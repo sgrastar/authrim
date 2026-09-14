@@ -4,6 +4,7 @@ import {
   runSqliteRestoreSequenceStep,
 } from '../restore-sqlite-sequence';
 import {
+  runSqliteRestoreDatasetDeferredStep,
   runSqliteRestoreDatasetStep,
   runSqliteRestoreDatasetVerificationStep,
 } from '../restore-sqlite-step';
@@ -210,6 +211,90 @@ it('does not redefine the seed on retry after target data changes', async () => 
   expect(target.prepare('SELECT count(*) AS n FROM tenant_backup_restore_targets').get()?.n).toBe(
     0
   );
+});
+it('restores child-first self references through a resumable deferred pass', async () => {
+  target.exec(
+    'CREATE TABLE roles(id TEXT PRIMARY KEY NOT NULL,tenant_id TEXT NOT NULL,parent_role_id TEXT REFERENCES roles(id)); CREATE TABLE role_updates(id TEXT); CREATE TRIGGER role_parent_updated AFTER UPDATE OF parent_role_id ON roles BEGIN INSERT INTO role_updates VALUES(NEW.id); END'
+  );
+  const rolePolicy: SqliteDatasetInspectionPolicy = {
+    dataset: { ...policy.dataset, id: 'core.roles', module: 'authorization' },
+    schema: {
+      table: 'roles',
+      columns: ['id', 'tenant_id', 'parent_role_id'],
+      primaryKey: ['id'],
+      uniqueKeys: [],
+      tenantColumn: 'tenant_id',
+    },
+    deferredColumns: ['parent_role_id'],
+    async inspectRow() {
+      return [];
+    },
+  };
+  const roleManifest = { ...manifest, datasets: [rolePolicy.dataset] };
+  const child =
+    '{"id":["text","child"],"tenant_id":["text","a"],"parent_role_id":["text","parent"]}';
+  const parent = '{"id":["text","parent"],"tenant_id":["text","a"],"parent_role_id":["null",null]}';
+  const readNextValidatedRow = async ({ sourceCursor }: { sourceCursor: string | null }) =>
+    sourceCursor === null
+      ? { rowJson: child, nextCursor: 'child' }
+      : sourceCursor === 'child'
+        ? { rowJson: parent, nextCursor: 'parent' }
+        : null;
+  await persist();
+  await seal();
+  let phase = 'apply_sqlite_dataset';
+  let cursor = JSON.stringify({
+    version: 1,
+    targetId: 'target',
+    targetOrdinal: 0,
+    datasetId: rolePolicy.dataset.id,
+    sourceCursor: null,
+    rowsWritten: 0,
+  });
+  const input = {
+    ...openInput(),
+    policy: rolePolicy,
+    manifest: roleManifest,
+    readNextValidatedRow,
+  };
+  for (let index = 0; index < 3; index++) {
+    const result = await runSqliteRestoreDatasetStep(
+      { ...context, operation: { ...context.operation, phase, cursor_json: cursor } },
+      input
+    );
+    phase = result.phase;
+    cursor = result.cursor ?? '';
+  }
+  expect(phase).toBe('apply_sqlite_dataset_deferred');
+  expect(target.prepare("SELECT parent_role_id FROM roles WHERE id='child'").get()).toEqual({
+    parent_role_id: null,
+  });
+  for (let index = 0; index < 3; index++) {
+    const result = await runSqliteRestoreDatasetDeferredStep(
+      { ...context, operation: { ...context.operation, phase, cursor_json: cursor } },
+      input
+    );
+    phase = result.phase;
+    cursor = result.cursor ?? '';
+  }
+  expect(phase).toBe('verify_sqlite_dataset');
+  expect(target.prepare("SELECT parent_role_id FROM roles WHERE id='child'").get()).toEqual({
+    parent_role_id: 'parent',
+  });
+  expect(target.prepare('SELECT id FROM role_updates').all()).toEqual([{ id: 'child' }]);
+  const resumed = await openPlannedSqliteRestoreTarget(openInput());
+  await resumed.restoreDeferredRow(rolePolicy, roleManifest, child);
+  expect(target.prepare('SELECT id FROM role_updates').all()).toEqual([{ id: 'child' }]);
+  expect(target.prepare('PRAGMA foreign_key_check').all()).toEqual([]);
+  for (let index = 0; index < 3; index++) {
+    const result = await runSqliteRestoreDatasetVerificationStep(
+      { ...context, operation: { ...context.operation, phase, cursor_json: cursor } },
+      input
+    );
+    phase = result.phase;
+    cursor = result.cursor ?? '';
+  }
+  expect(phase).toBe('advance_restore_dataset');
 });
 it('requires a sealed validated unpublished plan and exact provisioning destination', async () => {
   await persist();
@@ -474,6 +559,7 @@ it.each([false, true])(
       );
     const childPolicy: SqliteDatasetInspectionPolicy = {
       dataset: { ...policy.dataset, id: 'core.children' },
+      restoreAfter: ['core.tenants'],
       schema: {
         table: 'children',
         columns: ['id', 'tenant_id'],
@@ -496,7 +582,7 @@ it.each([false, true])(
     await persistSqliteRestoreSequence(
       inventory,
       1,
-      [policy, childPolicy].map((p) => ({
+      [childPolicy, policy].map((p) => ({
         targetId: 'target',
         ordinal: 0,
         policy: p,
@@ -671,6 +757,33 @@ it('pins input manifests and module policies and rejects overlapping dataset tar
   expect(target.prepare('SELECT count(*) AS n FROM tenant_backup_restore_targets').get()?.n).toBe(
     0
   );
+});
+
+it('rejects missing and cyclic restore dependencies before persisting a sequence', async () => {
+  const childPolicy: SqliteDatasetInspectionPolicy = {
+    ...policy,
+    dataset: { ...policy.dataset, id: 'core.children' },
+    schema: { ...policy.schema, table: 'children' },
+    restoreAfter: ['core.missing'],
+  };
+  const sourceManifest = { ...manifest, datasets: [policy.dataset, childPolicy.dataset] };
+  await expect(
+    persistSqliteRestoreSequence(inventory, 1, [
+      { targetId: 'target', ordinal: 0, policy, manifest: sourceManifest },
+      { targetId: 'target', ordinal: 0, policy: childPolicy, manifest: sourceManifest },
+    ])
+  ).rejects.toThrow('sequence_invalid');
+  expect((await inventory.head()).item_count).toBe(0);
+
+  const cyclicParent = { ...policy, restoreAfter: ['core.children'] };
+  const cyclicChild = { ...childPolicy, restoreAfter: ['core.tenants'] };
+  await expect(
+    persistSqliteRestoreSequence(inventory, 1, [
+      { targetId: 'target', ordinal: 0, policy: cyclicParent, manifest: sourceManifest },
+      { targetId: 'target', ordinal: 0, policy: cyclicChild, manifest: sourceManifest },
+    ])
+  ).rejects.toThrow('sequence_invalid');
+  expect((await inventory.head()).item_count).toBe(0);
 });
 
 it('requires completed input validation even when the caller allows target admission', async () => {

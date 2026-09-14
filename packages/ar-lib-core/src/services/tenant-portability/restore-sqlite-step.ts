@@ -35,22 +35,33 @@ export async function runSqliteRestoreDatasetStep(
   context: TenantBackupStepContext,
   input: RestoreStepInput
 ): Promise<TenantBackupStepResult> {
-  return runStep(context, input, false);
+  return runStep(context, input, 'write');
+}
+export async function runSqliteRestoreDatasetDeferredStep(
+  context: TenantBackupStepContext,
+  input: RestoreStepInput
+): Promise<TenantBackupStepResult> {
+  return runStep(context, input, 'defer');
 }
 export async function runSqliteRestoreDatasetVerificationStep(
   context: TenantBackupStepContext,
   input: RestoreStepInput
 ): Promise<TenantBackupStepResult> {
-  return runStep(context, input, true);
+  return runStep(context, input, 'verify');
 }
 async function runStep(
   context: TenantBackupStepContext,
   input: RestoreStepInput,
-  verify: boolean
+  mode: 'write' | 'defer' | 'verify'
 ): Promise<TenantBackupStepResult> {
   context.signal.throwIfAborted();
+  const phase = {
+    write: 'apply_sqlite_dataset',
+    defer: 'apply_sqlite_dataset_deferred',
+    verify: 'verify_sqlite_dataset',
+  }[mode];
   if (
-    context.operation.phase !== (verify ? 'verify_sqlite_dataset' : 'apply_sqlite_dataset') ||
+    context.operation.phase !== phase ||
     context.operation.kind !== 'import' ||
     context.operation.state !== 'running'
   )
@@ -63,11 +74,14 @@ async function runStep(
   }
   if (!value || typeof value !== 'object' || Array.isArray(value)) invalid();
   const cursor = value as Record<string, unknown>;
+  const expectedKeys =
+    mode === 'write'
+      ? 'datasetId,rowsWritten,sourceCursor,targetId,targetOrdinal,version'
+      : mode === 'defer'
+        ? 'datasetId,deferredSourceCursor,rowsDeferred,rowsWritten,sourceCursor,targetId,targetOrdinal,version'
+        : 'datasetId,rowsVerified,rowsWritten,sourceCursor,targetId,targetOrdinal,verifySourceCursor,version';
   if (
-    Object.keys(cursor).sort().join(',') !==
-      (verify
-        ? 'datasetId,rowsVerified,rowsWritten,sourceCursor,targetId,targetOrdinal,verifySourceCursor,version'
-        : 'datasetId,rowsWritten,sourceCursor,targetId,targetOrdinal,version') ||
+    Object.keys(cursor).sort().join(',') !== expectedKeys ||
     cursor.version !== 1 ||
     cursor.targetId !== input.targetId ||
     cursor.targetOrdinal !== input.ordinal ||
@@ -83,7 +97,7 @@ async function runStep(
     invalid();
   if ((cursor.sourceCursor === null) !== (cursor.rowsWritten === 0)) invalid();
   if (
-    verify &&
+    mode === 'verify' &&
     (!Number.isSafeInteger(cursor.rowsVerified) ||
       (cursor.rowsVerified as number) < 0 ||
       (cursor.rowsVerified as number) > (cursor.rowsWritten as number) ||
@@ -94,11 +108,30 @@ async function runStep(
       (cursor.verifySourceCursor === null) !== (cursor.rowsVerified === 0))
   )
     invalid();
+  if (
+    mode === 'defer' &&
+    (!Number.isSafeInteger(cursor.rowsDeferred) ||
+      (cursor.rowsDeferred as number) < 0 ||
+      (cursor.rowsDeferred as number) > (cursor.rowsWritten as number) ||
+      (cursor.deferredSourceCursor !== null &&
+        (typeof cursor.deferredSourceCursor !== 'string' ||
+          !cursor.deferredSourceCursor ||
+          cursor.deferredSourceCursor.length > 4096)) ||
+      (cursor.deferredSourceCursor === null) !== (cursor.rowsDeferred === 0))
+  )
+    invalid();
   const current = cursor as unknown as SqliteRestoreDatasetCursor & {
+    deferredSourceCursor?: string | null;
+    rowsDeferred?: number;
     verifySourceCursor?: string | null;
     rowsVerified?: number;
   };
-  const sourceCursor = verify ? (current.verifySourceCursor ?? null) : current.sourceCursor;
+  const sourceCursor =
+    mode === 'verify'
+      ? (current.verifySourceCursor ?? null)
+      : mode === 'defer'
+        ? (current.deferredSourceCursor ?? null)
+        : current.sourceCursor;
   const manifest = structuredClone(input.manifest);
   const policy = {
     ...structuredClone({ ...input.policy, inspectRow: undefined }),
@@ -117,7 +150,7 @@ async function runStep(
   await input.inventory.headForLease(context.lease);
   await input.assertValidatedUnpublishedPlan(head.chain_digest);
   if (next === null) {
-    if (verify) {
+    if (mode === 'verify') {
       if (current.rowsVerified !== current.rowsWritten) invalid();
       await target.verifyDataset(policy, current.rowsWritten);
       return {
@@ -126,6 +159,33 @@ async function runStep(
         disposition: 'continue',
       };
     }
+    if (mode === 'defer') {
+      if (current.rowsDeferred !== current.rowsWritten) invalid();
+      return {
+        phase: 'verify_sqlite_dataset',
+        cursor: JSON.stringify({
+          version: 1,
+          targetId: current.targetId,
+          targetOrdinal: current.targetOrdinal,
+          datasetId: current.datasetId,
+          sourceCursor: current.sourceCursor,
+          rowsWritten: current.rowsWritten,
+          verifySourceCursor: null,
+          rowsVerified: 0,
+        }),
+        disposition: 'continue',
+      };
+    }
+    if (policy.deferredColumns?.length && current.rowsWritten > 0)
+      return {
+        phase: 'apply_sqlite_dataset_deferred',
+        cursor: JSON.stringify({
+          ...current,
+          deferredSourceCursor: null,
+          rowsDeferred: 0,
+        }),
+        disposition: 'continue',
+      };
     return {
       phase: 'verify_sqlite_dataset',
       cursor: JSON.stringify({ ...current, verifySourceCursor: null, rowsVerified: 0 }),
@@ -140,21 +200,30 @@ async function runStep(
     next.nextCursor === sourceCursor
   )
     invalid();
-  if (verify) {
+  if (mode === 'verify') {
     if ((current.rowsVerified ?? 0) >= current.rowsWritten) invalid();
     await target.verifyRow(policy, manifest, next.rowJson);
+  } else if (mode === 'defer') {
+    if ((current.rowsDeferred ?? 0) >= current.rowsWritten) invalid();
+    await target.restoreDeferredRow(policy, manifest, next.rowJson);
   } else await target.writeRow(policy, manifest, next.rowJson);
   context.signal.throwIfAborted();
   return {
-    phase: verify ? 'verify_sqlite_dataset' : 'apply_sqlite_dataset',
+    phase,
     cursor: JSON.stringify(
-      verify
+      mode === 'verify'
         ? {
             ...current,
             verifySourceCursor: next.nextCursor,
             rowsVerified: (current.rowsVerified ?? 0) + 1,
           }
-        : { ...current, sourceCursor: next.nextCursor, rowsWritten: current.rowsWritten + 1 }
+        : mode === 'defer'
+          ? {
+              ...current,
+              deferredSourceCursor: next.nextCursor,
+              rowsDeferred: (current.rowsDeferred ?? 0) + 1,
+            }
+          : { ...current, sourceCursor: next.nextCursor, rowsWritten: current.rowsWritten + 1 }
     ),
     disposition: 'continue',
   };

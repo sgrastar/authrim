@@ -889,6 +889,14 @@ try {
     'utf8'
   );
   for (const sql of splitMigrationSql(snapshotStorage)) await coreDb.prepare(sql).run();
+  const snapshotPartitions = readFileSync(
+    new URL(
+      '../../migrations/core/d1/012_tenant_backup_preimage_row_partitions.sql',
+      import.meta.url
+    ),
+    'utf8'
+  );
+  for (const sql of splitMigrationSql(snapshotPartitions)) await coreDb.prepare(sql).run();
   await coreDb.prepare("INSERT INTO tenants VALUES ('tenant-a','before')").run();
   const captureInput = {
     ...sourceInput,
@@ -1410,6 +1418,18 @@ try {
       }
     ),
     inspectionReceipt
+  );
+  await assert.rejects(
+    finalizeSqliteDatasetInspection(
+      { ...restoreContext, operation: restoreOperation },
+      {
+        database: adapter,
+        manifest: restoreManifest,
+        policy: { ...restorePolicy, deferredColumns: ['value'] },
+        now: () => restoreNow,
+        assertPinnedInput: async () => {},
+      }
+    )
   );
   await assert.rejects(
     finalizeSqliteDatasetInspection(

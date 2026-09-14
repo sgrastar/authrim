@@ -10,6 +10,10 @@ export type PortableSqliteRow = Readonly<Record<string, readonly [string, string
 export interface SqliteDatasetInspectionPolicy {
   dataset: TenantPortableDataset;
   schema: CaptureSchema;
+  /** Installed dataset identities that must be restored before this dataset. */
+  restoreAfter?: readonly string[];
+  /** Nullable self-reference columns restored in a second pass after every row exists. */
+  deferredColumns?: readonly string[];
   /** Required for parent-owned rows: identify the parent's installed dataset. */
   parentDataset?: Pick<TenantPortableDataset, 'id' | 'module'>;
   /** Authoritative tenant key, when storage ownership uses it instead of tenant ID. */
@@ -61,6 +65,15 @@ export function createSqliteDatasetInspectorFactory(
     )
       invalid();
     const schema = pinned.schema;
+    if (
+      pinned.deferredColumns !== undefined &&
+      (!pinned.deferredColumns.length ||
+        new Set(pinned.deferredColumns).size !== pinned.deferredColumns.length ||
+        pinned.deferredColumns.some(
+          (column) => !schema.columns.includes(column) || schema.primaryKey.includes(column)
+        ))
+    )
+      invalid();
     if ('parent' in schema && !pinned.parentDataset) invalid();
     if (schema.rowPartition) {
       if (

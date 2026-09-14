@@ -151,6 +151,7 @@ export async function runTenantBackupImportOperationStep(
     [
       'start_sqlite_restore_sequence',
       'apply_sqlite_dataset',
+      'apply_sqlite_dataset_deferred',
       'verify_sqlite_dataset',
       'advance_restore_dataset',
       'verify_restore_targets',

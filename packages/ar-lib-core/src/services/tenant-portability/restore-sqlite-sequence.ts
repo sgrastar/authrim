@@ -3,6 +3,7 @@ import { encodeTenantBundleManifest } from './bundle-manifest';
 import type { TenantBackupRestorePlanInventoryPort } from './restore-plan-inventory';
 import type { TenantBackupStepContext, TenantBackupStepResult } from './operation-executor';
 import {
+  runSqliteRestoreDatasetDeferredStep,
   runSqliteRestoreDatasetStep,
   runSqliteRestoreDatasetVerificationStep,
 } from './restore-sqlite-step';
@@ -53,10 +54,66 @@ async function descriptor(
           schema: policy.schema,
           parentDataset: policy.parentDataset,
           tenantKey: policy.tenantKey,
+          restoreAfter: policy.restoreAfter,
+          deferredColumns: policy.deferredColumns,
         })
       )
     ),
   };
+}
+
+function orderDatasets<T extends { policy: DatasetInput['policy'] }>(datasets: readonly T[]): T[] {
+  const byDataset = new Map<string, { dataset: T; index: number }>();
+  for (const [index, candidate] of datasets.entries()) {
+    const id = candidate.policy.dataset.id;
+    if (byDataset.has(id)) throw fail();
+    byDataset.set(id, { dataset: candidate, index });
+  }
+  const sourceIndex = (id: string) => {
+    const value = byDataset.get(id);
+    if (!value) throw fail();
+    return value.index;
+  };
+  const dependencies = new Map<string, Set<string>>();
+  const dependents = new Map<string, Set<string>>();
+  for (const candidate of datasets) {
+    const id = candidate.policy.dataset.id;
+    const declared = candidate.policy.restoreAfter ?? [];
+    if (new Set(declared).size !== declared.length) throw fail();
+    const required = new Set<string>();
+    for (const dependency of declared) {
+      if (dependency === id) continue;
+      if (!byDataset.has(dependency)) throw fail();
+      required.add(dependency);
+      const downstream = dependents.get(dependency) ?? new Set<string>();
+      downstream.add(id);
+      dependents.set(dependency, downstream);
+    }
+    dependencies.set(id, required);
+  }
+  const ready = [...byDataset.entries()]
+    .filter(([id]) => dependencies.get(id)?.size === 0)
+    .sort((left, right) => left[1].index - right[1].index)
+    .map(([id]) => id);
+  const ordered: T[] = [];
+  while (ready.length) {
+    const id = ready.shift();
+    if (!id) throw fail();
+    const selected = byDataset.get(id);
+    if (!selected) throw fail();
+    ordered.push(selected.dataset);
+    for (const dependent of dependents.get(id) ?? []) {
+      const remaining = dependencies.get(dependent);
+      if (!remaining) throw fail();
+      remaining.delete(id);
+      if (remaining.size === 0) {
+        ready.push(dependent);
+        ready.sort((left, right) => sourceIndex(left) - sourceIndex(right));
+      }
+    }
+  }
+  if (ordered.length !== datasets.length) throw fail();
+  return ordered;
 }
 /** Installed planner supplies complete dependency order after validating the fixed input set. */
 export async function persistSqliteRestoreSequence(
@@ -65,14 +122,16 @@ export async function persistSqliteRestoreSequence(
   datasets: readonly Pick<DatasetInput, 'targetId' | 'ordinal' | 'manifest' | 'policy'>[]
 ): Promise<void> {
   if (datasets.length > 256) throw fail();
-  const pinned = datasets.map((dataset) => ({
-    ...dataset,
-    manifest: structuredClone(dataset.manifest),
-    policy: {
-      ...structuredClone({ ...dataset.policy, inspectRow: undefined }),
-      inspectRow: dataset.policy.inspectRow,
-    },
-  }));
+  const pinned = orderDatasets(
+    datasets.map((dataset) => ({
+      ...dataset,
+      manifest: structuredClone(dataset.manifest),
+      policy: {
+        ...structuredClone({ ...dataset.policy, inspectRow: undefined }),
+        inspectRow: dataset.policy.inspectRow,
+      },
+    }))
+  );
   const jobs: Job[] = [];
   for (const dataset of pinned) jobs.push(await descriptor(dataset));
   for (const [index, dataset] of pinned.entries()) {
@@ -201,7 +260,9 @@ export async function runSqliteRestoreSequenceStep(
     datasetCursor = null;
   } else if (
     !starting &&
-    !['apply_sqlite_dataset', 'verify_sqlite_dataset'].includes(context.operation.phase)
+    !['apply_sqlite_dataset', 'apply_sqlite_dataset_deferred', 'verify_sqlite_dataset'].includes(
+      context.operation.phase
+    )
   )
     throw fail();
   function envelope(inner: string | null) {
@@ -244,7 +305,9 @@ export async function runSqliteRestoreSequenceStep(
   const run =
     context.operation.phase === 'apply_sqlite_dataset'
       ? runSqliteRestoreDatasetStep
-      : runSqliteRestoreDatasetVerificationStep;
+      : context.operation.phase === 'apply_sqlite_dataset_deferred'
+        ? runSqliteRestoreDatasetDeferredStep
+        : runSqliteRestoreDatasetVerificationStep;
   const result = await run(
     { ...context, operation: { ...context.operation, cursor_json: datasetCursor } },
     {

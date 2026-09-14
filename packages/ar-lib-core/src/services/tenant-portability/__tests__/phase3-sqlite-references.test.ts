@@ -5,6 +5,8 @@ import { MIGRATION_STREAM_CONTRACTS } from '../../control-plane/migration-stream
 import { PHASE3_SQLITE_DATASET_REGISTRATIONS } from '../phase3-sqlite-modules';
 import {
   inspectPhase3SqliteReferences,
+  phase3SqliteDeferredColumns,
+  phase3SqliteRestoreDependencies,
   PHASE3_SQLITE_REFERENCE_RULES,
 } from '../phase3-sqlite-references';
 import type { PortableSqliteRow } from '../sqlite-dataset-inspector';
@@ -141,6 +143,49 @@ describe('Phase 3 installed SQL reference graph', () => {
     expect(new Set(identities).size).toBe(identities.length);
   });
 
+  it('orders storage parents before children without creating profile activation cycles', () => {
+    expect(phase3SqliteRestoreDependencies('core.client_consent_overrides')).toEqual([
+      'core.consent_statements',
+      'core.oauth_clients',
+      'core.tenants',
+    ]);
+    expect(phase3SqliteRestoreDependencies('admin.destination_profile_versions')).toContain(
+      'admin.destination_profiles'
+    );
+    expect(phase3SqliteRestoreDependencies('admin.destination_profiles')).not.toContain(
+      'admin.destination_profile_versions'
+    );
+    expect(phase3SqliteRestoreDependencies('core.roles')).toEqual(['core.tenants']);
+    expect(phase3SqliteDeferredColumns('core.roles')).toEqual(['parent_role_id']);
+    expect(phase3SqliteDeferredColumns('core.organizations')).toEqual(['parent_org_id']);
+    expect(phase3SqliteDeferredColumns('admin.destination_profiles')).toEqual(['base_profile_id']);
+    expect(phase3SqliteDeferredColumns('admin.source_profiles')).toEqual([]);
+    expect(() => phase3SqliteRestoreDependencies('unknown')).toThrow(
+      'backup_phase3_reference_dataset'
+    );
+  });
+
+  it('keeps the installed cross-dataset restore graph complete and acyclic', () => {
+    const remaining = new Map(
+      PHASE3_SQLITE_DATASET_REGISTRATIONS.map(({ dataset }) => [
+        dataset.id,
+        new Set(phase3SqliteRestoreDependencies(dataset.id)),
+      ])
+    );
+    const restored = new Set<string>();
+    while (remaining.size) {
+      const ready = [...remaining].filter(([, dependencies]) =>
+        [...dependencies].every((dependency) => restored.has(dependency))
+      );
+      expect(ready.length).toBeGreaterThan(0);
+      for (const [datasetId] of ready) {
+        remaining.delete(datasetId);
+        restored.add(datasetId);
+      }
+    }
+    expect(restored.size).toBe(PHASE3_SQLITE_DATASET_REGISTRATIONS.length);
+  });
+
   it('uses installed source columns and target primary-key arity for every rule', () => {
     const byDataset = new Map(
       PHASE3_SQLITE_DATASET_REGISTRATIONS.map((registration) => [
@@ -162,7 +207,9 @@ describe('Phase 3 installed SQL reference graph', () => {
       expect(sourceTable, rule.fromDatasetId).toBeDefined();
       expect(targetTable, rule.toDatasetId).toBeDefined();
       expect(
-        rule.localColumns.every((column) => sourceTable?.columns.some(({ name }) => name === column))
+        rule.localColumns.every((column) =>
+          sourceTable?.columns.some(({ name }) => name === column)
+        )
       ).toBe(true);
       if (rule.when) {
         expect(sourceTable?.columns.some(({ name }) => name === rule.when?.column)).toBe(true);
@@ -170,6 +217,28 @@ describe('Phase 3 installed SQL reference graph', () => {
       expect(
         targetTable?.columns.filter(({ primaryKeyPosition }) => primaryKeyPosition > 0).length
       ).toBe(rule.localColumns.length);
+      if (rule.fromDatasetId === rule.toDatasetId) {
+        expect(rule.nullable).toBe(true);
+        expect(
+          rule.localColumns.every(
+            (column) => !sourceTable?.columns.find(({ name }) => name === column)?.notNull
+          )
+        ).toBe(true);
+      }
+      if (rule.restoreOrdering === 'validation-only') {
+        const matchingForeignKey = [
+          ...Map.groupBy(sourceTable?.foreignKeys ?? [], (foreignKey) => foreignKey.id).values(),
+        ].some(
+          (foreignKeys) =>
+            foreignKeys[0]?.parentTable === targetTable?.name &&
+            JSON.stringify(
+              [...foreignKeys]
+                .sort((left, right) => left.position - right.position)
+                .map(({ column }) => column)
+            ) === JSON.stringify(rule.localColumns)
+        );
+        expect(matchingForeignKey).toBe(false);
+      }
     }
   });
 });

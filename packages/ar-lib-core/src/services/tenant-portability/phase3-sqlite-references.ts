@@ -15,6 +15,8 @@ export interface Phase3SqliteReferenceRule {
   toModule: TenantPortabilityModuleId;
   nullable?: boolean;
   when?: { column: string; equals: string };
+  /** Logical references are validated but may be excluded when they would invert storage order. */
+  restoreOrdering?: 'required' | 'validation-only';
 }
 
 const byTable = new Map(
@@ -36,7 +38,7 @@ function relation(
   localColumns: readonly string[],
   toFamily: 'core' | 'admin',
   toTable: string,
-  options: Pick<Phase3SqliteReferenceRule, 'nullable' | 'when'> = {}
+  options: Pick<Phase3SqliteReferenceRule, 'nullable' | 'when' | 'restoreOrdering'> = {}
 ): Phase3SqliteReferenceRule {
   const from = dataset(fromFamily, fromTable);
   const to = dataset(toFamily, toTable);
@@ -133,7 +135,7 @@ export const PHASE3_SQLITE_REFERENCE_RULES: readonly Phase3SqliteReferenceRule[]
     ['active_version_id'],
     'admin',
     'destination_profile_versions',
-    { nullable: true }
+    { nullable: true, restoreOrdering: 'validation-only' }
   ),
   relation(
     'admin',
@@ -192,6 +194,7 @@ export const PHASE3_SQLITE_REFERENCE_RULES: readonly Phase3SqliteReferenceRule[]
   relation('admin', 'source_profile_versions', ['profile_id'], 'admin', 'source_profiles'),
   relation('admin', 'source_profiles', ['active_version_id'], 'admin', 'source_profile_versions', {
     nullable: true,
+    restoreOrdering: 'validation-only',
   }),
 ];
 
@@ -239,6 +242,34 @@ export function inspectPhase3SqliteReferences(
   return dependencies;
 }
 
+/** Restore prerequisites derived only from the installed reference graph. */
+export function phase3SqliteRestoreDependencies(datasetId: string): readonly string[] {
+  if (!PHASE3_SQLITE_DATASET_REGISTRATIONS.some(({ dataset }) => dataset.id === datasetId))
+    throw new Error('backup_phase3_reference_dataset');
+  return [
+    ...new Set(
+      PHASE3_SQLITE_REFERENCE_RULES.filter(
+        (rule) =>
+          rule.fromDatasetId === datasetId &&
+          rule.toDatasetId !== datasetId &&
+          rule.restoreOrdering !== 'validation-only'
+      ).map((rule) => rule.toDatasetId)
+    ),
+  ].sort();
+}
+
+/** Nullable self references are linked only after every row in that table has been inserted. */
+export function phase3SqliteDeferredColumns(datasetId: string): readonly string[] {
+  if (!PHASE3_SQLITE_DATASET_REGISTRATIONS.some(({ dataset }) => dataset.id === datasetId))
+    throw new Error('backup_phase3_reference_dataset');
+  const rules = PHASE3_SQLITE_REFERENCE_RULES.filter(
+    (rule) => rule.fromDatasetId === datasetId && rule.toDatasetId === datasetId
+  );
+  if (rules.some((rule) => !rule.nullable))
+    throw new Error('backup_phase3_reference_deferred_required');
+  return [...new Set(rules.flatMap((rule) => rule.localColumns))].sort();
+}
+
 /** Build import inspectors only from the sealed SQL plan and the installed Phase 3 registry. */
 export function createPhase3SqliteInspectionPolicies(
   planned: readonly PlannedInstalledSqliteDataset[]
@@ -264,9 +295,13 @@ export function createPhase3SqliteInspectionPolicies(
       JSON.stringify(registration.partitions ?? []) !== JSON.stringify(entry.partitions ?? [])
     )
       throw new Error('backup_phase3_plan_mismatch');
+    const restoreAfter = phase3SqliteRestoreDependencies(entry.dataset.id);
+    const deferredColumns = phase3SqliteDeferredColumns(entry.dataset.id);
     return {
       dataset: structuredClone(entry.dataset),
       schema: structuredClone(entry.capture),
+      ...(restoreAfter.length ? { restoreAfter } : {}),
+      ...(deferredColumns.length ? { deferredColumns } : {}),
       ...(entry.partitions ? { partitions: [...entry.partitions] } : {}),
       inspectRow: async (row, identity) =>
         inspectPhase3SqliteReferences(entry.dataset.id, row, identity),

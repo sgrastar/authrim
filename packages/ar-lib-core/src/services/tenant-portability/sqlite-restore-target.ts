@@ -232,12 +232,50 @@ export class SqliteRestoreTarget {
   ): Promise<void> {
     await this.checkRow(policy, manifest, rowJson, false);
   }
-  private async checkRow(
+  /** Complete nullable self references after every row in the same dataset exists. */
+  async restoreDeferredRow(
     policy: SqliteDatasetInspectionPolicy,
     manifest: TenantBundleManifest,
-    rowJson: string,
-    write: boolean
+    rowJson: string
   ): Promise<void> {
+    if (this.mode !== 'write' || !policy.deferredColumns?.length) throw error();
+    ({ policy, manifest } = await this.validateRow(policy, manifest, rowJson));
+    const parsed = JSON.parse(rowJson) as Record<string, unknown>;
+    const deferred = policy.deferredColumns;
+    if (!deferred?.length) throw error();
+    if (await this.rowMatches(policy, rowJson)) return;
+    const values = sqliteSnapshotRowInsert(
+      policy.schema.table,
+      deferred,
+      JSON.stringify(Object.fromEntries(deferred.map((column) => [column, parsed[column]])))
+    );
+    const expressions = values.sql.slice(values.sql.indexOf(' VALUES (') + 9, -1).split(', ');
+    const key = sqliteSnapshotRowInsert(
+      policy.schema.table,
+      policy.schema.primaryKey,
+      JSON.stringify(
+        Object.fromEntries(policy.schema.primaryKey.map((column) => [column, parsed[column]]))
+      )
+    );
+    const keyExpressions = key.sql.slice(key.sql.indexOf(' VALUES (') + 9, -1).split(', ');
+    const assignments = deferred.map((column, index) => `"${column}"=${expressions[index]}`);
+    const predicate = policy.schema.primaryKey
+      .map((column, index) => `"${column}" IS ${keyExpressions[index]}`)
+      .join(' AND ');
+    await this.assertLive();
+    const result = await this.database.execute(
+      `UPDATE "${policy.schema.table}" SET ${assignments.join(', ')} WHERE ${this.guardSql()} AND ${predicate}`,
+      [...values.params, ...this.guard(), ...key.params]
+    );
+    if (!result.success || result.rowsAffected !== 1) throw error();
+    if (!(await this.rowMatches(policy, rowJson))) throw error();
+  }
+
+  private async validateRow(
+    policy: SqliteDatasetInspectionPolicy,
+    manifest: TenantBundleManifest,
+    rowJson: string
+  ): Promise<{ policy: SqliteDatasetInspectionPolicy; manifest: TenantBundleManifest }> {
     policy = {
       ...structuredClone({ ...policy, inspectRow: undefined }),
       inspectRow: policy.inspectRow,
@@ -258,7 +296,6 @@ export class SqliteRestoreTarget {
     await this.assertLive();
     const inspector = await createSqliteDatasetInspectorFactory(policy)(policy.dataset, manifest);
     try {
-      // This per-row path is bounded by the D1 binding budget. Large rows need a separate loader.
       const bytes = new TextEncoder().encode(rowJson + '\n');
       if (bytes.length > 256 * 1024) throw error();
       const inspected = await inspector.chunk(bytes, 0);
@@ -267,7 +304,27 @@ export class SqliteRestoreTarget {
     } finally {
       await inspector.dispose();
     }
-    const insert = sqliteSnapshotRowInsert(policy.schema.table, policy.schema.columns, rowJson);
+    return { policy, manifest };
+  }
+
+  private async checkRow(
+    policy: SqliteDatasetInspectionPolicy,
+    manifest: TenantBundleManifest,
+    rowJson: string,
+    write: boolean
+  ): Promise<void> {
+    ({ policy, manifest } = await this.validateRow(policy, manifest, rowJson));
+    let storedRowJson = rowJson;
+    if (write && policy.deferredColumns?.length) {
+      const row = JSON.parse(rowJson) as Record<string, unknown>;
+      for (const column of policy.deferredColumns) row[column] = ['null', null];
+      storedRowJson = JSON.stringify(row);
+    }
+    const insert = sqliteSnapshotRowInsert(
+      policy.schema.table,
+      policy.schema.columns,
+      storedRowJson
+    );
     if (write) {
       const keyInsert = sqliteSnapshotRowInsert(
         policy.schema.table,
@@ -276,7 +333,7 @@ export class SqliteRestoreTarget {
           Object.fromEntries(
             policy.schema.primaryKey.map((column) => [
               column,
-              (JSON.parse(rowJson) as Record<string, unknown>)[column],
+              (JSON.parse(storedRowJson) as Record<string, unknown>)[column],
             ])
           )
         )
@@ -298,7 +355,16 @@ export class SqliteRestoreTarget {
       ]);
       if (!result.success) throw error();
     }
-    // Compare stored values and storage types, including integer precision and blob bytes.
+    if (!(await this.rowMatches(policy, storedRowJson))) throw error();
+    await this.assertLive();
+  }
+
+  /** Compare stored values and storage types, including integer precision and blob bytes. */
+  private async rowMatches(
+    policy: SqliteDatasetInspectionPolicy,
+    rowJson: string
+  ): Promise<boolean> {
+    const insert = sqliteSnapshotRowInsert(policy.schema.table, policy.schema.columns, rowJson);
     const values = insert.sql.slice(insert.sql.indexOf(' VALUES (') + 9, -1).split(', ');
     const parsed: unknown = JSON.parse(rowJson);
     const row = parsed as Record<string, readonly [string, unknown]>;
@@ -312,14 +378,12 @@ export class SqliteRestoreTarget {
       if (!['Inf', '-Inf'].includes(String(row[column][1])) || row[column][0] !== 'real')
         params.push(insert.params[position++]);
     }
-    if (
-      !(await this.database.queryOne(
+    return Boolean(
+      await this.database.queryOne(
         `SELECT 1 AS matches FROM "${policy.schema.table}" WHERE ${comparisons.join(' AND ')} AND ${this.guardSql()}`,
         [...params, ...this.guard()]
-      ))
-    )
-      throw error();
-    await this.assertLive();
+      )
+    );
   }
   /** Verify the complete selected tenant dataset, after all of its expected rows were read back. */
   async verifyDataset(policy: SqliteDatasetInspectionPolicy, expectedRows: number): Promise<void> {

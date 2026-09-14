@@ -85,6 +85,8 @@ export async function finalizeSqliteDatasetInspection(
         schema: input.policy.schema,
         parentDataset: input.policy.parentDataset,
         tenantKey: input.policy.tenantKey,
+        restoreAfter: input.policy.restoreAfter,
+        deferredColumns: input.policy.deferredColumns,
       })
     )
   );

@@ -49,6 +49,8 @@ async function targetSetDigest(targets: readonly TenantBackupSqliteRestorePlanTa
         schema: policy.schema,
         parentDataset: policy.parentDataset,
         tenantKey: policy.tenantKey,
+        restoreAfter: policy.restoreAfter,
+        deferredColumns: policy.deferredColumns,
       })),
     }))
   );
