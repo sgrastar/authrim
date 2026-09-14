@@ -13,13 +13,21 @@ describe('Account Page published composition', () => {
 		expect(source).toContain('currentLocale = locale as Locales');
 		expect(source).toContain('screen.localizations?.[locale]?.fields');
 		expect(source).toContain('languageStore.defaultLocale');
-		expect(source).toContain('placementVisible(item.condition)');
+		expect(source).toContain('placementVisible(item)');
 		expect(source).toContain("case 'passkey_enabled'");
 		expect(source).toContain("case 'consent_records_available'");
 	});
 
+	it('hides any widget placement disabled for the current guest account', () => {
+		expect(source).toContain(
+			'isPlacementVisibleForRegistrationState(placement, profile?.registration_state)'
+		);
+		expect(source).toContain('placementVisible(item)');
+	});
+
 	it('renders only validated links and uses the dynamic viewport height', () => {
 		expect(source).toContain("field.block_type === 'link' && safeHref(field.href)");
+		expect(source).toContain('return target?.enabled && placementVisible(target) ? value : null;');
 		expect(source).toContain('min-height: 100dvh');
 		expect(source).not.toContain('min-height: 100vh');
 	});

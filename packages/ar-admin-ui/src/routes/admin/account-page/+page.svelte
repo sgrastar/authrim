@@ -22,6 +22,7 @@
 		width: PlacementWidth;
 		enabled: boolean;
 		condition: VisibilityCondition;
+		show_for_guests: boolean;
 	};
 	type PageLocalization = { title?: string; description?: string };
 	type AccountPageDefinition = {
@@ -63,70 +64,79 @@
 	const DEFAULT_PAGE: AccountPageDefinition = {
 		schema_version: 'authrim.account_page.v1',
 		base_preset_id: 'authrim-default',
-		base_preset_version: 2,
+		base_preset_version: 3,
 		screens: [
 			{
 				id: 'overview',
 				screen_key: 'account_overview',
 				width: 'full',
 				enabled: true,
-				condition: 'always'
+				condition: 'always',
+				show_for_guests: true
 			},
 			{
 				id: 'launchers',
 				screen_key: 'account_launchers',
 				width: 'full',
 				enabled: true,
-				condition: 'always'
+				condition: 'always',
+				show_for_guests: true
 			},
 			{
 				id: 'profile',
 				screen_key: 'account_profile',
 				width: 'half',
 				enabled: true,
-				condition: 'always'
+				condition: 'always',
+				show_for_guests: true
 			},
 			{
 				id: 'devices',
 				screen_key: 'account_devices',
 				width: 'half',
 				enabled: true,
-				condition: 'always'
+				condition: 'always',
+				show_for_guests: true
 			},
 			{
 				id: 'sessions',
 				screen_key: 'account_sessions',
 				width: 'half',
 				enabled: true,
-				condition: 'always'
+				condition: 'always',
+				show_for_guests: true
 			},
 			{
 				id: 'passkeys',
 				screen_key: 'account_passkeys',
 				width: 'half',
 				enabled: true,
-				condition: 'passkey_enabled'
+				condition: 'passkey_enabled',
+				show_for_guests: true
 			},
 			{
 				id: 'totp',
 				screen_key: 'account_totp',
 				width: 'full',
 				enabled: true,
-				condition: 'totp_enabled'
+				condition: 'totp_enabled',
+				show_for_guests: true
 			},
 			{
 				id: 'consents',
 				screen_key: 'account_consents',
 				width: 'full',
 				enabled: true,
-				condition: 'always'
+				condition: 'always',
+				show_for_guests: true
 			},
 			{
 				id: 'activity',
 				screen_key: 'account_activity',
 				width: 'full',
 				enabled: true,
-				condition: 'always'
+				condition: 'always',
+				show_for_guests: true
 			}
 		]
 	};
@@ -196,6 +206,7 @@
 				screen_key: screenKey,
 				width: item.width === 'half' ? 'half' : 'full',
 				enabled: item.enabled !== false,
+				show_for_guests: item.show_for_guests !== false,
 				condition: [
 					'hidden',
 					'passkey_enabled',
@@ -319,7 +330,14 @@
 			...draft,
 			screens: [
 				...draft.screens,
-				{ id, screen_key: screen.screen_key, width: 'full', enabled: true, condition: 'always' }
+				{
+					id,
+					screen_key: screen.screen_key,
+					width: 'full',
+					enabled: true,
+					condition: 'always',
+					show_for_guests: true
+				}
 			]
 		};
 	}
@@ -950,6 +968,16 @@
 												updatePlacement(index, { enabled: event.currentTarget.checked })}
 										/><span>{t('表示', 'Show')}</span></label
 									>
+									<label class="toggle-control guest-visibility-control"
+										><input
+											type="checkbox"
+											checked={placement.show_for_guests}
+											onchange={(event) =>
+												updatePlacement(index, {
+													show_for_guests: event.currentTarget.checked
+												})}
+										/><span>{t('ゲストアカウントでも表示', 'Show for guest accounts')}</span></label
+									>
 									<div class="order-buttons">
 										<button
 											type="button"
@@ -1263,9 +1291,14 @@
 	.toggle-control input {
 		width: auto;
 	}
+	.guest-visibility-control {
+		grid-column: 1 / 3;
+	}
 	.order-buttons {
 		display: flex;
 		gap: 0.3rem;
+		grid-column: 3;
+		justify-self: end;
 	}
 	.order-buttons button:disabled {
 		cursor: not-allowed;
@@ -1362,6 +1395,11 @@
 		}
 		.placement-controls {
 			grid-template-columns: 1fr;
+		}
+		.guest-visibility-control,
+		.order-buttons {
+			grid-column: auto;
+			justify-self: start;
 		}
 		.preview-grid {
 			grid-template-columns: 1fr;

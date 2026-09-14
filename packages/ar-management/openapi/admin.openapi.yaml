@@ -1695,6 +1695,8 @@ paths:
         existing accounts. Disabling deletion leaves existing deadlines unchanged.
         Upgrade holds are granted once per guest and are never extended by later settings changes.
         Guest upgrade method permissions are independent of signup and login permissions.
+        For the login-ui category, login-ui.account_pages is a JSON-encoded Account Page document.
+        Each screen placement accepts show_for_guests as a boolean; omitting it defaults to true.
         The request must include the current settings version in ifMatch; stale writes return 409.
       security:
         - adminBearer: []
@@ -47972,10 +47974,19 @@ components:
         set:
           type: object
           additionalProperties: true
+          properties:
+            login-ui.account_pages:
+              type: string
+              description: >-
+                JSON-encoded authrim.account_pages.v1 document. Every screen placement may set
+                show_for_guests to control whether its Account Page widget is rendered for guest
+                accounts. The value defaults to true when omitted.
           description: >-
             Setting keys and values to apply. For login-ui.primary_locales, use null for automatic
             defaults or an array of zero to six unique supported locale codes. The
-            login-ui.show_english_language_names value must be boolean.
+            login-ui.show_english_language_names value must be boolean. The login-ui.account_pages
+            value is a JSON-encoded Account Page document whose placements accept a boolean
+            show_for_guests value; omission defaults guest visibility to true.
         clear:
           type: array
           items:

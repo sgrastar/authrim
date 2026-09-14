@@ -12,6 +12,7 @@ type AccountApiResult<T> = Promise<{ data?: T; error?: APIError }>;
 
 export type AccountProfile = {
 	user_id: string;
+	registration_state: AccountRegistrationState;
 	email: string | null;
 	email_verified: boolean;
 	name: string | null;
@@ -252,6 +253,7 @@ export type AccountPageDefinition = {
 			| 'external_idp_enabled'
 			| 'consent_records_available'
 			| 'multiple_sessions';
+		show_for_guests: boolean;
 	}>;
 };
 

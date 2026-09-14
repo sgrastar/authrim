@@ -746,6 +746,129 @@ describe('Settings API v2', () => {
         expect((await res.json()) as ApiResponse).toMatchObject({ error: 'validation_failed' });
       });
 
+      it('rejects non-boolean guest widget visibility in Account Page settings', async () => {
+        const mockKV = createMockKV();
+        const { app, mockEnv } = createTestApp({ kv: mockKV });
+        const getRes = await app.request(
+          '/api/admin/tenants/tenant_123/settings/login-ui',
+          { method: 'GET' },
+          mockEnv
+        );
+        const current = (await getRes.json()) as SettingsGetResult;
+        const now = Date.now();
+        const document = {
+          schema_version: 'authrim.account_pages.v1',
+          default_page_id: 'default-page',
+          pages: [
+            {
+              id: 'default-page',
+              name: 'Default',
+              base_preset_id: 'authrim-default',
+              base_preset_version: 3,
+              draft: {
+                schema_version: 'authrim.account_page.v1',
+                screens: [
+                  {
+                    id: 'profile',
+                    screen_key: 'account_profile',
+                    width: 'half',
+                    enabled: true,
+                    condition: 'always',
+                    show_for_guests: 'yes',
+                  },
+                ],
+              },
+              published_version: 0,
+              published_at: '',
+              created_at: now,
+              updated_at: now,
+            },
+          ],
+        };
+
+        const res = await app.request(
+          '/api/admin/tenants/tenant_123/settings/login-ui',
+          {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              ifMatch: current.version,
+              set: { 'login-ui.account_pages': JSON.stringify(document) },
+            }),
+          },
+          mockEnv
+        );
+
+        expect(res.status).toBe(400);
+        expect((await res.json()) as ApiResponse).toMatchObject({ error: 'validation_failed' });
+      });
+
+      it('stores disabled guest visibility through the Login UI settings API', async () => {
+        const mockKV = createMockKV();
+        const { app, mockEnv } = createTestApp({ kv: mockKV });
+        const getRes = await app.request(
+          '/api/admin/tenants/tenant_123/settings/login-ui',
+          { method: 'GET' },
+          mockEnv
+        );
+        const current = (await getRes.json()) as SettingsGetResult;
+        const now = Date.now();
+        const document = {
+          schema_version: 'authrim.account_pages.v1',
+          default_page_id: 'default-page',
+          pages: [
+            {
+              id: 'default-page',
+              name: 'Default',
+              base_preset_id: 'authrim-default',
+              base_preset_version: 3,
+              draft: {
+                schema_version: 'authrim.account_page.v1',
+                screens: [
+                  {
+                    id: 'profile',
+                    screen_key: 'account_profile',
+                    width: 'half',
+                    enabled: true,
+                    condition: 'always',
+                    show_for_guests: false,
+                  },
+                ],
+              },
+              published_version: 0,
+              published_at: '',
+              created_at: now,
+              updated_at: now,
+            },
+          ],
+        };
+
+        const patchRes = await app.request(
+          '/api/admin/tenants/tenant_123/settings/login-ui',
+          {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              ifMatch: current.version,
+              set: { 'login-ui.account_pages': JSON.stringify(document) },
+            }),
+          },
+          mockEnv
+        );
+
+        expect(patchRes.status).toBe(200);
+        const savedRes = await app.request(
+          '/api/admin/tenants/tenant_123/settings/login-ui',
+          { method: 'GET' },
+          mockEnv
+        );
+        const saved = (await savedRes.json()) as SettingsGetResult;
+        const savedDocument = JSON.parse(
+          String(saved.values['login-ui.account_pages'])
+        ) as typeof document;
+        expect(savedDocument.pages[0]?.draft.screens[0]?.show_for_guests).toBe(false);
+      });
+
       it('rejects untrusted external post-login redirect URLs', async () => {
         const mockKV = createMockKV();
         const { app, mockEnv } = createTestApp({ kv: mockKV });

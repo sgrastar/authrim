@@ -1830,10 +1830,16 @@ components:
           type: object
           required:
             - user_id
+            - registration_state
             - email_verified
           properties:
             user_id:
               type: string
+            registration_state:
+              type: string
+              enum:
+                - guest
+                - registered
             email:
               type:
                 - string
@@ -2030,6 +2036,7 @@ components:
         - width
         - enabled
         - condition
+        - show_for_guests
       properties:
         id:
           type: string
@@ -2052,6 +2059,10 @@ components:
             - external_idp_enabled
             - consent_records_available
             - multiple_sessions
+        show_for_guests:
+          type: boolean
+          default: true
+          description: Whether this Account Page widget placement is rendered for guest accounts.
     AccountPageDefinition:
       type: object
       required:
