@@ -12,6 +12,10 @@ import type {
 type RequiredDatabases = TenantBackupInstalledExportAdapter['requiredDatabases'];
 
 export interface TenantBackupInstalledSqliteExportPorts {
+  /** Materialize legacy values in bounded, replayable pages before snapshot admission. */
+  prepareSources(
+    input: AdapterContext & { cursor: string | null }
+  ): Promise<{ cursor: string | null; done: boolean }>;
   /** Check installed module versions, secret handling and routing/DDL stability. */
   assertSources(input: AdapterContext): Promise<void>;
   /** Hold the installed source mutation/DDL guard during snapshot admission. */
@@ -45,6 +49,7 @@ export function createTenantBackupInstalledSqliteExportAdapter(input: {
       fixed: [...input.requiredDatabases.fixed],
     },
     datasets: (selection) => selectInstalledSqliteDatasets(registrations, selection),
+    prepareSources: (context) => input.ports.prepareSources(context),
     assertSources: (context) => input.ports.assertSources(context),
     assertBoundaryReady: (context) => input.ports.assertBoundaryReady(context),
     async additionalParticipants() {

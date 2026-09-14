@@ -100,6 +100,12 @@ function installed() {
         disposition: 'include',
       },
     ],
+    prepareSources: vi.fn(
+      async (): Promise<{ cursor: string | null; done: boolean }> => ({
+        cursor: null,
+        done: true,
+      })
+    ),
     assertSources: vi.fn(async () => {}),
     assertBoundaryReady: vi.fn(async () => {}),
     additionalParticipants: vi.fn(async () => [
@@ -186,6 +192,43 @@ it('routes prepare without constructing an unsealed downstream inventory', async
     expect.any(Function)
   );
   expect(mocks.load).not.toHaveBeenCalled();
+});
+
+it('runs installed source preparation in durable pages before SQL discovery', async () => {
+  const adapter = installed();
+  mocks.prepare.mockResolvedValueOnce({
+    phase: 'discover_sqlite_resources',
+    cursor: null,
+    disposition: 'continue',
+  });
+  await expect(
+    runTenantBackupExportOperationStep(env, context, adapter, () => 100)
+  ).resolves.toEqual({
+    phase: 'prepare_installed_sources',
+    cursor: null,
+    disposition: 'continue',
+  });
+
+  adapter.prepareSources.mockResolvedValueOnce({ cursor: '{"page":2}', done: false });
+  await expect(
+    runTenantBackupExportOperationStep(env, phase('prepare_installed_sources'), adapter)
+  ).resolves.toEqual({
+    phase: 'prepare_installed_sources',
+    cursor: '{"page":2}',
+    disposition: 'continue',
+  });
+  await expect(
+    runTenantBackupExportOperationStep(env, phase('prepare_installed_sources'), adapter)
+  ).resolves.toEqual({
+    phase: 'discover_sqlite_resources',
+    cursor: null,
+    disposition: 'continue',
+  });
+
+  adapter.prepareSources.mockResolvedValueOnce({ cursor: null, done: false });
+  await expect(
+    runTenantBackupExportOperationStep(env, phase('prepare_installed_sources'), adapter)
+  ).rejects.toThrow('backup_export_dispatch_invalid');
 });
 
 it('rechecks installed sources around discovery and trigger preparation', async () => {
@@ -286,6 +329,12 @@ it('rejects an incomplete installed adapter before planning physical sources', a
   const adapter = installed();
   await expect(
     runTenantBackupExportOperationStep(env, context, { ...adapter, datasets: [] as never })
+  ).rejects.toThrow('backup_export_dispatch_invalid');
+  await expect(
+    runTenantBackupExportOperationStep(env, context, {
+      ...adapter,
+      prepareSources: undefined as never,
+    })
   ).rejects.toThrow('backup_export_dispatch_invalid');
   await expect(
     runTenantBackupExportOperationStep(env, context, {

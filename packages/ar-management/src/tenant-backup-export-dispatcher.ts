@@ -44,6 +44,10 @@ export interface AdapterContext {
 export interface TenantBackupInstalledExportAdapter {
   requiredDatabases: RequiredDatabases;
   datasets(selection: TenantBackupSelection): readonly TenantPortableDataset[];
+  /** Idempotently materialize legacy source data before snapshot admission. */
+  prepareSources(
+    input: AdapterContext & { cursor: string | null }
+  ): Promise<{ cursor: string | null; done: boolean }>;
   /** Recheck module versions, non-SQL generations and source availability. */
   assertSources(input: AdapterContext): Promise<void>;
   /** Hold the installed routing/DDL guard while SQL capture definitions are checked or started. */
@@ -91,6 +95,7 @@ function validateInstalledAdapter(adapter: TenantBackupInstalledExportAdapter): 
   }
   if (
     typeof adapter.datasets !== 'function' ||
+    typeof adapter.prepareSources !== 'function' ||
     !datasets.length ||
     datasets.length > 4096 ||
     new Set(datasets.map((dataset) => dataset.id)).size !== datasets.length ||
@@ -147,8 +152,12 @@ export async function runTenantBackupExportOperationStep(
     roles: [...adapter.requiredDatabases.roles],
     fixed: [...adapter.requiredDatabases.fixed],
   };
-  if (context.operation.phase === 'prepare')
-    return runTenantBackupExportPreparation(env, context, required, now);
+  if (context.operation.phase === 'prepare') {
+    const result = await runTenantBackupExportPreparation(env, context, required, now);
+    return result.phase === 'discover_sqlite_resources'
+      ? { phase: 'prepare_installed_sources', cursor: null, disposition: 'continue' }
+      : result;
+  }
   const loaded = await loadTenantBackupExportExecution(env, context, now);
   const datasets = adapter.datasets(loaded.intent.selection).map((dataset) => ({ ...dataset }));
   if (
@@ -202,6 +211,31 @@ export async function runTenantBackupExportOperationStep(
     resolveSource,
   });
   const assertSources = async () => adapter.assertSources(await adapterContext());
+
+  if (context.operation.phase === 'prepare_installed_sources') {
+    const result = await adapter.prepareSources({
+      ...(await adapterContext()),
+      cursor: context.operation.cursor_json,
+    });
+    if (typeof result.done !== 'boolean') fail();
+    if (result.cursor !== null) {
+      if (
+        typeof result.cursor !== 'string' ||
+        new TextEncoder().encode(result.cursor).length > 16384
+      )
+        fail();
+      try {
+        JSON.parse(result.cursor);
+      } catch {
+        fail();
+      }
+    }
+    if ((result.done && result.cursor !== null) || (!result.done && result.cursor === null)) fail();
+    if (!result.done && result.cursor === context.operation.cursor_json) fail();
+    return result.done
+      ? { phase: 'discover_sqlite_resources', cursor: null, disposition: 'continue' }
+      : { phase: 'prepare_installed_sources', cursor: result.cursor, disposition: 'continue' };
+  }
 
   if (context.operation.phase === 'discover_sqlite_resources') {
     await assertSources();

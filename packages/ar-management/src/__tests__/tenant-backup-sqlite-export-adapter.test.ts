@@ -57,6 +57,7 @@ function fixture() {
     resolveSource: vi.fn(async () => source),
   } as unknown as AdapterContext;
   const ports = {
+    prepareSources: vi.fn(async () => ({ cursor: null, done: true })),
     assertSources: vi.fn(async () => {}),
     assertBoundaryReady: vi.fn(async () => {}),
   };
@@ -72,6 +73,17 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.planned.mockResolvedValue([planned]);
   mocks.read.mockResolvedValue({ bytes: new Uint8Array([1]), nextCursor: '{}' });
+});
+
+it('delegates bounded installed source preparation', async () => {
+  const { adapter, context, ports } = fixture();
+  await expect(adapter.prepareSources({ ...context, cursor: '{"page":1}' })).resolves.toEqual({
+    cursor: null,
+    done: true,
+  });
+  expect(ports.prepareSources).toHaveBeenCalledWith(
+    expect.objectContaining({ cursor: '{"page":1}' })
+  );
 });
 
 it('requires exact registered dataset and SQL participant coverage', async () => {
