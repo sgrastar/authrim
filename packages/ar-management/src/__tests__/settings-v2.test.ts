@@ -2240,3 +2240,122 @@ describe('Settings API v2', () => {
     });
   });
 });
+
+it('covers tenant settings and cache revision writes with one backup permit', async () => {
+  const { app, mockEnv, mockKV } = createTestApp();
+  mockEnv.TENANT_BACKUP_WRAPPING_KEY = 'ab'.repeat(32);
+  const acquire = vi.fn().mockResolvedValue({ admitted: false });
+  const complete = vi.fn(async () => {
+    expect(
+      await mockKV.get('cache:authentication-methods:v1:revision:tenant:tenant_123')
+    ).not.toBeNull();
+  });
+  mockEnv.CONTROL = {
+    acquireTenantBackupMutationPermit: acquire,
+    completeTenantBackupMutationPermit: complete,
+  } as unknown as Env['CONTROL'];
+  const url = '/api/admin/tenants/tenant_123/settings/login-ui';
+  const current: unknown = await (await app.request(url, { method: 'GET' }, mockEnv)).json();
+  if (!current || typeof current !== 'object' || !('version' in current))
+    throw new Error('missing settings version');
+  const request = {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      ifMatch: current.version,
+      set: { 'login-ui.brand_name': 'Covered Brand' },
+    }),
+  };
+  expect((await app.request(url, request, mockEnv)).status).toBe(503);
+  expect(vi.mocked(mockKV).put.mock.calls).toHaveLength(0);
+  expect(complete).not.toHaveBeenCalled();
+  acquire.mockResolvedValue({ admitted: true });
+  expect((await app.request(url, request, mockEnv)).status).toBe(200);
+  expect(complete).toHaveBeenCalledTimes(1);
+  expect(complete.mock.calls[0]).toEqual(acquire.mock.calls[1]);
+});
+
+it.each(['', '/client'])(
+  'covers client PATCH%s under its verified tenant before any write',
+  async (suffix) => {
+    const mockKV = createMockKV({
+      'client:test-tenant:client_abc:metadata': JSON.stringify({ tenant_id: 'test-tenant' }),
+    });
+    const { app, mockEnv } = createTestApp({ kv: mockKV });
+    mockEnv.TENANT_BACKUP_WRAPPING_KEY = 'ab'.repeat(32);
+    const acquire = vi.fn().mockResolvedValue({ admitted: false });
+    const complete = vi.fn().mockResolvedValue(undefined);
+    mockEnv.CONTROL = {
+      acquireTenantBackupMutationPermit: acquire,
+      completeTenantBackupMutationPermit: complete,
+    } as unknown as Env['CONTROL'];
+    const url = `/api/admin/clients/client_abc/settings${suffix}`;
+    const current: unknown = await (
+      await app.request(url, { method: 'GET', headers: { 'X-Tenant-Id': 'test-tenant' } }, mockEnv)
+    ).json();
+    if (!current || typeof current !== 'object' || !('version' in current))
+      throw new Error('missing settings version');
+    const update = {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', 'X-Tenant-Id': 'test-tenant' },
+      body: JSON.stringify({ ifMatch: current.version, set: { 'client.access_token_ttl': 7200 } }),
+    };
+    expect((await app.request(url, update, mockEnv)).status).toBe(503);
+    expect(vi.mocked(mockKV).put.mock.calls).toHaveLength(0);
+    expect(complete).not.toHaveBeenCalled();
+    expect(acquire.mock.calls[0][0]).toMatchObject({ tenantId: 'test-tenant' });
+    acquire.mockResolvedValue({ admitted: true });
+    expect((await app.request(url, update, mockEnv)).status).toBe(200);
+    expect(complete).toHaveBeenCalledTimes(1);
+    expect(complete.mock.calls[0][0]).toEqual(acquire.mock.calls[1][0]);
+    const calls = acquire.mock.calls.length;
+    expect(
+      (
+        await app.request(
+          url,
+          { ...update, headers: { ...update.headers, 'X-Tenant-Id': 'other' } },
+          mockEnv
+        )
+      ).status
+    ).toBe(404);
+    expect(acquire).toHaveBeenCalledTimes(calls);
+  }
+);
+
+it('covers platform changes with an environment permit and denies unsupported categories before admission', async () => {
+  const { app, mockEnv, mockKV } = createTestApp();
+  mockEnv.TENANT_BACKUP_WRAPPING_KEY = 'ab'.repeat(32);
+  const acquire = vi.fn().mockResolvedValue({ admitted: false });
+  const complete = vi.fn().mockResolvedValue(undefined);
+  const tenantAcquire = vi.fn();
+  mockEnv.CONTROL = {
+    acquireEnvironmentBackupMutationPermit: acquire,
+    completeEnvironmentBackupMutationPermit: complete,
+    acquireTenantBackupMutationPermit: tenantAcquire,
+  } as unknown as Env['CONTROL'];
+  const url = '/api/admin/platform/settings/login-entry';
+  const current: unknown = await (await app.request(url, { method: 'GET' }, mockEnv)).json();
+  if (!current || typeof current !== 'object' || !('version' in current))
+    throw new Error('missing settings version');
+  const update = {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      ifMatch: current.version,
+      set: { 'login-entry.skip_discovery_if_only_one_tenant': true },
+    }),
+  };
+  expect((await app.request(url, update, mockEnv)).status).toBe(503);
+  expect(vi.mocked(mockKV).put.mock.calls).toHaveLength(0);
+  expect(complete).not.toHaveBeenCalled();
+  acquire.mockResolvedValue({ admitted: true });
+  expect((await app.request(url, update, mockEnv)).status).toBe(200);
+  expect(complete).toHaveBeenCalledTimes(1);
+  expect(complete.mock.calls[0]).toEqual(acquire.mock.calls[1]);
+  expect(tenantAcquire).not.toHaveBeenCalled();
+  const count = acquire.mock.calls.length;
+  expect(
+    (await app.request('/api/admin/platform/settings/infrastructure', update, mockEnv)).status
+  ).toBe(405);
+  expect(acquire).toHaveBeenCalledTimes(count);
+});

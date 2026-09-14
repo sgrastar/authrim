@@ -94,7 +94,7 @@ const TABLE_GROUPS: Partial<
       service_group_revisions service_group_scans tenant_database_probe_results
       tenant_placement_migration_captures tenant_placement_migration_outbox
     `,
-    ephemeral: `
+    ephemeral: `tenant_backup_restore_targets tenant_backup_snapshots tenant_backup_preimages
       authrim_runtime_probes
       ciba_requests credential_offers device_codes external_idp_auth_states
       flow_interaction_steps flow_interactions password_reset_tokens sessions
@@ -116,7 +116,7 @@ const TABLE_GROUPS: Partial<
       authrim_control_plane_shard_metadata identity_identifier_replacement_outbox identity_identifier_replacement_projections
       tenant_placement_migration_captures tenant_placement_migration_outbox
     `,
-    ephemeral: `
+    ephemeral: `tenant_backup_restore_targets tenant_backup_snapshots tenant_backup_preimages
       authrim_runtime_probes
       identity_identifier_replacement_challenges
     `,
@@ -129,7 +129,7 @@ const TABLE_GROUPS: Partial<
     admin: `
       admin_agent_grants admin_agent_token_revocation_outbox admin_attribute_values admin_attributes
       admin_audit_coverage_status admin_database_connection_usages admin_external_token_refresh_runs admin_external_token_refresh_tenant_runs
-      admin_invitation_enrollments admin_invitations admin_jobs admin_machine_credential_permissions
+      admin_invitations admin_jobs admin_machine_credential_permissions
       admin_machine_credential_tenant_scopes admin_machine_credentials admin_machine_principal_permissions admin_machine_principal_tenant_scopes
       admin_machine_principals admin_machine_resource_scopes admin_passkeys admin_relationships
       admin_role_assignments admin_storage_destination_usages admin_users agent_bulk_plans
@@ -186,11 +186,12 @@ const TABLE_GROUPS: Partial<
       tenant_database_stats tenant_discovery_indexes tenant_placement_migration_jobs tenant_provisioning_operation_steps
       tenant_provisioning_operations tenant_runtime_registry_snapshots
     `,
-    ephemeral: `
+    ephemeral: `tenant_backup_restore_targets tenant_backup_snapshots tenant_backup_preimages
       authrim_runtime_probes
       admin_agent_delegation_jtis admin_agent_login_handoffs admin_agent_mcp_sessions admin_agent_token_families
       admin_machine_assertion_jti admin_sessions admin_setup_tokens agent_elevation_challenges
-      elevation_grants
+      tenant_backup_uploads tenant_backup_upload_parts tenant_backup_operation_inputs tenant_backup_export_manifests tenant_backup_publications tenant_backup_input_validations tenant_backup_dataset_inspections tenant_backup_input_receipts tenant_backup_cipher_streams tenant_backup_cipher_frames tenant_backup_snapshot_resources tenant_backup_execution_inventories tenant_backup_execution_inventory_items tenant_backup_restore_plan_inventories tenant_backup_restore_plan_inventory_items tenant_backup_restore_cleanup_receipts admin_invitation_enrollments elevation_grants tenant_backup_artifact_attempts tenant_backup_artifact_parts tenant_backup_operations tenant_backup_key_handoffs tenant_backup_validation_sessions
+      tenant_backup_validation_records tenant_backup_validation_references
     `,
   },
   control: {
@@ -228,7 +229,7 @@ const TABLE_GROUPS: Partial<
       control_worker_binding_reconciliations control_worker_deployment_leases control_worker_desired_bindings control_worker_inventory_change_events
       control_worker_inventory_drift_findings control_worker_observed_bindings control_worker_required_data_roles
     `,
-    ephemeral: `authrim_runtime_probes`,
+    ephemeral: `tenant_backup_boundary_plans tenant_backup_boundary_receipts tenant_backup_mutation_permits tenant_backup_mutation_boundaries tenant_backup_restore_targets tenant_backup_snapshots tenant_backup_preimages authrim_runtime_probes`,
   },
   lookup: {
     rebuild: `
@@ -263,7 +264,7 @@ const TABLE_GROUPS: Partial<
       plugin_runner_r2_metric_scan_state plugin_runner_rate_limit_buckets plugin_runner_registry_shards plugin_runner_registry_state
       plugin_runner_shard_cursors
     `,
-    ephemeral: `authrim_runtime_probes`,
+    ephemeral: `tenant_backup_restore_targets tenant_backup_snapshots tenant_backup_preimages authrim_runtime_probes`,
   },
 };
 

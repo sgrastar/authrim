@@ -1688,6 +1688,25 @@ paths:
       responses:
         '200':
           $ref: '#/components/responses/SettingsV2Patch'
+        '503':
+          description: >-
+            The update could not be admitted or its completion could not be confirmed.
+            Reload the current settings before retrying with their latest version.
+          headers:
+            Retry-After:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [error, message]
+                properties:
+                  error:
+                    type: string
+                    enum: [backup_mutation_unavailable]
+                  message:
+                    type: string
       description: >-
         Update Setting settings in the Tenants area. The request body is JSON unless the detailed
         schema for this operation states otherwise. Account-lifecycle settings are tenant-scoped.
@@ -1730,6 +1749,25 @@ paths:
       responses:
         '200':
           $ref: '#/components/responses/SettingsV2Patch'
+        '503':
+          description: >-
+            The update could not be admitted or its completion could not be confirmed.
+            Reload the current settings before retrying with their latest version.
+          headers:
+            Retry-After:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [error, message]
+                properties:
+                  error:
+                    type: string
+                    enum: [backup_mutation_unavailable]
+                  message:
+                    type: string
       description: >-
         Update Setting in the Clients area. The request body is JSON unless the detailed schema for
         this operation states otherwise.
@@ -1765,6 +1803,25 @@ paths:
       responses:
         '200':
           $ref: '#/components/responses/SettingsV2Patch'
+        '503':
+          description: >-
+            The update could not be admitted or its completion could not be confirmed.
+            Reload the current settings before retrying with their latest version.
+          headers:
+            Retry-After:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [error, message]
+                properties:
+                  error:
+                    type: string
+                    enum: [backup_mutation_unavailable]
+                  message:
+                    type: string
       description: >-
         Update Setting settings in the Admin Miscellaneous area. The request body is JSON unless the
         detailed schema for this operation states otherwise.
@@ -6911,6 +6968,25 @@ paths:
       responses:
         '200':
           $ref: '#/components/responses/SettingsV2Patch'
+        '503':
+          description: >-
+            The update could not be admitted or its completion could not be confirmed.
+            Reload the current settings before retrying with their latest version.
+          headers:
+            Retry-After:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [error, message]
+                properties:
+                  error:
+                    type: string
+                    enum: [backup_mutation_unavailable]
+                  message:
+                    type: string
         '400':
           $ref: '#/components/responses/Error'
         '401':
@@ -18697,6 +18773,25 @@ paths:
           $ref: '#/components/responses/Error'
         '500':
           $ref: '#/components/responses/Error'
+        '503':
+          description: >-
+            The update could not be admitted or its completion could not be confirmed.
+            Reload the current settings before retrying with their latest version.
+          headers:
+            Retry-After:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [error, message]
+                properties:
+                  error:
+                    type: string
+                    enum: [backup_mutation_unavailable]
+                  message:
+                    type: string
       parameters:
         - name: category
           in: path
@@ -31085,6 +31180,27 @@ paths:
       description: Dry-run or execute migration from legacy settings keys to v2 settings keys.
       x-authrim-route-coverage: inferred-from-source
       responses:
+        '403':
+          $ref: '#/components/responses/Error'
+        '503':
+          description: >-
+            The update could not be admitted or its completion could not be confirmed.
+            Reload the current settings before retrying with their latest version.
+          headers:
+            Retry-After:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [error, message]
+                properties:
+                  error:
+                    type: string
+                    enum: [backup_mutation_unavailable]
+                  message:
+                    type: string
         '200':
           $ref: '#/components/responses/SettingsMigrationResult'
         default:
@@ -31103,6 +31219,27 @@ paths:
       description: Delete the settings migration lock so migration can be run again.
       x-authrim-route-coverage: inferred-from-source
       responses:
+        '403':
+          $ref: '#/components/responses/Error'
+        '503':
+          description: >-
+            The update could not be admitted or its completion could not be confirmed.
+            Reload the current settings before retrying with their latest version.
+          headers:
+            Retry-After:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [error, message]
+                properties:
+                  error:
+                    type: string
+                    enum: [backup_mutation_unavailable]
+                  message:
+                    type: string
         '200':
           $ref: '#/components/responses/SettingsMigrationLockClear'
         default:
@@ -31119,6 +31256,8 @@ paths:
       description: 'Return the persisted settings migration lock/status, or the default not-migrated state.'
       x-authrim-route-coverage: inferred-from-source
       responses:
+        '403':
+          $ref: '#/components/responses/Error'
         '200':
           $ref: '#/components/responses/SettingsMigrationStatus'
         default:
@@ -31939,6 +32078,1217 @@ paths:
             application/json:
               schema: { type: object, required: [error], properties: { error: { type: string } } }
 
+  /api/admin/tenant-backups/{operationId}:
+    {
+      'get':
+        {
+          'summary': 'Read backup operation progress',
+          'description': 'Requires admin:backups:read. The authenticated tenant determines the operation scope. Internal cursors, keys and lease data are omitted. Responses are not cacheable.',
+          'parameters':
+            [
+              {
+                'name': 'operationId',
+                'in': 'path',
+                'required': true,
+                'schema': { 'type': 'string', 'pattern': '^[A-Za-z0-9_.:-]{1,256}$' },
+              },
+            ],
+          'responses':
+            {
+              '200':
+                {
+                  'description': 'Read backup operation progress',
+                  'content':
+                    {
+                      'application/json':
+                        {
+                          'schema':
+                            {
+                              'type': 'object',
+                              'additionalProperties': false,
+                              'required':
+                                [
+                                  'id',
+                                  'kind',
+                                  'state',
+                                  'phase',
+                                  'revision',
+                                  'createdAt',
+                                  'updatedAt',
+                                ],
+                              'properties':
+                                {
+                                  'id': { 'type': 'string' },
+                                  'kind': { 'type': 'string', 'enum': ['export', 'import'] },
+                                  'state':
+                                    {
+                                      'type': 'string',
+                                      'enum':
+                                        [
+                                          'queued',
+                                          'running',
+                                          'waiting',
+                                          'ready',
+                                          'completed',
+                                          'failed',
+                                          'cancelling',
+                                          'cancelled',
+                                        ],
+                                    },
+                                  'phase': { 'type': 'string' },
+                                  'revision': { 'type': 'integer', 'minimum': 0 },
+                                  'createdAt': { 'type': 'integer', 'minimum': 0 },
+                                  'updatedAt': { 'type': 'integer', 'minimum': 0 },
+                                },
+                            },
+                        },
+                    },
+                },
+              '400':
+                {
+                  'description': 'The request was rejected. No key material is returned.',
+                  'content':
+                    {
+                      'application/json':
+                        {
+                          'schema':
+                            {
+                              'type': 'object',
+                              'additionalProperties': false,
+                              'required': ['error'],
+                              'properties': { 'error': { 'type': 'string' } },
+                            },
+                        },
+                    },
+                },
+              '403':
+                {
+                  'description': 'The request was rejected. No key material is returned.',
+                  'content':
+                    {
+                      'application/json':
+                        {
+                          'schema':
+                            {
+                              'type': 'object',
+                              'additionalProperties': false,
+                              'required': ['error'],
+                              'properties': { 'error': { 'type': 'string' } },
+                            },
+                        },
+                    },
+                },
+              '404':
+                {
+                  'description': 'The request was rejected. No key material is returned.',
+                  'content':
+                    {
+                      'application/json':
+                        {
+                          'schema':
+                            {
+                              'type': 'object',
+                              'additionalProperties': false,
+                              'required': ['error'],
+                              'properties': { 'error': { 'type': 'string' } },
+                            },
+                        },
+                    },
+                },
+              '409':
+                {
+                  'description': 'The request was rejected. No key material is returned.',
+                  'content':
+                    {
+                      'application/json':
+                        {
+                          'schema':
+                            {
+                              'type': 'object',
+                              'additionalProperties': false,
+                              'required': ['error'],
+                              'properties': { 'error': { 'type': 'string' } },
+                            },
+                        },
+                    },
+                },
+              '503':
+                {
+                  'description': 'The request was rejected. No key material is returned.',
+                  'content':
+                    {
+                      'application/json':
+                        {
+                          'schema':
+                            {
+                              'type': 'object',
+                              'additionalProperties': false,
+                              'required': ['error'],
+                              'properties': { 'error': { 'type': 'string' } },
+                            },
+                        },
+                    },
+                },
+            },
+        },
+    }
+  /api/admin/tenant-backups/{operationId}/cancel:
+    {
+      'post':
+        {
+          'summary': 'Request backup cancellation',
+          'description': 'Requires admin:backups:read, admin:backups:manage and a human Admin session with MFA authenticated within five minutes. Persists an audit request before requesting cancellation. A 202 response means cleanup remains pending; it does not mean resources have been deleted.',
+          'parameters':
+            [
+              {
+                'name': 'operationId',
+                'in': 'path',
+                'required': true,
+                'schema': { 'type': 'string', 'pattern': '^[A-Za-z0-9_.:-]{1,256}$' },
+              },
+            ],
+          'responses':
+            {
+              '202':
+                {
+                  'description': 'Request backup cancellation',
+                  'content':
+                    {
+                      'application/json':
+                        {
+                          'schema':
+                            {
+                              'type': 'object',
+                              'additionalProperties': false,
+                              'required': ['id', 'state'],
+                              'properties':
+                                {
+                                  'id': { 'type': 'string' },
+                                  'state': { 'type': 'string', 'const': 'cancelling' },
+                                },
+                            },
+                        },
+                    },
+                },
+              '400':
+                {
+                  'description': 'The request was rejected. No key material is returned.',
+                  'content':
+                    {
+                      'application/json':
+                        {
+                          'schema':
+                            {
+                              'type': 'object',
+                              'additionalProperties': false,
+                              'required': ['error'],
+                              'properties': { 'error': { 'type': 'string' } },
+                            },
+                        },
+                    },
+                },
+              '403':
+                {
+                  'description': 'The request was rejected. No key material is returned.',
+                  'content':
+                    {
+                      'application/json':
+                        {
+                          'schema':
+                            {
+                              'type': 'object',
+                              'additionalProperties': false,
+                              'required': ['error'],
+                              'properties': { 'error': { 'type': 'string' } },
+                            },
+                        },
+                    },
+                },
+              '404':
+                {
+                  'description': 'The request was rejected. No key material is returned.',
+                  'content':
+                    {
+                      'application/json':
+                        {
+                          'schema':
+                            {
+                              'type': 'object',
+                              'additionalProperties': false,
+                              'required': ['error'],
+                              'properties': { 'error': { 'type': 'string' } },
+                            },
+                        },
+                    },
+                },
+              '409':
+                {
+                  'description': 'The request was rejected. No key material is returned.',
+                  'content':
+                    {
+                      'application/json':
+                        {
+                          'schema':
+                            {
+                              'type': 'object',
+                              'additionalProperties': false,
+                              'required': ['error'],
+                              'properties': { 'error': { 'type': 'string' } },
+                            },
+                        },
+                    },
+                },
+              '503':
+                {
+                  'description': 'The request was rejected. No key material is returned.',
+                  'content':
+                    {
+                      'application/json':
+                        {
+                          'schema':
+                            {
+                              'type': 'object',
+                              'additionalProperties': false,
+                              'required': ['error'],
+                              'properties': { 'error': { 'type': 'string' } },
+                            },
+                        },
+                    },
+                },
+            },
+        },
+    }
+  /api/admin/tenant-backups/{operationId}/key-challenges:
+    {
+      'post':
+        {
+          'summary': 'Issue a backup key challenge',
+          'description': 'Requires backup read, manage, the operation-specific export or import permission, and a human Admin session with fresh MFA (five minutes). The caller must be the operation creator and the operation must be queued or waiting. Import operations require one challenge per inputId; export operations use an empty body. Returns an RSA-OAEP SHA-256 public JWK and the exact binding context. The client wraps its content key with the operation key handoff format; it must never send its passphrase. submitExpiresAt and context.expiresAt are epoch milliseconds. The submission window is ten minutes and accepted keys expire after 24 hours.',
+          'parameters':
+            [
+              {
+                'name': 'operationId',
+                'in': 'path',
+                'required': true,
+                'schema': { 'type': 'string', 'pattern': '^[A-Za-z0-9_.:-]{1,256}$' },
+              },
+            ],
+          'requestBody':
+            {
+              'required': false,
+              'content':
+                {
+                  'application/json':
+                    {
+                      'schema':
+                        {
+                          'type': 'object',
+                          'additionalProperties': false,
+                          'required': ['inputId'],
+                          'properties':
+                            {
+                              'inputId':
+                                { 'type': 'string', 'pattern': '^[A-Za-z0-9_.:-]{1,256}$' },
+                            },
+                        },
+                    },
+                },
+            },
+          'responses':
+            {
+              '201':
+                {
+                  'description': 'Issue a backup key challenge',
+                  'content':
+                    {
+                      'application/json':
+                        {
+                          'schema':
+                            {
+                              'type': 'object',
+                              'additionalProperties': false,
+                              'required': ['publicKey', 'context', 'submitExpiresAt'],
+                              'properties':
+                                {
+                                  'publicKey':
+                                    {
+                                      'type': 'object',
+                                      'required': ['kty', 'n', 'e'],
+                                      'properties':
+                                        {
+                                          'kty': { 'const': 'RSA' },
+                                          'n': { 'type': 'string' },
+                                          'e': { 'type': 'string' },
+                                          'alg': { 'type': 'string' },
+                                          'ext': { 'type': 'boolean' },
+                                          'key_ops':
+                                            { 'type': 'array', 'items': { 'type': 'string' } },
+                                        },
+                                    },
+                                  'context':
+                                    {
+                                      'type': 'object',
+                                      'additionalProperties': false,
+                                      'required':
+                                        [
+                                          'tenantId',
+                                          'operationId',
+                                          'requestDigest',
+                                          'challengeId',
+                                          'expiresAt',
+                                        ],
+                                      'properties':
+                                        {
+                                          'tenantId': { 'type': 'string' },
+                                          'operationId': { 'type': 'string' },
+                                          'requestDigest':
+                                            { 'type': 'string', 'pattern': '^[a-f0-9]{64}$' },
+                                          'challengeId': { 'type': 'string' },
+                                          'expiresAt': { 'type': 'integer', 'minimum': 0 },
+                                          'inputId': { 'type': 'string' },
+                                        },
+                                    },
+                                  'submitExpiresAt': { 'type': 'integer', 'minimum': 0 },
+                                },
+                            },
+                        },
+                    },
+                },
+              '400':
+                {
+                  'description': 'The request was rejected. No key material is returned.',
+                  'content':
+                    {
+                      'application/json':
+                        {
+                          'schema':
+                            {
+                              'type': 'object',
+                              'additionalProperties': false,
+                              'required': ['error'],
+                              'properties': { 'error': { 'type': 'string' } },
+                            },
+                        },
+                    },
+                },
+              '403':
+                {
+                  'description': 'The request was rejected. No key material is returned.',
+                  'content':
+                    {
+                      'application/json':
+                        {
+                          'schema':
+                            {
+                              'type': 'object',
+                              'additionalProperties': false,
+                              'required': ['error'],
+                              'properties': { 'error': { 'type': 'string' } },
+                            },
+                        },
+                    },
+                },
+              '404':
+                {
+                  'description': 'The request was rejected. No key material is returned.',
+                  'content':
+                    {
+                      'application/json':
+                        {
+                          'schema':
+                            {
+                              'type': 'object',
+                              'additionalProperties': false,
+                              'required': ['error'],
+                              'properties': { 'error': { 'type': 'string' } },
+                            },
+                        },
+                    },
+                },
+              '409':
+                {
+                  'description': 'The request was rejected. No key material is returned.',
+                  'content':
+                    {
+                      'application/json':
+                        {
+                          'schema':
+                            {
+                              'type': 'object',
+                              'additionalProperties': false,
+                              'required': ['error'],
+                              'properties': { 'error': { 'type': 'string' } },
+                            },
+                        },
+                    },
+                },
+              '503':
+                {
+                  'description': 'The request was rejected. No key material is returned.',
+                  'content':
+                    {
+                      'application/json':
+                        {
+                          'schema':
+                            {
+                              'type': 'object',
+                              'additionalProperties': false,
+                              'required': ['error'],
+                              'properties': { 'error': { 'type': 'string' } },
+                            },
+                        },
+                    },
+                },
+            },
+        },
+    }
+  /api/admin/tenant-backups/{operationId}/key-challenges/{challengeId}/accept:
+    {
+      'post':
+        {
+          'summary': 'Accept a wrapped backup content key',
+          'description': 'Requires admin:backups:read, admin:backups:manage and a human Admin session with fresh MFA (five minutes). The operation creator may submit once before submitExpiresAt. The envelope and RSA-OAEP ciphertext are lowercase hexadecimal. Invalid, expired, replayed or cancelled requests return 409. Acceptance stores the key but does not start or complete the operation.',
+          'parameters':
+            [
+              {
+                'name': 'operationId',
+                'in': 'path',
+                'required': true,
+                'schema': { 'type': 'string', 'pattern': '^[A-Za-z0-9_.:-]{1,256}$' },
+              },
+              {
+                'name': 'challengeId',
+                'in': 'path',
+                'required': true,
+                'schema': { 'type': 'string' },
+              },
+            ],
+          'responses':
+            {
+              '200':
+                {
+                  'description': 'Accept a wrapped backup content key',
+                  'content':
+                    {
+                      'application/json':
+                        {
+                          'schema':
+                            {
+                              'type': 'object',
+                              'additionalProperties': false,
+                              'required': ['accepted'],
+                              'properties': { 'accepted': { 'type': 'boolean', 'const': true } },
+                            },
+                        },
+                    },
+                },
+              '400':
+                {
+                  'description': 'The request was rejected. No key material is returned.',
+                  'content':
+                    {
+                      'application/json':
+                        {
+                          'schema':
+                            {
+                              'type': 'object',
+                              'additionalProperties': false,
+                              'required': ['error'],
+                              'properties': { 'error': { 'type': 'string' } },
+                            },
+                        },
+                    },
+                },
+              '403':
+                {
+                  'description': 'The request was rejected. No key material is returned.',
+                  'content':
+                    {
+                      'application/json':
+                        {
+                          'schema':
+                            {
+                              'type': 'object',
+                              'additionalProperties': false,
+                              'required': ['error'],
+                              'properties': { 'error': { 'type': 'string' } },
+                            },
+                        },
+                    },
+                },
+              '404':
+                {
+                  'description': 'The request was rejected. No key material is returned.',
+                  'content':
+                    {
+                      'application/json':
+                        {
+                          'schema':
+                            {
+                              'type': 'object',
+                              'additionalProperties': false,
+                              'required': ['error'],
+                              'properties': { 'error': { 'type': 'string' } },
+                            },
+                        },
+                    },
+                },
+              '409':
+                {
+                  'description': 'The request was rejected. No key material is returned.',
+                  'content':
+                    {
+                      'application/json':
+                        {
+                          'schema':
+                            {
+                              'type': 'object',
+                              'additionalProperties': false,
+                              'required': ['error'],
+                              'properties': { 'error': { 'type': 'string' } },
+                            },
+                        },
+                    },
+                },
+              '503':
+                {
+                  'description': 'The request was rejected. No key material is returned.',
+                  'content':
+                    {
+                      'application/json':
+                        {
+                          'schema':
+                            {
+                              'type': 'object',
+                              'additionalProperties': false,
+                              'required': ['error'],
+                              'properties': { 'error': { 'type': 'string' } },
+                            },
+                        },
+                    },
+                },
+            },
+          'requestBody':
+            {
+              'required': true,
+              'content':
+                {
+                  'application/json':
+                    {
+                      'schema':
+                        {
+                          'type': 'object',
+                          'additionalProperties': false,
+                          'required': ['envelope', 'handoff'],
+                          'properties':
+                            {
+                              'envelope': { 'type': 'string', 'pattern': '^[a-f0-9]{186}$' },
+                              'handoff': { 'type': 'string', 'pattern': '^[a-f0-9]{512}$' },
+                            },
+                        },
+                    },
+                },
+            },
+        },
+    }
+  /api/admin/tenant-backups/uploads:
+    post:
+      tags: [Tenant Backups]
+      summary: Allocate an encrypted tenant backup upload
+      description: Requires backup read, manage, and import permissions plus fresh human administrator authentication. The upload is tenant- and actor-bound, expires after 24 hours, and accepts at most 10,000 parts of 8 MiB. The declared size and SHA-256 digest cover the complete encrypted artifact.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [idempotencyKey, sizeBytes, sha256]
+              properties:
+                idempotencyKey:
+                  type: string
+                  pattern: '^[A-Za-z0-9_.:-]{1,256}$'
+                sizeBytes:
+                  type: integer
+                  minimum: 174
+                  maximum: 83886080000
+                sha256:
+                  type: string
+                  pattern: '^[a-f0-9]{64}$'
+      responses:
+        '201':
+          description: The upload and its R2 multipart allocation are ready.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [id, state, partSize, partCount, expiresAt]
+                properties:
+                  id: { type: string }
+                  state: { type: string, enum: [uploading, completing, uploaded] }
+                  partSize: { type: integer, const: 8388608 }
+                  partCount: { type: integer, minimum: 1, maximum: 10000 }
+                  expiresAt: { type: integer }
+        '400': { description: Invalid upload declaration }
+        '403': { description: Missing permission or fresh administrator authentication }
+        '409': { description: Idempotency, ownership, or multipart allocation conflict }
+        '413': { description: The request body exceeds 4096 bytes }
+        '503': { description: Import storage or audit persistence is unavailable }
+  /api/admin/tenant-backups/uploads/{uploadId}/parts/{partNumber}:
+    put:
+      tags: [Tenant Backups]
+      summary: Upload one encrypted tenant backup part
+      description: Uploads one application/octet-stream part to the actor-bound multipart upload. A repeated part number is accepted only when its byte count and SHA-256 digest match the prior attempt.
+      parameters:
+        - in: path
+          name: uploadId
+          required: true
+          schema: { type: string }
+        - in: path
+          name: partNumber
+          required: true
+          schema: { type: integer, minimum: 1, maximum: 10000 }
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema:
+              type: string
+              format: binary
+              maxLength: 8388608
+      responses:
+        '200':
+          description: The exact part is durably recorded.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [partNumber, etag]
+                properties:
+                  partNumber: { type: integer, minimum: 1, maximum: 10000 }
+                  etag: { type: string }
+        '400': { description: Invalid part number or media type }
+        '403': { description: Missing permission or fresh administrator authentication }
+        '409': { description: Upload ownership, state, expiry, or repeated-content conflict }
+        '413': { description: The part exceeds 8 MiB }
+        '503': { description: Import storage is unavailable }
+  /api/admin/tenant-backups/uploads/{uploadId}/complete:
+    post:
+      tags: [Tenant Backups]
+      summary: Queue encrypted tenant backup upload completion
+      description: Seals the complete ordered part list after validating its declared byte count. Full-object SHA-256 verification continues asynchronously and makes the upload eligible for a later import request.
+      parameters:
+        - in: path
+          name: uploadId
+          required: true
+          schema: { type: string }
+      responses:
+        '202':
+          description: Multipart completion and full-object verification are queued.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [id, state]
+                properties:
+                  id: { type: string }
+                  state: { type: string, const: completing }
+        '403': { description: Missing permission or fresh administrator authentication }
+        '409': { description: The upload is incomplete, expired, or in a conflicting state }
+        '503': { description: Import storage or audit persistence is unavailable }
+  /api/admin/tenant-backups/uploads/{uploadId}/cancel:
+    post:
+      tags: [Tenant Backups]
+      summary: Cancel an unbound encrypted tenant backup upload
+      description: Requires backup read, manage, and import permissions plus fresh human administrator authentication. The actor-owned upload moves to asynchronous R2 cleanup. An upload already pinned by an import operation cannot be cancelled through this route.
+      parameters:
+        - in: path
+          name: uploadId
+          required: true
+          schema: { type: string, pattern: '^[A-Za-z0-9_.:-]{1,256}$' }
+      responses:
+        '202':
+          description: Upload cleanup is queued.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [id, state]
+                properties:
+                  id: { type: string }
+                  state: { type: string, const: cancelling }
+        '400': { description: Invalid upload identifier }
+        '403': { description: Missing permission or fresh administrator authentication }
+        '409': { description: Upload ownership, state, or import binding conflict }
+        '503': { description: Import storage or audit persistence is unavailable }
+  /api/admin/tenant-backups/imports:
+    post:
+      tags: [Tenant Backups]
+      summary: Create a tenant import request from verified uploads
+      description: Requires backup read, manage, and import permissions plus fresh human administrator authentication. The server fixes the target tenant, canonical issuer, and product version. One to 32 completed uploads are atomically pinned by R2 key, version, ETag, size, and SHA-256 digest. The operation waits for the administrator to submit the bundle content key before validation or staging begins.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [idempotencyKey, selection, uploadIds]
+              properties:
+                idempotencyKey:
+                  type: string
+                  pattern: '^[A-Za-z0-9_.:-]{1,256}$'
+                selection:
+                  type: object
+                  additionalProperties: false
+                  required: [settings, users, admin, artifacts, logs]
+                  properties:
+                    settings: { type: boolean }
+                    users: { type: boolean }
+                    admin: { type: boolean }
+                    artifacts: { type: boolean }
+                    logs:
+                      type: object
+                      additionalProperties: false
+                      required: [audit, other, sensitive, period]
+                      properties:
+                        audit: { type: boolean }
+                        other: { type: boolean }
+                        sensitive: { type: boolean }
+                        period:
+                          oneOf:
+                            - { type: integer, enum: [7, 30, 90] }
+                            - { type: string, const: all }
+                uploadIds:
+                  type: array
+                  minItems: 1
+                  maxItems: 32
+                  uniqueItems: true
+                  items:
+                    type: string
+                    pattern: '^[A-Za-z0-9_.:-]{1,256}$'
+      responses:
+        '201':
+          description: The durable import request exists and waits for its content key.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [id, kind, state, phase, revision]
+                properties:
+                  id: { type: string }
+                  kind: { type: string, const: import }
+                  state: { type: string, const: waiting }
+                  phase: { type: string, const: unlock }
+                  revision: { type: integer, minimum: 0 }
+        '400': { description: Invalid selection, identifier, or upload list }
+        '403': { description: Missing permission or fresh administrator authentication }
+        '409':
+          { description: Upload ownership, expiry, idempotency, or immutable identity conflict }
+        '413': { description: The request body exceeds 32768 bytes }
+        '503':
+          {
+            description: Import storage,
+            key service,
+            source identity,
+            or audit persistence is unavailable,
+          }
+  /api/admin/tenant-backups/exports:
+    {
+      'post':
+        {
+          'summary': 'Create a tenant export request',
+          'description': 'Requires admin:backups:read, admin:backups:manage, admin:backups:export and a human Admin session with MFA authenticated within five minutes. Selecting sensitive log details also requires admin:backups:sensitive. At least one category must be selected. The server fixes the authenticated tenant, canonical issuer and running product version. The same idempotency key may retry only the same request and actor. Creates a durable operation waiting for its wrapped content key; it does not return a completed artifact.',
+          'requestBody':
+            {
+              'required': true,
+              'content':
+                {
+                  'application/json':
+                    {
+                      'schema':
+                        {
+                          'type': 'object',
+                          'additionalProperties': false,
+                          'required': ['idempotencyKey', 'selection'],
+                          'properties':
+                            {
+                              'idempotencyKey':
+                                { 'type': 'string', 'pattern': '^[A-Za-z0-9_.:-]{1,256}$' },
+                              'selection':
+                                {
+                                  'type': 'object',
+                                  'additionalProperties': false,
+                                  'required': ['settings', 'users', 'admin', 'artifacts', 'logs'],
+                                  'properties':
+                                    {
+                                      'settings': { 'type': 'boolean' },
+                                      'users': { 'type': 'boolean' },
+                                      'admin': { 'type': 'boolean' },
+                                      'artifacts': { 'type': 'boolean' },
+                                      'logs':
+                                        {
+                                          'type': 'object',
+                                          'additionalProperties': false,
+                                          'required': ['audit', 'other', 'sensitive', 'period'],
+                                          'properties':
+                                            {
+                                              'audit': { 'type': 'boolean' },
+                                              'other': { 'type': 'boolean' },
+                                              'sensitive': { 'type': 'boolean' },
+                                              'period':
+                                                {
+                                                  'oneOf':
+                                                    [
+                                                      { 'type': 'integer', 'enum': [7, 30, 90] },
+                                                      { 'type': 'string', 'const': 'all' },
+                                                    ],
+                                                },
+                                            },
+                                        },
+                                    },
+                                },
+                            },
+                        },
+                    },
+                },
+            },
+          'responses':
+            {
+              '201':
+                {
+                  'description': 'The export request exists. Retries return the current operation state.',
+                  'content':
+                    {
+                      'application/json':
+                        {
+                          'schema':
+                            {
+                              'type': 'object',
+                              'additionalProperties': false,
+                              'required': ['id', 'kind', 'state', 'phase', 'revision'],
+                              'properties':
+                                {
+                                  'id': { 'type': 'string' },
+                                  'kind': { 'type': 'string', 'const': 'export' },
+                                  'state':
+                                    {
+                                      'type': 'string',
+                                      'enum':
+                                        [
+                                          'queued',
+                                          'running',
+                                          'waiting',
+                                          'ready',
+                                          'completed',
+                                          'failed',
+                                          'cancelling',
+                                          'cancelled',
+                                        ],
+                                    },
+                                  'phase': { 'type': 'string' },
+                                  'revision': { 'type': 'integer', 'minimum': 0 },
+                                },
+                            },
+                        },
+                    },
+                },
+              '400':
+                {
+                  'description': 'The request was rejected.',
+                  'content':
+                    {
+                      'application/json':
+                        {
+                          'schema':
+                            {
+                              'type': 'object',
+                              'additionalProperties': false,
+                              'required': ['error'],
+                              'properties': { 'error': { 'type': 'string' } },
+                            },
+                        },
+                    },
+                },
+              '403':
+                {
+                  'description': 'The request was rejected.',
+                  'content':
+                    {
+                      'application/json':
+                        {
+                          'schema':
+                            {
+                              'type': 'object',
+                              'additionalProperties': false,
+                              'required': ['error'],
+                              'properties': { 'error': { 'type': 'string' } },
+                            },
+                        },
+                    },
+                },
+              '409':
+                {
+                  'description': 'The request was rejected.',
+                  'content':
+                    {
+                      'application/json':
+                        {
+                          'schema':
+                            {
+                              'type': 'object',
+                              'additionalProperties': false,
+                              'required': ['error'],
+                              'properties': { 'error': { 'type': 'string' } },
+                            },
+                        },
+                    },
+                },
+              '413': { 'description': 'The request body exceeds 4096 bytes.' },
+              '503':
+                {
+                  'description': 'Required backup storage, key service, or audit service is unavailable. Missing artifact storage returns backup_storage_unavailable.',
+                  'content':
+                    {
+                      'application/json':
+                        {
+                          'schema':
+                            {
+                              'type': 'object',
+                              'additionalProperties': false,
+                              'required': ['error'],
+                              'properties': { 'error': { 'type': 'string' } },
+                            },
+                        },
+                    },
+                },
+            },
+        },
+    }
+  /api/admin/tenant-backups/{operationId}/download:
+    get:
+      summary: Download a published encrypted tenant backup
+      description: Requires backup read and export permissions and fresh human administrator authentication. Backups containing sensitive logs also require the sensitive-backup permission. Downloads are available only for ready exports within seven days of publication. Each encrypted part is verified before transmission; a failed or expired stream terminates without a complete file. A download-start audit event must be persisted before transmission.
+      tags: [Tenant Backups]
+      parameters:
+        - in: path
+          name: operationId
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Encrypted backup attachment. Responses must not be cached.
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        '400':
+          description: Invalid operation identifier
+        '403':
+          description: Missing permission or fresh administrator authentication
+        '404':
+          description: Operation not found in the current tenant
+        '409':
+          description: Export is not ready, has expired, or is unavailable
+        '503':
+          description: Backup storage or audit persistence is unavailable
+  /api/admin/tenant-backups/{operationId}/start:
+    {
+      'post':
+        {
+          'summary': 'Queue a backup or restore after accepting its content keys',
+          'description': 'Requires admin:backups:read, admin:backups:manage, the operation-specific admin:backups:export or admin:backups:import permission, and a human Admin session with MFA authenticated within five minutes. Sensitive selections also require admin:backups:sensitive. Export operations supply one challengeId. Import operations supply one inputId/challengeId pair for every pinned input in request order. Every challenge must be accepted, unexpired, and bound to that input. The canonical issuer and running product version must still match the fixed request. Queues preparation atomically; does not indicate artifact completion. Repeated or stale starts return 409.',
+          'parameters':
+            [
+              {
+                'name': 'operationId',
+                'in': 'path',
+                'required': true,
+                'schema': { 'type': 'string' },
+              },
+            ],
+          'requestBody':
+            {
+              'required': true,
+              'content':
+                {
+                  'application/json':
+                    {
+                      'schema':
+                        {
+                          'oneOf':
+                            [
+                              {
+                                'type': 'object',
+                                'additionalProperties': false,
+                                'required': ['challengeId', 'revision'],
+                                'properties':
+                                  {
+                                    'challengeId':
+                                      { 'type': 'string', 'pattern': '^[A-Za-z0-9_.:-]{1,256}$' },
+                                    'revision': { 'type': 'integer', 'minimum': 0 },
+                                  },
+                              },
+                              {
+                                'type': 'object',
+                                'additionalProperties': false,
+                                'required': ['challenges', 'revision'],
+                                'properties':
+                                  {
+                                    'challenges':
+                                      {
+                                        'type': 'array',
+                                        'minItems': 1,
+                                        'maxItems': 32,
+                                        'items':
+                                          {
+                                            'type': 'object',
+                                            'additionalProperties': false,
+                                            'required': ['inputId', 'challengeId'],
+                                            'properties':
+                                              {
+                                                'inputId':
+                                                  {
+                                                    'type': 'string',
+                                                    'pattern': '^[A-Za-z0-9_.:-]{1,256}$',
+                                                  },
+                                                'challengeId':
+                                                  {
+                                                    'type': 'string',
+                                                    'pattern': '^[A-Za-z0-9_.:-]{1,256}$',
+                                                  },
+                                              },
+                                          },
+                                      },
+                                    'revision': { 'type': 'integer', 'minimum': 0 },
+                                  },
+                              },
+                            ],
+                        },
+                    },
+                },
+            },
+          'responses':
+            {
+              '202':
+                {
+                  'description': 'Preparation is queued.',
+                  'content':
+                    {
+                      'application/json':
+                        {
+                          'schema':
+                            {
+                              'type': 'object',
+                              'additionalProperties': false,
+                              'required': ['id', 'state', 'phase', 'revision'],
+                              'properties':
+                                {
+                                  'id': { 'type': 'string' },
+                                  'state': { 'const': 'queued', 'type': 'string' },
+                                  'phase': { 'const': 'prepare', 'type': 'string' },
+                                  'revision': { 'type': 'integer', 'minimum': 1 },
+                                },
+                            },
+                        },
+                    },
+                },
+              '400':
+                {
+                  'description': 'The request was rejected.',
+                  'content':
+                    {
+                      'application/json':
+                        {
+                          'schema':
+                            {
+                              'type': 'object',
+                              'additionalProperties': false,
+                              'required': ['error'],
+                              'properties': { 'error': { 'type': 'string' } },
+                            },
+                        },
+                    },
+                },
+              '403':
+                {
+                  'description': 'The request was rejected.',
+                  'content':
+                    {
+                      'application/json':
+                        {
+                          'schema':
+                            {
+                              'type': 'object',
+                              'additionalProperties': false,
+                              'required': ['error'],
+                              'properties': { 'error': { 'type': 'string' } },
+                            },
+                        },
+                    },
+                },
+              '404':
+                {
+                  'description': 'The request was rejected.',
+                  'content':
+                    {
+                      'application/json':
+                        {
+                          'schema':
+                            {
+                              'type': 'object',
+                              'additionalProperties': false,
+                              'required': ['error'],
+                              'properties': { 'error': { 'type': 'string' } },
+                            },
+                        },
+                    },
+                },
+              '409':
+                {
+                  'description': 'The request was rejected.',
+                  'content':
+                    {
+                      'application/json':
+                        {
+                          'schema':
+                            {
+                              'type': 'object',
+                              'additionalProperties': false,
+                              'required': ['error'],
+                              'properties': { 'error': { 'type': 'string' } },
+                            },
+                        },
+                    },
+                },
+              '413': { 'description': 'Request body exceeds 4096 bytes.' },
+              '503':
+                {
+                  'description': 'Required backup storage, key service, or audit service is unavailable. Missing artifact storage returns backup_storage_unavailable.',
+                  'content':
+                    {
+                      'application/json':
+                        {
+                          'schema':
+                            {
+                              'type': 'object',
+                              'additionalProperties': false,
+                              'required': ['error'],
+                              'properties': { 'error': { 'type': 'string' } },
+                            },
+                        },
+                    },
+                },
+            },
+        },
+    }
 components:
   securitySchemes:
     adminBearer:

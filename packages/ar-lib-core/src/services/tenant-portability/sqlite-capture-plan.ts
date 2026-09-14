@@ -9,7 +9,15 @@ function schemaSignature(schema: CaptureSchema): string {
     uniqueKeys: schema.uniqueKeys
       .map((key) => [...key])
       .sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b))),
-    ownership: 'parent' in schema ? schema.parent : schema.tenantColumn,
+    uniqueExpressions: schema.uniqueExpressions ?? [],
+    ownership:
+      'parent' in schema
+        ? schema.parent
+        : {
+            column: schema.tenantColumn,
+            scopeTypeColumn: schema.scopeTypeColumn,
+            tenantIdentity: schema.tenantIdentity ?? 'tenantId',
+          },
   });
 }
 
@@ -22,7 +30,10 @@ function balancedConjunction(conditions: readonly string[]): string {
 }
 
 /** Close parent dependencies before installing triggers or starting a snapshot. */
-export function sqliteCapturePlan(schemas: readonly CaptureSchema[]): {
+export function sqliteCapturePlan(
+  schemas: readonly CaptureSchema[],
+  representation: 'packed' | 'json' = 'packed'
+): {
   schemas: CaptureSchema[];
   triggers: Array<{ name: string; table: string; sql: string }>;
 } {
@@ -45,7 +56,7 @@ export function sqliteCapturePlan(schemas: readonly CaptureSchema[]): {
   return {
     schemas: ordered,
     triggers: ordered.flatMap((schema) => {
-      const statements = splitMigrationSql(sqliteSnapshotTriggers(schema));
+      const statements = splitMigrationSql(sqliteSnapshotTriggers(schema, representation));
       if (statements.length !== 3) throw new Error('snapshot_invalid_trigger_count');
       return statements.map((sql, index) => ({
         name: `tenant_backup_${schema.table}_${['insert', 'update', 'delete'][index]}`,
@@ -65,10 +76,18 @@ export function sqliteCapturePlan(schemas: readonly CaptureSchema[]): {
 export function sqliteSnapshotStartStatement(
   schemas: readonly CaptureSchema[],
   snapshotId: string,
-  tenantId: string
+  tenantId: string,
+  tenantKey?: string,
+  representation: 'packed' | 'json' = 'packed'
 ): { sql: string; params: string[] } {
   if (!snapshotId || !tenantId) throw new Error('snapshot_missing_identity');
-  const plan = sqliteCapturePlan(schemas);
+  const plan = sqliteCapturePlan(schemas, representation);
+  if (tenantKey !== undefined && !tenantKey) throw new Error('snapshot_missing_tenant_key');
+  if (
+    plan.schemas.some((schema) => !('parent' in schema) && schema.tenantIdentity === 'tenantKey') &&
+    !tenantKey
+  )
+    throw new Error('snapshot_missing_tenant_key');
   // D1 limits each bound string. Parse bounded arrays independently rather than
   // concatenating them back into one oversized value inside SQLite.
   const chunks: string[] = [];
@@ -96,9 +115,9 @@ export function sqliteSnapshotStartStatement(
   if (entries.length) chunks.push(`[${entries.join(',')}]`);
   if (chunks.length > 90) throw new Error('snapshot_start_plan_too_large');
   return {
-    sql: `WITH requested_snapshot AS (SELECT ? AS id, ? AS tenant_id)
-      INSERT INTO tenant_backup_snapshots (id, tenant_id, state)
-      SELECT snapshot.id, snapshot.tenant_id, 'capturing' FROM requested_snapshot AS snapshot
+    sql: `WITH requested_snapshot AS (SELECT ? AS id, ? AS tenant_id, ${tenantKey === undefined ? 'NULL' : '?'} AS tenant_key)
+      INSERT INTO tenant_backup_snapshots (id, tenant_id, state, tenant_key)
+      SELECT snapshot.id, snapshot.tenant_id, 'capturing', snapshot.tenant_key FROM requested_snapshot AS snapshot
       WHERE ${balancedConjunction(
         chunks.map(
           () => `NOT EXISTS (
@@ -122,6 +141,31 @@ export function sqliteSnapshotStartStatement(
       )`
         )
       )}`,
-    params: [snapshotId, tenantId, ...chunks],
+    params: [snapshotId, tenantId, ...(tenantKey === undefined ? [] : [tenantKey]), ...chunks],
+  };
+}
+
+/** Same checked start, with an exact-identity retry that never replaces rows or old preimages. */
+export function sqliteSnapshotStartOrResumeStatement(
+  schemas: readonly CaptureSchema[],
+  snapshotId: string,
+  tenantId: string,
+  tenantKey?: string,
+  representation: 'packed' | 'json' = 'packed'
+): { sql: string; params: string[] } {
+  const statement = sqliteSnapshotStartStatement(
+    schemas,
+    snapshotId,
+    tenantId,
+    tenantKey,
+    representation
+  );
+  return {
+    ...statement,
+    sql: `${statement.sql}
+      ON CONFLICT(id) DO UPDATE SET state=tenant_backup_snapshots.state
+      WHERE tenant_backup_snapshots.tenant_id=excluded.tenant_id
+        AND tenant_backup_snapshots.tenant_key IS excluded.tenant_key
+        AND tenant_backup_snapshots.state='capturing'`,
   };
 }

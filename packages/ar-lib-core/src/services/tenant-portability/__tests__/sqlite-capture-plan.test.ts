@@ -89,9 +89,23 @@ describe('SQLite capture dependency plan', () => {
       db.exec(plan.triggers.find((entry) => entry.name === 'tenant_backup_parents_delete')!.sql);
       expect(activate()).toBe(1);
       expect(db.prepare('SELECT * FROM tenant_backup_snapshots').all()).toEqual([
-        { id: 'snapshot', tenant_id: 'tenant', state: 'capturing' },
+        { id: 'snapshot', tenant_id: 'tenant', state: 'capturing', tenant_key: null },
       ]);
       expect(activate).toThrow();
+    } finally {
+      db.close();
+    }
+  });
+  it('pins legacy JSON capture to matching JSON trigger definitions', () => {
+    const db = new DatabaseSync(':memory:');
+    try {
+      db.exec(`CREATE TABLE parents (id TEXT NOT NULL PRIMARY KEY, tenant_id TEXT NOT NULL);
+        ${SQLITE_SNAPSHOT_SCHEMA}`);
+      for (const trigger of sqliteCapturePlan([parent], 'json').triggers) db.exec(trigger.sql);
+      const packed = sqliteSnapshotStartStatement([parent], 'packed', 'tenant');
+      expect(db.prepare(packed.sql).run(...packed.params).changes).toBe(0);
+      const json = sqliteSnapshotStartStatement([parent], 'json', 'tenant', undefined, 'json');
+      expect(db.prepare(json.sql).run(...json.params).changes).toBe(1);
     } finally {
       db.close();
     }

@@ -1,3 +1,4 @@
+import { processTenantBackupMaintenance } from './tenant-backup-services';
 import {
   serviceGroupRestart,
   serviceGroupRecover,
@@ -1599,13 +1600,24 @@ app.use('/api/admin/*', releaseRolloutMutationFenceMiddleware());
 // 100KB is sufficient for policy/settings updates while blocking malicious large payloads
 app.use('/api/admin/*', async (c, next) => {
   const isImportUpload = c.req.path.startsWith('/api/admin/jobs/users/import/upload/');
+  const isTenantBackupPart = /^\/api\/admin\/tenant-backups\/uploads\/[^/]+\/parts\/[^/]+$/.test(
+    c.req.path
+  );
   const isPublicAssetUpload = c.req.path === '/api/admin/assets/login-ui';
-  const maxSize = isImportUpload
-    ? USER_IMPORT_MAX_UPLOAD_BYTES
-    : isPublicAssetUpload
-      ? 5 * 1024 * 1024
-      : 100 * 1024;
-  const maxSizeLabel = isImportUpload ? '50MB' : isPublicAssetUpload ? '5MB' : '100KB';
+  const maxSize = isTenantBackupPart
+    ? 8 * 1024 * 1024
+    : isImportUpload
+      ? USER_IMPORT_MAX_UPLOAD_BYTES
+      : isPublicAssetUpload
+        ? 5 * 1024 * 1024
+        : 100 * 1024;
+  const maxSizeLabel = isTenantBackupPart
+    ? '8MB'
+    : isImportUpload
+      ? '50MB'
+      : isPublicAssetUpload
+        ? '5MB'
+        : '100KB';
 
   return bodyLimit({
     maxSize,
@@ -4164,6 +4176,13 @@ async function deleteExpiredTenantRows(
  */
 async function handleScheduled(event: ScheduledEvent, env: Env): Promise<void> {
   const log = createLogger().module('SCHEDULED');
+  try {
+    const backup = await processTenantBackupMaintenance(env);
+    if (backup.keysRemoved > 0) log.info('Expired backup operation keys removed', backup);
+  } catch {
+    log.warn('Backup operation key maintenance failed', { errorType: 'BackupMaintenanceError' });
+  }
+
   try {
     const finalized = await processDynamicPluginResourceFinalizations(env);
     if (finalized.inspected > 0) {

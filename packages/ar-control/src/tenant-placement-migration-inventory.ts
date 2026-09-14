@@ -72,6 +72,9 @@ const COMMON_SPECIAL_RULES: Readonly<Record<string, TenantMigrationOwnershipRule
   tenant_database_migration_state: { kind: 'shard_local' },
   tenant_placement_migration_captures: { kind: 'shard_local' },
   tenant_placement_migration_outbox: { kind: 'shard_local' },
+  tenant_backup_snapshots: { kind: 'shard_local' },
+  tenant_backup_preimages: { kind: 'shard_local' },
+  tenant_backup_restore_targets: { kind: 'shard_local' },
 };
 
 const CORE_SPECIAL_RULES: Readonly<Record<string, TenantMigrationOwnershipRule>> = {

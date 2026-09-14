@@ -19,6 +19,7 @@ export const SECRET_NAMES = [
   'NOTIFICATION_PAYLOAD_DECRYPTION_JWK_SLOT_B',
   'NOTIFICATION_INTENT_HMAC_KEY',
   'AGENT_ELEVATION_ENCRYPTION_KEY',
+  'TENANT_BACKUP_WRAPPING_KEY',
   'TENANT_RUNTIME_REGISTRY_SIGNING_PRIVATE_JWK',
   'TENANT_RUNTIME_REGISTRY_SIGNING_KEY_ID',
   'TENANT_RUNTIME_REGISTRY_VERIFYING_PUBLIC_JWKS',
@@ -63,6 +64,7 @@ export const SECRET_KEY_FILES: Partial<Record<SecretName, string>> = {
     'notification_payload_decryption_jwk_slot_b.private.jwk.json',
   NOTIFICATION_INTENT_HMAC_KEY: 'notification_intent_hmac_key.txt',
   AGENT_ELEVATION_ENCRYPTION_KEY: 'agent_elevation_encryption_key.txt',
+  TENANT_BACKUP_WRAPPING_KEY: 'tenant_backup_wrapping_key.txt',
   TENANT_RUNTIME_REGISTRY_SIGNING_PRIVATE_JWK: 'tenant_runtime_registry_signing_private.jwk.json',
   TENANT_RUNTIME_REGISTRY_SIGNING_KEY_ID: 'tenant_runtime_registry_signing_key_id.txt',
   TENANT_RUNTIME_REGISTRY_VERIFYING_PUBLIC_JWKS: 'tenant_runtime_registry_verify.jwks.json',
@@ -144,6 +146,7 @@ export const SECRET_UPLOAD_PLAN: Record<WorkerComponent, readonly SecretName[]> 
     'CONTROL_SMOKE_VERIFYING_PUBLIC_JWKS',
   ],
   'ar-management': [
+    'TENANT_BACKUP_WRAPPING_KEY',
     'PUBLIC_JWK_JSON',
     'RP_TOKEN_ENCRYPTION_KEY',
     'PII_ENCRYPTION_KEY',

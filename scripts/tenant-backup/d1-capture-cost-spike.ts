@@ -92,7 +92,7 @@ try {
     const ids = new Set<string>();
     for (;;) {
       const page = await db
-        .prepare(sqliteSnapshotPageQuery(schema))
+        .prepare(sqliteSnapshotPageQuery(schema, 'json'))
         .bind(id, 'a', cursor, 31)
         .all<{ record_key: string; row_json: string }>();
       if (!page.results.length) break;
@@ -115,12 +115,14 @@ try {
   }
 
   await updateAll('no_triggers');
-  await db.batch(splitMigrationSql(sqliteSnapshotTriggers(schema)).map((sql) => db.prepare(sql)));
+  await db.batch(
+    splitMigrationSql(sqliteSnapshotTriggers(schema, 'json')).map((sql) => db.prepare(sql))
+  );
   await db
     .prepare(
       `WITH RECURSIVE numbers(n) AS (
     SELECT 1 UNION ALL SELECT n+1 FROM numbers WHERE n < 1000
-  ) INSERT INTO tenant_backup_snapshots SELECT 'history-' || n, 'a', 'sealed' FROM numbers`
+  ) INSERT INTO tenant_backup_snapshots (id, tenant_id, state) SELECT 'history-' || n, 'a', 'sealed' FROM numbers`
     )
     .run();
   await updateAll('idle_triggers');
@@ -144,8 +146,8 @@ try {
     .prepare("UPDATE tenant_backup_snapshots SET state = 'invalid' WHERE id = 'second'")
     .run();
   assert.equal(
-    (await db.prepare(sqliteSnapshotPageQuery(schema)).bind('second', 'a', '', 31).all()).results
-      .length,
+    (await db.prepare(sqliteSnapshotPageQuery(schema, 'json')).bind('second', 'a', '', 31).all())
+      .results.length,
     0
   );
   await db.prepare("DELETE FROM tenant_backup_snapshots WHERE id = 'second'").run();

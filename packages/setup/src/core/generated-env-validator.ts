@@ -791,6 +791,12 @@ async function validateLoggingSecretMaterial(
   );
   await inspectSecretFile(
     check,
+    join(keysDir, 'tenant_backup_wrapping_key.txt'),
+    'TENANT_BACKUP_WRAPPING_KEY',
+    isHexRootKey
+  );
+  await inspectSecretFile(
+    check,
     join(keysDir, 'otp_hmac_secret.txt'),
     'OTP_HMAC_SECRET',
     isBase64UrlSecret

@@ -1,3 +1,7 @@
+import { MIGRATION_STREAM_CONTRACTS } from '../../packages/ar-lib-core/src/services/control-plane/migration-stream-contract.js';
+import { planSqliteTenantDatasets } from '../../packages/ar-lib-core/src/services/tenant-portability/sqlite-dataset-plan.js';
+import { readBackupSqliteSchema } from '../../packages/ar-lib-core/src/services/tenant-portability/sqlite-schema-reader.js';
+import type { DatabaseAdapter } from '../../packages/ar-lib-core/src/db/adapter.js';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import { readFileSync } from 'node:fs';
@@ -72,14 +76,67 @@ try {
         );
       }
     }
+    const schemaReader: Pick<DatabaseAdapter, 'query' | 'queryOne'> = {
+      async query<T>(sql: string, params: unknown[] = []) {
+        const result = await db
+          .prepare(sql)
+          .bind(...params)
+          .all<T>();
+        return result.results;
+      },
+      async queryOne<T>(sql: string, params: unknown[] = []) {
+        return db
+          .prepare(sql)
+          .bind(...params)
+          .first<T>();
+      },
+    };
+    const runtimeSchemas = [];
+    for (const table of stream.tables) {
+      if (table.name.startsWith('tenant_backup_')) continue;
+      const runtimeSchema = await readBackupSqliteSchema(schemaReader, table.name);
+      assert.deepEqual(runtimeSchema.columns, table.columns, `${stream.id}:${table.name}:runtime`);
+      assert.deepEqual(
+        assessSnapshotTable(runtimeSchema),
+        assessSnapshotTable(table),
+        `${stream.id}:${table.name}:assessment`
+      );
+      runtimeSchemas.push(runtimeSchema);
+    }
     for (const sql of splitMigrationSql(SQLITE_SNAPSHOT_SCHEMA)) await db.prepare(sql).run();
-    const selected = stream.tables.flatMap((table) => {
-      const result = assessSnapshotTable(table);
-      return result.schema ? [result.schema] : [];
+    const contract = MIGRATION_STREAM_CONTRACTS.find((candidate) => candidate.id === stream.id);
+    if (!contract) throw new Error('missing_stream_contract');
+    const datasetPlan = planSqliteTenantDatasets(contract.schemaFamily, runtimeSchemas, {
+      settings: true,
+      users: true,
+      admin: true,
+      artifacts: true,
+      logs: { audit: true, other: true, sensitive: true, period: 'all' },
     });
+    // Feasibility only: exercise supported adapters while reporting every unresolved entry.
+    // The product planner itself withholds an executable plan if any required entry is unresolved.
+    const selected = datasetPlan.entries.flatMap((entry) => (entry.capture ? [entry.capture] : []));
+    if (!selected.length) {
+      results.push({
+        stream: stream.id,
+        totalTables: stream.tables.length,
+        verifiedColumnSchemas: stream.tables.length,
+        structurallyEligibleTables: 0,
+        captureStarted: false,
+        datasetPlanConcerns: datasetPlan.entries
+          .filter((entry) => entry.concerns.length)
+          .map((entry) => ({ table: entry.table, concerns: entry.concerns })),
+      });
+      continue;
+    }
     const plan = sqliteCapturePlan(selected);
     for (const trigger of plan.triggers) await db.prepare(trigger.sql).run();
-    const start = sqliteSnapshotStartStatement(selected, 'local-schema-spike', 'fixture-tenant');
+    const start = sqliteSnapshotStartStatement(
+      selected,
+      'local-schema-spike',
+      'fixture-tenant',
+      'fixture-tenant-key'
+    );
     const startedAt = performance.now();
     const result = await db
       .prepare(start.sql)
@@ -90,6 +147,9 @@ try {
     results.push({
       stream: stream.id,
       totalTables: stream.tables.length,
+      datasetPlanConcerns: datasetPlan.entries
+        .filter((entry) => entry.concerns.length)
+        .map((entry) => ({ table: entry.table, concerns: entry.concerns })),
       verifiedColumnSchemas: stream.tables.length,
       structurallyEligibleTables: selected.length,
       unverifiedTables: stream.tables.length - selected.length,

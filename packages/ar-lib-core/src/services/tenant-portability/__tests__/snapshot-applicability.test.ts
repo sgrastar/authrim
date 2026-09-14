@@ -36,7 +36,7 @@ describe('snapshot structural applicability', () => {
     [
       'expression_unique_index',
       `CREATE TABLE items (id TEXT NOT NULL PRIMARY KEY, tenant_id TEXT, code TEXT);
-      CREATE UNIQUE INDEX normalized ON items (COALESCE(code, ''));`,
+      CREATE UNIQUE INDEX normalized ON items (lower(code));`,
     ],
     [
       'nonbinary_unique_index',

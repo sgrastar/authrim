@@ -1,3 +1,4 @@
+import { runTenantBackupCoveredMutation } from '../../tenant-backup-writer';
 /**
  * Settings API v2
  *
@@ -1393,162 +1394,172 @@ settingsV2.patch(
       return errorResponse(c, 'forbidden', 'Cannot modify settings for this tenant', 403);
     }
 
-    const manager = getSettingsManager(c.env, c);
-    const scope: SettingScope = { type: 'tenant', id: tenantId };
+    return runTenantBackupCoveredMutation({
+      env: c.env,
+      tenantId,
+      run: async () => {
+        const manager = getSettingsManager(c.env, c);
+        const scope: SettingScope = { type: 'tenant', id: tenantId };
 
-    try {
-      // Parse and sanitize request body (prevent prototype pollution)
-      const rawBody = await c.req.json();
-      const body = parsePatchRequest(rawBody);
+        try {
+          // Parse and sanitize request body (prevent prototype pollution)
+          const rawBody = await c.req.json();
+          const body = parsePatchRequest(rawBody);
 
-      // Validate ifMatch is provided
-      if (!body.ifMatch) {
-        await recordSettingsAuditFailure(c, { category, scope, reason: 'if_match_required' });
-        return errorResponse(c, 'bad_request', 'ifMatch is required for PATCH operations', 400);
-      }
+          // Validate ifMatch is provided
+          if (!body.ifMatch) {
+            await recordSettingsAuditFailure(c, { category, scope, reason: 'if_match_required' });
+            return errorResponse(c, 'bad_request', 'ifMatch is required for PATCH operations', 400);
+          }
 
-      if (category === 'login-ui') {
-        const loginUiValidation = validateLoginUIPatch(body);
-        if (!loginUiValidation.ok) {
+          if (category === 'login-ui') {
+            const loginUiValidation = validateLoginUIPatch(body);
+            if (!loginUiValidation.ok) {
+              await recordSettingsAuditFailure(c, {
+                category,
+                scope,
+                reason: 'login_ui_validation_failed',
+                metadata: loginUiValidation.details,
+              });
+              return errorResponse(
+                c,
+                'validation_failed',
+                loginUiValidation.message ?? 'Login UI settings are invalid',
+                400,
+                loginUiValidation.details
+              );
+            }
+          }
+
+          const postLoginValidation = await validatePostLoginRelatedPatch(
+            c.env,
+            tenantId,
+            category,
+            body
+          );
+          if (!postLoginValidation.ok) {
+            await recordSettingsAuditFailure(c, {
+              category,
+              scope,
+              reason: 'post_login_validation_failed',
+              metadata: postLoginValidation.details,
+            });
+            return errorResponse(
+              c,
+              postLoginValidation.error,
+              postLoginValidation.message,
+              postLoginValidation.status,
+              postLoginValidation.details
+            );
+          }
+
+          // Get actor from context (set by auth middleware)
+          const actor = adminAuth?.userId ?? 'unknown';
+          const authenticationMethodsBefore =
+            category === 'authentication-methods'
+              ? await readScopedSettingsRecord(c.env, category, scope)
+              : null;
+
+          const result = await manager.patch(category, scope, body, actor);
+
+          if (
+            category === 'login-entry' &&
+            body.set?.['login-entry.post_login_behavior'] === 'account' &&
+            result.applied.includes('login-entry.post_login_behavior')
+          ) {
+            await ensureTenantAccountPageEnabled(c.env, tenantId);
+          }
+
+          // Check if there were any rejections
+          const hasRejections = Object.keys(result.rejected).length > 0;
+          const hasApplied =
+            result.applied.length > 0 || result.cleared.length > 0 || result.disabled.length > 0;
+          const changedKeys = [...result.applied, ...result.cleared, ...result.disabled];
+
+          if (
+            authenticationMethodsBefore &&
+            changedKeys.some((key) => key.startsWith(HUMAN_VERIFICATION_SETTING_PREFIX))
+          ) {
+            const authenticationMethodsAfter = await readScopedSettingsRecord(
+              c.env,
+              category,
+              scope
+            );
+            await scheduleInheritedHumanVerificationProjection(
+              c.env,
+              tenantId,
+              authenticationMethodsBefore,
+              authenticationMethodsAfter
+            );
+          }
+
+          // Return appropriate status
+          // 200 OK if anything was applied (even with rejections)
+          // 400 Bad Request if everything was rejected
+          if (!hasApplied && hasRejections) {
+            await recordSettingsAuditFailure(c, {
+              category,
+              scope,
+              reason: 'validation_failed',
+              metadata: { rejected: result.rejected },
+            });
+            return c.json(
+              {
+                error: 'validation_failed',
+                message: 'All changes were rejected',
+                ...result,
+              },
+              400
+            );
+          }
+
+          if (hasApplied && AUTHENTICATION_METHODS_TENANT_CACHE_CATEGORIES.has(category)) {
+            await invalidateAuthenticationMethodsCacheRevision(c, tenantId, `tenant:${category}`);
+          }
+
+          return c.json(result);
+        } catch (error) {
+          // Handle JSON parse errors
+          if (error instanceof SyntaxError) {
+            await recordSettingsAuditFailure(c, { category, scope, reason: 'invalid_json' });
+            return errorResponse(c, 'bad_request', 'Invalid JSON body', 400);
+          }
+          if (error instanceof ConflictError) {
+            await recordSettingsAuditFailure(c, {
+              category,
+              scope,
+              reason: 'version_conflict',
+              metadata: { current_version: error.currentVersion },
+            });
+            return c.json(
+              {
+                error: 'conflict',
+                message: error.message,
+                currentVersion: error.currentVersion,
+              },
+              409
+            );
+          }
+          if (error instanceof Error) {
+            if (error.message.includes('Unknown category')) {
+              await recordSettingsAuditFailure(c, { category, scope, reason: 'unknown_category' });
+              return errorResponse(c, 'not_found', `Category "${category}" not found`, 404);
+            }
+            if (error.message.includes('read-only')) {
+              await recordSettingsAuditFailure(c, { category, scope, reason: 'read_only' });
+              return errorResponse(c, 'forbidden', error.message, 403);
+            }
+          }
           await recordSettingsAuditFailure(c, {
             category,
             scope,
-            reason: 'login_ui_validation_failed',
-            metadata: loginUiValidation.details,
+            reason: 'unhandled_error',
+            metadata: { error_class: error instanceof Error ? error.name : 'unknown_error' },
           });
-          return errorResponse(
-            c,
-            'validation_failed',
-            loginUiValidation.message ?? 'Login UI settings are invalid',
-            400,
-            loginUiValidation.details
-          );
+          throw error;
         }
-      }
-
-      const postLoginValidation = await validatePostLoginRelatedPatch(
-        c.env,
-        tenantId,
-        category,
-        body
-      );
-      if (!postLoginValidation.ok) {
-        await recordSettingsAuditFailure(c, {
-          category,
-          scope,
-          reason: 'post_login_validation_failed',
-          metadata: postLoginValidation.details,
-        });
-        return errorResponse(
-          c,
-          postLoginValidation.error,
-          postLoginValidation.message,
-          postLoginValidation.status,
-          postLoginValidation.details
-        );
-      }
-
-      // Get actor from context (set by auth middleware)
-      const actor = adminAuth?.userId ?? 'unknown';
-      const authenticationMethodsBefore =
-        category === 'authentication-methods'
-          ? await readScopedSettingsRecord(c.env, category, scope)
-          : null;
-
-      const result = await manager.patch(category, scope, body, actor);
-
-      if (
-        category === 'login-entry' &&
-        body.set?.['login-entry.post_login_behavior'] === 'account' &&
-        result.applied.includes('login-entry.post_login_behavior')
-      ) {
-        await ensureTenantAccountPageEnabled(c.env, tenantId);
-      }
-
-      // Check if there were any rejections
-      const hasRejections = Object.keys(result.rejected).length > 0;
-      const hasApplied =
-        result.applied.length > 0 || result.cleared.length > 0 || result.disabled.length > 0;
-      const changedKeys = [...result.applied, ...result.cleared, ...result.disabled];
-
-      if (
-        authenticationMethodsBefore &&
-        changedKeys.some((key) => key.startsWith(HUMAN_VERIFICATION_SETTING_PREFIX))
-      ) {
-        const authenticationMethodsAfter = await readScopedSettingsRecord(c.env, category, scope);
-        await scheduleInheritedHumanVerificationProjection(
-          c.env,
-          tenantId,
-          authenticationMethodsBefore,
-          authenticationMethodsAfter
-        );
-      }
-
-      // Return appropriate status
-      // 200 OK if anything was applied (even with rejections)
-      // 400 Bad Request if everything was rejected
-      if (!hasApplied && hasRejections) {
-        await recordSettingsAuditFailure(c, {
-          category,
-          scope,
-          reason: 'validation_failed',
-          metadata: { rejected: result.rejected },
-        });
-        return c.json(
-          {
-            error: 'validation_failed',
-            message: 'All changes were rejected',
-            ...result,
-          },
-          400
-        );
-      }
-
-      if (hasApplied && AUTHENTICATION_METHODS_TENANT_CACHE_CATEGORIES.has(category)) {
-        await invalidateAuthenticationMethodsCacheRevision(c, tenantId, `tenant:${category}`);
-      }
-
-      return c.json(result);
-    } catch (error) {
-      // Handle JSON parse errors
-      if (error instanceof SyntaxError) {
-        await recordSettingsAuditFailure(c, { category, scope, reason: 'invalid_json' });
-        return errorResponse(c, 'bad_request', 'Invalid JSON body', 400);
-      }
-      if (error instanceof ConflictError) {
-        await recordSettingsAuditFailure(c, {
-          category,
-          scope,
-          reason: 'version_conflict',
-          metadata: { current_version: error.currentVersion },
-        });
-        return c.json(
-          {
-            error: 'conflict',
-            message: error.message,
-            currentVersion: error.currentVersion,
-          },
-          409
-        );
-      }
-      if (error instanceof Error) {
-        if (error.message.includes('Unknown category')) {
-          await recordSettingsAuditFailure(c, { category, scope, reason: 'unknown_category' });
-          return errorResponse(c, 'not_found', `Category "${category}" not found`, 404);
-        }
-        if (error.message.includes('read-only')) {
-          await recordSettingsAuditFailure(c, { category, scope, reason: 'read_only' });
-          return errorResponse(c, 'forbidden', error.message, 403);
-        }
-      }
-      await recordSettingsAuditFailure(c, {
-        category,
-        scope,
-        reason: 'unhandled_error',
-        metadata: { error_class: error instanceof Error ? error.name : 'unknown_error' },
-      });
-      throw error;
-    }
+      },
+    });
   }
 );
 
@@ -1693,115 +1704,125 @@ settingsV2.patch('/clients/:clientId/settings', async (c) => {
     );
   }
 
-  const manager = getSettingsManager(c.env, c);
-  const scope = { type: 'client', id: clientId, tenantId: clientTenantId } as SettingScope;
+  return runTenantBackupCoveredMutation({
+    env: c.env,
+    tenantId: clientTenantId,
+    run: async () => {
+      const manager = getSettingsManager(c.env, c);
+      const scope = { type: 'client', id: clientId, tenantId: clientTenantId } as SettingScope;
 
-  try {
-    // Parse and sanitize request body (prevent prototype pollution)
-    const rawBody = await c.req.json();
-    const body = parsePatchRequest(rawBody);
+      try {
+        // Parse and sanitize request body (prevent prototype pollution)
+        const rawBody = await c.req.json();
+        const body = parsePatchRequest(rawBody);
 
-    if (!body.ifMatch) {
-      await recordSettingsAuditFailure(c, { category, scope, reason: 'if_match_required' });
-      return errorResponse(c, 'bad_request', 'ifMatch is required for PATCH operations', 400);
-    }
+        if (!body.ifMatch) {
+          await recordSettingsAuditFailure(c, { category, scope, reason: 'if_match_required' });
+          return errorResponse(c, 'bad_request', 'ifMatch is required for PATCH operations', 400);
+        }
 
-    const deprecatedConsentSetting = findDeprecatedClientConsentSetting(body);
-    if (deprecatedConsentSetting) {
-      await recordSettingsAuditFailure(c, {
-        category,
-        scope,
-        reason: 'deprecated_client_consent_setting',
-      });
-      return errorResponse(
-        c,
-        'bad_request',
-        `${deprecatedConsentSetting} is no longer supported; use Client Trust Policy`,
-        400
-      );
-    }
+        const deprecatedConsentSetting = findDeprecatedClientConsentSetting(body);
+        if (deprecatedConsentSetting) {
+          await recordSettingsAuditFailure(c, {
+            category,
+            scope,
+            reason: 'deprecated_client_consent_setting',
+          });
+          return errorResponse(
+            c,
+            'bad_request',
+            `${deprecatedConsentSetting} is no longer supported; use Client Trust Policy`,
+            400
+          );
+        }
 
-    const appLoginValidation = await validateClientAppLoginPatch(
-      c.env,
-      clientTenantId,
-      clientId,
-      body
-    );
-    if (!appLoginValidation.ok) {
-      await recordSettingsAuditFailure(c, {
-        category,
-        scope,
-        reason: 'app_login_validation_failed',
-        metadata: appLoginValidation.details,
-      });
-      return errorResponse(
-        c,
-        appLoginValidation.error,
-        appLoginValidation.message,
-        appLoginValidation.status,
-        appLoginValidation.details
-      );
-    }
+        const appLoginValidation = await validateClientAppLoginPatch(
+          c.env,
+          clientTenantId,
+          clientId,
+          body
+        );
+        if (!appLoginValidation.ok) {
+          await recordSettingsAuditFailure(c, {
+            category,
+            scope,
+            reason: 'app_login_validation_failed',
+            metadata: appLoginValidation.details,
+          });
+          return errorResponse(
+            c,
+            appLoginValidation.error,
+            appLoginValidation.message,
+            appLoginValidation.status,
+            appLoginValidation.details
+          );
+        }
 
-    const actor = adminAuth?.userId ?? 'unknown';
-    const result = await manager.patch('client', scope, body, actor);
+        const actor = adminAuth?.userId ?? 'unknown';
+        const result = await manager.patch('client', scope, body, actor);
 
-    const hasRejections = Object.keys(result.rejected).length > 0;
-    const hasApplied =
-      result.applied.length > 0 || result.cleared.length > 0 || result.disabled.length > 0;
+        const hasRejections = Object.keys(result.rejected).length > 0;
+        const hasApplied =
+          result.applied.length > 0 || result.cleared.length > 0 || result.disabled.length > 0;
 
-    if (!hasApplied && hasRejections) {
-      await recordSettingsAuditFailure(c, {
-        category,
-        scope,
-        reason: 'validation_failed',
-        metadata: { rejected: result.rejected },
-      });
-      return c.json(
-        {
-          error: 'validation_failed',
-          message: 'All changes were rejected',
-          ...result,
-        },
-        400
-      );
-    }
+        if (!hasApplied && hasRejections) {
+          await recordSettingsAuditFailure(c, {
+            category,
+            scope,
+            reason: 'validation_failed',
+            metadata: { rejected: result.rejected },
+          });
+          return c.json(
+            {
+              error: 'validation_failed',
+              message: 'All changes were rejected',
+              ...result,
+            },
+            400
+          );
+        }
 
-    if (hasApplied && AUTHENTICATION_METHODS_CLIENT_CACHE_CATEGORIES.has(category)) {
-      await invalidateAuthenticationMethodsCacheRevision(c, clientTenantId, `client:${category}`);
-    }
+        if (hasApplied && AUTHENTICATION_METHODS_CLIENT_CACHE_CATEGORIES.has(category)) {
+          await invalidateAuthenticationMethodsCacheRevision(
+            c,
+            clientTenantId,
+            `client:${category}`
+          );
+        }
 
-    return c.json(result);
-  } catch (error) {
-    // Handle JSON parse errors
-    if (error instanceof SyntaxError) {
-      await recordSettingsAuditFailure(c, { category, scope, reason: 'invalid_json' });
-      return errorResponse(c, 'bad_request', 'Invalid JSON body', 400);
-    }
-    if (error instanceof ConflictError) {
-      await recordSettingsAuditFailure(c, {
-        category,
-        scope,
-        reason: 'version_conflict',
-        metadata: { current_version: error.currentVersion },
-      });
-      return c.json(
-        {
-          error: 'conflict',
-          message: error.message,
-          currentVersion: error.currentVersion,
-        },
-        409
-      );
-    }
-    await recordSettingsAuditFailure(c, {
-      category,
-      scope,
-      reason: 'unhandled_error',
-      metadata: { error_class: error instanceof Error ? error.name : 'unknown_error' },
-    });
-    throw error;
-  }
+        return c.json(result);
+      } catch (error) {
+        // Handle JSON parse errors
+        if (error instanceof SyntaxError) {
+          await recordSettingsAuditFailure(c, { category, scope, reason: 'invalid_json' });
+          return errorResponse(c, 'bad_request', 'Invalid JSON body', 400);
+        }
+        if (error instanceof ConflictError) {
+          await recordSettingsAuditFailure(c, {
+            category,
+            scope,
+            reason: 'version_conflict',
+            metadata: { current_version: error.currentVersion },
+          });
+          return c.json(
+            {
+              error: 'conflict',
+              message: error.message,
+              currentVersion: error.currentVersion,
+            },
+            409
+          );
+        }
+        await recordSettingsAuditFailure(c, {
+          category,
+          scope,
+          reason: 'unhandled_error',
+          metadata: { error_class: error instanceof Error ? error.name : 'unknown_error' },
+        });
+        throw error;
+      }
+    },
+  });
 });
 
 /**
@@ -1850,140 +1871,150 @@ settingsV2.patch('/clients/:clientId/settings/:category', async (c) => {
     );
   }
 
-  const manager = getSettingsManager(c.env, c);
-  const scope = { type: 'client', id: clientId, tenantId: clientTenantId } as SettingScope;
+  return runTenantBackupCoveredMutation({
+    env: c.env,
+    tenantId: clientTenantId,
+    run: async () => {
+      const manager = getSettingsManager(c.env, c);
+      const scope = { type: 'client', id: clientId, tenantId: clientTenantId } as SettingScope;
 
-  try {
-    const rawBody = await c.req.json();
-    const body = parsePatchRequest(rawBody);
+      try {
+        const rawBody = await c.req.json();
+        const body = parsePatchRequest(rawBody);
 
-    if (!body.ifMatch) {
-      await recordSettingsAuditFailure(c, { category, scope, reason: 'if_match_required' });
-      return errorResponse(c, 'bad_request', 'ifMatch is required for PATCH operations', 400);
-    }
+        if (!body.ifMatch) {
+          await recordSettingsAuditFailure(c, { category, scope, reason: 'if_match_required' });
+          return errorResponse(c, 'bad_request', 'ifMatch is required for PATCH operations', 400);
+        }
 
-    if (category === 'client') {
-      const deprecatedConsentSetting = findDeprecatedClientConsentSetting(body);
-      if (deprecatedConsentSetting) {
+        if (category === 'client') {
+          const deprecatedConsentSetting = findDeprecatedClientConsentSetting(body);
+          if (deprecatedConsentSetting) {
+            await recordSettingsAuditFailure(c, {
+              category,
+              scope,
+              reason: 'deprecated_client_consent_setting',
+            });
+            return errorResponse(
+              c,
+              'bad_request',
+              `${deprecatedConsentSetting} is no longer supported; use Client Trust Policy`,
+              400
+            );
+          }
+        }
+
+        if (category === 'login-ui') {
+          const loginUiValidation = validateLoginUIPatch(body);
+          if (!loginUiValidation.ok) {
+            await recordSettingsAuditFailure(c, {
+              category,
+              scope,
+              reason: 'login_ui_validation_failed',
+              metadata: loginUiValidation.details,
+            });
+            return errorResponse(
+              c,
+              'validation_failed',
+              loginUiValidation.message ?? 'Login UI settings are invalid',
+              400,
+              loginUiValidation.details
+            );
+          }
+        }
+
+        if (category === 'client') {
+          const appLoginValidation = await validateClientAppLoginPatch(
+            c.env,
+            clientTenantId,
+            clientId,
+            body
+          );
+          if (!appLoginValidation.ok) {
+            await recordSettingsAuditFailure(c, {
+              category,
+              scope,
+              reason: 'app_login_validation_failed',
+              metadata: appLoginValidation.details,
+            });
+            return errorResponse(
+              c,
+              appLoginValidation.error,
+              appLoginValidation.message,
+              appLoginValidation.status,
+              appLoginValidation.details
+            );
+          }
+        }
+
+        const actor = adminAuth?.userId ?? 'unknown';
+        const result = await manager.patch(category, scope, body, actor);
+
+        const hasRejections = Object.keys(result.rejected).length > 0;
+        const hasApplied =
+          result.applied.length > 0 || result.cleared.length > 0 || result.disabled.length > 0;
+
+        if (!hasApplied && hasRejections) {
+          await recordSettingsAuditFailure(c, {
+            category,
+            scope,
+            reason: 'validation_failed',
+            metadata: { rejected: result.rejected },
+          });
+          return c.json(
+            {
+              error: 'validation_failed',
+              message: 'All changes were rejected',
+              ...result,
+            },
+            400
+          );
+        }
+
+        if (hasApplied && AUTHENTICATION_METHODS_CLIENT_CACHE_CATEGORIES.has(category)) {
+          await invalidateAuthenticationMethodsCacheRevision(
+            c,
+            clientTenantId,
+            `client:${category}`
+          );
+        }
+
+        return c.json(result);
+      } catch (error) {
+        if (error instanceof SyntaxError) {
+          await recordSettingsAuditFailure(c, { category, scope, reason: 'invalid_json' });
+          return errorResponse(c, 'bad_request', 'Invalid JSON body', 400);
+        }
+        if (error instanceof ConflictError) {
+          await recordSettingsAuditFailure(c, {
+            category,
+            scope,
+            reason: 'version_conflict',
+            metadata: { current_version: error.currentVersion },
+          });
+          return c.json(
+            {
+              error: 'conflict',
+              message: error.message,
+              currentVersion: error.currentVersion,
+            },
+            409
+          );
+        }
+        if (error instanceof Error && error.message.includes('Unknown category')) {
+          await recordSettingsAuditFailure(c, { category, scope, reason: 'unknown_category' });
+          return errorResponse(c, 'not_found', `Category "${category}" not found`, 404);
+        }
         await recordSettingsAuditFailure(c, {
           category,
           scope,
-          reason: 'deprecated_client_consent_setting',
+          reason: 'unhandled_error',
+          metadata: { error_class: error instanceof Error ? error.name : 'unknown_error' },
         });
-        return errorResponse(
-          c,
-          'bad_request',
-          `${deprecatedConsentSetting} is no longer supported; use Client Trust Policy`,
-          400
-        );
+        throw error;
       }
-    }
-
-    if (category === 'login-ui') {
-      const loginUiValidation = validateLoginUIPatch(body);
-      if (!loginUiValidation.ok) {
-        await recordSettingsAuditFailure(c, {
-          category,
-          scope,
-          reason: 'login_ui_validation_failed',
-          metadata: loginUiValidation.details,
-        });
-        return errorResponse(
-          c,
-          'validation_failed',
-          loginUiValidation.message ?? 'Login UI settings are invalid',
-          400,
-          loginUiValidation.details
-        );
-      }
-    }
-
-    if (category === 'client') {
-      const appLoginValidation = await validateClientAppLoginPatch(
-        c.env,
-        clientTenantId,
-        clientId,
-        body
-      );
-      if (!appLoginValidation.ok) {
-        await recordSettingsAuditFailure(c, {
-          category,
-          scope,
-          reason: 'app_login_validation_failed',
-          metadata: appLoginValidation.details,
-        });
-        return errorResponse(
-          c,
-          appLoginValidation.error,
-          appLoginValidation.message,
-          appLoginValidation.status,
-          appLoginValidation.details
-        );
-      }
-    }
-
-    const actor = adminAuth?.userId ?? 'unknown';
-    const result = await manager.patch(category, scope, body, actor);
-
-    const hasRejections = Object.keys(result.rejected).length > 0;
-    const hasApplied =
-      result.applied.length > 0 || result.cleared.length > 0 || result.disabled.length > 0;
-
-    if (!hasApplied && hasRejections) {
-      await recordSettingsAuditFailure(c, {
-        category,
-        scope,
-        reason: 'validation_failed',
-        metadata: { rejected: result.rejected },
-      });
-      return c.json(
-        {
-          error: 'validation_failed',
-          message: 'All changes were rejected',
-          ...result,
-        },
-        400
-      );
-    }
-
-    if (hasApplied && AUTHENTICATION_METHODS_CLIENT_CACHE_CATEGORIES.has(category)) {
-      await invalidateAuthenticationMethodsCacheRevision(c, clientTenantId, `client:${category}`);
-    }
-
-    return c.json(result);
-  } catch (error) {
-    if (error instanceof SyntaxError) {
-      await recordSettingsAuditFailure(c, { category, scope, reason: 'invalid_json' });
-      return errorResponse(c, 'bad_request', 'Invalid JSON body', 400);
-    }
-    if (error instanceof ConflictError) {
-      await recordSettingsAuditFailure(c, {
-        category,
-        scope,
-        reason: 'version_conflict',
-        metadata: { current_version: error.currentVersion },
-      });
-      return c.json(
-        {
-          error: 'conflict',
-          message: error.message,
-          currentVersion: error.currentVersion,
-        },
-        409
-      );
-    }
-    if (error instanceof Error && error.message.includes('Unknown category')) {
-      await recordSettingsAuditFailure(c, { category, scope, reason: 'unknown_category' });
-      return errorResponse(c, 'not_found', `Category "${category}" not found`, 404);
-    }
-    await recordSettingsAuditFailure(c, {
-      category,
-      scope,
-      reason: 'unhandled_error',
-      metadata: { error_class: error instanceof Error ? error.name : 'unknown_error' },
-    });
-    throw error;
-  }
+    },
+  });
 });
 
 // =============================================================================
@@ -2071,98 +2102,104 @@ settingsV2.patch('/platform/settings/:category', (c) => {
       );
     }
 
-    const manager = getSettingsManager(c.env, c);
-    const scope: SettingScope = { type: 'platform' };
+    return runTenantBackupCoveredMutation({
+      env: c.env,
+      scope: 'environment',
+      run: async () => {
+        const manager = getSettingsManager(c.env, c);
+        const scope: SettingScope = { type: 'platform' };
 
-    try {
-      const rawBody = await c.req.json();
-      const body = parsePatchRequest(rawBody);
+        try {
+          const rawBody = await c.req.json();
+          const body = parsePatchRequest(rawBody);
 
-      if (!body.ifMatch) {
-        await recordSettingsAuditFailure(c, { category, scope, reason: 'if_match_required' });
-        return errorResponse(c, 'bad_request', 'ifMatch is required for PATCH operations', 400);
-      }
+          if (!body.ifMatch) {
+            await recordSettingsAuditFailure(c, { category, scope, reason: 'if_match_required' });
+            return errorResponse(c, 'bad_request', 'ifMatch is required for PATCH operations', 400);
+          }
 
-      if (category === 'login-ui') {
-        const loginUiValidation = validateLoginUIPatch(body);
-        if (!loginUiValidation.ok) {
+          if (category === 'login-ui') {
+            const loginUiValidation = validateLoginUIPatch(body);
+            if (!loginUiValidation.ok) {
+              await recordSettingsAuditFailure(c, {
+                category,
+                scope,
+                reason: 'login_ui_validation_failed',
+                metadata: loginUiValidation.details,
+              });
+              return errorResponse(
+                c,
+                'validation_failed',
+                loginUiValidation.message ?? 'Login UI settings are invalid',
+                400,
+                loginUiValidation.details
+              );
+            }
+          }
+
+          const actor = adminAuth?.userId ?? 'unknown';
+          const result = await manager.patch(category, scope, body, actor);
+          const hasRejections = Object.keys(result.rejected).length > 0;
+          const hasApplied =
+            result.applied.length > 0 || result.cleared.length > 0 || result.disabled.length > 0;
+
+          if (!hasApplied && hasRejections) {
+            await recordSettingsAuditFailure(c, {
+              category,
+              scope,
+              reason: 'validation_failed',
+              metadata: { rejected: result.rejected },
+            });
+            return c.json(
+              {
+                error: 'validation_failed',
+                message: 'All changes were rejected',
+                ...result,
+              },
+              400
+            );
+          }
+
+          if (hasApplied && AUTHENTICATION_METHODS_TENANT_CACHE_CATEGORIES.has(category)) {
+            await invalidateAuthenticationMethodsCacheRevision(c, null, `platform:${category}`);
+          }
+
+          return c.json(result);
+        } catch (error) {
+          if (error instanceof SyntaxError) {
+            await recordSettingsAuditFailure(c, { category, scope, reason: 'invalid_json' });
+            return errorResponse(c, 'bad_request', 'Invalid JSON body', 400);
+          }
+          if (error instanceof ConflictError) {
+            await recordSettingsAuditFailure(c, {
+              category,
+              scope,
+              reason: 'version_conflict',
+              metadata: { current_version: error.currentVersion },
+            });
+            return c.json(
+              {
+                error: 'conflict',
+                message: error.message,
+                currentVersion: error.currentVersion,
+              },
+              409
+            );
+          }
+          if (error instanceof Error && error.message.includes('Unknown category')) {
+            await recordSettingsAuditFailure(c, { category, scope, reason: 'unknown_category' });
+            return errorResponse(c, 'not_found', `Category "${category}" not found`, 404);
+          }
           await recordSettingsAuditFailure(c, {
             category,
             scope,
-            reason: 'login_ui_validation_failed',
-            metadata: loginUiValidation.details,
+            reason: 'unhandled_error',
+            metadata: { error_class: error instanceof Error ? error.name : 'unknown_error' },
           });
-          return errorResponse(
-            c,
-            'validation_failed',
-            loginUiValidation.message ?? 'Login UI settings are invalid',
-            400,
-            loginUiValidation.details
-          );
+          throw error;
         }
-      }
-
-      const actor = adminAuth?.userId ?? 'unknown';
-      const result = await manager.patch(category, scope, body, actor);
-      const hasRejections = Object.keys(result.rejected).length > 0;
-      const hasApplied =
-        result.applied.length > 0 || result.cleared.length > 0 || result.disabled.length > 0;
-
-      if (!hasApplied && hasRejections) {
-        await recordSettingsAuditFailure(c, {
-          category,
-          scope,
-          reason: 'validation_failed',
-          metadata: { rejected: result.rejected },
-        });
-        return c.json(
-          {
-            error: 'validation_failed',
-            message: 'All changes were rejected',
-            ...result,
-          },
-          400
-        );
-      }
-
-      if (hasApplied && AUTHENTICATION_METHODS_TENANT_CACHE_CATEGORIES.has(category)) {
-        await invalidateAuthenticationMethodsCacheRevision(c, null, `platform:${category}`);
-      }
-
-      return c.json(result);
-    } catch (error) {
-      if (error instanceof SyntaxError) {
-        await recordSettingsAuditFailure(c, { category, scope, reason: 'invalid_json' });
-        return errorResponse(c, 'bad_request', 'Invalid JSON body', 400);
-      }
-      if (error instanceof ConflictError) {
-        await recordSettingsAuditFailure(c, {
-          category,
-          scope,
-          reason: 'version_conflict',
-          metadata: { current_version: error.currentVersion },
-        });
-        return c.json(
-          {
-            error: 'conflict',
-            message: error.message,
-            currentVersion: error.currentVersion,
-          },
-          409
-        );
-      }
-      if (error instanceof Error && error.message.includes('Unknown category')) {
-        await recordSettingsAuditFailure(c, { category, scope, reason: 'unknown_category' });
-        return errorResponse(c, 'not_found', `Category "${category}" not found`, 404);
-      }
-      await recordSettingsAuditFailure(c, {
-        category,
-        scope,
-        reason: 'unhandled_error',
-        metadata: { error_class: error instanceof Error ? error.name : 'unknown_error' },
-      });
-      throw error;
-    }
+      },
+    });
   })();
 });
 

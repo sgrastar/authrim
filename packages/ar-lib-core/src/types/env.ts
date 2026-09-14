@@ -354,6 +354,8 @@ export interface PluginRunnerServiceBinding {
  * - PII_: PII encryption settings
  */
 export interface Env {
+  /** Setup-generated binding identity metadata; not a user-configurable backup option. */
+  AUTHRIM_FIXED_DATABASE_IDS?: string;
   // D1 Databases
   DB: D1Database; // Fixed platform metadata, profile registry, and non-PII audit store; never a tenant identity route
   PLATFORM_NOTIFICATION_DB?: D1Database; // Platform-owned notification intent store; never a tenant route
@@ -516,6 +518,7 @@ export interface Env {
   ENABLE_IDENTITY_STITCHING?: string; // "true" to enable automatic identity stitching
   ENABLE_IDENTITY_STITCHING_REQUIRE_VERIFIED_EMAIL?: string; // "false" to allow unverified emails (not recommended)
   RP_TOKEN_ENCRYPTION_KEY?: string; // Encryption key for external IdP tokens (32-byte hex string)
+  TENANT_BACKUP_WRAPPING_KEY?: string; // Dedicated 32-byte hex key for temporary backup operation secrets
   ADMIN_CREDENTIAL_ENCRYPTION_KEY?: string; // Encryption key for Admin-managed external credentials
 
   // PII Encryption

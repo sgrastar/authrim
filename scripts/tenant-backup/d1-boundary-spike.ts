@@ -152,7 +152,7 @@ try {
       tenant_id TEXT NOT NULL,id TEXT NOT NULL,revision INTEGER NOT NULL,PRIMARY KEY(tenant_id,id));
       CREATE TABLE service_group_write_boundaries(id TEXT PRIMARY KEY NOT NULL,
         tenant_id TEXT NOT NULL,user_id TEXT NOT NULL,operation TEXT NOT NULL,status TEXT NOT NULL,created_at INTEGER NOT NULL);
-      ${SQLITE_SNAPSHOT_SCHEMA} ${sqliteSnapshotTriggers(schema)}
+      ${SQLITE_SNAPSHOT_SCHEMA} ${sqliteSnapshotTriggers(schema, 'json')}
       INSERT INTO fixture_users VALUES('a','user',0);`).map((sql) => db.prepare(sql))
     );
   }
@@ -165,7 +165,7 @@ try {
     return (await response.json()) as Record<string, unknown> | null;
   }
   async function prepare(id: string, participant: string, advanceAfterActivation = 0) {
-    const start = sqliteSnapshotStartStatement([schema], id, 'a');
+    const start = sqliteSnapshotStartStatement([schema], id, 'a', undefined, 'json');
     // A trusted participant condition belongs in the same atomic activation statement. A
     // prior read with no active RPCs does not prove that old failed business writes were repaired.
     start.sql += ` AND NOT EXISTS (SELECT 1 FROM service_group_write_boundaries
@@ -174,7 +174,7 @@ try {
   }
   async function revision(db: typeof core, id: string): Promise<number> {
     const rows = await db
-      .prepare(sqliteSnapshotPageQuery(schema))
+      .prepare(sqliteSnapshotPageQuery(schema, 'json'))
       .bind(id, 'a', '', 100)
       .all<{ row_json: string }>();
     assert.equal(rows.results.length, 1);
@@ -184,14 +184,14 @@ try {
   }
 
   // Demonstrate why two successful D1 snapshots are not sufficient evidence on their own.
-  const unsafeCore = sqliteSnapshotStartStatement([schema], 'unsafe', 'a');
+  const unsafeCore = sqliteSnapshotStartStatement([schema], 'unsafe', 'a', undefined, 'json');
   await core
     .prepare(unsafeCore.sql)
     .bind(...unsafeCore.params)
     .run();
   await core.prepare('UPDATE fixture_users SET revision=1').run();
   await pii.prepare('UPDATE fixture_users SET revision=1').run();
-  const unsafePii = sqliteSnapshotStartStatement([schema], 'unsafe', 'a');
+  const unsafePii = sqliteSnapshotStartStatement([schema], 'unsafe', 'a', undefined, 'json');
   await pii
     .prepare(unsafePii.sql)
     .bind(...unsafePii.params)

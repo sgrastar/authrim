@@ -113,6 +113,8 @@
     "backup:inventory:writers": "tsx scripts/tenant-backup/writer-inventory-cli.ts",
     "backup:test:d1": "tsx scripts/tenant-backup/d1-snapshot-spike.ts",
     "backup:test:d1-cost": "tsx scripts/tenant-backup/d1-capture-cost-spike.ts",
+    "backup:test:upload": "tsx scripts/tenant-backup/upload-runtime-check.ts",
+    "backup:test:rpc": "tsx scripts/tenant-backup/boundary-rpc-runtime-check.ts",
     "backup:test:boundary": "tsx scripts/tenant-backup/d1-boundary-spike.ts",
     "backup:test:r2": "tsx scripts/tenant-backup/r2-retention-spike.ts",
     "backup:test:d1-schema": "tsx scripts/tenant-backup/d1-schema-spike.ts",

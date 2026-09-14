@@ -242,15 +242,17 @@ describe('settings offline roundtrip on real schemas', () => {
         INSERT INTO roles (id,tenant_id,name,permissions_json,created_at)
         VALUES ('other-tenant-role','tenant-b','Private','[]',1);
         ${SQLITE_SNAPSHOT_SCHEMA}`);
-        for (const schema of schemas) source.exec(sqliteSnapshotTriggers(schema));
-        source.exec("INSERT INTO tenant_backup_snapshots VALUES ('s1','tenant-a','capturing')");
+        for (const schema of schemas) source.exec(sqliteSnapshotTriggers(schema, 'json'));
+        source.exec(
+          "INSERT INTO tenant_backup_snapshots (id, tenant_id, state) VALUES ('s1','tenant-a','capturing')"
+        );
         source.exec(
           "UPDATE oauth_clients SET client_name = 'Changed during export' WHERE tenant_id = 'tenant-a'"
         );
         const records = schemas.map((schema) => ({
           table: schema.table,
           rows: source
-            .prepare(sqliteSnapshotPageQuery(schema))
+            .prepare(sqliteSnapshotPageQuery(schema, 'json'))
             .all('s1', 'tenant-a', '', 100)
             .map((row) => String(row.row_json)),
         }));

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import { splitMigrationSql } from '../../packages/ar-lib-core/src/services/control-plane/migration-sql.js';
 import { sqliteSnapshotRowInsert } from '../../packages/ar-lib-core/src/services/tenant-portability/sqlite-row-codec.js';
+import { packedSqliteRowToJson } from '../../packages/ar-lib-core/src/services/tenant-portability/sqlite-packed-row.js';
 import { sqliteSnapshotStartStatement } from '../../packages/ar-lib-core/src/services/tenant-portability/sqlite-capture-plan.js';
 import {
   SQLITE_SNAPSHOT_SCHEMA,
@@ -22,6 +23,37 @@ const runtime = new Miniflare({
   host: '127.0.0.1',
   d1Databases: ['BACKUP_TEST_DB', 'RESTORE_TEST_DB'],
 });
+
+async function decodePackedRow(value: unknown, columns: readonly string[]): Promise<string> {
+  const bytes =
+    value instanceof Uint8Array
+      ? value
+      : Array.isArray(value) &&
+          value.every((byte) => Number.isInteger(byte) && byte >= 0 && byte < 256)
+        ? Uint8Array.from(value as number[])
+        : value instanceof ArrayBuffer
+          ? new Uint8Array(value)
+          : ArrayBuffer.isView(value)
+            ? new Uint8Array(value.buffer, value.byteOffset, value.byteLength)
+            : null;
+  if (!bytes) throw new Error('snapshot_runtime_invalid_packed_row');
+  const output: Uint8Array[] = [];
+  for await (const chunk of packedSqliteRowToJson(
+    (async function* () {
+      yield bytes;
+    })(),
+    columns
+  ))
+    output.push(chunk);
+  const length = output.reduce((total, chunk) => total + chunk.length, 0);
+  const joined = new Uint8Array(length);
+  let offset = 0;
+  for (const chunk of output) {
+    joined.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return new TextDecoder().decode(joined).trimEnd();
+}
 
 try {
   const db = await runtime.getD1Database('BACKUP_TEST_DB');
@@ -79,7 +111,8 @@ try {
   await db.prepare("INSERT OR REPLACE INTO accounts VALUES ('a','2','original',0,NULL)").run();
   const page = await db.prepare(sqliteSnapshotPageQuery(schema)).bind('s1', 'a', '', 100).all();
   assert.equal(page.results.length, 1);
-  const row = JSON.parse(String(page.results[0].row_json)) as Record<string, unknown>;
+  const rowJson = await decodePackedRow(page.results[0].row_json, schema.columns);
+  const row = JSON.parse(rowJson) as Record<string, unknown>;
   assert.deepEqual(row.id, ['text', '1']);
   assert.deepEqual(row.counter, ['integer', '9007199254740993']);
   assert.deepEqual(row.secret, ['blob', '00FF']);
@@ -89,17 +122,14 @@ try {
     .bind('s1', 'a', '', 100)
     .all();
   assert.equal(notes.results.length, 1);
-  assert.deepEqual(
-    (JSON.parse(String(notes.results[0].row_json)) as Record<string, unknown>).note,
-    ['text', 'before parent deletion']
-  );
+  const noteJson = await decodePackedRow(notes.results[0].row_json, notesSchema.columns);
+  assert.deepEqual((JSON.parse(noteJson) as Record<string, unknown>).note, [
+    'text',
+    'before parent deletion',
+  ]);
   const target = await runtime.getD1Database('RESTORE_TEST_DB');
   await target.prepare(splitMigrationSql(ddl)[0]).run();
-  const insert = sqliteSnapshotRowInsert(
-    schema.table,
-    schema.columns,
-    String(page.results[0].row_json)
-  );
+  const insert = sqliteSnapshotRowInsert(schema.table, schema.columns, rowJson);
   await target
     .prepare(insert.sql)
     .bind(...insert.params)

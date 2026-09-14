@@ -23,49 +23,13 @@ const { DatabaseSync } = createRequire(import.meta.url)('node:sqlite') as {
   DatabaseSync: new (path: string) => SchemaDatabase;
 };
 
-export interface BackupSchemaColumn {
-  name: string;
-  type: string;
-  notNull: boolean;
-  defaultSql: string | null;
-  primaryKeyPosition: number;
-  generated: boolean;
-}
-
-export interface BackupSchemaForeignKey {
-  id: number;
-  position: number;
-  parentTable: string;
-  column: string;
-  parentColumn: string | null;
-  onUpdate: string;
-  onDelete: string;
-}
-
-export interface BackupSchemaIndex {
-  name: string;
-  unique: boolean;
-  origin: string;
-  partial: boolean;
-  sql: string | null;
-  columns: Array<{
-    position: number;
-    name: string | null;
-    collation: string;
-    descending: boolean;
-    key: boolean;
-  }>;
-}
-
-export interface BackupSchemaTable {
-  name: string;
-  sql: string;
-  columns: BackupSchemaColumn[];
-  foreignKeys: BackupSchemaForeignKey[];
-  indexes: BackupSchemaIndex[];
-  withoutRowid: boolean;
-  strict: boolean;
-}
+import type { BackupSchemaTable } from '../../packages/ar-lib-core/src/services/tenant-portability/sqlite-schema-types.js';
+export type {
+  BackupSchemaColumn,
+  BackupSchemaForeignKey,
+  BackupSchemaIndex,
+  BackupSchemaTable,
+} from '../../packages/ar-lib-core/src/services/tenant-portability/sqlite-schema-types.js';
 
 export interface BackupSchemaInventory {
   formatVersion: 1;
@@ -148,6 +112,9 @@ export function inspectBackupSchema(sqlFiles: readonly string[]): {
             primaryKeyPosition: Number(column.pk),
             generated: column.hidden !== 0,
           })),
+          triggers: schema
+            .filter((object) => object.type === 'trigger' && object.tbl_name === name)
+            .map((object) => ({ name: String(object.name), sql: String(object.sql) })),
           foreignKeys: foreignKeys.map((key) => ({
             id: Number(key.id),
             position: Number(key.seq),

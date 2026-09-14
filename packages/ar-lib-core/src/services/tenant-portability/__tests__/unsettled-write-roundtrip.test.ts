@@ -103,7 +103,7 @@ describe('unsettled cross-database user writes in backup', () => {
         const start = sqliteSnapshotStartStatement([schema, valuesSchema], 'capture', 'a');
         expect(source.prepare(start.sql).run(...start.params).changes).toBe(1);
         for (const row of source
-          .prepare(sqliteSnapshotPageQuery(valuesSchema))
+          .prepare(sqliteSnapshotPageQuery(valuesSchema, 'json'))
           .all('capture', 'a', '', 100)) {
           const insert = sqliteSnapshotRowInsert(
             valuesSchema.table,
@@ -120,7 +120,7 @@ describe('unsettled cross-database user writes in backup', () => {
         );
         if (selected) {
           for (const record of source
-            .prepare(sqliteSnapshotPageQuery(schema))
+            .prepare(sqliteSnapshotPageQuery(schema, 'json'))
             .all('capture', 'a', '', 100)) {
             const insert = sqliteSnapshotRowInsert(
               schema.table,

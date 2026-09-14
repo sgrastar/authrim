@@ -1,3 +1,4 @@
+import { TenantBundleCipherDecoder } from '../bundle-cipher-decoder';
 import { beforeAll, describe, expect, it } from 'vitest';
 import {
   createTenantBundleKeyEnvelope,
@@ -124,4 +125,75 @@ describe('self-contained backup key wrapping and chunk authentication', () => {
       )
     ).rejects.toThrow();
   });
+});
+
+it('resumes authenticated frame decoding after every saved checkpoint and repeats uncertain frames exactly', async () => {
+  let decoder = await TenantBundleCipherDecoder.create(frames[0], session, limits);
+  const output: Uint8Array[] = [];
+  for (const frame of frames.slice(1)) {
+    const checkpoint = decoder.checkpoint();
+    const event = await decoder.step(frame);
+    const retry = await TenantBundleCipherDecoder.create(frames[0], session, limits, checkpoint);
+    expect(await retry.step(frame)).toEqual(event);
+    expect(retry.checkpoint()).toEqual(decoder.checkpoint());
+    if (event.kind === 'chunk') output.push(event.bytes);
+    decoder = await TenantBundleCipherDecoder.create(
+      frames[0],
+      session,
+      limits,
+      JSON.parse(JSON.stringify(decoder.checkpoint()))
+    );
+  }
+  expect(output).toEqual([new Uint8Array([1, 2]), new Uint8Array([3, 4])]);
+  expect(decoder.checkpoint()).toMatchObject({ complete: true, chunks: 2, bytes: 4 });
+  await expect(decoder.step(frames[1])).rejects.toThrow();
+  const checkpoint = decoder.checkpoint();
+  checkpoint.chunks = 0;
+  expect(decoder.checkpoint().chunks).toBe(2);
+  expect(Object.keys(decoder.checkpoint()).sort()).toEqual([
+    'bytes',
+    'chunks',
+    'complete',
+    'headerSha256',
+    'version',
+  ]);
+});
+it('rejects wrong-header resumes, reordered frames and corrupt frames without advancing state', async () => {
+  const decoder = await TenantBundleCipherDecoder.create(frames[0], session, limits);
+  const before = decoder.checkpoint();
+  await expect(decoder.step(frames[2])).rejects.toThrow();
+  expect(decoder.checkpoint()).toEqual(before);
+  const damaged = frames[1].slice();
+  damaged[damaged.length - 1] ^= 1;
+  await expect(decoder.step(damaged)).rejects.toThrow();
+  expect(decoder.checkpoint()).toEqual(before);
+  const changed = frames[0].slice();
+  changed[124] ^= 1;
+  await expect(
+    TenantBundleCipherDecoder.create(changed, session, limits, before)
+  ).rejects.toThrow();
+  await expect(
+    TenantBundleCipherDecoder.create(frames[0], session, limits, { ...before, chunks: 1, bytes: 0 })
+  ).rejects.toThrow();
+});
+it('enforces cumulative frame and byte limits across resumes and serializes decryption', async () => {
+  const decoder = await TenantBundleCipherDecoder.create(frames[0], session, limits);
+  const pending = decoder.step(frames[1]);
+  await expect(decoder.step(frames[1])).rejects.toThrow();
+  await pending;
+  const saved = decoder.checkpoint();
+  const frameBound = await TenantBundleCipherDecoder.create(
+    frames[0],
+    session,
+    { ...limits, maxFrames: 2 },
+    saved
+  );
+  await expect(frameBound.step(frames[2])).rejects.toThrow();
+  const byteBound = await TenantBundleCipherDecoder.create(
+    frames[0],
+    session,
+    { ...limits, maxTotalBytes: 160 },
+    saved
+  );
+  await expect(byteBound.step(frames[2])).rejects.toThrow();
 });

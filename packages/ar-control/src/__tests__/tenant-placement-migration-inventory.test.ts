@@ -75,6 +75,16 @@ describe('tenant placement migration inventory', () => {
     );
 
     expect(result).toMatchObject({ state: 'ready', blockedReasons: [] });
+    for (const table of [
+      'tenant_backup_snapshots',
+      'tenant_backup_preimages',
+      'tenant_backup_restore_targets',
+    ]) {
+      expect(result.tables.find((entry) => entry.table === table)).toMatchObject({
+        disposition: 'retain_target_local',
+        ownership: { kind: 'shard_local' },
+      });
+    }
     expect(result.tables.find((table) => table.table === 'users')?.ownership).toEqual({
       kind: 'tenant_column',
       column: 'tenant_id',
@@ -98,6 +108,16 @@ describe('tenant placement migration inventory', () => {
     const result = classifyTenantMigrationSchema('tenant_pii', currentStreamSchema('pii-d1'));
 
     expect(result).toMatchObject({ state: 'ready', blockedReasons: [] });
+    for (const table of [
+      'tenant_backup_snapshots',
+      'tenant_backup_preimages',
+      'tenant_backup_restore_targets',
+    ]) {
+      expect(result.tables.find((entry) => entry.table === table)).toMatchObject({
+        disposition: 'retain_target_local',
+        ownership: { kind: 'shard_local' },
+      });
+    }
     expect(result.tables.find((table) => table.table === 'users_pii')?.ownership).toEqual({
       kind: 'tenant_column',
       column: 'tenant_id',

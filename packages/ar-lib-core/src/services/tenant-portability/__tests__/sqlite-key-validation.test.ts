@@ -1,3 +1,4 @@
+import { packedSqliteRowToJson } from '../sqlite-packed-row';
 import { DatabaseSync } from 'node:sqlite';
 import { describe, expect, it } from 'vitest';
 import { sqliteSnapshotStartStatement } from '../sqlite-capture-plan';
@@ -53,7 +54,7 @@ describe('DB-enforced snapshot identities', () => {
     }
   });
 
-  it('keeps NULL impossible before, during and after capture for every tenant', () => {
+  it('keeps NULL impossible before, during and after capture for every tenant', async () => {
     const db = new DatabaseSync(':memory:');
     try {
       db.exec(`CREATE TABLE items (id TEXT PRIMARY KEY NOT NULL, tenant_id TEXT NOT NULL, value TEXT);
@@ -82,7 +83,19 @@ describe('DB-enforced snapshot identities', () => {
       });
       db.exec("UPDATE items SET value='after' WHERE id='valid'");
       const rows = db.prepare(sqliteSnapshotPageQuery(schema)).all('s', 'a', '', 100);
-      expect(rows.map((row) => JSON.parse(String(row.row_json)).value[1])).toEqual(['before']);
+      const names = await Promise.all(
+        rows.map(async (row) => {
+          async function* chunks() {
+            yield row.row_json as Uint8Array;
+          }
+          let json = '';
+          const decoder = new TextDecoder();
+          for await (const chunk of packedSqliteRowToJson(chunks(), schema.columns))
+            json += decoder.decode(chunk, { stream: true });
+          return JSON.parse(json + decoder.decode()).value[1];
+        })
+      );
+      expect(names).toEqual(['before']);
       db.exec("UPDATE tenant_backup_snapshots SET state='sealed'");
       rejectNull();
     } finally {

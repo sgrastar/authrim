@@ -41,7 +41,7 @@ const ddl = `CREATE TABLE fixture_keys (
   CREATE TRIGGER ready_asset_update BEFORE UPDATE ON fixture_asset_refs BEGIN
     SELECT RAISE(ABORT,'object_not_ready') WHERE NOT EXISTS(SELECT 1 FROM fixture_objects
       WHERE tenant_id=NEW.tenant_id AND object_id=NEW.object_id AND state='ready'); END;
-  ${SQLITE_SNAPSHOT_SCHEMA} ${sqliteSnapshotTriggers(schema)}`;
+  ${SQLITE_SNAPSHOT_SCHEMA} ${sqliteSnapshotTriggers(schema, 'json')}`;
 const claimSql = `UPDATE fixture_objects SET state='deleting'
   WHERE tenant_id=? AND object_id=? AND state='ready'
   AND NOT EXISTS(SELECT 1 FROM fixture_asset_refs AS live
@@ -194,7 +194,7 @@ try {
       .run();
   }
   async function start(id: string): Promise<void> {
-    const start = sqliteSnapshotStartStatement([schema], id, 'a');
+    const start = sqliteSnapshotStartStatement([schema], id, 'a', undefined, 'json');
     assert.equal(
       (
         await db
@@ -234,7 +234,7 @@ try {
     assert.equal(active, snapshot);
     try {
       const page = await db
-        .prepare(sqliteSnapshotPageQuery(schema))
+        .prepare(sqliteSnapshotPageQuery(schema, 'json'))
         .bind(snapshot, 'a', '', 100)
         .all<{ row_json: string }>();
       assert.equal(page.results.length, 1);

@@ -115,6 +115,30 @@ export const TENANT_BACKUP_OWNERSHIP_RULES: ReadonlyArray<{
     table,
     ownership: byTenantKey,
   })),
+  // Parent joins verified against the owning repositories and migration foreign keys.
+  ...[
+    ['admin_passkeys', 'admin_users', 'admin_user_id'],
+    ['agent_task_set_versions', 'agent_task_sets', 'task_set_id'],
+    ['agent_scope_policy_versions', 'agent_scope_policies', 'scope_policy_id'],
+    ['approval_request_approvals', 'approval_requests', 'approval_request_id'],
+  ].map(([table, parentTable, childColumn]) => ({
+    family: 'admin' as const,
+    table,
+    ownership: parent(parentTable, childColumn, 'id'),
+  })),
+  {
+    family: 'admin',
+    table: 'agent_configuration_plan_steps',
+    ownership: {
+      kind: 'parent',
+      table: 'agent_configuration_plans',
+      keys: [
+        { child: 'plan_id', parent: 'id' },
+        { child: 'plan_version', parent: 'version' },
+      ],
+      ownership: byTenantId,
+    },
+  },
 ];
 
 export function requireBackupOwnership(

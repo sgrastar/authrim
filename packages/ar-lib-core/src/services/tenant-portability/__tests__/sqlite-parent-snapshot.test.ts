@@ -34,14 +34,14 @@ describe('parent-owned rows at the snapshot boundary', () => {
       INSERT INTO catalogs VALUES ('pa','a'),('pb','b');
       INSERT INTO objects VALUES ('ca','pa','original-a'),('cb','pb','original-b');
       ${SQLITE_SNAPSHOT_SCHEMA}
-      ${sqliteSnapshotTriggers(parent)}
-      ${sqliteSnapshotTriggers(child)}
-      INSERT INTO tenant_backup_snapshots VALUES ('sa','a','capturing'),('sb','b','capturing');`);
+      ${sqliteSnapshotTriggers(parent, 'json')}
+      ${sqliteSnapshotTriggers(child, 'json')}
+      INSERT INTO tenant_backup_snapshots (id, tenant_id, state) VALUES ('sa','a','capturing'),('sb','b','capturing');`);
   });
   afterEach(() => db.close());
   function values(snapshot = 'sa', tenant = 'a') {
     return db
-      .prepare(sqliteSnapshotPageQuery(child))
+      .prepare(sqliteSnapshotPageQuery(child, 'json'))
       .all(snapshot, tenant, '', 100)
       .map((row) => JSON.parse(String(row.row_json)).value[1]);
   }
@@ -53,7 +53,7 @@ describe('parent-owned rows at the snapshot boundary', () => {
 
   it('looks up each live parent by key instead of scanning the parent table per child', () => {
     const plan = db
-      .prepare(`EXPLAIN QUERY PLAN ${sqliteSnapshotPageQuery(child)}`)
+      .prepare(`EXPLAIN QUERY PLAN ${sqliteSnapshotPageQuery(child, 'json')}`)
       .all('sa', 'a', '', 100)
       .map((row) => String(row.detail));
     expect(plan.some((line) => /SEARCH owner_live .*\(id=\?\)/.test(line))).toBe(true);
@@ -75,7 +75,7 @@ describe('parent-owned rows at the snapshot boundary', () => {
   it('preserves child references when parent key changes cascade', () => {
     db.exec("UPDATE catalogs SET id='new-pa' WHERE id='pa'");
     unchanged();
-    const row = db.prepare(sqliteSnapshotPageQuery(child)).all('sa', 'a', '', 100)[0];
+    const row = db.prepare(sqliteSnapshotPageQuery(child, 'json')).all('sa', 'a', '', 100)[0];
     expect(JSON.parse(String(row.row_json)).catalog_id).toEqual(['text', 'pa']);
   });
   it('handles child ownership moves and subsequent deletion', () => {
@@ -93,7 +93,7 @@ describe('parent-owned rows at the snapshot boundary', () => {
   });
   it('keeps overlapping snapshots independent after a parent tenant move', () => {
     db.exec(`UPDATE catalogs SET tenant_id='b' WHERE id='pa';
-      INSERT INTO tenant_backup_snapshots VALUES ('sb2','b','capturing');
+      INSERT INTO tenant_backup_snapshots (id, tenant_id, state) VALUES ('sb2','b','capturing');
       UPDATE objects SET value='latest' WHERE id='ca';`);
     unchanged();
     expect(values('sb2', 'b')).toEqual(['original-a', 'original-b']);
@@ -101,8 +101,8 @@ describe('parent-owned rows at the snapshot boundary', () => {
   it('rejects missing or incomplete parent references', () => {
     for (const childColumns of [[], ['missing'], ['catalog_id', 'catalog_id']]) {
       const bad = { ...child, parent: { schema: parent, childColumns } };
-      expect(() => sqliteSnapshotTriggers(bad)).toThrow('snapshot_parent_key_invalid');
-      expect(() => sqliteSnapshotPageQuery(bad)).toThrow('snapshot_parent_key_invalid');
+      expect(() => sqliteSnapshotTriggers(bad, 'json')).toThrow('snapshot_parent_key_invalid');
+      expect(() => sqliteSnapshotPageQuery(bad, 'json')).toThrow('snapshot_parent_key_invalid');
     }
   });
 });

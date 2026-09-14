@@ -26,7 +26,7 @@ describe('SQLite backup preimages', () => {
         PRIMARY KEY (tenant_id, id)
       );
       ${SQLITE_SNAPSHOT_SCHEMA}
-      ${sqliteSnapshotTriggers(schema)}
+      ${sqliteSnapshotTriggers(schema, 'json')}
       INSERT INTO accounts VALUES ('a', '1', 'before', 9007199254740993, X'00ff');
       INSERT INTO accounts VALUES ('a', '2', 'second', 0, NULL);
       INSERT INTO accounts VALUES ('b', '1', 'other tenant', 0, NULL);`);
@@ -34,10 +34,12 @@ describe('SQLite backup preimages', () => {
   afterEach(() => db.close());
 
   function start(id = 's1', tenant = 'a') {
-    db.prepare("INSERT INTO tenant_backup_snapshots VALUES (?, ?, 'capturing')").run(id, tenant);
+    db.prepare(
+      "INSERT INTO tenant_backup_snapshots (id, tenant_id, state) VALUES (?, ?, 'capturing')"
+    ).run(id, tenant);
   }
   function page(id = 's1', tenant = 'a', cursor = '', limit = 100) {
-    return db.prepare(sqliteSnapshotPageQuery(schema)).all(id, tenant, cursor, limit);
+    return db.prepare(sqliteSnapshotPageQuery(schema, 'json')).all(id, tenant, cursor, limit);
   }
   function names(id = 's1', tenant = 'a') {
     return page(id, tenant).map((row) => JSON.parse(String(row.row_json)).name[1]);
@@ -46,7 +48,7 @@ describe('SQLite backup preimages', () => {
   it('uses indexed snapshot selection with accumulated history and isolates active tenants', () => {
     db.exec(`WITH RECURSIVE numbers(n) AS (
       SELECT 1 UNION ALL SELECT n+1 FROM numbers WHERE n < 1000
-    ) INSERT INTO tenant_backup_snapshots SELECT 'old-' || n, 'a', 'sealed' FROM numbers;`);
+    ) INSERT INTO tenant_backup_snapshots (id, tenant_id, state) SELECT 'old-' || n, 'a', 'sealed' FROM numbers;`);
     start();
     start('other-active', 'b');
     const index = db
@@ -113,10 +115,10 @@ describe('SQLite backup preimages', () => {
       primaryKey: ['id'],
       uniqueKeys: [['email']],
     };
-    db.exec(sqliteSnapshotTriggers(emailSchema));
+    db.exec(sqliteSnapshotTriggers(emailSchema, 'json'));
     start();
     db.exec(`INSERT OR REPLACE INTO emails VALUES ('a', 'new-id', 'one@example.test');`);
-    const rows = db.prepare(sqliteSnapshotPageQuery(emailSchema)).all('s1', 'a', '', 100);
+    const rows = db.prepare(sqliteSnapshotPageQuery(emailSchema, 'json')).all('s1', 'a', '', 100);
     expect(rows.map((row) => JSON.parse(String(row.row_json)).id[1])).toEqual(['old-id']);
   });
 
@@ -223,8 +225,8 @@ describe('SQLite backup preimages', () => {
       { ...schema, tenantColumn: 'missing' },
       { ...schema, columns: ['id', 'id'] },
     ]) {
-      expect(() => sqliteSnapshotTriggers(invalid)).toThrow();
-      expect(() => sqliteSnapshotPageQuery(invalid)).toThrow();
+      expect(() => sqliteSnapshotTriggers(invalid, 'json')).toThrow();
+      expect(() => sqliteSnapshotPageQuery(invalid, 'json')).toThrow();
     }
   });
 });

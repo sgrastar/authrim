@@ -79,6 +79,11 @@
       "capability": "object_encryption.encrypt_decrypt",
       "required": true
     },
+    {
+      "name": "TENANT_BACKUP_WRAPPING_KEY",
+      "capability": "tenant_backup.key_handoff",
+      "required": true
+    },
     { "name": "OTP_HMAC_SECRET", "capability": "otp.issue_verify", "required": true },
     { "name": "LOGGING_CURSOR_HMAC_SECRET", "capability": "logging_cursor.sign", "required": true },
     {

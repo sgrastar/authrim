@@ -9,23 +9,11 @@ const MAX_CHUNK_BYTES = 1024 * 1024;
 const MAX_CHUNKS = 0xffffffff;
 const HEADER_LENGTH = 125; // key envelope (93) + fresh stream salt (32)
 
-export class TenantBundleCipherError extends Error {
-  constructor() {
-    super('invalid_tenant_bundle_ciphertext');
-    this.name = 'TenantBundleCipherError';
-  }
-}
+export { TenantBundleCipherError, tenantBundleCipherParameters } from './bundle-cipher-parameters';
+import { TenantBundleCipherError, tenantBundleCipherParameters } from './bundle-cipher-parameters';
+import { TenantBundleCipherDecoder } from './bundle-cipher-decoder';
 function invalid(): never {
   throw new TenantBundleCipherError();
-}
-function parameters(hash: Uint8Array<ArrayBuffer>, sequence: number, type: number) {
-  const iv = new Uint8Array(12);
-  new DataView(iv.buffer).setBigUint64(4, BigInt(sequence));
-  const additionalData = new Uint8Array(hash.length + 9);
-  additionalData.set(hash);
-  new DataView(additionalData.buffer).setBigUint64(hash.length, BigInt(sequence));
-  additionalData[additionalData.length - 1] = type;
-  return { name: 'AES-GCM', iv, additionalData, tagLength: 128 };
 }
 
 /** Encrypt opaque module-codec chunks. Never treats chunk JSON as executable input. */
@@ -46,7 +34,7 @@ export async function* encryptTenantBundleStream(
     let bytes = 0;
     async function seal(plain: Uint8Array<ArrayBuffer>, type: number) {
       const encrypted = new Uint8Array(
-        await crypto.subtle.encrypt(parameters(hash, count, type), key, plain)
+        await crypto.subtle.encrypt(tenantBundleCipherParameters(hash, count, type), key, plain)
       );
       const frame = new Uint8Array(encrypted.length + 1);
       frame[0] = type;
@@ -86,49 +74,16 @@ export async function* decryptTenantBundleStream(
   session: TenantBundleKeyEnvelope,
   limits: TenantBundleReadLimits
 ): AsyncGenerator<TenantBundleDecryptionEvent> {
-  let key: CryptoKey | undefined;
-  let hash: Uint8Array<ArrayBuffer> | undefined;
-  let count = 0;
-  let bytes = 0;
-  let complete = false;
+  let decoder: TenantBundleCipherDecoder | undefined;
   for await (const frame of decodeTenantBundleFrames(source, limits)) {
-    if (!key) {
-      if (
-        frame.length !== HEADER_LENGTH ||
-        !frame.subarray(0, 93).every((b, i) => b === session.envelope[i])
-      )
-        invalid();
-      key = await deriveTenantBundleStreamKey(session.contentKey, frame.slice(93));
-      hash = new Uint8Array(await crypto.subtle.digest('SHA-256', frame));
+    if (!decoder) {
+      decoder = await TenantBundleCipherDecoder.create(frame, session, limits);
       continue;
     }
-    if (complete || !hash || frame.length < 17 || (frame[0] !== 1 && frame[0] !== 2)) invalid();
-    const type = frame[0];
-    if (
-      (type === 1 && (count >= MAX_CHUNKS || frame.length > MAX_CHUNK_BYTES + 17)) ||
-      (type === 2 && frame.length !== 33)
-    )
-      invalid();
-    let plain: Uint8Array<ArrayBuffer>;
-    try {
-      plain = new Uint8Array(
-        await crypto.subtle.decrypt(parameters(hash, count, type), key, frame.slice(1))
-      );
-    } catch {
-      invalid();
-    }
-    if (type === 1) {
-      if (!plain.length) invalid();
-      bytes += plain.length;
-      count++;
-      yield { kind: 'chunk', bytes: plain };
-    } else {
-      const footer = new DataView(plain.buffer);
-      if (footer.getBigUint64(0) !== BigInt(count) || footer.getBigUint64(8) !== BigInt(bytes))
-        invalid();
-      complete = true;
-    }
+    const event = await decoder.step(frame);
+    if (event.kind === 'chunk') yield event;
   }
-  if (!complete) invalid();
-  yield { kind: 'complete', chunks: count, bytes };
+  const state = decoder?.checkpoint();
+  if (!state?.complete) invalid();
+  yield { kind: 'complete', chunks: state.chunks, bytes: state.bytes };
 }

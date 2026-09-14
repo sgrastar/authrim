@@ -3,6 +3,8 @@
  * workerd's default PBKDF2 ceiling is below this format's fixed work factor.
  * Workers receive an operation-protected content key through the coordinator.
  */
+import { sealTenantBackupContentKey, type TenantBackupKeyRecipient } from './operation-key-handoff';
+
 export const TENANT_BUNDLE_KDF_ITERATIONS = 600_000;
 const DOMAIN = new TextEncoder().encode('authrim-tenant-bundle-key-v1');
 const HEADER_BYTES = 45; // suite byte, bundle ID (16), salt (16), wrap nonce (12)
@@ -13,6 +15,8 @@ export interface TenantBundleKeyEnvelope {
   envelope: Uint8Array;
   /** HKDF base key. Each stream derives its own AES key with a fresh stream salt. */
   contentKey: CryptoKey;
+  /** Operation-bound ciphertext for the coordinator; never part of the portable artifact. */
+  handoff?: Uint8Array;
 }
 
 export class TenantBundleKeyError extends Error {
@@ -62,7 +66,8 @@ async function importContentKey(raw: Uint8Array<ArrayBuffer>): Promise<CryptoKey
 
 /** Generates an independent backup key, never copies an environment root key. */
 export async function createTenantBundleKeyEnvelope(
-  passphrase: string
+  passphrase: string,
+  recipient?: TenantBackupKeyRecipient
 ): Promise<TenantBundleKeyEnvelope> {
   const header = crypto.getRandomValues(new Uint8Array(HEADER_BYTES));
   header[0] = 1;
@@ -79,7 +84,10 @@ export async function createTenantBundleKeyEnvelope(
     const envelope = new Uint8Array(ENVELOPE_BYTES);
     envelope.set(header);
     envelope.set(wrapped, HEADER_BYTES);
-    return { envelope, contentKey: await importContentKey(raw) };
+    const handoff = recipient
+      ? await sealTenantBackupContentKey(raw, envelope, recipient)
+      : undefined;
+    return { envelope, contentKey: await importContentKey(raw), ...(handoff ? { handoff } : {}) };
   } finally {
     raw.fill(0);
   }
@@ -88,7 +96,8 @@ export async function createTenantBundleKeyEnvelope(
 /** Has no storage/network side effects; errors never contain passphrase or plaintext. */
 export async function unlockTenantBundleKeyEnvelope(
   input: Uint8Array,
-  passphrase: string
+  passphrase: string,
+  recipient?: TenantBackupKeyRecipient
 ): Promise<TenantBundleKeyEnvelope> {
   const envelope = parseEnvelope(input);
   const key = await wrappingKey(passphrase, envelope.slice(17, 33));
@@ -110,7 +119,10 @@ export async function unlockTenantBundleKeyEnvelope(
     throw new TenantBundleKeyError();
   }
   try {
-    return { envelope, contentKey: await importContentKey(raw) };
+    const handoff = recipient
+      ? await sealTenantBackupContentKey(raw, envelope, recipient)
+      : undefined;
+    return { envelope, contentKey: await importContentKey(raw), ...(handoff ? { handoff } : {}) };
   } finally {
     raw.fill(0);
   }

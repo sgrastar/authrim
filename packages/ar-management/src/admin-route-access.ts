@@ -116,6 +116,21 @@ export const ADMIN_ROUTE_ACCESS_RULES: AdminRouteAccessRule[] = [
   authenticated('/api/admin/me/agent-consents', 'current admin Agent consent management'),
   authenticated('/api/admin/me/agent-consents/*', 'current admin Agent consent management'),
 
+  ...byMethod(
+    '/api/admin/tenant-backups',
+    ADMIN_PERMISSIONS.BACKUPS_READ,
+    ADMIN_PERMISSIONS.BACKUPS_MANAGE,
+    ADMIN_PERMISSIONS.BACKUPS_MANAGE,
+    'tenant backup operations'
+  ),
+  ...byMethod(
+    '/api/admin/tenant-backups/*',
+    ADMIN_PERMISSIONS.BACKUPS_READ,
+    ADMIN_PERMISSIONS.BACKUPS_MANAGE,
+    ADMIN_PERMISSIONS.BACKUPS_MANAGE,
+    'tenant backup operations'
+  ),
+
   rule({
     pattern: '/api/admin/agent-write/clients/:id/metadata',
     methods: ['PUT'],
