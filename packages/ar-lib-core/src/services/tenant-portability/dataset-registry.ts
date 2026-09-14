@@ -143,10 +143,10 @@ const TABLE_GROUPS: Partial<
       agent_baseline_assignments agent_baseline_exceptions agent_baselines agent_configuration_templates
       agent_scope_policies agent_scope_policy_versions agent_secret_refs agent_task_set_versions
       agent_task_sets agent_template_copies attribute_field_registry attribute_group_registry
-      credential_profile_versions credential_profiles credential_secret_bodies credential_secret_metadata
-      custom_field_catalog_entries destination_profile_versions destination_profiles external_schema_catalogs
+      compiled_mapping_snapshots credential_profile_versions credential_profiles credential_secret_bodies credential_secret_metadata
+      custom_field_catalog_entries dependency_graph_snapshots destination_profile_versions destination_profiles external_schema_catalogs
       federation_entity_statements federation_metadata_documents federation_metadata_entity_summaries federation_saml_runtime_entities
-      federation_trust_anchors federation_trust_chains federation_trust_scope_bindings federation_trust_sources
+      federation_trust_anchors federation_trust_chains federation_trust_context_snapshots federation_trust_scope_bindings federation_trust_sources
       field_catalog_entries field_catalog_versions field_catalogs field_mapping_activations
       field_mapping_sets field_mapping_versions internal_notification_delivery_routes key_material_refs
       key_registries key_versions logging_destination_overrides logging_fallback_policies
@@ -175,8 +175,8 @@ const TABLE_GROUPS: Partial<
     `,
     rebuild: `
       authrim_migrations migration_metadata
-      admin_search_projections compiled_mapping_snapshots dependency_graph_snapshots federation_metadata_refresh_jobs
-      federation_trust_context_snapshots identifier_replacement_scheduler_state mapping_activation_leases projection_jobs
+      admin_search_projections federation_metadata_refresh_jobs
+      identifier_replacement_scheduler_state mapping_activation_leases projection_jobs
       projection_outbox provider_reprojection_jobs provider_reprojection_tenant_state scheduled_task_leases
       tenant_database_active_pointers tenant_database_migration_state tenant_database_probe_results tenant_database_registry
       tenant_database_stats tenant_discovery_indexes tenant_placement_migration_jobs tenant_provisioning_operation_steps

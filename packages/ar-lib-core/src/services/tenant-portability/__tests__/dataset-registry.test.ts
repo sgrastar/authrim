@@ -11,10 +11,46 @@ import {
 } from '../binding-registry';
 import { MIGRATION_STREAM_CONTRACTS } from '../../control-plane/migration-stream-contract';
 import { checkTenantDatasetCoverage, TENANT_DATASET_POLICIES } from '../dataset-registry';
+import { parseTenantBackupSelection, tenantDatasetSelectionRule } from '../selection-contract';
 
 const root = fileURLToPath(new URL('../../../../../../', import.meta.url));
 
 describe('tenant backup dataset registry coverage', () => {
+  it('retains published mapping dependencies in settings-only backups with logs and Admin users off', () => {
+    const selection = parseTenantBackupSelection({
+      settings: true,
+      users: false,
+      admin: false,
+      logs: { audit: false, other: false, sensitive: false, period: 7 },
+      artifacts: false,
+    });
+    // Compilation chooses a catalog version and compatibility range, and activation
+    // changes lifecycle state. Recompiling defaults does not reproduce those choices.
+    for (const table of [
+      'field_mapping_activations',
+      'field_mapping_versions',
+      'compiled_mapping_snapshots',
+      'dependency_graph_snapshots',
+      'field_catalog_versions',
+      'destination_profiles',
+      'destination_profile_versions',
+      // Missing the latest trust-context hash makes an unchanged source update
+      // invalidate restored metadata and delete its verified runtime entities.
+      'federation_trust_context_snapshots',
+      'federation_trust_sources',
+      'federation_saml_runtime_entities',
+    ]) {
+      const policy = TENANT_DATASET_POLICIES.find(
+        (entry) => entry.family === 'admin' && entry.table === table
+      );
+      expect(policy, table).toBeDefined();
+      expect(tenantDatasetSelectionRule(policy!.kind, selection), table).toEqual({
+        action: 'selected',
+        timeFilter: 'none',
+      });
+    }
+  });
+
   it('classifies every table in each executable D1 schema without duplicates or stale entries', () => {
     for (const stream of inventoryBackupSchemas(root).inspectedStreams) {
       const family = MIGRATION_STREAM_CONTRACTS.find(
