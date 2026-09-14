@@ -270,6 +270,20 @@ export function phase3SqliteDeferredColumns(datasetId: string): readonly string[
   return [...new Set(rules.flatMap((rule) => rule.localColumns))].sort();
 }
 
+/** Target-local projection state must never be copied from the source environment. */
+export function phase3SqliteRestoreOverrides(
+  datasetId: string
+): Readonly<Record<string, readonly [string, string | null]>> | undefined {
+  if (!PHASE3_SQLITE_DATASET_REGISTRATIONS.some(({ dataset }) => dataset.id === datasetId))
+    throw new Error('backup_phase3_reference_dataset');
+  return datasetId === 'admin.tenant_settings_documents'
+    ? {
+        projection_state: ['text', 'pending'],
+        projected_at: ['null', null],
+      }
+    : undefined;
+}
+
 /** Build import inspectors only from the sealed SQL plan and the installed Phase 3 registry. */
 export function createPhase3SqliteInspectionPolicies(
   planned: readonly PlannedInstalledSqliteDataset[]
@@ -297,11 +311,13 @@ export function createPhase3SqliteInspectionPolicies(
       throw new Error('backup_phase3_plan_mismatch');
     const restoreAfter = phase3SqliteRestoreDependencies(entry.dataset.id);
     const deferredColumns = phase3SqliteDeferredColumns(entry.dataset.id);
+    const restoreOverrides = phase3SqliteRestoreOverrides(entry.dataset.id);
     return {
       dataset: structuredClone(entry.dataset),
       schema: structuredClone(entry.capture),
       ...(restoreAfter.length ? { restoreAfter } : {}),
       ...(deferredColumns.length ? { deferredColumns } : {}),
+      ...(restoreOverrides ? { restoreOverrides } : {}),
       ...(entry.partitions ? { partitions: [...entry.partitions] } : {}),
       inspectRow: async (row, identity) =>
         inspectPhase3SqliteReferences(entry.dataset.id, row, identity),

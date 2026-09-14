@@ -8,7 +8,10 @@
  * - GET /settings/meta/:category
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { readFileSync } from 'node:fs';
+// @ts-expect-error node:sqlite is available in the required runtime but this package omits Node types.
+import { DatabaseSync, type StatementSync } from 'node:sqlite';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { Hono } from 'hono';
 import type { D1Database } from '@cloudflare/workers-types';
 import type {
@@ -33,6 +36,90 @@ import settingsV2 from '../routes/settings-v2';
 // Response types
 type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
 type ApiResponse = Record<string, JsonValue>;
+type SqlValue = string | number | null | Uint8Array;
+const adminDatabases = new Set<DatabaseSync>();
+
+class BoundSqliteStatement {
+  constructor(
+    private readonly statement: StatementSync,
+    private readonly values: SqlValue[]
+  ) {}
+
+  async first<T>(): Promise<T | null> {
+    return (this.statement.get(...this.values) as T | undefined) ?? null;
+  }
+
+  async all<T>() {
+    return { success: true, results: this.statement.all(...this.values) as T[], meta: {} };
+  }
+
+  async run<T>() {
+    const result = this.statement.run(...this.values);
+    return {
+      success: true,
+      results: [] as T[],
+      meta: { changes: Number(result.changes), last_row_id: Number(result.lastInsertRowid) },
+    };
+  }
+}
+
+class SqliteStatement {
+  constructor(private readonly statement: StatementSync) {}
+
+  bind(...values: unknown[]): BoundSqliteStatement {
+    return new BoundSqliteStatement(
+      this.statement,
+      values.map((value) => {
+        if (
+          typeof value === 'string' ||
+          typeof value === 'number' ||
+          value === null ||
+          value instanceof Uint8Array
+        )
+          return value;
+        throw new Error('unsupported_test_sqlite_value');
+      })
+    );
+  }
+
+  first<T>() {
+    return this.bind().first<T>();
+  }
+
+  all<T>() {
+    return this.bind().all<T>();
+  }
+
+  run<T>() {
+    return this.bind().run<T>();
+  }
+}
+
+function createAdminD1(): D1Database {
+  const database = new DatabaseSync(':memory:');
+  database.exec(
+    readFileSync(
+      new URL('../../../../migrations/admin/d1/028_tenant_settings_documents.sql', import.meta.url),
+      'utf8'
+    )
+  );
+  adminDatabases.add(database);
+  const session = {
+    prepare: (sql: string) => new SqliteStatement(database.prepare(sql)),
+    getBookmark: () => 'settings-test-bookmark',
+  };
+  return {
+    ...session,
+    withSession: () => session,
+    batch: async (statements: BoundSqliteStatement[]) =>
+      Promise.all(statements.map((statement) => statement.run())),
+    dump: async () => new ArrayBuffer(0),
+    exec: async (sql: string) => {
+      database.exec(sql);
+      return { count: 0, duration: 0 };
+    },
+  } as unknown as D1Database;
+}
 
 // Mock KV namespace
 function createMockKV(data: Record<string, string> = {}): KVNamespace {
@@ -173,6 +260,7 @@ function createTestApp(
     AUTHRIM_CONFIG: mockKV,
     SETTINGS: mockKV,
     DB: options.db ?? createMockDB(),
+    DB_ADMIN: createAdminD1(),
     RATE_LIMITER: {
       idFromName: vi.fn().mockReturnValue('rate-limit-id'),
       get: vi.fn().mockReturnValue({ incrementRpc: mockRateLimiterIncrement }),
@@ -187,6 +275,11 @@ function createTestApp(
 describe('Settings API v2', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    for (const database of adminDatabases) database.close();
+    adminDatabases.clear();
   });
 
   describe('Tenant Settings', () => {
@@ -998,6 +1091,19 @@ describe('Settings API v2', () => {
           'self-service.account_page_enabled': true,
           'self-service.account_page_path': '/account',
         });
+        const canonical = [...adminDatabases][0]
+          .prepare(
+            `SELECT document_json,projection_state FROM tenant_settings_documents
+            WHERE tenant_id=? AND scope_type='tenant' AND scope_id=? AND category='self-service'`
+          )
+          .get('tenant_123', 'tenant_123') as
+          | { document_json: string; projection_state: string }
+          | undefined;
+        expect(canonical?.projection_state).toBe('applied');
+        expect(JSON.parse(canonical?.document_json ?? '{}')).toMatchObject({
+          'self-service.account_page_enabled': true,
+          'self-service.account_page_path': '/account',
+        });
       });
 
       it('rejects disabling account page while post-login behavior is account', async () => {
@@ -1721,6 +1827,19 @@ describe('Settings API v2', () => {
 
   describe('Platform Settings', () => {
     describe('GET /platform/settings/:category', () => {
+      it('does not require the tenant canonical database', async () => {
+        const { app, mockEnv } = createTestApp();
+        delete (mockEnv as unknown as { DB_ADMIN?: unknown }).DB_ADMIN;
+
+        const res = await app.request(
+          '/api/admin/platform/settings/infrastructure',
+          { method: 'GET' },
+          mockEnv
+        );
+
+        expect(res.status).toBe(200);
+      });
+
       it('should return platform settings', async () => {
         const { app, mockEnv } = createTestApp();
 

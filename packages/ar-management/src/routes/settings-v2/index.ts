@@ -5,7 +5,8 @@ import { runTenantBackupCoveredMutation } from '../../tenant-backup-writer';
  * Unified settings management with:
  * - URL-based scope (tenantId/clientId)
  * - PATCH for partial updates with optimistic locking
- * - env > KV > default priority
+ * - canonical tenant/client document > env > default priority
+ * - Workers KV projection for runtime readers
  * - Audit logging
  * - Version history and rollback support
  *
@@ -28,6 +29,8 @@ import { runTenantBackupCoveredMutation } from '../../tenant-backup-writer';
 
 import { Hono, type Context } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
+import { requireDedicatedAdminDatabaseAdapter } from '@authrim/ar-lib-core';
+import { DatabaseSettingsCanonicalStore } from '@authrim/ar-lib-core/services/settings-canonical-store';
 import migrateRouter from './migrate';
 import {
   listSettingsHistory,
@@ -687,11 +690,17 @@ const settingsV2 = new Hono<{
  */
 function getSettingsManager(
   env: Env,
-  auditContext?: Context<{ Bindings: Env; Variables: { adminAuth?: AdminAuthContext } }, string>
+  auditContext?: Context<{ Bindings: Env; Variables: { adminAuth?: AdminAuthContext } }, string>,
+  canonicalTenantSettings = false
 ): SettingsManager {
   const manager = createSettingsManager({
     env: env as unknown as Record<string, string | undefined>,
     kv: env.SETTINGS ?? null,
+    canonicalStore: canonicalTenantSettings
+      ? new DatabaseSettingsCanonicalStore(
+          requireDedicatedAdminDatabaseAdapter(env, 'settings-canonical')
+        )
+      : null,
     cacheTTL: 5000, // 5 seconds (as per plan)
     auditCallback: async (event) => {
       log.info('Settings change', {
@@ -858,25 +867,30 @@ async function scheduleInheritedHumanVerificationProjection(
   }
 }
 
-async function ensureTenantAccountPageEnabled(env: Env, tenantId: string): Promise<void> {
-  if (!env.SETTINGS) {
-    return;
-  }
+async function ensureTenantAccountPageEnabled(
+  manager: SettingsManager,
+  tenantId: string,
+  actor: string
+): Promise<void> {
   const scope: SettingScope = { type: 'tenant', id: tenantId };
-  const current = await readScopedSettingsRecord(env, 'self-service', scope);
-  if (current['self-service.account_page_enabled'] === true) {
+  const current = await manager.getAll('self-service', scope);
+  if (current.values['self-service.account_page_enabled'] === true) {
     return;
   }
-  await env.SETTINGS.put(
-    settingsKVKey('self-service', scope),
-    JSON.stringify({
-      ...current,
-      'self-service.account_page_enabled': true,
-      'self-service.account_page_path':
-        typeof current['self-service.account_page_path'] === 'string'
-          ? current['self-service.account_page_path']
-          : '/account',
-    })
+  await manager.patch(
+    'self-service',
+    scope,
+    {
+      ifMatch: current.version,
+      set: {
+        'self-service.account_page_enabled': true,
+        'self-service.account_page_path':
+          typeof current.values['self-service.account_page_path'] === 'string'
+            ? current.values['self-service.account_page_path']
+            : '/account',
+      },
+    },
+    actor
   );
 }
 
@@ -1343,7 +1357,7 @@ settingsV2.get('/tenants/:tenantId/settings/:category', async (c) => {
     return errorResponse(c, 'forbidden', 'Cannot access settings for this tenant', 403);
   }
 
-  const manager = getSettingsManager(c.env, c);
+  const manager = getSettingsManager(c.env, c, true);
   const scope: SettingScope = { type: 'tenant', id: tenantId };
 
   try {
@@ -1398,7 +1412,7 @@ settingsV2.patch(
       env: c.env,
       tenantId,
       run: async () => {
-        const manager = getSettingsManager(c.env, c);
+        const manager = getSettingsManager(c.env, c, true);
         const scope: SettingScope = { type: 'tenant', id: tenantId };
 
         try {
@@ -1467,7 +1481,7 @@ settingsV2.patch(
             body.set?.['login-entry.post_login_behavior'] === 'account' &&
             result.applied.includes('login-entry.post_login_behavior')
           ) {
-            await ensureTenantAccountPageEnabled(c.env, tenantId);
+            await ensureTenantAccountPageEnabled(manager, tenantId, actor);
           }
 
           // Check if there were any rejections
@@ -1598,7 +1612,7 @@ settingsV2.get('/clients/:clientId/settings', async (c) => {
     );
   }
 
-  const manager = getSettingsManager(c.env, c);
+  const manager = getSettingsManager(c.env, c, true);
   const scope = { type: 'client', id: clientId, tenantId: clientTenantId } as SettingScope;
 
   try {
@@ -1659,7 +1673,7 @@ settingsV2.get('/clients/:clientId/settings/:category', async (c) => {
     );
   }
 
-  const manager = getSettingsManager(c.env, c);
+  const manager = getSettingsManager(c.env, c, true);
   const scope = { type: 'client', id: clientId, tenantId: clientTenantId } as SettingScope;
 
   try {
@@ -1708,7 +1722,7 @@ settingsV2.patch('/clients/:clientId/settings', async (c) => {
     env: c.env,
     tenantId: clientTenantId,
     run: async () => {
-      const manager = getSettingsManager(c.env, c);
+      const manager = getSettingsManager(c.env, c, true);
       const scope = { type: 'client', id: clientId, tenantId: clientTenantId } as SettingScope;
 
       try {
@@ -1875,7 +1889,7 @@ settingsV2.patch('/clients/:clientId/settings/:category', async (c) => {
     env: c.env,
     tenantId: clientTenantId,
     run: async () => {
-      const manager = getSettingsManager(c.env, c);
+      const manager = getSettingsManager(c.env, c, true);
       const scope = { type: 'client', id: clientId, tenantId: clientTenantId } as SettingScope;
 
       try {

@@ -7,6 +7,7 @@ import { completeTenantBackupUpload } from '@authrim/ar-lib-core/services/tenant
 import { cleanupExpiredTenantBackupUpload } from '@authrim/ar-lib-core/services/tenant-portability/cleanup-upload';
 import { tenantBackupBoundaryId } from '@authrim/ar-lib-core/services/tenant-portability/snapshot-boundary-step';
 import type { TenantBackupStepContext } from '@authrim/ar-lib-core/services/tenant-portability/operation-executor';
+import { processPendingSettingsProjections } from './settings-canonical-projection';
 
 export async function getTenantBackupKeyStore(
   env: Env
@@ -38,6 +39,7 @@ export async function processTenantBackupMaintenance(env: Env): Promise<{
   uploadsCleaned: number;
   uploadCleanupFailures: number;
 }> {
+  await processPendingSettingsProjections(env);
   if (env.EXPORT_ARTIFACTS) {
     await cleanupExpiredTenantBackupArtifact({
       database: requireDedicatedAdminDatabaseAdapter(env, 'tenant-backup'),

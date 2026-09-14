@@ -14,6 +14,8 @@ export interface SqliteDatasetInspectionPolicy {
   restoreAfter?: readonly string[];
   /** Nullable self-reference columns restored in a second pass after every row exists. */
   deferredColumns?: readonly string[];
+  /** Installed target-only values that replace source transport columns during restore. */
+  restoreOverrides?: Readonly<Record<string, readonly [string, string | null]>>;
   /** Required for parent-owned rows: identify the parent's installed dataset. */
   parentDataset?: Pick<TenantPortableDataset, 'id' | 'module'>;
   /** Authoritative tenant key, when storage ownership uses it instead of tenant ID. */
@@ -74,6 +76,20 @@ export function createSqliteDatasetInspectorFactory(
         ))
     )
       invalid();
+    if (pinned.restoreOverrides !== undefined) {
+      const columns = Object.keys(pinned.restoreOverrides);
+      if (
+        !columns.length ||
+        columns.some(
+          (column) =>
+            !schema.columns.includes(column) ||
+            schema.primaryKey.includes(column) ||
+            pinned.deferredColumns?.includes(column)
+        )
+      )
+        invalid();
+      sqliteSnapshotRowInsert(schema.table, columns, JSON.stringify(pinned.restoreOverrides));
+    }
     if ('parent' in schema && !pinned.parentDataset) invalid();
     if (schema.rowPartition) {
       if (

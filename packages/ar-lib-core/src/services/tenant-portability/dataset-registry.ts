@@ -168,7 +168,7 @@ const TABLE_GROUPS: Partial<
       logging_quota_policies mapping_conflict_rules mapping_release_rules mapping_rule_edges
       mapping_rules mapping_templates mapping_transform_steps mapping_validation_rules
       persistent_identifier_profiles protocol_schema_catalogs source_authority_contracts source_profile_parse_drafts
-      source_profile_versions source_profiles storage_destination_assignments
+      source_profile_versions source_profiles storage_destination_assignments tenant_settings_documents
     `,
     audit: `
       admin_audit_log key_access_events

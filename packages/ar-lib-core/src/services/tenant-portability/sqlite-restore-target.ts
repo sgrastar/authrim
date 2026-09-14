@@ -241,9 +241,10 @@ export class SqliteRestoreTarget {
     if (this.mode !== 'write' || !policy.deferredColumns?.length) throw error();
     ({ policy, manifest } = await this.validateRow(policy, manifest, rowJson));
     const parsed = JSON.parse(rowJson) as Record<string, unknown>;
+    const restoredRowJson = this.applyRestoreOverrides(policy, rowJson);
     const deferred = policy.deferredColumns;
     if (!deferred?.length) throw error();
-    if (await this.rowMatches(policy, rowJson)) return;
+    if (await this.rowMatches(policy, restoredRowJson)) return;
     const values = sqliteSnapshotRowInsert(
       policy.schema.table,
       deferred,
@@ -268,7 +269,14 @@ export class SqliteRestoreTarget {
       [...values.params, ...this.guard(), ...key.params]
     );
     if (!result.success || result.rowsAffected !== 1) throw error();
-    if (!(await this.rowMatches(policy, rowJson))) throw error();
+    if (!(await this.rowMatches(policy, restoredRowJson))) throw error();
+  }
+
+  private applyRestoreOverrides(policy: SqliteDatasetInspectionPolicy, rowJson: string): string {
+    if (!policy.restoreOverrides) return rowJson;
+    const row = JSON.parse(rowJson) as Record<string, unknown>;
+    for (const [column, value] of Object.entries(policy.restoreOverrides)) row[column] = value;
+    return JSON.stringify(row);
   }
 
   private async validateRow(
@@ -314,7 +322,7 @@ export class SqliteRestoreTarget {
     write: boolean
   ): Promise<void> {
     ({ policy, manifest } = await this.validateRow(policy, manifest, rowJson));
-    let storedRowJson = rowJson;
+    let storedRowJson = this.applyRestoreOverrides(policy, rowJson);
     if (write && policy.deferredColumns?.length) {
       const row = JSON.parse(rowJson) as Record<string, unknown>;
       for (const column of policy.deferredColumns) row[column] = ['null', null];

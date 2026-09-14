@@ -6,7 +6,7 @@ import {
   getTenantBackupBoundaryClient,
   abortTenantBackupBoundary,
 } from '../tenant-backup-services';
-const db = vi.hoisted(() => ({ execute: vi.fn(), queryOne: vi.fn() }));
+const db = vi.hoisted(() => ({ execute: vi.fn(), query: vi.fn(), queryOne: vi.fn() }));
 const uploads = vi.hoisted(() => ({ claim: vi.fn(), complete: vi.fn() }));
 const cleanup = vi.hoisted(() => ({ run: vi.fn() }));
 vi.mock('@authrim/ar-lib-core', () => ({ requireDedicatedAdminDatabaseAdapter: () => db }));
@@ -24,9 +24,35 @@ vi.mock('@authrim/ar-lib-core/services/tenant-portability/cleanup-upload', () =>
 beforeEach(() => {
   vi.clearAllMocks();
   db.execute.mockResolvedValue({ success: true, rowsAffected: 3 });
+  db.query.mockResolvedValue([]);
   uploads.claim.mockResolvedValue(null);
   uploads.complete.mockResolvedValue({});
   cleanup.run.mockResolvedValue({ cleaned: false });
+});
+it('retries pending canonical settings projections before backup housekeeping', async () => {
+  db.query.mockResolvedValueOnce([
+    {
+      tenant_id: 'tenant-a',
+      scope_type: 'tenant',
+      scope_id: 'tenant-a',
+      category: 'security',
+      document_json: '{}',
+      version: 'sha256:44136fa355b3678a',
+    },
+  ]);
+  db.execute.mockResolvedValue({ success: true, rowsAffected: 1 });
+  const put = vi.fn(async () => undefined);
+  await processTenantBackupMaintenance({ SETTINGS: { put } } as unknown as Env);
+  expect(put).toHaveBeenCalledWith('settings:tenant:tenant-a:security', '{}');
+  expect(db.execute).toHaveBeenCalledWith(expect.stringContaining("projection_state='applied'"), [
+    expect.any(Number),
+    expect.any(Number),
+    'tenant-a',
+    'tenant',
+    'tenant-a',
+    'security',
+    'sha256:44136fa355b3678a',
+  ]);
 });
 it('does not contact storage without a configured backup key', async () => {
   expect(await processTenantBackupMaintenance({} as Env)).toEqual({

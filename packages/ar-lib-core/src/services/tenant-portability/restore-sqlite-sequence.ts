@@ -56,6 +56,7 @@ async function descriptor(
           tenantKey: policy.tenantKey,
           restoreAfter: policy.restoreAfter,
           deferredColumns: policy.deferredColumns,
+          restoreOverrides: policy.restoreOverrides,
         })
       )
     ),

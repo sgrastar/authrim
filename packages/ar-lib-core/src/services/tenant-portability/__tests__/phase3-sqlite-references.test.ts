@@ -6,6 +6,7 @@ import { PHASE3_SQLITE_DATASET_REGISTRATIONS } from '../phase3-sqlite-modules';
 import {
   inspectPhase3SqliteReferences,
   phase3SqliteDeferredColumns,
+  phase3SqliteRestoreOverrides,
   phase3SqliteRestoreDependencies,
   PHASE3_SQLITE_REFERENCE_RULES,
 } from '../phase3-sqlite-references';
@@ -160,6 +161,11 @@ describe('Phase 3 installed SQL reference graph', () => {
     expect(phase3SqliteDeferredColumns('core.organizations')).toEqual(['parent_org_id']);
     expect(phase3SqliteDeferredColumns('admin.destination_profiles')).toEqual(['base_profile_id']);
     expect(phase3SqliteDeferredColumns('admin.source_profiles')).toEqual([]);
+    expect(phase3SqliteRestoreOverrides('admin.tenant_settings_documents')).toEqual({
+      projection_state: ['text', 'pending'],
+      projected_at: ['null', null],
+    });
+    expect(phase3SqliteRestoreOverrides('core.tenants')).toBeUndefined();
     expect(() => phase3SqliteRestoreDependencies('unknown')).toThrow(
       'backup_phase3_reference_dataset'
     );

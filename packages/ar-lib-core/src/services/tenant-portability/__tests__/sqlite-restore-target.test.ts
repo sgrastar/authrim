@@ -284,6 +284,26 @@ it('readback detects missing and changed rows without repairing them', async () 
   expect(db.prepare('SELECT count(*) AS n FROM writes').get()?.n).toBe(1);
 });
 
+it('applies installed target-only restore values and verifies against the transformed row', async () => {
+  const target = await SqliteRestoreTarget.open(input());
+  const overridePolicy: SqliteDatasetInspectionPolicy = {
+    ...policy,
+    restoreOverrides: { value: ['text', 'pending'] },
+  };
+  await target.writeRow(overridePolicy, manifest, row);
+  expect(db.prepare('SELECT value FROM tenants').get()).toEqual({ value: 'pending' });
+  await target.verifyRow(overridePolicy, manifest, row);
+  await expect(target.verifyRow(policy, manifest, row)).rejects.toThrow();
+});
+
+it('rejects restore overrides for identity columns', async () => {
+  const target = await SqliteRestoreTarget.open(input());
+  await expect(
+    target.writeRow({ ...policy, restoreOverrides: { id: ['text', 'other'] } }, manifest, row)
+  ).rejects.toThrow();
+  expect(db.prepare('SELECT count(*) AS n FROM tenants').get()).toEqual({ n: 0 });
+});
+
 it('compares text bytes exactly even when target columns use NOCASE collation', async () => {
   db.exec(
     'CREATE TABLE case_rows(id TEXT PRIMARY KEY NOT NULL,value TEXT COLLATE NOCASE,count INTEGER,binary BLOB)'

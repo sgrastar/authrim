@@ -226,6 +226,10 @@
             {
               "path": "027_tenant_backup_preimage_row_partitions.sql",
               "checksum": "ec32b226b04a17da04ba3ac3427c5726814ec89503110386c25e9a264141506e"
+            },
+            {
+              "path": "028_tenant_settings_documents.sql",
+              "checksum": "374e9cdf2d93f301db92c68a8e488c400339d24ecc9ffd73e31d9102104e0c53"
             }
           ]
         },
@@ -619,6 +623,10 @@
         {
           "path": "027_tenant_backup_preimage_row_partitions.sql",
           "checksum": "ec32b226b04a17da04ba3ac3427c5726814ec89503110386c25e9a264141506e"
+        },
+        {
+          "path": "028_tenant_settings_documents.sql",
+          "checksum": "374e9cdf2d93f301db92c68a8e488c400339d24ecc9ffd73e31d9102104e0c53"
         }
       ]
     },

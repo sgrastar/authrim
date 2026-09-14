@@ -19,6 +19,11 @@ interface Phase3TableGroup {
  */
 export const PHASE3_SQLITE_TABLE_GROUPS: readonly Phase3TableGroup[] = [
   {
+    family: 'admin',
+    module: 'tenant-runtime',
+    tables: ['tenant_settings_documents'],
+  },
+  {
     family: 'core',
     module: 'tenant-runtime',
     tables: [

@@ -45,7 +45,10 @@ import {
   type ControlTenantShardCapacityTarget,
   type ControlTenantRuntimeRouteObservation,
   seedBuiltinProfileClaimSchemas,
+  generateVersion,
+  requireDedicatedAdminDatabaseAdapter,
 } from '@authrim/ar-lib-core';
+import { DatabaseSettingsCanonicalStore } from '@authrim/ar-lib-core/services/settings-canonical-store';
 import { createOpaqueTenantKey } from './logging-tenant-key';
 import { materializeDisabledTenantEmailProviderOrder } from './notification-provider-projection';
 import {
@@ -486,36 +489,43 @@ async function seedTenantDefaultSettings(env: Env, tenantId: string) {
     }
   })();
 
+  const tenantSettings = {
+    'tenant.allowed_origins': allowedOrigins,
+    'tenant.allowed_domains': allowedDomain,
+    'tenant.allowed_identifiers': allowedIdentifiers,
+  };
+  const emailSettings = { strategy: 'priority_failover', providerOrder: [] };
+  const canonicalStore = new DatabaseSettingsCanonicalStore(
+    requireDedicatedAdminDatabaseAdapter(env, 'tenant-settings-seed')
+  );
+  const seedCanonical = async (category: string, data: Record<string, unknown>) => {
+    const scope = { type: 'tenant', id: tenantId } as const;
+    const version = generateVersion(data);
+    await canonicalStore.replace(category, scope, { data, version });
+    if (!env.SETTINGS) return;
+    await env.SETTINGS.put(`settings:tenant:${tenantId}:${category}`, JSON.stringify(data));
+    await canonicalStore.markProjected(category, scope, version);
+  };
+
   await Promise.all([
-    env.AUTHRIM_CONFIG?.put(
-      `settings:tenant:${tenantId}:tenant`,
-      JSON.stringify({
-        'tenant.allowed_origins': allowedOrigins,
-        'tenant.allowed_domains': allowedDomain,
-        'tenant.allowed_identifiers': allowedIdentifiers,
-      })
-    ),
+    env.AUTHRIM_CONFIG?.put(`settings:tenant:${tenantId}:tenant`, JSON.stringify(tenantSettings)),
     env.AUTHRIM_CONFIG?.put(
       `settings:tenant:${tenantId}:email-settings`,
-      JSON.stringify({ strategy: 'priority_failover', providerOrder: [] })
+      JSON.stringify(emailSettings)
     ),
     materializeDisabledTenantEmailProviderOrder(env, tenantId),
-    env.SETTINGS?.put(
-      `settings:tenant:${tenantId}:login-ui`,
-      JSON.stringify({ 'login-ui.brand_name': tenantId })
-    ),
-    env.SETTINGS?.put(`settings:tenant:${tenantId}:tenant-discovery-ui`, JSON.stringify({})),
-    env.SETTINGS?.put(`settings:tenant:${tenantId}:authentication-methods`, JSON.stringify({})),
-    env.SETTINGS?.put(
-      `settings:tenant:${tenantId}:directory-connectors`,
-      JSON.stringify({
-        enabled: false,
-        default_connector_id: 'campus',
-        auto_provision: false,
-        connectors: [],
-      })
-    ),
-    env.SETTINGS?.put(`settings:tenant:${tenantId}:login-entry`, JSON.stringify({})),
+    seedCanonical('tenant', tenantSettings),
+    seedCanonical('email-settings', emailSettings),
+    seedCanonical('login-ui', { 'login-ui.brand_name': tenantId }),
+    seedCanonical('tenant-discovery-ui', {}),
+    seedCanonical('authentication-methods', {}),
+    seedCanonical('directory-connectors', {
+      enabled: false,
+      default_connector_id: 'campus',
+      auto_provision: false,
+      connectors: [],
+    }),
+    seedCanonical('login-entry', {}),
   ]);
 }
 
