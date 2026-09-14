@@ -6707,6 +6707,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
     let provisioningCompleted = false;
     let provisionPollInterval = null;
     let lastPrerequisitesResult = null;
+    let lastPrereqFailure = null;
 
     function buildProfilesConfig() {
       return {
@@ -7320,6 +7321,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
     }
 
     function refreshDynamicLocaleContent() {
+      renderPrereqFailureMessage();
       if (
         lastPrerequisitesResult &&
         sections.prerequisites &&
@@ -8860,7 +8862,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
     function createPrereqCheckLine(index, name, description, detail, status) {
       const copy = getPrereqUiCopy();
       const statusClass =
-        status === 'pass' ? 'pass' : status === 'warn' ? 'warn' : status === 'loading' ? 'loading' : 'fail';
+        status === 'pass' ? 'pass' : status === 'warn' ? 'check-warning' : status === 'loading' ? 'loading' : 'fail';
       const statusText = status === 'loading' ? copy.checking : '';
       const row = document.createElement('div');
       row.className = 'checkline ' + statusClass;
@@ -8952,17 +8954,21 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       }
     }
 
-    function renderPrereqFailureMessage(message) {
+    function renderPrereqFailureMessage(key, detail = '') {
+      if (key !== undefined) {
+        lastPrereqFailure = key ? { key, detail } : null;
+      }
       const content = document.getElementById('prereq-content');
       content.textContent = '';
-      if (!message) return;
+      if (!lastPrereqFailure) return;
       const alert = document.createElement('div');
       alert.className = 'alert error';
       const head = document.createElement('div');
       head.className = 'a-head';
       head.textContent = t('web.status.error');
       const body = document.createElement('p');
-      body.textContent = message;
+      body.textContent = t(lastPrereqFailure.key) +
+        (lastPrereqFailure.detail ? ' ' + lastPrereqFailure.detail : '');
       alert.appendChild(head);
       alert.appendChild(body);
       content.appendChild(alert);
@@ -8997,18 +9003,18 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         renderPrereqCheckRows(result);
 
         if (!result.wranglerInstalled) {
-          renderPrereqFailureMessage(t('web.error.wranglerNotInstalled') + ' npm install -g wrangler');
+          renderPrereqFailureMessage('web.error.wranglerNotInstalled', 'npm install -g wrangler');
           return false;
         }
 
         if (!result.auth.isLoggedIn) {
-          renderPrereqFailureMessage(t('web.error.notLoggedIn') + ' wrangler login');
+          renderPrereqFailureMessage('web.error.notLoggedIn', 'wrangler login');
           return false;
         }
 
         return true;
       } catch (error) {
-        renderPrereqFailureMessage(t('web.error.checkingPrereq') + ' ' + error.message);
+        renderPrereqFailureMessage('web.error.checkingPrereq', error.message);
         progress.innerHTML = copy.errorProgress;
         return false;
       }
