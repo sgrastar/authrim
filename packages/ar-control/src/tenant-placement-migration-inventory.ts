@@ -68,6 +68,7 @@ export interface TenantMigrationInventoryResult {
 const COMMON_SPECIAL_RULES: Readonly<Record<string, TenantMigrationOwnershipRule>> = {
   authrim_control_plane_shard_metadata: { kind: 'shard_local' },
   authrim_migrations: { kind: 'shard_local' },
+  migration_metadata: { kind: 'shard_local' },
   tenant_database_migration_state: { kind: 'shard_local' },
   tenant_placement_migration_captures: { kind: 'shard_local' },
   tenant_placement_migration_outbox: { kind: 'shard_local' },

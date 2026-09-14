@@ -1,3 +1,4 @@
+import { renderPortableMigrationSql } from '@authrim/ar-lib-core/control-plane';
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -14,9 +15,7 @@ const ROOT_DIR = fileURLToPath(new URL('../../../../', import.meta.url));
 const MIGRATIONS_ROOT = join(ROOT_DIR, 'migrations');
 
 function renderSql(sql: string): string {
-  return sql
-    .replaceAll('__AUTHRIM_NOW_EPOCH_MILLISECONDS__', '(unixepoch() * 1000)')
-    .replaceAll('__AUTHRIM_NOW_EPOCH_SECONDS__', 'unixepoch()');
+  return renderPortableMigrationSql(sql, 'sqlite');
 }
 
 function currentStreamSchema(streamId: 'core-d1' | 'pii-d1'): TenantMigrationTableSchema[] {

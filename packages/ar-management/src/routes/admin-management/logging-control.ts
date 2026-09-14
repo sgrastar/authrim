@@ -7454,7 +7454,7 @@ loggingPoliciesRouter.post('/runtime/tenant-db-probe', async (c) => {
     const tenantAdapter = ensureDatabaseAdapter(resolved.source, 'tenant-db-probe');
     await tenantAdapter.execute(
       `CREATE TABLE IF NOT EXISTS authrim_runtime_probes (
-        id TEXT PRIMARY KEY,
+        id TEXT PRIMARY KEY NOT NULL,
         tenant_id TEXT NOT NULL,
         role TEXT NOT NULL,
         probe_kind TEXT NOT NULL,

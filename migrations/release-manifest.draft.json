@@ -43,6 +43,10 @@
             {
               "path": "007_service_dynamic_groups.sql",
               "checksum": "e6dce155613d581111f53cf8b23a4e0f40733913d1326a92845bbcb1ccf24c2c"
+            },
+            {
+              "path": "008_primary_key_not_null.sql",
+              "checksum": "16dc5d492a01e1c04b89e11d9aedced3832153fbaacd17bf3637718c3174e0e0"
             }
           ]
         },
@@ -71,6 +75,10 @@
             {
               "path": "005_service_dynamic_groups.sql",
               "checksum": "0068ecf23d39337ecde79edaecda962971a5676e6024766df86cd65c35cb3958"
+            },
+            {
+              "path": "006_primary_key_not_null.sql",
+              "checksum": "95259ff32ea412104dc99bca34ff6be7c0bde7bb9013b4e46278e8fc100ff448"
             }
           ]
         },
@@ -82,7 +90,12 @@
           "logicalRoles": [
             "admin"
           ],
-          "files": []
+          "files": [
+            {
+              "path": "002_primary_key_not_null.sql",
+              "checksum": "ea11bb8b24bcc97d54325e4ac7b770463bbba69da63d998ce16877a8eb581f7c"
+            }
+          ]
         },
         {
           "id": "control-d1",
@@ -92,7 +105,12 @@
           "logicalRoles": [
             "control"
           ],
-          "files": []
+          "files": [
+            {
+              "path": "002_primary_key_not_null.sql",
+              "checksum": "61b4b39b46c38bce410dcf1abe13f3480a8c9e0700aa858bb6eaa8aeb2193f73"
+            }
+          ]
         },
         {
           "id": "lookup-d1",
@@ -102,7 +120,12 @@
           "logicalRoles": [
             "lookup"
           ],
-          "files": []
+          "files": [
+            {
+              "path": "002_primary_key_not_null.sql",
+              "checksum": "8c24f5cf5f098e12ec397391c2fef989251f1fc9418b86cb09a5a2037d551446"
+            }
+          ]
         },
         {
           "id": "plugin-runner-d1",
@@ -112,7 +135,12 @@
           "logicalRoles": [
             "plugin_runner"
           ],
-          "files": []
+          "files": [
+            {
+              "path": "002_primary_key_not_null.sql",
+              "checksum": "67b16ed10417200ed1f28c24c7709c70cf0f133f27b5057a8da928e3a74633b1"
+            }
+          ]
         },
         {
           "id": "core-postgresql",
@@ -224,6 +252,10 @@
         {
           "path": "007_service_dynamic_groups.sql",
           "checksum": "e6dce155613d581111f53cf8b23a4e0f40733913d1326a92845bbcb1ccf24c2c"
+        },
+        {
+          "path": "008_primary_key_not_null.sql",
+          "checksum": "16dc5d492a01e1c04b89e11d9aedced3832153fbaacd17bf3637718c3174e0e0"
         }
       ]
     },
@@ -256,6 +288,10 @@
         {
           "path": "005_service_dynamic_groups.sql",
           "checksum": "0068ecf23d39337ecde79edaecda962971a5676e6024766df86cd65c35cb3958"
+        },
+        {
+          "path": "006_primary_key_not_null.sql",
+          "checksum": "95259ff32ea412104dc99bca34ff6be7c0bde7bb9013b4e46278e8fc100ff448"
         }
       ]
     },
@@ -271,6 +307,10 @@
         {
           "path": "001_0_4_0_admin_baseline.sql",
           "checksum": "f355399d9f525911798feb51981b9ee31c5f969844b59a369709014b3abf062d"
+        },
+        {
+          "path": "002_primary_key_not_null.sql",
+          "checksum": "ea11bb8b24bcc97d54325e4ac7b770463bbba69da63d998ce16877a8eb581f7c"
         }
       ]
     },
@@ -286,6 +326,10 @@
         {
           "path": "001_0_4_0_control_baseline.sql",
           "checksum": "bd84e1ac53d2da9d09ec7500760ace5a9d45aabdd63c16433e6b919222a1e20c"
+        },
+        {
+          "path": "002_primary_key_not_null.sql",
+          "checksum": "61b4b39b46c38bce410dcf1abe13f3480a8c9e0700aa858bb6eaa8aeb2193f73"
         }
       ]
     },
@@ -301,6 +345,10 @@
         {
           "path": "001_0_4_0_lookup_baseline.sql",
           "checksum": "296bc48e57a1185111a8fdded551d54dfcb9b19e426e396eb34c753bf3299a65"
+        },
+        {
+          "path": "002_primary_key_not_null.sql",
+          "checksum": "8c24f5cf5f098e12ec397391c2fef989251f1fc9418b86cb09a5a2037d551446"
         }
       ]
     },
@@ -316,6 +364,10 @@
         {
           "path": "001_0_4_0_plugin_runner_baseline.sql",
           "checksum": "004ea4f613321692f39ebc16fabb34aa82673c5e5beb2a186d8150933e427a78"
+        },
+        {
+          "path": "002_primary_key_not_null.sql",
+          "checksum": "67b16ed10417200ed1f28c24c7709c70cf0f133f27b5057a8da928e3a74633b1"
         }
       ]
     },
