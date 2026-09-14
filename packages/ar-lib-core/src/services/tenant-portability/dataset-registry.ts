@@ -22,6 +22,16 @@ export interface TenantDatasetPolicy {
   kind: TenantDatasetKind;
 }
 
+export interface TenantDatasetRowPartition {
+  family: MigrationSchemaFamily;
+  table: string;
+  column: string;
+  values: readonly {
+    value: string;
+    kind: Extract<TenantDatasetKind, 'settings' | 'users' | 'admin'>;
+  }[];
+}
+
 // Explicit lists make new tables fail the inventory check instead of silently disappearing.
 // Logical families are shared across physical backends; schema/adapter parity is verified separately.
 const TABLE_GROUPS: Partial<
@@ -282,6 +292,23 @@ export const TENANT_DATASET_POLICIES: readonly TenantDatasetPolicy[] = Object.en
       }))
   )
 );
+
+/**
+ * Finite row partitions for tables whose records belong to independently selectable categories.
+ * Unknown values stop snapshot admission; they never fall through to a broader category.
+ */
+export const TENANT_DATASET_ROW_PARTITIONS: readonly TenantDatasetRowPartition[] = [
+  {
+    family: 'core',
+    table: 'resource_permissions',
+    column: 'subject_type',
+    values: [
+      { value: 'user', kind: 'users' },
+      { value: 'role', kind: 'settings' },
+      { value: 'org', kind: 'settings' },
+    ],
+  },
+];
 
 export interface TenantDatasetCoverage {
   unclassified: string[];

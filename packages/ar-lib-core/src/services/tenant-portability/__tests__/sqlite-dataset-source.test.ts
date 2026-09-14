@@ -241,3 +241,49 @@ it('rejects a cursor past the current row instead of silently ending the dataset
   for (const cursor of ['null', '{}', '{"after":"","chunk":-1}', '{"after":"","chunk":999}'])
     await expect(readNextSqliteSnapshotChunk(input, cursor)).rejects.toThrow('invalid_cursor');
 });
+
+it('streams only the installed logical partition from live rows and preimages', async () => {
+  const partitioned: SnapshotTableSchema = {
+    table: 'permissions',
+    tenantColumn: 'tenant_id',
+    columns: ['id', 'tenant_id', 'subject_type', 'value'],
+    primaryKey: ['id'],
+    uniqueKeys: [],
+    rowPartition: { column: 'subject_type', values: ['user', 'role', 'org'] },
+  };
+  db.exec(`CREATE TABLE permissions(
+      id TEXT PRIMARY KEY NOT NULL,
+      tenant_id TEXT NOT NULL,
+      subject_type TEXT NOT NULL,
+      value TEXT NOT NULL
+    );
+    ${sqliteSnapshotTriggers(partitioned)}
+    INSERT INTO permissions VALUES
+      ('u','a','user','user-before'),
+      ('r','a','role','role-before'),
+      ('o','a','org','org-before');
+    INSERT INTO tenant_backup_snapshots(id,tenant_id,state)
+      VALUES ('partition-snapshot','a','capturing');
+    UPDATE permissions SET value='changed' WHERE id IN ('u','r');`);
+  const read = (partitions: string[]) =>
+    text(
+      readSqliteSnapshotDataset({
+        database,
+        schema: partitioned,
+        snapshotId: 'partition-snapshot',
+        tenantId: 'a',
+        partitions,
+        signal: new AbortController().signal,
+      })
+    );
+  const settings = (await read(['role', 'org']))
+    .trim()
+    .split('\n')
+    .map((row) => JSON.parse(row));
+  const users = (await read(['user']))
+    .trim()
+    .split('\n')
+    .map((row) => JSON.parse(row));
+  expect(settings.map((row) => row.value[1]).sort()).toEqual(['org-before', 'role-before']);
+  expect(users.map((row) => row.value[1])).toEqual(['user-before']);
+});

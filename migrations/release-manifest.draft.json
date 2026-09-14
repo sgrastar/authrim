@@ -59,6 +59,10 @@
             {
               "path": "011_tenant_backup_restore_target_cancellation.sql",
               "checksum": "36a4d7c57586eb8bb5f2927aff7e8ad7a0dcd1a27f737d0a3521ff9277440f7c"
+            },
+            {
+              "path": "012_tenant_backup_preimage_row_partitions.sql",
+              "checksum": "ec32b226b04a17da04ba3ac3427c5726814ec89503110386c25e9a264141506e"
             }
           ]
         },
@@ -103,6 +107,10 @@
             {
               "path": "009_tenant_backup_restore_target_cancellation.sql",
               "checksum": "36a4d7c57586eb8bb5f2927aff7e8ad7a0dcd1a27f737d0a3521ff9277440f7c"
+            },
+            {
+              "path": "010_tenant_backup_preimage_row_partitions.sql",
+              "checksum": "ec32b226b04a17da04ba3ac3427c5726814ec89503110386c25e9a264141506e"
             }
           ]
         },
@@ -214,6 +222,10 @@
             {
               "path": "026_tenant_backup_restore_cleanup_receipts.sql",
               "checksum": "a4cbee7059fdd7d844a18682d356a13c39fe6396fda47df61eabfacbbb07b3b4"
+            },
+            {
+              "path": "027_tenant_backup_preimage_row_partitions.sql",
+              "checksum": "ec32b226b04a17da04ba3ac3427c5726814ec89503110386c25e9a264141506e"
             }
           ]
         },
@@ -253,6 +265,10 @@
             {
               "path": "008_tenant_backup_restore_target_cancellation.sql",
               "checksum": "36a4d7c57586eb8bb5f2927aff7e8ad7a0dcd1a27f737d0a3521ff9277440f7c"
+            },
+            {
+              "path": "009_tenant_backup_preimage_row_partitions.sql",
+              "checksum": "ec32b226b04a17da04ba3ac3427c5726814ec89503110386c25e9a264141506e"
             }
           ]
         },
@@ -295,6 +311,10 @@
             {
               "path": "005_tenant_backup_restore_target_cancellation.sql",
               "checksum": "36a4d7c57586eb8bb5f2927aff7e8ad7a0dcd1a27f737d0a3521ff9277440f7c"
+            },
+            {
+              "path": "006_tenant_backup_preimage_row_partitions.sql",
+              "checksum": "ec32b226b04a17da04ba3ac3427c5726814ec89503110386c25e9a264141506e"
             }
           ]
         },
@@ -424,6 +444,10 @@
         {
           "path": "011_tenant_backup_restore_target_cancellation.sql",
           "checksum": "36a4d7c57586eb8bb5f2927aff7e8ad7a0dcd1a27f737d0a3521ff9277440f7c"
+        },
+        {
+          "path": "012_tenant_backup_preimage_row_partitions.sql",
+          "checksum": "ec32b226b04a17da04ba3ac3427c5726814ec89503110386c25e9a264141506e"
         }
       ]
     },
@@ -472,6 +496,10 @@
         {
           "path": "009_tenant_backup_restore_target_cancellation.sql",
           "checksum": "36a4d7c57586eb8bb5f2927aff7e8ad7a0dcd1a27f737d0a3521ff9277440f7c"
+        },
+        {
+          "path": "010_tenant_backup_preimage_row_partitions.sql",
+          "checksum": "ec32b226b04a17da04ba3ac3427c5726814ec89503110386c25e9a264141506e"
         }
       ]
     },
@@ -587,6 +615,10 @@
         {
           "path": "026_tenant_backup_restore_cleanup_receipts.sql",
           "checksum": "a4cbee7059fdd7d844a18682d356a13c39fe6396fda47df61eabfacbbb07b3b4"
+        },
+        {
+          "path": "027_tenant_backup_preimage_row_partitions.sql",
+          "checksum": "ec32b226b04a17da04ba3ac3427c5726814ec89503110386c25e9a264141506e"
         }
       ]
     },
@@ -630,6 +662,10 @@
         {
           "path": "008_tenant_backup_restore_target_cancellation.sql",
           "checksum": "36a4d7c57586eb8bb5f2927aff7e8ad7a0dcd1a27f737d0a3521ff9277440f7c"
+        },
+        {
+          "path": "009_tenant_backup_preimage_row_partitions.sql",
+          "checksum": "ec32b226b04a17da04ba3ac3427c5726814ec89503110386c25e9a264141506e"
         }
       ]
     },
@@ -680,6 +716,10 @@
         {
           "path": "005_tenant_backup_restore_target_cancellation.sql",
           "checksum": "36a4d7c57586eb8bb5f2927aff7e8ad7a0dcd1a27f737d0a3521ff9277440f7c"
+        },
+        {
+          "path": "006_tenant_backup_preimage_row_partitions.sql",
+          "checksum": "ec32b226b04a17da04ba3ac3427c5726814ec89503110386c25e9a264141506e"
         }
       ]
     },

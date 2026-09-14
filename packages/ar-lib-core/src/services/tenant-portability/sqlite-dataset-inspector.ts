@@ -14,6 +14,8 @@ export interface SqliteDatasetInspectionPolicy {
   parentDataset?: Pick<TenantPortableDataset, 'id' | 'module'>;
   /** Authoritative tenant key, when storage ownership uses it instead of tenant ID. */
   tenantKey?: string;
+  /** Exact row-partition values assigned to this logical dataset. */
+  partitions?: readonly string[];
   /** Business fields, secrets and non-ownership references require module-specific validation. */
   inspectRow: (
     row: PortableSqliteRow,
@@ -60,6 +62,14 @@ export function createSqliteDatasetInspectorFactory(
       invalid();
     const schema = pinned.schema;
     if ('parent' in schema && !pinned.parentDataset) invalid();
+    if (schema.rowPartition) {
+      if (
+        !pinned.partitions?.length ||
+        new Set(pinned.partitions).size !== pinned.partitions.length ||
+        pinned.partitions.some((value) => !schema.rowPartition?.values.includes(value))
+      )
+        invalid();
+    } else if (pinned.partitions !== undefined) invalid();
     const decoder = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
     let fragments: string[] = [],
       rowBytes = 0,
@@ -98,6 +108,15 @@ export function createSqliteDatasetInspectorFactory(
             sqliteSnapshotRowInsert(schema.table, schema.columns, json);
             const parsed: unknown = JSON.parse(json);
             const row = parsed as PortableSqliteRow;
+            if (schema.rowPartition) {
+              const partition = row[schema.rowPartition.column];
+              if (
+                partition?.[0] !== 'text' ||
+                partition[1] === null ||
+                !pinned.partitions?.includes(partition[1])
+              )
+                invalid();
+            }
             const identity: TenantPortableRecordIdentity = {
               module: dataset.module,
               collection: dataset.id,

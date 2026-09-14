@@ -125,3 +125,63 @@ it('rejects duplicate dataset identities and malformed capture metadata', async 
     })
   ).rejects.toThrow('backup_installed_sqlite_dataset_invalid');
 });
+
+it('resolves disjoint selected row partitions and rejects incomplete installed coverage', async () => {
+  const partitioned = selected('resource_permissions', 0);
+  partitioned.payload_json = JSON.stringify({
+    ...JSON.parse(partitioned.payload_json),
+    capture: {
+      ...capture,
+      table: 'resource_permissions',
+      columns: ['id', 'tenant_id', 'subject_type'],
+      rowPartition: { column: 'subject_type', values: ['user', 'role', 'org'] },
+    },
+    rowPartitions: [
+      { value: 'user', kind: 'users', selection: { action: 'excluded', reason: 'not_selected' } },
+      { value: 'role', kind: 'settings', selection: { action: 'selected', timeFilter: 'none' } },
+      { value: 'org', kind: 'settings', selection: { action: 'selected', timeFilter: 'none' } },
+    ],
+  });
+  const settings = {
+    ...registration('resource_permissions'),
+    dataset: {
+      ...registration('resource_permissions').dataset,
+      id: 'core.resource_permissions.settings',
+    },
+    partitions: ['role', 'org'],
+  };
+  const result = await resolveInstalledSqliteDatasets({
+    inventory: inventory([partitioned]),
+    lease,
+    registrations: [settings],
+  });
+  expect(result).toEqual([
+    expect.objectContaining({
+      table: 'resource_permissions',
+      partitions: ['role', 'org'],
+      dataset: expect.objectContaining({ id: 'core.resource_permissions.settings' }),
+    }),
+  ]);
+
+  await expect(
+    resolveInstalledSqliteDatasets({
+      inventory: inventory([partitioned]),
+      lease,
+      registrations: [{ ...settings, partitions: ['role'] }],
+    })
+  ).rejects.toThrow('backup_installed_sqlite_dataset_invalid');
+  await expect(
+    resolveInstalledSqliteDatasets({
+      inventory: inventory([partitioned]),
+      lease,
+      registrations: [
+        settings,
+        {
+          ...settings,
+          dataset: { ...settings.dataset, id: 'core.resource_permissions.overlap' },
+          partitions: ['org'],
+        },
+      ],
+    })
+  ).rejects.toThrow('backup_installed_sqlite_dataset_invalid');
+});

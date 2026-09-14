@@ -27,6 +27,7 @@ import { persistTenantBackupInput } from '@authrim/ar-lib-core/services/tenant-p
 import { runTenantBackupArtifactStep } from '@authrim/ar-lib-core/services/tenant-portability/export-artifact-step';
 import { runTenantBackupArtifactVerificationStep } from '@authrim/ar-lib-core/services/tenant-portability/verify-artifact-step';
 import type { TenantPortableDataset } from '@authrim/ar-lib-core/services/tenant-portability/module-contract';
+import type { TenantBackupSelection } from '@authrim/ar-lib-core/services/tenant-portability/selection-contract';
 import type { TenantBackupStepResult } from '@authrim/ar-lib-core/services/tenant-portability/operation-executor';
 import { requireDedicatedAdminDatabaseAdapter, type Env } from '@authrim/ar-lib-core';
 import type { TenantBackupStepContext } from '@authrim/ar-lib-core/services/tenant-portability/operation-executor';
@@ -99,6 +100,29 @@ export async function loadTenantBackupExportExecution(
 }
 
 type RequiredDatabases = Parameters<typeof resolveTenantBackupDatabaseInventory>[2];
+export type TenantBackupDatasetResolver = (
+  selection: TenantBackupSelection
+) => readonly TenantPortableDataset[];
+
+function resolveDatasets(
+  resolver: TenantBackupDatasetResolver,
+  selection: TenantBackupSelection
+): TenantPortableDataset[] {
+  const datasets = resolver(selection).map((dataset) => ({ ...dataset }));
+  if (
+    !datasets.length ||
+    datasets.length > 4096 ||
+    new Set(datasets.map((dataset) => dataset.id)).size !== datasets.length ||
+    datasets.some(
+      (dataset) =>
+        !/^[A-Za-z0-9_.:-]{1,256}$/.test(dataset.id) ||
+        dataset.store !== 'database' ||
+        dataset.disposition !== 'include'
+    )
+  )
+    throw new Error('backup_installed_dataset_invalid');
+  return datasets;
+}
 
 async function resolveSqlitePlanResources(
   env: Env,
@@ -190,7 +214,7 @@ export async function runTenantBackupExportPreparation(
 export async function runTenantBackupImportPreparation(
   env: Env,
   context: TenantBackupStepContext,
-  datasets: readonly TenantPortableDataset[],
+  datasetResolver: TenantBackupDatasetResolver,
   now: () => number = Date.now
 ): Promise<TenantBackupStepResult> {
   context.signal.throwIfAborted();
@@ -203,6 +227,7 @@ export async function runTenantBackupImportPreparation(
   const database = requireDedicatedAdminDatabaseAdapter(env, 'tenant-backup');
   const requests = new TenantBackupImportRequestStore(database);
   const loaded = await requests.loadForExecution(context, now);
+  const datasets = resolveDatasets(datasetResolver, loaded.intent.selection);
   if (
     loaded.intent.source.productVersion !== productVersion ||
     loaded.intent.source.issuer !==
@@ -292,7 +317,7 @@ export async function runTenantBackupImportPreparation(
 export async function runTenantBackupImportDecode(
   env: Env,
   context: TenantBackupStepContext,
-  datasets: readonly TenantPortableDataset[],
+  datasetResolver: TenantBackupDatasetResolver,
   now: () => number = Date.now
 ): Promise<TenantBackupStepResult> {
   context.signal.throwIfAborted();
@@ -305,6 +330,7 @@ export async function runTenantBackupImportDecode(
   const database = requireDedicatedAdminDatabaseAdapter(env, 'tenant-backup');
   const requests = new TenantBackupImportRequestStore(database);
   const loaded = await requests.loadForExecution(context, now);
+  const datasets = resolveDatasets(datasetResolver, loaded.intent.selection);
   if (
     loaded.intent.source.productVersion !== productVersion ||
     loaded.intent.source.issuer !==
@@ -358,7 +384,7 @@ export async function runTenantBackupImportValidation(
   env: Env,
   context: TenantBackupStepContext,
   adapter: {
-    datasets: readonly TenantPortableDataset[];
+    datasets: TenantBackupDatasetResolver;
     loadPolicy(datasetId: string): Promise<SqliteDatasetInspectionPolicy>;
     assertSources(): Promise<void>;
   },
@@ -401,6 +427,7 @@ export async function runTenantBackupImportValidation(
     return { current, currentKeys };
   };
   const initial = await assertCurrent();
+  const datasets = resolveDatasets(adapter.datasets, initial.current.intent.selection);
   const result = await runTenantBackupSqliteInputValidationSequenceStep(context, {
     database,
     bucket: env.IMPORT_ARTIFACTS,
@@ -423,7 +450,7 @@ export async function runTenantBackupImportValidation(
           bundleId,
           source: loaded.current.intent.source,
           selection: loaded.current.intent.selection,
-          datasets: adapter.datasets,
+          datasets,
         },
         session: key.key,
         loadPolicy: async (datasetId) => {

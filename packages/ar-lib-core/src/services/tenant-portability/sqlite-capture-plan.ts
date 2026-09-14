@@ -10,6 +10,9 @@ function schemaSignature(schema: CaptureSchema): string {
       .map((key) => [...key])
       .sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b))),
     uniqueExpressions: schema.uniqueExpressions ?? [],
+    rowPartition: schema.rowPartition
+      ? { column: schema.rowPartition.column, values: [...schema.rowPartition.values].sort() }
+      : null,
     ownership:
       'parent' in schema
         ? schema.parent
@@ -88,6 +91,27 @@ export function sqliteSnapshotStartStatement(
     !tenantKey
   )
     throw new Error('snapshot_missing_tenant_key');
+  const partitionChecks = plan.schemas.flatMap((schema) => {
+    if (!schema.rowPartition) return [];
+    const column = `"${schema.rowPartition.column}"`;
+    const table = `"${schema.table}"`;
+    const values = schema.rowPartition.values.map((value) => `'${value}'`).join(', ');
+    const ownership =
+      'parent' in schema
+        ? null
+        : schema.scopeTypeColumn
+          ? `partitioned_row."${schema.tenantColumn}" = snapshot.${schema.tenantIdentity === 'tenantKey' ? 'tenant_key' : 'tenant_id'} AND partitioned_row."${schema.scopeTypeColumn}" = 'tenant'`
+          : `partitioned_row."${schema.tenantColumn}" = snapshot.${schema.tenantIdentity === 'tenantKey' ? 'tenant_key' : 'tenant_id'}`;
+    // Parent-owned partitioned rows require a specialized start validator because ownership must
+    // be resolved at the boundary. Refuse such a plan instead of scanning a wider table.
+    if (!ownership) throw new Error('snapshot_parent_row_partition_unsupported');
+    return [
+      `NOT EXISTS (SELECT 1 FROM ${table} AS partitioned_row
+        WHERE ${ownership}
+          AND (typeof(partitioned_row.${column}) <> 'text'
+            OR partitioned_row.${column} NOT IN (${values})))`,
+    ];
+  });
   // D1 limits each bound string. Parse bounded arrays independently rather than
   // concatenating them back into one oversized value inside SQLite.
   const chunks: string[] = [];
@@ -118,8 +142,8 @@ export function sqliteSnapshotStartStatement(
     sql: `WITH requested_snapshot AS (SELECT ? AS id, ? AS tenant_id, ${tenantKey === undefined ? 'NULL' : '?'} AS tenant_key)
       INSERT INTO tenant_backup_snapshots (id, tenant_id, state, tenant_key)
       SELECT snapshot.id, snapshot.tenant_id, 'capturing', snapshot.tenant_key FROM requested_snapshot AS snapshot
-      WHERE ${balancedConjunction(
-        chunks.map(
+      WHERE ${balancedConjunction([
+        ...chunks.map(
           () => `NOT EXISTS (
         SELECT 1 FROM json_each(?) AS expected
         WHERE NOT EXISTS (
@@ -139,8 +163,9 @@ export function sqliteSnapshotStartStatement(
             WHERE installed_key.name=expected_key.value AND installed_key.pk=expected_key.key+1
               AND installed_key."notnull"=1))))
       )`
-        )
-      )}`,
+        ),
+        ...partitionChecks,
+      ])}`,
     params: [snapshotId, tenantId, ...(tenantKey === undefined ? [] : [tenantKey]), ...chunks],
   };
 }

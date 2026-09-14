@@ -2,6 +2,7 @@ import type { MigrationSchemaFamily } from '../control-plane/migration-stream-co
 import type { TenantPortableDataset } from './module-contract';
 import type { TenantBackupExecutionInventory } from './execution-inventory';
 import { sqliteCapturePlan } from './sqlite-capture-plan';
+import { tenantDatasetSelectionRule, type TenantBackupSelection } from './selection-contract';
 import type { CaptureSchema } from './sqlite-snapshot';
 
 type Inventory = Pick<TenantBackupExecutionInventory, 'headForLease' | 'readPage'>;
@@ -9,6 +10,8 @@ export interface InstalledSqliteDatasetRegistration {
   family: MigrationSchemaFamily;
   table: string;
   dataset: TenantPortableDataset;
+  /** Exact trusted row-partition values when one physical table backs multiple datasets. */
+  partitions?: readonly string[];
 }
 
 export interface PlannedInstalledSqliteDataset {
@@ -19,12 +22,29 @@ export interface PlannedInstalledSqliteDataset {
   table: string;
   capture: CaptureSchema;
   dataset: TenantPortableDataset;
+  partitions?: readonly string[];
 }
 
 const families = ['core', 'pii', 'admin', 'control', 'lookup', 'plugin_runner'];
 
 function fail(): never {
   throw new Error('backup_installed_sqlite_dataset_invalid');
+}
+
+/** Select installed logical datasets from the persisted operator categories. */
+export function selectInstalledSqliteDatasets(
+  registrations: readonly InstalledSqliteDatasetRegistration[],
+  selection: TenantBackupSelection
+): TenantPortableDataset[] {
+  const selected = registrations
+    .filter((registration) => {
+      const rule = tenantDatasetSelectionRule(registration.dataset.kind, selection);
+      return rule.action === 'selected' || rule.action === 'resolve_references';
+    })
+    .map((registration) => structuredClone(registration.dataset));
+  if (!selected.length || new Set(selected.map((dataset) => dataset.id)).size !== selected.length)
+    fail();
+  return selected;
 }
 
 /**
@@ -41,26 +61,36 @@ export async function resolveInstalledSqliteDatasets(input: {
   if (
     !registrations.length ||
     registrations.length > 4096 ||
-    new Set(registrations.map((registration) => `${registration.family}:${registration.table}`))
-      .size !== registrations.length ||
     new Set(registrations.map((registration) => registration.dataset.id)).size !==
       registrations.length ||
     registrations.some(
-      ({ family, table, dataset }) =>
-        !families.includes(family) ||
-        !/^[a-z][a-z0-9_]*$/.test(table) ||
-        !/^[A-Za-z0-9_.:-]{1,256}$/.test(dataset.id) ||
-        dataset.store !== 'database' ||
-        dataset.disposition !== 'include'
+      (registration) =>
+        !families.includes(registration.family) ||
+        !/^[a-z][a-z0-9_]*$/.test(registration.table) ||
+        !/^[A-Za-z0-9_.:-]{1,256}$/.test(registration.dataset.id) ||
+        registration.dataset.store !== 'database' ||
+        registration.dataset.disposition !== 'include' ||
+        (registration.partitions !== undefined &&
+          (!registration.partitions.length ||
+            new Set(registration.partitions).size !== registration.partitions.length ||
+            registration.partitions.some((value) => !/^[A-Za-z0-9_.:-]{1,64}$/.test(value))))
     )
   )
     fail();
-  const byTable = new Map(
-    registrations.map((registration) => [
-      `${registration.family}:${registration.table}`,
-      registration,
-    ])
-  );
+  const byTable = new Map<string, InstalledSqliteDatasetRegistration[]>();
+  for (const registration of registrations) {
+    const key = `${registration.family}:${registration.table}`;
+    byTable.set(key, [...(byTable.get(key) ?? []), registration]);
+  }
+  for (const group of byTable.values()) {
+    if (group.length === 1) continue;
+    const values = group.flatMap((registration) => registration.partitions ?? []);
+    if (
+      group.some((registration) => !registration.partitions?.length) ||
+      new Set(values).size !== values.length
+    )
+      fail();
+  }
   const head = await input.inventory.headForLease(input.lease);
   if (head.state !== 'sealed') fail();
   const firstOrdinals = new Map<string, number>();
@@ -104,17 +134,71 @@ export async function resolveInstalledSqliteDatasets(input: {
         fail();
       }
       if (!capture || capture.table !== value.table) fail();
-      const registration = byTable.get(`${family}:${value.table}`);
-      if (!registration || registration.dataset.kind !== value.kind) fail();
-      planned.push({
-        ordinal: item.ordinal,
-        firstOrdinal,
-        resourceId: value.resourceId,
-        family,
-        table: value.table,
-        capture,
-        dataset: registration.dataset,
-      });
+      const tableRegistrations = byTable.get(`${family}:${value.table}`) ?? [];
+      if (capture.rowPartition) {
+        if (!Array.isArray(value.rowPartitions)) fail();
+        const rowPartitions = value.rowPartitions as Array<Record<string, unknown>>;
+        if (
+          rowPartitions.length !== capture.rowPartition.values.length ||
+          rowPartitions.some(
+            (partition) =>
+              !partition ||
+              typeof partition !== 'object' ||
+              typeof partition.value !== 'string' ||
+              typeof partition.kind !== 'string' ||
+              !partition.selection ||
+              typeof partition.selection !== 'object'
+          )
+        )
+          fail();
+        const selected = rowPartitions.filter((partition) =>
+          ['selected', 'resolve_references'].includes(
+            (partition.selection as Record<string, unknown>).action as string
+          )
+        );
+        const selectedValues = selected.map((partition) => partition.value as string).sort();
+        const selectedRegistrations = tableRegistrations.filter((registration) =>
+          registration.partitions?.some((partition) => selectedValues.includes(partition))
+        );
+        const registeredValues = selectedRegistrations
+          .flatMap((registration) => registration.partitions ?? [])
+          .sort();
+        if (
+          JSON.stringify(selectedValues) !== JSON.stringify(registeredValues) ||
+          selectedRegistrations.some((registration) =>
+            registration.partitions?.some((partition) => {
+              const plannedPartition = selected.find((entry) => entry.value === partition);
+              return plannedPartition?.kind !== registration.dataset.kind;
+            })
+          )
+        )
+          fail();
+        for (const registration of selectedRegistrations)
+          planned.push({
+            ordinal: item.ordinal,
+            firstOrdinal,
+            resourceId: value.resourceId,
+            family,
+            table: value.table,
+            capture,
+            dataset: registration.dataset,
+            partitions: [...(registration.partitions ?? [])],
+          });
+      } else {
+        if ('rowPartitions' in value) fail();
+        if (tableRegistrations.length !== 1 || tableRegistrations[0].partitions) fail();
+        const registration = tableRegistrations[0];
+        if (!registration || registration.dataset.kind !== value.kind) fail();
+        planned.push({
+          ordinal: item.ordinal,
+          firstOrdinal,
+          resourceId: value.resourceId,
+          family,
+          table: value.table,
+          capture,
+          dataset: registration.dataset,
+        });
+      }
     }
   }
   if (!planned.length || new Set(planned.map((entry) => entry.dataset.id)).size !== planned.length)

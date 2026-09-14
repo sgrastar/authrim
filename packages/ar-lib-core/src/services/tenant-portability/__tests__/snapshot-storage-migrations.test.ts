@@ -33,7 +33,7 @@ it.each(streams)(
     const reference = new DatabaseSync(':memory:');
     try {
       const additions = stream.migrations.filter((m) =>
-        m.file.endsWith('_tenant_backup_snapshot_storage.sql')
+        /_tenant_backup_(snapshot_storage|preimage_row_partitions)\.sql$/.test(m.file)
       );
       for (const migration of stream.migrations.filter((m) => !additions.includes(m)))
         db.exec(renderPortableMigrationSql(readFileSync(root + migration.file, 'utf8'), 'sqlite'));
@@ -41,9 +41,8 @@ it.each(streams)(
         "CREATE TABLE migration_fixture(id TEXT PRIMARY KEY NOT NULL,value TEXT DEFAULT 'seed'); INSERT INTO migration_fixture(id) VALUES ('preserved'); CREATE INDEX migration_fixture_value ON migration_fixture(value); CREATE TRIGGER migration_fixture_guard BEFORE DELETE ON migration_fixture BEGIN SELECT RAISE(ABORT,'fixture_keep'); END;"
       );
       const before = objects(db);
-      const migration = readFileSync(root + additions[0].file, 'utf8');
       db.exec('BEGIN');
-      db.exec(migration);
+      for (const migration of additions) db.exec(readFileSync(root + migration.file, 'utf8'));
       db.exec('COMMIT');
       const after = objects(db);
       expect(after.filter((row) => before.some((old) => old.name === row.name))).toEqual(before);

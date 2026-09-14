@@ -90,7 +90,7 @@ const context = {
 function installed() {
   return {
     requiredDatabases: { roles: ['tenant_core'], fixed: [] },
-    datasets: [
+    datasets: (_selection) => [
       {
         id: 'core.tenants',
         module: 'tenant-runtime',
@@ -285,12 +285,12 @@ it('rejects unknown export phases before invoking an installed adapter', async (
 it('rejects an incomplete installed adapter before planning physical sources', async () => {
   const adapter = installed();
   await expect(
-    runTenantBackupExportOperationStep(env, context, { ...adapter, datasets: [] })
+    runTenantBackupExportOperationStep(env, context, { ...adapter, datasets: [] as never })
   ).rejects.toThrow('backup_export_dispatch_invalid');
   await expect(
     runTenantBackupExportOperationStep(env, context, {
       ...adapter,
-      datasets: [{ ...adapter.datasets[0], disposition: 'unsupported' }],
+      datasets: (selection) => [{ ...adapter.datasets(selection)[0], disposition: 'unsupported' }],
     })
   ).rejects.toThrow('backup_export_dispatch_invalid');
   expect(mocks.prepare).not.toHaveBeenCalled();

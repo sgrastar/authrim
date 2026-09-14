@@ -229,4 +229,58 @@ describe('SQLite backup preimages', () => {
       expect(() => sqliteSnapshotPageQuery(invalid, 'json')).toThrow();
     }
   });
+
+  it('keeps independently selected row partitions at the original snapshot boundary', () => {
+    const permissions: SnapshotTableSchema = {
+      table: 'resource_permissions',
+      tenantColumn: 'tenant_id',
+      columns: ['id', 'tenant_id', 'subject_type', 'value'],
+      primaryKey: ['id'],
+      uniqueKeys: [],
+      rowPartition: { column: 'subject_type', values: ['user', 'role', 'org'] },
+    };
+    db.exec(`CREATE TABLE resource_permissions(
+        id TEXT PRIMARY KEY NOT NULL,
+        tenant_id TEXT NOT NULL,
+        subject_type TEXT NOT NULL,
+        value TEXT NOT NULL
+      );
+      ${sqliteSnapshotTriggers(permissions, 'json')}
+      INSERT INTO resource_permissions VALUES
+        ('user-a','a','user','user-before'),
+        ('role-a','a','role','role-before'),
+        ('org-a','a','org','org-before'),
+        ('user-b','b','user','private');`);
+    start('partitioned');
+    db.exec(`UPDATE resource_permissions SET subject_type='user',value='role-after'
+      WHERE id='role-a';
+      DELETE FROM resource_permissions WHERE id='user-a';`);
+
+    const read = (partitions: string[]) =>
+      db
+        .prepare(sqliteSnapshotPageQuery(permissions, 'json', partitions))
+        .all('partitioned', 'a', '', 100)
+        .map((row) => JSON.parse(String(row.row_json)).value[1]);
+    expect(read(['role', 'org']).sort()).toEqual(['org-before', 'role-before']);
+    expect(read(['user'])).toEqual(['user-before']);
+    expect(
+      db
+        .prepare(
+          "SELECT record_key,row_partition FROM tenant_backup_preimages WHERE snapshot_id='partitioned' AND present=1 ORDER BY record_key"
+        )
+        .all()
+    ).toEqual([
+      { record_key: '[["text","role-a"]]', row_partition: 'role' },
+      { record_key: '[["text","user-a"]]', row_partition: 'user' },
+    ]);
+    expect(() =>
+      db.exec("INSERT INTO resource_permissions VALUES ('bad','a','device','bad')")
+    ).toThrow('snapshot_invalid_row_partition');
+    expect(() => sqliteSnapshotPageQuery(permissions, 'json')).toThrow(
+      'snapshot_invalid_row_partition'
+    );
+    expect(() => sqliteSnapshotPageQuery(permissions, 'json', ['device'])).toThrow(
+      'snapshot_invalid_row_partition'
+    );
+  });
 });

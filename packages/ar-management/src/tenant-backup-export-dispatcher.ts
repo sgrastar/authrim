@@ -1,5 +1,6 @@
 import type { Env } from '@authrim/ar-lib-core';
 import type { TenantPortableDataset } from '@authrim/ar-lib-core/services/tenant-portability/module-contract';
+import type { TenantBackupSelection } from '@authrim/ar-lib-core/services/tenant-portability/selection-contract';
 import type {
   TenantBackupStepContext,
   TenantBackupStepResult,
@@ -42,7 +43,7 @@ export interface AdapterContext {
 /** Server-installed code only. A bundle cannot add datasets, readers, participants or guards. */
 export interface TenantBackupInstalledExportAdapter {
   requiredDatabases: RequiredDatabases;
-  datasets: readonly TenantPortableDataset[];
+  datasets(selection: TenantBackupSelection): readonly TenantPortableDataset[];
   /** Recheck module versions, non-SQL generations and source availability. */
   assertSources(input: AdapterContext): Promise<void>;
   /** Hold the installed routing/DDL guard while SQL capture definitions are checked or started. */
@@ -74,11 +75,26 @@ function fail(): never {
 }
 
 function validateInstalledAdapter(adapter: TenantBackupInstalledExportAdapter): void {
+  let datasets: readonly TenantPortableDataset[] = [];
+  if (typeof adapter.datasets === 'function') {
+    try {
+      datasets = adapter.datasets({
+        settings: true,
+        users: true,
+        admin: true,
+        artifacts: true,
+        logs: { audit: true, other: true, sensitive: true, period: 'all' },
+      });
+    } catch {
+      return fail();
+    }
+  }
   if (
-    !adapter.datasets.length ||
-    adapter.datasets.length > 4096 ||
-    new Set(adapter.datasets.map((dataset) => dataset.id)).size !== adapter.datasets.length ||
-    adapter.datasets.some(
+    typeof adapter.datasets !== 'function' ||
+    !datasets.length ||
+    datasets.length > 4096 ||
+    new Set(datasets.map((dataset) => dataset.id)).size !== datasets.length ||
+    datasets.some(
       (dataset) =>
         !/^[A-Za-z0-9_.:-]{1,256}$/.test(dataset.id) || dataset.disposition === 'unsupported'
     ) ||
@@ -133,8 +149,18 @@ export async function runTenantBackupExportOperationStep(
   };
   if (context.operation.phase === 'prepare')
     return runTenantBackupExportPreparation(env, context, required, now);
-
   const loaded = await loadTenantBackupExportExecution(env, context, now);
+  const datasets = adapter.datasets(loaded.intent.selection).map((dataset) => ({ ...dataset }));
+  if (
+    !datasets.length ||
+    datasets.length > 4096 ||
+    new Set(datasets.map((dataset) => dataset.id)).size !== datasets.length ||
+    datasets.some(
+      (dataset) =>
+        !/^[A-Za-z0-9_.:-]{1,256}$/.test(dataset.id) || dataset.disposition === 'unsupported'
+    )
+  )
+    fail();
   const inventory = new TenantBackupExecutionInventory(loaded.database, context.lease, now);
   const snapshotResources = new TenantBackupSnapshotResources(loaded.database, now);
   const resolveDatabases = () => resolveTenantBackupDatabaseInventory(env, context, required, now);
@@ -270,7 +296,7 @@ export async function runTenantBackupExportOperationStep(
       env,
       context,
       {
-        datasets: adapter.datasets,
+        datasets,
         requiredDatabases: required,
         assertSources,
         readNext: async (datasetId, cursor, signal) =>

@@ -51,7 +51,15 @@ function fixture() {
 
 it('uses only installed policies and rejects unknown bundle-selected datasets', async () => {
   const { adapter, context, calls } = fixture();
-  expect(adapter.datasets).toEqual([dataset]);
+  expect(
+    adapter.datasets({
+      settings: true,
+      users: false,
+      admin: false,
+      artifacts: false,
+      logs: { audit: false, other: false, sensitive: false, period: 'all' },
+    })
+  ).toEqual([dataset]);
   const loaded = await adapter.loadPolicy(context, dataset.id);
   expect(loaded.dataset).toEqual(dataset);
   expect(loaded.schema.table).toBe('roles');

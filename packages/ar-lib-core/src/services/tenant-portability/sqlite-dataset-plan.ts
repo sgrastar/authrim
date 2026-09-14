@@ -1,6 +1,10 @@
 import { readBackupSqliteDatabaseSchema } from './sqlite-schema-reader';
 import type { MigrationSchemaFamily } from '../control-plane/migration-stream-contract';
-import { TENANT_DATASET_POLICIES, type TenantDatasetKind } from './dataset-registry';
+import {
+  TENANT_DATASET_POLICIES,
+  TENANT_DATASET_ROW_PARTITIONS,
+  type TenantDatasetKind,
+} from './dataset-registry';
 import { TENANT_BACKUP_OWNERSHIP_RULES } from './ownership-registry';
 import type { BackupRowOwnership } from './row-ownership';
 import {
@@ -20,6 +24,11 @@ export interface SqliteDatasetPlanEntry {
   selection: TenantDatasetSelectionRule;
   capture: CaptureSchema | null;
   concerns: string[];
+  rowPartitions?: readonly {
+    value: string;
+    kind: Extract<TenantDatasetKind, 'settings' | 'users' | 'admin'>;
+    selection: TenantDatasetSelectionRule;
+  }[];
 }
 
 /**
@@ -54,7 +63,26 @@ export function planSqliteTenantDatasets(
     if (policies.length !== 1) throw new Error('backup_plan_unclassified_table');
     return policies[0];
   }
-  function capture(table: BackupSchemaTable, rule: BackupRowOwnership): CaptureSchema {
+  function rowPartition(table: BackupSchemaTable) {
+    const matches = TENANT_DATASET_ROW_PARTITIONS.filter(
+      (entry) => entry.family === family && entry.table === table.name
+    );
+    if (matches.length > 1) throw new Error('backup_plan_duplicate_row_partition');
+    const partition = matches[0];
+    if (!partition) return undefined;
+    if (
+      !table.columns.some((column) => column.name === partition.column && !column.generated) ||
+      partition.values.length < 2 ||
+      new Set(partition.values.map((entry) => entry.value)).size !== partition.values.length
+    )
+      throw new Error('backup_plan_invalid_row_partition');
+    return partition;
+  }
+  function capture(
+    table: BackupSchemaTable,
+    rule: BackupRowOwnership,
+    partition = rowPartition(table)
+  ): CaptureSchema {
     const structure = assessSqliteCaptureStructure(table);
     if (!structure.schema) throw new Error(`backup_plan_structure:${structure.concerns.join(',')}`);
     if (rule.kind === 'tenant') {
@@ -64,6 +92,14 @@ export function planSqliteTenantDatasets(
         ...structure.schema,
         tenantColumn: rule.column,
         ...(rule.identity === 'tenantKey' ? { tenantIdentity: 'tenantKey' as const } : {}),
+        ...(partition
+          ? {
+              rowPartition: {
+                column: partition.column,
+                values: partition.values.map((entry) => entry.value),
+              },
+            }
+          : {}),
       };
     }
     if (rule.kind === 'scope') {
@@ -73,7 +109,19 @@ export function planSqliteTenantDatasets(
         )
       )
         throw new Error('backup_plan_ownership_column_missing');
-      return { ...structure.schema, tenantColumn: rule.idColumn, scopeTypeColumn: rule.typeColumn };
+      return {
+        ...structure.schema,
+        tenantColumn: rule.idColumn,
+        scopeTypeColumn: rule.typeColumn,
+        ...(partition
+          ? {
+              rowPartition: {
+                column: partition.column,
+                values: partition.values.map((entry) => entry.value),
+              },
+            }
+          : {}),
+      };
     }
     const parent = byName.get(rule.table);
     if (!parent) throw new Error('backup_plan_parent_missing');
@@ -107,17 +155,31 @@ export function planSqliteTenantDatasets(
     .sort((a, b) => a.name.localeCompare(b.name))
     .map((table): SqliteDatasetPlanEntry => {
       const policy = classification(table.name);
-      const rule = tenantDatasetSelectionRule(policy.kind, selection);
+      const partition = rowPartition(table);
+      const rowPartitions = partition?.values.map((entry) => ({
+        ...entry,
+        selection: tenantDatasetSelectionRule(entry.kind, selection),
+      }));
+      const partitionSelected = rowPartitions?.some(
+        (entry) =>
+          entry.selection.action === 'selected' || entry.selection.action === 'resolve_references'
+      );
+      const rule = partitionSelected
+        ? ({ action: 'selected', timeFilter: 'none' } as const)
+        : partition
+          ? ({ action: 'excluded', reason: 'not_selected' } as const)
+          : tenantDatasetSelectionRule(policy.kind, selection);
       const entry: SqliteDatasetPlanEntry = {
         table: table.name,
         kind: policy.kind,
         selection: rule,
         capture: null,
         concerns: [],
+        ...(rowPartitions ? { rowPartitions } : {}),
       };
       if (rule.action !== 'selected' && rule.action !== 'resolve_references') return entry;
       try {
-        entry.capture = capture(table, ownership(table));
+        entry.capture = capture(table, ownership(table), partition);
         // Validate graph/identifier/SQL size using the actual trigger compiler.
         sqliteCapturePlan([entry.capture]);
       } catch (error) {
@@ -251,6 +313,7 @@ async function sqlitePlanPayload(
     table: entry.table,
     kind: entry.kind,
     selection: entry.selection,
+    ...(entry.rowPartitions ? { rowPartitions: entry.rowPartitions } : {}),
     capture: entry.capture,
     schemaDigest: await sqliteBackupSchemaDigest(schema),
   });

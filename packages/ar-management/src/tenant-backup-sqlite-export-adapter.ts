@@ -1,5 +1,6 @@
 import {
   resolveInstalledSqliteDatasets,
+  selectInstalledSqliteDatasets,
   type InstalledSqliteDatasetRegistration,
 } from '@authrim/ar-lib-core/services/tenant-portability/installed-sqlite-datasets';
 import { readNextPlannedSqliteDatasetChunk } from '@authrim/ar-lib-core/services/tenant-portability/sqlite-planned-dataset-reader';
@@ -43,7 +44,7 @@ export function createTenantBackupInstalledSqliteExportAdapter(input: {
       roles: [...input.requiredDatabases.roles],
       fixed: [...input.requiredDatabases.fixed],
     },
-    datasets: registrations.map((registration) => registration.dataset),
+    datasets: (selection) => selectInstalledSqliteDatasets(registrations, selection),
     assertSources: (context) => input.ports.assertSources(context),
     assertBoundaryReady: (context) => input.ports.assertBoundaryReady(context),
     async additionalParticipants() {
@@ -51,7 +52,9 @@ export function createTenantBackupInstalledSqliteExportAdapter(input: {
     },
     async assertCoverage(context) {
       const selected = await planned(context, registrations);
-      const expectedDatasets = registrations.map((registration) => registration.dataset.id).sort();
+      const expectedDatasets = selectInstalledSqliteDatasets(registrations, context.selection)
+        .map((dataset) => dataset.id)
+        .sort();
       if (
         JSON.stringify(selected.map((entry) => entry.dataset.id).sort()) !==
           JSON.stringify(expectedDatasets) ||
@@ -79,6 +82,7 @@ export function createTenantBackupInstalledSqliteExportAdapter(input: {
           resourceId: dataset.resourceId,
           firstOrdinal: dataset.firstOrdinal,
           snapshotId: snapshot.snapshotId,
+          partitions: dataset.partitions,
           selection: context.selection,
           resolveSource: () =>
             context
@@ -94,7 +98,9 @@ export function createTenantBackupInstalledSqliteExportAdapter(input: {
     },
     async assertPublishable(context) {
       const selected = await planned(context, registrations);
-      if (selected.length !== registrations.length)
+      if (
+        selected.length !== selectInstalledSqliteDatasets(registrations, context.selection).length
+      )
         throw new Error('backup_sqlite_export_adapter_coverage');
       await context.snapshotResources.assertReleased(context.context.lease);
       await input.ports.assertSources(context);

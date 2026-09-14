@@ -144,10 +144,12 @@ it('cleans in bounded slices, preserves another tenant, and resumes after uncert
     "INSERT INTO tenant_backup_snapshots(id,tenant_id,state) VALUES ('snapshot-a','a','capturing'),('foreign','b','capturing')"
   );
   for (let i = 0; i < 205; i++)
-    db.prepare("INSERT INTO tenant_backup_preimages VALUES ('snapshot-a','users',?,0,NULL)").run(
-      String(i)
-    );
-  db.exec("INSERT INTO tenant_backup_preimages VALUES ('foreign','users','private',0,NULL)");
+    db.prepare(
+      "INSERT INTO tenant_backup_preimages(snapshot_id,source_table,record_key,present,row_json) VALUES ('snapshot-a','users',?,0,NULL)"
+    ).run(String(i));
+  db.exec(
+    "INSERT INTO tenant_backup_preimages(snapshot_id,source_table,record_key,present,row_json) VALUES ('foreign','users','private',0,NULL)"
+  );
   const context = await cancellationContext();
   const resolve = async (resourceId: string) => ({ resourceId, database: adapter });
   expect(await resources.cleanupCancellationPage(context, resolve)).toEqual({ done: false });
@@ -201,9 +203,9 @@ it('releases a verified running snapshot in bounded pages before publication', a
     "INSERT INTO tenant_backup_snapshots(id,tenant_id,state) VALUES ('snapshot-a','a','capturing')"
   );
   for (let i = 0; i < 101; i++)
-    db.prepare("INSERT INTO tenant_backup_preimages VALUES ('snapshot-a','users',?,0,NULL)").run(
-      String(i)
-    );
+    db.prepare(
+      "INSERT INTO tenant_backup_preimages(snapshot_id,source_table,record_key,present,row_json) VALUES ('snapshot-a','users',?,0,NULL)"
+    ).run(String(i));
   const operation = await store.get('a', 'op');
   const context = {
     operation: operation!,

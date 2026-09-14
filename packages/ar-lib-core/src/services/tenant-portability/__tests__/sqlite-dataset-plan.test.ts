@@ -122,6 +122,61 @@ it('preserves log-window requirements and never turns current safety state off',
   expect(plan.entries[0].selection).toEqual({ action: 'selected', timeFilter: 'log_window' });
 });
 
+it('splits user grants from role and organization permission settings', () => {
+  const tables = schemas(`CREATE TABLE resource_permissions(
+    id TEXT PRIMARY KEY NOT NULL,
+    tenant_id TEXT NOT NULL,
+    subject_type TEXT NOT NULL,
+    subject_id TEXT NOT NULL
+  );`);
+  const settingsPlan = planSqliteTenantDatasets('core', tables, selection);
+  const settingsEntry = settingsPlan.entries[0];
+  expect(settingsEntry.rowPartitions).toEqual([
+    { value: 'user', kind: 'users', selection: { action: 'excluded', reason: 'not_selected' } },
+    { value: 'role', kind: 'settings', selection: { action: 'selected', timeFilter: 'none' } },
+    { value: 'org', kind: 'settings', selection: { action: 'selected', timeFilter: 'none' } },
+  ]);
+  expect(settingsEntry.capture).toMatchObject({
+    rowPartition: { column: 'subject_type', values: ['user', 'role', 'org'] },
+  });
+
+  const usersPlan = planSqliteTenantDatasets('core', tables, {
+    ...selection,
+    settings: false,
+    users: true,
+  });
+  expect(usersPlan.entries[0].selection).toEqual({ action: 'selected', timeFilter: 'none' });
+  expect(
+    usersPlan.entries[0].rowPartitions?.map(({ value, selection }) => [value, selection.action])
+  ).toEqual([
+    ['user', 'selected'],
+    ['role', 'excluded'],
+    ['org', 'excluded'],
+  ]);
+});
+
+it('stops snapshot admission when a partitioned table contains an unknown row kind', () => {
+  const sql = `CREATE TABLE resource_permissions(
+    id TEXT PRIMARY KEY NOT NULL,
+    tenant_id TEXT NOT NULL,
+    subject_type TEXT NOT NULL
+  );`;
+  const plan = planSqliteTenantDatasets('core', schemas(sql), selection);
+  const db = new DatabaseSync(':memory:');
+  try {
+    db.exec(`${sql}${SQLITE_SNAPSHOT_SCHEMA}`);
+    for (const capture of plan.captureSchemas) db.exec(sqliteSnapshotTriggers(capture));
+    db.exec("INSERT INTO resource_permissions VALUES ('bad','a','device')");
+    const start = sqliteSnapshotStartStatement(plan.captureSchemas, 'snapshot', 'a');
+    expect(db.prepare(start.sql).run(...start.params).changes).toBe(0);
+    expect(db.prepare('SELECT count(*) AS count FROM tenant_backup_snapshots').get()).toEqual({
+      count: 0,
+    });
+  } finally {
+    db.close();
+  }
+});
+
 it('keeps scoped settings and children at the original tenant boundary through scope moves', async () => {
   const sql = `CREATE TABLE admin_destinations(id TEXT PRIMARY KEY NOT NULL,scope_type TEXT NOT NULL,scope_id TEXT NOT NULL);
     CREATE TABLE credential_secret_metadata(id TEXT PRIMARY KEY NOT NULL,destination_id TEXT NOT NULL,value TEXT);`;

@@ -18,6 +18,14 @@ export interface SnapshotTableSchema {
   /** Every additional unique key; expression/partial indexes require a specialized adapter. */
   uniqueKeys: readonly (readonly string[])[];
   uniqueExpressions?: readonly (readonly SnapshotUniqueTerm[])[];
+  /**
+   * A trusted, finite row partition used when one table contains independently selectable
+   * backup categories. The original value is journaled with every preimage.
+   */
+  rowPartition?: {
+    column: string;
+    values: readonly string[];
+  };
 }
 
 /** Same-database parent ownership; reference values must use the parent's key storage types. */
@@ -53,7 +61,13 @@ CREATE TABLE IF NOT EXISTS tenant_backup_preimages (
   source_table TEXT NOT NULL,
   record_key TEXT NOT NULL,
   present INTEGER NOT NULL CHECK (present IN (0, 1)),
-  row_json TEXT,
+  row_json TEXT, row_partition TEXT
+  CHECK (
+    row_partition IS NULL OR (
+      typeof(row_partition) = 'text'
+      AND length(row_partition) BETWEEN 1 AND 64
+    )
+  ),
   PRIMARY KEY (snapshot_id, source_table, record_key),
   CHECK ((present = 0 AND row_json IS NULL) OR (present = 1 AND row_json IS NOT NULL))
 );
@@ -131,6 +145,27 @@ function validateSchema(schema: CaptureSchema): void {
   for (const column of schema.primaryKey) {
     if (!schema.columns.includes(column)) throw new Error('snapshot_unknown_primary_key');
   }
+  if (schema.rowPartition) {
+    identifier(schema.rowPartition.column);
+    if (
+      !schema.columns.includes(schema.rowPartition.column) ||
+      schema.rowPartition.values.length < 2 ||
+      schema.rowPartition.values.length > 32 ||
+      new Set(schema.rowPartition.values).size !== schema.rowPartition.values.length ||
+      schema.rowPartition.values.some((value) => !/^[A-Za-z0-9_.:-]{1,64}$/.test(value))
+    )
+      throw new Error('snapshot_invalid_row_partition');
+  }
+}
+
+function rowPartition(schema: CaptureSchema, alias: string): string {
+  return schema.rowPartition ? `${alias}.${identifier(schema.rowPartition.column)}` : 'NULL';
+}
+
+function rowPartitionValues(values: readonly string[]): string {
+  if (!values.length || values.some((value) => !/^[A-Za-z0-9_.:-]{1,64}$/.test(value)))
+    throw new Error('snapshot_invalid_row_partition');
+  return values.map((value) => `'${value}'`).join(', ');
 }
 
 // Tagged values preserve BLOBs and integers outside JavaScript's safe integer range.
@@ -221,11 +256,20 @@ export function sqliteSnapshotTriggers(
     WHERE (${schema.primaryKey.map((column) => `NEW.${identifier(column)} IS NULL`).join(' OR ')})
       AND EXISTS (SELECT 1 FROM tenant_backup_snapshots AS snapshot
         WHERE snapshot.state = 'capturing' AND ${ownedAtBoundary(schema, 'NEW', 'snapshot')});`;
+  const partitionGuard = schema.rowPartition
+    ? `
+    SELECT RAISE(ABORT, 'snapshot_invalid_row_partition')
+    WHERE (typeof(NEW.${identifier(schema.rowPartition.column)}) <> 'text'
+      OR NEW.${identifier(schema.rowPartition.column)} NOT IN (${rowPartitionValues(schema.rowPartition.values)}))
+      AND EXISTS (SELECT 1 FROM tenant_backup_snapshots AS snapshot
+        WHERE snapshot.state = 'capturing' AND ${ownedAtBoundary(schema, 'NEW', 'snapshot')});`
+    : '';
   const capture = (alias: 'OLD' | 'NEW', present: boolean) => `
     INSERT INTO tenant_backup_preimages
-      (snapshot_id, source_table, record_key, present, row_json)
+      (snapshot_id, source_table, record_key, present, row_json, row_partition)
     SELECT snapshot.id, '${schema.table}', ${recordKey(schema, alias)}, ${present ? 1 : 0},
-      ${present ? (representation === 'packed' ? sqlitePackedRowExpression(schema.columns, alias) : rowJson(schema, alias)) : 'NULL'}
+      ${present ? (representation === 'packed' ? sqlitePackedRowExpression(schema.columns, alias) : rowJson(schema, alias)) : 'NULL'},
+      ${rowPartition(schema, alias)}
     FROM tenant_backup_snapshots AS snapshot
     WHERE snapshot.state = 'capturing' AND ${ownedAtBoundary(schema, alias, 'snapshot')}
     ON CONFLICT (snapshot_id, source_table, record_key) DO NOTHING;`;
@@ -242,9 +286,10 @@ export function sqliteSnapshotTriggers(
   // Capture conflicts before that implicit deletion; UPSERT also safely uses this path.
   const captureConflicts = `
     INSERT INTO tenant_backup_preimages
-      (snapshot_id, source_table, record_key, present, row_json)
+      (snapshot_id, source_table, record_key, present, row_json, row_partition)
     SELECT snapshot.id, '${schema.table}', ${recordKey(schema, 'existing')}, 1,
-      ${representation === 'packed' ? sqlitePackedRowExpression(schema.columns, 'existing') : rowJson(schema, 'existing')}
+      ${representation === 'packed' ? sqlitePackedRowExpression(schema.columns, 'existing') : rowJson(schema, 'existing')},
+      ${rowPartition(schema, 'existing')}
     FROM ${table} AS existing
     JOIN tenant_backup_snapshots AS snapshot ON ${ownedAtBoundary(schema, 'existing', 'snapshot')}
     WHERE snapshot.state = 'capturing' AND (${conflicts})
@@ -256,9 +301,9 @@ export function sqliteSnapshotTriggers(
   // statement requires DB-enforced non-null primary keys; nullable schemas are refused.
   return `
 CREATE TRIGGER ${identifier(`tenant_backup_${schema.table}_insert`)} BEFORE INSERT ON ${table}
-BEGIN ${guard} ${captureConflicts} ${capture('NEW', false)} END;
+BEGIN ${guard} ${partitionGuard} ${captureConflicts} ${capture('NEW', false)} END;
 CREATE TRIGGER ${identifier(`tenant_backup_${schema.table}_update`)} BEFORE UPDATE ON ${table}
-BEGIN ${guard} ${capture('OLD', true)} ${captureConflicts} ${capture('NEW', false)} END;
+BEGIN ${guard} ${partitionGuard} ${capture('OLD', true)} ${captureConflicts} ${capture('NEW', false)} END;
 CREATE TRIGGER ${identifier(`tenant_backup_${schema.table}_delete`)} BEFORE DELETE ON ${table}
 BEGIN ${capture('OLD', true)} END;
 `;
@@ -272,9 +317,23 @@ BEGIN ${capture('OLD', true)} END;
  */
 export function sqliteSnapshotPageQuery(
   schema: CaptureSchema,
-  representation: 'json' | 'packed' = 'packed'
+  representation: 'json' | 'packed' = 'packed',
+  partitions?: readonly string[]
 ): string {
   validateSchema(schema);
+  if (schema.rowPartition) {
+    if (
+      !partitions?.length ||
+      new Set(partitions).size !== partitions.length ||
+      partitions.some((partition) => !schema.rowPartition?.values.includes(partition))
+    )
+      throw new Error('snapshot_invalid_row_partition');
+  } else if (partitions !== undefined) {
+    throw new Error('snapshot_unexpected_row_partition');
+  }
+  const selectedPartitions = partitions ? rowPartitionValues(partitions) : null;
+  const partitionColumn = schema.rowPartition?.column;
+  if (selectedPartitions && !partitionColumn) throw new Error('snapshot_invalid_row_partition');
   return `WITH selected_snapshot AS (
     SELECT id, tenant_id, tenant_key FROM tenant_backup_snapshots
     WHERE id = ? AND tenant_id = ? AND state = 'capturing'
@@ -282,7 +341,7 @@ export function sqliteSnapshotPageQuery(
     SELECT ${recordKey(schema, 'live')} AS record_key, ${representation === 'packed' ? sqlitePackedRowExpression(schema.columns, 'live') : rowJson(schema, 'live')} AS row_json
     FROM ${identifier(schema.table)} AS live
     JOIN selected_snapshot AS snapshot ON ${ownedAtBoundary(schema, 'live', 'snapshot')}
-    WHERE NOT EXISTS (
+    WHERE ${selectedPartitions ? `live.${identifier(partitionColumn ?? '')} IN (${selectedPartitions}) AND ` : ''}NOT EXISTS (
       SELECT 1 FROM tenant_backup_preimages AS previous
       WHERE previous.snapshot_id = snapshot.id AND previous.source_table = '${schema.table}'
         AND previous.record_key = ${recordKey(schema, 'live')}
@@ -291,7 +350,7 @@ export function sqliteSnapshotPageQuery(
     SELECT previous.record_key, previous.row_json
     FROM tenant_backup_preimages AS previous
     JOIN selected_snapshot AS snapshot ON snapshot.id = previous.snapshot_id
-    WHERE previous.source_table = '${schema.table}' AND previous.present = 1
+    WHERE previous.source_table = '${schema.table}' AND previous.present = 1${selectedPartitions ? ` AND previous.row_partition IN (${selectedPartitions})` : ''}
   ) SELECT record_key, row_json FROM snapshot_rows WHERE record_key > ?
     ORDER BY record_key LIMIT ?`;
 }

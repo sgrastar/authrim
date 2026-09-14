@@ -24,6 +24,7 @@ export async function readNextPlannedSqliteDatasetChunk(
     resourceId: string;
     firstOrdinal: number;
     snapshotId: string;
+    partitions?: readonly string[];
     selection: Plan['selection'];
     resolveSource: () => Promise<{ resourceId: string; database: Plan['database'] }>;
     assertSourceStable: () => Promise<void>;
@@ -57,6 +58,7 @@ export async function readNextPlannedSqliteDatasetChunk(
     resourceId: input.resourceId,
     table: input.table,
     snapshotId: input.snapshotId,
+    partitions: input.partitions ? [...input.partitions].sort().join(',') : '',
   };
   let sourceCursor: string | null = null;
   if (cursorJson !== null) {
@@ -70,7 +72,7 @@ export async function readNextPlannedSqliteDatasetChunk(
       throw new Error('backup_sqlite_reader_cursor');
     const value = parsed as Record<string, unknown>;
     if (
-      Object.keys(value).length !== 9 ||
+      Object.keys(value).length !== 10 ||
       Object.entries(identity).some(([key, expected]) => value[key] !== expected) ||
       typeof value.sourceCursor !== 'string'
     )
@@ -107,6 +109,7 @@ export async function readNextPlannedSqliteDatasetChunk(
       snapshotId: input.snapshotId,
       tenantId: lease.tenantId,
       signal,
+      partitions: input.partitions,
     },
     sourceCursor
   );

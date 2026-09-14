@@ -17,6 +17,8 @@ interface SourceInput {
   snapshotId: string;
   tenantId: string;
   signal: AbortSignal;
+  /** Required when the trusted capture schema partitions one physical table. */
+  partitions?: readonly string[];
 }
 
 /** Trusted COW source with durable output positions. Cursor must come from the same operation. */
@@ -24,7 +26,7 @@ export async function* readSqliteSnapshotChunks(
   input: SourceInput & { cursor?: SqliteSnapshotSourceCursor }
 ): AsyncGenerator<{ bytes: Uint8Array; nextCursor: SqliteSnapshotSourceCursor }> {
   const { database, snapshotId, tenantId, signal } = input;
-  const pageSql = sqliteSnapshotPageQuery(input.schema, 'packed');
+  const pageSql = sqliteSnapshotPageQuery(input.schema, 'packed', input.partitions);
   const sql = `WITH candidates AS (${pageSql})
     SELECT record_key,typeof(row_json) AS row_type,length(CAST(row_json AS BLOB)) AS total_bytes
     FROM candidates ORDER BY record_key`;

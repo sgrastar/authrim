@@ -370,7 +370,12 @@ it('probes and pins one immutable import input per preparation slice, then seals
   });
   const importEnv = { IMPORT_ARTIFACTS: {} } as unknown as Env;
   expect(
-    await runTenantBackupImportPreparation(importEnv, importContext, datasets, () => 100)
+    await runTenantBackupImportPreparation(
+      importEnv,
+      importContext,
+      () => datasets,
+      () => 100
+    )
   ).toEqual({
     phase: 'prepare',
     cursor: JSON.stringify({ version: 1, nextInput: 1 }),
@@ -397,7 +402,12 @@ it('probes and pins one immutable import input per preparation slice, then seals
     },
   };
   expect(
-    await runTenantBackupImportPreparation(importEnv, finalContext, datasets, () => 100)
+    await runTenantBackupImportPreparation(
+      importEnv,
+      finalContext,
+      () => datasets,
+      () => 100
+    )
   ).toEqual({
     phase: 'decode_input',
     cursor: JSON.stringify({ version: 1, inputOrdinal: 0 }),
@@ -433,16 +443,26 @@ it('fails import preparation before reads when its key mapping or durable cursor
   mocks.issuer.mockResolvedValue(imported.intent.source.issuer);
   mocks.activeInputs.mockResolvedValue([{ inputId: 'wrong', key }]);
   const importEnv = { IMPORT_ARTIFACTS: {} } as unknown as Env;
-  await expect(runTenantBackupImportPreparation(importEnv, importContext, [])).rejects.toThrow(
-    'backup_import_key_unavailable'
-  );
+  const installed = () => [
+    {
+      id: 'core.clients',
+      module: 'applications' as const,
+      kind: 'settings' as const,
+      store: 'database' as const,
+      schemaVersion: 1,
+      disposition: 'include' as const,
+    },
+  ];
+  await expect(
+    runTenantBackupImportPreparation(importEnv, importContext, installed)
+  ).rejects.toThrow('backup_import_key_unavailable');
   expect(mocks.probe).not.toHaveBeenCalled();
 
   mocks.activeInputs.mockResolvedValue([{ inputId: 'upload-a', key }]);
   mocks.inventoryCreate.mockResolvedValue({ item_count: 1, chain_digest: '0'.repeat(64) });
-  await expect(runTenantBackupImportPreparation(importEnv, importContext, [])).rejects.toThrow(
-    'backup_import_execution_cursor'
-  );
+  await expect(
+    runTenantBackupImportPreparation(importEnv, importContext, installed)
+  ).rejects.toThrow('backup_import_execution_cursor');
   expect(mocks.probe).not.toHaveBeenCalled();
 });
 
@@ -504,7 +524,7 @@ it('decodes one frame from the durable ordered import inputs and rechecks reques
     await runTenantBackupImportDecode(
       { IMPORT_ARTIFACTS: {} } as unknown as Env,
       importContext,
-      datasets,
+      () => datasets,
       () => 100
     )
   ).toEqual({ phase: 'decode_input', cursor: '{}', disposition: 'continue' });
@@ -527,7 +547,16 @@ it('rejects changed input-key order before import decode', async () => {
   mocks.issuer.mockResolvedValue(imported.intent.source.issuer);
   mocks.activeInputs.mockResolvedValue([{ inputId: 'wrong', key }]);
   await expect(
-    runTenantBackupImportDecode({ IMPORT_ARTIFACTS: {} } as unknown as Env, importContext, [])
+    runTenantBackupImportDecode({ IMPORT_ARTIFACTS: {} } as unknown as Env, importContext, () => [
+      {
+        id: 'core.clients',
+        module: 'applications',
+        kind: 'settings',
+        store: 'database',
+        schemaVersion: 1,
+        disposition: 'include',
+      },
+    ])
   ).rejects.toThrow('backup_import_key_unavailable');
   expect(mocks.decodeSequence).not.toHaveBeenCalled();
 });
@@ -585,7 +614,7 @@ it('validates imported SQL through installed policies with live request and key 
     runTenantBackupImportValidation(
       { IMPORT_ARTIFACTS: {} } as unknown as Env,
       importContext,
-      { datasets, loadPolicy: loadPolicy as never, assertSources },
+      { datasets: () => datasets, loadPolicy: loadPolicy as never, assertSources },
       () => 100
     )
   ).resolves.toMatchObject({ phase: 'validate_input_modules' });

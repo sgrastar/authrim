@@ -1,5 +1,6 @@
 import type { Env } from '@authrim/ar-lib-core';
 import type { TenantPortableDataset } from '@authrim/ar-lib-core/services/tenant-portability/module-contract';
+import type { TenantBackupSelection } from '@authrim/ar-lib-core/services/tenant-portability/selection-contract';
 import type {
   TenantBackupStepContext,
   TenantBackupStepResult,
@@ -20,7 +21,7 @@ type RestoreInput = Parameters<typeof runSqliteRestoreSequenceStep>[1];
 
 /** Server-installed code only. Uploaded manifests cannot supply policies or target callbacks. */
 export interface TenantBackupInstalledImportAdapter {
-  datasets: readonly TenantPortableDataset[];
+  datasets(selection: TenantBackupSelection): readonly TenantPortableDataset[];
   loadPolicy(
     context: TenantBackupStepContext,
     datasetId: string
@@ -55,11 +56,24 @@ function fail(): never {
   throw new Error('backup_import_dispatch_invalid');
 }
 function validateAdapter(adapter: TenantBackupInstalledImportAdapter): void {
+  if (typeof adapter.datasets !== 'function') fail();
+  let datasets: readonly TenantPortableDataset[];
+  try {
+    datasets = adapter.datasets({
+      settings: true,
+      users: true,
+      admin: true,
+      artifacts: true,
+      logs: { audit: true, other: true, sensitive: true, period: 'all' },
+    });
+  } catch {
+    return fail();
+  }
   if (
-    !adapter.datasets.length ||
-    adapter.datasets.length > 256 ||
-    new Set(adapter.datasets.map((dataset) => dataset.id)).size !== adapter.datasets.length ||
-    adapter.datasets.some(
+    !datasets.length ||
+    datasets.length > 4096 ||
+    new Set(datasets.map((dataset) => dataset.id)).size !== datasets.length ||
+    datasets.some(
       (dataset) =>
         !/^[A-Za-z0-9_.:-]{1,256}$/.test(dataset.id) ||
         dataset.store !== 'database' ||

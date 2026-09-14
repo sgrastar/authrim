@@ -218,6 +218,44 @@ it('requires complete parent keys and emits a required dependency for parent own
   ).rejects.toThrow();
 });
 
+it('rejects rows assigned to another logical dataset in a partitioned SQL table', async () => {
+  const partitionedDataset = { ...dataset, id: 'core.permissions.settings' };
+  const partitionedSchema: CaptureSchema = {
+    table: 'resource_permissions',
+    columns: ['id', 'tenant_id', 'subject_type'],
+    primaryKey: ['id'],
+    uniqueKeys: [],
+    tenantColumn: 'tenant_id',
+    rowPartition: { column: 'subject_type', values: ['user', 'role', 'org'] },
+  };
+  const settingsInspector = await createSqliteDatasetInspectorFactory({
+    dataset: partitionedDataset,
+    schema: partitionedSchema,
+    partitions: ['role', 'org'],
+    async inspectRow() {
+      return [];
+    },
+  })(partitionedDataset, { ...manifest, datasets: [partitionedDataset] });
+  await expect(
+    settingsInspector.chunk(
+      encode(
+        '{"id":["text","permission"],"tenant_id":["text","a"],"subject_type":["text","user"]}\n'
+      ),
+      0
+    )
+  ).rejects.toThrow('backup_sqlite_dataset_invalid');
+
+  await expect(
+    createSqliteDatasetInspectorFactory({
+      dataset: partitionedDataset,
+      schema: partitionedSchema,
+      async inspectRow() {
+        return [];
+      },
+    })(partitionedDataset, { ...manifest, datasets: [partitionedDataset] })
+  ).rejects.toThrow('backup_sqlite_dataset_invalid');
+});
+
 it('bounds row allocation and rejects sequence and UTF-8 corruption', async () => {
   const inspector = await factory()(dataset, manifest);
   await expect(inspector.chunk(encode(row), 1)).rejects.toThrow();

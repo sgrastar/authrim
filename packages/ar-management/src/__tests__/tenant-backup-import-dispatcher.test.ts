@@ -40,7 +40,7 @@ const dataset = {
   disposition: 'include' as const,
 };
 const adapter = {
-  datasets: [dataset],
+  datasets: () => [dataset],
   loadPolicy: vi.fn(async () => ({ dataset })),
   assertSources: vi.fn(async () => {}),
   restoreTargets: vi.fn(async () => [{}]),
@@ -190,13 +190,13 @@ it('rejects unknown phases and non-SQL or duplicate installed datasets', async (
   await expect(
     runTenantBackupImportOperationStep(env, context, {
       ...adapter,
-      datasets: [{ ...dataset, store: 'object' }],
+      datasets: () => [{ ...dataset, store: 'object' }],
     } as never)
   ).rejects.toThrow('dispatch_invalid');
   await expect(
     runTenantBackupImportOperationStep(env, context, {
       ...adapter,
-      datasets: [dataset, dataset],
+      datasets: () => [dataset, dataset],
     } as never)
   ).rejects.toThrow('dispatch_invalid');
 });

@@ -88,11 +88,65 @@ it('handles a partial JSON index without evaluating malformed non-indexed JSON',
   }
 });
 
+it('retains conflicts selected by the deployed conditional destination-profile index', () => {
+  const sql = `CREATE TABLE destination_profiles(
+    id TEXT PRIMARY KEY NOT NULL,
+    tenant_id TEXT NOT NULL,
+    owner_scope_type TEXT NOT NULL,
+    owner_scope_id TEXT,
+    destination_type TEXT NOT NULL,
+    profile_key TEXT NOT NULL,
+    value TEXT NOT NULL
+  );
+  CREATE UNIQUE INDEX ux_destination_profiles_active_resource_server_client
+    ON destination_profiles(
+      CASE WHEN destination_type = 'resource_server'
+        AND owner_scope_type = 'client'
+        AND profile_key = 'active'
+      THEN tenant_id ELSE NULL END,
+      CASE WHEN destination_type = 'resource_server'
+        AND owner_scope_type = 'client'
+        AND profile_key = 'active'
+      THEN COALESCE(owner_scope_id, '') ELSE NULL END
+    );`;
+  const result = assessSnapshotTable(inspectBackupSchema([sql]).tables[0]);
+  expect(result.concerns).toEqual([]);
+  const schema = result.schema;
+  if (!schema) throw new Error('missing_schema');
+  const db = new DatabaseSync(':memory:');
+  try {
+    db.exec(sql + SQLITE_SNAPSHOT_SCHEMA);
+    db.exec(`PRAGMA recursive_triggers=OFF;
+      INSERT INTO destination_profiles VALUES
+        ('old','a','client',NULL,'resource_server','active','original'),
+        ('other','b','client',NULL,'resource_server','active','private');`);
+    db.exec(sqliteSnapshotTriggers(schema, 'json'));
+    db.exec(
+      "INSERT INTO tenant_backup_snapshots (id,tenant_id,state) VALUES ('s','a','capturing')"
+    );
+    db.exec(
+      "INSERT OR REPLACE INTO destination_profiles VALUES ('new','a','client','','resource_server','active','replacement')"
+    );
+    const records = db
+      .prepare(sqliteSnapshotPageQuery(schema, 'json'))
+      .all('s', 'a', '', 100)
+      .map((row) => JSON.parse(row.row_json as string));
+    expect(records).toHaveLength(1);
+    expect(records[0]).toMatchObject({ id: ['text', 'old'], value: ['text', 'original'] });
+    expect(
+      db.prepare("SELECT value FROM destination_profiles WHERE tenant_id='b'").get()?.value
+    ).toBe('private');
+  } finally {
+    db.close();
+  }
+});
+
 it.each([
   'lower(subject_id)',
   "coalesce(subject_id,'fallback')",
   "json_extract(subject_id,'$[0]')",
   'subject_id COLLATE NOCASE',
+  'CASE WHEN tenant_id = subject_id THEN subject_id ELSE NULL END',
 ])('refuses unsupported index semantics: %s', (expression) => {
   const table = inspectBackupSchema([
     `CREATE TABLE items(id TEXT PRIMARY KEY NOT NULL,tenant_id TEXT,subject_id TEXT);

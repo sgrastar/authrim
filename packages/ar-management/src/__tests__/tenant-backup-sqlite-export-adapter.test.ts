@@ -7,6 +7,8 @@ const mocks = vi.hoisted(() => ({
 }));
 vi.mock('@authrim/ar-lib-core/services/tenant-portability/installed-sqlite-datasets', () => ({
   resolveInstalledSqliteDatasets: mocks.planned,
+  selectInstalledSqliteDatasets: (registrations: Array<{ dataset: typeof registration }>) =>
+    registrations.map(({ dataset }) => dataset),
 }));
 vi.mock('@authrim/ar-lib-core/services/tenant-portability/sqlite-planned-dataset-reader', () => ({
   readNextPlannedSqliteDatasetChunk: mocks.read,

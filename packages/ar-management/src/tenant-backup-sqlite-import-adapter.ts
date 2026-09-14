@@ -1,6 +1,7 @@
 import type { TenantBackupStepContext } from '@authrim/ar-lib-core/services/tenant-portability/operation-executor';
 import type { SqliteDatasetInspectionPolicy } from '@authrim/ar-lib-core/services/tenant-portability/sqlite-dataset-inspector';
 import type { TenantBackupInstalledImportAdapter } from './tenant-backup-import-dispatcher';
+import { tenantDatasetSelectionRule } from '@authrim/ar-lib-core/services/tenant-portability/selection-contract';
 
 type ResolveArgs = Parameters<TenantBackupInstalledImportAdapter['resolveRestoreTarget']>;
 type LoadArgs = Parameters<TenantBackupInstalledImportAdapter['loadValidatedDataset']>;
@@ -47,19 +48,47 @@ export function createTenantBackupInstalledSqliteImportAdapter(input: {
     !input.policies.length ||
     input.policies.length > 256 ||
     new Set(input.policies.map((policy) => policy.dataset.id)).size !== input.policies.length ||
-    new Set(input.policies.map((policy) => policy.schema.table)).size !== input.policies.length ||
     input.policies.some(
       (policy) =>
         policy.dataset.store !== 'database' ||
         policy.dataset.disposition !== 'include' ||
         policy.dataset.schemaVersion !== 1 ||
-        policy.schema.table.length === 0
+        policy.schema.table.length === 0 ||
+        (policy.schema.rowPartition
+          ? !policy.partitions?.length ||
+            policy.partitions.some(
+              (partition) => !policy.schema.rowPartition?.values.includes(partition)
+            )
+          : policy.partitions !== undefined)
     )
   )
     throw new Error('backup_sqlite_import_adapter_invalid');
+  const byTable = new Map<string, typeof input.policies>();
+  for (const policy of input.policies)
+    byTable.set(policy.schema.table, [...(byTable.get(policy.schema.table) ?? []), policy]);
+  for (const group of byTable.values()) {
+    const schemas = new Set(group.map((policy) => JSON.stringify(policy.schema)));
+    const partitions = group.flatMap((policy) => policy.partitions ?? []);
+    if (
+      schemas.size !== 1 ||
+      (group.length > 1 &&
+        (group.some((policy) => !policy.partitions?.length) ||
+          new Set(partitions).size !== partitions.length))
+    )
+      throw new Error('backup_sqlite_import_adapter_invalid');
+  }
   const policies = input.policies.map(clonePolicy);
   return {
-    datasets: policies.map((policy) => structuredClone(policy.dataset)),
+    datasets(selection) {
+      const selected = policies
+        .filter((policy) => {
+          const rule = tenantDatasetSelectionRule(policy.dataset.kind, selection);
+          return rule.action === 'selected' || rule.action === 'resolve_references';
+        })
+        .map((policy) => structuredClone(policy.dataset));
+      if (!selected.length) throw new Error('backup_sqlite_import_adapter_dataset');
+      return selected;
+    },
     async loadPolicy(context, datasetId) {
       await input.ports.assertSources(context);
       const policy = policies.find((candidate) => candidate.dataset.id === datasetId);
