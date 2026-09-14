@@ -2,6 +2,7 @@ import type { MigrationSchemaFamily } from '../control-plane/migration-stream-co
 
 /** Dataset intent, not an authorization grant or a claim that an adapter is implemented. */
 export type TenantDatasetKind =
+  | 'tenant_state'
   | 'settings'
   | 'users'
   | 'admin'
@@ -121,6 +122,9 @@ const TABLE_GROUPS: Partial<
     `,
   },
   admin: {
+    // Includes canonical route_status and quarantine denial state in metadata_json.
+    // Keep source evidence; the target adapter rebuilds physical cache generations.
+    tenant_state: 'tenant_runtime_cache_generations',
     delivery_state: 'internal_notification_delivery_attempts internal_notification_events',
     admin: `
       admin_agent_grants admin_agent_token_revocation_outbox admin_attribute_values admin_attributes
@@ -180,7 +184,7 @@ const TABLE_GROUPS: Partial<
       projection_outbox provider_reprojection_jobs provider_reprojection_tenant_state scheduled_task_leases
       tenant_database_active_pointers tenant_database_migration_state tenant_database_probe_results tenant_database_registry
       tenant_database_stats tenant_discovery_indexes tenant_placement_migration_jobs tenant_provisioning_operation_steps
-      tenant_provisioning_operations tenant_runtime_cache_generations tenant_runtime_registry_snapshots
+      tenant_provisioning_operations tenant_runtime_registry_snapshots
     `,
     ephemeral: `
       authrim_runtime_probes

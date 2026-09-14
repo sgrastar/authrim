@@ -8,6 +8,36 @@ import {
 } from '../../../../../../scripts/tenant-backup/writer-inventory';
 
 describe('backup writer review inventory', () => {
+  it('annotates built-in receivers while retaining every call for review', () => {
+    const rows = inspectBackupWriterCandidates(
+      'const cache = new Map();\ncache.delete(key);\nconst headers = new Headers();\nheaders.delete(key);',
+      'writer.ts'
+    );
+    expect(rows.map((row) => row.receiverEvidence)).toEqual([
+      { constructor: 'Map', declarationLine: 1 },
+      { constructor: 'Headers', declarationLine: 3 },
+    ]);
+    expect(rows.every((row) => row.review === 'unreviewed')).toBe(true);
+  });
+
+  it('does not treat mutable, shadowed, imported or aliased receivers as built-ins', () => {
+    const rows = inspectBackupWriterCandidates(
+      'const cache = new Map();\n' +
+        'function write(cache: KVNamespace) { cache.delete(key); }\n' +
+        'let mutable = new Map(); mutable = externalStore; mutable.delete(key);\n' +
+        'const alias = cache; alias.delete(key);\n' +
+        'function local(Map: any) { const store = new Map(); store.delete(key); }',
+      'writer.ts'
+    );
+    expect(rows).toHaveLength(4);
+    expect(rows.every((row) => row.receiverEvidence === undefined)).toBe(true);
+    const imported = inspectBackupWriterCandidates(
+      'import { Map } from "./storage"; const store = new Map(); store.delete(key);',
+      'writer.ts'
+    );
+    expect(imported[0].receiverEvidence).toBeUndefined();
+  });
+
   it('finds aliases and optional/computed calls without guessing their storage ownership', () => {
     const rows = inspectBackupWriterCandidates(
       `async function save(kv: KVNamespace, key: string) {

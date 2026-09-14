@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { TENANT_DATASET_POLICIES } from '../dataset-registry';
+import { getTenantRuntimeRegistryRouteState } from '../../tenant-runtime-registry-snapshot';
+import type { TenantRuntimeCacheGenerationRow } from '../../../repositories/admin/tenant-database-registry';
 import {
   parseTenantBackupSelection,
   tenantBackupLogWindow,
@@ -18,6 +20,42 @@ function usersOnly(): TenantBackupSelection {
 }
 
 describe('tenant portability selection contract', () => {
+  it.each(['settings', 'users', 'admin', 'logs'] as const)(
+    'keeps tenant denial state when only %s is selected',
+    (category) => {
+      const selection = parseTenantBackupSelection({
+        settings: category === 'settings',
+        users: category === 'users',
+        admin: category === 'admin',
+        logs: { audit: category === 'logs', other: false, sensitive: false, period: 7 },
+        artifacts: false,
+      });
+      const policy = TENANT_DATASET_POLICIES.find(
+        (entry) => entry.family === 'admin' && entry.table === 'tenant_runtime_cache_generations'
+      )!;
+      expect(tenantDatasetSelectionRule(policy.kind, selection)).toEqual({
+        action: 'selected',
+        timeFilter: 'none',
+      });
+      const state: TenantRuntimeCacheGenerationRow = {
+        tenant_id: 'tenant-a',
+        cache_namespace: 'runtime_registry',
+        generation: 12,
+        updated_by: null,
+        updated_at: '2026-09-14T00:00:00Z',
+        metadata_json: JSON.stringify({
+          route_status: 'quarantined',
+          quarantine_deny_generation: 7,
+        }),
+      };
+      expect(getTenantRuntimeRegistryRouteState(state)).toEqual({
+        routeStatus: 'quarantined',
+        quarantineDenyGeneration: 7,
+      });
+      // Omitting the row is not a safe reconstruction: the production reader defaults active.
+      expect(getTenantRuntimeRegistryRouteState(null).routeStatus).toBe('active');
+    }
+  );
   it.each(['settings', 'users', 'admin'] as const)(
     'allows %s without silently including other categories',
     (category) => {

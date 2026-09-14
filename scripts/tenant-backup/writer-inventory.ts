@@ -13,6 +13,40 @@ export interface BackupWriterCandidate {
   enclosingFunction: string | null;
   keyEvidence?: { kind: 'literal' | 'prefix'; value: string } | { kind: 'dynamic' };
   review: 'unreviewed';
+  receiverEvidence?: { constructor: string; declarationLine: number };
+}
+
+/** A local declaration hint, never a reason to remove a call from the review queue. */
+function receiverEvidence(
+  receiver: ts.Expression,
+  checker: ts.TypeChecker,
+  file: ts.SourceFile
+): BackupWriterCandidate['receiverEvidence'] {
+  if (!ts.isIdentifier(receiver)) return undefined;
+  const declaration = checker.getSymbolAtLocation(receiver)?.valueDeclaration;
+  if (
+    !declaration ||
+    !ts.isVariableDeclaration(declaration) ||
+    !ts.isVariableDeclarationList(declaration.parent) ||
+    !(declaration.parent.flags & ts.NodeFlags.Const)
+  )
+    return undefined;
+  const initializer = declaration.initializer;
+  if (
+    !initializer ||
+    !ts.isNewExpression(initializer) ||
+    !ts.isIdentifier(initializer.expression)
+  ) {
+    return undefined;
+  }
+  const constructor = initializer.expression;
+  if (!['Map', 'Set', 'URLSearchParams', 'Headers'].includes(constructor.text)) return undefined;
+  // noLib leaves built-ins unresolved; a local/imported name must not masquerade as one.
+  if (checker.getSymbolAtLocation(constructor)) return undefined;
+  return {
+    constructor: constructor.text,
+    declarationLine: file.getLineAndCharacterOfPosition(declaration.getStart(file)).line + 1,
+  };
 }
 
 // Bind lexical symbols inside this source only. Do not resolve imports, load dependencies,
@@ -125,7 +159,8 @@ function functionName(node: ts.Node, file: ts.SourceFile): string | null {
 /**
  * Syntactic review queue, NOT proof of complete writer interception. Keep aliases, dynamic
  * keys and computed methods visible rather than claiming ownership from spelling. Map.delete
- * and read-only RPC false positives must be reviewed. Free-function wrappers, JS/Svelte source,
+ * and read-only RPC false positives must be reviewed. Receiver declaration hints never exclude
+ * candidates: even a built-in instance can have an overridden method. Free-function wrappers, JS/Svelte source,
  * generated SQL and externally executed plugins require separate review.
  */
 export function inspectBackupWriterCandidates(
@@ -152,6 +187,11 @@ export function inspectBackupWriterCandidates(
             ? callee.argumentExpression.text
             : '<computed>';
         if (candidateMethods.has(method) || method.endsWith('Rpc') || method === '<computed>') {
+          const receiverHint = receiverEvidence(
+            callee.expression,
+            (checker ??= localChecker(file)),
+            file
+          );
           result.push({
             source: path,
             sourceSha256,
@@ -164,6 +204,7 @@ export function inspectBackupWriterCandidates(
               ? { keyEvidence: keyEvidence(node.arguments[0], (checker ??= localChecker(file))) }
               : {}),
             review: 'unreviewed',
+            ...(receiverHint ? { receiverEvidence: receiverHint } : {}),
           });
         }
       }

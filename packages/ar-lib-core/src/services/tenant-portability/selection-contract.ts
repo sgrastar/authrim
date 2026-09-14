@@ -102,6 +102,10 @@ export function tenantDatasetSelectionRule(
       ? { action: 'selected', timeFilter: logs ? 'log_window' : 'none' }
       : { action: 'excluded', reason: 'not_selected' };
   switch (kind) {
+    case 'tenant_state':
+      // Mandatory tenant safety state travels with every selection. It must not
+      // become "active" merely because users, settings or logs were deselected.
+      return selected(true);
     case 'settings':
     case 'users':
     case 'admin':
