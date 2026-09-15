@@ -3,6 +3,7 @@ import {
   requireDedicatedAdminDatabaseAdapter,
   type Env,
 } from '@authrim/ar-lib-core';
+import type { DatabaseAdapter } from '@authrim/ar-lib-core/db/adapter';
 import { TenantBackupAdminMappingStore } from '@authrim/ar-lib-core/services/tenant-portability/admin-mapping-store';
 import type { PlannedInstalledSqliteDataset } from '@authrim/ar-lib-core/services/tenant-portability/installed-sqlite-datasets';
 import { PHASE8_CUMULATIVE_SQLITE_DATASET_REGISTRATIONS } from '@authrim/ar-lib-core/services/tenant-portability/phase8-sqlite-modules';
@@ -53,7 +54,10 @@ export interface Phase8InstalledAdapterPorts extends Omit<
   import: Omit<
     Phase5InstalledAdapterPorts['import'],
     'loadValidatedDataset' | 'assertValidatedUnpublishedPlan'
-  >;
+  > & {
+    /** Additive physical-route guard; bundle and plan validation remain fixed inside this adapter. */
+    assertUnpublishedTarget(context: TenantBackupStepContext, planDigest: string): Promise<void>;
+  };
   rowTransform: Omit<Phase8SensitiveRowTransformPort, 'transformAdminEnvelope'>;
   otherStores: Omit<
     Phase8OtherStorePorts,
@@ -67,12 +71,12 @@ export interface Phase8InstalledAdapterPorts extends Omit<
     context: TenantBackupStepContext,
     planDigest: string,
     sourceDatabaseId: string
-  ): Promise<Pick<import('@authrim/ar-lib-core').DatabaseAdapter, 'query' | 'batch' | 'getType'>>;
+  ): Promise<Pick<DatabaseAdapter, 'query' | 'batch' | 'getType'>>;
   resolveCoreR2RestoreDatabase(
     context: TenantBackupStepContext,
     planDigest: string,
     sourceDatabaseId: string
-  ): Promise<Pick<import('@authrim/ar-lib-core').DatabaseAdapter, 'query' | 'batch' | 'getType'>>;
+  ): Promise<Pick<DatabaseAdapter, 'query' | 'batch' | 'getType'>>;
 }
 
 function requireR2Policy(
@@ -251,6 +255,8 @@ export function createPhase8TenantBackupInstalledAdapter(
       return installed.import.loadPolicy(context, datasetId);
     },
     assertSources: (context) => input.ports.import.assertSources(context),
+    assertUnpublishedTarget: (context, planDigest) =>
+      input.ports.import.assertUnpublishedTarget(context, planDigest),
     now: input.now,
   });
   const r2Policies = createPortableR2ObjectDatasetPolicies();

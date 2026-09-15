@@ -7,6 +7,7 @@ import type { TenantPortableDataset } from '@authrim/ar-lib-core/services/tenant
 import type { TenantBackupStepContext } from '@authrim/ar-lib-core/services/tenant-portability/operation-executor';
 import { DatabaseTenantBackupRestorePlanInventory } from '@authrim/ar-lib-core/services/tenant-portability/restore-plan-inventory';
 import type { TenantBackupSelection } from '@authrim/ar-lib-core/services/tenant-portability/selection-contract';
+import type { Phase8ValidatedSqliteRestoreDataset } from '@authrim/ar-lib-core/services/tenant-portability/phase8-restore-targets';
 import { readNextSqliteInputRow } from '@authrim/ar-lib-core/services/tenant-portability/sqlite-input-row-source';
 import type { SqliteDatasetInspectionPolicy } from '@authrim/ar-lib-core/services/tenant-portability/sqlite-dataset-inspector';
 import type { TenantBackupInstalledImportAdapter } from './tenant-backup-import-dispatcher';
@@ -27,8 +28,19 @@ export interface TenantBackupValidatedInputPortOptions {
     datasetId: string
   ): Promise<SqliteDatasetInspectionPolicy>;
   assertSources(context: TenantBackupStepContext): Promise<void>;
+  /** Recheck that every pinned physical restore target is still isolated from runtime routing. */
+  assertUnpublishedTarget(context: TenantBackupStepContext, planDigest: string): Promise<void>;
   now?: () => number;
 }
+
+export type TenantBackupValidatedInputPorts = Pick<
+  TenantBackupInstalledImportAdapter,
+  'loadValidatedDataset' | 'assertValidatedUnpublishedPlan'
+> & {
+  loadValidatedSqliteDatasets(
+    context: TenantBackupStepContext
+  ): Promise<readonly Phase8ValidatedSqliteRestoreDataset[]>;
+};
 
 function invalid(): never {
   throw new Error('backup_validated_input_invalid');
@@ -46,6 +58,17 @@ function validateDatasets(datasets: readonly TenantPortableDataset[]): TenantPor
   )
     invalid();
   return result;
+}
+
+function sameDataset(left: TenantPortableDataset, right: TenantPortableDataset): boolean {
+  return (
+    left.id === right.id &&
+    left.module === right.module &&
+    left.kind === right.kind &&
+    left.store === right.store &&
+    left.schemaVersion === right.schemaVersion &&
+    left.disposition === right.disposition
+  );
 }
 
 function validateJob(job: RestoreJob): void {
@@ -69,10 +92,7 @@ function validateJob(job: RestoreJob): void {
  */
 export function createTenantBackupValidatedInputPorts(
   options: TenantBackupValidatedInputPortOptions
-): Pick<
-  TenantBackupInstalledImportAdapter,
-  'loadValidatedDataset' | 'assertValidatedUnpublishedPlan'
-> {
+): TenantBackupValidatedInputPorts {
   const now = options.now ?? Date.now;
   const database = requireDedicatedAdminDatabaseAdapter(options.env, 'tenant-backup');
   const requestStore = new TenantBackupImportRequestStore(database);
@@ -111,6 +131,9 @@ export function createTenantBackupValidatedInputPorts(
     if (head.state !== 'sealed' || head.chain_digest !== planDigest) invalid();
     await restore.assertInputValidated(context.lease);
     await loadCurrent(context);
+    await options.assertUnpublishedTarget(context, planDigest);
+    await loadCurrent(context);
+    await options.assertUnpublishedTarget(context, planDigest);
   }
 
   return {
@@ -190,6 +213,58 @@ export function createTenantBackupValidatedInputPorts(
           });
         },
       };
+    },
+
+    async loadValidatedSqliteDatasets(context) {
+      const current = await loadCurrent(context);
+      const execution = new TenantBackupExecutionInventory(database, context.lease, now);
+      const head = await execution.headForLease(context.lease);
+      if (
+        head.state !== 'sealed' ||
+        head.item_count !== current.request.inputs.length ||
+        head.item_count < 1 ||
+        head.item_count > 32
+      )
+        invalid();
+      await execution.assertInputValidated(context.lease);
+      const result: Phase8ValidatedSqliteRestoreDataset[] = [];
+      for (let ordinal = 0; ordinal < head.item_count; ordinal += 1) {
+        const rows = await execution.readPage(ordinal);
+        const saved = rows[0];
+        const prefix = 'backup-input:';
+        const bundleId = saved?.item_id.startsWith(prefix)
+          ? saved.item_id.slice(prefix.length)
+          : '';
+        if (
+          !saved ||
+          saved.ordinal !== ordinal ||
+          !/^[a-f0-9]{32}$/u.test(bundleId) ||
+          current.request.inputs[ordinal]?.ordinal !== ordinal
+        )
+          invalid();
+        const planned = await loadPlannedTenantBackupInput(context, execution, ordinal, {
+          bundleId,
+          source: current.request.intent.source,
+          selection: current.request.intent.selection,
+          datasets: current.datasets,
+        });
+        for (const dataset of planned.manifest.datasets.filter(
+          ({ store }) => store === 'database'
+        )) {
+          const policy = await options.loadPolicy(context, dataset.id);
+          if (
+            !sameDataset(policy.dataset, dataset) ||
+            !policy.schema.table ||
+            policy.schema.table.length > 256
+          )
+            invalid();
+          result.push({ manifest: planned.manifest, policy });
+        }
+      }
+      if (!result.length || result.length > 4096) invalid();
+      await execution.assertInputValidated(context.lease);
+      await loadCurrent(context);
+      return result;
     },
   };
 }

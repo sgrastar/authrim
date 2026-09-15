@@ -148,21 +148,26 @@ describe('tenant backup validated input production port', () => {
     mocks.readNext.mockResolvedValue({ rowJson: '{"id":["text","user-a"]}', nextCursor: '{}' });
   });
 
-  function ports(assertSources = vi.fn(async () => {})) {
+  function ports(
+    assertSources = vi.fn(async () => {}),
+    assertUnpublishedTarget = vi.fn(async () => {})
+  ) {
     return {
       assertSources,
+      assertUnpublishedTarget,
       value: createTenantBackupValidatedInputPorts({
         env,
         datasets: () => [dataset],
         loadPolicy: vi.fn(async () => policy as never),
         assertSources,
+        assertUnpublishedTarget,
         now: () => 100,
       }),
     };
   }
 
   it('loads only the sealed validated bundle and rechecks the plan for every row read', async () => {
-    const { value, assertSources } = ports();
+    const { value, assertSources, assertUnpublishedTarget } = ports();
     const loaded = await value.loadValidatedDataset(context, {
       targetId: 'target-core',
       targetOrdinal: 1,
@@ -190,6 +195,8 @@ describe('tenant backup validated input production port', () => {
     expect(mocks.restoreHead).toHaveBeenCalled();
     expect(mocks.executionValidated).toHaveBeenCalled();
     expect(assertSources).toHaveBeenCalled();
+    expect(assertUnpublishedTarget).toHaveBeenCalledTimes(2);
+    expect(assertUnpublishedTarget).toHaveBeenCalledWith(context, digest);
   });
 
   it('rejects a changed restore plan or input key before returning data', async () => {
@@ -232,6 +239,40 @@ describe('tenant backup validated input production port', () => {
     mocks.executionPage.mockResolvedValue([{ ordinal: 0, item_id: `backup-input:${bundleId}` }]);
     await expect(value.loadValidatedDataset(context, job)).rejects.toThrow(
       'backup_validated_input_invalid'
+    );
+  });
+
+  it('stops every validated read when the physical target becomes published', async () => {
+    const assertUnpublishedTarget = vi
+      .fn<() => Promise<void>>()
+      .mockResolvedValueOnce()
+      .mockRejectedValueOnce(new Error('backup_restore_target_published'));
+    const { value } = ports(
+      vi.fn(async () => {}),
+      assertUnpublishedTarget
+    );
+    await expect(value.assertValidatedUnpublishedPlan(context, digest)).rejects.toThrow(
+      'backup_restore_target_published'
+    );
+    expect(assertUnpublishedTarget).toHaveBeenCalledWith(context, digest);
+    expect(assertUnpublishedTarget).toHaveBeenCalledTimes(2);
+  });
+
+  it('loads installed policies for every validated SQL dataset used by restore planning', async () => {
+    const { value } = ports();
+    const loaded = await value.loadValidatedSqliteDatasets(context);
+    expect(loaded).toEqual([
+      expect.objectContaining({
+        manifest: expect.objectContaining({ bundleId }),
+        policy,
+      }),
+    ]);
+    expect(mocks.executionValidated).toHaveBeenCalledTimes(2);
+    expect(mocks.planned).toHaveBeenCalledWith(
+      context,
+      expect.anything(),
+      0,
+      expect.objectContaining({ bundleId })
     );
   });
 });
