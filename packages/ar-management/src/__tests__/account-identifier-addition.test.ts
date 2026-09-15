@@ -3,6 +3,7 @@ import type { DatabaseAdapter, Env } from '@authrim/ar-lib-core';
 import {
   buildAccountEmailAddition,
   prepareAccountExternalSubjectRemoval,
+  publishAccountExternalSubjectAddition,
 } from '../account-identifier-addition';
 
 const { loadKeys } = vi.hoisted(() => ({
@@ -126,5 +127,39 @@ describe('account external-subject removal preparation', () => {
     await expect(
       prepareAccountExternalSubjectRemoval({} as Env, input(), conflict, 124)
     ).rejects.toThrow('account_identifier_removal_outbox_conflict');
+  });
+
+  it('rejects a covered identifier write before key or storage access when backup is draining', async () => {
+    const acquire = vi.fn().mockResolvedValue({ admitted: false });
+    const complete = vi.fn();
+    const tenantCoreUsers = {
+      queryOne: vi.fn(),
+      execute: vi.fn(),
+    } as unknown as DatabaseAdapter;
+    const publishAccountDirectory = vi.fn();
+
+    await expect(
+      publishAccountExternalSubjectAddition(
+        {
+          TENANT_BACKUP_WRAPPING_KEY: 'enabled',
+          CONTROL: {
+            acquireTenantBackupMutationPermit: acquire,
+            completeTenantBackupMutationPermit: complete,
+          },
+        } as unknown as Env,
+        input(),
+        {
+          tenantCoreUsers,
+          directory: { publishAccountDirectory },
+        }
+      )
+    ).rejects.toThrow('backup_mutation_unavailable');
+
+    expect(acquire).toHaveBeenCalledOnce();
+    expect(complete).not.toHaveBeenCalled();
+    expect(loadKeys).not.toHaveBeenCalled();
+    expect(tenantCoreUsers.queryOne).not.toHaveBeenCalled();
+    expect(tenantCoreUsers.execute).not.toHaveBeenCalled();
+    expect(publishAccountDirectory).not.toHaveBeenCalled();
   });
 });

@@ -1,5 +1,6 @@
 import {
   ensureDatabaseAdapter,
+  hasCapturingTenantBackupSnapshot,
   isD1DatabaseLike,
   listDeletedObjectCatalogObjectsForSystemCleanup,
   purgeDeletedObjectCatalogObjectsForSystemCleanup,
@@ -228,6 +229,10 @@ export async function purgeDeletedObjectArtifacts(
     error: (message: string, meta?: Record<string, unknown>, err?: Error) => void;
   }
 ): Promise<number> {
+  if (await hasCapturingTenantBackupSnapshot(adapter)) {
+    logger.info('Deferring deleted object purge while a tenant backup snapshot is active');
+    return 0;
+  }
   const exportBucket = env.EXPORT_ARTIFACTS;
   const importBucket = env.IMPORT_ARTIFACTS;
   const sensitiveBucket = env.SENSITIVE_DETAILS;

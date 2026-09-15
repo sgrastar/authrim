@@ -96,7 +96,32 @@ function context(): AdapterContext {
       lease: { tenantId: 'tenant-a', operationId: 'operation-a' },
       signal: new AbortController().signal,
     },
-  } as AdapterContext;
+    snapshotResources: {
+      loadCapture: vi.fn(async (_lease: unknown, resourceId: string) => ({
+        resourceId,
+        snapshotId: `sql-snapshot:${resourceId}`,
+      })),
+    },
+    databases: {
+      tenant: [
+        {
+          databaseId: 'core-a',
+          database: {
+            queryOne: vi.fn(async () => ({ id: 'sql-snapshot:core-a' })),
+          },
+        },
+      ],
+      fixed: [
+        {
+          family: 'admin',
+          databaseId: 'admin-a',
+          database: {
+            queryOne: vi.fn(async () => ({ id: 'sql-snapshot:admin-a' })),
+          },
+        },
+      ],
+    },
+  } as unknown as AdapterContext;
 }
 
 async function digest(bytes: Uint8Array): Promise<string> {
@@ -166,6 +191,8 @@ describe('tenant backup R2 object snapshot port', () => {
     const input = context();
 
     await ports.artifactObjects.start(input, 'snapshot-a', async () => {}, 100);
+    expect(source.head).not.toHaveBeenCalled();
+    expect(source.get).not.toHaveBeenCalled();
     const record = await ports.artifactObjects.readNext(
       input,
       'snapshot-a',
@@ -193,7 +220,7 @@ describe('tenant backup R2 object snapshot port', () => {
     expect(source.get).toHaveBeenCalledWith(objectKey, {
       onlyIf: { etagMatches: 'source-etag' },
     });
-    expect(assertSource).toHaveBeenCalledTimes(2);
+    expect(assertSource).toHaveBeenCalledTimes(4);
   });
 
   it('stops when a source object changes while it is captured', async () => {
@@ -228,6 +255,7 @@ describe('tenant backup R2 object snapshot port', () => {
           objectId: 'admin:physical-a',
           bucketBinding: 'IMPORT_ARTIFACTS',
           objectKey: 'imports/tenant-a/a.csv',
+          expectedStoredSha256: await digest(bytes),
           sourceEncoding: 'plaintext',
           context: {
             tenantId: 'tenant-a',
@@ -241,9 +269,57 @@ describe('tenant backup R2 object snapshot port', () => {
       ],
     });
 
+    const input = context();
+    await ports.artifactObjects.start(input, 'snapshot-b', async () => {}, 100);
     await expect(
-      ports.artifactObjects.start(context(), 'snapshot-b', async () => {}, 100)
+      ports.artifactObjects.readNext(input, 'snapshot-b', null, input.context.signal)
     ).rejects.toThrow('backup_r2_object_snapshot_invalid');
+  });
+
+  it('refuses to materialize after its exact SQL snapshot is released', async () => {
+    const bytes = new TextEncoder().encode('body');
+    const source = bucket({
+      'imports/tenant-a/a.csv': {
+        bytes,
+        etag: 'source-etag',
+        version: 'source-version',
+      },
+    });
+    const ports = createTenantBackupR2ObjectSnapshotPorts({
+      env: {
+        IMPORT_ARTIFACTS: source as unknown as R2Bucket,
+        EXPORT_ARTIFACTS: bucket() as unknown as R2Bucket,
+        OBJECT_ENCRYPTION_ROOT_KEY: '45'.repeat(32),
+      },
+      assertSource: async () => {},
+      list: async (_context, datasetId) => [
+        {
+          datasetId,
+          objectId: 'core:physical-a',
+          bucketBinding: 'IMPORT_ARTIFACTS',
+          objectKey: 'imports/tenant-a/a.csv',
+          expectedStoredSha256: await digest(bytes),
+          sourceEncoding: 'plaintext',
+          context: {
+            tenantId: 'tenant-a',
+            catalogKind: 'object_catalog_object',
+            sourceFamily: 'core',
+            sourceDatabaseId: 'core-a',
+            sourceRowId: 'physical-a',
+            catalogId: 'catalog-a',
+          },
+        },
+      ],
+    });
+    const input = context();
+    input.databases.tenant[0]!.database.queryOne = vi.fn(async () => null);
+
+    await ports.artifactObjects.start(input, 'snapshot-released', async () => {}, 100);
+    await expect(
+      ports.artifactObjects.readNext(input, 'snapshot-released', null, input.context.signal)
+    ).rejects.toThrow('backup_r2_object_snapshot_invalid');
+    expect(source.head).not.toHaveBeenCalled();
+    expect(source.get).not.toHaveBeenCalled();
   });
 
   it('reads a large plaintext artifact as fixed-size ranges', async () => {
@@ -270,6 +346,7 @@ describe('tenant backup R2 object snapshot port', () => {
           objectId: 'core:large',
           bucketBinding: 'IMPORT_ARTIFACTS',
           objectKey,
+          expectedStoredSha256: await digest(bytes),
           sourceEncoding: 'plaintext',
           context: {
             tenantId: 'tenant-a',
@@ -291,6 +368,8 @@ describe('tenant backup R2 object snapshot port', () => {
       null,
       input.context.signal
     );
+    const sourceReadsAfterMaterialization = source.get.mock.calls.length;
+    source.values.delete(objectKey);
     const second = await ports.artifactObjects.readNext(
       input,
       'snapshot-large',
@@ -309,6 +388,7 @@ describe('tenant backup R2 object snapshot port', () => {
     expect(firstChunk.bytes).toHaveLength(TENANT_BACKUP_R2_CHUNK_BYTES);
     expect(secondChunk.bytes).toHaveLength(3);
     expect(firstChunk.objectSha256).toBe(secondChunk.objectSha256);
+    expect(source.get).toHaveBeenCalledTimes(sourceReadsAfterMaterialization);
     expect(source.get).toHaveBeenCalledWith(objectKey, {
       range: { offset: TENANT_BACKUP_R2_CHUNK_BYTES, length: 3 },
       onlyIf: { etagMatches: 'large-etag' },
@@ -356,6 +436,7 @@ describe('tenant backup R2 object snapshot port', () => {
         {
           databaseId: 'core-a',
           database: {
+            queryOne: vi.fn(async () => ({ id: 'sql-snapshot:core-a' })),
             query: vi.fn(async () => {
               const location = encoded.records[1]!;
               const block = encoded.blocks[location.blockIndex]!;
@@ -594,8 +675,10 @@ describe('tenant backup R2 object snapshot port', () => {
       ],
     });
 
+    const input = context();
+    await ports.artifactObjects.start(input, 'snapshot-detail-range', async () => {}, 100);
     await expect(
-      ports.artifactObjects.start(context(), 'snapshot-detail-range', async () => {}, 100)
+      ports.artifactObjects.readNext(input, 'snapshot-detail-range', null, input.context.signal)
     ).rejects.toThrow('backup_r2_object_snapshot_invalid');
   });
 });

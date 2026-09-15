@@ -9,6 +9,7 @@ import type { Phase5RecordSnapshotPort } from './tenant-backup-phase5-adapter';
 
 const MAX_RECORDS = 4096;
 const MAX_RECORD_BYTES = 16 * 1024 * 1024;
+const MAX_DEFERRED_PLAN_BYTES = 8 * 1024 * 1024;
 
 interface SnapshotIndex {
   version: 2;
@@ -40,6 +41,37 @@ export interface EncryptedTenantBackupRecordSnapshotPort extends Phase5RecordSna
 interface Cursor {
   version: 1;
   ordinal: number;
+}
+
+interface DeferredSnapshotIndex {
+  version: 3;
+  resourceId: string;
+  snapshotId: string;
+  tenantId: string;
+  operationId: string;
+  boundaryUnixMs: number;
+  plans: readonly {
+    plaintext: string;
+    sha256: string;
+    bytes: number;
+    summary: TenantBackupRecordSnapshotSummary | null;
+  }[];
+}
+
+interface DeferredMaterializedIndex {
+  version: 1;
+  planSha256: string;
+  records: readonly {
+    key: string;
+    sha256: string;
+    bytes: number;
+  }[];
+}
+
+interface DeferredCursor {
+  version: 2;
+  planOrdinal: number;
+  recordOrdinal: number;
 }
 
 function invalid(): never {
@@ -378,6 +410,366 @@ export function createEncryptedTenantBackupRecordSnapshotPort(input: {
           prefix: base,
           limit: 1000,
         });
+        if (page.objects.length) await bucket.delete(page.objects.map(({ key }) => key));
+        if (!page.truncated) break;
+        if (!page.objects.length) invalid();
+      }
+    },
+    async assertReleased(context, snapshotId) {
+      const page = await bucket.list({
+        prefix: prefix(context, input.resourceId, snapshotId),
+        limit: 1,
+      });
+      if (page.objects.length || page.truncated) invalid();
+    },
+  };
+}
+
+function parseDeferredIndex(
+  value: string,
+  expected: Omit<DeferredSnapshotIndex, 'plans' | 'boundaryUnixMs'>,
+  expectedBoundaryUnixMs?: number
+): DeferredSnapshotIndex {
+  let decoded: unknown;
+  try {
+    decoded = JSON.parse(value) as unknown;
+  } catch {
+    return invalid();
+  }
+  if (
+    !decoded ||
+    typeof decoded !== 'object' ||
+    Array.isArray(decoded) ||
+    Object.keys(decoded).sort().join(',') !==
+      'boundaryUnixMs,operationId,plans,resourceId,snapshotId,tenantId,version' ||
+    !('plans' in decoded) ||
+    !Array.isArray(decoded.plans)
+  )
+    invalid();
+  const index = decoded as DeferredSnapshotIndex;
+  if (
+    index.version !== 3 ||
+    index.resourceId !== expected.resourceId ||
+    index.snapshotId !== expected.snapshotId ||
+    index.tenantId !== expected.tenantId ||
+    index.operationId !== expected.operationId ||
+    !Number.isSafeInteger(index.boundaryUnixMs) ||
+    index.boundaryUnixMs < 0 ||
+    (expectedBoundaryUnixMs !== undefined && index.boundaryUnixMs !== expectedBoundaryUnixMs) ||
+    index.plans.length > MAX_RECORDS ||
+    index.plans.reduce(
+      (total, plan) => total + (Number.isSafeInteger(plan?.bytes) ? plan.bytes : 0),
+      0
+    ) > MAX_DEFERRED_PLAN_BYTES ||
+    index.plans.some((plan) => {
+      if (
+        !plan ||
+        Object.keys(plan).sort().join(',') !== 'bytes,plaintext,sha256,summary' ||
+        typeof plan.plaintext !== 'string' ||
+        new TextEncoder().encode(plan.plaintext).length !== plan.bytes ||
+        !/^[a-f0-9]{64}$/.test(plan.sha256) ||
+        !Number.isSafeInteger(plan.bytes) ||
+        plan.bytes < 1 ||
+        plan.bytes > MAX_RECORD_BYTES
+      )
+        return true;
+      validateSummary(plan.summary);
+      return false;
+    })
+  )
+    invalid();
+  return index;
+}
+
+function parseMaterializedIndex(value: string, planSha256: string): DeferredMaterializedIndex {
+  let decoded: unknown;
+  try {
+    decoded = JSON.parse(value) as unknown;
+  } catch {
+    return invalid();
+  }
+  if (
+    !decoded ||
+    typeof decoded !== 'object' ||
+    Array.isArray(decoded) ||
+    Object.keys(decoded).sort().join(',') !== 'planSha256,records,version' ||
+    !('records' in decoded) ||
+    !Array.isArray(decoded.records)
+  )
+    invalid();
+  const index = decoded as DeferredMaterializedIndex;
+  if (
+    index.version !== 1 ||
+    index.planSha256 !== planSha256 ||
+    index.records.length < 1 ||
+    index.records.length > 64 ||
+    index.records.some(
+      (record, ordinal) =>
+        !record ||
+        Object.keys(record).sort().join(',') !== 'bytes,key,sha256' ||
+        record.key !== `record-${String(ordinal).padStart(2, '0')}-${record.sha256}.json` ||
+        !/^[a-f0-9]{64}$/.test(record.sha256) ||
+        !Number.isSafeInteger(record.bytes) ||
+        record.bytes < 1 ||
+        record.bytes > MAX_RECORD_BYTES
+    )
+  )
+    invalid();
+  return index;
+}
+
+function parseDeferredCursor(value: string | null): DeferredCursor {
+  if (value === null) return { version: 2, planOrdinal: 0, recordOrdinal: 0 };
+  let cursor: DeferredCursor;
+  try {
+    cursor = JSON.parse(value) as DeferredCursor;
+  } catch {
+    return invalid();
+  }
+  if (
+    !cursor ||
+    Object.keys(cursor).sort().join(',') !== 'planOrdinal,recordOrdinal,version' ||
+    cursor.version !== 2 ||
+    !Number.isSafeInteger(cursor.planOrdinal) ||
+    cursor.planOrdinal < 0 ||
+    cursor.planOrdinal > MAX_RECORDS ||
+    !Number.isSafeInteger(cursor.recordOrdinal) ||
+    cursor.recordOrdinal < 0 ||
+    cursor.recordOrdinal > 64
+  )
+    invalid();
+  return cursor;
+}
+
+/**
+ * Persist only a small immutable descriptor plan while the cross-store boundary is held. Source
+ * bodies are materialized into encrypted staging on the first read, outside the writer hold. A
+ * materialized sub-index makes every subsequent cursor retry independent of the mutable source.
+ */
+export function createDeferredEncryptedTenantBackupRecordSnapshotPort(input: {
+  env: Pick<
+    Env,
+    'EXPORT_ARTIFACTS' | 'OBJECT_ENCRYPTION_ROOT_KEY' | 'OBJECT_ENCRYPTION_KEY_VERSION'
+  >;
+  resourceId: string;
+  assertSource(context: AdapterContext): Promise<void>;
+  capturePlans(context: AdapterContext): AsyncIterable<Uint8Array>;
+  materializePlan(context: AdapterContext, plan: Uint8Array): AsyncIterable<Uint8Array>;
+  summarizePlan?(
+    bytes: Uint8Array
+  ): TenantBackupRecordSnapshotSummary | null | Promise<TenantBackupRecordSnapshotSummary | null>;
+}): EncryptedTenantBackupRecordSnapshotPort {
+  if (!/^[A-Za-z0-9_.:-]{1,128}$/.test(input.resourceId)) invalid();
+  const bucket = input.env.EXPORT_ARTIFACTS;
+  if (!bucket) invalid();
+  const encryptionRootKey = rootKey(input.env);
+  const encryptionKeyVersion = keyVersion(input.env);
+  const identity = (context: AdapterContext, snapshotId: string) => ({
+    version: 3 as const,
+    resourceId: input.resourceId,
+    snapshotId,
+    tenantId: context.context.lease.tenantId,
+    operationId: context.context.lease.operationId,
+  });
+  const loadIndex = async (
+    context: AdapterContext,
+    snapshotId: string,
+    boundaryUnixMs?: number
+  ) => {
+    const base = prefix(context, input.resourceId, snapshotId);
+    const saved = await readEncryptedJson(
+      bucket,
+      `${base}index.json`,
+      context.context.lease.tenantId,
+      encryptionRootKey
+    );
+    return saved === null
+      ? null
+      : parseDeferredIndex(saved, identity(context, snapshotId), boundaryUnixMs);
+  };
+  const loadMaterializedIndex = async (
+    context: AdapterContext,
+    base: string,
+    planOrdinal: number,
+    planSha256: string
+  ) => {
+    const saved = await readEncryptedJson(
+      bucket,
+      `${base}materialized-${String(planOrdinal).padStart(4, '0')}/index.json`,
+      context.context.lease.tenantId,
+      encryptionRootKey
+    );
+    return saved === null ? null : parseMaterializedIndex(saved, planSha256);
+  };
+
+  return {
+    resourceId: input.resourceId,
+    assertSource: (context) => input.assertSource(context),
+    async start(context, snapshotId, assertHeld, boundaryUnixMs) {
+      if (!Number.isSafeInteger(boundaryUnixMs) || boundaryUnixMs < 0) invalid();
+      const captureContext: AdapterContext = { ...context, boundaryUnixMs };
+      await assertHeld();
+      await input.assertSource(captureContext);
+      const existing = await loadIndex(captureContext, snapshotId, boundaryUnixMs);
+      if (existing) {
+        await assertHeld();
+        return;
+      }
+      const base = prefix(captureContext, input.resourceId, snapshotId);
+      const plans: DeferredSnapshotIndex['plans'][number][] = [];
+      let planBytes = 0;
+      for await (const captured of input.capturePlans(captureContext)) {
+        await assertHeld();
+        captureContext.context.signal.throwIfAborted();
+        const bytes = new Uint8Array(captured);
+        validateRecord(bytes);
+        if (plans.length >= MAX_RECORDS) invalid();
+        planBytes += bytes.length;
+        if (planBytes > MAX_DEFERRED_PLAN_BYTES) invalid();
+        const planSha256 = await sha256(bytes);
+        const plaintext = new TextDecoder().decode(bytes);
+        plans.push({
+          plaintext,
+          sha256: planSha256,
+          bytes: bytes.length,
+          summary: validateSummary((await input.summarizePlan?.(bytes)) ?? null),
+        });
+      }
+      await input.assertSource(captureContext);
+      await assertHeld();
+      const index = {
+        ...identity(captureContext, snapshotId),
+        boundaryUnixMs,
+        plans,
+      } satisfies DeferredSnapshotIndex;
+      const indexJson = JSON.stringify(index);
+      const raced = await loadIndex(captureContext, snapshotId, boundaryUnixMs);
+      if (raced && JSON.stringify(raced) !== indexJson) invalid();
+      if (!raced)
+        await writeEncryptedJson(
+          bucket,
+          `${base}index.json`,
+          captureContext.context.lease.tenantId,
+          indexJson,
+          encryptionRootKey,
+          encryptionKeyVersion
+        );
+      const published = (await loadIndex(captureContext, snapshotId, boundaryUnixMs)) ?? invalid();
+      if (JSON.stringify(published) !== indexJson) invalid();
+      await assertHeld();
+    },
+    async readNext(context, snapshotId, cursorValue, signal) {
+      signal.throwIfAborted();
+      if (!Number.isSafeInteger(context.boundaryUnixMs) || (context.boundaryUnixMs ?? -1) < 0)
+        invalid();
+      const index =
+        (await loadIndex(context, snapshotId, context.boundaryUnixMs ?? -1)) ?? invalid();
+      const cursor = parseDeferredCursor(cursorValue);
+      if (cursor.planOrdinal === index.plans.length && cursor.recordOrdinal === 0) return null;
+      if (cursor.planOrdinal >= index.plans.length) invalid();
+      const plan = index.plans[cursor.planOrdinal];
+      const base = prefix(context, input.resourceId, snapshotId);
+      let materialized = await loadMaterializedIndex(
+        context,
+        base,
+        cursor.planOrdinal,
+        plan.sha256
+      );
+      if (!materialized) {
+        const planPlaintext = plan.plaintext;
+        const planBytes = new TextEncoder().encode(planPlaintext);
+        validateRecord(planBytes);
+        if (planBytes.length !== plan.bytes || (await sha256(planBytes)) !== plan.sha256) invalid();
+        const materializedBase = `${base}materialized-${String(cursor.planOrdinal).padStart(4, '0')}/`;
+        const records: DeferredMaterializedIndex['records'][number][] = [];
+        await input.assertSource(context);
+        for await (const value of input.materializePlan(context, planBytes)) {
+          signal.throwIfAborted();
+          const bytes = new Uint8Array(value);
+          validateRecord(bytes);
+          if (records.length >= 64) invalid();
+          const recordSha256 = await sha256(bytes);
+          const key = `record-${String(records.length).padStart(2, '0')}-${recordSha256}.json`;
+          const objectKey = `${materializedBase}${key}`;
+          const plaintext = new TextDecoder().decode(bytes);
+          const saved = await readEncryptedJson(
+            bucket,
+            objectKey,
+            context.context.lease.tenantId,
+            encryptionRootKey
+          );
+          if (saved === null)
+            await writeEncryptedJson(
+              bucket,
+              objectKey,
+              context.context.lease.tenantId,
+              plaintext,
+              encryptionRootKey,
+              encryptionKeyVersion
+            );
+          else if (saved !== plaintext) invalid();
+          records.push({ key, sha256: recordSha256, bytes: bytes.length });
+        }
+        await input.assertSource(context);
+        if (!records.length) invalid();
+        const nextIndex = {
+          version: 1,
+          planSha256: plan.sha256,
+          records,
+        } satisfies DeferredMaterializedIndex;
+        const nextJson = JSON.stringify(nextIndex);
+        const raced = await loadMaterializedIndex(context, base, cursor.planOrdinal, plan.sha256);
+        if (raced && JSON.stringify(raced) !== nextJson) invalid();
+        if (!raced)
+          await writeEncryptedJson(
+            bucket,
+            `${materializedBase}index.json`,
+            context.context.lease.tenantId,
+            nextJson,
+            encryptionRootKey,
+            encryptionKeyVersion
+          );
+        materialized =
+          (await loadMaterializedIndex(context, base, cursor.planOrdinal, plan.sha256)) ??
+          invalid();
+        if (JSON.stringify(materialized) !== nextJson) invalid();
+      }
+      if (cursor.recordOrdinal >= materialized.records.length) invalid();
+      const record = materialized.records[cursor.recordOrdinal];
+      const objectKey = `${base}materialized-${String(cursor.planOrdinal).padStart(4, '0')}/${record.key}`;
+      const plaintext =
+        (await readEncryptedJson(
+          bucket,
+          objectKey,
+          context.context.lease.tenantId,
+          encryptionRootKey
+        )) ?? invalid();
+      const bytes = new TextEncoder().encode(plaintext);
+      validateRecord(bytes);
+      if (bytes.length !== record.bytes || (await sha256(bytes)) !== record.sha256) invalid();
+      signal.throwIfAborted();
+      const lastRecord = cursor.recordOrdinal + 1 === materialized.records.length;
+      return {
+        bytes,
+        nextCursor: JSON.stringify({
+          version: 2,
+          planOrdinal: lastRecord ? cursor.planOrdinal + 1 : cursor.planOrdinal,
+          recordOrdinal: lastRecord ? 0 : cursor.recordOrdinal + 1,
+        } satisfies DeferredCursor),
+      };
+    },
+    async readSummaries(context, snapshotId, boundaryUnixMs) {
+      if (!Number.isSafeInteger(boundaryUnixMs) || boundaryUnixMs < 0) invalid();
+      const index = (await loadIndex(context, snapshotId, boundaryUnixMs)) ?? invalid();
+      return index.plans.flatMap(({ summary }) =>
+        summary === null ? [] : [Object.freeze({ ...summary })]
+      );
+    },
+    async release(context, snapshotId) {
+      const base = prefix(context, input.resourceId, snapshotId);
+      while (true) {
+        context.context.signal.throwIfAborted();
+        const page = await bucket.list({ prefix: base, limit: 1000 });
         if (page.objects.length) await bucket.delete(page.objects.map(({ key }) => key));
         if (!page.truncated) break;
         if (!page.objects.length) invalid();

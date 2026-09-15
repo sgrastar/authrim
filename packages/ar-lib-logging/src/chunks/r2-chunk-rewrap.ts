@@ -4,6 +4,8 @@ import { encryptLogChunkBody } from './r2-chunk-writer';
 
 export interface RewrapLogChunkObjectCatalogUpdate {
   objectCatalogId: string;
+  previousObjectKey: string;
+  objectKey: string;
   byteCount: number;
   checksumSha256: string;
   encryptionScope: string;
@@ -19,6 +21,7 @@ export interface RewrapLogChunkObjectInput {
   bucket: R2Bucket;
   objectCatalogId: string;
   objectKey: string;
+  targetObjectKey: string;
   chunkId: string;
   tenantKey: string;
   logType: LogType;
@@ -51,6 +54,15 @@ export interface RewrapLogChunkObjectResult {
 
 function toHex(bytes: Uint8Array): string {
   return [...bytes].map((value) => value.toString(16).padStart(2, '0')).join('');
+}
+
+function equalBytes(left: Uint8Array, right: Uint8Array): boolean {
+  if (left.byteLength !== right.byteLength) return false;
+  let difference = 0;
+  for (let index = 0; index < left.byteLength; index += 1) {
+    difference |= left[index]! ^ right[index]!;
+  }
+  return difference === 0;
 }
 
 const DEFAULT_LOG_CHUNK_REWRAP_MAX_OBJECT_BYTES = 64 * 1024 * 1024;
@@ -119,6 +131,13 @@ async function sha256Hex(bytes: Uint8Array): Promise<string> {
 export async function rewrapLogChunkObject(
   input: RewrapLogChunkObjectInput
 ): Promise<RewrapLogChunkObjectResult> {
+  if (
+    !input.targetObjectKey ||
+    input.targetObjectKey === input.objectKey ||
+    new TextEncoder().encode(input.targetObjectKey).byteLength > 1024
+  ) {
+    throw new Error('log_chunk_rewrap_target_object_key_invalid');
+  }
   const object = await input.bucket.get(input.objectKey);
   if (!object) {
     throw new Error('log_chunk_rewrap_object_not_found');
@@ -146,14 +165,15 @@ export async function rewrapLogChunkObject(
     tenantKey: input.tenantKey,
     logType: input.logType,
     plane: input.plane,
-    objectKey: input.objectKey,
+    objectKey: input.targetObjectKey,
     chunkId: input.chunkId,
     compression: input.compression,
   });
-  const checksumSha256 = await sha256Hex(rewrappedBody);
+  const generatedChecksumSha256 = await sha256Hex(rewrappedBody);
   const updatedAt = input.now ?? Date.now();
 
-  await input.bucket.put(input.objectKey, rewrappedBody, {
+  const created = await input.bucket.put(input.targetObjectKey, rewrappedBody, {
+    onlyIf: { etagDoesNotMatch: '*' },
     httpMetadata: {
       contentType: 'application/authrim.log-chunk+encrypted',
     },
@@ -161,7 +181,7 @@ export async function rewrapLogChunkObject(
       tenantKey: input.tenantKey,
       logType: input.logType,
       plane: input.plane,
-      checksumSha256,
+      checksumSha256: generatedChecksumSha256,
       compression: input.compression,
       encryptionScope: input.to.encryptionScope,
       keyVersion: String(input.to.keyVersion),
@@ -169,9 +189,37 @@ export async function rewrapLogChunkObject(
     },
   });
 
+  let storedBodyForCatalog = rewrappedBody;
+  if (!created) {
+    const existing = await input.bucket.get(input.targetObjectKey);
+    if (!existing) throw new Error('log_chunk_rewrap_target_object_conflict');
+    const existingBody = await readR2ObjectBytesWithLimit(
+      existing,
+      resolveMaxObjectBytes(input.maxBytes)
+    );
+    const decodedExisting = await decryptLogChunkBody({
+      storedBody: existingBody,
+      keyBytes: input.to.keyBytes,
+      tenantKey: input.tenantKey,
+      logType: input.logType,
+      plane: input.plane,
+      objectKey: input.targetObjectKey,
+      chunkId: input.chunkId,
+      expectedEncryptionScope: input.to.encryptionScope,
+      expectedKeyVersion: input.to.keyVersion,
+    });
+    if (!equalBytes(decodedExisting.body, decoded.body)) {
+      throw new Error('log_chunk_rewrap_target_object_conflict');
+    }
+    storedBodyForCatalog = existingBody;
+  }
+  const checksumSha256 = await sha256Hex(storedBodyForCatalog);
+
   const update = {
     objectCatalogId: input.objectCatalogId,
-    byteCount: rewrappedBody.byteLength,
+    previousObjectKey: input.objectKey,
+    objectKey: input.targetObjectKey,
+    byteCount: storedBodyForCatalog.byteLength,
     checksumSha256,
     encryptionScope: input.to.encryptionScope,
     keyVersion: input.to.keyVersion,
@@ -181,8 +229,8 @@ export async function rewrapLogChunkObject(
 
   return {
     objectCatalogId: input.objectCatalogId,
-    objectKey: input.objectKey,
-    byteCount: rewrappedBody.byteLength,
+    objectKey: input.targetObjectKey,
+    byteCount: storedBodyForCatalog.byteLength,
     checksumSha256,
     encryptionScope: input.to.encryptionScope,
     keyVersion: input.to.keyVersion,

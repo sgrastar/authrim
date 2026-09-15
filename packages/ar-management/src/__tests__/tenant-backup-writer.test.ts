@@ -1,5 +1,5 @@
 import { expect, it, vi } from 'vitest';
-import type { Env } from '@authrim/ar-lib-core';
+import { type Env, withTenantBackupMutationCoverage } from '@authrim/ar-lib-core';
 import { runTenantBackupCoveredMutation } from '../tenant-backup-writer';
 
 it('does not write without admission and retries uncertain RPCs with the same permit', async () => {
@@ -21,7 +21,20 @@ it('does not write without admission and retries uncertain RPCs with the same pe
   expect(complete).not.toHaveBeenCalled();
   expect(acquire.mock.calls[0][0]).toEqual(acquire.mock.calls[1][0]);
 });
-it('awaits all registered work and retains uncertain failures instead of releasing the permit', async () => {
+
+it('reuses an inherited environment permit for nested mutations', async () => {
+  const run = vi.fn(async () => new Response('saved'));
+  const env = withTenantBackupMutationCoverage({ TENANT_BACKUP_WRAPPING_KEY: 'enabled' } as Env, {
+    environment: true,
+  });
+  await expect(
+    runTenantBackupCoveredMutation({ env, tenantId: 'tenant-a', run })
+  ).resolves.toMatchObject({
+    status: 200,
+  });
+  expect(run).toHaveBeenCalledWith({ tenantId: 'tenant-a' });
+});
+it('awaits all registered work and completes the permit after the mutation stops', async () => {
   const complete = vi.fn().mockResolvedValue(undefined);
   const env = {
     TENANT_BACKUP_WRAPPING_KEY: 'ab'.repeat(32),
@@ -57,7 +70,8 @@ it('awaits all registered work and retains uncertain failures instead of releasi
       },
     })
   ).rejects.toThrow('uncertain storage');
-  expect(complete).not.toHaveBeenCalled();
+  expect(complete).toHaveBeenCalledTimes(1);
+  complete.mockClear();
   expect(
     (
       await runTenantBackupCoveredMutation({
@@ -69,7 +83,26 @@ it('awaits all registered work and retains uncertain failures instead of releasi
       })
     ).status
   ).toBe(500);
-  expect(complete).not.toHaveBeenCalled();
+  expect(complete).toHaveBeenCalledTimes(1);
+});
+
+it('reports an unconfirmed partial write after completing its permit', async () => {
+  const complete = vi.fn().mockResolvedValue(undefined);
+  const env = {
+    TENANT_BACKUP_WRAPPING_KEY: 'ab'.repeat(32),
+    CONTROL: {
+      acquireTenantBackupMutationPermit: vi.fn().mockResolvedValue({ admitted: true }),
+      completeTenantBackupMutationPermit: complete,
+    },
+  } as unknown as Env;
+  const response = await runTenantBackupCoveredMutation({
+    env,
+    tenantId: 'a',
+    run: async () => new Response('partially saved'),
+    confirmCompletion: () => false,
+  });
+  expect(response.status).toBe(503);
+  expect(complete).toHaveBeenCalledTimes(1);
 });
 
 it('retries only completion after a successful write and reports uncertain acknowledgement', async () => {

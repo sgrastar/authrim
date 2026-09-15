@@ -70,6 +70,8 @@ describe('audit DLQ consumer', () => {
       resumeMultipartUpload: vi.fn(),
     } as unknown as R2Bucket;
     const adminDb = createAdminDbAdapter();
+    const acquire = vi.fn(async () => ({ admitted: true }));
+    const complete = vi.fn(async () => {});
     const message = createMessage({
       type: 'event_log',
       tenantId: 'tenant-a',
@@ -95,6 +97,11 @@ describe('audit DLQ consumer', () => {
         DB_ADMIN: adminDb,
         AUDIT_ARCHIVE: bucket,
         OBJECT_ENCRYPTION_ROOT_KEY: ROOT_KEY,
+        TENANT_BACKUP_WRAPPING_KEY: 'enabled',
+        CONTROL: {
+          acquireTenantBackupMutationPermit: acquire,
+          completeTenantBackupMutationPermit: complete,
+        },
       } as unknown as Parameters<typeof processDLQQueue>[1]
     );
 
@@ -135,6 +142,14 @@ describe('audit DLQ consumer', () => {
     });
     expect(message.ack).toHaveBeenCalledOnce();
     expect(message.retry).not.toHaveBeenCalled();
+    expect(acquire).toHaveBeenCalledWith({
+      tenantId: 'tenant-a',
+      permitId: expect.any(String),
+    });
+    expect(complete).toHaveBeenCalledWith({
+      tenantId: 'tenant-a',
+      permitId: acquire.mock.calls[0]?.[0].permitId,
+    });
   });
 
   it('fails closed instead of writing a plaintext DLQ payload without an encryption key', async () => {

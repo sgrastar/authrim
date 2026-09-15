@@ -193,7 +193,7 @@ describe('tenant backup R2 catalog lister', () => {
     admin.exec(`
       INSERT INTO object_catalog VALUES('catalog-b','tenant-a','user_import_input',NULL);
       INSERT INTO object_catalog_objects VALUES(
-        'physical-b','catalog-b','IMPORT_ARTIFACTS','imports/b','1',NULL,20,NULL
+        'physical-b','catalog-b','IMPORT_ARTIFACTS','imports/b','1','${'b'.repeat(64)}',20,NULL
       );
     `);
     const list = createTenantBackupR2CatalogLister({ tenantKey: 'tenant-key-a' });
@@ -219,7 +219,7 @@ describe('tenant backup R2 catalog lister', () => {
         database.exec(`
           INSERT INTO object_catalog VALUES('catalog-a','tenant-a','user_export',NULL);
           INSERT INTO object_catalog_objects VALUES(
-            'physical-a','catalog-a','EXPORT_ARTIFACTS','exports/a','2',NULL,12,NULL
+            'physical-a','catalog-a','EXPORT_ARTIFACTS','exports/a','2','${'a'.repeat(64)}',12,NULL
           );
         `);
       const input = context();
@@ -302,6 +302,22 @@ describe('tenant backup R2 catalog lister', () => {
     await expect(list(context(), 'logs.archive_object_bodies')).rejects.toThrow(
       'backup_r2_catalog_list_invalid'
     );
+  });
+
+  it('rejects a catalog object without a durable content checksum', async () => {
+    core.exec(`
+      INSERT INTO object_catalog VALUES('catalog-a','tenant-a','user_export',NULL);
+      INSERT INTO object_catalog_objects VALUES(
+        'physical-a','catalog-a','EXPORT_ARTIFACTS','exports/a','2',NULL,12,NULL
+      );
+    `);
+
+    await expect(
+      createTenantBackupR2CatalogLister({ tenantKey: 'tenant-key-a' })(
+        context(),
+        'artifacts.object_catalog_bodies'
+      )
+    ).rejects.toThrow('backup_r2_catalog_list_invalid');
   });
 
   it('marks a log chunk that crosses the requested period boundary for record repacking', async () => {

@@ -7,7 +7,6 @@ import { isObjectClass, type ObjectClass } from '@authrim/ar-lib-core/services/o
 import { encodePortableLogChunkRecords } from '@authrim/ar-lib-core/services/tenant-portability/portable-log-chunk';
 import { encodePortableSensitiveDetailRecord } from '@authrim/ar-lib-core/services/tenant-portability/portable-sensitive-detail';
 import {
-  decodePortableR2ObjectChunk,
   encodePortableR2ObjectChunk,
   TENANT_BACKUP_R2_CHUNK_BYTES,
   TENANT_BACKUP_R2_MAX_CHUNKS,
@@ -28,7 +27,7 @@ import {
 } from '@authrim/ar-lib-logging/contract';
 import type { AdapterContext } from './tenant-backup-export-dispatcher';
 import {
-  createEncryptedTenantBackupRecordSnapshotPort,
+  createDeferredEncryptedTenantBackupRecordSnapshotPort,
   type TenantBackupRecordSnapshotSummary,
 } from './tenant-backup-record-snapshot-port';
 
@@ -220,7 +219,8 @@ function validateDescriptor(
     !descriptor.objectKey ||
     new TextEncoder().encode(descriptor.objectKey).length > 1024 ||
     containsControlCharacter(descriptor.objectKey) ||
-    (descriptor.expectedStoredSha256 != null && !SHA256.test(descriptor.expectedStoredSha256)) ||
+    !descriptor.expectedStoredSha256 ||
+    !SHA256.test(descriptor.expectedStoredSha256) ||
     !['core', 'admin'].includes(source.sourceFamily) ||
     !SAFE_ID.test(source.sourceDatabaseId) ||
     !SAFE_ID.test(source.sourceRowId)
@@ -344,19 +344,43 @@ function nonNegativeInteger(value: unknown): number {
   return value as number;
 }
 
-function sourceLogDatabase(context: AdapterContext, descriptor: LogChunkRecordsR2ObjectDescriptor) {
+function sourceDatabase(
+  context: AdapterContext,
+  sourceFamily: 'core' | 'admin',
+  sourceDatabaseId: string
+) {
   const candidates =
-    descriptor.context.sourceFamily === 'core'
-      ? context.databases.tenant.filter(
-          (resource) => resource.databaseId === descriptor.context.sourceDatabaseId
-        )
+    sourceFamily === 'core'
+      ? context.databases.tenant.filter((resource) => resource.databaseId === sourceDatabaseId)
       : context.databases.fixed.filter(
-          (resource) =>
-            resource.family === 'admin' &&
-            resource.databaseId === descriptor.context.sourceDatabaseId
+          (resource) => resource.family === 'admin' && resource.databaseId === sourceDatabaseId
         );
   if (candidates.length !== 1) invalid();
   return candidates[0].database;
+}
+
+function sourceLogDatabase(context: AdapterContext, descriptor: LogChunkRecordsR2ObjectDescriptor) {
+  return sourceDatabase(
+    context,
+    descriptor.context.sourceFamily,
+    descriptor.context.sourceDatabaseId
+  );
+}
+
+async function assertDescriptorSnapshotActive(
+  context: AdapterContext,
+  descriptor: TenantBackupR2ObjectDescriptor
+): Promise<void> {
+  const resourceId = descriptor.context.sourceDatabaseId;
+  const capture = await context.snapshotResources.loadCapture(context.context.lease, resourceId);
+  if (capture.resourceId !== resourceId) invalid();
+  const row = await sourceDatabase(context, descriptor.context.sourceFamily, resourceId).queryOne<{
+    id: string;
+  }>("SELECT id FROM tenant_backup_snapshots WHERE id=? AND tenant_id=? AND state='capturing'", [
+    capture.snapshotId,
+    context.context.lease.tenantId,
+  ]);
+  if (!row || row.id !== capture.snapshotId) invalid();
 }
 
 async function portableLogRecords(
@@ -762,31 +786,49 @@ async function* captureDataset(
   }
 }
 
-async function summarizePortableR2Record(
-  bytes: Uint8Array
-): Promise<TenantBackupRecordSnapshotSummary | null> {
-  let chunk;
+interface R2DescriptorPlan {
+  version: 1;
+  datasetId: PortableR2DatasetId;
+  descriptor: TenantBackupR2ObjectDescriptor;
+}
+
+function encodeDescriptorPlan(
+  descriptor: TenantBackupR2ObjectDescriptor,
+  datasetId: PortableR2DatasetId
+): Uint8Array {
+  validateDescriptor(descriptor, datasetId);
+  return new TextEncoder().encode(`${JSON.stringify({ version: 1, datasetId, descriptor })}\n`);
+}
+
+function decodeDescriptorPlan(
+  bytes: Uint8Array,
+  datasetId: PortableR2DatasetId
+): TenantBackupR2ObjectDescriptor {
+  let value: unknown;
   try {
-    const rowJson = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true })
-      .decode(bytes)
-      .trimEnd();
-    const parsed: unknown = JSON.parse(rowJson);
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) invalid();
-    const tenantValue = (parsed as Record<string, unknown>).tenant_id;
-    if (
-      !Array.isArray(tenantValue) ||
-      tenantValue.length !== 2 ||
-      tenantValue[0] !== 'text' ||
-      typeof tenantValue[1] !== 'string'
-    )
-      invalid();
-    const tenantId = tenantValue[1];
-    chunk = await decodePortableR2ObjectChunk(rowJson, tenantId);
+    const text = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes);
+    if (!text.endsWith('\n') || text.indexOf('\n') !== text.length - 1) invalid();
+    value = JSON.parse(text.slice(0, -1)) as unknown;
   } catch {
     return invalid();
   }
-  if (chunk.chunkIndex !== 0) return null;
-  const value = chunk.context;
+  if (
+    !value ||
+    typeof value !== 'object' ||
+    Array.isArray(value) ||
+    Object.keys(value).sort().join(',') !== 'datasetId,descriptor,version'
+  )
+    invalid();
+  const plan = value as R2DescriptorPlan;
+  if (plan.version !== 1 || plan.datasetId !== datasetId || !plan.descriptor) invalid();
+  validateDescriptor(plan.descriptor, datasetId);
+  return plan.descriptor;
+}
+
+function summarizeDescriptor(
+  descriptor: TenantBackupR2ObjectDescriptor
+): TenantBackupRecordSnapshotSummary {
+  const value = descriptor.context;
   const family = value.sourceFamily;
   if (
     (family !== 'core' && family !== 'admin') ||
@@ -834,15 +876,26 @@ export function createTenantBackupR2ObjectSnapshotPorts(input: {
   ): Promise<readonly TenantBackupR2ObjectDescriptor[]>;
 }) {
   const snapshot = (datasetId: PortableR2DatasetId) =>
-    createEncryptedTenantBackupRecordSnapshotPort({
+    createDeferredEncryptedTenantBackupRecordSnapshotPort({
       env: input.env,
       resourceId: `r2-bodies:${datasetId}`,
       assertSource: (context) => input.assertSource(context),
-      capture: (context) =>
-        captureDataset(input.env, context, datasetId, (listContext, listDatasetId) =>
-          input.list(listContext, listDatasetId)
-        ),
-      summarizeRecord: summarizePortableR2Record,
+      async *capturePlans(context) {
+        const tenantId = context.context.lease.tenantId;
+        const descriptors = orderedDescriptors(await input.list(context, datasetId), datasetId);
+        for (const descriptor of descriptors) {
+          context.context.signal.throwIfAborted();
+          if (descriptor.context.tenantId !== tenantId) invalid();
+          yield encodeDescriptorPlan(descriptor, datasetId);
+        }
+      },
+      async *materializePlan(context, plan) {
+        const descriptor = decodeDescriptorPlan(plan, datasetId);
+        await assertDescriptorSnapshotActive(context, descriptor);
+        yield* captureDataset(input.env, context, datasetId, async () => [descriptor]);
+        await assertDescriptorSnapshotActive(context, descriptor);
+      },
+      summarizePlan: (plan) => summarizeDescriptor(decodeDescriptorPlan(plan, datasetId)),
     });
   return {
     artifactObjects: snapshot('artifacts.object_catalog_bodies'),

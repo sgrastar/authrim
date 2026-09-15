@@ -1,4 +1,8 @@
-import type { Env } from '@authrim/ar-lib-core';
+import {
+  hasTenantBackupMutationCoverage,
+  type Env,
+  type TenantBackupMutationCoverage,
+} from '@authrim/ar-lib-core';
 
 function unavailable(): Response {
   return Response.json(
@@ -17,11 +21,14 @@ function unavailable(): Response {
 export async function runTenantBackupCoveredMutation(
   input: {
     env: Env;
-    run: () => Promise<Response>;
-    /** False retains the permit when an API reports uncertain partial writes in a successful HTTP response. */
+    run: (coverage?: TenantBackupMutationCoverage) => Promise<Response>;
+    /** False reports an uncertain partial write after the awaited effect has stopped. */
     confirmCompletion?: () => boolean;
   } & ({ tenantId: string; scope?: 'tenant' } | { scope: 'environment' })
 ): Promise<Response> {
+  const coverage: TenantBackupMutationCoverage =
+    input.scope === 'environment' ? { environment: true } : { tenantId: input.tenantId };
+  if (hasTenantBackupMutationCoverage(input.env, coverage)) return input.run(coverage);
   // This deployment cannot start backup operations until its wrapping key is configured.
   if (!input.env.TENANT_BACKUP_WRAPPING_KEY) return input.run();
   const control = input.env.CONTROL;
@@ -64,17 +71,27 @@ export async function runTenantBackupCoveredMutation(
     }
   }
   if (!admitted) return unavailable();
-  const result = await input.run();
-  // An exception or server failure can leave uncertain storage effects. Do not assert completion.
-  if (result.status >= 500 || (input.confirmCompletion && !input.confirmCompletion()))
-    return result;
+  let result: Response | undefined;
+  let runError: unknown;
+  let runFailed = false;
+  try {
+    result = await input.run(coverage);
+  } catch (error) {
+    runFailed = true;
+    runError = error;
+  }
+  let completionAcknowledged = false;
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
       await complete();
-      return result;
+      completionAcknowledged = true;
+      break;
     } catch {
-      // Completion is idempotent; retain the permit if both acknowledgements remain unavailable.
+      // Completion is idempotent. Retry only the acknowledgement RPC, never the mutation.
     }
   }
-  return unavailable();
+  if (!completionAcknowledged) return unavailable();
+  if (runFailed) throw runError;
+  if (!result || (input.confirmCompletion && !input.confirmCompletion())) return unavailable();
+  return result;
 }

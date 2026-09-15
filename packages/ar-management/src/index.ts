@@ -58,6 +58,9 @@ import {
   ADMIN_PERMISSIONS,
   hasAdminPermission,
   type AdminAuthContext,
+  runTenantBackupCoveredEffect,
+  withTenantBackupMutationCoverage,
+  type TenantBackupMutationCoverage,
 } from '@authrim/ar-lib-core';
 import { cleanupResolvedAuditPrimaries } from './audit-maintenance';
 import { runObjectArtifactCleanup } from './artifact-cleanup';
@@ -105,6 +108,7 @@ import type { AccountDirectoryRpcProps } from './account-directory-entrypoint';
 import type { ExecutionContext } from '@cloudflare/workers-types';
 import { MANAGEMENT_REQUEST_DIAGNOSTIC_CONTEXT_KEY } from './request-diagnostics';
 import { releaseRolloutMutationFenceMiddleware } from './release-rollout-mutation-fence';
+import { runTenantBackupCoveredMutation } from './tenant-backup-writer';
 
 function isLoopbackHost(hostname: string): boolean {
   return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1';
@@ -4184,6 +4188,22 @@ async function handleScheduled(event: ScheduledEvent, env: Env): Promise<void> {
   }
 
   try {
+    await runTenantBackupCoveredEffect(env, { environment: true }, () =>
+      handleCoveredScheduled(event, env, log)
+    );
+  } catch (error) {
+    log.warn('Scheduled mutations deferred by backup admission', {
+      errorType: error instanceof Error ? error.name : 'Unknown',
+    });
+  }
+}
+
+async function handleCoveredScheduled(
+  event: ScheduledEvent,
+  env: Env,
+  log: ReturnType<typeof createLogger>
+): Promise<void> {
+  try {
     const finalized = await processDynamicPluginResourceFinalizations(env);
     if (finalized.inspected > 0) {
       log.info('Dynamic plugin resource finalization scheduler completed', finalized);
@@ -4613,13 +4633,92 @@ export function attachInternalAccountDirectoryBinding(
   };
 }
 
+export function createTrackedExecutionContext(executionContext: ExecutionContext | undefined): {
+  context: ExecutionContext | undefined;
+  drain(): Promise<void>;
+} {
+  if (!executionContext) return { context: undefined, drain: async () => {} };
+  const pending = new Set<Promise<unknown>>();
+  const context = new Proxy(executionContext, {
+    get(target, property, receiver) {
+      if (property === 'waitUntil') {
+        return (effect: Promise<unknown>) => {
+          const tracked = Promise.resolve(effect);
+          pending.add(tracked);
+          target.waitUntil(tracked);
+        };
+      }
+      const value = Reflect.get(target, property, receiver) as unknown;
+      return typeof value === 'function' ? value.bind(target) : value;
+    },
+  });
+  return {
+    context,
+    async drain() {
+      let firstError: unknown;
+      let hasFirstError = false;
+      while (pending.size > 0) {
+        const batch = [...pending];
+        const results = await Promise.allSettled(batch);
+        for (let index = 0; index < batch.length; index += 1) {
+          pending.delete(batch[index]!);
+          const result = results[index]!;
+          if (result.status === 'rejected' && !hasFirstError) {
+            firstError = result.reason;
+            hasFirstError = true;
+          }
+        }
+      }
+      if (hasFirstError) throw firstError;
+    },
+  };
+}
+
+async function runFetchWithCoveredDeferredEffects(
+  request: Request,
+  env: Env,
+  executionContext: ExecutionContext | undefined,
+  coverage: TenantBackupMutationCoverage | undefined
+): Promise<Response> {
+  if (!coverage) return app.fetch(request, env, executionContext);
+  const tracked = createTrackedExecutionContext(executionContext);
+  const coveredEnv = withTenantBackupMutationCoverage(env, coverage);
+  let response: Response | undefined;
+  let fetchError: unknown;
+  let fetchFailed = false;
+  try {
+    response = await app.fetch(request, coveredEnv, tracked.context);
+  } catch (error) {
+    fetchError = error;
+    fetchFailed = true;
+  }
+  try {
+    await tracked.drain();
+  } catch (error) {
+    if (!fetchFailed) {
+      fetchError = error;
+      fetchFailed = true;
+    }
+  }
+  if (fetchFailed) throw fetchError;
+  if (!response) throw new Error('management_fetch_response_missing');
+  return response;
+}
+
 export default {
   fetch(request: Request, env: Env, executionContext?: ExecutionContext) {
-    return app.fetch(
-      request,
-      executionContext ? attachInternalAccountDirectoryBinding(env, executionContext) : env,
-      executionContext
-    );
+    const effectiveEnv = executionContext
+      ? attachInternalAccountDirectoryBinding(env, executionContext)
+      : env;
+    if (['GET', 'HEAD', 'OPTIONS'].includes(request.method)) {
+      return app.fetch(request, effectiveEnv, executionContext);
+    }
+    return runTenantBackupCoveredMutation({
+      env: effectiveEnv,
+      scope: 'environment',
+      run: (coverage) =>
+        runFetchWithCoveredDeferredEffects(request, effectiveEnv, executionContext, coverage),
+    });
   },
   scheduled: handleScheduled,
   queue: handleQueue,

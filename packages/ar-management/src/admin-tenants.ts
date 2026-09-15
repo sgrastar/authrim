@@ -47,6 +47,7 @@ import {
   seedBuiltinProfileClaimSchemas,
   generateVersion,
   requireDedicatedAdminDatabaseAdapter,
+  runTenantBackupCoveredEffect,
 } from '@authrim/ar-lib-core';
 import { DatabaseSettingsCanonicalStore } from '@authrim/ar-lib-core/services/settings-canonical-store';
 import { createOpaqueTenantKey } from './logging-tenant-key';
@@ -1167,7 +1168,11 @@ export async function beginTenantProvisioning(
       existingOperation.status === 'running' ||
       existingOperation.status === 'waiting_retry'
     ) {
-      c.executionCtx?.waitUntil(processNextTenantProvisioning(c.env));
+      c.executionCtx?.waitUntil(
+        runTenantBackupCoveredEffect(c.env, { tenantId: input.id }, () =>
+          processNextTenantProvisioning(c.env)
+        )
+      );
     }
     return { tenant, operation: existingOperation };
   }
@@ -1248,7 +1253,11 @@ export async function beginTenantProvisioning(
     [input.id]
   );
   if (!tenant) throw new Error('tenant_provisioning_draft_missing');
-  c.executionCtx?.waitUntil(processNextTenantProvisioning(c.env));
+  c.executionCtx?.waitUntil(
+    runTenantBackupCoveredEffect(c.env, { tenantId: input.id }, () =>
+      processNextTenantProvisioning(c.env)
+    )
+  );
   return { tenant, operation };
 }
 
@@ -1440,7 +1449,9 @@ export async function adminTenantProvisioningStatusHandler(c: Context<{ Bindings
     });
   }
   if (['queued', 'waiting_retry', 'running'].includes(operation.status)) {
-    c.executionCtx?.waitUntil(processNextTenantProvisioning(c.env));
+    c.executionCtx?.waitUntil(
+      runTenantBackupCoveredEffect(c.env, { tenantId }, () => processNextTenantProvisioning(c.env))
+    );
   }
   return c.json(await formatTenantProvisioningStatus(c.env, operation));
 }
@@ -1950,7 +1961,11 @@ export async function adminTenantProvisioningRetryHandler(c: Context<{ Bindings:
         Math.floor(Date.now() / 1000)
       );
       if (!retried) throw new Error('tenant_provisioning_retry_conflict');
-      c.executionCtx?.waitUntil(processNextTenantProvisioning(c.env));
+      c.executionCtx?.waitUntil(
+        runTenantBackupCoveredEffect(c.env, { tenantId: id }, () =>
+          processNextTenantProvisioning(c.env)
+        )
+      );
       await createAuditLogFromContext(c, 'tenant.provisioning_retry.requested', 'tenant', id, {
         operation_id: retried.operationId,
       });

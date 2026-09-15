@@ -183,7 +183,7 @@ async function listObjectCatalog(
         ) ||
         !row.object_key ||
         new TextEncoder().encode(row.object_key).length > 1024 ||
-        (row.checksum_sha256 !== null && !SHA256.test(row.checksum_sha256)) ||
+        !SHA256.test(row.checksum_sha256 ?? '') ||
         integer(row.key_version, false) < 1 ||
         (row.total_bytes !== null && integer(row.total_bytes) < 0)
       )
@@ -201,7 +201,7 @@ async function listObjectCatalog(
           (row.byte_offset !== null && integer(row.byte_offset) < 0) ||
           (row.byte_length !== null && integer(row.byte_length, false) < 1) ||
           integer(row.sensitive_key_version, false) < 1 ||
-          (row.sensitive_checksum_sha256 !== null && !SHA256.test(row.sensitive_checksum_sha256)) ||
+          !SHA256.test(row.sensitive_checksum_sha256 ?? '') ||
           row.sensitive_checksum_sha256 !== row.checksum_sha256
         )
           invalid();

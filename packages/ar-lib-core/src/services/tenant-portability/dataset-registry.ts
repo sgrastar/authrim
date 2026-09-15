@@ -242,7 +242,7 @@ const TABLE_GROUPS: Partial<
       control_worker_binding_reconciliations control_worker_deployment_leases control_worker_desired_bindings control_worker_inventory_change_events
       control_worker_inventory_drift_findings control_worker_observed_bindings control_worker_required_data_roles
     `,
-    ephemeral: `tenant_backup_boundary_plans tenant_backup_boundary_receipts tenant_backup_mutation_permits tenant_backup_mutation_boundaries tenant_backup_restore_targets tenant_backup_snapshots tenant_backup_preimages authrim_runtime_probes`,
+    ephemeral: `tenant_backup_boundary_plans tenant_backup_boundary_receipts tenant_backup_mutation_permits tenant_backup_mutation_boundaries tenant_backup_restore_targets tenant_backup_snapshots tenant_backup_preimages tenant_backup_r2_retired_generations authrim_runtime_probes`,
   },
   lookup: {
     rebuild: `

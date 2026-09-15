@@ -5332,7 +5332,45 @@ describe('logging control routers', () => {
     expect(rejected.status).toBe(400);
 
     const bucketDelete = vi.fn().mockResolvedValue(undefined);
-    mockAdapter.queryOne.mockResolvedValueOnce(object);
+    let retiredGeneration: Record<string, unknown> | null = null;
+    let catalogObject = { ...object, deleted_at: null as number | null };
+    mockAdapter.execute.mockResolvedValue({ rowsAffected: 1 });
+    mockAdapter.batch.mockImplementation(
+      async (statements: Array<{ sql: string; params?: unknown[] }>) => {
+        for (const statement of statements) {
+          const params = statement.params ?? [];
+          if (statement.sql.includes('INSERT INTO tenant_backup_r2_retired_generations')) {
+            retiredGeneration = {
+              id: params[0],
+              tenant_key: params[1],
+              bucket_binding: params[2],
+              object_catalog_id: params[3],
+              object_key: params[4],
+              replacement_object_key: params[5],
+              reason: params[6],
+              key_registry_id: params[7],
+              previous_key_version: params[8],
+              replacement_key_version: params[9],
+              record_count: params[10],
+              accounting_applied: params[11],
+              created_at: params[12],
+            };
+          } else if (statement.sql.includes('UPDATE log_object_catalog')) {
+            catalogObject = {
+              ...catalogObject,
+              status: 'deleted',
+              deleted_at: Number(retiredGeneration?.created_at),
+            };
+          }
+        }
+        return statements.map(() => ({ success: true, rowsAffected: 1 }));
+      }
+    );
+    mockAdapter.queryOne.mockImplementation(async (sql: string) => {
+      if (sql.includes('FROM tenant_backup_r2_retired_generations')) return retiredGeneration;
+      if (sql.includes('FROM log_object_catalog')) return catalogObject;
+      return { total: 0, failures: 0, critical: 0 };
+    });
     const applied = await createApp([ADMIN_PERMISSIONS.ADMIN_LOGGING_REPAIR_RUN]).request(
       '/api/admin/admin-logging/catalog-repairs/dangerous/apply',
       {
@@ -5357,10 +5395,23 @@ describe('logging control routers', () => {
     expect(applied.status).toBe(200);
     expect(appliedBody.result.action).toBe('delete_object');
     expect(appliedBody.audit_id).toEqual(expect.any(String));
-    expect(bucketDelete).toHaveBeenCalledWith(object.object_key);
-    expect(mockAdapter.execute).toHaveBeenCalledWith(
-      expect.stringContaining("SET status = 'deleted'"),
-      expect.arrayContaining([object.id])
+    expect(bucketDelete).not.toHaveBeenCalled();
+    expect(mockAdapter.batch).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        expect.objectContaining({
+          sql: expect.stringContaining('INSERT INTO tenant_backup_r2_retired_generations'),
+          params: expect.arrayContaining([
+            `log-delete:${object.id}`,
+            tenantKey,
+            'AUDIT_ARCHIVE',
+            object.id,
+            object.object_key,
+            null,
+            'catalog_delete',
+          ]),
+        }),
+        expect.objectContaining({ sql: expect.stringContaining("SET status = 'deleted'") }),
+      ])
     );
     expect(mockAdapter.execute).toHaveBeenCalledWith(
       expect.stringContaining('INSERT INTO logging_delivery_events'),

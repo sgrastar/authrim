@@ -432,6 +432,29 @@ describe('AuthAccountProvisioningEntrypoint', () => {
     expect(mocks.resolveOperationAdapter).not.toHaveBeenCalled();
   });
 
+  it('exposes backup admission denial and performs no provisioning storage work', async () => {
+    const acquire = vi.fn().mockResolvedValue({ admitted: false });
+    const complete = vi.fn();
+
+    await expect(
+      worker({
+        env: {
+          TENANT_BACKUP_WRAPPING_KEY: 'enabled',
+          CONTROL: {
+            acquireTenantBackupMutationPermit: acquire,
+            completeTenantBackupMutationPermit: complete,
+          } as never,
+        },
+      }).provisionAuthAccount(input())
+    ).rejects.toThrow('backup_mutation_unavailable');
+
+    expect(acquire).toHaveBeenCalledOnce();
+    expect(complete).not.toHaveBeenCalled();
+    expect(mocks.resolveOperationAdapter).not.toHaveBeenCalled();
+    expect(mocks.execute).not.toHaveBeenCalled();
+    expect(mocks.writeAuthoritative).not.toHaveBeenCalled();
+  });
+
   it('rejects route email and authoritative PII mismatches', async () => {
     await expect(
       worker().provisionAuthAccount(

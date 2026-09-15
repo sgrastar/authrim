@@ -46,6 +46,7 @@ import {
 } from '@authrim/ar-lib-logging/delivery';
 import {
   buildLogChunkObjectKey,
+  buildLogChunkRewrapObjectKey,
   defaultLogStorageShard,
   deriveLogChunkEncryptionKey,
   rewrapLogChunkObject,
@@ -81,6 +82,9 @@ import {
   InternalNotificationEventRepository,
   resolveLoggingNotificationRoutingPolicy,
 } from '../../repositories/admin/internal-notification-event';
+import type { ControlServiceBinding } from '../control-plane/control-plane-contracts';
+import { runTenantBackupCoveredEffect } from '../tenant-portability/covered-mutation';
+import { persistRewrappedLogObjectGeneration } from '../tenant-portability/r2-generation-retention';
 
 function fetchInputToUrl(input: Parameters<typeof fetch>[0]): string {
   if (typeof input === 'string') {
@@ -613,6 +617,18 @@ export interface AuditQueueConsumerEnv {
 
   /** Object encryption key version for archive chunk encryption */
   OBJECT_ENCRYPTION_KEY_VERSION?: string;
+
+  /** Enables fail-closed writer admission while tenant backup is installed. */
+  TENANT_BACKUP_WRAPPING_KEY?: string;
+
+  /** Control admission facade shared with synchronous Management writers. */
+  CONTROL?: Pick<
+    ControlServiceBinding,
+    | 'acquireTenantBackupMutationPermit'
+    | 'completeTenantBackupMutationPermit'
+    | 'acquireEnvironmentBackupMutationPermit'
+    | 'completeEnvironmentBackupMutationPermit'
+  >;
 }
 
 interface RuntimeDeliveryDestination {
@@ -707,7 +723,9 @@ export async function processAuditQueue(
 
   for (const message of batch.messages) {
     try {
-      await processMessage(message, env, log);
+      await runTenantBackupCoveredEffect(env, { tenantId: message.body.tenantId }, () =>
+        processMessage(message, env, log)
+      );
 
       // IMPORTANT: Queues uses "first call wins" behavior.
       // ack() after retry() is ignored.
@@ -2111,105 +2129,106 @@ export async function processDLQQueue(
 
   for (const message of batch.messages) {
     try {
-      const now = queueMessageTimestamp(message);
-      const timestamp = new Date(now).toISOString();
-      const tenantKey = await deriveTenantKeyFromTenantId(
-        message.body.tenantId,
-        env.LOGGING_TENANT_KEY_SALT
-      );
-      const logType = logTypeForAuditMessage(message.body);
-      const lane = laneForLogPolicy(logType, 'delivery_event');
-      const destinationId = 'queue:AUDIT_DLQ';
-      const dlqItemId = await createQueueStableLoggingId('dlq', message, 'audit-dlq');
-      const partition = formatUtcPartition(now);
-      const payloadObjectRef =
-        `dlq/tenant_key=${tenantKey}/yyyy=${partition.year}/mm=${partition.month}` +
-        `/dd=${partition.day}/${dlqItemId}.json`;
+      await runTenantBackupCoveredEffect(env, { tenantId: message.body.tenantId }, async () => {
+        const now = queueMessageTimestamp(message);
+        const timestamp = new Date(now).toISOString();
+        const tenantKey = await deriveTenantKeyFromTenantId(
+          message.body.tenantId,
+          env.LOGGING_TENANT_KEY_SALT
+        );
+        const logType = logTypeForAuditMessage(message.body);
+        const lane = laneForLogPolicy(logType, 'delivery_event');
+        const destinationId = 'queue:AUDIT_DLQ';
+        const dlqItemId = await createQueueStableLoggingId('dlq', message, 'audit-dlq');
+        const partition = formatUtcPartition(now);
+        const payloadObjectRef =
+          `dlq/tenant_key=${tenantKey}/yyyy=${partition.year}/mm=${partition.month}` +
+          `/dd=${partition.day}/${dlqItemId}.json`;
 
-      // Save to R2 for recovery
-      const archiveBucket = env.AUDIT_ARCHIVE ?? null;
-      if (archiveBucket) {
-        await putEncryptedAuditArchivePayload({
-          env,
-          bucket: archiveBucket,
-          objectKey: payloadObjectRef,
-          tenantContext: tenantKey,
-          payload: {
-            messageId: message.id,
-            receivedAt: timestamp,
-            retryCount: message.attempts,
-            body: message.body,
-          },
-          customMetadata: {
+        // Save to R2 for recovery
+        const archiveBucket = env.AUDIT_ARCHIVE ?? null;
+        if (archiveBucket) {
+          await putEncryptedAuditArchivePayload({
+            env,
+            bucket: archiveBucket,
+            objectKey: payloadObjectRef,
+            tenantContext: tenantKey,
+            payload: {
+              messageId: message.id,
+              receivedAt: timestamp,
+              retryCount: message.attempts,
+              body: message.body,
+            },
+            customMetadata: {
+              tenantKey,
+              payloadType: 'audit_queue_message',
+              schemaVersion: '1',
+              dlqItemId,
+              logType,
+            },
+          });
+
+          await dlqStore?.insertItem({
+            id: dlqItemId,
             tenantKey,
             payloadType: 'audit_queue_message',
-            schemaVersion: '1',
-            dlqItemId,
-            logType,
+            schemaVersion: 1,
+            lane,
+            payloadObjectRef,
+            destinationId,
+            errorClass: 'audit_message_failed_permanently',
+            attemptCount: message.attempts,
+            now,
+          });
+        }
+
+        await recordDeliveryEvent(deliveryEventStore, log, {
+          id: await createQueueStableLoggingId('lde', message, 'audit-dlq'),
+          tenantKey,
+          destinationId,
+          logType,
+          plane: 'delivery_event',
+          lane,
+          status: 'dlq',
+          attemptCount: message.attempts,
+          errorClass: 'audit_message_failed_permanently',
+          metadata: {
+            dlq_item_id: archiveBucket ? dlqItemId : null,
+            payload_object_ref: archiveBucket ? payloadObjectRef : null,
+            payload_type: 'audit_queue_message',
+            schema_version: 1,
+            record_count: message.body.entries.length,
+          },
+        });
+        await recordDeliveryNotification(notificationRepository, log, {
+          id: await createQueueStableLoggingId('lde', message, 'audit-dlq:notification'),
+          tenantId: message.body.tenantId,
+          tenantKey,
+          destinationId,
+          logType,
+          plane: 'delivery_event',
+          lane,
+          status: 'dlq',
+          attemptCount: message.attempts,
+          errorClass: 'audit_message_failed_permanently',
+          metadata: {
+            dlq_item_id: archiveBucket ? dlqItemId : null,
+            payload_object_ref: archiveBucket ? payloadObjectRef : null,
+            payload_type: 'audit_queue_message',
+            schema_version: 1,
+            record_count: message.body.entries.length,
           },
         });
 
-        await dlqStore?.insertItem({
-          id: dlqItemId,
-          tenantKey,
-          payloadType: 'audit_queue_message',
-          schemaVersion: 1,
-          lane,
-          payloadObjectRef,
-          destinationId,
-          errorClass: 'audit_message_failed_permanently',
-          attemptCount: message.attempts,
-          now,
+        // Log for alerting
+        log.error('audit_message_failed_permanently', {
+          messageId: message.id,
+          tenantId: message.body.tenantId,
+          type: message.body.type,
+          entryCount: message.body.entries.length,
+          attempts: message.attempts,
         });
-      }
-
-      await recordDeliveryEvent(deliveryEventStore, log, {
-        id: await createQueueStableLoggingId('lde', message, 'audit-dlq'),
-        tenantKey,
-        destinationId,
-        logType,
-        plane: 'delivery_event',
-        lane,
-        status: 'dlq',
-        attemptCount: message.attempts,
-        errorClass: 'audit_message_failed_permanently',
-        metadata: {
-          dlq_item_id: archiveBucket ? dlqItemId : null,
-          payload_object_ref: archiveBucket ? payloadObjectRef : null,
-          payload_type: 'audit_queue_message',
-          schema_version: 1,
-          record_count: message.body.entries.length,
-        },
       });
-      await recordDeliveryNotification(notificationRepository, log, {
-        id: await createQueueStableLoggingId('lde', message, 'audit-dlq:notification'),
-        tenantId: message.body.tenantId,
-        tenantKey,
-        destinationId,
-        logType,
-        plane: 'delivery_event',
-        lane,
-        status: 'dlq',
-        attemptCount: message.attempts,
-        errorClass: 'audit_message_failed_permanently',
-        metadata: {
-          dlq_item_id: archiveBucket ? dlqItemId : null,
-          payload_object_ref: archiveBucket ? payloadObjectRef : null,
-          payload_type: 'audit_queue_message',
-          schema_version: 1,
-          record_count: message.body.entries.length,
-        },
-      });
-
-      // Log for alerting
-      log.error('audit_message_failed_permanently', {
-        messageId: message.id,
-        tenantId: message.body.tenantId,
-        type: message.body.type,
-        entryCount: message.body.entries.length,
-        attempts: message.attempts,
-      });
-
       message.ack();
     } catch (error) {
       // R2 save failed, retry
@@ -3626,6 +3645,31 @@ async function processRewrapChunkDeliveryPayload(input: {
     await completeSkipped('object_not_rewrappable');
     return 'ack';
   }
+  const targetObjectKey = buildLogChunkRewrapObjectKey({
+    tenantKey: object.tenant_key,
+    objectCatalogId: object.id,
+    rewrapJobId: job.id,
+    keyVersion: job.to_version,
+  });
+  if (object.key_version === job.to_version && object.object_key === targetObjectKey) {
+    const now = Date.now();
+    await completeLoggingRewrapJob({
+      adapter,
+      job,
+      status: 'succeeded',
+      completedAt: now,
+      metadata: {
+        ...metadataBase,
+        object_key: targetObjectKey,
+        from_version: job.from_version,
+        to_version: job.to_version,
+        byte_count: object.byte_count,
+        checksum_sha256: object.checksum_sha256,
+        resumed_after_catalog_commit: true,
+      },
+    });
+    return 'ack';
+  }
   if (object.key_version !== job.from_version) {
     await completeSkipped('object_key_version_mismatch');
     return 'ack';
@@ -3646,6 +3690,7 @@ async function processRewrapChunkDeliveryPayload(input: {
       bucket: env.AUDIT_ARCHIVE,
       objectCatalogId: object.id,
       objectKey: object.object_key,
+      targetObjectKey,
       chunkId: object.chunk_id,
       tenantKey: object.tenant_key,
       logType: object.log_type,
@@ -3676,37 +3721,24 @@ async function processRewrapChunkDeliveryPayload(input: {
       maxBytes: object.byte_count,
       catalogUpdater: {
         updateRewrappedObject: async (update) => {
-          await adapter.execute(
-            `UPDATE log_object_catalog
-             SET byte_count = ?, checksum_sha256 = ?, encryption_scope = ?,
-                 key_version = ?, committed_at = ?
-             WHERE id = ? AND status = ?`,
-            [
-              update.byteCount,
-              update.checksumSha256,
-              update.encryptionScope,
-              update.keyVersion,
-              update.updatedAt,
-              update.objectCatalogId,
-              'committed',
-            ]
-          );
+          await persistRewrappedLogObjectGeneration(adapter, {
+            retirementId: `log-rewrap:${job.id}`,
+            tenantKey: object.tenant_key,
+            objectCatalogId: update.objectCatalogId,
+            previousObjectKey: update.previousObjectKey,
+            objectKey: update.objectKey,
+            keyRegistryId: job.key_registry_id,
+            previousKeyVersion: job.from_version,
+            recordCount: object.record_count,
+            byteCount: update.byteCount,
+            checksumSha256: update.checksumSha256,
+            encryptionScope: update.encryptionScope,
+            keyVersion: update.keyVersion,
+            updatedAt: update.updatedAt,
+          });
         },
       },
     });
-
-    await adapter.execute(
-      `UPDATE logging_key_versions
-       SET stale_count = CASE WHEN stale_count > 0 THEN stale_count - 1 ELSE 0 END
-       WHERE key_registry_id = ? AND version = ?`,
-      [job.key_registry_id, job.from_version]
-    );
-    await adapter.execute(
-      `UPDATE logging_key_versions
-       SET usage_count = usage_count + ?
-       WHERE key_registry_id = ? AND version = ?`,
-      [object.record_count, job.key_registry_id, job.to_version]
-    );
     await completeLoggingRewrapJob({
       adapter,
       job,
@@ -3714,7 +3746,7 @@ async function processRewrapChunkDeliveryPayload(input: {
       completedAt: result.updatedAt,
       metadata: {
         ...metadataBase,
-        object_key: object.object_key,
+        object_key: result.objectKey,
         from_version: job.from_version,
         to_version: job.to_version,
         byte_count: result.byteCount,
@@ -3977,12 +4009,14 @@ export async function processLoggingDeliveryQueue(
     try {
       const parseResult = parseLoggingDeliveryQueuePayload(message.body);
       if (!parseResult.ok && shouldDlqUnsupportedQueuePayload(parseResult)) {
-        await writeUnsupportedLoggingDeliveryPayloadToDlq({
-          message,
-          parseResult,
-          env,
-          logger: log,
-        });
+        await runTenantBackupCoveredEffect(env, { environment: true }, () =>
+          writeUnsupportedLoggingDeliveryPayloadToDlq({
+            message,
+            parseResult,
+            env,
+            logger: log,
+          })
+        );
         log.warn('logging_delivery_payload_unsupported_schema_dlq', {
           messageId: message.id,
           payloadType: parseResult.payloadType,
@@ -4018,22 +4052,26 @@ export async function processLoggingDeliveryQueue(
   }
 
   if (sensitiveDetailChunkWrites.length > 0) {
-    await processSensitiveDetailChunkWritePayloadBatch({
-      items: sensitiveDetailChunkWrites,
-      env,
-      logger: log,
-    });
+    await runTenantBackupCoveredEffect(env, { environment: true }, () =>
+      processSensitiveDetailChunkWritePayloadBatch({
+        items: sensitiveDetailChunkWrites,
+        env,
+        logger: log,
+      })
+    );
   }
 
   for (const { message, payload } of parsedMessages) {
     try {
       if (payload.payload_type === 'chunk_write') {
-        const result = await processChunkWritePayload({
-          payload,
-          message,
-          env,
-          logger: log,
-        });
+        const result = await runTenantBackupCoveredEffect(env, { environment: true }, () =>
+          processChunkWritePayload({
+            payload,
+            message,
+            env,
+            logger: log,
+          })
+        );
         if (result === 'retry') {
           message.retry();
         } else {
@@ -4043,12 +4081,14 @@ export async function processLoggingDeliveryQueue(
       }
 
       if (payload.payload_type === 'http_sink_batch') {
-        const result = await processHttpSinkBatchDeliveryPayload({
-          payload,
-          message,
-          env,
-          logger: log,
-        });
+        const result = await runTenantBackupCoveredEffect(env, { environment: true }, () =>
+          processHttpSinkBatchDeliveryPayload({
+            payload,
+            message,
+            env,
+            logger: log,
+          })
+        );
         if (result === 'retry') {
           message.retry();
         } else {
@@ -4061,12 +4101,14 @@ export async function processLoggingDeliveryQueue(
         payload.payload_type === 'delivery_fanout' ||
         payload.payload_type === 'log_chunk_delivery'
       ) {
-        const result = await processDeliveryFanoutPayload({
-          payload,
-          message,
-          env,
-          logger: log,
-        });
+        const result = await runTenantBackupCoveredEffect(env, { environment: true }, () =>
+          processDeliveryFanoutPayload({
+            payload,
+            message,
+            env,
+            logger: log,
+          })
+        );
         if (result === 'retry') {
           message.retry();
         } else {
@@ -4076,12 +4118,14 @@ export async function processLoggingDeliveryQueue(
       }
 
       if (payload.payload_type === 'dlq_replay') {
-        const result = await processDlqReplayDeliveryPayload({
-          payload,
-          message,
-          env,
-          logger: log,
-        });
+        const result = await runTenantBackupCoveredEffect(env, { environment: true }, () =>
+          processDlqReplayDeliveryPayload({
+            payload,
+            message,
+            env,
+            logger: log,
+          })
+        );
         if (result === 'retry') {
           message.retry();
         } else {
@@ -4091,12 +4135,14 @@ export async function processLoggingDeliveryQueue(
       }
 
       if (payload.payload_type === 'rewrap_chunk') {
-        const result = await processRewrapChunkDeliveryPayload({
-          payload,
-          message,
-          env,
-          logger: log,
-        });
+        const result = await runTenantBackupCoveredEffect(env, { environment: true }, () =>
+          processRewrapChunkDeliveryPayload({
+            payload,
+            message,
+            env,
+            logger: log,
+          })
+        );
         if (result === 'retry') {
           message.retry();
         } else {

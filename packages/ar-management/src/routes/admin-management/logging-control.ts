@@ -15,6 +15,7 @@ import {
   loadChunkedSensitiveDetailJson,
   loadEnvironmentProfileDefaultsFromEnv,
   readR2ObjectTextWithLimit,
+  retireDeletedLogObjectGeneration,
   requireDedicatedAdminDatabaseAdapter,
   resolveRuntimeLoggingPolicyTargetFromEnv,
   resolveTenantDatabaseSourceFromRegistry,
@@ -992,20 +993,27 @@ function getLoggingMessagePayloadBucket(c: AdminContext): R2Bucket | null {
   return c.env.AUDIT_ARCHIVE ?? null;
 }
 
-function getCatalogObjectBucket(c: AdminContext, row: LogObjectCatalogRow): R2Bucket | null {
+function getCatalogObjectBucketBinding(
+  row: LogObjectCatalogRow
+):
+  | 'AUDIT_ARCHIVE'
+  | 'DIAGNOSTIC_LOGS'
+  | 'SENSITIVE_DETAILS'
+  | 'EXPORT_ARTIFACTS'
+  | 'IMPORT_ARTIFACTS' {
   if (row.object_kind === 'dlq_payload') {
-    return getDlqPayloadBucket(c);
+    return 'AUDIT_ARCHIVE';
   }
   if (row.object_kind === 'export_artifact') {
-    return getLoggingExportBucket(c);
+    return 'EXPORT_ARTIFACTS';
   }
   if (row.plane === 'sensitive_detail') {
-    return c.env.SENSITIVE_DETAILS ?? null;
+    return 'SENSITIVE_DETAILS';
   }
   if (row.plane === 'diagnostic_detail' || row.log_type === 'diagnostic') {
-    return c.env.DIAGNOSTIC_LOGS ?? null;
+    return 'DIAGNOSTIC_LOGS';
   }
-  return c.env.AUDIT_ARCHIVE ?? null;
+  return 'AUDIT_ARCHIVE';
 }
 
 async function readR2TextWithLimit(
@@ -12207,22 +12215,14 @@ adminLoggingRouter.post('/catalog-repairs/dangerous/apply', async (c) => {
     const adapter = getAdminAdapter(c);
     const now = Date.now();
     if (parsed.action === 'delete_object' && parsed.object) {
-      const bucket = getCatalogObjectBucket(c, parsed.object);
-      if (bucket) {
-        await bucket.delete(parsed.object.object_key);
-      }
-      await adapter.execute(
-        `UPDATE log_object_catalog
-         SET status = 'deleted', deleted_at = ?
-         WHERE id = ? AND status <> 'deleted'`,
-        [now, parsed.object.id]
-      );
-      await adapter.execute(
-        `UPDATE log_chunk_record_index
-         SET status = 'deleted'
-         WHERE object_catalog_id = ? AND status <> 'deleted'`,
-        [parsed.object.id]
-      );
+      await retireDeletedLogObjectGeneration(adapter, {
+        retirementId: `log-delete:${parsed.object.id}`,
+        tenantKey: parsed.object.tenant_key,
+        objectCatalogId: parsed.object.id,
+        objectKey: parsed.object.object_key,
+        deletedAt: now,
+        bucketBinding: getCatalogObjectBucketBinding(parsed.object),
+      });
     } else if (parsed.action === 'purge_record_indexes' && parsed.object) {
       await adapter.execute(
         `UPDATE log_chunk_record_index

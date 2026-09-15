@@ -10,6 +10,7 @@ import {
   passkeyCredentialLookupSubject,
   resolveAccountDataContext,
   resolveAuthCorePersistenceAdapterFromEnv,
+  runTenantBackupCoveredEffect,
   type AuthAccountProvisioningInput,
   type AuthGuestResumeCredentialProvisioningInput,
   type AuthExternalIdpIdentityProvisioningInput,
@@ -61,6 +62,12 @@ const FLOWS = new Set([
   'guest',
   'guest_upgrade',
 ]);
+
+function rethrowBackupMutationUnavailable(error: unknown): void {
+  if (error instanceof Error && error.message === 'backup_mutation_unavailable') {
+    throw new Error(error.message);
+  }
+}
 const INPUT_KEYS = new Set([
   'schemaVersion',
   'operationId',
@@ -867,75 +874,77 @@ async function provisionValidatedAccount(
   environmentId: string,
   validated: AuthAccountProvisioningInput
 ): Promise<AuthAccountProvisioningResult> {
-  const operationAdapter = await resolveAuthCorePersistenceAdapterFromEnv(
-    env,
-    'auth-account-provisioning-operation',
-    { tenantId: validated.tenantId }
-  );
-  const result = await executeDurableInitialAccountDirectoryWrite(
-    {
-      ...env,
-      ACCOUNT_DIRECTORY: internalDirectoryBinding(context, environmentId),
-    },
-    {
-      tenantId: validated.tenantId,
-      actorId: `auth:${validated.flow}`,
-      idempotencyKey: validated.idempotencyKey,
-      requestHash: await hashAccountCreationRequest({
-        schemaVersion: validated.schemaVersion,
-        tenantId: validated.tenantId,
-        flow: validated.flow,
-        email: validated.email,
-        ...(validated.externalSubject !== undefined
-          ? { externalSubject: validated.externalSubject }
-          : {}),
-        ...(validated.guestResumeCredential !== undefined
-          ? { guestResumeCredential: validated.guestResumeCredential }
-          : {}),
-        runtimeUser: validated.runtimeUser,
-      }),
-      candidateOperationId: validated.operationId,
-      candidateUserId: validated.candidateUserId,
-      email: validated.email,
-      externalSubject: validated.externalSubject,
-      residencyPolicyId: env.DEFAULT_RESIDENCY_PROFILE_ID ?? 'builtin:residency:default',
-      residencyPartition: 'default',
-    },
-    {
-      operationRepository: new AccountCreationOperationRepository(operationAdapter),
-      writeAuthoritative: async (writeContext) => {
-        await writeCanonicalAccountAuthoritative({
-          publication: writeContext.publication,
-          tenantCoreUsers: writeContext.tenantCoreUsers,
-          tenantPii: writeContext.tenantPii,
-          runtimeUser: validated.runtimeUser,
-        });
-        const userId = writeContext.publication.accountId.slice('account:'.length);
-        if (validated.flow === 'guest' && validated.guestResumeCredential) {
-          await writeGuestResumeCredentialAuthority({
-            tenantCoreUsers: writeContext.tenantCoreUsers,
-            tenantId: validated.tenantId,
-            userId,
-            credential: validated.guestResumeCredential,
-          });
-        }
-        if (validated.flow === 'external_idp' && validated.externalIdentity) {
-          await writeExternalIdentityAuthority({
-            tenantPii: writeContext.tenantPii,
-            tenantId: validated.tenantId,
-            userId,
-            identity: validated.externalIdentity,
-          });
-        }
+  return runTenantBackupCoveredEffect(env, { tenantId: validated.tenantId }, async () => {
+    const operationAdapter = await resolveAuthCorePersistenceAdapterFromEnv(
+      env,
+      'auth-account-provisioning-operation',
+      { tenantId: validated.tenantId }
+    );
+    const result = await executeDurableInitialAccountDirectoryWrite(
+      {
+        ...env,
+        ACCOUNT_DIRECTORY: internalDirectoryBinding(context, environmentId),
       },
-    }
-  );
-  return {
-    status: result.delivery.status,
-    operationId: result.operation.operationId,
-    accountId: result.publication.accountId,
-    userId: result.operation.userId,
-  };
+      {
+        tenantId: validated.tenantId,
+        actorId: `auth:${validated.flow}`,
+        idempotencyKey: validated.idempotencyKey,
+        requestHash: await hashAccountCreationRequest({
+          schemaVersion: validated.schemaVersion,
+          tenantId: validated.tenantId,
+          flow: validated.flow,
+          email: validated.email,
+          ...(validated.externalSubject !== undefined
+            ? { externalSubject: validated.externalSubject }
+            : {}),
+          ...(validated.guestResumeCredential !== undefined
+            ? { guestResumeCredential: validated.guestResumeCredential }
+            : {}),
+          runtimeUser: validated.runtimeUser,
+        }),
+        candidateOperationId: validated.operationId,
+        candidateUserId: validated.candidateUserId,
+        email: validated.email,
+        externalSubject: validated.externalSubject,
+        residencyPolicyId: env.DEFAULT_RESIDENCY_PROFILE_ID ?? 'builtin:residency:default',
+        residencyPartition: 'default',
+      },
+      {
+        operationRepository: new AccountCreationOperationRepository(operationAdapter),
+        writeAuthoritative: async (writeContext) => {
+          await writeCanonicalAccountAuthoritative({
+            publication: writeContext.publication,
+            tenantCoreUsers: writeContext.tenantCoreUsers,
+            tenantPii: writeContext.tenantPii,
+            runtimeUser: validated.runtimeUser,
+          });
+          const userId = writeContext.publication.accountId.slice('account:'.length);
+          if (validated.flow === 'guest' && validated.guestResumeCredential) {
+            await writeGuestResumeCredentialAuthority({
+              tenantCoreUsers: writeContext.tenantCoreUsers,
+              tenantId: validated.tenantId,
+              userId,
+              credential: validated.guestResumeCredential,
+            });
+          }
+          if (validated.flow === 'external_idp' && validated.externalIdentity) {
+            await writeExternalIdentityAuthority({
+              tenantPii: writeContext.tenantPii,
+              tenantId: validated.tenantId,
+              userId,
+              identity: validated.externalIdentity,
+            });
+          }
+        },
+      }
+    );
+    return {
+      status: result.delivery.status,
+      operationId: result.operation.operationId,
+      accountId: result.publication.accountId,
+      userId: result.operation.userId,
+    };
+  });
 }
 
 export class AuthAccountProvisioningEntrypoint extends WorkerEntrypoint<
@@ -1027,139 +1036,149 @@ export class AuthAccountProvisioningEntrypoint extends WorkerEntrypoint<
     try {
       authorizedExternalIdp(this.ctx.props, this.env);
       const validated = validateExternalIdpRouteRemovalInput(input);
-      const context = await resolveAccountDataContext(this.env, {
-        tenantId: validated.tenantId,
-        accountId: validated.accountId,
-      });
-      if (context.accountId !== validated.accountId || context.legacyUserId !== validated.userId) {
-        throw new Error('external_idp_route_removal_account_mismatch');
-      }
-      const tenantPii = ensureDatabaseAdapter(context.piiDb, 'external-idp-route-removal-pii');
-      const [issuerDigest, subjectDigest] = await Promise.all([
-        sha256Hex(validated.providerId),
-        sha256Hex(validated.providerUserId),
-      ]);
-      const routeProjectionJson = JSON.stringify(context.membership.routeProjection);
-      const existing = await tenantPii.queryOne<{
-        operation_id: string;
-        account_id: string;
-        user_id: string;
-        issuer_sha256: string;
-        subject_sha256: string;
-        route_projection_json: string;
-        state: string;
-      }>(
-        `SELECT operation_id, account_id, user_id, issuer_sha256, subject_sha256,
+      return await runTenantBackupCoveredEffect(
+        this.env,
+        { tenantId: validated.tenantId },
+        async () => {
+          const context = await resolveAccountDataContext(this.env, {
+            tenantId: validated.tenantId,
+            accountId: validated.accountId,
+          });
+          if (
+            context.accountId !== validated.accountId ||
+            context.legacyUserId !== validated.userId
+          ) {
+            throw new Error('external_idp_route_removal_account_mismatch');
+          }
+          const tenantPii = ensureDatabaseAdapter(context.piiDb, 'external-idp-route-removal-pii');
+          const [issuerDigest, subjectDigest] = await Promise.all([
+            sha256Hex(validated.providerId),
+            sha256Hex(validated.providerUserId),
+          ]);
+          const routeProjectionJson = JSON.stringify(context.membership.routeProjection);
+          const existing = await tenantPii.queryOne<{
+            operation_id: string;
+            account_id: string;
+            user_id: string;
+            issuer_sha256: string;
+            subject_sha256: string;
+            route_projection_json: string;
+            state: string;
+          }>(
+            `SELECT operation_id, account_id, user_id, issuer_sha256, subject_sha256,
                 route_projection_json, state
            FROM external_identifier_unlink_operations WHERE operation_id = ?`,
-        [validated.operationId],
-        { consistencyClass: 'primary_required' }
-      );
-      if (
-        existing &&
-        (existing.account_id !== validated.accountId ||
-          existing.user_id !== validated.userId ||
-          existing.issuer_sha256 !== issuerDigest ||
-          existing.subject_sha256 !== subjectDigest ||
-          existing.route_projection_json !== routeProjectionJson ||
-          !['pending', 'directory_pending', 'completed'].includes(existing.state))
-      ) {
-        throw new Error('external_idp_route_removal_operation_conflict');
-      }
-      if (!existing) {
-        const authority = await tenantPii.queryOne<{
-          id: string;
-          user_id: string;
-          provider_id: string;
-          provider_user_id: string;
-          provisioning_state: string;
-        }>(
-          `SELECT id, user_id, provider_id, provider_user_id, provisioning_state
+            [validated.operationId],
+            { consistencyClass: 'primary_required' }
+          );
+          if (
+            existing &&
+            (existing.account_id !== validated.accountId ||
+              existing.user_id !== validated.userId ||
+              existing.issuer_sha256 !== issuerDigest ||
+              existing.subject_sha256 !== subjectDigest ||
+              existing.route_projection_json !== routeProjectionJson ||
+              !['pending', 'directory_pending', 'completed'].includes(existing.state))
+          ) {
+            throw new Error('external_idp_route_removal_operation_conflict');
+          }
+          if (!existing) {
+            const authority = await tenantPii.queryOne<{
+              id: string;
+              user_id: string;
+              provider_id: string;
+              provider_user_id: string;
+              provisioning_state: string;
+            }>(
+              `SELECT id, user_id, provider_id, provider_user_id, provisioning_state
              FROM linked_identities
             WHERE id = ? AND tenant_id = ? AND user_id = ?`,
-          [validated.linkedIdentityId, validated.tenantId, validated.userId],
-          { consistencyClass: 'primary_required' }
-        );
-        if (
-          !authority ||
-          authority.id !== validated.linkedIdentityId ||
-          authority.user_id !== validated.userId ||
-          authority.provider_id !== validated.providerId ||
-          authority.provider_user_id !== validated.providerUserId ||
-          authority.provisioning_state !== 'active'
-        ) {
-          throw new Error('external_idp_route_removal_authority_not_found');
-        }
-        const now = Math.floor(Date.now() / 1000);
-        const results = await tenantPii.batch([
-          {
-            sql: `INSERT INTO external_identifier_unlink_operations (
+              [validated.linkedIdentityId, validated.tenantId, validated.userId],
+              { consistencyClass: 'primary_required' }
+            );
+            if (
+              !authority ||
+              authority.id !== validated.linkedIdentityId ||
+              authority.user_id !== validated.userId ||
+              authority.provider_id !== validated.providerId ||
+              authority.provider_user_id !== validated.providerUserId ||
+              authority.provisioning_state !== 'active'
+            ) {
+              throw new Error('external_idp_route_removal_authority_not_found');
+            }
+            const now = Math.floor(Date.now() / 1000);
+            const results = await tenantPii.batch([
+              {
+                sql: `INSERT INTO external_identifier_unlink_operations (
                operation_id, tenant_id, account_id, user_id, issuer_json, subject_json,
                issuer_sha256, subject_sha256, route_projection_json, state,
                attempt_count, created_at, updated_at
              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 0, ?, ?)`,
-            params: [
-              validated.operationId,
-              validated.tenantId,
-              validated.accountId,
-              validated.userId,
-              JSON.stringify(validated.providerId),
-              JSON.stringify(validated.providerUserId),
-              issuerDigest,
-              subjectDigest,
-              routeProjectionJson,
-              now,
-              now,
-            ],
-          },
-          {
-            sql: `DELETE FROM linked_identities
+                params: [
+                  validated.operationId,
+                  validated.tenantId,
+                  validated.accountId,
+                  validated.userId,
+                  JSON.stringify(validated.providerId),
+                  JSON.stringify(validated.providerUserId),
+                  issuerDigest,
+                  subjectDigest,
+                  routeProjectionJson,
+                  now,
+                  now,
+                ],
+              },
+              {
+                sql: `DELETE FROM linked_identities
                    WHERE id = ? AND tenant_id = ? AND user_id = ?
                      AND provider_id = ? AND provider_user_id = ?
                      AND provisioning_state = 'active'`,
-            params: [
-              validated.linkedIdentityId,
-              validated.tenantId,
-              validated.userId,
-              validated.providerId,
-              validated.providerUserId,
-            ],
-          },
-        ]);
-        if (results[0]?.rowsAffected !== 1 || results[1]?.rowsAffected !== 1) {
-          throw new Error('external_idp_route_removal_write_conflict');
-        }
-      }
-      const reflected = await tenantPii.queryOne<{
-        state: string;
-        account_id: string;
-        user_id: string;
-      }>(
-        `SELECT state, account_id, user_id FROM external_identifier_unlink_operations
+                params: [
+                  validated.linkedIdentityId,
+                  validated.tenantId,
+                  validated.userId,
+                  validated.providerId,
+                  validated.providerUserId,
+                ],
+              },
+            ]);
+            if (results[0]?.rowsAffected !== 1 || results[1]?.rowsAffected !== 1) {
+              throw new Error('external_idp_route_removal_write_conflict');
+            }
+          }
+          const reflected = await tenantPii.queryOne<{
+            state: string;
+            account_id: string;
+            user_id: string;
+          }>(
+            `SELECT state, account_id, user_id FROM external_identifier_unlink_operations
           WHERE operation_id = ?`,
-        [validated.operationId],
-        { consistencyClass: 'primary_required' }
+            [validated.operationId],
+            { consistencyClass: 'primary_required' }
+          );
+          const remaining = await tenantPii.queryOne<{ id: string }>(
+            'SELECT id FROM linked_identities WHERE id = ? AND tenant_id = ? AND user_id = ?',
+            [validated.linkedIdentityId, validated.tenantId, validated.userId],
+            { consistencyClass: 'primary_required' }
+          );
+          if (
+            !reflected ||
+            reflected.account_id !== validated.accountId ||
+            reflected.user_id !== validated.userId ||
+            !['pending', 'directory_pending', 'completed'].includes(reflected.state) ||
+            remaining
+          ) {
+            throw new Error('external_idp_route_removal_reflection_conflict');
+          }
+          return {
+            status: reflected.state === 'completed' ? 201 : 202,
+            operationId: validated.operationId,
+            accountId: validated.accountId,
+          };
+        }
       );
-      const remaining = await tenantPii.queryOne<{ id: string }>(
-        'SELECT id FROM linked_identities WHERE id = ? AND tenant_id = ? AND user_id = ?',
-        [validated.linkedIdentityId, validated.tenantId, validated.userId],
-        { consistencyClass: 'primary_required' }
-      );
-      if (
-        !reflected ||
-        reflected.account_id !== validated.accountId ||
-        reflected.user_id !== validated.userId ||
-        !['pending', 'directory_pending', 'completed'].includes(reflected.state) ||
-        remaining
-      ) {
-        throw new Error('external_idp_route_removal_reflection_conflict');
-      }
-      return {
-        status: reflected.state === 'completed' ? 201 : 202,
-        operationId: validated.operationId,
-        accountId: validated.accountId,
-      };
     } catch (error) {
+      rethrowBackupMutationUnavailable(error);
       if (
         error instanceof Error &&
         /^(external_idp_(account_provisioning_rpc_caller_unauthorized|route_removal_(input_invalid|account_mismatch|operation_conflict|authority_not_found|write_conflict|reflection_conflict)))$/u.test(
@@ -1238,6 +1257,7 @@ export class AuthAccountProvisioningEntrypoint extends WorkerEntrypoint<
         accountId: result.accountId,
       };
     } catch (error) {
+      rethrowBackupMutationUnavailable(error);
       if (
         error instanceof Error &&
         /^(external_idp_(account_provisioning_rpc_caller_unauthorized|route_(input_invalid|account_mismatch|authority_not_found))|account_identifier_addition_[a-z0-9_]+|directory_[a-z0-9_]+)$/u.test(
@@ -1319,6 +1339,7 @@ export class AuthAccountProvisioningEntrypoint extends WorkerEntrypoint<
         accountId: result.accountId,
       };
     } catch (error) {
+      rethrowBackupMutationUnavailable(error);
       if (
         error instanceof Error &&
         /^(auth_account_provisioning_rpc_caller_unauthorized|auth_passkey_route_(input_invalid|account_mismatch|authority_not_found)|passkey_route_[a-z0-9_]+|account_identifier_addition_[a-z0-9_]+|directory_[a-z0-9_]+)$/u.test(
@@ -1382,6 +1403,7 @@ export class AuthAccountProvisioningEntrypoint extends WorkerEntrypoint<
         accountId: result.accountId,
       };
     } catch (error) {
+      rethrowBackupMutationUnavailable(error);
       if (
         error instanceof Error &&
         /^(auth_account_provisioning_rpc_caller_unauthorized|auth_directory_route_(input_invalid|account_mismatch|authority_not_found)|directory_route_[a-z0-9_]+|account_identifier_addition_[a-z0-9_]+|directory_[a-z0-9_]+)$/u.test(
@@ -1452,6 +1474,7 @@ export class AuthAccountProvisioningEntrypoint extends WorkerEntrypoint<
       );
     } catch (error) {
       logProvisioningFailure(error);
+      rethrowBackupMutationUnavailable(error);
       if (
         error instanceof Error &&
         /^(auth_account_provisioning_(rpc_caller_unauthorized|input_invalid|input_too_large|runtime_user_invalid|directory_unavailable)|account_creation_operation_(blocked|canceled))$/u.test(
@@ -1481,6 +1504,7 @@ export class AuthAccountProvisioningEntrypoint extends WorkerEntrypoint<
       // Keep external-IdP JIT failures diagnosable without exposing request payloads or secrets.
       // The public RPC error remains intentionally generic below.
       logProvisioningFailure(error);
+      rethrowBackupMutationUnavailable(error);
       if (
         error instanceof Error &&
         /^(external_idp_account_provisioning_(rpc_caller_unauthorized|input_invalid)|auth_account_provisioning_(input_invalid|input_too_large|runtime_user_invalid|directory_unavailable)|account_creation_operation_(blocked|canceled)|external_idp_identity_authority_conflict)$/u.test(
