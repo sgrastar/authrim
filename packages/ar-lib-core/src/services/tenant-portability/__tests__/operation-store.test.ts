@@ -660,6 +660,32 @@ it('bounds scheduler work and persists backoff without exposing handler errors',
   expect(calls.slice(0, 2)).toEqual(['scheduled-5', 'scheduled-6']);
   expect(calls).not.toContain('scheduled-0');
 });
+it('claims only the explicitly enabled operation kind', async () => {
+  await store.create({ ...create, id: 'export-only', idempotencyKey: 'export-only' });
+  await store.create({
+    ...create,
+    id: 'import-held',
+    idempotencyKey: 'import-held',
+    kind: 'import',
+  });
+  const calls: string[] = [];
+  const handlers: TenantBackupOperationHandlers = {
+    async run(context) {
+      calls.push(context.operation.id);
+      return { phase: 'capture', cursor: null, disposition: 'continue' };
+    },
+    async cleanup() {
+      return { cursor: null, done: true };
+    },
+  };
+
+  await runTenantBackupScheduler(adapter, handlers, new AbortController().signal, () => 101, [
+    'export',
+  ]);
+
+  expect(calls).toEqual(['export-only']);
+  expect(await store.get('tenant-a', 'import-held')).toMatchObject({ state: 'queued' });
+});
 it('stops normal retries after eight failures while cancellation remains recoverable', async () => {
   await store.create(create);
   let now = 101;

@@ -1,4 +1,6 @@
 import { processTenantBackupMaintenance } from './tenant-backup-services';
+import { processTenantBackupOperations } from './tenant-backup-operation-dispatcher';
+import { createProductionTenantBackupExportAdapter } from './tenant-backup-production-export';
 import {
   serviceGroupRestart,
   serviceGroupRecover,
@@ -4185,6 +4187,24 @@ async function handleScheduled(event: ScheduledEvent, env: Env): Promise<void> {
     if (backup.keysRemoved > 0) log.info('Expired backup operation keys removed', backup);
   } catch {
     log.warn('Backup operation key maintenance failed', { errorType: 'BackupMaintenanceError' });
+  }
+
+  if (env.TENANT_BACKUP_WRAPPING_KEY && env.EXPORT_ARTIFACTS) {
+    try {
+      const operations = await processTenantBackupOperations(
+        env,
+        (context) => createProductionTenantBackupExportAdapter(env, context),
+        new AbortController().signal,
+        Date.now,
+        ['export']
+      );
+      if (operations.inspected > 0)
+        log.info('Tenant backup export scheduler completed', operations);
+    } catch (error) {
+      log.warn('Tenant backup export scheduler failed', {
+        errorType: error instanceof Error ? error.name : 'Unknown',
+      });
+    }
   }
 
   try {

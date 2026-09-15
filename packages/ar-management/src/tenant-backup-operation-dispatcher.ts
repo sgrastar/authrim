@@ -69,12 +69,14 @@ export function processTenantBackupOperations(
   env: Env,
   adapter: TenantBackupInstalledOperationAdapterResolver,
   signal: AbortSignal,
-  now: () => number = Date.now
+  now: () => number = Date.now,
+  kinds: readonly ('export' | 'import')[] = ['export', 'import']
 ) {
   return runTenantBackupScheduler(
     requireDedicatedAdminDatabaseAdapter(env, 'tenant-backup'),
     createTenantBackupOperationHandlers(env, adapter, now),
     signal,
-    now
+    now,
+    kinds
   );
 }

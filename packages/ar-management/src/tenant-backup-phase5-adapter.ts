@@ -58,7 +58,7 @@ import {
   type TenantBackupInstalledSqliteImportPorts,
 } from './tenant-backup-sqlite-import-adapter';
 
-const KEY_MANAGER_RESOURCE_ID = 'key-manager:tenant';
+export const TENANT_BACKUP_KEY_MANAGER_RESOURCE_ID = 'key-manager:tenant';
 const DONE_CURSOR = JSON.stringify({ version: 1, emitted: true });
 
 type Phase5ExportPorts = Omit<
@@ -165,11 +165,26 @@ export async function tenantBackupRecordSnapshotId(
 ): Promise<string> {
   const head = await context.inventory.headForLease(context.context.lease);
   if (head.state !== 'sealed') throw new Error('backup_phase5_key_manager_snapshot');
-  return digest([
-    'authrim-portable-record-snapshot-v1',
+  return tenantBackupRecordSnapshotIdForInventory(
     context.context.lease.tenantId,
     context.context.lease.operationId,
     head.chain_digest,
+    resourceId
+  );
+}
+
+/** Rebuild a non-SQL snapshot identity from its durable sealed inventory during cancellation. */
+export function tenantBackupRecordSnapshotIdForInventory(
+  tenantId: string,
+  operationId: string,
+  inventoryDigest: string,
+  resourceId: string
+): Promise<string> {
+  return digest([
+    'authrim-portable-record-snapshot-v1',
+    tenantId,
+    operationId,
+    inventoryDigest,
     resourceId,
   ]);
 }
@@ -321,9 +336,12 @@ export function createPhase5TenantBackupInstalledAdapter(input: {
         const participants = await sqlExport.additionalParticipants(context);
         const extra: TenantBackupBoundaryStart[] = [];
         if (keyManagerSelected(context)) {
-          const keyManagerId = await tenantBackupRecordSnapshotId(context, KEY_MANAGER_RESOURCE_ID);
+          const keyManagerId = await tenantBackupRecordSnapshotId(
+            context,
+            TENANT_BACKUP_KEY_MANAGER_RESOURCE_ID
+          );
           extra.push({
-            resourceId: KEY_MANAGER_RESOURCE_ID,
+            resourceId: TENANT_BACKUP_KEY_MANAGER_RESOURCE_ID,
             snapshotId: keyManagerId,
             start: (assertHeld) =>
               input.ports.keyManagerSnapshot.start(context, keyManagerId, assertHeld),
@@ -352,14 +370,14 @@ export function createPhase5TenantBackupInstalledAdapter(input: {
           ),
         });
         const keyManagerParticipants = context.participants.filter(
-          ({ resourceId }) => resourceId === KEY_MANAGER_RESOURCE_ID
+          ({ resourceId }) => resourceId === TENANT_BACKUP_KEY_MANAGER_RESOURCE_ID
         );
         if (keyManagerParticipants.length !== (keyManagerSelected(context) ? 1 : 0))
           throw new Error('backup_phase5_key_manager_coverage');
         if (
           keyManagerParticipants[0] &&
           keyManagerParticipants[0].snapshotId !==
-            (await tenantBackupRecordSnapshotId(context, KEY_MANAGER_RESOURCE_ID))
+            (await tenantBackupRecordSnapshotId(context, TENANT_BACKUP_KEY_MANAGER_RESOURCE_ID))
         )
           throw new Error('backup_phase5_key_manager_coverage');
         for (const record of recordSnapshots) {
@@ -392,7 +410,10 @@ export function createPhase5TenantBackupInstalledAdapter(input: {
         if (context.cursor === DONE_CURSOR) return null;
         if (context.cursor !== null) throw new Error('backup_phase5_key_manager_cursor');
         context.signal.throwIfAborted();
-        const keyManagerId = await tenantBackupRecordSnapshotId(context, KEY_MANAGER_RESOURCE_ID);
+        const keyManagerId = await tenantBackupRecordSnapshotId(
+          context,
+          TENANT_BACKUP_KEY_MANAGER_RESOURCE_ID
+        );
         const snapshot = await input.ports.keyManagerSnapshot.load(context, keyManagerId);
         context.signal.throwIfAborted();
         return {
@@ -406,7 +427,7 @@ export function createPhase5TenantBackupInstalledAdapter(input: {
         if (keyManagerSelected(context))
           await input.ports.keyManagerSnapshot.release(
             context,
-            await tenantBackupRecordSnapshotId(context, KEY_MANAGER_RESOURCE_ID)
+            await tenantBackupRecordSnapshotId(context, TENANT_BACKUP_KEY_MANAGER_RESOURCE_ID)
           );
         for (const record of recordSnapshots) {
           const rule = tenantDatasetSelectionRule(record.dataset.kind, context.selection);
@@ -423,7 +444,7 @@ export function createPhase5TenantBackupInstalledAdapter(input: {
         if (keyManagerSelected(context))
           await input.ports.keyManagerSnapshot.assertReleased(
             context,
-            await tenantBackupRecordSnapshotId(context, KEY_MANAGER_RESOURCE_ID)
+            await tenantBackupRecordSnapshotId(context, TENANT_BACKUP_KEY_MANAGER_RESOURCE_ID)
           );
         for (const record of recordSnapshots) {
           const rule = tenantDatasetSelectionRule(record.dataset.kind, context.selection);

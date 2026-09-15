@@ -82,6 +82,22 @@ describe('tenant backup operation dispatcher', () => {
     expect(mocks.scheduler.mock.calls[0]?.[0]).toBe(mocks.database);
     expect(mocks.scheduler.mock.calls[0]?.[2]).toBe(controller.signal);
     expect(mocks.scheduler.mock.calls[0]?.[3]).toBe(now);
+    expect(mocks.scheduler.mock.calls[0]?.[4]).toEqual(['export', 'import']);
+  });
+
+  it('passes an export-only claim filter to the scheduler', async () => {
+    const adapter = {
+      export: {},
+      import: {},
+      cleanup: {},
+    } as unknown as TenantBackupInstalledOperationAdapter;
+    mocks.scheduler.mockResolvedValueOnce({ inspected: 0, advanced: 0, failures: 0 });
+
+    await processTenantBackupOperations({} as Env, adapter, new AbortController().signal, () => 1, [
+      'export',
+    ]);
+
+    expect(mocks.scheduler.mock.lastCall?.[4]).toEqual(['export']);
   });
 
   it('resolves the installed adapter after the scheduler claims an operation context', async () => {
