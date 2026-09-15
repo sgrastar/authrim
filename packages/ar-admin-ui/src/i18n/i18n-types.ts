@@ -7378,6 +7378,231 @@ type RootTranslation = {
 	 */
 	admin_dr_backup_copy_certificate: string
 	/**
+	 * T​e​n​a​n​t​ ​b​a​c​k​u​p​ ​a​n​d​ ​r​e​s​t​o​r​e
+	 */
+	admin_dr_backup_tenant_title: string
+	/**
+	 * C​r​e​a​t​e​ ​a​n​ ​e​n​c​r​y​p​t​e​d​ ​p​o​r​t​a​b​l​e​ ​b​a​c​k​u​p​ ​f​o​r​ ​t​h​i​s​ ​t​e​n​a​n​t​ ​o​r​ ​r​e​s​t​o​r​e​ ​o​n​e​ ​i​n​t​o​ ​a​ ​n​e​w​l​y​ ​p​r​e​p​a​r​e​d​ ​e​n​v​i​r​o​n​m​e​n​t​.
+	 */
+	admin_dr_backup_tenant_desc: string
+	/**
+	 * S​e​t​t​i​n​g​s​ ​d​a​t​a
+	 */
+	admin_dr_backup_tenant_scope_settings: string
+	/**
+	 * I​n​c​l​u​d​e​s​ ​t​e​n​a​n​t​ ​c​o​n​f​i​g​u​r​a​t​i​o​n​,​ ​s​i​g​n​i​n​g​ ​m​a​t​e​r​i​a​l​,​ ​c​o​n​n​e​c​t​o​r​ ​s​e​c​r​e​t​s​,​ ​p​u​b​l​i​c​ ​a​s​s​e​t​s​,​ ​a​n​d​ ​p​l​u​g​i​n​ ​c​o​n​f​i​g​u​r​a​t​i​o​n​ ​c​u​r​r​e​n​t​l​y​ ​s​u​p​p​o​r​t​e​d​ ​b​y​ ​t​h​e​ ​p​o​r​t​a​b​l​e​ ​f​o​r​m​a​t​.
+	 */
+	admin_dr_backup_tenant_scope_settings_desc: string
+	/**
+	 * I​n​c​l​u​d​e​d
+	 */
+	admin_dr_backup_tenant_scope_included: string
+	/**
+	 * U​s​e​r​,​ ​A​d​m​i​n​,​ ​a​r​t​i​f​a​c​t​,​ ​a​n​d​ ​l​o​g​ ​s​e​l​e​c​t​i​o​n​s​ ​w​i​l​l​ ​a​p​p​e​a​r​ ​a​f​t​e​r​ ​t​h​e​i​r​ ​r​e​s​t​o​r​e​ ​a​d​a​p​t​e​r​s​ ​a​r​e​ ​a​v​a​i​l​a​b​l​e​.
+	 */
+	admin_dr_backup_tenant_scope_future: string
+	/**
+	 * C​r​e​a​t​e​ ​b​a​c​k​u​p
+	 */
+	admin_dr_backup_tenant_export_title: string
+	/**
+	 * U​s​e​ ​a​ ​p​a​s​s​p​h​r​a​s​e​ ​o​f​ ​a​t​ ​l​e​a​s​t​ ​1​6​ ​c​h​a​r​a​c​t​e​r​s​.​ ​A​u​t​h​r​i​m​ ​n​e​v​e​r​ ​s​e​n​d​s​ ​t​h​e​ ​p​a​s​s​p​h​r​a​s​e​ ​t​o​ ​t​h​e​ ​s​e​r​v​e​r​.
+	 */
+	admin_dr_backup_tenant_export_desc: string
+	/**
+	 * S​t​a​r​t​ ​e​x​p​o​r​t
+	 */
+	admin_dr_backup_tenant_export_start: string
+	/**
+	 * R​e​s​t​o​r​e​ ​b​a​c​k​u​p
+	 */
+	admin_dr_backup_tenant_import_title: string
+	/**
+	 * U​p​l​o​a​d​ ​a​n​ ​A​u​t​h​r​i​m​ ​b​a​c​k​u​p​ ​a​n​d​ ​e​n​t​e​r​ ​i​t​s​ ​p​a​s​s​p​h​r​a​s​e​.​ ​T​a​r​g​e​t​ ​w​r​i​t​e​s​ ​s​t​a​r​t​ ​o​n​l​y​ ​a​f​t​e​r​ ​p​r​e​v​i​e​w​ ​a​p​p​r​o​v​a​l​.
+	 */
+	admin_dr_backup_tenant_import_desc: string
+	/**
+	 * S​e​l​e​c​t​ ​b​a​c​k​u​p​ ​f​i​l​e
+	 */
+	admin_dr_backup_tenant_import_select: string
+	/**
+	 * U​p​l​o​a​d​i​n​g​ ​e​n​c​r​y​p​t​e​d​ ​b​a​c​k​u​p​.​.​.
+	 */
+	admin_dr_backup_tenant_uploading: string
+	/**
+	 * U​p​l​o​a​d​i​n​g​:​ ​{​p​e​r​c​e​n​t​}​%
+	 * @param {number} percent
+	 */
+	admin_dr_backup_tenant_upload_progress: RequiredParams<'percent'>
+	/**
+	 * V​e​r​i​f​y​i​n​g​ ​e​n​c​r​y​p​t​e​d​ ​u​p​l​o​a​d​.​.​.
+	 */
+	admin_dr_backup_tenant_verifying: string
+	/**
+	 * B​a​c​k​u​p​ ​o​p​e​r​a​t​i​o​n​s
+	 */
+	admin_dr_backup_tenant_history_title: string
+	/**
+	 * P​r​o​g​r​e​s​s​ ​r​e​m​a​i​n​s​ ​a​v​a​i​l​a​b​l​e​ ​a​f​t​e​r​ ​t​h​i​s​ ​p​a​g​e​ ​i​s​ ​r​e​o​p​e​n​e​d​.
+	 */
+	admin_dr_backup_tenant_history_desc: string
+	/**
+	 * N​o​ ​t​e​n​a​n​t​ ​b​a​c​k​u​p​ ​o​p​e​r​a​t​i​o​n​s​ ​y​e​t​.
+	 */
+	admin_dr_backup_tenant_history_empty: string
+	/**
+	 * T​y​p​e
+	 */
+	admin_dr_backup_tenant_kind: string
+	/**
+	 * S​t​a​t​u​s
+	 */
+	admin_dr_backup_tenant_status: string
+	/**
+	 * U​p​d​a​t​e​d
+	 */
+	admin_dr_backup_tenant_updated: string
+	/**
+	 * E​x​p​o​r​t
+	 */
+	admin_dr_backup_tenant_export: string
+	/**
+	 * I​m​p​o​r​t
+	 */
+	admin_dr_backup_tenant_import: string
+	/**
+	 * V​i​e​w
+	 */
+	admin_dr_backup_tenant_view: string
+	/**
+	 * D​o​w​n​l​o​a​d
+	 */
+	admin_dr_backup_tenant_download: string
+	/**
+	 * C​a​n​c​e​l
+	 */
+	admin_dr_backup_tenant_cancel: string
+	/**
+	 * O​p​e​r​a​t​i​o​n​ ​d​e​t​a​i​l
+	 */
+	admin_dr_backup_tenant_detail_title: string
+	/**
+	 * I​n​c​l​u​d​e​d​ ​d​a​t​a
+	 */
+	admin_dr_backup_tenant_selection_title: string
+	/**
+	 * S​e​t​t​i​n​g​s
+	 */
+	admin_dr_backup_tenant_selection_settings: string
+	/**
+	 * U​s​e​r​s
+	 */
+	admin_dr_backup_tenant_selection_users: string
+	/**
+	 * A​d​m​i​n​ ​d​a​t​a
+	 */
+	admin_dr_backup_tenant_selection_admin: string
+	/**
+	 * A​r​t​i​f​a​c​t​s
+	 */
+	admin_dr_backup_tenant_selection_artifacts: string
+	/**
+	 * a​l​l​ ​t​i​m​e
+	 */
+	admin_dr_backup_tenant_period_all: string
+	/**
+	 * {​d​a​y​s​}​ ​d​a​y​s
+	 * @param {number} days
+	 */
+	admin_dr_backup_tenant_period_days: RequiredParams<'days'>
+	/**
+	 * A​u​d​i​t​ ​l​o​g​s​ ​(​{​p​e​r​i​o​d​}​)
+	 * @param {string} period
+	 */
+	admin_dr_backup_tenant_selection_audit_logs: RequiredParams<'period'>
+	/**
+	 * O​t​h​e​r​ ​l​o​g​s​ ​(​{​p​e​r​i​o​d​}​)
+	 * @param {string} period
+	 */
+	admin_dr_backup_tenant_selection_other_logs: RequiredParams<'period'>
+	/**
+	 * i​n​c​l​u​d​i​n​g​ ​s​e​n​s​i​t​i​v​e​ ​l​o​g​ ​f​i​e​l​d​s
+	 */
+	admin_dr_backup_tenant_selection_sensitive: string
+	/**
+	 * D​a​t​a​s​e​t​s​ ​i​n​ ​t​h​e​ ​r​e​s​t​o​r​e​ ​p​l​a​n
+	 */
+	admin_dr_backup_tenant_preview_datasets: string
+	/**
+	 * R​e​s​t​o​r​e​ ​p​r​e​v​i​e​w​:​ ​{​d​a​t​a​s​e​t​s​}​ ​d​a​t​a​s​e​t​s​,​ ​{​r​e​c​o​r​d​s​}​ ​r​e​c​o​r​d​s
+	 * @param {number} datasets
+	 * @param {number} records
+	 */
+	admin_dr_backup_tenant_preview_summary: RequiredParams<'datasets' | 'records'>
+	/**
+	 * R​e​s​o​l​v​e​ ​t​h​e​ ​l​i​s​t​e​d​ ​e​n​v​i​r​o​n​m​e​n​t​ ​p​r​e​r​e​q​u​i​s​i​t​e​s​ ​b​e​f​o​r​e​ ​a​p​p​r​o​v​i​n​g​ ​t​h​i​s​ ​r​e​s​t​o​r​e​.
+	 */
+	admin_dr_backup_tenant_preview_blocked: string
+	/**
+	 * R​e​s​o​l​v​e​ ​t​a​r​g​e​t​ ​r​e​s​o​u​r​c​e​:​ ​{​i​d​}
+	 * @param {string} id
+	 */
+	admin_dr_backup_tenant_blocker_external: RequiredParams<'id'>
+	/**
+	 * C​o​n​f​i​r​m​ ​t​h​e​ ​s​o​u​r​c​e​ ​i​s​ ​s​t​o​p​p​e​d​ ​a​n​d​ ​h​i​s​t​o​r​i​c​a​l​ ​d​e​l​i​v​e​r​y​ ​r​e​m​a​i​n​s​ ​o​n​ ​h​o​l​d​.
+	 */
+	admin_dr_backup_tenant_blocker_delivery: string
+	/**
+	 * A​p​p​r​o​v​e​ ​a​n​d​ ​s​t​a​r​t​ ​r​e​s​t​o​r​e
+	 */
+	admin_dr_backup_tenant_approve_restore: string
+	/**
+	 * D​o​w​n​l​o​a​d​ ​a​v​a​i​l​a​b​l​e​ ​u​n​t​i​l​ ​{​t​i​m​e​}​.
+	 * @param {string} time
+	 */
+	admin_dr_backup_tenant_download_expires: RequiredParams<'time'>
+	/**
+	 * C​u​r​r​e​n​t​ ​s​t​a​t​u​s​:​ ​{​s​t​a​t​u​s​}
+	 * @param {string} status
+	 */
+	admin_dr_backup_tenant_detail_status: RequiredParams<'status'>
+	/**
+	 * T​e​n​a​n​t​ ​s​e​t​t​i​n​g​s​ ​e​x​p​o​r​t​ ​s​t​a​r​t​e​d​.
+	 */
+	admin_dr_backup_tenant_export_started: string
+	/**
+	 * T​e​n​a​n​t​ ​s​e​t​t​i​n​g​s​ ​i​m​p​o​r​t​ ​v​a​l​i​d​a​t​i​o​n​ ​s​t​a​r​t​e​d​.
+	 */
+	admin_dr_backup_tenant_import_started: string
+	/**
+	 * R​e​s​t​o​r​e​ ​a​p​p​r​o​v​e​d​ ​a​n​d​ ​q​u​e​u​e​d​.
+	 */
+	admin_dr_backup_tenant_restore_approved: string
+	/**
+	 * F​a​i​l​e​d​ ​t​o​ ​l​o​a​d​ ​t​e​n​a​n​t​ ​b​a​c​k​u​p​ ​o​p​e​r​a​t​i​o​n​s
+	 */
+	admin_dr_backup_tenant_error_load: string
+	/**
+	 * F​a​i​l​e​d​ ​t​o​ ​s​t​a​r​t​ ​t​e​n​a​n​t​ ​b​a​c​k​u​p​ ​e​x​p​o​r​t
+	 */
+	admin_dr_backup_tenant_error_export: string
+	/**
+	 * F​a​i​l​e​d​ ​t​o​ ​s​t​a​r​t​ ​t​e​n​a​n​t​ ​b​a​c​k​u​p​ ​i​m​p​o​r​t
+	 */
+	admin_dr_backup_tenant_error_import: string
+	/**
+	 * F​a​i​l​e​d​ ​t​o​ ​a​p​p​r​o​v​e​ ​t​e​n​a​n​t​ ​b​a​c​k​u​p​ ​r​e​s​t​o​r​e
+	 */
+	admin_dr_backup_tenant_error_approve: string
+	/**
+	 * F​a​i​l​e​d​ ​t​o​ ​c​a​n​c​e​l​ ​t​e​n​a​n​t​ ​b​a​c​k​u​p​ ​o​p​e​r​a​t​i​o​n
+	 */
+	admin_dr_backup_tenant_error_cancel: string
+	/**
+	 * F​a​i​l​e​d​ ​t​o​ ​d​o​w​n​l​o​a​d​ ​t​e​n​a​n​t​ ​b​a​c​k​u​p
+	 */
+	admin_dr_backup_tenant_error_download: string
+	/**
 	 * S​c​a​l​e​ ​C​o​n​f​i​g​u​r​a​t​i​o​n​ ​-​ ​A​u​t​h​r​i​m​ ​A​d​m​i​n
 	 */
 	admin_scale_head_title: string
@@ -40969,6 +41194,222 @@ export type TranslationFunctions = {
 	 * Copy certificate
 	 */
 	admin_dr_backup_copy_certificate: () => LocalizedString
+	/**
+	 * Tenant backup and restore
+	 */
+	admin_dr_backup_tenant_title: () => LocalizedString
+	/**
+	 * Create an encrypted portable backup for this tenant or restore one into a newly prepared environment.
+	 */
+	admin_dr_backup_tenant_desc: () => LocalizedString
+	/**
+	 * Settings data
+	 */
+	admin_dr_backup_tenant_scope_settings: () => LocalizedString
+	/**
+	 * Includes tenant configuration, signing material, connector secrets, public assets, and plugin configuration currently supported by the portable format.
+	 */
+	admin_dr_backup_tenant_scope_settings_desc: () => LocalizedString
+	/**
+	 * Included
+	 */
+	admin_dr_backup_tenant_scope_included: () => LocalizedString
+	/**
+	 * User, Admin, artifact, and log selections will appear after their restore adapters are available.
+	 */
+	admin_dr_backup_tenant_scope_future: () => LocalizedString
+	/**
+	 * Create backup
+	 */
+	admin_dr_backup_tenant_export_title: () => LocalizedString
+	/**
+	 * Use a passphrase of at least 16 characters. Authrim never sends the passphrase to the server.
+	 */
+	admin_dr_backup_tenant_export_desc: () => LocalizedString
+	/**
+	 * Start export
+	 */
+	admin_dr_backup_tenant_export_start: () => LocalizedString
+	/**
+	 * Restore backup
+	 */
+	admin_dr_backup_tenant_import_title: () => LocalizedString
+	/**
+	 * Upload an Authrim backup and enter its passphrase. Target writes start only after preview approval.
+	 */
+	admin_dr_backup_tenant_import_desc: () => LocalizedString
+	/**
+	 * Select backup file
+	 */
+	admin_dr_backup_tenant_import_select: () => LocalizedString
+	/**
+	 * Uploading encrypted backup...
+	 */
+	admin_dr_backup_tenant_uploading: () => LocalizedString
+	/**
+	 * Uploading: {percent}%
+	 */
+	admin_dr_backup_tenant_upload_progress: (arg: { percent: number }) => LocalizedString
+	/**
+	 * Verifying encrypted upload...
+	 */
+	admin_dr_backup_tenant_verifying: () => LocalizedString
+	/**
+	 * Backup operations
+	 */
+	admin_dr_backup_tenant_history_title: () => LocalizedString
+	/**
+	 * Progress remains available after this page is reopened.
+	 */
+	admin_dr_backup_tenant_history_desc: () => LocalizedString
+	/**
+	 * No tenant backup operations yet.
+	 */
+	admin_dr_backup_tenant_history_empty: () => LocalizedString
+	/**
+	 * Type
+	 */
+	admin_dr_backup_tenant_kind: () => LocalizedString
+	/**
+	 * Status
+	 */
+	admin_dr_backup_tenant_status: () => LocalizedString
+	/**
+	 * Updated
+	 */
+	admin_dr_backup_tenant_updated: () => LocalizedString
+	/**
+	 * Export
+	 */
+	admin_dr_backup_tenant_export: () => LocalizedString
+	/**
+	 * Import
+	 */
+	admin_dr_backup_tenant_import: () => LocalizedString
+	/**
+	 * View
+	 */
+	admin_dr_backup_tenant_view: () => LocalizedString
+	/**
+	 * Download
+	 */
+	admin_dr_backup_tenant_download: () => LocalizedString
+	/**
+	 * Cancel
+	 */
+	admin_dr_backup_tenant_cancel: () => LocalizedString
+	/**
+	 * Operation detail
+	 */
+	admin_dr_backup_tenant_detail_title: () => LocalizedString
+	/**
+	 * Included data
+	 */
+	admin_dr_backup_tenant_selection_title: () => LocalizedString
+	/**
+	 * Settings
+	 */
+	admin_dr_backup_tenant_selection_settings: () => LocalizedString
+	/**
+	 * Users
+	 */
+	admin_dr_backup_tenant_selection_users: () => LocalizedString
+	/**
+	 * Admin data
+	 */
+	admin_dr_backup_tenant_selection_admin: () => LocalizedString
+	/**
+	 * Artifacts
+	 */
+	admin_dr_backup_tenant_selection_artifacts: () => LocalizedString
+	/**
+	 * all time
+	 */
+	admin_dr_backup_tenant_period_all: () => LocalizedString
+	/**
+	 * {days} days
+	 */
+	admin_dr_backup_tenant_period_days: (arg: { days: number }) => LocalizedString
+	/**
+	 * Audit logs ({period})
+	 */
+	admin_dr_backup_tenant_selection_audit_logs: (arg: { period: string }) => LocalizedString
+	/**
+	 * Other logs ({period})
+	 */
+	admin_dr_backup_tenant_selection_other_logs: (arg: { period: string }) => LocalizedString
+	/**
+	 * including sensitive log fields
+	 */
+	admin_dr_backup_tenant_selection_sensitive: () => LocalizedString
+	/**
+	 * Datasets in the restore plan
+	 */
+	admin_dr_backup_tenant_preview_datasets: () => LocalizedString
+	/**
+	 * Restore preview: {datasets} datasets, {records} records
+	 */
+	admin_dr_backup_tenant_preview_summary: (arg: { datasets: number, records: number }) => LocalizedString
+	/**
+	 * Resolve the listed environment prerequisites before approving this restore.
+	 */
+	admin_dr_backup_tenant_preview_blocked: () => LocalizedString
+	/**
+	 * Resolve target resource: {id}
+	 */
+	admin_dr_backup_tenant_blocker_external: (arg: { id: string }) => LocalizedString
+	/**
+	 * Confirm the source is stopped and historical delivery remains on hold.
+	 */
+	admin_dr_backup_tenant_blocker_delivery: () => LocalizedString
+	/**
+	 * Approve and start restore
+	 */
+	admin_dr_backup_tenant_approve_restore: () => LocalizedString
+	/**
+	 * Download available until {time}.
+	 */
+	admin_dr_backup_tenant_download_expires: (arg: { time: string }) => LocalizedString
+	/**
+	 * Current status: {status}
+	 */
+	admin_dr_backup_tenant_detail_status: (arg: { status: string }) => LocalizedString
+	/**
+	 * Tenant settings export started.
+	 */
+	admin_dr_backup_tenant_export_started: () => LocalizedString
+	/**
+	 * Tenant settings import validation started.
+	 */
+	admin_dr_backup_tenant_import_started: () => LocalizedString
+	/**
+	 * Restore approved and queued.
+	 */
+	admin_dr_backup_tenant_restore_approved: () => LocalizedString
+	/**
+	 * Failed to load tenant backup operations
+	 */
+	admin_dr_backup_tenant_error_load: () => LocalizedString
+	/**
+	 * Failed to start tenant backup export
+	 */
+	admin_dr_backup_tenant_error_export: () => LocalizedString
+	/**
+	 * Failed to start tenant backup import
+	 */
+	admin_dr_backup_tenant_error_import: () => LocalizedString
+	/**
+	 * Failed to approve tenant backup restore
+	 */
+	admin_dr_backup_tenant_error_approve: () => LocalizedString
+	/**
+	 * Failed to cancel tenant backup operation
+	 */
+	admin_dr_backup_tenant_error_cancel: () => LocalizedString
+	/**
+	 * Failed to download tenant backup
+	 */
+	admin_dr_backup_tenant_error_download: () => LocalizedString
 	/**
 	 * Scale Configuration - Authrim Admin
 	 */

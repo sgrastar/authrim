@@ -229,6 +229,56 @@ it('blocks activation until external prerequisites and logical references pass',
   expect(ports.loadDeliverySafety).toHaveBeenCalledWith(context, 'ab'.repeat(32));
 });
 
+it('builds a safe restore preview from current prerequisites and delivery evidence', async () => {
+  const { adapter, ports } = fixture();
+  const context = { lease: { tenantId: 'tenant-a' } } as TenantBackupStepContext;
+  await expect(adapter.import.previewRestore?.(context, 'ab'.repeat(32))).resolves.toEqual({
+    version: 1,
+    planDigest: 'ab'.repeat(32),
+    prerequisites: [],
+    deliverySafety: {
+      version: 1,
+      sourceEnvironment: 'stopped',
+      historicalDelivery: 'hold',
+      scheduledCatchup: 'disabled',
+      activation: 'new_events_only',
+    },
+    blockers: [],
+  });
+  expect(ports.loadExternalPrerequisites).toHaveBeenCalledWith(context, 'ab'.repeat(32));
+  expect(ports.loadDeliverySafety).toHaveBeenCalledWith(context, 'ab'.repeat(32));
+});
+
+it('exposes unresolved restore conditions as preview blockers without activating', async () => {
+  const { adapter, ports } = fixture();
+  ports.loadExternalPrerequisites.mockResolvedValueOnce([
+    {
+      id: 'kms/customer-key',
+      kind: 'key_material',
+      scope: 'tenant',
+      resolution: 'target_binding',
+      status: 'unresolved',
+      required: true,
+    },
+  ]);
+  ports.loadDeliverySafety.mockResolvedValueOnce({
+    version: 1,
+    sourceEnvironment: 'not_confirmed',
+    historicalDelivery: 'unknown',
+    scheduledCatchup: 'unknown',
+    activation: 'unknown',
+  });
+  const preview = await adapter.import.previewRestore?.(
+    { lease: { tenantId: 'tenant-a' } } as TenantBackupStepContext,
+    'ab'.repeat(32)
+  );
+  expect(preview?.blockers).toEqual([
+    { code: 'external_prerequisite_unresolved', subjectId: 'kms/customer-key' },
+    { code: 'delivery_safety_unconfirmed', subjectId: null },
+  ]);
+  expect(ports.import.prepareActivation).not.toHaveBeenCalled();
+});
+
 it('stops activation when historical delivery could resume', async () => {
   const { adapter, ports } = fixture();
   ports.loadDeliverySafety.mockResolvedValueOnce({

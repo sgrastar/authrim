@@ -4,6 +4,9 @@ import { ADMIN_PERMISSIONS, type AdminAuthContext } from '@authrim/ar-lib-core';
 import { tenantBackupsRouter } from '../routes/admin-management/tenant-backups';
 const state = vi.hoisted(() => ({
   get: vi.fn(),
+  listViews: vi.fn(),
+  getView: vi.fn(),
+  resume: vi.fn(),
   download: vi.fn(),
   cancel: vi.fn(),
   audit: vi.fn(),
@@ -12,6 +15,7 @@ const state = vi.hoisted(() => ({
   start: vi.fn(),
   startImport: vi.fn(),
   uploadCreate: vi.fn(),
+  uploadGet: vi.fn(),
   uploadPrepare: vi.fn(),
   uploadCancel: vi.fn(),
   uploadAllocate: vi.fn(),
@@ -33,6 +37,13 @@ vi.mock('@authrim/ar-lib-core/services/tenant-portability/operation-store', () =
   TenantBackupOperationStore: class {
     get = state.get;
     requestCancel = state.cancel;
+    resumeWaiting = state.resume;
+  },
+}));
+vi.mock('../tenant-backup-operation-read-model', () => ({
+  TenantBackupOperationReadModel: class {
+    list = state.listViews;
+    get = state.getView;
   },
 }));
 vi.mock('@authrim/ar-lib-core/services/tenant-portability/operation-request', () => ({
@@ -50,6 +61,7 @@ vi.mock('@authrim/ar-lib-core/services/tenant-portability/upload-store', () => (
   TENANT_BACKUP_UPLOAD_PART_BYTES: 8 * 1024 * 1024,
   TenantBackupUploadStore: class {
     create = state.uploadCreate;
+    get = state.uploadGet;
     prepareCompletion = state.uploadPrepare;
     requestCancel = state.uploadCancel;
   },
@@ -118,6 +130,12 @@ beforeEach(() => {
       : null
   );
   state.cancel.mockResolvedValue({ state: 'cancelling' });
+  state.resume.mockResolvedValue({
+    id: 'operation',
+    state: 'queued',
+    phase: 'await_restore_approval',
+    revision: 4,
+  });
   state.audit.mockResolvedValue('audit');
   state.create.mockResolvedValue({
     id: 'created-operation',
@@ -147,6 +165,7 @@ beforeEach(() => {
     state: 'uploading',
   };
   state.uploadCreate.mockResolvedValue(upload);
+  state.uploadGet.mockResolvedValue(upload);
   state.uploadAllocate.mockResolvedValue(upload);
   state.uploadPart.mockResolvedValue({ partNumber: 1, etag: 'etag-1' });
   state.uploadPrepare.mockResolvedValue({ upload: { ...upload, state: 'completing' }, parts: [] });
@@ -157,6 +176,53 @@ beforeEach(() => {
     state: 'waiting',
     phase: 'unlock',
     revision: 0,
+  });
+  state.listViews.mockResolvedValue([
+    {
+      id: 'operation',
+      kind: 'export',
+      state: 'queued',
+      phase: 'prepare',
+      revision: 0,
+      createdAt: 1,
+      updatedAt: 1,
+      lastErrorCode: null,
+    },
+  ]);
+  state.getView.mockResolvedValue({
+    operation: {
+      id: 'operation',
+      kind: 'export',
+      state: 'queued',
+      phase: 'prepare',
+      revision: 0,
+      created_at: 1,
+      updated_at: 1,
+      last_error_code: null,
+      request_digest: 'ab'.repeat(32),
+    },
+    intent: {
+      kind: 'export',
+      selection,
+      source: {
+        tenantId: 'tenant-a',
+        issuer: 'https://canonical.example',
+        productVersion: '0.4.2',
+      },
+    },
+    view: {
+      id: 'operation',
+      kind: 'export',
+      state: 'queued',
+      phase: 'prepare',
+      revision: 0,
+      createdAt: 1,
+      updatedAt: 1,
+      lastErrorCode: null,
+      selection,
+      publication: null,
+      preview: null,
+    },
   });
 });
 
@@ -192,6 +258,24 @@ it('allocates an idempotent encrypted import upload after durable audit evidence
     })
   );
   expect(state.uploadAllocate).toHaveBeenCalledAfter(state.audit);
+});
+
+it('reads only the authenticated actor-owned upload progress', async () => {
+  const response = await request('uploads/upload-original');
+  expect(response.status).toBe(200);
+  expect(await response.json()).toEqual({
+    id: 'upload-original',
+    state: 'uploading',
+    sizeBytes: 174,
+    sha256: 'a'.repeat(64),
+    expiresAt: expect.any(Number),
+  });
+  expect(state.uploadGet).toHaveBeenCalledWith(
+    { tenantId: 'tenant-a', actorId: 'admin', uploadId: 'upload-original' },
+    expect.any(Number)
+  );
+  state.uploadGet.mockRejectedValueOnce(new Error('not owned'));
+  expect((await request('uploads/upload-original')).status).toBe(404);
 });
 
 it('fails upload allocation closed on permission, input, storage, audit and identity conflicts', async () => {
@@ -357,13 +441,88 @@ it('scopes status by authenticated tenant and returns only public progress', asy
     revision: 0,
     createdAt: 1,
     updatedAt: 1,
+    lastErrorCode: null,
+    selection,
+    publication: null,
+    preview: null,
   });
-  expect(state.get).toHaveBeenCalledWith('tenant-a', 'operation');
+  expect(state.getView).toHaveBeenCalledWith('tenant-a', 'operation', expect.any(Number));
   auth.tenantId = 'tenant-b';
   expect((await request('operation')).status).toBe(403);
   auth.tenantId = 'tenant-a';
-  state.get.mockResolvedValueOnce(null);
+  state.getView.mockResolvedValueOnce(null);
   expect((await request('operation')).status).toBe(404);
+});
+
+it('lists recent operation progress for recovery after reopening Admin UI', async () => {
+  const response = await request('operations');
+  expect(response.status).toBe(200);
+  expect(await response.json()).toEqual({
+    operations: await state.listViews.mock.results[0]?.value,
+  });
+  expect(state.listViews).toHaveBeenCalledWith('tenant-a');
+});
+
+it('approves only the exact current blocker-free import preview after audit persistence', async () => {
+  state.getView.mockResolvedValueOnce({
+    operation: {
+      id: 'operation',
+      kind: 'import',
+      state: 'waiting',
+      phase: 'await_restore_approval',
+      revision: 3,
+      request_digest: 'ab'.repeat(32),
+    },
+    intent: { kind: 'import', selection },
+    view: {
+      preview: { planDigest: 'cd'.repeat(32), canApprove: true },
+    },
+  });
+  const response = await request(
+    'operation/approve',
+    'POST',
+    JSON.stringify({ revision: 3, planDigest: 'cd'.repeat(32) })
+  );
+  expect(response.status).toBe(202);
+  expect(state.audit).toHaveBeenCalledWith(
+    expect.anything(),
+    expect.objectContaining({
+      action: 'tenant_backup.restore_approved',
+      metadata: { revision: 3, planDigest: 'cd'.repeat(32) },
+    })
+  );
+  expect(state.resume).toHaveBeenCalledWith(
+    'tenant-a',
+    'operation',
+    3,
+    'ab'.repeat(32),
+    expect.any(Number)
+  );
+});
+
+it('rejects stale or blocked restore approval before audit and resume', async () => {
+  state.getView.mockResolvedValueOnce({
+    operation: {
+      id: 'operation',
+      kind: 'import',
+      state: 'waiting',
+      phase: 'await_restore_approval',
+      revision: 3,
+      request_digest: 'ab'.repeat(32),
+    },
+    intent: { kind: 'import', selection },
+    view: {
+      preview: { planDigest: 'cd'.repeat(32), canApprove: false },
+    },
+  });
+  const response = await request(
+    'operation/approve',
+    'POST',
+    JSON.stringify({ revision: 3, planDigest: 'cd'.repeat(32) })
+  );
+  expect(response.status).toBe(409);
+  expect(state.audit).not.toHaveBeenCalled();
+  expect(state.resume).not.toHaveBeenCalled();
 });
 it.each(['permission', 'tenant', 'mfa', 'stale', 'machine'])(
   'rejects cancel without %s assurance before mutation',
@@ -388,6 +547,13 @@ it('requires audit persistence before accepting cancellation and reports conflic
   );
   state.cancel.mockResolvedValue(null);
   expect((await request('operation/cancel', 'POST')).status).toBe(409);
+});
+it('requires the operation-specific permission before cancellation', async () => {
+  state.load.mockResolvedValue({ kind: 'import', selection: { logs: { sensitive: false } } });
+  auth.permissions = [ADMIN_PERMISSIONS.BACKUPS_READ, ADMIN_PERMISSIONS.BACKUPS_MANAGE];
+  expect((await request('operation/cancel', 'POST')).status).toBe(403);
+  expect(state.audit).not.toHaveBeenCalled();
+  expect(state.cancel).not.toHaveBeenCalled();
 });
 it('rejects malformed key input and fails closed without a wrapping key', async () => {
   expect(

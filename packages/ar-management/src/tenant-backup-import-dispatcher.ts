@@ -6,6 +6,11 @@ import type {
   TenantBackupStepResult,
 } from '@authrim/ar-lib-core/services/tenant-portability/operation-executor';
 import { DatabaseTenantBackupRestorePlanInventory } from '@authrim/ar-lib-core/services/tenant-portability/restore-plan-inventory';
+import {
+  decodeTenantBackupRestoreApprovalCursor,
+  encodeTenantBackupRestoreApprovalCursor,
+  type TenantBackupRestorePreview,
+} from '@authrim/ar-lib-core/services/tenant-portability/restore-preview';
 import { runSqliteRestoreSequenceStep } from '@authrim/ar-lib-core/services/tenant-portability/restore-sqlite-sequence';
 import type { SqliteDatasetInspectionPolicy } from '@authrim/ar-lib-core/services/tenant-portability/sqlite-dataset-inspector';
 import type { TenantBackupSqliteRestorePlanTarget } from '@authrim/ar-lib-core/services/tenant-portability/sqlite-restore-plan-step';
@@ -54,6 +59,11 @@ export interface TenantBackupInstalledImportAdapter {
     planDigest: string,
     cursor: string | null
   ): Promise<{ cursor: string | null; done: boolean }>;
+  /** Build a secret-free preview for the sealed plan before any target writes start. */
+  previewRestore?(
+    context: TenantBackupStepContext,
+    planDigest: string
+  ): Promise<TenantBackupRestorePreview>;
   /** Persist a recoverable activation intent without publishing routing. */
   prepareActivation(context: TenantBackupStepContext, planDigest: string): Promise<void>;
   /** Idempotently publish the validated target set. A lost response must be safe to retry. */
@@ -256,12 +266,48 @@ export async function runTenantBackupImportOperationStep(
     );
   if (context.operation.phase === 'prepare_restore_plan') {
     const targets = await adapter.restoreTargets(context);
-    return runTenantBackupImportRestorePlanning(
+    const result = await runTenantBackupImportRestorePlanning(
       env,
       context,
       { targets, assertSources: () => adapter.assertSources(context) },
       now
     );
+    if (result.phase !== 'start_sqlite_restore_sequence') return result;
+    if (typeof adapter.previewRestore !== 'function' || result.cursor === null) fail();
+    const database = requireDedicatedAdminDatabaseAdapter(env, 'tenant-backup');
+    const inventory = new DatabaseTenantBackupRestorePlanInventory(database, context.lease, now);
+    const head = await inventory.headForLease(context.lease);
+    if (head.state !== 'sealed' || !/^[a-f0-9]{64}$/.test(head.chain_digest)) fail();
+    await adapter.assertSources(context);
+    const preview = await adapter.previewRestore(context, head.chain_digest);
+    await adapter.assertSources(context);
+    return {
+      phase: 'await_restore_approval',
+      cursor: encodeTenantBackupRestoreApprovalCursor({
+        planDigest: head.chain_digest,
+        restoreCursor: result.cursor,
+        preview,
+      }),
+      disposition: 'wait',
+    };
+  }
+  if (context.operation.phase === 'await_restore_approval') {
+    if (typeof adapter.previewRestore !== 'function') fail();
+    const cursor = decodeTenantBackupRestoreApprovalCursor(context.operation.cursor_json);
+    await adapter.assertSources(context);
+    const preview = await adapter.previewRestore(context, cursor.planDigest);
+    await adapter.assertSources(context);
+    if (
+      preview.blockers.length > 0 ||
+      cursor.preview.blockers.length > 0 ||
+      JSON.stringify(preview) !== JSON.stringify(cursor.preview)
+    )
+      fail();
+    return {
+      phase: 'start_sqlite_restore_sequence',
+      cursor: JSON.stringify(cursor.restoreCursor),
+      disposition: 'continue',
+    };
   }
   if (
     [

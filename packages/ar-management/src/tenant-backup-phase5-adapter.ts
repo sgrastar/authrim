@@ -9,6 +9,7 @@ import type { KeyManagerTenantBackupSnapshot } from '@authrim/ar-lib-core/servic
 import { assertPhase4ExternalPrerequisitesResolved } from '@authrim/ar-lib-core/services/tenant-portability/phase4-external-prerequisites';
 import { verifyPhase4LogicalReferences } from '@authrim/ar-lib-core/services/tenant-portability/phase4-logical-references';
 import { assertPhase5DeliverySafety } from '@authrim/ar-lib-core/services/tenant-portability/phase5-delivery-safety';
+import { createTenantBackupRestorePreview } from '@authrim/ar-lib-core/services/tenant-portability/restore-preview';
 import { verifyPhase5LogicalReferences } from '@authrim/ar-lib-core/services/tenant-portability/phase5-logical-references';
 import type { PlannedInstalledSqliteDataset } from '@authrim/ar-lib-core/services/tenant-portability/installed-sqlite-datasets';
 import {
@@ -348,6 +349,17 @@ export function createPhase5TenantBackupInstalledAdapter(input: {
       ports: {
         ...input.ports.import,
         ...otherStores,
+        async previewRestore(context, planDigest) {
+          const [prerequisites, deliverySafety] = await Promise.all([
+            input.ports.loadExternalPrerequisites(context, planDigest),
+            input.ports.loadDeliverySafety(context, planDigest),
+          ]);
+          return createTenantBackupRestorePreview({
+            planDigest,
+            prerequisites,
+            deliverySafety,
+          });
+        },
         async prepareActivation(context, planDigest) {
           assertPhase4ExternalPrerequisitesResolved(
             await input.ports.loadExternalPrerequisites(context, planDigest)

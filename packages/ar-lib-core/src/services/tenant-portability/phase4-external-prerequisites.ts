@@ -35,7 +35,7 @@ function assertExactKeys(value: Record<string, unknown>): void {
  * Validates the target-side dependencies which cannot always be carried in a tenant bundle.
  * The returned list is stable and safe to display because it contains identifiers and states only.
  */
-export function assertPhase4ExternalPrerequisitesResolved(
+export function parsePhase4ExternalPrerequisites(
   value: unknown
 ): readonly Phase4ExternalPrerequisite[] {
   if (!Array.isArray(value) || value.length > 1024)
@@ -71,7 +71,14 @@ export function assertPhase4ExternalPrerequisitesResolved(
     };
   });
 
+  return normalized.sort((left, right) => left.id.localeCompare(right.id));
+}
+
+export function assertPhase4ExternalPrerequisitesResolved(
+  value: unknown
+): readonly Phase4ExternalPrerequisite[] {
+  const normalized = parsePhase4ExternalPrerequisites(value);
   if (normalized.some(({ required, status }) => required && status !== 'resolved'))
     throw new Error('backup_phase4_prerequisites_unresolved');
-  return normalized.sort((left, right) => left.id.localeCompare(right.id));
+  return normalized;
 }

@@ -25,6 +25,7 @@ export interface TenantBackupInstalledSqliteImportPorts {
   ): ReturnType<TenantBackupInstalledImportAdapter['assertValidatedUnpublishedPlan']>;
   restoreOtherStores: TenantBackupInstalledImportAdapter['restoreOtherStores'];
   verifyOtherStores: TenantBackupInstalledImportAdapter['verifyOtherStores'];
+  previewRestore?: TenantBackupInstalledImportAdapter['previewRestore'];
   prepareActivation: TenantBackupInstalledImportAdapter['prepareActivation'];
   activate: TenantBackupInstalledImportAdapter['activate'];
   verifyActivation: TenantBackupInstalledImportAdapter['verifyActivation'];
@@ -86,7 +87,7 @@ export function createTenantBackupInstalledSqliteImportAdapter(input: {
       throw new Error('backup_sqlite_import_adapter_invalid');
   }
   const policies = input.policies.map(clonePolicy);
-  return {
+  const adapter: TenantBackupInstalledImportAdapter = {
     datasets(selection) {
       const selected = policies
         .filter((policy) => {
@@ -118,4 +119,6 @@ export function createTenantBackupInstalledSqliteImportAdapter(input: {
     activate: (context, digest) => input.ports.activate(context, digest),
     verifyActivation: (context, digest) => input.ports.verifyActivation(context, digest),
   };
+  if (input.ports.previewRestore) adapter.previewRestore = input.ports.previewRestore;
+  return adapter;
 }

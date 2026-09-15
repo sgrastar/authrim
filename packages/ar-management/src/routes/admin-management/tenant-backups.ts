@@ -27,6 +27,7 @@ import {
 import { initializeTenantBackupMultipart } from '@authrim/ar-lib-core/services/tenant-portability/allocate-upload';
 import { uploadTenantBackupPart } from '@authrim/ar-lib-core/services/tenant-portability/upload-part';
 import { TenantBackupImportRequestStore } from '@authrim/ar-lib-core/services/tenant-portability/import-request';
+import { TenantBackupOperationReadModel } from '../../tenant-backup-operation-read-model';
 
 export const tenantBackupsRouter = new Hono<{
   Bindings: Env;
@@ -168,6 +169,32 @@ tenantBackupsRouter.post('/uploads', async (c) => {
     );
   } catch {
     return c.json({ error: 'backup_upload_conflict' }, 409);
+  }
+});
+
+tenantBackupsRouter.get('/uploads/:uploadId', async (c) => {
+  const auth = tenantAuth(c.get('adminAuth'));
+  if (!requireImportPermission(auth)) return c.json({ error: 'backup_forbidden' }, 403);
+  try {
+    const upload = await new TenantBackupUploadStore(
+      requireDedicatedAdminDatabaseAdapter(c.env, 'tenant-backup')
+    ).get(
+      {
+        tenantId: auth.tenantId,
+        actorId: auth.actorId ?? auth.userId,
+        uploadId: c.req.param('uploadId'),
+      },
+      Date.now()
+    );
+    return c.json({
+      id: upload.id,
+      state: upload.state,
+      sizeBytes: upload.expected_bytes,
+      sha256: upload.expected_sha256,
+      expiresAt: upload.expires_at,
+    });
+  } catch {
+    return c.json({ error: 'backup_upload_unavailable' }, 404);
   }
 });
 
@@ -337,22 +364,95 @@ tenantBackupsRouter.post('/imports', async (c) => {
   }
 });
 
+tenantBackupsRouter.get('/operations', async (c) => {
+  const auth = tenantAuth(c.get('adminAuth'));
+  const views = await new TenantBackupOperationReadModel(
+    requireDedicatedAdminDatabaseAdapter(c.env, 'tenant-backup')
+  ).list(auth.tenantId);
+  return c.json({ operations: views });
+});
+
 tenantBackupsRouter.get('/:operationId', async (c) => {
   const auth = tenantAuth(c.get('adminAuth'));
-  const store = new TenantBackupOperationStore(
-    requireDedicatedAdminDatabaseAdapter(c.env, 'tenant-backup')
+  let result;
+  try {
+    result = await new TenantBackupOperationReadModel(
+      requireDedicatedAdminDatabaseAdapter(c.env, 'tenant-backup')
+    ).get(auth.tenantId, c.req.param('operationId'), Date.now());
+  } catch {
+    return c.json({ error: 'backup_operation_status_unavailable' }, 409);
+  }
+  if (!result) return c.json({ error: 'backup_operation_not_found' }, 404);
+  if (!hasOperationPermission(auth, result.intent))
+    return c.json({ error: 'backup_forbidden' }, 403);
+  return c.json(result.view);
+});
+
+tenantBackupsRouter.post('/:operationId/approve', async (c) => {
+  const auth = tenantAuth(c.get('adminAuth'));
+  const body: unknown = await c.req.json().catch(() => null);
+  if (!body || typeof body !== 'object' || Array.isArray(body))
+    return c.json({ error: 'invalid_backup_approval' }, 400);
+  const input = body as Record<string, unknown>;
+  if (
+    Object.keys(input).sort().join(',') !== 'planDigest,revision' ||
+    typeof input.planDigest !== 'string' ||
+    !/^[a-f0-9]{64}$/.test(input.planDigest) ||
+    typeof input.revision !== 'number' ||
+    !Number.isSafeInteger(input.revision) ||
+    input.revision < 0
+  )
+    return c.json({ error: 'invalid_backup_approval' }, 400);
+  const database = requireDedicatedAdminDatabaseAdapter(c.env, 'tenant-backup');
+  let result;
+  try {
+    result = await new TenantBackupOperationReadModel(database).get(
+      auth.tenantId,
+      c.req.param('operationId'),
+      Date.now()
+    );
+  } catch {
+    return c.json({ error: 'backup_restore_preview_stale' }, 409);
+  }
+  if (!result) return c.json({ error: 'backup_operation_not_found' }, 404);
+  if (!hasOperationPermission(auth, result.intent))
+    return c.json({ error: 'backup_forbidden' }, 403);
+  if (
+    result.operation.kind !== 'import' ||
+    result.operation.state !== 'waiting' ||
+    result.operation.phase !== 'await_restore_approval' ||
+    result.operation.revision !== input.revision ||
+    result.view.preview?.planDigest !== input.planDigest ||
+    !result.view.preview.canApprove
+  )
+    return c.json({ error: 'backup_restore_preview_stale' }, 409);
+  if (
+    !(await writeAdminAuditLog(c, {
+      action: 'tenant_backup.restore_approved',
+      resourceType: 'tenant_backup',
+      resourceId: result.operation.id,
+      result: 'success',
+      metadata: { planDigest: input.planDigest, revision: input.revision },
+    }))
+  )
+    return c.json({ error: 'backup_audit_unavailable' }, 503);
+  const operation = await new TenantBackupOperationStore(database).resumeWaiting(
+    auth.tenantId,
+    result.operation.id,
+    result.operation.revision,
+    result.operation.request_digest,
+    Date.now()
   );
-  const operation = await store.get(auth.tenantId, c.req.param('operationId'));
-  if (!operation) return c.json({ error: 'backup_operation_not_found' }, 404);
-  return c.json({
-    id: operation.id,
-    kind: operation.kind,
-    state: operation.state,
-    phase: operation.phase,
-    revision: operation.revision,
-    createdAt: operation.created_at,
-    updatedAt: operation.updated_at,
-  });
+  if (!operation) return c.json({ error: 'backup_restore_preview_stale' }, 409);
+  return c.json(
+    {
+      id: operation.id,
+      state: operation.state,
+      phase: operation.phase,
+      revision: operation.revision,
+    },
+    202
+  );
 });
 
 tenantBackupsRouter.get('/:operationId/download', async (c) => {
@@ -427,12 +527,18 @@ tenantBackupsRouter.get('/:operationId/download', async (c) => {
 
 tenantBackupsRouter.post('/:operationId/cancel', async (c) => {
   const auth = tenantAuth(c.get('adminAuth'));
-  const store = new TenantBackupOperationStore(
-    requireDedicatedAdminDatabaseAdapter(c.env, 'tenant-backup')
-  );
+  const database = requireDedicatedAdminDatabaseAdapter(c.env, 'tenant-backup');
+  const store = new TenantBackupOperationStore(database);
   const id = c.req.param('operationId');
   if (!(await store.get(auth.tenantId, id)))
     return c.json({ error: 'backup_operation_not_found' }, 404);
+  let intent: TenantBackupRequestIntent;
+  try {
+    intent = await new TenantBackupRequestStore(database).load(auth.tenantId, id);
+  } catch {
+    return c.json({ error: 'backup_operation_not_found' }, 404);
+  }
+  if (!hasOperationPermission(auth, intent)) return c.json({ error: 'backup_forbidden' }, 403);
   const evidence = await writeAdminAuditLog(c, {
     action: 'tenant_backup.cancel_requested',
     resourceType: 'tenant_backup',

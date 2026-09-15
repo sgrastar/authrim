@@ -1,6 +1,7 @@
 import { beforeEach, expect, it, vi } from 'vitest';
 import type { Env } from '@authrim/ar-lib-core';
 import type { TenantBackupStepContext } from '@authrim/ar-lib-core/services/tenant-portability/operation-executor';
+import type { TenantBackupRestorePreview } from '@authrim/ar-lib-core/services/tenant-portability/restore-preview';
 import { runTenantBackupImportOperationStep } from '../tenant-backup-import-dispatcher';
 
 const mocks = vi.hoisted(() => ({
@@ -39,6 +40,19 @@ const dataset = {
   schemaVersion: 1,
   disposition: 'include' as const,
 };
+const safePreview = (): TenantBackupRestorePreview => ({
+  version: 1 as const,
+  planDigest: 'ab'.repeat(32),
+  prerequisites: [],
+  deliverySafety: {
+    version: 1 as const,
+    sourceEnvironment: 'stopped' as const,
+    historicalDelivery: 'hold' as const,
+    scheduledCatchup: 'disabled' as const,
+    activation: 'new_events_only' as const,
+  },
+  blockers: [],
+});
 const adapter = {
   datasets: () => [dataset],
   loadPolicy: vi.fn(async () => ({ dataset })),
@@ -53,6 +67,7 @@ const adapter = {
   verifyOtherStores: vi.fn(
     async (): Promise<{ cursor: string | null; done: boolean }> => ({ cursor: null, done: true })
   ),
+  previewRestore: vi.fn(async () => safePreview()),
   prepareActivation: vi.fn(async () => {}),
   activate: vi.fn(async () => {}),
   verifyActivation: vi.fn(async () => {}),
@@ -77,6 +92,7 @@ beforeEach(() => {
   for (const mock of [mocks.prepare, mocks.decode, mocks.validate, mocks.plan, mocks.restore])
     mock.mockResolvedValue(next);
   adapter.restoreTargets.mockResolvedValue([{}]);
+  adapter.previewRestore.mockResolvedValue(safePreview());
 });
 
 it.each([
@@ -98,6 +114,77 @@ it.each([
   expect(result).toEqual(next);
   expect(mocks[selected]).toHaveBeenCalledTimes(1);
   if (phase === 'prepare_restore_plan') expect(adapter.restoreTargets).toHaveBeenCalledTimes(1);
+});
+
+it('waits for approval after sealing the restore plan and resumes from its immutable cursor', async () => {
+  const restoreCursor = JSON.stringify({ version: 1, sequenceOrdinal: 0 });
+  mocks.plan.mockResolvedValueOnce({
+    phase: 'start_sqlite_restore_sequence',
+    cursor: restoreCursor,
+    disposition: 'continue',
+  });
+  const waiting = await runTenantBackupImportOperationStep(
+    env,
+    { ...context, operation: { ...context.operation, phase: 'prepare_restore_plan' } },
+    adapter as never,
+    () => 100
+  );
+  expect(waiting.phase).toBe('await_restore_approval');
+  expect(waiting.disposition).toBe('wait');
+  expect(adapter.previewRestore).toHaveBeenCalledWith(expect.anything(), 'ab'.repeat(32));
+
+  const approved = await runTenantBackupImportOperationStep(
+    env,
+    {
+      ...context,
+      operation: {
+        ...context.operation,
+        phase: 'await_restore_approval',
+        cursor_json: waiting.cursor,
+      },
+    },
+    adapter as never,
+    () => 100
+  );
+  expect(approved).toEqual({
+    phase: 'start_sqlite_restore_sequence',
+    cursor: restoreCursor,
+    disposition: 'continue',
+  });
+});
+
+it('refuses to start target writes when blockers appear or the approved preview changes', async () => {
+  const restoreCursor = JSON.stringify({ version: 1, sequenceOrdinal: 0 });
+  mocks.plan.mockResolvedValue({
+    phase: 'start_sqlite_restore_sequence',
+    cursor: restoreCursor,
+    disposition: 'continue',
+  });
+  const waiting = await runTenantBackupImportOperationStep(
+    env,
+    { ...context, operation: { ...context.operation, phase: 'prepare_restore_plan' } },
+    adapter as never,
+    () => 100
+  );
+  adapter.previewRestore.mockResolvedValueOnce({
+    ...safePreview(),
+    blockers: [{ code: 'delivery_safety_unconfirmed' as const, subjectId: null }],
+  });
+  await expect(
+    runTenantBackupImportOperationStep(
+      env,
+      {
+        ...context,
+        operation: {
+          ...context.operation,
+          phase: 'await_restore_approval',
+          cursor_json: waiting.cursor,
+        },
+      },
+      adapter as never,
+      () => 100
+    )
+  ).rejects.toThrow('backup_import_dispatch_invalid');
 });
 
 it('routes SQL restore phases through the separate restore-plan inventory', async () => {

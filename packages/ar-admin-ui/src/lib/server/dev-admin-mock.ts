@@ -9993,6 +9993,92 @@ async function handleStorageDestinations(
 	return null;
 }
 
+async function handleTenantBackups(
+	event: RequestEvent,
+	segments: string[]
+): Promise<Response | null> {
+	if (segments[0] !== 'tenant-backups') return null;
+
+	const method = event.request.method;
+	const waitingOperation = {
+		id: 'dev-restore-preview',
+		kind: 'import' as const,
+		state: 'waiting' as const,
+		phase: 'await_restore_approval',
+		revision: 4,
+		createdAt: NOW - 12 * 60 * 1000,
+		updatedAt: NOW - 2 * 60 * 1000,
+		lastErrorCode: null
+	};
+	const readyOperation = {
+		id: 'dev-settings-export',
+		kind: 'export' as const,
+		state: 'ready' as const,
+		phase: 'publish_bundle',
+		revision: 7,
+		createdAt: NOW - 24 * 60 * 60 * 1000,
+		updatedAt: NOW - 23 * 60 * 60 * 1000,
+		lastErrorCode: null
+	};
+
+	if (segments[1] === 'operations' && segments.length === 2 && method === 'GET') {
+		return json({ operations: [waitingOperation, readyOperation] });
+	}
+	if (segments.length === 2 && method === 'GET') {
+		if (segments[1] === waitingOperation.id) {
+			return json({
+				...waitingOperation,
+				selection: {
+					settings: true,
+					users: false,
+					admin: false,
+					artifacts: false,
+					logs: { audit: false, other: false, sensitive: false, period: 'all' }
+				},
+				publication: null,
+				preview: {
+					planDigest: 'dev-plan-digest',
+					datasetCount: 2,
+					recordCount: 42,
+					datasets: [
+						{ datasetId: 'clients', recordCount: 12 },
+						{ datasetId: 'flows', recordCount: 30 }
+					],
+					prerequisites: [],
+					deliverySafety: {},
+					blockers: [],
+					canApprove: true
+				}
+			});
+		}
+		if (segments[1] === readyOperation.id) {
+			return json({
+				...readyOperation,
+				selection: {
+					settings: true,
+					users: false,
+					admin: false,
+					artifacts: false,
+					logs: { audit: false, other: false, sensitive: false, period: 'all' }
+				},
+				publication: {
+					expiresAt: NOW + 6 * 24 * 60 * 60 * 1000,
+					downloadAvailable: true
+				},
+				preview: null
+			});
+		}
+	}
+	if (segments[2] === 'approve' && segments.length === 3 && method === 'POST') {
+		return json({ ...waitingOperation, state: 'queued', phase: 'start_sqlite_restore_sequence' });
+	}
+	if (segments[2] === 'cancel' && segments.length === 3 && method === 'POST') {
+		return json({ id: segments[1], state: 'cancelled' });
+	}
+
+	return null;
+}
+
 function parseDevMachineTenantScopes(input: unknown): DevMachineTenantScope[] {
 	if (!Array.isArray(input) || input.length === 0) return [{ scopeMode: 'none', tenantId: null }];
 	return input.map((entry) => {
@@ -13686,6 +13772,8 @@ export async function handleDevAdminMock(
 	if (controlPlaneDestinationsResponse) return controlPlaneDestinationsResponse;
 	const storageDestinationsResponse = await handleStorageDestinations(event, segments);
 	if (storageDestinationsResponse) return storageDestinationsResponse;
+	const tenantBackupsResponse = await handleTenantBackups(event, segments);
+	if (tenantBackupsResponse) return tenantBackupsResponse;
 	const approvalsResponse = await handleApprovals(event, segments);
 	if (approvalsResponse) return approvalsResponse;
 	const rolesResponse = await handleRoles(event, segments);

@@ -32078,6 +32078,58 @@ paths:
             application/json:
               schema: { type: object, required: [error], properties: { error: { type: string } } }
 
+  /api/admin/tenant-backups/operations:
+    get:
+      tags: [Tenant Backup]
+      operationId: listTenantBackupOperations
+      summary: List recent tenant backup operations
+      description: Returns up to 50 operations for the authenticated tenant in newest-first order. Internal cursors, request digests, key material, and lease data are omitted.
+      security: [{ adminSessionCookie: [] }]
+      responses:
+        '200':
+          description: Recent tenant backup operation summaries.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [operations]
+                properties:
+                  operations:
+                    type: array
+                    maxItems: 50
+                    items:
+                      type: object
+                      additionalProperties: false
+                      required:
+                        [id, kind, state, phase, revision, createdAt, updatedAt, lastErrorCode]
+                      properties:
+                        id: { type: string }
+                        kind: { type: string, enum: [export, import] }
+                        state:
+                          {
+                            type: string,
+                            enum:
+                              [
+                                queued,
+                                running,
+                                waiting,
+                                ready,
+                                completed,
+                                failed,
+                                cancelling,
+                                cancelled,
+                              ],
+                          }
+                        phase: { type: string }
+                        revision: { type: integer, minimum: 0 }
+                        createdAt: { type: integer, minimum: 0 }
+                        updatedAt: { type: integer, minimum: 0 }
+                        lastErrorCode: { type: string, nullable: true }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '503': { $ref: '#/components/responses/Error' }
+
   /api/admin/tenant-backups/{operationId}:
     {
       'get':
@@ -32115,6 +32167,10 @@ paths:
                                   'revision',
                                   'createdAt',
                                   'updatedAt',
+                                  'lastErrorCode',
+                                  'selection',
+                                  'publication',
+                                  'preview',
                                 ],
                               'properties':
                                 {
@@ -32139,6 +32195,26 @@ paths:
                                   'revision': { 'type': 'integer', 'minimum': 0 },
                                   'createdAt': { 'type': 'integer', 'minimum': 0 },
                                   'updatedAt': { 'type': 'integer', 'minimum': 0 },
+                                  'lastErrorCode': { 'type': 'string', 'nullable': true },
+                                  'selection': { 'type': 'object' },
+                                  'publication':
+                                    {
+                                      'type': 'object',
+                                      'nullable': true,
+                                      'additionalProperties': false,
+                                      'required': ['expiresAt', 'downloadAvailable'],
+                                      'properties':
+                                        {
+                                          'expiresAt': { 'type': 'integer', 'minimum': 0 },
+                                          'downloadAvailable': { 'type': 'boolean' },
+                                        },
+                                    },
+                                  'preview':
+                                    {
+                                      'type': 'object',
+                                      'nullable': true,
+                                      'description': 'Secret-free sealed restore summary. Present only while explicit restore approval is required.',
+                                    },
                                 },
                             },
                         },
@@ -32232,6 +32308,49 @@ paths:
             },
         },
     }
+  /api/admin/tenant-backups/{operationId}/approve:
+    post:
+      tags: [Tenant Backup]
+      operationId: approveTenantBackupRestore
+      summary: Approve one sealed restore preview
+      description: Requires import and manage permissions plus a fresh human Admin session. The revision and plan digest must match the current blocker-free preview. Audit evidence is persisted before the waiting operation is resumed.
+      security: [{ adminSessionCookie: [] }]
+      parameters:
+        - name: operationId
+          in: path
+          required: true
+          schema: { type: string, pattern: '^[A-Za-z0-9_.:-]{1,256}$' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [revision, planDigest]
+              properties:
+                revision: { type: integer, minimum: 0 }
+                planDigest: { type: string, pattern: '^[a-f0-9]{64}$' }
+      responses:
+        '202':
+          description: The exact approved restore was queued for execution.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [id, state, phase, revision]
+                properties:
+                  id: { type: string }
+                  state: { type: string, const: queued }
+                  phase: { type: string, const: await_restore_approval }
+                  revision: { type: integer, minimum: 0 }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '503': { $ref: '#/components/responses/Error' }
   /api/admin/tenant-backups/{operationId}/cancel:
     {
       'post':
@@ -32735,6 +32854,35 @@ paths:
         '409': { description: Idempotency, ownership, or multipart allocation conflict }
         '413': { description: The request body exceeds 4096 bytes }
         '503': { description: Import storage or audit persistence is unavailable }
+  /api/admin/tenant-backups/uploads/{uploadId}:
+    get:
+      tags: [Tenant Backups]
+      operationId: getTenantBackupUpload
+      summary: Read encrypted import upload progress
+      description: Returns metadata for one non-expired upload owned by the authenticated tenant and Admin actor. Object keys, multipart identifiers, and storage versions are omitted.
+      parameters:
+        - name: uploadId
+          in: path
+          required: true
+          schema: { type: string, pattern: '^[A-Za-z0-9_.:-]{1,256}$' }
+      responses:
+        '200':
+          description: Current upload state.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [id, state, sizeBytes, sha256, expiresAt]
+                properties:
+                  id: { type: string }
+                  state: { type: string, enum: [allocating, uploading, completing, uploaded] }
+                  sizeBytes: { type: integer, minimum: 174 }
+                  sha256: { type: string, pattern: '^[a-f0-9]{64}$' }
+                  expiresAt: { type: integer, minimum: 0 }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
   /api/admin/tenant-backups/uploads/{uploadId}/parts/{partNumber}:
     put:
       tags: [Tenant Backups]

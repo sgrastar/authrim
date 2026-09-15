@@ -13,6 +13,13 @@
 		type StorageDestination
 	} from '$lib/api/admin-storage-destinations';
 	import {
+		adminTenantBackupsAPI,
+		saveTenantBackupResponse,
+		type TenantBackupOperation,
+		type TenantBackupOperationSummary,
+		type TenantBackupSelection
+	} from '$lib/api/admin-tenant-backups';
+	import {
 		adminSAMLAPI,
 		type SAMLSettings,
 		type SAMLSigningKeyPolicy,
@@ -51,6 +58,21 @@
 	let drBundleFileInput = $state<HTMLInputElement | null>(null);
 	let drBundlePassphrase = $state('');
 	let drBundlePassphraseConfirm = $state('');
+	let tenantBackupPassphrase = $state('');
+	let tenantBackupPassphraseConfirm = $state('');
+	let tenantBackupImportPassphrase = $state('');
+	let tenantBackupAction = $state('');
+	let tenantBackupProgress = $state('');
+	let tenantBackupFileInput = $state<HTMLInputElement | null>(null);
+	let tenantBackupOperations = $state<TenantBackupOperationSummary[]>([]);
+	let selectedTenantBackup = $state<TenantBackupOperation | null>(null);
+	const settingsBackupSelection: TenantBackupSelection = {
+		settings: true,
+		users: false,
+		admin: false,
+		artifacts: false,
+		logs: { audit: false, other: false, sensitive: false, period: 'all' }
+	};
 	let selectedCertificateDetail = $state<{
 		row: ExportCertificateRow;
 		certificate: string;
@@ -67,12 +89,30 @@
 			drBundlePassphrase === drBundlePassphraseConfirm
 	);
 	const canImportDRBundle = $derived(canEdit && !drBundleAction && drBundlePassphrase.length >= 12);
+	const canExportTenantBackup = $derived(
+		canEdit &&
+			!tenantBackupAction &&
+			tenantBackupPassphrase.length >= 16 &&
+			tenantBackupPassphrase === tenantBackupPassphraseConfirm
+	);
+	const canImportTenantBackup = $derived(
+		canEdit && !tenantBackupAction && tenantBackupImportPassphrase.length >= 16
+	);
 	const exportCertificateRows = $derived(buildExportCertificateRows(samlSettings));
 
-	onMount(async () => {
-		await settingsContext.initialize();
-		tenantId = settingsContext.tenantId;
-		await Promise.all([loadSettings(), loadStorageDestinations(), loadSAMLSettings()]);
+	onMount(() => {
+		void (async () => {
+			await settingsContext.initialize();
+			tenantId = settingsContext.tenantId;
+			await Promise.all([
+				loadSettings(),
+				loadStorageDestinations(),
+				loadSAMLSettings(),
+				loadTenantBackupOperations()
+			]);
+		})();
+		const timer = globalThis.setInterval(() => void loadTenantBackupOperations(true), 5000);
+		return () => globalThis.clearInterval(timer);
 	});
 
 	let previousTenantId = $state<string | null>(null);
@@ -88,7 +128,154 @@
 		loadSettings();
 		loadStorageDestinations();
 		loadSAMLSettings();
+		loadTenantBackupOperations();
 	});
+
+	async function loadTenantBackupOperations(quiet = false) {
+		try {
+			const response = await adminTenantBackupsAPI.list();
+			tenantBackupOperations = response.operations;
+			if (selectedTenantBackup) {
+				const current = response.operations.find((item) => item.id === selectedTenantBackup?.id);
+				if (current) selectedTenantBackup = await adminTenantBackupsAPI.get(current.id);
+			}
+		} catch (err) {
+			if (!quiet) {
+				error = err instanceof Error ? err.message : $LL.admin_dr_backup_tenant_error_load();
+			}
+		}
+	}
+
+	async function startTenantSettingsExport() {
+		if (!canExportTenantBackup) return;
+		tenantBackupAction = 'export';
+		error = '';
+		success = '';
+		try {
+			await adminTenantBackupsAPI.createExport(settingsBackupSelection, tenantBackupPassphrase);
+			tenantBackupPassphrase = '';
+			tenantBackupPassphraseConfirm = '';
+			success = $LL.admin_dr_backup_tenant_export_started();
+			await loadTenantBackupOperations();
+		} catch (err) {
+			error = err instanceof Error ? err.message : $LL.admin_dr_backup_tenant_error_export();
+		} finally {
+			tenantBackupAction = '';
+		}
+	}
+
+	async function importTenantSettingsBackup(event: Event) {
+		const input = event.currentTarget as HTMLInputElement;
+		const file = input.files?.[0];
+		if (!file || !canImportTenantBackup) return;
+		tenantBackupAction = 'import';
+		tenantBackupProgress = $LL.admin_dr_backup_tenant_uploading();
+		error = '';
+		success = '';
+		try {
+			const upload = await adminTenantBackupsAPI.upload(file, (uploaded, total) => {
+				tenantBackupProgress = $LL.admin_dr_backup_tenant_upload_progress({
+					percent: Math.floor((uploaded / total) * 100)
+				});
+			});
+			tenantBackupProgress = $LL.admin_dr_backup_tenant_verifying();
+			await adminTenantBackupsAPI.waitForUpload(upload.id);
+			await adminTenantBackupsAPI.createImport(
+				file,
+				upload.id,
+				settingsBackupSelection,
+				tenantBackupImportPassphrase
+			);
+			tenantBackupImportPassphrase = '';
+			success = $LL.admin_dr_backup_tenant_import_started();
+			await loadTenantBackupOperations();
+		} catch (err) {
+			error = err instanceof Error ? err.message : $LL.admin_dr_backup_tenant_error_import();
+		} finally {
+			tenantBackupAction = '';
+			tenantBackupProgress = '';
+			input.value = '';
+		}
+	}
+
+	async function openTenantBackup(operationId: string) {
+		try {
+			selectedTenantBackup = await adminTenantBackupsAPI.get(operationId);
+		} catch (err) {
+			error = err instanceof Error ? err.message : $LL.admin_dr_backup_tenant_error_load();
+		}
+	}
+
+	async function approveTenantRestore() {
+		if (!selectedTenantBackup?.preview?.canApprove || tenantBackupAction) return;
+		tenantBackupAction = 'approve';
+		try {
+			await adminTenantBackupsAPI.approve(selectedTenantBackup);
+			success = $LL.admin_dr_backup_tenant_restore_approved();
+			selectedTenantBackup = await adminTenantBackupsAPI.get(selectedTenantBackup.id);
+			await loadTenantBackupOperations(true);
+		} catch (err) {
+			error = err instanceof Error ? err.message : $LL.admin_dr_backup_tenant_error_approve();
+		} finally {
+			tenantBackupAction = '';
+		}
+	}
+
+	async function cancelTenantBackup(operationId: string) {
+		if (tenantBackupAction) return;
+		tenantBackupAction = 'cancel';
+		try {
+			await adminTenantBackupsAPI.cancel(operationId);
+			await loadTenantBackupOperations();
+		} catch (err) {
+			error = err instanceof Error ? err.message : $LL.admin_dr_backup_tenant_error_cancel();
+		} finally {
+			tenantBackupAction = '';
+		}
+	}
+
+	async function downloadTenantBackup(operationId: string) {
+		if (tenantBackupAction) return;
+		tenantBackupAction = 'download';
+		try {
+			const response = await adminTenantBackupsAPI.download(operationId, tenantId);
+			if (!response.ok) throw new Error($LL.admin_dr_backup_tenant_error_download());
+			await saveTenantBackupResponse(response, `authrim-${operationId}.authrim`);
+		} catch (err) {
+			error = err instanceof Error ? err.message : $LL.admin_dr_backup_tenant_error_download();
+		} finally {
+			tenantBackupAction = '';
+		}
+	}
+
+	function restoreBlockerLabel(blocker: { code: string; subjectId: string | null }): string {
+		if (blocker.code === 'external_prerequisite_unresolved') {
+			return $LL.admin_dr_backup_tenant_blocker_external({ id: blocker.subjectId ?? '-' });
+		}
+		return $LL.admin_dr_backup_tenant_blocker_delivery();
+	}
+
+	function tenantBackupSelectionLabels(selection: TenantBackupSelection): string[] {
+		const labels: string[] = [];
+		if (selection.settings) labels.push($LL.admin_dr_backup_tenant_selection_settings());
+		if (selection.users) labels.push($LL.admin_dr_backup_tenant_selection_users());
+		if (selection.admin) labels.push($LL.admin_dr_backup_tenant_selection_admin());
+		if (selection.artifacts) labels.push($LL.admin_dr_backup_tenant_selection_artifacts());
+		const period =
+			selection.logs.period === 'all'
+				? $LL.admin_dr_backup_tenant_period_all()
+				: $LL.admin_dr_backup_tenant_period_days({ days: selection.logs.period });
+		if (selection.logs.audit) {
+			labels.push($LL.admin_dr_backup_tenant_selection_audit_logs({ period }));
+		}
+		if (selection.logs.other) {
+			labels.push($LL.admin_dr_backup_tenant_selection_other_logs({ period }));
+		}
+		if ((selection.logs.audit || selection.logs.other) && selection.logs.sensitive) {
+			labels.push($LL.admin_dr_backup_tenant_selection_sensitive());
+		}
+		return labels;
+	}
 
 	async function loadSettings() {
 		loading = true;
@@ -405,6 +592,236 @@
 			{success}
 		</Alert>
 	{/if}
+
+	<AdminSection
+		title={$LL.admin_dr_backup_tenant_title()}
+		description={$LL.admin_dr_backup_tenant_desc()}
+	>
+		<div class="dr-panel tenant-backup-panel">
+			<div class="tenant-backup-scope">
+				<div>
+					<strong>{$LL.admin_dr_backup_tenant_scope_settings()}</strong>
+					<p>{$LL.admin_dr_backup_tenant_scope_settings_desc()}</p>
+				</div>
+				<span class="scope-badge">{$LL.admin_dr_backup_tenant_scope_included()}</span>
+			</div>
+			<p class="scope-note">{$LL.admin_dr_backup_tenant_scope_future()}</p>
+
+			<div class="tenant-backup-actions-grid">
+				<div class="tenant-backup-action-card">
+					<h3>{$LL.admin_dr_backup_tenant_export_title()}</h3>
+					<p>{$LL.admin_dr_backup_tenant_export_desc()}</p>
+					<label>
+						<span>{$LL.admin_dr_backup_passphrase()}</span>
+						<input
+							class="admin-input"
+							type="password"
+							autocomplete="new-password"
+							bind:value={tenantBackupPassphrase}
+							disabled={!!tenantBackupAction || !canEdit}
+						/>
+					</label>
+					<label>
+						<span>{$LL.admin_dr_backup_confirm_passphrase()}</span>
+						<input
+							class="admin-input"
+							type="password"
+							autocomplete="new-password"
+							bind:value={tenantBackupPassphraseConfirm}
+							disabled={!!tenantBackupAction || !canEdit}
+						/>
+					</label>
+					<button
+						class="btn btn-primary"
+						type="button"
+						onclick={startTenantSettingsExport}
+						disabled={!canExportTenantBackup}
+					>
+						<i class="i-ph-download-simple"></i>
+						{$LL.admin_dr_backup_tenant_export_start()}
+					</button>
+				</div>
+
+				<div class="tenant-backup-action-card">
+					<h3>{$LL.admin_dr_backup_tenant_import_title()}</h3>
+					<p>{$LL.admin_dr_backup_tenant_import_desc()}</p>
+					<label>
+						<span>{$LL.admin_dr_backup_passphrase()}</span>
+						<input
+							class="admin-input"
+							type="password"
+							autocomplete="current-password"
+							bind:value={tenantBackupImportPassphrase}
+							disabled={!!tenantBackupAction || !canEdit}
+						/>
+					</label>
+					<button
+						class="btn btn-secondary"
+						type="button"
+						onclick={() => tenantBackupFileInput?.click()}
+						disabled={!canImportTenantBackup}
+					>
+						<i class="i-ph-upload-simple"></i>
+						{$LL.admin_dr_backup_tenant_import_select()}
+					</button>
+					<input
+						bind:this={tenantBackupFileInput}
+						class="hidden-file-input"
+						type="file"
+						accept=".authrim,application/octet-stream"
+						onchange={importTenantSettingsBackup}
+					/>
+					{#if tenantBackupProgress}<p class="operation-progress">{tenantBackupProgress}</p>{/if}
+				</div>
+			</div>
+
+			<div class="tenant-backup-history-header">
+				<div>
+					<h3>{$LL.admin_dr_backup_tenant_history_title()}</h3>
+					<p>{$LL.admin_dr_backup_tenant_history_desc()}</p>
+				</div>
+				<button
+					class="btn btn-secondary btn-sm"
+					type="button"
+					onclick={() => loadTenantBackupOperations()}
+				>
+					<i class="i-ph-arrows-clockwise"></i>
+					{$LL.admin_dr_backup_refresh_certificates()}
+				</button>
+			</div>
+			{#if tenantBackupOperations.length === 0}
+				<p class="empty-certificate-state">{$LL.admin_dr_backup_tenant_history_empty()}</p>
+			{:else}
+				<AdminDataTable compact>
+					<thead>
+						<tr>
+							<th>{$LL.admin_dr_backup_tenant_kind()}</th>
+							<th>{$LL.admin_dr_backup_tenant_status()}</th>
+							<th>{$LL.admin_dr_backup_tenant_updated()}</th>
+							<th>{$LL.admin_dr_backup_certificate_actions()}</th>
+						</tr>
+					</thead>
+					<tbody>
+						{#each tenantBackupOperations as operation (operation.id)}
+							<tr>
+								<td
+									>{operation.kind === 'export'
+										? $LL.admin_dr_backup_tenant_export()
+										: $LL.admin_dr_backup_tenant_import()}</td
+								>
+								<td><span class="operation-state">{operation.state}</span></td>
+								<td>{formatDateTime(operation.updatedAt)}</td>
+								<td class="operation-actions">
+									<button
+										class="btn btn-secondary btn-xs"
+										type="button"
+										onclick={() => openTenantBackup(operation.id)}
+									>
+										{$LL.admin_dr_backup_tenant_view()}
+									</button>
+									{#if operation.kind === 'export' && ['ready', 'completed'].includes(operation.state)}
+										<button
+											class="btn btn-secondary btn-xs"
+											type="button"
+											onclick={() => downloadTenantBackup(operation.id)}
+										>
+											{$LL.admin_dr_backup_tenant_download()}
+										</button>
+									{/if}
+									{#if ['queued', 'running', 'waiting', 'ready'].includes(operation.state)}
+										<button
+											class="btn btn-danger btn-xs"
+											type="button"
+											onclick={() => cancelTenantBackup(operation.id)}
+										>
+											{$LL.admin_dr_backup_tenant_cancel()}
+										</button>
+									{/if}
+								</td>
+							</tr>
+						{/each}
+					</tbody>
+				</AdminDataTable>
+			{/if}
+
+			{#if selectedTenantBackup}
+				<div class="tenant-backup-detail">
+					<div class="tenant-backup-history-header">
+						<div>
+							<h3>{$LL.admin_dr_backup_tenant_detail_title()}</h3>
+							<p>{selectedTenantBackup.id}</p>
+						</div>
+						<button
+							class="icon-btn"
+							type="button"
+							onclick={() => (selectedTenantBackup = null)}
+							aria-label={$LL.dialog_close()}
+						>
+							<i class="i-ph-x"></i>
+						</button>
+					</div>
+					<div class="operation-selection">
+						<strong>{$LL.admin_dr_backup_tenant_selection_title()}</strong>
+						<ul>
+							{#each tenantBackupSelectionLabels(selectedTenantBackup.selection) as label (label)}
+								<li>{label}</li>
+							{/each}
+						</ul>
+					</div>
+					{#if selectedTenantBackup.preview}
+						<div class="restore-preview-summary">
+							<strong
+								>{$LL.admin_dr_backup_tenant_preview_summary({
+									datasets: selectedTenantBackup.preview.datasetCount,
+									records: selectedTenantBackup.preview.recordCount
+								})}</strong
+							>
+							<details class="restore-preview-datasets">
+								<summary>{$LL.admin_dr_backup_tenant_preview_datasets()}</summary>
+								<ul>
+									{#each selectedTenantBackup.preview.datasets as dataset (dataset.datasetId)}
+										<li><code>{dataset.datasetId}</code>: {dataset.recordCount}</li>
+									{/each}
+								</ul>
+							</details>
+							{#if selectedTenantBackup.preview.blockers.length > 0}
+								<div class="warning-box">
+									<i class="i-ph-warning-circle"></i>
+									<div>
+										<span>{$LL.admin_dr_backup_tenant_preview_blocked()}</span>
+										<ul>
+											{#each selectedTenantBackup.preview.blockers as blocker (`${blocker.code}:${blocker.subjectId ?? ''}`)}
+												<li>{restoreBlockerLabel(blocker)}</li>
+											{/each}
+										</ul>
+									</div>
+								</div>
+							{/if}
+							<button
+								class="btn btn-primary"
+								type="button"
+								onclick={approveTenantRestore}
+								disabled={!selectedTenantBackup.preview.canApprove || !!tenantBackupAction}
+							>
+								{$LL.admin_dr_backup_tenant_approve_restore()}
+							</button>
+						</div>
+					{:else}
+						<p>
+							{$LL.admin_dr_backup_tenant_detail_status({ status: selectedTenantBackup.state })}
+						</p>
+					{/if}
+					{#if selectedTenantBackup.publication}
+						<p>
+							{$LL.admin_dr_backup_tenant_download_expires({
+								time: formatDateTime(selectedTenantBackup.publication.expiresAt)
+							})}
+						</p>
+					{/if}
+				</div>
+			{/if}
+		</div>
+	</AdminSection>
 
 	<AdminSection title={$LL.admin_dr_backup_destination_title()}>
 		<div class="dr-panel">
@@ -755,6 +1172,109 @@
 		padding: var(--settings-panel-padding, 1.5rem);
 		color: var(--color-text);
 		box-shadow: var(--settings-panel-shadow, var(--card-shadow, none));
+	}
+
+	.tenant-backup-panel,
+	.tenant-backup-action-card,
+	.tenant-backup-detail,
+	.restore-preview-summary {
+		display: grid;
+		gap: 1rem;
+	}
+
+	.tenant-backup-scope,
+	.tenant-backup-history-header,
+	.operation-actions {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 1rem;
+	}
+
+	.tenant-backup-scope p,
+	.tenant-backup-history-header p,
+	.tenant-backup-action-card p,
+	.scope-note,
+	.operation-progress {
+		margin: 0.25rem 0 0;
+		color: var(--color-text-secondary);
+	}
+
+	.scope-badge,
+	.operation-state {
+		display: inline-flex;
+		border-radius: 999px;
+		padding: 0.25rem 0.65rem;
+		background: var(
+			--color-primary-soft,
+			color-mix(in srgb, var(--color-primary) 12%, transparent)
+		);
+		color: var(--color-primary);
+		font-size: 0.8rem;
+		font-weight: 650;
+		white-space: nowrap;
+	}
+
+	.tenant-backup-actions-grid {
+		display: grid;
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+		gap: 1rem;
+	}
+
+	.tenant-backup-action-card,
+	.tenant-backup-detail {
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-md, 0.75rem);
+		padding: 1rem;
+	}
+
+	.operation-selection,
+	.restore-preview-datasets {
+		color: var(--color-text-muted);
+		font-size: 0.8125rem;
+	}
+
+	.operation-selection ul,
+	.restore-preview-datasets ul {
+		margin: 0.5rem 0 0;
+		padding-left: 1.25rem;
+	}
+
+	.restore-preview-datasets summary {
+		cursor: pointer;
+		font-weight: 600;
+	}
+
+	.restore-preview-datasets ul {
+		max-height: 14rem;
+		overflow-y: auto;
+	}
+
+	.tenant-backup-action-card h3,
+	.tenant-backup-history-header h3 {
+		margin: 0;
+	}
+
+	.tenant-backup-action-card label {
+		display: grid;
+		gap: 0.4rem;
+	}
+
+	.operation-actions {
+		justify-content: flex-start;
+		flex-wrap: wrap;
+	}
+
+	@media (max-width: 760px) {
+		.tenant-backup-actions-grid {
+			grid-template-columns: 1fr;
+		}
+
+		.tenant-backup-scope,
+		.tenant-backup-history-header {
+			align-items: flex-start;
+			flex-direction: column;
+		}
 	}
 
 	.sensitive-badge {
