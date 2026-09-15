@@ -39,6 +39,8 @@ export const TENANT_BACKUP_OWNERSHIP_RULES: ReadonlyArray<{
   ...[
     'admin_destination_capabilities',
     'admin_destination_health_events',
+    'admin_logging_critical_policies',
+    'admin_logging_sensitive_detail_policies',
     'credential_secret_metadata',
     'credential_secret_bodies',
   ].map((table) => ({
@@ -109,6 +111,7 @@ export const TENANT_BACKUP_OWNERSHIP_RULES: ReadonlyArray<{
     'logging_delivery_events',
     'logging_dlq_items',
     'logging_export_jobs',
+    'logging_key_material_bodies',
     'logging_key_registry',
   ].map((table) => ({
     family: 'admin' as const,
@@ -118,6 +121,7 @@ export const TENANT_BACKUP_OWNERSHIP_RULES: ReadonlyArray<{
   // Parent joins verified against the owning repositories and migration foreign keys.
   ...[
     ['admin_passkeys', 'admin_users', 'admin_user_id'],
+    ['agent_baseline_exceptions', 'agent_baseline_assignments', 'assignment_id'],
     ['agent_task_set_versions', 'agent_task_sets', 'task_set_id'],
     ['agent_scope_policy_versions', 'agent_scope_policies', 'scope_policy_id'],
     ['approval_request_approvals', 'approval_requests', 'approval_request_id'],
@@ -125,6 +129,15 @@ export const TENANT_BACKUP_OWNERSHIP_RULES: ReadonlyArray<{
     family: 'admin' as const,
     table,
     ownership: parent(parentTable, childColumn, 'id'),
+  })),
+  ...[
+    ['agent_baselines', 'control_tenant_id'],
+    ['agent_configuration_templates', 'source_tenant_id'],
+    ['agent_template_copies', 'target_tenant_id'],
+  ].map(([table, column]) => ({
+    family: 'admin' as const,
+    table,
+    ownership: { kind: 'tenant' as const, column, identity: 'tenantId' as const },
   })),
   {
     family: 'admin',

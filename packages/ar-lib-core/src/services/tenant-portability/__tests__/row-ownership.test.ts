@@ -117,6 +117,38 @@ describe('backup row ownership', () => {
     expect(() => backupOwnershipPredicate(rule, identity)).toThrow('depth_exceeded');
   });
 
+  it('pins Phase 5 indirect and control-tenant settings ownership', () => {
+    expect(requireBackupOwnership('admin', 'agent_baseline_exceptions')).toMatchObject({
+      kind: 'parent',
+      table: 'agent_baseline_assignments',
+    });
+    for (const [table, column] of [
+      ['agent_baselines', 'control_tenant_id'],
+      ['agent_configuration_templates', 'source_tenant_id'],
+      ['agent_template_copies', 'target_tenant_id'],
+    ]) {
+      expect(requireBackupOwnership('admin', table)).toEqual({
+        kind: 'tenant',
+        column,
+        identity: 'tenantId',
+      });
+    }
+    for (const table of [
+      'admin_logging_critical_policies',
+      'admin_logging_sensitive_detail_policies',
+    ]) {
+      expect(requireBackupOwnership('admin', table)).toMatchObject({
+        kind: 'parent',
+        table: 'admin_destinations',
+      });
+    }
+    expect(requireBackupOwnership('admin', 'logging_key_material_bodies')).toEqual({
+      kind: 'tenant',
+      column: 'tenant_key',
+      identity: 'tenantKey',
+    });
+  });
+
   it('validates every registered selector against actual manifest-selected schemas', () => {
     const root = fileURLToPath(new URL('../../../../../../', import.meta.url));
     const inventory = inventoryBackupSchemas(root);

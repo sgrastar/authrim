@@ -65,8 +65,15 @@ export function createTenantBackupInstalledSqliteImportAdapter(input: {
   )
     throw new Error('backup_sqlite_import_adapter_invalid');
   const byTable = new Map<string, typeof input.policies>();
-  for (const policy of input.policies.filter((candidate) => candidate.dataset.store === 'database'))
-    byTable.set(policy.schema.table, [...(byTable.get(policy.schema.table) ?? []), policy]);
+  for (const policy of input.policies.filter(
+    (candidate) => candidate.dataset.store === 'database'
+  )) {
+    const family = policy.dataset.id.split('.')[0];
+    if (!family || !['core', 'pii', 'admin', 'control', 'lookup', 'plugin_runner'].includes(family))
+      throw new Error('backup_sqlite_import_adapter_invalid');
+    const key = `${family}:${policy.schema.table}`;
+    byTable.set(key, [...(byTable.get(key) ?? []), policy]);
+  }
   for (const group of byTable.values()) {
     const schemas = new Set(group.map((policy) => JSON.stringify(policy.schema)));
     const partitions = group.flatMap((policy) => policy.partitions ?? []);

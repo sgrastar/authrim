@@ -109,3 +109,16 @@ it('rejects duplicate SQL datasets, duplicate tables, and environment policies a
     })
   ).toThrow('backup_sqlite_import_adapter_invalid');
 });
+
+it('allows the same table name in distinct physical schema families', () => {
+  const ports = fixture().ports;
+  expect(() =>
+    createTenantBackupInstalledSqliteImportAdapter({
+      policies: [
+        { ...policy, dataset: { ...dataset, id: 'core.shared_name' } },
+        { ...policy, dataset: { ...dataset, id: 'admin.shared_name' } },
+      ],
+      ports,
+    })
+  ).not.toThrow();
+});
