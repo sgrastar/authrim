@@ -579,6 +579,12 @@ function validateLoginUIPatch(body: SettingsPatchRequest): {
             ) {
               throw new Error('Invalid account page visibility condition');
             }
+            if (
+              placement.show_for_guests !== undefined &&
+              typeof placement.show_for_guests !== 'boolean'
+            ) {
+              throw new Error('Account page show_for_guests must be boolean');
+            }
             if (placement.enabled !== false && snapshots !== undefined) {
               if (!snapshots || typeof snapshots !== 'object' || Array.isArray(snapshots))
                 throw new Error('Published definitions require screen snapshots');

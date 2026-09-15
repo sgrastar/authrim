@@ -149,7 +149,9 @@ describe('Account Page capabilities API', () => {
       },
     });
     expect(body.account_page.definition.screens).toEqual(
-      expect.arrayContaining([expect.objectContaining({ screen_key: 'account_profile' })])
+      expect.arrayContaining([
+        expect.objectContaining({ screen_key: 'account_profile', show_for_guests: true }),
+      ])
     );
   });
 
@@ -192,7 +194,13 @@ describe('Account Page capabilities API', () => {
         schema_version: 'authrim.account_page.v1',
         title: 'Your account',
         screens: [
-          { id: 'profile', screen_key: 'account_profile', width: 'half', enabled: true },
+          {
+            id: 'profile',
+            screen_key: 'account_profile',
+            width: 'half',
+            enabled: true,
+            show_for_guests: false,
+          },
           { id: 'invalid', screen_key: '../invalid', width: 'full', enabled: true },
         ],
       }),
@@ -218,7 +226,15 @@ describe('Account Page capabilities API', () => {
     expect(body.account_page.version).toBe(3);
     expect(body.account_page.definition).toMatchObject({
       title: 'Your account',
-      screens: [{ id: 'profile', screen_key: 'account_profile', width: 'half', enabled: true }],
+      screens: [
+        {
+          id: 'profile',
+          screen_key: 'account_profile',
+          width: 'half',
+          enabled: true,
+          show_for_guests: false,
+        },
+      ],
     });
     expect(body.account_page.screens).toHaveLength(1);
     expect(body.account_page.screens[0].screen_key).toBe('account_profile');

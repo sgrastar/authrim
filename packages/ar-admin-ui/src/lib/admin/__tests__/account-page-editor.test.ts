@@ -18,4 +18,11 @@ describe('Account page editor', () => {
 		expect(source).toContain('{#each LOGIN_UI_LOCALE_OPTIONS as locale (locale.code)}');
 		expect(source).not.toContain('const PAGE_LOCALES');
 	});
+
+	it('configures guest visibility for every Account Page widget and defaults it on', () => {
+		expect(source).toContain('show_for_guests: boolean;');
+		expect(source).toContain('show_for_guests: item.show_for_guests !== false');
+		expect(source).toContain('checked={placement.show_for_guests}');
+		expect(source).toContain("t('ゲストアカウントでも表示', 'Show for guest accounts')");
+	});
 });

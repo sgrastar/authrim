@@ -125,6 +125,7 @@ describe('Account Page API', () => {
       subject_id: 'sub-001',
       account_id: 'acct-001',
       account_type: 'end_user',
+      registration_state: 'registered',
       lifecycle_state: 'active',
       email: 'person@example.test',
       email_verified: 1,
@@ -175,6 +176,7 @@ describe('Account Page API', () => {
     expect(mockCreateAccountAuthContextFromHono).toHaveBeenCalledWith(expect.anything(), 'default');
     expect(body.profile).toEqual({
       user_id: 'user-001',
+      registration_state: 'registered',
       email: 'person@example.test',
       email_verified: true,
       name: 'Example Person',
@@ -190,6 +192,33 @@ describe('Account Page API', () => {
       acr: 'urn:example:acr',
       amr: ['pwd'],
     });
+  });
+
+  it('returns the canonical guest registration state used by Account Page visibility', async () => {
+    mockFindById.mockResolvedValueOnce({
+      id: 'user-001',
+      tenant_id: 'default',
+      subject_id: 'sub-001',
+      account_id: 'acct-001',
+      account_type: 'end_user',
+      registration_state: 'guest',
+      lifecycle_state: 'active',
+      email: null,
+      email_verified: 0,
+      name: null,
+      given_name: null,
+      family_name: null,
+      locale: 'ja',
+      picture: null,
+    });
+
+    const response = await getAccountProfileHandler(
+      createMockContext('authrim_session=g1%3Aapac%3A3%3Asession_123')
+    );
+    const body = (await response.json()) as { profile: Record<string, unknown> };
+
+    expect(response.status).toBe(200);
+    expect(body.profile.registration_state).toBe('guest');
   });
 
   it('marks reauth as required after the five-minute window', async () => {

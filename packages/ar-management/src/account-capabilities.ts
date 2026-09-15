@@ -188,6 +188,7 @@ function normalizePlacement(
     screen_key: screenKey,
     width: record.width === 'half' ? 'half' : 'full',
     enabled: record.enabled !== false,
+    show_for_guests: record.show_for_guests !== false,
     condition:
       record.condition === 'hidden' ||
       record.condition === 'passkey_enabled' ||

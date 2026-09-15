@@ -124,6 +124,7 @@ export interface AccountPageScreenPlacement {
   width: AccountPagePlacementWidth;
   enabled: boolean;
   condition: AccountPageVisibilityCondition;
+  show_for_guests: boolean;
 }
 
 export interface AccountPageLocalization {
@@ -166,7 +167,7 @@ export interface AccountPagesDocument {
   pages: AccountPageRecord[];
 }
 
-export const ACCOUNT_PAGE_PRESET_VERSION = 2;
+export const ACCOUNT_PAGE_PRESET_VERSION = 3;
 
 export const DEFAULT_ACCOUNT_PAGE_DEFINITION: AccountPageDefinition = {
   schema_version: 'authrim.account_page.v1',
@@ -179,6 +180,7 @@ export const DEFAULT_ACCOUNT_PAGE_DEFINITION: AccountPageDefinition = {
       width: 'full',
       enabled: true,
       condition: 'always',
+      show_for_guests: true,
     },
     {
       id: 'launchers',
@@ -186,6 +188,7 @@ export const DEFAULT_ACCOUNT_PAGE_DEFINITION: AccountPageDefinition = {
       width: 'full',
       enabled: true,
       condition: 'always',
+      show_for_guests: true,
     },
     {
       id: 'profile',
@@ -193,6 +196,7 @@ export const DEFAULT_ACCOUNT_PAGE_DEFINITION: AccountPageDefinition = {
       width: 'half',
       enabled: true,
       condition: 'always',
+      show_for_guests: true,
     },
     {
       id: 'devices',
@@ -200,6 +204,7 @@ export const DEFAULT_ACCOUNT_PAGE_DEFINITION: AccountPageDefinition = {
       width: 'half',
       enabled: true,
       condition: 'always',
+      show_for_guests: true,
     },
     {
       id: 'sessions',
@@ -207,6 +212,7 @@ export const DEFAULT_ACCOUNT_PAGE_DEFINITION: AccountPageDefinition = {
       width: 'half',
       enabled: true,
       condition: 'always',
+      show_for_guests: true,
     },
     {
       id: 'passkeys',
@@ -214,6 +220,7 @@ export const DEFAULT_ACCOUNT_PAGE_DEFINITION: AccountPageDefinition = {
       width: 'half',
       enabled: true,
       condition: 'passkey_enabled',
+      show_for_guests: true,
     },
     {
       id: 'totp',
@@ -221,6 +228,7 @@ export const DEFAULT_ACCOUNT_PAGE_DEFINITION: AccountPageDefinition = {
       width: 'full',
       enabled: true,
       condition: 'totp_enabled',
+      show_for_guests: true,
     },
     {
       id: 'consents',
@@ -228,6 +236,7 @@ export const DEFAULT_ACCOUNT_PAGE_DEFINITION: AccountPageDefinition = {
       width: 'full',
       enabled: true,
       condition: 'always',
+      show_for_guests: true,
     },
     {
       id: 'activity',
@@ -235,6 +244,7 @@ export const DEFAULT_ACCOUNT_PAGE_DEFINITION: AccountPageDefinition = {
       width: 'full',
       enabled: true,
       condition: 'always',
+      show_for_guests: true,
     },
   ],
 };

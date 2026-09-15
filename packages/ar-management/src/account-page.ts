@@ -154,6 +154,7 @@ export async function getAccountProfileHandler(c: Context<{ Bindings: Env }>): P
   return c.json({
     profile: {
       user_id: accountSession.userId,
+      registration_state: user.registration_state,
       email: user.email,
       email_verified: user.email_verified === 1,
       name: user.name,
@@ -240,6 +241,7 @@ export async function updateAccountProfileHandler(
   return c.json({
     profile: {
       user_id: accountSession.userId,
+      registration_state: updatedUser?.registration_state ?? existingUser.registration_state,
       email: updatedUser?.email ?? existingUser.email,
       email_verified: (updatedUser?.email_verified ?? existingUser.email_verified) === 1,
       name: updatedUser?.name ?? name,

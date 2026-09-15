@@ -32,6 +32,7 @@
 		type AuthenticationMethodsResponse
 	} from '$lib/api/authentication-methods';
 	import { logoutWithGuestWarning } from '$lib/account/guest-logout';
+	import { isPlacementVisibleForRegistrationState } from '$lib/account/account-page-visibility';
 	import { auth } from '$lib/stores/auth';
 	import {
 		signalAllAcceptedCredentials,
@@ -319,8 +320,13 @@
 		};
 	}
 
-	function placementVisible(condition: string): boolean {
-		switch (condition) {
+	function placementVisible(
+		placement: NonNullable<AccountCapabilities['account_page']>['definition']['screens'][number]
+	): boolean {
+		if (!isPlacementVisibleForRegistrationState(placement, profile?.registration_state)) {
+			return false;
+		}
+		switch (placement.condition) {
 			case 'hidden':
 				return false;
 			case 'passkey_enabled':
@@ -346,7 +352,13 @@
 
 	function safeHref(value: string | null | undefined): string | null {
 		if (!value) return null;
-		if (/^#[a-zA-Z][\w-]*$/u.test(value) || /^\/(?!\/)/u.test(value)) return value;
+		if (/^#[a-zA-Z][\w-]*$/u.test(value)) {
+			const target = accountCapabilities?.account_page?.definition.screens.find(
+				(placement) => placement.id === value.slice(1)
+			);
+			return target?.enabled && placementVisible(target) ? value : null;
+		}
+		if (/^\/(?!\/)/u.test(value)) return value;
 		try {
 			const url = new URL(value);
 			return url.protocol === 'https:' ? url.toString() : null;
@@ -1200,7 +1212,7 @@
 			{#if capabilitiesLoading || !capabilitiesResolved}
 				<!-- Wait for the published composition so unused widgets never flash as skeletons. -->
 			{:else if accountCapabilities?.account_page}
-				{#each accountCapabilities.account_page.definition.screens.filter((item) => item.enabled && placementVisible(item.condition)) as placement (placement.id)}
+				{#each accountCapabilities.account_page.definition.screens.filter((item) => item.enabled && placementVisible(item)) as placement (placement.id)}
 					{@const screen = configuredScreen(placement.screen_key)}
 					{#if screen}
 						<section

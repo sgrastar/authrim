@@ -95,6 +95,81 @@ it('uses theme colors for visited deletion notice links and keyboard focus', () 
 });
 
 describe('getHtmlTemplate', () => {
+  it('retranslates visible prerequisite errors and preserves diagnostic details', () => {
+    const html = getHtmlTemplate('session-token', false, 'en', en, SUPPORTED_LOCALES);
+    const source = html.slice(
+      html.indexOf('    function renderPrereqFailureMessage('),
+      html.indexOf('    async function loadRuntimeContext(')
+    );
+    type Element = { textContent: string; children: Element[]; appendChild: (el: Element) => void };
+    const element = (): Element => ({
+      textContent: '',
+      children: [],
+      appendChild(el) {
+        this.children.push(el);
+      },
+    });
+    const content = element();
+    let translations: Record<string, string> = ja;
+    const context = vm.createContext({
+      lastPrereqFailure: null,
+      document: { getElementById: () => content, createElement: element },
+      t: (key: string) => translations[key],
+    });
+    vm.runInContext(source, context);
+    for (const [key, detail] of [
+      ['web.error.notLoggedIn', 'wrangler login'],
+      ['web.error.wranglerNotInstalled', 'npm install -g wrangler'],
+      ['web.error.checkingPrereq', '<network failure>'],
+    ]) {
+      translations = ja;
+      vm.runInContext(
+        `renderPrereqFailureMessage(${JSON.stringify(key)}, ${JSON.stringify(detail)})`,
+        context
+      );
+      for (const locale of [en, es, zhCN, zhTW, pt, fr, de, ko, ru, id, ja]) {
+        translations = locale;
+        vm.runInContext('renderPrereqFailureMessage()', context);
+        const alert = content.children.at(-1)!;
+        expect(alert.children[0].textContent).toBe(locale['web.status.error']);
+        expect(alert.children[1].textContent).toBe(
+          `${locale[key as keyof typeof locale]} ${detail}`
+        );
+      }
+    }
+    vm.runInContext("renderPrereqFailureMessage('')", context);
+    const count = content.children.length;
+    vm.runInContext('renderPrereqFailureMessage()', context);
+    expect(content.children).toHaveLength(count);
+    expect(content.textContent).toBe('');
+    expect(html).toContain(
+      'function refreshDynamicLocaleContent() {\n      renderPrereqFailureMessage();'
+    );
+  });
+
+  it('keeps missing-subdomain rows separate from the block warning style', () => {
+    const html = getHtmlTemplate('session-token', false, 'en', en, SUPPORTED_LOCALES);
+    const source = html.slice(
+      html.indexOf('    function createPrereqCheckLine('),
+      html.indexOf('    function renderPrereqCheckRows(')
+    );
+    const context = vm.createContext({
+      getPrereqUiCopy: () => ({ unknown: 'Not loaded' }),
+      document: {
+        createElement: () => ({ className: '', appendChild() {} }),
+        createTextNode: (text: string) => text,
+      },
+    });
+    vm.runInContext(source, context);
+    const row = vm.runInContext(
+      "createPrereqCheckLine(3, 'workers.dev', 'Fallback origin', '', 'warn')",
+      context
+    );
+    expect(row.className.split(' ')).not.toContain('warn');
+    expect(row.className.split(' ')).toContain('checkline');
+    expect(SETUP_WEB_UI_STYLE).toContain('.checkline.check-warning .st');
+  });
+
   const localeCases = [
     { locale: 'en', translations: en, expected: 'Choose How to Start' },
     { locale: 'ja', translations: ja, expected: '開始方法を選択' },

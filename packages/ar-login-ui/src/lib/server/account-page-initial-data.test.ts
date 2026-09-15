@@ -25,7 +25,8 @@ function capabilitiesWithConditions(
 					screen_key: `screen-${index}`,
 					width: 'half',
 					enabled: true,
-					condition
+					condition,
+					show_for_guests: true
 				}))
 			},
 			screens: [],

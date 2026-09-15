@@ -3170,7 +3170,7 @@ export const SETUP_WEB_UI_STYLE = [
   '  color: var(--green);',
   '}',
   '',
-  '.checkline.warn .st {',
+  '.checkline.check-warning .st {',
   '  color: var(--brass);',
   '}',
   '',
