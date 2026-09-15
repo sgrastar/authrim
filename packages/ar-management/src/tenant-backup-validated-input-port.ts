@@ -14,6 +14,7 @@ import type { TenantBackupSelection } from '@authrim/ar-lib-core/services/tenant
 import type { Phase8ValidatedSqliteRestoreDataset } from '@authrim/ar-lib-core/services/tenant-portability/phase8-restore-targets';
 import { readNextSqliteInputRow } from '@authrim/ar-lib-core/services/tenant-portability/sqlite-input-row-source';
 import type { SqliteDatasetInspectionPolicy } from '@authrim/ar-lib-core/services/tenant-portability/sqlite-dataset-inspector';
+import type { TenantBundleManifest } from '@authrim/ar-lib-core/services/tenant-portability/bundle-manifest';
 import type { TenantBackupInstalledImportAdapter } from './tenant-backup-import-dispatcher';
 import { getCanonicalTenantBaseUrlAsync } from './request-issuer';
 import { getTenantBackupKeyStore } from './tenant-backup-services';
@@ -44,6 +45,17 @@ export type TenantBackupValidatedInputPorts = Pick<
   loadValidatedSqliteDatasets(
     context: TenantBackupStepContext
   ): Promise<readonly Phase8ValidatedSqliteRestoreDataset[]>;
+  loadValidatedDatasetById(
+    context: TenantBackupStepContext,
+    planDigest: string,
+    datasetId: string
+  ): Promise<{
+    policy: SqliteDatasetInspectionPolicy;
+    manifest: TenantBundleManifest;
+    readNextValidatedRow(input: {
+      sourceCursor: string | null;
+    }): Promise<{ rowJson: string; nextCursor: string } | null>;
+  }>;
 };
 
 function invalid(): never {
@@ -262,6 +274,74 @@ export function createTenantBackupValidatedInputPorts(
       await execution.assertInputValidated(context.lease);
       await loadCurrent(context);
       return result;
+    },
+
+    async loadValidatedDatasetById(context, planDigest, datasetId) {
+      if (!/^[A-Za-z0-9_.:-]{1,256}$/u.test(datasetId)) invalid();
+      await assertPlan(context, planDigest);
+      const current = await loadCurrent(context);
+      const execution = new TenantBackupExecutionInventory(database, context.lease, now);
+      const head = await execution.headForLease(context.lease);
+      if (head.state !== 'sealed') invalid();
+      const plannedInputs = await loadPlannedTenantBackupInputs(context, execution, {
+        source: current.request.intent.source,
+        selection: current.request.intent.selection,
+        datasets: current.datasets,
+      });
+      const owner = tenantBackupInputDatasetOwners(plannedInputs).get(datasetId) ?? invalid();
+      const inputOrdinal = plannedInputs.findIndex(({ manifest }) => manifest.bundleId === owner);
+      const planned = plannedInputs[inputOrdinal] ?? invalid();
+      const bound = current.request.inputs[inputOrdinal];
+      const key = current.keys[inputOrdinal];
+      if (
+        !bound ||
+        !key ||
+        bound.ordinal !== inputOrdinal ||
+        key.inputId !== bound.inputId ||
+        !planned.manifest.datasets.some(({ id }) => id === datasetId)
+      )
+        invalid();
+      const policy = await options.loadPolicy(context, datasetId);
+      if (policy.dataset.id !== datasetId) invalid();
+      const authorize = async () => {
+        await loadCurrent(context);
+        await execution.assertInputValidated(context.lease);
+        await assertPlan(context, planDigest);
+      };
+      const replayInput = {
+        ...planned,
+        expected: {
+          bundleId: planned.manifest.bundleId,
+          source: planned.manifest.source,
+          selection: planned.manifest.selection,
+          datasets: planned.manifest.datasets,
+        },
+        session: key.key,
+        bucket: current.bucket,
+        signal: context.signal,
+        assertAuthorized: authorize,
+      };
+      const receipts = new TenantBackupInputReceipts(database, context.lease, now);
+      const firstSequence = await receipts.datasetStart(owner, datasetId, replayInput);
+      await authorize();
+      return {
+        policy,
+        manifest: planned.manifest,
+        readNextValidatedRow: ({ sourceCursor }) =>
+          readNextSqliteInputRow({
+            receipts,
+            replayInput,
+            datasetId,
+            firstSequence,
+            sourceCursor,
+            planDigest,
+            assertValidatedPlan: async (digest, bundleId, validatedDatasetId) => {
+              if (digest !== planDigest || bundleId !== owner || validatedDatasetId !== datasetId)
+                invalid();
+              await assertPlan(context, digest);
+            },
+          }),
+      };
     },
   };
 }

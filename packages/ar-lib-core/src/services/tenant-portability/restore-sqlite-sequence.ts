@@ -15,7 +15,7 @@ import {
 
 type DatasetInput = Parameters<typeof runSqliteRestoreDatasetStep>[1];
 type Source = Pick<DatasetInput, 'policy' | 'manifest' | 'readNextValidatedRow'>;
-interface Job {
+export interface PlannedSqliteRestoreSequenceJob {
   targetId: string;
   targetOrdinal: number;
   datasetId: string;
@@ -24,7 +24,75 @@ interface Job {
   manifestDigest: string;
   policyDigest: string;
 }
+type Job = PlannedSqliteRestoreSequenceJob;
 const fail = () => new Error('backup_restore_sequence_invalid');
+
+function decodeJobs(value: string): Job[] {
+  let decoded: unknown;
+  try {
+    decoded = JSON.parse(value) as unknown;
+  } catch {
+    throw fail();
+  }
+  if (
+    !decoded ||
+    typeof decoded !== 'object' ||
+    Array.isArray(decoded) ||
+    Object.keys(decoded).sort().join(',') !== 'jobs,kind,version' ||
+    !('version' in decoded) ||
+    decoded.version !== 1 ||
+    !('kind' in decoded) ||
+    decoded.kind !== 'sqlite-restore-sequence' ||
+    !('jobs' in decoded) ||
+    !Array.isArray(decoded.jobs) ||
+    decoded.jobs.length > TENANT_BACKUP_MAX_SQLITE_DATASETS ||
+    decoded.jobs.some(
+      (job) =>
+        !job ||
+        typeof job !== 'object' ||
+        Array.isArray(job) ||
+        Object.keys(job).sort().join(',') !==
+          'bundleId,datasetId,manifestDigest,policyDigest,table,targetId,targetOrdinal' ||
+        !/^[A-Za-z0-9_.:-]{1,256}$/.test(String(job.targetId)) ||
+        !Number.isSafeInteger(job.targetOrdinal) ||
+        job.targetOrdinal < 0 ||
+        !/^[A-Za-z0-9_.:-]{1,256}$/.test(String(job.datasetId)) ||
+        !/^[a-f0-9]{32}$/.test(String(job.bundleId)) ||
+        !/^[A-Za-z_][A-Za-z0-9_]*$/.test(String(job.table)) ||
+        !/^[a-f0-9]{64}$/.test(String(job.manifestDigest)) ||
+        !/^[a-f0-9]{64}$/.test(String(job.policyDigest))
+    )
+  )
+    throw fail();
+  return decoded.jobs as Job[];
+}
+
+/** Locate one dataset's target from the sealed server-built restore sequence. */
+export async function loadPlannedSqliteRestoreSequenceJob(
+  inventory: TenantBackupRestorePlanInventoryPort,
+  lease: TenantBackupStepContext['lease'],
+  planDigest: string,
+  datasetId: string
+): Promise<{ sequenceOrdinal: number; job: Readonly<PlannedSqliteRestoreSequenceJob> }> {
+  if (!/^[a-f0-9]{64}$/.test(planDigest) || !/^[A-Za-z0-9_.:-]{1,256}$/.test(datasetId))
+    throw fail();
+  const head = await inventory.headForLease(lease);
+  if (head.state !== 'sealed' || head.chain_digest !== planDigest) throw fail();
+  let sequence: { ordinal: number; item_id: string; payload_json: string } | undefined;
+  for (let from = 0; from < head.item_count; from += 16) {
+    const rows = await inventory.readPage(from);
+    for (const row of rows) {
+      if (row.item_id !== 'sqlite-restore-sequence') continue;
+      if (sequence) throw fail();
+      sequence = row;
+    }
+  }
+  if (!sequence) throw fail();
+  const matches = decodeJobs(sequence.payload_json).filter((job) => job.datasetId === datasetId);
+  if (matches.length !== 1) throw fail();
+  await inventory.headForLease(lease);
+  return { sequenceOrdinal: sequence.ordinal, job: Object.freeze({ ...matches[0] }) };
+}
 async function hash(bytes: Uint8Array): Promise<string> {
   const digest = await crypto.subtle.digest('SHA-256', new Uint8Array(bytes));
   return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, '0')).join('');
@@ -170,20 +238,7 @@ export async function runSqliteRestoreSequenceStep(
   const head = await input.inventory.headForLease(context.lease);
   const rows = await input.inventory.readPage(input.sequenceOrdinal);
   if (!rows.length || rows[0].item_id !== 'sqlite-restore-sequence') throw fail();
-  const decoded: unknown = JSON.parse(rows[0].payload_json);
-  if (
-    !decoded ||
-    typeof decoded !== 'object' ||
-    !('version' in decoded) ||
-    decoded.version !== 1 ||
-    !('kind' in decoded) ||
-    decoded.kind !== 'sqlite-restore-sequence' ||
-    !('jobs' in decoded) ||
-    !Array.isArray(decoded.jobs) ||
-    decoded.jobs.length > TENANT_BACKUP_MAX_SQLITE_DATASETS
-  )
-    throw fail();
-  const jobs = decoded.jobs as Job[]; // Created by the installed planner and protected by inventory digests.
+  const jobs = decodeJobs(rows[0].payload_json);
   const cursor: unknown = JSON.parse(context.operation.cursor_json ?? 'null');
   if (
     !cursor ||

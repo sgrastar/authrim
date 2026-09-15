@@ -270,17 +270,30 @@ describe('tenant backup validated input production port', () => {
   it('loads installed policies for every validated SQL dataset used by restore planning', async () => {
     const { value } = ports();
     const loaded = await value.loadValidatedSqliteDatasets(context);
-    expect(loaded).toEqual([
-      expect.objectContaining({
-        manifest: expect.objectContaining({ bundleId }),
-        policy,
-      }),
-    ]);
+    expect(loaded).toHaveLength(1);
+    expect(loaded[0]?.manifest.bundleId).toBe(bundleId);
+    expect(loaded[0]?.policy).toEqual(policy);
     expect(mocks.executionValidated).toHaveBeenCalledTimes(2);
     expect(mocks.plannedInputs).toHaveBeenCalledWith(
       context,
       expect.anything(),
       expect.objectContaining({ source: request.intent.source })
+    );
+  });
+
+  it('loads a validated non-SQL sidecar source by installed dataset identity', async () => {
+    const { value } = ports();
+    const loaded = await value.loadValidatedDatasetById(context, digest, dataset.id);
+
+    expect(loaded.policy).toEqual(policy);
+    expect(loaded.manifest.bundleId).toBe(bundleId);
+    await expect(loaded.readNextValidatedRow({ sourceCursor: null })).resolves.toEqual({
+      rowJson: '{"id":["text","user-a"]}',
+      nextCursor: '{}',
+    });
+    expect(mocks.datasetStart).toHaveBeenCalledWith(bundleId, dataset.id, expect.anything());
+    expect(mocks.readNext).toHaveBeenCalledWith(
+      expect.objectContaining({ datasetId: dataset.id, planDigest: digest })
     );
   });
 });

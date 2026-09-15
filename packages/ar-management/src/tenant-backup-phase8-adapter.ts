@@ -15,6 +15,9 @@ import {
 } from '@authrim/ar-lib-core/services/tenant-portability/portable-tenant-key';
 import type { TenantBackupStepContext } from '@authrim/ar-lib-core/services/tenant-portability/operation-executor';
 import { TenantBackupRestoreHoldStore } from '@authrim/ar-lib-core/services/tenant-portability/restore-hold-store';
+import { DatabaseTenantBackupRestorePlanInventory } from '@authrim/ar-lib-core/services/tenant-portability/restore-plan-inventory';
+import { openPlannedSqliteRestoreTarget } from '@authrim/ar-lib-core/services/tenant-portability/sqlite-restore-plan';
+import { loadPlannedSqliteRestoreSequenceJob } from '@authrim/ar-lib-core/services/tenant-portability/restore-sqlite-sequence';
 import {
   createUserAvatarDatasetPolicy,
   USER_AVATARS_DATASET,
@@ -61,8 +64,18 @@ export interface Phase8InstalledAdapterPorts extends Omit<
   rowTransform: Omit<Phase8SensitiveRowTransformPort, 'transformAdminEnvelope'>;
   otherStores: Omit<
     Phase8OtherStorePorts,
-    'restoreAdminEnvelope' | 'verifyAdminEnvelope' | 'importR2Chunk' | 'verifyR2Chunk'
-  >;
+    | 'phase4'
+    | 'loadSqlite'
+    | 'loadRecord'
+    | 'loadPhase8Sqlite'
+    | 'loadPhase8Record'
+    | 'restoreAdminEnvelope'
+    | 'verifyAdminEnvelope'
+    | 'importR2Chunk'
+    | 'verifyR2Chunk'
+  > & {
+    phase4: Omit<Phase8OtherStorePorts['phase4'], 'load' | 'loadKeyManager' | 'loadRecord'>;
+  };
   recordSnapshots: Omit<Phase5InstalledAdapterPorts['recordSnapshots'], 'validateAdminEnvelope'> & {
     validatePhase8Envelope(datasetId: string, row: PortableSqliteRow): Promise<void>;
     userAvatars: Phase5InstalledAdapterPorts['recordSnapshots']['publicAssets'];
@@ -189,14 +202,6 @@ export function createPhase8TenantBackupInstalledAdapter(
     }
     return rowJson;
   };
-  const otherStores = {
-    ...input.ports.otherStores,
-    ...r2Objects,
-    restoreAdminEnvelope: (...args: Parameters<typeof adminEnvelopes.restoreAdminEnvelope>) =>
-      adminEnvelopes.restoreAdminEnvelope(...args),
-    verifyAdminEnvelope: (...args: Parameters<typeof adminEnvelopes.verifyAdminEnvelope>) =>
-      adminEnvelopes.verifyAdminEnvelope(...args),
-  };
   const policyInput: Parameters<typeof createPhase8SqliteInspectionPolicies>[1] = {
     tenantKey: input.ports.tenantKey,
     validateAdminEnvelope: (datasetId, rowValue) =>
@@ -259,6 +264,61 @@ export function createPhase8TenantBackupInstalledAdapter(
       input.ports.import.assertUnpublishedTarget(context, planDigest),
     now: input.now,
   });
+  const loadValidatedRecord = (
+    context: TenantBackupStepContext,
+    planDigest: string,
+    datasetId: string
+  ) => validatedInput.loadValidatedDatasetById(context, planDigest, datasetId);
+  const loadValidatedSqlite = async (
+    context: TenantBackupStepContext,
+    planDigest: string,
+    purpose: 'restore' | 'verify',
+    datasetId: string
+  ) => {
+    const inventory = new DatabaseTenantBackupRestorePlanInventory(database, context.lease, now);
+    const { job } = await loadPlannedSqliteRestoreSequenceJob(
+      inventory,
+      context.lease,
+      planDigest,
+      datasetId
+    );
+    const source = await validatedInput.loadValidatedDatasetById(context, planDigest, datasetId);
+    const target = await openPlannedSqliteRestoreTarget({
+      context,
+      inventory,
+      ordinal: job.targetOrdinal,
+      targetId: job.targetId,
+      now,
+      mode: purpose === 'restore' ? 'write' : 'verify',
+      resolve: (resourceId, provisioningId) =>
+        input.ports.import.resolveRestoreTarget(context, resourceId, provisioningId),
+      assertValidatedUnpublishedPlan: (digest) =>
+        validatedInput.assertValidatedUnpublishedPlan(context, digest),
+    });
+    return { ...source, target };
+  };
+  const otherStores: Phase8OtherStorePorts = {
+    ...input.ports.otherStores,
+    phase4: {
+      ...input.ports.otherStores.phase4,
+      load: loadValidatedSqlite,
+      loadKeyManager: (context, planDigest) =>
+        loadValidatedRecord(context, planDigest, 'credentials.key_manager_tenant_state'),
+      loadRecord: (context, planDigest, _purpose, datasetId) =>
+        loadValidatedRecord(context, planDigest, datasetId),
+    },
+    loadSqlite: loadValidatedSqlite,
+    loadRecord: (context, planDigest, _purpose, datasetId) =>
+      loadValidatedRecord(context, planDigest, datasetId),
+    loadPhase8Sqlite: loadValidatedSqlite,
+    loadPhase8Record: (context, planDigest, _purpose, datasetId) =>
+      loadValidatedRecord(context, planDigest, datasetId),
+    ...r2Objects,
+    restoreAdminEnvelope: (...args: Parameters<typeof adminEnvelopes.restoreAdminEnvelope>) =>
+      adminEnvelopes.restoreAdminEnvelope(...args),
+    verifyAdminEnvelope: (...args: Parameters<typeof adminEnvelopes.verifyAdminEnvelope>) =>
+      adminEnvelopes.verifyAdminEnvelope(...args),
+  };
   const r2Policies = createPortableR2ObjectDatasetPolicies();
   installed = createPhase5TenantBackupInstalledAdapter({
     env: input.env,
