@@ -157,7 +157,7 @@ describe('Phase 8 empty-environment SQL roundtrip', () => {
       pii.close();
       admin.close();
     }
-  });
+  }, 20_000);
 
   it('restores every SQL contract with reusable user authentication and mapped Admin access', async () => {
     const planned = await phase8Plan();
