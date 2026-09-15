@@ -345,7 +345,12 @@ async function encodeTargetBody(
     !LOG_TYPES.includes(logType as (typeof LOG_TYPES)[number]) ||
     !LOG_PLANES.includes(plane as (typeof LOG_PLANES)[number]) ||
     !LOG_CHUNK_COMPRESSION.includes(compression as (typeof LOG_CHUNK_COMPRESSION)[number]) ||
-    source.bucketBinding !== 'AUDIT_ARCHIVE'
+    source.bucketBinding !==
+      (plane === 'sensitive_detail'
+        ? 'SENSITIVE_DETAILS'
+        : plane === 'diagnostic_detail'
+          ? 'DIAGNOSTIC_LOGS'
+          : 'AUDIT_ARCHIVE')
   )
     invalid();
   const keyBytes = await deriveLogChunkEncryptionKey({

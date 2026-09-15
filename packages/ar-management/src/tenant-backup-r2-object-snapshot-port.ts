@@ -177,7 +177,12 @@ function validateDescriptor(
       !LOG_CHUNK_COMPRESSION.includes(descriptor.context.compression) ||
       !Number.isSafeInteger(descriptor.context.keyVersion) ||
       descriptor.context.keyVersion < 1 ||
-      descriptor.bucketBinding !== 'AUDIT_ARCHIVE')
+      descriptor.bucketBinding !==
+        (descriptor.context.plane === 'sensitive_detail'
+          ? 'SENSITIVE_DETAILS'
+          : descriptor.context.plane === 'diagnostic_detail'
+            ? 'DIAGNOSTIC_LOGS'
+            : 'AUDIT_ARCHIVE'))
   )
     invalid();
 }
@@ -433,8 +438,11 @@ export function createTenantBackupR2ObjectSnapshotPorts(input: {
     createEncryptedTenantBackupRecordSnapshotPort({
       env: input.env,
       resourceId: `r2-bodies:${datasetId}`,
-      assertSource: input.assertSource,
-      capture: (context) => captureDataset(input.env, context, datasetId, input.list),
+      assertSource: (context) => input.assertSource(context),
+      capture: (context) =>
+        captureDataset(input.env, context, datasetId, (listContext, listDatasetId) =>
+          input.list(listContext, listDatasetId)
+        ),
     });
   return {
     artifactObjects: snapshot('artifacts.object_catalog_bodies'),

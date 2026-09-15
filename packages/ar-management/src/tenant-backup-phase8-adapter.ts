@@ -38,6 +38,8 @@ import { createTenantBackupAdminEnvelopePorts } from './tenant-backup-admin-enve
 import { createTenantBackupValidatedInputPorts } from './tenant-backup-validated-input-port';
 import { createTenantBackupR2ObjectRestorePorts } from './tenant-backup-r2-object-restore-port';
 import { createTenantBackupR2CatalogFinalizer } from './tenant-backup-r2-catalog-finalizer';
+import { createTenantBackupR2CatalogLister } from './tenant-backup-r2-catalog-lister';
+import { createTenantBackupR2ObjectSnapshotPorts } from './tenant-backup-r2-object-snapshot-port';
 
 export interface Phase8InstalledAdapterPorts extends Omit<
   Phase5InstalledAdapterPorts,
@@ -55,8 +57,6 @@ export interface Phase8InstalledAdapterPorts extends Omit<
   recordSnapshots: Omit<Phase5InstalledAdapterPorts['recordSnapshots'], 'validateAdminEnvelope'> & {
     validatePhase8Envelope(datasetId: string, row: PortableSqliteRow): Promise<void>;
     userAvatars: Phase5InstalledAdapterPorts['recordSnapshots']['publicAssets'];
-    artifactObjects: Phase5InstalledAdapterPorts['recordSnapshots']['publicAssets'];
-    logArchiveObjects: Phase5InstalledAdapterPorts['recordSnapshots']['publicAssets'];
   };
 }
 
@@ -104,6 +104,11 @@ export function createPhase8TenantBackupInstalledAdapter(
   const keyVersion = Number(keyVersionValue);
   const now = input.now ?? Date.now;
   const adminEnvelopes = createTenantBackupAdminEnvelopePorts(input.env);
+  const r2Snapshots = createTenantBackupR2ObjectSnapshotPorts({
+    env: input.env,
+    assertSource: (context) => input.ports.export.assertSources(context),
+    list: createTenantBackupR2CatalogLister({ tenantKey: input.ports.tenantKey }),
+  });
   const r2Objects = createTenantBackupR2ObjectRestorePorts({
     env: input.env,
     database,
@@ -234,12 +239,12 @@ export function createPhase8TenantBackupInstalledAdapter(
         {
           dataset: ARTIFACT_OBJECT_BODIES_DATASET,
           policy: requireR2Policy(r2Policies, ARTIFACT_OBJECT_BODIES_DATASET.id),
-          port: input.ports.recordSnapshots.artifactObjects,
+          port: r2Snapshots.artifactObjects,
         },
         {
           dataset: LOG_ARCHIVE_OBJECT_BODIES_DATASET,
           policy: requireR2Policy(r2Policies, LOG_ARCHIVE_OBJECT_BODIES_DATASET.id),
-          port: input.ports.recordSnapshots.logArchiveObjects,
+          port: r2Snapshots.logArchiveObjects,
         },
       ],
     },
