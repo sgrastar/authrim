@@ -35,6 +35,7 @@ import {
 } from '@authrim/ar-lib-core/services/tenant-portability/sqlite-snapshot';
 import { sqliteSnapshotStartStatement } from '@authrim/ar-lib-core/services/tenant-portability/sqlite-capture-plan';
 import { decryptValue, encryptValue } from '@authrim/ar-lib-core/utils/pii-encryption';
+import { hashPassword, verifyPassword } from '@authrim/ar-lib-core/utils/crypto';
 import {
   createPhase8TenantBackupRowFilter,
   createPhase8TenantBackupRowTransform,
@@ -172,6 +173,8 @@ describe('Phase 8 empty-environment SQL roundtrip', () => {
       admin: freshDatabase('admin'),
     };
     try {
+      const sourceUserPassword = 'phase8-existing-user-password';
+      const sourceUserPasswordHash = await hashPassword(sourceUserPassword);
       const totp = await encryptValue('JBSWY3DPEHPK3PXP', sourcePiiKey, 'AES-256-GCM', 3);
       const access = await encryptUpstreamProviderSecret('access-token', sourceRpKey);
       const refresh = await encryptUpstreamProviderSecret('refresh-token', sourceRpKey);
@@ -181,7 +184,7 @@ describe('Phase 8 empty-environment SQL roundtrip', () => {
         INSERT INTO users_core(
           id,tenant_id,email_verified,password_hash,is_active,user_type,pii_partition,pii_status,
           created_at,updated_at,status,lifecycle_state
-        ) VALUES('user-a','tenant-a',1,'password-hash',1,'end_user','default','active',1,1,'active','active');
+        ) VALUES('user-a','tenant-a',1,'${sourceUserPasswordHash}',1,'end_user','default','active',1,1,'active','active');
         INSERT INTO identity_subjects(
           id,tenant_id,subject_type,lifecycle_state,display_label,created_at,updated_at
         ) VALUES('subject-a','tenant-a','human','active','User A',1,1);
@@ -461,11 +464,12 @@ describe('Phase 8 empty-environment SQL roundtrip', () => {
       expect(
         target.core.prepare("SELECT tenant_key FROM tenants WHERE id='tenant-a'").get()
       ).toEqual({ tenant_key: targetTenantKey });
-      expect(
-        target.core.prepare("SELECT password_hash FROM users_core WHERE id='user-a'").get()
-      ).toEqual({
-        password_hash: 'password-hash',
-      });
+      const targetUser = target.core
+        .prepare("SELECT password_hash FROM users_core WHERE id='user-a'")
+        .get() as { password_hash: string };
+      expect(targetUser.password_hash).toBe(sourceUserPasswordHash);
+      expect(await verifyPassword(sourceUserPassword, targetUser.password_hash)).toBe(true);
+      expect(await verifyPassword('wrong-password', targetUser.password_hash)).toBe(false);
       const targetTotpRow = target.core
         .prepare(
           "SELECT secret_encrypted,secret_key_version FROM totp_credentials WHERE id='totp-a'"
