@@ -27,6 +27,30 @@ export interface PlannedSqliteRestoreSequenceJob {
 type Job = PlannedSqliteRestoreSequenceJob;
 const fail = () => new Error('backup_restore_sequence_invalid');
 
+function isJob(value: unknown): value is Job {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const job = value as Record<string, unknown>;
+  return (
+    Object.keys(job).sort().join(',') ===
+      'bundleId,datasetId,manifestDigest,policyDigest,table,targetId,targetOrdinal' &&
+    typeof job.targetId === 'string' &&
+    /^[A-Za-z0-9_.:-]{1,256}$/.test(job.targetId) &&
+    typeof job.targetOrdinal === 'number' &&
+    Number.isSafeInteger(job.targetOrdinal) &&
+    job.targetOrdinal >= 0 &&
+    typeof job.datasetId === 'string' &&
+    /^[A-Za-z0-9_.:-]{1,256}$/.test(job.datasetId) &&
+    typeof job.bundleId === 'string' &&
+    /^[a-f0-9]{32}$/.test(job.bundleId) &&
+    typeof job.table === 'string' &&
+    /^[A-Za-z_][A-Za-z0-9_]*$/.test(job.table) &&
+    typeof job.manifestDigest === 'string' &&
+    /^[a-f0-9]{64}$/.test(job.manifestDigest) &&
+    typeof job.policyDigest === 'string' &&
+    /^[a-f0-9]{64}$/.test(job.policyDigest)
+  );
+}
+
 function decodeJobs(value: string): Job[] {
   let decoded: unknown;
   try {
@@ -46,22 +70,7 @@ function decodeJobs(value: string): Job[] {
     !('jobs' in decoded) ||
     !Array.isArray(decoded.jobs) ||
     decoded.jobs.length > TENANT_BACKUP_MAX_SQLITE_DATASETS ||
-    decoded.jobs.some(
-      (job) =>
-        !job ||
-        typeof job !== 'object' ||
-        Array.isArray(job) ||
-        Object.keys(job).sort().join(',') !==
-          'bundleId,datasetId,manifestDigest,policyDigest,table,targetId,targetOrdinal' ||
-        !/^[A-Za-z0-9_.:-]{1,256}$/.test(String(job.targetId)) ||
-        !Number.isSafeInteger(job.targetOrdinal) ||
-        job.targetOrdinal < 0 ||
-        !/^[A-Za-z0-9_.:-]{1,256}$/.test(String(job.datasetId)) ||
-        !/^[a-f0-9]{32}$/.test(String(job.bundleId)) ||
-        !/^[A-Za-z_][A-Za-z0-9_]*$/.test(String(job.table)) ||
-        !/^[a-f0-9]{64}$/.test(String(job.manifestDigest)) ||
-        !/^[a-f0-9]{64}$/.test(String(job.policyDigest))
-    )
+    decoded.jobs.some((job: unknown) => !isJob(job))
   )
     throw fail();
   return decoded.jobs as Job[];
