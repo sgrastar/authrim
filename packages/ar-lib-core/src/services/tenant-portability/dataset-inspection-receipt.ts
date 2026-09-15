@@ -2,7 +2,10 @@ import type { DatabaseAdapter } from '../../db/adapter';
 import type { TenantBackupStepContext } from './operation-executor';
 import type { TenantBundleManifest } from './bundle-manifest';
 import { encodeTenantBundleManifest } from './bundle-manifest';
-import type { SqliteDatasetInspectionPolicy } from './sqlite-dataset-inspector';
+import {
+  sqliteDatasetInspectionPolicyDescriptor,
+  type SqliteDatasetInspectionPolicy,
+} from './sqlite-dataset-inspector';
 import { TenantBackupInputReceipts } from './input-receipts';
 import { DatabaseTenantBundleReferenceIndex } from './validation-index';
 
@@ -79,18 +82,7 @@ export async function finalizeSqliteDatasetInspection(
     fail();
   const manifestSha256 = await hash(encodeTenantBundleManifest(input.manifest, input.manifest));
   const policySha256 = await hash(
-    new TextEncoder().encode(
-      JSON.stringify({
-        dataset: input.policy.dataset,
-        schema: input.policy.schema,
-        parentDataset: input.policy.parentDataset,
-        tenantKey: input.policy.tenantKey,
-        restoreAfter: input.policy.restoreAfter,
-        deferredColumns: input.policy.deferredColumns,
-        restoreOverrides: input.policy.restoreOverrides,
-        verificationIgnoredColumns: input.policy.verificationIgnoredColumns,
-      })
-    )
+    new TextEncoder().encode(JSON.stringify(sqliteDatasetInspectionPolicyDescriptor(input.policy)))
   );
   signal.throwIfAborted();
   await input.assertPinnedInput();

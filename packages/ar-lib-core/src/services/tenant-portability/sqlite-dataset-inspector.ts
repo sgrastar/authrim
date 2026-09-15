@@ -1,5 +1,6 @@
 import type { TenantBundleInspectorFactory } from './bundle-validation';
 import type { TenantPortableDataset } from './module-contract';
+import type { TenantBackupStepContext } from './operation-executor';
 import type { TenantPortableDependency, TenantPortableRecordIdentity } from './reference-contract';
 import type { CaptureSchema } from './sqlite-snapshot';
 import { sqliteSnapshotRowInsert } from './sqlite-row-codec';
@@ -18,6 +19,24 @@ export interface SqliteDatasetInspectionPolicy {
   restoreOverrides?: Readonly<Record<string, readonly [string, string | null]>>;
   /** Columns verified by an installed secret sidecar instead of byte equality. */
   verificationIgnoredColumns?: readonly string[];
+  /** Validate and inventory the source rows, but do not materialize them in the restore target. */
+  restoreDisposition?: 'reference_only';
+  /** Installed, versioned row rewrite applied after validation and before every target operation. */
+  restoreTransform?: {
+    id: string;
+    transform(
+      context: TenantBackupStepContext,
+      rowJson: string,
+      mode: 'write' | 'defer' | 'verify'
+    ): Promise<string>;
+  };
+  /** Quarantine selected source work instead of inserting it into a live target queue. */
+  restoreHold?: {
+    id: string;
+    shouldHold(context: TenantBackupStepContext, rowJson: string): Promise<boolean>;
+    write(context: TenantBackupStepContext, rowJson: string): Promise<void>;
+    verify(context: TenantBackupStepContext, rowJson: string): Promise<void>;
+  };
   /** Required for parent-owned rows: identify the parent's installed dataset. */
   parentDataset?: Pick<TenantPortableDataset, 'id' | 'module'>;
   /** Authoritative tenant key, when storage ownership uses it instead of tenant ID. */
@@ -29,6 +48,57 @@ export interface SqliteDatasetInspectionPolicy {
     row: PortableSqliteRow,
     identity: TenantPortableRecordIdentity
   ) => Promise<readonly TenantPortableDependency[]>;
+}
+
+/** Clone an installed policy without attempting to structured-clone executable callbacks. */
+export function cloneSqliteDatasetInspectionPolicy(
+  policy: SqliteDatasetInspectionPolicy
+): SqliteDatasetInspectionPolicy {
+  const { inspectRow, restoreTransform, restoreHold, ...serializable } = policy;
+  return {
+    ...structuredClone(serializable),
+    inspectRow,
+    ...(restoreTransform
+      ? {
+          restoreTransform: {
+            id: restoreTransform.id,
+            transform: (context, rowJson, mode) =>
+              restoreTransform.transform(context, rowJson, mode),
+          },
+        }
+      : {}),
+    ...(restoreHold
+      ? {
+          restoreHold: {
+            id: restoreHold.id,
+            shouldHold: (context: TenantBackupStepContext, rowJson: string) =>
+              restoreHold.shouldHold(context, rowJson),
+            write: (context: TenantBackupStepContext, rowJson: string) =>
+              restoreHold.write(context, rowJson),
+            verify: (context: TenantBackupStepContext, rowJson: string) =>
+              restoreHold.verify(context, rowJson),
+          },
+        }
+      : {}),
+  };
+}
+
+/** Serializable policy contract pinned into validation and restore plan digests. */
+export function sqliteDatasetInspectionPolicyDescriptor(policy: SqliteDatasetInspectionPolicy) {
+  return {
+    dataset: policy.dataset,
+    schema: policy.schema,
+    parentDataset: policy.parentDataset,
+    tenantKey: policy.tenantKey,
+    partitions: policy.partitions,
+    restoreAfter: policy.restoreAfter,
+    deferredColumns: policy.deferredColumns,
+    restoreOverrides: policy.restoreOverrides,
+    verificationIgnoredColumns: policy.verificationIgnoredColumns,
+    restoreDisposition: policy.restoreDisposition,
+    restoreTransformId: policy.restoreTransform?.id,
+    restoreHoldId: policy.restoreHold?.id,
+  };
 }
 const MAX_ROW_BYTES = 16 * 1024 * 1024;
 const MAX_CHUNK_BYTES = 4 * 1024 * 1024;
@@ -55,7 +125,7 @@ export function createSqliteDatasetInspectorFactory(
   policy: SqliteDatasetInspectionPolicy
 ): TenantBundleInspectorFactory {
   const { inspectRow } = policy;
-  const pinned = structuredClone({ ...policy, inspectRow: undefined });
+  const pinned = structuredClone(sqliteDatasetInspectionPolicyDescriptor(policy));
   return async (dataset, manifest) => {
     if (
       Object.keys(pinned.dataset).some(
@@ -69,6 +139,21 @@ export function createSqliteDatasetInspectorFactory(
     )
       invalid();
     const schema = pinned.schema;
+    if (
+      (pinned.restoreDisposition !== undefined && pinned.restoreDisposition !== 'reference_only') ||
+      (pinned.restoreTransformId !== undefined &&
+        !/^[a-z0-9][a-z0-9_.:-]{0,127}$/.test(pinned.restoreTransformId)) ||
+      (pinned.restoreHoldId !== undefined &&
+        !/^[a-z0-9][a-z0-9_.:-]{0,127}$/.test(pinned.restoreHoldId)) ||
+      (pinned.restoreDisposition === 'reference_only' &&
+        (pinned.deferredColumns !== undefined ||
+          pinned.restoreOverrides !== undefined ||
+          pinned.verificationIgnoredColumns !== undefined ||
+          pinned.restoreTransformId !== undefined ||
+          pinned.restoreHoldId !== undefined)) ||
+      (pinned.restoreHoldId !== undefined && pinned.deferredColumns !== undefined)
+    )
+      invalid();
     if (
       pinned.deferredColumns !== undefined &&
       (!pinned.deferredColumns.length ||
@@ -101,7 +186,8 @@ export function createSqliteDatasetInspectorFactory(
           (column) =>
             !schema.columns.includes(column) ||
             schema.primaryKey.includes(column) ||
-            !Object.hasOwn(pinned.restoreOverrides ?? {}, column)
+            (!Object.hasOwn(pinned.restoreOverrides ?? {}, column) &&
+              pinned.restoreTransformId === undefined)
         ))
     )
       invalid();

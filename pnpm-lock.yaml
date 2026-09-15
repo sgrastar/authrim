@@ -718,6 +718,9 @@ importers:
       '@authrim/ar-lib-scim':
         specifier: workspace:*
         version: link:../ar-lib-scim
+      '@authrim/ar-saml':
+        specifier: workspace:^
+        version: link:../ar-saml
       '@simplewebauthn/server':
         specifier: ^13.2.2
         version: 13.2.2

@@ -73,16 +73,23 @@ function database(
   datasets = [
     { dataset_id: 'admin.clients', record_count: 2 },
     { dataset_id: 'core.tenant_settings', record_count: 1 },
-  ]
+  ],
+  mappingCounts = { source_count: 0, mapped_count: 0 },
+  mappingHead: { revision: number; state: string; sealed_digest: string | null } | null = null,
+  heldRecords: { dataset_id: string; reason: string; item_count: number }[] = []
 ) {
   return {
-    query: vi.fn(async (sql: string) =>
-      sql.includes('tenant_backup_dataset_inspections') ? datasets : [state.operation]
-    ),
+    query: vi.fn(async (sql: string) => {
+      if (sql.includes('tenant_backup_dataset_inspections')) return datasets;
+      if (sql.includes('tenant_backup_restored_holds')) return heldRecords;
+      return [state.operation];
+    }),
     queryOne: vi.fn(async (sql: string) => {
       if (sql.includes('tenant_backup_publications')) return null;
       if (sql.includes('tenant_backup_restore_plan_inventories'))
         return { state: 'sealed', item_count: 2, chain_digest: planDigest };
+      if (sql.includes('AS source_count')) return mappingCounts;
+      if (sql.includes('tenant_backup_admin_mapping_heads')) return mappingHead;
       return state.operation;
     }),
     execute: vi.fn(async () => ({ rowsAffected: 0 })),
@@ -108,6 +115,45 @@ it('returns a secret-free restore preview with durable dataset totals', async ()
   const json = JSON.stringify(result?.view);
   expect(json).not.toContain('PRIVATE');
   expect(json).not.toContain('restoreCursor');
+  expect(result?.view.heldRecords).toEqual([]);
+});
+
+it('reports encrypted source work held outside live queues', async () => {
+  state.operation = { ...state.operation, state: 'ready', phase: 'ready' };
+  const model = new TenantBackupOperationReadModel(
+    database(digest, [], undefined, null, [
+      { dataset_id: 'core.plugin_hook_outbox', reason: 'source_outbox', item_count: 3 },
+    ]) as never
+  );
+  const result = await model.get('tenant-a', 'operation-a', 300);
+  expect(result?.view.heldRecords).toEqual([
+    { datasetId: 'core.plugin_hook_outbox', reason: 'source_outbox', count: 3 },
+  ]);
+});
+
+it('blocks approval until every source Admin has an explicit target mapping', async () => {
+  state.intent = {
+    ...state.intent,
+    selection: { ...(state.intent?.selection as object), admin: true },
+  };
+  const model = new TenantBackupOperationReadModel(
+    database(
+      digest,
+      [{ dataset_id: 'admin.admin_users', record_count: 2 }],
+      { source_count: 2, mapped_count: 1 },
+      { revision: 1, state: 'open', sealed_digest: null }
+    ) as never
+  );
+  const result = await model.get('tenant-a', 'operation-a', 300);
+  expect(result?.view.adminMapping).toEqual({
+    revision: 1,
+    state: 'open',
+    sourceCount: 2,
+    mappedCount: 1,
+    complete: false,
+    digest: null,
+  });
+  expect(result?.view.preview?.canApprove).toBe(false);
 });
 
 it('fails closed when the persisted preview no longer matches the sealed plan', async () => {

@@ -219,6 +219,34 @@ describe('KeyManager Durable Object', () => {
     ).rejects.toThrow('backup_key_manager_target_not_empty');
   });
 
+  it('keeps an operation snapshot stable until explicit release', async () => {
+    const snapshotId = 'ab'.repeat(32);
+    await keyManager.startTenantBackupSnapshotRpc(snapshotId);
+    const frozen = await keyManager.loadTenantBackupSnapshotRpc(snapshotId);
+
+    await keyManager.rotateSecretRpc('directory:tenant-a');
+    expect(await keyManager.exportTenantBackupStateRpc()).not.toEqual(frozen);
+    await expect(keyManager.loadTenantBackupSnapshotRpc(snapshotId)).resolves.toEqual(frozen);
+    await expect(keyManager.startTenantBackupSnapshotRpc(snapshotId)).resolves.toBeUndefined();
+
+    await expect(keyManager.assertTenantBackupSnapshotReleasedRpc(snapshotId)).rejects.toThrow(
+      'backup_key_manager_snapshot_not_released'
+    );
+    await keyManager.releaseTenantBackupSnapshotRpc(snapshotId);
+    await expect(
+      keyManager.assertTenantBackupSnapshotReleasedRpc(snapshotId)
+    ).resolves.toBeUndefined();
+    await expect(keyManager.loadTenantBackupSnapshotRpc(snapshotId)).rejects.toThrow(
+      'backup_key_manager_snapshot_missing'
+    );
+  });
+
+  it('rejects malformed tenant backup snapshot identifiers', async () => {
+    await expect(keyManager.startTenantBackupSnapshotRpc('../state')).rejects.toThrow(
+      'backup_key_manager_snapshot_id_invalid'
+    );
+  });
+
   describe('purpose-separated OIDC signing keys', () => {
     it('publishes a dedicated ES256 key without reusing VC EC state', async () => {
       const keys = await keyManager.getAllOIDCPublicKeysRpc();

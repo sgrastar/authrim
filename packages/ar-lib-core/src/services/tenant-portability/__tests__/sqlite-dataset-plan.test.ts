@@ -261,7 +261,6 @@ it('pins tenantKey separately from tenant ID for logs and parent-owned key versi
 
 it('binds Admin children to their resource parent, never their actor identifiers', () => {
   for (const [child, parent, column] of [
-    ['admin_passkeys', 'admin_users', 'admin_user_id'],
     ['agent_task_set_versions', 'agent_task_sets', 'task_set_id'],
     ['agent_scope_policy_versions', 'agent_scope_policies', 'scope_policy_id'],
     ['approval_request_approvals', 'approval_requests', 'approval_request_id'],
@@ -339,7 +338,6 @@ it('plans the new Admin ownership adapters against manifest-selected migrations'
   if (!stream) throw new Error('missing_admin_stream');
   const plan = planSqliteTenantDatasets('admin', stream.tables, { ...selection, admin: true });
   for (const table of [
-    'admin_passkeys',
     'agent_task_set_versions',
     'agent_scope_policy_versions',
     'approval_request_approvals',
@@ -349,4 +347,9 @@ it('plans the new Admin ownership adapters against manifest-selected migrations'
     expect(entry?.concerns, table).toEqual([]);
     expect(entry?.capture, table).not.toBeNull();
   }
+  expect(plan.entries.find((entry) => entry.table === 'admin_passkeys')).toMatchObject({
+    selection: { action: 'excluded', reason: 'ephemeral' },
+    capture: null,
+    concerns: [],
+  });
 });

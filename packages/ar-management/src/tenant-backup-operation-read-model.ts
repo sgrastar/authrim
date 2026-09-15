@@ -8,6 +8,14 @@ import {
   type TenantBackupRequestIntent,
 } from '@authrim/ar-lib-core/services/tenant-portability/operation-request';
 import { decodeTenantBackupRestoreApprovalCursor } from '@authrim/ar-lib-core/services/tenant-portability/restore-preview';
+import {
+  TenantBackupAdminMappingStore,
+  type TenantBackupAdminMappingStatus,
+} from '@authrim/ar-lib-core/services/tenant-portability/admin-mapping-store';
+import {
+  TenantBackupRestoreHoldStore,
+  type TenantBackupRestoreHoldSummary,
+} from '@authrim/ar-lib-core/services/tenant-portability/restore-hold-store';
 
 interface PublicationRow {
   expires_at: number;
@@ -36,6 +44,8 @@ export interface TenantBackupOperationSummary {
 export interface TenantBackupOperationView extends TenantBackupOperationSummary {
   selection: TenantBackupRequestIntent['selection'];
   publication: { expiresAt: number; downloadAvailable: boolean } | null;
+  adminMapping: TenantBackupAdminMappingStatus | null;
+  heldRecords: TenantBackupRestoreHoldSummary[];
   preview: {
     planDigest: string;
     datasetCount: number;
@@ -98,7 +108,7 @@ export class TenantBackupOperationReadModel {
     const operation = await this.operations.get(tenantId, operationId);
     if (!operation) return null;
     const intent = await this.requests.load(tenantId, operationId);
-    const [publication, plan, datasets] = await Promise.all([
+    const [publication, plan, datasets, adminMapping, heldRecords] = await Promise.all([
       this.database.queryOne<PublicationRow>(
         'SELECT expires_at FROM tenant_backup_publications WHERE tenant_id=? AND operation_id=?',
         [tenantId, operationId]
@@ -116,6 +126,12 @@ export class TenantBackupOperationReadModel {
          GROUP BY i.dataset_id ORDER BY i.dataset_id LIMIT 4096`,
         [tenantId, operationId]
       ),
+      intent.kind === 'import' && intent.selection.admin
+        ? new TenantBackupAdminMappingStore(this.database).status(tenantId, operationId)
+        : null,
+      intent.kind === 'import'
+        ? new TenantBackupRestoreHoldStore(this.database).summaries(tenantId, operationId)
+        : [],
     ]);
     if (
       datasets.some(
@@ -147,7 +163,7 @@ export class TenantBackupOperationReadModel {
         prerequisites: cursor.preview.prerequisites,
         deliverySafety: cursor.preview.deliverySafety,
         blockers: cursor.preview.blockers,
-        canApprove: cursor.preview.blockers.length === 0,
+        canApprove: cursor.preview.blockers.length === 0 && (adminMapping?.complete ?? true),
       };
     }
     return {
@@ -156,6 +172,8 @@ export class TenantBackupOperationReadModel {
       view: {
         ...summary(operation),
         selection: intent.selection,
+        adminMapping,
+        heldRecords,
         publication: publication
           ? { expiresAt: publication.expires_at, downloadAvailable: publication.expires_at > now }
           : null,

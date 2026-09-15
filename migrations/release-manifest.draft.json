@@ -230,6 +230,14 @@
             {
               "path": "028_tenant_settings_documents.sql",
               "checksum": "374e9cdf2d93f301db92c68a8e488c400339d24ecc9ffd73e31d9102104e0c53"
+            },
+            {
+              "path": "029_tenant_backup_admin_mappings.sql",
+              "checksum": "3daa4ce58bc0c1d0b0291df8b92b36c39c5577dd521699c12ccb657ff393d05e"
+            },
+            {
+              "path": "030_tenant_backup_restored_holds.sql",
+              "checksum": "5fdf017116c187ad814ca44163f4f3f8c3eed58c2fe0fe88a04bbdb6019afc33"
             }
           ]
         },
@@ -627,6 +635,14 @@
         {
           "path": "028_tenant_settings_documents.sql",
           "checksum": "374e9cdf2d93f301db92c68a8e488c400339d24ecc9ffd73e31d9102104e0c53"
+        },
+        {
+          "path": "029_tenant_backup_admin_mappings.sql",
+          "checksum": "3daa4ce58bc0c1d0b0291df8b92b36c39c5577dd521699c12ccb657ff393d05e"
+        },
+        {
+          "path": "030_tenant_backup_restored_holds.sql",
+          "checksum": "5fdf017116c187ad814ca44163f4f3f8c3eed58c2fe0fe88a04bbdb6019afc33"
         }
       ]
     },

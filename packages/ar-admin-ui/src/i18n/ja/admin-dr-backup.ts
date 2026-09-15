@@ -70,12 +70,6 @@ const adminDrBackup = {
 	admin_dr_backup_tenant_title: 'テナントのバックアップと復元',
 	admin_dr_backup_tenant_desc:
 		'このテナントの暗号化ポータブルバックアップを作成し、新しく準備した環境へ復元します。',
-	admin_dr_backup_tenant_scope_settings: '設定データ',
-	admin_dr_backup_tenant_scope_settings_desc:
-		'現在のポータブル形式が対応するテナント設定、署名情報、接続先の秘密情報、公開アセット、プラグイン設定を含みます。',
-	admin_dr_backup_tenant_scope_included: '対象',
-	admin_dr_backup_tenant_scope_future:
-		'ユーザー、Admin、artifact、ログは、復元adapterが利用可能になった段階で選択肢に追加されます。',
 	admin_dr_backup_tenant_export_title: 'バックアップを作成',
 	admin_dr_backup_tenant_export_desc:
 		'16文字以上のpassphraseを指定します。Passphraseがサーバーへ送信されることはありません。',
@@ -100,6 +94,9 @@ const adminDrBackup = {
 	admin_dr_backup_tenant_cancel: 'Cancel',
 	admin_dr_backup_tenant_detail_title: '操作詳細',
 	admin_dr_backup_tenant_selection_title: '対象データ',
+	admin_dr_backup_tenant_selection_desc:
+		'データ分類ごとに個別選択します。同じ選択内容をexportとimportに使用します。',
+	admin_dr_backup_tenant_selection_required: '1つ以上のデータ分類を選択してください。',
 	admin_dr_backup_tenant_selection_settings: '設定データ',
 	admin_dr_backup_tenant_selection_users: 'ユーザーデータ',
 	admin_dr_backup_tenant_selection_admin: 'Adminデータ',
@@ -108,7 +105,10 @@ const adminDrBackup = {
 	admin_dr_backup_tenant_period_days: '{days}日間',
 	admin_dr_backup_tenant_selection_audit_logs: '監査ログ（{period}）',
 	admin_dr_backup_tenant_selection_other_logs: 'その他のログ（{period}）',
+	admin_dr_backup_tenant_selection_audit_logs_plain: '監査ログ',
+	admin_dr_backup_tenant_selection_other_logs_plain: 'その他のログ',
 	admin_dr_backup_tenant_selection_sensitive: '機密ログ項目を含む',
+	admin_dr_backup_tenant_log_period: 'ログ期間',
 	admin_dr_backup_tenant_preview_datasets: '復元計画のdataset',
 	admin_dr_backup_tenant_preview_summary: '復元preview: {datasets} datasets、{records} records',
 	admin_dr_backup_tenant_preview_blocked:
@@ -116,6 +116,17 @@ const adminDrBackup = {
 	admin_dr_backup_tenant_blocker_external: '移行先resourceを解決してください: {id}',
 	admin_dr_backup_tenant_blocker_delivery:
 		'旧環境が停止し、過去の配信が保留されたままであることを確認してください。',
+	admin_dr_backup_tenant_admin_mapping_title: 'Adminの対応付け',
+	admin_dr_backup_tenant_admin_mapping_progress: '移行元Admin {total}件中{mapped}件を対応付け済み',
+	admin_dr_backup_tenant_admin_mapping_source: '移行元Admin ID',
+	admin_dr_backup_tenant_admin_mapping_target: '移行先Admin',
+	admin_dr_backup_tenant_admin_mapping_unassigned: '移行先Adminを選択',
+	admin_dr_backup_tenant_admin_mapping_no_targets:
+		'このテナントに対応付け可能な有効Adminがありません。',
+	admin_dr_backup_tenant_admin_mapping_error: 'Adminの対応付けを更新できませんでした',
+	admin_dr_backup_tenant_held_records:
+		'移行元の処理データ{count}件を暗号化して保留しています。自動実行はされません。',
+	admin_dr_backup_tenant_held_records_details: '保留した移行元処理',
 	admin_dr_backup_tenant_approve_restore: '承認して復元を開始',
 	admin_dr_backup_tenant_download_expires: 'Download期限: {time}',
 	admin_dr_backup_tenant_detail_status: '現在の状態: {status}',

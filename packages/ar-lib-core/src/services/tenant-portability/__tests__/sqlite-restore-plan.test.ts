@@ -547,6 +547,166 @@ it('advances an empty dataset only to verification and rejects a non-advancing s
   expect(target.prepare('SELECT count(*) AS n FROM tenants').get()?.n).toBe(0);
 });
 
+it('reads a reference-only dataset twice without creating or counting target rows', async () => {
+  const referencePolicy: SqliteDatasetInspectionPolicy = {
+    ...policy,
+    dataset: { ...policy.dataset, id: 'admin.admin_users', module: 'admin-auth', kind: 'admin' },
+    restoreDisposition: 'reference_only',
+  };
+  const referenceManifest = { ...manifest, datasets: [referencePolicy.dataset] };
+  await persist();
+  await seal();
+  let phase = 'apply_sqlite_dataset';
+  let cursor = JSON.stringify({
+    version: 1,
+    targetId: 'target',
+    targetOrdinal: 0,
+    datasetId: referencePolicy.dataset.id,
+    sourceCursor: null,
+    rowsWritten: 0,
+  });
+  const reads: (string | null)[] = [];
+  const input = {
+    ...openInput(),
+    policy: referencePolicy,
+    manifest: referenceManifest,
+    async readNextValidatedRow({ sourceCursor }: { sourceCursor: string | null }) {
+      reads.push(sourceCursor);
+      return sourceCursor === null ? { rowJson: row, nextCursor: 'row:1' } : null;
+    },
+  };
+  for (let index = 0; index < 4; index++) {
+    const run =
+      phase === 'verify_sqlite_dataset'
+        ? runSqliteRestoreDatasetVerificationStep
+        : runSqliteRestoreDatasetStep;
+    const result = await run(
+      { ...context, operation: { ...context.operation, phase, cursor_json: cursor } },
+      input
+    );
+    phase = result.phase;
+    cursor = result.cursor ?? '';
+  }
+  expect(phase).toBe('advance_restore_dataset');
+  expect(reads).toEqual([null, 'row:1', null, 'row:1']);
+  expect(target.prepare('SELECT count(*) AS n FROM tenants').get()).toEqual({ n: 0 });
+  expect(target.prepare('SELECT count(*) AS n FROM tenant_backup_restore_targets').get()).toEqual({
+    n: 0,
+  });
+});
+
+it('quarantines held rows and verifies them without inflating the target row count', async () => {
+  const heldRow = '{"id":["text","held"],"value":["text","queued"]}';
+  const writes: string[] = [];
+  const verifies: string[] = [];
+  const holdPolicy: SqliteDatasetInspectionPolicy = {
+    ...policy,
+    restoreHold: {
+      id: 'test-source-work-hold-v1',
+      async shouldHold(_context, rowJson) {
+        return rowJson === heldRow;
+      },
+      async write(_context, rowJson) {
+        writes.push(rowJson);
+      },
+      async verify(_context, rowJson) {
+        verifies.push(rowJson);
+      },
+    },
+  };
+  await persist();
+  await seal();
+  let phase = 'apply_sqlite_dataset';
+  let cursor = JSON.stringify({
+    version: 1,
+    targetId: 'target',
+    targetOrdinal: 0,
+    datasetId: policy.dataset.id,
+    sourceCursor: null,
+    rowsWritten: 0,
+  });
+  const input = {
+    ...openInput(),
+    policy: holdPolicy,
+    manifest,
+    async readNextValidatedRow({ sourceCursor }: { sourceCursor: string | null }) {
+      if (sourceCursor === null) return { rowJson: heldRow, nextCursor: 'row:1' };
+      if (sourceCursor === 'row:1') return { rowJson: row, nextCursor: 'row:2' };
+      return null;
+    },
+  };
+  for (let index = 0; index < 6; index++) {
+    const run =
+      phase === 'verify_sqlite_dataset'
+        ? runSqliteRestoreDatasetVerificationStep
+        : runSqliteRestoreDatasetStep;
+    const result = await run(
+      { ...context, operation: { ...context.operation, phase, cursor_json: cursor } },
+      input
+    );
+    phase = result.phase;
+    cursor = result.cursor ?? '';
+  }
+  expect(phase).toBe('advance_restore_dataset');
+  expect(writes).toEqual([heldRow]);
+  expect(verifies).toEqual([heldRow]);
+  expect(target.prepare('SELECT id,value FROM tenants').all()).toEqual([
+    { id: 'a', value: 'restored' },
+  ]);
+});
+
+it('pins and reapplies an installed row transform during write and verification', async () => {
+  const transformed: string[] = [];
+  const transformPolicy: SqliteDatasetInspectionPolicy = {
+    ...policy,
+    restoreTransform: {
+      id: 'test-admin-map-v1',
+      async transform(_context, rowJson) {
+        transformed.push(rowJson);
+        const parsed = JSON.parse(rowJson);
+        parsed.value = ['text', 'mapped-target'];
+        return JSON.stringify(parsed);
+      },
+    },
+  };
+  await persist();
+  await seal();
+  let phase = 'apply_sqlite_dataset';
+  let cursor = JSON.stringify({
+    version: 1,
+    targetId: 'target',
+    targetOrdinal: 0,
+    datasetId: policy.dataset.id,
+    sourceCursor: null,
+    rowsWritten: 0,
+  });
+  const input = {
+    ...openInput(),
+    policy: transformPolicy,
+    manifest,
+    async readNextValidatedRow({ sourceCursor }: { sourceCursor: string | null }) {
+      return sourceCursor === null ? { rowJson: row, nextCursor: 'row:1' } : null;
+    },
+  };
+  for (let index = 0; index < 4; index++) {
+    const run =
+      phase === 'verify_sqlite_dataset'
+        ? runSqliteRestoreDatasetVerificationStep
+        : runSqliteRestoreDatasetStep;
+    const result = await run(
+      { ...context, operation: { ...context.operation, phase, cursor_json: cursor } },
+      input
+    );
+    phase = result.phase;
+    cursor = result.cursor ?? '';
+  }
+  expect(phase).toBe('advance_restore_dataset');
+  expect(transformed).toEqual([row, row]);
+  expect(target.prepare("SELECT value FROM tenants WHERE id='a'").get()).toEqual({
+    value: 'mapped-target',
+  });
+});
+
 it.each([false, true])(
   'restores and finally rechecks dependent datasets (late mutation: %s)',
   async (changed) => {
@@ -764,6 +924,35 @@ it('pins input manifests and module policies and rejects overlapping dataset tar
   expect(target.prepare('SELECT count(*) AS n FROM tenant_backup_restore_targets').get()?.n).toBe(
     0
   );
+});
+
+it('persists a complete 310-dataset Phase 8 SQL restore sequence', async () => {
+  await persist();
+  const policies = Array.from(
+    { length: 310 },
+    (_, index): SqliteDatasetInspectionPolicy => ({
+      ...policy,
+      dataset: { ...policy.dataset, id: `core.phase8_${index}` },
+      schema: { ...policy.schema, table: `phase8_${index}` },
+    })
+  );
+  const phase8Manifest: TenantBundleManifest = {
+    ...manifest,
+    datasets: policies.map(({ dataset }) => dataset),
+  };
+  await persistSqliteRestoreSequence(
+    inventory,
+    1,
+    policies.map((installedPolicy) => ({
+      targetId: 'target',
+      ordinal: 0,
+      policy: installedPolicy,
+      manifest: phase8Manifest,
+    }))
+  );
+  await seal();
+  const saved = (await inventory.readPage(1))[0];
+  expect(JSON.parse(saved.payload_json).jobs).toHaveLength(310);
 });
 
 it('rejects missing and cyclic restore dependencies before persisting a sequence', async () => {

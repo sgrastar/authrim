@@ -83,4 +83,25 @@ describe('tenant backup operation dispatcher', () => {
     expect(mocks.scheduler.mock.calls[0]?.[2]).toBe(controller.signal);
     expect(mocks.scheduler.mock.calls[0]?.[3]).toBe(now);
   });
+
+  it('resolves the installed adapter after the scheduler claims an operation context', async () => {
+    const now = () => 789;
+    const adapter = {
+      export: {},
+      import: {},
+      cleanup: {},
+    } as unknown as TenantBackupInstalledOperationAdapter;
+    const resolver = vi.fn(async () => adapter);
+    const env = {} as Env;
+    const context = { operation: { kind: 'export' } } as never;
+    const result = { phase: 'next', cursor: null, disposition: 'continue' };
+    mocks.exportStep.mockResolvedValueOnce(result);
+
+    await expect(
+      createTenantBackupOperationHandlers(env, resolver, now).run(context)
+    ).resolves.toBe(result);
+
+    expect(resolver).toHaveBeenCalledWith(context);
+    expect(mocks.exportStep).toHaveBeenCalledWith(env, context, adapter.export, now);
+  });
 });

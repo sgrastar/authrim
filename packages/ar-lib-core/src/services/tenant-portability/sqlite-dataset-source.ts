@@ -20,6 +20,8 @@ interface SourceInput {
   /** Required when the trusted capture schema partitions one physical table. */
   partitions?: readonly string[];
   /** Deterministic installed transformation applied before bytes enter the encrypted bundle. */
+  /** Return false to omit one installed-policy row while advancing the trusted source scan. */
+  filterRow?: (rowJson: string) => Promise<boolean>;
   transformRow?: (rowJson: string) => Promise<string>;
 }
 
@@ -132,7 +134,7 @@ export async function* readSqliteSnapshotChunks(
         }
       }
       async function* rowChunks(): AsyncGenerator<Uint8Array> {
-        if (!input.transformRow) {
+        if (!input.transformRow && !input.filterRow) {
           yield* rawRowChunks();
           return;
         }
@@ -145,7 +147,9 @@ export async function* readSqliteSnapshotChunks(
         }
         rowJson += decoder.decode();
         if (!rowJson.endsWith('\n')) throw new Error('backup_snapshot_transform_row_invalid');
-        const transformed = await input.transformRow(rowJson.slice(0, -1));
+        rowJson = rowJson.slice(0, -1);
+        if (input.filterRow && !(await input.filterRow(rowJson))) return;
+        const transformed = input.transformRow ? await input.transformRow(rowJson) : rowJson;
         const bytes = new TextEncoder().encode(transformed + '\n');
         if (bytes.length > 256 * 1024) throw new Error('backup_snapshot_transform_row_limit');
         for (let offset = 0; offset < bytes.length; offset += FRAGMENT_BYTES)
@@ -167,7 +171,8 @@ export async function* readSqliteSnapshotChunks(
           ordinal++;
           current = next;
         }
-        if (skip >= ordinal) throw new Error('backup_snapshot_invalid_cursor');
+        if ((ordinal === 0 && skip !== 0) || (ordinal > 0 && skip >= ordinal))
+          throw new Error('backup_snapshot_invalid_cursor');
       } finally {
         await iterator.return?.(undefined);
       }

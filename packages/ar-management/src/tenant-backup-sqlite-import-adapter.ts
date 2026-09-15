@@ -1,7 +1,12 @@
 import type { TenantBackupStepContext } from '@authrim/ar-lib-core/services/tenant-portability/operation-executor';
-import type { SqliteDatasetInspectionPolicy } from '@authrim/ar-lib-core/services/tenant-portability/sqlite-dataset-inspector';
+import { TENANT_BACKUP_MAX_SQLITE_DATASETS } from '@authrim/ar-lib-core/services/tenant-portability/installed-sqlite-datasets';
+import {
+  cloneSqliteDatasetInspectionPolicy,
+  type SqliteDatasetInspectionPolicy,
+} from '@authrim/ar-lib-core/services/tenant-portability/sqlite-dataset-inspector';
 import type { TenantBackupInstalledImportAdapter } from './tenant-backup-import-dispatcher';
 import { tenantDatasetSelectionRule } from '@authrim/ar-lib-core/services/tenant-portability/selection-contract';
+import type { TenantPortableDataset } from '@authrim/ar-lib-core/services/tenant-portability/module-contract';
 
 type ResolveArgs = Parameters<TenantBackupInstalledImportAdapter['resolveRestoreTarget']>;
 type LoadArgs = Parameters<TenantBackupInstalledImportAdapter['loadValidatedDataset']>;
@@ -26,31 +31,38 @@ export interface TenantBackupInstalledSqliteImportPorts {
   restoreOtherStores: TenantBackupInstalledImportAdapter['restoreOtherStores'];
   verifyOtherStores: TenantBackupInstalledImportAdapter['verifyOtherStores'];
   previewRestore?: TenantBackupInstalledImportAdapter['previewRestore'];
+  assertRestoreApproval?: TenantBackupInstalledImportAdapter['assertRestoreApproval'];
   prepareActivation: TenantBackupInstalledImportAdapter['prepareActivation'];
   activate: TenantBackupInstalledImportAdapter['activate'];
   verifyActivation: TenantBackupInstalledImportAdapter['verifyActivation'];
-}
-
-function clonePolicy(policy: SqliteDatasetInspectionPolicy): SqliteDatasetInspectionPolicy {
-  return {
-    ...structuredClone({ ...policy, inspectRow: undefined }),
-    inspectRow: policy.inspectRow,
-  };
 }
 
 /**
  * SQL-only installed module adapter. Uploaded metadata can select an installed dataset, but cannot
  * provide its schema, row inspector, source reader, target, or activation callbacks.
  */
-export function createTenantBackupInstalledSqliteImportAdapter(input: {
+type StaticPolicyInput = {
   policies: readonly SqliteDatasetInspectionPolicy[];
-  ports: TenantBackupInstalledSqliteImportPorts;
-}): TenantBackupInstalledImportAdapter {
+  datasets?: never;
+  loadPolicies?: never;
+};
+
+type DynamicPolicyInput = {
+  policies?: never;
+  datasets: readonly TenantPortableDataset[];
+  /** Resolve the complete installed policy set from the operation's pinned physical inventory. */
+  loadPolicies(context: TenantBackupStepContext): Promise<readonly SqliteDatasetInspectionPolicy[]>;
+};
+
+function validatePolicies(
+  policies: readonly SqliteDatasetInspectionPolicy[],
+  expectedDatasets?: readonly TenantPortableDataset[]
+): void {
   if (
-    !input.policies.length ||
-    input.policies.length > 256 ||
-    new Set(input.policies.map((policy) => policy.dataset.id)).size !== input.policies.length ||
-    input.policies.some(
+    !policies.length ||
+    policies.length > TENANT_BACKUP_MAX_SQLITE_DATASETS ||
+    new Set(policies.map((policy) => policy.dataset.id)).size !== policies.length ||
+    policies.some(
       (policy) =>
         !['database', 'kv', 'durable_object', 'object'].includes(policy.dataset.store) ||
         policy.dataset.disposition !== 'include' ||
@@ -65,10 +77,20 @@ export function createTenantBackupInstalledSqliteImportAdapter(input: {
     )
   )
     throw new Error('backup_sqlite_import_adapter_invalid');
-  const byTable = new Map<string, typeof input.policies>();
-  for (const policy of input.policies.filter(
-    (candidate) => candidate.dataset.store === 'database'
-  )) {
+  if (expectedDatasets) {
+    const expected = new Map(expectedDatasets.map((dataset) => [dataset.id, dataset]));
+    if (
+      expected.size !== expectedDatasets.length ||
+      policies.length !== expected.size ||
+      policies.some((policy) => {
+        const dataset = expected.get(policy.dataset.id);
+        return !dataset || JSON.stringify(policy.dataset) !== JSON.stringify(dataset);
+      })
+    )
+      throw new Error('backup_sqlite_import_adapter_invalid');
+  }
+  const byTable = new Map<string, SqliteDatasetInspectionPolicy[]>();
+  for (const policy of policies.filter((candidate) => candidate.dataset.store === 'database')) {
     const family = policy.dataset.id.split('.')[0];
     if (!family || !['core', 'pii', 'admin', 'control', 'lookup', 'plugin_runner'].includes(family))
       throw new Error('backup_sqlite_import_adapter_invalid');
@@ -86,23 +108,51 @@ export function createTenantBackupInstalledSqliteImportAdapter(input: {
     )
       throw new Error('backup_sqlite_import_adapter_invalid');
   }
-  const policies = input.policies.map(clonePolicy);
+}
+
+export function createTenantBackupInstalledSqliteImportAdapter(
+  input: (StaticPolicyInput | DynamicPolicyInput) & {
+    ports: TenantBackupInstalledSqliteImportPorts;
+  }
+): TenantBackupInstalledImportAdapter {
+  const staticPolicies = input.policies
+    ? input.policies.map(cloneSqliteDatasetInspectionPolicy)
+    : null;
+  if (staticPolicies) validatePolicies(staticPolicies);
+  const installedDatasets = (
+    staticPolicies?.map((policy) => policy.dataset) ??
+    input.datasets ??
+    []
+  ).map((dataset) => structuredClone(dataset));
+  if (
+    !installedDatasets.length ||
+    installedDatasets.length > TENANT_BACKUP_MAX_SQLITE_DATASETS ||
+    new Set(installedDatasets.map((dataset) => dataset.id)).size !== installedDatasets.length
+  )
+    throw new Error('backup_sqlite_import_adapter_invalid');
+  const loadPolicies = async (context: TenantBackupStepContext) => {
+    if (staticPolicies) return staticPolicies;
+    const loaded = (await input.loadPolicies?.(context)) ?? [];
+    validatePolicies(loaded, installedDatasets);
+    return loaded.map(cloneSqliteDatasetInspectionPolicy);
+  };
   const adapter: TenantBackupInstalledImportAdapter = {
     datasets(selection) {
-      const selected = policies
-        .filter((policy) => {
-          const rule = tenantDatasetSelectionRule(policy.dataset.kind, selection);
+      const selected = installedDatasets
+        .filter((dataset) => {
+          const rule = tenantDatasetSelectionRule(dataset.kind, selection);
           return rule.action === 'selected' || rule.action === 'resolve_references';
         })
-        .map((policy) => structuredClone(policy.dataset));
+        .map((dataset) => structuredClone(dataset));
       if (!selected.length) throw new Error('backup_sqlite_import_adapter_dataset');
       return selected;
     },
     async loadPolicy(context, datasetId) {
       await input.ports.assertSources(context);
+      const policies = await loadPolicies(context);
       const policy = policies.find((candidate) => candidate.dataset.id === datasetId);
       if (!policy) throw new Error('backup_sqlite_import_adapter_dataset');
-      return clonePolicy(policy);
+      return cloneSqliteDatasetInspectionPolicy(policy);
     },
     assertSources: (context) => input.ports.assertSources(context),
     restoreTargets: (context) => input.ports.restoreTargets(context),
@@ -120,5 +170,7 @@ export function createTenantBackupInstalledSqliteImportAdapter(input: {
     verifyActivation: (context, digest) => input.ports.verifyActivation(context, digest),
   };
   if (input.ports.previewRestore) adapter.previewRestore = input.ports.previewRestore;
+  if (input.ports.assertRestoreApproval)
+    adapter.assertRestoreApproval = input.ports.assertRestoreApproval;
   return adapter;
 }

@@ -25,6 +25,7 @@ import {
 import { probeTenantBackupInputManifest } from '@authrim/ar-lib-core/services/tenant-portability/input-manifest-probe';
 import { persistTenantBackupInput } from '@authrim/ar-lib-core/services/tenant-portability/input-plan';
 import { runTenantBackupArtifactStep } from '@authrim/ar-lib-core/services/tenant-portability/export-artifact-step';
+import type { TenantBundleManifest } from '@authrim/ar-lib-core/services/tenant-portability/bundle-manifest';
 import { runTenantBackupArtifactVerificationStep } from '@authrim/ar-lib-core/services/tenant-portability/verify-artifact-step';
 import type { TenantPortableDataset } from '@authrim/ar-lib-core/services/tenant-portability/module-contract';
 import type { TenantBackupSelection } from '@authrim/ar-lib-core/services/tenant-portability/selection-contract';
@@ -523,7 +524,12 @@ export async function runTenantBackupArtifactExecution(
     requiredDatabases: Parameters<typeof resolveTenantBackupDatabaseInventory>[2];
     /** Includes final module receipts, snapshot release and retention verification. */
     assertPublishable: (inventoryDigest: string) => Promise<void>;
-    readNext: Parameters<typeof runTenantBackupArtifactStep>[1]['readNext'];
+    readNext: (
+      datasetId: string,
+      cursor: string | null,
+      signal: AbortSignal,
+      manifest?: TenantBundleManifest
+    ) => Promise<{ bytes: Uint8Array; nextCursor: string } | null>;
     assertSources: () => Promise<void>;
   },
   now: () => number = Date.now

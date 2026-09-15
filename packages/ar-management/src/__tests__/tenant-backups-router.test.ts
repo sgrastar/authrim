@@ -21,6 +21,11 @@ const state = vi.hoisted(() => ({
   uploadAllocate: vi.fn(),
   uploadPart: vi.fn(),
   importCreate: vi.fn(),
+  mappingStatus: vi.fn(),
+  mappingSources: vi.fn(),
+  mappingTargets: vi.fn(),
+  mappingPut: vi.fn(),
+  mappingApprove: vi.fn(),
 }));
 let auth: AdminAuthContext;
 vi.mock('@authrim/ar-lib-core', async (original) => ({
@@ -38,6 +43,15 @@ vi.mock('@authrim/ar-lib-core/services/tenant-portability/operation-store', () =
     get = state.get;
     requestCancel = state.cancel;
     resumeWaiting = state.resume;
+  },
+}));
+vi.mock('@authrim/ar-lib-core/services/tenant-portability/admin-mapping-store', () => ({
+  TenantBackupAdminMappingStore: class {
+    status = state.mappingStatus;
+    listSources = state.mappingSources;
+    listTargets = state.mappingTargets;
+    map = state.mappingPut;
+    approve = state.mappingApprove;
   },
 }));
 vi.mock('../tenant-backup-operation-read-model', () => ({
@@ -176,6 +190,43 @@ beforeEach(() => {
     state: 'waiting',
     phase: 'unlock',
     revision: 0,
+  });
+  state.mappingStatus.mockResolvedValue({
+    revision: 1,
+    state: 'open',
+    sourceCount: 1,
+    mappedCount: 1,
+    complete: true,
+    digest: null,
+  });
+  state.mappingSources.mockResolvedValue({
+    entries: [
+      {
+        sourceAdminId: 'source-admin',
+        targetAdminId: 'target-admin',
+        targetEmail: 'target@example.test',
+        targetName: 'Target',
+      },
+    ],
+    nextCursor: 'source-admin',
+    done: true,
+  });
+  state.mappingTargets.mockResolvedValue({
+    entries: [{ id: 'target-admin', email: 'target@example.test', name: 'Target' }],
+    nextCursor: 'target-admin',
+    done: true,
+  });
+  state.mappingPut.mockResolvedValue({
+    revision: 1,
+    state: 'open',
+    sourceCount: 1,
+    mappedCount: 1,
+    complete: true,
+    digest: null,
+  });
+  state.mappingApprove.mockResolvedValue({
+    operation: { id: 'operation', state: 'queued', phase: 'await_restore_approval', revision: 4 },
+    mappingDigest: 'ef'.repeat(32),
   });
   state.listViews.mockResolvedValue([
     {
@@ -498,6 +549,74 @@ it('approves only the exact current blocker-free import preview after audit pers
     'ab'.repeat(32),
     expect.any(Number)
   );
+});
+
+it('lists, updates and freezes Admin mappings before resuming an Admin restore', async () => {
+  const adminSelection = { ...selection, admin: true };
+  state.getView.mockResolvedValue({
+    operation: {
+      id: 'operation',
+      kind: 'import',
+      state: 'waiting',
+      phase: 'await_restore_approval',
+      revision: 3,
+      request_digest: 'ab'.repeat(32),
+    },
+    intent: { kind: 'import', selection: adminSelection },
+    view: {
+      adminMapping: {
+        revision: 1,
+        state: 'open',
+        sourceCount: 1,
+        mappedCount: 1,
+        complete: true,
+        digest: null,
+      },
+      preview: { planDigest: 'cd'.repeat(32), canApprove: true },
+    },
+  });
+  const listed = await request('operation/admin-mappings');
+  expect(listed.status).toBe(200);
+  expect(await listed.json()).toEqual({
+    status: await state.mappingStatus.mock.results[0]?.value,
+    sources: await state.mappingSources.mock.results[0]?.value,
+    targets: await state.mappingTargets.mock.results[0]?.value,
+  });
+
+  const updated = await request(
+    'operation/admin-mappings',
+    'PUT',
+    JSON.stringify({ sourceAdminId: 'source-admin', targetAdminId: 'target-admin' })
+  );
+  expect(updated.status).toBe(200);
+  expect(state.audit).toHaveBeenCalledWith(
+    expect.anything(),
+    expect.objectContaining({ action: 'tenant_backup.admin_mapping_requested' })
+  );
+  expect(state.mappingPut).toHaveBeenCalledWith(
+    expect.objectContaining({
+      tenantId: 'tenant-a',
+      operationId: 'operation',
+      sourceAdminId: 'source-admin',
+      targetAdminId: 'target-admin',
+      actorId: 'admin',
+    })
+  );
+
+  const approved = await request(
+    'operation/approve',
+    'POST',
+    JSON.stringify({
+      revision: 3,
+      planDigest: 'cd'.repeat(32),
+      adminMappingRevision: 1,
+    })
+  );
+  expect(approved.status).toBe(202);
+  expect(state.mappingApprove).toHaveBeenCalledWith(
+    expect.objectContaining({ operationRevision: 3, mappingRevision: 1 })
+  );
+  expect(state.resume).not.toHaveBeenCalled();
 });
 
 it('rejects stale or blocked restore approval before audit and resume', async () => {

@@ -15,6 +15,15 @@ export const PUBLIC_ASSETS_DATASET: TenantPortableDataset = {
   disposition: 'include',
 };
 
+export const USER_AVATARS_DATASET: TenantPortableDataset = {
+  id: 'users.public_avatars',
+  module: 'users',
+  kind: 'users',
+  store: 'object',
+  schemaVersion: 1,
+  disposition: 'include',
+};
+
 export const PLUGIN_CONFIGURATION_DATASET: TenantPortableDataset = {
   id: 'integrations.plugin_runner_configuration',
   module: 'integrations',
@@ -36,6 +45,13 @@ export const LOGICAL_PLACEMENT_DATASET: TenantPortableDataset = {
 const schemas: Record<string, CaptureSchema> = {
   [PUBLIC_ASSETS_DATASET.id]: {
     table: 'tenant_public_asset_backup',
+    tenantColumn: 'tenant_id',
+    columns: ['tenant_id', 'asset_key', 'content_type', 'sha256', 'bytes_base64'],
+    primaryKey: ['tenant_id', 'asset_key'],
+    uniqueKeys: [],
+  },
+  [USER_AVATARS_DATASET.id]: {
+    table: 'tenant_user_avatar_backup',
     tenantColumn: 'tenant_id',
     columns: ['tenant_id', 'asset_key', 'content_type', 'sha256', 'bytes_base64'],
     primaryKey: ['tenant_id', 'asset_key'],
@@ -167,9 +183,19 @@ function encodedRow(row: PortableSqliteRow): Uint8Array {
   return new TextEncoder().encode(`${JSON.stringify(row)}\n`);
 }
 
-export async function encodePortablePublicAsset(asset: PortablePublicAsset): Promise<Uint8Array> {
+async function encodePortableAsset(
+  asset: PortablePublicAsset,
+  category: 'settings' | 'users'
+): Promise<Uint8Array> {
   const digest = await sha256(asset.bytes);
-  if (asset.sha256 !== digest || detectedContentType(asset.bytes) !== asset.contentType) invalid();
+  const classification = classifyPublicAssetKey(asset.key, asset.tenantId);
+  if (
+    classification.kind !== 'asset' ||
+    classification.category !== category ||
+    asset.sha256 !== digest ||
+    detectedContentType(asset.bytes) !== asset.contentType
+  )
+    invalid();
   return encodedRow({
     tenant_id: ['text', asset.tenantId],
     asset_key: ['text', asset.key],
@@ -179,15 +205,25 @@ export async function encodePortablePublicAsset(asset: PortablePublicAsset): Pro
   });
 }
 
-export async function decodePortablePublicAsset(
+export function encodePortablePublicAsset(asset: PortablePublicAsset): Promise<Uint8Array> {
+  return encodePortableAsset(asset, 'settings');
+}
+
+export function encodePortableUserAvatar(asset: PortablePublicAsset): Promise<Uint8Array> {
+  return encodePortableAsset(asset, 'users');
+}
+
+async function decodePortableAsset(
   rowJson: string,
-  tenantId: string
+  tenantId: string,
+  datasetId: string,
+  category: 'settings' | 'users'
 ): Promise<PortablePublicAsset> {
-  const row = parseRow(rowJson, schemas[PUBLIC_ASSETS_DATASET.id]);
+  const row = parseRow(rowJson, schemas[datasetId]);
   if (text(row, 'tenant_id', 256) !== tenantId) invalid();
   const key = text(row, 'asset_key', 512);
   const classification = classifyPublicAssetKey(key, tenantId);
-  if (classification.kind !== 'asset' || classification.category !== 'settings') invalid();
+  if (classification.kind !== 'asset' || classification.category !== category) invalid();
   const bytes = decodeBase64(text(row, 'bytes_base64', 7 * 1024 * 1024));
   if (!bytes.length || bytes.length > 5 * 1024 * 1024) invalid();
   const contentType = text(row, 'content_type', 128);
@@ -195,6 +231,20 @@ export async function decodePortablePublicAsset(
   if (!/^[a-f0-9]{64}$/.test(digest) || (await sha256(bytes)) !== digest) invalid();
   if (detectedContentType(bytes) !== contentType) invalid();
   return { tenantId, key, contentType, sha256: digest, bytes };
+}
+
+export function decodePortablePublicAsset(
+  rowJson: string,
+  tenantId: string
+): Promise<PortablePublicAsset> {
+  return decodePortableAsset(rowJson, tenantId, PUBLIC_ASSETS_DATASET.id, 'settings');
+}
+
+export function decodePortableUserAvatar(
+  rowJson: string,
+  tenantId: string
+): Promise<PortablePublicAsset> {
+  return decodePortableAsset(rowJson, tenantId, USER_AVATARS_DATASET.id, 'users');
 }
 
 export function decodePortablePluginConfiguration(
@@ -220,6 +270,33 @@ export function decodePortablePluginConfiguration(
     contractVersion: integer(row, 'contract_version'),
     config,
   };
+}
+
+export function encodePortablePluginConfiguration(
+  configuration: PortablePluginConfiguration
+): Uint8Array {
+  const configJson = JSON.stringify(configuration.config);
+  if (
+    !/^[a-f0-9]{64}$/.test(configuration.versionDigest) ||
+    !Number.isSafeInteger(configuration.contractVersion) ||
+    configuration.contractVersion < 1 ||
+    !configJson ||
+    new TextEncoder().encode(configJson).length > 4 * 1024 * 1024
+  )
+    invalid();
+  const encoded = encodedRow({
+    tenant_id: ['text', configuration.tenantId],
+    installation_id: ['text', configuration.installationId],
+    plugin_id: ['text', configuration.pluginId],
+    version_digest: ['text', configuration.versionDigest],
+    contract_version: ['integer', String(configuration.contractVersion)],
+    config_json: ['text', configJson],
+  });
+  decodePortablePluginConfiguration(
+    new TextDecoder().decode(encoded).trimEnd(),
+    configuration.tenantId
+  );
+  return encoded;
 }
 
 function stringArray(value: unknown): string[] {
@@ -280,6 +357,18 @@ export function decodePortableLogicalTargetPlan(
   };
 }
 
+export function encodePortableLogicalTargetPlan(
+  tenantId: string,
+  plan: PortableLogicalTargetPlan
+): Uint8Array {
+  const encoded = encodedRow({
+    tenant_id: ['text', tenantId],
+    plan_json: ['text', JSON.stringify(plan)],
+  });
+  decodePortableLogicalTargetPlan(new TextDecoder().decode(encoded).trimEnd(), tenantId);
+  return encoded;
+}
+
 export function createPhase5RecordDatasetPolicies(input: {
   assertPluginSupported(configuration: PortablePluginConfiguration): Promise<void>;
 }): SqliteDatasetInspectionPolicy[] {
@@ -313,4 +402,16 @@ export function createPhase5RecordDatasetPolicies(input: {
       },
     },
   ];
+}
+
+/** Phase 8 user-owned PUBLIC_ASSETS records; kept separate from settings image selection. */
+export function createUserAvatarDatasetPolicy(): SqliteDatasetInspectionPolicy {
+  return {
+    dataset: structuredClone(USER_AVATARS_DATASET),
+    schema: structuredClone(schemas[USER_AVATARS_DATASET.id]),
+    async inspectRow(row) {
+      await decodePortableUserAvatar(JSON.stringify(row), text(row, 'tenant_id', 256));
+      return [];
+    },
+  };
 }

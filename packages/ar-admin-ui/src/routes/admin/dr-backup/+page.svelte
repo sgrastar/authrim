@@ -15,6 +15,7 @@
 	import {
 		adminTenantBackupsAPI,
 		saveTenantBackupResponse,
+		type TenantBackupAdminMappings,
 		type TenantBackupOperation,
 		type TenantBackupOperationSummary,
 		type TenantBackupSelection
@@ -66,13 +67,14 @@
 	let tenantBackupFileInput = $state<HTMLInputElement | null>(null);
 	let tenantBackupOperations = $state<TenantBackupOperationSummary[]>([]);
 	let selectedTenantBackup = $state<TenantBackupOperation | null>(null);
-	const settingsBackupSelection: TenantBackupSelection = {
+	let tenantBackupAdminMappings = $state<TenantBackupAdminMappings | null>(null);
+	let tenantBackupSelection = $state<TenantBackupSelection>({
 		settings: true,
 		users: false,
 		admin: false,
 		artifacts: false,
 		logs: { audit: false, other: false, sensitive: false, period: 'all' }
-	};
+	});
 	let selectedCertificateDetail = $state<{
 		row: ExportCertificateRow;
 		certificate: string;
@@ -92,11 +94,15 @@
 	const canExportTenantBackup = $derived(
 		canEdit &&
 			!tenantBackupAction &&
+			hasTenantBackupSelection() &&
 			tenantBackupPassphrase.length >= 16 &&
 			tenantBackupPassphrase === tenantBackupPassphraseConfirm
 	);
 	const canImportTenantBackup = $derived(
-		canEdit && !tenantBackupAction && tenantBackupImportPassphrase.length >= 16
+		canEdit &&
+			!tenantBackupAction &&
+			hasTenantBackupSelection() &&
+			tenantBackupImportPassphrase.length >= 16
 	);
 	const exportCertificateRows = $derived(buildExportCertificateRows(samlSettings));
 
@@ -137,7 +143,7 @@
 			tenantBackupOperations = response.operations;
 			if (selectedTenantBackup) {
 				const current = response.operations.find((item) => item.id === selectedTenantBackup?.id);
-				if (current) selectedTenantBackup = await adminTenantBackupsAPI.get(current.id);
+				if (current) await openTenantBackup(current.id);
 			}
 		} catch (err) {
 			if (!quiet) {
@@ -152,7 +158,10 @@
 		error = '';
 		success = '';
 		try {
-			await adminTenantBackupsAPI.createExport(settingsBackupSelection, tenantBackupPassphrase);
+			await adminTenantBackupsAPI.createExport(
+				currentTenantBackupSelection(),
+				tenantBackupPassphrase
+			);
 			tenantBackupPassphrase = '';
 			tenantBackupPassphraseConfirm = '';
 			success = $LL.admin_dr_backup_tenant_export_started();
@@ -183,7 +192,7 @@
 			await adminTenantBackupsAPI.createImport(
 				file,
 				upload.id,
-				settingsBackupSelection,
+				currentTenantBackupSelection(),
 				tenantBackupImportPassphrase
 			);
 			tenantBackupImportPassphrase = '';
@@ -201,9 +210,54 @@
 	async function openTenantBackup(operationId: string) {
 		try {
 			selectedTenantBackup = await adminTenantBackupsAPI.get(operationId);
+			tenantBackupAdminMappings =
+				selectedTenantBackup.preview && selectedTenantBackup.selection.admin
+					? await adminTenantBackupsAPI.adminMappings(operationId)
+					: null;
 		} catch (err) {
 			error = err instanceof Error ? err.message : $LL.admin_dr_backup_tenant_error_load();
 		}
+	}
+
+	async function mapTenantBackupAdmin(sourceAdminId: string, targetAdminId: string) {
+		if (!selectedTenantBackup || !targetAdminId || tenantBackupAction) return;
+		tenantBackupAction = 'admin-mapping';
+		error = '';
+		try {
+			await adminTenantBackupsAPI.mapAdmin(selectedTenantBackup.id, sourceAdminId, targetAdminId);
+			await openTenantBackup(selectedTenantBackup.id);
+		} catch (err) {
+			error = err instanceof Error ? err.message : $LL.admin_dr_backup_tenant_admin_mapping_error();
+		} finally {
+			tenantBackupAction = '';
+		}
+	}
+
+	function hasTenantBackupSelection(): boolean {
+		return (
+			tenantBackupSelection.settings ||
+			tenantBackupSelection.users ||
+			tenantBackupSelection.admin ||
+			tenantBackupSelection.artifacts ||
+			tenantBackupSelection.logs.audit ||
+			tenantBackupSelection.logs.other
+		);
+	}
+
+	function currentTenantBackupSelection(): TenantBackupSelection {
+		return structuredClone(tenantBackupSelection);
+	}
+
+	function setTenantBackupLogPeriod(value: string) {
+		tenantBackupSelection.logs.period = value === 'all' ? 'all' : (Number(value) as 7 | 30 | 90);
+	}
+
+	function targetAdminAlreadyMapped(targetAdminId: string, sourceAdminId: string): boolean {
+		return Boolean(
+			tenantBackupAdminMappings?.sources.some(
+				(source) => source.sourceAdminId !== sourceAdminId && source.targetAdminId === targetAdminId
+			)
+		);
 	}
 
 	async function approveTenantRestore() {
@@ -600,12 +654,61 @@
 		<div class="dr-panel tenant-backup-panel">
 			<div class="tenant-backup-scope">
 				<div>
-					<strong>{$LL.admin_dr_backup_tenant_scope_settings()}</strong>
-					<p>{$LL.admin_dr_backup_tenant_scope_settings_desc()}</p>
+					<strong>{$LL.admin_dr_backup_tenant_selection_title()}</strong>
+					<p>{$LL.admin_dr_backup_tenant_selection_desc()}</p>
 				</div>
-				<span class="scope-badge">{$LL.admin_dr_backup_tenant_scope_included()}</span>
 			</div>
-			<p class="scope-note">{$LL.admin_dr_backup_tenant_scope_future()}</p>
+			<div class="tenant-backup-selection-grid">
+				<label
+					><input type="checkbox" bind:checked={tenantBackupSelection.settings} />
+					{$LL.admin_dr_backup_tenant_selection_settings()}</label
+				>
+				<label
+					><input type="checkbox" bind:checked={tenantBackupSelection.users} />
+					{$LL.admin_dr_backup_tenant_selection_users()}</label
+				>
+				<label
+					><input type="checkbox" bind:checked={tenantBackupSelection.admin} />
+					{$LL.admin_dr_backup_tenant_selection_admin()}</label
+				>
+				<label
+					><input type="checkbox" bind:checked={tenantBackupSelection.artifacts} />
+					{$LL.admin_dr_backup_tenant_selection_artifacts()}</label
+				>
+				<label
+					><input type="checkbox" bind:checked={tenantBackupSelection.logs.audit} />
+					{$LL.admin_dr_backup_tenant_selection_audit_logs_plain()}</label
+				>
+				<label
+					><input type="checkbox" bind:checked={tenantBackupSelection.logs.other} />
+					{$LL.admin_dr_backup_tenant_selection_other_logs_plain()}</label
+				>
+				<label>
+					<input
+						type="checkbox"
+						bind:checked={tenantBackupSelection.logs.sensitive}
+						disabled={!tenantBackupSelection.logs.audit && !tenantBackupSelection.logs.other}
+					/>
+					{$LL.admin_dr_backup_tenant_selection_sensitive()}
+				</label>
+				<label class="tenant-backup-period">
+					<span>{$LL.admin_dr_backup_tenant_log_period()}</span>
+					<select
+						class="admin-input"
+						value={tenantBackupSelection.logs.period}
+						disabled={!tenantBackupSelection.logs.audit && !tenantBackupSelection.logs.other}
+						onchange={(event) => setTenantBackupLogPeriod(event.currentTarget.value)}
+					>
+						<option value="7">{$LL.admin_dr_backup_tenant_period_days({ days: 7 })}</option>
+						<option value="30">{$LL.admin_dr_backup_tenant_period_days({ days: 30 })}</option>
+						<option value="90">{$LL.admin_dr_backup_tenant_period_days({ days: 90 })}</option>
+						<option value="all">{$LL.admin_dr_backup_tenant_period_all()}</option>
+					</select>
+				</label>
+			</div>
+			{#if !hasTenantBackupSelection()}
+				<p class="scope-note">{$LL.admin_dr_backup_tenant_selection_required()}</p>
+			{/if}
 
 			<div class="tenant-backup-actions-grid">
 				<div class="tenant-backup-action-card">
@@ -797,6 +900,67 @@
 									</div>
 								</div>
 							{/if}
+							{#if selectedTenantBackup.selection.admin && selectedTenantBackup.adminMapping}
+								<div class="tenant-backup-admin-mapping">
+									<strong>{$LL.admin_dr_backup_tenant_admin_mapping_title()}</strong>
+									<p>
+										{$LL.admin_dr_backup_tenant_admin_mapping_progress({
+											mapped: selectedTenantBackup.adminMapping.mappedCount,
+											total: selectedTenantBackup.adminMapping.sourceCount
+										})}
+									</p>
+									{#if tenantBackupAdminMappings}
+										{#if tenantBackupAdminMappings.targets.length === 0 && tenantBackupAdminMappings.sources.length > 0}
+											<p class="scope-note">
+												{$LL.admin_dr_backup_tenant_admin_mapping_no_targets()}
+											</p>
+										{:else}
+											<AdminDataTable compact>
+												<thead>
+													<tr>
+														<th>{$LL.admin_dr_backup_tenant_admin_mapping_source()}</th>
+														<th>{$LL.admin_dr_backup_tenant_admin_mapping_target()}</th>
+													</tr>
+												</thead>
+												<tbody>
+													{#each tenantBackupAdminMappings.sources as source (source.sourceAdminId)}
+														<tr>
+															<td><code>{source.sourceAdminId}</code></td>
+															<td>
+																<select
+																	class="admin-input"
+																	value={source.targetAdminId ?? ''}
+																	disabled={tenantBackupAction === 'admin-mapping'}
+																	onchange={(event) =>
+																		mapTenantBackupAdmin(
+																			source.sourceAdminId,
+																			event.currentTarget.value
+																		)}
+																>
+																	<option value=""
+																		>{$LL.admin_dr_backup_tenant_admin_mapping_unassigned()}</option
+																	>
+																	{#each tenantBackupAdminMappings.targets as target (target.id)}
+																		<option
+																			value={target.id}
+																			disabled={targetAdminAlreadyMapped(
+																				target.id,
+																				source.sourceAdminId
+																			)}
+																		>
+																			{target.name ? `${target.name} — ` : ''}{target.email}
+																		</option>
+																	{/each}
+																</select>
+															</td>
+														</tr>
+													{/each}
+												</tbody>
+											</AdminDataTable>
+										{/if}
+									{/if}
+								</div>
+							{/if}
 							<button
 								class="btn btn-primary"
 								type="button"
@@ -810,6 +974,29 @@
 						<p>
 							{$LL.admin_dr_backup_tenant_detail_status({ status: selectedTenantBackup.state })}
 						</p>
+					{/if}
+					{#if selectedTenantBackup.heldRecords.length > 0}
+						<div class="warning-box">
+							<i class="i-ph-pause-circle"></i>
+							<div>
+								<strong>
+									{$LL.admin_dr_backup_tenant_held_records({
+										count: selectedTenantBackup.heldRecords.reduce(
+											(total, item) => total + item.count,
+											0
+										)
+									})}
+								</strong>
+								<details>
+									<summary>{$LL.admin_dr_backup_tenant_held_records_details()}</summary>
+									<ul>
+										{#each selectedTenantBackup.heldRecords as item (`${item.datasetId}:${item.reason}`)}
+											<li><code>{item.datasetId}</code>: {item.count} ({item.reason})</li>
+										{/each}
+									</ul>
+								</details>
+							</div>
+						</div>
 					{/if}
 					{#if selectedTenantBackup.publication}
 						<p>
@@ -1200,7 +1387,6 @@
 		color: var(--color-text-secondary);
 	}
 
-	.scope-badge,
 	.operation-state {
 		display: inline-flex;
 		border-radius: 999px;
@@ -1219,6 +1405,43 @@
 		display: grid;
 		grid-template-columns: repeat(2, minmax(0, 1fr));
 		gap: 1rem;
+	}
+
+	.tenant-backup-selection-grid {
+		display: grid;
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+		gap: 0.75rem 1rem;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-md, 0.75rem);
+		padding: 1rem;
+	}
+
+	.tenant-backup-selection-grid label {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+	}
+
+	.tenant-backup-selection-grid .tenant-backup-period {
+		display: grid;
+		grid-template-columns: auto minmax(8rem, 1fr);
+	}
+
+	.tenant-backup-admin-mapping {
+		display: grid;
+		gap: 0.75rem;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-md, 0.75rem);
+		padding: 1rem;
+	}
+
+	.tenant-backup-admin-mapping p {
+		margin: 0;
+		color: var(--color-text-secondary);
+	}
+
+	.tenant-backup-admin-mapping code {
+		word-break: break-all;
 	}
 
 	.tenant-backup-action-card,
@@ -1266,7 +1489,8 @@
 	}
 
 	@media (max-width: 760px) {
-		.tenant-backup-actions-grid {
+		.tenant-backup-actions-grid,
+		.tenant-backup-selection-grid {
 			grid-template-columns: 1fr;
 		}
 

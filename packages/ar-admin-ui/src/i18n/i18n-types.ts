@@ -7386,22 +7386,6 @@ type RootTranslation = {
 	 */
 	admin_dr_backup_tenant_desc: string
 	/**
-	 * S​e​t​t​i​n​g​s​ ​d​a​t​a
-	 */
-	admin_dr_backup_tenant_scope_settings: string
-	/**
-	 * I​n​c​l​u​d​e​s​ ​t​e​n​a​n​t​ ​c​o​n​f​i​g​u​r​a​t​i​o​n​,​ ​s​i​g​n​i​n​g​ ​m​a​t​e​r​i​a​l​,​ ​c​o​n​n​e​c​t​o​r​ ​s​e​c​r​e​t​s​,​ ​p​u​b​l​i​c​ ​a​s​s​e​t​s​,​ ​a​n​d​ ​p​l​u​g​i​n​ ​c​o​n​f​i​g​u​r​a​t​i​o​n​ ​c​u​r​r​e​n​t​l​y​ ​s​u​p​p​o​r​t​e​d​ ​b​y​ ​t​h​e​ ​p​o​r​t​a​b​l​e​ ​f​o​r​m​a​t​.
-	 */
-	admin_dr_backup_tenant_scope_settings_desc: string
-	/**
-	 * I​n​c​l​u​d​e​d
-	 */
-	admin_dr_backup_tenant_scope_included: string
-	/**
-	 * U​s​e​r​,​ ​A​d​m​i​n​,​ ​a​r​t​i​f​a​c​t​,​ ​a​n​d​ ​l​o​g​ ​s​e​l​e​c​t​i​o​n​s​ ​w​i​l​l​ ​a​p​p​e​a​r​ ​a​f​t​e​r​ ​t​h​e​i​r​ ​r​e​s​t​o​r​e​ ​a​d​a​p​t​e​r​s​ ​a​r​e​ ​a​v​a​i​l​a​b​l​e​.
-	 */
-	admin_dr_backup_tenant_scope_future: string
-	/**
 	 * C​r​e​a​t​e​ ​b​a​c​k​u​p
 	 */
 	admin_dr_backup_tenant_export_title: string
@@ -7491,6 +7475,14 @@ type RootTranslation = {
 	 */
 	admin_dr_backup_tenant_selection_title: string
 	/**
+	 * S​e​l​e​c​t​ ​e​a​c​h​ ​d​a​t​a​ ​g​r​o​u​p​ ​i​n​d​e​p​e​n​d​e​n​t​l​y​.​ ​T​h​e​ ​s​a​m​e​ ​s​e​l​e​c​t​i​o​n​ ​i​s​ ​u​s​e​d​ ​f​o​r​ ​e​x​p​o​r​t​ ​a​n​d​ ​r​e​s​t​o​r​e​.
+	 */
+	admin_dr_backup_tenant_selection_desc: string
+	/**
+	 * S​e​l​e​c​t​ ​a​t​ ​l​e​a​s​t​ ​o​n​e​ ​d​a​t​a​ ​g​r​o​u​p​.
+	 */
+	admin_dr_backup_tenant_selection_required: string
+	/**
 	 * S​e​t​t​i​n​g​s
 	 */
 	admin_dr_backup_tenant_selection_settings: string
@@ -7526,9 +7518,21 @@ type RootTranslation = {
 	 */
 	admin_dr_backup_tenant_selection_other_logs: RequiredParams<'period'>
 	/**
+	 * A​u​d​i​t​ ​l​o​g​s
+	 */
+	admin_dr_backup_tenant_selection_audit_logs_plain: string
+	/**
+	 * O​t​h​e​r​ ​l​o​g​s
+	 */
+	admin_dr_backup_tenant_selection_other_logs_plain: string
+	/**
 	 * i​n​c​l​u​d​i​n​g​ ​s​e​n​s​i​t​i​v​e​ ​l​o​g​ ​f​i​e​l​d​s
 	 */
 	admin_dr_backup_tenant_selection_sensitive: string
+	/**
+	 * L​o​g​ ​p​e​r​i​o​d
+	 */
+	admin_dr_backup_tenant_log_period: string
 	/**
 	 * D​a​t​a​s​e​t​s​ ​i​n​ ​t​h​e​ ​r​e​s​t​o​r​e​ ​p​l​a​n
 	 */
@@ -7552,6 +7556,45 @@ type RootTranslation = {
 	 * C​o​n​f​i​r​m​ ​t​h​e​ ​s​o​u​r​c​e​ ​i​s​ ​s​t​o​p​p​e​d​ ​a​n​d​ ​h​i​s​t​o​r​i​c​a​l​ ​d​e​l​i​v​e​r​y​ ​r​e​m​a​i​n​s​ ​o​n​ ​h​o​l​d​.
 	 */
 	admin_dr_backup_tenant_blocker_delivery: string
+	/**
+	 * A​d​m​i​n​i​s​t​r​a​t​o​r​ ​m​a​p​p​i​n​g
+	 */
+	admin_dr_backup_tenant_admin_mapping_title: string
+	/**
+	 * {​m​a​p​p​e​d​}​ ​o​f​ ​{​t​o​t​a​l​}​ ​s​o​u​r​c​e​ ​a​d​m​i​n​i​s​t​r​a​t​o​r​s​ ​m​a​p​p​e​d
+	 * @param {number} mapped
+	 * @param {number} total
+	 */
+	admin_dr_backup_tenant_admin_mapping_progress: RequiredParams<'mapped' | 'total'>
+	/**
+	 * S​o​u​r​c​e​ ​a​d​m​i​n​i​s​t​r​a​t​o​r​ ​I​D
+	 */
+	admin_dr_backup_tenant_admin_mapping_source: string
+	/**
+	 * T​a​r​g​e​t​ ​a​d​m​i​n​i​s​t​r​a​t​o​r
+	 */
+	admin_dr_backup_tenant_admin_mapping_target: string
+	/**
+	 * S​e​l​e​c​t​ ​a​ ​t​a​r​g​e​t​ ​a​d​m​i​n​i​s​t​r​a​t​o​r
+	 */
+	admin_dr_backup_tenant_admin_mapping_unassigned: string
+	/**
+	 * N​o​ ​a​c​t​i​v​e​ ​a​d​m​i​n​i​s​t​r​a​t​o​r​ ​i​s​ ​a​v​a​i​l​a​b​l​e​ ​i​n​ ​t​h​i​s​ ​t​e​n​a​n​t​.
+	 */
+	admin_dr_backup_tenant_admin_mapping_no_targets: string
+	/**
+	 * F​a​i​l​e​d​ ​t​o​ ​u​p​d​a​t​e​ ​t​h​e​ ​a​d​m​i​n​i​s​t​r​a​t​o​r​ ​m​a​p​p​i​n​g
+	 */
+	admin_dr_backup_tenant_admin_mapping_error: string
+	/**
+	 * {​c​o​u​n​t​}​ ​s​o​u​r​c​e​ ​w​o​r​k​ ​r​e​c​o​r​d​s​ ​a​r​e​ ​r​e​t​a​i​n​e​d​ ​e​n​c​r​y​p​t​e​d​ ​a​n​d​ ​w​i​l​l​ ​n​o​t​ ​r​u​n​ ​a​u​t​o​m​a​t​i​c​a​l​l​y​.
+	 * @param {unknown} count
+	 */
+	admin_dr_backup_tenant_held_records: RequiredParams<'count'>
+	/**
+	 * H​e​l​d​ ​s​o​u​r​c​e​ ​w​o​r​k
+	 */
+	admin_dr_backup_tenant_held_records_details: string
 	/**
 	 * A​p​p​r​o​v​e​ ​a​n​d​ ​s​t​a​r​t​ ​r​e​s​t​o​r​e
 	 */
@@ -41203,22 +41246,6 @@ export type TranslationFunctions = {
 	 */
 	admin_dr_backup_tenant_desc: () => LocalizedString
 	/**
-	 * Settings data
-	 */
-	admin_dr_backup_tenant_scope_settings: () => LocalizedString
-	/**
-	 * Includes tenant configuration, signing material, connector secrets, public assets, and plugin configuration currently supported by the portable format.
-	 */
-	admin_dr_backup_tenant_scope_settings_desc: () => LocalizedString
-	/**
-	 * Included
-	 */
-	admin_dr_backup_tenant_scope_included: () => LocalizedString
-	/**
-	 * User, Admin, artifact, and log selections will appear after their restore adapters are available.
-	 */
-	admin_dr_backup_tenant_scope_future: () => LocalizedString
-	/**
 	 * Create backup
 	 */
 	admin_dr_backup_tenant_export_title: () => LocalizedString
@@ -41307,6 +41334,14 @@ export type TranslationFunctions = {
 	 */
 	admin_dr_backup_tenant_selection_title: () => LocalizedString
 	/**
+	 * Select each data group independently. The same selection is used for export and restore.
+	 */
+	admin_dr_backup_tenant_selection_desc: () => LocalizedString
+	/**
+	 * Select at least one data group.
+	 */
+	admin_dr_backup_tenant_selection_required: () => LocalizedString
+	/**
 	 * Settings
 	 */
 	admin_dr_backup_tenant_selection_settings: () => LocalizedString
@@ -41339,9 +41374,21 @@ export type TranslationFunctions = {
 	 */
 	admin_dr_backup_tenant_selection_other_logs: (arg: { period: string }) => LocalizedString
 	/**
+	 * Audit logs
+	 */
+	admin_dr_backup_tenant_selection_audit_logs_plain: () => LocalizedString
+	/**
+	 * Other logs
+	 */
+	admin_dr_backup_tenant_selection_other_logs_plain: () => LocalizedString
+	/**
 	 * including sensitive log fields
 	 */
 	admin_dr_backup_tenant_selection_sensitive: () => LocalizedString
+	/**
+	 * Log period
+	 */
+	admin_dr_backup_tenant_log_period: () => LocalizedString
 	/**
 	 * Datasets in the restore plan
 	 */
@@ -41362,6 +41409,42 @@ export type TranslationFunctions = {
 	 * Confirm the source is stopped and historical delivery remains on hold.
 	 */
 	admin_dr_backup_tenant_blocker_delivery: () => LocalizedString
+	/**
+	 * Administrator mapping
+	 */
+	admin_dr_backup_tenant_admin_mapping_title: () => LocalizedString
+	/**
+	 * {mapped} of {total} source administrators mapped
+	 */
+	admin_dr_backup_tenant_admin_mapping_progress: (arg: { mapped: number, total: number }) => LocalizedString
+	/**
+	 * Source administrator ID
+	 */
+	admin_dr_backup_tenant_admin_mapping_source: () => LocalizedString
+	/**
+	 * Target administrator
+	 */
+	admin_dr_backup_tenant_admin_mapping_target: () => LocalizedString
+	/**
+	 * Select a target administrator
+	 */
+	admin_dr_backup_tenant_admin_mapping_unassigned: () => LocalizedString
+	/**
+	 * No active administrator is available in this tenant.
+	 */
+	admin_dr_backup_tenant_admin_mapping_no_targets: () => LocalizedString
+	/**
+	 * Failed to update the administrator mapping
+	 */
+	admin_dr_backup_tenant_admin_mapping_error: () => LocalizedString
+	/**
+	 * {count} source work records are retained encrypted and will not run automatically.
+	 */
+	admin_dr_backup_tenant_held_records: (arg: { count: unknown }) => LocalizedString
+	/**
+	 * Held source work
+	 */
+	admin_dr_backup_tenant_held_records_details: () => LocalizedString
 	/**
 	 * Approve and start restore
 	 */

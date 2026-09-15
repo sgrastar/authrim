@@ -348,6 +348,57 @@ it('leaves sidecar-owned columns out of SQL byte verification only', async () =>
   await expect(verifier.verifyRow(sidecarPolicy, manifest, row)).rejects.toThrow();
 });
 
+it('moves a NOT NULL integer sidecar from its exact placeholder with response-loss safety', async () => {
+  const options = input();
+  const execute = options.database.execute;
+  let loseSidecarResponse = true;
+  options.database.execute = async (sql, params) => {
+    const result = await execute(sql, params);
+    if (loseSidecarResponse && sql.startsWith('UPDATE "tenants" SET "count"=')) {
+      loseSidecarResponse = false;
+      throw new Error('sidecar_response_lost');
+    }
+    return result;
+  };
+  const target = await SqliteRestoreTarget.open(options);
+  const sidecarPolicy: SqliteDatasetInspectionPolicy = {
+    ...policy,
+    restoreOverrides: { count: ['integer', '1'] },
+    verificationIgnoredColumns: ['count'],
+  };
+  await target.writeRow(sidecarPolicy, manifest, row);
+  expect(db.prepare('SELECT count FROM tenants').get()).toEqual({ count: 1 });
+  await expect(
+    target.writeSidecarValue(
+      sidecarPolicy,
+      manifest,
+      row,
+      'count',
+      ['integer', '7'],
+      async (stored) => stored[0] === 'integer' && stored[1] === '7'
+    )
+  ).rejects.toThrow('sidecar_response_lost');
+  await target.writeSidecarValue(
+    sidecarPolicy,
+    manifest,
+    row,
+    'count',
+    ['integer', '8'],
+    async (stored) => stored[0] === 'integer' && stored[1] === '7'
+  );
+  expect(db.prepare('SELECT count FROM tenants').get()).toEqual({ count: 7 });
+  await target.verifyRow(sidecarPolicy, manifest, row);
+  await target.seal();
+  const verifier = await SqliteRestoreTarget.open({ ...input(2), mode: 'verify' });
+  await verifier.verifySidecarTypedValue(
+    sidecarPolicy,
+    manifest,
+    row,
+    'count',
+    async (stored) => stored[0] === 'integer' && stored[1] === '7'
+  );
+});
+
 it('rejects restore overrides for identity columns', async () => {
   const target = await SqliteRestoreTarget.open(input());
   await expect(

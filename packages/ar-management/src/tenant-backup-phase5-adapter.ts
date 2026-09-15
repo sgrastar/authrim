@@ -1,5 +1,6 @@
 import type { Env } from '@authrim/ar-lib-core';
 import type { DatabaseAdapter } from '@authrim/ar-lib-core';
+import type { TenantPortableDataset } from '@authrim/ar-lib-core/services/tenant-portability/module-contract';
 import {
   KEY_MANAGER_TENANT_BACKUP_DATASET,
   createKeyManagerTenantBackupInspectionPolicy,
@@ -12,6 +13,7 @@ import { assertPhase5DeliverySafety } from '@authrim/ar-lib-core/services/tenant
 import { createTenantBackupRestorePreview } from '@authrim/ar-lib-core/services/tenant-portability/restore-preview';
 import { verifyPhase5LogicalReferences } from '@authrim/ar-lib-core/services/tenant-portability/phase5-logical-references';
 import type { PlannedInstalledSqliteDataset } from '@authrim/ar-lib-core/services/tenant-portability/installed-sqlite-datasets';
+import type { InstalledSqliteDatasetRegistration } from '@authrim/ar-lib-core/services/tenant-portability/installed-sqlite-datasets';
 import {
   LOGICAL_PLACEMENT_DATASET,
   PLUGIN_CONFIGURATION_DATASET,
@@ -22,6 +24,7 @@ import {
 import { PHASE5_CUMULATIVE_SQLITE_DATASET_REGISTRATIONS } from '@authrim/ar-lib-core/services/tenant-portability/phase5-sqlite-modules';
 import { createPhase5SqliteInspectionPolicies } from '@authrim/ar-lib-core/services/tenant-portability/phase5-sqlite-references';
 import type { PortableSqliteRow } from '@authrim/ar-lib-core/services/tenant-portability/sqlite-dataset-inspector';
+import type { SqliteDatasetInspectionPolicy } from '@authrim/ar-lib-core/services/tenant-portability/sqlite-dataset-inspector';
 import { verifyPhase3LogicalReferences } from '@authrim/ar-lib-core/services/tenant-portability/phase3-logical-references';
 import type { TenantBackupStepContext } from '@authrim/ar-lib-core/services/tenant-portability/operation-executor';
 import { tenantDatasetSelectionRule } from '@authrim/ar-lib-core/services/tenant-portability/selection-contract';
@@ -127,6 +130,26 @@ export interface Phase5InstalledAdapterPorts {
   loadDeliverySafety(context: TenantBackupStepContext, planDigest: string): Promise<unknown>;
 }
 
+interface InstalledSqliteExtension {
+  policies?: readonly SqliteDatasetInspectionPolicy[];
+  loadPolicies?(
+    context: TenantBackupStepContext
+  ): Promise<readonly SqliteDatasetInspectionPolicy[]>;
+  requiredDatabases: Parameters<
+    typeof createTenantBackupInstalledSqliteExportAdapter
+  >[0]['requiredDatabases'];
+  registrations: readonly InstalledSqliteDatasetRegistration[];
+  transformedDatasetIds: readonly string[];
+  filterRow?: NonNullable<TenantBackupInstalledSqliteExportPorts['filterRow']>;
+  transformRow: NonNullable<TenantBackupInstalledSqliteExportPorts['transformRow']>;
+  otherStores?: ReturnType<typeof createPhase5OtherStoreHandlers>;
+  recordSnapshots?: readonly {
+    dataset: TenantPortableDataset;
+    policy: SqliteDatasetInspectionPolicy;
+    port: Phase5RecordSnapshotPort;
+  }[];
+}
+
 async function digest(parts: readonly string[]): Promise<string> {
   const value = await crypto.subtle.digest(
     'SHA-256',
@@ -155,18 +178,37 @@ function keyManagerSelected(context: AdapterContext): boolean {
   return rule.action === 'selected' || rule.action === 'resolve_references';
 }
 
+function selectedRecordSnapshots<T extends { dataset: TenantPortableDataset }>(
+  records: readonly T[],
+  context: AdapterContext
+): T[] {
+  return records.filter(({ dataset }) => {
+    const rule = tenantDatasetSelectionRule(dataset.kind, context.selection);
+    return rule.action === 'selected' || rule.action === 'resolve_references';
+  });
+}
+
 /** Complete Phase 5 adapter: SQL settings plus the tenant KeyManager DO snapshot. */
 export function createPhase5TenantBackupInstalledAdapter(input: {
   env: Env;
   planned: readonly PlannedInstalledSqliteDataset[];
   ports: Phase5InstalledAdapterPorts;
+  /** Server-installed Phase 8 extension; never accepted from an upload or API request. */
+  sqliteExtension?: InstalledSqliteExtension;
   now?: () => number;
 }): TenantBackupInstalledOperationAdapter {
-  const policies = [
-    ...createPhase5SqliteInspectionPolicies(input.planned, {
-      tenantKey: input.ports.tenantKey,
-      validateAdminEnvelope: input.ports.recordSnapshots.validateAdminEnvelope,
-    }),
+  if (
+    input.sqliteExtension &&
+    Boolean(input.sqliteExtension.policies) === Boolean(input.sqliteExtension.loadPolicies)
+  )
+    throw new Error('backup_phase5_sqlite_policy_loader');
+  const staticSqlitePolicies = input.sqliteExtension
+    ? (input.sqliteExtension.policies ?? null)
+    : createPhase5SqliteInspectionPolicies(input.planned, {
+        tenantKey: input.ports.tenantKey,
+        validateAdminEnvelope: input.ports.recordSnapshots.validateAdminEnvelope,
+      });
+  const nonSqlitePolicies = [
     createKeyManagerTenantBackupInspectionPolicy(),
     ...createPhase4RecordDatasetPolicies({
       validateSamlBundle: input.ports.recordSnapshots.validateSamlBundle,
@@ -174,18 +216,33 @@ export function createPhase5TenantBackupInstalledAdapter(input: {
     ...createPhase5RecordDatasetPolicies({
       assertPluginSupported: input.ports.recordSnapshots.assertPluginSupported,
     }),
+    ...(input.sqliteExtension?.recordSnapshots ?? []).map(({ policy }) => policy),
   ];
+  const policies = staticSqlitePolicies ? [...staticSqlitePolicies, ...nonSqlitePolicies] : null;
   const sqlExport = createTenantBackupInstalledSqliteExportAdapter({
-    requiredDatabases: { roles: ['tenant_core'], fixed: ['DB_ADMIN'] },
-    registrations: PHASE5_CUMULATIVE_SQLITE_DATASET_REGISTRATIONS,
+    requiredDatabases: input.sqliteExtension?.requiredDatabases ?? {
+      roles: ['tenant_core'],
+      fixed: ['DB_ADMIN'],
+    },
+    registrations:
+      input.sqliteExtension?.registrations ?? PHASE5_CUMULATIVE_SQLITE_DATASET_REGISTRATIONS,
     ports: {
       ...input.ports.export,
-      transformedDatasetIds: PHASE5_TRANSFORMED_SQLITE_DATASETS,
-      transformRow: createPhase5TenantBackupRowTransform(input.env, input.ports.rowTransform),
+      transformedDatasetIds:
+        input.sqliteExtension?.transformedDatasetIds ?? PHASE5_TRANSFORMED_SQLITE_DATASETS,
+      ...(input.sqliteExtension?.filterRow ? { filterRow: input.sqliteExtension.filterRow } : {}),
+      transformRow:
+        input.sqliteExtension?.transformRow ??
+        createPhase5TenantBackupRowTransform(input.env, input.ports.rowTransform),
     },
   });
-  const otherStores = createPhase5OtherStoreHandlers(input.env, input.ports.otherStores);
-  const recordSnapshots = [
+  const otherStores =
+    input.sqliteExtension?.otherStores ??
+    createPhase5OtherStoreHandlers(input.env, input.ports.otherStores);
+  const recordSnapshots: Array<{
+    dataset: TenantPortableDataset;
+    port: Phase5RecordSnapshotPort;
+  }> = [
     { dataset: SAML_LOCAL_SIGNING_DATASET, port: input.ports.recordSnapshots.saml },
     {
       dataset: DIRECTORY_CONNECTOR_SECRETS_DATASET,
@@ -197,10 +254,23 @@ export function createPhase5TenantBackupInstalledAdapter(input: {
       port: input.ports.recordSnapshots.pluginConfiguration,
     },
     { dataset: LOGICAL_PLACEMENT_DATASET, port: input.ports.recordSnapshots.logicalPlacement },
-  ] as const;
+    ...(input.sqliteExtension?.recordSnapshots ?? []).map(({ dataset, port }) => ({
+      dataset,
+      port,
+    })),
+  ];
   if (
+    new Set(recordSnapshots.map(({ dataset }) => dataset.id)).size !== recordSnapshots.length ||
     new Set(recordSnapshots.map(({ port }) => port.resourceId)).size !== recordSnapshots.length ||
-    recordSnapshots.some(({ port }) => !/^[A-Za-z0-9_.:-]{1,128}$/.test(port.resourceId))
+    recordSnapshots.some(
+      ({ dataset, port }) =>
+        !/^[A-Za-z0-9_.:-]{1,128}$/.test(port.resourceId) ||
+        !nonSqlitePolicies.some(
+          ({ dataset: policyDataset }) =>
+            policyDataset.id === dataset.id &&
+            JSON.stringify(policyDataset) === JSON.stringify(dataset)
+        )
+    )
   )
     throw new Error('backup_phase5_record_snapshot_ports');
   return {
@@ -225,28 +295,35 @@ export function createPhase5TenantBackupInstalledAdapter(input: {
       },
       async assertSources(context) {
         await sqlExport.assertSources(context);
-        await input.ports.keyManagerSnapshot.assertSource(context);
-        await Promise.all(recordSnapshots.map(({ port }) => port.assertSource(context)));
+        if (keyManagerSelected(context)) await input.ports.keyManagerSnapshot.assertSource(context);
+        await Promise.all(
+          selectedRecordSnapshots(recordSnapshots, context).map(({ port }) =>
+            port.assertSource(context)
+          )
+        );
       },
       async assertBoundaryReady(context) {
         await sqlExport.assertBoundaryReady(context);
-        await input.ports.keyManagerSnapshot.assertSource(context);
-        await Promise.all(recordSnapshots.map(({ port }) => port.assertSource(context)));
+        if (keyManagerSelected(context)) await input.ports.keyManagerSnapshot.assertSource(context);
+        await Promise.all(
+          selectedRecordSnapshots(recordSnapshots, context).map(({ port }) =>
+            port.assertSource(context)
+          )
+        );
       },
       async additionalParticipants(context) {
         const participants = await sqlExport.additionalParticipants(context);
-        if (!keyManagerSelected(context)) return participants;
-        const keyManagerId = await snapshotId(context, KEY_MANAGER_RESOURCE_ID);
-        const participant: TenantBackupBoundaryStart = {
-          resourceId: KEY_MANAGER_RESOURCE_ID,
-          snapshotId: keyManagerId,
-          start: (assertHeld) =>
-            input.ports.keyManagerSnapshot.start(context, keyManagerId, assertHeld),
-        };
-        const extra: TenantBackupBoundaryStart[] = [participant];
-        for (const record of recordSnapshots) {
-          const rule = tenantDatasetSelectionRule(record.dataset.kind, context.selection);
-          if (rule.action !== 'selected' && rule.action !== 'resolve_references') continue;
+        const extra: TenantBackupBoundaryStart[] = [];
+        if (keyManagerSelected(context)) {
+          const keyManagerId = await snapshotId(context, KEY_MANAGER_RESOURCE_ID);
+          extra.push({
+            resourceId: KEY_MANAGER_RESOURCE_ID,
+            snapshotId: keyManagerId,
+            start: (assertHeld) =>
+              input.ports.keyManagerSnapshot.start(context, keyManagerId, assertHeld),
+          });
+        }
+        for (const record of selectedRecordSnapshots(recordSnapshots, context)) {
           const recordSnapshotId = await snapshotId(context, record.port.resourceId);
           extra.push({
             resourceId: record.port.resourceId,
@@ -344,9 +421,8 @@ export function createPhase5TenantBackupInstalledAdapter(input: {
         }
       },
     },
-    import: createTenantBackupInstalledSqliteImportAdapter({
-      policies,
-      ports: {
+    import: (() => {
+      const ports: TenantBackupInstalledSqliteImportPorts = {
         ...input.ports.import,
         ...otherStores,
         async previewRestore(context, planDigest) {
@@ -385,8 +461,23 @@ export function createPhase5TenantBackupInstalledAdapter(input: {
           assertPhase5DeliverySafety(await input.ports.loadDeliverySafety(context, planDigest));
           await input.ports.import.prepareActivation(context, planDigest);
         },
-      },
-    }),
+      };
+      if (policies) return createTenantBackupInstalledSqliteImportAdapter({ policies, ports });
+      const datasets = [
+        ...(
+          input.sqliteExtension?.registrations ?? PHASE5_CUMULATIVE_SQLITE_DATASET_REGISTRATIONS
+        ).map(({ dataset }) => dataset),
+        ...nonSqlitePolicies.map(({ dataset }) => dataset),
+      ];
+      return createTenantBackupInstalledSqliteImportAdapter({
+        datasets,
+        async loadPolicies(context) {
+          const sqlitePolicies = await input.sqliteExtension!.loadPolicies!(context);
+          return [...sqlitePolicies, ...nonSqlitePolicies];
+        },
+        ports,
+      });
+    })(),
     cleanup: createTenantBackupInstalledCleanupAdapter(input.env, input.ports.cleanup, input.now),
   };
 }

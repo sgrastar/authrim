@@ -5,6 +5,9 @@ import { sqliteCapturePlan } from './sqlite-capture-plan';
 import { tenantDatasetSelectionRule, type TenantBackupSelection } from './selection-contract';
 import type { CaptureSchema } from './sqlite-snapshot';
 
+/** Bounded above the complete installed Phase 8 dataset set and below inventory/D1 limits. */
+export const TENANT_BACKUP_MAX_SQLITE_DATASETS = 1024;
+
 type Inventory = Pick<TenantBackupExecutionInventory, 'headForLease' | 'readPage'>;
 export interface InstalledSqliteDatasetRegistration {
   family: MigrationSchemaFamily;

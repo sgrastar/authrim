@@ -32170,6 +32170,8 @@ paths:
                                   'lastErrorCode',
                                   'selection',
                                   'publication',
+                                  'adminMapping',
+                                  'heldRecords',
                                   'preview',
                                 ],
                               'properties':
@@ -32208,6 +32210,54 @@ paths:
                                           'expiresAt': { 'type': 'integer', 'minimum': 0 },
                                           'downloadAvailable': { 'type': 'boolean' },
                                         },
+                                    },
+                                  'adminMapping':
+                                    {
+                                      'type': 'object',
+                                      'nullable': true,
+                                      'additionalProperties': false,
+                                      'description': 'Mapping status for a restore that includes Admin data. The digest is exposed only after the mapping is frozen.',
+                                      'required':
+                                        [
+                                          'revision',
+                                          'state',
+                                          'sourceCount',
+                                          'mappedCount',
+                                          'complete',
+                                          'digest',
+                                        ],
+                                      'properties':
+                                        {
+                                          'revision': { 'type': 'integer', 'minimum': 0 },
+                                          'state': { 'type': 'string', 'enum': ['open', 'frozen'] },
+                                          'sourceCount': { 'type': 'integer', 'minimum': 0 },
+                                          'mappedCount': { 'type': 'integer', 'minimum': 0 },
+                                          'complete': { 'type': 'boolean' },
+                                          'digest':
+                                            {
+                                              'type': 'string',
+                                              'nullable': true,
+                                              'pattern': '^[a-f0-9]{64}$',
+                                            },
+                                        },
+                                  'heldRecords':
+                                    {
+                                      'type': 'array',
+                                      'description': 'Source asynchronous work quarantined during restore. These records are retained encrypted and are not visible to normal consumers.',
+                                      'maxItems': 100,
+                                      'items':
+                                        {
+                                          'type': 'object',
+                                          'additionalProperties': false,
+                                          'required': ['datasetId', 'reason', 'count'],
+                                          'properties':
+                                            {
+                                              'datasetId': { 'type': 'string' },
+                                              'reason': { 'type': 'string' },
+                                              'count': { 'type': 'integer', 'minimum': 1 },
+                                            },
+                                        },
+                                    },
                                     },
                                   'preview':
                                     {
@@ -32308,12 +32358,134 @@ paths:
             },
         },
     }
+  /api/admin/tenant-backups/{operationId}/admin-mappings:
+    get:
+      tags: [Tenant Backup]
+      operationId: listTenantBackupAdminMappings
+      summary: List source and target administrators for restore mapping
+      description: Returns at most 100 validated source administrator IDs and 100 active same-tenant target administrators per page. Mapping data is available only for an import that selected Admin data. Internal validation positions and source credentials are omitted.
+      security: [{ adminSessionCookie: [] }]
+      parameters:
+        - name: operationId
+          in: path
+          required: true
+          schema: { type: string, pattern: '^[A-Za-z0-9_.:-]{1,256}$' }
+        - name: after
+          in: query
+          schema: { type: string, maxLength: 256 }
+        - name: targetAfter
+          in: query
+          schema: { type: string, maxLength: 256 }
+      responses:
+        '200':
+          description: Current mapping status and bounded source and target pages.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [status, sources, targets]
+                properties:
+                  status:
+                    type: object
+                    additionalProperties: false
+                    required: [revision, state, sourceCount, mappedCount, complete, digest]
+                    properties:
+                      revision: { type: integer, minimum: 0 }
+                      state: { type: string, enum: [open, frozen] }
+                      sourceCount: { type: integer, minimum: 0 }
+                      mappedCount: { type: integer, minimum: 0 }
+                      complete: { type: boolean }
+                      digest: { type: string, nullable: true, pattern: '^[a-f0-9]{64}$' }
+                  sources:
+                    type: object
+                    additionalProperties: false
+                    required: [entries, nextCursor, done]
+                    properties:
+                      entries:
+                        type: array
+                        maxItems: 100
+                        items:
+                          type: object
+                          additionalProperties: false
+                          required:
+                            [sourceAdminId, targetAdminId, targetEmail, targetName]
+                          properties:
+                            sourceAdminId: { type: string }
+                            targetAdminId: { type: string, nullable: true }
+                            targetEmail: { type: string, nullable: true }
+                            targetName: { type: string, nullable: true }
+                      nextCursor: { type: string }
+                      done: { type: boolean }
+                  targets:
+                    type: object
+                    additionalProperties: false
+                    required: [entries, nextCursor, done]
+                    properties:
+                      entries:
+                        type: array
+                        maxItems: 100
+                        items:
+                          type: object
+                          additionalProperties: false
+                          required: [id, email, name]
+                          properties:
+                            id: { type: string }
+                            email: { type: string }
+                            name: { type: string, nullable: true }
+                      nextCursor: { type: string }
+                      done: { type: boolean }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '503': { $ref: '#/components/responses/Error' }
+    put:
+      tags: [Tenant Backup]
+      operationId: mapTenantBackupAdministrator
+      summary: Map one source administrator to one target administrator
+      description: Requires import and manage permissions plus a fresh human Admin session. The source must exist in the validated input and the target must be an active administrator in the authenticated tenant. A target may be assigned to only one source. The mapping is mutable only while restore approval is pending, and an audit request is persisted first.
+      security: [{ adminSessionCookie: [] }]
+      parameters:
+        - name: operationId
+          in: path
+          required: true
+          schema: { type: string, pattern: '^[A-Za-z0-9_.:-]{1,256}$' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [sourceAdminId, targetAdminId]
+              properties:
+                sourceAdminId: { type: string, pattern: '^[A-Za-z0-9_.:-]{1,256}$' }
+                targetAdminId: { type: string, pattern: '^[A-Za-z0-9_.:-]{1,256}$' }
+      responses:
+        '200':
+          description: The mapping was stored and the mapping revision was advanced.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [status]
+                properties:
+                  status: { type: object }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '503': { $ref: '#/components/responses/Error' }
   /api/admin/tenant-backups/{operationId}/approve:
     post:
       tags: [Tenant Backup]
       operationId: approveTenantBackupRestore
       summary: Approve one sealed restore preview
-      description: Requires import and manage permissions plus a fresh human Admin session. The revision and plan digest must match the current blocker-free preview. Audit evidence is persisted before the waiting operation is resumed.
+      description: Requires import and manage permissions plus a fresh human Admin session. The revision and plan digest must match the current blocker-free preview. An Admin-data restore also requires the current complete mapping revision. The mapping is frozen atomically with resuming the waiting operation. Audit evidence is persisted first.
       security: [{ adminSessionCookie: [] }]
       parameters:
         - name: operationId
@@ -32331,6 +32503,10 @@ paths:
               properties:
                 revision: { type: integer, minimum: 0 }
                 planDigest: { type: string, pattern: '^[a-f0-9]{64}$' }
+                adminMappingRevision:
+                  type: integer
+                  minimum: 0
+                  description: Required exactly when the restore selection includes Admin data.
       responses:
         '202':
           description: The exact approved restore was queued for execution.

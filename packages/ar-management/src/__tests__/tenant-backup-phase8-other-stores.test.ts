@@ -1,0 +1,170 @@
+import { describe, expect, it, vi } from 'vitest';
+import { createPhase8OtherStoreHandlers } from '../tenant-backup-phase8-other-stores';
+import { encodePortableUserAvatar } from '@authrim/ar-lib-core/services/tenant-portability/phase5-record-datasets';
+
+const digest = 'a'.repeat(64);
+const context = {
+  lease: { tenantId: 'tenant-a' },
+  signal: new AbortController().signal,
+} as never;
+
+function cursor(datasetId: string, purpose: 'restore' | 'verify' = 'restore') {
+  return JSON.stringify({
+    version: 1,
+    purpose,
+    stage: 'phase8',
+    datasetId,
+    sourceCursor: null,
+  });
+}
+
+function source(datasetId: string, ignored: string[], rowJson: string, target: unknown = {}) {
+  return {
+    policy: {
+      dataset: { id: datasetId },
+      verificationIgnoredColumns: ignored,
+    },
+    manifest: {},
+    target,
+    readNextValidatedRow: vi.fn(async () => ({ rowJson, nextCursor: 'row-1' })),
+  } as never;
+}
+
+describe('Phase 8 sensitive sidecars', () => {
+  it('restores target-environment material after the SQL placeholder row exists', async () => {
+    const target = {
+      writeSidecarText: vi.fn(async (...args: unknown[]) => {
+        const value = args[4] as string;
+        const matches = args[5] as (stored: string) => Promise<boolean>;
+        expect(await matches(value)).toBe(true);
+      }),
+      writeSidecarValue: vi.fn(async (...args: unknown[]) => {
+        const value = args[4] as readonly ['integer', string];
+        const matches = args[5] as (stored: readonly ['integer', string]) => Promise<boolean>;
+        expect(await matches(value)).toBe(true);
+      }),
+    };
+    const loaded = source(
+      'core.totp_credentials',
+      ['secret_encrypted', 'secret_key_version'],
+      JSON.stringify({
+        id: ['text', 'totp-a'],
+        tenant_id: ['text', 'tenant-a'],
+        secret_encrypted: [
+          'text',
+          JSON.stringify({
+            version: 1,
+            kind: 'totp_secret',
+            sourceKeyVersion: 3,
+            value: 'JBSWY3DPEHPK3PXP',
+          }),
+        ],
+        secret_key_version: ['integer', '3'],
+      }),
+      target
+    );
+    const restorePhase8Envelope = vi.fn();
+    const handlers = createPhase8OtherStoreHandlers(
+      {
+        PII_ENCRYPTION_KEY: '22'.repeat(32),
+        PII_ENCRYPTION_KEY_VERSION: '7',
+      },
+      {
+        loadPhase8Sqlite: vi.fn(async () => loaded),
+        restorePhase8Envelope,
+        verifyPhase8Envelope: vi.fn(),
+      } as never
+    );
+
+    const result = await handlers.restoreOtherStores(
+      context,
+      digest,
+      cursor('core.totp_credentials')
+    );
+
+    expect(result.done).toBe(false);
+    expect(restorePhase8Envelope).not.toHaveBeenCalled();
+    expect(target.writeSidecarText).toHaveBeenCalledOnce();
+    expect(target.writeSidecarValue).toHaveBeenCalledOnce();
+  });
+
+  it('does not materialize a sensitive sidecar for quarantined source work', async () => {
+    const loaded = source(
+      'core.notification_delivery_intents',
+      [
+        'payload_key_id',
+        'payload_envelope_json',
+        'recipient_encrypted',
+        'recipient_encryption_key_version',
+      ],
+      JSON.stringify({ intent_id: ['text', 'intent-a'], state: ['text', 'pending'] })
+    );
+    const restorePhase8Envelope = vi.fn();
+    const handlers = createPhase8OtherStoreHandlers({}, {
+      loadPhase8Sqlite: vi.fn(async () => loaded),
+      restorePhase8Envelope,
+      verifyPhase8Envelope: vi.fn(),
+    } as never);
+
+    await handlers.restoreOtherStores(
+      context,
+      digest,
+      cursor('core.notification_delivery_intents')
+    );
+    expect(restorePhase8Envelope).not.toHaveBeenCalled();
+  });
+
+  it('requires semantic verification for every restored sensitive sidecar', async () => {
+    const loaded = source(
+      'pii.pii_log',
+      ['values_encrypted', 'encryption_key_id', 'encryption_iv'],
+      JSON.stringify({
+        id: ['text', 'pii-log-a'],
+        tenant_id: ['text', 'tenant-a'],
+        affected_fields: ['text', '["email"]'],
+        values_r2_key: ['text', 'sensitive-detail-catalog:catalog-a'],
+        values_encrypted: ['null', null],
+        encryption_key_id: ['text', 'pii-key-v1'],
+        encryption_iv: ['text', 'source-iv'],
+      })
+    );
+    const handlers = createPhase8OtherStoreHandlers({}, {
+      loadPhase8Sqlite: vi.fn(async () => loaded),
+      restorePhase8Envelope: vi.fn(),
+      verifyPhase8Envelope: vi.fn(async () => false),
+    } as never);
+
+    await expect(
+      handlers.verifyOtherStores(context, digest, cursor('pii.pii_log', 'verify'))
+    ).rejects.toThrow('backup_phase8_other_store_invalid');
+  });
+
+  it('restores user avatars through the user-owned record dataset', async () => {
+    const bytes = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 3]);
+    const hashed = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes));
+    const rowJson = new TextDecoder()
+      .decode(
+        await encodePortableUserAvatar({
+          tenantId: 'tenant-a',
+          key: 'avatars/tenant-a/users/user-a.png',
+          contentType: 'image/png',
+          sha256: [...hashed].map((byte) => byte.toString(16).padStart(2, '0')).join(''),
+          bytes,
+        })
+      )
+      .trim();
+    const loaded = source('users.public_avatars', [], rowJson);
+    const importAsset = vi.fn();
+    const handlers = createPhase8OtherStoreHandlers({}, {
+      loadPhase8Record: vi.fn(async () => loaded),
+      importAsset,
+    } as never);
+
+    await handlers.restoreOtherStores(context, digest, cursor('users.public_avatars'));
+
+    expect(importAsset).toHaveBeenCalledWith(
+      context,
+      expect.objectContaining({ key: 'avatars/tenant-a/users/user-a.png', bytes })
+    );
+  });
+});

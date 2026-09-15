@@ -70,12 +70,6 @@ const adminDrBackup = {
 	admin_dr_backup_tenant_title: 'Tenant backup and restore',
 	admin_dr_backup_tenant_desc:
 		'Create an encrypted portable backup for this tenant or restore one into a newly prepared environment.',
-	admin_dr_backup_tenant_scope_settings: 'Settings data',
-	admin_dr_backup_tenant_scope_settings_desc:
-		'Includes tenant configuration, signing material, connector secrets, public assets, and plugin configuration currently supported by the portable format.',
-	admin_dr_backup_tenant_scope_included: 'Included',
-	admin_dr_backup_tenant_scope_future:
-		'User, Admin, artifact, and log selections will appear after their restore adapters are available.',
 	admin_dr_backup_tenant_export_title: 'Create backup',
 	admin_dr_backup_tenant_export_desc:
 		'Use a passphrase of at least 16 characters. Authrim never sends the passphrase to the server.',
@@ -100,6 +94,9 @@ const adminDrBackup = {
 	admin_dr_backup_tenant_cancel: 'Cancel',
 	admin_dr_backup_tenant_detail_title: 'Operation detail',
 	admin_dr_backup_tenant_selection_title: 'Included data',
+	admin_dr_backup_tenant_selection_desc:
+		'Select each data group independently. The same selection is used for export and restore.',
+	admin_dr_backup_tenant_selection_required: 'Select at least one data group.',
 	admin_dr_backup_tenant_selection_settings: 'Settings',
 	admin_dr_backup_tenant_selection_users: 'Users',
 	admin_dr_backup_tenant_selection_admin: 'Admin data',
@@ -108,7 +105,10 @@ const adminDrBackup = {
 	admin_dr_backup_tenant_period_days: '{days:number} days',
 	admin_dr_backup_tenant_selection_audit_logs: 'Audit logs ({period:string})',
 	admin_dr_backup_tenant_selection_other_logs: 'Other logs ({period:string})',
+	admin_dr_backup_tenant_selection_audit_logs_plain: 'Audit logs',
+	admin_dr_backup_tenant_selection_other_logs_plain: 'Other logs',
 	admin_dr_backup_tenant_selection_sensitive: 'including sensitive log fields',
+	admin_dr_backup_tenant_log_period: 'Log period',
 	admin_dr_backup_tenant_preview_datasets: 'Datasets in the restore plan',
 	admin_dr_backup_tenant_preview_summary:
 		'Restore preview: {datasets:number} datasets, {records:number} records',
@@ -117,6 +117,18 @@ const adminDrBackup = {
 	admin_dr_backup_tenant_blocker_external: 'Resolve target resource: {id:string}',
 	admin_dr_backup_tenant_blocker_delivery:
 		'Confirm the source is stopped and historical delivery remains on hold.',
+	admin_dr_backup_tenant_admin_mapping_title: 'Administrator mapping',
+	admin_dr_backup_tenant_admin_mapping_progress:
+		'{mapped:number} of {total:number} source administrators mapped',
+	admin_dr_backup_tenant_admin_mapping_source: 'Source administrator ID',
+	admin_dr_backup_tenant_admin_mapping_target: 'Target administrator',
+	admin_dr_backup_tenant_admin_mapping_unassigned: 'Select a target administrator',
+	admin_dr_backup_tenant_admin_mapping_no_targets:
+		'No active administrator is available in this tenant.',
+	admin_dr_backup_tenant_admin_mapping_error: 'Failed to update the administrator mapping',
+	admin_dr_backup_tenant_held_records:
+		'{count} source work records are retained encrypted and will not run automatically.',
+	admin_dr_backup_tenant_held_records_details: 'Held source work',
 	admin_dr_backup_tenant_approve_restore: 'Approve and start restore',
 	admin_dr_backup_tenant_download_expires: 'Download available until {time:string}.',
 	admin_dr_backup_tenant_detail_status: 'Current status: {status:string}',

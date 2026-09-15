@@ -12,6 +12,7 @@ import {
   type Env,
 } from '@authrim/ar-lib-core';
 import { TenantBackupOperationStore } from '@authrim/ar-lib-core/services/tenant-portability/operation-store';
+import { TenantBackupAdminMappingStore } from '@authrim/ar-lib-core/services/tenant-portability/admin-mapping-store';
 import { getTenantBackupKeyStore as keyStore } from '../../tenant-backup-services';
 import { TenantBackupRequestStore } from '@authrim/ar-lib-core/services/tenant-portability/operation-request';
 import type { TenantBackupRequestIntent } from '@authrim/ar-lib-core/services/tenant-portability/operation-request';
@@ -388,14 +389,111 @@ tenantBackupsRouter.get('/:operationId', async (c) => {
   return c.json(result.view);
 });
 
+tenantBackupsRouter.get('/:operationId/admin-mappings', async (c) => {
+  const auth = tenantAuth(c.get('adminAuth'));
+  const database = requireDedicatedAdminDatabaseAdapter(c.env, 'tenant-backup');
+  let result;
+  try {
+    result = await new TenantBackupOperationReadModel(database).get(
+      auth.tenantId,
+      c.req.param('operationId'),
+      Date.now()
+    );
+  } catch {
+    return c.json({ error: 'backup_admin_mapping_unavailable' }, 409);
+  }
+  if (!result) return c.json({ error: 'backup_operation_not_found' }, 404);
+  if (!hasOperationPermission(auth, result.intent))
+    return c.json({ error: 'backup_forbidden' }, 403);
+  if (result.intent.kind !== 'import' || !result.intent.selection.admin)
+    return c.json({ error: 'backup_admin_mapping_unavailable' }, 409);
+  const after = c.req.query('after') ?? '';
+  const targetAfter = c.req.query('targetAfter') ?? '';
+  try {
+    const store = new TenantBackupAdminMappingStore(database);
+    const [status, sources, targets] = await Promise.all([
+      store.status(auth.tenantId, result.operation.id),
+      store.listSources(auth.tenantId, result.operation.id, after),
+      store.listTargets(auth.tenantId, targetAfter),
+    ]);
+    return c.json({ status, sources, targets });
+  } catch {
+    return c.json({ error: 'backup_admin_mapping_unavailable' }, 409);
+  }
+});
+
+tenantBackupsRouter.put('/:operationId/admin-mappings', async (c) => {
+  const auth = tenantAuth(c.get('adminAuth'));
+  const body: unknown = await c.req.json().catch(() => null);
+  if (!body || typeof body !== 'object' || Array.isArray(body))
+    return c.json({ error: 'invalid_backup_admin_mapping' }, 400);
+  const input = body as Record<string, unknown>;
+  if (
+    Object.keys(input).sort().join(',') !== 'sourceAdminId,targetAdminId' ||
+    typeof input.sourceAdminId !== 'string' ||
+    !/^[A-Za-z0-9_.:-]{1,256}$/.test(input.sourceAdminId) ||
+    typeof input.targetAdminId !== 'string' ||
+    !/^[A-Za-z0-9_.:-]{1,256}$/.test(input.targetAdminId)
+  )
+    return c.json({ error: 'invalid_backup_admin_mapping' }, 400);
+  const database = requireDedicatedAdminDatabaseAdapter(c.env, 'tenant-backup');
+  let result;
+  try {
+    result = await new TenantBackupOperationReadModel(database).get(
+      auth.tenantId,
+      c.req.param('operationId'),
+      Date.now()
+    );
+  } catch {
+    return c.json({ error: 'backup_admin_mapping_conflict' }, 409);
+  }
+  if (!result) return c.json({ error: 'backup_operation_not_found' }, 404);
+  if (!hasOperationPermission(auth, result.intent))
+    return c.json({ error: 'backup_forbidden' }, 403);
+  if (
+    result.intent.kind !== 'import' ||
+    !result.intent.selection.admin ||
+    result.operation.state !== 'waiting' ||
+    result.operation.phase !== 'await_restore_approval'
+  )
+    return c.json({ error: 'backup_admin_mapping_conflict' }, 409);
+  if (
+    !(await writeAdminAuditLog(c, {
+      action: 'tenant_backup.admin_mapping_requested',
+      resourceType: 'tenant_backup',
+      resourceId: result.operation.id,
+      result: 'success',
+      metadata: {
+        sourceAdminId: input.sourceAdminId,
+        targetAdminId: input.targetAdminId,
+      },
+    }))
+  )
+    return c.json({ error: 'backup_audit_unavailable' }, 503);
+  try {
+    const status = await new TenantBackupAdminMappingStore(database).map({
+      tenantId: auth.tenantId,
+      operationId: result.operation.id,
+      sourceAdminId: input.sourceAdminId,
+      targetAdminId: input.targetAdminId,
+      actorId: auth.actorId ?? auth.userId,
+      now: Date.now(),
+    });
+    return c.json({ status });
+  } catch {
+    return c.json({ error: 'backup_admin_mapping_conflict' }, 409);
+  }
+});
+
 tenantBackupsRouter.post('/:operationId/approve', async (c) => {
   const auth = tenantAuth(c.get('adminAuth'));
   const body: unknown = await c.req.json().catch(() => null);
   if (!body || typeof body !== 'object' || Array.isArray(body))
     return c.json({ error: 'invalid_backup_approval' }, 400);
   const input = body as Record<string, unknown>;
+  const keys = Object.keys(input).sort().join(',');
   if (
-    Object.keys(input).sort().join(',') !== 'planDigest,revision' ||
+    !['adminMappingRevision,planDigest,revision', 'planDigest,revision'].includes(keys) ||
     typeof input.planDigest !== 'string' ||
     !/^[a-f0-9]{64}$/.test(input.planDigest) ||
     typeof input.revision !== 'number' ||
@@ -427,22 +525,56 @@ tenantBackupsRouter.post('/:operationId/approve', async (c) => {
   )
     return c.json({ error: 'backup_restore_preview_stale' }, 409);
   if (
+    result.intent.selection.admin &&
+    (typeof input.adminMappingRevision !== 'number' ||
+      !Number.isSafeInteger(input.adminMappingRevision) ||
+      input.adminMappingRevision < 0 ||
+      result.view.adminMapping?.revision !== input.adminMappingRevision ||
+      !result.view.adminMapping.complete ||
+      result.view.adminMapping.state !== 'open')
+  )
+    return c.json({ error: 'backup_restore_preview_stale' }, 409);
+  if (!result.intent.selection.admin && 'adminMappingRevision' in input)
+    return c.json({ error: 'invalid_backup_approval' }, 400);
+  if (
     !(await writeAdminAuditLog(c, {
       action: 'tenant_backup.restore_approved',
       resourceType: 'tenant_backup',
       resourceId: result.operation.id,
       result: 'success',
-      metadata: { planDigest: input.planDigest, revision: input.revision },
+      metadata: {
+        planDigest: input.planDigest,
+        revision: input.revision,
+        ...(result.intent.selection.admin
+          ? { adminMappingRevision: input.adminMappingRevision }
+          : {}),
+      },
     }))
   )
     return c.json({ error: 'backup_audit_unavailable' }, 503);
-  const operation = await new TenantBackupOperationStore(database).resumeWaiting(
-    auth.tenantId,
-    result.operation.id,
-    result.operation.revision,
-    result.operation.request_digest,
-    Date.now()
-  );
+  let operation;
+  try {
+    operation = result.intent.selection.admin
+      ? (
+          await new TenantBackupAdminMappingStore(database).approve({
+            tenantId: auth.tenantId,
+            operationId: result.operation.id,
+            actorId: auth.actorId ?? auth.userId,
+            operationRevision: result.operation.revision,
+            mappingRevision: input.adminMappingRevision as number,
+            now: Date.now(),
+          })
+        ).operation
+      : await new TenantBackupOperationStore(database).resumeWaiting(
+          auth.tenantId,
+          result.operation.id,
+          result.operation.revision,
+          result.operation.request_digest,
+          Date.now()
+        );
+  } catch {
+    return c.json({ error: 'backup_restore_preview_stale' }, 409);
+  }
   if (!operation) return c.json({ error: 'backup_restore_preview_stale' }, 409);
   return c.json(
     {

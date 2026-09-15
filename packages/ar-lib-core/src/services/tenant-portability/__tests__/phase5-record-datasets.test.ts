@@ -4,7 +4,11 @@ import {
   decodePortableLogicalTargetPlan,
   decodePortablePluginConfiguration,
   decodePortablePublicAsset,
+  decodePortableUserAvatar,
+  encodePortableLogicalTargetPlan,
+  encodePortablePluginConfiguration,
   encodePortablePublicAsset,
+  encodePortableUserAvatar,
 } from '../phase5-record-datasets.js';
 
 const text = (value: string) => ['text', value] as const;
@@ -30,6 +34,27 @@ describe('Phase 5 record datasets', () => {
     );
     expect(restored.bytes).toEqual(bytes);
     expect(restored.sha256).toBe(sha256);
+  });
+
+  it('keeps user avatars in a user-owned dataset independent from settings assets', async () => {
+    const bytes = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 2]);
+    const sha = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes));
+    const sha256 = [...sha].map((byte) => byte.toString(16).padStart(2, '0')).join('');
+    const avatar = {
+      tenantId: 'tenant-a',
+      key: 'avatars/tenant-a/users/user-a.png',
+      contentType: 'image/png',
+      sha256,
+      bytes,
+    };
+
+    const encoded = await encodePortableUserAvatar(avatar);
+    await expect(
+      decodePortableUserAvatar(new TextDecoder().decode(encoded).trim(), 'tenant-a')
+    ).resolves.toMatchObject({ key: avatar.key, sha256 });
+    await expect(encodePortablePublicAsset(avatar)).rejects.toThrow(
+      'backup_phase5_record_dataset_invalid'
+    );
   });
 
   it('rejects foreign assets, forged MIME types and digest mismatch', async () => {
@@ -65,6 +90,35 @@ describe('Phase 5 record datasets', () => {
         'tenant-a'
       )
     ).toMatchObject({ pluginId: 'plugin-a', contractVersion: 2, versionDigest: digest });
+  });
+
+  it('encodes plugin and logical placement records through their strict decoders', () => {
+    const plugin = {
+      tenantId: 'tenant-a',
+      installationId: 'installation-a',
+      pluginId: 'plugin-a',
+      versionDigest: digest,
+      contractVersion: 1,
+      config: { routes: [] },
+    };
+    expect(
+      decodePortablePluginConfiguration(
+        new TextDecoder().decode(encodePortablePluginConfiguration(plugin)).trim(),
+        'tenant-a'
+      )
+    ).toEqual(plugin);
+    const plan = {
+      version: 1 as const,
+      databaseRoles: ['tenant_core', 'tenant_pii'],
+      rebuild: ['lookup'],
+      externalPrerequisiteIds: ['email-primary'],
+    };
+    expect(
+      decodePortableLogicalTargetPlan(
+        new TextDecoder().decode(encodePortableLogicalTargetPlan('tenant-a', plan)).trim(),
+        'tenant-a'
+      )
+    ).toEqual(plan);
   });
 
   it('accepts logical roles and rejects source physical resource identifiers', () => {

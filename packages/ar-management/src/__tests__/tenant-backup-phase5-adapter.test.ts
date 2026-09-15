@@ -216,6 +216,35 @@ it('captures, exports and releases the immutable KeyManager snapshot participant
   expect(ports.keyManagerSnapshot.release).toHaveBeenCalledOnce();
 });
 
+it('does not require unselected settings stores for a users-only backup', async () => {
+  const { adapter, ports } = fixture();
+  const context = {
+    ...adapterContext(),
+    selection: {
+      settings: false,
+      users: true,
+      admin: false,
+      artifacts: false,
+      logs: { audit: false, other: false, sensitive: false, period: 'all' as const },
+    },
+  };
+
+  await adapter.export.assertSources(context);
+  await adapter.export.assertBoundaryReady(context);
+  await expect(adapter.export.additionalParticipants(context)).resolves.toEqual([]);
+
+  expect(ports.keyManagerSnapshot.assertSource).not.toHaveBeenCalled();
+  for (const record of [
+    ports.recordSnapshots.saml,
+    ports.recordSnapshots.directorySecrets,
+    ports.recordSnapshots.publicAssets,
+    ports.recordSnapshots.pluginConfiguration,
+    ports.recordSnapshots.logicalPlacement,
+  ]) {
+    expect(record.assertSource).not.toHaveBeenCalled();
+  }
+});
+
 it('blocks activation until external prerequisites and logical references pass', async () => {
   const { adapter, ports } = fixture();
   const context = {

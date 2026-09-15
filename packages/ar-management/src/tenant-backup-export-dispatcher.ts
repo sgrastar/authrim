@@ -67,6 +67,8 @@ export interface TenantBackupInstalledExportAdapter {
       datasetId: string;
       cursor: string | null;
       signal: AbortSignal;
+      /** Immutable bundle boundary used by installed log-window policies. */
+      boundaryUnixMs?: number;
     }
   ): Promise<{ bytes: Uint8Array; nextCursor: string } | null>;
   /** Release one page of installed non-SQL snapshot state after ciphertext verification. */
@@ -333,8 +335,14 @@ export async function runTenantBackupExportOperationStep(
         datasets,
         requiredDatabases: required,
         assertSources,
-        readNext: async (datasetId, cursor, signal) =>
-          adapter.readNext({ ...(await adapterContext()), datasetId, cursor, signal }),
+        readNext: async (datasetId, cursor, signal, manifest) =>
+          adapter.readNext({
+            ...(await adapterContext()),
+            datasetId,
+            cursor,
+            signal,
+            boundaryUnixMs: manifest?.boundaryUnixMs,
+          }),
         assertPublishable: async (inventoryDigest) =>
           adapter.assertPublishable({ ...(await adapterContext()), inventoryDigest }),
       },

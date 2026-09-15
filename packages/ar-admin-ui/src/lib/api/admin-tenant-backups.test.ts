@@ -78,6 +78,8 @@ it('lists public progress and submits the exact preview revision and digest for 
 			logs: { audit: false, other: false, sensitive: false, period: 'all' }
 		},
 		publication: null,
+		adminMapping: null,
+		heldRecords: [],
 		preview: {
 			planDigest: 'ab'.repeat(32),
 			datasetCount: 2,

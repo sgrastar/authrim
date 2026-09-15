@@ -7,6 +7,11 @@ import {
   runSqliteRestoreDatasetStep,
   runSqliteRestoreDatasetVerificationStep,
 } from './restore-sqlite-step';
+import { TENANT_BACKUP_MAX_SQLITE_DATASETS } from './installed-sqlite-datasets';
+import {
+  cloneSqliteDatasetInspectionPolicy,
+  sqliteDatasetInspectionPolicyDescriptor,
+} from './sqlite-dataset-inspector';
 
 type DatasetInput = Parameters<typeof runSqliteRestoreDatasetStep>[1];
 type Source = Pick<DatasetInput, 'policy' | 'manifest' | 'readNextValidatedRow'>;
@@ -48,18 +53,7 @@ async function descriptor(
     table: policy.schema.table,
     manifestDigest: await hash(encodeTenantBundleManifest(input.manifest, input.manifest)),
     policyDigest: await hash(
-      new TextEncoder().encode(
-        JSON.stringify({
-          dataset: policy.dataset,
-          schema: policy.schema,
-          parentDataset: policy.parentDataset,
-          tenantKey: policy.tenantKey,
-          restoreAfter: policy.restoreAfter,
-          deferredColumns: policy.deferredColumns,
-          restoreOverrides: policy.restoreOverrides,
-          verificationIgnoredColumns: policy.verificationIgnoredColumns,
-        })
-      )
+      new TextEncoder().encode(JSON.stringify(sqliteDatasetInspectionPolicyDescriptor(policy)))
     ),
   };
 }
@@ -123,15 +117,12 @@ export async function persistSqliteRestoreSequence(
   ordinal: number,
   datasets: readonly Pick<DatasetInput, 'targetId' | 'ordinal' | 'manifest' | 'policy'>[]
 ): Promise<void> {
-  if (datasets.length > 256) throw fail();
+  if (datasets.length > TENANT_BACKUP_MAX_SQLITE_DATASETS) throw fail();
   const pinned = orderDatasets(
     datasets.map((dataset) => ({
       ...dataset,
       manifest: structuredClone(dataset.manifest),
-      policy: {
-        ...structuredClone({ ...dataset.policy, inspectRow: undefined }),
-        inspectRow: dataset.policy.inspectRow,
-      },
+      policy: cloneSqliteDatasetInspectionPolicy(dataset.policy),
     }))
   );
   const jobs: Job[] = [];
@@ -189,7 +180,7 @@ export async function runSqliteRestoreSequenceStep(
     decoded.kind !== 'sqlite-restore-sequence' ||
     !('jobs' in decoded) ||
     !Array.isArray(decoded.jobs) ||
-    decoded.jobs.length > 256
+    decoded.jobs.length > TENANT_BACKUP_MAX_SQLITE_DATASETS
   )
     throw fail();
   const jobs = decoded.jobs as Job[]; // Created by the installed planner and protected by inventory digests.

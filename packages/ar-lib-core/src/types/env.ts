@@ -190,6 +190,36 @@ export interface ReplaceDynamicPluginCredentialsInput {
   credentials: Record<string, string>;
 }
 
+export interface PortableDynamicPluginResource {
+  logicalResourceId: string;
+  binding: string;
+  kind: 'd1' | 'kv_namespace' | 'r2_bucket';
+  access: 'read_only' | 'read_write';
+}
+
+export interface PortableDynamicPluginConfiguration {
+  tenantId: string;
+  sourceInstallationId: string;
+  pluginId: string;
+  versionDigest: string;
+  contractVersion: 1;
+  enabled: boolean;
+  credentials: Record<string, string>;
+  resources: PortableDynamicPluginResource[];
+  mutationScopes: string[];
+}
+
+export interface RestoreDynamicPluginBackupInput {
+  operationId: string;
+  configuration: PortableDynamicPluginConfiguration;
+}
+
+export interface RestoreDynamicPluginBackupResult {
+  installationId: string;
+  state: 'enabled' | 'disabled';
+  configVersion: number;
+}
+
 export interface PluginCredentialInput {
   configKey: string;
   destinationHost: string;
@@ -300,6 +330,16 @@ export interface PluginRunnerServiceBinding {
   replaceDynamicPluginCredentials(
     input: ReplaceDynamicPluginCredentialsInput
   ): Promise<ReplacePluginCredentialsResult>;
+  exportDynamicPluginBackup(input: {
+    tenantId: string;
+    pluginId: string;
+  }): Promise<PortableDynamicPluginConfiguration | null>;
+  restoreDynamicPluginBackup(
+    input: RestoreDynamicPluginBackupInput
+  ): Promise<RestoreDynamicPluginBackupResult>;
+  verifyDynamicPluginBackup(input: {
+    configuration: PortableDynamicPluginConfiguration;
+  }): Promise<boolean>;
   replacePluginCredentials(
     input: ReplacePluginCredentialsInput
   ): Promise<ReplacePluginCredentialsResult>;

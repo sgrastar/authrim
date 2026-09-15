@@ -28,6 +28,7 @@ export async function readNextPlannedSqliteDatasetChunk(
     selection: Plan['selection'];
     resolveSource: () => Promise<{ resourceId: string; database: Plan['database'] }>;
     assertSourceStable: () => Promise<void>;
+    filterRow?: (rowJson: string) => Promise<boolean>;
     transformRow?: (rowJson: string) => Promise<string>;
   },
   cursorJson: string | null
@@ -111,6 +112,7 @@ export async function readNextPlannedSqliteDatasetChunk(
       tenantId: lease.tenantId,
       signal,
       partitions: input.partitions,
+      filterRow: input.filterRow,
       transformRow: input.transformRow,
     },
     sourceCursor

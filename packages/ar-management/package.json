@@ -21,6 +21,7 @@
     "@authrim/ar-lib-plugin": "workspace:*",
     "@authrim/ar-lib-policy": "workspace:*",
     "@authrim/ar-lib-scim": "workspace:*",
+    "@authrim/ar-saml": "workspace:^",
     "@simplewebauthn/server": "^13.2.2",
     "hono": "4.13.2",
     "jose": "^6.2.9",

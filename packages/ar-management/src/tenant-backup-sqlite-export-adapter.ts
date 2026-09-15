@@ -22,6 +22,13 @@ export interface TenantBackupInstalledSqliteExportPorts {
   assertBoundaryReady(input: AdapterContext): Promise<void>;
   /** Transform environment-encrypted fields before bundle encryption. */
   transformedDatasetIds?: readonly string[];
+  filterRow?(
+    input: AdapterContext & {
+      datasetId: string;
+      rowJson: string;
+      boundaryUnixMs?: number;
+    }
+  ): Promise<boolean>;
   transformRow?(input: AdapterContext & { datasetId: string; rowJson: string }): Promise<string>;
 }
 
@@ -106,6 +113,14 @@ export function createTenantBackupInstalledSqliteExportAdapter(input: {
               .resolveSource({ resourceId: dataset.resourceId, family: dataset.family })
               .then((database) => ({ resourceId: dataset.resourceId, database })),
           assertSourceStable: () => input.ports.assertSources(context),
+          filterRow: input.ports.filterRow
+            ? (rowJson) =>
+                input.ports.filterRow?.({
+                  ...context,
+                  datasetId: dataset.dataset.id,
+                  rowJson,
+                }) ?? Promise.reject(new Error('backup_sqlite_export_adapter_filter'))
+            : undefined,
           transformRow:
             transformedDatasetIds.includes(dataset.dataset.id) && input.ports.transformRow
               ? (rowJson) =>

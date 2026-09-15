@@ -64,6 +64,8 @@ export interface TenantBackupInstalledImportAdapter {
     context: TenantBackupStepContext,
     planDigest: string
   ): Promise<TenantBackupRestorePreview>;
+  /** Recheck approval-only state that is deliberately excluded from the immutable preview. */
+  assertRestoreApproval?(context: TenantBackupStepContext, planDigest: string): Promise<void>;
   /** Persist a recoverable activation intent without publishing routing. */
   prepareActivation(context: TenantBackupStepContext, planDigest: string): Promise<void>;
   /** Idempotently publish the validated target set. A lost response must be safe to retry. */
@@ -303,6 +305,8 @@ export async function runTenantBackupImportOperationStep(
       JSON.stringify(preview) !== JSON.stringify(cursor.preview)
     )
       fail();
+    await adapter.assertRestoreApproval?.(context, cursor.planDigest);
+    await adapter.assertSources(context);
     return {
       phase: 'start_sqlite_restore_sequence',
       cursor: JSON.stringify(cursor.restoreCursor),

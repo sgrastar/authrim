@@ -1,5 +1,6 @@
 import { expect, it, vi } from 'vitest';
 import type { TenantBackupStepContext } from '@authrim/ar-lib-core/services/tenant-portability/operation-executor';
+import type { SqliteDatasetInspectionPolicy } from '@authrim/ar-lib-core/services/tenant-portability/sqlite-dataset-inspector';
 import {
   createTenantBackupInstalledSqliteImportAdapter,
   type TenantBackupInstalledSqliteImportPorts,
@@ -121,4 +122,53 @@ it('allows the same table name in distinct physical schema families', () => {
       ports,
     })
   ).not.toThrow();
+});
+
+it('accepts the complete Phase 8 SQL scale while retaining a bounded policy limit', () => {
+  const ports = fixture().ports;
+  const policies = Array.from({ length: 311 }, (_, index) => ({
+    ...policy,
+    dataset: { ...dataset, id: `core.phase8_${index}` },
+    schema: { ...policy.schema, table: `phase8_${index}` },
+  }));
+  expect(() => createTenantBackupInstalledSqliteImportAdapter({ policies, ports })).not.toThrow();
+});
+
+it('loads the complete policy set from the operation context and rejects physical-plan drift', async () => {
+  const { ports, context } = fixture();
+  const loadPolicies = vi.fn(
+    async (): Promise<readonly SqliteDatasetInspectionPolicy[]> => [policy]
+  );
+  const adapter = createTenantBackupInstalledSqliteImportAdapter({
+    datasets: [dataset],
+    loadPolicies,
+    ports,
+  });
+
+  expect(await adapter.loadPolicy(context, dataset.id)).toEqual(policy);
+  expect(loadPolicies).toHaveBeenCalledWith(context);
+
+  loadPolicies.mockResolvedValueOnce([
+    { ...policy, dataset: { ...dataset, kind: 'users' as const } },
+  ]);
+  await expect(adapter.loadPolicy(context, dataset.id)).rejects.toThrow(
+    'backup_sqlite_import_adapter_invalid'
+  );
+});
+
+it('rejects incomplete dynamically loaded policies before returning any policy', async () => {
+  const { ports, context } = fixture();
+  const second = {
+    ...dataset,
+    id: 'core.organizations',
+  };
+  const adapter = createTenantBackupInstalledSqliteImportAdapter({
+    datasets: [dataset, second],
+    loadPolicies: async () => [policy],
+    ports,
+  });
+
+  await expect(adapter.loadPolicy(context, dataset.id)).rejects.toThrow(
+    'backup_sqlite_import_adapter_invalid'
+  );
 });

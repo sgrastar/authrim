@@ -3,12 +3,17 @@ import { readSqliteRestoreSeedFingerprint } from './sqlite-restore-seed';
 import type { DatabaseAdapter } from '../../db/adapter';
 import type { TenantBundleManifest } from './bundle-manifest';
 import {
+  cloneSqliteDatasetInspectionPolicy,
   createSqliteDatasetInspectorFactory,
   type SqliteDatasetInspectionPolicy,
 } from './sqlite-dataset-inspector';
 import { sqliteSnapshotRowInsert } from './sqlite-row-codec';
 
 type Database = Pick<DatabaseAdapter, 'query' | 'queryOne' | 'execute'>;
+export type SqliteSidecarValue =
+  | readonly ['null', null]
+  | readonly ['text', string]
+  | readonly ['integer', string];
 export interface SqliteRestoreTargetIdentity {
   id: string;
   tenantId: string;
@@ -242,15 +247,28 @@ export class SqliteRestoreTarget {
     matches: (storedValue: string) => Promise<boolean>
   ): Promise<void> {
     if (this.mode !== 'write' || !targetValue) throw error();
-    await this.sidecarValue(
+    await this.sidecarTypedValue(
       policy,
       manifest,
       rowJson,
       column,
-      targetValue,
-      async (stored) => stored !== null && matches(stored),
+      ['text', targetValue],
+      async (stored) => stored[0] === 'text' && stored[1] !== null && matches(stored[1]),
       true
     );
+  }
+
+  /** Apply a text or integer sidecar value from its exact installed restore placeholder. */
+  async writeSidecarValue(
+    policy: SqliteDatasetInspectionPolicy,
+    manifest: TenantBundleManifest,
+    rowJson: string,
+    column: string,
+    targetValue: Exclude<SqliteSidecarValue, readonly ['null', null]>,
+    matches: (storedValue: SqliteSidecarValue) => Promise<boolean>
+  ): Promise<void> {
+    if (this.mode !== 'write') throw error();
+    await this.sidecarTypedValue(policy, manifest, rowJson, column, targetValue, matches, true);
   }
   /** Verify a sidecar-owned value after the target has been sealed. */
   async verifySidecarValue(
@@ -260,7 +278,31 @@ export class SqliteRestoreTarget {
     column: string,
     matches: (storedValue: string | null) => Promise<boolean>
   ): Promise<void> {
-    await this.sidecarValue(policy, manifest, rowJson, column, null, matches, false);
+    await this.sidecarTypedValue(
+      policy,
+      manifest,
+      rowJson,
+      column,
+      null,
+      async (stored) =>
+        stored[0] === 'null'
+          ? matches(null)
+          : stored[0] === 'text' && stored[1] !== null
+            ? matches(stored[1])
+            : false,
+      false
+    );
+  }
+
+  /** Verify a sidecar-owned text or integer value after the target has been sealed. */
+  async verifySidecarTypedValue(
+    policy: SqliteDatasetInspectionPolicy,
+    manifest: TenantBundleManifest,
+    rowJson: string,
+    column: string,
+    matches: (storedValue: SqliteSidecarValue) => Promise<boolean>
+  ): Promise<void> {
+    await this.sidecarTypedValue(policy, manifest, rowJson, column, null, matches, false);
   }
   /** Complete nullable self references after every row in the same dataset exists. */
   async restoreDeferredRow(
@@ -309,20 +351,25 @@ export class SqliteRestoreTarget {
     return JSON.stringify(row);
   }
 
-  private async sidecarValue(
+  private async sidecarTypedValue(
     policy: SqliteDatasetInspectionPolicy,
     manifest: TenantBundleManifest,
     rowJson: string,
     column: string,
-    targetValue: string | null,
-    matches: (storedValue: string | null) => Promise<boolean>,
+    targetValue: SqliteSidecarValue | null,
+    matches: (storedValue: SqliteSidecarValue) => Promise<boolean>,
     write: boolean
   ): Promise<void> {
     ({ policy, manifest } = await this.validateRow(policy, manifest, rowJson));
+    const placeholder = policy.restoreOverrides?.[column];
     if (
       !/^[a-z][a-z0-9_]*$/.test(column) ||
       !policy.verificationIgnoredColumns?.includes(column) ||
-      JSON.stringify(policy.restoreOverrides?.[column]) !== '["null",null]'
+      !placeholder ||
+      !(['null', 'text', 'integer'] as const).includes(
+        placeholder[0] as 'null' | 'text' | 'integer'
+      ) ||
+      (targetValue !== null && (targetValue[0] === 'null' || typeof targetValue[1] !== 'string'))
     )
       throw error();
     const row = JSON.parse(rowJson) as Record<string, unknown>;
@@ -340,36 +387,53 @@ export class SqliteRestoreTarget {
     const read = async () => {
       await this.assertLive();
       return this.database.queryOne<{ value_type: string; value: unknown }>(
-        `SELECT typeof("${column}") AS value_type,"${column}" AS value
+        `SELECT typeof("${column}") AS value_type,
+        CASE WHEN typeof("${column}")='integer' THEN CAST("${column}" AS TEXT)
+             ELSE "${column}" END AS value
         FROM "${policy.schema.table}" WHERE ${this.guardSql()} AND ${predicate}`,
         [...this.guard(), ...key.params]
       );
     };
+    const decodeStored = (current: { value_type: string; value: unknown }): SqliteSidecarValue => {
+      if (current.value_type === 'null' && current.value === null) return ['null', null];
+      if (current.value_type === 'text' && typeof current.value === 'string')
+        return ['text', current.value];
+      if (
+        current.value_type === 'integer' &&
+        typeof current.value === 'string' &&
+        /^(0|-?[1-9][0-9]{0,18})$/.test(current.value)
+      )
+        return ['integer', current.value];
+      throw error();
+    };
     let current = await read();
     if (!current) throw error();
-    const stored =
-      current.value_type === 'text' && typeof current.value === 'string'
-        ? current.value
-        : current.value_type === 'null' && current.value === null
-          ? null
-          : undefined;
-    if (stored === undefined) throw error();
+    const stored = decodeStored(current);
     if (await matches(stored)) return;
-    if (!write || stored !== null || targetValue === null) throw error();
+    if (!write || targetValue === null || JSON.stringify(stored) !== JSON.stringify(placeholder))
+      throw error();
+    const target = sqliteSnapshotRowInsert(
+      policy.schema.table,
+      [column],
+      JSON.stringify({ [column]: targetValue })
+    );
+    const targetExpression = target.sql.slice(target.sql.indexOf(' VALUES (') + 9, -1);
+    const expected = sqliteSnapshotRowInsert(
+      policy.schema.table,
+      [column],
+      JSON.stringify({ [column]: placeholder })
+    );
+    const expectedExpression = expected.sql.slice(expected.sql.indexOf(' VALUES (') + 9, -1);
     await this.assertLive();
     const result = await this.database.execute(
-      `UPDATE "${policy.schema.table}" SET "${column}"=?
-      WHERE ${this.guardSql()} AND ${predicate} AND "${column}" IS NULL`,
-      [targetValue, ...this.guard(), ...key.params]
+      `UPDATE "${policy.schema.table}" SET "${column}"=${targetExpression}
+      WHERE ${this.guardSql()} AND ${predicate}
+      AND typeof("${column}")=? AND "${column}" IS ${expectedExpression}`,
+      [...target.params, ...this.guard(), ...key.params, placeholder[0], ...expected.params]
     );
     if (!result.success) throw error();
     current = await read();
-    if (
-      current?.value_type !== 'text' ||
-      typeof current.value !== 'string' ||
-      !(await matches(current.value))
-    )
-      throw error();
+    if (!current || !(await matches(decodeStored(current)))) throw error();
   }
 
   private async validateRow(
@@ -377,10 +441,7 @@ export class SqliteRestoreTarget {
     manifest: TenantBundleManifest,
     rowJson: string
   ): Promise<{ policy: SqliteDatasetInspectionPolicy; manifest: TenantBundleManifest }> {
-    policy = {
-      ...structuredClone({ ...policy, inspectRow: undefined }),
-      inspectRow: policy.inspectRow,
-    };
+    policy = cloneSqliteDatasetInspectionPolicy(policy);
     manifest = structuredClone(manifest);
     if (
       manifest.source.tenantId !== this.identity.tenantId ||

@@ -1,4 +1,5 @@
 import { encodeTenantBundleManifest } from './bundle-manifest';
+import type { TenantBundleManifest } from './bundle-manifest';
 import { loadTenantBackupExportManifest } from './export-manifest-store';
 import { TenantBackupArtifactWriter } from './artifact-writer';
 import { TenantBackupCipherJournal } from './cipher-journal';
@@ -24,7 +25,12 @@ export async function runTenantBackupArtifactStep(
     now: () => number;
     manifest?: DatasetInput['manifest'];
     expected: DatasetInput['expected'];
-    readNext: DatasetInput['readNext'];
+    readNext: (
+      datasetId: string,
+      cursor: string | null,
+      signal: AbortSignal,
+      manifest?: TenantBundleManifest
+    ) => Promise<{ bytes: Uint8Array; nextCursor: string } | null>;
     assertBoundary: DatasetInput['assertBoundary'];
   }
 ): Promise<TenantBackupStepResult> {
@@ -81,7 +87,14 @@ export async function runTenantBackupArtifactStep(
     input.now,
     input.key
   );
-  const result = await writeTenantBackupDatasetSlice({ ...input, manifest, journal, signal });
+  const result = await writeTenantBackupDatasetSlice({
+    ...input,
+    manifest,
+    journal,
+    signal,
+    readNext: (datasetId, cursor, readSignal) =>
+      input.readNext(datasetId, cursor, readSignal, manifest),
+  });
   return {
     phase: result.complete ? 'verify_artifact' : 'export_artifact',
     cursor: JSON.stringify({ version: 1, attemptId: input.attemptId }),

@@ -1,6 +1,9 @@
 import type { TenantBackupStepContext, TenantBackupStepResult } from './operation-executor';
 import type { TenantBundleManifest } from './bundle-manifest';
-import type { SqliteDatasetInspectionPolicy } from './sqlite-dataset-inspector';
+import {
+  cloneSqliteDatasetInspectionPolicy,
+  type SqliteDatasetInspectionPolicy,
+} from './sqlite-dataset-inspector';
 import { openPlannedSqliteRestoreTarget } from './sqlite-restore-plan';
 
 type TargetInput = Parameters<typeof openPlannedSqliteRestoreTarget>[0];
@@ -95,7 +98,8 @@ async function runStep(
         cursor.sourceCursor.length > 4096))
   )
     invalid();
-  if ((cursor.sourceCursor === null) !== (cursor.rowsWritten === 0)) invalid();
+  // Held rows advance the authenticated source cursor without increasing target row count.
+  if (cursor.sourceCursor === null && cursor.rowsWritten !== 0) invalid();
   if (
     mode === 'verify' &&
     (!Number.isSafeInteger(cursor.rowsVerified) ||
@@ -105,7 +109,7 @@ async function runStep(
         (typeof cursor.verifySourceCursor !== 'string' ||
           !cursor.verifySourceCursor ||
           cursor.verifySourceCursor.length > 4096)) ||
-      (cursor.verifySourceCursor === null) !== (cursor.rowsVerified === 0))
+      (cursor.verifySourceCursor === null && cursor.rowsVerified !== 0))
   )
     invalid();
   if (
@@ -133,13 +137,9 @@ async function runStep(
         ? (current.deferredSourceCursor ?? null)
         : current.sourceCursor;
   const manifest = structuredClone(input.manifest);
-  const policy = {
-    ...structuredClone({ ...input.policy, inspectRow: undefined }),
-    inspectRow: input.policy.inspectRow,
-  };
+  const policy = cloneSqliteDatasetInspectionPolicy(input.policy);
   if (manifest.source.tenantId !== context.lease.tenantId) invalid();
   const head = await input.inventory.headForLease(context.lease);
-  const target = await openPlannedSqliteRestoreTarget({ ...input, context });
   const next = await input.readNextValidatedRow({
     datasetId: current.datasetId,
     sourceCursor,
@@ -150,6 +150,23 @@ async function runStep(
   await input.inventory.headForLease(context.lease);
   await input.assertValidatedUnpublishedPlan(head.chain_digest);
   if (next === null) {
+    if (policy.restoreDisposition === 'reference_only') {
+      if (mode === 'defer') invalid();
+      if (mode === 'verify') {
+        if (current.rowsVerified !== current.rowsWritten) invalid();
+        return {
+          phase: 'advance_restore_dataset',
+          cursor: JSON.stringify(current),
+          disposition: 'continue',
+        };
+      }
+      return {
+        phase: 'verify_sqlite_dataset',
+        cursor: JSON.stringify({ ...current, verifySourceCursor: null, rowsVerified: 0 }),
+        disposition: 'continue',
+      };
+    }
+    const target = await openPlannedSqliteRestoreTarget({ ...input, context });
     if (mode === 'verify') {
       if (current.rowsVerified !== current.rowsWritten) invalid();
       await target.verifyDataset(policy, current.rowsWritten);
@@ -200,13 +217,55 @@ async function runStep(
     next.nextCursor === sourceCursor
   )
     invalid();
+  if (policy.restoreDisposition === 'reference_only') {
+    if (mode === 'defer') invalid();
+  } else {
+    const held = policy.restoreHold
+      ? await policy.restoreHold.shouldHold(context, next.rowJson)
+      : false;
+    if (held) {
+      if (mode === 'defer') invalid();
+      await input.inventory.headForLease(context.lease);
+      await input.assertValidatedUnpublishedPlan(head.chain_digest);
+      if (mode === 'verify') await policy.restoreHold?.verify(context, next.rowJson);
+      else await policy.restoreHold?.write(context, next.rowJson);
+      context.signal.throwIfAborted();
+      return {
+        phase,
+        cursor: JSON.stringify(
+          mode === 'verify'
+            ? { ...current, verifySourceCursor: next.nextCursor }
+            : { ...current, sourceCursor: next.nextCursor }
+        ),
+        disposition: 'continue',
+      };
+    }
+    const rowJson = policy.restoreTransform
+      ? await policy.restoreTransform.transform(context, next.rowJson, mode)
+      : next.rowJson;
+    if (
+      typeof rowJson !== 'string' ||
+      !rowJson ||
+      new TextEncoder().encode(rowJson).length > 16 * 1024 * 1024
+    )
+      invalid();
+    // Mapping or other installed transforms may yield; recheck the exact plan before mutation.
+    await input.inventory.headForLease(context.lease);
+    await input.assertValidatedUnpublishedPlan(head.chain_digest);
+    const target = await openPlannedSqliteRestoreTarget({ ...input, context });
+    if (mode === 'verify') {
+      if ((current.rowsVerified ?? 0) >= current.rowsWritten) invalid();
+      await target.verifyRow(policy, manifest, rowJson);
+    } else if (mode === 'defer') {
+      if ((current.rowsDeferred ?? 0) >= current.rowsWritten) invalid();
+      await target.restoreDeferredRow(policy, manifest, rowJson);
+    } else await target.writeRow(policy, manifest, rowJson);
+  }
   if (mode === 'verify') {
     if ((current.rowsVerified ?? 0) >= current.rowsWritten) invalid();
-    await target.verifyRow(policy, manifest, next.rowJson);
   } else if (mode === 'defer') {
     if ((current.rowsDeferred ?? 0) >= current.rowsWritten) invalid();
-    await target.restoreDeferredRow(policy, manifest, next.rowJson);
-  } else await target.writeRow(policy, manifest, next.rowJson);
+  }
   context.signal.throwIfAborted();
   return {
     phase,

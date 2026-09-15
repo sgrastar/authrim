@@ -68,6 +68,7 @@ const adapter = {
     async (): Promise<{ cursor: string | null; done: boolean }> => ({ cursor: null, done: true })
   ),
   previewRestore: vi.fn(async () => safePreview()),
+  assertRestoreApproval: vi.fn(async () => {}),
   prepareActivation: vi.fn(async () => {}),
   activate: vi.fn(async () => {}),
   verifyActivation: vi.fn(async () => {}),
@@ -151,6 +152,7 @@ it('waits for approval after sealing the restore plan and resumes from its immut
     cursor: restoreCursor,
     disposition: 'continue',
   });
+  expect(adapter.assertRestoreApproval).toHaveBeenCalledWith(expect.anything(), 'ab'.repeat(32));
 });
 
 it('refuses to start target writes when blockers appear or the approved preview changes', async () => {

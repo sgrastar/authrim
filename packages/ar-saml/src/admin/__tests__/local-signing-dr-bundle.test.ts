@@ -5,6 +5,8 @@ import {
   buildSAMLLocalSigningSecretDRBundle,
   restoreEncryptedSAMLLocalSigningSecretDRBundle,
   restoreSAMLLocalSigningSecretDRBundle,
+  validateSAMLLocalSigningSecretDRBundle,
+  verifySAMLLocalSigningSecretDRBundle,
 } from '../local-signing-dr-bundle';
 import { getSAMLLocalEntityIds, getSAMLPublicSettings } from '../../common/entity-id';
 import { buildSAMLIdPSigningContext, getSAMLIdPSigningMaterial } from '../../common/idp-signing';
@@ -103,6 +105,21 @@ describe('SAML local signing secret DR bundle', () => {
     await expect(
       restoreSAMLLocalSigningSecretDRBundle(createEnv(), 'test', bundle)
     ).rejects.toThrow('SAML DR bundle signing key policy references a missing key');
+  });
+
+  it('validates without mutation and semantically verifies a restored raw bundle', async () => {
+    const sourceEnv = createEnv();
+    const bundle = await buildSAMLLocalSigningSecretDRBundle(sourceEnv, 'test');
+    expect(() => validateSAMLLocalSigningSecretDRBundle(bundle, 'test')).not.toThrow();
+    expect(() => validateSAMLLocalSigningSecretDRBundle(bundle, 'other')).toThrow(
+      'tenant does not match'
+    );
+
+    const restoredEnv = createEnv();
+    await restoreSAMLLocalSigningSecretDRBundle(restoredEnv, 'test', bundle);
+    await expect(verifySAMLLocalSigningSecretDRBundle(restoredEnv, 'test', bundle)).resolves.toBe(
+      true
+    );
   });
 
   it('uses the DR-restored active IdP key for metadata and SAML responses', async () => {

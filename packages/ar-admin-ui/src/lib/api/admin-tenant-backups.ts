@@ -41,6 +41,15 @@ export interface TenantBackupOperationSummary {
 export interface TenantBackupOperation extends TenantBackupOperationSummary {
 	selection: TenantBackupSelection;
 	publication: { expiresAt: number; downloadAvailable: boolean } | null;
+	adminMapping: {
+		revision: number;
+		state: 'open' | 'frozen';
+		sourceCount: number;
+		mappedCount: number;
+		complete: boolean;
+		digest: string | null;
+	} | null;
+	heldRecords: { datasetId: string; reason: string; count: number }[];
 	preview: {
 		planDigest: string;
 		datasetCount: number;
@@ -58,6 +67,25 @@ export interface TenantBackupOperation extends TenantBackupOperationSummary {
 		blockers: { code: string; subjectId: string | null }[];
 		canApprove: boolean;
 	} | null;
+}
+
+export interface TenantBackupAdminMappingSource {
+	sourceAdminId: string;
+	targetAdminId: string | null;
+	targetEmail: string | null;
+	targetName: string | null;
+}
+
+export interface TenantBackupAdminMappingTarget {
+	id: string;
+	email: string;
+	name: string | null;
+}
+
+export interface TenantBackupAdminMappings {
+	status: NonNullable<TenantBackupOperation['adminMapping']>;
+	sources: TenantBackupAdminMappingSource[];
+	targets: TenantBackupAdminMappingTarget[];
 }
 
 interface CreatedOperation {
@@ -225,6 +253,62 @@ export const adminTenantBackupsAPI = {
 		);
 	},
 
+	async adminMappings(operationId: string): Promise<TenantBackupAdminMappings> {
+		const sources = new Map<string, TenantBackupAdminMappingSource>();
+		const targets = new Map<string, TenantBackupAdminMappingTarget>();
+		let after = '';
+		let targetAfter = '';
+		let sourceDone = false;
+		let targetDone = false;
+		let status: TenantBackupAdminMappings['status'] | null = null;
+		for (let page = 0; page < 100 && (!sourceDone || !targetDone); page += 1) {
+			const query = new URLSearchParams();
+			if (after) query.set('after', after);
+			if (targetAfter) query.set('targetAfter', targetAfter);
+			const response = await json<{
+				status: TenantBackupAdminMappings['status'];
+				sources: {
+					entries: TenantBackupAdminMappingSource[];
+					nextCursor: string;
+					done: boolean;
+				};
+				targets: {
+					entries: TenantBackupAdminMappingTarget[];
+					nextCursor: string;
+					done: boolean;
+				};
+			}>(`/api/admin/tenant-backups/${encodeURIComponent(operationId)}/admin-mappings?${query}`);
+			status = response.status;
+			for (const source of response.sources.entries) sources.set(source.sourceAdminId, source);
+			for (const target of response.targets.entries) targets.set(target.id, target);
+			if (!sourceDone) {
+				sourceDone = response.sources.done;
+				if (!sourceDone && response.sources.nextCursor === after)
+					throw new Error('Admin mapping source pagination stalled');
+				after = response.sources.nextCursor;
+			}
+			if (!targetDone) {
+				targetDone = response.targets.done;
+				if (!targetDone && response.targets.nextCursor === targetAfter)
+					throw new Error('Admin mapping target pagination stalled');
+				targetAfter = response.targets.nextCursor;
+			}
+		}
+		if (!status || !sourceDone || !targetDone)
+			throw new Error('Admin mappings exceed the supported page limit');
+		return { status, sources: [...sources.values()], targets: [...targets.values()] };
+	},
+
+	mapAdmin(operationId: string, sourceAdminId: string, targetAdminId: string) {
+		return json<{ status: NonNullable<TenantBackupOperation['adminMapping']> }>(
+			`/api/admin/tenant-backups/${encodeURIComponent(operationId)}/admin-mappings`,
+			{
+				method: 'PUT',
+				body: JSON.stringify({ sourceAdminId, targetAdminId })
+			}
+		);
+	},
+
 	async createExport(selection: TenantBackupSelection, passphrase: string) {
 		const operation = await json<CreatedOperation>('/api/admin/tenant-backups/exports', {
 			method: 'POST',
@@ -345,7 +429,10 @@ export const adminTenantBackupsAPI = {
 				method: 'POST',
 				body: JSON.stringify({
 					revision: operation.revision,
-					planDigest: operation.preview.planDigest
+					planDigest: operation.preview.planDigest,
+					...(operation.selection.admin
+						? { adminMappingRevision: operation.adminMapping?.revision }
+						: {})
 				})
 			}
 		);

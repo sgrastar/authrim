@@ -263,6 +263,28 @@ it('applies a deterministic row transform before resumable chunks are emitted', 
   expect(await readNextSqliteSnapshotChunk(input, first?.nextCursor ?? null)).toBeNull();
 });
 
+it('omits filtered rows while preserving resumable progress and an empty dataset', async () => {
+  db.exec(`INSERT INTO accounts VALUES
+    ('a','0','omit',0,NULL),
+    ('a','1','keep',0,NULL),
+    ('a','2','omit',0,NULL);
+    INSERT INTO tenant_backup_snapshots(id,tenant_id,state) VALUES ('snapshot','a','capturing')`);
+  const input = {
+    database,
+    schema,
+    snapshotId: 'snapshot',
+    tenantId: 'a',
+    signal: new AbortController().signal,
+    filterRow: async (rowJson: string) => rowJson.includes('"keep"'),
+  };
+  const first = await readNextSqliteSnapshotChunk(input, null);
+  expect(new TextDecoder().decode(first?.bytes)).toContain('["text","keep"]');
+  expect(await readNextSqliteSnapshotChunk(input, first?.nextCursor ?? null)).toBeNull();
+  expect(
+    await readNextSqliteSnapshotChunk({ ...input, filterRow: async () => false }, null)
+  ).toBeNull();
+});
+
 it('streams only the installed logical partition from live rows and preimages', async () => {
   const partitioned: SnapshotTableSchema = {
     table: 'permissions',

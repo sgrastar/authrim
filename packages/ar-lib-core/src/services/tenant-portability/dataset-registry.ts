@@ -68,14 +68,14 @@ const TABLE_GROUPS: Partial<
       profiles provisioning_assignment_ownership relationships role_assignments
       service_group_inputs service_group_manual service_group_write_boundaries structured_attribute_values subject_account_links
       subject_org_membership tenant_invitations totp_backup_codes totp_credentials
-      user_consent_records user_custom_fields user_roles user_token_families
+      user_consent_records user_custom_fields user_roles
       user_verified_attributes users users_core value_provenance
       webhook_deliveries
     `,
     admin: `
       access_review_items access_reviews account_support_contexts admin_jobs
       compliance_reports data_export_requests directory_auth_evidence_exports directory_auth_migration_campaigns
-      directory_auth_release_advisories directory_auth_support_bundles logging_catalog_repair_jobs logging_quota_evaluations
+      directory_auth_support_bundles logging_catalog_repair_jobs logging_quota_evaluations
       logging_usage_aggregates policy_simulations security_alerts security_threats
       support_operation_actions support_operation_cohort_targets support_operation_cohorts suspicious_activities
     `,
@@ -99,6 +99,7 @@ const TABLE_GROUPS: Partial<
     rebuild: `
       authrim_migrations migration_metadata tenant_database_migration_state
       account_routing_outbox authrim_control_plane_shard_metadata contact_point_search_indexes did_document_cache
+      directory_auth_release_advisories
       identity_binding_lookup_indexes legal_hold_projection_outbox lookup_retention_policy_projection_outbox refresh_token_shard_configs
       relationship_closure service_group_catalog service_group_epoch service_group_results
       service_group_revisions service_group_scans tenant_database_probe_results
@@ -108,13 +109,16 @@ const TABLE_GROUPS: Partial<
       authrim_runtime_probes
       ciba_requests credential_offers device_codes external_idp_auth_states
       flow_interaction_steps flow_interactions password_reset_tokens sessions
-      vp_requests
+      user_token_families vp_requests
     `,
   },
   pii: {
+    // Replacement operations retain an FK to their challenge evidence. The Phase 8 adapter
+    // preserves that evidence but consumes every restored challenge, so no source login/session
+    // can authorize work in the target environment.
     users: `
       account_webhook_delivery_fields account_webhook_outbox account_webhook_snapshots external_identifier_unlink_operations
-      guest_upgrade_operations identity_identifier_replacement_operations identity_sensitive_values linked_identities
+      guest_upgrade_operations identity_identifier_replacement_challenges identity_identifier_replacement_operations identity_sensitive_values linked_identities
       pairwise_subject_identifiers service_group_inputs service_group_write_boundaries subject_identifiers user_anonymization_map
       users_pii users_pii_tombstone
     `,
@@ -128,7 +132,6 @@ const TABLE_GROUPS: Partial<
     `,
     ephemeral: `tenant_backup_restore_targets tenant_backup_snapshots tenant_backup_preimages
       authrim_runtime_probes
-      identity_identifier_replacement_challenges
     `,
   },
   admin: {
@@ -138,10 +141,7 @@ const TABLE_GROUPS: Partial<
     delivery_state: 'internal_notification_delivery_attempts internal_notification_events',
     admin: `
       admin_agent_grants admin_agent_token_revocation_outbox admin_attribute_values admin_attributes
-      admin_audit_coverage_status admin_database_connection_usages admin_external_token_refresh_runs admin_external_token_refresh_tenant_runs
-      admin_invitations admin_jobs admin_machine_credential_permissions
-      admin_machine_credential_tenant_scopes admin_machine_credentials admin_machine_principal_permissions admin_machine_principal_tenant_scopes
-      admin_machine_principals admin_machine_resource_scopes admin_passkeys admin_relationships
+      admin_database_connection_usages admin_invitations admin_jobs admin_relationships
       admin_role_assignments admin_storage_destination_usages admin_users agent_bulk_plans
       agent_bulk_tenant_executions agent_configuration_plan_steps agent_configuration_plans agent_consents
       agent_management_executions agent_plan_confirmations approval_request_approvals approval_requests
@@ -186,10 +186,13 @@ const TABLE_GROUPS: Partial<
     `,
     external: `
       admin_database_connections admin_storage_destinations
+      admin_machine_credential_permissions admin_machine_credential_tenant_scopes admin_machine_credentials
+      admin_machine_principal_permissions admin_machine_principal_tenant_scopes admin_machine_principals
+      admin_machine_resource_scopes
     `,
     rebuild: `
       authrim_migrations migration_metadata
-      admin_search_projections federation_metadata_refresh_jobs
+      admin_audit_coverage_status admin_search_projections federation_metadata_refresh_jobs
       identifier_replacement_scheduler_state mapping_activation_leases projection_jobs
       projection_outbox provider_reprojection_jobs provider_reprojection_tenant_state scheduled_task_leases
       tenant_database_active_pointers tenant_database_migration_state tenant_database_probe_results tenant_database_registry
@@ -198,30 +201,30 @@ const TABLE_GROUPS: Partial<
     `,
     ephemeral: `tenant_backup_restore_targets tenant_backup_snapshots tenant_backup_preimages
       authrim_runtime_probes
-      admin_agent_delegation_jtis admin_agent_login_handoffs admin_agent_mcp_sessions admin_agent_token_families
+      admin_external_token_refresh_runs admin_external_token_refresh_tenant_runs
+      admin_agent_delegation_jtis admin_agent_login_handoffs admin_agent_mcp_sessions admin_agent_token_families admin_passkeys
       admin_machine_assertion_jti admin_sessions admin_setup_tokens agent_elevation_challenges
       tenant_backup_uploads tenant_backup_upload_parts tenant_backup_operation_inputs tenant_backup_export_manifests tenant_backup_publications tenant_backup_input_validations tenant_backup_dataset_inspections tenant_backup_input_receipts tenant_backup_cipher_streams tenant_backup_cipher_frames tenant_backup_snapshot_resources tenant_backup_execution_inventories tenant_backup_execution_inventory_items tenant_backup_restore_plan_inventories tenant_backup_restore_plan_inventory_items tenant_backup_restore_cleanup_receipts admin_invitation_enrollments elevation_grants tenant_backup_artifact_attempts tenant_backup_artifact_parts tenant_backup_operations tenant_backup_key_handoffs tenant_backup_validation_sessions
       tenant_backup_validation_records tenant_backup_validation_references
+      tenant_backup_admin_mapping_heads tenant_backup_admin_mappings
+      tenant_backup_restored_holds
     `,
   },
   control: {
     settings: `
       control_tenant_placement_policies
     `,
-    audit: `
-      control_audit_events
-    `,
-    users: `
-      control_account_legal_hold_projections
-    `,
+    // control_audit_events has environment/operation ownership and no tenant identity. Exporting
+    // it from a tenant backup would leak other tenants' events. Legal-hold projections are rebuilt
+    // from the authoritative Core hold state after the target environment identity is allocated.
     external: `
-      control_environment_resource_policies control_environments control_external_capability_bindings control_external_capability_sources
+      control_audit_events control_environment_resource_policies control_environments control_external_capability_bindings control_external_capability_sources
       control_plugin_desired_resources control_read_replication_policies control_residency_partitions control_signing_key_metadata
       control_signing_key_verifications
     `,
     rebuild: `
       authrim_migrations migration_metadata tenant_database_migration_state
-      control_account_scale_out_forecasts control_bootstrap_accelerator_leases control_bootstrap_accelerator_proofs control_bootstrap_handoffs
+      control_account_legal_hold_projections control_account_scale_out_forecasts control_bootstrap_accelerator_leases control_bootstrap_accelerator_proofs control_bootstrap_handoffs
       control_bootstrap_worker_evidence control_d1_create_budget_reservations control_desired_resources control_desired_worker_inventory
       control_directory_rewrite_leases control_hmac_rotation_operations control_lookup_bucket_assignments control_lookup_bucket_migrations
       control_lookup_hmac_candidate_verifications control_lookup_hmac_key_state_publications control_lookup_hmac_key_states control_lookup_hmac_rotation_sources

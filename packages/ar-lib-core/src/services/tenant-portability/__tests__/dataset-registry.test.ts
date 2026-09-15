@@ -88,11 +88,10 @@ describe('tenant backup dataset registry coverage', () => {
     });
   });
 
-  it('keeps current revocation, deletion, and undelivered state outside optional history', () => {
+  it('keeps deletion and undelivered state while excluding active refresh-token families', () => {
     for (const [family, table] of [
       ['pii', 'users_pii_tombstone'],
       ['core', 'account_legal_hold_states'],
-      ['core', 'user_token_families'],
       ['core', 'webhook_deliveries'],
       ['core', 'account_webhook_outbox'],
     ]) {
@@ -107,9 +106,31 @@ describe('tenant backup dataset registry coverage', () => {
       )?.kind
     ).toBe('sensitive_logs');
     expect(
+      TENANT_DATASET_POLICIES.find(
+        (entry) => entry.family === 'core' && entry.table === 'user_token_families'
+      )?.kind
+    ).toBe('ephemeral');
+    expect(
       TENANT_DATASET_POLICIES.find((entry) => entry.family === 'core' && entry.table === 'sessions')
         ?.kind
     ).toBe('ephemeral');
+    expect(
+      TENANT_DATASET_POLICIES.find(
+        (entry) =>
+          entry.family === 'pii' && entry.table === 'identity_identifier_replacement_challenges'
+      )?.kind
+    ).toBe('users');
+    expect(
+      TENANT_DATASET_POLICIES.find(
+        (entry) => entry.family === 'control' && entry.table === 'control_audit_events'
+      )?.kind
+    ).toBe('external');
+    expect(
+      TENANT_DATASET_POLICIES.find(
+        (entry) =>
+          entry.family === 'control' && entry.table === 'control_account_legal_hold_projections'
+      )?.kind
+    ).toBe('rebuild');
   });
 
   it('distinguishes deployment profiles, delivery state, and sensitive identifier history', () => {

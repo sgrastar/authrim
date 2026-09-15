@@ -152,6 +152,37 @@ export const TENANT_BACKUP_OWNERSHIP_RULES: ReadonlyArray<{
       ownership: byTenantId,
     },
   },
+  {
+    family: 'admin',
+    table: 'agent_bulk_plans',
+    ownership: { kind: 'tenant', column: 'control_tenant_id', identity: 'tenantId' },
+  },
+  {
+    family: 'admin',
+    table: 'agent_bulk_tenant_executions',
+    ownership: {
+      kind: 'parent',
+      table: 'agent_bulk_plans',
+      keys: [
+        { child: 'bulk_plan_id', parent: 'id' },
+        { child: 'bulk_plan_version', parent: 'version' },
+      ],
+      ownership: {
+        kind: 'tenant',
+        column: 'control_tenant_id',
+        identity: 'tenantId',
+      },
+    },
+  },
+  ...[
+    'logging_message_export_builds',
+    'logging_message_idempotency_keys',
+    'logging_message_repair_findings',
+  ].map((table) => ({
+    family: 'admin' as const,
+    table,
+    ownership: parent('logging_message_jobs', 'message_job_id', 'id'),
+  })),
 ];
 
 export function requireBackupOwnership(

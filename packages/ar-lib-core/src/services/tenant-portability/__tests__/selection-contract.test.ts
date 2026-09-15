@@ -73,11 +73,10 @@ describe('tenant portability selection contract', () => {
     }
   );
 
-  it('keeps revocation, tombstones and failed write guards when logs are OFF', () => {
+  it('keeps tombstones and failed write guards but excludes refresh-token families', () => {
     const selection = parseTenantBackupSelection(usersOnly());
     for (const table of [
       'users_pii_tombstone',
-      'user_token_families',
       'service_group_write_boundaries',
       'account_legal_hold_states',
     ]) {
@@ -92,6 +91,14 @@ describe('tenant portability selection contract', () => {
     }
     expect(tenantDatasetSelectionRule('audit', selection).action).toBe('excluded');
     expect(tenantDatasetSelectionRule('history', selection).action).toBe('excluded');
+    const tokenFamilies = TENANT_DATASET_POLICIES.filter(
+      (policy) => policy.table === 'user_token_families'
+    );
+    expect(tokenFamilies).toHaveLength(1);
+    expect(tenantDatasetSelectionRule(tokenFamilies[0]!.kind, selection)).toEqual({
+      action: 'excluded',
+      reason: 'ephemeral',
+    });
     expect(tenantDatasetSelectionRule('ephemeral', selection)).toEqual({
       action: 'excluded',
       reason: 'ephemeral',

@@ -1,11 +1,13 @@
 import type { TenantBundleManifest } from './bundle-manifest';
 import type { TenantBackupStepContext, TenantBackupStepResult } from './operation-executor';
+import { TENANT_BACKUP_MAX_SQLITE_DATASETS } from './installed-sqlite-datasets';
 import type {
   TenantBackupRestorePlanInventoryPort,
   TenantBackupRestorePlanHead,
 } from './restore-plan-inventory';
 import { persistSqliteRestoreSequence } from './restore-sqlite-sequence';
 import type { SqliteDatasetInspectionPolicy } from './sqlite-dataset-inspector';
+import { sqliteDatasetInspectionPolicyDescriptor } from './sqlite-dataset-inspector';
 import {
   persistInitializedSqliteRestoreTarget,
   type InitializedSqliteRestoreResource,
@@ -45,14 +47,7 @@ async function targetSetDigest(targets: readonly TenantBackupSqliteRestorePlanTa
       provisioningId: target.provisioningId,
       datasets: target.datasets.map(({ manifest, policy }) => ({
         bundleId: manifest.bundleId,
-        dataset: policy.dataset,
-        schema: policy.schema,
-        parentDataset: policy.parentDataset,
-        tenantKey: policy.tenantKey,
-        restoreAfter: policy.restoreAfter,
-        deferredColumns: policy.deferredColumns,
-        restoreOverrides: policy.restoreOverrides,
-        verificationIgnoredColumns: policy.verificationIgnoredColumns,
+        ...sqliteDatasetInspectionPolicyDescriptor(policy),
       })),
     }))
   );
@@ -85,7 +80,7 @@ function validateTargets(targets: readonly TenantBackupSqliteRestorePlanTarget[]
     placements.add(target.resourceId);
     datasets += target.datasets.length;
   }
-  if (datasets > 256) fail();
+  if (datasets > TENANT_BACKUP_MAX_SQLITE_DATASETS) fail();
 }
 
 /** Provision and pin one unpublished SQL target per slice, then seal a separate restore plan. */
