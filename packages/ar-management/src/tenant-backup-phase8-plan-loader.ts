@@ -43,48 +43,77 @@ export async function planPhase8InstalledSqliteResources(
 ): Promise<PlannedInstalledSqliteDataset[]> {
   signal.throwIfAborted();
   if (
-    resources.length !== 3 ||
+    resources.length < 3 ||
+    resources.length > 129 ||
     new Set(resources.map(({ resourceId }) => resourceId)).size !== resources.length ||
-    new Set(resources.map(({ family }) => family)).size !== resources.length ||
+    !(['core', 'pii', 'admin'] as const).every((family) =>
+      resources.some((resource) => resource.family === family)
+    ) ||
+    resources.filter(({ family }) => family === 'admin').length !== 1 ||
     resources.some(({ resourceId }) => !/^[A-Za-z0-9_.:-]{1,128}$/.test(resourceId))
   )
     invalid();
-  const plannedByFamily = new Map<
-    Family,
-    ReturnType<typeof planSqliteTenantDatasets> & { resourceId: string }
-  >();
-  for (const resource of resources) {
+  const resourcePlans: Array<
+    ReturnType<typeof planSqliteTenantDatasets> & {
+      resourceId: string;
+      family: Family;
+      firstOrdinal: number;
+    }
+  > = [];
+  for (const [firstOrdinal, resource] of [...resources]
+    .sort((left, right) => left.resourceId.localeCompare(right.resourceId))
+    .entries()) {
     const tables = await readBackupSqliteDatabaseSchema(resource.database, resource.family, signal);
     const plan = planSqliteTenantDatasets(resource.family, tables, allSelection);
-    plannedByFamily.set(resource.family, { ...plan, resourceId: resource.resourceId });
+    resourcePlans.push({
+      ...plan,
+      resourceId: resource.resourceId,
+      family: resource.family,
+      firstOrdinal,
+    });
   }
   const planned = PHASE8_CUMULATIVE_SQLITE_DATASET_REGISTRATIONS.map(
     (registration, ordinal): PlannedInstalledSqliteDataset => {
       const family = registration.family as Family;
-      const familyPlan = plannedByFamily.get(family) ?? invalid();
-      const entry = familyPlan.entries.find(({ table }) => table === registration.table);
       const partitions = registration.partitions ?? [];
-      if (
-        !entry?.capture ||
-        (partitions.length
-          ? partitions.some((partition) => {
-              const plannedPartition = entry.rowPartitions?.find(
-                ({ value }) => value === partition
-              );
-              return plannedPartition?.kind !== registration.dataset.kind;
-            })
-          : entry.kind !== registration.dataset.kind)
-      )
+      const matches = resourcePlans
+        .filter((plan) => plan.family === family)
+        .flatMap((plan) => {
+          const entry = plan.entries.find(({ table }) => table === registration.table);
+          return entry?.capture ? [{ plan, entry }] : [];
+        });
+      const canonical = matches[0] ?? invalid();
+      if (matches.length !== resourcePlans.filter((plan) => plan.family === family).length)
         invalid();
+      const canonicalCapture = canonical.entry.capture ?? invalid();
+      for (const { entry } of matches)
+        if (
+          !entry.capture ||
+          JSON.stringify(entry.capture) !== JSON.stringify(canonicalCapture) ||
+          (partitions.length
+            ? partitions.some((partition) => {
+                const plannedPartition = entry.rowPartitions?.find(
+                  ({ value }) => value === partition
+                );
+                return plannedPartition?.kind !== registration.dataset.kind;
+              })
+            : entry.kind !== registration.dataset.kind)
+        )
+          invalid();
       return {
         ordinal,
-        firstOrdinal: ['core', 'pii', 'admin'].indexOf(family),
-        resourceId: familyPlan.resourceId,
+        firstOrdinal: canonical.plan.firstOrdinal,
+        resourceId: canonical.plan.resourceId,
         family,
         table: registration.table,
-        capture: entry.capture,
+        capture: canonicalCapture,
         dataset: registration.dataset,
         ...(registration.partitions ? { partitions: registration.partitions } : {}),
+        sources: matches.map(({ plan }) => ({
+          ordinal,
+          firstOrdinal: plan.firstOrdinal,
+          resourceId: plan.resourceId,
+        })),
       };
     }
   );

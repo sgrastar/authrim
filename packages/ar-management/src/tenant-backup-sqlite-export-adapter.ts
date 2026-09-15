@@ -1,9 +1,10 @@
 import {
+  plannedInstalledSqliteDatasetSources,
   resolveInstalledSqliteDatasets,
   selectInstalledSqliteDatasets,
   type InstalledSqliteDatasetRegistration,
 } from '@authrim/ar-lib-core/services/tenant-portability/installed-sqlite-datasets';
-import { readNextPlannedSqliteDatasetChunk } from '@authrim/ar-lib-core/services/tenant-portability/sqlite-planned-dataset-reader';
+import { readNextShardedSqliteDatasetChunk } from '@authrim/ar-lib-core/services/tenant-portability/sqlite-sharded-dataset-reader';
 import type {
   AdapterContext,
   TenantBackupInstalledExportAdapter,
@@ -92,11 +93,22 @@ export function createTenantBackupInstalledSqliteExportAdapter(input: {
       const selected = await planned(context, registrations);
       const dataset = selected.find((entry) => entry.dataset.id === context.datasetId);
       if (!dataset) throw new Error('backup_sqlite_export_adapter_dataset');
-      const snapshot = await context.snapshotResources.loadCapture(
-        context.context.lease,
-        dataset.resourceId
+      const sources = plannedInstalledSqliteDatasetSources(dataset);
+      const shards = await Promise.all(
+        sources.map(async (source) => {
+          const snapshot = await context.snapshotResources.loadCapture(
+            context.context.lease,
+            source.resourceId
+          );
+          return {
+            resourceId: source.resourceId,
+            firstOrdinal: source.firstOrdinal,
+            snapshotId: snapshot.snapshotId,
+          };
+        })
       );
-      return readNextPlannedSqliteDatasetChunk(
+      const expectedShardIdentity = JSON.stringify(shards);
+      return readNextShardedSqliteDatasetChunk(
         {
           context: context.context,
           inventory: context.inventory,
@@ -104,22 +116,40 @@ export function createTenantBackupInstalledSqliteExportAdapter(input: {
           dataset: dataset.dataset,
           table: dataset.table,
           family: dataset.family,
-          resourceId: dataset.resourceId,
-          firstOrdinal: dataset.firstOrdinal,
-          snapshotId: snapshot.snapshotId,
+          shards,
           partitions: dataset.partitions,
           selection: context.selection,
-          resolveSource: () =>
+          resolveSource: (shard) =>
             context
-              .resolveSource({ resourceId: dataset.resourceId, family: dataset.family })
-              .then((database) => ({ resourceId: dataset.resourceId, database })),
+              .resolveSource({ resourceId: shard.resourceId, family: dataset.family })
+              .then((database) => ({ resourceId: shard.resourceId, database })),
+          assertResourceSet: async () => {
+            const current = (await planned(context, registrations)).find(
+              (entry) => entry.dataset.id === context.datasetId
+            );
+            if (!current) throw new Error('backup_sqlite_export_adapter_dataset');
+            const currentShards = await Promise.all(
+              plannedInstalledSqliteDatasetSources(current).map(async (source) => ({
+                resourceId: source.resourceId,
+                firstOrdinal: source.firstOrdinal,
+                snapshotId: (
+                  await context.snapshotResources.loadCapture(
+                    context.context.lease,
+                    source.resourceId
+                  )
+                ).snapshotId,
+              }))
+            );
+            if (JSON.stringify(currentShards) !== expectedShardIdentity)
+              throw new Error('backup_sqlite_export_adapter_coverage');
+          },
           assertSourceStable: () => input.ports.assertSources(context),
-          filterRow: input.ports.filterRow
-            ? (rowJson) =>
+          filterShardRow: input.ports.filterRow
+            ? (shard, rowJson) =>
                 input.ports.filterRow?.({
                   ...context,
                   datasetId: dataset.dataset.id,
-                  resourceId: dataset.resourceId,
+                  resourceId: shard.resourceId,
                   rowJson,
                 }) ?? Promise.reject(new Error('backup_sqlite_export_adapter_filter'))
             : undefined,

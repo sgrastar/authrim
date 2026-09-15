@@ -878,6 +878,7 @@ it.each([false, true])(
         { resourceId: 'physical-a', firstOrdinal: 0, snapshotId: 'snapshot-a' },
         { resourceId: 'physical-b', firstOrdinal: 1, snapshotId: 'snapshot-b' },
       ];
+      const filteredResources: string[] = [];
       const args = {
         ...input,
         table: 'oauth_clients',
@@ -894,6 +895,10 @@ it.each([false, true])(
           expect(actual.map((s) => s.resourceId)).toEqual(['physical-a', 'physical-b']);
         },
         async assertSourceStable() {},
+        async filterShardRow(shard: { resourceId: string }) {
+          filteredResources.push(shard.resourceId);
+          return true;
+        },
         async resolveSource(shard: { resourceId: string }) {
           return shard.resourceId === 'physical-a' ? input.source : other.source;
         },
@@ -917,6 +922,9 @@ it.each([false, true])(
         expect(await readNextShardedSqliteDatasetChunk(args, first!.nextCursor)).toEqual(next);
         expect(await readNextShardedSqliteDatasetChunk(args, next!.nextCursor)).toBeNull();
       }
+      expect(new Set(filteredResources)).toEqual(
+        new Set(emptyFirst ? ['physical-b'] : ['physical-a', 'physical-b'])
+      );
       await expect(
         readNextShardedSqliteDatasetChunk(
           { ...args, shards: shards.slice(0, 1) },

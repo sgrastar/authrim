@@ -91,6 +91,53 @@ it('resolves all selected tables and retains the physical resource first ordinal
   ]);
 });
 
+it('returns only selected datasets while accepting a larger installed registry', async () => {
+  const result = await resolveInstalledSqliteDatasets({
+    inventory: inventory([skipped('oauth_clients', 0), selected('roles', 1)]),
+    lease,
+    registrations: [registration('roles'), registration('oauth_clients')],
+  });
+  expect(result.map(({ dataset }) => dataset.id)).toEqual(['core.roles']);
+});
+
+it('groups every authoritative shard for one logical dataset in stable resource order', async () => {
+  const result = await resolveInstalledSqliteDatasets({
+    inventory: inventory([
+      { ...descriptor, item_id: 'database:physical-z', ordinal: 0 } as never,
+      selected('roles', 1, 'physical-z'),
+      { ...descriptor, item_id: 'database:physical-a', ordinal: 2 } as never,
+      selected('roles', 3, 'physical-a'),
+    ]),
+    lease,
+    registrations: [registration('roles')],
+  });
+  expect(result).toHaveLength(1);
+  expect(result[0]).toEqual(
+    expect.objectContaining({
+      resourceId: 'physical-a',
+      sources: [
+        { resourceId: 'physical-a', ordinal: 3, firstOrdinal: 3 },
+        { resourceId: 'physical-z', ordinal: 1, firstOrdinal: 1 },
+      ],
+    })
+  );
+});
+
+it('rejects divergent schemas across shards for the same logical dataset', async () => {
+  const divergent = selected('roles', 1, 'physical-b');
+  divergent.payload_json = JSON.stringify({
+    ...JSON.parse(divergent.payload_json),
+    capture: { ...capture, columns: [...capture.columns, 'name'] },
+  });
+  await expect(
+    resolveInstalledSqliteDatasets({
+      inventory: inventory([selected('roles', 0, 'physical-a'), divergent]),
+      lease,
+      registrations: [registration('roles')],
+    })
+  ).rejects.toThrow('backup_installed_sqlite_dataset_invalid');
+});
+
 it('fails the complete plan for a selected table missing an installed adapter', async () => {
   await expect(
     resolveInstalledSqliteDatasets({

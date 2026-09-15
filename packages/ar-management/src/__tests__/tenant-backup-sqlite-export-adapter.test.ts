@@ -7,11 +7,23 @@ const mocks = vi.hoisted(() => ({
 }));
 vi.mock('@authrim/ar-lib-core/services/tenant-portability/installed-sqlite-datasets', () => ({
   resolveInstalledSqliteDatasets: mocks.planned,
+  plannedInstalledSqliteDatasetSources: (
+    entry: typeof planned & {
+      sources?: Array<{ resourceId: string; firstOrdinal: number; ordinal: number }>;
+    }
+  ) =>
+    entry.sources ?? [
+      {
+        resourceId: entry.resourceId,
+        firstOrdinal: entry.firstOrdinal,
+        ordinal: entry.ordinal,
+      },
+    ],
   selectInstalledSqliteDatasets: (registrations: Array<{ dataset: typeof registration }>) =>
     registrations.map(({ dataset }) => dataset),
 }));
-vi.mock('@authrim/ar-lib-core/services/tenant-portability/sqlite-planned-dataset-reader', () => ({
-  readNextPlannedSqliteDatasetChunk: mocks.read,
+vi.mock('@authrim/ar-lib-core/services/tenant-portability/sqlite-sharded-dataset-reader', () => ({
+  readNextShardedSqliteDatasetChunk: mocks.read,
 }));
 
 import { createTenantBackupInstalledSqliteExportAdapter } from '../tenant-backup-sqlite-export-adapter';
@@ -41,7 +53,10 @@ const planned = {
 function fixture() {
   const source = {};
   const snapshotResources = {
-    loadCapture: vi.fn(async () => ({ resourceId: 'physical-core', snapshotId: 'snapshot' })),
+    loadCapture: vi.fn(async (_lease: unknown, resourceId: string) => ({
+      resourceId,
+      snapshotId: 'snapshot',
+    })),
     assertReleased: vi.fn(async () => {}),
   };
   const context = {
@@ -122,18 +137,69 @@ it('reads the persisted plan and exact snapshot rather than caller-supplied tabl
     signal: context.context.signal,
   });
   const input = mocks.read.mock.calls[0]?.[0] as {
-    resourceId: string;
     table: string;
-    snapshotId: string;
-    resolveSource(): Promise<unknown>;
+    shards: Array<{ resourceId: string; firstOrdinal: number; snapshotId: string }>;
+    resolveSource(shard: { resourceId: string }): Promise<unknown>;
   };
   expect(input).toEqual(
-    expect.objectContaining({ resourceId: 'physical-core', table: 'roles', snapshotId: 'snapshot' })
+    expect.objectContaining({
+      table: 'roles',
+      shards: [{ resourceId: 'physical-core', firstOrdinal: 1, snapshotId: 'snapshot' }],
+    })
   );
-  await expect(input.resolveSource()).resolves.toEqual({
+  await expect(input.resolveSource(input.shards[0])).resolves.toEqual({
     resourceId: 'physical-core',
     database: source,
   });
+});
+
+it('reads every frozen shard and passes physical identity to row filters', async () => {
+  const { adapter, context, ports, snapshotResources } = fixture();
+  const filterRow = vi.fn(async () => true);
+  mocks.planned.mockResolvedValue([
+    {
+      ...planned,
+      resourceId: 'physical-a',
+      sources: [
+        { resourceId: 'physical-a', ordinal: 2, firstOrdinal: 1 },
+        { resourceId: 'physical-b', ordinal: 5, firstOrdinal: 4 },
+      ],
+    },
+  ]);
+  snapshotResources.loadCapture.mockImplementation(async (_lease: unknown, resourceId: string) => ({
+    resourceId,
+    snapshotId: `snapshot-${resourceId}`,
+  }));
+  const sharded = createTenantBackupInstalledSqliteExportAdapter({
+    requiredDatabases: { roles: ['tenant_core'], fixed: [] },
+    registrations: [registration],
+    ports: { ...ports, filterRow },
+  });
+  await sharded.readNext({
+    ...context,
+    datasetId: 'core.roles',
+    cursor: null,
+    signal: context.context.signal,
+  });
+  const input = mocks.read.mock.calls[0]?.[0] as {
+    shards: Array<{ resourceId: string; snapshotId: string }>;
+    filterShardRow(shard: { resourceId: string }, rowJson: string): Promise<boolean>;
+    assertResourceSet(): Promise<void>;
+  };
+  expect(input.shards).toEqual([
+    { resourceId: 'physical-a', firstOrdinal: 1, snapshotId: 'snapshot-physical-a' },
+    { resourceId: 'physical-b', firstOrdinal: 4, snapshotId: 'snapshot-physical-b' },
+  ]);
+  await expect(input.filterShardRow(input.shards[1], '{"id":"row"}')).resolves.toBe(true);
+  expect(filterRow).toHaveBeenCalledWith(
+    expect.objectContaining({ resourceId: 'physical-b', datasetId: 'core.roles' })
+  );
+  await expect(input.assertResourceSet()).resolves.toBeUndefined();
+  snapshotResources.loadCapture.mockImplementation(async (_lease: unknown, resourceId: string) => ({
+    resourceId,
+    snapshotId: resourceId === 'physical-b' ? 'replacement' : `snapshot-${resourceId}`,
+  }));
+  await expect(input.assertResourceSet()).rejects.toThrow('backup_sqlite_export_adapter_coverage');
 });
 
 it('enables row transforms only for explicitly installed datasets', async () => {

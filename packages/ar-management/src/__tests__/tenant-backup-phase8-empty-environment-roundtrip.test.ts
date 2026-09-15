@@ -85,14 +85,15 @@ function schemaAdapter(database: DatabaseSync) {
 
 async function phase8Plan() {
   const controller = new AbortController();
-  const databases = (['core', 'pii', 'admin'] as const).map((family) => ({
+  const databases = (['core', 'core', 'pii', 'admin'] as const).map((family, index) => ({
     family,
+    resourceId: `${family}-db-${index}`,
     database: freshDatabase(family),
   }));
   try {
     return await planPhase8InstalledSqliteResources(
-      databases.map(({ family, database }) => ({
-        resourceId: `${family}-db`,
+      databases.map(({ family, resourceId, database }) => ({
+        resourceId,
         family,
         database: schemaAdapter(database),
       })),
@@ -124,6 +125,32 @@ async function* values<T>(items: readonly T[]) {
 }
 
 describe('Phase 8 empty-environment SQL roundtrip', () => {
+  it('rejects a shard whose installed schema cannot carry every family dataset', async () => {
+    const coreA = freshDatabase('core');
+    const coreB = freshDatabase('core');
+    const pii = freshDatabase('pii');
+    const admin = freshDatabase('admin');
+    try {
+      coreB.exec('PRAGMA foreign_keys = OFF; DROP TABLE users_core; PRAGMA foreign_keys = ON');
+      await expect(
+        planPhase8InstalledSqliteResources(
+          [
+            { resourceId: 'core-a', family: 'core', database: schemaAdapter(coreA) },
+            { resourceId: 'core-b', family: 'core', database: schemaAdapter(coreB) },
+            { resourceId: 'pii-a', family: 'pii', database: schemaAdapter(pii) },
+            { resourceId: 'admin-a', family: 'admin', database: schemaAdapter(admin) },
+          ],
+          new AbortController().signal
+        )
+      ).rejects.toThrow('backup_phase8_installed_plan_invalid');
+    } finally {
+      coreA.close();
+      coreB.close();
+      pii.close();
+      admin.close();
+    }
+  });
+
   it('restores every SQL contract with reusable user authentication and mapped Admin access', async () => {
     const planned = await phase8Plan();
     const source = {
@@ -382,6 +409,12 @@ describe('Phase 8 empty-environment SQL roundtrip', () => {
         );
 
       expect(planned).toHaveLength(PHASE8_CUMULATIVE_SQLITE_DATASET_REGISTRATIONS.length);
+      expect(planned.find(({ dataset }) => dataset.id === 'core.users_core')?.sources).toHaveLength(
+        2
+      );
+      expect(planned.find(({ dataset }) => dataset.id === 'pii.users_pii')?.sources).toHaveLength(
+        1
+      );
       expect(restored.size).toBe(PHASE8_CUMULATIVE_SQLITE_DATASET_REGISTRATIONS.length);
       expect(
         target.core.prepare("SELECT password_hash FROM users_core WHERE id='user-a'").get()

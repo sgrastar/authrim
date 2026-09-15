@@ -26,6 +26,48 @@ export interface PlannedInstalledSqliteDataset {
   capture: CaptureSchema;
   dataset: TenantPortableDataset;
   partitions?: readonly string[];
+  /** Complete physical source set when one logical dataset spans multiple SQL shards. */
+  sources?: readonly PlannedInstalledSqliteDatasetSource[];
+}
+
+export interface PlannedInstalledSqliteDatasetSource {
+  ordinal: number;
+  firstOrdinal: number;
+  resourceId: string;
+}
+
+/** Normalize older single-resource plans and current sharded plans to one immutable source list. */
+export function plannedInstalledSqliteDatasetSources(
+  entry: PlannedInstalledSqliteDataset
+): PlannedInstalledSqliteDatasetSource[] {
+  const sources = entry.sources ?? [
+    {
+      ordinal: entry.ordinal,
+      firstOrdinal: entry.firstOrdinal,
+      resourceId: entry.resourceId,
+    },
+  ];
+  const normalized = sources
+    .map((source) => ({ ...source }))
+    .sort((left, right) => left.resourceId.localeCompare(right.resourceId));
+  if (
+    !normalized.length ||
+    normalized.length > 64 ||
+    new Set(normalized.map(({ resourceId }) => resourceId)).size !== normalized.length ||
+    normalized.some(
+      ({ ordinal, firstOrdinal, resourceId }) =>
+        !Number.isSafeInteger(ordinal) ||
+        ordinal < 0 ||
+        !Number.isSafeInteger(firstOrdinal) ||
+        firstOrdinal < 0 ||
+        !/^[A-Za-z0-9_.:-]{1,128}$/.test(resourceId)
+    )
+  )
+    fail();
+  const primary = normalized.find(({ resourceId }) => resourceId === entry.resourceId);
+  if (!primary || primary.ordinal !== entry.ordinal || primary.firstOrdinal !== entry.firstOrdinal)
+    fail();
+  return normalized;
 }
 
 const families = ['core', 'pii', 'admin', 'control', 'lookup', 'plugin_runner'];
@@ -204,8 +246,38 @@ export async function resolveInstalledSqliteDatasets(input: {
       }
     }
   }
-  if (!planned.length || new Set(planned.map((entry) => entry.dataset.id)).size !== planned.length)
-    fail();
+  if (!planned.length) fail();
+  const grouped = new Map<string, PlannedInstalledSqliteDataset[]>();
+  for (const entry of planned)
+    grouped.set(entry.dataset.id, [...(grouped.get(entry.dataset.id) ?? []), entry]);
+  const logical = [...grouped.values()].map((entries) => {
+    const ordered = [...entries].sort((left, right) =>
+      left.resourceId.localeCompare(right.resourceId)
+    );
+    const canonical = ordered[0] ?? fail();
+    if (
+      ordered.length > 64 ||
+      new Set(ordered.map(({ resourceId }) => resourceId)).size !== ordered.length ||
+      ordered.some(
+        (entry) =>
+          entry.family !== canonical.family ||
+          entry.table !== canonical.table ||
+          JSON.stringify(entry.capture) !== JSON.stringify(canonical.capture) ||
+          JSON.stringify(entry.dataset) !== JSON.stringify(canonical.dataset) ||
+          JSON.stringify(entry.partitions ?? []) !== JSON.stringify(canonical.partitions ?? [])
+      )
+    )
+      fail();
+    return {
+      ...canonical,
+      sources: ordered.map(({ ordinal, firstOrdinal, resourceId }) => ({
+        ordinal,
+        firstOrdinal,
+        resourceId,
+      })),
+    };
+  });
+  if (new Set(logical.map((entry) => entry.dataset.id)).size !== logical.length) fail();
   await input.inventory.headForLease(input.lease);
-  return planned;
+  return logical;
 }
