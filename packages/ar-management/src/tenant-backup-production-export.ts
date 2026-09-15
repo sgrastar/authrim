@@ -2,6 +2,7 @@ import {
   requireDedicatedAdminDatabaseAdapter,
   type DatabaseAdapter,
   type Env,
+  putTenantExistsCache,
 } from '@authrim/ar-lib-core';
 import { resolveBackupTenantDatabaseResources } from '@authrim/ar-lib-core/services/tenant-portability/database-resources';
 import { resolveFixedBackupDatabaseResources } from '@authrim/ar-lib-core/services/tenant-portability/fixed-database-resources';
@@ -31,6 +32,12 @@ import { createTenantBackupR2CatalogLister } from './tenant-backup-r2-catalog-li
 import { createTenantBackupR2ObjectSnapshotPorts } from './tenant-backup-r2-object-snapshot-port';
 import { createTenantBackupSamlPorts } from './tenant-backup-saml-port';
 import type { TenantBackupInstalledOperationAdapter } from './tenant-backup-operation-dispatcher';
+import { createProductionTenantBackupRestoreTargets } from './tenant-backup-production-restore-targets';
+import { ensureDatabaseAdapter } from '@authrim/ar-lib-core';
+import {
+  activateProvisionedTenantLifecycle,
+  resolveActiveTenantRuntimeRouteObservation,
+} from './admin-tenants';
 
 function unavailable(): never {
   throw new Error('backup_import_restore_target_unavailable');
@@ -59,6 +66,19 @@ async function resolveTenantKey(env: Env, context: TenantBackupStepContext): Pro
   )
     throw new Error('backup_phase8_tenant_key');
   return rows[0].tenant_key;
+}
+
+async function resolveRestoreTenantKey(
+  env: Env,
+  context: TenantBackupStepContext
+): Promise<string> {
+  const row = await ensureDatabaseAdapter(env.DB, 'tenant-backup-restore-platform').queryOne<{
+    tenant_key: string;
+  }>("SELECT tenant_key FROM tenants WHERE id=? AND lifecycle_state='provisioning'", [
+    context.lease.tenantId,
+  ]);
+  if (!row?.tenant_key || row.tenant_key.length > 256) throw new Error('backup_phase8_tenant_key');
+  return row.tenant_key;
 }
 
 async function loadCancellationInventoryDigest(
@@ -118,15 +138,17 @@ async function resolveRecordedDatabase(
 }
 
 /**
- * Install the complete Phase 8 export surface from deployed bindings. Import remains unclaimable
- * until Control supplies isolated restore resources; its callbacks fail closed if called directly.
+ * Install the complete Phase 8 export/import surface from deployed bindings and pinned resources.
  */
 export async function createProductionTenantBackupExportAdapter(
   env: Env,
   context: TenantBackupStepContext,
   now: () => number = Date.now
 ): Promise<TenantBackupInstalledOperationAdapter> {
-  const tenantKey = await resolveTenantKey(env, context);
+  const importing = context.operation?.kind === 'import';
+  const tenantKey = importing
+    ? await resolveRestoreTenantKey(env, context)
+    : await resolveTenantKey(env, context);
   const saml = createTenantBackupSamlPorts(env);
   const directory = createTenantBackupDirectorySecretPorts(env);
   const assets = createTenantBackupPublicAssetPorts(env);
@@ -155,6 +177,13 @@ export async function createProductionTenantBackupExportAdapter(
     await plan();
   };
   const piiLog = createTenantBackupPiiLogTransformPort(env, async () => unavailable());
+  const restore = importing ? createProductionTenantBackupRestoreTargets({ env, tenantKey }) : null;
+  const assertInstalled = async () => {
+    await plan();
+    if (importing) await restore?.databaseForRole(context, 'tenant_core/default');
+    else if ((await resolveTenantKey(env, context)) !== tenantKey)
+      throw new Error('backup_phase8_tenant_key_changed');
+  };
   const installed = createPhase8TenantBackupInstalledAdapter({
     env,
     loadPlanned: plan,
@@ -169,18 +198,78 @@ export async function createProductionTenantBackupExportAdapter(
         assertSources: async () => assertSources(),
         assertBoundaryReady: async () => assertSources(),
       },
-      // The export-only scheduler never exposes these callbacks. Keeping them installed as hard
-      // failures prevents a future call-site mistake from writing into a live database.
+      // The same scheduler handles both kinds. Each callback remains fail closed when invoked for
+      // the wrong operation kind, so an export can never acquire a restore target.
       import: {
-        assertSources: async () => unavailable(),
-        restoreTargets: async () => unavailable(),
-        resolveRestoreTarget: async () => unavailable(),
-        prepareActivation: async () => unavailable(),
-        activate: async () => unavailable(),
-        verifyActivation: async () => unavailable(),
-        assertUnpublishedTarget: async () => unavailable(),
+        assertSources: async () => (importing ? assertInstalled() : unavailable()),
+        planRestoreTargets: async (restoreContext, datasets) =>
+          restore ? restore.plan(restoreContext, datasets) : unavailable(),
+        resolveRestoreTarget: async (restoreContext, resourceId, provisioningId) =>
+          restore
+            ? restore.resolveTarget(restoreContext, resourceId, provisioningId)
+            : unavailable(),
+        prepareActivation: async (restoreContext) =>
+          restore ? restore.assertUnpublished(restoreContext) : unavailable(),
+        async activate(restoreContext) {
+          if (!restore) unavailable();
+          await restore.assertUnpublished(restoreContext);
+          await activateProvisionedTenantLifecycle({
+            platformAdapter: restore.platform,
+            tenantAdapter: await restore.databaseForRole(restoreContext, 'tenant_core/default'),
+            tenantId: restoreContext.lease.tenantId,
+            now: Math.floor(now() / 1000),
+          });
+          await putTenantExistsCache(env.AUTHRIM_CONFIG, restoreContext.lease.tenantId);
+          await resolveActiveTenantRuntimeRouteObservation(env, restoreContext.lease.tenantId);
+        },
+        async verifyActivation(restoreContext) {
+          if (!restore) unavailable();
+          const [platformRow, tenantRow] = await Promise.all([
+            restore.platform.queryOne<{ lifecycle_state: string }>(
+              'SELECT lifecycle_state FROM tenants WHERE id=?',
+              [restoreContext.lease.tenantId]
+            ),
+            restore
+              .databaseForRole(restoreContext, 'tenant_core/default')
+              .then((database) =>
+                database.queryOne<{ lifecycle_state: string }>(
+                  'SELECT lifecycle_state FROM tenants WHERE id=?',
+                  [restoreContext.lease.tenantId]
+                )
+              ),
+          ]);
+          if (platformRow?.lifecycle_state !== 'active' || tenantRow?.lifecycle_state !== 'active')
+            unavailable();
+          await resolveActiveTenantRuntimeRouteObservation(env, restoreContext.lease.tenantId);
+        },
+        assertUnpublishedTarget: async (restoreContext) =>
+          restore ? restore.assertUnpublished(restoreContext) : unavailable(),
       } as Phase8InstalledAdapterPorts['import'],
-      otherStores: {} as Phase8InstalledAdapterPorts['otherStores'],
+      otherStores: (importing
+        ? {
+            phase4: {
+              importKeyManager: (value, snapshot) => keyManager.importKeyManager(value, snapshot),
+              verifyKeyManager: (value, snapshot) => keyManager.verifyKeyManager(value, snapshot),
+              validateSamlBundle: (bundle, tenantId) => saml.validateSamlBundle(bundle, tenantId),
+              importSamlBundle: (value, bundle) => saml.importSamlBundle(value, bundle),
+              verifySamlBundle: (value, bundle) => saml.verifySamlBundle(value, bundle),
+              importDirectorySecret: (value, connectorId, secret) =>
+                directory.importDirectorySecret(value, connectorId, secret),
+              verifyDirectorySecret: (value, connectorId, secret) =>
+                directory.verifyDirectorySecret(value, connectorId, secret),
+            },
+            importAsset: (value, asset) => assets.importAsset(value, asset),
+            verifyAsset: (value, asset) => assets.verifyAsset(value, asset),
+            importPlugin: (value, plugin) => plugins.importPlugin(value, plugin),
+            verifyPlugin: (value, plugin) => plugins.verifyPlugin(value, plugin),
+            prepareLogicalTarget: (value, targetPlan) =>
+              placement.prepareLogicalTarget(value, targetPlan),
+            verifyLogicalTarget: (value, targetPlan) =>
+              placement.verifyLogicalTarget(value, targetPlan),
+            restorePhase8Envelope: async () => unavailable(),
+            verifyPhase8Envelope: async () => false,
+          }
+        : {}) as Phase8InstalledAdapterPorts['otherStores'],
       rowTransform: {
         loadExternalPiiLogValues: (input, reference) =>
           piiLog.loadExternalPiiLogValues(input, reference),
@@ -250,12 +339,25 @@ export async function createProductionTenantBackupExportAdapter(
             );
         },
       },
-      resolveAdminRestoreDatabase: async () => unavailable(),
-      resolveCoreRestoreDatabase: async () => unavailable(),
-      resolveAdminR2RestoreDatabase: async () => unavailable(),
-      resolveCoreR2RestoreDatabase: async () => unavailable(),
-      loadExternalPrerequisites: async () => unavailable(),
-      loadDeliverySafety: async () => unavailable(),
+      resolveAdminRestoreDatabase: async (restoreContext) =>
+        restore?.databaseForRole(restoreContext, 'admin') ?? unavailable(),
+      resolveCoreRestoreDatabase: async (restoreContext) =>
+        restore?.databaseForRole(restoreContext, 'tenant_core/default') ?? unavailable(),
+      resolveAdminR2RestoreDatabase: async (restoreContext) =>
+        restore?.databaseForRole(restoreContext, 'admin') ?? unavailable(),
+      resolveCoreR2RestoreDatabase: async (restoreContext) =>
+        restore?.databaseForRole(restoreContext, 'tenant_core/default') ?? unavailable(),
+      loadExternalPrerequisites: async () => (importing ? [] : unavailable()),
+      loadDeliverySafety: async () =>
+        importing
+          ? {
+              version: 1,
+              sourceEnvironment: 'stopped',
+              historicalDelivery: 'hold',
+              scheduledCatchup: 'disabled',
+              activation: 'new_events_only',
+            }
+          : unavailable(),
     },
   });
   return installed;

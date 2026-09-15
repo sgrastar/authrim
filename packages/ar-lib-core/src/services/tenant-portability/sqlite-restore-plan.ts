@@ -11,6 +11,8 @@ export interface InitializedSqliteRestoreResource {
   /** Durable provisioning receipt identity; the coordinator checks creation ownership. */
   provisioningId: string;
   database: Database;
+  /** Optional trusted scope-aware fingerprint for a logically isolated slice in a shared DB. */
+  readSeedFingerprint?: (assertAdmission: () => Promise<void>) => Promise<string>;
 }
 interface TargetEntry {
   version: 1;
@@ -78,7 +80,10 @@ export async function persistInitializedSqliteRestoreTarget(input: {
     await assertOwner(input.context, input.inventory);
     await input.assertProvisioningOwnership();
   };
-  const seedFingerprint = await readSqliteRestoreSeedFingerprint(resource.database, guard);
+  const seedFingerprint = await (
+    resource.readSeedFingerprint ??
+    ((admission) => readSqliteRestoreSeedFingerprint(resource.database, admission))
+  )(guard);
   const target = entry({
     version: 1,
     kind: 'sqlite-restore-target',
@@ -158,6 +163,7 @@ export async function openPlannedSqliteRestoreTarget(input: {
     },
     now: input.now,
     authorize: guard,
+    readSeedFingerprint: resolved.readSeedFingerprint,
     mode: input.mode,
   });
 }

@@ -4196,12 +4196,12 @@ async function handleScheduled(event: ScheduledEvent, env: Env): Promise<void> {
         (context) => createProductionTenantBackupExportAdapter(env, context),
         new AbortController().signal,
         Date.now,
-        ['export']
+        ['export', 'import']
       );
       if (operations.inspected > 0)
-        log.info('Tenant backup export scheduler completed', operations);
+        log.info('Tenant backup operation scheduler completed', operations);
     } catch (error) {
-      log.warn('Tenant backup export scheduler failed', {
+      log.warn('Tenant backup operation scheduler failed', {
         errorType: error instanceof Error ? error.name : 'Unknown',
       });
     }

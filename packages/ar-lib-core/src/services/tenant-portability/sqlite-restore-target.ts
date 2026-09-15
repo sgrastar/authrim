@@ -135,6 +135,7 @@ export class SqliteRestoreTarget {
     lease: SqliteRestoreTargetLease;
     now: () => number;
     authorize: () => Promise<void>;
+    readSeedFingerprint?: (assertAdmission: () => Promise<void>) => Promise<string>;
     mode?: SqliteRestoreTargetMode;
   }): Promise<SqliteRestoreTarget> {
     const mode = input.mode ?? 'write';
@@ -166,11 +167,10 @@ export class SqliteRestoreTarget {
     );
     if (!existing) {
       if (mode !== 'write') throw error();
-      if (
-        (await readSqliteRestoreSeedFingerprint(input.database, input.authorize)) !==
-        identity.seedFingerprint
-      )
-        throw error();
+      const fingerprint = input.readSeedFingerprint
+        ? await input.readSeedFingerprint(input.authorize)
+        : await readSqliteRestoreSeedFingerprint(input.database, input.authorize);
+      if (fingerprint !== identity.seedFingerprint) throw error();
       await input.authorize();
       target.guard();
       const result = await input.database.execute(

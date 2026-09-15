@@ -307,6 +307,7 @@ export function createPhase8SqliteInspectionPolicies(
       : policy.restoreOverrides?.[column];
     if (existing && JSON.stringify(existing) !== JSON.stringify(target)) invalid();
     const inspectRow = policy.inspectRow;
+    const keepProvisioning = entry.dataset.id === 'core.tenants';
     return {
       ...policy,
       ...(directTenantKey
@@ -325,6 +326,18 @@ export function createPhase8SqliteInspectionPolicies(
               [column]: target,
             },
           }),
+      ...(keepProvisioning
+        ? {
+            restoreOverrides: {
+              ...policy.restoreOverrides,
+              ...(!primaryKey ? { [column]: target } : {}),
+              lifecycle_state: ['text', 'provisioning'] as const,
+            },
+            verificationIgnoredColumns: [
+              ...new Set([...(policy.verificationIgnoredColumns ?? []), 'lifecycle_state']),
+            ],
+          }
+        : {}),
       inspectRow: async (row, identity) => {
         assertPortableTenantKeyRow(entry.capture, row, required);
         return inspectRow(row, identity);

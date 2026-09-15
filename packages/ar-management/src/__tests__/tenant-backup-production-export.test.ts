@@ -15,6 +15,12 @@ const mocks = vi.hoisted(() => {
     phase8: vi.fn(),
     plan: vi.fn(async () => []),
     resources: vi.fn(),
+    activate: vi.fn(),
+    observe: vi.fn(),
+    restorePlan: vi.fn(async () => []),
+    restoreResolve: vi.fn(),
+    restoreAssert: vi.fn(),
+    restoreDatabaseForRole: vi.fn(),
   };
 });
 
@@ -78,6 +84,21 @@ vi.mock('../tenant-backup-pii-log-port', () => ({
     loadExternalPiiLogValues: vi.fn(),
   }),
 }));
+vi.mock('../tenant-backup-production-restore-targets', () => ({
+  createProductionTenantBackupRestoreTargets: () => ({
+    platform: {
+      queryOne: vi.fn(async () => ({ lifecycle_state: 'active' })),
+    },
+    plan: mocks.restorePlan,
+    resolveTarget: mocks.restoreResolve,
+    assertUnpublished: mocks.restoreAssert,
+    databaseForRole: mocks.restoreDatabaseForRole,
+  }),
+}));
+vi.mock('../admin-tenants', () => ({
+  activateProvisionedTenantLifecycle: mocks.activate,
+  resolveActiveTenantRuntimeRouteObservation: mocks.observe,
+}));
 
 import { createProductionTenantBackupExportAdapter } from '../tenant-backup-production-export';
 
@@ -92,6 +113,9 @@ beforeEach(() => {
     },
   ]);
   mocks.phase8.mockReturnValue({ export: { installed: true }, import: {}, cleanup: {} });
+  mocks.restoreDatabaseForRole.mockResolvedValue({
+    queryOne: vi.fn(async () => ({ lifecycle_state: 'active' })),
+  });
 });
 
 it('installs deployed export ports and keeps import targets fail closed', async () => {
@@ -107,14 +131,49 @@ it('installs deployed export ports and keeps import targets fail closed', async 
       tenantKey: string;
       recordSnapshots: { userAvatars: { resourceId: string } };
       export: { prepareSources(): Promise<{ cursor: string | null; done: boolean }> };
-      import: { restoreTargets(): Promise<unknown> };
+      import: { planRestoreTargets(): Promise<unknown> };
     };
   };
   expect(input.ports.tenantKey).toBe('tenant-key-a');
   expect(input.ports.recordSnapshots.userAvatars.resourceId).toBe('public-assets:users');
   await expect(input.ports.export.prepareSources()).resolves.toEqual({ cursor: null, done: true });
-  await expect(input.ports.import.restoreTargets()).rejects.toThrow(
+  await expect(input.ports.import.planRestoreTargets()).rejects.toThrow(
     'backup_import_restore_target_unavailable'
   );
   expect(mocks.plan).toHaveBeenCalledWith(expect.anything(), context, expect.any(Function));
+});
+
+it('installs the production import targets, activation, and runtime-route verification', async () => {
+  const platform = {
+    query: vi.fn(async () => []),
+    queryOne: vi.fn(async () => ({ tenant_key: 'tenant-key-a', lifecycle_state: 'active' })),
+    execute: vi.fn(),
+    transaction: vi.fn(),
+    batch: vi.fn(),
+    isHealthy: vi.fn(async () => true),
+    getType: vi.fn(() => 'd1'),
+    close: vi.fn(),
+  };
+  const context = {
+    operation: { kind: 'import' },
+    lease: { tenantId: 'tenant-a', operationId: 'operation-a' },
+    signal: new AbortController().signal,
+  } as never;
+  await createProductionTenantBackupExportAdapter({ DB: platform } as unknown as Env, context);
+
+  const input = mocks.phase8.mock.calls[0]?.[0] as unknown as {
+    ports: {
+      import: {
+        planRestoreTargets(context: unknown, datasets: unknown[]): Promise<unknown[]>;
+        activate(context: unknown): Promise<void>;
+        verifyActivation(context: unknown): Promise<void>;
+      };
+    };
+  };
+  await expect(input.ports.import.planRestoreTargets(context, [])).resolves.toEqual([]);
+  await input.ports.import.activate(context);
+  await input.ports.import.verifyActivation(context);
+  expect(mocks.restoreAssert).toHaveBeenCalled();
+  expect(mocks.activate).toHaveBeenCalled();
+  expect(mocks.observe).toHaveBeenCalledTimes(2);
 });

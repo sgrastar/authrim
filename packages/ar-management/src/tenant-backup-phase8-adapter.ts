@@ -18,6 +18,8 @@ import { TenantBackupRestoreHoldStore } from '@authrim/ar-lib-core/services/tena
 import { DatabaseTenantBackupRestorePlanInventory } from '@authrim/ar-lib-core/services/tenant-portability/restore-plan-inventory';
 import { openPlannedSqliteRestoreTarget } from '@authrim/ar-lib-core/services/tenant-portability/sqlite-restore-plan';
 import { loadPlannedSqliteRestoreSequenceJob } from '@authrim/ar-lib-core/services/tenant-portability/restore-sqlite-sequence';
+import type { Phase8ValidatedSqliteRestoreDataset } from '@authrim/ar-lib-core/services/tenant-portability/phase8-restore-targets';
+import type { TenantBackupSqliteRestorePlanTarget } from '@authrim/ar-lib-core/services/tenant-portability/sqlite-restore-plan-step';
 import {
   createUserAvatarDatasetPolicy,
   USER_AVATARS_DATASET,
@@ -56,8 +58,12 @@ export interface Phase8InstalledAdapterPorts extends Omit<
 > {
   import: Omit<
     Phase5InstalledAdapterPorts['import'],
-    'loadValidatedDataset' | 'assertValidatedUnpublishedPlan'
+    'restoreTargets' | 'loadValidatedDataset' | 'assertValidatedUnpublishedPlan'
   > & {
+    planRestoreTargets(
+      context: TenantBackupStepContext,
+      datasets: readonly Phase8ValidatedSqliteRestoreDataset[]
+    ): Promise<readonly TenantBackupSqliteRestorePlanTarget[]>;
     /** Additive physical-route guard; bundle and plan validation remain fixed inside this adapter. */
     assertUnpublishedTarget(context: TenantBackupStepContext, planDigest: string): Promise<void>;
   };
@@ -264,6 +270,17 @@ export function createPhase8TenantBackupInstalledAdapter(
       input.ports.import.assertUnpublishedTarget(context, planDigest),
     now: input.now,
   });
+  const restoreTargets = async (context: TenantBackupStepContext) => {
+    const datasets = await validatedInput.loadValidatedSqliteDatasets(context);
+    const targets = await input.ports.import.planRestoreTargets(context, datasets);
+    const expected = [...datasets].map(({ policy }) => policy.dataset.id).sort();
+    const actual = targets
+      .flatMap((target) => target.datasets.map(({ policy }) => policy.dataset.id))
+      .sort();
+    if (JSON.stringify(actual) !== JSON.stringify(expected))
+      throw new Error('backup_phase8_restore_target_coverage');
+    return targets;
+  };
   const loadValidatedRecord = (
     context: TenantBackupStepContext,
     planDigest: string,
@@ -336,6 +353,7 @@ export function createPhase8TenantBackupInstalledAdapter(
       import: {
         ...input.ports.import,
         ...validatedInput,
+        restoreTargets,
         assertRestoreApproval: (context) =>
           adminMappings.assertApproved(context.lease.tenantId, context.lease.operationId),
       },

@@ -961,6 +961,10 @@
 									{/if}
 								</div>
 							{/if}
+							<div class="warning-box">
+								<i class="i-ph-warning-circle"></i>
+								<span>{$LL.admin_dr_backup_tenant_blocker_delivery()}</span>
+							</div>
 							<button
 								class="btn btn-primary"
 								type="button"
