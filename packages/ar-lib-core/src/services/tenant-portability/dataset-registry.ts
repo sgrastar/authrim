@@ -208,6 +208,8 @@ const TABLE_GROUPS: Partial<
       tenant_backup_validation_records tenant_backup_validation_references
       tenant_backup_admin_mapping_heads tenant_backup_admin_mappings
       tenant_backup_restored_holds
+      tenant_backup_r2_retired_generations
+      tenant_backup_restored_hold_objects
     `,
   },
   control: {

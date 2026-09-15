@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 // @ts-expect-error node:sqlite is available in the required runtime but this package omits Node types.
 import { DatabaseSync } from 'node:sqlite';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -11,6 +12,10 @@ type SqlInputValue = string | number | bigint | null | Uint8Array;
 const planDigest = 'a'.repeat(64);
 let database: DatabaseSync;
 let query: Pick<DatabaseAdapter, 'query' | 'batch' | 'getType'>;
+
+function migration(name: string): string {
+  return readFileSync(new URL(`../../../../migrations/admin/d1/${name}`, import.meta.url), 'utf8');
+}
 
 function context(): TenantBackupStepContext {
   return {
@@ -79,6 +84,7 @@ async function metadataDigest(input: {
 
 beforeEach(() => {
   database = new DatabaseSync(':memory:');
+  database.exec('PRAGMA foreign_keys=ON');
   database.exec(`
     CREATE TABLE object_catalog(
       id TEXT PRIMARY KEY NOT NULL,tenant_id TEXT NOT NULL,deleted_at INTEGER
@@ -127,6 +133,17 @@ beforeEach(() => {
       'manifest-a','tenant-key-a','admin_audit','archive','source/manifest-a',NULL,'committed',100
     );
   `);
+  database.exec(migration('003_tenant_backup_operations.sql'));
+  database.exec(migration('034_tenant_backup_restored_hold_objects.sql'));
+  database
+    .prepare(
+      `INSERT INTO tenant_backup_operations(
+      id,tenant_id,kind,idempotency_key,request_digest,state,phase,created_by,
+      created_at,updated_at,fencing_token,lease_owner,lease_expires_at
+    ) VALUES('operation-a','tenant-a','import','request-a',?,'running','restore_other_stores',
+      'admin-a',100,100,1,'worker-a',1000)`
+    )
+    .run('a'.repeat(64));
   query = {
     getType: () => 'd1',
     async query<T>(sql: string, params: unknown[] = []) {
@@ -398,6 +415,62 @@ describe('tenant backup R2 catalog finalizer', () => {
       key_version: 8,
       checksum_sha256: sensitiveTarget.storedSha256,
     });
+  });
+
+  it('records restored workflow payloads in an immutable quarantine without live references', async () => {
+    const finalizer = createTenantBackupR2CatalogFinalizer({
+      resolveCore: vi.fn(async () => query),
+      resolveAdmin: vi.fn(async () => query),
+    });
+    const holdSource = source({
+      objectId: 'admin:admin-source:held-message.job-a',
+      bucketBinding: 'AUDIT_ARCHIVE',
+      objectKey: 'source/job-a',
+      context: {
+        tenantId: 'tenant-a',
+        catalogKind: 'restore_hold_payload',
+        sourceFamily: 'admin',
+        sourceDatabaseId: 'admin-source',
+        sourceRowId: 'held-message.job-a',
+        objectClass: 'operational_log_detail',
+        holdDatasetId: 'admin.logging_message_jobs',
+        holdRecordId: '[["text","job-a"]]',
+        sourceField: 'payload_object_ref',
+      },
+    });
+    const holdTarget = restored({
+      bucketBinding: 'AUDIT_ARCHIVE',
+      objectKey: 'tenant-restores/tenant-a/operation-a/logs/admin:held-message.job-a',
+    });
+
+    await finalizer.finalize(
+      context(),
+      planDigest,
+      'logs.archive_object_bodies',
+      holdSource,
+      holdTarget
+    );
+
+    await expect(
+      finalizer.verify(context(), planDigest, 'logs.archive_object_bodies', holdSource, holdTarget)
+    ).resolves.toBe(true);
+    expect(
+      database.prepare('SELECT * FROM tenant_backup_restored_hold_objects').get()
+    ).toMatchObject({
+      operation_id: 'operation-a',
+      tenant_id: 'tenant-a',
+      dataset_id: 'admin.logging_message_jobs',
+      source_object_ref: 'source/job-a',
+      target_object_ref: holdTarget.objectKey,
+      target_stored_byte_count: 144,
+    });
+    expect(() =>
+      database.prepare('UPDATE tenant_backup_restored_hold_objects SET created_at=0').run()
+    ).toThrow('tenant_backup_restored_hold_object_immutable');
+    database.prepare('DELETE FROM tenant_backup_operations WHERE id=?').run('operation-a');
+    expect(
+      database.prepare('SELECT count(*) AS count FROM tenant_backup_restored_hold_objects').get()
+    ).toEqual({ count: 0 });
   });
 
   it('rejects a catalog row owned by another tenant', async () => {

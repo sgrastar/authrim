@@ -1737,6 +1737,13 @@ async function readLoggingMessagePayload(env: Env, objectRef: string) {
 
 async function deleteLoggingMessagePayload(env: Env, objectRef: string): Promise<void> {
   try {
+    if (
+      env.DB_ADMIN &&
+      (await hasCapturingTenantBackupSnapshot(
+        requireDedicatedAdminDatabaseAdapter(env, 'logging-message-payload-retention')
+      ))
+    )
+      return;
     await env.AUDIT_ARCHIVE?.delete(objectRef);
   } catch {
     // Terminal state is authoritative. The scheduled orphan cleanup retries object deletion.
@@ -4060,18 +4067,20 @@ async function runScheduledDeliveryEventRetention(
      )`,
     [bulkSuccessCutoff, defaultCutoff, criticalFailureCutoff, retryDlqCutoff, defaultCutoff]
   );
-  const dlqRows = await adapter.query<{ id: string; payload_object_ref: string }>(
-    `SELECT id, payload_object_ref
-     FROM logging_dlq_items
-     WHERE status IN ('deleted', 'purged', 'replayed')
-       AND (
-         (lane = 'critical' AND updated_at < ?)
-         OR (lane <> 'critical' AND updated_at < ?)
-       )
-     ORDER BY updated_at ASC
-     LIMIT ?`,
-    [criticalFailureCutoff, retryDlqCutoff, LOGGING_RETENTION_DELETE_BATCH_SIZE]
-  );
+  const dlqRows = (await hasCapturingTenantBackupSnapshot(adapter))
+    ? []
+    : await adapter.query<{ id: string; payload_object_ref: string }>(
+        `SELECT id, payload_object_ref
+         FROM logging_dlq_items
+         WHERE status IN ('deleted', 'purged', 'replayed')
+           AND (
+             (lane = 'critical' AND updated_at < ?)
+             OR (lane <> 'critical' AND updated_at < ?)
+           )
+         ORDER BY updated_at ASC
+         LIMIT ?`,
+        [criticalFailureCutoff, retryDlqCutoff, LOGGING_RETENTION_DELETE_BATCH_SIZE]
+      );
   if (dlqRows.length > 0) {
     if (!env.AUDIT_ARCHIVE) {
       throw new Error('logging_dlq_payload_bucket_unavailable');

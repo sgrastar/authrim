@@ -223,6 +223,80 @@ describe('tenant backup R2 object snapshot port', () => {
     expect(assertSource).toHaveBeenCalledTimes(4);
   });
 
+  it('decrypts a held logging payload with its opaque tenant key and verifies plaintext', async () => {
+    const rootKey = '23'.repeat(32);
+    const tenantKey = 'tenant-key-a';
+    const objectKey = 'message-jobs/tenant-key-a/job-a.json';
+    const plaintext = '{"type":"retry_delivery"}';
+    const envelope = await encryptObjectArtifact(plaintext, {
+      rootKeyHex: rootKey,
+      plane: 'AUDIT_ARCHIVE',
+      keyVersion: 4,
+      contentType: 'application/json',
+      context: { tenantId: tenantKey, objectKey, objectClass: 'operational_log_detail' },
+    });
+    const stored = new TextEncoder().encode(JSON.stringify(envelope));
+    const source = bucket({
+      [objectKey]: { bytes: stored, etag: 'hold-etag', version: 'hold-version' },
+    });
+    const ports = createTenantBackupR2ObjectSnapshotPorts({
+      env: {
+        AUDIT_ARCHIVE: source as unknown as R2Bucket,
+        EXPORT_ARTIFACTS: bucket() as unknown as R2Bucket,
+        OBJECT_ENCRYPTION_ROOT_KEY: rootKey,
+      },
+      assertSource: async () => {},
+      list: async (_context, datasetId) => [
+        {
+          datasetId,
+          objectId: 'admin:admin-a:held-message.job-a',
+          bucketBinding: 'AUDIT_ARCHIVE',
+          objectKey,
+          sourceEncoding: 'object_artifact_v1',
+          context: {
+            tenantId: 'tenant-a',
+            catalogKind: 'restore_hold_payload',
+            sourceFamily: 'admin',
+            sourceDatabaseId: 'admin-a',
+            sourceRowId: 'held-message.job-a',
+            objectClass: 'operational_log_detail',
+            encryptionTenantContext: tenantKey,
+            holdDatasetId: 'admin.logging_message_jobs',
+            holdRecordId: '[["text","job-a"]]',
+            sourceField: 'payload_object_ref',
+            expectedPlaintextSha256: await digest(new TextEncoder().encode(plaintext)),
+          },
+        },
+      ],
+    });
+    const input = context();
+
+    await ports.logArchiveObjects.start(input, 'snapshot-hold', async () => {}, 100);
+    const record = await ports.logArchiveObjects.readNext(
+      input,
+      'snapshot-hold',
+      null,
+      input.context.signal
+    );
+    const decoded = await decodePortableR2ObjectChunk(
+      new TextDecoder().decode(record?.bytes).trimEnd(),
+      'tenant-a'
+    );
+
+    expect(new TextDecoder().decode(decoded.bytes)).toBe(plaintext);
+    await expect(
+      ports.logArchiveObjects.readSummaries(input, 'snapshot-hold', 100)
+    ).resolves.toEqual([
+      {
+        kind: 'hold',
+        family: 'admin',
+        databaseId: 'admin-a',
+        rowId: 'held-message.job-a',
+        holdDatasetId: 'admin.logging_message_jobs',
+      },
+    ]);
+  });
+
   it('stops when a source object changes while it is captured', async () => {
     const bytes = new TextEncoder().encode('body');
     const source = bucket({

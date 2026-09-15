@@ -346,6 +346,66 @@ describe('tenant backup R2 object restore port', () => {
     );
   });
 
+  it('re-encrypts held logging payloads for the target tenant and marks them as holds', async () => {
+    const plaintext = new TextEncoder().encode('{"type":"retry_delivery"}');
+    const source = await chunk(plaintext, {
+      objectId: 'admin:admin-a:held-message.job-a',
+      bucketBinding: 'AUDIT_ARCHIVE',
+      sourceEncoding: 'object_artifact_v1',
+      context: {
+        tenantId: 'tenant-a',
+        catalogKind: 'restore_hold_payload',
+        objectClass: 'operational_log_detail',
+        holdDatasetId: 'admin.logging_message_jobs',
+        holdRecordId: '[["text","job-a"]]',
+        sourceField: 'payload_object_ref',
+      },
+    });
+    const ports = createTenantBackupR2ObjectRestorePorts({
+      env: {
+        AUDIT_ARCHIVE: target as unknown as R2Bucket,
+        EXPORT_ARTIFACTS: target as unknown as R2Bucket,
+        OBJECT_ENCRYPTION_ROOT_KEY: '24'.repeat(32),
+        OBJECT_ENCRYPTION_KEY_VERSION: '6',
+      },
+      database: adapter,
+      finalizer,
+      now: () => now++,
+    });
+
+    await ports.importR2Chunk(context(), planDigest, 'logs.archive_object_bodies', source);
+    const expectedKey =
+      'tenant-restores/tenant-a/operation-a/logs/admin:admin-a:held-message.job-a';
+    const saved = target.objects.get(expectedKey);
+    expect(saved?.customMetadata).toMatchObject({
+      encryption: 'authrim-object-envelope-v1',
+      encryptionTenantContext: 'tenant-a',
+      sha256: source.objectSha256,
+      holdDatasetId: 'admin.logging_message_jobs',
+      holdSourceField: 'payload_object_ref',
+    });
+    const envelope = JSON.parse(new TextDecoder().decode(saved?.bytes)) as Parameters<
+      typeof decryptObjectArtifact
+    >[0];
+    await expect(
+      decryptObjectArtifact(envelope, {
+        rootKeyHex: '24'.repeat(32),
+        context: {
+          tenantId: 'tenant-a',
+          objectKey: expectedKey,
+          objectClass: 'operational_log_detail',
+        },
+      })
+    ).resolves.toBe('{"type":"retry_delivery"}');
+    expect(finalizer.finalize).toHaveBeenCalledWith(
+      expect.anything(),
+      planDigest,
+      'logs.archive_object_bodies',
+      source,
+      expect.objectContaining({ objectKey: expectedKey, keyVersion: 6 })
+    );
+  });
+
   it('fails closed after the operation lease is fenced', async () => {
     const source = await chunk(new TextEncoder().encode('portable body'));
     const ports = createTenantBackupR2ObjectRestorePorts({

@@ -84,7 +84,10 @@ import {
 } from '../../repositories/admin/internal-notification-event';
 import type { ControlServiceBinding } from '../control-plane/control-plane-contracts';
 import { runTenantBackupCoveredEffect } from '../tenant-portability/covered-mutation';
-import { persistRewrappedLogObjectGeneration } from '../tenant-portability/r2-generation-retention';
+import {
+  hasCapturingTenantBackupSnapshot,
+  persistRewrappedLogObjectGeneration,
+} from '../tenant-portability/r2-generation-retention';
 
 function fetchInputToUrl(input: Parameters<typeof fetch>[0]): string {
   if (typeof input === 'string') {
@@ -2409,6 +2412,13 @@ async function deleteLoggingDeliveryPayloadObject(input: {
     return;
   }
   try {
+    if (
+      input.env.DB_ADMIN &&
+      (await hasCapturingTenantBackupSnapshot(
+        ensureDatabaseAdapter(input.env.DB_ADMIN, 'logging-payload-backup-retention')
+      ))
+    )
+      return;
     await bucket.delete(normalizeR2ObjectRef(input.objectRef));
   } catch (error) {
     // Delivery has already reached a terminal state. Do not redeliver only because cleanup failed;

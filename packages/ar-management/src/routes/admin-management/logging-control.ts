@@ -11,6 +11,7 @@ import {
   createRuntimeProfileRegistryFromEnv,
   ensureDatabaseAdapter,
   getTenantIdFromContext,
+  hasCapturingTenantBackupSnapshot,
   hasAdminPermission,
   loadChunkedSensitiveDetailJson,
   loadEnvironmentProfileDefaultsFromEnv,
@@ -10834,6 +10835,16 @@ loggingPoliciesRouter.post('/dlq-items/:id/purge', async (c) => {
           'payload_object_ref',
           'bucket_unavailable',
           'DLQ payload bucket is unavailable.'
+        ),
+      ]);
+    }
+
+    if (await hasCapturingTenantBackupSnapshot(adapter)) {
+      return createAdminFieldErrorResponse(c, [
+        fieldError(
+          'payload_object_ref',
+          'backup_snapshot_active',
+          'DLQ payload is retained while a tenant backup snapshot is active.'
         ),
       ]);
     }

@@ -295,6 +295,31 @@ describe('logging/storage maintenance jobs', () => {
     }
   });
 
+  it('keeps closed DLQ payloads while a backup snapshot is capturing', async () => {
+    mockAdapter.queryOne.mockImplementation(async (sql: string) =>
+      sql.includes('tenant_backup_snapshots') ? { id: 'snapshot-a' } : null
+    );
+    mockAdapter.query.mockImplementation(async (sql: string) =>
+      sql.includes('FROM logging_dlq_items')
+        ? [{ id: 'dlq_closed', payload_object_ref: 'dlq/closed.json' }]
+        : []
+    );
+    const deleteObject = vi.fn().mockResolvedValue(undefined);
+
+    const result = await processLoggingStorageMaintenanceJobs(
+      { AUDIT_ARCHIVE: { delete: deleteObject } as unknown as R2Bucket } as Env,
+      log
+    );
+
+    expect(result.retention.dlqItemsPurged).toBe(0);
+    expect(
+      mockAdapter.query.mock.calls.some(([sql]) =>
+        String(sql).includes("WHERE status IN ('deleted', 'purged', 'replayed')")
+      )
+    ).toBe(false);
+    expect(deleteObject).not.toHaveBeenCalledWith(['dlq/closed.json']);
+  });
+
   it('runs deep scheduled R2 health probes for stale healthy destinations', async () => {
     const put = vi.fn().mockResolvedValue(undefined);
     const head = vi.fn().mockResolvedValue({ size: 33 });

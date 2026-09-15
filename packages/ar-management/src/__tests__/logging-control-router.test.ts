@@ -3696,6 +3696,7 @@ describe('logging control routers', () => {
       created_at: 1000,
       updated_at: 1000,
     });
+    mockAdapter.queryOne.mockResolvedValueOnce(null);
     vi.mocked(env.AUDIT_ARCHIVE!.get).mockResolvedValueOnce({
       size: 52,
       httpMetadata: { contentType: 'application/json' },
@@ -4160,19 +4161,25 @@ describe('logging control routers', () => {
       code: 'confirmation_mismatch',
     });
 
-    mockAdapter.queryOne.mockResolvedValueOnce({
-      id: 'dlq_1',
-      tenant_key: tenantKey,
-      payload_type: 'audit_queue_message',
-      schema_version: 1,
-      lane: 'critical',
-      destination_id: null,
-      payload_object_ref: payloadObjectRef,
-      error_class: 'audit_message_failed_permanently',
-      attempt_count: 5,
-      status: 'open',
-      created_at: 1000,
-      updated_at: 1000,
+    mockAdapter.queryOne.mockReset();
+    mockAdapter.queryOne.mockImplementation(async (sql: string) => {
+      if (sql.includes('FROM logging_dlq_items'))
+        return {
+          id: 'dlq_1',
+          tenant_key: tenantKey,
+          payload_type: 'audit_queue_message',
+          schema_version: 1,
+          lane: 'critical',
+          destination_id: null,
+          payload_object_ref: payloadObjectRef,
+          error_class: 'audit_message_failed_permanently',
+          attempt_count: 5,
+          status: 'open',
+          created_at: 1000,
+          updated_at: 1000,
+        };
+      if (sql.includes('tenant_backup_snapshots')) return null;
+      return { total: 0, failures: 0, critical: 0 };
     });
     const bucketDelete = vi.fn().mockResolvedValue(undefined);
     const allowed = await createApp([ADMIN_PERMISSIONS.LOGGING_DLQ_PURGE]).request(
@@ -4201,6 +4208,44 @@ describe('logging control routers', () => {
     expect(mockAdapter.execute).toHaveBeenCalledWith(
       expect.stringContaining('INSERT INTO admin_audit_log'),
       expect.arrayContaining(['logging.dlq.purge'])
+    );
+  });
+
+  it('retains an open DLQ payload while a backup snapshot is capturing', async () => {
+    const tenantKey = await deriveTenantKeyFromTenantId('tenant-a');
+    const payloadObjectRef = `dlq/tenant_key=${tenantKey}/item.json`;
+    mockAdapter.queryOne.mockImplementation(async (sql: string) => {
+      if (sql.includes('FROM logging_dlq_items'))
+        return {
+          id: 'dlq_1',
+          tenant_key: tenantKey,
+          payload_object_ref: payloadObjectRef,
+          status: 'open',
+        };
+      if (sql.includes('tenant_backup_snapshots')) return { id: 'snapshot-a' };
+      return null;
+    });
+    const bucketDelete = vi.fn().mockResolvedValue(undefined);
+
+    const response = await createApp([ADMIN_PERMISSIONS.LOGGING_DLQ_PURGE]).request(
+      '/api/admin/logging-policies/dlq-items/dlq_1/purge',
+      {
+        method: 'POST',
+        body: JSON.stringify({ confirmation: 'PURGE DLQ dlq_1' }),
+        headers: { 'content-type': 'application/json' },
+      },
+      { ...env, AUDIT_ARCHIVE: { get: vi.fn(), delete: bucketDelete } } as unknown as Env
+    );
+    const body = (await response.json()) as {
+      details: { fields: Array<{ code: string }> };
+    };
+
+    expect(response.status).toBe(400);
+    expect(body.details.fields[0]?.code).toBe('backup_snapshot_active');
+    expect(bucketDelete).not.toHaveBeenCalled();
+    expect(mockAdapter.execute).not.toHaveBeenCalledWith(
+      expect.stringContaining("SET status = 'purged'"),
+      expect.anything()
     );
   });
 

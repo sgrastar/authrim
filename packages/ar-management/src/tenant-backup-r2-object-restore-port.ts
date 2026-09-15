@@ -600,6 +600,15 @@ export function createTenantBackupR2ObjectRestorePorts(input: {
               keyVersion: String(encoded.keyVersion ?? invalid()),
               ...(encoded.encryptionScope ? { encryptionScope: encoded.encryptionScope } : {}),
             }),
+        ...(source.context.catalogKind === 'restore_hold_payload'
+          ? {
+              encryption: 'authrim-object-envelope-v1',
+              encryptionTenantContext: source.tenantId,
+              sha256: source.objectSha256,
+              holdDatasetId: requiredString(source.context, 'holdDatasetId'),
+              holdSourceField: requiredString(source.context, 'sourceField'),
+            }
+          : {}),
       };
       await target.put(prepared.object.target_object_key, encoded.bytes, {
         httpMetadata: {

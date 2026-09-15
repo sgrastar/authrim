@@ -95,6 +95,13 @@ interface LogObjectRow {
   last_chunk_id: string | null;
 }
 
+interface HeldPayloadRow {
+  id: string;
+  payload_object_ref: string;
+  payload_sha256: string | null;
+  hold_dataset_id: 'admin.logging_dlq_items' | 'admin.logging_message_jobs';
+}
+
 function invalid(code = 'backup_r2_catalog_list_invalid'): never {
   throw new Error(code);
 }
@@ -131,6 +138,87 @@ function objectId(source: Source, rowId: string): string {
   const value = `${source.family}:${source.databaseId}:${rowId}`;
   if (new TextEncoder().encode(value).length > 512) invalid();
   return value;
+}
+
+function heldRecordId(id: string): string {
+  if (!SAFE_ID.test(id)) invalid();
+  return JSON.stringify([['text', id]]);
+}
+
+async function listHeldLoggingPayloads(
+  context: AdapterContext,
+  source: Source,
+  tenantId: string,
+  tenantKey: string
+): Promise<TenantBackupR2ObjectDescriptor[]> {
+  if (source.family !== 'admin' || !context.selection.admin) return [];
+  const [dlqRows, messageRows] = await Promise.all([
+    source.database.query<{
+      id: string;
+      payload_object_ref: string;
+    }>(
+      `SELECT id,payload_object_ref FROM logging_dlq_items
+       WHERE tenant_key=? AND status='open' ORDER BY id LIMIT ?`,
+      [tenantKey, MAX_DESCRIPTORS + 1]
+    ),
+    source.database.query<{
+      id: string;
+      payload_object_ref: string;
+      payload_sha256: string;
+    }>(
+      `SELECT id,payload_object_ref,payload_sha256 FROM logging_message_jobs
+       WHERE tenant_key=? AND status IN ('queued','claimed','running','retrying','failed','dlq','blocked')
+       ORDER BY id LIMIT ?`,
+      [tenantKey, MAX_DESCRIPTORS + 1]
+    ),
+  ]);
+  if (dlqRows.length > MAX_DESCRIPTORS || messageRows.length > MAX_DESCRIPTORS)
+    invalid('backup_r2_catalog_list_limit');
+  const rows: HeldPayloadRow[] = [
+    ...dlqRows.map((row) => ({
+      ...row,
+      payload_sha256: null,
+      hold_dataset_id: 'admin.logging_dlq_items' as const,
+    })),
+    ...messageRows.map((row) => ({
+      ...row,
+      hold_dataset_id: 'admin.logging_message_jobs' as const,
+    })),
+  ];
+  if (rows.length > MAX_DESCRIPTORS) invalid('backup_r2_catalog_list_limit');
+  return rows.map((row) => {
+    context.context.signal.throwIfAborted();
+    if (
+      !SAFE_ID.test(row.id) ||
+      !row.payload_object_ref ||
+      new TextEncoder().encode(row.payload_object_ref).length > 1024 ||
+      (row.payload_sha256 !== null && !SHA256.test(row.payload_sha256))
+    )
+      invalid();
+    const sourceRowId = `${
+      row.hold_dataset_id === 'admin.logging_dlq_items' ? 'held-dlq' : 'held-message'
+    }.${row.id}`;
+    return {
+      datasetId: 'logs.archive_object_bodies',
+      objectId: objectId(source, sourceRowId),
+      bucketBinding: 'AUDIT_ARCHIVE',
+      objectKey: row.payload_object_ref,
+      sourceEncoding: 'object_artifact_v1',
+      context: {
+        tenantId,
+        catalogKind: 'restore_hold_payload',
+        sourceDatabaseId: source.databaseId,
+        sourceFamily: source.family,
+        sourceRowId,
+        objectClass: 'operational_log_detail',
+        encryptionTenantContext: tenantKey,
+        holdDatasetId: row.hold_dataset_id,
+        holdRecordId: heldRecordId(row.id),
+        sourceField: 'payload_object_ref',
+        ...(row.payload_sha256 === null ? {} : { expectedPlaintextSha256: row.payload_sha256 }),
+      },
+    } as TenantBackupR2ObjectDescriptor;
+  });
 }
 
 function bucketForPlane(plane: string): PortableR2BucketBinding {
@@ -339,6 +427,7 @@ async function listLogObjects(
       },
     } as TenantBackupR2ObjectDescriptor);
   }
+  descriptors.push(...(await listHeldLoggingPayloads(context, source, tenantId, tenantKey)));
   return descriptors;
 }
 

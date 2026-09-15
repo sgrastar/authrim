@@ -11,7 +11,7 @@ import type {
 
 type Database = Pick<DatabaseAdapter, 'query' | 'batch' | 'getType'>;
 type Family = 'core' | 'admin';
-type CatalogKind = 'object_catalog_object' | 'log_object' | 'log_manifest';
+type CatalogKind = 'object_catalog_object' | 'log_object' | 'log_manifest' | 'restore_hold_payload';
 const SHA256 = /^[a-f0-9]{64}$/u;
 
 function invalid(): never {
@@ -47,7 +47,12 @@ function identity(source: PortableR2ObjectChunk): {
 
 function catalogKind(source: PortableR2ObjectChunk): CatalogKind {
   const value = source.context.catalogKind;
-  if (!['object_catalog_object', 'log_object', 'log_manifest'].includes(String(value))) invalid();
+  if (
+    !['object_catalog_object', 'log_object', 'log_manifest', 'restore_hold_payload'].includes(
+      String(value)
+    )
+  )
+    invalid();
   return value as CatalogKind;
 }
 
@@ -79,6 +84,20 @@ function validate(
       catalogKind(source) !== 'object_catalog_object') ||
     (catalogKind(source) === 'log_object' && datasetId !== 'logs.archive_object_bodies') ||
     (catalogKind(source) === 'log_manifest' && datasetId !== 'logs.archive_object_bodies')
+  )
+    invalid();
+  if (
+    catalogKind(source) === 'restore_hold_payload' &&
+    (datasetId !== 'logs.archive_object_bodies' ||
+      source.sourceEncoding !== 'object_artifact_v1' ||
+      source.bucketBinding !== 'AUDIT_ARCHIVE' ||
+      source.context.sourceFamily !== 'admin' ||
+      source.context.objectClass !== 'operational_log_detail' ||
+      !['admin.logging_dlq_items', 'admin.logging_message_jobs'].includes(
+        String(source.context.holdDatasetId)
+      ) ||
+      source.context.sourceField !== 'payload_object_ref' ||
+      restored.keyVersion === null)
   )
     invalid();
   if (
@@ -118,6 +137,71 @@ interface CatalogRow {
   encryption_scope?: string | null;
   manifest_object_key?: string;
   record_count?: number;
+}
+
+interface HoldObjectRow {
+  dataset_id: string;
+  record_id: string;
+  source_field: string;
+  source_bucket_binding: string;
+  source_object_ref: string;
+  target_bucket_binding: string;
+  target_object_ref: string;
+  target_object_version: string;
+  target_object_etag: string;
+  target_plaintext_sha256: string;
+  target_stored_sha256: string;
+  target_stored_byte_count: number;
+  target_key_version: number;
+}
+
+function holdContext(source: PortableR2ObjectChunk): {
+  datasetId: string;
+  recordId: string;
+  sourceField: string;
+} {
+  const datasetId = source.context.holdDatasetId;
+  const recordId = source.context.holdRecordId;
+  const sourceField = source.context.sourceField;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(String(recordId));
+  } catch {
+    return invalid();
+  }
+  if (
+    !['admin.logging_dlq_items', 'admin.logging_message_jobs'].includes(String(datasetId)) ||
+    typeof recordId !== 'string' ||
+    recordId.length < 1 ||
+    recordId.length > 4096 ||
+    !Array.isArray(parsed) ||
+    sourceField !== 'payload_object_ref'
+  )
+    invalid();
+  return { datasetId: String(datasetId), recordId, sourceField };
+}
+
+function matchesHold(
+  row: HoldObjectRow,
+  source: PortableR2ObjectChunk,
+  restored: RestoredTenantR2Object
+): boolean {
+  const hold = holdContext(source);
+  return (
+    row.dataset_id === hold.datasetId &&
+    row.record_id === hold.recordId &&
+    row.source_field === hold.sourceField &&
+    row.source_bucket_binding === source.bucketBinding &&
+    row.source_object_ref === source.objectKey &&
+    row.target_bucket_binding === restored.bucketBinding &&
+    row.target_object_ref === restored.objectKey &&
+    row.target_object_version === restored.version &&
+    row.target_object_etag === restored.etag &&
+    row.target_plaintext_sha256 === source.objectSha256 &&
+    row.target_stored_sha256 === restored.storedSha256 &&
+    row.target_stored_byte_count === restored.storedBytes &&
+    row.target_key_version === restored.keyVersion
+  );
 }
 
 function matches(kind: CatalogKind, row: CatalogRow, restored: RestoredTenantR2Object): boolean {
@@ -315,6 +399,7 @@ export function createTenantBackupR2CatalogFinalizer(input: {
     const target = identity(source);
     const db = await database(context, planDigest, target.family, target.databaseId);
     const kind = catalogKind(source);
+    if (kind === 'restore_hold_payload') invalid();
     let rows: CatalogRow[];
     if (kind === 'object_catalog_object') {
       rows = await db.query<CatalogRow>(
@@ -340,6 +425,33 @@ export function createTenantBackupR2CatalogFinalizer(input: {
     return rows[0];
   };
 
+  const readHold = async (
+    context: TenantBackupStepContext,
+    planDigest: string,
+    source: PortableR2ObjectChunk
+  ): Promise<HoldObjectRow> => {
+    const target = identity(source);
+    if (target.family !== 'admin') invalid();
+    const hold = holdContext(source);
+    const db = await database(context, planDigest, target.family, target.databaseId);
+    const rows = await db.query<HoldObjectRow>(
+      `SELECT dataset_id,record_id,source_field,source_bucket_binding,source_object_ref,
+        target_bucket_binding,target_object_ref,target_object_version,target_object_etag,
+        target_plaintext_sha256,target_stored_sha256,target_stored_byte_count,target_key_version
+       FROM tenant_backup_restored_hold_objects
+       WHERE operation_id=? AND tenant_id=? AND dataset_id=? AND record_id=? AND source_field=?`,
+      [
+        context.lease.operationId,
+        context.lease.tenantId,
+        hold.datasetId,
+        hold.recordId,
+        hold.sourceField,
+      ]
+    );
+    if (rows.length !== 1) invalid();
+    return rows[0];
+  };
+
   return {
     async finalize(context, planDigest, datasetId, source, restored) {
       validate(context, planDigest, datasetId, source, restored);
@@ -347,6 +459,42 @@ export function createTenantBackupR2CatalogFinalizer(input: {
       const target = identity(source);
       const db = await database(context, planDigest, target.family, target.databaseId);
       const kind = catalogKind(source);
+      if (kind === 'restore_hold_payload') {
+        const hold = holdContext(source);
+        const result = await db.batch([
+          {
+            sql: `INSERT INTO tenant_backup_restored_hold_objects (
+              operation_id,tenant_id,dataset_id,record_id,source_field,
+              source_bucket_binding,source_object_ref,target_bucket_binding,target_object_ref,
+              target_object_version,target_object_etag,target_plaintext_sha256,
+              target_stored_sha256,target_stored_byte_count,target_key_version,created_at
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            ON CONFLICT(operation_id,dataset_id,record_id,source_field) DO NOTHING`,
+            params: [
+              context.lease.operationId,
+              context.lease.tenantId,
+              hold.datasetId,
+              hold.recordId,
+              hold.sourceField,
+              source.bucketBinding,
+              source.objectKey,
+              restored.bucketBinding,
+              restored.objectKey,
+              restored.version,
+              restored.etag,
+              source.objectSha256,
+              restored.storedSha256,
+              restored.storedBytes,
+              restored.keyVersion,
+              Date.now(),
+            ],
+          },
+        ]);
+        if (result.length !== 1 || !result[0]?.success) invalid();
+        if (!matchesHold(await readHold(context, planDigest, source), source, restored)) invalid();
+        context.signal.throwIfAborted();
+        return;
+      }
       let rows: CatalogRow[];
       if (kind === 'object_catalog_object') {
         const objectUpdate = {
@@ -499,6 +647,8 @@ export function createTenantBackupR2CatalogFinalizer(input: {
     async verify(context, planDigest, datasetId, source, restored) {
       validate(context, planDigest, datasetId, source, restored);
       context.signal.throwIfAborted();
+      if (catalogKind(source) === 'restore_hold_payload')
+        return matchesHold(await readHold(context, planDigest, source), source, restored);
       const target = identity(source);
       const db = await database(context, planDigest, target.family, target.databaseId);
       return (

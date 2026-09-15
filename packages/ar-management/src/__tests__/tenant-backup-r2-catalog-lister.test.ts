@@ -65,6 +65,14 @@ function createSchema(database: DatabaseSync): void {
       object_catalog_id TEXT NOT NULL,chunk_id TEXT NOT NULL,event_at INTEGER NOT NULL,
       status TEXT NOT NULL
     );
+    CREATE TABLE logging_dlq_items(
+      id TEXT PRIMARY KEY NOT NULL,tenant_key TEXT NOT NULL,payload_object_ref TEXT NOT NULL,
+      status TEXT NOT NULL
+    );
+    CREATE TABLE logging_message_jobs(
+      id TEXT PRIMARY KEY NOT NULL,tenant_key TEXT NOT NULL,payload_object_ref TEXT NOT NULL,
+      payload_sha256 TEXT NOT NULL,status TEXT NOT NULL
+    );
   `);
 }
 
@@ -262,6 +270,50 @@ describe('tenant backup R2 catalog lister', () => {
       sourceEncoding: 'log_chunk_records_v1',
       context: { logType: 'audit', chunkId: 'audit-a-chunk' },
     });
+  });
+
+  it('includes runnable logging payloads as quarantined restore holds with Admin data', async () => {
+    admin.exec(`
+      INSERT INTO logging_dlq_items VALUES(
+        'dlq-a','tenant-key-a','dlq/tenant-a/a.json','open'
+      );
+      INSERT INTO logging_dlq_items VALUES(
+        'dlq-closed','tenant-key-a','dlq/tenant-a/closed.json','purged'
+      );
+      INSERT INTO logging_message_jobs VALUES(
+        'job-a','tenant-key-a','jobs/tenant-a/a.json','${'a'.repeat(64)}','queued'
+      );
+      INSERT INTO logging_message_jobs VALUES(
+        'job-other','tenant-key-b','jobs/tenant-b/a.json','${'b'.repeat(64)}','queued'
+      );
+    `);
+
+    const rows = await createTenantBackupR2CatalogLister({ tenantKey: 'tenant-key-a' })(
+      context({ admin: true, logs: { audit: false, other: false, sensitive: false, period: 7 } }),
+      'logs.archive_object_bodies'
+    );
+
+    expect(rows).toHaveLength(2);
+    expect(rows).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          objectKey: 'dlq/tenant-a/a.json',
+          sourceEncoding: 'object_artifact_v1',
+          context: expect.objectContaining({
+            catalogKind: 'restore_hold_payload',
+            holdDatasetId: 'admin.logging_dlq_items',
+          }),
+        }),
+        expect.objectContaining({
+          objectKey: 'jobs/tenant-a/a.json',
+          context: expect.objectContaining({
+            catalogKind: 'restore_hold_payload',
+            expectedPlaintextSha256: 'a'.repeat(64),
+            holdDatasetId: 'admin.logging_message_jobs',
+          }),
+        }),
+      ])
+    );
   });
 
   it('maps diagnostic and sensitive log planes to their actual buckets', async () => {

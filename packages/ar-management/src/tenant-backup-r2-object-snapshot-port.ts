@@ -35,7 +35,11 @@ const MAX_REENCRYPTABLE_OBJECT_BYTES = 64 * 1024 * 1024;
 const SHA256 = /^[a-f0-9]{64}$/u;
 const SAFE_ID = /^[A-Za-z0-9_.:-]{1,256}$/u;
 type LogChunkCompression = 'none' | 'gzip_block';
-export type TenantBackupR2CatalogKind = 'object_catalog_object' | 'log_object' | 'log_manifest';
+export type TenantBackupR2CatalogKind =
+  | 'object_catalog_object'
+  | 'log_object'
+  | 'log_manifest'
+  | 'restore_hold_payload';
 
 interface SourceIdentityContext {
   sourceFamily: 'core' | 'admin';
@@ -70,6 +74,23 @@ export interface ObjectArtifactR2ObjectDescriptor extends BaseDescriptor {
       catalogKind: 'object_catalog_object';
       catalogId: string;
       objectClass: ObjectClass;
+      [key: string]: unknown;
+    }
+  >;
+}
+
+export interface RestoreHoldPayloadR2ObjectDescriptor extends BaseDescriptor {
+  sourceEncoding: 'object_artifact_v1';
+  context: Readonly<
+    SourceIdentityContext & {
+      tenantId: string;
+      catalogKind: 'restore_hold_payload';
+      objectClass: 'operational_log_detail';
+      encryptionTenantContext: string;
+      holdDatasetId: 'admin.logging_dlq_items' | 'admin.logging_message_jobs';
+      holdRecordId: string;
+      sourceField: 'payload_object_ref';
+      expectedPlaintextSha256?: string;
       [key: string]: unknown;
     }
   >;
@@ -138,6 +159,7 @@ export interface SensitiveDetailRecordR2ObjectDescriptor extends BaseDescriptor 
 export type TenantBackupR2ObjectDescriptor =
   | PlaintextR2ObjectDescriptor
   | ObjectArtifactR2ObjectDescriptor
+  | RestoreHoldPayloadR2ObjectDescriptor
   | LogChunkR2ObjectDescriptor
   | LogChunkRecordsR2ObjectDescriptor
   | SensitiveDetailRecordR2ObjectDescriptor;
@@ -219,8 +241,11 @@ function validateDescriptor(
     !descriptor.objectKey ||
     new TextEncoder().encode(descriptor.objectKey).length > 1024 ||
     containsControlCharacter(descriptor.objectKey) ||
-    !descriptor.expectedStoredSha256 ||
-    !SHA256.test(descriptor.expectedStoredSha256) ||
+    (descriptor.context.catalogKind !== 'restore_hold_payload' &&
+      !descriptor.expectedStoredSha256) ||
+    (descriptor.expectedStoredSha256 !== undefined &&
+      descriptor.expectedStoredSha256 !== null &&
+      !SHA256.test(descriptor.expectedStoredSha256)) ||
     !['core', 'admin'].includes(source.sourceFamily) ||
     !SAFE_ID.test(source.sourceDatabaseId) ||
     !SAFE_ID.test(source.sourceRowId)
@@ -228,23 +253,46 @@ function validateDescriptor(
     invalid();
   if (!SAFE_ID.test(descriptor.context.tenantId)) invalid();
   if (
-    !['object_catalog_object', 'log_object', 'log_manifest'].includes(
+    !['object_catalog_object', 'log_object', 'log_manifest', 'restore_hold_payload'].includes(
       descriptor.context.catalogKind
     ) ||
     (datasetId === 'artifacts.object_catalog_bodies' &&
       descriptor.context.catalogKind !== 'object_catalog_object')
   )
     invalid();
-  if (
-    descriptor.sourceEncoding === 'object_artifact_v1' &&
-    (descriptor.context.catalogKind !== 'object_catalog_object' ||
-      !SAFE_ID.test(descriptor.context.catalogId) ||
-      !isObjectClass(descriptor.context.objectClass) ||
-      !['AUDIT_ARCHIVE', 'EXPORT_ARTIFACTS', 'SENSITIVE_DETAILS'].includes(
-        descriptor.bucketBinding
-      ))
-  )
-    invalid();
+  if (descriptor.sourceEncoding === 'object_artifact_v1') {
+    if (descriptor.context.catalogKind === 'object_catalog_object') {
+      if (
+        !SAFE_ID.test(descriptor.context.catalogId) ||
+        !isObjectClass(descriptor.context.objectClass) ||
+        !['AUDIT_ARCHIVE', 'EXPORT_ARTIFACTS', 'SENSITIVE_DETAILS'].includes(
+          descriptor.bucketBinding
+        )
+      )
+        invalid();
+    } else if (descriptor.context.catalogKind === 'restore_hold_payload') {
+      const hold = descriptor.context;
+      let recordId: unknown;
+      try {
+        recordId = JSON.parse(hold.holdRecordId);
+      } catch {
+        invalid();
+      }
+      if (
+        datasetId !== 'logs.archive_object_bodies' ||
+        hold.sourceFamily !== 'admin' ||
+        hold.objectClass !== 'operational_log_detail' ||
+        descriptor.bucketBinding !== 'AUDIT_ARCHIVE' ||
+        !SAFE_ID.test(hold.encryptionTenantContext) ||
+        !['admin.logging_dlq_items', 'admin.logging_message_jobs'].includes(hold.holdDatasetId) ||
+        hold.sourceField !== 'payload_object_ref' ||
+        !Array.isArray(recordId) ||
+        JSON.stringify(recordId).length > 4096 ||
+        (hold.expectedPlaintextSha256 !== undefined && !SHA256.test(hold.expectedPlaintextSha256))
+      )
+        invalid();
+    } else invalid();
+  }
   if (descriptor.sourceEncoding === 'sensitive_detail_record_v1') {
     const value = descriptor.context;
     if (
@@ -657,12 +705,22 @@ async function portablePlaintext(
     const plaintext = await decryptObjectArtifact(envelope, {
       rootKeyHex: rootKey,
       context: {
-        tenantId: descriptor.context.tenantId,
+        tenantId:
+          descriptor.context.catalogKind === 'restore_hold_payload'
+            ? descriptor.context.encryptionTenantContext
+            : descriptor.context.tenantId,
         objectKey: descriptor.objectKey,
         objectClass: descriptor.context.objectClass,
       },
     });
-    return new TextEncoder().encode(plaintext);
+    const bytes = new TextEncoder().encode(plaintext);
+    if (
+      descriptor.context.catalogKind === 'restore_hold_payload' &&
+      descriptor.context.expectedPlaintextSha256 !== undefined &&
+      (await sha256(bytes)) !== descriptor.context.expectedPlaintextSha256
+    )
+      invalid();
+    return bytes;
   }
   if (descriptor.sourceEncoding === 'sensitive_detail_record_v1')
     return portableSensitiveDetail(rootKey, descriptor, stored);
@@ -836,7 +894,9 @@ function summarizeDescriptor(
     !SAFE_ID.test(value.sourceDatabaseId) ||
     typeof value.sourceRowId !== 'string' ||
     !SAFE_ID.test(value.sourceRowId) ||
-    !['object_catalog_object', 'log_object'].includes(String(value.catalogKind))
+    !['object_catalog_object', 'log_object', 'restore_hold_payload'].includes(
+      String(value.catalogKind)
+    )
   )
     invalid();
   if (value.catalogKind === 'object_catalog_object') {
@@ -847,6 +907,21 @@ function summarizeDescriptor(
       databaseId: value.sourceDatabaseId,
       rowId: value.sourceRowId,
       catalogId: value.catalogId,
+    };
+  }
+  if (value.catalogKind === 'restore_hold_payload') {
+    if (
+      value.sourceFamily !== 'admin' ||
+      typeof value.holdDatasetId !== 'string' ||
+      !['admin.logging_dlq_items', 'admin.logging_message_jobs'].includes(value.holdDatasetId)
+    )
+      invalid();
+    return {
+      kind: 'hold',
+      family,
+      databaseId: value.sourceDatabaseId,
+      rowId: value.sourceRowId,
+      holdDatasetId: value.holdDatasetId,
     };
   }
   return {

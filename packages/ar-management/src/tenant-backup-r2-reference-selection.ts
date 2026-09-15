@@ -43,6 +43,16 @@ function addSummary(
   if (typeof family !== 'string' || typeof databaseId !== 'string' || typeof rowId !== 'string')
     invalid();
   const rowKey = tenantBackupR2ReferenceKey(family, databaseId, rowId);
+  if (summary.kind === 'hold') {
+    if (
+      keys !== 'databaseId,family,holdDatasetId,kind,rowId' ||
+      !['admin.logging_dlq_items', 'admin.logging_message_jobs'].includes(
+        String(summary.holdDatasetId)
+      )
+    )
+      invalid();
+    return;
+  }
   if (summary.kind === 'object') {
     if (keys !== 'catalogId,databaseId,family,kind,rowId' || typeof summary.catalogId !== 'string')
       invalid();

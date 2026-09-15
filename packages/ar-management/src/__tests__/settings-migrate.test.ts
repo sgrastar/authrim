@@ -591,7 +591,7 @@ it('admits actual migration and lock deletion but leaves dry-run available', asy
   expect((await app.request(url + '/lock', { method: 'DELETE' }, mockEnv)).status).toBe(200);
   expect(complete).toHaveBeenCalledTimes(2);
 });
-it('retains the permit when migration reports a partial write failure', async () => {
+it('completes the permit and reports an uncertain partial settings migration', async () => {
   const kv = createMockKV({ error_locale: 'ja' });
   const original = vi.mocked(kv).put.getMockImplementation();
   if (!original) throw new Error('missing KV mock');
@@ -600,7 +600,7 @@ it('retains the permit when migration reports a partial write failure', async ()
     await original(key, value, options);
   });
   const { app, mockEnv } = createTestApp({ kv });
-  const complete = vi.fn();
+  const complete = vi.fn().mockResolvedValue(undefined);
   mockEnv.TENANT_BACKUP_WRAPPING_KEY = 'ab'.repeat(32);
   mockEnv.CONTROL = {
     acquireEnvironmentBackupMutationPermit: vi.fn().mockResolvedValue({ admitted: true }),
@@ -615,12 +615,9 @@ it('retains the permit when migration reports a partial write failure', async ()
     },
     mockEnv
   );
-  expect(response.status).toBe(200);
-  const body: unknown = await response.json();
-  expect(body).toMatchObject({
-    errors: expect.arrayContaining([expect.stringContaining('uncertain write')]) as unknown,
-  });
-  expect(complete).not.toHaveBeenCalled();
+  expect(response.status).toBe(503);
+  expect(response.headers.get('Cache-Control')).toBe('no-store');
+  expect(complete).toHaveBeenCalledTimes(1);
 });
 it('requires system admin for migration status and lock operations before admission', async () => {
   const { app, mockEnv } = createTestApp({ roles: ['viewer'] });
