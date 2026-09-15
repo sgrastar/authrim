@@ -12,6 +12,7 @@ import {
   PHASE3_SQLITE_REFERENCE_RULES,
 } from '../phase3-sqlite-references';
 import type { PortableSqliteRow } from '../sqlite-dataset-inspector';
+import { validateTenantPortableReferences } from '../reference-contract';
 
 const root = fileURLToPath(new URL('../../../../../../', import.meta.url));
 const inventory = inventoryBackupSchemas(root);
@@ -150,6 +151,8 @@ describe('Phase 3 installed SQL reference graph', () => {
         row({
           tenant_id: 'tenant-a',
           client_id: 'client-a',
+          allowed_subject_token_clients: null,
+          identity_mapping: null,
           logout_webhook_secret_encrypted: portable,
         }),
         identity
@@ -161,11 +164,247 @@ describe('Phase 3 installed SQL reference graph', () => {
         row({
           tenant_id: 'tenant-a',
           client_id: 'client-a',
+          allowed_subject_token_clients: null,
+          identity_mapping: null,
           logout_webhook_secret_encrypted: 'enc:v1:gcm:source-ciphertext',
         }),
         identity
       )
     ).toThrow('backup_portable_client_secret_invalid');
+  });
+
+  it('requires every OAuth subject-token client named inside JSON', () => {
+    const identity = {
+      module: 'applications' as const,
+      collection: 'core.oauth_clients',
+      id: 'client',
+      tenantId: 'tenant-a',
+    };
+    const references = inspectPhase3SqliteReferences(
+      identity.collection,
+      row({
+        tenant_id: 'tenant-a',
+        client_id: 'client-a',
+        allowed_subject_token_clients: '["client-b","client-b","client-c"]',
+        identity_mapping: null,
+        logout_webhook_secret_encrypted: null,
+      }),
+      identity
+    );
+    expect(
+      references.filter(({ to }) => to.collection === 'core.oauth_clients').map(({ to }) => to.id)
+    ).toEqual([
+      '[["text","tenant-a"],["text","client-b"]]',
+      '[["text","tenant-a"],["text","client-c"]]',
+    ]);
+    expect(() =>
+      inspectPhase3SqliteReferences(
+        identity.collection,
+        row({
+          tenant_id: 'tenant-a',
+          client_id: 'client-a',
+          allowed_subject_token_clients: '{"client":"client-b"}',
+          identity_mapping: null,
+          logout_webhook_secret_encrypted: null,
+        }),
+        identity
+      )
+    ).toThrow('backup_phase3_structured_json');
+  });
+
+  it('requires mapping records selected by an OAuth client', () => {
+    const identity = {
+      module: 'applications' as const,
+      collection: 'core.oauth_clients',
+      id: 'client',
+      tenantId: 'tenant-a',
+    };
+    const references = inspectPhase3SqliteReferences(
+      identity.collection,
+      row({
+        tenant_id: 'tenant-a',
+        client_id: 'client-a',
+        allowed_subject_token_clients: null,
+        identity_mapping: JSON.stringify({
+          fieldMappingSetId: 'set-a',
+          fieldMappingVersionId: 'version-a',
+          sourceProfileId: 'source-profile-source_profile_a',
+          destinationProfileId: 'destination_profile_a',
+        }),
+        logout_webhook_secret_encrypted: null,
+      }),
+      identity
+    );
+    expect(references.map(({ to }) => [to.collection, to.id])).toEqual([
+      ['admin.field_mapping_sets', '[["text","set-a"]]'],
+      ['admin.field_mapping_versions', '[["text","version-a"]]'],
+      ['admin.source_profiles', '[["text","source_profile_a"]]'],
+      ['admin.destination_profiles', '[["text","destination_profile_a"]]'],
+      ['core.tenants', '[["text","tenant-a"]]'],
+    ]);
+  });
+
+  it('requires OIDC clients and groups referenced by application launchers', () => {
+    const identity = {
+      module: 'applications' as const,
+      collection: 'core.application_launchers',
+      id: 'launcher',
+      tenantId: 'tenant-a',
+    };
+    const references = inspectPhase3SqliteReferences(
+      identity.collection,
+      row({
+        tenant_id: 'tenant-a',
+        id: 'launcher-a',
+        config_json: JSON.stringify({
+          id: 'launcher-a',
+          application_type: 'oidc_client',
+          application_id: 'client-a',
+          visibility: { group_ids: ['group-a', 'group-a'] },
+        }),
+      }),
+      identity
+    );
+    expect(references.map(({ to }) => [to.collection, to.id])).toEqual([
+      ['core.oauth_clients', '[["text","tenant-a"],["text","client-a"]]'],
+      ['core.groups', '[["text","group-a"]]'],
+      ['core.tenants', '[["text","tenant-a"]]'],
+    ]);
+    expect(() =>
+      inspectPhase3SqliteReferences(
+        identity.collection,
+        row({
+          tenant_id: 'tenant-a',
+          id: 'launcher-a',
+          config_json: JSON.stringify({
+            id: 'launcher-b',
+            application_type: 'standalone',
+          }),
+        }),
+        identity
+      )
+    ).toThrow('backup_phase3_structured_reference');
+  });
+
+  it('blocks import when a structured reference is absent from the decoded bundles', () => {
+    const source = {
+      tenantId: 'tenant-a',
+      issuer: 'https://tenant.example.test',
+      productVersion: '0.4.2',
+    };
+    const launcher = {
+      module: 'applications' as const,
+      collection: 'core.application_launchers',
+      id: '[["text","tenant-a"],["text","launcher-a"]]',
+      tenantId: source.tenantId,
+    };
+    const references = inspectPhase3SqliteReferences(
+      launcher.collection,
+      row({
+        tenant_id: source.tenantId,
+        id: 'launcher-a',
+        config_json: JSON.stringify({
+          id: 'launcher-a',
+          application_type: 'oidc_client',
+          application_id: 'missing-client',
+        }),
+      }),
+      launcher
+    );
+    const validation = validateTenantPortableReferences(
+      [{ bundleId: 'bundle-a', source, records: [launcher], references }],
+      source,
+      new Set(['applications', 'tenant-runtime'])
+    );
+    expect(validation.issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: 'missing_required_reference',
+          record: expect.objectContaining({ collection: 'core.oauth_clients' }),
+        }),
+        expect.objectContaining({
+          code: 'missing_required_reference',
+          record: expect.objectContaining({ collection: 'core.tenants' }),
+        }),
+      ])
+    );
+  });
+
+  it('requires profiles named by structured mapping references', () => {
+    const identity = {
+      module: 'mapping' as const,
+      collection: 'admin.mapping_rule_edges',
+      id: 'edge',
+      tenantId: 'tenant-a',
+    };
+    const references = inspectPhase3SqliteReferences(
+      identity.collection,
+      row({
+        tenant_id: 'tenant-a',
+        rule_id: 'rule-a',
+        source_ref_json: '{"profileId":"source-profile-source_profile_workforce"}',
+        target_ref_json: '{"profileId":"destination_profile_oidc"}',
+      }),
+      identity
+    );
+    expect(references.map(({ to }) => [to.collection, to.id])).toEqual([
+      ['admin.source_profiles', '[["text","source_profile_workforce"]]'],
+      ['admin.destination_profiles', '[["text","destination_profile_oidc"]]'],
+      ['core.tenants', '[["text","tenant-a"]]'],
+      ['admin.mapping_rules', '[["text","rule-a"]]'],
+    ]);
+    expect(() =>
+      inspectPhase3SqliteReferences(
+        identity.collection,
+        row({
+          tenant_id: 'tenant-a',
+          rule_id: 'rule-a',
+          source_ref_json: '[]',
+          target_ref_json: '{}',
+        }),
+        identity
+      )
+    ).toThrow('backup_phase3_structured_json');
+  });
+
+  it('validates logical-key and persistent-identifier JSON without inventing record IDs', () => {
+    const groupIdentity = {
+      module: 'mapping' as const,
+      collection: 'admin.attribute_group_registry',
+      id: 'group',
+      tenantId: 'tenant-a',
+    };
+    expect(
+      inspectPhase3SqliteReferences(
+        groupIdentity.collection,
+        row({ tenant_id: 'tenant-a', field_keys_json: '["email","department"]' }),
+        groupIdentity
+      ).map(({ to }) => to.collection)
+    ).toEqual(['core.tenants']);
+    expect(() =>
+      inspectPhase3SqliteReferences(
+        groupIdentity.collection,
+        row({ tenant_id: 'tenant-a', field_keys_json: '{"field":"email"}' }),
+        groupIdentity
+      )
+    ).toThrow('backup_phase3_structured_json');
+
+    const profileIdentity = {
+      ...groupIdentity,
+      collection: 'admin.persistent_identifier_profiles',
+    };
+    expect(() =>
+      inspectPhase3SqliteReferences(
+        profileIdentity.collection,
+        row({
+          tenant_id: 'tenant-a',
+          source_ref_json: '[]',
+          usage_json: '[]',
+          format_json: '{}',
+        }),
+        profileIdentity
+      )
+    ).toThrow('backup_phase3_structured_json');
   });
 
   it('contains no duplicate installed rules', () => {

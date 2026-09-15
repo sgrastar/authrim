@@ -205,6 +205,278 @@ function value(row: PortableSqliteRow, column: string) {
   return result;
 }
 
+function textValue(
+  row: PortableSqliteRow,
+  column: string,
+  options: { nullable?: boolean } = {}
+): string | null {
+  const field = value(row, column);
+  if (field[0] === 'null' && options.nullable) return null;
+  if (field[0] !== 'text' || field[1] === null) throw new Error('backup_phase3_structured_value');
+  return field[1];
+}
+
+function requiredTextValue(row: PortableSqliteRow, column: string): string {
+  const result = textValue(row, column);
+  if (result === null) throw new Error('backup_phase3_structured_value');
+  return result;
+}
+
+function jsonObject(row: PortableSqliteRow, column: string): Readonly<Record<string, unknown>> {
+  const encoded = requiredTextValue(row, column);
+  try {
+    const parsed: unknown = JSON.parse(encoded);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error();
+    return parsed as Readonly<Record<string, unknown>>;
+  } catch {
+    throw new Error('backup_phase3_structured_json');
+  }
+}
+
+function optionalJsonObject(
+  row: PortableSqliteRow,
+  column: string
+): Readonly<Record<string, unknown>> | null {
+  if (textValue(row, column, { nullable: true }) === null) return null;
+  return jsonObject(row, column);
+}
+
+function stringArray(
+  row: PortableSqliteRow,
+  column: string,
+  options: { nullable?: boolean; maxItems?: number } = {}
+): readonly string[] {
+  const encoded = textValue(row, column, { nullable: options.nullable });
+  if (encoded === null) return [];
+  try {
+    const parsed: unknown = JSON.parse(encoded);
+    const maxItems = options.maxItems ?? 1024;
+    if (
+      !Array.isArray(parsed) ||
+      parsed.length > maxItems ||
+      parsed.some((item) => typeof item !== 'string' || item.length === 0 || item.length > 1024)
+    )
+      throw new Error();
+    return parsed as string[];
+  } catch {
+    throw new Error('backup_phase3_structured_json');
+  }
+}
+
+function recordId(...values: string[]): string {
+  return JSON.stringify(values.map((item) => ['text', item] as const));
+}
+
+function dependency(
+  identity: TenantPortableRecordIdentity,
+  target: { family: 'core' | 'admin'; table: string; id: string }
+): TenantPortableDependency {
+  const installed = dataset(target.family, target.table);
+  return {
+    from: identity,
+    to: {
+      module: installed.module,
+      collection: installed.id,
+      id: target.id,
+      tenantId: identity.tenantId,
+      meaning: 'resource',
+      requirement: 'required',
+    },
+  };
+}
+
+function installedIdDependency(
+  identity: TenantPortableRecordIdentity,
+  family: 'core' | 'admin',
+  table: string,
+  id: string
+): TenantPortableDependency {
+  return dependency(identity, { family, table, id: recordId(id) });
+}
+
+function profileReference(
+  identity: TenantPortableRecordIdentity,
+  ref: Readonly<Record<string, unknown>>
+): TenantPortableDependency | null {
+  const raw =
+    typeof ref.profileId === 'string'
+      ? ref.profileId
+      : typeof ref.profile_id === 'string'
+        ? ref.profile_id
+        : null;
+  if (!raw) return null;
+  if (raw.startsWith('source-profile-')) {
+    const id = raw.slice('source-profile-'.length);
+    if (!id) throw new Error('backup_phase3_structured_reference');
+    return dependency(identity, { family: 'admin', table: 'source_profiles', id: recordId(id) });
+  }
+  if (raw.startsWith('source_profile_'))
+    return dependency(identity, {
+      family: 'admin',
+      table: 'source_profiles',
+      id: recordId(raw),
+    });
+  if (raw.startsWith('destination-profile-')) {
+    const id = raw.slice('destination-profile-'.length);
+    if (!id) throw new Error('backup_phase3_structured_reference');
+    return dependency(identity, {
+      family: 'admin',
+      table: 'destination_profiles',
+      id: recordId(id),
+    });
+  }
+  if (raw.startsWith('destination_profile_'))
+    return dependency(identity, {
+      family: 'admin',
+      table: 'destination_profiles',
+      id: recordId(raw),
+    });
+  return null;
+}
+
+function activationProfileReferences(
+  identity: TenantPortableRecordIdentity,
+  value: Readonly<Record<string, unknown>>
+): readonly TenantPortableDependency[] {
+  const references: TenantPortableDependency[] = [];
+  const fields = [
+    ['sourceProfileId', 'source_profiles'],
+    ['destinationProfileId', 'destination_profiles'],
+  ] as const;
+  for (const [column, table] of fields) {
+    const raw = value[column];
+    if (raw === undefined || raw === null) continue;
+    if (typeof raw !== 'string' || raw.length === 0 || raw.length > 1024)
+      throw new Error('backup_phase3_structured_reference');
+    const normalized = raw.replace(/^source-profile-/, '').replace(/^destination-profile-/, '');
+    if (!normalized) throw new Error('backup_phase3_structured_reference');
+    references.push(
+      dependency(identity, {
+        family: 'admin',
+        table,
+        id: recordId(normalized),
+      })
+    );
+  }
+  return references;
+}
+
+function inspectStructuredReferences(
+  datasetId: string,
+  row: PortableSqliteRow,
+  identity: TenantPortableRecordIdentity
+): readonly TenantPortableDependency[] {
+  if (datasetId === 'core.oauth_clients') {
+    const tenantId = requiredTextValue(row, 'tenant_id');
+    const dependencies = [
+      ...new Set(
+        stringArray(row, 'allowed_subject_token_clients', { nullable: true, maxItems: 1024 })
+      ),
+    ].map((clientId) =>
+      dependency(identity, {
+        family: 'core',
+        table: 'oauth_clients',
+        id: recordId(tenantId, clientId),
+      })
+    );
+    const selector = optionalJsonObject(row, 'identity_mapping');
+    if (!selector) return dependencies;
+    const selectors = [
+      [selector.fieldMappingSetId ?? selector.policySetId, 'field_mapping_sets'],
+      [selector.fieldMappingVersionId ?? selector.policyVersionId, 'field_mapping_versions'],
+      [selector.sourceProfileId, 'source_profiles'],
+      [selector.destinationProfileId, 'destination_profiles'],
+    ] as const;
+    for (const [raw, table] of selectors) {
+      if (raw === undefined || raw === null) continue;
+      if (typeof raw !== 'string' || raw.length === 0 || raw.length > 1024)
+        throw new Error('backup_phase3_structured_reference');
+      const normalized = raw.replace(/^source-profile-/, '').replace(/^destination-profile-/, '');
+      if (!normalized) throw new Error('backup_phase3_structured_reference');
+      dependencies.push(installedIdDependency(identity, 'admin', table, normalized));
+    }
+    return dependencies;
+  }
+
+  if (datasetId === 'core.application_launchers') {
+    const config = jsonObject(row, 'config_json');
+    const id = requiredTextValue(row, 'id');
+    if (config.id !== id) throw new Error('backup_phase3_structured_reference');
+    const applicationType = config.application_type;
+    const applicationId = config.application_id;
+    if (
+      !['standalone', 'oidc_client', 'saml_sp'].includes(
+        typeof applicationType === 'string' ? applicationType : ''
+      ) ||
+      (applicationType !== 'standalone' &&
+        (typeof applicationId !== 'string' || !applicationId || applicationId.length > 1024))
+    )
+      throw new Error('backup_phase3_structured_reference');
+    const dependencies: TenantPortableDependency[] = [];
+    if (applicationType === 'oidc_client') {
+      const tenantId = requiredTextValue(row, 'tenant_id');
+      dependencies.push(
+        dependency(identity, {
+          family: 'core',
+          table: 'oauth_clients',
+          id: recordId(tenantId, applicationId as string),
+        })
+      );
+    }
+    const visibility = config.visibility;
+    if (visibility !== undefined) {
+      if (!visibility || typeof visibility !== 'object' || Array.isArray(visibility))
+        throw new Error('backup_phase3_structured_reference');
+      const groupIds = (visibility as Record<string, unknown>).group_ids;
+      if (groupIds !== undefined) {
+        if (
+          !Array.isArray(groupIds) ||
+          groupIds.length > 500 ||
+          groupIds.some(
+            (groupId) => typeof groupId !== 'string' || !groupId || groupId.length > 200
+          )
+        )
+          throw new Error('backup_phase3_structured_reference');
+        for (const groupId of new Set(groupIds as string[]))
+          dependencies.push(installedIdDependency(identity, 'core', 'groups', groupId));
+      }
+    }
+    return dependencies;
+  }
+
+  if (datasetId === 'admin.attribute_group_registry') {
+    stringArray(row, 'field_keys_json', { maxItems: 1024 });
+    return [];
+  }
+
+  if (datasetId === 'admin.persistent_identifier_profiles') {
+    optionalJsonObject(row, 'source_ref_json');
+    stringArray(row, 'usage_json', { maxItems: 64 });
+    jsonObject(row, 'format_json');
+    return [];
+  }
+
+  const columns =
+    datasetId === 'admin.mapping_rule_edges'
+      ? ['source_ref_json', 'target_ref_json']
+      : datasetId === 'admin.mapping_release_rules'
+        ? ['source_ref_json']
+        : datasetId === 'admin.mapping_conflict_rules' ||
+            datasetId === 'admin.mapping_validation_rules'
+          ? ['target_ref_json']
+          : datasetId === 'admin.mapping_transform_steps'
+            ? textValue(row, 'target_ref_json', { nullable: true }) === null
+              ? []
+              : ['target_ref_json']
+            : [];
+  if (datasetId === 'admin.field_mapping_activations')
+    return activationProfileReferences(identity, jsonObject(row, 'activation_scope_json'));
+  return columns.flatMap((column) => {
+    const reference = profileReference(identity, jsonObject(row, column));
+    return reference ? [reference] : [];
+  });
+}
+
 function referenceId(row: PortableSqliteRow, rule: Phase3SqliteReferenceRule): string | null {
   const values = rule.localColumns.map((column) => value(row, column));
   const nulls = values.filter(([type]) => type === 'null').length;
@@ -219,7 +491,9 @@ export function inspectPhase3SqliteReferences(
   identity: TenantPortableRecordIdentity
 ): readonly TenantPortableDependency[] {
   if (datasetId === 'core.oauth_clients') portableOauthClientSecret(row);
-  const dependencies: TenantPortableDependency[] = [];
+  const dependencies: TenantPortableDependency[] = [
+    ...inspectStructuredReferences(datasetId, row, identity),
+  ];
   for (const rule of PHASE3_SQLITE_REFERENCE_RULES) {
     if (rule.fromDatasetId !== datasetId) continue;
     if (rule.when) {
