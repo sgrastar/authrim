@@ -238,6 +238,10 @@
             {
               "path": "030_tenant_backup_restored_holds.sql",
               "checksum": "5fdf017116c187ad814ca44163f4f3f8c3eed58c2fe0fe88a04bbdb6019afc33"
+            },
+            {
+              "path": "031_tenant_backup_r2_restores.sql",
+              "checksum": "85532698d5e0fb05e72132848a0eec2883596fdd33ee0f9e516cd54fc8b72930"
             }
           ]
         },
@@ -643,6 +647,10 @@
         {
           "path": "030_tenant_backup_restored_holds.sql",
           "checksum": "5fdf017116c187ad814ca44163f4f3f8c3eed58c2fe0fe88a04bbdb6019afc33"
+        },
+        {
+          "path": "031_tenant_backup_r2_restores.sql",
+          "checksum": "85532698d5e0fb05e72132848a0eec2883596fdd33ee0f9e516cd54fc8b72930"
         }
       ]
     },
