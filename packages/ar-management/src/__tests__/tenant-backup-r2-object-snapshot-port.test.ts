@@ -143,8 +143,10 @@ describe('tenant backup R2 object snapshot port', () => {
                 sourceEncoding: 'object_artifact_v1',
                 context: {
                   tenantId: 'tenant-a',
+                  catalogKind: 'object_catalog_object',
                   objectClass: 'admin_audit_detail',
                   catalogId: 'catalog-a',
+                  contentType: 'application/json',
                 },
               } as const,
             ]
@@ -207,7 +209,11 @@ describe('tenant backup R2 object snapshot port', () => {
           bucketBinding: 'IMPORT_ARTIFACTS',
           objectKey: 'imports/tenant-a/a.csv',
           sourceEncoding: 'plaintext',
-          context: { tenantId: 'tenant-a', catalogId: 'catalog-a' },
+          context: {
+            tenantId: 'tenant-a',
+            catalogKind: 'object_catalog_object',
+            catalogId: 'catalog-a',
+          },
         },
       ],
     });
@@ -242,7 +248,11 @@ describe('tenant backup R2 object snapshot port', () => {
           bucketBinding: 'IMPORT_ARTIFACTS',
           objectKey,
           sourceEncoding: 'plaintext',
-          context: { tenantId: 'tenant-a', catalogId: 'catalog-large' },
+          context: {
+            tenantId: 'tenant-a',
+            catalogKind: 'object_catalog_object',
+            catalogId: 'catalog-large',
+          },
         },
       ],
     });

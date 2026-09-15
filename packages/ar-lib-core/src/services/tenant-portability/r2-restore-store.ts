@@ -34,6 +34,8 @@ export interface TenantBackupR2RestoreObject {
   object_version: string | null;
   object_etag: string | null;
   stored_sha256: string | null;
+  target_key_version: number | null;
+  target_encryption_scope: string | null;
   completed_at: number | null;
   created_at: number;
   updated_at: number;
@@ -390,7 +392,14 @@ export class TenantBackupR2RestoreStore {
 
   async markCompleted(
     ownerInput: Owner,
-    input: { version: string; etag: string; storedSha256: string; now: number }
+    input: {
+      version: string;
+      etag: string;
+      storedSha256: string;
+      targetKeyVersion: number | null;
+      targetEncryptionScope: string | null;
+      now: number;
+    }
   ): Promise<TenantBackupR2RestoreObject> {
     const owner = ownerFrom(ownerInput);
     timestamp(input.now);
@@ -400,14 +409,26 @@ export class TenantBackupR2RestoreStore {
       input.version.length > 1024 ||
       !input.etag ||
       input.etag.length > 1024 ||
-      !SHA256.test(input.storedSha256)
+      !SHA256.test(input.storedSha256) ||
+      (input.targetKeyVersion !== null &&
+        (!Number.isSafeInteger(input.targetKeyVersion) || input.targetKeyVersion < 1)) ||
+      (input.targetEncryptionScope !== null &&
+        (!input.targetEncryptionScope || input.targetEncryptionScope.length > 256)) ||
+      (object.source_encoding === 'plaintext' &&
+        (input.targetKeyVersion !== null || input.targetEncryptionScope !== null)) ||
+      (object.source_encoding === 'object_artifact_v1' &&
+        (input.targetKeyVersion === null || input.targetEncryptionScope !== null)) ||
+      (object.source_encoding === 'log_chunk_v1' &&
+        (input.targetKeyVersion === null || input.targetEncryptionScope === null))
     )
       invalid();
     if (object.state === 'completed') {
       if (
         object.object_version !== input.version ||
         object.object_etag !== input.etag ||
-        object.stored_sha256 !== input.storedSha256
+        object.stored_sha256 !== input.storedSha256 ||
+        object.target_key_version !== input.targetKeyVersion ||
+        object.target_encryption_scope !== input.targetEncryptionScope
       )
         invalid();
       return object;
@@ -415,7 +436,8 @@ export class TenantBackupR2RestoreStore {
     if (object.state !== 'completing') invalid();
     await this.database.queryOne(
       `UPDATE tenant_backup_r2_restore_objects
-       SET state='completed',object_version=?,object_etag=?,stored_sha256=?,completed_at=?,updated_at=?
+       SET state='completed',object_version=?,object_etag=?,stored_sha256=?,
+         target_key_version=?,target_encryption_scope=?,completed_at=?,updated_at=?
        WHERE operation_id=? AND tenant_id=? AND dataset_id=? AND object_id=? AND state='completing'
          AND ${LIVE_OPERATION}
        RETURNING object_id`,
@@ -423,6 +445,8 @@ export class TenantBackupR2RestoreStore {
         input.version,
         input.etag,
         input.storedSha256,
+        input.targetKeyVersion,
+        input.targetEncryptionScope,
         input.now,
         input.now,
         owner.operationId,
@@ -437,7 +461,9 @@ export class TenantBackupR2RestoreStore {
       saved.state !== 'completed' ||
       saved.object_version !== input.version ||
       saved.object_etag !== input.etag ||
-      saved.stored_sha256 !== input.storedSha256
+      saved.stored_sha256 !== input.storedSha256 ||
+      saved.target_key_version !== input.targetKeyVersion ||
+      saved.target_encryption_scope !== input.targetEncryptionScope
     )
       invalid();
     return saved;

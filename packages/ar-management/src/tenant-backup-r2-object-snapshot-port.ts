@@ -26,6 +26,7 @@ const MAX_REENCRYPTABLE_OBJECT_BYTES = 64 * 1024 * 1024;
 const SHA256 = /^[a-f0-9]{64}$/u;
 const SAFE_ID = /^[A-Za-z0-9_.:-]{1,256}$/u;
 type LogChunkCompression = 'none' | 'gzip_block';
+export type TenantBackupR2CatalogKind = 'object_catalog_object' | 'log_object' | 'log_manifest';
 
 interface BaseDescriptor {
   datasetId: PortableR2DatasetId;
@@ -39,6 +40,7 @@ export interface PlaintextR2ObjectDescriptor extends BaseDescriptor {
   sourceEncoding: 'plaintext';
   context: Readonly<{
     tenantId: string;
+    catalogKind: TenantBackupR2CatalogKind;
     [key: string]: unknown;
   }>;
 }
@@ -47,6 +49,7 @@ export interface ObjectArtifactR2ObjectDescriptor extends BaseDescriptor {
   sourceEncoding: 'object_artifact_v1';
   context: Readonly<{
     tenantId: string;
+    catalogKind: 'object_catalog_object';
     objectClass: ObjectClass;
     [key: string]: unknown;
   }>;
@@ -56,6 +59,7 @@ export interface LogChunkR2ObjectDescriptor extends BaseDescriptor {
   sourceEncoding: 'log_chunk_v1';
   context: Readonly<{
     tenantId: string;
+    catalogKind: 'log_object';
     tenantKey: string;
     logType: LogType;
     plane: LogPlane;
@@ -146,8 +150,17 @@ function validateDescriptor(
     invalid();
   if (!SAFE_ID.test(descriptor.context.tenantId)) invalid();
   if (
+    !['object_catalog_object', 'log_object', 'log_manifest'].includes(
+      descriptor.context.catalogKind
+    ) ||
+    (datasetId === 'artifacts.object_catalog_bodies' &&
+      descriptor.context.catalogKind !== 'object_catalog_object')
+  )
+    invalid();
+  if (
     descriptor.sourceEncoding === 'object_artifact_v1' &&
-    (!isObjectClass(descriptor.context.objectClass) ||
+    (descriptor.context.catalogKind !== 'object_catalog_object' ||
+      !isObjectClass(descriptor.context.objectClass) ||
       !['AUDIT_ARCHIVE', 'EXPORT_ARTIFACTS', 'SENSITIVE_DETAILS'].includes(
         descriptor.bucketBinding
       ))
@@ -155,7 +168,8 @@ function validateDescriptor(
     invalid();
   if (
     descriptor.sourceEncoding === 'log_chunk_v1' &&
-    (!descriptor.context.tenantKey ||
+    (descriptor.context.catalogKind !== 'log_object' ||
+      !descriptor.context.tenantKey ||
       !descriptor.context.chunkId ||
       !descriptor.context.encryptionScope ||
       !LOG_TYPES.includes(descriptor.context.logType) ||

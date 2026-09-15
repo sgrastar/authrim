@@ -82,11 +82,13 @@ export interface Phase8OtherStorePorts extends Phase5OtherStorePorts {
   ): Promise<Omit<Phase3OtherStoreSource, 'target'>>;
   importR2Chunk(
     context: TenantBackupStepContext,
+    planDigest: string,
     datasetId: PortableR2DatasetId,
     chunk: PortableR2ObjectChunk
   ): Promise<void>;
   verifyR2Chunk(
     context: TenantBackupStepContext,
+    planDigest: string,
     datasetId: PortableR2DatasetId,
     chunk: PortableR2ObjectChunk
   ): Promise<boolean>;
@@ -218,8 +220,8 @@ export function createPhase8OtherStoreHandlers(
         else if (!(await ports.verifyAsset(context, avatar))) invalid();
       } else {
         const chunk = await decodePortableR2ObjectChunk(row.rowJson, context.lease.tenantId);
-        if (purpose === 'restore') await ports.importR2Chunk(context, datasetId, chunk);
-        else if (!(await ports.verifyR2Chunk(context, datasetId, chunk))) invalid();
+        if (purpose === 'restore') await ports.importR2Chunk(context, planDigest, datasetId, chunk);
+        else if (!(await ports.verifyR2Chunk(context, planDigest, datasetId, chunk))) invalid();
       }
       context.signal.throwIfAborted();
       return { cursor: encode({ ...cursor, sourceCursor: row.nextCursor }), done: false };

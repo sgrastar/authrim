@@ -20,6 +20,8 @@ CREATE TABLE tenant_backup_r2_restore_objects (
   object_version TEXT,
   object_etag TEXT,
   stored_sha256 TEXT CHECK(stored_sha256 IS NULL OR (length(stored_sha256)=64 AND stored_sha256 NOT GLOB '*[^0-9a-f]*')),
+  target_key_version INTEGER CHECK(target_key_version IS NULL OR target_key_version>=1),
+  target_encryption_scope TEXT CHECK(target_encryption_scope IS NULL OR length(target_encryption_scope) BETWEEN 1 AND 256),
   completed_at INTEGER,
   created_at INTEGER NOT NULL CHECK(created_at>=0),
   updated_at INTEGER NOT NULL CHECK(updated_at>=created_at),
@@ -30,7 +32,11 @@ CREATE TABLE tenant_backup_r2_restore_objects (
   CHECK((write_mode='multipart' AND (state='allocating' OR multipart_id IS NOT NULL))
     OR (write_mode='staged' AND multipart_id IS NULL)),
   CHECK(state!='completed' OR (object_version IS NOT NULL AND object_etag IS NOT NULL
-    AND stored_sha256 IS NOT NULL AND completed_at IS NOT NULL))
+    AND stored_sha256 IS NOT NULL AND completed_at IS NOT NULL)),
+  CHECK(state!='completed' OR
+    (source_encoding='plaintext' AND target_key_version IS NULL AND target_encryption_scope IS NULL) OR
+    (source_encoding='object_artifact_v1' AND target_key_version IS NOT NULL AND target_encryption_scope IS NULL) OR
+    (source_encoding='log_chunk_v1' AND target_key_version IS NOT NULL AND target_encryption_scope IS NOT NULL))
 );
 
 CREATE TABLE tenant_backup_r2_restore_parts (
@@ -75,6 +81,8 @@ WHEN NEW.operation_id IS NOT OLD.operation_id
   OR (OLD.object_version IS NOT NULL AND NEW.object_version IS NOT OLD.object_version)
   OR (OLD.object_etag IS NOT NULL AND NEW.object_etag IS NOT OLD.object_etag)
   OR (OLD.stored_sha256 IS NOT NULL AND NEW.stored_sha256 IS NOT OLD.stored_sha256)
+  OR (OLD.target_key_version IS NOT NULL AND NEW.target_key_version IS NOT OLD.target_key_version)
+  OR (OLD.target_encryption_scope IS NOT NULL AND NEW.target_encryption_scope IS NOT OLD.target_encryption_scope)
   OR (OLD.completed_at IS NOT NULL AND NEW.completed_at IS NOT OLD.completed_at)
 BEGIN SELECT RAISE(ABORT,'backup_r2_restore_identity'); END;
 

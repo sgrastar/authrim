@@ -111,6 +111,8 @@ describe('tenant backup R2 restore store', () => {
       version: 'version-a',
       etag: 'etag-a',
       storedSha256: chunk.objectSha256,
+      targetKeyVersion: null,
+      targetEncryptionScope: null,
       now: 108,
     });
     expect(completed.state).toBe('completed');
@@ -119,6 +121,8 @@ describe('tenant backup R2 restore store', () => {
         version: 'version-a',
         etag: 'etag-a',
         storedSha256: chunk.objectSha256,
+        targetKeyVersion: null,
+        targetEncryptionScope: null,
         now: 109,
       })
     ).resolves.toMatchObject({ state: 'completed' });

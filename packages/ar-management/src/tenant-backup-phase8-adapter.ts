@@ -36,6 +36,8 @@ import {
 } from './tenant-backup-phase8-other-stores';
 import { createTenantBackupAdminEnvelopePorts } from './tenant-backup-admin-envelope-port';
 import { createTenantBackupValidatedInputPorts } from './tenant-backup-validated-input-port';
+import { createTenantBackupR2ObjectRestorePorts } from './tenant-backup-r2-object-restore-port';
+import { createTenantBackupR2CatalogFinalizer } from './tenant-backup-r2-catalog-finalizer';
 
 export interface Phase8InstalledAdapterPorts extends Omit<
   Phase5InstalledAdapterPorts,
@@ -46,7 +48,10 @@ export interface Phase8InstalledAdapterPorts extends Omit<
     'loadValidatedDataset' | 'assertValidatedUnpublishedPlan'
   >;
   rowTransform: Omit<Phase8SensitiveRowTransformPort, 'transformAdminEnvelope'>;
-  otherStores: Omit<Phase8OtherStorePorts, 'restoreAdminEnvelope' | 'verifyAdminEnvelope'>;
+  otherStores: Omit<
+    Phase8OtherStorePorts,
+    'restoreAdminEnvelope' | 'verifyAdminEnvelope' | 'importR2Chunk' | 'verifyR2Chunk'
+  >;
   recordSnapshots: Omit<Phase5InstalledAdapterPorts['recordSnapshots'], 'validateAdminEnvelope'> & {
     validatePhase8Envelope(datasetId: string, row: PortableSqliteRow): Promise<void>;
     userAvatars: Phase5InstalledAdapterPorts['recordSnapshots']['publicAssets'];
@@ -99,6 +104,15 @@ export function createPhase8TenantBackupInstalledAdapter(
   const keyVersion = Number(keyVersionValue);
   const now = input.now ?? Date.now;
   const adminEnvelopes = createTenantBackupAdminEnvelopePorts(input.env);
+  const r2Objects = createTenantBackupR2ObjectRestorePorts({
+    env: input.env,
+    database,
+    finalizer: createTenantBackupR2CatalogFinalizer({
+      resolveAdmin: input.ports.resolveAdminRestoreDatabase,
+      resolveCore: input.ports.resolveCoreRestoreDatabase,
+    }),
+    now,
+  });
   const rowTransform = {
     ...input.ports.rowTransform,
     transformAdminEnvelope: (datasetId: string, rowJson: string) =>
@@ -106,6 +120,7 @@ export function createPhase8TenantBackupInstalledAdapter(
   };
   const otherStores = {
     ...input.ports.otherStores,
+    ...r2Objects,
     restoreAdminEnvelope: (...args: Parameters<typeof adminEnvelopes.restoreAdminEnvelope>) =>
       adminEnvelopes.restoreAdminEnvelope(...args),
     verifyAdminEnvelope: (...args: Parameters<typeof adminEnvelopes.verifyAdminEnvelope>) =>

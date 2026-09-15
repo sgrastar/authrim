@@ -205,6 +205,7 @@ describe('Phase 8 sensitive sidecars', () => {
 
     expect(importR2Chunk).toHaveBeenCalledWith(
       context,
+      digest,
       'artifacts.object_catalog_bodies',
       expect.objectContaining({ objectId: 'object-a', bytes })
     );
