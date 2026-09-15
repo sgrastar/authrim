@@ -91,7 +91,7 @@ function validateAdapter(adapter: TenantBackupInstalledImportAdapter): void {
     datasets.some(
       (dataset) =>
         !/^[A-Za-z0-9_.:-]{1,256}$/.test(dataset.id) ||
-        dataset.store !== 'database' ||
+        !['database', 'kv', 'durable_object', 'object'].includes(dataset.store) ||
         dataset.disposition !== 'include'
     )
   )

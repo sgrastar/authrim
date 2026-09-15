@@ -51,7 +51,7 @@ export function createTenantBackupInstalledSqliteImportAdapter(input: {
     new Set(input.policies.map((policy) => policy.dataset.id)).size !== input.policies.length ||
     input.policies.some(
       (policy) =>
-        policy.dataset.store !== 'database' ||
+        !['database', 'kv', 'durable_object', 'object'].includes(policy.dataset.store) ||
         policy.dataset.disposition !== 'include' ||
         policy.dataset.schemaVersion !== 1 ||
         policy.schema.table.length === 0 ||
@@ -65,7 +65,7 @@ export function createTenantBackupInstalledSqliteImportAdapter(input: {
   )
     throw new Error('backup_sqlite_import_adapter_invalid');
   const byTable = new Map<string, typeof input.policies>();
-  for (const policy of input.policies)
+  for (const policy of input.policies.filter((candidate) => candidate.dataset.store === 'database'))
     byTable.set(policy.schema.table, [...(byTable.get(policy.schema.table) ?? []), policy]);
   for (const group of byTable.values()) {
     const schemas = new Set(group.map((policy) => JSON.stringify(policy.schema)));

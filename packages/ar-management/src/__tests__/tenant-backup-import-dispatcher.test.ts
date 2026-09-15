@@ -343,7 +343,7 @@ it('verifies other stores in durable pages before activation preparation', async
   });
 });
 
-it('rejects unknown phases and non-SQL or duplicate installed datasets', async () => {
+it('rejects unknown phases, environment-only records, or duplicate installed datasets', async () => {
   await expect(
     runTenantBackupImportOperationStep(
       env,
@@ -354,7 +354,7 @@ it('rejects unknown phases and non-SQL or duplicate installed datasets', async (
   await expect(
     runTenantBackupImportOperationStep(env, context, {
       ...adapter,
-      datasets: () => [{ ...dataset, store: 'object' }],
+      datasets: () => [{ ...dataset, store: 'environment' }],
     } as never)
   ).rejects.toThrow('dispatch_invalid');
   await expect(

@@ -208,7 +208,11 @@ export async function runTenantBackupSqliteInputValidationSequenceStep(
       };
     }
     const dataset = planned.manifest.datasets[outer.datasetIndex];
-    if (dataset.store !== 'database' || dataset.disposition !== 'include') fail();
+    if (
+      !['database', 'kv', 'durable_object', 'object'].includes(dataset.store) ||
+      dataset.disposition !== 'include'
+    )
+      fail();
     const policy = await loaded.loadPolicy(dataset.id);
     if (policy.dataset.id !== dataset.id) fail();
     await authorize();
@@ -231,7 +235,12 @@ export async function runTenantBackupSqliteInputValidationSequenceStep(
 
   const active = outer as DatasetCursor;
   const dataset = planned.manifest.datasets[active.datasetIndex];
-  if (!dataset || dataset.store !== 'database' || dataset.disposition !== 'include') fail();
+  if (
+    !dataset ||
+    !['database', 'kv', 'durable_object', 'object'].includes(dataset.store) ||
+    dataset.disposition !== 'include'
+  )
+    fail();
   const policy = await loaded.loadPolicy(dataset.id);
   if (policy.dataset.id !== dataset.id) fail();
   const replayInput = {

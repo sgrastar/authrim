@@ -91,7 +91,7 @@ it('forwards operation context to target, source, plan, and activation ports', a
   expect(calls.verifyActivation).toHaveBeenCalledWith(context, 'ab'.repeat(32));
 });
 
-it('rejects duplicate datasets, duplicate tables, and non-SQL policies at construction', () => {
+it('rejects duplicate SQL datasets, duplicate tables, and environment policies at construction', () => {
   const ports = fixture().ports;
   expect(() =>
     createTenantBackupInstalledSqliteImportAdapter({ policies: [policy, policy], ports })
@@ -104,7 +104,7 @@ it('rejects duplicate datasets, duplicate tables, and non-SQL policies at constr
   ).toThrow('backup_sqlite_import_adapter_invalid');
   expect(() =>
     createTenantBackupInstalledSqliteImportAdapter({
-      policies: [{ ...policy, dataset: { ...dataset, store: 'object' as const } }],
+      policies: [{ ...policy, dataset: { ...dataset, store: 'environment' as const } }],
       ports,
     })
   ).toThrow('backup_sqlite_import_adapter_invalid');

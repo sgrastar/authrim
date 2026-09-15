@@ -63,7 +63,7 @@ export function createSqliteDatasetInspectorFactory(
           dataset[field as keyof TenantPortableDataset] !==
           pinned.dataset[field as keyof TenantPortableDataset]
       ) ||
-      dataset.store !== 'database' ||
+      !['database', 'kv', 'durable_object', 'object'].includes(dataset.store) ||
       dataset.schemaVersion !== 1 ||
       dataset.disposition !== 'include'
     )

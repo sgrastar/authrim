@@ -178,6 +178,30 @@ it('starts the installed SQL policy at the exact ordered input and dataset', asy
   expect(authorize).toHaveBeenCalled();
 });
 
+it.each(['kv', 'durable_object', 'object'] as const)(
+  'starts the same installed row validation pipeline for %s datasets',
+  async (store) => {
+    const recordDataset = { ...dataset, id: `settings.${store}`, store };
+    mocks.loadPlanned.mockResolvedValueOnce({
+      identity: { key: 'input', version: 'v1', etag: 'etag', size: 1000 },
+      limits: { maxFrames: 100, maxTotalBytes: 1000 },
+      manifest: { ...manifest, datasets: [recordDataset] },
+    });
+    loadInput.mockResolvedValueOnce({
+      expected: {
+        bundleId: bundleIds[0],
+        source: manifest.source,
+        selection: manifest.selection,
+        datasets: [recordDataset],
+      },
+      session: key,
+      loadPolicy: vi.fn(async () => ({ ...policy, dataset: recordDataset })),
+      assertAuthorized: authorize,
+    });
+    await expect(run()).resolves.toMatchObject({ phase: 'validate_sqlite_dataset' });
+  }
+);
+
 it('runs one resumable SQL validation slice through immutable input receipts', async () => {
   const started = await run();
   const result = await run({
@@ -295,11 +319,11 @@ it('delegates reference pages and persists whole-input completion before restore
   });
 });
 
-it('stops on unsupported stores, reordered inputs, or changed inventory state', async () => {
+it('stops on environment-only records, reordered inputs, or changed inventory state', async () => {
   mocks.loadPlanned.mockResolvedValueOnce({
     identity: {},
     limits: {},
-    manifest: { ...manifest, datasets: [{ ...dataset, store: 'object' }] },
+    manifest: { ...manifest, datasets: [{ ...dataset, store: 'environment' }] },
   });
   await expect(run()).rejects.toThrow('sequence_invalid');
   expect(mocks.validateDataset).not.toHaveBeenCalled();

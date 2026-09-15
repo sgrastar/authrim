@@ -69,7 +69,7 @@ export async function finalizeSqliteDatasetInspection(
   const dataset = input.manifest.datasets.find((item) => item.id === cursor.datasetId);
   if (
     !dataset ||
-    dataset.store !== 'database' ||
+    !['database', 'kv', 'durable_object', 'object'].includes(dataset.store) ||
     dataset.disposition !== 'include' ||
     Object.keys(input.policy.dataset).some(
       (key) =>

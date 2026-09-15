@@ -40,7 +40,7 @@ export async function readNextSqliteInputRow(input: {
     !input.replayInput.manifest.datasets.some(
       (dataset) =>
         dataset.id === datasetId &&
-        dataset.store === 'database' &&
+        ['database', 'kv', 'durable_object', 'object'].includes(dataset.store) &&
         dataset.disposition === 'include'
     )
   )
