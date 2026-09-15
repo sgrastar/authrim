@@ -242,6 +242,27 @@ it('rejects a cursor past the current row instead of silently ending the dataset
     await expect(readNextSqliteSnapshotChunk(input, cursor)).rejects.toThrow('invalid_cursor');
 });
 
+it('applies a deterministic row transform before resumable chunks are emitted', async () => {
+  db.prepare("INSERT INTO accounts VALUES ('a','0','source',0,NULL)").run();
+  db.exec(
+    "INSERT INTO tenant_backup_snapshots(id,tenant_id,state) VALUES ('snapshot','a','capturing')"
+  );
+  const input = {
+    database,
+    schema,
+    snapshotId: 'snapshot',
+    tenantId: 'a',
+    signal: new AbortController().signal,
+    transformRow: async (rowJson: string) =>
+      rowJson.replace('[\"text\",\"source\"]', '[\"text\",\"portable\"]'),
+  };
+  const first = await readNextSqliteSnapshotChunk(input, null);
+  const retry = await readNextSqliteSnapshotChunk(input, null);
+  expect(retry).toEqual(first);
+  expect(new TextDecoder().decode(first?.bytes)).toContain('["text","portable"]');
+  expect(await readNextSqliteSnapshotChunk(input, first?.nextCursor ?? null)).toBeNull();
+});
+
 it('streams only the installed logical partition from live rows and preimages', async () => {
   const partitioned: SnapshotTableSchema = {
     table: 'permissions',

@@ -232,6 +232,36 @@ export class SqliteRestoreTarget {
   ): Promise<void> {
     await this.checkRow(policy, manifest, rowJson, false);
   }
+  /** Apply one installed sidecar value while this target is still fenced and unpublished. */
+  async writeSidecarText(
+    policy: SqliteDatasetInspectionPolicy,
+    manifest: TenantBundleManifest,
+    rowJson: string,
+    column: string,
+    targetValue: string,
+    matches: (storedValue: string) => Promise<boolean>
+  ): Promise<void> {
+    if (this.mode !== 'write' || !targetValue) throw error();
+    await this.sidecarValue(
+      policy,
+      manifest,
+      rowJson,
+      column,
+      targetValue,
+      async (stored) => stored !== null && matches(stored),
+      true
+    );
+  }
+  /** Verify a sidecar-owned value after the target has been sealed. */
+  async verifySidecarValue(
+    policy: SqliteDatasetInspectionPolicy,
+    manifest: TenantBundleManifest,
+    rowJson: string,
+    column: string,
+    matches: (storedValue: string | null) => Promise<boolean>
+  ): Promise<void> {
+    await this.sidecarValue(policy, manifest, rowJson, column, null, matches, false);
+  }
   /** Complete nullable self references after every row in the same dataset exists. */
   async restoreDeferredRow(
     policy: SqliteDatasetInspectionPolicy,
@@ -277,6 +307,69 @@ export class SqliteRestoreTarget {
     const row = JSON.parse(rowJson) as Record<string, unknown>;
     for (const [column, value] of Object.entries(policy.restoreOverrides)) row[column] = value;
     return JSON.stringify(row);
+  }
+
+  private async sidecarValue(
+    policy: SqliteDatasetInspectionPolicy,
+    manifest: TenantBundleManifest,
+    rowJson: string,
+    column: string,
+    targetValue: string | null,
+    matches: (storedValue: string | null) => Promise<boolean>,
+    write: boolean
+  ): Promise<void> {
+    ({ policy, manifest } = await this.validateRow(policy, manifest, rowJson));
+    if (
+      !/^[a-z][a-z0-9_]*$/.test(column) ||
+      !policy.verificationIgnoredColumns?.includes(column) ||
+      JSON.stringify(policy.restoreOverrides?.[column]) !== '["null",null]'
+    )
+      throw error();
+    const row = JSON.parse(rowJson) as Record<string, unknown>;
+    const key = sqliteSnapshotRowInsert(
+      policy.schema.table,
+      policy.schema.primaryKey,
+      JSON.stringify(
+        Object.fromEntries(policy.schema.primaryKey.map((keyColumn) => [keyColumn, row[keyColumn]]))
+      )
+    );
+    const keyExpressions = key.sql.slice(key.sql.indexOf(' VALUES (') + 9, -1).split(', ');
+    const predicate = policy.schema.primaryKey
+      .map((keyColumn, index) => `"${keyColumn}" IS ${keyExpressions[index]}`)
+      .join(' AND ');
+    const read = async () => {
+      await this.assertLive();
+      return this.database.queryOne<{ value_type: string; value: unknown }>(
+        `SELECT typeof("${column}") AS value_type,"${column}" AS value
+        FROM "${policy.schema.table}" WHERE ${this.guardSql()} AND ${predicate}`,
+        [...this.guard(), ...key.params]
+      );
+    };
+    let current = await read();
+    if (!current) throw error();
+    const stored =
+      current.value_type === 'text' && typeof current.value === 'string'
+        ? current.value
+        : current.value_type === 'null' && current.value === null
+          ? null
+          : undefined;
+    if (stored === undefined) throw error();
+    if (await matches(stored)) return;
+    if (!write || stored !== null || targetValue === null) throw error();
+    await this.assertLive();
+    const result = await this.database.execute(
+      `UPDATE "${policy.schema.table}" SET "${column}"=?
+      WHERE ${this.guardSql()} AND ${predicate} AND "${column}" IS NULL`,
+      [targetValue, ...this.guard(), ...key.params]
+    );
+    if (!result.success) throw error();
+    current = await read();
+    if (
+      current?.value_type !== 'text' ||
+      typeof current.value !== 'string' ||
+      !(await matches(current.value))
+    )
+      throw error();
   }
 
   private async validateRow(

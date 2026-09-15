@@ -132,6 +132,42 @@ describe('Phase 3 installed SQL reference graph', () => {
     ).toThrow('backup_phase3_reference_null');
   });
 
+  it('accepts only the bundle-only form of an OAuth client environment secret', () => {
+    const identity = {
+      module: 'applications' as const,
+      collection: 'core.oauth_clients',
+      id: 'client',
+      tenantId: 'tenant-a',
+    };
+    const portable = JSON.stringify({
+      version: 1,
+      kind: 'oauth_logout_webhook_secret',
+      value: 'fixture-secret',
+    });
+    expect(
+      inspectPhase3SqliteReferences(
+        identity.collection,
+        row({
+          tenant_id: 'tenant-a',
+          client_id: 'client-a',
+          logout_webhook_secret_encrypted: portable,
+        }),
+        identity
+      ).map(({ to }) => to.collection)
+    ).toEqual(['core.tenants']);
+    expect(() =>
+      inspectPhase3SqliteReferences(
+        identity.collection,
+        row({
+          tenant_id: 'tenant-a',
+          client_id: 'client-a',
+          logout_webhook_secret_encrypted: 'enc:v1:gcm:source-ciphertext',
+        }),
+        identity
+      )
+    ).toThrow('backup_portable_client_secret_invalid');
+  });
+
   it('contains no duplicate installed rules', () => {
     const identities = PHASE3_SQLITE_REFERENCE_RULES.map((rule) =>
       JSON.stringify([

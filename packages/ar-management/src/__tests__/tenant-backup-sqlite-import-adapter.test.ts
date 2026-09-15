@@ -36,7 +36,7 @@ function fixture() {
     loadValidatedDataset: vi.fn(async () => ({})),
     assertValidatedUnpublishedPlan: vi.fn(async () => {}),
     restoreOtherStores: vi.fn(async () => ({ cursor: null, done: true })),
-    verifyOtherStores: vi.fn(async () => {}),
+    verifyOtherStores: vi.fn(async () => ({ cursor: null, done: true })),
     prepareActivation: vi.fn(async () => {}),
     activate: vi.fn(async () => {}),
     verifyActivation: vi.fn(async () => {}),
@@ -77,7 +77,7 @@ it('forwards operation context to target, source, plan, and activation ports', a
   await adapter.loadValidatedDataset(context, { datasetId: dataset.id } as never);
   await adapter.assertValidatedUnpublishedPlan(context, 'ab'.repeat(32));
   await adapter.restoreOtherStores(context, 'ab'.repeat(32), '{"page":1}');
-  await adapter.verifyOtherStores(context, 'ab'.repeat(32));
+  await adapter.verifyOtherStores(context, 'ab'.repeat(32), '{"page":1}');
   await adapter.prepareActivation(context, 'ab'.repeat(32));
   await adapter.activate(context, 'ab'.repeat(32));
   await adapter.verifyActivation(context, 'ab'.repeat(32));
@@ -87,6 +87,7 @@ it('forwards operation context to target, source, plan, and activation ports', a
   expect(calls.loadValidatedDataset).toHaveBeenCalledWith(context, { datasetId: dataset.id });
   expect(calls.assertValidatedUnpublishedPlan).toHaveBeenCalledWith(context, 'ab'.repeat(32));
   expect(calls.restoreOtherStores).toHaveBeenCalledWith(context, 'ab'.repeat(32), '{"page":1}');
+  expect(calls.verifyOtherStores).toHaveBeenCalledWith(context, 'ab'.repeat(32), '{"page":1}');
   expect(calls.verifyActivation).toHaveBeenCalledWith(context, 'ab'.repeat(32));
 });
 

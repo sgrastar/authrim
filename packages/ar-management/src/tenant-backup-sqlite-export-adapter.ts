@@ -20,6 +20,9 @@ export interface TenantBackupInstalledSqliteExportPorts {
   assertSources(input: AdapterContext): Promise<void>;
   /** Hold the installed source mutation/DDL guard during snapshot admission. */
   assertBoundaryReady(input: AdapterContext): Promise<void>;
+  /** Transform environment-encrypted fields before bundle encryption. */
+  transformedDatasetIds?: readonly string[];
+  transformRow?(input: AdapterContext & { datasetId: string; rowJson: string }): Promise<string>;
 }
 
 async function planned(
@@ -43,6 +46,15 @@ export function createTenantBackupInstalledSqliteExportAdapter(input: {
   ports: TenantBackupInstalledSqliteExportPorts;
 }): TenantBackupInstalledExportAdapter {
   const registrations = input.registrations.map((registration) => structuredClone(registration));
+  const transformedDatasetIds = input.ports.transformedDatasetIds ?? [];
+  if (
+    new Set(transformedDatasetIds).size !== transformedDatasetIds.length ||
+    transformedDatasetIds.some(
+      (datasetId) => !registrations.some((registration) => registration.dataset.id === datasetId)
+    ) ||
+    Boolean(transformedDatasetIds.length) !== (typeof input.ports.transformRow === 'function')
+  )
+    throw new Error('backup_sqlite_export_adapter_transform');
   return {
     requiredDatabases: {
       roles: [...input.requiredDatabases.roles],
@@ -94,6 +106,15 @@ export function createTenantBackupInstalledSqliteExportAdapter(input: {
               .resolveSource({ resourceId: dataset.resourceId, family: dataset.family })
               .then((database) => ({ resourceId: dataset.resourceId, database })),
           assertSourceStable: () => input.ports.assertSources(context),
+          transformRow:
+            transformedDatasetIds.includes(dataset.dataset.id) && input.ports.transformRow
+              ? (rowJson) =>
+                  input.ports.transformRow?.({
+                    ...context,
+                    datasetId: dataset.dataset.id,
+                    rowJson,
+                  }) ?? Promise.reject(new Error('backup_sqlite_export_adapter_transform'))
+              : undefined,
         },
         context.cursor
       );

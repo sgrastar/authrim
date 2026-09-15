@@ -19,6 +19,8 @@ interface SourceInput {
   signal: AbortSignal;
   /** Required when the trusted capture schema partitions one physical table. */
   partitions?: readonly string[];
+  /** Deterministic installed transformation applied before bytes enter the encrypted bundle. */
+  transformRow?: (rowJson: string) => Promise<string>;
 }
 
 /** Trusted COW source with durable output positions. Cursor must come from the same operation. */
@@ -121,13 +123,33 @@ export async function* readSqliteSnapshotChunks(
         row.total_bytes < 1
       )
         throw new Error('backup_snapshot_invalid_row');
-      async function* rowChunks(): AsyncGenerator<Uint8Array> {
+      async function* rawRowChunks(): AsyncGenerator<Uint8Array> {
         if (row.row_type === 'blob')
           yield* coalesce(packedSqliteRowToJson(fragments(after, row), input.schema.columns));
         else {
           yield* fragments(after, row);
           yield new Uint8Array([10]);
         }
+      }
+      async function* rowChunks(): AsyncGenerator<Uint8Array> {
+        if (!input.transformRow) {
+          yield* rawRowChunks();
+          return;
+        }
+        const decoder = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
+        let rowJson = '';
+        for await (const part of rawRowChunks()) {
+          rowJson += decoder.decode(part, { stream: true });
+          if (new TextEncoder().encode(rowJson).length > 256 * 1024)
+            throw new Error('backup_snapshot_transform_row_limit');
+        }
+        rowJson += decoder.decode();
+        if (!rowJson.endsWith('\n')) throw new Error('backup_snapshot_transform_row_invalid');
+        const transformed = await input.transformRow(rowJson.slice(0, -1));
+        const bytes = new TextEncoder().encode(transformed + '\n');
+        if (bytes.length > 256 * 1024) throw new Error('backup_snapshot_transform_row_limit');
+        for (let offset = 0; offset < bytes.length; offset += FRAGMENT_BYTES)
+          yield bytes.slice(offset, offset + FRAGMENT_BYTES);
       }
       const iterator = rowChunks()[Symbol.asyncIterator]();
       let ordinal = 0;

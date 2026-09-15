@@ -48,8 +48,12 @@ export interface TenantBackupInstalledImportAdapter {
     planDigest: string,
     cursor: string | null
   ): Promise<{ cursor: string | null; done: boolean }>;
-  /** Verify installed non-SQL stores and side-effect holds before activation. */
-  verifyOtherStores(context: TenantBackupStepContext, planDigest: string): Promise<void>;
+  /** Verify installed non-SQL stores and side-effect holds in bounded pages before activation. */
+  verifyOtherStores(
+    context: TenantBackupStepContext,
+    planDigest: string,
+    cursor: string | null
+  ): Promise<{ cursor: string | null; done: boolean }>;
   /** Persist a recoverable activation intent without publishing routing. */
   prepareActivation(context: TenantBackupStepContext, planDigest: string): Promise<void>;
   /** Idempotently publish the validated target set. A lost response must be safe to retry. */
@@ -62,7 +66,11 @@ function fail(): never {
   throw new Error('backup_import_dispatch_invalid');
 }
 function validateAdapter(adapter: TenantBackupInstalledImportAdapter): void {
-  if (typeof adapter.datasets !== 'function' || typeof adapter.restoreOtherStores !== 'function')
+  if (
+    typeof adapter.datasets !== 'function' ||
+    typeof adapter.restoreOtherStores !== 'function' ||
+    typeof adapter.verifyOtherStores !== 'function'
+  )
     fail();
   let datasets: readonly TenantPortableDataset[];
   try {
@@ -120,6 +128,12 @@ interface OtherStoreCursor {
   storeCursor: string | null;
 }
 
+interface StoreVerificationCursor {
+  version: 1;
+  planDigest: string;
+  storeCursor: string | null;
+}
+
 function otherStoreCursor(value: string | null): OtherStoreCursor {
   try {
     if (value === null || new TextEncoder().encode(value).length > 16384) fail();
@@ -137,13 +151,65 @@ function otherStoreCursor(value: string | null): OtherStoreCursor {
       (cursor.storeCursor !== null &&
         (typeof cursor.storeCursor !== 'string' ||
           !cursor.storeCursor ||
-          cursor.storeCursor.length > 4096))
+          new TextEncoder().encode(cursor.storeCursor).length > 4096))
     )
       fail();
     return cursor as unknown as OtherStoreCursor;
   } catch {
     return fail();
   }
+}
+
+function storeVerificationCursor(value: string | null): StoreVerificationCursor {
+  try {
+    if (value === null || new TextEncoder().encode(value).length > 8192) fail();
+    const cursor = JSON.parse(value) as Record<string, unknown>;
+    if (
+      !cursor ||
+      Array.isArray(cursor) ||
+      Object.keys(cursor).sort().join(',') !== 'planDigest,storeCursor,version' ||
+      cursor.version !== 1 ||
+      typeof cursor.planDigest !== 'string' ||
+      !/^[a-f0-9]{64}$/.test(cursor.planDigest) ||
+      (cursor.storeCursor !== null &&
+        (typeof cursor.storeCursor !== 'string' ||
+          !cursor.storeCursor ||
+          new TextEncoder().encode(cursor.storeCursor).length > 4096))
+    )
+      fail();
+    return cursor as unknown as StoreVerificationCursor;
+  } catch {
+    return fail();
+  }
+}
+
+function validateStoreProgress(
+  result: unknown,
+  previous: string | null
+): asserts result is { cursor: string | null; done: boolean } {
+  if (
+    !result ||
+    typeof result !== 'object' ||
+    Array.isArray(result) ||
+    !('done' in result) ||
+    !('cursor' in result) ||
+    typeof result.done !== 'boolean' ||
+    (result.done && result.cursor !== null) ||
+    (!result.done &&
+      (typeof result.cursor !== 'string' ||
+        !result.cursor ||
+        new TextEncoder().encode(result.cursor).length > 4096 ||
+        result.cursor === previous))
+  )
+    fail();
+  const cursor = result.cursor;
+  if (typeof cursor === 'string') {
+    try {
+      JSON.parse(cursor);
+    } catch {
+      fail();
+    }
+  } else if (cursor !== null) fail();
 }
 
 /** Dispatch one import phase; the common scheduler owns its outer lease and checkpoint. */
@@ -232,7 +298,7 @@ export async function runTenantBackupImportOperationStep(
     if (result.phase === 'restore_other_stores') {
       if (!result.cursor) fail();
       const head = await inventory.headForLease(context.lease);
-      if (!/^[a-f0-9]{64}$/.test(head.chain_digest)) fail();
+      if (head.state !== 'sealed' || !/^[a-f0-9]{64}$/.test(head.chain_digest)) fail();
       let sequenceCursor: unknown;
       try {
         sequenceCursor = JSON.parse(result.cursor) as unknown;
@@ -250,6 +316,18 @@ export async function runTenantBackupImportOperationStep(
       if (new TextEncoder().encode(cursor).length > 16384) fail();
       return { ...result, cursor };
     }
+    if (result.phase === 'verify_other_restore_stores') {
+      const head = await inventory.headForLease(context.lease);
+      if (head.state !== 'sealed' || !/^[a-f0-9]{64}$/.test(head.chain_digest)) fail();
+      return {
+        ...result,
+        cursor: JSON.stringify({
+          version: 1,
+          planDigest: head.chain_digest,
+          storeCursor: null,
+        }),
+      };
+    }
     return result;
   }
   if (context.operation.phase === 'restore_other_stores') {
@@ -262,23 +340,7 @@ export async function runTenantBackupImportOperationStep(
     await adapter.assertSources(context);
     const result = await adapter.restoreOtherStores(context, cursor.planDigest, cursor.storeCursor);
     await adapter.assertSources(context);
-    if (
-      typeof result.done !== 'boolean' ||
-      (result.done && result.cursor !== null) ||
-      (!result.done &&
-        (typeof result.cursor !== 'string' ||
-          !result.cursor ||
-          result.cursor.length > 4096 ||
-          result.cursor === cursor.storeCursor))
-    )
-      fail();
-    if (result.cursor !== null) {
-      try {
-        JSON.parse(result.cursor);
-      } catch {
-        fail();
-      }
-    }
+    validateStoreProgress(result, cursor.storeCursor);
     if (result.done) {
       const sequenceCursor = JSON.stringify(cursor.sequenceCursor);
       if (new TextEncoder().encode(sequenceCursor).length > 16384) fail();
@@ -288,33 +350,47 @@ export async function runTenantBackupImportOperationStep(
     if (new TextEncoder().encode(nextCursor).length > 16384) fail();
     return { phase: 'restore_other_stores', cursor: nextCursor, disposition: 'continue' };
   }
+  if (context.operation.phase === 'verify_other_restore_stores') {
+    const database = requireDedicatedAdminDatabaseAdapter(env, 'tenant-backup');
+    const inventory = new DatabaseTenantBackupRestorePlanInventory(database, context.lease, now);
+    const head = await inventory.headForLease(context.lease);
+    if (head.state !== 'sealed') fail();
+    const cursor = storeVerificationCursor(context.operation.cursor_json);
+    if (cursor.planDigest !== head.chain_digest) fail();
+    await adapter.assertSources(context);
+    const result = await adapter.verifyOtherStores(context, cursor.planDigest, cursor.storeCursor);
+    await adapter.assertSources(context);
+    validateStoreProgress(result, cursor.storeCursor);
+    if (result.done)
+      return {
+        phase: 'prepare_restore_activation',
+        cursor: JSON.stringify({ version: 1, planDigest: cursor.planDigest }),
+        disposition: 'continue',
+      };
+    return {
+      phase: 'verify_other_restore_stores',
+      cursor: JSON.stringify({ ...cursor, storeCursor: result.cursor }),
+      disposition: 'continue',
+    };
+  }
   if (
-    [
-      'verify_other_restore_stores',
-      'prepare_restore_activation',
-      'activate_restore',
-      'verify_restore_activation',
-    ].includes(context.operation.phase)
+    ['prepare_restore_activation', 'activate_restore', 'verify_restore_activation'].includes(
+      context.operation.phase
+    )
   ) {
     const database = requireDedicatedAdminDatabaseAdapter(env, 'tenant-backup');
     const inventory = new DatabaseTenantBackupRestorePlanInventory(database, context.lease, now);
     const head = await inventory.headForLease(context.lease);
     if (head.state !== 'sealed') fail();
-    const cursor =
-      context.operation.phase === 'verify_other_restore_stores'
-        ? activationCursor(null, head.chain_digest)
-        : activationCursor(context.operation.cursor_json, head.chain_digest);
+    const cursor = activationCursor(context.operation.cursor_json, head.chain_digest);
     await adapter.assertSources(context);
-    if (context.operation.phase === 'verify_other_restore_stores')
-      await adapter.verifyOtherStores(context, cursor.planDigest);
-    else if (context.operation.phase === 'prepare_restore_activation')
+    if (context.operation.phase === 'prepare_restore_activation')
       await adapter.prepareActivation(context, cursor.planDigest);
     else if (context.operation.phase === 'activate_restore')
       await adapter.activate(context, cursor.planDigest);
     else await adapter.verifyActivation(context, cursor.planDigest);
     await adapter.assertSources(context);
     const phase = {
-      verify_other_restore_stores: 'prepare_restore_activation',
       prepare_restore_activation: 'activate_restore',
       activate_restore: 'verify_restore_activation',
       verify_restore_activation: 'ready',

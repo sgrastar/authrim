@@ -297,7 +297,18 @@ it('applies installed target-only restore values and verifies against the transf
 });
 
 it('leaves sidecar-owned columns out of SQL byte verification only', async () => {
-  const target = await SqliteRestoreTarget.open(input());
+  const options = input();
+  const execute = options.database.execute;
+  let loseSidecarResponse = true;
+  options.database.execute = async (sql, params) => {
+    const result = await execute(sql, params);
+    if (loseSidecarResponse && sql.startsWith('UPDATE "tenants" SET "value"=')) {
+      loseSidecarResponse = false;
+      throw new Error('sidecar_response_lost');
+    }
+    return result;
+  };
+  const target = await SqliteRestoreTarget.open(options);
   const sidecarPolicy: SqliteDatasetInspectionPolicy = {
     ...policy,
     restoreOverrides: { value: ['null', null] },
@@ -305,10 +316,36 @@ it('leaves sidecar-owned columns out of SQL byte verification only', async () =>
   };
   await target.writeRow(sidecarPolicy, manifest, row);
   expect(db.prepare('SELECT value FROM tenants').get()).toEqual({ value: null });
-  db.exec("UPDATE tenants SET value='reencrypted'");
+  await expect(
+    target.writeSidecarText(
+      sidecarPolicy,
+      manifest,
+      row,
+      'value',
+      'reencrypted',
+      async (stored) => stored === 'reencrypted'
+    )
+  ).rejects.toThrow('sidecar_response_lost');
+  await target.writeSidecarText(
+    sidecarPolicy,
+    manifest,
+    row,
+    'value',
+    'different-random-ciphertext',
+    async (stored) => stored === 'reencrypted'
+  );
   await target.verifyRow(sidecarPolicy, manifest, row);
+  await target.seal();
+  const verifier = await SqliteRestoreTarget.open({ ...input(2), mode: 'verify' });
+  await verifier.verifySidecarValue(
+    sidecarPolicy,
+    manifest,
+    row,
+    'value',
+    async (stored) => stored === 'reencrypted'
+  );
   db.exec('UPDATE tenants SET count=1');
-  await expect(target.verifyRow(sidecarPolicy, manifest, row)).rejects.toThrow();
+  await expect(verifier.verifyRow(sidecarPolicy, manifest, row)).rejects.toThrow();
 });
 
 it('rejects restore overrides for identity columns', async () => {

@@ -50,7 +50,9 @@ const adapter = {
   restoreOtherStores: vi.fn(
     async (): Promise<{ cursor: string | null; done: boolean }> => ({ cursor: null, done: true })
   ),
-  verifyOtherStores: vi.fn(async () => {}),
+  verifyOtherStores: vi.fn(
+    async (): Promise<{ cursor: string | null; done: boolean }> => ({ cursor: null, done: true })
+  ),
   prepareActivation: vi.fn(async () => {}),
   activate: vi.fn(async () => {}),
   verifyActivation: vi.fn(async () => {}),
@@ -248,7 +250,6 @@ it.each([
 });
 
 it.each([
-  ['verify_other_restore_stores', 'prepare_restore_activation', 'verifyOtherStores', 'continue'],
   ['prepare_restore_activation', 'activate_restore', 'prepareActivation', 'continue'],
   ['activate_restore', 'verify_restore_activation', 'activate', 'continue'],
   ['verify_restore_activation', 'ready', 'verifyActivation', 'ready'],
@@ -263,7 +264,7 @@ it.each([
         operation: {
           ...context.operation,
           phase,
-          cursor_json: phase === 'verify_other_restore_stores' ? '{}' : cursor,
+          cursor_json: cursor,
         },
       },
       adapter as never,
@@ -281,6 +282,66 @@ it.each([
     expect(adapter.assertSources).toHaveBeenCalledTimes(2);
   }
 );
+
+it('verifies other stores in durable pages before activation preparation', async () => {
+  mocks.restore.mockResolvedValueOnce({
+    phase: 'verify_other_restore_stores',
+    cursor: '{"sql":"complete"}',
+    disposition: 'continue',
+  });
+  const transition = await runTenantBackupImportOperationStep(
+    env,
+    {
+      ...context,
+      operation: {
+        ...context.operation,
+        phase: 'verify_sealed_sqlite_datasets',
+        cursor_json: JSON.stringify({ version: 1, sequenceOrdinal: 3 }),
+      },
+    },
+    adapter as never,
+    () => 100
+  );
+  const initial = JSON.stringify({
+    version: 1,
+    planDigest: 'ab'.repeat(32),
+    storeCursor: null,
+  });
+  expect(transition).toEqual({
+    phase: 'verify_other_restore_stores',
+    cursor: initial,
+    disposition: 'continue',
+  });
+  adapter.verifyOtherStores.mockResolvedValueOnce({ cursor: '{"after":"client-a"}', done: false });
+  const page = await runTenantBackupImportOperationStep(
+    env,
+    {
+      ...context,
+      operation: {
+        ...context.operation,
+        phase: 'verify_other_restore_stores',
+        cursor_json: initial,
+      },
+    },
+    adapter as never,
+    () => 100
+  );
+  expect(page.phase).toBe('verify_other_restore_stores');
+  const completed = await runTenantBackupImportOperationStep(
+    env,
+    {
+      ...context,
+      operation: { ...context.operation, phase: page.phase, cursor_json: page.cursor },
+    },
+    adapter as never,
+    () => 100
+  );
+  expect(completed).toEqual({
+    phase: 'prepare_restore_activation',
+    cursor: JSON.stringify({ version: 1, planDigest: 'ab'.repeat(32) }),
+    disposition: 'continue',
+  });
+});
 
 it('rejects unknown phases and non-SQL or duplicate installed datasets', async () => {
   await expect(

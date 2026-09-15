@@ -7,6 +7,7 @@ import type {
 } from './reference-contract.js';
 import type { PortableSqliteRow } from './sqlite-dataset-inspector.js';
 import { PHASE3_SQLITE_DATASET_REGISTRATIONS } from './phase3-sqlite-modules.js';
+import { portableOauthClientSecret } from './portable-client-secret.js';
 
 export interface Phase3SqliteReferenceRule {
   fromDatasetId: string;
@@ -217,6 +218,7 @@ export function inspectPhase3SqliteReferences(
   row: PortableSqliteRow,
   identity: TenantPortableRecordIdentity
 ): readonly TenantPortableDependency[] {
+  if (datasetId === 'core.oauth_clients') portableOauthClientSecret(row);
   const dependencies: TenantPortableDependency[] = [];
   for (const rule of PHASE3_SQLITE_REFERENCE_RULES) {
     if (rule.fromDatasetId !== datasetId) continue;

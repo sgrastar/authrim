@@ -105,7 +105,8 @@ export function createTenantBackupInstalledSqliteImportAdapter(input: {
       input.ports.assertValidatedUnpublishedPlan(context, digest),
     restoreOtherStores: (context, digest, cursor) =>
       input.ports.restoreOtherStores(context, digest, cursor),
-    verifyOtherStores: (context, digest) => input.ports.verifyOtherStores(context, digest),
+    verifyOtherStores: (context, digest, cursor) =>
+      input.ports.verifyOtherStores(context, digest, cursor),
     prepareActivation: (context, digest) => input.ports.prepareActivation(context, digest),
     activate: (context, digest) => input.ports.activate(context, digest),
     verifyActivation: (context, digest) => input.ports.verifyActivation(context, digest),

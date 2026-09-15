@@ -136,6 +136,34 @@ it('reads the persisted plan and exact snapshot rather than caller-supplied tabl
   });
 });
 
+it('enables row transforms only for explicitly installed datasets', async () => {
+  const { context, ports } = fixture();
+  const transformRow = vi.fn(async ({ rowJson }: { rowJson: string }) => `${rowJson}:portable`);
+  const adapter = createTenantBackupInstalledSqliteExportAdapter({
+    requiredDatabases: { roles: ['tenant_core'], fixed: [] },
+    registrations: [registration],
+    ports: { ...ports, transformedDatasetIds: ['core.roles'], transformRow },
+  });
+  await adapter.readNext({
+    ...context,
+    datasetId: 'core.roles',
+    cursor: null,
+    signal: context.context.signal,
+  });
+  const reader = mocks.read.mock.calls[0]?.[0] as {
+    transformRow(rowJson: string): Promise<string>;
+  };
+  await expect(reader.transformRow('row')).resolves.toBe('row:portable');
+  expect(transformRow).toHaveBeenCalledWith(expect.objectContaining({ datasetId: 'core.roles' }));
+  expect(() =>
+    createTenantBackupInstalledSqliteExportAdapter({
+      requiredDatabases: { roles: ['tenant_core'], fixed: [] },
+      registrations: [registration],
+      ports: { ...ports, transformedDatasetIds: ['unknown'], transformRow },
+    })
+  ).toThrow('backup_sqlite_export_adapter_transform');
+});
+
 it('requires all SQL snapshot receipts to be released before publication', async () => {
   const { adapter, context, ports, snapshotResources } = fixture();
   await adapter.assertPublishable({ ...context, inventoryDigest: 'ab'.repeat(32) });
