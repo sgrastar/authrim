@@ -4,6 +4,7 @@ import type { TenantBackupStepContext } from './operation-executor';
 import type { TenantPortableDependency, TenantPortableRecordIdentity } from './reference-contract';
 import type { CaptureSchema } from './sqlite-snapshot';
 import { sqliteSnapshotRowInsert } from './sqlite-row-codec';
+import { assertEnvironmentTenantKey } from './portable-tenant-key.js';
 
 export type PortableSqliteRow = Readonly<Record<string, readonly [string, string | null]>>;
 
@@ -17,6 +18,8 @@ export interface SqliteDatasetInspectionPolicy {
   deferredColumns?: readonly string[];
   /** Installed target-only values that replace source transport columns during restore. */
   restoreOverrides?: Readonly<Record<string, readonly [string, string | null]>>;
+  /** Installed target-only values for tenant-key primary-key columns. */
+  restoreIdentityOverrides?: Readonly<Record<string, readonly ['text', string]>>;
   /** Columns verified by an installed secret sidecar instead of byte equality. */
   verificationIgnoredColumns?: readonly string[];
   /** Validate and inventory the source rows, but do not materialize them in the restore target. */
@@ -41,6 +44,8 @@ export interface SqliteDatasetInspectionPolicy {
   parentDataset?: Pick<TenantPortableDataset, 'id' | 'module'>;
   /** Authoritative tenant key, when storage ownership uses it instead of tenant ID. */
   tenantKey?: string;
+  /** Target environment tenant key used to verify restored tenant-key-owned rows. */
+  restoreTenantKey?: string;
   /** Exact row-partition values assigned to this logical dataset. */
   partitions?: readonly string[];
   /** Business fields, secrets and non-ownership references require module-specific validation. */
@@ -94,10 +99,12 @@ export function sqliteDatasetInspectionPolicyDescriptor(policy: SqliteDatasetIns
     restoreAfter: policy.restoreAfter,
     deferredColumns: policy.deferredColumns,
     restoreOverrides: policy.restoreOverrides,
+    restoreIdentityOverrides: policy.restoreIdentityOverrides,
     verificationIgnoredColumns: policy.verificationIgnoredColumns,
     restoreDisposition: policy.restoreDisposition,
     restoreTransformId: policy.restoreTransform?.id,
     restoreHoldId: policy.restoreHold?.id,
+    restoreTenantKey: policy.restoreTenantKey,
   };
 }
 const MAX_ROW_BYTES = 16 * 1024 * 1024;
@@ -148,6 +155,7 @@ export function createSqliteDatasetInspectorFactory(
       (pinned.restoreDisposition === 'reference_only' &&
         (pinned.deferredColumns !== undefined ||
           pinned.restoreOverrides !== undefined ||
+          pinned.restoreIdentityOverrides !== undefined ||
           pinned.verificationIgnoredColumns !== undefined ||
           pinned.restoreTransformId !== undefined ||
           pinned.restoreHoldId !== undefined)) ||
@@ -176,6 +184,39 @@ export function createSqliteDatasetInspectorFactory(
       )
         invalid();
       sqliteSnapshotRowInsert(schema.table, columns, JSON.stringify(pinned.restoreOverrides));
+    }
+    if (pinned.restoreIdentityOverrides !== undefined) {
+      const columns = Object.keys(pinned.restoreIdentityOverrides);
+      const direct = 'parent' in schema ? undefined : schema;
+      if (
+        !direct ||
+        direct.tenantIdentity !== 'tenantKey' ||
+        columns.length !== 1 ||
+        columns[0] !== direct.tenantColumn ||
+        !direct.primaryKey.includes(direct.tenantColumn) ||
+        pinned.tenantKey === undefined ||
+        pinned.restoreTenantKey === undefined ||
+        JSON.stringify(pinned.restoreIdentityOverrides[direct.tenantColumn]) !==
+          JSON.stringify(['text', pinned.restoreTenantKey]) ||
+        Object.hasOwn(pinned.restoreOverrides ?? {}, direct.tenantColumn)
+      )
+        invalid();
+      assertEnvironmentTenantKey(pinned.restoreTenantKey);
+      sqliteSnapshotRowInsert(
+        schema.table,
+        columns,
+        JSON.stringify(pinned.restoreIdentityOverrides)
+      );
+    } else if (pinned.restoreTenantKey !== undefined) {
+      const direct = 'parent' in schema ? undefined : schema;
+      if (
+        !direct ||
+        direct.tenantIdentity !== 'tenantKey' ||
+        pinned.restoreOverrides?.[direct.tenantColumn]?.[0] !== 'text' ||
+        pinned.restoreOverrides[direct.tenantColumn]?.[1] !== pinned.restoreTenantKey
+      )
+        invalid();
+      assertEnvironmentTenantKey(pinned.restoreTenantKey);
     }
     if (
       pinned.verificationIgnoredColumns !== undefined &&

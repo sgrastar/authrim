@@ -24,6 +24,12 @@ import {
   phase8RestoreHoldReason,
   phase8RestoreHoldRecordId,
 } from './phase8-restore-holds.js';
+import {
+  assertEnvironmentTenantKey,
+  assertPortableTenantKeyRow,
+  portableTenantKeyColumn,
+  PORTABLE_TENANT_KEY,
+} from './portable-tenant-key.js';
 
 const phase5Ids = new Set(
   PHASE5_CUMULATIVE_SQLITE_DATASET_REGISTRATIONS.map(({ dataset }) => dataset.id)
@@ -270,7 +276,7 @@ export function createPhase8SqliteInspectionPolicies(
     };
   }
 ): SqliteDatasetInspectionPolicy[] {
-  if (!input.tenantKey || input.tenantKey.length > 256) invalid();
+  assertEnvironmentTenantKey(input.tenantKey);
   if (
     planned.length !== registrations.size ||
     new Set(planned.map(({ dataset }) => dataset.id)).size !== planned.length
@@ -279,15 +285,56 @@ export function createPhase8SqliteInspectionPolicies(
 
   const phase5Planned = planned.filter(({ dataset }) => phase5Ids.has(dataset.id));
   const previousPolicies = new Map(
-    createPhase5SqliteInspectionPolicies(phase5Planned, input).map((policy) => [
-      policy.dataset.id,
-      policy,
-    ])
+    createPhase5SqliteInspectionPolicies(phase5Planned, {
+      ...input,
+      tenantKey: PORTABLE_TENANT_KEY,
+    }).map((policy) => [policy.dataset.id, policy])
   );
+
+  const withTargetTenantKey = (
+    entry: PlannedInstalledSqliteDataset,
+    policy: SqliteDatasetInspectionPolicy
+  ): SqliteDatasetInspectionPolicy => {
+    const column = portableTenantKeyColumn(entry.capture);
+    if (!column) return policy;
+    const directTenantKey =
+      !('parent' in entry.capture) && entry.capture.tenantIdentity === 'tenantKey';
+    const required = directTenantKey || entry.dataset.id === 'core.tenants';
+    const target = ['text', input.tenantKey] as const;
+    const primaryKey = entry.capture.primaryKey.includes(column);
+    const existing = primaryKey
+      ? policy.restoreIdentityOverrides?.[column]
+      : policy.restoreOverrides?.[column];
+    if (existing && JSON.stringify(existing) !== JSON.stringify(target)) invalid();
+    const inspectRow = policy.inspectRow;
+    return {
+      ...policy,
+      ...(directTenantKey
+        ? { tenantKey: PORTABLE_TENANT_KEY, restoreTenantKey: input.tenantKey }
+        : {}),
+      ...(primaryKey
+        ? {
+            restoreIdentityOverrides: {
+              ...policy.restoreIdentityOverrides,
+              [column]: target,
+            },
+          }
+        : {
+            restoreOverrides: {
+              ...policy.restoreOverrides,
+              [column]: target,
+            },
+          }),
+      inspectRow: async (row, identity) => {
+        assertPortableTenantKeyRow(entry.capture, row, required);
+        return inspectRow(row, identity);
+      },
+    };
+  };
 
   return planned.map((entry) => {
     const previous = previousPolicies.get(entry.dataset.id);
-    if (previous) return previous;
+    if (previous) return withTargetTenantKey(entry, previous);
     const registration = registrations.get(entry.dataset.id);
     if (
       !registration ||
@@ -414,7 +461,7 @@ export function createPhase8SqliteInspectionPolicies(
         }
       : undefined;
 
-    return {
+    return withTargetTenantKey(entry, {
       dataset: structuredClone(entry.dataset),
       schema: structuredClone(entry.capture),
       ...(restoreAfter.length ? { restoreAfter } : {}),
@@ -425,7 +472,7 @@ export function createPhase8SqliteInspectionPolicies(
         : {}),
       ...(restoreTransform ? { restoreTransform } : {}),
       ...(restoreHold ? { restoreHold } : {}),
-      ...(entry.capture.tenantIdentity === 'tenantKey' ? { tenantKey: input.tenantKey } : {}),
+      ...(entry.capture.tenantIdentity === 'tenantKey' ? { tenantKey: PORTABLE_TENANT_KEY } : {}),
       ...(parentDataset
         ? { parentDataset: { id: parentDataset.id, module: parentDataset.module } }
         : {}),
@@ -435,6 +482,6 @@ export function createPhase8SqliteInspectionPolicies(
           await input.validatePhase8Envelope(entry.dataset.id, row);
         return inspectPhase8SqliteReferences(entry.dataset.id, row, identity);
       },
-    };
+    });
   });
 }

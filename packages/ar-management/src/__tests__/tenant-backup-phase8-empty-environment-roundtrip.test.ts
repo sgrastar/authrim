@@ -18,6 +18,12 @@ import { createPhase8SqliteInspectionPolicies } from '@authrim/ar-lib-core/servi
 import { portableLinkedIdentityTokens } from '@authrim/ar-lib-core/services/tenant-portability/portable-linked-identity-tokens';
 import { portableTotpSecret } from '@authrim/ar-lib-core/services/tenant-portability/portable-totp-secret';
 import {
+  normalizePortableTenantKeyRow,
+  portableTenantKeyColumn,
+  PORTABLE_TENANT_KEY,
+  PORTABLE_TENANT_KEY_SQLITE_DATASETS,
+} from '@authrim/ar-lib-core/services/tenant-portability/portable-tenant-key';
+import {
   decryptUpstreamProviderSecret,
   encryptUpstreamProviderSecret,
 } from '@authrim/ar-lib-core/services/tenant-portability/portable-upstream-provider-secrets';
@@ -41,6 +47,8 @@ const sourcePiiKey = '11'.repeat(32);
 const targetPiiKey = '22'.repeat(32);
 const sourceRpKey = '33'.repeat(32);
 const targetRpKey = '44'.repeat(32);
+const sourceTenantKey = 'source-tenant-key';
+const targetTenantKey = 'target-tenant-key';
 const selection = {
   settings: true,
   users: true,
@@ -114,7 +122,7 @@ function applySnapshot(database: DatabaseSync, planned: readonly PlannedInstalle
     captures,
     'phase8-snapshot',
     'tenant-a',
-    'tenant-key-a',
+    sourceTenantKey,
     'json'
   );
   expect(database.prepare(start.sql).run(...start.params).changes).toBe(1);
@@ -169,7 +177,7 @@ describe('Phase 8 empty-environment SQL roundtrip', () => {
       const refresh = await encryptUpstreamProviderSecret('refresh-token', sourceRpKey);
       source.core.exec(`
         INSERT INTO tenants(id,tenant_code,tenant_key,name,created_at,updated_at)
-        VALUES('tenant-a','TENANTA','tenant-key-a','Tenant A',1,1);
+        VALUES('tenant-a','TENANTA','${sourceTenantKey}','Tenant A',1,1);
         INSERT INTO users_core(
           id,tenant_id,email_verified,password_hash,is_active,user_type,pii_partition,pii_status,
           created_at,updated_at,status,lifecycle_state
@@ -239,6 +247,13 @@ describe('Phase 8 empty-environment SQL roundtrip', () => {
         }
       );
       const exported = new Map<string, string[]>();
+      const tenantKeyDatasets = new Set<string>(PORTABLE_TENANT_KEY_SQLITE_DATASETS);
+      expect(
+        planned
+          .filter((entry) => portableTenantKeyColumn(entry.capture) !== undefined)
+          .map(({ dataset }) => dataset.id)
+          .sort()
+      ).toEqual([...PORTABLE_TENANT_KEY_SQLITE_DATASETS].sort());
       const boundaryUnixMs = 10_000_000;
       for (const entry of planned) {
         const rows = source[entry.family as Family]
@@ -256,16 +271,25 @@ describe('Phase 8 empty-environment SQL roundtrip', () => {
             } as never))
           )
             continue;
-          accepted.push(
-            (PHASE8_TRANSFORMED_SQLITE_DATASETS as readonly string[]).includes(entry.dataset.id)
-              ? await transform({
-                  datasetId: entry.dataset.id,
-                  rowJson,
-                  boundaryUnixMs,
-                  selection,
-                } as never)
-              : rowJson
-          );
+          let portableRow = (PHASE8_TRANSFORMED_SQLITE_DATASETS as readonly string[]).includes(
+            entry.dataset.id
+          )
+            ? await transform({
+                datasetId: entry.dataset.id,
+                rowJson,
+                boundaryUnixMs,
+                selection,
+              } as never)
+            : rowJson;
+          if (tenantKeyDatasets.has(entry.dataset.id))
+            portableRow = normalizePortableTenantKeyRow(
+              entry.capture,
+              portableRow,
+              sourceTenantKey,
+              (!('parent' in entry.capture) && entry.capture.tenantIdentity === 'tenantKey') ||
+                entry.dataset.id === 'core.tenants'
+            );
+          accepted.push(portableRow);
         }
         exported.set(entry.dataset.id, accepted);
       }
@@ -334,7 +358,7 @@ describe('Phase 8 empty-environment SQL roundtrip', () => {
       }
 
       const policies = createPhase8SqliteInspectionPolicies(planned, {
-        tenantKey: 'tenant-key-a',
+        tenantKey: targetTenantKey,
         validateAdminEnvelope: async () => {},
         async validatePhase8Envelope(datasetId, row) {
           if (datasetId === 'core.totp_credentials') portableTotpSecret(row);
@@ -348,6 +372,18 @@ describe('Phase 8 empty-environment SQL roundtrip', () => {
         restoreHold: { write: async () => {}, verify: async () => {} },
       });
       const byId = new Map(policies.map((policy) => [policy.dataset.id, policy]));
+      for (const entry of planned.filter(({ dataset }) => tenantKeyDatasets.has(dataset.id))) {
+        const policy = byId.get(entry.dataset.id)!;
+        const column = portableTenantKeyColumn(entry.capture)!;
+        expect(
+          policy.restoreIdentityOverrides?.[column] ?? policy.restoreOverrides?.[column],
+          entry.dataset.id
+        ).toEqual(['text', targetTenantKey]);
+        if (!('parent' in entry.capture) && entry.capture.tenantIdentity === 'tenantKey') {
+          expect(policy.tenantKey, entry.dataset.id).toBe(PORTABLE_TENANT_KEY);
+          expect(policy.restoreTenantKey, entry.dataset.id).toBe(targetTenantKey);
+        }
+      }
       const ordered: typeof policies = [];
       const visited = new Set<string>();
       const visit = (id: string) => {
@@ -375,6 +411,8 @@ describe('Phase 8 empty-environment SQL roundtrip', () => {
             rowJson = await policy.restoreTransform.transform(restoreContext, rowJson, 'write');
           const fields = JSON.parse(rowJson) as Record<string, readonly [string, string | null]>;
           for (const [column, override] of Object.entries(policy.restoreOverrides ?? {}))
+            fields[column] = override;
+          for (const [column, override] of Object.entries(policy.restoreIdentityOverrides ?? {}))
             fields[column] = override;
           const insert = sqliteSnapshotRowInsert(
             entry.capture.table,
@@ -416,6 +454,13 @@ describe('Phase 8 empty-environment SQL roundtrip', () => {
         1
       );
       expect(restored.size).toBe(PHASE8_CUMULATIVE_SQLITE_DATASET_REGISTRATIONS.length);
+      expect(JSON.parse(restored.get('core.tenants')![0]).tenant_key).toEqual([
+        'text',
+        PORTABLE_TENANT_KEY,
+      ]);
+      expect(
+        target.core.prepare("SELECT tenant_key FROM tenants WHERE id='tenant-a'").get()
+      ).toEqual({ tenant_key: targetTenantKey });
       expect(
         target.core.prepare("SELECT password_hash FROM users_core WHERE id='user-a'").get()
       ).toEqual({

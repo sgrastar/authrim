@@ -13,6 +13,7 @@ import {
 } from '@authrim/ar-lib-logging/chunks';
 import type { TenantBackupStepContext } from '@authrim/ar-lib-core/services/tenant-portability/operation-executor';
 import type { PortableR2ObjectChunk } from '@authrim/ar-lib-core/services/tenant-portability/portable-r2-object';
+import { PORTABLE_TENANT_KEY } from '@authrim/ar-lib-core/services/tenant-portability/portable-tenant-key';
 import {
   createTenantBackupR2ObjectRestorePorts,
   type TenantBackupR2ObjectFinalizer,
@@ -261,6 +262,7 @@ describe('tenant backup R2 object restore port', () => {
   it('uploads plaintext with multipart, verifies the target and finalizes its new key', async () => {
     const source = await chunk(new TextEncoder().encode('portable body'));
     const ports = createTenantBackupR2ObjectRestorePorts({
+      targetTenantKey: 'target-tenant-key',
       env: {
         IMPORT_ARTIFACTS: target as unknown as R2Bucket,
         EXPORT_ARTIFACTS: target as unknown as R2Bucket,
@@ -305,6 +307,7 @@ describe('tenant backup R2 object restore port', () => {
       customMetadata: { checksumSha256: 'source-sha', keyVersion: '1' },
     });
     const ports = createTenantBackupR2ObjectRestorePorts({
+      targetTenantKey: 'target-tenant-key',
       env: {
         EXPORT_ARTIFACTS: target as unknown as R2Bucket,
         OBJECT_ENCRYPTION_ROOT_KEY: '22'.repeat(32),
@@ -356,12 +359,18 @@ describe('tenant backup R2 object restore port', () => {
         tenantId: 'tenant-a',
         catalogKind: 'restore_hold_payload',
         objectClass: 'operational_log_detail',
+        encryptionTenantContext: PORTABLE_TENANT_KEY,
         holdDatasetId: 'admin.logging_message_jobs',
         holdRecordId: '[["text","job-a"]]',
         sourceField: 'payload_object_ref',
       },
+      customMetadata: {
+        tenantKey: PORTABLE_TENANT_KEY,
+        encryptionTenantContext: PORTABLE_TENANT_KEY,
+      },
     });
     const ports = createTenantBackupR2ObjectRestorePorts({
+      targetTenantKey: 'target-tenant-key',
       env: {
         AUDIT_ARCHIVE: target as unknown as R2Bucket,
         EXPORT_ARTIFACTS: target as unknown as R2Bucket,
@@ -380,6 +389,7 @@ describe('tenant backup R2 object restore port', () => {
     expect(saved?.customMetadata).toMatchObject({
       encryption: 'authrim-object-envelope-v1',
       encryptionTenantContext: 'tenant-a',
+      tenantKey: 'target-tenant-key',
       sha256: source.objectSha256,
       holdDatasetId: 'admin.logging_message_jobs',
       holdSourceField: 'payload_object_ref',
@@ -409,6 +419,7 @@ describe('tenant backup R2 object restore port', () => {
   it('fails closed after the operation lease is fenced', async () => {
     const source = await chunk(new TextEncoder().encode('portable body'));
     const ports = createTenantBackupR2ObjectRestorePorts({
+      targetTenantKey: 'target-tenant-key',
       env: {
         IMPORT_ARTIFACTS: target as unknown as R2Bucket,
         EXPORT_ARTIFACTS: target as unknown as R2Bucket,
@@ -440,7 +451,7 @@ describe('tenant backup R2 object restore port', () => {
       context: {
         tenantId: 'tenant-a',
         catalogKind: 'log_object',
-        tenantKey: 'tenant-a',
+        tenantKey: PORTABLE_TENANT_KEY,
         logType: 'admin_audit',
         plane: 'archive',
         chunkId: 'chunk-a',
@@ -448,9 +459,14 @@ describe('tenant backup R2 object restore port', () => {
         encryptionScope: 'tenant-log-archive',
         keyVersion: 2,
       },
-      customMetadata: { checksumSha256: 'source-sha', keyVersion: '2' },
+      customMetadata: {
+        checksumSha256: 'source-sha',
+        keyVersion: '2',
+        tenantKey: PORTABLE_TENANT_KEY,
+      },
     });
     const ports = createTenantBackupR2ObjectRestorePorts({
+      targetTenantKey: 'target-tenant-key',
       env: {
         AUDIT_ARCHIVE: target as unknown as R2Bucket,
         EXPORT_ARTIFACTS: target as unknown as R2Bucket,
@@ -467,7 +483,7 @@ describe('tenant backup R2 object restore port', () => {
     const saved = target.objects.get(expectedKey);
     const keyBytes = await deriveLogChunkEncryptionKey({
       rootKeyHex: '44'.repeat(32),
-      tenantKey: 'tenant-a',
+      tenantKey: 'target-tenant-key',
       logType: 'admin_audit',
       plane: 'archive',
       keyVersion: 5,
@@ -475,7 +491,7 @@ describe('tenant backup R2 object restore port', () => {
     const decoded = await decryptLogChunkBody({
       storedBody: saved?.bytes ?? new Uint8Array(),
       keyBytes,
-      tenantKey: 'tenant-a',
+      tenantKey: 'target-tenant-key',
       logType: 'admin_audit',
       plane: 'archive',
       objectKey: expectedKey,
@@ -488,6 +504,7 @@ describe('tenant backup R2 object restore port', () => {
     expect(saved?.customMetadata).toMatchObject({
       keyVersion: '5',
       encryptionScope: 'tenant-log-archive',
+      tenantKey: 'target-tenant-key',
     });
     expect(finalizer.finalize).toHaveBeenCalledWith(
       expect.anything(),
@@ -496,6 +513,45 @@ describe('tenant backup R2 object restore port', () => {
       source,
       expect.objectContaining({ keyVersion: 5, encryptionScope: 'tenant-log-archive' })
     );
+  });
+
+  it('rejects a log object that carries an environment-specific source tenant key', async () => {
+    const source = await chunk(new TextEncoder().encode('{"audit":true}\n'), {
+      objectId: 'admin:legacy-log-object',
+      bucketBinding: 'AUDIT_ARCHIVE',
+      sourceEncoding: 'log_chunk_v1',
+      context: {
+        tenantId: 'tenant-a',
+        catalogKind: 'log_object',
+        tenantKey: 'source-environment-key',
+        logType: 'admin_audit',
+        plane: 'archive',
+        chunkId: 'chunk-a',
+        compression: 'none',
+        encryptionScope: 'tenant-log-archive',
+        keyVersion: 2,
+      },
+    });
+    const ports = createTenantBackupR2ObjectRestorePorts({
+      targetTenantKey: 'target-tenant-key',
+      env: {
+        AUDIT_ARCHIVE: target as unknown as R2Bucket,
+        EXPORT_ARTIFACTS: target as unknown as R2Bucket,
+        OBJECT_ENCRYPTION_ROOT_KEY: '44'.repeat(32),
+        OBJECT_ENCRYPTION_KEY_VERSION: '5',
+      },
+      database: adapter,
+      finalizer,
+      now: () => now++,
+    });
+
+    await expect(
+      ports.importR2Chunk(context(), planDigest, 'logs.archive_object_bodies', source)
+    ).rejects.toThrow('backup_r2_object_restore_invalid');
+    expect([...target.objects.keys()].some((key) => key.startsWith('tenant-restores/'))).toBe(
+      false
+    );
+    expect(finalizer.finalize).not.toHaveBeenCalled();
   });
 
   it('rebuilds portable log records and persists their target block locations', async () => {
@@ -521,7 +577,7 @@ describe('tenant backup R2 object restore port', () => {
       context: {
         tenantId: 'tenant-a',
         catalogKind: 'log_object',
-        tenantKey: 'tenant-key-a',
+        tenantKey: PORTABLE_TENANT_KEY,
         logType: 'admin_audit',
         plane: 'archive',
         chunkId: 'chunk-repacked',
@@ -530,6 +586,7 @@ describe('tenant backup R2 object restore port', () => {
       },
     });
     const ports = createTenantBackupR2ObjectRestorePorts({
+      targetTenantKey: 'target-tenant-key',
       env: {
         AUDIT_ARCHIVE: target as unknown as R2Bucket,
         EXPORT_ARTIFACTS: target as unknown as R2Bucket,
@@ -547,7 +604,7 @@ describe('tenant backup R2 object restore port', () => {
     const saved = target.objects.get(expectedKey);
     const keyBytes = await deriveLogChunkEncryptionKey({
       rootKeyHex: '55'.repeat(32),
-      tenantKey: 'tenant-key-a',
+      tenantKey: 'target-tenant-key',
       logType: 'admin_audit',
       plane: 'archive',
       keyVersion: 6,
@@ -555,7 +612,7 @@ describe('tenant backup R2 object restore port', () => {
     const decoded = await decryptLogChunkBody({
       storedBody: saved?.bytes ?? new Uint8Array(),
       keyBytes,
-      tenantKey: 'tenant-key-a',
+      tenantKey: 'target-tenant-key',
       logType: 'admin_audit',
       plane: 'archive',
       objectKey: expectedKey,
@@ -629,6 +686,7 @@ describe('tenant backup R2 object restore port', () => {
       },
     });
     const ports = createTenantBackupR2ObjectRestorePorts({
+      targetTenantKey: 'target-tenant-key',
       env: {
         SENSITIVE_DETAILS: target as unknown as R2Bucket,
         EXPORT_ARTIFACTS: target as unknown as R2Bucket,

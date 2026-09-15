@@ -9,6 +9,7 @@ import {
   inspectPhase8SqliteReferences,
   phase8SqliteRestoreDependencies,
 } from '../phase8-sqlite-references.js';
+import { PORTABLE_TENANT_KEY } from '../portable-tenant-key.js';
 
 const text = (value: string) => ['text', value] as const;
 const nil = ['null', null] as const;
@@ -81,6 +82,45 @@ describe('Phase 8 SQL references', () => {
     ).toMatchObject({
       secret_encrypted: ['text', 'backup-pending'],
       secret_key_version: ['integer', '1'],
+    });
+  });
+
+  it('rekeys tenant metadata and tenant-key primary keys only after portable inspection', () => {
+    const plan = planned();
+    const tenant = plan.find(({ dataset }) => dataset.id === 'core.tenants')!;
+    tenant.capture = {
+      table: 'tenants',
+      columns: ['id', 'tenant_key'],
+      primaryKey: ['id'],
+      uniqueKeys: [['tenant_key']],
+      tenantColumn: 'id',
+    };
+    const index = plan.find(({ dataset }) => dataset.id === 'core.log_chunk_record_index')!;
+    index.capture = {
+      table: 'log_chunk_record_index',
+      columns: ['tenant_key', 'log_type', 'plane', 'record_id'],
+      primaryKey: ['tenant_key', 'log_type', 'plane', 'record_id'],
+      uniqueKeys: [],
+      tenantColumn: 'tenant_key',
+      tenantIdentity: 'tenantKey',
+    };
+    const policies = createPhase8SqliteInspectionPolicies(plan, {
+      tenantKey: 'target-key',
+      validateAdminEnvelope: vi.fn(),
+      validatePhase8Envelope: vi.fn(),
+      resolveAdminReference: vi.fn(async (_context, source) => source),
+      resolvePluginReference: vi.fn(async (_context, source) => source),
+      restoreHold: restoreHold(),
+    });
+    expect(policies.find(({ dataset }) => dataset.id === 'core.tenants')).toMatchObject({
+      restoreOverrides: { tenant_key: text('target-key') },
+    });
+    expect(
+      policies.find(({ dataset }) => dataset.id === 'core.log_chunk_record_index')
+    ).toMatchObject({
+      tenantKey: PORTABLE_TENANT_KEY,
+      restoreTenantKey: 'target-key',
+      restoreIdentityOverrides: { tenant_key: text('target-key') },
     });
   });
 

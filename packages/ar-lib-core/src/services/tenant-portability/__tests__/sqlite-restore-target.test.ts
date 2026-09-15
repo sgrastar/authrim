@@ -404,7 +404,65 @@ it('rejects restore overrides for identity columns', async () => {
   await expect(
     target.writeRow({ ...policy, restoreOverrides: { id: ['text', 'other'] } }, manifest, row)
   ).rejects.toThrow();
+  await expect(
+    target.writeRow(
+      {
+        ...policy,
+        tenantKey: 'authrim-portable-tenant-v1',
+        restoreTenantKey: 'other',
+        restoreIdentityOverrides: { id: ['text', 'other'] },
+      },
+      manifest,
+      row
+    )
+  ).rejects.toThrow();
   expect(db.prepare('SELECT count(*) AS n FROM tenants').get()).toEqual({ n: 0 });
+});
+
+it('rekeys an installed tenant-key primary key and verifies the target ownership', async () => {
+  db.exec(
+    'CREATE TABLE log_index(tenant_key TEXT NOT NULL,record_id TEXT NOT NULL,value TEXT,PRIMARY KEY(tenant_key,record_id))'
+  );
+  identity.seedFingerprint = await readSqliteRestoreSeedFingerprint(
+    input().database,
+    async () => {}
+  );
+  const keyPolicy: SqliteDatasetInspectionPolicy = {
+    ...policy,
+    schema: {
+      table: 'log_index',
+      columns: ['tenant_key', 'record_id', 'value'],
+      primaryKey: ['tenant_key', 'record_id'],
+      uniqueKeys: [],
+      tenantColumn: 'tenant_key',
+      tenantIdentity: 'tenantKey',
+    },
+    tenantKey: 'authrim-portable-tenant-v1',
+    restoreTenantKey: 'target-key',
+    restoreIdentityOverrides: { tenant_key: ['text', 'target-key'] },
+  };
+  const keyRow = JSON.stringify({
+    tenant_key: ['text', 'authrim-portable-tenant-v1'],
+    record_id: ['text', 'record-a'],
+    value: ['text', 'value-a'],
+  });
+  const target = await SqliteRestoreTarget.open(input());
+  await expect(
+    target.writeRow(
+      keyPolicy,
+      manifest,
+      keyRow.replace('authrim-portable-tenant-v1', 'source-environment-key')
+    )
+  ).rejects.toThrow();
+  await target.writeRow(keyPolicy, manifest, keyRow);
+  await target.writeRow(keyPolicy, manifest, keyRow);
+  expect(db.prepare('SELECT * FROM log_index').all()).toEqual([
+    { tenant_key: 'target-key', record_id: 'record-a', value: 'value-a' },
+  ]);
+  await target.seal();
+  const verifier = await SqliteRestoreTarget.open({ ...input(2), mode: 'verify' });
+  await verifier.verifyRow(keyPolicy, manifest, keyRow);
+  await verifier.verifyDataset(keyPolicy, 1);
 });
 
 it('compares text bytes exactly even when target columns use NOCASE collation', async () => {

@@ -11,6 +11,7 @@ import type {
   PortableR2BucketBinding,
   PortableR2DatasetId,
 } from '@authrim/ar-lib-core/services/tenant-portability/portable-r2-object';
+import { assertEnvironmentTenantKey } from '@authrim/ar-lib-core/services/tenant-portability/portable-tenant-key';
 
 const MAX_DESCRIPTORS = 4096;
 const SAFE_ID = /^[A-Za-z0-9_.:-]{1,256}$/u;
@@ -433,7 +434,7 @@ async function listLogObjects(
 
 /** List only tenant-owned, committed catalog rows from the sealed source inventory. */
 export function createTenantBackupR2CatalogLister(input: { tenantKey: string }) {
-  if (!SAFE_ID.test(input.tenantKey)) invalid();
+  assertEnvironmentTenantKey(input.tenantKey);
   return async (
     context: AdapterContext,
     datasetId: PortableR2DatasetId

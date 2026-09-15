@@ -312,8 +312,8 @@ export class SqliteRestoreTarget {
   ): Promise<void> {
     if (this.mode !== 'write' || !policy.deferredColumns?.length) throw error();
     ({ policy, manifest } = await this.validateRow(policy, manifest, rowJson));
-    const parsed = JSON.parse(rowJson) as Record<string, unknown>;
     const restoredRowJson = this.applyRestoreOverrides(policy, rowJson);
+    const parsed = JSON.parse(restoredRowJson) as Record<string, unknown>;
     const deferred = policy.deferredColumns;
     if (!deferred?.length) throw error();
     if (await this.rowMatches(policy, restoredRowJson)) return;
@@ -345,9 +345,12 @@ export class SqliteRestoreTarget {
   }
 
   private applyRestoreOverrides(policy: SqliteDatasetInspectionPolicy, rowJson: string): string {
-    if (!policy.restoreOverrides) return rowJson;
+    if (!policy.restoreOverrides && !policy.restoreIdentityOverrides) return rowJson;
     const row = JSON.parse(rowJson) as Record<string, unknown>;
-    for (const [column, value] of Object.entries(policy.restoreOverrides)) row[column] = value;
+    for (const [column, value] of Object.entries(policy.restoreOverrides ?? {}))
+      row[column] = value;
+    for (const [column, value] of Object.entries(policy.restoreIdentityOverrides ?? {}))
+      row[column] = value;
     return JSON.stringify(row);
   }
 
@@ -372,7 +375,7 @@ export class SqliteRestoreTarget {
       (targetValue !== null && (targetValue[0] === 'null' || typeof targetValue[1] !== 'string'))
     )
       throw error();
-    const row = JSON.parse(rowJson) as Record<string, unknown>;
+    const row = JSON.parse(this.applyRestoreOverrides(policy, rowJson)) as Record<string, unknown>;
     const key = sqliteSnapshotRowInsert(
       policy.schema.table,
       policy.schema.primaryKey,
@@ -558,7 +561,7 @@ export class SqliteRestoreTarget {
   async verifyDataset(policy: SqliteDatasetInspectionPolicy, expectedRows: number): Promise<void> {
     const { schema, tenantKey } = structuredClone({
       schema: policy.schema,
-      tenantKey: policy.tenantKey,
+      tenantKey: policy.restoreTenantKey ?? policy.tenantKey,
     });
     if (
       !Number.isSafeInteger(expectedRows) ||

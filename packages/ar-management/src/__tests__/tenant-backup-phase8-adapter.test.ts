@@ -175,8 +175,11 @@ it('loads import policies from the claimed operation physical plan', async () =>
   } as never;
 
   const policy = await adapter.import.loadPolicy(context, 'core.users_core');
+  const secondPolicy = await adapter.import.loadPolicy(context, 'core.tenants');
 
   expect(policy.dataset.id).toBe('core.users_core');
+  expect(secondPolicy.dataset.id).toBe('core.tenants');
   expect(loadPlanned).toHaveBeenCalledWith(context);
+  expect(loadPlanned).toHaveBeenCalledTimes(1);
   expect(installedPorts.import.assertSources).toHaveBeenCalledWith(context);
 });

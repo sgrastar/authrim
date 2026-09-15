@@ -6,6 +6,7 @@ import {
   decodePortableR2ObjectChunk,
   TENANT_BACKUP_R2_CHUNK_BYTES,
 } from '@authrim/ar-lib-core/services/tenant-portability/portable-r2-object';
+import { PORTABLE_TENANT_KEY } from '@authrim/ar-lib-core/services/tenant-portability/portable-tenant-key';
 import {
   encodeLogRecordBlocks,
   encryptLogChunkBody,
@@ -237,7 +238,15 @@ describe('tenant backup R2 object snapshot port', () => {
     });
     const stored = new TextEncoder().encode(JSON.stringify(envelope));
     const source = bucket({
-      [objectKey]: { bytes: stored, etag: 'hold-etag', version: 'hold-version' },
+      [objectKey]: {
+        bytes: stored,
+        etag: 'hold-etag',
+        version: 'hold-version',
+        customMetadata: {
+          tenantKey,
+          encryptionTenantContext: tenantKey,
+        },
+      },
     });
     const ports = createTenantBackupR2ObjectSnapshotPorts({
       env: {
@@ -284,6 +293,12 @@ describe('tenant backup R2 object snapshot port', () => {
     );
 
     expect(new TextDecoder().decode(decoded.bytes)).toBe(plaintext);
+    expect(decoded.context.encryptionTenantContext).toBe(PORTABLE_TENANT_KEY);
+    expect(decoded.customMetadata).toMatchObject({
+      tenantKey: PORTABLE_TENANT_KEY,
+      encryptionTenantContext: PORTABLE_TENANT_KEY,
+    });
+    expect(JSON.stringify(decoded.context)).not.toContain(tenantKey);
     await expect(
       ports.logArchiveObjects.readSummaries(input, 'snapshot-hold', 100)
     ).resolves.toEqual([
@@ -502,6 +517,7 @@ describe('tenant backup R2 object snapshot port', () => {
         bytes: stored,
         etag: 'log-etag',
         version: 'log-version',
+        customMetadata: { tenantKey: 'tenant-key-a' },
       },
     });
     const input = context();
@@ -585,6 +601,9 @@ describe('tenant backup R2 object snapshot port', () => {
     );
     const portableLog = decodePortableLogChunkRecords(portableObject.bytes);
 
+    expect(portableObject.context.tenantKey).toBe(PORTABLE_TENANT_KEY);
+    expect(portableObject.customMetadata?.tenantKey).toBe(PORTABLE_TENANT_KEY);
+    expect(JSON.stringify(portableObject.context)).not.toContain('tenant-key-a');
     expect(portableLog.records).toEqual([
       {
         recordId: 'record-kept',

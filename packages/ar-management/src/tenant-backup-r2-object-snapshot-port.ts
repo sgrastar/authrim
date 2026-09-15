@@ -13,6 +13,7 @@ import {
   type PortableR2BucketBinding,
   type PortableR2DatasetId,
 } from '@authrim/ar-lib-core/services/tenant-portability/portable-r2-object';
+import { PORTABLE_TENANT_KEY } from '@authrim/ar-lib-core/services/tenant-portability/portable-tenant-key';
 import {
   decodeLogRecordFromBlock,
   decryptLogChunkBody,
@@ -614,6 +615,31 @@ function metadata(object: Pick<R2Object, 'httpMetadata' | 'customMetadata'>): Lo
   };
 }
 
+function portableCustomMetadata(
+  descriptor: TenantBackupR2ObjectDescriptor,
+  value: Readonly<Record<string, string>>
+): Record<string, string> {
+  const result = { ...value };
+  const context = descriptor.context;
+  if ('tenantKey' in context) {
+    if (result.tenantKey !== undefined && result.tenantKey !== context.tenantKey) invalid();
+    if (result.tenantKey !== undefined) result.tenantKey = PORTABLE_TENANT_KEY;
+  }
+  if (context.catalogKind === 'restore_hold_payload') {
+    if (result.tenantKey !== undefined && result.tenantKey !== context.encryptionTenantContext)
+      invalid();
+    if (
+      result.encryptionTenantContext !== undefined &&
+      result.encryptionTenantContext !== context.encryptionTenantContext
+    )
+      invalid();
+    if (result.tenantKey !== undefined) result.tenantKey = PORTABLE_TENANT_KEY;
+    if (result.encryptionTenantContext !== undefined)
+      result.encryptionTenantContext = PORTABLE_TENANT_KEY;
+  }
+  return result;
+}
+
 async function getPinnedObject(
   bucket: R2Bucket,
   descriptor: TenantBackupR2ObjectDescriptor,
@@ -834,9 +860,15 @@ async function* captureDataset(
         chunkCount,
         chunkSha256: await sha256(chunk),
         bytes: chunk,
-        context: descriptor.context,
+        context: {
+          ...descriptor.context,
+          ...('tenantKey' in descriptor.context ? { tenantKey: PORTABLE_TENANT_KEY } : {}),
+          ...('encryptionTenantContext' in descriptor.context
+            ? { encryptionTenantContext: PORTABLE_TENANT_KEY }
+            : {}),
+        },
         httpMetadata: normalizeHttpMetadata(loadedMetadata.httpMetadata),
-        customMetadata: loadedMetadata.customMetadata,
+        customMetadata: portableCustomMetadata(descriptor, loadedMetadata.customMetadata),
       });
     }
     const after = await bucket.head(descriptor.objectKey);

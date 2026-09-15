@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DatabaseAdapter } from '@authrim/ar-lib-core';
 import type { TenantBackupStepContext } from '@authrim/ar-lib-core/services/tenant-portability/operation-executor';
 import type { PortableR2ObjectChunk } from '@authrim/ar-lib-core/services/tenant-portability/portable-r2-object';
+import { PORTABLE_TENANT_KEY } from '@authrim/ar-lib-core/services/tenant-portability/portable-tenant-key';
 import type { RestoredTenantR2Object } from '../tenant-backup-r2-object-restore-port';
 import { createTenantBackupR2CatalogFinalizer } from '../tenant-backup-r2-catalog-finalizer';
 
@@ -175,6 +176,7 @@ describe('tenant backup R2 catalog finalizer', () => {
   it('retargets and verifies an object catalog physical row', async () => {
     const resolveCore = vi.fn(async () => query);
     const finalizer = createTenantBackupR2CatalogFinalizer({
+      targetTenantKey: 'tenant-key-a',
       resolveCore,
       resolveAdmin: vi.fn(async () => query),
     });
@@ -210,6 +212,7 @@ describe('tenant backup R2 catalog finalizer', () => {
 
   it('retargets encrypted log objects and plaintext manifests in Admin D1', async () => {
     const finalizer = createTenantBackupR2CatalogFinalizer({
+      targetTenantKey: 'tenant-key-a',
       resolveCore: vi.fn(async () => query),
       resolveAdmin: vi.fn(async () => query),
     });
@@ -221,7 +224,7 @@ describe('tenant backup R2 catalog finalizer', () => {
       context: {
         tenantId: 'tenant-a',
         catalogKind: 'log_object',
-        tenantKey: 'tenant-key-a',
+        tenantKey: PORTABLE_TENANT_KEY,
       },
     });
     const logTarget = restored({
@@ -248,7 +251,7 @@ describe('tenant backup R2 catalog finalizer', () => {
       context: {
         tenantId: 'tenant-a',
         catalogKind: 'log_manifest',
-        tenantKey: 'tenant-key-a',
+        tenantKey: PORTABLE_TENANT_KEY,
       },
     });
     const manifestTarget = restored({
@@ -287,6 +290,7 @@ describe('tenant backup R2 catalog finalizer', () => {
       );
     `);
     const finalizer = createTenantBackupR2CatalogFinalizer({
+      targetTenantKey: 'tenant-key-a',
       resolveCore: vi.fn(async () => query),
       resolveAdmin: vi.fn(async () => query),
     });
@@ -298,7 +302,7 @@ describe('tenant backup R2 catalog finalizer', () => {
       context: {
         tenantId: 'tenant-a',
         catalogKind: 'log_object',
-        tenantKey: 'tenant-key-a',
+        tenantKey: PORTABLE_TENANT_KEY,
         logType: 'admin_audit',
         plane: 'archive',
         chunkId: 'chunk-a',
@@ -375,6 +379,7 @@ describe('tenant backup R2 catalog finalizer', () => {
 
   it('retargets one shared sensitive-detail index to an independent record', async () => {
     const finalizer = createTenantBackupR2CatalogFinalizer({
+      targetTenantKey: 'tenant-key-a',
       resolveCore: vi.fn(async () => query),
       resolveAdmin: vi.fn(async () => query),
     });
@@ -419,6 +424,7 @@ describe('tenant backup R2 catalog finalizer', () => {
 
   it('records restored workflow payloads in an immutable quarantine without live references', async () => {
     const finalizer = createTenantBackupR2CatalogFinalizer({
+      targetTenantKey: 'tenant-key-a',
       resolveCore: vi.fn(async () => query),
       resolveAdmin: vi.fn(async () => query),
     });
@@ -433,6 +439,7 @@ describe('tenant backup R2 catalog finalizer', () => {
         sourceDatabaseId: 'admin-source',
         sourceRowId: 'held-message.job-a',
         objectClass: 'operational_log_detail',
+        encryptionTenantContext: PORTABLE_TENANT_KEY,
         holdDatasetId: 'admin.logging_message_jobs',
         holdRecordId: '[["text","job-a"]]',
         sourceField: 'payload_object_ref',
@@ -476,6 +483,7 @@ describe('tenant backup R2 catalog finalizer', () => {
   it('rejects a catalog row owned by another tenant', async () => {
     database.prepare("UPDATE object_catalog SET tenant_id='tenant-b'").run();
     const finalizer = createTenantBackupR2CatalogFinalizer({
+      targetTenantKey: 'tenant-key-a',
       resolveCore: vi.fn(async () => query),
       resolveAdmin: vi.fn(async () => query),
     });

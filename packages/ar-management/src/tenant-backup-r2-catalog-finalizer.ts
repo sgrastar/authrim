@@ -4,6 +4,10 @@ import type {
   PortableR2DatasetId,
   PortableR2ObjectChunk,
 } from '@authrim/ar-lib-core/services/tenant-portability/portable-r2-object';
+import {
+  assertEnvironmentTenantKey,
+  PORTABLE_TENANT_KEY,
+} from '@authrim/ar-lib-core/services/tenant-portability/portable-tenant-key';
 import type {
   RestoredTenantR2Object,
   TenantBackupR2ObjectFinalizer,
@@ -56,10 +60,10 @@ function catalogKind(source: PortableR2ObjectChunk): CatalogKind {
   return value as CatalogKind;
 }
 
-function tenantKey(source: PortableR2ObjectChunk): string {
+function tenantKey(source: PortableR2ObjectChunk, targetTenantKey: string): string {
   const value = source.context.tenantKey;
-  if (typeof value !== 'string' || !/^[A-Za-z0-9_.:-]{1,256}$/u.test(value)) invalid();
-  return value;
+  if (value !== PORTABLE_TENANT_KEY) invalid();
+  return assertEnvironmentTenantKey(targetTenantKey);
 }
 
 function validate(
@@ -93,6 +97,7 @@ function validate(
       source.bucketBinding !== 'AUDIT_ARCHIVE' ||
       source.context.sourceFamily !== 'admin' ||
       source.context.objectClass !== 'operational_log_detail' ||
+      source.context.encryptionTenantContext !== PORTABLE_TENANT_KEY ||
       !['admin.logging_dlq_items', 'admin.logging_message_jobs'].includes(
         String(source.context.holdDatasetId)
       ) ||
@@ -274,7 +279,8 @@ async function verifyLogRecords(
   db: Database,
   source: PortableR2ObjectChunk,
   rowId: string,
-  restored: RestoredTenantR2Object
+  restored: RestoredTenantR2Object,
+  targetTenantKey: string
 ): Promise<boolean> {
   if (source.sourceEncoding !== 'log_chunk_records_v1') return true;
   const expected = restored.logRecords ?? invalid();
@@ -298,7 +304,7 @@ async function verifyLogRecords(
        AND status='committed' ORDER BY record_id`,
     [
       rowId,
-      tenantKey(source),
+      tenantKey(source, targetTenantKey),
       contextString(source, 'logType'),
       contextString(source, 'plane'),
       contextString(source, 'chunkId'),
@@ -370,6 +376,7 @@ async function verifySensitiveDetail(
 
 /** Atomically retarget restored catalog rows inside the unpublished Core/Admin databases. */
 export function createTenantBackupR2CatalogFinalizer(input: {
+  targetTenantKey: string;
   resolveAdmin(
     context: TenantBackupStepContext,
     planDigest: string,
@@ -381,6 +388,7 @@ export function createTenantBackupR2CatalogFinalizer(input: {
     sourceDatabaseId: string
   ): Promise<Database>;
 }): TenantBackupR2ObjectFinalizer {
+  assertEnvironmentTenantKey(input.targetTenantKey);
   const database = (
     context: TenantBackupStepContext,
     planDigest: string,
@@ -412,13 +420,13 @@ export function createTenantBackupR2CatalogFinalizer(input: {
       rows = await db.query<CatalogRow>(
         `SELECT id,object_key,record_count,byte_count,checksum_sha256,encryption_scope,key_version
          FROM log_object_catalog WHERE id=? AND tenant_key=? AND deleted_at IS NULL`,
-        [target.rowId, tenantKey(source)]
+        [target.rowId, tenantKey(source, input.targetTenantKey)]
       );
     } else {
       rows = await db.query<CatalogRow>(
         `SELECT id,manifest_object_key,checksum_sha256 FROM log_chunk_manifests
          WHERE id=? AND tenant_key=?`,
-        [target.rowId, tenantKey(source)]
+        [target.rowId, tenantKey(source, input.targetTenantKey)]
       );
     }
     if (rows.length !== 1) invalid();
@@ -580,7 +588,7 @@ export function createTenantBackupR2CatalogFinalizer(input: {
                 restored.encryptionScope,
                 restored.keyVersion,
                 target.rowId,
-                tenantKey(source),
+                tenantKey(source, input.targetTenantKey),
                 logType,
                 plane,
                 source.objectKey,
@@ -589,12 +597,19 @@ export function createTenantBackupR2CatalogFinalizer(input: {
             },
             {
               sql: mappedLogRecordUpdateSql(db),
-              params: [mappings, target.rowId, tenantKey(source), logType, plane, chunkId],
+              params: [
+                mappings,
+                target.rowId,
+                tenantKey(source, input.targetTenantKey),
+                logType,
+                plane,
+                chunkId,
+              ],
             },
             {
               sql: `UPDATE log_chunk_manifests SET status='repair_needed'
                 WHERE tenant_key=? AND log_type=? AND plane=? AND status='committed'`,
-              params: [tenantKey(source), logType, plane],
+              params: [tenantKey(source, input.targetTenantKey), logType, plane],
             },
           ]);
           if (
@@ -618,7 +633,7 @@ export function createTenantBackupR2CatalogFinalizer(input: {
               restored.encryptionScope,
               restored.keyVersion,
               target.rowId,
-              tenantKey(source),
+              tenantKey(source, input.targetTenantKey),
               source.objectKey,
               restored.objectKey,
             ]
@@ -633,14 +648,15 @@ export function createTenantBackupR2CatalogFinalizer(input: {
             restored.objectKey,
             restored.storedSha256,
             target.rowId,
-            tenantKey(source),
+            tenantKey(source, input.targetTenantKey),
             source.objectKey,
             restored.objectKey,
           ]
         );
       }
       if (rows.length !== 1 || !matches(kind, rows[0], restored)) invalid();
-      if (!(await verifyLogRecords(db, source, target.rowId, restored))) invalid();
+      if (!(await verifyLogRecords(db, source, target.rowId, restored, input.targetTenantKey)))
+        invalid();
       if (!(await verifySensitiveDetail(db, context, source, restored))) invalid();
       context.signal.throwIfAborted();
     },
@@ -653,7 +669,7 @@ export function createTenantBackupR2CatalogFinalizer(input: {
       const db = await database(context, planDigest, target.family, target.databaseId);
       return (
         matches(catalogKind(source), await read(context, planDigest, source), restored) &&
-        (await verifyLogRecords(db, source, target.rowId, restored)) &&
+        (await verifyLogRecords(db, source, target.rowId, restored, input.targetTenantKey)) &&
         (await verifySensitiveDetail(db, context, source, restored))
       );
     },

@@ -8,6 +8,10 @@ import type { PlannedInstalledSqliteDataset } from '@authrim/ar-lib-core/service
 import { PHASE8_CUMULATIVE_SQLITE_DATASET_REGISTRATIONS } from '@authrim/ar-lib-core/services/tenant-portability/phase8-sqlite-modules';
 import { createPhase8SqliteInspectionPolicies } from '@authrim/ar-lib-core/services/tenant-portability/phase8-sqlite-references';
 import type { PortableSqliteRow } from '@authrim/ar-lib-core/services/tenant-portability/sqlite-dataset-inspector';
+import {
+  normalizePortableTenantKeyRow,
+  PORTABLE_TENANT_KEY_SQLITE_DATASETS,
+} from '@authrim/ar-lib-core/services/tenant-portability/portable-tenant-key';
 import type { TenantBackupStepContext } from '@authrim/ar-lib-core/services/tenant-portability/operation-executor';
 import { TenantBackupRestoreHoldStore } from '@authrim/ar-lib-core/services/tenant-portability/restore-hold-store';
 import {
@@ -115,6 +119,18 @@ export function createPhase8TenantBackupInstalledAdapter(
   const keyVersion = Number(keyVersionValue);
   const now = input.now ?? Date.now;
   const adminEnvelopes = createTenantBackupAdminEnvelopePorts(input.env);
+  const planCache = new WeakMap<
+    TenantBackupStepContext,
+    Promise<readonly PlannedInstalledSqliteDataset[]>
+  >();
+  const loadInstalledPlan = (context: TenantBackupStepContext) => {
+    if (input.planned) return Promise.resolve(input.planned);
+    const cached = planCache.get(context);
+    if (cached) return cached;
+    const loaded = input.loadPlanned(context);
+    planCache.set(context, loaded);
+    return loaded;
+  };
   const r2Snapshots = createTenantBackupR2ObjectSnapshotPorts({
     env: input.env,
     assertSource: (context) => input.ports.export.assertSources(context),
@@ -124,7 +140,9 @@ export function createPhase8TenantBackupInstalledAdapter(
   const r2Objects = createTenantBackupR2ObjectRestorePorts({
     env: input.env,
     database,
+    targetTenantKey: input.ports.tenantKey,
     finalizer: createTenantBackupR2CatalogFinalizer({
+      targetTenantKey: input.ports.tenantKey,
       resolveAdmin: (context, planDigest, sourceDatabaseId) =>
         input.ports.resolveAdminR2RestoreDatabase(context, planDigest, sourceDatabaseId),
       resolveCore: (context, planDigest, sourceDatabaseId) =>
@@ -136,6 +154,36 @@ export function createPhase8TenantBackupInstalledAdapter(
     ...input.ports.rowTransform,
     transformAdminEnvelope: (datasetId: string, rowJson: string) =>
       adminEnvelopes.transformAdminEnvelope(datasetId, rowJson),
+  };
+  const transformSensitiveRow = createPhase8TenantBackupRowTransform(input.env, rowTransform);
+  const portableTenantKeyIds = new Set<string>(PORTABLE_TENANT_KEY_SQLITE_DATASETS);
+  const transformedDatasetIds = [
+    ...new Set([...PHASE8_TRANSFORMED_SQLITE_DATASETS, ...PORTABLE_TENANT_KEY_SQLITE_DATASETS]),
+  ];
+  const transformPortableRow = async (
+    value: Parameters<typeof transformSensitiveRow>[0]
+  ): Promise<string> => {
+    let rowJson = (PHASE8_TRANSFORMED_SQLITE_DATASETS as readonly string[]).includes(
+      value.datasetId
+    )
+      ? await transformSensitiveRow(value)
+      : value.rowJson;
+    if (portableTenantKeyIds.has(value.datasetId)) {
+      const entry = (await loadInstalledPlan(value.context)).find(
+        ({ dataset }) => dataset.id === value.datasetId
+      );
+      if (!entry) throw new Error('backup_phase8_plan_loader');
+      const required =
+        (!('parent' in entry.capture) && entry.capture.tenantIdentity === 'tenantKey') ||
+        entry.dataset.id === 'core.tenants';
+      rowJson = normalizePortableTenantKeyRow(
+        entry.capture,
+        rowJson,
+        input.ports.tenantKey,
+        required
+      );
+    }
+    return rowJson;
   };
   const otherStores = {
     ...input.ports.otherStores,
@@ -232,7 +280,10 @@ export function createPhase8TenantBackupInstalledAdapter(
         : {
             loadPolicies: async (context: TenantBackupStepContext) => {
               if (!loadPlanned) throw new Error('backup_phase8_plan_loader');
-              return createPhase8SqliteInspectionPolicies(await loadPlanned(context), policyInput);
+              return createPhase8SqliteInspectionPolicies(
+                await loadInstalledPlan(context),
+                policyInput
+              );
             },
           }),
       requiredDatabases: {
@@ -240,9 +291,9 @@ export function createPhase8TenantBackupInstalledAdapter(
         fixed: ['DB_ADMIN'],
       },
       registrations: PHASE8_CUMULATIVE_SQLITE_DATASET_REGISTRATIONS,
-      transformedDatasetIds: PHASE8_TRANSFORMED_SQLITE_DATASETS,
+      transformedDatasetIds,
       filterRow: createPhase8TenantBackupRowFilter({ loadReferences: loadR2References }),
-      transformRow: createPhase8TenantBackupRowTransform(input.env, rowTransform),
+      transformRow: transformPortableRow,
       otherStores: createPhase8OtherStoreHandlers(input.env, otherStores),
       recordSnapshots: [
         {

@@ -14,6 +14,10 @@ import {
   type PortableR2ObjectChunk,
 } from '@authrim/ar-lib-core/services/tenant-portability/portable-r2-object';
 import {
+  assertEnvironmentTenantKey,
+  PORTABLE_TENANT_KEY,
+} from '@authrim/ar-lib-core/services/tenant-portability/portable-tenant-key';
+import {
   TenantBackupR2RestoreStore,
   type TenantBackupRestoredLogRecordLocation,
   type TenantBackupR2RestoreObject,
@@ -304,6 +308,7 @@ function requiredInteger(context: Readonly<Record<string, unknown>>, key: string
 
 async function encodeTargetBody(
   env: RestoreEnv,
+  targetTenantKey: string,
   source: PortableR2ObjectChunk,
   objectKey: string,
   plaintext: Uint8Array
@@ -321,6 +326,8 @@ async function encodeTargetBody(
     const plane = source.bucketBinding;
     if (
       !isObjectClass(objectClass) ||
+      (source.context.catalogKind === 'restore_hold_payload' &&
+        requiredString(source.context, 'encryptionTenantContext') !== PORTABLE_TENANT_KEY) ||
       (plane !== 'AUDIT_ARCHIVE' && plane !== 'EXPORT_ARTIFACTS' && plane !== 'SENSITIVE_DETAILS')
     )
       invalid();
@@ -367,7 +374,8 @@ async function encodeTargetBody(
       logRecords: null,
     };
   }
-  const tenantKey = requiredString(source.context, 'tenantKey');
+  if (requiredString(source.context, 'tenantKey') !== PORTABLE_TENANT_KEY) invalid();
+  const tenantKey = targetTenantKey;
   const logType = requiredString(source.context, 'logType');
   const plane = requiredString(source.context, 'plane');
   const chunkId = requiredString(source.context, 'chunkId');
@@ -498,9 +506,11 @@ function restored(
 export function createTenantBackupR2ObjectRestorePorts(input: {
   env: RestoreEnv;
   database: Pick<DatabaseAdapter, 'query' | 'queryOne'>;
+  targetTenantKey: string;
   finalizer: TenantBackupR2ObjectFinalizer;
   now?: () => number;
 }) {
+  assertEnvironmentTenantKey(input.targetTenantKey);
   const store = new TenantBackupR2RestoreStore(input.database);
   const now = input.now ?? Date.now;
 
@@ -582,6 +592,7 @@ export function createTenantBackupR2ObjectRestorePorts(input: {
       if ((await sha256(plaintext)) !== prepared.object.object_sha256) invalid();
       const encoded = await encodeTargetBody(
         input.env,
+        input.targetTenantKey,
         source,
         prepared.object.target_object_key,
         plaintext
@@ -593,6 +604,12 @@ export function createTenantBackupR2ObjectRestorePorts(input: {
       const encodedSha256 = await sha256(encoded.bytes);
       const customMetadata = {
         ...(source.customMetadata ?? {}),
+        ...(['log_object', 'log_manifest', 'restore_hold_payload'].includes(
+          String(source.context.catalogKind)
+        ) &&
+        ('tenantKey' in source.context || source.customMetadata?.tenantKey !== undefined)
+          ? { tenantKey: input.targetTenantKey }
+          : {}),
         ...(source.sourceEncoding === 'plaintext'
           ? {}
           : {
