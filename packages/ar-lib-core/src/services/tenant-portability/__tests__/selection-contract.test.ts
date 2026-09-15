@@ -4,6 +4,8 @@ import { getTenantRuntimeRegistryRouteState } from '../../tenant-runtime-registr
 import type { TenantRuntimeCacheGenerationRow } from '../../../repositories/admin/tenant-database-registry';
 import {
   parseTenantBackupSelection,
+  tenantBackupSelectionIsSubset,
+  tenantBackupSelectionsCover,
   tenantBackupLogWindow,
   tenantDatasetSelectionRule,
   type TenantBackupSelection,
@@ -181,5 +183,41 @@ describe('tenant portability selection contract', () => {
     for (const invalid of [NaN, Infinity, -1, 1.5, Number.MAX_SAFE_INTEGER + 1]) {
       expect(() => tenantBackupLogWindow(7, invalid)).toThrow('invalid_tenant_backup_selection');
     }
+  });
+
+  it('combines independent category bundles without broadening the restore request', () => {
+    const requested = {
+      settings: true,
+      users: true,
+      admin: false,
+      artifacts: false,
+      logs: { audit: false, other: false, sensitive: false, period: 30 as const },
+    };
+    const settings = { ...requested, users: false };
+    const users = { ...requested, settings: false };
+    expect(tenantBackupSelectionIsSubset(settings, requested)).toBe(true);
+    expect(tenantBackupSelectionIsSubset(users, requested)).toBe(true);
+    expect(tenantBackupSelectionsCover(requested, [settings, users])).toBe(true);
+    expect(tenantBackupSelectionsCover(requested, [settings])).toBe(false);
+    expect(tenantBackupSelectionIsSubset({ ...settings, admin: true }, requested)).toBe(false);
+  });
+
+  it('requires one log window across every contributing log bundle', () => {
+    const requested = {
+      settings: false,
+      users: false,
+      admin: false,
+      artifacts: false,
+      logs: { audit: true, other: true, sensitive: false, period: 30 as const },
+    };
+    const audit = {
+      ...requested,
+      logs: { ...requested.logs, other: false },
+    };
+    const otherWrongWindow = {
+      ...requested,
+      logs: { ...requested.logs, audit: false, period: 7 as const },
+    };
+    expect(tenantBackupSelectionsCover(requested, [audit, otherWrongWindow])).toBe(false);
   });
 });

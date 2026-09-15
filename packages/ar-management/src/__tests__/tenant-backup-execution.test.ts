@@ -27,6 +27,7 @@ const mocks = vi.hoisted(() => ({
   activeInputs: vi.fn<(...args: unknown[]) => Promise<unknown>>(),
   probe: vi.fn<(...args: unknown[]) => Promise<unknown>>(),
   persistInput: vi.fn<(...args: unknown[]) => Promise<unknown>>(),
+  plannedInputs: vi.fn<(...args: unknown[]) => Promise<unknown>>(),
   inventoryCreate: vi.fn<(...args: unknown[]) => Promise<unknown>>(),
   inventorySeal: vi.fn<(...args: unknown[]) => Promise<unknown>>(),
   tenantResources: vi.fn<(...args: unknown[]) => Promise<unknown>>(),
@@ -84,6 +85,8 @@ vi.mock('@authrim/ar-lib-core/services/tenant-portability/input-manifest-probe',
 }));
 vi.mock('@authrim/ar-lib-core/services/tenant-portability/input-plan', () => ({
   persistTenantBackupInput: (...args: unknown[]) => mocks.persistInput(...args),
+  loadPlannedTenantBackupInputs: (...args: unknown[]) => mocks.plannedInputs(...args),
+  tenantBackupInputDatasetOwners: () => new Map(),
 }));
 vi.mock('../tenant-backup-database-inventory', () => ({
   resolveTenantBackupDatabaseInventory: (...args: unknown[]) => mocks.placement(...args),
@@ -149,6 +152,7 @@ beforeEach(() => {
   mocks.inventoryCreate.mockResolvedValue({ item_count: 0, chain_digest: '0'.repeat(64) });
   mocks.inventorySeal.mockResolvedValue({});
   mocks.persistInput.mockResolvedValue(undefined);
+  mocks.plannedInputs.mockResolvedValue([]);
   mocks.tenantResources.mockResolvedValue([]);
   mocks.fixedResources.mockReturnValue([]);
   mocks.sqlitePlanStep.mockResolvedValue({

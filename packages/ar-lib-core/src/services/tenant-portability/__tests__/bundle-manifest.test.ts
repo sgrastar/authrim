@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   decodeTenantBundleManifest,
+  decodeTenantBundleImportManifest,
   encodeTenantBundleManifest,
   TENANT_BUNDLE_MANIFEST_MAX_BYTES,
   type TenantBundleManifest,
@@ -141,5 +142,47 @@ describe('authenticated bundle manifest semantics', () => {
         decodeTenantBundleManifest(bytes(value), { ...expected, datasets: value.datasets })
       ).toThrow();
     }
+  });
+
+  it('accepts one complete category subset of a combined import expectation', () => {
+    const tenantState = {
+      id: 'core.tenants',
+      module: 'tenant-runtime',
+      kind: 'tenant_state' as const,
+      store: 'database' as const,
+      schemaVersion: 1,
+      disposition: 'include' as const,
+    };
+    const userDataset = {
+      id: 'core.users',
+      module: 'users',
+      kind: 'users' as const,
+      store: 'database' as const,
+      schemaVersion: 1,
+      disposition: 'include' as const,
+    };
+    const combined = {
+      ...expected,
+      selection: { ...expected.selection, users: true },
+      datasets: [...expected.datasets, tenantState, userDataset],
+    };
+    const settingsBundle = {
+      ...fixture(),
+      selection: {
+        settings: true,
+        users: false,
+        admin: false,
+        artifacts: false,
+        logs: { audit: false, other: false, sensitive: false, period: 'all' as const },
+      },
+      datasets: [...expected.datasets, tenantState],
+    };
+    expect(decodeTenantBundleImportManifest(bytes(settingsBundle), combined)).toEqual(
+      settingsBundle
+    );
+    settingsBundle.datasets.pop();
+    expect(() => decodeTenantBundleImportManifest(bytes(settingsBundle), combined)).toThrow(
+      'invalid_tenant_bundle_manifest'
+    );
   });
 });

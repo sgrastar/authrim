@@ -16,6 +16,7 @@ const mocks = vi.hoisted(() => ({
   restoreHead: vi.fn<(...args: unknown[]) => Promise<unknown>>(),
   restoreValidated: vi.fn<(...args: unknown[]) => Promise<unknown>>(),
   planned: vi.fn<(...args: unknown[]) => Promise<unknown>>(),
+  plannedInputs: vi.fn<(...args: unknown[]) => Promise<unknown>>(),
   datasetStart: vi.fn<(...args: unknown[]) => Promise<unknown>>(),
   readNext: vi.fn<(...args: unknown[]) => Promise<unknown>>(),
 }));
@@ -55,6 +56,13 @@ vi.mock('@authrim/ar-lib-core/services/tenant-portability/restore-plan-inventory
 }));
 vi.mock('@authrim/ar-lib-core/services/tenant-portability/input-plan', () => ({
   loadPlannedTenantBackupInput: (...args: unknown[]) => mocks.planned(...args),
+  loadPlannedTenantBackupInputs: (...args: unknown[]) => mocks.plannedInputs(...args),
+  tenantBackupInputDatasetOwners: (
+    inputs: Array<{ manifest: { bundleId: string; datasets: Array<{ id: string }> } }>
+  ) =>
+    new Map(
+      inputs.flatMap(({ manifest }) => manifest.datasets.map(({ id }) => [id, manifest.bundleId]))
+    ),
 }));
 vi.mock('@authrim/ar-lib-core/services/tenant-portability/input-receipts', () => ({
   TenantBackupInputReceipts: class {
@@ -144,6 +152,7 @@ describe('tenant backup validated input production port', () => {
         datasets: [dataset],
       },
     });
+    mocks.plannedInputs.mockImplementation(async () => [await mocks.planned()]);
     mocks.datasetStart.mockResolvedValue(4);
     mocks.readNext.mockResolvedValue({ rowJson: '{"id":["text","user-a"]}', nextCursor: '{}' });
   });
@@ -268,11 +277,10 @@ describe('tenant backup validated input production port', () => {
       }),
     ]);
     expect(mocks.executionValidated).toHaveBeenCalledTimes(2);
-    expect(mocks.planned).toHaveBeenCalledWith(
+    expect(mocks.plannedInputs).toHaveBeenCalledWith(
       context,
       expect.anything(),
-      0,
-      expect.objectContaining({ bundleId })
+      expect.objectContaining({ source: request.intent.source })
     );
   });
 });

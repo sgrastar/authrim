@@ -23,7 +23,11 @@ import {
   type TenantBackupSqliteRestorePlanTarget,
 } from '@authrim/ar-lib-core/services/tenant-portability/sqlite-restore-plan-step';
 import { probeTenantBackupInputManifest } from '@authrim/ar-lib-core/services/tenant-portability/input-manifest-probe';
-import { persistTenantBackupInput } from '@authrim/ar-lib-core/services/tenant-portability/input-plan';
+import {
+  loadPlannedTenantBackupInputs,
+  persistTenantBackupInput,
+  tenantBackupInputDatasetOwners,
+} from '@authrim/ar-lib-core/services/tenant-portability/input-plan';
 import { runTenantBackupArtifactStep } from '@authrim/ar-lib-core/services/tenant-portability/export-artifact-step';
 import type { TenantBundleManifest } from '@authrim/ar-lib-core/services/tenant-portability/bundle-manifest';
 import { runTenantBackupArtifactVerificationStep } from '@authrim/ar-lib-core/services/tenant-portability/verify-artifact-step';
@@ -250,6 +254,11 @@ export async function runTenantBackupImportPreparation(
   if (head.item_count !== cursor.nextInput) throw new Error('backup_import_execution_cursor');
   if (cursor.nextInput === loaded.inputs.length) {
     await inventory.seal(head.item_count, head.chain_digest);
+    await loadPlannedTenantBackupInputs(context, inventory, {
+      source: loaded.intent.source,
+      selection: loaded.intent.selection,
+      datasets,
+    });
     return {
       phase: 'decode_input',
       cursor: JSON.stringify({ version: 1, inputOrdinal: 0 }),
@@ -288,6 +297,7 @@ export async function runTenantBackupImportPreparation(
     },
     signal: context.signal,
     assertAuthorized: assertCurrent,
+    selectionMode: 'subset',
   });
   await persistTenantBackupInput({
     context,
@@ -429,11 +439,21 @@ export async function runTenantBackupImportValidation(
   };
   const initial = await assertCurrent();
   const datasets = resolveDatasets(adapter.datasets, initial.current.intent.selection);
+  const inventory = new TenantBackupExecutionInventory(database, context.lease, now);
+  const expectedInputSet = {
+    source: initial.current.intent.source,
+    selection: initial.current.intent.selection,
+    datasets,
+  };
   const result = await runTenantBackupSqliteInputValidationSequenceStep(context, {
     database,
     bucket: env.IMPORT_ARTIFACTS,
-    inventory: new TenantBackupExecutionInventory(database, context.lease, now),
+    inventory,
     now,
+    async ownsDataset(_ordinal, bundleId, datasetId) {
+      const inputs = await loadPlannedTenantBackupInputs(context, inventory, expectedInputSet);
+      return tenantBackupInputDatasetOwners(inputs).get(datasetId) === bundleId;
+    },
     loadInput: async (ordinal, bundleId) => {
       const loaded = await assertCurrent();
       const bound = loaded.current.inputs[ordinal];

@@ -3,6 +3,7 @@ import type { TenantBundleKeyEnvelope } from './bundle-key-envelope';
 import type { TenantBundleReadLimits } from './bundle-framing';
 import {
   decodeTenantBundleManifest,
+  decodeTenantBundleImportManifest,
   type TenantBundleManifest,
   type TenantBundleManifestExpectation,
 } from './bundle-manifest';
@@ -32,6 +33,8 @@ export async function probeTenantBackupInputManifest(input: {
   expected: Omit<TenantBundleManifestExpectation, 'bundleId'>;
   signal: AbortSignal;
   assertAuthorized: () => Promise<void>;
+  /** Combined imports allow each authenticated bundle to carry a strict category subset. */
+  selectionMode?: 'exact' | 'subset';
 }): Promise<{
   manifest: TenantBundleManifest;
   expected: TenantBundleManifestExpectation;
@@ -65,11 +68,22 @@ export async function probeTenantBackupInputManifest(input: {
     if (!content) fail();
     const opened = await cipher.step(content.payload);
     if (opened.kind !== 'chunk' || opened.bytes[0] !== 1) fail();
-    const manifest = decodeTenantBundleManifest(opened.bytes.subarray(1), expected);
+    const manifest =
+      input.selectionMode === 'subset'
+        ? decodeTenantBundleImportManifest(opened.bytes.subarray(1), expected)
+        : decodeTenantBundleManifest(opened.bytes.subarray(1), expected);
     input.signal.throwIfAborted();
     await input.assertAuthorized();
     input.signal.throwIfAborted();
-    return { manifest, expected };
+    return {
+      manifest,
+      expected: {
+        bundleId: manifest.bundleId,
+        source: structuredClone(manifest.source),
+        selection: structuredClone(manifest.selection),
+        datasets: manifest.datasets.map((dataset) => ({ ...dataset })),
+      },
+    };
   } catch {
     return fail();
   }

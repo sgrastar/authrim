@@ -1,5 +1,6 @@
 import {
   parseTenantBackupSelection,
+  tenantBackupSelectionIsSubset,
   tenantDatasetSelectionRule,
   type TenantBackupSelection,
   type TenantPortableSourceIdentity,
@@ -63,7 +64,11 @@ function logicalId(value: unknown): string {
   return id;
 }
 
-function validate(value: unknown, expected: TenantBundleManifestExpectation): TenantBundleManifest {
+function validate(
+  value: unknown,
+  expected: TenantBundleManifestExpectation,
+  selectionMode: 'exact' | 'subset' = 'exact'
+): TenantBundleManifest {
   const root = object(value, [
     'formatVersion',
     'bundleId',
@@ -97,7 +102,10 @@ function validate(value: unknown, expected: TenantBundleManifestExpectation): Te
   try {
     selection = parseTenantBackupSelection(root.selection);
     if (
-      JSON.stringify(selection) !== JSON.stringify(parseTenantBackupSelection(expected.selection))
+      selectionMode === 'exact'
+        ? JSON.stringify(selection) !==
+          JSON.stringify(parseTenantBackupSelection(expected.selection))
+        : !tenantBackupSelectionIsSubset(selection, expected.selection)
     )
       invalid();
   } catch {
@@ -107,11 +115,25 @@ function validate(value: unknown, expected: TenantBundleManifestExpectation): Te
     !Array.isArray(root.datasets) ||
     root.datasets.length === 0 ||
     root.datasets.length > MAX_DATASETS ||
-    root.datasets.length !== expected.datasets.length
+    root.datasets.length !==
+      (selectionMode === 'exact'
+        ? expected.datasets.length
+        : expected.datasets.filter(({ kind }) => {
+            const rule = tenantDatasetSelectionRule(kind, selection);
+            return rule.action === 'selected' || rule.action === 'resolve_references';
+          }).length)
   )
     invalid();
-  const installed = new Map(expected.datasets.map((dataset) => [dataset.id, dataset]));
-  if (installed.size !== expected.datasets.length) invalid();
+  const expectedDatasets =
+    selectionMode === 'exact'
+      ? expected.datasets
+      : expected.datasets.filter(({ kind }) => {
+          const rule = tenantDatasetSelectionRule(kind, selection);
+          return rule.action === 'selected' || rule.action === 'resolve_references';
+        });
+  if (new Set(expected.datasets.map(({ id }) => id)).size !== expected.datasets.length) invalid();
+  const installed = new Map(expectedDatasets.map((dataset) => [dataset.id, dataset]));
+  if (installed.size !== expectedDatasets.length) invalid();
   const seen = new Set<string>();
   const datasets = root.datasets.map((value) => {
     const entry = object(value, ['id', 'module', 'kind', 'store', 'schemaVersion', 'disposition']);
@@ -150,6 +172,32 @@ function validate(value: unknown, expected: TenantBundleManifestExpectation): Te
     selection,
     datasets,
   };
+}
+
+/** Decode one input contributing a strict subset of a combined import request. */
+export function decodeTenantBundleImportManifest(
+  bytes: Uint8Array,
+  expected: TenantBundleManifestExpectation
+): TenantBundleManifest {
+  if (!(bytes instanceof Uint8Array) || bytes.length > TENANT_BUNDLE_MANIFEST_MAX_BYTES) invalid();
+  try {
+    const encoded = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes);
+    const manifest = validate(JSON.parse(encoded), expected, 'subset');
+    if (JSON.stringify(manifest) !== encoded) invalid();
+    return manifest;
+  } catch {
+    invalid();
+  }
+}
+
+/** Canonicalize one input manifest while allowing it to contribute a category subset. */
+export function encodeTenantBundleImportManifest(
+  manifest: TenantBundleManifest,
+  expected: TenantBundleManifestExpectation
+): Uint8Array {
+  const bytes = new TextEncoder().encode(JSON.stringify(validate(manifest, expected, 'subset')));
+  if (bytes.length > TENANT_BUNDLE_MANIFEST_MAX_BYTES) invalid();
+  return bytes;
 }
 
 /** Bounded, canonical UTF-8. Duplicate JSON keys and alternate representations fail. */

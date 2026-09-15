@@ -3,11 +3,12 @@ import type { TenantBackupExecutionInventory } from './execution-inventory';
 import type { TenantBackupInputIdentity } from './input-frame-reader';
 import type { TenantBundleReadLimits } from './bundle-framing';
 import {
-  encodeTenantBundleManifest,
-  decodeTenantBundleManifest,
+  decodeTenantBundleImportManifest,
+  encodeTenantBundleImportManifest,
   type TenantBundleManifest,
   type TenantBundleManifestExpectation,
 } from './bundle-manifest';
+import { tenantBackupSelectionsCover } from './selection-contract';
 import { runTenantBackupInputDecodeStep } from './decode-input-step';
 
 export interface TenantBackupPlannedInput {
@@ -62,8 +63,8 @@ function entry(
     limits.maxFrames > 1000001
   )
     fail();
-  const manifest = decodeTenantBundleManifest(
-    encodeTenantBundleManifest(value.manifest, expected),
+  const manifest = decodeTenantBundleImportManifest(
+    encodeTenantBundleImportManifest(value.manifest, expected),
     expected
   );
   return {
@@ -73,6 +74,67 @@ function entry(
     limits: { ...limits },
     manifest,
   };
+}
+
+/** Revalidate the complete immutable input set and its combined category coverage. */
+export async function loadPlannedTenantBackupInputs(
+  context: TenantBackupStepContext,
+  inventory: TenantBackupExecutionInventory,
+  expected: Omit<TenantBundleManifestExpectation, 'bundleId'>
+): Promise<TenantBackupPlannedInput[]> {
+  const head = await owner(context, inventory);
+  if (head.state !== 'sealed' || head.item_count < 1 || head.item_count > 32) fail();
+  const inputs: TenantBackupPlannedInput[] = [];
+  for (let ordinal = 0; ordinal < head.item_count; ordinal += 1) {
+    const saved = (await inventory.readPage(ordinal))[0];
+    const prefix = 'backup-input:';
+    const bundleId = saved?.item_id.startsWith(prefix) ? saved.item_id.slice(prefix.length) : '';
+    if (!saved || saved.ordinal !== ordinal || !/^[a-f0-9]{32}$/.test(bundleId)) fail();
+    inputs.push(
+      entry(JSON.parse(saved.payload_json) as TenantBackupPlannedInput, {
+        bundleId,
+        source: expected.source,
+        selection: expected.selection,
+        datasets: expected.datasets,
+      })
+    );
+  }
+  if (
+    !tenantBackupSelectionsCover(
+      expected.selection,
+      inputs.map(({ manifest }) => manifest.selection)
+    ) ||
+    expected.datasets.some(
+      ({ id }) =>
+        !inputs.some(({ manifest }) => manifest.datasets.some((dataset) => dataset.id === id))
+    )
+  )
+    fail();
+  await owner(context, inventory);
+  return inputs;
+}
+
+/** Newest bundle owns an overlapping dataset; dependency validation still spans all owners. */
+export function tenantBackupInputDatasetOwners(
+  inputs: readonly TenantBackupPlannedInput[]
+): ReadonlyMap<string, string> {
+  const owners = new Map<string, { bundleId: string; boundaryUnixMs: number; ordinal: number }>();
+  inputs.forEach(({ manifest }, ordinal) => {
+    for (const { id } of manifest.datasets) {
+      const current = owners.get(id);
+      if (
+        !current ||
+        manifest.boundaryUnixMs > current.boundaryUnixMs ||
+        (manifest.boundaryUnixMs === current.boundaryUnixMs && ordinal > current.ordinal)
+      )
+        owners.set(id, {
+          bundleId: manifest.bundleId,
+          boundaryUnixMs: manifest.boundaryUnixMs,
+          ordinal,
+        });
+    }
+  });
+  return new Map([...owners].map(([datasetId, value]) => [datasetId, value.bundleId]));
 }
 
 /** Read and revalidate one immutable input from the sealed operation inventory. */
@@ -142,13 +204,19 @@ export async function runPlannedTenantBackupInputDecodeStep(
     input.ordinal,
     input.expected
   );
+  const exactExpected: TenantBundleManifestExpectation = {
+    bundleId: pinned.manifest.bundleId,
+    source: pinned.manifest.source,
+    selection: pinned.manifest.selection,
+    datasets: pinned.manifest.datasets,
+  };
   return runTenantBackupInputDecodeStep(context, {
     database: input.database,
     bucket: input.bucket,
     session: input.session,
     now: input.now,
     ...pinned,
-    expected: input.expected,
+    expected: exactExpected,
     async assertPinnedInput() {
       const current = await owner(context, input.inventory);
       if (current.state !== 'sealed' || current.chain_digest !== head.chain_digest) fail();

@@ -118,13 +118,17 @@ const base = {
   signal: new AbortController().signal,
 } as unknown as TenantBackupStepContext;
 
-function run(context: TenantBackupStepContext = base) {
+function run(
+  context: TenantBackupStepContext = base,
+  ownsDataset?: (ordinal: number, bundleId: string, datasetId: string) => Promise<boolean>
+) {
   return runTenantBackupSqliteInputValidationSequenceStep(context, {
     database: {} as never,
     bucket: {} as never,
     inventory,
     now: () => 100,
     loadInput,
+    ...(ownsDataset ? { ownsDataset } : {}),
   });
 }
 
@@ -176,6 +180,22 @@ it('starts the installed SQL policy at the exact ordered input and dataset', asy
   expect(loadInput).toHaveBeenCalledWith(0, bundleIds[0]);
   expect(loadPolicy).toHaveBeenCalledWith(dataset.id);
   expect(authorize).toHaveBeenCalled();
+});
+
+it('skips an overlapping dataset owned by a newer input', async () => {
+  const ownsDataset = vi.fn(async () => false);
+  await expect(run(base, ownsDataset)).resolves.toEqual({
+    phase: 'validate_input_modules',
+    cursor: JSON.stringify({
+      version: 1,
+      sessionId: 'validation-session',
+      inputOrdinal: 0,
+      datasetIndex: 1,
+    }),
+    disposition: 'continue',
+  });
+  expect(ownsDataset).toHaveBeenCalledWith(0, bundleIds[0], dataset.id);
+  expect(loadPolicy).not.toHaveBeenCalled();
 });
 
 it.each(['kv', 'durable_object', 'object'] as const)(

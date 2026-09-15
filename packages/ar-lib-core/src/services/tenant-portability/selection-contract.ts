@@ -81,6 +81,48 @@ export function parseTenantBackupSelection(value: unknown): TenantBackupSelectio
   };
 }
 
+/** A bundle may contribute one or more requested categories to a combined import plan. */
+export function tenantBackupSelectionIsSubset(
+  candidateValue: unknown,
+  requestedValue: unknown
+): boolean {
+  const candidate = parseTenantBackupSelection(candidateValue);
+  const requested = parseTenantBackupSelection(requestedValue);
+  if (
+    (candidate.settings && !requested.settings) ||
+    (candidate.users && !requested.users) ||
+    (candidate.admin && !requested.admin) ||
+    (candidate.artifacts && !requested.artifacts) ||
+    (candidate.logs.audit && !requested.logs.audit) ||
+    (candidate.logs.other && !requested.logs.other) ||
+    (candidate.logs.sensitive && !requested.logs.sensitive)
+  )
+    return false;
+  const carriesLogs = candidate.logs.audit || candidate.logs.other || candidate.logs.sensitive;
+  return !carriesLogs || candidate.logs.period === requested.logs.period;
+}
+
+/** Require the ordered input set, as a whole, to cover every category requested for restore. */
+export function tenantBackupSelectionsCover(
+  requestedValue: unknown,
+  candidateValues: readonly unknown[]
+): boolean {
+  const requested = parseTenantBackupSelection(requestedValue);
+  if (!candidateValues.length || candidateValues.length > 32) return false;
+  const candidates = candidateValues.map(parseTenantBackupSelection);
+  if (candidates.some((candidate) => !tenantBackupSelectionIsSubset(candidate, requested)))
+    return false;
+  return (
+    (!requested.settings || candidates.some(({ settings }) => settings)) &&
+    (!requested.users || candidates.some(({ users }) => users)) &&
+    (!requested.admin || candidates.some(({ admin }) => admin)) &&
+    (!requested.artifacts || candidates.some(({ artifacts }) => artifacts)) &&
+    (!requested.logs.audit || candidates.some(({ logs }) => logs.audit)) &&
+    (!requested.logs.other || candidates.some(({ logs }) => logs.other)) &&
+    (!requested.logs.sensitive || candidates.some(({ logs }) => logs.sensitive))
+  );
+}
+
 export type TenantDatasetSelectionRule =
   | { action: 'selected'; timeFilter: 'none' | 'log_window' }
   | { action: 'excluded'; reason: 'not_selected' | 'ephemeral' }

@@ -2,7 +2,11 @@ import { requireDedicatedAdminDatabaseAdapter, type Env } from '@authrim/ar-lib-
 import { TenantBackupExecutionInventory } from '@authrim/ar-lib-core/services/tenant-portability/execution-inventory';
 import { TenantBackupImportRequestStore } from '@authrim/ar-lib-core/services/tenant-portability/import-request';
 import { TenantBackupInputReceipts } from '@authrim/ar-lib-core/services/tenant-portability/input-receipts';
-import { loadPlannedTenantBackupInput } from '@authrim/ar-lib-core/services/tenant-portability/input-plan';
+import {
+  loadPlannedTenantBackupInput,
+  loadPlannedTenantBackupInputs,
+  tenantBackupInputDatasetOwners,
+} from '@authrim/ar-lib-core/services/tenant-portability/input-plan';
 import type { TenantPortableDataset } from '@authrim/ar-lib-core/services/tenant-portability/module-contract';
 import type { TenantBackupStepContext } from '@authrim/ar-lib-core/services/tenant-portability/operation-executor';
 import { DatabaseTenantBackupRestorePlanInventory } from '@authrim/ar-lib-core/services/tenant-portability/restore-plan-inventory';
@@ -185,7 +189,12 @@ export function createTenantBackupValidatedInputPorts(
       };
       const replayInput = {
         ...planned,
-        expected,
+        expected: {
+          bundleId: planned.manifest.bundleId,
+          source: planned.manifest.source,
+          selection: planned.manifest.selection,
+          datasets: planned.manifest.datasets,
+        },
         session: key.key,
         bucket: current.bucket,
         signal: context.signal,
@@ -227,29 +236,17 @@ export function createTenantBackupValidatedInputPorts(
       )
         invalid();
       await execution.assertInputValidated(context.lease);
+      const plannedInputs = await loadPlannedTenantBackupInputs(context, execution, {
+        source: current.request.intent.source,
+        selection: current.request.intent.selection,
+        datasets: current.datasets,
+      });
+      const owners = tenantBackupInputDatasetOwners(plannedInputs);
       const result: Phase8ValidatedSqliteRestoreDataset[] = [];
-      for (let ordinal = 0; ordinal < head.item_count; ordinal += 1) {
-        const rows = await execution.readPage(ordinal);
-        const saved = rows[0];
-        const prefix = 'backup-input:';
-        const bundleId = saved?.item_id.startsWith(prefix)
-          ? saved.item_id.slice(prefix.length)
-          : '';
-        if (
-          !saved ||
-          saved.ordinal !== ordinal ||
-          !/^[a-f0-9]{32}$/u.test(bundleId) ||
-          current.request.inputs[ordinal]?.ordinal !== ordinal
-        )
-          invalid();
-        const planned = await loadPlannedTenantBackupInput(context, execution, ordinal, {
-          bundleId,
-          source: current.request.intent.source,
-          selection: current.request.intent.selection,
-          datasets: current.datasets,
-        });
+      for (const [ordinal, planned] of plannedInputs.entries()) {
+        if (current.request.inputs[ordinal]?.ordinal !== ordinal) invalid();
         for (const dataset of planned.manifest.datasets.filter(
-          ({ store }) => store === 'database'
+          ({ id, store }) => store === 'database' && owners.get(id) === planned.manifest.bundleId
         )) {
           const policy = await options.loadPolicy(context, dataset.id);
           if (

@@ -10,8 +10,9 @@ function fail(): never {
 }
 
 /**
- * Finalize only when every dataset of every pinned input has an inspection receipt and reference
- * paging reached the sealed index's actual end/count. This does not authorize target activation.
+ * Finalize only when every effective dataset has an inspection receipt and every pinned input is
+ * completely authenticated. Overlaps use the newest snapshot, while reference paging must reach the
+ * sealed index's actual end/count. This does not authorize target activation.
  * Keep the session and its evidence until restore and cleanup finish.
  */
 export async function finalizeTenantBackupInputValidation(
@@ -100,11 +101,19 @@ export async function finalizeTenantBackupInputValidation(
   const now = input.now();
   if (!Number.isSafeInteger(now) || now < 0) fail();
   const coverage = `WITH inputs AS (
-      SELECT json_extract(payload_json,'$.manifest.bundleId') AS bundle_id,
+      SELECT i.ordinal,json_extract(payload_json,'$.manifest.bundleId') AS bundle_id,
+        json_extract(payload_json,'$.manifest.boundaryUnixMs') AS boundary_unix_ms,
         json_extract(payload_json,'$.manifest.datasets') AS datasets
-      FROM tenant_backup_execution_inventory_items WHERE operation_id=? AND tenant_id=? AND json_extract(payload_json,'$.kind')='backup-input'
+      FROM tenant_backup_execution_inventory_items i WHERE operation_id=? AND tenant_id=? AND json_extract(payload_json,'$.kind')='backup-input'
+    ), ranked_expected AS (
+      SELECT i.bundle_id,json_extract(d.value,'$.id') AS dataset_id,
+        row_number() OVER (
+          PARTITION BY json_extract(d.value,'$.id')
+          ORDER BY i.boundary_unix_ms DESC,i.ordinal DESC
+        ) AS owner_rank
+      FROM inputs i,json_each(i.datasets) d
     ), expected AS (
-      SELECT i.bundle_id,json_extract(d.value,'$.id') AS dataset_id FROM inputs i,json_each(i.datasets) d
+      SELECT bundle_id,dataset_id FROM ranked_expected WHERE owner_rank=1
     )
     SELECT o.id,o.tenant_id,s.id,?,?,? FROM tenant_backup_operations o
       JOIN tenant_backup_validation_sessions s ON s.operation_id=o.id AND s.tenant_id=o.tenant_id

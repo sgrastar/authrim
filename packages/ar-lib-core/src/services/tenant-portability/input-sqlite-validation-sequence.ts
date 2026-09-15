@@ -93,6 +93,7 @@ export async function runTenantBackupSqliteInputValidationSequenceStep(
     inventory: TenantBackupExecutionInventory;
     now: () => number;
     loadInput(ordinal: number, bundleId: string): Promise<LoadedInput>;
+    ownsDataset?(ordinal: number, bundleId: string, datasetId: string): Promise<boolean>;
   }
 ): Promise<TenantBackupStepResult> {
   const { operation, lease, signal } = context;
@@ -213,6 +214,12 @@ export async function runTenantBackupSqliteInputValidationSequenceStep(
       dataset.disposition !== 'include'
     )
       fail();
+    if (input.ownsDataset && !(await input.ownsDataset(outer.inputOrdinal, bundleId, dataset.id)))
+      return {
+        phase: 'validate_input_modules',
+        cursor: JSON.stringify({ ...outer, datasetIndex: outer.datasetIndex + 1 }),
+        disposition: 'continue',
+      };
     const policy = await loaded.loadPolicy(dataset.id);
     if (policy.dataset.id !== dataset.id) fail();
     await authorize();
@@ -241,11 +248,18 @@ export async function runTenantBackupSqliteInputValidationSequenceStep(
     dataset.disposition !== 'include'
   )
     fail();
+  if (input.ownsDataset && !(await input.ownsDataset(active.inputOrdinal, bundleId, dataset.id)))
+    fail();
   const policy = await loaded.loadPolicy(dataset.id);
   if (policy.dataset.id !== dataset.id) fail();
   const replayInput = {
     ...planned,
-    expected: loaded.expected,
+    expected: {
+      bundleId: planned.manifest.bundleId,
+      source: planned.manifest.source,
+      selection: planned.manifest.selection,
+      datasets: planned.manifest.datasets,
+    },
     session: loaded.session,
     bucket: input.bucket,
     signal,
