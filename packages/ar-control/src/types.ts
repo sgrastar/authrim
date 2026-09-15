@@ -98,6 +98,8 @@ export interface RuntimeSmokeServiceBinding {
 }
 
 export interface ControlEnv {
+  /** Setup-generated binding identity metadata; not a user-configurable backup option. */
+  AUTHRIM_FIXED_DATABASE_IDS?: string;
   CONTROL_DB: D1Database;
   MIGRATION_RELEASES: R2Bucket;
   TENANT_RUNTIME_REGISTRY?: KVNamespace;

@@ -103,11 +103,28 @@ function createHarness(permissions: string[], roles: string[] = []) {
     c.json({ ok: true })
   );
   app.post('/api/admin/platform/control-plane/lookup-hmac/rotations', (c) => c.json({ ok: true }));
+  app.get('/api/admin/tenant-backups/operation-1', (c) => c.json({ ok: true }));
+  app.post('/api/admin/tenant-backups/exports', (c) => c.json({ ok: true }));
 
   return app;
 }
 
 describe('declared admin route access', () => {
+  it('requires backup read access for inspection and backup management access for mutations', async () => {
+    const reader = createHarness([ADMIN_PERMISSIONS.BACKUPS_READ]);
+    const manager = createHarness([ADMIN_PERMISSIONS.BACKUPS_MANAGE]);
+
+    await expect(reader.request('/api/admin/tenant-backups/operation-1')).resolves.toMatchObject({
+      status: 200,
+    });
+    await expect(
+      reader.request('/api/admin/tenant-backups/exports', { method: 'POST' })
+    ).resolves.toMatchObject({ status: 403 });
+    await expect(
+      manager.request('/api/admin/tenant-backups/exports', { method: 'POST' })
+    ).resolves.toMatchObject({ status: 200 });
+  });
+
   it('restricts global R2 schedules and metrics to platform admin roles', () => {
     expect(findAdminRouteAccessRule('GET', '/api/admin/jobs/schedules')).toMatchObject({
       roles: ['super_admin', 'system_admin'],
@@ -119,7 +136,7 @@ describe('declared admin route access', () => {
   it('fails closed when an admin route has no declaration', async () => {
     const app = createHarness([ADMIN_PERMISSIONS.ALL]);
     const response = await app.request('/api/admin/undocumented', { method: 'POST' });
-    const body = (await response.json()) as { error: string };
+    const body: { error: string } = await response.json();
 
     expect(response.status).toBe(403);
     expect(body.error).toBe('insufficient_permissions');

@@ -1,8 +1,11 @@
 import {
   AdminLoggingControlRepository,
+  completeRetiredTenantBackupR2Generation,
+  hasCapturingTenantBackupSnapshot,
   InternalNotificationEventRepository,
   isObjectClass,
   loadChunkedSensitiveDetailJson,
+  listRetiredTenantBackupR2Generations,
   readR2ObjectTextWithLimit,
   requireDedicatedAdminDatabaseAdapter,
   validateUrlForSSRF,
@@ -73,6 +76,7 @@ const BULK_SUCCESS_DELIVERY_EVENT_RETENTION_DAYS = 7;
 const RETRY_DLQ_DELIVERY_EVENT_RETENTION_DAYS = 90;
 const CRITICAL_FAILURE_DELIVERY_EVENT_RETENTION_DAYS = 180;
 const LOGGING_RETENTION_DELETE_BATCH_SIZE = 500;
+const R2_RETIRED_GENERATION_CLEANUP_BATCH_SIZE = 100;
 const LOGGING_USAGE_WINDOW_KINDS = ['hour', 'day'] as const;
 const LOGGING_QUOTA_METRICS = [
   'delivery_records',
@@ -1733,6 +1737,13 @@ async function readLoggingMessagePayload(env: Env, objectRef: string) {
 
 async function deleteLoggingMessagePayload(env: Env, objectRef: string): Promise<void> {
   try {
+    if (
+      env.DB_ADMIN &&
+      (await hasCapturingTenantBackupSnapshot(
+        requireDedicatedAdminDatabaseAdapter(env, 'logging-message-payload-retention')
+      ))
+    )
+      return;
     await env.AUDIT_ARCHIVE?.delete(objectRef);
   } catch {
     // Terminal state is authoritative. The scheduled orphan cleanup retries object deletion.
@@ -4056,18 +4067,20 @@ async function runScheduledDeliveryEventRetention(
      )`,
     [bulkSuccessCutoff, defaultCutoff, criticalFailureCutoff, retryDlqCutoff, defaultCutoff]
   );
-  const dlqRows = await adapter.query<{ id: string; payload_object_ref: string }>(
-    `SELECT id, payload_object_ref
-     FROM logging_dlq_items
-     WHERE status IN ('deleted', 'purged', 'replayed')
-       AND (
-         (lane = 'critical' AND updated_at < ?)
-         OR (lane <> 'critical' AND updated_at < ?)
-       )
-     ORDER BY updated_at ASC
-     LIMIT ?`,
-    [criticalFailureCutoff, retryDlqCutoff, LOGGING_RETENTION_DELETE_BATCH_SIZE]
-  );
+  const dlqRows = (await hasCapturingTenantBackupSnapshot(adapter))
+    ? []
+    : await adapter.query<{ id: string; payload_object_ref: string }>(
+        `SELECT id, payload_object_ref
+         FROM logging_dlq_items
+         WHERE status IN ('deleted', 'purged', 'replayed')
+           AND (
+             (lane = 'critical' AND updated_at < ?)
+             OR (lane <> 'critical' AND updated_at < ?)
+           )
+         ORDER BY updated_at ASC
+         LIMIT ?`,
+        [criticalFailureCutoff, retryDlqCutoff, LOGGING_RETENTION_DELETE_BATCH_SIZE]
+      );
   if (dlqRows.length > 0) {
     if (!env.AUDIT_ARCHIVE) {
       throw new Error('logging_dlq_payload_bucket_unavailable');
@@ -4086,6 +4099,58 @@ async function runScheduledDeliveryEventRetention(
   };
   log.debug?.('Logging delivery event retention completed', result);
   return result;
+}
+
+export async function runScheduledRetiredR2GenerationCleanup(
+  env: Env,
+  adapter: DatabaseAdapter,
+  log: LoggingStorageMaintenanceLogger
+): Promise<void> {
+  if (await hasCapturingTenantBackupSnapshot(adapter)) {
+    log.debug?.('Retired R2 generation cleanup deferred for active tenant backup');
+    return;
+  }
+  const rows = await listRetiredTenantBackupR2Generations(
+    adapter,
+    R2_RETIRED_GENERATION_CLEANUP_BATCH_SIZE
+  );
+  if (rows.length === 0) return;
+  let deleted = 0;
+  let skipped = 0;
+  for (const row of rows) {
+    const current = await adapter.queryOne<{
+      object_key: string;
+      status: string;
+    }>(`SELECT object_key, status FROM log_object_catalog WHERE id = ? AND tenant_key = ?`, [
+      row.object_catalog_id,
+      row.tenant_key,
+    ]);
+    const safelyRetired =
+      !current ||
+      (row.reason === 'rewrap' &&
+        current.status === 'committed' &&
+        current.object_key === row.replacement_object_key) ||
+      (row.reason === 'catalog_delete' && current.status === 'deleted');
+    if (!safelyRetired || current?.object_key === row.object_key) {
+      skipped += 1;
+      continue;
+    }
+    const bucket = env[row.bucket_binding as keyof Env];
+    if (
+      !bucket ||
+      typeof bucket !== 'object' ||
+      typeof (bucket as R2Bucket).delete !== 'function'
+    ) {
+      throw new Error('retired_r2_generation_bucket_unavailable');
+    }
+    await (bucket as R2Bucket).delete(row.object_key);
+    await completeRetiredTenantBackupR2Generation(adapter, {
+      id: row.id,
+      objectKey: row.object_key,
+    });
+    deleted += 1;
+  }
+  log.debug?.('Retired R2 generation cleanup completed', { deleted, skipped });
 }
 
 export async function processLoggingStorageMaintenanceJobs(
@@ -4160,6 +4225,12 @@ export async function processLoggingStorageMaintenanceJobs(
     result.retention = await runScheduledDeliveryEventRetention(env, adapter, log, now);
   } catch (error) {
     log.error('Logging delivery event retention failed', {}, error as Error);
+  }
+
+  try {
+    await runScheduledRetiredR2GenerationCleanup(env, adapter, log);
+  } catch (error) {
+    log.error('Retired R2 generation cleanup failed', {}, error as Error);
   }
 
   log.info('Logging/storage maintenance completed', {

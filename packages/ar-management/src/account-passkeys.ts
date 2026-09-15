@@ -21,6 +21,7 @@ import {
   getTenantIdFromContext,
   type AccountDirectoryRemovalPublication,
   type ExecuteResult,
+  runTenantBackupCoveredEffect,
 } from '@authrim/ar-lib-core';
 import { resolveAaguidAuthenticator } from '@authrim/ar-lib-core/webauthn/aaguid-metadata';
 import { requireAccountSession, type AccountSession } from './account-page';
@@ -747,16 +748,18 @@ export async function completeAccountPasskeyReauthHandler(
     );
   }
   c.executionCtx.waitUntil(
-    passkeyRepo
-      .mirrorCounterAfterAuth(passkey.id, verification.authenticationInfo.newCounter)
-      .catch((error: unknown) => {
-        getLogger(c)
-          .module('ACCOUNT-REAUTH')
-          .error('Failed to mirror Passkey counter', {
-            action: 'passkey_state_mirror',
-            errorType: error instanceof Error ? error.name : 'Unknown',
-          });
-      })
+    runTenantBackupCoveredEffect(c.env, { tenantId }, () =>
+      passkeyRepo
+        .mirrorCounterAfterAuth(passkey.id, verification.authenticationInfo.newCounter)
+        .catch((error: unknown) => {
+          getLogger(c)
+            .module('ACCOUNT-REAUTH')
+            .error('Failed to mirror Passkey counter', {
+              action: 'passkey_state_mirror',
+              errorType: error instanceof Error ? error.name : 'Unknown',
+            });
+        })
+    )
   );
   const response = await refreshAccountReauthSession(
     c,
@@ -1516,22 +1519,24 @@ export async function deleteAccountPasskeyHandler(
     await attemptImmediateAccountDirectoryRemovals(c.env.ACCOUNT_DIRECTORY, [removal]);
   }
   c.executionCtx.waitUntil(
-    getSessionRevocationStore(c.env, tenantId, accountSession.userId)
-      .deleteCredentialStateRpc(
-        tenantId,
-        accountSession.userId,
-        `account:${accountSession.userId}`,
-        'passkey',
-        existing.id
-      )
-      .catch((error: unknown) => {
-        getLogger(c)
-          .module('ACCOUNT_PASSKEY')
-          .error('Failed to clean Passkey DO state', {
-            action: 'passkey_state_cleanup',
-            errorType: error instanceof Error ? error.name : 'Unknown',
-          });
-      })
+    runTenantBackupCoveredEffect(c.env, { tenantId }, () =>
+      getSessionRevocationStore(c.env, tenantId, accountSession.userId)
+        .deleteCredentialStateRpc(
+          tenantId,
+          accountSession.userId,
+          `account:${accountSession.userId}`,
+          'passkey',
+          existing.id
+        )
+        .catch((error: unknown) => {
+          getLogger(c)
+            .module('ACCOUNT_PASSKEY')
+            .error('Failed to clean Passkey DO state', {
+              action: 'passkey_state_cleanup',
+              errorType: error instanceof Error ? error.name : 'Unknown',
+            });
+        })
+    )
   );
 
   await recordAccountOperation(c, {

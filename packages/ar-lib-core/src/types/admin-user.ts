@@ -727,6 +727,13 @@ export const ADMIN_PERMISSIONS = {
   BULK_PLANS_PAUSE: 'admin:bulk_plans:pause',
   BULK_PLANS_RESUME: 'admin:bulk_plans:resume',
 
+  // Tenant backup operations
+  BACKUPS_READ: 'admin:backups:read',
+  BACKUPS_MANAGE: 'admin:backups:manage',
+  BACKUPS_EXPORT: 'admin:backups:export',
+  BACKUPS_IMPORT: 'admin:backups:import',
+  BACKUPS_SENSITIVE: 'admin:backups:sensitive',
+
   // Admin Machine Access
   ADMIN_MACHINE_ACCESS_READ: 'admin:machine_access:read',
   ADMIN_MACHINE_ACCESS_WRITE: 'admin:machine_access:write',

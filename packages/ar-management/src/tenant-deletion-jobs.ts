@@ -59,6 +59,7 @@ const NON_RETRYABLE_DELETION_ERRORS = new Set([
 
 const TENANT_ADMIN_TABLES_TO_DELETE = [
   'internal_notification_events',
+  'tenant_settings_documents',
   'tenant_database_migration_state',
   'tenant_database_stats',
   'tenant_discovery_indexes',

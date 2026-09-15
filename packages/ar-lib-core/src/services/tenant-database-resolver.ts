@@ -1330,7 +1330,15 @@ export async function resolveTenantAssignedDatabaseSourcesFromRegistry(
           minimumSchemaVersion: options.minimumSchemaVersion,
           deploymentTarget,
           requestCache,
+          memoryCacheTtlMs: 0,
+          generationCacheTtlMs: 0,
         });
+        if (results[index].runtimeGeneration !== snapshot.runtimeGeneration) {
+          throw new TenantDatabaseResolverError(
+            'route_generation_mismatch',
+            'Tenant store inventory changed during enumeration'
+          );
+        }
       }
     })
   );

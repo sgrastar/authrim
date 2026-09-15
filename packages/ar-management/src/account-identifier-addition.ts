@@ -14,6 +14,7 @@ import {
   type AccountRouteProjection,
   type DatabaseAdapter,
   type Env,
+  runTenantBackupCoveredEffect,
 } from '@authrim/ar-lib-core';
 import { InitialAccountIdentifierReservationService } from './account-directory-reservation';
 import { createLookupBucketWriteResolver } from './lookup-bucket-write-route';
@@ -112,35 +113,37 @@ export async function publishAccountExternalSubjectRemoval(
   input: AccountExternalSubjectRemovalInput,
   dependencies: IdentifierAdditionDependencies
 ): Promise<AccountDirectoryPublishResult> {
-  const now = dependencies.now?.() ?? Math.floor(Date.now() / 1000);
-  const publication = await prepareAccountExternalSubjectRemoval(
-    env,
-    input,
-    dependencies.tenantCoreUsers,
-    now
-  );
-  await markAccountDirectoryRemovalReady(
-    dependencies.tenantCoreUsers,
-    publication.operationId,
-    now
-  );
-  try {
-    const result = await dependencies.directory.removeAccountDirectory?.(publication);
-    if (
-      result?.status === 201 &&
-      result.operationId === publication.operationId &&
-      result.accountId === publication.accountId
-    ) {
-      return result;
+  return runTenantBackupCoveredEffect(env, { tenantId: input.tenantId }, async () => {
+    const now = dependencies.now?.() ?? Math.floor(Date.now() / 1000);
+    const publication = await prepareAccountExternalSubjectRemoval(
+      env,
+      input,
+      dependencies.tenantCoreUsers,
+      now
+    );
+    await markAccountDirectoryRemovalReady(
+      dependencies.tenantCoreUsers,
+      publication.operationId,
+      now
+    );
+    try {
+      const result = await dependencies.directory.removeAccountDirectory?.(publication);
+      if (
+        result?.status === 201 &&
+        result.operationId === publication.operationId &&
+        result.accountId === publication.accountId
+      ) {
+        return result;
+      }
+    } catch {
+      // The pending outbox is the durable retry boundary.
     }
-  } catch {
-    // The pending outbox is the durable retry boundary.
-  }
-  return {
-    status: 202,
-    operationId: publication.operationId,
-    accountId: publication.accountId,
-  };
+    return {
+      status: 202,
+      operationId: publication.operationId,
+      accountId: publication.accountId,
+    };
+  });
 }
 
 export async function buildAccountExternalSubjectAddition(
@@ -282,10 +285,12 @@ export async function publishAccountExternalSubjectAddition(
   input: AccountExternalSubjectAdditionInput,
   dependencies: IdentifierAdditionDependencies
 ): Promise<AccountDirectoryPublishResult> {
-  const publication = dependencies.preparedPublication
-    ? await validatePreparedAddition(dependencies.preparedPublication, input)
-    : await buildAccountExternalSubjectAddition(env, input);
-  return publishAccountIdentifierAddition(env, publication, dependencies);
+  return runTenantBackupCoveredEffect(env, { tenantId: input.tenantId }, async () => {
+    const publication = dependencies.preparedPublication
+      ? await validatePreparedAddition(dependencies.preparedPublication, input)
+      : await buildAccountExternalSubjectAddition(env, input);
+    return publishAccountIdentifierAddition(env, publication, dependencies);
+  });
 }
 
 export async function publishAccountEmailAddition(
@@ -293,10 +298,12 @@ export async function publishAccountEmailAddition(
   input: AccountEmailAdditionInput,
   dependencies: IdentifierAdditionDependencies
 ): Promise<AccountDirectoryPublishResult> {
-  const publication = dependencies.preparedPublication
-    ? await validatePreparedAddition(dependencies.preparedPublication, input)
-    : await buildAccountEmailAddition(env, input);
-  return publishAccountIdentifierAddition(env, publication, dependencies);
+  return runTenantBackupCoveredEffect(env, { tenantId: input.tenantId }, async () => {
+    const publication = dependencies.preparedPublication
+      ? await validatePreparedAddition(dependencies.preparedPublication, input)
+      : await buildAccountEmailAddition(env, input);
+    return publishAccountIdentifierAddition(env, publication, dependencies);
+  });
 }
 
 async function validatePreparedAddition(

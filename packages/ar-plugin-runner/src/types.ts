@@ -12,6 +12,8 @@ import type {
 } from '@authrim/ar-lib-core';
 
 export interface PluginRunnerEnv {
+  /** Setup-generated binding identity metadata. */
+  AUTHRIM_FIXED_DATABASE_IDS?: string;
   PLUGIN_RUNNER_DB: D1Database;
   TENANT_RUNTIME_REGISTRY: KVNamespace;
   PLUGIN_LOADER?: WorkerLoader;

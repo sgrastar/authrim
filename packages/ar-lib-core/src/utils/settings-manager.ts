@@ -151,6 +151,35 @@ export interface SettingsPatchResult {
   rejected: Record<string, string>;
 }
 
+export interface CanonicalSettingsDocument {
+  data: Record<string, unknown>;
+  version: string;
+}
+
+/** Strong source used for tenant/client settings; KV remains a runtime projection. */
+export interface SettingsCanonicalStore {
+  load(
+    category: string,
+    scope: Exclude<SettingScope, { type: 'platform' }>
+  ): Promise<CanonicalSettingsDocument | null>;
+  create(
+    category: string,
+    scope: Exclude<SettingScope, { type: 'platform' }>,
+    document: CanonicalSettingsDocument
+  ): Promise<CanonicalSettingsDocument>;
+  compareAndSet(
+    category: string,
+    scope: Exclude<SettingScope, { type: 'platform' }>,
+    expectedVersion: string,
+    document: CanonicalSettingsDocument
+  ): Promise<boolean>;
+  markProjected(
+    category: string,
+    scope: Exclude<SettingScope, { type: 'platform' }>,
+    version: string
+  ): Promise<void>;
+}
+
 /**
  * Validation error for settings
  */
@@ -271,6 +300,10 @@ function getKVKey(category: string, scope: SettingScope): string {
   }
 }
 
+export function settingsStorageKey(category: string, scope: SettingScope): string {
+  return getKVKey(category, scope);
+}
+
 // ============================================================================
 // Settings Manager
 // ============================================================================
@@ -289,6 +322,7 @@ export class SettingsManager {
   private kv: KVNamespace | null;
   private categoryMeta: Map<string, CategoryMeta> = new Map();
   private auditCallback?: (event: SettingsAuditEvent) => Promise<void>;
+  private canonicalStore: SettingsCanonicalStore | null;
 
   // In-memory cache for runtime performance
   private cache: Map<string, { data: Record<string, unknown>; expiresAt: number }> = new Map();
@@ -300,6 +334,7 @@ export class SettingsManager {
     kv?: KVNamespace | null;
     cacheTTL?: number;
     strictReads?: boolean;
+    canonicalStore?: SettingsCanonicalStore | null;
     auditCallback?: (event: SettingsAuditEvent) => Promise<void>;
   }) {
     this.env = options.env;
@@ -307,6 +342,7 @@ export class SettingsManager {
     this.cacheTTL = options.cacheTTL ?? 5000; // Default 5 seconds
     this.auditCallback = options.auditCallback;
     this.strictReads = options.strictReads ?? false;
+    this.canonicalStore = options.canonicalStore ?? null;
   }
 
   /**
@@ -498,7 +534,7 @@ export class SettingsManager {
     // Save if anything changed
     const hasChanges = applied.length > 0 || cleared.length > 0 || disabled.length > 0;
     if (hasChanges) {
-      await this.saveKVData(category, scope, kvData);
+      await this.saveKVData(category, scope, kvData, currentVersion);
 
       // Invalidate cache
       this.invalidateCache(category, scope);
@@ -591,7 +627,7 @@ export class SettingsManager {
     scope: SettingScope,
     skipCache = false
   ): Promise<Record<string, unknown>> {
-    if (!this.kv) {
+    if (!this.kv && (!this.canonicalStore || scope.type === 'platform')) {
       return {};
     }
 
@@ -607,12 +643,25 @@ export class SettingsManager {
 
     try {
       const key = getKVKey(category, scope);
-      const json = await this.kv.get(key);
+      const canonicalScope = scope.type === 'platform' ? null : scope;
+      if (this.canonicalStore && canonicalScope) {
+        const canonical = await this.canonicalStore.load(category, canonicalScope);
+        if (canonical) {
+          if (generateVersion(canonical.data) !== canonical.version)
+            throw new Error('settings_canonical_version_invalid');
+          this.cache.set(cacheKey, {
+            data: canonical.data,
+            expiresAt: Date.now() + this.cacheTTL,
+          });
+          return canonical.data;
+        }
+      }
+      const json = this.kv ? await this.kv.get(key) : null;
 
       // Parse and validate KV data
       let data: Record<string, unknown> = {};
       if (json) {
-        const parsed = JSON.parse(json);
+        const parsed: unknown = JSON.parse(json) as unknown;
         // Validate parsed data is a plain object (not null, not array)
         // and sanitize to prevent prototype pollution
         if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
@@ -625,6 +674,19 @@ export class SettingsManager {
         }
       }
 
+      if (this.canonicalStore && canonicalScope) {
+        const sourceVersion = generateVersion(data);
+        const created = await this.canonicalStore.create(category, canonicalScope, {
+          data,
+          version: sourceVersion,
+        });
+        if (generateVersion(created.data) !== created.version)
+          throw new Error('settings_canonical_version_invalid');
+        if (json !== null && created.version === sourceVersion)
+          await this.canonicalStore.markProjected(category, canonicalScope, created.version);
+        data = created.data;
+      }
+
       // Update cache
       this.cache.set(cacheKey, {
         data,
@@ -632,9 +694,9 @@ export class SettingsManager {
       });
 
       return data;
-    } catch (error) {
+    } catch {
       log.warn('Failed to load settings from KV');
-      if (this.strictReads) throw new Error('settings_read_failed');
+      if (this.strictReads || this.canonicalStore) throw new Error('settings_read_failed');
       return {};
     }
   }
@@ -645,13 +707,34 @@ export class SettingsManager {
   private async saveKVData(
     category: string,
     scope: SettingScope,
-    data: Record<string, unknown>
+    data: Record<string, unknown>,
+    expectedVersion: string
   ): Promise<void> {
-    if (!this.kv) {
-      throw new Error('KV not configured');
-    }
-
     const key = getKVKey(category, scope);
+    const version = generateVersion(data);
+    const canonicalScope = scope.type === 'platform' ? null : scope;
+    if (this.canonicalStore && canonicalScope) {
+      if (
+        !(await this.canonicalStore.compareAndSet(category, canonicalScope, expectedVersion, {
+          data,
+          version,
+        }))
+      ) {
+        const latest = await this.canonicalStore.load(category, canonicalScope);
+        throw new ConflictError('Settings were updated by someone else. Please refresh.', {
+          currentVersion: latest?.version ?? expectedVersion,
+        });
+      }
+      try {
+        if (!this.kv) throw new Error('settings_projection_unavailable');
+        await this.kv.put(key, JSON.stringify(data));
+        await this.canonicalStore.markProjected(category, canonicalScope, version);
+      } catch {
+        log.warn('Settings saved; KV projection remains pending');
+      }
+      return;
+    }
+    if (!this.kv) throw new Error('KV not configured');
     await this.kv.put(key, JSON.stringify(data));
   }
 
@@ -846,6 +929,7 @@ export function createSettingsManager(options: {
   kv?: KVNamespace | null;
   cacheTTL?: number;
   strictReads?: boolean;
+  canonicalStore?: SettingsCanonicalStore | null;
   auditCallback?: (event: SettingsAuditEvent) => Promise<void>;
 }): SettingsManager {
   return new SettingsManager(options);

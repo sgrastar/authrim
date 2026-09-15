@@ -1,3 +1,5 @@
+import { controlTenantBackupBoundary } from './tenant-backup-boundary';
+import { controlTenantMutationPermit } from './tenant-backup-mutation-permits';
 import { WorkerEntrypoint } from 'cloudflare:workers';
 import { createLogger } from '@authrim/ar-lib-core';
 import { LOOKUP_MAX_VIRTUAL_BUCKET } from '@authrim/ar-lib-core/services/lookup-directory/contract';
@@ -1541,6 +1543,80 @@ export default class ControlWorker extends WorkerEntrypoint<ControlEnv, ControlR
       );
       assertControlPlaneRecordIsSecretFree(result);
       return result;
+    });
+  }
+
+  tenantBackupSnapshotBoundary(input: unknown) {
+    return rpcResult(async () => {
+      const caller = authorizedCaller(this.ctx.props);
+      return controlTenantBackupBoundary({
+        database: this.env.CONTROL_DB,
+        environmentId: caller.environmentId,
+        caller: caller.caller,
+        request: input,
+      });
+    });
+  }
+
+  acquireTenantBackupMutationPermit(input: unknown) {
+    return rpcResult(async () => {
+      const caller = authorizedCaller(this.ctx.props);
+      const result = await controlTenantMutationPermit({
+        database: this.env.CONTROL_DB,
+        environmentId: caller.environmentId,
+        caller: caller.caller,
+        request: input,
+        action: 'acquire',
+        now: Date.now(),
+      });
+      if (!result) throw new Error('control_internal_error');
+      return result;
+    });
+  }
+
+  completeTenantBackupMutationPermit(input: unknown) {
+    return rpcResult(async () => {
+      const caller = authorizedCaller(this.ctx.props);
+      await controlTenantMutationPermit({
+        database: this.env.CONTROL_DB,
+        environmentId: caller.environmentId,
+        caller: caller.caller,
+        request: input,
+        action: 'complete',
+        now: Date.now(),
+      });
+    });
+  }
+
+  acquireEnvironmentBackupMutationPermit(input: unknown) {
+    return rpcResult(async () => {
+      const caller = authorizedCaller(this.ctx.props);
+      const result = await controlTenantMutationPermit({
+        database: this.env.CONTROL_DB,
+        environmentId: caller.environmentId,
+        caller: caller.caller,
+        request: input,
+        scope: 'environment',
+        action: 'acquire',
+        now: Date.now(),
+      });
+      if (!result) throw new Error('control_internal_error');
+      return result;
+    });
+  }
+
+  completeEnvironmentBackupMutationPermit(input: unknown) {
+    return rpcResult(async () => {
+      const caller = authorizedCaller(this.ctx.props);
+      await controlTenantMutationPermit({
+        database: this.env.CONTROL_DB,
+        environmentId: caller.environmentId,
+        caller: caller.caller,
+        request: input,
+        scope: 'environment',
+        action: 'complete',
+        now: Date.now(),
+      });
     });
   }
 

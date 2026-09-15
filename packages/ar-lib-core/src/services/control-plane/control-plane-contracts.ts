@@ -1,3 +1,7 @@
+import type {
+  TenantBackupBoundaryRequest,
+  TenantBackupBoundaryResponse,
+} from '../tenant-portability/boundary-rpc-contract';
 export type ControlOperationStatus =
   | 'queued'
   | 'running'
@@ -1410,10 +1414,23 @@ export interface ControlPluginResourceCleanupView {
 }
 
 export interface ControlServiceBinding {
+  tenantBackupSnapshotBoundary?(
+    input: TenantBackupBoundaryRequest
+  ): Promise<TenantBackupBoundaryResponse>;
   reportR2BucketMetrics?(
     request: ControlR2BucketMetricReportRequest
   ): Promise<ControlR2BucketMetricInventory>;
   getR2BucketMetrics?(): Promise<ControlR2BucketMetricInventory>;
+  /** Internal logical-writer admission; only trusted service-binding callers may invoke these. */
+  acquireTenantBackupMutationPermit?(input: {
+    tenantId: string;
+    permitId: string;
+  }): Promise<{ admitted: boolean }>;
+  completeTenantBackupMutationPermit?(input: { tenantId: string; permitId: string }): Promise<void>;
+  acquireEnvironmentBackupMutationPermit?(input: {
+    permitId: string;
+  }): Promise<{ admitted: boolean }>;
+  completeEnvironmentBackupMutationPermit?(input: { permitId: string }): Promise<void>;
   getReleaseMigrationRolloutStatus?(): Promise<ControlReleaseRolloutStatus>;
   retryReleaseMigrationRolloutTarget?(
     request: ControlReleaseRolloutRetryTargetRequest

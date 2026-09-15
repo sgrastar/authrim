@@ -37,6 +37,7 @@ import {
   type PluginResourceBindingDescriptor,
   type PluginResourceBindingProps,
 } from './resource-bindings';
+import { DynamicPluginTenantBackupService } from './tenant-backup';
 
 const SAFE_ID = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,255}$/u;
 const SAFE_NAME = /^[a-z][a-z0-9_.:-]{0,127}$/u;
@@ -674,6 +675,27 @@ export default class PluginRunnerWorker extends WorkerEntrypoint<
         expectedConfigVersion: value.expectedConfigVersion,
         credentials: mapped.values,
       });
+    });
+  }
+
+  exportDynamicPluginBackup(input: unknown) {
+    return rpcResult(() => {
+      authorized(this.env, this.ctx.props, ['ar-management']);
+      return new DynamicPluginTenantBackupService(this.env).export(input);
+    });
+  }
+
+  restoreDynamicPluginBackup(input: unknown) {
+    return rpcResult(() => {
+      authorized(this.env, this.ctx.props, ['ar-management']);
+      return new DynamicPluginTenantBackupService(this.env).restore(input);
+    });
+  }
+
+  verifyDynamicPluginBackup(input: unknown) {
+    return rpcResult(() => {
+      authorized(this.env, this.ctx.props, ['ar-management']);
+      return new DynamicPluginTenantBackupService(this.env).verify(input);
     });
   }
 

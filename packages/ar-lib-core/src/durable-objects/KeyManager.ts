@@ -26,9 +26,17 @@ import type { Env } from '../types/env';
 import type { KeyStatus } from '../types/admin';
 import { readRequestJsonWithLimit } from '../utils/body-limits';
 import { createLogger } from '../utils/logger';
+import {
+  keyManagerTenantBackupSnapshotIsEmpty,
+  keyManagerTenantBackupSnapshotsEqual,
+  normalizeKeyManagerTenantBackupSnapshot,
+  type KeyManagerTenantBackupSnapshot,
+} from '../services/tenant-portability/key-manager-portability';
 
 const log = createLogger().module('DO-KEY-MANAGER');
 const MAX_KEY_MANAGER_JSON_BODY_BYTES = 64 * 1024;
+const TENANT_BACKUP_SNAPSHOT_KEY_PREFIX = 'tenantBackupSnapshot:';
+const TENANT_BACKUP_SNAPSHOT_ID = /^[a-f0-9]{64}$/u;
 const SECRET_REF_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}$/u;
 const FORBIDDEN_SECRET_REFS = new Set(['__proto__', 'constructor', 'prototype']);
 
@@ -519,6 +527,98 @@ export class KeyManager extends DurableObject<Env> {
     };
   }
 
+  /** Export every tenant OIDC/VC signing generation and managed secret for an encrypted DR bundle. */
+  async exportTenantBackupStateRpc(): Promise<KeyManagerTenantBackupSnapshot> {
+    await this.initializeState();
+    return normalizeKeyManagerTenantBackupSnapshot(this.currentTenantBackupState());
+  }
+
+  /** Freeze one immutable operation-owned view while the cross-store admission lock is held. */
+  async startTenantBackupSnapshotRpc(snapshotId: string): Promise<void> {
+    await this.initializeState();
+    if (!TENANT_BACKUP_SNAPSHOT_ID.test(snapshotId))
+      throw new Error('backup_key_manager_snapshot_id_invalid');
+    const key = `${TENANT_BACKUP_SNAPSHOT_KEY_PREFIX}${snapshotId}`;
+    const existing = await this.ctx.storage.get<KeyManagerTenantBackupSnapshot>(key);
+    if (existing !== undefined) {
+      await normalizeKeyManagerTenantBackupSnapshot(existing);
+      return;
+    }
+    await this.ctx.storage.put(key, this.currentTenantBackupState());
+  }
+
+  /** Read the frozen state instead of a later live key generation. */
+  async loadTenantBackupSnapshotRpc(snapshotId: string): Promise<KeyManagerTenantBackupSnapshot> {
+    await this.initializeState();
+    if (!TENANT_BACKUP_SNAPSHOT_ID.test(snapshotId))
+      throw new Error('backup_key_manager_snapshot_id_invalid');
+    const snapshot = await this.ctx.storage.get<KeyManagerTenantBackupSnapshot>(
+      `${TENANT_BACKUP_SNAPSHOT_KEY_PREFIX}${snapshotId}`
+    );
+    if (snapshot === undefined) throw new Error('backup_key_manager_snapshot_missing');
+    return normalizeKeyManagerTenantBackupSnapshot(snapshot);
+  }
+
+  async releaseTenantBackupSnapshotRpc(snapshotId: string): Promise<void> {
+    if (!TENANT_BACKUP_SNAPSHOT_ID.test(snapshotId))
+      throw new Error('backup_key_manager_snapshot_id_invalid');
+    await this.ctx.storage.delete(`${TENANT_BACKUP_SNAPSHOT_KEY_PREFIX}${snapshotId}`);
+  }
+
+  async assertTenantBackupSnapshotReleasedRpc(snapshotId: string): Promise<void> {
+    if (!TENANT_BACKUP_SNAPSHOT_ID.test(snapshotId))
+      throw new Error('backup_key_manager_snapshot_id_invalid');
+    if (
+      (await this.ctx.storage.get(`${TENANT_BACKUP_SNAPSHOT_KEY_PREFIX}${snapshotId}`)) !==
+      undefined
+    )
+      throw new Error('backup_key_manager_snapshot_not_released');
+  }
+
+  /** Restore only into an empty tenant KeyManager. Exact retries are idempotent. */
+  async importTenantBackupStateRpc(input: unknown): Promise<{
+    imported: boolean;
+    rsaKeys: number;
+    vcKeys: number;
+    oidcKeys: number;
+    secrets: number;
+  }> {
+    await this.initializeState();
+    const snapshot = await normalizeKeyManagerTenantBackupSnapshot(input);
+    const current = this.currentTenantBackupState();
+    const exactRetry = keyManagerTenantBackupSnapshotsEqual(current, snapshot);
+    if (!exactRetry && !keyManagerTenantBackupSnapshotIsEmpty(current))
+      throw new Error('backup_key_manager_target_not_empty');
+    if (!exactRetry) {
+      await this.ctx.storage.transaction(async (transaction) => {
+        await transaction.put({
+          state: snapshot.rsa,
+          ecState: snapshot.vcEc,
+          oidcECState: snapshot.oidcEs256,
+          oidcPS256State: snapshot.oidcPs256,
+        });
+      });
+      this.keyManagerState = structuredClone(snapshot.rsa);
+      this.ecKeyManagerState = structuredClone(snapshot.vcEc);
+      this.oidcECKeyManagerState = structuredClone(snapshot.oidcEs256);
+      this.oidcPS256KeyManagerState = structuredClone(snapshot.oidcPs256);
+    }
+    return {
+      imported: !exactRetry,
+      rsaKeys: snapshot.rsa.keys.length,
+      vcKeys: snapshot.vcEc.keys.length,
+      oidcKeys: snapshot.oidcEs256.keys.length + snapshot.oidcPs256.keys.length,
+      secrets: Object.keys(snapshot.rsa.secrets).length,
+    };
+  }
+
+  /** Re-verify key pairs and compare the complete stored rotation state after restore. */
+  async verifyTenantBackupStateRpc(input: unknown): Promise<boolean> {
+    await this.initializeState();
+    const expected = await normalizeKeyManagerTenantBackupSnapshot(input);
+    return keyManagerTenantBackupSnapshotsEqual(this.currentTenantBackupState(), expected);
+  }
+
   // ==========================================
   // EC Key RPC Methods (Phase 9: SD-JWT VC)
   // ==========================================
@@ -780,6 +880,17 @@ export class KeyManager extends DurableObject<Env> {
       throw new Error('KeyManager state not initialized');
     }
     return this.keyManagerState;
+  }
+
+  private currentTenantBackupState(): KeyManagerTenantBackupSnapshot {
+    return structuredClone({
+      kind: 'authrim.key_manager_tenant_backup.v1',
+      version: 1,
+      rsa: { ...this.getState(), secrets: this.getState().secrets ?? {} },
+      vcEc: this.getECState(),
+      oidcEs256: this.getOIDCECState(),
+      oidcPs256: this.getOIDCPS256State(),
+    });
   }
 
   /**

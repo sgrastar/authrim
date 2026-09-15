@@ -197,6 +197,37 @@ export async function restoreSAMLLocalSigningSecretDRBundle(
   };
 }
 
+/** Pure validation used by installed backup inspectors before any target mutation is allowed. */
+export function validateSAMLLocalSigningSecretDRBundle(input: unknown, tenantId: string): void {
+  const resolvedTenantId = requireSAMLTenantId(tenantId, 'SAML local signing DR bundle tenant');
+  const bundle = normalizeSAMLLocalSigningSecretDRBundle(input);
+  if (bundle.tenantId !== resolvedTenantId) {
+    throw new Error('SAML DR bundle tenant does not match the current tenant');
+  }
+  validateRestoredSigningKeyPolicies(bundle, resolvedTenantId);
+}
+
+function comparableSAMLLocalSigningSecretDRBundle(input: unknown, tenantId: string): string {
+  validateSAMLLocalSigningSecretDRBundle(input, tenantId);
+  const bundle = normalizeSAMLLocalSigningSecretDRBundle(input);
+  return JSON.stringify({
+    ...bundle,
+    generatedAt: undefined,
+    warning: undefined,
+  });
+}
+
+/** Verify imported key material and settings by exporting the target through the same trusted path. */
+export async function verifySAMLLocalSigningSecretDRBundle(
+  env: Env,
+  tenantId: string,
+  expected: unknown
+): Promise<boolean> {
+  const expectedComparable = comparableSAMLLocalSigningSecretDRBundle(expected, tenantId);
+  const actual = await buildSAMLLocalSigningSecretDRBundle(env, tenantId);
+  return comparableSAMLLocalSigningSecretDRBundle(actual, tenantId) === expectedComparable;
+}
+
 export async function restoreEncryptedSAMLLocalSigningSecretDRBundle(
   env: Env,
   tenantId: string,

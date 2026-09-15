@@ -72,7 +72,9 @@ function createMockKV(data: Record<string, string> = {}): KVNamespace {
 }
 
 // Create test app with settings-v2 routes
-function createTestApp(options: { kv?: KVNamespace; env?: Record<string, string> } = {}) {
+function createTestApp(
+  options: { kv?: KVNamespace; env?: Record<string, string>; roles?: string[] } = {}
+) {
   const mockKV = options.kv ?? createMockKV();
 
   const app = new Hono<{
@@ -87,7 +89,11 @@ function createTestApp(options: { kv?: KVNamespace; env?: Record<string, string>
   // (Migration API requires super_admin or system_admin per spec)
   app.use('*', async (c, next) => {
     c.set('adminUser', { id: 'test_admin', role: 'system_admin' });
-    c.set('adminAuth', { userId: 'test_admin', roles: ['system_admin'], authMethod: 'bearer' });
+    c.set('adminAuth', {
+      userId: 'test_admin',
+      roles: options.roles ?? ['system_admin'],
+      authMethod: 'bearer',
+    });
     await next();
   });
 
@@ -543,4 +549,88 @@ describe('Settings Migration API', () => {
       expect(body.error).toBe('forbidden');
     });
   });
+});
+
+it('admits actual migration and lock deletion but leaves dry-run available', async () => {
+  const { app, mockEnv, mockKV } = createTestApp({ kv: createMockKV({ error_locale: 'ja' }) });
+  const acquire = vi.fn().mockResolvedValue({ admitted: false });
+  const complete = vi.fn().mockResolvedValue(undefined);
+  mockEnv.TENANT_BACKUP_WRAPPING_KEY = 'ab'.repeat(32);
+  mockEnv.CONTROL = {
+    acquireEnvironmentBackupMutationPermit: acquire,
+    completeEnvironmentBackupMutationPermit: complete,
+  } as unknown as Env['CONTROL'];
+  const url = '/api/admin/settings/migrate';
+  const post = (dryRun: boolean) =>
+    app.request(
+      url,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ dryRun }),
+      },
+      mockEnv
+    );
+  expect((await post(true)).status).toBe(200);
+  expect(acquire).not.toHaveBeenCalled();
+  expect((await post(false)).status).toBe(503);
+  expect(vi.mocked(mockKV).put.mock.calls).toHaveLength(0);
+  acquire.mockResolvedValue({ admitted: true });
+  complete.mockImplementation(async () => {
+    expect(await mockKV.get('settings:migration:status')).not.toBeNull();
+  });
+  expect((await post(false)).status).toBe(200);
+  expect(complete).toHaveBeenCalledTimes(1);
+  acquire.mockResolvedValue({ admitted: false });
+  expect((await app.request(url + '/lock', { method: 'DELETE' }, mockEnv)).status).toBe(503);
+  expect(await mockKV.get('settings:migration:status')).not.toBeNull();
+  acquire.mockResolvedValue({ admitted: true });
+  complete.mockImplementation(async () => {
+    expect(await mockKV.get('settings:migration:status')).toBeNull();
+  });
+  expect((await app.request(url + '/lock', { method: 'DELETE' }, mockEnv)).status).toBe(200);
+  expect(complete).toHaveBeenCalledTimes(2);
+});
+it('completes the permit and reports an uncertain partial settings migration', async () => {
+  const kv = createMockKV({ error_locale: 'ja' });
+  const original = vi.mocked(kv).put.getMockImplementation();
+  if (!original) throw new Error('missing KV mock');
+  vi.mocked(kv).put.mockImplementation(async (key, value, options) => {
+    if (key.startsWith('settings:tenant:')) throw new Error('uncertain write');
+    await original(key, value, options);
+  });
+  const { app, mockEnv } = createTestApp({ kv });
+  const complete = vi.fn().mockResolvedValue(undefined);
+  mockEnv.TENANT_BACKUP_WRAPPING_KEY = 'ab'.repeat(32);
+  mockEnv.CONTROL = {
+    acquireEnvironmentBackupMutationPermit: vi.fn().mockResolvedValue({ admitted: true }),
+    completeEnvironmentBackupMutationPermit: complete,
+  } as unknown as Env['CONTROL'];
+  const response = await app.request(
+    '/api/admin/settings/migrate',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ dryRun: false }),
+    },
+    mockEnv
+  );
+  expect(response.status).toBe(503);
+  expect(response.headers.get('Cache-Control')).toBe('no-store');
+  expect(complete).toHaveBeenCalledTimes(1);
+});
+it('requires system admin for migration status and lock operations before admission', async () => {
+  const { app, mockEnv } = createTestApp({ roles: ['viewer'] });
+  const acquire = vi.fn();
+  mockEnv.TENANT_BACKUP_WRAPPING_KEY = 'ab'.repeat(32);
+  mockEnv.CONTROL = {
+    acquireEnvironmentBackupMutationPermit: acquire,
+  } as unknown as Env['CONTROL'];
+  expect(
+    (await app.request('/api/admin/settings/migrate/lock', { method: 'DELETE' }, mockEnv)).status
+  ).toBe(403);
+  expect(
+    (await app.request('/api/admin/settings/migrate/status', { method: 'GET' }, mockEnv)).status
+  ).toBe(403);
+  expect(acquire).not.toHaveBeenCalled();
 });

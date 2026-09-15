@@ -7,6 +7,7 @@ import {
   AdminAuditLogRepository,
   type AdminAuthContext,
   requireAdminDatabaseAdapter,
+  runTenantBackupCoveredEffect,
 } from '@authrim/ar-lib-core';
 import type { Env } from '@authrim/ar-lib-core';
 import {
@@ -511,13 +512,15 @@ export function scheduleAdminAuditLog(
   metadata?: Record<string, unknown>
 ): void {
   const resourceType = action.startsWith('client.') ? 'client' : 'user';
-  const promise = writeAdminAuditLog(c, {
-    action,
-    resourceType,
-    resourceId,
-    result,
-    metadata,
-  });
+  const promise = runTenantBackupCoveredEffect(c.env, { environment: true }, () =>
+    writeAdminAuditLog(c, {
+      action,
+      resourceType,
+      resourceId,
+      result,
+      metadata,
+    })
+  );
   c.executionCtx?.waitUntil(promise);
 }
 

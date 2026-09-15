@@ -25,6 +25,8 @@ export default [
           './packages/*/tsconfig.json',
           './tools/*/tsconfig.json',
           './test/scale-out-correctness-phase1/tsconfig.json',
+          './scripts/tenant-backup/tsconfig.json',
+          './scripts/primary-key-integrity/tsconfig.json',
         ],
       },
       globals: {

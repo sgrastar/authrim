@@ -1,3 +1,4 @@
+import { renderPortableMigrationSql } from '@authrim/ar-lib-core/control-plane';
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -14,9 +15,7 @@ const ROOT_DIR = fileURLToPath(new URL('../../../../', import.meta.url));
 const MIGRATIONS_ROOT = join(ROOT_DIR, 'migrations');
 
 function renderSql(sql: string): string {
-  return sql
-    .replaceAll('__AUTHRIM_NOW_EPOCH_MILLISECONDS__', '(unixepoch() * 1000)')
-    .replaceAll('__AUTHRIM_NOW_EPOCH_SECONDS__', 'unixepoch()');
+  return renderPortableMigrationSql(sql, 'sqlite');
 }
 
 function currentStreamSchema(streamId: 'core-d1' | 'pii-d1'): TenantMigrationTableSchema[] {
@@ -76,6 +75,16 @@ describe('tenant placement migration inventory', () => {
     );
 
     expect(result).toMatchObject({ state: 'ready', blockedReasons: [] });
+    for (const table of [
+      'tenant_backup_snapshots',
+      'tenant_backup_preimages',
+      'tenant_backup_restore_targets',
+    ]) {
+      expect(result.tables.find((entry) => entry.table === table)).toMatchObject({
+        disposition: 'retain_target_local',
+        ownership: { kind: 'shard_local' },
+      });
+    }
     expect(result.tables.find((table) => table.table === 'users')?.ownership).toEqual({
       kind: 'tenant_column',
       column: 'tenant_id',
@@ -99,6 +108,16 @@ describe('tenant placement migration inventory', () => {
     const result = classifyTenantMigrationSchema('tenant_pii', currentStreamSchema('pii-d1'));
 
     expect(result).toMatchObject({ state: 'ready', blockedReasons: [] });
+    for (const table of [
+      'tenant_backup_snapshots',
+      'tenant_backup_preimages',
+      'tenant_backup_restore_targets',
+    ]) {
+      expect(result.tables.find((entry) => entry.table === table)).toMatchObject({
+        disposition: 'retain_target_local',
+        ownership: { kind: 'shard_local' },
+      });
+    }
     expect(result.tables.find((table) => table.table === 'users_pii')?.ownership).toEqual({
       kind: 'tenant_column',
       column: 'tenant_id',

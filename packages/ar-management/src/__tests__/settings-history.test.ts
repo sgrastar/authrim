@@ -226,6 +226,66 @@ describe('Settings History Handlers', () => {
       expect(response.status).toBe(400);
     });
 
+    it('uses an environment permit and waits for rollback event publication before completion', async () => {
+      const acquire = vi.fn().mockResolvedValue({ admitted: false });
+      const complete = vi.fn().mockResolvedValue(undefined);
+      const c = createMockContext({
+        params: { category: 'oauth' },
+        body: { targetVersion: 1 },
+        envOverrides: {
+          TENANT_BACKUP_WRAPPING_KEY: 'ab'.repeat(32),
+          CONTROL: {
+            acquireEnvironmentBackupMutationPermit: acquire,
+            completeEnvironmentBackupMutationPermit: complete,
+          } as unknown as Env['CONTROL'],
+        },
+      });
+      expect((await rollbackSettings(c as never)).status).toBe(503);
+      expect(mockHistoryManager.rollback).not.toHaveBeenCalled();
+      expect(publishEvent).not.toHaveBeenCalled();
+      acquire.mockResolvedValue({ admitted: true });
+      mockHistoryManager.rollback.mockImplementation(
+        async (
+          _category: string,
+          _request: unknown,
+          _read: unknown,
+          apply: (snapshot: Record<string, unknown>) => Promise<void>
+        ) => {
+          await apply({ mode: 'strict' });
+          return { previousVersion: 1, currentVersion: 2 };
+        }
+      );
+      const publisher = vi.mocked(publishEvent);
+      const original = publisher.getMockImplementation();
+      if (!original) throw new Error('missing event mock');
+      let release!: () => void;
+      const pending = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      publisher.mockImplementation(async (...args) => {
+        if (args[1].type === SETTINGS_EVENTS.ROLLBACK_COMPLETED) await pending;
+        return original(...args);
+      });
+      try {
+        const execution = rollbackSettings(c as never);
+        await vi.waitFor(() =>
+          expect(publisher).toHaveBeenCalledWith(
+            c,
+            expect.objectContaining({ type: SETTINGS_EVENTS.ROLLBACK_COMPLETED })
+          )
+        );
+        expect(complete).not.toHaveBeenCalled();
+        release();
+        expect((await execution).status).toBe(200);
+        expect(complete).toHaveBeenCalledTimes(1);
+        expect(complete.mock.calls[0]).toEqual(acquire.mock.calls[1]);
+        expect(acquire.mock.calls[1][0]).toEqual({ permitId: expect.any(String) as unknown });
+      } finally {
+        release();
+        publisher.mockImplementation(original);
+      }
+    });
+
     it('should restore the target snapshot and publish rollback events', async () => {
       mockHistoryManager.rollback.mockImplementation(
         async (

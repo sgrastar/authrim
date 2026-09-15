@@ -90,6 +90,7 @@ export interface KeyMetadata {
     notificationPayloadEncryptPublicJwks?: string;
     notificationIntentHmacKey?: string;
     agentElevationEncryptionKey?: string;
+    tenantBackupWrappingKey?: string;
     setupMachinePrivateKey?: string;
     setupMachinePublicKey?: string;
     adminUiBffPrivateKey?: string;
@@ -160,6 +161,8 @@ export interface GeneratedSecrets {
   notificationIntentHmacKey: string;
   /** Dedicated AES-256-GCM key for Agent elevation payloads and terminal results. */
   agentElevationEncryptionKey: string;
+  /** Dedicated wrapping key for short-lived tenant backup key handoffs. */
+  tenantBackupWrappingKey: string;
   /** Setup token for initial admin creation */
   setupToken?: string;
 }
@@ -464,6 +467,7 @@ export function generateAllSecrets(keyId?: string): GeneratedSecrets {
     pluginMutationHmacKey: generateBase64Secret(32), // 256-bit stable idempotency key
     notificationIntentHmacKey: generateBase64Secret(32), // 256-bit notification fingerprint key
     agentElevationEncryptionKey: generateHexSecret(32), // 256-bit AES-GCM key
+    tenantBackupWrappingKey: generateHexSecret(32), // 256-bit AES-GCM key
     setupToken: generateBase64Secret(32), // 256-bit URL-safe token for initial setup
   };
 }
@@ -807,6 +811,7 @@ function getKeyBundlePaths(directory: string) {
     ),
     notificationIntentHmacKey: join(directory, 'notification_intent_hmac_key.txt'),
     agentElevationEncryptionKey: join(directory, 'agent_elevation_encryption_key.txt'),
+    tenantBackupWrappingKey: join(directory, 'tenant_backup_wrapping_key.txt'),
     setupToken: join(directory, 'setup_token.txt'),
     setupMachinePrivateKey: join(directory, 'setup_machine_private.pem'),
     setupMachinePublicKey: join(directory, 'setup_machine_public.jwk.json'),
@@ -1063,6 +1068,7 @@ function buildKeyMetadata(keyId: string, createdAt: string, paths: KeyBundlePath
       notificationPayloadEncryptPublicJwks: paths.notificationPayloadEncryptPublicJwks,
       notificationIntentHmacKey: paths.notificationIntentHmacKey,
       agentElevationEncryptionKey: paths.agentElevationEncryptionKey,
+      tenantBackupWrappingKey: paths.tenantBackupWrappingKey,
       setupMachinePrivateKey: paths.setupMachinePrivateKey,
       setupMachinePublicKey: paths.setupMachinePublicKey,
       adminUiBffPrivateKey: paths.adminUiBffPrivateKey,
@@ -1274,6 +1280,8 @@ export async function saveKeysToDirectory(
       'utf-8'
     );
     await chmod(paths.agentElevationEncryptionKey, SENSITIVE_FILE_MODE);
+    await writeFile(paths.tenantBackupWrappingKey, secrets.tenantBackupWrappingKey, 'utf-8');
+    await chmod(paths.tenantBackupWrappingKey, SENSITIVE_FILE_MODE);
 
     if (secrets.setupToken) {
       await writeFile(paths.setupToken, secrets.setupToken, 'utf-8');
@@ -1725,6 +1733,7 @@ export async function ensureSupplementalKeyFiles(
     ),
     notificationIntentHmacKey: join(keysDir, 'notification_intent_hmac_key.txt'),
     agentElevationEncryptionKey: join(keysDir, 'agent_elevation_encryption_key.txt'),
+    tenantBackupWrappingKey: join(keysDir, 'tenant_backup_wrapping_key.txt'),
     setupMachinePrivateKey: join(keysDir, 'setup_machine_private.pem'),
     setupMachinePublicKey: join(keysDir, 'setup_machine_public.jwk.json'),
     adminUiBffPrivateKey: join(keysDir, 'admin_ui_bff_private.pem'),
@@ -1747,6 +1756,7 @@ export async function ensureSupplementalKeyFiles(
     paths.objectEncryptionRootKey,
     paths.piiEncryptionKey,
     paths.agentElevationEncryptionKey,
+    paths.tenantBackupWrappingKey,
   ];
   for (const path of hexSecretPaths) {
     await ensureSupplementalSecret(
@@ -1844,6 +1854,7 @@ export async function ensureSupplementalKeyFiles(
     notificationPayloadEncryptPublicJwks: paths.notificationPayloadEncryptPublicJwks,
     notificationIntentHmacKey: paths.notificationIntentHmacKey,
     agentElevationEncryptionKey: paths.agentElevationEncryptionKey,
+    tenantBackupWrappingKey: paths.tenantBackupWrappingKey,
     ...(options.includeSetupMachineKeyPair !== false
       ? {
           setupMachinePrivateKey: paths.setupMachinePrivateKey,
@@ -2088,6 +2099,9 @@ export function generateWranglerSecretCommands(
 
   commands.push(
     `echo -n "$(cat ${join(keysDir, 'agent_elevation_encryption_key.txt')})" | wrangler secret put AGENT_ELEVATION_ENCRYPTION_KEY${envFlag}`
+  );
+  commands.push(
+    `echo -n "$(cat ${join(keysDir, 'tenant_backup_wrapping_key.txt')})" | wrangler secret put TENANT_BACKUP_WRAPPING_KEY${envFlag}`
   );
 
   return commands;
