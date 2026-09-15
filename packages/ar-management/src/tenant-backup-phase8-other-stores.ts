@@ -27,6 +27,13 @@ import {
   decodePortableUserAvatar,
   USER_AVATARS_DATASET,
 } from '@authrim/ar-lib-core/services/tenant-portability/phase5-record-datasets';
+import {
+  ARTIFACT_OBJECT_BODIES_DATASET,
+  decodePortableR2ObjectChunk,
+  LOG_ARCHIVE_OBJECT_BODIES_DATASET,
+  type PortableR2DatasetId,
+  type PortableR2ObjectChunk,
+} from '@authrim/ar-lib-core/services/tenant-portability/portable-r2-object';
 
 type Purpose = 'restore' | 'verify';
 const USER_AVATAR_DATASET_ID = 'users.public_avatars' as const;
@@ -36,7 +43,8 @@ type DatasetId =
   | 'core.totp_credentials'
   | 'pii.linked_identities'
   | 'pii.pii_log'
-  | 'users.public_avatars';
+  | 'users.public_avatars'
+  | PortableR2DatasetId;
 
 type SqlDatasetId = Exclude<DatasetId, typeof USER_AVATAR_DATASET_ID>;
 
@@ -47,6 +55,8 @@ const DATASETS: readonly DatasetId[] = [
   'pii.linked_identities',
   'pii.pii_log',
   USER_AVATAR_DATASET_ID,
+  ARTIFACT_OBJECT_BODIES_DATASET.id,
+  LOG_ARCHIVE_OBJECT_BODIES_DATASET.id,
 ];
 
 interface Cursor {
@@ -68,8 +78,18 @@ export interface Phase8OtherStorePorts extends Phase5OtherStorePorts {
     context: TenantBackupStepContext,
     planDigest: string,
     purpose: Purpose,
-    datasetId: typeof USER_AVATAR_DATASET_ID
+    datasetId: typeof USER_AVATAR_DATASET_ID | PortableR2DatasetId
   ): Promise<Omit<Phase3OtherStoreSource, 'target'>>;
+  importR2Chunk(
+    context: TenantBackupStepContext,
+    datasetId: PortableR2DatasetId,
+    chunk: PortableR2ObjectChunk
+  ): Promise<void>;
+  verifyR2Chunk(
+    context: TenantBackupStepContext,
+    datasetId: PortableR2DatasetId,
+    chunk: PortableR2ObjectChunk
+  ): Promise<boolean>;
   restorePhase8Envelope(
     context: TenantBackupStepContext,
     datasetId: SqlDatasetId,
@@ -181,16 +201,26 @@ export function createPhase8OtherStoreHandlers(
     }
 
     const datasetId = cursor.datasetId ?? invalid();
-    if (datasetId === USER_AVATAR_DATASET_ID) {
+    if (
+      datasetId === USER_AVATAR_DATASET_ID ||
+      datasetId === ARTIFACT_OBJECT_BODIES_DATASET.id ||
+      datasetId === LOG_ARCHIVE_OBJECT_BODIES_DATASET.id
+    ) {
       const source = await ports.loadPhase8Record(context, planDigest, purpose, datasetId);
       if (source.policy.dataset.id !== datasetId) invalid();
       const row = await source.readNextValidatedRow({ sourceCursor: cursor.sourceCursor });
       context.signal.throwIfAborted();
       if (row === null) return advance(datasetId, purpose);
       if (!row.nextCursor || row.nextCursor === cursor.sourceCursor) invalid();
-      const avatar = await decodePortableUserAvatar(row.rowJson, context.lease.tenantId);
-      if (purpose === 'restore') await ports.importAsset(context, avatar);
-      else if (!(await ports.verifyAsset(context, avatar))) invalid();
+      if (datasetId === USER_AVATAR_DATASET_ID) {
+        const avatar = await decodePortableUserAvatar(row.rowJson, context.lease.tenantId);
+        if (purpose === 'restore') await ports.importAsset(context, avatar);
+        else if (!(await ports.verifyAsset(context, avatar))) invalid();
+      } else {
+        const chunk = await decodePortableR2ObjectChunk(row.rowJson, context.lease.tenantId);
+        if (purpose === 'restore') await ports.importR2Chunk(context, datasetId, chunk);
+        else if (!(await ports.verifyR2Chunk(context, datasetId, chunk))) invalid();
+      }
       context.signal.throwIfAborted();
       return { cursor: encode({ ...cursor, sourceCursor: row.nextCursor }), done: false };
     }

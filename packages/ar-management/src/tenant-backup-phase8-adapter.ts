@@ -15,6 +15,11 @@ import {
   USER_AVATARS_DATASET,
 } from '@authrim/ar-lib-core/services/tenant-portability/phase5-record-datasets';
 import {
+  ARTIFACT_OBJECT_BODIES_DATASET,
+  createPortableR2ObjectDatasetPolicies,
+  LOG_ARCHIVE_OBJECT_BODIES_DATASET,
+} from '@authrim/ar-lib-core/services/tenant-portability/portable-r2-object';
+import {
   createPhase5TenantBackupInstalledAdapter,
   type Phase5InstalledAdapterPorts,
 } from './tenant-backup-phase5-adapter';
@@ -45,7 +50,18 @@ export interface Phase8InstalledAdapterPorts extends Omit<
   recordSnapshots: Omit<Phase5InstalledAdapterPorts['recordSnapshots'], 'validateAdminEnvelope'> & {
     validatePhase8Envelope(datasetId: string, row: PortableSqliteRow): Promise<void>;
     userAvatars: Phase5InstalledAdapterPorts['recordSnapshots']['publicAssets'];
+    artifactObjects: Phase5InstalledAdapterPorts['recordSnapshots']['publicAssets'];
+    logArchiveObjects: Phase5InstalledAdapterPorts['recordSnapshots']['publicAssets'];
   };
+}
+
+function requireR2Policy(
+  policies: ReturnType<typeof createPortableR2ObjectDatasetPolicies>,
+  datasetId: string
+) {
+  const policy = policies.find(({ dataset }) => dataset.id === datasetId);
+  if (!policy) throw new Error('backup_phase8_r2_policy_missing');
+  return policy;
 }
 
 /**
@@ -155,6 +171,7 @@ export function createPhase8TenantBackupInstalledAdapter(
     assertSources: (context) => input.ports.import.assertSources(context),
     now: input.now,
   });
+  const r2Policies = createPortableR2ObjectDatasetPolicies();
   installed = createPhase5TenantBackupInstalledAdapter({
     env: input.env,
     planned: input.planned ?? [],
@@ -198,6 +215,16 @@ export function createPhase8TenantBackupInstalledAdapter(
           dataset: USER_AVATARS_DATASET,
           policy: createUserAvatarDatasetPolicy(),
           port: input.ports.recordSnapshots.userAvatars,
+        },
+        {
+          dataset: ARTIFACT_OBJECT_BODIES_DATASET,
+          policy: requireR2Policy(r2Policies, ARTIFACT_OBJECT_BODIES_DATASET.id),
+          port: input.ports.recordSnapshots.artifactObjects,
+        },
+        {
+          dataset: LOG_ARCHIVE_OBJECT_BODIES_DATASET,
+          policy: requireR2Policy(r2Policies, LOG_ARCHIVE_OBJECT_BODIES_DATASET.id),
+          port: input.ports.recordSnapshots.logArchiveObjects,
         },
       ],
     },

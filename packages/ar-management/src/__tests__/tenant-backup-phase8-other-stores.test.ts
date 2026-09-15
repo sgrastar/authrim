@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createPhase8OtherStoreHandlers } from '../tenant-backup-phase8-other-stores';
 import { encodePortableUserAvatar } from '@authrim/ar-lib-core/services/tenant-portability/phase5-record-datasets';
+import { encodePortableR2ObjectChunk } from '@authrim/ar-lib-core/services/tenant-portability/portable-r2-object';
 
 const digest = 'a'.repeat(64);
 const context = {
@@ -165,6 +166,47 @@ describe('Phase 8 sensitive sidecars', () => {
     expect(importAsset).toHaveBeenCalledWith(
       context,
       expect.objectContaining({ key: 'avatars/tenant-a/users/user-a.png', bytes })
+    );
+  });
+
+  it('restores a validated portable R2 chunk through the installed object port', async () => {
+    const bytes = new TextEncoder().encode('object-body');
+    const sha256 = [...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))]
+      .map((byte) => byte.toString(16).padStart(2, '0'))
+      .join('');
+    const rowJson = new TextDecoder()
+      .decode(
+        await encodePortableR2ObjectChunk({
+          tenantId: 'tenant-a',
+          objectId: 'object-a',
+          bucketBinding: 'EXPORT_ARTIFACTS',
+          objectKey: 'exports/tenant-a/object-a',
+          sourceEncoding: 'plaintext',
+          objectSha256: sha256,
+          totalBytes: bytes.length,
+          chunkIndex: 0,
+          chunkCount: 1,
+          chunkSha256: sha256,
+          bytes,
+          context: {},
+          httpMetadata: { contentType: 'application/octet-stream' },
+          customMetadata: null,
+        })
+      )
+      .trim();
+    const loaded = source('artifacts.object_catalog_bodies', [], rowJson);
+    const importR2Chunk = vi.fn();
+    const handlers = createPhase8OtherStoreHandlers({}, {
+      loadPhase8Record: vi.fn(async () => loaded),
+      importR2Chunk,
+    } as never);
+
+    await handlers.restoreOtherStores(context, digest, cursor('artifacts.object_catalog_bodies'));
+
+    expect(importR2Chunk).toHaveBeenCalledWith(
+      context,
+      'artifacts.object_catalog_bodies',
+      expect.objectContaining({ objectId: 'object-a', bytes })
     );
   });
 });

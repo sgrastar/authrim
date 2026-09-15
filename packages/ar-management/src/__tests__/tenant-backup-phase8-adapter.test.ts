@@ -83,6 +83,8 @@ function ports(): Phase8InstalledAdapterPorts {
       directorySecrets: recordSnapshot('directory'),
       publicAssets: recordSnapshot('assets'),
       userAvatars: recordSnapshot('avatars'),
+      artifactObjects: recordSnapshot('artifact-objects'),
+      logArchiveObjects: recordSnapshot('log-archive-objects'),
       pluginConfiguration: recordSnapshot('plugin'),
       logicalPlacement: recordSnapshot('placement'),
     },
@@ -117,7 +119,7 @@ it('installs the complete Core, PII, and Admin Phase 8 SQL adapter', () => {
     fixed: ['DB_ADMIN'],
   });
   expect(adapter.export.datasets(all)).toHaveLength(
-    PHASE8_CUMULATIVE_SQLITE_DATASET_REGISTRATIONS.length + 7
+    PHASE8_CUMULATIVE_SQLITE_DATASET_REGISTRATIONS.length + 9
   );
   expect(adapter.export.datasets(all).map(({ id }) => id)).toContain(
     'pii.identity_identifier_replacement_challenges'
@@ -126,6 +128,10 @@ it('installs the complete Core, PII, and Admin Phase 8 SQL adapter', () => {
     'plugin_runner.plugin_runner_egress_audit'
   );
   expect(adapter.export.datasets(all).map(({ id }) => id)).toContain('users.public_avatars');
+  expect(adapter.export.datasets(all).map(({ id }) => id)).toContain(
+    'artifacts.object_catalog_bodies'
+  );
+  expect(adapter.export.datasets(all).map(({ id }) => id)).toContain('logs.archive_object_bodies');
 });
 
 it('includes user avatars without settings assets for a users-only backup', () => {
