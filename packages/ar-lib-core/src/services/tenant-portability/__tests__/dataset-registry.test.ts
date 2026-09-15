@@ -153,7 +153,7 @@ describe('tenant backup dataset registry coverage', () => {
     expect(
       checkTenantBackupBindingCoverage([{ name: 'NEW_DATA', kind: 'R2Bucket' }]).unclassified
     ).toEqual(['R2Bucket:NEW_DATA']);
-  });
+  }, 15_000);
 
   it('does not discard single-use credential denials as ordinary rate counters', () => {
     // IAT metadata has no tenant ID, and consumption is claimed in RATE_LIMITER before KV

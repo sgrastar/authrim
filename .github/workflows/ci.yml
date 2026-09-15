@@ -75,6 +75,8 @@ jobs:
           echo "PUBLIC_API_BASE_URL=http://localhost:8786" > packages/ar-admin-ui/.env
 
       - name: Run linter
+        env:
+          NODE_OPTIONS: '--max-old-space-size=6144'
         run: pnpm run lint
 
   typecheck:
