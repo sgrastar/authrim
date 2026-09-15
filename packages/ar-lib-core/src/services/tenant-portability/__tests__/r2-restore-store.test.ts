@@ -46,6 +46,7 @@ beforeEach(() => {
     '003_tenant_backup_operations.sql',
     '004_tenant_backup_validation_index.sql',
     '031_tenant_backup_r2_restores.sql',
+    '032_tenant_backup_r2_log_record_maps.sql',
   ])
     database.exec(migration(name));
   database
@@ -226,5 +227,79 @@ describe('tenant backup R2 restore store', () => {
     await expect(store.get({ ...stagedOwner, fencingToken: 2 }, 106)).rejects.toThrow(
       'backup_r2_restore_store_invalid'
     );
+  });
+
+  it('requires immutable rebuilt log record locations before completion', async () => {
+    const logOwner = {
+      ...owner,
+      datasetId: 'logs.archive_object_bodies' as const,
+      objectId: 'core:log-a',
+    };
+    const logChunk = {
+      ...chunk,
+      objectId: logOwner.objectId,
+      objectKey: 'source/tenant-a/log-a',
+      sourceEncoding: 'log_chunk_records_v1' as const,
+      bucketBinding: 'AUDIT_ARCHIVE' as const,
+    };
+    await store.create(logOwner, {
+      chunk: logChunk,
+      writeMode: 'staged',
+      targetBucketBinding: 'AUDIT_ARCHIVE',
+      targetObjectKey: 'restored/tenant-a/log-a',
+      now: 101,
+    });
+    await store.beginStaging(logOwner, 102);
+    await store.acknowledgePart(logOwner, {
+      chunkIndex: 0,
+      byteCount: 3,
+      sha256: logChunk.chunkSha256,
+      stagingObjectKey: 'staging/log-a/0',
+      now: 103,
+    });
+    await store.prepareCompletion(logOwner, 104);
+    await expect(
+      store.markCompleted(logOwner, {
+        version: 'version-a',
+        etag: 'etag-a',
+        storedSha256: logChunk.objectSha256,
+        targetKeyVersion: 2,
+        targetEncryptionScope: 'tenant-log-archive',
+        now: 105,
+      })
+    ).rejects.toThrow('backup_r2_restore_log_records_required');
+
+    const locations = [
+      {
+        recordId: 'record-a',
+        sourceMetadataSha256: 'e'.repeat(64),
+        lineNumber: 0,
+        blockOffset: 0,
+        blockLength: 44,
+        recordOffset: 0,
+        recordLength: 12,
+      },
+    ];
+    await store.saveLogRecords(logOwner, locations, 106);
+    await store.saveLogRecords(logOwner, locations, 107);
+    await expect(store.loadLogRecords(logOwner, 108)).resolves.toEqual(locations);
+    await expect(
+      store.markCompleted(logOwner, {
+        version: 'version-a',
+        etag: 'etag-a',
+        storedSha256: logChunk.objectSha256,
+        targetKeyVersion: 2,
+        targetEncryptionScope: 'tenant-log-archive',
+        now: 109,
+      })
+    ).resolves.toMatchObject({ state: 'completed' });
+    expect(() =>
+      database
+        .prepare(
+          `UPDATE tenant_backup_r2_restore_objects
+           SET log_records_json=json('[{"recordId":"changed"}]') WHERE object_id='core:log-a'`
+        )
+        .run()
+    ).toThrow('backup_r2_restore_log_records_identity');
   });
 });

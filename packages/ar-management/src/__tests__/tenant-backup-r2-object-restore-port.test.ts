@@ -4,7 +4,13 @@ import { DatabaseSync } from 'node:sqlite';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DatabaseAdapter } from '@authrim/ar-lib-core/db/adapter';
 import { decryptObjectArtifact } from '@authrim/ar-lib-core/services/object-artifact-crypto';
-import { decryptLogChunkBody, deriveLogChunkEncryptionKey } from '@authrim/ar-lib-logging/chunks';
+import { encodePortableLogChunkRecords } from '@authrim/ar-lib-core/services/tenant-portability/portable-log-chunk';
+import { encodePortableSensitiveDetailRecord } from '@authrim/ar-lib-core/services/tenant-portability/portable-sensitive-detail';
+import {
+  decodeLogRecordFromBlock,
+  decryptLogChunkBody,
+  deriveLogChunkEncryptionKey,
+} from '@authrim/ar-lib-logging/chunks';
 import type { TenantBackupStepContext } from '@authrim/ar-lib-core/services/tenant-portability/operation-executor';
 import type { PortableR2ObjectChunk } from '@authrim/ar-lib-core/services/tenant-portability/portable-r2-object';
 import {
@@ -222,6 +228,7 @@ beforeEach(() => {
     '003_tenant_backup_operations.sql',
     '004_tenant_backup_validation_index.sql',
     '031_tenant_backup_r2_restores.sql',
+    '032_tenant_backup_r2_log_record_maps.sql',
   ])
     database.exec(migration(name));
   database
@@ -428,6 +435,177 @@ describe('tenant backup R2 object restore port', () => {
       'logs.archive_object_bodies',
       source,
       expect.objectContaining({ keyVersion: 5, encryptionScope: 'tenant-log-archive' })
+    );
+  });
+
+  it('rebuilds portable log records and persists their target block locations', async () => {
+    const portable = encodePortableLogChunkRecords({
+      version: 1,
+      compression: 'gzip_block',
+      records: [
+        {
+          recordId: 'record-kept',
+          eventAt: 400,
+          surface: 'auth',
+          indexProfile: 'audit',
+          indexedFields: '{"result":"allowed"}',
+          createdAt: 401,
+          payload: { audit: 'inside' },
+        },
+      ],
+    });
+    const source = await chunk(portable, {
+      objectId: 'admin:log-object-repacked',
+      bucketBinding: 'AUDIT_ARCHIVE',
+      sourceEncoding: 'log_chunk_records_v1',
+      context: {
+        tenantId: 'tenant-a',
+        catalogKind: 'log_object',
+        tenantKey: 'tenant-key-a',
+        logType: 'admin_audit',
+        plane: 'archive',
+        chunkId: 'chunk-repacked',
+        compression: 'gzip_block',
+        targetEncryptionScope: 'tenant-log-archive',
+      },
+    });
+    const ports = createTenantBackupR2ObjectRestorePorts({
+      env: {
+        AUDIT_ARCHIVE: target as unknown as R2Bucket,
+        EXPORT_ARTIFACTS: target as unknown as R2Bucket,
+        OBJECT_ENCRYPTION_ROOT_KEY: '55'.repeat(32),
+        OBJECT_ENCRYPTION_KEY_VERSION: '6',
+      },
+      database: adapter,
+      finalizer,
+      now: () => now++,
+    });
+
+    await ports.importR2Chunk(context(), planDigest, 'logs.archive_object_bodies', source);
+
+    const expectedKey = 'tenant-restores/tenant-a/operation-a/logs/admin:log-object-repacked';
+    const saved = target.objects.get(expectedKey);
+    const keyBytes = await deriveLogChunkEncryptionKey({
+      rootKeyHex: '55'.repeat(32),
+      tenantKey: 'tenant-key-a',
+      logType: 'admin_audit',
+      plane: 'archive',
+      keyVersion: 6,
+    });
+    const decoded = await decryptLogChunkBody({
+      storedBody: saved?.bytes ?? new Uint8Array(),
+      keyBytes,
+      tenantKey: 'tenant-key-a',
+      logType: 'admin_audit',
+      plane: 'archive',
+      objectKey: expectedKey,
+      chunkId: 'chunk-repacked',
+      expectedEncryptionScope: 'tenant-log-archive',
+      expectedKeyVersion: 6,
+    });
+    const call = vi.mocked(finalizer.finalize).mock.calls.at(-1);
+    const location = call?.[4].logRecords?.[0];
+    expect(location).toBeDefined();
+    expect(location?.sourceMetadataSha256).toMatch(/^[a-f0-9]{64}$/);
+    await expect(
+      decodeLogRecordFromBlock(
+        decoded.body,
+        {
+          blockIndex: 0,
+          compressedOffset: location?.blockOffset ?? -1,
+          compressedLength: location?.blockLength ?? -1,
+          uncompressedLength: location?.blockLength ?? -1,
+          firstLineNumber: 0,
+          lastLineNumber: 0,
+          recordCount: 1,
+        },
+        {
+          recordId: 'record-kept',
+          lineNumber: location?.lineNumber ?? -1,
+          blockIndex: 0,
+          recordOffset: location?.recordOffset ?? -1,
+          recordLength: location?.recordLength ?? -1,
+        },
+        'gzip_block'
+      )
+    ).resolves.toEqual({ audit: 'inside' });
+    expect(
+      database
+        .prepare(
+          'SELECT source_encoding,log_records_json,target_key_version,target_encryption_scope FROM tenant_backup_r2_restore_objects WHERE object_id=?'
+        )
+        .get('admin:log-object-repacked')
+    ).toMatchObject({
+      source_encoding: 'log_chunk_records_v1',
+      target_key_version: 6,
+      target_encryption_scope: 'tenant-log-archive',
+      log_records_json: expect.stringContaining('record-kept'),
+    });
+    await expect(
+      ports.verifyR2Chunk(context(), planDigest, 'logs.archive_object_bodies', source)
+    ).resolves.toBe(true);
+  });
+
+  it('restores one shared sensitive detail as an independently encrypted NDJSON record', async () => {
+    const portable = encodePortableSensitiveDetailRecord({
+      version: 1,
+      contentType: 'application/json',
+      plaintext: '{"selected":true}',
+    });
+    const source = await chunk(portable, {
+      objectId: 'core:detail-a',
+      bucketBinding: 'SENSITIVE_DETAILS',
+      sourceEncoding: 'sensitive_detail_record_v1',
+      context: {
+        tenantId: 'tenant-a',
+        catalogKind: 'object_catalog_object',
+        catalogId: 'catalog-a',
+        objectClass: 'pii_log_values',
+        contentEncoding: 'gzip',
+        lineNumber: 3,
+        byteOffset: null,
+        byteLength: null,
+        sourceKeyVersion: 2,
+      },
+    });
+    const ports = createTenantBackupR2ObjectRestorePorts({
+      env: {
+        SENSITIVE_DETAILS: target as unknown as R2Bucket,
+        EXPORT_ARTIFACTS: target as unknown as R2Bucket,
+        OBJECT_ENCRYPTION_ROOT_KEY: '66'.repeat(32),
+        OBJECT_ENCRYPTION_KEY_VERSION: '7',
+      },
+      database: adapter,
+      finalizer,
+      now: () => now++,
+    });
+
+    await ports.importR2Chunk(context(), planDigest, 'artifacts.object_catalog_bodies', source);
+
+    const expectedKey = 'tenant-restores/tenant-a/operation-a/artifacts/core:detail-a';
+    const saved = target.objects.get(expectedKey);
+    const text = new TextDecoder().decode(saved?.bytes);
+    expect(text.endsWith('\n')).toBe(true);
+    const envelope = JSON.parse(text.trimEnd()) as Parameters<typeof decryptObjectArtifact>[0];
+    await expect(
+      decryptObjectArtifact(envelope, {
+        rootKeyHex: '66'.repeat(32),
+        context: {
+          tenantId: 'tenant-a',
+          objectKey: expectedKey,
+          objectClass: 'pii_log_values',
+        },
+      })
+    ).resolves.toBe('{"selected":true}');
+    expect(saved?.httpMetadata).toMatchObject({
+      contentType: 'application/x-ndjson',
+    });
+    expect(finalizer.finalize).toHaveBeenCalledWith(
+      expect.anything(),
+      planDigest,
+      'artifacts.object_catalog_bodies',
+      source,
+      expect.objectContaining({ keyVersion: 7, encryptionScope: null })
     );
   });
 });

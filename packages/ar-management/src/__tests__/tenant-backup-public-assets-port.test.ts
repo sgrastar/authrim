@@ -63,6 +63,7 @@ function bucket(
 
 function context(): AdapterContext {
   return {
+    boundaryUnixMs: 100,
     context: {
       lease: { tenantId: 'tenant-a', operationId: 'operation-a' },
       signal: new AbortController().signal,
@@ -87,8 +88,8 @@ describe('tenant backup public asset ports', () => {
     });
     const input = context();
 
-    await ports.publicAssets.start(input, 'settings-snapshot', async () => {});
-    await ports.userAvatars.start(input, 'users-snapshot', async () => {});
+    await ports.publicAssets.start(input, 'settings-snapshot', async () => {}, 100);
+    await ports.userAvatars.start(input, 'users-snapshot', async () => {}, 100);
     const settings = await ports.publicAssets.readNext(
       input,
       'settings-snapshot',

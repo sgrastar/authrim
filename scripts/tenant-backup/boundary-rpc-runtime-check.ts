@@ -137,6 +137,7 @@ try {
     '005_tenant_backup_mutation_admission.sql',
     '006_tenant_backup_mutation_environment_scope.sql',
     '007_tenant_backup_boundary_receipts.sql',
+    '010_tenant_backup_snapshot_timestamp.sql',
   ]) {
     const sql = readFileSync(
       new URL('../../migrations/control/d1/' + file, import.meta.url),

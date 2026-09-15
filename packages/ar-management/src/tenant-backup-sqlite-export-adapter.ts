@@ -25,6 +25,7 @@ export interface TenantBackupInstalledSqliteExportPorts {
   filterRow?(
     input: AdapterContext & {
       datasetId: string;
+      resourceId: string;
       rowJson: string;
       boundaryUnixMs?: number;
     }
@@ -118,6 +119,7 @@ export function createTenantBackupInstalledSqliteExportAdapter(input: {
                 input.ports.filterRow?.({
                   ...context,
                   datasetId: dataset.dataset.id,
+                  resourceId: dataset.resourceId,
                   rowJson,
                 }) ?? Promise.reject(new Error('backup_sqlite_export_adapter_filter'))
             : undefined,

@@ -54,12 +54,8 @@ const PHASE8_LOG_DEPENDENCY_DATASETS = new Set([
 
 const AUDIT_LOG_TYPES = new Set(['audit', 'admin_audit', 'security']);
 const OTHER_LOG_TYPES = new Set(['normal', 'diagnostic', 'job', 'webhook', 'operational']);
-const AUDIT_DETAIL_CLASSES = new Set([
-  'admin_audit_detail',
-  'event_log_detail',
-  'approval_transport_detail',
-]);
-const OTHER_DETAIL_CLASSES = new Set(['webhook_delivery_payload', 'operational_log_detail']);
+const AUDIT_DETAIL_CLASSES = new Set(['admin_audit_detail']);
+const OTHER_DETAIL_CLASSES = new Set(['event_log_detail', 'operational_log_detail']);
 
 function invalid(): never {
   throw new Error('backup_phase8_log_timestamp_invalid');
@@ -124,12 +120,20 @@ function logTypeSelected(
   return invalid();
 }
 
-function detailClassSelected(objectClass: string, selection: TenantBackupSelection): boolean {
+function detailClassSelection(
+  objectClass: string,
+  selection: TenantBackupSelection
+): { selected: boolean; timeFiltered: boolean } {
   if (AUDIT_DETAIL_CLASSES.has(objectClass))
-    return selection.logs.audit && selection.logs.sensitive;
+    return { selected: selection.logs.audit && selection.logs.sensitive, timeFiltered: true };
   if (OTHER_DETAIL_CLASSES.has(objectClass))
-    return selection.logs.other && selection.logs.sensitive;
-  if (objectClass === 'pii_log_values') return selection.logs.sensitive;
+    return { selected: selection.logs.other && selection.logs.sensitive, timeFiltered: true };
+  if (objectClass === 'approval_transport_detail')
+    return { selected: selection.admin, timeFiltered: false };
+  if (objectClass === 'webhook_delivery_payload')
+    return { selected: selection.users, timeFiltered: false };
+  // PII log R2 values are converted into the encrypted bundle row and restored under target keys.
+  if (objectClass === 'pii_log_values') return { selected: false, timeFiltered: false };
   return invalid();
 }
 
@@ -143,7 +147,9 @@ export function phase8LogDependencyRowInSelection(input: {
   if (!PHASE8_LOG_DEPENDENCY_DATASETS.has(input.datasetId)) invalid();
   const window = tenantBackupLogWindow(input.selection.logs.period, input.boundaryUnixMs);
   if (input.datasetId.endsWith('.sensitive_detail_chunk_index')) {
-    if (!detailClassSelected(text(input.row, 'object_class'), input.selection)) return false;
+    const detail = detailClassSelection(text(input.row, 'object_class'), input.selection);
+    if (!detail.selected) return false;
+    if (!detail.timeFiltered) return true;
     const createdAt = integer(input.row, 'created_at');
     return (
       createdAt <= window.untilInclusiveUnixMs &&

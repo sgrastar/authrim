@@ -11,12 +11,30 @@ const MAX_RECORDS = 4096;
 const MAX_RECORD_BYTES = 16 * 1024 * 1024;
 
 interface SnapshotIndex {
-  version: 1;
+  version: 2;
   resourceId: string;
   snapshotId: string;
   tenantId: string;
   operationId: string;
-  records: readonly { key: string; sha256: string; bytes: number }[];
+  boundaryUnixMs: number;
+  records: readonly {
+    key: string;
+    sha256: string;
+    bytes: number;
+    summary: TenantBackupRecordSnapshotSummary | null;
+  }[];
+}
+
+export type TenantBackupRecordSnapshotSummary = Readonly<
+  Record<string, string | number | boolean | null>
+>;
+
+export interface EncryptedTenantBackupRecordSnapshotPort extends Phase5RecordSnapshotPort {
+  readSummaries(
+    context: AdapterContext,
+    snapshotId: string,
+    boundaryUnixMs: number
+  ): Promise<readonly TenantBackupRecordSnapshotSummary[]>;
 }
 
 interface Cursor {
@@ -56,6 +74,26 @@ function validateRecord(bytes: Uint8Array): void {
   } catch {
     invalid();
   }
+}
+
+function validateSummary(
+  value: TenantBackupRecordSnapshotSummary | null
+): TenantBackupRecordSnapshotSummary | null {
+  if (value === null) return null;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) invalid();
+  const entries = Object.entries(value);
+  if (
+    entries.length > 16 ||
+    entries.some(([key, item]) => {
+      if (!/^[a-z][A-Za-z0-9]{0,63}$/.test(key)) return true;
+      if (item === null || typeof item === 'boolean') return false;
+      if (typeof item === 'string') return new TextEncoder().encode(item).length > 512;
+      return typeof item !== 'number' || !Number.isSafeInteger(item);
+    }) ||
+    new TextEncoder().encode(JSON.stringify(value)).length > 4096
+  )
+    invalid();
+  return value;
 }
 
 function prefix(context: AdapterContext, resourceId: string, snapshotId: string): string {
@@ -116,34 +154,52 @@ async function writeEncryptedJson(
   });
 }
 
-function parseIndex(value: string, expected: Omit<SnapshotIndex, 'records'>): SnapshotIndex {
-  let index: SnapshotIndex;
+function parseIndex(
+  value: string,
+  expected: Omit<SnapshotIndex, 'records' | 'boundaryUnixMs'>,
+  expectedBoundaryUnixMs?: number
+): SnapshotIndex {
+  let decoded: unknown;
   try {
-    index = JSON.parse(value) as SnapshotIndex;
+    decoded = JSON.parse(value) as unknown;
   } catch {
     return invalid();
   }
   if (
-    !index ||
-    Object.keys(index).sort().join(',') !==
-      'operationId,records,resourceId,snapshotId,tenantId,version' ||
-    index.version !== 1 ||
+    !decoded ||
+    typeof decoded !== 'object' ||
+    Array.isArray(decoded) ||
+    Object.keys(decoded).sort().join(',') !==
+      'boundaryUnixMs,operationId,records,resourceId,snapshotId,tenantId,version' ||
+    !('records' in decoded) ||
+    !Array.isArray(decoded.records)
+  )
+    invalid();
+  const index = decoded as SnapshotIndex;
+  if (
+    index.version !== 2 ||
     index.resourceId !== expected.resourceId ||
     index.snapshotId !== expected.snapshotId ||
     index.tenantId !== expected.tenantId ||
     index.operationId !== expected.operationId ||
-    !Array.isArray(index.records) ||
+    !Number.isSafeInteger(index.boundaryUnixMs) ||
+    index.boundaryUnixMs < 0 ||
+    (expectedBoundaryUnixMs !== undefined && index.boundaryUnixMs !== expectedBoundaryUnixMs) ||
     index.records.length > MAX_RECORDS ||
-    index.records.some(
-      (record, ordinal) =>
+    index.records.some((record, ordinal) => {
+      if (
         !record ||
-        Object.keys(record).sort().join(',') !== 'bytes,key,sha256' ||
+        Object.keys(record).sort().join(',') !== 'bytes,key,sha256,summary' ||
         record.key !== `record-${String(ordinal).padStart(4, '0')}-${record.sha256}.json` ||
         !/^[a-f0-9]{64}$/.test(record.sha256) ||
         !Number.isSafeInteger(record.bytes) ||
         record.bytes < 1 ||
         record.bytes > MAX_RECORD_BYTES
-    )
+      )
+        return true;
+      validateSummary(record.summary);
+      return false;
+    })
   )
     invalid();
   return index;
@@ -181,7 +237,10 @@ export function createEncryptedTenantBackupRecordSnapshotPort(input: {
   resourceId: string;
   assertSource(context: AdapterContext): Promise<void>;
   capture(context: AdapterContext): AsyncIterable<Uint8Array>;
-}): Phase5RecordSnapshotPort {
+  summarizeRecord?(
+    bytes: Uint8Array
+  ): TenantBackupRecordSnapshotSummary | null | Promise<TenantBackupRecordSnapshotSummary | null>;
+}): EncryptedTenantBackupRecordSnapshotPort {
   if (!/^[A-Za-z0-9_.:-]{1,128}$/.test(input.resourceId)) invalid();
   const bucket = input.env.EXPORT_ARTIFACTS;
   if (!bucket) invalid();
@@ -189,13 +248,17 @@ export function createEncryptedTenantBackupRecordSnapshotPort(input: {
   const encryptionKeyVersion = keyVersion(input.env);
 
   const identity = (context: AdapterContext, snapshotId: string) => ({
-    version: 1 as const,
+    version: 2 as const,
     resourceId: input.resourceId,
     snapshotId,
     tenantId: context.context.lease.tenantId,
     operationId: context.context.lease.operationId,
   });
-  const loadIndex = async (context: AdapterContext, snapshotId: string) => {
+  const loadIndex = async (
+    context: AdapterContext,
+    snapshotId: string,
+    boundaryUnixMs?: number
+  ) => {
     const base = prefix(context, input.resourceId, snapshotId);
     const saved = await readEncryptedJson(
       bucket,
@@ -203,25 +266,27 @@ export function createEncryptedTenantBackupRecordSnapshotPort(input: {
       context.context.lease.tenantId,
       encryptionRootKey
     );
-    return saved === null ? null : parseIndex(saved, identity(context, snapshotId));
+    return saved === null ? null : parseIndex(saved, identity(context, snapshotId), boundaryUnixMs);
   };
 
   return {
     resourceId: input.resourceId,
-    assertSource: input.assertSource,
-    async start(context, snapshotId, assertHeld) {
+    assertSource: (context) => input.assertSource(context),
+    async start(context, snapshotId, assertHeld, boundaryUnixMs) {
+      if (!Number.isSafeInteger(boundaryUnixMs) || boundaryUnixMs < 0) invalid();
+      const captureContext: AdapterContext = { ...context, boundaryUnixMs };
       await assertHeld();
-      await input.assertSource(context);
-      const existing = await loadIndex(context, snapshotId);
+      await input.assertSource(captureContext);
+      const existing = await loadIndex(captureContext, snapshotId, boundaryUnixMs);
       if (existing) {
         await assertHeld();
         return;
       }
-      const base = prefix(context, input.resourceId, snapshotId);
+      const base = prefix(captureContext, input.resourceId, snapshotId);
       const records: SnapshotIndex['records'][number][] = [];
-      for await (const captured of input.capture(context)) {
+      for await (const captured of input.capture(captureContext)) {
         await assertHeld();
-        context.context.signal.throwIfAborted();
+        captureContext.context.signal.throwIfAborted();
         const bytes = new Uint8Array(captured);
         validateRecord(bytes);
         if (records.length >= MAX_RECORDS) invalid();
@@ -232,43 +297,55 @@ export function createEncryptedTenantBackupRecordSnapshotPort(input: {
         const saved = await readEncryptedJson(
           bucket,
           objectKey,
-          context.context.lease.tenantId,
+          captureContext.context.lease.tenantId,
           encryptionRootKey
         );
         if (saved === null)
           await writeEncryptedJson(
             bucket,
             objectKey,
-            context.context.lease.tenantId,
+            captureContext.context.lease.tenantId,
             plaintext,
             encryptionRootKey,
             encryptionKeyVersion
           );
         else if (saved !== plaintext) invalid();
-        records.push({ key, sha256: digest, bytes: bytes.length });
+        records.push({
+          key,
+          sha256: digest,
+          bytes: bytes.length,
+          summary: validateSummary((await input.summarizeRecord?.(bytes)) ?? null),
+        });
       }
-      await input.assertSource(context);
+      await input.assertSource(captureContext);
       await assertHeld();
-      const index = { ...identity(context, snapshotId), records } satisfies SnapshotIndex;
+      const index = {
+        ...identity(captureContext, snapshotId),
+        boundaryUnixMs,
+        records,
+      } satisfies SnapshotIndex;
       const indexJson = JSON.stringify(index);
-      const raced = await loadIndex(context, snapshotId);
+      const raced = await loadIndex(captureContext, snapshotId, boundaryUnixMs);
       if (raced && JSON.stringify(raced) !== indexJson) invalid();
       if (!raced)
         await writeEncryptedJson(
           bucket,
           `${base}index.json`,
-          context.context.lease.tenantId,
+          captureContext.context.lease.tenantId,
           indexJson,
           encryptionRootKey,
           encryptionKeyVersion
         );
-      const published = (await loadIndex(context, snapshotId)) ?? invalid();
+      const published = (await loadIndex(captureContext, snapshotId, boundaryUnixMs)) ?? invalid();
       if (JSON.stringify(published) !== indexJson) invalid();
       await assertHeld();
     },
     async readNext(context, snapshotId, cursor, signal) {
       signal.throwIfAborted();
-      const index = (await loadIndex(context, snapshotId)) ?? invalid();
+      if (!Number.isSafeInteger(context.boundaryUnixMs) || (context.boundaryUnixMs ?? -1) < 0)
+        invalid();
+      const index =
+        (await loadIndex(context, snapshotId, context.boundaryUnixMs ?? -1)) ?? invalid();
       const ordinal = parseCursor(cursor);
       if (ordinal >= index.records.length) return null;
       const record = index.records[ordinal];
@@ -285,6 +362,13 @@ export function createEncryptedTenantBackupRecordSnapshotPort(input: {
       if (bytes.length !== record.bytes || (await sha256(bytes)) !== record.sha256) invalid();
       signal.throwIfAborted();
       return { bytes, nextCursor: JSON.stringify({ version: 1, ordinal: ordinal + 1 }) };
+    },
+    async readSummaries(context, snapshotId, boundaryUnixMs) {
+      if (!Number.isSafeInteger(boundaryUnixMs) || boundaryUnixMs < 0) invalid();
+      const index = (await loadIndex(context, snapshotId, boundaryUnixMs)) ?? invalid();
+      return index.records.flatMap(({ summary }) =>
+        summary === null ? [] : [Object.freeze({ ...summary })]
+      );
     },
     async release(context, snapshotId) {
       const base = prefix(context, input.resourceId, snapshotId);

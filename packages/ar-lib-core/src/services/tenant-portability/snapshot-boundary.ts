@@ -11,7 +11,7 @@ import {
 
 export interface TenantBackupBoundaryStart extends BackupBoundaryParticipant {
   /** Must resolve only after the exact snapshot is active; retain uncertain starts for cleanup. */
-  start(assertHeld: () => Promise<void>): Promise<void>;
+  start(assertHeld: () => Promise<void>, boundaryUnixMs: number): Promise<void>;
 }
 
 /** Adapter for an already prepared SQL resource, retaining its operation and DDL guards. */
@@ -64,6 +64,8 @@ export async function startTenantBackupSnapshotBoundary(input: {
   await check();
   const recovered = await receipts.readReleased(identity, participants, now());
   if (recovered) {
+    if (!Number.isSafeInteger(recovered.held_at) || (recovered.held_at ?? -1) < 0)
+      throw new Error('backup_boundary_snapshot_timestamp_invalid');
     await check();
     return recovered;
   }
@@ -79,8 +81,11 @@ export async function startTenantBackupSnapshotBoundary(input: {
     if (!(await receipts.plan(identity, participants, now())))
       throw new Error('backup_boundary_plan_rejected');
     await check();
-    if (!(await admission.hold(identity.tenantId, identity.boundaryId, now())))
-      throw new Error('backup_boundary_writers_pending');
+    const held = await admission.hold(identity.tenantId, identity.boundaryId, now());
+    if (!held) throw new Error('backup_boundary_writers_pending');
+    if (!Number.isSafeInteger(held.held_at) || (held.held_at ?? -1) < 0)
+      throw new Error('backup_boundary_snapshot_timestamp_invalid');
+    const boundaryUnixMs = held.held_at ?? -1;
     const assertHeld = async () => {
       await check();
       await receipts.assertHeld(identity, now());
@@ -89,7 +94,7 @@ export async function startTenantBackupSnapshotBoundary(input: {
     const starts = await Promise.allSettled(
       participants.map(async (participant) => {
         await assertHeld();
-        await participant.start(assertHeld);
+        await participant.start(assertHeld, boundaryUnixMs);
         await assertHeld();
         if (!(await receipts.acknowledge(identity, participant, now())))
           throw new Error('backup_boundary_receipt_rejected');
@@ -100,6 +105,8 @@ export async function startTenantBackupSnapshotBoundary(input: {
     await assertHeld();
     const released = await receipts.release(identity, now());
     if (!released) throw new Error('backup_boundary_release_rejected');
+    if (released.held_at !== boundaryUnixMs)
+      throw new Error('backup_boundary_snapshot_timestamp_invalid');
     return released;
   } catch {
     // A lost successful release response remains released; abort only changes active attempts.

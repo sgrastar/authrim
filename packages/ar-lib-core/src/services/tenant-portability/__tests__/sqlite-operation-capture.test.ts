@@ -602,6 +602,7 @@ it('prepares both databases before admission and safely repeats an installed tab
       '005_tenant_backup_mutation_admission.sql',
       '006_tenant_backup_mutation_environment_scope.sql',
       '007_tenant_backup_boundary_receipts.sql',
+      '010_tenant_backup_snapshot_timestamp.sql',
     ])
       db.exec(
         readFileSync(
@@ -720,6 +721,7 @@ it('connects real SQL snapshot start to durable boundary receipts and preserves 
       '005_tenant_backup_mutation_admission.sql',
       '006_tenant_backup_mutation_environment_scope.sql',
       '007_tenant_backup_boundary_receipts.sql',
+      '010_tenant_backup_snapshot_timestamp.sql',
     ])
       db.exec(
         readFileSync(

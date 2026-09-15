@@ -40,6 +40,7 @@ import { createTenantBackupR2ObjectRestorePorts } from './tenant-backup-r2-objec
 import { createTenantBackupR2CatalogFinalizer } from './tenant-backup-r2-catalog-finalizer';
 import { createTenantBackupR2CatalogLister } from './tenant-backup-r2-catalog-lister';
 import { createTenantBackupR2ObjectSnapshotPorts } from './tenant-backup-r2-object-snapshot-port';
+import { createTenantBackupR2ReferenceSelectionLoader } from './tenant-backup-r2-reference-selection';
 
 export interface Phase8InstalledAdapterPorts extends Omit<
   Phase5InstalledAdapterPorts,
@@ -58,6 +59,16 @@ export interface Phase8InstalledAdapterPorts extends Omit<
     validatePhase8Envelope(datasetId: string, row: PortableSqliteRow): Promise<void>;
     userAvatars: Phase5InstalledAdapterPorts['recordSnapshots']['publicAssets'];
   };
+  resolveAdminR2RestoreDatabase(
+    context: TenantBackupStepContext,
+    planDigest: string,
+    sourceDatabaseId: string
+  ): Promise<Pick<import('@authrim/ar-lib-core').DatabaseAdapter, 'query' | 'batch' | 'getType'>>;
+  resolveCoreR2RestoreDatabase(
+    context: TenantBackupStepContext,
+    planDigest: string,
+    sourceDatabaseId: string
+  ): Promise<Pick<import('@authrim/ar-lib-core').DatabaseAdapter, 'query' | 'batch' | 'getType'>>;
 }
 
 function requireR2Policy(
@@ -109,12 +120,15 @@ export function createPhase8TenantBackupInstalledAdapter(
     assertSource: (context) => input.ports.export.assertSources(context),
     list: createTenantBackupR2CatalogLister({ tenantKey: input.ports.tenantKey }),
   });
+  const loadR2References = createTenantBackupR2ReferenceSelectionLoader(r2Snapshots);
   const r2Objects = createTenantBackupR2ObjectRestorePorts({
     env: input.env,
     database,
     finalizer: createTenantBackupR2CatalogFinalizer({
-      resolveAdmin: input.ports.resolveAdminRestoreDatabase,
-      resolveCore: input.ports.resolveCoreRestoreDatabase,
+      resolveAdmin: (context, planDigest, sourceDatabaseId) =>
+        input.ports.resolveAdminR2RestoreDatabase(context, planDigest, sourceDatabaseId),
+      resolveCore: (context, planDigest, sourceDatabaseId) =>
+        input.ports.resolveCoreR2RestoreDatabase(context, planDigest, sourceDatabaseId),
     }),
     now,
   });
@@ -227,7 +241,7 @@ export function createPhase8TenantBackupInstalledAdapter(
       },
       registrations: PHASE8_CUMULATIVE_SQLITE_DATASET_REGISTRATIONS,
       transformedDatasetIds: PHASE8_TRANSFORMED_SQLITE_DATASETS,
-      filterRow: createPhase8TenantBackupRowFilter(),
+      filterRow: createPhase8TenantBackupRowFilter({ loadReferences: loadR2References }),
       transformRow: createPhase8TenantBackupRowTransform(input.env, rowTransform),
       otherStores: createPhase8OtherStoreHandlers(input.env, otherStores),
       recordSnapshots: [

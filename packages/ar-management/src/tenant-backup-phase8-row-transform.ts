@@ -17,6 +17,10 @@ import {
   type Phase5SensitiveRowTransformPort,
 } from './tenant-backup-phase5-row-transform';
 import type { TenantBackupInstalledSqliteExportPorts } from './tenant-backup-sqlite-export-adapter';
+import {
+  tenantBackupR2ReferenceKey,
+  type TenantBackupR2ReferenceSelection,
+} from './tenant-backup-r2-reference-selection';
 
 export { PHASE8_SENSITIVE_SQLITE_DATASETS };
 
@@ -68,36 +72,87 @@ function scrubHeldEnvironmentCiphertext(datasetId: string, rowJson: string): str
 }
 
 /** Apply the fixed log window before a row enters the encrypted bundle. */
-export function createPhase8TenantBackupRowFilter(): NonNullable<
-  TenantBackupInstalledSqliteExportPorts['filterRow']
-> {
-  return async (input) => {
-    const kind = kinds.get(input.datasetId);
+function referenceText(
+  row: ReturnType<typeof parsePhase8PortableSqliteRow>,
+  column: string
+): string {
+  const value = row[column];
+  if (value?.[0] !== 'text' || value[1] === null || !value[1])
+    throw new Error('backup_phase8_reference_selection');
+  return value[1];
+}
+
+export function createPhase8TenantBackupRowFilter(input?: {
+  loadReferences(
+    context: Parameters<NonNullable<TenantBackupInstalledSqliteExportPorts['filterRow']>>[0]
+  ): Promise<TenantBackupR2ReferenceSelection>;
+}): NonNullable<TenantBackupInstalledSqliteExportPorts['filterRow']> {
+  return async (rowInput) => {
+    const kind = kinds.get(rowInput.datasetId);
     if (!kind) throw new Error('backup_phase8_row_transform_dataset');
     if (['audit', 'history', 'sensitive_logs'].includes(kind)) {
-      if (!Number.isSafeInteger(input.boundaryUnixMs) || (input.boundaryUnixMs ?? -1) < 0)
+      if (!Number.isSafeInteger(rowInput.boundaryUnixMs) || (rowInput.boundaryUnixMs ?? -1) < 0)
         throw new Error('backup_phase8_log_boundary');
       if (
         !phase8LogRowInWindow({
-          datasetId: input.datasetId,
-          row: parsePhase8PortableSqliteRow(input.rowJson),
-          period: input.selection.logs.period,
-          boundaryUnixMs: input.boundaryUnixMs ?? -1,
+          datasetId: rowInput.datasetId,
+          row: parsePhase8PortableSqliteRow(rowInput.rowJson),
+          period: rowInput.selection.logs.period,
+          boundaryUnixMs: rowInput.boundaryUnixMs ?? -1,
         })
       )
         return false;
     }
     if (kind === 'log_dependencies') {
-      if (!Number.isSafeInteger(input.boundaryUnixMs) || (input.boundaryUnixMs ?? -1) < 0)
+      if (!Number.isSafeInteger(rowInput.boundaryUnixMs) || (rowInput.boundaryUnixMs ?? -1) < 0)
         throw new Error('backup_phase8_log_boundary');
-      return phase8LogDependencyRowInSelection({
-        datasetId: input.datasetId,
-        row: parsePhase8PortableSqliteRow(input.rowJson),
-        selection: input.selection,
-        boundaryUnixMs: input.boundaryUnixMs ?? -1,
-      });
+      // Repacked chunks invalidate source manifests. The target rebuilds them from restored chunks.
+      if (rowInput.datasetId.endsWith('.log_chunk_manifests')) return false;
+      if (
+        !rowInput.datasetId.endsWith('.log_object_catalog') &&
+        !phase8LogDependencyRowInSelection({
+          datasetId: rowInput.datasetId,
+          row: parsePhase8PortableSqliteRow(rowInput.rowJson),
+          selection: rowInput.selection,
+          boundaryUnixMs: rowInput.boundaryUnixMs ?? -1,
+        })
+      )
+        return false;
     }
-    return true;
+    const table = rowInput.datasetId.split('.')[1];
+    if (
+      ![
+        'object_catalog',
+        'object_catalog_objects',
+        'log_object_catalog',
+        'log_chunk_record_index',
+        'sensitive_detail_chunk_index',
+      ].includes(table ?? '')
+    )
+      return true;
+    if (!input || !rowInput.resourceId) throw new Error('backup_phase8_reference_selection');
+    const row = parsePhase8PortableSqliteRow(rowInput.rowJson);
+    const family = rowInput.datasetId.split('.')[0] ?? '';
+    const selected = await input.loadReferences(rowInput);
+    if (table === 'object_catalog')
+      return selected.objectCatalogRows.has(
+        tenantBackupR2ReferenceKey(family, rowInput.resourceId, referenceText(row, 'id'))
+      );
+    if (table === 'object_catalog_objects')
+      return selected.objectPhysicalRows.has(
+        tenantBackupR2ReferenceKey(family, rowInput.resourceId, referenceText(row, 'id'))
+      );
+    if (table === 'sensitive_detail_chunk_index')
+      return selected.objectCatalogRows.has(
+        tenantBackupR2ReferenceKey(family, rowInput.resourceId, referenceText(row, 'catalog_id'))
+      );
+    const objectCatalogId =
+      table === 'log_object_catalog'
+        ? referenceText(row, 'id')
+        : referenceText(row, 'object_catalog_id');
+    return selected.logCatalogRows.has(
+      tenantBackupR2ReferenceKey(family, rowInput.resourceId, objectCatalogId)
+    );
   };
 }
 

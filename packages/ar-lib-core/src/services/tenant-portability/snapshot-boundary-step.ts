@@ -191,6 +191,6 @@ export async function runPreparedSnapshotBoundaryStep(input: {
   return {
     phase: 'prepare_export_artifact',
     disposition: 'continue',
-    cursor: JSON.stringify({ ...resultCursor, releasedAt: released.released_at }),
+    cursor: JSON.stringify({ ...resultCursor, releasedAt: released.held_at }),
   };
 }

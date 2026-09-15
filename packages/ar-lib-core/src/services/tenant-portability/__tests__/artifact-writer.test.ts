@@ -889,6 +889,7 @@ it('prepares one encrypted manifest after a released boundary and recovers witho
     ['control', '005_tenant_backup_mutation_admission.sql'],
     ['control', '006_tenant_backup_mutation_environment_scope.sql'],
     ['control', '007_tenant_backup_boundary_receipts.sql'],
+    ['control', '010_tenant_backup_snapshot_timestamp.sql'],
   ])
     db.exec(
       readFileSync(
@@ -962,7 +963,7 @@ it('prepares one encrypted manifest after a released boundary and recovers witho
     formatVersion: 1 as const,
     ...expected,
     snapshotId: identity.boundaryId,
-    boundaryUnixMs: 106,
+    boundaryUnixMs: 104,
     inventoryDigestSha256: head.chain_digest,
   };
   const args = {
@@ -974,7 +975,7 @@ it('prepares one encrypted manifest after a released boundary and recovers witho
           version: 1,
           boundaryId: identity.boundaryId,
           inventoryDigest: head.chain_digest,
-          releasedAt: 106,
+          releasedAt: 104,
           participants,
         }),
       },

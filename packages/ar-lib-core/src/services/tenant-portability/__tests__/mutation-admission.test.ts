@@ -37,6 +37,15 @@ beforeEach(() => {
       'utf8'
     )
   );
+  db.exec(
+    readFileSync(
+      new URL(
+        '../../../../../../migrations/control/d1/010_tenant_backup_snapshot_timestamp.sql',
+        import.meta.url
+      ),
+      'utf8'
+    )
+  );
   adapter = {
     async queryOne<T>(sql: string, params: unknown[] = []) {
       return (db.prepare(sql).get(...(params as SQLInputValue[])) as T) ?? null;
@@ -58,6 +67,45 @@ const boundary = {
   inventoryDigest: 'ab'.repeat(32),
   now: 100,
 };
+it('backfills the former boundary timestamp when upgrading existing held and released rows', () => {
+  const legacy = new DatabaseSync(':memory:');
+  try {
+    for (const file of [
+      '005_tenant_backup_mutation_admission.sql',
+      '006_tenant_backup_mutation_environment_scope.sql',
+    ])
+      legacy.exec(
+        readFileSync(
+          new URL(`../../../../../../migrations/control/d1/${file}`, import.meta.url),
+          'utf8'
+        )
+      );
+    const insert = legacy.prepare(
+      `INSERT INTO tenant_backup_mutation_boundaries
+       (id,tenant_id,operation_id,inventory_digest,state,created_at,deadline_at,released_at)
+       VALUES (?,?,?,?,?,?,?,?)`
+    );
+    insert.run('held', 'a', 'backup-a', 'ab'.repeat(32), 'held', 100, 2100, null);
+    insert.run('released', 'b', 'backup-b', 'cd'.repeat(32), 'released', 200, 2200, 350);
+    legacy.exec(
+      readFileSync(
+        new URL(
+          '../../../../../../migrations/control/d1/010_tenant_backup_snapshot_timestamp.sql',
+          import.meta.url
+        ),
+        'utf8'
+      )
+    );
+    expect(
+      legacy.prepare('SELECT id,held_at FROM tenant_backup_mutation_boundaries ORDER BY id').all()
+    ).toEqual([
+      { id: 'held', held_at: 100 },
+      { id: 'released', held_at: 350 },
+    ]);
+  } finally {
+    legacy.close();
+  }
+});
 it('drains existing writers, excludes new writers, and isolates other tenants', async () => {
   expect(await admission.acquire('a', 'writer', 99)).toBe(true);
   expect((await admission.begin(boundary))?.deadline_at).toBe(2100);
@@ -68,7 +116,7 @@ it('drains existing writers, excludes new writers, and isolates other tenants', 
   await admission.complete('b', 'writer', 102);
   expect(await admission.hold('a', 'boundary', 103)).toBeNull();
   await admission.complete('a', 'writer', 104);
-  expect((await admission.hold('a', 'boundary', 105))?.state).toBe('held');
+  expect(await admission.hold('a', 'boundary', 105)).toMatchObject({ state: 'held', held_at: 105 });
   expect(await admission.acquire('a', 'new', 106)).toBe(false);
   expect(await admission.acquire('a', 'writer', 106)).toBe(false);
   await admission.abort('a', 'boundary', 107);
@@ -196,11 +244,15 @@ it('releases a frozen two-store boundary only after both receipts, including res
   expect(await restarted.acknowledge(receiptIdentity, participants[0], 109)).toBe(true);
   expect(await restarted.acknowledge(receiptIdentity, participants[1], 110)).toBe(true);
   expect((await restarted.release(receiptIdentity, 111))?.released_at).toBe(111);
+  expect((await restarted.readReleased(receiptIdentity, participants, 112))?.held_at).toBe(105);
   expect((await restarted.release(receiptIdentity, 9999))?.released_at).toBe(111);
   expect(await admission.acquire('a', 'resumed', 112)).toBe(true);
   expect(() =>
     db.exec("UPDATE tenant_backup_mutation_boundaries SET released_at=112 WHERE id='boundary'")
   ).toThrow(/immutable/);
+  expect(() =>
+    db.exec("UPDATE tenant_backup_mutation_boundaries SET held_at=112 WHERE id='boundary'")
+  ).toThrow(/held_at_invalid/);
 });
 it('rejects changed identities, unplanned snapshots, missing plans and late receipts or release', async () => {
   const receipts = new TenantBackupBoundaryReceipts(adapter);
@@ -282,8 +334,9 @@ it('coordinator waits for every participant and recovers a lost release without 
     async assertReady() {},
     participants: participants.map((participant) => ({
       ...participant,
-      async start(assertHeld: () => Promise<void>) {
+      async start(assertHeld: () => Promise<void>, boundaryUnixMs: number) {
         await assertHeld();
+        expect(boundaryUnixMs).toBe(101);
         starts++;
         expect(await admission.acquire('a', 'during-start', clock)).toBe(false);
       },

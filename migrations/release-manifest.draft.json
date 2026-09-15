@@ -241,7 +241,11 @@
             },
             {
               "path": "031_tenant_backup_r2_restores.sql",
-              "checksum": "5a74882008f582586529daffe29a933345d536e138f856eb843a11bc2bb3fcb3"
+              "checksum": "e5d06fd759bc0fd2676fda4d26288a5fee857bee8f95a55f0af55628d6b2d4f4"
+            },
+            {
+              "path": "032_tenant_backup_r2_log_record_maps.sql",
+              "checksum": "762d5deaf698642e8b6daf5e16810d19ed5c37633c63596111d5ebf3e0a163c7"
             }
           ]
         },
@@ -285,6 +289,10 @@
             {
               "path": "009_tenant_backup_preimage_row_partitions.sql",
               "checksum": "ec32b226b04a17da04ba3ac3427c5726814ec89503110386c25e9a264141506e"
+            },
+            {
+              "path": "010_tenant_backup_snapshot_timestamp.sql",
+              "checksum": "5604920223863acf804f9d5d3ebce6b54ad6e2a09ae4962c9491247769001f3f"
             }
           ]
         },
@@ -650,7 +658,11 @@
         },
         {
           "path": "031_tenant_backup_r2_restores.sql",
-          "checksum": "5a74882008f582586529daffe29a933345d536e138f856eb843a11bc2bb3fcb3"
+          "checksum": "e5d06fd759bc0fd2676fda4d26288a5fee857bee8f95a55f0af55628d6b2d4f4"
+        },
+        {
+          "path": "032_tenant_backup_r2_log_record_maps.sql",
+          "checksum": "762d5deaf698642e8b6daf5e16810d19ed5c37633c63596111d5ebf3e0a163c7"
         }
       ]
     },
@@ -698,6 +710,10 @@
         {
           "path": "009_tenant_backup_preimage_row_partitions.sql",
           "checksum": "ec32b226b04a17da04ba3ac3427c5726814ec89503110386c25e9a264141506e"
+        },
+        {
+          "path": "010_tenant_backup_snapshot_timestamp.sql",
+          "checksum": "5604920223863acf804f9d5d3ebce6b54ad6e2a09ae4962c9491247769001f3f"
         }
       ]
     },

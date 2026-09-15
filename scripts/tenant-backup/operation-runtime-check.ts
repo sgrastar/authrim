@@ -114,6 +114,16 @@ try {
     'utf8'
   );
   await control.batch(splitMigrationSql(receiptSql).map((statement) => control.prepare(statement)));
+  const snapshotTimestampSql = readFileSync(
+    new URL(
+      '../../migrations/control/d1/010_tenant_backup_snapshot_timestamp.sql',
+      import.meta.url
+    ),
+    'utf8'
+  );
+  await control.batch(
+    splitMigrationSql(snapshotTimestampSql).map((statement) => control.prepare(statement))
+  );
   const admissionDatabase = {
     async queryOne<T>(sql: string, params: unknown[] = []) {
       return control
@@ -311,6 +321,20 @@ try {
       )
     ).map((statement) => db.prepare(statement))
   );
+  for (const file of [
+    '031_tenant_backup_r2_restores.sql',
+    '032_tenant_backup_r2_log_record_maps.sql',
+  ]) {
+    const migration = readFileSync(
+      new URL(`../../migrations/admin/d1/${file}`, import.meta.url),
+      'utf8'
+    );
+    await db.batch(splitMigrationSql(migration).map((statement) => db.prepare(statement)));
+  }
+  const r2RestoreColumns = await db
+    .prepare("PRAGMA table_info('tenant_backup_r2_restore_objects')")
+    .all<{ name: string }>();
+  assert(r2RestoreColumns.results.some(({ name }) => name === 'log_records_json'));
   const adapter: Pick<DatabaseAdapter, 'query' | 'queryOne' | 'execute'> = {
     async query<T>(sql: string, params: unknown[] = []) {
       return (
@@ -1573,7 +1597,8 @@ try {
   );
   assert(importCheckpoint);
   assert(await store.release(restoreLease, importCheckpoint.revision, 'queued', restoreNow));
-  for (let slice = 0; slice < 11; slice++) {
+  let restoreSequenceComplete = false;
+  for (let slice = 0; slice < 20; slice++) {
     restoreNow++;
     const result = await executeTenantBackupSlice(
       store,
@@ -1585,6 +1610,12 @@ try {
       },
       {
         async run(context) {
+          if (context.operation.phase === 'restore_other_stores')
+            return {
+              phase: 'verify_restore_targets',
+              cursor: context.operation.cursor_json,
+              disposition: 'continue' as const,
+            };
           return runSqliteRestoreSequenceStep(context, {
             ...restoreInput,
             sequenceOrdinal: 1,
@@ -1627,7 +1658,12 @@ try {
       () => restoreNow
     );
     assert.equal(result.outcome, 'yielded');
+    if (result.operation?.phase === 'verify_other_restore_stores') {
+      restoreSequenceComplete = true;
+      break;
+    }
   }
+  assert.equal(restoreSequenceComplete, true);
   const importedOperation = await store.get('tenant-a', 'import-fixture');
   assert.equal(importedOperation?.phase, 'verify_other_restore_stores');
   assert.equal(importedOperation?.state, 'queued');
@@ -1645,6 +1681,19 @@ try {
     owner: 'replacement',
     fencingToken: replacementOperation.fencing_token,
   };
+  assert.equal(replacementOperation.state, 'running');
+  assert.equal(replacementOperation.lease_owner, replacementLease.owner);
+  assert(replacementOperation.lease_expires_at !== null);
+  assert(replacementOperation.lease_expires_at > restoreNow);
+  const previousRestoreTarget = await restoreAdapter.queryOne<{
+    state: string;
+    owner: string;
+    fencing_token: number;
+    lease_expires_at: number;
+  }>('SELECT state,owner,fencing_token,lease_expires_at FROM tenant_backup_restore_targets');
+  assert(previousRestoreTarget);
+  assert.equal(previousRestoreTarget.state, 'sealed');
+  assert(previousRestoreTarget.fencing_token < replacementOperation.fencing_token);
   const replacementTarget = await openPlannedSqliteRestoreTarget({
     mode: 'verify',
     ...restoreInput,
@@ -2591,6 +2640,7 @@ try {
           'large control-character preimages preserve normal D1 updates',
           'local D1 snapshot dataset preserves prior values and large integer types',
           'local R2 checksummed artifact parts are immutable and idempotent',
+          'local D1 applies the portable R2 restore schema and log-record extension',
           'scheduler persists bounded retry delay without private error text',
           'request intent persists atomically in key-waiting state',
           'request intent rejects SQL mutation',

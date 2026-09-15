@@ -39,6 +39,7 @@ function bucket() {
 
 function context(): AdapterContext {
   return {
+    boundaryUnixMs: 100,
     context: {
       lease: { tenantId: 'tenant-a', operationId: 'operation-a' },
       signal: new AbortController().signal,
@@ -75,7 +76,7 @@ describe('tenant backup directory secret ports', () => {
     });
     const input = context();
 
-    await ports.directorySecrets.start(input, 'snapshot', async () => {});
+    await ports.directorySecrets.start(input, 'snapshot', async () => {}, 100);
     const row = await ports.directorySecrets.readNext(
       input,
       'snapshot',

@@ -38,6 +38,15 @@ it('scopes permits to the authenticated environment, tenant and caller and permi
       )
     );
     sql.exec(
+      readFileSync(
+        new URL(
+          '../../../../migrations/control/d1/010_tenant_backup_snapshot_timestamp.sql',
+          import.meta.url
+        ),
+        'utf8'
+      )
+    );
+    sql.exec(
       "CREATE TABLE control_tenant_placement_policies(environment_id TEXT,tenant_id TEXT); INSERT INTO control_tenant_placement_policies VALUES ('env-a','tenant'),('env-b','tenant')"
     );
     const database = {

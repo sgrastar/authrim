@@ -3,9 +3,9 @@ CREATE TABLE tenant_backup_r2_restore_objects (
   operation_id TEXT NOT NULL,
   tenant_id TEXT NOT NULL,
   dataset_id TEXT NOT NULL CHECK(dataset_id IN ('artifacts.object_catalog_bodies','logs.archive_object_bodies')),
-  object_id TEXT NOT NULL CHECK(length(object_id) BETWEEN 1 AND 256),
+  object_id TEXT NOT NULL CHECK(length(object_id) BETWEEN 1 AND 512),
   source_object_key TEXT NOT NULL CHECK(length(source_object_key) BETWEEN 1 AND 1024),
-  source_encoding TEXT NOT NULL CHECK(source_encoding IN ('plaintext','object_artifact_v1','log_chunk_v1')),
+  source_encoding TEXT NOT NULL CHECK(source_encoding IN ('plaintext','object_artifact_v1','log_chunk_v1','log_chunk_records_v1','sensitive_detail_record_v1')),
   write_mode TEXT NOT NULL CHECK(write_mode IN ('multipart','staged')),
   target_bucket_binding TEXT NOT NULL CHECK(target_bucket_binding IN ('AUDIT_ARCHIVE','DIAGNOSTIC_LOGS','EXPORT_ARTIFACTS','IMPORT_ARTIFACTS','SENSITIVE_DETAILS')),
   target_object_key TEXT NOT NULL CHECK(length(target_object_key) BETWEEN 1 AND 1024),
@@ -35,8 +35,8 @@ CREATE TABLE tenant_backup_r2_restore_objects (
     AND stored_sha256 IS NOT NULL AND completed_at IS NOT NULL)),
   CHECK(state!='completed' OR
     (source_encoding='plaintext' AND target_key_version IS NULL AND target_encryption_scope IS NULL) OR
-    (source_encoding='object_artifact_v1' AND target_key_version IS NOT NULL AND target_encryption_scope IS NULL) OR
-    (source_encoding='log_chunk_v1' AND target_key_version IS NOT NULL AND target_encryption_scope IS NOT NULL))
+    (source_encoding IN ('object_artifact_v1','sensitive_detail_record_v1') AND target_key_version IS NOT NULL AND target_encryption_scope IS NULL) OR
+    (source_encoding IN ('log_chunk_v1','log_chunk_records_v1') AND target_key_version IS NOT NULL AND target_encryption_scope IS NOT NULL))
 );
 
 CREATE TABLE tenant_backup_r2_restore_parts (

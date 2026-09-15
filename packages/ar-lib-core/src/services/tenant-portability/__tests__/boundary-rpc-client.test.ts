@@ -16,6 +16,7 @@ const boundary = {
   state: 'held' as const,
   created_at: 100,
   deadline_at: 2100,
+  held_at: 101,
   released_at: null,
 };
 it('rejects a changed operation scope before sending and requires a usable binding', async () => {

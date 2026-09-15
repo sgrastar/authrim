@@ -10,6 +10,7 @@ export interface TenantMutationBoundary {
   state: 'draining' | 'held' | 'released' | 'aborted';
   created_at: number;
   deadline_at: number;
+  held_at: number | null;
   released_at: number | null;
 }
 function validate(now: number, ...ids: string[]): void {
@@ -137,11 +138,15 @@ export class TenantBackupMutationAdmission {
   ): Promise<TenantMutationBoundary | null> {
     validate(now, tenantId, boundaryId);
     return this.database.queryOne<TenantMutationBoundary>(
-      `UPDATE tenant_backup_mutation_boundaries SET state='held' WHERE id=? AND tenant_id=? AND environment_id=?
-       AND state IN ('draining','held') AND created_at<=? AND deadline_at>${sqliteBoundaryClockParameter(this.databaseClock)}
+      `UPDATE tenant_backup_mutation_boundaries SET state='held',
+         held_at=CASE WHEN state='draining' THEN ${sqliteBoundaryClockParameter(this.databaseClock)} ELSE held_at END
+       WHERE id=? AND tenant_id=? AND environment_id=?
+       AND state IN ('draining','held') AND (state='draining' OR held_at IS NOT NULL)
+       AND created_at<=? AND deadline_at>${sqliteBoundaryClockParameter(this.databaseClock)}
        AND NOT EXISTS (SELECT 1 FROM tenant_backup_mutation_permits WHERE ((environment_id=? AND (tenant_id=? OR scope='environment')) OR (?!='legacy' AND environment_id='legacy')) AND completed_at IS NULL)
        RETURNING *`,
       [
+        now,
         boundaryId,
         tenantId,
         this.environmentId,

@@ -5,23 +5,23 @@ import type {
 } from './sqlite-dataset-inspector.js';
 import type { CaptureSchema } from './sqlite-snapshot.js';
 
-export const ARTIFACT_OBJECT_BODIES_DATASET: TenantPortableDataset = {
+export const ARTIFACT_OBJECT_BODIES_DATASET = {
   id: 'artifacts.object_catalog_bodies',
   module: 'artifacts',
   kind: 'artifacts',
   store: 'object',
   schemaVersion: 1,
   disposition: 'include',
-};
+} as const satisfies TenantPortableDataset;
 
-export const LOG_ARCHIVE_OBJECT_BODIES_DATASET: TenantPortableDataset = {
+export const LOG_ARCHIVE_OBJECT_BODIES_DATASET = {
   id: 'logs.archive_object_bodies',
   module: 'logs',
   kind: 'log_dependencies',
   store: 'object',
   schemaVersion: 1,
   disposition: 'include',
-};
+} as const satisfies TenantPortableDataset;
 
 export const TENANT_BACKUP_R2_CHUNK_BYTES = 5 * 1024 * 1024;
 export const TENANT_BACKUP_R2_MAX_CHUNKS = 4096;
@@ -37,7 +37,12 @@ export type PortableR2BucketBinding =
   | 'IMPORT_ARTIFACTS'
   | 'SENSITIVE_DETAILS';
 
-export type PortableR2SourceEncoding = 'plaintext' | 'object_artifact_v1' | 'log_chunk_v1';
+export type PortableR2SourceEncoding =
+  | 'plaintext'
+  | 'object_artifact_v1'
+  | 'log_chunk_v1'
+  | 'log_chunk_records_v1'
+  | 'sensitive_detail_record_v1';
 
 export interface PortableR2ObjectChunk {
   tenantId: string;
@@ -92,9 +97,12 @@ const SOURCE_ENCODINGS = new Set<PortableR2SourceEncoding>([
   'plaintext',
   'object_artifact_v1',
   'log_chunk_v1',
+  'log_chunk_records_v1',
+  'sensitive_detail_record_v1',
 ]);
 const SHA256 = /^[a-f0-9]{64}$/u;
 const SAFE_ID = /^[A-Za-z0-9_.:-]{1,256}$/u;
+const SAFE_OBJECT_ID = /^[A-Za-z0-9_.:-]{1,512}$/u;
 
 function invalid(): never {
   throw new Error('backup_portable_r2_object_invalid');
@@ -175,12 +183,15 @@ function validateObject(input: PortableR2ObjectChunk): void {
     input.customMetadata === null ? null : JSON.stringify(input.customMetadata);
   if (
     !SAFE_ID.test(input.tenantId) ||
-    !SAFE_ID.test(input.objectId) ||
+    !SAFE_OBJECT_ID.test(input.objectId) ||
     !BUCKET_BINDINGS.has(input.bucketBinding) ||
     !SOURCE_ENCODINGS.has(input.sourceEncoding) ||
     !input.objectKey ||
     new TextEncoder().encode(input.objectKey).length > 1024 ||
-    /[\u0000-\u001f\u007f]/u.test(input.objectKey) ||
+    [...input.objectKey].some((character) => {
+      const code = character.codePointAt(0) ?? -1;
+      return code <= 0x1f || code === 0x7f;
+    }) ||
     !SHA256.test(input.objectSha256) ||
     !SHA256.test(input.chunkSha256) ||
     !Number.isSafeInteger(input.totalBytes) ||
@@ -275,7 +286,7 @@ export async function decodePortableR2ObjectChunk(
   const customMetadataValue = nullableText(row, 'custom_metadata_json', 8192);
   const result: PortableR2ObjectChunk = {
     tenantId: text(row, 'tenant_id', 256),
-    objectId: text(row, 'object_id', 256),
+    objectId: text(row, 'object_id', 512),
     bucketBinding: text(row, 'bucket_binding', 32) as PortableR2BucketBinding,
     objectKey: text(row, 'object_key', 1024),
     sourceEncoding: text(row, 'source_encoding', 32) as PortableR2SourceEncoding,

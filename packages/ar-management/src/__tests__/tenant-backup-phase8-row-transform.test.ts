@@ -10,10 +10,12 @@ import {
   PHASE8_SENSITIVE_SQLITE_DATASETS,
   PHASE8_TRANSFORMED_SQLITE_DATASETS,
 } from '../tenant-backup-phase8-row-transform';
+import { tenantBackupR2ReferenceKey } from '../tenant-backup-r2-reference-selection';
 
 function context(datasetId: string, rowJson: string, boundaryUnixMs?: number) {
   return {
     datasetId,
+    resourceId: datasetId.startsWith('admin.') ? 'admin-a' : 'core-a',
     rowJson,
     boundaryUnixMs,
     selection: {
@@ -35,7 +37,16 @@ describe('Phase 8 row transform', () => {
       loadExternalPiiLogValues: vi.fn(),
     }
   );
-  const filter = createPhase8TenantBackupRowFilter();
+  const filter = createPhase8TenantBackupRowFilter({
+    loadReferences: vi.fn(async () => ({
+      objectCatalogRows: new Set([
+        tenantBackupR2ReferenceKey('admin', 'admin-a', 'catalog-sensitive'),
+        tenantBackupR2ReferenceKey('core', 'core-a', 'catalog-a'),
+      ]),
+      objectPhysicalRows: new Set([tenantBackupR2ReferenceKey('core', 'core-a', 'physical-a')]),
+      logCatalogRows: new Set([tenantBackupR2ReferenceKey('core', 'core-a', 'log-a')]),
+    })),
+  });
 
   it('filters logs against the immutable bundle boundary', async () => {
     const boundary = 100 * 86_400_000;
@@ -56,6 +67,7 @@ describe('Phase 8 row transform', () => {
     const boundary = 100 * 86_400_000;
     const row = (logType: string, plane: string, createdAt: number) =>
       JSON.stringify({
+        id: ['text', logType === 'audit' && plane === 'archive' ? 'log-a' : 'log-other'],
         log_type: ['text', logType],
         plane: ['text', plane],
         created_at: ['integer', String(createdAt)],
@@ -77,17 +89,19 @@ describe('Phase 8 row transform', () => {
     await expect(
       filter({ ...selected, rowJson: row('audit', 'sensitive_detail', boundary) } as never)
     ).resolves.toBe(false);
+    // Catalog creation time may be delayed; the held R2 reference closure is authoritative.
     await expect(
-      filter({
-        ...selected,
-        rowJson: row('audit', 'archive', 93 * 86_400_000 - 1),
-      } as never)
+      filter({ ...selected, rowJson: row('audit', 'archive', 93 * 86_400_000 - 1) } as never)
+    ).resolves.toBe(true);
+    await expect(
+      filter({ ...selected, datasetId: 'core.log_chunk_manifests' } as never)
     ).resolves.toBe(false);
 
     const sensitive = context(
       'admin.sensitive_detail_chunk_index',
       JSON.stringify({
         object_class: ['text', 'admin_audit_detail'],
+        catalog_id: ['text', 'catalog-sensitive'],
         created_at: ['integer', String(boundary)],
       }),
       boundary
@@ -97,6 +111,42 @@ describe('Phase 8 row transform', () => {
     await expect(filter(sensitive as never)).resolves.toBe(true);
     sensitive.selection.logs.audit = false;
     await expect(filter(sensitive as never)).resolves.toBe(false);
+  });
+
+  it('keeps only SQL catalog rows referenced by the held R2 snapshot', async () => {
+    const boundary = 100 * 86_400_000;
+    await expect(
+      filter(
+        context('core.object_catalog', JSON.stringify({ id: ['text', 'catalog-a'] }), boundary)
+      )
+    ).resolves.toBe(true);
+    await expect(
+      filter(
+        context('core.object_catalog', JSON.stringify({ id: ['text', 'catalog-unused'] }), boundary)
+      )
+    ).resolves.toBe(false);
+    await expect(
+      filter(
+        context(
+          'core.object_catalog_objects',
+          JSON.stringify({ id: ['text', 'physical-a'] }),
+          boundary
+        )
+      )
+    ).resolves.toBe(true);
+    const record = (catalogId: string) =>
+      context(
+        'core.log_chunk_record_index',
+        JSON.stringify({
+          log_type: ['text', 'audit'],
+          plane: ['text', 'archive'],
+          event_at: ['integer', String(boundary)],
+          object_catalog_id: ['text', catalogId],
+        }),
+        boundary
+      );
+    await expect(filter(record('log-a'))).resolves.toBe(true);
+    await expect(filter(record('log-unused'))).resolves.toBe(false);
   });
 
   it('uses the installed TOTP codec and scrubs held delivery ciphertext', async () => {

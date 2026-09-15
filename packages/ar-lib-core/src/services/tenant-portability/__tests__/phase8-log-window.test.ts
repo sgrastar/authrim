@@ -3,6 +3,7 @@ import { TENANT_DATASET_POLICIES } from '../dataset-registry';
 import {
   PHASE8_LOG_TIMESTAMP_COLUMNS,
   parsePhase8PortableSqliteRow,
+  phase8LogDependencyRowInSelection,
   phase8LogRowInWindow,
 } from '../phase8-log-window';
 
@@ -65,5 +66,36 @@ describe('Phase 8 log window', () => {
       expect(() => parsePhase8PortableSqliteRow(invalid)).toThrow(
         'backup_phase8_log_timestamp_invalid'
       );
+  });
+
+  it('selects sensitive-detail dependencies by their owning data category', () => {
+    const boundaryUnixMs = 100 * 86_400_000;
+    const selection = {
+      settings: false,
+      users: true,
+      admin: true,
+      artifacts: false,
+      logs: { audit: false, other: false, sensitive: true, period: 7 as const },
+    };
+    const detail = (objectClass: string, createdAt: number) =>
+      ({
+        object_class: ['text', objectClass],
+        created_at: ['integer', String(createdAt)],
+      }) as never;
+    const selected = (objectClass: string, createdAt = 1) =>
+      phase8LogDependencyRowInSelection({
+        datasetId: 'core.sensitive_detail_chunk_index',
+        row: detail(objectClass, createdAt),
+        selection,
+        boundaryUnixMs,
+      });
+
+    expect(selected('webhook_delivery_payload')).toBe(true);
+    expect(selected('approval_transport_detail')).toBe(true);
+    expect(selected('pii_log_values')).toBe(false);
+    expect(selected('event_log_detail', boundaryUnixMs)).toBe(false);
+    selection.logs.other = true;
+    expect(selected('event_log_detail', boundaryUnixMs)).toBe(true);
+    expect(selected('event_log_detail', 93 * 86_400_000 - 1)).toBe(false);
   });
 });

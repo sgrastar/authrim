@@ -8,6 +8,7 @@ import {
 } from './portable-r2-object.js';
 
 const SAFE_ID = /^[A-Za-z0-9_.:-]{1,256}$/u;
+const SAFE_OBJECT_ID = /^[A-Za-z0-9_.:-]{1,512}$/u;
 const SHA256 = /^[a-f0-9]{64}$/u;
 const LIVE_OPERATION = `EXISTS (SELECT 1 FROM tenant_backup_operations o
   WHERE o.id=? AND o.tenant_id=? AND o.kind='import' AND o.state='running'
@@ -36,9 +37,20 @@ export interface TenantBackupR2RestoreObject {
   stored_sha256: string | null;
   target_key_version: number | null;
   target_encryption_scope: string | null;
+  log_records_json: string | null;
   completed_at: number | null;
   created_at: number;
   updated_at: number;
+}
+
+export interface TenantBackupRestoredLogRecordLocation {
+  recordId: string;
+  sourceMetadataSha256: string;
+  lineNumber: number;
+  blockOffset: number;
+  blockLength: number;
+  recordOffset: number;
+  recordLength: number;
 }
 
 export interface TenantBackupR2RestorePart {
@@ -73,7 +85,7 @@ function identifiers(owner: Owner): void {
     !SAFE_ID.test(owner.leaseOwner) ||
     !Number.isSafeInteger(owner.fencingToken) ||
     owner.fencingToken <= 0 ||
-    !SAFE_ID.test(owner.objectId) ||
+    !SAFE_OBJECT_ID.test(owner.objectId) ||
     !['artifacts.object_catalog_bodies', 'logs.archive_object_bodies'].includes(owner.datasetId)
   )
     invalid();
@@ -95,6 +107,34 @@ function ownerFrom(input: Owner): Owner {
 function live(owner: Owner, now: number): unknown[] {
   timestamp(now);
   return [owner.operationId, owner.tenantId, owner.leaseOwner, owner.fencingToken, now, now];
+}
+
+function logRecordsJson(records: readonly TenantBackupRestoredLogRecordLocation[]): string {
+  if (records.length < 1 || records.length > 10_000) invalid();
+  const ids = new Set<string>();
+  for (const record of records) {
+    if (
+      !record ||
+      !SAFE_ID.test(record.recordId) ||
+      ids.has(record.recordId) ||
+      !SHA256.test(record.sourceMetadataSha256) ||
+      !Number.isSafeInteger(record.lineNumber) ||
+      record.lineNumber < 0 ||
+      !Number.isSafeInteger(record.blockOffset) ||
+      record.blockOffset < 0 ||
+      !Number.isSafeInteger(record.blockLength) ||
+      record.blockLength < 1 ||
+      !Number.isSafeInteger(record.recordOffset) ||
+      record.recordOffset < 0 ||
+      !Number.isSafeInteger(record.recordLength) ||
+      record.recordLength < 1
+    )
+      invalid();
+    ids.add(record.recordId);
+  }
+  const value = JSON.stringify(records);
+  if (new TextEncoder().encode(value).length > 2_097_152) invalid();
+  return value;
 }
 
 /** Durable identity and chunk receipts for one unpublished target R2 object. */
@@ -390,6 +430,57 @@ export class TenantBackupR2RestoreStore {
     return { object, parts };
   }
 
+  async saveLogRecords(
+    ownerInput: Owner,
+    records: readonly TenantBackupRestoredLogRecordLocation[],
+    now: number
+  ): Promise<void> {
+    const owner = ownerFrom(ownerInput);
+    timestamp(now);
+    const value = logRecordsJson(records);
+    const object = await this.get(owner, now);
+    if (
+      object.source_encoding !== 'log_chunk_records_v1' ||
+      !['uploading', 'completing'].includes(object.state)
+    )
+      invalid();
+    await this.database.queryOne(
+      `UPDATE tenant_backup_r2_restore_objects SET log_records_json=?,updated_at=?
+       WHERE operation_id=? AND tenant_id=? AND dataset_id=? AND object_id=?
+         AND source_encoding='log_chunk_records_v1' AND log_records_json IS NULL
+         AND state IN ('uploading','completing') AND ${LIVE_OPERATION}
+       RETURNING object_id`,
+      [
+        value,
+        now,
+        owner.operationId,
+        owner.tenantId,
+        owner.datasetId,
+        owner.objectId,
+        ...live(owner, now),
+      ]
+    );
+    const saved = await this.get(owner, now);
+    if (saved.log_records_json !== value) invalid();
+  }
+
+  async loadLogRecords(
+    ownerInput: Owner,
+    now: number
+  ): Promise<TenantBackupRestoredLogRecordLocation[]> {
+    const owner = ownerFrom(ownerInput);
+    const object = await this.get(owner, now);
+    if (object.source_encoding !== 'log_chunk_records_v1' || !object.log_records_json) invalid();
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(object.log_records_json);
+    } catch {
+      return invalid();
+    }
+    logRecordsJson(parsed as TenantBackupRestoredLogRecordLocation[]);
+    return parsed as TenantBackupRestoredLogRecordLocation[];
+  }
+
   async markCompleted(
     ownerInput: Owner,
     input: {
@@ -416,9 +507,9 @@ export class TenantBackupR2RestoreStore {
         (!input.targetEncryptionScope || input.targetEncryptionScope.length > 256)) ||
       (object.source_encoding === 'plaintext' &&
         (input.targetKeyVersion !== null || input.targetEncryptionScope !== null)) ||
-      (object.source_encoding === 'object_artifact_v1' &&
+      (['object_artifact_v1', 'sensitive_detail_record_v1'].includes(object.source_encoding) &&
         (input.targetKeyVersion === null || input.targetEncryptionScope !== null)) ||
-      (object.source_encoding === 'log_chunk_v1' &&
+      (['log_chunk_v1', 'log_chunk_records_v1'].includes(object.source_encoding) &&
         (input.targetKeyVersion === null || input.targetEncryptionScope === null))
     )
       invalid();

@@ -5,6 +5,8 @@ import {
   type EncryptedObjectArtifactEnvelope,
 } from '@authrim/ar-lib-core/services/object-artifact-crypto';
 import { isObjectClass } from '@authrim/ar-lib-core/services/object-catalog';
+import { decodePortableLogChunkRecords } from '@authrim/ar-lib-core/services/tenant-portability/portable-log-chunk';
+import { decodePortableSensitiveDetailRecord } from '@authrim/ar-lib-core/services/tenant-portability/portable-sensitive-detail';
 import type { TenantBackupStepContext } from '@authrim/ar-lib-core/services/tenant-portability/operation-executor';
 import {
   type PortableR2BucketBinding,
@@ -13,9 +15,14 @@ import {
 } from '@authrim/ar-lib-core/services/tenant-portability/portable-r2-object';
 import {
   TenantBackupR2RestoreStore,
+  type TenantBackupRestoredLogRecordLocation,
   type TenantBackupR2RestoreObject,
 } from '@authrim/ar-lib-core/services/tenant-portability/r2-restore-store';
-import { encryptLogChunkBody, deriveLogChunkEncryptionKey } from '@authrim/ar-lib-logging/chunks';
+import {
+  encodeLogRecordBlocks,
+  encryptLogChunkBody,
+  deriveLogChunkEncryptionKey,
+} from '@authrim/ar-lib-logging/chunks';
 import { LOG_CHUNK_COMPRESSION, LOG_PLANES, LOG_TYPES } from '@authrim/ar-lib-logging/contract';
 import type { DatabaseAdapter } from '@authrim/ar-lib-core/db/adapter';
 
@@ -31,6 +38,7 @@ export interface RestoredTenantR2Object {
   storedBytes: number;
   keyVersion: number | null;
   encryptionScope: string | null;
+  logRecords?: readonly TenantBackupRestoredLogRecordLocation[] | null;
 }
 
 export interface TenantBackupR2ObjectFinalizer {
@@ -299,9 +307,14 @@ async function encodeTargetBody(
   source: PortableR2ObjectChunk,
   objectKey: string,
   plaintext: Uint8Array
-): Promise<{ bytes: Uint8Array; keyVersion: number | null; encryptionScope: string | null }> {
+): Promise<{
+  bytes: Uint8Array;
+  keyVersion: number | null;
+  encryptionScope: string | null;
+  logRecords: TenantBackupRestoredLogRecordLocation[] | null;
+}> {
   if (source.sourceEncoding === 'plaintext')
-    return { bytes: plaintext, keyVersion: null, encryptionScope: null };
+    return { bytes: plaintext, keyVersion: null, encryptionScope: null, logRecords: null };
   const version = keyVersion(env);
   if (source.sourceEncoding === 'object_artifact_v1') {
     const objectClass = requiredString(source.context, 'objectClass');
@@ -332,6 +345,26 @@ async function encodeTargetBody(
       bytes: new TextEncoder().encode(JSON.stringify(envelope)),
       keyVersion: version,
       encryptionScope: null,
+      logRecords: null,
+    };
+  }
+  if (source.sourceEncoding === 'sensitive_detail_record_v1') {
+    const objectClass = requiredString(source.context, 'objectClass');
+    if (!isObjectClass(objectClass) || source.bucketBinding !== 'SENSITIVE_DETAILS') invalid();
+    const portable = decodePortableSensitiveDetailRecord(plaintext);
+    const envelope = await encryptObjectArtifact(portable.plaintext, {
+      rootKeyHex: rootKey(env),
+      plane: 'SENSITIVE_DETAILS',
+      keyVersion: version,
+      contentType: portable.contentType,
+      context: { tenantId: source.tenantId, objectKey, objectClass },
+    });
+    const line = new TextEncoder().encode(`${JSON.stringify(envelope)}\n`);
+    return {
+      bytes: line,
+      keyVersion: version,
+      encryptionScope: null,
+      logRecords: null,
     };
   }
   const tenantKey = requiredString(source.context, 'tenantKey');
@@ -339,8 +372,11 @@ async function encodeTargetBody(
   const plane = requiredString(source.context, 'plane');
   const chunkId = requiredString(source.context, 'chunkId');
   const compression = requiredString(source.context, 'compression');
-  const encryptionScope = requiredString(source.context, 'encryptionScope');
-  requiredInteger(source.context, 'keyVersion');
+  const encryptionScope = requiredString(
+    source.context,
+    source.sourceEncoding === 'log_chunk_records_v1' ? 'targetEncryptionScope' : 'encryptionScope'
+  );
+  if (source.sourceEncoding === 'log_chunk_v1') requiredInteger(source.context, 'keyVersion');
   if (
     !LOG_TYPES.includes(logType as (typeof LOG_TYPES)[number]) ||
     !LOG_PLANES.includes(plane as (typeof LOG_PLANES)[number]) ||
@@ -353,6 +389,58 @@ async function encodeTargetBody(
           : 'AUDIT_ARCHIVE')
   )
     invalid();
+  let body = plaintext;
+  let logRecords: TenantBackupRestoredLogRecordLocation[] | null = null;
+  if (source.sourceEncoding === 'log_chunk_records_v1') {
+    const portable = decodePortableLogChunkRecords(plaintext);
+    if (portable.compression !== compression) invalid();
+    const encoded = await encodeLogRecordBlocks(
+      portable.records.map((record) => {
+        let indexedFields: Record<string, unknown> | undefined;
+        if (record.indexedFields !== null) {
+          const parsed = JSON.parse(record.indexedFields) as unknown;
+          if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) invalid();
+          indexedFields = parsed as Record<string, unknown>;
+        }
+        return {
+          id: record.recordId,
+          eventAt: record.eventAt,
+          payload: record.payload,
+          ...(indexedFields ? { indexedFields } : {}),
+        };
+      }),
+      { compression: portable.compression }
+    );
+    body = encoded.body;
+    logRecords = await Promise.all(
+      encoded.records.map(async (record, index) => {
+        const block = encoded.blocks[record.blockIndex] ?? invalid();
+        const sourceRecord = portable.records[index] ?? invalid();
+        if (sourceRecord.recordId !== record.recordId) invalid();
+        const sourceMetadataSha256 = await sha256(
+          new TextEncoder().encode(
+            JSON.stringify({
+              recordId: sourceRecord.recordId,
+              eventAt: sourceRecord.eventAt,
+              surface: sourceRecord.surface,
+              indexProfile: sourceRecord.indexProfile,
+              indexedFields: sourceRecord.indexedFields,
+              createdAt: sourceRecord.createdAt,
+            })
+          )
+        );
+        return {
+          recordId: record.recordId,
+          sourceMetadataSha256,
+          lineNumber: record.lineNumber,
+          blockOffset: block.compressedOffset,
+          blockLength: block.compressedLength,
+          recordOffset: record.recordOffset,
+          recordLength: record.recordLength,
+        };
+      })
+    );
+  }
   const keyBytes = await deriveLogChunkEncryptionKey({
     rootKeyHex: rootKey(env),
     tenantKey,
@@ -361,7 +449,7 @@ async function encodeTargetBody(
     keyVersion: version,
   });
   return {
-    bytes: await encryptLogChunkBody(plaintext, {
+    bytes: await encryptLogChunkBody(body, {
       keyBytes,
       encryptionScope,
       keyVersion: version,
@@ -374,12 +462,14 @@ async function encodeTargetBody(
     }),
     keyVersion: version,
     encryptionScope,
+    logRecords,
   };
 }
 
 function restored(
   object: TenantBackupR2RestoreObject,
-  storedBytes: number
+  storedBytes: number,
+  logRecords: readonly TenantBackupRestoredLogRecordLocation[] | null = null
 ): RestoredTenantR2Object {
   if (
     object.state !== 'completed' ||
@@ -397,7 +487,10 @@ function restored(
     storedBytes,
     keyVersion: object.target_key_version,
     encryptionScope:
-      object.source_encoding === 'log_chunk_v1' ? object.target_encryption_scope : null,
+      object.source_encoding === 'log_chunk_v1' || object.source_encoding === 'log_chunk_records_v1'
+        ? object.target_encryption_scope
+        : null,
+    logRecords,
   };
 }
 
@@ -434,13 +527,18 @@ export function createTenantBackupR2ObjectRestorePorts(input: {
         )) !== prepared.object.stored_sha256
       )
         invalid();
-      return restored(prepared.object, head.size);
+      const logRecords =
+        prepared.object.source_encoding === 'log_chunk_records_v1'
+          ? await store.loadLogRecords(identity, now())
+          : null;
+      return restored(prepared.object, head.size, logRecords);
     }
 
     const target = bucket(input.env, prepared.object.target_bucket_binding);
     let head = await target.head(prepared.object.target_object_key);
     let keyVersionValue: number | null = null;
     let encryptionScope: string | null = null;
+    let logRecordsValue: TenantBackupRestoredLogRecordLocation[] | null = null;
     if (prepared.object.write_mode === 'multipart') {
       if (!prepared.object.multipart_id) invalid();
       if (!head) {
@@ -490,6 +588,8 @@ export function createTenantBackupR2ObjectRestorePorts(input: {
       );
       keyVersionValue = encoded.keyVersion;
       encryptionScope = encoded.encryptionScope;
+      logRecordsValue = encoded.logRecords;
+      if (encoded.logRecords) await store.saveLogRecords(identity, encoded.logRecords, now());
       const encodedSha256 = await sha256(encoded.bytes);
       const customMetadata = {
         ...(source.customMetadata ?? {}),
@@ -506,12 +606,15 @@ export function createTenantBackupR2ObjectRestorePorts(input: {
           ...httpMetadata(source.httpMetadata),
           ...(source.sourceEncoding === 'object_artifact_v1'
             ? { contentType: 'application/json', contentEncoding: undefined }
-            : source.sourceEncoding === 'log_chunk_v1'
-              ? {
-                  contentType: 'application/authrim.log-chunk+encrypted',
-                  contentEncoding: undefined,
-                }
-              : {}),
+            : source.sourceEncoding === 'sensitive_detail_record_v1'
+              ? { contentType: 'application/x-ndjson', contentEncoding: undefined }
+              : source.sourceEncoding === 'log_chunk_v1' ||
+                  source.sourceEncoding === 'log_chunk_records_v1'
+                ? {
+                    contentType: 'application/authrim.log-chunk+encrypted',
+                    contentEncoding: undefined,
+                  }
+                : {}),
         },
         ...(Object.keys(customMetadata).length ? { customMetadata } : {}),
       });
@@ -534,7 +637,7 @@ export function createTenantBackupR2ObjectRestorePorts(input: {
       now: now(),
     });
     return {
-      ...restored(completed, head.size),
+      ...restored(completed, head.size, logRecordsValue),
       keyVersion: keyVersionValue,
       encryptionScope,
     };
@@ -677,7 +780,14 @@ export function createTenantBackupR2ObjectRestorePorts(input: {
         storedBytes: head.size,
         keyVersion: state.target_key_version,
         encryptionScope:
-          source.sourceEncoding === 'log_chunk_v1' ? state.target_encryption_scope : null,
+          source.sourceEncoding === 'log_chunk_v1' ||
+          source.sourceEncoding === 'log_chunk_records_v1'
+            ? state.target_encryption_scope
+            : null,
+        logRecords:
+          source.sourceEncoding === 'log_chunk_records_v1'
+            ? await store.loadLogRecords(identity, now())
+            : null,
       };
       return input.finalizer.verify(context, planDigest, datasetId, source, result);
     },

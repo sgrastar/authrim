@@ -77,11 +77,20 @@ export function createTenantBackupBoundaryRpcClient(
       if (request.action === 'begin' && !['draining', 'held'].includes(b.state)) fail();
       if (request.action === 'hold' && b.state !== 'held') fail();
       if (['release', 'readReleased'].includes(request.action) && b.state !== 'released') fail();
+      if (b.state === 'held' || b.state === 'released') {
+        if (
+          !Number.isSafeInteger(b.held_at) ||
+          b.held_at === null ||
+          b.held_at < b.created_at ||
+          b.held_at >= b.deadline_at
+        )
+          fail();
+      } else if (b.held_at !== null) fail();
       if (b.state === 'released') {
         if (
           !Number.isSafeInteger(b.released_at) ||
           b.released_at === null ||
-          b.released_at < b.created_at ||
+          b.released_at < (b.held_at ?? b.created_at) ||
           b.released_at >= b.deadline_at
         )
           fail();

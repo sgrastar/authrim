@@ -191,7 +191,7 @@ it('captures, exports and releases the immutable KeyManager snapshot participant
   expect(participants).toHaveLength(6);
   expect(participants[0].resourceId).toBe('key-manager:tenant');
   const assertHeld = vi.fn(async () => {});
-  await participants[0].start(assertHeld);
+  await participants[0].start(assertHeld, 100);
 
   const first = await adapter.export.readNext({
     ...context,

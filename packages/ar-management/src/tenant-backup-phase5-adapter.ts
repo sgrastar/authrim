@@ -88,7 +88,8 @@ export interface Phase5RecordSnapshotPort {
   start(
     context: AdapterContext,
     snapshotId: string,
-    assertHeld: () => Promise<void>
+    assertHeld: () => Promise<void>,
+    boundaryUnixMs: number
   ): Promise<void>;
   readNext(
     context: AdapterContext,
@@ -158,7 +159,10 @@ async function digest(parts: readonly string[]): Promise<string> {
   return Array.from(new Uint8Array(value), (byte) => byte.toString(16).padStart(2, '0')).join('');
 }
 
-async function snapshotId(context: AdapterContext, resourceId: string): Promise<string> {
+export async function tenantBackupRecordSnapshotId(
+  context: AdapterContext,
+  resourceId: string
+): Promise<string> {
   const head = await context.inventory.headForLease(context.context.lease);
   if (head.state !== 'sealed') throw new Error('backup_phase5_key_manager_snapshot');
   return digest([
@@ -197,24 +201,26 @@ export function createPhase5TenantBackupInstalledAdapter(input: {
   sqliteExtension?: InstalledSqliteExtension;
   now?: () => number;
 }): TenantBackupInstalledOperationAdapter {
-  if (
-    input.sqliteExtension &&
-    Boolean(input.sqliteExtension.policies) === Boolean(input.sqliteExtension.loadPolicies)
-  )
+  const hasStaticSqlitePolicies = input.sqliteExtension?.policies !== undefined;
+  const hasDynamicSqlitePolicies = typeof input.sqliteExtension?.loadPolicies === 'function';
+  if (input.sqliteExtension && hasStaticSqlitePolicies === hasDynamicSqlitePolicies)
     throw new Error('backup_phase5_sqlite_policy_loader');
   const staticSqlitePolicies = input.sqliteExtension
     ? (input.sqliteExtension.policies ?? null)
     : createPhase5SqliteInspectionPolicies(input.planned, {
         tenantKey: input.ports.tenantKey,
-        validateAdminEnvelope: input.ports.recordSnapshots.validateAdminEnvelope,
+        validateAdminEnvelope: (datasetId, row) =>
+          input.ports.recordSnapshots.validateAdminEnvelope(datasetId, row),
       });
   const nonSqlitePolicies = [
     createKeyManagerTenantBackupInspectionPolicy(),
     ...createPhase4RecordDatasetPolicies({
-      validateSamlBundle: input.ports.recordSnapshots.validateSamlBundle,
+      validateSamlBundle: (bundle, tenantId) =>
+        input.ports.recordSnapshots.validateSamlBundle(bundle, tenantId),
     }),
     ...createPhase5RecordDatasetPolicies({
-      assertPluginSupported: input.ports.recordSnapshots.assertPluginSupported,
+      assertPluginSupported: (configuration) =>
+        input.ports.recordSnapshots.assertPluginSupported(configuration),
     }),
     ...(input.sqliteExtension?.recordSnapshots ?? []).map(({ policy }) => policy),
   ];
@@ -315,7 +321,7 @@ export function createPhase5TenantBackupInstalledAdapter(input: {
         const participants = await sqlExport.additionalParticipants(context);
         const extra: TenantBackupBoundaryStart[] = [];
         if (keyManagerSelected(context)) {
-          const keyManagerId = await snapshotId(context, KEY_MANAGER_RESOURCE_ID);
+          const keyManagerId = await tenantBackupRecordSnapshotId(context, KEY_MANAGER_RESOURCE_ID);
           extra.push({
             resourceId: KEY_MANAGER_RESOURCE_ID,
             snapshotId: keyManagerId,
@@ -324,11 +330,15 @@ export function createPhase5TenantBackupInstalledAdapter(input: {
           });
         }
         for (const record of selectedRecordSnapshots(recordSnapshots, context)) {
-          const recordSnapshotId = await snapshotId(context, record.port.resourceId);
+          const recordSnapshotId = await tenantBackupRecordSnapshotId(
+            context,
+            record.port.resourceId
+          );
           extra.push({
             resourceId: record.port.resourceId,
             snapshotId: recordSnapshotId,
-            start: (assertHeld) => record.port.start(context, recordSnapshotId, assertHeld),
+            start: (assertHeld, boundaryUnixMs) =>
+              record.port.start(context, recordSnapshotId, assertHeld, boundaryUnixMs),
           });
         }
         return [...participants, ...extra];
@@ -349,7 +359,7 @@ export function createPhase5TenantBackupInstalledAdapter(input: {
         if (
           keyManagerParticipants[0] &&
           keyManagerParticipants[0].snapshotId !==
-            (await snapshotId(context, KEY_MANAGER_RESOURCE_ID))
+            (await tenantBackupRecordSnapshotId(context, KEY_MANAGER_RESOURCE_ID))
         )
           throw new Error('backup_phase5_key_manager_coverage');
         for (const record of recordSnapshots) {
@@ -362,7 +372,8 @@ export function createPhase5TenantBackupInstalledAdapter(input: {
           if (
             matches.length !== (required ? 1 : 0) ||
             (matches[0] &&
-              matches[0].snapshotId !== (await snapshotId(context, record.port.resourceId)))
+              matches[0].snapshotId !==
+                (await tenantBackupRecordSnapshotId(context, record.port.resourceId)))
           )
             throw new Error('backup_phase5_record_snapshot_coverage');
         }
@@ -372,7 +383,7 @@ export function createPhase5TenantBackupInstalledAdapter(input: {
         if (record)
           return record.port.readNext(
             context,
-            await snapshotId(context, record.port.resourceId),
+            await tenantBackupRecordSnapshotId(context, record.port.resourceId),
             context.cursor,
             context.signal
           );
@@ -381,7 +392,7 @@ export function createPhase5TenantBackupInstalledAdapter(input: {
         if (context.cursor === DONE_CURSOR) return null;
         if (context.cursor !== null) throw new Error('backup_phase5_key_manager_cursor');
         context.signal.throwIfAborted();
-        const keyManagerId = await snapshotId(context, KEY_MANAGER_RESOURCE_ID);
+        const keyManagerId = await tenantBackupRecordSnapshotId(context, KEY_MANAGER_RESOURCE_ID);
         const snapshot = await input.ports.keyManagerSnapshot.load(context, keyManagerId);
         context.signal.throwIfAborted();
         return {
@@ -395,12 +406,15 @@ export function createPhase5TenantBackupInstalledAdapter(input: {
         if (keyManagerSelected(context))
           await input.ports.keyManagerSnapshot.release(
             context,
-            await snapshotId(context, KEY_MANAGER_RESOURCE_ID)
+            await tenantBackupRecordSnapshotId(context, KEY_MANAGER_RESOURCE_ID)
           );
         for (const record of recordSnapshots) {
           const rule = tenantDatasetSelectionRule(record.dataset.kind, context.selection);
           if (rule.action === 'selected' || rule.action === 'resolve_references')
-            await record.port.release(context, await snapshotId(context, record.port.resourceId));
+            await record.port.release(
+              context,
+              await tenantBackupRecordSnapshotId(context, record.port.resourceId)
+            );
         }
         return { done: true };
       },
@@ -409,14 +423,14 @@ export function createPhase5TenantBackupInstalledAdapter(input: {
         if (keyManagerSelected(context))
           await input.ports.keyManagerSnapshot.assertReleased(
             context,
-            await snapshotId(context, KEY_MANAGER_RESOURCE_ID)
+            await tenantBackupRecordSnapshotId(context, KEY_MANAGER_RESOURCE_ID)
           );
         for (const record of recordSnapshots) {
           const rule = tenantDatasetSelectionRule(record.dataset.kind, context.selection);
           if (rule.action === 'selected' || rule.action === 'resolve_references')
             await record.port.assertReleased(
               context,
-              await snapshotId(context, record.port.resourceId)
+              await tenantBackupRecordSnapshotId(context, record.port.resourceId)
             );
         }
       },
@@ -472,7 +486,8 @@ export function createPhase5TenantBackupInstalledAdapter(input: {
       return createTenantBackupInstalledSqliteImportAdapter({
         datasets,
         async loadPolicies(context) {
-          const sqlitePolicies = await input.sqliteExtension!.loadPolicies!(context);
+          const sqlitePolicies = await input.sqliteExtension?.loadPolicies?.(context);
+          if (!sqlitePolicies) throw new Error('backup_phase5_sqlite_policy_loader');
           return [...sqlitePolicies, ...nonSqlitePolicies];
         },
         ports,

@@ -1,9 +1,16 @@
 import { describe, expect, it, vi } from 'vitest';
 import { encryptObjectArtifact } from '@authrim/ar-lib-core/services/object-artifact-crypto';
+import { decodePortableLogChunkRecords } from '@authrim/ar-lib-core/services/tenant-portability/portable-log-chunk';
+import { decodePortableSensitiveDetailRecord } from '@authrim/ar-lib-core/services/tenant-portability/portable-sensitive-detail';
 import {
   decodePortableR2ObjectChunk,
   TENANT_BACKUP_R2_CHUNK_BYTES,
 } from '@authrim/ar-lib-core/services/tenant-portability/portable-r2-object';
+import {
+  encodeLogRecordBlocks,
+  encryptLogChunkBody,
+  deriveLogChunkEncryptionKey,
+} from '@authrim/ar-lib-logging/chunks';
 import type { AdapterContext } from '../tenant-backup-export-dispatcher';
 import { createTenantBackupR2ObjectSnapshotPorts } from '../tenant-backup-r2-object-snapshot-port';
 
@@ -84,6 +91,7 @@ function bucket(initial: Record<string, StoredObject> = {}) {
 
 function context(): AdapterContext {
   return {
+    boundaryUnixMs: 100,
     context: {
       lease: { tenantId: 'tenant-a', operationId: 'operation-a' },
       signal: new AbortController().signal,
@@ -144,6 +152,9 @@ describe('tenant backup R2 object snapshot port', () => {
                 context: {
                   tenantId: 'tenant-a',
                   catalogKind: 'object_catalog_object',
+                  sourceFamily: 'core',
+                  sourceDatabaseId: 'core-a',
+                  sourceRowId: 'physical-a',
                   objectClass: 'admin_audit_detail',
                   catalogId: 'catalog-a',
                   contentType: 'application/json',
@@ -154,7 +165,7 @@ describe('tenant backup R2 object snapshot port', () => {
     });
     const input = context();
 
-    await ports.artifactObjects.start(input, 'snapshot-a', async () => {});
+    await ports.artifactObjects.start(input, 'snapshot-a', async () => {}, 100);
     const record = await ports.artifactObjects.readNext(
       input,
       'snapshot-a',
@@ -165,6 +176,15 @@ describe('tenant backup R2 object snapshot port', () => {
       new TextDecoder().decode(record?.bytes).trimEnd(),
       'tenant-a'
     );
+    await expect(ports.artifactObjects.readSummaries(input, 'snapshot-a', 100)).resolves.toEqual([
+      {
+        kind: 'object',
+        family: 'core',
+        databaseId: 'core-a',
+        rowId: 'physical-a',
+        catalogId: 'catalog-a',
+      },
+    ]);
 
     expect(new TextDecoder().decode(decoded.bytes)).toBe('{"secret":"portable"}');
     expect(decoded.objectSha256).toBe(await digest(decoded.bytes));
@@ -212,6 +232,9 @@ describe('tenant backup R2 object snapshot port', () => {
           context: {
             tenantId: 'tenant-a',
             catalogKind: 'object_catalog_object',
+            sourceFamily: 'core',
+            sourceDatabaseId: 'core-a',
+            sourceRowId: 'physical-a',
             catalogId: 'catalog-a',
           },
         },
@@ -219,7 +242,7 @@ describe('tenant backup R2 object snapshot port', () => {
     });
 
     await expect(
-      ports.artifactObjects.start(context(), 'snapshot-b', async () => {})
+      ports.artifactObjects.start(context(), 'snapshot-b', async () => {}, 100)
     ).rejects.toThrow('backup_r2_object_snapshot_invalid');
   });
 
@@ -251,6 +274,9 @@ describe('tenant backup R2 object snapshot port', () => {
           context: {
             tenantId: 'tenant-a',
             catalogKind: 'object_catalog_object',
+            sourceFamily: 'core',
+            sourceDatabaseId: 'core-a',
+            sourceRowId: 'physical-a',
             catalogId: 'catalog-large',
           },
         },
@@ -258,7 +284,7 @@ describe('tenant backup R2 object snapshot port', () => {
     });
     const input = context();
 
-    await ports.artifactObjects.start(input, 'snapshot-large', async () => {});
+    await ports.artifactObjects.start(input, 'snapshot-large', async () => {}, 100);
     const first = await ports.artifactObjects.readNext(
       input,
       'snapshot-large',
@@ -287,5 +313,289 @@ describe('tenant backup R2 object snapshot port', () => {
       range: { offset: TENANT_BACKUP_R2_CHUNK_BYTES, length: 3 },
       onlyIf: { etagMatches: 'large-etag' },
     });
+  });
+
+  it('repackages only selected records from a log chunk that crosses the time window', async () => {
+    const rootKey = '78'.repeat(32);
+    const objectKey = 'logs/tenant-a/crossing';
+    const encoded = await encodeLogRecordBlocks(
+      [
+        { id: 'record-old', eventAt: 2, payload: { secret: 'outside' } },
+        { id: 'record-kept', eventAt: 4, payload: { audit: 'inside' } },
+      ],
+      { compression: 'none' }
+    );
+    const keyBytes = await deriveLogChunkEncryptionKey({
+      rootKeyHex: rootKey,
+      tenantKey: 'tenant-key-a',
+      logType: 'audit',
+      plane: 'archive',
+      keyVersion: 2,
+    });
+    const stored = await encryptLogChunkBody(encoded.body, {
+      keyBytes,
+      tenantKey: 'tenant-key-a',
+      logType: 'audit',
+      plane: 'archive',
+      objectKey,
+      chunkId: 'chunk-a',
+      compression: 'none',
+      encryptionScope: 'tenant-log-archive',
+      keyVersion: 2,
+    });
+    const source = bucket({
+      [objectKey]: {
+        bytes: stored,
+        etag: 'log-etag',
+        version: 'log-version',
+      },
+    });
+    const input = context();
+    input.databases = {
+      tenant: [
+        {
+          databaseId: 'core-a',
+          database: {
+            query: vi.fn(async () => {
+              const location = encoded.records[1]!;
+              const block = encoded.blocks[location.blockIndex]!;
+              return [
+                {
+                  record_id: 'record-kept',
+                  surface: 'auth',
+                  line_number: location.lineNumber,
+                  block_offset: block.compressedOffset,
+                  block_length: block.compressedLength,
+                  record_offset: location.recordOffset,
+                  record_length: location.recordLength,
+                  event_at: 4,
+                  index_profile: 'audit',
+                  indexed_fields: '{"result":"allowed"}',
+                  created_at: 4,
+                },
+              ];
+            }),
+          },
+        },
+      ],
+      fixed: [],
+    } as unknown as AdapterContext['databases'];
+    const ports = createTenantBackupR2ObjectSnapshotPorts({
+      env: {
+        AUDIT_ARCHIVE: source as unknown as R2Bucket,
+        EXPORT_ARTIFACTS: bucket() as unknown as R2Bucket,
+        OBJECT_ENCRYPTION_ROOT_KEY: rootKey,
+      },
+      assertSource: async () => {},
+      list: async (_context, datasetId) => [
+        {
+          datasetId,
+          objectId: 'core:log-a',
+          bucketBinding: 'AUDIT_ARCHIVE',
+          objectKey,
+          expectedStoredSha256: await digest(stored),
+          sourceEncoding: 'log_chunk_records_v1',
+          context: {
+            tenantId: 'tenant-a',
+            catalogKind: 'log_object',
+            sourceRowId: 'log-a',
+            sourceDatabaseId: 'core-a',
+            sourceFamily: 'core',
+            tenantKey: 'tenant-key-a',
+            logType: 'audit',
+            plane: 'archive',
+            chunkId: 'chunk-a',
+            compression: 'none',
+            windowFromInclusiveUnixMs: 3,
+            windowUntilInclusiveUnixMs: 10,
+            sourceEncrypted: true,
+            targetEncryptionScope: 'tenant-log-archive',
+            encryptionScope: 'tenant-log-archive',
+            keyVersion: 2,
+          },
+        },
+      ],
+    });
+
+    await ports.logArchiveObjects.start(input, 'snapshot-log', async () => {}, 100);
+    const record = await ports.logArchiveObjects.readNext(
+      input,
+      'snapshot-log',
+      null,
+      input.context.signal
+    );
+    const portableObject = await decodePortableR2ObjectChunk(
+      new TextDecoder().decode(record?.bytes).trimEnd(),
+      'tenant-a'
+    );
+    const portableLog = decodePortableLogChunkRecords(portableObject.bytes);
+
+    expect(portableLog.records).toEqual([
+      {
+        recordId: 'record-kept',
+        eventAt: 4,
+        surface: 'auth',
+        indexProfile: 'audit',
+        indexedFields: '{"result":"allowed"}',
+        createdAt: 4,
+        payload: { audit: 'inside' },
+      },
+    ]);
+    expect(new TextDecoder().decode(portableObject.bytes)).not.toContain('outside');
+  });
+
+  it('extracts and decrypts only one record from a shared gzip sensitive-detail body', async () => {
+    const rootKey = '89'.repeat(32);
+    const objectKey = 'details/tenant-a/shared';
+    const first = await encryptObjectArtifact('{"outside":true}', {
+      rootKeyHex: rootKey,
+      plane: 'SENSITIVE_DETAILS',
+      keyVersion: 3,
+      contentType: 'application/json',
+      context: {
+        tenantId: 'tenant-a',
+        objectKey,
+        objectClass: 'pii_log_values',
+      },
+    });
+    const second = await encryptObjectArtifact('{"selected":true}', {
+      rootKeyHex: rootKey,
+      plane: 'SENSITIVE_DETAILS',
+      keyVersion: 3,
+      contentType: 'application/json',
+      context: {
+        tenantId: 'tenant-a',
+        objectKey,
+        objectClass: 'pii_log_values',
+      },
+    });
+    const plaintext = new TextEncoder().encode(
+      `${JSON.stringify(first)}\n${JSON.stringify(second)}\n`
+    );
+    const compressed = new Uint8Array(
+      await new Response(
+        new Blob([plaintext]).stream().pipeThrough(new CompressionStream('gzip'))
+      ).arrayBuffer()
+    );
+    const source = bucket({
+      [objectKey]: {
+        bytes: compressed,
+        etag: 'detail-etag',
+        version: 'detail-version',
+      },
+    });
+    const staging = bucket();
+    const ports = createTenantBackupR2ObjectSnapshotPorts({
+      env: {
+        SENSITIVE_DETAILS: source as unknown as R2Bucket,
+        EXPORT_ARTIFACTS: staging as unknown as R2Bucket,
+        OBJECT_ENCRYPTION_ROOT_KEY: rootKey,
+      },
+      assertSource: async () => {},
+      list: async (_context, datasetId) => [
+        {
+          datasetId,
+          objectId: 'core:detail-a',
+          bucketBinding: 'SENSITIVE_DETAILS',
+          objectKey,
+          expectedStoredSha256: await digest(compressed),
+          sourceEncoding: 'sensitive_detail_record_v1',
+          context: {
+            tenantId: 'tenant-a',
+            catalogKind: 'object_catalog_object',
+            sourceFamily: 'core',
+            sourceDatabaseId: 'core-a',
+            sourceRowId: 'physical-detail',
+            catalogId: 'catalog-a',
+            objectClass: 'pii_log_values',
+            contentEncoding: 'gzip',
+            lineNumber: 1,
+            byteOffset: null,
+            byteLength: null,
+            sourceKeyVersion: 3,
+          },
+        },
+      ],
+    });
+    const input = context();
+
+    await ports.artifactObjects.start(input, 'snapshot-detail', async () => {}, 100);
+    const record = await ports.artifactObjects.readNext(
+      input,
+      'snapshot-detail',
+      null,
+      input.context.signal
+    );
+    const portableObject = await decodePortableR2ObjectChunk(
+      new TextDecoder().decode(record?.bytes).trimEnd(),
+      'tenant-a'
+    );
+
+    expect(decodePortableSensitiveDetailRecord(portableObject.bytes)).toEqual({
+      version: 1,
+      contentType: 'application/json',
+      plaintext: '{"selected":true}',
+    });
+    expect(new TextDecoder().decode(portableObject.bytes)).not.toContain('outside');
+  });
+
+  it('rejects a sensitive-detail byte range that points at a different line', async () => {
+    const rootKey = '90'.repeat(32);
+    const objectKey = 'details/tenant-a/shared-none';
+    const first = await encryptObjectArtifact('{"first":true}', {
+      rootKeyHex: rootKey,
+      plane: 'SENSITIVE_DETAILS',
+      keyVersion: 3,
+      contentType: 'application/json',
+      context: { tenantId: 'tenant-a', objectKey, objectClass: 'pii_log_values' },
+    });
+    const second = await encryptObjectArtifact('{"second":true}', {
+      rootKeyHex: rootKey,
+      plane: 'SENSITIVE_DETAILS',
+      keyVersion: 3,
+      contentType: 'application/json',
+      context: { tenantId: 'tenant-a', objectKey, objectClass: 'pii_log_values' },
+    });
+    const firstLine = JSON.stringify(first);
+    const body = new TextEncoder().encode(`${firstLine}\n${JSON.stringify(second)}\n`);
+    const source = bucket({
+      [objectKey]: { bytes: body, etag: 'detail-etag', version: 'detail-version' },
+    });
+    const ports = createTenantBackupR2ObjectSnapshotPorts({
+      env: {
+        SENSITIVE_DETAILS: source as unknown as R2Bucket,
+        EXPORT_ARTIFACTS: bucket() as unknown as R2Bucket,
+        OBJECT_ENCRYPTION_ROOT_KEY: rootKey,
+      },
+      assertSource: async () => {},
+      list: async (_context, datasetId) => [
+        {
+          datasetId,
+          objectId: 'core:detail-a',
+          bucketBinding: 'SENSITIVE_DETAILS',
+          objectKey,
+          expectedStoredSha256: await digest(body),
+          sourceEncoding: 'sensitive_detail_record_v1',
+          context: {
+            tenantId: 'tenant-a',
+            catalogKind: 'object_catalog_object',
+            sourceFamily: 'core',
+            sourceDatabaseId: 'core-a',
+            sourceRowId: 'physical-detail',
+            catalogId: 'catalog-a',
+            objectClass: 'pii_log_values',
+            contentEncoding: 'none',
+            lineNumber: 1,
+            byteOffset: 0,
+            byteLength: new TextEncoder().encode(firstLine).length,
+            sourceKeyVersion: 3,
+          },
+        },
+      ],
+    });
+
+    await expect(
+      ports.artifactObjects.start(context(), 'snapshot-detail-range', async () => {}, 100)
+    ).rejects.toThrow('backup_r2_object_snapshot_invalid');
   });
 });

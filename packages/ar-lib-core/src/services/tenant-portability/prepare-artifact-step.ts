@@ -82,7 +82,7 @@ export async function runPrepareTenantBackupArtifactStep(input: {
   );
   if (
     !released ||
-    released.released_at !== cursor.releasedAt ||
+    released.held_at !== cursor.releasedAt ||
     input.manifest.snapshotId !== cursor.boundaryId ||
     input.manifest.boundaryUnixMs !== cursor.releasedAt ||
     input.manifest.inventoryDigestSha256 !== head.chain_digest

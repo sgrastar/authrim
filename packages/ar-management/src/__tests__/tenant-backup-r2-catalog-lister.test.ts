@@ -48,8 +48,10 @@ function createSchema(database: DatabaseSync): void {
       total_bytes INTEGER,deleted_at INTEGER
     );
     CREATE TABLE sensitive_detail_chunk_index(
-      catalog_id TEXT PRIMARY KEY NOT NULL,tenant_id TEXT NOT NULL,object_key TEXT NOT NULL,
-      deleted_at INTEGER
+      catalog_id TEXT PRIMARY KEY NOT NULL,tenant_id TEXT NOT NULL,object_class TEXT NOT NULL,
+      object_key TEXT NOT NULL,content_encoding TEXT NOT NULL,line_number INTEGER NOT NULL,
+      byte_offset INTEGER,byte_length INTEGER,key_version INTEGER NOT NULL,
+      checksum_sha256 TEXT,created_at INTEGER NOT NULL,deleted_at INTEGER
     );
     CREATE TABLE log_object_catalog(
       id TEXT PRIMARY KEY NOT NULL,tenant_key TEXT NOT NULL,log_type TEXT NOT NULL,
@@ -68,6 +70,7 @@ function createSchema(database: DatabaseSync): void {
 
 function context(selection?: Partial<AdapterContext['selection']>): AdapterContext {
   return {
+    boundaryUnixMs: 10 * 86_400_000,
     context: {
       operation: { created_at: 10 * 86_400_000 },
       lease: { tenantId: 'tenant-a', operationId: 'operation-a' },
@@ -197,12 +200,47 @@ describe('tenant backup R2 catalog lister', () => {
 
     const rows = await list(context(), 'artifacts.object_catalog_bodies');
 
-    expect(rows.map(({ objectId }) => objectId)).toEqual(['admin:physical-b', 'core:physical-a']);
+    expect(rows.map(({ objectId }) => objectId)).toEqual([
+      'admin:admin-a:physical-b',
+      'core:core-a:physical-a',
+    ]);
     expect(rows.map(({ sourceEncoding }) => sourceEncoding)).toEqual([
       'plaintext',
       'object_artifact_v1',
     ]);
     expect(rows.every(({ context: value }) => value.tenantId === 'tenant-a')).toBe(true);
+  });
+
+  it('keeps identical catalog row IDs distinct across Core databases', async () => {
+    const secondCore = new DatabaseSync(':memory:');
+    try {
+      createSchema(secondCore);
+      for (const database of [core, secondCore])
+        database.exec(`
+          INSERT INTO object_catalog VALUES('catalog-a','tenant-a','user_export',NULL);
+          INSERT INTO object_catalog_objects VALUES(
+            'physical-a','catalog-a','EXPORT_ARTIFACTS','exports/a','2',NULL,12,NULL
+          );
+        `);
+      const input = context();
+      input.databases.tenant.push({
+        ...input.databases.tenant[0],
+        databaseId: 'core-b',
+        database: adapter(secondCore),
+      });
+
+      const rows = await createTenantBackupR2CatalogLister({ tenantKey: 'tenant-key-a' })(
+        input,
+        'artifacts.object_catalog_bodies'
+      );
+
+      expect(rows.map(({ objectId }) => objectId)).toEqual([
+        'core:core-a:physical-a',
+        'core:core-b:physical-a',
+      ]);
+    } finally {
+      secondCore.close();
+    }
   });
 
   it('selects only complete log chunks in the requested category and fixed period', async () => {
@@ -219,9 +257,9 @@ describe('tenant backup R2 catalog lister', () => {
 
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({
-      objectId: 'core:audit-a',
+      objectId: 'core:core-a:audit-a',
       bucketBinding: 'AUDIT_ARCHIVE',
-      sourceEncoding: 'log_chunk_v1',
+      sourceEncoding: 'log_chunk_records_v1',
       context: { logType: 'audit', chunkId: 'audit-a-chunk' },
     });
   });
@@ -247,8 +285,8 @@ describe('tenant backup R2 catalog lister', () => {
     const rows = await list(input, 'logs.archive_object_bodies');
 
     expect(rows.map(({ objectId, bucketBinding }) => [objectId, bucketBinding])).toEqual([
-      ['admin:sensitive-a', 'SENSITIVE_DETAILS'],
-      ['core:diagnostic-a', 'DIAGNOSTIC_LOGS'],
+      ['admin:admin-a:sensitive-a', 'SENSITIVE_DETAILS'],
+      ['core:core-a:diagnostic-a', 'DIAGNOSTIC_LOGS'],
     ]);
   });
 
@@ -266,29 +304,126 @@ describe('tenant backup R2 catalog lister', () => {
     );
   });
 
-  it('fails closed when a log chunk crosses the requested period boundary', async () => {
+  it('marks a log chunk that crosses the requested period boundary for record repacking', async () => {
     insertLog(core, { id: 'split-a', events: [2 * 86_400_000, 4 * 86_400_000] });
     const list = createTenantBackupR2CatalogLister({ tenantKey: 'tenant-key-a' });
 
-    await expect(list(context(), 'logs.archive_object_bodies')).rejects.toThrow(
-      'backup_r2_catalog_log_window_requires_repack'
-    );
+    await expect(list(context(), 'logs.archive_object_bodies')).resolves.toMatchObject([
+      {
+        objectId: 'core:core-a:split-a',
+        sourceEncoding: 'log_chunk_records_v1',
+        context: {
+          sourceDatabaseId: 'core-a',
+          windowFromInclusiveUnixMs: 3 * 86_400_000,
+          windowUntilInclusiveUnixMs: 10 * 86_400_000,
+        },
+      },
+    ]);
   });
 
-  it('fails closed instead of copying a shared sensitive-detail body', async () => {
+  it('lists one portable record instead of copying a shared log-detail body', async () => {
+    core.exec(`
+      INSERT INTO object_catalog VALUES('catalog-a','tenant-a','event_log_detail',NULL);
+      INSERT INTO object_catalog_objects VALUES(
+        'physical-a','catalog-a','SENSITIVE_DETAILS','details/shared','2','${'c'.repeat(64)}',12,NULL
+      );
+      INSERT INTO sensitive_detail_chunk_index VALUES(
+        'catalog-a','tenant-a','event_log_detail','details/shared','gzip',3,NULL,NULL,2,
+        '${'c'.repeat(64)}',432000000,NULL
+      );
+    `);
+    const list = createTenantBackupR2CatalogLister({ tenantKey: 'tenant-key-a' });
+
+    await expect(
+      list(
+        context({ logs: { audit: false, other: true, sensitive: true, period: 7 } }),
+        'artifacts.object_catalog_bodies'
+      )
+    ).resolves.toMatchObject([
+      {
+        objectId: 'core:core-a:physical-a',
+        sourceEncoding: 'sensitive_detail_record_v1',
+        context: {
+          catalogId: 'catalog-a',
+          contentEncoding: 'gzip',
+          lineNumber: 3,
+        },
+      },
+    ]);
+  });
+
+  it('does not list historical artifacts or sensitive details outside the chosen categories', async () => {
     core.exec(`
       INSERT INTO object_catalog VALUES('catalog-a','tenant-a','pii_log_values',NULL);
       INSERT INTO object_catalog_objects VALUES(
         'physical-a','catalog-a','SENSITIVE_DETAILS','details/shared','2','${'c'.repeat(64)}',12,NULL
       );
       INSERT INTO sensitive_detail_chunk_index VALUES(
-        'catalog-a','tenant-a','details/shared',NULL
+        'catalog-a','tenant-a','pii_log_values','details/shared','none',0,0,11,2,
+        '${'c'.repeat(64)}',432000000,NULL
+      );
+      INSERT INTO object_catalog VALUES('catalog-b','tenant-a','user_export',NULL);
+      INSERT INTO object_catalog_objects VALUES(
+        'physical-b','catalog-b','EXPORT_ARTIFACTS','exports/b','2','${'d'.repeat(64)}',12,NULL
       );
     `);
     const list = createTenantBackupR2CatalogLister({ tenantKey: 'tenant-key-a' });
 
-    await expect(list(context(), 'artifacts.object_catalog_bodies')).rejects.toThrow(
-      'backup_r2_catalog_shared_detail_requires_repack'
+    await expect(
+      list(
+        context({
+          artifacts: false,
+          logs: { audit: false, other: false, sensitive: false, period: 7 },
+        }),
+        'artifacts.object_catalog_bodies'
+      )
+    ).resolves.toEqual([]);
+  });
+
+  it('follows Admin and user ownership for non-log sensitive detail references', async () => {
+    core.exec(`
+      INSERT INTO object_catalog VALUES('catalog-webhook','tenant-a','webhook_delivery_payload',NULL);
+      INSERT INTO object_catalog_objects VALUES(
+        'physical-webhook','catalog-webhook','SENSITIVE_DETAILS','details/webhook','2','${'c'.repeat(64)}',12,NULL
+      );
+      INSERT INTO sensitive_detail_chunk_index VALUES(
+        'catalog-webhook','tenant-a','webhook_delivery_payload','details/webhook','none',0,0,11,2,
+        '${'c'.repeat(64)}',1,NULL
+      );
+      INSERT INTO object_catalog VALUES('catalog-pii','tenant-a','pii_log_values',NULL);
+      INSERT INTO object_catalog_objects VALUES(
+        'physical-pii','catalog-pii','SENSITIVE_DETAILS','details/pii','2','${'d'.repeat(64)}',12,NULL
+      );
+      INSERT INTO sensitive_detail_chunk_index VALUES(
+        'catalog-pii','tenant-a','pii_log_values','details/pii','none',0,0,11,2,
+        '${'d'.repeat(64)}',432000000,NULL
+      );
+    `);
+    admin.exec(`
+      INSERT INTO object_catalog VALUES('catalog-approval','tenant-a','approval_transport_detail',NULL);
+      INSERT INTO object_catalog_objects VALUES(
+        'physical-approval','catalog-approval','SENSITIVE_DETAILS','details/approval','2','${'e'.repeat(64)}',12,NULL
+      );
+      INSERT INTO sensitive_detail_chunk_index VALUES(
+        'catalog-approval','tenant-a','approval_transport_detail','details/approval','none',0,0,11,2,
+        '${'e'.repeat(64)}',1,NULL
+      );
+    `);
+    const list = createTenantBackupR2CatalogLister({ tenantKey: 'tenant-key-a' });
+
+    const rows = await list(
+      context({
+        artifacts: false,
+        users: true,
+        admin: true,
+        logs: { audit: false, other: false, sensitive: true, period: 7 },
+      }),
+      'artifacts.object_catalog_bodies'
     );
+
+    expect(rows.map(({ objectId }) => objectId)).toEqual([
+      'admin:admin-a:physical-approval',
+      'core:core-a:physical-webhook',
+    ]);
   });
 });

@@ -46,6 +46,7 @@ function bucket() {
 
 function context(): AdapterContext {
   return {
+    boundaryUnixMs: 100,
     context: {
       lease: { tenantId: 'tenant-a', operationId: 'operation-a' },
       signal: new AbortController().signal,
@@ -75,7 +76,7 @@ describe('tenant backup SAML port', () => {
     const ports = createTenantBackupSamlPorts(env);
     const input = context();
 
-    await ports.saml.start(input, 'snapshot', async () => {});
+    await ports.saml.start(input, 'snapshot', async () => {}, 100);
     const row = await ports.saml.readNext(input, 'snapshot', null, input.context.signal);
     const decoded = await decodeSamlLocalSigningBackupRow(
       new TextDecoder().decode(row?.bytes).trim(),

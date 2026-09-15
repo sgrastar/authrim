@@ -34,6 +34,8 @@ export interface AdapterContext {
   snapshotResources: TenantBackupSnapshotResources;
   databases: ResolvedDatabases;
   selection: Awaited<ReturnType<typeof loadTenantBackupExportExecution>>['intent']['selection'];
+  /** Set while a non-SQL participant captures the persisted held boundary. */
+  boundaryUnixMs?: number;
   resolveSource(resource: {
     resourceId: string;
     family: SqliteCaptureResource['family'];

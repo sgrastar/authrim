@@ -33,6 +33,7 @@ function bucket() {
 
 function context(): AdapterContext {
   return {
+    boundaryUnixMs: 100,
     context: {
       lease: { tenantId: 'tenant-a', operationId: 'operation-a' },
       signal: new AbortController().signal,
@@ -62,13 +63,16 @@ describe('encrypted tenant backup record snapshot port', () => {
     const held = vi.fn(async () => {});
     const input = context();
 
-    await port.start(input, 'snapshot-a', held);
+    await port.start(input, 'snapshot-a', held, 100);
     expect([...storage.values.values()].join('')).not.toContain('private-key');
     expect(storage.values.size).toBe(3);
 
     source = ['changed-after-snapshot'];
-    await port.start(input, 'snapshot-a', held);
+    await port.start(input, 'snapshot-a', held, 100);
     expect(storage.values.size).toBe(3);
+    await expect(port.start(input, 'snapshot-a', held, 101)).rejects.toThrow(
+      'backup_record_snapshot_invalid'
+    );
 
     const first = await port.readNext(input, 'snapshot-a', null, input.context.signal);
     const second = await port.readNext(
@@ -86,7 +90,7 @@ describe('encrypted tenant backup record snapshot port', () => {
     await port.release(input, 'snapshot-a');
     await expect(port.assertReleased(input, 'snapshot-a')).resolves.toBeUndefined();
     expect(storage.values.size).toBe(0);
-    expect(assertSource).toHaveBeenCalledTimes(3);
+    expect(assertSource).toHaveBeenCalledTimes(4);
     expect(held.mock.calls.length).toBeGreaterThanOrEqual(4);
   });
 
@@ -125,7 +129,7 @@ describe('encrypted tenant backup record snapshot port', () => {
         yield new TextEncoder().encode('not-json\n');
       },
     });
-    await expect(port.start(context(), 'snapshot-b', async () => {})).rejects.toThrow(
+    await expect(port.start(context(), 'snapshot-b', async () => {}, 100)).rejects.toThrow(
       'backup_record_snapshot_invalid'
     );
     expect([...storage.values.keys()].some((key) => key.endsWith('index.json'))).toBe(false);

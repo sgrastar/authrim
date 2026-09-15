@@ -89,6 +89,8 @@ function ports(): Phase8InstalledAdapterPorts {
     cleanup: {} as never,
     resolveAdminRestoreDatabase: vi.fn(),
     resolveCoreRestoreDatabase: vi.fn(),
+    resolveAdminR2RestoreDatabase: vi.fn(),
+    resolveCoreR2RestoreDatabase: vi.fn(),
     loadExternalPrerequisites: vi.fn(),
     loadDeliverySafety: vi.fn(),
   };
