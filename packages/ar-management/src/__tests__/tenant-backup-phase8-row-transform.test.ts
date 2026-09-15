@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { encryptValue } from '@authrim/ar-lib-core/utils/pii-encryption';
+import type { TenantBackupSelection } from '@authrim/ar-lib-core/services/tenant-portability/selection-contract';
+import type { PortableSqliteRow } from '@authrim/ar-lib-core/services/tenant-portability/sqlite-dataset-inspector';
 import { portableTotpSecret } from '@authrim/ar-lib-core/services/tenant-portability/portable-totp-secret';
 import {
   createPhase8TenantBackupRowTransform,
@@ -50,6 +52,53 @@ describe('Phase 8 row transform', () => {
     );
   });
 
+  it('filters mixed log dependency catalogs by category, sensitive permission, and window', async () => {
+    const boundary = 100 * 86_400_000;
+    const row = (logType: string, plane: string, createdAt: number) =>
+      JSON.stringify({
+        log_type: ['text', logType],
+        plane: ['text', plane],
+        created_at: ['integer', String(createdAt)],
+      });
+    const selected = context(
+      'core.log_object_catalog',
+      row('audit', 'archive', boundary),
+      boundary
+    ) as unknown as {
+      rowJson: string;
+      selection: TenantBackupSelection;
+    };
+    selected.selection.logs.other = false;
+    selected.selection.logs.sensitive = false;
+    await expect(filter(selected as never)).resolves.toBe(true);
+    await expect(
+      filter({ ...selected, rowJson: row('operational', 'archive', boundary) } as never)
+    ).resolves.toBe(false);
+    await expect(
+      filter({ ...selected, rowJson: row('audit', 'sensitive_detail', boundary) } as never)
+    ).resolves.toBe(false);
+    await expect(
+      filter({
+        ...selected,
+        rowJson: row('audit', 'archive', 93 * 86_400_000 - 1),
+      } as never)
+    ).resolves.toBe(false);
+
+    const sensitive = context(
+      'admin.sensitive_detail_chunk_index',
+      JSON.stringify({
+        object_class: ['text', 'admin_audit_detail'],
+        created_at: ['integer', String(boundary)],
+      }),
+      boundary
+    ) as unknown as { selection: TenantBackupSelection };
+    sensitive.selection.logs.other = false;
+    sensitive.selection.logs.sensitive = true;
+    await expect(filter(sensitive as never)).resolves.toBe(true);
+    sensitive.selection.logs.audit = false;
+    await expect(filter(sensitive as never)).resolves.toBe(false);
+  });
+
   it('uses the installed TOTP codec and scrubs held delivery ciphertext', async () => {
     const encrypted = await encryptValue('JBSWY3DPEHPK3PXP', sourceKey, 'AES-256-GCM', 3);
     const totp = JSON.stringify({
@@ -59,7 +108,9 @@ describe('Phase 8 row transform', () => {
       secret_key_version: ['integer', '3'],
     });
     const portable = await transform(context('core.totp_credentials', totp, 10));
-    expect(portableTotpSecret(JSON.parse(portable)).plaintext).toBe('JBSWY3DPEHPK3PXP');
+    expect(portableTotpSecret(JSON.parse(portable) as unknown as PortableSqliteRow).plaintext).toBe(
+      'JBSWY3DPEHPK3PXP'
+    );
     const notification = JSON.stringify({
       payload_envelope_json: ['text', 'source-ciphertext'],
       payload_key_id: ['text', 'source-key'],
@@ -107,7 +158,7 @@ describe('Phase 8 row transform', () => {
     expect(new Set(PHASE8_TRANSFORMED_SQLITE_DATASETS).size).toBe(
       PHASE8_TRANSFORMED_SQLITE_DATASETS.length
     );
-    expect(PHASE8_FILTERED_LOG_DATASETS).toHaveLength(35);
+    expect(PHASE8_FILTERED_LOG_DATASETS).toHaveLength(43);
     for (const dataset of PHASE8_SENSITIVE_SQLITE_DATASETS)
       if (dataset !== 'pii.identity_identifier_replacement_challenges')
         expect(PHASE8_TRANSFORMED_SQLITE_DATASETS).toContain(dataset);

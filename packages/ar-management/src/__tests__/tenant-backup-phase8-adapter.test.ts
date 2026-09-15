@@ -72,13 +72,11 @@ function ports(): Phase8InstalledAdapterPorts {
     import: { assertSources: vi.fn() } as never,
     otherStores: {} as never,
     rowTransform: {
-      transformAdminEnvelope: vi.fn(async (_datasetId, rowJson) => rowJson),
       loadExternalPiiLogValues: vi.fn(async () => null),
     },
     keyManagerSnapshot: {} as never,
     recordSnapshots: {
       validateSamlBundle: vi.fn(),
-      validateAdminEnvelope: vi.fn(),
       validatePhase8Envelope: vi.fn(),
       assertPluginSupported: vi.fn(),
       saml: recordSnapshot('saml'),
@@ -106,7 +104,11 @@ const all = {
 
 it('installs the complete Core, PII, and Admin Phase 8 SQL adapter', () => {
   const adapter = createPhase8TenantBackupInstalledAdapter({
-    env: { DB_ADMIN: database(), PII_ENCRYPTION_KEY: '11'.repeat(32) } as unknown as Env,
+    env: {
+      DB_ADMIN: database(),
+      PII_ENCRYPTION_KEY: '11'.repeat(32),
+      OBJECT_ENCRYPTION_ROOT_KEY: '22'.repeat(32),
+    } as unknown as Env,
     planned: planned(),
     ports: ports(),
   });
@@ -128,7 +130,11 @@ it('installs the complete Core, PII, and Admin Phase 8 SQL adapter', () => {
 
 it('includes user avatars without settings assets for a users-only backup', () => {
   const adapter = createPhase8TenantBackupInstalledAdapter({
-    env: { DB_ADMIN: database(), PII_ENCRYPTION_KEY: '11'.repeat(32) } as unknown as Env,
+    env: {
+      DB_ADMIN: database(),
+      PII_ENCRYPTION_KEY: '11'.repeat(32),
+      OBJECT_ENCRYPTION_ROOT_KEY: '22'.repeat(32),
+    } as unknown as Env,
     planned: planned(),
     ports: ports(),
   });
@@ -147,7 +153,11 @@ it('loads import policies from the claimed operation physical plan', async () =>
   const installedPorts = ports();
   const loadPlanned = vi.fn(async () => planned());
   const adapter = createPhase8TenantBackupInstalledAdapter({
-    env: { DB_ADMIN: database(), PII_ENCRYPTION_KEY: '11'.repeat(32) } as unknown as Env,
+    env: {
+      DB_ADMIN: database(),
+      PII_ENCRYPTION_KEY: '11'.repeat(32),
+      OBJECT_ENCRYPTION_ROOT_KEY: '22'.repeat(32),
+    } as unknown as Env,
     loadPlanned,
     ports: installedPorts,
   });

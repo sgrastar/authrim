@@ -41,6 +41,26 @@ export const PHASE8_LOG_TIMESTAMP_COLUMNS: Readonly<Record<string, string>> = {
   'plugin_runner.plugin_runner_egress_audit': 'created_at',
 };
 
+const PHASE8_LOG_DEPENDENCY_DATASETS = new Set([
+  'admin.log_chunk_manifests',
+  'admin.log_chunk_record_index',
+  'admin.log_object_catalog',
+  'admin.sensitive_detail_chunk_index',
+  'core.log_chunk_manifests',
+  'core.log_chunk_record_index',
+  'core.log_object_catalog',
+  'core.sensitive_detail_chunk_index',
+]);
+
+const AUDIT_LOG_TYPES = new Set(['audit', 'admin_audit', 'security']);
+const OTHER_LOG_TYPES = new Set(['normal', 'diagnostic', 'job', 'webhook', 'operational']);
+const AUDIT_DETAIL_CLASSES = new Set([
+  'admin_audit_detail',
+  'event_log_detail',
+  'approval_transport_detail',
+]);
+const OTHER_DETAIL_CLASSES = new Set(['webhook_delivery_payload', 'operational_log_detail']);
+
 function invalid(): never {
   throw new Error('backup_phase8_log_timestamp_invalid');
 }
@@ -70,6 +90,85 @@ export function phase8LogRowInWindow(input: {
   const timestamp = Number(value[1]);
   if (!Number.isSafeInteger(timestamp)) invalid();
   const window = tenantBackupLogWindow(input.period, input.boundaryUnixMs);
+  return (
+    timestamp <= window.untilInclusiveUnixMs &&
+    (window.fromInclusiveUnixMs === null || timestamp >= window.fromInclusiveUnixMs)
+  );
+}
+
+function text(row: PortableSqliteRow, column: string): string {
+  const value = row[column];
+  if (value?.[0] !== 'text' || value[1] === null || !value[1]) invalid();
+  return value[1];
+}
+
+function integer(row: PortableSqliteRow, column: string): number {
+  const value = row[column];
+  if (value?.[0] !== 'integer' || value[1] === null || !/^(0|[1-9][0-9]{0,15})$/.test(value[1]))
+    invalid();
+  const result = Number(value[1]);
+  if (!Number.isSafeInteger(result)) invalid();
+  return result;
+}
+
+function logTypeSelected(
+  logType: string,
+  selection: TenantBackupSelection,
+  sensitiveDetail: boolean
+): boolean {
+  if (AUDIT_LOG_TYPES.has(logType))
+    return selection.logs.audit && (!sensitiveDetail || selection.logs.sensitive);
+  if (OTHER_LOG_TYPES.has(logType))
+    return selection.logs.other && (!sensitiveDetail || selection.logs.sensitive);
+  if (logType === 'pii') return selection.logs.sensitive;
+  return invalid();
+}
+
+function detailClassSelected(objectClass: string, selection: TenantBackupSelection): boolean {
+  if (AUDIT_DETAIL_CLASSES.has(objectClass))
+    return selection.logs.audit && selection.logs.sensitive;
+  if (OTHER_DETAIL_CLASSES.has(objectClass))
+    return selection.logs.other && selection.logs.sensitive;
+  if (objectClass === 'pii_log_values') return selection.logs.sensitive;
+  return invalid();
+}
+
+/** Filter mixed log catalogs without copying rows from unselected log categories. */
+export function phase8LogDependencyRowInSelection(input: {
+  datasetId: string;
+  row: PortableSqliteRow;
+  selection: TenantBackupSelection;
+  boundaryUnixMs: number;
+}): boolean {
+  if (!PHASE8_LOG_DEPENDENCY_DATASETS.has(input.datasetId)) invalid();
+  const window = tenantBackupLogWindow(input.selection.logs.period, input.boundaryUnixMs);
+  if (input.datasetId.endsWith('.sensitive_detail_chunk_index')) {
+    if (!detailClassSelected(text(input.row, 'object_class'), input.selection)) return false;
+    const createdAt = integer(input.row, 'created_at');
+    return (
+      createdAt <= window.untilInclusiveUnixMs &&
+      (window.fromInclusiveUnixMs === null || createdAt >= window.fromInclusiveUnixMs)
+    );
+  }
+  const selected = logTypeSelected(
+    text(input.row, 'log_type'),
+    input.selection,
+    text(input.row, 'plane') === 'sensitive_detail'
+  );
+  if (!selected) return false;
+  if (input.datasetId.endsWith('.log_chunk_manifests')) {
+    const from = integer(input.row, 'bucket_start_at');
+    const until = integer(input.row, 'bucket_end_at');
+    if (until < from) invalid();
+    return (
+      from <= window.untilInclusiveUnixMs &&
+      (window.fromInclusiveUnixMs === null || until >= window.fromInclusiveUnixMs)
+    );
+  }
+  const timestamp = integer(
+    input.row,
+    input.datasetId.endsWith('.log_chunk_record_index') ? 'event_at' : 'created_at'
+  );
   return (
     timestamp <= window.untilInclusiveUnixMs &&
     (window.fromInclusiveUnixMs === null || timestamp >= window.fromInclusiveUnixMs)

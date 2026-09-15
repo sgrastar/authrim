@@ -1,6 +1,7 @@
 import type { Env } from '@authrim/ar-lib-core';
 import { TENANT_DATASET_POLICIES } from '@authrim/ar-lib-core/services/tenant-portability/dataset-registry';
 import {
+  phase8LogDependencyRowInSelection,
   parsePhase8PortableSqliteRow,
   phase8LogRowInWindow,
 } from '@authrim/ar-lib-core/services/tenant-portability/phase8-log-window';
@@ -86,6 +87,16 @@ export function createPhase8TenantBackupRowFilter(): NonNullable<
       )
         return false;
     }
+    if (kind === 'log_dependencies') {
+      if (!Number.isSafeInteger(input.boundaryUnixMs) || (input.boundaryUnixMs ?? -1) < 0)
+        throw new Error('backup_phase8_log_boundary');
+      return phase8LogDependencyRowInSelection({
+        datasetId: input.datasetId,
+        row: parsePhase8PortableSqliteRow(input.rowJson),
+        selection: input.selection,
+        boundaryUnixMs: input.boundaryUnixMs ?? -1,
+      });
+    }
     return true;
   };
 }
@@ -127,5 +138,5 @@ export const PHASE8_TRANSFORMED_SQLITE_DATASETS = [
 ].filter((datasetId, index, values) => values.indexOf(datasetId) === index);
 
 export const PHASE8_FILTERED_LOG_DATASETS = PHASE8_CUMULATIVE_SQLITE_DATASET_REGISTRATIONS.filter(
-  ({ dataset }) => ['audit', 'history', 'sensitive_logs'].includes(dataset.kind)
+  ({ dataset }) => ['audit', 'history', 'sensitive_logs', 'log_dependencies'].includes(dataset.kind)
 ).map(({ dataset }) => dataset.id);

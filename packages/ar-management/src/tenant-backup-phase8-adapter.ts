@@ -18,6 +18,7 @@ import {
   createPhase5TenantBackupInstalledAdapter,
   type Phase5InstalledAdapterPorts,
 } from './tenant-backup-phase5-adapter';
+import type { TenantBackupInstalledOperationAdapter } from './tenant-backup-operation-dispatcher';
 import {
   createPhase8TenantBackupRowFilter,
   createPhase8TenantBackupRowTransform,
@@ -28,14 +29,20 @@ import {
   createPhase8OtherStoreHandlers,
   type Phase8OtherStorePorts,
 } from './tenant-backup-phase8-other-stores';
+import { createTenantBackupAdminEnvelopePorts } from './tenant-backup-admin-envelope-port';
+import { createTenantBackupValidatedInputPorts } from './tenant-backup-validated-input-port';
 
 export interface Phase8InstalledAdapterPorts extends Omit<
   Phase5InstalledAdapterPorts,
-  'recordSnapshots' | 'rowTransform' | 'otherStores'
+  'recordSnapshots' | 'rowTransform' | 'otherStores' | 'import'
 > {
-  rowTransform: Phase8SensitiveRowTransformPort;
-  otherStores: Phase8OtherStorePorts;
-  recordSnapshots: Phase5InstalledAdapterPorts['recordSnapshots'] & {
+  import: Omit<
+    Phase5InstalledAdapterPorts['import'],
+    'loadValidatedDataset' | 'assertValidatedUnpublishedPlan'
+  >;
+  rowTransform: Omit<Phase8SensitiveRowTransformPort, 'transformAdminEnvelope'>;
+  otherStores: Omit<Phase8OtherStorePorts, 'restoreAdminEnvelope' | 'verifyAdminEnvelope'>;
+  recordSnapshots: Omit<Phase5InstalledAdapterPorts['recordSnapshots'], 'validateAdminEnvelope'> & {
     validatePhase8Envelope(datasetId: string, row: PortableSqliteRow): Promise<void>;
     userAvatars: Phase5InstalledAdapterPorts['recordSnapshots']['publicAssets'];
   };
@@ -75,10 +82,25 @@ export function createPhase8TenantBackupInstalledAdapter(
     throw new Error('backup_phase8_restore_hold_key_invalid');
   const keyVersion = Number(keyVersionValue);
   const now = input.now ?? Date.now;
+  const adminEnvelopes = createTenantBackupAdminEnvelopePorts(input.env);
+  const rowTransform = {
+    ...input.ports.rowTransform,
+    transformAdminEnvelope: (datasetId: string, rowJson: string) =>
+      adminEnvelopes.transformAdminEnvelope(datasetId, rowJson),
+  };
+  const otherStores = {
+    ...input.ports.otherStores,
+    restoreAdminEnvelope: (...args: Parameters<typeof adminEnvelopes.restoreAdminEnvelope>) =>
+      adminEnvelopes.restoreAdminEnvelope(...args),
+    verifyAdminEnvelope: (...args: Parameters<typeof adminEnvelopes.verifyAdminEnvelope>) =>
+      adminEnvelopes.verifyAdminEnvelope(...args),
+  };
   const policyInput: Parameters<typeof createPhase8SqliteInspectionPolicies>[1] = {
     tenantKey: input.ports.tenantKey,
-    validateAdminEnvelope: input.ports.recordSnapshots.validateAdminEnvelope,
-    validatePhase8Envelope: input.ports.recordSnapshots.validatePhase8Envelope,
+    validateAdminEnvelope: (datasetId, rowValue) =>
+      adminEnvelopes.validateAdminEnvelope(datasetId, rowValue),
+    validatePhase8Envelope: (datasetId, rowValue) =>
+      input.ports.recordSnapshots.validatePhase8Envelope(datasetId, rowValue),
     resolveAdminReference: (context, sourceAdminId) =>
       adminMappings.resolveFrozen(context.lease.tenantId, context.lease.operationId, sourceAdminId),
     resolvePluginReference: async (context, sourceInstallationId, pluginId) => {
@@ -118,14 +140,37 @@ export function createPhase8TenantBackupInstalledAdapter(
   const policies = input.planned
     ? createPhase8SqliteInspectionPolicies(input.planned, policyInput)
     : null;
-  return createPhase5TenantBackupInstalledAdapter({
+  const loadPlanned = input.loadPlanned;
+  let installed: TenantBackupInstalledOperationAdapter | undefined;
+  const validatedInput = createTenantBackupValidatedInputPorts({
+    env: input.env,
+    datasets: (selection) => {
+      if (!installed) throw new Error('backup_phase8_adapter_initializing');
+      return installed.import.datasets(selection);
+    },
+    loadPolicy: (context, datasetId) => {
+      if (!installed) throw new Error('backup_phase8_adapter_initializing');
+      return installed.import.loadPolicy(context, datasetId);
+    },
+    assertSources: (context) => input.ports.import.assertSources(context),
+    now: input.now,
+  });
+  installed = createPhase5TenantBackupInstalledAdapter({
     env: input.env,
     planned: input.planned ?? [],
     now: input.now,
     ports: {
       ...input.ports,
+      rowTransform,
+      otherStores,
+      recordSnapshots: {
+        ...input.ports.recordSnapshots,
+        validateAdminEnvelope: (datasetId, rowValue) =>
+          adminEnvelopes.validateAdminEnvelope(datasetId, rowValue),
+      },
       import: {
         ...input.ports.import,
+        ...validatedInput,
         assertRestoreApproval: (context) =>
           adminMappings.assertApproved(context.lease.tenantId, context.lease.operationId),
       },
@@ -134,8 +179,10 @@ export function createPhase8TenantBackupInstalledAdapter(
       ...(policies
         ? { policies }
         : {
-            loadPolicies: async (context: TenantBackupStepContext) =>
-              createPhase8SqliteInspectionPolicies(await input.loadPlanned!(context), policyInput),
+            loadPolicies: async (context: TenantBackupStepContext) => {
+              if (!loadPlanned) throw new Error('backup_phase8_plan_loader');
+              return createPhase8SqliteInspectionPolicies(await loadPlanned(context), policyInput);
+            },
           }),
       requiredDatabases: {
         roles: ['tenant_core', 'tenant_pii'],
@@ -144,8 +191,8 @@ export function createPhase8TenantBackupInstalledAdapter(
       registrations: PHASE8_CUMULATIVE_SQLITE_DATASET_REGISTRATIONS,
       transformedDatasetIds: PHASE8_TRANSFORMED_SQLITE_DATASETS,
       filterRow: createPhase8TenantBackupRowFilter(),
-      transformRow: createPhase8TenantBackupRowTransform(input.env, input.ports.rowTransform),
-      otherStores: createPhase8OtherStoreHandlers(input.env, input.ports.otherStores),
+      transformRow: createPhase8TenantBackupRowTransform(input.env, rowTransform),
+      otherStores: createPhase8OtherStoreHandlers(input.env, otherStores),
       recordSnapshots: [
         {
           dataset: USER_AVATARS_DATASET,
@@ -155,4 +202,5 @@ export function createPhase8TenantBackupInstalledAdapter(
       ],
     },
   });
+  return installed;
 }
