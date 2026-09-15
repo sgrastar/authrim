@@ -35,11 +35,16 @@ describe('tenant backup external PII log transform port', () => {
         databases: {
           tenant: [
             {
+              databaseId: 'pii-db-other',
+              assignments: [{ role: 'tenant_pii' }],
+            },
+            {
               databaseId: 'pii-db-a',
               assignments: [{ role: 'tenant_pii' }],
             },
           ],
         },
+        resourceId: 'pii-db-a',
         resolveSource,
       } as never,
       'sensitive-detail-catalog:catalog-a'
@@ -57,6 +62,34 @@ describe('tenant backup external PII log transform port', () => {
       }
     );
     expect(JSON.parse(result ?? 'null')).toMatchObject({ keyId: 'pii-key-v1' });
+  });
+
+  it('does not resolve a different PII shard when the row source is missing', async () => {
+    const port = createTenantBackupPiiLogTransformPort({}, vi.fn());
+    await expect(
+      port.loadExternalPiiLogValues(
+        {
+          context: {
+            lease: { tenantId: 'tenant-a' },
+            signal: new AbortController().signal,
+          },
+          resourceId: 'pii-db-missing',
+          databases: {
+            tenant: [
+              {
+                databaseId: 'pii-db-a',
+                assignments: [{ role: 'tenant_pii' }],
+              },
+              {
+                databaseId: 'pii-db-b',
+                assignments: [{ role: 'tenant_pii' }],
+              },
+            ],
+          },
+        } as never,
+        'sensitive-detail-catalog:catalog-a'
+      )
+    ).rejects.toThrow('backup_pii_log_external_value_invalid');
   });
 
   it('fails closed when the PII resource or catalog payload is unavailable', async () => {

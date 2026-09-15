@@ -21,7 +21,8 @@ export function createTenantBackupPiiLogTransformPort(
       const catalogId = catalogReference.slice(PREFIX.length);
       if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u.test(catalogId)) invalid();
       const resources = input.databases.tenant.filter(
-        (resource) => tenantBackupDatabaseFamily(resource) === 'pii'
+        (resource) =>
+          resource.databaseId === input.resourceId && tenantBackupDatabaseFamily(resource) === 'pii'
       );
       if (resources.length !== 1) invalid();
       const resource = resources[0];

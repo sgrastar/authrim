@@ -31,7 +31,9 @@ export interface TenantBackupInstalledSqliteExportPorts {
       boundaryUnixMs?: number;
     }
   ): Promise<boolean>;
-  transformRow?(input: AdapterContext & { datasetId: string; rowJson: string }): Promise<string>;
+  transformRow?(
+    input: AdapterContext & { datasetId: string; resourceId: string; rowJson: string }
+  ): Promise<string>;
 }
 
 async function planned(
@@ -153,12 +155,13 @@ export function createTenantBackupInstalledSqliteExportAdapter(input: {
                   rowJson,
                 }) ?? Promise.reject(new Error('backup_sqlite_export_adapter_filter'))
             : undefined,
-          transformRow:
+          transformShardRow:
             transformedDatasetIds.includes(dataset.dataset.id) && input.ports.transformRow
-              ? (rowJson) =>
+              ? (shard, rowJson) =>
                   input.ports.transformRow?.({
                     ...context,
                     datasetId: dataset.dataset.id,
+                    resourceId: shard.resourceId,
                     rowJson,
                   }) ?? Promise.reject(new Error('backup_sqlite_export_adapter_transform'))
               : undefined,

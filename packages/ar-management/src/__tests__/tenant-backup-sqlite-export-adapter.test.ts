@@ -154,7 +154,7 @@ it('reads the persisted plan and exact snapshot rather than caller-supplied tabl
 });
 
 it('reads every frozen shard and passes physical identity to row filters', async () => {
-  const { adapter, context, ports, snapshotResources } = fixture();
+  const { context, ports, snapshotResources } = fixture();
   const filterRow = vi.fn(async () => true);
   mocks.planned.mockResolvedValue([
     {
@@ -217,10 +217,13 @@ it('enables row transforms only for explicitly installed datasets', async () => 
     signal: context.context.signal,
   });
   const reader = mocks.read.mock.calls[0]?.[0] as {
-    transformRow(rowJson: string): Promise<string>;
+    shards: Array<{ resourceId: string }>;
+    transformShardRow(shard: { resourceId: string }, rowJson: string): Promise<string>;
   };
-  await expect(reader.transformRow('row')).resolves.toBe('row:portable');
-  expect(transformRow).toHaveBeenCalledWith(expect.objectContaining({ datasetId: 'core.roles' }));
+  await expect(reader.transformShardRow(reader.shards[0], 'row')).resolves.toBe('row:portable');
+  expect(transformRow).toHaveBeenCalledWith(
+    expect.objectContaining({ datasetId: 'core.roles', resourceId: 'physical-core' })
+  );
   expect(() =>
     createTenantBackupInstalledSqliteExportAdapter({
       requiredDatabases: { roles: ['tenant_core'], fixed: [] },

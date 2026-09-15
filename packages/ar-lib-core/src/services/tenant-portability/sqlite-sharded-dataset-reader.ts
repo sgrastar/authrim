@@ -16,6 +16,8 @@ export async function readNextShardedSqliteDatasetChunk(
     assertResourceSet: (shards: readonly SqliteDatasetShard[]) => Promise<void>;
     /** Optional resource-aware filter for catalog rows whose object identity includes a shard. */
     filterShardRow?: (shard: Readonly<SqliteDatasetShard>, rowJson: string) => Promise<boolean>;
+    /** Optional resource-aware transform for ciphertext whose source key belongs to one shard. */
+    transformShardRow?: (shard: Readonly<SqliteDatasetShard>, rowJson: string) => Promise<string>;
   },
   cursorJson: string | null
 ): ReturnType<typeof readNextPlannedSqliteDatasetChunk> {
@@ -91,6 +93,7 @@ export async function readNextShardedSqliteDatasetChunk(
   };
   await guard();
   const filterShardRow = input.filterShardRow;
+  const transformShardRow = input.transformShardRow;
   // Up to 64 empty shards can be skipped, but at most one data chunk is returned per slice.
   while (sourceIndex < shards.length) {
     const shard = shards[sourceIndex];
@@ -101,6 +104,9 @@ export async function readNextShardedSqliteDatasetChunk(
         resolveSource: () => input.resolveSource(shard),
         ...(filterShardRow
           ? { filterRow: (rowJson: string) => filterShardRow(shard, rowJson) }
+          : {}),
+        ...(transformShardRow
+          ? { transformRow: (rowJson: string) => transformShardRow(shard, rowJson) }
           : {}),
       },
       sourceCursor

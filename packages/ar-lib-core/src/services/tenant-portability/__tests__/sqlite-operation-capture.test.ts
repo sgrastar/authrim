@@ -879,6 +879,7 @@ it.each([false, true])(
         { resourceId: 'physical-b', firstOrdinal: 1, snapshotId: 'snapshot-b' },
       ];
       const filteredResources: string[] = [];
+      const transformedResources: string[] = [];
       const args = {
         ...input,
         table: 'oauth_clients',
@@ -898,6 +899,10 @@ it.each([false, true])(
         async filterShardRow(shard: { resourceId: string }) {
           filteredResources.push(shard.resourceId);
           return true;
+        },
+        async transformShardRow(shard: { resourceId: string }, rowJson: string) {
+          transformedResources.push(shard.resourceId);
+          return rowJson;
         },
         async resolveSource(shard: { resourceId: string }) {
           return shard.resourceId === 'physical-a' ? input.source : other.source;
@@ -923,6 +928,9 @@ it.each([false, true])(
         expect(await readNextShardedSqliteDatasetChunk(args, next!.nextCursor)).toBeNull();
       }
       expect(new Set(filteredResources)).toEqual(
+        new Set(emptyFirst ? ['physical-b'] : ['physical-a', 'physical-b'])
+      );
+      expect(new Set(transformedResources)).toEqual(
         new Set(emptyFirst ? ['physical-b'] : ['physical-a', 'physical-b'])
       );
       await expect(
