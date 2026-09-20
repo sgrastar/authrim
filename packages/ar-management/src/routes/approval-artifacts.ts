@@ -30,10 +30,7 @@ import {
   generateAuthenticationOptions,
   verifyAuthenticationResponse,
 } from '@simplewebauthn/server';
-import type {
-  AuthenticationResponseJSON,
-  AuthenticatorTransportFuture,
-} from '@simplewebauthn/server';
+import type { AuthenticationResponseJSON, AuthenticatorTransport } from '@simplewebauthn/server';
 import {
   getApprovalCompletionArtifact,
   consumeApprovalCompletionArtifact,
@@ -437,7 +434,7 @@ approvalArtifactsRouter.post('/:artifactId/passkey/options', async (c) => {
       userVerification: 'required',
       allowCredentials: passkeys.map((passkey) => ({
         id: passkey.credential_id,
-        transports: (passkey.transports ?? undefined) as AuthenticatorTransportFuture[] | undefined,
+        transports: (passkey.transports ?? undefined) as AuthenticatorTransport[] | undefined,
       })),
     });
 

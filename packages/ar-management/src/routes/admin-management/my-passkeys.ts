@@ -33,10 +33,7 @@ import {
 import { resolveAaguidAuthenticator } from '@authrim/ar-lib-core/webauthn/aaguid-metadata';
 import { generateRegistrationOptions, verifyRegistrationResponse } from '@simplewebauthn/server';
 import { writeAdminAuditLog } from '../../admin-shared';
-import type {
-  RegistrationResponseJSON,
-  AuthenticatorTransportFuture,
-} from '@simplewebauthn/server';
+import type { RegistrationResponseJSON, AuthenticatorTransport } from '@simplewebauthn/server';
 
 // Context type with adminAuth variable
 type AdminContext = Context<{ Bindings: Env; Variables: { adminAuth?: AdminAuthContext } }>;
@@ -194,7 +191,7 @@ myPasskeysRouter.post('/options', async (c) => {
     const excludeCredentials = existingPasskeys.map((pk) => ({
       id: pk.credential_id,
       type: 'public-key' as const,
-      transports: pk.transports as AuthenticatorTransportFuture[] | undefined,
+      transports: pk.transports as AuthenticatorTransport[] | undefined,
     }));
 
     // Generate passkey registration options

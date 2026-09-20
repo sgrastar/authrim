@@ -33,7 +33,7 @@ import {
 } from '@simplewebauthn/server';
 import type {
   AuthenticationResponseJSON,
-  AuthenticatorTransportFuture,
+  AuthenticatorTransport,
   RegistrationResponseJSON,
 } from '@simplewebauthn/server';
 import { recordAccountOperation } from './account-operation-log';
@@ -576,7 +576,7 @@ export async function createAccountPasskeyReauthOptionsHandler(
       type: 'public-key' as const,
       transports:
         passkey.transports.length > 0
-          ? (passkey.transports as AuthenticatorTransportFuture[])
+          ? (passkey.transports as AuthenticatorTransport[])
           : undefined,
     })),
   });
@@ -1111,9 +1111,7 @@ export async function createAccountPasskeyOptionsHandler(
     id: passkey.credential_id,
     type: 'public-key' as const,
     transports:
-      passkey.transports.length > 0
-        ? (passkey.transports as AuthenticatorTransportFuture[])
-        : undefined,
+      passkey.transports.length > 0 ? (passkey.transports as AuthenticatorTransport[]) : undefined,
   }));
 
   const userName = accountSession.userId;
