@@ -190,6 +190,36 @@ export interface ReplaceDynamicPluginCredentialsInput {
   credentials: Record<string, string>;
 }
 
+export interface PortableDynamicPluginResource {
+  logicalResourceId: string;
+  binding: string;
+  kind: 'd1' | 'kv_namespace' | 'r2_bucket';
+  access: 'read_only' | 'read_write';
+}
+
+export interface PortableDynamicPluginConfiguration {
+  tenantId: string;
+  sourceInstallationId: string;
+  pluginId: string;
+  versionDigest: string;
+  contractVersion: 1;
+  enabled: boolean;
+  credentials: Record<string, string>;
+  resources: PortableDynamicPluginResource[];
+  mutationScopes: string[];
+}
+
+export interface RestoreDynamicPluginBackupInput {
+  operationId: string;
+  configuration: PortableDynamicPluginConfiguration;
+}
+
+export interface RestoreDynamicPluginBackupResult {
+  installationId: string;
+  state: 'enabled' | 'disabled';
+  configVersion: number;
+}
+
 export interface PluginCredentialInput {
   configKey: string;
   destinationHost: string;
@@ -300,6 +330,16 @@ export interface PluginRunnerServiceBinding {
   replaceDynamicPluginCredentials(
     input: ReplaceDynamicPluginCredentialsInput
   ): Promise<ReplacePluginCredentialsResult>;
+  exportDynamicPluginBackup(input: {
+    tenantId: string;
+    pluginId: string;
+  }): Promise<PortableDynamicPluginConfiguration | null>;
+  restoreDynamicPluginBackup(
+    input: RestoreDynamicPluginBackupInput
+  ): Promise<RestoreDynamicPluginBackupResult>;
+  verifyDynamicPluginBackup(input: {
+    configuration: PortableDynamicPluginConfiguration;
+  }): Promise<boolean>;
   replacePluginCredentials(
     input: ReplacePluginCredentialsInput
   ): Promise<ReplacePluginCredentialsResult>;
@@ -354,6 +394,8 @@ export interface PluginRunnerServiceBinding {
  * - PII_: PII encryption settings
  */
 export interface Env {
+  /** Setup-generated binding identity metadata; not a user-configurable backup option. */
+  AUTHRIM_FIXED_DATABASE_IDS?: string;
   // D1 Databases
   DB: D1Database; // Fixed platform metadata, profile registry, and non-PII audit store; never a tenant identity route
   PLATFORM_NOTIFICATION_DB?: D1Database; // Platform-owned notification intent store; never a tenant route
@@ -516,6 +558,7 @@ export interface Env {
   ENABLE_IDENTITY_STITCHING?: string; // "true" to enable automatic identity stitching
   ENABLE_IDENTITY_STITCHING_REQUIRE_VERIFIED_EMAIL?: string; // "false" to allow unverified emails (not recommended)
   RP_TOKEN_ENCRYPTION_KEY?: string; // Encryption key for external IdP tokens (32-byte hex string)
+  TENANT_BACKUP_WRAPPING_KEY?: string; // Dedicated 32-byte hex key for temporary backup operation secrets
   ADMIN_CREDENTIAL_ENCRYPTION_KEY?: string; // Encryption key for Admin-managed external credentials
 
   // PII Encryption

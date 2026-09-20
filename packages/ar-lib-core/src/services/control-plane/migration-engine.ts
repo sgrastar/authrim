@@ -1,5 +1,6 @@
 import {
   AUTHRIM_MIGRATIONS_TABLE_SQL,
+  TENANT_DATABASE_MIGRATION_STATE_TABLE_SQL,
   AUTHRIM_MIGRATION_HISTORY_SQL,
   validateAuthrimMigrationHistoryRows,
 } from './migration-history-contract.js';
@@ -17,15 +18,7 @@ const MIGRATION_INFRASTRUCTURE_BATCH: readonly MigrationD1Query[] = [
     sql: AUTHRIM_MIGRATIONS_TABLE_SQL,
   },
   {
-    sql: `CREATE TABLE IF NOT EXISTS tenant_database_migration_state (
-      stream_id TEXT PRIMARY KEY,
-      release_id TEXT NOT NULL,
-      manifest_digest TEXT NOT NULL,
-      applied_file_count INTEGER NOT NULL CHECK (applied_file_count >= 0),
-      state TEXT NOT NULL CHECK (state IN ('applying', 'ready', 'blocked')),
-      last_filename TEXT,
-      updated_at INTEGER NOT NULL
-    )`,
+    sql: TENANT_DATABASE_MIGRATION_STATE_TABLE_SQL,
   },
 ] as const;
 

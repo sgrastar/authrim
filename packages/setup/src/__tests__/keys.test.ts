@@ -5,6 +5,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import {
   mkdirSync,
+  statSync,
   rmSync,
   existsSync,
   writeFileSync,
@@ -168,6 +169,8 @@ describe('generateAllSecrets', () => {
     expect(secrets.rpTokenEncryptionKey).toMatch(/^[a-f0-9]{64}$/);
     expect(secrets.piiEncryptionKey).toMatch(/^[a-f0-9]{64}$/);
     expect(secrets.objectEncryptionRootKey).toMatch(/^[a-f0-9]{64}$/);
+    expect(secrets.tenantBackupWrappingKey).toMatch(/^[a-f0-9]{64}$/);
+    expect(secrets.tenantBackupWrappingKey).not.toBe(secrets.objectEncryptionRootKey);
     expect(secrets.otpHmacSecret).toBeDefined();
     expect(secrets.loggingCursorHmacSecret).toBeDefined();
     expect(secrets.flowRuntimeHmacSecret).toBeDefined();
@@ -632,7 +635,7 @@ describe('ensureSupplementalKeyFiles', () => {
 
     const result = await ensureSupplementalKeyFiles(keysDir);
 
-    expect(result.createdFiles).toHaveLength(24);
+    expect(result.createdFiles).toHaveLength(25);
     expect(existsSync(join(keysDir, 'object_encryption_root_key.txt'))).toBe(true);
     expect(existsSync(join(keysDir, 'pii_encryption_key.txt'))).toBe(true);
     expect(existsSync(join(keysDir, 'vc_transaction_code_hmac_secret.txt'))).toBe(true);
@@ -759,6 +762,33 @@ describe('ensureSupplementalKeyFiles', () => {
     expect(repairedMetadata.files.vcProfileContractHmacSecret).toContain(
       'vc_profile_contract_hmac_secret.txt'
     );
+  });
+
+  it('backfills the backup wrapping key once, keeps it private, and rejects corrupt existing keys', async () => {
+    const keysDir = join(testDir, AUTHRIM_KEYS_DIR, 'backup');
+    const secrets = generateAllSecrets('backup-fixture');
+    await saveKeysToDirectory(secrets, { targetDir: keysDir });
+    const file = join(keysDir, 'tenant_backup_wrapping_key.txt');
+    expect(readFileSync(file, 'utf-8')).toBe(secrets.tenantBackupWrappingKey);
+    expect(statSync(file).mode & 0o777).toBe(0o600);
+    rmSync(file);
+    const metadataPath = join(keysDir, 'metadata.json');
+    const oldMetadata = JSON.parse(readFileSync(metadataPath, 'utf-8'));
+    delete oldMetadata.files.tenantBackupWrappingKey;
+    writeFileSync(metadataPath, JSON.stringify(oldMetadata));
+    expect((await loadKeysFromDirectory(keysDir)).keyPair?.keyId).toBe('backup-fixture');
+    const first = await ensureSupplementalKeyFiles(keysDir);
+    expect(first.createdFiles).toContain(file);
+    const saved = readFileSync(file, 'utf-8');
+    expect(saved).toMatch(/^[a-f0-9]{64}$/);
+    expect(statSync(file).mode & 0o777).toBe(0o600);
+    await ensureSupplementalKeyFiles(keysDir);
+    expect(readFileSync(file, 'utf-8')).toBe(saved);
+    writeFileSync(file, 'truncated');
+    await expect(ensureSupplementalKeyFiles(keysDir)).rejects.toThrow(
+      'Invalid supplemental secret'
+    );
+    expect(readFileSync(file, 'utf-8')).toBe('truncated');
   });
 
   it('removes legacy static secret files and metadata references', async () => {

@@ -579,6 +579,52 @@ describe('Control Worker boundary', () => {
     );
   });
 
+  it('authenticates snapshot boundary RPCs and rejects client-supplied environment and clock', async () => {
+    await expect(
+      worker({ caller: 'ar-plugin-runner' }).tenantBackupSnapshotBoundary({})
+    ).rejects.toThrow('control_rpc_caller_unauthorized');
+    await expect(
+      worker({ environmentId: '../invalid' }).tenantBackupSnapshotBoundary({})
+    ).rejects.toThrow('control_rpc_caller_unauthorized');
+    for (const extra of [{ environmentId: 'other' }, { now: 0 }])
+      await expect(
+        worker().tenantBackupSnapshotBoundary({
+          action: 'begin',
+          tenantId: 'tenant',
+          operationId: 'op',
+          boundaryId: 'ab'.repeat(32),
+          inventoryDigest: 'cd'.repeat(32),
+          ...extra,
+        })
+      ).rejects.toThrow('invalid_backup_boundary_request');
+  });
+
+  it('authenticates mutation permit RPCs before accepting input', async () => {
+    for (const action of [
+      'acquireTenantBackupMutationPermit',
+      'completeTenantBackupMutationPermit',
+      'acquireEnvironmentBackupMutationPermit',
+      'completeEnvironmentBackupMutationPermit',
+    ] as const) {
+      await expect(worker({ caller: 'ar-plugin-runner' })[action]({})).rejects.toThrow(
+        'control_rpc_caller_unauthorized'
+      );
+      await expect(worker({ environmentId: '../invalid' })[action]({})).rejects.toThrow(
+        'control_rpc_caller_unauthorized'
+      );
+      await expect(worker()[action]({ tenantId: 'tenant-test', permitId: 'bad' })).rejects.toThrow(
+        'invalid_backup_mutation_permit'
+      );
+      await expect(
+        worker()[action]({
+          tenantId: 'tenant-test',
+          permitId: crypto.randomUUID(),
+          environmentId: 'other',
+        })
+      ).rejects.toThrow('invalid_backup_mutation_permit');
+    }
+  });
+
   it('rejects malformed provisioning operation identifiers before reading storage', async () => {
     await expect(worker().getProvisioningOperation('../operation')).rejects.toThrow(
       'invalid_operation_id'

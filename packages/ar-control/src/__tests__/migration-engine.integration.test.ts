@@ -1,3 +1,4 @@
+import { renderPortableMigrationSql } from '@authrim/ar-lib-core/control-plane';
 import { createHash } from 'node:crypto';
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
@@ -37,9 +38,7 @@ function digest(value: Uint8Array | string): string {
 }
 
 function renderSql(sql: string): string {
-  return sql
-    .replaceAll('__AUTHRIM_NOW_EPOCH_MILLISECONDS__', '(unixepoch() * 1000)')
-    .replaceAll('__AUTHRIM_NOW_EPOCH_SECONDS__', 'unixepoch()');
+  return renderPortableMigrationSql(sql, 'sqlite');
 }
 
 function asSqlValues(values: readonly unknown[] | undefined): SqlValue[] {

@@ -43,6 +43,26 @@
             {
               "path": "007_service_dynamic_groups.sql",
               "checksum": "e6dce155613d581111f53cf8b23a4e0f40733913d1326a92845bbcb1ccf24c2c"
+            },
+            {
+              "path": "008_primary_key_not_null.sql",
+              "checksum": "16dc5d492a01e1c04b89e11d9aedced3832153fbaacd17bf3637718c3174e0e0"
+            },
+            {
+              "path": "009_tenant_backup_snapshot_storage.sql",
+              "checksum": "7611a5dac71358efeadd194d5d8fcd461cc4861099a7233398303569d64c7874"
+            },
+            {
+              "path": "010_tenant_backup_restore_target.sql",
+              "checksum": "4ac930ded157a3091a0d39ad395e33a4314fb68d70428b1b42c664d0dd6609ed"
+            },
+            {
+              "path": "011_tenant_backup_restore_target_cancellation.sql",
+              "checksum": "36a4d7c57586eb8bb5f2927aff7e8ad7a0dcd1a27f737d0a3521ff9277440f7c"
+            },
+            {
+              "path": "012_tenant_backup_preimage_row_partitions.sql",
+              "checksum": "ec32b226b04a17da04ba3ac3427c5726814ec89503110386c25e9a264141506e"
             }
           ]
         },
@@ -71,6 +91,26 @@
             {
               "path": "005_service_dynamic_groups.sql",
               "checksum": "0068ecf23d39337ecde79edaecda962971a5676e6024766df86cd65c35cb3958"
+            },
+            {
+              "path": "006_primary_key_not_null.sql",
+              "checksum": "95259ff32ea412104dc99bca34ff6be7c0bde7bb9013b4e46278e8fc100ff448"
+            },
+            {
+              "path": "007_tenant_backup_snapshot_storage.sql",
+              "checksum": "7611a5dac71358efeadd194d5d8fcd461cc4861099a7233398303569d64c7874"
+            },
+            {
+              "path": "008_tenant_backup_restore_target.sql",
+              "checksum": "4ac930ded157a3091a0d39ad395e33a4314fb68d70428b1b42c664d0dd6609ed"
+            },
+            {
+              "path": "009_tenant_backup_restore_target_cancellation.sql",
+              "checksum": "36a4d7c57586eb8bb5f2927aff7e8ad7a0dcd1a27f737d0a3521ff9277440f7c"
+            },
+            {
+              "path": "010_tenant_backup_preimage_row_partitions.sql",
+              "checksum": "ec32b226b04a17da04ba3ac3427c5726814ec89503110386c25e9a264141506e"
             }
           ]
         },
@@ -82,7 +122,152 @@
           "logicalRoles": [
             "admin"
           ],
-          "files": []
+          "files": [
+            {
+              "path": "002_primary_key_not_null.sql",
+              "checksum": "ea11bb8b24bcc97d54325e4ac7b770463bbba69da63d998ce16877a8eb581f7c"
+            },
+            {
+              "path": "003_tenant_backup_operations.sql",
+              "checksum": "92ed6db69bdd634e374786c567fd199b7584d4fecca8f5b8a3dfa9185e782c4d"
+            },
+            {
+              "path": "004_tenant_backup_validation_index.sql",
+              "checksum": "9910c7fcbb6150848502ab60212799c43639f138bab4da45a74599b60228bbe5"
+            },
+            {
+              "path": "005_tenant_backup_key_handoffs.sql",
+              "checksum": "5c8a2ee5d4edea7a2011e1a3435632686fb4ac9dd054002318a5b1390a0ed1e8"
+            },
+            {
+              "path": "006_tenant_backup_request_intent.sql",
+              "checksum": "156133c6602f32d398b53965227e30ee02408f76c1c3daaf8756a3d1168bca5e"
+            },
+            {
+              "path": "007_tenant_backup_active_key.sql",
+              "checksum": "e1a0d75069f999b7c97a6cd27004617245fe7104c5303805d216bf7be4d80294"
+            },
+            {
+              "path": "008_tenant_backup_retry_state.sql",
+              "checksum": "02a89705bf6feef0689ed0aec7df7fe939e19bb1e99987af057f878b53749871"
+            },
+            {
+              "path": "009_tenant_backup_artifact_parts.sql",
+              "checksum": "202d6705cccde0a570813e37dc04bc2073544ea58455cb173502b12b50c53dde"
+            },
+            {
+              "path": "010_tenant_backup_execution_inventory.sql",
+              "checksum": "ff7f1d99dd964ad5b9862c49f25859549a6e124d37ebfe0649d381e766cb692b"
+            },
+            {
+              "path": "011_tenant_backup_snapshot_resources.sql",
+              "checksum": "b088fae2b5c133aa81f85004c318ea30d0a77c6f9dc019871c0a8090c7b9452e"
+            },
+            {
+              "path": "012_tenant_backup_cipher_journal.sql",
+              "checksum": "ac3cb617463c44a56217955460cc2073d495aed3037a5f2fb95eda4492c861d8"
+            },
+            {
+              "path": "013_tenant_backup_snapshot_storage.sql",
+              "checksum": "7611a5dac71358efeadd194d5d8fcd461cc4861099a7233398303569d64c7874"
+            },
+            {
+              "path": "014_tenant_backup_restore_target.sql",
+              "checksum": "4ac930ded157a3091a0d39ad395e33a4314fb68d70428b1b42c664d0dd6609ed"
+            },
+            {
+              "path": "015_tenant_backup_input_receipts.sql",
+              "checksum": "907400646afe09d4b0c035357deebc330f3f1de9082ab9f293d660a576a39b10"
+            },
+            {
+              "path": "016_tenant_backup_input_dataset_boundaries.sql",
+              "checksum": "fd8f82a9f50318a4aff17e494bd5afa38753de50d0e28075e024f9e7f86883c5"
+            },
+            {
+              "path": "017_tenant_backup_validation_record_sources.sql",
+              "checksum": "ede7b43cd858b91c038ffd2c4200295a6840eabecc7ca008d54204dad0c710cb"
+            },
+            {
+              "path": "018_tenant_backup_dataset_inspections.sql",
+              "checksum": "bf20d848461f554d0986c1eca39f15047e9c7983fbcdfbd41df7cd677141c91f"
+            },
+            {
+              "path": "019_tenant_backup_input_validations.sql",
+              "checksum": "4f8825869074006cc933a85d56ca92267c76ef23753f1f5f0de704efeabe7340"
+            },
+            {
+              "path": "020_tenant_backup_publications.sql",
+              "checksum": "1d90231579b51c55a8e5762c93325db0bd76721b89280ca4700c550c92625a1c"
+            },
+            {
+              "path": "021_tenant_backup_export_manifests.sql",
+              "checksum": "b9c90a0cf71bca37047bc95ee445e329c75152df43fc2098e5d2c927bedb3ed6"
+            },
+            {
+              "path": "022_tenant_backup_uploads.sql",
+              "checksum": "0aebcb8a4d3eee359d4aed02eec3c5d3370c01984a5e2f566808857577871ffc"
+            },
+            {
+              "path": "023_tenant_backup_operation_inputs.sql",
+              "checksum": "aa150a104e5cf3a7cd81cfc07c365805fc83d0280c6aa83a9eee906fdf4dfcd8"
+            },
+            {
+              "path": "024_tenant_backup_restore_plan_inventory.sql",
+              "checksum": "a09ad80d376ff0b0288a2e6e3e5117cbcc22e1b60439f1f5354a9944edcd9879"
+            },
+            {
+              "path": "025_tenant_backup_restore_target_cancellation.sql",
+              "checksum": "36a4d7c57586eb8bb5f2927aff7e8ad7a0dcd1a27f737d0a3521ff9277440f7c"
+            },
+            {
+              "path": "026_tenant_backup_restore_cleanup_receipts.sql",
+              "checksum": "a4cbee7059fdd7d844a18682d356a13c39fe6396fda47df61eabfacbbb07b3b4"
+            },
+            {
+              "path": "027_tenant_backup_preimage_row_partitions.sql",
+              "checksum": "ec32b226b04a17da04ba3ac3427c5726814ec89503110386c25e9a264141506e"
+            },
+            {
+              "path": "028_tenant_settings_documents.sql",
+              "checksum": "374e9cdf2d93f301db92c68a8e488c400339d24ecc9ffd73e31d9102104e0c53"
+            },
+            {
+              "path": "029_tenant_backup_admin_mappings.sql",
+              "checksum": "3daa4ce58bc0c1d0b0291df8b92b36c39c5577dd521699c12ccb657ff393d05e"
+            },
+            {
+              "path": "030_tenant_backup_restored_holds.sql",
+              "checksum": "5fdf017116c187ad814ca44163f4f3f8c3eed58c2fe0fe88a04bbdb6019afc33"
+            },
+            {
+              "path": "031_tenant_backup_r2_restores.sql",
+              "checksum": "e5d06fd759bc0fd2676fda4d26288a5fee857bee8f95a55f0af55628d6b2d4f4"
+            },
+            {
+              "path": "032_tenant_backup_r2_log_record_maps.sql",
+              "checksum": "762d5deaf698642e8b6daf5e16810d19ed5c37633c63596111d5ebf3e0a163c7"
+            },
+            {
+              "path": "033_tenant_backup_r2_generation_retention.sql",
+              "checksum": "5ee3c196ff379da0cc703a4fb9e93728f71fd71fec29cb280c3e27d363949602"
+            },
+            {
+              "path": "034_tenant_backup_restored_hold_objects.sql",
+              "checksum": "b582875900f928550c6ba0ee6338918fc16ab391bc0c00ca54a9c41bb475fba8"
+            },
+            {
+              "path": "035_tenant_backup_admin_mapping_operation_scope.sql",
+              "checksum": "65b30dacc05d5a4051cfc912dddb578e0f35dbc09a7353d9e85bdc6334cb592a"
+            },
+            {
+              "path": "036_tenant_backup_capacity_parts.sql",
+              "checksum": "04dc90df83d03b6b45b7d38d593b33ad8106ab2e87afff681f78cb565c796a02"
+            },
+            {
+              "path": "037_tenant_backup_container_inputs.sql",
+              "checksum": "9e4f77975a86706ac4d776980f76c61ac8aa89a846f60b9df8c832b477bb4306"
+            }
+          ]
         },
         {
           "id": "control-d1",
@@ -92,7 +277,48 @@
           "logicalRoles": [
             "control"
           ],
-          "files": []
+          "files": [
+            {
+              "path": "002_primary_key_not_null.sql",
+              "checksum": "61b4b39b46c38bce410dcf1abe13f3480a8c9e0700aa858bb6eaa8aeb2193f73"
+            },
+            {
+              "path": "003_tenant_backup_snapshot_storage.sql",
+              "checksum": "7611a5dac71358efeadd194d5d8fcd461cc4861099a7233398303569d64c7874"
+            },
+            {
+              "path": "004_tenant_backup_restore_target.sql",
+              "checksum": "4ac930ded157a3091a0d39ad395e33a4314fb68d70428b1b42c664d0dd6609ed"
+            },
+            {
+              "path": "005_tenant_backup_mutation_admission.sql",
+              "checksum": "36a1506023896590369a44aeeda3c4f019c21f266c7f244ba1b2f76f18c24ac1"
+            },
+            {
+              "path": "006_tenant_backup_mutation_environment_scope.sql",
+              "checksum": "ba09c69888fdcad5282e7287cd11840dadf8753fe86dfa0cf20084744cdf1154"
+            },
+            {
+              "path": "007_tenant_backup_boundary_receipts.sql",
+              "checksum": "d49b2ec5a01c5920b5afe580ba1d39cf64d255196590b88c3f01cbeab1eff55f"
+            },
+            {
+              "path": "008_tenant_backup_restore_target_cancellation.sql",
+              "checksum": "36a4d7c57586eb8bb5f2927aff7e8ad7a0dcd1a27f737d0a3521ff9277440f7c"
+            },
+            {
+              "path": "009_tenant_backup_preimage_row_partitions.sql",
+              "checksum": "ec32b226b04a17da04ba3ac3427c5726814ec89503110386c25e9a264141506e"
+            },
+            {
+              "path": "010_tenant_backup_snapshot_timestamp.sql",
+              "checksum": "5604920223863acf804f9d5d3ebce6b54ad6e2a09ae4962c9491247769001f3f"
+            },
+            {
+              "path": "011_tenant_backup_boundary_deadline.sql",
+              "checksum": "2b82c9d0b812e106349601d8869bad12ed1cfacd511b977eb93448b18050f827"
+            }
+          ]
         },
         {
           "id": "lookup-d1",
@@ -102,7 +328,12 @@
           "logicalRoles": [
             "lookup"
           ],
-          "files": []
+          "files": [
+            {
+              "path": "002_primary_key_not_null.sql",
+              "checksum": "8c24f5cf5f098e12ec397391c2fef989251f1fc9418b86cb09a5a2037d551446"
+            }
+          ]
         },
         {
           "id": "plugin-runner-d1",
@@ -112,7 +343,28 @@
           "logicalRoles": [
             "plugin_runner"
           ],
-          "files": []
+          "files": [
+            {
+              "path": "002_primary_key_not_null.sql",
+              "checksum": "67b16ed10417200ed1f28c24c7709c70cf0f133f27b5057a8da928e3a74633b1"
+            },
+            {
+              "path": "003_tenant_backup_snapshot_storage.sql",
+              "checksum": "7611a5dac71358efeadd194d5d8fcd461cc4861099a7233398303569d64c7874"
+            },
+            {
+              "path": "004_tenant_backup_restore_target.sql",
+              "checksum": "4ac930ded157a3091a0d39ad395e33a4314fb68d70428b1b42c664d0dd6609ed"
+            },
+            {
+              "path": "005_tenant_backup_restore_target_cancellation.sql",
+              "checksum": "36a4d7c57586eb8bb5f2927aff7e8ad7a0dcd1a27f737d0a3521ff9277440f7c"
+            },
+            {
+              "path": "006_tenant_backup_preimage_row_partitions.sql",
+              "checksum": "ec32b226b04a17da04ba3ac3427c5726814ec89503110386c25e9a264141506e"
+            }
+          ]
         },
         {
           "id": "core-postgresql",
@@ -224,6 +476,26 @@
         {
           "path": "007_service_dynamic_groups.sql",
           "checksum": "e6dce155613d581111f53cf8b23a4e0f40733913d1326a92845bbcb1ccf24c2c"
+        },
+        {
+          "path": "008_primary_key_not_null.sql",
+          "checksum": "16dc5d492a01e1c04b89e11d9aedced3832153fbaacd17bf3637718c3174e0e0"
+        },
+        {
+          "path": "009_tenant_backup_snapshot_storage.sql",
+          "checksum": "7611a5dac71358efeadd194d5d8fcd461cc4861099a7233398303569d64c7874"
+        },
+        {
+          "path": "010_tenant_backup_restore_target.sql",
+          "checksum": "4ac930ded157a3091a0d39ad395e33a4314fb68d70428b1b42c664d0dd6609ed"
+        },
+        {
+          "path": "011_tenant_backup_restore_target_cancellation.sql",
+          "checksum": "36a4d7c57586eb8bb5f2927aff7e8ad7a0dcd1a27f737d0a3521ff9277440f7c"
+        },
+        {
+          "path": "012_tenant_backup_preimage_row_partitions.sql",
+          "checksum": "ec32b226b04a17da04ba3ac3427c5726814ec89503110386c25e9a264141506e"
         }
       ]
     },
@@ -256,6 +528,26 @@
         {
           "path": "005_service_dynamic_groups.sql",
           "checksum": "0068ecf23d39337ecde79edaecda962971a5676e6024766df86cd65c35cb3958"
+        },
+        {
+          "path": "006_primary_key_not_null.sql",
+          "checksum": "95259ff32ea412104dc99bca34ff6be7c0bde7bb9013b4e46278e8fc100ff448"
+        },
+        {
+          "path": "007_tenant_backup_snapshot_storage.sql",
+          "checksum": "7611a5dac71358efeadd194d5d8fcd461cc4861099a7233398303569d64c7874"
+        },
+        {
+          "path": "008_tenant_backup_restore_target.sql",
+          "checksum": "4ac930ded157a3091a0d39ad395e33a4314fb68d70428b1b42c664d0dd6609ed"
+        },
+        {
+          "path": "009_tenant_backup_restore_target_cancellation.sql",
+          "checksum": "36a4d7c57586eb8bb5f2927aff7e8ad7a0dcd1a27f737d0a3521ff9277440f7c"
+        },
+        {
+          "path": "010_tenant_backup_preimage_row_partitions.sql",
+          "checksum": "ec32b226b04a17da04ba3ac3427c5726814ec89503110386c25e9a264141506e"
         }
       ]
     },
@@ -271,6 +563,150 @@
         {
           "path": "001_0_4_0_admin_baseline.sql",
           "checksum": "f355399d9f525911798feb51981b9ee31c5f969844b59a369709014b3abf062d"
+        },
+        {
+          "path": "002_primary_key_not_null.sql",
+          "checksum": "ea11bb8b24bcc97d54325e4ac7b770463bbba69da63d998ce16877a8eb581f7c"
+        },
+        {
+          "path": "003_tenant_backup_operations.sql",
+          "checksum": "92ed6db69bdd634e374786c567fd199b7584d4fecca8f5b8a3dfa9185e782c4d"
+        },
+        {
+          "path": "004_tenant_backup_validation_index.sql",
+          "checksum": "9910c7fcbb6150848502ab60212799c43639f138bab4da45a74599b60228bbe5"
+        },
+        {
+          "path": "005_tenant_backup_key_handoffs.sql",
+          "checksum": "5c8a2ee5d4edea7a2011e1a3435632686fb4ac9dd054002318a5b1390a0ed1e8"
+        },
+        {
+          "path": "006_tenant_backup_request_intent.sql",
+          "checksum": "156133c6602f32d398b53965227e30ee02408f76c1c3daaf8756a3d1168bca5e"
+        },
+        {
+          "path": "007_tenant_backup_active_key.sql",
+          "checksum": "e1a0d75069f999b7c97a6cd27004617245fe7104c5303805d216bf7be4d80294"
+        },
+        {
+          "path": "008_tenant_backup_retry_state.sql",
+          "checksum": "02a89705bf6feef0689ed0aec7df7fe939e19bb1e99987af057f878b53749871"
+        },
+        {
+          "path": "009_tenant_backup_artifact_parts.sql",
+          "checksum": "202d6705cccde0a570813e37dc04bc2073544ea58455cb173502b12b50c53dde"
+        },
+        {
+          "path": "010_tenant_backup_execution_inventory.sql",
+          "checksum": "ff7f1d99dd964ad5b9862c49f25859549a6e124d37ebfe0649d381e766cb692b"
+        },
+        {
+          "path": "011_tenant_backup_snapshot_resources.sql",
+          "checksum": "b088fae2b5c133aa81f85004c318ea30d0a77c6f9dc019871c0a8090c7b9452e"
+        },
+        {
+          "path": "012_tenant_backup_cipher_journal.sql",
+          "checksum": "ac3cb617463c44a56217955460cc2073d495aed3037a5f2fb95eda4492c861d8"
+        },
+        {
+          "path": "013_tenant_backup_snapshot_storage.sql",
+          "checksum": "7611a5dac71358efeadd194d5d8fcd461cc4861099a7233398303569d64c7874"
+        },
+        {
+          "path": "014_tenant_backup_restore_target.sql",
+          "checksum": "4ac930ded157a3091a0d39ad395e33a4314fb68d70428b1b42c664d0dd6609ed"
+        },
+        {
+          "path": "015_tenant_backup_input_receipts.sql",
+          "checksum": "907400646afe09d4b0c035357deebc330f3f1de9082ab9f293d660a576a39b10"
+        },
+        {
+          "path": "016_tenant_backup_input_dataset_boundaries.sql",
+          "checksum": "fd8f82a9f50318a4aff17e494bd5afa38753de50d0e28075e024f9e7f86883c5"
+        },
+        {
+          "path": "017_tenant_backup_validation_record_sources.sql",
+          "checksum": "ede7b43cd858b91c038ffd2c4200295a6840eabecc7ca008d54204dad0c710cb"
+        },
+        {
+          "path": "018_tenant_backup_dataset_inspections.sql",
+          "checksum": "bf20d848461f554d0986c1eca39f15047e9c7983fbcdfbd41df7cd677141c91f"
+        },
+        {
+          "path": "019_tenant_backup_input_validations.sql",
+          "checksum": "4f8825869074006cc933a85d56ca92267c76ef23753f1f5f0de704efeabe7340"
+        },
+        {
+          "path": "020_tenant_backup_publications.sql",
+          "checksum": "1d90231579b51c55a8e5762c93325db0bd76721b89280ca4700c550c92625a1c"
+        },
+        {
+          "path": "021_tenant_backup_export_manifests.sql",
+          "checksum": "b9c90a0cf71bca37047bc95ee445e329c75152df43fc2098e5d2c927bedb3ed6"
+        },
+        {
+          "path": "022_tenant_backup_uploads.sql",
+          "checksum": "0aebcb8a4d3eee359d4aed02eec3c5d3370c01984a5e2f566808857577871ffc"
+        },
+        {
+          "path": "023_tenant_backup_operation_inputs.sql",
+          "checksum": "aa150a104e5cf3a7cd81cfc07c365805fc83d0280c6aa83a9eee906fdf4dfcd8"
+        },
+        {
+          "path": "024_tenant_backup_restore_plan_inventory.sql",
+          "checksum": "a09ad80d376ff0b0288a2e6e3e5117cbcc22e1b60439f1f5354a9944edcd9879"
+        },
+        {
+          "path": "025_tenant_backup_restore_target_cancellation.sql",
+          "checksum": "36a4d7c57586eb8bb5f2927aff7e8ad7a0dcd1a27f737d0a3521ff9277440f7c"
+        },
+        {
+          "path": "026_tenant_backup_restore_cleanup_receipts.sql",
+          "checksum": "a4cbee7059fdd7d844a18682d356a13c39fe6396fda47df61eabfacbbb07b3b4"
+        },
+        {
+          "path": "027_tenant_backup_preimage_row_partitions.sql",
+          "checksum": "ec32b226b04a17da04ba3ac3427c5726814ec89503110386c25e9a264141506e"
+        },
+        {
+          "path": "028_tenant_settings_documents.sql",
+          "checksum": "374e9cdf2d93f301db92c68a8e488c400339d24ecc9ffd73e31d9102104e0c53"
+        },
+        {
+          "path": "029_tenant_backup_admin_mappings.sql",
+          "checksum": "3daa4ce58bc0c1d0b0291df8b92b36c39c5577dd521699c12ccb657ff393d05e"
+        },
+        {
+          "path": "030_tenant_backup_restored_holds.sql",
+          "checksum": "5fdf017116c187ad814ca44163f4f3f8c3eed58c2fe0fe88a04bbdb6019afc33"
+        },
+        {
+          "path": "031_tenant_backup_r2_restores.sql",
+          "checksum": "e5d06fd759bc0fd2676fda4d26288a5fee857bee8f95a55f0af55628d6b2d4f4"
+        },
+        {
+          "path": "032_tenant_backup_r2_log_record_maps.sql",
+          "checksum": "762d5deaf698642e8b6daf5e16810d19ed5c37633c63596111d5ebf3e0a163c7"
+        },
+        {
+          "path": "033_tenant_backup_r2_generation_retention.sql",
+          "checksum": "5ee3c196ff379da0cc703a4fb9e93728f71fd71fec29cb280c3e27d363949602"
+        },
+        {
+          "path": "034_tenant_backup_restored_hold_objects.sql",
+          "checksum": "b582875900f928550c6ba0ee6338918fc16ab391bc0c00ca54a9c41bb475fba8"
+        },
+        {
+          "path": "035_tenant_backup_admin_mapping_operation_scope.sql",
+          "checksum": "65b30dacc05d5a4051cfc912dddb578e0f35dbc09a7353d9e85bdc6334cb592a"
+        },
+        {
+          "path": "036_tenant_backup_capacity_parts.sql",
+          "checksum": "04dc90df83d03b6b45b7d38d593b33ad8106ab2e87afff681f78cb565c796a02"
+        },
+        {
+          "path": "037_tenant_backup_container_inputs.sql",
+          "checksum": "9e4f77975a86706ac4d776980f76c61ac8aa89a846f60b9df8c832b477bb4306"
         }
       ]
     },
@@ -286,6 +722,46 @@
         {
           "path": "001_0_4_0_control_baseline.sql",
           "checksum": "bd84e1ac53d2da9d09ec7500760ace5a9d45aabdd63c16433e6b919222a1e20c"
+        },
+        {
+          "path": "002_primary_key_not_null.sql",
+          "checksum": "61b4b39b46c38bce410dcf1abe13f3480a8c9e0700aa858bb6eaa8aeb2193f73"
+        },
+        {
+          "path": "003_tenant_backup_snapshot_storage.sql",
+          "checksum": "7611a5dac71358efeadd194d5d8fcd461cc4861099a7233398303569d64c7874"
+        },
+        {
+          "path": "004_tenant_backup_restore_target.sql",
+          "checksum": "4ac930ded157a3091a0d39ad395e33a4314fb68d70428b1b42c664d0dd6609ed"
+        },
+        {
+          "path": "005_tenant_backup_mutation_admission.sql",
+          "checksum": "36a1506023896590369a44aeeda3c4f019c21f266c7f244ba1b2f76f18c24ac1"
+        },
+        {
+          "path": "006_tenant_backup_mutation_environment_scope.sql",
+          "checksum": "ba09c69888fdcad5282e7287cd11840dadf8753fe86dfa0cf20084744cdf1154"
+        },
+        {
+          "path": "007_tenant_backup_boundary_receipts.sql",
+          "checksum": "d49b2ec5a01c5920b5afe580ba1d39cf64d255196590b88c3f01cbeab1eff55f"
+        },
+        {
+          "path": "008_tenant_backup_restore_target_cancellation.sql",
+          "checksum": "36a4d7c57586eb8bb5f2927aff7e8ad7a0dcd1a27f737d0a3521ff9277440f7c"
+        },
+        {
+          "path": "009_tenant_backup_preimage_row_partitions.sql",
+          "checksum": "ec32b226b04a17da04ba3ac3427c5726814ec89503110386c25e9a264141506e"
+        },
+        {
+          "path": "010_tenant_backup_snapshot_timestamp.sql",
+          "checksum": "5604920223863acf804f9d5d3ebce6b54ad6e2a09ae4962c9491247769001f3f"
+        },
+        {
+          "path": "011_tenant_backup_boundary_deadline.sql",
+          "checksum": "2b82c9d0b812e106349601d8869bad12ed1cfacd511b977eb93448b18050f827"
         }
       ]
     },
@@ -301,6 +777,10 @@
         {
           "path": "001_0_4_0_lookup_baseline.sql",
           "checksum": "296bc48e57a1185111a8fdded551d54dfcb9b19e426e396eb34c753bf3299a65"
+        },
+        {
+          "path": "002_primary_key_not_null.sql",
+          "checksum": "8c24f5cf5f098e12ec397391c2fef989251f1fc9418b86cb09a5a2037d551446"
         }
       ]
     },
@@ -316,6 +796,26 @@
         {
           "path": "001_0_4_0_plugin_runner_baseline.sql",
           "checksum": "004ea4f613321692f39ebc16fabb34aa82673c5e5beb2a186d8150933e427a78"
+        },
+        {
+          "path": "002_primary_key_not_null.sql",
+          "checksum": "67b16ed10417200ed1f28c24c7709c70cf0f133f27b5057a8da928e3a74633b1"
+        },
+        {
+          "path": "003_tenant_backup_snapshot_storage.sql",
+          "checksum": "7611a5dac71358efeadd194d5d8fcd461cc4861099a7233398303569d64c7874"
+        },
+        {
+          "path": "004_tenant_backup_restore_target.sql",
+          "checksum": "4ac930ded157a3091a0d39ad395e33a4314fb68d70428b1b42c664d0dd6609ed"
+        },
+        {
+          "path": "005_tenant_backup_restore_target_cancellation.sql",
+          "checksum": "36a4d7c57586eb8bb5f2927aff7e8ad7a0dcd1a27f737d0a3521ff9277440f7c"
+        },
+        {
+          "path": "006_tenant_backup_preimage_row_partitions.sql",
+          "checksum": "ec32b226b04a17da04ba3ac3427c5726814ec89503110386c25e9a264141506e"
         }
       ]
     },

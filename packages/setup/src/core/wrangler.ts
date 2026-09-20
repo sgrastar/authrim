@@ -758,6 +758,25 @@ export function generateWranglerConfig(
   const d1Databases = collectD1DatabaseBindings(component, resourceIds);
   if (d1Databases.length > 0) {
     wranglerConfig.d1_databases = d1Databases;
+    const fixedDatabaseBindings = new Set([
+      'DB',
+      'DB_PII',
+      'DB_ADMIN',
+      'CONTROL_DB',
+      'LOOKUP_DB',
+      'PLUGIN_RUNNER_DB',
+    ]);
+    const fixedDatabases = Object.fromEntries(
+      d1Databases
+        .filter((database) => fixedDatabaseBindings.has(database.binding))
+        .map((database) => [database.binding, database.database_id])
+        .sort(([a], [b]) => a.localeCompare(b))
+    );
+    if (Object.keys(fixedDatabases).length)
+      wranglerConfig.vars.AUTHRIM_FIXED_DATABASE_IDS = JSON.stringify({
+        version: 1,
+        databases: fixedDatabases,
+      });
   }
 
   const hyperdriveBindings = collectConfiguredHyperdriveBindings(config);

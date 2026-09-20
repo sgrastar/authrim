@@ -122,6 +122,7 @@ setup_token*.txt
 
 # Monorepo / Turbo
 .turbo/
+.pnpm-store/
 packages/*/dist/
 packages/*/.wrangler/
 CLAUDE.md

@@ -22,7 +22,10 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   };
 });
 
-import { processLoggingStorageMaintenanceJobs } from '../logging-storage-maintenance-jobs';
+import {
+  processLoggingStorageMaintenanceJobs,
+  runScheduledRetiredR2GenerationCleanup,
+} from '../logging-storage-maintenance-jobs';
 
 const OBJECT_ENCRYPTION_ROOT_KEY = '33'.repeat(32);
 
@@ -127,6 +130,62 @@ describe('logging/storage maintenance jobs', () => {
     mockAdapter.query.mockResolvedValue([]);
     mockAdapter.queryOne.mockResolvedValue(null);
     mockAdapter.execute.mockResolvedValue({ rowsAffected: 1 });
+  });
+
+  it('retains superseded R2 generations until SQL snapshots finish', async () => {
+    const deleteObject = vi.fn();
+    mockAdapter.queryOne.mockResolvedValue({ id: 'snapshot-active' });
+
+    await runScheduledRetiredR2GenerationCleanup(
+      { AUDIT_ARCHIVE: { delete: deleteObject } as unknown as R2Bucket } as Env,
+      mockAdapter as any,
+      log
+    );
+
+    expect(deleteObject).not.toHaveBeenCalled();
+    expect(mockAdapter.query).not.toHaveBeenCalledWith(
+      expect.stringContaining('tenant_backup_r2_retired_generations'),
+      expect.anything()
+    );
+  });
+
+  it('deletes a superseded R2 generation after snapshots finish', async () => {
+    const deleteObject = vi.fn().mockResolvedValue(undefined);
+    mockAdapter.queryOne.mockImplementation(async (sql: string) => {
+      if (sql.includes('tenant_backup_snapshots')) return null;
+      if (sql.includes('FROM log_object_catalog')) {
+        return { object_key: 'logs-rewrapped/tenant/object/job/v2.bin', status: 'committed' };
+      }
+      return null;
+    });
+    mockAdapter.query.mockImplementation(async (sql: string) =>
+      sql.includes('tenant_backup_r2_retired_generations')
+        ? [
+            {
+              id: 'retired-1',
+              tenant_key: 'tenant',
+              bucket_binding: 'AUDIT_ARCHIVE',
+              object_catalog_id: 'object',
+              object_key: 'logs/tenant/source.bin',
+              replacement_object_key: 'logs-rewrapped/tenant/object/job/v2.bin',
+              reason: 'rewrap',
+              created_at: 1234,
+            },
+          ]
+        : []
+    );
+
+    await runScheduledRetiredR2GenerationCleanup(
+      { AUDIT_ARCHIVE: { delete: deleteObject } as unknown as R2Bucket } as Env,
+      mockAdapter as any,
+      log
+    );
+
+    expect(deleteObject).toHaveBeenCalledWith('logs/tenant/source.bin');
+    expect(mockAdapter.execute).toHaveBeenCalledWith(
+      expect.stringContaining('DELETE FROM tenant_backup_r2_retired_generations'),
+      ['retired-1', 'logs/tenant/source.bin']
+    );
   });
 
   it('runs scheduled destination health checks and enqueues failure notifications', async () => {
@@ -234,6 +293,31 @@ describe('logging/storage maintenance jobs', () => {
     } finally {
       nowSpy.mockRestore();
     }
+  });
+
+  it('keeps closed DLQ payloads while a backup snapshot is capturing', async () => {
+    mockAdapter.queryOne.mockImplementation(async (sql: string) =>
+      sql.includes('tenant_backup_snapshots') ? { id: 'snapshot-a' } : null
+    );
+    mockAdapter.query.mockImplementation(async (sql: string) =>
+      sql.includes('FROM logging_dlq_items')
+        ? [{ id: 'dlq_closed', payload_object_ref: 'dlq/closed.json' }]
+        : []
+    );
+    const deleteObject = vi.fn().mockResolvedValue(undefined);
+
+    const result = await processLoggingStorageMaintenanceJobs(
+      { AUDIT_ARCHIVE: { delete: deleteObject } as unknown as R2Bucket } as Env,
+      log
+    );
+
+    expect(result.retention.dlqItemsPurged).toBe(0);
+    expect(
+      mockAdapter.query.mock.calls.some(([sql]) =>
+        String(sql).includes("WHERE status IN ('deleted', 'purged', 'replayed')")
+      )
+    ).toBe(false);
+    expect(deleteObject).not.toHaveBeenCalledWith(['dlq/closed.json']);
   });
 
   it('runs deep scheduled R2 health probes for stale healthy destinations', async () => {

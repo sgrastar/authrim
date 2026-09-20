@@ -1,5 +1,15 @@
+export const TENANT_DATABASE_MIGRATION_STATE_TABLE_SQL = `CREATE TABLE IF NOT EXISTS tenant_database_migration_state (
+      stream_id TEXT PRIMARY KEY NOT NULL,
+      release_id TEXT NOT NULL,
+      manifest_digest TEXT NOT NULL,
+      applied_file_count INTEGER NOT NULL CHECK (applied_file_count >= 0),
+      state TEXT NOT NULL CHECK (state IN ('applying', 'ready', 'blocked')),
+      last_filename TEXT,
+      updated_at INTEGER NOT NULL
+    )`;
+
 export const AUTHRIM_MIGRATIONS_TABLE_SQL = `CREATE TABLE IF NOT EXISTS authrim_migrations (
-  filename TEXT PRIMARY KEY,
+  filename TEXT PRIMARY KEY NOT NULL,
   checksum TEXT NOT NULL,
   applied_at INTEGER NOT NULL,
   execution_time_ms INTEGER,
@@ -79,11 +89,11 @@ export function validateAuthrimMigrationHistoryRows(
     return {
       ...row,
       filename,
-      checksum: row.checksum as string | null | undefined,
-      applied_at: row.applied_at as number | null | undefined,
-      execution_time_ms: row.execution_time_ms as number | null | undefined,
-      setup_version: row.setup_version as string | null | undefined,
-      tool_version: row.tool_version as string | null | undefined,
+      checksum: row.checksum,
+      applied_at: row.applied_at,
+      execution_time_ms: row.execution_time_ms,
+      setup_version: row.setup_version,
+      tool_version: row.tool_version,
     };
   });
 }

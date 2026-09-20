@@ -308,6 +308,10 @@ describe('tenant deletion jobs', () => {
       'DELETE FROM internal_notification_events WHERE tenant_id = ?',
       ['target-tenant']
     );
+    expect(mockControlTx.execute).toHaveBeenCalledWith(
+      'DELETE FROM tenant_settings_documents WHERE tenant_id = ?',
+      ['target-tenant']
+    );
     expect(mockAdapter.transaction).not.toHaveBeenCalled();
     expect(mockAdapter.execute).toHaveBeenCalledWith(
       "UPDATE admin_jobs SET status = 'completed', completed_at = ?, updated_at = ?, progress = ? WHERE id = ? AND tenant_id = ?",

@@ -19,6 +19,7 @@ import {
   getTenantIdFromContext,
   hashTotpBackupCode,
   profileForTotpPreset,
+  runTenantBackupCoveredEffect,
   verifyTotpCode,
 } from '@authrim/ar-lib-core';
 import { requireAccountSession, type AccountSession } from './account-page';
@@ -271,6 +272,7 @@ async function verifyTotpCredentialCode(
   if (!verification.valid || verification.timeStep === null) {
     return null;
   }
+  const verifiedTimeStep = verification.timeStep;
   const proofVerifiedAtMs = Date.now();
   const tenantId = getTenantIdFromContext(c);
   const authCtx = createAuthContextFromHono(c, tenantId);
@@ -288,7 +290,7 @@ async function verifyTotpCredentialCode(
         userId: credential.user_id,
         credentialId: credential.id,
         storedLastUsedTimeStep: credential.last_used_time_step,
-        observedTimeStep: verification.timeStep,
+        observedTimeStep: verifiedTimeStep,
         observedAtMs: proofVerifiedAtMs,
       },
       () => runtimeUsers.findAccountAuthenticationState(credential.user_id)
@@ -298,16 +300,18 @@ async function verifyTotpCredentialCode(
     throw error;
   }
   c.executionCtx.waitUntil(
-    authCtx.repositories.totp
-      .markUsed(credential.id, credential.user_id, verification.timeStep)
-      .catch((error: unknown) => {
-        getLogger(c)
-          .module('ACCOUNT_TOTP')
-          .error('Failed to mirror TOTP time-step', {
-            action: 'totp_state_mirror',
-            errorType: error instanceof Error ? error.name : 'Unknown',
-          });
-      })
+    runTenantBackupCoveredEffect(c.env, { tenantId }, () =>
+      authCtx.repositories.totp
+        .markUsed(credential.id, credential.user_id, verifiedTimeStep)
+        .catch((error: unknown) => {
+          getLogger(c)
+            .module('ACCOUNT_TOTP')
+            .error('Failed to mirror TOTP time-step', {
+              action: 'totp_state_mirror',
+              errorType: error instanceof Error ? error.name : 'Unknown',
+            });
+        })
+    )
   );
   return proofVerifiedAtMs;
 }
@@ -794,22 +798,24 @@ export async function deleteAccountTotpCredentialHandler(
     return c.json({ error: 'not_found', error_description: 'TOTP credential was not found' }, 404);
   }
   c.executionCtx.waitUntil(
-    getSessionRevocationStore(c.env, tenantId, accountSession.userId)
-      .deleteCredentialStateRpc(
-        tenantId,
-        accountSession.userId,
-        `account:${accountSession.userId}`,
-        'totp',
-        credential.id
-      )
-      .catch((error: unknown) => {
-        getLogger(c)
-          .module('ACCOUNT_TOTP')
-          .error('Failed to clean TOTP DO state', {
-            action: 'totp_state_cleanup',
-            errorType: error instanceof Error ? error.name : 'Unknown',
-          });
-      })
+    runTenantBackupCoveredEffect(c.env, { tenantId }, () =>
+      getSessionRevocationStore(c.env, tenantId, accountSession.userId)
+        .deleteCredentialStateRpc(
+          tenantId,
+          accountSession.userId,
+          `account:${accountSession.userId}`,
+          'totp',
+          credential.id
+        )
+        .catch((error: unknown) => {
+          getLogger(c)
+            .module('ACCOUNT_TOTP')
+            .error('Failed to clean TOTP DO state', {
+              action: 'totp_state_cleanup',
+              errorType: error instanceof Error ? error.name : 'Unknown',
+            });
+        })
+    )
   );
 
   await recordAccountOperation(c, {

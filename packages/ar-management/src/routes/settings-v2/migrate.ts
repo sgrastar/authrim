@@ -1,3 +1,4 @@
+import { runTenantBackupCoveredMutation } from '../../tenant-backup-writer';
 /**
  * Settings Migration API
  *
@@ -14,7 +15,7 @@
  * - GET /api/admin/settings/migrate/status - Get migration status
  */
 
-import { Hono, type Context } from 'hono';
+import { Hono, type Context, type MiddlewareHandler } from 'hono';
 import type { Env, AdminAuthContext } from '@authrim/ar-lib-core';
 import { getLogger, sanitizeObject } from '@authrim/ar-lib-core';
 
@@ -368,20 +369,21 @@ async function applyMigration(
 // Route Handlers
 // =============================================================================
 
-const migrateRouter = new Hono<{
+type MigrationEnv = {
   Bindings: Env;
   Variables: {
     adminUser?: { id: string; role?: string };
     adminAuth?: AdminAuthContext;
   };
-}>();
+};
+const migrateRouter = new Hono<MigrationEnv>();
 
 /**
  * System admin middleware for migration routes
  * Per spec: "Migration API execution restriction - system admin only"
  * Updated: Now checks for super_admin or system_admin roles (consistent with other admin APIs)
  */
-migrateRouter.use('/migrate', async (c, next) => {
+const requireMigrationAdmin: MiddlewareHandler<MigrationEnv> = async (c, next) => {
   const adminAuth = c.get('adminAuth');
   const userRoles = adminAuth?.roles || [];
 
@@ -402,7 +404,9 @@ migrateRouter.use('/migrate', async (c, next) => {
   }
 
   await next();
-});
+};
+migrateRouter.use('/migrate', requireMigrationAdmin);
+migrateRouter.use('/migrate/*', requireMigrationAdmin);
 
 /**
  * POST /api/admin/settings/migrate
@@ -447,73 +451,85 @@ migrateRouter.post('/migrate', async (c) => {
     );
   }
 
-  // Check migration lock (only for actual migration)
-  if (!body.dryRun) {
-    const status = await kv.get('settings:migration:status');
-    if (status) {
-      try {
-        const parsed = JSON.parse(status);
-        // Validate structure with type guard
-        if (isMigrationStatus(parsed) && parsed.migrated) {
-          return c.json(
-            {
-              error: 'already_migrated',
-              message: 'Migration has already been executed. Delete the lock key to re-run.',
-              migratedAt: parsed.migratedAt,
-              migratedBy: parsed.migratedBy,
-            },
-            409
-          );
+  let writesConfirmed = true;
+  const migrate = async () => {
+    // Check migration lock (only for actual migration)
+    if (!body.dryRun) {
+      const status = await kv.get('settings:migration:status');
+      if (status) {
+        try {
+          const parsed = JSON.parse(status);
+          // Validate structure with type guard
+          if (isMigrationStatus(parsed) && parsed.migrated) {
+            return c.json(
+              {
+                error: 'already_migrated',
+                message: 'Migration has already been executed. Delete the lock key to re-run.',
+                migratedAt: parsed.migratedAt,
+                migratedBy: parsed.migratedBy,
+              },
+              409
+            );
+          }
+        } catch {
+          // Invalid migration status data - treat as not migrated and continue
+          const log = getLogger(c as unknown as BaseContext).module('SettingsMigrationAPI');
+          log.warn('Invalid migration status JSON, treating as not migrated', {});
         }
-      } catch {
-        // Invalid migration status data - treat as not migrated and continue
-        const log = getLogger(c as unknown as BaseContext).module('SettingsMigrationAPI');
-        log.warn('Invalid migration status JSON, treating as not migrated', {});
       }
     }
-  }
 
-  // Scan for legacy keys
-  const { changes, warnings } = await scanLegacyKeys(kv, body.categories);
+    // Scan for legacy keys
+    const { changes, warnings } = await scanLegacyKeys(kv, body.categories);
 
-  // Calculate summary
-  const summary = {
-    total: changes.length,
-    set: changes.filter((c) => c.action === 'set').length,
-    skipped: changes.filter((c) => c.action === 'skip').length,
-    conflicts: changes.filter((c) => c.action === 'conflict').length,
-  };
+    // Calculate summary
+    const summary = {
+      total: changes.length,
+      set: changes.filter((c) => c.action === 'set').length,
+      skipped: changes.filter((c) => c.action === 'skip').length,
+      conflicts: changes.filter((c) => c.action === 'conflict').length,
+    };
 
-  const result: MigrationResult = {
-    dryRun: body.dryRun,
-    timestamp: new Date().toISOString(),
-    changes,
-    summary,
-    warnings,
-    errors: [],
-  };
+    const result: MigrationResult = {
+      dryRun: body.dryRun,
+      timestamp: new Date().toISOString(),
+      changes,
+      summary,
+      warnings,
+      errors: [],
+    };
 
-  // If dry-run, return preview
-  if (body.dryRun) {
+    // If dry-run, return preview
+    if (body.dryRun) {
+      return c.json(result);
+    }
+
+    // Apply migration
+    const { applied, errors } = await applyMigration(kv, changes);
+    result.summary.set = applied;
+    result.errors = errors;
+    writesConfirmed = errors.length === 0;
+
+    // Set migration lock
+    const actor = c.get('adminUser')?.id ?? 'unknown';
+    const migrationStatus: MigrationStatus = {
+      migrated: true,
+      migratedAt: new Date().toISOString(),
+      migratedBy: actor,
+      version: 'v2',
+    };
+    await kv.put('settings:migration:status', JSON.stringify(migrationStatus));
+
     return c.json(result);
-  }
-
-  // Apply migration
-  const { applied, errors } = await applyMigration(kv, changes);
-  result.summary.set = applied;
-  result.errors = errors;
-
-  // Set migration lock
-  const actor = c.get('adminUser')?.id ?? 'unknown';
-  const migrationStatus: MigrationStatus = {
-    migrated: true,
-    migratedAt: new Date().toISOString(),
-    migratedBy: actor,
-    version: 'v2',
   };
-  await kv.put('settings:migration:status', JSON.stringify(migrationStatus));
-
-  return c.json(result);
+  return body.dryRun
+    ? migrate()
+    : runTenantBackupCoveredMutation({
+        env: c.env,
+        scope: 'environment',
+        run: migrate,
+        confirmCompletion: () => writesConfirmed,
+      });
 });
 
 /**
@@ -589,22 +605,28 @@ migrateRouter.delete('/migrate/lock', async (c) => {
     );
   }
 
-  // Get actor for audit logging
-  const actor = c.get('adminUser')?.id ?? 'unknown';
+  return runTenantBackupCoveredMutation({
+    env: c.env,
+    scope: 'environment',
+    run: async () => {
+      // Get actor for audit logging
+      const actor = c.get('adminUser')?.id ?? 'unknown';
 
-  // Audit log before deletion
-  const log = getLogger(c as unknown as BaseContext).module('SettingsMigrationAPI');
-  log.info('Migration lock cleared', {
-    event: 'migration.lock_cleared',
-    actor,
-  });
+      // Audit log before deletion
+      const log = getLogger(c as unknown as BaseContext).module('SettingsMigrationAPI');
+      log.info('Migration lock cleared', {
+        event: 'migration.lock_cleared',
+        actor,
+      });
 
-  await kv.delete('settings:migration:status');
+      await kv.delete('settings:migration:status');
 
-  return c.json({
-    success: true,
-    message: 'Migration lock cleared. You can now re-run the migration.',
-    clearedBy: actor,
+      return c.json({
+        success: true,
+        message: 'Migration lock cleared. You can now re-run the migration.',
+        clearedBy: actor,
+      });
+    },
   });
 });
 

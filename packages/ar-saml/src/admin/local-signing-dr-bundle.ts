@@ -197,6 +197,41 @@ export async function restoreSAMLLocalSigningSecretDRBundle(
   };
 }
 
+/** Pure validation used by installed backup inspectors before any target mutation is allowed. */
+export function validateSAMLLocalSigningSecretDRBundle(input: unknown, tenantId: string): void {
+  const resolvedTenantId = requireSAMLTenantId(tenantId, 'SAML local signing DR bundle tenant');
+  const bundle = normalizeSAMLLocalSigningSecretDRBundle(input);
+  if (bundle.tenantId !== resolvedTenantId) {
+    throw new Error('SAML DR bundle tenant does not match the current tenant');
+  }
+  validateRestoredSigningKeyPolicies(bundle, resolvedTenantId);
+}
+
+function comparableSAMLLocalSigningSecretDRBundle(input: unknown, tenantId: string): string {
+  validateSAMLLocalSigningSecretDRBundle(input, tenantId);
+  const bundle = normalizeSAMLLocalSigningSecretDRBundle(input);
+  return JSON.stringify({
+    ...bundle,
+    generatedAt: undefined,
+    // Entity IDs and endpoints are derived from the destination environment. A cross-environment
+    // restore must verify the imported settings and private key material without requiring the
+    // destination to reproduce the source environment's public URLs.
+    generated: undefined,
+    warning: undefined,
+  });
+}
+
+/** Verify imported key material and settings by exporting the target through the same trusted path. */
+export async function verifySAMLLocalSigningSecretDRBundle(
+  env: Env,
+  tenantId: string,
+  expected: unknown
+): Promise<boolean> {
+  const expectedComparable = comparableSAMLLocalSigningSecretDRBundle(expected, tenantId);
+  const actual = await buildSAMLLocalSigningSecretDRBundle(env, tenantId);
+  return comparableSAMLLocalSigningSecretDRBundle(actual, tenantId) === expectedComparable;
+}
+
 export async function restoreEncryptedSAMLLocalSigningSecretDRBundle(
   env: Env,
   tenantId: string,

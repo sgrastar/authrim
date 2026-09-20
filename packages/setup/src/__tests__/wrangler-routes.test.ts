@@ -2225,3 +2225,32 @@ describe('registered schema references', () => {
     ).toThrow('registered_schema_references_exceed_cloudflare_variable_limit');
   });
 });
+
+it('pins fixed database identities only for bindings owned by the generated Worker', () => {
+  const config = createDefaultConfig('test');
+  config.components.adminUi = false;
+  const resources = {
+    d1: {
+      DB: { id: 'core-id', name: 'core' },
+      DB_PII: { id: 'pii-id', name: 'pii' },
+      DB_ADMIN: { id: 'admin-id', name: 'admin' },
+      LOOKUP_DB: { id: 'lookup-id', name: 'lookup' },
+      CONTROL_DB: { id: 'control-id', name: 'control' },
+    },
+    kv: {},
+  };
+  const management = generateWranglerConfig('ar-management', config, resources);
+  expect(JSON.parse(management.vars.AUTHRIM_FIXED_DATABASE_IDS)).toEqual({
+    version: 1,
+    databases: { DB: 'core-id', DB_ADMIN: 'admin-id', DB_PII: 'pii-id', LOOKUP_DB: 'lookup-id' },
+  });
+  const control = generateWranglerConfig('ar-control', config, resources);
+  expect(JSON.parse(control.vars.AUTHRIM_FIXED_DATABASE_IDS)).toEqual({
+    version: 1,
+    databases: { CONTROL_DB: 'control-id' },
+  });
+  expect(
+    generateWranglerConfig('ar-management', config, { d1: {}, kv: {} }).vars
+      .AUTHRIM_FIXED_DATABASE_IDS
+  ).toBeUndefined();
+});

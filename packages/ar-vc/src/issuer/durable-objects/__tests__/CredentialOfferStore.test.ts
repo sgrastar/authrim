@@ -29,6 +29,7 @@ class MemoryVciSql {
     ...p: SqlStorageValue[]
   ): SqlStorageCursor<T> {
     const q = query.replace(/\s+/g, ' ').trim();
+    if (q.startsWith('PRAGMA table_info')) return cursor([{ pk: 1, notnull: 1 }]) as never;
     if (q.startsWith('CREATE TABLE') || q.startsWith('CREATE INDEX')) return cursor() as never;
     if (q.startsWith('INSERT INTO credential_offers')) {
       const [
@@ -227,6 +228,7 @@ function stateWith(
 ): DurableObjectState {
   const storage = {
     sql,
+    transactionSync: (fn: () => unknown) => fn(),
     getAlarm: vi.fn().mockResolvedValue(null),
     setAlarm,
   } as unknown as DurableObjectStorage;

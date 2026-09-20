@@ -8,7 +8,10 @@
  * - GET /settings/meta/:category
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { readFileSync } from 'node:fs';
+// @ts-expect-error node:sqlite is available in the required runtime but this package omits Node types.
+import { DatabaseSync, type StatementSync } from 'node:sqlite';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { Hono } from 'hono';
 import type { D1Database } from '@cloudflare/workers-types';
 import type {
@@ -33,6 +36,90 @@ import settingsV2 from '../routes/settings-v2';
 // Response types
 type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
 type ApiResponse = Record<string, JsonValue>;
+type SqlValue = string | number | null | Uint8Array;
+const adminDatabases = new Set<DatabaseSync>();
+
+class BoundSqliteStatement {
+  constructor(
+    private readonly statement: StatementSync,
+    private readonly values: SqlValue[]
+  ) {}
+
+  async first<T>(): Promise<T | null> {
+    return (this.statement.get(...this.values) as T | undefined) ?? null;
+  }
+
+  async all<T>() {
+    return { success: true, results: this.statement.all(...this.values) as T[], meta: {} };
+  }
+
+  async run<T>() {
+    const result = this.statement.run(...this.values);
+    return {
+      success: true,
+      results: [] as T[],
+      meta: { changes: Number(result.changes), last_row_id: Number(result.lastInsertRowid) },
+    };
+  }
+}
+
+class SqliteStatement {
+  constructor(private readonly statement: StatementSync) {}
+
+  bind(...values: unknown[]): BoundSqliteStatement {
+    return new BoundSqliteStatement(
+      this.statement,
+      values.map((value) => {
+        if (
+          typeof value === 'string' ||
+          typeof value === 'number' ||
+          value === null ||
+          value instanceof Uint8Array
+        )
+          return value;
+        throw new Error('unsupported_test_sqlite_value');
+      })
+    );
+  }
+
+  first<T>() {
+    return this.bind().first<T>();
+  }
+
+  all<T>() {
+    return this.bind().all<T>();
+  }
+
+  run<T>() {
+    return this.bind().run<T>();
+  }
+}
+
+function createAdminD1(): D1Database {
+  const database = new DatabaseSync(':memory:');
+  database.exec(
+    readFileSync(
+      new URL('../../../../migrations/admin/d1/028_tenant_settings_documents.sql', import.meta.url),
+      'utf8'
+    )
+  );
+  adminDatabases.add(database);
+  const session = {
+    prepare: (sql: string) => new SqliteStatement(database.prepare(sql)),
+    getBookmark: () => 'settings-test-bookmark',
+  };
+  return {
+    ...session,
+    withSession: () => session,
+    batch: async (statements: BoundSqliteStatement[]) =>
+      Promise.all(statements.map((statement) => statement.run())),
+    dump: async () => new ArrayBuffer(0),
+    exec: async (sql: string) => {
+      database.exec(sql);
+      return { count: 0, duration: 0 };
+    },
+  } as unknown as D1Database;
+}
 
 // Mock KV namespace
 function createMockKV(data: Record<string, string> = {}): KVNamespace {
@@ -173,6 +260,7 @@ function createTestApp(
     AUTHRIM_CONFIG: mockKV,
     SETTINGS: mockKV,
     DB: options.db ?? createMockDB(),
+    DB_ADMIN: createAdminD1(),
     RATE_LIMITER: {
       idFromName: vi.fn().mockReturnValue('rate-limit-id'),
       get: vi.fn().mockReturnValue({ incrementRpc: mockRateLimiterIncrement }),
@@ -187,6 +275,11 @@ function createTestApp(
 describe('Settings API v2', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    for (const database of adminDatabases) database.close();
+    adminDatabases.clear();
   });
 
   describe('Tenant Settings', () => {
@@ -998,6 +1091,19 @@ describe('Settings API v2', () => {
           'self-service.account_page_enabled': true,
           'self-service.account_page_path': '/account',
         });
+        const canonical = [...adminDatabases][0]
+          .prepare(
+            `SELECT document_json,projection_state FROM tenant_settings_documents
+            WHERE tenant_id=? AND scope_type='tenant' AND scope_id=? AND category='self-service'`
+          )
+          .get('tenant_123', 'tenant_123') as
+          | { document_json: string; projection_state: string }
+          | undefined;
+        expect(canonical?.projection_state).toBe('applied');
+        expect(JSON.parse(canonical?.document_json ?? '{}')).toMatchObject({
+          'self-service.account_page_enabled': true,
+          'self-service.account_page_path': '/account',
+        });
       });
 
       it('rejects disabling account page while post-login behavior is account', async () => {
@@ -1721,6 +1827,19 @@ describe('Settings API v2', () => {
 
   describe('Platform Settings', () => {
     describe('GET /platform/settings/:category', () => {
+      it('does not require the tenant canonical database', async () => {
+        const { app, mockEnv } = createTestApp();
+        delete (mockEnv as unknown as { DB_ADMIN?: unknown }).DB_ADMIN;
+
+        const res = await app.request(
+          '/api/admin/platform/settings/infrastructure',
+          { method: 'GET' },
+          mockEnv
+        );
+
+        expect(res.status).toBe(200);
+      });
+
       it('should return platform settings', async () => {
         const { app, mockEnv } = createTestApp();
 
@@ -2239,4 +2358,123 @@ describe('Settings API v2', () => {
       expect(assurance.status).toBe(403);
     });
   });
+});
+
+it('covers tenant settings and cache revision writes with one backup permit', async () => {
+  const { app, mockEnv, mockKV } = createTestApp();
+  mockEnv.TENANT_BACKUP_WRAPPING_KEY = 'ab'.repeat(32);
+  const acquire = vi.fn().mockResolvedValue({ admitted: false });
+  const complete = vi.fn(async () => {
+    expect(
+      await mockKV.get('cache:authentication-methods:v1:revision:tenant:tenant_123')
+    ).not.toBeNull();
+  });
+  mockEnv.CONTROL = {
+    acquireTenantBackupMutationPermit: acquire,
+    completeTenantBackupMutationPermit: complete,
+  } as unknown as Env['CONTROL'];
+  const url = '/api/admin/tenants/tenant_123/settings/login-ui';
+  const current: unknown = await (await app.request(url, { method: 'GET' }, mockEnv)).json();
+  if (!current || typeof current !== 'object' || !('version' in current))
+    throw new Error('missing settings version');
+  const request = {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      ifMatch: current.version,
+      set: { 'login-ui.brand_name': 'Covered Brand' },
+    }),
+  };
+  expect((await app.request(url, request, mockEnv)).status).toBe(503);
+  expect(vi.mocked(mockKV).put.mock.calls).toHaveLength(0);
+  expect(complete).not.toHaveBeenCalled();
+  acquire.mockResolvedValue({ admitted: true });
+  expect((await app.request(url, request, mockEnv)).status).toBe(200);
+  expect(complete).toHaveBeenCalledTimes(1);
+  expect(complete.mock.calls[0]).toEqual(acquire.mock.calls[1]);
+});
+
+it.each(['', '/client'])(
+  'covers client PATCH%s under its verified tenant before any write',
+  async (suffix) => {
+    const mockKV = createMockKV({
+      'client:test-tenant:client_abc:metadata': JSON.stringify({ tenant_id: 'test-tenant' }),
+    });
+    const { app, mockEnv } = createTestApp({ kv: mockKV });
+    mockEnv.TENANT_BACKUP_WRAPPING_KEY = 'ab'.repeat(32);
+    const acquire = vi.fn().mockResolvedValue({ admitted: false });
+    const complete = vi.fn().mockResolvedValue(undefined);
+    mockEnv.CONTROL = {
+      acquireTenantBackupMutationPermit: acquire,
+      completeTenantBackupMutationPermit: complete,
+    } as unknown as Env['CONTROL'];
+    const url = `/api/admin/clients/client_abc/settings${suffix}`;
+    const current: unknown = await (
+      await app.request(url, { method: 'GET', headers: { 'X-Tenant-Id': 'test-tenant' } }, mockEnv)
+    ).json();
+    if (!current || typeof current !== 'object' || !('version' in current))
+      throw new Error('missing settings version');
+    const update = {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', 'X-Tenant-Id': 'test-tenant' },
+      body: JSON.stringify({ ifMatch: current.version, set: { 'client.access_token_ttl': 7200 } }),
+    };
+    expect((await app.request(url, update, mockEnv)).status).toBe(503);
+    expect(vi.mocked(mockKV).put.mock.calls).toHaveLength(0);
+    expect(complete).not.toHaveBeenCalled();
+    expect(acquire.mock.calls[0][0]).toMatchObject({ tenantId: 'test-tenant' });
+    acquire.mockResolvedValue({ admitted: true });
+    expect((await app.request(url, update, mockEnv)).status).toBe(200);
+    expect(complete).toHaveBeenCalledTimes(1);
+    expect(complete.mock.calls[0][0]).toEqual(acquire.mock.calls[1][0]);
+    const calls = acquire.mock.calls.length;
+    expect(
+      (
+        await app.request(
+          url,
+          { ...update, headers: { ...update.headers, 'X-Tenant-Id': 'other' } },
+          mockEnv
+        )
+      ).status
+    ).toBe(404);
+    expect(acquire).toHaveBeenCalledTimes(calls);
+  }
+);
+
+it('covers platform changes with an environment permit and denies unsupported categories before admission', async () => {
+  const { app, mockEnv, mockKV } = createTestApp();
+  mockEnv.TENANT_BACKUP_WRAPPING_KEY = 'ab'.repeat(32);
+  const acquire = vi.fn().mockResolvedValue({ admitted: false });
+  const complete = vi.fn().mockResolvedValue(undefined);
+  const tenantAcquire = vi.fn();
+  mockEnv.CONTROL = {
+    acquireEnvironmentBackupMutationPermit: acquire,
+    completeEnvironmentBackupMutationPermit: complete,
+    acquireTenantBackupMutationPermit: tenantAcquire,
+  } as unknown as Env['CONTROL'];
+  const url = '/api/admin/platform/settings/login-entry';
+  const current: unknown = await (await app.request(url, { method: 'GET' }, mockEnv)).json();
+  if (!current || typeof current !== 'object' || !('version' in current))
+    throw new Error('missing settings version');
+  const update = {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      ifMatch: current.version,
+      set: { 'login-entry.skip_discovery_if_only_one_tenant': true },
+    }),
+  };
+  expect((await app.request(url, update, mockEnv)).status).toBe(503);
+  expect(vi.mocked(mockKV).put.mock.calls).toHaveLength(0);
+  expect(complete).not.toHaveBeenCalled();
+  acquire.mockResolvedValue({ admitted: true });
+  expect((await app.request(url, update, mockEnv)).status).toBe(200);
+  expect(complete).toHaveBeenCalledTimes(1);
+  expect(complete.mock.calls[0]).toEqual(acquire.mock.calls[1]);
+  expect(tenantAcquire).not.toHaveBeenCalled();
+  const count = acquire.mock.calls.length;
+  expect(
+    (await app.request('/api/admin/platform/settings/infrastructure', update, mockEnv)).status
+  ).toBe(405);
+  expect(acquire).toHaveBeenCalledTimes(count);
 });

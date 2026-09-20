@@ -88,6 +88,7 @@ describe('R2 scheduled storage maintenance', () => {
     mockEnsureDatabaseAdapter.mockReturnValue({
       execute: vi.fn().mockResolvedValue({ success: true, rowsAffected: 1 }),
       query: vi.fn().mockResolvedValue([]),
+      queryOne: vi.fn().mockResolvedValue(null),
     });
     mockResolveTenantUserStoreSourcesFromEnv.mockResolvedValue({ coreDb: {}, piiDb: {} });
     mockCreateSettingsManager.mockReturnValue({
@@ -272,6 +273,7 @@ describe('R2 scheduled storage maintenance', () => {
     }));
     mockEnsureDatabaseAdapter.mockReturnValueOnce({
       query: vi.fn().mockResolvedValue([{ payload_object_ref: activeKey }]),
+      queryOne: vi.fn().mockResolvedValue(null),
     });
 
     await expect(
@@ -290,6 +292,25 @@ describe('R2 scheduled storage maintenance', () => {
 
     expect(bucket.delete).toHaveBeenCalledWith([terminalKey]);
     expect(bucket.delete).not.toHaveBeenCalledWith(expect.arrayContaining([activeKey]));
+  });
+
+  it('does not scan or delete transient audit payloads during snapshot capture', async () => {
+    const kv = createKv();
+    const bucket = createBucket();
+    mockEnsureDatabaseAdapter.mockReturnValueOnce({
+      query: vi.fn().mockResolvedValue([]),
+      queryOne: vi.fn().mockResolvedValue({ id: 'snapshot-a' }),
+    });
+
+    await expect(
+      cleanupOrphanedAuditTransientPayloads({
+        AUTHRIM_CONFIG: kv,
+        AUDIT_ARCHIVE: bucket,
+        DB_ADMIN: {},
+      } as never)
+    ).resolves.toMatchObject({ scanned: 0, deleted: 0, retained: 0, retainedActive: 0 });
+    expect(bucket.list).not.toHaveBeenCalled();
+    expect(bucket.delete).not.toHaveBeenCalled();
   });
 
   it('deletes only old unreferenced Login UI objects within the same tenant scope', async () => {

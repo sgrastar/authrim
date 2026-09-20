@@ -1127,6 +1127,51 @@ describe('Direct Auth primary passkey and email-code flows', () => {
     );
   });
 
+  it('provisions a routed account before passkey signup in a shared pool', async () => {
+    mocks.getWebOriginRegistry.mockResolvedValueOnce({
+      origins: [{ origin: 'https://login.test.authrim.com', handoff_allowed: true }],
+    });
+    const { directPasskeySignupStartHandler } = await import('../direct-auth');
+
+    const context = createContext(
+      {
+        client_id: 'web-client',
+        code_challenge: 'signup-pkce-challenge',
+        code_challenge_method: 'S256',
+        channel: 'browser',
+      },
+      tenantProxyHeaders(),
+      'https://test.authrim.com/api/v1/auth/direct/passkey/signup/start'
+    );
+    context.get = vi.fn((key: string) => {
+      if (key === 'tenantId') return 'tenant_test';
+      if (key === 'tenantMetadataContext') {
+        return {
+          tenantId: 'tenant_test',
+          route: { allocationScope: 'shared_pool' },
+        };
+      }
+      return undefined;
+    }) as never;
+    context.env.ALLOWED_ORIGINS = 'https://login.test.authrim.com';
+
+    const response = await directPasskeySignupStartHandler(context as never);
+
+    expect(response.status).toBe(200);
+    expect(mocks.provisionTenantD1EmailAccount).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        flow: 'passkey',
+        email: null,
+      })
+    );
+    expect(mocks.resolveAccountDataContextFromHono).toHaveBeenCalledWith(
+      context,
+      'account:user_new'
+    );
+    expect(mocks.createAccountAuthContextFromHono).toHaveBeenCalled();
+  });
+
   it('reuses the same candidate user when an email-less tenant account resumes after 202', async () => {
     mocks.generateUserIdFromSettings
       .mockReset()

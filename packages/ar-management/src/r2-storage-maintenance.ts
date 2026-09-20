@@ -3,6 +3,7 @@ import {
   createSettingsManager,
   DIAGNOSTIC_LOGGING_CATEGORY_META,
   ensureDatabaseAdapter,
+  hasCapturingTenantBackupSnapshot,
   LOGIN_UI_CATEGORY_META,
   listEnvironmentTenantDefaultStores,
   resolveTenantUserStoreSourcesFromEnv,
@@ -622,6 +623,9 @@ export async function cleanupOrphanedAuditTransientPayloads(
   };
   const cutoff = Date.now() - AUDIT_TRANSIENT_ORPHAN_GRACE_MS;
   const admin = ensureDatabaseAdapter(env.DB_ADMIN, 'audit-transient-orphan-cleanup');
+  if (await hasCapturingTenantBackupSnapshot(admin)) {
+    return { scanned: 0, deleted: 0, retained: 0, retainedActive: 0, cursor };
+  }
   let scanned = 0;
   let deleted = 0;
   let retainedActive = 0;

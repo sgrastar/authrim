@@ -1,3 +1,7 @@
+import {
+  resolveBackupTenantDatabaseResources,
+  backupDatabaseResourceDescriptor,
+} from '../tenant-portability/database-resources';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DatabaseAdapter, TransactionContext } from '../../db/adapter';
 import type {
@@ -1418,4 +1422,133 @@ describe('tenant-database-resolver', () => {
       'tenant_assigned_to_other_deployment_target'
     );
   });
+});
+
+describe('backup tenant database resource resolution', () => {
+  it('uses signed assignments and exposes only connection-free resource metadata', async () => {
+    const { privateJwk, publicJwk } = await generateEd25519Jwks();
+    const signed = await signTenantRuntimeRegistrySnapshot(
+      createRuntimeRegistrySnapshot(),
+      { privateJwk, keyId: 'runtime-registry-key-1' },
+      '2026-05-16T00:00:00.000Z'
+    );
+    const env = {
+      TDB_TENANT_A_SNAPSHOT_CORE: createD1Binding(),
+      AUTHRIM_DEPLOYMENT_TARGET: 'edge-a',
+      TENANT_RUNTIME_REGISTRY_VERIFYING_PUBLIC_JWKS: JSON.stringify({ keys: [publicJwk] }),
+      TENANT_RUNTIME_REGISTRY: {
+        get: vi.fn(async (key: string) =>
+          key.includes(':generation:') ? createRuntimeGenerationDocument() : JSON.stringify(signed)
+        ),
+      },
+    };
+    const resources = await resolveBackupTenantDatabaseResources(env, {
+      tenantId: 'tenant-a',
+      roles: ['tenant_core'],
+      signal: new AbortController().signal,
+    });
+    expect(resources).toHaveLength(1);
+    expect(resources[0]).toMatchObject({
+      databaseId: 'snapshot-db-id',
+      runtimeGeneration: 8,
+      assignments: [{ role: 'tenant_core', bindingRef: 'TDB_TENANT_A_SNAPSHOT_CORE' }],
+    });
+    const descriptor = JSON.parse(backupDatabaseResourceDescriptor(resources[0]));
+    expect(Object.keys(descriptor)).toEqual([
+      'version',
+      'databaseId',
+      'runtimeGeneration',
+      'deploymentTarget',
+      'assignments',
+    ]);
+    await expect(
+      resolveBackupTenantDatabaseResources(env, {
+        tenantId: 'tenant-a',
+        roles: ['tenant_pii'],
+        signal: new AbortController().signal,
+      })
+    ).rejects.toThrow('missing_registry_row');
+    await expect(
+      resolveBackupTenantDatabaseResources(env, {
+        tenantId: 'tenant-b',
+        roles: ['tenant_core'],
+        signal: new AbortController().signal,
+      })
+    ).rejects.toThrow('invalid_route_contract');
+  });
+  it('rejects a signed generation change during enumeration rather than mixing snapshots', async () => {
+    const { privateJwk, publicJwk } = await generateEd25519Jwks();
+    const original = createRuntimeRegistrySnapshot();
+    const advanced = {
+      ...original,
+      runtimeGeneration: 9,
+      stores: original.stores.map((store) => ({ ...store, runtimeGeneration: 9 })),
+    };
+    const signed = await Promise.all(
+      [original, advanced].map((snapshot) =>
+        signTenantRuntimeRegistrySnapshot(
+          snapshot,
+          { privateJwk, keyId: 'runtime-registry-key-1' },
+          '2026-05-16T00:00:00.000Z'
+        )
+      )
+    );
+    let snapshots = 0,
+      generations = 0;
+    const env = {
+      TDB_TENANT_A_SNAPSHOT_CORE: createD1Binding(),
+      AUTHRIM_DEPLOYMENT_TARGET: 'edge-a',
+      TENANT_RUNTIME_REGISTRY_VERIFYING_PUBLIC_JWKS: JSON.stringify({ keys: [publicJwk] }),
+      TENANT_RUNTIME_REGISTRY: {
+        get: vi.fn(async (key: string) =>
+          key.includes(':generation:')
+            ? createRuntimeGenerationDocument(generations++ === 0 ? 8 : 9)
+            : JSON.stringify(signed[snapshots++ === 0 ? 0 : 1])
+        ),
+      },
+    };
+    await expect(
+      resolveBackupTenantDatabaseResources(env, {
+        tenantId: 'tenant-a',
+        roles: ['tenant_core'],
+        signal: new AbortController().signal,
+      })
+    ).rejects.toThrow('route_generation_mismatch');
+  });
+});
+
+it('groups multiple signed assignments to one physical backup database', async () => {
+  const { privateJwk, publicJwk } = await generateEd25519Jwks();
+  const snapshot = createRuntimeRegistrySnapshot();
+  snapshot.stores.push({
+    ...snapshot.stores[0],
+    dataRole: 'tenant_core/users',
+    shardId: 'shard-users',
+  });
+  snapshot.metadata.storeCount = 2;
+  const signed = await signTenantRuntimeRegistrySnapshot(
+    snapshot,
+    { privateJwk, keyId: 'runtime-registry-key-1' },
+    '2026-05-16T00:00:00.000Z'
+  );
+  const env = {
+    TDB_TENANT_A_SNAPSHOT_CORE: createD1Binding(),
+    AUTHRIM_DEPLOYMENT_TARGET: 'edge-a',
+    TENANT_RUNTIME_REGISTRY_VERIFYING_PUBLIC_JWKS: JSON.stringify({ keys: [publicJwk] }),
+    TENANT_RUNTIME_REGISTRY: {
+      get: vi.fn(async (key: string) =>
+        key.includes(':generation:') ? createRuntimeGenerationDocument() : JSON.stringify(signed)
+      ),
+    },
+  };
+  const resources = await resolveBackupTenantDatabaseResources(env, {
+    tenantId: 'tenant-a',
+    roles: ['tenant_core'],
+    signal: new AbortController().signal,
+  });
+  expect(resources).toHaveLength(1);
+  expect(resources[0].assignments.map((assignment) => assignment.dataRole)).toEqual([
+    'tenant_core/default',
+    'tenant_core/users',
+  ]);
 });

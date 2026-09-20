@@ -3696,6 +3696,7 @@ describe('logging control routers', () => {
       created_at: 1000,
       updated_at: 1000,
     });
+    mockAdapter.queryOne.mockResolvedValueOnce(null);
     vi.mocked(env.AUDIT_ARCHIVE!.get).mockResolvedValueOnce({
       size: 52,
       httpMetadata: { contentType: 'application/json' },
@@ -4160,19 +4161,25 @@ describe('logging control routers', () => {
       code: 'confirmation_mismatch',
     });
 
-    mockAdapter.queryOne.mockResolvedValueOnce({
-      id: 'dlq_1',
-      tenant_key: tenantKey,
-      payload_type: 'audit_queue_message',
-      schema_version: 1,
-      lane: 'critical',
-      destination_id: null,
-      payload_object_ref: payloadObjectRef,
-      error_class: 'audit_message_failed_permanently',
-      attempt_count: 5,
-      status: 'open',
-      created_at: 1000,
-      updated_at: 1000,
+    mockAdapter.queryOne.mockReset();
+    mockAdapter.queryOne.mockImplementation(async (sql: string) => {
+      if (sql.includes('FROM logging_dlq_items'))
+        return {
+          id: 'dlq_1',
+          tenant_key: tenantKey,
+          payload_type: 'audit_queue_message',
+          schema_version: 1,
+          lane: 'critical',
+          destination_id: null,
+          payload_object_ref: payloadObjectRef,
+          error_class: 'audit_message_failed_permanently',
+          attempt_count: 5,
+          status: 'open',
+          created_at: 1000,
+          updated_at: 1000,
+        };
+      if (sql.includes('tenant_backup_snapshots')) return null;
+      return { total: 0, failures: 0, critical: 0 };
     });
     const bucketDelete = vi.fn().mockResolvedValue(undefined);
     const allowed = await createApp([ADMIN_PERMISSIONS.LOGGING_DLQ_PURGE]).request(
@@ -4201,6 +4208,44 @@ describe('logging control routers', () => {
     expect(mockAdapter.execute).toHaveBeenCalledWith(
       expect.stringContaining('INSERT INTO admin_audit_log'),
       expect.arrayContaining(['logging.dlq.purge'])
+    );
+  });
+
+  it('retains an open DLQ payload while a backup snapshot is capturing', async () => {
+    const tenantKey = await deriveTenantKeyFromTenantId('tenant-a');
+    const payloadObjectRef = `dlq/tenant_key=${tenantKey}/item.json`;
+    mockAdapter.queryOne.mockImplementation(async (sql: string) => {
+      if (sql.includes('FROM logging_dlq_items'))
+        return {
+          id: 'dlq_1',
+          tenant_key: tenantKey,
+          payload_object_ref: payloadObjectRef,
+          status: 'open',
+        };
+      if (sql.includes('tenant_backup_snapshots')) return { id: 'snapshot-a' };
+      return null;
+    });
+    const bucketDelete = vi.fn().mockResolvedValue(undefined);
+
+    const response = await createApp([ADMIN_PERMISSIONS.LOGGING_DLQ_PURGE]).request(
+      '/api/admin/logging-policies/dlq-items/dlq_1/purge',
+      {
+        method: 'POST',
+        body: JSON.stringify({ confirmation: 'PURGE DLQ dlq_1' }),
+        headers: { 'content-type': 'application/json' },
+      },
+      { ...env, AUDIT_ARCHIVE: { get: vi.fn(), delete: bucketDelete } } as unknown as Env
+    );
+    const body = (await response.json()) as {
+      details: { fields: Array<{ code: string }> };
+    };
+
+    expect(response.status).toBe(400);
+    expect(body.details.fields[0]?.code).toBe('backup_snapshot_active');
+    expect(bucketDelete).not.toHaveBeenCalled();
+    expect(mockAdapter.execute).not.toHaveBeenCalledWith(
+      expect.stringContaining("SET status = 'purged'"),
+      expect.anything()
     );
   });
 
@@ -5332,7 +5377,45 @@ describe('logging control routers', () => {
     expect(rejected.status).toBe(400);
 
     const bucketDelete = vi.fn().mockResolvedValue(undefined);
-    mockAdapter.queryOne.mockResolvedValueOnce(object);
+    let retiredGeneration: Record<string, unknown> | null = null;
+    let catalogObject = { ...object, deleted_at: null as number | null };
+    mockAdapter.execute.mockResolvedValue({ rowsAffected: 1 });
+    mockAdapter.batch.mockImplementation(
+      async (statements: Array<{ sql: string; params?: unknown[] }>) => {
+        for (const statement of statements) {
+          const params = statement.params ?? [];
+          if (statement.sql.includes('INSERT INTO tenant_backup_r2_retired_generations')) {
+            retiredGeneration = {
+              id: params[0],
+              tenant_key: params[1],
+              bucket_binding: params[2],
+              object_catalog_id: params[3],
+              object_key: params[4],
+              replacement_object_key: params[5],
+              reason: params[6],
+              key_registry_id: params[7],
+              previous_key_version: params[8],
+              replacement_key_version: params[9],
+              record_count: params[10],
+              accounting_applied: params[11],
+              created_at: params[12],
+            };
+          } else if (statement.sql.includes('UPDATE log_object_catalog')) {
+            catalogObject = {
+              ...catalogObject,
+              status: 'deleted',
+              deleted_at: Number(retiredGeneration?.created_at),
+            };
+          }
+        }
+        return statements.map(() => ({ success: true, rowsAffected: 1 }));
+      }
+    );
+    mockAdapter.queryOne.mockImplementation(async (sql: string) => {
+      if (sql.includes('FROM tenant_backup_r2_retired_generations')) return retiredGeneration;
+      if (sql.includes('FROM log_object_catalog')) return catalogObject;
+      return { total: 0, failures: 0, critical: 0 };
+    });
     const applied = await createApp([ADMIN_PERMISSIONS.ADMIN_LOGGING_REPAIR_RUN]).request(
       '/api/admin/admin-logging/catalog-repairs/dangerous/apply',
       {
@@ -5357,10 +5440,23 @@ describe('logging control routers', () => {
     expect(applied.status).toBe(200);
     expect(appliedBody.result.action).toBe('delete_object');
     expect(appliedBody.audit_id).toEqual(expect.any(String));
-    expect(bucketDelete).toHaveBeenCalledWith(object.object_key);
-    expect(mockAdapter.execute).toHaveBeenCalledWith(
-      expect.stringContaining("SET status = 'deleted'"),
-      expect.arrayContaining([object.id])
+    expect(bucketDelete).not.toHaveBeenCalled();
+    expect(mockAdapter.batch).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        expect.objectContaining({
+          sql: expect.stringContaining('INSERT INTO tenant_backup_r2_retired_generations'),
+          params: expect.arrayContaining([
+            `log-delete:${object.id}`,
+            tenantKey,
+            'AUDIT_ARCHIVE',
+            object.id,
+            object.object_key,
+            null,
+            'catalog_delete',
+          ]),
+        }),
+        expect.objectContaining({ sql: expect.stringContaining("SET status = 'deleted'") }),
+      ])
     );
     expect(mockAdapter.execute).toHaveBeenCalledWith(
       expect.stringContaining('INSERT INTO logging_delivery_events'),

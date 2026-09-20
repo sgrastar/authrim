@@ -51,6 +51,7 @@ describe('tenant runtime registry snapshot jobs', () => {
     warn: vi.fn(),
   };
   const snapshotStore = {
+    get: vi.fn(async (): Promise<string | null> => '{}'),
     put: vi.fn(async () => undefined),
   };
   const controlSigner = {
@@ -79,6 +80,7 @@ describe('tenant runtime registry snapshot jobs', () => {
       isolationPolicy: 'tenant_exclusive',
       policyGeneration: 4,
     });
+    snapshotStore.get.mockResolvedValue('{}');
   });
 
   it('uses the existing two-minute scheduled lane only', () => {
@@ -289,6 +291,7 @@ describe('tenant runtime registry snapshot jobs', () => {
       { tenant_id: 'tenant-a', role: 'tenant_core', status: 'active' },
     ]);
     mockRepository.getLatestRuntimeRegistrySnapshot.mockResolvedValue({
+      object_ref: 'tenant-runtime-registry/tenant-a.json',
       expires_at: '2026-05-20T00:00:00.000Z',
     });
 
@@ -303,6 +306,31 @@ describe('tenant runtime registry snapshot jobs', () => {
 
     expect(summary).toEqual({ scanned: 1, published: 0, skipped: 1, failed: 0 });
     expect(mockPublishTenantRuntimeRegistrySnapshot).not.toHaveBeenCalled();
+  });
+
+  it('republishes when the active database receipt points to a missing KV snapshot', async () => {
+    mockRepository.listActiveRegistryRowsForRole.mockResolvedValue([
+      { tenant_id: 'tenant-a', role: 'tenant_core', status: 'active' },
+    ]);
+    mockRepository.getLatestRuntimeRegistrySnapshot.mockResolvedValue({
+      object_ref: 'tenant-runtime-registry/tenant-a.json',
+      expires_at: '2026-05-20T00:00:00.000Z',
+    });
+    snapshotStore.get.mockResolvedValue(null);
+
+    const summary = await refreshTenantRuntimeRegistrySnapshots(
+      {
+        DB_ADMIN: 'control',
+        TENANT_RUNTIME_REGISTRY: snapshotStore,
+        CONTROL: controlSigner,
+      } as never,
+      logger,
+      { now: new Date('2026-05-16T00:00:00.000Z') }
+    );
+
+    expect(summary).toEqual({ scanned: 1, published: 1, skipped: 0, failed: 0 });
+    expect(snapshotStore.get).toHaveBeenCalledWith('tenant-runtime-registry/tenant-a.json');
+    expect(mockPublishTenantRuntimeRegistrySnapshot).toHaveBeenCalledTimes(1);
   });
 
   it('refreshes an active snapshot with less than ten minutes remaining', async () => {

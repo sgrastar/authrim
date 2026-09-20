@@ -1,3 +1,4 @@
+import { runTenantBackupCoveredMutation } from '../../tenant-backup-writer';
 /**
  * Settings History API Handlers
  *
@@ -455,100 +456,111 @@ export async function rollbackSettings(c: SettingsContext) {
     );
   }
 
-  // Get actor info from context (set by admin auth middleware)
-  const actorId = c.get('adminUser')?.id;
+  return runTenantBackupCoveredMutation({
+    env: c.env,
+    scope: 'environment',
+    run: async () => {
+      // Get actor info from context (set by admin auth middleware)
+      const actorId = c.get('adminUser')?.id;
 
-  try {
-    const historyManager = getHistoryManager(c);
+      try {
+        const historyManager = getHistoryManager(c);
 
-    // Publish rollback started event
-    publishEvent(c as unknown as BaseContext, {
-      type: SETTINGS_EVENTS.ROLLBACK_STARTED,
-      tenantId,
-      data: {
-        category,
-        targetVersion: body.targetVersion,
-        actorId,
-        changeSource: 'admin_api',
-      } satisfies SettingsEventData,
-    }).catch((err: unknown) => {
-      log.warn(
-        'Failed to publish event',
-        { event: SETTINGS_EVENTS.ROLLBACK_STARTED },
-        err as Error
-      );
-    });
+        // Publish rollback started event
+        await publishEvent(c as unknown as BaseContext, {
+          type: SETTINGS_EVENTS.ROLLBACK_STARTED,
+          tenantId,
+          data: {
+            category,
+            targetVersion: body.targetVersion,
+            actorId,
+            changeSource: 'admin_api',
+          } satisfies SettingsEventData,
+        }).catch((err: unknown) => {
+          log.warn(
+            'Failed to publish event',
+            { event: SETTINGS_EVENTS.ROLLBACK_STARTED },
+            err as Error
+          );
+        });
 
-    const result = await historyManager.rollback(
-      category,
-      {
-        targetVersion: body.targetVersion,
-        actorId,
-        actorType: 'admin',
-        changeReason: body.reason,
-      },
-      async () => getCurrentSnapshot(c, category),
-      async (snapshot) => applySnapshot(c, category, snapshot)
-    );
+        const result = await historyManager.rollback(
+          category,
+          {
+            targetVersion: body.targetVersion,
+            actorId,
+            actorType: 'admin',
+            changeReason: body.reason,
+          },
+          async () => getCurrentSnapshot(c, category),
+          async (snapshot) => applySnapshot(c, category, snapshot)
+        );
 
-    // Publish rollback completed event
-    publishEvent(c as unknown as BaseContext, {
-      type: SETTINGS_EVENTS.ROLLBACK_COMPLETED,
-      tenantId,
-      data: {
-        category,
-        currentVersion: result.currentVersion,
-        targetVersion: body.targetVersion,
-        actorId,
-        changeSource: 'admin_api',
-      } satisfies SettingsEventData,
-    }).catch((err: unknown) => {
-      log.warn(
-        'Failed to publish event',
-        { event: SETTINGS_EVENTS.ROLLBACK_COMPLETED },
-        err as Error
-      );
-    });
+        // Publish rollback completed event
+        await publishEvent(c as unknown as BaseContext, {
+          type: SETTINGS_EVENTS.ROLLBACK_COMPLETED,
+          tenantId,
+          data: {
+            category,
+            currentVersion: result.currentVersion,
+            targetVersion: body.targetVersion,
+            actorId,
+            changeSource: 'admin_api',
+          } satisfies SettingsEventData,
+        }).catch((err: unknown) => {
+          log.warn(
+            'Failed to publish event',
+            { event: SETTINGS_EVENTS.ROLLBACK_COMPLETED },
+            err as Error
+          );
+        });
 
-    log.info('Settings rolled back', {
-      category,
-      previousVersion: result.previousVersion,
-      targetVersion: body.targetVersion,
-      currentVersion: result.currentVersion,
-    });
+        log.info('Settings rolled back', {
+          category,
+          previousVersion: result.previousVersion,
+          targetVersion: body.targetVersion,
+          currentVersion: result.currentVersion,
+        });
 
-    return c.json({
-      success: true,
-      category,
-      previousVersion: result.previousVersion,
-      currentVersion: result.currentVersion,
-      restoredFromVersion: body.targetVersion,
-    });
-  } catch (error) {
-    // Publish rollback failed event
-    publishEvent(c as unknown as BaseContext, {
-      type: SETTINGS_EVENTS.ROLLBACK_FAILED,
-      tenantId,
-      data: {
-        category,
-        targetVersion: body.targetVersion,
-        actorId,
-        changeSource: 'admin_api',
-        errorMessage: error instanceof Error ? error.message : 'Unknown error',
-      } satisfies SettingsEventData,
-    }).catch((err: unknown) => {
-      log.warn('Failed to publish event', { event: SETTINGS_EVENTS.ROLLBACK_FAILED }, err as Error);
-    });
+        return c.json({
+          success: true,
+          category,
+          previousVersion: result.previousVersion,
+          currentVersion: result.currentVersion,
+          restoredFromVersion: body.targetVersion,
+        });
+      } catch (error) {
+        // Publish rollback failed event
+        await publishEvent(c as unknown as BaseContext, {
+          type: SETTINGS_EVENTS.ROLLBACK_FAILED,
+          tenantId,
+          data: {
+            category,
+            targetVersion: body.targetVersion,
+            actorId,
+            changeSource: 'admin_api',
+            errorMessage: error instanceof Error ? error.message : 'Unknown error',
+          } satisfies SettingsEventData,
+        }).catch((err: unknown) => {
+          log.warn(
+            'Failed to publish event',
+            { event: SETTINGS_EVENTS.ROLLBACK_FAILED },
+            err as Error
+          );
+        });
 
-    log.error('Rollback error', {}, error as Error);
-    return c.json(
-      {
-        error: 'server_error',
-        error_description: error instanceof Error ? error.message : 'Failed to rollback settings',
-      },
-      500
-    );
-  }
+        log.error('Rollback error', {}, error as Error);
+        return c.json(
+          {
+            error: 'server_error',
+            error_description:
+              error instanceof Error ? error.message : 'Failed to rollback settings',
+          },
+          500
+        );
+      }
+    },
+  });
 }
 
 /**

@@ -140,7 +140,7 @@ import {
   resolvePasskeyProvisioningResumeUserId,
   resolveTenantD1PasskeyAccountRoute,
   resolveTenantD1EmailAccountRoute,
-  usesTenantD1AccountStorage,
+  usesRoutedAccountStorage,
 } from './account-provisioning';
 
 // ===== Constants =====
@@ -1097,7 +1097,7 @@ export async function directPasskeyLoginFinishHandler(c: Context<{ Bindings: Env
     } catch {
       return createErrorResponse(c, AR_ERROR_CODES.AUTH_PASSKEY_FAILED);
     }
-    const accountScoped = usesTenantD1AccountStorage(c) && Boolean(accountRoute);
+    const accountScoped = Boolean(accountRoute);
     const authCtx = accountScoped
       ? createAccountAuthContextFromHono(c, tenantId)
       : createAuthContextFromHono(c, tenantId);
@@ -1400,14 +1400,14 @@ export async function directPasskeySignupStartHandler(c: Context<{ Bindings: Env
     let user: { id: string; email: string | null; name: string | null } | null = null;
     const normalizedEmail =
       typeof email === 'string' && email.trim() ? email.trim().toLowerCase() : null;
-    const tenantD1 = usesTenantD1AccountStorage(c);
+    const routedAccountStorage = usesRoutedAccountStorage(c);
     // Passkey signup is discoverable and does not use email to identify the
     // account. Email is only used when the caller supplies it as optional
     // profile data or as an existing-account lookup hint.
     const accountRoute = normalizedEmail
       ? await resolveTenantD1EmailAccountRoute(c, normalizedEmail)
       : 'not_required';
-    let runtimeUsers: CanonicalRuntimeUserStore | null = tenantD1
+    let runtimeUsers: CanonicalRuntimeUserStore | null = routedAccountStorage
       ? accountRoute === 'resolved'
         ? createCanonicalRuntimeUserStore(c, tenantId, { accountScoped: true })
         : null
@@ -1476,7 +1476,7 @@ export async function directPasskeySignupStartHandler(c: Context<{ Bindings: Env
       };
 
       try {
-        if (tenantD1) {
+        if (routedAccountStorage) {
           const provisioned = await provisionTenantD1EmailAccount(c, {
             tenantId,
             candidateUserId: newUserId,
@@ -1516,7 +1516,7 @@ export async function directPasskeySignupStartHandler(c: Context<{ Bindings: Env
     }
 
     // Get existing passkeys for exclusion
-    const accountScoped = usesTenantD1AccountStorage(c);
+    const accountScoped = routedAccountStorage;
     const authCtx = accountScoped
       ? createAccountAuthContextFromHono(c, tenantId)
       : createAuthContextFromHono(c, tenantId);
@@ -1779,10 +1779,10 @@ export async function directPasskeySignupFinishHandler(c: Context<{ Bindings: En
 
     // Store passkey
     failureStage = 'account_context_resolve';
-    if (usesTenantD1AccountStorage(c)) {
+    if (usesRoutedAccountStorage(c)) {
       await resolveAccountDataContextFromHono(c, userId);
     }
-    const accountScoped = usesTenantD1AccountStorage(c);
+    const accountScoped = usesRoutedAccountStorage(c);
     const authCtx = accountScoped
       ? createAccountAuthContextFromHono(c, tenantId)
       : createAuthContextFromHono(c, tenantId);
@@ -1952,7 +1952,7 @@ async function completeDirectEmailVerification(
 ): Promise<Response> {
   const { tenantId, userId, trustedEmail, channel, transactionId, method, metadata } = input;
   const log = getLogger(c).module('DIRECT-AUTH');
-  const tenantD1 = usesTenantD1AccountStorage(c);
+  const tenantD1 = usesRoutedAccountStorage(c);
   let runtimeUser: CanonicalOtpLoginUser | null;
   let coreAdapter: DatabaseAdapter;
 
@@ -2407,7 +2407,7 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
 
-    const tenantD1 = usesTenantD1AccountStorage(c);
+    const tenantD1 = usesRoutedAccountStorage(c);
     if (tenantD1 && tenantId !== challengeTenantId) {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
@@ -3059,7 +3059,7 @@ export async function directSessionCreateHandler(c: Context<{ Bindings: Env }>) 
     }
 
     const tenantId = getTenantIdFromContext(c);
-    const accountScoped = usesTenantD1AccountStorage(c);
+    const accountScoped = usesRoutedAccountStorage(c);
     if (accountScoped) {
       await resolveAccountDataContextFromHono(c, artifactData.userId);
     }
@@ -3497,10 +3497,10 @@ export async function directPasskeyRegisterFinishHandler(c: Context<{ Bindings: 
 
     // Store passkey
     const tenantId = getTenantIdFromContext(c);
-    if (usesTenantD1AccountStorage(c)) {
+    if (usesRoutedAccountStorage(c)) {
       await resolveAccountDataContextFromHono(c, userId);
     }
-    const accountScoped = usesTenantD1AccountStorage(c);
+    const accountScoped = usesRoutedAccountStorage(c);
     const authCtx = accountScoped
       ? createAccountAuthContextFromHono(c, tenantId)
       : createAuthContextFromHono(c, tenantId);
@@ -3589,7 +3589,7 @@ export async function directSessionHandler(c: Context<{ Bindings: Env }>) {
 
     // Get user info
     const tenantId = getTenantIdFromContext(c);
-    const accountScoped = usesTenantD1AccountStorage(c);
+    const accountScoped = usesRoutedAccountStorage(c);
     if (accountScoped) {
       await resolveAccountDataContextFromHono(c, session.userId);
     }

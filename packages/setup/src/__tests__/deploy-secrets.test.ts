@@ -67,6 +67,15 @@ describe('getSecretTargetWorkers', () => {
 });
 
 describe('SECRET_UPLOAD_PLAN', () => {
+  it('uploads the tenant backup wrapping key only to Management', () => {
+    expect(
+      Object.entries(SECRET_UPLOAD_PLAN)
+        .filter(([, secrets]) => secrets.includes('TENANT_BACKUP_WRAPPING_KEY'))
+        .map(([worker]) => worker)
+    ).toEqual(['ar-management']);
+    expect(getSecretNamesForWorker('ar-management')).toContain('TENANT_BACKUP_WRAPPING_KEY');
+  });
+
   it('keeps persistent Cloudflare tokens exclusive to the Control Worker', () => {
     expect(getSecretNamesForWorker('ar-control')).toEqual([
       'RUNTIME_REGISTRY_SIGNING_JWK_SLOT_A',

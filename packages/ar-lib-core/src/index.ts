@@ -696,5 +696,14 @@ export {
   persistAccountEmailMutation,
 } from './services/account-webhook-snapshots';
 
+export {
+  hasTenantBackupMutationCoverage,
+  runTenantBackupCoveredEffect,
+  TenantBackupMutationUnavailableError,
+  withTenantBackupMutationCoverage,
+  type TenantBackupMutationCoverage,
+} from './services/tenant-portability/covered-mutation';
+export * from './services/tenant-portability/r2-generation-retention';
+
 // Service memberships are intentionally separate from authorization and token claims.
 export * from './services/dynamic-groups';

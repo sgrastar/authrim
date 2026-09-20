@@ -196,6 +196,8 @@ describe('logging delivery queue consumer', () => {
       put: vi.fn().mockResolvedValue(undefined),
     } as unknown as R2Bucket;
     const adminDb = createAdminDbAdapter();
+    const acquire = vi.fn(async () => ({ admitted: true }));
+    const complete = vi.fn(async () => {});
     const message = createMessage({
       payload_type: 'chunk_write',
       schema_version: 1,
@@ -223,6 +225,11 @@ describe('logging delivery queue consumer', () => {
         DB_ADMIN: adminDb,
         AUDIT_ARCHIVE: bucket,
         OBJECT_ENCRYPTION_ROOT_KEY: ROOT_KEY,
+        TENANT_BACKUP_WRAPPING_KEY: 'enabled',
+        CONTROL: {
+          acquireEnvironmentBackupMutationPermit: acquire,
+          completeEnvironmentBackupMutationPermit: complete,
+        },
       }
     );
 
@@ -258,6 +265,10 @@ describe('logging delivery queue consumer', () => {
     );
     expect(message.ack).toHaveBeenCalledOnce();
     expect(message.retry).not.toHaveBeenCalled();
+    expect(acquire).toHaveBeenCalledWith({ permitId: expect.any(String) });
+    expect(complete).toHaveBeenCalledWith({
+      permitId: acquire.mock.calls[0]?.[0].permitId,
+    });
   });
 
   it('loads chunk_write records from an R2 object reference before writing chunks', async () => {
@@ -1437,12 +1448,31 @@ describe('logging delivery queue consumer', () => {
       },
     });
     const recordIndex = indexRows[0]!;
+    let retiredGeneration: Record<string, unknown> | null = null;
+    let catalogGeneration = {
+      id: chunkResult.objectCatalogId,
+      tenant_key: tenantKey,
+      log_type: 'audit',
+      plane: 'archive',
+      object_key: chunkResult.objectKey,
+      chunk_id: chunkResult.chunkId,
+      object_kind: 'chunk',
+      status: 'committed',
+      record_count: 1,
+      byte_count: storedBody!.byteLength,
+      checksum_sha256: 'old-checksum',
+      compression: chunkResult.compression,
+      encryption_scope: encryptionScope,
+      key_version: 1,
+      committed_at: 1779148800000,
+    };
     const bucket = {
       get: vi.fn().mockResolvedValue({
         arrayBuffer: vi.fn().mockResolvedValue(storedBody!.slice().buffer),
       }),
       put: vi.fn(async (_key: string, body: Uint8Array) => {
         rewrappedBody = body;
+        return {} as R2Object;
       }),
     } as unknown as R2Bucket;
     const adminDb = {
@@ -1459,31 +1489,55 @@ describe('logging delivery queue consumer', () => {
           });
         }
         if (sql.includes('FROM log_object_catalog')) {
-          return Promise.resolve({
-            id: chunkResult.objectCatalogId,
-            tenant_key: tenantKey,
-            log_type: 'audit',
-            plane: 'archive',
-            object_key: chunkResult.objectKey,
-            chunk_id: chunkResult.chunkId,
-            object_kind: 'chunk',
-            status: 'committed',
-            record_count: 1,
-            byte_count: storedBody!.byteLength,
-            checksum_sha256: 'old-checksum',
-            compression: chunkResult.compression,
-            encryption_scope: encryptionScope,
-            key_version: 1,
-          });
+          return Promise.resolve(catalogGeneration);
         }
         if (sql.includes('internal_notification_events')) {
           return Promise.resolve(null);
         }
+        if (sql.includes('FROM tenant_backup_r2_retired_generations')) {
+          return Promise.resolve(retiredGeneration);
+        }
         return Promise.resolve(null);
       }),
       execute: vi.fn().mockResolvedValue({ rowsAffected: 1 }),
-      transaction: vi.fn(),
-      batch: vi.fn().mockResolvedValue([]),
+      transaction: vi.fn(async (callback) => callback(adminDb)),
+      batch: vi
+        .fn()
+        .mockImplementation((statements: Array<{ sql: string; params?: unknown[] }>) => {
+          for (const statement of statements) {
+            const params = statement.params ?? [];
+            if (statement.sql.includes('INSERT INTO tenant_backup_r2_retired_generations')) {
+              retiredGeneration = {
+                id: params[0],
+                tenant_key: params[1],
+                bucket_binding: params[2],
+                object_catalog_id: params[3],
+                object_key: params[4],
+                replacement_object_key: params[5],
+                reason: params[6],
+                key_registry_id: params[7],
+                previous_key_version: params[8],
+                replacement_key_version: params[9],
+                record_count: params[10],
+                accounting_applied: params[11],
+                created_at: params[12],
+              };
+            } else if (statement.sql.includes('UPDATE log_object_catalog')) {
+              catalogGeneration = {
+                ...catalogGeneration,
+                object_key: String(params[0]),
+                byte_count: Number(params[1]),
+                checksum_sha256: String(params[2]),
+                encryption_scope: String(params[3]),
+                key_version: Number(params[4]),
+                committed_at: Number(retiredGeneration?.created_at),
+              };
+            } else if (statement.sql.includes('SET accounting_applied = 1')) {
+              retiredGeneration = { ...retiredGeneration!, accounting_applied: 1 };
+            }
+          }
+          return Promise.resolve(statements.map(() => ({ success: true, rowsAffected: 1 })));
+        }),
       isHealthy: vi.fn().mockResolvedValue({ healthy: true, latencyMs: 1 }),
       getType: vi.fn().mockReturnValue('mock'),
       close: vi.fn().mockResolvedValue(undefined),
@@ -1514,8 +1568,9 @@ describe('logging delivery queue consumer', () => {
     );
 
     expect(bucket.get).toHaveBeenCalledWith(chunkResult.objectKey);
+    const targetObjectKey = `logs-rewrapped/${tenantKey}/${chunkResult.objectCatalogId}/lrw_1/v2.bin`;
     expect(bucket.put).toHaveBeenCalledWith(
-      chunkResult.objectKey,
+      targetObjectKey,
       expect.any(Uint8Array),
       expect.objectContaining({
         customMetadata: expect.objectContaining({
@@ -1556,16 +1611,31 @@ describe('logging delivery queue consumer', () => {
           tenantKey,
           logType: 'audit',
           plane: 'archive',
-          objectKey: chunkResult.objectKey,
+          objectKey: targetObjectKey,
           chunkId: chunkResult.chunkId,
           expectedEncryptionScope: encryptionScope,
           expectedKeyVersion: 2,
         },
       })
     ).resolves.toEqual(payload);
-    expect(adminDb.execute).toHaveBeenCalledWith(
-      expect.stringContaining('UPDATE log_object_catalog'),
-      expect.arrayContaining([2, expect.any(Number), chunkResult.objectCatalogId, 'committed'])
+    expect(adminDb.batch).toHaveBeenCalledOnce();
+    const retentionStatements = adminDb.batch.mock.calls[0]![0];
+    expect(retentionStatements).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          sql: expect.stringContaining('INSERT INTO tenant_backup_r2_retired_generations'),
+          params: expect.arrayContaining([
+            'log-rewrap:lrw_1',
+            tenantKey,
+            'AUDIT_ARCHIVE',
+            chunkResult.objectCatalogId,
+            chunkResult.objectKey,
+            targetObjectKey,
+            'rewrap',
+          ]),
+        }),
+        expect.objectContaining({ sql: expect.stringContaining('UPDATE log_object_catalog') }),
+      ])
     );
     expect(adminDb.execute).toHaveBeenCalledWith(
       expect.stringContaining('UPDATE logging_rewrap_jobs'),
@@ -1576,14 +1646,11 @@ describe('logging delivery queue consumer', () => {
         'lrw_1',
       ])
     );
-    expect(adminDb.execute).toHaveBeenCalledWith(
-      expect.stringContaining('UPDATE logging_key_versions'),
-      expect.arrayContaining(['lkey_1', 1])
-    );
-    expect(adminDb.execute).toHaveBeenCalledWith(
-      expect.stringContaining('UPDATE logging_key_versions'),
-      expect.arrayContaining([1, 'lkey_1', 2])
-    );
+    expect(
+      retentionStatements.filter((statement) =>
+        statement.sql.includes('UPDATE logging_key_versions')
+      )
+    ).toHaveLength(2);
     expect(message.ack).toHaveBeenCalledOnce();
     expect(message.retry).not.toHaveBeenCalled();
   });

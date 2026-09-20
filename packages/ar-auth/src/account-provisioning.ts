@@ -370,11 +370,15 @@ export function usesTenantD1AccountStorage(c: Context<{ Bindings: Env }>): boole
   );
 }
 
+export function usesRoutedAccountStorage(c: Context<{ Bindings: Env }>): boolean {
+  return Boolean(getTenantMetadataContextFromHono(c)?.route) || usesTenantD1AccountStorage(c);
+}
+
 export async function resolveTenantD1EmailAccountRoute(
   c: Context<{ Bindings: Env }>,
   email: string
 ): Promise<'not_required' | 'resolved' | 'not_found'> {
-  if (!usesTenantD1AccountStorage(c)) return 'not_required';
+  if (!usesRoutedAccountStorage(c)) return 'not_required';
   return resolveEmailAccountRoute(c, email);
 }
 
@@ -382,7 +386,7 @@ export async function resolveTenantD1PasskeyAccountRoute(
   c: Context<{ Bindings: Env }>,
   input: { credentialId: string; rpId: string }
 ): Promise<AccountDataContext | null> {
-  if (!usesTenantD1AccountStorage(c)) return null;
+  if (!usesRoutedAccountStorage(c)) return null;
   return resolvePasskeyAccountRoute(c, input);
 }
 
@@ -390,7 +394,7 @@ export async function publishTenantD1PasskeyRoute(
   c: Context<{ Bindings: Env }>,
   input: PublishPasskeyRouteInput
 ): Promise<201 | 202> {
-  if (!usesTenantD1AccountStorage(c)) return 201;
+  if (!usesRoutedAccountStorage(c)) return 201;
   return publishPasskeyRoute(c, input);
 }
 

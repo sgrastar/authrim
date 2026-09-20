@@ -71,7 +71,7 @@ CREATE INDEX IF NOT EXISTS idx_schema_migrations_checksum
   ON schema_migrations(checksum);
 
 CREATE TABLE IF NOT EXISTS migration_metadata (
-  id TEXT PRIMARY KEY DEFAULT 'global',
+  id TEXT PRIMARY KEY NOT NULL DEFAULT 'global',
   current_version INTEGER NOT NULL DEFAULT 0,
   last_migration_at INTEGER,
   environment TEXT DEFAULT 'development',
