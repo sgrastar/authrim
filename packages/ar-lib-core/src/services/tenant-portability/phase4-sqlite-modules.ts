@@ -22,6 +22,7 @@ export const PHASE4_SQLITE_TABLE_GROUPS: readonly Phase4TableGroup[] = [
     tables: [
       'directory_auth_retention_policies',
       'directory_auth_tenant_policies',
+      'directory_connector_instances',
       'identity_providers',
       'saml_attribute_presets',
       'upstream_providers',
@@ -36,8 +37,13 @@ export const PHASE4_SQLITE_TABLE_GROUPS: readonly Phase4TableGroup[] = [
     family: 'admin',
     module: 'federation',
     tables: [
+      'federation_entity_statements',
       'federation_metadata_documents',
+      'federation_metadata_entity_summaries',
+      'federation_saml_runtime_entities',
       'federation_trust_anchors',
+      'federation_trust_chains',
+      'federation_trust_context_snapshots',
       'federation_trust_scope_bindings',
       'federation_trust_sources',
     ],
@@ -72,14 +78,7 @@ export const PHASE4_SQLITE_DATASET_REGISTRATIONS: readonly InstalledSqliteDatase
   );
 
 /** Derived database projections that must be regenerated after source documents are revalidated. */
-export const PHASE4_REBUILT_SQLITE_TABLES = [
-  'directory_connector_instances',
-  'federation_entity_statements',
-  'federation_metadata_entity_summaries',
-  'federation_saml_runtime_entities',
-  'federation_trust_chains',
-  'federation_trust_context_snapshots',
-] as const;
+export const PHASE4_REBUILT_SQLITE_TABLES = [] as const;
 
 /** Cumulative SQL registry used by the Phase 4 installed adapter. */
 export const PHASE4_CUMULATIVE_SQLITE_DATASET_REGISTRATIONS = [

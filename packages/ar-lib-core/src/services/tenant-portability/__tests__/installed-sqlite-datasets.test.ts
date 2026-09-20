@@ -100,6 +100,26 @@ it('returns only selected datasets while accepting a larger installed registry',
   expect(result.map(({ dataset }) => dataset.id)).toEqual(['core.roles']);
 });
 
+it('resolves a child capture even when dependency closure orders its parent first', async () => {
+  const child = selected('role_memberships', 0);
+  child.payload_json = JSON.stringify({
+    ...JSON.parse(child.payload_json),
+    capture: {
+      table: 'role_memberships',
+      columns: ['id', 'role_id'],
+      primaryKey: ['id'],
+      uniqueKeys: [],
+      parent: { schema: capture, childColumns: ['role_id'] },
+    },
+  });
+  const result = await resolveInstalledSqliteDatasets({
+    inventory: inventory([child]),
+    lease,
+    registrations: [registration('role_memberships')],
+  });
+  expect(result).toEqual([expect.objectContaining({ table: 'role_memberships' })]);
+});
+
 it('groups every authoritative shard for one logical dataset in stable resource order', async () => {
   const result = await resolveInstalledSqliteDatasets({
     inventory: inventory([

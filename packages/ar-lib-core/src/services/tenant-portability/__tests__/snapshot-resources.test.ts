@@ -131,7 +131,7 @@ it('rejects a changed physical destination and expired cleanup lease without tou
   ).rejects.toThrow('destination_changed');
   await expect(
     resources.cleanupCancellationPage(context, async (resourceId) => {
-      now += 31000;
+      now += 600001;
       return { resourceId, database: adapter };
     })
   ).rejects.toThrow('fenced');

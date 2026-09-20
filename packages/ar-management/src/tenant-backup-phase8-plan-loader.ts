@@ -53,25 +53,31 @@ export async function planPhase8InstalledSqliteResources(
     resources.some(({ resourceId }) => !/^[A-Za-z0-9_.:-]{1,128}$/.test(resourceId))
   )
     invalid();
+  const orderedResources = [...resources].sort((left, right) =>
+    left.resourceId.localeCompare(right.resourceId)
+  );
   const resourcePlans: Array<
     ReturnType<typeof planSqliteTenantDatasets> & {
       resourceId: string;
       family: Family;
       firstOrdinal: number;
     }
-  > = [];
-  for (const [firstOrdinal, resource] of [...resources]
-    .sort((left, right) => left.resourceId.localeCompare(right.resourceId))
-    .entries()) {
-    const tables = await readBackupSqliteDatabaseSchema(resource.database, resource.family, signal);
-    const plan = planSqliteTenantDatasets(resource.family, tables, allSelection);
-    resourcePlans.push({
-      ...plan,
-      resourceId: resource.resourceId,
-      family: resource.family,
-      firstOrdinal,
-    });
-  }
+  > = await Promise.all(
+    orderedResources.map(async (resource, firstOrdinal) => {
+      const tables = await readBackupSqliteDatabaseSchema(
+        resource.database,
+        resource.family,
+        signal
+      );
+      const plan = planSqliteTenantDatasets(resource.family, tables, allSelection);
+      return {
+        ...plan,
+        resourceId: resource.resourceId,
+        family: resource.family,
+        firstOrdinal,
+      };
+    })
+  );
   const planned = PHASE8_CUMULATIVE_SQLITE_DATASET_REGISTRATIONS.map(
     (registration, ordinal): PlannedInstalledSqliteDataset => {
       const family = registration.family as Family;

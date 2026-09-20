@@ -20,12 +20,14 @@ const state = vi.hoisted(() => ({
   uploadCancel: vi.fn(),
   uploadAllocate: vi.fn(),
   uploadPart: vi.fn(),
+  uploadComplete: vi.fn(),
   importCreate: vi.fn(),
   mappingStatus: vi.fn(),
   mappingSources: vi.fn(),
   mappingTargets: vi.fn(),
   mappingPut: vi.fn(),
   mappingApprove: vi.fn(),
+  platformQueryOne: vi.fn(),
 }));
 let auth: AdminAuthContext;
 vi.mock('@authrim/ar-lib-core', async (original) => ({
@@ -36,6 +38,7 @@ vi.mock('@authrim/ar-lib-core', async (original) => ({
       await next();
     },
   getTenantIdFromContext: () => 'tenant-a',
+  ensureDatabaseAdapter: () => ({ queryOne: state.platformQueryOne }),
   requireDedicatedAdminDatabaseAdapter: () => ({}),
 }));
 vi.mock('@authrim/ar-lib-core/services/tenant-portability/operation-store', () => ({
@@ -85,6 +88,9 @@ vi.mock('@authrim/ar-lib-core/services/tenant-portability/allocate-upload', () =
 }));
 vi.mock('@authrim/ar-lib-core/services/tenant-portability/upload-part', () => ({
   uploadTenantBackupPart: state.uploadPart,
+}));
+vi.mock('@authrim/ar-lib-core/services/tenant-portability/complete-upload', () => ({
+  completeTenantBackupUpload: state.uploadComplete,
 }));
 vi.mock('@authrim/ar-lib-core/services/tenant-portability/import-request', () => ({
   TenantBackupImportRequestStore: class {
@@ -169,6 +175,7 @@ beforeEach(() => {
     phase: 'prepare',
     revision: 1,
   });
+  state.platformQueryOne.mockResolvedValue({ lifecycle_state: 'provisioning' });
   const upload = {
     id: 'upload-original',
     tenant_id: 'tenant-a',
@@ -182,6 +189,7 @@ beforeEach(() => {
   state.uploadGet.mockResolvedValue(upload);
   state.uploadAllocate.mockResolvedValue(upload);
   state.uploadPart.mockResolvedValue({ partNumber: 1, etag: 'etag-1' });
+  state.uploadComplete.mockResolvedValue({ version: 'version-1', etag: 'etag-1', size: 174 });
   state.uploadPrepare.mockResolvedValue({ upload: { ...upload, state: 'completing' }, parts: [] });
   state.uploadCancel.mockResolvedValue({ ...upload, state: 'cancelling' });
   state.importCreate.mockResolvedValue({
@@ -349,7 +357,7 @@ it('fails upload allocation closed on permission, input, storage, audit and iden
   expect((await request('uploads', 'POST', valid, { IMPORT_ARTIFACTS: {} })).status).toBe(409);
 });
 
-it('uploads bounded binary parts and queues completion without accepting incomplete input', async () => {
+it('uploads bounded binary parts and verifies small uploads without accepting incomplete input', async () => {
   const env = { IMPORT_ARTIFACTS: {} };
   const part = await request(
     'uploads/upload-original/parts/1',
@@ -380,12 +388,39 @@ it('uploads bounded binary parts and queues completion without accepting incompl
   expect((await request('uploads/upload-original/parts/0', 'PUT', '{}', env)).status).toBe(400);
 
   const complete = await request('uploads/upload-original/complete', 'POST', undefined, env);
-  expect(complete.status).toBe(202);
-  expect(await complete.json()).toEqual({ id: 'upload-original', state: 'completing' });
+  expect(complete.status).toBe(200);
+  expect(await complete.json()).toEqual({ id: 'upload-original', state: 'uploaded' });
+  expect(state.uploadComplete).toHaveBeenCalledWith(
+    expect.objectContaining({
+      owner: { tenantId: 'tenant-a', actorId: 'admin', uploadId: 'upload-original' },
+    })
+  );
   state.uploadPrepare.mockRejectedValueOnce(new Error('incomplete'));
   expect((await request('uploads/upload-original/complete', 'POST', undefined, env)).status).toBe(
     409
   );
+});
+
+it('keeps large upload completion asynchronous', async () => {
+  state.uploadPrepare.mockResolvedValueOnce({
+    upload: { id: 'upload-large', state: 'completing', expected_bytes: 16 * 1024 * 1024 + 1 },
+    parts: [],
+  });
+  const response = await request('uploads/upload-large/complete', 'POST', undefined, {
+    IMPORT_ARTIFACTS: {},
+  });
+  expect(response.status).toBe(202);
+  expect(await response.json()).toEqual({ id: 'upload-large', state: 'completing' });
+  expect(state.uploadComplete).not.toHaveBeenCalled();
+});
+
+it('returns a retryable failure when synchronous upload verification is unavailable', async () => {
+  state.uploadComplete.mockRejectedValueOnce(new Error('r2 unavailable'));
+  const response = await request('uploads/upload-original/complete', 'POST', undefined, {
+    IMPORT_ARTIFACTS: {},
+  });
+  expect(response.status).toBe(503);
+  expect(await response.json()).toEqual({ error: 'backup_upload_verification_unavailable' });
 });
 
 it('queues actor-owned upload cancellation for asynchronous R2 cleanup', async () => {
@@ -410,11 +445,21 @@ it('queues actor-owned upload cancellation for asynchronous R2 cleanup', async (
   );
 });
 
-it('creates an import from verified upload handles without accepting source identity', async () => {
+it('creates an import from verified upload handles with the bundle source identity', async () => {
+  const source = {
+    tenantId: 'tenant-a',
+    issuer: 'https://source.example',
+    productVersion: '0.4.2',
+  };
   const response = await request(
     'imports',
     'POST',
-    JSON.stringify({ idempotencyKey: 'import-request', selection, uploadIds: ['upload-original'] }),
+    JSON.stringify({
+      idempotencyKey: 'import-request',
+      selection,
+      source,
+      uploadIds: ['upload-original'],
+    }),
     { TENANT_BACKUP_WRAPPING_KEY: 'ab'.repeat(32), IMPORT_ARTIFACTS: {} }
   );
   expect(response.status).toBe(201);
@@ -430,11 +475,7 @@ it('creates an import from verified upload handles without accepting source iden
       tenantId: 'tenant-a',
       actorId: 'admin',
       idempotencyKey: 'import-request',
-      source: {
-        tenantId: 'tenant-a',
-        issuer: 'https://canonical.example',
-        productVersion: '0.4.2',
-      },
+      source,
       selection,
       uploadIds: ['upload-original'],
     })
@@ -452,6 +493,11 @@ it('rejects import creation without permission, storage, key service or valid ha
   const body = JSON.stringify({
     idempotencyKey: 'import-request',
     selection,
+    source: {
+      tenantId: 'tenant-a',
+      issuer: 'https://source.example',
+      productVersion: '0.4.2',
+    },
     uploadIds: ['upload-original'],
   });
   auth.permissions = auth.permissions?.filter(
@@ -473,7 +519,16 @@ it('rejects import creation without permission, storage, key service or valid ha
       await request(
         'imports',
         'POST',
-        JSON.stringify({ idempotencyKey: 'import-request', selection, uploadIds: [] }),
+        JSON.stringify({
+          idempotencyKey: 'import-request',
+          selection,
+          source: {
+            tenantId: 'tenant-a',
+            issuer: 'https://source.example',
+            productVersion: '0.4.2',
+          },
+          uploadIds: [],
+        }),
         { TENANT_BACKUP_WRAPPING_KEY: 'ab'.repeat(32), IMPORT_ARTIFACTS: {} }
       )
     ).status
@@ -861,6 +916,28 @@ it('starts an import with import permission and import storage', async () => {
       })
     ).status
   ).toBe(503);
+});
+
+it('rejects import start before enqueueing when the restore tenant is still active', async () => {
+  state.load.mockResolvedValue({
+    kind: 'import',
+    selection,
+    source: { tenantId: 'tenant-a', issuer: 'https://canonical.example', productVersion: '0.4.2' },
+  });
+  state.platformQueryOne.mockResolvedValue({ lifecycle_state: 'active' });
+  const response = await request(
+    'operation/start',
+    'POST',
+    JSON.stringify({
+      challenges: [{ inputId: 'upload-original', challengeId: 'challenge' }],
+      revision: 0,
+    }),
+    { TENANT_BACKUP_WRAPPING_KEY: 'ab'.repeat(32), IMPORT_ARTIFACTS: {}, DB: {} }
+  );
+
+  expect(response.status).toBe(409);
+  expect(await response.json()).toEqual({ error: 'backup_restore_target_not_provisioning' });
+  expect(state.startImport).not.toHaveBeenCalled();
 });
 
 it('rejects creation and start without artifact storage before enqueueing work', async () => {

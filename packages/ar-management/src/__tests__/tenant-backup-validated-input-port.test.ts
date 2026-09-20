@@ -17,8 +17,9 @@ const mocks = vi.hoisted(() => ({
   restoreValidated: vi.fn<(...args: unknown[]) => Promise<unknown>>(),
   planned: vi.fn<(...args: unknown[]) => Promise<unknown>>(),
   plannedInputs: vi.fn<(...args: unknown[]) => Promise<unknown>>(),
-  datasetStart: vi.fn<(...args: unknown[]) => Promise<unknown>>(),
-  readNext: vi.fn<(...args: unknown[]) => Promise<unknown>>(),
+  readNext: vi.fn<(...args: unknown[]) => unknown>(),
+  readContainer: vi.fn<(...args: unknown[]) => Promise<unknown>>(),
+  containerReceipt: vi.fn<(...args: unknown[]) => Promise<unknown>>(),
 }));
 
 vi.mock('@authrim/ar-lib-core', () => ({
@@ -64,15 +65,18 @@ vi.mock('@authrim/ar-lib-core/services/tenant-portability/input-plan', () => ({
       inputs.flatMap(({ manifest }) => manifest.datasets.map(({ id }) => [id, manifest.bundleId]))
     ),
 }));
-vi.mock('@authrim/ar-lib-core/services/tenant-portability/input-receipts', () => ({
-  TenantBackupInputReceipts: class {
-    datasetStart(...args: unknown[]) {
-      return mocks.datasetStart(...args);
+vi.mock('@authrim/ar-lib-core/services/tenant-portability/input-container-v2', () => ({
+  readTenantBackupContainerV2Input: (...args: unknown[]) => mocks.readContainer(...args),
+}));
+vi.mock('@authrim/ar-lib-core/services/tenant-portability/container-dataset-reader', () => ({
+  readNextTenantBackupContainerRow: (...args: unknown[]) => mocks.readNext(...args),
+}));
+vi.mock('@authrim/ar-lib-core/services/tenant-portability/container-input-store', () => ({
+  TenantBackupContainerInputStore: class {
+    load(...args: unknown[]) {
+      return mocks.containerReceipt(...args);
     }
   },
-}));
-vi.mock('@authrim/ar-lib-core/services/tenant-portability/sqlite-input-row-source', () => ({
-  readNextSqliteInputRow: (...args: unknown[]) => mocks.readNext(...args),
 }));
 vi.mock('../tenant-backup-services', () => ({
   getTenantBackupKeyStore: (...args: unknown[]) => mocks.keyStore(...args),
@@ -153,8 +157,18 @@ describe('tenant backup validated input production port', () => {
       },
     });
     mocks.plannedInputs.mockImplementation(async () => [await mocks.planned()]);
-    mocks.datasetStart.mockResolvedValue(4);
-    mocks.readNext.mockResolvedValue({ rowJson: '{"id":["text","user-a"]}', nextCursor: '{}' });
+    mocks.containerReceipt.mockResolvedValue({
+      object_key: request.inputs[0].identity.key,
+      object_version: request.inputs[0].identity.version,
+      object_etag: request.inputs[0].identity.etag,
+      object_size: request.inputs[0].identity.size,
+    });
+    mocks.readContainer.mockResolvedValue({
+      datasets: new Map([[dataset.id, new TextEncoder().encode('{"id":["text","user-a"]}\n')]]),
+    });
+    mocks.readNext.mockImplementation((_bytes, sourceCursor) =>
+      sourceCursor === null ? { rowJson: '{"id":["text","user-a"]}', nextCursor: '{}' } : null
+    );
   });
 
   function ports(
@@ -175,7 +189,7 @@ describe('tenant backup validated input production port', () => {
     };
   }
 
-  it('loads only the sealed validated bundle and rechecks the plan for every row read', async () => {
+  it('loads only the sealed validated bundle and reuses its authenticated dataset', async () => {
     const { value, assertSources, assertUnpublishedTarget } = ports();
     const loaded = await value.loadValidatedDataset(context, {
       targetId: 'target-core',
@@ -185,6 +199,9 @@ describe('tenant backup validated input production port', () => {
       table: 'users',
       manifestDigest: 'cd'.repeat(32),
       policyDigest: 'ef'.repeat(32),
+      recordCount: 1,
+      byteCount: 25,
+      reconcilesGeneratedRows: false,
     });
     expect(loaded.policy).toEqual(policy);
     expect(loaded.manifest.bundleId).toBe(bundleId);
@@ -195,17 +212,10 @@ describe('tenant backup validated input production port', () => {
         planDigest: digest,
       })
     ).resolves.toEqual({ rowJson: '{"id":["text","user-a"]}', nextCursor: '{}' });
-    const readInput = mocks.readNext.mock.calls[0]?.[0] as {
-      firstSequence: number;
-      assertValidatedPlan: (digest: string, bundleId: string, datasetId: string) => Promise<void>;
-    };
-    expect(readInput.firstSequence).toBe(4);
-    await readInput.assertValidatedPlan(digest, bundleId, dataset.id);
-    expect(mocks.restoreHead).toHaveBeenCalled();
+    expect(mocks.readContainer).toHaveBeenCalledTimes(1);
     expect(mocks.executionValidated).toHaveBeenCalled();
     expect(assertSources).toHaveBeenCalled();
-    expect(assertUnpublishedTarget).toHaveBeenCalledTimes(2);
-    expect(assertUnpublishedTarget).toHaveBeenCalledWith(context, digest);
+    expect(assertUnpublishedTarget).not.toHaveBeenCalled();
   });
 
   it('rejects a changed restore plan or input key before returning data', async () => {
@@ -225,6 +235,9 @@ describe('tenant backup validated input production port', () => {
         table: 'users',
         manifestDigest: 'cd'.repeat(32),
         policyDigest: 'ef'.repeat(32),
+        recordCount: 1,
+        byteCount: 25,
+        reconcilesGeneratedRows: false,
       })
     ).rejects.toThrow('backup_validated_input_invalid');
   });
@@ -239,6 +252,9 @@ describe('tenant backup validated input production port', () => {
       table: 'users',
       manifestDigest: 'cd'.repeat(32),
       policyDigest: 'ef'.repeat(32),
+      recordCount: 1,
+      byteCount: 25,
+      reconcilesGeneratedRows: false,
     };
     mocks.executionPage.mockResolvedValueOnce([]);
     await expect(value.loadValidatedDataset(context, job)).rejects.toThrow(
@@ -268,7 +284,19 @@ describe('tenant backup validated input production port', () => {
   });
 
   it('loads installed policies for every validated SQL dataset used by restore planning', async () => {
-    const { value } = ports();
+    const loadPolicy = vi.fn(async () => {
+      throw new Error('individual policy loading must not be used');
+    });
+    const loadPolicies = vi.fn(async () => [policy as never]);
+    const value = createTenantBackupValidatedInputPorts({
+      env,
+      datasets: () => [dataset],
+      loadPolicies,
+      loadPolicy,
+      assertSources: vi.fn(async () => {}),
+      assertUnpublishedTarget: vi.fn(async () => {}),
+      now: () => 100,
+    });
     const loaded = await value.loadValidatedSqliteDatasets(context);
     expect(loaded).toHaveLength(1);
     expect(loaded[0]?.manifest.bundleId).toBe(bundleId);
@@ -279,6 +307,33 @@ describe('tenant backup validated input production port', () => {
       expect.anything(),
       expect.objectContaining({ source: request.intent.source })
     );
+    expect(loadPolicies).toHaveBeenCalledOnce();
+    expect(loadPolicy).not.toHaveBeenCalled();
+  });
+
+  it('keeps the validated source issuer when restoring into a different environment', async () => {
+    mocks.issuer.mockResolvedValue('https://destination.example.test');
+    const { value } = ports();
+
+    await expect(value.loadValidatedSqliteDatasets(context)).resolves.toHaveLength(1);
+    expect(mocks.plannedInputs).toHaveBeenCalledWith(
+      context,
+      expect.anything(),
+      expect.objectContaining({ source: request.intent.source })
+    );
+    expect(mocks.issuer).not.toHaveBeenCalled();
+  });
+
+  it('reloads pinned input state after the scheduler renews the operation lease', async () => {
+    const { value } = ports();
+    const renewedContext = {
+      ...context,
+      lease: { ...context.lease, owner: 'worker-b', fencingToken: 3 },
+    } as TenantBackupStepContext;
+
+    await expect(value.loadValidatedSqliteDatasets(context)).resolves.toHaveLength(1);
+    await expect(value.loadValidatedSqliteDatasets(renewedContext)).resolves.toHaveLength(1);
+    expect(mocks.request).toHaveBeenCalledWith(renewedContext, expect.any(Function));
   });
 
   it('loads a validated non-SQL sidecar source by installed dataset identity', async () => {
@@ -291,9 +346,34 @@ describe('tenant backup validated input production port', () => {
       rowJson: '{"id":["text","user-a"]}',
       nextCursor: '{}',
     });
-    expect(mocks.datasetStart).toHaveBeenCalledWith(bundleId, dataset.id, expect.anything());
-    expect(mocks.readNext).toHaveBeenCalledWith(
-      expect.objectContaining({ datasetId: dataset.id, planDigest: digest })
-    );
+    expect(mocks.readContainer).toHaveBeenCalledTimes(1);
+    expect(mocks.readNext).toHaveBeenCalledWith(expect.any(Uint8Array), null);
+  });
+
+  it('reuses the sealed plan, input inventory, and installed policies within one lease', async () => {
+    const loadPolicy = vi.fn(async () => {
+      throw new Error('individual policy loading must not be used');
+    });
+    const loadPolicies = vi.fn(async () => [policy as never]);
+    const assertUnpublishedTarget = vi.fn(async () => {});
+    const value = createTenantBackupValidatedInputPorts({
+      env,
+      datasets: () => [dataset],
+      loadPolicies,
+      loadPolicy,
+      assertSources: vi.fn(async () => {}),
+      assertUnpublishedTarget,
+      now: () => 100,
+    });
+
+    await value.loadValidatedDatasetById(context, digest, dataset.id);
+    await value.loadValidatedDatasetById(context, digest, dataset.id);
+
+    expect(mocks.restoreHead).toHaveBeenCalledTimes(1);
+    expect(assertUnpublishedTarget).toHaveBeenCalledTimes(2);
+    expect(mocks.plannedInputs).toHaveBeenCalledTimes(1);
+    expect(loadPolicies).toHaveBeenCalledTimes(1);
+    expect(loadPolicy).not.toHaveBeenCalled();
+    expect(mocks.readContainer).toHaveBeenCalledTimes(1);
   });
 });

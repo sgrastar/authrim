@@ -32172,6 +32172,7 @@ paths:
                                   'publication',
                                   'adminMapping',
                                   'heldRecords',
+                                  'progress',
                                   'preview',
                                 ],
                               'properties':
@@ -32240,24 +32241,48 @@ paths:
                                               'pattern': '^[a-f0-9]{64}$',
                                             },
                                         },
-                                  'heldRecords':
-                                    {
-                                      'type': 'array',
-                                      'description': 'Source asynchronous work quarantined during restore. These records are retained encrypted and are not visible to normal consumers.',
-                                      'maxItems': 100,
-                                      'items':
+                                      'heldRecords':
                                         {
-                                          'type': 'object',
-                                          'additionalProperties': false,
-                                          'required': ['datasetId', 'reason', 'count'],
-                                          'properties':
+                                          'type': 'array',
+                                          'description': 'Source asynchronous work quarantined during restore. These records are retained encrypted and are not visible to normal consumers.',
+                                          'maxItems': 100,
+                                          'items':
                                             {
-                                              'datasetId': { 'type': 'string' },
-                                              'reason': { 'type': 'string' },
-                                              'count': { 'type': 'integer', 'minimum': 1 },
+                                              'type': 'object',
+                                              'additionalProperties': false,
+                                              'required': ['datasetId', 'reason', 'count'],
+                                              'properties':
+                                                {
+                                                  'datasetId': { 'type': 'string' },
+                                                  'reason': { 'type': 'string' },
+                                                  'count': { 'type': 'integer', 'minimum': 1 },
+                                                },
                                             },
                                         },
                                     },
+                                  'progress':
+                                    {
+                                      'type': 'object',
+                                      'nullable': true,
+                                      'additionalProperties': false,
+                                      'required':
+                                        [
+                                          'registered',
+                                          'materialized',
+                                          'nonEmpty',
+                                          'executionBatches',
+                                          'bytes',
+                                          'rows',
+                                        ],
+                                      'properties':
+                                        {
+                                          'registered': { 'type': 'integer', 'minimum': 0 },
+                                          'materialized': { 'type': 'integer', 'minimum': 0 },
+                                          'nonEmpty': { 'type': 'integer', 'minimum': 0 },
+                                          'executionBatches': { 'type': 'integer', 'minimum': 0 },
+                                          'bytes': { 'type': 'integer', 'minimum': 0 },
+                                          'rows': { 'type': 'integer', 'minimum': 0 },
+                                        },
                                     },
                                   'preview':
                                     {
@@ -32408,8 +32433,7 @@ paths:
                         items:
                           type: object
                           additionalProperties: false
-                          required:
-                            [sourceAdminId, targetAdminId, targetEmail, targetName]
+                          required: [sourceAdminId, targetAdminId, targetEmail, targetName]
                           properties:
                             sourceAdminId: { type: string }
                             targetAdminId: { type: string, nullable: true }
@@ -33101,16 +33125,27 @@ paths:
   /api/admin/tenant-backups/uploads/{uploadId}/complete:
     post:
       tags: [Tenant Backups]
-      summary: Queue encrypted tenant backup upload completion
-      description: Seals the complete ordered part list after validating its declared byte count. Full-object SHA-256 verification continues asynchronously and makes the upload eligible for a later import request.
+      summary: Complete and verify an encrypted tenant backup upload
+      description: Seals the complete ordered part list after validating its declared byte count. Uploads of 16 MiB or less are completed and SHA-256 verified in the request; larger uploads continue asynchronously.
       parameters:
         - in: path
           name: uploadId
           required: true
           schema: { type: string }
       responses:
+        '200':
+          description: A small upload was completed and SHA-256 verified.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [id, state]
+                properties:
+                  id: { type: string }
+                  state: { type: string, const: uploaded }
         '202':
-          description: Multipart completion and full-object verification are queued.
+          description: Multipart completion and full-object verification for a large upload are queued.
           content:
             application/json:
               schema:
@@ -33122,7 +33157,7 @@ paths:
                   state: { type: string, const: completing }
         '403': { description: Missing permission or fresh administrator authentication }
         '409': { description: The upload is incomplete, expired, or in a conflicting state }
-        '503': { description: Import storage or audit persistence is unavailable }
+        '503': { description: Import storage, audit persistence, or synchronous verification is unavailable }
   /api/admin/tenant-backups/uploads/{uploadId}/cancel:
     post:
       tags: [Tenant Backups]
@@ -33153,7 +33188,7 @@ paths:
     post:
       tags: [Tenant Backups]
       summary: Create a tenant import request from verified uploads
-      description: Requires backup read, manage, and import permissions plus fresh human administrator authentication. The server fixes the target tenant, canonical issuer, and product version. One to 32 completed uploads are atomically pinned by R2 key, version, ETag, size, and SHA-256 digest. The operation waits for the administrator to submit the bundle content key before validation or staging begins.
+      description: Requires backup read, manage, and import permissions plus fresh human administrator authentication. The client reads the source identity from the locally decrypted manifest; the server fixes the target tenant and product version, then requires the authenticated uploaded manifest to match that source identity. One to 32 completed uploads are atomically pinned by R2 key, version, ETag, size, and SHA-256 digest. The operation waits for the administrator to submit the bundle content key before validation or staging begins.
       requestBody:
         required: true
         content:
@@ -33161,7 +33196,7 @@ paths:
             schema:
               type: object
               additionalProperties: false
-              required: [idempotencyKey, selection, uploadIds]
+              required: [idempotencyKey, selection, source, uploadIds]
               properties:
                 idempotencyKey:
                   type: string
@@ -33187,6 +33222,21 @@ paths:
                           oneOf:
                             - { type: integer, enum: [7, 30, 90] }
                             - { type: string, const: all }
+                source:
+                  type: object
+                  additionalProperties: false
+                  required: [tenantId, issuer, productVersion]
+                  properties:
+                    tenantId:
+                      type: string
+                      pattern: '^[A-Za-z0-9_.:-]{1,256}$'
+                    issuer:
+                      type: string
+                      format: uri
+                      maxLength: 2048
+                    productVersion:
+                      type: string
+                      pattern: '^\d+\.\d+\.\d+(?:-[A-Za-z0-9.-]+)?(?:\+[A-Za-z0-9.-]+)?$'
                 uploadIds:
                   type: array
                   minItems: 1
@@ -33428,7 +33478,7 @@ paths:
       'post':
         {
           'summary': 'Queue a backup or restore after accepting its content keys',
-          'description': 'Requires admin:backups:read, admin:backups:manage, the operation-specific admin:backups:export or admin:backups:import permission, and a human Admin session with MFA authenticated within five minutes. Sensitive selections also require admin:backups:sensitive. Export operations supply one challengeId. Import operations supply one inputId/challengeId pair for every pinned input in request order. Every challenge must be accepted, unexpired, and bound to that input. The canonical issuer and running product version must still match the fixed request. Queues preparation atomically; does not indicate artifact completion. Repeated or stale starts return 409.',
+          'description': 'Requires admin:backups:read, admin:backups:manage, the operation-specific admin:backups:export or admin:backups:import permission, and a human Admin session with MFA authenticated within five minutes. Sensitive selections also require admin:backups:sensitive. Export operations supply one challengeId. Import operations supply one inputId/challengeId pair for every pinned input in request order. Every challenge must be accepted, unexpired, and bound to that input. Import starts also require the destination tenant to be in the unpublished provisioning lifecycle state. The canonical issuer and running product version must still match the fixed request. Queues preparation atomically; does not indicate artifact completion. Repeated, stale, or active-destination starts return 409.',
           'parameters':
             [
               {

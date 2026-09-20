@@ -24,6 +24,14 @@ export interface SqliteDatasetInspectionPolicy {
   verificationIgnoredColumns?: readonly string[];
   /** Validate and inventory the source rows, but do not materialize them in the restore target. */
   restoreDisposition?: 'reference_only';
+  /** Preserve target-owned rows while still verifying every restored source row exactly. */
+  restoreAllowsAdditionalRows?: boolean;
+  /** Replace only rows proven to be part of the target's pinned fresh-install seed. */
+  restoreReplacesInstalledSeedRows?: boolean;
+  /** Replace target-generated restore side effects with the exact validated source row set. */
+  restoreReconcilesGeneratedRows?: boolean;
+  /** Keep these target-owned columns when replacing a pinned fresh-install seed row. */
+  restorePreservedSeedColumns?: readonly string[];
   /** Installed, versioned row rewrite applied after validation and before every target operation. */
   restoreTransform?: {
     id: string;
@@ -48,6 +56,14 @@ export interface SqliteDatasetInspectionPolicy {
   restoreTenantKey?: string;
   /** Exact row-partition values assigned to this logical dataset. */
   partitions?: readonly string[];
+  /** Installed alternate identities accepted by runtime references, such as a unique screen key. */
+  identityAliases?: {
+    id: string;
+    aliases(
+      row: PortableSqliteRow,
+      identity: TenantPortableRecordIdentity
+    ): readonly TenantPortableRecordIdentity[];
+  };
   /** Business fields, secrets and non-ownership references require module-specific validation. */
   inspectRow: (
     row: PortableSqliteRow,
@@ -59,10 +75,18 @@ export interface SqliteDatasetInspectionPolicy {
 export function cloneSqliteDatasetInspectionPolicy(
   policy: SqliteDatasetInspectionPolicy
 ): SqliteDatasetInspectionPolicy {
-  const { inspectRow, restoreTransform, restoreHold, ...serializable } = policy;
+  const { inspectRow, identityAliases, restoreTransform, restoreHold, ...serializable } = policy;
   return {
     ...structuredClone(serializable),
     inspectRow,
+    ...(identityAliases
+      ? {
+          identityAliases: {
+            id: identityAliases.id,
+            aliases: (row, identity) => identityAliases.aliases(row, identity),
+          },
+        }
+      : {}),
     ...(restoreTransform
       ? {
           restoreTransform: {
@@ -102,8 +126,13 @@ export function sqliteDatasetInspectionPolicyDescriptor(policy: SqliteDatasetIns
     restoreIdentityOverrides: policy.restoreIdentityOverrides,
     verificationIgnoredColumns: policy.verificationIgnoredColumns,
     restoreDisposition: policy.restoreDisposition,
+    restoreAllowsAdditionalRows: policy.restoreAllowsAdditionalRows,
+    restoreReplacesInstalledSeedRows: policy.restoreReplacesInstalledSeedRows,
+    restoreReconcilesGeneratedRows: policy.restoreReconcilesGeneratedRows,
+    restorePreservedSeedColumns: policy.restorePreservedSeedColumns,
     restoreTransformId: policy.restoreTransform?.id,
     restoreHoldId: policy.restoreHold?.id,
+    identityAliasesId: policy.identityAliases?.id,
     restoreTenantKey: policy.restoreTenantKey,
   };
 }
@@ -131,7 +160,7 @@ function key(row: PortableSqliteRow, columns: readonly string[]): string {
 export function createSqliteDatasetInspectorFactory(
   policy: SqliteDatasetInspectionPolicy
 ): TenantBundleInspectorFactory {
-  const { inspectRow } = policy;
+  const { inspectRow, identityAliases } = policy;
   const pinned = structuredClone(sqliteDatasetInspectionPolicyDescriptor(policy));
   return async (dataset, manifest) => {
     if (
@@ -152,14 +181,29 @@ export function createSqliteDatasetInspectorFactory(
         !/^[a-z0-9][a-z0-9_.:-]{0,127}$/.test(pinned.restoreTransformId)) ||
       (pinned.restoreHoldId !== undefined &&
         !/^[a-z0-9][a-z0-9_.:-]{0,127}$/.test(pinned.restoreHoldId)) ||
+      (pinned.identityAliasesId !== undefined &&
+        !/^[a-z0-9][a-z0-9_.:-]{0,127}$/.test(pinned.identityAliasesId)) ||
       (pinned.restoreDisposition === 'reference_only' &&
         (pinned.deferredColumns !== undefined ||
           pinned.restoreOverrides !== undefined ||
           pinned.restoreIdentityOverrides !== undefined ||
           pinned.verificationIgnoredColumns !== undefined ||
+          pinned.restoreReplacesInstalledSeedRows !== undefined ||
+          pinned.restoreReconcilesGeneratedRows !== undefined ||
+          pinned.restorePreservedSeedColumns !== undefined ||
           pinned.restoreTransformId !== undefined ||
           pinned.restoreHoldId !== undefined)) ||
       (pinned.restoreHoldId !== undefined && pinned.deferredColumns !== undefined)
+    )
+      invalid();
+    if (
+      (pinned.restoreAllowsAdditionalRows !== undefined &&
+        pinned.restoreAllowsAdditionalRows !== true) ||
+      (pinned.restoreReplacesInstalledSeedRows !== undefined &&
+        pinned.restoreReplacesInstalledSeedRows !== true) ||
+      (pinned.restoreReconcilesGeneratedRows !== undefined &&
+        pinned.restoreReconcilesGeneratedRows !== true) ||
+      (pinned.restoreReconcilesGeneratedRows === true && pinned.restoreHoldId === undefined)
     )
       invalid();
     if (
@@ -228,7 +272,24 @@ export function createSqliteDatasetInspectorFactory(
             !schema.columns.includes(column) ||
             schema.primaryKey.includes(column) ||
             (!Object.hasOwn(pinned.restoreOverrides ?? {}, column) &&
-              pinned.restoreTransformId === undefined)
+              pinned.restoreTransformId === undefined &&
+              !pinned.restorePreservedSeedColumns?.includes(column))
+        ))
+    )
+      invalid();
+    if (
+      pinned.restorePreservedSeedColumns !== undefined &&
+      (pinned.restoreReplacesInstalledSeedRows !== true ||
+        !pinned.restorePreservedSeedColumns.length ||
+        new Set(pinned.restorePreservedSeedColumns).size !==
+          pinned.restorePreservedSeedColumns.length ||
+        pinned.restorePreservedSeedColumns.some(
+          (column) =>
+            !schema.columns.includes(column) ||
+            schema.primaryKey.includes(column) ||
+            !pinned.verificationIgnoredColumns?.includes(column) ||
+            Object.hasOwn(pinned.restoreOverrides ?? {}, column) ||
+            pinned.deferredColumns?.includes(column)
         ))
     )
       invalid();
@@ -322,6 +383,22 @@ export function createSqliteDatasetInspectorFactory(
             if (!boundedDependencies(dependencies)) invalid();
             references.push(...dependencies);
             records.push(identity);
+            if (identityAliases) {
+              const aliases = identityAliases.aliases(row, identity);
+              if (aliases.length > MAX_ITEMS) invalid();
+              for (const alias of aliases) {
+                if (
+                  alias.module !== identity.module ||
+                  alias.collection !== identity.collection ||
+                  alias.tenantId !== identity.tenantId ||
+                  typeof alias.id !== 'string' ||
+                  !alias.id.length ||
+                  alias.id.length > 4096
+                )
+                  invalid();
+                records.push(alias);
+              }
+            }
             if (records.length > MAX_ITEMS || references.length > MAX_ITEMS) invalid();
           }
           nextOrdinal++;

@@ -17,11 +17,9 @@ export const PHASE8_RESTORE_HOLD_RULES: Readonly<Record<string, HoldRule>> = {
     column: 'status',
     holdValues: ['preparing', 'reserved', 'writing', 'directory_pending', 'blocked'],
   },
-  'core.account_lifecycle_event_outbox': {
-    reason: 'source_outbox',
-    column: 'status',
-    holdValues: ['pending', 'leased', 'retry', 'dead_letter'],
-  },
+  // The insert trigger only permits the initial pending state. Terminal source events remain
+  // encrypted evidence instead of being replayed or rewritten into a live target outbox.
+  'core.account_lifecycle_event_outbox': { reason: 'source_outbox', all: true },
   'core.account_webhook_outbox': {
     reason: 'source_outbox',
     column: 'delivered_at',

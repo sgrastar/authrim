@@ -3,8 +3,10 @@ import type { TenantBackupLease } from './operation-store';
 import type { TenantBundleManifest, TenantBundleManifestExpectation } from './bundle-manifest';
 import type { TenantBundleKeyEnvelope } from './bundle-key-envelope';
 import { encodeTenantBundle, type TenantBundleDatasetSource } from './bundle-codec';
+import type { EncodedTenantBackupContainerV2 } from './backup-container-v2';
 
-const PART_BYTES = 4 * 1024 * 1024;
+const PART_BYTES = 16 * 1024 * 1024;
+const LEGACY_PART_BYTES = 4 * 1024 * 1024;
 type Database = Pick<DatabaseAdapter, 'queryOne' | 'execute'>;
 interface ObjectReceipt {
   size: number;
@@ -284,7 +286,7 @@ export async function writeTenantBackupArtifact(
   expected: TenantBundleManifestExpectation,
   signal: AbortSignal
 ): Promise<{ attemptId: string; parts: number; bytes: number }> {
-  let buffer = new Uint8Array(PART_BYTES),
+  let buffer = new Uint8Array(LEGACY_PART_BYTES),
     filled = 0,
     parts = 0,
     bytes = 0;
@@ -292,14 +294,14 @@ export async function writeTenantBackupArtifact(
     signal.throwIfAborted();
     let offset = 0;
     while (offset < chunk.length) {
-      const size = Math.min(PART_BYTES - filled, chunk.length - offset);
+      const size = Math.min(LEGACY_PART_BYTES - filled, chunk.length - offset);
       buffer.set(chunk.subarray(offset, offset + size), filled);
       filled += size;
       offset += size;
-      if (filled === PART_BYTES) {
+      if (filled === LEGACY_PART_BYTES) {
         await writer.writePart(parts++, buffer);
         bytes += filled;
-        buffer = new Uint8Array(PART_BYTES);
+        buffer = new Uint8Array(LEGACY_PART_BYTES);
         filled = 0;
       }
     }
@@ -312,4 +314,22 @@ export async function writeTenantBackupArtifact(
   signal.throwIfAborted();
   await writer.seal(parts, bytes);
   return { attemptId: writer.attemptId, parts, bytes };
+}
+
+/** Persist one normal v2 container object, or capacity parts for a large backup. */
+export async function writeTenantBackupContainerArtifactV2(
+  writer: TenantBackupArtifactWriter,
+  container: EncodedTenantBackupContainerV2,
+  signal: AbortSignal
+): Promise<{ attemptId: string; parts: number; bytes: number }> {
+  if (!container.parts.length) fail();
+  let bytes = 0;
+  for (const [ordinal, part] of container.parts.entries()) {
+    signal.throwIfAborted();
+    await writer.writePart(ordinal, part);
+    bytes += part.length;
+  }
+  signal.throwIfAborted();
+  await writer.seal(container.parts.length, bytes);
+  return { attemptId: writer.attemptId, parts: container.parts.length, bytes };
 }

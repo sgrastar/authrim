@@ -1,6 +1,6 @@
 import type { DatabaseAdapter } from '../../db/adapter';
 import { TenantBackupOperationStore } from './operation-store';
-import { executeTenantBackupSlice, type TenantBackupOperationHandlers } from './operation-executor';
+import { executeTenantBackupBatch, type TenantBackupOperationHandlers } from './operation-executor';
 
 /** One bounded scheduling tick. The database lease arbitrates overlapping invocations. */
 export async function runTenantBackupScheduler(
@@ -8,14 +8,21 @@ export async function runTenantBackupScheduler(
   handlers: TenantBackupOperationHandlers,
   signal: AbortSignal,
   now: () => number = Date.now,
-  kinds: readonly ('export' | 'import')[] = ['export', 'import']
-): Promise<{ inspected: number; advanced: number; failures: number }> {
+  kinds: readonly ('export' | 'import')[] = ['export', 'import'],
+  maxTransitionsPerOperation = 1
+): Promise<{ inspected: number; advanced: number; failures: number; failureCodes: string[] }> {
   signal.throwIfAborted();
   const timestamp = now();
   if (!Number.isSafeInteger(timestamp) || timestamp < 0)
     throw new Error('invalid_backup_scheduler_clock');
   if (!kinds.length || kinds.length > 2 || new Set(kinds).size !== kinds.length)
     throw new Error('invalid_backup_scheduler_kinds');
+  if (
+    !Number.isSafeInteger(maxTransitionsPerOperation) ||
+    maxTransitionsPerOperation < 1 ||
+    maxTransitionsPerOperation > 32
+  )
+    throw new Error('invalid_backup_scheduler_transition_limit');
   const kindPredicate =
     kinds.length === 2 ? '' : kinds[0] === 'export' ? "AND kind='export'" : "AND kind='import'";
   // Oldest updated first prevents a repeatedly yielding operation from monopolizing every tick.
@@ -31,20 +38,28 @@ export async function runTenantBackupScheduler(
   const store = new TenantBackupOperationStore(database);
   let advanced = 0,
     failures = 0;
+  const failureCodes = new Set<string>();
   for (const item of due) {
-    signal.throwIfAborted();
     const workerId = crypto.randomUUID();
+    signal.throwIfAborted();
     try {
-      const result = await executeTenantBackupSlice(
+      const result = await executeTenantBackupBatch(
         store,
         { tenantId: item.tenant_id, operationId: item.id, workerId, signal },
         handlers,
-        now
+        now,
+        maxTransitionsPerOperation
       );
-      if (result.outcome === 'yielded') advanced++;
-    } catch {
+      advanced += result.transitions;
+    } catch (error) {
       signal.throwIfAborted();
       const current = await store.get(item.tenant_id, item.id);
+      const cause = error instanceof Error ? error.cause : undefined;
+      const errorCode =
+        cause instanceof Error && /^[a-z0-9_:-]{1,128}$/.test(cause.message)
+          ? cause.message
+          : 'backup_operation_slice_failed';
+      failureCodes.add(errorCode);
       // Do not reschedule a new owner after cancellation, lease takeover, or a stale response.
       if (current?.lease_owner === workerId) {
         await store.retryFailure(
@@ -61,5 +76,5 @@ export async function runTenantBackupScheduler(
       failures++;
     }
   }
-  return { inspected: due.length, advanced, failures };
+  return { inspected: due.length, advanced, failures, failureCodes: [...failureCodes].sort() };
 }

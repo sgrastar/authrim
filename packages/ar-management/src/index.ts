@@ -3982,6 +3982,18 @@ app.post('/api/admin/test/sessions', adminTestSessionCreateHandler); // Create s
 app.post('/api/admin/test/email-codes', adminTestEmailCodeHandler); // Generate OTP code without email
 app.get('/api/admin/test/signing-key', adminSigningKeyGetHandler); // Get signing key with private key
 app.post('/api/admin/test/tokens', adminTokenRegisterHandler); // Register pre-generated tokens
+app.post('/api/admin/test/run-scheduled', async (c) => {
+  await handleScheduled(
+    {
+      cron: '* * * * *',
+      scheduledTime: Date.now(),
+      type: 'scheduled',
+      noRetry() {},
+    } as ScheduledEvent,
+    c.env
+  );
+  return c.json({ ok: true });
+});
 
 // =====================================================
 // Internal API - Version Management
@@ -4180,6 +4192,8 @@ async function deleteExpiredTenantRows(
  * [triggers]
  * crons = ["0 * * * *"]  # Hourly
  */
+const TENANT_BACKUP_SCHEDULED_TRANSITION_LIMIT = 8;
+
 async function handleScheduled(event: ScheduledEvent, env: Env): Promise<void> {
   const log = createLogger().module('SCHEDULED');
   try {
@@ -4196,7 +4210,8 @@ async function handleScheduled(event: ScheduledEvent, env: Env): Promise<void> {
         (context) => createProductionTenantBackupExportAdapter(env, context),
         new AbortController().signal,
         Date.now,
-        ['export', 'import']
+        ['export', 'import'],
+        TENANT_BACKUP_SCHEDULED_TRANSITION_LIMIT
       );
       if (operations.inspected > 0)
         log.info('Tenant backup operation scheduler completed', operations);
@@ -4730,7 +4745,11 @@ export default {
     const effectiveEnv = executionContext
       ? attachInternalAccountDirectoryBinding(env, executionContext)
       : env;
-    if (['GET', 'HEAD', 'OPTIONS'].includes(request.method)) {
+    const pathname = new URL(request.url).pathname;
+    if (
+      ['GET', 'HEAD', 'OPTIONS'].includes(request.method) ||
+      (pathname === '/api/admin/test/run-scheduled' && env.ENABLE_TEST_ENDPOINTS === 'true')
+    ) {
       return app.fetch(request, effectiveEnv, executionContext);
     }
     return runTenantBackupCoveredMutation({

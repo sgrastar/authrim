@@ -68,6 +68,20 @@ it('retains duplicate seed multiplicity and hashes several pages', async () => {
   insert.run();
   expect(await fingerprint()).not.toBe(baseline);
 });
+it('uses trusted literal PRAGMA arguments and batches D1 reads', async () => {
+  const database = adapter();
+  const query = database.query;
+  let calls = 0;
+  database.query = async <T>(sql: string, params?: unknown[]) => {
+    calls++;
+    if (/pragma_[a-z_]+\(\?\)/i.test(sql)) throw new Error('D1_ERROR: not authorized: SQLITE_AUTH');
+    return query<T>(sql, params);
+  };
+  await expect(readSqliteRestoreSeedFingerprint(database, async () => {})).resolves.toMatch(
+    /^[0-9a-f]{64}$/
+  );
+  expect(calls).toBeLessThan(10);
+});
 it('stops on admission loss and detects schema changes during inspection', async () => {
   let checks = 0;
   await expect(

@@ -92,7 +92,7 @@ const target = {
   targetId: resource.targetId,
   resourceId: resource.resourceId,
   provisioningId: resource.provisioningId,
-  datasets: [{ manifest, policy }],
+  datasets: [{ manifest, policy, recordCount: 1, byteCount: 1 }],
   initialize: vi.fn(async () => resource),
   assertProvisioningOwnership: vi.fn(async () => {}),
 };
@@ -115,47 +115,30 @@ beforeEach(() => {
   mocks.persistSequence.mockResolvedValue(undefined);
 });
 
-it('pins one initialized target per slice and detects changed product plans on retry', async () => {
+it('pins initialized targets and the sequence in one slice', async () => {
   mocks.persistTarget.mockImplementationOnce(async (raw) => {
     const request = raw as { assertProvisioningOwnership(): Promise<void> };
     await request.assertProvisioningOwnership();
   });
   const first = await run();
-  expect(first.phase).toBe('prepare_restore_plan');
-  const cursor = JSON.parse(first.cursor ?? 'null');
-  expect(cursor).toMatchObject({ targetIndex: 1, inputSetDigest: inputDigest });
-  expect(cursor.planSetDigest).toMatch(/^[a-f0-9]{64}$/);
+  expect(first.phase).toBe('start_sqlite_restore_sequence');
   expect(mocks.persistTarget).toHaveBeenCalledWith(
     expect.objectContaining({ ordinal: 0, resource })
   );
-  expect(assertInputs.mock.calls.length).toBeGreaterThanOrEqual(3);
-
-  await expect(
-    run({ ...context, operation: { ...context.operation, cursor_json: first.cursor } }, [
-      { ...target, resourceId: 'changed-target' },
-    ])
-  ).rejects.toThrow('step_invalid');
-});
-
-it('persists the ordered dataset sequence, then seals before starting writes', async () => {
-  const first = await run();
-  const sequence = await run({
-    ...context,
-    operation: { ...context.operation, cursor_json: first.cursor },
-  });
   expect(mocks.persistSequence).toHaveBeenCalledWith(inventory, 1, [
     expect.objectContaining({ targetId: 'core', ordinal: 0, manifest, policy }),
   ]);
-  expect(JSON.parse(sequence.cursor ?? 'null').targetIndex).toBe(2);
-  vi.mocked(inventory.headForLease).mockResolvedValueOnce({
+  expect(inventory.seal).toHaveBeenCalled();
+  expect(assertInputs.mock.calls.length).toBeGreaterThanOrEqual(3);
+});
+
+it('seals the complete plan before starting writes', async () => {
+  vi.mocked(inventory.headForLease).mockResolvedValue({
     ...head,
     item_count: 2,
     chain_digest: '12'.repeat(32),
   });
-  const started = await run({
-    ...context,
-    operation: { ...context.operation, cursor_json: sequence.cursor },
-  });
+  const started = await run();
   expect(inventory.seal).toHaveBeenCalledWith(2, '12'.repeat(32));
   expect(started).toEqual({
     phase: 'start_sqlite_restore_sequence',
@@ -165,6 +148,7 @@ it('persists the ordered dataset sequence, then seals before starting writes', a
       jobIndex: 0,
       datasetCursor: null,
       completedRows: [],
+      emptyPrepared: false,
     }),
     disposition: 'continue',
   });
@@ -173,7 +157,14 @@ it('persists the ordered dataset sequence, then seals before starting writes', a
 it('rejects duplicate targets, unsupported datasets, and mismatched provisioning receipts', async () => {
   await expect(run(context, [target, target])).rejects.toThrow('step_invalid');
   await expect(
-    run(context, [{ ...target, datasets: [{ manifest: { ...manifest, datasets: [] }, policy }] }])
+    run(context, [
+      {
+        ...target,
+        datasets: [
+          { manifest: { ...manifest, datasets: [] }, policy, recordCount: 1, byteCount: 1 },
+        ],
+      },
+    ])
   ).rejects.toThrow('step_invalid');
   target.initialize.mockResolvedValueOnce({ ...resource, resourceId: 'different' });
   await expect(run()).rejects.toThrow('step_invalid');

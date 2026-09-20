@@ -58,6 +58,7 @@ type Sleep = (milliseconds: number) => Promise<void>;
 
 const CATALOG_MAX_ATTEMPTS = 4;
 const ARTIFACT_UPLOAD_MAX_ATTEMPTS = 4;
+const ARTIFACT_UPLOAD_CONCURRENCY = 4;
 
 function isRetryableArtifactUploadError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
@@ -481,17 +482,38 @@ export async function publishAndActivateMigrationRelease(input: {
   const upload = input.upload ?? putR2Object;
   const sleep =
     input.sleep ?? ((milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)));
-  for (const object of artifact.objects) {
-    input.onProgress?.(`Uploading ${object.objectKey}`);
-    await uploadArtifactWithRetry({
-      upload,
-      bucketName: input.bucketName,
-      object,
-      verifyBucketOwnership: input.verifyBucketOwnership,
-      onProgress: input.onProgress,
-      sleep,
-    });
+  const manifest = artifact.objects.at(-1);
+  if (!manifest || manifest.objectKey !== artifact.manifestObjectKey) {
+    throw new Error('migration_release_manifest_object_missing');
   }
+  const sqlObjects = artifact.objects.slice(0, -1);
+  for (let offset = 0; offset < sqlObjects.length; offset += ARTIFACT_UPLOAD_CONCURRENCY) {
+    const batch = sqlObjects.slice(offset, offset + ARTIFACT_UPLOAD_CONCURRENCY);
+    await Promise.all(
+      batch.map(async (object) => {
+        input.onProgress?.(`Uploading ${object.objectKey}`);
+        await uploadArtifactWithRetry({
+          upload,
+          bucketName: input.bucketName,
+          object,
+          verifyBucketOwnership: input.verifyBucketOwnership,
+          onProgress: input.onProgress,
+          sleep,
+        });
+      })
+    );
+  }
+  // Publish the manifest only after every SQL object is durable. The active catalog remains the
+  // final visibility boundary, but keeping the manifest last also makes incomplete uploads clear.
+  input.onProgress?.(`Uploading ${manifest.objectKey}`);
+  await uploadArtifactWithRetry({
+    upload,
+    bucketName: input.bucketName,
+    object: manifest,
+    verifyBucketOwnership: input.verifyBucketOwnership,
+    onProgress: input.onProgress,
+    sleep,
+  });
   // Do not activate a catalog entry that could resolve to a same-name replacement created
   // after the final upload. The provider has no generation-qualified R2 URL.
   await input.verifyBucketOwnership?.();

@@ -138,7 +138,7 @@ describe('tenant backup dataset registry coverage', () => {
       TENANT_DATASET_POLICIES.find(
         (entry) => entry.family === 'core' && entry.table === 'profile_registry'
       )?.kind
-    ).toBe('settings');
+    ).toBe('external');
     for (const family of ['core', 'admin']) {
       for (const table of [
         'internal_notification_events',

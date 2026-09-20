@@ -238,7 +238,7 @@ it('routes SQL restore phases through the separate restore-plan inventory', asyn
   expect(adapter.assertSources).toHaveBeenCalledTimes(2);
 });
 
-it('wraps the SQL cursor while restoring other stores in durable pages', async () => {
+it('wraps the SQL cursor and restores a bounded store batch before checkpointing', async () => {
   const sequenceCursor = {
     version: 1,
     sequenceOrdinal: 3,
@@ -287,29 +287,51 @@ it('wraps the SQL cursor while restoring other stores in durable pages', async (
     adapter as never,
     () => 100
   );
-  if (!page.cursor) throw new Error('expected_cursor');
-  expect(JSON.parse(page.cursor)).toEqual({ ...wrapped, storeCursor: '{"page":2}' });
-  expect(page.phase).toBe('restore_other_stores');
-
-  const completed = await runTenantBackupImportOperationStep(
-    env,
-    {
-      ...context,
-      operation: {
-        ...context.operation,
-        phase: 'restore_other_stores',
-        cursor_json: page.cursor,
-      },
-    },
-    adapter as never,
-    () => 100
-  );
-  expect(completed).toEqual({
+  expect(page).toEqual({
     phase: 'verify_restore_targets',
     cursor: JSON.stringify(sequenceCursor),
     disposition: 'continue',
   });
-  expect(adapter.assertSources).toHaveBeenCalledTimes(6);
+  expect(adapter.restoreOtherStores).toHaveBeenNthCalledWith(
+    1,
+    expect.anything(),
+    'ab'.repeat(32),
+    null
+  );
+  expect(adapter.restoreOtherStores).toHaveBeenNthCalledWith(
+    2,
+    expect.anything(),
+    'ab'.repeat(32),
+    '{"page":2}'
+  );
+  expect(adapter.assertSources).toHaveBeenCalledTimes(4);
+});
+
+it('checkpoints a long other-store restore once per four-call execution batch', async () => {
+  for (let index = 1; index <= 5; index++)
+    adapter.restoreOtherStores.mockResolvedValueOnce({
+      cursor: JSON.stringify({ page: index }),
+      done: false,
+    });
+  const sequenceCursor = { version: 1, sequenceOrdinal: 3, jobIndex: 2, datasetCursor: null };
+  const cursor = JSON.stringify({
+    version: 1,
+    planDigest: 'ab'.repeat(32),
+    sequenceCursor,
+    storeCursor: null,
+  });
+  const first = await runTenantBackupImportOperationStep(
+    env,
+    {
+      ...context,
+      operation: { ...context.operation, phase: 'restore_other_stores', cursor_json: cursor },
+    },
+    adapter as never,
+    () => 100
+  );
+  expect(first.phase).toBe('restore_other_stores');
+  expect(JSON.parse(first.cursor ?? '').storeCursor).toBe('{"page":4}');
+  expect(adapter.restoreOtherStores).toHaveBeenCalledTimes(4);
 });
 
 it.each([
@@ -372,7 +394,7 @@ it.each([
   }
 );
 
-it('verifies other stores in durable pages before activation preparation', async () => {
+it('verifies a bounded store batch before activation preparation', async () => {
   mocks.restore.mockResolvedValueOnce({
     phase: 'verify_other_restore_stores',
     cursor: '{"sql":"complete"}',
@@ -415,21 +437,12 @@ it('verifies other stores in durable pages before activation preparation', async
     adapter as never,
     () => 100
   );
-  expect(page.phase).toBe('verify_other_restore_stores');
-  const completed = await runTenantBackupImportOperationStep(
-    env,
-    {
-      ...context,
-      operation: { ...context.operation, phase: page.phase, cursor_json: page.cursor },
-    },
-    adapter as never,
-    () => 100
-  );
-  expect(completed).toEqual({
+  expect(page).toEqual({
     phase: 'prepare_restore_activation',
     cursor: JSON.stringify({ version: 1, planDigest: 'ab'.repeat(32) }),
     disposition: 'continue',
   });
+  expect(adapter.verifyOtherStores).toHaveBeenCalledTimes(2);
 });
 
 it('rejects unknown phases, environment-only records, or duplicate installed datasets', async () => {

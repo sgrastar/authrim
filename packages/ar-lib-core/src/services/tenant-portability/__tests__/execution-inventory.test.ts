@@ -18,7 +18,7 @@ import type { DatabaseAdapter } from '../../../db/adapter';
 import { TenantBackupExecutionInventory } from '../execution-inventory';
 import { TenantBackupOperationStore, type TenantBackupLease } from '../operation-store';
 let db: DatabaseSync;
-let adapter: Pick<DatabaseAdapter, 'query' | 'queryOne' | 'execute'>;
+let adapter: Pick<DatabaseAdapter, 'query' | 'queryOne' | 'execute' | 'batch'>;
 let store: TenantBackupOperationStore;
 let lease: TenantBackupLease;
 let inventory: TenantBackupExecutionInventory;
@@ -50,6 +50,20 @@ beforeEach(async () => {
         success: true,
         rowsAffected: Number(db.prepare(sql).run(...(params as SQLInputValue[])).changes),
       };
+    },
+    async batch(statements) {
+      db.exec('BEGIN');
+      try {
+        const results = statements.map(({ sql, params = [] }) => ({
+          success: true,
+          rowsAffected: Number(db.prepare(sql).run(...(params as SQLInputValue[])).changes),
+        }));
+        db.exec('COMMIT');
+        return results;
+      } catch (error) {
+        db.exec('ROLLBACK');
+        throw error;
+      }
     },
   };
   store = new TenantBackupOperationStore(adapter);
@@ -85,7 +99,7 @@ it('pins a complete list, permits exact retries, and exposes bounded pages only 
   await expect(inventory.seal(19, head.chain_digest)).rejects.toThrow('seal_conflict');
   await inventory.seal(20, head.chain_digest);
   await inventory.seal(20, head.chain_digest);
-  expect(await inventory.readPage()).toHaveLength(16);
+  expect(await inventory.readPage()).toHaveLength(20);
   expect((await inventory.readPage(16)).map((item) => item.ordinal)).toEqual([16, 17, 18, 19]);
   await expect(inventory.append(20, 'extra', '{}')).rejects.toThrow('append_conflict');
   expect(() =>
@@ -97,7 +111,7 @@ it('pins a complete list, permits exact retries, and exposes bounded pages only 
 });
 it('survives lease takeover without changing committed metadata', async () => {
   await inventory.append(0, 'first', '{}');
-  now = 40000;
+  now = 700000;
   const operation = await store.claim('a', 'op', 'new-worker', now);
   if (!operation) throw new Error('missing_takeover');
   await expect(inventory.append(1, 'second', '{}')).rejects.toThrow('fenced');
@@ -156,7 +170,7 @@ it('detects an internal gap even when a page still contains the expected number 
   const head = await inventory.head();
   await inventory.seal(17, head.chain_digest);
   db.exec('DELETE FROM tenant_backup_execution_inventory_items WHERE ordinal=0');
-  await expect(inventory.readPage()).rejects.toThrow('backup_inventory_integrity');
+  await expect(inventory.readPage()).rejects.toThrow('backup_inventory_items_missing');
   await expect(inventory.readPage(18)).rejects.toThrow('invalid_cursor');
 });
 
@@ -292,7 +306,9 @@ it('reads the actual source DB and detects table and application trigger changes
   };
   const signal = new AbortController().signal;
   try {
-    sourceDb.exec('CREATE TABLE tenants(id TEXT PRIMARY KEY NOT NULL,value TEXT)');
+    sourceDb.exec(
+      'CREATE TABLE tenants(id TEXT PRIMARY KEY NOT NULL,value TEXT); CREATE TABLE _cf_KV(key TEXT)'
+    );
     const tables = await readBackupSqliteDatabaseSchema(source, 'core', signal);
     const input = {
       inventory,
@@ -431,8 +447,8 @@ it('discovers all SQL resources across pages and retries without duplicate count
     now
   );
   await store.release(lease, saved!.revision, 'queued', now);
-  for (let slice = 0; slice < 3; slice++) {
-    now += 40000;
+  for (let slice = 0; slice < 2; slice++) {
+    now += 700000;
     const execution = executeTenantBackupSlice(
       store,
       {

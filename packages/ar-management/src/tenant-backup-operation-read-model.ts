@@ -16,6 +16,8 @@ import {
   TenantBackupRestoreHoldStore,
   type TenantBackupRestoreHoldSummary,
 } from '@authrim/ar-lib-core/services/tenant-portability/restore-hold-store';
+import { buildTenantBackupDatasetExecutionPlan } from '@authrim/ar-lib-core/services/tenant-portability/dataset-execution-plan';
+import type { TenantPortableDataset } from '@authrim/ar-lib-core/services/tenant-portability/module-contract';
 
 interface PublicationRow {
   expires_at: number;
@@ -28,6 +30,21 @@ interface PlanRow {
 interface DatasetRow {
   dataset_id: string;
   record_count: number;
+}
+interface ContainerInputRow {
+  dataset_stats_json: string;
+}
+interface RestoreSequenceRow {
+  payload_json: string;
+}
+
+export interface TenantBackupOperationProgress {
+  registered: number;
+  materialized: number;
+  nonEmpty: number;
+  executionBatches: number;
+  bytes: number;
+  rows: number;
 }
 
 export interface TenantBackupOperationSummary {
@@ -46,6 +63,7 @@ export interface TenantBackupOperationView extends TenantBackupOperationSummary 
   publication: { expiresAt: number; downloadAvailable: boolean } | null;
   adminMapping: TenantBackupAdminMappingStatus | null;
   heldRecords: TenantBackupRestoreHoldSummary[];
+  progress: TenantBackupOperationProgress | null;
   preview: {
     planDigest: string;
     datasetCount: number;
@@ -108,31 +126,46 @@ export class TenantBackupOperationReadModel {
     const operation = await this.operations.get(tenantId, operationId);
     if (!operation) return null;
     const intent = await this.requests.load(tenantId, operationId);
-    const [publication, plan, datasets, adminMapping, heldRecords] = await Promise.all([
-      this.database.queryOne<PublicationRow>(
-        'SELECT expires_at FROM tenant_backup_publications WHERE tenant_id=? AND operation_id=?',
-        [tenantId, operationId]
-      ),
-      this.database.queryOne<PlanRow>(
-        `SELECT state,item_count,chain_digest FROM tenant_backup_restore_plan_inventories
+    const [publication, plan, datasets, adminMapping, heldRecords, containerInputs, sequence] =
+      await Promise.all([
+        this.database.queryOne<PublicationRow>(
+          'SELECT expires_at FROM tenant_backup_publications WHERE tenant_id=? AND operation_id=?',
+          [tenantId, operationId]
+        ),
+        this.database.queryOne<PlanRow>(
+          `SELECT state,item_count,chain_digest FROM tenant_backup_restore_plan_inventories
          WHERE tenant_id=? AND operation_id=?`,
-        [tenantId, operationId]
-      ),
-      this.database.query<DatasetRow>(
-        `SELECT i.dataset_id,sum(i.record_count) record_count
+          [tenantId, operationId]
+        ),
+        this.database.query<DatasetRow>(
+          `SELECT i.dataset_id,sum(i.record_count) record_count
          FROM tenant_backup_dataset_inspections i
          JOIN tenant_backup_validation_sessions s ON s.id=i.session_id AND s.tenant_id=i.tenant_id
          WHERE s.tenant_id=? AND s.operation_id=?
          GROUP BY i.dataset_id ORDER BY i.dataset_id LIMIT 4096`,
-        [tenantId, operationId]
-      ),
-      intent.kind === 'import' && intent.selection.admin
-        ? new TenantBackupAdminMappingStore(this.database).status(tenantId, operationId)
-        : null,
-      intent.kind === 'import'
-        ? new TenantBackupRestoreHoldStore(this.database).summaries(tenantId, operationId)
-        : [],
-    ]);
+          [tenantId, operationId]
+        ),
+        intent.kind === 'import' && intent.selection.admin
+          ? new TenantBackupAdminMappingStore(this.database).status(tenantId, operationId)
+          : null,
+        intent.kind === 'import'
+          ? new TenantBackupRestoreHoldStore(this.database).summaries(tenantId, operationId)
+          : [],
+        intent.kind === 'import'
+          ? this.database.query<ContainerInputRow>(
+              `SELECT dataset_stats_json FROM tenant_backup_container_inputs
+             WHERE tenant_id=? AND operation_id=? ORDER BY bundle_id`,
+              [tenantId, operationId]
+            )
+          : [],
+        intent.kind === 'import'
+          ? this.database.queryOne<RestoreSequenceRow>(
+              `SELECT payload_json FROM tenant_backup_restore_plan_inventory_items
+             WHERE tenant_id=? AND operation_id=? AND item_id='sqlite-restore-sequence'`,
+              [tenantId, operationId]
+            )
+          : null,
+      ]);
     if (
       datasets.some(
         ({ dataset_id, record_count }) =>
@@ -145,6 +178,68 @@ export class TenantBackupOperationReadModel {
     )
       throw new Error('backup_restore_preview_invalid');
     let preview: TenantBackupOperationView['preview'] = null;
+    let progress: TenantBackupOperationProgress | null = null;
+    if (containerInputs.length) {
+      try {
+        const targets = new Map<string, string>();
+        if (sequence) {
+          const decoded = JSON.parse(sequence.payload_json) as {
+            jobs?: { datasetId?: unknown; targetId?: unknown }[];
+          };
+          for (const job of decoded.jobs ?? [])
+            if (typeof job.datasetId === 'string' && typeof job.targetId === 'string')
+              targets.set(job.datasetId, job.targetId);
+        }
+        const registered = new Map<
+          string,
+          {
+            dataset: TenantPortableDataset;
+            targetId: string;
+            rows: number;
+            bytes: number;
+          }
+        >();
+        for (const row of containerInputs) {
+          const value = JSON.parse(row.dataset_stats_json) as {
+            datasets?: { id?: unknown; rows?: unknown; bytes?: unknown }[];
+            registeredDatasets?: TenantPortableDataset[];
+          };
+          const stats = new Map((value.datasets ?? []).map((entry) => [entry.id, entry]));
+          for (const dataset of value.registeredDatasets ?? []) {
+            const saved = stats.get(dataset.id);
+            if (
+              !saved ||
+              typeof saved.rows !== 'number' ||
+              typeof saved.bytes !== 'number' ||
+              registered.has(dataset.id)
+            )
+              throw new Error('invalid');
+            registered.set(dataset.id, {
+              dataset,
+              targetId:
+                dataset.store === 'database'
+                  ? (targets.get(dataset.id) ?? 'database:pending')
+                  : `${dataset.store}:default`,
+              rows: saved.rows,
+              bytes: saved.bytes,
+            });
+          }
+        }
+        if (registered.size) {
+          const execution = buildTenantBackupDatasetExecutionPlan([...registered.values()]);
+          progress = {
+            registered: execution.registeredDatasets.length,
+            materialized: execution.materializedDatasets.length,
+            nonEmpty: execution.nonEmptyDatasets.length,
+            executionBatches: execution.executionBatches.length,
+            bytes: execution.totalBytes,
+            rows: execution.totalRows,
+          };
+        }
+      } catch {
+        progress = null;
+      }
+    }
     if (operation.state === 'waiting' && operation.phase === 'await_restore_approval') {
       const cursor = decodeTenantBackupRestoreApprovalCursor(operation.cursor_json);
       if (!plan || plan.state !== 'sealed' || plan.chain_digest !== cursor.planDigest)
@@ -174,6 +269,7 @@ export class TenantBackupOperationReadModel {
         selection: intent.selection,
         adminMapping,
         heldRecords,
+        progress,
         publication: publication
           ? { expiresAt: publication.expires_at, downloadAvailable: publication.expires_at > now }
           : null,

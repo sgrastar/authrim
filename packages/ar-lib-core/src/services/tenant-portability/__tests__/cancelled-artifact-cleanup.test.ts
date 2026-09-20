@@ -133,7 +133,7 @@ it('retains the receipt when deletion is uncertain and rejects a stale cleanup l
   ).rejects.toThrow('lost response');
   expect(sql.prepare('SELECT count(*) n FROM tenant_backup_artifact_parts').get()?.n).toBe(33);
 
-  now = 40_000;
+  now = 700_000;
   await expect(
     cleanupCancelledTenantBackupArtifactPage({ database, bucket, context, now: () => now })
   ).rejects.toThrow('backup_artifact_cleanup_fenced');

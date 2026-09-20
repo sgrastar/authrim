@@ -59,6 +59,8 @@ const DATASETS: readonly DatasetId[] = [
   LOG_ARCHIVE_OBJECT_BODIES_DATASET.id,
 ];
 
+const RECORD_BATCH_LIMIT = 4;
+
 interface Cursor {
   version: 1;
   purpose: Purpose;
@@ -210,21 +212,53 @@ export function createPhase8OtherStoreHandlers(
     ) {
       const source = await ports.loadPhase8Record(context, planDigest, purpose, datasetId);
       if (source.policy.dataset.id !== datasetId) invalid();
-      const row = await source.readNextValidatedRow({ sourceCursor: cursor.sourceCursor });
-      context.signal.throwIfAborted();
-      if (row === null) return advance(datasetId, purpose);
-      if (!row.nextCursor || row.nextCursor === cursor.sourceCursor) invalid();
+      let sourceCursor = cursor.sourceCursor;
+      let exhausted = false;
+      const rows: Array<{ rowJson: string; nextCursor: string }> = [];
+      for (let index = 0; index < RECORD_BATCH_LIMIT; index += 1) {
+        const row = await source.readNextValidatedRow({ sourceCursor });
+        if (row === null) {
+          exhausted = true;
+          break;
+        }
+        if (!row.nextCursor || row.nextCursor === sourceCursor) invalid();
+        rows.push(row);
+        sourceCursor = row.nextCursor;
+      }
       if (datasetId === USER_AVATAR_DATASET_ID) {
-        const avatar = await decodePortableUserAvatar(row.rowJson, context.lease.tenantId);
-        if (purpose === 'restore') await ports.importAsset(context, avatar);
-        else if (!(await ports.verifyAsset(context, avatar))) invalid();
+        const avatars = await Promise.all(
+          rows.map(({ rowJson }) => decodePortableUserAvatar(rowJson, context.lease.tenantId))
+        );
+        await Promise.all(
+          avatars.map(async (avatar) => {
+            if (purpose === 'restore') await ports.importAsset(context, avatar);
+            else if (!(await ports.verifyAsset(context, avatar))) invalid();
+          })
+        );
       } else {
-        const chunk = await decodePortableR2ObjectChunk(row.rowJson, context.lease.tenantId);
-        if (purpose === 'restore') await ports.importR2Chunk(context, planDigest, datasetId, chunk);
-        else if (!(await ports.verifyR2Chunk(context, planDigest, datasetId, chunk))) invalid();
+        const chunks = await Promise.all(
+          rows.map(({ rowJson }) => decodePortableR2ObjectChunk(rowJson, context.lease.tenantId))
+        );
+        const byObject = new Map<string, PortableR2ObjectChunk[]>();
+        for (const chunk of chunks) {
+          const objectChunks = byObject.get(chunk.objectId) ?? [];
+          objectChunks.push(chunk);
+          byObject.set(chunk.objectId, objectChunks);
+        }
+        await Promise.all(
+          [...byObject.values()].map(async (objectChunks) => {
+            for (const chunk of objectChunks) {
+              if (purpose === 'restore')
+                await ports.importR2Chunk(context, planDigest, datasetId, chunk);
+              else if (!(await ports.verifyR2Chunk(context, planDigest, datasetId, chunk)))
+                invalid();
+            }
+          })
+        );
       }
       context.signal.throwIfAborted();
-      return { cursor: encode({ ...cursor, sourceCursor: row.nextCursor }), done: false };
+      if (exhausted) return advance(datasetId, purpose);
+      return { cursor: encode({ ...cursor, sourceCursor }), done: false };
     }
     const source = await ports.loadPhase8Sqlite(context, planDigest, purpose, datasetId);
     if (source.policy.dataset.id !== datasetId) invalid();
@@ -235,64 +269,73 @@ export function createPhase8OtherStoreHandlers(
       ignored.some((column) => !expectedColumns.includes(column))
     )
       invalid();
-    const row = await source.readNextValidatedRow({ sourceCursor: cursor.sourceCursor });
-    context.signal.throwIfAborted();
-    if (row === null) return advance(datasetId, purpose);
-    if (!row.nextCursor || row.nextCursor === cursor.sourceCursor) invalid();
-
-    // The SQL restore intentionally omitted quarantined work, so its sidecar must do the same.
-    if (phase8RestoreHoldReason(datasetId, row.rowJson) === null) {
-      if (
-        datasetId === 'core.totp_credentials' ||
-        datasetId === 'core.operational_logs' ||
-        datasetId === 'pii.linked_identities' ||
-        datasetId === 'pii.pii_log'
-      ) {
-        const common = {
-          target: source.target,
-          policy: source.policy,
-          manifest: source.manifest,
-          rowJson: row.rowJson,
-          targetKey: env.PII_ENCRYPTION_KEY,
-          targetKeyVersion: targetKeyVersion(env),
-        };
-        if (datasetId === 'pii.linked_identities') {
-          const linked = {
+    let sourceCursor = cursor.sourceCursor;
+    let exhausted = false;
+    const rows: Array<{ rowJson: string; nextCursor: string }> = [];
+    for (let index = 0; index < RECORD_BATCH_LIMIT; index += 1) {
+      const row = await source.readNextValidatedRow({ sourceCursor });
+      if (row === null) {
+        exhausted = true;
+        break;
+      }
+      if (!row.nextCursor || row.nextCursor === sourceCursor) invalid();
+      rows.push(row);
+      sourceCursor = row.nextCursor;
+    }
+    await Promise.all(
+      rows.map(async (row) => {
+        // The SQL restore intentionally omitted quarantined work, so its sidecar must do the same.
+        if (phase8RestoreHoldReason(datasetId, row.rowJson) !== null) return;
+        if (
+          datasetId === 'core.totp_credentials' ||
+          datasetId === 'core.operational_logs' ||
+          datasetId === 'pii.linked_identities' ||
+          datasetId === 'pii.pii_log'
+        ) {
+          const common = {
             target: source.target,
             policy: source.policy,
             manifest: source.manifest,
             rowJson: row.rowJson,
-            targetKey: env.RP_TOKEN_ENCRYPTION_KEY,
-          };
-          if (purpose === 'restore') await restorePortableLinkedIdentityTokens(linked);
-          else await verifyPortableLinkedIdentityTokens(linked);
-        } else if (datasetId === 'pii.pii_log') {
-          const pii = {
-            ...common,
             targetKey: env.PII_ENCRYPTION_KEY,
+            targetKeyVersion: targetKeyVersion(env),
           };
-          const mode =
-            purpose === 'restore'
-              ? await restorePortablePiiLogValues(pii)
-              : await verifyPortablePiiLogValues(pii);
-          if (mode === 'external') {
-            if (purpose === 'restore')
-              await ports.restorePhase8Envelope(context, datasetId, source, row.rowJson);
-            else if (!(await ports.verifyPhase8Envelope(context, datasetId, source, row.rowJson)))
-              invalid();
-          }
-        } else if (datasetId === 'core.totp_credentials') {
-          if (purpose === 'restore') await restorePortableTotpSecret(common);
-          else await verifyPortableTotpSecret(common);
-        } else if (purpose === 'restore') await restorePortableOperationalLogDetail(common);
-        else await verifyPortableOperationalLogDetail(common);
-      } else if (purpose === 'restore')
-        await ports.restorePhase8Envelope(context, datasetId, source, row.rowJson);
-      else if (!(await ports.verifyPhase8Envelope(context, datasetId, source, row.rowJson)))
-        invalid();
-    }
+          if (datasetId === 'pii.linked_identities') {
+            const linked = {
+              target: source.target,
+              policy: source.policy,
+              manifest: source.manifest,
+              rowJson: row.rowJson,
+              targetKey: env.RP_TOKEN_ENCRYPTION_KEY,
+            };
+            if (purpose === 'restore') await restorePortableLinkedIdentityTokens(linked);
+            else await verifyPortableLinkedIdentityTokens(linked);
+          } else if (datasetId === 'pii.pii_log') {
+            const pii = { ...common, targetKey: env.PII_ENCRYPTION_KEY };
+            const mode =
+              purpose === 'restore'
+                ? await restorePortablePiiLogValues(pii)
+                : await verifyPortablePiiLogValues(pii);
+            if (mode === 'external') {
+              if (purpose === 'restore')
+                await ports.restorePhase8Envelope(context, datasetId, source, row.rowJson);
+              else if (!(await ports.verifyPhase8Envelope(context, datasetId, source, row.rowJson)))
+                invalid();
+            }
+          } else if (datasetId === 'core.totp_credentials') {
+            if (purpose === 'restore') await restorePortableTotpSecret(common);
+            else await verifyPortableTotpSecret(common);
+          } else if (purpose === 'restore') await restorePortableOperationalLogDetail(common);
+          else await verifyPortableOperationalLogDetail(common);
+        } else if (purpose === 'restore')
+          await ports.restorePhase8Envelope(context, datasetId, source, row.rowJson);
+        else if (!(await ports.verifyPhase8Envelope(context, datasetId, source, row.rowJson)))
+          invalid();
+      })
+    );
     context.signal.throwIfAborted();
-    return { cursor: encode({ ...cursor, sourceCursor: row.nextCursor }), done: false };
+    if (exhausted) return advance(datasetId, purpose);
+    return { cursor: encode({ ...cursor, sourceCursor }), done: false };
   };
   return {
     restoreOtherStores: (

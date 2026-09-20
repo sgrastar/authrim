@@ -100,17 +100,30 @@ export const PHASE5_SQLITE_DATASET_REGISTRATIONS: readonly InstalledSqliteDatase
     }))
   );
 
+const tenantRuntimeCacheGenerations = {
+  family: 'admin',
+  table: 'tenant_runtime_cache_generations',
+  dataset: {
+    id: 'admin.tenant_runtime_cache_generations',
+    module: 'authorization',
+    kind: 'tenant_state',
+    store: 'database',
+    schemaVersion: 1,
+    disposition: 'include',
+  },
+  partitions: undefined,
+} as const satisfies InstalledSqliteDatasetRegistration;
+
 /** Tables whose source rows are deliberately regenerated from restored authoritative state. */
 export const PHASE5_REBUILT_TABLES = [
-  'directory_connector_instances',
   'lookup_directory_job_cursors',
   'lookup_identifiers',
   'lookup_schema_metadata',
   'lookup_tenant_aliases',
-  'tenant_runtime_cache_generations',
 ] as const;
 
 export const PHASE5_CUMULATIVE_SQLITE_DATASET_REGISTRATIONS = [
   ...PHASE4_CUMULATIVE_SQLITE_DATASET_REGISTRATIONS,
   ...PHASE5_SQLITE_DATASET_REGISTRATIONS,
+  tenantRuntimeCacheGenerations,
 ] as const;

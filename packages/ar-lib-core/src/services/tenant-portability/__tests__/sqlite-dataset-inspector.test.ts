@@ -290,3 +290,21 @@ it('requires every sidecar-owned verification column to have a safe SQL reset', 
     })(dataset, manifest)
   ).resolves.toBeDefined();
 });
+
+it('records installed alternate identities for runtime references', async () => {
+  const inspector = await createSqliteDatasetInspectorFactory({
+    dataset,
+    schema,
+    identityAliases: {
+      id: 'tenant-value-v1',
+      aliases: (candidate, identity) => [{ ...identity, id: JSON.stringify([candidate.value]) }],
+    },
+    inspectRow: async () => [],
+  })(dataset, manifest);
+  const inspected = await inspector.chunk(encode(row), 0);
+  expect(inspected.records).toEqual([
+    expect.objectContaining({ id: '[["text","a"]]' }),
+    expect.objectContaining({ id: '[["text","日本語😀"]]' }),
+  ]);
+  await inspector.finish();
+});

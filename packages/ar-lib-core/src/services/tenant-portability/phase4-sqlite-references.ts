@@ -121,6 +121,20 @@ export const PHASE4_SQLITE_REFERENCE_RULES: readonly Phase3SqliteReferenceRule[]
   ),
   relation(
     'admin',
+    'federation_saml_runtime_entities',
+    ['metadata_document_id'],
+    'admin',
+    'federation_metadata_documents'
+  ),
+  relation(
+    'admin',
+    'federation_saml_runtime_entities',
+    ['trust_source_id'],
+    'admin',
+    'federation_trust_sources'
+  ),
+  relation(
+    'admin',
     'federation_trust_anchors',
     ['trust_source_id'],
     'admin',

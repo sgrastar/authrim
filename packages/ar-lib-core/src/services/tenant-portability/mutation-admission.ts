@@ -2,6 +2,11 @@ import { sqliteBoundaryClockParameter } from './sqlite-boundary-clock';
 import type { DatabaseAdapter } from '../../db/adapter';
 
 type Database = Pick<DatabaseAdapter, 'queryOne' | 'execute'>;
+/** Bounded cross-store admission window measured from the persisted begin timestamp. */
+export const TENANT_BACKUP_BOUNDARY_DEADLINE_MS = 5_000;
+export const TENANT_BACKUP_LEGACY_BOUNDARY_DEADLINE_MS = 2_000;
+export const TENANT_BACKUP_INTERMEDIATE_BOUNDARY_DEADLINE_MS = 15_000;
+export const TENANT_BACKUP_LONG_BOUNDARY_DEADLINE_MS = 60_000;
 export interface TenantMutationBoundary {
   id: string;
   tenant_id: string;
@@ -17,7 +22,7 @@ function validate(now: number, ...ids: string[]): void {
   if (
     !Number.isSafeInteger(now) ||
     now < 0 ||
-    now > Number.MAX_SAFE_INTEGER - 2000 ||
+    now > Number.MAX_SAFE_INTEGER - TENANT_BACKUP_BOUNDARY_DEADLINE_MS ||
     ids.some((id) => !/^[A-Za-z0-9_.:-]{1,256}$/.test(id))
   )
     throw new Error('backup_mutation_admission_input');
@@ -109,7 +114,7 @@ export class TenantBackupMutationAdmission {
         input.operationId,
         input.inventoryDigest,
         input.now,
-        input.now + 2000,
+        input.now + TENANT_BACKUP_BOUNDARY_DEADLINE_MS,
         this.environmentId,
         input.tenantId,
         this.environmentId,

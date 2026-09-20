@@ -1,8 +1,12 @@
 import type { DatabaseAdapter } from '../../db/adapter';
 import type { TenantBackupStepContext, TenantBackupStepResult } from './operation-executor';
 import type { TenantBackupSnapshotResources } from './snapshot-resources';
-import { verifyLiveSqliteTenantDatasetPlan } from './sqlite-dataset-plan';
+import {
+  readPersistedSqliteCaptureSchemas,
+  verifyLiveSqliteTenantDatasetPlan,
+} from './sqlite-dataset-plan';
 import { sqliteCapturePlan, sqliteSnapshotStartOrResumeStatement } from './sqlite-capture-plan';
+import { readBackupSqliteBoundarySchemaDigest } from './sqlite-schema-reader';
 
 type Plan = Parameters<typeof verifyLiveSqliteTenantDatasetPlan>[0];
 
@@ -16,10 +20,16 @@ export interface TenantBackupSqliteCaptureInput {
   context: TenantBackupStepContext;
   resources: TenantBackupSnapshotResources;
   inventory: Plan['inventory'];
-  source: { resourceId: string; database: Pick<DatabaseAdapter, 'query' | 'queryOne' | 'execute'> };
+  source: {
+    resourceId: string;
+    database: Pick<DatabaseAdapter, 'query' | 'queryOne' | 'execute' | 'batch'>;
+  };
   resourceId: string;
   family: Plan['family'];
   firstOrdinal: number;
+  tableCount?: number;
+  captureCount?: number;
+  expectedBoundarySchemaDigest?: string;
   selection: Plan['selection'];
   snapshotId: string;
   /** Resolved from authenticated tenant metadata, not the incoming API request. */
@@ -50,7 +60,7 @@ async function verifyCaptureInput(input: TenantBackupSqlitePreparationInput) {
 }
 
 /**
- * Install at most one table's three capture triggers per call, before snapshot admission.
+ * Install all remaining capture triggers in D1-sized batches before snapshot admission.
  * assertBoundary must hold an exclusive source DDL/admission guard across the call; a lease check
  * alone is insufficient. Retry inspects existing definitions and never replaces a trigger.
  * Migrations must already have installed the scratch tables. Missing capture protection while any
@@ -59,7 +69,7 @@ async function verifyCaptureInput(input: TenantBackupSqlitePreparationInput) {
 export async function prepareTenantBackupSqliteCapture(
   input: TenantBackupSqlitePreparationInput,
   tableOrdinal: number
-): Promise<{ nextTableOrdinal: number; complete: boolean }> {
+): Promise<{ nextTableOrdinal: number; complete: boolean; boundarySchemaDigest?: string }> {
   const schemas = await verifyCaptureInput(input);
   const plan = sqliteCapturePlan(schemas);
   if (
@@ -69,64 +79,127 @@ export async function prepareTenantBackupSqliteCapture(
   )
     throw new Error('backup_snapshot_install_cursor');
   const database = input.source.database;
-  const table = plan.schemas[tableOrdinal].table;
-  const triggers = plan.triggers.filter((trigger) => trigger.table === table);
-  const missing: typeof triggers = [];
-  for (const trigger of triggers) {
-    const installed = await database.queryOne<{ type: string; tbl_name: string; sql: string }>(
-      'SELECT type,tbl_name,sql FROM sqlite_schema WHERE name=?',
-      [trigger.name]
+  // Verify the complete plan once, then install all remaining triggers in D1-sized batches during
+  // the same operation slice. Persisted resume still starts at tableOrdinal, but scheduler latency is
+  // paid per physical database instead of once per 32 tables.
+  let nextTableOrdinal = tableOrdinal;
+  while (nextTableOrdinal < plan.schemas.length) {
+    // D1 batch accepts up to 100 statements. Each table has at most three capture triggers.
+    const batchEnd = Math.min(plan.schemas.length, nextTableOrdinal + 32);
+    const tables = new Set(
+      plan.schemas.slice(nextTableOrdinal, batchEnd).map((schema) => schema.table)
     );
-    if (!installed) missing.push(trigger);
-    else if (
-      installed.type !== 'trigger' ||
-      installed.tbl_name !== table ||
-      installed.sql.trim().replace(/;+$/, '') !== trigger.sql
-    )
-      throw new Error('backup_snapshot_trigger_conflict');
-  }
-  for (const trigger of missing) {
-    input.context.signal.throwIfAborted();
-    await input.inventory.head();
-    await input.assertBoundary();
-    if (
-      await database.queryOne(
-        "SELECT id FROM tenant_backup_snapshots WHERE state='capturing' LIMIT 1"
+    const triggers = plan.triggers.filter((trigger) => tables.has(trigger.table));
+    const installed = triggers.length
+      ? await database.query<{ name: string; type: string; tbl_name: string; sql: string }>(
+          `SELECT name,type,tbl_name,sql FROM sqlite_schema WHERE name IN (${triggers
+            .map(() => '?')
+            .join(',')})`,
+          triggers.map((trigger) => trigger.name)
+        )
+      : [];
+    const installedByName = new Map(installed.map((trigger) => [trigger.name, trigger]));
+    const missing = triggers.filter((trigger) => {
+      const found = installedByName.get(trigger.name);
+      if (!found) return true;
+      if (
+        found.type !== 'trigger' ||
+        found.tbl_name !== trigger.table ||
+        found.sql.trim().replace(/;+$/, '') !== trigger.sql
       )
-    )
-      throw new Error('backup_snapshot_install_during_capture');
-    const result = await database.execute(trigger.sql);
-    if (!result.success) throw new Error('backup_snapshot_trigger_install_failed');
+        throw new Error('backup_snapshot_trigger_conflict');
+      return false;
+    });
+    if (missing.length) {
+      input.context.signal.throwIfAborted();
+      await input.inventory.head();
+      await input.assertBoundary();
+      if (
+        await database.queryOne(
+          "SELECT id FROM tenant_backup_snapshots WHERE state='capturing' LIMIT 1"
+        )
+      )
+        throw new Error('backup_snapshot_install_during_capture');
+      const results = await database.batch(missing.map((trigger) => ({ sql: trigger.sql })));
+      if (results.length !== missing.length || results.some((result) => !result.success))
+        throw new Error('backup_snapshot_trigger_install_failed');
+    }
+    nextTableOrdinal = batchEnd;
   }
   input.context.signal.throwIfAborted();
   await input.inventory.head();
   await input.assertBoundary();
-  return { nextTableOrdinal: tableOrdinal + 1, complete: tableOrdinal + 1 === plan.schemas.length };
+  return {
+    nextTableOrdinal,
+    complete: true,
+    boundarySchemaDigest: await readBackupSqliteBoundarySchemaDigest(
+      database,
+      input.context.signal
+    ),
+  };
 }
 
 export async function startTenantBackupSqliteCapture(
   input: TenantBackupSqliteCaptureInput
 ): Promise<void> {
+  const prepared = await prepareTenantBackupSqliteCaptureStart(input);
+  await prepared(input.assertBoundary);
+}
+
+/**
+ * Perform the expensive complete-plan verification before the short cross-store write hold.
+ * The returned start rechecks a compact schema fingerprint under the hold, then relies on the
+ * atomic start statement for exact capture-trigger and primary-key validation.
+ */
+export async function prepareTenantBackupSqliteCaptureStart(
+  input: TenantBackupSqliteCaptureInput
+): Promise<(assertBoundary: () => Promise<void>) => Promise<void>> {
   const { context, resources, source, resourceId, snapshotId } = input;
   const { lease, signal } = context;
-  const schemas = await verifyCaptureInput(input);
-  // Validate the complete SQL before recording a reservation; keep uncertain writes discoverable.
+  const expectedSchemaDigest = input.expectedBoundarySchemaDigest;
+  const schemas = expectedSchemaDigest
+    ? await readPersistedSqliteCaptureSchemas({
+        inventory: input.inventory,
+        lease,
+        family: input.family,
+        resourceId,
+        firstOrdinal: input.firstOrdinal,
+        tableCount: input.tableCount ?? 0,
+        captureCount: input.captureCount ?? 0,
+      })
+    : await verifyCaptureInput(input);
+  const preparedSchemaDigest =
+    expectedSchemaDigest ?? (await readBackupSqliteBoundarySchemaDigest(source.database, signal));
+  // Validate the complete SQL before entering the hold or recording a reservation.
   const statement = sqliteSnapshotStartOrResumeStatement(
     schemas,
     snapshotId,
     lease.tenantId,
     input.tenantKey
   );
+  // Persist write-ahead ownership before the short cross-store hold. A failed admission keeps the
+  // reservation for idempotent retry and cancellation cleanup, while the hold only performs the
+  // compact schema check and atomic source snapshot start.
   await resources.reserve(lease, resourceId, snapshotId);
-  signal.throwIfAborted();
-  await input.assertBoundary();
   await resources.assertCaptureOwner(lease, resourceId, snapshotId);
-  const result = await source.database.execute(statement.sql, statement.params);
-  if (!result.success || result.rowsAffected !== 1)
-    throw new Error('backup_snapshot_start_rejected');
-  signal.throwIfAborted();
-  await resources.assertCaptureOwner(lease, resourceId, snapshotId);
-  await input.assertBoundary();
+  return async (assertBoundary) => {
+    signal.throwIfAborted();
+    await assertBoundary();
+    if (
+      (await readBackupSqliteBoundarySchemaDigest(source.database, signal)) !== preparedSchemaDigest
+    )
+      throw new Error('backup_schema_changed_during_boundary');
+    await assertBoundary();
+    // The durable reservation and live operation lease were verified immediately before the
+    // cross-store hold. Avoid repeating that remote check before the atomic source write. The
+    // post-write check remains mandatory so cancellation racing the write is retained for cleanup.
+    const result = await source.database.execute(statement.sql, statement.params);
+    if (!result.success || result.rowsAffected !== 1)
+      throw new Error('backup_snapshot_start_rejected');
+    signal.throwIfAborted();
+    await resources.assertCaptureOwner(lease, resourceId, snapshotId);
+    await assertBoundary();
+  };
 }
 
 /** One persisted installation/start step; cross-store admission remains the coordinator's guard. */

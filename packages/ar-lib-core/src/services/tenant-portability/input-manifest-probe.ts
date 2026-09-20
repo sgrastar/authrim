@@ -1,13 +1,17 @@
-import { TenantBundleCipherDecoder } from './bundle-cipher-decoder';
 import type { TenantBundleKeyEnvelope } from './bundle-key-envelope';
 import type { TenantBundleReadLimits } from './bundle-framing';
 import {
   decodeTenantBundleManifest,
   decodeTenantBundleImportManifest,
+  encodeTenantBundleManifest,
   type TenantBundleManifest,
   type TenantBundleManifestExpectation,
 } from './bundle-manifest';
-import { readTenantBackupInputFrame, type TenantBackupInputIdentity } from './input-frame-reader';
+import type { TenantBackupInputIdentity } from './input-frame-reader';
+import {
+  readTenantBackupContainerV2Input,
+  type TenantBackupContainerInputBucketV2,
+} from './input-container-v2';
 
 function fail(): never {
   throw new Error('backup_input_manifest_probe_failed');
@@ -20,61 +24,46 @@ function bundleId(session: TenantBundleKeyEnvelope): string {
   ).join('');
 }
 
-/**
- * Authenticate only the cipher header and first plaintext content frame. The first content frame is
- * the canonical manifest by contract. This has no persistence side effects; callers must recheck the
- * live operation before pinning the returned manifest in an execution inventory.
- */
+/** Authenticate the pinned v2 object and its manifest/footer before persisting an import plan. */
 export async function probeTenantBackupInputManifest(input: {
-  bucket: Parameters<typeof readTenantBackupInputFrame>[0]['bucket'];
+  bucket: TenantBackupContainerInputBucketV2;
   identity: Readonly<TenantBackupInputIdentity>;
   session: TenantBundleKeyEnvelope;
   limits: Readonly<TenantBundleReadLimits>;
   expected: Omit<TenantBundleManifestExpectation, 'bundleId'>;
   signal: AbortSignal;
   assertAuthorized: () => Promise<void>;
-  /** Combined imports allow each authenticated bundle to carry a strict category subset. */
   selectionMode?: 'exact' | 'subset';
 }): Promise<{
   manifest: TenantBundleManifest;
   expected: TenantBundleManifestExpectation;
 }> {
-  if (input.limits.maxFrames < 2) fail();
+  if (input.identity.size > input.limits.maxTotalBytes) fail();
   const expected: TenantBundleManifestExpectation = {
     bundleId: bundleId(input.session),
     source: structuredClone(input.expected.source),
     selection: structuredClone(input.expected.selection),
     datasets: input.expected.datasets.map((dataset) => ({ ...dataset })),
   };
-  const common = {
-    bucket: input.bucket,
-    identity: input.identity,
-    limits: input.limits,
-    signal: input.signal,
-    assertAuthorized: input.assertAuthorized,
-  };
   try {
-    const header = await readTenantBackupInputFrame({
-      ...common,
-      cursor: { offset: 0, frames: 0 },
+    const decoded = await readTenantBackupContainerV2Input(input);
+    const encoded = encodeTenantBundleManifest(decoded.manifest.backup, {
+      bundleId: decoded.manifest.backup.bundleId,
+      source: decoded.manifest.backup.source,
+      selection: decoded.manifest.backup.selection,
+      datasets: decoded.manifest.backup.datasets,
     });
-    if (!header) fail();
-    const cipher = await TenantBundleCipherDecoder.create(
-      header.payload,
-      input.session,
-      input.limits
-    );
-    const content = await readTenantBackupInputFrame({ ...common, cursor: header.cursor });
-    if (!content) fail();
-    const opened = await cipher.step(content.payload);
-    if (opened.kind !== 'chunk' || opened.bytes[0] !== 1) fail();
     const manifest =
       input.selectionMode === 'subset'
-        ? decodeTenantBundleImportManifest(opened.bytes.subarray(1), expected)
-        : decodeTenantBundleManifest(opened.bytes.subarray(1), expected);
-    input.signal.throwIfAborted();
-    await input.assertAuthorized();
-    input.signal.throwIfAborted();
+        ? decodeTenantBundleImportManifest(encoded, expected)
+        : decodeTenantBundleManifest(encoded, expected);
+    if (
+      decoded.manifest.datasets.length !== manifest.datasets.length ||
+      decoded.manifest.datasets.some(
+        (dataset, index) => dataset.id !== manifest.datasets[index]?.id
+      )
+    )
+      fail();
     return {
       manifest,
       expected: {

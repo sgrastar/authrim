@@ -37,7 +37,7 @@ export async function runTenantBackupArtifactPublicationStep(
   if (
     !cursor ||
     Object.keys(cursor).sort().join(',') !== 'attemptId,nextPart,verifiedBytes,version' ||
-    cursor.version !== 1 ||
+    cursor.version !== 2 ||
     typeof cursor.attemptId !== 'string' ||
     !cursor.attemptId ||
     !Number.isSafeInteger(cursor.nextPart) ||
@@ -56,11 +56,10 @@ export async function runTenantBackupArtifactPublicationStep(
     `INSERT INTO tenant_backup_publications(operation_id,tenant_id,attempt_id,inventory_digest,published_at,expires_at)
     SELECT o.id,o.tenant_id,a.id,p.chain_digest,?,? FROM tenant_backup_operations o
     JOIN tenant_backup_artifact_attempts a ON a.operation_id=o.id AND a.tenant_id=o.tenant_id
-    JOIN tenant_backup_cipher_streams s ON s.attempt_id=a.id AND s.tenant_id=a.tenant_id
     JOIN tenant_backup_execution_inventories p ON p.operation_id=o.id AND p.tenant_id=o.tenant_id
     WHERE o.id=? AND o.tenant_id=? AND o.state='running' AND o.kind='export' AND o.phase='publish_artifact' AND o.cursor_json=?
       AND o.lease_owner=? AND o.fencing_token=? AND o.lease_expires_at>? AND o.updated_at<=?
-      AND a.id=? AND a.state='sealed' AND a.part_count=? AND a.byte_count=? AND s.finished=1
+      AND a.id=? AND a.state='sealed' AND a.part_count=? AND a.byte_count=?
       AND p.state='sealed' AND p.chain_digest=?
       AND (SELECT count(*) FROM tenant_backup_artifact_parts t WHERE t.attempt_id=a.id AND t.uploaded=1)=a.part_count
       AND (SELECT sum(byte_count) FROM tenant_backup_artifact_parts t WHERE t.attempt_id=a.id)=a.byte_count

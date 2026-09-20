@@ -5,7 +5,7 @@ import type {
 import type { TenantMutationBoundary } from './mutation-admission';
 import type { BackupBoundaryIdentity, BackupBoundaryParticipant } from './boundary-receipts';
 import {
-  startTenantBackupSqliteCapture,
+  prepareTenantBackupSqliteCaptureStart,
   type TenantBackupSqliteCaptureInput,
 } from './sqlite-operation-capture';
 
@@ -15,20 +15,16 @@ export interface TenantBackupBoundaryStart extends BackupBoundaryParticipant {
 }
 
 /** Adapter for an already prepared SQL resource, retaining its operation and DDL guards. */
-export function sqliteBoundaryParticipant(
+export async function sqliteBoundaryParticipant(
   input: TenantBackupSqliteCaptureInput
-): TenantBackupBoundaryStart {
+): Promise<TenantBackupBoundaryStart> {
+  const start = await prepareTenantBackupSqliteCaptureStart(input);
   return {
     resourceId: input.resourceId,
     snapshotId: input.snapshotId,
     async start(assertHeld) {
-      await startTenantBackupSqliteCapture({
-        ...input,
-        async assertBoundary() {
-          await input.assertBoundary();
-          await assertHeld();
-        },
-      });
+      await assertHeld();
+      await start(assertHeld);
     },
   };
 }
@@ -70,39 +66,55 @@ export async function startTenantBackupSnapshotBoundary(input: {
     return recovered;
   }
   try {
-    const boundary = await admission.begin({
+    const admissionInput = {
       id: identity.boundaryId,
       tenantId: identity.tenantId,
       operationId: identity.operationId,
       inventoryDigest: identity.inventoryDigest,
       now: now(),
-    });
-    if (!boundary) throw new Error('backup_boundary_unavailable');
-    if (!(await receipts.plan(identity, participants, now())))
-      throw new Error('backup_boundary_plan_rejected');
-    await check();
-    const held = await admission.hold(identity.tenantId, identity.boundaryId, now());
+    };
+    const held = admission.admit
+      ? await admission.admit(admissionInput, participants)
+      : await (async () => {
+          const boundary = await admission.begin(admissionInput);
+          if (!boundary) throw new Error('backup_boundary_unavailable');
+          if (!(await receipts.plan(identity, participants, now())))
+            throw new Error('backup_boundary_plan_rejected');
+          signal.throwIfAborted();
+          return admission.hold(identity.tenantId, identity.boundaryId, now());
+        })();
     if (!held) throw new Error('backup_boundary_writers_pending');
     if (!Number.isSafeInteger(held.held_at) || (held.held_at ?? -1) < 0)
       throw new Error('backup_boundary_snapshot_timestamp_invalid');
     const boundaryUnixMs = held.held_at ?? -1;
     const assertHeld = async () => {
-      await check();
-      await receipts.assertHeld(identity, now());
+      signal.throwIfAborted();
+      const timestamp = now();
+      if (!Number.isSafeInteger(timestamp) || timestamp < 0 || timestamp >= held.deadline_at)
+        throw new Error('backup_boundary_not_held');
     };
+    await check();
+    await receipts.assertHeld(identity, now());
     // Await every start, including failures, so abort cannot race our own unfinished callbacks.
     const starts = await Promise.allSettled(
       participants.map(async (participant) => {
-        await assertHeld();
         await participant.start(assertHeld, boundaryUnixMs);
         await assertHeld();
-        if (!(await receipts.acknowledge(identity, participant, now())))
-          throw new Error('backup_boundary_receipt_rejected');
       })
     );
     if (starts.some((result) => result.status === 'rejected'))
       throw new Error('backup_boundary_participant_failed');
     await assertHeld();
+    await check();
+    await receipts.assertHeld(identity, now());
+    const acknowledged = receipts.acknowledgeAll
+      ? await receipts.acknowledgeAll(identity, participants, now())
+      : (
+          await Promise.all(
+            participants.map((participant) => receipts.acknowledge(identity, participant, now()))
+          )
+        ).every(Boolean);
+    if (!acknowledged) throw new Error('backup_boundary_receipt_rejected');
     const released = await receipts.release(identity, now());
     if (!released) throw new Error('backup_boundary_release_rejected');
     if (released.held_at !== boundaryUnixMs)

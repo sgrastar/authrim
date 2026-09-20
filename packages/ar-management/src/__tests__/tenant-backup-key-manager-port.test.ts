@@ -79,7 +79,9 @@ describe('tenant backup KeyManager production port', () => {
     await port.importKeyManager(context.context as never, snapshot);
     await expect(port.verifyKeyManager(context.context as never, snapshot)).resolves.toBe(true);
 
-    expect(stub.importTenantBackupStateRpc).toHaveBeenCalledWith(snapshot);
+    expect(stub.importTenantBackupStateRpc).toHaveBeenCalledWith(snapshot, {
+      replaceBootstrapKey: true,
+    });
     expect(stub.verifyTenantBackupStateRpc).toHaveBeenCalledWith(snapshot);
   });
 });

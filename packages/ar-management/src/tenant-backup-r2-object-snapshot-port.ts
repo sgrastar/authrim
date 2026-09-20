@@ -445,7 +445,7 @@ async function portableLogRecords(
        AND status='committed' AND event_at<=? AND (? IS NULL OR event_at>=?)
      ORDER BY event_at,record_id LIMIT 10001`,
     [
-      descriptor.objectId.slice(descriptor.objectId.indexOf(':') + 1),
+      descriptor.context.sourceRowId,
       descriptor.context.tenantKey,
       descriptor.context.logType,
       descriptor.context.plane,

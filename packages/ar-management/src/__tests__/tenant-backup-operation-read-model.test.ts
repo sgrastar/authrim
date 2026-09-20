@@ -4,6 +4,8 @@ import { TenantBackupOperationReadModel } from '../tenant-backup-operation-read-
 const state = vi.hoisted(() => ({
   operation: null as Record<string, unknown> | null,
   intent: null as Record<string, unknown> | null,
+  containerInputs: [] as { dataset_stats_json: string }[],
+  sequence: null as { payload_json: string } | null,
 }));
 
 vi.mock('@authrim/ar-lib-core/services/tenant-portability/operation-store', () => ({
@@ -66,6 +68,8 @@ beforeEach(() => {
       logs: { audit: false, other: false, sensitive: false, period: 'all' },
     },
   };
+  state.containerInputs = [];
+  state.sequence = null;
 });
 
 function database(
@@ -82,6 +86,7 @@ function database(
     query: vi.fn(async (sql: string) => {
       if (sql.includes('tenant_backup_dataset_inspections')) return datasets;
       if (sql.includes('tenant_backup_restored_holds')) return heldRecords;
+      if (sql.includes('tenant_backup_container_inputs')) return state.containerInputs;
       return [state.operation];
     }),
     queryOne: vi.fn(async (sql: string) => {
@@ -90,6 +95,7 @@ function database(
         return { state: 'sealed', item_count: 2, chain_digest: planDigest };
       if (sql.includes('AS source_count')) return mappingCounts;
       if (sql.includes('tenant_backup_admin_mapping_heads')) return mappingHead;
+      if (sql.includes('tenant_backup_restore_plan_inventory_items')) return state.sequence;
       return state.operation;
     }),
     execute: vi.fn(async () => ({ rowsAffected: 0 })),
@@ -129,6 +135,49 @@ it('reports encrypted source work held outside live queues', async () => {
   expect(result?.view.heldRecords).toEqual([
     { datasetId: 'core.plugin_hook_outbox', reason: 'source_outbox', count: 3 },
   ]);
+});
+
+it('reports registered, materialized and physical batch totals separately', async () => {
+  state.operation = { ...state.operation, state: 'running', phase: 'apply_sqlite_dataset' };
+  const descriptors = Array.from({ length: 306 }, (_, index) => ({
+    id: `core.dataset_${index}`,
+    module: 'core',
+    kind: 'users',
+    store: 'database',
+    schemaVersion: 1,
+    disposition: 'include',
+  }));
+  state.containerInputs = [
+    {
+      dataset_stats_json: JSON.stringify({
+        formatVersion: 2,
+        registeredDatasets: descriptors,
+        datasets: descriptors.map(({ id }, index) => ({
+          id,
+          rows: index < 2 ? 10 : 0,
+          bytes: index < 2 ? 1024 : 0,
+        })),
+      }),
+    },
+  ];
+  state.sequence = {
+    payload_json: JSON.stringify({
+      jobs: descriptors.map(({ id }) => ({ datasetId: id, targetId: 'core-default' })),
+    }),
+  };
+  const result = await new TenantBackupOperationReadModel(database() as never).get(
+    'tenant-a',
+    'operation-a',
+    300
+  );
+  expect(result?.view.progress).toEqual({
+    registered: 306,
+    materialized: 2,
+    nonEmpty: 2,
+    executionBatches: 1,
+    bytes: 2048,
+    rows: 20,
+  });
 });
 
 it('blocks approval until every source Admin has an explicit target mapping', async () => {

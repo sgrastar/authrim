@@ -5,6 +5,12 @@ import type {
   TenantBackupBoundaryAdmissionPort,
   TenantBackupBoundaryReceiptsPort,
 } from './boundary-rpc-contract';
+import {
+  TENANT_BACKUP_BOUNDARY_DEADLINE_MS,
+  TENANT_BACKUP_INTERMEDIATE_BOUNDARY_DEADLINE_MS,
+  TENANT_BACKUP_LEGACY_BOUNDARY_DEADLINE_MS,
+  TENANT_BACKUP_LONG_BOUNDARY_DEADLINE_MS,
+} from './mutation-admission';
 
 type Scope = Omit<BackupBoundaryIdentity, 'boundaryId'>;
 function fail(): never {
@@ -59,7 +65,9 @@ export function createTenantBackupBoundaryRpcClient(
     )
       fail();
     const b = result.boundary;
-    const returnsBoundary = ['begin', 'hold', 'release', 'readReleased'].includes(request.action);
+    const returnsBoundary = ['admit', 'begin', 'hold', 'release', 'readReleased'].includes(
+      request.action
+    );
     if (b) {
       if (
         !returnsBoundary ||
@@ -71,10 +79,16 @@ export function createTenantBackupBoundaryRpcClient(
         !Number.isSafeInteger(b.created_at) ||
         b.created_at < 0 ||
         !Number.isSafeInteger(b.deadline_at) ||
-        b.deadline_at - b.created_at !== 2000
+        ![
+          TENANT_BACKUP_LONG_BOUNDARY_DEADLINE_MS,
+          TENANT_BACKUP_BOUNDARY_DEADLINE_MS,
+          TENANT_BACKUP_INTERMEDIATE_BOUNDARY_DEADLINE_MS,
+          TENANT_BACKUP_LEGACY_BOUNDARY_DEADLINE_MS,
+        ].includes(b.deadline_at - b.created_at)
       )
         fail();
       if (request.action === 'begin' && !['draining', 'held'].includes(b.state)) fail();
+      if (request.action === 'admit' && b.state !== 'held') fail();
       if (request.action === 'hold' && b.state !== 'held') fail();
       if (['release', 'readReleased'].includes(request.action) && b.state !== 'released') fail();
       if (b.state === 'held' || b.state === 'released') {
@@ -120,6 +134,18 @@ export function createTenantBackupBoundaryRpcClient(
         })
       ).accepted;
     },
+    async acknowledgeAll(value, participants, _now) {
+      return (
+        await call({
+          ...identity(value),
+          action: 'acknowledgeAll',
+          participants: participants.map(({ resourceId, snapshotId }) => ({
+            resourceId,
+            snapshotId,
+          })),
+        })
+      ).accepted;
+    },
     async assertHeld(value, _now) {
       if (!(await call({ ...identity(value), action: 'assertHeld' })).accepted) fail();
     },
@@ -145,6 +171,24 @@ export function createTenantBackupBoundaryRpcClient(
   return {
     receipts,
     admission: {
+      async admit(value, participants) {
+        return (
+          await call({
+            ...identity({
+              ...pinned,
+              tenantId: value.tenantId,
+              operationId: value.operationId,
+              inventoryDigest: value.inventoryDigest,
+              boundaryId: value.id,
+            }),
+            action: 'admit',
+            participants: participants.map(({ resourceId, snapshotId }) => ({
+              resourceId,
+              snapshotId,
+            })),
+          })
+        ).boundary;
+      },
       async begin(value) {
         return (
           await call({

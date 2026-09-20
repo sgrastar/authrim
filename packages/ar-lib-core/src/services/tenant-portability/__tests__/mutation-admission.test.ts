@@ -46,6 +46,15 @@ beforeEach(() => {
       'utf8'
     )
   );
+  db.exec(
+    readFileSync(
+      new URL(
+        '../../../../../../migrations/control/d1/011_tenant_backup_boundary_deadline.sql',
+        import.meta.url
+      ),
+      'utf8'
+    )
+  );
   adapter = {
     async queryOne<T>(sql: string, params: unknown[] = []) {
       return (db.prepare(sql).get(...(params as SQLInputValue[])) as T) ?? null;
@@ -108,7 +117,7 @@ it('backfills the former boundary timestamp when upgrading existing held and rel
 });
 it('drains existing writers, excludes new writers, and isolates other tenants', async () => {
   expect(await admission.acquire('a', 'writer', 99)).toBe(true);
-  expect((await admission.begin(boundary))?.deadline_at).toBe(2100);
+  expect((await admission.begin(boundary))?.deadline_at).toBe(5100);
   expect(await admission.acquire('a', 'new', 101)).toBe(false);
   expect(await admission.acquire('b', 'other', 101)).toBe(true);
   expect(await admission.acquire('a', 'writer', 101)).toBe(true);
@@ -127,17 +136,17 @@ it('never treats an unresolved permit as complete or extends a retried admission
   expect(await admission.acquire('a', 'unknown-completion', 1)).toBe(true);
   await admission.begin(boundary);
   const restarted = new TenantBackupMutationAdmission(adapter);
-  expect((await restarted.begin({ ...boundary, now: 2099 }))?.deadline_at).toBe(2100);
-  expect(await restarted.hold('a', 'boundary', 2100)).toBeNull();
-  expect(await restarted.acquire('a', 'after-timeout', 2100)).toBe(true);
-  expect(await restarted.begin({ ...boundary, now: 2101 })).toBeNull();
-  expect((await restarted.begin({ ...boundary, id: 'retry-boundary', now: 2102 }))?.state).toBe(
+  expect((await restarted.begin({ ...boundary, now: 5099 }))?.deadline_at).toBe(5100);
+  expect(await restarted.hold('a', 'boundary', 5100)).toBeNull();
+  expect(await restarted.acquire('a', 'after-timeout', 5100)).toBe(true);
+  expect(await restarted.begin({ ...boundary, now: 5101 })).toBeNull();
+  expect((await restarted.begin({ ...boundary, id: 'retry-boundary', now: 5102 }))?.state).toBe(
     'draining'
   );
-  await restarted.complete('a', 'after-timeout', 2103);
-  expect(await restarted.hold('a', 'retry-boundary', 2104)).toBeNull();
-  await restarted.complete('a', 'unknown-completion', 2105);
-  expect((await restarted.hold('a', 'retry-boundary', 2106))?.state).toBe('held');
+  await restarted.complete('a', 'after-timeout', 5103);
+  expect(await restarted.hold('a', 'retry-boundary', 5104)).toBeNull();
+  await restarted.complete('a', 'unknown-completion', 5105);
+  expect((await restarted.hold('a', 'retry-boundary', 5106))?.state).toBe('held');
 });
 it('rejects overlapping attempts, changed identity and stale completion reuse', async () => {
   await admission.begin(boundary);
@@ -278,8 +287,8 @@ it('rejects changed identities, unplanned snapshots, missing plans and late rece
     await receipts.acknowledge(receiptIdentity, { resourceId: 'other', snapshotId: 'other' }, 103)
   ).toBe(false);
   expect(await receipts.acknowledge(receiptIdentity, participants[0], 104)).toBe(true);
-  expect(await receipts.acknowledge(receiptIdentity, participants[1], 2100)).toBe(false);
-  expect(await receipts.release(receiptIdentity, 2100)).toBeNull();
+  expect(await receipts.acknowledge(receiptIdentity, participants[1], 60100)).toBe(false);
+  expect(await receipts.release(receiptIdentity, 60100)).toBeNull();
   expect(() =>
     db.exec(
       "UPDATE tenant_backup_mutation_boundaries SET state='released',released_at=110 WHERE id='boundary'"
@@ -289,12 +298,12 @@ it('rejects changed identities, unplanned snapshots, missing plans and late rece
   expect(() => db.exec("UPDATE tenant_backup_boundary_plans SET participants_json='[]'")).toThrow(
     /immutable/
   );
-  await admission.begin({ ...boundary, id: 'no-plan', now: 2101 });
-  await admission.hold('a', 'no-plan', 2102);
-  expect(await receipts.release({ ...receiptIdentity, boundaryId: 'no-plan' }, 2103)).toBeNull();
+  await admission.begin({ ...boundary, id: 'no-plan', now: 60101 });
+  await admission.hold('a', 'no-plan', 60102);
+  expect(await receipts.release({ ...receiptIdentity, boundaryId: 'no-plan' }, 60103)).toBeNull();
   expect(() =>
     db.exec(
-      "UPDATE tenant_backup_mutation_boundaries SET state='released',released_at=2103 WHERE id='no-plan'"
+      "UPDATE tenant_backup_mutation_boundaries SET state='released',released_at=60103 WHERE id='no-plan'"
     )
   ).toThrow(/incomplete/);
 });
@@ -306,16 +315,16 @@ it('does not release after deadline even with every receipt, or allow precomplet
   await admission.hold('a', 'boundary', 102);
   for (const participant of participants)
     await receipts.acknowledge(receiptIdentity, participant, 103);
-  expect(await receipts.release(receiptIdentity, 2100)).toBeNull();
-  expect(await admission.acquire('a', 'after-deadline', 2100)).toBe(true);
-  await admission.abort('a', 'boundary', 2101);
-  expect(await receipts.release(receiptIdentity, 2102)).toBeNull();
+  expect(await receipts.release(receiptIdentity, 60100)).toBeNull();
+  expect(await admission.acquire('a', 'after-deadline', 60100)).toBe(true);
+  await admission.abort('a', 'boundary', 60101);
+  expect(await receipts.release(receiptIdentity, 60102)).toBeNull();
   expect(() =>
     db
       .prepare(
         `INSERT INTO tenant_backup_mutation_boundaries
     (id,tenant_id,operation_id,inventory_digest,state,created_at,deadline_at,released_at)
-    VALUES ('forged','a','backup',?,'released',100,2100,101)`
+    VALUES ('forged','a','backup',?,'released',100,60100,101)`
       )
       .run('ab'.repeat(32))
   ).toThrow(/incomplete/);
@@ -423,7 +432,7 @@ it('coordinator cannot admit while a writer is unresolved and rejects starts tha
       ...participant,
       async start() {
         starts++;
-        clock = 9999;
+        clock = 99999;
       },
     })),
   };
@@ -502,14 +511,14 @@ it.each(['plan', 'hold', 'acknowledge', 'release'])(
       expect(await timedAdmission.hold('a', boundary.id, 100)).not.toBeNull();
     if (action === 'release')
       expect(await receipts.acknowledge(identity, participant, 100)).toBe(true);
-    databaseNow = 2101;
+    databaseNow = 60101;
     if (action === 'plan') expect(await receipts.plan(identity, [participant], 100)).toBe(false);
     if (action === 'hold') expect(await timedAdmission.hold('a', boundary.id, 100)).toBeNull();
     if (action === 'acknowledge')
       expect(await receipts.acknowledge(identity, participant, 100)).toBe(false);
     if (action === 'release') expect(await receipts.release(identity, 100)).toBeNull();
     await expect(receipts.assertHeld(identity, 100)).rejects.toThrow('not_held');
-    expect(await receipts.readReleased(identity, [participant], 2200)).toBeNull();
+    expect(await receipts.readReleased(identity, [participant], 60200)).toBeNull();
   }
 );
 
@@ -533,6 +542,6 @@ it('records the database release time and recovers the immutable receipt after e
   expect(await receipts.acknowledge(identity, participant, 100)).toBe(true);
   databaseNow = 200;
   expect((await receipts.release(identity, 100))?.released_at).toBe(200);
-  databaseNow = 3000;
+  databaseNow = 70000;
   expect((await receipts.readReleased(identity, [participant], 100))?.released_at).toBe(200);
 });

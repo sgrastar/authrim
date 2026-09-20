@@ -1,6 +1,9 @@
 import { readNextPlannedSqliteDatasetChunk } from './sqlite-planned-dataset-reader';
 
 type Single = Parameters<typeof readNextPlannedSqliteDatasetChunk>[0];
+type SealedHead = { state: string; chain_digest: string };
+const shardReadSessionHeads = new WeakMap<object, Promise<SealedHead>>();
+const shardReadSessionGuards = new WeakMap<object, Map<string, Promise<void>>>();
 export interface SqliteDatasetShard {
   resourceId: string;
   firstOrdinal: number;
@@ -39,7 +42,12 @@ export async function readNextShardedSqliteDatasetChunk(
     )
   )
     throw new Error('backup_sqlite_shards_invalid');
-  const head = await input.inventory.headForLease(input.context.lease);
+  let headPromise = input.readSession ? shardReadSessionHeads.get(input.readSession) : undefined;
+  if (!headPromise) {
+    headPromise = input.inventory.headForLease(input.context.lease);
+    if (input.readSession) shardReadSessionHeads.set(input.readSession, headPromise);
+  }
+  const head = await headPromise;
   if (head.state !== 'sealed') throw new Error('backup_sqlite_shards_unsealed');
   const digest = await crypto.subtle.digest(
     'SHA-256',
@@ -87,8 +95,17 @@ export async function readNextShardedSqliteDatasetChunk(
   }
   const guard = async () => {
     input.context.signal.throwIfAborted();
-    await input.inventory.headForLease(input.context.lease);
-    await input.assertResourceSet(Object.freeze(shards));
+    let guards = input.readSession ? shardReadSessionGuards.get(input.readSession) : undefined;
+    if (!guards && input.readSession) {
+      guards = new Map();
+      shardReadSessionGuards.set(input.readSession, guards);
+    }
+    let proof = guards?.get(sourcesDigest);
+    if (!proof) {
+      proof = input.assertResourceSet(Object.freeze(shards));
+      guards?.set(sourcesDigest, proof);
+    }
+    await proof;
     input.context.signal.throwIfAborted();
   };
   await guard();

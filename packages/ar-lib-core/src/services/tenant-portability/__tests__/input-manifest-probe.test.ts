@@ -1,5 +1,5 @@
 import { beforeAll, describe, expect, it, vi } from 'vitest';
-import { encodeTenantBundle } from '../bundle-codec';
+import { encodeTenantBackupContainerV2 } from '../backup-container-v2';
 import {
   createTenantBundleKeyEnvelope,
   type TenantBundleKeyEnvelope,
@@ -9,22 +9,6 @@ import { probeTenantBackupInputManifest } from '../input-manifest-probe';
 
 async function* source<T>(items: T[]) {
   yield* items;
-}
-
-async function bytes(items: AsyncIterable<Uint8Array>): Promise<Uint8Array> {
-  const parts: Uint8Array[] = [];
-  let length = 0;
-  for await (const part of items) {
-    parts.push(part);
-    length += part.length;
-  }
-  const result = new Uint8Array(length);
-  let offset = 0;
-  for (const part of parts) {
-    result.set(part, offset);
-    offset += part.length;
-  }
-  return result;
 }
 
 const limits = { maxFrames: 100, maxTotalBytes: 8 * 1024 * 1024 };
@@ -68,14 +52,22 @@ beforeAll(async () => {
     selection: expected.selection,
     datasets: [...expected.datasets],
   };
-  object = await bytes(
-    encodeTenantBundle(
-      manifest,
-      source([{ datasetId: 'core.clients', chunks: source([new Uint8Array([1, 2, 3])]) }]),
-      session,
-      expected
-    )
-  );
+  const encoded = await encodeTenantBackupContainerV2({
+    manifest,
+    datasets: source([
+      {
+        datasetId: 'core.clients',
+        chunks: source([new TextEncoder().encode('{"id":1}\n')]),
+      },
+    ]),
+    session,
+  });
+  object = encoded.parts.reduce((combined, part) => {
+    const next = new Uint8Array(combined.length + part.length);
+    next.set(combined);
+    next.set(part, combined.length);
+    return next;
+  }, new Uint8Array());
 });
 
 function bucket(value = object) {
@@ -119,7 +111,7 @@ describe('tenant backup input manifest probe', () => {
     const input = request();
     const result = await probeTenantBackupInputManifest(input);
     expect(result).toEqual({ manifest, expected });
-    expect(input.assertAuthorized).toHaveBeenCalledTimes(13);
+    expect(input.assertAuthorized).toHaveBeenCalledTimes(3);
   });
 
   it('rejects ciphertext changes, a wrong key and changed installed expectations', async () => {
@@ -143,7 +135,7 @@ describe('tenant backup input manifest probe', () => {
   it('rechecks authorization after authenticated manifest parsing', async () => {
     const input = request();
     input.assertAuthorized.mockImplementation(async () => {
-      if (input.assertAuthorized.mock.calls.length === 13) throw new Error('lease changed');
+      if (input.assertAuthorized.mock.calls.length === 3) throw new Error('lease changed');
     });
     await expect(probeTenantBackupInputManifest(input)).rejects.toThrow(
       'backup_input_manifest_probe_failed'

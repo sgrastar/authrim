@@ -172,15 +172,18 @@ it('rejects a target after it has become publicly active', async () => {
   ).rejects.toThrow('backup_production_restore_target_invalid');
 });
 
-it('reopens the exact sealed shared target receipt', async () => {
+it.each([
+  ['admin-db', 'setup:admin:admin-db'],
+  ['core-db', 'setup:7:core-db'],
+])('reopens the exact sealed target receipt for %s', async (resourceId, provisioningId) => {
   admin.setRows([
     {
       payload_json: JSON.stringify({
         version: 1,
         kind: 'sqlite-restore-target',
-        targetId: 'operation-a:admin-db',
-        resourceId: 'admin-db',
-        provisioningId: 'setup:admin:admin-db',
+        targetId: `operation-a:${resourceId}`,
+        resourceId,
+        provisioningId,
         seedFingerprint: 'c'.repeat(64),
       }),
     },
@@ -189,6 +192,11 @@ it('reopens the exact sealed shared target receipt', async () => {
     env: { DB: platform, DB_ADMIN: admin } as unknown as Env,
     tenantKey: 'tenant-key-a',
   });
-  const target = await provider.resolveTarget(context, 'admin-db', 'setup:admin:admin-db');
+  const query = vi.spyOn(admin, 'query');
+  const target = await provider.resolveTarget(context, resourceId, provisioningId);
   await expect(target.readSeedFingerprint?.(async () => {})).resolves.toBe('c'.repeat(64));
+  expect(query).toHaveBeenCalledWith(
+    expect.stringContaining('tenant_backup_restore_plan_inventory_items'),
+    ['operation-a', 'tenant-a', `restore-target:operation-a:${resourceId}`]
+  );
 });

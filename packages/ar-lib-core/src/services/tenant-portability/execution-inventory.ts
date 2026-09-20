@@ -1,7 +1,8 @@
 import type { DatabaseAdapter } from '../../db/adapter';
 import type { TenantBackupLease } from './operation-store';
 
-type Database = Pick<DatabaseAdapter, 'query' | 'queryOne'>;
+type Database = Pick<DatabaseAdapter, 'query' | 'queryOne'> &
+  Partial<Pick<DatabaseAdapter, 'batch'>>;
 interface InventoryHead {
   operation_id: string;
   tenant_id: string;
@@ -162,6 +163,99 @@ export class TenantBackupExecutionInventory {
     );
     if (!inserted) throw new Error('backup_inventory_append_conflict');
   }
+
+  /** Append one durable planning batch. D1 executes the statements atomically and in order. */
+  async appendBatch(
+    entries: readonly { ordinal: number; itemId: string; payloadJson: string }[]
+  ): Promise<void> {
+    if (!entries.length || entries.length > 100) throw new Error('backup_inventory_invalid_batch');
+    if (!this.database.batch) {
+      for (const entry of entries)
+        await this.append(entry.ordinal, entry.itemId, entry.payloadJson);
+      return;
+    }
+    for (const [index, entry] of entries.entries()) {
+      if (
+        !Number.isInteger(entry.ordinal) ||
+        entry.ordinal < 0 ||
+        entry.ordinal >= 4096 ||
+        entry.ordinal !== entries[0].ordinal + index ||
+        !/^[A-Za-z0-9_.:-]{1,256}$/.test(entry.itemId) ||
+        typeof entry.payloadJson !== 'string' ||
+        new TextEncoder().encode(entry.payloadJson).length > 262144
+      )
+        throw new Error('backup_inventory_invalid_item');
+      try {
+        JSON.parse(entry.payloadJson);
+      } catch {
+        throw new Error('backup_inventory_invalid_item');
+      }
+    }
+    const before = await this.head();
+    const firstOrdinal = entries[0].ordinal;
+    const endOrdinal = firstOrdinal + entries.length;
+    if (firstOrdinal < before.item_count) {
+      if (endOrdinal > before.item_count) throw new Error('backup_inventory_append_conflict');
+      const existing = await this.database.query<InventoryItem>(
+        `SELECT ordinal,item_id,payload_json,payload_digest,chain_digest
+         FROM tenant_backup_execution_inventory_items
+         WHERE operation_id=? AND tenant_id=? AND ordinal>=? AND ordinal<? ORDER BY ordinal`,
+        [this.lease.operationId, this.lease.tenantId, firstOrdinal, endOrdinal]
+      );
+      if (
+        existing.length !== entries.length ||
+        existing.some(
+          (item, index) =>
+            item.ordinal !== entries[index].ordinal ||
+            item.item_id !== entries[index].itemId ||
+            item.payload_json !== entries[index].payloadJson
+        )
+      )
+        throw new Error('backup_inventory_retry_conflict');
+      await this.head();
+      return;
+    }
+    if (before.state !== 'building' || firstOrdinal !== before.item_count)
+      throw new Error('backup_inventory_append_conflict');
+    let chainDigest = before.chain_digest;
+    const statements = [];
+    for (const entry of entries) {
+      const payloadDigest = await sha(entry.payloadJson);
+      const previousDigest = chainDigest;
+      chainDigest = await sha(
+        JSON.stringify([
+          'authrim-execution-inventory-v1',
+          previousDigest,
+          entry.ordinal,
+          entry.itemId,
+          payloadDigest,
+        ])
+      );
+      statements.push({
+        sql: `INSERT INTO tenant_backup_execution_inventory_items
+          (operation_id,tenant_id,ordinal,item_id,payload_json,payload_digest,chain_digest)
+          SELECT p.operation_id,p.tenant_id,?,?,?,?,? FROM tenant_backup_execution_inventories p
+          WHERE p.tenant_id=? AND p.operation_id=? AND ${LIVE} AND p.state='building'
+            AND p.item_count=? AND p.chain_digest=?`,
+        params: [
+          entry.ordinal,
+          entry.itemId,
+          entry.payloadJson,
+          payloadDigest,
+          chainDigest,
+          ...this.params(),
+          entry.ordinal,
+          previousDigest,
+        ],
+      });
+    }
+    const results = await this.database.batch(statements);
+    if (results.length !== entries.length || results.some((result) => !result.success))
+      throw new Error('backup_inventory_append_conflict');
+    const after = await this.head();
+    if (after.item_count !== endOrdinal || after.chain_digest !== chainDigest)
+      throw new Error('backup_inventory_append_conflict');
+  }
   async seal(expectedCount: number, expectedDigest: string): Promise<InventoryHead> {
     if (
       !Number.isInteger(expectedCount) ||
@@ -196,10 +290,10 @@ export class TenantBackupExecutionInventory {
       FROM tenant_backup_execution_inventory_items i JOIN tenant_backup_execution_inventories p
       ON p.operation_id=i.operation_id AND p.tenant_id=i.tenant_id
       WHERE p.tenant_id=? AND p.operation_id=? AND ${LIVE} AND i.ordinal>=?
-      ORDER BY i.ordinal LIMIT 16`,
+      ORDER BY i.ordinal LIMIT 256`,
       [...this.params(), from]
     );
-    if (rows.length !== Math.min(16, Math.max(0, before.item_count - from)))
+    if (rows.length !== Math.min(256, Math.max(0, before.item_count - from)))
       throw new Error('backup_inventory_items_missing');
     let chain = EMPTY_DIGEST;
     if (rows.length && from > 0) {

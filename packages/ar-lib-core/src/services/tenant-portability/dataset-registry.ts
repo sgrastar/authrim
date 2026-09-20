@@ -47,7 +47,7 @@ const TABLE_GROUPS: Partial<
       field_usage_bindings flow_assignments flow_versions flows
       groups identity_providers internal_notification_delivery_routes logging_quota_policies
       lookup_retention_policies oauth_clients oidc_scopes org_domain_mappings
-      organizations policy_rules presentation_definitions profile_registry provisioning_assignment_rules
+      organizations policy_rules presentation_definitions provisioning_assignment_rules
       relation_definitions resource_permissions role_assignment_rules roles
       saml_attribute_presets scope_mappings screens sign_in_confirmation_policies
       status_lists tenant_consent_requirements tenant_domain_mappings tenant_vanity_domains
@@ -96,6 +96,9 @@ const TABLE_GROUPS: Partial<
     artifacts: `
       object_catalog object_catalog_objects
     `,
+    // Shared installed storage/audit/residency profiles are target prerequisites. They have no
+    // tenant-owned rows and must never be copied wholesale into a tenant bundle.
+    external: 'profile_registry',
     rebuild: `
       authrim_migrations migration_metadata tenant_database_migration_state
       account_routing_outbox authrim_control_plane_shard_metadata contact_point_search_indexes did_document_cache
@@ -204,7 +207,7 @@ const TABLE_GROUPS: Partial<
       admin_external_token_refresh_runs admin_external_token_refresh_tenant_runs
       admin_agent_delegation_jtis admin_agent_login_handoffs admin_agent_mcp_sessions admin_agent_token_families admin_passkeys
       admin_machine_assertion_jti admin_sessions admin_setup_tokens agent_elevation_challenges
-      tenant_backup_uploads tenant_backup_upload_parts tenant_backup_operation_inputs tenant_backup_export_manifests tenant_backup_publications tenant_backup_input_validations tenant_backup_dataset_inspections tenant_backup_input_receipts tenant_backup_cipher_streams tenant_backup_cipher_frames tenant_backup_snapshot_resources tenant_backup_execution_inventories tenant_backup_execution_inventory_items tenant_backup_restore_plan_inventories tenant_backup_restore_plan_inventory_items tenant_backup_restore_cleanup_receipts tenant_backup_r2_restore_objects tenant_backup_r2_restore_parts admin_invitation_enrollments elevation_grants tenant_backup_artifact_attempts tenant_backup_artifact_parts tenant_backup_operations tenant_backup_key_handoffs tenant_backup_validation_sessions
+      tenant_backup_uploads tenant_backup_upload_parts tenant_backup_operation_inputs tenant_backup_export_manifests tenant_backup_publications tenant_backup_input_validations tenant_backup_dataset_inspections tenant_backup_input_receipts tenant_backup_container_inputs tenant_backup_cipher_streams tenant_backup_cipher_frames tenant_backup_snapshot_resources tenant_backup_execution_inventories tenant_backup_execution_inventory_items tenant_backup_restore_plan_inventories tenant_backup_restore_plan_inventory_items tenant_backup_restore_cleanup_receipts tenant_backup_r2_restore_objects tenant_backup_r2_restore_parts admin_invitation_enrollments elevation_grants tenant_backup_artifact_attempts tenant_backup_artifact_parts tenant_backup_operations tenant_backup_key_handoffs tenant_backup_validation_sessions
       tenant_backup_validation_records tenant_backup_validation_references
       tenant_backup_admin_mapping_heads tenant_backup_admin_mappings
       tenant_backup_restored_holds

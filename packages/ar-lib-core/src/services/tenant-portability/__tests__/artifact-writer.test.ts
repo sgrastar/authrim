@@ -34,6 +34,7 @@ import {
 } from '../sqlite-snapshot';
 import { sqliteSnapshotRowInsert } from '../sqlite-row-codec';
 import { decodeTenantBundle } from '../bundle-codec';
+import { decodeTenantBackupContainerV2 } from '../backup-container-v2';
 let db: DatabaseSync;
 let operations: TenantBackupOperationStore;
 let writer: TenantBackupArtifactWriter;
@@ -52,6 +53,7 @@ beforeEach(async () => {
     '004_tenant_backup_validation_index.sql',
     '008_tenant_backup_retry_state.sql',
     '009_tenant_backup_artifact_parts.sql',
+    '036_tenant_backup_capacity_parts.sql',
     '012_tenant_backup_cipher_journal.sql',
     '021_tenant_backup_export_manifests.sql',
   ])
@@ -229,7 +231,7 @@ it('retains the object reservation when cancellation races the receipt and canno
   await expect(writer.seal(1, 1)).rejects.toThrow();
 });
 it('rejects missing parts, incorrect byte totals and oversized writes', async () => {
-  await expect(writer.writePart(0, new Uint8Array(4 * 1024 * 1024 + 1))).rejects.toThrow();
+  await expect(writer.writePart(0, new Uint8Array(16 * 1024 * 1024 + 1))).rejects.toThrow();
   await writer.writePart(1, new Uint8Array([1]));
   await expect(writer.seal(1, 1)).rejects.toThrow();
   await writer.writePart(0, new Uint8Array([2]));
@@ -305,7 +307,7 @@ it('connects a real SQL snapshot through encrypted storage and typed restoration
     readLease,
     current.revision,
     'export_artifact',
-    JSON.stringify({ version: 1, attemptId: writer.attemptId }),
+    JSON.stringify({ version: 2, attemptId: writer.attemptId }),
     readTime
   ))!;
   await operations.release(readLease, prepared.revision, 'queued', readTime);
@@ -388,6 +390,7 @@ it('connects a real SQL snapshot through encrypted storage and typed restoration
       inspected: 1,
       advanced: slice === 0 ? 0 : 1,
       failures: slice === 0 ? 1 : 0,
+      failureCodes: slice === 0 ? ['checkpoint_response_lost'] : [],
     });
     const saved = (await operations.get('tenant-a', 'operation'))!;
     expect(saved.state).toBe('queued');
@@ -426,7 +429,7 @@ it('connects a real SQL snapshot through encrypted storage and typed restoration
         operation: {
           ...verifier,
           phase: 'export_artifact',
-          cursor_json: '{"version":1,"attemptId":"other"}',
+          cursor_json: '{"version":2,"attemptId":"other"}',
         },
       },
       wrongPhaseInput
@@ -443,18 +446,10 @@ it('connects a real SQL snapshot through encrypted storage and typed restoration
       now: () => readTime,
     });
   }
-  let rows = '',
-    complete = false;
-  const decoder = new TextDecoder('utf-8', { fatal: true });
-  for await (const event of decodeTenantBundle(saved(), session, expected, {
-    maxFrames: 20,
-    maxTotalBytes: 1024 * 1024,
-  })) {
-    if (event.kind === 'chunk') rows += decoder.decode(event.bytes, { stream: true });
-    if (event.kind === 'complete') complete = true;
-  }
-  rows += decoder.decode();
-  expect(complete).toBe(true);
+  const savedParts: Uint8Array[] = [];
+  for await (const part of saved()) savedParts.push(part);
+  const decoded = await decodeTenantBackupContainerV2({ parts: savedParts, session });
+  const rows = new TextDecoder('utf-8', { fatal: true }).decode(decoded.datasets.get('accounts'));
   const restored = new DatabaseSync(':memory:');
   try {
     restored.exec(ddl);
@@ -480,7 +475,7 @@ it('connects a real SQL snapshot through encrypted storage and typed restoration
 
 it('adopts immutable parts after worker takeover and fences the prior writer', async () => {
   await writer.writePart(0, new Uint8Array([1, 2, 3]));
-  const next = (await operations.claim('tenant-a', 'operation', 'next', 40000))!;
+  const next = (await operations.claim('tenant-a', 'operation', 'next', 600101))!;
   const lease = {
     tenantId: 'tenant-a',
     operationId: 'operation',
@@ -492,7 +487,7 @@ it('adopts immutable parts after worker takeover and fences the prior writer', a
     bucket,
     writer.attemptId,
     lease,
-    () => 40001
+    () => 600102
   );
   expect(await resumed.progress()).toEqual({
     state: 'writing',
@@ -513,7 +508,7 @@ it('adopts immutable parts after worker takeover and fences the prior writer', a
     bucket,
     writer.attemptId,
     lease,
-    () => 40001
+    () => 600102
   );
   expect((await reopened.progress()).state).toBe('sealed');
   await expect(reopened.writePart(2, new Uint8Array([5]))).rejects.toThrow('write_failed');
@@ -531,7 +526,7 @@ it('does not count an uncertain upload until the new worker verifies the identic
     uploadedBytes: 0,
   });
   putHook = undefined;
-  const next = (await operations.claim('tenant-a', 'operation', 'next', 40000))!;
+  const next = (await operations.claim('tenant-a', 'operation', 'next', 600101))!;
   const resumed = await TenantBackupArtifactWriter.resume(
     adapter,
     bucket,
@@ -542,7 +537,7 @@ it('does not count an uncertain upload until the new worker verifies the identic
       owner: 'next',
       fencingToken: next.fencing_token,
     },
-    () => 40001
+    () => 600102
   );
   await resumed.writePart(0, new Uint8Array([1, 2]));
   expect(objects.size).toBe(1);
@@ -581,20 +576,20 @@ it('resumes the same cipher stream under a new lease and decodes with the v1 rea
   };
   const journal = await TenantBackupCipherJournal.open(adapter, writer, lease, () => 102, session);
   await journal.write(0, new TextEncoder().encode('first'), ' {"cursor":1}');
-  const next = (await operations.claim('tenant-a', 'operation', 'replacement', 40000))!;
+  const next = (await operations.claim('tenant-a', 'operation', 'replacement', 600101))!;
   const nextLease = { ...lease, owner: 'replacement', fencingToken: next.fencing_token };
   const resumedWriter = await TenantBackupArtifactWriter.resume(
     adapter,
     bucket,
     writer.attemptId,
     nextLease,
-    () => 40001
+    () => 600102
   );
   const resumed = await TenantBackupCipherJournal.open(
     adapter,
     resumedWriter,
     nextLease,
-    () => 40001,
+    () => 600102,
     session
   );
   expect((await resumed.progress()).checkpoint_json).toBe(' {"cursor":1}');
@@ -890,6 +885,7 @@ it('prepares one encrypted manifest after a released boundary and recovers witho
     ['control', '006_tenant_backup_mutation_environment_scope.sql'],
     ['control', '007_tenant_backup_boundary_receipts.sql'],
     ['control', '010_tenant_backup_snapshot_timestamp.sql'],
+    ['control', '011_tenant_backup_boundary_deadline.sql'],
   ])
     db.exec(
       readFileSync(
@@ -998,13 +994,9 @@ it('prepares one encrypted manifest after a released boundary and recovers witho
     runPrepareTenantBackupArtifactStep({ ...args, manifest: { ...manifest, boundaryUnixMs: 107 } })
   ).rejects.toThrow('preparation_boundary');
   expect(objects.size).toBe(0);
-  putHook = async () => {
-    throw new Error('lost upload response');
-  };
-  await expect(runPrepareTenantBackupArtifactStep(args)).rejects.toThrow();
-  putHook = undefined;
   const first = await runPrepareTenantBackupArtifactStep(args);
   expect(first.phase).toBe('export_artifact');
+  expect(objects.size).toBe(0);
   const objectCount = objects.size;
   expect(await runPrepareTenantBackupArtifactStep(args)).toEqual(first);
   expect(objects.size).toBe(objectCount);
@@ -1048,9 +1040,9 @@ it('prepares one encrypted manifest after a released boundary and recovers witho
 
   expect(
     db
-      .prepare('SELECT next_sequence FROM tenant_backup_cipher_streams WHERE attempt_id=?')
-      .get(attemptId)?.next_sequence
-  ).toBe(1);
+      .prepare('SELECT count(*) AS n FROM tenant_backup_cipher_streams WHERE attempt_id=?')
+      .get(attemptId)?.n
+  ).toBe(0);
 });
 
 it('recovers an uncertain attempt allocation and refuses another tenant or unsafe object identity', async () => {

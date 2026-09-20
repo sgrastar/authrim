@@ -4,8 +4,6 @@ import type { TenantBackupStepContext, TenantBackupStepResult } from './operatio
 import type { TenantBackupExecutionInventory } from './execution-inventory';
 import type { BackupBoundaryParticipant } from './boundary-receipts';
 import { TenantBackupArtifactWriter } from './artifact-writer';
-import { TenantBackupCipherJournal } from './cipher-journal';
-import { initializeTenantBackupContent } from './resumable-bundle-writer';
 import {
   encodeTenantBundleManifest,
   type TenantBundleManifest,
@@ -115,7 +113,7 @@ export async function runPrepareTenantBackupArtifactStep(input: {
   const attemptId = Array.from(new Uint8Array(digest), (byte) =>
     byte.toString(16).padStart(2, '0')
   ).join('');
-  const writer = await TenantBackupArtifactWriter.createOrResume(
+  await TenantBackupArtifactWriter.createOrResume(
     input.database,
     input.bucket,
     attemptId,
@@ -130,23 +128,10 @@ export async function runPrepareTenantBackupArtifactStep(input: {
     expected: input.expected,
     now: () => input.now(),
   });
-  const journal = await TenantBackupCipherJournal.open(
-    input.database,
-    writer,
-    lease,
-    () => input.now(),
-    input.key
-  );
-  await guard();
-  await initializeTenantBackupContent({
-    journal,
-    manifest: input.manifest,
-    expected: input.expected,
-  });
   await guard();
   return {
     phase: 'export_artifact',
     disposition: 'continue',
-    cursor: JSON.stringify({ version: 1, attemptId }),
+    cursor: JSON.stringify({ version: 2, attemptId }),
   };
 }

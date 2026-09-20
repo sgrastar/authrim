@@ -1,12 +1,17 @@
 // @vitest-environment jsdom
 
 import { beforeEach, expect, it, vi } from 'vitest';
+import { File as NodeFile } from 'node:buffer';
 import {
 	adminTenantBackupsAPI,
 	extractTenantBackupEnvelope,
+	inspectTenantBackupSource,
 	saveTenantBackupResponse,
 	type TenantBackupOperation
 } from './admin-tenant-backups';
+import { createTenantBundleKeyEnvelope } from '@authrim/ar-lib-core/services/tenant-portability/bundle-key-envelope';
+import { encryptTenantBundleStream } from '@authrim/ar-lib-core/services/tenant-portability/bundle-cipher';
+import { encodeTenantBackupContainerV2 } from '@authrim/ar-lib-core/services/tenant-portability/backup-container-v2';
 
 beforeEach(() => {
 	vi.restoreAllMocks();
@@ -60,6 +65,72 @@ it('extracts only the portable key envelope from an authenticated artifact heade
 	);
 });
 
+it('reads a cross-environment source identity from the locally decrypted manifest', async () => {
+	const passphrase = 'correct horse battery staple';
+	const session = await createTenantBundleKeyEnvelope(passphrase);
+	const source = {
+		tenantId: 'tenant-a',
+		issuer: 'https://source.example',
+		productVersion: '0.4.2'
+	};
+	const manifest = new TextEncoder().encode(JSON.stringify({ source }));
+	const first = new Uint8Array(manifest.length + 1);
+	first[0] = 1;
+	first.set(manifest, 1);
+	async function* plaintext() {
+		yield first;
+	}
+	const frames: Uint8Array[] = [];
+	for await (const frame of encryptTenantBundleStream(plaintext(), session)) frames.push(frame);
+	const file = new NodeFile(
+		frames.map((frame) => frame.slice()),
+		'tenant.authrim'
+	) as unknown as File;
+
+	await expect(inspectTenantBackupSource(file, passphrase)).resolves.toEqual(source);
+});
+
+it('reads source identity and envelope from an authenticated v2 container', async () => {
+	const passphrase = 'correct horse battery staple';
+	const session = await createTenantBundleKeyEnvelope(passphrase);
+	const source = {
+		tenantId: 'tenant-a',
+		issuer: 'https://source.example',
+		productVersion: '0.4.2'
+	};
+	const container = await encodeTenantBackupContainerV2({
+		manifest: {
+			formatVersion: 1,
+			bundleId: Array.from(session.envelope.slice(1, 17), (byte) =>
+				byte.toString(16).padStart(2, '0')
+			).join(''),
+			source,
+			snapshotId: 'snapshot-a',
+			boundaryUnixMs: 1,
+			inventoryDigestSha256: 'ab'.repeat(32),
+			selection: {
+				settings: true,
+				users: false,
+				admin: false,
+				artifacts: false,
+				logs: { audit: false, other: false, sensitive: false, period: 'all' }
+			},
+			datasets: []
+		},
+		datasets: (async function* () {})(),
+		session
+	});
+	const file = new NodeFile(
+		container.parts.map((part) => part.slice()),
+		'tenant.authrim'
+	) as unknown as File;
+
+	expect(extractTenantBackupEnvelope(await file.slice(0, 137).arrayBuffer())).toEqual(
+		session.envelope
+	);
+	await expect(inspectTenantBackupSource(file, passphrase)).resolves.toEqual(source);
+});
+
 it('lists public progress and submits the exact preview revision and digest for approval', async () => {
 	const operation = {
 		id: 'operation-a',
@@ -80,6 +151,7 @@ it('lists public progress and submits the exact preview revision and digest for 
 		publication: null,
 		adminMapping: null,
 		heldRecords: [],
+		progress: null,
 		preview: {
 			planDigest: 'ab'.repeat(32),
 			datasetCount: 2,

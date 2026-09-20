@@ -354,3 +354,42 @@ export function sqliteSnapshotPageQuery(
   ) SELECT record_key, row_json FROM snapshot_rows WHERE record_key > ?
     ORDER BY record_key LIMIT ?`;
 }
+
+/** Cheap T0 existence probe used to materialize execution work without encoding row bodies. */
+export function sqliteSnapshotExistenceQuery(
+  schema: CaptureSchema,
+  partitions?: readonly string[]
+): string {
+  validateSchema(schema);
+  if (schema.rowPartition) {
+    if (
+      !partitions?.length ||
+      new Set(partitions).size !== partitions.length ||
+      partitions.some((partition) => !schema.rowPartition?.values.includes(partition))
+    )
+      throw new Error('snapshot_invalid_row_partition');
+  } else if (partitions !== undefined) {
+    throw new Error('snapshot_unexpected_row_partition');
+  }
+  const selectedPartitions = partitions ? rowPartitionValues(partitions) : null;
+  const partitionColumn = schema.rowPartition?.column;
+  if (selectedPartitions && !partitionColumn) throw new Error('snapshot_invalid_row_partition');
+  return `WITH selected_snapshot AS (
+    SELECT id, tenant_id, tenant_key FROM tenant_backup_snapshots
+    WHERE id = ? AND tenant_id = ? AND state = 'capturing'
+  ), snapshot_rows AS (
+    SELECT 1 AS present
+    FROM ${identifier(schema.table)} AS live
+    JOIN selected_snapshot AS snapshot ON ${ownedAtBoundary(schema, 'live', 'snapshot')}
+    WHERE ${selectedPartitions ? `live.${identifier(partitionColumn ?? '')} IN (${selectedPartitions}) AND ` : ''}NOT EXISTS (
+      SELECT 1 FROM tenant_backup_preimages AS previous
+      WHERE previous.snapshot_id = snapshot.id AND previous.source_table = '${schema.table}'
+        AND previous.record_key = ${recordKey(schema, 'live')}
+    )
+    UNION ALL
+    SELECT 1
+    FROM tenant_backup_preimages AS previous
+    JOIN selected_snapshot AS snapshot ON snapshot.id = previous.snapshot_id
+    WHERE previous.source_table = '${schema.table}' AND previous.present = 1${selectedPartitions ? ` AND previous.row_partition IN (${selectedPartitions})` : ''}
+  ) SELECT 1 FROM snapshot_rows LIMIT 1`;
+}

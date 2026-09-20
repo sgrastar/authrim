@@ -36,6 +36,8 @@ export interface AdapterContext {
   selection: Awaited<ReturnType<typeof loadTenantBackupExportExecution>>['intent']['selection'];
   /** Set while a non-SQL participant captures the persisted held boundary. */
   boundaryUnixMs?: number;
+  /** Present only while assembling one export artifact. */
+  readSession?: object;
   resolveSource(resource: {
     resourceId: string;
     family: SqliteCaptureResource['family'];
@@ -71,6 +73,8 @@ export interface TenantBackupInstalledExportAdapter {
       signal: AbortSignal;
       /** Immutable bundle boundary used by installed log-window policies. */
       boundaryUnixMs?: number;
+      /** Shared only within one artifact assembly attempt. */
+      readSession?: object;
     }
   ): Promise<{ bytes: Uint8Array; nextCursor: string } | null>;
   /** Release one page of installed non-SQL snapshot state after ciphertext verification. */
@@ -128,7 +132,7 @@ function verifiedArtifactCursor(value: string | null): string {
       !cursor ||
       Array.isArray(cursor) ||
       Object.keys(cursor).sort().join(',') !== 'attemptId,nextPart,verifiedBytes,version' ||
-      cursor.version !== 1 ||
+      cursor.version !== 2 ||
       typeof cursor.attemptId !== 'string' ||
       !/^[A-Za-z0-9-]{1,64}$/.test(cursor.attemptId) ||
       !Number.isSafeInteger(cursor.nextPart) ||
@@ -176,7 +180,11 @@ export async function runTenantBackupExportOperationStep(
     fail();
   const inventory = new TenantBackupExecutionInventory(loaded.database, context.lease, now);
   const snapshotResources = new TenantBackupSnapshotResources(loaded.database, now);
-  const resolveDatabases = () => resolveTenantBackupDatabaseInventory(env, context, required, now);
+  // Database routing is immutable for one fenced operation slice. Reuse the same verified
+  // resolution across dataset frames instead of repeating Control and D1 inventory lookups.
+  let resolvedDatabases: Promise<ResolvedDatabases> | null = null;
+  const resolveDatabases = () =>
+    (resolvedDatabases ??= resolveTenantBackupDatabaseInventory(env, context, required, now));
   const resolveSource = async (resource: {
     resourceId: string;
     family: SqliteCaptureResource['family'];
@@ -337,13 +345,14 @@ export async function runTenantBackupExportOperationStep(
         datasets,
         requiredDatabases: required,
         assertSources,
-        readNext: async (datasetId, cursor, signal, manifest) =>
+        readNext: async (datasetId, cursor, signal, manifest, readSession) =>
           adapter.readNext({
             ...(await adapterContext()),
             datasetId,
             cursor,
             signal,
             boundaryUnixMs: manifest?.boundaryUnixMs,
+            readSession,
           }),
         assertPublishable: async (inventoryDigest) =>
           adapter.assertPublishable({ ...(await adapterContext()), inventoryDigest }),

@@ -6,10 +6,7 @@ import {
   phase4SqliteVerificationIgnoredColumns,
 } from './phase4-sqlite-references.js';
 import { PHASE4_CUMULATIVE_SQLITE_DATASET_REGISTRATIONS } from './phase4-sqlite-modules.js';
-import {
-  PHASE5_CUMULATIVE_SQLITE_DATASET_REGISTRATIONS,
-  PHASE5_SQLITE_DATASET_REGISTRATIONS,
-} from './phase5-sqlite-modules.js';
+import { PHASE5_CUMULATIVE_SQLITE_DATASET_REGISTRATIONS } from './phase5-sqlite-modules.js';
 import type {
   TenantPortableDependency,
   TenantPortableRecordIdentity,
@@ -23,7 +20,9 @@ import { portableWebhookSecret } from './portable-webhook-secret.js';
 const previousIds = new Set(
   PHASE4_CUMULATIVE_SQLITE_DATASET_REGISTRATIONS.map(({ dataset }) => dataset.id)
 );
-const phase5Ids = new Set(PHASE5_SQLITE_DATASET_REGISTRATIONS.map(({ dataset }) => dataset.id));
+const phase5Ids = new Set(
+  PHASE5_CUMULATIVE_SQLITE_DATASET_REGISTRATIONS.map(({ dataset }) => dataset.id)
+);
 const registrations = new Map(
   PHASE5_CUMULATIVE_SQLITE_DATASET_REGISTRATIONS.map((registration) => [
     registration.dataset.id,
@@ -308,6 +307,10 @@ export function createPhase5SqliteInspectionPolicies(
     new Set(planned.map(({ dataset }) => dataset.id)).size !== planned.length
   )
     throw new Error('backup_phase5_plan_incomplete');
+  const isTenantKeyOwned = (schema: PlannedInstalledSqliteDataset['capture']): boolean =>
+    'parent' in schema
+      ? isTenantKeyOwned(schema.parent.schema)
+      : schema.tenantIdentity === 'tenantKey';
   return planned.map((entry) => {
     const registration = registrations.get(entry.dataset.id);
     if (
@@ -330,11 +333,23 @@ export function createPhase5SqliteInspectionPolicies(
     return {
       dataset: structuredClone(entry.dataset),
       schema: structuredClone(entry.capture),
+      ...(entry.dataset.id === 'core.screens'
+        ? {
+            identityAliases: {
+              id: 'screen-key-v1',
+              aliases: (row: PortableSqliteRow, identity: TenantPortableRecordIdentity) => {
+                const screenKey = field(row, 'screen_key');
+                if (screenKey[0] !== 'text' || !screenKey[1]) invalid();
+                return [{ ...identity, id: JSON.stringify([screenKey]) }];
+              },
+            },
+          }
+        : {}),
       ...(restoreAfter.length ? { restoreAfter } : {}),
       ...(deferredColumns.length ? { deferredColumns } : {}),
       ...(restoreOverrides ? { restoreOverrides } : {}),
       ...(verificationIgnoredColumns.length ? { verificationIgnoredColumns } : {}),
-      ...(entry.capture.tenantIdentity === 'tenantKey' ? { tenantKey: input.tenantKey } : {}),
+      ...(isTenantKeyOwned(entry.capture) ? { tenantKey: input.tenantKey } : {}),
       ...(parentDataset
         ? { parentDataset: { id: parentDataset.id, module: parentDataset.module } }
         : {}),

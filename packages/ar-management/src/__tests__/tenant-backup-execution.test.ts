@@ -708,7 +708,7 @@ it.each(['export_artifact', 'verify_artifact'])(
       },
     });
     expect(selected.mock.calls[0][1]).not.toHaveProperty('manifest');
-    expect(assertSources).toHaveBeenCalledTimes(2);
+    expect(assertSources).toHaveBeenCalledTimes(phase === 'export_artifact' ? 1 : 2);
   }
 );
 

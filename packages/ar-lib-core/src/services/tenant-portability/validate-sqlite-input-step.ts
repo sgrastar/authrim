@@ -17,7 +17,10 @@ interface Cursor {
   rows: number;
 }
 
-/** One installed-policy SQL row inspection per slice; dataset completion is not whole-input validity. */
+const VALIDATION_BATCH_ROWS = 250;
+const VALIDATION_BATCH_BYTES = 4 * 1024 * 1024;
+
+/** Inspect one bounded dataset batch and save only the batch-level operation checkpoint. */
 export async function runSqliteInputValidationStep(
   context: TenantBackupStepContext,
   input: {
@@ -76,32 +79,45 @@ export async function runSqliteInputValidationStep(
     lease,
     input.now
   );
-  const row = await input.readNextRow(cursor.sourceCursor);
+  let sourceCursor = cursor.sourceCursor;
+  let rows = cursor.rows;
+  let bytes = 0;
+  let complete = false;
+  for (let count = 0; count < VALIDATION_BATCH_ROWS; count++) {
+    const row = await input.readNextRow(sourceCursor);
+    if (!row) {
+      complete = true;
+      break;
+    }
+    if (
+      typeof row.nextCursor !== 'string' ||
+      !row.nextCursor ||
+      row.nextCursor.length > 4096 ||
+      row.nextCursor === sourceCursor
+    )
+      fail();
+    const rowBytes = new TextEncoder().encode(row.rowJson).length;
+    if (
+      rowBytes > VALIDATION_BATCH_BYTES ||
+      (count > 0 && bytes + rowBytes > VALIDATION_BATCH_BYTES)
+    )
+      break;
+    await inspectSqliteInputRow({
+      policy: input.policy,
+      manifest: input.manifest,
+      rowJson: row.rowJson,
+      rowOrdinal: rows,
+      index,
+      assertPinnedInput: async () => {},
+    });
+    sourceCursor = row.nextCursor;
+    rows++;
+    bytes += rowBytes;
+  }
   await assertPinned();
-  if (!row)
-    return {
-      phase: 'advance_validation_dataset',
-      cursor: JSON.stringify(cursor),
-      disposition: 'continue',
-    };
-  if (
-    typeof row.nextCursor !== 'string' ||
-    !row.nextCursor ||
-    row.nextCursor.length > 4096 ||
-    row.nextCursor === cursor.sourceCursor
-  )
-    fail();
-  await inspectSqliteInputRow({
-    policy: input.policy,
-    manifest: input.manifest,
-    rowJson: row.rowJson,
-    rowOrdinal: cursor.rows,
-    index,
-    assertPinnedInput: assertPinned,
-  });
   return {
-    phase: 'validate_sqlite_dataset',
-    cursor: JSON.stringify({ ...cursor, rows: cursor.rows + 1, sourceCursor: row.nextCursor }),
+    phase: complete ? 'advance_validation_dataset' : 'validate_sqlite_dataset',
+    cursor: JSON.stringify({ ...cursor, rows, sourceCursor }),
     disposition: 'continue',
   };
 }

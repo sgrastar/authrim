@@ -119,6 +119,8 @@ export async function runPreparedSnapshotBoundaryStep(input: {
   const participants: TenantBackupBoundaryStart[] = [];
   for (const resource of cursor.discovery.resources) {
     if (resource.captureCount === 0) continue;
+    if (!resource.boundarySchemaDigest)
+      throw new Error('backup_boundary_step_preparation_incomplete');
     const source = await input.resolveSource(Object.freeze({ ...resource }));
     signal.throwIfAborted();
     if (source.resourceId !== resource.resourceId)
@@ -129,13 +131,16 @@ export async function runPreparedSnapshotBoundaryStep(input: {
       resource.resourceId,
     ]);
     participants.push(
-      sqliteBoundaryParticipant({
+      await sqliteBoundaryParticipant({
         context: input.context,
         inventory: input.inventory,
         resources: input.resources,
         resourceId: resource.resourceId,
         family: resource.family,
         firstOrdinal: resource.firstOrdinal,
+        tableCount: resource.tableCount,
+        captureCount: resource.captureCount,
+        expectedBoundarySchemaDigest: resource.boundarySchemaDigest,
         selection: input.selection,
         tenantKey: input.tenantKey,
         source,

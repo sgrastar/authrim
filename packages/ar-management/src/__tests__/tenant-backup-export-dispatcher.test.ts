@@ -291,7 +291,7 @@ it('forwards installed readers and final coverage to artifact execution', async 
 it('releases SQL and installed non-SQL snapshots in bounded slices before publication', async () => {
   const adapter = installed();
   const cursor = JSON.stringify({
-    version: 1,
+    version: 2,
     attemptId: 'attempt',
     nextPart: 2,
     verifiedBytes: 10,

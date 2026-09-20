@@ -28,7 +28,7 @@ import { sqliteCapturePlan } from '../sqlite-capture-plan';
 import { readSqliteSnapshotDataset } from '../sqlite-dataset-source';
 import { TenantBackupOperationStore, type TenantBackupLease } from '../operation-store';
 let db: DatabaseSync;
-let adapter: Pick<DatabaseAdapter, 'query' | 'queryOne' | 'execute'>;
+let adapter: Pick<DatabaseAdapter, 'query' | 'queryOne' | 'execute' | 'batch'>;
 let store: TenantBackupOperationStore;
 let lease: TenantBackupLease;
 let resources: TenantBackupSnapshotResources;
@@ -61,6 +61,12 @@ beforeEach(async () => {
         success: true,
         rowsAffected: Number(db.prepare(sql).run(...(params as SQLInputValue[])).changes),
       };
+    },
+    async batch(statements) {
+      return statements.map(({ sql, params = [] }) => ({
+        success: true,
+        rowsAffected: Number(db.prepare(sql).run(...(params as SQLInputValue[])).changes),
+      }));
     },
   };
   store = new TenantBackupOperationStore(adapter);
@@ -101,6 +107,12 @@ async function fixture(prepare = true, secondResource = false, clients = false) 
         success: true,
         rowsAffected: Number(sourceDb.prepare(sql).run(...(params as SQLInputValue[])).changes),
       };
+    },
+    async batch(statements: Array<{ sql: string; params?: unknown[] }>) {
+      return statements.map(({ sql, params = [] }) => ({
+        success: true,
+        rowsAffected: Number(sourceDb.prepare(sql).run(...(params as SQLInputValue[])).changes),
+      }));
     },
   };
   const inventory = new TenantBackupExecutionInventory(adapter, lease, () => now);
@@ -274,7 +286,7 @@ it('a new worker resumes the same sealed plan while the old lease is rejected', 
   try {
     await startTenantBackupSqliteCapture(input);
     sourceDb.exec("UPDATE tenants SET value='after' WHERE id='a'");
-    now = 40000;
+    now = 700000;
     const operation = (await store.claim('a', 'op', 'replacement', now))!;
     const nextLease = { ...lease, owner: 'replacement', fencingToken: operation.fencing_token };
     await expect(startTenantBackupSqliteCapture(input)).rejects.toThrow('fenced');
@@ -300,9 +312,10 @@ it('retries partial installation after an uncertain DDL response without replaci
         ...input.source,
         database: {
           ...input.source.database,
-          async execute(sql: string, params?: unknown[]) {
-            const result = await input.source.database.execute(sql, params);
-            if (++calls === 1) throw new Error('lost_install_response');
+          async batch(statements: Array<{ sql: string; params?: unknown[] }>) {
+            const result = await input.source.database.batch(statements);
+            calls += 1;
+            if (calls === 1) throw new Error('lost_install_response');
             return result;
           },
         },
@@ -317,13 +330,13 @@ it('retries partial installation after an uncertain DDL response without replaci
           "SELECT count(*) AS n FROM sqlite_schema WHERE type='trigger' AND tbl_name='tenants'"
         )
         .get()?.n
-    ).toBe(1);
-    await expect(startTenantBackupSqliteCapture(input)).rejects.toThrow('start_rejected');
-    expect(await prepareTenantBackupSqliteCapture(input, 0)).toEqual({
+    ).toBe(3);
+    await startTenantBackupSqliteCapture(input);
+    expect(await prepareTenantBackupSqliteCapture(input, 0)).toMatchObject({
       nextTableOrdinal: 1,
       complete: true,
     });
-    expect(await prepareTenantBackupSqliteCapture(input, 0)).toEqual({
+    expect(await prepareTenantBackupSqliteCapture(input, 0)).toMatchObject({
       nextTableOrdinal: 1,
       complete: true,
     });
@@ -416,7 +429,7 @@ it('checkpoints installation and start, retaining the snapshot after a lost oute
     await store.release(lease, prepared!.revision, 'queued', now);
     let loseStart = true;
     for (let slice = 0; slice < 3; slice++) {
-      now += 40000;
+      now += 700000;
       const execute = executeTenantBackupSlice(
         store,
         {
@@ -517,6 +530,12 @@ it('prepares both databases before admission and safely repeats an installed tab
           rowsAffected: Number(second.prepare(sql).run(...(params as SQLInputValue[])).changes),
         };
       },
+      async batch(statements: Array<{ sql: string; params?: unknown[] }>) {
+        return statements.map(({ sql, params = [] }) => ({
+          success: true,
+          rowsAffected: Number(second.prepare(sql).run(...(params as SQLInputValue[])).changes),
+        }));
+      },
     };
     const discovered = await runSqliteResourceDiscoveryStep({
       inventory: input.inventory,
@@ -560,7 +579,7 @@ it('prepares both databases before admission and safely repeats an installed tab
     );
     await store.release(lease, saved!.revision, 'queued', now);
     for (let slice = 0; slice < 3; slice++) {
-      now += 40000;
+      now += 700000;
       const execution = executeTenantBackupSlice(
         store,
         {
@@ -603,6 +622,7 @@ it('prepares both databases before admission and safely repeats an installed tab
       '006_tenant_backup_mutation_environment_scope.sql',
       '007_tenant_backup_boundary_receipts.sql',
       '010_tenant_backup_snapshot_timestamp.sql',
+      '011_tenant_backup_boundary_deadline.sql',
     ])
       db.exec(
         readFileSync(
@@ -611,7 +631,7 @@ it('prepares both databases before admission and safely repeats an installed tab
         )
       );
     for (let attempt = 0; attempt < 2; attempt++) {
-      now += 40000;
+      now += 700000;
       const executing = executeTenantBackupSlice(
         store,
         {
@@ -722,6 +742,7 @@ it('connects real SQL snapshot start to durable boundary receipts and preserves 
       '006_tenant_backup_mutation_environment_scope.sql',
       '007_tenant_backup_boundary_receipts.sql',
       '010_tenant_backup_snapshot_timestamp.sql',
+      '011_tenant_backup_boundary_deadline.sql',
     ])
       db.exec(
         readFileSync(
@@ -739,7 +760,7 @@ it('connects real SQL snapshot start to durable boundary receipts and preserves 
       operationId: 'op',
       inventoryDigest: head.chain_digest,
     };
-    const participant = sqliteBoundaryParticipant(input);
+    const participant = await sqliteBoundaryParticipant(input);
     const released = await startTenantBackupSnapshotBoundary({
       identity,
       admission,
@@ -773,7 +794,7 @@ it('connects real SQL snapshot start to durable boundary receipts and preserves 
 });
 
 it('reads only the owned planned snapshot and binds continuation to dataset, source and operation', async () => {
-  const { sourceDb, input } = await fixture();
+  const { sourceDb, schemas, input } = await fixture();
   try {
     await startTenantBackupSqliteCapture(input);
     sourceDb.exec("UPDATE tenants SET value='after' WHERE id='a'");
@@ -781,6 +802,7 @@ it('reads only the owned planned snapshot and binds continuation to dataset, sou
     const args = {
       ...input,
       table: 'tenants',
+      capture: schemas[0],
       dataset: {
         id: 'core.tenants',
         module: 'tenant-runtime' as const,
@@ -840,7 +862,7 @@ it('reads only the owned planned snapshot and binds continuation to dataset, sou
 it.each([false, true])(
   'continues across fixed shards with an empty first shard=%s',
   async (emptyFirst) => {
-    const { sourceDb, input } = await fixture(true, true, true);
+    const { sourceDb, schemas, input } = await fixture(true, true, true);
     const second = new DatabaseSync(':memory:');
     try {
       second.exec(
@@ -859,6 +881,12 @@ it.each([false, true])(
             success: true,
             rowsAffected: Number(second.prepare(sql).run(...(params as SQLInputValue[])).changes),
           };
+        },
+        async batch(statements: Array<{ sql: string; params?: unknown[] }>) {
+          return statements.map(({ sql, params = [] }) => ({
+            success: true,
+            rowsAffected: Number(second.prepare(sql).run(...(params as SQLInputValue[])).changes),
+          }));
         },
       };
       const other = {
@@ -883,6 +911,7 @@ it.each([false, true])(
       const args = {
         ...input,
         table: 'oauth_clients',
+        capture: schemas[0],
         dataset: {
           id: 'core.oauth_clients',
           module: 'applications' as const,

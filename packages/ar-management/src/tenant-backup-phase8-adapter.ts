@@ -51,11 +51,16 @@ import { createTenantBackupR2CatalogFinalizer } from './tenant-backup-r2-catalog
 import { createTenantBackupR2CatalogLister } from './tenant-backup-r2-catalog-lister';
 import { createTenantBackupR2ObjectSnapshotPorts } from './tenant-backup-r2-object-snapshot-port';
 import { createTenantBackupR2ReferenceSelectionLoader } from './tenant-backup-r2-reference-selection';
+import type { TenantBackupInstalledSqliteExportPorts } from './tenant-backup-sqlite-export-adapter';
 
 export interface Phase8InstalledAdapterPorts extends Omit<
   Phase5InstalledAdapterPorts,
   'recordSnapshots' | 'rowTransform' | 'otherStores' | 'import'
 > {
+  /** Admit rows only from the physical database role that owns this logical dataset. */
+  allowSqliteSource?(
+    context: Parameters<NonNullable<TenantBackupInstalledSqliteExportPorts['filterRow']>>[0]
+  ): Promise<boolean>;
   import: Omit<
     Phase5InstalledAdapterPorts['import'],
     'restoreTargets' | 'loadValidatedDataset' | 'assertValidatedUnpublishedPlan'
@@ -142,16 +147,27 @@ export function createPhase8TenantBackupInstalledAdapter(
   const keyVersion = Number(keyVersionValue);
   const now = input.now ?? Date.now;
   const adminEnvelopes = createTenantBackupAdminEnvelopePorts(input.env);
-  const planCache = new WeakMap<
-    TenantBackupStepContext,
-    Promise<readonly PlannedInstalledSqliteDataset[]>
-  >();
+  let planCache:
+    | {
+        leaseKey: string;
+        value: Promise<readonly PlannedInstalledSqliteDataset[]>;
+      }
+    | undefined;
   const loadInstalledPlan = (context: TenantBackupStepContext) => {
     if (input.planned) return Promise.resolve(input.planned);
-    const cached = planCache.get(context);
-    if (cached) return cached;
+    if (!context.lease) return input.loadPlanned(context);
+    const leaseKey = JSON.stringify([
+      context.lease.tenantId,
+      context.lease.operationId,
+      context.lease.owner,
+      context.lease.fencingToken,
+    ]);
+    if (planCache) {
+      if (planCache.leaseKey !== leaseKey) throw new Error('backup_phase8_plan_loader');
+      return planCache.value;
+    }
     const loaded = input.loadPlanned(context);
-    planCache.set(context, loaded);
+    planCache = { leaseKey, value: loaded };
     return loaded;
   };
   const r2Snapshots = createTenantBackupR2ObjectSnapshotPorts({
@@ -253,6 +269,7 @@ export function createPhase8TenantBackupInstalledAdapter(
   const policies = input.planned
     ? createPhase8SqliteInspectionPolicies(input.planned, policyInput)
     : null;
+  let dynamicPolicies: Promise<ReturnType<typeof createPhase8SqliteInspectionPolicies>> | undefined;
   const loadPlanned = input.loadPlanned;
   let installed: TenantBackupInstalledOperationAdapter | undefined;
   const validatedInput = createTenantBackupValidatedInputPorts({
@@ -264,6 +281,10 @@ export function createPhase8TenantBackupInstalledAdapter(
     loadPolicy: (context, datasetId) => {
       if (!installed) throw new Error('backup_phase8_adapter_initializing');
       return installed.import.loadPolicy(context, datasetId);
+    },
+    loadPolicies: (context) => {
+      if (!installed?.import.loadPolicies) throw new Error('backup_phase8_adapter_initializing');
+      return installed.import.loadPolicies(context);
     },
     assertSources: (context) => input.ports.import.assertSources(context),
     assertUnpublishedTarget: (context, planDigest) =>
@@ -337,6 +358,7 @@ export function createPhase8TenantBackupInstalledAdapter(
       adminEnvelopes.verifyAdminEnvelope(...args),
   };
   const r2Policies = createPortableR2ObjectDatasetPolicies();
+  const phase8RowFilter = createPhase8TenantBackupRowFilter({ loadReferences: loadR2References });
   installed = createPhase5TenantBackupInstalledAdapter({
     env: input.env,
     planned: input.planned ?? [],
@@ -364,10 +386,10 @@ export function createPhase8TenantBackupInstalledAdapter(
         : {
             loadPolicies: async (context: TenantBackupStepContext) => {
               if (!loadPlanned) throw new Error('backup_phase8_plan_loader');
-              return createPhase8SqliteInspectionPolicies(
-                await loadInstalledPlan(context),
-                policyInput
+              dynamicPolicies ??= loadInstalledPlan(context).then((planned) =>
+                createPhase8SqliteInspectionPolicies(planned, policyInput)
               );
+              return dynamicPolicies;
             },
           }),
       requiredDatabases: {
@@ -376,7 +398,9 @@ export function createPhase8TenantBackupInstalledAdapter(
       },
       registrations: PHASE8_CUMULATIVE_SQLITE_DATASET_REGISTRATIONS,
       transformedDatasetIds,
-      filterRow: createPhase8TenantBackupRowFilter({ loadReferences: loadR2References }),
+      filterRow: async (rowInput) =>
+        (!input.ports.allowSqliteSource || (await input.ports.allowSqliteSource(rowInput))) &&
+        (await phase8RowFilter(rowInput)),
       transformRow: transformPortableRow,
       otherStores: createPhase8OtherStoreHandlers(input.env, otherStores),
       recordSnapshots: [

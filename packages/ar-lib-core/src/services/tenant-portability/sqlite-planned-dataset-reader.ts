@@ -2,11 +2,36 @@ import type { TenantBackupStepContext } from './operation-executor';
 import type { TenantBackupExecutionInventory } from './execution-inventory';
 import type { TenantBackupSnapshotResources } from './snapshot-resources';
 import type { TenantPortableDataset } from './module-contract';
-import { TENANT_DATASET_POLICIES } from './dataset-registry';
-import { verifyLiveSqliteTenantDatasetPlan } from './sqlite-dataset-plan';
+import { TENANT_DATASET_POLICIES, TENANT_DATASET_ROW_PARTITIONS } from './dataset-registry';
 import { readNextSqliteSnapshotChunk } from './sqlite-dataset-source';
+import { sqliteCapturePlan } from './sqlite-capture-plan';
+import type { CaptureSchema } from './sqlite-snapshot';
 
-type Plan = Parameters<typeof verifyLiveSqliteTenantDatasetPlan>[0];
+type Plan = {
+  family: import('../control-plane/migration-stream-contract').MigrationSchemaFamily;
+  database: Pick<
+    import('../../db/adapter').DatabaseAdapter,
+    'query' | 'queryOne' | 'execute' | 'batch'
+  >;
+  selection: import('./selection-contract').TenantBackupSelection;
+};
+
+type SealedHead = { state: string; chain_digest: string };
+const readSessionHeads = new WeakMap<object, Promise<SealedHead>>();
+const readSessionResourceGuards = new WeakMap<object, Map<string, Promise<void>>>();
+const readSessionSnapshotChecks = new WeakMap<object, Map<string, Promise<void>>>();
+
+function cachedMap(
+  cache: WeakMap<object, Map<string, Promise<void>>>,
+  context: object
+): Map<string, Promise<void>> {
+  let value = cache.get(context);
+  if (!value) {
+    value = new Map();
+    cache.set(context, value);
+  }
+  return value;
+}
 
 /**
  * Raw SQL reader for installed module adapters. Field transformations, log windows and complete
@@ -20,6 +45,7 @@ export async function readNextPlannedSqliteDatasetChunk(
     resources: TenantBackupSnapshotResources;
     dataset: TenantPortableDataset;
     table: string;
+    capture: CaptureSchema;
     family: Plan['family'];
     resourceId: string;
     firstOrdinal: number;
@@ -30,6 +56,8 @@ export async function readNextPlannedSqliteDatasetChunk(
     assertSourceStable: () => Promise<void>;
     filterRow?: (rowJson: string) => Promise<boolean>;
     transformRow?: (rowJson: string) => Promise<string>;
+    /** Unique to one artifact assembly attempt; omitted callers retain per-call revalidation. */
+    readSession?: object;
   },
   cursorJson: string | null
 ): Promise<{ bytes: Uint8Array; nextCursor: string } | null> {
@@ -47,9 +75,21 @@ export async function readNextPlannedSqliteDatasetChunk(
   const policy = TENANT_DATASET_POLICIES.filter(
     (p) => p.family === input.family && p.table === input.table
   );
-  if (policy.length !== 1 || policy[0].kind !== input.dataset.kind)
+  const partition = TENANT_DATASET_ROW_PARTITIONS.find(
+    (item) => item.family === input.family && item.table === input.table
+  );
+  const allowedKinds = new Set([
+    ...policy.map((item) => item.kind),
+    ...(partition?.values.map((item) => item.kind) ?? []),
+  ]);
+  if (policy.length !== 1 || !allowedKinds.has(input.dataset.kind))
     throw new Error('backup_sqlite_reader_policy');
-  const head = await input.inventory.headForLease(lease);
+  let headPromise = input.readSession ? readSessionHeads.get(input.readSession) : undefined;
+  if (!headPromise) {
+    headPromise = input.inventory.headForLease(lease);
+    if (input.readSession) readSessionHeads.set(input.readSession, headPromise);
+  }
+  const head = await headPromise;
   if (head.state !== 'sealed') throw new Error('backup_sqlite_reader_unsealed');
   const identity = {
     version: 1,
@@ -81,28 +121,59 @@ export async function readNextPlannedSqliteDatasetChunk(
       throw new Error('backup_sqlite_reader_cursor');
     sourceCursor = value.sourceCursor;
   }
+  const guardKey = `${input.resourceId}\u0000${input.snapshotId}`;
   const guard = async () => {
     signal.throwIfAborted();
-    await input.inventory.headForLease(lease);
-    await input.resources.assertCaptureOwner(lease, input.resourceId, input.snapshotId);
-    await input.assertSourceStable();
+    const guards = input.readSession
+      ? cachedMap(readSessionResourceGuards, input.readSession)
+      : undefined;
+    let proof = guards?.get(guardKey);
+    if (!proof) {
+      proof = (async () => {
+        const current = await input.inventory.headForLease(lease);
+        if (current.state !== 'sealed' || current.chain_digest !== head.chain_digest)
+          throw new Error('backup_sqlite_reader_unsealed');
+        await input.resources.assertCaptureOwner(lease, input.resourceId, input.snapshotId);
+        await input.assertSourceStable();
+      })();
+      guards?.set(guardKey, proof);
+    }
+    await proof;
     signal.throwIfAborted();
   };
   await guard();
   const source = await input.resolveSource();
   if (source.resourceId !== input.resourceId)
     throw new Error('backup_resource_destination_changed');
-  const schemas = await verifyLiveSqliteTenantDatasetPlan({
-    inventory: input.inventory,
-    database: source.database,
-    family: input.family,
-    resourceId: input.resourceId,
-    firstOrdinal: input.firstOrdinal,
-    selection: input.selection,
-    signal,
-  });
-  const schema = schemas.find((schema) => schema.table === input.table);
+  // Snapshot admission already reconciled this capture schema with the live database and sealed it
+  // in the execution inventory. Export reads that immutable plan instead of rescanning the complete
+  // live schema for every logical dataset frame.
+  const schema = sqliteCapturePlan([input.capture]).schemas.find(
+    (candidate) => candidate.table === input.table
+  );
   if (!schema) throw new Error('backup_sqlite_reader_dataset_unselected');
+  const assertSnapshotActive = async () => {
+    signal.throwIfAborted();
+    const checks = input.readSession
+      ? cachedMap(readSessionSnapshotChecks, input.readSession)
+      : undefined;
+    let proof = checks?.get(guardKey);
+    if (!proof) {
+      proof = source.database
+        .queryOne<{
+          id: string;
+        }>(
+          "SELECT id FROM tenant_backup_snapshots WHERE id=? AND tenant_id=? AND state='capturing'",
+          [input.snapshotId, lease.tenantId]
+        )
+        .then((snapshot) => {
+          if (!snapshot) throw new Error('backup_snapshot_unavailable');
+        });
+      checks?.set(guardKey, proof);
+    }
+    await proof;
+    signal.throwIfAborted();
+  };
   await guard();
   const chunk = await readNextSqliteSnapshotChunk(
     {
@@ -114,6 +185,7 @@ export async function readNextPlannedSqliteDatasetChunk(
       partitions: input.partitions,
       filterRow: input.filterRow,
       transformRow: input.transformRow,
+      assertSnapshotActive,
     },
     sourceCursor
   );

@@ -155,40 +155,45 @@ export function createProductionTenantBackupRestoreTargets(input: { env: Env; te
       provisioningId: string
     ) {
       const resources = await resolve(context);
-      const matches = [...resources.values()].filter(
-        (resource) =>
-          resource.resourceId === resourceId && resource.provisioningId === provisioningId
-      );
+      const matches = [
+        ...new Map(
+          [...resources.values()]
+            .filter(
+              (resource) =>
+                resource.resourceId === resourceId && resource.provisioningId === provisioningId
+            )
+            .map((resource) => [`${resource.resourceId}:${resource.provisioningId}`, resource])
+        ).values(),
+      ];
       if (matches.length !== 1) invalid();
       const resource = matches[0];
       const targetId = `${context.lease.operationId}:${resourceId}`;
-      const adminResource = resources.get('admin');
       return {
         targetId,
         ...resource,
-        ...(adminResource?.resourceId === resourceId
-          ? {
-              readSeedFingerprint: async (admission: () => Promise<void>) => {
-                await admission();
-                const rows = await admin.query<{ payload_json: string }>(
-                  `SELECT i.payload_json FROM tenant_backup_restore_plan_items i
+        // Provisioning pins the seed before the plan is sealed. Once sealed, reopening trusts only
+        // that server-owned receipt plus the exact resource identity and the live unpublished guard.
+        // This avoids treating backup receipts and permitted background operational rows as seed
+        // drift while the restore is in progress.
+        readSeedFingerprint: async (admission: () => Promise<void>) => {
+          await admission();
+          const rows = await admin.query<{ payload_json: string }>(
+            `SELECT i.payload_json FROM tenant_backup_restore_plan_inventory_items i
                    JOIN tenant_backup_restore_plan_inventories h
                      ON h.operation_id=i.operation_id AND h.tenant_id=i.tenant_id
                    WHERE i.operation_id=? AND i.tenant_id=? AND h.state='sealed'
                      AND i.item_id=?`,
-                  [context.lease.operationId, context.lease.tenantId, `restore-target:${targetId}`]
-                );
-                if (rows.length !== 1) invalid();
-                const seedFingerprint = recordedSeedFingerprint(JSON.parse(rows[0].payload_json), {
-                  targetId,
-                  resourceId,
-                  provisioningId,
-                });
-                await admission();
-                return seedFingerprint;
-              },
-            }
-          : {}),
+            [context.lease.operationId, context.lease.tenantId, `restore-target:${targetId}`]
+          );
+          if (rows.length !== 1) invalid();
+          const seedFingerprint = recordedSeedFingerprint(JSON.parse(rows[0].payload_json), {
+            targetId,
+            resourceId,
+            provisioningId,
+          });
+          await admission();
+          return seedFingerprint;
+        },
       };
     },
     async databaseForRole(context: TenantBackupStepContext, role: Phase8SqliteRestoreTargetRole) {

@@ -213,6 +213,10 @@ function comparableSAMLLocalSigningSecretDRBundle(input: unknown, tenantId: stri
   return JSON.stringify({
     ...bundle,
     generatedAt: undefined,
+    // Entity IDs and endpoints are derived from the destination environment. A cross-environment
+    // restore must verify the imported settings and private key material without requiring the
+    // destination to reproduce the source environment's public URLs.
+    generated: undefined,
     warning: undefined,
   });
 }

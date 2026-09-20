@@ -3,8 +3,10 @@ import type { TenantBundleReferenceIndex } from './bundle-validation';
 import type { TenantBackupLease } from './operation-store';
 import type { TenantPortableDependency, TenantPortableRecordIdentity } from './reference-contract';
 
-type Database = Pick<DatabaseAdapter, 'query' | 'queryOne' | 'execute'>;
+type Database = Pick<DatabaseAdapter, 'query' | 'queryOne' | 'execute'> &
+  Partial<Pick<DatabaseAdapter, 'batch'>>;
 const PAGE_SIZE = 100;
+const WRITE_BATCH_SIZE = 50;
 const ACTIVE = `EXISTS (SELECT 1 FROM tenant_backup_validation_sessions s
   JOIN tenant_backup_operations o ON o.id=s.operation_id AND o.tenant_id=s.tenant_id
   WHERE s.id=? AND s.tenant_id=? AND s.state IN ('open','sealed') AND s.fencing_token=?
@@ -281,6 +283,167 @@ export class DatabaseTenantBundleReferenceIndex implements TenantBundleReference
     );
     if (!saved || saved.dependency_json !== json || saved.bundle_id !== bundleId)
       throw new Error('backup_validation_index_retry_conflict');
+  }
+
+  /**
+   * Persist one already-inspected input batch with bounded D1 round trips. The deterministic
+   * source IDs keep retries idempotent; every batch is read back before the caller checkpoints.
+   */
+  async recordInspectionBatch(input: {
+    records: readonly {
+      bundleId: string;
+      sourceId: string;
+      record: TenantPortableRecordIdentity;
+    }[];
+    references: readonly {
+      bundleId: string;
+      sourceEdgeId: string;
+      dependency: TenantPortableDependency;
+    }[];
+  }): Promise<void> {
+    const batchWrite = this.database.batch?.bind(this.database);
+    if (!batchWrite) throw new Error('backup_validation_index_batch_unavailable');
+    if (
+      input.records.length > 8192 ||
+      input.references.length > 8192 ||
+      (!input.records.length && !input.references.length)
+    )
+      throw new Error('backup_validation_index_batch_invalid');
+
+    const records = input.records.map((entry) => {
+      this.identity(entry.record);
+      if (!/^[A-Za-z0-9_.:-]{1,128}$/.test(entry.sourceId))
+        throw new Error('backup_validation_index_source');
+      return entry;
+    });
+    const references = input.references.map((entry) => {
+      this.identity(entry.dependency.from);
+      this.identity(entry.dependency.to);
+      if (!/^[A-Za-z0-9_.:-]{1,128}$/.test(entry.sourceEdgeId))
+        throw new Error('backup_validation_index_source');
+      const dependencyJson = JSON.stringify(entry.dependency);
+      if (dependencyJson.length > 20000) throw new Error('backup_validation_index_reference_size');
+      return {
+        ...entry,
+        id: `source:${entry.bundleId}:${entry.sourceEdgeId}`,
+        dependencyJson,
+      };
+    });
+
+    for (let offset = 0; offset < records.length; offset += WRITE_BATCH_SIZE) {
+      const page = records.slice(offset, offset + WRITE_BATCH_SIZE);
+      const statements = page.map((entry) => ({
+        sql: `INSERT INTO tenant_backup_validation_records(session_id,tenant_id,module,collection,record_id,bundle_id,source_id)
+          SELECT ?,?,?,?,?,?,? WHERE ${ACTIVE} AND EXISTS (SELECT 1 FROM tenant_backup_validation_sessions WHERE id=? AND state='open')
+          ON CONFLICT DO NOTHING`,
+        params: [
+          this.sessionId,
+          this.lease.tenantId,
+          entry.record.module,
+          entry.record.collection,
+          entry.record.id,
+          entry.bundleId,
+          entry.sourceId,
+          ...this.params(),
+          this.sessionId,
+        ],
+      }));
+      await batchWrite(statements);
+      const saved = await this.database.query<{
+        module: string;
+        collection: string;
+        record_id: string;
+        bundle_id: string;
+        source_id: string;
+      }>(
+        `SELECT module,collection,record_id,bundle_id,source_id
+         FROM tenant_backup_validation_records
+         WHERE session_id=? AND tenant_id=? AND source_id IN (${page.map(() => '?').join(',')})
+         AND ${ACTIVE} AND EXISTS (SELECT 1 FROM tenant_backup_validation_sessions WHERE id=? AND state='open')`,
+        [
+          this.sessionId,
+          this.lease.tenantId,
+          ...page.map(({ sourceId }) => sourceId),
+          ...this.params(),
+          this.sessionId,
+        ]
+      );
+      const expected = new Set(
+        page.map((entry) =>
+          JSON.stringify([
+            entry.record.module,
+            entry.record.collection,
+            entry.record.id,
+            entry.bundleId,
+            entry.sourceId,
+          ])
+        )
+      );
+      if (
+        saved.length !== page.length ||
+        saved.some(
+          (entry) =>
+            !expected.delete(
+              JSON.stringify([
+                entry.module,
+                entry.collection,
+                entry.record_id,
+                entry.bundle_id,
+                entry.source_id,
+              ])
+            )
+        ) ||
+        expected.size
+      )
+        throw new Error('backup_validation_index_retry_conflict');
+    }
+
+    for (let offset = 0; offset < references.length; offset += WRITE_BATCH_SIZE) {
+      const page = references.slice(offset, offset + WRITE_BATCH_SIZE);
+      const statements = page.map((entry) => ({
+        sql: `INSERT INTO tenant_backup_validation_references(session_id,id,tenant_id,bundle_id,dependency_json)
+          SELECT ?,?,?,?,? WHERE ${ACTIVE} AND EXISTS (SELECT 1 FROM tenant_backup_validation_sessions WHERE id=? AND state='open')
+          ON CONFLICT(session_id,id) DO NOTHING`,
+        params: [
+          this.sessionId,
+          entry.id,
+          this.lease.tenantId,
+          entry.bundleId,
+          entry.dependencyJson,
+          ...this.params(),
+          this.sessionId,
+        ],
+      }));
+      await batchWrite(statements);
+      const saved = await this.database.query<{
+        id: string;
+        bundle_id: string;
+        dependency_json: string;
+      }>(
+        `SELECT id,bundle_id,dependency_json FROM tenant_backup_validation_references
+         WHERE session_id=? AND tenant_id=? AND id IN (${page.map(() => '?').join(',')})
+         AND ${ACTIVE} AND EXISTS (SELECT 1 FROM tenant_backup_validation_sessions WHERE id=? AND state='open')`,
+        [
+          this.sessionId,
+          this.lease.tenantId,
+          ...page.map(({ id }) => id),
+          ...this.params(),
+          this.sessionId,
+        ]
+      );
+      const expected = new Set(
+        page.map((entry) => JSON.stringify([entry.id, entry.bundleId, entry.dependencyJson]))
+      );
+      if (
+        saved.length !== page.length ||
+        saved.some(
+          (entry) =>
+            !expected.delete(JSON.stringify([entry.id, entry.bundle_id, entry.dependency_json]))
+        ) ||
+        expected.size
+      )
+        throw new Error('backup_validation_index_retry_conflict');
+    }
   }
 
   async hasRecord(record: TenantPortableRecordIdentity, bundleId?: string): Promise<boolean> {

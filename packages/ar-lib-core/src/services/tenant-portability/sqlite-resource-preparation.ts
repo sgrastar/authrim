@@ -98,6 +98,9 @@ export async function runSqliteResourcePreparationStep(
     } else {
       const prepared = await prepareTenantBackupSqliteCapture(capture, cursor.tableOrdinal);
       if (prepared.complete) {
+        if (!prepared.boundarySchemaDigest)
+          throw new Error('backup_resource_schema_digest_missing');
+        resource.boundarySchemaDigest = prepared.boundarySchemaDigest;
         cursor.resourceIndex++;
         cursor.tableOrdinal = 0;
       } else cursor.tableOrdinal = prepared.nextTableOrdinal;

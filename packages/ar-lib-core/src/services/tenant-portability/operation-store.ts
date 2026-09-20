@@ -35,7 +35,9 @@ export interface TenantBackupLease {
   owner: string;
   fencingToken: number;
 }
-const LEASE_MS = 30_000;
+// Snapshot admission validates every installed dataset and starts every physical database.
+// Large tenants can legitimately need more than 30 seconds for that single fenced slice.
+const LEASE_MS = 180_000;
 function identifier(value: string): void {
   if (typeof value !== 'string' || !/^[A-Za-z0-9_.:-]{1,256}$/.test(value))
     throw new Error('invalid_backup_operation_identifier');

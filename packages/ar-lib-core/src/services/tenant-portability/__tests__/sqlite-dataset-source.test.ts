@@ -50,7 +50,7 @@ async function text(source: AsyncIterable<Uint8Array>) {
   }
   return value + decoder.decode();
 }
-it('keeps the start boundary through updates and deletion between pages', async () => {
+it('keeps T0 while login reads and registration, updates and deletion continue between pages', async () => {
   for (let i = 0; i < 105; i++)
     db.prepare("INSERT INTO accounts VALUES (?,?,?,9007199254740993,X'00ff')").run(
       'a',
@@ -66,6 +66,13 @@ it('keeps the start boundary through updates and deletion between pages', async 
   db.exec(
     "UPDATE accounts SET value='after' WHERE tenant_id='a'; DELETE FROM accounts WHERE tenant_id='a' AND id='104'; INSERT INTO accounts VALUES ('a','new','new',0,NULL);"
   );
+  // Ordinary login reads and post-T0 registration use the live database while export reads COW.
+  expect(db.prepare("SELECT value FROM accounts WHERE tenant_id='a' AND id='000'").get()).toEqual({
+    value: 'after',
+  });
+  expect(db.prepare("SELECT value FROM accounts WHERE tenant_id='a' AND id='new'").get()).toEqual({
+    value: 'new',
+  });
   const rows = (new TextDecoder().decode(first.value) + (await text(generator)))
     .trim()
     .split('\n')
@@ -190,7 +197,7 @@ it('reads legacy JSON preimages alongside new binary live rows', async () => {
   ]);
 });
 
-it('reopens after every chunk including inside a Unicode row and preserves the original data', async () => {
+it('retries a capacity batch and preserves the original data', async () => {
   const value = '界'.repeat(200000);
   db.prepare("INSERT INTO accounts VALUES ('a','0',?,0,NULL)").run(value);
   db.exec(
@@ -217,7 +224,7 @@ it('reopens after every chunk including inside a Unicode row and preserves the o
         "UPDATE accounts SET value='changed'; DELETE FROM accounts WHERE id='1'; INSERT INTO accounts VALUES ('a','new','new',0,NULL)"
       );
   }
-  expect(bytes.length).toBeGreaterThan(2);
+  expect(bytes).toHaveLength(1);
   async function* collected() {
     yield* bytes;
   }
@@ -226,6 +233,35 @@ it('reopens after every chunk including inside a Unicode row and preserves the o
     .split('\n')
     .map((row) => JSON.parse(row));
   expect(rows.map((row) => row.value[1])).toEqual([value, 'second']);
+});
+it('returns small rows in 250-row batches instead of one storage roundtrip per row', async () => {
+  const insert = db.prepare("INSERT INTO accounts VALUES ('a',?,?,0,NULL)");
+  for (let index = 0; index < 600; index++) insert.run(String(index).padStart(3, '0'), 'value');
+  db.exec(
+    "INSERT INTO tenant_backup_snapshots(id,tenant_id,state) VALUES ('snapshot','a','capturing')"
+  );
+  const input = {
+    database,
+    schema,
+    snapshotId: 'snapshot',
+    tenantId: 'a',
+    signal: new AbortController().signal,
+  };
+  let cursor: string | null = null;
+  const batches: Uint8Array[] = [];
+  for (;;) {
+    const next = await readNextSqliteSnapshotChunk(input, cursor);
+    if (!next) break;
+    batches.push(next.bytes);
+    cursor = next.nextCursor;
+  }
+  expect(batches).toHaveLength(3);
+  expect(
+    new TextDecoder()
+      .decode(Uint8Array.from(batches.flatMap((batch) => [...batch])))
+      .trim()
+      .split('\n')
+  ).toHaveLength(600);
 });
 it('rejects a cursor past the current row instead of silently ending the dataset', async () => {
   db.exec(

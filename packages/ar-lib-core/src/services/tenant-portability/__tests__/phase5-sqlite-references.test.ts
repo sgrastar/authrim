@@ -86,4 +86,8 @@ describe('Phase 5 SQL references', () => {
       'core.lookup_retention_policies'
     );
   });
+
+  it('accepts cumulative Phase 5 datasets added outside the grouped settings registry', () => {
+    expect(phase5SqliteRestoreDependencies('admin.tenant_runtime_cache_generations')).toEqual([]);
+  });
 });

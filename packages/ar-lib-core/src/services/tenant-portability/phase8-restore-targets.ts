@@ -14,6 +14,8 @@ export type Phase8SqliteRestoreTargetRole = (typeof PHASE8_SQLITE_RESTORE_TARGET
 export interface Phase8ValidatedSqliteRestoreDataset {
   manifest: TenantBundleManifest;
   policy: SqliteDatasetInspectionPolicy;
+  recordCount: number;
+  byteCount: number;
 }
 
 function invalid(): never {

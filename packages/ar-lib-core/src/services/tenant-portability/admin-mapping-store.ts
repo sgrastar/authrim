@@ -9,6 +9,11 @@ interface HeadRow {
   state: 'open' | 'frozen';
   sealed_digest: string | null;
 }
+interface ApprovedHeadRow extends HeadRow {
+  approved_by: string | null;
+  approved_at: number | null;
+  approval_operation_revision: number | null;
+}
 
 interface CountRow {
   source_count: number;
@@ -407,29 +412,47 @@ export class TenantBackupAdminMappingStore {
       input.mappingRevision,
       'open'
     );
-    const result = await this.database.execute(
-      `UPDATE tenant_backup_admin_mapping_heads SET
-        state='frozen',sealed_digest=?,updated_by=?,updated_at=?,approved_by=?,approved_at=?,
-        approval_operation_revision=?
-       WHERE operation_id=? AND tenant_id=? AND state='open' AND revision=?`,
-      [
-        mappingDigest,
-        input.actorId,
-        input.now,
-        input.actorId,
-        input.now,
-        input.operationRevision,
-        input.operationId,
-        input.tenantId,
-        input.mappingRevision,
-      ]
+    try {
+      const result = await this.database.execute(
+        `UPDATE tenant_backup_admin_mapping_heads SET
+          state='frozen',sealed_digest=?,updated_by=?,updated_at=?,approved_by=?,approved_at=?,
+          approval_operation_revision=?
+         WHERE operation_id=? AND tenant_id=? AND state='open' AND revision=?`,
+        [
+          mappingDigest,
+          input.actorId,
+          input.now,
+          input.actorId,
+          input.now,
+          input.operationRevision,
+          input.operationId,
+          input.tenantId,
+          input.mappingRevision,
+        ]
+      );
+      if (!result.success || result.rowsAffected !== 1)
+        throw new Error('backup_admin_mapping_stale');
+    } catch {
+      // D1 can commit a mutation while its response is lost. Read back the complete exact
+      // approval below; never retry this side effect or infer success from a partial state.
+    }
+    const approvedHead = await this.database.queryOne<ApprovedHeadRow>(
+      `SELECT revision,state,sealed_digest,approved_by,approved_at,approval_operation_revision
+       FROM tenant_backup_admin_mapping_heads WHERE operation_id=? AND tenant_id=?`,
+      [input.operationId, input.tenantId]
     );
-    if (!result.success || result.rowsAffected !== 1) throw new Error('backup_admin_mapping_stale');
     const operation = await this.database.queryOne<TenantBackupOperation>(
       `SELECT * FROM tenant_backup_operations WHERE id=? AND tenant_id=?`,
       [input.operationId, input.tenantId]
     );
     if (
+      !approvedHead ||
+      approvedHead.state !== 'frozen' ||
+      approvedHead.revision !== input.mappingRevision ||
+      approvedHead.sealed_digest !== mappingDigest ||
+      approvedHead.approved_by !== input.actorId ||
+      approvedHead.approved_at !== input.now ||
+      approvedHead.approval_operation_revision !== input.operationRevision ||
       !operation ||
       operation.state !== 'queued' ||
       operation.revision !== input.operationRevision + 1

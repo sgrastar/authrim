@@ -6,6 +6,13 @@ import type { CaptureSchema } from './sqlite-snapshot';
 import { sqlitePackedRowExpression } from './sqlite-packed-row';
 
 type Database = Pick<DatabaseAdapter, 'query'>;
+// Packed-row expressions can consume hundreds of SQLite compound terms for wide tables. Two
+// datasets per statement is the D1-safe bound; four concurrent pages still collapse the latency of
+// the many small/empty datasets without exceeding the Worker connection budget.
+const MAX_QUERY_TERMS = 2;
+const MAX_QUERY_SQL_BYTES = 48 * 1024;
+const QUERY_PAGE_CONCURRENCY = 4;
+const MAX_SEED_ROWS = 8192;
 const fail = () => new Error('backup_scoped_restore_seed_unavailable');
 const identifier = (value: string) => {
   if (!/^[a-z][a-z0-9_]*$/.test(value)) throw fail();
@@ -55,21 +62,28 @@ export async function readScopedSqliteRestoreSeedFingerprint(input: {
     new Set(input.policies.map(({ dataset }) => dataset.id)).size !== input.policies.length
   )
     throw fail();
-  const datasets: Array<{ descriptor: unknown; rows: number; digest: string }> = [];
-  let totalRows = 0;
-  for (const policy of [...input.policies].sort((left, right) =>
+  const sorted = [...input.policies].sort((left, right) =>
     left.dataset.id.localeCompare(right.dataset.id)
-  )) {
-    const descriptor = sqliteDatasetInspectionPolicyDescriptor(policy);
+  );
+  const descriptors = new Map(
+    sorted.map((policy) => [policy.dataset.id, sqliteDatasetInspectionPolicyDescriptor(policy)])
+  );
+  const hashesByDataset = new Map<string, string[]>();
+  const queryable: {
+    datasetId: string;
+    sql: string;
+    params: unknown[];
+  }[] = [];
+  let totalRows = 0;
+  for (const policy of sorted) {
+    hashesByDataset.set(policy.dataset.id, []);
     if (
       ['audit', 'history', 'sensitive_logs', 'delivery_state', 'log_dependencies'].includes(
         policy.dataset.kind
       ) ||
       policy.restoreDisposition === 'reference_only'
-    ) {
-      datasets.push({ descriptor, rows: 0, digest: await digest('[]') });
+    )
       continue;
-    }
     const schema = policy.schema;
     const predicate = backupOwnershipPredicate(ownership(schema), {
       tenantId: input.tenantId,
@@ -87,22 +101,66 @@ export async function readScopedSqliteRestoreSeedFingerprint(input: {
       ...predicate.params,
       ...(schema.rowPartition ? [...(policy.partitions ?? schema.rowPartition.values)] : []),
     ];
-    const hashes: string[] = [];
-    for (let offset = 0; ; offset += 32) {
-      await input.assertAdmission();
-      const rows = await input.database.query<{ encoded: string }>(
-        `SELECT hex(${packed}) AS encoded FROM ${identifier(schema.table)} AS backup_row
-         WHERE ${predicate.sql}${partition} LIMIT 32 OFFSET ?`,
-        [...params, offset]
-      );
-      if (!rows.length) break;
+    queryable.push({
+      datasetId: policy.dataset.id,
+      sql: `SELECT ? AS dataset_id,hex(${packed}) AS encoded
+            FROM ${identifier(schema.table)} AS backup_row
+            WHERE ${predicate.sql}${partition}`,
+      params: [policy.dataset.id, ...params],
+    });
+  }
+
+  const pages: (typeof queryable)[] = [];
+  let page: typeof queryable = [];
+  let pageSqlBytes = 0;
+  for (const query of queryable) {
+    const queryBytes = new TextEncoder().encode(query.sql).byteLength;
+    if (
+      page.length &&
+      (page.length >= MAX_QUERY_TERMS || pageSqlBytes + queryBytes > MAX_QUERY_SQL_BYTES)
+    ) {
+      pages.push(page);
+      page = [];
+      pageSqlBytes = 0;
+    }
+    page.push(query);
+    pageSqlBytes += queryBytes;
+  }
+  if (page.length) pages.push(page);
+
+  // The caller's admission check revalidates the lease, restore plan, routing, and unpublished
+  // target. Repeating that full cross-database check for every mostly-empty page made plan creation
+  // scale with the registered dataset count. Pin admission once around this bounded read; the outer
+  // restore-plan guard checks it again before persisting the fingerprint.
+  await input.assertAdmission();
+  for (let offset = 0; offset < pages.length; offset += QUERY_PAGE_CONCURRENCY) {
+    const group = pages.slice(offset, offset + QUERY_PAGE_CONCURRENCY);
+    const results = await Promise.all(
+      group.map((entries) =>
+        input.database.query<{ dataset_id: string; encoded: string }>(
+          `SELECT dataset_id,encoded FROM (${entries.map(({ sql }) => sql).join(' UNION ALL ')}) LIMIT ?`,
+          [...entries.flatMap(({ params }) => params), MAX_SEED_ROWS + 1]
+        )
+      )
+    );
+    for (const rows of results) {
+      totalRows += rows.length;
+      if (totalRows > MAX_SEED_ROWS) throw fail();
       for (const row of rows) {
-        if (typeof row.encoded !== 'string' || !/^[A-F0-9]+$/.test(row.encoded)) throw fail();
+        const hashes = hashesByDataset.get(row.dataset_id);
+        if (!hashes || typeof row.encoded !== 'string' || !/^[A-F0-9]+$/.test(row.encoded))
+          throw fail();
         hashes.push(await digest(row.encoded));
       }
-      totalRows += rows.length;
-      if (totalRows > 8192) throw fail();
     }
+  }
+  await input.assertAdmission();
+
+  const datasets: Array<{ descriptor: unknown; rows: number; digest: string }> = [];
+  for (const policy of sorted) {
+    const descriptor = descriptors.get(policy.dataset.id);
+    const hashes = hashesByDataset.get(policy.dataset.id);
+    if (!descriptor || !hashes) throw fail();
     hashes.sort();
     datasets.push({
       descriptor,
@@ -110,6 +168,5 @@ export async function readScopedSqliteRestoreSeedFingerprint(input: {
       digest: await digest(JSON.stringify(hashes)),
     });
   }
-  await input.assertAdmission();
   return digest(JSON.stringify({ version: 1, tenantId: input.tenantId, datasets }));
 }

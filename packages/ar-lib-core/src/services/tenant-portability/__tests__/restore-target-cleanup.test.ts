@@ -122,7 +122,7 @@ it('records cleanup only after exact physical target deletion and proves an empt
 });
 
 it('rejects a stale cancellation lease without invoking provider cleanup', async () => {
-  now = 40_000;
+  now = 700_000;
   let called = false;
   await expect(
     cleanupTenantBackupRestoreTargetPage({

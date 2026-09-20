@@ -12,7 +12,7 @@ import {
 
 let db: DatabaseSync;
 let store: TenantBackupOperationStore;
-let adapter: Pick<DatabaseAdapter, 'query' | 'queryOne' | 'execute'>;
+let adapter: Pick<DatabaseAdapter, 'query' | 'queryOne' | 'execute' | 'batch'>;
 const create = {
   id: 'operation-a',
   tenantId: 'tenant-a',
@@ -54,6 +54,20 @@ beforeEach(() => {
       const result = db.prepare(sql).run(...(params as SQLInputValue[]));
       return { success: true, rowsAffected: Number(result.changes) };
     },
+    async batch(statements) {
+      db.exec('BEGIN');
+      try {
+        const results = statements.map(({ sql, params = [] }) => {
+          const result = db.prepare(sql).run(...(params as SQLInputValue[]));
+          return { success: true, rowsAffected: Number(result.changes) };
+        });
+        db.exec('COMMIT');
+        return results;
+      } catch (error) {
+        db.exec('ROLLBACK');
+        throw error;
+      }
+    },
   };
   store = new TenantBackupOperationStore(adapter);
   db.exec(
@@ -69,6 +83,15 @@ beforeEach(() => {
     readFileSync(
       new URL(
         '../../../../../../migrations/admin/d1/019_tenant_backup_input_validations.sql',
+        import.meta.url
+      ),
+      'utf8'
+    )
+  );
+  db.exec(
+    readFileSync(
+      new URL(
+        '../../../../../../migrations/admin/d1/017_tenant_backup_validation_record_sources.sql',
         import.meta.url
       ),
       'utf8'
@@ -101,38 +124,43 @@ describe('durable backup operation leases', () => {
       id: 'client',
     };
     for (let i = 0; i < 105; i++) await old.record('bundle', { ...identity, id: String(i) });
-    const takeover = await store.claim('tenant-a', 'operation-a', 'new', 30101);
+    const takeover = await store.claim('tenant-a', 'operation-a', 'new', 600101);
     const lease = { ...oldLease, owner: 'new', fencingToken: takeover!.fencing_token };
-    const current = await DatabaseTenantBundleReferenceIndex.create(database, lease, () => 30102);
+    const current = await DatabaseTenantBundleReferenceIndex.create(database, lease, () => 600102);
     await current.record('bundle', identity);
     await expect(
-      DatabaseTenantBundleReferenceIndex.cleanupAbandonedPage(database, oldLease, () => 30102)
+      DatabaseTenantBundleReferenceIndex.cleanupAbandonedPage(database, oldLease, () => 600102)
     ).rejects.toThrow(/fenced/);
     await expect(
       DatabaseTenantBundleReferenceIndex.cleanupAbandonedPage(
         database,
         { ...lease, tenantId: 'tenant-b' },
-        () => 30102
+        () => 600102
       )
     ).rejects.toThrow(/fenced/);
     expect(
-      await DatabaseTenantBundleReferenceIndex.cleanupAbandonedPage(database, lease, () => 30102)
+      await DatabaseTenantBundleReferenceIndex.cleanupAbandonedPage(database, lease, () => 600102)
     ).toEqual({ found: true, done: false });
     expect(
-      await DatabaseTenantBundleReferenceIndex.cleanupAbandonedPage(database, lease, () => 30102)
+      await DatabaseTenantBundleReferenceIndex.cleanupAbandonedPage(database, lease, () => 600102)
     ).toEqual({ found: true, done: true });
     expect(
-      await DatabaseTenantBundleReferenceIndex.cleanupAbandonedPage(database, lease, () => 30102)
+      await DatabaseTenantBundleReferenceIndex.cleanupAbandonedPage(database, lease, () => 600102)
     ).toEqual({ found: false, done: true });
     expect(await current.hasRecord(identity)).toBe(true);
-    await store.requestCancel('tenant-a', 'operation-a', 30103);
-    const cancellation = await store.claimCancellation('tenant-a', 'operation-a', 'cleaner', 30104);
+    await store.requestCancel('tenant-a', 'operation-a', 600103);
+    const cancellation = await store.claimCancellation(
+      'tenant-a',
+      'operation-a',
+      'cleaner',
+      600104
+    );
     const cleanupLease = { ...lease, owner: 'cleaner', fencingToken: cancellation!.fencing_token };
     expect(
       await DatabaseTenantBundleReferenceIndex.cleanupAbandonedPage(
         database,
         cleanupLease,
-        () => 30105
+        () => 600105
       )
     ).toEqual({ found: true, done: true });
     expect(db.prepare('SELECT count(*) AS n FROM tenant_backup_validation_sessions').get()).toEqual(
@@ -168,6 +196,60 @@ describe('durable backup operation leases', () => {
     expect(await index.record('bundle-b', record)).toBe(false);
     expect(await index.hasRecord(record, 'bundle-a')).toBe(true);
     expect(await index.hasRecord(record, 'bundle-b')).toBe(false);
+    await index.recordInspectionBatch({
+      records: [
+        {
+          bundleId: 'bundle-a',
+          sourceId: 'dataset:0:row:1',
+          record: { ...record, id: 'client-b' },
+        },
+        {
+          bundleId: 'bundle-a',
+          sourceId: 'dataset:0:row:2',
+          record: { ...record, id: 'client-c' },
+        },
+      ],
+      references: [
+        {
+          bundleId: 'bundle-a',
+          sourceEdgeId: 'dataset:0:row:1:edge:0',
+          dependency: {
+            from: { ...record, id: 'client-b' },
+            to: {
+              ...record,
+              id: 'client-c',
+              meaning: 'resource',
+              requirement: 'required',
+            },
+          },
+        },
+      ],
+    });
+    expect(await index.hasRecord({ ...record, id: 'client-b' }, 'bundle-a')).toBe(true);
+    await index.recordInspectionBatch({
+      records: [
+        {
+          bundleId: 'bundle-a',
+          sourceId: 'dataset:0:row:1',
+          record: { ...record, id: 'client-b' },
+        },
+      ],
+      references: [
+        {
+          bundleId: 'bundle-a',
+          sourceEdgeId: 'dataset:0:row:1:edge:0',
+          dependency: {
+            from: { ...record, id: 'client-b' },
+            to: {
+              ...record,
+              id: 'client-c',
+              meaning: 'resource',
+              requirement: 'required',
+            },
+          },
+        },
+      ],
+    });
     await expect(index.record('bundle-a', { ...record, tenantId: 'tenant-b' })).rejects.toThrow();
     for (let i = 0; i < 205; i++)
       await index.reference('bundle-a', {
@@ -179,7 +261,7 @@ describe('durable backup operation leases', () => {
       expect(reference.bundleId).toBe('bundle-a');
       count++;
     }
-    expect(count).toBe(205);
+    expect(count).toBe(206);
     expect(await index.record('bundle-a', { ...record, id: 'after-seal' })).toBe(false);
     await expect(
       index.reference('bundle-a', {
@@ -195,7 +277,7 @@ describe('durable backup operation leases', () => {
     ).toEqual({ state: 'deleting' });
     expect(
       db.prepare('SELECT count(*) AS n FROM tenant_backup_validation_references').get()
-    ).toEqual({ n: 105 });
+    ).toEqual({ n: 106 });
     expect(await index.cleanupPage()).toBe(false);
     expect(await index.cleanupPage()).toBe(true);
     expect(await index.cleanupPage()).toBe(true);
@@ -221,7 +303,7 @@ describe('durable backup operation leases', () => {
     const old = await DatabaseTenantBundleReferenceIndex.create(database, lease, () => clock);
     const record = { tenantId: 'tenant-a', module: 'users', collection: 'users', id: 'user' };
     expect(await old.record('bundle', record)).toBe(true);
-    clock = 30101;
+    clock = 600101;
     expect(await old.record('bundle', { ...record, id: 'expired' })).toBe(false);
     await expect(old.hasRecord(record)).rejects.toThrow('backup_validation_index_fenced');
     const takeover = await store.claim('tenant-a', 'operation-a', 'new-worker', clock);
@@ -378,14 +460,14 @@ describe('durable backup operation leases', () => {
       'tenant-a',
       'operation-a',
       'cleaner-b',
-      30103
+      600103
     );
     expect(takeover?.cursor_json).toBe('{"resource":2}');
-    expect(await store.finishCancellation(lease, saved!.revision, 30104)).toBeNull();
+    expect(await store.finishCancellation(lease, saved!.revision, 600104)).toBeNull();
     const finished = await restarted.finishCancellation(
       { ...lease, owner: 'cleaner-b', fencingToken: takeover!.fencing_token },
       takeover!.revision,
-      30104
+      600104
     );
     expect(finished).toMatchObject({
       state: 'cancelled',
@@ -497,9 +579,9 @@ describe('durable backup operation leases', () => {
       owner: 'worker',
       fencingToken: run!.fencing_token,
     };
-    expect(await store.release(lease, run!.revision, 'ready', 30101)).toBeNull();
-    await store.requestCancel('tenant-a', 'operation-a', 30102);
-    const cleanup = await store.claimCancellation('tenant-a', 'operation-a', 'worker', 30103);
+    expect(await store.release(lease, run!.revision, 'ready', 600101)).toBeNull();
+    await store.requestCancel('tenant-a', 'operation-a', 600102);
+    const cleanup = await store.claimCancellation('tenant-a', 'operation-a', 'worker', 600103);
     expect(
       await store.finishCancellation(
         { ...lease, fencingToken: cleanup!.fencing_token },
@@ -541,7 +623,7 @@ describe('durable backup operation leases', () => {
     expect(claimed?.fencing_token).toBe(1);
     expect(await store.claim('tenant-a', 'operation-a', 'worker-b', 102)).toBeNull();
     const restarted = new TenantBackupOperationStore(adapter);
-    const takeover = await restarted.claim('tenant-a', 'operation-a', 'worker-b', 30101);
+    const takeover = await restarted.claim('tenant-a', 'operation-a', 'worker-b', 600101);
     expect(takeover?.fencing_token).toBe(2);
     const old: TenantBackupLease = {
       tenantId: 'tenant-a',
@@ -550,7 +632,7 @@ describe('durable backup operation leases', () => {
       fencingToken: 1,
     };
     expect(
-      await store.checkpoint(old, claimed!.revision, 'capture', '{"page":2}', 30102)
+      await store.checkpoint(old, claimed!.revision, 'capture', '{"page":2}', 600102)
     ).toBeNull();
     expect(await restarted.get('tenant-a', 'operation-a')).toEqual(takeover);
   });
@@ -574,12 +656,12 @@ describe('durable backup operation leases', () => {
       cursor_json: '{"page":2}',
       phase: 'capture',
       revision: 2,
-      lease_expires_at: 30102,
+      lease_expires_at: 180102,
     });
     expect(
       await store.checkpoint(lease, claimed!.revision, 'capture', '{"page":1}', 103)
     ).toBeNull();
-    expect(await store.checkpoint(lease, checkpoint!.revision, 'capture', '{}', 30102)).toBeNull();
+    expect(await store.checkpoint(lease, checkpoint!.revision, 'capture', '{}', 600102)).toBeNull();
   });
   it('persists cancellation, revokes running work and does not requeue it on claim', async () => {
     await store.create(create);
@@ -600,7 +682,7 @@ describe('durable backup operation leases', () => {
         103
       )
     ).toBeNull();
-    expect(await store.claim('tenant-a', 'operation-a', 'worker-b', 40000)).toBeNull();
+    expect(await store.claim('tenant-a', 'operation-a', 'worker-b', 700000)).toBeNull();
     expect(await store.requestCancel('tenant-a', 'operation-a', 104)).toBeNull();
     expect((await store.get('tenant-a', 'operation-a'))?.state).toBe('cancelling');
   });
@@ -644,7 +726,12 @@ it('bounds scheduler work and persists backoff without exposing handler errors',
   };
   expect(
     await runTenantBackupScheduler(adapter, handlers, new AbortController().signal, () => 101)
-  ).toEqual({ inspected: 5, advanced: 4, failures: 1 });
+  ).toEqual({
+    inspected: 5,
+    advanced: 4,
+    failures: 1,
+    failureCodes: ['backup_operation_slice_failed'],
+  });
   const failed = await store.get('tenant-a', 'scheduled-0');
   expect(failed).toMatchObject({
     state: 'queued',
@@ -685,6 +772,39 @@ it('claims only the explicitly enabled operation kind', async () => {
 
   expect(calls).toEqual(['export-only']);
   expect(await store.get('tenant-a', 'import-held')).toMatchObject({ state: 'queued' });
+});
+it('advances one operation through a bounded number of durable scheduler transitions', async () => {
+  await store.create(create);
+  const calls: number[] = [];
+  const handlers: TenantBackupOperationHandlers = {
+    async run(context) {
+      calls.push(context.operation.fencing_token);
+      return {
+        phase: `capture-${calls.length}`,
+        cursor: JSON.stringify({ transition: calls.length }),
+        disposition: calls.length === 3 ? 'wait' : 'continue',
+      };
+    },
+    async cleanup() {
+      return { cursor: null, done: true };
+    },
+  };
+
+  expect(
+    await runTenantBackupScheduler(
+      adapter,
+      handlers,
+      new AbortController().signal,
+      () => 101,
+      ['export', 'import'],
+      8
+    )
+  ).toEqual({ inspected: 1, advanced: 3, failures: 0, failureCodes: [] });
+  expect(calls).toEqual([1, 1, 1]);
+  expect(await store.get(create.tenantId, create.id)).toMatchObject({
+    state: 'waiting',
+    phase: 'capture-3',
+  });
 });
 it('stops normal retries after eight failures while cancellation remains recoverable', async () => {
   await store.create(create);

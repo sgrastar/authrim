@@ -5,26 +5,14 @@ import { runTenantBackupSqliteInputValidationSequenceStep } from '../input-sqlit
 
 const mocks = vi.hoisted(() => ({
   loadPlanned: vi.fn<(...args: unknown[]) => Promise<unknown>>(),
-  datasetStart: vi.fn<(...args: unknown[]) => Promise<number>>(),
-  replay: vi.fn<(...args: unknown[]) => Promise<unknown>>(),
   validateDataset: vi.fn<(...args: unknown[]) => Promise<unknown>>(),
   finalizeDataset: vi.fn<(...args: unknown[]) => Promise<unknown>>(),
   validateReferences: vi.fn<(...args: unknown[]) => Promise<unknown>>(),
   finalizeInput: vi.fn<(...args: unknown[]) => Promise<unknown>>(),
-  readRow: vi.fn<(...args: unknown[]) => Promise<unknown>>(),
+  loadDataset: vi.fn<(...args: unknown[]) => Promise<Uint8Array>>(),
 }));
 vi.mock('../input-plan', () => ({
   loadPlannedTenantBackupInput: (...args: unknown[]) => mocks.loadPlanned(...args),
-}));
-vi.mock('../input-receipts', () => ({
-  TenantBackupInputReceipts: class {
-    datasetStart(...args: unknown[]) {
-      return mocks.datasetStart(...args);
-    }
-    replay(...args: unknown[]) {
-      return mocks.replay(...args);
-    }
-  },
 }));
 vi.mock('../validate-sqlite-input-step', () => ({
   runSqliteInputValidationStep: (...args: unknown[]) => mocks.validateDataset(...args),
@@ -37,9 +25,6 @@ vi.mock('../validate-references-step', () => ({
 }));
 vi.mock('../finalize-input-validation', () => ({
   finalizeTenantBackupInputValidation: (...args: unknown[]) => mocks.finalizeInput(...args),
-}));
-vi.mock('../sqlite-input-row-source', () => ({
-  readNextSqliteInputRow: (...args: unknown[]) => mocks.readRow(...args),
 }));
 
 const bundleIds = ['ab'.repeat(16), 'cd'.repeat(16)];
@@ -91,6 +76,7 @@ const loadInput = vi.fn(async (_ordinal: number, bundleId: string) => ({
   },
   session: key,
   loadPolicy,
+  loadDataset: mocks.loadDataset,
   assertAuthorized: authorize,
 }));
 const head = { state: 'sealed', item_count: 1, chain_digest: digest };
@@ -143,7 +129,6 @@ beforeEach(() => {
     limits: { maxFrames: 100, maxTotalBytes: 1000 },
     manifest,
   });
-  mocks.datasetStart.mockResolvedValue(2);
   mocks.validateDataset.mockResolvedValue({
     phase: 'validate_sqlite_dataset',
     cursor: '{"inner":1}',
@@ -156,7 +141,9 @@ beforeEach(() => {
     disposition: 'continue',
   });
   mocks.finalizeInput.mockResolvedValue(undefined);
-  mocks.readRow.mockResolvedValue(null);
+  mocks.loadDataset.mockResolvedValue(
+    new TextEncoder().encode('{"client_id":["text","client"],"tenant_id":["text","tenant"]}\n')
+  );
 });
 
 it('starts the installed SQL policy at the exact ordered input and dataset', async () => {
@@ -216,13 +203,14 @@ it.each(['kv', 'durable_object', 'object'] as const)(
       },
       session: key,
       loadPolicy: vi.fn(async () => ({ ...policy, dataset: recordDataset })),
+      loadDataset: mocks.loadDataset,
       assertAuthorized: authorize,
     });
     await expect(run()).resolves.toMatchObject({ phase: 'validate_sqlite_dataset' });
   }
 );
 
-it('runs one resumable SQL validation slice through immutable input receipts', async () => {
+it('runs one dataset validation batch from the authenticated container', async () => {
   const started = await run();
   const result = await run({
     ...base,
@@ -230,14 +218,11 @@ it('runs one resumable SQL validation slice through immutable input receipts', a
   });
   expect(result.phase).toBe('validate_sqlite_dataset');
   expect(JSON.parse(JSON.parse(result.cursor ?? 'null').datasetCursor)).toEqual({ inner: 1 });
-  expect(mocks.datasetStart).toHaveBeenCalledWith(bundleIds[0], dataset.id, expect.any(Object));
+  expect(mocks.loadDataset).toHaveBeenCalledWith(dataset.id);
   const request = mocks.validateDataset.mock.calls[0]?.[1] as {
     readNextRow(cursor: string | null): Promise<unknown>;
   };
-  await request.readNextRow(null);
-  expect(mocks.readRow).toHaveBeenCalledWith(
-    expect.objectContaining({ datasetId: dataset.id, firstSequence: 2, planDigest: digest })
-  );
+  await expect(request.readNextRow(null)).resolves.toMatchObject({ rowJson: expect.any(String) });
 });
 
 it('records dataset completion, then advances to reference validation only after all inputs', async () => {

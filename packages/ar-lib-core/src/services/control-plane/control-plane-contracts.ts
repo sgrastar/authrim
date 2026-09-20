@@ -1414,6 +1414,16 @@ export interface ControlPluginResourceCleanupView {
 }
 
 export interface ControlServiceBinding {
+  /** Rebuild runtime registry snapshots required before a restored tenant can be activated. */
+  publishTenantBackupRuntimeState?(): Promise<{
+    lookupRegistry: { generation: number; status: 'published' | 'unchanged' | 'resumed' };
+    lookupHmacKeyState: {
+      generation: number;
+      stateRevision: number;
+      status: 'published' | 'unchanged' | 'resumed';
+    };
+    pluginRunnerRegistry: { generation: number; status: 'published' | 'unchanged' | 'resumed' };
+  }>;
   tenantBackupSnapshotBoundary?(
     input: TenantBackupBoundaryRequest
   ): Promise<TenantBackupBoundaryResponse>;

@@ -29,7 +29,7 @@ function streamFor(family: (typeof MIGRATION_STREAM_CONTRACTS)[number]['schemaFa
 }
 
 it('pins the Phase 4 protocol and credential SQL scope to installed settings modules', () => {
-  expect(PHASE4_SQLITE_DATASET_REGISTRATIONS).toHaveLength(17);
+  expect(PHASE4_SQLITE_DATASET_REGISTRATIONS).toHaveLength(23);
   const identities = PHASE4_SQLITE_DATASET_REGISTRATIONS.map(
     ({ family, table }) => `${family}:${table}`
   );
@@ -79,18 +79,11 @@ it('keeps user migration state and connector observations out of the portable se
   expect(tables.has('directory_jit_pending_users')).toBe(false);
   expect(tables.has('directory_auth_migration_user_states')).toBe(false);
   expect(tables.has('directory_auth_migration_transactions')).toBe(false);
-  expect(tables.has('directory_connector_instances')).toBe(false);
+  expect(tables.has('directory_connector_instances')).toBe(true);
   expect(tables.has('directory_connector_status_episodes')).toBe(false);
   expect(tables.has('credential_offers')).toBe(false);
   expect(tables.has('credential_secret_bodies')).toBe(false);
   expect(tables.has('credential_secret_metadata')).toBe(false);
   expect(tables.has('issued_credentials')).toBe(false);
-  expect(PHASE4_REBUILT_SQLITE_TABLES).toEqual([
-    'directory_connector_instances',
-    'federation_entity_statements',
-    'federation_metadata_entity_summaries',
-    'federation_saml_runtime_entities',
-    'federation_trust_chains',
-    'federation_trust_context_snapshots',
-  ]);
+  expect(PHASE4_REBUILT_SQLITE_TABLES).toEqual([]);
 });

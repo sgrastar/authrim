@@ -1,26 +1,27 @@
 import type { DatabaseAdapter } from '../../db/adapter';
 import type { TenantBackupStepContext, TenantBackupStepResult } from './operation-executor';
-import { decodeTenantBackupInputStep } from './input-decode-step';
-import { TenantBackupInputReceipts } from './input-receipts';
+import { TenantBackupContainerInputStore } from './container-input-store';
+import { readTenantBackupContainerV2Input } from './input-container-v2';
+import type { TenantBackupInputIdentity } from './input-frame-reader';
+import type { TenantBundleKeyEnvelope } from './bundle-key-envelope';
+import {
+  encodeTenantBundleManifest,
+  type TenantBundleManifestExpectation,
+} from './bundle-manifest';
 
-type DecodeInput = Omit<
-  Parameters<typeof decodeTenantBackupInputStep>[0],
-  'checkpoint' | 'signal' | 'assertAuthorized'
->;
 function fail(): never {
   throw new Error('backup_decode_input_step_invalid');
 }
 
-/**
- * One encrypted input frame per operation slice. Receipts are the authoritative progress so a
- * committed frame is not lost when the outer operation checkpoint response is lost. Preparation
- * must pin the uploaded object, manifest and expected source to this operation before dispatch.
- * Completion advances to module validation, never to restore writes or activation.
- */
+/** Authenticate one complete v2 input and save one input-level receipt. */
 export async function runTenantBackupInputDecodeStep(
   context: TenantBackupStepContext,
-  input: DecodeInput & {
+  input: {
     database: Pick<DatabaseAdapter, 'queryOne'>;
+    bucket: Parameters<typeof readTenantBackupContainerV2Input>[0]['bucket'];
+    identity: TenantBackupInputIdentity;
+    session: TenantBundleKeyEnvelope;
+    expected: TenantBundleManifestExpectation;
     now: () => number;
     assertPinnedInput: () => Promise<void>;
   }
@@ -35,54 +36,47 @@ export async function runTenantBackupInputDecodeStep(
     input.expected.source.tenantId !== lease.tenantId
   )
     fail();
-  let cursor: unknown;
+  let cursor: { version?: unknown; bundleId?: unknown };
   try {
-    cursor = JSON.parse(operation.cursor_json ?? 'null');
+    cursor = JSON.parse(operation.cursor_json ?? 'null') as typeof cursor;
   } catch {
     fail();
   }
-  if (
-    !cursor ||
-    typeof cursor !== 'object' ||
-    Object.keys(cursor).sort().join(',') !== 'bundleId,version' ||
-    !('version' in cursor) ||
-    cursor.version !== 1 ||
-    !('bundleId' in cursor) ||
-    cursor.bundleId !== input.expected.bundleId
-  )
-    fail();
-  const receipts = new TenantBackupInputReceipts(input.database, lease, input.now);
+  if (cursor?.version !== 2 || cursor.bundleId !== input.expected.bundleId) fail();
   const authorize = async () => {
     signal.throwIfAborted();
     await input.assertPinnedInput();
-    await receipts.latest(input.expected.bundleId);
     signal.throwIfAborted();
   };
-  await authorize();
-  const latest = await receipts.latest(input.expected.bundleId);
-  const replayInput = { ...input, signal, assertAuthorized: authorize };
-  let complete: boolean;
-  if (latest?.checkpoint.complete) {
-    const event = await receipts.replay(input.expected.bundleId, latest.sequence, replayInput);
-    if (event.kind !== 'complete') fail();
-    complete = true;
-  } else {
-    const result = await decodeTenantBackupInputStep({
-      ...replayInput,
-      checkpoint: latest?.checkpoint ?? null,
-    });
-    await receipts.append(
-      input.expected.bundleId,
-      latest ? latest.sequence + 1 : 0,
-      latest?.checkpoint ?? null,
-      result
-    );
-    complete = result.checkpoint.complete;
-  }
+  const decoded = await readTenantBackupContainerV2Input({
+    bucket: input.bucket,
+    identity: input.identity,
+    session: input.session,
+    signal,
+    assertAuthorized: authorize,
+  });
+  const expectedManifest = encodeTenantBundleManifest(decoded.manifest.backup, input.expected);
+  if (
+    new TextDecoder().decode(expectedManifest) !==
+      new TextDecoder().decode(
+        encodeTenantBundleManifest(decoded.manifest.backup, {
+          bundleId: decoded.manifest.backup.bundleId,
+          source: decoded.manifest.backup.source,
+          selection: decoded.manifest.backup.selection,
+          datasets: decoded.manifest.backup.datasets,
+        })
+      ) ||
+    decoded.manifest.datasets.some(
+      (dataset, index) => dataset.id !== decoded.manifest.backup.datasets[index]?.id
+    )
+  )
+    fail();
+  const store = new TenantBackupContainerInputStore(input.database, lease, input.now);
+  await store.save(input.expected.bundleId, input.identity, decoded.manifest);
   await authorize();
   return {
-    phase: complete ? 'validate_input_modules' : 'decode_input',
-    cursor: JSON.stringify({ version: 1, bundleId: input.expected.bundleId }),
+    phase: 'validate_input_modules',
+    cursor: JSON.stringify({ version: 2, bundleId: input.expected.bundleId }),
     disposition: 'continue',
   };
 }

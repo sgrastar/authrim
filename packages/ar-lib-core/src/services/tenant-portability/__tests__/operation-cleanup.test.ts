@@ -27,6 +27,8 @@ beforeEach(() => {
     '018_tenant_backup_dataset_inspections',
     '019_tenant_backup_input_validations',
     '020_tenant_backup_publications',
+    '036_tenant_backup_capacity_parts',
+    '037_tenant_backup_container_inputs',
   ])
     sql.exec(
       readFileSync(

@@ -23,6 +23,7 @@ import {
   type TenantBackupSqliteRestorePlanTarget,
 } from '@authrim/ar-lib-core/services/tenant-portability/sqlite-restore-plan-step';
 import { probeTenantBackupInputManifest } from '@authrim/ar-lib-core/services/tenant-portability/input-manifest-probe';
+import { readTenantBackupContainerV2Input } from '@authrim/ar-lib-core/services/tenant-portability/input-container-v2';
 import {
   loadPlannedTenantBackupInputs,
   persistTenantBackupInput,
@@ -235,8 +236,7 @@ export async function runTenantBackupImportPreparation(
   const datasets = resolveDatasets(datasetResolver, loaded.intent.selection);
   if (
     loaded.intent.source.productVersion !== productVersion ||
-    loaded.intent.source.issuer !==
-      (await getCanonicalTenantBaseUrlAsync(env, context.lease.tenantId))
+    loaded.intent.source.tenantId !== context.lease.tenantId
   )
     throw new Error('backup_import_source_changed');
   const keyStore = await getTenantBackupKeyStore(env);
@@ -344,8 +344,7 @@ export async function runTenantBackupImportDecode(
   const datasets = resolveDatasets(datasetResolver, loaded.intent.selection);
   if (
     loaded.intent.source.productVersion !== productVersion ||
-    loaded.intent.source.issuer !==
-      (await getCanonicalTenantBaseUrlAsync(env, context.lease.tenantId))
+    loaded.intent.source.tenantId !== context.lease.tenantId
   )
     throw new Error('backup_import_source_changed');
   const keyStore = await getTenantBackupKeyStore(env);
@@ -396,6 +395,7 @@ export async function runTenantBackupImportValidation(
   context: TenantBackupStepContext,
   adapter: {
     datasets: TenantBackupDatasetResolver;
+    loadPolicies?(): Promise<readonly SqliteDatasetInspectionPolicy[]>;
     loadPolicy(datasetId: string): Promise<SqliteDatasetInspectionPolicy>;
     assertSources(): Promise<void>;
   },
@@ -423,8 +423,7 @@ export async function runTenantBackupImportValidation(
     const current = await requests.loadForExecution(context, now);
     if (
       current.intent.source.productVersion !== productVersion ||
-      current.intent.source.issuer !==
-        (await getCanonicalTenantBaseUrlAsync(env, context.lease.tenantId))
+      current.intent.source.tenantId !== context.lease.tenantId
     )
       throw new Error('backup_import_source_changed');
     const currentKeys = await keyStore.loadActiveInputs(context.lease, now);
@@ -445,6 +444,11 @@ export async function runTenantBackupImportValidation(
     selection: initial.current.intent.selection,
     datasets,
   };
+  const policies = adapter.loadPolicies ? adapter.loadPolicies() : null;
+  const decodedInputs = new Map<
+    string,
+    Promise<Awaited<ReturnType<typeof readTenantBackupContainerV2Input>>>
+  >();
   const result = await runTenantBackupSqliteInputValidationSequenceStep(context, {
     database,
     bucket: env.IMPORT_ARTIFACTS,
@@ -474,12 +478,40 @@ export async function runTenantBackupImportValidation(
           datasets,
         },
         session: key.key,
+        loadDataset: async (datasetId: string) => {
+          let decoded = decodedInputs.get(bundleId);
+          if (!decoded) {
+            decoded = readTenantBackupContainerV2Input({
+              bucket: env.IMPORT_ARTIFACTS!,
+              identity: bound.identity,
+              session: key.key,
+              signal: context.signal,
+              assertAuthorized: async () => {
+                await assertCurrent();
+              },
+            });
+            decodedInputs.set(bundleId, decoded);
+          }
+          const bytes = (await decoded).datasets.get(datasetId);
+          if (!(bytes instanceof Uint8Array)) throw new Error('backup_import_input_changed');
+          return bytes;
+        },
         loadPolicy: async (datasetId) => {
           await assertCurrent();
           const policy = await adapter.loadPolicy(datasetId);
           await assertCurrent();
           return policy;
         },
+        ...(policies
+          ? {
+              loadPolicies: async () => {
+                await assertCurrent();
+                const loadedPolicies = await policies;
+                await assertCurrent();
+                return loadedPolicies;
+              },
+            }
+          : {}),
         assertAuthorized: async () => {
           await assertCurrent();
         },
@@ -511,8 +543,7 @@ export async function runTenantBackupImportRestorePlanning(
     const current = await requests.loadForExecution(context, now);
     if (
       current.intent.source.productVersion !== productVersion ||
-      current.intent.source.issuer !==
-        (await getCanonicalTenantBaseUrlAsync(env, context.lease.tenantId))
+      current.intent.source.tenantId !== context.lease.tenantId
     )
       throw new Error('backup_import_source_changed');
     const keys = await keyStore.loadActiveInputs(context.lease, now);
@@ -548,7 +579,8 @@ export async function runTenantBackupArtifactExecution(
       datasetId: string,
       cursor: string | null,
       signal: AbortSignal,
-      manifest?: TenantBundleManifest
+      manifest?: TenantBundleManifest,
+      readSession?: object
     ) => Promise<{ bytes: Uint8Array; nextCursor: string } | null>;
     assertSources: () => Promise<void>;
   },
@@ -579,7 +611,7 @@ export async function runTenantBackupArtifactExecution(
     selection: loaded.intent.selection,
     datasets: adapters.datasets.map((dataset) => ({ ...dataset })),
   };
-  const assertSources = async () => {
+  const assertSourcesFull = async () => {
     context.signal.throwIfAborted();
     await new TenantBackupRequestStore(loaded.database).loadForExecution(context, now);
     await resolveTenantBackupDatabaseInventory(env, context, requiredDatabases, now);
@@ -587,6 +619,11 @@ export async function runTenantBackupArtifactExecution(
     await new TenantBackupRequestStore(loaded.database).loadForExecution(context, now);
     context.signal.throwIfAborted();
   };
+  let exportAssertion: Promise<void> | null = null;
+  const assertSources = () =>
+    context.operation.phase === 'export_artifact'
+      ? (exportAssertion ??= assertSourcesFull())
+      : assertSourcesFull();
   await assertSources();
   if (context.operation.phase === 'prepare_export_artifact') {
     if (

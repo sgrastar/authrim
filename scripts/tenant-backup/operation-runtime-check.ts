@@ -335,7 +335,7 @@ try {
     .prepare("PRAGMA table_info('tenant_backup_r2_restore_objects')")
     .all<{ name: string }>();
   assert(r2RestoreColumns.results.some(({ name }) => name === 'log_records_json'));
-  const adapter: Pick<DatabaseAdapter, 'query' | 'queryOne' | 'execute'> = {
+  const adapter: Pick<DatabaseAdapter, 'query' | 'queryOne' | 'execute' | 'batch'> = {
     async query<T>(sql: string, params: unknown[] = []) {
       return (
         await db
@@ -356,6 +356,15 @@ try {
         .bind(...params)
         .run();
       return { success: result.success, rowsAffected: result.meta.changes };
+    },
+    async batch(statements) {
+      const results = await db.batch(
+        statements.map(({ sql, params = [] }) => db.prepare(sql).bind(...params))
+      );
+      return results.map((result) => ({
+        success: result.success,
+        rowsAffected: result.meta.changes ?? 0,
+      }));
     },
   };
   const store = new TenantBackupOperationStore(adapter);
@@ -835,7 +844,7 @@ try {
   await db.batch(splitMigrationSql(resourceSql).map((statement) => db.prepare(statement)));
   const coreDb = await runtime.getD1Database('FIXTURE_CORE');
   await coreDb.prepare('CREATE TABLE tenants(id TEXT PRIMARY KEY NOT NULL,value TEXT)').run();
-  const coreAdapter: Pick<DatabaseAdapter, 'query' | 'queryOne' | 'execute'> = {
+  const coreAdapter: Pick<DatabaseAdapter, 'query' | 'queryOne' | 'execute' | 'batch'> = {
     async execute(sql, params = []) {
       const r = await coreDb
         .prepare(sql)
@@ -856,6 +865,15 @@ try {
         .prepare(sql)
         .bind(...params)
         .first<T>();
+    },
+    async batch(statements) {
+      const results = await coreDb.batch(
+        statements.map(({ sql, params = [] }) => coreDb.prepare(sql).bind(...params))
+      );
+      return results.map((result) => ({
+        success: result.success,
+        rowsAffected: result.meta.changes ?? 0,
+      }));
     },
   };
   const sourceTables = await readBackupSqliteDatabaseSchema(
@@ -1233,6 +1251,7 @@ try {
               resources: captureInput.resources,
               dataset: sqlDataset,
               table: 'tenants',
+              capture: schemas[0],
               family: 'core',
               shards: [
                 { resourceId: 'core-fixture', firstOrdinal: 0, snapshotId: operationSnapshotId },
@@ -1427,6 +1446,7 @@ try {
       policy: restorePolicy,
       now: () => restoreNow,
       assertPinnedInput: async () => {},
+      operationCursorGuard: restoreOperation.cursor_json ?? '',
     }
   );
   assert.equal(inspectionReceipt.recordCount, 1);
@@ -1439,6 +1459,7 @@ try {
         policy: restorePolicy,
         now: () => restoreNow,
         assertPinnedInput: async () => {},
+        operationCursorGuard: restoreOperation.cursor_json ?? '',
       }
     ),
     inspectionReceipt
@@ -1452,6 +1473,7 @@ try {
         policy: { ...restorePolicy, deferredColumns: ['value'] },
         now: () => restoreNow,
         assertPinnedInput: async () => {},
+        operationCursorGuard: restoreOperation.cursor_json ?? '',
       }
     )
   );
@@ -1473,6 +1495,7 @@ try {
         policy: restorePolicy,
         now: () => restoreNow,
         assertPinnedInput: async () => {},
+        operationCursorGuard: restoreOperation.cursor_json ?? '',
       }
     )
   );
@@ -1567,7 +1590,14 @@ try {
     async assertProvisioningOwnership() {},
   });
   await persistSqliteRestoreSequence(restorePlanInventory, 1, [
-    { targetId: 'isolated', ordinal: 0, policy: restorePolicy, manifest: restoreManifest },
+    {
+      targetId: 'isolated',
+      ordinal: 0,
+      policy: restorePolicy,
+      manifest: restoreManifest,
+      recordCount: 1,
+      byteCount: new TextEncoder().encode(capturedText).length,
+    },
   ]);
   const restorePlanHead = await restorePlanInventory.headForLease(restoreLease);
   await restorePlanInventory.seal(restorePlanHead.item_count, restorePlanHead.chain_digest);

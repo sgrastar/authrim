@@ -105,6 +105,12 @@
 			tenantBackupImportPassphrase.length >= 16
 	);
 	const exportCertificateRows = $derived(buildExportCertificateRows(samlSettings));
+	const formatBackupBytes = (bytes: number) =>
+		bytes < 1024
+			? `${bytes} B`
+			: bytes < 1024 * 1024
+				? `${(bytes / 1024).toFixed(1)} KiB`
+				: `${(bytes / (1024 * 1024)).toFixed(1)} MiB`;
 
 	onMount(() => {
 		void (async () => {
@@ -245,7 +251,18 @@
 	}
 
 	function currentTenantBackupSelection(): TenantBackupSelection {
-		return structuredClone(tenantBackupSelection);
+		return {
+			settings: tenantBackupSelection.settings,
+			users: tenantBackupSelection.users,
+			admin: tenantBackupSelection.admin,
+			artifacts: tenantBackupSelection.artifacts,
+			logs: {
+				audit: tenantBackupSelection.logs.audit,
+				other: tenantBackupSelection.logs.other,
+				sensitive: tenantBackupSelection.logs.sensitive,
+				period: tenantBackupSelection.logs.period
+			}
+		};
 	}
 
 	function setTenantBackupLogPeriod(value: string) {
@@ -871,6 +888,14 @@
 							{/each}
 						</ul>
 					</div>
+					{#if selectedTenantBackup.progress}
+						<p class="operation-progress" data-testid="tenant-backup-execution-progress">
+							registered {selectedTenantBackup.progress.registered} / materialized {selectedTenantBackup
+								.progress.materialized} / nonEmpty {selectedTenantBackup.progress.nonEmpty} / executionBatches
+							{selectedTenantBackup.progress.executionBatches} / rows {selectedTenantBackup.progress
+								.rows} / bytes {formatBackupBytes(selectedTenantBackup.progress.bytes)}
+						</p>
+					{/if}
 					{#if selectedTenantBackup.preview}
 						<div class="restore-preview-summary">
 							<strong

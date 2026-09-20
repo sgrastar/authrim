@@ -119,9 +119,10 @@ it('requires exact registered dataset and SQL participant coverage', async () =>
     })
   ).rejects.toThrow('backup_sqlite_export_adapter_coverage');
   mocks.planned.mockResolvedValueOnce([]);
+  const missing = fixture();
   await expect(
-    adapter.assertCoverage({
-      ...context,
+    missing.adapter.assertCoverage({
+      ...missing.context,
       sqliteResources: [{ resourceId: 'physical-core' } as never],
       participants: [{ resourceId: 'physical-core', snapshotId: 'snapshot' }],
     })

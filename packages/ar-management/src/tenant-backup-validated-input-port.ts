@@ -1,7 +1,6 @@
 import { requireDedicatedAdminDatabaseAdapter, type Env } from '@authrim/ar-lib-core';
 import { TenantBackupExecutionInventory } from '@authrim/ar-lib-core/services/tenant-portability/execution-inventory';
 import { TenantBackupImportRequestStore } from '@authrim/ar-lib-core/services/tenant-portability/import-request';
-import { TenantBackupInputReceipts } from '@authrim/ar-lib-core/services/tenant-portability/input-receipts';
 import {
   loadPlannedTenantBackupInput,
   loadPlannedTenantBackupInputs,
@@ -12,11 +11,12 @@ import type { TenantBackupStepContext } from '@authrim/ar-lib-core/services/tena
 import { DatabaseTenantBackupRestorePlanInventory } from '@authrim/ar-lib-core/services/tenant-portability/restore-plan-inventory';
 import type { TenantBackupSelection } from '@authrim/ar-lib-core/services/tenant-portability/selection-contract';
 import type { Phase8ValidatedSqliteRestoreDataset } from '@authrim/ar-lib-core/services/tenant-portability/phase8-restore-targets';
-import { readNextSqliteInputRow } from '@authrim/ar-lib-core/services/tenant-portability/sqlite-input-row-source';
+import { readTenantBackupContainerV2Input } from '@authrim/ar-lib-core/services/tenant-portability/input-container-v2';
+import { readNextTenantBackupContainerRow } from '@authrim/ar-lib-core/services/tenant-portability/container-dataset-reader';
+import { TenantBackupContainerInputStore } from '@authrim/ar-lib-core/services/tenant-portability/container-input-store';
 import type { SqliteDatasetInspectionPolicy } from '@authrim/ar-lib-core/services/tenant-portability/sqlite-dataset-inspector';
 import type { TenantBundleManifest } from '@authrim/ar-lib-core/services/tenant-portability/bundle-manifest';
 import type { TenantBackupInstalledImportAdapter } from './tenant-backup-import-dispatcher';
-import { getCanonicalTenantBaseUrlAsync } from './request-issuer';
 import { getTenantBackupKeyStore } from './tenant-backup-services';
 import { version as productVersion } from '../package.json';
 
@@ -28,6 +28,9 @@ type LoadedDataset = Awaited<
 export interface TenantBackupValidatedInputPortOptions {
   env: Env;
   datasets(selection: TenantBackupSelection): readonly TenantPortableDataset[];
+  loadPolicies?(
+    context: TenantBackupStepContext
+  ): Promise<readonly SqliteDatasetInspectionPolicy[]>;
   loadPolicy(
     context: TenantBackupStepContext,
     datasetId: string
@@ -113,16 +116,39 @@ export function createTenantBackupValidatedInputPorts(
   const database = requireDedicatedAdminDatabaseAdapter(options.env, 'tenant-backup');
   const requestStore = new TenantBackupImportRequestStore(database);
 
-  async function loadCurrent(context: TenantBackupStepContext) {
+  type Current = Awaited<ReturnType<typeof loadCurrentUncached>>;
+  let currentCache: { leaseKey: string; value: Promise<Current> } | undefined;
+  type PreparedInput = {
+    current: Current;
+    execution: TenantBackupExecutionInventory;
+    plannedInputs: Awaited<ReturnType<typeof loadPlannedTenantBackupInputs>>;
+    owners: ReadonlyMap<string, string>;
+    policiesById: Map<string, SqliteDatasetInspectionPolicy> | null;
+  };
+  let preparedCache: { leaseKey: string; value: Promise<PreparedInput> } | undefined;
+  let inputAuthorizationCache: { leaseKey: string; value: Promise<void> } | undefined;
+  let planAuthorizationCache:
+    | { leaseKey: string; planDigest: string; value: Promise<void> }
+    | undefined;
+  const decodedCache = new Map<
+    string,
+    Promise<Awaited<ReturnType<typeof readTenantBackupContainerV2Input>>>
+  >();
+
+  function operationLeaseKey(context: TenantBackupStepContext): string {
+    return JSON.stringify([
+      context.lease.tenantId,
+      context.lease.operationId,
+      context.lease.owner,
+      context.lease.fencingToken,
+    ]);
+  }
+
+  async function loadCurrentUncached(context: TenantBackupStepContext) {
     context.signal.throwIfAborted();
     if (!options.env.IMPORT_ARTIFACTS) invalid();
     const request = await requestStore.loadForExecution(context, now);
-    if (
-      request.intent.source.productVersion !== productVersion ||
-      request.intent.source.issuer !==
-        (await getCanonicalTenantBaseUrlAsync(options.env, context.lease.tenantId))
-    )
-      invalid();
+    if (request.intent.source.productVersion !== productVersion) invalid();
     const keyStore = await getTenantBackupKeyStore(options.env);
     if (!keyStore) invalid();
     const keys = await keyStore.loadActiveInputs(context.lease, now);
@@ -138,7 +164,115 @@ export function createTenantBackupValidatedInputPorts(
     return { request, keys, datasets, bucket: options.env.IMPORT_ARTIFACTS };
   }
 
-  async function assertPlan(context: TenantBackupStepContext, planDigest: string): Promise<void> {
+  function loadCurrent(context: TenantBackupStepContext): Promise<Current> {
+    const leaseKey = operationLeaseKey(context);
+    if (currentCache?.leaseKey === leaseKey) return currentCache.value;
+    const value = loadCurrentUncached(context);
+    currentCache = { leaseKey, value };
+    return value;
+  }
+
+  function authorizeInput(
+    context: TenantBackupStepContext,
+    execution: TenantBackupExecutionInventory
+  ): Promise<void> {
+    const leaseKey = operationLeaseKey(context);
+    if (inputAuthorizationCache?.leaseKey === leaseKey) return inputAuthorizationCache.value;
+    const value = (async () => {
+      await loadCurrent(context);
+      await execution.assertInputValidated(context.lease);
+    })();
+    inputAuthorizationCache = { leaseKey, value };
+    return value;
+  }
+
+  function loadPreparedInput(context: TenantBackupStepContext): Promise<PreparedInput> {
+    const leaseKey = operationLeaseKey(context);
+    if (preparedCache?.leaseKey === leaseKey) return preparedCache.value;
+    const value = (async () => {
+      const current = await loadCurrent(context);
+      const execution = new TenantBackupExecutionInventory(database, context.lease, now);
+      const head = await execution.headForLease(context.lease);
+      if (
+        head.state !== 'sealed' ||
+        head.item_count !== current.request.inputs.length ||
+        head.item_count < 1 ||
+        head.item_count > 32
+      )
+        invalid();
+      await authorizeInput(context, execution);
+      const bundleCounts = new Map<string, number>();
+      for (let from = 0; from < head.item_count; ) {
+        const page = await execution.readPage(from);
+        if (!page.length) invalid();
+        for (const row of page) {
+          const prefix = 'backup-input:';
+          const bundleId = row.item_id.startsWith(prefix) ? row.item_id.slice(prefix.length) : '';
+          if (!/^[a-f0-9]{32}$/u.test(bundleId)) invalid();
+          bundleCounts.set(bundleId, (bundleCounts.get(bundleId) ?? 0) + 1);
+        }
+        from += page.length;
+      }
+      const plannedInputs = await loadPlannedTenantBackupInputs(context, execution, {
+        source: current.request.intent.source,
+        selection: current.request.intent.selection,
+        datasets: current.datasets,
+      });
+      const owners = tenantBackupInputDatasetOwners(plannedInputs);
+      if (
+        bundleCounts.size !== plannedInputs.length ||
+        plannedInputs.some(({ manifest }) => bundleCounts.get(manifest.bundleId) !== 1)
+      )
+        invalid();
+      const installedPolicies = options.loadPolicies ? await options.loadPolicies(context) : null;
+      const policiesById = installedPolicies
+        ? new Map(installedPolicies.map((policy) => [policy.dataset.id, policy]))
+        : null;
+      if (policiesById && policiesById.size !== installedPolicies?.length) invalid();
+      return { current, execution, plannedInputs, owners, policiesById };
+    })();
+    preparedCache = { leaseKey, value };
+    return value;
+  }
+
+  async function loadDecoded(
+    context: TenantBackupStepContext,
+    planned: Awaited<ReturnType<typeof loadPlannedTenantBackupInput>>,
+    key: Current['keys'][number],
+    bucket: Current['bucket']
+  ) {
+    const cacheKey = `${operationLeaseKey(context)}:${planned.manifest.bundleId}`;
+    const existing = decodedCache.get(cacheKey);
+    if (existing) return existing;
+    const value = (async () => {
+      const store = new TenantBackupContainerInputStore(database, context.lease, now);
+      const receipt = await store.load(planned.manifest.bundleId);
+      if (
+        receipt.object_key !== planned.identity.key ||
+        receipt.object_version !== planned.identity.version ||
+        receipt.object_etag !== planned.identity.etag ||
+        receipt.object_size !== planned.identity.size
+      )
+        invalid();
+      return readTenantBackupContainerV2Input({
+        bucket,
+        identity: planned.identity,
+        session: key.key,
+        signal: context.signal,
+        assertAuthorized: async () => {
+          await loadCurrent(context);
+          await store.load(planned.manifest.bundleId);
+        },
+      });
+    })();
+    decodedCache.set(cacheKey, value);
+    return value;
+  }
+
+  async function assertPlanUncached(
+    context: TenantBackupStepContext,
+    planDigest: string
+  ): Promise<void> {
     if (!/^[a-f0-9]{64}$/u.test(planDigest)) invalid();
     const execution = new TenantBackupExecutionInventory(database, context.lease, now);
     await execution.assertInputValidated(context.lease);
@@ -152,6 +286,18 @@ export function createTenantBackupValidatedInputPorts(
     await options.assertUnpublishedTarget(context, planDigest);
   }
 
+  function assertPlan(context: TenantBackupStepContext, planDigest: string): Promise<void> {
+    const leaseKey = operationLeaseKey(context);
+    if (
+      planAuthorizationCache?.leaseKey === leaseKey &&
+      planAuthorizationCache.planDigest === planDigest
+    )
+      return planAuthorizationCache.value;
+    const value = assertPlanUncached(context, planDigest);
+    planAuthorizationCache = { leaseKey, planDigest, value };
+    return value;
+  }
+
   return {
     async assertValidatedUnpublishedPlan(context, planDigest) {
       await assertPlan(context, planDigest);
@@ -159,36 +305,19 @@ export function createTenantBackupValidatedInputPorts(
 
     async loadValidatedDataset(context, job): Promise<LoadedDataset> {
       validateJob(job);
-      const current = await loadCurrent(context);
-      const execution = new TenantBackupExecutionInventory(database, context.lease, now);
-      const head = await execution.headForLease(context.lease);
-      if (head.state !== 'sealed') invalid();
-      await execution.assertInputValidated(context.lease);
-      let inputOrdinal = -1;
-      for (let from = 0; from < head.item_count; from += 16) {
-        const page = await execution.readPage(from);
-        const matching = page.filter(({ item_id }) => item_id === `backup-input:${job.bundleId}`);
-        if (matching.length > 1 || (matching.length === 1 && inputOrdinal !== -1)) invalid();
-        if (matching[0]) inputOrdinal = matching[0].ordinal;
-      }
-      if (inputOrdinal < 0) invalid();
+      const { current, execution, plannedInputs, owners, policiesById } =
+        await loadPreparedInput(context);
+      const inputOrdinal = plannedInputs.findIndex(
+        ({ manifest }) => manifest.bundleId === job.bundleId
+      );
+      if (inputOrdinal < 0 || owners.get(job.datasetId) !== job.bundleId) invalid();
       const bound = current.request.inputs[inputOrdinal];
       const key = current.keys[inputOrdinal];
       if (!bound || !key || bound.ordinal !== inputOrdinal || key.inputId !== bound.inputId)
         invalid();
-      const expected = {
-        bundleId: job.bundleId,
-        source: current.request.intent.source,
-        selection: current.request.intent.selection,
-        datasets: current.datasets,
-      };
-      const planned = await loadPlannedTenantBackupInput(
-        context,
-        execution,
-        inputOrdinal,
-        expected
-      );
-      const policy = await options.loadPolicy(context, job.datasetId);
+      const planned = plannedInputs[inputOrdinal] ?? invalid();
+      const policy =
+        policiesById?.get(job.datasetId) ?? (await options.loadPolicy(context, job.datasetId));
       if (
         policy.dataset.id !== job.datasetId ||
         policy.schema.table !== job.table ||
@@ -196,78 +325,55 @@ export function createTenantBackupValidatedInputPorts(
       )
         invalid();
       const authorize = async () => {
-        await loadCurrent(context);
-        await execution.assertInputValidated(context.lease);
+        await authorizeInput(context, execution);
       };
-      const replayInput = {
-        ...planned,
-        expected: {
-          bundleId: planned.manifest.bundleId,
-          source: planned.manifest.source,
-          selection: planned.manifest.selection,
-          datasets: planned.manifest.datasets,
-        },
-        session: key.key,
-        bucket: current.bucket,
-        signal: context.signal,
-        assertAuthorized: authorize,
-      };
-      const receipts = new TenantBackupInputReceipts(database, context.lease, now);
-      const firstSequence = await receipts.datasetStart(job.bundleId, job.datasetId, replayInput);
+      const decoded = await loadDecoded(context, planned, key, current.bucket);
+      const datasetBytes = decoded.datasets.get(job.datasetId) ?? invalid();
       await authorize();
       return {
         policy,
         manifest: planned.manifest,
-        readNextValidatedRow: ({ datasetId, sourceCursor, planDigest }) => {
-          if (datasetId !== job.datasetId) invalid();
-          return readNextSqliteInputRow({
-            receipts,
-            replayInput,
-            datasetId,
-            firstSequence,
-            sourceCursor,
-            planDigest,
-            assertValidatedPlan: async (digest, bundleId, validatedDatasetId) => {
-              if (bundleId !== job.bundleId || validatedDatasetId !== job.datasetId) invalid();
-              await assertPlan(context, digest);
-            },
-          });
+        readNextValidatedRow: async ({ datasetId, sourceCursor, planDigest }) => {
+          if (datasetId !== job.datasetId || !/^[a-f0-9]{64}$/u.test(planDigest)) invalid();
+          return readNextTenantBackupContainerRow(datasetBytes, sourceCursor);
         },
       };
     },
 
     async loadValidatedSqliteDatasets(context) {
-      const current = await loadCurrent(context);
-      const execution = new TenantBackupExecutionInventory(database, context.lease, now);
-      const head = await execution.headForLease(context.lease);
-      if (
-        head.state !== 'sealed' ||
-        head.item_count !== current.request.inputs.length ||
-        head.item_count < 1 ||
-        head.item_count > 32
-      )
-        invalid();
-      await execution.assertInputValidated(context.lease);
-      const plannedInputs = await loadPlannedTenantBackupInputs(context, execution, {
-        source: current.request.intent.source,
-        selection: current.request.intent.selection,
-        datasets: current.datasets,
-      });
-      const owners = tenantBackupInputDatasetOwners(plannedInputs);
+      const { current, execution, plannedInputs, owners, policiesById } =
+        await loadPreparedInput(context);
       const result: Phase8ValidatedSqliteRestoreDataset[] = [];
       for (const [ordinal, planned] of plannedInputs.entries()) {
         if (current.request.inputs[ordinal]?.ordinal !== ordinal) invalid();
+        const key = current.keys[ordinal] ?? invalid();
+        const decoded = await loadDecoded(context, planned, key, current.bucket);
         for (const dataset of planned.manifest.datasets.filter(
           ({ id, store }) => store === 'database' && owners.get(id) === planned.manifest.bundleId
         )) {
-          const policy = await options.loadPolicy(context, dataset.id);
+          const policy =
+            policiesById?.get(dataset.id) ?? (await options.loadPolicy(context, dataset.id));
           if (
             !sameDataset(policy.dataset, dataset) ||
             !policy.schema.table ||
             policy.schema.table.length > 256
           )
             invalid();
-          result.push({ manifest: planned.manifest, policy });
+          const datasetBytes = decoded.datasets.get(dataset.id) ?? invalid();
+          let recordCount = 0;
+          let sourceCursor: string | null = null;
+          for (;;) {
+            const row = readNextTenantBackupContainerRow(datasetBytes, sourceCursor);
+            if (!row) break;
+            recordCount += 1;
+            sourceCursor = row.nextCursor;
+          }
+          result.push({
+            manifest: planned.manifest,
+            policy,
+            recordCount,
+            byteCount: datasetBytes.byteLength,
+          });
         }
       }
       if (!result.length || result.length > 4096) invalid();
@@ -279,16 +385,9 @@ export function createTenantBackupValidatedInputPorts(
     async loadValidatedDatasetById(context, planDigest, datasetId) {
       if (!/^[A-Za-z0-9_.:-]{1,256}$/u.test(datasetId)) invalid();
       await assertPlan(context, planDigest);
-      const current = await loadCurrent(context);
-      const execution = new TenantBackupExecutionInventory(database, context.lease, now);
-      const head = await execution.headForLease(context.lease);
-      if (head.state !== 'sealed') invalid();
-      const plannedInputs = await loadPlannedTenantBackupInputs(context, execution, {
-        source: current.request.intent.source,
-        selection: current.request.intent.selection,
-        datasets: current.datasets,
-      });
-      const owner = tenantBackupInputDatasetOwners(plannedInputs).get(datasetId) ?? invalid();
+      const { current, execution, plannedInputs, owners, policiesById } =
+        await loadPreparedInput(context);
+      const owner = owners.get(datasetId) ?? invalid();
       const inputOrdinal = plannedInputs.findIndex(({ manifest }) => manifest.bundleId === owner);
       const planned = plannedInputs[inputOrdinal] ?? invalid();
       const bound = current.request.inputs[inputOrdinal];
@@ -301,46 +400,22 @@ export function createTenantBackupValidatedInputPorts(
         !planned.manifest.datasets.some(({ id }) => id === datasetId)
       )
         invalid();
-      const policy = await options.loadPolicy(context, datasetId);
+      const policy = policiesById?.get(datasetId) ?? (await options.loadPolicy(context, datasetId));
       if (policy.dataset.id !== datasetId) invalid();
       const authorize = async () => {
         await loadCurrent(context);
         await execution.assertInputValidated(context.lease);
         await assertPlan(context, planDigest);
       };
-      const replayInput = {
-        ...planned,
-        expected: {
-          bundleId: planned.manifest.bundleId,
-          source: planned.manifest.source,
-          selection: planned.manifest.selection,
-          datasets: planned.manifest.datasets,
-        },
-        session: key.key,
-        bucket: current.bucket,
-        signal: context.signal,
-        assertAuthorized: authorize,
-      };
-      const receipts = new TenantBackupInputReceipts(database, context.lease, now);
-      const firstSequence = await receipts.datasetStart(owner, datasetId, replayInput);
+      const decoded = await loadDecoded(context, planned, key, current.bucket);
+      const datasetBytes = decoded.datasets.get(datasetId) ?? invalid();
       await authorize();
       return {
         policy,
         manifest: planned.manifest,
-        readNextValidatedRow: ({ sourceCursor }) =>
-          readNextSqliteInputRow({
-            receipts,
-            replayInput,
-            datasetId,
-            firstSequence,
-            sourceCursor,
-            planDigest,
-            assertValidatedPlan: async (digest, bundleId, validatedDatasetId) => {
-              if (digest !== planDigest || bundleId !== owner || validatedDatasetId !== datasetId)
-                invalid();
-              await assertPlan(context, digest);
-            },
-          }),
+        readNextValidatedRow: async ({ sourceCursor }) => {
+          return readNextTenantBackupContainerRow(datasetBytes, sourceCursor);
+        },
       };
     },
   };

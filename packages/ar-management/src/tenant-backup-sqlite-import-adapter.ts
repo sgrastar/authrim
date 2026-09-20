@@ -147,9 +147,13 @@ export function createTenantBackupInstalledSqliteImportAdapter(
       if (!selected.length) throw new Error('backup_sqlite_import_adapter_dataset');
       return selected;
     },
-    async loadPolicy(context, datasetId) {
+    async loadPolicies(context) {
       await input.ports.assertSources(context);
       const policies = await loadPolicies(context);
+      return policies.map(cloneSqliteDatasetInspectionPolicy);
+    },
+    async loadPolicy(context, datasetId) {
+      const policies = await adapter.loadPolicies!(context);
       const policy = policies.find((candidate) => candidate.dataset.id === datasetId);
       if (!policy) throw new Error('backup_sqlite_import_adapter_dataset');
       return cloneSqliteDatasetInspectionPolicy(policy);

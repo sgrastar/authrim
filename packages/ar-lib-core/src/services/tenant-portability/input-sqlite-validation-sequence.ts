@@ -1,18 +1,23 @@
 import type { DatabaseAdapter } from '../../db/adapter';
 import type { TenantBundleKeyEnvelope } from './bundle-key-envelope';
 import type { TenantBundleManifestExpectation } from './bundle-manifest';
-import { finalizeSqliteDatasetInspection } from './dataset-inspection-receipt';
+import {
+  finalizeSqliteDatasetBatchInspections,
+  finalizeSqliteDatasetInspection,
+} from './dataset-inspection-receipt';
 import type { TenantBackupExecutionInventory } from './execution-inventory';
 import { finalizeTenantBackupInputValidation } from './finalize-input-validation';
-import { TenantBackupInputReceipts } from './input-receipts';
 import { loadPlannedTenantBackupInput } from './input-plan';
+import { readTenantBackupContainerV2Input } from './input-container-v2';
+import { readNextTenantBackupContainerRow } from './container-dataset-reader';
 import type { TenantBackupStepContext, TenantBackupStepResult } from './operation-executor';
 import type { SqliteDatasetInspectionPolicy } from './sqlite-dataset-inspector';
-import { readNextSqliteInputRow } from './sqlite-input-row-source';
 import { runSqliteInputValidationStep } from './validate-sqlite-input-step';
 import { runTenantBackupReferenceValidationStep } from './validate-references-step';
+import { DatabaseTenantBundleReferenceIndex } from './validation-index';
+import { inspectSqliteInputRow } from './sqlite-input-inspection';
 
-type Database = Pick<DatabaseAdapter, 'query' | 'queryOne' | 'execute'>;
+type Database = Pick<DatabaseAdapter, 'query' | 'queryOne' | 'execute' | 'batch'>;
 interface PositionCursor {
   version: 1;
   sessionId: string;
@@ -26,12 +31,16 @@ interface LoadedInput {
   expected: TenantBundleManifestExpectation;
   session: TenantBundleKeyEnvelope;
   loadPolicy(datasetId: string): Promise<SqliteDatasetInspectionPolicy>;
+  loadPolicies?(): Promise<readonly SqliteDatasetInspectionPolicy[]>;
+  loadDataset?(datasetId: string): Promise<Uint8Array>;
   assertAuthorized(): Promise<void>;
 }
 
 function fail(): never {
   throw new Error('backup_input_validation_sequence_invalid');
 }
+const VALIDATION_BATCH_ROWS = 250;
+const VALIDATION_BATCH_BYTES = 4 * 1024 * 1024;
 function position(raw: string | null): PositionCursor {
   let value: PositionCursor;
   try {
@@ -89,7 +98,7 @@ export async function runTenantBackupSqliteInputValidationSequenceStep(
   context: TenantBackupStepContext,
   input: {
     database: Database;
-    bucket: Parameters<typeof readNextSqliteInputRow>[0]['replayInput']['bucket'];
+    bucket: Parameters<typeof readTenantBackupContainerV2Input>[0]['bucket'];
     inventory: TenantBackupExecutionInventory;
     now: () => number;
     loadInput(ordinal: number, bundleId: string): Promise<LoadedInput>;
@@ -214,6 +223,110 @@ export async function runTenantBackupSqliteInputValidationSequenceStep(
       dataset.disposition !== 'include'
     )
       fail();
+    const installedPolicies = loaded.loadPolicies ? await loaded.loadPolicies() : null;
+    const policiesById = installedPolicies
+      ? new Map(installedPolicies.map((policy) => [policy.dataset.id, policy]))
+      : null;
+    const batch: { policy: SqliteDatasetInspectionPolicy; recordCount: number }[] = [];
+    const batchRecords: {
+      bundleId: string;
+      sourceId: string;
+      record: Parameters<DatabaseTenantBundleReferenceIndex['recordOnce']>[2];
+    }[] = [];
+    const batchReferences: {
+      bundleId: string;
+      sourceEdgeId: string;
+      dependency: Parameters<DatabaseTenantBundleReferenceIndex['referenceOnce']>[2];
+    }[] = [];
+    let nextDatasetIndex = outer.datasetIndex;
+    let batchRows = 0;
+    let batchBytes = 0;
+    const index =
+      loaded.loadDataset && loaded.loadPolicies
+        ? await DatabaseTenantBundleReferenceIndex.resume(
+            input.database,
+            outer.sessionId,
+            lease,
+            input.now
+          )
+        : null;
+    if (loaded.loadDataset && loaded.loadPolicies && !index) fail();
+    while (
+      loaded.loadDataset &&
+      loaded.loadPolicies &&
+      nextDatasetIndex < planned.manifest.datasets.length &&
+      batch.length < 256
+    ) {
+      const candidate = planned.manifest.datasets[nextDatasetIndex];
+      if (
+        head.item_count !== 1 &&
+        input.ownsDataset &&
+        !(await input.ownsDataset(outer.inputOrdinal, bundleId, candidate.id))
+      )
+        break;
+      const bytes = await loaded.loadDataset(candidate.id);
+      if (!(bytes instanceof Uint8Array) || batchBytes + bytes.length > VALIDATION_BATCH_BYTES)
+        break;
+      const candidatePolicy =
+        policiesById?.get(candidate.id) ?? (await loaded.loadPolicy(candidate.id));
+      if (candidatePolicy.dataset.id !== candidate.id) fail();
+      let cursor: string | null = null;
+      const rows: string[] = [];
+      for (;;) {
+        const row = readNextTenantBackupContainerRow(bytes, cursor);
+        if (!row) break;
+        rows.push(row.rowJson);
+        if (batchRows + rows.length > VALIDATION_BATCH_ROWS) break;
+        cursor = row.nextCursor;
+      }
+      if (batchRows + rows.length > VALIDATION_BATCH_ROWS) break;
+      const activeIndex = index;
+      if (!activeIndex) fail();
+      for (let rowOrdinal = 0; rowOrdinal < rows.length; rowOrdinal++) {
+        await inspectSqliteInputRow({
+          policy: candidatePolicy,
+          manifest: planned.manifest,
+          rowJson: rows[rowOrdinal],
+          rowOrdinal,
+          index: {
+            async recordOnce(recordBundleId, sourceId, record) {
+              batchRecords.push({ bundleId: recordBundleId, sourceId, record });
+              return true;
+            },
+            async referenceOnce(referenceBundleId, sourceEdgeId, dependency) {
+              batchReferences.push({
+                bundleId: referenceBundleId,
+                sourceEdgeId,
+                dependency,
+              });
+            },
+          },
+          assertPinnedInput: async () => {},
+        });
+      }
+      batch.push({ policy: candidatePolicy, recordCount: rows.length });
+      batchRows += rows.length;
+      batchBytes += bytes.length;
+      nextDatasetIndex++;
+    }
+    if (batch.length) {
+      if (!index) fail();
+      await index.recordInspectionBatch({ records: batchRecords, references: batchReferences });
+      await finalizeSqliteDatasetBatchInspections(context, {
+        database: input.database,
+        manifest: planned.manifest,
+        datasets: batch,
+        sessionId: outer.sessionId,
+        now: input.now,
+        assertPinnedInput: authorize,
+        operationCursorGuard: operation.cursor_json ?? '',
+      });
+      return {
+        phase: 'validate_input_modules',
+        cursor: JSON.stringify({ ...outer, datasetIndex: nextDatasetIndex }),
+        disposition: 'continue',
+      };
+    }
     if (input.ownsDataset && !(await input.ownsDataset(outer.inputOrdinal, bundleId, dataset.id)))
       return {
         phase: 'validate_input_modules',
@@ -252,21 +365,18 @@ export async function runTenantBackupSqliteInputValidationSequenceStep(
     fail();
   const policy = await loaded.loadPolicy(dataset.id);
   if (policy.dataset.id !== dataset.id) fail();
-  const replayInput = {
-    ...planned,
-    expected: {
-      bundleId: planned.manifest.bundleId,
-      source: planned.manifest.source,
-      selection: planned.manifest.selection,
-      datasets: planned.manifest.datasets,
-    },
-    session: loaded.session,
-    bucket: input.bucket,
-    signal,
-    assertAuthorized: authorize,
-  };
-  const receipts = new TenantBackupInputReceipts(input.database, lease, input.now);
-  const firstSequence = await receipts.datasetStart(bundleId, dataset.id, replayInput);
+  const datasetBytes = loaded.loadDataset
+    ? await loaded.loadDataset(dataset.id)
+    : (
+        await readTenantBackupContainerV2Input({
+          bucket: input.bucket,
+          identity: planned.identity,
+          session: loaded.session,
+          signal,
+          assertAuthorized: authorize,
+        })
+      ).datasets.get(dataset.id);
+  if (!(datasetBytes instanceof Uint8Array)) fail();
   const innerContext = {
     ...context,
     operation: { ...operation, cursor_json: active.datasetCursor },
@@ -279,24 +389,8 @@ export async function runTenantBackupSqliteInputValidationSequenceStep(
       policy,
       manifest: planned.manifest,
       assertPinnedInput: authorize,
-      readNextRow: (sourceCursor) =>
-        readNextSqliteInputRow({
-          receipts,
-          replayInput,
-          datasetId: dataset.id,
-          firstSequence,
-          sourceCursor,
-          planDigest: head.chain_digest,
-          assertValidatedPlan: async (digest, expectedBundle, expectedDataset) => {
-            if (
-              digest !== head.chain_digest ||
-              expectedBundle !== bundleId ||
-              expectedDataset !== dataset.id
-            )
-              fail();
-            await authorize();
-          },
-        }),
+      readNextRow: async (sourceCursor) =>
+        readNextTenantBackupContainerRow(datasetBytes, sourceCursor),
     });
     if (!['validate_sqlite_dataset', 'advance_validation_dataset'].includes(result.phase)) fail();
     return {
@@ -310,6 +404,7 @@ export async function runTenantBackupSqliteInputValidationSequenceStep(
     policy,
     now: input.now,
     assertPinnedInput: authorize,
+    operationCursorGuard: operation.cursor_json ?? '',
   });
   await authorize();
   return {

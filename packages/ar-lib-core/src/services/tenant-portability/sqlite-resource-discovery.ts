@@ -8,6 +8,8 @@ export interface SqliteCaptureResource {
   firstOrdinal: number;
   tableCount: number;
   captureCount: number;
+  /** Schema fingerprint recorded after the final live verification and trigger installation. */
+  boundarySchemaDigest?: string;
 }
 export interface SqliteResourceDiscoveryCursor {
   version: 1;
@@ -23,7 +25,7 @@ function validResource(value: unknown): value is SqliteCaptureResource {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
   const r = value as SqliteCaptureResource;
   return (
-    Object.keys(r).length === 5 &&
+    (Object.keys(r).length === 5 || Object.keys(r).length === 6) &&
     typeof r.resourceId === 'string' &&
     /^[A-Za-z0-9_.:-]{1,128}$/.test(r.resourceId) &&
     families.includes(r.family) &&
@@ -33,7 +35,8 @@ function validResource(value: unknown): value is SqliteCaptureResource {
     r.tableCount > 0 &&
     Number.isSafeInteger(r.captureCount) &&
     r.captureCount >= 0 &&
-    r.captureCount <= r.tableCount
+    r.captureCount <= r.tableCount &&
+    (r.boundarySchemaDigest === undefined || /^[a-f0-9]{64}$/.test(r.boundarySchemaDigest))
   );
 }
 

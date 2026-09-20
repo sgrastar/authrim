@@ -1,9 +1,10 @@
-import { TenantBackupInputReceipts } from './input-receipts';
+import { TenantBackupContainerInputStore } from './container-input-store';
 import { encodeTenantBundleManifest, type TenantBundleManifest } from './bundle-manifest';
 import type { TenantBackupInputIdentity } from './input-frame-reader';
 import type { DatabaseAdapter } from '../../db/adapter';
 import type { TenantBackupStepContext } from './operation-executor';
 import type { TenantBackupExecutionInventory } from './execution-inventory';
+import { DatabaseTenantBundleReferenceIndex } from './validation-index';
 
 function fail(): never {
   throw new Error('backup_input_validation_incomplete');
@@ -18,7 +19,7 @@ function fail(): never {
 export async function finalizeTenantBackupInputValidation(
   context: TenantBackupStepContext,
   input: {
-    database: Pick<DatabaseAdapter, 'queryOne'>;
+    database: Pick<DatabaseAdapter, 'query' | 'queryOne' | 'execute'>;
     inventory: TenantBackupExecutionInventory;
     now: () => number;
   }
@@ -63,10 +64,20 @@ export async function finalizeTenantBackupInputValidation(
   signal.throwIfAborted();
   const head = await input.inventory.headForLease(lease);
   if (head.state !== 'sealed' || head.chain_digest !== cursor.inputSetDigest) fail();
-  const receipts = new TenantBackupInputReceipts(input.database, lease, input.now);
+  // Reference validation seals the session before checkpointing this phase. A later scheduler slice
+  // owns a newer operation lease, so adopt that lease before checking the final evidence atomically.
+  await DatabaseTenantBundleReferenceIndex.resume(
+    input.database,
+    cursor.sessionId,
+    lease,
+    input.now
+  );
+  const receipts = new TenantBackupContainerInputStore(input.database, lease, input.now);
   let inputCount = 0;
-  for (let offset = 0; offset < head.item_count; offset += 16) {
-    for (const item of await input.inventory.readPage(offset)) {
+  for (let offset = 0; offset < head.item_count; ) {
+    const page = await input.inventory.readPage(offset);
+    if (!page.length) fail();
+    for (const item of page) {
       const value = JSON.parse(item.payload_json) as {
         kind: string;
         manifest: TenantBundleManifest;
@@ -74,7 +85,7 @@ export async function finalizeTenantBackupInputValidation(
       };
       if (value.kind !== 'backup-input') continue;
       if (++inputCount > 32) fail();
-      const decoded = await receipts.latest(value.manifest.bundleId);
+      const decoded = await receipts.load(value.manifest.bundleId);
       const manifestHash = [
         ...new Uint8Array(
           await crypto.subtle.digest(
@@ -86,16 +97,16 @@ export async function finalizeTenantBackupInputValidation(
         .map((byte) => byte.toString(16).padStart(2, '0'))
         .join('');
       if (
-        !decoded?.checkpoint.complete ||
-        decoded.checkpoint.content.manifestSha256 !== manifestHash ||
+        decoded.manifest_sha256 !== manifestHash ||
         ['key', 'version', 'etag', 'size'].some(
           (key) =>
-            decoded.checkpoint.identity[key as keyof TenantBackupInputIdentity] !==
+            decoded[`object_${key === 'key' ? 'key' : key}` as keyof typeof decoded] !==
             value.identity[key as keyof TenantBackupInputIdentity]
         )
       )
         fail();
     }
+    offset += page.length;
   }
   if (!inputCount) fail();
   const now = input.now();
@@ -123,11 +134,11 @@ export async function finalizeTenantBackupInputValidation(
       AND s.id=? AND s.state='sealed' AND s.fencing_token=o.fencing_token AND p.state='sealed' AND p.chain_digest=?
       AND (SELECT count(*) FROM inputs)>0 AND (SELECT count(*) FROM inputs)=(SELECT count(DISTINCT bundle_id) FROM inputs)
       AND NOT EXISTS (SELECT 1 FROM inputs i WHERE NOT EXISTS (
-        SELECT 1 FROM tenant_backup_input_receipts r WHERE r.operation_id=o.id AND r.tenant_id=o.tenant_id AND r.bundle_id=i.bundle_id AND json_extract(r.checkpoint_json,'$.complete')=1))
+        SELECT 1 FROM tenant_backup_container_inputs r WHERE r.operation_id=o.id AND r.tenant_id=o.tenant_id AND r.bundle_id=i.bundle_id))
       AND NOT EXISTS (SELECT 1 FROM expected e WHERE NOT EXISTS (
-        SELECT 1 FROM tenant_backup_dataset_inspections d JOIN tenant_backup_input_receipts r ON r.operation_id=o.id AND r.tenant_id=o.tenant_id AND r.bundle_id=d.bundle_id
+        SELECT 1 FROM tenant_backup_dataset_inspections d JOIN tenant_backup_container_inputs r ON r.operation_id=o.id AND r.tenant_id=o.tenant_id AND r.bundle_id=d.bundle_id
         WHERE d.session_id=s.id AND d.tenant_id=s.tenant_id AND d.bundle_id=e.bundle_id AND d.dataset_id=e.dataset_id
-        AND json_extract(r.checkpoint_json,'$.complete')=1 AND d.manifest_sha256=json_extract(r.checkpoint_json,'$.content.manifestSha256')))
+        AND d.manifest_sha256=r.manifest_sha256))
       AND NOT EXISTS (SELECT 1 FROM tenant_backup_dataset_inspections d WHERE d.session_id=s.id AND NOT EXISTS (SELECT 1 FROM expected e WHERE e.bundle_id=d.bundle_id AND e.dataset_id=d.dataset_id))
       AND (SELECT count(*) FROM tenant_backup_validation_references r WHERE r.session_id=s.id)=?
       AND COALESCE((SELECT max(id) FROM tenant_backup_validation_references r WHERE r.session_id=s.id),'')=?`;

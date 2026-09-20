@@ -117,6 +117,7 @@
     "backup:test:rpc": "tsx scripts/tenant-backup/boundary-rpc-runtime-check.ts",
     "backup:test:boundary": "tsx scripts/tenant-backup/d1-boundary-spike.ts",
     "backup:test:r2": "tsx scripts/tenant-backup/r2-retention-spike.ts",
+    "backup:benchmark:v2": "tsx scripts/tenant-backup/container-v2-benchmark.ts",
     "backup:test:d1-schema": "tsx scripts/tenant-backup/d1-schema-spike.ts",
     "backup:typecheck": "tsc --noEmit -p scripts/tenant-backup/tsconfig.json",
     "backup:lint": "eslint scripts/tenant-backup/*.ts packages/ar-lib-core/src/services/tenant-portability/*.ts"

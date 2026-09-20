@@ -1,14 +1,34 @@
+import { decodeTenantBackupContainerV2 } from './backup-container-v2';
+import { readTenantBackupArtifact } from './artifact-reader';
 import { loadTenantBackupExportManifest } from './export-manifest-store';
 import { encodeTenantBundleManifest } from './bundle-manifest';
-import { verifyTenantBackupArtifactPart } from './artifact-verification';
 import type { TenantBackupStepContext, TenantBackupStepResult } from './operation-executor';
+import type { TenantBundleKeyEnvelope } from './bundle-key-envelope';
+import type { DatabaseAdapter } from '../../db/adapter';
 
-type PartInput = Parameters<typeof verifyTenantBackupArtifactPart>[0];
-/** Transport/content integrity only. Module coverage and snapshot readiness gate publication. */
+interface Bucket {
+  get(key: string): Promise<{
+    size: number;
+    body: {
+      getReader(): {
+        read(): Promise<{ done: boolean; value?: Uint8Array }>;
+        cancel(): Promise<void>;
+        releaseLock(): void;
+      };
+    };
+  } | null>;
+}
+
+/** Verify R2 receipts, authenticated metadata, footer and every dataset digest once. */
 export async function runTenantBackupArtifactVerificationStep(
   context: TenantBackupStepContext,
-  input: Omit<PartInput, 'lease' | 'signal' | 'ordinal' | 'manifest'> & {
-    manifest?: PartInput['manifest'];
+  input: {
+    database: Pick<DatabaseAdapter, 'queryOne'>;
+    bucket: Bucket;
+    attemptId: string;
+    key: TenantBundleKeyEnvelope;
+    expected: Parameters<typeof loadTenantBackupExportManifest>[0]['expected'];
+    now: () => number;
   }
 ): Promise<TenantBackupStepResult> {
   const { operation, lease, signal } = context;
@@ -21,62 +41,63 @@ export async function runTenantBackupArtifactVerificationStep(
     input.expected.source.tenantId !== lease.tenantId
   )
     throw new Error('backup_verify_step_context');
-  let cursor: { version: number; attemptId: string; nextPart?: number; verifiedBytes?: number };
+  let cursor: { version?: unknown; attemptId?: unknown };
   try {
     cursor = JSON.parse(operation.cursor_json ?? 'null') as typeof cursor;
   } catch {
     throw new Error('backup_verify_step_cursor');
   }
-  if (!cursor || cursor.version !== 1 || cursor.attemptId !== input.attemptId)
+  if (cursor?.version !== 2 || cursor.attemptId !== input.attemptId)
     throw new Error('backup_verify_step_cursor');
-  const ordinal = cursor.nextPart ?? 0,
-    total = cursor.verifiedBytes ?? 0;
+  const attempt = await input.database.queryOne<{ part_count: number; byte_count: number }>(
+    "SELECT part_count,byte_count FROM tenant_backup_artifact_attempts WHERE id=? AND tenant_id=? AND state='sealed'",
+    [input.attemptId, lease.tenantId]
+  );
   if (
-    !Number.isSafeInteger(ordinal) ||
-    ordinal < 0 ||
-    !Number.isSafeInteger(total) ||
-    total < 0 ||
-    (ordinal === 0) !== (total === 0)
+    !attempt ||
+    !Number.isSafeInteger(attempt.part_count) ||
+    attempt.part_count < 1 ||
+    !Number.isSafeInteger(attempt.byte_count) ||
+    attempt.byte_count < 1
   )
     throw new Error('backup_verify_step_cursor');
-  const manifest = await loadTenantBackupExportManifest({
+  const savedManifest = await loadTenantBackupExportManifest({
     database: input.database,
     lease,
     attemptId: input.attemptId,
     expected: input.expected,
     now: input.now,
   });
+  const parts: Uint8Array[] = [];
+  let verifiedBytes = 0;
+  for await (const part of readTenantBackupArtifact({
+    database: input.database,
+    bucket: input.bucket,
+    lease,
+    attemptId: input.attemptId,
+    signal,
+    now: input.now,
+  })) {
+    parts.push(part);
+    verifiedBytes += part.length;
+  }
+  if (parts.length !== attempt.part_count || verifiedBytes !== attempt.byte_count)
+    throw new Error('backup_verify_step_size');
+  const decoded = await decodeTenantBackupContainerV2({ parts, session: input.key });
   if (
-    input.manifest &&
-    new TextDecoder().decode(encodeTenantBundleManifest(input.manifest, input.expected)) !==
-      new TextDecoder().decode(encodeTenantBundleManifest(manifest, input.expected))
+    new TextDecoder().decode(
+      encodeTenantBundleManifest(decoded.manifest.backup, input.expected)
+    ) !== new TextDecoder().decode(encodeTenantBundleManifest(savedManifest, input.expected))
   )
     throw new Error('backup_export_manifest_changed');
-  const result = await verifyTenantBackupArtifactPart({
-    ...input,
-    manifest,
-    lease,
-    signal,
-    ordinal,
-  });
-  const verifiedBytes = total + result.bytes;
-  if (verifiedBytes > result.totalBytes || (result.complete && verifiedBytes !== result.totalBytes))
-    throw new Error('backup_verify_step_size');
-  if (result.complete) {
-    const extra = await input.database.queryOne(
-      'SELECT ordinal FROM tenant_backup_artifact_parts WHERE attempt_id=? AND tenant_id=? AND ordinal>=? LIMIT 1',
-      [input.attemptId, lease.tenantId, result.nextPart]
-    );
-    if (extra) throw new Error('backup_verify_step_extra_part');
-  }
   signal.throwIfAborted();
   return {
-    phase: result.complete ? 'release_export_resources' : 'verify_artifact',
+    phase: 'release_export_resources',
     disposition: 'continue',
     cursor: JSON.stringify({
-      version: 1,
+      version: 2,
       attemptId: input.attemptId,
-      nextPart: result.nextPart,
+      nextPart: parts.length,
       verifiedBytes,
     }),
   };

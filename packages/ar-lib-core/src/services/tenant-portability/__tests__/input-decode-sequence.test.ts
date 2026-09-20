@@ -99,7 +99,7 @@ it('keeps one input ordinal until its authenticated footer is complete', async (
   });
   const inner = mocks.decode.mock.calls[0]?.[0] as TenantBackupStepContext;
   expect(JSON.parse(inner.operation.cursor_json ?? 'null')).toEqual({
-    version: 1,
+    version: 2,
     bundleId: bundles[0],
   });
   expect(loadInput).toHaveBeenCalledWith(0, bundles[0]);

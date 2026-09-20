@@ -465,7 +465,18 @@ export class AccountDirectoryCoordinator {
           publication.routeProjection.accountRouteGeneration
         )
         .run();
-      if ((completed.meta.changes ?? 0) !== 1) {
+      const activated = await first<AccountRow>(
+        tenant,
+        `SELECT directory_publication_state, account_route_generation
+           FROM identity_accounts WHERE tenant_id = ? AND id = ?`,
+        [publication.tenantId, publication.accountId]
+      );
+      if (
+        ((completed.meta.changes ?? 0) !== 1 &&
+          activated?.directory_publication_state !== 'active') ||
+        Number(activated?.account_route_generation) !==
+          publication.routeProjection.accountRouteGeneration
+      ) {
         throw new Error('directory_account_activation_failed');
       }
       await this.dependencies.onAccountActivated?.(publication, now);

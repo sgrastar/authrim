@@ -4,6 +4,8 @@ import { packedSqliteRowToJson } from './sqlite-packed-row';
 
 const PAGE_ROWS = 100;
 const FRAGMENT_BYTES = 256 * 1024;
+const READ_BATCH_ROWS = 250;
+const READ_BATCH_BYTES = 1024 * 1024;
 
 export interface SqliteSnapshotSourceCursor {
   /** Last fully emitted row key; source identity is pinned by the operation inventory. */
@@ -23,6 +25,8 @@ interface SourceInput {
   /** Return false to omit one installed-policy row while advancing the trusted source scan. */
   filterRow?: (rowJson: string) => Promise<boolean>;
   transformRow?: (rowJson: string) => Promise<string>;
+  /** Operation-local cached proof that this pinned snapshot is still active. */
+  assertSnapshotActive?: () => Promise<void>;
 }
 
 /** Trusted COW source with durable output positions. Cursor must come from the same operation. */
@@ -34,8 +38,21 @@ export async function* readSqliteSnapshotChunks(
   const sql = `WITH candidates AS (${pageSql})
     SELECT record_key,typeof(row_json) AS row_type,length(CAST(row_json AS BLOB)) AS total_bytes
     FROM candidates ORDER BY record_key`;
+  const fastSql = `WITH candidates AS (${pageSql}), ranked AS (
+    SELECT record_key,typeof(row_json) AS row_type,length(CAST(row_json AS BLOB)) AS total_bytes,
+      CAST(row_json AS BLOB) AS row_blob,
+      sum(length(CAST(row_json AS BLOB))) OVER (ORDER BY record_key) AS cumulative_bytes,
+      max(length(CAST(row_json AS BLOB))) OVER (ORDER BY record_key) AS max_prefix_bytes
+    FROM candidates
+  ) SELECT record_key,row_type,total_bytes,hex(row_blob) AS fragment
+    FROM ranked WHERE cumulative_bytes<=? AND max_prefix_bytes<=? ORDER BY record_key`;
   async function active(): Promise<void> {
     signal.throwIfAborted();
+    if (input.assertSnapshotActive) {
+      await input.assertSnapshotActive();
+      signal.throwIfAborted();
+      return;
+    }
     const snapshot = await database.queryOne<{ id: string }>(
       "SELECT id FROM tenant_backup_snapshots WHERE id=? AND tenant_id=? AND state='capturing'",
       [snapshotId, tenantId]
@@ -46,6 +63,15 @@ export async function* readSqliteSnapshotChunks(
     record_key: string;
     row_type: 'blob' | 'text';
     total_bytes: number;
+    fragment?: string;
+  }
+  function decodeFragment(fragment: string): Uint8Array {
+    if (fragment.length % 2 !== 0 || !/^[0-9A-F]+$/.test(fragment))
+      throw new Error('backup_snapshot_invalid_fragment');
+    const bytes = new Uint8Array(fragment.length / 2);
+    for (let i = 0; i < bytes.length; i++)
+      bytes[i] = parseInt(fragment.slice(i * 2, i * 2 + 2), 16);
+    return bytes;
   }
   const fragmentSql = `WITH candidate AS (${pageSql})
     SELECT record_key,typeof(row_json) AS row_type,length(CAST(row_json AS BLOB)) AS total_bytes,
@@ -75,9 +101,7 @@ export async function* readSqliteSnapshotChunks(
         !/^[0-9A-F]+$/.test(part.fragment)
       )
         throw new Error('backup_snapshot_invalid_fragment');
-      const bytes = new Uint8Array(part.fragment.length / 2);
-      for (let i = 0; i < bytes.length; i++)
-        bytes[i] = parseInt(part.fragment.slice(i * 2, i * 2 + 2), 16);
+      const bytes = decodeFragment(part.fragment);
       yield bytes;
       offset += bytes.length;
     }
@@ -108,7 +132,19 @@ export async function* readSqliteSnapshotChunks(
     throw new Error('backup_snapshot_invalid_cursor');
   while (true) {
     await active();
-    const rows = await database.query<Row>(sql, [snapshotId, tenantId, after, PAGE_ROWS]);
+    let rows =
+      skip === 0
+        ? await database.query<Row>(fastSql, [
+            snapshotId,
+            tenantId,
+            after,
+            PAGE_ROWS,
+            READ_BATCH_BYTES,
+            FRAGMENT_BYTES,
+          ])
+        : [];
+    if (!rows.length)
+      rows = await database.query<Row>(sql, [snapshotId, tenantId, after, PAGE_ROWS]);
     await active();
     if (!rows.length) {
       if (skip) throw new Error('backup_snapshot_invalid_cursor');
@@ -126,10 +162,18 @@ export async function* readSqliteSnapshotChunks(
       )
         throw new Error('backup_snapshot_invalid_row');
       async function* rawRowChunks(): AsyncGenerator<Uint8Array> {
+        const raw = row.fragment
+          ? (async function* () {
+              const bytes = decodeFragment(row.fragment ?? '');
+              if (bytes.length !== row.total_bytes)
+                throw new Error('backup_snapshot_invalid_fragment');
+              yield bytes;
+            })()
+          : fragments(after, row);
         if (row.row_type === 'blob')
-          yield* coalesce(packedSqliteRowToJson(fragments(after, row), input.schema.columns));
+          yield* coalesce(packedSqliteRowToJson(raw, input.schema.columns));
         else {
-          yield* fragments(after, row);
+          yield* raw;
           yield new Uint8Array([10]);
         }
       }
@@ -209,10 +253,28 @@ export async function readNextSqliteSnapshotChunk(
   }
   const iterator = readSqliteSnapshotChunks({ ...input, cursor });
   try {
-    const next = await iterator.next();
-    return next.done
-      ? null
-      : { bytes: next.value.bytes, nextCursor: JSON.stringify(next.value.nextCursor) };
+    const parts: Uint8Array[] = [];
+    let totalBytes = 0;
+    let completedRows = 0;
+    let nextCursor: SqliteSnapshotSourceCursor | null = null;
+    for (;;) {
+      const next = await iterator.next();
+      if (next.done) break;
+      if (parts.length > 0 && totalBytes + next.value.bytes.length > READ_BATCH_BYTES) break;
+      parts.push(next.value.bytes);
+      totalBytes += next.value.bytes.length;
+      nextCursor = next.value.nextCursor;
+      if (nextCursor.chunk === 0) completedRows++;
+      if (completedRows >= READ_BATCH_ROWS || totalBytes >= READ_BATCH_BYTES) break;
+    }
+    if (!nextCursor) return null;
+    const bytes = new Uint8Array(totalBytes);
+    let offset = 0;
+    for (const part of parts) {
+      bytes.set(part, offset);
+      offset += part.length;
+    }
+    return { bytes, nextCursor: JSON.stringify(nextCursor) };
   } finally {
     await iterator.return(undefined);
   }

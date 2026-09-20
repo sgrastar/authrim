@@ -176,7 +176,7 @@ const log = createLogger().module('CONTROL_RPC');
 const SAFE_INTERNAL_ERROR_NAME = /^[a-zA-Z][a-zA-Z0-9]{0,79}$/u;
 
 const EXPOSED_RPC_ERROR =
-  /^(invalid_[a-z0-9_]+|directory_rewrite_[a-z0-9_]+|lookup_hmac_[a-z0-9_]+|lookup_scale_out_[a-z0-9_]+|read_replication_[a-z0-9_]+|control_(rpc_caller_unauthorized|environment_not_found|residency_partition_not_found|resource_policy_not_found|d1_resource_limit|destructive_operations_disabled|capacity_[a-z0-9_]+|operation_idempotency_conflict|operation_retry_(conflict|not_retryable)|release_rollout_retry_(conflict|not_retryable)|operation_cancel_(conflict|not_allowed)|operation_restore_(conflict|not_allowed)|account_allocation_idempotency_conflict|account_allocation_capacity_unavailable|worker_inventory_drift_review_conflict|tenant_dr_[a-z0-9_]+|tenant_default_allocation_[a-z0-9_]+|tenant_placement_policy_[a-z0-9_]+|tenant_runtime_route_observation_[a-z0-9_]+|tenant_placement_migration_[a-z0-9_]+|tenant_region_shard_[a-z0-9_]+|tenant_shard_assignment_[a-z0-9_]+|shard_(quarantine|cleanup)_[a-z0-9_]+|lookup_bucket_[a-z0-9_]+|lookup_retention_[a-z0-9_]+|account_legal_hold_[a-z0-9_]+|plugin_[a-z0-9_]+))$/u;
+  /^(invalid_[a-z0-9_]+|backup_[a-z0-9_]+|directory_rewrite_[a-z0-9_]+|lookup_hmac_[a-z0-9_]+|lookup_scale_out_[a-z0-9_]+|read_replication_[a-z0-9_]+|control_(rpc_caller_unauthorized|environment_not_found|residency_partition_not_found|resource_policy_not_found|d1_resource_limit|destructive_operations_disabled|capacity_[a-z0-9_]+|operation_idempotency_conflict|operation_retry_(conflict|not_retryable)|release_rollout_retry_(conflict|not_retryable)|operation_cancel_(conflict|not_allowed)|operation_restore_(conflict|not_allowed)|account_allocation_idempotency_conflict|account_allocation_capacity_unavailable|worker_inventory_drift_review_conflict|tenant_dr_[a-z0-9_]+|tenant_default_allocation_[a-z0-9_]+|tenant_placement_policy_[a-z0-9_]+|tenant_runtime_route_observation_[a-z0-9_]+|tenant_placement_migration_[a-z0-9_]+|tenant_region_shard_[a-z0-9_]+|tenant_shard_assignment_[a-z0-9_]+|shard_(quarantine|cleanup)_[a-z0-9_]+|lookup_bucket_[a-z0-9_]+|lookup_retention_[a-z0-9_]+|account_legal_hold_[a-z0-9_]+|plugin_[a-z0-9_]+))$/u;
 
 async function rpcResult<T>(operation: () => Promise<T>, action = 'unknown'): Promise<T> {
   try {
@@ -1103,6 +1103,21 @@ function tenantPlacementMigrationMutation(
 }
 
 export default class ControlWorker extends WorkerEntrypoint<ControlEnv, ControlRpcProps> {
+  publishTenantBackupRuntimeState() {
+    return rpcResult(async () => {
+      const caller = authorizedCaller(this.ctx.props);
+      const now = () => Math.floor(Date.now() / 1000);
+      const [lookupRegistry, lookupHmacKeyState, pluginRunnerRegistry] = await Promise.all([
+        new LookupRegistryPublisher(this.env, now).publishEnvironment(caller.environmentId),
+        new LookupHmacKeyStatePublisher(this.env, now).publishEnvironment(caller.environmentId),
+        new PluginRunnerRegistryPublisher(this.env, now).publishEnvironment(caller.environmentId),
+      ]);
+      const result = { lookupRegistry, lookupHmacKeyState, pluginRunnerRegistry };
+      assertControlPlaneRecordIsSecretFree(result);
+      return result;
+    });
+  }
+
   async fetch(request?: Request): Promise<Response> {
     if (!request) {
       return new Response('Not Found', {

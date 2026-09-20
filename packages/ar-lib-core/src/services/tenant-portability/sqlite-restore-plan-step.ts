@@ -17,7 +17,12 @@ export interface TenantBackupSqliteRestorePlanTarget {
   targetId: string;
   resourceId: string;
   provisioningId: string;
-  datasets: readonly { manifest: TenantBundleManifest; policy: SqliteDatasetInspectionPolicy }[];
+  datasets: readonly {
+    manifest: TenantBundleManifest;
+    policy: SqliteDatasetInspectionPolicy;
+    recordCount: number;
+    byteCount: number;
+  }[];
   initialize(): Promise<InitializedSqliteRestoreResource>;
   assertProvisioningOwnership(): Promise<void>;
 }
@@ -45,9 +50,11 @@ async function targetSetDigest(targets: readonly TenantBackupSqliteRestorePlanTa
       targetId: target.targetId,
       resourceId: target.resourceId,
       provisioningId: target.provisioningId,
-      datasets: target.datasets.map(({ manifest, policy }) => ({
+      datasets: target.datasets.map(({ manifest, policy, recordCount, byteCount }) => ({
         bundleId: manifest.bundleId,
         ...sqliteDatasetInspectionPolicyDescriptor(policy),
+        recordCount,
+        byteCount,
       })),
     }))
   );
@@ -64,8 +71,13 @@ function validateTargets(targets: readonly TenantBackupSqliteRestorePlanTarget[]
       !/^[A-Za-z0-9_.:-]{1,256}$/.test(target.provisioningId) ||
       !target.datasets.length ||
       target.datasets.some(
-        ({ manifest, policy }) =>
+        ({ manifest, policy, recordCount, byteCount }) =>
           manifest.source.tenantId.length === 0 ||
+          !Number.isSafeInteger(recordCount) ||
+          recordCount < 0 ||
+          !Number.isSafeInteger(byteCount) ||
+          byteCount < 0 ||
+          (recordCount === 0) !== (byteCount === 0) ||
           !manifest.datasets.some(
             (item) =>
               item.id === policy.dataset.id &&
@@ -149,54 +161,47 @@ export async function runTenantBackupSqliteRestorePlanStep(input: {
   let head = await input.inventory.create(cursor.inputSetDigest);
   if (head.input_inventory_digest !== cursor.inputSetDigest) fail();
 
-  if (cursor.targetIndex < input.targets.length) {
-    const target = input.targets[cursor.targetIndex];
-    const resource = await target.initialize();
-    if (
-      resource.targetId !== target.targetId ||
-      resource.resourceId !== target.resourceId ||
-      resource.provisioningId !== target.provisioningId
-    )
-      fail();
-    await persistInitializedSqliteRestoreTarget({
-      context,
-      inventory: input.inventory,
-      ordinal: cursor.targetIndex,
-      resource,
-      assertProvisioningOwnership: async () => {
-        await target.assertProvisioningOwnership();
-        await guard();
-      },
-    });
-    await guard();
-    return {
-      phase: 'prepare_restore_plan',
-      cursor: JSON.stringify({ ...cursor, targetIndex: cursor.targetIndex + 1 }),
-      disposition: 'continue',
-    };
+  for (let from = cursor.targetIndex; from < input.targets.length; from += 4) {
+    const group = input.targets.slice(from, from + 4);
+    const resources = await Promise.all(group.map((target) => target.initialize()));
+    for (const [offset, target] of group.entries()) {
+      const resource = resources[offset] ?? fail();
+      if (
+        resource.targetId !== target.targetId ||
+        resource.resourceId !== target.resourceId ||
+        resource.provisioningId !== target.provisioningId
+      )
+        fail();
+      await persistInitializedSqliteRestoreTarget({
+        context,
+        inventory: input.inventory,
+        ordinal: from + offset,
+        resource,
+        assertProvisioningOwnership: async () => {
+          await target.assertProvisioningOwnership();
+          await guard();
+        },
+      });
+      await guard();
+    }
   }
 
   const sequenceOrdinal = input.targets.length;
-  if (cursor.targetIndex === sequenceOrdinal) {
-    await persistSqliteRestoreSequence(
-      input.inventory,
-      sequenceOrdinal,
-      input.targets.flatMap((target, ordinal) =>
-        target.datasets.map(({ manifest, policy }) => ({
-          targetId: target.targetId,
-          ordinal,
-          manifest,
-          policy,
-        }))
-      )
-    );
-    await guard();
-    return {
-      phase: 'prepare_restore_plan',
-      cursor: JSON.stringify({ ...cursor, targetIndex: sequenceOrdinal + 1 }),
-      disposition: 'continue',
-    };
-  }
+  await persistSqliteRestoreSequence(
+    input.inventory,
+    sequenceOrdinal,
+    input.targets.flatMap((target, ordinal) =>
+      target.datasets.map(({ manifest, policy, recordCount, byteCount }) => ({
+        targetId: target.targetId,
+        ordinal,
+        manifest,
+        policy,
+        recordCount,
+        byteCount,
+      }))
+    )
+  );
+  await guard();
   head = await guard();
   const sealed = await input.inventory.seal(head.item_count, head.chain_digest);
   if (sealed.item_count !== sequenceOrdinal + 1) fail();
@@ -209,6 +214,7 @@ export async function runTenantBackupSqliteRestorePlanStep(input: {
       jobIndex: 0,
       datasetCursor: null,
       completedRows: [],
+      emptyPrepared: false,
     }),
     disposition: 'continue',
   };

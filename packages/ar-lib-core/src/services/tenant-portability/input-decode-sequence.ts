@@ -85,7 +85,7 @@ export async function runTenantBackupInputDecodeSequenceStep(
       ...context,
       operation: {
         ...operation,
-        cursor_json: JSON.stringify({ version: 1, bundleId }),
+        cursor_json: JSON.stringify({ version: 2, bundleId }),
       },
     },
     {

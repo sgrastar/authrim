@@ -7,9 +7,12 @@ import {
 import {
   createPhase8SqliteInspectionPolicies,
   inspectPhase8SqliteReferences,
+  PHASE8_INSTALLED_TENANT_SEED_DATASETS,
   phase8SqliteRestoreDependencies,
 } from '../phase8-sqlite-references.js';
 import { PORTABLE_TENANT_KEY } from '../portable-tenant-key.js';
+import { createSqliteDatasetInspectorFactory } from '../sqlite-dataset-inspector.js';
+import type { TenantBundleManifest } from '../bundle-manifest.js';
 
 const text = (value: string) => ['text', value] as const;
 const nil = ['null', null] as const;
@@ -26,7 +29,13 @@ function planned(): PlannedInstalledSqliteDataset[] {
     ...(registration.partitions ? { partitions: [...registration.partitions] } : {}),
     capture: {
       table: registration.table,
-      columns: registration.partitions ? ['id', 'tenant_id', 'resource_type'] : ['id', 'tenant_id'],
+      columns: registration.partitions
+        ? ['id', 'tenant_id', 'resource_type']
+        : ['admin_attributes', 'admin_rebac_definitions', 'admin_roles'].includes(
+              registration.table
+            )
+          ? ['id', 'tenant_id', 'created_at', 'updated_at']
+          : ['id', 'tenant_id'],
       primaryKey: ['id'],
       uniqueKeys: [],
       tenantColumn: 'tenant_id',
@@ -73,16 +82,207 @@ describe('Phase 8 SQL references', () => {
     expect(
       policies.find(({ dataset }) => dataset.id === 'admin.admin_users')?.restoreDisposition
     ).toBe('reference_only');
+    for (const datasetId of [
+      'admin.admin_attributes',
+      'admin.admin_rebac_definitions',
+      'admin.admin_roles',
+    ]) {
+      const policy = policies.find(({ dataset }) => dataset.id === datasetId);
+      expect(policy?.verificationIgnoredColumns, datasetId).toEqual(['created_at', 'updated_at']);
+      expect(policy?.restoreTransform?.id, datasetId).toBe(
+        `phase8-seed-timestamps-v1:${datasetId}`
+      );
+    }
     expect(
       policies.find(({ dataset }) => dataset.id === 'admin.admin_role_assignments')
         ?.restoreTransform?.id
     ).toBe('phase8-restore-v1:admin.admin_role_assignments');
+    for (const datasetId of PHASE8_INSTALLED_TENANT_SEED_DATASETS) {
+      expect(
+        policies.find(({ dataset }) => dataset.id === datasetId)?.restoreAllowsAdditionalRows,
+        datasetId
+      ).toBe(true);
+      expect(
+        policies.find(({ dataset }) => dataset.id === datasetId)?.restoreReplacesInstalledSeedRows,
+        datasetId
+      ).toBe(true);
+    }
+    for (const datasetId of [
+      'core.oauth_clients',
+      'core.service_group_inputs',
+      'core.web_origin_registry',
+      'pii.service_group_inputs',
+    ]) {
+      expect(
+        policies.find(({ dataset }) => dataset.id === datasetId)?.restoreAllowsAdditionalRows,
+        datasetId
+      ).toBe(true);
+    }
+    for (const datasetId of ['core.service_group_inputs', 'pii.service_group_inputs']) {
+      const policy = policies.find(({ dataset }) => dataset.id === datasetId);
+      expect(policy?.restoreDisposition, datasetId).toBe('reference_only');
+      expect(policy?.verificationIgnoredColumns, datasetId).toBeUndefined();
+      expect(policy?.restoreOverrides, datasetId).toBeUndefined();
+      expect(policy?.restoreIdentityOverrides, datasetId).toBeUndefined();
+      expect(policy?.restoreTenantKey, datasetId).toBeUndefined();
+    }
+    expect(
+      policies.find(({ dataset }) => dataset.id === 'core.branding_settings')
+        ?.restoreAllowsAdditionalRows
+    ).toBeUndefined();
     expect(
       policies.find(({ dataset }) => dataset.id === 'core.totp_credentials')?.restoreOverrides
     ).toMatchObject({
       secret_encrypted: ['text', 'backup-pending'],
       secret_key_version: ['integer', '1'],
     });
+  });
+
+  it('pins the target tenant key for datasets owned through a parent table', () => {
+    const plan = planned();
+    const registry = plan.find(({ dataset }) => dataset.id === 'admin.logging_key_registry')!;
+    registry.capture = {
+      table: 'logging_key_registry',
+      columns: ['id', 'tenant_key'],
+      primaryKey: ['id'],
+      uniqueKeys: [],
+      tenantColumn: 'tenant_key',
+      tenantIdentity: 'tenantKey',
+    };
+    const versions = plan.find(({ dataset }) => dataset.id === 'admin.logging_key_versions')!;
+    versions.capture = {
+      table: 'logging_key_versions',
+      columns: ['key_registry_id', 'version'],
+      primaryKey: ['key_registry_id', 'version'],
+      uniqueKeys: [],
+      parent: { childColumns: ['key_registry_id'], schema: structuredClone(registry.capture) },
+    };
+    const policy = createPhase8SqliteInspectionPolicies(plan, {
+      tenantKey: 'tenant-key-a',
+      validateAdminEnvelope: vi.fn(),
+      validatePhase8Envelope: vi.fn(),
+      resolveAdminReference: vi.fn(async (_context, source) => `target-${source}`),
+      resolvePluginReference: vi.fn(async (_context, _source, plugin) => `target-${plugin}`),
+      restoreHold: restoreHold(),
+    }).find(({ dataset }) => dataset.id === 'admin.logging_key_versions');
+    expect(policy).toMatchObject({
+      tenantKey: PORTABLE_TENANT_KEY,
+      restoreTenantKey: 'tenant-key-a',
+    });
+  });
+
+  it('pins the installed seed timestamp exception as a valid restore transform', async () => {
+    const policy = createPhase8SqliteInspectionPolicies(planned(), {
+      tenantKey: 'tenant-key-a',
+      validateAdminEnvelope: vi.fn(),
+      validatePhase8Envelope: vi.fn(),
+      resolveAdminReference: vi.fn(async (_context, source) => `target-${source}`),
+      resolvePluginReference: vi.fn(async (_context, _source, plugin) => `target-${plugin}`),
+      restoreHold: restoreHold(),
+    }).find(({ dataset }) => dataset.id === 'admin.admin_rebac_definitions')!;
+    const manifest: TenantBundleManifest = {
+      formatVersion: 1,
+      bundleId: 'a'.repeat(32),
+      source: { tenantId: 'default', issuer: 'https://issuer.example', productVersion: '0.4.2' },
+      selection: {
+        settings: true,
+        users: true,
+        admin: true,
+        artifacts: true,
+        logs: { audit: true, other: true, sensitive: true, period: 'all' },
+      },
+      snapshotId: 'snapshot-a',
+      boundaryUnixMs: 100,
+      inventoryDigestSha256: 'b'.repeat(64),
+      datasets: [policy.dataset],
+    };
+    const inspector = await createSqliteDatasetInspectorFactory(policy)(policy.dataset, manifest);
+    await inspector.dispose();
+  });
+
+  it('preserves destination runtime registry generations and signed routing metadata', () => {
+    const plan = planned();
+    const runtimeRegistry = plan.find(
+      ({ dataset }) => dataset.id === 'admin.tenant_runtime_cache_generations'
+    )!;
+    runtimeRegistry.capture = {
+      table: 'tenant_runtime_cache_generations',
+      columns: [
+        'tenant_id',
+        'cache_namespace',
+        'generation',
+        'updated_at',
+        'updated_by',
+        'metadata_json',
+      ],
+      primaryKey: ['tenant_id', 'cache_namespace'],
+      uniqueKeys: [],
+      tenantColumn: 'tenant_id',
+    };
+    const policy = createPhase8SqliteInspectionPolicies(plan, {
+      tenantKey: 'tenant-key-a',
+      validateAdminEnvelope: vi.fn(),
+      validatePhase8Envelope: vi.fn(),
+      resolveAdminReference: vi.fn(async (_context, source) => `target-${source}`),
+      resolvePluginReference: vi.fn(async (_context, _source, plugin) => `target-${plugin}`),
+      restoreHold: restoreHold(),
+    }).find(({ dataset }) => dataset.id === 'admin.tenant_runtime_cache_generations');
+    expect(policy).toMatchObject({
+      restoreReplacesInstalledSeedRows: true,
+      restorePreservedSeedColumns: ['generation', 'updated_at', 'updated_by', 'metadata_json'],
+      verificationIgnoredColumns: ['generation', 'updated_at', 'updated_by', 'metadata_json'],
+    });
+  });
+
+  it('treats trigger-maintained service group inputs as valid reference-only datasets', async () => {
+    const plan = planned();
+    for (const datasetId of ['core.service_group_inputs', 'pii.service_group_inputs']) {
+      const entry = plan.find(({ dataset }) => dataset.id === datasetId)!;
+      entry.capture = {
+        table: 'service_group_inputs',
+        columns: ['tenant_id', 'user_id', 'revision'],
+        primaryKey: ['tenant_id', 'user_id'],
+        uniqueKeys: [],
+        tenantColumn: 'tenant_id',
+      };
+    }
+    const policies = createPhase8SqliteInspectionPolicies(plan, {
+      tenantKey: 'tenant-key-a',
+      validateAdminEnvelope: vi.fn(),
+      validatePhase8Envelope: vi.fn(),
+      resolveAdminReference: vi.fn(async (_context, source) => `target-${source}`),
+      resolvePluginReference: vi.fn(async (_context, _source, plugin) => `target-${plugin}`),
+      restoreHold: restoreHold(),
+    });
+    for (const datasetId of ['core.service_group_inputs', 'pii.service_group_inputs']) {
+      const policy = policies.find(({ dataset }) => dataset.id === datasetId)!;
+      const manifest: TenantBundleManifest = {
+        formatVersion: 1,
+        bundleId: 'a'.repeat(32),
+        source: { tenantId: 'default', issuer: 'https://issuer.example', productVersion: '0.4.2' },
+        selection: {
+          settings: true,
+          users: true,
+          admin: true,
+          artifacts: true,
+          logs: { audit: true, other: true, sensitive: true, period: 'all' },
+        },
+        snapshotId: 'snapshot-a',
+        boundaryUnixMs: 100,
+        inventoryDigestSha256: 'b'.repeat(64),
+        datasets: [policy.dataset],
+      };
+      const inspector = await createSqliteDatasetInspectorFactory(policy)(policy.dataset, manifest);
+      const result = await inspector.chunk(
+        new TextEncoder().encode(
+          '{"tenant_id":["text","default"],"user_id":["text","user-a"],"revision":["integer","4"]}\n'
+        ),
+        0
+      );
+      expect(result.records).toHaveLength(1);
+      await inspector.finish();
+      await inspector.dispose();
+    }
   });
 
   it('rekeys tenant metadata and tenant-key primary keys only after portable inspection', () => {

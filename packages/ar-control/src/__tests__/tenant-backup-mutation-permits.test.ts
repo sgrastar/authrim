@@ -47,13 +47,30 @@ it('scopes permits to the authenticated environment, tenant and caller and permi
       )
     );
     sql.exec(
+      readFileSync(
+        new URL(
+          '../../../../migrations/control/d1/011_tenant_backup_boundary_deadline.sql',
+          import.meta.url
+        ),
+        'utf8'
+      )
+    );
+    sql.exec(
       "CREATE TABLE control_tenant_placement_policies(environment_id TEXT,tenant_id TEXT); INSERT INTO control_tenant_placement_policies VALUES ('env-a','tenant'),('env-b','tenant')"
     );
+    type BoundStatement = {
+      statement: string;
+      params: SQLInputValue[];
+      first<T>(): Promise<T | null>;
+      run(): Promise<{ success: boolean; meta: { changes: number } }>;
+    };
     const database = {
       prepare(statement: string) {
         return {
           bind(...params: unknown[]) {
             return {
+              statement,
+              params: params as SQLInputValue[],
               async first<T>() {
                 return (sql.prepare(statement).get(...(params as SQLInputValue[])) as T) ?? null;
               },
@@ -70,6 +87,23 @@ it('scopes permits to the authenticated environment, tenant and caller and permi
             };
           },
         };
+      },
+      async batch(statements: BoundStatement[]) {
+        sql.exec('BEGIN');
+        try {
+          const results = statements.map(({ statement, params }) => {
+            const rows = sql.prepare(statement).all(...params) as Record<string, unknown>[];
+            const changes = Number(
+              (sql.prepare('SELECT changes() AS changes').get() as { changes: number }).changes
+            );
+            return { success: true, results: rows, meta: { changes } };
+          });
+          sql.exec('COMMIT');
+          return results;
+        } catch (error) {
+          sql.exec('ROLLBACK');
+          throw error;
+        }
       },
     } as unknown as ControlEnv['CONTROL_DB'];
     const input = {

@@ -23,16 +23,189 @@ export interface PlannedSqliteRestoreSequenceJob {
   table: string;
   manifestDigest: string;
   policyDigest: string;
+  recordCount: number;
+  byteCount: number;
+  reconcilesGeneratedRows: boolean;
 }
 type Job = PlannedSqliteRestoreSequenceJob;
 const fail = () => new Error('backup_restore_sequence_invalid');
+const EXECUTION_BATCH_ROWS = 250;
+const EXECUTION_BATCH_BYTES = 4 * 1024 * 1024;
+
+function canShareExecutionBatch(policy: Source['policy']): boolean {
+  return (
+    policy.restoreDisposition !== 'reference_only' &&
+    !policy.restoreHold &&
+    !policy.deferredColumns?.length
+  );
+}
+
+function canShareVerificationBatch(policy: Source['policy']): boolean {
+  // Sidecars, deferred references and transformed values are complete before targets are sealed.
+  // Their final readback can therefore share one physical target window. Held and reference-only
+  // rows retain their dedicated verification rules because their materialized count differs.
+  return policy.restoreDisposition !== 'reference_only' && !policy.restoreHold;
+}
+
+async function readCompleteDataset(
+  source: Source,
+  job: Job,
+  planDigest: string,
+  remainingRows: number,
+  remainingBytes: number
+): Promise<{ rows: string[]; bytes: number } | null> {
+  const rows: string[] = [];
+  let bytes = 0;
+  let sourceCursor: string | null = null;
+  for (;;) {
+    const next = await source.readNextValidatedRow({
+      datasetId: job.datasetId,
+      sourceCursor,
+      planDigest,
+    });
+    if (next === null) return { rows, bytes };
+    if (!next.nextCursor || next.nextCursor === sourceCursor) throw fail();
+    const rowBytes = new TextEncoder().encode(next.rowJson).length;
+    if (rows.length >= remainingRows || bytes + rowBytes > remainingBytes) return null;
+    rows.push(next.rowJson);
+    bytes += rowBytes;
+    sourceCursor = next.nextCursor;
+  }
+}
+
+async function transformRows(
+  context: TenantBackupStepContext,
+  source: Source,
+  rows: readonly string[],
+  mode: 'write' | 'verify'
+): Promise<string[]> {
+  if (!source.policy.restoreTransform) return [...rows];
+  const transformed: string[] = [];
+  for (const row of rows) {
+    const value = await source.policy.restoreTransform.transform(context, row, mode);
+    if (!value || new TextEncoder().encode(value).length > 16 * 1024 * 1024) throw fail();
+    transformed.push(value);
+  }
+  return transformed;
+}
+
+async function runDatasetExecutionBatch(
+  context: TenantBackupStepContext,
+  input: Parameters<typeof runSqliteRestoreSequenceStep>[1],
+  loaded: Source,
+  job: Job,
+  phase: 'apply_sqlite_dataset' | 'apply_sqlite_dataset_deferred' | 'verify_sqlite_dataset',
+  cursor: string
+): Promise<TenantBackupStepResult> {
+  let currentPhase = phase;
+  let currentCursor = cursor;
+  // A capacity-sized write, deferred-reference pass and readback belong to one dataset execution
+  // batch. Persist only when that capacity is exhausted or the whole dataset is complete.
+  for (let transition = 0; transition < 3; transition++) {
+    const run =
+      currentPhase === 'apply_sqlite_dataset'
+        ? runSqliteRestoreDatasetStep
+        : currentPhase === 'apply_sqlite_dataset_deferred'
+          ? runSqliteRestoreDatasetDeferredStep
+          : runSqliteRestoreDatasetVerificationStep;
+    const result = await run(
+      {
+        ...context,
+        operation: {
+          ...context.operation,
+          phase: currentPhase,
+          cursor_json: currentCursor,
+        },
+      },
+      {
+        ...input,
+        ...loaded,
+        targetId: job.targetId,
+        ordinal: job.targetOrdinal,
+      }
+    );
+    if (result.phase === 'advance_restore_dataset' || result.phase === currentPhase) return result;
+    if (
+      typeof result.cursor !== 'string' ||
+      !(
+        (currentPhase === 'apply_sqlite_dataset' &&
+          ['apply_sqlite_dataset_deferred', 'verify_sqlite_dataset'].includes(result.phase)) ||
+        (currentPhase === 'apply_sqlite_dataset_deferred' &&
+          result.phase === 'verify_sqlite_dataset')
+      )
+    )
+      throw fail();
+    currentPhase = result.phase as typeof currentPhase;
+    currentCursor = result.cursor;
+  }
+  throw fail();
+}
+
+async function openRegisteredRestoreTargets(
+  context: TenantBackupStepContext,
+  input: Parameters<typeof runSqliteRestoreSequenceStep>[1],
+  jobs: readonly Job[]
+): Promise<void> {
+  const targets = new Map<string, { targetId: string; targetOrdinal: number }>();
+  for (const job of jobs) {
+    const existing = targets.get(job.targetId);
+    if (existing && existing.targetOrdinal !== job.targetOrdinal) throw fail();
+    targets.set(job.targetId, {
+      targetId: job.targetId,
+      targetOrdinal: job.targetOrdinal,
+    });
+  }
+
+  const pending = [...targets.values()];
+  for (let offset = 0; offset < pending.length; offset += 4) {
+    await Promise.all(
+      pending.slice(offset, offset + 4).map((target) =>
+        openPlannedSqliteRestoreTarget({
+          ...input,
+          context,
+          targetId: target.targetId,
+          ordinal: target.targetOrdinal,
+          mode: 'write',
+        })
+      )
+    );
+  }
+}
+
+async function reconcileGeneratedRestoreRows(
+  context: TenantBackupStepContext,
+  input: Parameters<typeof runSqliteRestoreSequenceStep>[1],
+  jobs: readonly Job[],
+  planDigest: string
+): Promise<void> {
+  for (const job of jobs) {
+    if (!job.reconcilesGeneratedRows) continue;
+    const loaded = await input.loadValidatedDataset(structuredClone(job));
+    if (loaded.policy.restoreReconcilesGeneratedRows !== true) continue;
+    if (!loaded.policy.restoreHold || loaded.policy.restoreTransform) throw fail();
+    const complete = await readCompleteDataset(loaded, job, planDigest, 500, EXECUTION_BATCH_BYTES);
+    if (!complete || complete.rows.length !== job.recordCount) throw fail();
+    const materialized: string[] = [];
+    for (const rowJson of complete.rows) {
+      if (!(await loaded.policy.restoreHold.shouldHold(context, rowJson)))
+        materialized.push(rowJson);
+    }
+    const target = await openPlannedSqliteRestoreTarget({
+      ...input,
+      context,
+      targetId: job.targetId,
+      ordinal: job.targetOrdinal,
+    });
+    await target.reconcileGeneratedRows(loaded.policy, loaded.manifest, materialized);
+  }
+}
 
 function isJob(value: unknown): value is Job {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
   const job = value as Record<string, unknown>;
   return (
     Object.keys(job).sort().join(',') ===
-      'bundleId,datasetId,manifestDigest,policyDigest,table,targetId,targetOrdinal' &&
+      'bundleId,byteCount,datasetId,manifestDigest,policyDigest,reconcilesGeneratedRows,recordCount,table,targetId,targetOrdinal' &&
     typeof job.targetId === 'string' &&
     /^[A-Za-z0-9_.:-]{1,256}$/.test(job.targetId) &&
     typeof job.targetOrdinal === 'number' &&
@@ -47,7 +220,15 @@ function isJob(value: unknown): value is Job {
     typeof job.manifestDigest === 'string' &&
     /^[a-f0-9]{64}$/.test(job.manifestDigest) &&
     typeof job.policyDigest === 'string' &&
-    /^[a-f0-9]{64}$/.test(job.policyDigest)
+    /^[a-f0-9]{64}$/.test(job.policyDigest) &&
+    typeof job.recordCount === 'number' &&
+    Number.isSafeInteger(job.recordCount) &&
+    job.recordCount >= 0 &&
+    typeof job.byteCount === 'number' &&
+    Number.isSafeInteger(job.byteCount) &&
+    job.byteCount >= 0 &&
+    typeof job.reconcilesGeneratedRows === 'boolean' &&
+    (job.recordCount === 0) === (job.byteCount === 0)
   );
 }
 
@@ -64,7 +245,7 @@ function decodeJobs(value: string): Job[] {
     Array.isArray(decoded) ||
     Object.keys(decoded).sort().join(',') !== 'jobs,kind,version' ||
     !('version' in decoded) ||
-    decoded.version !== 1 ||
+    decoded.version !== 2 ||
     !('kind' in decoded) ||
     decoded.kind !== 'sqlite-restore-sequence' ||
     !('jobs' in decoded) ||
@@ -88,13 +269,15 @@ export async function loadPlannedSqliteRestoreSequenceJob(
   const head = await inventory.headForLease(lease);
   if (head.state !== 'sealed' || head.chain_digest !== planDigest) throw fail();
   let sequence: { ordinal: number; item_id: string; payload_json: string } | undefined;
-  for (let from = 0; from < head.item_count; from += 16) {
+  for (let from = 0; from < head.item_count; ) {
     const rows = await inventory.readPage(from);
+    if (!rows.length) throw fail();
     for (const row of rows) {
       if (row.item_id !== 'sqlite-restore-sequence') continue;
       if (sequence) throw fail();
       sequence = row;
     }
+    from += rows.length;
   }
   if (!sequence) throw fail();
   const matches = decodeJobs(sequence.payload_json).filter((job) => job.datasetId === datasetId);
@@ -107,13 +290,22 @@ async function hash(bytes: Uint8Array): Promise<string> {
   return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, '0')).join('');
 }
 async function descriptor(
-  input: Pick<DatasetInput, 'targetId' | 'ordinal' | 'manifest' | 'policy'>
+  input: Pick<DatasetInput, 'targetId' | 'ordinal' | 'manifest' | 'policy'> & {
+    recordCount: number;
+    byteCount: number;
+  },
+  pinnedManifestDigest?: string
 ): Promise<Job> {
   const policy = input.policy;
   if (
     !/^[A-Za-z0-9_.:-]{1,256}$/.test(input.targetId) ||
     !Number.isSafeInteger(input.ordinal) ||
     input.ordinal < 0 ||
+    !Number.isSafeInteger(input.recordCount) ||
+    input.recordCount < 0 ||
+    !Number.isSafeInteger(input.byteCount) ||
+    input.byteCount < 0 ||
+    (input.recordCount === 0) !== (input.byteCount === 0) ||
     !input.manifest.datasets.some(
       (dataset) =>
         dataset.id === policy.dataset.id &&
@@ -128,14 +320,21 @@ async function descriptor(
     datasetId: policy.dataset.id,
     bundleId: input.manifest.bundleId,
     table: policy.schema.table,
-    manifestDigest: await hash(encodeTenantBundleManifest(input.manifest, input.manifest)),
+    manifestDigest:
+      pinnedManifestDigest ??
+      (await hash(encodeTenantBundleManifest(input.manifest, input.manifest))),
     policyDigest: await hash(
       new TextEncoder().encode(JSON.stringify(sqliteDatasetInspectionPolicyDescriptor(policy)))
     ),
+    recordCount: input.recordCount,
+    byteCount: input.byteCount,
+    reconcilesGeneratedRows: policy.restoreReconcilesGeneratedRows === true,
   };
 }
 
-function orderDatasets<T extends { policy: DatasetInput['policy'] }>(datasets: readonly T[]): T[] {
+function orderDatasets<T extends { targetId: string; policy: DatasetInput['policy'] }>(
+  datasets: readonly T[]
+): T[] {
   const byDataset = new Map<string, { dataset: T; index: number }>();
   for (const [index, candidate] of datasets.entries()) {
     const id = candidate.policy.dataset.id;
@@ -170,7 +369,11 @@ function orderDatasets<T extends { policy: DatasetInput['policy'] }>(datasets: r
     .map(([id]) => id);
   const ordered: T[] = [];
   while (ready.length) {
-    const id = ready.shift();
+    const previousTarget = ordered.at(-1)?.targetId;
+    const preferredIndex = previousTarget
+      ? ready.findIndex((id) => byDataset.get(id)?.dataset.targetId === previousTarget)
+      : -1;
+    const id = ready.splice(preferredIndex >= 0 ? preferredIndex : 0, 1)[0];
     if (!id) throw fail();
     const selected = byDataset.get(id);
     if (!selected) throw fail();
@@ -192,7 +395,10 @@ function orderDatasets<T extends { policy: DatasetInput['policy'] }>(datasets: r
 export async function persistSqliteRestoreSequence(
   inventory: TenantBackupRestorePlanInventoryPort,
   ordinal: number,
-  datasets: readonly Pick<DatasetInput, 'targetId' | 'ordinal' | 'manifest' | 'policy'>[]
+  datasets: readonly (Pick<DatasetInput, 'targetId' | 'ordinal' | 'manifest' | 'policy'> & {
+    recordCount: number;
+    byteCount: number;
+  })[]
 ): Promise<void> {
   if (datasets.length > TENANT_BACKUP_MAX_SQLITE_DATASETS) throw fail();
   const pinned = orderDatasets(
@@ -202,15 +408,38 @@ export async function persistSqliteRestoreSequence(
       policy: cloneSqliteDatasetInspectionPolicy(dataset.policy),
     }))
   );
+  const manifestDigests = new Map<string, string>();
   const jobs: Job[] = [];
-  for (const dataset of pinned) jobs.push(await descriptor(dataset));
-  for (const [index, dataset] of pinned.entries()) {
-    const own = jobs.filter((job) => job.bundleId === dataset.manifest.bundleId);
+  for (const dataset of pinned) {
+    let manifestDigest = manifestDigests.get(dataset.manifest.bundleId);
+    if (!manifestDigest) {
+      manifestDigest = await hash(encodeTenantBundleManifest(dataset.manifest, dataset.manifest));
+      manifestDigests.set(dataset.manifest.bundleId, manifestDigest);
+    }
+    jobs.push(await descriptor(dataset, manifestDigest));
+  }
+  const jobsByBundle = new Map<string, Job[]>();
+  for (const job of jobs) {
+    const own = jobsByBundle.get(job.bundleId) ?? [];
+    own.push(job);
+    jobsByBundle.set(job.bundleId, own);
+  }
+  const checkedBundles = new Set<string>();
+  for (const dataset of pinned) {
+    const bundleId = dataset.manifest.bundleId;
+    if (checkedBundles.has(bundleId)) continue;
+    checkedBundles.add(bundleId);
+    const own = jobsByBundle.get(bundleId) ?? [];
+    const expected = dataset.manifest.datasets.filter(
+      (value) => value.store === 'database' && value.disposition === 'include'
+    );
+    const counts = new Map<string, number>();
+    for (const job of own) counts.set(job.datasetId, (counts.get(job.datasetId) ?? 0) + 1);
     if (
-      own.some((job) => job.manifestDigest !== jobs[index].manifestDigest) ||
-      dataset.manifest.datasets
-        .filter((value) => value.store === 'database' && value.disposition === 'include')
-        .some((value) => own.filter((job) => job.datasetId === value.id).length !== 1)
+      !own.length ||
+      own.some((job) => job.manifestDigest !== manifestDigests.get(bundleId)) ||
+      expected.some((value) => counts.get(value.id) !== 1) ||
+      own.length !== expected.length
     )
       throw fail();
   }
@@ -222,7 +451,7 @@ export async function persistSqliteRestoreSequence(
   await inventory.append(
     ordinal,
     'sqlite-restore-sequence',
-    JSON.stringify({ version: 1, kind: 'sqlite-restore-sequence', jobs })
+    JSON.stringify({ version: 2, kind: 'sqlite-restore-sequence', jobs })
   );
 }
 
@@ -247,7 +476,8 @@ export async function runSqliteRestoreSequenceStep(
   const head = await input.inventory.headForLease(context.lease);
   const rows = await input.inventory.readPage(input.sequenceOrdinal);
   if (!rows.length || rows[0].item_id !== 'sqlite-restore-sequence') throw fail();
-  const jobs = decodeJobs(rows[0].payload_json);
+  const registeredJobs = decodeJobs(rows[0].payload_json);
+  const jobs = registeredJobs.filter(({ recordCount }) => recordCount > 0);
   const cursor: unknown = JSON.parse(context.operation.cursor_json ?? 'null');
   if (
     !cursor ||
@@ -262,11 +492,33 @@ export async function runSqliteRestoreSequenceStep(
     cursor.jobIndex < 0 ||
     cursor.jobIndex > jobs.length ||
     !('datasetCursor' in cursor) ||
-    (cursor.datasetCursor !== null && typeof cursor.datasetCursor !== 'string')
+    (cursor.datasetCursor !== null && typeof cursor.datasetCursor !== 'string') ||
+    !('emptyPrepared' in cursor) ||
+    typeof cursor.emptyPrepared !== 'boolean'
   )
     throw fail();
   await input.assertValidatedUnpublishedPlan(head.chain_digest);
   const starting = context.operation.phase === 'start_sqlite_restore_sequence';
+  if (starting && !cursor.emptyPrepared) {
+    if (cursor.jobIndex !== 0 || cursor.datasetCursor !== null) throw fail();
+    // The sealed plan already authenticates every registered dataset descriptor, including its
+    // zero count and zero byte length. Open each physical target once to pin its seed fingerprint
+    // and unpublished lease; do not reload policies or query one destination table per empty item.
+    await openRegisteredRestoreTargets(context, input, registeredJobs);
+    return {
+      phase: 'start_sqlite_restore_sequence',
+      cursor: JSON.stringify({
+        version: 1,
+        sequenceOrdinal: input.sequenceOrdinal,
+        jobIndex: 0,
+        datasetCursor: null,
+        completedRows: [],
+        emptyPrepared: true,
+      }),
+      disposition: 'continue',
+    };
+  }
+  if (!cursor.emptyPrepared) throw fail();
   const rawCompleted: unknown =
     'completedRows' in cursor ? cursor.completedRows : starting ? [] : null;
   if (
@@ -282,6 +534,7 @@ export async function runSqliteRestoreSequenceStep(
     return finalizeSqliteTargets(
       context,
       input,
+      registeredJobs,
       jobs,
       { ...cursor, jobIndex: cursor.jobIndex, datasetCursor: cursor.datasetCursor },
       completedRows
@@ -301,6 +554,7 @@ export async function runSqliteRestoreSequenceStep(
       !Number.isSafeInteger(result.rowsWritten) ||
       typeof result.rowsWritten !== 'number' ||
       result.rowsWritten < 0 ||
+      result.rowsWritten > jobs[index].recordCount ||
       !('datasetId' in result) ||
       result.datasetId !== jobs[index].datasetId ||
       !('targetId' in result) ||
@@ -312,6 +566,18 @@ export async function runSqliteRestoreSequenceStep(
       result.sourceCursor !== result.verifySourceCursor
     )
       throw fail();
+    if (result.rowsWritten !== jobs[index].recordCount) {
+      const held = await input.loadValidatedDataset(structuredClone(jobs[index]));
+      const actual = await descriptor({
+        ...held,
+        targetId: jobs[index].targetId,
+        ordinal: jobs[index].targetOrdinal,
+        recordCount: jobs[index].recordCount,
+        byteCount: jobs[index].byteCount,
+      });
+      if (JSON.stringify(actual) !== JSON.stringify(jobs[index]) || !held.policy.restoreHold)
+        throw fail();
+    }
     completedRows.push(result.rowsWritten);
     index++;
     datasetCursor = null;
@@ -329,14 +595,88 @@ export async function runSqliteRestoreSequenceStep(
       jobIndex: index,
       datasetCursor: inner,
       completedRows,
+      emptyPrepared: true,
     });
   }
   if (index === jobs.length) {
     if (!starting && context.operation.phase !== 'advance_restore_dataset') throw fail();
+    await reconcileGeneratedRestoreRows(context, input, registeredJobs, head.chain_digest);
     return { phase: 'restore_other_stores', cursor: envelope(null), disposition: 'continue' };
   }
-  const job = jobs[index];
+  let job = jobs[index];
   if (datasetCursor === null) {
+    const batch: { job: Job; loaded: Source; rows: string[]; bytes: number }[] = [];
+    let batchRows = 0;
+    let batchBytes = 0;
+    for (let candidateIndex = index; candidateIndex < jobs.length; candidateIndex++) {
+      const candidate = jobs[candidateIndex];
+      if (batch.length && candidate.targetId !== batch[0].job.targetId) break;
+      const loaded = await input.loadValidatedDataset(structuredClone(candidate));
+      const actual = await descriptor({
+        ...loaded,
+        targetId: candidate.targetId,
+        ordinal: candidate.targetOrdinal,
+        recordCount: candidate.recordCount,
+        byteCount: candidate.byteCount,
+      });
+      if (JSON.stringify(actual) !== JSON.stringify(candidate)) throw fail();
+      const complete = await readCompleteDataset(
+        loaded,
+        candidate,
+        head.chain_digest,
+        EXECUTION_BATCH_ROWS - batchRows,
+        EXECUTION_BATCH_BYTES - batchBytes
+      );
+      if (
+        !complete ||
+        complete.rows.length !== candidate.recordCount ||
+        (complete.rows.length && !canShareExecutionBatch(loaded.policy))
+      )
+        break;
+      batch.push({ job: candidate, loaded, ...complete });
+      batchRows += complete.rows.length;
+      batchBytes += complete.bytes;
+    }
+    if (batch.length) {
+      await input.inventory.headForLease(context.lease);
+      await input.assertValidatedUnpublishedPlan(head.chain_digest);
+      const writableEmpty = batch.filter(
+        ({ loaded, rows }) =>
+          rows.length === 0 && loaded.policy.restoreDisposition !== 'reference_only'
+      );
+      const writableRows = batch.filter(({ rows }) => rows.length > 0);
+      if (writableEmpty.length || writableRows.length) {
+        const target = await openPlannedSqliteRestoreTarget({
+          ...input,
+          context,
+          targetId: batch[0].job.targetId,
+          ordinal: batch[0].job.targetOrdinal,
+        });
+        if (writableEmpty.length)
+          await target.verifyEmptyDatasets(writableEmpty.map(({ loaded }) => loaded.policy));
+        if (writableRows.length) {
+          const preparedRows = await Promise.all(
+            writableRows.map(async ({ loaded, rows }) => ({
+              policy: loaded.policy,
+              manifest: loaded.manifest,
+              rowJsons: await transformRows(context, loaded, rows, 'write'),
+            }))
+          );
+          await target.writeDatasetRows(preparedRows);
+          for (const { loaded, rows } of writableRows) {
+            await target.verifyDataset(loaded.policy, rows.length);
+          }
+        }
+      }
+      completedRows.push(...batch.map(({ rows }) => rows.length));
+      index += batch.length;
+      datasetCursor = null;
+      if (index === jobs.length) {
+        await reconcileGeneratedRestoreRows(context, input, registeredJobs, head.chain_digest);
+        return { phase: 'restore_other_stores', cursor: envelope(null), disposition: 'continue' };
+      }
+      job = jobs[index];
+    }
     datasetCursor = JSON.stringify({
       version: 1,
       targetId: job.targetId,
@@ -356,30 +696,23 @@ export async function runSqliteRestoreSequenceStep(
     ...loaded,
     targetId: job.targetId,
     ordinal: job.targetOrdinal,
+    recordCount: job.recordCount,
+    byteCount: job.byteCount,
   });
   if (JSON.stringify(actual) !== JSON.stringify(job)) throw fail();
   await input.inventory.headForLease(context.lease);
-  const run =
-    context.operation.phase === 'apply_sqlite_dataset'
-      ? runSqliteRestoreDatasetStep
-      : context.operation.phase === 'apply_sqlite_dataset_deferred'
-        ? runSqliteRestoreDatasetDeferredStep
-        : runSqliteRestoreDatasetVerificationStep;
-  const result = await run(
-    { ...context, operation: { ...context.operation, cursor_json: datasetCursor } },
-    {
-      ...input,
-      ...loaded,
-      targetId: job.targetId,
-      ordinal: job.targetOrdinal,
-    }
-  );
+  const phase = context.operation.phase as
+    | 'apply_sqlite_dataset'
+    | 'apply_sqlite_dataset_deferred'
+    | 'verify_sqlite_dataset';
+  const result = await runDatasetExecutionBatch(context, input, loaded, job, phase, datasetCursor);
   return { ...result, cursor: envelope(result.cursor) };
 }
 
 async function finalizeSqliteTargets(
   context: TenantBackupStepContext,
   input: Parameters<typeof runSqliteRestoreSequenceStep>[1],
+  registeredJobs: Job[],
   jobs: Job[],
   cursor: object & { jobIndex: number; datasetCursor: string | null },
   completedRows: number[]
@@ -387,11 +720,15 @@ async function finalizeSqliteTargets(
   if (cursor.jobIndex !== jobs.length) throw fail();
   const targets = [
     ...new Map(
-      jobs.map((job) => [job.targetId, { targetId: job.targetId, ordinal: job.targetOrdinal }])
+      registeredJobs.map((job) => [
+        job.targetId,
+        { targetId: job.targetId, ordinal: job.targetOrdinal },
+      ])
     ).values(),
   ];
   const sealIndex = 'sealIndex' in cursor ? cursor.sealIndex : 0;
   let verifyIndex = 'verifyIndex' in cursor ? cursor.verifyIndex : 0;
+  const emptyVerified = 'emptyVerified' in cursor ? cursor.emptyVerified : false;
   if (
     typeof sealIndex !== 'number' ||
     !Number.isSafeInteger(sealIndex) ||
@@ -400,7 +737,8 @@ async function finalizeSqliteTargets(
     typeof verifyIndex !== 'number' ||
     !Number.isSafeInteger(verifyIndex) ||
     verifyIndex < 0 ||
-    verifyIndex > jobs.length
+    verifyIndex > jobs.length ||
+    typeof emptyVerified !== 'boolean'
   )
     throw fail();
   function state(sealed: number, inner: string | null) {
@@ -412,31 +750,65 @@ async function finalizeSqliteTargets(
       completedRows,
       sealIndex: sealed,
       verifyIndex,
+      emptyPrepared: true,
+      emptyVerified,
     });
   }
   if (context.operation.phase === 'verify_restore_targets') {
     if (verifyIndex !== 0 || cursor.datasetCursor !== null) throw fail();
     if (sealIndex < targets.length) {
-      const target = await openPlannedSqliteRestoreTarget({
-        ...input,
-        context,
-        ...targets[sealIndex],
-        mode: 'seal',
-      });
-      await target.seal();
+      const batch = targets.slice(sealIndex, sealIndex + 4);
+      await Promise.all(
+        batch.map(async (descriptor) => {
+          const target = await openPlannedSqliteRestoreTarget({
+            ...input,
+            context,
+            ...descriptor,
+            mode: 'seal',
+          });
+          await target.seal();
+        })
+      );
       return {
         phase: 'verify_restore_targets',
-        cursor: state(sealIndex + 1, null),
+        cursor: state(sealIndex + batch.length, null),
         disposition: 'continue',
       };
     }
     return {
       phase: 'verify_sealed_sqlite_datasets',
-      cursor: state(sealIndex, null),
+      cursor: JSON.stringify({
+        version: 1,
+        sequenceOrdinal: input.sequenceOrdinal,
+        jobIndex: jobs.length,
+        datasetCursor: null,
+        completedRows,
+        sealIndex,
+        verifyIndex: 0,
+        emptyPrepared: true,
+        emptyVerified: false,
+      }),
       disposition: 'continue',
     };
   }
   if (sealIndex !== targets.length) throw fail();
+  if (!emptyVerified) {
+    return {
+      phase: 'verify_sealed_sqlite_datasets',
+      cursor: JSON.stringify({
+        version: 1,
+        sequenceOrdinal: input.sequenceOrdinal,
+        jobIndex: jobs.length,
+        datasetCursor: null,
+        completedRows,
+        sealIndex,
+        verifyIndex,
+        emptyPrepared: true,
+        emptyVerified: true,
+      }),
+      disposition: 'continue',
+    };
+  }
   if (verifyIndex === jobs.length) {
     if (cursor.datasetCursor !== null) throw fail();
     return {
@@ -445,11 +817,120 @@ async function finalizeSqliteTargets(
       disposition: 'continue',
     };
   }
+  if (cursor.datasetCursor === null) {
+    const targetId = jobs[verifyIndex].targetId;
+    const empty: { job: Job; loaded: Source }[] = [];
+    while (
+      verifyIndex + empty.length < jobs.length &&
+      jobs[verifyIndex + empty.length].targetId === targetId &&
+      completedRows[verifyIndex + empty.length] === 0
+    ) {
+      const candidate = jobs[verifyIndex + empty.length];
+      const loaded = await input.loadValidatedDataset(structuredClone(candidate));
+      if (
+        JSON.stringify(
+          await descriptor({
+            ...loaded,
+            targetId: candidate.targetId,
+            ordinal: candidate.targetOrdinal,
+            recordCount: candidate.recordCount,
+            byteCount: candidate.byteCount,
+          })
+        ) !== JSON.stringify(candidate)
+      )
+        throw fail();
+      empty.push({ job: candidate, loaded });
+    }
+    if (empty.length) {
+      const writable = empty.filter(
+        ({ loaded }) => loaded.policy.restoreDisposition !== 'reference_only'
+      );
+      if (writable.length) {
+        const target = await openPlannedSqliteRestoreTarget({
+          ...input,
+          context,
+          targetId: writable[0].job.targetId,
+          ordinal: writable[0].job.targetOrdinal,
+          mode: 'verify',
+        });
+        await target.verifyEmptyDatasets(writable.map(({ loaded }) => loaded.policy));
+      }
+      verifyIndex += empty.length;
+      return {
+        phase: 'verify_sealed_sqlite_datasets',
+        cursor: state(sealIndex, null),
+        disposition: 'continue',
+      };
+    }
+
+    const batch: { job: Job; loaded: Source; rows: string[] }[] = [];
+    let batchRows = 0;
+    let batchBytes = 0;
+    const verificationHead = await input.inventory.headForLease(context.lease);
+    for (let candidateIndex = verifyIndex; candidateIndex < jobs.length; candidateIndex++) {
+      const candidate = jobs[candidateIndex];
+      if (candidate.targetId !== targetId || completedRows[candidateIndex] === 0) break;
+      const loaded = await input.loadValidatedDataset(structuredClone(candidate));
+      if (!canShareVerificationBatch(loaded.policy)) break;
+      if (
+        JSON.stringify(
+          await descriptor({
+            ...loaded,
+            targetId: candidate.targetId,
+            ordinal: candidate.targetOrdinal,
+            recordCount: candidate.recordCount,
+            byteCount: candidate.byteCount,
+          })
+        ) !== JSON.stringify(candidate)
+      )
+        throw fail();
+      const complete = await readCompleteDataset(
+        loaded,
+        candidate,
+        verificationHead.chain_digest,
+        EXECUTION_BATCH_ROWS - batchRows,
+        EXECUTION_BATCH_BYTES - batchBytes
+      );
+      if (!complete || complete.rows.length !== completedRows[candidateIndex]) break;
+      batch.push({ job: candidate, loaded, rows: complete.rows });
+      batchRows += complete.rows.length;
+      batchBytes += complete.bytes;
+    }
+    if (batch.length) {
+      const target = await openPlannedSqliteRestoreTarget({
+        ...input,
+        context,
+        targetId: batch[0].job.targetId,
+        ordinal: batch[0].job.targetOrdinal,
+        mode: 'verify',
+      });
+      for (const { loaded, rows } of batch) {
+        await target.verifyRows(
+          loaded.policy,
+          loaded.manifest,
+          await transformRows(context, loaded, rows, 'verify')
+        );
+        await target.verifyDataset(loaded.policy, rows.length);
+      }
+      verifyIndex += batch.length;
+      return {
+        phase: 'verify_sealed_sqlite_datasets',
+        cursor: state(sealIndex, null),
+        disposition: 'continue',
+      };
+    }
+  }
   const job = jobs[verifyIndex];
   const loaded = await input.loadValidatedDataset(structuredClone(job));
   if (
     JSON.stringify(
-      await descriptor({ ...loaded, targetId: job.targetId, ordinal: job.targetOrdinal })
+      await descriptor({
+        ...loaded,
+        targetId: job.targetId,
+        ordinal: job.targetOrdinal,
+        recordCount: job.recordCount,
+        byteCount: job.byteCount,
+      })
     ) !== JSON.stringify(job)
   )
     throw fail();
@@ -473,30 +954,39 @@ async function finalizeSqliteTargets(
     saved.rowsWritten !== completedRows[verifyIndex]
   )
     throw fail();
-  const result = await runSqliteRestoreDatasetVerificationStep(
-    {
-      ...context,
-      operation: { ...context.operation, phase: 'verify_sqlite_dataset', cursor_json: inner },
-    },
-    {
-      ...input,
-      ...loaded,
-      targetId: job.targetId,
-      ordinal: job.targetOrdinal,
-      mode: 'verify',
+  let verificationCursor = inner;
+  for (let page = 0; page < 8; page++) {
+    const result = await runSqliteRestoreDatasetVerificationStep(
+      {
+        ...context,
+        operation: {
+          ...context.operation,
+          phase: 'verify_sqlite_dataset',
+          cursor_json: verificationCursor,
+        },
+      },
+      {
+        ...input,
+        ...loaded,
+        targetId: job.targetId,
+        ordinal: job.targetOrdinal,
+        mode: 'verify',
+      }
+    );
+    if (result.phase === 'advance_restore_dataset') {
+      verifyIndex++;
+      return {
+        phase: 'verify_sealed_sqlite_datasets',
+        cursor: state(sealIndex, null),
+        disposition: 'continue',
+      };
     }
-  );
-  if (result.phase === 'advance_restore_dataset') {
-    verifyIndex++;
-    return {
-      phase: 'verify_sealed_sqlite_datasets',
-      cursor: state(sealIndex, null),
-      disposition: 'continue',
-    };
+    if (result.phase !== 'verify_sqlite_dataset' || typeof result.cursor !== 'string') throw fail();
+    verificationCursor = result.cursor;
   }
   return {
     phase: 'verify_sealed_sqlite_datasets',
-    cursor: state(sealIndex, result.cursor),
+    cursor: state(sealIndex, verificationCursor),
     disposition: 'continue',
   };
 }

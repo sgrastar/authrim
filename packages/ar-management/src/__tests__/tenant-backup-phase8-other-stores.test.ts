@@ -27,7 +27,9 @@ function source(datasetId: string, ignored: string[], rowJson: string, target: u
     },
     manifest: {},
     target,
-    readNextValidatedRow: vi.fn(async () => ({ rowJson, nextCursor: 'row-1' })),
+    readNextValidatedRow: vi.fn(async ({ sourceCursor }: { sourceCursor: string | null }) =>
+      sourceCursor === null ? { rowJson, nextCursor: 'row-1' } : null
+    ),
   } as never;
 }
 
@@ -209,5 +211,74 @@ describe('Phase 8 sensitive sidecars', () => {
       'artifacts.object_catalog_bodies',
       expect.objectContaining({ objectId: 'object-a', bytes })
     );
+  });
+
+  it('restores independent R2 objects concurrently in one bounded checkpoint batch', async () => {
+    const active = { value: 0, maximum: 0 };
+    const rows = await Promise.all(
+      Array.from({ length: 4 }, async (_, index) => {
+        const bytes = new TextEncoder().encode(`object-${index}`);
+        const sha256 = [...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))]
+          .map((byte) => byte.toString(16).padStart(2, '0'))
+          .join('');
+        return new TextDecoder()
+          .decode(
+            await encodePortableR2ObjectChunk({
+              tenantId: 'tenant-a',
+              objectId: `object-${index}`,
+              bucketBinding: 'EXPORT_ARTIFACTS',
+              objectKey: `exports/tenant-a/object-${index}`,
+              sourceEncoding: 'plaintext',
+              objectSha256: sha256,
+              totalBytes: bytes.length,
+              chunkIndex: 0,
+              chunkCount: 1,
+              chunkSha256: sha256,
+              bytes,
+              context: {},
+              httpMetadata: null,
+              customMetadata: null,
+            })
+          )
+          .trim();
+      })
+    );
+    const loaded = {
+      policy: { dataset: { id: 'artifacts.object_catalog_bodies' } },
+      manifest: {},
+      readNextValidatedRow: vi.fn(async ({ sourceCursor }: { sourceCursor: string | null }) => {
+        const index = sourceCursor === null ? 0 : Number(sourceCursor.split('-')[1]);
+        return rows[index] ? { rowJson: rows[index], nextCursor: `row-${index + 1}` } : null;
+      }),
+    } as never;
+    const importR2Chunk = vi.fn(async () => {
+      active.value += 1;
+      active.maximum = Math.max(active.maximum, active.value);
+      await Promise.resolve();
+      active.value -= 1;
+    });
+    const handlers = createPhase8OtherStoreHandlers({}, {
+      loadPhase8Record: vi.fn(async () => loaded),
+      importR2Chunk,
+    } as never);
+
+    const result = await handlers.restoreOtherStores(
+      context,
+      digest,
+      cursor('artifacts.object_catalog_bodies')
+    );
+
+    expect(result).toEqual({
+      cursor: JSON.stringify({
+        version: 1,
+        purpose: 'restore',
+        stage: 'phase8',
+        datasetId: 'artifacts.object_catalog_bodies',
+        sourceCursor: 'row-4',
+      }),
+      done: false,
+    });
+    expect(importR2Chunk).toHaveBeenCalledTimes(4);
+    expect(active.maximum).toBe(4);
   });
 });

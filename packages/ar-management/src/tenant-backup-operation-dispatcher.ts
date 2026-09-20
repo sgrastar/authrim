@@ -22,6 +22,8 @@ export interface TenantBackupInstalledOperationAdapter {
   export: TenantBackupInstalledExportAdapter;
   import: TenantBackupInstalledImportAdapter;
   cleanup: TenantBackupOperationCleanupAdapter;
+  /** Refresh the durable operation revision while retaining one live lease's installed plan. */
+  bindContext?(context: Parameters<TenantBackupOperationHandlers['run']>[0]): void;
 }
 
 export type TenantBackupInstalledOperationAdapterResolver =
@@ -44,15 +46,37 @@ export function createTenantBackupOperationHandlers(
   now: () => number = Date.now
 ): TenantBackupOperationHandlers {
   const database = requireDedicatedAdminDatabaseAdapter(env, 'tenant-backup');
+  let cached:
+    | {
+        key: string;
+        adapter: Promise<TenantBackupInstalledOperationAdapter>;
+      }
+    | undefined;
+  const installedFor = (context: Parameters<TenantBackupOperationHandlers['run']>[0]) => {
+    const key = [
+      context.lease.operationId,
+      context.lease.tenantId,
+      context.lease.owner,
+      context.lease.fencingToken,
+    ].join(':');
+    if (!cached || cached.key !== key) {
+      cached = { key, adapter: resolveAdapter(adapter, context) };
+      return cached.adapter;
+    }
+    return cached.adapter.then((installed) => {
+      installed.bindContext?.(context);
+      return installed;
+    });
+  };
   return {
     async run(context) {
-      const installed = await resolveAdapter(adapter, context);
+      const installed = await installedFor(context);
       return context.operation.kind === 'export'
         ? runTenantBackupExportOperationStep(env, context, installed.export, now)
         : runTenantBackupImportOperationStep(env, context, installed.import, now);
     },
     async cleanup(context) {
-      const installed = await resolveAdapter(adapter, context);
+      const installed = await installedFor(context);
       return runTenantBackupOperationCleanupStep({
         database,
         context,
@@ -70,13 +94,15 @@ export function processTenantBackupOperations(
   adapter: TenantBackupInstalledOperationAdapterResolver,
   signal: AbortSignal,
   now: () => number = Date.now,
-  kinds: readonly ('export' | 'import')[] = ['export', 'import']
+  kinds: readonly ('export' | 'import')[] = ['export', 'import'],
+  maxTransitionsPerOperation = 1
 ) {
   return runTenantBackupScheduler(
     requireDedicatedAdminDatabaseAdapter(env, 'tenant-backup'),
     createTenantBackupOperationHandlers(env, adapter, now),
     signal,
     now,
-    kinds
+    kinds,
+    maxTransitionsPerOperation
   );
 }

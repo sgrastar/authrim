@@ -3,67 +3,66 @@ import { TENANT_DATASET_POLICIES } from './dataset-registry';
 import type { DatabaseAdapter } from '../../db/adapter';
 import type { BackupSchemaTable } from './sqlite-schema-types';
 
-/** Read only a trusted registry table. The coordinator must fence DDL across planning/capture. */
-export async function readBackupSqliteSchema(
-  database: Pick<DatabaseAdapter, 'query' | 'queryOne'>,
-  table: string
-): Promise<BackupSchemaTable> {
-  if (!/^[a-z][a-z0-9_]*$/.test(table) || table.startsWith('tenant_backup_')) {
-    throw new Error('backup_schema_invalid_table');
-  }
-  return readSchema(database, table);
+interface PackedColumnRow {
+  name: string;
+  type: string;
+  non_null: number;
+  dflt_value: string | null;
+  pk: number;
+  hidden: number;
 }
 
-async function readSchema(
-  database: Pick<DatabaseAdapter, 'query' | 'queryOne'>,
-  table: string
-): Promise<BackupSchemaTable> {
-  const definition = await database.queryOne<{ sql: string }>(
-    "SELECT sql FROM sqlite_schema WHERE type = 'table' AND name = ? AND sql IS NOT NULL",
-    [table]
-  );
-  const flags = await database.queryOne<{ type: string; wr: number; strict: number }>(
-    "SELECT type, wr, strict FROM pragma_table_list WHERE schema = 'main' AND name = ?",
-    [table]
-  );
-  if (!definition || flags?.type !== 'table') throw new Error('backup_schema_missing_table');
-  const columns = await database.query<{
-    name: string;
-    type: string;
-    non_null: number;
-    dflt_value: string | null;
-    pk: number;
-    hidden: number;
-  }>(
-    'SELECT name, type, "notnull" AS non_null, dflt_value, pk, hidden FROM pragma_table_xinfo(?) ORDER BY cid',
-    [table]
-  );
-  const indexes = await database.query<{
-    name: string;
-    is_unique: number;
-    origin: string;
-    partial: number;
-  }>(
-    'SELECT name, "unique" AS is_unique, origin, partial FROM pragma_index_list(?) ORDER BY name',
-    [table]
-  );
-  const foreignKeys = await database.query<{
-    id: number;
-    seq: number;
-    parent_table: string;
-    child_column: string;
-    parent_column: string | null;
-    on_update: string;
-    on_delete: string;
-  }>(
-    'SELECT id, seq, "table" AS parent_table, "from" AS child_column, "to" AS parent_column, on_update, on_delete FROM pragma_foreign_key_list(?) ORDER BY id, seq',
-    [table]
-  );
-  const result: BackupSchemaTable = {
-    name: table,
-    sql: definition.sql,
-    withoutRowid: flags.wr === 1,
-    strict: flags.strict === 1,
+interface PackedIndexRow {
+  name: string;
+  is_unique: number;
+  origin: string;
+  partial: number;
+  sql: string | null;
+  columns: Array<{
+    seqno: number;
+    name: string | null;
+    coll: string;
+    descending: number;
+    key: number;
+  }>;
+}
+
+interface PackedForeignKeyRow {
+  id: number;
+  seq: number;
+  parent_table: string;
+  child_column: string;
+  parent_column: string | null;
+  on_update: string;
+  on_delete: string;
+}
+
+interface PackedTriggerRow {
+  name: string;
+  sql: string;
+}
+
+interface PackedSchemaRow {
+  name: string;
+  sql: string;
+  flag_type: string;
+  wr: number;
+  strict: number;
+  columns_json: string;
+  indexes_json: string;
+  foreign_keys_json: string;
+  triggers_json: string;
+}
+
+function unpackSchema(packed: PackedSchemaRow): BackupSchemaTable {
+  const columns = JSON.parse(packed.columns_json) as PackedColumnRow[];
+  const indexes = JSON.parse(packed.indexes_json) as PackedIndexRow[];
+  const foreignKeys = JSON.parse(packed.foreign_keys_json) as PackedForeignKeyRow[];
+  return {
+    name: packed.name,
+    sql: packed.sql,
+    withoutRowid: packed.wr === 1,
+    strict: packed.strict === 1,
     columns: columns.map((column) => ({
       name: column.name,
       type: column.type,
@@ -81,43 +80,78 @@ async function readSchema(
       onUpdate: key.on_update,
       onDelete: key.on_delete,
     })),
-    indexes: [],
-  };
-  for (const index of indexes) {
-    const definition = await database.queryOne<{ sql: string | null }>(
-      "SELECT sql FROM sqlite_schema WHERE type = 'index' AND name = ?",
-      [index.name]
-    );
-    const columns = await database.query<{
-      seqno: number;
-      name: string | null;
-      coll: string;
-      descending: number;
-      key: number;
-    }>(
-      'SELECT seqno, name, coll, "desc" AS descending, key FROM pragma_index_xinfo(?) ORDER BY seqno',
-      [index.name]
-    );
-    result.indexes.push({
+    indexes: indexes.map((index) => ({
       name: index.name,
       unique: index.is_unique === 1,
       origin: index.origin,
       partial: index.partial === 1,
-      sql: definition?.sql ?? null,
-      columns: columns.map((column) => ({
+      sql: index.sql,
+      columns: index.columns.map((column) => ({
         position: column.seqno,
         name: column.name,
         collation: column.coll ?? 'BINARY',
         descending: column.descending === 1,
         key: column.key === 1,
       })),
-    });
+    })),
+    triggers: JSON.parse(packed.triggers_json) as PackedTriggerRow[],
+  };
+}
+
+/** Read only a trusted registry table. The coordinator must fence DDL across planning/capture. */
+export async function readBackupSqliteSchema(
+  database: Pick<DatabaseAdapter, 'query' | 'queryOne'>,
+  table: string
+): Promise<BackupSchemaTable> {
+  if (!/^[a-z][a-z0-9_]*$/.test(table) || table.startsWith('tenant_backup_')) {
+    throw new Error('backup_schema_invalid_table');
   }
-  result.triggers = await database.query<{ name: string; sql: string }>(
-    "SELECT name,sql FROM sqlite_schema WHERE type='trigger' AND tbl_name=? AND sql IS NOT NULL ORDER BY name",
-    [table]
+  return (await readSchemas(database, [table]))[0];
+}
+
+async function readSchemas(
+  database: Pick<DatabaseAdapter, 'query'>,
+  tables: readonly string[]
+): Promise<BackupSchemaTable[]> {
+  if (!tables.length) return [];
+  if (tables.some((table) => !/^[a-z][a-z0-9_]*$/.test(table)))
+    throw new Error('backup_schema_invalid_table');
+  // SQLite does not reliably correlate an outer column passed to a table-valued PRAGMA.
+  // Keep every PRAGMA argument a trusted literal, then combine the independent reads.
+  const selects = tables.map(
+    (table) => `SELECT '${table}' AS name,
+      (SELECT sql FROM sqlite_schema WHERE type='table' AND name='${table}' AND sql IS NOT NULL) AS sql,
+      (SELECT type FROM pragma_table_list WHERE schema='main' AND name='${table}') AS flag_type,
+      (SELECT wr FROM pragma_table_list WHERE schema='main' AND name='${table}') AS wr,
+      (SELECT strict FROM pragma_table_list WHERE schema='main' AND name='${table}') AS strict,
+      (SELECT json_group_array(json_object(
+        'name',name,'type',type,'non_null',"notnull",'dflt_value',dflt_value,
+        'pk',pk,'hidden',hidden
+      )) FROM (SELECT * FROM pragma_table_xinfo('${table}') ORDER BY cid)) AS columns_json,
+      (SELECT json_group_array(json_object(
+        'name',il.name,'is_unique',il."unique",'origin',il.origin,'partial',il.partial,
+        'sql',(SELECT sql FROM sqlite_schema WHERE type='index' AND name=il.name),
+        'columns',(SELECT json_group_array(json_object(
+          'seqno',seqno,'name',name,'coll',coll,'descending',"desc",'key',key
+        )) FROM (SELECT * FROM pragma_index_xinfo(il.name) ORDER BY seqno))
+      )) FROM (SELECT * FROM pragma_index_list('${table}') ORDER BY name) AS il) AS indexes_json,
+      (SELECT json_group_array(json_object(
+        'id',id,'seq',seq,'parent_table',"table",'child_column',"from",
+        'parent_column',"to",'on_update',on_update,'on_delete',on_delete
+      )) FROM (SELECT * FROM pragma_foreign_key_list('${table}') ORDER BY id,seq)) AS foreign_keys_json,
+      (SELECT json_group_array(json_object('name',name,'sql',sql))
+       FROM (SELECT name,sql FROM sqlite_schema
+             WHERE type='trigger' AND tbl_name='${table}' AND sql IS NOT NULL ORDER BY name)) AS triggers_json`
   );
-  return result;
+  const packed = await database.query<PackedSchemaRow>(
+    `SELECT * FROM (${selects.join(' UNION ALL ')}) ORDER BY name`
+  );
+  if (
+    packed.length !== tables.length ||
+    packed.some((row) => row.flag_type !== 'table' || typeof row.sql !== 'string')
+  )
+    throw new Error('backup_schema_missing_table');
+  return packed.map(unpackSchema);
 }
 
 /** Discover a complete family schema from an already authorized DB. Never accepts a requested table subset. */
@@ -127,61 +161,69 @@ export async function readBackupSqliteDatabaseSchema(
   signal: AbortSignal
 ): Promise<BackupSchemaTable[]> {
   signal.throwIfAborted();
-  const before = await schemaDefinitionsDigest(database, signal);
+  const before = await readBackupSqliteBoundarySchemaDigest(database, signal);
   const rows = await database.query<{ name: string }>(
     "SELECT name FROM sqlite_schema WHERE type='table' AND name NOT GLOB 'sqlite_*' ORDER BY name"
   );
   if (rows.length > 4096) throw new Error('backup_schema_table_limit');
   const result: BackupSchemaTable[] = [];
+  const classified: string[] = [];
   for (const { name } of rows) {
     signal.throwIfAborted();
     // These two tables are local capture scratch, never tenant source data.
     if (name === 'tenant_backup_snapshots' || name === 'tenant_backup_preimages') continue;
     // D1 creates this reserved provider metadata table; its rows are not tenant data.
-    if (name === '_cf_METADATA') continue;
+    if (name === '_cf_METADATA' || name === '_cf_KV') continue;
     const policies = TENANT_DATASET_POLICIES.filter(
       (policy) => policy.family === family && policy.table === name
     );
     if (policies.length !== 1) throw new Error('backup_schema_unclassified_table');
     if (!/^[a-z][a-z0-9_]*$/.test(name)) throw new Error('backup_schema_invalid_table');
-    result.push(await readSchema(database, name));
+    classified.push(name);
   }
-  const after = await schemaDefinitionsDigest(database, signal);
+  // Four tables keep every packed PRAGMA compound SELECT below D1's term limit. Run four
+  // independent reads together; the before/after digest still rejects any schema change across the
+  // complete observation.
+  const pages: string[][] = [];
+  for (let offset = 0; offset < classified.length; offset += 4)
+    pages.push(classified.slice(offset, offset + 4));
+  for (let offset = 0; offset < pages.length; offset += 4) {
+    signal.throwIfAborted();
+    const group = await Promise.all(
+      pages.slice(offset, offset + 4).map((page) => readSchemas(database, page))
+    );
+    result.push(...group.flat());
+  }
+  const after = await readBackupSqliteBoundarySchemaDigest(database, signal);
   signal.throwIfAborted();
   if (after !== before) throw new Error('backup_schema_changed_during_inspection');
   return result;
 }
 
-/** D1 does not authorize schema_version. Hash bounded pages of schema definitions instead. */
-async function schemaDefinitionsDigest(
-  database: Pick<DatabaseAdapter, 'query'>,
+/**
+ * Fast boundary fingerprint for schema objects that affect captured rows. Capture triggers are
+ * checked atomically by the snapshot start statement, so excluding them keeps the result bounded.
+ */
+export async function readBackupSqliteBoundarySchemaDigest(
+  database: Pick<DatabaseAdapter, 'queryOne'>,
   signal: AbortSignal
 ): Promise<string> {
-  let after = '',
-    afterType = '',
-    digest = '0'.repeat(64),
-    count = 0;
-  for (;;) {
-    signal.throwIfAborted();
-    const rows = await database.query<{
-      name: string;
-      type: string;
-      tbl_name: string;
-      sql: string | null;
-    }>(
-      "SELECT name,type,tbl_name,sql FROM sqlite_schema WHERE name NOT GLOB 'sqlite_*' AND (type>? OR (type=? AND name>?)) ORDER BY type,name LIMIT 16",
-      [afterType, afterType, after]
-    );
-    if (!rows.length) return digest;
-    count += rows.length;
-    if (count > 16384) throw new Error('backup_schema_object_limit');
-    const bytes = new TextEncoder().encode(JSON.stringify([digest, rows]));
-    if (bytes.length > 4 * 1024 * 1024) throw new Error('backup_schema_definition_limit');
-    const hashed = await crypto.subtle.digest('SHA-256', bytes);
-    digest = Array.from(new Uint8Array(hashed), (byte) => byte.toString(16).padStart(2, '0')).join(
-      ''
-    );
-    after = rows[rows.length - 1].name;
-    afterType = rows[rows.length - 1].type;
-  }
+  signal.throwIfAborted();
+  const row = await database.queryOne<{ definitions_json: string }>(
+    `SELECT json_group_array(json_object(
+      'name',name,'type',type,'table',tbl_name,'sql',sql
+    )) AS definitions_json FROM (
+      SELECT name,type,tbl_name,sql FROM sqlite_schema
+      WHERE name NOT GLOB 'sqlite_*'
+        AND NOT (type='trigger' AND name GLOB 'tenant_backup_*')
+      ORDER BY type,name
+    )`
+  );
+  signal.throwIfAborted();
+  if (!row || typeof row.definitions_json !== 'string')
+    throw new Error('backup_schema_definition_digest');
+  const bytes = new TextEncoder().encode(row.definitions_json);
+  if (bytes.length > 4 * 1024 * 1024) throw new Error('backup_schema_definition_limit');
+  const hashed = await crypto.subtle.digest('SHA-256', bytes);
+  return Array.from(new Uint8Array(hashed), (byte) => byte.toString(16).padStart(2, '0')).join('');
 }

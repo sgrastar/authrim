@@ -52,33 +52,62 @@ export async function inspectSqliteInputRow(input: {
   const bytes = new TextEncoder().encode(input.rowJson);
   if (!bytes.length || bytes.length > 16 * 1024 * 1024 || bytes.includes(10)) fail();
   await input.assertPinnedInput();
-  const inspector = await createSqliteDatasetInspectorFactory(input.policy)(
-    manifest.datasets[datasetIndex],
-    manifest
-  );
+  let inspector;
+  try {
+    inspector = await createSqliteDatasetInspectorFactory(input.policy)(
+      manifest.datasets[datasetIndex],
+      manifest
+    );
+  } catch {
+    throw new Error('backup_sqlite_inspector_create_failed');
+  }
   const records: TenantPortableRecordIdentity[] = [];
   const references: TenantPortableDependency[] = [];
   try {
     let ordinal = 0;
     for (let offset = 0; offset < bytes.length; offset += 1048576) {
       await input.assertPinnedInput();
-      const inspected = await inspector.chunk(bytes.subarray(offset, offset + 1048576), ordinal++);
+      let inspected;
+      try {
+        inspected = await inspector.chunk(bytes.subarray(offset, offset + 1048576), ordinal++);
+      } catch {
+        throw new Error('backup_sqlite_inspector_chunk_failed');
+      }
       records.push(...inspected.records);
       references.push(...inspected.references);
     }
-    const last = await inspector.chunk(new Uint8Array([10]), ordinal);
+    let last;
+    try {
+      last = await inspector.chunk(new Uint8Array([10]), ordinal);
+    } catch {
+      throw new Error('backup_sqlite_inspector_row_finish_failed');
+    }
     records.push(...last.records);
     references.push(...last.references);
-    await inspector.finish();
+    try {
+      await inspector.finish();
+    } catch {
+      throw new Error('backup_sqlite_inspector_dataset_finish_failed');
+    }
   } finally {
     await inspector.dispose();
   }
-  if (records.length !== 1 || references.length > 4096) fail();
+  if (!records.length || records.length > 4096 || references.length > 4096) fail();
   const record = records[0];
   if (
     !validIdentity(record, manifest.source.tenantId) ||
     record.module !== input.policy.dataset.module ||
     record.collection !== input.policy.dataset.id
+  )
+    fail();
+  if (
+    new Set(records.map(({ id }) => id)).size !== records.length ||
+    records.some(
+      (candidate) =>
+        !validIdentity(candidate, manifest.source.tenantId) ||
+        candidate.module !== record.module ||
+        candidate.collection !== record.collection
+    )
   )
     fail();
   for (const dependency of references) {
@@ -98,7 +127,10 @@ export async function inspectSqliteInputRow(input: {
   }
   const source = `dataset:${datasetIndex}:row:${input.rowOrdinal}`;
   await input.assertPinnedInput();
-  if (!(await input.index.recordOnce(manifest.bundleId, source, record))) fail();
+  for (const [ordinal, candidate] of records.entries()) {
+    const recordSource = ordinal === 0 ? source : `${source}:alias:${ordinal - 1}`;
+    if (!(await input.index.recordOnce(manifest.bundleId, recordSource, candidate))) fail();
+  }
   for (const [ordinal, dependency] of references.entries()) {
     await input.assertPinnedInput();
     await input.index.referenceOnce(manifest.bundleId, `${source}:edge:${ordinal}`, dependency);

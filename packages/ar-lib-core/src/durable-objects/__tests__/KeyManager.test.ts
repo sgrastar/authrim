@@ -137,6 +137,50 @@ function createRequest(
   });
 }
 
+async function createPortableSnapshot(): Promise<KeyManagerTenantBackupSnapshot> {
+  const pair = await generateKeyPair('ES256', { extractable: true });
+  const key = {
+    kid: 'vc-backup-key',
+    algorithm: 'ES256' as const,
+    curve: 'P-256' as const,
+    publicJWK: {
+      ...(await exportJWK(pair.publicKey)),
+      kid: 'vc-backup-key',
+      use: 'sig',
+      alg: 'ES256',
+    },
+    privatePEM: await exportPKCS8(pair.privateKey),
+    createdAt: 100,
+    status: 'active' as const,
+  };
+  const config = { rotationIntervalDays: 90, retentionPeriodDays: 30 };
+  return {
+    kind: 'authrim.key_manager_tenant_backup.v1',
+    version: 1,
+    rsa: {
+      keys: [],
+      activeKeyId: null,
+      config,
+      lastRotation: null,
+      secrets: {
+        'saml:pairwise:tenant-a': {
+          secretRef: 'saml:pairwise:tenant-a',
+          active: { kid: 'secret-a', value: 'secret-value', createdAt: 100 },
+          updatedAt: 100,
+        },
+      },
+    },
+    vcEc: {
+      keys: [key],
+      activeKeyIds: { ES256: key.kid, ES384: null, ES512: null },
+      config,
+      lastRotation: 100,
+    },
+    oidcEs256: { keys: [], activeKeyId: null, config, lastRotation: null },
+    oidcPs256: { keys: [], activeKeyId: null, config, lastRotation: null },
+  };
+}
+
 describe('KeyManager Durable Object', () => {
   let state: MockDurableObjectState;
   let env: Env;
@@ -149,47 +193,7 @@ describe('KeyManager Durable Object', () => {
   });
 
   it('atomically restores a complete tenant backup state only into an empty KeyManager', async () => {
-    const pair = await generateKeyPair('ES256', { extractable: true });
-    const key = {
-      kid: 'vc-backup-key',
-      algorithm: 'ES256' as const,
-      curve: 'P-256' as const,
-      publicJWK: {
-        ...(await exportJWK(pair.publicKey)),
-        kid: 'vc-backup-key',
-        use: 'sig',
-        alg: 'ES256',
-      },
-      privatePEM: await exportPKCS8(pair.privateKey),
-      createdAt: 100,
-      status: 'active' as const,
-    };
-    const config = { rotationIntervalDays: 90, retentionPeriodDays: 30 };
-    const snapshot: KeyManagerTenantBackupSnapshot = {
-      kind: 'authrim.key_manager_tenant_backup.v1',
-      version: 1,
-      rsa: {
-        keys: [],
-        activeKeyId: null,
-        config,
-        lastRotation: null,
-        secrets: {
-          'saml:pairwise:tenant-a': {
-            secretRef: 'saml:pairwise:tenant-a',
-            active: { kid: 'secret-a', value: 'secret-value', createdAt: 100 },
-            updatedAt: 100,
-          },
-        },
-      },
-      vcEc: {
-        keys: [key],
-        activeKeyIds: { ES256: key.kid, ES384: null, ES512: null },
-        config,
-        lastRotation: 100,
-      },
-      oidcEs256: { keys: [], activeKeyId: null, config, lastRotation: null },
-      oidcPs256: { keys: [], activeKeyId: null, config, lastRotation: null },
-    };
+    const snapshot = await createPortableSnapshot();
 
     await expect(keyManager.importTenantBackupStateRpc(snapshot)).resolves.toMatchObject({
       imported: true,
@@ -216,6 +220,31 @@ describe('KeyManager Durable Object', () => {
           },
         },
       })
+    ).rejects.toThrow('backup_key_manager_target_not_empty');
+  });
+
+  it('replaces only the pristine bootstrap key when a restore explicitly permits it', async () => {
+    await keyManager.rotateKeysRpc();
+    await keyManager.rotateOIDCES256KeyRpc();
+    await keyManager.rotateOIDCPS256KeyRpc();
+    const snapshot = await createPortableSnapshot();
+
+    await expect(keyManager.importTenantBackupStateRpc(snapshot)).rejects.toThrow(
+      'backup_key_manager_target_not_empty'
+    );
+    await expect(
+      keyManager.importTenantBackupStateRpc(snapshot, { replaceBootstrapKey: true })
+    ).resolves.toMatchObject({ imported: true });
+    await expect(keyManager.verifyTenantBackupStateRpc(snapshot)).resolves.toBe(true);
+  });
+
+  it('never replaces a KeyManager that has progressed beyond its bootstrap key', async () => {
+    await keyManager.rotateKeysRpc();
+    await keyManager.rotateSecretRpc('directory:tenant-a');
+    const snapshot = await createPortableSnapshot();
+
+    await expect(
+      keyManager.importTenantBackupStateRpc(snapshot, { replaceBootstrapKey: true })
     ).rejects.toThrow('backup_key_manager_target_not_empty');
   });
 

@@ -7,6 +7,7 @@ import {
   ADMIN_PERMISSIONS,
   hasAdminPermission,
   getTenantIdFromContext,
+  ensureDatabaseAdapter,
   requireDedicatedAdminDatabaseAdapter,
   type AdminAuthContext,
   type Env,
@@ -27,8 +28,11 @@ import {
 } from '@authrim/ar-lib-core/services/tenant-portability/upload-store';
 import { initializeTenantBackupMultipart } from '@authrim/ar-lib-core/services/tenant-portability/allocate-upload';
 import { uploadTenantBackupPart } from '@authrim/ar-lib-core/services/tenant-portability/upload-part';
+import { completeTenantBackupUpload } from '@authrim/ar-lib-core/services/tenant-portability/complete-upload';
 import { TenantBackupImportRequestStore } from '@authrim/ar-lib-core/services/tenant-portability/import-request';
 import { TenantBackupOperationReadModel } from '../../tenant-backup-operation-read-model';
+
+const SYNCHRONOUS_UPLOAD_COMPLETION_BYTES = 16 * 1024 * 1024;
 
 export const tenantBackupsRouter = new Hono<{
   Bindings: Env;
@@ -245,19 +249,31 @@ tenantBackupsRouter.post('/uploads/:uploadId/complete', async (c) => {
     }))
   )
     return c.json({ error: 'backup_audit_unavailable' }, 503);
+  const store = new TenantBackupUploadStore(
+    requireDedicatedAdminDatabaseAdapter(c.env, 'tenant-backup')
+  );
+  const owner = { tenantId: auth.tenantId, actorId: auth.actorId ?? auth.userId, uploadId };
+  let upload;
   try {
-    const upload = (
-      await new TenantBackupUploadStore(
-        requireDedicatedAdminDatabaseAdapter(c.env, 'tenant-backup')
-      ).prepareCompletion(
-        { tenantId: auth.tenantId, actorId: auth.actorId ?? auth.userId, uploadId },
-        Date.now()
-      )
-    ).upload;
-    return c.json({ id: upload.id, state: upload.state }, 202);
+    upload = (await store.prepareCompletion(owner, Date.now())).upload;
   } catch {
     return c.json({ error: 'backup_upload_incomplete' }, 409);
   }
+  if (upload.expected_bytes <= SYNCHRONOUS_UPLOAD_COMPLETION_BYTES) {
+    try {
+      await completeTenantBackupUpload({
+        store,
+        bucket: c.env.IMPORT_ARTIFACTS,
+        owner,
+        signal: c.req.raw.signal,
+        now: Date.now,
+      });
+      return c.json({ id: upload.id, state: 'uploaded' }, 200);
+    } catch {
+      return c.json({ error: 'backup_upload_verification_unavailable' }, 503);
+    }
+  }
+  return c.json({ id: upload.id, state: upload.state }, 202);
 });
 
 tenantBackupsRouter.post('/uploads/:uploadId/cancel', async (c) => {
@@ -299,7 +315,7 @@ tenantBackupsRouter.post('/imports', async (c) => {
     return c.json({ error: 'invalid_backup_request' }, 400);
   const input = body as Record<string, unknown>;
   if (
-    Object.keys(input).sort().join(',') !== 'idempotencyKey,selection,uploadIds' ||
+    Object.keys(input).sort().join(',') !== 'idempotencyKey,selection,source,uploadIds' ||
     typeof input.idempotencyKey !== 'string' ||
     !/^[A-Za-z0-9_.:-]{1,256}$/.test(input.idempotencyKey) ||
     !Array.isArray(input.uploadIds) ||
@@ -308,6 +324,32 @@ tenantBackupsRouter.post('/imports', async (c) => {
     input.uploadIds.some((id) => typeof id !== 'string' || !/^[A-Za-z0-9_.:-]{1,256}$/.test(id))
   )
     return c.json({ error: 'invalid_backup_request' }, 400);
+  const source = input.source as Record<string, unknown> | null;
+  if (
+    !source ||
+    typeof source !== 'object' ||
+    Array.isArray(source) ||
+    Object.keys(source).sort().join(',') !== 'issuer,productVersion,tenantId' ||
+    source.tenantId !== auth.tenantId ||
+    source.productVersion !== productVersion ||
+    typeof source.issuer !== 'string' ||
+    source.issuer.length < 1 ||
+    source.issuer.length > 2048
+  )
+    return c.json({ error: 'invalid_backup_request' }, 400);
+  try {
+    const url = new URL(source.issuer);
+    if (
+      !['https:', 'http:'].includes(url.protocol) ||
+      url.username ||
+      url.password ||
+      url.search ||
+      url.hash
+    )
+      return c.json({ error: 'invalid_backup_request' }, 400);
+  } catch {
+    return c.json({ error: 'invalid_backup_request' }, 400);
+  }
   let selection;
   try {
     selection = parseTenantBackupSelection(input.selection);
@@ -319,12 +361,6 @@ tenantBackupsRouter.post('/imports', async (c) => {
     !hasAdminPermission(auth.permissions ?? [], ADMIN_PERMISSIONS.BACKUPS_SENSITIVE)
   )
     return c.json({ error: 'backup_forbidden' }, 403);
-  let issuer: string;
-  try {
-    issuer = await getCanonicalTenantBaseUrlAsync(c.env, auth.tenantId);
-  } catch {
-    return c.json({ error: 'backup_source_unavailable' }, 503);
-  }
   const actorId = auth.actorId ?? auth.userId;
   const id = await stableOperationId('import', auth.tenantId, actorId, input.idempotencyKey);
   if (
@@ -345,7 +381,11 @@ tenantBackupsRouter.post('/imports', async (c) => {
       tenantId: auth.tenantId,
       actorId,
       idempotencyKey: input.idempotencyKey,
-      source: { tenantId: auth.tenantId, issuer, productVersion },
+      source: {
+        tenantId: auth.tenantId,
+        issuer: source.issuer,
+        productVersion,
+      },
       selection,
       uploadIds: input.uploadIds as string[],
       now: Date.now(),
@@ -927,7 +967,9 @@ tenantBackupsRouter.post('/:operationId/start', async (c) => {
   }
   if (
     intent.source.productVersion !== productVersion ||
-    intent.source.issuer !== (await getCanonicalTenantBaseUrlAsync(c.env, auth.tenantId))
+    intent.source.tenantId !== auth.tenantId ||
+    (intent.kind === 'export' &&
+      intent.source.issuer !== (await getCanonicalTenantBaseUrlAsync(c.env, auth.tenantId)))
   )
     return c.json({ error: 'backup_source_changed' }, 409);
   if (
@@ -935,6 +977,13 @@ tenantBackupsRouter.post('/:operationId/start', async (c) => {
     (intent.kind === 'import' && !c.env.IMPORT_ARTIFACTS)
   )
     return c.json({ error: 'backup_storage_unavailable' }, 503);
+  if (intent.kind === 'import') {
+    const target = await ensureDatabaseAdapter(c.env.DB, 'tenant-backup-restore-start').queryOne<{
+      lifecycle_state: string;
+    }>('SELECT lifecycle_state FROM tenants WHERE id=?', [auth.tenantId]);
+    if (target?.lifecycle_state !== 'provisioning')
+      return c.json({ error: 'backup_restore_target_not_provisioning' }, 409);
+  }
   const keys = await keyStore(c.env);
   if (!keys) return c.json({ error: 'backup_key_service_unavailable' }, 503);
   const audit = await writeAdminAuditLog(c, {

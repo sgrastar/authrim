@@ -11,6 +11,10 @@ import { portableOperationalLogDetail } from '@authrim/ar-lib-core/services/tena
 import { portablePiiLogValues } from '@authrim/ar-lib-core/services/tenant-portability/portable-pii-log-values';
 import { portableTotpSecret } from '@authrim/ar-lib-core/services/tenant-portability/portable-totp-secret';
 import type { TenantBackupStepContext } from '@authrim/ar-lib-core/services/tenant-portability/operation-executor';
+import { TenantBackupExecutionInventory } from '@authrim/ar-lib-core/services/tenant-portability/execution-inventory';
+import { resolveInstalledSqliteDatasets } from '@authrim/ar-lib-core/services/tenant-portability/installed-sqlite-datasets';
+import { PHASE8_CUMULATIVE_SQLITE_DATASET_REGISTRATIONS } from '@authrim/ar-lib-core/services/tenant-portability/phase8-sqlite-modules';
+import { phase8SqliteRestoreTargetRole } from '@authrim/ar-lib-core/services/tenant-portability/phase8-restore-targets';
 import type { PortableSqliteRow } from '@authrim/ar-lib-core/services/tenant-portability/sqlite-dataset-inspector';
 import { createTenantBackupDirectorySecretPorts } from './tenant-backup-directory-secrets-port';
 import { createTenantBackupKeyManagerSnapshotPort } from './tenant-backup-key-manager-port';
@@ -43,40 +47,81 @@ function unavailable(): never {
   throw new Error('backup_import_restore_target_unavailable');
 }
 
+const ENVIRONMENT_LOCAL_SYSTEM_CLIENT_DESCRIPTIONS = new Set([
+  'System-managed public OAuth client used by the built-in Authrim Login UI.',
+  'System-managed confidential client used by Authrim for downstream grant introspection.',
+]);
+
+function portableText(rowJson: string, column: string): string {
+  const row = JSON.parse(rowJson) as Record<string, readonly [string, string | null]>;
+  const value = row[column];
+  if (value?.[0] !== 'text' || value[1] === null || !value[1])
+    throw new Error('backup_system_client_row_invalid');
+  return value[1];
+}
+
+function portableOptionalText(rowJson: string, column: string): string | null {
+  const row = JSON.parse(rowJson) as Record<string, readonly [string, string | null]>;
+  const value = row[column];
+  if (!value || value[0] === 'null') return null;
+  if (value[0] !== 'text') throw new Error('backup_system_client_row_invalid');
+  return value[1];
+}
+
+/** Keep setup-owned clients local to the environment that generated their IDs and secrets. */
+export async function isEnvironmentLocalSystemClientRow(
+  database: Pick<DatabaseAdapter, 'queryOne'>,
+  datasetId: string,
+  rowJson: string
+): Promise<boolean> {
+  if (datasetId === 'core.oauth_clients')
+    return ENVIRONMENT_LOCAL_SYSTEM_CLIENT_DESCRIPTIONS.has(
+      portableOptionalText(rowJson, 'description') ?? ''
+    );
+  if (!['core.client_consent_overrides', 'core.web_origin_registry'].includes(datasetId))
+    return false;
+  const row = await database.queryOne<{ description: string }>(
+    'SELECT description FROM oauth_clients WHERE tenant_id=? AND client_id=?',
+    [portableText(rowJson, 'tenant_id'), portableText(rowJson, 'client_id')]
+  );
+  return ENVIRONMENT_LOCAL_SYSTEM_CLIENT_DESCRIPTIONS.has(row?.description ?? '');
+}
+
 async function resolveTenantKey(env: Env, context: TenantBackupStepContext): Promise<string> {
   const resources = await resolveBackupTenantDatabaseResources(env, {
     tenantId: context.lease.tenantId,
     roles: ['tenant_core'],
     signal: context.signal,
   });
-  const rows = (
-    await Promise.all(
-      resources.map(({ database }) =>
-        database.query<{ tenant_key: string }>('SELECT tenant_key FROM tenants WHERE id=?', [
-          context.lease.tenantId,
-        ])
-      )
-    )
-  ).flat();
-  if (
-    rows.length !== 1 ||
-    typeof rows[0]?.tenant_key !== 'string' ||
-    !rows[0].tenant_key ||
-    rows[0].tenant_key.length > 256
-  )
-    throw new Error('backup_phase8_tenant_key');
-  return rows[0].tenant_key;
+  const canonical = resources.filter(({ assignments }) =>
+    assignments.some(({ dataRole }) => dataRole === 'tenant_core/default')
+  );
+  if (canonical.length !== 1) throw new Error('backup_phase8_tenant_key');
+  const rows = await canonical[0].database.query<{ tenant_key: string }>(
+    'SELECT tenant_key FROM tenants WHERE id=?',
+    [context.lease.tenantId]
+  );
+  const tenantKey = rows.length === 1 ? rows[0]?.tenant_key : null;
+  if (!tenantKey || tenantKey.length > 256) throw new Error('backup_phase8_tenant_key');
+  return tenantKey;
 }
 
 async function resolveRestoreTenantKey(
   env: Env,
   context: TenantBackupStepContext
 ): Promise<string> {
+  const lifecycleStates =
+    context.operation.state === 'cancelling'
+      ? ['provisioning', 'active']
+      : [context.operation.phase === 'verify_restore_activation' ? 'active' : 'provisioning'];
   const row = await ensureDatabaseAdapter(env.DB, 'tenant-backup-restore-platform').queryOne<{
     tenant_key: string;
-  }>("SELECT tenant_key FROM tenants WHERE id=? AND lifecycle_state='provisioning'", [
-    context.lease.tenantId,
-  ]);
+  }>(
+    `SELECT tenant_key FROM tenants WHERE id=? AND lifecycle_state IN (${lifecycleStates
+      .map(() => '?')
+      .join(',')})`,
+    [context.lease.tenantId, ...lifecycleStates]
+  );
   if (!row?.tenant_key || row.tenant_key.length > 256) throw new Error('backup_phase8_tenant_key');
   return row.tenant_key;
 }
@@ -93,12 +138,13 @@ async function loadCancellationInventoryDigest(
   const row = await database.queryOne<{ chain_digest: string }>(
     `SELECT e.chain_digest FROM tenant_backup_execution_inventories e
      JOIN tenant_backup_operations o ON o.id=e.operation_id AND o.tenant_id=e.tenant_id
-     WHERE o.id=? AND o.tenant_id=? AND o.kind='export' AND o.state='cancelling'
+     WHERE o.id=? AND o.tenant_id=? AND o.kind=? AND o.state='cancelling'
      AND o.lease_owner=? AND o.fencing_token=? AND o.lease_expires_at>? AND o.updated_at<=?
      AND e.state='sealed'`,
     [
       context.lease.operationId,
       context.lease.tenantId,
+      context.operation.kind,
       context.lease.owner,
       context.lease.fencingToken,
       timestamp,
@@ -145,6 +191,8 @@ export async function createProductionTenantBackupExportAdapter(
   context: TenantBackupStepContext,
   now: () => number = Date.now
 ): Promise<TenantBackupInstalledOperationAdapter> {
+  let activeContext = context;
+  const currentContext = () => activeContext;
   const importing = context.operation?.kind === 'import';
   const tenantKey = importing
     ? await resolveRestoreTenantKey(env, context)
@@ -170,18 +218,41 @@ export async function createProductionTenantBackupExportAdapter(
     r2Snapshots.artifactObjects,
     r2Snapshots.logArchiveObjects,
   ];
-  const plan = () => loadPhase8InstalledSqlitePlan(env, context, now);
-  const assertSources = async () => {
-    if ((await resolveTenantKey(env, context)) !== tenantKey)
-      throw new Error('backup_phase8_tenant_key_changed');
-    await plan();
-  };
+  // Reuse the immutable installed plan within one leased slice. Export policy comes from the
+  // sealed, lease-bound inventory; import still inspects the newly provisioned target schemas.
+  let planned: ReturnType<typeof loadPhase8InstalledSqlitePlan> | null = null;
+  const plan = () =>
+    (planned ??= importing
+      ? loadPhase8InstalledSqlitePlan(env, currentContext(), now)
+      : resolveInstalledSqliteDatasets({
+          inventory: new TenantBackupExecutionInventory(
+            requireDedicatedAdminDatabaseAdapter(env, 'tenant-backup'),
+            currentContext().lease,
+            now
+          ),
+          lease: currentContext().lease,
+          registrations: PHASE8_CUMULATIVE_SQLITE_DATASET_REGISTRATIONS,
+        }));
+  let sourceAssertion: Promise<void> | null = null;
+  const assertSources = () =>
+    (sourceAssertion ??= (async () => {
+      if ((await resolveTenantKey(env, currentContext())) !== tenantKey)
+        throw new Error('backup_phase8_tenant_key_changed');
+      await plan();
+    })());
   const piiLog = createTenantBackupPiiLogTransformPort(env, async () => unavailable());
   const restore = importing ? createProductionTenantBackupRestoreTargets({ env, tenantKey }) : null;
+  let routedResources: ReturnType<typeof resolveBackupTenantDatabaseResources> | null = null;
+  const loadRoutedResources = () =>
+    (routedResources ??= resolveBackupTenantDatabaseResources(env, {
+      tenantId: currentContext().lease.tenantId,
+      roles: ['tenant_core', 'tenant_pii'],
+      signal: currentContext().signal,
+    }));
   const assertInstalled = async () => {
     await plan();
-    if (importing) await restore?.databaseForRole(context, 'tenant_core/default');
-    else if ((await resolveTenantKey(env, context)) !== tenantKey)
+    if (importing) await restore?.databaseForRole(currentContext(), 'tenant_core/default');
+    else if ((await resolveTenantKey(env, currentContext())) !== tenantKey)
       throw new Error('backup_phase8_tenant_key_changed');
   };
   const installed = createPhase8TenantBackupInstalledAdapter({
@@ -190,6 +261,28 @@ export async function createProductionTenantBackupExportAdapter(
     now,
     ports: {
       tenantKey,
+      async allowSqliteSource(rowInput) {
+        if (importing) unavailable();
+        const registration = PHASE8_CUMULATIVE_SQLITE_DATASET_REGISTRATIONS.find(
+          ({ dataset }) => dataset.id === rowInput.datasetId
+        );
+        if (!registration) throw new Error('backup_phase8_source_role_missing');
+        const role = phase8SqliteRestoreTargetRole(registration.dataset);
+        if (role === 'admin') {
+          const [admin] = resolveFixedBackupDatabaseResources(env, ['DB_ADMIN']);
+          return admin?.databaseId === rowInput.resourceId;
+        }
+        const resource = (await loadRoutedResources()).find(
+          ({ databaseId }) => databaseId === rowInput.resourceId
+        );
+        if (!resource) throw new Error('backup_phase8_source_role_missing');
+        if (!resource.assignments.some(({ dataRole }) => dataRole === role)) return false;
+        return !(await isEnvironmentLocalSystemClientRow(
+          resource.database,
+          rowInput.datasetId,
+          rowInput.rowJson
+        ));
+      },
       export: {
         async prepareSources() {
           await assertSources();
@@ -208,8 +301,13 @@ export async function createProductionTenantBackupExportAdapter(
           restore
             ? restore.resolveTarget(restoreContext, resourceId, provisioningId)
             : unavailable(),
-        prepareActivation: async (restoreContext) =>
-          restore ? restore.assertUnpublished(restoreContext) : unavailable(),
+        async prepareActivation(restoreContext) {
+          if (!restore) unavailable();
+          await restore.assertUnpublished(restoreContext);
+          if (!env.CONTROL?.publishTenantBackupRuntimeState) unavailable();
+          await env.CONTROL.publishTenantBackupRuntimeState();
+          await restore.assertUnpublished(restoreContext);
+        },
         async activate(restoreContext) {
           if (!restore) unavailable();
           await restore.assertUnpublished(restoreContext);
@@ -287,11 +385,13 @@ export async function createProductionTenantBackupExportAdapter(
         logicalPlacement: placement.logicalPlacement,
       },
       cleanup: {
-        resolveSnapshotSource: (resourceId) => resolveRecordedDatabase(env, context, resourceId),
+        resolveSnapshotSource: (resourceId) =>
+          resolveRecordedDatabase(env, currentContext(), resourceId),
         async cleanupRestoreTarget() {
           unavailable();
         },
         async cleanupAdditionalPage(cleanupContext) {
+          if (importing) return { done: true };
           const inventoryDigest = await loadCancellationInventoryDigest(env, cleanupContext, now);
           const adapterContext = { context: cleanupContext } as never;
           await keyManager.release(
@@ -316,6 +416,7 @@ export async function createProductionTenantBackupExportAdapter(
           return { done: true };
         },
         async assertClean(cleanupContext) {
+          if (importing) return;
           const inventoryDigest = await loadCancellationInventoryDigest(env, cleanupContext, now);
           const adapterContext = { context: cleanupContext } as never;
           await keyManager.assertReleased(
@@ -360,5 +461,18 @@ export async function createProductionTenantBackupExportAdapter(
           : unavailable(),
     },
   });
-  return installed;
+  return {
+    ...installed,
+    bindContext(next) {
+      if (
+        next.operation.kind !== activeContext.operation.kind ||
+        next.lease.operationId !== activeContext.lease.operationId ||
+        next.lease.tenantId !== activeContext.lease.tenantId ||
+        next.lease.owner !== activeContext.lease.owner ||
+        next.lease.fencingToken !== activeContext.lease.fencingToken
+      )
+        throw new Error('backup_production_adapter_context_changed');
+      activeContext = next;
+    },
+  };
 }

@@ -122,6 +122,21 @@ describe('SAML local signing secret DR bundle', () => {
     );
   });
 
+  it('verifies restored keys when destination entity URLs differ from the source', async () => {
+    const sourceEnv = createEnv('https://source.example.test');
+    const bundle = await buildSAMLLocalSigningSecretDRBundle(sourceEnv, 'test');
+    const restoredEnv = createEnv('https://restore.example.test');
+
+    await restoreSAMLLocalSigningSecretDRBundle(restoredEnv, 'test', bundle);
+
+    expect((await getSAMLLocalEntityIds(restoredEnv, 'test')).idpEntityId).not.toBe(
+      bundle.generated.idpEntityId
+    );
+    await expect(verifySAMLLocalSigningSecretDRBundle(restoredEnv, 'test', bundle)).resolves.toBe(
+      true
+    );
+  });
+
   it('uses the DR-restored active IdP key for metadata and SAML responses', async () => {
     const bundle = await buildSAMLLocalSigningSecretDRBundle(createEnv(), 'test');
     const idpKey = bundle.keys.find((key) => key.role === 'idp' && key.slot === 'active');
@@ -173,11 +188,11 @@ describe('SAML local signing secret DR bundle', () => {
   });
 });
 
-function createEnv(): Env {
+function createEnv(issuerUrl = 'https://admin.test.authrim.com'): Env {
   const settings = new Map<string, string>();
   const keyManager = new MockKeyManagerNamespace();
   return {
-    ISSUER_URL: 'https://admin.test.authrim.com',
+    ISSUER_URL: issuerUrl,
     SETTINGS: {
       get: async (key: string) => settings.get(key) ?? null,
       put: async (key: string, value: string) => {

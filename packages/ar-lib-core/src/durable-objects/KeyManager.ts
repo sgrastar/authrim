@@ -575,8 +575,14 @@ export class KeyManager extends DurableObject<Env> {
       throw new Error('backup_key_manager_snapshot_not_released');
   }
 
-  /** Restore only into an empty tenant KeyManager. Exact retries are idempotent. */
-  async importTenantBackupStateRpc(input: unknown): Promise<{
+  /**
+   * Restore into an empty KeyManager, or replace the single bootstrap RSA key created while a
+   * restore target is provisioned. Exact retries are idempotent.
+   */
+  async importTenantBackupStateRpc(
+    input: unknown,
+    options?: { replaceBootstrapKey?: boolean }
+  ): Promise<{
     imported: boolean;
     rsaKeys: number;
     vcKeys: number;
@@ -587,7 +593,34 @@ export class KeyManager extends DurableObject<Env> {
     const snapshot = await normalizeKeyManagerTenantBackupSnapshot(input);
     const current = this.currentTenantBackupState();
     const exactRetry = keyManagerTenantBackupSnapshotsEqual(current, snapshot);
-    if (!exactRetry && !keyManagerTenantBackupSnapshotIsEmpty(current))
+    const replaceBootstrapKey =
+      options !== undefined &&
+      !Array.isArray(options) &&
+      Object.keys(options).length === 1 &&
+      options.replaceBootstrapKey === true;
+    const singleActivePurposeKey = (value: {
+      keys: Array<{ kid: string; status: KeyStatus }>;
+      activeKeyId: string | null;
+    }) =>
+      value.keys.length === 0
+        ? value.activeKeyId === null
+        : value.keys.length === 1 &&
+          value.keys[0]?.status === 'active' &&
+          value.activeKeyId === value.keys[0]?.kid;
+    const bootstrapOnly =
+      current.rsa.keys.length === 1 &&
+      current.rsa.keys[0]?.status === 'active' &&
+      current.rsa.activeKeyId === current.rsa.keys[0]?.kid &&
+      current.rsa.lastRotation !== null &&
+      Object.keys(current.rsa.secrets).length === 0 &&
+      current.vcEc.keys.length === 0 &&
+      singleActivePurposeKey(current.oidcEs256) &&
+      singleActivePurposeKey(current.oidcPs256);
+    if (
+      !exactRetry &&
+      !keyManagerTenantBackupSnapshotIsEmpty(current) &&
+      !(replaceBootstrapKey && bootstrapOnly)
+    )
       throw new Error('backup_key_manager_target_not_empty');
     if (!exactRetry) {
       await this.ctx.storage.transaction(async (transaction) => {

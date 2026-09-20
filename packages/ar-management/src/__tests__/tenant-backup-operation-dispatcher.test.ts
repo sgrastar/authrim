@@ -43,8 +43,17 @@ describe('tenant backup operation dispatcher', () => {
     const bucket = {};
     const env = { EXPORT_ARTIFACTS: bucket } as unknown as Env;
     const handlers = createTenantBackupOperationHandlers(env, adapter, now);
-    const exportContext = { operation: { kind: 'export' } } as never;
-    const importContext = { operation: { kind: 'import' } } as never;
+    const lease = {
+      operationId: 'operation',
+      tenantId: 'tenant',
+      owner: 'worker',
+      fencingToken: 1,
+    };
+    const exportContext = { operation: { kind: 'export' }, lease } as never;
+    const importContext = {
+      operation: { kind: 'import' },
+      lease: { ...lease, operationId: 'import-operation' },
+    } as never;
     const result = { phase: 'next', cursor: null, disposition: 'continue' };
     mocks.exportStep.mockResolvedValueOnce(result);
     mocks.importStep.mockResolvedValueOnce(result);
@@ -109,7 +118,15 @@ describe('tenant backup operation dispatcher', () => {
     } as unknown as TenantBackupInstalledOperationAdapter;
     const resolver = vi.fn(async () => adapter);
     const env = {} as Env;
-    const context = { operation: { kind: 'export' } } as never;
+    const context = {
+      operation: { kind: 'export' },
+      lease: {
+        operationId: 'operation',
+        tenantId: 'tenant',
+        owner: 'worker',
+        fencingToken: 1,
+      },
+    } as never;
     const result = { phase: 'next', cursor: null, disposition: 'continue' };
     mocks.exportStep.mockResolvedValueOnce(result);
 
@@ -119,5 +136,34 @@ describe('tenant backup operation dispatcher', () => {
 
     expect(resolver).toHaveBeenCalledWith(context);
     expect(mocks.exportStep).toHaveBeenCalledWith(env, context, adapter.export, now);
+  });
+
+  it('reuses the installed adapter while durable transitions keep the same lease', async () => {
+    const adapter = {
+      export: {},
+      import: {},
+      cleanup: {},
+    } as unknown as TenantBackupInstalledOperationAdapter;
+    const resolver = vi.fn(async () => adapter);
+    const handlers = createTenantBackupOperationHandlers({} as Env, resolver, () => 1);
+    const base = {
+      operation: { kind: 'export' },
+      lease: {
+        operationId: 'operation',
+        tenantId: 'tenant',
+        owner: 'worker',
+        fencingToken: 1,
+      },
+    };
+    mocks.exportStep.mockResolvedValue({
+      phase: 'next',
+      cursor: null,
+      disposition: 'continue',
+    });
+
+    await handlers.run(base as never);
+    await handlers.run({ ...base, operation: { kind: 'export', phase: 'next' } } as never);
+
+    expect(resolver).toHaveBeenCalledTimes(1);
   });
 });

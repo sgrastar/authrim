@@ -95,7 +95,7 @@ async function* readArtifactParts(
       part.uploaded !== 1 ||
       !Number.isSafeInteger(part.byte_count) ||
       part.byte_count < 1 ||
-      part.byte_count > 4194304 ||
+      part.byte_count > 16 * 1024 * 1024 ||
       !/^[a-f0-9]{64}$/.test(part.sha256) ||
       !part.object_key.startsWith(`tenant-backup-staging/${input.attemptId}/${ordinal}/`) ||
       part.byte_count > artifact.byte_count - total

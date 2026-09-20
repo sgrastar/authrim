@@ -6,6 +6,7 @@ import { TenantBackupAdminMappingStore } from '../admin-mapping-store';
 
 let db: DatabaseSync;
 let store: TenantBackupAdminMappingStore;
+let throwAfterApprovalCommit: boolean;
 
 function migration(name: string): string {
   return readFileSync(
@@ -23,6 +24,7 @@ function source(id: string): void {
 }
 
 beforeEach(() => {
+  throwAfterApprovalCommit = false;
   db = new DatabaseSync(':memory:');
   db.exec('PRAGMA foreign_keys=ON');
   db.exec(`CREATE TABLE admin_users (
@@ -41,6 +43,7 @@ beforeEach(() => {
     '017_tenant_backup_validation_record_sources.sql',
     '019_tenant_backup_input_validations.sql',
     '029_tenant_backup_admin_mappings.sql',
+    '035_tenant_backup_admin_mapping_operation_scope.sql',
   ])
     db.exec(migration(name));
   db.prepare(
@@ -73,6 +76,13 @@ beforeEach(() => {
     },
     async execute(sql: string, params: unknown[] = []) {
       const result = db.prepare(sql).run(...(params as SQLInputValue[]));
+      if (
+        throwAfterApprovalCommit &&
+        sql.includes('UPDATE tenant_backup_admin_mapping_heads SET')
+      ) {
+        throwAfterApprovalCommit = false;
+        throw new Error('ambiguous_d1_response');
+      }
       return { success: true, rowsAffected: Number(result.changes) };
     },
   };
@@ -171,6 +181,51 @@ describe('tenant backup Admin mappings', () => {
     expect(db.prepare('PRAGMA foreign_key_check').all()).toEqual([]);
   });
 
+  it('ignores matching Admin validation history from an older import operation', async () => {
+    source('source-a');
+    db.prepare(
+      `INSERT INTO tenant_backup_operations
+        (id,tenant_id,kind,idempotency_key,request_digest,state,phase,created_by,created_at,
+         updated_at,revision,request_json)
+       VALUES ('operation-old','tenant-a','import','request-old',?,'completed','complete',
+         'approver-a',50,90,3,?)`
+    ).run('cd'.repeat(32), JSON.stringify({ selection: { admin: true } }));
+    db.exec(
+      `INSERT INTO tenant_backup_validation_sessions
+        (id,tenant_id,operation_id,fencing_token,state,created_at)
+       VALUES ('session-old','tenant-a','operation-old',1,'sealed',51);
+       INSERT INTO tenant_backup_input_validations
+        (operation_id,tenant_id,session_id,input_inventory_digest,examined_references,
+         unresolved_provenance)
+       VALUES ('operation-old','tenant-a','session-old','inventory-old',0,0);`
+    );
+    db.prepare(
+      `INSERT INTO tenant_backup_validation_records
+        (session_id,tenant_id,module,collection,record_id,bundle_id,source_id)
+       VALUES ('session-old','tenant-a','admin-auth','admin.admin_users',?,'bundle-old',
+         'source-old')`
+    ).run(JSON.stringify([['text', 'source-a']]));
+
+    await store.map({
+      tenantId: 'tenant-a',
+      operationId: 'operation-a',
+      sourceAdminId: 'source-a',
+      targetAdminId: 'target-a',
+      actorId: 'approver-a',
+      now: 201,
+    });
+    await expect(
+      store.approve({
+        tenantId: 'tenant-a',
+        operationId: 'operation-a',
+        actorId: 'approver-a',
+        operationRevision: 7,
+        mappingRevision: 1,
+        now: 202,
+      })
+    ).resolves.toMatchObject({ operation: { state: 'queued', revision: 8 } });
+  });
+
   it('fails closed for missing mappings, stale revisions and invalid targets', async () => {
     source('source-a');
     source('source-b');
@@ -243,6 +298,29 @@ describe('tenant backup Admin mappings', () => {
       n: 0,
     });
     await expect(store.assertApproved('tenant-a', 'operation-a')).resolves.toBeUndefined();
+  });
+
+  it('recovers an exact approval when D1 loses the response after committing', async () => {
+    source('source-a');
+    await store.map({
+      tenantId: 'tenant-a',
+      operationId: 'operation-a',
+      sourceAdminId: 'source-a',
+      targetAdminId: 'target-a',
+      actorId: 'approver-a',
+      now: 201,
+    });
+    throwAfterApprovalCommit = true;
+    await expect(
+      store.approve({
+        tenantId: 'tenant-a',
+        operationId: 'operation-a',
+        actorId: 'approver-a',
+        operationRevision: 7,
+        mappingRevision: 1,
+        now: 202,
+      })
+    ).resolves.toMatchObject({ operation: { state: 'queued', revision: 8 } });
   });
 
   it('stops restore when a mapped target is disabled after approval', async () => {

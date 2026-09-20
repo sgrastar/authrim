@@ -9,7 +9,8 @@ import {
 } from './sqlite-dataset-inspector';
 import { sqliteSnapshotRowInsert } from './sqlite-row-codec';
 
-type Database = Pick<DatabaseAdapter, 'query' | 'queryOne' | 'execute'>;
+type Database = Pick<DatabaseAdapter, 'query' | 'queryOne' | 'execute'> &
+  Partial<Pick<DatabaseAdapter, 'batch'>>;
 export type SqliteSidecarValue =
   | readonly ['null', null]
   | readonly ['text', string]
@@ -34,6 +35,60 @@ const SEALED_GUARD = GUARD.replace("state='loading'", "state='sealed'");
 const SEALABLE_GUARD = GUARD.replace("state='loading'", "state IN ('loading','sealed')");
 export type SqliteRestoreTargetMode = 'write' | 'seal' | 'verify';
 const error = () => new Error('backup_restore_target_rejected');
+const APPEND_ONLY_OPERATIONAL_KINDS = new Set([
+  'audit',
+  'history',
+  'sensitive_logs',
+  'delivery_state',
+  'log_dependencies',
+]);
+
+/**
+ * R2 restore finalization rewrites these SQLite catalog fields and verifies every rewritten value
+ * against the restored object receipt before targets are sealed. Final source-row readback therefore
+ * compares the remaining SQLite-owned fields; write-time verification still compares every column.
+ */
+const R2_FINALIZED_COLUMNS: Readonly<Record<string, readonly string[]>> = Object.fromEntries(
+  ['admin', 'core'].flatMap((family) => [
+    [`${family}.log_chunk_manifests`, ['status', 'manifest_object_key', 'checksum_sha256']],
+    [
+      `${family}.log_chunk_record_index`,
+      ['line_number', 'block_offset', 'block_length', 'record_offset', 'record_length'],
+    ],
+    [
+      `${family}.log_object_catalog`,
+      [
+        'object_key',
+        'record_count',
+        'byte_count',
+        'checksum_sha256',
+        'encryption_scope',
+        'key_version',
+      ],
+    ],
+    [
+      `${family}.object_catalog_objects`,
+      ['bucket_binding', 'object_key', 'key_version', 'checksum_sha256', 'total_bytes'],
+    ],
+    [
+      `${family}.sensitive_detail_chunk_index`,
+      [
+        'object_key',
+        'content_encoding',
+        'line_number',
+        'byte_offset',
+        'byte_length',
+        'key_version',
+        'checksum_sha256',
+        'deleted_at',
+      ],
+    ],
+  ])
+);
+/** Fields asynchronously finalized by the unpublished target while its restore is still loading. */
+const TARGET_RUNTIME_COLUMNS: Readonly<Record<string, readonly string[]>> = {
+  'admin.tenant_settings_documents': ['projection_state', 'projected_at'],
+};
 
 /**
  * Fence a recorded unpublished target before provider cleanup. A missing local receipt means the
@@ -229,6 +284,214 @@ export class SqliteRestoreTarget {
     if (this.mode !== 'write') throw error();
     await this.checkRow(policy, manifest, rowJson, true);
   }
+
+  /**
+   * Validate an installed-policy row batch in memory and commit it with one atomic D1 batch call.
+   * Dataset verification is the durable readback boundary; no row checkpoint is written here.
+   */
+  async writeRows(
+    policy: SqliteDatasetInspectionPolicy,
+    manifest: TenantBundleManifest,
+    rowJsons: readonly string[]
+  ): Promise<void> {
+    await this.writeDatasetRows([{ policy, manifest, rowJsons }]);
+  }
+
+  /**
+   * Commit ordinary rows from multiple dependency-ordered tables in one D1 batch. The caller keeps
+   * special transforms, holds, deferred references and reference-only datasets on their dedicated
+   * paths; this method only combines the physical write without weakening row validation or fences.
+   */
+  async writeDatasetRows(
+    datasets: readonly {
+      policy: SqliteDatasetInspectionPolicy;
+      manifest: TenantBundleManifest;
+      rowJsons: readonly string[];
+    }[]
+  ): Promise<void> {
+    const rowCount = datasets.reduce((total, dataset) => total + dataset.rowJsons.length, 0);
+    const byteCount = datasets.reduce(
+      (total, dataset) =>
+        total +
+        dataset.rowJsons.reduce(
+          (datasetTotal, row) => datasetTotal + new TextEncoder().encode(row).length,
+          0
+        ),
+      0
+    );
+    if (
+      this.mode !== 'write' ||
+      datasets.length < 1 ||
+      datasets.length > 256 ||
+      rowCount < 1 ||
+      rowCount > 500 ||
+      byteCount > 4 * 1024 * 1024
+    )
+      throw error();
+    await this.assertLive();
+    const statements = [];
+    for (const dataset of datasets) {
+      if (!dataset.rowJsons.length) throw error();
+      for (const original of dataset.rowJsons) {
+        const validated = await this.validateRow(dataset.policy, dataset.manifest, original, false);
+        const currentPolicy = validated.policy;
+        let storedRowJson = this.applyRestoreOverrides(currentPolicy, original);
+        if (currentPolicy.deferredColumns?.length) {
+          const row = JSON.parse(storedRowJson) as Record<string, unknown>;
+          for (const column of currentPolicy.deferredColumns) row[column] = ['null', null];
+          storedRowJson = JSON.stringify(row);
+        }
+        const insert = sqliteSnapshotRowInsert(
+          currentPolicy.schema.table,
+          currentPolicy.schema.columns,
+          storedRowJson
+        );
+        const keyInsert = sqliteSnapshotRowInsert(
+          currentPolicy.schema.table,
+          currentPolicy.schema.primaryKey,
+          JSON.stringify(
+            Object.fromEntries(
+              currentPolicy.schema.primaryKey.map((column) => [
+                column,
+                (JSON.parse(storedRowJson) as Record<string, unknown>)[column],
+              ])
+            )
+          )
+        );
+        const expressions = keyInsert.sql
+          .slice(keyInsert.sql.indexOf(' VALUES (') + 9, -1)
+          .split(', ');
+        const predicate = currentPolicy.schema.primaryKey
+          .map((column, index) => `"${column}" IS ${expressions[index]}`)
+          .join(' AND ');
+        const insertSelect =
+          insert.sql.replace(' VALUES (', ' SELECT ').slice(0, -1) + ` WHERE ${this.guardSql()}`;
+        const preserved = new Set(currentPolicy.restorePreservedSeedColumns ?? []);
+        const replaceSeed = currentPolicy.restoreReplacesInstalledSeedRows === true;
+        const nonKeyColumns = currentPolicy.schema.columns.filter(
+          (column) => !currentPolicy.schema.primaryKey.includes(column) && !preserved.has(column)
+        );
+        // A target-owned seed may preserve every non-key column. There is nothing to mutate in that
+        // case; the dataset readback phase still requires the installed target row to exist.
+        if (replaceSeed && !nonKeyColumns.length) continue;
+        statements.push(
+          replaceSeed
+            ? {
+                sql: `${insertSelect}${
+                  preserved.size
+                    ? ` AND EXISTS (SELECT 1 FROM "${currentPolicy.schema.table}" WHERE ${predicate})`
+                    : ''
+                } ON CONFLICT (${currentPolicy.schema.primaryKey
+                  .map((column) => `"${column}"`)
+                  .join(', ')}) DO UPDATE SET ${nonKeyColumns
+                  .map((column) => `"${column}"=excluded."${column}"`)
+                  .join(', ')}`,
+                params: [
+                  ...insert.params,
+                  ...this.guard(),
+                  ...(preserved.size ? keyInsert.params : []),
+                ],
+              }
+            : {
+                sql: `${insertSelect} AND NOT EXISTS (SELECT 1 FROM "${currentPolicy.schema.table}" WHERE ${predicate})`,
+                params: [...insert.params, ...this.guard(), ...keyInsert.params],
+              }
+        );
+      }
+    }
+    await this.authorize();
+    const results = this.database.batch
+      ? await this.database.batch(statements)
+      : await Promise.all(statements.map(({ sql, params }) => this.database.execute(sql, params)));
+    if (results.length !== statements.length || results.some(({ success }) => !success))
+      throw error();
+    await this.assertLive();
+  }
+
+  /**
+   * Remove rows created as a restore side effect and atomically replace them with the validated
+   * source set. Only explicitly installed hold policies may use this path.
+   */
+  async reconcileGeneratedRows(
+    policy: SqliteDatasetInspectionPolicy,
+    manifest: TenantBundleManifest,
+    rowJsons: readonly string[]
+  ): Promise<void> {
+    if (
+      this.mode !== 'write' ||
+      policy.restoreReconcilesGeneratedRows !== true ||
+      !policy.restoreHold ||
+      policy.restoreDisposition === 'reference_only' ||
+      policy.deferredColumns?.length ||
+      policy.restoreTransform ||
+      policy.restoreReplacesInstalledSeedRows ||
+      rowJsons.length > 500 ||
+      rowJsons.reduce((total, row) => total + new TextEncoder().encode(row).length, 0) >
+        4 * 1024 * 1024 ||
+      !this.database.batch
+    )
+      throw error();
+    const pinned = cloneSqliteDatasetInspectionPolicy(policy);
+    const direct = 'parent' in pinned.schema ? pinned.schema.parent.schema : pinned.schema;
+    const tenantKey = pinned.restoreTenantKey ?? pinned.tenantKey;
+    if (direct.tenantIdentity === 'tenantKey' && !tenantKey) throw error();
+    const ownership = (schema: typeof pinned.schema): BackupRowOwnership => {
+      if ('parent' in schema)
+        return {
+          kind: 'parent',
+          table: schema.parent.schema.table,
+          keys: schema.parent.schema.primaryKey.map((parent, index) => ({
+            parent,
+            child: schema.parent.childColumns[index],
+          })),
+          ownership: ownership(schema.parent.schema),
+        };
+      return schema.scopeTypeColumn
+        ? { kind: 'scope', typeColumn: schema.scopeTypeColumn, idColumn: schema.tenantColumn }
+        : {
+            kind: 'tenant',
+            column: schema.tenantColumn,
+            identity: schema.tenantIdentity ?? 'tenantId',
+          };
+    };
+    const predicate = backupOwnershipPredicate(
+      ownership(pinned.schema),
+      {
+        tenantId: this.identity.tenantId,
+        tenantKey: tenantKey ?? this.identity.tenantId,
+      },
+      'backup_row'
+    );
+    await this.assertLive();
+    const statements: Array<{ sql: string; params: unknown[] }> = [
+      {
+        sql: `DELETE FROM "${pinned.schema.table}" AS "backup_row"
+          WHERE ${predicate.sql} AND ${this.guardSql()}`,
+        params: [...predicate.params, ...this.guard()],
+      },
+    ];
+    for (const original of rowJsons) {
+      const validated = await this.validateRow(pinned, manifest, original, false);
+      const rowJson = this.applyRestoreOverrides(validated.policy, original);
+      const insert = sqliteSnapshotRowInsert(
+        validated.policy.schema.table,
+        validated.policy.schema.columns,
+        rowJson
+      );
+      statements.push({
+        sql: insert.sql.replace(' VALUES (', ' SELECT ').slice(0, -1) + ` WHERE ${this.guardSql()}`,
+        params: [...insert.params, ...this.guard()],
+      });
+    }
+    const batch = this.database.batch;
+    if (!batch) throw error();
+    await this.authorize();
+    const results = await batch.call(this.database, statements);
+    if (results.length !== statements.length || results.some(({ success }) => !success))
+      throw error();
+    if (rowJsons.length) await this.verifyRows(pinned, manifest, rowJsons);
+    await this.verifyDataset(pinned, rowJsons.length);
+  }
   /** Readback only: missing or changed rows fail without repairing them during verification. */
   async verifyRow(
     policy: SqliteDatasetInspectionPolicy,
@@ -236,6 +499,52 @@ export class SqliteRestoreTarget {
     rowJson: string
   ): Promise<void> {
     await this.checkRow(policy, manifest, rowJson, false);
+  }
+
+  /** Verify ordinary restored rows with bounded aggregate queries instead of one D1 call per row. */
+  async verifyRows(
+    policy: SqliteDatasetInspectionPolicy,
+    manifest: TenantBundleManifest,
+    rowJsons: readonly string[]
+  ): Promise<void> {
+    if (
+      rowJsons.length < 1 ||
+      rowJsons.length > 500 ||
+      rowJsons.reduce((total, row) => total + new TextEncoder().encode(row).length, 0) >
+        4 * 1024 * 1024
+    )
+      throw error();
+    await this.assertLive();
+    const pending: Array<{ sql: string; params: unknown[] }> = [];
+    for (const original of rowJsons) {
+      const validated = await this.validateRow(policy, manifest, original, false);
+      const rowJson = this.applyRestoreOverrides(validated.policy, original);
+      const clauses = this.rowMatchClauses(validated.policy, rowJson);
+      // Very wide rows retain the existing bounded comparison path.
+      if (clauses.length !== 1 || clauses[0].params.length > 80) {
+        if (!(await this.rowMatches(validated.policy, rowJson))) throw error();
+        continue;
+      }
+      pending.push(clauses[0]);
+    }
+    while (pending.length) {
+      const group: typeof pending = [];
+      let parameters = this.guard().length;
+      while (pending.length && parameters + pending[0].params.length <= 90) {
+        const clause = pending.shift();
+        if (!clause) break;
+        group.push(clause);
+        parameters += clause.params.length;
+      }
+      if (!group.length) throw error();
+      const found = await this.database.queryOne<{ matches: number | bigint }>(
+        `SELECT COUNT(*) AS matches FROM "${policy.schema.table}" WHERE ${this.guardSql()}
+        AND (${group.map(({ sql }) => `(${sql})`).join(' OR ')})`,
+        [...this.guard(), ...group.flatMap(({ params }) => params)]
+      );
+      if (Number(found?.matches) !== group.length) throw error();
+    }
+    await this.assertLive();
   }
   /** Apply one installed sidecar value while this target is still fenced and unpublished. */
   async writeSidecarText(
@@ -442,7 +751,8 @@ export class SqliteRestoreTarget {
   private async validateRow(
     policy: SqliteDatasetInspectionPolicy,
     manifest: TenantBundleManifest,
-    rowJson: string
+    rowJson: string,
+    assertLive = true
   ): Promise<{ policy: SqliteDatasetInspectionPolicy; manifest: TenantBundleManifest }> {
     policy = cloneSqliteDatasetInspectionPolicy(policy);
     manifest = structuredClone(manifest);
@@ -458,13 +768,13 @@ export class SqliteRestoreTarget {
       )
     )
       throw error();
-    await this.assertLive();
+    if (assertLive) await this.assertLive();
     const inspector = await createSqliteDatasetInspectorFactory(policy)(policy.dataset, manifest);
     try {
       const bytes = new TextEncoder().encode(rowJson + '\n');
       if (bytes.length > 256 * 1024) throw error();
       const inspected = await inspector.chunk(bytes, 0);
-      if (inspected.records.length !== 1) throw error();
+      if (!inspected.records.length) throw error();
       await inspector.finish();
     } finally {
       await inspector.dispose();
@@ -490,6 +800,7 @@ export class SqliteRestoreTarget {
       policy.schema.columns,
       storedRowJson
     );
+    const targetOwnedSeedColumns = new Set(policy.restorePreservedSeedColumns ?? []);
     if (write) {
       const keyInsert = sqliteSnapshotRowInsert(
         policy.schema.table,
@@ -509,53 +820,106 @@ export class SqliteRestoreTarget {
       const predicate = policy.schema.primaryKey
         .map((column, i) => `"${column}" IS ${expressions[i]}`)
         .join(' AND ');
+      const insertSelect =
+        insert.sql.replace(' VALUES (', ' SELECT ').slice(0, -1) + ` WHERE ${this.guardSql()}`;
+      const replaceSeed = policy.restoreReplacesInstalledSeedRows === true;
+      const nonKeyColumns = policy.schema.columns.filter(
+        (column) =>
+          !policy.schema.primaryKey.includes(column) && !targetOwnedSeedColumns.has(column)
+      );
       const sql =
-        insert.sql.replace(' VALUES (', ' SELECT ').slice(0, -1) +
-        ` WHERE ${this.guardSql()} AND NOT EXISTS (SELECT 1 FROM "${policy.schema.table}" WHERE ${predicate})`;
-      await this.assertLive();
-      const result = await this.database.execute(sql, [
-        ...insert.params,
-        ...this.guard(),
-        ...keyInsert.params,
-      ]);
-      if (!result.success) throw error();
+        replaceSeed && !nonKeyColumns.length
+          ? null
+          : replaceSeed
+            ? `${insertSelect}${
+                targetOwnedSeedColumns.size
+                  ? ` AND EXISTS (SELECT 1 FROM "${policy.schema.table}" WHERE ${predicate})`
+                  : ''
+              } ON CONFLICT (${policy.schema.primaryKey
+                .map((column) => `"${column}"`)
+                .join(', ')}) DO UPDATE SET ${nonKeyColumns
+                .map((column) => `"${column}"=excluded."${column}"`)
+                .join(', ')}`
+            : `${insertSelect} AND NOT EXISTS (SELECT 1 FROM "${policy.schema.table}" WHERE ${predicate})`;
+      if (sql) {
+        await this.assertLive();
+        const result = await this.database.execute(sql, [
+          ...insert.params,
+          ...this.guard(),
+          ...(!replaceSeed || targetOwnedSeedColumns.size ? keyInsert.params : []),
+        ]);
+        if (!result.success) throw error();
+      }
     }
-    if (!(await this.rowMatches(policy, storedRowJson))) throw error();
+    if (!(await this.rowMatches(policy, storedRowJson, targetOwnedSeedColumns))) throw error();
     await this.assertLive();
   }
 
   /** Compare stored values and storage types, including integer precision and blob bytes. */
   private async rowMatches(
     policy: SqliteDatasetInspectionPolicy,
-    rowJson: string
+    rowJson: string,
+    additionalIgnoredColumns: ReadonlySet<string> = new Set()
   ): Promise<boolean> {
+    for (const clause of this.rowMatchClauses(policy, rowJson, additionalIgnoredColumns)) {
+      const match = await this.database.queryOne(
+        `SELECT 1 AS matches FROM "${policy.schema.table}" WHERE ${clause.sql} AND ${this.guardSql()}`,
+        [...clause.params, ...this.guard()]
+      );
+      if (!match) return false;
+    }
+    return true;
+  }
+
+  private rowMatchClauses(
+    policy: SqliteDatasetInspectionPolicy,
+    rowJson: string,
+    additionalIgnoredColumns: ReadonlySet<string> = new Set()
+  ): Array<{ sql: string; params: unknown[] }> {
     const insert = sqliteSnapshotRowInsert(policy.schema.table, policy.schema.columns, rowJson);
     const values = insert.sql.slice(insert.sql.indexOf(' VALUES (') + 9, -1).split(', ');
-    const parsed: unknown = JSON.parse(rowJson);
-    const row = parsed as Record<string, readonly [string, unknown]>;
-    const ignored = new Set(policy.verificationIgnoredColumns ?? []);
-    const comparisons = policy.schema.columns.flatMap((column, i) =>
-      ignored.has(column)
-        ? []
-        : [`typeof("${column}")=? AND "${column}" COLLATE BINARY IS ${values[i]}`]
-    );
-    if (!comparisons.length) throw error();
-    const params: unknown[] = [];
+    const row = JSON.parse(rowJson) as Record<string, readonly [string, unknown]>;
+    const ignored = new Set([
+      ...(policy.verificationIgnoredColumns ?? []),
+      ...additionalIgnoredColumns,
+      ...(TARGET_RUNTIME_COLUMNS[policy.dataset.id] ?? []),
+      ...(this.mode === 'verify' ? (R2_FINALIZED_COLUMNS[policy.dataset.id] ?? []) : []),
+    ]);
+    const parameterByColumn = new Map<string, unknown>();
     let position = 0;
-    for (const column of policy.schema.columns) {
+    for (const [index, column] of policy.schema.columns.entries()) {
       const parameterized =
         !['Inf', '-Inf'].includes(String(row[column][1])) || row[column][0] !== 'real';
       const parameter = parameterized ? insert.params[position++] : undefined;
-      if (ignored.has(column)) continue;
-      params.push(row[column][0]);
-      if (parameterized) params.push(parameter);
+      if (parameterized) parameterByColumn.set(column, parameter);
+      if (!values[index]) throw error();
     }
-    return Boolean(
-      await this.database.queryOne(
-        `SELECT 1 AS matches FROM "${policy.schema.table}" WHERE ${comparisons.join(' AND ')} AND ${this.guardSql()}`,
-        [...params, ...this.guard()]
-      )
+    const primaryKey = [...policy.schema.primaryKey];
+    if (!primaryKey.length) throw error();
+    const compared = policy.schema.columns.filter(
+      (column) => !ignored.has(column) && !primaryKey.includes(column)
     );
+    const chunks: string[][] = [];
+    for (let index = 0; index < compared.length; index += 32)
+      chunks.push(compared.slice(index, index + 32));
+    if (!chunks.length) chunks.push([]);
+    const columnClause = (column: string): { sql: string; params: unknown[] } => {
+      const index = policy.schema.columns.indexOf(column);
+      if (index < 0) throw error();
+      const params: unknown[] = [row[column][0]];
+      if (parameterByColumn.has(column)) params.push(parameterByColumn.get(column));
+      return {
+        sql: `typeof("${column}")=? AND "${column}" COLLATE BINARY IS ${values[index]}`,
+        params,
+      };
+    };
+    return chunks.map((chunk) => {
+      const comparisons = [...primaryKey, ...chunk].map(columnClause);
+      return {
+        sql: comparisons.map(({ sql }) => sql).join(' AND '),
+        params: comparisons.flatMap(({ params }) => params),
+      };
+    });
   }
   /** Verify the complete selected tenant dataset, after all of its expected rows were read back. */
   async verifyDataset(policy: SqliteDatasetInspectionPolicy, expectedRows: number): Promise<void> {
@@ -600,13 +964,106 @@ export class SqliteRestoreTarget {
       `SELECT count(*) AS total FROM "${schema.table}" AS backup_row WHERE ${predicate.sql} AND ${this.guardSql()}`,
       [...predicate.params, ...this.guard()]
     );
-    if (!count || count.total !== expectedRows) throw error();
+    // Restoring a tenant creates new destination-side audit and operational records. Every row
+    // from the bundle is still verified separately, but those new records must remain present.
+    // Mutable settings, user and admin datasets retain exact cardinality verification.
+    const allowsDestinationRows =
+      policy.restoreAllowsAdditionalRows === true ||
+      APPEND_ONLY_OPERATIONAL_KINDS.has(policy.dataset.kind);
     if (
-      await this.database.queryOne('SELECT 1 AS invalid FROM pragma_foreign_key_check(?) LIMIT 1', [
-        schema.table,
-      ])
+      !count ||
+      count.total < expectedRows ||
+      (!allowsDestinationRows && count.total !== expectedRows)
     )
       throw error();
+    // Table names come from the trusted registry and were validated above. D1 rejects bound
+    // arguments to table-valued PRAGMAs, so this argument must be a trusted SQL literal.
+    if (
+      await this.database.queryOne(
+        `SELECT 1 AS invalid FROM pragma_foreign_key_check('${schema.table}') LIMIT 1`
+      )
+    )
+      throw error();
+    await this.assertLive();
+  }
+
+  /** Verify consecutive empty datasets with bounded aggregate reads and one live-target window. */
+  async verifyEmptyDatasets(policies: readonly SqliteDatasetInspectionPolicy[]): Promise<void> {
+    if (!policies.length || policies.length > 4096) throw error();
+    const entries = policies.map((policy) => {
+      const { schema, tenantKey } = structuredClone({
+        schema: policy.schema,
+        tenantKey: policy.restoreTenantKey ?? policy.tenantKey,
+      });
+      if (!/^[a-z][a-z0-9_]*$/.test(schema.table)) throw error();
+      function ownership(value: typeof schema): BackupRowOwnership {
+        if ('parent' in value)
+          return {
+            kind: 'parent',
+            table: value.parent.schema.table,
+            keys: value.parent.schema.primaryKey.map((parent, index) => ({
+              parent,
+              child: value.parent.childColumns[index],
+            })),
+            ownership: ownership(value.parent.schema),
+          };
+        return value.scopeTypeColumn
+          ? { kind: 'scope', typeColumn: value.scopeTypeColumn, idColumn: value.tenantColumn }
+          : {
+              kind: 'tenant',
+              column: value.tenantColumn,
+              identity: value.tenantIdentity ?? 'tenantId',
+            };
+      }
+      const direct = 'parent' in schema ? schema.parent.schema : schema;
+      if (direct.tenantIdentity === 'tenantKey' && !tenantKey) throw error();
+      const predicate = backupOwnershipPredicate(ownership(schema), {
+        tenantId: this.identity.tenantId,
+        tenantKey: tenantKey ?? this.identity.tenantId,
+      });
+      return {
+        datasetId: policy.dataset.id,
+        table: schema.table,
+        predicate,
+        allowsDestinationRows:
+          policy.restoreAllowsAdditionalRows === true ||
+          APPEND_ONLY_OPERATIONAL_KINDS.has(policy.dataset.kind),
+      };
+    });
+    if (
+      new Set(entries.map(({ datasetId }) => datasetId)).size !== entries.length ||
+      new Set(entries.map(({ table }) => table)).size !== entries.length
+    )
+      throw error();
+    await this.assertLive();
+    const exactEntries = entries.filter(({ allowsDestinationRows }) => !allowsDestinationRows);
+    // D1 applies a very small compound-SELECT limit here, including SELECTs introduced by
+    // ownership predicates. Scalar subqueries keep each group to one bounded database read.
+    for (let offset = 0; offset < exactEntries.length; offset += 50) {
+      const group = exactEntries.slice(offset, offset + 50);
+      const params: unknown[] = [];
+      const columns = group.map((entry, index) => {
+        params.push(...entry.predicate.params);
+        return `(SELECT count(*) FROM "${entry.table}" AS backup_row WHERE ${entry.predicate.sql}) AS "c${index}"`;
+      });
+      const counts = await this.database.queryOne<Record<string, number>>(
+        `SELECT ${columns.join(',')}`,
+        params
+      );
+      if (!counts || group.some((_, index) => counts[`c${index}`] !== 0)) throw error();
+    }
+    for (let offset = 0; offset < entries.length; offset += 50) {
+      const group = entries.slice(offset, offset + 50);
+      const failures = await this.database.queryOne<Record<string, number>>(
+        `SELECT ${group
+          .map(
+            ({ table }, index) =>
+              `EXISTS(SELECT 1 FROM pragma_foreign_key_check('${table}')) AS "f${index}"`
+          )
+          .join(',')}`
+      );
+      if (!failures || group.some((_, index) => failures[`f${index}`] !== 0)) throw error();
+    }
     await this.assertLive();
   }
   /** Freeze this target against further importer writes; this is not application activation. */

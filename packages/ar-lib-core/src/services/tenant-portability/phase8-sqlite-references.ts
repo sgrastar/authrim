@@ -60,6 +60,50 @@ export const PHASE8_SENSITIVE_SQLITE_DATASETS = [
 ] as const;
 
 const sensitiveIds = new Set<string>(PHASE8_SENSITIVE_SQLITE_DATASETS);
+const installedAdminSeedTimestampDatasets = new Set([
+  'admin.admin_attributes',
+  'admin.admin_rebac_definitions',
+  'admin.admin_roles',
+]);
+
+/**
+ * Tenant rows installed by the fresh-install baseline. A restore target pins its complete seed
+ * fingerprint before the first write, so these destination rows may remain when the source did not
+ * contain them. Every source row is still verified independently and conflicting identities fail.
+ */
+export const PHASE8_INSTALLED_TENANT_SEED_DATASETS = [
+  'admin.field_catalog_entries',
+  'admin.field_catalog_versions',
+  'admin.field_catalogs',
+  'admin.tenant_runtime_cache_generations',
+  'admin.tenant_settings_documents',
+  'core.custom_claim_schemas',
+  'core.flow_assignments',
+  'core.flow_versions',
+  'core.flows',
+  'core.lookup_retention_policies',
+  'core.oidc_scopes',
+  'core.screens',
+  'core.tenants',
+] as const;
+
+const installedTenantSeedDatasetIds = new Set<string>(PHASE8_INSTALLED_TENANT_SEED_DATASETS);
+const targetGeneratedRowDatasetIds = new Set<string>([
+  'core.oauth_clients',
+  'core.service_group_inputs',
+  'core.web_origin_registry',
+  'pii.service_group_inputs',
+]);
+
+const restoreGeneratedSideEffectDatasetIds = new Set<string>([
+  'core.account_webhook_outbox',
+  'pii.account_webhook_outbox',
+]);
+
+const derivedReferenceOnlyDatasetIds = new Set<string>([
+  'core.service_group_inputs',
+  'pii.service_group_inputs',
+]);
 
 export const PHASE8_RESTORED_SENSITIVE_COLUMNS: Readonly<Record<string, readonly string[]>> = {
   'admin.agent_management_executions': ['result_envelope'],
@@ -291,26 +335,108 @@ export function createPhase8SqliteInspectionPolicies(
     }).map((policy) => [policy.dataset.id, policy])
   );
 
+  const preserveInstalledSeedTimestamps = (
+    entry: PlannedInstalledSqliteDataset,
+    policy: SqliteDatasetInspectionPolicy
+  ): SqliteDatasetInspectionPolicy => {
+    if (
+      !installedAdminSeedTimestampDatasets.has(entry.dataset.id) ||
+      !entry.capture.columns.includes('created_at') ||
+      !entry.capture.columns.includes('updated_at')
+    )
+      return policy;
+    if (policy.restoreTransform) invalid();
+    return {
+      ...policy,
+      verificationIgnoredColumns: [
+        ...new Set([...(policy.verificationIgnoredColumns ?? []), 'created_at', 'updated_at']),
+      ],
+      ...(policy.restoreReplacesInstalledSeedRows === true
+        ? {
+            restorePreservedSeedColumns: [
+              ...new Set([
+                ...(policy.restorePreservedSeedColumns ?? []),
+                'created_at',
+                'updated_at',
+              ]),
+            ],
+          }
+        : {}),
+      restoreTransform: {
+        id: `phase8-seed-timestamps-v1:${entry.dataset.id}`,
+        async transform(
+          _context: TenantBackupStepContext,
+          rowJson: string,
+          _mode: 'write' | 'defer' | 'verify'
+        ) {
+          return rowJson;
+        },
+      },
+    };
+  };
+
+  const preserveTargetRuntimeRegistryState = (
+    entry: PlannedInstalledSqliteDataset,
+    policy: SqliteDatasetInspectionPolicy
+  ): SqliteDatasetInspectionPolicy => {
+    if (entry.dataset.id !== 'admin.tenant_runtime_cache_generations') return policy;
+    const targetOwnedColumns = ['generation', 'updated_at', 'updated_by', 'metadata_json'].filter(
+      (column) => entry.capture.columns.includes(column)
+    );
+    if (policy.restoreReplacesInstalledSeedRows !== true || !targetOwnedColumns.length)
+      return policy;
+    return {
+      ...policy,
+      verificationIgnoredColumns: [
+        ...new Set([...(policy.verificationIgnoredColumns ?? []), ...targetOwnedColumns]),
+      ],
+      restorePreservedSeedColumns: [
+        ...new Set([...(policy.restorePreservedSeedColumns ?? []), ...targetOwnedColumns]),
+      ],
+    };
+  };
+
   const withTargetTenantKey = (
     entry: PlannedInstalledSqliteDataset,
     policy: SqliteDatasetInspectionPolicy
   ): SqliteDatasetInspectionPolicy => {
+    const isTenantKeyOwned = (schema: PlannedInstalledSqliteDataset['capture']): boolean =>
+      'parent' in schema
+        ? isTenantKeyOwned(schema.parent.schema)
+        : schema.tenantIdentity === 'tenantKey';
+    const tenantKeyOwned = isTenantKeyOwned(entry.capture);
     const column = portableTenantKeyColumn(entry.capture);
-    if (!column) return policy;
+    if (!column)
+      return tenantKeyOwned
+        ? { ...policy, tenantKey: PORTABLE_TENANT_KEY, restoreTenantKey: input.tenantKey }
+        : policy;
     const directTenantKey =
       !('parent' in entry.capture) && entry.capture.tenantIdentity === 'tenantKey';
     const required = directTenantKey || entry.dataset.id === 'core.tenants';
     const target = ['text', input.tenantKey] as const;
     const primaryKey = entry.capture.primaryKey.includes(column);
+    if (policy.restoreDisposition === 'reference_only') {
+      const inspectRow = policy.inspectRow;
+      return {
+        ...policy,
+        ...(tenantKeyOwned ? { tenantKey: PORTABLE_TENANT_KEY } : {}),
+        inspectRow: async (row, identity) => {
+          assertPortableTenantKeyRow(entry.capture, row, required);
+          return inspectRow(row, identity);
+        },
+      };
+    }
     const existing = primaryKey
       ? policy.restoreIdentityOverrides?.[column]
       : policy.restoreOverrides?.[column];
     if (existing && JSON.stringify(existing) !== JSON.stringify(target)) invalid();
     const inspectRow = policy.inspectRow;
     const keepProvisioning = entry.dataset.id === 'core.tenants';
+    const preserveIsolationPolicy =
+      keepProvisioning && entry.capture.columns.includes('isolation_policy');
     return {
       ...policy,
-      ...(directTenantKey
+      ...(tenantKeyOwned
         ? { tenantKey: PORTABLE_TENANT_KEY, restoreTenantKey: input.tenantKey }
         : {}),
       ...(primaryKey
@@ -334,8 +460,19 @@ export function createPhase8SqliteInspectionPolicies(
               lifecycle_state: ['text', 'provisioning'] as const,
             },
             verificationIgnoredColumns: [
-              ...new Set([...(policy.verificationIgnoredColumns ?? []), 'lifecycle_state']),
+              ...new Set([
+                ...(policy.verificationIgnoredColumns ?? []),
+                'lifecycle_state',
+                ...(preserveIsolationPolicy ? ['isolation_policy'] : []),
+              ]),
             ],
+            ...(preserveIsolationPolicy
+              ? {
+                  restorePreservedSeedColumns: [
+                    ...new Set([...(policy.restorePreservedSeedColumns ?? []), 'isolation_policy']),
+                  ],
+                }
+              : {}),
           }
         : {}),
       inspectRow: async (row, identity) => {
@@ -347,7 +484,23 @@ export function createPhase8SqliteInspectionPolicies(
 
   return planned.map((entry) => {
     const previous = previousPolicies.get(entry.dataset.id);
-    if (previous) return withTargetTenantKey(entry, previous);
+    if (previous) {
+      const installedSeed = installedTenantSeedDatasetIds.has(entry.dataset.id);
+      const seedAware = {
+        ...previous,
+        ...(installedSeed || targetGeneratedRowDatasetIds.has(entry.dataset.id)
+          ? { restoreAllowsAdditionalRows: true }
+          : {}),
+        ...(installedSeed ? { restoreReplacesInstalledSeedRows: true } : {}),
+        ...(restoreGeneratedSideEffectDatasetIds.has(entry.dataset.id)
+          ? { restoreReconcilesGeneratedRows: true }
+          : {}),
+      };
+      return withTargetTenantKey(
+        entry,
+        preserveTargetRuntimeRegistryState(entry, preserveInstalledSeedTimestamps(entry, seedAware))
+      );
+    }
     const registration = registrations.get(entry.dataset.id);
     if (
       !registration ||
@@ -445,6 +598,7 @@ export function createPhase8SqliteInspectionPolicies(
       : undefined;
     if (adminRestoreTransform && pluginRestoreTransform) invalid();
     const restoreTransform = adminRestoreTransform ?? pluginRestoreTransform;
+    const verificationIgnoredColumns = [...new Set([...Object.keys(restoreOverrides ?? {})])];
     const holdRule = PHASE8_RESTORE_HOLD_RULES[entry.dataset.id];
     if (holdRule && !input.restoreHold) throw new Error('backup_phase8_restore_hold_missing');
     const holdInput = (rowJson: string) => {
@@ -474,27 +628,42 @@ export function createPhase8SqliteInspectionPolicies(
         }
       : undefined;
 
-    return withTargetTenantKey(entry, {
-      dataset: structuredClone(entry.dataset),
-      schema: structuredClone(entry.capture),
-      ...(restoreAfter.length ? { restoreAfter } : {}),
-      ...(restoreOverrides ? { restoreOverrides } : {}),
-      ...(restoreOverrides ? { verificationIgnoredColumns: Object.keys(restoreOverrides) } : {}),
-      ...(entry.dataset.id === 'admin.admin_users'
-        ? { restoreDisposition: 'reference_only' as const }
-        : {}),
-      ...(restoreTransform ? { restoreTransform } : {}),
-      ...(restoreHold ? { restoreHold } : {}),
-      ...(entry.capture.tenantIdentity === 'tenantKey' ? { tenantKey: PORTABLE_TENANT_KEY } : {}),
-      ...(parentDataset
-        ? { parentDataset: { id: parentDataset.id, module: parentDataset.module } }
-        : {}),
-      ...(entry.partitions ? { partitions: [...entry.partitions] } : {}),
-      inspectRow: async (row, identity) => {
-        if (sensitiveIds.has(entry.dataset.id))
-          await input.validatePhase8Envelope(entry.dataset.id, row);
-        return inspectPhase8SqliteReferences(entry.dataset.id, row, identity);
-      },
-    });
+    return withTargetTenantKey(
+      entry,
+      preserveInstalledSeedTimestamps(entry, {
+        dataset: structuredClone(entry.dataset),
+        schema: structuredClone(entry.capture),
+        ...(restoreAfter.length ? { restoreAfter } : {}),
+        ...(restoreOverrides ? { restoreOverrides } : {}),
+        ...(verificationIgnoredColumns.length ? { verificationIgnoredColumns } : {}),
+        ...(entry.dataset.id === 'admin.admin_users' ||
+        derivedReferenceOnlyDatasetIds.has(entry.dataset.id)
+          ? { restoreDisposition: 'reference_only' as const }
+          : {}),
+        ...(adminReferenceRule ||
+        installedTenantSeedDatasetIds.has(entry.dataset.id) ||
+        targetGeneratedRowDatasetIds.has(entry.dataset.id)
+          ? { restoreAllowsAdditionalRows: true }
+          : {}),
+        ...(installedTenantSeedDatasetIds.has(entry.dataset.id)
+          ? { restoreReplacesInstalledSeedRows: true }
+          : {}),
+        ...(restoreTransform ? { restoreTransform } : {}),
+        ...(restoreHold ? { restoreHold } : {}),
+        ...(restoreGeneratedSideEffectDatasetIds.has(entry.dataset.id)
+          ? { restoreReconcilesGeneratedRows: true }
+          : {}),
+        ...(entry.capture.tenantIdentity === 'tenantKey' ? { tenantKey: PORTABLE_TENANT_KEY } : {}),
+        ...(parentDataset
+          ? { parentDataset: { id: parentDataset.id, module: parentDataset.module } }
+          : {}),
+        ...(entry.partitions ? { partitions: [...entry.partitions] } : {}),
+        inspectRow: async (row, identity) => {
+          if (sensitiveIds.has(entry.dataset.id))
+            await input.validatePhase8Envelope(entry.dataset.id, row);
+          return inspectPhase8SqliteReferences(entry.dataset.id, row, identity);
+        },
+      })
+    );
   });
 }

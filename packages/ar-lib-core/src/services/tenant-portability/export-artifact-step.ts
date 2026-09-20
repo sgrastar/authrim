@@ -1,19 +1,26 @@
-import { encodeTenantBundleManifest } from './bundle-manifest';
-import type { TenantBundleManifest } from './bundle-manifest';
+import {
+  encodeTenantBackupContainerV2,
+  type TenantBackupContainerDatasetSourceV2,
+} from './backup-container-v2';
+import { encodeTenantBundleManifest, type TenantBundleManifest } from './bundle-manifest';
 import { loadTenantBackupExportManifest } from './export-manifest-store';
-import { TenantBackupArtifactWriter } from './artifact-writer';
-import { TenantBackupCipherJournal } from './cipher-journal';
-import { writeTenantBackupDatasetSlice } from './resumable-bundle-writer';
+import {
+  TenantBackupArtifactWriter,
+  writeTenantBackupContainerArtifactV2,
+} from './artifact-writer';
 import type { TenantBackupStepContext, TenantBackupStepResult } from './operation-executor';
 import type { TenantBundleKeyEnvelope } from './bundle-key-envelope';
 
 type WriterArguments = Parameters<typeof TenantBackupArtifactWriter.resume>;
-type DatasetInput = Parameters<typeof writeTenantBackupDatasetSlice>[0];
+const DATASET_READ_CONCURRENCY = 4;
+
+function fail(): never {
+  throw new Error('backup_export_step_cursor');
+}
 
 /**
- * Durable export_artifact phase. Preparation must already have persisted the attempt, manifest,
- * source inventory and snapshot boundary. This stage never resolves a different source or creates
- * a replacement attempt implicitly. Verification/publication remain subsequent operation phases.
+ * Export the pinned T0 snapshot into one v2 container for normal backups. There are no row or
+ * event checkpoints. Large artifacts persist only completed capacity parts.
  */
 export async function runTenantBackupArtifactStep(
   context: TenantBackupStepContext,
@@ -23,15 +30,21 @@ export async function runTenantBackupArtifactStep(
     attemptId: string;
     key: TenantBundleKeyEnvelope;
     now: () => number;
-    manifest?: DatasetInput['manifest'];
-    expected: DatasetInput['expected'];
+    manifest?: TenantBundleManifest;
+    expected: {
+      bundleId: string;
+      source: TenantBundleManifest['source'];
+      selection: TenantBundleManifest['selection'];
+      datasets: TenantBundleManifest['datasets'];
+    };
     readNext: (
       datasetId: string,
       cursor: string | null,
       signal: AbortSignal,
-      manifest?: TenantBundleManifest
+      manifest?: TenantBundleManifest,
+      readSession?: object
     ) => Promise<{ bytes: Uint8Array; nextCursor: string } | null>;
-    assertBoundary: DatasetInput['assertBoundary'];
+    assertBoundary: () => Promise<void>;
   }
 ): Promise<TenantBackupStepResult> {
   const { operation, lease, signal } = context;
@@ -45,21 +58,13 @@ export async function runTenantBackupArtifactStep(
     input.expected.source.tenantId !== lease.tenantId
   )
     throw new Error('backup_export_step_context');
-  let cursor: unknown;
+  let cursor: { version?: unknown; attemptId?: unknown };
   try {
-    cursor = JSON.parse(operation.cursor_json ?? 'null');
+    cursor = JSON.parse(operation.cursor_json ?? 'null') as typeof cursor;
   } catch {
-    throw new Error('backup_export_step_cursor');
+    fail();
   }
-  if (
-    !cursor ||
-    typeof cursor !== 'object' ||
-    !('version' in cursor) ||
-    cursor.version !== 1 ||
-    !('attemptId' in cursor) ||
-    cursor.attemptId !== input.attemptId
-  )
-    throw new Error('backup_export_step_cursor');
+  if (cursor?.version !== 2 || cursor.attemptId !== input.attemptId) fail();
   const writer = await TenantBackupArtifactWriter.resume(
     input.database,
     input.bucket,
@@ -80,24 +85,72 @@ export async function runTenantBackupArtifactStep(
       new TextDecoder().decode(encodeTenantBundleManifest(manifest, input.expected))
   )
     throw new Error('backup_export_manifest_changed');
-  const journal = await TenantBackupCipherJournal.open(
-    input.database,
-    writer,
-    lease,
-    input.now,
-    input.key
+
+  await input.assertBoundary();
+  const datasetChunks: Uint8Array[][] = manifest.datasets.map(() => []);
+  const readSession = {};
+  let nextDatasetIndex = 0;
+  const readDataset = async (index: number): Promise<void> => {
+    const descriptor = manifest.datasets[index];
+    if (descriptor.disposition !== 'include') return;
+    let sourceCursor: string | null = null;
+    for (;;) {
+      signal.throwIfAborted();
+      const next = await input.readNext(descriptor.id, sourceCursor, signal, manifest, readSession);
+      if (!next) return;
+      if (
+        !(next.bytes instanceof Uint8Array) ||
+        !next.bytes.length ||
+        typeof next.nextCursor !== 'string' ||
+        !next.nextCursor ||
+        next.nextCursor === sourceCursor
+      )
+        throw new Error('backup_export_source_invalid');
+      sourceCursor = next.nextCursor;
+      datasetChunks[index].push(next.bytes);
+    }
+  };
+  const workers = Array.from(
+    { length: Math.min(DATASET_READ_CONCURRENCY, manifest.datasets.length) },
+    async () => {
+      for (;;) {
+        const index = nextDatasetIndex++;
+        if (index >= manifest.datasets.length) return;
+        await readDataset(index);
+      }
+    }
   );
-  const result = await writeTenantBackupDatasetSlice({
-    ...input,
+  await Promise.all(workers);
+  const datasets = (async function* (): AsyncGenerator<TenantBackupContainerDatasetSourceV2> {
+    for (let index = 0; index < manifest.datasets.length; index++) {
+      const descriptor = manifest.datasets[index];
+      yield {
+        datasetId: descriptor.id,
+        chunks: (async function* () {
+          yield* datasetChunks[index];
+        })(),
+      };
+    }
+  })();
+  const salt = new Uint8Array(
+    await crypto.subtle.digest(
+      'SHA-256',
+      new TextEncoder().encode(`authrim-backup-container-v2:${input.attemptId}`)
+    )
+  );
+  const container = await encodeTenantBackupContainerV2({
     manifest,
-    journal,
+    datasets,
+    session: input.key,
     signal,
-    readNext: (datasetId, cursor, readSignal) =>
-      input.readNext(datasetId, cursor, readSignal, manifest),
+    streamSalt: salt,
   });
+  await input.assertBoundary();
+  await writeTenantBackupContainerArtifactV2(writer, container, signal);
+  await input.assertBoundary();
   return {
-    phase: result.complete ? 'verify_artifact' : 'export_artifact',
-    cursor: JSON.stringify({ version: 1, attemptId: input.attemptId }),
+    phase: 'verify_artifact',
+    cursor: JSON.stringify({ version: 2, attemptId: input.attemptId }),
     disposition: 'continue',
   };
 }

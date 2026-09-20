@@ -279,15 +279,18 @@ export async function persistSqliteTenantDatasetPlanPage(
     throw new Error('backup_plan_adapters_unresolved');
   if (input.firstOrdinal + plan.entries.length > 4096 || entryOffset > plan.entries.length)
     throw new Error('backup_plan_inventory_limit');
-  const entries = plan.entries.slice(entryOffset, entryOffset + 16);
-  for (const [offset, entry] of entries.entries()) {
-    // Only installed metadata; no credentials, row bodies, bindings or uploaded SQL.
-    await input.inventory.append(
-      input.firstOrdinal + entryOffset + offset,
-      `${input.resourceId}:${entry.table}`,
-      await sqlitePlanPayload(input, entry)
+  const entries = plan.entries.slice(entryOffset, entryOffset + 100);
+  if (entries.length)
+    await input.inventory.appendBatch(
+      await Promise.all(
+        entries.map(async (entry, offset) => ({
+          ordinal: input.firstOrdinal + entryOffset + offset,
+          itemId: `${input.resourceId}:${entry.table}`,
+          // Only installed metadata; no credentials, row bodies, bindings or uploaded SQL.
+          payloadJson: await sqlitePlanPayload(input, entry),
+        }))
+      )
     );
-  }
   const nextEntryOffset = entryOffset + entries.length;
   return {
     nextEntryOffset,
@@ -377,6 +380,83 @@ export async function verifyPersistedSqliteTenantDatasetPlan(input: {
   }
   await input.inventory.head();
   return plan.captureSchemas;
+}
+
+/**
+ * Load the capture program from the sealed inventory after a resource was verified live during
+ * preparation. Callers must pair this with the preparation-time schema digest and recheck that
+ * digest immediately before starting the snapshot.
+ */
+export async function readPersistedSqliteCaptureSchemas(input: {
+  inventory: import('./execution-inventory').TenantBackupExecutionInventory;
+  lease: import('./operation-store').TenantBackupLease;
+  family: MigrationSchemaFamily;
+  resourceId: string;
+  firstOrdinal: number;
+  tableCount: number;
+  captureCount: number;
+}): Promise<CaptureSchema[]> {
+  if (
+    !/^[A-Za-z0-9_.:-]{1,128}$/.test(input.resourceId) ||
+    !Number.isSafeInteger(input.firstOrdinal) ||
+    input.firstOrdinal < 0 ||
+    !Number.isSafeInteger(input.tableCount) ||
+    input.tableCount < 1 ||
+    !Number.isSafeInteger(input.captureCount) ||
+    input.captureCount < 1 ||
+    input.captureCount > input.tableCount
+  )
+    throw new Error('backup_plan_invalid_resource');
+  const head = await input.inventory.headForLease(input.lease);
+  if (head.state !== 'sealed' || input.firstOrdinal + input.tableCount > head.item_count)
+    throw new Error('backup_plan_inventory_changed');
+  const captures: CaptureSchema[] = [];
+  let ordinal = input.firstOrdinal;
+  const end = input.firstOrdinal + input.tableCount;
+  while (ordinal < end) {
+    const page = await input.inventory.readPage(ordinal);
+    const bounded = page.slice(0, end - ordinal);
+    if (!bounded.length) throw new Error('backup_plan_inventory_changed');
+    for (const item of bounded) {
+      let value: Record<string, unknown>;
+      try {
+        value = JSON.parse(item.payload_json) as Record<string, unknown>;
+      } catch {
+        throw new Error('backup_plan_inventory_changed');
+      }
+      if (
+        value.version !== 1 ||
+        value.resourceId !== input.resourceId ||
+        value.family !== input.family ||
+        typeof value.table !== 'string' ||
+        !/^[a-z][a-z0-9_]*$/.test(value.table) ||
+        item.item_id !== `${input.resourceId}:${value.table}` ||
+        typeof value.schemaDigest !== 'string' ||
+        !/^[a-f0-9]{64}$/.test(value.schemaDigest) ||
+        !('selection' in value) ||
+        !('capture' in value)
+      )
+        throw new Error('backup_plan_inventory_changed');
+      if (value.capture === null) continue;
+      if (typeof value.capture !== 'object' || Array.isArray(value.capture))
+        throw new Error('backup_plan_inventory_changed');
+      let capture: CaptureSchema | undefined;
+      try {
+        capture = sqliteCapturePlan([value.capture as CaptureSchema]).schemas.find(
+          (schema) => schema.table === value.table
+        );
+      } catch {
+        throw new Error('backup_plan_inventory_changed');
+      }
+      if (!capture) throw new Error('backup_plan_inventory_changed');
+      captures.push(capture);
+    }
+    ordinal += bounded.length;
+  }
+  if (captures.length !== input.captureCount) throw new Error('backup_plan_inventory_changed');
+  const schemas = sqliteCapturePlan(captures).schemas;
+  await input.inventory.headForLease(input.lease);
+  return schemas;
 }
 
 /** Read the authorized physical DB afresh and reconcile it against the sealed operation plan. */

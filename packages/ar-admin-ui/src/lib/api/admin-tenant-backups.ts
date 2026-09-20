@@ -2,6 +2,9 @@ import {
 	createTenantBundleKeyEnvelope,
 	unlockTenantBundleKeyEnvelope
 } from '@authrim/ar-lib-core/services/tenant-portability/bundle-key-envelope';
+import { TenantBundleCipherDecoder } from '@authrim/ar-lib-core/services/tenant-portability/bundle-cipher-decoder';
+import { TENANT_BUNDLE_MANIFEST_MAX_BYTES } from '@authrim/ar-lib-core/services/tenant-portability/bundle-manifest';
+import { decodeTenantBackupContainerV2 } from '@authrim/ar-lib-core/services/tenant-portability/backup-container-v2';
 import type { TenantBackupKeyHandoffContext } from '@authrim/ar-lib-core/services/tenant-portability/operation-key-handoff';
 import { API_BASE_URL, adminFetch, buildAdminHeaders } from './admin-request';
 import { hashTenantBackupFile } from './tenant-backup-sha256';
@@ -17,6 +20,12 @@ export interface TenantBackupSelection {
 		sensitive: boolean;
 		period: 7 | 30 | 90 | 'all';
 	};
+}
+
+interface TenantBackupSource {
+	tenantId: string;
+	issuer: string;
+	productVersion: string;
 }
 
 export interface TenantBackupOperationSummary {
@@ -50,6 +59,14 @@ export interface TenantBackupOperation extends TenantBackupOperationSummary {
 		digest: string | null;
 	} | null;
 	heldRecords: { datasetId: string; reason: string; count: number }[];
+	progress: {
+		registered: number;
+		materialized: number;
+		nonEmpty: number;
+		executionBatches: number;
+		bytes: number;
+		rows: number;
+	} | null;
 	preview: {
 		planDigest: string;
 		datasetCount: number;
@@ -185,6 +202,12 @@ async function acceptKey(
 export function extractTenantBackupEnvelope(header: ArrayBuffer): Uint8Array {
 	const bytes = new Uint8Array(header);
 	if (
+		bytes.length >= 101 &&
+		new TextDecoder().decode(bytes.subarray(0, 8)) === 'AUTHRIM2' &&
+		bytes[8] === 1
+	)
+		return bytes.slice(8, 101);
+	if (
 		bytes.length !== 137 ||
 		new TextDecoder().decode(bytes.subarray(0, 8)) !== 'AUTHRIM1' ||
 		new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength).getUint32(8) !== 125 ||
@@ -192,6 +215,88 @@ export function extractTenantBackupEnvelope(header: ArrayBuffer): Uint8Array {
 	)
 		throw new Error('Invalid Authrim tenant backup file');
 	return bytes.slice(12, 105);
+}
+
+function validateTenantBackupSource(source: unknown): TenantBackupSource {
+	if (
+		!source ||
+		typeof source !== 'object' ||
+		Array.isArray(source) ||
+		Object.keys(source).sort().join(',') !== 'issuer,productVersion,tenantId'
+	)
+		throw new Error('Invalid Authrim tenant backup file');
+	const value = source as Record<string, unknown>;
+	if (
+		typeof value.tenantId !== 'string' ||
+		!/^[A-Za-z0-9_.:-]{1,256}$/.test(value.tenantId) ||
+		typeof value.issuer !== 'string' ||
+		value.issuer.length < 1 ||
+		value.issuer.length > 2048 ||
+		typeof value.productVersion !== 'string' ||
+		!/^[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.-]+)?(?:\+[A-Za-z0-9.-]+)?$/.test(value.productVersion)
+	)
+		throw new Error('Invalid Authrim tenant backup file');
+	try {
+		const url = new URL(value.issuer);
+		if (
+			!['https:', 'http:'].includes(url.protocol) ||
+			url.username ||
+			url.password ||
+			url.search ||
+			url.hash
+		)
+			throw new Error('invalid');
+	} catch {
+		throw new Error('Invalid Authrim tenant backup file');
+	}
+	return {
+		tenantId: value.tenantId,
+		issuer: value.issuer,
+		productVersion: value.productVersion
+	};
+}
+
+export async function inspectTenantBackupSource(
+	file: File,
+	passphrase: string
+): Promise<TenantBackupSource> {
+	const prefix = new Uint8Array(await file.slice(0, 141).arrayBuffer());
+	const envelope = extractTenantBackupEnvelope(prefix.slice(0, 137).buffer);
+	const session = await unlockTenantBundleKeyEnvelope(envelope, passphrase);
+	if (new TextDecoder().decode(prefix.subarray(0, 8)) === 'AUTHRIM2') {
+		const decoded = await decodeTenantBackupContainerV2({
+			parts: [new Uint8Array(await file.arrayBuffer())],
+			session
+		});
+		return validateTenantBackupSource(decoded.manifest.backup.source);
+	}
+	const contentLength = new DataView(prefix.buffer, prefix.byteOffset + 137, 4).getUint32(0, false);
+	if (
+		contentLength < 18 ||
+		contentLength > TENANT_BUNDLE_MANIFEST_MAX_BYTES + 18 ||
+		141 + contentLength > file.size
+	)
+		throw new Error('Invalid Authrim tenant backup file');
+	const decoder = await TenantBundleCipherDecoder.create(prefix.slice(12, 137), session, {
+		maxTotalBytes: file.size,
+		maxFrames: Math.min(1_000_001, Math.max(2, Math.floor((file.size - 8) / 5)))
+	});
+	const opened = await decoder.step(
+		new Uint8Array(await file.slice(141, 141 + contentLength).arrayBuffer())
+	);
+	if (opened.kind !== 'chunk' || opened.bytes[0] !== 1)
+		throw new Error('Invalid Authrim tenant backup file');
+	let root: unknown;
+	try {
+		root = JSON.parse(
+			new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(opened.bytes.slice(1))
+		);
+	} catch {
+		throw new Error('Invalid Authrim tenant backup file');
+	}
+	if (!root || typeof root !== 'object' || Array.isArray(root) || !('source' in root))
+		throw new Error('Invalid Authrim tenant backup file');
+	return validateTenantBackupSource(root.source);
 }
 
 export async function saveTenantBackupResponse(
@@ -390,11 +495,13 @@ export const adminTenantBackupsAPI = {
 		selection: TenantBackupSelection,
 		passphrase: string
 	) {
+		const source = await inspectTenantBackupSource(file, passphrase);
 		const operation = await json<CreatedOperation>('/api/admin/tenant-backups/imports', {
 			method: 'POST',
 			body: JSON.stringify({
 				idempotencyKey: idempotencyKey('import'),
 				selection,
+				source,
 				uploadIds: [uploadId]
 			})
 		});

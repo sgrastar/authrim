@@ -161,6 +161,43 @@ export class TenantBackupBoundaryReceipts {
     ));
   }
 
+  /** Persist the complete verified participant set in one database round trip. */
+  async acknowledgeAll(
+    input: BackupBoundaryIdentity,
+    participants: readonly BackupBoundaryParticipant[],
+    now: number
+  ): Promise<boolean> {
+    const identity = this.identity(input, now);
+    const serialized = this.serializeParticipants(participants);
+    await this.database.queryOne(
+      `INSERT INTO tenant_backup_boundary_receipts
+       (boundary_id,resource_id,snapshot_id,acknowledged_at)
+       SELECT b.id,json_extract(participant.value,'$.resourceId'),
+         json_extract(participant.value,'$.snapshotId'),${sqliteBoundaryClockParameter(this.databaseClock)}
+       FROM tenant_backup_mutation_boundaries b
+       JOIN tenant_backup_boundary_plans p ON p.boundary_id=b.id,
+       json_each(p.participants_json) participant
+       WHERE b.id=? AND b.environment_id=? AND b.tenant_id=? AND b.operation_id=?
+       AND b.inventory_digest=? AND b.state='held' AND b.created_at<=?
+       AND b.deadline_at>${sqliteBoundaryClockParameter(this.databaseClock)}
+       AND p.participants_json=?
+       ON CONFLICT(boundary_id,resource_id) DO NOTHING
+       RETURNING boundary_id`,
+      [now, ...identity, now, now, serialized]
+    );
+    return !!(await this.database.queryOne(
+      `SELECT p.boundary_id FROM tenant_backup_boundary_plans p
+       JOIN tenant_backup_mutation_boundaries b ON b.id=p.boundary_id
+       WHERE b.id=? AND b.environment_id=? AND b.tenant_id=? AND b.operation_id=?
+       AND b.inventory_digest=? AND b.state='held' AND b.created_at<=?
+       AND b.deadline_at>${sqliteBoundaryClockParameter(this.databaseClock)}
+       AND p.participants_json=? AND p.participant_count=(
+         SELECT count(*) FROM tenant_backup_boundary_receipts r WHERE r.boundary_id=p.boundary_id
+       )`,
+      [...identity, now, now, serialized]
+    ));
+  }
+
   /** Atomically release only with all receipts; replay reads the original immutable release. */
   async release(
     input: BackupBoundaryIdentity,

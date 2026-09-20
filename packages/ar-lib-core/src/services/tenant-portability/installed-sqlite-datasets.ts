@@ -140,7 +140,7 @@ export async function resolveInstalledSqliteDatasets(input: {
   if (head.state !== 'sealed') fail();
   const firstOrdinals = new Map<string, number>();
   const planned: PlannedInstalledSqliteDataset[] = [];
-  for (let from = 0; from < head.item_count; from += 16) {
+  for (let from = 0; from < head.item_count; ) {
     const page = await input.inventory.readPage(from);
     if (!page.length && from < head.item_count) fail();
     for (const item of page) {
@@ -172,9 +172,10 @@ export async function resolveInstalledSqliteDatasets(input: {
       firstOrdinals.set(value.resourceId, firstOrdinal);
       if (value.capture === null) continue;
       if (typeof value.capture !== 'object' || Array.isArray(value.capture)) fail();
-      let capture: CaptureSchema;
+      let capture: CaptureSchema | undefined;
       try {
-        capture = sqliteCapturePlan([value.capture as CaptureSchema]).schemas[0];
+        const schemas = sqliteCapturePlan([value.capture as CaptureSchema]).schemas;
+        capture = schemas.find((schema) => schema.table === value.table);
       } catch {
         fail();
       }
@@ -245,6 +246,7 @@ export async function resolveInstalledSqliteDatasets(input: {
         });
       }
     }
+    from += page.length;
   }
   if (!planned.length) fail();
   const grouped = new Map<string, PlannedInstalledSqliteDataset[]>();

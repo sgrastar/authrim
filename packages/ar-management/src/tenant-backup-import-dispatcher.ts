@@ -27,6 +27,10 @@ type RestoreInput = Parameters<typeof runSqliteRestoreSequenceStep>[1];
 /** Server-installed code only. Uploaded manifests cannot supply policies or target callbacks. */
 export interface TenantBackupInstalledImportAdapter {
   datasets(selection: TenantBackupSelection): readonly TenantPortableDataset[];
+  /** Load the complete installed policy set once for whole-plan validation. */
+  loadPolicies?(
+    context: TenantBackupStepContext
+  ): Promise<readonly SqliteDatasetInspectionPolicy[]>;
   loadPolicy(
     context: TenantBackupStepContext,
     datasetId: string
@@ -224,6 +228,29 @@ function validateStoreProgress(
   } else if (cursor !== null) fail();
 }
 
+// The handler may coalesce up to four independent object writes. Keep the outer
+// lease batch bounded so a slow R2 store still reaches a durable checkpoint well
+// before the Worker execution deadline.
+const STORE_EXECUTION_BATCH_LIMIT = 4;
+
+/**
+ * Keep row-level sidecar handlers retryable, but checkpoint only after a bounded execution batch.
+ * Every handler is required to be idempotent because a failed batch resumes from `initialCursor`.
+ */
+async function runStoreExecutionBatch(
+  initialCursor: string | null,
+  run: (cursor: string | null) => Promise<{ cursor: string | null; done: boolean }>
+) {
+  let cursor = initialCursor;
+  for (let index = 0; index < STORE_EXECUTION_BATCH_LIMIT; index++) {
+    const result = await run(cursor);
+    validateStoreProgress(result, cursor);
+    if (result.done) return result;
+    cursor = result.cursor;
+  }
+  return { cursor, done: false } as const;
+}
+
 /** Dispatch one import phase; the common scheduler owns its outer lease and checkpoint. */
 export async function runTenantBackupImportOperationStep(
   env: Env,
@@ -261,6 +288,7 @@ export async function runTenantBackupImportOperationStep(
       context,
       {
         datasets: (selection) => adapter.datasets(selection),
+        ...(adapter.loadPolicies ? { loadPolicies: () => adapter.loadPolicies!(context) } : {}),
         loadPolicy: (datasetId) => adapter.loadPolicy(context, datasetId),
         assertSources: () => adapter.assertSources(context),
       },
@@ -388,9 +416,10 @@ export async function runTenantBackupImportOperationStep(
     const cursor = otherStoreCursor(context.operation.cursor_json);
     if (cursor.planDigest !== head.chain_digest) fail();
     await adapter.assertSources(context);
-    const result = await adapter.restoreOtherStores(context, cursor.planDigest, cursor.storeCursor);
+    const result = await runStoreExecutionBatch(cursor.storeCursor, (storeCursor) =>
+      adapter.restoreOtherStores(context, cursor.planDigest, storeCursor)
+    );
     await adapter.assertSources(context);
-    validateStoreProgress(result, cursor.storeCursor);
     if (result.done) {
       const sequenceCursor = JSON.stringify(cursor.sequenceCursor);
       if (new TextEncoder().encode(sequenceCursor).length > 16384) fail();
@@ -408,9 +437,10 @@ export async function runTenantBackupImportOperationStep(
     const cursor = storeVerificationCursor(context.operation.cursor_json);
     if (cursor.planDigest !== head.chain_digest) fail();
     await adapter.assertSources(context);
-    const result = await adapter.verifyOtherStores(context, cursor.planDigest, cursor.storeCursor);
+    const result = await runStoreExecutionBatch(cursor.storeCursor, (storeCursor) =>
+      adapter.verifyOtherStores(context, cursor.planDigest, storeCursor)
+    );
     await adapter.assertSources(context);
-    validateStoreProgress(result, cursor.storeCursor);
     if (result.done)
       return {
         phase: 'prepare_restore_activation',

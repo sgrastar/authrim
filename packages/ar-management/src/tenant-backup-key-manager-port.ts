@@ -9,7 +9,10 @@ interface TenantBackupKeyManagerStub {
   loadTenantBackupSnapshotRpc(snapshotId: string): Promise<KeyManagerTenantBackupSnapshot>;
   releaseTenantBackupSnapshotRpc(snapshotId: string): Promise<void>;
   assertTenantBackupSnapshotReleasedRpc(snapshotId: string): Promise<void>;
-  importTenantBackupStateRpc(snapshot: unknown): Promise<unknown>;
+  importTenantBackupStateRpc(
+    snapshot: unknown,
+    options?: { replaceBootstrapKey?: boolean }
+  ): Promise<unknown>;
   verifyTenantBackupStateRpc(snapshot: unknown): Promise<boolean>;
 }
 
@@ -61,7 +64,9 @@ export function createTenantBackupKeyManagerSnapshotPort(
     },
     async importKeyManager(context, snapshot) {
       context.signal.throwIfAborted();
-      await stub(env, context.lease.tenantId).importTenantBackupStateRpc(snapshot);
+      await stub(env, context.lease.tenantId).importTenantBackupStateRpc(snapshot, {
+        replaceBootstrapKey: true,
+      });
       context.signal.throwIfAborted();
     },
     async verifyKeyManager(context, snapshot) {
