@@ -819,6 +819,8 @@ describe('deployWorker', () => {
   });
 
   it('adopts the active version and retries only triggers after a partial trigger deployment', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-08-25T00:00:00.000Z'));
     const rootDir = createTempRoot();
     createWorkerPackage(rootDir, 'ar-router', '1.0.0');
     const activeVersionId = 'router-version-after-partial-trigger-failure';
