@@ -2,6 +2,7 @@
 
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 const MARKER = '<!-- authrim-ci-coverage-summary -->';
 const SOURCE_EXTENSIONS = new Set(['.ts', '.tsx', '.js', '.jsx', '.svelte']);
@@ -401,7 +402,11 @@ function formatSuiteName(name, readmePath) {
   return `[${name}](${serverUrl}/${repository}/blob/${revision}/${readmePath})`;
 }
 
-function buildComment({ packages, totals, repositorySuites }) {
+function formatSize(bytes, divisor, unit) {
+  return Number.isFinite(bytes) ? `${(bytes / divisor).toFixed(2)} ${unit}` : '-';
+}
+
+export function buildComment({ packages, totals, repositorySuites, packageSizes }) {
   const sha = process.env.GITHUB_SHA ? process.env.GITHUB_SHA.slice(0, 7) : 'local';
   const generatedAt = new Date().toISOString();
 
@@ -413,18 +418,28 @@ function buildComment({ packages, totals, repositorySuites }) {
     ['Test case definitions', totals.testCases],
     ['Describe blocks', totals.describeBlocks],
     ['Real code + test total', totals.codeLines + totals.testLines],
+    [
+      'All packages uncompressed',
+      formatSize(packageSizes?.totals?.uncompressedBytes, 1024 ** 2, 'MiB'),
+    ],
+    ['All packages gzip', formatSize(packageSizes?.totals?.gzipBytes, 1024 ** 2, 'MiB')],
   ];
 
-  const packageRows = packages.map((pkg) => {
+  const coverageByName = new Map(packages.map((pkg) => [pkg.name, pkg]));
+  const rows = packageSizes
+    ? packageSizes.packages.map((pkg) => ({ ...coverageByName.get(pkg.name), ...pkg }))
+    : packages;
+  const packageRows = rows.map((pkg) => {
     const coverage = pkg.coverage;
     return [
       pkg.name,
-      pkg.status,
-      pkg.testCases,
+      pkg.testCases ?? '-',
       formatPct(coverage?.lines?.pct),
       formatPct(coverage?.branches?.pct),
       formatPct(coverage?.functions?.pct),
       formatPct(coverage?.statements?.pct),
+      formatSize(pkg.uncompressedBytes, 1024, 'KiB'),
+      formatSize(pkg.gzipBytes, 1024, 'KiB'),
     ];
   });
   const repositorySuiteRows = repositorySuites.map(
@@ -440,8 +455,8 @@ function buildComment({ packages, totals, repositorySuites }) {
   return `${MARKER}
 ## Coverage Summary
 
-Generated after **Lint, Type Check, and Test** completed for \`${sha}\`.
-Admin UI and Login UI are intentionally excluded while UI coverage is being refined.
+Generated after **Lint, Type Check, Test, and Build** completed for \`${sha}\`.
+Admin UI and Login UI are excluded from coverage and code/test counts while UI coverage is being refined; their build sizes are included.
 
 ### Overview
 
@@ -451,9 +466,11 @@ ${overviewRows.map(([label, value]) => `| ${label} | ${value} |`).join('\n')}
 
 ### Packages
 
-| Package | status | Test cases | lines | branches | funcs | stmts |
-| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| Package | Test cases | lines | branches | funcs | stmts | Uncompressed | Gzip |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 ${packageRows.map((row) => `| ${row.join(' | ')} |`).join('\n')}
+
+Sizes sum build output files (API/shared/setup: dist; UI: .svelte-kit/cloudflare), excluding source maps, type declarations, build metadata, and tests. Gzip is measured per file with Node.js defaults. These are build artifact sizes, not bundled Worker upload sizes.
 
 ### Repository Test Suites
 
@@ -528,7 +545,8 @@ async function main() {
     ? assertCoverageStatsReport(statsReport)
     : await collectPackageStats(process.cwd());
   const repositorySuites = await collectRepositorySuiteStats();
-  const body = buildComment({ ...stats, repositorySuites });
+  const packageSizes = await readJsonReport('AUTHRIM_PACKAGE_SIZES_REPORT');
+  const body = buildComment({ ...stats, repositorySuites, packageSizes });
 
   try {
     await upsertPullRequestComment(body);
@@ -538,4 +556,6 @@ async function main() {
   }
 }
 
-await main();
+if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
+  await main();
+}
