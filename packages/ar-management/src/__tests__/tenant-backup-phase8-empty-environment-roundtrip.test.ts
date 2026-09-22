@@ -160,6 +160,8 @@ describe('Phase 8 empty-environment SQL roundtrip', () => {
     }
   }, 20_000);
 
+  // Full migrations on ten in-memory databases plus real bundle/password crypto can exceed
+  // 20 seconds under CI coverage and parallel package load. Keep this budget local to the roundtrip.
   it('restores every SQL contract with reusable user authentication and mapped Admin access', async () => {
     const planned = await phase8Plan();
     const source = {
@@ -517,5 +519,5 @@ describe('Phase 8 empty-environment SQL roundtrip', () => {
         }
       }
     }
-  }, 20_000);
+  }, 60_000);
 });
