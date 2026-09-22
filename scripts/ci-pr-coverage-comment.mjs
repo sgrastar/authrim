@@ -434,10 +434,9 @@ export function buildComment({ packages, totals, repositorySuites, packageSizes 
     return [
       pkg.name,
       pkg.testCases ?? '-',
-      formatPct(coverage?.lines?.pct),
+      formatPct(coverage?.statements?.pct),
       formatPct(coverage?.branches?.pct),
       formatPct(coverage?.functions?.pct),
-      formatPct(coverage?.statements?.pct),
       formatSize(pkg.uncompressedBytes, 1024, 'KiB'),
       formatSize(pkg.gzipBytes, 1024, 'KiB'),
     ];
@@ -466,8 +465,8 @@ ${overviewRows.map(([label, value]) => `| ${label} | ${value} |`).join('\n')}
 
 ### Packages
 
-| Package | Test cases | lines | branches | funcs | stmts | Uncompressed | Gzip |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Package | Test cases | stmts | branches | funcs | Uncompressed | Gzip |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
 ${packageRows.map((row) => `| ${row.join(' | ')} |`).join('\n')}
 
 Sizes sum build output files (API/shared/setup: dist; UI: .svelte-kit/cloudflare), excluding source maps, type declarations, build metadata, and tests. Gzip is measured per file with Node.js defaults. These are build artifact sizes, not bundled Worker upload sizes.

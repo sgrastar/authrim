@@ -54,9 +54,10 @@ test('measures nested outputs and both UIs, excludes metadata/tests, and renders
   });
   const packageTable = comment.split('### Packages')[1].split('### Repository Test Suites')[0];
   assert.ok(!packageTable.includes('| status |'));
-  assert.match(packageTable, /stmts \| Uncompressed \| Gzip/);
-  assert.match(packageTable, /@authrim\/ar-auth \| 2 \| - \| - \| - \| 75.00% \| 1.00 KiB/);
-  assert.match(packageTable, /@authrim\/ar-admin-ui \| - \| - \| - \| - \| - \| 1.00 KiB/);
+  assert.ok(!packageTable.includes('| lines |'));
+  assert.match(packageTable, /Package \| Test cases \| stmts \| branches \| funcs \| Uncompressed \| Gzip/);
+  assert.match(packageTable, /@authrim\/ar-auth \| 2 \| 75.00% \| - \| - \| 1.00 KiB/);
+  assert.match(packageTable, /@authrim\/ar-admin-ui \| - \| - \| - \| - \| 1.00 KiB/);
   assert.match(comment, /All packages uncompressed \| 0.00 MiB/);
   assert.match(comment, /All packages gzip \| 0.00 MiB/);
   // Exercise MiB conversion independently of small filesystem fixtures.
