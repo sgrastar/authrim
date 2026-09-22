@@ -821,7 +821,7 @@ function mockStartQueries(
 
 function mockSubmitQueries(input: {
   state?: string;
-  expiresAt?: number;
+  expiresAt: number;
   contractHash: string;
   signature: string;
   currentNodeId?: string;
@@ -857,7 +857,7 @@ function mockSubmitQueries(input: {
       }),
       contract_hash: input.contractHash,
       signature: input.signature,
-      expires_at: input.expiresAt ?? Math.floor(Date.now() / 1000) + 600,
+      expires_at: input.expiresAt,
     })
     .mockResolvedValueOnce({
       id: 'step_1',
@@ -1897,6 +1897,7 @@ describe('LoginUI runtime Flow handlers', () => {
 
     resetAdapter();
     mockSubmitQueries({
+      expiresAt: Number((startData.interaction as Record<string, unknown>).expires_at),
       contractHash: String(startData.contract_hash),
       signature: String(startData.signature),
       currentNodeId: 'consent',
@@ -2116,6 +2117,7 @@ describe('LoginUI runtime Flow handlers', () => {
     const { data: startData } = await startInteraction();
     resetAdapter();
     mockSubmitQueries({
+      expiresAt: Number((startData.interaction as Record<string, unknown>).expires_at),
       contractHash: String(startData.contract_hash),
       signature: String(startData.signature),
     });
@@ -2143,36 +2145,44 @@ describe('LoginUI runtime Flow handlers', () => {
     expect(mocks.coreAdapter.transaction).toHaveBeenCalledTimes(1);
   });
 
-  it('uses editor edge handles to resolve the next runtime step', async () => {
-    const { data: startData } = await startInteraction();
-    resetAdapter();
-    mockSubmitQueries({
-      contractHash: String(startData.contract_hash),
-      signature: String(startData.signature),
-      currentNodeId: 'auth',
-      currentStepId: 'auth:step',
-      stepState: 'waiting_input',
-      runtimeSnapshot: branchingRuntime,
-      editorSnapshot: branchingEditor,
-    });
+  it('uses editor edge handles after the clock advances without changing the signed expiry', async () => {
+    const startedAt = Date.UTC(2026, 8, 22);
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(startedAt);
+    try {
+      const { data: startData } = await startInteraction();
+      clock.mockReturnValue(startedAt + 2000);
+      resetAdapter();
+      mockSubmitQueries({
+        expiresAt: Number((startData.interaction as Record<string, unknown>).expires_at),
+        contractHash: String(startData.contract_hash),
+        signature: String(startData.signature),
+        currentNodeId: 'auth',
+        currentStepId: 'auth:step',
+        stepState: 'waiting_input',
+        runtimeSnapshot: branchingRuntime,
+        editorSnapshot: branchingEditor,
+      });
 
-    const response = await loginRuntimeInteractionSubmitHandler(
-      createContext({
-        params: { interaction_id: 'interaction_1' },
-        body: {
-          step_id: 'auth:step',
-          node_id: 'auth',
-          selected_handle: 'passkey',
-          contract_hash: startData.contract_hash,
-          signature: startData.signature,
-        },
-      })
-    );
-    const data = await readJson(response);
+      const response = await loginRuntimeInteractionSubmitHandler(
+        createContext({
+          params: { interaction_id: 'interaction_1' },
+          body: {
+            step_id: 'auth:step',
+            node_id: 'auth',
+            selected_handle: 'passkey',
+            contract_hash: startData.contract_hash,
+            signature: startData.signature,
+          },
+        })
+      );
+      const data = await readJson(response);
 
-    expect(response.status).toBe(200);
-    expect(data.completed).toBe(true);
-    expect(data.step).toBeNull();
+      expect(response.status).toBe(200);
+      expect(data.completed).toBe(true);
+      expect(data.step).toBeNull();
+    } finally {
+      clock.mockRestore();
+    }
   });
 
   it('skips implicit account action nodes instead of returning a Continue step', async () => {
@@ -2182,6 +2192,7 @@ describe('LoginUI runtime Flow handlers', () => {
     );
     resetAdapter();
     mockSubmitQueries({
+      expiresAt: Number((startData.interaction as Record<string, unknown>).expires_at),
       contractHash: String(startData.contract_hash),
       signature: String(startData.signature),
       currentNodeId: 'auth',
@@ -2234,6 +2245,7 @@ describe('LoginUI runtime Flow handlers', () => {
     );
     resetAdapter();
     mockSubmitQueries({
+      expiresAt: Number((startData.interaction as Record<string, unknown>).expires_at),
       contractHash: String(startData.contract_hash),
       signature: String(startData.signature),
       currentNodeId: 'scope-condition',
@@ -2269,6 +2281,7 @@ describe('LoginUI runtime Flow handlers', () => {
     const { data: startData } = await startInteraction({ flow_kind: 'login' }, sessionCheckRuntime);
     resetAdapter();
     mockSubmitQueries({
+      expiresAt: Number((startData.interaction as Record<string, unknown>).expires_at),
       contractHash: String(startData.contract_hash),
       signature: String(startData.signature),
       currentNodeId: 'session-check',
@@ -2304,6 +2317,7 @@ describe('LoginUI runtime Flow handlers', () => {
     const { data: startData } = await startInteraction({ flow_kind: 'login' }, sessionCheckRuntime);
     resetAdapter();
     mockSubmitQueries({
+      expiresAt: Number((startData.interaction as Record<string, unknown>).expires_at),
       contractHash: String(startData.contract_hash),
       signature: String(startData.signature),
       currentNodeId: 'session-check',
@@ -2342,6 +2356,7 @@ describe('LoginUI runtime Flow handlers', () => {
     const { data: startData } = await startInteraction({ flow_kind: 'login' }, sessionCheckRuntime);
     resetAdapter();
     mockSubmitQueries({
+      expiresAt: Number((startData.interaction as Record<string, unknown>).expires_at),
       contractHash: String(startData.contract_hash),
       signature: String(startData.signature),
       currentNodeId: 'session-check',
@@ -2403,6 +2418,7 @@ describe('LoginUI runtime Flow handlers', () => {
     );
     resetAdapter();
     mockSubmitQueries({
+      expiresAt: Number((startData.interaction as Record<string, unknown>).expires_at),
       contractHash: String(startData.contract_hash),
       signature: String(startData.signature),
       currentNodeId: 'consent',
@@ -2558,6 +2574,7 @@ describe('LoginUI runtime Flow handlers', () => {
     );
     resetAdapter();
     mockSubmitQueries({
+      expiresAt: Number((startData.interaction as Record<string, unknown>).expires_at),
       contractHash: String(startData.contract_hash),
       signature: String(startData.signature),
       currentNodeId: 'consent',
@@ -2743,6 +2760,7 @@ describe('LoginUI runtime Flow handlers', () => {
     );
     resetAdapter();
     mockSubmitQueries({
+      expiresAt: Number((startData.interaction as Record<string, unknown>).expires_at),
       contractHash: String(startData.contract_hash),
       signature: String(startData.signature),
       currentNodeId: 'auth',
@@ -2837,6 +2855,7 @@ describe('LoginUI runtime Flow handlers', () => {
     );
     resetAdapter();
     mockSubmitQueries({
+      expiresAt: Number((startData.interaction as Record<string, unknown>).expires_at),
       contractHash: String(startData.contract_hash),
       signature: String(startData.signature),
       currentNodeId: 'auth',
@@ -2950,6 +2969,7 @@ describe('LoginUI runtime Flow handlers', () => {
     const { data: startData } = await startInteraction();
     resetAdapter();
     mockSubmitQueries({
+      expiresAt: Number((startData.interaction as Record<string, unknown>).expires_at),
       contractHash: String(startData.contract_hash),
       signature: String(startData.signature),
       currentNodeId: 'auth',
@@ -2987,6 +3007,7 @@ describe('LoginUI runtime Flow handlers', () => {
     );
     resetAdapter();
     mockSubmitQueries({
+      expiresAt: Number((startData.interaction as Record<string, unknown>).expires_at),
       contractHash: String(startData.contract_hash),
       signature: String(startData.signature),
       currentNodeId: 'complete',
@@ -3042,6 +3063,7 @@ describe('LoginUI runtime Flow handlers', () => {
     );
     resetAdapter();
     mockSubmitQueries({
+      expiresAt: Number((startData.interaction as Record<string, unknown>).expires_at),
       contractHash: String(startData.contract_hash),
       signature: String(startData.signature),
       currentNodeId: 'complete',
@@ -3125,6 +3147,7 @@ describe('LoginUI runtime Flow handlers', () => {
     );
     resetAdapter();
     mockSubmitQueries({
+      expiresAt: Number((startData.interaction as Record<string, unknown>).expires_at),
       contractHash: String(startData.contract_hash),
       signature: String(startData.signature),
       currentNodeId: 'complete',
@@ -3191,6 +3214,7 @@ describe('LoginUI runtime Flow handlers', () => {
     const { data: startData } = await startInteraction();
     resetAdapter();
     mockSubmitQueries({
+      expiresAt: Number((startData.interaction as Record<string, unknown>).expires_at),
       contractHash: String(startData.contract_hash),
       signature: String(startData.signature),
     });

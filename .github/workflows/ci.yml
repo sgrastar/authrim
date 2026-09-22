@@ -273,6 +273,7 @@ jobs:
       - control-plane-tests
       - lint
       - typecheck
+      - build
 
     steps:
       - name: Checkout code
@@ -290,6 +291,12 @@ jobs:
           name: authrim-control-plane-test-evidence
           path: ci-reports
 
+      - name: Download package build sizes
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: authrim-package-sizes
+          path: ci-reports
+
       - name: Comment coverage summary
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -302,6 +309,7 @@ jobs:
           AUTHRIM_SCALE_OUT_PHASE1_REPORT: ci-reports/authrim-scale-out-phase1-tests.json
           AUTHRIM_CONTROL_PLANE_REPORT: ci-reports/authrim-control-plane-tests.json
           AUTHRIM_COVERAGE_STATS_REPORT: ci-reports/authrim-package-coverage.json
+          AUTHRIM_PACKAGE_SIZES_REPORT: ci-reports/authrim-package-sizes.json
         run: node scripts/ci-pr-coverage-comment.mjs
 
   build:
@@ -347,6 +355,20 @@ jobs:
         run: pnpm run build:admin-ui
         env:
           NODE_OPTIONS: '--max-old-space-size=4096'
+
+      - name: Test package size reporting
+        run: node --test scripts/ci-package-sizes.test.mjs
+
+      - name: Measure all package build sizes
+        run: node scripts/ci-package-sizes.mjs ci-reports/authrim-package-sizes.json
+
+      - name: Upload package build sizes
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: authrim-package-sizes
+          path: ci-reports/authrim-package-sizes.json
+          if-no-files-found: error
+          retention-days: 7
 
   format:
     name: Format Check
