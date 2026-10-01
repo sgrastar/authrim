@@ -6,7 +6,7 @@
   "preview_urls": false,
   "assets": {
     "directory": "./packages/ar-admin-console/storybook-static",
-    "html_handling": "none",
+    "html_handling": "auto-trailing-slash",
     "not_found_handling": "none",
   },
   "routes": [
