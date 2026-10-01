@@ -27,7 +27,7 @@ import {
   getSessionCookieSameSite,
   getSessionStoreForNewSession,
   getSessionClientMetadata,
-  getTenantSettings,
+  getTenantSettingsDocument,
   getTenantIdFromContext,
   hasRemainingInvitationUses,
   isAllowedOrigin,
@@ -1850,7 +1850,10 @@ function createMigrationTransactionToken(): string {
 
 async function getAllowedOriginsFromKV(env: Env, tenantId: string): Promise<string[]> {
   let allowedOriginsValue: string | undefined;
-  const settings = await getTenantSettings(env.AUTHRIM_CONFIG, tenantId, 'tenant');
+  const settings = await getTenantSettingsDocument(env, tenantId, 'tenant', {
+    // Without the tenant's settings the fallback is at least as strict.
+    onUnreadable: 'empty',
+  });
   if (settings && typeof settings['tenant.allowed_origins'] === 'string') {
     allowedOriginsValue = settings['tenant.allowed_origins'];
   }

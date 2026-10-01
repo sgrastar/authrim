@@ -1,9 +1,34 @@
-import type { AuthrimConfig } from './config.js';
+import { join } from 'node:path';
+import type { AdminUiVariant, AuthrimConfig } from './config.js';
 import { classifyUiApiSite, type UiApiSiteClassification } from './site-classifier.js';
 import { ensureHttps } from './url-config.js';
 import type { UiEnvConfig } from './ui-env.js';
 
 export type UiComponent = 'ar-login-ui' | 'ar-admin-ui';
+/** Package that is built and deployed into a UI Worker slot. */
+export type UiSourcePackage = UiComponent | 'ar-admin-console';
+
+/**
+ * The Admin UI slot (`ar-admin-ui`) can be filled by the legacy Admin UI or the admin console.
+ * Worker name, inventory, lock entries and cleanup always use the slot name; only the package
+ * that is built and whose capability manifest is read changes.
+ */
+export function resolveUiSourcePackage(
+  component: UiComponent,
+  adminUiVariant: AdminUiVariant | null | undefined
+): UiSourcePackage {
+  return component === 'ar-admin-ui' && adminUiVariant === 'console'
+    ? 'ar-admin-console'
+    : component;
+}
+
+export function resolveUiPackageDir(
+  rootDir: string,
+  component: UiComponent,
+  adminUiVariant: AdminUiVariant | null | undefined
+): string {
+  return join(rootDir, 'packages', resolveUiSourcePackage(component, adminUiVariant));
+}
 export type AdminUiApiMode = 'same-origin' | 'same-site-cross-origin' | 'cross-site-proxy';
 
 export const DISABLED_API_BACKEND_URL = '__DISABLED__';
@@ -27,6 +52,8 @@ export interface UiDeploymentSettings {
   uiEnv: UiEnvConfig;
   runtimeApiBackendUrl: string;
   serviceBindingName: string | undefined;
+  /** Package built into this slot (the admin console can fill the Admin UI slot). */
+  sourcePackage: UiSourcePackage;
 }
 
 export function describeAdminUiApiMode(mode: AdminUiApiMode): string {
@@ -245,5 +272,6 @@ export function resolveUiDeploymentSettings(
     uiEnv,
     runtimeApiBackendUrl: needsProxy ? runtimeApiBackendUrl : DISABLED_API_BACKEND_URL,
     serviceBindingName,
+    sourcePackage: resolveUiSourcePackage(component, config.components?.adminUiVariant),
   };
 }

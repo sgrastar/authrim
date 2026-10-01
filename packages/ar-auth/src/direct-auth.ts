@@ -36,7 +36,8 @@ import {
   getTenantIdFromContext,
   buildDOKey,
   buildDOInstanceName,
-  getTenantSettings,
+  getTenantSettingsDocument,
+  resolveEffectiveSettings,
   generateSecureRandomString,
   generateId,
   generateUserIdFromSettings,
@@ -147,7 +148,7 @@ import {
 
 const RP_NAME = 'Authrim';
 const CHALLENGE_TTL = 5 * 60; // 5 minutes
-const AUTH_CODE_TTL = 60; // 60 seconds
+const AUTH_CODE_TTL = 60; // 60 seconds, when oauth.auth_code_ttl is not usable
 const EMAIL_CODE_TTL = 5 * 60; // 5 minutes
 const REFRESH_TOKEN_TTL = 30 * 24 * 60 * 60; // 30 days
 const DIRECT_AUTH_GRANT_REDIRECT_URI = 'https://authrim.local/direct-auth/callback';
@@ -350,7 +351,10 @@ type CredentialIDLike = string | ArrayBuffer | ArrayBufferView;
 async function getAllowedOriginsFromKV(env: Env, tenantId: string): Promise<string[]> {
   let allowedOriginsValue: string | undefined;
 
-  const settings = await getTenantSettings(env.AUTHRIM_CONFIG, tenantId, 'tenant');
+  const settings = await getTenantSettingsDocument(env, tenantId, 'tenant', {
+    // Without the tenant's settings the fallback is at least as strict.
+    onUnreadable: 'empty',
+  });
   if (settings && typeof settings['tenant.allowed_origins'] === 'string') {
     allowedOriginsValue = settings['tenant.allowed_origins'];
   }
@@ -824,7 +828,8 @@ async function validateSession(
 }
 
 /**
- * Generate auth_code and store in ChallengeStore
+ * Generate auth_code and store in ChallengeStore. Returns the code and its lifetime in seconds
+ * (`oauth.auth_code_ttl` for the client or tenant), which both stores and the response use.
  */
 async function generateAuthCode(
   env: Env,
@@ -832,7 +837,7 @@ async function generateAuthCode(
   userId: string,
   codeChallenge: string,
   metadata?: Record<string, unknown>
-): Promise<string> {
+): Promise<{ code: string; expiresIn: number }> {
   const authCode = crypto.randomUUID();
   const clientId = typeof metadata?.client_id === 'string' ? metadata.client_id : undefined;
   const scope = typeof metadata?.scope === 'string' ? metadata.scope : 'openid profile email';
@@ -846,10 +851,20 @@ async function generateAuthCode(
   );
   const authCodeStore = env.AUTH_CODE_STORE.get(authCodeStoreId);
 
+  const configuredTtl = (await resolveEffectiveSettings(env, 'oauth', { tenantId, clientId }))[
+    'oauth.auth_code_ttl'
+  ];
+  // One lifetime for the code, its challenge and the response: a code must not outlive its
+  // challenge (the token exchange consumes both) or the other way round.
+  const expiresIn =
+    typeof configuredTtl === 'number' && Number.isSafeInteger(configuredTtl) && configuredTtl > 0
+      ? configuredTtl
+      : AUTH_CODE_TTL;
   await authCodeStore.storeCodeRpc({
     code: authCode,
     tenantId,
     clientId,
+    ttlSeconds: expiresIn,
     redirectUri: DIRECT_AUTH_GRANT_REDIRECT_URI,
     userId,
     scope,
@@ -868,14 +883,14 @@ async function generateAuthCode(
     type: 'direct_auth_code',
     userId,
     challenge: codeChallenge, // Store code_challenge for verification
-    ttl: AUTH_CODE_TTL, // 60 seconds
+    ttl: expiresIn,
     metadata: {
       ...metadata,
       created_at: Date.now(),
     },
   });
 
-  return authCode;
+  return { code: authCode, expiresIn };
 }
 
 // ===== Passkey Login Handlers =====
@@ -1243,7 +1258,7 @@ export async function directPasskeyLoginFinishHandler(c: Context<{ Bindings: Env
     );
 
     // Generate auth_code
-    const authCode = await generateAuthCode(
+    const { code: authCode, expiresIn: authCodeExpiresIn } = await generateAuthCode(
       c.env,
       tenantId,
       passkey.user_id,
@@ -1273,7 +1288,7 @@ export async function directPasskeyLoginFinishHandler(c: Context<{ Bindings: Env
 
     return c.json({
       direct_auth_artifact: authCode,
-      expires_in: AUTH_CODE_TTL,
+      expires_in: authCodeExpiresIn,
     });
   } catch (error) {
     const writeFenceResponse = createTenantPlacementWriteFenceResponse(c, error);
@@ -1452,8 +1467,7 @@ export async function directPasskeySignupStartHandler(c: Context<{ Bindings: Env
 
     if (!user) {
       // Create new user
-      const newUserId =
-        resumedUserId ?? (await generateUserIdFromSettings(c.env.AUTHRIM_CONFIG, tenantId, c.env));
+      const newUserId = resumedUserId ?? (await generateUserIdFromSettings(c.env, tenantId, c.env));
       const defaultName = display_name || null;
       const preferredUsername = normalizedEmail?.split('@')[0] ?? newUserId;
       const provisioningRuntimeUser = {
@@ -1834,7 +1848,7 @@ export async function directPasskeySignupFinishHandler(c: Context<{ Bindings: En
 
     // Generate auth_code
     failureStage = 'auth_code_issue';
-    const authCode = await generateAuthCode(
+    const { code: authCode, expiresIn: authCodeExpiresIn } = await generateAuthCode(
       c.env,
       tenantId,
       userId,
@@ -1853,7 +1867,7 @@ export async function directPasskeySignupFinishHandler(c: Context<{ Bindings: En
 
     return c.json({
       direct_auth_artifact: authCode,
-      expires_in: AUTH_CODE_TTL,
+      expires_in: authCodeExpiresIn,
       is_new_user: isNewUser,
     });
   } catch (error) {
@@ -2084,7 +2098,7 @@ async function completeDirectEmailVerification(
     );
   });
 
-  const authCode = await generateAuthCode(
+  const { code: authCode, expiresIn: authCodeExpiresIn } = await generateAuthCode(
     c.env,
     tenantId,
     userId,
@@ -2125,7 +2139,7 @@ async function completeDirectEmailVerification(
 
   return c.json({
     direct_auth_artifact: authCode,
-    expires_in: AUTH_CODE_TTL,
+    expires_in: authCodeExpiresIn,
     is_new_user: isNewUser,
   });
 }
@@ -2535,7 +2549,7 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
     });
 
     if (!user) {
-      const userId = await generateUserIdFromSettings(c.env.AUTHRIM_CONFIG, tenantId, c.env);
+      const userId = await generateUserIdFromSettings(c.env, tenantId, c.env);
       const preferredUsername = normalizedEmail.split('@')[0];
       const runtimeUser = {
         active: true as const,

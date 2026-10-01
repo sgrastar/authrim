@@ -293,7 +293,11 @@ import {
 } from '../core/topology-config-transaction.js';
 import { completeInitialSetup } from '../core/admin.js';
 import { prepareAdminUiBffDeployment } from '../core/admin-ui-bff-deployment.js';
-import { describeAdminUiApiMode, resolveUiDeploymentSettings } from '../core/ui-deployment.js';
+import {
+  describeAdminUiApiMode,
+  resolveUiDeploymentSettings,
+  resolveUiPackageDir,
+} from '../core/ui-deployment.js';
 import { saveUiEnv, buildInitialUiEnvConfig, mergeAndSaveUiEnv } from '../core/ui-env.js';
 import { validateSetupDomainInputs } from './domain-form-state.js';
 import { runReleaseUpdateCli } from './release-update-runner.js';
@@ -5882,6 +5886,7 @@ export function createApiRoutes(): Hono {
                     serviceBindingName: loginUiSettings.serviceBindingName,
                     workersDev: loginUiSettings.workersDev,
                     routes: loginUiSettings.routes,
+                    sourcePackage: loginUiSettings.sourcePackage,
                   },
                   'ar-admin-ui': {
                     apiBaseUrl: adminUiSettings.apiBaseUrl,
@@ -5890,6 +5895,7 @@ export function createApiRoutes(): Hono {
                     serviceBindingName: adminUiSettings.serviceBindingName,
                     workersDev: adminUiSettings.workersDev,
                     routes: adminUiSettings.routes,
+                    sourcePackage: adminUiSettings.sourcePackage,
                     adminUiBffSecrets,
                   },
                 },
@@ -5972,8 +5978,13 @@ export function createApiRoutes(): Hono {
                     name: result.projectName,
                     deployedAt: result.deployedAt,
                     version:
-                      (await getPackageVersion(join(rootDir, 'packages', result.component))) ??
-                      undefined,
+                      (await getPackageVersion(
+                        resolveUiPackageDir(
+                          rootDir,
+                          result.component,
+                          cfg?.components?.adminUiVariant
+                        )
+                      )) ?? undefined,
                     cloudflareVersionId: result.cloudflareVersionId,
                     cloudflareScriptTag: result.cloudflareScriptTag,
                   };
@@ -6011,6 +6022,7 @@ export function createApiRoutes(): Hono {
                     (cfg as AuthrimConfig).controlPlane?.automaticProvisioning === true,
                 },
                 registeredBy: 'setup:web-deploy-ui',
+                adminUiVariant: (cfg as AuthrimConfig).components?.adminUiVariant,
                 onProgress: addProgress,
               });
             }
@@ -9412,6 +9424,7 @@ export function createApiRoutes(): Hono {
               serviceBindingName: uiSettings.serviceBindingName,
               workersDev: uiSettings.workersDev,
               routes: uiSettings.routes,
+              sourcePackage: uiSettings.sourcePackage,
               adminUiBffSecrets,
               skipBuild,
               deployConfigLockProof: deployConfigLock?.proof,
@@ -9474,6 +9487,7 @@ export function createApiRoutes(): Hono {
                     (cfg as AuthrimConfig).controlPlane?.automaticProvisioning === true,
                 },
                 registeredBy: 'setup:web-upgrade-ui',
+                adminUiVariant: (cfg as AuthrimConfig).components?.adminUiVariant,
                 disableMissing: false,
                 onProgress: addProgress,
               });
@@ -9482,7 +9496,13 @@ export function createApiRoutes(): Hono {
               if (!currentLock || !lockPath) {
                 throw new Error('ui_worker_deployment_lock_unavailable');
               }
-              const version = await getPackageVersion(join(rootDir, 'packages', componentName));
+              const version = await getPackageVersion(
+                resolveUiPackageDir(
+                  rootDir,
+                  componentName as UiWorkerComponent,
+                  cfg?.components?.adminUiVariant
+                )
+              );
               const workers = { ...currentLock.workers };
               workers[componentName] = {
                 name: result.projectName,

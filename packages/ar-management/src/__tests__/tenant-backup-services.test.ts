@@ -40,9 +40,19 @@ it('retries pending canonical settings projections before backup housekeeping', 
       version: 'sha256:44136fa355b3678a',
     },
   ]);
+  // The retry projects the latest canonical document, read again before and after the write.
+  db.queryOne.mockResolvedValue({
+    tenant_id: 'tenant-a',
+    scope_type: 'tenant',
+    scope_id: 'tenant-a',
+    category: 'security',
+    document_json: '{}',
+    version: 'sha256:44136fa355b3678a',
+  });
   db.execute.mockResolvedValue({ success: true, rowsAffected: 1 });
   const put = vi.fn(async () => undefined);
-  await processTenantBackupMaintenance({ SETTINGS: { put } } as unknown as Env);
+  const get = vi.fn(async () => null);
+  await processTenantBackupMaintenance({ SETTINGS: { put, get } } as unknown as Env);
   expect(put).toHaveBeenCalledWith('settings:tenant:tenant-a:security', '{}');
   expect(db.execute).toHaveBeenCalledWith(expect.stringContaining("projection_state='applied'"), [
     expect.any(Number),

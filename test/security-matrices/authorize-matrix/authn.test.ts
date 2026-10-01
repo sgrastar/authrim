@@ -781,6 +781,31 @@ describe('authorize-matrix authn protocol suite', () => {
     expect(run.observation.challengeType).toBe('login');
   });
 
+  it.each(['omitted', 'none'])(
+    'refuses code issuance when OAuth settings fail with prompt=%s',
+    async (prompt) => {
+      const row: Row = {
+        clientSso: 'true',
+        tenantSso: 'failure',
+        session: 'active',
+        prompt,
+        maxAge: 'omitted',
+        consent: 'auto-grant',
+      };
+      const fresh = await createFreshKitApp();
+      const run = await runAuthnRow(fresh.kit, fresh.app, row);
+      expect(run.observation.error).toBe('server_error');
+      expect(run.observation.tenantSsoReadFailed).toBe(true);
+      expect(run.observation.consentLookup).toBe(true);
+      expect(run.observation.consentWrite).toBe(true);
+      expect(run.observation.codeIssued).toBe(false);
+      expect(run.observation.codePresent).toBe(false);
+      expect(run.observation.challengeType).toBeNull();
+      const expected = observationFromDecision(decideAuthn(row), row, sessionIdFor('active'));
+      expect(observationsMatch(run.observation, expected)).toBe(true);
+    }
+  );
+
   it('covers every legal 2-way tuple of the authn dimensions', () => {
     expect.hasAssertions();
     const covered = new Set<string>();

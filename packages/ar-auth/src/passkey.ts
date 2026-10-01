@@ -15,7 +15,7 @@ import {
   getChallengeStoreByChallengeId,
   getChallengeStoreByUserId,
   getTenantIdFromContext,
-  getTenantSettings,
+  getTenantSettingsDocument,
   generateUserIdFromSettings,
   createAuthContextFromHono,
   createAccountAuthContextFromHono,
@@ -125,7 +125,10 @@ interface RegistrationInfoCompat {
 async function getAllowedOriginsFromKV(env: Env, tenantId: string): Promise<string[]> {
   let allowedOriginsValue: string | undefined;
 
-  const settings = await getTenantSettings(env.AUTHRIM_CONFIG, tenantId, 'tenant');
+  const settings = await getTenantSettingsDocument(env, tenantId, 'tenant', {
+    // Without the tenant's settings the fallback is at least as strict.
+    onUnreadable: 'empty',
+  });
   if (settings && typeof settings['tenant.allowed_origins'] === 'string') {
     allowedOriginsValue = settings['tenant.allowed_origins'];
   }
@@ -339,8 +342,7 @@ export async function passkeyRegisterOptionsHandler(c: Context<{ Bindings: Env }
 
     // If user doesn't exist, create a new canonical runtime user.
     if (!user) {
-      const newUserId =
-        resumedUserId ?? (await generateUserIdFromSettings(c.env.AUTHRIM_CONFIG, tenantId, c.env));
+      const newUserId = resumedUserId ?? (await generateUserIdFromSettings(c.env, tenantId, c.env));
       const defaultName = name || null;
       const preferredUsername = normalizedEmail?.split('@')[0] ?? newUserId;
       const provisioningRuntimeUser = {

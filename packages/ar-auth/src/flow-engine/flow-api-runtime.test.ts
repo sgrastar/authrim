@@ -72,8 +72,10 @@ describe('Flow API HTTP boundary', () => {
 
   it.each([
     [JSON.stringify({ 'feature.enable_flow_engine': true }), 200],
-    [JSON.stringify({ 'feature.enable_flow_engine': false }), 200],
-    ['not-json', 200],
+    // An explicit false in the settings is not overridden by the legacy flag.
+    [JSON.stringify({ 'feature.enable_flow_engine': false }), 403],
+    // Settings that exist but cannot be read fail closed instead of falling back.
+    ['not-json', 500],
   ])('resolves feature settings with safe legacy fallback', async (settings, status) => {
     mocks.getFeatureFlag.mockResolvedValue(true);
     const response = await jsonRequest(
@@ -84,14 +86,16 @@ describe('Flow API HTTP boundary', () => {
     expect(response.status).toBe(status);
   });
 
-  it('falls back to the legacy flag when settings KV fails', async () => {
+  it('fails closed instead of using the legacy flag when settings KV fails', async () => {
+    mocks.getFeatureFlag.mockResolvedValue(true);
     const response = await jsonRequest(
       '/init',
       { clientId: 'client-1' },
       { AUTHRIM_CONFIG: kv(null, true) }
     );
-    expect(response.status).toBe(200);
-    expect(mocks.getFeatureFlag).toHaveBeenCalled();
+    expect(response.status).toBe(500);
+    expect(mocks.getFeatureFlag).not.toHaveBeenCalled();
+    expect(mocks.initFlow).not.toHaveBeenCalled();
   });
 
   it.each(['/init', '/submit'])(

@@ -22,6 +22,7 @@ import {
   AR_ERROR_CODES,
   createLogger,
   resolveOptionalCoreAdapterFromHono,
+  UserVerifiedAttributeRepository,
   type CheckApiRequest,
 } from '@authrim/ar-lib-core';
 import {
@@ -48,6 +49,7 @@ import {
   type RateLimitContext,
 } from '../middleware/rate-limit';
 import { createPolicyReBACService, getPolicyCoreAdapter } from '../rebac-storage-adapter';
+import { resolveTenantPolicy } from '../tenant-policy';
 
 // =============================================================================
 // Types
@@ -391,6 +393,9 @@ async function getCheckService(
     cacheTTL: 60,
     debugMode,
     auditService,
+    // Verified attributes and the tenant's rules, as each check's tenant settings enable them.
+    attributeRepository: new UserVerifiedAttributeRepository(coreAdapter),
+    tenantPolicy: (tenantId) => resolveTenantPolicy(env, coreAdapter, tenantId),
   });
 
   return { checkService, auditService };

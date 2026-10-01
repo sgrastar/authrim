@@ -73,9 +73,21 @@ export interface AuthorizationCode {
 /**
  * Store code request
  */
+/** The requested code lifetime when it is a positive whole number of seconds, else the fallback. */
+function codeTtlSeconds(requested: number | undefined, fallback: number): number {
+  return typeof requested === 'number' && Number.isSafeInteger(requested) && requested > 0
+    ? requested
+    : fallback;
+}
+
 export interface StoreCodeRequest {
   code: string;
   tenantId: string;
+  /**
+   * Lifetime of this code in seconds, as configured for the tenant or client
+   * (`oauth.auth_code_ttl`). The store's own configured lifetime applies when absent.
+   */
+  ttlSeconds?: number;
   clientId: string;
   redirectUri: string;
   userId: string;
@@ -580,7 +592,7 @@ export class AuthorizationCodeStore extends DurableObject<Env> {
       agentGrantGeneration: request.agentGrantGeneration,
       agentConsentVersion: request.agentConsentVersion,
       used: false,
-      expiresAt: now + this.CODE_TTL * 1000,
+      expiresAt: now + codeTtlSeconds(request.ttlSeconds, this.CODE_TTL) * 1000,
       createdAt: now,
     };
 

@@ -88,7 +88,7 @@ export async function handleSPLogin(c: Context<{ Bindings: Env }>): Promise<Resp
 
     // Determine return URL with UI config fallback. Only local Authrim/Login UI origins are accepted.
     const requestedReturnUrl = c.req.query('return_url');
-    const uiConfig = await getUIConfig(env);
+    const uiConfig = await getUIConfig(env, tenantId);
     const defaultReturnUrl = uiConfig?.baseUrl ? `${uiConfig.baseUrl}/` : `${issuerUrl}/`;
     const returnUrl = resolveSafeReturnUrl(env, tenantId, requestedReturnUrl) ?? defaultReturnUrl;
 

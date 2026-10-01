@@ -55,7 +55,7 @@ const mocks = vi.hoisted(() => {
     userPII,
     getClient: vi.fn(),
     getWebOriginRegistry: vi.fn(),
-    getTenantSettings: vi.fn(),
+    getTenantSettingsDocument: vi.fn(),
     getDefaultTenantId: vi.fn(),
     resolveTenantFromEmailDomain: vi.fn(),
     generateUserIdFromSettings: vi.fn(),
@@ -256,7 +256,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     },
     getTenantIdFromContext: vi.fn(() => 'tenant_test'),
     getDefaultTenantId: mocks.getDefaultTenantId,
-    getTenantSettings: mocks.getTenantSettings,
+    getTenantSettingsDocument: mocks.getTenantSettingsDocument,
     getClient: mocks.getClient,
     getWebOriginRegistry: mocks.getWebOriginRegistry,
     resolveTenantFromEmailDomain: mocks.resolveTenantFromEmailDomain,
@@ -451,7 +451,7 @@ describe('Direct Auth primary passkey and email-code flows', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    mocks.getTenantSettings.mockResolvedValue(null);
+    mocks.getTenantSettingsDocument.mockResolvedValue(null);
     mocks.getDefaultTenantId.mockReturnValue('default');
     mocks.resolveTenantFromEmailDomain.mockResolvedValue(null);
     mocks.getClient.mockResolvedValue({
@@ -873,6 +873,45 @@ describe('Direct Auth primary passkey and email-code flows', () => {
           transaction_id: 'transaction_1',
         }),
       })
+    );
+  });
+
+  it('gives the code, its challenge and the response the configured code lifetime', async () => {
+    const codeVerifier = 'passkey-login-code-verifier';
+    const codeChallenge = await s256Challenge(codeVerifier);
+    mocks.challengeStore.consumeChallengeRpc.mockResolvedValue({
+      challenge: 'passkey-login-challenge',
+      metadata: {
+        code_challenge: codeChallenge,
+        client_id: 'web-client',
+        channel: 'browser',
+        scope: 'openid profile',
+        transaction_id: 'transaction_1',
+        origin: 'https://app.example.com',
+        rpID: 'app.example.com',
+      },
+    });
+    const { directPasskeyLoginFinishHandler } = await import('../direct-auth');
+    const context = createContext({
+      challenge_id: 'challenge_1',
+      credential: { id: 'credential-id', rawId: 'credential-id', response: {}, type: 'public-key' },
+      code_verifier: codeVerifier,
+      channel: 'browser',
+    });
+    context.env.SETTINGS = createMockKV({
+      'settings:tenant:tenant_test:oauth': JSON.stringify({ 'oauth.auth_code_ttl': 120 }),
+    }) as never;
+
+    const response = await directPasskeyLoginFinishHandler(context as never);
+    const body = (await response.json()) as Record<string, unknown>;
+
+    expect(response.status).toBe(200);
+    expect(body.expires_in).toBe(120);
+    expect(mocks.authCodeStore.storeCodeRpc).toHaveBeenCalledWith(
+      expect.objectContaining({ ttlSeconds: 120 })
+    );
+    expect(mocks.challengeStore.storeChallengeRpc).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'direct_auth_code', ttl: 120 })
     );
   });
 

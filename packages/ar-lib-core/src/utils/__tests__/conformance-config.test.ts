@@ -151,7 +151,7 @@ describe('Conformance Mode Configuration', () => {
     });
 
     describe('error handling', () => {
-      it('should handle KV error gracefully and fall back to env', async () => {
+      it('stays disabled when KV cannot be read, even if env enables it', async () => {
         const mockSettings = {
           get: vi.fn().mockRejectedValue(new Error('KV error')),
         };
@@ -161,10 +161,10 @@ describe('Conformance Mode Configuration', () => {
           ENABLE_CONFORMANCE_MODE: 'true',
         });
 
-        expect(result.enabled).toBe(true);
+        expect(result).toEqual({ enabled: false, useBuiltinForms: false });
       });
 
-      it('should handle invalid JSON in KV gracefully', async () => {
+      it('stays disabled when the stored settings are not valid JSON', async () => {
         const mockSettings = {
           get: vi.fn().mockResolvedValue('invalid json'),
         };
@@ -174,19 +174,49 @@ describe('Conformance Mode Configuration', () => {
           ENABLE_CONFORMANCE_MODE: 'true',
         });
 
-        expect(result.enabled).toBe(true);
+        expect(result.enabled).toBe(false);
       });
 
-      it('should fall back to default when both KV error and no env', async () => {
+      it('stays disabled when the older settings cannot be read, even if the Settings API enables it', async () => {
         const mockSettings = {
-          get: vi.fn().mockRejectedValue(new Error('KV error')),
+          get: vi.fn(async (key: string) => {
+            if (key === 'system_settings') return 'invalid json';
+            if (key === 'settings:platform:feature-flags') {
+              return JSON.stringify({
+                'feature.conformance_enabled': true,
+                'feature.conformance_use_builtin_forms': true,
+              });
+            }
+            return null;
+          }),
         };
 
         const result = await getConformanceConfig({
           SETTINGS: mockSettings as unknown as KVNamespace,
         });
 
-        expect(result).toEqual(DEFAULT_CONFORMANCE_CONFIG);
+        expect(result).toEqual({ enabled: false, useBuiltinForms: false });
+      });
+
+      it('stays disabled when the Settings API cannot be read, even if older settings enable it', async () => {
+        const documents: Record<string, string> = {
+          system_settings: JSON.stringify({
+            conformance: { enabled: true, useBuiltinForms: true },
+          }),
+        };
+        const mockSettings = {
+          get: vi.fn(async (key: string) => {
+            if (key === 'settings:platform:feature-flags') throw new Error('KV error');
+            return documents[key] ?? null;
+          }),
+        };
+
+        const result = await getConformanceConfig({
+          SETTINGS: mockSettings as unknown as KVNamespace,
+          ENABLE_CONFORMANCE_MODE: 'true',
+        });
+
+        expect(result).toEqual({ enabled: false, useBuiltinForms: false });
       });
     });
   });

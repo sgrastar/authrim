@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { Context } from 'hono';
-import { updateTokenEmbeddingSettings } from '../routes/settings/token-embedding';
+import {
+  getTokenEmbeddingSettings,
+  updateTokenEmbeddingSettings,
+} from '../routes/settings/token-embedding';
 
 function contextFor(body: Record<string, unknown>) {
   const values = new Map<string, string>();
@@ -82,5 +85,36 @@ describe('token embedding settings update', () => {
     expect(values.get('policy:flags:ENABLE_POLICY_EMBEDDING')).toBe('true');
     expect(values.get('config:max_resource_permissions')).toBe('250');
     expect(values.get('config:token_embedding:last_updated')).toEqual(expect.any(String));
+  });
+});
+
+describe('token embedding settings view', () => {
+  it("shows the tenant's Settings API values over the values saved here", async () => {
+    const { context, values } = contextFor({});
+    values.set('policy:flags:ENABLE_POLICY_EMBEDDING', 'true');
+    values.set('config:max_resource_permissions', '300');
+    values.set(
+      'settings:tenant:default:feature-flags',
+      JSON.stringify({ 'feature.enable_policy_embedding': false })
+    );
+    values.set('settings:tenant:default:limits', JSON.stringify({ 'limits.max_custom_claims': 5 }));
+
+    await expect(getTokenEmbeddingSettings(context)).resolves.toMatchObject({
+      payload: {
+        policy_embedding_enabled: false,
+        limits: {
+          max_embedded_permissions: 50,
+          max_resource_permissions: 300,
+          max_custom_claims: 5,
+        },
+      },
+    });
+  });
+
+  it('answers 503 when the settings cannot be read', async () => {
+    const { context, values } = contextFor({});
+    values.set('settings:tenant:default:limits', 'not json');
+
+    await expect(getTokenEmbeddingSettings(context)).resolves.toMatchObject({ status: 503 });
   });
 });

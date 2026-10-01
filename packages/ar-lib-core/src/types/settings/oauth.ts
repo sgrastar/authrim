@@ -92,6 +92,7 @@ export const OAUTH_SETTINGS_META: Record<keyof OAuthSettings, SettingMeta> = {
   'oauth.access_token_expiry': {
     key: 'oauth.access_token_expiry',
     type: 'duration',
+    integer: true,
     default: 3600,
     envKey: 'ACCESS_TOKEN_EXPIRY',
     label: 'Access Token TTL',
@@ -116,6 +117,7 @@ export const OAUTH_SETTINGS_META: Record<keyof OAuthSettings, SettingMeta> = {
   'oauth.refresh_token_expiry': {
     key: 'oauth.refresh_token_expiry',
     type: 'duration',
+    integer: true,
     default: 7776000,
     envKey: 'REFRESH_TOKEN_EXPIRY',
     label: 'Refresh Token TTL',
@@ -128,6 +130,7 @@ export const OAUTH_SETTINGS_META: Record<keyof OAuthSettings, SettingMeta> = {
   'oauth.auth_code_ttl': {
     key: 'oauth.auth_code_ttl',
     type: 'duration',
+    integer: true,
     default: 60,
     envKey: 'AUTH_CODE_EXPIRY',
     label: 'Authorization Code TTL',
@@ -236,6 +239,7 @@ export const OAUTH_SETTINGS_META: Record<keyof OAuthSettings, SettingMeta> = {
     type: 'boolean',
     default: false,
     envKey: 'ENABLE_STATE_REQUIRED',
+    envBoolean: 'unless-false',
     label: 'State Required',
     description: 'Require state parameter for CSRF protection (recommended for production)',
     visibility: 'public',
@@ -257,6 +261,7 @@ export const OAUTH_SETTINGS_META: Record<keyof OAuthSettings, SettingMeta> = {
     type: 'boolean',
     default: true,
     envKey: 'ENABLE_USERINFO_REQUIRE_OPENID_SCOPE',
+    envBoolean: 'unless-false',
     label: 'UserInfo Requires OpenID Scope',
     description: 'Require openid scope for UserInfo endpoint (OIDC compliance)',
     visibility: 'public',
@@ -382,6 +387,7 @@ export const OAUTH_SETTINGS_META: Record<keyof OAuthSettings, SettingMeta> = {
     type: 'boolean',
     default: false,
     envKey: 'ENABLE_HTTPS_REQUEST_URI',
+    envBoolean: 'exactly-true',
     label: 'Request URI Enabled',
     description: 'Enable request_uri parameter support',
     visibility: 'public',
@@ -432,6 +438,9 @@ export const OAUTH_SETTINGS_META: Record<keyof OAuthSettings, SettingMeta> = {
     label: 'Error Response Format',
     description: 'Error response format: oauth (standard) or problem_details (RFC 7807)',
     enum: ['oauth', 'problem_details'],
+    // Error responses are built before a client is known: not per client. (The category has no
+    // platform documents; 'platform' keeps the value saved in the older store as the fallback.)
+    scopes: ['platform', 'tenant'],
     visibility: 'admin',
   },
   'oauth.error_id_mode': {
@@ -442,6 +451,9 @@ export const OAUTH_SETTINGS_META: Record<keyof OAuthSettings, SettingMeta> = {
     label: 'Error ID Mode',
     description: 'When to include error IDs for support tracking',
     enum: ['all', '5xx', 'security_only', 'none'],
+    // Error responses are built before a client is known: not per client. (The category has no
+    // platform documents; 'platform' keeps the value saved in the older store as the fallback.)
+    scopes: ['platform', 'tenant'],
     visibility: 'admin',
   },
 

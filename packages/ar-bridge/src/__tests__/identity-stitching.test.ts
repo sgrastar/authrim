@@ -16,6 +16,8 @@ const {
   mockCreateAuditLog,
   mockRuntimeSyncUser,
   MockD1Adapter,
+  mockFindUserById,
+  mockUpdateProfileFields,
   MockCanonicalRuntimeUserStore,
   sqlTracker,
   mockResolveAccountContext,
@@ -50,6 +52,8 @@ const {
   });
   const createAuditLogMock = vi.fn().mockResolvedValue(undefined);
   const runtimeSyncUserMock = vi.fn().mockResolvedValue({ accountId: 'account-id' });
+  const findUserByIdMock = vi.fn().mockResolvedValue(null);
+  const updateProfileFieldsMock = vi.fn().mockResolvedValue(true);
   const resolveAccountContextMock = vi.fn();
   const resolveTenantMetadataContextMock = vi.fn();
   const createRuleEvaluatorMock = vi.fn(() => ({
@@ -125,6 +129,14 @@ const {
     async syncUser(input: unknown) {
       return runtimeSyncUserMock(input);
     }
+
+    async findById(userId: string) {
+      return findUserByIdMock(userId);
+    }
+
+    async updateProfileFields(userId: string, values: unknown) {
+      return updateProfileFieldsMock(userId, values);
+    }
   }
 
   return {
@@ -136,6 +148,8 @@ const {
     mockSyncUserLifecycleState: syncUserLifecycleStateMock,
     mockCreateAuditLog: createAuditLogMock,
     mockRuntimeSyncUser: runtimeSyncUserMock,
+    mockFindUserById: findUserByIdMock,
+    mockUpdateProfileFields: updateProfileFieldsMock,
     MockD1Adapter: D1AdapterClass,
     MockCanonicalRuntimeUserStore: CanonicalRuntimeUserStoreClass,
     sqlTracker: tracker,
@@ -152,6 +166,36 @@ const {
 // Mock @authrim/ar-lib-core to prevent Cloudflare Workers imports
 vi.mock('@authrim/ar-lib-core', () => ({
   D1Adapter: MockD1Adapter,
+  // The saved document as it is; JIT enablement as the Settings API resolves it with nothing set
+  // for the tenant: the saved document's `enabled`, else the default (on).
+  legacyJitProvisioningValues: (raw: string | null) => {
+    if (raw === null) return {};
+    let saved: { enabled?: unknown } | null = null;
+    try {
+      saved = JSON.parse(raw) as { enabled?: unknown };
+    } catch {
+      saved = null;
+    }
+    return { 'external_idp.jit_provisioning_enabled': saved?.enabled === true };
+  },
+  parseSettingsDocument: (raw: string | null | undefined) =>
+    raw === null || raw === undefined ? null : (JSON.parse(raw) as Record<string, unknown>),
+  resolveEffectiveSettings: vi.fn(
+    async (
+      env: { SETTINGS?: { get: (key: string) => Promise<string | null> } },
+      _category: string,
+      target: { tenantId: string }
+    ) => {
+      const raw = await env.SETTINGS?.get('jit_provisioning_config');
+      const saved = raw ? (JSON.parse(raw) as { enabled?: unknown }) : null;
+      const tenant = await env.SETTINGS?.get(`settings:tenant:${target.tenantId}:external-idp`);
+      return {
+        'external_idp.jit_provisioning_enabled': saved ? saved.enabled === true : true,
+        'external_idp.jit_update_on_login': false,
+        ...(tenant ? (JSON.parse(tenant) as Record<string, unknown>) : {}),
+      };
+    }
+  ),
   CanonicalRuntimeUserStore: MockCanonicalRuntimeUserStore,
   ensureDatabaseAdapter: vi.fn().mockImplementation((db: unknown) => new MockD1Adapter({ db })),
   createLogger: () => ({
@@ -501,6 +545,71 @@ describe('Identity Stitching Service', () => {
           }),
           env.DB_PII
         );
+      });
+
+      it("updates the user's profile from the provider only when the tenant turns it on", async () => {
+        const accountContext = {
+          tenantId: 'default',
+          accountId: 'account:existing-user-789',
+          legacyUserId: 'existing-user-789',
+          coreDb: { _isPii: false },
+          piiDb: { _isPii: true },
+        };
+        mockResolveAccountContext.mockResolvedValue(accountContext);
+        const link = {
+          id: 'existing-linked-id',
+          userId: 'existing-user-789',
+          tenantId: 'default',
+          providerId: mockProvider.id,
+          providerUserId: mockUserInfo.sub,
+          emailVerified: true,
+          linkedAt: Date.now(),
+          updatedAt: Date.now(),
+        };
+        mockFindUserById.mockResolvedValue({
+          id: 'existing-user-789',
+          name: 'Old Name',
+          active: 1,
+          account_type: 'end_user',
+        });
+        const userInfo = { ...mockUserInfo, name: 'New Name', given_name: 'New', locale: 'ja' };
+
+        // Off by default: the profile is left as it is.
+        vi.mocked(linkedIdentityStore.findLinkedIdentity).mockResolvedValueOnce(link);
+        vi.mocked(linkedIdentityStore.updateLinkedIdentity).mockResolvedValueOnce(true);
+        await handleIdentity(createMockEnv() as never, {
+          provider: mockProvider,
+          userInfo,
+          tokens: mockTokens,
+          tenantId: 'default',
+        });
+        expect(mockUpdateProfileFields).not.toHaveBeenCalled();
+
+        const env = createMockEnv();
+        const originalGet = env.SETTINGS.get;
+        env.SETTINGS.get = vi.fn(async (key: string) =>
+          key === 'settings:tenant:default:external-idp'
+            ? JSON.stringify({ 'external_idp.jit_update_on_login': true })
+            : originalGet(key)
+        );
+        vi.mocked(linkedIdentityStore.findLinkedIdentity).mockResolvedValueOnce(link);
+        vi.mocked(linkedIdentityStore.updateLinkedIdentity).mockResolvedValueOnce(true);
+        await handleIdentity(env as never, {
+          provider: mockProvider,
+          userInfo,
+          tokens: mockTokens,
+          tenantId: 'default',
+        });
+
+        // Only the claims the provider sent; the account state and other fields are not written.
+        expect(mockUpdateProfileFields).toHaveBeenCalledWith('existing-user-789', {
+          name: 'New Name',
+          given_name: 'New',
+          family_name: mockUserInfo.family_name,
+          picture: mockUserInfo.picture,
+          locale: 'ja',
+        });
+        expect(mockRuntimeSyncUser).not.toHaveBeenCalled();
       });
 
       it('updates an existing linked identity in its routed PII shard', async () => {

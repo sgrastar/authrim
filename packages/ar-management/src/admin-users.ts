@@ -1249,7 +1249,7 @@ export async function adminUserCreateHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
-    const candidateUserId = await generateUserIdFromSettings(c.env.AUTHRIM_CONFIG, tenantId, c.env);
+    const candidateUserId = await generateUserIdFromSettings(c.env, tenantId, c.env);
     const requestHash = await hashAccountCreationRequest({
       ...body,
       email: normalizedEmail,

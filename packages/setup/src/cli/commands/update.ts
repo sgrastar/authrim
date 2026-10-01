@@ -133,7 +133,7 @@ import {
   waitForWorkerHttpReady,
   waitForRouterWorkerReady,
 } from '../../core/worker-readiness.js';
-import { resolveUiDeploymentSettings } from '../../core/ui-deployment.js';
+import { resolveUiDeploymentSettings, resolveUiPackageDir } from '../../core/ui-deployment.js';
 import { mergeAndSaveUiEnv } from '../../core/ui-env.js';
 import { ensureLoginUiClient } from '../../core/login-ui-client.js';
 import { prepareAdminUiBffDeployment } from '../../core/admin-ui-bff-deployment.js';
@@ -889,6 +889,7 @@ async function deployReleaseUiWorkers(input: {
       serviceBindingName: settings.serviceBindingName,
       workersDev: settings.workersDev,
       routes: settings.routes,
+      sourcePackage: settings.sourcePackage,
       adminUiBffSecrets,
       skipBuild: input.skipBuild,
       deployConfigLockProof: input.deployConfigLockProof,
@@ -963,6 +964,7 @@ async function deployReleaseUiWorkers(input: {
       automaticProvisioning: input.config.controlPlane?.automaticProvisioning === true,
     },
     registeredBy: 'setup:update-ui',
+    adminUiVariant: input.config.components?.adminUiVariant,
     disableMissing: false,
   });
   return workingLock;
@@ -1063,7 +1065,9 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
   }
   const localUiVersions = new Map<UiWorkerComponent, string>();
   for (const component of UI_WORKER_COMPONENTS) {
-    const version = await getPackageVersion(join(baseDir, 'packages', component));
+    const version = await getPackageVersion(
+      resolveUiPackageDir(baseDir, component, config.components?.adminUiVariant)
+    );
     if (version) localUiVersions.set(component, version);
   }
   const mismatchedPackages = getWorkspaceVersionMismatches({

@@ -246,7 +246,7 @@ export async function handleSPACS(c: Context<{ Bindings: Env }>): Promise<Respon
     // Determine redirect URL
     let returnUrl = validatedRequest?.relayState || resolveSafeReturnUrl(env, tenantId, relayState);
     if (!returnUrl) {
-      const uiConfig = await getUIConfig(env);
+      const uiConfig = await getUIConfig(env, tenantId);
       returnUrl = uiConfig?.baseUrl ? `${uiConfig.baseUrl}/` : `${buildIssuerUrl(env, tenantId)}/`;
     }
 

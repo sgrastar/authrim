@@ -1,0 +1,186 @@
+/* ============================================================
+   Standard theme — the warm paper palette decided in the redesign mock.
+   This file also defines the full theme contract: every token a theme may set appears here
+   with its default. Selectors are wrapped in :where() so they carry no specificity and any
+   other theme overrides them regardless of load order.
+
+   <html> attributes (set by the theme store before first paint):
+     data-admin-theme = standard | swiss-grid | frosted
+     data-scheme      = light | dark   (resolved; "system" is resolved from the OS)
+   Any element may carry the same attributes to theme its subtree (Storybook's theme matrix).
+   ============================================================ */
+
+:where(:root, [data-admin-theme]) {
+	/* --- Surfaces --- */
+	--bg-page: #eeeae3;
+	--bg-card: #fefdfa;
+	--bg-subtle: #f5f2ec;
+	--bg-input: #ffffff;
+	--bg-hover: rgba(51, 51, 51, 0.045);
+	/* Pressed face of transparent controls: clearly stronger than hover. Follows the theme's text. */
+	--bg-press: color-mix(in srgb, var(--text-primary) 11%, transparent);
+
+	/* --- Ink --- */
+	--primary: #2c2724;
+	--primary-hover: #1a1715;
+	--text-primary: #2c2724;
+	--text-secondary: #5f5851;
+	--text-muted: #6e665e;
+	--text-inverse: #ffffff;
+
+	/* --- Lines --- */
+	--border: rgba(51, 51, 51, 0.12);
+	--border-strong: rgba(51, 51, 51, 0.2);
+	--border-subtle: rgba(51, 51, 51, 0.07);
+	--focus-ring: #4a7fa6;
+
+	/* --- Scope accents: which kind of subject an area manages --- */
+	--accent-enduser: #7aadcc;
+	--accent-client: #68b89a;
+	--accent-tenant: #c9a05a;
+	--accent-platform: #9b84c4;
+
+	/* --- Status --- */
+	--success: #25774f;
+	--success-bg: #e7f5ef;
+	--warning: #8f5f14;
+	--warning-bg: #fdf3e0;
+	--danger: #b03a31;
+	--danger-bg: #fbeae8;
+	--info: #3b6c90;
+	--info-bg: #e9f1f7;
+	--info-text: #33556e;
+
+	/* Changed, not saved yet. A warm tone of its own, softer than --warning so a change never
+	   reads as a problem. Themes set --changed; the rest follows from it:
+	   --changed-bg   wash on the changed item (a row, an option, a field box, the save bar)
+	   --changed-ring ring on the exact control that changed (a checkbox in a changed row)
+	   --changed-edge border of a changed field
+	   On the wash, quiet text switches to the secondary text colour, because the muted one
+	   only reaches AA on plain surfaces. */
+	/* Tile behind product logos: stays light in dark schemes, where most logos are drawn for. */
+	--logo-tile: #ffffff;
+
+	--changed: #c79a4e;
+	--changed-bg: color-mix(in srgb, var(--changed) 16%, transparent);
+	--changed-ring: color-mix(in srgb, var(--changed) 55%, transparent);
+	--changed-edge: color-mix(in srgb, var(--changed) 75%, var(--border-strong));
+	--warning-text: #6e4a0e;
+	--platform-text: #5d4a7a;
+	/* Text drawn on top of an accent or status fill. */
+	--on-accent: #1a1715;
+	--switch-off: rgba(51, 51, 51, 0.24);
+	--switch-knob: #ffffff;
+	--scrim: rgba(0, 0, 0, 0.42);
+
+	/* --- Code (syntax highlighting on --bg-input) --- */
+	--code-comment: #6e665e;
+	--code-string: #2f7a4d;
+	--code-number: #9a5b13;
+	--code-keyword: #8a3f8f;
+	--code-literal: #0f6a8a;
+	--code-property: #1d5f9a;
+	--code-tag: #a0402f;
+	--code-attr: #7a5c10;
+	--code-function: #5a4bb0;
+	--code-variable: #a03f6b;
+	--code-punct: #6b635c;
+
+	/* --- Material ---
+	   How surfaces are made. Flat by default; a translucent theme sets a gradient on
+	   --surface-bg and a blur on --surface-backdrop without touching components. */
+	--surface-bg: var(--bg-card);
+	--surface-backdrop: none;
+	--surface-highlight: 0 0 transparent;
+	--shell-bg: var(--bg-card);
+	--shell-backdrop: none;
+	--shell-rule: 1px;
+	--subnav-bg: var(--bg-subtle);
+	--page-backdrop: none;
+	/* Gap between floating shell panels. 0 keeps the shell edge-to-edge. */
+	--shell-inset: 0px;
+	--shell-radius: 0px;
+
+	--shadow-sm: 0 1px 2px rgba(44, 39, 36, 0.06);
+	--shadow-md: 0 4px 12px rgba(44, 39, 36, 0.08);
+	--shadow-lg: 0 12px 32px rgba(44, 39, 36, 0.12);
+
+	/* --- Shape --- */
+	--radius-control: var(--radius-sm);
+	--radius-panel: var(--radius-lg);
+	--radius-badge: var(--radius-round);
+
+	/* --- Type --- */
+	--font-sans:
+		-apple-system, BlinkMacSystemFont, 'Hiragino Sans', 'Noto Sans JP', 'Segoe UI', Roboto,
+		sans-serif;
+	--font-display: var(--font-sans);
+	--font-mono: ui-monospace, 'SF Mono', 'Cascadia Code', Menlo, Consolas, monospace;
+	--font-brand: var(--font-sans);
+	--heading-weight: 680;
+	--heading-tracking: -0.02em;
+
+	color-scheme: light;
+}
+
+:where([data-scheme='dark']) {
+	--bg-page: #141110;
+	--bg-card: #231f1c;
+	--bg-subtle: #1b1816;
+	--bg-input: #2b2622;
+	--bg-hover: rgba(245, 243, 240, 0.06);
+
+	--primary: #c8b8a8;
+	--primary-hover: #dccfc2;
+	--text-primary: #f5f3f0;
+	--text-secondary: #c4bcb3;
+	--text-muted: #a39a91;
+	--text-inverse: #1a1715;
+
+	--border: rgba(200, 184, 168, 0.16);
+	--border-strong: rgba(200, 184, 168, 0.3);
+	--border-subtle: rgba(200, 184, 168, 0.09);
+	--focus-ring: #6ba5cc;
+
+	--accent-enduser: #88bedd;
+	--accent-client: #72c4a6;
+	--accent-tenant: #d4ae68;
+	--accent-platform: #a890cc;
+
+	--success: #4fb489;
+	--success-bg: rgba(79, 180, 137, 0.14);
+	--changed: #b89a6a;
+	--logo-tile: #ebe7e0;
+	--warning: #d9a03f;
+	--warning-bg: rgba(217, 160, 63, 0.14);
+	--danger: #ea8a81;
+	--danger-bg: rgba(224, 114, 104, 0.14);
+	--info: #6ba5cc;
+	--info-bg: rgba(107, 165, 204, 0.14);
+	--info-text: #a8cde5;
+	--warning-text: #e8c489;
+	--platform-text: #c4b0e0;
+	--on-accent: #141110;
+	--switch-off: rgba(245, 243, 240, 0.24);
+	--switch-knob: #f5f3f0;
+	--scrim: rgba(0, 0, 0, 0.55);
+
+	/* --- Code (syntax highlighting on --bg-input) --- */
+	--code-comment: #a39a91;
+	--code-string: #8fd19e;
+	--code-number: #e8b77a;
+	--code-keyword: #d69be0;
+	--code-literal: #7cc7e0;
+	--code-property: #8cb8ec;
+	--code-tag: #f0957e;
+	--code-attr: #e2c07a;
+	--code-function: #b3a6f2;
+	--code-variable: #ef9fbf;
+	--code-punct: #c4bcb3;
+
+	--shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+	--shadow-md: 0 4px 12px rgba(0, 0, 0, 0.45);
+	--shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.55);
+
+	color-scheme: dark;
+}

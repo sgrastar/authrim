@@ -43,11 +43,22 @@ function kv(values: Record<string, string | null> = {}) {
 }
 
 function context(
-  options: { store?: ReturnType<typeof kv>; body?: unknown; bodyError?: boolean } = {}
+  options: {
+    store?: ReturnType<typeof kv>;
+    settings?: ReturnType<typeof kv>;
+    body?: unknown;
+    bodyError?: boolean;
+  } = {}
 ) {
   return {
-    env: options.store ? { AUTHRIM_CONFIG: options.store } : {},
+    env: {
+      ...(options.store ? { AUTHRIM_CONFIG: options.store } : {}),
+      ...(options.settings ? { SETTINGS: options.settings } : {}),
+    },
+    get: vi.fn(),
     req: {
+      path: '/api/admin/settings/error-config',
+      header: vi.fn(() => undefined),
       json: options.bodyError
         ? vi.fn().mockRejectedValue(new SyntaxError('bad json'))
         : vi.fn().mockResolvedValue(options.body ?? {}),
@@ -66,14 +77,14 @@ describe('error response and IP security settings', () => {
     await expect((await getErrorConfig(context())).json()).resolves.toMatchObject({
       locale: { current: 'en', source: 'default' },
       response_format: { current: 'oauth', source: 'default' },
-      error_id_mode: { current: '5xx', source: 'default' },
+      error_id_mode: { current: 'security_only', source: 'default' },
     });
     await expect((await getErrorLocale(context())).json()).resolves.toMatchObject({ locale: 'en' });
     await expect((await getErrorResponseFormat(context())).json()).resolves.toMatchObject({
       response_format: 'oauth',
     });
     await expect((await getErrorIdMode(context())).json()).resolves.toMatchObject({
-      error_id_mode: '5xx',
+      error_id_mode: 'security_only',
     });
   });
 
@@ -81,30 +92,49 @@ describe('error response and IP security settings', () => {
     const store = kv({
       error_locale: 'ja',
       error_response_format: 'problem_details',
-      error_id_mode: 'security_only',
+      error_id_mode: 'all',
     });
     await expect((await getErrorConfig(context({ store }))).json()).resolves.toMatchObject({
       locale: { current: 'ja', source: 'kv' },
       response_format: { current: 'problem_details', source: 'kv' },
-      error_id_mode: { current: 'security_only', source: 'kv' },
+      error_id_mode: { current: 'all', source: 'kv' },
     });
   });
 
-  it('falls back safely when KV reads fail', async () => {
+  it("shows the tenant's Settings API values, as the error middleware applies them", async () => {
+    const store = kv({ error_response_format: 'oauth', error_id_mode: 'all' });
+    const settings = kv({
+      'settings:tenant:default:oauth': JSON.stringify({
+        'oauth.error_response_format': 'problem_details',
+        'oauth.error_id_mode': 'none',
+      }),
+    });
+    await expect(
+      (await getErrorConfig(context({ store, settings }))).json()
+    ).resolves.toMatchObject({
+      response_format: { current: 'problem_details', source: 'kv' },
+      error_id_mode: { current: 'none', source: 'kv' },
+    });
+  });
+
+  it('answers 503 when the Settings API values cannot be read', async () => {
+    const settings = kv({ 'settings:tenant:default:oauth': 'not json' });
+    const response = await getErrorConfig(context({ store: kv(), settings }));
+    expect(response.status).toBe(503);
+    await expect(response.json()).resolves.toMatchObject({ error: 'temporarily_unavailable' });
+    expect((await getErrorIdMode(context({ store: kv(), settings }))).status).toBe(503);
+  });
+
+  it('answers 503 when a saved error setting may exist but cannot be read', async () => {
     const store = kv();
     store.get.mockRejectedValue(new Error('KV unavailable'));
-    await expect((await getErrorConfig(context({ store }))).json()).resolves.toMatchObject({
-      locale: { current: 'en' },
-    });
+    // The locale alone still falls back: the middleware reads it separately.
     await expect((await getErrorLocale(context({ store }))).json()).resolves.toMatchObject({
       locale: 'en',
     });
-    await expect((await getErrorResponseFormat(context({ store }))).json()).resolves.toMatchObject({
-      response_format: 'oauth',
-    });
-    await expect((await getErrorIdMode(context({ store }))).json()).resolves.toMatchObject({
-      error_id_mode: '5xx',
-    });
+    expect((await getErrorConfig(context({ store }))).status).toBe(503);
+    expect((await getErrorResponseFormat(context({ store }))).status).toBe(503);
+    expect((await getErrorIdMode(context({ store }))).status).toBe(503);
   });
 
   it.each([

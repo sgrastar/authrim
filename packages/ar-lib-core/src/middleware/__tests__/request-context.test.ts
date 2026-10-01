@@ -273,7 +273,11 @@ describe('requestContextMiddleware – tenant existence check', () => {
 
     it('passes via positive KV cache without hitting D1', async () => {
       const db = createMockDB({ tenantRow: null }); // would return 404 if queried
-      const kv = createMockKV({ cachedValue: 'true' }); // cache hit
+      // Cache hit for the tenant existence check; the tenant has no settings document.
+      const kv = createMockKV({
+        cachedValue: 'true',
+        valuesByKey: { 'settings:tenant:sample:tenant': null },
+      });
       const env: TestEnv = { BASE_DOMAIN, DB: db, AUTHRIM_CONFIG: kv };
       const app = buildApp(env);
       const res = await app.request(makeRequest(`sample.${BASE_DOMAIN}`), undefined, env as Env);

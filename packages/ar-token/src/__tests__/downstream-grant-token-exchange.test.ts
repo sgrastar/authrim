@@ -240,6 +240,21 @@ describe('downstream elevation grant token exchange', () => {
       expect(mocks.mockGetClientCached).not.toHaveBeenCalled();
     });
 
+    it('refuses token exchange when its settings cannot be read, even if env enables it', async () => {
+      mocks.mockGetSystemSettingsCached.mockRejectedValue(new Error('kv unavailable'));
+      await expectOAuthError(
+        request(),
+        503,
+        'temporarily_unavailable',
+        'Token Exchange settings are unavailable; try again later'
+      );
+      expect(mocks.mockGetSystemSettingsCached).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.anything(),
+        expect.objectContaining({ failOnError: true })
+      );
+    });
+
     it('uses cached settings to disable an environment-enabled exchange', async () => {
       mocks.mockGetSystemSettingsCached.mockResolvedValue({
         oidc: { tokenExchange: { enabled: false } },
@@ -249,16 +264,6 @@ describe('downstream elevation grant token exchange', () => {
         400,
         'unsupported_grant_type',
         'Token Exchange is not enabled'
-      );
-    });
-
-    it('falls back to environment configuration when settings lookup fails', async () => {
-      mocks.mockGetSystemSettingsCached.mockRejectedValueOnce(new Error('KV unavailable'));
-      await expectOAuthError(
-        request({ subject_token: undefined }),
-        400,
-        'invalid_request',
-        'subject_token is required'
       );
     });
 

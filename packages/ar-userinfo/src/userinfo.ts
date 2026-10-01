@@ -11,7 +11,7 @@ import {
   isUserInfoEncryptionRequired,
   getClientPublicKey,
   validateJWEOptions,
-  createOAuthConfigManager,
+  resolveEffectiveSettings,
   buildRequestIssuerUrl,
   getLogger,
   getTenantIdFromContext,
@@ -153,10 +153,17 @@ export async function userinfoHandler(c: Context<{ Bindings: Env }>) {
   const claimsParam = (tokenClaims.claims as string) || undefined;
   const scopes = scope.split(' ');
 
-  // OIDC Core 5.3.1: Check if openid scope is required
-  // Configurable via KV (USERINFO_REQUIRE_OPENID_SCOPE) for OAuth 2.0 compatibility
-  const configManager = createOAuthConfigManager(c.env);
-  const requireOpenidScope = await configManager.isUserInfoRequireOpenidScope();
+  // OIDC Core 5.3.1: Check if openid scope is required. Configurable (Settings API for the
+  // client or tenant, else the older oauth-config value, else env) for OAuth 2.0 compatibility.
+  const tokenClientId =
+    typeof tokenClaims.client_id === 'string' ? tokenClaims.client_id : undefined;
+  const requireOpenidScope =
+    (
+      await resolveEffectiveSettings(c.env, 'oauth', {
+        tenantId: getTenantIdFromContext(c),
+        clientId: tokenClientId,
+      })
+    )['oauth.userinfo_require_openid'] !== false;
 
   if (requireOpenidScope && !scopes.includes('openid')) {
     c.header('WWW-Authenticate', 'Bearer error="insufficient_scope", scope="openid"');

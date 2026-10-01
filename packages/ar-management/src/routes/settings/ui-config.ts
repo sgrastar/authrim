@@ -37,8 +37,7 @@
 import type { Context } from 'hono';
 import type { Env, AdminAuthContext } from '@authrim/ar-lib-core';
 import {
-  getUIConfig,
-  getUIConfigSource,
+  resolveUIConfig,
   getUIRoutingConfig,
   DEFAULT_UI_PATHS,
   UI_PATH_METADATA,
@@ -51,8 +50,10 @@ import {
   logUIConfigChange,
   logUIConfigValidationFailure,
   getTenantIdFromContext,
+  parseSettingsDocument,
 } from '@authrim/ar-lib-core';
 import { getCanonicalTenantBaseUrl } from '../../request-issuer';
+import { settingsUnavailableResponse } from './settings-unavailable';
 
 /**
  * Get admin auth context from request
@@ -75,8 +76,17 @@ interface SystemSettings {
  * Get current UI configuration
  */
 export async function getUIConfigHandler(c: Context<{ Bindings: Env }>) {
-  const config = await getUIConfig(c.env);
-  const source = await getUIConfigSource(c.env);
+  // One read of the saved document, and the configuration and its source from it. It must be
+  // readable: otherwise the values would be the fallback (UI_URL or none), not what is saved.
+  let document: Record<string, unknown> | null = null;
+  if (c.env.SETTINGS) {
+    try {
+      document = parseSettingsDocument(await c.env.SETTINGS.get('system_settings'));
+    } catch {
+      return settingsUnavailableResponse(c);
+    }
+  }
+  const { config, source } = resolveUIConfig(document, c.env);
 
   return c.json({
     config: config || { baseUrl: null, paths: DEFAULT_UI_PATHS },

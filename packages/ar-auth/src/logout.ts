@@ -37,6 +37,8 @@ import {
   resolveSessionIdFromOidcSidStore,
   resolveLegacyLogoutTargetsFromOidcSidStore,
   createBackchannelLogoutOrchestrator,
+  applyBackchannelLogoutSettings,
+  resolveEffectiveSettings,
   DEFAULT_LOGOUT_CONFIG,
   LOGOUT_SETTINGS_KEY,
   buildFrontchannelLogoutIframes,
@@ -187,6 +189,32 @@ async function getLogoutConfig(env: Env): Promise<LogoutConfig> {
   }
 
   return DEFAULT_LOGOUT_CONFIG;
+}
+
+/**
+ * The back-channel settings for a tenant: `session.backchannel_*` as the Settings API resolves
+ * them (tenant, else the older logout document, else env, else defaults). When they cannot be
+ * read, the older document's values apply, as they did before the Settings API.
+ */
+async function getBackchannelLogoutConfig(
+  env: Env,
+  tenantId: string,
+  base: BackchannelLogoutConfig
+): Promise<BackchannelLogoutConfig> {
+  try {
+    // Strict: a logout document that cannot be read keeps the base values (read above), rather
+    // than reading as unset and replacing them with env or defaults.
+    const values = await resolveEffectiveSettings(env, 'session', {
+      tenantId,
+      strictLegacy: true,
+    });
+    return applyBackchannelLogoutSettings(base, values);
+  } catch (error) {
+    moduleLogger.warn('Back-channel logout settings could not be read', {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return base;
+  }
 }
 
 /**
@@ -727,6 +755,8 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
     if (deletedSessions.length > 0 && c.executionCtx) {
       c.executionCtx.waitUntil(
         (async () => {
+          // The retry budget counts from here: loading keys and settings uses it too.
+          const startedAt = Date.now();
           try {
             if (!logoutConfig.backchannel.enabled) {
               log.debug('Backchannel logout is disabled', { action: 'BackchannelLogout' });
@@ -735,6 +765,11 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
 
             // Get signing key for logout tokens
             const tenantId = getTenantIdFromContext(c);
+            const backchannelConfig = await getBackchannelLogoutConfig(
+              c.env,
+              tenantId,
+              logoutConfig.backchannel
+            );
             const keyManagerId = c.env.KEY_MANAGER.idFromName(`${tenantId}-v3`);
             const keyManager = c.env.KEY_MANAGER.get(keyManagerId);
             const keys = await keyManager.getAllPublicKeysRpc();
@@ -759,48 +794,78 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
 
             // Create orchestrator
             const kv = c.env.SETTINGS || c.env.STATE_STORE;
-            const orchestrator = createBackchannelLogoutOrchestrator(kv);
+            // Retries follow session.backchannel_retry_*; a final failure with
+            // on_failure 'error' (alert) is written to the audit log.
+            const orchestrator = createBackchannelLogoutOrchestrator(kv, undefined, {
+              startedAt,
+              onAlert: async (details) => {
+                await createAuditLog(c.env, {
+                  tenantId,
+                  userId: details.userId,
+                  action: 'backchannel_logout.failed',
+                  resource: 'session',
+                  resourceId: details.sessionId,
+                  // Sent from the server after the response: no client request applies.
+                  ipAddress: '',
+                  userAgent: '',
+                  metadata: JSON.stringify({
+                    client_id: details.clientId,
+                    attempts: details.attempts,
+                  }),
+                  severity: 'warning',
+                });
+              },
+            });
 
             // Send logout notifications for each deleted session
             const allResults: LogoutSendResult[] = [];
 
-            for (const {
-              sessionId: sessId,
-              userId: sessUserId,
-              backchannelClients,
-            } of sessionsToNotify) {
-              if (backchannelClients.length === 0) {
-                log.debug('No clients to notify for session', {
+            // Retries run behind the first attempts: they are waited for even when a send fails.
+            let retried: LogoutSendResult[] = [];
+            try {
+              for (const {
+                sessionId: sessId,
+                userId: sessUserId,
+                backchannelClients,
+              } of sessionsToNotify) {
+                if (backchannelClients.length === 0) {
+                  log.debug('No clients to notify for session', {
+                    sessionId: sessId,
+                    action: 'BackchannelLogout',
+                  });
+                  continue;
+                }
+
+                log.info('Sending logout notifications', {
                   sessionId: sessId,
+                  clientCount: backchannelClients.length,
                   action: 'BackchannelLogout',
                 });
-                continue;
+
+                const results = await orchestrator.sendToAll(
+                  backchannelClients,
+                  {
+                    issuer,
+                    userId: sessUserId,
+                    sessionId: sessId,
+                    privateKey,
+                    kid,
+                  },
+                  backchannelConfig
+                );
+
+                allResults.push(...results);
               }
-
-              log.info('Sending logout notifications', {
-                sessionId: sessId,
-                clientCount: backchannelClients.length,
-                action: 'BackchannelLogout',
-              });
-
-              const results = await orchestrator.sendToAll(
-                backchannelClients,
-                {
-                  issuer,
-                  userId: sessUserId,
-                  sessionId: sessId,
-                  privateKey,
-                  kid,
-                },
-                logoutConfig.backchannel
-              );
-
-              allResults.push(...results);
+            } finally {
+              retried = await orchestrator.settle();
             }
 
             // Log summary
-            const succeeded = allResults.filter((r) => r.success).length;
-            const failed = allResults.filter((r) => !r.success).length;
+            const succeeded =
+              allResults.filter((r) => r.success).length + retried.filter((r) => r.success).length;
+            const failed =
+              allResults.filter((r) => !r.success && !r.retryScheduled).length +
+              retried.filter((r) => !r.success).length;
             log.info('Backchannel logout completed', {
               succeeded,
               failed,

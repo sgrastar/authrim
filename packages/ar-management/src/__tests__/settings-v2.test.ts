@@ -103,6 +103,15 @@ function createAdminD1(): D1Database {
       'utf8'
     )
   );
+  database.exec(
+    readFileSync(
+      new URL(
+        '../../../../migrations/admin/d1/038_tenant_settings_reconciled_at.sql',
+        import.meta.url
+      ),
+      'utf8'
+    )
+  );
   adminDatabases.add(database);
   const session = {
     prepare: (sql: string) => new SqliteStatement(database.prepare(sql)),
@@ -315,6 +324,151 @@ describe('Settings API v2', () => {
         expect(body).toHaveProperty('version');
         expect(body).toHaveProperty('values');
         expect(body).toHaveProperty('sources');
+      });
+
+      it('shows FAPI saved through the older system settings as the platform value', async () => {
+        const { app, mockEnv } = createTestApp({
+          kv: createMockKV({ system_settings: JSON.stringify({ fapi: { enabled: true } }) }),
+        });
+
+        const res = await app.request(
+          '/api/admin/tenants/tenant_123/settings/security',
+          { method: 'GET' },
+          mockEnv
+        );
+
+        expect(res.status).toBe(200);
+        const body = (await res.json()) as SettingsGetResult;
+        expect(body.values['security.fapi_enabled']).toBe(true);
+        expect(body.sources['security.fapi_enabled']).toBe('platform');
+      });
+
+      it('shows a value saved through the older oauth-config as the platform value', async () => {
+        const { app, mockEnv } = createTestApp({
+          kv: createMockKV({ 'oauth:config:TOKEN_EXPIRY': '900' }),
+        });
+
+        const res = await app.request(
+          '/api/admin/tenants/tenant_123/settings/oauth',
+          { method: 'GET' },
+          mockEnv
+        );
+
+        expect(res.status).toBe(200);
+        const body = (await res.json()) as SettingsGetResult;
+        expect(body.values['oauth.access_token_expiry']).toBe(900);
+        expect(body.sources['oauth.access_token_expiry']).toBe('platform');
+        expect(body.inherited.values['oauth.access_token_expiry']).toBe(900);
+      });
+
+      it('answers 503 instead of env or defaults when the older settings cannot be read', async () => {
+        const { app, mockEnv } = createTestApp({
+          kv: createMockKV({ system_settings: 'not json' }),
+        });
+
+        const res = await app.request(
+          '/api/admin/tenants/tenant_123/settings/security',
+          { method: 'GET' },
+          mockEnv
+        );
+
+        expect(res.status).toBe(503);
+        const body = (await res.json()) as ApiResponse;
+        expect(body.error).toBe('temporarily_unavailable');
+      });
+
+      it('shows the older logout and error settings as platform values', async () => {
+        const { app, mockEnv } = createTestApp({
+          kv: createMockKV({
+            'settings:logout': JSON.stringify({
+              backchannel: { logout_token_exp_seconds: 60, on_final_failure: 'alert' },
+            }),
+            error_id_mode: 'all',
+          }),
+        });
+
+        const session = (await (
+          await app.request('/api/admin/tenants/tenant_123/settings/session', {}, mockEnv)
+        ).json()) as SettingsGetResult;
+        expect(session.values['session.backchannel_logout_token_exp']).toBe(60);
+        expect(session.values['session.backchannel_on_failure']).toBe('error');
+        expect(session.sources['session.backchannel_logout_token_exp']).toBe('platform');
+        expect(session.values['session.backchannel_request_timeout_ms']).toBe(5000);
+
+        const oauth = (await (
+          await app.request('/api/admin/tenants/tenant_123/settings/oauth', {}, mockEnv)
+        ).json()) as SettingsGetResult;
+        expect(oauth.values['oauth.error_id_mode']).toBe('all');
+        expect(oauth.sources['oauth.error_id_mode']).toBe('platform');
+      });
+
+      it('answers 503 for a tenant view whose document is not an object, and records nothing', async () => {
+        const kv = createMockKV({ 'settings:tenant:tenant_123:oauth': '[]' });
+        const { app, mockEnv } = createTestApp({ kv });
+
+        const res = await app.request(
+          '/api/admin/tenants/tenant_123/settings/oauth',
+          { method: 'GET' },
+          mockEnv
+        );
+
+        expect(res.status).toBe(503);
+        const row = await mockEnv.DB_ADMIN.prepare(
+          'SELECT COUNT(*) AS n FROM tenant_settings_documents'
+        ).first<{ n: number }>();
+        expect(row?.n).toBe(0);
+
+        // Once the document is repaired, the view shows it.
+        await kv.put(
+          'settings:tenant:tenant_123:oauth',
+          JSON.stringify({ 'oauth.access_token_expiry': 900 })
+        );
+        const repaired = await app.request(
+          '/api/admin/tenants/tenant_123/settings/oauth',
+          { method: 'GET' },
+          mockEnv
+        );
+        expect(repaired.status).toBe(200);
+        const body = (await repaired.json()) as SettingsGetResult;
+        expect(body.values['oauth.access_token_expiry']).toBe(900);
+      });
+
+      it('answers 503 for a platform view whose Settings API document cannot be read', async () => {
+        const { app, mockEnv } = createTestApp({
+          kv: createMockKV({ 'settings:platform:feature-flags': 'not json' }),
+        });
+
+        const res = await app.request(
+          '/api/admin/platform/settings/feature-flags',
+          { method: 'GET' },
+          mockEnv
+        );
+
+        expect(res.status).toBe(503);
+        const body = (await res.json()) as ApiResponse;
+        expect(body.error).toBe('temporarily_unavailable');
+      });
+
+      it('inherits a value set at the platform and reports it as the fallback', async () => {
+        const { app, mockEnv } = createTestApp({
+          kv: createMockKV({
+            'settings:platform:rate-limit': JSON.stringify({ 'rate_limit.strict': 50 }),
+          }),
+        });
+
+        const res = await app.request(
+          '/api/admin/tenants/tenant_123/settings/rate-limit',
+          { method: 'GET' },
+          mockEnv
+        );
+
+        expect(res.status).toBe(200);
+        const body = (await res.json()) as SettingsGetResult;
+        expect(body.values['rate_limit.strict']).toBe(50);
+        expect(body.sources['rate_limit.strict']).toBe('platform');
+        expect(body.inherited.values['rate_limit.strict']).toBe(50);
+        expect(body.inherited.sources['rate_limit.strict']).toBe('platform');
+        expect(body.sources['rate_limit.moderate']).toBe('default');
       });
 
       it('should return 404 for unknown category', async () => {
@@ -763,6 +917,53 @@ describe('Settings API v2', () => {
         expect(res.status).toBe(400);
         const body = (await res.json()) as ApiResponse;
         expect(body.error).toBe('validation_failed');
+      });
+
+      it('accepts only a tenant UI on an allowed origin, with paths on that host', async () => {
+        const mockKV = createMockKV();
+        const { app, mockEnv } = createTestApp({
+          kv: mockKV,
+          env: {
+            ISSUER_URL: 'https://id.example.com',
+            ALLOWED_ORIGINS: 'https://login.example.org',
+          },
+        });
+        const patch = async (set: Record<string, unknown>) => {
+          const getRes = await app.request(
+            '/api/admin/tenants/tenant_123/settings/tenant',
+            { method: 'GET' },
+            mockEnv
+          );
+          const current = (await getRes.json()) as SettingsGetResult;
+          return app.request(
+            '/api/admin/tenants/tenant_123/settings/tenant',
+            {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ ifMatch: current.version, set }),
+            },
+            mockEnv
+          );
+        };
+
+        for (const set of [
+          { 'tenant.ui_base_url': 'https://evil.example.net' },
+          { 'tenant.ui_base_url': '   ' },
+          { 'tenant.ui_base_url': '' },
+          { 'tenant.ui_base_url': 'http://login.example.org' },
+          { 'tenant.ui_login_path': '//evil.example.net/login' },
+          { 'tenant.ui_error_path': 'error' },
+        ]) {
+          const res = await patch(set);
+          expect(res.status, JSON.stringify(set)).toBe(400);
+          expect((await res.json()) as ApiResponse).toMatchObject({ error: 'validation_failed' });
+        }
+
+        const res = await patch({
+          'tenant.ui_base_url': 'https://login.example.org',
+          'tenant.ui_login_path': '/signin',
+        });
+        expect(res.status).toBe(200);
       });
 
       it('rejects unsafe published Account Page snapshots', async () => {
@@ -1587,6 +1788,59 @@ describe('Settings API v2', () => {
           expect(response.status).toBe(400);
         }
       );
+
+      it('lets a client set a setting whose dependency it inherits from the tenant', async () => {
+        const mockKV = createMockKV({
+          'client:test-tenant:client_abc:metadata': JSON.stringify({ tenant_id: 'test-tenant' }),
+        });
+        const { app, mockEnv } = createTestApp({ kv: mockKV, tenantId: 'test-tenant' });
+        const headers = { 'Content-Type': 'application/json', 'X-Tenant-Id': 'test-tenant' };
+
+        const tenantGet = await app.request(
+          '/api/admin/tenants/test-tenant/settings/security',
+          { method: 'GET', headers },
+          mockEnv
+        );
+        const tenant = (await tenantGet.json()) as SettingsGetResult;
+        const tenantPatch = await app.request(
+          '/api/admin/tenants/test-tenant/settings/security',
+          {
+            method: 'PATCH',
+            headers,
+            body: JSON.stringify({
+              ifMatch: tenant.version,
+              set: { 'security.fapi_enabled': true },
+            }),
+          },
+          mockEnv
+        );
+        expect(tenantPatch.status).toBe(200);
+
+        const clientGet = await app.request(
+          '/api/admin/clients/client_abc/settings/security',
+          { method: 'GET', headers },
+          mockEnv
+        );
+        const client = (await clientGet.json()) as SettingsGetResult;
+        expect(client.values['security.fapi_enabled']).toBe(true);
+        expect(client.sources['security.fapi_enabled']).toBe('tenant');
+
+        const clientPatch = await app.request(
+          '/api/admin/clients/client_abc/settings/security',
+          {
+            method: 'PATCH',
+            headers,
+            body: JSON.stringify({
+              ifMatch: client.version,
+              set: { 'security.fapi_strict_dpop': true },
+            }),
+          },
+          mockEnv
+        );
+        const result = (await clientPatch.json()) as SettingsPatchResult;
+        expect(result.rejected).toEqual({});
+        expect(result.applied).toContain('security.fapi_strict_dpop');
+      });
 
       it('rejects deprecated consent authority keys through the category route', async () => {
         const mockKV = createMockKV({

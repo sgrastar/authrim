@@ -252,7 +252,7 @@ export async function emailCodeSendHandler(c: Context<{ Bindings: Env }>) {
           ...customFieldValues,
         });
 
-        const userId = await generateUserIdFromSettings(c.env.AUTHRIM_CONFIG, tenantId, c.env);
+        const userId = await generateUserIdFromSettings(c.env, tenantId, c.env);
         const defaultName = name || null;
         const preferredUsername = normalizedEmail.split('@')[0];
         const runtimeUser = {

@@ -280,6 +280,59 @@ describe('CanonicalRuntimeUserWriter', () => {
     });
   });
 
+  it('updates only the given profile fields of an existing user', async () => {
+    await writer.createFromRuntimeUser({
+      userId: 'user-1',
+      tenantId: 'tenant-a',
+      active: true,
+      emailVerified: true,
+      piiFields: { email: true, name: true, given_name: true, zoneinfo: true },
+      sensitiveValues: {
+        email: 'person@example.test',
+        name: 'Example Person',
+        given_name: 'Example',
+        zoneinfo: 'Asia/Tokyo',
+      },
+      inlineProfileFields: { 'field.custom.employee_number': 'E-001' },
+    });
+    const account = adapter.getById('identity_accounts', 'account:user-1');
+
+    await expect(
+      writer.updateProfileFields({
+        userId: 'user-1',
+        tenantId: 'tenant-a',
+        values: { given_name: 'Updated', locale: 'en-US' },
+      })
+    ).resolves.toBe(true);
+
+    const sensitive = (field: string) =>
+      piiAdapter.getById('identity_sensitive_values', `sensitive-value:user-1:${field}`);
+    expect(sensitive('given_name')).toMatchObject({ value_json: JSON.stringify('Updated') });
+    expect(sensitive('locale')).toMatchObject({ value_json: JSON.stringify('en-US') });
+    // Fields the update does not name stay as they were.
+    expect(sensitive('zoneinfo')).toMatchObject({
+      value_json: JSON.stringify('Asia/Tokyo'),
+      lifecycle_state: 'active',
+    });
+    expect(sensitive('name')).toMatchObject({ value_json: JSON.stringify('Example Person') });
+    expect(sensitive('email')).toMatchObject({ value_json: JSON.stringify('person@example.test') });
+    expect(
+      adapter.getById(
+        'profile_attribute_values',
+        'profile-attribute:user-1:field.custom.employee_number'
+      )
+    ).toMatchObject({ value_json: JSON.stringify('E-001') });
+    expect(adapter.getById('identity_accounts', 'account:user-1')).toEqual(account);
+
+    await expect(
+      writer.updateProfileFields({
+        userId: 'unknown',
+        tenantId: 'tenant-a',
+        values: { given_name: 'X' },
+      })
+    ).resolves.toBe(false);
+  });
+
   it('marks canonical runtime users deleted for SCIM delete cutover', async () => {
     await writer.createFromRuntimeUser({
       userId: 'user-1',

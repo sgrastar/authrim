@@ -499,6 +499,14 @@ export class CanonicalRuntimeUserStore {
     });
   }
 
+  /** Write only the given profile fields of an existing user (see the writer). */
+  async updateProfileFields(
+    userId: string,
+    values: Partial<Record<CanonicalSensitiveUserField, string>>
+  ): Promise<boolean> {
+    return this.writer.updateProfileFields({ userId, tenantId: this.options.tenantId, values });
+  }
+
   async deleteUser(userId: string): Promise<boolean> {
     return this.writer.deleteRuntimeUser(userId);
   }

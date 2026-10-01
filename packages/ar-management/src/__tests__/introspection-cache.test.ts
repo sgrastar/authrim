@@ -177,6 +177,26 @@ describe('Introspection Cache Settings', () => {
     });
   });
 
+  describe('tenant view when settings cannot be read', () => {
+    it('turns the cache off instead of falling back to a value that enables it', async () => {
+      const env = {
+        SETTINGS: {
+          get: vi.fn(async (key: string) => {
+            if (key === 'settings:tenant:acme:feature-flags') throw new Error('kv unavailable');
+            return key === 'system_settings'
+              ? JSON.stringify({ oidc: { introspectionCache: { enabled: true } } })
+              : null;
+          }),
+        } as unknown as KVNamespace,
+        ENABLE_INTROSPECTION_CACHE: 'true',
+      } as Env;
+
+      const { settings } = await getIntrospectionCacheSettings(env, 'acme');
+
+      expect(settings.enabled).toBe(false);
+    });
+  });
+
   describe('getIntrospectionCacheConfig', () => {
     it('should return just the settings object', async () => {
       const env = {
@@ -225,6 +245,28 @@ describe('Introspection Cache Settings', () => {
       );
     });
 
+    it('shows the values the Settings API applies at runtime', async () => {
+      const documents: Record<string, string> = {
+        'settings:platform:feature-flags': JSON.stringify({
+          'feature.introspection_cache_enabled': false,
+        }),
+        'settings:tenant:default:tokens': JSON.stringify({ 'tokens.introspection_cache_ttl': 90 }),
+      };
+      const c = createMockContext({
+        env: {
+          SETTINGS: {
+            get: vi.fn(async (key: string) => documents[key] ?? null),
+          } as unknown as KVNamespace,
+        },
+      });
+
+      await getIntrospectionCacheConfigHandler(c);
+
+      const body = c.json.mock.calls[0][0];
+      expect(body.settings.enabled).toMatchObject({ value: false, source: 'kv' });
+      expect(body.settings.ttlSeconds).toMatchObject({ value: 90, source: 'kv' });
+    });
+
     it('should handle errors gracefully', async () => {
       const c = createMockContext({
         env: {
@@ -243,8 +285,9 @@ describe('Introspection Cache Settings', () => {
 
       await getIntrospectionCacheConfigHandler(c);
 
-      // Should still return successfully with default values
-      expect(result.body.settings.enabled.value).toBe(true);
+      // The values in effect are unknown, so no values are shown
+      expect(result.status).toBe(503);
+      expect(result.body.error).toBe('temporarily_unavailable');
     });
   });
 

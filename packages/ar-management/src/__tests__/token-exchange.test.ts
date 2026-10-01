@@ -139,6 +139,22 @@ describe('Token Exchange Settings API - GET', () => {
   });
 
   describe('GET /api/admin/settings/token-exchange', () => {
+    it("shows the tenant's Settings API value, as runtime applies it", async () => {
+      const c = createMockContext({
+        kv: createMockKV({
+          getValues: {
+            system_settings: JSON.stringify({ oidc: { tokenExchange: { enabled: true } } }),
+            'settings:tenant:default:tokens': JSON.stringify({ 'tokens.exchange_enabled': false }),
+          },
+        }),
+      });
+
+      await getTokenExchangeConfig(c);
+
+      const body = c.json.mock.calls[0][0];
+      expect(body.settings.enabled).toMatchObject({ value: false, source: 'kv' });
+    });
+
     it('should return default settings when no configuration exists', async () => {
       const c = createMockContext({});
 
@@ -315,7 +331,7 @@ describe('Token Exchange Settings API - GET', () => {
       );
     });
 
-    it('should handle KV read errors gracefully', async () => {
+    it('answers 503 instead of env values when the settings cannot be read', async () => {
       const mockKV = createMockKV({});
       mockKV.get = vi.fn().mockRejectedValue(new Error('KV error'));
 
@@ -328,16 +344,10 @@ describe('Token Exchange Settings API - GET', () => {
 
       await getTokenExchangeConfig(c);
 
-      // Should fall back to env/default
+      // Runtime refuses the grant while the settings cannot be read; env is not what applies.
       expect(c.json).toHaveBeenCalledWith(
-        expect.objectContaining({
-          settings: expect.objectContaining({
-            enabled: expect.objectContaining({
-              value: true,
-              source: 'env',
-            }),
-          }),
-        })
+        expect.objectContaining({ error: 'temporarily_unavailable' }),
+        503
       );
     });
   });

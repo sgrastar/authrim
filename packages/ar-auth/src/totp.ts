@@ -414,7 +414,7 @@ export async function totpSignupOptionsHandler(c: Context<{ Bindings: Env }>) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_CONFLICT);
     }
 
-    const userId = await generateUserIdFromSettings(c.env.AUTHRIM_CONFIG, tenantId, c.env);
+    const userId = await generateUserIdFromSettings(c.env, tenantId, c.env);
     const profile = await resolveTotpProfile(c.env, tenantId);
     const secret = generateTotpSecret();
     const encrypted = await encryptValue(

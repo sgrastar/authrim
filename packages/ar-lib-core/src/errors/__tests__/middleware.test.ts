@@ -11,7 +11,11 @@ import {
   errorMiddleware,
 } from '../middleware';
 
-type TestEnv = { AUTHRIM_CONFIG?: { get: (key: string) => Promise<string | null> } };
+type TestEnv = {
+  AUTHRIM_CONFIG?: { get: (key: string) => Promise<string | null> };
+  SETTINGS?: { get: (key: string) => Promise<string | null> };
+  ERROR_RESPONSE_FORMAT?: string;
+};
 
 function appWithError(
   error: unknown,
@@ -100,7 +104,9 @@ describe('error middleware', () => {
     const response = await app.request('/test', {}, env);
 
     expect(response.headers.get('content-type')).toContain('application/problem+json');
-    expect(kv.get).toHaveBeenCalledTimes(3);
+    expect(kv.get).toHaveBeenCalledWith('error_locale');
+    expect(kv.get).toHaveBeenCalledWith('error_response_format');
+    expect(kv.get).toHaveBeenCalledWith('error_id_mode');
   });
 
   it.each([
@@ -112,6 +118,80 @@ describe('error middleware', () => {
     });
 
     const response = await app.request('/authorize', {}, env);
+
+    expect(response.status).toBe(400);
+    expect(response.headers.get('content-type')).toContain('application/json');
+  });
+
+  it("uses the tenant's Settings API format over the value saved in AUTHRIM_CONFIG", async () => {
+    const settings: Record<string, string> = {
+      'settings:tenant:default:oauth': JSON.stringify({
+        'oauth.error_response_format': 'problem_details',
+      }),
+    };
+    const { app, env } = appWithError(new RFCError('invalid_request', 400), {
+      AUTHRIM_CONFIG: { get: async (key) => (key === 'error_response_format' ? 'oauth' : null) },
+      SETTINGS: { get: async (key) => settings[key] ?? null },
+    });
+
+    const response = await app.request('/test', {}, env);
+
+    expect(response.headers.get('content-type')).toContain('application/problem+json');
+  });
+
+  it('uses the format from env when nothing is saved', async () => {
+    const { app, env } = appWithError(new RFCError('invalid_request', 400), {
+      ERROR_RESPONSE_FORMAT: 'problem_details',
+    });
+
+    const response = await app.request('/test', {}, env);
+
+    expect(response.headers.get('content-type')).toContain('application/problem+json');
+  });
+
+  it('applies saved error settings even when unrelated settings documents are broken', async () => {
+    const { app, env } = appWithError(new RFCError('invalid_request', 400), {
+      AUTHRIM_CONFIG: {
+        get: async (key) => (key === 'error_response_format' ? 'problem_details' : null),
+      },
+      SETTINGS: {
+        get: async (key) => (key === 'system_settings' ? 'not json' : null),
+      },
+    });
+
+    const response = await app.request('/test', {}, env);
+
+    expect(response.headers.get('content-type')).toContain('application/problem+json');
+  });
+
+  it('uses its defaults when a saved error setting cannot be read, and backs off re-reading', async () => {
+    const get = vi.fn(async (key: string) => {
+      if (key === 'error_id_mode') throw new Error('kv unavailable');
+      return key === 'error_response_format' ? 'problem_details' : null;
+    });
+    const { app, env } = appWithError(new RFCError('invalid_request', 400), {
+      AUTHRIM_CONFIG: { get },
+      SETTINGS: { get: async () => null },
+    });
+
+    const first = await app.request('/test', {}, env);
+    expect(first.headers.get('content-type')).toContain('application/json');
+    const readsAfterFirst = get.mock.calls.filter(([key]) => key === 'error_id_mode').length;
+    await app.request('/test', {}, env);
+    await app.request('/test', {}, env);
+    expect(get.mock.calls.filter(([key]) => key === 'error_id_mode').length).toBe(readsAfterFirst);
+  });
+
+  it('keeps the OAuth format when the Settings API cannot be read', async () => {
+    const { app, env } = appWithError(new RFCError('invalid_request', 400), {
+      SETTINGS: {
+        get: async () => {
+          throw new Error('kv unavailable');
+        },
+      },
+    });
+
+    const response = await app.request('/test', {}, env);
 
     expect(response.status).toBe(400);
     expect(response.headers.get('content-type')).toContain('application/json');

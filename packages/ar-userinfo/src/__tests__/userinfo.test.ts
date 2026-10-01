@@ -36,10 +36,8 @@ const mockCanonicalRuntimeUserProjectionRepository = vi.hoisted(() =>
   })
 );
 const mockCanonicalSensitiveValueResolver = vi.hoisted(() => vi.fn());
-const mockCreateOAuthConfigManager = vi.hoisted(() =>
-  vi.fn(() => ({
-    isUserInfoRequireOpenidScope: vi.fn().mockResolvedValue(false),
-  }))
+const mockResolveEffectiveSettings = vi.hoisted(() =>
+  vi.fn().mockResolvedValue({ 'oauth.userinfo_require_openid': false })
 );
 const mockLoadFeatureConfig = vi.hoisted(() => vi.fn().mockResolvedValue({ enabled: false }));
 const mockResolveCustomClaimRuntimeSourcesFromEnv = vi.hoisted(() =>
@@ -75,7 +73,7 @@ vi.mock('@authrim/ar-lib-core', async () => {
     getCachedUserCore: mockGetCachedUserCore,
     CanonicalRuntimeUserProjectionRepository: mockCanonicalRuntimeUserProjectionRepository,
     CanonicalSensitiveValueResolver: mockCanonicalSensitiveValueResolver,
-    createOAuthConfigManager: mockCreateOAuthConfigManager,
+    resolveEffectiveSettings: mockResolveEffectiveSettings,
     loadFeatureConfig: mockLoadFeatureConfig,
     resolveCustomClaimRuntimeSourcesFromEnv: mockResolveCustomClaimRuntimeSourcesFromEnv,
     resolveCustomClaimRuntimeSourcesFromHono: mockResolveCustomClaimRuntimeSourcesFromEnv,
@@ -259,9 +257,7 @@ describe('UserInfo Endpoint', () => {
       updated_at: 1700000000000,
     });
     mockCanonicalFindByLegacyUserId.mockResolvedValue(sampleCanonicalProjection());
-    mockCreateOAuthConfigManager.mockReturnValue({
-      isUserInfoRequireOpenidScope: vi.fn().mockResolvedValue(false),
-    });
+    mockResolveEffectiveSettings.mockResolvedValue({ 'oauth.userinfo_require_openid': false });
     mockLoadFeatureConfig.mockResolvedValue({ enabled: false });
     mockResolveCustomClaimRuntimeSourcesFromEnv.mockResolvedValue({
       schemaDb: null,
@@ -394,9 +390,7 @@ describe('UserInfo Endpoint', () => {
       const c = createMockContext({
         headers: { Authorization: 'Bearer valid-token' },
       });
-      mockCreateOAuthConfigManager.mockReturnValue({
-        isUserInfoRequireOpenidScope: vi.fn().mockResolvedValue(true),
-      });
+      mockResolveEffectiveSettings.mockResolvedValue({ 'oauth.userinfo_require_openid': true });
 
       vi.mocked(introspectTokenFromContext).mockResolvedValue({
         valid: true,

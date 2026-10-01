@@ -1093,6 +1093,12 @@ const id: Translations = {
   'web.comp.adminUi': 'UI Admin',
   'web.comp.adminUiDesc':
     'Dashboard admin untuk mengelola tenant, klien, pengguna, dan pengaturan sistem.',
+  'web.comp.adminUiVariant': 'Paket UI admin',
+  'web.comp.adminUiLegacy': 'UI admin saat ini',
+  'web.comp.adminUiLegacyDesc': 'UI admin yang digunakan saat ini, dengan semua fitur.',
+  'web.comp.adminUiConsole': 'Konsol admin (pratinjau)',
+  'web.comp.adminUiConsoleDesc':
+    'Konsol admin yang didesain ulang. Fitur ditambahkan satu per satu; item yang belum dibangun ulang menampilkan placeholder. Menggunakan URL dan passkey administrator yang sama dengan UI admin saat ini.',
 
   // Web UI Domain Row Labels
   'web.domain.loginUi': 'UI Login',

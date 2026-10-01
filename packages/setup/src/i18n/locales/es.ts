@@ -1116,6 +1116,13 @@ const es: Translations = {
   'web.comp.adminUi': 'UI de Administración',
   'web.comp.adminUiDesc':
     'Panel de administración para gestionar tenants, clientes, usuarios y configuración del sistema.',
+  'web.comp.adminUiVariant': 'Paquete de la interfaz de administración',
+  'web.comp.adminUiLegacy': 'Interfaz de administración actual',
+  'web.comp.adminUiLegacyDesc':
+    'La interfaz de administración que se usa hoy, con todas las funciones.',
+  'web.comp.adminUiConsole': 'Consola de administración (vista previa)',
+  'web.comp.adminUiConsoleDesc':
+    'La consola de administración rediseñada. Las funciones se añaden una a una; los elementos aún no reconstruidos muestran un marcador. Misma URL y mismas llaves de acceso de administrador que la interfaz actual.',
 
   // Web UI Domain Row Labels
   'web.domain.loginUi': 'UI de Inicio de Sesión',

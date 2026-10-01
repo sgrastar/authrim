@@ -2,7 +2,12 @@ import { readFileSync } from 'node:fs';
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DatabaseSettingsCanonicalStore } from '../settings-canonical-store';
-import { ConflictError, generateVersion, SettingsManager } from '../../utils/settings-manager';
+import {
+  ConflictError,
+  generateVersion,
+  projectLatestSettingsDocument,
+  SettingsManager,
+} from '../../utils/settings-manager';
 
 function adapter(db: DatabaseSync) {
   return {
@@ -55,6 +60,15 @@ describe('DatabaseSettingsCanonicalStore', () => {
         'utf8'
       )
     );
+    db.exec(
+      readFileSync(
+        new URL(
+          '../../../../../migrations/admin/d1/038_tenant_settings_reconciled_at.sql',
+          import.meta.url
+        ),
+        'utf8'
+      )
+    );
     now = 100;
     values = new Map([
       ['settings:tenant:tenant-a:security', JSON.stringify({ 'security.enabled': true })],
@@ -99,6 +113,9 @@ describe('DatabaseSettingsCanonicalStore', () => {
   it('commits with CAS and leaves a retryable projection when KV fails', async () => {
     const first = manager();
     const initial = await first.getAll('security', { type: 'tenant', id: 'tenant-a' });
+    // The manager tries the projection three times before leaving it to the scheduled retry.
+    put.mockRejectedValueOnce(new Error('kv unavailable'));
+    put.mockRejectedValueOnce(new Error('kv unavailable'));
     put.mockRejectedValueOnce(new Error('kv unavailable'));
     const changed = await first.patch(
       'security',
@@ -107,6 +124,7 @@ describe('DatabaseSettingsCanonicalStore', () => {
       'admin'
     );
     expect(changed.applied).toEqual(['security.enabled']);
+    expect(changed.projection).toBe('pending');
     expect((await store.pending()).map(({ storageKey }) => storageKey)).toEqual([
       'settings:tenant:tenant-a:security',
     ]);
@@ -122,6 +140,172 @@ describe('DatabaseSettingsCanonicalStore', () => {
       .prepare('SELECT updated_at,projected_at FROM tenant_settings_documents')
       .get();
     expect(timestamps).toEqual({ updated_at: 102, projected_at: 102 });
+  });
+
+  it('projects on the retry when the first KV write fails', async () => {
+    const first = manager();
+    const initial = await first.getAll('security', { type: 'tenant', id: 'tenant-a' });
+    put.mockRejectedValueOnce(new Error('kv unavailable'));
+    const changed = await first.patch(
+      'security',
+      { type: 'tenant', id: 'tenant-a' },
+      { ifMatch: initial.version, set: { 'security.enabled': false } },
+      'admin'
+    );
+    expect(changed.projection).toBeUndefined();
+    expect(await store.pending()).toEqual([]);
+  });
+
+  it('re-projects the latest document when a save lands after the pending list was read', async () => {
+    const scope = { type: 'tenant' as const, id: 'tenant-a' };
+    const first = manager();
+    const initial = await first.getAll('security', scope);
+    put.mockRejectedValue(new Error('kv unavailable'));
+    const stale = await first.patch(
+      'security',
+      scope,
+      { ifMatch: initial.version, set: { 'security.enabled': false } },
+      'admin'
+    );
+    expect(stale.projection).toBe('pending');
+    const [item] = await store.pending();
+
+    // A newer save projects itself after the scheduled retry listed the older one.
+    put.mockImplementation(async (key: string, value: string) => values.set(key, value));
+    const latest = await manager().getAll('security', scope);
+    await manager().patch(
+      'security',
+      scope,
+      { ifMatch: latest.version, set: { 'security.enabled': true } },
+      'admin'
+    );
+
+    const result = await projectLatestSettingsDocument(
+      store,
+      { put } as unknown as KVNamespace,
+      item.category,
+      item.scope,
+      item.storageKey
+    );
+    expect(result).toBe('applied');
+    expect(JSON.parse(values.get(item.storageKey)!)).toEqual({ 'security.enabled': true });
+    expect(await store.pending()).toEqual([]);
+  });
+
+  it('lists recently projected documents for reconciliation', async () => {
+    const scope = { type: 'tenant' as const, id: 'tenant-a' };
+    const first = manager();
+    const initial = await first.getAll('security', scope);
+    await first.patch(
+      'security',
+      scope,
+      { ifMatch: initial.version, set: { 'security.enabled': false } },
+      'admin'
+    );
+
+    const recent = await store.recentlyProjected(0);
+    expect(recent.map(({ storageKey }) => storageKey)).toEqual([
+      'settings:tenant:tenant-a:security',
+    ]);
+    expect(await store.recentlyProjected(now + 1_000)).toEqual([]);
+  });
+
+  it('reports pending instead of failing when the canonical copy cannot be read after writing', async () => {
+    const scope = { type: 'tenant' as const, id: 'tenant-a' };
+    await manager().getAll('security', scope);
+    const [initial] = await store.recentlyProjected(0);
+    const flaky = {
+      load: vi
+        .fn()
+        .mockImplementationOnce((c: string, s: typeof scope) => store.load(c, s))
+        .mockRejectedValue(new Error('d1 unavailable')),
+      markProjected: vi.fn(),
+      markPending: vi.fn(async () => {}),
+    };
+
+    const result = await projectLatestSettingsDocument(
+      flaky as never,
+      { put } as unknown as KVNamespace,
+      'security',
+      scope,
+      initial.storageKey
+    );
+
+    expect(result).toBe('pending');
+    expect(flaky.markProjected).not.toHaveBeenCalled();
+    expect(flaky.markPending).toHaveBeenCalledWith('security', scope, initial.version);
+  });
+
+  it('lists documents by when they were last reconciled, pending ones included', async () => {
+    const data = { 'security.enabled': true };
+    for (const tenant of ['tenant-b', 'tenant-a']) {
+      const scope = { type: 'tenant' as const, id: tenant };
+      now += 10;
+      await store.create('security', scope, { data, version: generateVersion(data) });
+    }
+    await store.markProjected(
+      'security',
+      { type: 'tenant', id: 'tenant-a' },
+      generateVersion(data)
+    );
+
+    // Created first, so reconciled least recently.
+    let order = await store.leastRecentlyReconciled(5);
+    expect(order.map(({ storageKey, projectionState }) => [storageKey, projectionState])).toEqual([
+      ['settings:tenant:tenant-b:security', 'pending'],
+      ['settings:tenant:tenant-a:security', 'applied'],
+    ]);
+
+    now += 10;
+    await store.markReconciled('security', { type: 'tenant', id: 'tenant-b' });
+    order = await store.leastRecentlyReconciled(5);
+    expect(order.map(({ storageKey }) => storageKey)).toEqual([
+      'settings:tenant:tenant-a:security',
+      'settings:tenant:tenant-b:security',
+    ]);
+  });
+
+  it('bootstraps a tenant document from the creation-time copy when SETTINGS has none', async () => {
+    values.delete('settings:tenant:tenant-a:security');
+    const legacy = new Map([
+      ['settings:tenant:tenant-a:security', JSON.stringify({ 'security.enabled': false })],
+    ]);
+    const withLegacy = category(
+      new SettingsManager({
+        env: {},
+        kv: { get: async (key: string) => values.get(key) ?? null, put } as unknown as KVNamespace,
+        legacyKv: { get: async (key: string) => legacy.get(key) ?? null } as unknown as KVNamespace,
+        canonicalStore: store,
+        cacheTTL: 0,
+        strictReads: true,
+      })
+    );
+
+    const result = await withLegacy.getAll('security', { type: 'tenant', id: 'tenant-a' });
+
+    expect(result.values).toEqual({ 'security.enabled': false });
+    // Left pending, so the scheduled retry copies it to SETTINGS.
+    expect((await store.pending()).map(({ storageKey }) => storageKey)).toEqual([
+      'settings:tenant:tenant-a:security',
+    ]);
+  });
+
+  it('marks only the given version pending again', async () => {
+    const scope = { type: 'tenant' as const, id: 'tenant-a' };
+    const first = manager();
+    const initial = await first.getAll('security', scope);
+    const saved = await first.patch(
+      'security',
+      scope,
+      { ifMatch: initial.version, set: { 'security.enabled': false } },
+      'admin'
+    );
+    expect(await store.pending()).toEqual([]);
+
+    await store.markPending('security', scope, initial.version);
+    expect(await store.pending()).toEqual([]);
+    await store.markPending('security', scope, saved.version);
+    expect((await store.pending()).map(({ version }) => version)).toEqual([saved.version]);
   });
 
   it('rejects a stale concurrent patch without replacing the canonical winner', async () => {

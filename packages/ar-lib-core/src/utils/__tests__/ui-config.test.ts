@@ -687,3 +687,19 @@ describe('UI Configuration Manager', () => {
     });
   });
 });
+
+describe('getUIConfig with an unusable saved base URL', () => {
+  it('falls back to UI_URL, as before, instead of failing', async () => {
+    const env = {
+      SETTINGS: {
+        get: async () => JSON.stringify({ ui: { baseUrl: 123, paths: { login: '/x' } } }),
+      } as unknown as KVNamespace,
+      UI_URL: 'https://ui.example.com/',
+    };
+
+    await expect(getUIConfig(env)).resolves.toEqual({
+      baseUrl: 'https://ui.example.com',
+      paths: DEFAULT_UI_PATHS,
+    });
+  });
+});

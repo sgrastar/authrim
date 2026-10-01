@@ -5343,6 +5343,23 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
                 <span class="st"></span>
               </label>
             </div>
+            <div id="admin-ui-variant-group" class="admin-ui-variant">
+              <p id="admin-ui-variant-label" class="admin-ui-variant-label" data-i18n="web.comp.adminUiVariant">Admin UI package</p>
+              <div class="radiocards" role="radiogroup" aria-labelledby="admin-ui-variant-label">
+                <label class="radiocard">
+                  <input type="radio" name="admin-ui-variant" value="legacy" checked>
+                  <span class="dot" aria-hidden="true"></span>
+                  <span class="nm"><span data-i18n="web.comp.adminUiLegacy">Current Admin UI</span><small data-i18n="web.comp.adminUiLegacyDesc">The Admin UI in use today, with every feature.</small></span>
+                  <span class="st"></span>
+                </label>
+                <label class="radiocard">
+                  <input type="radio" name="admin-ui-variant" value="console">
+                  <span class="dot" aria-hidden="true"></span>
+                  <span class="nm"><span data-i18n="web.comp.adminUiConsole">Admin console (preview)</span><small data-i18n="web.comp.adminUiConsoleDesc">The redesigned admin console. Features are added one by one; items not rebuilt yet show a placeholder. Uses the same URL and administrator passkeys as the current Admin UI.</small></span>
+                  <span class="st"></span>
+                </label>
+              </div>
+            </div>
           </div>
           <div class="rownote">
             <span data-i18n="web.basic.componentsNote">The API is always included. UIs are optional when using your own frontend through the SDK.</span>
@@ -8318,7 +8335,11 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       const componentNames = [
         components.api !== false ? 'API' : null,
         components.loginUi !== false ? 'Login UI' : null,
-        components.adminUi !== false ? 'Admin UI' : null,
+        components.adminUi !== false
+          ? components.adminUiVariant === 'console'
+            ? 'Admin console (preview)'
+            : 'Admin UI'
+          : null,
       ].filter(Boolean);
       const placement = raw.tenant?.placementPolicy || config.tenant?.placementPolicy || 'tenant_exclusive';
       const coreRegion =
@@ -9392,6 +9413,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       setAutomaticProvisioningEnabled(config.controlPlane?.automaticProvisioning === true);
       document.getElementById('comp-login-ui').checked = config.components.loginUi !== false;
       document.getElementById('comp-admin-ui').checked = config.components.adminUi !== false;
+      setAdminUiVariant(config.components.adminUiVariant);
       document.getElementById('feature-queue-enabled').checked =
         config.features?.queue?.enabled === true;
       updateComponentOptionUi();
@@ -9711,7 +9733,9 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       const components = [
         'API',
         ...(loginUiEnabled ? ['Login UI'] : []),
-        ...(adminUiEnabled ? ['Admin UI'] : []),
+        ...(adminUiEnabled
+          ? [getAdminUiVariant() === 'console' ? 'Admin console (preview)' : 'Admin UI']
+          : []),
       ];
       const previewComponents = document.getElementById('preview-components');
       previewComponents.textContent = '';
@@ -9883,9 +9907,25 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       }
     }
 
+    // Only one Admin UI is deployed per environment; the admin console fills the same slot.
+    function getAdminUiVariant() {
+      return document.querySelector('input[name="admin-ui-variant"]:checked')?.value === 'console'
+        ? 'console'
+        : 'legacy';
+    }
+
+    function setAdminUiVariant(variant) {
+      const value = variant === 'console' ? 'console' : 'legacy';
+      document.querySelectorAll('input[name="admin-ui-variant"]').forEach((input) => {
+        input.checked = input.value === value;
+      });
+    }
+
     function updateComponentOptionUi() {
       const loginUiEnabled = document.getElementById('comp-login-ui')?.checked !== false;
       const adminUiEnabled = document.getElementById('comp-admin-ui')?.checked !== false;
+      const adminUiVariantGroup = document.getElementById('admin-ui-variant-group');
+      if (adminUiVariantGroup) adminUiVariantGroup.hidden = !adminUiEnabled;
       const loginDomainRow = document.getElementById('login-domain-row');
       const adminDomainRow = document.getElementById('admin-domain-row');
       const loginDomainInput = document.getElementById('login-domain');
@@ -10471,6 +10511,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
           api: true,
           loginUi: loginUiEnabled,
           adminUi: adminUiEnabled,
+          adminUiVariant: getAdminUiVariant(),
           saml: true,
           async: true,
           vc: true,

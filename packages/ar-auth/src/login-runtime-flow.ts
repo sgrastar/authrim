@@ -1,6 +1,8 @@
 import type { Context } from 'hono';
 import { consumeAuthorizationChallengeContinuation } from './direct-auth';
 import {
+  getTenantSettingsDocument,
+  readSettingsFlag,
   FLOW_RUNTIME_CONTRACT_SCHEMA_VERSION,
   FLOW_RUNTIME_INTERACTION_TTL_SECONDS,
   createAuthContextFromHono,
@@ -725,11 +727,13 @@ function getLoginRuntimeFeatureFlagCacheTtlMs(env: Env): number {
   );
 }
 
-function readLoginRuntimeFlagFromSettings(settings: Record<string, unknown> | null): true | null {
-  if (!settings || typeof settings !== 'object') return null;
-  for (const key of LOGIN_RUNTIME_FEATURE_KEYS) {
-    if (settings[key] === true || settings[key] === 'true' || settings[key] === '1') return true;
-  }
+function readLoginRuntimeFlagFromSettings(
+  settings: Record<string, unknown> | null
+): boolean | null {
+  const values = LOGIN_RUNTIME_FEATURE_KEYS.map((key) => readSettingsFlag(settings, key));
+  if (values.includes(true)) return true;
+  // An explicit false wins over the environment flag; unset keys fall back to it.
+  if (values.includes(false)) return false;
   return null;
 }
 
@@ -750,19 +754,10 @@ async function isLoginRuntimeFlowEnabled(env: Env, tenantId: string): Promise<bo
     return value;
   };
 
-  if (env.AUTHRIM_CONFIG) {
-    try {
-      const settingsJson = await env.AUTHRIM_CONFIG.get(
-        `settings:tenant:${tenantId}:feature-flags`
-      );
-      const settings = settingsJson ? (JSON.parse(settingsJson) as Record<string, unknown>) : null;
-      const settingValue = readLoginRuntimeFlagFromSettings(settings);
-      if (settingValue !== null) {
-        return cacheValue(settingValue);
-      }
-    } catch {
-      // Fall through to environment flags.
-    }
+  const settings = await getTenantSettingsDocument(env, tenantId, 'feature-flags');
+  const settingValue = readLoginRuntimeFlagFromSettings(settings);
+  if (settingValue !== null) {
+    return cacheValue(settingValue);
   }
   return cacheValue(await getFeatureFlag('ENABLE_LOGIN_RUNTIME_FLOW', env, false));
 }

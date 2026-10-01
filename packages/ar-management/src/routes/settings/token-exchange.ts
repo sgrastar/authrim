@@ -28,7 +28,17 @@
  */
 
 import type { Context } from 'hono';
-import { getLogger, validateExternalUrl, type Env } from '@authrim/ar-lib-core';
+import {
+  getLogger,
+  getTenantIdFromContext,
+  validateExternalUrl,
+  type Env,
+} from '@authrim/ar-lib-core';
+import {
+  readTenantSettingsView,
+  SettingsUnavailableError,
+  settingsUnavailableResponse,
+} from './settings-unavailable';
 
 // Valid token types for Token Exchange
 const VALID_TOKEN_TYPES = ['access_token', 'jwt', 'id_token'] as const;
@@ -190,7 +200,10 @@ export async function getIdJagSettings(env: Env): Promise<{
 /**
  * Get current Token Exchange settings (hybrid: KV > env > default)
  */
-async function getTokenExchangeSettings(env: Env): Promise<{
+async function getTokenExchangeSettings(
+  env: Env,
+  tenantId?: string
+): Promise<{
   settings: TokenExchangeSettings;
   sources: TokenExchangeSettingsSources;
   idJag: { settings: IdJagSettings; sources: IdJagSettingsSources };
@@ -236,11 +249,20 @@ async function getTokenExchangeSettings(env: Env): Promise<{
     }
   }
 
+  // For a tenant: its view, as runtime reads it; unreadable settings throw (503), not defaults.
+  const tenantSettings = tenantId
+    ? await readTenantSettingsView<SystemSettings>(env, tenantId, ['oidc'])
+    : undefined;
+
   // Check KV (takes priority)
   try {
-    const settingsJson = await env.SETTINGS?.get('system_settings');
-    if (settingsJson) {
-      const systemSettings = JSON.parse(settingsJson) as SystemSettings;
+    const systemSettings =
+      tenantSettings !== undefined
+        ? tenantSettings
+        : (JSON.parse(
+            (await env.SETTINGS?.get('system_settings')) ?? 'null'
+          ) as SystemSettings | null);
+    if (systemSettings) {
       const kvSettings = systemSettings.oidc?.tokenExchange;
 
       if (kvSettings?.enabled !== undefined) {
@@ -291,7 +313,10 @@ async function getTokenExchangeSettings(env: Env): Promise<{
 export async function getTokenExchangeConfig(c: Context<{ Bindings: Env }>) {
   const log = getLogger(c).module('TokenExchangeSettingsAPI');
   try {
-    const { settings, sources, idJag } = await getTokenExchangeSettings(c.env);
+    const { settings, sources, idJag } = await getTokenExchangeSettings(
+      c.env,
+      getTenantIdFromContext(c)
+    );
 
     return c.json({
       settings: {
@@ -362,6 +387,7 @@ export async function getTokenExchangeConfig(c: Context<{ Bindings: Env }>) {
         'ID-JAG implements draft-ietf-oauth-identity-assertion-authz-grant for IdP-mediated authorization.',
     });
   } catch (error) {
+    if (error instanceof SettingsUnavailableError) return settingsUnavailableResponse(c);
     log.error('Error getting settings', {}, error as Error);
     return c.json(
       {
@@ -701,7 +727,7 @@ export async function updateTokenExchangeConfig(c: Context<{ Bindings: Env }>) {
     await c.env.SETTINGS.put('system_settings', JSON.stringify(systemSettings));
 
     // Get updated settings
-    const { settings, idJag } = await getTokenExchangeSettings(c.env);
+    const { settings, idJag } = await getTokenExchangeSettings(c.env, getTenantIdFromContext(c));
 
     return c.json({
       success: true,
@@ -712,6 +738,7 @@ export async function updateTokenExchangeConfig(c: Context<{ Bindings: Env }>) {
       note: 'Settings updated successfully.',
     });
   } catch (error) {
+    if (error instanceof SettingsUnavailableError) return settingsUnavailableResponse(c);
     log.error('Error updating settings', {}, error as Error);
     // SECURITY: Do not expose internal error details
     return c.json(
@@ -757,7 +784,7 @@ export async function clearTokenExchangeConfig(c: Context<{ Bindings: Env }>) {
     }
 
     // Get updated settings (will fall back to env/default)
-    const { settings, sources } = await getTokenExchangeSettings(c.env);
+    const { settings, sources } = await getTokenExchangeSettings(c.env, getTenantIdFromContext(c));
 
     return c.json({
       success: true,
@@ -766,6 +793,7 @@ export async function clearTokenExchangeConfig(c: Context<{ Bindings: Env }>) {
       note: 'Token Exchange settings cleared. Using env/default values.',
     });
   } catch (error) {
+    if (error instanceof SettingsUnavailableError) return settingsUnavailableResponse(c);
     log.error('Error clearing settings', {}, error as Error);
     // SECURITY: Do not expose internal error details
     return c.json(

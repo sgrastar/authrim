@@ -155,7 +155,7 @@ async function handleVerificationSubmission(c: Context<{ Bindings: Env }>) {
       }
 
       // Check UI configuration
-      const uiConfig = await getUIConfig(c.env);
+      const uiConfig = await getUIConfig(c.env, tenantId);
       if (uiConfig?.baseUrl) {
         const deviceAuthPath = uiConfig.paths?.deviceAuthorize || '/device/authorize';
         const loginUrl = new URL(`${uiConfig.baseUrl}${deviceAuthPath}`);

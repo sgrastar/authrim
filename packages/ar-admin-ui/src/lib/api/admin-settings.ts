@@ -24,9 +24,10 @@ function resolveTenantId(tenantId?: string): string {
 }
 
 /**
- * Setting value source (priority: env > kv > default)
+ * Setting value source: 'kv' is set at this scope, 'tenant' / 'platform' are inherited from
+ * that scope, then 'env', then 'default'.
  */
-export type SettingSource = 'env' | 'kv' | 'default';
+export type SettingSource = 'env' | 'kv' | 'default' | 'tenant' | 'platform';
 
 /**
  * Individual setting value with source tracking

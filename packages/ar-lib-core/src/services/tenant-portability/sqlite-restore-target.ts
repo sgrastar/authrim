@@ -87,7 +87,7 @@ const R2_FINALIZED_COLUMNS: Readonly<Record<string, readonly string[]>> = Object
 );
 /** Fields asynchronously finalized by the unpublished target while its restore is still loading. */
 const TARGET_RUNTIME_COLUMNS: Readonly<Record<string, readonly string[]>> = {
-  'admin.tenant_settings_documents': ['projection_state', 'projected_at'],
+  'admin.tenant_settings_documents': ['projection_state', 'projected_at', 'reconciled_at'],
 };
 
 /**

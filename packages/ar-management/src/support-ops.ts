@@ -18,7 +18,7 @@ import {
   generateInvestigationId,
   getSupportOpsResource,
   getTenantIdFromContext,
-  getTenantSettings,
+  getTenantSettingsDocument,
   hasAdminPermission,
   listSupportOpsResources,
   requireDedicatedAdminDatabaseAdapter,
@@ -327,9 +327,7 @@ async function getSupportOpsTenantSettings(
   c: SupportOpsContext,
   tenantId: string
 ): Promise<{ allowSelfApproval: boolean; dutySeparation: SupportOpsDutySeparation }> {
-  const settings =
-    (await getTenantSettings(c.env.SETTINGS, tenantId, 'support-ops')) ??
-    (await getTenantSettings(c.env.AUTHRIM_CONFIG, tenantId, 'support-ops'));
+  const settings = await getTenantSettingsDocument(c.env, tenantId, 'support-ops');
   const dutySeparation = settings?.['support_ops.duty_separation'];
 
   return {

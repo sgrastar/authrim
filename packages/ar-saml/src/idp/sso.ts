@@ -24,7 +24,7 @@ import {
   getSessionStoreBySessionId,
   isShardedSessionId,
   getUIConfig,
-  getTenantSettings,
+  getTenantSettingsDocument,
   buildIssuerUrl,
   buildSAMLRequestStoreInstanceName,
   shouldUseBuiltinForms,
@@ -342,7 +342,7 @@ export async function handleIdPSSO(c: Context<{ Bindings: Env }>): Promise<Respo
       // Conformance mode: use builtin forms
       // UI configured: redirect to external UI
       // Neither: return configuration error
-      const uiConfig = await getUIConfig(env);
+      const uiConfig = await getUIConfig(env, tenantId);
 
       if (await shouldUseBuiltinForms(env)) {
         // Conformance mode: redirect to builtin login
@@ -948,9 +948,10 @@ async function resolveAttributeReleaseFailureUserMessageMode(
     return spConfig.attributeReleaseFailureUserMessageMode;
   }
 
-  const authrimSettings =
-    (await getTenantSettings(env.AUTHRIM_CONFIG, tenantId, 'tenant')) ??
-    (await getTenantSettings(env.SETTINGS, tenantId, 'tenant'));
+  const authrimSettings = await getTenantSettingsDocument(env, tenantId, 'tenant', {
+    // Without the tenant's settings the fallback is at least as strict.
+    onUnreadable: 'empty',
+  });
   const mode = authrimSettings?.[TENANT_SAML_ATTRIBUTE_RELEASE_FAILURE_MESSAGE_MODE];
   return mode === 'detailed' || mode === 'generic' ? mode : 'generic';
 }

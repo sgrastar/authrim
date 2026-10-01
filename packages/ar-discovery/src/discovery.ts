@@ -20,6 +20,7 @@ import {
   getLogger,
   // Request-level caching for feature flags (Phase 2)
   getTenantFeatureFlagsCached,
+  readSettingsFlag,
   getFeatureFlagCached,
   // KV caching utilities (Phase 2)
   buildVersionedKey,
@@ -217,15 +218,12 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
   // When enabled, server-driven UI flows are available
   // Check Settings Manager KV format first (settings:tenant:<tenantId>:feature-flags)
   // then fall back to legacy flag format (flag:ENABLE_FLOW_ENGINE)
-  let flowEngineEnabled = false;
   const tenantFlags = await getTenantFeatureFlagsCached(c, c.env, tenantId);
-  if (tenantFlags && tenantFlags['feature.enable_flow_engine'] === true) {
-    flowEngineEnabled = true;
-  }
-  // Legacy fallback: check flag:ENABLE_FLOW_ENGINE or env variable (request-level cached)
-  if (!flowEngineEnabled) {
-    flowEngineEnabled = await getFeatureFlagCached(c, 'ENABLE_FLOW_ENGINE', c.env, false);
-  }
+  // An explicit setting wins; the legacy flag (flag:ENABLE_FLOW_ENGINE or env) applies only
+  // when the tenant and platform documents leave it unset (request-level cached).
+  const flowEngineEnabled =
+    readSettingsFlag(tenantFlags as Record<string, unknown> | null, 'feature.enable_flow_engine') ??
+    (await getFeatureFlagCached(c, 'ENABLE_FLOW_ENGINE', c.env, false));
 
   // Load TenantProfile for profile-based grant_types filtering (request-level cached)
   // §16: Human Auth / AI Ephemeral Auth two-layer model

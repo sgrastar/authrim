@@ -1,0 +1,9 @@
+/* Global stylesheet: imported once by the root layout and by Storybook. Order matters only for
+   readability; themes use specificity (standard is :where(), others are attribute-qualified). */
+@import './fonts/fonts.css';
+@import './tokens/properties.css';
+@import './tokens/tokens.css';
+@import './themes/standard.css';
+@import './themes/swiss-grid.css';
+@import './themes/frosted.css';
+@import './tokens/base.css';

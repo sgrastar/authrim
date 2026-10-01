@@ -128,7 +128,11 @@ import {
   type ConfigureDownstreamIntrospectionDeploymentResult,
 } from '../../core/downstream-introspection-deploy.js';
 import { runEphemeralSetupMachineAccess } from '../../core/setup-machine-access-lifecycle.js';
-import { describeAdminUiApiMode, resolveUiDeploymentSettings } from '../../core/ui-deployment.js';
+import {
+  describeAdminUiApiMode,
+  resolveUiDeploymentSettings,
+  resolveUiPackageDir,
+} from '../../core/ui-deployment.js';
 import { mergeAndSaveUiEnv } from '../../core/ui-env.js';
 import {
   resolveApiBaseUrlCandidates,
@@ -503,7 +507,11 @@ export async function getInitialDeploymentWorkspaceVersionMismatches(input: {
   ];
   const mismatches: string[] = [];
   for (const component of requiredComponents) {
-    const version = await getPackageVersion(join(input.rootDir, 'packages', component));
+    const version = await getPackageVersion(
+      component === 'ar-login-ui' || component === 'ar-admin-ui'
+        ? resolveUiPackageDir(input.rootDir, component, input.config.components.adminUiVariant)
+        : join(input.rootDir, 'packages', component)
+    );
     if (version !== input.productVersion) {
       mismatches.push(`${component}=${version ?? 'missing'}`);
     }
@@ -1520,6 +1528,7 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
         serviceBindingName: uiSettings.serviceBindingName,
         workersDev: uiSettings.workersDev,
         routes: uiSettings.routes,
+        sourcePackage: uiSettings.sourcePackage,
         adminUiBffSecrets,
         deployConfigLockProof: deployConfigLock?.proof,
         workerScriptOwnership: uiWorkerOwnership,
@@ -1567,7 +1576,9 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
         if (!result.deployedAt || !result.cloudflareVersionId || !result.cloudflareScriptTag) {
           throw new Error(`ui_worker_deployment_exact_identity_unavailable:${uiComponent}`);
         }
-        const version = await getPackageVersion(join(rootDir, 'packages', uiComponent));
+        const version = await getPackageVersion(
+          resolveUiPackageDir(rootDir, uiComponent, config.components?.adminUiVariant)
+        );
         currentLock = clearProvisionalWorkerScriptOwnership(
           {
             ...currentLock,
@@ -4100,6 +4111,7 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
               serviceBindingName: loginUiSettings.serviceBindingName,
               workersDev: loginUiSettings.workersDev,
               routes: loginUiSettings.routes,
+              sourcePackage: loginUiSettings.sourcePackage,
             },
             'ar-admin-ui': {
               apiBaseUrl: adminUiSettings.apiBaseUrl,
@@ -4108,6 +4120,7 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
               serviceBindingName: adminUiSettings.serviceBindingName,
               workersDev: adminUiSettings.workersDev,
               routes: adminUiSettings.routes,
+              sourcePackage: adminUiSettings.sourcePackage,
               adminUiBffSecrets,
             },
           },
@@ -4170,7 +4183,9 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
             name: result.projectName,
             deployedAt: result.deployedAt,
             version:
-              (await getPackageVersion(join(rootDir, 'packages', result.component))) ?? undefined,
+              (await getPackageVersion(
+                resolveUiPackageDir(rootDir, result.component, config.components?.adminUiVariant)
+              )) ?? undefined,
             cloudflareVersionId: result.cloudflareVersionId,
             cloudflareScriptTag: result.cloudflareScriptTag,
           };
@@ -4200,6 +4215,7 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
             automaticProvisioning: config.controlPlane?.automaticProvisioning === true,
           },
           registeredBy: 'setup:deploy-ui',
+          adminUiVariant: config.components?.adminUiVariant,
           onProgress: (message) => console.log(chalk.gray(`  ${message}`)),
         });
       }

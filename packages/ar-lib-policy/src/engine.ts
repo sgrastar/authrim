@@ -130,6 +130,200 @@ export class PolicyEngine {
   }
 }
 
+/** Whether the engine knows a condition type (a condition of an unknown type is never met). */
+export function isKnownConditionType(type: unknown): boolean {
+  return (
+    typeof type === 'string' && Object.prototype.hasOwnProperty.call(conditionEvaluators, type)
+  );
+}
+
+type ParamCheck = (value: unknown) => boolean;
+
+const text: ParamCheck = (v) => typeof v === 'string' && v !== '';
+const texts: ParamCheck = (v) => Array.isArray(v) && v.length > 0 && v.every(text);
+const number: ParamCheck = (v) => typeof v === 'number' && Number.isFinite(v);
+const flag: ParamCheck = (v) => typeof v === 'boolean';
+const optional =
+  (check: ParamCheck): ParamCheck =>
+  (v) =>
+    v === undefined || check(v);
+const integerIn =
+  (min: number, max: number): ParamCheck =>
+  (v) =>
+    Number.isInteger(v) && (v as number) >= min && (v as number) <= max;
+/** A time in UNIX seconds (0 or less is no real bound: a range ending in 1970 never applies). */
+const epochSeconds: ParamCheck = (v) => Number.isSafeInteger(v) && (v as number) > 0;
+const scope: ParamCheck = (v) => v === 'global' || v === 'org' || v === 'resource';
+/** An IANA time zone the runtime knows (an unknown one would silently be read as UTC). */
+const timeZone: ParamCheck = (v) => {
+  if (!text(v)) return false;
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: v as string });
+    return true;
+  } catch {
+    return false;
+  }
+};
+const days: ParamCheck = (v) => Array.isArray(v) && v.length > 0 && v.every(integerIn(0, 6));
+
+const ROLE_PARAMS = { scope: optional(scope), scopeTarget: optional(text) };
+const NUMERIC_PARAMS = { name: text, value: number };
+
+/**
+ * The parameters each condition type reads, and what each must be. A missing or mistyped one
+ * makes the condition never met, and one of another name (such as `start` for `from`) would be
+ * ignored, so only these names are accepted.
+ */
+const CONDITION_PARAMS: Record<ConditionType, Record<string, ParamCheck>> = {
+  has_role: { role: text, ...ROLE_PARAMS },
+  has_any_role: { roles: texts, ...ROLE_PARAMS },
+  has_all_roles: { roles: texts, ...ROLE_PARAMS },
+  is_resource_owner: {},
+  same_organization: {},
+  has_relationship: { types: texts },
+  user_type_is: { types: texts },
+  plan_allows: { plans: texts },
+  attribute_equals: {
+    name: text,
+    value: (v) => typeof v === 'string',
+    checkExpiry: optional(flag),
+  },
+  attribute_exists: { name: text, checkExpiry: optional(flag) },
+  attribute_in: { name: text, values: texts, checkExpiry: optional(flag) },
+  time_in_range: {
+    startHour: integerIn(0, 23),
+    endHour: integerIn(0, 24),
+    timezone: optional(timeZone),
+  },
+  day_of_week: { allowedDays: days, timezone: optional(timeZone) },
+  valid_during: { from: optional(epochSeconds), to: optional(epochSeconds) },
+  numeric_gt: NUMERIC_PARAMS,
+  numeric_gte: NUMERIC_PARAMS,
+  numeric_lt: NUMERIC_PARAMS,
+  numeric_lte: NUMERIC_PARAMS,
+  numeric_eq: NUMERIC_PARAMS,
+  numeric_between: { name: text, min: number, max: number },
+  country_in: { countries: texts },
+  country_not_in: { countries: texts },
+  ip_in_range: { ranges: texts },
+  request_count_lt: { key: text, limit: number },
+  request_count_lte: { key: text, limit: number },
+  request_count_gt: { key: text, threshold: number },
+  request_count_gte: { key: text, threshold: number },
+};
+
+/** Condition types that read the subject's verified attributes. */
+export const ATTRIBUTE_CONDITION_TYPES: ReadonlySet<string> = new Set<ConditionType>([
+  'attribute_equals',
+  'attribute_exists',
+  'attribute_in',
+  'numeric_gt',
+  'numeric_gte',
+  'numeric_lt',
+  'numeric_lte',
+  'numeric_eq',
+  'numeric_between',
+]);
+
+/**
+ * Condition types the Check API can evaluate: it knows the subject's roles and verified
+ * attributes, the resource and the time, but not the subject's user type, organization, plan or
+ * relationships, nor the request's country, IP or rate counts.
+ */
+export const CHECK_API_CONDITION_TYPES: ReadonlySet<string> = new Set<ConditionType>([
+  'has_role',
+  'has_any_role',
+  'has_all_roles',
+  'is_resource_owner',
+  'attribute_equals',
+  'attribute_exists',
+  'attribute_in',
+  'time_in_range',
+  'day_of_week',
+  'valid_during',
+  'numeric_gt',
+  'numeric_gte',
+  'numeric_lt',
+  'numeric_lte',
+  'numeric_eq',
+  'numeric_between',
+]);
+
+/**
+ * Why a rule's conditions cannot be evaluated as written, or null when they can: they must be an
+ * array of conditions of known types (limited to `allowedTypes` when given), each with an object
+ * of the parameters its type needs. A condition that cannot be evaluated is never met, so a deny
+ * rule holding one would silently never apply.
+ */
+export function validatePolicyConditions(
+  conditions: unknown,
+  allowedTypes?: ReadonlySet<string>,
+  options: {
+    /**
+     * False where expired attributes never reach the evaluator (the Check API loads only valid
+     * ones): `checkExpiry: false` could then not mean what it says, so it is refused.
+     */
+    expiredAttributesKnown?: boolean;
+  } = {}
+): string | null {
+  if (!Array.isArray(conditions)) return 'conditions must be an array';
+  for (const [index, condition] of conditions.entries()) {
+    if (!condition || typeof condition !== 'object' || Array.isArray(condition)) {
+      return `conditions[${index}] must be an object`;
+    }
+    const { type, params } = condition as { type?: unknown; params?: unknown };
+    if (!isKnownConditionType(type)) {
+      return `conditions[${index}].type is not a known condition type`;
+    }
+    if (allowedTypes && !allowedTypes.has(type as string)) {
+      return `conditions[${index}].type ${String(type)} cannot be evaluated here`;
+    }
+    if (!params || typeof params !== 'object' || Array.isArray(params)) {
+      return `conditions[${index}].params must be an object`;
+    }
+    const expected = CONDITION_PARAMS[type as ConditionType];
+    for (const name of Object.keys(params)) {
+      if (!Object.prototype.hasOwnProperty.call(expected, name)) {
+        return `conditions[${index}].params.${name} is not a parameter of ${String(type)}`;
+      }
+    }
+    for (const [name, check] of Object.entries(expected)) {
+      if (!check((params as Record<string, unknown>)[name])) {
+        return `conditions[${index}].params.${name} is missing or not valid for ${String(type)}`;
+      }
+    }
+    if (
+      options.expiredAttributesKnown === false &&
+      (params as { checkExpiry?: unknown }).checkExpiry === false
+    ) {
+      return `conditions[${index}].params.checkExpiry cannot be false here: expired attributes are not available`;
+    }
+    // Ranges whose bounds are the wrong way round would never apply.
+    const values = params as Record<string, number | undefined>;
+    if (
+      type === 'valid_during' &&
+      values.from !== undefined &&
+      values.to !== undefined &&
+      values.from > values.to
+    ) {
+      return `conditions[${index}].params.from is after params.to`;
+    }
+    if (type === 'numeric_between' && (values.min as number) > (values.max as number)) {
+      return `conditions[${index}].params.min is above params.max`;
+    }
+  }
+  return null;
+}
+
+/**
+ * The moment a request is evaluated at, in UNIX milliseconds: its timestamp, so that every
+ * condition (time ranges as well as role and attribute expiry) is judged at the same moment;
+ * now when the request does not say.
+ */
+function evaluatedAt(context: PolicyContext): number {
+  return Number.isFinite(context.timestamp) ? context.timestamp : Date.now();
+}
+
 /**
  * Condition evaluator functions
  */
@@ -144,7 +338,7 @@ const conditionEvaluators: Record<ConditionType, ConditionEvaluator> = {
     const scope = (params.scope as string) || 'global';
     const scopeTarget = params.scopeTarget as string | undefined;
 
-    return hasRole(context.subject.roles, requiredRole, scope, scopeTarget);
+    return hasRole(context.subject.roles, requiredRole, scope, scopeTarget, evaluatedAt(context));
   },
 
   /**
@@ -155,7 +349,9 @@ const conditionEvaluators: Record<ConditionType, ConditionEvaluator> = {
     const scope = (params.scope as string) || 'global';
     const scopeTarget = params.scopeTarget as string | undefined;
 
-    return requiredRoles.some((role) => hasRole(context.subject.roles, role, scope, scopeTarget));
+    return requiredRoles.some((role) =>
+      hasRole(context.subject.roles, role, scope, scopeTarget, evaluatedAt(context))
+    );
   },
 
   /**
@@ -166,7 +362,9 @@ const conditionEvaluators: Record<ConditionType, ConditionEvaluator> = {
     const scope = (params.scope as string) || 'global';
     const scopeTarget = params.scopeTarget as string | undefined;
 
-    return requiredRoles.every((role) => hasRole(context.subject.roles, role, scope, scopeTarget));
+    return requiredRoles.every((role) =>
+      hasRole(context.subject.roles, role, scope, scopeTarget, evaluatedAt(context))
+    );
   },
 
   /**
@@ -196,7 +394,7 @@ const conditionEvaluators: Record<ConditionType, ConditionEvaluator> = {
       return false;
     }
 
-    const now = Date.now();
+    const now = evaluatedAt(context);
     return context.subject.relationships.some(
       (rel) =>
         rel.relatedSubjectId === context.resource.ownerId &&
@@ -246,7 +444,7 @@ const conditionEvaluators: Record<ConditionType, ConditionEvaluator> = {
     const attributes = getVerifiedAttributes(context);
     if (!attributes) return false;
 
-    const now = Math.floor(Date.now() / 1000);
+    const now = Math.floor(evaluatedAt(context) / 1000);
 
     return attributes.some((attr) => {
       if (attr.name !== attributeName) return false;
@@ -273,7 +471,7 @@ const conditionEvaluators: Record<ConditionType, ConditionEvaluator> = {
     const attributes = getVerifiedAttributes(context);
     if (!attributes) return false;
 
-    const now = Math.floor(Date.now() / 1000);
+    const now = Math.floor(evaluatedAt(context) / 1000);
 
     return attributes.some((attr) => {
       if (attr.name !== attributeName) return false;
@@ -301,7 +499,7 @@ const conditionEvaluators: Record<ConditionType, ConditionEvaluator> = {
     const attributes = getVerifiedAttributes(context);
     if (!attributes) return false;
 
-    const now = Math.floor(Date.now() / 1000);
+    const now = Math.floor(evaluatedAt(context) / 1000);
 
     return attributes.some((attr) => {
       if (attr.name !== attributeName) return false;
@@ -656,7 +854,7 @@ function getNumericAttribute(context: PolicyContext, attributeName: string): num
   const attributes = getVerifiedAttributes(context);
   if (!attributes) return null;
 
-  const now = Math.floor(Date.now() / 1000);
+  const now = Math.floor(evaluatedAt(context) / 1000);
 
   for (const attr of attributes) {
     if (attr.name !== attributeName) continue;
@@ -842,10 +1040,9 @@ function hasRole(
   roles: SubjectRole[],
   requiredRole: string,
   scope: string,
-  scopeTarget?: string
+  scopeTarget: string | undefined,
+  now: number
 ): boolean {
-  const now = Date.now();
-
   return roles.some((role) => {
     // Check role name
     if (role.name !== requiredRole) {

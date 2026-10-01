@@ -1045,6 +1045,12 @@ const zhTW: Translations = {
   'web.comp.loginUiDesc': '面向使用者的登入、註冊、同意和帳戶管理頁面。',
   'web.comp.adminUi': '管理 UI',
   'web.comp.adminUiDesc': '用於管理租戶、用戶端、使用者和系統設定的管理儀表板。',
+  'web.comp.adminUiVariant': '管理介面版本',
+  'web.comp.adminUiLegacy': '目前的管理介面',
+  'web.comp.adminUiLegacyDesc': '目前使用的管理介面，包含所有功能。',
+  'web.comp.adminUiConsole': '管理主控台（預覽）',
+  'web.comp.adminUiConsoleDesc':
+    '重新設計的管理主控台。功能會逐步加入，尚未重建的項目會顯示預留頁面。與目前的管理介面使用相同的 URL 與管理員通行金鑰。',
 
   // Web UI Domain Row Labels
   'web.domain.loginUi': '登入 UI',

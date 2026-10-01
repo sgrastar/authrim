@@ -308,13 +308,17 @@
 					{@const value = getCurrentValue(key)}
 					{@const locked = isSettingLocked(key, settingMeta)}
 					{@const hasPendingChange = pendingPatches.some((p) => p.key === key)}
+					{@const valueSource = (settings?.sources[key] as SettingSource) || 'default'}
 					<div class="setting-item" class:modified={hasPendingChange}>
 						<div class="setting-item-content">
 							<div class="setting-info">
 								<div class="setting-label-row">
 									<label for={key} class="setting-label">{settingMeta.label}</label>
 									<InheritanceIndicator
-										source={(settings?.sources[key] as SettingSource) || 'default'}
+										source={valueSource}
+										parentScope={valueSource === 'tenant' || valueSource === 'platform'
+											? valueSource
+											: undefined}
 										currentScope={currentLevel}
 										{canEdit}
 										compact={true}

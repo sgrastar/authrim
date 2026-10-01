@@ -1065,6 +1065,8 @@ export async function consentPostHandler(c: Context<{ Bindings: Env }>) {
         try {
           const settings = await getTenantSystemSettings(c.env.SETTINGS, tenantId, {
             failOnError: true,
+            clientId,
+            sections: ['fapi'],
           });
           messageSigning = (
             settings?.fapi as { messageSigning?: FAPI2MessageSigningConfig } | undefined

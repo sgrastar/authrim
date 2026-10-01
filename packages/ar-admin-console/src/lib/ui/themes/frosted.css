@@ -1,0 +1,98 @@
+/* ============================================================
+   Frosted — translucent, blurred, rounded panels (values from the legacy "frosted" skin).
+   Everything goes through the material tokens; there are no component-specific overrides.
+   If a component breaks under this theme, the component is reading a colour directly
+   instead of going through the material tokens.
+   ============================================================ */
+
+[data-admin-theme='frosted'] {
+	--bg-page: #e3e6ef;
+	--bg-card: #f5f8ff;
+	--bg-subtle: #eaeefa;
+	--bg-input: #fbfcff;
+	--bg-hover: rgba(59, 74, 112, 0.075);
+
+	--primary: #3f4fc4;
+	--primary-hover: #3342ad;
+	--text-primary: #192238;
+	--text-secondary: #3d4760;
+	--text-muted: #4c566f;
+	--text-inverse: #ffffff;
+
+	--border: rgba(75, 93, 135, 0.18);
+	--border-strong: rgba(75, 93, 135, 0.31);
+	--border-subtle: rgba(75, 93, 135, 0.1);
+	--focus-ring: #4d5edb;
+
+	--success: #147552;
+	--changed: #e8a07c;
+	--warning: #8c5c14;
+	--danger: #b0344c;
+
+	--surface-bg: linear-gradient(
+		135deg,
+		rgba(255, 255, 255, 0.6) 0%,
+		rgba(240, 244, 253, 0.42) 48%,
+		rgba(235, 239, 249, 0.5) 100%
+	);
+	--surface-backdrop: blur(22px) saturate(1.2);
+	--surface-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.72);
+	--shell-bg: rgba(238, 243, 255, 0.76);
+	--shell-backdrop: blur(18px);
+	--subnav-bg: rgba(245, 248, 255, 0.55);
+	--page-backdrop:
+		radial-gradient(820px 560px at 10% -6%, rgba(99, 116, 255, 0.3), transparent 58%),
+		radial-gradient(1000px 620px at 96% 14%, rgba(255, 150, 90, 0.22), transparent 52%),
+		radial-gradient(900px 700px at 42% 112%, rgba(70, 200, 190, 0.22), transparent 55%);
+	--shell-inset: 14px;
+	--shell-radius: 18px;
+	--shadow-sm: 0 10px 26px rgba(31, 45, 80, 0.08);
+
+	--radius-control: 12px;
+	--radius-panel: 18px;
+	--radius-badge: var(--radius-round);
+
+	--font-sans: 'Schibsted Grotesk', system-ui, sans-serif;
+	--font-display: 'Schibsted Grotesk', system-ui, sans-serif;
+	--font-mono: 'Spline Sans Mono', ui-monospace, monospace;
+	--font-brand: 'Cinzel', Georgia, serif;
+}
+
+[data-admin-theme='frosted'][data-scheme='dark'] {
+	--bg-page: #080b12;
+	--bg-card: #141926;
+	--bg-subtle: #10141f;
+	--bg-input: #1a2030;
+	--bg-hover: rgba(221, 227, 255, 0.08);
+
+	--primary: #8e9cff;
+	--primary-hover: #a6b1ff;
+	--text-primary: #edf2ff;
+	--text-secondary: #c3cadb;
+	--text-muted: #a4acbf;
+	--text-inverse: #101322;
+
+	--border: rgba(191, 201, 235, 0.18);
+	--border-strong: rgba(191, 201, 235, 0.3);
+	--border-subtle: rgba(191, 201, 235, 0.1);
+
+	--success: #75d6ad;
+	--changed: #c98b73;
+	--warning: #f3c66d;
+	--danger: #ff8ca1;
+
+	--surface-bg: linear-gradient(
+		135deg,
+		rgba(49, 55, 74, 0.7) 0%,
+		rgba(22, 26, 39, 0.72) 45%,
+		rgba(15, 18, 28, 0.76) 100%
+	);
+	--surface-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.11);
+	--shell-bg: rgba(22, 26, 39, 0.78);
+	--subnav-bg: rgba(20, 25, 38, 0.6);
+	--page-backdrop:
+		radial-gradient(820px 560px at 10% -6%, rgba(100, 120, 255, 0.26), transparent 58%),
+		radial-gradient(1000px 620px at 96% 14%, rgba(255, 140, 90, 0.13), transparent 52%),
+		radial-gradient(900px 700px at 42% 112%, rgba(60, 190, 180, 0.14), transparent 55%);
+	--shadow-sm: 0 10px 26px rgba(0, 0, 0, 0.3);
+}

@@ -33,7 +33,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   return {
     ...actual,
     getUIConfig: vi.fn(async () => mocks.ui),
-    getTenantSettings: vi.fn(async () => ({})),
+    getTenantSettingsDocument: vi.fn(async () => ({})),
     buildIssuerUrl: vi.fn(() => 'https://tenant.example.test'),
     buildSAMLRequestStoreInstanceName: vi.fn(
       (tenant: string, role: string, entity: string) => `${tenant}:${role}:${entity}`

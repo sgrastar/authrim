@@ -374,6 +374,40 @@ describe('client-config update handler', () => {
     expect(mocked.createAuthContextFromHono).not.toHaveBeenCalled();
   });
 
+  it('applies FAPI set only for this client when validating its update', async () => {
+    mocked.getClientCached.mockResolvedValue({
+      client_id: 'client-123',
+      token_endpoint_auth_method: 'private_key_jwt',
+      registration_access_token_hash: 'token-hash',
+    });
+    const c = createMockContext({
+      body: {
+        client_id: 'client-123',
+        redirect_uris: ['https://example.com/callback'],
+        token_endpoint_auth_method: 'client_secret_basic',
+      },
+      env: {
+        SETTINGS: {
+          get: vi
+            .fn()
+            .mockImplementation(async (key: string) =>
+              key.startsWith('settings:client:') && key.endsWith(':client-123:security')
+                ? JSON.stringify({ 'security.fapi_enabled': true })
+                : null
+            ),
+        } as unknown as KVNamespace,
+      },
+    });
+
+    const res = await clientConfigUpdateHandler(c);
+
+    expect(res.status).toBe(400);
+    await expect(res.json()).resolves.toMatchObject({
+      error: 'invalid_client_metadata',
+      error_description: expect.stringContaining('private_key_jwt'),
+    });
+  });
+
   it('rejects changing a FAPI client to secret-based token authentication', async () => {
     mocked.getClientCached.mockResolvedValue({
       client_id: 'client-123',

@@ -151,7 +151,9 @@ describe('isPolicyEmbeddingEnabled', () => {
   });
 
   it('should return false when env variable is not set', async () => {
-    (mockSettings.get as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+    (mockSettings.get as ReturnType<typeof vi.fn>).mockImplementation(async (key: string) =>
+      key === 'policy:flags:ENABLE_POLICY_EMBEDDING' ? null : null
+    );
 
     const result = await isPolicyEmbeddingEnabled({
       SETTINGS: mockSettings as KVNamespace,
@@ -162,7 +164,9 @@ describe('isPolicyEmbeddingEnabled', () => {
   });
 
   it('should return true when KV value is "true"', async () => {
-    (mockSettings.get as ReturnType<typeof vi.fn>).mockResolvedValue('true');
+    (mockSettings.get as ReturnType<typeof vi.fn>).mockImplementation(async (key: string) =>
+      key === 'policy:flags:ENABLE_POLICY_EMBEDDING' ? 'true' : null
+    );
 
     const result = await isPolicyEmbeddingEnabled({
       SETTINGS: mockSettings as KVNamespace,
@@ -172,7 +176,9 @@ describe('isPolicyEmbeddingEnabled', () => {
   });
 
   it('should return true when KV value is "1"', async () => {
-    (mockSettings.get as ReturnType<typeof vi.fn>).mockResolvedValue('1');
+    (mockSettings.get as ReturnType<typeof vi.fn>).mockImplementation(async (key: string) =>
+      key === 'policy:flags:ENABLE_POLICY_EMBEDDING' ? '1' : null
+    );
 
     const result = await isPolicyEmbeddingEnabled({
       SETTINGS: mockSettings as KVNamespace,
@@ -182,7 +188,9 @@ describe('isPolicyEmbeddingEnabled', () => {
   });
 
   it('should return false when KV value is "false"', async () => {
-    (mockSettings.get as ReturnType<typeof vi.fn>).mockResolvedValue('false');
+    (mockSettings.get as ReturnType<typeof vi.fn>).mockImplementation(async (key: string) =>
+      key === 'policy:flags:ENABLE_POLICY_EMBEDDING' ? 'false' : null
+    );
 
     const result = await isPolicyEmbeddingEnabled({
       SETTINGS: mockSettings as KVNamespace,
@@ -192,7 +200,9 @@ describe('isPolicyEmbeddingEnabled', () => {
   });
 
   it('should fall back to env variable when KV returns null', async () => {
-    (mockSettings.get as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+    (mockSettings.get as ReturnType<typeof vi.fn>).mockImplementation(async (key: string) =>
+      key === 'policy:flags:ENABLE_POLICY_EMBEDDING' ? null : null
+    );
 
     const result = await isPolicyEmbeddingEnabled({
       SETTINGS: mockSettings as KVNamespace,
@@ -202,7 +212,7 @@ describe('isPolicyEmbeddingEnabled', () => {
     expect(result).toBe(true);
   });
 
-  it('should fall back to env variable when KV throws error', async () => {
+  it('is off when the settings cannot be read, even if env enables it', async () => {
     (mockSettings.get as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('KV error'));
 
     const result = await isPolicyEmbeddingEnabled({
@@ -210,11 +220,13 @@ describe('isPolicyEmbeddingEnabled', () => {
       ENABLE_POLICY_EMBEDDING: 'true',
     });
 
-    expect(result).toBe(true);
+    expect(result).toBe(false);
   });
 
   it('should handle case-insensitive KV value', async () => {
-    (mockSettings.get as ReturnType<typeof vi.fn>).mockResolvedValue('TRUE');
+    (mockSettings.get as ReturnType<typeof vi.fn>).mockImplementation(async (key: string) =>
+      key === 'policy:flags:ENABLE_POLICY_EMBEDDING' ? 'TRUE' : null
+    );
 
     const result = await isPolicyEmbeddingEnabled({
       SETTINGS: mockSettings as KVNamespace,
@@ -249,6 +261,37 @@ describe('evaluatePermissionEmbeddingForScope', () => {
         scope_target: 'document:doc_123',
       },
     ]);
+  });
+
+  it('embeds at most the limit, tenant-wide permissions first', async () => {
+    const db = new PolicyEmbeddingAdapter([
+      {
+        permissions_json: JSON.stringify(['documents:*']),
+        scope_type: 'global',
+        scope_target: '',
+      },
+      {
+        permissions_json: JSON.stringify(['reports:read']),
+        scope_type: 'resource',
+        scope_target: 'report:r1',
+      },
+    ]);
+    const scope = 'documents:read documents:write reports:read';
+
+    const limited = await evaluatePermissionEmbeddingForScope(db, 'user_123', scope, {
+      tenantId: 'tenant-a',
+      maxPermissions: 2,
+    });
+    expect(limited).toEqual({
+      permissions: ['documents:read', 'documents:write'],
+      scopedPermissions: [],
+    });
+
+    const roomForScoped = await evaluatePermissionEmbeddingForScope(db, 'user_123', scope, {
+      tenantId: 'tenant-a',
+      maxPermissions: 3,
+    });
+    expect(roomForScoped.scopedPermissions).toHaveLength(1);
   });
 
   it('continues returning tenant-wide permissions through the legacy helper', async () => {

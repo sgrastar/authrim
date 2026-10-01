@@ -116,6 +116,14 @@ describe('UI, OAuth, and rate-limit settings', () => {
     mocks.oauthSources.mockResolvedValue(sources);
   });
 
+  it('answers 503 for the UI config when the saved settings cannot be read', async () => {
+    const failing = kv();
+    failing.get.mockRejectedValue(new Error('kv unavailable'));
+    expect((await getUIConfigHandler(context({ store: failing }))).status).toBe(503);
+    expect((await getUIConfigHandler(context({ store: kv('not json') }))).status).toBe(503);
+    expect(mocks.uiConfig).not.toHaveBeenCalled();
+  });
+
   it('gets UI config/routing with defaults and explicit values', async () => {
     await expect((await getUIConfigHandler(context())).json()).resolves.toMatchObject({
       config: { baseUrl: null },
@@ -124,15 +132,30 @@ describe('UI, OAuth, and rate-limit settings', () => {
     await expect((await getUIRoutingHandler(context())).json()).resolves.toEqual({
       routing: { rolePathOverrides: {}, policyRedirects: [] },
     });
-    mocks.uiConfig.mockResolvedValueOnce({ baseUrl: 'https://login.example', paths: {} });
-    mocks.uiSource.mockResolvedValueOnce('kv');
     mocks.uiRouting.mockResolvedValueOnce({
       rolePathOverrides: { admin: { login: '/admin' } },
       policyRedirects: [],
     });
-    await expect((await getUIConfigHandler(context())).json()).resolves.toMatchObject({
+    const saved = kv(JSON.stringify({ ui: { baseUrl: 'https://login.example/' } }));
+    await expect(
+      (await getUIConfigHandler(context({ store: saved }))).json()
+    ).resolves.toMatchObject({
+      config: { baseUrl: 'https://login.example', paths: { login: '/login' } },
       source: 'kv',
     });
+    // One read of the saved document gives both the configuration and its source.
+    expect(saved.get).toHaveBeenCalledTimes(1);
+    // A saved base URL that is not a string is unusable: shown as runtime uses it (UI_URL).
+    await expect(
+      (
+        await getUIConfigHandler(
+          context({
+            store: kv(JSON.stringify({ ui: { baseUrl: 123 } })),
+            env: { UI_URL: 'https://ui.example' },
+          })
+        )
+      ).json()
+    ).resolves.toMatchObject({ config: { baseUrl: 'https://ui.example' }, source: 'env' });
     await expect((await getUIRoutingHandler(context())).json()).resolves.toMatchObject({
       routing: { rolePathOverrides: expect.anything() },
     });
@@ -322,7 +345,9 @@ describe('UI, OAuth, and rate-limit settings', () => {
   it('gets all/single rate profiles with KV/defaults and invalid profile rejection', async () => {
     const store = kv();
     store.get.mockImplementation((key: string) =>
-      Promise.resolve(key.includes('max_requests') ? '99' : '60')
+      Promise.resolve(
+        key.startsWith('settings:') ? null : key.includes('max_requests') ? '99' : '60'
+      )
     );
     const all = (await (
       await getRateLimitSettings(context({ store, env: { RATE_LIMIT_PROFILE: 'strict' } }))
@@ -340,11 +365,54 @@ describe('UI, OAuth, and rate-limit settings', () => {
     expect((await getRateLimitProfile(context({ store, param: 'loadTest' }))).status).toBe(200);
   });
 
-  it('falls back when rate KV reads fail', async () => {
+  it('answers 503 when the saved rate limits cannot be read', async () => {
     const store = kv();
     store.get.mockRejectedValue(new Error('failure'));
-    expect((await getRateLimitSettings(context({ store }))).status).toBe(200);
-    expect((await getRateLimitProfile(context({ store, param: 'strict' }))).status).toBe(200);
+    expect((await getRateLimitSettings(context({ store }))).status).toBe(503);
+    expect((await getRateLimitProfile(context({ store, param: 'strict' }))).status).toBe(503);
+  });
+
+  it('shows a value just saved, not one cached by an earlier view', async () => {
+    let saved = '50';
+    const store = kv();
+    store.get.mockImplementation((key: string) =>
+      Promise.resolve(key === 'rate_limit_strict_max_requests' ? saved : null)
+    );
+    const view = async () =>
+      (await (await getRateLimitProfile(context({ store, param: 'strict' }))).json()) as {
+        current: { maxRequests: number };
+      };
+    expect((await view()).current.maxRequests).toBe(50);
+    saved = '25';
+    expect((await view()).current.maxRequests).toBe(25);
+  });
+
+  it('shows the platform Settings API limits the rate limiter applies', async () => {
+    const store = kv();
+    store.get.mockImplementation((key: string) =>
+      Promise.resolve(
+        key === 'settings:platform:rate-limit'
+          ? JSON.stringify({ 'rate_limit.strict': 25, 'rate_limit.window_ms': 30000 })
+          : key === 'rate_limit_strict_max_requests'
+            ? '50'
+            : null
+      )
+    );
+    const body = (await (
+      await getRateLimitProfile(context({ store, param: 'strict' }))
+    ).json()) as Record<string, unknown>;
+    expect(body).toMatchObject({
+      current: { maxRequests: 25, windowSeconds: 30 },
+      source: { maxRequests: 'settings_api', windowSeconds: 'settings_api' },
+    });
+    const moderate = (await (
+      await getRateLimitProfile(context({ store, param: 'moderate' }))
+    ).json()) as Record<string, unknown>;
+    // The window set through the Settings API applies to moderate too.
+    expect(moderate).toMatchObject({
+      current: { maxRequests: 60, windowSeconds: 30 },
+      source: { maxRequests: 'default', windowSeconds: 'settings_api' },
+    });
   });
 
   it.each([

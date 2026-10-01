@@ -2,6 +2,7 @@ import type { Env } from '../types/env';
 import type { Challenge } from '../durable-objects/ChallengeStore';
 import { arrayBufferToBase64Url, generateSecureRandomString } from '../utils/crypto';
 import { getChallengeStoreByChallengeId } from '../utils/challenge-sharding';
+import { getTenantSettingsDocument } from '../utils/tenant-settings';
 import type {
   StepUpInputState,
   StepUpPreferredMethod,
@@ -275,36 +276,14 @@ function readPolicyValue(
   return settings[snake] ?? settings[camel];
 }
 
-async function readStepUpSettings(
-  kv: KVNamespace | undefined,
-  tenantId: string
-): Promise<Record<string, unknown> | null> {
-  if (!kv) {
-    return null;
-  }
-  try {
-    const raw = await kv.get(`settings:tenant:${tenantId}:${STEP_UP_SETTINGS_CATEGORY}`);
-    if (!raw) {
-      return null;
-    }
-    return JSON.parse(raw) as Record<string, unknown>;
-  } catch {
-    return null;
-  }
-}
-
 export async function resolveStepUpPolicy(
   env: Pick<Env, 'AUTHRIM_CONFIG' | 'SETTINGS'>,
   tenantId: string
 ): Promise<StepUpPolicy> {
-  const [configSettings, settingsSettings] = await Promise.all([
-    readStepUpSettings(env.AUTHRIM_CONFIG, tenantId),
-    readStepUpSettings(env.SETTINGS, tenantId),
-  ]);
-  const settings = {
-    ...(configSettings ?? {}),
-    ...(settingsSettings ?? {}),
-  };
+  // The Settings API document wins as a whole: merging in the legacy copy key by key would
+  // bring back a value an admin has since cleared.
+  const settings =
+    (await getTenantSettingsDocument(env, tenantId, STEP_UP_SETTINGS_CATEGORY)) ?? {};
 
   return {
     stepUpTokenTtlSeconds: ensurePositiveInteger(

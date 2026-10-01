@@ -202,6 +202,38 @@ describe('sendLogoutToken', () => {
     );
   });
 
+  it('does not wait past the timeout for a 400 body that never ends', async () => {
+    // Headers arrive, then the body stalls.
+    const cancel = vi.fn();
+    global.fetch = vi
+      .fn()
+      .mockResolvedValue(new Response(new ReadableStream({ start() {}, cancel }), { status: 400 }));
+
+    const started = Date.now();
+    const result = await sendLogoutToken({
+      logoutToken: 'test-token',
+      backchannelLogoutUri: 'https://example.com/logout',
+      timeoutMs: 200,
+    });
+
+    expect(result).toMatchObject({ success: false, statusCode: 400, error: 'rejected_by_rp: ' });
+    expect(Date.now() - started).toBeLessThan(1000);
+    // The stalled body is cancelled, not left reading.
+    expect(cancel).toHaveBeenCalled();
+  });
+
+  it('keeps a short rejection reason from the body', async () => {
+    global.fetch = vi.fn().mockResolvedValue(new Response('invalid_token', { status: 400 }));
+
+    const result = await sendLogoutToken({
+      logoutToken: 'test-token',
+      backchannelLogoutUri: 'https://example.com/logout',
+      timeoutMs: 1000,
+    });
+
+    expect(result.error).toBe('rejected_by_rp: invalid_token');
+  });
+
   it('should return success for 204 response', async () => {
     global.fetch = vi.fn().mockResolvedValue({
       status: 204,
@@ -556,5 +588,456 @@ describe('createBackchannelLogoutOrchestrator', () => {
     expect(results).toHaveLength(1);
     expect(results[0].success).toBe(false);
     expect(results[0].error).toBe('already_pending');
+  });
+
+  describe('retries within the request', () => {
+    const client: SessionClientWithDetails = {
+      id: 'sc-1',
+      session_id: 'session-1',
+      client_id: 'client-1',
+      first_token_at: Date.now(),
+      last_token_at: Date.now(),
+      last_seen_at: null,
+      client_name: 'Test Client 1',
+      backchannel_logout_uri: 'https://client1.example.com/logout',
+      backchannel_logout_session_required: false,
+      frontchannel_logout_uri: null,
+      frontchannel_logout_session_required: false,
+    };
+    const params = () => ({
+      issuer: 'https://example.com',
+      userId: 'user-123',
+      sessionId: 'session-1',
+      privateKey: testPrivateKey,
+      kid: 'kid-123',
+    });
+    const response = (status: number) => ({ status, ok: status < 300 });
+
+    it('retries a retryable failure with backoff, then succeeds', async () => {
+      global.fetch = vi
+        .fn()
+        .mockResolvedValueOnce(response(503))
+        .mockResolvedValueOnce(response(502))
+        .mockResolvedValueOnce(response(200));
+      const sleep = vi.fn(async () => {});
+      await LogoutKVHelpers.recordFailure(kv, 'client-1', { error: 'HTTP 503' });
+      const orchestrator = createBackchannelLogoutOrchestrator(kv, undefined, { sleep });
+
+      const [first] = await orchestrator.sendToAll([client], params(), mockConfig);
+      expect(first).toMatchObject({ success: false, retryScheduled: true });
+      const [final] = await orchestrator.settle();
+
+      expect(final.success).toBe(true);
+      expect(global.fetch).toHaveBeenCalledTimes(3);
+      // A failure recorded by an earlier logout is cleared by the successful retry.
+      await expect(LogoutKVHelpers.getFailure(kv, 'client-1')).resolves.toBeNull();
+      expect(sleep.mock.calls.map(([ms]) => ms)).toEqual([1000, 2000]);
+      // The pending lock is released afterwards.
+      await expect(LogoutKVHelpers.isPending(kv, 'session-1', 'client-1')).resolves.toBe(false);
+    });
+
+    it('does not retry a failure the client reports as final', async () => {
+      global.fetch = vi.fn().mockResolvedValue(response(400));
+      const sleep = vi.fn(async () => {});
+      const orchestrator = createBackchannelLogoutOrchestrator(kv, undefined, { sleep });
+
+      const [result] = await orchestrator.sendToAll([client], params(), mockConfig);
+
+      expect(result).toMatchObject({ success: false, retryScheduled: false });
+      await expect(orchestrator.settle()).resolves.toEqual([]);
+      expect(global.fetch).toHaveBeenCalledTimes(1);
+      expect(sleep).not.toHaveBeenCalled();
+    });
+
+    it('records the failure and raises an alert after the last retry', async () => {
+      global.fetch = vi.fn().mockResolvedValue(response(503));
+      const onAlert = vi.fn(async () => {});
+      const orchestrator = createBackchannelLogoutOrchestrator(kv, undefined, {
+        sleep: async () => {},
+        onAlert,
+      });
+
+      await orchestrator.sendToAll([client], params(), {
+        ...mockConfig,
+        retry: { ...mockConfig.retry, max_attempts: 2 },
+        on_final_failure: 'alert',
+      });
+      const [final] = await orchestrator.settle();
+
+      expect(final.success).toBe(false);
+      expect(global.fetch).toHaveBeenCalledTimes(3);
+      expect(onAlert).toHaveBeenCalledWith(
+        expect.objectContaining({ clientId: 'client-1', attempts: 3 })
+      );
+      await expect(kv.get(LogoutKVHelpers.getFailureKey('client-1'))).resolves.not.toBeNull();
+    });
+
+    it('still raises the alert when the failure cannot be recorded', async () => {
+      global.fetch = vi.fn().mockResolvedValue(response(503));
+      const failureKey = LogoutKVHelpers.getFailureKey('client-1');
+      const put = kv.put.bind(kv);
+      kv.put = vi.fn(async (key: string, ...rest: unknown[]) => {
+        if (key === failureKey) throw new Error('kv unavailable');
+        return (put as (...args: unknown[]) => Promise<void>)(key, ...rest);
+      }) as unknown as KVNamespace['put'];
+      const onAlert = vi.fn(async () => {});
+      const orchestrator = createBackchannelLogoutOrchestrator(kv, undefined, {
+        sleep: async () => {},
+        onAlert,
+      });
+
+      await orchestrator.sendToAll([client], params(), {
+        ...mockConfig,
+        retry: { ...mockConfig.retry, max_attempts: 1 },
+        on_final_failure: 'alert',
+      });
+      const [final] = await orchestrator.settle();
+
+      expect(final.success).toBe(false);
+      expect(onAlert).toHaveBeenCalledWith(expect.objectContaining({ clientId: 'client-1' }));
+      await expect(LogoutKVHelpers.isPending(kv, 'session-1', 'client-1')).resolves.toBe(false);
+    });
+
+    it('stops retrying at the retry budget', async () => {
+      global.fetch = vi.fn().mockResolvedValue(response(503));
+      const orchestrator = createBackchannelLogoutOrchestrator(kv, undefined, {
+        sleep: async () => {},
+        retryBudgetMs: 7300,
+        storeTimeoutMs: 500,
+      });
+
+      await orchestrator.sendToAll([client], params(), mockConfig);
+      await orchestrator.settle();
+
+      // The first retry (1 s wait + 0.5 s lock + 5 s timeout + 0.5 s clean-up) fits the budget;
+      // the second (2 s + 5 s + 0.5 s) does not.
+      expect(global.fetch).toHaveBeenCalledTimes(2);
+    });
+
+    it('ends retries and their clean-up by the deadline while the store stalls', async () => {
+      // Only timers and the clock are faked: signing (WebCrypto) still completes on its own.
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+      /** Run scheduled timers, allowing native signing to finish without advancing time. */
+      const drive = async <T>(p: Promise<T>): Promise<T> => {
+        let done = false;
+        void p.finally(() => {
+          done = true;
+        });
+        while (!done) {
+          await new Promise((resolve) => setImmediate(resolve));
+          if (!done && vi.getTimerCount() > 0) await vi.advanceTimersToNextTimerAsync();
+        }
+        return p;
+      };
+      try {
+        const start = Date.now();
+        // Each request takes its whole 10 s timeout; the store never answers.
+        global.fetch = vi.fn(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 10_000));
+          return response(503);
+        });
+        const stalled = () => new Promise<never>(() => {});
+        kv.get = vi.fn(stalled) as unknown as KVNamespace['get'];
+        kv.put = vi.fn(stalled) as unknown as KVNamespace['put'];
+        kv.delete = vi.fn(stalled) as unknown as KVNamespace['delete'];
+        const orchestrator = createBackchannelLogoutOrchestrator(kv);
+
+        await drive(
+          orchestrator.sendToAll([client], params(), {
+            ...mockConfig,
+            request_timeout_ms: 10_000,
+          })
+        );
+        await drive(orchestrator.settle());
+
+        // Everything, clean-up included, ended within the 25 s budget.
+        expect(Date.now() - start).toBeLessThanOrEqual(25_000);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('keeps to the deadline when the first attempt fails just before it', async () => {
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+      const drive = async <T>(p: Promise<T>): Promise<T> => {
+        let done = false;
+        void p.finally(() => {
+          done = true;
+        });
+        while (!done) {
+          await new Promise((resolve) => setImmediate(resolve));
+          if (!done && vi.getTimerCount() > 0) await vi.advanceTimersToNextTimerAsync();
+        }
+        return p;
+      };
+      try {
+        const now = Date.now();
+        // 20.8 s of the 25 s are gone; requests time out after 1 s; the store never answers.
+        global.fetch = vi.fn(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 1_000));
+          return response(503);
+        });
+        const stalled = () => new Promise<never>(() => {});
+        kv.get = vi.fn(stalled) as unknown as KVNamespace['get'];
+        kv.put = vi.fn(stalled) as unknown as KVNamespace['put'];
+        kv.delete = vi.fn(stalled) as unknown as KVNamespace['delete'];
+        const orchestrator = createBackchannelLogoutOrchestrator(kv, undefined, {
+          startedAt: now - 20_800,
+        });
+
+        await drive(
+          orchestrator.sendToAll([client], params(), {
+            ...mockConfig,
+            request_timeout_ms: 1_000,
+            retry: { ...mockConfig.retry, initial_delay_ms: 100 },
+          })
+        );
+        await drive(orchestrator.settle());
+
+        // Ended by the deadline: no retry fits, and no store operation is waited for past it.
+        expect(Date.now()).toBeLessThanOrEqual(now - 20_800 + 25_000);
+        expect(global.fetch).toHaveBeenCalledTimes(1);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('settles an exhausted budget without waiting for a zero-delay cleanup timer', async () => {
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+      try {
+        const start = Date.now();
+        global.fetch = vi.fn().mockResolvedValue(response(503));
+        const stalled = () => new Promise<never>(() => {});
+        kv.put = vi.fn(stalled) as unknown as KVNamespace['put'];
+        const orchestrator = createBackchannelLogoutOrchestrator(kv, undefined, {
+          retryBudgetMs: 0,
+        });
+        const [result] = await orchestrator.sendToAll([client], params(), mockConfig);
+        await orchestrator.settle();
+        expect(result.success).toBe(false);
+        expect(global.fetch).toHaveBeenCalledTimes(1);
+        expect(kv.put).toHaveBeenCalled();
+        expect(vi.getTimerCount()).toBe(0);
+        expect(Date.now()).toBe(start);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('fits retries with slow requests within the budget', async () => {
+      let now = Date.now();
+      const start = now;
+      global.fetch = vi.fn(async () => {
+        now += 10_000; // each request times out after 10 s
+        return response(503);
+      });
+      const clock = vi.spyOn(Date, 'now').mockImplementation(() => now);
+      try {
+        const orchestrator = createBackchannelLogoutOrchestrator(kv, undefined, {
+          sleep: async (ms) => {
+            now += ms;
+          },
+        });
+        await orchestrator.sendToAll([client], params(), {
+          ...mockConfig,
+          request_timeout_ms: 8_000,
+        });
+        await orchestrator.settle();
+      } finally {
+        clock.mockRestore();
+      }
+
+      // 8 s, then a retry needing 1 s + 3 s (lock) + 8 s + 3 s (clean-up) fits 25 s; another
+      // 2 s + 8 s + 3 s would not.
+      expect(global.fetch).toHaveBeenCalledTimes(2);
+      expect(now - start).toBeLessThanOrEqual(25_000);
+    });
+
+    it('counts the retry budget from when the work began', async () => {
+      global.fetch = vi.fn().mockResolvedValue(response(503));
+      // Preparing the sends took 20 s of the 25 s: a retry (1 s + 5 s) no longer fits.
+      const orchestrator = createBackchannelLogoutOrchestrator(kv, undefined, {
+        sleep: async () => {},
+        startedAt: Date.now() - 20_000,
+      });
+
+      await orchestrator.sendToAll([client], params(), mockConfig);
+      await orchestrator.settle();
+
+      expect(global.fetch).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not send a retry whose wait ran past the time left', async () => {
+      let now = Date.now();
+      global.fetch = vi.fn().mockResolvedValue(response(503));
+      const clock = vi.spyOn(Date, 'now').mockImplementation(() => now);
+      try {
+        const orchestrator = createBackchannelLogoutOrchestrator(kv, undefined, {
+          // The 1 s wait takes 22 s: 5 s of request no longer fits the 25 s budget.
+          sleep: async () => {
+            now += 22_000;
+          },
+        });
+        await orchestrator.sendToAll([client], params(), mockConfig);
+        const [final] = await orchestrator.settle();
+        expect(final.success).toBe(false);
+      } finally {
+        clock.mockRestore();
+      }
+
+      expect(global.fetch).toHaveBeenCalledTimes(1);
+      await expect(kv.get(LogoutKVHelpers.getFailureKey('client-1'))).resolves.not.toBeNull();
+    });
+
+    it('retries even when the pending lock cannot be written', async () => {
+      global.fetch = vi.fn().mockResolvedValueOnce(response(503)).mockResolvedValue(response(200));
+      const put = kv.put.bind(kv);
+      kv.put = vi.fn(async (key: string, ...rest: unknown[]) => {
+        if (key.includes('pending')) throw new Error('kv unavailable');
+        return (put as (...args: unknown[]) => Promise<void>)(key, ...rest);
+      }) as unknown as KVNamespace['put'];
+      const orchestrator = createBackchannelLogoutOrchestrator(kv, undefined, {
+        sleep: async () => {},
+      });
+
+      const [first] = await orchestrator.sendToAll([client], params(), mockConfig);
+      const [retried] = await orchestrator.settle();
+
+      expect(first).toMatchObject({ success: false, retryScheduled: true });
+      expect(retried).toMatchObject({ success: true });
+    });
+
+    it('raises the alert while the failure record has not completed', async () => {
+      global.fetch = vi.fn().mockResolvedValue(response(503));
+      const failureKey = LogoutKVHelpers.getFailureKey('client-1');
+      const put = kv.put.bind(kv);
+      kv.put = vi.fn((key: string, ...rest: unknown[]) =>
+        key === failureKey
+          ? new Promise<void>(() => {}) // stalls
+          : (put as (...args: unknown[]) => Promise<void>)(key, ...rest)
+      ) as unknown as KVNamespace['put'];
+      const onAlert = vi.fn(async () => {});
+      const orchestrator = createBackchannelLogoutOrchestrator(kv, undefined, {
+        onAlert,
+        storeTimeoutMs: 20,
+      });
+
+      // No retry: the first failure is final; its record stalls.
+      const [result] = await orchestrator.sendToAll([client], params(), {
+        ...mockConfig,
+        retry: { ...mockConfig.retry, max_attempts: 0 },
+        on_final_failure: 'alert',
+      });
+      await orchestrator.settle();
+
+      expect(result.success).toBe(false);
+      expect(onAlert).toHaveBeenCalled();
+    });
+
+    it('notifies every client and settles while the store stalls', async () => {
+      global.fetch = vi.fn().mockResolvedValue(response(503));
+      const stalled = () => new Promise<never>(() => {});
+      kv.get = vi.fn(stalled) as unknown as KVNamespace['get'];
+      kv.put = vi.fn(stalled) as unknown as KVNamespace['put'];
+      kv.delete = vi.fn(stalled) as unknown as KVNamespace['delete'];
+      const orchestrator = createBackchannelLogoutOrchestrator(kv, undefined, {
+        sleep: async () => {},
+        storeTimeoutMs: 20,
+      });
+      const config = { ...mockConfig, retry: { ...mockConfig.retry, max_attempts: 1 } };
+      const clients = Array.from({ length: 12 }, (_, i) => ({
+        ...client,
+        id: `sc-${i}`,
+        client_id: `client-${i}`,
+      }));
+
+      await orchestrator.sendToAll(clients, params(), config);
+      await orchestrator.sendToAll(
+        [{ ...client, session_id: 'session-2' }],
+        { ...params(), sessionId: 'session-2' },
+        config
+      );
+      // Every first attempt was made, across batches and sessions.
+      expect((global.fetch as ReturnType<typeof vi.fn>).mock.calls.length).toBeGreaterThanOrEqual(
+        13
+      );
+      const settled = await orchestrator.settle();
+      expect(settled).toHaveLength(13);
+    });
+
+    it('keeps sending when a pending lock cannot be read', async () => {
+      // The two clients are sent to at the same time: answer by address, not by call order.
+      const firstFailed = new Set<string>();
+      global.fetch = vi.fn(async (url: string) => {
+        if (url.includes('client1') && !firstFailed.has(url)) {
+          firstFailed.add(url);
+          return response(503);
+        }
+        return response(200);
+      }) as unknown as typeof fetch;
+      const get = kv.get.bind(kv);
+      kv.get = vi.fn(async (key: string, ...rest: unknown[]) => {
+        if (key.includes('client-2')) throw new Error('kv unavailable');
+        return (get as (...args: unknown[]) => Promise<unknown>)(key, ...rest);
+      }) as unknown as KVNamespace['get'];
+      const orchestrator = createBackchannelLogoutOrchestrator(kv, undefined, {
+        sleep: async () => {},
+      });
+
+      const results = await orchestrator.sendToAll(
+        [
+          client,
+          {
+            ...client,
+            id: 'sc-2',
+            client_id: 'client-2',
+            backchannel_logout_uri: 'https://client2.example.com/logout',
+          },
+        ],
+        params(),
+        mockConfig
+      );
+      // The first client's retry still ends through settle().
+      const [retried] = await orchestrator.settle();
+
+      expect(results.map((r) => r.clientId)).toEqual(['client-1', 'client-2']);
+      expect(results[1].success).toBe(true);
+      expect(retried).toMatchObject({ clientId: 'client-1', success: true });
+    });
+
+    it('makes every first attempt before any retry ends', async () => {
+      global.fetch = vi.fn().mockResolvedValue(response(503));
+      let openGate = () => {};
+      const gate = new Promise<void>((resolve) => {
+        openGate = resolve;
+      });
+      const orchestrator = createBackchannelLogoutOrchestrator(kv, undefined, {
+        sleep: () => gate,
+      });
+      const config = { ...mockConfig, retry: { ...mockConfig.retry, max_attempts: 1 } };
+      // Two batches of clients in one session, then another session.
+      const clients = Array.from({ length: 12 }, (_, i) => ({
+        ...client,
+        id: `sc-${i}`,
+        client_id: `client-${i}`,
+      }));
+
+      await orchestrator.sendToAll(clients, params(), config);
+      await orchestrator.sendToAll(
+        [{ ...client, session_id: 'session-2' }],
+        {
+          ...params(),
+          sessionId: 'session-2',
+        },
+        config
+      );
+
+      // Every client got its first attempt while the retries still wait.
+      expect(global.fetch).toHaveBeenCalledTimes(13);
+      openGate();
+      const settled = await orchestrator.settle();
+      expect(settled).toHaveLength(13);
+      expect(global.fetch).toHaveBeenCalledTimes(26);
+    });
   });
 });

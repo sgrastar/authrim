@@ -12,11 +12,54 @@ import type { Context } from 'hono';
 import {
   DEFAULT_LOGOUT_CONFIG,
   LOGOUT_SETTINGS_KEY,
+  applyBackchannelLogoutSettings,
   getLogger,
+  getTenantIdFromContext,
+  resolveEffectiveSettingsWithSources,
   type LogoutConfig,
   type BackchannelLogoutConfig,
   type Env,
 } from '@authrim/ar-lib-core';
+import { SettingsUnavailableError, settingsUnavailableResponse } from './settings-unavailable';
+
+const BACKCHANNEL_SETTING_KEYS = [
+  'session.backchannel_logout_token_exp',
+  'session.backchannel_request_timeout_ms',
+  'session.backchannel_retry_max_attempts',
+  'session.backchannel_retry_initial_delay_ms',
+  'session.backchannel_retry_max_delay_ms',
+  'session.backchannel_retry_backoff_multiplier',
+  'session.backchannel_on_failure',
+] as const;
+
+/**
+ * The config the request's tenant gets: back-channel values resolved through the Settings API
+ * (`session.backchannel_*`: tenant, else this document, else env, else defaults) apply over this
+ * document, as the logout handler applies them; with where each of those values comes from.
+ * Throws SettingsUnavailableError (503) when they cannot be read.
+ */
+async function effectiveLogoutConfig(
+  c: Context<{ Bindings: Env }>,
+  config: LogoutConfig
+): Promise<{ config: LogoutConfig; backchannelSources: Record<string, string> }> {
+  try {
+    const { values, sources } = await resolveEffectiveSettingsWithSources(c.env, 'session', {
+      tenantId: getTenantIdFromContext(c),
+      freshLegacy: true,
+    });
+    return {
+      config: {
+        ...config,
+        backchannel: applyBackchannelLogoutSettings(config.backchannel, values),
+      },
+      backchannelSources: Object.fromEntries(
+        BACKCHANNEL_SETTING_KEYS.map((key) => [key, sources[key]])
+      ),
+    };
+  } catch (error) {
+    throw new SettingsUnavailableError(error);
+  }
+}
 
 /**
  * Validate BackchannelLogoutConfig values
@@ -120,7 +163,12 @@ export async function getLogoutConfig(c: Context<{ Bindings: Env }>) {
 
     // Try to get from KV
     if (c.env.SETTINGS) {
-      const kvConfig = await c.env.SETTINGS.get(LOGOUT_SETTINGS_KEY);
+      let kvConfig: string | null;
+      try {
+        kvConfig = await c.env.SETTINGS.get(LOGOUT_SETTINGS_KEY);
+      } catch (error) {
+        throw new SettingsUnavailableError(error);
+      }
       if (kvConfig) {
         try {
           const parsed = JSON.parse(kvConfig) as LogoutConfig;
@@ -139,12 +187,18 @@ export async function getLogoutConfig(c: Context<{ Bindings: Env }>) {
       }
     }
 
+    const effective = await effectiveLogoutConfig(c, currentConfig);
     return c.json({
-      config: currentConfig,
+      config: effective.config,
+      // Whether the older settings:logout document is saved ('kv') or not ('default').
       source,
+      // Where each back-channel value in effect comes from, as the Settings API reports it:
+      // 'kv' (set for this tenant), 'platform' (the document above), 'env' or 'default'.
+      backchannel_sources: effective.backchannelSources,
       defaults: DEFAULT_LOGOUT_CONFIG,
     });
   } catch (error) {
+    if (error instanceof SettingsUnavailableError) return settingsUnavailableResponse(c);
     log.error('Error getting config', {}, error as Error);
     return c.json(
       {
@@ -205,7 +259,12 @@ export async function updateLogoutConfig(c: Context<{ Bindings: Env }>) {
   try {
     // Get existing config from KV
     let existingConfig: LogoutConfig = DEFAULT_LOGOUT_CONFIG;
-    const kvConfig = await c.env.SETTINGS.get(LOGOUT_SETTINGS_KEY);
+    let kvConfig: string | null;
+    try {
+      kvConfig = await c.env.SETTINGS.get(LOGOUT_SETTINGS_KEY);
+    } catch (error) {
+      throw new SettingsUnavailableError(error);
+    }
     if (kvConfig) {
       try {
         existingConfig = JSON.parse(kvConfig);
@@ -241,10 +300,11 @@ export async function updateLogoutConfig(c: Context<{ Bindings: Env }>) {
 
     return c.json({
       success: true,
-      config: newConfig,
-      note: 'Logout configuration updated. Changes take effect immediately.',
+      config: (await effectiveLogoutConfig(c, newConfig)).config,
+      note: 'Logout configuration updated. Back-channel values set per tenant through the Settings API take precedence; changes take effect within a minute.',
     });
   } catch (error) {
+    if (error instanceof SettingsUnavailableError) return settingsUnavailableResponse(c);
     log.error('Error updating config', {}, error as Error);
     // SECURITY: Do not expose internal error details
     return c.json(
@@ -279,10 +339,11 @@ export async function resetLogoutConfig(c: Context<{ Bindings: Env }>) {
 
     return c.json({
       success: true,
-      config: DEFAULT_LOGOUT_CONFIG,
+      config: (await effectiveLogoutConfig(c, DEFAULT_LOGOUT_CONFIG)).config,
       note: 'Logout configuration reset to defaults.',
     });
   } catch (error) {
+    if (error instanceof SettingsUnavailableError) return settingsUnavailableResponse(c);
     log.error('Error resetting config', {}, error as Error);
     // SECURITY: Do not expose internal error details
     return c.json(

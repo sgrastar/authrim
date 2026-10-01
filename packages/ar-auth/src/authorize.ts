@@ -11,6 +11,7 @@ import {
   validateNonce,
   isRedirectUriRegistered,
   createOAuthConfigManager,
+  resolveEffectiveSettings,
   getAuthCodeShardIndex,
   createShardedAuthCode,
   buildAuthCodeShardInstanceName,
@@ -37,7 +38,7 @@ import {
   getPARRequestStoreByUri,
   parsePARRequestUri,
   // UI Configuration
-  getUIConfig,
+  getTenantUIConfig,
   buildUIUrl,
   shouldUseBuiltinForms,
   DEFAULT_UI_PATHS,
@@ -336,7 +337,8 @@ type UIRedirectResult =
  * @param env - Environment bindings
  * @param path - UI path key (e.g., 'login', 'consent', 'error')
  * @param queryParams - Query parameters to append to URL
- * @param tenantHint - Optional tenant hint for branding (UX only, untrusted)
+ * @param tenantId - The request's tenant: its UI settings apply, and the UI gets it as a
+ *   branding hint (tenant_hint)
  * @returns UIRedirectResult indicating where to redirect
  */
 async function getUIRedirectTarget(
@@ -352,7 +354,7 @@ async function getUIRedirectTarget(
     | 'loggedOut'
     | 'register',
   queryParams?: Record<string, string>,
-  tenantHint?: string,
+  tenantId?: string,
   clientLoginUiUrl?: string | null,
   issuerUiBaseUrl?: string | null,
   forceBuiltinForms = false
@@ -381,26 +383,28 @@ async function getUIRedirectTarget(
       baseUrl: clientLoginUiUrl,
       paths: DEFAULT_UI_PATHS,
     };
-    const url = buildUIUrl(clientConfig, path, queryParams, tenantHint);
+    const url = buildUIUrl(clientConfig, path, queryParams, tenantId);
     return { type: 'redirect', url };
   }
 
-  // Check global UI configuration (priority 3)
-  const uiConfig = await getUIConfig(env);
+  // Check the tenant's, else the global, UI configuration (priority 3). A UI base URL the
+  // tenant set is its explicit choice, so it goes before the issuer-hosted Login UI.
+  const { config: uiConfig, tenantBaseUrl } = await getTenantUIConfig(env, tenantId);
   if (!uiConfig?.baseUrl) {
     return { type: 'config_error', reason: 'ui_not_configured' };
   }
 
-  const baseUrl = shouldUseIssuerHostedUi(env, issuerUiBaseUrl)
-    ? issuerUiBaseUrl!
-    : uiConfig.baseUrl;
+  const baseUrl =
+    !tenantBaseUrl && shouldUseIssuerHostedUi(env, issuerUiBaseUrl)
+      ? issuerUiBaseUrl!
+      : uiConfig.baseUrl;
   const effectiveUiConfig: UIConfig = {
     ...uiConfig,
     baseUrl,
   };
 
   // Build UI URL with optional query params and tenant hint
-  const url = buildUIUrl(effectiveUiConfig, path, queryParams, tenantHint);
+  const url = buildUIUrl(effectiveUiConfig, path, queryParams, tenantId);
   return { type: 'redirect', url };
 }
 
@@ -1225,14 +1229,45 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         maxSizeBytes: 102400,
       };
 
+      // A value saved in KV (older settings or the Settings API) wins over env, including an
+      // explicit false; env applies only when nothing is saved.
+      let enabledSaved = false;
+      let allowedDomainsSaved = false;
       try {
-        const settings = await getTenantSystemSettings(c.env.SETTINGS, getTenantIdFromContext(c));
+        // Values set for a client apply only to a registered client: an unknown client_id must
+        // not cost settings reads (the request is rejected once the client is checked).
+        const requestClient =
+          typeof client_id === 'string' && client_id
+            ? await getClientCached(c, c.env, client_id)
+            : null;
+        const requestTenantId = getTenantIdFromContext(c);
+        const clientInTenant =
+          requestClient &&
+          (typeof requestClient.tenant_id !== 'string' ||
+            requestClient.tenant_id.length === 0 ||
+            requestClient.tenant_id === requestTenantId);
+        // An unknown client, or one of another tenant, gets no external fetch and costs no
+        // settings reads: the request would be rejected once the client is checked anyway.
+        if (!clientInTenant) {
+          return sendRequestUriError(
+            'request_uri_not_supported',
+            'HTTPS request_uri is not available for this client'
+          );
+        }
+        const settings = await getTenantSystemSettings(c.env.SETTINGS, requestTenantId, {
+          clientId: client_id,
+          sections: ['oidc'],
+          // Settings that cannot be read must not let env or older values allow the fetch.
+          failOnError: true,
+        });
         if (settings) {
           const oidc = settings.oidc as
             | { httpsRequestUri?: Partial<typeof httpsRequestUriConfig> }
             | undefined;
           const kvConfig = oidc?.httpsRequestUri;
           if (kvConfig) {
+            enabledSaved = typeof kvConfig.enabled === 'boolean';
+            allowedDomainsSaved = Array.isArray(kvConfig.allowedDomains);
             httpsRequestUriConfig = {
               enabled: kvConfig.enabled ?? false,
               allowedDomains: kvConfig.allowedDomains ?? [],
@@ -1247,13 +1282,19 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
           { action: 'settings_load' },
           error as Error
         );
+        // Fail closed: without the saved settings, an external fetch could be allowed that the
+        // tenant or client has turned off or restricted.
+        return sendRequestUriError(
+          'temporarily_unavailable',
+          'HTTPS request_uri settings are unavailable; use PAR or try again later'
+        );
       }
 
       // Fall back to environment variables if not configured in KV
-      if (!httpsRequestUriConfig.enabled) {
+      if (!enabledSaved) {
         httpsRequestUriConfig.enabled = c.env.ENABLE_HTTPS_REQUEST_URI === 'true';
       }
-      if (httpsRequestUriConfig.allowedDomains.length === 0) {
+      if (!allowedDomainsSaved) {
         const allowedDomainsStr = c.env.HTTPS_REQUEST_URI_ALLOWED_DOMAINS || '';
         httpsRequestUriConfig.allowedDomains = allowedDomainsStr
           ? allowedDomainsStr.split(',').map((d) => d.trim().toLowerCase())
@@ -2195,6 +2236,8 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
     () =>
       getTenantSystemSettings(c.env.SETTINGS, tenantId, {
         failOnError: true,
+        clientId: validClientId,
+        sections: ['fapi'],
       })
   ).then(
     (value) => ({ ok: true as const, value }),
@@ -2666,7 +2709,14 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
-    const allowPublicClients = fapiConfig.allowPublicClients !== false;
+    // The saved value (Settings API, else the older document), else FAPI_ALLOW_PUBLIC_CLIENTS
+    // (anything but 'false' / '0' allows), else allowed.
+    const envAllowsPublicClients = c.env.FAPI_ALLOW_PUBLIC_CLIENTS;
+    const allowPublicClients =
+      typeof fapiConfig.allowPublicClients === 'boolean'
+        ? fapiConfig.allowPublicClients
+        : envAllowsPublicClients === undefined ||
+          (envAllowsPublicClients.toLowerCase() !== 'false' && envAllowsPublicClients !== '0');
     const isPublicClient = !clientMetadata.client_secret_hash;
     if (!allowPublicClients && isPublicClient) {
       return sendError('invalid_client', 'Public clients are not allowed in FAPI 2.0 mode');
@@ -2676,6 +2726,17 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
     if (response_type !== 'none' && (!code_challenge || code_challenge_method !== 'S256')) {
       return sendError('invalid_request', 'PKCE with S256 is required in FAPI 2.0 mode');
     }
+  }
+
+  // A signed request object may be required (FAPI message signing, or the Settings API's
+  // security.require_signed_request_object for the tenant or client). PAR enforces it when the
+  // request is pushed; a request sent here directly must carry a request object whose signature
+  // was verified (or come from PAR, which is integrity protected).
+  const messageSigning = (
+    fapiConfig as { messageSigning?: { requireSignedRequestObject?: boolean } }
+  ).messageSigning;
+  if (messageSigning?.requireSignedRequestObject === true && !claimsRequestIntegrityProtected) {
+    return sendError('invalid_request', 'A signed request object is required for this client');
   }
 
   // Validate scope
@@ -2748,15 +2809,14 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
     }
   }
 
-  // Check if state parameter is required (configurable via KV)
-  const configManager = createOAuthConfigManager(c.env);
-  const stateRequired = await configManager.isStateRequired();
-
   // Validate state (conditionally required based on configuration)
   // SECURITY: response_type=none ALWAYS requires state for CSRF protection
   // (used for session checks, state prevents cross-site request forgery)
+  // Whether the configuration requires state is checked once the rest of the request is valid
+  // (below), so invalid requests do not cost a settings read.
   const isNoneResponseTypeForState = response_type === 'none';
-  if ((stateRequired || isNoneResponseTypeForState) && (!state || state.trim().length === 0)) {
+  const stateMissing = !state || state.trim().length === 0;
+  if (isNoneResponseTypeForState && stateMissing) {
     return sendError('invalid_request', 'state parameter is required (CSRF protection)');
   }
   const stateValidation = validateState(state);
@@ -2875,6 +2935,27 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
     (clientMetadata.require_pkce === true || isClientPublic(clientMetadata));
   if (requiresPkce && (!code_challenge || code_challenge_method !== 'S256')) {
     return sendError('invalid_request', 'PKCE with S256 is required for this client');
+  }
+
+  // State required by configuration: the Settings API value for the client or tenant, else the
+  // older oauth-config value, else env, else the default. Only read when state is missing; a
+  // setting that cannot be read refuses the request rather than assuming state is optional.
+  if (stateMissing) {
+    let stateRequired: unknown;
+    try {
+      stateRequired = (
+        await resolveEffectiveSettings(c.env, 'oauth', {
+          tenantId: getTenantIdFromContext(c),
+          clientId: validClientId,
+        })
+      )['oauth.state_required'];
+    } catch (error) {
+      log.error('State requirement settings could not be read', {}, error as Error);
+      return sendError('server_error', 'Failed to process authorization request');
+    }
+    if (stateRequired === true) {
+      return sendError('invalid_request', 'state parameter is required (CSRF protection)');
+    }
   }
 
   // Start optional SSO settings only after request validation, while still overlapping session I/O.
@@ -4281,11 +4362,21 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
             ? clientMetadata.default_audience
             : undefined;
 
+      // Code lifetime for the client or tenant (Settings API, else the older oauth-config value,
+      // else env, else the default); the code store's own lifetime applies otherwise.
+      const authCodeTtl = (
+        await resolveEffectiveSettings(c.env, 'oauth', {
+          tenantId: getTenantIdFromContext(c),
+          clientId: validClientId,
+        })
+      )['oauth.auth_code_ttl'];
+      const authCodeTtlSeconds = typeof authCodeTtl === 'number' ? authCodeTtl : undefined;
       await timeAuthRequestDiagnosticOperation(c, 'auth_authorize_code_store', () =>
         authCodeStore.storeCodeRpc({
           code: code as string,
           tenantId: getTenantIdFromContext(c),
           clientId: validClientId,
+          ttlSeconds: authCodeTtlSeconds,
           redirectUri: validRedirectUri,
           userId: sub,
           scope: validScope,
@@ -4314,6 +4405,26 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       });
     } catch (error) {
       log.error('AuthCodeStore DO error', { action: 'auth_code_store' }, error as Error);
+      return sendError('server_error', 'Failed to process authorization request');
+    }
+  }
+
+  // Token lifetime for the client or tenant (Settings API, else the older oauth-config value,
+  // else env, else the default), used for both tokens as the token endpoint uses it.
+  let tokenLifetimeSeconds = 3600;
+  if (includesToken || includesIdToken) {
+    try {
+      const configured = Number(
+        (
+          await resolveEffectiveSettings(c.env, 'oauth', {
+            tenantId: getTenantIdFromContext(c),
+            clientId: validClientId,
+          })
+        )['oauth.access_token_expiry']
+      );
+      if (Number.isFinite(configured) && configured > 0) tokenLifetimeSeconds = configured;
+    } catch (error) {
+      log.error('Token lifetime settings could not be read', {}, error as Error);
       return sendError('server_error', 'Failed to process authorization request');
     }
   }
@@ -4349,7 +4460,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         },
         privateKey,
         signingKeyId,
-        3600, // 1 hour
+        tokenLifetimeSeconds,
         regionAwareJti
       );
 
@@ -4461,7 +4572,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         idTokenClaims as Parameters<typeof createIDToken>[0],
         privateKey,
         signingKeyId,
-        3600 // 1 hour
+        tokenLifetimeSeconds
       );
 
       log.info('Generated id_token for hybrid/implicit flow', {
@@ -4542,7 +4653,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   if (code) responseParams.code = code;
   if (accessToken) responseParams.access_token = accessToken;
   if (accessToken) responseParams.token_type = 'Bearer';
-  if (accessToken) responseParams.expires_in = '3600';
+  if (accessToken) responseParams.expires_in = String(tokenLifetimeSeconds);
   if (idToken) responseParams.id_token = idToken;
   if (state) responseParams.state = state;
   // RFC 9207: Add iss parameter to prevent mix-up attacks

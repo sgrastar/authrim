@@ -260,8 +260,10 @@ export function parseWorkerCapabilityManifest(
 export async function loadWorkerCapabilityManifest(input: {
   baseDir: string;
   component: WorkerInventoryComponent;
+  /** Package filling the component's slot when it differs (Admin UI slot → admin console). */
+  packageDir?: string;
 }): Promise<CompiledWorkerCapabilityManifest> {
-  const packageDir = join(input.baseDir, 'packages', input.component);
+  const packageDir = input.packageDir ?? join(input.baseDir, 'packages', input.component);
   const packagePath = join(packageDir, 'package.json');
   const manifestPath = join(packageDir, 'authrim.worker-capabilities.json');
   const [packageBytes, manifestBytes] = await Promise.all([
@@ -294,10 +296,15 @@ export async function loadWorkerCapabilityManifest(input: {
 export async function loadWorkerCapabilityManifests(input: {
   baseDir: string;
   components: readonly WorkerInventoryComponent[];
+  packageDirs?: Partial<Record<WorkerInventoryComponent, string>>;
 }): Promise<CompiledWorkerCapabilityManifest[]> {
   const manifests = await Promise.all(
     input.components.map((component) =>
-      loadWorkerCapabilityManifest({ baseDir: input.baseDir, component })
+      loadWorkerCapabilityManifest({
+        baseDir: input.baseDir,
+        component,
+        packageDir: input.packageDirs?.[component],
+      })
     )
   );
   const packageNames = new Set<string>();

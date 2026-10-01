@@ -1109,6 +1109,12 @@ const pt: Translations = {
   'web.comp.adminUi': 'UI de Admin',
   'web.comp.adminUiDesc':
     'Painel de admin para gerenciar tenants, clientes, usuários e configurações do sistema.',
+  'web.comp.adminUiVariant': 'Pacote da interface de administração',
+  'web.comp.adminUiLegacy': 'Interface de administração atual',
+  'web.comp.adminUiLegacyDesc': 'A interface de administração usada hoje, com todos os recursos.',
+  'web.comp.adminUiConsole': 'Console de administração (prévia)',
+  'web.comp.adminUiConsoleDesc':
+    'O console de administração redesenhado. Os recursos são adicionados um a um; itens ainda não reconstruídos mostram um espaço reservado. Mesma URL e mesmas chaves de acesso de administrador da interface atual.',
 
   // Web UI Domain Row Labels
   'web.domain.loginUi': 'UI de Login',

@@ -53,7 +53,7 @@ import {
   parseAllowedOrigins,
   csrfProtectionMiddleware,
   getTenantIdFromContext,
-  getTenantSettings,
+  getTenantSettingsDocument,
   listEnvironmentTenantDefaultStores,
   resolveTenantAssignedDatabaseSourcesFromRegistry,
   createCompatibilityErrorResponse,
@@ -1249,8 +1249,8 @@ app.use('*', async (c, next) => {
   let allowedOriginsStr: string | null = null;
 
   // 1. Try to get from KV (tenant-aware settings)
-  const tenantSettings = await getTenantSettings(
-    c.env.AUTHRIM_CONFIG,
+  const tenantSettings = await getTenantSettingsDocument(
+    c.env,
     getTenantIdFromContext(c),
     'tenant'
   );

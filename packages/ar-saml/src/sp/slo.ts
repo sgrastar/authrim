@@ -783,7 +783,7 @@ async function buildLogoutCompleteUrlForSP(
   }
 
   // Normal mode: use UI config
-  const uiConfig = await getUIConfig(env);
+  const uiConfig = await getUIConfig(env, tenantId);
   if (!uiConfig?.baseUrl) {
     return { type: 'error', response: c.json(createConfigurationError(), 500) };
   }

@@ -620,6 +620,64 @@ describe('control worker desired inventory registration', () => {
     }
   });
 
+  it('maps the admin console artifact to the Admin UI slot and reads its own manifest', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'authrim-ui-console-inventory-'));
+    const packageDir = join(root, 'packages', 'ar-admin-console');
+    await mkdir(packageDir, { recursive: true });
+    await writeFile(join(packageDir, 'package.json'), '{"name":"@authrim/ar-admin-console"}');
+    await writeFile(
+      join(packageDir, 'authrim.worker-capabilities.json'),
+      JSON.stringify({
+        schemaVersion: 1,
+        packageName: '@authrim/ar-admin-console',
+        worker: 'ar-admin-ui',
+        requiredDataRoles: [],
+        bindings: [],
+        secrets: [],
+      })
+    );
+    const artifactPath = join(packageDir, 'wrangler.toml');
+    await writeFile(artifactPath, 'name = "test-ar-admin-ui"\n');
+
+    try {
+      await expect(
+        compileControlWorkerInventoryFromArtifacts({
+          baseDir: root,
+          environmentId: 'env-test',
+          environmentName: 'test',
+          components: ['ar-admin-ui'],
+          artifactPaths: [artifactPath],
+          deploymentTarget: 'ui',
+        })
+      ).resolves.toMatchObject([
+        {
+          workerScriptName: 'test-ar-admin-ui',
+          deploymentTarget: 'ui',
+        },
+      ]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps the repository Admin UI slot manifests interchangeable', async () => {
+    const [legacy] = await loadWorkerCapabilityManifests({
+      baseDir: ROOT_DIR,
+      components: ['ar-admin-ui'],
+    });
+    const [console] = await loadWorkerCapabilityManifests({
+      baseDir: ROOT_DIR,
+      components: ['ar-admin-ui'],
+      packageDirs: { 'ar-admin-ui': join(ROOT_DIR, 'packages', 'ar-admin-console') },
+    });
+    expect(console.manifest.packageName).toBe('@authrim/ar-admin-console');
+    // Same slot, same bindings and secrets: switching packages must not change what the
+    // Worker is allowed to use.
+    const { packageName: _legacyName, ...legacyRest } = legacy.manifest;
+    const { packageName: _consoleName, ...consoleRest } = console.manifest;
+    expect(consoleRest).toEqual(legacyRest);
+  });
+
   it('rejects an inventory record whose script name is outside the declared environment', () => {
     expect(() =>
       buildControlWorkerInventoryRegistrationPlan({

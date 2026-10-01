@@ -34,19 +34,24 @@ export const EXTERNAL_IDP_SETTINGS_META: Record<keyof ExternalIdPSettings, Setti
   'external_idp.jit_provisioning_enabled': {
     key: 'external_idp.jit_provisioning_enabled',
     type: 'boolean',
-    default: false,
+    // As the bridge has always behaved without a saved configuration. Each provider must also
+    // enable JIT provisioning, so this alone creates no accounts.
+    default: true,
     envKey: 'ENABLE_JIT_PROVISIONING',
     label: 'JIT Provisioning',
-    description: 'Enable Just-In-Time user provisioning from external IdPs',
+    description:
+      'Enable Just-In-Time user provisioning from external IdPs (for providers that also enable it)',
     visibility: 'public',
   },
   'external_idp.jit_update_on_login': {
     key: 'external_idp.jit_update_on_login',
     type: 'boolean',
-    default: true,
+    // Off unless set: logins have never changed the user's profile, which may be edited locally.
+    default: false,
     envKey: 'JIT_UPDATE_ON_LOGIN',
     label: 'Update on Login',
-    description: 'Update user attributes on each login from external IdP',
+    description:
+      "Update the user's name, given and family name, picture and locale from the external IdP on each login",
     visibility: 'public',
     dependsOn: [{ key: 'external_idp.jit_provisioning_enabled', value: true }],
   },
@@ -115,8 +120,8 @@ export const EXTERNAL_IDP_CATEGORY_META: CategoryMeta = {
  * Default External IdP settings values
  */
 export const EXTERNAL_IDP_DEFAULTS: ExternalIdPSettings = {
-  'external_idp.jit_provisioning_enabled': false,
-  'external_idp.jit_update_on_login': true,
+  'external_idp.jit_provisioning_enabled': true,
+  'external_idp.jit_update_on_login': false,
   'external_idp.jwks_cache_ttl': 86400,
   'external_idp.jwks_fetch_timeout_ms': 5000,
   'external_idp.request_timeout_ms': 10000,

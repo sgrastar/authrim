@@ -183,9 +183,9 @@ const mocks = vi.hoisted(() => {
     mockGetEmbeddingLimits: vi.fn().mockReturnValue({ maxClaims: 50, maxSize: 4096 }),
 
     // Configuration
-    mockCreateOAuthConfigManager: vi.fn().mockReturnValue({
-      getTokenExpiry: vi.fn().mockResolvedValue(3600),
-      getRefreshTokenExpiry: vi.fn().mockResolvedValue(86400 * 30),
+    mockResolveEffectiveSettings: vi.fn().mockResolvedValue({
+      'oauth.access_token_expiry': 3600,
+      'oauth.refresh_token_expiry': 86400 * 30,
     }),
 
     // Events
@@ -277,7 +277,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     resolveDeviceSecretRouteHint: mocks.mockResolveDeviceSecretRouteHint,
     getTenantMetadataContextFromHono: mocks.mockGetTenantMetadataContextFromHono,
     resolveAccountDataContextFromHono: mocks.mockResolveAccountDataContextFromHono,
-    createOAuthConfigManager: mocks.mockCreateOAuthConfigManager,
+    resolveEffectiveSettings: mocks.mockResolveEffectiveSettings,
     publishEvent: mocks.mockPublishEvent,
     TOKEN_EVENTS: {
       ACCESS_ISSUED: 'token.access.issued',
@@ -658,10 +658,10 @@ describe('Client Authentication Tests', () => {
       allows_refresh_token: true,
     });
 
-    // Setup default config manager
-    mocks.mockCreateOAuthConfigManager.mockReturnValue({
-      getTokenExpiry: vi.fn().mockResolvedValue(3600),
-      getRefreshTokenExpiry: vi.fn().mockResolvedValue(86400 * 30),
+    // Token lifetimes from the effective settings
+    mocks.mockResolveEffectiveSettings.mockResolvedValue({
+      'oauth.access_token_expiry': 3600,
+      'oauth.refresh_token_expiry': 86400 * 30,
     });
 
     // Setup token creation mocks
@@ -3985,6 +3985,56 @@ describe('Client Authentication Tests', () => {
       expect(consumeCodeRpcMock).not.toHaveBeenCalled();
     });
 
+    it('applies FAPI set only for this client to client authentication', async () => {
+      // Registered for client_secret_post, which only FAPI refuses.
+      const client = createConfidentialClient({ token_endpoint_auth_method: 'client_secret_post' });
+      mocks.mockVerifyClientSecretHash.mockResolvedValue(true);
+      const authCodeData = createAuthCodeData();
+      mocks.mockGetClientCached.mockResolvedValue(client);
+      // FAPI is off for the tenant and on for this client (Settings API, client scope).
+      mocks.mockGetSystemSettingsCached.mockImplementation(
+        async (_c: unknown, _env: unknown, options?: { clientId?: string }) =>
+          options?.clientId === client.client_id
+            ? { fapi: { enabled: true, requireDpop: true } }
+            : { fapi: { enabled: false } }
+      );
+      mocks.mockExtractDPoPProof.mockReturnValue('dpop-proof');
+      mocks.mockValidateDPoPProof.mockResolvedValue({ valid: true, jkt: 'test-jkt' });
+      mocks.mockParseBasicAuth.mockReturnValue({ success: false });
+      const consumeCodeRpcMock = vi.fn().mockResolvedValue(authCodeData);
+      mockEnv.AUTH_CODE_STORE.get = vi.fn().mockReturnValue({
+        consumeCodeRpc: consumeCodeRpcMock,
+        registerIssuedTokensRpc: vi.fn().mockResolvedValue(true),
+      });
+
+      const response = await tokenHandler(
+        createMockContext({
+          method: 'POST',
+          body: {
+            grant_type: 'authorization_code',
+            code: 'valid-auth-code',
+            redirect_uri: authCodeData.redirectUri,
+            client_id: client.client_id,
+            client_secret: 'valid-secret',
+          },
+          env: mockEnv,
+        })
+      );
+
+      expect(response.status).toBe(401);
+      await expect(parseJsonResponse(response)).resolves.toMatchObject({
+        error: 'invalid_client',
+        error_description: expect.stringContaining('private_key_jwt'),
+      });
+      expect(consumeCodeRpcMock).not.toHaveBeenCalled();
+      // The client's own settings were asked for.
+      expect(mocks.mockGetSystemSettingsCached).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.anything(),
+        expect.objectContaining({ clientId: client.client_id })
+      );
+    });
+
     it('rejects client-secret downgrade before consuming a code in FAPI mode', async () => {
       const client = createPrivateKeyJwtClient();
       const authCodeData = createAuthCodeData();
@@ -5232,6 +5282,12 @@ describe('Client Authentication Tests', () => {
       const result = await requestJWTBearer();
       expect(result.response.status).toBe(200);
       expect(result.body.scope).toBe('api:read');
+      // Token lifetimes are read for the trusted issuer, which acts as the client.
+      expect(mocks.mockResolveEffectiveSettings).toHaveBeenCalledWith(
+        expect.anything(),
+        'oauth',
+        expect.objectContaining({ clientId: 'https://service.example.com' })
+      );
     });
 
     it('fails closed when JWT bearer access token creation fails', async () => {
@@ -5508,6 +5564,20 @@ describe('Client Authentication Tests', () => {
         error: 'temporarily_unavailable',
       });
       expect(mocks.mockCreateAccessToken).not.toHaveBeenCalled();
+    });
+
+    it('refuses the grant when its settings cannot be read, even if env enables it', async () => {
+      const client = setupM2MClient();
+      mocks.mockGetSystemSettingsCached.mockRejectedValue(new Error('settings unavailable'));
+
+      const refused = await requestM2M(client);
+
+      expect(refused.response.status).toBe(503);
+      expect(refused.body).toMatchObject({
+        error: 'temporarily_unavailable',
+        error_description: 'Client Credentials settings are unavailable; try again later',
+      });
+      expect(mocks.mockGetClientCached).not.toHaveBeenCalled();
     });
 
     it('rejects malformed assertions and Authorization headers before client lookup', async () => {

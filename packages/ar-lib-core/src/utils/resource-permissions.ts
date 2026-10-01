@@ -39,6 +39,11 @@ function requireTenantId(tenantId: string, context: string): string {
   return normalized;
 }
 import type { Env } from '../types/env';
+import {
+  resolveEffectiveSettingsWithSources,
+  resolvePlatformSettingsWithSources,
+  type EffectiveSettingsEnv,
+} from '../services/effective-settings';
 import type {
   ResourcePermission,
   ResourcePermissionRow,
@@ -411,84 +416,37 @@ export async function isIdLevelPermissionsEnabled(env: {
 }
 
 /**
- * Get token embedding limits from KV or environment
- *
- * @param env - Environment bindings
- * @returns Token embedding limits
+ * Token embedding limits for a tenant: `limits.max_*` as the Settings API resolves them (tenant,
+ * else platform, else the older `config:max_*`, else the environment variables, else defaults).
+ * Without a tenant, the platform's values. The defaults when the settings cannot be read.
  */
-export async function getEmbeddingLimits(env: {
-  SETTINGS?: KVNamespace;
-  MAX_EMBEDDED_PERMISSIONS?: string;
-  MAX_RESOURCE_PERMISSIONS?: string;
-  MAX_CUSTOM_CLAIMS?: string;
-}): Promise<TokenEmbeddingLimits> {
+export async function getEmbeddingLimits(
+  env: EffectiveSettingsEnv,
+  tenantId?: string
+): Promise<TokenEmbeddingLimits> {
   const limits: TokenEmbeddingLimits = {
     max_embedded_permissions: 50,
     max_resource_permissions: 100,
     max_custom_claims: 20,
   };
-
-  // Try KV first for each setting
-  if (env.SETTINGS) {
-    try {
-      const kvMaxEmbedded = await env.SETTINGS.get('config:max_embedded_permissions');
-      if (kvMaxEmbedded) {
-        const parsed = parseInt(kvMaxEmbedded, 10);
-        if (!isNaN(parsed) && parsed > 0) {
-          limits.max_embedded_permissions = parsed;
-        }
+  const keys = Object.keys(limits).map((name) => `limits.${name}`);
+  try {
+    const { values } = tenantId
+      ? await resolveEffectiveSettingsWithSources(env, 'limits', {
+          tenantId,
+          keys,
+          strictLegacy: true,
+        })
+      : await resolvePlatformSettingsWithSources(env, 'limits', { keys, strictLegacy: true });
+    for (const name of Object.keys(limits) as Array<keyof TokenEmbeddingLimits>) {
+      const value = values[`limits.${name}`];
+      if (typeof value === 'number' && Number.isSafeInteger(value) && value > 0) {
+        limits[name] = value;
       }
-    } catch {
-      // Ignore KV errors
     }
-
-    try {
-      const kvMaxResource = await env.SETTINGS.get('config:max_resource_permissions');
-      if (kvMaxResource) {
-        const parsed = parseInt(kvMaxResource, 10);
-        if (!isNaN(parsed) && parsed > 0) {
-          limits.max_resource_permissions = parsed;
-        }
-      }
-    } catch {
-      // Ignore KV errors
-    }
-
-    try {
-      const kvMaxCustom = await env.SETTINGS.get('config:max_custom_claims');
-      if (kvMaxCustom) {
-        const parsed = parseInt(kvMaxCustom, 10);
-        if (!isNaN(parsed) && parsed > 0) {
-          limits.max_custom_claims = parsed;
-        }
-      }
-    } catch {
-      // Ignore KV errors
-    }
+  } catch {
+    // Keep the defaults.
   }
-
-  // Fall back to environment variables
-  if (env.MAX_EMBEDDED_PERMISSIONS) {
-    const parsed = parseInt(env.MAX_EMBEDDED_PERMISSIONS, 10);
-    if (!isNaN(parsed) && parsed > 0 && limits.max_embedded_permissions === 50) {
-      limits.max_embedded_permissions = parsed;
-    }
-  }
-
-  if (env.MAX_RESOURCE_PERMISSIONS) {
-    const parsed = parseInt(env.MAX_RESOURCE_PERMISSIONS, 10);
-    if (!isNaN(parsed) && parsed > 0 && limits.max_resource_permissions === 100) {
-      limits.max_resource_permissions = parsed;
-    }
-  }
-
-  if (env.MAX_CUSTOM_CLAIMS) {
-    const parsed = parseInt(env.MAX_CUSTOM_CLAIMS, 10);
-    if (!isNaN(parsed) && parsed > 0 && limits.max_custom_claims === 20) {
-      limits.max_custom_claims = parsed;
-    }
-  }
-
   return limits;
 }
 

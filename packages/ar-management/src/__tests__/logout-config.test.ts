@@ -92,6 +92,69 @@ function createMockContext(options: {
 
 describe('Logout Config API', () => {
   describe('GET /api/admin/settings/logout', () => {
+    it("shows the tenant's Settings API back-channel values, as logout applies them", async () => {
+      const mockKV = createMockKV({
+        [LOGOUT_SETTINGS_KEY]: JSON.stringify({
+          backchannel: { logout_token_exp_seconds: 60, request_timeout_ms: 8000 },
+        }),
+        'settings:tenant:default:session': JSON.stringify({
+          'session.backchannel_logout_token_exp': 300,
+        }),
+      });
+      const c = createMockContext({ env: { SETTINGS: mockKV as unknown as KVNamespace } });
+
+      await getLogoutConfig(c);
+
+      const { config, backchannel_sources } = c.json.mock.calls[0][0];
+      expect(config.backchannel.logout_token_exp_seconds).toBe(300);
+      expect(config.backchannel.request_timeout_ms).toBe(8000);
+      expect(backchannel_sources['session.backchannel_logout_token_exp']).toBe('kv');
+      expect(backchannel_sources['session.backchannel_request_timeout_ms']).toBe('platform');
+      expect(backchannel_sources['session.backchannel_retry_max_attempts']).toBe('default');
+    });
+
+    it('answers 503 when the tenant back-channel settings cannot be read', async () => {
+      const mockKV = createMockKV({ 'settings:tenant:default:session': 'not json' });
+      const c = createMockContext({ env: { SETTINGS: mockKV as unknown as KVNamespace } });
+
+      await getLogoutConfig(c);
+
+      expect(c.json).toHaveBeenCalledWith(
+        expect.objectContaining({ error: 'temporarily_unavailable' }),
+        503
+      );
+    });
+
+    it('answers 503 for an update when the older logout document cannot be read', async () => {
+      const mockKV = createMockKV();
+      mockKV.get.mockRejectedValue(new Error('kv unavailable'));
+      const c = createMockContext({
+        env: { SETTINGS: mockKV as unknown as KVNamespace },
+        body: { backchannel: { logout_token_exp_seconds: 60 } },
+      });
+
+      await updateLogoutConfig(c);
+
+      expect(c.json).toHaveBeenCalledWith(
+        expect.objectContaining({ error: 'temporarily_unavailable' }),
+        503
+      );
+      expect(mockKV.put).not.toHaveBeenCalled();
+    });
+
+    it('answers 503 when the older logout document cannot be read', async () => {
+      const mockKV = createMockKV();
+      mockKV.get.mockRejectedValue(new Error('kv unavailable'));
+      const c = createMockContext({ env: { SETTINGS: mockKV as unknown as KVNamespace } });
+
+      await getLogoutConfig(c);
+
+      expect(c.json).toHaveBeenCalledWith(
+        expect.objectContaining({ error: 'temporarily_unavailable' }),
+        503
+      );
+    });
+
     it('should return default config when no KV override', async () => {
       const mockKV = createMockKV();
       const c = createMockContext({

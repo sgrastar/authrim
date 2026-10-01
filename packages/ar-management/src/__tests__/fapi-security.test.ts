@@ -26,22 +26,44 @@ function context(
   return {
     env: { ...(options.store ? { SETTINGS: options.store } : {}), ...(options.env ?? {}) },
     req: {
+      path: '/api/admin/settings/fapi-security',
+      header: vi.fn(() => undefined),
       json: options.bodyError
         ? vi.fn().mockRejectedValue(new SyntaxError('bad'))
         : vi.fn().mockResolvedValue(options.body ?? {}),
     },
     json: vi.fn((value: unknown, status = 200) => Response.json(value, { status })),
+    get: vi.fn(),
   } as never;
 }
 describe('FAPI security settings', () => {
   beforeEach(() => vi.clearAllMocks());
   it('uses secure defaults and environment ACR values', async () => {
     await expect(getFapiSecuritySettings({} as never)).resolves.toMatchObject({
-      settings: { fapi: { enabled: false, strictDPoP: true, allowPublicClients: false } },
+      settings: { fapi: { enabled: false, strictDPoP: true, allowPublicClients: true } },
     });
     const result = await getFapiSecuritySettings({ SUPPORTED_ACR_VALUES: 'aal1, aal2 ' } as never);
     expect(result.settings.oidc.supportedAcrValues).toEqual(['aal1', 'aal2']);
     expect(result.sources.oidc.supportedAcrValues).toBe('env');
+  });
+  it('reads the public client allowance from env, as authorization does', async () => {
+    for (const [value, allowed] of [
+      ['false', false],
+      ['0', false],
+      ['FALSE', false],
+      ['true', true],
+      ['', true],
+    ] as const) {
+      const result = await getFapiSecuritySettings({ FAPI_ALLOW_PUBLIC_CLIENTS: value } as never);
+      expect(result.settings.fapi.allowPublicClients, value).toBe(allowed);
+      expect(result.sources.fapi.allowPublicClients).toBe('env');
+    }
+    // A saved value goes first.
+    const saved = await getFapiSecuritySettings({
+      SETTINGS: kv(JSON.stringify({ fapi: { allowPublicClients: true } })),
+      FAPI_ALLOW_PUBLIC_CLIENTS: 'false',
+    } as never);
+    expect(saved.settings.fapi.allowPublicClients).toBe(true);
   });
   it('applies KV over env and coerces flags strictly', async () => {
     const store = kv(
@@ -89,6 +111,35 @@ describe('FAPI security settings', () => {
     await expect((await getFapiSecurityConfig(context())).json()).resolves.toMatchObject({
       settings: { fapi: { enabled: { value: false, source: 'default' } } },
     });
+  });
+  it("shows the tenant's Settings API values, as runtime applies them", async () => {
+    const documents: Record<string, string> = {
+      system_settings: JSON.stringify({ fapi: { enabled: false, allowPublicClients: true } }),
+      'settings:tenant:default:security': JSON.stringify({
+        'security.fapi_enabled': true,
+        'security.fapi_allow_public_clients': false,
+      }),
+    };
+    const store = {
+      get: vi.fn(async (key: string) => documents[key] ?? null),
+      put: vi.fn(),
+    };
+    const body = (await (await getFapiSecurityConfig(context({ store }))).json()) as {
+      settings: { fapi: Record<string, { value: unknown; source: string }> };
+    };
+    expect(body.settings.fapi.enabled).toMatchObject({ value: true, source: 'kv' });
+    expect(body.settings.fapi.allowPublicClients).toMatchObject({ value: false, source: 'kv' });
+  });
+  it('answers 503 instead of defaults when the settings cannot be read', async () => {
+    const store = {
+      get: vi.fn(async (key: string) =>
+        key === 'settings:tenant:default:security' ? 'not json' : null
+      ),
+      put: vi.fn(),
+    };
+    const response = await getFapiSecurityConfig(context({ store }));
+    expect(response.status).toBe(503);
+    await expect(response.json()).resolves.toMatchObject({ error: 'temporarily_unavailable' });
   });
   it('requires KV and valid JSON for update', async () => {
     expect((await updateFapiSecurityConfig(context())).status).toBe(500);

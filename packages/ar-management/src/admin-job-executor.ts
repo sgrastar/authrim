@@ -16,6 +16,7 @@ import {
   putTenantExistsCache,
   deleteTenantExistsCache,
   transitionAccountAuthenticationState,
+  getTenantSettingsDocument,
 } from '@authrim/ar-lib-core';
 import { materializeEncryptedObjectArtifact } from './object-artifact-materialization';
 import { createLoggingTenantKeyResolver } from './logging-tenant-key';
@@ -302,10 +303,11 @@ async function processTenantLifecycleValidationJob(
   const issuer = env.BASE_DOMAIN ? `https://${job.tenant_id}.${env.BASE_DOMAIN}` : env.ISSUER_URL;
   if (!issuer) throw new Error('tenant_lifecycle_validation_issuer_missing');
   new URL(issuer);
-  if (!env.AUTHRIM_CONFIG) throw new Error('tenant_lifecycle_validation_kv_binding_missing');
-  const tenantSettingsRaw = await env.AUTHRIM_CONFIG.get(`settings:tenant:${job.tenant_id}:tenant`);
-  if (!tenantSettingsRaw) throw new Error('tenant_lifecycle_validation_tenant_settings_missing');
-  const tenantSettings = JSON.parse(tenantSettingsRaw) as Record<string, unknown>;
+  if (!env.SETTINGS && !env.AUTHRIM_CONFIG) {
+    throw new Error('tenant_lifecycle_validation_kv_binding_missing');
+  }
+  const tenantSettings = await getTenantSettingsDocument(env, job.tenant_id, 'tenant');
+  if (!tenantSettings) throw new Error('tenant_lifecycle_validation_tenant_settings_missing');
   if (typeof tenantSettings['tenant.allowed_identifiers'] !== 'string') {
     throw new Error('tenant_lifecycle_validation_discovery_settings_invalid');
   }

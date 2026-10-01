@@ -756,6 +756,32 @@ describe('discovery API', () => {
     expect(body.ui.brand_name).toBe('Shared Brand');
   });
 
+  it('sends a tenant to its own login path when it sets only the path', async () => {
+    const { app, env } = createDiscoveryApp();
+    // Added to the tenant's other settings (its allowed domains bind the login host), which the
+    // fixture keeps in the older store: a document in SETTINGS takes its place.
+    const saved = JSON.parse(
+      (await env.AUTHRIM_CONFIG!.get('settings:tenant:acme:tenant')) ?? '{}'
+    );
+    await env.SETTINGS!.put(
+      'settings:tenant:acme:tenant',
+      JSON.stringify({ ...saved, 'tenant.ui_login_path': '/signin' })
+    );
+
+    const response = await app.request(
+      'https://login.example.com/api/auth/discovery',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Forwarded-Host': 'login.example.com' },
+        body: JSON.stringify({ mode: 'tenant_code', value: 'acme' }),
+      },
+      env
+    );
+
+    const body = (await response.json()) as { candidate: { login_url: string } };
+    expect(body.candidate.login_url).toBe('https://acme.auth.example.com/signin');
+  });
+
   it('resolves a tenant by tenant_code with branding precedence', async () => {
     const { app, env } = createDiscoveryApp();
 
@@ -1184,6 +1210,43 @@ describe('discovery API', () => {
     expect(response.status).toBe(200);
     const body = (await response.json()) as { login_url: string };
     expect(body.login_url).toMatch(/^https:\/\/login\.acme\.example\.com\/login\?discovery_grant=/);
+  });
+
+  it("keeps a return_to on the tenant's own login path, set without a base URL", async () => {
+    const { app, env } = createDiscoveryApp();
+    // Added to the tenant's other settings (its allowed domains bind the login host), which the
+    // fixture keeps in the older store: a document in SETTINGS takes its place.
+    const saved = JSON.parse(
+      (await env.AUTHRIM_CONFIG!.get('settings:tenant:acme:tenant')) ?? '{}'
+    );
+    await env.SETTINGS!.put(
+      'settings:tenant:acme:tenant',
+      JSON.stringify({ ...saved, 'tenant.ui_login_path': '/signin' })
+    );
+    const grant = (returnTo: string) =>
+      app.request(
+        'https://auth.example.com/api/auth/discovery/grant',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-Forwarded-Host': 'auth.example.com' },
+          body: JSON.stringify({
+            tenant_id: 'acme',
+            expected_tenant_id: 'acme',
+            return_to: returnTo,
+          }),
+        },
+        env
+      );
+
+    const signin = (await (await grant('https://login.acme.example.com/signin')).json()) as {
+      login_url: string;
+    };
+    expect(signin.login_url).toMatch(/^https:\/\/login\.acme\.example\.com\/signin\?/);
+    // The default path is no longer the tenant's login page: the canonical one is used instead.
+    const login = (await (await grant('https://login.acme.example.com/login')).json()) as {
+      login_url: string;
+    };
+    expect(login.login_url).not.toMatch(/^https:\/\/login\.acme\.example\.com\/login\?/);
   });
 
   it('verifies a discovery grant only for the bound tenant login URL', async () => {

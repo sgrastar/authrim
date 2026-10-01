@@ -1091,6 +1091,12 @@ const en: Translations = {
   'web.comp.adminUi': 'Admin UI',
   'web.comp.adminUiDesc':
     'Admin dashboard for managing tenants, clients, users, and system settings.',
+  'web.comp.adminUiVariant': 'Admin UI package',
+  'web.comp.adminUiLegacy': 'Current Admin UI',
+  'web.comp.adminUiLegacyDesc': 'The Admin UI in use today, with every feature.',
+  'web.comp.adminUiConsole': 'Admin console (preview)',
+  'web.comp.adminUiConsoleDesc':
+    'The redesigned admin console. Features are added one by one; items not rebuilt yet show a placeholder. Uses the same URL and administrator passkeys as the current Admin UI.',
 
   // Web UI Domain Row Labels
   'web.domain.loginUi': 'Login UI',

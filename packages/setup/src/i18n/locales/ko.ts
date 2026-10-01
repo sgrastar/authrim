@@ -1075,6 +1075,12 @@ const ko: Translations = {
   'web.comp.loginUiDesc': '로그인, 가입, 동의 및 계정 관리 페이지.',
   'web.comp.adminUi': '관리자 UI',
   'web.comp.adminUiDesc': '테넌트, 클라이언트, 사용자 및 시스템 설정을 관리하는 관리 대시보드.',
+  'web.comp.adminUiVariant': '관리 UI 패키지',
+  'web.comp.adminUiLegacy': '현재 관리 UI',
+  'web.comp.adminUiLegacyDesc': '현재 사용 중인 관리 UI로, 모든 기능을 제공합니다.',
+  'web.comp.adminUiConsole': '관리 콘솔 (미리보기)',
+  'web.comp.adminUiConsoleDesc':
+    '새로 설계된 관리 콘솔입니다. 기능은 하나씩 추가되며 아직 다시 만들지 않은 항목은 준비 중으로 표시됩니다. 현재 관리 UI와 같은 URL과 관리자 패스키를 사용합니다.',
 
   // Web UI Domain Row Labels
   'web.domain.loginUi': '로그인 UI',

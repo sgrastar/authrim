@@ -2,6 +2,8 @@ import { z } from 'zod';
 import type { Context } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
 import {
+  getTenantSettingsDocument,
+  TenantSettingsUnavailableError,
   AR_ERROR_CODES,
   createErrorResponse,
   getTenantEmailSettings,
@@ -62,22 +64,17 @@ function pluginIdToSettingsKey(pluginId: string): string {
 
 async function isPluginEnabled(env: Env, pluginId: string, tenantId: string): Promise<boolean> {
   try {
-    const configKV = env.AUTHRIM_CONFIG;
-    if (configKV) {
-      const settingsKey = pluginIdToSettingsKey(pluginId);
-      const tenantConfig = await configKV.get(`settings:tenant:${tenantId}:plugin`);
-      if (tenantConfig) {
-        const parsed = JSON.parse(tenantConfig) as Record<string, unknown>;
-        const enabled = parsed[settingsKey];
-        if (typeof enabled === 'boolean') {
-          return enabled;
-        }
-        if (typeof enabled === 'string') {
-          return enabled === 'true';
-        }
-      }
+    const settingsKey = pluginIdToSettingsKey(pluginId);
+    const enabled = (await getTenantSettingsDocument(env, tenantId, 'plugin'))?.[settingsKey];
+    if (typeof enabled === 'boolean') {
+      return enabled;
     }
-  } catch {
+    if (typeof enabled === 'string') {
+      return enabled === 'true';
+    }
+  } catch (error) {
+    // A document that exists but cannot be read must not fall back to other flags.
+    if (error instanceof TenantSettingsUnavailableError) throw error;
     // Fall through to legacy KV.
   }
 

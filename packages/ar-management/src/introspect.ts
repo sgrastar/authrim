@@ -375,7 +375,7 @@ export async function introspectHandler(c: Context<{ Bindings: Env }>) {
   // Cache keys may be derived from decoded JWT claims, but cached responses are
   // never returned until after signature, issuer, audience, expiry, and
   // revocation validation below has completed for the submitted token.
-  const cacheConfig = await getIntrospectionCacheConfig(c.env);
+  const cacheConfig = await getIntrospectionCacheConfig(c.env, getTenantIdFromContext(c));
   let cacheKey: string | null = null;
 
   if (cacheConfig.enabled && jti && c.env.AUTHRIM_CONFIG) {
@@ -458,7 +458,21 @@ export async function introspectHandler(c: Context<{ Bindings: Env }>) {
   // ========== Strict Validation Mode (KV-controlled) ==========
   // RFC 7662 does not require aud/client_id validation, but strictValidation
   // enables additional security checks for Token Introspection Control Plane Test
-  const { settings: validationSettings } = await getIntrospectionValidationSettings(c.env);
+  let validationSettings: Awaited<
+    ReturnType<typeof getIntrospectionValidationSettings>
+  >['settings'];
+  try {
+    ({ settings: validationSettings } = await getIntrospectionValidationSettings(
+      c.env,
+      getTenantIdFromContext(c)
+    ));
+  } catch {
+    // Unknown settings must not relax validation: refuse instead of answering active=true.
+    return c.json(
+      { error: 'server_error', error_description: 'Introspection settings are unavailable' },
+      503
+    );
+  }
 
   if (validationSettings.strictValidation) {
     // 1. Audience validation (RFC 7519: aud can be array)

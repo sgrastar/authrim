@@ -1663,6 +1663,8 @@ paths:
       responses:
         '200':
           $ref: '#/components/responses/SettingsV2Get'
+        '503':
+          $ref: '#/components/responses/Error'
       description: >-
         Get Setting settings in the Tenants area. Use this operation to retrieve setting data
         without mutating tenant state. The account-lifecycle category exposes
@@ -1688,6 +1690,8 @@ paths:
       responses:
         '200':
           $ref: '#/components/responses/SettingsV2Patch'
+        '400':
+          $ref: '#/components/responses/Error'
         '503':
           description: >-
             The update could not be admitted or its completion could not be confirmed.
@@ -1711,7 +1715,13 @@ paths:
         Update Setting settings in the Tenants area. The request body is JSON unless the detailed
         schema for this operation states otherwise. Account-lifecycle settings are tenant-scoped.
         Retention changes apply only to guests created subsequently; saving never reschedules
-        existing accounts. Disabling deletion leaves existing deadlines unchanged.
+        existing accounts. Disabling deletion leaves existing deadlines unchanged. The tenant
+        category's sign-in UI routing is validated: tenant.ui_base_url must be the platform's or the
+        tenant's issuer origin (including its active primary custom domain), localhost, or an origin
+        in ALLOWED_ORIGINS, and each
+        tenant.ui_*_path must start with a single / and have no query or fragment (400
+        validation_failed otherwise). An empty tenant.ui_base_url is refused: clear the setting to
+        use the platform's UI.
         Upgrade holds are granted once per guest and are never extended by later settings changes.
         Guest upgrade method permissions are independent of signup and login permissions.
         For the login-ui category, login-ui.account_pages is a JSON-encoded Account Page document.
@@ -1731,6 +1741,8 @@ paths:
       responses:
         '200':
           $ref: '#/components/responses/SettingsV2Get'
+        '503':
+          $ref: '#/components/responses/Error'
       description: >-
         Get Setting in the Clients area. Use this operation to retrieve setting data without
         mutating tenant state.
@@ -1785,6 +1797,8 @@ paths:
       responses:
         '200':
           $ref: '#/components/responses/SettingsV2Get'
+        '503':
+          $ref: '#/components/responses/Error'
       description: >-
         Get Setting settings in the Admin Miscellaneous area. Use this operation to retrieve setting
         data without mutating tenant state.
@@ -1845,6 +1859,8 @@ paths:
           $ref: '#/components/responses/Error'
         '405':
           $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
       parameters:
         - $ref: '#/components/parameters/Category'
       security:
@@ -1866,6 +1882,8 @@ paths:
         '403':
           $ref: '#/components/responses/Error'
         '405':
+          $ref: '#/components/responses/Error'
+        '503':
           $ref: '#/components/responses/Error'
       parameters:
         - $ref: '#/components/parameters/Category'
@@ -6940,6 +6958,8 @@ paths:
         '404':
           $ref: '#/components/responses/Error'
         '500':
+          $ref: '#/components/responses/Error'
+        '503':
           $ref: '#/components/responses/Error'
       parameters:
         - name: clientId
@@ -17173,6 +17193,12 @@ paths:
       description: >-
         Create a tenant policy rule. The handler requires name and a valid effect, stores
         resource_types, actions, and conditions as JSON, and returns the new rule identifier.
+        priority must be an integer, resource_types and actions arrays of strings, and conditions an
+        array of conditions
+        the Check API can evaluate (roles, verified and numeric attributes, resource owner, time;
+        not user type, organization, plan, relationships, country, IP or request counts), each with
+        the params its type needs (400 otherwise): the Check API grants nothing from a tenant's
+        rules while one of them cannot be evaluated.
       responses:
         '201':
           $ref: '#/components/responses/AdminPolicyCreate'
@@ -17251,10 +17277,13 @@ paths:
       summary: Update a policy rule.
       description: >-
         Update mutable policy rule fields and return a success object. If no fields are supplied,
-        the handler also returns success without changing the row.
+        the handler also returns success without changing the row. Supplied fields are validated as
+        on create (400 otherwise).
       responses:
         '200':
           $ref: '#/components/responses/AdminPolicyDelete'
+        '400':
+          $ref: '#/components/responses/Error'
         '401':
           $ref: '#/components/responses/Error'
         '403':
@@ -17282,8 +17311,8 @@ paths:
       operationId: getApiAdminPoliciesConditionTypes
       summary: List policy condition types.
       description: >-
-        Return the built-in policy condition types and UI categories supported by the Admin policy
-        builder.
+        Return the condition types a policy rule may use (those the Check API can evaluate), with
+        the parameter names rules must use, and their UI categories for the Admin policy builder.
       responses:
         '200':
           $ref: '#/components/responses/AdminPolicyConditionTypes'
@@ -17301,8 +17330,14 @@ paths:
       operationId: postApiAdminPoliciesSimulate
       summary: Simulate policy evaluation.
       description: >-
-        Evaluate enabled policy rules against a supplied context and optionally persist the
-        simulation history for later review.
+        Evaluate enabled policy rules against a supplied context as the Check API would, and
+        optionally persist the simulation history for later review. The tenant's settings apply
+        (no grant while feature.enable_abac or feature.enable_custom_rules is off; no verified
+        attributes while feature.enable_verified_attributes is off), as do the rules' resource
+        types and actions, and the subject's scoped roles count only for the context's resource
+        and organization. While a rule cannot be evaluated as stored, nothing is granted and its
+        id is returned. context.resource.type and context.action.name are required. Answers 503
+        when the settings cannot be read.
       responses:
         '200':
           $ref: '#/components/responses/AdminPolicySimulation'
@@ -17313,6 +17348,8 @@ paths:
         '403':
           $ref: '#/components/responses/Error'
         '500':
+          $ref: '#/components/responses/Error'
+        '503':
           $ref: '#/components/responses/Error'
       requestBody:
         $ref: '#/components/requestBodies/AdminPolicySimulation'
@@ -19639,7 +19676,10 @@ paths:
       summary: Get combined error handling settings
       description: >-
         Returns locale, response format, and error ID mode settings with their sources and valid
-        values.
+        values. Response format and error ID mode are the values in effect for the request's tenant:
+        its Settings API values (oauth.error_response_format, oauth.error_id_mode), else the values
+        saved here, else environment variables, else defaults. Answers 503 when those cannot be
+        read.
       responses:
         '200':
           $ref: '#/components/responses/AdminSettingsErrorConfig'
@@ -19650,6 +19690,8 @@ paths:
         '403':
           $ref: '#/components/responses/Error'
         '500':
+          $ref: '#/components/responses/Error'
+        '503':
           $ref: '#/components/responses/Error'
       security:
         - adminBearer: []
@@ -19671,6 +19713,8 @@ paths:
         '403':
           $ref: '#/components/responses/Error'
         '500':
+          $ref: '#/components/responses/Error'
+        '503':
           $ref: '#/components/responses/Error'
       security:
         - adminBearer: []
@@ -19694,6 +19738,8 @@ paths:
           $ref: '#/components/responses/Error'
         '500':
           $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
       security:
         - adminBearer: []
         - adminSessionCookie: []
@@ -19713,6 +19759,8 @@ paths:
         '403':
           $ref: '#/components/responses/Error'
         '500':
+          $ref: '#/components/responses/Error'
+        '503':
           $ref: '#/components/responses/Error'
       requestBody:
         $ref: '#/components/requestBodies/AdminSettingsErrorIdModeUpdate'
@@ -19800,6 +19848,8 @@ paths:
           $ref: '#/components/responses/Error'
         '500':
           $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
       security:
         - adminBearer: []
         - adminSessionCookie: []
@@ -19822,6 +19872,8 @@ paths:
           $ref: '#/components/responses/Error'
         '500':
           $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
       security:
         - adminBearer: []
         - adminSessionCookie: []
@@ -19841,6 +19893,8 @@ paths:
         '403':
           $ref: '#/components/responses/Error'
         '500':
+          $ref: '#/components/responses/Error'
+        '503':
           $ref: '#/components/responses/Error'
       requestBody:
         $ref: '#/components/requestBodies/AdminSettingsErrorResponseFormatUpdate'
@@ -19867,6 +19921,8 @@ paths:
           $ref: '#/components/responses/Error'
         '500':
           $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
       security:
         - adminBearer: []
         - adminSessionCookie: []
@@ -19877,7 +19933,10 @@ paths:
       summary: Get FAPI and security settings
       description: >-
         Returns FAPI 2.0 security profile settings and supported OIDC ACR values with source
-        metadata.
+        metadata. For the request's tenant, the values in effect: its Settings API values
+        (security.fapi_*, security.require_signed_request_object), else the values saved here, else
+        environment variables (FAPI_ALLOW_PUBLIC_CLIENTS for public clients), else defaults. Answers
+        503 when the settings cannot be read.
       responses:
         '200':
           $ref: '#/components/responses/AdminSettingsFapiSecurity'
@@ -19889,6 +19948,8 @@ paths:
           $ref: '#/components/responses/Error'
         '500':
           $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
       security:
         - adminBearer: []
         - adminSessionCookie: []
@@ -19899,7 +19960,8 @@ paths:
       summary: Update FAPI and security settings
       description: >-
         Updates SETTINGS KV overrides for FAPI mode, strict DPoP, public client allowance, and
-        supported ACR values.
+        supported ACR values. They apply to tenants that do not set the same settings through the
+        Settings API.
       responses:
         '200':
           $ref: '#/components/responses/AdminSettingsFapiSecurityUpdate'
@@ -19910,6 +19972,8 @@ paths:
         '403':
           $ref: '#/components/responses/Error'
         '500':
+          $ref: '#/components/responses/Error'
+        '503':
           $ref: '#/components/responses/Error'
       requestBody:
         $ref: '#/components/requestBodies/AdminSettingsFapiSecurityUpdate'
@@ -19936,6 +20000,8 @@ paths:
           $ref: '#/components/responses/Error'
         '500':
           $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
       security:
         - adminBearer: []
         - adminSessionCookie: []
@@ -19944,7 +20010,11 @@ paths:
         - Settings - OAuth and Tokens
       operationId: getApiAdminSettingsIntrospectionCache
       summary: Get introspection cache settings
-      description: Returns active=true introspection response cache settings and source metadata.
+      description: >-
+        Returns active=true introspection response cache settings and source metadata, as in effect
+        for the request's tenant: its Settings API values (feature.introspection_cache_enabled,
+        tokens.introspection_cache_ttl), else the values saved here, else environment variables,
+        else defaults. Answers 503 when the settings cannot be read.
       responses:
         '200':
           $ref: '#/components/responses/AdminSettingsIntrospectionCacheGet'
@@ -19955,6 +20025,8 @@ paths:
         '403':
           $ref: '#/components/responses/Error'
         '500':
+          $ref: '#/components/responses/Error'
+        '503':
           $ref: '#/components/responses/Error'
       security:
         - adminBearer: []
@@ -19977,6 +20049,8 @@ paths:
         '403':
           $ref: '#/components/responses/Error'
         '500':
+          $ref: '#/components/responses/Error'
+        '503':
           $ref: '#/components/responses/Error'
       requestBody:
         $ref: '#/components/requestBodies/AdminSettingsIntrospectionCacheUpdate'
@@ -20003,6 +20077,8 @@ paths:
           $ref: '#/components/responses/Error'
         '500':
           $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
       security:
         - adminBearer: []
         - adminSessionCookie: []
@@ -20013,7 +20089,9 @@ paths:
       summary: Get introspection validation settings
       description: >-
         Returns strict validation and expected audience settings for RFC 7662 introspection
-        responses.
+        responses. Strict validation is the value in effect for the request's tenant: its Settings
+        API value (tokens.introspection_strict_validation), else the value saved here, else
+        environment variables, else the default. Answers 503 when the settings cannot be read.
       responses:
         '200':
           $ref: '#/components/responses/AdminSettingsIntrospectionValidationGet'
@@ -20024,6 +20102,8 @@ paths:
         '403':
           $ref: '#/components/responses/Error'
         '500':
+          $ref: '#/components/responses/Error'
+        '503':
           $ref: '#/components/responses/Error'
       security:
         - adminBearer: []
@@ -20044,6 +20124,8 @@ paths:
         '403':
           $ref: '#/components/responses/Error'
         '500':
+          $ref: '#/components/responses/Error'
+        '503':
           $ref: '#/components/responses/Error'
       requestBody:
         $ref: '#/components/requestBodies/AdminSettingsIntrospectionValidationUpdate'
@@ -20135,6 +20217,8 @@ paths:
           $ref: '#/components/responses/Error'
         '500':
           $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
       security:
         - adminBearer: []
         - adminSessionCookie: []
@@ -20143,7 +20227,13 @@ paths:
         - Settings - General
       operationId: getApiAdminSettingsJitProvisioning
       summary: Get JIT provisioning configuration
-      description: 'Returns Just-In-Time provisioning configuration, source, and defaults.'
+      description: >-
+        Returns Just-In-Time provisioning configuration, source, and defaults. enabled is the value
+        in effect for the request's tenant: its Settings API value
+        (external_idp.jit_provisioning_enabled), else the value saved here, else environment
+        variables, else on. Updating a user's profile from the IdP on each sign-in is set through
+        the Settings API only (external_idp.jit_update_on_login, off by default). Answers 503 when
+        the settings cannot be read.
       responses:
         '200':
           $ref: '#/components/responses/AdminSettingsJitProvisioning'
@@ -20155,6 +20245,8 @@ paths:
           $ref: '#/components/responses/Error'
         '500':
           $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
       security:
         - adminBearer: []
         - adminSessionCookie: []
@@ -20165,7 +20257,8 @@ paths:
       summary: Update JIT provisioning configuration
       description: >-
         Merges the request into the existing SETTINGS KV JIT provisioning configuration after
-        validation.
+        validation. The saved enabled value applies to tenants that do not set
+        external_idp.jit_provisioning_enabled through the Settings API.
       responses:
         '200':
           $ref: '#/components/responses/AdminSettingsJitProvisioningMutation'
@@ -20176,6 +20269,8 @@ paths:
         '403':
           $ref: '#/components/responses/Error'
         '500':
+          $ref: '#/components/responses/Error'
+        '503':
           $ref: '#/components/responses/Error'
       requestBody:
         $ref: '#/components/requestBodies/AdminSettingsJitProvisioningUpdate'
@@ -20376,6 +20471,8 @@ paths:
           $ref: '#/components/responses/Error'
         '500':
           $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
       security:
         - adminBearer: []
         - adminSessionCookie: []
@@ -20385,8 +20482,10 @@ paths:
       operationId: getApiAdminSettingsLogout
       summary: Get logout configuration
       description: >-
-        Returns back-channel logout, front-channel logout, and session management settings from
-        SETTINGS KV or defaults.
+        Returns back-channel logout, front-channel logout, and session management settings. The
+        back-channel values are the ones in effect for the request's tenant: its Settings API values
+        (session.backchannel_*), else the values saved here, else environment variables, else
+        defaults, with where each comes from. Answers 503 when those cannot be read.
       responses:
         '200':
           $ref: '#/components/responses/AdminSettingsLogout'
@@ -20398,6 +20497,8 @@ paths:
           $ref: '#/components/responses/Error'
         '500':
           $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
       security:
         - adminBearer: []
         - adminSessionCookie: []
@@ -20408,7 +20509,12 @@ paths:
       summary: Update logout configuration
       description: >-
         Deep-merges partial logout configuration into SETTINGS KV after validating back-channel
-        settings.
+        settings. The back-channel values saved here apply to tenants that do not set
+        session.backchannel_* through the Settings API. A logout notification that fails with a
+        network error, a timeout or an error response other than 400 is retried with backoff up to
+        retry.max_attempts times, within about 25 seconds for the whole logout; with
+        on_final_failure 'alert', a final failure also writes a backchannel_logout.failed audit log
+        entry.
       responses:
         '200':
           $ref: '#/components/responses/AdminSettingsLogoutMutation'
@@ -20419,6 +20525,8 @@ paths:
         '403':
           $ref: '#/components/responses/Error'
         '500':
+          $ref: '#/components/responses/Error'
+        '503':
           $ref: '#/components/responses/Error'
       requestBody:
         $ref: '#/components/requestBodies/AdminSettingsLogoutUpdate'
@@ -20751,7 +20859,10 @@ paths:
       summary: List OAuth configuration values
       description: >-
         Returns all dynamic OAuth configuration values with their resolved value, source, default,
-        and metadata.
+        and metadata. These are the platform's values: a tenant's (or app's) Settings API values for
+        the same settings (oauth.access_token_expiry, oauth.refresh_token_expiry,
+        oauth.auth_code_ttl, oauth.state_required, oauth.userinfo_require_openid) take precedence at
+        runtime.
       responses:
         '200':
           $ref: '#/components/responses/AdminSettingsOAuthConfig'
@@ -21108,7 +21219,9 @@ paths:
       summary: List rate limit profiles
       description: >-
         Returns all rate limit profiles, source metadata, and the RATE_LIMIT_PROFILE environment
-        override if set.
+        override if set. The strict, moderate and lenient limits are the ones the rate limiter
+        applies: the platform's Settings API values (rate_limit.*), else the values saved here, else
+        environment variables, else defaults. Answers 503 when the saved limits cannot be read.
       responses:
         '200':
           $ref: '#/components/responses/AdminSettingsRateLimits'
@@ -21121,6 +21234,8 @@ paths:
         '404':
           $ref: '#/components/responses/Error'
         '500':
+          $ref: '#/components/responses/Error'
+        '503':
           $ref: '#/components/responses/Error'
       security:
         - adminBearer: []
@@ -21144,6 +21259,8 @@ paths:
         '404':
           $ref: '#/components/responses/Error'
         '500':
+          $ref: '#/components/responses/Error'
+        '503':
           $ref: '#/components/responses/Error'
       parameters:
         - name: profile
@@ -21174,6 +21291,8 @@ paths:
           $ref: '#/components/responses/Error'
         '500':
           $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
       parameters:
         - name: profile
           in: path
@@ -21202,6 +21321,8 @@ paths:
         '404':
           $ref: '#/components/responses/Error'
         '500':
+          $ref: '#/components/responses/Error'
+        '503':
           $ref: '#/components/responses/Error'
       parameters:
         - name: profile
@@ -21661,7 +21782,13 @@ paths:
       summary: Get token embedding settings
       description: >-
         Returns token embedding feature flags, custom claims flags, ID-level permission flag,
-        limits, and last update timestamp.
+        limits, and last update timestamp. Policy embedding and the limits are the values token
+        issuance applies for the request's tenant: its Settings API values
+        (feature.enable_policy_embedding, limits.max_embedded_permissions,
+        limits.max_resource_permissions, limits.max_custom_claims), else the values saved here, else
+        environment variables, else defaults. max_embedded_permissions caps the permissions policy
+        embedding adds to an access token (tenant-wide permissions first). Answers 503 when the
+        settings cannot be read.
       responses:
         '200':
           $ref: '#/components/responses/AdminSettingsTokenEmbedding'
@@ -21674,6 +21801,8 @@ paths:
         '404':
           $ref: '#/components/responses/Error'
         '500':
+          $ref: '#/components/responses/Error'
+        '503':
           $ref: '#/components/responses/Error'
       security:
         - adminBearer: []
@@ -21685,7 +21814,8 @@ paths:
       summary: Update token embedding settings
       description: >-
         Updates token embedding feature flags and limits in SETTINGS KV. At least one valid setting
-        is required.
+        is required. The values saved here apply to tenants that do not set them through the
+        Settings API.
       responses:
         '200':
           $ref: '#/components/responses/AdminSettingsTokenEmbedding'
@@ -21698,6 +21828,8 @@ paths:
         '404':
           $ref: '#/components/responses/Error'
         '500':
+          $ref: '#/components/responses/Error'
+        '503':
           $ref: '#/components/responses/Error'
       requestBody:
         $ref: '#/components/requestBodies/AdminSettingsTokenEmbeddingUpdate'
@@ -21726,6 +21858,8 @@ paths:
           $ref: '#/components/responses/Error'
         '500':
           $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
       security:
         - adminBearer: []
         - adminSessionCookie: []
@@ -21736,7 +21870,9 @@ paths:
       summary: Get token exchange settings
       description: >-
         Returns OAuth token exchange and ID-JAG settings with source metadata. refresh_token is
-        never allowed.
+        never allowed. Whether token exchange is enabled is the value in effect for the request's
+        tenant: its Settings API value (tokens.exchange_enabled), else the value saved here, else
+        ENABLE_TOKEN_EXCHANGE, else off. Answers 503 when the settings cannot be read.
       responses:
         '200':
           $ref: '#/components/responses/AdminSettingsTokenExchange'
@@ -21749,6 +21885,8 @@ paths:
         '404':
           $ref: '#/components/responses/Error'
         '500':
+          $ref: '#/components/responses/Error'
+        '503':
           $ref: '#/components/responses/Error'
       security:
         - adminBearer: []
@@ -21772,6 +21910,8 @@ paths:
           $ref: '#/components/responses/Error'
         '500':
           $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
       requestBody:
         $ref: '#/components/requestBodies/AdminSettingsTokenExchangeUpdate'
       security:
@@ -21784,8 +21924,8 @@ paths:
       operationId: deleteApiAdminSettingsUiConfig
       summary: Clear UI configuration
       description: >-
-        Deletes UI configuration overrides from SETTINGS KV and falls back to environment/default
-        values.
+        Deletes the platform's UI configuration overrides from SETTINGS KV and falls back to
+        environment/default values. A tenant's own Settings API values are kept.
       responses:
         '200':
           $ref: '#/components/responses/AdminSettingsUiConfigClear'
@@ -21807,7 +21947,12 @@ paths:
         - Settings - UI
       operationId: getApiAdminSettingsUiConfig
       summary: Get UI configuration
-      description: 'Returns UI base URL and path configuration with source, defaults, and metadata.'
+      description: >-
+        Returns the platform's UI base URL and path configuration with source, defaults, and
+        metadata: the values saved here, else UI_URL with the default paths. A tenant that sets
+        tenant.ui_base_url or tenant.ui_*_path through the Settings API has its own sign-in UI,
+        which takes precedence for that tenant's redirects. Answers 503 when the saved configuration
+        cannot be read.
       responses:
         '200':
           $ref: '#/components/responses/AdminSettingsUiConfig'
@@ -21821,6 +21966,8 @@ paths:
           $ref: '#/components/responses/Error'
         '500':
           $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
       security:
         - adminBearer: []
         - adminSessionCookie: []
@@ -21830,8 +21977,9 @@ paths:
       operationId: putApiAdminSettingsUiConfig
       summary: Update UI configuration
       description: >-
-        Updates UI base URL and paths after validating HTTPS/same-origin or allowed-origin
-        constraints and path shape.
+        Updates the platform's UI base URL and paths after validating HTTPS/same-origin or allowed-
+        origin constraints and path shape. They apply to tenants that do not set their own through
+        the Settings API (tenant.ui_base_url, tenant.ui_*_path).
       responses:
         '200':
           $ref: '#/components/responses/AdminSettingsUiConfigUpdate'
@@ -33157,7 +33305,10 @@ paths:
                   state: { type: string, const: completing }
         '403': { description: Missing permission or fresh administrator authentication }
         '409': { description: The upload is incomplete, expired, or in a conflicting state }
-        '503': { description: Import storage, audit persistence, or synchronous verification is unavailable }
+        '503':
+          {
+            description: 'Import storage, audit persistence, or synchronous verification is unavailable',
+          }
   /api/admin/tenant-backups/uploads/{uploadId}/cancel:
     post:
       tags: [Tenant Backups]
@@ -41117,9 +41268,9 @@ components:
                 OIDC core endpoints (/authorize, /token, /userinfo, etc.) always use OAuth format
                 regardless of this setting
             error_id_mode:
-              current: 5xx
+              current: security_only
               source: default
-              default: 5xx
+              default: security_only
               valid_values:
                 - all
                 - 5xx
@@ -41128,11 +41279,13 @@ components:
               kv_key: error_id_mode
               description:
                 all: Generate error_id for all errors
-                5xx: Generate error_id only for 5xx errors (default)
-                security_only: Generate error_id only for security-tracked errors
+                5xx: Generate error_id only for 5xx errors
+                security_only: Generate error_id only for security-tracked errors (default)
                 none: Never generate error_id
-            cache_ttl_seconds: 10
-            note: Changes take effect within 10 seconds (cache TTL)
+            cache_ttl_seconds: 60
+            note: >-
+              Changes take effect within a minute (cache TTL). Response format and error ID mode
+              set per tenant through the Settings API take precedence over the values here.
     AdminSettingsErrorLocale:
       description: Error message locale setting.
       content:
@@ -41211,9 +41364,9 @@ components:
           schema:
             $ref: '#/components/schemas/AdminSettingsErrorIdModeResponse'
           example:
-            error_id_mode: 5xx
+            error_id_mode: security_only
             source: default
-            default: 5xx
+            default: security_only
             valid_values:
               - all
               - 5xx
@@ -41222,10 +41375,10 @@ components:
             kv_key: error_id_mode
             description:
               all: Generate error_id for all errors - useful for debugging
-              5xx: 'Generate error_id only for server errors (5xx) - default, recommended for production'
+              5xx: Generate error_id only for server errors (5xx)
               security_only: >-
                 Generate error_id only for security-tracked errors (invalid_client, invalid_grant,
-                etc.)
+                etc.) - default
               none: Never generate error_id - minimal response size
             security_tracked_errors:
               - invalid_client
@@ -49676,16 +49829,69 @@ components:
       type: object
       additionalProperties: true
       description: >-
-        Settings v2 category read result returned by the settings manager. Includes category values,
-        inheritance metadata, and version information when available.
+        Settings v2 category read result returned by the settings manager. A value comes from the
+        requested scope, else from the scopes it inherits from (a client's tenant, then the
+        platform, where the category allows those scopes), else from the deployment's environment
+        variable, else from the built-in default. `sources` says where each value came from, and
+        `inherited` gives what each setting would be if the requested scope set nothing.
+      properties:
+        category:
+          type: string
+        scope:
+          type: object
+          additionalProperties: true
+        version:
+          type: string
+          description: Version of the requested scope's document, for optimistic concurrency.
+        values:
+          type: object
+          additionalProperties: true
+          description: Effective value of each setting at the requested scope.
+        sources:
+          type: object
+          description: >-
+            Where each value came from. `kv` means it is set at the requested scope; `tenant` and
+            `platform` mean it is inherited from that scope.
+          additionalProperties:
+            $ref: '#/components/schemas/SettingsV2Source'
+        inherited:
+          type: object
+          description: What each setting would be if the requested scope set nothing.
+          required:
+            - values
+            - sources
+          properties:
+            values:
+              type: object
+              additionalProperties: true
+            sources:
+              type: object
+              additionalProperties:
+                type: string
+                enum: [tenant, platform, env, default]
       example:
         category: oauth
         scope:
-          type: tenant
-          id: tenant_123
+          type: client
+          id: client_123
+          tenantId: tenant_123
         values:
-          oauth.require_pkce: true
+          oauth.access_token_expiry: 300
+          oauth.id_token_expiry: 900
+        sources:
+          oauth.access_token_expiry: kv
+          oauth.id_token_expiry: tenant
+        inherited:
+          values:
+            oauth.access_token_expiry: 900
+            oauth.id_token_expiry: 900
+          sources:
+            oauth.access_token_expiry: tenant
+            oauth.id_token_expiry: tenant
         version: v1
+    SettingsV2Source:
+      type: string
+      enum: [kv, tenant, platform, env, default]
     SettingsV2PatchRequest:
       type: object
       additionalProperties: true
@@ -49724,7 +49930,17 @@ components:
       additionalProperties: true
       description: >-
         Settings v2 patch result. Includes applied, cleared, disabled, rejected, and version
-        metadata from the settings manager.
+        metadata from the settings manager. A setting whose dependency (dependsOn) is met by an
+        inherited value, the environment or the default is accepted; dependencies are checked
+        against effective values, not only the values stored at the requested scope.
+      properties:
+        projection:
+          type: string
+          enum: [pending]
+          description: >-
+            Present when the change was saved but could not yet be copied to the store runtime
+            workers read. A scheduled retry copies it, normally within a minute; until then
+            runtime keeps the previous values. Absent when the change already applies.
       example:
         applied:
           - oauth.require_pkce
@@ -62047,15 +62263,42 @@ components:
     AdminPolicyContext:
       type: object
       additionalProperties: true
+      required:
+        - subject
+        - resource
+        - action
       properties:
         subject:
           type: object
           additionalProperties: true
+          description: >-
+            The subject: id, roles ({ name, scope: global | org | resource, scopeTarget such as
+            org:<id> or resource:<type>:<id> }) and verifiedAttributes ({ name, value }).
         resource:
           type: object
           additionalProperties: true
+          required:
+            - type
+          properties:
+            type:
+              type: string
+            id:
+              type: string
+            ownerId:
+              type: string
+            orgId:
+              type: string
         action:
-          type: string
+          type: object
+          additionalProperties: true
+          required:
+            - name
+          properties:
+            name:
+              type: string
+        timestamp:
+          type: integer
+          description: When the request is evaluated, in UNIX milliseconds (default now).
         environment:
           type: object
           additionalProperties: true
@@ -62265,11 +62508,14 @@ components:
           subject:
             id: user_123
             roles:
-              - viewer
+              - name: viewer
+                scope: global
           resource:
             type: user
             id: user_456
-          action: read
+          action:
+            name: read
+          timestamp: 1790000000000
         save_history: true
     AdminPolicySimulationResponse:
       type: object
@@ -65331,6 +65577,12 @@ components:
           $ref: '#/components/schemas/AdminSettingsJitProvisioningConfig'
         source:
           type: string
+        enabled_source:
+          type: string
+          enum: [kv, platform, env, default]
+          description: >-
+            Where config.enabled comes from: kv (external_idp.jit_provisioning_enabled set for this
+            tenant through the Settings API), platform (this saved configuration), env, or default.
         defaults:
           $ref: '#/components/schemas/AdminSettingsJitProvisioningConfig'
         message:
@@ -65483,6 +65735,17 @@ components:
           $ref: '#/components/schemas/AdminSettingsLogoutConfig'
         source:
           type: string
+          enum: [kv, default]
+          description: Whether the older settings:logout document is saved.
+        backchannel_sources:
+          type: object
+          description: >-
+            Where each back-channel value in effect comes from, by Settings API key
+            (session.backchannel_*): kv (set for this tenant), platform (the older settings:logout
+            document), env, or default.
+          additionalProperties:
+            type: string
+            enum: [kv, platform, env, default]
         defaults:
           $ref: '#/components/schemas/AdminSettingsLogoutConfig'
       additionalProperties: false
@@ -65883,6 +66146,10 @@ components:
       additionalProperties: false
     AdminSettingsRateLimitProfileState:
       type: object
+      description: >-
+        The limits the rate limiter applies. For strict, moderate and lenient, the platform's
+        Settings API values (rate_limit.<profile>, rate_limit.window_ms) take precedence over the
+        values saved here.
       properties:
         current:
           type: object
@@ -65894,11 +66161,15 @@ components:
           additionalProperties: false
         source:
           type: object
+          description: >-
+            settings_api (the platform's Settings API value), kv (saved here), env, or default.
           properties:
             maxRequests:
               type: string
+              enum: [settings_api, kv, env, default]
             windowSeconds:
               type: string
+              enum: [settings_api, kv, env, default]
           additionalProperties: false
         default:
           type: object

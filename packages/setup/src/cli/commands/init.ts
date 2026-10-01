@@ -20,7 +20,12 @@ import { existsSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { createRequire } from 'node:module';
 import { execa } from 'execa';
-import { createDefaultConfig, parseConfig, type AuthrimConfig } from '../../core/config.js';
+import {
+  createDefaultConfig,
+  parseConfig,
+  type AdminUiVariant,
+  type AuthrimConfig,
+} from '../../core/config.js';
 import {
   generateAllSecrets,
   saveKeysToDirectory,
@@ -2249,6 +2254,7 @@ async function runNormalSetup(options: InitOptions): Promise<void> {
   console.log(chalk.blue('━━━ ' + t('components.title') + ' ━━━'));
   console.log(chalk.gray('  ' + t('components.note')));
   console.log('');
+  const adminUiVariant = await promptAdminUiVariant('legacy');
 
   // Step 6: Feature flags
   console.log('');
@@ -2462,6 +2468,7 @@ async function runNormalSetup(options: InitOptions): Promise<void> {
   };
   config.components = {
     ...config.components,
+    adminUiVariant,
     saml: true,
     async: true,
     vc: true,
@@ -3777,7 +3784,36 @@ async function editComponents(config: AuthrimConfig): Promise<boolean> {
   console.log(`  Policy Engine: ${chalk.green('Enabled')} ${chalk.gray('(standard - always on)')}`);
   console.log('');
 
+  if (config.components.adminUi !== false) {
+    config.components.adminUiVariant = await promptAdminUiVariant(
+      config.components.adminUiVariant ?? 'legacy'
+    );
+  }
+
   return true;
+}
+
+/**
+ * Only one Admin UI is deployed per environment. The admin console fills the same Worker slot,
+ * so URL, BFF credentials and administrator passkeys stay the same when switching.
+ */
+async function promptAdminUiVariant(current: AdminUiVariant): Promise<AdminUiVariant> {
+  return select<AdminUiVariant>({
+    message: t('web.comp.adminUiVariant'),
+    choices: [
+      {
+        value: 'legacy',
+        name: t('web.comp.adminUiLegacy'),
+        description: t('web.comp.adminUiLegacyDesc'),
+      },
+      {
+        value: 'console',
+        name: t('web.comp.adminUiConsole'),
+        description: t('web.comp.adminUiConsoleDesc'),
+      },
+    ],
+    default: current,
+  });
 }
 
 // =============================================================================

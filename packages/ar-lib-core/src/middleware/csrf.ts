@@ -25,7 +25,7 @@ import type { Env } from '../types/env';
 import { isAllowedOrigin, parseAllowedOrigins } from '../utils/origin-validator';
 import { createLogger } from '../utils/logger';
 import { getTenantIdFromContext } from './request-context';
-import { getTenantSettings } from '../utils/tenant-settings';
+import { getTenantSettingsDocument } from '../utils/tenant-settings';
 
 const log = createLogger().module('CSRF');
 
@@ -139,10 +139,14 @@ async function defaultResolveAllowedOrigins(c: Context<{ Bindings: Env }>): Prom
   const origins: string[] = [];
 
   // 1. Try KV (tenant-aware settings) for dynamic configuration
-  const tenantSettings = await getTenantSettings(
-    c.env.AUTHRIM_CONFIG,
+  const tenantSettings = await getTenantSettingsDocument(
+    c.env,
     getTenantIdFromContext(c),
-    'tenant'
+    'tenant',
+    {
+      // Without the tenant's settings the fallback is at least as strict.
+      onUnreadable: 'empty',
+    }
   );
   if (tenantSettings) {
     const kvValue = tenantSettings['tenant.allowed_origins'];

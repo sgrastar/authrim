@@ -676,8 +676,11 @@ export async function clientConfigUpdateHandler(c: Context<{ Bindings: Env }>): 
       return c.json(validationError, 400);
     }
 
+    // FAPI can be set per client, so validate with the settings as they apply to this client.
     const systemSettings = (await getTenantSystemSettings(c.env.SETTINGS, tenantId, {
       failOnError: true,
+      clientId,
+      sections: ['fapi'],
     })) as {
       fapi?: {
         enabled?: boolean;
