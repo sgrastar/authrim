@@ -108,10 +108,13 @@ describe('where the other Admin APIs are used', () => {
 	});
 
 	it('gives every group operations, and every prefix at least one', () => {
+		const groupedOperations = API_OPERATIONS.map((op) => ({ op, group: groupOf(op.path) }));
 		for (const group of API_GROUPS) {
 			for (const prefix of group.paths) {
 				expect(
-					API_OPERATIONS.some((op) => groupOf(op.path) === group && op.path.startsWith(prefix)),
+					groupedOperations.some(
+						({ op, group: owner }) => owner === group && op.path.startsWith(prefix)
+					),
 					`${group.id}: ${prefix}`
 				).toBe(true);
 			}

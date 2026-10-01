@@ -212,8 +212,21 @@ export function decideAuthn(row: Row): { outcome: Outcome; sideEffects: SideEffe
     }
     sideEffects.consentLookup = true;
     if (authnConsentSatisfied(row.consent, prompt)) {
-      sideEffects.codeIssued = true;
       sideEffects.consentWrite = row.consent === 'auto-grant';
+      if (row.tenantSso === 'failure') {
+        // This fixture fails the whole tenant OAuth document, including the authoritative
+        // authorization-code lifetime. Consent may be saved, but no code can be issued.
+        return {
+          outcome: {
+            kind: 'error-redirect',
+            error: 'server_error',
+            mode: 'query',
+            target: 'registered',
+          },
+          sideEffects,
+        };
+      }
+      sideEffects.codeIssued = true;
       return { outcome: { kind: 'code-success', mode: 'query' }, sideEffects };
     }
     return {
@@ -230,8 +243,19 @@ export function decideAuthn(row: Row): { outcome: Outcome; sideEffects: SideEffe
   // prompt: omitted, select_account, or consent
   sideEffects.consentLookup = true;
   if (authnConsentSatisfied(row.consent, prompt)) {
-    sideEffects.codeIssued = true;
     sideEffects.consentWrite = row.consent === 'auto-grant';
+    if (row.tenantSso === 'failure') {
+      return {
+        outcome: {
+          kind: 'error-redirect',
+          error: 'server_error',
+          mode: 'query',
+          target: 'registered',
+        },
+        sideEffects,
+      };
+    }
+    sideEffects.codeIssued = true;
     return { outcome: { kind: 'code-success', mode: 'query' }, sideEffects };
   }
   sideEffects.challengeStored = 'consent';
