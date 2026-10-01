@@ -717,7 +717,7 @@ describe('createBackchannelLogoutOrchestrator', () => {
     it('ends retries and their clean-up by the deadline while the store stalls', async () => {
       // Only timers and the clock are faked: signing (WebCrypto) still completes on its own.
       vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
-      /** Advance the fake clock in small steps, letting real work finish, until `p` settles. */
+      /** Run scheduled timers, allowing native signing to finish without advancing time. */
       const drive = async <T>(p: Promise<T>): Promise<T> => {
         let done = false;
         void p.finally(() => {
@@ -725,7 +725,7 @@ describe('createBackchannelLogoutOrchestrator', () => {
         });
         while (!done) {
           await new Promise((resolve) => setImmediate(resolve));
-          await vi.advanceTimersByTimeAsync(100);
+          if (!done && vi.getTimerCount() > 0) await vi.advanceTimersToNextTimerAsync();
         }
         return p;
       };
@@ -766,8 +766,7 @@ describe('createBackchannelLogoutOrchestrator', () => {
         });
         while (!done) {
           await new Promise((resolve) => setImmediate(resolve));
-          // Small steps: the fake clock also moves while real work (signing) runs.
-          await vi.advanceTimersByTimeAsync(5);
+          if (!done && vi.getTimerCount() > 0) await vi.advanceTimersToNextTimerAsync();
         }
         return p;
       };
@@ -796,8 +795,30 @@ describe('createBackchannelLogoutOrchestrator', () => {
         await drive(orchestrator.settle());
 
         // Ended by the deadline: no retry fits, and no store operation is waited for past it.
-        expect(Date.now()).toBeLessThanOrEqual(now - 20_800 + 25_000 + 100);
+        expect(Date.now()).toBeLessThanOrEqual(now - 20_800 + 25_000);
         expect(global.fetch).toHaveBeenCalledTimes(1);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('settles an exhausted budget without waiting for a zero-delay cleanup timer', async () => {
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+      try {
+        const start = Date.now();
+        global.fetch = vi.fn().mockResolvedValue(response(503));
+        const stalled = () => new Promise<never>(() => {});
+        kv.put = vi.fn(stalled) as unknown as KVNamespace['put'];
+        const orchestrator = createBackchannelLogoutOrchestrator(kv, undefined, {
+          retryBudgetMs: 0,
+        });
+        const [result] = await orchestrator.sendToAll([client], params(), mockConfig);
+        await orchestrator.settle();
+        expect(result.success).toBe(false);
+        expect(global.fetch).toHaveBeenCalledTimes(1);
+        expect(kv.put).toHaveBeenCalled();
+        expect(vi.getTimerCount()).toBe(0);
+        expect(Date.now()).toBe(start);
       } finally {
         vi.useRealTimers();
       }

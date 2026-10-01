@@ -475,6 +475,16 @@ async function bounded<T>(
   what: string,
   clientId: string
 ): Promise<T> {
+  const guarded = operation.catch((error: unknown) => {
+    log.warn(`Backchannel logout: ${what} failed`, {
+      clientId,
+      error: error instanceof Error ? error.message : 'unknown',
+    });
+    return fallback;
+  });
+  // A zero-delay timer still waits for another event-loop turn. Once the budget is
+  // exhausted, detach the guarded operation without waiting beyond the deadline.
+  if (ms <= 0) return fallback;
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timedOut = new Promise<T>((resolve) => {
     timer = setTimeout(() => {
@@ -483,16 +493,7 @@ async function bounded<T>(
     }, ms);
   });
   try {
-    return await Promise.race([
-      operation.catch((error: unknown) => {
-        log.warn(`Backchannel logout: ${what} failed`, {
-          clientId,
-          error: error instanceof Error ? error.message : 'unknown',
-        });
-        return fallback;
-      }),
-      timedOut,
-    ]);
+    return await Promise.race([guarded, timedOut]);
   } finally {
     clearTimeout(timer);
   }
