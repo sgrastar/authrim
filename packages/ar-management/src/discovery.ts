@@ -9,6 +9,8 @@ import {
   ensureDatabaseAdapter,
   getDefaultTenantId,
   getUIConfig,
+  getTenantUIConfig,
+  isValidUIPath,
   loadVerifiedLookupBucketAssignmentProvider,
   LookupRouteResolver,
   resolveTenantDatabaseSourceFromRegistry,
@@ -17,7 +19,7 @@ import {
   type LookupAliasKind,
   type ResolvedLookupAlias,
 } from '@authrim/ar-lib-core';
-import { getLogger } from '@authrim/ar-lib-core';
+import { getLogger, getTenantSettingsDocument } from '@authrim/ar-lib-core';
 import { SignJWT, jwtVerify } from 'jose';
 import { getSingleTenantId, isSingleTenantMode } from './single-tenant-guard';
 import { getCanonicalTenantBaseUrlAsync } from './request-issuer';
@@ -614,8 +616,10 @@ async function resolveGrantTargetLoginUrl(
     return fallback;
   }
 
-  const uiConfig = await getUIConfig(env).catch(() => null);
-  const expectedLoginPath = uiConfig?.paths.login || '/login';
+  // The tenant's login path, as resolveTenantLoginUrl uses it (also when no base URL is set).
+  const tenantUi = await getTenantUIConfig(env, tenantId).catch(() => null);
+  const configuredPath = tenantUi?.paths.login;
+  const expectedLoginPath = isValidUIPath(configuredPath) ? configuredPath : '/login';
   if (parsedReturnTo.pathname !== expectedLoginPath) {
     return appendLoginHint(fallback, options.loginHint);
   }
@@ -631,19 +635,30 @@ async function resolveGrantTargetLoginUrl(
 }
 
 async function resolveTenantLoginUrl(env: Env, tenantId: string): Promise<string> {
-  const canonicalLoginUrl = `${await getCanonicalTenantBaseUrlAsync(env, tenantId)}/login`;
+  // The tenant's UI settings (its own values, else the platform's): its login path applies on
+  // whichever host is chosen, and a UI base URL the tenant set goes before the tenant's host.
+  const tenantUi = await getTenantUIConfig(env, tenantId).catch(() => null);
+  const configuredPath = tenantUi?.paths.login;
+  const loginPath = isValidUIPath(configuredPath) ? configuredPath : '/login';
+  if (tenantUi?.tenantBaseUrl && tenantUi.config) {
+    try {
+      return new URL(loginPath, tenantUi.config.baseUrl).toString();
+    } catch {
+      // Fall back to the tenant's host
+    }
+  }
+  const canonicalLoginUrl = `${await getCanonicalTenantBaseUrlAsync(env, tenantId)}${loginPath}`;
   if (!isSingleTenantMode(env) || env.LOGIN_UI_EXECUTION_HOST_MODE !== 'dedicated') {
     return canonicalLoginUrl;
   }
 
-  const uiConfig = await getUIConfig(env).catch(() => null);
-  const uiBaseUrl = uiConfig?.baseUrl || env.UI_URL;
+  const uiBaseUrl = tenantUi?.config?.baseUrl || env.UI_URL;
   if (!uiBaseUrl) {
     return canonicalLoginUrl;
   }
 
   try {
-    return new URL('/login', uiBaseUrl).toString();
+    return new URL(loginPath, uiBaseUrl).toString();
   } catch {
     return canonicalLoginUrl;
   }
@@ -999,15 +1014,15 @@ async function getTenantCandidatePresentation(
   if (cached) tenantCandidatePresentationCache.delete(cacheKey);
 
   const loginUiKey = `settings:tenant:${tenantId}:login-ui`;
-  const tenantKey = `settings:tenant:${tenantId}:tenant`;
-  const [loginUiSettings, tenantSettingsFromSettings, tenantSettingsFromLegacy, loginUrl] =
-    await Promise.all([
-      readSettingsRecord(env.SETTINGS, loginUiKey),
-      readSettingsRecord(env.SETTINGS, tenantKey),
-      readSettingsRecord(env.AUTHRIM_CONFIG, tenantKey),
-      resolveTenantLoginUrl(env, tenantId),
-    ]);
-  const tenantSettings = tenantSettingsFromSettings ?? tenantSettingsFromLegacy ?? {};
+  const [loginUiSettings, tenantDocument, loginUrl] = await Promise.all([
+    readSettingsRecord(env.SETTINGS, loginUiKey),
+    getTenantSettingsDocument(env, tenantId, 'tenant', {
+      // Without the tenant's settings the fallback is at least as strict.
+      onUnreadable: 'empty',
+    }),
+    resolveTenantLoginUrl(env, tenantId),
+  ]);
+  const tenantSettings = tenantDocument ?? {};
 
   const brandName = loginUiSettings?.['login-ui.brand_name'];
   const loginUiLogoUrl = loginUiSettings?.['login-ui.logo_url'];

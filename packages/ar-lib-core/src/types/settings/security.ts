@@ -73,7 +73,6 @@ export const SECURITY_SETTINGS_META: Record<keyof SecuritySettings, SettingMeta>
     key: 'security.fapi_enabled',
     type: 'boolean',
     default: false,
-    envKey: 'ENABLE_FAPI',
     label: 'FAPI Mode',
     description: 'Enable Financial-grade API security profile',
     visibility: 'public',
@@ -81,8 +80,7 @@ export const SECURITY_SETTINGS_META: Record<keyof SecuritySettings, SettingMeta>
   'security.fapi_strict_dpop': {
     key: 'security.fapi_strict_dpop',
     type: 'boolean',
-    default: false,
-    envKey: 'FAPI_STRICT_DPOP',
+    default: true,
     label: 'FAPI Strict DPoP',
     description: 'Require DPoP for all FAPI requests',
     visibility: 'public',
@@ -91,8 +89,11 @@ export const SECURITY_SETTINGS_META: Record<keyof SecuritySettings, SettingMeta>
   'security.fapi_allow_public_clients': {
     key: 'security.fapi_allow_public_clients',
     type: 'boolean',
-    default: false,
-    envKey: 'ENABLE_FAPI_PUBLIC_CLIENTS',
+    // Allowed unless set otherwise, as FAPI mode has always behaved.
+    default: true,
+    envKey: 'FAPI_ALLOW_PUBLIC_CLIENTS',
+    // As authorization reads it: anything but 'false' (or '0') allows.
+    envBoolean: 'unless-false',
     label: 'FAPI Allow Public Clients',
     description: 'Allow public clients in FAPI mode (not recommended)',
     visibility: 'admin',
@@ -341,7 +342,6 @@ export const SECURITY_SETTINGS_META: Record<keyof SecuritySettings, SettingMeta>
     key: 'security.require_signed_request_object',
     type: 'boolean',
     default: false,
-    envKey: 'REQUIRE_SIGNED_REQUEST_OBJECT',
     label: 'Signed Request Required',
     description: 'Require signed request objects (JAR)',
     visibility: 'admin',
@@ -401,8 +401,8 @@ export const SECURITY_CATEGORY_META: CategoryMeta = {
  */
 export const SECURITY_DEFAULTS: SecuritySettings = {
   'security.fapi_enabled': false,
-  'security.fapi_strict_dpop': false,
-  'security.fapi_allow_public_clients': false,
+  'security.fapi_strict_dpop': true,
+  'security.fapi_allow_public_clients': true,
   'security.dpop_bound_access_tokens': false,
   'security.dpop_nonce_enabled': true,
   'security.dpop_nonce_ttl': 300,

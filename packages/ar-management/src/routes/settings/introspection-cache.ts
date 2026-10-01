@@ -30,7 +30,12 @@
  */
 
 import type { Context } from 'hono';
-import { getLogger, type Env } from '@authrim/ar-lib-core';
+import { getLogger, getTenantIdFromContext, type Env } from '@authrim/ar-lib-core';
+import {
+  readTenantSettingsView,
+  SettingsUnavailableError,
+  settingsUnavailableResponse,
+} from './settings-unavailable';
 
 // Default settings (default ON = optimized for production)
 const DEFAULT_SETTINGS = {
@@ -63,7 +68,12 @@ interface IntrospectionCacheSettingsSources {
 /**
  * Get current Introspection Cache settings (hybrid: KV > env > default)
  */
-export async function getIntrospectionCacheSettings(env: Env): Promise<{
+export async function getIntrospectionCacheSettings(
+  env: Env,
+  tenantId?: string,
+  /** For admin display: settings that cannot be read throw (503) instead of turning the cache off. */
+  options: { strict?: boolean } = {}
+): Promise<{
   settings: IntrospectionCacheSettings;
   sources: IntrospectionCacheSettingsSources;
 }> {
@@ -87,11 +97,29 @@ export async function getIntrospectionCacheSettings(env: Env): Promise<{
     }
   }
 
+  // For a tenant: its view, as runtime reads it.
+  let tenantSettings: SystemSettings | null | undefined;
+  if (tenantId) {
+    try {
+      tenantSettings = await readTenantSettingsView<SystemSettings>(env, tenantId, ['oidc']);
+    } catch (error) {
+      if (options.strict) throw error;
+      // At runtime, settings that cannot be read turn the cache off rather than falling back to
+      // an older or env value that enables it: a cached response can outlive a change.
+      settings.enabled = false;
+      return { settings, sources: { ...sources, enabled: 'default' } };
+    }
+  }
+
   // Check KV (takes priority)
   try {
-    const settingsJson = await env.SETTINGS?.get('system_settings');
-    if (settingsJson) {
-      const systemSettings = JSON.parse(settingsJson) as SystemSettings;
+    const systemSettings =
+      tenantSettings !== undefined
+        ? tenantSettings
+        : (JSON.parse(
+            (await env.SETTINGS?.get('system_settings')) ?? 'null'
+          ) as SystemSettings | null);
+    if (systemSettings) {
       const kvSettings = systemSettings.oidc?.introspectionCache;
 
       if (kvSettings?.enabled !== undefined) {
@@ -117,8 +145,11 @@ export async function getIntrospectionCacheSettings(env: Env): Promise<{
 /**
  * Get cache settings for use in introspect.ts
  */
-export async function getIntrospectionCacheConfig(env: Env): Promise<IntrospectionCacheSettings> {
-  const { settings } = await getIntrospectionCacheSettings(env);
+export async function getIntrospectionCacheConfig(
+  env: Env,
+  tenantId?: string
+): Promise<IntrospectionCacheSettings> {
+  const { settings } = await getIntrospectionCacheSettings(env, tenantId);
   return settings;
 }
 
@@ -129,7 +160,11 @@ export async function getIntrospectionCacheConfig(env: Env): Promise<Introspecti
 export async function getIntrospectionCacheConfigHandler(c: Context<{ Bindings: Env }>) {
   const log = getLogger(c).module('IntrospectionCacheSettingsAPI');
   try {
-    const { settings, sources } = await getIntrospectionCacheSettings(c.env);
+    const { settings, sources } = await getIntrospectionCacheSettings(
+      c.env,
+      getTenantIdFromContext(c),
+      { strict: true }
+    );
 
     return c.json({
       settings: {
@@ -150,6 +185,7 @@ export async function getIntrospectionCacheConfigHandler(c: Context<{ Bindings: 
       note: 'Cache only stores active=true responses. Revocation checks bypass cache for security.',
     });
   } catch (error) {
+    if (error instanceof SettingsUnavailableError) return settingsUnavailableResponse(c);
     log.error('Error getting settings', {}, error as Error);
     return c.json(
       {
@@ -259,7 +295,9 @@ export async function updateIntrospectionCacheConfigHandler(c: Context<{ Binding
     await c.env.SETTINGS.put('system_settings', JSON.stringify(systemSettings));
 
     // Get updated settings
-    const { settings } = await getIntrospectionCacheSettings(c.env);
+    const { settings } = await getIntrospectionCacheSettings(c.env, getTenantIdFromContext(c), {
+      strict: true,
+    });
 
     return c.json({
       success: true,
@@ -267,6 +305,7 @@ export async function updateIntrospectionCacheConfigHandler(c: Context<{ Binding
       note: 'Introspection cache settings updated successfully.',
     });
   } catch (error) {
+    if (error instanceof SettingsUnavailableError) return settingsUnavailableResponse(c);
     log.error('Error updating settings', {}, error as Error);
     return c.json(
       {
@@ -312,7 +351,11 @@ export async function clearIntrospectionCacheConfigHandler(c: Context<{ Bindings
     }
 
     // Get updated settings (will fall back to env/default)
-    const { settings, sources } = await getIntrospectionCacheSettings(c.env);
+    const { settings, sources } = await getIntrospectionCacheSettings(
+      c.env,
+      getTenantIdFromContext(c),
+      { strict: true }
+    );
 
     return c.json({
       success: true,
@@ -321,6 +364,7 @@ export async function clearIntrospectionCacheConfigHandler(c: Context<{ Bindings
       note: 'Introspection cache settings cleared. Using env/default values.',
     });
   } catch (error) {
+    if (error instanceof SettingsUnavailableError) return settingsUnavailableResponse(c);
     log.error('Error clearing settings', {}, error as Error);
     return c.json(
       {

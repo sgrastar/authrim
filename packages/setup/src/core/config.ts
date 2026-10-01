@@ -147,6 +147,9 @@ export const TenantConfigSchema = z.object({
 // Components Configuration
 // =============================================================================
 
+export const AdminUiVariantSchema = z.enum(['legacy', 'console']);
+export type AdminUiVariant = z.infer<typeof AdminUiVariantSchema>;
+
 export const ComponentsConfigSchema = z
   .object({
     /** Core API components (always enabled) */
@@ -155,6 +158,14 @@ export const ComponentsConfigSchema = z
     loginUi: z.boolean().default(true),
     /** Admin UI component */
     adminUi: z.boolean().default(true),
+    /**
+     * Which package fills the Admin UI slot. Only one Admin UI is deployed per environment:
+     * - legacy:  packages/ar-admin-ui (current Admin UI)
+     * - console: packages/ar-admin-console (the redesigned admin console, in preview)
+     * Both use the same Worker name, URL, API origin settings and BFF machine credentials,
+     * so switching keeps existing administrator passkeys (RP ID = Admin UI host) working.
+     */
+    adminUiVariant: AdminUiVariantSchema.default('legacy'),
     /** SAML IdP/SP support */
     saml: z.boolean().default(true),
     /** Async queue processing */

@@ -928,6 +928,11 @@ describe('getHtmlTemplate', () => {
     expect(html).not.toContain("'SAML IdP', 'Device Flow/CIBA', 'VC SD-JWT'");
     expect(html).toContain('loginUi: loginUiEnabled');
     expect(html).toContain('adminUi: adminUiEnabled');
+    expect(html).toContain('adminUiVariant: getAdminUiVariant()');
+    expect(html).toContain('name="admin-ui-variant" value="legacy" checked');
+    expect(html).toContain('name="admin-ui-variant" value="console"');
+    expect(html).toContain('data-i18n="web.comp.adminUiConsoleDesc"');
+    expect(html).toContain('setAdminUiVariant(config.components.adminUiVariant)');
   });
 
   it('renders Cloudflare Queues as an explicit disabled-by-default setup choice', () => {

@@ -36,7 +36,7 @@ import {
   getRefreshToken,
   deleteRefreshToken,
   // Configuration Manager (KV > env > default)
-  createOAuthConfigManager,
+  resolveEffectiveSettings,
   recordRefreshTokenFamilyIndex,
   // Request-level caching (P0 KV Cache Optimization)
   getClientCached,
@@ -45,7 +45,7 @@ import {
   requireDedicatedAdminDatabaseAdapter,
   resolveElevationGrantSubjectToken,
   ELEVATION_GRANT_SUBJECT_TOKEN_TYPE,
-  getTenantSettings,
+  getTenantSettingsDocument,
   TENANT_DEFAULTS,
   getDeviceSecretInstallationId,
   AdminMachineAccessRepository,
@@ -68,6 +68,7 @@ import {
   resolveAccountDataContextFromHono,
   recordDeviceSecretRouteHint,
   resolveDeviceSecretRouteHint,
+  resolvePolicyFlags,
 } from '@authrim/ar-lib-core';
 import {
   resolveIDTokenSigningAlgorithm,
@@ -194,16 +195,25 @@ class SecurityProfileSettingsUnavailableError extends Error {
   }
 }
 
-let cachedOAuthConfigManager: ReturnType<typeof createOAuthConfigManager> | null = null;
-let cachedOAuthConfigBinding: Env['AUTHRIM_CONFIG'] | null = null;
-
-function getOAuthConfigManager(env: Env): ReturnType<typeof createOAuthConfigManager> {
-  const binding = env.AUTHRIM_CONFIG ?? null;
-  if (!cachedOAuthConfigManager || cachedOAuthConfigBinding !== binding) {
-    cachedOAuthConfigManager = createOAuthConfigManager(env);
-    cachedOAuthConfigBinding = binding;
-  }
-  return cachedOAuthConfigManager;
+/**
+ * Access and refresh token lifetimes for a tenant, or one of its clients: the Settings API
+ * value (client, then tenant), else the older oauth-config value, else env, else the default.
+ * The settings are read once, when a lifetime is first asked for.
+ */
+function tokenLifetimes(
+  c: Context<{ Bindings: Env }>,
+  tenantId: string,
+  clientId?: string
+): { access(): Promise<number>; refresh(): Promise<number> } {
+  let values: Promise<Record<string, unknown>> | undefined;
+  const read = async (key: string) => {
+    values ??= resolveEffectiveSettings(c.env, 'oauth', { tenantId, clientId });
+    return Number((await values)[key]);
+  };
+  return {
+    access: () => read('oauth.access_token_expiry'),
+    refresh: () => read('oauth.refresh_token_expiry'),
+  };
 }
 
 async function loadOIDCClaimsUser(
@@ -554,8 +564,7 @@ async function resolveBrowserPublicClientMode(
     return 'strict';
   }
 
-  const authrimSettings = await getTenantSettings(c.env.AUTHRIM_CONFIG, tenantId, 'tenant');
-  const settings = authrimSettings ?? (await getTenantSettings(c.env.SETTINGS, tenantId, 'tenant'));
+  const settings = await getTenantSettingsDocument(c.env, tenantId, 'tenant');
   const tenantMode = settings?.['tenant.browser_public_client_mode'];
   if (isValidBrowserPublicClientMode(tenantMode)) {
     return tenantMode;
@@ -573,8 +582,7 @@ async function resolveTenantRBACClaimsConfig(
   env: Env,
   tenantId: string
 ): Promise<TenantRBACClaimsConfig> {
-  const authrimSettings = await getTenantSettings(env.AUTHRIM_CONFIG, tenantId, 'tokens');
-  const settings = authrimSettings ?? (await getTenantSettings(env.SETTINGS, tenantId, 'tokens'));
+  const settings = await getTenantSettingsDocument(env, tenantId, 'tokens');
   const accessToken = settings?.['tokens.rbac_access_token_claims'];
   const idToken = settings?.['tokens.rbac_id_token_claims'];
 
@@ -818,7 +826,11 @@ async function resolveDPoPNoncePolicy(
 
   let settings: Awaited<ReturnType<typeof getSystemSettingsCached>> | null = null;
   try {
-    settings = await getSystemSettingsCached(c, c.env);
+    // DPoP nonce settings are not Settings API overlay fields: no overlay sections needed.
+    settings = await getSystemSettingsCached(c, c.env, {
+      clientId: options.clientMetadata?.client_id,
+      sections: [],
+    });
   } catch {
     settings = null;
   }
@@ -885,7 +897,11 @@ async function isDPoPRequiredForTokenRequest(
 ): Promise<boolean> {
   let fapiRequiresDpop = false;
   try {
-    const settings = await getSystemSettingsCached(c, c.env, { failOnError: true });
+    const settings = await getSystemSettingsCached(c, c.env, {
+      failOnError: true,
+      clientId: clientMetadata.client_id,
+      sections: ['fapi'],
+    });
     if (settings) {
       const fapi = (settings.fapi || {}) as { enabled?: boolean; requireDpop?: boolean };
       fapiRequiresDpop = Boolean(fapi.requireDpop || (fapi.enabled && fapi.requireDpop !== false));
@@ -908,11 +924,17 @@ async function isDPoPRequiredForTokenRequest(
 }
 
 async function resolveClientAssertionValidationOptions(
-  c: Context<{ Bindings: Env }>
+  c: Context<{ Bindings: Env }>,
+  clientId: string
 ): Promise<ClientAssertionValidationOptions | undefined> {
   let settings: { fapi?: { enabled?: boolean } } | null;
   try {
-    settings = await getSystemSettingsCached(c, c.env, { failOnError: true });
+    // FAPI can be set per client, so read the settings as they apply to this client.
+    settings = await getSystemSettingsCached(c, c.env, {
+      failOnError: true,
+      clientId,
+      sections: ['fapi'],
+    });
   } catch {
     throw new SecurityProfileSettingsUnavailableError();
   }
@@ -941,7 +963,10 @@ async function resolveTokenClientAuthenticationPolicy(
   | { ok: true; assertionOptions: ClientAssertionValidationOptions | undefined }
   | { ok: false; response: Response }
 > {
-  const assertionOptions = await resolveClientAssertionValidationOptions(c);
+  const assertionOptions = await resolveClientAssertionValidationOptions(
+    c,
+    clientMetadata.client_id
+  );
   if (!assertionOptions) {
     const methodValidation = validateRegisteredClientAuthenticationMethod(clientMetadata, {
       ...presentation,
@@ -1693,7 +1718,11 @@ async function handleAuthorizationCodeGrant(
   let fapiRequiresDpop = false;
   try {
     const settings = await timeTokenRequestDiagnosticOperation(c, 'token_security_settings', () =>
-      getSystemSettingsCached(c, c.env, { failOnError: true })
+      getSystemSettingsCached(c, c.env, {
+        failOnError: true,
+        clientId: client_id,
+        sections: ['fapi'],
+      })
     );
     if (settings) {
       const fapi = (settings.fapi || {}) as { enabled?: boolean; requireDpop?: boolean };
@@ -2135,13 +2164,13 @@ async function handleAuthorizationCodeGrant(
   const shouldIssueRefreshToken =
     !isBrowserPublicClientRequest ||
     (browserRefreshTokenPolicy === 'dpop_bound' && tokenType === 'DPoP' && Boolean(dpopJkt));
-  const configManager = getOAuthConfigManager(c.env);
+  const lifetimes = tokenLifetimes(c, tenantId, client_id);
   const optionalFeatureStatePromise = timeTokenRequestDiagnosticOperation(
     c,
     'token_optional_features',
     () =>
       Promise.all([
-        isPolicyEmbeddingEnabled(c.env),
+        isPolicyEmbeddingEnabled(c.env, getTenantIdFromContext(c)),
         isIdLevelPermissionsEnabled(c.env),
         isCustomClaimsEnabled(c.env),
         isNativeSSOEnabled(c.env),
@@ -2156,16 +2185,12 @@ async function handleAuthorizationCodeGrant(
       timeTokenRequestDiagnosticOperation(c, 'token_signing_key', () =>
         getSigningKeyFromKeyManager(c.env, getTenantIdFromContext(c))
       ),
-      timeTokenRequestDiagnosticOperation(c, 'token_access_ttl', () =>
-        configManager.getTokenExpiry()
-      ),
+      timeTokenRequestDiagnosticOperation(c, 'token_access_ttl', () => lifetimes.access()),
       timeTokenRequestDiagnosticOperation(c, 'token_account_route', () =>
         resolveTrustedSubjectAccountRoute(c, authCodeData.sub)
       ),
       shouldIssueRefreshToken
-        ? timeTokenRequestDiagnosticOperation(c, 'token_refresh_ttl', () =>
-            configManager.getRefreshTokenExpiry()
-          )
+        ? timeTokenRequestDiagnosticOperation(c, 'token_refresh_ttl', () => lifetimes.refresh())
         : Promise.resolve(undefined),
     ] as const);
 
@@ -2347,7 +2372,11 @@ async function handleAuthorizationCodeGrant(
         authCtx.coreAdapter,
         authCodeData.sub,
         authCodeData.scope,
-        { cache: c.env.REBAC_CACHE, tenantId }
+        {
+          cache: c.env.REBAC_CACHE,
+          tenantId,
+          maxPermissions: (await getEmbeddingLimits(c.env, tenantId)).max_embedded_permissions,
+        }
       );
       policyEmbeddingPermissions = policyEmbedding.permissions;
       policyEmbeddingScopedPermissions = policyEmbedding.scopedPermissions;
@@ -2361,7 +2390,7 @@ async function handleAuthorizationCodeGrant(
   let idLevelPermissions: string[] = [];
   try {
     if (idLevelPermissionsEnabled) {
-      const limits = await getEmbeddingLimits(c.env);
+      const limits = await getEmbeddingLimits(c.env, getTenantIdFromContext(c));
       const allIdPerms = await evaluateIdLevelPermissions(
         authCtx.coreAdapter,
         authCodeData.sub,
@@ -2389,7 +2418,7 @@ async function handleAuthorizationCodeGrant(
   let customClaims: Record<string, unknown> = {};
   try {
     if (customClaimsEnabled) {
-      const limits = await getEmbeddingLimits(c.env);
+      const limits = await getEmbeddingLimits(c.env, getTenantIdFromContext(c));
       const evaluator = createTokenClaimEvaluator(authCtx.coreAdapter, c.env.REBAC_CACHE, {
         maxCustomClaims: limits.max_custom_claims,
       });
@@ -2776,8 +2805,10 @@ async function handleAuthorizationCodeGrant(
   let idToken: string;
   try {
     // Check if client requests SD-JWT ID Token (RFC 9901)
+    // SD-JWT for a client that requests it, where the tenant enables it (feature.enable_sd_jwt).
     const useSDJWT =
-      clientMetadata.id_token_signed_response_type === 'sd-jwt' && c.env.ENABLE_SD_JWT === 'true';
+      clientMetadata.id_token_signed_response_type === 'sd-jwt' &&
+      (await resolvePolicyFlags(c.env, getTenantIdFromContext(c))).sdJwt;
 
     if (useSDJWT) {
       // Create SD-JWT ID Token with selective disclosure
@@ -3305,7 +3336,11 @@ async function handleRefreshTokenGrant(
   // not received or persisted. Non-FAPI tenants keep Authrim's rotation default.
   let prohibitRefreshTokenRotation = false;
   try {
-    const settings = await getSystemSettingsCached(c, c.env, { failOnError: true });
+    const settings = await getSystemSettingsCached(c, c.env, {
+      failOnError: true,
+      clientId: client_id,
+      sections: ['fapi'],
+    });
     const fapi = (settings?.fapi || {}) as { enabled?: boolean };
     prohibitRefreshTokenRotation = fapi.enabled === true;
   } catch (error) {
@@ -3490,8 +3525,8 @@ async function handleRefreshTokenGrant(
   }
 
   // Token expiration (KV > env > default priority)
-  const configManager = getOAuthConfigManager(c.env);
-  const baseExpiresIn = await configManager.getTokenExpiry();
+  const lifetimes = tokenLifetimes(c, tenantId, client_id);
+  const baseExpiresIn = await lifetimes.access();
   // Apply Profile-based TTL limit (Human Auth / AI Ephemeral Auth two-layer model)
   // RFC 6749 §4.2.2: Access token lifetime is controlled by the authorization server
   const expiresIn = Math.min(baseExpiresIn, tenantProfile.max_token_ttl_seconds);
@@ -3526,13 +3561,18 @@ async function handleRefreshTokenGrant(
   let policyEmbeddingPermissions: string[] = [];
   let policyEmbeddingScopedPermissions: AccessTokenScopedPermission[] = [];
   try {
-    const policyEmbeddingEnabled = await isPolicyEmbeddingEnabled(c.env);
+    const policyEmbeddingEnabled = await isPolicyEmbeddingEnabled(c.env, getTenantIdFromContext(c));
     if (policyEmbeddingEnabled && grantedScope) {
       const policyEmbedding = await evaluatePermissionEmbeddingForScope(
         authCtx.coreAdapter,
         refreshTokenData.sub,
         grantedScope,
-        { cache: c.env.REBAC_CACHE, tenantId: authCtx.tenantId }
+        {
+          cache: c.env.REBAC_CACHE,
+          tenantId: authCtx.tenantId,
+          maxPermissions: (await getEmbeddingLimits(c.env, authCtx.tenantId))
+            .max_embedded_permissions,
+        }
       );
       policyEmbeddingPermissions = policyEmbedding.permissions;
       policyEmbeddingScopedPermissions = policyEmbedding.scopedPermissions;
@@ -3748,8 +3788,10 @@ async function handleRefreshTokenGrant(
     }
 
     // Check if client requests SD-JWT ID Token (RFC 9901)
+    // SD-JWT for a client that requests it, where the tenant enables it (feature.enable_sd_jwt).
     const useSDJWT =
-      clientMetadata.id_token_signed_response_type === 'sd-jwt' && c.env.ENABLE_SD_JWT === 'true';
+      clientMetadata.id_token_signed_response_type === 'sd-jwt' &&
+      (await resolvePolicyFlags(c.env, getTenantIdFromContext(c))).sdJwt;
 
     if (useSDJWT) {
       const rawSelectiveClaims = clientMetadata.sd_jwt_selective_claims;
@@ -3784,7 +3826,7 @@ async function handleRefreshTokenGrant(
     !prohibitRefreshTokenRotation && c.env.ENABLE_REFRESH_TOKEN_ROTATION !== 'false';
 
   let newRefreshToken: string;
-  const refreshTokenExpiresIn = await configManager.getRefreshTokenExpiry();
+  const refreshTokenExpiresIn = await lifetimes.refresh();
 
   if (rotationEnabled) {
     // V2: Implement refresh token rotation with version-based theft detection
@@ -4138,8 +4180,9 @@ async function handleJWTBearerGrant(
   }
 
   // Token expiration (KV > env > default priority)
-  const configManager = getOAuthConfigManager(c.env);
-  const expiresIn = await configManager.getTokenExpiry();
+  // The trusted issuer acts as the client (client_id = iss in the issued token).
+  const lifetimes = tokenLifetimes(c, getTenantIdFromContext(c), claims.iss);
+  const expiresIn = await lifetimes.access();
 
   // Generate Access Token
   // For JWT Bearer flow, the subject (sub) comes from the assertion
@@ -4501,8 +4544,8 @@ async function handleDeviceCodeGrant(
   }
 
   // Token expiration (KV > env > default priority)
-  const configManager = getOAuthConfigManager(c.env);
-  const expiresIn = await configManager.getTokenExpiry();
+  const lifetimes = tokenLifetimes(c, tenantId, client_id);
+  const expiresIn = await lifetimes.access();
   const authCtx = createAccountAuthContextFromHono(c, getTenantIdFromContext(c));
 
   // Phase 2 RBAC: Fetch RBAC claims for device flow tokens
@@ -4531,13 +4574,18 @@ async function handleDeviceCodeGrant(
   let policyEmbeddingPermissions: string[] = [];
   let policyEmbeddingScopedPermissions: AccessTokenScopedPermission[] = [];
   try {
-    const policyEmbeddingEnabled = await isPolicyEmbeddingEnabled(c.env);
+    const policyEmbeddingEnabled = await isPolicyEmbeddingEnabled(c.env, getTenantIdFromContext(c));
     if (policyEmbeddingEnabled && metadata.scope && metadata.sub) {
       const policyEmbedding = await evaluatePermissionEmbeddingForScope(
         authCtx.coreAdapter,
         metadata.sub,
         metadata.scope,
-        { cache: c.env.REBAC_CACHE, tenantId: authCtx.tenantId }
+        {
+          cache: c.env.REBAC_CACHE,
+          tenantId: authCtx.tenantId,
+          maxPermissions: (await getEmbeddingLimits(c.env, authCtx.tenantId))
+            .max_embedded_permissions,
+        }
       );
       policyEmbeddingPermissions = policyEmbedding.permissions;
       policyEmbeddingScopedPermissions = policyEmbedding.scopedPermissions;
@@ -4656,7 +4704,7 @@ async function handleDeviceCodeGrant(
   }
 
   // Generate Refresh Token with V3 sharding support
-  const refreshTokenExpiry = await configManager.getRefreshTokenExpiry();
+  const refreshTokenExpiry = await lifetimes.refresh();
   let refreshToken: string;
   let refreshJti: string;
   try {
@@ -5122,9 +5170,9 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
   const { privateKey, kid } = await getSigningKeyFromKeyManager(c.env, getTenantIdFromContext(c));
 
   // Token expiration times (KV > env > default priority)
-  const configManager = getOAuthConfigManager(c.env);
-  const expiresIn = await configManager.getTokenExpiry();
-  const refreshExpiresIn = await configManager.getRefreshTokenExpiry();
+  const lifetimes = tokenLifetimes(c, tenantId, client_id);
+  const expiresIn = await lifetimes.access();
+  const refreshExpiresIn = await lifetimes.refresh();
 
   // Phase 2 RBAC: Fetch RBAC claims for CIBA flow tokens
   let accessTokenRBACClaims: Awaited<ReturnType<typeof getAccessTokenRBACClaims>> = {};
@@ -5152,13 +5200,18 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
   let policyEmbeddingPermissions: string[] = [];
   let policyEmbeddingScopedPermissions: AccessTokenScopedPermission[] = [];
   try {
-    const policyEmbeddingEnabled = await isPolicyEmbeddingEnabled(c.env);
+    const policyEmbeddingEnabled = await isPolicyEmbeddingEnabled(c.env, getTenantIdFromContext(c));
     if (policyEmbeddingEnabled && metadata.scope && metadata.sub) {
       const policyEmbedding = await evaluatePermissionEmbeddingForScope(
         authCtx.coreAdapter,
         metadata.sub,
         metadata.scope,
-        { cache: c.env.REBAC_CACHE, tenantId: authCtx.tenantId }
+        {
+          cache: c.env.REBAC_CACHE,
+          tenantId: authCtx.tenantId,
+          maxPermissions: (await getEmbeddingLimits(c.env, authCtx.tenantId))
+            .max_embedded_permissions,
+        }
       );
       policyEmbeddingPermissions = policyEmbedding.permissions;
       policyEmbeddingScopedPermissions = policyEmbedding.scopedPermissions;
@@ -5507,9 +5560,13 @@ async function handleTokenExchangeGrant(
     }
   }
 
-  // KV takes priority over env - request-level cached
+  // KV takes priority over env - request-level cached. Read fail-closed: settings that cannot be
+  // read must not fall back to an older or env value that enables the grant.
   try {
-    const settings = await getSystemSettingsCached(c, c.env);
+    const settings = await getSystemSettingsCached(c, c.env, {
+      failOnError: true,
+      sections: ['oidc'],
+    });
     if (settings) {
       if (settings.oidc?.tokenExchange?.enabled !== undefined) {
         tokenExchangeEnabled = settings.oidc.tokenExchange.enabled === true;
@@ -5550,8 +5607,15 @@ async function handleTokenExchangeGrant(
         }
       }
     }
-  } catch {
-    // Ignore KV errors, fall back to env
+  } catch (error) {
+    log.error('Token exchange settings could not be read', {}, error as Error);
+    return c.json(
+      {
+        error: 'temporarily_unavailable',
+        error_description: 'Token Exchange settings are unavailable; try again later',
+      },
+      503
+    );
   }
 
   // Check env fallback for ID-JAG enabled flag
@@ -6460,8 +6524,8 @@ async function handleTokenExchangeGrant(
     );
   }
 
-  const configManager = getOAuthConfigManager(c.env);
-  const baseExpiresIn = await configManager.getTokenExpiry();
+  const lifetimes = tokenLifetimes(c, tenantId, client_id);
+  const baseExpiresIn = await lifetimes.access();
   // Apply Profile-based TTL limit (Human Auth / AI Ephemeral Auth two-layer model)
   // RFC 6749 §4.2.2: Access token lifetime is controlled by the authorization server
   const expiresIn = Math.min(baseExpiresIn, tenantProfile.max_token_ttl_seconds);
@@ -7148,9 +7212,9 @@ async function handleNativeSSOTokenExchange(
     );
   }
 
-  const configManager = getOAuthConfigManager(c.env);
-  const expiresIn = await configManager.getTokenExpiry();
-  const refreshTokenExpiresIn = await configManager.getRefreshTokenExpiry();
+  const lifetimes = tokenLifetimes(c, tenantId, clientId);
+  const expiresIn = await lifetimes.access();
+  const refreshTokenExpiresIn = await lifetimes.refresh();
 
   // Build access token claims
   const accessTokenClaims: Record<string, unknown> = {
@@ -7543,14 +7607,25 @@ async function handleClientCredentialsGrant(
   // Check Feature Flag (hybrid: KV > env) - request-level cached
   let clientCredentialsEnabled = c.env.ENABLE_CLIENT_CREDENTIALS === 'true';
   try {
-    const settings = await getSystemSettingsCached(c, c.env);
+    // Fail-closed: settings that cannot be read must not fall back to an enabling env value.
+    const settings = await getSystemSettingsCached(c, c.env, {
+      failOnError: true,
+      sections: ['oidc'],
+    });
     if (settings) {
       if (settings.oidc?.clientCredentials?.enabled !== undefined) {
         clientCredentialsEnabled = settings.oidc.clientCredentials.enabled === true;
       }
     }
-  } catch {
-    // Ignore cache errors, fall back to env
+  } catch (error) {
+    log.error('Client credentials settings could not be read', {}, error as Error);
+    return c.json(
+      {
+        error: 'temporarily_unavailable',
+        error_description: 'Client Credentials settings are unavailable; try again later',
+      },
+      503
+    );
   }
 
   if (!clientCredentialsEnabled) {
@@ -7741,8 +7816,8 @@ async function handleClientCredentialsGrant(
     return oauthError(c, 'server_error', 'Failed to load signing key', 500);
   }
 
-  const configManager = getOAuthConfigManager(c.env);
-  const baseExpiresIn = await configManager.getTokenExpiry();
+  const lifetimes = tokenLifetimes(c, tenantId, client_id);
+  const baseExpiresIn = await lifetimes.access();
   // Apply Profile-based TTL limit (Human Auth / AI Ephemeral Auth two-layer model)
   // RFC 6749 §4.2.2: Access token lifetime is controlled by the authorization server
   const expiresIn = Math.min(baseExpiresIn, tenantProfile.max_token_ttl_seconds);

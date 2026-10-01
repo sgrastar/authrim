@@ -1084,6 +1084,12 @@ const ja: Translations = {
   'web.comp.loginUiDesc': 'ログイン、登録、同意、アカウント管理ページ',
   'web.comp.adminUi': '管理UI',
   'web.comp.adminUiDesc': 'テナント、クライアント、ユーザー、システム設定を管理するダッシュボード',
+  'web.comp.adminUiVariant': '管理UIの種類',
+  'web.comp.adminUiLegacy': '現行の管理UI',
+  'web.comp.adminUiLegacyDesc': '現在使っている管理UIです。すべての機能があります。',
+  'web.comp.adminUiConsole': '新しい管理コンソール（プレビュー）',
+  'web.comp.adminUiConsoleDesc':
+    '作り直し中の管理コンソールです。機能は順に追加され、まだ作り直していない項目は準備中と表示されます。URLと管理者のパスキーは現行の管理UIと同じです。',
 
   // Web UI Domain Row Labels
   'web.domain.loginUi': 'ログインUI',

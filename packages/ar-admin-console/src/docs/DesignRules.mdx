@@ -1,0 +1,302 @@
+import { Meta } from '@storybook/addon-docs/blocks';
+
+<Meta title="Design rules" />
+
+# Design rules
+
+These apply to every page. Behaviour comes first, then the foundations (space, type,
+controls, layers), then content (words, numbers, placeholders). The values behind them are in
+**Tokens › Scales** and **Tokens › Themes**; lint enforces what it can (page styles, raw
+colours, type and icon sizes).
+
+## Save model
+
+| Control                       | Effect      | Use for                                      |
+| ----------------------------- | ----------- | -------------------------------------------- |
+| **Toggle**                    | immediate   | enabling a flow, turning a feature on or off |
+| **Checkbox**, fields, selects | on **Save** | anything reviewed before it applies          |
+
+A setting never mixes the two. Every settings page that waits for Save wraps its form in a
+**SaveScope** with a `Draft` of the saved values:
+
+- each control is given its `field`, and marks itself in the change colour while its value differs
+  from the saved one — so the admin sees exactly what will be saved. The change colour is a warm
+  tone of its own (`--changed`, set per theme), softer than the warning colour: a change is not a
+  problem. The item takes the wash (a field's box, an option, a table row), the exact control a
+  ring; the save bar shares the colour;
+- the save bar — a compact card floating at the bottom, centred on the page column — rises as
+  soon as anything is unsaved, stays reachable while the page scrolls, and sinks back after
+  Save or Discard;
+- while saving, the whole form is busy;
+- a form with its own Save button (a dialog, a short inline form) uses `bar={false}`: no save bar,
+  but its changes are still marked and leaving still asks.
+
+See _Patterns → Save scope_ and _Save model (toggle vs save)_.
+
+## Page width
+
+- **Standard** (1100px) — settings and forms: short lines, labels close to their controls.
+- **Wide** (1600px) — lists, tables, logs, dashboards: more columns on wide screens.
+
+Both are start-aligned, so the content edge does not move when the left nav comes and goes.
+Navigation items declare `wide: true` in `src/lib/shell/nav-data.ts`.
+
+## Tone and emphasis
+
+- No coloured stripe on the start edge of a box (toasts, notes, cards, list items, the current
+  nav item). Tone is carried by the icon colour, a badge or the wording; the current item by
+  its surface and weight.
+- Boxes keep one even border all round.
+- Every button answers a press at once (pushed 1px, darker face), before its action shows a
+  result — hover alone tells touch users nothing. Defined once in `tokens/base.css`; busy,
+  disabled and loading buttons do not react.
+
+## Right-to-left
+
+- Layout uses logical properties (`inline-start`, `inline-end`), never left/right.
+- Icons that point along the reading direction (external link, import, export, sign out, back)
+  mirror automatically. Up/down carets do not.
+- Anything moved with `translateX` multiplies by `var(--dir)` (1 in LTR, −1 in RTL); the toggle
+  knob is the reference example.
+- Identifiers, keys and routes stay left-to-right inside RTL text. Put them in `<code>` (set to
+  an isolated left-to-right run in `tokens/base.css`) or give their element the same
+  `unicode-bidi: isolate; direction: ltr`; never type a direction mark into a message.
+- Values that are always Latin — URLs, email addresses, keys, paths, secrets, colour codes,
+  regular expressions — are typed and read left to right, also in right-to-left pages: their
+  fields set `dir="ltr"` (TextField does it for `type="url"`, `email`, `tel`; ListField,
+  EditableTable and KeyValueField for monospace values). Otherwise "https://" shows as
+  "//:https" and the caret jumps.
+
+## Motion
+
+| When                                  | Motion                                                   |
+| ------------------------------------- | -------------------------------------------------------- |
+| A page is entered                     | blocks rise 12px, top first, 55ms apart (entry reveal)   |
+| The header category changes           | left-nav rows turn over from the top: old fall, new rise |
+| …again while rows are still turning   | the turn is abandoned; only the new rows rise            |
+| The scope changes (tenant ↔ platform) | header categories flip one by one, like turning cards    |
+| Light ↔ dark                          | colour tokens interpolate under a single wash            |
+
+All motion stops under `prefers-reduced-motion`.
+
+## Platform scope
+
+In platform scope the categories that hold every tenant's defaults are tinted, and each page
+states what it does here with a **scope note**: sets the default, searches across tenants,
+cannot be set here, or shares a definition.
+
+## Retiring an area
+
+An area scheduled for removal stays in the navigation until its blockers are resolved, and its
+page lists them in a **retire note**. Removing it earlier makes the outstanding work invisible.
+
+## Spacing
+
+Tokens in `src/lib/ui/tokens/tokens.css`; see **Tokens › Scales** for the values.
+Spacing is not themable: a theme never moves anything.
+
+**Between boxes**
+
+- Boxes stacked on a page, and panes side by side (a list and its detail, the screen
+  builder's three panes): `--space-section` (16px). The page template sets it; pages add no
+  margins of their own.
+- Tiles of one set (item cards in a grid): `--space-grid` (12px) — closer, so they read as
+  one group.
+- Page header to the first box: `--space-page-header`. Page margins (`--space-page-*`)
+  shrink at 1024px and 640px; at 640px box, note, tile and dialog padding shrink with them.
+  Gaps between boxes stay the same at every width.
+- A box never sets an outer margin. Whatever holds it sets the gap.
+
+**Inside a box**
+
+- Sides, and top and bottom of the body: `--box-pad` (18px). Header, setting rows and danger
+  rows are shorter (`--box-head-pad-y`), the footer shorter still (`--box-foot-pad-y`).
+- Fields and settings one below the other: `--space-field` (14px). Form columns side by side:
+  `--space-columns` (24px), wider than the rows, so columns read as columns.
+- A control and what belongs to it (its buttons, a note right under it): `--space-related`.
+- A note inside a box (callout, scope note): `--note-pad-*`, less than the box around it.
+- Rows that bring their own padding (SettingRow, DataTable, list rows) go in a `flush` card,
+  so their text lines up with the card title instead of being indented twice.
+- Item cards: `--tile-pad`, smaller than a box. Dialogs: `--dialog-pad-*`, larger.
+
+Nesting always steps down — page margin > box padding > note padding — so a box inside a box
+never looks as roomy as its parent. Spacing inside a component (icon to text, label to
+control, a badge's padding) is the component's own and is not tokenised.
+
+## Typography
+
+One size per role, from `--fs-*`; weights from `--fw-*`; line heights from `--lh-*`. A
+literal size or weight fails lint (`scripts/check-type-scale.mjs`); relative sizes (`em`)
+are fine for text that follows its parent, such as a monospace key inside a label.
+
+- Pick the size by **what the text is**, not how important it feels: every field label is
+  `--fs-label`, every hint `--fs-caption`, wherever it sits.
+- Weights: regular for text, `--fw-name` for names of things (options, list items), and
+  `--fw-semibold` for labels, box titles and table heads. `--fw-bold` only for upper-case
+  overlines and counts. Only the page title follows the theme's `--heading-weight` and
+  `--heading-tracking`, so a theme can change the voice of the page without changing the
+  hierarchy inside it.
+- Emphasis comes from weight or colour, one at a time — not size, weight and colour together.
+- No italics (Japanese, Chinese and Arabic have none; browsers slant the glyphs). No
+  upper case except `--fs-overline` group labels, which get letter spacing; nothing is
+  upper-cased in Japanese or Arabic, which have no case.
+- Nothing smaller than `--fs-overline` (10.5px), and that only for short upper-case labels
+  and the flow diagram's status lines; anything read as a sentence is at least
+  `--fs-caption`.
+- Line height: `--lh-body` for running text, `--lh-relaxed` for paragraphs meant to be read
+  (dialog bodies, notes), `--lh-snug` for captions and tooltips, `--lh-tight` for titles and
+  names that may wrap in a small box.
+
+## Controls and icons
+
+- Heights come in five tiers (`--control-h-*`): 42 for the one main action of a standalone
+  card, 36 for buttons, text fields and selects, 32 for icon buttons and inputs repeated in
+  rows, 28 for toolbars, tables and pagination, 24 for switches and "?" tips.
+- Controls on one line share a tier, so their top and bottom edges line up: a search field
+  and its button are both 36; a page-size select and the page buttons are both 28.
+- Small controls (`size="sm"`: Checkbox, Toggle, TextField, NumberField, Select) are for a
+  secondary choice beside another control, dense rows and small cards: fields drop to 28 with
+  label-size text, a checkbox to a 16px box, a switch to 18px. They still take a 24px target.
+- Nothing you can press is smaller than 24 × 24 (WCAG 2.2 target size). Where a control has
+  to stay smaller (the flow's "+", the buttons in the screen builder's row bar), keep it apart
+  from its neighbours so a 24px circle around it touches no other target.
+- Icons follow the text beside them (`--icon-*`): 12 with small text, 14 with labels and
+  captions, 16 with body text and in buttons, 18 alone in an icon button or the navigation,
+  22 in empty states and drop zones. A literal icon size fails lint.
+- An icon never carries meaning alone: an icon button has a label for screen readers and a
+  tooltip, a status icon sits next to words.
+
+## Badges
+
+| What it says                                 | Use                    |
+| -------------------------------------------- | ---------------------- |
+| a status (enabled, failed, needs attention)  | Badge, a tone          |
+| changed, not saved yet                       | Badge `tone="changed"` |
+| a data type or short fact (`string`)         | TypeBadge              |
+| required, as a property of an item in a list | RequiredBadge          |
+| how many things wait, in the navigation      | CountBadge             |
+
+- After a name, in this order: type, required, status.
+- Only CountBadge takes the danger colour: it asks for action. A problem is a warning sign
+  with its reason, not a red badge.
+
+## Required
+
+- A field the admin must fill: a red `*` after its label (`required` on the field). Screen
+  readers hear it from the field itself.
+- An item that is required as a property, in a list or a row (an attribute a destination
+  needs, a claim that must be sent): **RequiredBadge**, after the item's name and its type
+  badge. Outlined, the height of the other badges, no colour: being required is not a status
+  or a problem.
+- A required item still empty is a problem, and is shown as one: the warning sign with its
+  reason, not a louder badge.
+
+## Choosing a field
+
+| The value is…                                    | Use                                               |
+| ------------------------------------------------ | ------------------------------------------------- |
+| a line of text                                   | TextField (TextArea for paragraphs)               |
+| a number with a unit (a limit, days to keep)     | NumberField                                       |
+| a length of time (lifetimes, timeouts)           | DurationField — stored in seconds                 |
+| one of a few, all worth seeing                   | RadioGroup, SegmentedControl                      |
+| one of a longer, fixed list                      | Select (SelectMenu when rows need more than text) |
+| one or several things that exist (users, roles)  | EntityPicker — searched, not listed               |
+| a list of values (URIs, origins, IP ranges)      | ListField                                         |
+| pairs (headers, mappings)                        | KeyValueField                                     |
+| a secret                                         | SecretField — never a TextField                   |
+| on or off, applied at once                       | Toggle; confirmed with Save: Checkbox             |
+| a period to filter by                            | DateRangeField                                    |
+| a colour (branding)                              | ColorField — with a contrast check                |
+| a condition (membership, assignment, policy)     | ConditionBuilder                                  |
+| which attribute fills which                      | MappingEditor                                     |
+| rows × columns of values (a source's attributes) | EditableTable                                     |
+
+- A setting that may come from a wider scope (the platform default) wraps its control in
+  **InheritedSetting**, so the admin sees which value applies and can switch.
+- A list is narrowed with a **FilterBar** above it: search first, then filters, all `sm`.
+- Options people rarely change fold away in a **Disclosure**; one that is looked for often
+  does not.
+- Fields that can hold something that cannot be saved (NumberField, DurationField,
+  ListField, KeyValueField) report it to their SaveScope: the save bar says so, and Save
+  takes the admin to the first field with an error instead of sending. Outside a SaveScope,
+  read `bind:invalid`.
+
+## Layers and shadows
+
+- Page layers, lowest first (`--z-*`): top nav, header, save bar, anchored menus, toasts,
+  the skip link. Dialogs, the drawer, tips and select menus use the browser's top layer and
+  need no z-index. Do not invent numbers between the tokens.
+- Inside a component, small local numbers (1–20) are fine under a root with
+  `isolation: isolate`, so they can never compete with the page layers.
+- While a dialog is open everything behind it is inert, toasts included: a dialog shows its
+  own outcome and errors inside itself (FormDialog's `error`) and leaves toasts to the page.
+- Three shadows, by role: `--shadow-sm` for surfaces at rest (boxes, a switch knob, the
+  chosen segment), `--shadow-md` for a standalone card on the page (sign-in),
+  `--shadow-lg` for anything floating over content (menus, dialogs, toasts, the save bar).
+  Themes decide what they look like — Swiss Grid draws rings instead — so never write a
+  shadow by hand. Rings drawn with `box-shadow` (focus, selection, change marks) are not
+  shadows; they use their own colour tokens.
+
+## Writing
+
+Messages live in `src/lib/i18n/messages` (Japanese is the source; every language has every
+key). The same thing is called the same everywhere.
+
+- **Who is speaking**: the console, plainly and politely. Japanese uses です・ます in
+  sentences; English and German address the reader (German with "Sie"); no exclamation
+  marks, no jokes, no "Oops".
+- **Buttons say what happens**, as a verb with its object when there is room: 変更を保存 /
+  Save changes, パスキーを作成 / Create passkey. A dialog's buttons repeat its verb
+  (「削除しますか？」→「削除」), never Yes / No / OK.
+- **Labels and headings** are nouns or short phrases, without a full stop. **Sentences** —
+  descriptions, hints, errors, toasts — end with one: 。 in Japanese, . elsewhere. Short
+  statuses shown in place (保存中… on a button, コピーしました / Copied, a badge, a
+  screen-reader announcement) take none; something still going on ends with "…".
+- **Errors** say what did not happen and what to do next, without blame and without codes:
+  「保存できませんでした。もう一度お試しください。」/ "The changes could not be saved. Please
+  try again." Write "could not" / できませんでした, not "failed" / 失敗しました. The retry line
+  is fixed per language: もう一度お試しください。/ Please try again. / Bitte versuchen Sie es
+  erneut. / يُرجى المحاولة مرة أخرى.
+- **Confirmation** is asked only before something that cannot be undone, and names it —
+  「仕事用 MacBook」を削除しますか？ — with the consequence in the body.
+- **Terms**: ログイン / ログアウト in Japanese; sign in / sign out in English. Long vowels are
+  written (ユーザー, サーバー). Terms with an established Japanese form are translated
+  (パスキー); protocol and format names are not (OIDC, SAML, SCIM, JSON).
+- **Japanese punctuation**: full-width 、。（）「」：, half-width digits and Latin letters, and
+  a half-width space between Japanese and Latin words, digits or placeholders
+  (`JSON の形式`, `{n} 件`). A name the user typed is quoted: `「{name}」を削除しました`.
+- **English**: sentence case everywhere (not Title Case), curly quotes “ ”, an en dash for
+  ranges (1–20).
+- **Arabic** runs right to left. Messages carry no direction marks; identifiers, keys and URLs
+  that components show are isolated as left-to-right by the component (see Right-to-left).
+
+## Numbers, dates and times
+
+- Numbers go through `formatNumber` (`src/lib/ui/format.ts`) or a `t()` parameter, which
+  does the same: grouped the local way (1,234 · 1.234), always in Latin digits, Arabic
+  included, to match the IDs, codes and logs around them.
+- Sizes use `formatBytes`. Dates and times use `DateTime` / `format-time.ts`: 24-hour clock,
+  numeric year-month-day, the zone shown, and the viewer's choice of local time or UTC
+  (personal settings). Never format a date by hand.
+- Digits that are compared or change in place use equal widths (`tabular-nums`): table
+  columns of numbers (align `end`), counters, pagination, timers. Numbers in a sentence do not.
+- Count with the noun the language needs ("3 件", "3 items") through the message, never by
+  putting a number next to a word in code.
+
+## Placeholders
+
+- A placeholder shows the **shape** of an entry (`https://`, `name@example.com`,
+  `+81 90 1234 5678`), never a value the field could really hold. Left empty, a field
+  showing a real-looking value reads as still filled in.
+- What happens when a field is left empty ("only the line shows"), and examples of wording,
+  go in the hint under the field, which stays visible while typing.
+- Never instead of a label: it disappears on the first keystroke.
+- These are text-field placeholders. The first, empty entry of a select that asks for a
+  choice (選択してください / Choose…) is not a placeholder and may say what to do.
+- A search box (SearchField, EntityPicker) may name what can be searched ("Name or email"):
+  its purpose is plain from the magnifier and the list it filters, and its label is kept for
+  screen readers.
+- Colour `--text-muted`, upright (no italics, see Typography). It is not made lighter: it
+  must stay readable (4.5:1).
+- One exception: TranslationTable shows the default-language wording in empty entries, since
+  that is what users will see; the note above the table says so.

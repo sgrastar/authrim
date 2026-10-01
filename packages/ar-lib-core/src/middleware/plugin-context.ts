@@ -26,6 +26,10 @@
 import type { Context, Next } from 'hono';
 import type { Env } from '../types/env';
 import { createLogger } from '../utils/logger';
+import {
+  getTenantSettingsDocument,
+  TenantSettingsUnavailableError,
+} from '../utils/tenant-settings';
 
 const log = createLogger().module('PluginContext');
 
@@ -666,24 +670,20 @@ async function isPluginEnabledInKV(env: Env, pluginId: string, tenantId: string)
     return cached;
   }
 
-  // 1. Check settings-v2 (AUTHRIM_CONFIG KV)
+  // 1. Check the Settings API document (settings:tenant:<tenantId>:plugin)
   try {
-    const configKV = env.AUTHRIM_CONFIG;
-    if (configKV) {
-      const settingsKey = pluginIdToSettingsKey(pluginId);
-      const kvJson = await configKV.get(`settings:tenant:${tenantId}:plugin`);
-      if (kvJson) {
-        const settings = JSON.parse(kvJson) as Record<string, unknown>;
-        if (typeof settings[settingsKey] === 'boolean') {
-          return setCachedValue(env, cacheKey, settings[settingsKey] as boolean);
-        }
-        // Also check string form (KV stores may serialize as string)
-        if (typeof settings[settingsKey] === 'string') {
-          return setCachedValue(env, cacheKey, settings[settingsKey] === 'true');
-        }
-      }
+    const settingsKey = pluginIdToSettingsKey(pluginId);
+    const settings = await getTenantSettingsDocument(env, tenantId, 'plugin');
+    if (typeof settings?.[settingsKey] === 'boolean') {
+      return setCachedValue(env, cacheKey, settings[settingsKey] as boolean);
     }
-  } catch {
+    // Also check string form (KV stores may serialize as string)
+    if (typeof settings?.[settingsKey] === 'string') {
+      return setCachedValue(env, cacheKey, settings[settingsKey] === 'true');
+    }
+  } catch (error) {
+    // A document that exists but cannot be read must not fall back to other flags.
+    if (error instanceof TenantSettingsUnavailableError) throw error;
     // Ignore errors, fall through
   }
 

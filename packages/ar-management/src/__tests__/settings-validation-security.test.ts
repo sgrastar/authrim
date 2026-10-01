@@ -54,6 +54,28 @@ describe('JIT provisioning settings trust boundary', () => {
     expect(typeof result.payload.config.enabled).toBe('boolean');
   });
 
+  it("shows JIT as the tenant's Settings API value decides it, and 503 when unreadable", async () => {
+    const { context: c, values } = context({
+      stored: JSON.stringify({ enabled: true, default_role_id: 'role_end_user' }),
+    });
+    values.set(
+      'settings:tenant:default:external-idp',
+      JSON.stringify({ 'external_idp.jit_provisioning_enabled': false })
+    );
+    const shown = (await getJITProvisioningConfig(c)) as unknown as {
+      payload: { config: { enabled: boolean }; enabled_source: string };
+    };
+    expect(shown.payload.config.enabled).toBe(false);
+    expect(shown.payload.enabled_source).toBe('kv');
+
+    const { context: failing, kv } = context({});
+    kv.get.mockRejectedValue(new Error('kv unavailable'));
+    const unavailable = (await getJITProvisioningConfig(failing)) as unknown as {
+      status: number;
+    };
+    expect(unavailable.status).toBe(503);
+  });
+
   it.each([
     [null, 'configuration must be an object'],
     [{ rate_limit: null }, 'rate_limit must be an object'],

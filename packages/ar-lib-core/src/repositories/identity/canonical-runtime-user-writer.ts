@@ -250,6 +250,44 @@ export class CanonicalRuntimeUserWriter {
     };
   }
 
+  /**
+   * Write only the given profile fields of an existing runtime user, leaving its lifecycle,
+   * labels, contacts and other attributes as they are. False when the user has no profile.
+   */
+  async updateProfileFields(input: {
+    userId: string;
+    tenantId: string;
+    values: Partial<Record<CanonicalSensitiveUserField, string>>;
+  }): Promise<boolean> {
+    const account = await this.repository.findAccountByLegacyUserId(input.userId, {
+      includeInactive: true,
+      consistencyClass: 'primary_required',
+    });
+    if (!account?.primary_subject_id) {
+      return false;
+    }
+    const profile = (
+      await this.repository.findProfilesForSubject(account.primary_subject_id, {
+        includeInactive: true,
+      })
+    )[0];
+    if (!profile) {
+      return false;
+    }
+    const fields = Object.keys(input.values) as CanonicalSensitiveUserField[];
+    await this.upsertPiiProfileAttributeRefs(
+      {
+        userId: input.userId,
+        tenantId: input.tenantId,
+        active: account.lifecycle_state === 'active',
+        piiFields: Object.fromEntries(fields.map((field) => [field, true])),
+        sensitiveValues: input.values,
+      },
+      profile.id
+    );
+    return true;
+  }
+
   async deleteRuntimeUser(userId: string): Promise<boolean> {
     const account = await this.repository.findAccountByLegacyUserId(userId, {
       includeInactive: true,

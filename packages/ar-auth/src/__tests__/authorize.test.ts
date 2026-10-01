@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { Hono } from 'hono';
-import { SignJWT, exportJWK, exportPKCS8, generateKeyPair } from 'jose';
+import { SignJWT, decodeJwt, exportJWK, exportPKCS8, generateKeyPair } from 'jose';
 import { authorizeConfirmHandler, authorizeHandler, authorizeLoginHandler } from '../authorize';
 import { buildPolicyConstrainedRegionShardConfig } from '@authrim/ar-lib-core';
 import type { Env } from '@authrim/ar-lib-core/types/env';
@@ -668,6 +668,30 @@ describe('Authorization Handler', () => {
       );
     });
 
+    it("should use the tenant's own Login UI before the issuer-hosted one", async () => {
+      env.ENABLE_CONFORMANCE_MODE = 'false';
+      env.UI_URL = 'https://login.example.com';
+      env.LOGIN_UI_EXECUTION_HOST_MODE = 'issuer';
+      env.ALLOWED_ORIGINS = 'https://tenant-login.example.org';
+      await (env.SETTINGS as unknown as MockKVNamespace).put(
+        'settings:tenant:default:tenant',
+        JSON.stringify({
+          'tenant.ui_base_url': 'https://tenant-login.example.org',
+          'tenant.ui_login_path': '/signin',
+        })
+      );
+
+      const response = await app.request(
+        'https://test.example.com/authorize?response_type=code&client_id=test-client&redirect_uri=https://example.com/callback&scope=openid',
+        { method: 'GET' },
+        env
+      );
+
+      expect(response.status).toBe(302);
+      const location = new URL(response.headers.get('Location')!);
+      expect(location.origin + location.pathname).toBe('https://tenant-login.example.org/signin');
+    });
+
     it('should use form_post for temporarily_unavailable when response_mode=form_post', async () => {
       env.ENABLE_CONFORMANCE_MODE = 'false';
 
@@ -792,6 +816,17 @@ describe('Authorization Handler', () => {
       expect(response.headers.get('location')).toContain('error=invalid_request');
     });
 
+    it('refuses a request without state when the state setting cannot be read', async () => {
+      await (env.SETTINGS as unknown as MockKVNamespace).put('settings:tenant:default:oauth', '');
+      const response = await app.request(
+        '/authorize?response_type=code&client_id=test-client&redirect_uri=https%3A%2F%2Fexample.com%2Fcallback&scope=openid',
+        {},
+        env
+      );
+      expect(response.status).toBe(302);
+      expect(response.headers.get('location')).toContain('error=server_error');
+    });
+
     it.each([
       '{',
       '[]',
@@ -825,6 +860,22 @@ describe('Authorization Handler', () => {
         ui_locales: 'ja en',
         login_hint: 'user@example.com',
       });
+    });
+
+    it('requires a signed request object on direct requests when the tenant requires one', async () => {
+      await (env.SETTINGS as unknown as MockKVNamespace).put(
+        'settings:tenant:default:security',
+        JSON.stringify({ 'security.require_signed_request_object': true })
+      );
+      const response = await app.request(
+        `${base}&code_challenge=${'a'.repeat(43)}&code_challenge_method=S256`,
+        {},
+        env
+      );
+      expect(response.status).toBe(302);
+      const redirect = new URL(response.headers.get('location')!);
+      expect(redirect.searchParams.get('error')).toBe('invalid_request');
+      expect(redirect.searchParams.get('error_description')).toContain('signed request object');
     });
 
     it('requires PAR by default when FAPI mode is enabled', async () => {
@@ -1292,6 +1343,37 @@ describe('Authorization Handler', () => {
       const redirect = new URL(response.headers.get('location')!);
       expect(redirect.searchParams.get('error')).toBe('invalid_client');
       expect(redirect.searchParams.get('error_description')).toContain('Public clients');
+    });
+
+    it('rejects public clients when FAPI_ALLOW_PUBLIC_CLIENTS is false and nothing is saved', async () => {
+      await (env.SETTINGS as unknown as MockKVNamespace).put(
+        'system_settings',
+        JSON.stringify({ fapi: { enabled: true }, oidc: { requirePar: false } })
+      );
+      env.FAPI_ALLOW_PUBLIC_CLIENTS = 'false';
+      const refused = await app.request(
+        `${base}&code_challenge=${'a'.repeat(43)}&code_challenge_method=S256`,
+        {},
+        env
+      );
+      expect(new URL(refused.headers.get('location')!).searchParams.get('error')).toBe(
+        'invalid_client'
+      );
+
+      // A saved value wins over the environment variable.
+      await (env.SETTINGS as unknown as MockKVNamespace).put(
+        'system_settings',
+        JSON.stringify({
+          fapi: { enabled: true, allowPublicClients: true },
+          oidc: { requirePar: false },
+        })
+      );
+      const allowed = await app.request(
+        `${base}&code_challenge=${'a'.repeat(43)}&code_challenge_method=S256`,
+        {},
+        env
+      );
+      expect(allowed.headers.get('location')).not.toContain('error=invalid_client');
     });
 
     it('requires S256 PKCE for a confidential FAPI client', async () => {
@@ -1931,6 +2013,55 @@ describe('Authorization Handler', () => {
         expect(hybridRedirect.searchParams.get('state')).toBe('hybrid-query-token-poc');
       }
     );
+
+    it('issues implicit and hybrid tokens with the configured token lifetime', async () => {
+      mockGetClient.mockResolvedValue({
+        client_id: 'test-client',
+        redirect_uris: ['https://example.com/callback'],
+        grant_types: ['implicit', 'authorization_code'],
+        response_types: ['id_token token', 'code id_token token'],
+        scope: 'openid profile',
+        token_endpoint_auth_method: 'none',
+      });
+      await configureClientSettings(env, { 'client.sso_enabled': true });
+      configureClientTrustPolicy(env);
+      await (env.SETTINGS as unknown as MockKVNamespace).put(
+        'settings:tenant:default:oauth',
+        JSON.stringify({ 'oauth.access_token_expiry': 300 })
+      );
+      seedSession(env, 'lifetime-user');
+
+      const keyPair = await generateKeyPair('RS256', { extractable: true });
+      const privatePEM = await exportPKCS8(keyPair.privateKey);
+      env.KEY_MANAGER = {
+        idFromName: vi.fn().mockReturnValue({ toString: () => 'default-v3' }),
+        get: vi.fn().mockReturnValue({
+          getActiveOIDCSigningKeyWithPrivateRpc: vi.fn().mockResolvedValue({
+            kid: 'lifetime-signing-key',
+            privatePEM,
+          }),
+        }),
+      } as unknown as Env['KEY_MANAGER'];
+
+      const response = await app.request(
+        '/authorize?response_type=id_token%20token&client_id=test-client&redirect_uri=https://example.com/callback&scope=openid%20profile&state=lifetime&nonce=lifetime-nonce',
+        {
+          method: 'GET',
+          headers: { Cookie: `authrim_session=${encodeURIComponent(TEST_SESSION_ID)}` },
+        },
+        env
+      );
+
+      expect(response.status).toBe(302);
+      const fragment = new URLSearchParams(
+        new URL(response.headers.get('Location')!).hash.slice(1)
+      );
+      expect(fragment.get('expires_in')).toBe('300');
+      for (const token of [fragment.get('access_token'), fragment.get('id_token')]) {
+        const claims = decodeJwt(token!);
+        expect(claims.exp! - claims.iat!).toBe(300);
+      }
+    });
 
     securityRegressionIt(
       '[security regression] enforces a tenant code-only response type policy',

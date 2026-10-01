@@ -25,6 +25,7 @@ function canonicalFixture() {
     }),
     compareAndSet: vi.fn(async () => false),
     markProjected: vi.fn(async () => {}),
+    markPending: vi.fn(async () => {}),
   };
   return { store, values };
 }

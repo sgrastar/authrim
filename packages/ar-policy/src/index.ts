@@ -58,6 +58,9 @@ import {
   type ListObjectsRequest,
   type ListUsersRequest,
   type PermissionChangeNotifier,
+  resolvePolicyFlags,
+  resolveEffectiveSettingsWithSources,
+  resolvePlatformSettingsWithSources,
 } from '@authrim/ar-lib-core';
 import {
   createDefaultPolicyEngine,
@@ -66,11 +69,9 @@ import {
   hasAllRoles,
   isAdmin,
   subjectFromClaims,
-  createFeatureFlagsManager,
   type PolicyContext,
   type PolicySubject,
   type SubjectRole,
-  type FeatureFlagsManager,
   type KVNamespace,
 } from '@authrim/ar-lib-policy';
 import { checkRoutes } from './routes/check';
@@ -190,29 +191,21 @@ function requireBodyTenantId(tenantId: string | undefined): string | null {
 // Policy Routes (/policy/*)
 // ============================================================
 
-/**
- * Get feature flags manager for current request
- */
-function getFeatureFlagsManager(env: Env): FeatureFlagsManager {
-  return createFeatureFlagsManager(
-    {
-      ENABLE_ABAC: env.ENABLE_ABAC,
-      ENABLE_REBAC: env.ENABLE_REBAC,
-      ENABLE_POLICY_LOGGING: env.ENABLE_POLICY_LOGGING,
-      ENABLE_VERIFIED_ATTRIBUTES: env.ENABLE_VERIFIED_ATTRIBUTES,
-      ENABLE_CUSTOM_RULES: env.ENABLE_CUSTOM_RULES,
-    },
-    env.POLICY_FLAGS_KV ?? null
-  );
-}
+const POLICY_FLAG_SETTINGS: Record<string, string> = {
+  ENABLE_ABAC: 'feature.enable_abac',
+  ENABLE_REBAC: 'feature.enable_rebac',
+  ENABLE_POLICY_LOGGING: 'feature.enable_policy_logging',
+  ENABLE_VERIFIED_ATTRIBUTES: 'feature.enable_verified_attributes',
+  ENABLE_CUSTOM_RULES: 'feature.enable_custom_rules',
+};
 
 /**
  * Health check endpoint
  * GET /policy/health
  */
 policyRoutes.get('/health', async (c) => {
-  const flagsManager = getFeatureFlagsManager(c.env);
-  const flags = await flagsManager.getAllFlags();
+  // The platform's values (no tenant on a health check).
+  const flags = await resolvePolicyFlags(c.env);
 
   return c.json({
     status: 'ok',
@@ -220,11 +213,11 @@ policyRoutes.get('/health', async (c) => {
     version: '0.1.0',
     timestamp: new Date().toISOString(),
     features: {
-      abac: flags.ENABLE_ABAC,
-      rebac: flags.ENABLE_REBAC,
-      logging: flags.ENABLE_POLICY_LOGGING,
-      verifiedAttributes: flags.ENABLE_VERIFIED_ATTRIBUTES,
-      customRules: flags.ENABLE_CUSTOM_RULES,
+      abac: flags.abac,
+      rebac: flags.rebac,
+      logging: flags.policyLogging,
+      verifiedAttributes: flags.verifiedAttributes,
+      customRules: flags.customRules,
     },
   });
 });
@@ -232,102 +225,68 @@ policyRoutes.get('/health', async (c) => {
 /**
  * Get feature flags with sources (for debugging/admin)
  * GET /policy/flags
+ *
+ * The flags as the Settings API resolves them (`feature.enable_*`) for the authenticated tenant,
+ * else the platform; each with where it comes from. 503 when they cannot be read.
  */
 policyRoutes.get('/flags', async (c) => {
   if (!authenticateRequest(c)) {
     return createErrorResponse(c, AR_ERROR_CODES.AUTH_LOGIN_REQUIRED);
   }
 
-  const flagsManager = getFeatureFlagsManager(c.env);
-  const sources = await flagsManager.getFlagSources();
+  const tenantId = getAuthenticatedTenantId(c);
+  const keys = Object.values(POLICY_FLAG_SETTINGS);
+  let resolved: Awaited<ReturnType<typeof resolvePlatformSettingsWithSources>>;
+  try {
+    resolved = tenantId
+      ? await resolveEffectiveSettingsWithSources(c.env, 'feature-flags', {
+          tenantId,
+          keys,
+          freshLegacy: true,
+        })
+      : await resolvePlatformSettingsWithSources(c.env, 'feature-flags', {
+          keys,
+          freshLegacy: true,
+        });
+  } catch {
+    return c.json(
+      {
+        error: 'temporarily_unavailable',
+        error_description: 'Policy feature flags cannot be read; try again',
+      },
+      503
+    );
+  }
+  const flags = Object.fromEntries(
+    Object.entries(POLICY_FLAG_SETTINGS).map(([name, key]) => [
+      name,
+      { value: resolved.values[key] === true, source: resolved.sources[key] ?? 'default' },
+    ])
+  );
 
-  return c.json({
-    flags: sources,
-    kvEnabled: !!c.env.POLICY_FLAGS_KV,
-  });
+  return c.json({ flags, tenant_id: tenantId });
 });
 
 /**
- * Set a feature flag override (requires KV)
- * PUT /policy/flags/:name
+ * Feature flags are set through the Settings API (`feature.enable_*`), per tenant or for the
+ * platform. PUT/DELETE /policy/flags/:name wrote to a separate store no runtime read.
  */
-policyRoutes.put('/flags/:name', async (c) => {
+const FLAGS_MOVED = {
+  error: 'unsupported_operation',
+  error_description:
+    'Policy feature flags are set through the Settings API (feature.enable_*), not here',
+};
+policyRoutes.put('/flags/:name', (c) => {
   if (!authenticateRequest(c)) {
     return createErrorResponse(c, AR_ERROR_CODES.AUTH_LOGIN_REQUIRED);
   }
-
-  const name = c.req.param('name');
-  const validNames = [
-    'ENABLE_ABAC',
-    'ENABLE_REBAC',
-    'ENABLE_POLICY_LOGGING',
-    'ENABLE_VERIFIED_ATTRIBUTES',
-    'ENABLE_CUSTOM_RULES',
-  ];
-
-  if (!validNames.includes(name)) {
-    return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
-  }
-
-  try {
-    const body = await c.req.json<{ value: boolean }>();
-    if (typeof body.value !== 'boolean') {
-      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
-    }
-
-    const flagsManager = getFeatureFlagsManager(c.env);
-    await flagsManager.setFlag(name as 'ENABLE_ABAC', body.value);
-
-    return c.json({
-      success: true,
-      flag: name,
-      value: body.value,
-    });
-  } catch (error) {
-    if (error instanceof Error && error.message.includes('KV not configured')) {
-      return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
-    }
-    throw error;
-  }
+  return c.json(FLAGS_MOVED, 410);
 });
-
-/**
- * Clear a feature flag override (revert to env/default)
- * DELETE /policy/flags/:name
- */
-policyRoutes.delete('/flags/:name', async (c) => {
+policyRoutes.delete('/flags/:name', (c) => {
   if (!authenticateRequest(c)) {
     return createErrorResponse(c, AR_ERROR_CODES.AUTH_LOGIN_REQUIRED);
   }
-
-  const name = c.req.param('name');
-  const validNames = [
-    'ENABLE_ABAC',
-    'ENABLE_REBAC',
-    'ENABLE_POLICY_LOGGING',
-    'ENABLE_VERIFIED_ATTRIBUTES',
-    'ENABLE_CUSTOM_RULES',
-  ];
-
-  if (!validNames.includes(name)) {
-    return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
-  }
-
-  try {
-    const flagsManager = getFeatureFlagsManager(c.env);
-    await flagsManager.clearFlag(name as 'ENABLE_ABAC');
-
-    return c.json({
-      success: true,
-      flag: name,
-      message: 'Flag override cleared. Now using environment/default value.',
-    });
-  } catch (error) {
-    if (error instanceof Error && error.message.includes('KV not configured')) {
-      return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
-    }
-    throw error;
-  }
+  return c.json(FLAGS_MOVED, 410);
 });
 
 /**
@@ -586,8 +545,8 @@ function getPermissionChangeNotifier(c: Context<{ Bindings: Env }>): PermissionC
  * GET /api/rebac/health
  */
 rebacRoutes.get('/health', async (c) => {
-  const flagsManager = getFeatureFlagsManager(c.env);
-  const rebacEnabled = await flagsManager.getFlag('ENABLE_REBAC');
+  // The platform's value (no tenant on a health check).
+  const rebacEnabled = (await resolvePolicyFlags(c.env)).rebac;
   const hasDatabase = Boolean(
     resolveOptionalCoreAdapterFromHono(
       c as unknown as Context<{ Bindings: SharedEnv }>,
@@ -627,13 +586,6 @@ rebacRoutes.post('/check', async (c) => {
     return createErrorResponse(c, AR_ERROR_CODES.AUTH_LOGIN_REQUIRED);
   }
 
-  // Check if ReBAC is enabled
-  const flagsManager = getFeatureFlagsManager(c.env);
-  const rebacEnabled = await flagsManager.getFlag('ENABLE_REBAC');
-  if (!rebacEnabled) {
-    return createErrorResponse(c, AR_ERROR_CODES.POLICY_FEATURE_DISABLED);
-  }
-
   const rebacService = getReBACService(c);
   if (!rebacService) {
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
@@ -657,6 +609,10 @@ rebacRoutes.post('/check', async (c) => {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
         variables: { field: 'tenant_id' },
       });
+    }
+    // ReBAC as the tenant's settings enable it (feature.enable_rebac).
+    if (!(await resolvePolicyFlags(c.env, tenantId)).rebac) {
+      return createErrorResponse(c, AR_ERROR_CODES.POLICY_FEATURE_DISABLED);
     }
 
     const request: CheckRequest = {
@@ -695,13 +651,6 @@ rebacRoutes.post('/batch-check', async (c) => {
     return createErrorResponse(c, AR_ERROR_CODES.AUTH_LOGIN_REQUIRED);
   }
 
-  // Check if ReBAC is enabled
-  const flagsManager = getFeatureFlagsManager(c.env);
-  const rebacEnabled = await flagsManager.getFlag('ENABLE_REBAC');
-  if (!rebacEnabled) {
-    return createErrorResponse(c, AR_ERROR_CODES.POLICY_FEATURE_DISABLED);
-  }
-
   const rebacService = getReBACService(c);
   if (!rebacService) {
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
@@ -728,6 +677,10 @@ rebacRoutes.post('/batch-check', async (c) => {
         return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
           variables: { field: 'checks[].tenant_id' },
         });
+      }
+      // ReBAC as the tenant's settings enable it (feature.enable_rebac).
+      if (!(await resolvePolicyFlags(c.env, tenantId)).rebac) {
+        return createErrorResponse(c, AR_ERROR_CODES.POLICY_FEATURE_DISABLED);
       }
       checks.push({
         ...check,
@@ -769,13 +722,6 @@ rebacRoutes.post('/list-objects', async (c) => {
     return createErrorResponse(c, AR_ERROR_CODES.AUTH_LOGIN_REQUIRED);
   }
 
-  // Check if ReBAC is enabled
-  const flagsManager = getFeatureFlagsManager(c.env);
-  const rebacEnabled = await flagsManager.getFlag('ENABLE_REBAC');
-  if (!rebacEnabled) {
-    return createErrorResponse(c, AR_ERROR_CODES.POLICY_FEATURE_DISABLED);
-  }
-
   const rebacService = getReBACService(c);
   if (!rebacService) {
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
@@ -793,6 +739,10 @@ rebacRoutes.post('/list-objects', async (c) => {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
         variables: { field: 'tenant_id' },
       });
+    }
+    // ReBAC as the tenant's settings enable it (feature.enable_rebac).
+    if (!(await resolvePolicyFlags(c.env, tenantId)).rebac) {
+      return createErrorResponse(c, AR_ERROR_CODES.POLICY_FEATURE_DISABLED);
     }
 
     const request: ListObjectsRequest = {
@@ -832,13 +782,6 @@ rebacRoutes.post('/list-users', async (c) => {
     return createErrorResponse(c, AR_ERROR_CODES.AUTH_LOGIN_REQUIRED);
   }
 
-  // Check if ReBAC is enabled
-  const flagsManager = getFeatureFlagsManager(c.env);
-  const rebacEnabled = await flagsManager.getFlag('ENABLE_REBAC');
-  if (!rebacEnabled) {
-    return createErrorResponse(c, AR_ERROR_CODES.POLICY_FEATURE_DISABLED);
-  }
-
   const rebacService = getReBACService(c);
   if (!rebacService) {
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
@@ -856,6 +799,10 @@ rebacRoutes.post('/list-users', async (c) => {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
         variables: { field: 'tenant_id' },
       });
+    }
+    // ReBAC as the tenant's settings enable it (feature.enable_rebac).
+    if (!(await resolvePolicyFlags(c.env, tenantId)).rebac) {
+      return createErrorResponse(c, AR_ERROR_CODES.POLICY_FEATURE_DISABLED);
     }
 
     const request: ListUsersRequest = {
@@ -899,13 +846,6 @@ rebacRoutes.post(
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const log = getLogger(c as any).module('REBAC');
 
-    // Check if ReBAC is enabled
-    const flagsManager = getFeatureFlagsManager(c.env);
-    const rebacEnabled = await flagsManager.getFlag('ENABLE_REBAC');
-    if (!rebacEnabled) {
-      return createErrorResponse(c, AR_ERROR_CODES.POLICY_FEATURE_DISABLED);
-    }
-
     try {
       const body = await c.req.json<{
         tenant_id?: string;
@@ -932,6 +872,10 @@ rebacRoutes.post(
         return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
           variables: { field: 'tenant_id' },
         });
+      }
+      // ReBAC as the tenant's settings enable it (feature.enable_rebac).
+      if (!(await resolvePolicyFlags(c.env, tenantId)).rebac) {
+        return createErrorResponse(c, AR_ERROR_CODES.POLICY_FEATURE_DISABLED);
       }
       const tenantMismatch = rejectTenantMismatch(c, tenantId);
       if (tenantMismatch) {
@@ -1085,13 +1029,6 @@ rebacRoutes.delete(
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const log = getLogger(c as any).module('REBAC');
 
-    // Check if ReBAC is enabled
-    const flagsManager = getFeatureFlagsManager(c.env);
-    const rebacEnabled = await flagsManager.getFlag('ENABLE_REBAC');
-    if (!rebacEnabled) {
-      return createErrorResponse(c, AR_ERROR_CODES.POLICY_FEATURE_DISABLED);
-    }
-
     try {
       const body = await c.req.json<{
         tenant_id?: string;
@@ -1117,6 +1054,10 @@ rebacRoutes.delete(
         return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
           variables: { field: 'tenant_id' },
         });
+      }
+      // ReBAC as the tenant's settings enable it (feature.enable_rebac).
+      if (!(await resolvePolicyFlags(c.env, tenantId)).rebac) {
+        return createErrorResponse(c, AR_ERROR_CODES.POLICY_FEATURE_DISABLED);
       }
       const tenantMismatch = rejectTenantMismatch(c, tenantId);
       if (tenantMismatch) {

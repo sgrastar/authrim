@@ -1,0 +1,166 @@
+/* ============================================================
+   Theme-independent tokens.
+   Themes (../themes/*.css) redefine only the "theme contract" tokens listed in
+   ../themes/README.md: colours, surface material, shape and type. Spacing, sizes and
+   layout live here and are not themable, so a theme can never change information design.
+   ============================================================ */
+
+:root {
+	/* Horizontal sign. translateX has no logical direction, so anything mirrored in RTL
+	   multiplies by this. */
+	--dir: 1;
+
+	/* --- Layout metrics --- */
+	--header-h: 56px;
+	--subheader-h: 48px;
+	/* Wide enough for single long German compounds such as "Verzeichnisauthentifizierung". */
+	--sidebar-w: 252px;
+	/* Page widths: standard for forms and settings, wide for lists, tables and dashboards. */
+	--page-w-standard: 1100px;
+	--page-w-wide: 1600px;
+
+	/* --- Flow diagram ---
+	   Node width and side gutter decide the canvas width and where edges run. */
+	--flow-node-w: 216px;
+	--flow-gutter: 24px;
+	--flow-canvas-w: calc(var(--flow-node-w) + var(--flow-gutter) * 2);
+
+	/* --- Motion ---
+	   Entry reveal ported from ar-login-ui (auth-entry-reveal). Theme switch timings match the
+	   legacy Admin UI (1800ms fade, 2280ms wash). */
+	--entry-dur: 520ms;
+	--entry-ease: cubic-bezier(0.16, 1, 0.3, 1);
+	--entry-step: 55ms;
+	--theme-fade: 1800ms;
+	--theme-wash: 2280ms;
+	--theme-ease: cubic-bezier(0.22, 1, 0.36, 1);
+	/* The colour curve itself. Tokens are interpolated rather than elements, so this decides how
+	   colour progresses across the whole screen. Eased at both ends so perceived lightness (L*)
+	   changes in even steps instead of jumping early. */
+	--theme-color-ease: cubic-bezier(0.5, 0.2, 0.7, 0.95);
+	--flip-ease: cubic-bezier(0.32, 0.9, 0.2, 1.06);
+	--subflip-step: 40ms;
+
+	/* --- Shape scale (themes pick from these through --radius-control / --radius-panel) --- */
+	--radius-xs: 4px;
+	--radius-sm: 6px;
+	--radius-md: 10px;
+	--radius-lg: 14px;
+	--radius-round: 999px;
+
+	/* --- Type: sizes by role (Design rules › Typography). No other sizes. --- */
+	--fs-page-title: 24px; /* the page's h1 */
+	--fs-title-lg: 18px; /* a standalone card's title: sign-in, setup */
+	--fs-title: 16px; /* dialog titles */
+	--fs-heading: 14.5px; /* box titles: card, empty state, item card, danger zone */
+	--fs-body-lg: 14px; /* page text, large buttons */
+	--fs-control: 13.5px; /* text inside inputs and selects, the page description */
+	--fs-body: 13px; /* rows, cells, card text, buttons, checkbox labels */
+	--fs-label: 12.5px; /* field labels, secondary headings */
+	--fs-caption: 12px; /* hints, notes, meta, errors */
+	--fs-small: 11.5px; /* badges, second lines, table column heads */
+	--fs-overline: 10.5px; /* upper-case group labels (with tracking), diagram status */
+
+	/* Weights. The page title follows the theme's --heading-weight; nothing else does. */
+	--fw-regular: 400;
+	--fw-medium: 500; /* a line that leads (a part's role, the source text's owner) */
+	--fw-name: 550; /* names of things: options, list items, checkbox labels */
+	--fw-semibold: 600; /* labels, box titles, table heads, the current item */
+	--fw-bold: 700; /* upper-case overlines, counts */
+
+	--lh-tight: 1.25; /* titles and names that may wrap in a small box */
+	--lh-snug: 1.45; /* captions, notes, tooltips */
+	--lh-body: 1.55; /* running text */
+	--lh-relaxed: 1.7; /* paragraphs meant to be read: dialog bodies, notes */
+
+	/* --- Stacking (Design rules › Layers) ---
+	   Page layers, lowest first. Dialogs, the drawer and popovers (tips, select menus) use the
+	   browser's top layer and sit above all of these without a z-index. Inside a component,
+	   small local numbers (1-20) are fine under a root with isolation: isolate. */
+	--z-nav: 30; /* the sticky top nav */
+	--z-header: 40; /* the sticky header */
+	--z-save-bar: 45; /* the floating save bar */
+	--z-menu: 60; /* dropdown panels anchored in the page (Popover) */
+	--z-toast: 70; /* notifications */
+	--z-skip-link: 100; /* "skip to content", above everything when focused */
+
+	/* --- Control heights (Design rules › Controls) ---
+	   Controls on one line share a tier, so their edges line up. */
+	--control-h-lg: 42px; /* the one main action of a standalone card (sign-in) */
+	--control-h: 36px; /* buttons, text fields, selects */
+	--control-h-dense: 32px; /* icon buttons; inputs repeated in rows (options, translations) */
+	--control-h-sm: 28px; /* toolbars, table and pagination controls, small buttons */
+	--control-h-xs: 24px; /* switches, "?" tips: the smallest target (WCAG 2.2, 24 x 24) */
+
+	/* Icon sizes follow the text beside them. */
+	--icon-xs: 12px; /* with --fs-small / --fs-overline; carets, chevrons */
+	--icon-sm: 14px; /* with --fs-caption / --fs-label; small controls */
+	--icon-md: 16px; /* with --fs-body; buttons, menu rows */
+	--icon-lg: 18px; /* icon-only buttons, navigation */
+	--icon-xl: 22px; /* empty states, drop zones, placeholders */
+
+	/* --- Spacing between and inside boxes (Design rules › Spacing) ---
+	   Spacing inside a component (icon to text, label to control) is the component's own. */
+	--space-page-x: 30px;
+	--space-page-top: 26px;
+	--space-page-bottom: 60px;
+	--space-page-header: 20px; /* page header to the first box */
+	--space-section: 16px; /* boxes stacked on a page, panes side by side */
+	--space-grid: 12px; /* tiles of one set (ItemGrid) */
+	--space-columns: 24px; /* form columns inside a box */
+	--space-field: 14px; /* fields and settings inside a box, one below the other */
+	--space-related: 8px; /* a control and what belongs to it, buttons in a group */
+	--box-pad: 18px; /* box sides, and top and bottom of a box body */
+	--box-head-pad-y: 14px; /* box header, setting and danger rows */
+	--box-foot-pad-y: 12px; /* box footer */
+	--tile-pad: 14px; /* item card: a smaller box among many */
+	--dialog-pad-x: 24px; /* dialogs: a box on its own, a little roomier */
+	--dialog-pad-y: 20px;
+	--note-pad-y: 12px; /* callout: a note inside a box */
+	--note-pad-x: 14px;
+
+	/* --- Theme swatches: fixed previews of each look for the theme picker --- */
+	--swatch-standard-a: #eeeae3;
+	--swatch-standard-b: #2c2724;
+	--swatch-swiss-a: #f6f5f1;
+	--swatch-swiss-b: #ff4400;
+	--swatch-frosted-a: #e3e6ef;
+	--swatch-frosted-b: #3f4fc4;
+
+	/* --- Environment marker (reserved) ---
+	   Per-landscape header colour/label to prevent operating on the wrong environment.
+	   It will sit above the theme: whatever theme is chosen, production must stand out.
+	   Not wired yet; do not reuse these names for anything else. */
+	--env-marker-bg: transparent;
+	--env-marker-text: inherit;
+}
+
+[dir='rtl'] {
+	--dir: -1;
+}
+
+/* Page margins shrink with the screen (the same three breakpoints as the shell). */
+@media (max-width: 1024px) {
+	:root {
+		--space-page-x: 20px;
+		--space-page-top: 22px;
+		--space-page-bottom: 52px;
+	}
+}
+
+@media (max-width: 640px) {
+	:root {
+		--space-page-x: 16px;
+		--space-page-top: 18px;
+		--space-page-bottom: 44px;
+		/* Boxes step down with the page, so page margin > box padding > note padding holds. */
+		--box-pad: 14px;
+		--box-head-pad-y: 12px;
+		--box-foot-pad-y: 10px;
+		--note-pad-y: 10px;
+		--note-pad-x: 12px;
+		--tile-pad: 12px;
+		--dialog-pad-x: 18px;
+		--dialog-pad-y: 16px;
+	}
+}

@@ -2,7 +2,7 @@
  * Tests for Rate Limiting Middleware
  */
 
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { Hono } from 'hono';
 import type { Env } from '../../types/env';
 import {
@@ -1125,14 +1125,218 @@ describe('Rate Limiting Middleware', () => {
         } as unknown as Parameters<typeof getRateLimitProfileAsync>[2])
       ).resolves.toEqual(RateLimitProfiles.publicRead);
 
-      expect(waitUntil).toHaveBeenCalledTimes(1);
-      const scheduledRefresh = waitUntil.mock.calls[0]?.[0] as Promise<void> | undefined;
-      expect(scheduledRefresh).toBeDefined();
-      await scheduledRefresh;
+      // One refresh for the profile override, one for the profile's limits.
+      expect(waitUntil).toHaveBeenCalledTimes(2);
+      await Promise.all(waitUntil.mock.calls.map(([refresh]) => refresh));
       await expect(getRateLimitProfileAsync(mockEnv, 'publicRead')).resolves.toEqual({
         maxRequests: 123,
         windowSeconds: 45,
       });
+    });
+
+    it('applies the platform Settings API limits over the older per-profile values', async () => {
+      const configKV = createMockKV();
+      await configKV.put('rate_limit_strict_max_requests', '50');
+      await configKV.put('rate_limit_strict_window_seconds', '45');
+      const settingsKV = createMockKV();
+      await settingsKV.put(
+        'settings:platform:rate-limit',
+        JSON.stringify({ 'rate_limit.strict': 25, 'rate_limit.window_ms': 30000 })
+      );
+      mockEnv.AUTHRIM_CONFIG = configKV;
+      mockEnv.SETTINGS = settingsKV;
+      const waitUntil = vi.fn();
+
+      await getRateLimitProfileAsync(mockEnv, 'strict', {
+        waitUntil,
+      } as unknown as Parameters<typeof getRateLimitProfileAsync>[2]);
+      await Promise.all(waitUntil.mock.calls.map(([refresh]) => refresh));
+
+      await expect(getRateLimitProfileAsync(mockEnv, 'strict')).resolves.toEqual({
+        maxRequests: 25,
+        windowSeconds: 30,
+      });
+    });
+
+    it('keeps the older per-profile values where the Settings API sets nothing', async () => {
+      const configKV = createMockKV();
+      await configKV.put('rate_limit_moderate_max_requests', '80');
+      await configKV.put('rate_limit_moderate_window_seconds', '45');
+      mockEnv.AUTHRIM_CONFIG = configKV;
+      mockEnv.SETTINGS = createMockKV();
+      const waitUntil = vi.fn();
+
+      await getRateLimitProfileAsync(mockEnv, 'moderate', {
+        waitUntil,
+      } as unknown as Parameters<typeof getRateLimitProfileAsync>[2]);
+      await Promise.all(waitUntil.mock.calls.map(([refresh]) => refresh));
+
+      await expect(getRateLimitProfileAsync(mockEnv, 'moderate')).resolves.toEqual({
+        maxRequests: 80,
+        windowSeconds: 45,
+      });
+    });
+
+    it('keeps the last limits read when a later refresh fails, instead of the defaults', async () => {
+      let fail = false;
+      const settingsKV = createMockKV();
+      await settingsKV.put(
+        'settings:platform:rate-limit',
+        JSON.stringify({ 'rate_limit.strict': 1 })
+      );
+      mockEnv.AUTHRIM_CONFIG = createMockKV();
+      mockEnv.SETTINGS = {
+        get: vi.fn(async (key: string) => {
+          if (fail) throw new Error('kv unavailable');
+          return settingsKV.get(key);
+        }),
+      } as unknown as KVNamespace;
+      let now = Date.now();
+      const clock = vi.spyOn(Date, 'now').mockImplementation(() => now);
+      const refresh = async () => {
+        // Past every cache time (rate limit profiles, settings documents).
+        now += 10 * 60 * 1000;
+        const waitUntil = vi.fn();
+        const config = await getRateLimitProfileAsync(mockEnv, 'strict', {
+          waitUntil,
+        } as unknown as Parameters<typeof getRateLimitProfileAsync>[2]);
+        await Promise.all(waitUntil.mock.calls.map(([refresh]) => refresh));
+        return config;
+      };
+
+      await refresh();
+      expect((await refresh()).maxRequests).toBe(1);
+      fail = true;
+      await refresh();
+      expect((await refresh()).maxRequests).toBe(1);
+      clock.mockRestore();
+    });
+
+    describe('with a profile override and stores that stop answering', () => {
+      let now: number;
+      let clock: ReturnType<typeof vi.spyOn>;
+      const refreshAll = async (profile: keyof typeof RateLimitProfiles) => {
+        // Past every cache time (profiles, override, settings documents).
+        now += 10 * 60 * 1000;
+        const waitUntil = vi.fn();
+        await getRateLimitProfileAsync(mockEnv, profile, {
+          waitUntil,
+        } as unknown as Parameters<typeof getRateLimitProfileAsync>[2]);
+        await Promise.all(waitUntil.mock.calls.map(([refresh]) => refresh));
+        return waitUntil;
+      };
+
+      beforeEach(() => {
+        now = Date.now();
+        clock = vi.spyOn(Date, 'now').mockImplementation(() => now);
+      });
+      afterEach(() => clock.mockRestore());
+
+      it('keeps the override and its limits when the stores fail', async () => {
+        let fail = false;
+        const values = new Map<string, string>([
+          ['rate_limit_profile_override', 'strict'],
+          ['rate_limit_strict_window_seconds', '3600'],
+          ['settings:platform:rate-limit', JSON.stringify({ 'rate_limit.strict': 1 })],
+        ]);
+        const store = {
+          get: vi.fn(async (key: string) => {
+            if (fail) throw new Error('kv unavailable');
+            return values.get(key) ?? null;
+          }),
+        } as unknown as KVNamespace;
+        mockEnv.AUTHRIM_CONFIG = store;
+        mockEnv.SETTINGS = store;
+
+        await refreshAll('lenient');
+        await refreshAll('lenient');
+        await expect(getRateLimitProfileAsync(mockEnv, 'lenient')).resolves.toEqual({
+          maxRequests: 1,
+          windowSeconds: 3600,
+        });
+
+        fail = true;
+        await refreshAll('lenient');
+        await expect(getRateLimitProfileAsync(mockEnv, 'lenient')).resolves.toEqual({
+          maxRequests: 1,
+          windowSeconds: 3600,
+        });
+      });
+
+      it('switches to a new override only once its limits are read', async () => {
+        let settingsFail = false;
+        const values = new Map<string, string>([
+          ['rate_limit_profile_override', 'strict'],
+          [
+            'settings:platform:rate-limit',
+            JSON.stringify({ 'rate_limit.strict': 1, 'rate_limit.lenient': 1 }),
+          ],
+        ]);
+        const store = {
+          get: vi.fn(async (key: string) => {
+            if (settingsFail && key.startsWith('settings:')) throw new Error('kv unavailable');
+            return values.get(key) ?? null;
+          }),
+        } as unknown as KVNamespace;
+        mockEnv.AUTHRIM_CONFIG = store;
+        mockEnv.SETTINGS = store;
+
+        await refreshAll('moderate');
+        await refreshAll('moderate');
+        expect((await getRateLimitProfileAsync(mockEnv, 'moderate')).maxRequests).toBe(1);
+
+        values.set('rate_limit_profile_override', 'lenient');
+        settingsFail = true;
+        await refreshAll('moderate');
+        await refreshAll('moderate');
+        // Still strict (1): lenient's limits could not be read, so the switch waits.
+        expect((await getRateLimitProfileAsync(mockEnv, 'moderate')).maxRequests).toBe(1);
+
+        settingsFail = false;
+        await refreshAll('moderate');
+        await refreshAll('moderate');
+        expect((await getRateLimitProfileAsync(mockEnv, 'moderate')).maxRequests).toBe(1);
+      });
+
+      it('shares one refresh of the overriding profile between profiles', async () => {
+        const configKV = createMockKV();
+        await configKV.put('rate_limit_profile_override', 'loadTest');
+        mockEnv.AUTHRIM_CONFIG = configKV;
+        mockEnv.SETTINGS = createMockKV();
+        await refreshAll('strict');
+
+        now += 10 * 60 * 1000;
+        const get = vi.spyOn(configKV, 'get');
+        const waitUntil = vi.fn();
+        const ctx = { waitUntil } as unknown as Parameters<typeof getRateLimitProfileAsync>[2];
+        await Promise.all([
+          getRateLimitProfileAsync(mockEnv, 'strict', ctx),
+          getRateLimitProfileAsync(mockEnv, 'moderate', ctx),
+          getRateLimitProfileAsync(mockEnv, 'lenient', ctx),
+        ]);
+        await Promise.all(waitUntil.mock.calls.map(([refresh]) => refresh));
+
+        const reads = get.mock.calls.map(([key]) => key);
+        expect(reads.filter((key) => key === 'rate_limit_loadtest_max_requests')).toHaveLength(1);
+        expect(reads.filter((key) => key === 'rate_limit_profile_override')).toHaveLength(1);
+      });
+    });
+
+    it('keeps the limits it has when the settings cannot be read', async () => {
+      mockEnv.AUTHRIM_CONFIG = createMockKV();
+      mockEnv.SETTINGS = {
+        get: vi.fn().mockRejectedValue(new Error('kv unavailable')),
+      } as unknown as KVNamespace;
+      const waitUntil = vi.fn();
+
+      await getRateLimitProfileAsync(mockEnv, 'strict', {
+        waitUntil,
+      } as unknown as Parameters<typeof getRateLimitProfileAsync>[2]);
+      await Promise.all(waitUntil.mock.calls.map(([refresh]) => refresh));
+
+      await expect(getRateLimitProfileAsync(mockEnv, 'strict')).resolves.toEqual(
+        RateLimitProfiles.strict
+      );
     });
 
     it('should work with strict profile', async () => {

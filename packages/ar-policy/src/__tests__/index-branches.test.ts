@@ -81,69 +81,33 @@ describe('Policy service branch and failure behavior', () => {
       }
     );
 
-    it('returns flag sources with and without KV', async () => {
-      let response = await app.fetch(request('/api/policy/flags'), createEnv());
-      expect(response.status).toBe(200);
-      expect((await response.json()).kvEnabled).toBe(false);
-
-      response = await app.fetch(
-        request('/api/policy/flags'),
-        createEnv({ POLICY_FLAGS_KV: createKv() })
-      );
-      expect(response.status).toBe(200);
-      expect((await response.json()).kvEnabled).toBe(true);
-    });
-
-    it.each(['put', 'delete'] as const)(
-      '%s rejects unknown feature names and missing KV',
-      async (operation) => {
-        const method = operation.toUpperCase();
-        let response = await app.fetch(
-          request('/api/policy/flags/UNKNOWN', { method, body: { value: true } }),
-          createEnv()
-        );
-        expect(response.status).toBe(400);
-
-        response = await app.fetch(
-          request('/api/policy/flags/ENABLE_ABAC', { method, body: { value: true } }),
-          createEnv()
-        );
-        expect(response.status).toBe(500);
-      }
-    );
-
-    it('validates and persists boolean feature overrides', async () => {
-      const kv = createKv();
-      let response = await app.fetch(
-        request('/api/policy/flags/ENABLE_ABAC', {
-          method: 'PUT',
-          body: { value: 'true' },
-        }),
-        createEnv({ POLICY_FLAGS_KV: kv })
-      );
-      expect(response.status).toBe(400);
-
-      response = await app.fetch(
-        request('/api/policy/flags/ENABLE_ABAC', { method: 'PUT', body: { value: false } }),
-        createEnv({ POLICY_FLAGS_KV: kv })
-      );
-      expect(response.status).toBe(200);
-      expect(kv.put).toHaveBeenCalled();
-
-      response = await app.fetch(
-        request('/api/policy/flags/ENABLE_ABAC', { method: 'DELETE' }),
-        createEnv({ POLICY_FLAGS_KV: kv })
-      );
-      expect(response.status).toBe(200);
-      expect(kv.delete).toHaveBeenCalled();
-    });
-
-    it('maps unexpected flag storage failures to the global internal error handler', async () => {
+    it('returns the flags as the Settings API resolves them, with their sources', async () => {
       const response = await app.fetch(
-        request('/api/policy/flags/ENABLE_ABAC', { method: 'PUT', body: { value: true } }),
-        createEnv({ POLICY_FLAGS_KV: createKv({ throwOnWrite: true }) })
+        request('/api/policy/flags'),
+        createEnv({ ENABLE_ABAC: 'true' })
       );
-      expect(response.status).toBe(500);
+      expect(response.status).toBe(200);
+      const body = (await response.json()) as {
+        flags: Record<string, { value: boolean; source: string }>;
+      };
+      expect(body.flags.ENABLE_ABAC).toEqual({ value: true, source: 'env' });
+      expect(body.flags.ENABLE_CUSTOM_RULES).toEqual({ value: true, source: 'default' });
+    });
+
+    it('answers 503 when the flags cannot be read', async () => {
+      const response = await app.fetch(
+        request('/api/policy/flags'),
+        createEnv({ SETTINGS: { get: vi.fn().mockRejectedValue(new Error('kv down')) } })
+      );
+      expect(response.status).toBe(503);
+    });
+
+    it.each(['PUT', 'DELETE'])('%s points to the Settings API (410)', async (method) => {
+      const response = await app.fetch(
+        request('/api/policy/flags/ENABLE_ABAC', { method, body: { value: true } }),
+        createEnv()
+      );
+      expect(response.status).toBe(410);
     });
   });
 
@@ -254,16 +218,40 @@ describe('Policy service branch and failure behavior', () => {
       }
     );
 
-    it.each(['/batch-check', '/list-objects', '/list-users'])(
-      'fails closed when ReBAC is disabled: %s',
-      async (path) => {
-        const response = await app.fetch(
-          request(`/api/rebac${path}`, { method: 'POST', body: {} }),
-          createEnv({ ENABLE_REBAC: 'false' })
-        );
-        expect(response.status).toBe(403);
-      }
-    );
+    it.each([
+      [
+        '/batch-check',
+        { checks: [{ tenant_id: 't1', user_id: 'user:1', relation: 'viewer', object: 'doc:1' }] },
+      ],
+      [
+        '/list-objects',
+        { tenant_id: 't1', user_id: 'user:1', relation: 'viewer', object_type: 'doc' },
+      ],
+      ['/list-users', { tenant_id: 't1', object: 'doc:1', relation: 'viewer' }],
+    ])('fails closed when ReBAC is disabled: %s', async (path, body) => {
+      const response = await app.fetch(
+        request(`/api/rebac${path}`, { method: 'POST', body }),
+        createEnv({ ENABLE_REBAC: 'false' })
+      );
+      expect(response.status).toBe(403);
+    });
+
+    it("follows the tenant's Settings API value over env", async () => {
+      const settings = new Map<string, string>([
+        ['settings:tenant:t1:feature-flags', JSON.stringify({ 'feature.enable_rebac': false })],
+      ]);
+      const response = await app.fetch(
+        request('/api/rebac/list-users', {
+          method: 'POST',
+          body: { tenant_id: 't1', object: 'doc:1', relation: 'viewer' },
+        }),
+        createEnv({
+          ENABLE_REBAC: 'true',
+          SETTINGS: { get: vi.fn(async (key: string) => settings.get(key) ?? null) },
+        })
+      );
+      expect(response.status).toBe(403);
+    });
 
     it.each([
       ['/batch-check', {}],

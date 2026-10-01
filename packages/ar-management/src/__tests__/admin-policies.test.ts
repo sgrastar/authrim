@@ -1,3 +1,6 @@
+import { CHECK_API_CONDITION_TYPES, validatePolicyConditions } from '@authrim/ar-lib-policy';
+import { readFileSync } from 'node:fs';
+import { parse as parseYaml } from 'yaml';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
@@ -49,9 +52,23 @@ function context(
     body?: unknown;
     bodyError?: boolean;
     userId?: string;
+    /** The tenant's policy flags (Settings API feature-flags), or unreadable settings. */
+    flags?: Record<string, boolean> | 'unreadable';
   } = {}
 ) {
+  const flags = options.flags ?? {
+    'feature.enable_abac': true,
+    'feature.enable_verified_attributes': true,
+  };
   return {
+    env: {
+      SETTINGS: {
+        get: vi.fn(async (key: string) => {
+          if (flags === 'unreadable') throw new Error('kv unavailable');
+          return key === 'settings:tenant:tenant-a:feature-flags' ? JSON.stringify(flags) : null;
+        }),
+      },
+    },
     get: vi.fn((name: string) =>
       name === 'adminAuth' && options.userId ? { userId: options.userId } : undefined
     ),
@@ -164,6 +181,48 @@ describe('admin policies APIs', () => {
     [{}, 'Name is required'],
     [{ name: 'Rule' }, 'Valid effect is required'],
     [{ name: 'Rule', effect: 'invalid' }, 'Valid effect is required'],
+    [{ name: 'Rule', effect: 'deny', conditions: {} }, 'conditions must be an array'],
+    [
+      { name: 'Rule', effect: 'deny', conditions: [{ type: 'no_such_condition', params: {} }] },
+      'not a known condition type',
+    ],
+    [
+      { name: 'Rule', effect: 'deny', conditions: [{ type: 'has_role' }] },
+      'params must be an object',
+    ],
+    [{ name: 'Rule', effect: 'allow', actions: [1] }, 'actions must be an array of strings'],
+    [{ name: 'Rule', effect: 'deny', priority: 'high' }, 'priority must be an integer'],
+    [{ name: 'Rule', effect: 'allow', conditions: null }, 'conditions must be an array'],
+    [
+      {
+        name: 'Rule',
+        effect: 'deny',
+        conditions: [
+          {
+            type: 'attribute_equals',
+            params: { name: 'blocked', value: 'true', checkExpiry: false },
+          },
+        ],
+      },
+      'checkExpiry cannot be false',
+    ],
+    [{ name: 'Rule', effect: 'deny', priority: 1.5 }, 'priority must be an integer'],
+    [
+      {
+        name: 'Rule',
+        effect: 'deny',
+        conditions: [{ type: 'numeric_gte', params: { name: 'age' } }],
+      },
+      'params.value',
+    ],
+    [
+      {
+        name: 'Rule',
+        effect: 'deny',
+        conditions: [{ type: 'user_type_is', params: { types: ['contractor'] } }],
+      },
+      'cannot be evaluated here',
+    ],
   ])('validates create request %#', async (body, message) => {
     const response = await adminPolicyCreateHandler(context({ body }));
     expect(response.status).toBe(400);
@@ -208,6 +267,20 @@ describe('admin policies APIs', () => {
 
   it('does not update a missing policy', async () => {
     expect((await adminPolicyUpdateHandler(context({ body: {} }))).status).toBe(404);
+  });
+
+  it('refuses an update the Check API could not evaluate', async () => {
+    for (const body of [
+      { conditions: [{ type: 'attribute_equals' }] },
+      { effect: 'block' },
+      { conditions: null },
+      { resource_types: 'documents' },
+    ]) {
+      mocks.adapter.queryOne.mockResolvedValueOnce(rule());
+      const response = await adminPolicyUpdateHandler(context({ body }));
+      expect(response.status, JSON.stringify(body)).toBe(400);
+    }
+    expect(mocks.adapter.execute).not.toHaveBeenCalled();
   });
 
   it('treats an empty policy update as a successful no-op', async () => {
@@ -265,44 +338,140 @@ describe('admin policies APIs', () => {
     expect((await adminPolicySimulateHandler(context({ body: {} }))).status).toBe(400);
   });
 
-  it.each([false, true])('simulates enabled policies (save=%s)', async (save_history) => {
-    mocks.adapter.query.mockResolvedValueOnce([
-      rule(),
-      rule({ id: 'bad-json', conditions: '{', description: 'fallback' }),
-    ]);
+  const checkContext = (overrides: Record<string, unknown> = {}) => ({
+    subject: { id: 'user-1', roles: [] },
+    resource: { type: 'document', id: 'doc-1' },
+    action: { name: 'read' },
+    timestamp: Date.now(),
+    ...overrides,
+  });
+
+  it.each([false, true])(
+    'simulates enabled policies as checks do (save=%s)',
+    async (save_history) => {
+      mocks.adapter.query.mockResolvedValueOnce([rule()]);
+      const response = await adminPolicySimulateHandler(
+        context({ body: { context: checkContext(), save_history }, userId: 'admin-1' })
+      );
+      await expect(response.json()).resolves.toMatchObject({
+        allowed: true,
+        decided_by: 'rule-1',
+        evaluated_rules: 1,
+      });
+      expect(mocks.adapter.execute).toHaveBeenCalledTimes(save_history ? 1 : 0);
+    }
+  );
+
+  it('applies a rule only to its resource types and actions', async () => {
+    mocks.adapter.query.mockResolvedValueOnce([rule()]);
     const response = await adminPolicySimulateHandler(
-      context({ body: { context: { subject: { id: 'user-1' } }, save_history }, userId: 'admin-1' })
+      context({ body: { context: checkContext({ action: { name: 'write' } }) } })
+    );
+    await expect(response.json()).resolves.toMatchObject({ allowed: false });
+  });
+
+  it('grants nothing when a deny on the owner meets a request without one', async () => {
+    const rows = () => [
+      rule({
+        id: 'not-owner',
+        priority: 1000,
+        effect: 'deny',
+        conditions: JSON.stringify([{ type: 'is_resource_owner', params: {} }]),
+      }),
+      rule(),
+    ];
+    mocks.adapter.query.mockResolvedValueOnce(rows());
+    const withoutOwner = await adminPolicySimulateHandler(
+      context({ body: { context: checkContext() } })
+    );
+    await expect(withoutOwner.json()).resolves.toMatchObject({ allowed: false });
+
+    mocks.adapter.query.mockResolvedValueOnce(rows());
+    const otherOwner = await adminPolicySimulateHandler(
+      context({
+        body: { context: checkContext({ resource: { type: 'document', id: 'd', ownerId: 'u2' } }) },
+      })
+    );
+    await expect(otherOwner.json()).resolves.toMatchObject({ allowed: true });
+  });
+
+  it('grants nothing while a stored rule cannot be evaluated', async () => {
+    mocks.adapter.query.mockResolvedValueOnce([rule(), rule({ id: 'bad-json', conditions: '{' })]);
+    const response = await adminPolicySimulateHandler(
+      context({ body: { context: checkContext() } })
     );
     await expect(response.json()).resolves.toMatchObject({
-      allowed: true,
-      reason: 'matched',
+      allowed: false,
+      details: { unusable_rules: ['bad-json'] },
       evaluated_rules: 2,
     });
-    expect(mocks.addRules).toHaveBeenCalledWith([
-      expect.objectContaining({ id: 'rule-1', conditions: [] }),
-      expect.objectContaining({ id: 'bad-json', conditions: [] }),
+  });
+
+  it('shows what checks decide under the tenant settings', async () => {
+    mocks.adapter.query.mockResolvedValueOnce([rule()]);
+    const off = await adminPolicySimulateHandler(
+      context({ body: { context: checkContext() }, flags: { 'feature.enable_abac': false } })
+    );
+    await expect(off.json()).resolves.toMatchObject({
+      allowed: false,
+      details: { abac: false },
+    });
+
+    mocks.adapter.query.mockResolvedValueOnce([rule()]);
+    const unreadable = await adminPolicySimulateHandler(
+      context({ body: { context: checkContext() }, flags: 'unreadable' })
+    );
+    expect(unreadable.status).toBe(503);
+
+    // Verified attributes off: a deny on one could never apply, so the rules grant nothing.
+    mocks.adapter.query.mockResolvedValueOnce([
+      rule({
+        id: 'blocked',
+        priority: 1000,
+        effect: 'deny',
+        conditions: JSON.stringify([
+          { type: 'attribute_equals', params: { name: 'blocked', value: 'true' } },
+        ]),
+      }),
+      rule(),
     ]);
-    expect(mocks.adapter.execute).toHaveBeenCalledTimes(save_history ? 1 : 0);
+    const withoutAttributes = await adminPolicySimulateHandler(
+      context({ body: { context: checkContext() }, flags: { 'feature.enable_abac': true } })
+    );
+    await expect(withoutAttributes.json()).resolves.toMatchObject({ allowed: false });
+  });
+
+  it("evaluates the spec's simulation example as documented", async () => {
+    const spec = parseYaml(
+      readFileSync(new URL('../../openapi/admin.openapi.yaml', import.meta.url), 'utf8')
+    ) as {
+      components: { schemas: { AdminPolicySimulationRequest: { example: { context: unknown } } } };
+    };
+    const example = spec.components.schemas.AdminPolicySimulationRequest.example;
+    mocks.adapter.query.mockResolvedValueOnce([
+      rule({ resource_types: '["user"]', actions: '["read"]' }),
+    ]);
+
+    const response = await adminPolicySimulateHandler(
+      context({ body: { context: example.context } })
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({ allowed: true });
   });
 
   it('persists nullable simulation decision details correctly', async () => {
-    mocks.evaluate.mockReturnValueOnce({ allowed: false, reason: 'default deny' });
+    mocks.adapter.query.mockResolvedValueOnce([]);
     await adminPolicySimulateHandler(
-      context({ body: { context: { subject: { id: 'user-1' } }, save_history: true } })
+      context({ body: { context: checkContext(), save_history: true } })
     );
-    expect(mocks.adapter.execute.mock.calls[0][1]).toEqual(
-      expect.arrayContaining([0, 'default deny', null, null, null])
-    );
+    expect(mocks.adapter.execute.mock.calls[0][1]).toEqual(expect.arrayContaining([0, null, null]));
   });
 
   it('handles simulation failures', async () => {
     mocks.adapter.query.mockRejectedValueOnce(new Error('failure'));
     expect(
-      (
-        await adminPolicySimulateHandler(
-          context({ body: { context: { subject: { id: 'user-1' } } } })
-        )
-      ).status
+      (await adminPolicySimulateHandler(context({ body: { context: checkContext() } }))).status
     ).toBe(500);
   });
 
@@ -350,14 +519,52 @@ describe('admin policies APIs', () => {
     expect((await adminPolicySimulationsHandler(context())).status).toBe(500);
   });
 
-  it('returns complete condition metadata grouped into seven categories', async () => {
+  it('describes exactly the conditions a saved rule may use, with the names it must use', async () => {
     const body = (await (await adminConditionTypesHandler(context())).json()) as {
-      condition_types: Array<{ type: string }>;
-      categories: unknown[];
+      condition_types: Array<{
+        type: string;
+        category: string;
+        params: Array<{ name: string; type: string; required: boolean }>;
+      }>;
+      categories: Array<{ id: string }>;
     };
-    expect(body.categories).toHaveLength(7);
-    expect(body.condition_types.map((item) => item.type)).toEqual(
-      expect.arrayContaining(['has_role', 'attribute_equals', 'time_in_range', 'ip_in_range'])
+    expect(new Set(body.condition_types.map((item) => item.type))).toEqual(
+      new Set(CHECK_API_CONDITION_TYPES)
     );
+    const categories = new Set(body.categories.map((category) => category.id));
+    // Sample values a form would send for each parameter.
+    const sample = (name: string, type: string): unknown => {
+      if (name === 'scope') return 'org';
+      if (name === 'timezone') return 'Asia/Tokyo';
+      if (name === 'startHour') return 9;
+      if (name === 'endHour') return 17;
+      if (name === 'allowedDays') return [1, 2];
+      if (type === 'string[]') return ['a'];
+      if (type === 'number[]') return [1];
+      if (type === 'number') return 5;
+      if (type === 'boolean') return true;
+      return 'a';
+    };
+    for (const item of body.condition_types) {
+      expect(categories.has(item.category), item.type).toBe(true);
+      const all = Object.fromEntries(item.params.map((p) => [p.name, sample(p.name, p.type)]));
+      const required = Object.fromEntries(
+        item.params.filter((p) => p.required).map((p) => [p.name, sample(p.name, p.type)])
+      );
+      // What the legacy form sends when only the required fields are filled in: optional ones
+      // left at their starting values (empty text, empty lists, unset numbers) are left out.
+      const fromForm = Object.fromEntries(
+        item.params.filter((p) => p.required).map((p) => [p.name, sample(p.name, p.type)])
+      );
+      expect(fromForm).toEqual(required);
+      for (const params of [all, required]) {
+        expect(
+          validatePolicyConditions([{ type: item.type, params }], CHECK_API_CONDITION_TYPES, {
+            expiredAttributesKnown: false,
+          }),
+          `${item.type}: ${JSON.stringify(params)}`
+        ).toBeNull();
+      }
+    }
   });
 });

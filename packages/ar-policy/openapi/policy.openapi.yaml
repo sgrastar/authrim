@@ -31,34 +31,41 @@ paths:
       tags:
         - Policy
       summary: List policy feature flags.
+      description: >-
+        The flags as the Settings API resolves them (feature.enable_*) for the authenticated
+        tenant, else the platform, each with its source (kv, platform, env or default).
       responses:
         '200':
           $ref: '#/components/responses/List'
+        '503':
+          description: The flags cannot be read.
       security:
         - bearerAuth: []
   /api/policy/flags/{name}:
     put:
       tags:
         - Policy
-      summary: Upsert a policy feature flag.
+      summary: Upsert a policy feature flag (moved to the Settings API).
+      description: Policy feature flags are set through the Settings API (feature.enable_*).
       parameters:
         - $ref: '#/components/parameters/Name'
       requestBody:
         $ref: '#/components/requestBodies/PolicyFlagUpdate'
       responses:
-        '200':
-          $ref: '#/components/responses/PolicyFlagUpdate'
+        '410':
+          description: Set the flag through the Settings API instead.
       security:
         - bearerAuth: []
     delete:
       tags:
         - Policy
-      summary: Delete a policy feature flag.
+      summary: Delete a policy feature flag (moved to the Settings API).
+      description: Policy feature flags are set through the Settings API (feature.enable_*).
       parameters:
         - $ref: '#/components/parameters/Name'
       responses:
-        '200':
-          $ref: '#/components/responses/PolicyFlagDelete'
+        '410':
+          description: Clear the flag through the Settings API instead.
       security:
         - bearerAuth: []
   /api/policy/evaluate:

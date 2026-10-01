@@ -1123,6 +1123,13 @@ const fr: Translations = {
   'web.comp.adminUi': "UI d'Admin",
   'web.comp.adminUiDesc':
     'Tableau de bord admin pour gérer les tenants, clients, utilisateurs et paramètres système.',
+  'web.comp.adminUiVariant': 'Paquet de l’interface d’administration',
+  'web.comp.adminUiLegacy': 'Interface d’administration actuelle',
+  'web.comp.adminUiLegacyDesc':
+    'L’interface d’administration utilisée aujourd’hui, avec toutes les fonctionnalités.',
+  'web.comp.adminUiConsole': 'Console d’administration (aperçu)',
+  'web.comp.adminUiConsoleDesc':
+    'La console d’administration repensée. Les fonctionnalités sont ajoutées une à une ; les éléments pas encore reconstruits affichent un espace réservé. Même URL et mêmes clés d’accès administrateur que l’interface actuelle.',
 
   // Web UI Domain Row Labels
   'web.domain.loginUi': 'UI de Connexion',

@@ -1,0 +1,207 @@
+/* ============================================================
+   Global base: reset, document surface, focus, theme switch and entry motion.
+   Components style themselves; nothing here targets a component class.
+   ============================================================ */
+
+*,
+*::before,
+*::after {
+	box-sizing: border-box;
+}
+
+html,
+body {
+	margin: 0;
+	padding: 0;
+}
+
+html {
+	background: var(--bg-page);
+}
+
+body {
+	min-height: 100vh;
+	font-family: var(--font-sans);
+	font-size: var(--fs-body-lg);
+	line-height: var(--lh-body);
+	color: var(--text-primary);
+	background-color: var(--bg-page);
+	background-image: var(--page-backdrop);
+	background-attachment: fixed;
+	-webkit-font-smoothing: antialiased;
+}
+
+a {
+	color: inherit;
+	text-decoration: none;
+}
+
+button {
+	font: inherit;
+	color: inherit;
+	cursor: pointer;
+}
+
+button:disabled {
+	cursor: not-allowed;
+}
+
+/* Pressed: every button answers the press at once, before its action shows any result —
+   a slight push down and a darker face. Hover alone does not tell touch users anything.
+   Brightness works on any surface and theme, so components need no pressed colour of their
+   own. Buttons that are busy, disabled or loading do not react. */
+:where(button, [role='button']):not(:disabled, [aria-disabled='true']):active {
+	filter: brightness(0.93);
+	translate: 0 1px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	:where(button, [role='button']):not(:disabled, [aria-disabled='true']):active {
+		translate: none;
+	}
+}
+
+h1,
+h2,
+h3,
+h4 {
+	font-family: var(--font-display);
+}
+
+:focus-visible {
+	outline: 2px solid var(--focus-ring);
+	outline-offset: 2px;
+}
+
+.sr-only {
+	position: absolute;
+	width: 1px;
+	height: 1px;
+	margin: -1px;
+	padding: 0;
+	overflow: hidden;
+	clip: rect(0, 0, 0, 0);
+	white-space: nowrap;
+	border: 0;
+}
+
+/* Locked while a modal drawer or dialog is open. */
+body.is-scroll-locked {
+	overflow: hidden;
+}
+
+/* ============================================================
+   Entry reveal — 12px up, top element first (ported from ar-login-ui).
+   Delay is "row index × step", so rows can be added without renumbering.
+   Apply with the `reveal` action or `data-reveal` on a container.
+   ============================================================ */
+
+@keyframes entry-reveal {
+	from {
+		opacity: 0;
+		transform: translate3d(0, 12px, 0);
+	}
+	to {
+		opacity: 1;
+		transform: translate3d(0, 0, 0);
+	}
+}
+
+@media (prefers-reduced-motion: no-preference) {
+	/* `backwards`, not `both`: the end state is the element's own, and a transform kept after
+	   the animation would anchor `position: fixed` descendants (the save bar) to the element
+	   instead of the window. */
+	[data-reveal='on'] > * {
+		animation: entry-reveal var(--entry-dur) var(--entry-ease) backwards;
+		animation-delay: calc(var(--entry-i, 6) * var(--entry-step));
+	}
+	[data-reveal='on'] > :nth-child(1) {
+		--entry-i: 0;
+	}
+	[data-reveal='on'] > :nth-child(2) {
+		--entry-i: 1;
+	}
+	[data-reveal='on'] > :nth-child(3) {
+		--entry-i: 2;
+	}
+	[data-reveal='on'] > :nth-child(4) {
+		--entry-i: 3;
+	}
+	[data-reveal='on'] > :nth-child(5) {
+		--entry-i: 4;
+	}
+	[data-reveal='on'] > :nth-child(6) {
+		--entry-i: 5;
+	}
+}
+
+/* ============================================================
+   Theme switch — tokens are interpolated, and a light wash covers the screen once so
+   elements reaching their final colour at slightly different times read as one change.
+   Ported from the legacy Admin UI (theme-transitioning + authrim-dawn / dusk).
+   ============================================================ */
+
+html.theme-transitioning {
+	transition-property:
+		--bg-page, --bg-card, --bg-subtle, --bg-input, --bg-hover, --primary, --primary-hover,
+		--text-primary, --text-secondary, --text-muted, --text-inverse, --border, --border-strong,
+		--border-subtle, --focus-ring, --accent-enduser, --accent-client, --accent-tenant,
+		--accent-platform, --success, --success-bg, --warning, --warning-bg, --danger, --danger-bg,
+		--info, --info-bg, --info-text, --warning-text, --platform-text, --on-accent, --switch-off,
+		--switch-knob, --scrim, --code-comment, --code-string, --code-number, --code-keyword,
+		--code-literal, --code-property, --code-tag, --code-attr, --code-function, --code-variable,
+		--code-punct;
+	transition-duration: var(--theme-fade);
+	transition-timing-function: var(--theme-color-ease);
+}
+
+html.theme-transitioning::after {
+	content: '';
+	position: fixed;
+	inset: 0;
+	z-index: 9999;
+	pointer-events: none;
+	background: linear-gradient(180deg, rgba(226, 138, 88, 0.24), rgba(45, 59, 94, 0.32));
+	animation: theme-wash var(--theme-wash) var(--theme-ease) both;
+}
+
+html.theme-transitioning.theme-to-light::after {
+	background: linear-gradient(180deg, rgba(102, 138, 178, 0.2), rgba(244, 196, 132, 0.22));
+}
+
+@keyframes theme-wash {
+	0% {
+		opacity: 0;
+	}
+	18% {
+		opacity: 0.36;
+	}
+	44% {
+		opacity: 1;
+	}
+	68% {
+		opacity: 0.92;
+	}
+	100% {
+		opacity: 0;
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	html.theme-transitioning {
+		transition-property: none;
+	}
+	html.theme-transitioning::after {
+		display: none;
+		animation: none;
+	}
+}
+
+/* Identifiers, keys and routes read left to right inside right-to-left text (Design rules ›
+   Right-to-left). Isolated so the surrounding Arabic keeps its own order. */
+code,
+kbd,
+samp {
+	unicode-bidi: isolate;
+	direction: ltr;
+}

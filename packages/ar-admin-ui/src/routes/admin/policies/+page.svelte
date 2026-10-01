@@ -10,7 +10,9 @@
 		type PolicyContext,
 		type SimulationResult,
 		getCategoryIcon,
-		createEmptyContext
+		createEmptyContext,
+		conditionParamsForSave,
+		initialConditionParams
 	} from '$lib/api/admin-policies';
 	import { adminSettingsAPI } from '$lib/api/admin-settings';
 	import {
@@ -282,9 +284,11 @@
 	function addCondition() {
 		if (!selectedConditionType) return;
 
+		const typeInfo = conditionTypes.find((t) => t.type === selectedConditionType);
+		const params = conditionParamsForSave(typeInfo, conditionParams);
 		const condition: PolicyCondition = {
 			type: selectedConditionType as PolicyCondition['type'],
-			params: { ...conditionParams }
+			params
 		};
 
 		ruleForm.conditions = [...ruleForm.conditions, condition];
@@ -356,31 +360,31 @@
 				return $LL.admin_policies_condition_same_organization();
 			case 'attribute_equals':
 				return $LL.admin_policies_condition_attribute_equals({
-					attribute: String(params.attribute ?? ''),
+					attribute: String(params.name ?? ''),
 					value: String(params.value ?? '')
 				});
 			case 'attribute_exists':
 				return $LL.admin_policies_condition_attribute_exists({
-					attribute: String(params.attribute ?? '')
+					attribute: String(params.name ?? '')
 				});
 			case 'attribute_in':
 				return $LL.admin_policies_condition_attribute_in({
-					attribute: String(params.attribute ?? ''),
+					attribute: String(params.name ?? ''),
 					values: ((params.values as string[]) ?? []).join(', ')
 				});
 			case 'time_in_range':
 				return $LL.admin_policies_condition_time_in_range({
-					start: String(params.start_hour ?? ''),
-					end: String(params.end_hour ?? '')
+					start: String(params.startHour ?? ''),
+					end: String(params.endHour ?? '')
 				});
 			case 'day_of_week':
 				return $LL.admin_policies_condition_day_of_week({
-					days: ((params.days as number[]) ?? []).join(', ')
+					days: ((params.allowedDays as number[]) ?? []).join(', ')
 				});
 			case 'valid_during':
 				return $LL.admin_policies_condition_valid_during({
-					start: String(params.start ?? $LL.admin_policies_now()),
-					end: String(params.end ?? $LL.admin_policies_infinity())
+					start: String(params.from ?? $LL.admin_policies_now()),
+					end: String(params.to ?? $LL.admin_policies_infinity())
 				});
 			case 'country_in':
 				return $LL.admin_policies_condition_country_in({
@@ -395,15 +399,15 @@
 					cidr: String(params.cidr ?? '')
 				});
 			case 'numeric_gt':
-				return `${params.attribute} > ${params.threshold}`;
+				return `${params.name} > ${params.value}`;
 			case 'numeric_gte':
-				return `${params.attribute} >= ${params.threshold}`;
+				return `${params.name} >= ${params.value}`;
 			case 'numeric_lt':
-				return `${params.attribute} < ${params.threshold}`;
+				return `${params.name} < ${params.value}`;
 			case 'numeric_lte':
-				return `${params.attribute} <= ${params.threshold}`;
+				return `${params.name} <= ${params.value}`;
 			case 'numeric_between':
-				return `${params.min} <= ${params.attribute} <= ${params.max}`;
+				return `${params.min} <= ${params.name} <= ${params.max}`;
 			case 'request_count_lt':
 				return $LL.admin_policies_condition_request_count_lt({ limit: String(params.limit ?? '') });
 			case 'request_count_lte':
@@ -594,18 +598,7 @@
 			// Get the condition type metadata
 			const typeInfo = conditionTypes.find((t) => t.type === selectedConditionType);
 			if (typeInfo) {
-				// Initialize params with defaults
-				const newParams: Record<string, unknown> = {};
-				for (const param of typeInfo.params) {
-					if (param.type === 'string[]' || param.type === 'number[]') {
-						newParams[param.name] = [];
-					} else if (param.type === 'number') {
-						newParams[param.name] = 0;
-					} else {
-						newParams[param.name] = '';
-					}
-				}
-				conditionParams = newParams;
+				conditionParams = initialConditionParams(typeInfo);
 			}
 		}
 	});
@@ -1094,7 +1087,8 @@
 			<h3 class="section-subtitle">{formatConditionTypeLabel(typeInfo)}</h3>
 			<p class="muted">{formatConditionTypeDescription(typeInfo)}</p>
 
-			{#each typeInfo.params as param (param.name)}
+			<!-- Optional switches (such as checkExpiry) keep their defaults here. -->
+			{#each typeInfo.params.filter((p) => p.type !== 'boolean') as param (param.name)}
 				<div class="form-group">
 					<label for="param-{param.name}" class="form-label">
 						{formatParamLabel(param)}{param.required ? ' *' : ''}

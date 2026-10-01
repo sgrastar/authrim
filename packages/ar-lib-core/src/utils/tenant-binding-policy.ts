@@ -6,7 +6,7 @@ import {
   buildRequestIssuerUrl,
   getRequestHost,
 } from './issuer';
-import { getTenantSettings } from './tenant-settings';
+import { getTenantSettingsDocument } from './tenant-settings';
 
 export interface TenantBindingPolicy {
   allowedHosts: string[];
@@ -74,7 +74,11 @@ export async function getTenantBindingPolicy(
   env: Partial<Env>,
   tenantId: string
 ): Promise<TenantBindingPolicy> {
-  const settings = await getTenantSettings(kv, tenantId, 'tenant');
+  const settings = await getTenantSettingsDocument(
+    { SETTINGS: env.SETTINGS, AUTHRIM_CONFIG: kv },
+    tenantId,
+    'tenant'
+  );
   const configuredHosts = new Set<string>();
   const configuredIdentifiers = new Set<string>();
   const defaultIdentifiers = new Set<string>();

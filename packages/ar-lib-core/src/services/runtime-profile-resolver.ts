@@ -1,6 +1,6 @@
 import { ensureDatabaseAdapter, type DatabaseSource } from '../db/adapter-source';
 import { createSettingsManager } from '../utils/settings-manager';
-import { getTenantSettings } from '../utils/tenant-settings';
+import { getTenantSettingsDocument } from '../utils/tenant-settings';
 import { INFRASTRUCTURE_CATEGORY_META } from '../types/settings/infrastructure';
 import type { InfrastructureSettings } from '../types/settings/infrastructure';
 import type { TenantSettings } from '../types/settings/tenant';
@@ -74,10 +74,8 @@ export async function loadTenantProfileOverridesFromEnv(
   env: RuntimeProfileResolverEnv,
   tenantId: string
 ): Promise<TenantProfileOverrides> {
-  const authrimSettings = await getTenantSettings(env.AUTHRIM_CONFIG, tenantId, 'tenant');
-  const fallbackSettings =
-    authrimSettings ?? (await getTenantSettings(env.SETTINGS, tenantId, 'tenant'));
-  return readTenantProfileOverrides(fallbackSettings ?? undefined);
+  const settings = await getTenantSettingsDocument(env, tenantId, 'tenant');
+  return readTenantProfileOverrides(settings ?? undefined);
 }
 
 export function createRuntimeProfileRegistryFromEnv(

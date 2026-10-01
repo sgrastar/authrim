@@ -814,6 +814,36 @@ describe('AuthorizationCodeStore', () => {
   });
 
   describe('Code Expiration (60 seconds TTL)', () => {
+    it('uses the lifetime configured for the tenant or client when the caller passes one', async () => {
+      const now = vi.spyOn(Date, 'now').mockReturnValue(1_000_000);
+      try {
+        const configured = await codeStore.storeCodeRpc({
+          code: 'code-configured-ttl',
+          clientId: 'client_1',
+          tenantId: 'default',
+          redirectUri: 'https://app.example.com/callback',
+          userId: 'user_ttl',
+          scope: 'openid',
+          ttlSeconds: 30,
+        });
+        expect(configured.expiresAt).toBe(1_000_000 + 30_000);
+
+        const invalid = await codeStore.storeCodeRpc({
+          code: 'code-invalid-ttl',
+          clientId: 'client_1',
+          tenantId: 'default',
+          redirectUri: 'https://app.example.com/callback',
+          userId: 'user_ttl',
+          scope: 'openid',
+          ttlSeconds: -5,
+        });
+        // An unusable lifetime falls back to the store's own.
+        expect(invalid.expiresAt).toBeGreaterThan(1_000_000 + 30_000);
+      } finally {
+        now.mockRestore();
+      }
+    });
+
     it('should reject expired code', async () => {
       // Note: This test is difficult to implement without mocking time
       // In a real scenario, we would mock Date.now() or use a time-based library

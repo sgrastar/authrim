@@ -25,7 +25,7 @@ import {
   getLogger,
   // Tenant-aware utilities
   getTenantIdFromContext,
-  getTenantSettings,
+  getTenantSettingsDocument,
   adminAuthMiddleware,
 } from '@authrim/ar-lib-core';
 import { getRequestIssuer } from './issuer';
@@ -389,10 +389,14 @@ app.use('*', async (c, next) => {
   // Try to get allowed origins from KV (Settings Manager format)
   let allowedOriginsValue: string | undefined;
 
-  const tenantSettings = await getTenantSettings(
-    c.env.AUTHRIM_CONFIG,
+  const tenantSettings = await getTenantSettingsDocument(
+    c.env,
     getTenantIdFromContext(c),
-    'tenant'
+    'tenant',
+    {
+      // Without the tenant's settings the fallback is at least as strict.
+      onUnreadable: 'empty',
+    }
   );
   if (tenantSettings && typeof tenantSettings['tenant.allowed_origins'] === 'string') {
     allowedOriginsValue = tenantSettings['tenant.allowed_origins'];
@@ -749,7 +753,7 @@ app.get('/logged-out', async (c) => {
   }
 
   // Check UI configuration
-  const uiConfig = await getUIConfig(c.env);
+  const uiConfig = await getUIConfig(c.env, getTenantIdFromContext(c));
   if (uiConfig?.baseUrl) {
     const url = buildUIUrl(uiConfig, 'loggedOut');
     return c.redirect(url, 302);
@@ -980,7 +984,7 @@ app.get('/logout-error', async (c) => {
   }
 
   // Check UI configuration
-  const uiConfig = await getUIConfig(c.env);
+  const uiConfig = await getUIConfig(c.env, getTenantIdFromContext(c));
   if (uiConfig?.baseUrl) {
     const url = buildUIUrl(uiConfig, 'error', { error });
     return c.redirect(url, 302);

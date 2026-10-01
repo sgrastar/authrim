@@ -22,6 +22,12 @@ import type { KVNamespace } from '@cloudflare/workers-types';
 import type { DatabaseSource } from '../db';
 import { ensureDatabaseAdapter } from '../db';
 import type { ScopeType } from '../types/rbac';
+import { createLogger } from './logger';
+import {
+  resolveEffectiveSettingsWithSources,
+  resolvePlatformSettingsWithSources,
+  type EffectiveSettingsEnv,
+} from '../services/effective-settings';
 
 /**
  * Standard OIDC scopes that should not be treated as resource:action permissions
@@ -67,6 +73,8 @@ interface UserPermissionGrant {
 /**
  * Options for permission evaluation
  */
+const log = createLogger().module('POLICY_EMBEDDING');
+
 export interface PolicyEmbeddingOptions {
   /** KV namespace for caching (optional) */
   cache?: KVNamespace;
@@ -74,6 +82,11 @@ export interface PolicyEmbeddingOptions {
   cacheTTL?: number;
   /** Tenant ID for multi-tenant isolation */
   tenantId: string;
+  /**
+   * At most this many permissions (tenant-wide first, then scoped, in the order of the
+   * requested scope) are embedded (`limits.max_embedded_permissions`). No limit when absent.
+   */
+  maxPermissions?: number;
 }
 
 /**
@@ -309,6 +322,21 @@ export async function evaluatePermissionEmbeddingForScope(
     }
   }
 
+  const max = options.maxPermissions;
+  if (max !== undefined && Number.isSafeInteger(max) && max >= 0) {
+    const total = grantedPermissions.length + scopedPermissions.length;
+    if (total > max) {
+      const permissions = grantedPermissions.slice(0, max);
+      const scoped = scopedPermissions.slice(0, max - permissions.length);
+      log.warn('Embedded permissions truncated to the limit', {
+        tenantId,
+        limit: max,
+        requested: total,
+      });
+      return { permissions, scopedPermissions: scoped };
+    }
+  }
+
   return { permissions: grantedPermissions, scopedPermissions };
 }
 
@@ -330,29 +358,29 @@ export async function invalidatePermissionCache(
 }
 
 /**
- * Check if policy embedding feature is enabled
- *
- * Reads from KV first (dynamic override), then environment variable.
- *
- * @param env - Environment bindings
- * @returns true if policy embedding is enabled
+ * Whether policy embedding is on for a tenant: `feature.enable_policy_embedding` as the Settings
+ * API resolves it (tenant, else platform, else the older `policy:flags:ENABLE_POLICY_EMBEDDING`,
+ * else the ENABLE_POLICY_EMBEDDING environment variable, else off). Without a tenant, the
+ * platform's value. Off when the settings cannot be read (tokens then carry no embedded policy).
  */
-export async function isPolicyEmbeddingEnabled(env: {
-  SETTINGS?: KVNamespace;
-  ENABLE_POLICY_EMBEDDING?: string;
-}): Promise<boolean> {
-  // Check KV first (dynamic override)
-  if (env.SETTINGS) {
-    try {
-      const kvValue = await env.SETTINGS.get('policy:flags:ENABLE_POLICY_EMBEDDING');
-      if (kvValue !== null) {
-        return kvValue.toLowerCase() === 'true' || kvValue === '1';
-      }
-    } catch {
-      // Fall through to environment variable
-    }
+export async function isPolicyEmbeddingEnabled(
+  env: EffectiveSettingsEnv,
+  tenantId?: string
+): Promise<boolean> {
+  const keys = ['feature.enable_policy_embedding'];
+  try {
+    const { values } = tenantId
+      ? await resolveEffectiveSettingsWithSources(env, 'feature-flags', {
+          tenantId,
+          keys,
+          strictLegacy: true,
+        })
+      : await resolvePlatformSettingsWithSources(env, 'feature-flags', {
+          keys,
+          strictLegacy: true,
+        });
+    return values['feature.enable_policy_embedding'] === true;
+  } catch {
+    return false;
   }
-
-  // Fall back to environment variable
-  return env.ENABLE_POLICY_EMBEDDING === 'true';
 }

@@ -124,6 +124,30 @@ Common options:
 
 The Web UI serves static font files from the local setup server and does not load Google Fonts at runtime.
 
+### Admin UI package
+
+Only one Admin UI is deployed per environment. When the Admin UI component is enabled, choose
+which package fills it:
+
+| Choice                    | `components.adminUiVariant` | Package                      |
+| ------------------------- | --------------------------- | ---------------------------- |
+| Current Admin UI          | `legacy` (default)          | `packages/ar-admin-ui`       |
+| Admin console (preview)   | `console`                   | `packages/ar-admin-console`  |
+
+Both deploy into the same Worker (`{env}-ar-admin-ui`) with the same URL, API origin settings,
+router binding and Admin UI BFF machine credentials. Because the Admin UI host does not change,
+administrator passkeys (whose RP ID is that host) keep working after a switch. The admin console
+is being rebuilt feature by feature; items it has not rebuilt yet show a placeholder that names
+the current Admin UI pages they will replace.
+
+To switch an existing environment, set `components.adminUiVariant` in `.authrim/{env}/config.json`
+(or run `npx @authrim/setup --cli --config .authrim/prod/config.json` → Edit config → Components)
+and redeploy the Admin UI:
+
+```bash
+npx @authrim/setup deploy --env prod --component ar-admin-ui
+```
+
 ## Environment Files
 
 The current environment layout is:

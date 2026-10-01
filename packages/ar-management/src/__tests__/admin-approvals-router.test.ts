@@ -141,7 +141,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
       }
     },
     getTenantIdFromContext: vi.fn(() => 'tenant-a'),
-    getTenantSettings: mockGetTenantSettings,
+    getTenantSettingsDocument: mockGetTenantSettings,
     ApprovalRequestRepository: vi.fn(function MockApprovalRequestRepository() {
       return mockRequestRepo;
     }),
@@ -1906,7 +1906,7 @@ describe('admin approvals router', () => {
     expect(await res.json()).toMatchObject({
       error: 'self_approval_not_allowed',
     });
-    expect(mockGetTenantSettings).toHaveBeenCalledWith(mockEnv.SETTINGS, 'tenant-a', 'support-ops');
+    expect(mockGetTenantSettings).toHaveBeenCalledWith(mockEnv, 'tenant-a', 'support-ops');
     expect(mockApprovalRepo.updateApproval).not.toHaveBeenCalled();
     expect(mockRequestRepo.updateApprovalRequestStatus).not.toHaveBeenCalled();
   });

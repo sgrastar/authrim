@@ -1,0 +1,90 @@
+/* Self-hosted fonts (CSP font-src 'self'). SIL Open Font License. Only themes that name
+   these families load them; the standard theme uses system fonts. */
+
+@font-face {
+	font-family: 'Archivo';
+	font-style: normal;
+	font-weight: 400;
+	font-display: swap;
+	src: url('./archivo-400.ttf') format('truetype');
+}
+
+@font-face {
+	font-family: 'Archivo';
+	font-style: normal;
+	font-weight: 500;
+	font-display: swap;
+	src: url('./archivo-500.ttf') format('truetype');
+}
+
+@font-face {
+	font-family: 'Archivo';
+	font-style: normal;
+	font-weight: 600;
+	font-display: swap;
+	src: url('./archivo-600.ttf') format('truetype');
+}
+
+@font-face {
+	font-family: 'Archivo';
+	font-style: normal;
+	font-weight: 700;
+	font-display: swap;
+	src: url('./archivo-700.ttf') format('truetype');
+}
+
+@font-face {
+	font-family: 'Spline Sans Mono';
+	font-style: normal;
+	font-weight: 400;
+	font-display: swap;
+	src: url('./spline-sans-mono-400.ttf') format('truetype');
+}
+
+@font-face {
+	font-family: 'Spline Sans Mono';
+	font-style: normal;
+	font-weight: 500;
+	font-display: swap;
+	src: url('./spline-sans-mono-500.ttf') format('truetype');
+}
+
+@font-face {
+	font-family: 'Cinzel';
+	font-style: normal;
+	font-weight: 400;
+	font-display: swap;
+	src: url('./cinzel-400.ttf') format('truetype');
+}
+
+@font-face {
+	font-family: 'Schibsted Grotesk';
+	font-style: normal;
+	font-weight: 400;
+	font-display: swap;
+	src: url('./schibsted-grotesk-400.ttf') format('truetype');
+}
+
+@font-face {
+	font-family: 'Schibsted Grotesk';
+	font-style: normal;
+	font-weight: 500;
+	font-display: swap;
+	src: url('./schibsted-grotesk-500.ttf') format('truetype');
+}
+
+@font-face {
+	font-family: 'Schibsted Grotesk';
+	font-style: normal;
+	font-weight: 600;
+	font-display: swap;
+	src: url('./schibsted-grotesk-600.ttf') format('truetype');
+}
+
+@font-face {
+	font-family: 'Schibsted Grotesk';
+	font-style: normal;
+	font-weight: 700;
+	font-display: swap;
+	src: url('./schibsted-grotesk-700.ttf') format('truetype');
+}

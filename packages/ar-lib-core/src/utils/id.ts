@@ -6,6 +6,8 @@
  * - nanoid: NanoID (URL-safe, 21 chars, default for user IDs)
  */
 
+import { getTenantSettingsDocument, type TenantSettingsStores } from './tenant-settings';
+
 /**
  * Supported user ID formats
  */
@@ -129,14 +131,14 @@ function requireTenantId(tenantId: string, context: string): string {
 }
 
 /**
- * Get user ID format from tenant settings in KV storage
+ * Get the user ID format from the tenant's settings (`tenant.user_id_format`)
  *
- * @param kv - The KV namespace (AUTHRIM_CONFIG)
+ * @param stores - The KV namespaces tenant settings live in (the worker's env)
  * @param tenantId - The tenant ID
  * @returns The configured user ID format, or default if not set
  */
 export async function getUserIdFormatFromSettings(
-  kv: KVNamespace | undefined,
+  stores: TenantSettingsStores | undefined,
   tenantId: string,
   env?: UserIdFormatEnv
 ): Promise<UserIdFormat> {
@@ -146,39 +148,30 @@ export async function getUserIdFormatFromSettings(
     return envFormat;
   }
 
-  if (!kv) {
+  if (!stores) {
     return DEFAULT_USER_ID_FORMAT;
   }
 
-  try {
-    const kvData = await kv.get(`settings:tenant:${normalizedTenantId}:tenant`);
-    if (kvData) {
-      const settings = JSON.parse(kvData) as Record<string, unknown>;
-      const format = parseUserIdFormat(settings['tenant.user_id_format']);
-      if (format) {
-        return format;
-      }
-    }
-  } catch {
-    // Fall back to default on any error
-  }
-
-  return DEFAULT_USER_ID_FORMAT;
+  const settings = await getTenantSettingsDocument(stores, normalizedTenantId, 'tenant', {
+    // Without the tenant's settings the fallback is at least as strict.
+    onUnreadable: 'empty',
+  });
+  return parseUserIdFormat(settings?.['tenant.user_id_format']) ?? DEFAULT_USER_ID_FORMAT;
 }
 
 /**
  * Generate a user ID based on tenant settings
  * Convenience function that reads the format from KV and generates the ID
  *
- * @param kv - The KV namespace (AUTHRIM_CONFIG)
+ * @param stores - The KV namespaces tenant settings live in (the worker's env)
  * @param tenantId - The tenant ID
  * @returns Generated user ID string
  */
 export async function generateUserIdFromSettings(
-  kv: KVNamespace | undefined,
+  stores: TenantSettingsStores | undefined,
   tenantId: string,
   env?: UserIdFormatEnv
 ): Promise<string> {
-  const format = await getUserIdFormatFromSettings(kv, tenantId, env);
+  const format = await getUserIdFormatFromSettings(stores, tenantId, env);
   return generateUserId(format);
 }

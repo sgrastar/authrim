@@ -123,9 +123,31 @@ describe('request system-settings cache', () => {
     await expect(getSystemSettingsCached(c, env, { failOnError: true })).resolves.toMatchObject({
       fapi: { enabled: true },
     });
+    const readsForFirstCall = get.mock.calls.length;
     await expect(getSystemSettingsCached(c, env)).resolves.toMatchObject({
       fapi: { enabled: true },
     });
-    expect(get).toHaveBeenCalledTimes(2);
+    // The later caller in the same request reads nothing more.
+    expect(get).toHaveBeenCalledTimes(readsForFirstCall);
+  });
+  it('reads only the sections a caller needs, so an unrelated broken document does not fail it', async () => {
+    const c = createContext();
+    c.set('tenantId', 'tenant-a');
+    const get = vi.fn(async (key: string) => {
+      if (key === 'settings:platform:feature-flags') return 'not json';
+      return key === 'settings:tenant:tenant-a:security'
+        ? JSON.stringify({ 'security.fapi_enabled': true })
+        : null;
+    });
+    const env = { SETTINGS: { get } as unknown as KVNamespace } as Env;
+
+    await expect(
+      getSystemSettingsCached(c, env, { failOnError: true, sections: ['fapi'] })
+    ).resolves.toMatchObject({ fapi: { enabled: true } });
+    expect(get).not.toHaveBeenCalledWith('settings:platform:feature-flags');
+    // A caller needing that section does not reuse the narrower entry.
+    await expect(
+      getSystemSettingsCached(c, env, { failOnError: true, sections: ['conformance'] })
+    ).rejects.toThrow();
   });
 });

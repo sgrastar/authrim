@@ -56,8 +56,19 @@ export type {
 } from './types';
 
 // Policy Engine
-export { PolicyEngine, createDefaultPolicyEngine } from './engine';
+export {
+  PolicyEngine,
+  createDefaultPolicyEngine,
+  isKnownConditionType,
+  validatePolicyConditions,
+  CHECK_API_CONDITION_TYPES,
+  ATTRIBUTE_CONDITION_TYPES,
+} from './engine';
 export type { PolicyEngineConfig } from './engine';
+
+// A tenant's custom rules (Check API and policy simulation)
+export { toTenantPolicyRule, evaluateTenantRules, tenantRulesUnusableReason } from './tenant-rules';
+export type { TenantPolicyRule, TenantPolicyRuleRow } from './tenant-rules';
 
 // Role Checker utilities
 export {

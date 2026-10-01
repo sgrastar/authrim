@@ -266,6 +266,10 @@
             {
               "path": "037_tenant_backup_container_inputs.sql",
               "checksum": "9e4f77975a86706ac4d776980f76c61ac8aa89a846f60b9df8c832b477bb4306"
+            },
+            {
+              "path": "038_tenant_settings_reconciled_at.sql",
+              "checksum": "7eb35e565f8e8eb88fc16fac6c51bf11cd001421040e9421c664a899c35626a4"
             }
           ]
         },
@@ -707,6 +711,10 @@
         {
           "path": "037_tenant_backup_container_inputs.sql",
           "checksum": "9e4f77975a86706ac4d776980f76c61ac8aa89a846f60b9df8c832b477bb4306"
+        },
+        {
+          "path": "038_tenant_settings_reconciled_at.sql",
+          "checksum": "7eb35e565f8e8eb88fc16fac6c51bf11cd001421040e9421c664a899c35626a4"
         }
       ]
     },

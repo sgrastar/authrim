@@ -504,7 +504,12 @@ describe('Policy Service API', () => {
     it('should return 403 when ReBAC is not enabled', async () => {
       const req = createRequest('/api/rebac/check', {
         method: 'POST',
-        body: { user_id: 'user:123', relation: 'viewer', object: 'document:doc_1' },
+        body: {
+          tenant_id: 'default',
+          user_id: 'user:123',
+          relation: 'viewer',
+          object: 'document:doc_1',
+        },
       });
       const res = await app.fetch(req, mockEnv);
 

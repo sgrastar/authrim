@@ -48,6 +48,8 @@ import {
   ConflictError,
   ALL_CATEGORY_META,
   CATEGORY_SCOPE_CONFIG,
+  settingsParentScopes,
+  readLegacySettings,
   type CategoryName,
   type SettingScopeLevel,
   getScopedCategoryMeta,
@@ -74,6 +76,9 @@ import {
   validateTrustedRedirectOrigins,
   bumpAuthenticationMethodsCacheRevision,
   resolveClientTrustPolicy,
+  isValidUIPath,
+  TENANT_UI_PATH_KEYS,
+  validateTenantUIBaseUrlAsync,
 } from '@authrim/ar-lib-core';
 import {
   MAX_LOGIN_UI_PRIMARY_LOCALES,
@@ -404,6 +409,38 @@ function parsePatchRequest(rawBody: unknown): SettingsPatchRequest {
   };
 }
 
+/**
+ * A tenant's UI routing (`tenant.ui_*`): the base URL must be an allowed UI origin (the
+ * platform's or the tenant's issuer, localhost or ALLOWED_ORIGINS), and each path must stay on
+ * that host. The runtime checks the same, and skips a value that fails. Returns the problem, or
+ * null.
+ */
+async function validateTenantUIPatch(
+  body: SettingsPatchRequest,
+  env: Env,
+  tenantId: string
+): Promise<string | null> {
+  const baseUrl = body.set?.['tenant.ui_base_url'];
+  if (baseUrl !== undefined) {
+    if (typeof baseUrl !== 'string') return 'tenant.ui_base_url must be a string';
+    // An empty value would show as the tenant's own while sign-in used the platform's UI.
+    if (baseUrl === '') {
+      return "tenant.ui_base_url must not be empty; clear it to use the platform's UI";
+    }
+    const validation = await validateTenantUIBaseUrlAsync(baseUrl, env, tenantId);
+    if (!validation.valid) {
+      return `tenant.ui_base_url is not an allowed UI origin: ${validation.error ?? 'invalid'}`;
+    }
+  }
+  for (const key of Object.values(TENANT_UI_PATH_KEYS)) {
+    const path = body.set?.[key];
+    if (path !== undefined && !isValidUIPath(path)) {
+      return `${key} must be a path starting with a single / (no query or fragment)`;
+    }
+  }
+  return null;
+}
+
 function validateLoginUIPatch(body: SettingsPatchRequest): {
   ok: boolean;
   message?: string;
@@ -686,16 +723,67 @@ const settingsV2 = new Hono<{
 }>();
 
 /**
+ * Values saved in the older platform-wide stores for a category, shown as the platform value
+ * below the Settings API scopes (fresh, so a change made through the older API shows at once).
+ */
+async function legacySettingsFor(
+  env: Env,
+  category: string,
+  scope: SettingScope
+): Promise<Record<string, unknown>> {
+  const tenantId =
+    scope.type === 'tenant' ? scope.id : scope.type === 'client' ? scope.tenantId : undefined;
+  try {
+    return await readLegacySettings(env, category, { fresh: true, tenantId });
+  } catch (error) {
+    // Runtime refuses requests while these cannot be read; env or defaults are not the values.
+    throw new LegacySettingsUnavailableError(category, error);
+  }
+}
+
+/** The older store behind a category could not be read, so its effective values are unknown. */
+class LegacySettingsUnavailableError extends Error {
+  constructor(category: string, cause: unknown) {
+    super(`Settings stored by the older API for "${category}" cannot be read`, { cause });
+    this.name = 'LegacySettingsUnavailableError';
+  }
+}
+
+// A settings document (Settings API or older store) that cannot be read answers 503 on every
+// settings route, rather than the generic 500 (or values that are not the effective ones).
+settingsV2.use('*', async (c, next) => {
+  await next();
+  if (c.error instanceof LegacySettingsUnavailableError) {
+    c.res = errorResponse(c, 'temporarily_unavailable', c.error.message, 503);
+  } else if (
+    c.error instanceof Error &&
+    (c.error.message === 'settings_read_failed' || c.error.message === 'settings_data_invalid')
+  ) {
+    // A Settings API document that cannot be read: its values in effect are unknown.
+    c.res = errorResponse(c, 'temporarily_unavailable', 'Settings cannot be read', 503);
+  }
+});
+
+/**
  * Get or create SettingsManager for the request
  */
 function getSettingsManager(
   env: Env,
   auditContext?: Context<{ Bindings: Env; Variables: { adminAuth?: AdminAuthContext } }, string>,
-  canonicalTenantSettings = false
+  canonicalTenantSettings = false,
+  /**
+   * Refuse documents that cannot be read instead of reading them as empty: for views, which must
+   * not show env or defaults as the values in effect. Writes leave it off, so a broken document
+   * can still be replaced.
+   */
+  strictReads = false
 ): SettingsManager {
   const manager = createSettingsManager({
     env: env as unknown as Record<string, string | undefined>,
     kv: env.SETTINGS ?? null,
+    strictReads,
+    // Tenants created before settings were written to SETTINGS keep their creation-time copy.
+    legacyKv: env.AUTHRIM_CONFIG ?? null,
     canonicalStore: canonicalTenantSettings
       ? new DatabaseSettingsCanonicalStore(
           requireDedicatedAdminDatabaseAdapter(env, 'settings-canonical')
@@ -1357,11 +1445,14 @@ settingsV2.get('/tenants/:tenantId/settings/:category', async (c) => {
     return errorResponse(c, 'forbidden', 'Cannot access settings for this tenant', 403);
   }
 
-  const manager = getSettingsManager(c.env, c, true);
+  const manager = getSettingsManager(c.env, c, true, true);
   const scope: SettingScope = { type: 'tenant', id: tenantId };
 
   try {
-    const result = await manager.getAll(category, scope);
+    const result = await manager.getAll(category, scope, {
+      parents: settingsParentScopes(category, scope),
+      legacy: await legacySettingsFor(c.env, category, scope),
+    });
     return c.json(result);
   } catch (error) {
     if (error instanceof Error && error.message.includes('Unknown category')) {
@@ -1445,6 +1536,18 @@ settingsV2.patch(
             }
           }
 
+          if (category === 'tenant') {
+            const tenantUiError = await validateTenantUIPatch(body, c.env, tenantId);
+            if (tenantUiError) {
+              await recordSettingsAuditFailure(c, {
+                category,
+                scope,
+                reason: 'tenant_ui_validation_failed',
+              });
+              return errorResponse(c, 'validation_failed', tenantUiError, 400);
+            }
+          }
+
           const postLoginValidation = await validatePostLoginRelatedPatch(
             c.env,
             tenantId,
@@ -1474,7 +1577,10 @@ settingsV2.patch(
               ? await readScopedSettingsRecord(c.env, category, scope)
               : null;
 
-          const result = await manager.patch(category, scope, body, actor);
+          const result = await manager.patch(category, scope, body, actor, {
+            parents: settingsParentScopes(category, scope),
+            legacy: await legacySettingsFor(c.env, category, scope),
+          });
 
           if (
             category === 'login-entry' &&
@@ -1612,12 +1718,14 @@ settingsV2.get('/clients/:clientId/settings', async (c) => {
     );
   }
 
-  const manager = getSettingsManager(c.env, c, true);
+  const manager = getSettingsManager(c.env, c, true, true);
   const scope = { type: 'client', id: clientId, tenantId: clientTenantId } as SettingScope;
 
   try {
     // Client settings are stored under a single category
-    const result = await manager.getAll('client', scope);
+    const result = await manager.getAll('client', scope, {
+      parents: settingsParentScopes('client', scope),
+    });
     return c.json(result);
   } catch (error) {
     if (error instanceof Error && error.message.includes('Unknown category')) {
@@ -1673,11 +1781,14 @@ settingsV2.get('/clients/:clientId/settings/:category', async (c) => {
     );
   }
 
-  const manager = getSettingsManager(c.env, c, true);
+  const manager = getSettingsManager(c.env, c, true, true);
   const scope = { type: 'client', id: clientId, tenantId: clientTenantId } as SettingScope;
 
   try {
-    const result = await manager.getAll(category, scope);
+    const result = await manager.getAll(category, scope, {
+      parents: settingsParentScopes(category, scope),
+      legacy: await legacySettingsFor(c.env, category, scope),
+    });
     return c.json(result);
   } catch (error) {
     if (error instanceof Error && error.message.includes('Unknown category')) {
@@ -1773,7 +1884,9 @@ settingsV2.patch('/clients/:clientId/settings', async (c) => {
         }
 
         const actor = adminAuth?.userId ?? 'unknown';
-        const result = await manager.patch('client', scope, body, actor);
+        const result = await manager.patch('client', scope, body, actor, {
+          parents: settingsParentScopes('client', scope),
+        });
 
         const hasRejections = Object.keys(result.rejected).length > 0;
         const hasApplied =
@@ -1962,7 +2075,10 @@ settingsV2.patch('/clients/:clientId/settings/:category', async (c) => {
         }
 
         const actor = adminAuth?.userId ?? 'unknown';
-        const result = await manager.patch(category, scope, body, actor);
+        const result = await manager.patch(category, scope, body, actor, {
+          parents: settingsParentScopes(category, scope),
+          legacy: await legacySettingsFor(c.env, category, scope),
+        });
 
         const hasRejections = Object.keys(result.rejected).length > 0;
         const hasApplied =
@@ -2065,11 +2181,14 @@ settingsV2.get('/platform/settings/:category', async (c) => {
     return errorResponse(c, 'forbidden', 'Insufficient permissions to view platform settings', 403);
   }
 
-  const manager = getSettingsManager(c.env, c);
+  const manager = getSettingsManager(c.env, c, false, true);
   const scope: SettingScope = { type: 'platform' };
 
   try {
-    const result = await manager.getAll(category, scope);
+    const result = await manager.getAll(category, scope, {
+      parents: settingsParentScopes(category, scope),
+      legacy: await legacySettingsFor(c.env, category, scope),
+    });
     return c.json(result);
   } catch (error) {
     if (error instanceof Error && error.message.includes('Unknown category')) {
@@ -2152,7 +2271,10 @@ settingsV2.patch('/platform/settings/:category', (c) => {
           }
 
           const actor = adminAuth?.userId ?? 'unknown';
-          const result = await manager.patch(category, scope, body, actor);
+          const result = await manager.patch(category, scope, body, actor, {
+            parents: settingsParentScopes(category, scope),
+            legacy: await legacySettingsFor(c.env, category, scope),
+          });
           const hasRejections = Object.keys(result.rejected).length > 0;
           const hasApplied =
             result.applied.length > 0 || result.cleared.length > 0 || result.disabled.length > 0;

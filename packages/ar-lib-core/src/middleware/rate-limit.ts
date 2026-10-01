@@ -18,6 +18,12 @@ import { publishEvent } from '../utils/event-dispatcher-factory';
 import { SECURITY_EVENTS, type SecurityEventData } from '../types/events';
 import { getTenantIdFromContext } from './request-context';
 import { createLogger } from '../utils/logger';
+import { resolvePlatformSettingsWithSources } from '../services/effective-settings';
+import {
+  RATE_LIMIT_LEGACY_KEYS,
+  legacyRateLimitValues,
+  positiveRateLimitValue,
+} from '../services/legacy-settings';
 
 const log = createLogger().module('RATE-LIMIT');
 
@@ -966,6 +972,11 @@ interface CachedRateLimitConfig {
   cachedAt: number;
 }
 const rateLimitConfigCache = new Map<string, CachedRateLimitConfig>();
+/**
+ * The profile override last read (null: none), and when it was last checked. A failed check keeps
+ * the override last read and only moves `checkedAt`, so a store that cannot be read neither drops
+ * an override (loosening or tightening limits) nor is re-read on each request.
+ */
 let rateLimitProfileOverrideCache: {
   profile: keyof typeof RateLimitProfiles | null;
   cachedAt: number;
@@ -1006,42 +1017,77 @@ function getRateLimitKVKeys(profileName: string): {
   };
 }
 
+/**
+ * A profile's saved AUTHRIM_CONFIG limits over its defaults, read as the rate limiter always has
+ * (a positive integer). Throws when they cannot be read, so the caller keeps the limits it has.
+ */
 async function readRateLimitConfigFromKV(
   env: Env,
   profileName: keyof typeof RateLimitProfiles
 ): Promise<RateLimitConfig> {
   const defaultConfig = RateLimitProfiles[profileName];
-  let maxRequests: number = defaultConfig.maxRequests;
-  let windowSeconds: number = defaultConfig.windowSeconds;
+  if (!env.AUTHRIM_CONFIG) return { ...defaultConfig };
+  const { maxRequestsKey, windowSecondsKey } = getRateLimitKVKeys(profileName);
+  const [maxRequestsValue, windowSecondsValue] = await Promise.all([
+    env.AUTHRIM_CONFIG.get(maxRequestsKey),
+    env.AUTHRIM_CONFIG.get(windowSecondsKey),
+  ]);
+  return {
+    maxRequests: positiveRateLimitValue(maxRequestsValue) ?? defaultConfig.maxRequests,
+    windowSeconds: positiveRateLimitValue(windowSecondsValue) ?? defaultConfig.windowSeconds,
+  };
+}
 
+/** Profiles whose limits the Settings API sets for the whole platform. */
+const PROFILE_SETTING_KEYS: Partial<Record<keyof typeof RateLimitProfiles, string>> = {
+  strict: 'rate_limit.strict',
+  moderate: 'rate_limit.moderate',
+  lenient: 'rate_limit.lenient',
+};
+
+/**
+ * A profile's limits: for strict, moderate and lenient, the platform's Settings API values
+ * (`rate_limit.<profile>`, `rate_limit.window_ms`), else the older per-profile values, else env,
+ * else the defaults; for the other profiles, the older per-profile values or the defaults. The
+ * older values are read once and used for both. Throws when anything cannot be read, so the
+ * caller keeps the limits it has.
+ */
+async function readRateLimitProfileConfig(
+  env: Env,
+  profileName: keyof typeof RateLimitProfiles
+): Promise<RateLimitConfig> {
+  const key = PROFILE_SETTING_KEYS[profileName];
+  if (!key) return readRateLimitConfigFromKV(env, profileName);
+
+  const raw: Record<string, string | null> = {};
   if (env.AUTHRIM_CONFIG) {
-    const { maxRequestsKey, windowSecondsKey } = getRateLimitKVKeys(profileName);
-
-    try {
-      const [maxRequestsValue, windowSecondsValue] = await Promise.all([
-        env.AUTHRIM_CONFIG.get(maxRequestsKey),
-        env.AUTHRIM_CONFIG.get(windowSecondsKey),
-      ]);
-
-      if (maxRequestsValue) {
-        const parsed = parseInt(maxRequestsValue, 10);
-        if (!isNaN(parsed) && parsed > 0) {
-          maxRequests = parsed;
-        }
-      }
-
-      if (windowSecondsValue) {
-        const parsed = parseInt(windowSecondsValue, 10);
-        if (!isNaN(parsed) && parsed > 0) {
-          windowSeconds = parsed;
-        }
-      }
-    } catch (error) {
-      log.error('Failed to refresh rate limit config from KV', {}, error as Error);
-    }
+    const kv = env.AUTHRIM_CONFIG;
+    const values = await Promise.all(RATE_LIMIT_LEGACY_KEYS.map((name) => kv.get(name)));
+    RATE_LIMIT_LEGACY_KEYS.forEach((name, index) => (raw[name] = values[index]));
   }
-
-  return { maxRequests, windowSeconds };
+  const defaultConfig = RateLimitProfiles[profileName];
+  const { maxRequestsKey, windowSecondsKey } = getRateLimitKVKeys(profileName);
+  const ownWindow = positiveRateLimitValue(raw[windowSecondsKey]) ?? defaultConfig.windowSeconds;
+  const { values, sources } = await resolvePlatformSettingsWithSources(env, 'rate-limit', {
+    keys: [key, 'rate_limit.window_ms'],
+    legacy: legacyRateLimitValues(raw),
+  });
+  const maxRequests = values[key];
+  const windowMs = values['rate_limit.window_ms'];
+  return {
+    maxRequests:
+      typeof maxRequests === 'number' && Number.isSafeInteger(maxRequests) && maxRequests > 0
+        ? maxRequests
+        : (positiveRateLimitValue(raw[maxRequestsKey]) ?? defaultConfig.maxRequests),
+    // Unset, each profile keeps its own window.
+    windowSeconds:
+      sources['rate_limit.window_ms'] !== 'default' &&
+      typeof windowMs === 'number' &&
+      Number.isSafeInteger(windowMs / 1000) &&
+      windowMs >= 1000
+        ? windowMs / 1000
+        : ownWindow,
+  };
 }
 
 async function refreshRelaxedRateLimitOverrideAfterDenial(
@@ -1058,11 +1104,17 @@ async function refreshRelaxedRateLimitOverrideAfterDenial(
   }
   try {
     const value = await env.AUTHRIM_CONFIG.get(PROFILE_OVERRIDE_KV_KEY);
-    if (!value || !(value in RateLimitProfiles)) return null;
-    const profile = value as keyof typeof RateLimitProfiles;
-    const refreshed = await readRateLimitConfigFromKV(env, profile);
-    rateLimitProfileOverrideCache = { profile, cachedAt: Date.now() };
+    const profile =
+      value && value in RateLimitProfiles ? (value as keyof typeof RateLimitProfiles) : null;
+    if (!profile) {
+      // A removed override is published by the background check, with the limits it needs.
+      deniedOverrideRefreshCache = { config: null, checkedAt: Date.now() };
+      return null;
+    }
+    // Publish the override only with its limits read.
+    const refreshed = await readRateLimitProfileConfig(env, profile);
     rateLimitConfigCache.set(profile, { config: refreshed, cachedAt: Date.now() });
+    rateLimitProfileOverrideCache = { profile, cachedAt: Date.now() };
     const config = refreshed.maxRequests > current.maxRequests ? refreshed : null;
     deniedOverrideRefreshCache = { config, checkedAt: Date.now() };
     return config;
@@ -1136,20 +1188,25 @@ export async function getRateLimitProfileAsync(
     env.RATE_LIMIT_PROFILE && env.RATE_LIMIT_PROFILE in RateLimitProfiles
       ? (env.RATE_LIMIT_PROFILE as keyof typeof RateLimitProfiles)
       : null;
-  const cachedOverride =
-    rateLimitProfileOverrideCache && now - rateLimitProfileOverrideCache.cachedAt < cacheTTL
-      ? rateLimitProfileOverrideCache.profile
-      : null;
-  const overrideCacheFresh =
-    !!rateLimitProfileOverrideCache && now - rateLimitProfileOverrideCache.cachedAt < cacheTTL;
-  const effectiveProfile = cachedOverride ?? envProfile ?? profileName;
-  const cached = rateLimitConfigCache.get(effectiveProfile);
 
-  if (!overrideCacheFresh || !cached || now - cached.cachedAt >= cacheTTL) {
-    scheduleRateLimitProfileRefresh(env, profileName, ctx);
+  // The override last read applies until a later check replaces it (not when it goes stale).
+  if (!rateLimitProfileOverrideCache || now - rateLimitProfileOverrideCache.cachedAt >= cacheTTL) {
+    scheduleRateLimitRefresh('override', () => refreshRateLimitProfileOverride(env), ctx);
+  }
+  const effectiveProfile = rateLimitProfileOverrideCache?.profile ?? envProfile ?? profileName;
+
+  const cached = rateLimitConfigCache.get(effectiveProfile);
+  if (!cached || now - cached.cachedAt >= cacheTTL) {
+    scheduleRateLimitRefresh(
+      effectiveProfile,
+      () => refreshRateLimitProfileConfig(env, effectiveProfile),
+      ctx
+    );
   }
 
-  if (cached && now - cached.cachedAt < cacheTTL) {
+  // The last limits read, even past their refresh time: while a refresh runs or fails, limits set
+  // through the Settings API must not fall back to the (looser) defaults.
+  if (cached) {
     return cached.config;
   }
 
@@ -1158,48 +1215,97 @@ export async function getRateLimitProfileAsync(
   return config;
 }
 
-async function refreshRateLimitProfileFromKV(
+/**
+ * Check the profile override. A changed override is published only together with the limits of
+ * every profile it makes apply, so a switch never runs on a profile's defaults; a failed check
+ * (of the override or of those limits) keeps the override and limits last read.
+ */
+async function refreshRateLimitProfileOverride(env: Env): Promise<void> {
+  const keepCurrent = () => {
+    rateLimitProfileOverrideCache = {
+      profile: rateLimitProfileOverrideCache?.profile ?? null,
+      cachedAt: Date.now(),
+    };
+  };
+  let profile: keyof typeof RateLimitProfiles | null = null;
+  if (env.AUTHRIM_CONFIG) {
+    try {
+      const value = await env.AUTHRIM_CONFIG.get(PROFILE_OVERRIDE_KV_KEY);
+      profile =
+        value && value in RateLimitProfiles ? (value as keyof typeof RateLimitProfiles) : null;
+    } catch (error) {
+      keepCurrent();
+      throw error;
+    }
+  }
+  if (rateLimitProfileOverrideCache && rateLimitProfileOverrideCache.profile === profile) {
+    rateLimitProfileOverrideCache = { profile, cachedAt: Date.now() };
+    return;
+  }
+
+  // The profiles that apply after the change: the override, else RATE_LIMIT_PROFILE, else each
+  // caller's own profile (any of them).
+  const envProfile =
+    env.RATE_LIMIT_PROFILE && env.RATE_LIMIT_PROFILE in RateLimitProfiles
+      ? (env.RATE_LIMIT_PROFILE as keyof typeof RateLimitProfiles)
+      : null;
+  const targets = profile
+    ? [profile]
+    : envProfile
+      ? [envProfile]
+      : (Object.keys(RateLimitProfiles) as Array<keyof typeof RateLimitProfiles>);
+  let configs: RateLimitConfig[];
+  try {
+    configs = await Promise.all(targets.map((target) => readRateLimitProfileConfig(env, target)));
+  } catch (error) {
+    keepCurrent();
+    throw error;
+  }
+  const now = Date.now();
+  targets.forEach((target, index) =>
+    rateLimitConfigCache.set(target, { config: configs[index], cachedAt: now })
+  );
+  rateLimitProfileOverrideCache = { profile, cachedAt: now };
+}
+
+/** Read a profile's limits. A failed read keeps the limits last read, until the next cache time. */
+async function refreshRateLimitProfileConfig(
   env: Env,
   profileName: keyof typeof RateLimitProfiles
 ): Promise<void> {
-  const now = Date.now();
-  let effectiveProfile: keyof typeof RateLimitProfiles = profileName;
-
-  if (env.AUTHRIM_CONFIG) {
-    try {
-      const kvProfileOverride = await env.AUTHRIM_CONFIG.get(PROFILE_OVERRIDE_KV_KEY);
-      if (kvProfileOverride && kvProfileOverride in RateLimitProfiles) {
-        effectiveProfile = kvProfileOverride as keyof typeof RateLimitProfiles;
-        rateLimitProfileOverrideCache = { profile: effectiveProfile, cachedAt: now };
-      } else {
-        rateLimitProfileOverrideCache = { profile: null, cachedAt: now };
-      }
-    } catch {
-      rateLimitProfileOverrideCache = { profile: null, cachedAt: now };
-    }
+  let config: RateLimitConfig;
+  try {
+    config = await readRateLimitProfileConfig(env, profileName);
+  } catch (error) {
+    const previous = rateLimitConfigCache.get(profileName);
+    if (previous) rateLimitConfigCache.set(profileName, { ...previous, cachedAt: Date.now() });
+    throw error;
   }
-
-  if (effectiveProfile === profileName) {
-    if (env.RATE_LIMIT_PROFILE && env.RATE_LIMIT_PROFILE in RateLimitProfiles) {
-      effectiveProfile = env.RATE_LIMIT_PROFILE as keyof typeof RateLimitProfiles;
-    }
-  }
-
-  const config = await readRateLimitConfigFromKV(env, effectiveProfile);
-  rateLimitConfigCache.set(effectiveProfile, { config, cachedAt: Date.now() });
+  rateLimitConfigCache.set(profileName, { config, cachedAt: Date.now() });
 }
 
-function scheduleRateLimitProfileRefresh(
-  env: Env,
-  profileName: keyof typeof RateLimitProfiles,
+/**
+ * Refreshes in flight, by what they read (the override, or a profile's limits as applied), so
+ * concurrent requests share one read instead of each starting one.
+ */
+const refreshesInFlight = new Map<string, Promise<void>>();
+
+function scheduleRateLimitRefresh(
+  key: string,
+  run: () => Promise<void>,
   ctx?: HonoExecutionContext
 ): void {
-  if (!env.AUTHRIM_CONFIG) {
+  const inFlight = refreshesInFlight.get(key);
+  if (inFlight) {
+    ctx?.waitUntil(inFlight);
     return;
   }
-  const refresh = refreshRateLimitProfileFromKV(env, profileName).catch((error) => {
-    log.error('Failed to refresh rate limit profile from KV', {}, error as Error);
-  });
+  const refresh = run()
+    .catch((error) => {
+      log.error('Failed to refresh rate limit settings', { key }, error as Error);
+    })
+    .finally(() => refreshesInFlight.delete(key));
+  refreshesInFlight.set(key, refresh);
   if (ctx) {
     ctx.waitUntil(refresh);
     return;
@@ -1221,6 +1327,7 @@ export function getProfileOverrideKVKey(): string {
  */
 export function clearRateLimitConfigCache(): void {
   rateLimitConfigCache.clear();
+  refreshesInFlight.clear();
   rateLimitProfileOverrideCache = null;
   deniedOverrideRefreshCache = null;
 }

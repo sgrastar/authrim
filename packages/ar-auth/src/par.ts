@@ -335,7 +335,7 @@ export async function parHandler(c: Context<{ Bindings: Env }>): Promise<Respons
       const settings = await getTenantSystemSettings(
         c.env.SETTINGS,
         (clientMetadata.tenant_id as string) || getTenantIdFromContext(c),
-        { failOnError: true }
+        { failOnError: true, clientId: clientMetadata.client_id, sections: ['fapi'] }
       );
       if (settings) {
         fapiConfig = settings.fapi || {};

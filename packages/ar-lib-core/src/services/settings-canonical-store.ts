@@ -64,6 +64,24 @@ function decode(row: StoredRow): CanonicalSettingsDocument {
   return { data, version: row.version };
 }
 
+function toProjection(row: StoredRow): PendingSettingsProjection {
+  const scope: ScopedSetting =
+    row.scope_type === 'tenant'
+      ? { type: 'tenant', id: row.scope_id }
+      : { type: 'client', tenantId: row.tenant_id, id: row.scope_id };
+  const key = identity(row.category, scope);
+  if (key.tenantId !== row.tenant_id) invalid();
+  decode(row);
+  return {
+    tenantId: row.tenant_id,
+    scope,
+    category: row.category,
+    version: row.version,
+    documentJson: row.document_json,
+    storageKey: key.storageKey,
+  };
+}
+
 export class DatabaseSettingsCanonicalStore implements SettingsCanonicalStore {
   constructor(
     private readonly database: Database,
@@ -102,10 +120,11 @@ export class DatabaseSettingsCanonicalStore implements SettingsCanonicalStore {
   ): Promise<CanonicalSettingsDocument> {
     const key = identity(category, scope);
     const saved = document(value);
+    const now = this.timestamp();
     await this.database.execute(
       `INSERT INTO tenant_settings_documents
-      (tenant_id,scope_type,scope_id,category,document_json,version,revision,projection_state,updated_at,projected_at)
-      VALUES(?,?,?,?,?,?,1,'pending',?,NULL)
+      (tenant_id,scope_type,scope_id,category,document_json,version,revision,projection_state,updated_at,projected_at,reconciled_at)
+      VALUES(?,?,?,?,?,?,1,'pending',?,NULL,?)
       ON CONFLICT(tenant_id,scope_type,scope_id,category) DO NOTHING`,
       [
         key.tenantId,
@@ -114,7 +133,9 @@ export class DatabaseSettingsCanonicalStore implements SettingsCanonicalStore {
         key.category,
         saved.json,
         saved.version,
-        this.timestamp(),
+        now,
+        // New documents queue behind existing ones for reconciliation.
+        now,
       ]
     );
     const current = await this.load(category, scope);
@@ -157,10 +178,11 @@ export class DatabaseSettingsCanonicalStore implements SettingsCanonicalStore {
   ): Promise<CanonicalSettingsDocument> {
     const key = identity(category, scope);
     const saved = document(value);
+    const now = this.timestamp();
     await this.database.execute(
       `INSERT INTO tenant_settings_documents
-      (tenant_id,scope_type,scope_id,category,document_json,version,revision,projection_state,updated_at,projected_at)
-      VALUES(?,?,?,?,?,?,1,'pending',?,NULL)
+      (tenant_id,scope_type,scope_id,category,document_json,version,revision,projection_state,updated_at,projected_at,reconciled_at)
+      VALUES(?,?,?,?,?,?,1,'pending',?,NULL,?)
       ON CONFLICT(tenant_id,scope_type,scope_id,category) DO UPDATE SET
         document_json=excluded.document_json,
         version=excluded.version,
@@ -168,15 +190,7 @@ export class DatabaseSettingsCanonicalStore implements SettingsCanonicalStore {
         projection_state='pending',
         updated_at=excluded.updated_at,
         projected_at=NULL`,
-      [
-        key.tenantId,
-        key.scopeType,
-        key.scopeId,
-        key.category,
-        saved.json,
-        saved.version,
-        this.timestamp(),
-      ]
+      [key.tenantId, key.scopeType, key.scopeId, key.category, saved.json, saved.version, now, now]
     );
     return { data: sanitizeObject(value.data), version: saved.version };
   }
@@ -194,6 +208,18 @@ export class DatabaseSettingsCanonicalStore implements SettingsCanonicalStore {
     if (!result.success || result.rowsAffected !== 1) invalid();
   }
 
+  async markPending(category: string, scope: ScopedSetting, version: string): Promise<void> {
+    if (!/^sha256:[0-9a-f]{16}$/.test(version)) invalid();
+    const key = identity(category, scope);
+    // Only the given version: a newer save projects itself and must not be reset here.
+    const result = await this.database.execute(
+      `UPDATE tenant_settings_documents SET projection_state='pending', projected_at=NULL
+      WHERE tenant_id=? AND scope_type=? AND scope_id=? AND category=? AND version=?`,
+      [key.tenantId, key.scopeType, key.scopeId, key.category, version]
+    );
+    if (!result.success) invalid();
+  }
+
   async pending(limit = 25): Promise<PendingSettingsProjection[]> {
     if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) invalid();
     const rows = await this.database.query<StoredRow>(
@@ -202,22 +228,53 @@ export class DatabaseSettingsCanonicalStore implements SettingsCanonicalStore {
       ORDER BY updated_at,tenant_id,scope_type,scope_id,category LIMIT ?`,
       [limit]
     );
-    return rows.map((row) => {
-      const scope: ScopedSetting =
-        row.scope_type === 'tenant'
-          ? { type: 'tenant', id: row.scope_id }
-          : { type: 'client', tenantId: row.tenant_id, id: row.scope_id };
-      const key = identity(row.category, scope);
-      if (key.tenantId !== row.tenant_id) invalid();
-      decode(row);
-      return {
-        tenantId: row.tenant_id,
-        scope,
-        category: row.category,
-        version: row.version,
-        documentJson: row.document_json,
-        storageKey: key.storageKey,
-      };
-    });
+    return rows.map(toProjection);
+  }
+
+  /**
+   * Documents marked projected that changed since `since` (newest first). KV has no
+   * conditional write, so a slow projection of an older version can land after a newer one
+   * was projected and marked; the scheduled retry compares these with KV to repair that.
+   */
+  async recentlyProjected(since: number, limit = 25): Promise<PendingSettingsProjection[]> {
+    if (!Number.isSafeInteger(since) || since < 0) invalid();
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) invalid();
+    const rows = await this.database.query<StoredRow>(
+      `SELECT tenant_id,scope_type,scope_id,category,document_json,version
+      FROM tenant_settings_documents WHERE projection_state='applied' AND updated_at>=?
+      ORDER BY updated_at DESC,tenant_id,scope_type,scope_id,category LIMIT ?`,
+      [since, limit]
+    );
+    return rows.map(toProjection);
+  }
+
+  /**
+   * The documents compared with KV least recently, pending or projected (oldest first). The
+   * scheduled retry takes these and marks each one reconciled, so every document gets its turn
+   * whatever is added, removed or failing meanwhile: new documents queue behind existing ones,
+   * and one that keeps failing does not hold back the others.
+   */
+  async leastRecentlyReconciled(
+    limit = 25
+  ): Promise<Array<PendingSettingsProjection & { projectionState: 'pending' | 'applied' }>> {
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) invalid();
+    const rows = await this.database.query<StoredRow & { projection_state: 'pending' | 'applied' }>(
+      `SELECT tenant_id,scope_type,scope_id,category,document_json,version,projection_state
+      FROM tenant_settings_documents
+      ORDER BY reconciled_at,tenant_id,scope_type,scope_id,category LIMIT ?`,
+      [limit]
+    );
+    return rows.map((row) => ({ ...toProjection(row), projectionState: row.projection_state }));
+  }
+
+  /** Record that a document was compared with KV (or handed to the pending retry) now. */
+  async markReconciled(category: string, scope: ScopedSetting): Promise<void> {
+    const key = identity(category, scope);
+    const result = await this.database.execute(
+      `UPDATE tenant_settings_documents SET reconciled_at=max(reconciled_at,?)
+      WHERE tenant_id=? AND scope_type=? AND scope_id=? AND category=?`,
+      [this.timestamp(), key.tenantId, key.scopeType, key.scopeId, key.category]
+    );
+    if (!result.success) invalid();
   }
 }

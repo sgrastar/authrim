@@ -170,6 +170,8 @@ export const ASSURANCE_LEVELS_SETTINGS_META: Record<keyof AssuranceLevelsSetting
     envKey: 'ENABLE_NIST_ASSURANCE_LEVELS',
     label: 'Enable Assurance Levels',
     description: 'Enable explicit AAL/FAL/IAL tracking per NIST SP 800-63-4',
+    // No runtime reads it: saved through the older assurance-levels API for display only.
+    status: 'in_development',
   },
   'assurance.default_aal': {
     key: 'assurance.default_aal',
@@ -179,6 +181,8 @@ export const ASSURANCE_LEVELS_SETTINGS_META: Record<keyof AssuranceLevelsSetting
     label: 'Default AAL',
     description: 'Default Authentication Assurance Level',
     enum: ['AAL1', 'AAL2', 'AAL3'],
+    // No runtime reads it: saved through the older assurance-levels API for display only.
+    status: 'in_development',
   },
   'assurance.default_fal': {
     key: 'assurance.default_fal',
@@ -188,6 +192,8 @@ export const ASSURANCE_LEVELS_SETTINGS_META: Record<keyof AssuranceLevelsSetting
     label: 'Default FAL',
     description: 'Default Federation Assurance Level',
     enum: ['FAL1', 'FAL2', 'FAL3'],
+    // No runtime reads it: saved through the older assurance-levels API for display only.
+    status: 'in_development',
   },
   'assurance.default_ial': {
     key: 'assurance.default_ial',
@@ -197,6 +203,8 @@ export const ASSURANCE_LEVELS_SETTINGS_META: Record<keyof AssuranceLevelsSetting
     label: 'Default IAL',
     description: 'Default Identity Assurance Level for new users',
     enum: ['IAL1', 'IAL2', 'IAL3'],
+    // No runtime reads it: saved through the older assurance-levels API for display only.
+    status: 'in_development',
   },
   'assurance.scope_aal_requirements': {
     key: 'assurance.scope_aal_requirements',
@@ -205,6 +213,8 @@ export const ASSURANCE_LEVELS_SETTINGS_META: Record<keyof AssuranceLevelsSetting
     label: 'Scope AAL Requirements',
     description:
       'JSON mapping of scopes to minimum AAL (e.g., {"admin": "AAL2", "financial": "AAL3"})',
+    // No runtime reads it: saved through the older assurance-levels API for display only.
+    status: 'in_development',
   },
   'assurance.include_in_id_token': {
     key: 'assurance.include_in_id_token',
@@ -212,6 +222,8 @@ export const ASSURANCE_LEVELS_SETTINGS_META: Record<keyof AssuranceLevelsSetting
     default: true,
     label: 'Include in ID Token',
     description: 'Include acr/amr/aal/fal claims in ID tokens',
+    // No runtime reads it: saved through the older assurance-levels API for display only.
+    status: 'in_development',
   },
   'assurance.include_in_access_token': {
     key: 'assurance.include_in_access_token',
@@ -220,6 +232,8 @@ export const ASSURANCE_LEVELS_SETTINGS_META: Record<keyof AssuranceLevelsSetting
     label: 'Include in Access Token',
     description: 'Include assurance level claims in access tokens',
     visibility: 'admin',
+    // No runtime reads it: saved through the older assurance-levels API for display only.
+    status: 'in_development',
   },
   'assurance.fal2_requires_dpop': {
     key: 'assurance.fal2_requires_dpop',
@@ -228,6 +242,8 @@ export const ASSURANCE_LEVELS_SETTINGS_META: Record<keyof AssuranceLevelsSetting
     label: 'FAL2 Requires DPoP',
     description: 'Require DPoP proof-of-possession for FAL2 and higher',
     visibility: 'admin',
+    // No runtime reads it: saved through the older assurance-levels API for display only.
+    status: 'in_development',
   },
   'assurance.fal3_requires_par': {
     key: 'assurance.fal3_requires_par',
@@ -236,6 +252,8 @@ export const ASSURANCE_LEVELS_SETTINGS_META: Record<keyof AssuranceLevelsSetting
     label: 'FAL3 Requires PAR',
     description: 'Require Pushed Authorization Requests for FAL3',
     visibility: 'admin',
+    // No runtime reads it: saved through the older assurance-levels API for display only.
+    status: 'in_development',
   },
 };
 

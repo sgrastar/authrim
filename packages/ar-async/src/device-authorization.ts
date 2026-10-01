@@ -113,7 +113,7 @@ export async function deviceAuthorizationHandler(c: Context<{ Bindings: Env }>) 
     // Build verification URIs
     // Use UI config if available (for external UI), otherwise fall back to ISSUER_URL
     // tenant_hint is added to verification_uri_complete for UX branding (untrusted, security is via Host header)
-    const uiConfig = await getUIConfig(c.env);
+    const uiConfig = await getUIConfig(c.env, tenantId);
     let verificationBaseUrl: string;
 
     if (uiConfig?.baseUrl) {

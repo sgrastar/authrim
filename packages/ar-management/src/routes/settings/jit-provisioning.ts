@@ -9,7 +9,14 @@
  */
 
 import type { Context } from 'hono';
-import { type JITProvisioningConfig, DEFAULT_JIT_CONFIG, getLogger } from '@authrim/ar-lib-core';
+import {
+  type JITProvisioningConfig,
+  DEFAULT_JIT_CONFIG,
+  getLogger,
+  getTenantIdFromContext,
+  resolveEffectiveSettingsWithSources,
+} from '@authrim/ar-lib-core';
+import { SettingsUnavailableError, settingsUnavailableResponse } from './settings-unavailable';
 
 // =============================================================================
 // Constants
@@ -129,6 +136,28 @@ function mergeWithDefaults(config: Partial<JITProvisioningConfig>): JITProvision
 // =============================================================================
 
 /**
+ * Whether JIT provisioning is on for the request's tenant, as the bridge decides it: the
+ * tenant's `external_idp.jit_provisioning_enabled` (Settings API), else the saved document's
+ * `enabled` (a saved document without `enabled: true` disables it), else env, else on. Throws
+ * SettingsUnavailableError (503) when that cannot be read.
+ */
+async function effectiveEnabled(c: Context): Promise<{ enabled: boolean; source: string }> {
+  try {
+    const { values, sources } = await resolveEffectiveSettingsWithSources(c.env, 'external-idp', {
+      tenantId: getTenantIdFromContext(c),
+      keys: ['external_idp.jit_provisioning_enabled'],
+      freshLegacy: true,
+    });
+    return {
+      enabled: values['external_idp.jit_provisioning_enabled'] === true,
+      source: sources['external_idp.jit_provisioning_enabled'] ?? 'default',
+    };
+  } catch (error) {
+    throw new SettingsUnavailableError(error);
+  }
+}
+
+/**
  * GET /api/admin/settings/jit-provisioning
  * Get JIT Provisioning configuration
  */
@@ -140,8 +169,13 @@ export async function getJITProvisioningConfig(c: Context) {
 
     // Try KV first
     if (c.env.SETTINGS) {
+      let kvConfig: string | null;
       try {
-        const kvConfig = await c.env.SETTINGS.get(KV_KEY);
+        kvConfig = await c.env.SETTINGS.get(KV_KEY);
+      } catch (error) {
+        throw new SettingsUnavailableError(error);
+      }
+      try {
         if (kvConfig) {
           const parsed = JSON.parse(kvConfig) as Partial<JITProvisioningConfig>;
           if (parsed && typeof parsed === 'object' && validateConfig(parsed).length === 0) {
@@ -150,16 +184,21 @@ export async function getJITProvisioningConfig(c: Context) {
           }
         }
       } catch {
-        // KV error, use default
+        // Invalid document, shown as the defaults (enabled below is what applies)
       }
     }
 
+    const enabled = await effectiveEnabled(c);
     return c.json({
-      config,
+      config: { ...config, enabled: enabled.enabled },
       source,
+      // Where `enabled` comes from, as the Settings API reports it: 'kv' (set for this tenant),
+      // 'platform' (the saved document), 'env' or 'default'.
+      enabled_source: enabled.source,
       defaults: DEFAULT_JIT_CONFIG,
     });
   } catch (error) {
+    if (error instanceof SettingsUnavailableError) return settingsUnavailableResponse(c);
     log.error('Get error', {}, error as Error);
     return c.json(
       {
@@ -234,11 +273,14 @@ export async function updateJITProvisioningConfig(c: Context) {
     // Save to KV
     await c.env.SETTINGS.put(KV_KEY, JSON.stringify(newConfig));
 
+    const enabled = await effectiveEnabled(c);
     return c.json({
-      config: newConfig,
-      message: 'JIT Provisioning configuration updated',
+      config: { ...newConfig, enabled: enabled.enabled },
+      message:
+        'JIT Provisioning configuration updated. A value set for the tenant through the Settings API (external_idp.jit_provisioning_enabled) takes precedence over enabled.',
     });
   } catch (error) {
+    if (error instanceof SettingsUnavailableError) return settingsUnavailableResponse(c);
     log.error('Update error', {}, error as Error);
     return c.json(
       {
@@ -269,11 +311,13 @@ export async function resetJITProvisioningConfig(c: Context) {
   try {
     await c.env.SETTINGS.delete(KV_KEY);
 
+    const enabled = await effectiveEnabled(c);
     return c.json({
-      config: DEFAULT_JIT_CONFIG,
+      config: { ...DEFAULT_JIT_CONFIG, enabled: enabled.enabled },
       message: 'JIT Provisioning configuration reset to defaults',
     });
   } catch (error) {
+    if (error instanceof SettingsUnavailableError) return settingsUnavailableResponse(c);
     log.error('Reset error', {}, error as Error);
     return c.json(
       {

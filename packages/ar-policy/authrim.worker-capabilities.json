@@ -5,6 +5,12 @@
   "requiredDataRoles": ["tenant_core/default", "tenant_core/users"],
   "bindings": [
     {
+      "name": "SETTINGS",
+      "kind": "kv_namespace",
+      "required": true,
+      "capability": "settings.read"
+    },
+    {
       "name": "REBAC_CACHE",
       "kind": "kv_namespace",
       "required": true,

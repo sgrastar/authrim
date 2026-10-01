@@ -758,11 +758,7 @@ async function createImportedUser(
       idempotencyKey: operationId,
       candidateOperationId: operationId,
       requestHash: await hashAccountCreationRequest(JSON.parse(JSON.stringify(input))),
-      candidateUserId: await generateUserIdFromSettings(
-        runtime.env.AUTHRIM_CONFIG,
-        runtime.tenantId,
-        runtime.env
-      ),
+      candidateUserId: await generateUserIdFromSettings(runtime.env, runtime.tenantId, runtime.env),
       email: input.email,
       residencyPolicyId: runtime.env.DEFAULT_RESIDENCY_PROFILE_ID ?? 'builtin:residency:default',
       residencyPartition: 'default',

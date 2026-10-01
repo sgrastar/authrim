@@ -21,7 +21,12 @@
  */
 
 import type { Context } from 'hono';
-import { getLogger, type Env } from '@authrim/ar-lib-core';
+import { getLogger, getTenantIdFromContext, type Env } from '@authrim/ar-lib-core';
+import {
+  readTenantSettingsView,
+  SettingsUnavailableError,
+  settingsUnavailableResponse,
+} from './settings-unavailable';
 
 // Default ACR values per OIDC Core / SAML 2.0 specification
 const DEFAULT_SUPPORTED_ACR_VALUES = [
@@ -36,7 +41,8 @@ const DEFAULT_SUPPORTED_ACR_VALUES = [
 const DEFAULT_FAPI_SETTINGS = {
   enabled: false, // FAPI 2.0 mode disabled by default
   strictDPoP: true, // When FAPI is enabled, strict DPoP validation is on by default
-  allowPublicClients: false, // FAPI 2.0 requires confidential clients
+  // Unset allows public clients, as runtime does; enable FAPI's check by setting it to false.
+  allowPublicClients: true,
 };
 
 interface FapiSecuritySettings {
@@ -73,9 +79,13 @@ interface FapiSecuritySettingsSources {
 }
 
 /**
- * Get current FAPI/Security settings (hybrid: KV > env > default)
+ * Get current FAPI/Security settings (hybrid: KV > env > default). For a tenant, its view: with
+ * values set through the Settings API, as runtime applies them.
  */
-export async function getFapiSecuritySettings(env: Env): Promise<{
+export async function getFapiSecuritySettings(
+  env: Env,
+  tenantId?: string
+): Promise<{
   settings: FapiSecuritySettings;
   sources: FapiSecuritySettingsSources;
 }> {
@@ -101,12 +111,29 @@ export async function getFapiSecuritySettings(env: Env): Promise<{
     sources.oidc.supportedAcrValues = 'env';
   }
 
+  // Public clients under FAPI: env when nothing is saved, as authorization reads it (only 'false'
+  // or '0' refuses them).
+  const envAllowsPublicClients = env.FAPI_ALLOW_PUBLIC_CLIENTS;
+  if (envAllowsPublicClients !== undefined) {
+    settings.fapi.allowPublicClients =
+      envAllowsPublicClients.toLowerCase() !== 'false' && envAllowsPublicClients !== '0';
+    sources.fapi.allowPublicClients = 'env';
+  }
+
+  // For a tenant: its view, as runtime reads it; unreadable settings throw (503), not defaults.
+  const tenantSettings = tenantId
+    ? await readTenantSettingsView<SystemSettings>(env, tenantId, ['fapi'])
+    : undefined;
+
   // Check KV (takes priority)
   try {
-    const settingsJson = await env.SETTINGS?.get('system_settings');
-    if (settingsJson) {
-      const systemSettings = JSON.parse(settingsJson) as SystemSettings;
-
+    const systemSettings =
+      tenantSettings !== undefined
+        ? tenantSettings
+        : (JSON.parse(
+            (await env.SETTINGS?.get('system_settings')) ?? 'null'
+          ) as SystemSettings | null);
+    if (systemSettings) {
       // FAPI settings from KV
       if (systemSettings.fapi?.enabled !== undefined) {
         settings.fapi.enabled = systemSettings.fapi.enabled === true;
@@ -161,7 +188,7 @@ export async function getStrictDPoPSetting(env: Env): Promise<boolean> {
 export async function getFapiSecurityConfig(c: Context<{ Bindings: Env }>) {
   const log = getLogger(c).module('FapiSecurityAPI');
   try {
-    const { settings, sources } = await getFapiSecuritySettings(c.env);
+    const { settings, sources } = await getFapiSecuritySettings(c.env, getTenantIdFromContext(c));
 
     return c.json({
       settings: {
@@ -199,6 +226,7 @@ export async function getFapiSecurityConfig(c: Context<{ Bindings: Env }>) {
       note: 'FAPI 2.0 enforces PAR, PKCE S256, and confidential clients. strictDPoP rejects invalid DPoP proofs when enabled.',
     });
   } catch (error) {
+    if (error instanceof SettingsUnavailableError) return settingsUnavailableResponse(c);
     log.error('Error getting settings', {}, error as Error);
     return c.json(
       {
@@ -365,7 +393,7 @@ export async function updateFapiSecurityConfig(c: Context<{ Bindings: Env }>) {
     await c.env.SETTINGS.put('system_settings', JSON.stringify(systemSettings));
 
     // Get updated settings
-    const { settings } = await getFapiSecuritySettings(c.env);
+    const { settings } = await getFapiSecuritySettings(c.env, getTenantIdFromContext(c));
 
     return c.json({
       success: true,
@@ -373,6 +401,7 @@ export async function updateFapiSecurityConfig(c: Context<{ Bindings: Env }>) {
       note: 'FAPI/Security settings updated successfully.',
     });
   } catch (error) {
+    if (error instanceof SettingsUnavailableError) return settingsUnavailableResponse(c);
     log.error('Error updating settings', {}, error as Error);
     // SECURITY: Do not expose internal error details
     return c.json(
@@ -423,7 +452,7 @@ export async function clearFapiSecurityConfig(c: Context<{ Bindings: Env }>) {
     }
 
     // Get updated settings (will fall back to env/default)
-    const { settings, sources } = await getFapiSecuritySettings(c.env);
+    const { settings, sources } = await getFapiSecuritySettings(c.env, getTenantIdFromContext(c));
 
     return c.json({
       success: true,
@@ -432,6 +461,7 @@ export async function clearFapiSecurityConfig(c: Context<{ Bindings: Env }>) {
       note: 'FAPI/Security settings cleared. Using env/default values.',
     });
   } catch (error) {
+    if (error instanceof SettingsUnavailableError) return settingsUnavailableResponse(c);
     log.error('Error clearing settings', {}, error as Error);
     // SECURITY: Do not expose internal error details
     return c.json(

@@ -1046,6 +1046,12 @@ const zhCN: Translations = {
   'web.comp.loginUiDesc': '面向用户的登录、注册、同意和账户管理页面。',
   'web.comp.adminUi': '管理 UI',
   'web.comp.adminUiDesc': '用于管理租户、客户端、用户和系统设置的管理仪表板。',
+  'web.comp.adminUiVariant': '管理界面版本',
+  'web.comp.adminUiLegacy': '当前管理界面',
+  'web.comp.adminUiLegacyDesc': '目前使用的管理界面，包含全部功能。',
+  'web.comp.adminUiConsole': '管理控制台（预览）',
+  'web.comp.adminUiConsoleDesc':
+    '重新设计的管理控制台。功能将逐步加入，尚未重建的项目会显示占位页面。与当前管理界面使用相同的 URL 和管理员通行密钥。',
 
   // Web UI Domain Row Labels
   'web.domain.loginUi': '登录 UI',

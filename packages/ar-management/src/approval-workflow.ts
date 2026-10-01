@@ -12,7 +12,7 @@ import type {
   ElevationGrantRepository,
   Env,
 } from '@authrim/ar-lib-core';
-import { ApprovalRequestApprovalRepository, getTenantSettings } from '@authrim/ar-lib-core';
+import { ApprovalRequestApprovalRepository, getTenantSettingsDocument } from '@authrim/ar-lib-core';
 import { appendApprovalTransportEvent } from './approval-transport-detail';
 
 type AppContext = Context<any, any, any>;
@@ -34,9 +34,7 @@ function isBooleanTrue(value: unknown): boolean {
 
 async function isSupportOpsSelfApprovalAllowed(c: AppContext, tenantId: string): Promise<boolean> {
   const env = c.env as Env | undefined;
-  const settings =
-    (await getTenantSettings(env?.SETTINGS, tenantId, 'support-ops')) ??
-    (await getTenantSettings(env?.AUTHRIM_CONFIG, tenantId, 'support-ops'));
+  const settings = await getTenantSettingsDocument(env ?? {}, tenantId, 'support-ops');
 
   return isBooleanTrue(settings?.['support_ops.allow_self_approval']);
 }

@@ -24,7 +24,17 @@
  */
 
 import type { Context } from 'hono';
-import { getDefaultTenantId, getLogger, type Env } from '@authrim/ar-lib-core';
+import {
+  getDefaultTenantId,
+  getLogger,
+  getTenantIdFromContext,
+  type Env,
+} from '@authrim/ar-lib-core';
+import {
+  readTenantSettingsView,
+  SettingsUnavailableError,
+  settingsUnavailableResponse,
+} from './settings-unavailable';
 
 // Default settings (for security, default is OFF = RFC 7662 standard behavior)
 const DEFAULT_SETTINGS = {
@@ -56,7 +66,10 @@ interface IntrospectionValidationSettingsSources {
 /**
  * Get current Introspection Validation settings (hybrid: KV > env > default)
  */
-export async function getIntrospectionValidationSettings(env: Env): Promise<{
+export async function getIntrospectionValidationSettings(
+  env: Env,
+  tenantId?: string
+): Promise<{
   settings: IntrospectionValidationSettings;
   sources: IntrospectionValidationSettingsSources;
 }> {
@@ -77,11 +90,21 @@ export async function getIntrospectionValidationSettings(env: Env): Promise<{
     sources.expectedAudience = 'env';
   }
 
+  // For a tenant: its view of the settings, with values set through the Settings API. It is read
+  // fail-closed: settings that cannot be read throw rather than silently relaxing validation.
+  const tenantSettings = tenantId
+    ? await readTenantSettingsView<SystemSettings>(env, tenantId, ['oidc'])
+    : undefined;
+
   // Check KV (takes priority)
   try {
-    const settingsJson = await env.SETTINGS?.get('system_settings');
-    if (settingsJson) {
-      const systemSettings = JSON.parse(settingsJson) as SystemSettings;
+    const systemSettings =
+      tenantSettings !== undefined
+        ? tenantSettings
+        : (JSON.parse(
+            (await env.SETTINGS?.get('system_settings')) ?? 'null'
+          ) as SystemSettings | null);
+    if (systemSettings) {
       const kvSettings = systemSettings.oidc?.introspectionValidation;
 
       if (kvSettings?.strictValidation !== undefined) {
@@ -140,7 +163,10 @@ export async function getIntrospectionExpectedAudience(env: Env): Promise<string
 export async function getIntrospectionValidationConfig(c: Context<{ Bindings: Env }>) {
   const log = getLogger(c).module('IntrospectionValidationAPI');
   try {
-    const { settings, sources } = await getIntrospectionValidationSettings(c.env);
+    const { settings, sources } = await getIntrospectionValidationSettings(
+      c.env,
+      getTenantIdFromContext(c)
+    );
 
     return c.json({
       settings: {
@@ -162,6 +188,7 @@ export async function getIntrospectionValidationConfig(c: Context<{ Bindings: En
       note: 'RFC 7662 does not require aud/client_id validation. Enable strictValidation for additional security checks.',
     });
   } catch (error) {
+    if (error instanceof SettingsUnavailableError) return settingsUnavailableResponse(c);
     log.error('Error getting settings', {}, error as Error);
     return c.json(
       {
@@ -276,7 +303,7 @@ export async function updateIntrospectionValidationConfig(c: Context<{ Bindings:
     await c.env.SETTINGS.put('system_settings', JSON.stringify(systemSettings));
 
     // Get updated settings
-    const { settings } = await getIntrospectionValidationSettings(c.env);
+    const { settings } = await getIntrospectionValidationSettings(c.env, getTenantIdFromContext(c));
 
     return c.json({
       success: true,
@@ -284,6 +311,7 @@ export async function updateIntrospectionValidationConfig(c: Context<{ Bindings:
       note: 'Introspection validation settings updated successfully.',
     });
   } catch (error) {
+    if (error instanceof SettingsUnavailableError) return settingsUnavailableResponse(c);
     // Log full error details for debugging but don't expose to client
     log.error('Error updating settings', {}, error as Error);
     // SECURITY: Do not expose internal error details in response
@@ -330,7 +358,10 @@ export async function clearIntrospectionValidationConfig(c: Context<{ Bindings: 
     }
 
     // Get updated settings (will fall back to env/default)
-    const { settings, sources } = await getIntrospectionValidationSettings(c.env);
+    const { settings, sources } = await getIntrospectionValidationSettings(
+      c.env,
+      getTenantIdFromContext(c)
+    );
 
     return c.json({
       success: true,
@@ -339,6 +370,7 @@ export async function clearIntrospectionValidationConfig(c: Context<{ Bindings: 
       note: 'Introspection validation settings cleared. Using env/default values.',
     });
   } catch (error) {
+    if (error instanceof SettingsUnavailableError) return settingsUnavailableResponse(c);
     log.error('Error clearing settings', {}, error as Error);
     return c.json(
       {

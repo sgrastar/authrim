@@ -29,7 +29,7 @@ import {
   generateId,
   generateUserIdFromSettings,
   getTenantIdFromContext,
-  getTenantSettings,
+  getTenantSettingsDocument,
   parseAllowedOrigins,
   isAllowedOrigin,
   // Logger
@@ -88,7 +88,10 @@ function toBase64URLString(input: CredentialIDLike): string {
 async function getAllowedOriginsFromKV(env: Env, tenantId: string): Promise<string[]> {
   let allowedOriginsValue: string | undefined;
 
-  const settings = await getTenantSettings(env.AUTHRIM_CONFIG, tenantId, 'tenant');
+  const settings = await getTenantSettingsDocument(env, tenantId, 'tenant', {
+    // Without the tenant's settings the fallback is at least as strict.
+    onUnreadable: 'empty',
+  });
   if (settings && typeof settings['tenant.allowed_origins'] === 'string') {
     allowedOriginsValue = settings['tenant.allowed_origins'];
   }
@@ -526,7 +529,7 @@ setupApp.post('/api/admin-init-setup/initialize', async (c) => {
 
     // Create user in database
     const tenantId = getTenantIdFromContext(c);
-    const userId = await generateUserIdFromSettings(c.env.AUTHRIM_CONFIG, tenantId, c.env);
+    const userId = await generateUserIdFromSettings(c.env, tenantId, c.env);
 
     const adminAdapter = requireDedicatedAdminDatabaseAdapter(c.env, 'setup-admin');
     const adminUserRepo = new AdminUserRepository(adminAdapter);

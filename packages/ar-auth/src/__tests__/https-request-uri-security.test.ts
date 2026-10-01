@@ -231,6 +231,53 @@ describe('HTTPS Request URI Security', () => {
       expect(error.get('error_description')).toContain('PAR');
     });
 
+    it('keeps HTTPS request_uri disabled when the Settings API says so, even if env enables it', async () => {
+      const settings = new MockKVNamespace();
+      await settings.put(
+        'settings:tenant:default:oauth',
+        JSON.stringify({ 'oauth.https_request_uri_enabled': false })
+      );
+      const env = {
+        ...mockEnv,
+        SETTINGS: settings as unknown as KVNamespace,
+        ENABLE_HTTPS_REQUEST_URI: 'true',
+      } as Env;
+
+      const response = await app.request(
+        '/authorize?response_type=code&client_id=test-client&redirect_uri=https://example.com/callback&scope=openid&request_uri=https://malicious.com/request-object.jwt',
+        { method: 'GET' },
+        env
+      );
+
+      const error = getRedirectedOAuthError(response);
+      expect(error.get('error')).toBe('request_uri_not_supported');
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+
+    it('refuses HTTPS request_uri without fetching when its settings cannot be read', async () => {
+      const env = {
+        ...mockEnv,
+        SETTINGS: {
+          get: async (key: string) => {
+            if (key === 'settings:tenant:default:oauth') throw new Error('kv unavailable');
+            return null;
+          },
+        } as unknown as KVNamespace,
+        ENABLE_HTTPS_REQUEST_URI: 'true',
+        HTTPS_REQUEST_URI_ALLOWED_DOMAINS: 'malicious.com',
+      } as Env;
+
+      const response = await app.request(
+        '/authorize?response_type=code&client_id=test-client&redirect_uri=https://example.com/callback&scope=openid&request_uri=https://malicious.com/request-object.jwt',
+        { method: 'GET' },
+        env
+      );
+
+      const error = getRedirectedOAuthError(response);
+      expect(error.get('error')).toBe('temporarily_unavailable');
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+
     it('should preserve state when returning a request_uri error to a validated client', async () => {
       const response = await app.request(
         '/authorize?response_type=code&client_id=test-client&redirect_uri=https://example.com/callback&scope=openid&state=state-123&request_uri=https://malicious.com/request-object.jwt',
@@ -257,7 +304,7 @@ describe('HTTPS Request URI Security', () => {
     });
 
     it('should not redirect a request_uri error for a client from another tenant', async () => {
-      mockGetClient.mockResolvedValueOnce({
+      mockGetClient.mockResolvedValue({
         client_id: 'test-client',
         tenant_id: 'other-tenant',
         redirect_uris: ['https://example.com/callback'],
@@ -275,6 +322,35 @@ describe('HTTPS Request URI Security', () => {
       expect(response.headers.get('location')).toBeNull();
       const body = (await response.json()) as ErrorResponse;
       expect(body.error).toBe('request_uri_not_supported');
+    });
+
+    it('refuses HTTPS request_uri for an unknown client without reading settings or fetching', async () => {
+      mockGetClient.mockResolvedValue(null);
+      const settingsKeys: string[] = [];
+      const env = {
+        ...mockEnv,
+        SETTINGS: {
+          get: async (key: string) => {
+            settingsKeys.push(key);
+            return null;
+          },
+        } as unknown as KVNamespace,
+        ENABLE_HTTPS_REQUEST_URI: 'true',
+        HTTPS_REQUEST_URI_ALLOWED_DOMAINS: 'malicious.com',
+      } as Env;
+
+      const response = await app.request(
+        '/authorize?response_type=code&client_id=unknown-client&redirect_uri=https://example.com/callback&scope=openid&request_uri=https://malicious.com/request-object.jwt',
+        { method: 'GET' },
+        env
+      );
+
+      expect(response.status).toBe(400);
+      expect(response.headers.get('location')).toBeNull();
+      const body = (await response.json()) as ErrorResponse;
+      expect(body.error).toBe('request_uri_not_supported');
+      expect(settingsKeys).toEqual([]);
+      expect(mockFetch).not.toHaveBeenCalled();
     });
 
     it('should accept PAR URN even when HTTPS is disabled', async () => {

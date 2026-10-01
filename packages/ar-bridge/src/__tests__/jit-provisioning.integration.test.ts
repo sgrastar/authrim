@@ -231,6 +231,27 @@ const {
 // Mock @authrim/ar-lib-core
 vi.mock('@authrim/ar-lib-core', () => ({
   D1Adapter: MockD1Adapter,
+  // The saved document as it is; JIT enablement as the Settings API resolves it with nothing set
+  // for the tenant: the saved document's `enabled`, else the default (on).
+  legacyJitProvisioningValues: (raw: string | null) => {
+    if (raw === null) return {};
+    let saved: { enabled?: unknown } | null = null;
+    try {
+      saved = JSON.parse(raw) as { enabled?: unknown };
+    } catch {
+      saved = null;
+    }
+    return { 'external_idp.jit_provisioning_enabled': saved?.enabled === true };
+  },
+  parseSettingsDocument: (raw: string | null | undefined) =>
+    raw === null || raw === undefined ? null : (JSON.parse(raw) as Record<string, unknown>),
+  resolveEffectiveSettings: vi.fn(
+    async (env: { SETTINGS?: { get: (key: string) => Promise<string | null> } }) => {
+      const raw = await env.SETTINGS?.get('jit_provisioning_config');
+      const saved = raw ? (JSON.parse(raw) as { enabled?: unknown }) : null;
+      return { 'external_idp.jit_provisioning_enabled': saved ? saved.enabled === true : true };
+    }
+  ),
   CanonicalRuntimeUserStore: MockCanonicalRuntimeUserStore,
   ensureDatabaseAdapter: vi.fn().mockImplementation((db: unknown) => new MockD1Adapter({ db })),
   createLogger: () => ({

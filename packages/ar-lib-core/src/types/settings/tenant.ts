@@ -205,45 +205,48 @@ export const TENANT_SETTINGS_META: Record<keyof TenantSettings, SettingMeta> = {
     key: 'tenant.ui_base_url',
     type: 'string',
     default: '',
-    envKey: 'UI_BASE_URL',
+    envKey: 'UI_URL',
+    // As the login redirects read it.
+    envString: 'strip-trailing-slash',
     label: 'UI Base URL',
-    description: 'Base URL for authentication UI (if different from issuer)',
+    description:
+      "Base URL of this tenant's sign-in UI: the platform's or this tenant's issuer origin (including its active primary custom domain), localhost, or an allowed origin (ALLOWED_ORIGINS). It goes before the platform's (the older ui-config API, else UI_URL) and before a Login UI hosted on the tenant's issuer host; an app's own login UI URL goes first.",
     visibility: 'page',
   },
   'tenant.ui_login_path': {
     key: 'tenant.ui_login_path',
     type: 'string',
     default: '/login',
-    envKey: 'UI_LOGIN_PATH',
     label: 'Login Path',
-    description: 'Path for user login page',
+    description:
+      "Path of the sign-in page on this tenant's sign-in UI (starts with a single /; no query or fragment). Unset: the platform's.",
     visibility: 'page',
   },
   'tenant.ui_consent_path': {
     key: 'tenant.ui_consent_path',
     type: 'string',
     default: '/consent',
-    envKey: 'UI_CONSENT_PATH',
     label: 'Consent Path',
-    description: 'Path for OAuth consent page',
+    description:
+      "Path of the consent page on this tenant's sign-in UI (starts with a single /; no query or fragment). Unset: the platform's.",
     visibility: 'page',
   },
   'tenant.ui_reauth_path': {
     key: 'tenant.ui_reauth_path',
     type: 'string',
     default: '/reauth',
-    envKey: 'UI_REAUTH_PATH',
     label: 'Reauth Path',
-    description: 'Path for re-authentication page',
+    description:
+      "Path of the re-authentication page on this tenant's sign-in UI (starts with a single /; no query or fragment). Unset: the platform's.",
     visibility: 'page',
   },
   'tenant.ui_error_path': {
     key: 'tenant.ui_error_path',
     type: 'string',
     default: '/error',
-    envKey: 'UI_ERROR_PATH',
     label: 'Error Path',
-    description: 'Path for error display page',
+    description:
+      "Path of the error page on this tenant's sign-in UI (starts with a single /; no query or fragment). Unset: the platform's.",
     visibility: 'page',
   },
 };

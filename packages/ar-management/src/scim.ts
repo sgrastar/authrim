@@ -573,7 +573,7 @@ async function executeScimAccountCreation(
   const explicitKey = source.kind === 'single' ? explicitScimIdempotencyKey(c) : null;
   const idempotencyKey = explicitKey ?? `scim-create:${requestHash}`;
   const actorId = await scimActorId(c);
-  const candidateUserId = await generateUserIdFromSettings(c.env.AUTHRIM_CONFIG, tenantId, c.env);
+  const candidateUserId = await generateUserIdFromSettings(c.env, tenantId, c.env);
   const customClaimSources = await resolveCustomClaimRuntimeSourcesFromEnv(c.env, tenantId);
   const operationRepository = new AccountCreationOperationRepository(
     createAuthContextFromHono(c, tenantId).coreAdapter

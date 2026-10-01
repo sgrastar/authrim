@@ -284,6 +284,7 @@ async function deployComponent(
     serviceBindingName: uiSettings.serviceBindingName,
     workersDev: uiSettings.workersDev,
     routes: uiSettings.routes,
+    sourcePackage: uiSettings.sourcePackage,
     adminUiBffSecrets,
     deployConfigLockProof,
     onProgress: (message) => console.log(message),

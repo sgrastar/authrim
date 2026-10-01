@@ -1573,7 +1573,7 @@ async function redirectWithError(
   description?: string
 ): Promise<Response> {
   const tenantId = getTenantIdFromContext(c);
-  const uiConfig = await getUIConfig(c.env);
+  const uiConfig = await getUIConfig(c.env, tenantId);
 
   let baseUrl: string;
   if (uiConfig?.baseUrl) {

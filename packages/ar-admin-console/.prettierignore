@@ -1,0 +1,8 @@
+.svelte-kit
+build
+node_modules
+storybook-static
+pnpm-lock.yaml
+src/lib/ui/fonts/*.ttf
+# Generated (scripts/generate-api-operations.mjs): one operation per line
+src/lib/settings/api-operations.ts

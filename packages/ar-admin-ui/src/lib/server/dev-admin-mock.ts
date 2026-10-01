@@ -6991,19 +6991,19 @@ async function handlePolicyRules(
 					params: [{ name: 'roles', type: 'string[]', required: true, label: 'Roles' }]
 				},
 				{
-					type: 'same_organization',
+					type: 'is_resource_owner',
 					category: 'ownership',
-					label: 'Same organization',
-					description: 'Subject and resource share an organization.',
+					label: 'Is resource owner',
+					description: 'Subject owns the resource.',
 					params: []
 				},
 				{
 					type: 'attribute_equals',
 					category: 'abac',
 					label: 'Attribute equals',
-					description: 'A subject or resource attribute equals the given value.',
+					description: 'A verified subject attribute equals the given value.',
 					params: [
-						{ name: 'attribute', type: 'string', required: true, label: 'Attribute' },
+						{ name: 'name', type: 'string', required: true, label: 'Attribute' },
 						{ name: 'value', type: 'string', required: true, label: 'Value' }
 					]
 				}

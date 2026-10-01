@@ -5,7 +5,11 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { gzipSync } from 'node:zlib';
 
-const UI_PACKAGES = new Set(['@authrim/ar-admin-ui', '@authrim/ar-login-ui']);
+const UI_PACKAGES = new Set([
+  '@authrim/ar-admin-console',
+  '@authrim/ar-admin-ui',
+  '@authrim/ar-login-ui',
+]);
 
 async function measureDirectory(directory) {
   const totals = { uncompressedBytes: 0, gzipBytes: 0 };

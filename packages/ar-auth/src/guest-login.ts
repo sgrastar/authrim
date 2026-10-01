@@ -218,7 +218,7 @@ export async function guestLoginHandler(c: Context<{ Bindings: Env }>) {
     if (!userId) {
       const provisioned = await provisionGuestAccount(c, {
         tenantId,
-        candidateUserId: await generateUserIdFromSettings(c.env.AUTHRIM_CONFIG, tenantId, c.env),
+        candidateUserId: await generateUserIdFromSettings(c.env, tenantId, c.env),
         resumeCredential: {
           credentialHash,
           expiresInDays: RESUME_TTL_SECONDS / 86400,

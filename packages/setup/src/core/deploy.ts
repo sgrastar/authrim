@@ -32,7 +32,7 @@ import {
   uiEnvExists,
   type UiEnvConfig,
 } from './ui-env.js';
-import { DISABLED_API_BACKEND_URL } from './ui-deployment.js';
+import { DISABLED_API_BACKEND_URL, type UiSourcePackage } from './ui-deployment.js';
 import { generateUiWorkersWranglerConfig, parseWranglerToml } from './wrangler.js';
 import { getPackageVersion } from './version.js';
 import {
@@ -3916,6 +3916,11 @@ export interface UiWorkerDeployOptions extends DeployOptions {
   routes?: Array<{ pattern: string; zone_name?: string; custom_domain?: boolean }>;
   /** Optional Admin UI BFF machine credentials uploaded as UI Worker secrets */
   adminUiBffSecrets?: AdminUiBffWorkerSecrets;
+  /**
+   * Package built into this UI slot (defaults to the slot's own package). The Admin UI slot can
+   * be filled by `ar-admin-console`; see resolveUiSourcePackage().
+   */
+  sourcePackage?: UiSourcePackage;
 }
 
 function assertNoPublicUiSourceMaps(uiDir: string): void {
@@ -3998,6 +4003,7 @@ export async function deployUiWorkerComponent(
     routes,
     adminUiBffSecrets,
     skipBuild,
+    sourcePackage = component,
     maxRetries = 3,
     retryDelayMs = 5000,
   } = options;
@@ -4013,7 +4019,7 @@ export async function deployUiWorkerComponent(
     };
   }
 
-  const uiDir = join(rootDir, 'packages', component);
+  const uiDir = join(rootDir, 'packages', sourcePackage);
   const startTime = Date.now();
 
   if (!existsSync(uiDir)) {
@@ -4021,7 +4027,7 @@ export async function deployUiWorkerComponent(
       component,
       projectName: projectName || `${env}-${component}`,
       success: false,
-      error: `${component} package not found`,
+      error: `${sourcePackage} package not found`,
       duration: Date.now() - startTime,
     };
   }
@@ -4486,6 +4492,7 @@ export async function deployAllUiWorkers(
           | 'workersDev'
           | 'routes'
           | 'adminUiBffSecrets'
+          | 'sourcePackage'
         >
       >
     >;

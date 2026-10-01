@@ -42,7 +42,9 @@
 	const sourceIcons: Record<SettingSource, string> = {
 		env: 'i-ph-wrench',
 		kv: 'i-ph-database',
-		default: 'i-ph-clipboard-text'
+		default: 'i-ph-clipboard-text',
+		tenant: 'i-ph-arrow-up',
+		platform: 'i-ph-arrow-up'
 	};
 
 	// Format value for display
@@ -72,7 +74,9 @@
 		const labels: Record<SettingSource, string> = {
 			env: $LL.admin_inheritance_source_environment(),
 			kv: $LL.admin_inheritance_source_kv(),
-			default: $LL.admin_inheritance_source_default()
+			default: $LL.admin_inheritance_source_default(),
+			tenant: $LL.admin_inheritance_inherited_from({ scope: getParentLabel('tenant') }),
+			platform: $LL.admin_inheritance_inherited_from({ scope: getParentLabel('platform') })
 		};
 		return labels[settingSource];
 	}

@@ -1599,8 +1599,10 @@ export async function registerHandler(c: Context<{ Bindings: Env }>): Promise<Re
           : SELF_SERVICE_AGENT_SCOPES.join(' ');
       request.application_type = request.application_type ?? 'native';
     }
+    // A client being registered has no client settings yet: the tenant's apply.
     const systemSettings = (await getTenantSystemSettings(c.env.SETTINGS, tenantId, {
       failOnError: true,
+      sections: ['fapi'],
     })) as {
       fapi?: {
         enabled?: boolean;

@@ -13,8 +13,13 @@
  */
 
 import type { Context } from 'hono';
-import type { Env } from '@authrim/ar-lib-core';
+import {
+  getTenantIdFromContext,
+  resolveEffectiveSettingsWithSources,
+  type Env,
+} from '@authrim/ar-lib-core';
 import type { ErrorLocale, ErrorIdMode, ErrorResponseFormat } from '@authrim/ar-lib-core';
+import { SettingsUnavailableError, settingsUnavailableResponse } from './settings-unavailable';
 
 // KV key constants
 const KV_KEY_LOCALE = 'error_locale';
@@ -29,7 +34,48 @@ const VALID_ERROR_ID_MODES: ErrorIdMode[] = ['all', '5xx', 'security_only', 'non
 // Default values
 const DEFAULT_LOCALE: ErrorLocale = 'en';
 const DEFAULT_RESPONSE_FORMAT: ErrorResponseFormat = 'oauth';
-const DEFAULT_ERROR_ID_MODE: ErrorIdMode = '5xx';
+// What deployed workers use when nothing is set (the error middleware's production default).
+const DEFAULT_ERROR_ID_MODE: ErrorIdMode = 'security_only';
+
+type DisplaySource = 'kv' | 'env' | 'default';
+
+/**
+ * The response format and error ID mode the request's tenant gets, as the error middleware
+ * resolves them: its Settings API values, else the values saved here, else env, else defaults.
+ * Throws SettingsUnavailableError (503) when they cannot be read: while they cannot, runtime
+ * falls back to its defaults, so no stored value is the one in effect.
+ */
+async function effectiveErrorSettings(c: Context<{ Bindings: Env }>): Promise<{
+  format: { value: string | null; source: DisplaySource };
+  mode: { value: string | null; source: DisplaySource };
+}> {
+  const shown = (value: unknown, source: string | undefined, allowed: readonly string[]) =>
+    source && source !== 'default' && typeof value === 'string' && allowed.includes(value)
+      ? { value, source: (source === 'env' ? 'env' : 'kv') as DisplaySource }
+      : { value: null, source: 'default' as DisplaySource };
+  try {
+    const { values, sources } = await resolveEffectiveSettingsWithSources(c.env, 'oauth', {
+      tenantId: getTenantIdFromContext(c),
+      freshLegacy: true,
+      // The stores the error middleware reads for these settings, and no others.
+      keys: ['oauth.error_response_format', 'oauth.error_id_mode'],
+    });
+    return {
+      format: shown(
+        values['oauth.error_response_format'],
+        sources['oauth.error_response_format'],
+        VALID_RESPONSE_FORMATS
+      ),
+      mode: shown(
+        values['oauth.error_id_mode'],
+        sources['oauth.error_id_mode'],
+        VALID_ERROR_ID_MODES
+      ),
+    };
+  } catch (error) {
+    throw new SettingsUnavailableError(error);
+  }
+}
 
 /**
  * GET /api/admin/settings/error-config
@@ -37,20 +83,22 @@ const DEFAULT_ERROR_ID_MODE: ErrorIdMode = '5xx';
  */
 export async function getErrorConfig(c: Context<{ Bindings: Env }>) {
   let locale: string | null = null;
-  let responseFormat: string | null = null;
-  let errorIdMode: string | null = null;
 
   if (c.env.AUTHRIM_CONFIG) {
     try {
-      [locale, responseFormat, errorIdMode] = await Promise.all([
-        c.env.AUTHRIM_CONFIG.get(KV_KEY_LOCALE),
-        c.env.AUTHRIM_CONFIG.get(KV_KEY_RESPONSE_FORMAT),
-        c.env.AUTHRIM_CONFIG.get(KV_KEY_ERROR_ID_MODE),
-      ]);
+      locale = await c.env.AUTHRIM_CONFIG.get(KV_KEY_LOCALE);
     } catch {
       // KV read error - use defaults
     }
   }
+  let effective: Awaited<ReturnType<typeof effectiveErrorSettings>>;
+  try {
+    effective = await effectiveErrorSettings(c);
+  } catch (error) {
+    if (error instanceof SettingsUnavailableError) return settingsUnavailableResponse(c);
+    throw error;
+  }
+  const { format: responseFormat, mode: errorIdMode } = effective;
 
   return c.json({
     locale: {
@@ -61,28 +109,28 @@ export async function getErrorConfig(c: Context<{ Bindings: Env }>) {
       kv_key: KV_KEY_LOCALE,
     },
     response_format: {
-      current: responseFormat ?? DEFAULT_RESPONSE_FORMAT,
-      source: responseFormat ? 'kv' : 'default',
+      current: responseFormat.value ?? DEFAULT_RESPONSE_FORMAT,
+      source: responseFormat.source,
       default: DEFAULT_RESPONSE_FORMAT,
       valid_values: VALID_RESPONSE_FORMATS,
       kv_key: KV_KEY_RESPONSE_FORMAT,
       note: 'OIDC core endpoints (/authorize, /token, /userinfo, etc.) always use OAuth format regardless of this setting',
     },
     error_id_mode: {
-      current: errorIdMode ?? DEFAULT_ERROR_ID_MODE,
-      source: errorIdMode ? 'kv' : 'default',
+      current: errorIdMode.value ?? DEFAULT_ERROR_ID_MODE,
+      source: errorIdMode.source,
       default: DEFAULT_ERROR_ID_MODE,
       valid_values: VALID_ERROR_ID_MODES,
       kv_key: KV_KEY_ERROR_ID_MODE,
       description: {
         all: 'Generate error_id for all errors',
-        '5xx': 'Generate error_id only for 5xx errors (default)',
-        security_only: 'Generate error_id only for security-tracked errors',
+        '5xx': 'Generate error_id only for 5xx errors',
+        security_only: 'Generate error_id only for security-tracked errors (default)',
         none: 'Never generate error_id',
       },
     },
-    cache_ttl_seconds: 10,
-    note: 'Changes take effect within 10 seconds (cache TTL)',
+    cache_ttl_seconds: 60,
+    note: 'Changes take effect within a minute (cache TTL). Response format and error ID mode set per tenant through the Settings API take precedence over the values here.',
   });
 }
 
@@ -197,19 +245,18 @@ export async function resetErrorLocale(c: Context<{ Bindings: Env }>) {
  * Get current error response format
  */
 export async function getErrorResponseFormat(c: Context<{ Bindings: Env }>) {
-  let format: string | null = null;
-
-  if (c.env.AUTHRIM_CONFIG) {
-    try {
-      format = await c.env.AUTHRIM_CONFIG.get(KV_KEY_RESPONSE_FORMAT);
-    } catch {
-      // KV read error - use default
-    }
+  let effective: Awaited<ReturnType<typeof effectiveErrorSettings>>;
+  try {
+    effective = await effectiveErrorSettings(c);
+  } catch (error) {
+    if (error instanceof SettingsUnavailableError) return settingsUnavailableResponse(c);
+    throw error;
   }
+  const { format } = effective;
 
   return c.json({
-    response_format: format ?? DEFAULT_RESPONSE_FORMAT,
-    source: format ? 'kv' : 'default',
+    response_format: format.value ?? DEFAULT_RESPONSE_FORMAT,
+    source: format.source,
     default: DEFAULT_RESPONSE_FORMAT,
     valid_values: VALID_RESPONSE_FORMATS,
     kv_key: KV_KEY_RESPONSE_FORMAT,
@@ -291,7 +338,7 @@ export async function resetErrorResponseFormat(c: Context<{ Bindings: Env }>) {
   return c.json({
     success: true,
     reset_to_default: DEFAULT_RESPONSE_FORMAT,
-    note: 'Response format reset to default. Changes will take effect within 10 seconds.',
+    note: 'Response format reset to default. Changes will take effect within a minute.',
   });
 }
 
@@ -304,27 +351,26 @@ export async function resetErrorResponseFormat(c: Context<{ Bindings: Env }>) {
  * Get current error ID generation mode
  */
 export async function getErrorIdMode(c: Context<{ Bindings: Env }>) {
-  let mode: string | null = null;
-
-  if (c.env.AUTHRIM_CONFIG) {
-    try {
-      mode = await c.env.AUTHRIM_CONFIG.get(KV_KEY_ERROR_ID_MODE);
-    } catch {
-      // KV read error - use default
-    }
+  let effective: Awaited<ReturnType<typeof effectiveErrorSettings>>;
+  try {
+    effective = await effectiveErrorSettings(c);
+  } catch (error) {
+    if (error instanceof SettingsUnavailableError) return settingsUnavailableResponse(c);
+    throw error;
   }
+  const { mode } = effective;
 
   return c.json({
-    error_id_mode: mode ?? DEFAULT_ERROR_ID_MODE,
-    source: mode ? 'kv' : 'default',
+    error_id_mode: mode.value ?? DEFAULT_ERROR_ID_MODE,
+    source: mode.source,
     default: DEFAULT_ERROR_ID_MODE,
     valid_values: VALID_ERROR_ID_MODES,
     kv_key: KV_KEY_ERROR_ID_MODE,
     description: {
       all: 'Generate error_id for all errors - useful for debugging',
-      '5xx': 'Generate error_id only for server errors (5xx) - default, recommended for production',
+      '5xx': 'Generate error_id only for server errors (5xx)',
       security_only:
-        'Generate error_id only for security-tracked errors (invalid_client, invalid_grant, etc.)',
+        'Generate error_id only for security-tracked errors (invalid_client, invalid_grant, etc.) - default',
       none: 'Never generate error_id - minimal response size',
     },
     security_tracked_errors: [
@@ -420,6 +466,6 @@ export async function resetErrorIdMode(c: Context<{ Bindings: Env }>) {
   return c.json({
     success: true,
     reset_to_default: DEFAULT_ERROR_ID_MODE,
-    note: 'Error ID mode reset to default. Changes will take effect within 10 seconds.',
+    note: 'Error ID mode reset to default. Changes will take effect within a minute.',
   });
 }

@@ -1028,7 +1028,7 @@ async function validateRedirectUri(
   clientRedirectUris?: string[]
 ): Promise<string> {
   // Get UI config and build base URL
-  const uiConfig = await getUIConfig(env);
+  const uiConfig = await getUIConfig(env, tenantId);
   const issuerUrl = buildIssuerUrl(env, tenantId);
 
   // Determine base URL: UI config > issuer URL

@@ -9,7 +9,7 @@ const mocks = vi.hoisted(() => ({
   deleteSetupSession: vi.fn(),
   isSystemInitialized: vi.fn(),
   assignSystemAdminRole: vi.fn(),
-  getTenantSettings: vi.fn(),
+  getTenantSettingsDocument: vi.fn(),
   isAllowedOrigin: vi.fn(),
   createAdminUser: vi.fn(),
   setEmailVerified: vi.fn(),
@@ -38,7 +38,7 @@ vi.mock('@authrim/ar-lib-core', async () => {
     generateId: vi.fn(() => 'setup-token-1'),
     generateUserIdFromSettings: vi.fn(async () => 'admin-user-1'),
     getTenantIdFromContext: vi.fn(() => 'tenant-1'),
-    getTenantSettings: mocks.getTenantSettings,
+    getTenantSettingsDocument: mocks.getTenantSettingsDocument,
     parseAllowedOrigins: vi.fn((value?: string) =>
       value ? value.split(',').map((item) => item.trim()) : []
     ),
@@ -143,7 +143,7 @@ describe('initial setup runtime routes', () => {
     mocks.deleteSetupSession.mockResolvedValue(undefined);
     mocks.isSystemInitialized.mockResolvedValue(false);
     mocks.assignSystemAdminRole.mockResolvedValue(undefined);
-    mocks.getTenantSettings.mockResolvedValue(null);
+    mocks.getTenantSettingsDocument.mockResolvedValue(null);
     mocks.isAllowedOrigin.mockImplementation((origin: string, allowed: string[]) =>
       allowed.includes(origin)
     );

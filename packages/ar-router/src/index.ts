@@ -990,7 +990,11 @@ app.use('*', async (c, next) => {
       const tenantId =
         hostResult.valid && hostResult.tenantId ? hostResult.tenantId : getDefaultTenantId(c.env);
 
-      const kvData = await c.env.AUTHRIM_CONFIG.get(`settings:tenant:${tenantId}:tenant`);
+      // SETTINGS holds what the Settings API saves; AUTHRIM_CONFIG only the copy written when
+      // the tenant was created, which later edits do not update.
+      const kvData =
+        (await c.env.SETTINGS?.get(`settings:tenant:${tenantId}:tenant`)) ??
+        (await c.env.AUTHRIM_CONFIG.get(`settings:tenant:${tenantId}:tenant`));
       if (kvData) {
         const parsed = JSON.parse(kvData) as Record<string, unknown>;
         const kvValue = parsed['tenant.allowed_origins'];

@@ -13,9 +13,15 @@ import {
   getTenantIdFromContext,
   createAuditLogFromContext,
   getLogger,
+  readPolicyFlags,
 } from '@authrim/ar-lib-core';
 import {
-  PolicyEngine,
+  CHECK_API_CONDITION_TYPES,
+  evaluateTenantRules,
+  tenantRulesUnusableReason,
+  toTenantPolicyRule,
+  validatePolicyConditions,
+  type TenantPolicyRule,
   type PolicyRule,
   type PolicyCondition,
   type PolicyContext,
@@ -243,6 +249,42 @@ export async function adminPolicyGetHandler(c: Context<{ Bindings: Env }>) {
 }
 
 /**
+ * Why a rule as sent could not be evaluated as written, or null. The Check API refuses to grant
+ * from a tenant's rules while one of them cannot be evaluated (a deny that never applies could
+ * let a later allow through), so such a rule is not saved.
+ */
+function validatePolicyRuleBody(body: {
+  priority?: unknown;
+  effect?: unknown;
+  resource_types?: unknown;
+  actions?: unknown;
+  conditions?: unknown;
+}): string | null {
+  if (body.priority !== undefined && !Number.isSafeInteger(body.priority)) {
+    return 'priority must be an integer';
+  }
+  if (body.effect !== undefined && body.effect !== 'allow' && body.effect !== 'deny') {
+    return 'effect must be allow or deny';
+  }
+  for (const field of ['resource_types', 'actions'] as const) {
+    const value = body[field];
+    if (
+      value !== undefined &&
+      (!Array.isArray(value) || value.some((entry) => typeof entry !== 'string'))
+    ) {
+      return `${field} must be an array of strings`;
+    }
+  }
+  if (body.conditions !== undefined) {
+    // The rules are the tenant's custom rules of the Check API: only conditions it can evaluate.
+    return validatePolicyConditions(body.conditions, CHECK_API_CONDITION_TYPES, {
+      expiredAttributesKnown: false,
+    });
+  }
+  return null;
+}
+
+/**
  * Create policy rule
  */
 export async function adminPolicyCreateHandler(c: AdminContext) {
@@ -280,6 +322,13 @@ export async function adminPolicyCreateHandler(c: AdminContext) {
       );
     }
 
+    // Left out: no conditions. Sent as null (or anything else not an array): refused.
+    const conditions = body.conditions === undefined ? [] : body.conditions;
+    const createProblem = validatePolicyRuleBody({ ...body, conditions });
+    if (createProblem) {
+      return c.json({ error: 'invalid_request', error_description: createProblem }, 400);
+    }
+
     const ruleId = generateId();
     const now = Math.floor(Date.now() / 1000);
     const adminUserId = getAdminUserId(c);
@@ -299,7 +348,7 @@ export async function adminPolicyCreateHandler(c: AdminContext) {
         body.effect,
         body.resource_types ? JSON.stringify(body.resource_types) : null,
         body.actions ? JSON.stringify(body.actions) : null,
-        JSON.stringify(body.conditions || []),
+        JSON.stringify(conditions),
         body.enabled !== false ? 1 : 0,
         adminUserId,
         now,
@@ -368,6 +417,11 @@ export async function adminPolicyUpdateHandler(c: AdminContext) {
       conditions?: PolicyCondition[];
       enabled?: boolean;
     }>();
+
+    const updateProblem = validatePolicyRuleBody(body);
+    if (updateProblem) {
+      return c.json({ error: 'invalid_request', error_description: updateProblem }, 400);
+    }
 
     const updates: string[] = [];
     const params: unknown[] = [];
@@ -512,12 +566,67 @@ export async function adminPolicySimulateHandler(c: AdminContext) {
       [tenantId]
     );
 
-    const rules: PolicyRule[] = rows.map(rowToPolicyRule);
+    if (
+      typeof body.context.resource?.type !== 'string' ||
+      typeof body.context.action?.name !== 'string'
+    ) {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: 'context.resource.type and context.action.name are required',
+        },
+        400
+      );
+    }
 
-    // Create engine and evaluate
-    const engine = new PolicyEngine();
-    engine.addRules(rules);
-    const decision: PolicyDecision = engine.evaluate(body.context);
+    // As checks decide: the tenant's settings first (read fresh; unreadable settings are not
+    // "off"), then the rules as stored, then the rules for the resource type and action.
+    const flags = await readPolicyFlags(asBaseContext(c).env, tenantId, { fresh: true });
+    if (!flags) {
+      return c.json(
+        {
+          error: 'settings_unavailable',
+          error_description: 'The policy settings could not be read',
+        },
+        503
+      );
+    }
+    const verifiedAttributes = flags.abac && flags.verifiedAttributes;
+    const rules: TenantPolicyRule[] = [];
+    const unusable: string[] = [];
+    for (const row of rows) {
+      const rule = toTenantPolicyRule(row);
+      if (rule) rules.push(rule);
+      else unusable.push(row.id);
+    }
+    const unusableReason =
+      unusable.length > 0
+        ? 'Some rules cannot be evaluated as stored: checks grant nothing from the rules until they are fixed'
+        : tenantRulesUnusableReason(rules, { verifiedAttributes });
+    const decision: PolicyDecision =
+      !flags.abac || !flags.customRules
+        ? {
+            allowed: false,
+            reason:
+              'Attribute-based policy or custom rules are off for this tenant: checks grant nothing from the rules',
+            details: { abac: flags.abac, custom_rules: flags.customRules },
+          }
+        : unusableReason
+          ? {
+              allowed: false,
+              reason: unusableReason,
+              ...(unusable.length > 0 ? { details: { unusable_rules: unusable } } : {}),
+            }
+          : evaluateTenantRules(rules, {
+              ...body.context,
+              // Evaluated now unless the request says when (in UNIX milliseconds).
+              timestamp:
+                typeof body.context.timestamp === 'number' ? body.context.timestamp : Date.now(),
+              // Checks do not load verified attributes while the settings keep them off.
+              subject: verifiedAttributes
+                ? body.context.subject
+                : ({ ...body.context.subject, verifiedAttributes: [] } as PolicyContext['subject']),
+            });
 
     // Optionally save simulation history
     if (body.save_history) {
@@ -550,7 +659,7 @@ export async function adminPolicySimulateHandler(c: AdminContext) {
       reason: decision.reason,
       decided_by: decision.decidedBy,
       details: decision.details,
-      evaluated_rules: rules.length,
+      evaluated_rules: rows.length,
     });
   } catch (error) {
     const log = getLogger(asBaseContext(c)).module('ADMIN-POLICIES');
@@ -629,6 +738,27 @@ export async function adminPolicySimulationsHandler(c: Context<{ Bindings: Env }
  * Returns available condition types with their parameter definitions
  */
 export async function adminConditionTypesHandler(c: Context<{ Bindings: Env }>) {
+  // The Check API's tenant rules: only the conditions it can evaluate, with the parameter names
+  // the policy engine reads (validatePolicyConditions checks the same on save).
+  const scopeParams = [
+    { name: 'scope', type: 'string', required: false, label: 'Scope (global, org or resource)' },
+    {
+      name: 'scopeTarget',
+      type: 'string',
+      required: false,
+      label: 'Scope Target (e.g. org:org_123)',
+    },
+  ];
+  const numeric = (type: string, label: string, description: string) => ({
+    type,
+    category: 'numeric',
+    label,
+    description,
+    params: [
+      { name: 'name', type: 'string', required: true, label: 'Attribute Name' },
+      { name: 'value', type: 'number', required: true, label: 'Value' },
+    ],
+  });
   const conditionTypes = [
     // RBAC conditions
     {
@@ -638,7 +768,7 @@ export async function adminConditionTypesHandler(c: Context<{ Bindings: Env }>) 
       description: 'Subject has a specific role',
       params: [
         { name: 'role', type: 'string', required: true, label: 'Role Name' },
-        { name: 'scope', type: 'string', required: false, label: 'Scope' },
+        ...scopeParams,
       ],
     },
     {
@@ -646,38 +776,37 @@ export async function adminConditionTypesHandler(c: Context<{ Bindings: Env }>) 
       category: 'rbac',
       label: 'Has Any Role',
       description: 'Subject has any of the specified roles',
-      params: [{ name: 'roles', type: 'string[]', required: true, label: 'Role Names' }],
+      params: [
+        { name: 'roles', type: 'string[]', required: true, label: 'Role Names' },
+        ...scopeParams,
+      ],
     },
     {
       type: 'has_all_roles',
       category: 'rbac',
       label: 'Has All Roles',
       description: 'Subject has all specified roles',
-      params: [{ name: 'roles', type: 'string[]', required: true, label: 'Role Names' }],
+      params: [
+        { name: 'roles', type: 'string[]', required: true, label: 'Role Names' },
+        ...scopeParams,
+      ],
     },
     // Ownership conditions
     {
       type: 'is_resource_owner',
       category: 'ownership',
       label: 'Is Resource Owner',
-      description: 'Subject owns the resource',
+      description: 'Subject owns the resource (from the check’s resource context)',
       params: [],
     },
-    {
-      type: 'same_organization',
-      category: 'ownership',
-      label: 'Same Organization',
-      description: 'Subject and resource are in the same organization',
-      params: [],
-    },
-    // ABAC conditions
+    // ABAC conditions (the subject's verified attributes)
     {
       type: 'attribute_equals',
       category: 'abac',
       label: 'Attribute Equals',
       description: 'Subject attribute equals a specific value',
       params: [
-        { name: 'attribute', type: 'string', required: true, label: 'Attribute Name' },
+        { name: 'name', type: 'string', required: true, label: 'Attribute Name' },
         { name: 'value', type: 'string', required: true, label: 'Expected Value' },
       ],
     },
@@ -686,7 +815,7 @@ export async function adminConditionTypesHandler(c: Context<{ Bindings: Env }>) 
       category: 'abac',
       label: 'Attribute Exists',
       description: 'Subject has the specified attribute',
-      params: [{ name: 'attribute', type: 'string', required: true, label: 'Attribute Name' }],
+      params: [{ name: 'name', type: 'string', required: true, label: 'Attribute Name' }],
     },
     {
       type: 'attribute_in',
@@ -694,7 +823,7 @@ export async function adminConditionTypesHandler(c: Context<{ Bindings: Env }>) 
       label: 'Attribute In List',
       description: 'Subject attribute value is in a list',
       params: [
-        { name: 'attribute', type: 'string', required: true, label: 'Attribute Name' },
+        { name: 'name', type: 'string', required: true, label: 'Attribute Name' },
         { name: 'values', type: 'string[]', required: true, label: 'Allowed Values' },
       ],
     },
@@ -705,9 +834,9 @@ export async function adminConditionTypesHandler(c: Context<{ Bindings: Env }>) 
       label: 'Time In Range',
       description: 'Current time is within a specific hour range',
       params: [
-        { name: 'start_hour', type: 'number', required: true, label: 'Start Hour (0-23)' },
-        { name: 'end_hour', type: 'number', required: true, label: 'End Hour (0-23)' },
-        { name: 'timezone', type: 'string', required: false, label: 'Timezone' },
+        { name: 'startHour', type: 'number', required: true, label: 'Start Hour (0-23)' },
+        { name: 'endHour', type: 'number', required: true, label: 'End Hour (0-24)' },
+        { name: 'timezone', type: 'string', required: false, label: 'Timezone (IANA)' },
       ],
     },
     {
@@ -717,11 +846,12 @@ export async function adminConditionTypesHandler(c: Context<{ Bindings: Env }>) 
       description: 'Current day matches allowed days',
       params: [
         {
-          name: 'days',
+          name: 'allowedDays',
           type: 'number[]',
           required: true,
           label: 'Allowed Days (0=Sun, 6=Sat)',
         },
+        { name: 'timezone', type: 'string', required: false, label: 'Timezone (IANA)' },
       ],
     },
     {
@@ -730,103 +860,25 @@ export async function adminConditionTypesHandler(c: Context<{ Bindings: Env }>) 
       label: 'Valid During',
       description: 'Current time is within a date range',
       params: [
-        { name: 'start', type: 'number', required: false, label: 'Start (Unix seconds)' },
-        { name: 'end', type: 'number', required: false, label: 'End (Unix seconds)' },
+        { name: 'from', type: 'number', required: false, label: 'From (Unix seconds)' },
+        { name: 'to', type: 'number', required: false, label: 'To (Unix seconds)' },
       ],
     },
-    // Numeric conditions
-    {
-      type: 'numeric_gt',
-      category: 'numeric',
-      label: 'Greater Than',
-      description: 'Attribute value > threshold',
-      params: [
-        { name: 'attribute', type: 'string', required: true, label: 'Attribute Name' },
-        { name: 'threshold', type: 'number', required: true, label: 'Threshold' },
-      ],
-    },
-    {
-      type: 'numeric_gte',
-      category: 'numeric',
-      label: 'Greater Than or Equal',
-      description: 'Attribute value >= threshold',
-      params: [
-        { name: 'attribute', type: 'string', required: true, label: 'Attribute Name' },
-        { name: 'threshold', type: 'number', required: true, label: 'Threshold' },
-      ],
-    },
-    {
-      type: 'numeric_lt',
-      category: 'numeric',
-      label: 'Less Than',
-      description: 'Attribute value < threshold',
-      params: [
-        { name: 'attribute', type: 'string', required: true, label: 'Attribute Name' },
-        { name: 'threshold', type: 'number', required: true, label: 'Threshold' },
-      ],
-    },
-    {
-      type: 'numeric_lte',
-      category: 'numeric',
-      label: 'Less Than or Equal',
-      description: 'Attribute value <= threshold',
-      params: [
-        { name: 'attribute', type: 'string', required: true, label: 'Attribute Name' },
-        { name: 'threshold', type: 'number', required: true, label: 'Threshold' },
-      ],
-    },
+    // Numeric conditions (the subject's verified attributes, read as numbers)
+    numeric('numeric_gt', 'Greater Than', 'Attribute value > value'),
+    numeric('numeric_gte', 'Greater Than or Equal', 'Attribute value >= value'),
+    numeric('numeric_lt', 'Less Than', 'Attribute value < value'),
+    numeric('numeric_lte', 'Less Than or Equal', 'Attribute value <= value'),
+    numeric('numeric_eq', 'Equals', 'Attribute value = value'),
     {
       type: 'numeric_between',
       category: 'numeric',
       label: 'Between',
       description: 'Attribute value is between min and max',
       params: [
-        { name: 'attribute', type: 'string', required: true, label: 'Attribute Name' },
+        { name: 'name', type: 'string', required: true, label: 'Attribute Name' },
         { name: 'min', type: 'number', required: true, label: 'Minimum' },
         { name: 'max', type: 'number', required: true, label: 'Maximum' },
-      ],
-    },
-    // Geographic conditions
-    {
-      type: 'country_in',
-      category: 'geo',
-      label: 'Country In List',
-      description: 'Request country code is in allowed list',
-      params: [{ name: 'countries', type: 'string[]', required: true, label: 'Allowed Countries' }],
-    },
-    {
-      type: 'country_not_in',
-      category: 'geo',
-      label: 'Country Not In List',
-      description: 'Request country code is NOT in blocked list',
-      params: [{ name: 'countries', type: 'string[]', required: true, label: 'Blocked Countries' }],
-    },
-    {
-      type: 'ip_in_range',
-      category: 'geo',
-      label: 'IP In CIDR Range',
-      description: 'Request IP is within CIDR range',
-      params: [{ name: 'cidr', type: 'string', required: true, label: 'CIDR Range' }],
-    },
-    // Rate-based conditions
-    {
-      type: 'request_count_lt',
-      category: 'rate',
-      label: 'Request Count <',
-      description: 'Request count is less than limit',
-      params: [
-        { name: 'key', type: 'string', required: true, label: 'Count Key' },
-        { name: 'limit', type: 'number', required: true, label: 'Limit' },
-      ],
-    },
-    {
-      type: 'request_count_lte',
-      category: 'rate',
-      label: 'Request Count <=',
-      description: 'Request count is less than or equal to limit',
-      params: [
-        { name: 'key', type: 'string', required: true, label: 'Count Key' },
-        { name: 'limit', type: 'number', required: true, label: 'Limit' },
       ],
     },
   ];
@@ -837,8 +889,6 @@ export async function adminConditionTypesHandler(c: Context<{ Bindings: Env }>) 
     { id: 'abac', label: 'Attribute-Based (ABAC)', icon: 'tag' },
     { id: 'time', label: 'Time-Based', icon: 'clock' },
     { id: 'numeric', label: 'Numeric', icon: 'hash' },
-    { id: 'geo', label: 'Geographic', icon: 'globe' },
-    { id: 'rate', label: 'Rate Limiting', icon: 'activity' },
   ];
 
   return c.json({ condition_types: conditionTypes, categories });

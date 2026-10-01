@@ -33,7 +33,9 @@ import type {
   VerifiedAttributeForCheck,
   AttributeRepository,
   PolicyEvaluator,
+  TenantPolicySettings,
   PolicyEvaluationContext,
+  PolicySubjectRole,
 } from '../types/check-api';
 import type { CheckAuditService, PermissionCheckAuditEntry } from './check-audit-service';
 import { generateAuditId } from './check-audit-service';
@@ -241,6 +243,12 @@ export interface UnifiedCheckServiceConfig {
   policyEvaluator?: PolicyEvaluator;
   /** Audit service for permission check logging (optional) */
   auditService?: CheckAuditService;
+  /**
+   * The attribute-based policy settings of a tenant (optional). When given, it decides per check
+   * (by the check's tenant) instead of `enableAbac` / `policyEvaluator`. It must not throw: it
+   * returns everything off when the tenant's settings cannot be read.
+   */
+  tenantPolicy?: (tenantId: string) => Promise<TenantPolicySettings>;
 }
 
 /**
@@ -256,6 +264,13 @@ interface CheckContext {
   startTime: number;
   /** Verified attributes for ABAC evaluation (loaded from DB) */
   verifiedAttributes?: VerifiedAttributeForCheck[];
+  /** The tenant's attribute-based policy settings for this check */
+  policy: TenantPolicySettings;
+  /** The subject's active role assignments with their scope (from the role check; unset when
+   * they could not be read) */
+  subjectRoles?: PolicySubjectRole[];
+  /** The verified attributes were wanted but could not be read */
+  attributesUnavailable?: boolean;
 }
 
 /**
@@ -284,6 +299,9 @@ export class UnifiedCheckService {
   private enableAbac: boolean;
   private policyEvaluator?: PolicyEvaluator;
   private auditService?: CheckAuditService;
+  private tenantPolicy?: (tenantId: string) => Promise<TenantPolicySettings>;
+  /** Tenant policy settings resolved during this service's lifetime (one request). */
+  private tenantPolicies = new Map<string, Promise<TenantPolicySettings>>();
 
   constructor(config: UnifiedCheckServiceConfig) {
     this.db = ensureDatabaseAdapter(config.db, 'policy-check');
@@ -300,6 +318,30 @@ export class UnifiedCheckService {
     this.enableAbac = config.enableAbac ?? false;
     this.policyEvaluator = config.policyEvaluator;
     this.auditService = config.auditService;
+    this.tenantPolicy = config.tenantPolicy;
+  }
+
+  /** The attribute-based policy settings for a tenant (once per tenant for this service). */
+  private policyFor(tenantId: string): Promise<TenantPolicySettings> {
+    if (!this.tenantPolicy) {
+      return Promise.resolve({
+        abac: this.enableAbac,
+        verifiedAttributes: this.enableAbac,
+        logDecisions: false,
+        evaluator: this.policyEvaluator,
+      });
+    }
+    let policy = this.tenantPolicies.get(tenantId);
+    if (!policy) {
+      policy = this.tenantPolicy(tenantId).catch(() => ({
+        abac: false,
+        verifiedAttributes: false,
+        logDecisions: false,
+        unavailable: true,
+      }));
+      this.tenantPolicies.set(tenantId, policy);
+    }
+    return policy;
   }
 
   /**
@@ -341,6 +383,7 @@ export class UnifiedCheckService {
         resourceContext: request.resource_context,
         rebacParams: request.rebac,
         startTime,
+        policy: await this.policyFor(tenantId),
       };
 
       // Try cache first
@@ -349,6 +392,7 @@ export class UnifiedCheckService {
         const cached = await this.getCachedResult(cacheKey);
         if (cached) {
           // Log audit for cached result too
+          this.logDecision(context, request, cached);
           await this.logAudit(request, cached, parsed, tenantId, options);
           return cached;
         }
@@ -364,6 +408,8 @@ export class UnifiedCheckService {
       if (this.cache && cacheKey) {
         await this.cacheResult(cacheKey, response);
       }
+
+      this.logDecision(context, request, response);
 
       // Log audit entry
       await this.logAudit(request, response, parsed, tenantId, options);
@@ -386,6 +432,25 @@ export class UnifiedCheckService {
 
       return errorResponse;
     }
+  }
+
+  /** Log a decision, for a tenant that enables it (`feature.enable_policy_logging`). */
+  private logDecision(
+    context: CheckContext,
+    request: CheckApiRequest,
+    response: CheckApiResponse
+  ): void {
+    if (!context.policy.logDecisions) return;
+    log.info('Permission check decision', {
+      tenantId: context.tenantId,
+      subjectId: context.subjectId,
+      permission: formatPermission(context.parsed),
+      allowed: response.allowed,
+      resolvedVia: response.resolved_via,
+      decidedBy: response.debug?.matched_rules?.[0],
+      reason: response.reason,
+      hasResourceContext: request.resource_context !== undefined,
+    });
   }
 
   /**
@@ -495,7 +560,12 @@ export class UnifiedCheckService {
     const matchedRules: string[] = [];
 
     // Pre-load user verified attributes for ABAC evaluation
-    if (this.enableAbac && this.attributeRepository && !context.verifiedAttributes) {
+    if (
+      context.policy.abac &&
+      context.policy.verifiedAttributes &&
+      this.attributeRepository &&
+      !context.verifiedAttributes
+    ) {
       try {
         const attrs = await this.attributeRepository.getValidAttributesForUser(
           context.tenantId,
@@ -512,7 +582,9 @@ export class UnifiedCheckService {
           { subjectId: context.subjectId },
           error as Error
         );
-        // Continue without attributes - don't fail the check
+        // Continue without attributes - don't fail the check; the tenant's rules are not
+        // evaluated then (a rule denying on an attribute must not be skipped).
+        context.attributesUnavailable = true;
       }
     }
 
@@ -556,8 +628,9 @@ export class UnifiedCheckService {
       }
     }
 
-    // 4. Computed/ABAC (if resource_context provided)
-    if (context.resourceContext) {
+    // 4. Computed/ABAC (ownership and membership with resource_context; the tenant's rules when
+    // attribute-based policy is on)
+    if (context.resourceContext || (context.policy.abac && context.policy.evaluator)) {
       const abacResult = await this.checkComputedPermission(context);
       if (abacResult.allowed) {
         matchedRules.push(`computed:${abacResult.ruleName}`);
@@ -613,8 +686,14 @@ export class UnifiedCheckService {
   ): Promise<{ allowed: boolean; roleName?: string }> {
     try {
       // Query user's roles
-      const rolesResult = await this.db.query<{ name: string; permissions_json: string }>(
-        `SELECT r.name, r.permissions_json
+      const rolesResult = await this.db.query<{
+        name: string;
+        permissions_json: string;
+        scope_type: string | null;
+        scope_target: string | null;
+        expires_at: number | null;
+      }>(
+        `SELECT r.name, r.permissions_json, ra.scope_type, ra.scope_target, ra.expires_at
            FROM roles r
            INNER JOIN role_assignments ra ON r.id = ra.role_id
            WHERE ra.subject_id = ?
@@ -624,6 +703,22 @@ export class UnifiedCheckService {
              AND (ra.expires_at IS NULL OR ra.expires_at > ?)`,
         [context.subjectId, context.tenantId, context.tenantId, Math.floor(Date.now() / 1000)]
       );
+
+      // Role assignments for attribute-based rules with role conditions, with their scope: an
+      // assignment limited to one organization or resource must not match a rule for another.
+      // One with a scope the rules cannot express is left out (it only grants less).
+      context.subjectRoles = rolesResult.flatMap((role): PolicySubjectRole[] => {
+        const scope = role.scope_type ?? 'global';
+        if (scope !== 'global' && scope !== 'org' && scope !== 'resource') return [];
+        return [
+          {
+            name: role.name,
+            scope,
+            scopeTarget: scope === 'global' ? undefined : role.scope_target || undefined,
+            expiresAt: role.expires_at ? role.expires_at * 1000 : undefined,
+          },
+        ];
+      });
 
       const permissionToCheck =
         context.parsed.type === 'type_level'
@@ -702,18 +797,14 @@ export class UnifiedCheckService {
   private async checkComputedPermission(
     context: CheckContext
   ): Promise<{ allowed: boolean; ruleName?: string }> {
-    if (!context.resourceContext) {
-      return { allowed: false };
-    }
-
     try {
       // Simple ownership check
-      if (context.resourceContext.owner_id === context.subjectId) {
+      if (context.resourceContext && context.resourceContext.owner_id === context.subjectId) {
         return { allowed: true, ruleName: 'owner_access' };
       }
 
       // Organization membership check
-      if (context.resourceContext.org_id) {
+      if (context.resourceContext?.org_id) {
         const orgMemberResult = await this.db.queryOne(
           `SELECT 1 FROM organization_memberships
              WHERE tenant_id = ? AND user_id = ? AND org_id = ? AND is_active = 1`,
@@ -725,21 +816,29 @@ export class UnifiedCheckService {
         }
       }
 
-      // ABAC evaluation via PolicyEvaluator (if enabled and configured)
-      if (this.enableAbac && this.policyEvaluator && context.verifiedAttributes?.length) {
+      // ABAC evaluation: the tenant's rules (when its settings turn attribute-based policy on)
+      const evaluator = context.policy.abac ? context.policy.evaluator : undefined;
+      // Rules see roles and attributes: without them, a rule that denies on one of them would not
+      // match and a later rule could grant. No grant from the rules then.
+      if (evaluator && (context.subjectRoles === undefined || context.attributesUnavailable)) {
+        log.warn('Tenant rules not evaluated: roles or attributes could not be read', {
+          subjectId: context.subjectId,
+        });
+      } else if (evaluator) {
         const policyContext: PolicyEvaluationContext = {
           subjectId: context.subjectId,
-          verifiedAttributes: context.verifiedAttributes,
+          subjectRoles: context.subjectRoles,
+          verifiedAttributes: context.verifiedAttributes ?? [],
           resourceType: context.parsed.resource,
           resourceId: context.parsed.id,
-          resourceOwnerId: context.resourceContext.owner_id,
-          resourceOrgId: context.resourceContext.org_id,
-          resourceAttributes: context.resourceContext.attributes,
+          resourceOwnerId: context.resourceContext?.owner_id,
+          resourceOrgId: context.resourceContext?.org_id,
+          resourceAttributes: context.resourceContext?.attributes,
           action: context.parsed.action,
           timestamp: Date.now(),
         };
 
-        const decision = this.policyEvaluator.evaluate(policyContext);
+        const decision = evaluator.evaluate(policyContext);
         if (decision.allowed) {
           return { allowed: true, ruleName: decision.decidedBy ?? 'abac_policy' };
         }
@@ -760,6 +859,11 @@ export class UnifiedCheckService {
     // them out of the shared cache is safer than attempting to normalize attacker-controlled
     // nested objects and prevents a contextual allow from being reused by a different request.
     if (context.resourceContext !== undefined || context.rebacParams !== undefined) {
+      return null;
+    }
+    // Attribute-based rules can depend on time and on the tenant's rules and settings, which the
+    // key does not carry; a result decided while those could not be read must not be reused.
+    if (context.policy.unavailable || (context.policy.abac && context.policy.evaluator)) {
       return null;
     }
 

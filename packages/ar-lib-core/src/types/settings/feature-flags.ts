@@ -54,7 +54,8 @@ export const FEATURE_FLAGS_SETTINGS_META: Record<keyof FeatureFlagsSettings, Set
     default: false,
     envKey: 'ENABLE_ABAC',
     label: 'Enable ABAC',
-    description: 'Enable Attribute-Based Access Control',
+    description:
+      'Evaluate attribute-based policy rules in permission checks (the Check API), after roles, ID-level permissions and relationships',
     visibility: 'page', // Managed on Attributes page
   },
   'feature.enable_rebac': {
@@ -63,7 +64,7 @@ export const FEATURE_FLAGS_SETTINGS_META: Record<keyof FeatureFlagsSettings, Set
     default: false,
     envKey: 'ENABLE_REBAC',
     label: 'Enable ReBAC',
-    description: 'Enable Relationship-Based Access Control',
+    description: 'Enable the policy service relationship (ReBAC) check endpoints',
     visibility: 'page', // Managed on ReBAC page
   },
   'feature.enable_policy_logging': {
@@ -72,7 +73,8 @@ export const FEATURE_FLAGS_SETTINGS_META: Record<keyof FeatureFlagsSettings, Set
     default: false,
     envKey: 'ENABLE_POLICY_LOGGING',
     label: 'Enable Policy Logging',
-    description: 'Log policy evaluation decisions for debugging',
+    description:
+      'Log each permission check decision (subject, permission, result and the rule that decided it)',
     visibility: 'admin',
   },
   'feature.enable_verified_attributes': {
@@ -81,7 +83,7 @@ export const FEATURE_FLAGS_SETTINGS_META: Record<keyof FeatureFlagsSettings, Set
     default: false,
     envKey: 'ENABLE_VERIFIED_ATTRIBUTES',
     label: 'Enable Verified Attributes',
-    description: 'Enable verified attribute claims in tokens',
+    description: "Use users' verified attributes in attribute-based policy rules",
     visibility: 'admin',
   },
   'feature.enable_custom_rules': {
@@ -90,7 +92,7 @@ export const FEATURE_FLAGS_SETTINGS_META: Record<keyof FeatureFlagsSettings, Set
     default: true,
     envKey: 'ENABLE_CUSTOM_RULES',
     label: 'Enable Custom Rules',
-    description: 'Allow custom policy rules',
+    description: "Evaluate the tenant's custom policy rules in attribute-based checks",
     visibility: 'page', // Managed on Policies page
   },
   'feature.enable_policy_embedding': {
@@ -98,6 +100,8 @@ export const FEATURE_FLAGS_SETTINGS_META: Record<keyof FeatureFlagsSettings, Set
     type: 'boolean',
     default: false,
     envKey: 'ENABLE_POLICY_EMBEDDING',
+    // As token issuance has always read it.
+    envBoolean: 'exactly-true',
     label: 'Enable Policy Embedding',
     description: 'Enable embedding policy decisions in tokens',
     visibility: 'admin',
@@ -118,8 +122,10 @@ export const FEATURE_FLAGS_SETTINGS_META: Record<keyof FeatureFlagsSettings, Set
     type: 'boolean',
     default: false,
     envKey: 'ENABLE_SD_JWT',
+    // As token issuance reads it.
+    envBoolean: 'exactly-true',
     label: 'Enable SD-JWT',
-    description: 'Enable Selective Disclosure JWT support',
+    description: 'Issue SD-JWT ID tokens (RFC 9901) to clients that request them',
     visibility: 'admin',
   },
   'feature.enable_token_exchange': {
@@ -136,6 +142,7 @@ export const FEATURE_FLAGS_SETTINGS_META: Record<keyof FeatureFlagsSettings, Set
     type: 'boolean',
     default: false,
     envKey: 'ENABLE_CLIENT_CREDENTIALS',
+    envBoolean: 'exactly-true',
     label: 'Enable Client Credentials',
     description: 'Enable Client Credentials grant type',
     visibility: 'admin',
@@ -184,7 +191,8 @@ export const FEATURE_FLAGS_SETTINGS_META: Record<keyof FeatureFlagsSettings, Set
     key: 'feature.introspection_cache_enabled',
     type: 'boolean',
     default: true,
-    envKey: 'INTROSPECTION_CACHE_ENABLED',
+    envKey: 'ENABLE_INTROSPECTION_CACHE',
+    envBoolean: 'exactly-true',
     label: 'Introspection Cache Enabled',
     description: 'Enable caching of token introspection results',
     visibility: 'admin',
@@ -193,9 +201,12 @@ export const FEATURE_FLAGS_SETTINGS_META: Record<keyof FeatureFlagsSettings, Set
   // Conformance Testing
   'feature.conformance_enabled': {
     key: 'feature.conformance_enabled',
+    // Conformance mode applies to the whole deployment; tenants cannot set it.
+    scopes: ['platform'],
     type: 'boolean',
     default: false,
-    envKey: 'CONFORMANCE_ENABLED',
+    envKey: 'ENABLE_CONFORMANCE_MODE',
+    envEmpty: 'false',
     label: 'Conformance Mode',
     description:
       'Enable OIDC conformance testing mode for OpenID Foundation certification. When enabled: (1) Uses built-in HTML forms instead of external UI for Login/Consent pages, (2) Required for passing OpenID conformance tests, (3) UI_URL configuration is ignored, (4) Should be disabled in production environments.',
@@ -203,9 +214,10 @@ export const FEATURE_FLAGS_SETTINGS_META: Record<keyof FeatureFlagsSettings, Set
   },
   'feature.conformance_use_builtin_forms': {
     key: 'feature.conformance_use_builtin_forms',
+    // Conformance mode applies to the whole deployment; tenants cannot set it.
+    scopes: ['platform'],
     type: 'boolean',
     default: true,
-    envKey: 'CONFORMANCE_USE_BUILTIN_FORMS',
     label: 'Use Built-in Forms',
     description:
       'Use built-in HTML login/consent forms when conformance mode is enabled. This is required for OIDC conformance testing. When disabled: external UI must handle all authentication flows (not recommended for certification testing).',

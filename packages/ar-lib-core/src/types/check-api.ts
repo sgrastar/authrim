@@ -468,9 +468,22 @@ export interface AttributeRepository {
  * Policy evaluation context for ABAC
  * Minimal interface to avoid circular dependencies with ar-lib-policy
  */
+/** A role assignment as attribute-based rules see it. */
+export interface PolicySubjectRole {
+  name: string;
+  /** Where the assignment applies: everywhere, one organization, or one resource. */
+  scope: 'global' | 'org' | 'resource';
+  /** The organization or resource of a scoped assignment (e.g. 'org:org_123'). */
+  scopeTarget?: string;
+  /** When the assignment ends (UNIX milliseconds). */
+  expiresAt?: number;
+}
+
 export interface PolicyEvaluationContext {
   /** Subject ID */
   subjectId: string;
+  /** The subject's active role assignments in the tenant, with their scope (for role conditions) */
+  subjectRoles?: PolicySubjectRole[];
   /** Subject's verified attributes */
   verifiedAttributes: VerifiedAttributeForCheck[];
   /** Resource type */
@@ -515,4 +528,25 @@ export interface PolicyEvaluationResult {
 export interface PolicyEvaluator {
   /** Evaluate policy for the given context */
   evaluate(context: PolicyEvaluationContext): PolicyEvaluationResult;
+}
+
+/**
+ * How a tenant's permission checks use attribute-based policy, as its settings decide
+ * (`feature.enable_abac`, `enable_verified_attributes`, `enable_custom_rules`,
+ * `enable_policy_logging`).
+ */
+export interface TenantPolicySettings {
+  /** Evaluate the evaluator after roles, ID-level permissions and relationships found no grant */
+  abac: boolean;
+  /** Load the subject's verified attributes for the evaluator */
+  verifiedAttributes: boolean;
+  /** Log each decision */
+  logDecisions: boolean;
+  /** The tenant's rules (its custom rules), when attribute-based policy is on */
+  evaluator?: PolicyEvaluator;
+  /**
+   * The settings or rules could not be read: attribute-based policy is off for the check, and
+   * its result is not cached (it must not outlive the outage).
+   */
+  unavailable?: boolean;
 }

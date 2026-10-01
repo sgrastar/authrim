@@ -35,6 +35,9 @@ import {
   resolveAccountDataContextByIdentifier,
   resolveTenantMetadataContext,
   type AuthAccountProvisioningInput,
+  legacyJitProvisioningValues,
+  parseSettingsDocument,
+  resolveEffectiveSettings,
 } from '@authrim/ar-lib-core';
 import {
   ExternalIdPError,
@@ -79,23 +82,90 @@ export async function getStitchingConfig(env: Env): Promise<StitchingConfig> {
   };
 }
 
-/**
- * Get JIT Provisioning configuration
- * Priority: KV → Default
- */
-export async function getJITConfig(env: Env): Promise<JITProvisioningConfig> {
-  if (env.SETTINGS) {
-    try {
-      const kvConfig = await env.SETTINGS.get('jit_provisioning_config');
-      if (kvConfig) {
-        return JSON.parse(kvConfig);
-      }
-    } catch {
-      // Ignore KV errors, fall through to default
-    }
-  }
+/** Profile fields a login from the provider updates (never the email or the account state). */
+const PROVIDER_PROFILE_FIELDS = ['name', 'given_name', 'family_name', 'picture', 'locale'] as const;
 
-  return DEFAULT_JIT_CONFIG;
+/**
+ * Update a linked user's profile from the provider's claims on login, when the tenant turns
+ * `external_idp.jit_update_on_login` on (with JIT provisioning on). Only claims the provider sends
+ * are written. A failure is logged and never fails the login.
+ */
+async function updateUserProfileFromProvider(
+  env: Env,
+  tenantId: string,
+  userId: string,
+  userInfo: UserInfo,
+  sources: { coreDb: DatabaseSource; piiDb: DatabaseSource }
+): Promise<void> {
+  const log = createLogger().module('IDENTITY-STITCHING');
+  try {
+    const values = await resolveEffectiveSettings(env, 'external-idp', {
+      tenantId,
+      keys: ['external_idp.jit_update_on_login', 'external_idp.jit_provisioning_enabled'],
+      strictLegacy: true,
+    });
+    if (
+      values['external_idp.jit_update_on_login'] !== true ||
+      values['external_idp.jit_provisioning_enabled'] !== true
+    ) {
+      return;
+    }
+    const users = new CanonicalRuntimeUserStore({
+      coreAdapter: ensureDatabaseAdapter(sources.coreDb, 'identity-stitching-profile-core'),
+      piiAdapter: ensureDatabaseAdapter(sources.piiDb, 'identity-stitching-profile-pii'),
+      tenantId,
+    });
+    const claims = userInfo as unknown as Record<string, unknown>;
+    const profile = Object.fromEntries(
+      PROVIDER_PROFILE_FIELDS.filter((field) => typeof claims[field] === 'string').map((field) => [
+        field,
+        claims[field] as string,
+      ])
+    );
+    if (Object.keys(profile).length === 0) return;
+    // Only these profile fields: the account state, labels and other attributes stay as they are.
+    await users.updateProfileFields(userId, profile);
+  } catch (error) {
+    log.warn('Profile update from the identity provider failed', {
+      action: 'profile_update_on_login',
+      errorName: error instanceof Error ? error.name : 'Unknown error',
+    });
+  }
+}
+
+/**
+ * Get JIT Provisioning configuration for a tenant.
+ *
+ * The saved platform document (`jit_provisioning_config`) as it is, else the defaults; its
+ * `enabled` is the tenant's `external_idp.jit_provisioning_enabled` as the Settings API resolves
+ * it (tenant, else the saved document, else env, else the default). JIT creates accounts, so
+ * settings that cannot be read disable it rather than falling back to a value that enables it.
+ */
+export async function getJITConfig(env: Env, tenantId: string): Promise<JITProvisioningConfig> {
+  let config: JITProvisioningConfig = DEFAULT_JIT_CONFIG;
+  let raw: string | null | undefined;
+  try {
+    raw = await env.SETTINGS?.get('jit_provisioning_config');
+  } catch {
+    return { ...DEFAULT_JIT_CONFIG, enabled: false };
+  }
+  try {
+    const saved = parseSettingsDocument(raw);
+    if (saved) config = saved as unknown as JITProvisioningConfig;
+  } catch {
+    // Saved but not a JSON object: its other fields are unknown, so the defaults apply to them;
+    // the older value reads as disabled, below the tenant's Settings API value.
+  }
+  try {
+    // The document read above is the older value: one read decides, never a cached copy.
+    const values = await resolveEffectiveSettings(env, 'external-idp', {
+      tenantId,
+      legacy: legacyJitProvisioningValues(raw ?? null),
+    });
+    return { ...config, enabled: values['external_idp.jit_provisioning_enabled'] === true };
+  } catch {
+    return { ...config, enabled: false };
+  }
 }
 
 /**
@@ -210,6 +280,15 @@ export async function handleIdentity(
         defaultUserStoreSources.piiDb
       );
   if (existingLink) {
+    // The user's profile from the provider, where the tenant turns that on.
+    await updateUserProfileFromProvider(
+      env,
+      existingLink.tenantId,
+      existingLink.userId,
+      userInfo,
+      externalRoute ?? defaultUserStoreSources
+    );
+
     // Update tokens and last login
     const updates = { tokens, lastLoginAt: Date.now(), rawClaims: userInfo };
     if (externalRoute) {
@@ -385,7 +464,7 @@ export async function handleIdentity(
     }
 
     // Get JIT provisioning configuration
-    const jitConfig = await getJITConfig(env);
+    const jitConfig = await getJITConfig(env, tenantId);
 
     // Check if JIT is enabled
     if (!jitConfig.enabled) {

@@ -219,7 +219,7 @@ program
     const chalk = await import('chalk').then((m) => m.default);
     const ora = await import('ora').then((m) => m.default);
     const { confirm } = await import('@inquirer/prompts');
-    const { resolve, join } = await import('node:path');
+    const { resolve } = await import('node:path');
     const { existsSync } = await import('node:fs');
     const { readFile } = await import('node:fs/promises');
 
@@ -253,7 +253,8 @@ program
     } = await import('./core/worker-readiness.js');
     const { findAuthrimBaseDir, getEnvironmentPaths, resolvePaths, findKeysDirectory } =
       await import('./core/paths.js');
-    const { resolveUiDeploymentSettings } = await import('./core/ui-deployment.js');
+    const { resolveUiDeploymentSettings, resolveUiPackageDir } =
+      await import('./core/ui-deployment.js');
     const { mergeAndSaveUiEnv } = await import('./core/ui-env.js');
     const { getPackageVersion, getRootProductVersion } = await import('./core/version.js');
     const { evaluateReleaseDeploymentGuard, releaseDeploymentGuardMessage } =
@@ -415,7 +416,12 @@ program
         // Deploy UI Worker component.
         if (!dryRun) {
           const buildSpinner = ora(`Preparing ${componentName}...`).start();
-          const uiDir = join(baseDir, 'packages', componentName);
+          const adminUiVariant = cfg?.components?.adminUiVariant;
+          const uiDir = resolveUiPackageDir(
+            baseDir,
+            componentName as 'ar-admin-ui' | 'ar-login-ui',
+            adminUiVariant
+          );
 
           if (!existsSync(uiDir)) {
             buildSpinner.fail(`Package not found: ${componentName}`);
@@ -538,6 +544,7 @@ program
               serviceBindingName: uiSettings.serviceBindingName,
               workersDev: uiSettings.workersDev,
               routes: uiSettings.routes,
+              sourcePackage: uiSettings.sourcePackage,
               adminUiBffSecrets,
               skipBuild,
               deployConfigLockProof: deployConfigLock?.proof,
@@ -595,9 +602,7 @@ program
                     [componentName]: {
                       name: result.projectName,
                       deployedAt: result.deployedAt,
-                      version:
-                        (await getPackageVersion(join(baseDir, 'packages', componentName))) ??
-                        undefined,
+                      version: (await getPackageVersion(uiDir)) ?? undefined,
                       cloudflareVersionId: result.cloudflareVersionId,
                       cloudflareScriptTag: result.cloudflareScriptTag,
                     },
@@ -626,6 +631,7 @@ program
                 },
                 registeredBy: 'setup:upgrade-ui',
                 disableMissing: false,
+                adminUiVariant,
               });
             }
             deploySpinner.succeed(`${componentName} deployed successfully`);

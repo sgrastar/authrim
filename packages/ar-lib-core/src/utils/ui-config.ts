@@ -18,7 +18,14 @@
  */
 
 import type { Env } from '../types/env';
-import { validateUIBaseUrl, parseAllowedOriginsEnv } from './ui-url-validator';
+import { resolveEffectiveSettingsWithSources } from '../services/effective-settings';
+import { buildIssuerUrl, type IssuerEnvLike } from './issuer';
+import { getPrimaryTenantVanityDomain } from '../services/tenant-vanity-domain-resolver';
+import {
+  validateUIBaseUrl,
+  parseAllowedOriginsEnv,
+  type UIUrlValidationResult,
+} from './ui-url-validator';
 import { createLogger } from './logger';
 
 const log = createLogger().module('UI_CONFIG');
@@ -178,35 +185,223 @@ export const UI_PATH_METADATA: Record<
 // Flag to track if UI_URL warning has been logged (avoid spam)
 let uiUrlWarningLogged = false;
 
+/** The UI paths a tenant can set through the Settings API, by path name. */
+export const TENANT_UI_PATH_KEYS = {
+  login: 'tenant.ui_login_path',
+  consent: 'tenant.ui_consent_path',
+  reauth: 'tenant.ui_reauth_path',
+  error: 'tenant.ui_error_path',
+} as const satisfies Partial<Record<keyof UIPathConfig, string>>;
+
+const TENANT_UI_KEYS = ['tenant.ui_base_url', ...Object.values(TENANT_UI_PATH_KEYS)];
+
+/**
+ * A UI path that stays on the UI's host: it starts with one `/` (not `//` or `/\`, which a URL
+ * resolves to another host) and has no whitespace, backslash, query or fragment.
+ */
+export function isValidUIPath(value: unknown): value is string {
+  return typeof value === 'string' && value.length <= 256 && /^\/(?![/\\])[^\s\\?#]*$/.test(value);
+}
+
+type TenantUIEnv = Partial<IssuerEnvLike & Pick<Env, 'ISSUER_URL' | 'ALLOWED_ORIGINS'>>;
+
+/**
+ * Like validateTenantUIBaseUrl, and also the origin of the tenant's active primary custom domain
+ * (its issuer when it has one). The domain is looked up only when the other origins do not
+ * allow the URL; a lookup that fails allows nothing more.
+ */
+export async function validateTenantUIBaseUrlAsync(
+  value: string,
+  env: TenantUIEnv & Partial<Pick<Env, 'AUTHRIM_CONFIG' | 'DB'>>,
+  tenantId: string
+): Promise<UIUrlValidationResult> {
+  const result = validateTenantUIBaseUrl(value, env, tenantId);
+  if (result.valid || value.trim() === '' || value !== value.trim()) return result;
+  let origin: string;
+  try {
+    origin = new URL(value).origin.toLowerCase();
+  } catch {
+    return result;
+  }
+  const primary = await getPrimaryTenantVanityDomain(env as Partial<Env>, tenantId).catch(
+    () => null
+  );
+  if (!primary || origin !== `https://${primary.hostname}`.toLowerCase()) return result;
+  return validateUIBaseUrl(value, env.ISSUER_URL, [
+    ...parseAllowedOriginsEnv(env.ALLOWED_ORIGINS),
+    origin,
+  ]);
+}
+
+type UIConfigEnv = TenantUIEnv & Partial<Pick<Env, 'SETTINGS' | 'UI_URL' | 'AUTHRIM_CONFIG'>>;
+
+/**
+ * Whether a tenant's UI base URL is an allowed UI origin: the platform issuer's or the tenant's
+ * own issuer origin, localhost, or one of ALLOWED_ORIGINS (as for the platform's UI).
+ */
+export function validateTenantUIBaseUrl(
+  value: string,
+  env: TenantUIEnv,
+  tenantId: string
+): UIUrlValidationResult {
+  // Blank or padded values are not URLs (the shared validator treats blank as "not set").
+  if (value.trim() === '' || value !== value.trim()) {
+    return { valid: false, error: 'The UI base URL must not be blank or padded with spaces' };
+  }
+  const allowedOrigins = parseAllowedOriginsEnv(env.ALLOWED_ORIGINS);
+  try {
+    const tenantIssuer = buildIssuerUrl(env, tenantId);
+    if (tenantIssuer) allowedOrigins.push(new URL(tenantIssuer).origin);
+  } catch {
+    // No issuer of its own (an id that cannot be a host name): the other origins only
+  }
+  return validateUIBaseUrl(value, env.ISSUER_URL, allowedOrigins);
+}
+
 /**
  * Get UI configuration
- * Priority: KV (system_settings.ui) > env.UI_URL > null
+ * Priority: the tenant's Settings API values (`tenant.ui_*`) > KV (system_settings.ui) >
+ * env.UI_URL > null
  *
- * Security: KV values are validated when set via Admin API.
+ * Security: KV values are validated when set via Admin API. The tenant's values are validated
+ * again here (they can also arrive through imports), and one that is not valid is skipped.
  * Environment variable UI_URL is trusted but warned if suspicious (defense in depth).
  *
  * @param env Environment bindings
+ * @param tenantId The tenant whose sign-in UI is wanted (without one: the platform's)
  * @returns UI configuration or null if not configured
  */
-export async function getUIConfig(
-  env: Partial<Pick<Env, 'SETTINGS' | 'UI_URL' | 'ISSUER_URL' | 'ALLOWED_ORIGINS'>>
-): Promise<UIConfig | null> {
-  // 1. Try KV first (already validated when set via Admin API)
+export async function getUIConfig(env: UIConfigEnv, tenantId?: string): Promise<UIConfig | null> {
+  return (await getTenantUIConfig(env, tenantId)).config;
+}
+
+/** The UI configuration for a tenant (see getTenantUIConfig). */
+export interface TenantUIConfig {
+  /** The UI to redirect to, or null when none is configured. */
+  config: UIConfig | null;
+  /**
+   * Whether the base URL is the tenant's own (`tenant.ui_base_url`): an explicit choice that
+   * callers put before a UI host they would otherwise pick themselves.
+   */
+  tenantBaseUrl: boolean;
+  /** The UI paths, with the tenant's, also when no base URL is configured. */
+  paths: UIPathConfig;
+}
+
+/** Like getUIConfig, with whether the base URL is the tenant's and the paths on their own. */
+export async function getTenantUIConfig(
+  env: UIConfigEnv,
+  tenantId?: string
+): Promise<TenantUIConfig> {
+  let document: unknown = null;
   if (env.SETTINGS) {
     try {
       const settings = await env.SETTINGS.get('system_settings');
-      if (settings) {
-        const parsed = JSON.parse(settings) as { ui?: Partial<UIConfig> };
-        if (parsed.ui?.baseUrl) {
-          return {
-            baseUrl: normalizeUrl(parsed.ui.baseUrl),
-            paths: { ...DEFAULT_UI_PATHS, ...parsed.ui.paths },
-          };
-        }
-      }
+      document = settings ? JSON.parse(settings) : null;
     } catch {
       // Fall through to environment variable
     }
+  }
+  const platform = resolveUIConfig(document, env).config;
+  const platformOnly = (): TenantUIConfig => ({
+    config: platform,
+    tenantBaseUrl: false,
+    paths: platform?.paths ?? DEFAULT_UI_PATHS,
+  });
+  if (!tenantId) return platformOnly();
+  let tenantValues: Record<string, unknown>;
+  try {
+    const { values, sources } = await resolveEffectiveSettingsWithSources(env, 'tenant', {
+      tenantId,
+      keys: TENANT_UI_KEYS,
+      // The older store was read above; only the tenant's own values are wanted here.
+      legacy: {},
+    });
+    tenantValues = Object.fromEntries(
+      TENANT_UI_KEYS.filter((key) => sources[key] === 'kv').map((key) => [key, values[key]])
+    );
+  } catch {
+    // As before tenants could set these: the platform's UI.
+    log.warn('Tenant UI settings could not be read; using the platform UI settings', {
+      tenantId,
+    });
+    return platformOnly();
+  }
+  // A base URL on the tenant's custom domain needs a lookup: made only for a value the other
+  // origins do not allow.
+  const tenantBase = tenantValues['tenant.ui_base_url'];
+  const baseUrlCheck =
+    typeof tenantBase === 'string' && tenantBase !== ''
+      ? await validateTenantUIBaseUrlAsync(tenantBase, env, tenantId)
+      : undefined;
+  return applyTenantUISettings(platform, tenantValues, env, tenantId, baseUrlCheck);
+}
+
+/**
+ * The platform's UI configuration with the values a tenant set: its base URL when it is an
+ * allowed UI origin (as the Admin API requires), and its paths that stay on the UI's host.
+ * Paths alone do not give a tenant a UI when none is configured.
+ */
+export function applyTenantUISettings(
+  platform: UIConfig | null,
+  tenantValues: Record<string, unknown>,
+  env: TenantUIEnv,
+  tenantId: string,
+  /** The base URL's check, when made beforehand (such as with the custom domain lookup). */
+  baseUrlCheck?: UIUrlValidationResult
+): TenantUIConfig {
+  let baseUrl = platform?.baseUrl;
+  let fromTenant = false;
+  const tenantBase = tenantValues['tenant.ui_base_url'];
+  if (typeof tenantBase === 'string' && tenantBase !== '') {
+    const validation = baseUrlCheck ?? validateTenantUIBaseUrl(tenantBase, env, tenantId);
+    if (validation.valid) {
+      baseUrl = normalizeUrl(tenantBase);
+      fromTenant = true;
+    } else {
+      log.warn('Tenant UI base URL is not an allowed UI origin; using the platform UI', {
+        tenantId,
+        error: validation.error,
+      });
+    }
+  }
+  const paths: UIPathConfig = { ...(platform?.paths ?? DEFAULT_UI_PATHS) };
+  for (const [name, key] of Object.entries(TENANT_UI_PATH_KEYS) as Array<
+    [keyof typeof TENANT_UI_PATH_KEYS, string]
+  >) {
+    const path = tenantValues[key];
+    if (path === undefined) continue;
+    if (isValidUIPath(path)) paths[name] = path;
+    else log.warn('Tenant UI path is not valid; using the platform path', { tenantId, key });
+  }
+  return {
+    config: baseUrl ? { baseUrl, paths } : null,
+    tenantBaseUrl: fromTenant,
+    paths,
+  };
+}
+
+/**
+ * The UI configuration from a `system_settings` document (as read; null when none) and env:
+ * the document's `ui` (already validated when set via Admin API) when it has a base URL, else
+ * UI_URL with the default paths, else none. Admin views pass the document they read once, so
+ * the configuration and its source come from the same read.
+ */
+export function resolveUIConfig(
+  document: unknown,
+  env: Partial<Pick<Env, 'UI_URL' | 'ISSUER_URL' | 'ALLOWED_ORIGINS'>>
+): { config: UIConfig | null; source: 'kv' | 'env' | 'none' } {
+  // 1. The saved document
+  const ui =
+    document && typeof document === 'object'
+      ? (document as { ui?: Partial<UIConfig> }).ui
+      : undefined;
+  // A base URL that is not a non-empty string is unusable: as before, UI_URL or none applies.
+  if (typeof ui?.baseUrl === 'string' && ui.baseUrl !== '') {
+    return {
+      config: { baseUrl: normalizeUrl(ui.baseUrl), paths: { ...DEFAULT_UI_PATHS, ...ui.paths } },
+      source: 'kv',
+    };
   }
 
   // 2. Try environment variable (trusted but validate for defense in depth)
@@ -226,13 +421,13 @@ export async function getUIConfig(
     }
 
     return {
-      baseUrl: normalizeUrl(env.UI_URL),
-      paths: DEFAULT_UI_PATHS,
+      config: { baseUrl: normalizeUrl(env.UI_URL), paths: DEFAULT_UI_PATHS },
+      source: 'env',
     };
   }
 
   // 3. Not configured
-  return null;
+  return { config: null, source: 'none' };
 }
 
 /**

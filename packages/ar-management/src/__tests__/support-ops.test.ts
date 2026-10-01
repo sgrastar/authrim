@@ -145,7 +145,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
       })
     ),
     getTenantIdFromContext: vi.fn(() => 'tenant-a'),
-    getTenantSettings: mockGetTenantSettings,
+    getTenantSettingsDocument: mockGetTenantSettings,
     ensureDatabaseAdapter: vi.fn(() => mockAdapter),
     listEnvironmentTenantDefaultStores: mockListTenantStores,
     requireDedicatedAdminDatabaseAdapter: vi.fn(() => mockAdminAdapter),

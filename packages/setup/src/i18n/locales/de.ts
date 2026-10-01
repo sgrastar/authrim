@@ -1111,6 +1111,12 @@ const de: Translations = {
   'web.comp.adminUi': 'Admin-UI',
   'web.comp.adminUiDesc':
     'Admin-Dashboard zur Verwaltung von Tenants, Clients, Benutzern und Systemeinstellungen.',
+  'web.comp.adminUiVariant': 'Admin-UI-Paket',
+  'web.comp.adminUiLegacy': 'Aktuelle Admin-UI',
+  'web.comp.adminUiLegacyDesc': 'Die heute genutzte Admin-UI mit allen Funktionen.',
+  'web.comp.adminUiConsole': 'Admin-Konsole (Vorschau)',
+  'web.comp.adminUiConsoleDesc':
+    'Die neu gestaltete Admin-Konsole. Funktionen kommen schrittweise hinzu; noch nicht neu gebaute Einträge zeigen einen Platzhalter. Gleiche URL und Administrator-Passkeys wie die aktuelle Admin-UI.',
 
   // Web UI Domain Row Labels
   'web.domain.loginUi': 'Login-UI',

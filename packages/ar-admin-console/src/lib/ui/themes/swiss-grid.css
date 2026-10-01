@@ -1,0 +1,137 @@
+/* ============================================================
+   Swiss Grid — flat, square, high-contrast. Ported from the legacy Admin UI skin
+   (ar-admin-ui themes.css, data-admin-skin="admin"). Only theme-contract tokens are set here.
+   ============================================================ */
+
+[data-admin-theme='swiss-grid'] {
+	--bg-page: #f6f5f1;
+	--bg-card: #f6f5f1;
+	--bg-subtle: #ecebe6;
+	--bg-input: #fbfaf7;
+	--bg-hover: rgba(20, 20, 18, 0.05);
+
+	--primary: #141412;
+	--primary-hover: #000000;
+	--text-primary: #141412;
+	--text-secondary: #4f4e4a;
+	--text-muted: #5f5e59;
+	--text-inverse: #f6f5f1;
+
+	--border: rgba(20, 20, 18, 0.15);
+	--border-strong: #141412;
+	--border-subtle: rgba(20, 20, 18, 0.09);
+	--focus-ring: #ff4400;
+
+	--accent-enduser: #5e97bd;
+	--accent-client: #3f9d78;
+	--accent-tenant: #c18d2e;
+	--accent-platform: #8467b8;
+
+	--success: #1a7a3c;
+	--success-bg: #e3efe6;
+	--changed: #e6c229;
+	--warning: #a33a00;
+	--warning-bg: #fbe8dc;
+	--danger: #b8201c;
+	--danger-bg: #f8e2e0;
+	--info: #1f5c93;
+	--info-bg: #e2ebf3;
+	--info-text: #1f4b73;
+	--warning-text: #7f2e00;
+	--platform-text: #553d80;
+	--on-accent: #141412;
+	--switch-off: rgba(20, 20, 18, 0.28);
+	--switch-knob: #ffffff;
+	--scrim: rgba(20, 20, 18, 0.5);
+
+	/* --- Code (syntax highlighting on --bg-input) --- */
+	--code-comment: #5f5e59;
+	--code-string: #1a6b36;
+	--code-number: #a33a00;
+	--code-keyword: #9a1f5c;
+	--code-literal: #1f5c93;
+	--code-property: #1f5c93;
+	--code-tag: #b8201c;
+	--code-attr: #7f5a00;
+	--code-function: #3d3a9e;
+	--code-variable: #9a1f5c;
+	--code-punct: #4f4e4a;
+
+	/* Flat: no card fill distinct from the page, rules instead of shadows. */
+	--surface-bg: var(--bg-card);
+	--shell-bg: var(--bg-page);
+	--shell-rule: 2px;
+	--subnav-bg: var(--bg-page);
+	--shadow-sm: 0 0 transparent;
+	--shadow-md: 0 0 0 1px var(--border-strong);
+	--shadow-lg: 0 0 0 2px var(--border-strong);
+
+	--radius-control: 0px;
+	--radius-panel: 0px;
+	--radius-badge: 0px;
+
+	--font-sans: 'Archivo', system-ui, 'Hiragino Sans', 'Noto Sans JP', sans-serif;
+	--font-display: 'Archivo', system-ui, 'Hiragino Sans', 'Noto Sans JP', sans-serif;
+	--font-mono: 'Spline Sans Mono', ui-monospace, monospace;
+	--font-brand: 'Cinzel', Georgia, serif;
+	--heading-weight: 700;
+	--heading-tracking: -0.03em;
+}
+
+[data-admin-theme='swiss-grid'][data-scheme='dark'] {
+	--bg-page: #121210;
+	--bg-card: #181816;
+	--bg-subtle: #1e1e1b;
+	--bg-input: #1e1e1b;
+	--bg-hover: rgba(233, 231, 224, 0.06);
+
+	--primary: #e9e7e0;
+	--primary-hover: #ffffff;
+	--text-primary: #e9e7e0;
+	--text-secondary: #bdbbb4;
+	--text-muted: #a3a19a;
+	--text-inverse: #121210;
+
+	--border: rgba(233, 231, 224, 0.16);
+	--border-strong: rgba(233, 231, 224, 0.5);
+	--border-subtle: rgba(233, 231, 224, 0.09);
+	--focus-ring: #ff5a14;
+
+	--accent-enduser: #7fb3d6;
+	--accent-client: #5fc49a;
+	--accent-tenant: #dcae55;
+	--accent-platform: #a58bd4;
+
+	--success: #4cc97a;
+	--success-bg: rgba(76, 201, 122, 0.13);
+	--changed: #c9a93a;
+	--warning: #ff8a4c;
+	--warning-bg: rgba(255, 90, 20, 0.13);
+	--danger: #ff6b67;
+	--danger-bg: rgba(255, 107, 103, 0.13);
+	--info: #74aee0;
+	--info-bg: rgba(116, 174, 224, 0.13);
+	--info-text: #b4d3ee;
+	--warning-text: #ffc29e;
+	--platform-text: #cdb8f0;
+	--on-accent: #121210;
+	--switch-off: rgba(233, 231, 224, 0.28);
+	--switch-knob: #e9e7e0;
+	--scrim: rgba(0, 0, 0, 0.6);
+
+	/* --- Code (syntax highlighting on --bg-input) --- */
+	--code-comment: #a3a19a;
+	--code-string: #7fd69a;
+	--code-number: #ff9a5c;
+	--code-keyword: #f08fc0;
+	--code-literal: #8cc4f0;
+	--code-property: #8cc4f0;
+	--code-tag: #ff8a80;
+	--code-attr: #e8c46e;
+	--code-function: #b7aef5;
+	--code-variable: #f08fc0;
+	--code-punct: #bdbbb4;
+
+	--subnav-bg: var(--bg-page);
+	--shell-bg: var(--bg-page);
+}

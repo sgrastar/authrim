@@ -529,6 +529,7 @@ export interface Env {
 
   // Advanced OAuth Features
   ENABLE_HTTPS_REQUEST_URI?: string; // "true" to enable external HTTPS request_uri (SSRF risk, disabled by default)
+  FAPI_ALLOW_PUBLIC_CLIENTS?: string; // "false" to refuse public clients in FAPI mode (default: allowed)
   HTTPS_REQUEST_URI_ALLOWED_DOMAINS?: string; // Comma-separated list of allowed domains
   HTTPS_REQUEST_URI_TIMEOUT_MS?: string; // Fetch timeout in milliseconds (default: 5000)
   HTTPS_REQUEST_URI_MAX_SIZE_BYTES?: string; // Maximum response body size in bytes (default: 102400 = 100KB)

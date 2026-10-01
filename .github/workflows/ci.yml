@@ -224,6 +224,12 @@ jobs:
       - name: Run UI tests
         run: pnpm run test:ui
 
+      - name: Install Playwright Chromium for admin console stories
+        run: pnpm --filter=@authrim/ar-admin-console exec playwright install --with-deps chromium
+
+      - name: Run admin console story tests (interactions + accessibility)
+        run: pnpm --filter=@authrim/ar-admin-console test:stories
+
   control-plane-tests:
     name: Tenant D1 Control Plane Tests
     runs-on: ubuntu-latest
@@ -355,6 +361,14 @@ jobs:
         run: pnpm run build:admin-ui
         env:
           NODE_OPTIONS: '--max-old-space-size=4096'
+
+      - name: Build admin console
+        run: pnpm run build:admin-console
+        env:
+          NODE_OPTIONS: '--max-old-space-size=4096'
+
+      - name: Verify admin console dev mock is absent from the build
+        run: pnpm --filter=@authrim/ar-admin-console check:dev-mock-guard
 
       - name: Test package size reporting
         run: node --test scripts/ci-package-sizes.test.mjs

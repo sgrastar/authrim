@@ -193,7 +193,7 @@ async function redirectToIdPInitiatedConsentFlow(
     return c.redirect(loginUrl.toString());
   }
 
-  const uiConfig = await getUIConfig(c.env);
+  const uiConfig = await getUIConfig(c.env, input.tenantId);
   if (!uiConfig?.baseUrl) return c.json(createConfigurationError(), 500);
   const loginUrlPolicy = await getSAMLInteractiveLoginUrlPolicy(c.env, input.tenantId);
   if (loginUrlPolicy === 'tenant_host') {

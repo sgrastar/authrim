@@ -492,6 +492,182 @@ describe('UnifiedCheckService', () => {
     });
   });
 
+  describe("check - the tenant's attribute-based policy", () => {
+    const allowPremium = {
+      evaluate: vi.fn((context: { verifiedAttributes: Array<{ name: string; value: string }> }) => {
+        const premium = context.verifiedAttributes.some(
+          (attribute) => attribute.name === 'tier' && attribute.value === 'premium'
+        );
+        return premium
+          ? { allowed: true, reason: 'premium', decidedBy: 'rule_premium' }
+          : { allowed: false, reason: 'no rule matched' };
+      }),
+    };
+    const attributes = {
+      getValidAttributesForUser: vi.fn(async () => ({ tier: 'premium' })),
+    };
+    const request: CheckApiRequest = {
+      subject_id: 'user_123',
+      permission: 'reports:read',
+      tenant_id: 'acme',
+    };
+
+    it('grants through the tenant rules with its verified attributes when both are on', async () => {
+      const abacService = createUnifiedCheckService({
+        db: mockD1 as unknown as D1Database,
+        attributeRepository: attributes,
+        tenantPolicy: async () => ({
+          abac: true,
+          verifiedAttributes: true,
+          logDecisions: false,
+          evaluator: allowPremium,
+        }),
+      });
+
+      const result = await abacService.check(request);
+
+      expect(result.allowed).toBe(true);
+      expect(result.resolved_via).toContain('computed');
+      expect(attributes.getValidAttributesForUser).toHaveBeenCalledWith('acme', 'user_123');
+    });
+
+    it('does not load verified attributes, or evaluate rules, when the settings keep them off', async () => {
+      const withoutAttributes = createUnifiedCheckService({
+        db: mockD1 as unknown as D1Database,
+        attributeRepository: attributes,
+        tenantPolicy: async () => ({
+          abac: true,
+          verifiedAttributes: false,
+          logDecisions: false,
+          evaluator: allowPremium,
+        }),
+      });
+      expect((await withoutAttributes.check(request)).allowed).toBe(false);
+      expect(attributes.getValidAttributesForUser).not.toHaveBeenCalled();
+      allowPremium.evaluate.mockClear();
+
+      const abacOff = createUnifiedCheckService({
+        db: mockD1 as unknown as D1Database,
+        attributeRepository: attributes,
+        tenantPolicy: async () => ({
+          abac: false,
+          verifiedAttributes: true,
+          logDecisions: false,
+          evaluator: allowPremium,
+        }),
+      });
+      expect((await abacOff.check(request)).allowed).toBe(false);
+      expect(allowPremium.evaluate).not.toHaveBeenCalled();
+    });
+
+    it('turns attribute-based policy off when the tenant settings cannot be resolved', async () => {
+      const failing = createUnifiedCheckService({
+        db: mockD1 as unknown as D1Database,
+        attributeRepository: attributes,
+        tenantPolicy: async () => {
+          throw new Error('settings unavailable');
+        },
+      });
+      expect((await failing.check(request)).allowed).toBe(false);
+    });
+
+    it('grants nothing through the rules when attributes or roles cannot be read', async () => {
+      // A rule set that would grant: without the subject's attributes or roles, a rule denying
+      // on one of them could be skipped, so the rules are not evaluated at all.
+      const grantAll = { evaluate: vi.fn(() => ({ allowed: true, decidedBy: 'rule_any' })) };
+      const policy = async () => ({
+        abac: true,
+        verifiedAttributes: true,
+        logDecisions: false,
+        evaluator: grantAll,
+      });
+
+      const attributesDown = createUnifiedCheckService({
+        db: mockD1 as unknown as D1Database,
+        attributeRepository: {
+          getValidAttributesForUser: vi.fn(async () => {
+            throw new Error('attributes unavailable');
+          }),
+        },
+        tenantPolicy: policy,
+      });
+      expect((await attributesDown.check(request)).allowed).toBe(false);
+
+      mockD1.all.mockRejectedValueOnce(new Error('roles unavailable'));
+      const rolesDown = createUnifiedCheckService({
+        db: mockD1 as unknown as D1Database,
+        attributeRepository: attributes,
+        tenantPolicy: policy,
+      });
+      expect((await rolesDown.check(request)).allowed).toBe(false);
+      expect(grantAll.evaluate).not.toHaveBeenCalled();
+
+      // With both read, the same rules grant.
+      const healthy = createUnifiedCheckService({
+        db: mockD1 as unknown as D1Database,
+        attributeRepository: attributes,
+        tenantPolicy: policy,
+      });
+      expect((await healthy.check(request)).allowed).toBe(true);
+    });
+
+    it('keeps results out of the shared cache while tenant rules apply or cannot be read', async () => {
+      const cache = { get: vi.fn(async () => null), put: vi.fn(async () => undefined) };
+      const withPolicy = (policy: Record<string, unknown>) =>
+        createUnifiedCheckService({
+          db: mockD1 as unknown as D1Database,
+          cache: cache as unknown as KVNamespace,
+          attributeRepository: attributes,
+          tenantPolicy: async () => ({
+            abac: false,
+            verifiedAttributes: false,
+            logDecisions: false,
+            ...policy,
+          }),
+        });
+
+      await withPolicy({ abac: true, verifiedAttributes: true, evaluator: allowPremium }).check(
+        request
+      );
+      await withPolicy({ unavailable: true }).check(request);
+      await createUnifiedCheckService({
+        db: mockD1 as unknown as D1Database,
+        cache: cache as unknown as KVNamespace,
+        tenantPolicy: async () => {
+          throw new Error('settings unavailable');
+        },
+      }).check(request);
+      expect(cache.get).not.toHaveBeenCalled();
+      expect(cache.put).not.toHaveBeenCalled();
+
+      // Without tenant rules, results are cached as before.
+      await withPolicy({}).check(request);
+      expect(cache.get).toHaveBeenCalled();
+      expect(cache.put).toHaveBeenCalled();
+    });
+
+    it('resolves the settings of each check tenant once', async () => {
+      const tenantPolicy = vi.fn(async (tenantId: string) => ({
+        abac: tenantId === 'acme',
+        verifiedAttributes: true,
+        logDecisions: false,
+        evaluator: allowPremium,
+      }));
+      const perTenant = createUnifiedCheckService({
+        db: mockD1 as unknown as D1Database,
+        attributeRepository: attributes,
+        tenantPolicy,
+      });
+
+      const result = await perTenant.batchCheck({
+        checks: [request, { ...request, tenant_id: 'other' }, request],
+      });
+
+      expect(result.results.map((entry) => entry.allowed)).toEqual([true, false, true]);
+      expect(tenantPolicy).toHaveBeenCalledTimes(2);
+    });
+  });
+
   describe('batchCheck', () => {
     it('should process multiple checks and return summary', async () => {
       // Mock different results for different checks

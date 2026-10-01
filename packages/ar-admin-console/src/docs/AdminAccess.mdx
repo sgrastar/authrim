@@ -1,0 +1,46 @@
+import { Meta } from '@storybook/addon-docs/blocks';
+
+<Meta title="Pages/Kinds of admin" />
+
+# Kinds of admin
+
+Admins see and change different things. The console shows each of them only what they can use.
+
+| Kind                      | Runs                                    | Example role                  |
+| ------------------------- | --------------------------------------- | ----------------------------- |
+| **Platform admin**        | the whole installation, every tenant    | `super_admin` (platform-wide) |
+| **Tenant admin**          | one tenant: users, apps, settings       | `admin`                       |
+| **Limited** (in a tenant) | one job: helping users, or only reading | `support`, `viewer`           |
+
+Use the **Admin** toolbar to look at any page as each of them. The personas carry the
+permissions of the built-in roles, so what a story shows matches what that role gets from the
+real API.
+
+## One question, three answers
+
+The console never branches on a kind of admin. For each thing it shows — a navigation item, a
+page, a setting, an action — it asks what the admin may do (`src/lib/access/access.ts`):
+
+| Level  | Shown as                                                                      |
+| ------ | ----------------------------------------------------------------------------- |
+| `none` | not at all — no greyed-out item or control that can never be used             |
+| `view` | values as text, with one note on the page saying the admin cannot change them |
+| `edit` | controls                                                                      |
+
+A navigation item states what its page needs (`requires` in `nav-data.ts`); the item is left out
+for admins who could not use the page. Opening its URL anyway shows that the admin has no access.
+Custom roles work the same way: what the API grants is what shows.
+
+## The API decides; the console mirrors it
+
+Every request is checked by the Admin API. `access.ts` mirrors those checks so the console does
+not offer what would fail, and keeps them in one file:
+
+- **Settings are opened by role name**, not by permission (`admin:settings:*` alone does not
+  open them); `super_admin` and `system_admin` open every category.
+- **A category no role may edit at a scope is read-only there for everyone** (infrastructure
+  and encryption on the platform: they are set when deploying).
+- Other areas are checked by permission (`admin:users:read`, wildcards included).
+
+If the API refuses what the rules allowed (a role the rules do not know), the page treats that
+part as `none`.

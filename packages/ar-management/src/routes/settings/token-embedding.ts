@@ -9,13 +9,14 @@
 
 import type { Context } from 'hono';
 import {
-  isPolicyEmbeddingEnabled,
   isCustomClaimsEnabled,
   isIdLevelPermissionsEnabled,
-  getEmbeddingLimits,
   getLogger,
+  getTenantIdFromContext,
+  resolveEffectiveSettingsWithSources,
   type TokenEmbeddingLimits,
 } from '@authrim/ar-lib-core';
+import { SettingsUnavailableError, settingsUnavailableResponse } from './settings-unavailable';
 
 // =============================================================================
 // Types
@@ -57,6 +58,46 @@ const KV_KEYS = {
   LAST_UPDATED: 'config:token_embedding:last_updated',
 };
 
+/**
+ * Policy embedding and the embedding limits as token issuance applies them for the request's
+ * tenant (Settings API values, else the values saved here, else env, else defaults), read
+ * without caches. Throws SettingsUnavailableError (503) when they cannot be read.
+ */
+async function effectiveEmbeddingSettings(c: Context): Promise<{
+  policyEmbeddingEnabled: boolean;
+  limits: TokenEmbeddingLimits;
+}> {
+  const tenantId = getTenantIdFromContext(c);
+  try {
+    const [flags, limits] = await Promise.all([
+      resolveEffectiveSettingsWithSources(c.env, 'feature-flags', {
+        tenantId,
+        keys: ['feature.enable_policy_embedding'],
+        freshLegacy: true,
+      }),
+      resolveEffectiveSettingsWithSources(c.env, 'limits', {
+        tenantId,
+        keys: [
+          'limits.max_embedded_permissions',
+          'limits.max_resource_permissions',
+          'limits.max_custom_claims',
+        ],
+        freshLegacy: true,
+      }),
+    ]);
+    return {
+      policyEmbeddingEnabled: flags.values['feature.enable_policy_embedding'] === true,
+      limits: {
+        max_embedded_permissions: limits.values['limits.max_embedded_permissions'] as number,
+        max_resource_permissions: limits.values['limits.max_resource_permissions'] as number,
+        max_custom_claims: limits.values['limits.max_custom_claims'] as number,
+      },
+    };
+  } catch (error) {
+    throw new SettingsUnavailableError(error);
+  }
+}
+
 // =============================================================================
 // Handlers
 // =============================================================================
@@ -69,12 +110,11 @@ export async function getTokenEmbeddingSettings(c: Context) {
   const log = getLogger(c).module('TokenEmbeddingAPI');
   try {
     // Get current feature flag states
-    const [policyEmbeddingEnabled, customClaimsEnabled, idLevelPermissionsEnabled, limits] =
+    const [{ policyEmbeddingEnabled, limits }, customClaimsEnabled, idLevelPermissionsEnabled] =
       await Promise.all([
-        isPolicyEmbeddingEnabled(c.env),
+        effectiveEmbeddingSettings(c),
         isCustomClaimsEnabled(c.env),
         isIdLevelPermissionsEnabled(c.env),
-        getEmbeddingLimits(c.env),
       ]);
 
     // Get last updated timestamp
@@ -97,6 +137,7 @@ export async function getTokenEmbeddingSettings(c: Context) {
 
     return c.json(settings);
   } catch (error) {
+    if (error instanceof SettingsUnavailableError) return settingsUnavailableResponse(c);
     log.error('Get error', {}, error as Error);
     return c.json(
       {
@@ -225,12 +266,11 @@ export async function updateTokenEmbeddingSettings(c: Context) {
     log.info('Settings updated', { updates: updates.join(', ') });
 
     // Return updated settings
-    const [policyEmbeddingEnabled, customClaimsEnabled, idLevelPermissionsEnabled, limits] =
+    const [{ policyEmbeddingEnabled, limits }, customClaimsEnabled, idLevelPermissionsEnabled] =
       await Promise.all([
-        isPolicyEmbeddingEnabled(c.env),
+        effectiveEmbeddingSettings(c),
         isCustomClaimsEnabled(c.env),
         isIdLevelPermissionsEnabled(c.env),
-        getEmbeddingLimits(c.env),
       ]);
 
     const settings: TokenEmbeddingSettings = {
@@ -243,6 +283,7 @@ export async function updateTokenEmbeddingSettings(c: Context) {
 
     return c.json(settings);
   } catch (error) {
+    if (error instanceof SettingsUnavailableError) return settingsUnavailableResponse(c);
     log.error('Update error', {}, error as Error);
     return c.json(
       {
