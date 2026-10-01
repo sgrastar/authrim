@@ -43,5 +43,6 @@ Once the workflow also exists on the repository's default branch, it can be
 rerun manually with `develop` selected as the branch. Otherwise push a new
 commit to `develop` to trigger a deployment. Public checks verify the manager,
 preview iframe, and Introduction entry in `index.json`. DNS and certificate
-provisioning may take longer on the first deployment; rerun verification after
+provisioning is retried for up to ten minutes per endpoint. HTML redirects are
+followed, and the root URL serves the Storybook manager. Rerun verification after
 provisioning completes if necessary.

@@ -69,7 +69,7 @@ jobs:
 
       - name: Verify published Storybook
         run: |
-          curl --fail --silent --show-error --retry 12 --retry-all-errors --retry-delay 10 https://admin.storybook.authrim.com/ --output /tmp/storybook-index.html
-          curl --fail --silent --show-error --retry 12 --retry-all-errors --retry-delay 10 https://admin.storybook.authrim.com/iframe.html --output /tmp/storybook-iframe.html
-          curl --fail --silent --show-error --retry 12 --retry-all-errors --retry-delay 10 https://admin.storybook.authrim.com/index.json --output /tmp/storybook-index.json
+          curl --fail --location --silent --show-error --connect-timeout 10 --max-time 30 --retry 60 --retry-max-time 600 --retry-all-errors --retry-delay 10 https://admin.storybook.authrim.com/ --output /tmp/storybook-index.html
+          curl --fail --location --silent --show-error --connect-timeout 10 --max-time 30 --retry 60 --retry-max-time 600 --retry-all-errors --retry-delay 10 https://admin.storybook.authrim.com/iframe.html --output /tmp/storybook-iframe.html
+          curl --fail --location --silent --show-error --connect-timeout 10 --max-time 30 --retry 60 --retry-max-time 600 --retry-all-errors --retry-delay 10 https://admin.storybook.authrim.com/index.json --output /tmp/storybook-index.json
           node -e "const fs = require('node:fs'); const index = JSON.parse(fs.readFileSync('/tmp/storybook-index.json', 'utf8')); if (!index.entries['introduction--docs']) throw new Error('Published Introduction docs are missing');"
