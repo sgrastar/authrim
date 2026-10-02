@@ -40,6 +40,7 @@ import type {
 } from '@authrim/ar-lib-core';
 import {
   ADMIN_PERMISSIONS,
+  profileUpdateFieldsProblem,
   validateExternalUrl,
   safeFetch,
   safeFetchText,
@@ -247,6 +248,13 @@ function normalizeSAMLIdPJitLinkingPolicyConfig(
   const policy = config.jitEmailLinkingPolicy ?? 'email_linking';
   if (!SAML_JIT_EMAIL_LINKING_POLICIES.has(policy)) {
     return { field: 'jitEmailLinkingPolicy' };
+  }
+  if (
+    config.profileUpdateFields !== undefined &&
+    config.profileUpdateFields !== null &&
+    profileUpdateFieldsProblem(config.profileUpdateFields) !== null
+  ) {
+    return { field: 'profileUpdateFields' };
   }
   if (options.requireIdentityMapping !== false && !config.identityMapping?.fieldMappingSetId) {
     return { field: 'identityMapping.fieldMappingSetId' };

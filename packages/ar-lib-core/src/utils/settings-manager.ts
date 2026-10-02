@@ -54,12 +54,32 @@ export interface SettingsReadOptions {
    * Only scopes the category allows belong here; see `settingsParentScopes`.
    */
   parents?: SettingScope[];
+}
+
+/** Options of `SettingsManager.patch`. */
+export interface SettingsPatchOptions extends SettingsReadOptions {
   /**
-   * Values from the older platform-wide stores (oauth-config, system_settings and others),
-   * keyed by setting key. They sit below every Settings API scope and above env and default,
-   * and are reported as coming from the platform. See `readLegacySettings`.
+   * Save values without checking their dependencies: for a set saved as a whole (values carried
+   * over from the older stores, which applied whatever their dependencies were, or a
+   * certification profile), where refusing one would change what applies.
    */
-  legacy?: Record<string, unknown>;
+  skipDependencyCheck?: boolean;
+}
+
+interface InheritedLayer {
+  source: InheritedSettingSource;
+  data: Record<string, unknown>;
+}
+
+/** The layers a scope inherits from, nearest first: its tenant, then the platform. */
+function inheritedLayers(
+  parents: SettingScope[],
+  parentData: Record<string, unknown>[]
+): InheritedLayer[] {
+  return parents.map((parent, index) => ({
+    source: parent.type as InheritedSettingSource,
+    data: parentData[index],
+  }));
 }
 
 /**
@@ -97,8 +117,13 @@ export interface SettingMeta {
    * whose runtime treats any defined value as set. Implied by envBoolean 'exactly-true'.
    */
   envEmpty?: 'unset' | 'false';
-  /** 'positive': a number env value of 0 or less is ignored, as runtime ignores it. */
-  envNumber?: 'any' | 'positive';
+  /**
+   * 'positive': a number env value of 0 or less is ignored, as runtime ignores it.
+   * 'in-range': one outside min..max is ignored, as runtime ignores it.
+   * 'fraction-in-range': read as a decimal (not cut to its whole part), and ignored outside
+   * min..max, for a setting such as a sample rate.
+   */
+  envNumber?: 'any' | 'positive' | 'in-range' | 'fraction-in-range';
   /** Human-readable label */
   label: string;
   /** Description for admin UI */
@@ -212,37 +237,26 @@ export interface CanonicalSettingsDocument {
   version: string;
 }
 
-/** Strong source used for tenant/client settings; KV remains a runtime projection. */
+/** Strong source used for platform, tenant and client settings; KV remains a runtime projection. */
 export interface SettingsCanonicalStore {
-  load(
-    category: string,
-    scope: Exclude<SettingScope, { type: 'platform' }>
-  ): Promise<CanonicalSettingsDocument | null>;
+  load(category: string, scope: SettingScope): Promise<CanonicalSettingsDocument | null>;
   create(
     category: string,
-    scope: Exclude<SettingScope, { type: 'platform' }>,
+    scope: SettingScope,
     document: CanonicalSettingsDocument
   ): Promise<CanonicalSettingsDocument>;
   compareAndSet(
     category: string,
-    scope: Exclude<SettingScope, { type: 'platform' }>,
+    scope: SettingScope,
     expectedVersion: string,
     document: CanonicalSettingsDocument
   ): Promise<boolean>;
-  markProjected(
-    category: string,
-    scope: Exclude<SettingScope, { type: 'platform' }>,
-    version: string
-  ): Promise<void>;
+  markProjected(category: string, scope: SettingScope, version: string): Promise<void>;
   /**
    * Ask for this version to be projected again by the scheduled retry. Does nothing when a
    * newer version has been saved since, because that save projects itself.
    */
-  markPending(
-    category: string,
-    scope: Exclude<SettingScope, { type: 'platform' }>,
-    version: string
-  ): Promise<void>;
+  markPending(category: string, scope: SettingScope, version: string): Promise<void>;
 }
 
 /**
@@ -305,7 +319,15 @@ function parseEnvValue(
   type: SettingMeta['type'],
   parsing: Pick<
     SettingMeta,
-    'envBoolean' | 'envEmpty' | 'envNumber' | 'step' | 'integer' | 'envString'
+    | 'envBoolean'
+    | 'envEmpty'
+    | 'envNumber'
+    | 'step'
+    | 'integer'
+    | 'envString'
+    | 'min'
+    | 'max'
+    | 'enum'
   > = {}
 ): unknown {
   const envBoolean = parsing.envBoolean ?? 'true-or-1';
@@ -324,9 +346,17 @@ function parseEnvValue(
   switch (type) {
     case 'number':
     case 'duration': {
-      const parsed = parseInt(value, 10);
-      if (isNaN(parsed)) return undefined;
+      const parsed =
+        parsing.envNumber === 'fraction-in-range' ? parseFloat(value) : parseInt(value, 10);
+      if (!Number.isFinite(parsed)) return undefined;
       if (parsing.envNumber === 'positive' && parsed <= 0) return undefined;
+      if (
+        (parsing.envNumber === 'in-range' || parsing.envNumber === 'fraction-in-range') &&
+        ((parsing.min !== undefined && parsed < parsing.min) ||
+          (parsing.max !== undefined && parsed > parsing.max))
+      ) {
+        return undefined;
+      }
       if (parsing.integer && !Number.isSafeInteger(parsed)) return undefined;
       // A value the setting refuses (runtime could not apply it) is not used from env either.
       return parsing.step !== undefined && parsed % parsing.step !== 0 ? undefined : parsed;
@@ -338,7 +368,8 @@ function parseEnvValue(
     case 'string':
       return parsing.envString === 'strip-trailing-slash' ? value.replace(/\/$/, '') : value;
     case 'enum':
-      return value;
+      // A value the setting does not offer is not used from env (its default applies).
+      return !parsing.enum || parsing.enum.includes(value) ? value : undefined;
     case 'json':
       try {
         return JSON.parse(value);
@@ -424,6 +455,7 @@ export class SettingsManager {
   private auditCallback?: (event: SettingsAuditEvent) => Promise<void>;
   private canonicalStore: SettingsCanonicalStore | null;
   private legacyKv: KVNamespace | null;
+  private readOnly: boolean;
 
   // In-memory cache for runtime performance
   private cache: Map<string, { data: Record<string, unknown>; expiresAt: number }> = new Map();
@@ -443,6 +475,11 @@ export class SettingsManager {
      */
     legacyKv?: KVNamespace | null;
     auditCallback?: (event: SettingsAuditEvent) => Promise<void>;
+    /**
+     * Read without writing anything: a missing canonical document is read from KV (and, for a
+     * tenant, the creation-time copy) without creating it, and saves are refused. For previews.
+     */
+    readOnly?: boolean;
   }) {
     this.env = options.env;
     this.kv = options.kv ?? null;
@@ -451,6 +488,7 @@ export class SettingsManager {
     this.strictReads = options.strictReads ?? false;
     this.canonicalStore = options.canonicalStore ?? null;
     this.legacyKv = options.legacyKv ?? null;
+    this.readOnly = options.readOnly ?? false;
   }
 
   /**
@@ -485,13 +523,9 @@ export class SettingsManager {
       this.loadKVData(category, scope),
       ...parents.map((parent) => this.loadKVData(category, parent)),
     ]);
-    const layers = parents.map((parent, index) => ({
-      source: parent.type as InheritedSettingSource,
-      data: parentData[index],
-    }));
-    if (options.legacy) layers.push({ source: 'platform', data: options.legacy });
+    const layers = inheritedLayers(parents, parentData);
 
-    // Resolve values with priority: this scope > parents (nearest first) > legacy > env > default
+    // Resolve values with priority: this scope > parents (nearest first) > env > default
     const values: Record<string, unknown> = {};
     const sources: Record<string, SettingSource> = {};
     const inherited: SettingsGetResult['inherited'] = { values: {}, sources: {} };
@@ -541,7 +575,7 @@ export class SettingsManager {
     scope: SettingScope,
     request: SettingsPatchRequest,
     actor: string,
-    options: SettingsReadOptions = {}
+    options: SettingsPatchOptions = {}
   ): Promise<SettingsPatchResult> {
     const meta = this.categoryMeta.get(category);
     if (!meta) {
@@ -560,11 +594,7 @@ export class SettingsManager {
     const parentData = await Promise.all(
       parents.map((parent) => this.loadKVData(category, parent))
     );
-    const layers = parents.map((parent, index) => ({
-      source: parent.type as InheritedSettingSource,
-      data: parentData[index],
-    }));
-    if (options.legacy) layers.push({ source: 'platform', data: options.legacy });
+    const layers = inheritedLayers(parents, parentData);
 
     // Check optimistic lock
     if (request.ifMatch !== currentVersion) {
@@ -657,7 +687,7 @@ export class SettingsManager {
 
     // Refuse sets whose dependencies the resulting document does not meet. Refusing one can
     // break another's dependency, so repeat until nothing more is refused.
-    let changed = true;
+    let changed = options.skipDependencyCheck !== true;
     while (changed) {
       changed = false;
       for (const key of setKeys) {
@@ -787,7 +817,7 @@ export class SettingsManager {
     scope: SettingScope,
     skipCache = false
   ): Promise<Record<string, unknown>> {
-    if (!this.kv && (!this.canonicalStore || scope.type === 'platform')) {
+    if (!this.kv && !this.canonicalStore) {
       return {};
     }
 
@@ -803,9 +833,8 @@ export class SettingsManager {
 
     try {
       const key = getKVKey(category, scope);
-      const canonicalScope = scope.type === 'platform' ? null : scope;
-      if (this.canonicalStore && canonicalScope) {
-        const canonical = await this.canonicalStore.load(category, canonicalScope);
+      if (this.canonicalStore) {
+        const canonical = await this.canonicalStore.load(category, scope);
         if (canonical) {
           if (generateVersion(canonical.data) !== canonical.version)
             throw new Error('settings_canonical_version_invalid');
@@ -842,16 +871,17 @@ export class SettingsManager {
         }
       }
 
-      if (this.canonicalStore && canonicalScope) {
+      // A read-only manager (previews) never creates the canonical document from KV.
+      if (this.canonicalStore && !this.readOnly) {
         const sourceVersion = generateVersion(data);
-        const created = await this.canonicalStore.create(category, canonicalScope, {
+        const created = await this.canonicalStore.create(category, scope, {
           data,
           version: sourceVersion,
         });
         if (generateVersion(created.data) !== created.version)
           throw new Error('settings_canonical_version_invalid');
         if (json !== null && !fromLegacy && created.version === sourceVersion)
-          await this.canonicalStore.markProjected(category, canonicalScope, created.version);
+          await this.canonicalStore.markProjected(category, scope, created.version);
         data = created.data;
       }
 
@@ -880,20 +910,20 @@ export class SettingsManager {
   ): Promise<'applied' | 'pending'> {
     const key = getKVKey(category, scope);
     const version = generateVersion(data);
-    const canonicalScope = scope.type === 'platform' ? null : scope;
-    if (this.canonicalStore && canonicalScope) {
+    if (this.readOnly) throw new Error('Settings manager is read-only');
+    if (this.canonicalStore) {
       if (
-        !(await this.canonicalStore.compareAndSet(category, canonicalScope, expectedVersion, {
+        !(await this.canonicalStore.compareAndSet(category, scope, expectedVersion, {
           data,
           version,
         }))
       ) {
-        const latest = await this.canonicalStore.load(category, canonicalScope);
+        const latest = await this.canonicalStore.load(category, scope);
         throw new ConflictError('Settings were updated by someone else. Please refresh.', {
           currentVersion: latest?.version ?? expectedVersion,
         });
       }
-      return this.projectLatest(category, canonicalScope, key);
+      return this.projectLatest(category, scope, key);
     }
     if (!this.kv) throw new Error('KV not configured');
     await this.kv.put(key, JSON.stringify(data));
@@ -902,7 +932,7 @@ export class SettingsManager {
 
   private async projectLatest(
     category: string,
-    scope: Exclude<SettingScope, { type: 'platform' }>,
+    scope: SettingScope,
     key: string
   ): Promise<'applied' | 'pending'> {
     if (!this.canonicalStore || !this.kv) {
@@ -928,10 +958,10 @@ export class SettingsManager {
   private resolveInherited(
     key: string,
     meta: SettingMeta,
-    layers: Array<{ source: InheritedSettingSource; data: Record<string, unknown> }>
+    layers: InheritedLayer[]
   ): { value: unknown; source: InheritedSettingSource } {
     for (const layer of layers) {
-      // The older stores ('platform' too) are only consulted where the platform may set it.
+      // A parent is consulted only where that scope may set the setting.
       if (!settableAt(meta, layer.source === 'tenant' ? 'tenant' : 'platform')) continue;
       const found = readLayer(layer.data, key);
       if (found) return { value: found.value, source: layer.source };
@@ -1036,7 +1066,7 @@ export class SettingsManager {
     meta: SettingMeta,
     categoryMeta: CategoryMeta,
     candidate: Record<string, unknown>,
-    layers: Array<{ source: InheritedSettingSource; data: Record<string, unknown> }>,
+    layers: InheritedLayer[],
     scopeType: SettingScope['type']
   ): { valid: boolean; reason: string } {
     if (!meta.dependsOn || meta.dependsOn.length === 0) {
@@ -1071,11 +1101,7 @@ export class SettingsManager {
   }
 
   /** The inherited value of a key, keeping a parent's disabled marker so it can be reported. */
-  private effectiveInheritedRaw(
-    key: string,
-    meta: SettingMeta,
-    layers: Array<{ source: InheritedSettingSource; data: Record<string, unknown> }>
-  ): unknown {
+  private effectiveInheritedRaw(key: string, meta: SettingMeta, layers: InheritedLayer[]): unknown {
     for (const layer of layers) {
       if (!settableAt(meta, layer.source === 'tenant' ? 'tenant' : 'platform')) continue;
       if (layer.data[key] !== undefined) return layer.data[key];
@@ -1104,7 +1130,7 @@ export async function projectLatestSettingsDocument(
   store: SettingsCanonicalStore,
   kv: KVNamespace,
   category: string,
-  scope: Exclude<SettingScope, { type: 'platform' }>,
+  scope: SettingScope,
   key: string,
   attempts = 3
 ): Promise<'applied' | 'pending'> {

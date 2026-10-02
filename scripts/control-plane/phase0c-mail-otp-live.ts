@@ -1345,7 +1345,7 @@ async function main(): Promise<void> {
         previousRateLimitOverride = parsePhase0cRateLimitOverride(
           await phase0cAdminJson({
             baseUrl,
-            path: '/api/admin/settings/rate-limits/profile-override',
+            path: '/api/admin/rate-limits/profile-override',
             token: adminToken,
             tenantId,
           })
@@ -1353,7 +1353,7 @@ async function main(): Promise<void> {
         rateLimitOverrideMutationStarted = true;
         await phase0cAdminJson({
           baseUrl,
-          path: '/api/admin/settings/rate-limits/profile-override',
+          path: '/api/admin/rate-limits/profile-override',
           method: 'PUT',
           token: adminToken,
           tenantId,
@@ -1444,7 +1444,7 @@ async function main(): Promise<void> {
       try {
         await phase0cAdminJson({
           baseUrl,
-          path: '/api/admin/settings/rate-limits/profile-override',
+          path: '/api/admin/rate-limits/profile-override',
           method: previousRateLimitOverride === null ? 'DELETE' : 'PUT',
           token: adminToken,
           tenantId,

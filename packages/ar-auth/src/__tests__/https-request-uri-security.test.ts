@@ -17,6 +17,17 @@ import {
 } from 'jose';
 import { authorizeHandler } from '../authorize';
 import type { Env } from '@authrim/ar-lib-core/types/env';
+import { systemSettingsPlatformDocuments } from '@authrim/ar-lib-core/utils/system-settings-fields';
+
+/** Save an older `system_settings` document's values as the platform's Settings API values. */
+async function putSystemSettings(
+  kv: { put(key: string, value: string): Promise<unknown> },
+  document: Record<string, unknown>
+): Promise<void> {
+  for (const [key, values] of Object.entries(systemSettingsPlatformDocuments(document))) {
+    await kv.put(key, JSON.stringify(values));
+  }
+}
 
 const securityRegressionIt =
   process.env.AUTHRIM_SECURITY_REGRESSION_SUITE === 'true' ? it : it.skip;
@@ -251,6 +262,50 @@ describe('HTTPS Request URI Security', () => {
 
       const error = getRedirectedOAuthError(response);
       expect(error.get('error')).toBe('request_uri_not_supported');
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+
+    it('keeps refusing every domain for a saved allowlist of empty entries, as env did', async () => {
+      const settings = new MockKVNamespace();
+      await settings.put(
+        'settings:tenant:default:oauth',
+        JSON.stringify({
+          'oauth.https_request_uri_enabled': true,
+          'oauth.https_request_uri_allowed_domains': ',',
+        })
+      );
+      const env = { ...mockEnv, SETTINGS: settings as unknown as KVNamespace } as Env;
+
+      const response = await app.request(
+        '/authorize?response_type=code&client_id=test-client&redirect_uri=https://example.com/callback&scope=openid&request_uri=https://trusted.com/request.jwt',
+        { method: 'GET' },
+        env
+      );
+
+      const error = getRedirectedOAuthError(response);
+      expect(error.get('error_description')).toContain('not in the allowed list');
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+
+    it('does not let an empty entry of the allowlist allow a host ending in a dot', async () => {
+      const settings = new MockKVNamespace();
+      await settings.put(
+        'settings:tenant:default:oauth',
+        JSON.stringify({
+          'oauth.https_request_uri_enabled': true,
+          'oauth.https_request_uri_allowed_domains': 'trusted.com,',
+        })
+      );
+      const env = { ...mockEnv, SETTINGS: settings as unknown as KVNamespace } as Env;
+
+      const response = await app.request(
+        '/authorize?response_type=code&client_id=test-client&redirect_uri=https://example.com/callback&scope=openid&request_uri=https://evil.example./request.jwt',
+        { method: 'GET' },
+        env
+      );
+
+      const error = getRedirectedOAuthError(response);
+      expect(error.get('error_description')).toContain('not in the allowed list');
       expect(mockFetch).not.toHaveBeenCalled();
     });
 
@@ -556,6 +611,34 @@ describe('HTTPS Request URI Security', () => {
       const error = getRedirectedOAuthError(response);
       expect(error.get('error_description')).not.toContain('too large');
     });
+
+    it('lets a saved size limit win over the environment variable', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        headers: new Headers({ 'content-length': '150000' }), // 150KB
+        body: null,
+      });
+      const settings = new MockKVNamespace();
+      await settings.put(
+        'settings:tenant:default:oauth',
+        JSON.stringify({ 'oauth.https_request_uri_max_size': 102400 })
+      );
+
+      const response = await app.request(
+        '/authorize?response_type=code&client_id=test-client&redirect_uri=https://example.com/callback&scope=openid&request_uri=https://external.com/request.jwt',
+        { method: 'GET' },
+        {
+          ...mockEnv,
+          SETTINGS: settings as unknown as KVNamespace,
+          ENABLE_HTTPS_REQUEST_URI: 'true',
+          HTTPS_REQUEST_URI_MAX_SIZE_BYTES: '200000',
+        } as Env
+      );
+
+      const error = getRedirectedOAuthError(response);
+      expect(error.get('error')).toBe('invalid_request_uri');
+      expect(error.get('error_description')).toContain('too large');
+    });
   });
 
   describe('Redirect Handling', () => {
@@ -839,14 +922,11 @@ describe('HTTPS Request URI Security', () => {
       });
 
       const settings = new MockKVNamespace();
-      await settings.put(
-        'system_settings',
-        JSON.stringify({
-          oidc: {
-            allowNoneAlgorithm: true,
-          },
-        })
-      );
+      await putSystemSettings(settings, {
+        oidc: {
+          allowNoneAlgorithm: true,
+        },
+      });
 
       const response = await app.request(
         `/authorize?request=${encodeURIComponent(requestObject)}`,
@@ -1066,14 +1146,11 @@ describe('HTTPS Request URI Security', () => {
       });
 
       const settings = new MockKVNamespace();
-      await settings.put(
-        'system_settings',
-        JSON.stringify({
-          oidc: {
-            allowNoneAlgorithm: true,
-          },
-        })
-      );
+      await putSystemSettings(settings, {
+        oidc: {
+          allowNoneAlgorithm: true,
+        },
+      });
       const envWithFeature = {
         ...mockEnv,
         ENABLE_HTTPS_REQUEST_URI: 'true',

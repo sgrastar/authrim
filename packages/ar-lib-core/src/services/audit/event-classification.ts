@@ -116,7 +116,8 @@ const FAIL_CLOSED_RULES: readonly AuditEventClassificationRule[] = [
   {
     category: 'admin_user',
     behavior: 'fail_closed_or_strong_retry',
-    reason: 'User administrative state changes affect account access and must be explicit.',
+    reason:
+      'User administrative state changes, identity assurance included, affect account access and must be explicit.',
     prefixes: [
       'user.create',
       'user.update',
@@ -127,6 +128,7 @@ const FAIL_CLOSED_RULES: readonly AuditEventClassificationRule[] = [
       'user.lock',
       'user.anonymized',
       'user.pii_',
+      'user.assurance.',
     ],
   },
 ] as const;

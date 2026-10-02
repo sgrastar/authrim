@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { Hono } from 'hono';
 import type { Env } from '@authrim/ar-lib-core/types/env';
 import { generateSecureRandomString, hashClientSecret } from '@authrim/ar-lib-core/utils/crypto';
+import { systemSettingsPlatformDocuments } from '../../packages/ar-lib-core/src/utils/system-settings-fields';
 import { authorizeHandler } from '../../packages/ar-auth/src/authorize';
 import { tokenHandler } from '../../packages/ar-token/src/token';
 import { discoveryHandler } from '../../packages/ar-discovery/src/discovery';
@@ -66,8 +67,11 @@ describe('FAPI 2.0 profile integration', () => {
       .run();
   }
 
+  /** The platform's Settings API values for settings written in the older document's shape. */
   async function setSettings(settings: Record<string, unknown>): Promise<void> {
-    await env.SETTINGS.put('system_settings', JSON.stringify(settings));
+    for (const [key, values] of Object.entries(systemSettingsPlatformDocuments(settings))) {
+      await env.SETTINGS.put(key, JSON.stringify(values));
+    }
   }
 
   function authorizationUrl(clientId: string, extra: Record<string, string> = {}): string {
@@ -80,6 +84,37 @@ describe('FAPI 2.0 profile integration', () => {
       ...extra,
     });
     return `/authorize?${query}`;
+  }
+
+  /** A request pushed for the client (FAPI requires PAR), as authorize reads it back. */
+  async function pushedAuthorizationUrl(
+    clientId: string,
+    extra: Record<string, string> = {}
+  ): Promise<string> {
+    const requestUri = `urn:ietf:params:oauth:request_uri:${generateSecureRandomString(16)}`;
+    const store = env.PAR_REQUEST_STORE.get(
+      env.PAR_REQUEST_STORE.idFromName(clientId)
+    ) as unknown as {
+      storeRequestRpc(request: {
+        requestUri: string;
+        data: Record<string, unknown>;
+        ttl: number;
+      }): Promise<void>;
+    };
+    await store.storeRequestRpc({
+      requestUri,
+      data: {
+        tenant_id: 'default',
+        client_id: clientId,
+        response_type: 'code',
+        redirect_uri: REDIRECT_URI,
+        scope: 'openid',
+        state: 'fapi-state',
+        ...extra,
+      },
+      ttl: 60,
+    });
+    return `/authorize?${new URLSearchParams({ client_id: clientId, request_uri: requestUri })}`;
   }
 
   function redirectedError(response: Response): URL {
@@ -125,14 +160,11 @@ describe('FAPI 2.0 profile integration', () => {
   });
 
   it('rejects public clients when the FAPI tenant policy disallows them', async () => {
-    await setSettings({
-      fapi: { enabled: true, allowPublicClients: false },
-      oidc: { requirePar: false },
-    });
+    await setSettings({ fapi: { enabled: true, allowPublicClients: false } });
 
     const response = await app.fetch(
       new Request(
-        `https://id.example.com${authorizationUrl(PUBLIC_CLIENT, {
+        `https://id.example.com${await pushedAuthorizationUrl(PUBLIC_CLIENT, {
           code_challenge: 'a'.repeat(43),
           code_challenge_method: 'S256',
         })}`
@@ -146,10 +178,10 @@ describe('FAPI 2.0 profile integration', () => {
   });
 
   it('requires S256 PKCE even for a confidential FAPI client', async () => {
-    await setSettings({ fapi: { enabled: true }, oidc: { requirePar: false } });
+    await setSettings({ fapi: { enabled: true } });
 
     const response = await app.fetch(
-      new Request(`https://id.example.com${authorizationUrl(CONFIDENTIAL_CLIENT)}`),
+      new Request(`https://id.example.com${await pushedAuthorizationUrl(CONFIDENTIAL_CLIENT)}`),
       env
     );
     const redirect = redirectedError(response);
@@ -214,7 +246,7 @@ describe('FAPI 2.0 profile integration', () => {
   });
 
   it('fails closed when the security-profile settings are malformed', async () => {
-    await env.SETTINGS.put('system_settings', '{');
+    await env.SETTINGS.put('settings:platform:security', '{');
 
     const response = await app.fetch(
       new Request(`https://id.example.com${authorizationUrl(CONFIDENTIAL_CLIENT)}`),

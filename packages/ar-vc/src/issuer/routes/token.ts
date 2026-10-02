@@ -15,6 +15,9 @@ import {
   AR_ERROR_CODES,
   getLogger,
   getTenantIdFromContext,
+  resolveEffectiveSettings,
+  falRequiresDpop,
+  falRequiresSignedPushedRequest,
   type Logger,
 } from '@authrim/ar-lib-core';
 import {
@@ -92,6 +95,40 @@ async function handlePreAuthorizedCodeGrant(
 
   // Extract tx_code (optional, for PIN-protected offers)
   const txCode = formData['tx_code'];
+
+  // Assurance: this grant issues a bearer token from no pushed request, so it meets neither FAL2
+  // with DPoP nor FAL3 and is refused then. Decided before the offer is reserved.
+  let assurance: Record<string, unknown>;
+  try {
+    assurance = await resolveEffectiveSettings(c.env, 'assurance', {
+      tenantId: getTenantIdFromContext(c),
+    });
+  } catch (error) {
+    log.error(
+      'Failed to load assurance settings',
+      { action: 'assurance_settings' },
+      error as Error
+    );
+    c.header('Cache-Control', 'no-store');
+    return c.json(
+      {
+        error: 'temporarily_unavailable',
+        error_description: 'Assurance settings are temporarily unavailable',
+      },
+      503
+    );
+  }
+  if (falRequiresDpop(assurance) || falRequiresSignedPushedRequest(assurance)) {
+    c.header('Cache-Control', 'no-store');
+    return c.json(
+      {
+        error: 'unauthorized_client',
+        error_description:
+          'A pre-authorized code grant does not meet the required federation assurance level',
+      },
+      400
+    );
+  }
 
   // Look up the credential offer by pre-authorized code
   // The pre-authorized code contains the offer ID for routing

@@ -185,8 +185,11 @@ export async function updateTenantPIIConfig(c: Context<{ Bindings: Env }>) {
 
   // Validate eventLogRetentionDays
   if (body.eventLogRetentionDays !== undefined) {
-    if (typeof body.eventLogRetentionDays !== 'number') {
-      errors.push('eventLogRetentionDays must be a number');
+    if (
+      typeof body.eventLogRetentionDays !== 'number' ||
+      !Number.isSafeInteger(body.eventLogRetentionDays)
+    ) {
+      errors.push('eventLogRetentionDays must be a whole number of days');
     } else if (body.eventLogRetentionDays < MIN_RETENTION_DAYS) {
       errors.push(`eventLogRetentionDays must be at least ${MIN_RETENTION_DAYS}`);
     } else if (body.eventLogRetentionDays > MAX_EVENT_LOG_RETENTION_DAYS) {
@@ -198,8 +201,11 @@ export async function updateTenantPIIConfig(c: Context<{ Bindings: Env }>) {
 
   // Validate piiLogRetentionDays
   if (body.piiLogRetentionDays !== undefined) {
-    if (typeof body.piiLogRetentionDays !== 'number') {
-      errors.push('piiLogRetentionDays must be a number');
+    if (
+      typeof body.piiLogRetentionDays !== 'number' ||
+      !Number.isSafeInteger(body.piiLogRetentionDays)
+    ) {
+      errors.push('piiLogRetentionDays must be a whole number of days');
     } else if (body.piiLogRetentionDays < MIN_RETENTION_DAYS) {
       errors.push(`piiLogRetentionDays must be at least ${MIN_RETENTION_DAYS}`);
     } else if (body.piiLogRetentionDays > MAX_PII_LOG_RETENTION_DAYS) {

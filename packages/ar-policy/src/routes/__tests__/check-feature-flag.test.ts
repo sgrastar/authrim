@@ -13,7 +13,6 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import app from '../../index';
-import { clearBatchSizeLimitCache } from '../check';
 import { createPolicyRuntimeEnv } from '../../__tests__/helpers/runtime-env';
 
 /**
@@ -29,6 +28,24 @@ function createMockKV(data: Record<string, string | null> = {}): KVNamespace {
     list: vi.fn().mockResolvedValue({ keys: [], list_complete: true }),
     getWithMetadata: vi.fn().mockResolvedValue({ value: null, metadata: null }),
   } as unknown as KVNamespace;
+}
+
+/**
+ * The platform's Settings API documents for the Check API switch and batch limit
+ */
+function platformSettings(values: { enabled?: boolean; batchSize?: unknown }) {
+  const documents: Record<string, string> = {};
+  if (values.enabled !== undefined) {
+    documents['settings:platform:feature-flags'] = JSON.stringify({
+      'feature.enable_check_api': values.enabled,
+    });
+  }
+  if (values.batchSize !== undefined) {
+    documents['settings:platform:limits'] = JSON.stringify({
+      'limits.check_api_batch_size': values.batchSize,
+    });
+  }
+  return documents;
 }
 
 /**
@@ -106,13 +123,13 @@ describe('Check API Feature Flag - Dynamic Override', () => {
 
   describe('KV Dynamic Override (Highest Priority)', () => {
     it('should enable Check API when KV flag is true', async () => {
-      const mockKV = createMockKV({ CHECK_API_ENABLED: 'true' });
+      const mockKV = createMockKV(platformSettings({ enabled: true }));
       const mockD1 = createMockD1();
 
       const env = {
         ...baseMockEnv,
         ...createEnv(mockD1),
-        POLICY_FLAGS_KV: mockKV,
+        SETTINGS: mockKV,
         ENABLE_CHECK_API: 'false', // Env is false, but KV should override
       };
 
@@ -122,17 +139,17 @@ describe('Check API Feature Flag - Dynamic Override', () => {
 
       expect(res.status).toBe(200);
       expect(body.enabled).toBe(true);
-      expect(mockKV.get).toHaveBeenCalledWith('CHECK_API_ENABLED');
+      expect(mockKV.get).toHaveBeenCalledWith('settings:platform:feature-flags');
     });
 
     it('should disable Check API when KV flag is false (overrides env true)', async () => {
-      const mockKV = createMockKV({ CHECK_API_ENABLED: 'false' });
+      const mockKV = createMockKV(platformSettings({ enabled: false }));
       const mockD1 = createMockD1();
 
       const env = {
         ...baseMockEnv,
         ...createEnv(mockD1),
-        POLICY_FLAGS_KV: mockKV,
+        SETTINGS: mockKV,
         ENABLE_CHECK_API: 'true', // Env is true, but KV should override
       };
 
@@ -151,7 +168,7 @@ describe('Check API Feature Flag - Dynamic Override', () => {
       const env = {
         ...baseMockEnv,
         ...createEnv(mockD1),
-        POLICY_FLAGS_KV: mockKV,
+        SETTINGS: mockKV,
         ENABLE_CHECK_API: 'true', // Should use env var
       };
 
@@ -165,7 +182,7 @@ describe('Check API Feature Flag - Dynamic Override', () => {
   });
 
   describe('KV Error Handling', () => {
-    it('should fall back to env var when KV throws error', async () => {
+    it('should stay disabled when the settings cannot be read, even if env enables it', async () => {
       const mockKV = {
         get: vi.fn().mockRejectedValue(new Error('KV connection failed')),
         put: vi.fn(),
@@ -181,7 +198,7 @@ describe('Check API Feature Flag - Dynamic Override', () => {
       const env = {
         ...baseMockEnv,
         ...createEnv(mockD1),
-        POLICY_FLAGS_KV: mockKV,
+        SETTINGS: mockKV,
         ENABLE_CHECK_API: 'true',
       };
 
@@ -190,10 +207,7 @@ describe('Check API Feature Flag - Dynamic Override', () => {
       const body = await res.json();
 
       expect(res.status).toBe(200);
-      expect(body.enabled).toBe(true);
-      // Logger was called (structured logger outputs JSON)
-      expect(consoleSpy).toHaveBeenCalled();
-
+      expect(body.enabled).toBe(false);
       consoleSpy.mockRestore();
     });
 
@@ -212,7 +226,7 @@ describe('Check API Feature Flag - Dynamic Override', () => {
       const env = {
         ...baseMockEnv,
         ...createEnv(mockD1),
-        POLICY_FLAGS_KV: mockKV,
+        SETTINGS: mockKV,
         // No ENABLE_CHECK_API - should default to disabled
       };
 
@@ -235,7 +249,7 @@ describe('Check API Feature Flag - Dynamic Override', () => {
         ...baseMockEnv,
         ...createEnv(mockD1),
         ENABLE_CHECK_API: 'true',
-        // No POLICY_FLAGS_KV
+        // No saved settings
       };
 
       const req = createRequest('/api/check/health', { withAuth: false });
@@ -271,7 +285,7 @@ describe('Check API Feature Flag - Dynamic Override', () => {
       const env = {
         ...baseMockEnv,
         ...createEnv(mockD1),
-        // No POLICY_FLAGS_KV, no ENABLE_CHECK_API
+        // No saved settings, no ENABLE_CHECK_API
       };
 
       const req = createRequest('/api/check/health', { withAuth: false });
@@ -311,13 +325,13 @@ describe('Check API Feature Flag - Dynamic Override', () => {
     });
 
     it('should process request when Check API is enabled via KV', async () => {
-      const mockKV = createMockKV({ CHECK_API_ENABLED: 'true' });
+      const mockKV = createMockKV(platformSettings({ enabled: true }));
       const mockD1 = createMockD1();
 
       const env = {
         ...baseMockEnv,
         ...createEnv(mockD1),
-        POLICY_FLAGS_KV: mockKV,
+        SETTINGS: mockKV,
       };
 
       const req = createRequest('/api/check', {
@@ -376,12 +390,10 @@ describe('Check API Feature Flag - Dynamic Override', () => {
 describe('Batch Size Limit Configuration', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    clearBatchSizeLimitCache();
   });
 
   afterEach(() => {
     vi.restoreAllMocks();
-    clearBatchSizeLimitCache();
   });
 
   describe('Health Check Shows Batch Size Limit', () => {
@@ -403,16 +415,13 @@ describe('Batch Size Limit Configuration', () => {
     });
 
     it('should show KV-configured batch_size_limit in health check', async () => {
-      const mockKV = createMockKV({
-        CHECK_API_ENABLED: 'true',
-        CHECK_API_BATCH_SIZE_LIMIT: '50',
-      });
+      const mockKV = createMockKV(platformSettings({ enabled: true, batchSize: 50 }));
       const mockD1 = createMockD1();
 
       const env = {
         ...baseMockEnv,
         ...createEnv(mockD1),
-        POLICY_FLAGS_KV: mockKV,
+        SETTINGS: mockKV,
       };
 
       const req = createRequest('/api/check/health', { withAuth: false });
@@ -426,16 +435,13 @@ describe('Batch Size Limit Configuration', () => {
 
   describe('KV Dynamic Override (Highest Priority)', () => {
     it('should use KV batch size limit over env var', async () => {
-      const mockKV = createMockKV({
-        CHECK_API_ENABLED: 'true',
-        CHECK_API_BATCH_SIZE_LIMIT: '25',
-      });
+      const mockKV = createMockKV(platformSettings({ enabled: true, batchSize: 25 }));
       const mockD1 = createMockD1();
 
       const env = {
         ...baseMockEnv,
         ...createEnv(mockD1),
-        POLICY_FLAGS_KV: mockKV,
+        SETTINGS: mockKV,
         CHECK_API_BATCH_SIZE_LIMIT: '200', // Env should be overridden by KV
       };
 
@@ -445,20 +451,17 @@ describe('Batch Size Limit Configuration', () => {
 
       expect(res.status).toBe(200);
       expect(body.batch_size_limit).toBe(25);
-      expect(mockKV.get).toHaveBeenCalledWith('CHECK_API_BATCH_SIZE_LIMIT');
+      expect(mockKV.get).toHaveBeenCalledWith('settings:platform:limits');
     });
 
     it('should reject batch exceeding KV-configured limit', async () => {
-      const mockKV = createMockKV({
-        CHECK_API_ENABLED: 'true',
-        CHECK_API_BATCH_SIZE_LIMIT: '5',
-      });
+      const mockKV = createMockKV(platformSettings({ enabled: true, batchSize: 5 }));
       const mockD1 = createMockD1();
 
       const env = {
         ...baseMockEnv,
         ...createEnv(mockD1),
-        POLICY_FLAGS_KV: mockKV,
+        SETTINGS: mockKV,
       };
 
       // Create 6 checks (exceeds limit of 5)
@@ -485,13 +488,13 @@ describe('Batch Size Limit Configuration', () => {
 
   describe('Environment Variable Fallback', () => {
     it('should use env var when KV returns null', async () => {
-      const mockKV = createMockKV({ CHECK_API_ENABLED: 'true' });
+      const mockKV = createMockKV(platformSettings({ enabled: true }));
       const mockD1 = createMockD1();
 
       const env = {
         ...baseMockEnv,
         ...createEnv(mockD1),
-        POLICY_FLAGS_KV: mockKV,
+        SETTINGS: mockKV,
         CHECK_API_BATCH_SIZE_LIMIT: '75',
       };
 
@@ -523,16 +526,13 @@ describe('Batch Size Limit Configuration', () => {
 
   describe('Limit Validation', () => {
     it('should ignore invalid KV value (non-numeric)', async () => {
-      const mockKV = createMockKV({
-        CHECK_API_ENABLED: 'true',
-        CHECK_API_BATCH_SIZE_LIMIT: 'invalid',
-      });
+      const mockKV = createMockKV(platformSettings({ enabled: true, batchSize: 'invalid' }));
       const mockD1 = createMockD1();
 
       const env = {
         ...baseMockEnv,
         ...createEnv(mockD1),
-        POLICY_FLAGS_KV: mockKV,
+        SETTINGS: mockKV,
         CHECK_API_BATCH_SIZE_LIMIT: '50',
       };
 
@@ -540,22 +540,19 @@ describe('Batch Size Limit Configuration', () => {
       const res = await app.fetch(req, env);
       const body = (await res.json()) as { batch_size_limit: number };
 
-      // Should fall back to env var since KV value is invalid
+      // A saved value is the platform's choice: one that is not usable is the default, not env.
       expect(res.status).toBe(200);
-      expect(body.batch_size_limit).toBe(50);
+      expect(body.batch_size_limit).toBe(100);
     });
 
     it('should ignore KV value exceeding maximum (1000)', async () => {
-      const mockKV = createMockKV({
-        CHECK_API_ENABLED: 'true',
-        CHECK_API_BATCH_SIZE_LIMIT: '2000',
-      });
+      const mockKV = createMockKV(platformSettings({ enabled: true, batchSize: 2000 }));
       const mockD1 = createMockD1();
 
       const env = {
         ...baseMockEnv,
         ...createEnv(mockD1),
-        POLICY_FLAGS_KV: mockKV,
+        SETTINGS: mockKV,
       };
 
       const req = createRequest('/api/check/health', { withAuth: false });
@@ -568,16 +565,13 @@ describe('Batch Size Limit Configuration', () => {
     });
 
     it('should ignore KV value of zero or negative', async () => {
-      const mockKV = createMockKV({
-        CHECK_API_ENABLED: 'true',
-        CHECK_API_BATCH_SIZE_LIMIT: '0',
-      });
+      const mockKV = createMockKV(platformSettings({ enabled: true, batchSize: 0 }));
       const mockD1 = createMockD1();
 
       const env = {
         ...baseMockEnv,
         ...createEnv(mockD1),
-        POLICY_FLAGS_KV: mockKV,
+        SETTINGS: mockKV,
       };
 
       const req = createRequest('/api/check/health', { withAuth: false });
@@ -594,8 +588,10 @@ describe('Batch Size Limit Configuration', () => {
     it('should fall back to default when KV throws error', async () => {
       const mockKV = {
         get: vi.fn().mockImplementation((key: string) => {
-          if (key === 'CHECK_API_ENABLED') return Promise.resolve('true');
-          if (key === 'CHECK_API_BATCH_SIZE_LIMIT') return Promise.reject(new Error('KV error'));
+          if (key === 'settings:platform:feature-flags') {
+            return Promise.resolve(JSON.stringify({ 'feature.enable_check_api': true }));
+          }
+          if (key === 'settings:platform:limits') return Promise.reject(new Error('KV error'));
           return Promise.resolve(null);
         }),
         put: vi.fn(),
@@ -611,7 +607,7 @@ describe('Batch Size Limit Configuration', () => {
       const env = {
         ...baseMockEnv,
         ...createEnv(mockD1),
-        POLICY_FLAGS_KV: mockKV,
+        SETTINGS: mockKV,
       };
 
       const req = createRequest('/api/check/health', { withAuth: false });
@@ -620,8 +616,7 @@ describe('Batch Size Limit Configuration', () => {
 
       expect(res.status).toBe(200);
       expect(body.batch_size_limit).toBe(100);
-      // Logger was called (structured logger outputs JSON)
-      expect(consoleSpy).toHaveBeenCalled();
+      // The store that cannot be read is skipped (logged), not taken for a saved value.
 
       consoleSpy.mockRestore();
     });

@@ -4,10 +4,14 @@ const mocks = vi.hoisted(() => ({
   core: { query: vi.fn(), queryOne: vi.fn(), execute: vi.fn() },
   admin: { queryOne: vi.fn() },
   auditDb: { queryOne: vi.fn() },
-  settings: vi.fn(),
   hotSupport: vi.fn(),
   audit: vi.fn(),
-  logger: { error: vi.fn() },
+  logger: { error: vi.fn(), warn: vi.fn() },
+  buildRetentionInventory: vi.fn(),
+  readMfaEnforcement: vi.fn(),
+  countAdminMfa: vi.fn(),
+  countUserMfa: vi.fn(),
+  resolveStores: vi.fn(),
 }));
 
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
@@ -16,29 +20,36 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     ...actual,
     getTenantIdFromContext: vi.fn(() => 'tenant-a'),
     createAuthContextFromHono: vi.fn(() => ({ coreAdapter: mocks.core })),
-    getTenantSystemSettings: mocks.settings,
     requireAdminDatabaseAdapter: vi.fn(() => mocks.admin),
     createAuditLogFromContext: mocks.audit,
     createErrorResponse: vi.fn((c, code, options) =>
       c.json({ error: code, ...options }, code === actual.AR_ERROR_CODES.INTERNAL_ERROR ? 500 : 400)
     ),
     getLogger: vi.fn(() => ({ module: vi.fn(() => mocks.logger) })),
+    resolveTenantAssignedDatabaseSourcesFromRegistry: mocks.resolveStores,
+    resolveTenantRuntimeProfilesFromEnv: vi.fn(async () => ({ auditProfile: { id: 'p' } })),
+    ensureDatabaseAdapter: vi.fn(() => mocks.core),
   };
 });
 
+vi.mock('../compliance/retention-inventory', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../compliance/retention-inventory')>();
+  return { ...actual, buildRetentionInventory: mocks.buildRetentionInventory };
+});
+
+vi.mock('../compliance/mfa-coverage', () => ({
+  readMfaEnforcement: mocks.readMfaEnforcement,
+  countAdminMfa: mocks.countAdminMfa,
+  countUserMfa: mocks.countUserMfa,
+}));
+
 vi.mock('../audit-hot-query', () => ({
-  getAuditHotQuerySupport: mocks.hotSupport,
+  getAuditHotQuerySupportForProfile: mocks.hotSupport,
   getAuditHotQuerySqlSpec: vi.fn(() => ({ tableName: 'audit_events' })),
   getAuditTimeRange: vi.fn((from: number, to: number) => [from, to]),
 }));
 
-import {
-  adminComplianceAccessReviewsCreateHandler,
-  adminComplianceAccessReviewsListHandler,
-  adminComplianceReportsListHandler,
-  adminComplianceStatusHandler,
-  adminDataRetentionStatusHandler,
-} from '../admin-compliance';
+import { adminComplianceStatusHandler } from '../admin-compliance';
 
 function context(
   options: {
@@ -63,46 +74,6 @@ function context(
   } as never;
 }
 
-function review(overrides: Record<string, unknown> = {}) {
-  return {
-    id: 'review-1',
-    tenant_id: 'tenant-a',
-    name: 'Quarterly review',
-    description: null,
-    scope: 'all_users',
-    scope_value: null,
-    status: 'pending',
-    reviewer_id: 'admin-1',
-    total_items: 4,
-    reviewed_items: 2,
-    approved_items: 1,
-    revoked_items: 1,
-    created_at: 100,
-    started_at: null,
-    completed_at: null,
-    due_date: null,
-    ...overrides,
-  };
-}
-
-function report(overrides: Record<string, unknown> = {}) {
-  return {
-    id: 'report-1',
-    tenant_id: 'tenant-a',
-    type: 'soc2_audit',
-    name: 'SOC2',
-    status: 'completed',
-    requested_by: 'admin-1',
-    parameters: '{"year":2026}',
-    result_url: null,
-    error_message: null,
-    created_at: 100,
-    completed_at: 200,
-    expires_at: null,
-    ...overrides,
-  };
-}
-
 describe('admin compliance APIs', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -111,309 +82,148 @@ describe('admin compliance APIs', () => {
     mocks.core.execute.mockReset();
     mocks.admin.queryOne.mockReset();
     mocks.auditDb.queryOne.mockReset();
-    mocks.settings.mockReset();
     mocks.hotSupport.mockReset();
     mocks.core.query.mockResolvedValue([]);
     mocks.core.queryOne.mockResolvedValue(null);
     mocks.core.execute.mockResolvedValue({ success: true, rowsAffected: 1 });
     mocks.admin.queryOne.mockResolvedValue(null);
     mocks.auditDb.queryOne.mockResolvedValue(null);
-    mocks.settings.mockResolvedValue({});
-    mocks.hotSupport.mockResolvedValue({ supported: false, status: 'not_supported' });
+    mocks.hotSupport.mockReturnValue({ supported: false, status: 'not_supported' });
     mocks.audit.mockResolvedValue(undefined);
-  });
-
-  it.each([
-    [null, false, 0],
-    [{}, false, 0],
-    [
+    mocks.resolveStores.mockResolvedValue([{ source: {}, bindingRef: 'DB_PII' }]);
+    mocks.buildRetentionInventory.mockResolvedValue([
       {
-        compliance: { data_retention_enabled: 'true', data_retention_days: '30' },
-        security: { mfa_enforced: 1 },
-        logging: { audit_log_retention_days: '180' },
+        id: 'audit_events',
+        retention: { value: 180, unit: 'days' },
+        source: { kind: 'audit', from: 'audit_profile' },
+        edit: { kind: 'audit_profile' },
+        deletion: { kind: 'expiry' },
+        varies: null,
+        counts: { total: 10, expired: 2 },
       },
-      true,
-      100,
-    ],
-    [
       {
-        data_retention: { enabled: 'false', days: 'invalid' },
-        security: { mfa_enforced: '0' },
-        audit: { retention_days: Number.NaN },
+        id: 'audit_pii',
+        retention: { value: 365, unit: 'days' },
+        source: { kind: 'audit', from: 'pii_config' },
+        edit: { kind: 'audit_pii_config' },
+        deletion: { kind: 'expiry' },
+        varies: null,
+        counts: null,
       },
-      false,
-      50,
-    ],
-  ])('builds compliance status from tenant settings %#', async (settings, enabled, mfaCoverage) => {
-    mocks.settings.mockResolvedValueOnce(settings);
-    mocks.admin.queryOne.mockResolvedValueOnce({
-      users_with_mfa: mfaCoverage,
-      users_without_mfa: 100 - mfaCoverage,
+    ]);
+    mocks.readMfaEnforcement.mockResolvedValue({
+      enforced: false,
+      assurance_enabled: false,
+      default_aal: 'AAL1',
+      scopes_requiring_mfa: [],
     });
-    mocks.core.queryOne
-      .mockResolvedValueOnce({ active_roles: enabled ? 2 : 0, users_with_roles: 2 })
-      .mockResolvedValueOnce({ pending_deletions: 3 });
-    const body = (await (await adminComplianceStatusHandler(context())).json()) as {
-      data_retention: { policy_enabled: boolean };
-      mfa_status: { mfa_coverage_percent: number };
-      audit_log: { hot_query_status: string };
-    };
-    expect(body.data_retention.policy_enabled).toBe(enabled);
-    expect(body.mfa_status.mfa_coverage_percent).toBe(mfaCoverage);
-    expect(body.audit_log.hot_query_status).toBe('not_supported');
-    expect(mocks.admin.queryOne.mock.calls[0]?.[0]).toContain('FROM admin_users');
-    const coreSql = mocks.core.queryOne.mock.calls.map(([sql]) => String(sql)).join('\n');
-    expect(coreSql).toContain('FROM role_assignments');
-    expect(coreSql).not.toMatch(/tenants\s+WHERE|user_roles|signing_keys|tombstones/u);
-  });
-
-  it('uses supported audit storage and reports compliant frameworks', async () => {
-    mocks.hotSupport.mockResolvedValueOnce({
-      supported: true,
-      context: { adapter: mocks.auditDb, createdAtUnit: 'seconds' },
-    });
-    mocks.auditDb.queryOne.mockResolvedValueOnce({ total: 10, last_30_days: 4 });
-    mocks.settings.mockResolvedValueOnce({
-      compliance: { data_retention_enabled: true, data_retention_days: 30 },
-    });
-    mocks.admin.queryOne.mockResolvedValueOnce({ users_with_mfa: 8, users_without_mfa: 2 });
-    mocks.core.queryOne
-      .mockResolvedValueOnce({ active_roles: 2, users_with_roles: 8 })
-      .mockResolvedValueOnce({ pending_deletions: 0 });
-    const body = (await (await adminComplianceStatusHandler(context())).json()) as {
-      overall_status: string;
-      audit_log: { total_entries: number; hot_query_status: string };
-    };
-    expect(body).toMatchObject({
-      overall_status: 'compliant',
-      audit_log: { total_entries: 10, hot_query_status: 'supported' },
+    mocks.countAdminMfa.mockResolvedValue({ admins: 2, with_passkey: 2 });
+    mocks.countUserMfa.mockResolvedValue({
+      users: 10,
+      with_passkey: 6,
+      with_totp: 3,
+      with_any: 9,
+      guests: 1,
+      deleting: 3,
     });
   });
 
-  it('returns internal_error when compliance status storage fails', async () => {
-    mocks.settings.mockRejectedValueOnce(new Error('failure'));
-    expect((await adminComplianceStatusHandler(context())).status).toBe(500);
-  });
-
-  it.each([[{ page: '1' }], [{ page_size: '20' }]])(
-    'rejects page pagination for access reviews %#',
-    async (query) => {
-      expect((await adminComplianceAccessReviewsListHandler(context({ query }))).status).toBe(400);
-    }
-  );
-
-  it.each(['bad', Buffer.from('{}').toString('base64url'), Buffer.from('{').toString('base64url')])(
-    'rejects invalid access-review cursor %s',
-    async (cursor) => {
-      expect(
-        (await adminComplianceAccessReviewsListHandler(context({ query: { cursor } }))).status
-      ).toBe(400);
-    }
-  );
-
-  it.each([
-    [{}, 20],
-    [{ limit: '0', filter: 'status=pending' }, 20],
-    [{ limit: '999', filter: 'status=invalid' }, 100],
-  ])('lists access reviews with bounded pagination %#', async (query, limit) => {
-    const rows = Array.from({ length: limit + 1 }, (_, index) =>
-      review({ id: `review-${index}`, total_items: index ? 4 : 0, created_at: 100 - index })
+  it('reports each check from what the tenant enforces, and the facts behind it', async () => {
+    // Roles in the default store; users with one in each of two stores.
+    mocks.resolveStores.mockResolvedValue([
+      { source: {}, bindingRef: 'DB' },
+      { source: {}, bindingRef: 'DB_USERS_1' },
+    ]);
+    mocks.core.queryOne.mockImplementation(async (sql: string) =>
+      sql.includes('FROM roles WHERE') ? { active_roles: 2 } : null
     );
-    mocks.core.query.mockResolvedValueOnce(rows);
-    const body = (await (
-      await adminComplianceAccessReviewsListHandler(context({ query }))
-    ).json()) as { data: unknown[]; pagination: Record<string, unknown> };
-    expect(body.data).toHaveLength(limit);
-    expect(body.pagination).toMatchObject({ has_more: true, next_cursor: expect.any(String) });
-  });
-
-  it('applies a valid cursor and returns no next cursor on the final page', async () => {
-    const cursor = Buffer.from(JSON.stringify({ id: 'review-old', created_at: 100 })).toString(
-      'base64url'
+    // Four users with a role in each store, one of them in both.
+    const storeUsers = [
+      ['user-1', 'user-2', 'user-3', 'user-4'],
+      ['user-4', 'user-5', 'user-6', 'user-7'],
+    ];
+    let storeIndex = 0;
+    mocks.core.query.mockImplementation(async (sql: string) =>
+      sql.includes('ra.subject_id') ? storeUsers[storeIndex++]!.map((user_id) => ({ user_id })) : []
     );
-    mocks.core.query.mockResolvedValueOnce([review()]);
-    const body = (await (
-      await adminComplianceAccessReviewsListHandler(context({ query: { cursor } }))
-    ).json()) as { pagination: Record<string, unknown> };
-    expect(body.pagination).toEqual({ has_more: false });
-    expect(mocks.core.query.mock.calls[0][1]).toEqual(
-      expect.arrayContaining([100, 100, 'review-old'])
-    );
-  });
+    const response = await adminComplianceStatusHandler(context());
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as Record<string, any>;
 
-  it('handles access review listing failures', async () => {
-    mocks.core.query.mockRejectedValueOnce(new Error('failure'));
-    expect((await adminComplianceAccessReviewsListHandler(context())).status).toBe(500);
-  });
-
-  it.each([
-    [{}],
-    [{ name: '', scope: 'all_users' }],
-    [{ name: 'Review', scope: 'unknown' }],
-    [{ name: 'Review', scope: 'all_users', due_date: 'tomorrow' }],
-  ])('validates access review creation %#', async (body) => {
-    expect((await adminComplianceAccessReviewsCreateHandler(context({ body }))).status).toBe(400);
-  });
-
-  it.each([
-    ['all_users', undefined, 4],
-    ['role', 'role-1', 3],
-    ['role', undefined, 0],
-    ['organization', 'org-1', 2],
-    ['organization', undefined, 0],
-    ['inactive_users', undefined, 1],
-  ])('creates %s access review with scope value %#', async (scope, scope_value, count) => {
-    mocks.core.queryOne.mockResolvedValueOnce({ count });
-    const response = await adminComplianceAccessReviewsCreateHandler(
-      context({
-        adminId: 'admin-1',
-        body: {
-          name: 'Review',
-          description: '',
-          scope,
-          scope_value,
-          due_date: '2027-01-01T00:00:00.000Z',
-        },
-      })
-    );
-    expect(response.status).toBe(201);
-    await expect(response.json()).resolves.toMatchObject({
-      reviewer_id: 'admin-1',
-      total_items: count,
-    });
-    expect(mocks.audit).toHaveBeenCalled();
-  });
-
-  it('uses unknown reviewer and handles access-review creation failures', async () => {
-    mocks.core.execute.mockRejectedValueOnce(new Error('failure'));
+    expect(body.overall_status).toBe('warning');
     expect(
-      (
-        await adminComplianceAccessReviewsCreateHandler(
-          context({ body: { name: 'Review', scope: 'all_users' } })
-        )
-      ).status
-    ).toBe(500);
-  });
-
-  it.each([[{ page: '1' }], [{ page_size: '20' }]])(
-    'rejects page pagination for reports %#',
-    async (query) => {
-      expect((await adminComplianceReportsListHandler(context({ query }))).status).toBe(400);
-    }
-  );
-
-  it('lists filtered reports, safely ignores corrupt parameters, and paginates', async () => {
-    mocks.core.query.mockResolvedValueOnce([
-      report(),
-      report({ id: 'report-2', parameters: '{', completed_at: null }),
-      report({ id: 'extra' }),
-    ]);
-    const body = (await (
-      await adminComplianceReportsListHandler(
-        context({ query: { limit: '2', filter: 'status=completed,type=soc2_audit' } })
+      Object.fromEntries(
+        (body.checks as Array<{ id: string; status: string }>).map((check) => [
+          check.id,
+          check.status,
+        ])
       )
-    ).json()) as { data: Array<Record<string, unknown>>; pagination: Record<string, unknown> };
-    expect(body.data).toEqual([
-      expect.objectContaining({ parameters: { year: 2026 } }),
-      expect.objectContaining({ parameters: null, completed_at: null }),
-    ]);
-    expect(body.pagination.next_cursor).toEqual(expect.any(String));
-  });
-
-  it.each(['bad', Buffer.from('{}').toString('base64url')])(
-    'rejects invalid report cursor %s',
-    async (cursor) => {
-      expect((await adminComplianceReportsListHandler(context({ query: { cursor } }))).status).toBe(
-        400
-      );
-    }
-  );
-
-  it('ignores unknown report filters and handles query failures', async () => {
-    await expect(
-      (
-        await adminComplianceReportsListHandler(
-          context({ query: { filter: 'status=nope,type=nope' } })
-        )
-      ).json()
-    ).resolves.toMatchObject({ pagination: { has_more: false } });
-    mocks.core.query.mockRejectedValueOnce(new Error('failure'));
-    expect((await adminComplianceReportsListHandler(context())).status).toBe(500);
-  });
-
-  it.each([
-    [null, false],
-    [{}, false],
-    [
-      {
-        compliance: {
-          data_retention_enabled: true,
-          data_retention_days: 30,
-          tombstone_retention_days: 3650,
-        },
-        data_retention: { last_cleanup_at: 100, next_cleanup_at: 200 },
-        logging: { audit_log_retention_days: 60 },
-        session: { retention_days: 14 },
-      },
-      true,
-    ],
-  ])('builds data retention status from settings %#', async (settings, enabled) => {
-    mocks.settings.mockResolvedValueOnce(settings);
-    mocks.core.queryOne
-      .mockResolvedValueOnce({ total: 3, oldest_date: 100 })
-      .mockResolvedValueOnce(null)
-      .mockResolvedValueOnce({ pending: 1 });
-    const body = (await (await adminDataRetentionStatusHandler(context())).json()) as {
-      policy: { enabled: boolean };
-      categories: Array<{ category: string; retention_days: number; execution_status?: string }>;
-      summary: { total_records: number; records_pending_deletion: number };
-    };
-    expect(body.policy.enabled).toBe(enabled);
-    expect(body.categories).toContainEqual(
-      expect.objectContaining({
-        category: 'lookup_directory',
-        retention_days: 180,
-        execution_status: 'durable_projection_pending',
-      })
+    ).toEqual({
+      data_retention_enforced: 'compliant',
+      audit_logging: 'compliant',
+      admin_mfa: 'compliant',
+      user_mfa_enforced: 'warning',
+      user_mfa_coverage: 'compliant',
+      rbac_configured: 'compliant',
+    });
+    expect(body.audit_log).toEqual({
+      enabled: true,
+      event_retention_days: 180,
+      pii_retention_days: 365,
+      total_entries: null,
+      entries_last_30_days: null,
+      hot_query_status: 'not_supported',
+    });
+    expect(body.data_retention).toEqual({ expired_records: 2, attention: [] });
+    expect(body.mfa.users.with_any).toBe(9);
+    expect(body.accounts).toEqual({ pending_deletions: 3 });
+    expect(body).not.toHaveProperty('encryption');
+    expect(mocks.countAdminMfa).toHaveBeenCalledWith(mocks.admin, 'tenant-a');
+    // The profile read once is the one the retention and the counts use.
+    expect(mocks.buildRetentionInventory).toHaveBeenCalledWith(
+      expect.objectContaining({ auditProfile: { id: 'p' } })
     );
-    expect(body.summary).toMatchObject({ total_records: 3, records_pending_deletion: 0 });
-    const coreSql = mocks.core.queryOne.mock.calls.map(([sql]) => String(sql)).join('\n');
-    expect(coreSql).toContain('FROM identity_accounts');
-    expect(coreSql).not.toMatch(/FROM\s+tombstones|SELECT\s+settings\s+FROM\s+tenants/u);
+    expect(mocks.hotSupport).toHaveBeenCalledWith(expect.anything(), { id: 'p' });
+    expect(mocks.countUserMfa).toHaveBeenCalledWith(expect.anything(), 'tenant-a', {
+      routed: false,
+    });
+    // Users with a role: only unexpired assignments to roles of the tenant.
+    const rbacSql = String(
+      mocks.core.query.mock.calls.find(([sql]) => String(sql).includes('role_assignments'))?.[0]
+    );
+    expect(rbacSql).toContain('JOIN roles r ON r.id = ra.role_id AND r.tenant_id = ra.tenant_id');
+    expect(rbacSql).toContain('ra.expires_at IS NULL OR ra.expires_at > ?');
+    expect(body.access_control).toEqual({ active_roles: 2, users_with_roles: 7 });
   });
 
-  it('includes audit retention statistics when hot query is supported', async () => {
-    mocks.hotSupport.mockResolvedValueOnce({
+  it('counts audit entries where the audit log can be queried', async () => {
+    mocks.hotSupport.mockReturnValueOnce({
       supported: true,
       context: { adapter: mocks.auditDb, createdAtUnit: 'seconds' },
     });
-    mocks.auditDb.queryOne.mockResolvedValueOnce({
-      total: 5,
-      pending_deletion: 2,
-      oldest_date: 100,
-      deleted_last_30_days: 0,
-    });
-    const body = (await (await adminDataRetentionStatusHandler(context())).json()) as {
-      categories: Array<Record<string, unknown>>;
-    };
-    expect(body.categories[0]).toMatchObject({
-      total_records: 5,
-      records_pending_deletion: 2,
+    mocks.auditDb.queryOne.mockResolvedValueOnce({ total: 10, last_30_days: 0 });
+    const body = (await (await adminComplianceStatusHandler(context())).json()) as Record<
+      string,
+      any
+    >;
+    expect(body.audit_log).toMatchObject({
+      total_entries: 10,
+      entries_last_30_days: 0,
       hot_query_status: 'supported',
     });
+    expect(
+      (body.checks as Array<{ id: string; status: string }>).find(
+        (check) => check.id === 'audit_logging'
+      )?.status
+    ).toBe('warning');
   });
 
-  it('fails closed when the typed Lookup retention policy is malformed', async () => {
-    mocks.core.queryOne
-      .mockResolvedValueOnce({ total: 0, oldest_date: null })
-      .mockResolvedValueOnce({ retention_days: 29 });
-
-    expect((await adminDataRetentionStatusHandler(context())).status).toBe(500);
-    expect(mocks.logger.error).toHaveBeenCalled();
-  });
-
-  it('handles data-retention storage failures', async () => {
-    mocks.settings.mockRejectedValueOnce(new Error('failure'));
-    expect((await adminDataRetentionStatusHandler(context())).status).toBe(500);
+  it.each([
+    ['retention', () => mocks.buildRetentionInventory.mockRejectedValueOnce(new Error('x'))],
+    ['MFA enforcement', () => mocks.readMfaEnforcement.mockRejectedValueOnce(new Error('x'))],
+    ['user counts', () => mocks.countUserMfa.mockRejectedValueOnce(new Error('x'))],
+  ])('answers 503 when the %s cannot be read', async (_what, fail) => {
+    fail();
+    expect((await adminComplianceStatusHandler(context())).status).toBe(503);
   });
 });

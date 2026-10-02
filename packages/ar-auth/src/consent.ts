@@ -45,7 +45,10 @@ import {
   createAuthContextFromHono,
   createPIIContextFromHono,
   getTenantIdFromContext,
-  createOAuthConfigManager,
+  getConsentDefaultExpirationDays,
+  getConsentExpirationEnabled,
+  getConsentGranularScopes,
+  getConsentVersioningEnabled,
   // Event System
   publishEvent,
   CONSENT_EVENTS,
@@ -62,7 +65,7 @@ import {
   parseClaimsRequest,
   // Logger
   getLogger,
-  getTenantSystemSettings,
+  resolveProtocolSettings,
   resolveClientTrustPolicy,
   resolveAccountDataContextFromHono,
   generateSecureRandomString,
@@ -473,11 +476,10 @@ async function handleJsonConsentGet(
   }
 
   // Get consent settings
-  const configManager = createOAuthConfigManager(c.env);
 
   // Check versioning and re-consent requirements
-  const versioningEnabled = await configManager.getConsentVersioningEnabled();
-  const granularScopesEnabled = await configManager.getConsentGranularScopes();
+  const versioningEnabled = await getConsentVersioningEnabled(c.env);
+  const granularScopesEnabled = await getConsentGranularScopes(c.env);
 
   let versioningInfo:
     | {
@@ -1063,14 +1065,11 @@ export async function consentPostHandler(c: Context<{ Bindings: Env }>) {
 
         let messageSigning: FAPI2MessageSigningConfig | undefined;
         try {
-          const settings = await getTenantSystemSettings(c.env.SETTINGS, tenantId, {
-            failOnError: true,
+          const settings = await resolveProtocolSettings(c.env, tenantId, {
             clientId,
             sections: ['fapi'],
           });
-          messageSigning = (
-            settings?.fapi as { messageSigning?: FAPI2MessageSigningConfig } | undefined
-          )?.messageSigning;
+          messageSigning = settings.fapi.messageSigning;
         } catch (error) {
           log.error(
             'Failed to load JARM settings for consent denial',
@@ -1180,10 +1179,9 @@ export async function consentPostHandler(c: Context<{ Bindings: Env }>) {
     }
 
     // Get settings for granular scopes and expiration
-    const configManager = createOAuthConfigManager(c.env);
-    const granularScopesEnabled = await configManager.getConsentGranularScopes();
-    const expirationEnabled = await configManager.getConsentExpirationEnabled();
-    const defaultExpirationDays = await configManager.getConsentDefaultExpirationDays();
+    const granularScopesEnabled = await getConsentGranularScopes(c.env);
+    const expirationEnabled = await getConsentExpirationEnabled(c.env);
+    const defaultExpirationDays = await getConsentDefaultExpirationDays(c.env);
 
     // Determine effective scope (granular scopes or all requested)
     let effectiveScope = requestedScope;
@@ -1358,7 +1356,7 @@ export async function consentPostHandler(c: Context<{ Bindings: Env }>) {
     }
 
     // Check if versioning is enabled for history recording
-    const versioningEnabled = await configManager.getConsentVersioningEnabled();
+    const versioningEnabled = await getConsentVersioningEnabled(c.env);
 
     // Determine if this is a new consent or update
     // (We check by looking at consent_history or by the presence of policy versions)

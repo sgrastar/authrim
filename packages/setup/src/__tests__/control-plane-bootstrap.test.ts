@@ -373,12 +373,10 @@ describe('initial Control Plane bootstrap orchestration', () => {
     expect(resumed.error).toContain('PROD_TDB_DEFAULT_BOOTSTRAP_CORE');
     expect(resumed.error).toContain('prod-authrim-tenant-default-bootstrap-db');
     expect(resumed.error).toContain('Cloudflare');
-    expect(resumed.error).toContain('automatic recovery is unavailable');
-    expect(resumed.error).toContain('inspect the exact name');
-    expect(resumed.error).toContain('pnpm run setup delete --env prod --all --yes');
-    expect(resumed.error).toContain('immutable identity is missing');
-    expect(resumed.error).toContain('manually delete only that exact ambiguous name');
-    expect(resumed.error).toContain('pnpm run setup init --env prod');
+    expect(resumed.error).toContain('exact name and immutable ID');
+    expect(resumed.error).toContain(
+      'pnpm run setup recover-initial-d1 --env prod --binding PROD_TDB_DEFAULT_BOOTSTRAP_CORE --database-id <uuid>'
+    );
     expect(observedAllowExisting).toEqual([false]);
     expect(providerAttempt).toBe(1);
     await expect(

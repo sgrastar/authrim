@@ -260,14 +260,13 @@ Create and configure KV namespaces for Authrim.
 
 - Creates KV namespaces for the specified environment
 - Each namespace includes both production and preview versions
-- **Automatically initializes default settings** by calling `setup-default-settings.sh`
 - Updates wrangler.toml files with namespace IDs
 
 **KV Namespaces created:**
 
 - `{ENV}-CLIENTS_CACHE` - OAuth client metadata cache
 - `{ENV}-INITIAL_ACCESS_TOKENS` - Dynamic Client Registration tokens
-- `{ENV}-SETTINGS` - System settings (initialized with basic-op profile)
+- `{ENV}-SETTINGS` - Settings API documents (empty: every setting starts at its default)
 - `{ENV}-REBAC_CACHE`, `{ENV}-USER_CACHE`, `{ENV}-AUTHRIM_CONFIG`, `{ENV}-STATE_STORE`
 
 **Note:** Many KV stores have been migrated to Durable Objects for better consistency:
@@ -278,37 +277,26 @@ Create and configure KV namespaces for Authrim.
 - NONCE_STORE → DPoPJTIStore DO
 - RATE_LIMIT → RateLimiterCounter DO
 
-### setup-default-settings.sh
+### Initial settings
 
-Initialize default system settings in SETTINGS KV.
-
-**Usage:**
+Settings live in the Settings API (`/api/admin/platform/settings/*`,
+`/api/admin/tenants/:tenantId/settings/*`). A new deployment needs no initial settings: every
+setting starts at its default, and the defaults are the secure choice. To run the OpenID
+conformance tests, apply a certification profile after deploying. It applies to the tenant the
+API URL resolves to, and needs an Admin API bearer token allowed to change that tenant's
+settings:
 
 ```bash
-# Initialize with basic-op profile
-./scripts/setup-default-settings.sh --env=dev
+# List the profiles
+ADMIN_TOKEN=<token> ./scripts/switch-certification-profile.sh "" https://auth.example.com
 
-# Force overwrite existing settings
-./scripts/setup-default-settings.sh --env=prod --force
+# Apply one
+ADMIN_TOKEN=<token> ./scripts/switch-certification-profile.sh basic-op https://auth.example.com
 ```
 
-**What it does:**
-
-- Writes default system settings to SETTINGS KV
-- Uses "basic-op" certification profile as the base
-- Initializes FAPI, OIDC, and general configuration
-- Automatically called by `setup-kv.sh`
-
-**Default Configuration:**
-
-- Profile: basic-op (Standard OpenID Connect Provider)
-- FAPI: Disabled
-- PAR: Not required
-- Public Clients: Allowed
-- Authentication methods: All standard methods enabled
-- 'none' algorithm: Allowed (for testing)
-
-**Note:** This script is automatically called by `setup-kv.sh`. You only need to run it manually if you want to reset settings to defaults.
+Older deployments that saved settings through the endpoints the Settings API replaced
+(`system_settings`, `oauth:config:*` and the like) have them imported once by ar-management
+(`GET/POST /api/admin/platform/settings/legacy-import`; it runs from the scheduler as well).
 
 ### setup-d1.sh
 
@@ -714,7 +702,7 @@ Create GitHub issues for Phase 1 implementation tasks.
 pnpm run dev
 ```
 
-**Note:** `setup-kv.sh` automatically calls `setup-default-settings.sh` to initialize system settings with the basic-op profile.
+**Note:** Settings start at the Settings API defaults; see [Initial settings](#initial-settings).
 
 #### Remote Environment Deployment
 
@@ -748,7 +736,7 @@ pnpm run deploy:retry
 ./scripts/setup-remote-cors.sh              # Configure CORS for allowed origins
 ```
 
-**Note:** `setup-kv.sh` automatically initializes system settings with the basic-op profile. You can change the profile later using `./scripts/switch-certification-profile.sh`.
+**Note:** Settings start at the Settings API defaults. To apply a certification profile, use `./scripts/switch-certification-profile.sh`.
 
 **Notes:**
 
@@ -902,7 +890,7 @@ setup-local-vars.sh
     ↓
 setup-local-wrangler.sh
     ↓
-setup-kv.sh --env=dev  ← Automatically calls setup-default-settings.sh
+setup-kv.sh --env=dev
     ↓
 setup-d1.sh / setup-durable-objects.sh
     ↓
@@ -918,7 +906,7 @@ setup-keys.sh --setup-url=https://... --kv-namespace-id=xxx
     ↓
 setup-remote-wrangler.sh
     ↓
-setup-kv.sh --env=prod  ← Automatically calls setup-default-settings.sh
+setup-kv.sh --env=prod
     ↓
 setup-d1.sh / setup-durable-objects.sh
     ↓

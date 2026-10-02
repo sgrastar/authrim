@@ -18,6 +18,7 @@
     { "name": "CLIENTS_CACHE", "kind": "kv_namespace", "required": true },
     { "name": "SETTINGS", "kind": "kv_namespace", "required": true },
     { "name": "USER_CACHE", "kind": "kv_namespace", "required": true },
+    { "name": "REBAC_CACHE", "kind": "kv_namespace", "required": true },
     { "name": "INITIAL_ACCESS_TOKENS", "kind": "kv_namespace", "required": true },
     { "name": "AUTHRIM_CONFIG", "kind": "kv_namespace", "required": true },
     { "name": "TENANT_RUNTIME_REGISTRY", "kind": "kv_namespace", "required": true },

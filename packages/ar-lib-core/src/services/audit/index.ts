@@ -70,9 +70,9 @@ export {
 export type { IAnonymizationService } from './anonymization';
 
 // Audit Service
-export { AuditService, createAuditService } from './audit-service';
+export { AuditService, createAuditService, resolveAuditRetention } from './audit-service';
 
-export type { AuditServiceDependencies } from './audit-service';
+export type { AuditRetentionSource, AuditServiceDependencies } from './audit-service';
 export {
   AUDIT_FAIL_CLOSED_CATEGORIES,
   AUDIT_FAIL_OPEN_CATEGORIES,

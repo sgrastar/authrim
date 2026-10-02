@@ -1181,6 +1181,19 @@ components:
             type: string
         identityMapping:
           $ref: '#/components/schemas/SAMLIdentityMapping'
+        profileUpdateFields:
+          description: >-
+            For an IdP (saml_idp): the profile fields a login from it updates for a user already
+            linked to it, with external_idp.jit_update_on_login on. Null or absent follows the
+            tenant's external_idp.jit_update_fields; [] updates none. Names any of name,
+            given_name, family_name, middle_name, nickname, profile, picture, website, gender,
+            birthdate, zoneinfo and locale (after the field mapping), each once; any other value
+            is refused with 400.
+          type:
+            - array
+            - 'null'
+          items:
+            type: string
         attributeReleaseConsent:
           type: object
           additionalProperties: false

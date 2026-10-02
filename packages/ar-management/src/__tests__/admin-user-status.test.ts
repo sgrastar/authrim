@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
-  adapter: { queryOne: vi.fn(), execute: vi.fn(), query: vi.fn() },
+  adapter: { queryOne: vi.fn(), execute: vi.fn(), query: vi.fn(), batch: vi.fn() },
   audit: vi.fn(),
   operationalLog: vi.fn(),
   retention: vi.fn(),
@@ -21,6 +21,11 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     getOperationalLogRetentionDays: mocks.retention,
     getLogger: vi.fn(() => ({ module: vi.fn(() => mocks.logger) })),
     transitionAccountAuthenticationState: vi.fn(async () => ({ lifecycle: 'active' })),
+    readAccountAuthenticationState: vi.fn(async () => ({
+      lifecycle: 'active',
+      lifecycleOperationId: null,
+      lifecycleVersionMs: null,
+    })),
     createErrorResponse: vi.fn((c, code, options) => {
       const status =
         code === actual.AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND
@@ -42,6 +47,10 @@ vi.mock('../admin-shared', async (importOriginal) => {
   };
 });
 
+import {
+  readAccountAuthenticationState,
+  transitionAccountAuthenticationState,
+} from '@authrim/ar-lib-core';
 import { adminUserActivateHandler, adminUserLockHandler, adminUserSuspendHandler } from '../admin';
 
 function context(
@@ -87,6 +96,10 @@ describe('admin user account status transitions', () => {
     mocks.adapter.query.mockReset();
     mocks.adapter.queryOne.mockResolvedValue(null);
     mocks.adapter.execute.mockResolvedValue({ success: true, rowsAffected: 1 });
+    mocks.adapter.batch.mockReset();
+    mocks.adapter.batch.mockImplementation(async (statements: unknown[]) =>
+      statements.map(() => ({ success: true, rowsAffected: 1 }))
+    );
     mocks.adapter.query.mockResolvedValue([]);
     mocks.audit.mockResolvedValue(undefined);
     mocks.operationalLog.mockResolvedValue(undefined);
@@ -207,6 +220,7 @@ describe('admin user account status transitions', () => {
         ).status
       ).toBe(400);
       expect(mocks.adapter.execute).not.toHaveBeenCalled();
+      expect(mocks.adapter.batch).not.toHaveBeenCalled();
     }
   );
 
@@ -219,13 +233,87 @@ describe('admin user account status transitions', () => {
       status: 'active',
       previous_status: 'locked',
     });
-    expect(mocks.adapter.execute).toHaveBeenCalledTimes(6);
+    // The account (status, version and cleared restrictions) and its subject, together.
+    expect(mocks.adapter.batch).toHaveBeenCalledTimes(1);
+    const [statements] = mocks.adapter.batch.mock.calls[0]! as [
+      Array<{ sql: string; params: unknown[] }>,
+    ];
+    expect(statements).toHaveLength(2);
+    expect(statements[0]!.params).toEqual(
+      expect.arrayContaining(['active', null, 'account-1', 'tenant-a'])
+    );
     expect(mocks.audit).toHaveBeenCalledWith(
       expect.anything(),
       'user.activate',
       'user',
       'user-1',
       expect.anything()
+    );
+  });
+
+  it.each([
+    ['activate', adminUserActivateHandler, 'locked'],
+    ['suspend', adminUserSuspendHandler, 'active'],
+  ] as const)(
+    'changes nothing when the authentication state took another transition first (%s)',
+    async (_name, handler, current) => {
+      queueAccount(current);
+      // Two changes of the same version: the authentication state takes one and refuses the
+      // other, which then never reaches the account (both paths ask it first).
+      vi.mocked(transitionAccountAuthenticationState).mockRejectedValueOnce(
+        new Error('account_authentication_lifecycle_conflict')
+      );
+      const response = await handler(context({ body: { reason_code: 'admin_action' } }));
+      expect(response.status).toBe(409);
+      // A suspension asks the authentication state first and changes nothing else; an activation
+      // changed the account first, and sign-in stays refused until activating again settles it.
+      expect(mocks.adapter.batch).toHaveBeenCalledTimes(
+        handler === adminUserActivateHandler ? 1 : 0
+      );
+      expect(mocks.audit).not.toHaveBeenCalled();
+    }
+  );
+
+  it.each([
+    ['deleted account whose status still says active', 'deleted', 'active'],
+    ['account being deleted', 'deleting', 'deleting'],
+  ])('never activates a %s', async (_name, lifecycleState, authentication) => {
+    mocks.adapter.queryOne.mockResolvedValueOnce({
+      id: 'account-1',
+      lifecycle_state: lifecycleState,
+      metadata_json: JSON.stringify({ status: 'active' }),
+    });
+    vi.mocked(readAccountAuthenticationState).mockResolvedValueOnce({
+      lifecycle: authentication as never,
+      lifecycleOperationId: null,
+      lifecycleVersionMs: null,
+      revokedAfterMs: null,
+      lastLoginAtMs: null,
+    });
+    const response = await adminUserActivateHandler(
+      context({ body: { reason_code: 'admin_action' } })
+    );
+    expect(response.status).toBe(400);
+    expect(mocks.adapter.batch).not.toHaveBeenCalled();
+    expect(transitionAccountAuthenticationState).not.toHaveBeenCalled();
+  });
+
+  it('activates again an account shown active whose sign-in is still refused', async () => {
+    queueAccount('active');
+    vi.mocked(readAccountAuthenticationState).mockResolvedValueOnce({
+      lifecycle: 'suspended',
+      lifecycleOperationId: 'other',
+      lifecycleVersionMs: 1,
+      revokedAfterMs: null,
+      lastLoginAtMs: null,
+    });
+    const response = await adminUserActivateHandler(
+      context({ body: { reason_code: 'admin_action' } })
+    );
+    expect(response.status).toBe(200);
+    expect(transitionAccountAuthenticationState).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ lifecycle: 'active' })
     );
   });
 
@@ -284,7 +372,7 @@ describe('admin user account status transitions', () => {
     [adminUserActivateHandler, { reason_code: 'admin_action' }],
   ])('returns internal_error for status persistence failure %#', async (handler, body) => {
     queueAccount(handler === adminUserActivateHandler ? 'locked' : 'active');
-    mocks.adapter.execute.mockRejectedValueOnce(new Error('D1 unavailable'));
+    mocks.adapter.batch.mockRejectedValueOnce(new Error('D1 unavailable'));
     expect((await handler(context({ body }))).status).toBe(500);
   });
 });

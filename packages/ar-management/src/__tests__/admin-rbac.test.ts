@@ -8,6 +8,9 @@ const mocked = vi.hoisted(() => ({
   createPIIContextFromHono: vi.fn(),
   resolveAccountDataContextFromHono: vi.fn(),
   hasPIIDatabase: vi.fn(),
+  createAuditLogFromContext: vi.fn(async () => undefined),
+  invalidateUserCache: vi.fn(async () => undefined),
+  invalidateSubjectRBACCache: vi.fn(async () => undefined),
 }));
 
 vi.mock('@authrim/ar-lib-core', async () => {
@@ -21,6 +24,9 @@ vi.mock('@authrim/ar-lib-core', async () => {
     createPIIContextFromHono: mocked.createPIIContextFromHono,
     resolveAccountDataContextFromHono: mocked.resolveAccountDataContextFromHono,
     hasPIIDatabase: mocked.hasPIIDatabase,
+    createAuditLogFromContext: mocked.createAuditLogFromContext,
+    invalidateUserCache: mocked.invalidateUserCache,
+    invalidateSubjectRBACCache: mocked.invalidateSubjectRBACCache,
     CanonicalRuntimeUserStore: class {
       async findById(userId: string) {
         if (userId !== 'user-1' && userId !== '_WdnkLInMNDz8yJNZUlzA') {
@@ -45,6 +51,7 @@ import {
   adminUserEffectivePermissionsHandler,
   adminUserRoleAssignHandler,
   adminUserRolesListHandler,
+  adminUserRoleRemoveHandler,
 } from '../admin-rbac';
 
 function createMockAdapter(
@@ -412,7 +419,58 @@ describe('admin-rbac schema alignment', () => {
     expect(coreAdapter.execute).toHaveBeenCalledWith(
       'DELETE FROM subject_org_membership WHERE tenant_id = ? AND org_id = ? AND subject_id = ?',
       ['default', 'org-1', 'user-1']
+    ); // Removing access is audited and drops the member's cached claims.
+    expect(mocked.createAuditLogFromContext).toHaveBeenCalledWith(
+      c,
+      'organization_membership.removed',
+      'organization',
+      'org-1',
+      { user_id: 'user-1' },
+      'info',
+      undefined,
+      undefined
     );
+    // An Admin API removal only warns about caches (they expire on their own).
+    expect(mocked.invalidateUserCache).toHaveBeenCalledWith(
+      expect.anything(),
+      'default',
+      'user-1',
+      {
+        throwOnFailure: false,
+      }
+    );
+  });
+
+  it('removes a role assignment of the user only, audits it and drops cached claims', async () => {
+    const coreAdapter = createMockAdapter({
+      queryOne: (sql) =>
+        sql.includes('FROM role_assignments ra') ? { id: 'ra-1', hierarchy_level: 10 } : null,
+    });
+    mocked.createAuthContextFromHono.mockReturnValue({ coreAdapter });
+    const rebacCache = { list: vi.fn(), delete: vi.fn() };
+    const c = createMockContext({
+      params: { id: 'user-1', assignmentId: 'ra-1' },
+      env: { REBAC_CACHE: rebacCache as never },
+    });
+    c.set('adminAuth', { userId: 'admin-1', hierarchyLevel: 50 });
+
+    const res = await adminUserRoleRemoveHandler(c);
+    expect(res.status).toBe(200);
+    expect(coreAdapter.execute).toHaveBeenCalledWith(
+      'DELETE FROM role_assignments WHERE tenant_id = ? AND id = ? AND subject_id = ?',
+      ['default', 'ra-1', 'user-1']
+    );
+    expect(mocked.createAuditLogFromContext).toHaveBeenCalledWith(
+      c,
+      'role_assignment.removed',
+      'role_assignment',
+      'ra-1',
+      { user_id: 'user-1' },
+      'info',
+      undefined,
+      undefined
+    );
+    expect(mocked.invalidateSubjectRBACCache).toHaveBeenCalledWith(rebacCache, 'default', 'user-1');
   });
 
   it('rejects assigning a role at the caller hierarchy level', async () => {

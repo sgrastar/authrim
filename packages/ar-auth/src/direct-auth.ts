@@ -38,6 +38,9 @@ import {
   buildDOInstanceName,
   getTenantSettingsDocument,
   resolveEffectiveSettings,
+  computeAAL,
+  sessionAssuranceEvidence,
+  aalToAcr,
   generateSecureRandomString,
   generateId,
   generateUserIdFromSettings,
@@ -621,6 +624,14 @@ export async function consumeAuthorizationChallengeContinuation(
       sessionUserId: expectedUserId || authenticatedUserId,
       browserBinding,
       authorization_request: createAuthorizationRequestContinuation(metadata),
+      // An assurance step-up: authorize combines the earlier session's proven factors with this one.
+      ...(type === 'reauth' && metadata.assurance_step_up !== undefined
+        ? { assurance_step_up: metadata.assurance_step_up }
+        : {}),
+      // When the re-authentication was asked for: only a session proven after it is its result.
+      ...(type === 'reauth' && metadata.reauth_issued_at !== undefined
+        ? { reauth_issued_at: metadata.reauth_issued_at }
+        : {}),
     },
   });
   c.header(
@@ -828,6 +839,33 @@ async function validateSession(
 }
 
 /**
+ * The tenant's assurance settings for a Direct Auth code, read before anything one-time (a
+ * challenge, a code, a new credential) is spent: settings that cannot be read stop the request
+ * with nothing lost, so it can be retried.
+ */
+async function readDirectAuthAssurance(
+  c: Context<{ Bindings: Env }>,
+  tenantId: string
+): Promise<{ settings: Record<string, unknown> } | { error: Response }> {
+  try {
+    return { settings: await resolveEffectiveSettings(c.env, 'assurance', { tenantId }) };
+  } catch (error) {
+    getLogger(c)
+      .module('DIRECT-AUTH')
+      .error('Failed to load assurance settings', { action: 'assurance_settings' }, error as Error);
+    return {
+      error: c.json(
+        {
+          error: 'temporarily_unavailable',
+          error_description: 'Assurance settings are temporarily unavailable',
+        },
+        503
+      ),
+    };
+  }
+}
+
+/**
  * Generate auth_code and store in ChallengeStore. Returns the code and its lifetime in seconds
  * (`oauth.auth_code_ttl` for the client or tenant), which both stores and the response use.
  */
@@ -836,7 +874,9 @@ async function generateAuthCode(
   tenantId: string,
   userId: string,
   codeChallenge: string,
-  metadata?: Record<string, unknown>
+  metadata: Record<string, unknown> | undefined,
+  /** Read by the caller beforehand (readDirectAuthAssurance). */
+  assuranceSettings: Record<string, unknown>
 ): Promise<{ code: string; expiresIn: number }> {
   const authCode = crypto.randomUUID();
   const clientId = typeof metadata?.client_id === 'string' ? metadata.client_id : undefined;
@@ -851,9 +891,17 @@ async function generateAuthCode(
   );
   const authCodeStore = env.AUTH_CODE_STORE.get(authCodeStoreId);
 
-  const configuredTtl = (await resolveEffectiveSettings(env, 'oauth', { tenantId, clientId }))[
-    'oauth.auth_code_ttl'
-  ];
+  const oauthSettings = await resolveEffectiveSettings(env, 'oauth', { tenantId, clientId });
+  // With assurance on, how the user authenticated goes with the code: the token endpoint enforces
+  // the AAL it reached and reports it (amr, the acr of that AAL) in its tokens.
+  const method = typeof metadata?.method === 'string' ? metadata.method : undefined;
+  const aal =
+    assuranceSettings['assurance.enabled'] === true
+      ? computeAAL(sessionAssuranceEvidence({ amr: method ? [method] : [] }))
+      : undefined;
+  const assuranceAcr = aal ? aalToAcr(aal) : null;
+  const configuredTtl = oauthSettings['oauth.auth_code_ttl'];
+  const maxCodesPerUser = oauthSettings['oauth.max_codes_per_user'];
   // One lifetime for the code, its challenge and the response: a code must not outlive its
   // challenge (the token exchange consumes both) or the other way round.
   const expiresIn =
@@ -865,6 +913,7 @@ async function generateAuthCode(
     tenantId,
     clientId,
     ttlSeconds: expiresIn,
+    maxCodesPerUser: typeof maxCodesPerUser === 'number' ? maxCodesPerUser : undefined,
     redirectUri: DIRECT_AUTH_GRANT_REDIRECT_URI,
     userId,
     scope,
@@ -872,7 +921,20 @@ async function generateAuthCode(
     codeChallengeMethod: 'S256',
     authTime:
       typeof metadata?.auth_time === 'number' ? metadata.auth_time : Math.floor(Date.now() / 1000),
-    acr: 'urn:mace:incommon:iap:bronze',
+    // With assurance on and in ID tokens, the acr of the AAL reached (none for AAL0), as authorize
+    // gives; otherwise the fixed one Direct Auth has always given.
+    ...(aal && assuranceSettings['assurance.include_in_id_token'] === true
+      ? assuranceAcr
+        ? { acr: assuranceAcr }
+        : {}
+      : { acr: 'urn:mace:incommon:iap:bronze' }),
+    ...(aal
+      ? {
+          aal,
+          ...(method ? { amr: [method], assuranceAmr: [method] } : {}),
+          ...(assuranceAcr ? { assuranceAcr } : {}),
+        }
+      : {}),
   });
 
   const challengeStore = await getChallengeStoreByChallengeId(env, authCode, tenantId);
@@ -1053,6 +1115,9 @@ export async function directPasskeyLoginFinishHandler(c: Context<{ Bindings: Env
     if (!isDirectAuthChannel(channel)) {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
+
+    const assurance = await readDirectAuthAssurance(c, getTenantIdFromContext(c));
+    if ('error' in assurance) return assurance.error;
 
     // Consume challenge atomically
     const challengeStore = await getChallengeStoreByChallengeId(
@@ -1271,8 +1336,12 @@ export async function directPasskeyLoginFinishHandler(c: Context<{ Bindings: Env
         transaction_id: challengeData.metadata?.transaction_id || challenge_id,
         passkey_id: passkey.id,
         auth_time: authTime,
+        // When the assertion was verified (milliseconds): the session redeemed from this artifact
+        // was proven then, not when the artifact was stored or redeemed.
+        proven_at: proofVerifiedAtMs,
         authorization_challenge_id: challengeData.metadata?.authorization_challenge_id,
-      }
+      },
+      assurance.settings
     );
 
     // Publish success event
@@ -1681,6 +1750,8 @@ export async function directPasskeySignupFinishHandler(c: Context<{ Bindings: En
     // The challenge_id was stored in metadata during signup/start
     // Get tenantId for user lookup
     const tenantId = getTenantIdFromContext(c);
+    const assurance = await readDirectAuthAssurance(c, tenantId);
+    if ('error' in assurance) return assurance.error;
 
     // Look up userId from challenge_id mapping
     // We stored this mapping in signup/start using challenge_id-based sharding
@@ -1862,7 +1933,8 @@ export async function directPasskeySignupFinishHandler(c: Context<{ Bindings: En
         passkey_id: passkeyId,
         is_new_user: isNewUser,
         authorization_challenge_id: challengeData.metadata?.authorization_challenge_id,
-      }
+      },
+      assurance.settings
     );
 
     return c.json({
@@ -1898,6 +1970,8 @@ interface DirectEmailVerificationCompletionInput {
   transactionId: string;
   method: DirectEmailVerificationMethod;
   metadata: Record<string, unknown>;
+  /** Read before the challenge was spent (readDirectAuthAssurance). */
+  assuranceSettings: Record<string, unknown>;
 }
 
 interface EmailVerificationProtocolChallengeData {
@@ -1964,7 +2038,16 @@ async function completeDirectEmailVerification(
   c: Context<{ Bindings: Env }>,
   input: DirectEmailVerificationCompletionInput
 ): Promise<Response> {
-  const { tenantId, userId, trustedEmail, channel, transactionId, method, metadata } = input;
+  const {
+    tenantId,
+    userId,
+    trustedEmail,
+    channel,
+    transactionId,
+    method,
+    metadata,
+    assuranceSettings,
+  } = input;
   const log = getLogger(c).module('DIRECT-AUTH');
   const tenantD1 = usesRoutedAccountStorage(c);
   let runtimeUser: CanonicalOtpLoginUser | null;
@@ -2112,7 +2195,8 @@ async function completeDirectEmailVerification(
       is_new_user: isNewUser,
       authorization_challenge_id: metadataString(metadata, 'authorization_challenge_id'),
       runtime_interaction_id: metadataString(metadata, 'runtime_interaction_id'),
-    }
+    },
+    assuranceSettings
   );
 
   if (method === 'email_code') {
@@ -2156,6 +2240,8 @@ async function tryEmailVerificationProtocol(
     challengeId: string | undefined;
     runtimeInteractionId: string | undefined;
     completionMetadata: Record<string, unknown>;
+    /** Read before the send limit was counted; none when no presentation came. */
+    assuranceSettings: Record<string, unknown> | undefined;
   }
 ): Promise<Response | null> {
   const {
@@ -2168,6 +2254,7 @@ async function tryEmailVerificationProtocol(
     challengeId,
     runtimeInteractionId,
     completionMetadata,
+    assuranceSettings,
   } = input;
 
   // The runtime interaction, browser challenge, user, and resulting managed session must all
@@ -2178,6 +2265,7 @@ async function tryEmailVerificationProtocol(
   }
 
   if (
+    !assuranceSettings ||
     channel !== 'browser' ||
     typeof presentationToken !== 'string' ||
     presentationToken.length === 0 ||
@@ -2288,6 +2376,7 @@ async function tryEmailVerificationProtocol(
       ...completionMetadata,
       runtime_interaction_id: runtimeInteractionId,
     },
+    assuranceSettings,
   });
 }
 
@@ -2424,6 +2513,15 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
     const tenantD1 = usesRoutedAccountStorage(c);
     if (tenantD1 && tenantId !== challengeTenantId) {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
+    }
+
+    // An email verification presentation can complete the login here: its assurance settings are
+    // read before the send limit is counted, so settings that cannot be read cost nothing.
+    let presentationAssurance: Record<string, unknown> | undefined;
+    if (typeof email_verification_token === 'string' && email_verification_token.length > 0) {
+      const assurance = await readDirectAuthAssurance(c, tenantId);
+      if ('error' in assurance) return assurance.error;
+      presentationAssurance = assurance.settings;
     }
 
     // Rate limiting
@@ -2639,6 +2737,7 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
       challengeId: email_verification_challenge_id,
       runtimeInteractionId: boundRuntimeInteractionId,
       completionMetadata: emailVerificationMetadata,
+      assuranceSettings: presentationAssurance,
     });
     if (emailVerificationResponse) return emailVerificationResponse;
 
@@ -2815,8 +2914,11 @@ export async function directEmailCodeVerifyHandler(c: Context<{ Bindings: Env }>
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
 
-    // Rate limit: Max 5 attempts per code
+    // Rate limit: Max 5 attempts per code. Assurance settings are read first, so settings that
+    // cannot be read cost no attempt.
     const tenantId = getTenantIdFromContext(c);
+    const assurance = await readDirectAuthAssurance(c, tenantId);
+    if ('error' in assurance) return assurance.error;
     const rateLimiterId = c.env.RATE_LIMITER.idFromName(
       buildDOKey('rate-limit', 'email-code-verify', tenantId)
     );
@@ -2911,6 +3013,7 @@ export async function directEmailCodeVerifyHandler(c: Context<{ Bindings: Env }>
       transactionId: attempt_id,
       method: 'email_code',
       metadata: challengeData.metadata ?? {},
+      assuranceSettings: assurance.settings,
     });
   } catch (error) {
     const writeFenceResponse = createTenantPlacementWriteFenceResponse(c, error);
@@ -3001,6 +3104,7 @@ export async function directSessionCreateHandler(c: Context<{ Bindings: Env }>) 
       challenge: string;
       userId: string;
       metadata?: Record<string, unknown>;
+      createdAt?: number;
     };
 
     try {
@@ -3141,6 +3245,16 @@ export async function directSessionCreateHandler(c: Context<{ Bindings: Env }>) 
         direct_auth_channel: channel,
         ...(typeof metadata.runtime_interaction_id === 'string'
           ? { runtime_interaction_id: metadata.runtime_interaction_id }
+          : {}),
+        // When the authentication was proven, not when it is stored or redeemed: an assurance
+        // step-up counts only proof made after it began.
+        ...directSessionProvenAt(metadata),
+        // An external IdP login's upstream acr (from its validated ID token), for assurance.
+        ...(metadata.method === 'external_idp' &&
+        typeof metadata.upstream_acr === 'string' &&
+        metadata.upstream_acr.length > 0 &&
+        metadata.upstream_acr.length <= 1024
+          ? { upstream_acr: metadata.upstream_acr }
           : {}),
       },
       tenantId
@@ -3582,6 +3696,25 @@ export async function directPasskeyRegisterFinishHandler(c: Context<{ Bindings: 
  *
  * Returns current session and user information.
  */
+function directSessionProvenAt(metadata: Record<string, unknown>): { proven_at?: number } {
+  // When its producer verified the authentication (proven_at). An external IdP login has none: the
+  // IdP's time is in its own clock (see the bridge callback). Unknown: never combined.
+  const proven = metadata.method === 'external_idp' ? undefined : metadata.proven_at;
+  return typeof proven === 'number' && Number.isSafeInteger(proven) && proven > 0
+    ? { proven_at: proven }
+    : {};
+}
+
+/** Session data only Authrim reads (assurance evidence): never returned to the client. */
+const INTERNAL_SESSION_DATA_KEYS = ['unverified_amr', 'upstream_acr', 'proven_at'];
+
+function publicSessionData(data: Session['data']): Session['data'] {
+  if (!data) return data;
+  return Object.fromEntries(
+    Object.entries(data).filter(([key]) => !INTERNAL_SESSION_DATA_KEYS.includes(key))
+  ) as Session['data'];
+}
+
 export async function directSessionHandler(c: Context<{ Bindings: Env }>) {
   const log = getLogger(c).module('DIRECT-AUTH');
 
@@ -3622,7 +3755,7 @@ export async function directSessionHandler(c: Context<{ Bindings: Env }>) {
         userId: session.userId,
         createdAt: session.createdAt,
         expiresAt: session.expiresAt,
-        data: session.data,
+        data: publicSessionData(session.data),
       },
       user: {
         id: runtimeUser.id,

@@ -471,7 +471,7 @@ restored. Do not change production rate limits.
 The override endpoint is:
 
 ```text
-PUT /api/admin/settings/rate-limits/profile-override
+PUT /api/admin/rate-limits/profile-override
 {"profile":"loadTest","expires_in":3600}
 ```
 
@@ -479,7 +479,7 @@ Use an ephemeral `admin:*` token scoped to the conformance environment. After th
 testing window, clear it with:
 
 ```text
-DELETE /api/admin/settings/rate-limits/profile-override
+DELETE /api/admin/rate-limits/profile-override
 ```
 
 ### 6. Dynamic RP attempted DCR after a discovery-only module

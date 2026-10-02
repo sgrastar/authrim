@@ -180,6 +180,8 @@ describe('Direct Auth session endpoint', () => {
       expiresAt: Date.now() + 60_000,
       data: {
         amr: ['passkey'],
+        unverified_amr: ['passkey'],
+        upstream_acr: 'urn:mace:incommon:iap:silver',
       },
     });
     mocks.userCoreRepository.findById.mockResolvedValue({
@@ -203,10 +205,10 @@ describe('Direct Auth session endpoint', () => {
     expect(body.session).toMatchObject({
       id: '0_session_123',
       userId: 'user_123',
-      data: {
-        amr: ['passkey'],
-      },
+      // The assurance evidence Authrim keeps for itself is not returned.
+      data: { amr: ['passkey'] },
     });
+    expect(body.session.data).toEqual({ amr: ['passkey'] });
     expect(body.user).toMatchObject({
       id: 'user_123',
       email: 'user@example.com',

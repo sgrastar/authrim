@@ -15,9 +15,7 @@ import { runTenantBackupCoveredMutation } from '../../tenant-backup-writer';
  * - GET/PATCH /api/admin/clients/:clientId/settings
  * - GET/PATCH /api/admin/platform/settings/:category
  * - GET /api/admin/settings/meta/:category
- * - POST /api/admin/settings/migrate (v1 → v2 migration)
- * - GET /api/admin/settings/migrate/status
- * - DELETE /api/admin/settings/migrate/lock
+ * - GET/POST /api/admin/platform/settings/legacy-import (one-time import of the older stores)
  *
  * History (Configuration Rollback):
  * - GET /api/admin/settings/:category/history - List version history
@@ -31,7 +29,7 @@ import { Hono, type Context } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
 import { requireDedicatedAdminDatabaseAdapter } from '@authrim/ar-lib-core';
 import { DatabaseSettingsCanonicalStore } from '@authrim/ar-lib-core/services/settings-canonical-store';
-import migrateRouter from './migrate';
+import legacyImportRouter from './legacy-import';
 import {
   listSettingsHistory,
   getSettingsVersion,
@@ -49,7 +47,6 @@ import {
   ALL_CATEGORY_META,
   CATEGORY_SCOPE_CONFIG,
   settingsParentScopes,
-  readLegacySettings,
   type CategoryName,
   type SettingScopeLevel,
   getScopedCategoryMeta,
@@ -76,10 +73,13 @@ import {
   validateTrustedRedirectOrigins,
   bumpAuthenticationMethodsCacheRevision,
   resolveClientTrustPolicy,
-  isValidUIPath,
-  TENANT_UI_PATH_KEYS,
   validateTenantUIBaseUrlAsync,
 } from '@authrim/ar-lib-core';
+import {
+  validateCategoryPatch,
+  validatePlatformUIPatch,
+  validateTenantUIPaths,
+} from './patch-validation';
 import {
   MAX_LOGIN_UI_PRIMARY_LOCALES,
   isLoginUILocale,
@@ -139,6 +139,10 @@ const AGENT_ELEVATED_SETTINGS = {
           'scopeAALRequirements',
           parsedJsonObject(settingValue(body, 'assurance.scope_aal_requirements')),
         ],
+        [
+          'upstreamAcrMappings',
+          parsedJsonObject(settingValue(body, 'assurance.upstream_acr_mappings')),
+        ],
         ['includeInIdToken', settingValue(body, 'assurance.include_in_id_token')],
         ['includeInAccessToken', settingValue(body, 'assurance.include_in_access_token')],
         ['fal2RequiresDPoP', settingValue(body, 'assurance.fal2_requires_dpop')],
@@ -194,6 +198,65 @@ const AGENT_ELEVATED_SETTINGS = {
   },
 } as const;
 
+/**
+ * The keys each elevated Tool binds. An agent's elevated PATCH may set only these, and may not
+ * clear or disable anything: what the approval did not bind is never written.
+ */
+const AGENT_ELEVATED_SETTING_KEYS: Record<keyof typeof AGENT_ELEVATED_SETTINGS, readonly string[]> =
+  {
+    assurance: [
+      'assurance.enabled',
+      'assurance.default_aal',
+      'assurance.default_fal',
+      'assurance.default_ial',
+      'assurance.scope_aal_requirements',
+      'assurance.upstream_acr_mappings',
+      'assurance.include_in_id_token',
+      'assurance.include_in_access_token',
+      'assurance.fal2_requires_dpop',
+      'assurance.fal3_requires_par',
+    ],
+    security: [
+      'security.fapi_enabled',
+      'security.fapi_strict_dpop',
+      'security.fapi_allow_public_clients',
+    ],
+    tokens: [
+      'tokens.exchange_enabled',
+      'tokens.exchange_delegation_enabled',
+      'tokens.exchange_impersonation_enabled',
+    ],
+    oauth: [
+      'oauth.access_token_expiry',
+      'oauth.id_token_expiry',
+      'oauth.auth_code_ttl',
+      'oauth.state_required',
+      'oauth.refresh_token_rotation',
+      'oauth.offline_access_required',
+      'oauth.jarm_enabled',
+    ],
+    session: [
+      'session.default_ttl',
+      'session.max_ttl',
+      'session.refresh_default',
+      'session.backchannel_logout_token_exp',
+      'session.backchannel_on_failure',
+    ],
+  };
+
+/** Whether an elevated PATCH body writes only what the category's Tool binds. */
+export function agentElevatedSettingsBodyInScope(category: string, body: unknown): boolean {
+  const keys = AGENT_ELEVATED_SETTING_KEYS[category as keyof typeof AGENT_ELEVATED_SETTINGS];
+  if (!keys || !body || typeof body !== 'object' || Array.isArray(body)) return false;
+  const { set, clear, disable, ...rest } = body as Record<string, unknown>;
+  if (Object.keys(rest).some((field) => field !== 'ifMatch')) return false;
+  if (clear !== undefined && !(Array.isArray(clear) && clear.length === 0)) return false;
+  if (disable !== undefined && !(Array.isArray(disable) && disable.length === 0)) return false;
+  if (set === undefined) return true;
+  if (!set || typeof set !== 'object' || Array.isArray(set)) return false;
+  return Object.keys(set).every((key) => keys.includes(key));
+}
+
 export function buildAgentElevatedSettingsToolInput(
   category: string,
   body: JsonObject
@@ -212,6 +275,16 @@ async function requireAgentSettingsElevation(
   if (!hasTenantSettingsPermission(adminAuth, category as CategoryName, 'edit')) return next();
   const definition = buildAgentElevatedSettingsToolInput(category, {});
   if (!definition) return next();
+  let body: unknown;
+  try {
+    body = await c.req.raw.clone().json();
+  } catch {
+    return c.json({ error: 'AGENT_ELEVATION_REQUEST_BODY_INVALID' }, 400);
+  }
+  if (!agentElevatedSettingsBodyInScope(category, body)) {
+    // The approval binds only the Tool's own fields: anything else would be written unapproved.
+    return c.json({ error: 'AGENT_ELEVATION_SETTINGS_OUT_OF_SCOPE' }, 400);
+  }
   return agentElevatedExecutionMiddleware(
     definition.operation,
     ({ body }) => buildAgentElevatedSettingsToolInput(category, body)!.input
@@ -432,13 +505,7 @@ async function validateTenantUIPatch(
       return `tenant.ui_base_url is not an allowed UI origin: ${validation.error ?? 'invalid'}`;
     }
   }
-  for (const key of Object.values(TENANT_UI_PATH_KEYS)) {
-    const path = body.set?.[key];
-    if (path !== undefined && !isValidUIPath(path)) {
-      return `${key} must be a path starting with a single / (no query or fragment)`;
-    }
-  }
-  return null;
+  return validateTenantUIPaths(body);
 }
 
 function validateLoginUIPatch(body: SettingsPatchRequest): {
@@ -722,40 +789,11 @@ const settingsV2 = new Hono<{
   };
 }>();
 
-/**
- * Values saved in the older platform-wide stores for a category, shown as the platform value
- * below the Settings API scopes (fresh, so a change made through the older API shows at once).
- */
-async function legacySettingsFor(
-  env: Env,
-  category: string,
-  scope: SettingScope
-): Promise<Record<string, unknown>> {
-  const tenantId =
-    scope.type === 'tenant' ? scope.id : scope.type === 'client' ? scope.tenantId : undefined;
-  try {
-    return await readLegacySettings(env, category, { fresh: true, tenantId });
-  } catch (error) {
-    // Runtime refuses requests while these cannot be read; env or defaults are not the values.
-    throw new LegacySettingsUnavailableError(category, error);
-  }
-}
-
-/** The older store behind a category could not be read, so its effective values are unknown. */
-class LegacySettingsUnavailableError extends Error {
-  constructor(category: string, cause: unknown) {
-    super(`Settings stored by the older API for "${category}" cannot be read`, { cause });
-    this.name = 'LegacySettingsUnavailableError';
-  }
-}
-
-// A settings document (Settings API or older store) that cannot be read answers 503 on every
-// settings route, rather than the generic 500 (or values that are not the effective ones).
+// A settings document that cannot be read answers 503 on every settings route, rather than the
+// generic 500 (or values that are not the effective ones).
 settingsV2.use('*', async (c, next) => {
   await next();
-  if (c.error instanceof LegacySettingsUnavailableError) {
-    c.res = errorResponse(c, 'temporarily_unavailable', c.error.message, 503);
-  } else if (
+  if (
     c.error instanceof Error &&
     (c.error.message === 'settings_read_failed' || c.error.message === 'settings_data_invalid')
   ) {
@@ -767,10 +805,11 @@ settingsV2.use('*', async (c, next) => {
 /**
  * Get or create SettingsManager for the request
  */
-function getSettingsManager(
+export function getSettingsManager(
   env: Env,
   auditContext?: Context<{ Bindings: Env; Variables: { adminAuth?: AdminAuthContext } }, string>,
-  canonicalTenantSettings = false,
+  /** Save through the canonical store (D1), with KV as the runtime projection. */
+  canonicalSettings = false,
   /**
    * Refuse documents that cannot be read instead of reading them as empty: for views, which must
    * not show env or defaults as the values in effect. Writes leave it off, so a broken document
@@ -784,7 +823,7 @@ function getSettingsManager(
     strictReads,
     // Tenants created before settings were written to SETTINGS keep their creation-time copy.
     legacyKv: env.AUTHRIM_CONFIG ?? null,
-    canonicalStore: canonicalTenantSettings
+    canonicalStore: canonicalSettings
       ? new DatabaseSettingsCanonicalStore(
           requireDedicatedAdminDatabaseAdapter(env, 'settings-canonical')
         )
@@ -1451,7 +1490,6 @@ settingsV2.get('/tenants/:tenantId/settings/:category', async (c) => {
   try {
     const result = await manager.getAll(category, scope, {
       parents: settingsParentScopes(category, scope),
-      legacy: await legacySettingsFor(c.env, category, scope),
     });
     return c.json(result);
   } catch (error) {
@@ -1548,6 +1586,16 @@ settingsV2.patch(
             }
           }
 
+          const categoryError = validateCategoryPatch(category, body);
+          if (categoryError) {
+            await recordSettingsAuditFailure(c, {
+              category,
+              scope,
+              reason: `${category.replace('-', '_')}_validation_failed`,
+            });
+            return errorResponse(c, 'validation_failed', categoryError, 400);
+          }
+
           const postLoginValidation = await validatePostLoginRelatedPatch(
             c.env,
             tenantId,
@@ -1579,7 +1627,6 @@ settingsV2.patch(
 
           const result = await manager.patch(category, scope, body, actor, {
             parents: settingsParentScopes(category, scope),
-            legacy: await legacySettingsFor(c.env, category, scope),
           });
 
           if (
@@ -1787,7 +1834,6 @@ settingsV2.get('/clients/:clientId/settings/:category', async (c) => {
   try {
     const result = await manager.getAll(category, scope, {
       parents: settingsParentScopes(category, scope),
-      legacy: await legacySettingsFor(c.env, category, scope),
     });
     return c.json(result);
   } catch (error) {
@@ -2050,6 +2096,16 @@ settingsV2.patch('/clients/:clientId/settings/:category', async (c) => {
           }
         }
 
+        const categoryError = validateCategoryPatch(category, body);
+        if (categoryError) {
+          await recordSettingsAuditFailure(c, {
+            category,
+            scope,
+            reason: `${category.replace('-', '_')}_validation_failed`,
+          });
+          return errorResponse(c, 'validation_failed', categoryError, 400);
+        }
+
         if (category === 'client') {
           const appLoginValidation = await validateClientAppLoginPatch(
             c.env,
@@ -2077,7 +2133,6 @@ settingsV2.patch('/clients/:clientId/settings/:category', async (c) => {
         const actor = adminAuth?.userId ?? 'unknown';
         const result = await manager.patch(category, scope, body, actor, {
           parents: settingsParentScopes(category, scope),
-          legacy: await legacySettingsFor(c.env, category, scope),
         });
 
         const hasRejections = Object.keys(result.rejected).length > 0;
@@ -2151,6 +2206,10 @@ settingsV2.patch('/clients/:clientId/settings/:category', async (c) => {
 // Platform Settings Routes (Read-Only)
 // =============================================================================
 
+// The one-time import of the older stores (before the category routes, which would take its
+// path for a category).
+settingsV2.route('/', legacyImportRouter);
+
 /**
  * GET /api/admin/platform/settings/:category
  * Get platform settings
@@ -2181,13 +2240,12 @@ settingsV2.get('/platform/settings/:category', async (c) => {
     return errorResponse(c, 'forbidden', 'Insufficient permissions to view platform settings', 403);
   }
 
-  const manager = getSettingsManager(c.env, c, false, true);
+  const manager = getSettingsManager(c.env, c, true, true);
   const scope: SettingScope = { type: 'platform' };
 
   try {
     const result = await manager.getAll(category, scope, {
       parents: settingsParentScopes(category, scope),
-      legacy: await legacySettingsFor(c.env, category, scope),
     });
     return c.json(result);
   } catch (error) {
@@ -2239,7 +2297,7 @@ settingsV2.patch('/platform/settings/:category', (c) => {
       env: c.env,
       scope: 'environment',
       run: async () => {
-        const manager = getSettingsManager(c.env, c);
+        const manager = getSettingsManager(c.env, c, true);
         const scope: SettingScope = { type: 'platform' };
 
         try {
@@ -2270,10 +2328,22 @@ settingsV2.patch('/platform/settings/:category', (c) => {
             }
           }
 
+          const platformError =
+            category === 'tenant'
+              ? validatePlatformUIPatch(body, c.env)
+              : validateCategoryPatch(category, body);
+          if (platformError) {
+            await recordSettingsAuditFailure(c, {
+              category,
+              scope,
+              reason: `${category}_validation_failed`,
+            });
+            return errorResponse(c, 'validation_failed', platformError, 400);
+          }
+
           const actor = adminAuth?.userId ?? 'unknown';
           const result = await manager.patch(category, scope, body, actor, {
             parents: settingsParentScopes(category, scope),
-            legacy: await legacySettingsFor(c.env, category, scope),
           });
           const hasRejections = Object.keys(result.rejected).length > 0;
           const hasApplied =
@@ -2459,7 +2529,6 @@ settingsV2.get('/settings/meta/:category/scope', async (c) => {
 // =============================================================================
 
 // Mount migration routes under /settings
-settingsV2.route('/settings', migrateRouter);
 
 // =============================================================================
 // Settings History Routes (Configuration Rollback)

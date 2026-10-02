@@ -3,7 +3,7 @@ import { Hono } from 'hono';
 import { clearDiscoveryMetadataCache, discoveryHandler } from '../discovery';
 import type { Env } from '@authrim/ar-lib-core/types/env';
 import type { OIDCProviderMetadata } from '@authrim/ar-lib-core/types/oidc';
-import { clearNativeSSOConfigCache, LOGOUT_SETTINGS_KEY } from '@authrim/ar-lib-core';
+import { clearNativeSSOConfigCache } from '@authrim/ar-lib-core';
 
 /**
  * Create a mock environment for testing
@@ -728,11 +728,12 @@ describe('Discovery Handler', () => {
       // Mock SETTINGS KV with logout config
       env.SETTINGS = {
         get: async (key: string) => {
-          if (key === LOGOUT_SETTINGS_KEY) {
+          if (key === 'settings:platform:session') {
             return JSON.stringify({
-              frontchannel: { enabled: false },
-              backchannel: { enabled: true },
-              session_management: { enabled: true, check_session_iframe_enabled: true },
+              'session.frontchannel_enabled': false,
+              'session.backchannel_enabled': true,
+              'session.session_management_enabled': true,
+              'session.check_session_iframe_enabled': true,
             });
           }
           return null;
@@ -761,16 +762,122 @@ describe('Discovery Handler', () => {
       expect(metadata.check_session_iframe).toBe('https://test.example.com/session/check');
     });
 
+    it.each([
+      [
+        'nothing is configured',
+        {},
+        ['urn:mace:incommon:iap:silver', 'urn:mace:incommon:iap:bronze'],
+      ],
+      [
+        'assurance is enabled',
+        { 'settings:tenant:default:assurance': { 'assurance.enabled': true } },
+        [
+          'urn:mace:incommon:iap:silver',
+          'urn:mace:incommon:iap:bronze',
+          'urn:authrim:aal:1',
+          'urn:authrim:aal:2',
+          'urn:authrim:aal:3',
+        ],
+      ],
+      [
+        'the tenant configures the list',
+        {
+          'settings:tenant:default:discovery': {
+            'discovery.acr_values_supported': ' urn:example:gold , urn:example:silver ',
+          },
+        },
+        ['urn:example:gold', 'urn:example:silver'],
+      ],
+      [
+        'the list repeats values, has empty entries and assurance adds its own',
+        {
+          'settings:tenant:default:discovery': {
+            'discovery.acr_values_supported':
+              'urn:authrim:aal:2,,urn:example:gold,urn:example:gold',
+          },
+          'settings:tenant:default:assurance': { 'assurance.enabled': true },
+        },
+        ['urn:authrim:aal:2', 'urn:example:gold', 'urn:authrim:aal:1', 'urn:authrim:aal:3'],
+      ],
+      [
+        'the list is empty',
+        { 'settings:tenant:default:discovery': { 'discovery.acr_values_supported': ' , ' } },
+        undefined,
+      ],
+    ])('advertises the acr values when %s', async (_label, documents, expected) => {
+      const env = createMockEnv();
+      env.SETTINGS = {
+        get: async (key: string) =>
+          key in documents ? JSON.stringify((documents as Record<string, unknown>)[key]) : null,
+      } as unknown as KVNamespace;
+
+      const response = await app.request(
+        '/.well-known/openid-configuration',
+        { method: 'GET' },
+        env
+      );
+
+      const metadata = (await response.json()) as OIDCProviderMetadata;
+      expect(metadata.acr_values_supported).toEqual(expected);
+    });
+
+    it('keeps the cache key short, however long the acr list', async () => {
+      const env = {
+        ...createMockEnv(),
+        AUTHRIM_CONFIG: createMockKV({ get: async () => null }),
+      } as Env;
+      const longList = Array.from({ length: 40 }, (_, i) => `urn:example:acr:level-${i}`).join(',');
+      env.SETTINGS = {
+        get: async (key: string) =>
+          key === 'settings:tenant:default:discovery'
+            ? JSON.stringify({ 'discovery.acr_values_supported': longList })
+            : null,
+      } as unknown as KVNamespace;
+
+      const response = await app.request(
+        '/.well-known/openid-configuration',
+        { method: 'GET' },
+        env
+      );
+
+      expect(response.status).toBe(200);
+      const keys = (
+        env.AUTHRIM_CONFIG as unknown as { put: { mock: { calls: unknown[][] } } }
+      ).put.mock.calls
+        .map(([key]) => String(key))
+        .filter((key) => key.startsWith('v1:discovery:'));
+      expect(keys.length).toBeGreaterThan(0);
+      for (const key of keys) expect(new TextEncoder().encode(key).length).toBeLessThanOrEqual(512);
+    });
+
+    it('stops when the assurance settings cannot be read', async () => {
+      const env = createMockEnv();
+      env.SETTINGS = {
+        get: async (key: string) => {
+          if (key === 'settings:tenant:default:assurance') throw new Error('KV unavailable');
+          return null;
+        },
+      } as unknown as KVNamespace;
+
+      const response = await app.request(
+        '/.well-known/openid-configuration',
+        { method: 'GET' },
+        env
+      );
+
+      expect(response.status).toBe(503);
+    });
+
     it('should not include check_session_iframe when session management is disabled', async () => {
       const env = createMockEnv();
       // Mock SETTINGS KV with session management disabled
       env.SETTINGS = {
         get: async (key: string) => {
-          if (key === LOGOUT_SETTINGS_KEY) {
+          if (key === 'settings:platform:session') {
             return JSON.stringify({
-              frontchannel: { enabled: true },
-              backchannel: { enabled: true },
-              session_management: { enabled: false },
+              'session.frontchannel_enabled': true,
+              'session.backchannel_enabled': true,
+              'session.session_management_enabled': false,
             });
           }
           return null;
@@ -789,6 +896,65 @@ describe('Discovery Handler', () => {
 
       // Session management disabled - no check_session_iframe
       expect(metadata.check_session_iframe).toBeUndefined();
+    });
+    it("uses the tenant's logout settings over the platform's", async () => {
+      const env = createMockEnv();
+      const stored: Record<string, string> = {
+        'settings:platform:session': JSON.stringify({ 'session.frontchannel_enabled': true }),
+        'settings:tenant:default:session': JSON.stringify({
+          'session.frontchannel_enabled': false,
+          'session.check_session_iframe_enabled': false,
+        }),
+      };
+      env.SETTINGS = {
+        get: async (key: string) => stored[key] ?? null,
+      } as unknown as KVNamespace;
+
+      const response = await app.request('/.well-known/openid-configuration', {}, env);
+
+      const metadata = (await response.json()) as OIDCProviderMetadata;
+      expect(metadata.frontchannel_logout_supported).toBe(false);
+      expect(metadata.check_session_iframe).toBeUndefined();
+      expect(metadata.backchannel_logout_supported).toBe(true);
+    });
+
+    it('is unavailable while the logout settings cannot be parsed', async () => {
+      const env = createMockEnv();
+      env.SETTINGS = {
+        get: async (key: string) => (key === 'settings:platform:session' ? '{' : null),
+      } as unknown as KVNamespace;
+
+      const response = await app.request('/.well-known/openid-configuration', {}, env);
+
+      expect(response.status).toBe(503);
+    });
+
+    it('does not read the logout webhook settings', async () => {
+      const env = createMockEnv();
+      env.SETTINGS = {
+        get: async (key: string) => {
+          if (key === 'settings:logout_webhook') throw new Error('KV unavailable');
+          return null;
+        },
+      } as unknown as KVNamespace;
+
+      const response = await app.request('/.well-known/openid-configuration', {}, env);
+
+      expect(response.status).toBe(200);
+    });
+
+    it('is unavailable while the logout settings cannot be read', async () => {
+      const env = createMockEnv();
+      env.SETTINGS = {
+        get: async (key: string) => {
+          if (key === 'settings:platform:session') throw new Error('KV unavailable');
+          return null;
+        },
+      } as unknown as KVNamespace;
+
+      const response = await app.request('/.well-known/openid-configuration', {}, env);
+
+      expect(response.status).toBe(503);
     });
   });
 

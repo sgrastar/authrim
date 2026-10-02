@@ -82,7 +82,7 @@ import {
   type AuditActor,
   createAuditLogEntry,
   createLogger,
-  getTenantSystemSettings,
+  resolveEffectiveSettings,
 } from '@authrim/ar-lib-core';
 
 // =============================================================================
@@ -659,17 +659,21 @@ policyRouter.put('/tenant-policy', async (c) => {
       }
 
       if (requestedProfile === 'ai_ephemeral') {
-        // Check feature flag (KV > env > default: false)
-        let aiEphemeralEnabled = false;
+        // feature.enable_ai_ephemeral_auth: the saved value, else ENABLE_AI_EPHEMERAL_AUTH,
+        // else off. A setting that cannot be read does not enable it.
+        let aiEphemeralEnabled: boolean;
         try {
-          const settings = await getTenantSystemSettings(c.env.SETTINGS, tenantId);
-          const oidc = settings?.oidc as { aiEphemeralAuth?: { enabled?: boolean } } | undefined;
-          aiEphemeralEnabled = oidc?.aiEphemeralAuth?.enabled ?? false;
+          const flags = await resolveEffectiveSettings(c.env, 'feature-flags', {
+            tenantId,
+          });
+          aiEphemeralEnabled = flags['feature.enable_ai_ephemeral_auth'] === true;
         } catch {
-          // Fall back to env
-        }
-        if (!aiEphemeralEnabled) {
-          aiEphemeralEnabled = c.env.ENABLE_AI_EPHEMERAL_AUTH === 'true';
+          return errorResponse(
+            c,
+            'temporarily_unavailable',
+            'AI Ephemeral Auth settings cannot be read; try again',
+            503
+          );
         }
 
         if (!aiEphemeralEnabled) {

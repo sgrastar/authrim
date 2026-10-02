@@ -8,6 +8,14 @@ import {
 } from './generated-smoke-common.js';
 import { runGeneratedApprovalsSmoke } from './generated-approvals-smoke.js';
 import {
+  patchTenantSettings,
+  readTenantSettings,
+  restoreTenantSettings,
+  waitForSettingsToApply,
+  type TemporarySettingsChange,
+  type TenantSettingsTarget,
+} from './generated-settings-v2.js';
+import {
   createGeneratedApprovalLoadContext,
   type GeneratedApprovalLoadContext,
 } from './generated-approval-load-context.js';
@@ -57,11 +65,6 @@ export interface GeneratedLoadAbuseResult {
   stages: GeneratedLoadStageResult[];
   cleanupNotes: string[];
   interStageCooldownsMs: number[];
-}
-
-interface IntrospectionValidationSnapshot {
-  value: boolean;
-  source: string;
 }
 
 interface StageRequestResult {
@@ -201,61 +204,14 @@ function encodeBasicAuth(clientId: string, clientSecret: string): string {
   return Buffer.from(`${clientId}:${clientSecret}`).toString('base64');
 }
 
-async function getIntrospectionValidationSnapshot(input: {
-  baseUrl: string;
-  adminSecret: string;
-  tenantId: string;
-}): Promise<IntrospectionValidationSnapshot> {
-  const response = await fetchJsonWithTimeout(
-    `${input.baseUrl}/api/admin/settings/introspection-validation`,
-    10_000,
-    {
-      headers: {
-        authorization: `Bearer ${input.adminSecret}`,
-        accept: 'application/json',
-        'X-Tenant-Id': input.tenantId,
-      },
-    }
-  );
-  if (!response.ok || !isRecord(response.payload)) {
-    throw new Error(
-      `load_introspection_validation_get_failed:${response.status}:${response.error ?? response.bodyText ?? ''}`
-    );
-  }
-  const settings = isRecord(response.payload.settings) ? response.payload.settings : null;
-  const strictValidation =
-    settings && isRecord(settings.strictValidation) ? settings.strictValidation : null;
-  return {
-    value: strictValidation?.value === true,
-    source: typeof strictValidation?.source === 'string' ? strictValidation.source : 'unknown',
-  };
-}
+const STRICT_VALIDATION_KEY = 'tokens.introspection_strict_validation';
 
-async function putIntrospectionValidation(input: {
+function introspectionSettingsTarget(input: {
   baseUrl: string;
   adminSecret: string;
   tenantId: string;
-  value: boolean;
-}): Promise<void> {
-  const response = await fetchJsonWithTimeout(
-    `${input.baseUrl}/api/admin/settings/introspection-validation`,
-    10_000,
-    {
-      method: 'PUT',
-      headers: {
-        authorization: `Bearer ${input.adminSecret}`,
-        accept: 'application/json',
-        'content-type': 'application/json',
-        'X-Tenant-Id': input.tenantId,
-      },
-      body: JSON.stringify({ strictValidation: input.value }),
-    }
-  );
-  if (!response.ok) {
-    throw new Error(
-      `load_introspection_validation_put_failed:${response.status}:${response.error ?? response.bodyText ?? ''}`
-    );
-  }
+}): TenantSettingsTarget {
+  return { ...input, category: 'tokens' };
 }
 
 function getProfileStages(
@@ -580,22 +536,45 @@ export async function runGeneratedLoadAbuse(
   );
   const cleanupNotes: string[] = [];
   const interStageCooldownsMs: number[] = [];
-  let restoreStrictValidation = false;
+  const tokenSettings = introspectionSettingsTarget({
+    baseUrl: context.baseUrl,
+    adminSecret: context.adminSecret,
+    tenantId: context.tenantId,
+  });
+  // Strict introspection turned off for the run (recorded before the save, so it is put back
+  // even when the save's answer is lost).
+  let strictValidationChange: TemporarySettingsChange | null = null;
 
   try {
-    const introspectionValidation = await getIntrospectionValidationSnapshot({
-      baseUrl: context.baseUrl,
-      adminSecret: context.adminSecret,
-      tenantId: context.tenantId,
-    });
-    if (introspectionValidation.value) {
-      await putIntrospectionValidation({
-        baseUrl: context.baseUrl,
-        adminSecret: context.adminSecret,
-        tenantId: context.tenantId,
-        value: false,
+    const snapshot = await readTenantSettings(tokenSettings);
+    if (snapshot.values[STRICT_VALIDATION_KEY] === true) {
+      strictValidationChange = { before: snapshot, set: { [STRICT_VALIDATION_KEY]: false } };
+      await patchTenantSettings(tokenSettings, {
+        ifMatch: snapshot.version,
+        set: strictValidationChange.set,
       });
-      restoreStrictValidation = true;
+      // The change reaches runtime within about a minute: wait until introspection answers as
+      // without strict validation before measuring it.
+      const applied = await waitForSettingsToApply(async () => {
+        const response = await fetchJsonWithTimeout(`${context.baseUrl}/introspect`, 10_000, {
+          method: 'POST',
+          headers: {
+            authorization: `Basic ${encodeBasicAuth(context.clientId, context.clientSecret)}`,
+            accept: 'application/json',
+            'content-type': 'application/x-www-form-urlencoded',
+          },
+          body: new URLSearchParams({
+            token: context.downstreamAccessToken,
+            token_type_hint: 'access_token',
+          }).toString(),
+        });
+        return isRecord(response.payload) && response.payload.active === true;
+      });
+      if (!applied) {
+        cleanupNotes.push(
+          'introspection-validation: strict validation was still in effect after waiting; the introspection stage may report failures'
+        );
+      }
     }
     const stages: GeneratedLoadStageResult[] = [];
     for (const stage of getProfileStages(context, profile)) {
@@ -619,17 +598,21 @@ export async function runGeneratedLoadAbuse(
       interStageCooldownsMs,
     };
   } finally {
-    if (restoreStrictValidation) {
-      await putIntrospectionValidation({
-        baseUrl: context.baseUrl,
-        adminSecret: context.adminSecret,
-        tenantId: context.tenantId,
-        value: true,
-      }).catch((error) => {
-        cleanupNotes.push(
-          `introspection-validation-restore: ${error instanceof Error ? error.message : String(error)}`
-        );
-      });
+    if (strictValidationChange) {
+      await restoreTenantSettings(tokenSettings, strictValidationChange).then(
+        ({ left }) => {
+          if (left.length > 0) {
+            cleanupNotes.push(
+              `introspection-validation-restore: left as is (changed meanwhile): ${left.join(', ')}`
+            );
+          }
+        },
+        (error) => {
+          cleanupNotes.push(
+            `introspection-validation-restore: ${error instanceof Error ? error.message : String(error)}`
+          );
+        }
+      );
     }
     const cleanupChecks = await context.cleanup();
     cleanupNotes.push(

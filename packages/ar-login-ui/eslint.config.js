@@ -1,12 +1,14 @@
 import js from '@eslint/js';
 import ts from 'typescript-eslint';
 import svelte from 'eslint-plugin-svelte';
+import storybook from 'eslint-plugin-storybook';
 import globals from 'globals';
 
 export default ts.config(
 	js.configs.recommended,
 	...ts.configs.recommended,
 	...svelte.configs['flat/recommended'],
+	...storybook.configs['flat/recommended'],
 	{
 		languageOptions: {
 			globals: {
@@ -51,6 +53,13 @@ export default ts.config(
 		}
 	},
 	{
-		ignores: ['build/', '.svelte-kit/', 'dist/', 'src/i18n/i18n-util*.ts']
+		ignores: [
+			'build/',
+			'.svelte-kit/',
+			'dist/',
+			'storybook-static/',
+			'src/i18n/i18n-util*.ts',
+			'!.storybook'
+		]
 	}
 );

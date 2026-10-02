@@ -42,9 +42,15 @@ paths:
       tags:
         - Discovery
       summary: Return OpenID Provider metadata.
+      description: >-
+        acr_values_supported lists the tenant's discovery.acr_values_supported and, with tenant
+        assurance enabled, the acr values Authrim issues for each AAL (urn:authrim:aal:1 to
+        urn:authrim:aal:3). Settings that cannot be read return 503 temporarily_unavailable.
       responses:
         '200':
           $ref: '#/components/responses/OidcProviderMetadata'
+        '503':
+          $ref: '#/components/responses/SettingsUnavailable'
   /.well-known/oauth-authorization-server:
     get:
       tags:
@@ -101,6 +107,19 @@ paths:
           $ref: '#/components/responses/JWKS'
 components:
   responses:
+    SettingsUnavailable:
+      description: Settings are temporarily unavailable.
+      content:
+        application/json:
+          schema:
+            type: object
+            required:
+              - error
+            properties:
+              error:
+                type: string
+              error_description:
+                type: string
     Ok:
       description: Successful JSON response.
       content:

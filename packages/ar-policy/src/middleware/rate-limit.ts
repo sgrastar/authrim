@@ -5,8 +5,7 @@
  *
  * Implements sliding window rate limiting using KV storage:
  * - Tracks request counts per client/API key
- * - Supports multiple rate limit tiers (strict, moderate, lenient)
- * - Configurable via KV for dynamic updates without redeployment
+ * - Supports multiple rate limit tiers (strict, moderate, lenient), each a fixed limit
  *
  * Security features:
  * - Per-client isolation
@@ -59,8 +58,6 @@ export interface RateLimitResult {
 export interface RateLimitContext {
   /** KV namespace for rate limit storage */
   cache?: KVNamespace;
-  /** Optional KV namespace for config overrides */
-  configKv?: KVNamespace;
 }
 
 // =============================================================================
@@ -77,9 +74,6 @@ export const DEFAULT_RATE_LIMIT_CONFIG: Record<RateLimitTier, RateLimitConfig> =
 /** KV key prefix for rate limit counters */
 const RATE_LIMIT_KEY_PREFIX = 'ratelimit:check:';
 
-/** KV key prefix for rate limit config overrides */
-const RATE_LIMIT_CONFIG_PREFIX = 'ratelimit:config:';
-
 /** Counter expiration padding (extra time after window expires) */
 const COUNTER_EXPIRATION_PADDING_MS = 5000;
 
@@ -87,51 +81,9 @@ const COUNTER_EXPIRATION_PADDING_MS = 5000;
 // Configuration Helpers
 // =============================================================================
 
-/**
- * Get rate limit configuration for a tier
- * Priority: KV → Default
- */
-export async function getRateLimitConfig(
-  tier: RateLimitTier,
-  configKv?: KVNamespace
-): Promise<RateLimitConfig> {
-  // Try KV override first
-  if (configKv) {
-    try {
-      const cached = await configKv.get(`${RATE_LIMIT_CONFIG_PREFIX}${tier}`);
-      if (cached) {
-        const config = JSON.parse(cached) as RateLimitConfig;
-        if (typeof config.requests === 'number' && typeof config.windowMs === 'number') {
-          return config;
-        }
-      }
-    } catch {
-      // KV error - fall through to defaults
-    }
-  }
-
+/** The rate limit of a tier. */
+export function getRateLimitConfig(tier: RateLimitTier): RateLimitConfig {
   return DEFAULT_RATE_LIMIT_CONFIG[tier];
-}
-
-/**
- * Set rate limit configuration override
- */
-export async function setRateLimitConfig(
-  tier: RateLimitTier,
-  config: RateLimitConfig,
-  configKv: KVNamespace
-): Promise<void> {
-  await configKv.put(`${RATE_LIMIT_CONFIG_PREFIX}${tier}`, JSON.stringify(config));
-}
-
-/**
- * Clear rate limit configuration override
- */
-export async function clearRateLimitConfig(
-  tier: RateLimitTier,
-  configKv: KVNamespace
-): Promise<void> {
-  await configKv.delete(`${RATE_LIMIT_CONFIG_PREFIX}${tier}`);
 }
 
 // =============================================================================
@@ -189,7 +141,7 @@ export async function checkRateLimit(
 ): Promise<RateLimitResult> {
   // Get tier and configuration
   const tier = auth.rateLimitTier || 'strict';
-  const config = await getRateLimitConfig(tier, ctx.configKv);
+  const config = getRateLimitConfig(tier);
 
   // If no cache available, allow but log warning
   if (!ctx.cache) {

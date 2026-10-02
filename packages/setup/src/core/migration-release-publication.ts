@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import {
+  createR2ObjectApiUploader,
   executeD1Batch,
   putR2Object,
   type D1BatchExecutionResult,
@@ -64,6 +65,7 @@ function isRetryableArtifactUploadError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
   const statusPatterns = [
     /failed to fetch[^\n]*?[-:]\s*(\d{3})\b/iu,
+    /\bfailed\s*\((\d{3})\)/iu,
     /\b(?:http|status|status code|error code)\s*[:=]?\s*(\d{3})\b/iu,
   ];
   for (const pattern of statusPatterns) {
@@ -479,7 +481,7 @@ export async function publishAndActivateMigrationRelease(input: {
   onProgress?: (message: string) => void;
 }): Promise<{ artifact: MigrationReleaseArtifactPlan; operationId: string }> {
   const artifact = buildMigrationReleaseArtifactPlan(input);
-  const upload = input.upload ?? putR2Object;
+  const upload = input.upload ?? (await createR2ObjectApiUploader()) ?? putR2Object;
   const sleep =
     input.sleep ?? ((milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)));
   const manifest = artifact.objects.at(-1);

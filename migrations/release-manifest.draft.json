@@ -63,6 +63,22 @@
             {
               "path": "012_tenant_backup_preimage_row_partitions.sql",
               "checksum": "ec32b226b04a17da04ba3ac3427c5726814ec89503110386c25e9a264141506e"
+            },
+            {
+              "path": "013_upstream_provider_profile_update_fields.sql",
+              "checksum": "f92d04687572002ea8427d9698fb6cd03c3fe5e1452d13b70d2bdf98ba03f978"
+            },
+            {
+              "path": "014_access_review_apply.sql",
+              "checksum": "dbddd536f8beafe3d0b792233ca291671387bc0bcd0bf34aae92fcebf9cf35d4"
+            },
+            {
+              "path": "015_compliance_report_artifacts.sql",
+              "checksum": "b4cae9428225549e14aec63ca457cdae6b0091d8d4b23e3c75c2f13c1d24e37d"
+            },
+            {
+              "path": "016_assurance_evidence_revoked_by.sql",
+              "checksum": "6d36852f67139e572e202db4f5730cead2031f28e9985ad26a1bd316c7772c41"
             }
           ]
         },
@@ -270,6 +286,14 @@
             {
               "path": "038_tenant_settings_reconciled_at.sql",
               "checksum": "7eb35e565f8e8eb88fc16fac6c51bf11cd001421040e9421c664a899c35626a4"
+            },
+            {
+              "path": "039_platform_settings_documents.sql",
+              "checksum": "41cfba01e0f4df567dd16876a9849476bfdc2c866ef6649d1320e64e64a2c78c"
+            },
+            {
+              "path": "040_settings_legacy_import_state.sql",
+              "checksum": "48ad4a13af900706cc0309226b9fb938cd33c0e4dde56aa63eda8befecfb7e51"
             }
           ]
         },
@@ -404,6 +428,14 @@
             {
               "path": "007_service_dynamic_groups.sql",
               "checksum": "4464937e46e965f846d642bf993061c288e56f2f62fca55499c7550e712ff785"
+            },
+            {
+              "path": "008_assurance_evidence.sql",
+              "checksum": "8d4a2d2cc123d9c167fc79b08ad9beb05fc6023ad661529f638baa8010db5ca0"
+            },
+            {
+              "path": "009_assurance_evidence_revoked_by.sql",
+              "checksum": "6d36852f67139e572e202db4f5730cead2031f28e9985ad26a1bd316c7772c41"
             }
           ]
         },
@@ -500,6 +532,22 @@
         {
           "path": "012_tenant_backup_preimage_row_partitions.sql",
           "checksum": "ec32b226b04a17da04ba3ac3427c5726814ec89503110386c25e9a264141506e"
+        },
+        {
+          "path": "013_upstream_provider_profile_update_fields.sql",
+          "checksum": "f92d04687572002ea8427d9698fb6cd03c3fe5e1452d13b70d2bdf98ba03f978"
+        },
+        {
+          "path": "014_access_review_apply.sql",
+          "checksum": "dbddd536f8beafe3d0b792233ca291671387bc0bcd0bf34aae92fcebf9cf35d4"
+        },
+        {
+          "path": "015_compliance_report_artifacts.sql",
+          "checksum": "b4cae9428225549e14aec63ca457cdae6b0091d8d4b23e3c75c2f13c1d24e37d"
+        },
+        {
+          "path": "016_assurance_evidence_revoked_by.sql",
+          "checksum": "6d36852f67139e572e202db4f5730cead2031f28e9985ad26a1bd316c7772c41"
         }
       ]
     },
@@ -715,6 +763,14 @@
         {
           "path": "038_tenant_settings_reconciled_at.sql",
           "checksum": "7eb35e565f8e8eb88fc16fac6c51bf11cd001421040e9421c664a899c35626a4"
+        },
+        {
+          "path": "039_platform_settings_documents.sql",
+          "checksum": "41cfba01e0f4df567dd16876a9849476bfdc2c866ef6649d1320e64e64a2c78c"
+        },
+        {
+          "path": "040_settings_legacy_import_state.sql",
+          "checksum": "48ad4a13af900706cc0309226b9fb938cd33c0e4dde56aa63eda8befecfb7e51"
         }
       ]
     },
@@ -865,6 +921,14 @@
         {
           "path": "007_service_dynamic_groups.sql",
           "checksum": "4464937e46e965f846d642bf993061c288e56f2f62fca55499c7550e712ff785"
+        },
+        {
+          "path": "008_assurance_evidence.sql",
+          "checksum": "8d4a2d2cc123d9c167fc79b08ad9beb05fc6023ad661529f638baa8010db5ca0"
+        },
+        {
+          "path": "009_assurance_evidence_revoked_by.sql",
+          "checksum": "6d36852f67139e572e202db4f5730cead2031f28e9985ad26a1bd316c7772c41"
         }
       ]
     },

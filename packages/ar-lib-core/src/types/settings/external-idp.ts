@@ -7,14 +7,22 @@
  */
 
 import type { CategoryMeta, SettingMeta } from '../../utils/settings-manager';
+import { DEFAULT_PROFILE_UPDATE_FIELDS } from '../../services/profile-update-fields';
 
 /**
  * External IdP Settings Interface
  */
+/**
+ * An `external_idp.jit_allowed_provider_ids` entry that names no provider (IDs are UUIDs): a list
+ * of only this allows none.
+ */
+export const NO_JIT_PROVIDER = '-';
+
 export interface ExternalIdPSettings {
   // JIT Provisioning
   'external_idp.jit_provisioning_enabled': boolean;
   'external_idp.jit_update_on_login': boolean;
+  'external_idp.jit_update_fields': string[];
 
   // JWKS Settings
   'external_idp.jwks_cache_ttl': number;
@@ -25,6 +33,12 @@ export interface ExternalIdPSettings {
 
   // Token Settings
   'external_idp.token_encryption_enabled': boolean;
+  'external_idp.jit_require_verified_email': boolean;
+  'external_idp.jit_allowed_provider_ids': string;
+  'external_idp.jit_join_all_matching_orgs': boolean;
+  'external_idp.jit_allow_user_without_org': boolean;
+  'external_idp.jit_default_role_id': string;
+  'external_idp.jit_allow_unverified_domain_mappings': boolean;
 }
 
 /**
@@ -51,12 +65,25 @@ export const EXTERNAL_IDP_SETTINGS_META: Record<keyof ExternalIdPSettings, Setti
     envKey: 'JIT_UPDATE_ON_LOGIN',
     label: 'Update on Login',
     description:
-      "Update the user's name, given and family name, picture and locale from the external IdP on each login",
+      "Update the user's profile from the external IdP on each login: the fields chosen in Fields to Update (an IdP may choose its own)",
     visibility: 'public',
     dependsOn: [{ key: 'external_idp.jit_provisioning_enabled', value: true }],
   },
+  'external_idp.jit_update_fields': {
+    key: 'external_idp.jit_update_fields',
+    type: 'json',
+    // What a login has always updated.
+    default: [...DEFAULT_PROFILE_UPDATE_FIELDS],
+    label: 'Fields to Update',
+    description:
+      'Profile fields a login updates for IdPs without their own list: any of name, given_name, family_name, middle_name, nickname, profile, picture, website, gender, birthdate, zoneinfo, locale (only those the IdP sends; [] updates none)',
+    visibility: 'public',
+    dependsOn: [{ key: 'external_idp.jit_update_on_login', value: true }],
+  },
   'external_idp.jwks_cache_ttl': {
     key: 'external_idp.jwks_cache_ttl',
+    // Per tenant (or app) only, as before the category had platform values.
+    scopes: ['tenant'],
     type: 'duration',
     default: 86400,
     envKey: 'EXTERNAL_IDP_JWKS_CACHE_TTL',
@@ -69,6 +96,8 @@ export const EXTERNAL_IDP_SETTINGS_META: Record<keyof ExternalIdPSettings, Setti
   },
   'external_idp.jwks_fetch_timeout_ms': {
     key: 'external_idp.jwks_fetch_timeout_ms',
+    // Per tenant (or app) only, as before the category had platform values.
+    scopes: ['tenant'],
     type: 'duration',
     default: 5000,
     envKey: 'EXTERNAL_IDP_JWKS_FETCH_TIMEOUT_MS',
@@ -83,6 +112,8 @@ export const EXTERNAL_IDP_SETTINGS_META: Record<keyof ExternalIdPSettings, Setti
   // Request Settings
   'external_idp.request_timeout_ms': {
     key: 'external_idp.request_timeout_ms',
+    // Per tenant (or app) only, as before the category had platform values.
+    scopes: ['tenant'],
     type: 'duration',
     default: 10000,
     envKey: 'EXTERNAL_IDP_REQUEST_TIMEOUT_MS',
@@ -97,12 +128,70 @@ export const EXTERNAL_IDP_SETTINGS_META: Record<keyof ExternalIdPSettings, Setti
   // Token Settings
   'external_idp.token_encryption_enabled': {
     key: 'external_idp.token_encryption_enabled',
+    // Per tenant (or app) only, as before the category had platform values.
+    scopes: ['tenant'],
     type: 'boolean',
     default: false,
     envKey: 'EXTERNAL_IDP_TOKEN_ENCRYPTION_ENABLED',
     label: 'Token Encryption',
     description: 'Enable encryption for tokens received from external IdPs',
     visibility: 'admin',
+  },
+  'external_idp.jit_require_verified_email': {
+    key: 'external_idp.jit_require_verified_email',
+    type: 'boolean',
+    label: 'JIT: Verified Email Only',
+    description: 'Create an account only when the identity provider reports the email as verified',
+    visibility: 'admin',
+    dependsOn: [{ key: 'external_idp.jit_provisioning_enabled', value: true }],
+    default: true,
+  },
+  'external_idp.jit_allowed_provider_ids': {
+    key: 'external_idp.jit_allowed_provider_ids',
+    type: 'string',
+    label: 'JIT: Allowed Providers',
+    description:
+      'Comma-separated identity provider IDs that may create accounts; empty allows all, and an entry that names no provider (such as -) on its own allows none',
+    visibility: 'admin',
+    dependsOn: [{ key: 'external_idp.jit_provisioning_enabled', value: true }],
+    default: '',
+  },
+  'external_idp.jit_join_all_matching_orgs': {
+    key: 'external_idp.jit_join_all_matching_orgs',
+    type: 'boolean',
+    label: 'JIT: Join All Matching Organizations',
+    description: 'Add a new account to every organization whose domain matches, not only the first',
+    visibility: 'admin',
+    dependsOn: [{ key: 'external_idp.jit_provisioning_enabled', value: true }],
+    default: false,
+  },
+  'external_idp.jit_allow_user_without_org': {
+    key: 'external_idp.jit_allow_user_without_org',
+    type: 'boolean',
+    label: 'JIT: Allow Accounts Without Organization',
+    description: 'Create an account even when no organization domain matches',
+    visibility: 'admin',
+    dependsOn: [{ key: 'external_idp.jit_provisioning_enabled', value: true }],
+    default: true,
+  },
+  'external_idp.jit_default_role_id': {
+    key: 'external_idp.jit_default_role_id',
+    type: 'string',
+    label: 'JIT: Default Role',
+    description:
+      'Role given to a new account when no role assignment rule matches; empty gives none',
+    visibility: 'admin',
+    dependsOn: [{ key: 'external_idp.jit_provisioning_enabled', value: true }],
+    default: 'role_end_user',
+  },
+  'external_idp.jit_allow_unverified_domain_mappings': {
+    key: 'external_idp.jit_allow_unverified_domain_mappings',
+    type: 'boolean',
+    label: 'JIT: Unverified Domains',
+    description: 'Use organization domain mappings that are not verified',
+    visibility: 'admin',
+    dependsOn: [{ key: 'external_idp.jit_provisioning_enabled', value: true }],
+    default: false,
   },
 };
 
@@ -122,8 +211,15 @@ export const EXTERNAL_IDP_CATEGORY_META: CategoryMeta = {
 export const EXTERNAL_IDP_DEFAULTS: ExternalIdPSettings = {
   'external_idp.jit_provisioning_enabled': true,
   'external_idp.jit_update_on_login': false,
+  'external_idp.jit_update_fields': [...DEFAULT_PROFILE_UPDATE_FIELDS],
   'external_idp.jwks_cache_ttl': 86400,
   'external_idp.jwks_fetch_timeout_ms': 5000,
   'external_idp.request_timeout_ms': 10000,
   'external_idp.token_encryption_enabled': false,
+  'external_idp.jit_require_verified_email': true,
+  'external_idp.jit_allowed_provider_ids': '',
+  'external_idp.jit_join_all_matching_orgs': false,
+  'external_idp.jit_allow_user_without_org': true,
+  'external_idp.jit_default_role_id': 'role_end_user',
+  'external_idp.jit_allow_unverified_domain_mappings': false,
 };

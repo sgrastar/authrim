@@ -18,7 +18,10 @@
  */
 
 import type { Env } from '../types/env';
-import { resolveEffectiveSettingsWithSources } from '../services/effective-settings';
+import {
+  resolveEffectiveSettingsWithSources,
+  resolvePlatformSettingsWithSources,
+} from '../services/effective-settings';
 import { buildIssuerUrl, type IssuerEnvLike } from './issuer';
 import { getPrimaryTenantVanityDomain } from '../services/tenant-vanity-domain-resolver';
 import {
@@ -63,60 +66,6 @@ export interface UIConfig {
   baseUrl: string;
   /** Path configuration for various screens */
   paths: UIPathConfig;
-}
-
-/**
- * Role-based UI path overrides
- */
-export interface RoleBasedUIConfig {
-  /** Role to path overrides mapping */
-  rolePathOverrides: {
-    [role: string]: Partial<UIPathConfig>;
-  };
-}
-
-/**
- * Policy-based redirect rule condition
- */
-export interface PolicyRedirectCondition {
-  /** Field to evaluate */
-  field: 'org_type' | 'user_type' | 'role' | 'plan' | 'email_domain_hash';
-  /** Comparison operator */
-  operator: 'eq' | 'ne' | 'in' | 'not_in' | 'contains';
-  /** Value to compare against */
-  value: string | string[];
-}
-
-/**
- * Policy-based redirect rule
- */
-export interface PolicyRedirectRule {
-  /** Conditions that must all be met */
-  conditions: PolicyRedirectCondition[];
-  /** Path to redirect to when conditions are met */
-  redirectPath: string;
-  /** Optional priority (higher = evaluated first) */
-  priority?: number;
-}
-
-/**
- * UI routing configuration with RBAC/policy support
- */
-export interface UIRoutingConfig {
-  /** Role-based path overrides */
-  rolePathOverrides?: RoleBasedUIConfig['rolePathOverrides'];
-  /** Policy-based redirect rules */
-  policyRedirects?: PolicyRedirectRule[];
-}
-
-/**
- * Full UI settings stored in KV
- */
-export interface UISettings {
-  /** Basic UI configuration */
-  ui?: Partial<UIConfig>;
-  /** Routing configuration */
-  routing?: UIRoutingConfig;
 }
 
 /**
@@ -191,9 +140,17 @@ export const TENANT_UI_PATH_KEYS = {
   consent: 'tenant.ui_consent_path',
   reauth: 'tenant.ui_reauth_path',
   error: 'tenant.ui_error_path',
-} as const satisfies Partial<Record<keyof UIPathConfig, string>>;
+  device: 'tenant.ui_device_path',
+  deviceAuthorize: 'tenant.ui_device_authorize_path',
+  logoutComplete: 'tenant.ui_logout_complete_path',
+  loggedOut: 'tenant.ui_logged_out_path',
+  register: 'tenant.ui_register_path',
+} as const satisfies Record<keyof UIPathConfig, string>;
 
-const TENANT_UI_KEYS = ['tenant.ui_base_url', ...Object.values(TENANT_UI_PATH_KEYS)];
+export const TENANT_UI_KEYS: readonly string[] = [
+  'tenant.ui_base_url',
+  ...Object.values(TENANT_UI_PATH_KEYS),
+];
 
 /**
  * A UI path that stays on the UI's host: it starts with one `/` (not `//` or `/\`, which a URL
@@ -213,7 +170,9 @@ type TenantUIEnv = Partial<IssuerEnvLike & Pick<Env, 'ISSUER_URL' | 'ALLOWED_ORI
 export async function validateTenantUIBaseUrlAsync(
   value: string,
   env: TenantUIEnv & Partial<Pick<Env, 'AUTHRIM_CONFIG' | 'DB'>>,
-  tenantId: string
+  tenantId: string,
+  /** strict: a domain lookup that fails throws, instead of allowing nothing more. */
+  options: { strict?: boolean } = {}
 ): Promise<UIUrlValidationResult> {
   const result = validateTenantUIBaseUrl(value, env, tenantId);
   if (result.valid || value.trim() === '' || value !== value.trim()) return result;
@@ -223,9 +182,8 @@ export async function validateTenantUIBaseUrlAsync(
   } catch {
     return result;
   }
-  const primary = await getPrimaryTenantVanityDomain(env as Partial<Env>, tenantId).catch(
-    () => null
-  );
+  const lookup = getPrimaryTenantVanityDomain(env as Partial<Env>, tenantId, options);
+  const primary = options.strict ? await lookup : await lookup.catch(() => null);
   if (!primary || origin !== `https://${primary.hostname}`.toLowerCase()) return result;
   return validateUIBaseUrl(value, env.ISSUER_URL, [
     ...parseAllowedOriginsEnv(env.ALLOWED_ORIGINS),
@@ -260,19 +218,31 @@ export function validateTenantUIBaseUrl(
 
 /**
  * Get UI configuration
- * Priority: the tenant's Settings API values (`tenant.ui_*`) > KV (system_settings.ui) >
- * env.UI_URL > null
+ * Priority: the tenant's Settings API values (`tenant.ui_*`) > the platform's > env.UI_URL > null
  *
- * Security: KV values are validated when set via Admin API. The tenant's values are validated
- * again here (they can also arrive through imports), and one that is not valid is skipped.
+ * Security: saved values are validated when set via Admin API, and again here (they can also
+ * arrive through imports); one that is not valid is skipped.
  * Environment variable UI_URL is trusted but warned if suspicious (defense in depth).
  *
  * @param env Environment bindings
  * @param tenantId The tenant whose sign-in UI is wanted (without one: the platform's)
  * @returns UI configuration or null if not configured
  */
-export async function getUIConfig(env: UIConfigEnv, tenantId?: string): Promise<UIConfig | null> {
-  return (await getTenantUIConfig(env, tenantId)).config;
+export async function getUIConfig(
+  env: UIConfigEnv,
+  tenantId?: string,
+  options?: UIConfigReadOptions
+): Promise<UIConfig | null> {
+  return (await getTenantUIConfig(env, tenantId, options)).config;
+}
+
+/** How the UI configuration is read. */
+export interface UIConfigReadOptions {
+  /**
+   * Let settings that cannot be read fail the read, instead of falling back as the login
+   * redirects do: for admin views, which do not show a UI that may be configured as unset.
+   */
+  strict?: boolean;
 }
 
 /** The UI configuration for a tenant (see getTenantUIConfig). */
@@ -291,36 +261,31 @@ export interface TenantUIConfig {
 /** Like getUIConfig, with whether the base URL is the tenant's and the paths on their own. */
 export async function getTenantUIConfig(
   env: UIConfigEnv,
-  tenantId?: string
+  tenantId?: string,
+  options: UIConfigReadOptions = {}
 ): Promise<TenantUIConfig> {
-  let document: unknown = null;
-  if (env.SETTINGS) {
-    try {
-      const settings = await env.SETTINGS.get('system_settings');
-      document = settings ? JSON.parse(settings) : null;
-    } catch {
-      // Fall through to environment variable
-    }
-  }
-  const platform = resolveUIConfig(document, env).config;
+  const { config: platform, paths: platformPaths } = await applyPlatformUISettings(
+    uiUrlConfig(env),
+    env,
+    options
+  );
   const platformOnly = (): TenantUIConfig => ({
     config: platform,
     tenantBaseUrl: false,
-    paths: platform?.paths ?? DEFAULT_UI_PATHS,
+    paths: platformPaths,
   });
   if (!tenantId) return platformOnly();
   let tenantValues: Record<string, unknown>;
   try {
+    // The platform's values were applied above; only the tenant's own values are wanted here.
     const { values, sources } = await resolveEffectiveSettingsWithSources(env, 'tenant', {
       tenantId,
-      keys: TENANT_UI_KEYS,
-      // The older store was read above; only the tenant's own values are wanted here.
-      legacy: {},
     });
     tenantValues = Object.fromEntries(
       TENANT_UI_KEYS.filter((key) => sources[key] === 'kv').map((key) => [key, values[key]])
     );
-  } catch {
+  } catch (error) {
+    if (options.strict) throw error;
     // As before tenants could set these: the platform's UI.
     log.warn('Tenant UI settings could not be read; using the platform UI settings', {
       tenantId,
@@ -332,9 +297,60 @@ export async function getTenantUIConfig(
   const tenantBase = tenantValues['tenant.ui_base_url'];
   const baseUrlCheck =
     typeof tenantBase === 'string' && tenantBase !== ''
-      ? await validateTenantUIBaseUrlAsync(tenantBase, env, tenantId)
+      ? await validateTenantUIBaseUrlAsync(tenantBase, env, tenantId, options)
       : undefined;
-  return applyTenantUISettings(platform, tenantValues, env, tenantId, baseUrlCheck);
+  return applyTenantUISettings(platform, tenantValues, env, tenantId, baseUrlCheck, platformPaths);
+}
+
+/**
+ * The platform's UI configuration with the values set for the whole platform through the
+ * Settings API (`tenant.ui_*` at the platform), which go before UI_URL: its base URL when it is
+ * an allowed UI origin (as the Admin API requires), and its paths that stay on the UI's host.
+ * Values that cannot be read leave UI_URL (unless `strict`).
+ */
+async function applyPlatformUISettings(
+  platform: UIConfig | null,
+  env: UIConfigEnv,
+  options: UIConfigReadOptions = {}
+): Promise<{ config: UIConfig | null; paths: UIPathConfig }> {
+  const unchanged = { config: platform, paths: platform?.paths ?? DEFAULT_UI_PATHS };
+  let values: Record<string, unknown>;
+  try {
+    const resolved = await resolvePlatformSettingsWithSources(env, 'tenant');
+    values = Object.fromEntries(
+      TENANT_UI_KEYS.filter((key) => resolved.sources[key] === 'kv').map((key) => [
+        key,
+        resolved.values[key],
+      ])
+    );
+  } catch (error) {
+    if (options.strict) throw error;
+    log.warn('Platform UI settings could not be read; using UI_URL');
+    return unchanged;
+  }
+  if (Object.keys(values).length === 0) return unchanged;
+  let baseUrl = platform?.baseUrl;
+  const base = values['tenant.ui_base_url'];
+  if (typeof base === 'string' && base !== '') {
+    const validation = validateUIBaseUrl(
+      base,
+      env.ISSUER_URL,
+      parseAllowedOriginsEnv(env.ALLOWED_ORIGINS)
+    );
+    if (validation.valid) baseUrl = normalizeUrl(base);
+    else log.warn('Platform UI base URL is not an allowed UI origin; ignoring it');
+  }
+  const paths: UIPathConfig = { ...(platform?.paths ?? DEFAULT_UI_PATHS) };
+  for (const [name, key] of Object.entries(TENANT_UI_PATH_KEYS) as Array<
+    [keyof typeof TENANT_UI_PATH_KEYS, string]
+  >) {
+    const path = values[key];
+    if (path === undefined) continue;
+    if (isValidUIPath(path)) paths[name] = path;
+    else log.warn('Platform UI path is not valid; using the default path', { key });
+  }
+  // Paths alone do not give the platform a UI when none is configured.
+  return { config: baseUrl ? { baseUrl, paths } : null, paths };
 }
 
 /**
@@ -348,7 +364,9 @@ export function applyTenantUISettings(
   env: TenantUIEnv,
   tenantId: string,
   /** The base URL's check, when made beforehand (such as with the custom domain lookup). */
-  baseUrlCheck?: UIUrlValidationResult
+  baseUrlCheck?: UIUrlValidationResult,
+  /** The platform's paths, also when it has no UI configured. */
+  platformPaths: UIPathConfig = platform?.paths ?? DEFAULT_UI_PATHS
 ): TenantUIConfig {
   let baseUrl = platform?.baseUrl;
   let fromTenant = false;
@@ -365,7 +383,7 @@ export function applyTenantUISettings(
       });
     }
   }
-  const paths: UIPathConfig = { ...(platform?.paths ?? DEFAULT_UI_PATHS) };
+  const paths: UIPathConfig = { ...platformPaths };
   for (const [name, key] of Object.entries(TENANT_UI_PATH_KEYS) as Array<
     [keyof typeof TENANT_UI_PATH_KEYS, string]
   >) {
@@ -381,36 +399,18 @@ export function applyTenantUISettings(
   };
 }
 
-/**
- * The UI configuration from a `system_settings` document (as read; null when none) and env:
- * the document's `ui` (already validated when set via Admin API) when it has a base URL, else
- * UI_URL with the default paths, else none. Admin views pass the document they read once, so
- * the configuration and its source come from the same read.
- */
-export function resolveUIConfig(
-  document: unknown,
+/** The platform's UI configuration before the Settings API values: UI_URL with the default paths. */
+function uiUrlConfig(
   env: Partial<Pick<Env, 'UI_URL' | 'ISSUER_URL' | 'ALLOWED_ORIGINS'>>
-): { config: UIConfig | null; source: 'kv' | 'env' | 'none' } {
-  // 1. The saved document
-  const ui =
-    document && typeof document === 'object'
-      ? (document as { ui?: Partial<UIConfig> }).ui
-      : undefined;
-  // A base URL that is not a non-empty string is unusable: as before, UI_URL or none applies.
-  if (typeof ui?.baseUrl === 'string' && ui.baseUrl !== '') {
-    return {
-      config: { baseUrl: normalizeUrl(ui.baseUrl), paths: { ...DEFAULT_UI_PATHS, ...ui.paths } },
-      source: 'kv',
-    };
-  }
-
-  // 2. Try environment variable (trusted but validate for defense in depth)
+): UIConfig | null {
+  // UI_URL is trusted, but warned about when it does not look like an allowed UI origin.
   if (env.UI_URL) {
-    // Defense in depth: warn if UI_URL doesn't pass validation
-    // This helps catch misconfigurations during development/staging
     if (!uiUrlWarningLogged) {
-      const allowedOrigins = parseAllowedOriginsEnv(env.ALLOWED_ORIGINS);
-      const validation = validateUIBaseUrl(env.UI_URL, env.ISSUER_URL, allowedOrigins);
+      const validation = validateUIBaseUrl(
+        env.UI_URL,
+        env.ISSUER_URL,
+        parseAllowedOriginsEnv(env.ALLOWED_ORIGINS)
+      );
       if (!validation.valid) {
         log.warn('UI_URL environment variable may be misconfigured - this is a warning only', {
           error: validation.error,
@@ -419,73 +419,9 @@ export function resolveUIConfig(
         uiUrlWarningLogged = true;
       }
     }
-
-    return {
-      config: { baseUrl: normalizeUrl(env.UI_URL), paths: DEFAULT_UI_PATHS },
-      source: 'env',
-    };
+    return { baseUrl: normalizeUrl(env.UI_URL), paths: DEFAULT_UI_PATHS };
   }
-
-  // 3. Not configured
-  return { config: null, source: 'none' };
-}
-
-/**
- * Get UI routing configuration for RBAC/policy support
- *
- * @param env Environment bindings
- * @returns UI routing configuration
- */
-export async function getUIRoutingConfig(
-  env: Partial<Pick<Env, 'SETTINGS'>>
-): Promise<UIRoutingConfig | null> {
-  if (!env.SETTINGS) {
-    return null;
-  }
-
-  try {
-    const settings = await env.SETTINGS.get('system_settings');
-    if (settings) {
-      const parsed = JSON.parse(settings) as { routing?: UIRoutingConfig };
-      return parsed.routing || null;
-    }
-  } catch {
-    // Ignore errors
-  }
-
   return null;
-}
-
-/**
- * Get configuration source for debugging
- *
- * @param env Environment bindings
- * @returns Source of the configuration
- */
-export async function getUIConfigSource(
-  env: Partial<Pick<Env, 'SETTINGS' | 'UI_URL'>>
-): Promise<'kv' | 'env' | 'none'> {
-  // Check KV first
-  if (env.SETTINGS) {
-    try {
-      const settings = await env.SETTINGS.get('system_settings');
-      if (settings) {
-        const parsed = JSON.parse(settings) as { ui?: Partial<UIConfig> };
-        if (parsed.ui?.baseUrl) {
-          return 'kv';
-        }
-      }
-    } catch {
-      // Fall through
-    }
-  }
-
-  // Check environment variable
-  if (env.UI_URL) {
-    return 'env';
-  }
-
-  return 'none';
 }
 
 /**
@@ -520,223 +456,6 @@ export function buildUIUrl(
   }
 
   // Add tenant_hint for UI branding (UX only, not for security decisions)
-  if (tenantHint) {
-    url.searchParams.set('tenant_hint', tenantHint);
-  }
-
-  return url.toString();
-}
-
-/**
- * Get path override for a specific role
- *
- * @param routingConfig UI routing configuration
- * @param roles User's roles
- * @param pathKey Path key to look up
- * @returns Overridden path or undefined if no override
- */
-export function getRoleBasedPath(
-  routingConfig: UIRoutingConfig | null,
-  roles: string[],
-  pathKey: keyof UIPathConfig
-): string | undefined {
-  if (!routingConfig?.rolePathOverrides) {
-    return undefined;
-  }
-
-  // Check roles in order (first match wins)
-  for (const role of roles) {
-    const override = routingConfig.rolePathOverrides[role];
-    if (override && override[pathKey]) {
-      return override[pathKey];
-    }
-  }
-
-  return undefined;
-}
-
-/**
- * Evaluate policy redirect rules
- *
- * @param routingConfig UI routing configuration
- * @param context Context for policy evaluation
- * @returns Redirect path if a rule matches, or undefined
- */
-export function evaluatePolicyRedirect(
-  routingConfig: UIRoutingConfig | null,
-  context: {
-    org_type?: string;
-    user_type?: string;
-    roles?: string[];
-    plan?: string;
-    email_domain_hash?: string;
-  }
-): string | undefined {
-  if (!routingConfig?.policyRedirects || routingConfig.policyRedirects.length === 0) {
-    return undefined;
-  }
-
-  // Sort by priority (descending)
-  const sortedRules = [...routingConfig.policyRedirects].sort(
-    (a, b) => (b.priority ?? 0) - (a.priority ?? 0)
-  );
-
-  for (const rule of sortedRules) {
-    if (evaluateConditions(rule.conditions, context)) {
-      return rule.redirectPath;
-    }
-  }
-
-  return undefined;
-}
-
-/**
- * Evaluate all conditions for a rule
- */
-function evaluateConditions(
-  conditions: PolicyRedirectCondition[],
-  context: {
-    org_type?: string;
-    user_type?: string;
-    roles?: string[];
-    plan?: string;
-    email_domain_hash?: string;
-  }
-): boolean {
-  return conditions.every((condition) => evaluateCondition(condition, context));
-}
-
-/**
- * Evaluate a single condition
- */
-function evaluateCondition(
-  condition: PolicyRedirectCondition,
-  context: {
-    org_type?: string;
-    user_type?: string;
-    roles?: string[];
-    plan?: string;
-    email_domain_hash?: string;
-  }
-): boolean {
-  let contextValue: string | string[] | undefined;
-
-  switch (condition.field) {
-    case 'org_type':
-      contextValue = context.org_type;
-      break;
-    case 'user_type':
-      contextValue = context.user_type;
-      break;
-    case 'role':
-      contextValue = context.roles;
-      break;
-    case 'plan':
-      contextValue = context.plan;
-      break;
-    case 'email_domain_hash':
-      contextValue = context.email_domain_hash;
-      break;
-    default:
-      return false;
-  }
-
-  if (contextValue === undefined) {
-    return false;
-  }
-
-  const conditionValue = condition.value;
-
-  switch (condition.operator) {
-    case 'eq':
-      if (Array.isArray(contextValue)) {
-        return contextValue.includes(conditionValue as string);
-      }
-      return contextValue === conditionValue;
-
-    case 'ne':
-      if (Array.isArray(contextValue)) {
-        return !contextValue.includes(conditionValue as string);
-      }
-      return contextValue !== conditionValue;
-
-    case 'in':
-      if (!Array.isArray(conditionValue)) {
-        return false;
-      }
-      if (Array.isArray(contextValue)) {
-        return contextValue.some((v) => conditionValue.includes(v));
-      }
-      return conditionValue.includes(contextValue);
-
-    case 'not_in':
-      if (!Array.isArray(conditionValue)) {
-        return false;
-      }
-      if (Array.isArray(contextValue)) {
-        return !contextValue.some((v) => conditionValue.includes(v));
-      }
-      return !conditionValue.includes(contextValue);
-
-    case 'contains':
-      if (Array.isArray(contextValue)) {
-        return contextValue.some((v) => v.includes(conditionValue as string));
-      }
-      return contextValue.includes(conditionValue as string);
-
-    default:
-      return false;
-  }
-}
-
-/**
- * Build UI URL with role/policy overrides applied
- *
- * @param env Environment bindings
- * @param pathKey Path key (e.g., 'login', 'consent')
- * @param params Query parameters
- * @param context Context for role/policy evaluation
- * @param tenantHint Optional tenant hint
- * @returns Full URL string or null if UI not configured
- */
-export async function buildUIUrlWithOverrides(
-  env: Partial<Pick<Env, 'SETTINGS' | 'UI_URL'>>,
-  pathKey: keyof UIPathConfig,
-  params?: Record<string, string>,
-  context?: {
-    roles?: string[];
-    org_type?: string;
-    user_type?: string;
-    plan?: string;
-    email_domain_hash?: string;
-  },
-  tenantHint?: string
-): Promise<string | null> {
-  const config = await getUIConfig(env);
-  if (!config) {
-    return null;
-  }
-
-  const routingConfig = await getUIRoutingConfig(env);
-
-  // Check for role-based path override
-  let finalPath = config.paths[pathKey];
-  if (context?.roles && routingConfig) {
-    const roleOverride = getRoleBasedPath(routingConfig, context.roles, pathKey);
-    if (roleOverride) {
-      finalPath = roleOverride;
-    }
-  }
-
-  // Build URL with the (possibly overridden) path
-  const url = new URL(finalPath, config.baseUrl);
-
-  if (params) {
-    Object.entries(params).forEach(([key, value]) => {
-      url.searchParams.set(key, value);
-    });
-  }
-
   if (tenantHint) {
     url.searchParams.set('tenant_hint', tenantHint);
   }

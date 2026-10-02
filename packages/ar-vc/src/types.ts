@@ -16,6 +16,8 @@ export interface Env {
   DB_ADMIN?: D1Database;
 
   // KV Namespace (same as other packages for shared config)
+  /** Settings API documents (tenant and platform settings). */
+  SETTINGS?: KVNamespace;
   AUTHRIM_CONFIG: KVNamespace;
 
   // Durable Objects

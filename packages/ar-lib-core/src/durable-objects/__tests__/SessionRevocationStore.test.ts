@@ -128,6 +128,30 @@ describe('SessionRevocationStore', () => {
     ).rejects.toThrow('account_authentication_not_allowed');
   });
 
+  it('only lets a deletion go forward, whatever a later transition asks', async () => {
+    const set = (lifecycle: 'active' | 'suspended' | 'deleting' | 'deleted', version: number) =>
+      store.setAccountLifecycleRpc(
+        'tenant-a',
+        'user-a',
+        'account:user-a',
+        lifecycle,
+        version,
+        `operation-${version}`,
+        true
+      );
+    await set('deleting', 2_000);
+    await expect(set('active', 3_000)).rejects.toThrow('account_authentication_lifecycle_terminal');
+    await expect(set('suspended', 3_000)).rejects.toThrow(
+      'account_authentication_lifecycle_terminal'
+    );
+    // Retrying the deletion, and finishing it, go on.
+    await expect(set('deleting', 3_000)).resolves.toMatchObject({ lifecycle: 'deleting' });
+    await expect(set('deleted', 4_000)).resolves.toMatchObject({ lifecycle: 'deleted' });
+    await expect(set('active', 5_000)).rejects.toThrow('account_authentication_lifecycle_terminal');
+    // A deletion retried after it was done (its later steps left undone) goes on.
+    await expect(set('deleting', 5_000)).resolves.toMatchObject({ lifecycle: 'deleted' });
+  });
+
   it('preserves account lifecycle when registering a session', async () => {
     await store.initializeAccountStateRpc('tenant-a', 'user-a', 'account:user-a', 'active', 1_000);
 

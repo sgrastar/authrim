@@ -58,6 +58,7 @@ import {
   listWorkers,
   assertR2BucketOwnershipIdentity,
   assertR2BucketOwnershipForUse,
+  createR2BucketOwnershipVerifier,
   hasExactR2BucketOwnership,
   toResourceIds,
 } from '../core/cloudflare.js';
@@ -308,6 +309,8 @@ import {
   cleanupCloudflareBootstrapToken,
   CloudflareTokenBootstrapError,
   detectCloudflareTokenOwnership,
+  formatCloudflareTokenCapabilityDiagnostic,
+  preflightCloudflareBootstrapToken,
   selectPreferredCloudflareTokenOwnership,
   WranglerControlSecretSink,
   type CloudflareTokenOwnership,
@@ -2106,6 +2109,8 @@ export function createApiRoutes(): Hono {
               error instanceof CloudflareTokenBootstrapError
                 ? error.capabilityDiagnostic
                 : undefined,
+            tokenApiOperation:
+              error instanceof CloudflareTokenBootstrapError ? error.apiOperation : undefined,
           },
           500
         );
@@ -4537,6 +4542,19 @@ export function createApiRoutes(): Hono {
             409
           );
         }
+        if (!dryRun && automaticProvisioning && hasBootstrapInput) {
+          const accountId = releaseConfig.cloudflare?.accountId ?? (await getAccountId());
+          if (!accountId) throw new Error('cloudflare_config_account_id_missing');
+          const detectedOwnership = await preflightCloudflareBootstrapToken({
+            accountId,
+            token: bootstrapToken,
+          });
+          if (bootstrapOwnership !== detectedOwnership) {
+            addProgress(`Cloudflare bootstrap token ownership detected as ${detectedOwnership}`);
+          }
+          bootstrapOwnership = detectedOwnership;
+          addProgress('Cloudflare bootstrap token read preflight passed');
+        }
         state.config = releaseConfig;
         addProgress(`Loaded locked config from ${configPath}`);
 
@@ -4911,12 +4929,11 @@ export function createApiRoutes(): Hono {
               throw new Error('migration_release_bucket_required_for_release_publication');
             }
             if (!initialHandoffResumeSummary) {
-              const verifyMigrationBucketOwnership = () =>
-                assertR2BucketOwnershipForUse({
-                  ...migrationReleaseBucket,
-                  environment: env,
-                  binding: 'MIGRATION_RELEASES',
-                });
+              const verifyMigrationBucketOwnership = await createR2BucketOwnershipVerifier({
+                ...migrationReleaseBucket,
+                environment: env,
+                binding: 'MIGRATION_RELEASES',
+              });
               await verifyMigrationBucketOwnership();
               const publication = await publishAndActivateMigrationRelease({
                 migrationsRoot: migrationRootResult.path,
@@ -6167,6 +6184,14 @@ export function createApiRoutes(): Hono {
         state.error = cleanupFailure
           ? `${primaryError}; setup machine access cleanup also failed: ${cleanupFailure}`
           : primaryError;
+        if (error instanceof CloudflareTokenBootstrapError && error.capabilityDiagnostic) {
+          addProgress(formatCloudflareTokenCapabilityDiagnostic(error.capabilityDiagnostic));
+        }
+        if (error instanceof CloudflareTokenBootstrapError && error.apiOperation) {
+          addProgress(
+            `Cloudflare token API operation failed: ${error.apiOperation} (${error.code})`
+          );
+        }
         addProgress(`❌ Deployment failed: ${state.error}`);
         await flushProgressLog();
         return c.json(
@@ -6187,6 +6212,12 @@ export function createApiRoutes(): Hono {
             recoveryTokenRequired:
               error instanceof CloudflareTokenBootstrapError &&
               error.code === 'cloudflare_bootstrap_recovery_token_required',
+            capabilityDiagnostic:
+              error instanceof CloudflareTokenBootstrapError
+                ? error.capabilityDiagnostic
+                : undefined,
+            tokenApiOperation:
+              error instanceof CloudflareTokenBootstrapError ? error.apiOperation : undefined,
           },
           isInsufficientLocalDiskSpaceError(error) ? 507 : 500
         );
@@ -6390,7 +6421,7 @@ export function createApiRoutes(): Hono {
               parsedEnv.data
             );
             const response = await fetch(
-              `${resolveIssuerUrl(config, { env: parsedEnv.data }).replace(/\/$/u, '')}/api/admin-init-setup/status`,
+              `${resolveIssuerUrl(config, { env: parsedEnv.data }).replace(/[/]$/u, '')}/api/admin-init-setup/status`,
               {
                 headers: { accept: 'application/json' },
                 redirect: 'manual',
@@ -7140,13 +7171,59 @@ export function createApiRoutes(): Hono {
         });
       }
 
-      if (!configExists || !lock.releaseUpdate || lock.releaseUpdate.phase === 'verified') {
+      const provisioningIntent = await loadProvisioningIntent({
+        baseDir,
+        environment: env,
+      });
+      const ambiguousD1 = Object.values(provisioningIntent?.resources ?? {}).find(
+        (resource) => resource.kind === 'd1' && resource.state === 'create_issued'
+      );
+      if (ambiguousD1) {
+        const isInitialControlPlaneShard =
+          provisioningIntent?.resourceSpec !== null &&
+          typeof provisioningIntent?.resourceSpec === 'object' &&
+          !Array.isArray(provisioningIntent.resourceSpec) &&
+          (provisioningIntent.resourceSpec as Record<string, unknown>).purpose ===
+            'initial_control_plane_tenant_shards';
+        return c.json({
+          ...responseBase,
+          status: 'blocked',
+          canResume: false,
+          requiresRecreate: false,
+          reasonCode: isInitialControlPlaneShard
+            ? 'initial_d1_identity_recovery_required'
+            : 'resource_create_ambiguous',
+          recoveryBinding: ambiguousD1.binding,
+          recoveryName: ambiguousD1.name,
+          ...(isInitialControlPlaneShard
+            ? {
+                recoveryCommand:
+                  `pnpm run setup recover-initial-d1 --env ${env} ` +
+                  `--binding ${ambiguousD1.binding} --database-id <uuid>`,
+              }
+            : {}),
+        });
+      }
+
+      if (!configExists || lock.releaseUpdate?.phase === 'verified') {
         return c.json({
           ...responseBase,
           status: 'recreate_required',
           canResume: false,
           requiresRecreate: true,
           reasonCode: !configExists ? 'config_missing' : 'release_checkpoint_inconsistent',
+        });
+      }
+      if (
+        !lock.releaseUpdate &&
+        (Boolean(lock.productVersion) || Object.keys(lock.workers ?? {}).length > 0)
+      ) {
+        return c.json({
+          ...responseBase,
+          status: 'recreate_required',
+          canResume: false,
+          requiresRecreate: true,
+          reasonCode: 'release_checkpoint_inconsistent',
         });
       }
 
@@ -7352,6 +7429,30 @@ export function createApiRoutes(): Hono {
           return false;
         }
       };
+
+      if (!lock.releaseUpdate) {
+        if (recoverableWorkerOwnershipComponents.length > 0) {
+          return c.json({
+            ...responseBase,
+            status: 'recreate_required',
+            canResume: false,
+            requiresRecreate: true,
+            reasonCode: 'worker_ownership_checkpoint_mismatch',
+          });
+        }
+        return c.json({
+          ...responseBase,
+          status: 'resumable',
+          canResume: true,
+          requiresRecreate: false,
+          resumeFrom: 'database_migrations',
+          resumeMode: 'continue',
+          requiresBootstrapToken: releaseConfig.controlPlane?.automaticProvisioning === true,
+          requiresWorkerOwnershipRecovery: false,
+          workerOwnershipRecoveryComponents: [],
+          reasonCode: 'provisioning_complete_deploy_not_started',
+        });
+      }
 
       if (guard.appendOnlyInitialDraftResume) {
         const controlCredentialsReady = await checkExistingControlCredentials();

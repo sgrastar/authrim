@@ -135,8 +135,8 @@ export async function createProvider(
       scopes, token_endpoint_auth_method, attribute_mapping, auto_link_email, jit_provisioning, require_email_verified, always_fetch_userinfo, enable_sso,
       provider_quirks, icon_url, icon_name, button_color, button_color_dark, button_text,
       use_request_object, request_object_signing_alg, private_key_jwk_encrypted, public_key_jwk,
-      created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      profile_update_fields, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       id,
       provider.tenantId,
@@ -170,6 +170,7 @@ export async function createProvider(
       provider.requestObjectSigningAlg || null,
       provider.privateKeyJwkEncrypted || null,
       provider.publicKeyJwk ? JSON.stringify(provider.publicKeyJwk) : null,
+      serializeProfileUpdateFields(provider.profileUpdateFields),
       now,
       now,
     ]
@@ -207,7 +208,7 @@ export async function updateProvider(
       scopes = ?, token_endpoint_auth_method = ?, attribute_mapping = ?, auto_link_email = ?, jit_provisioning = ?, require_email_verified = ?, always_fetch_userinfo = ?, enable_sso = ?,
       provider_quirks = ?, icon_url = ?, icon_name = ?, button_color = ?, button_color_dark = ?, button_text = ?,
       use_request_object = ?, request_object_signing_alg = ?, private_key_jwk_encrypted = ?, public_key_jwk = ?,
-      updated_at = ?
+      profile_update_fields = ?, updated_at = ?
     WHERE id = ? AND tenant_id = ?`,
     [
       updated.slug || null,
@@ -240,6 +241,7 @@ export async function updateProvider(
       updated.requestObjectSigningAlg || null,
       updated.privateKeyJwkEncrypted || null,
       updated.publicKeyJwk ? JSON.stringify(updated.publicKeyJwk) : null,
+      serializeProfileUpdateFields(updated.profileUpdateFields),
       now,
       id,
       tenantId,
@@ -299,8 +301,30 @@ interface DbUpstreamProvider {
   request_object_signing_alg: string | null;
   private_key_jwk_encrypted: string | null;
   public_key_jwk: string | null;
+  profile_update_fields: string | null;
   created_at: number;
   updated_at: number;
+}
+
+/** The provider's own profile update fields as stored: NULL follows the tenant. */
+function serializeProfileUpdateFields(fields: string[] | null | undefined): string | null {
+  return Array.isArray(fields) ? JSON.stringify(fields) : null;
+}
+
+/**
+ * The stored list as written (the admin API validates its names), or null. A value that is not a
+ * list of names reads as an empty one: it updates nothing rather than following the tenant.
+ */
+function parseStoredProfileUpdateFields(value: string | null | undefined): string[] | null {
+  if (value === null || value === undefined) return null;
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return Array.isArray(parsed) && parsed.every((item) => typeof item === 'string')
+      ? (parsed as string[])
+      : [];
+  } catch {
+    return [];
+  }
 }
 
 function mapDbToProvider(db: DbUpstreamProvider): UpstreamProvider {
@@ -339,6 +363,7 @@ function mapDbToProvider(db: DbUpstreamProvider): UpstreamProvider {
     requestObjectSigningAlg: db.request_object_signing_alg || undefined,
     privateKeyJwkEncrypted: db.private_key_jwk_encrypted || undefined,
     publicKeyJwk: db.public_key_jwk ? JSON.parse(db.public_key_jwk) : undefined,
+    profileUpdateFields: parseStoredProfileUpdateFields(db.profile_update_fields),
     createdAt: db.created_at,
     updatedAt: db.updated_at,
   };

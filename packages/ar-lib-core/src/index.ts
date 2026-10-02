@@ -21,7 +21,19 @@ export * from './types/oidc-scopes';
 export * from './types/consent-records';
 export * from './services/notification-intent-routing';
 export * from './services/legacy-settings';
+export * from './services/legacy-settings-import';
 export * from './services/effective-settings';
+export * from './services/assurance';
+export * from './services/identity-assurance';
+export * from './services/profile-update-on-login';
+export * from './services/logout-settings';
+export * from './services/protocol-settings';
+export {
+  StoredLegacyValue,
+  isStoredLegacyValue,
+  REQUEST_OBJECT_SIGNING_ALGORITHMS,
+  AUTHORIZATION_SIGNING_ALGORITHMS,
+} from './utils/system-settings-fields';
 export * from './services/notification-delivery-producer';
 export * from './services/notification-installation-id';
 export * from './services/plugin-installation-id';
@@ -109,7 +121,7 @@ export * from './utils/resource-permissions';
 export * from './utils/consent-rbac';
 export * from './utils/refresh-token-sharding';
 export * from './utils/refresh-token-store';
-export * from './utils/oauth-config';
+export * from './utils/consent-config';
 export * from './utils/oidc-claims';
 export * from './utils/canonical-runtime-claims';
 export * from './utils/dcr-config';
@@ -372,6 +384,7 @@ export * from './services/custom-claim-schema-history';
 export * from './services/profile-registry';
 export * from './services/runtime-profile-resolver';
 export * from './services/session-client-store';
+export * from './services/session-ttl';
 export * from './services/external-provider-session-store';
 export {
   advancePasskeyAuthenticationState,
@@ -383,6 +396,8 @@ export {
   recordHybridUserSessionRevocationEpoch,
   SESSION_REVOCATION_AUTHORITY,
   transitionAccountAuthenticationState,
+  readAccountAuthenticationState,
+  initializeAccountAuthenticationFromAccount,
 } from './services/session-revocation-store';
 export * from './services/tenant-database-health';
 export * from './services/tenant-backup-policy';
@@ -553,6 +568,7 @@ export type {
 } from './durable-objects/SessionRevocationStore';
 export { AuthorizationCodeStore } from './durable-objects/AuthorizationCodeStore';
 export { RefreshTokenRotator } from './durable-objects/RefreshTokenRotator';
+export type { RefreshTokenAuthContext } from './durable-objects/RefreshTokenRotator';
 export { RateLimiterCounter } from './durable-objects/RateLimiterCounter';
 export { PARRequestStore } from './durable-objects/PARRequestStore';
 export type { PARRequestData } from './durable-objects/PARRequestStore';

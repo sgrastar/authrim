@@ -173,4 +173,24 @@ describe('D1AuditAdapter', () => {
     );
     expect(deleted).toBe(1);
   });
+
+  it('reports a failed retention read or delete instead of nothing to delete', async () => {
+    const failure = new Error('D1_ERROR: database unavailable');
+    const bind = vi.fn().mockReturnValue({
+      all: vi.fn().mockRejectedValue(failure),
+      run: vi.fn().mockRejectedValue(failure),
+    });
+    const adapter = new D1AuditAdapter({
+      id: 'audit-d1',
+      db: { prepare: vi.fn().mockReturnValue({ bind }) } as unknown as D1Database,
+      isPiiDb: false,
+    });
+
+    await expect(
+      adapter.listTenantRetentionCandidates('event', Date.now(), 'tenant-1')
+    ).rejects.toThrow(failure);
+    await expect(adapter.deleteTenantByRetention('pii', Date.now(), 'tenant-1')).rejects.toThrow(
+      failure
+    );
+  });
 });

@@ -1,6 +1,17 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { Hono } from 'hono';
-import { checkRoutes, clearBatchSizeLimitCache } from '../check';
+
+const audit = vi.hoisted(() => ({ create: vi.fn() }));
+vi.mock('@authrim/ar-lib-core/services/check-audit-service', async (importOriginal) => {
+  const original =
+    await importOriginal<typeof import('@authrim/ar-lib-core/services/check-audit-service')>();
+  return {
+    ...original,
+    createCheckAuditService: audit.create.mockImplementation(original.createCheckAuditService),
+  };
+});
+
+import { checkRoutes } from '../check';
 
 function createDb() {
   return {
@@ -75,7 +86,6 @@ async function reachAuditConfiguration(overrides: Record<string, unknown> = {}) 
 describe('Check API runtime configuration branches', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    clearBatchSizeLimitCache();
   });
 
   it.each([
@@ -90,43 +100,74 @@ describe('Check API runtime configuration branches', () => {
     expect((await response.json()).batch_size_limit).toBe(expected);
   });
 
-  it.each([
-    ['25', 25],
-    ['0', 40],
-    ['1001', 40],
-    ['invalid', 40],
-  ])(
-    'gives valid KV batch limit priority and rejects invalid value %s',
-    async (value, expected) => {
-      const kv = createKv({ CHECK_API_BATCH_SIZE_LIMIT: value });
-      const response = await health({
-        POLICY_FLAGS_KV: kv,
-        CHECK_API_BATCH_SIZE_LIMIT: '40',
-      });
-      expect((await response.json()).batch_size_limit).toBe(expected);
-    }
-  );
-
-  it('falls back to the environment when batch-limit KV fails', async () => {
+  it('falls back to the environment when the settings cannot be read', async () => {
     const response = await health({
-      POLICY_FLAGS_KV: createKv({}, true),
+      SETTINGS: createKv({}, true),
       CHECK_API_BATCH_SIZE_LIMIT: '30',
     });
     expect((await response.json()).batch_size_limit).toBe(30);
   });
 
-  it('uses AUTHRIM_CONFIG when the policy-specific KV is absent and caches the result', async () => {
-    const kv = createKv({ CHECK_API_BATCH_SIZE_LIMIT: '12' });
-    let response = await health({ AUTHRIM_CONFIG: kv });
-    expect((await response.json()).batch_size_limit).toBe(12);
+  it('no longer reads the older values from AUTHRIM_CONFIG or the policy service KV', async () => {
+    const response = await health({
+      ENABLE_CHECK_API: undefined,
+      POLICY_FLAGS_KV: createKv({ CHECK_API_ENABLED: 'true', CHECK_API_BATCH_SIZE_LIMIT: '5' }),
+      AUTHRIM_CONFIG: createKv({ CHECK_API_ENABLED: 'true', CHECK_API_BATCH_SIZE_LIMIT: '12' }),
+    });
+    const body = await response.json();
+    expect(body.enabled).toBe(false);
+    expect(body.batch_size_limit).toBe(100);
+  });
 
-    kv.get.mockRejectedValue(new Error('should not be read while cached'));
-    response = await health({ AUTHRIM_CONFIG: kv });
-    expect((await response.json()).batch_size_limit).toBe(12);
-    expect(kv.get).toHaveBeenCalledTimes(3); // enable flag per request; batch limit only once
-    expect(kv.get.mock.calls.filter(([key]) => key === 'CHECK_API_BATCH_SIZE_LIMIT')).toHaveLength(
-      1
-    );
+  it('applies the platform Settings API values over env', async () => {
+    const settings = createKv({
+      'settings:platform:feature-flags': JSON.stringify({ 'feature.enable_check_api': false }),
+      'settings:platform:limits': JSON.stringify({ 'limits.check_api_batch_size': 7 }),
+    });
+    const config = createKv({ CHECK_API_ENABLED: 'true', CHECK_API_BATCH_SIZE_LIMIT: '12' });
+    const response = await health({ SETTINGS: settings, AUTHRIM_CONFIG: config });
+    const body = await response.json();
+    expect(body.enabled).toBe(false);
+    expect(body.batch_size_limit).toBe(7);
+  });
+
+  it.each(['1', 'TRUE', 'True'])(
+    'turns the Check API on from env only as exactly true, not %s',
+    async (value) => {
+      const response = await health({ ENABLE_CHECK_API: value });
+      expect((await response.json()).enabled).toBe(false);
+    }
+  );
+
+  it('keeps the value it could read when the other settings document cannot be read', async () => {
+    const flagsOnly = createKv({
+      'settings:platform:feature-flags': JSON.stringify({ 'feature.enable_check_api': false }),
+      'settings:platform:limits': 'not json',
+    });
+    let body = await (
+      await health({
+        SETTINGS: flagsOnly,
+        ENABLE_CHECK_API: 'true',
+        CHECK_API_BATCH_SIZE_LIMIT: '9',
+      })
+    ).json();
+    expect(body.enabled).toBe(false);
+    expect(body.batch_size_limit).toBe(9);
+
+    const limitsOnly = createKv({
+      'settings:platform:feature-flags': 'not json',
+      'settings:platform:limits': JSON.stringify({ 'limits.check_api_batch_size': 7 }),
+    });
+    body = await (
+      await health({
+        SETTINGS: limitsOnly,
+        ENABLE_CHECK_API: 'true',
+        CHECK_API_BATCH_SIZE_LIMIT: '9',
+      })
+    ).json();
+    // A switch that cannot be read is off: env does not turn on what may have been turned off.
+    expect(body.enabled).toBe(false);
+    expect(body.batch_size_limit).toBe(7);
   });
 
   it('reports database, cache, debug, and disabled secure-default state', async () => {
@@ -145,52 +186,115 @@ describe('Check API runtime configuration branches', () => {
     });
   });
 
-  it('accepts complete audit settings from KV while preserving request validation', async () => {
-    const response = await reachAuditConfiguration({
-      POLICY_FLAGS_KV: createKv({
-        CHECK_API_ENABLED: 'true',
-        CHECK_API_AUDIT_ENABLED: 'true',
-        CHECK_API_AUDIT_MODE: 'sync',
-        CHECK_API_AUDIT_LOG_ALLOW: 'always',
-        CHECK_API_AUDIT_SAMPLE_RATE: '0',
-        CHECK_API_AUDIT_RETENTION_DAYS: '1',
+  it('creates the audit service with the platform Settings API values over env', async () => {
+    await reachAuditConfiguration({
+      ENABLE_CHECK_API_AUDIT: 'false',
+      CHECK_API_AUDIT_MODE: 'queue',
+      SETTINGS: createKv({
+        'settings:platform:check-api-audit': JSON.stringify({
+          'audit.check_api_enabled': true,
+          'audit.check_api_mode': 'sync',
+          'audit.check_api_log_allow': 'always',
+          'audit.check_api_sample_rate': 0,
+          'audit.check_api_retention_days': 1,
+        }),
       }),
     });
-    expect(response.status).toBe(400);
+    expect(audit.create).toHaveBeenCalledWith(
+      expect.anything(),
+      { mode: 'sync', logDeny: 'always', logAllow: 'always', sampleRate: 0, retentionDays: 1 },
+      undefined
+    );
   });
 
-  it('falls back from absent KV audit values to valid environment settings', async () => {
-    const response = await reachAuditConfiguration({
-      POLICY_FLAGS_KV: createKv(),
+  it('uses env, then the defaults, for the audit settings nothing saved', async () => {
+    await reachAuditConfiguration({
+      SETTINGS: createKv(),
       ENABLE_CHECK_API_AUDIT: 'true',
-      CHECK_API_AUDIT_MODE: 'queue',
       CHECK_API_AUDIT_LOG_ALLOW: 'never',
-      CHECK_API_AUDIT_SAMPLE_RATE: '1',
       CHECK_API_AUDIT_RETENTION_DAYS: '365',
     });
-    expect(response.status).toBe(400);
+    expect(audit.create).toHaveBeenCalledWith(
+      expect.anything(),
+      {
+        mode: 'waitUntil',
+        logDeny: 'always',
+        logAllow: 'never',
+        sampleRate: 0.01,
+        retentionDays: 365,
+      },
+      undefined
+    );
   });
 
-  it('falls back from failed KV audit reads to environment settings', async () => {
-    const response = await reachAuditConfiguration({
-      POLICY_FLAGS_KV: createKv({}, true),
-      ENABLE_CHECK_API: 'true',
+  it('takes a decimal sample rate from env and ignores env values it cannot use', async () => {
+    await reachAuditConfiguration({
+      SETTINGS: createKv(),
       ENABLE_CHECK_API_AUDIT: 'true',
-      CHECK_API_AUDIT_MODE: 'waitUntil',
-      CHECK_API_AUDIT_LOG_ALLOW: 'sample',
-      CHECK_API_AUDIT_SAMPLE_RATE: '0.5',
-      CHECK_API_AUDIT_RETENTION_DAYS: '30',
-    });
-    expect(response.status).toBe(400);
-  });
-
-  it('ignores invalid audit values and retains secure defaults', async () => {
-    const response = await reachAuditConfiguration({
       CHECK_API_AUDIT_MODE: 'invalid',
       CHECK_API_AUDIT_LOG_ALLOW: 'invalid',
-      CHECK_API_AUDIT_SAMPLE_RATE: '2',
+      CHECK_API_AUDIT_SAMPLE_RATE: '0.5',
       CHECK_API_AUDIT_RETENTION_DAYS: '0',
     });
-    expect(response.status).toBe(400);
+    expect(audit.create).toHaveBeenCalledWith(
+      expect.anything(),
+      {
+        mode: 'waitUntil',
+        logDeny: 'always',
+        logAllow: 'sample',
+        sampleRate: 0.5,
+        retentionDays: 90,
+      },
+      undefined
+    );
+
+    audit.create.mockClear();
+    await reachAuditConfiguration({
+      SETTINGS: createKv(),
+      ENABLE_CHECK_API_AUDIT: 'true',
+      CHECK_API_AUDIT_SAMPLE_RATE: '2',
+    });
+    expect(audit.create).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ sampleRate: 0.01 }),
+      undefined
+    );
+  });
+
+  it('creates no audit service when the Settings API turns auditing off, even if env enables it', async () => {
+    await reachAuditConfiguration({
+      ENABLE_CHECK_API_AUDIT: 'true',
+      SETTINGS: createKv({
+        'settings:platform:check-api-audit': JSON.stringify({ 'audit.check_api_enabled': false }),
+      }),
+    });
+    expect(audit.create).not.toHaveBeenCalled();
+  });
+
+  it('keeps auditing on with the defaults when its settings cannot be read', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    await reachAuditConfiguration({
+      SETTINGS: createKv({ 'settings:platform:check-api-audit': 'not json' }),
+      ENABLE_CHECK_API_AUDIT: 'false',
+    });
+    expect(audit.create).toHaveBeenCalledWith(
+      expect.anything(),
+      {
+        mode: 'waitUntil',
+        logDeny: 'always',
+        logAllow: 'sample',
+        sampleRate: 0.01,
+        retentionDays: 90,
+      },
+      undefined
+    );
+  });
+
+  it('no longer reads the older audit values from AUTHRIM_CONFIG', async () => {
+    await reachAuditConfiguration({
+      SETTINGS: createKv(),
+      AUTHRIM_CONFIG: createKv({ CHECK_API_AUDIT_ENABLED: 'true' }),
+    });
+    expect(audit.create).not.toHaveBeenCalled();
   });
 });

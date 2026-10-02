@@ -38,6 +38,11 @@ export interface DraftEntry {
 
 export const DRAFT_PAGES: readonly DraftPage[] = [
 	{ id: 'authentication/methods', scope: 'tenant', note: 'A method × use matrix (dedicated UI).' },
+	{
+		id: 'authentication/staying-signed-in',
+		scope: 'tenant',
+		note: 'A built page: these are its settings not yet applied (still read from the older logout settings).'
+	},
 	{ id: 'authentication/social', scope: 'tenant' },
 	{ id: 'authentication/enterprise', scope: 'tenant' },
 	{ id: 'authentication/directory', scope: 'tenant' },
@@ -174,6 +179,11 @@ place(
 			'assurance.default_fal',
 			'assurance.default_ial',
 			'assurance.scope_aal_requirements',
+			'assurance.upstream_acr_mappings',
+			'assurance.scope_ial_requirements',
+			'assurance.ial_assurance_values',
+			'assurance.saml_authn_context_aal',
+			'assurance.ida_profile',
 			'assurance.include_in_id_token',
 			'assurance.include_in_access_token',
 			'assurance.fal2_requires_dpop',
@@ -194,7 +204,16 @@ place('authentication/social', 'Providers', {
 });
 place('authentication/social', 'Creating users on first sign-in', {
 	primary: ['external_idp.jit_provisioning_enabled', 'external_idp.jit_update_on_login'],
-	advanced: ['external_idp.token_encryption_enabled'],
+	advanced: [
+		'external_idp.jit_update_fields',
+		'external_idp.token_encryption_enabled',
+		'external_idp.jit_require_verified_email',
+		'external_idp.jit_allowed_provider_ids',
+		'external_idp.jit_default_role_id',
+		'external_idp.jit_join_all_matching_orgs',
+		'external_idp.jit_allow_user_without_org',
+		'external_idp.jit_allow_unverified_domain_mappings'
+	],
 	search: [
 		'external_idp.jwks_cache_ttl',
 		'external_idp.jwks_fetch_timeout_ms',
@@ -267,8 +286,26 @@ place('authentication/protection', 'Email sending limit', {
 	advanced: ['rate_limit.email_max_requests', 'rate_limit.email_window']
 });
 place('authentication/protection', 'API rate limits', {
-	advanced: ['rate_limit.strict', 'rate_limit.moderate', 'rate_limit.lenient'],
-	search: ['rate_limit.window_ms', 'security.min_response_time', 'security.jitter']
+	advanced: [
+		'rate_limit.strict',
+		'rate_limit.moderate',
+		'rate_limit.lenient',
+		'rate_limit.public_read',
+		'rate_limit.login_start',
+		'rate_limit.send_challenge'
+	],
+	search: [
+		'rate_limit.strict_window_seconds',
+		'rate_limit.moderate_window_seconds',
+		'rate_limit.lenient_window_seconds',
+		'rate_limit.public_read_window_seconds',
+		'rate_limit.login_start_window_seconds',
+		'rate_limit.send_challenge_window_seconds',
+		'rate_limit.loadtest',
+		'rate_limit.loadtest_window_seconds',
+		'security.min_response_time',
+		'security.jitter'
+	]
 });
 
 place('authentication/ip-allowlist', 'IP addresses', {
@@ -290,9 +327,11 @@ place('applications/defaults', 'Authorization requests', {
 		'oauth.jarm_enabled',
 		'oauth.iss_response_param',
 		'security.require_signed_request_object',
-		'security.require_encrypted_request_object'
+		'security.require_encrypted_request_object',
+		'oauth.response_types_supported'
 	],
 	search: [
+		'security.allow_unsigned_request_object',
 		'oauth.auth_code_ttl',
 		'oauth.state_expiry',
 		'oauth.nonce_expiry',
@@ -316,7 +355,9 @@ place('applications/defaults', 'Redirect URIs', {
 place('applications/defaults', 'Sender-constrained tokens', {
 	primary: ['security.dpop_bound_access_tokens'],
 	advanced: [
+		'security.dpop_required',
 		'security.dpop_nonce_enabled',
+		'security.dpop_nonce_resource_overrides',
 		'security.mutual_tls_required',
 		'security.sender_constrained_tokens',
 		'security.token_binding_required'
@@ -325,15 +366,45 @@ place('applications/defaults', 'Sender-constrained tokens', {
 });
 place('applications/defaults', 'FAPI', {
 	primary: ['security.fapi_enabled'],
-	advanced: ['security.fapi_strict_dpop', 'security.fapi_allow_public_clients']
+	advanced: [
+		'security.fapi_strict_dpop',
+		'security.fapi_allow_public_clients',
+		'security.fapi_require_private_key_jwt',
+		'security.fapi_client_assertion_audience',
+		'security.fapi_message_signing_enabled',
+		'security.require_jarm'
+	],
+	search: [
+		'security.request_object_signing_algs',
+		'security.authorization_signing_algs',
+		'security.default_authorization_signing_alg',
+		'security.request_object_max_age_seconds',
+		'security.request_object_max_lifetime_seconds',
+		'security.request_object_clock_skew_seconds'
+	]
+});
+place('applications/defaults', 'Rich authorization requests', {
+	advanced: ['feature.enable_rar']
 });
 place('applications/defaults', 'Machine-to-machine (client credentials)', {
 	primary: ['feature.enable_client_credentials']
 });
 place('applications/defaults', 'Token exchange', {
 	primary: ['tokens.exchange_enabled'],
-	advanced: ['tokens.exchange_delegation_enabled', 'tokens.exchange_impersonation_enabled'],
-	search: ['limits.token_exchange_max_resource_params', 'limits.token_exchange_max_audience_params']
+	advanced: [
+		'tokens.exchange_delegation_enabled',
+		'tokens.exchange_impersonation_enabled',
+		'tokens.exchange_allowed_subject_token_types',
+		'feature.enable_id_jag',
+		'tokens.id_jag_allowed_issuers'
+	],
+	search: [
+		'limits.token_exchange_max_resource_params',
+		'limits.token_exchange_max_audience_params',
+		'tokens.id_jag_max_token_lifetime',
+		'tokens.id_jag_include_tenant_claim',
+		'tokens.id_jag_require_confidential_client'
+	]
 });
 place('applications/defaults', 'Tokens', {
 	advanced: [
@@ -350,7 +421,8 @@ place('applications/defaults', 'Token introspection', {
 	advanced: [
 		'tokens.introspection_require_client_auth',
 		'tokens.introspection_strict_validation',
-		'tokens.introspection_extended_claims'
+		'tokens.introspection_extended_claims',
+		'tokens.introspection_expected_audience'
 	],
 	search: [
 		'tokens.introspection_cache_ttl',
@@ -364,7 +436,8 @@ place('applications/defaults', 'Error responses', {
 		'oauth.error_description',
 		'oauth.error_uri',
 		'oauth.error_response_format',
-		'oauth.error_id_mode'
+		'oauth.error_id_mode',
+		'oauth.error_locale'
 	]
 });
 place('applications/defaults', 'Device sign-in (Device Flow)', {
@@ -450,7 +523,9 @@ place('applications/defaults', 'Discovery document', {
 	search: [
 		'discovery.claims_supported',
 		'discovery.claims_locales_supported',
-		'discovery.acr_values_supported'
+		'discovery.acr_values_supported',
+		'oauth.token_endpoint_auth_methods_supported',
+		'feature.enable_ai_scopes'
 	]
 });
 
@@ -572,14 +647,23 @@ place('access/policies', 'Policies', {
 		'feature.enable_id_level_permissions',
 		'feature.enable_check_api'
 	],
-	search: ['limits.max_embedded_permissions', 'limits.max_resource_permissions']
+	search: [
+		'limits.max_embedded_permissions',
+		'limits.max_resource_permissions',
+		'limits.check_api_batch_size',
+		'feature.enable_ai_ephemeral_auth'
+	]
 });
 place('access/roles', 'Roles in tokens', {
 	advanced: ['tokens.rbac_id_token_claims', 'tokens.rbac_access_token_claims']
 });
 place('access/schema', 'Custom claims', {
-	advanced: ['feature.enable_custom_claims'],
-	search: ['limits.max_custom_claims']
+	advanced: [
+		'feature.enable_custom_claim_schemas',
+		'feature.enable_custom_claim_schemas_introspection',
+		'feature.enable_custom_claims'
+	],
+	search: ['limits.custom_claim_schemas_max_per_target', 'limits.max_custom_claims']
 });
 
 // ---------------------------------------------------------------------------------------------
@@ -684,7 +768,12 @@ place('customization/screens', 'Screen flows', {
 		'tenant.ui_login_path',
 		'tenant.ui_consent_path',
 		'tenant.ui_reauth_path',
-		'tenant.ui_error_path'
+		'tenant.ui_error_path',
+		'tenant.ui_device_path',
+		'tenant.ui_device_authorize_path',
+		'tenant.ui_logout_complete_path',
+		'tenant.ui_logged_out_path',
+		'tenant.ui_register_path'
 	]
 });
 place('customization/account-page', 'Account page', {
@@ -843,6 +932,21 @@ place(
 );
 place('settings/runtime', 'Limits', {
 	search: ['limits.max_query_limit', 'limits.default_batch_size']
+});
+place('authentication/staying-signed-in', 'Logout channels and webhook', {
+	advanced: [
+		'session.backchannel_enabled',
+		'session.frontchannel_enabled',
+		'session.session_management_enabled',
+		'session.check_session_iframe_enabled',
+		'session.logout_webhook_enabled'
+	],
+	search: [
+		'session.backchannel_include_sub',
+		'session.backchannel_include_sid',
+		'session.logout_webhook_include_sub',
+		'session.logout_webhook_include_sid'
+	]
 });
 place('settings/team', 'Admin sign-in', {
 	advanced: ['session.ttl.admin_passkey']

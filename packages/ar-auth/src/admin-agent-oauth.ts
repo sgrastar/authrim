@@ -35,6 +35,7 @@ import {
   validateClientId,
   validateRegisteredClientAuthenticationMethod,
   validateRedirectUri,
+  resolvePlatformSettingsWithSources,
 } from '@authrim/ar-lib-core';
 import { getRequestIssuer } from './issuer';
 
@@ -1761,10 +1762,15 @@ export async function adminAgentAuthorizeHandler(c: Context<{ Bindings: Env }>):
   );
   const codeStore = c.env.AUTH_CODE_STORE.get(codeStoreId);
   try {
+    // The platform's code lifetime and per-user limit, as they applied before the Settings API.
+    const { values: oauthSettings } = await resolvePlatformSettingsWithSources(c.env, 'oauth', {});
+    const numeric = (value: unknown) => (typeof value === 'number' ? value : undefined);
     await codeStore.storeCodeRpc({
       code,
       tenantId: resolved.tenantId,
       clientId,
+      ttlSeconds: numeric(oauthSettings['oauth.auth_code_ttl']),
+      maxCodesPerUser: numeric(oauthSettings['oauth.max_codes_per_user']),
       redirectUri: consumed.redirect_uri,
       userId: `admin_user:${resolved.actor.userId}`,
       scope: approvedScopes.join(' '),

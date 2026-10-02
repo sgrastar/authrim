@@ -653,6 +653,8 @@ export interface RefreshTokenData {
   exp: number; // Expiration timestamp
   resource_aud?: string | string[]; // Original access token resource audience
   familyId?: string; // Refresh token family ID for token rotation
+  /** How the user authenticated for the grant that began the family (RefreshTokenAuthContext). */
+  auth_context?: import('../durable-objects/RefreshTokenRotator').RefreshTokenAuthContext;
 }
 
 /**

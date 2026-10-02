@@ -583,20 +583,23 @@ async function runIndependentCheck(repoRoot, id) {
       repoRoot,
       'packages/ar-lib-core/src/durable-objects/AuthorizationCodeStore.ts'
     );
-    const oauthConfig = await readText(repoRoot, 'packages/ar-lib-core/src/utils/oauth-config.ts');
+    const oauthSettings = await readText(
+      repoRoot,
+      'packages/ar-lib-core/src/types/settings/oauth.ts'
+    );
     requirePattern(
       authCodeStore,
       /this\.CODE_TTL = codeTtlEnv[\s\S]{0,120}: 60;/,
       'Authorization code default TTL must be 60 seconds.'
     );
     requirePattern(
-      oauthConfig,
-      /AUTH_CODE_TTL: 60/,
-      'OAuth config default auth-code TTL must be 60 seconds.'
+      oauthSettings,
+      /'oauth\.auth_code_ttl': \{[\s\S]{0,200}default: 60,/,
+      'The oauth.auth_code_ttl setting must default to 60 seconds.'
     );
     requirePattern(
       authCodeStore,
-      /used: false,[\s\S]{0,120}expiresAt: now \+ this\.CODE_TTL \* 1000/,
+      /used: false,[\s\S]{0,120}expiresAt: now \+ positiveIntegerOr\(request\.ttlSeconds, this\.CODE_TTL\) \* 1000/,
       'Stored authorization codes must include used=false and an expiration timestamp.'
     );
     requirePattern(
@@ -606,7 +609,7 @@ async function runIndependentCheck(repoRoot, id) {
     );
     requirePattern(
       authCodeStore,
-      /stored\.used = true/,
+      /const consumed: AuthorizationCode = \{\s*\.\.\.stored,\s*used: true,/,
       'AuthorizationCodeStore must atomically mark authorization codes as used.'
     );
     requirePattern(
@@ -621,7 +624,7 @@ async function runIndependentCheck(repoRoot, id) {
       description:
         'Authorization codes are short-lived, atomically marked used, and replay attempts trigger invalid_grant handling with token revocation where possible.',
       evidence:
-        'packages/ar-lib-core/src/durable-objects/AuthorizationCodeStore.ts; packages/ar-token/src/token.ts; packages/ar-lib-core/src/utils/oauth-config.ts',
+        'packages/ar-lib-core/src/durable-objects/AuthorizationCodeStore.ts; packages/ar-token/src/token.ts; packages/ar-lib-core/src/types/settings/oauth.ts',
     };
   }
 
@@ -679,7 +682,10 @@ async function runIndependentCheck(repoRoot, id) {
       repoRoot,
       'packages/ar-lib-core/src/durable-objects/RefreshTokenRotator.ts'
     );
-    const oauthConfig = await readText(repoRoot, 'packages/ar-lib-core/src/utils/oauth-config.ts');
+    const oauthSettings = await readText(
+      repoRoot,
+      'packages/ar-lib-core/src/types/settings/oauth.ts'
+    );
     requirePattern(
       token,
       /Public client refresh tokens must be DPoP-bound/,
@@ -692,7 +698,7 @@ async function runIndependentCheck(repoRoot, id) {
     );
     requirePattern(
       token,
-      /const rotationEnabled = c\.env\.ENABLE_REFRESH_TOKEN_ROTATION !== 'false'/,
+      /const rotationEnabled =\s*!prohibitRefreshTokenRotation && c\.env\.ENABLE_REFRESH_TOKEN_ROTATION !== 'false'/,
       'Refresh token rotation must be enabled by default.'
     );
     requirePattern(
@@ -706,9 +712,9 @@ async function runIndependentCheck(repoRoot, id) {
       'Refresh token replay/theft detection must revoke the token family.'
     );
     requirePattern(
-      oauthConfig,
-      /REFRESH_TOKEN_ROTATION_ENABLED: true/,
-      'OAuth config must default refresh token rotation to enabled.'
+      oauthSettings,
+      /'oauth\.refresh_token_rotation': \{[\s\S]{0,200}default: true,/,
+      'The oauth.refresh_token_rotation setting must default to enabled.'
     );
     requirePattern(
       rotator,
@@ -722,7 +728,7 @@ async function runIndependentCheck(repoRoot, id) {
       description:
         'Public-client refresh tokens are sender-constrained with DPoP, rotated by default, and stale-token replay revokes the token family.',
       evidence:
-        'packages/ar-token/src/token.ts; packages/ar-lib-core/src/durable-objects/RefreshTokenRotator.ts; packages/ar-lib-core/src/utils/oauth-config.ts',
+        'packages/ar-token/src/token.ts; packages/ar-lib-core/src/durable-objects/RefreshTokenRotator.ts; packages/ar-lib-core/src/types/settings/oauth.ts',
     };
   }
 

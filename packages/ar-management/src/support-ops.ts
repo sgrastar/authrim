@@ -1789,6 +1789,8 @@ supportOpsRouter.post('/actions/:actionId/execute', async (c) => {
         WHERE tenant_id = ? AND cohort_id = ? AND block_reason IS NULL`,
       [tenantId, action.cohort_id]
     );
+    // Stable per action and account, so the account's record names this action's transition.
+    const operationPrefix = `support-op:${actionId}:`;
     for (let offset = 0; offset < targets.length; offset += 20) {
       await Promise.all(
         targets.slice(offset, offset + 20).map((target) =>
@@ -1797,42 +1799,62 @@ supportOpsRouter.post('/actions/:actionId/execute', async (c) => {
             userId: target.target_id,
             lifecycle: 'suspended',
             sourceVersionMs: now,
-            operationId: crypto.randomUUID(),
+            operationId: `${operationPrefix}${target.target_id}`,
             revokeSessions: true,
           })
         )
       );
     }
-    const updateResult = await authCtx.coreAdapter.execute(
-      `UPDATE identity_accounts
-          SET lifecycle_state = 'suspended',
-              metadata_json = json_set(COALESCE(metadata_json, '{}'), '$.status', 'suspended', '$.suspended_at', ?),
-              updated_at = ?
-        WHERE tenant_id = ?
-          AND legacy_user_id IN (
-            SELECT target_id
-              FROM support_operation_cohort_targets
-             WHERE tenant_id = ? AND cohort_id = ? AND block_reason IS NULL
-          )
-          AND lifecycle_state = 'active'`,
-      [Math.floor(now / 1000), now, tenantId, tenantId, action.cohort_id]
-    );
-    await authCtx.coreAdapter.execute(
-      `UPDATE identity_subjects
-          SET lifecycle_state = 'suspended', updated_at = ?
-        WHERE tenant_id = ?
-          AND id IN (
-            SELECT primary_subject_id
-              FROM identity_accounts
-             WHERE tenant_id = ?
-               AND legacy_user_id IN (
-                 SELECT target_id
-                   FROM support_operation_cohort_targets
-                  WHERE tenant_id = ? AND cohort_id = ? AND block_reason IS NULL
-               )
-          )`,
-      [now, tenantId, tenantId, tenantId, action.cohort_id]
-    );
+    // Each account takes this action's transition (its version and operation) only if no newer
+    // one did, and its subject only along with it, as single-account status changes do.
+    const lifecycleVersion =
+      "COALESCE(CAST(json_extract(metadata_json, '$.lifecycle_version_ms') AS INTEGER), 0)";
+    const [updateResult] = await authCtx.coreAdapter.batch([
+      {
+        sql: `UPDATE identity_accounts
+                 SET lifecycle_state = 'suspended',
+                     metadata_json = json_set(COALESCE(metadata_json, '{}'),
+                       '$.status', 'suspended', '$.suspended_at', ?,
+                       '$.lifecycle_version_ms', ?, '$.lifecycle_operation_id', ? || legacy_user_id),
+                     updated_at = ?
+               WHERE tenant_id = ?
+                 AND legacy_user_id IN (
+                   SELECT target_id
+                     FROM support_operation_cohort_targets
+                    WHERE tenant_id = ? AND cohort_id = ? AND block_reason IS NULL
+                 )
+                 AND lifecycle_state = 'active'
+                 AND ${lifecycleVersion} < ?`,
+        params: [
+          Math.floor(now / 1000),
+          now,
+          operationPrefix,
+          now,
+          tenantId,
+          tenantId,
+          action.cohort_id,
+          now,
+        ],
+      },
+      {
+        sql: `UPDATE identity_subjects
+                 SET lifecycle_state = 'suspended', updated_at = ?
+               WHERE tenant_id = ?
+                 AND id IN (
+                   SELECT primary_subject_id
+                     FROM identity_accounts
+                    WHERE tenant_id = ?
+                      AND legacy_user_id IN (
+                        SELECT target_id
+                          FROM support_operation_cohort_targets
+                         WHERE tenant_id = ? AND cohort_id = ? AND block_reason IS NULL
+                      )
+                      AND ${lifecycleVersion} = ?
+                      AND json_extract(metadata_json, '$.lifecycle_operation_id') = ? || legacy_user_id
+                 )`,
+        params: [now, tenantId, tenantId, tenantId, action.cohort_id, now, operationPrefix],
+      },
+    ]);
     const succeededCount = updateResult.rowsAffected ?? 0;
     const failedCount = Math.max(0, action.actionable_count - succeededCount);
     const resultSummary = {

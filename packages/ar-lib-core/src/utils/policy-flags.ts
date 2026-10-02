@@ -69,19 +69,14 @@ export async function readPolicyFlags(
   tenantId?: string,
   options: { fresh?: boolean } = {}
 ): Promise<PolicyFlags | null> {
-  const keys = Object.values(FLAG_KEYS);
   try {
     const { values } = tenantId
       ? await resolveEffectiveSettingsWithSources(env, 'feature-flags', {
           tenantId,
-          keys,
-          strictLegacy: true,
-          freshLegacy: options.fresh,
+          fresh: options.fresh,
         })
       : await resolvePlatformSettingsWithSources(env, 'feature-flags', {
-          keys,
-          strictLegacy: true,
-          freshLegacy: options.fresh,
+          fresh: options.fresh,
         });
     const flags = { ...POLICY_FLAGS_OFF };
     for (const [name, key] of Object.entries(FLAG_KEYS) as Array<[keyof PolicyFlags, string]>) {

@@ -762,7 +762,16 @@ interface BoundShardMetadataRow {
   residency_partition: string;
 }
 
-type ExactAccountSearchPurpose = 'active_search' | 'account_lifecycle' | 'account_delete_retry';
+/**
+ * active_search: active accounts; account_lifecycle: active or deprovisioned; account_delete_retry:
+ * those plus ones being deleted; admin_view: any account not deleted (suspended and locked too),
+ * to show who it is.
+ */
+type ExactAccountSearchPurpose =
+  | 'active_search'
+  | 'account_lifecycle'
+  | 'account_delete_retry'
+  | 'admin_view';
 
 function exactAccountStateClause(purpose: ExactAccountSearchPurpose): string {
   return purpose === 'account_delete_retry'
@@ -772,7 +781,9 @@ function exactAccountStateClause(purpose: ExactAccountSearchPurpose): string {
        )`
     : purpose === 'account_lifecycle'
       ? "AND account.lifecycle_state IN ('active', 'deprovisioned') AND account.directory_publication_state = 'active'"
-      : "AND account.lifecycle_state = 'active' AND account.directory_publication_state = 'active'";
+      : purpose === 'admin_view'
+        ? "AND account.lifecycle_state NOT IN ('deleting', 'deleted') AND account.directory_publication_state = 'active'"
+        : "AND account.lifecycle_state = 'active' AND account.directory_publication_state = 'active'";
 }
 
 async function primaryAccountRow(
@@ -862,7 +873,7 @@ async function findAccountLifecycleByFanout(input: {
            SELECT id AS owner_id FROM users_pii_tombstone
              WHERE tenant_id = ? AND id = ?
            LIMIT 1`
-        : input.purpose === 'account_lifecycle'
+        : input.purpose === 'account_lifecycle' || input.purpose === 'admin_view'
           ? `SELECT owner_id FROM identity_sensitive_values
                WHERE tenant_id = ? AND owner_type = 'runtime_user' AND owner_id = ? LIMIT 1`
           : `SELECT owner_id FROM identity_sensitive_values
@@ -1017,7 +1028,7 @@ async function findAccountLifecycleAcrossBoundShards(input: {
            SELECT id AS owner_id FROM users_pii_tombstone
              WHERE tenant_id = ? AND id = ?
            LIMIT 1`
-        : input.purpose === 'account_lifecycle'
+        : input.purpose === 'account_lifecycle' || input.purpose === 'admin_view'
           ? `SELECT owner_id FROM identity_sensitive_values
                WHERE tenant_id = ? AND owner_type = 'runtime_user' AND owner_id = ? LIMIT 1`
           : `SELECT owner_id FROM identity_sensitive_values

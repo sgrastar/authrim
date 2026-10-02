@@ -390,6 +390,13 @@ describe('generateRoutes', () => {
     expect(vcConfig.migrations?.[1]?.new_sqlite_classes).toEqual(['CredentialOfferStoreV2']);
     expect(vcConfig.migrations?.[2]?.new_sqlite_classes).toEqual(['VPRequestStoreV2']);
     expect(vcConfig.vars.VC_TRANSACTION_CODE_HMAC_SECRET).toBe('');
+    // Credential issuance reads Settings API values (custom claim schemas).
+    expect(
+      generateWranglerConfig('ar-vc', config, {
+        d1: {},
+        kv: { SETTINGS: 'settings-id', AUTHRIM_CONFIG: 'config-id' },
+      }).kv_namespaces
+    ).toEqual(expect.arrayContaining([expect.objectContaining({ binding: 'SETTINGS' })]));
     expect(vcConfig.vars.VC_EVIDENCE_HMAC_SECRET).toBe('');
     expect(vcConfig.vars.VC_PROFILE_CONTRACT_HMAC_SECRET).toBe('');
     expect(vcConfig.vars.VC_ATTRIBUTE_ELEVATION_AUDIENCE).toBe('svc://op-vc/attribute-elevation');

@@ -10,8 +10,20 @@ import {
   validateState,
   validateNonce,
   isRedirectUriRegistered,
-  createOAuthConfigManager,
   resolveEffectiveSettings,
+  falRequiresDpop,
+  falRequiresSignedPushedRequest,
+  computeAAL,
+  meetsAAL,
+  mergeStepUpEvidence,
+  parseScopeAALRequirements,
+  parseUpstreamAcrMappings,
+  requiredAAL,
+  selectAcr,
+  aalToAcr,
+  sessionAssuranceEvidence,
+  type AAL,
+  type AssuranceLevel,
   getAuthCodeShardIndex,
   createShardedAuthCode,
   buildAuthCodeShardInstanceName,
@@ -71,7 +83,9 @@ import {
   canonicalProjectionToOIDCClaimsUser,
   hasSAORulesForTarget,
   normalizeAttributeReleaseConsentPolicy,
-  getTenantSystemSettings,
+  resolveProtocolSettings,
+  type FAPIProtocolSettings,
+  type OIDCProtocolSettings,
   resolveAuthorizationResponseSigningAlgorithm,
   selectJWEEncryptionKey,
   setBoundedMapEntry,
@@ -79,7 +93,7 @@ import {
   type OIDCSigningAlgorithm,
 } from '@authrim/ar-lib-core';
 import type { CachedUser, CachedConsent } from '@authrim/ar-lib-core';
-import type { Session, PARRequestData } from '@authrim/ar-lib-core';
+import type { Session, SessionData, PARRequestData } from '@authrim/ar-lib-core';
 import type { PublicJWK, JWKS } from '@authrim/ar-lib-core';
 import { isSigningJWK } from '@authrim/ar-lib-core';
 import { safeFetch, safeFetchJson } from '@authrim/ar-lib-core';
@@ -250,6 +264,14 @@ function resolveHandoffArtifactTtlSeconds(
       (c.env as unknown as Record<string, unknown>).HANDOFF_ARTIFACT_TTL_SECONDS
     ) ?? DEFAULT_HANDOFF_ARTIFACT_TTL_SECONDS
   );
+}
+
+/**
+ * Whether a request_uri host is an allowed domain or under it. An empty entry (from a list such as
+ * 'a.example,') matches nothing: otherwise every host ending in a dot would be under it.
+ */
+function domainMatches(host: string, allowed: string): boolean {
+  return allowed !== '' && (host === allowed || host.endsWith('.' + allowed));
 }
 
 function isRedirectStatus(status: number): boolean {
@@ -644,6 +666,10 @@ async function createAuthorizeConfirmationChallenge(
     sessionUserId?: string;
     sessionId?: string;
     authorizationRequest: AuthorizationRequestContinuation;
+    /** An assurance step-up the confirmed re-authentication completes. */
+    assuranceStepUp?: unknown;
+    /** When the re-authentication was asked for. */
+    reauthIssuedAt?: unknown;
   }
 ): Promise<string> {
   const confirmationId = crypto.randomUUID();
@@ -663,6 +689,12 @@ async function createAuthorizeConfirmationChallenge(
       sessionId: metadata.sessionId,
       browserBinding,
       authorization_request: metadata.authorizationRequest,
+      ...(metadata.assuranceStepUp !== undefined
+        ? { assurance_step_up: metadata.assuranceStepUp }
+        : {}),
+      ...(metadata.reauthIssuedAt !== undefined
+        ? { reauth_issued_at: metadata.reauthIssuedAt }
+        : {}),
     },
   });
   c.res.headers.append(
@@ -708,11 +740,19 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   let login_hint: string | undefined;
   let handoff: string | undefined; // Authrim Extension: Session Token Handoff SSO
   let claimsRequestIntegrityProtected = false;
+  // The request came in a request object the client signed (verified), directly or pushed.
+  let requestObjectSigned = false;
   let authorizationRequestSource: AuthorizationRequestSource = 'frontchannel';
   let restoredAuthorizationRequest: AuthorizationRequestContinuation | undefined;
   let _confirmed: string | undefined;
   let _auth_time: string | undefined;
   let _session_user_id: string | undefined;
+  // The confirmation of an assurance step-up: when it began (only an authentication after it is
+  // the step-up's), and the session the user had before stepping up, when there was one.
+  let confirmedAssuranceStepUp: { priorSessionId?: string; issuedAt: number } | undefined;
+  // The confirmation of a re-authentication: when it was asked for (milliseconds). Only a session
+  // proven after it is that re-authentication's result.
+  let confirmedReauthIssuedAt: number | undefined;
   let _confirmation_challenge: string | undefined;
   let _consent_confirmation_challenge: string | undefined;
   let confirmedConsentUserId: string | undefined;
@@ -835,6 +875,8 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         sessionId?: string;
         browserBinding?: string;
         authorization_request?: unknown;
+        assurance_step_up?: unknown;
+        reauth_issued_at?: unknown;
       };
     };
     let confirmationData: AuthorizeConfirmationData;
@@ -949,6 +991,29 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
     _confirmed = 'true';
     if (typeof confirmationData.metadata.authTime === 'number') {
       _auth_time = confirmationData.metadata.authTime.toString();
+    }
+    const reauthIssuedAt = confirmationData.metadata.reauth_issued_at;
+    if (typeof reauthIssuedAt === 'number' && Number.isSafeInteger(reauthIssuedAt)) {
+      confirmedReauthIssuedAt = reauthIssuedAt;
+    }
+    const stepUp = confirmationData.metadata.assurance_step_up as
+      | { prior_session_id?: unknown; issued_at?: unknown }
+      | null
+      | undefined;
+    if (
+      stepUp &&
+      typeof stepUp === 'object' &&
+      typeof stepUp.issued_at === 'number' &&
+      Number.isSafeInteger(stepUp.issued_at)
+    ) {
+      // A step-up was tried (never again), whether or not there is a session to combine with.
+      confirmedAssuranceStepUp = {
+        priorSessionId:
+          typeof stepUp.prior_session_id === 'string' && isShardedSessionId(stepUp.prior_session_id)
+            ? stepUp.prior_session_id
+            : undefined,
+        issuedAt: stepUp.issued_at,
+      };
     }
     _session_user_id = confirmationData.metadata.sessionUserId || confirmationData.userId;
     if (confirmationData.metadata.authorization_request !== undefined) {
@@ -1147,6 +1212,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
     request = undefined;
     authorizationRequestSource = restoredAuthorizationRequest.source;
     claimsRequestIntegrityProtected = restoredAuthorizationRequest.integrity_protected;
+    requestObjectSigned = restoredAuthorizationRequest.request_object_signed === true;
   }
 
   const sendRequestUriError = async (error: string, description: string): Promise<Response> => {
@@ -1229,10 +1295,9 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         maxSizeBytes: 102400,
       };
 
-      // A value saved in KV (older settings or the Settings API) wins over env, including an
-      // explicit false; env applies only when nothing is saved.
-      let enabledSaved = false;
-      let allowedDomainsSaved = false;
+      // A saved value wins over env, including an explicit false; env applies only when
+      // nothing is saved.
+      let saved: NonNullable<OIDCProtocolSettings['httpsRequestUri']> = {};
       try {
         // Values set for a client apply only to a registered client: an unknown client_id must
         // not cost settings reads (the request is rejected once the client is checked).
@@ -1254,28 +1319,17 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
             'HTTPS request_uri is not available for this client'
           );
         }
-        const settings = await getTenantSystemSettings(c.env.SETTINGS, requestTenantId, {
+        // Settings that cannot be read must not let env allow the fetch.
+        const settings = await resolveProtocolSettings(c.env, requestTenantId, {
           clientId: client_id,
-          sections: ['oidc'],
-          // Settings that cannot be read must not let env or older values allow the fetch.
-          failOnError: true,
+          keys: [
+            'oauth.https_request_uri_enabled',
+            'oauth.https_request_uri_allowed_domains',
+            'oauth.https_request_uri_timeout_ms',
+            'oauth.https_request_uri_max_size',
+          ],
         });
-        if (settings) {
-          const oidc = settings.oidc as
-            | { httpsRequestUri?: Partial<typeof httpsRequestUriConfig> }
-            | undefined;
-          const kvConfig = oidc?.httpsRequestUri;
-          if (kvConfig) {
-            enabledSaved = typeof kvConfig.enabled === 'boolean';
-            allowedDomainsSaved = Array.isArray(kvConfig.allowedDomains);
-            httpsRequestUriConfig = {
-              enabled: kvConfig.enabled ?? false,
-              allowedDomains: kvConfig.allowedDomains ?? [],
-              timeoutMs: kvConfig.timeoutMs ?? 5000,
-              maxSizeBytes: kvConfig.maxSizeBytes ?? 102400,
-            };
-          }
-        }
+        saved = settings.oidc.httpsRequestUri ?? {};
       } catch (error) {
         log.error(
           'Failed to load HTTPS request_uri settings from KV',
@@ -1290,20 +1344,28 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         );
       }
 
-      // Fall back to environment variables if not configured in KV
-      if (!enabledSaved) {
+      // Environment variables apply where nothing is saved.
+      if (typeof saved.enabled === 'boolean') {
+        httpsRequestUriConfig.enabled = saved.enabled;
+      } else {
         httpsRequestUriConfig.enabled = c.env.ENABLE_HTTPS_REQUEST_URI === 'true';
       }
-      if (!allowedDomainsSaved) {
+      if (Array.isArray(saved.allowedDomains)) {
+        httpsRequestUriConfig.allowedDomains = saved.allowedDomains as string[];
+      } else {
         const allowedDomainsStr = c.env.HTTPS_REQUEST_URI_ALLOWED_DOMAINS || '';
         httpsRequestUriConfig.allowedDomains = allowedDomainsStr
           ? allowedDomainsStr.split(',').map((d) => d.trim().toLowerCase())
           : [];
       }
-      if (c.env.HTTPS_REQUEST_URI_TIMEOUT_MS) {
+      if (saved.timeoutMs !== undefined) {
+        httpsRequestUriConfig.timeoutMs = saved.timeoutMs;
+      } else if (c.env.HTTPS_REQUEST_URI_TIMEOUT_MS) {
         httpsRequestUriConfig.timeoutMs = parseInt(c.env.HTTPS_REQUEST_URI_TIMEOUT_MS, 10);
       }
-      if (c.env.HTTPS_REQUEST_URI_MAX_SIZE_BYTES) {
+      if (saved.maxSizeBytes !== undefined) {
+        httpsRequestUriConfig.maxSizeBytes = saved.maxSizeBytes;
+      } else if (c.env.HTTPS_REQUEST_URI_MAX_SIZE_BYTES) {
         httpsRequestUriConfig.maxSizeBytes = parseInt(c.env.HTTPS_REQUEST_URI_MAX_SIZE_BYTES, 10);
       }
 
@@ -1330,8 +1392,8 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       // Validate domain against allowlist (if configured)
       if (allowedDomains.length > 0) {
         const requestDomain = requestUrl.hostname.toLowerCase();
-        const isDomainAllowed = allowedDomains.some(
-          (allowed) => requestDomain === allowed || requestDomain.endsWith('.' + allowed)
+        const isDomainAllowed = allowedDomains.some((allowed) =>
+          domainMatches(requestDomain, allowed)
         );
 
         if (!isDomainAllowed) {
@@ -1409,9 +1471,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
 
             const isFinalDomainAllowed =
               allowedDomains.length === 0 ||
-              allowedDomains.some(
-                (allowed) => finalDomain === allowed || finalDomain.endsWith('.' + allowed)
-              );
+              allowedDomains.some((allowed) => domainMatches(finalDomain, allowed));
             if (!isFinalDomainAllowed) {
               log.warn('SSRF prevention: Rejected redirect to disallowed domain', {
                 action: 'ssrf_block',
@@ -1558,6 +1618,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         authorization_details?: string;
         error_uri?: string;
         cancel_uri?: string;
+        request_object_signed?: boolean;
       } | null = null;
 
       if (!c.env.PAR_REQUEST_STORE) {
@@ -1632,6 +1693,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
           acr_values: stored.acr_values,
           error_uri: stored.error_uri,
           cancel_uri: stored.cancel_uri,
+          request_object_signed: stored.request_object_signed === true,
         };
       } catch {
         // RPC error (invalid/expired request_uri)
@@ -1706,6 +1768,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         authorization_details?: string; // RFC 9396: Rich Authorization Requests
         error_uri?: string;
         cancel_uri?: string;
+        request_object_signed?: boolean;
       } = parsedData;
 
       try {
@@ -1732,6 +1795,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         claims = parData.claims;
         dpop_jkt = parData.dpop_jkt;
         claimsRequestIntegrityProtected = true;
+        requestObjectSigned = parData.request_object_signed === true;
         authorization_details = parData.authorization_details; // RFC 9396 RAR
         response_mode = parData.response_mode;
         prompt = parData.prompt;
@@ -1859,12 +1923,23 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
             );
           }
 
-          // Check if 'none' algorithm is allowed (read from KV settings)
-          // Only applies to non-production environments
-          const settings =
-            (await getTenantSystemSettings(c.env.SETTINGS, getTenantIdFromContext(c))) || {};
-          const oidc = settings.oidc as { allowNoneAlgorithm?: boolean } | undefined;
-          const allowNoneAlgorithm = oidc?.allowNoneAlgorithm ?? false;
+          // Check if 'none' algorithm is allowed (security.allow_unsigned_request_object).
+          // Only applies to non-production environments; settings that cannot be read do not
+          // allow it.
+          let allowNoneAlgorithm = false;
+          try {
+            const settings = await resolveProtocolSettings(c.env, getTenantIdFromContext(c), {
+              clientId: client_id,
+              keys: ['security.allow_unsigned_request_object'],
+            });
+            allowNoneAlgorithm = settings.oidc.allowNoneAlgorithm ?? false;
+          } catch (error) {
+            log.error(
+              'Unsigned request object settings could not be read',
+              { action: 'settings_load' },
+              error as Error
+            );
+          }
 
           if (!allowNoneAlgorithm) {
             log.warn('Rejected unsigned request object (alg=none) - not allowed in configuration', {
@@ -1889,6 +1964,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
           });
           requestObjectClaims = parseToken(jwtRequest) as Record<string, unknown>;
           claimsRequestIntegrityProtected = false;
+          requestObjectSigned = false;
         } else {
           if (alg !== 'RS256') {
             return c.json(
@@ -2009,6 +2085,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
           });
           requestObjectClaims = verified as Record<string, unknown>;
           claimsRequestIntegrityProtected = true;
+          requestObjectSigned = true;
         }
       }
 
@@ -2234,10 +2311,10 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
     c,
     'auth_authorize_security_settings',
     () =>
-      getTenantSystemSettings(c.env.SETTINGS, tenantId, {
-        failOnError: true,
+      resolveProtocolSettings(c.env, tenantId, {
         clientId: validClientId,
         sections: ['fapi'],
+        keys: ['security.par_required', 'oauth.response_types_supported', 'feature.enable_rar'],
       })
   ).then(
     (value) => ({ ok: true as const, value }),
@@ -2253,24 +2330,9 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   // RFC 7591 Section 2: response_types defaults to ["code"] if not specified
   const clientResponseTypes = (clientMetadata.response_types as string[] | undefined) || ['code'];
 
-  // Load FAPI 2.0 configuration from SETTINGS KV
-  interface FAPIConfig {
-    enabled?: boolean;
-    allowPublicClients?: boolean;
-    /** Strict DPoP enforcement mode */
-    strictDPoP?: boolean;
-    messageSigning?: FAPI2MessageSigningConfig;
-  }
-  interface OIDCConfig {
-    requirePar?: boolean;
-    responseTypesSupported?: unknown;
-    /** RFC 9396: Rich Authorization Requests */
-    rar?: { enabled: boolean };
-    /** Supported ACR values */
-    supportedAcrValues?: string[];
-  }
-  let fapiConfig: FAPIConfig = {};
-  let oidcConfig: OIDCConfig = {};
+  // FAPI 2.0 and OIDC settings saved for the tenant or client (see resolveProtocolSettings).
+  let fapiConfig: FAPIProtocolSettings = {};
+  let oidcConfig: OIDCProtocolSettings = {};
   const securitySettings = await securitySettingsPromise;
   if (!securitySettings.ok) {
     log.error(
@@ -2286,10 +2348,8 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       503
     );
   }
-  if (securitySettings.value) {
-    fapiConfig = securitySettings.value.fapi || {};
-    oidcConfig = securitySettings.value.oidc || {};
-  }
+  fapiConfig = securitySettings.value.fapi;
+  oidcConfig = securitySettings.value.oidc;
 
   let configuredResponseTypes: string[] | undefined;
   if (oidcConfig.responseTypesSupported !== undefined) {
@@ -2698,18 +2758,22 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   // FAPI errors are safe to redirect only after client_id and redirect_uri have been
   // validated. This also lets a relying party (including the OIDF suite) observe a
   // standards-compliant authorization error instead of leaving the browser at the AS.
-  if (fapiConfig.enabled) {
-    const requirePar = oidcConfig.requirePar !== false;
-    const usedPAR = authorizationRequestSource === 'par';
-
-    if (requirePar && !usedPAR) {
+  // PAR is required in FAPI 2.0 mode, and wherever the tenant (or client) requires it: what
+  // discovery advertises as require_pushed_authorization_requests.
+  if (authorizationRequestSource !== 'par') {
+    if (fapiConfig.enabled) {
       return sendError(
         'invalid_request',
         'PAR is required in FAPI 2.0 mode. Use /par endpoint first.'
       );
     }
+    if (oidcConfig.requirePar) {
+      return sendError('invalid_request', 'PAR is required. Use /par endpoint first.');
+    }
+  }
 
-    // The saved value (Settings API, else the older document), else FAPI_ALLOW_PUBLIC_CLIENTS
+  if (fapiConfig.enabled) {
+    // The saved value, else FAPI_ALLOW_PUBLIC_CLIENTS
     // (anything but 'false' / '0' allows), else allowed.
     const envAllowsPublicClients = c.env.FAPI_ALLOW_PUBLIC_CLIENTS;
     const allowPublicClients =
@@ -2732,9 +2796,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   // security.require_signed_request_object for the tenant or client). PAR enforces it when the
   // request is pushed; a request sent here directly must carry a request object whose signature
   // was verified (or come from PAR, which is integrity protected).
-  const messageSigning = (
-    fapiConfig as { messageSigning?: { requireSignedRequestObject?: boolean } }
-  ).messageSigning;
+  const messageSigning = fapiConfig.messageSigning;
   if (messageSigning?.requireSignedRequestObject === true && !claimsRequestIntegrityProtected) {
     return sendError('invalid_request', 'A signed request object is required for this client');
   }
@@ -2987,6 +3049,9 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   let authTime: number | undefined;
   let sessionAcr: string | undefined;
   let sessionAmr: string[] | undefined;
+  // The session's own data (assurance evidence included), and whose session it is.
+  let sessionData: Record<string, unknown> | undefined;
+  let sessionDataUserId: string | undefined;
   let isAnonymousSession: boolean = false;
 
   // Check for existing session (cookie)
@@ -3030,6 +3095,8 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         // Check if session is not expired
         if (session.expiresAt > Date.now()) {
           sessionUserId = session.userId;
+          sessionData = session.data as Record<string, unknown> | undefined;
+          sessionDataUserId = session.userId;
           // Check if this is an anonymous session (architecture-decisions.md §17)
           isAnonymousSession = session.data?.is_guest_session === true;
           if (typeof session.data?.acr === 'string' && session.data.acr.length > 0) {
@@ -3428,10 +3495,236 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
 
   // Note: max_age parameter is handled in the OIDC compliance section above
 
+  // ============================================================
+  // Assurance (NIST SP 800-63-4): the AAL this authorization requires
+  // ============================================================
+  // Off (the default): nothing here changes the request. On: the session's AAL is computed from
+  // what it proved, and a request needing more steps up once (re-authentication), fails with
+  // login_required for prompt=none, or with unmet_authentication_requirements after the step-up.
+  let assuranceSettings: Record<string, unknown>;
+  try {
+    assuranceSettings = await resolveEffectiveSettings(c.env, 'assurance', { tenantId });
+  } catch (error) {
+    log.error(
+      'Failed to load assurance settings',
+      { action: 'assurance_settings' },
+      error as Error
+    );
+    return sendError('temporarily_unavailable', 'Assurance settings are temporarily unavailable');
+  }
+  const assuranceEnabled = assuranceSettings['assurance.enabled'] === true;
+  // The FAL assurance enforces (enforcedFAL). FAL3: a pushed request with a signed request object.
+  // FAL2 and above with DPoP: no token from the front channel, where none can be bound to a key
+  // (the token endpoint requires the DPoP proof for the rest).
+  if (
+    falRequiresSignedPushedRequest(assuranceSettings) &&
+    !(authorizationRequestSource === 'par' && requestObjectSigned)
+  ) {
+    return sendError(
+      'invalid_request',
+      'A pushed authorization request with a signed request object is required (FAL3)'
+    );
+  }
+  if (falRequiresDpop(assuranceSettings) && (response_type ?? '').split(/\s+/).includes('token')) {
+    return sendError(
+      'unsupported_response_type',
+      'An access token is not issued from the authorization endpoint (FAL2 requires DPoP)'
+    );
+  }
+  // The step-up this request needs (a re-authentication challenge), when it needs one.
+  let assuranceStepUp: { requiredAal: AssuranceLevel } | undefined;
+  // The AAL the authentication reached, and the acr assurance chose (undefined: unchanged).
+  let assuranceAal: AssuranceLevel | undefined;
+  let assuranceAcr: string | null | undefined;
+  // The acr of the AAL reached, for access tokens (include_in_access_token), whatever ID tokens get.
+  let assuranceTokenAcr: string | undefined;
+  // The methods the authentication proved (none merely registered), for access tokens.
+  let assuranceTokenAmr: string[] | undefined;
+  // A forced re-authentication (prompt=login, max_age) comes first; assurance applies to its result.
+  if (assuranceEnabled && sessionUserId && !(forceReauthentication && _confirmed !== 'true')) {
+    const upstreamAcrMappings = parseUpstreamAcrMappings(
+      assuranceSettings['assurance.upstream_acr_mappings']
+    );
+    // Only the evidence of the session of the user being authorized counts (a confirmation names the
+    // user; the cookie may carry someone else's session).
+    const ownSession = sessionDataUserId === sessionUserId;
+    const provenAt = typeof sessionData?.proven_at === 'number' ? sessionData.proven_at : undefined;
+    // After a re-authentication, only a session proven after it was asked for is its result: an
+    // older session of the user (switched in by cookie) counts for nothing. An external IdP login
+    // records no proof time (its IdP's times are in that IdP's clock), so it never counts here.
+    const reauthResult =
+      confirmedReauthIssuedAt === undefined ||
+      (provenAt !== undefined && provenAt >= confirmedReauthIssuedAt);
+    const evidenceSession = ownSession && reauthResult;
+    let evidence = sessionAssuranceEvidence(
+      evidenceSession ? sessionData : undefined,
+      upstreamAcrMappings
+    );
+    if (!evidenceSession) {
+      // What that session proved is not this authentication's: the code reports none of it.
+      sessionAmr = undefined;
+      sessionAcr = undefined;
+    }
+    // A completed step-up: the factors the earlier session had proven, with the one just completed,
+    // provided the earlier session is still that user's live session and the current one records
+    // that its authentication was proven after the step-up began (proven_at, milliseconds; a
+    // session without it is never combined).
+    if (
+      _confirmed === 'true' &&
+      confirmedAssuranceStepUp &&
+      sessionId &&
+      ownSession &&
+      provenAt !== undefined &&
+      provenAt >= confirmedAssuranceStepUp.issuedAt
+    ) {
+      const priorSessionId = confirmedAssuranceStepUp.priorSessionId;
+      if (priorSessionId && priorSessionId !== sessionId) {
+        const prior = (await getSessionStoreBySessionId(
+          c.env,
+          priorSessionId,
+          tenantId
+        ).stub.getSessionRpc(priorSessionId)) as Session | null;
+        if (prior && prior.userId === sessionUserId && prior.expiresAt > Date.now()) {
+          evidence = mergeStepUpEvidence(
+            sessionAssuranceEvidence(
+              prior.data as Record<string, unknown> | undefined,
+              upstreamAcrMappings
+            ),
+            evidence
+          );
+          // The combined evidence is as old as its oldest proof (0: unknown, never fresh), so it
+          // cannot pass for a later step-up's own authentication.
+          const combinedProvenAt =
+            typeof prior.data?.proven_at === 'number'
+              ? Math.min(prior.data.proven_at, provenAt)
+              : 0;
+          const store = getSessionStoreBySessionId(c.env, sessionId, tenantId).stub;
+          // Written only over the evidence this request read: another step-up of the same session
+          // may have combined its own factors meanwhile, and those are kept rather than replaced.
+          let read = sessionData;
+          let stored = evidence;
+          let storedProvenAt = combinedProvenAt;
+          let written = false;
+          for (let attempt = 0; attempt < 3 && !written; attempt++) {
+            const updates = {
+              amr: [...stored.amr],
+              unverified_amr: [...(stored.unverifiedMethods ?? [])],
+              ...(stored.upstreamAcr ? { upstream_acr: stored.upstreamAcr } : {}),
+              proven_at: storedProvenAt,
+            };
+            const updated = (await store.updateSessionDataRpc(sessionId, updates, {
+              ifDataMatches: {
+                amr: read?.amr,
+                unverified_amr: read?.unverified_amr,
+                upstream_acr: read?.upstream_acr,
+                proven_at: read?.proven_at,
+              } as Partial<SessionData>,
+            })) as Session | null;
+            if (!updated) {
+              // The session ended meanwhile: nothing it proved may be used.
+              return sendError('login_required', 'The session ended during the step-up');
+            }
+            const latest = updated.data as Record<string, unknown> | undefined;
+            written = Object.entries(updates).every(
+              ([field, value]) => JSON.stringify(latest?.[field]) === JSON.stringify(value)
+            );
+            if (!written) {
+              read = latest;
+              stored = mergeStepUpEvidence(
+                sessionAssuranceEvidence(latest, upstreamAcrMappings),
+                evidence
+              );
+              storedProvenAt = Math.min(
+                typeof latest?.proven_at === 'number' ? latest.proven_at : 0,
+                combinedProvenAt
+              );
+            }
+          }
+          if (!written) {
+            // This request's own evidence stands; the session keeps what was written last.
+            log.warn('The step-up could not be recorded in the session', {
+              action: 'assurance_step_up_record',
+            });
+          }
+          sessionAmr = [...evidence.amr];
+        }
+      }
+    }
+    const actualAal = computeAAL(evidence);
+    const acrClaim = parsedClaimsRequest.request?.id_token?.acr as
+      | { essential?: unknown; value?: unknown; values?: unknown }
+      | null
+      | undefined;
+    const essentialValues = Array.isArray(acrClaim?.values)
+      ? acrClaim.values.filter((value): value is string => typeof value === 'string')
+      : typeof acrClaim?.value === 'string'
+        ? [acrClaim.value]
+        : null;
+    const acrValueList = acr_values ? acr_values.split(' ').filter(Boolean) : [];
+    const interactive = !prompt?.split(' ').includes('none');
+    const required = requiredAAL({
+      defaultAAL: (assuranceSettings['assurance.default_aal'] as AAL) ?? 'AAL1',
+      scopes: (scope ?? '').split(' ').filter(Boolean),
+      scopeRequirements: parseScopeAALRequirements(
+        assuranceSettings['assurance.scope_aal_requirements']
+      ),
+      essentialAcr: acrClaim?.essential === true ? { values: essentialValues } : null,
+      acrValues: acrValueList,
+      interactive,
+      // A guest exemption only from the session of the user being authorized.
+      guest: ownSession && isAnonymousSession,
+    });
+    if (required.unsatisfiable) {
+      return sendError(
+        'unmet_authentication_requirements',
+        'None of the essential acr values requested can be met'
+      );
+    }
+    const mandatoryMet = meetsAAL(actualAal, required.mandatory);
+    if (!mandatoryMet && !interactive) {
+      return sendError('login_required', 'A higher authentication assurance level is required');
+    }
+    if (!mandatoryMet && confirmedAssuranceStepUp) {
+      // Stepped up once already: never loop.
+      return sendError(
+        'unmet_authentication_requirements',
+        'The authentication does not meet the required assurance level'
+      );
+    }
+    // Below the mandatory level: step up (whatever the step). Below only a voluntary target: step
+    // up before consent, never again on the way back from it.
+    const reachTarget = !mandatoryMet || _consent_confirmed !== 'true';
+    if (
+      !meetsAAL(actualAal, required.target) &&
+      interactive &&
+      !confirmedAssuranceStepUp &&
+      reachTarget
+    ) {
+      assuranceStepUp = { requiredAal: required.target };
+    }
+    assuranceAal = actualAal;
+    // The acr of the AAL actually reached, never a lower one the request asked for (selectAcr
+    // answers the request, for ID tokens).
+    assuranceTokenAcr = aalToAcr(actualAal) ?? undefined;
+    const unproven = new Set(evidence.unverifiedMethods ?? []);
+    assuranceTokenAmr = evidence.amr.filter((method) => !unproven.has(method));
+    // An essential acr naming values always gets one of them back (OIDC Core 5.5.1.1), whether or
+    // not assurance claims are otherwise included.
+    if (
+      assuranceSettings['assurance.include_in_id_token'] === true ||
+      (required.essential && required.essentialAcrs)
+    ) {
+      assuranceAcr = selectAcr(actualAal, required, acrValueList);
+    }
+  }
+
   // prompt=login and an expired max_age both require proof of a new authentication ceremony.
   // Use a reauth challenge tied to the current subject; never let an ordinary login challenge be
   // auto-completed merely because the browser still has a valid session cookie.
-  if (forceReauthentication && sessionUserId && _confirmed !== 'true') {
+  if (
+    (forceReauthentication && sessionUserId && _confirmed !== 'true') ||
+    (assuranceStepUp && sessionUserId)
+  ) {
     // Store authorization request parameters in ChallengeStore (RPC)
     // Use challengeId-based sharding for better scalability
     const challengeId = crypto.randomUUID();
@@ -3473,6 +3766,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         issuer: getRequestIssuer(c),
         authorization_request_source: authorizationRequestSource,
         authorization_request_integrity_protected: claimsRequestIntegrityProtected,
+        authorization_request_signed: requestObjectSigned,
         authorization_server: 'default',
         session_mode:
           clientMetadata?.browser_public_client_mode === 'strict'
@@ -3490,6 +3784,20 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         // Custom Redirect URIs (Authrim Extension)
         error_uri: validatedErrorUri,
         cancel_uri: validatedCancelUri,
+        // When the re-authentication was asked for (milliseconds): only a session proven after it
+        // is its result.
+        reauth_issued_at: Date.now(),
+        // An assurance step-up: the session the user steps up from, and the level to reach.
+        ...(assuranceStepUp
+          ? {
+              assurance_step_up: {
+                ...(sessionId ? { prior_session_id: sessionId } : {}),
+                required_aal: assuranceStepUp.requiredAal,
+                // Milliseconds, compared with the creation of the step-up's session.
+                issued_at: Date.now(),
+              },
+            }
+          : {}),
       },
     });
 
@@ -3499,6 +3807,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
     // Global UI configured: redirect to external UI
     // Neither: return configuration error
     const reauthUiQueryParams = getChallengeUiQueryParams(challengeId, ui_locales);
+    if (assuranceStepUp) reauthUiQueryParams.required_aal = assuranceStepUp.requiredAal;
     const reauthTarget = await getUIRedirectTarget(
       c.env,
       'reauth',
@@ -3581,6 +3890,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         issuer: getRequestIssuer(c),
         authorization_request_source: authorizationRequestSource,
         authorization_request_integrity_protected: claimsRequestIntegrityProtected,
+        authorization_request_signed: requestObjectSigned,
         authorization_server: 'default',
         // Custom Redirect URIs (Authrim Extension)
         error_uri: validatedErrorUri,
@@ -3932,6 +4242,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
             issuer: getRequestIssuer(c),
             authorization_request_source: authorizationRequestSource,
             authorization_request_integrity_protected: claimsRequestIntegrityProtected,
+            authorization_request_signed: requestObjectSigned,
             authorization_server: 'default',
             // Phase 2-B RBAC extensions
             org_id,
@@ -3979,7 +4290,6 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   if (_consent_confirmed !== 'true') {
     try {
       const tenantId = getTenantIdFromContext(c);
-      const configManager = createOAuthConfigManager(c.env);
 
       // Check KV first, then env, then code default (false)
       let consentMgmtEnabled = false;
@@ -4090,6 +4400,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
                 issuer: getRequestIssuer(c),
                 authorization_request_source: authorizationRequestSource,
                 authorization_request_integrity_protected: claimsRequestIntegrityProtected,
+                authorization_request_signed: requestObjectSigned,
                 authorization_server: 'default',
                 org_id,
                 acting_as,
@@ -4195,7 +4506,8 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   // Handle acr_values parameter (Authentication Context Class Reference)
   // Only emit an ACR that came from the authenticated session. A requested
   // acr_values parameter is not proof that the authentication actually met it.
-  let selectedAcr = sessionAcr;
+  // With assurance on and in ID tokens, the acr assurance chose (none when it has none to give).
+  let selectedAcr = assuranceAcr !== undefined ? (assuranceAcr ?? undefined) : sessionAcr;
   if (acr_values && !selectedAcr) {
     log.debug('Ignoring requested acr_values without verified session ACR', {
       action: 'acr_unverified_request_ignored',
@@ -4362,21 +4674,23 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
             ? clientMetadata.default_audience
             : undefined;
 
-      // Code lifetime for the client or tenant (Settings API, else the older oauth-config value,
-      // else env, else the default); the code store's own lifetime applies otherwise.
-      const authCodeTtl = (
-        await resolveEffectiveSettings(c.env, 'oauth', {
-          tenantId: getTenantIdFromContext(c),
-          clientId: validClientId,
-        })
-      )['oauth.auth_code_ttl'];
+      // Code lifetime for the client or tenant, and the per-user code limit (Settings API, else
+      // the older oauth-config value, else env, else the default); the code store's own values
+      // apply otherwise.
+      const oauthSettings = await resolveEffectiveSettings(c.env, 'oauth', {
+        tenantId: getTenantIdFromContext(c),
+        clientId: validClientId,
+      });
+      const authCodeTtl = oauthSettings['oauth.auth_code_ttl'];
       const authCodeTtlSeconds = typeof authCodeTtl === 'number' ? authCodeTtl : undefined;
+      const maxCodesPerUser = oauthSettings['oauth.max_codes_per_user'];
       await timeAuthRequestDiagnosticOperation(c, 'auth_authorize_code_store', () =>
         authCodeStore.storeCodeRpc({
           code: code as string,
           tenantId: getTenantIdFromContext(c),
           clientId: validClientId,
           ttlSeconds: authCodeTtlSeconds,
+          maxCodesPerUser: typeof maxCodesPerUser === 'number' ? maxCodesPerUser : undefined,
           redirectUri: validRedirectUri,
           userId: sub,
           scope: validScope,
@@ -4389,6 +4703,13 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
           authTime: currentAuthTime,
           acr: selectedAcr,
           amr: sessionAmr,
+          ...(assuranceAal ? { aal: assuranceAal } : {}),
+          ...(assuranceTokenAcr ? { assuranceAcr: assuranceTokenAcr } : {}),
+          ...(assuranceTokenAmr ? { assuranceAmr: assuranceTokenAmr } : {}),
+          // FAL3 evidence the token endpoint checks: pushed (PAR) with a signed request object.
+          ...(authorizationRequestSource === 'par' && requestObjectSigned
+            ? { pushedSignedRequest: true }
+            : {}),
           dpopJkt, // Bind authorization code to DPoP key (RFC 9449)
           sid: oidcSid, // OIDC Session Management: derived RP-specific session identifier
           sessionId, // Internal OP session key for logout target lookup
@@ -4457,6 +4778,14 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
           client_id: validClientId,
           claims,
           ...(claims ? { claims_request_protected: claimsRequestIntegrityProtected === true } : {}),
+          // Assurance (include_in_access_token): how the user authenticated, as RFC 9068 has it.
+          ...(assuranceEnabled && assuranceSettings['assurance.include_in_access_token'] === true
+            ? {
+                auth_time: currentAuthTime,
+                ...(assuranceTokenAcr ? { acr: assuranceTokenAcr } : {}),
+                ...(assuranceTokenAmr?.length ? { amr: assuranceTokenAmr } : {}),
+              }
+            : {}),
         },
         privateKey,
         signingKeyId,
@@ -5903,6 +6232,8 @@ export async function authorizeConfirmHandler(c: Context<{ Bindings: Env }>) {
         typeof metadata.sessionUserId === 'string' ? metadata.sessionUserId : challengeData.userId,
       sessionId: typeof metadata.session_id === 'string' ? metadata.session_id : undefined,
       authorizationRequest: createAuthorizationRequestContinuation(metadata),
+      assuranceStepUp: metadata.assurance_step_up,
+      reauthIssuedAt: metadata.reauth_issued_at,
     }
   );
   if (metadata.authTime) {

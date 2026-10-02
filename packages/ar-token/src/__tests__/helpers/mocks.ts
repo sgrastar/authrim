@@ -659,12 +659,6 @@ export function createArLibCoreMocks() {
     mockPublishEvent: vi.fn().mockResolvedValue(undefined),
 
     // Configuration Manager
-    mockCreateOAuthConfigManager: vi.fn().mockReturnValue({
-      get: vi.fn().mockResolvedValue(null),
-      getWithDefault: vi
-        .fn()
-        .mockImplementation((_key: string, defaultValue: unknown) => Promise.resolve(defaultValue)),
-    }),
 
     // Timing-safe comparison
     mockTimingSafeEqual: vi.fn().mockReturnValue(true),

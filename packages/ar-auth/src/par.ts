@@ -25,7 +25,6 @@ import {
   validateRedirectUri,
   validateScope,
   isRedirectUriRegistered,
-  createOAuthConfigManager,
   validateClientAssertion,
   validateDPoPProof,
   timingSafeEqual,
@@ -40,7 +39,11 @@ import {
   getLogger,
   getTenantIdFromContext,
   isSigningJWK,
-  getTenantSystemSettings,
+  resolveProtocolSettings,
+  resolveEffectiveSettings,
+  falRequiresSignedPushedRequest,
+  type FAPIProtocolSettings,
+  type OIDCProtocolSettings,
   FAPI2_MESSAGE_SIGNING_ALGS,
   parseBasicAuth,
   validateRegisteredClientAuthenticationMethod,
@@ -49,6 +52,48 @@ import {
 import type { JWK } from '@authrim/ar-lib-core';
 import { getClientCached, getPARRequestStoreForNewRequest } from '@authrim/ar-lib-core';
 import { getRequestIssuer } from './issuer';
+
+const supplied = (value: unknown) => Boolean(value);
+const suppliedIfDefined = (value: unknown) => value !== undefined;
+const suppliedIfString = (value: unknown) => typeof value === 'string';
+
+/**
+ * The authorization parameters a pushed request stores, each with when a request object supplies
+ * it (the merge below takes it from the request object then, in place of the form's).
+ */
+const SIGNED_AUTHORIZATION_PARAMETERS: ReadonlyArray<[string, (value: unknown) => boolean]> = [
+  ['response_type', supplied],
+  ['redirect_uri', supplied],
+  ['scope', supplied],
+  ['state', supplied],
+  ['nonce', supplied],
+  ['code_challenge', supplied],
+  ['code_challenge_method', supplied],
+  ['response_mode', supplied],
+  ['prompt', supplied],
+  ['display', supplied],
+  ['max_age', suppliedIfDefined],
+  ['ui_locales', supplied],
+  ['id_token_hint', supplied],
+  ['login_hint', supplied],
+  ['acr_values', supplied],
+  ['claims', supplied],
+  ['dpop_jkt', suppliedIfString],
+  ['authorization_details', supplied],
+  ['error_uri', suppliedIfString],
+  ['cancel_uri', suppliedIfString],
+];
+
+/** Whether every authorization parameter the request uses came from the signed request object. */
+function signedRequestCoversParameters(
+  claims: Record<string, unknown>,
+  params: Record<string, unknown>
+): boolean {
+  return SIGNED_AUTHORIZATION_PARAMETERS.every(([name, fromRequestObject]) => {
+    const value = params[name];
+    return value === undefined || value === null || value === '' || fromRequestObject(claims[name]);
+  });
+}
 import { jwtVerify, compactDecrypt, importJWK } from 'jose';
 import {
   type FAPI2MessageSigningConfig,
@@ -318,29 +363,25 @@ export async function parHandler(c: Context<{ Bindings: Env }>): Promise<Respons
     // =========================================================================
     // Load FAPI 2.0 / OIDC configuration from SETTINGS KV
     // =========================================================================
-    let fapiConfig: {
-      enabled?: boolean;
-      requirePrivateKeyJwt?: boolean;
-      maxRequestUriExpiry?: number;
-      clientAssertionAudience?: 'issuer';
-      messageSigning?: FAPI2MessageSigningConfig;
-    } = {};
-    let oidcConfig: {
-      parExpiry?: number;
-      allowNoneAlgorithm?: boolean;
-      rar?: { enabled?: boolean };
-    } = {};
+    let fapiConfig: FAPIProtocolSettings;
+    let oidcConfig: OIDCProtocolSettings;
 
     try {
-      const settings = await getTenantSystemSettings(
-        c.env.SETTINGS,
+      const settings = await resolveProtocolSettings(
+        c.env,
         (clientMetadata.tenant_id as string) || getTenantIdFromContext(c),
-        { failOnError: true, clientId: clientMetadata.client_id, sections: ['fapi'] }
+        {
+          clientId: clientMetadata.client_id,
+          sections: ['fapi'],
+          keys: [
+            'oauth.par_default_ttl',
+            'security.allow_unsigned_request_object',
+            'feature.enable_rar',
+          ],
+        }
       );
-      if (settings) {
-        fapiConfig = settings.fapi || {};
-        oidcConfig = settings.oidc || {};
-      }
+      fapiConfig = settings.fapi;
+      oidcConfig = settings.oidc;
     } catch (error) {
       log.error('Failed to load settings from KV', { action: 'settings_load' }, error as Error);
       throw new RFCError(
@@ -457,6 +498,29 @@ export async function parHandler(c: Context<{ Bindings: Env }>): Promise<Respons
     const requestObjectSigningAlgorithms = messageSigningEnabled
       ? (messageSigningConfig.requestObjectSigningAlgorithms ?? [...FAPI2_MESSAGE_SIGNING_ALGS])
       : LEGACY_REQUEST_OBJECT_SIGNING_ALGORITHMS;
+
+    // Assurance FAL3 (fal3_requires_par): only a request carrying a signed request object is pushed.
+    let falRequiresSignedRequest: boolean;
+    try {
+      falRequiresSignedRequest = falRequiresSignedPushedRequest(
+        await resolveEffectiveSettings(c.env, 'assurance', { tenantId: getTenantIdFromContext(c) })
+      );
+    } catch (error) {
+      log.error(
+        'Failed to load assurance settings',
+        { action: 'assurance_settings' },
+        error as Error
+      );
+      return c.json(
+        {
+          error: 'temporarily_unavailable',
+          error_description: 'Assurance settings are temporarily unavailable',
+        },
+        503
+      );
+    }
+    // Whether the client signed the request object (verified), for the authorization endpoint.
+    let requestObjectSigned = false;
 
     if (messageSigningConfig?.requireSignedRequestObject && !requestParam) {
       return c.json(
@@ -848,6 +912,15 @@ export async function parHandler(c: Context<{ Bindings: Env }>): Promise<Respons
             );
           }
 
+          // Signed only if every authorization parameter used came from the signed request object:
+          // one signed over its issuer alone, with the parameters in the form, is not.
+          requestObjectSigned =
+            requestCryptographicallySigned &&
+            signedRequestCoversParameters(
+              requestObjectClaims,
+              params as unknown as Record<string, unknown>
+            );
+
           log.debug('Request object processed successfully', { action: 'request_object' });
         }
       } catch (error) {
@@ -1047,11 +1120,6 @@ export async function parHandler(c: Context<{ Bindings: Env }>): Promise<Respons
 
     dpopJkt ??= params.dpop_jkt;
 
-    // =========================================================================
-    // P1: Use ConfigManager for expiration (KV → env → default)
-    // =========================================================================
-    const configManager = createOAuthConfigManager(c.env);
-
     // Priority: FAPI max limit → KV config → OIDC config → default
     let requestUriExpiry: number;
     if (fapiConfig.enabled && fapiConfig.maxRequestUriExpiry) {
@@ -1065,6 +1133,17 @@ export async function parHandler(c: Context<{ Bindings: Env }>): Promise<Respons
     }
 
     // Build request data with optional dpop_jkt and authorization_details
+    if (falRequiresSignedRequest && !requestObjectSigned) {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description:
+            'A request object the client signed, carrying every authorization parameter, is required (FAL3)',
+        },
+        400
+      );
+    }
+
     const requestData = {
       tenant_id: getTenantIdFromContext(c),
       client_id: params.client_id,
@@ -1092,6 +1171,7 @@ export async function parHandler(c: Context<{ Bindings: Env }>): Promise<Respons
       // validation used for direct authorization requests before either URI can be used.
       error_uri: params.error_uri,
       cancel_uri: params.cancel_uri,
+      ...(requestObjectSigned ? { request_object_signed: true } : {}),
     };
 
     // Store in PARRequestStore DO with region-aware sharding (issue #11: single-use guarantee)

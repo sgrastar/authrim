@@ -42,6 +42,9 @@ function createHarness(permissions: string[], roles: string[] = []) {
   app.get('/api/admin/users/user-1/legal-holds', (c) => c.json({ ok: true }));
   app.post('/api/admin/users/user-1/legal-holds', (c) => c.json({ ok: true }));
   app.post('/api/admin/users/user-1/legal-holds/hold-1/release', (c) => c.json({ ok: true }));
+  app.get('/api/admin/users/user-1/assurance', (c) => c.json({ ok: true }));
+  app.post('/api/admin/users/user-1/assurance/evidence', (c) => c.json({ ok: true }));
+  app.post('/api/admin/users/user-1/assurance/evidence/ev-1/revoke', (c) => c.json({ ok: true }));
   app.delete('/api/admin/users/user-1', (c) => c.json({ ok: true }));
   app.post('/api/admin/users/user-1/totp/reset', (c) => c.json({ ok: true }));
   app.delete('/api/admin/users/user-1/roles/assignment-1', (c) => c.json({ ok: true }));
@@ -240,6 +243,20 @@ describe('declared admin route access', () => {
     await expect(
       holdWriter.request('/api/admin/users/user-1/legal-holds/hold-1/release', { method: 'POST' })
     ).resolves.toMatchObject({ status: 200 });
+  });
+
+  it('keeps identity assurance behind its own permissions', async () => {
+    const userWriter = createHarness([ADMIN_PERMISSIONS.USERS_READ, ADMIN_PERMISSIONS.USERS_WRITE]);
+    const reader = createHarness([ADMIN_PERMISSIONS.ACCOUNT_ASSURANCE_READ]);
+    const writer = createHarness([ADMIN_PERMISSIONS.ACCOUNT_ASSURANCE_WRITE]);
+    const path = '/api/admin/users/user-1/assurance';
+    expect((await userWriter.request(path)).status).toBe(403);
+    expect((await reader.request(path)).status).toBe(200);
+    for (const write of [`${path}/evidence`, `${path}/evidence/ev-1/revoke`]) {
+      expect((await userWriter.request(write, { method: 'POST' })).status, write).toBe(403);
+      expect((await reader.request(write, { method: 'POST' })).status, write).toBe(403);
+      expect((await writer.request(write, { method: 'POST' })).status, write).toBe(200);
+    }
   });
 
   it('uses the dedicated Agent settings permission ahead of the generic settings wildcard', async () => {

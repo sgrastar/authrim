@@ -28,6 +28,7 @@ import {
 } from '@authrim/ar-lib-core';
 import { getRequestIssuer } from './issuer';
 import { resolveAsyncTenantId } from './tenant';
+import { fal3Refusal } from './assurance';
 
 function invalidCIBAClientResponse(c: Context<{ Bindings: Env }>) {
   // CIBA error responses are a public protocol contract and may only contain
@@ -53,6 +54,8 @@ export async function cibaAuthorizationHandler(c: Context<{ Bindings: Env }>) {
       variables: { field: 'tenant context' },
     });
   }
+  const assuranceRefusal = await fal3Refusal(c, tenantId);
+  if (assuranceRefusal) return assuranceRefusal;
   const requestIssuer = getRequestIssuer(c, tenantId);
 
   try {

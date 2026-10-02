@@ -11,7 +11,7 @@
  * Phase A-6: Added Backchannel Logout sender integration
  * - Sends logout notifications to all RPs that have tokens for the session
  * - Uses waitUntil() for non-blocking sends
- * - Configurable via KV settings (LOGOUT_SETTINGS_KEY)
+ * - Configurable via the Settings API (session.* logout settings)
  *
  * @see https://openid.net/specs/openid-connect-rpinitiated-1_0.html
  * @see https://openid.net/specs/openid-connect-backchannel-1_0.html
@@ -37,13 +37,12 @@ import {
   resolveSessionIdFromOidcSidStore,
   resolveLegacyLogoutTargetsFromOidcSidStore,
   createBackchannelLogoutOrchestrator,
-  applyBackchannelLogoutSettings,
-  resolveEffectiveSettings,
+  resolveLogoutConfig,
+  resolveLogoutWebhookConfig,
   DEFAULT_LOGOUT_CONFIG,
-  LOGOUT_SETTINGS_KEY,
+  DEFAULT_LOGOUT_WEBHOOK_CONFIG,
   buildFrontchannelLogoutIframes,
   generateFrontchannelLogoutHtml,
-  getFrontchannelLogoutConfig,
   BROWSER_STATE_COOKIE_NAME,
   // Native SSO device_secret revocation
   isNativeSSOEnabled,
@@ -53,7 +52,6 @@ import {
   type RevokeDeviceSecretsForLogoutScopeResult,
   // Simple Logout Webhook (Authrim Extension)
   createLogoutWebhookOrchestrator,
-  getLogoutWebhookConfig,
   decryptValue,
   // Event System
   publishEvent,
@@ -72,9 +70,9 @@ import {
 } from '@authrim/ar-lib-core';
 import { getRequestIssuer } from './issuer';
 import type {
-  BackchannelLogoutConfig,
   LogoutSendResult,
   LogoutConfig,
+  LogoutWebhookConfig,
   SessionClientWithWebhook,
   SessionClientWithDetails,
   LogoutWebhookSendResult,
@@ -154,66 +152,29 @@ async function importPrivateKeyPem(pem: string): Promise<CryptoKey> {
 }
 
 /**
- * Get Logout Configuration
- *
- * Priority: KV → defaults
- *
- * @param env - Environment bindings
- * @returns LogoutConfig
+ * The tenant's back-channel, front-channel and session management settings (`session.*`, as the
+ * Settings API resolves them). When they cannot be read, the code defaults apply.
  */
-async function getLogoutConfig(env: Env): Promise<LogoutConfig> {
-  // Try KV first
-  if (env.SETTINGS) {
-    try {
-      const kvConfig = await env.SETTINGS.get(LOGOUT_SETTINGS_KEY);
-      if (kvConfig) {
-        const parsed = JSON.parse(kvConfig);
-        return {
-          backchannel: {
-            ...DEFAULT_LOGOUT_CONFIG.backchannel,
-            ...(parsed.backchannel || {}),
-          },
-          frontchannel: {
-            ...DEFAULT_LOGOUT_CONFIG.frontchannel,
-            ...(parsed.frontchannel || {}),
-          },
-          session_management: {
-            ...DEFAULT_LOGOUT_CONFIG.session_management,
-            ...(parsed.session_management || {}),
-          },
-        };
-      }
-    } catch {
-      // Ignore KV errors, use defaults
-    }
-  }
-
-  return DEFAULT_LOGOUT_CONFIG;
-}
-
-/**
- * The back-channel settings for a tenant: `session.backchannel_*` as the Settings API resolves
- * them (tenant, else the older logout document, else env, else defaults). When they cannot be
- * read, the older document's values apply, as they did before the Settings API.
- */
-async function getBackchannelLogoutConfig(
-  env: Env,
-  tenantId: string,
-  base: BackchannelLogoutConfig
-): Promise<BackchannelLogoutConfig> {
+async function getLogoutConfig(env: Env, tenantId: string): Promise<LogoutConfig> {
   try {
-    // Strict: a logout document that cannot be read keeps the base values (read above), rather
-    // than reading as unset and replacing them with env or defaults.
-    const values = await resolveEffectiveSettings(env, 'session', {
-      tenantId,
-      strictLegacy: true,
-    });
-    return applyBackchannelLogoutSettings(base, values);
+    return await resolveLogoutConfig(env, tenantId);
   } catch (error) {
-    moduleLogger.warn('Back-channel logout settings could not be read', {
+    moduleLogger.warn('Logout settings could not be read', {
       error: error instanceof Error ? error.message : String(error),
     });
-    return base;
+    return DEFAULT_LOGOUT_CONFIG;
+  }
+}
+
+/** The tenant's logout webhook settings; the code defaults (off) when they cannot be read. */
+async function getLogoutWebhookConfig(env: Env, tenantId: string): Promise<LogoutWebhookConfig> {
+  try {
+    return await resolveLogoutWebhookConfig(env, tenantId);
+  } catch (error) {
+    moduleLogger.warn('Logout webhook settings could not be read', {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return DEFAULT_LOGOUT_WEBHOOK_CONFIG;
   }
 }
 
@@ -750,12 +711,12 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
     // ========================================
     // Use waitUntil() to send notifications without blocking the response
     // Get logout config for both backchannel and frontchannel
-    const logoutConfig = await getLogoutConfig(c.env);
+    const logoutConfig = await getLogoutConfig(c.env, getTenantIdFromContext(c));
 
     if (deletedSessions.length > 0 && c.executionCtx) {
       c.executionCtx.waitUntil(
         (async () => {
-          // The retry budget counts from here: loading keys and settings uses it too.
+          // The retry budget counts from here: loading keys uses it too.
           const startedAt = Date.now();
           try {
             if (!logoutConfig.backchannel.enabled) {
@@ -765,11 +726,7 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
 
             // Get signing key for logout tokens
             const tenantId = getTenantIdFromContext(c);
-            const backchannelConfig = await getBackchannelLogoutConfig(
-              c.env,
-              tenantId,
-              logoutConfig.backchannel
-            );
+            const backchannelConfig = logoutConfig.backchannel;
             const keyManagerId = c.env.KEY_MANAGER.idFromName(`${tenantId}-v3`);
             const keyManager = c.env.KEY_MANAGER.get(keyManagerId);
             const keys = await keyManager.getAllPublicKeysRpc();
@@ -891,8 +848,7 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
       c.executionCtx.waitUntil(
         (async () => {
           try {
-            // Get webhook configuration from KV
-            const webhookConfig = await getLogoutWebhookConfig(c.env.SETTINGS);
+            const webhookConfig = await getLogoutWebhookConfig(c.env, getTenantIdFromContext(c));
 
             if (!webhookConfig.enabled) {
               log.debug('Logout webhook is disabled', { action: 'LogoutWebhook' });

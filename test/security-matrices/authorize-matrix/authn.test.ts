@@ -762,10 +762,10 @@ describe('authorize-matrix authn protocol suite', () => {
     expect(trustedRun.observation.consentWrite).toBe(false);
   });
 
-  it('authn-boundary-004 tenant SSO lookup failure is ledger-observable and fails to default', async () => {
+  it('authn-boundary-004 an unreadable tenant OAuth document stops authorization with 503', async () => {
     expect.hasAssertions();
-    // tenantSso=failure behaves like the tenant default (disabled) while the failed KV
-    // read stays observable in the settings ledger.
+    // The document holds the tenant's SSO switch and its protocol settings: authorize reads the
+    // protocol settings first and stops, rather than going on without them.
     const row: Row = {
       clientSso: 'default',
       tenantSso: 'failure',
@@ -777,12 +777,14 @@ describe('authorize-matrix authn protocol suite', () => {
     const fresh = await createFreshKitApp();
     const run = await runAuthnRow(fresh.kit, fresh.app, row);
     expect(run.observation.tenantSsoReadFailed).toBe(true);
+    expect(run.observation.status).toBe(503);
+    expect(run.observation.error).toBe('temporarily_unavailable');
     expect(run.observation.codeIssued).toBe(false);
-    expect(run.observation.challengeType).toBe('login');
+    expect(run.observation.challengeType).toBeNull();
   });
 
   it.each(['omitted', 'none'])(
-    'refuses code issuance when OAuth settings fail with prompt=%s',
+    'issues no code and saves no consent when OAuth settings fail with prompt=%s',
     async (prompt) => {
       const row: Row = {
         clientSso: 'true',
@@ -794,10 +796,10 @@ describe('authorize-matrix authn protocol suite', () => {
       };
       const fresh = await createFreshKitApp();
       const run = await runAuthnRow(fresh.kit, fresh.app, row);
-      expect(run.observation.error).toBe('server_error');
+      expect(run.observation.error).toBe('temporarily_unavailable');
       expect(run.observation.tenantSsoReadFailed).toBe(true);
-      expect(run.observation.consentLookup).toBe(true);
-      expect(run.observation.consentWrite).toBe(true);
+      expect(run.observation.consentLookup).toBe(false);
+      expect(run.observation.consentWrite).toBe(false);
       expect(run.observation.codeIssued).toBe(false);
       expect(run.observation.codePresent).toBe(false);
       expect(run.observation.challengeType).toBeNull();
@@ -908,7 +910,9 @@ describe('authorize-matrix authn protocol suite', () => {
           ? `challenge:${decision.outcome.challengeType}`
           : decision.outcome.kind === 'error-redirect'
             ? `error-redirect:${decision.outcome.error}`
-            : decision.outcome.kind;
+            : decision.outcome.kind === 'direct-error'
+              ? `direct-error:${decision.outcome.status}`
+              : decision.outcome.kind;
       if (!families.has(family)) families.set(family, entry);
     }
     const domains = [

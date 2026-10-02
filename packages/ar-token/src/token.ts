@@ -37,11 +37,18 @@ import {
   deleteRefreshToken,
   // Configuration Manager (KV > env > default)
   resolveEffectiveSettings,
+  requiredAAL,
+  parseScopeAALRequirements,
+  isAssuranceLevel,
+  meetsAAL,
+  type AAL,
+  falRequiresDpop,
+  falRequiresSignedPushedRequest,
   recordRefreshTokenFamilyIndex,
   // Request-level caching (P0 KV Cache Optimization)
   getClientCached,
   loadTenantProfileCached,
-  getSystemSettingsCached,
+  getProtocolSettingsCached,
   requireDedicatedAdminDatabaseAdapter,
   resolveElevationGrantSubjectToken,
   ELEVATION_GRANT_SUBJECT_TOKEN_TYPE,
@@ -188,6 +195,9 @@ type DirectAuthChannel = 'browser' | 'native' | 'server';
 type BrowserPublicClientMode = 'strict' | 'cookie_fallback' | 'legacy';
 type BrowserRefreshTokenPolicy = 'disabled' | 'dpop_bound';
 
+/** The FAPI settings the token endpoint reads (one read per request and client). */
+const FAPI_TOKEN_SETTINGS = ['security.fapi_enabled', 'security.dpop_required'];
+
 class SecurityProfileSettingsUnavailableError extends Error {
   constructor() {
     super('Security profile settings are temporarily unavailable');
@@ -200,6 +210,12 @@ class SecurityProfileSettingsUnavailableError extends Error {
  * value (client, then tenant), else the older oauth-config value, else env, else the default.
  * The settings are read once, when a lifetime is first asked for.
  */
+/**
+ * The lifetimes of the tokens a grant issues: the client's, else the tenant's settings. An access
+ * token never outlives the tenant profile's max_token_ttl_seconds (Human Auth / AI Ephemeral Auth
+ * two-layer model; RFC 6749 §4.2.2: the authorization server controls access token lifetime),
+ * whatever the grant.
+ */
 function tokenLifetimes(
   c: Context<{ Bindings: Env }>,
   tenantId: string,
@@ -211,7 +227,13 @@ function tokenLifetimes(
     return Number((await values)[key]);
   };
   return {
-    access: () => read('oauth.access_token_expiry'),
+    access: async () => {
+      const [configured, profile] = await Promise.all([
+        read('oauth.access_token_expiry'),
+        loadTenantProfileCached(c, c.env.AUTHRIM_CONFIG, c.env, tenantId),
+      ]);
+      return Math.min(configured, profile.max_token_ttl_seconds);
+    },
     refresh: () => read('oauth.refresh_token_expiry'),
   };
 }
@@ -614,6 +636,54 @@ function formatEpochSecondsAsRfc3339(epochSeconds: number): string {
  * @param status - HTTP status code (default 400)
  * @returns Response with proper headers
  */
+/**
+ * The tenant's assurance settings for a token issued to a user, and the FAL the grant must meet:
+ * - FAL2 and above with fal2_requires_dpop (falRequiresDpop): every such token is bound to a DPoP
+ *   key, so a request without a DPoP proof is refused.
+ * - FAL3 with fal3_requires_par (falRequiresSignedPushedRequest): only a grant from a pushed,
+ *   signed authorization request (the authorization code, which authorize checked, and refresh)
+ *   meets it; any other grant is refused.
+ * Settings that cannot be read stop the request.
+ */
+async function tokenAssurance(
+  c: Context<{ Bindings: Env }>,
+  tenantId: string,
+  grant: { hasDpopProof: boolean; fromPushedSignedRequest: boolean },
+  /** Settings this request already read, so a later step never fails to read them again. */
+  readSettings?: Record<string, unknown>
+): Promise<{ settings: Record<string, unknown> } | { error: Response }> {
+  let settings: Record<string, unknown>;
+  try {
+    settings = readSettings ?? (await resolveEffectiveSettings(c.env, 'assurance', { tenantId }));
+  } catch (error) {
+    getLogger(c)
+      .module('TOKEN')
+      .error('Failed to load assurance settings', { action: 'assurance_settings' }, error as Error);
+    return {
+      error: oauthError(
+        c,
+        'temporarily_unavailable',
+        'Assurance settings are temporarily unavailable',
+        503
+      ),
+    };
+  }
+  if (falRequiresSignedPushedRequest(settings) && !grant.fromPushedSignedRequest) {
+    return {
+      error: oauthError(
+        c,
+        'unauthorized_client',
+        'This grant does not meet the required federation assurance level (FAL3)',
+        400
+      ),
+    };
+  }
+  if (falRequiresDpop(settings) && !grant.hasDpopProof) {
+    return { error: oauthError(c, 'invalid_request', 'A DPoP proof is required (FAL2)', 400) };
+  }
+  return { settings };
+}
+
 function oauthError(
   c: Context<{ Bindings: Env }>,
   error: string,
@@ -824,21 +894,19 @@ async function resolveDPoPNoncePolicy(
     return { enabled: clientOverride, source: 'client' };
   }
 
-  let settings: Awaited<ReturnType<typeof getSystemSettingsCached>> | null = null;
+  // Settings that cannot be read keep the nonce required (the default).
+  let securitySettings: Record<string, unknown> | undefined;
   try {
-    // DPoP nonce settings are not Settings API overlay fields: no overlay sections needed.
-    settings = await getSystemSettingsCached(c, c.env, {
+    const settings = await getProtocolSettingsCached(c, c.env, {
       clientId: options.clientMetadata?.client_id,
-      sections: [],
+      sections: ['security'],
     });
+    securitySettings = settings.security as Record<string, unknown>;
   } catch {
-    settings = null;
+    securitySettings = undefined;
   }
 
-  const securitySettings = getRecordSetting(settings, 'security');
-  const resourceOverrides =
-    getRecordSetting(settings, 'security.dpop_nonce_resource_overrides') ??
-    getRecordSetting(securitySettings, 'dpop_nonce_resource_overrides');
+  const resourceOverrides = getRecordSetting(securitySettings, 'dpop_nonce_resource_overrides');
   if (resourceOverrides && options.resources) {
     for (const resource of options.resources) {
       const resourceOverride = getBooleanSetting(resourceOverrides, resource);
@@ -848,9 +916,7 @@ async function resolveDPoPNoncePolicy(
     }
   }
 
-  const tenantOverride =
-    getBooleanSetting(settings, 'security.dpop_nonce_enabled') ??
-    getBooleanSetting(securitySettings, 'dpop_nonce_enabled');
+  const tenantOverride = getBooleanSetting(securitySettings, 'dpop_nonce_enabled');
   if (tenantOverride !== undefined) {
     return { enabled: tenantOverride, source: 'tenant' };
   }
@@ -897,15 +963,11 @@ async function isDPoPRequiredForTokenRequest(
 ): Promise<boolean> {
   let fapiRequiresDpop = false;
   try {
-    const settings = await getSystemSettingsCached(c, c.env, {
-      failOnError: true,
+    const { fapi } = await getProtocolSettingsCached(c, c.env, {
       clientId: clientMetadata.client_id,
-      sections: ['fapi'],
+      keys: FAPI_TOKEN_SETTINGS,
     });
-    if (settings) {
-      const fapi = (settings.fapi || {}) as { enabled?: boolean; requireDpop?: boolean };
-      fapiRequiresDpop = Boolean(fapi.requireDpop || (fapi.enabled && fapi.requireDpop !== false));
-    }
+    fapiRequiresDpop = Boolean(fapi.requireDpop || (fapi.enabled && fapi.requireDpop !== false));
   } catch (error) {
     getLogger(c)
       .module('TOKEN')
@@ -927,18 +989,18 @@ async function resolveClientAssertionValidationOptions(
   c: Context<{ Bindings: Env }>,
   clientId: string
 ): Promise<ClientAssertionValidationOptions | undefined> {
-  let settings: { fapi?: { enabled?: boolean } } | null;
+  let fapiEnabled: boolean;
   try {
     // FAPI can be set per client, so read the settings as they apply to this client.
-    settings = await getSystemSettingsCached(c, c.env, {
-      failOnError: true,
+    const { fapi } = await getProtocolSettingsCached(c, c.env, {
       clientId,
-      sections: ['fapi'],
+      keys: FAPI_TOKEN_SETTINGS,
     });
+    fapiEnabled = fapi.enabled === true;
   } catch {
     throw new SecurityProfileSettingsUnavailableError();
   }
-  if (settings?.fapi?.enabled !== true) {
+  if (!fapiEnabled) {
     return undefined;
   }
 
@@ -1250,6 +1312,10 @@ interface AuthCodeStoreResponse {
   authTime?: number;
   acr?: string;
   amr?: string[];
+  pushedSignedRequest?: boolean; // Pushed (PAR) with a signed request object (FAL3)
+  aal?: string; // The AAL the authentication reached (assurance enabled when issued)
+  assuranceAcr?: string; // The acr of that AAL, for access tokens
+  assuranceAmr?: string[]; // The methods proven (none merely registered), for access tokens
   cHash?: string; // OIDC c_hash for hybrid flows
   dpopJkt?: string; // DPoP JWK thumbprint (RFC 9449)
   sid?: string; // OIDC Session Management: Session ID for RP-Initiated Logout
@@ -1536,6 +1602,14 @@ async function handleDirectAuthFinishGrant(
     return oauthError(c, 'invalid_client', clientIdValidation.error as string, 401);
   }
 
+  // Decided before the one-time artifact is spent, so a corrected request still works: Direct Auth
+  // has no pushed request (refused at FAL3), and needs a DPoP proof at FAL2 with DPoP.
+  const assurance = await tokenAssurance(c, getTenantIdFromContext(c), {
+    hasDpopProof: Boolean(extractDPoPProof(c.req.raw.headers)),
+    fromPushedSignedRequest: false,
+  });
+  if ('error' in assurance) return assurance.error;
+
   const challengeStore = await getChallengeStoreByChallengeId(
     c.env,
     directAuthArtifact,
@@ -1586,14 +1660,18 @@ async function handleDirectAuthFinishGrant(
     return oauthError(c, 'invalid_grant', 'Direct Auth artifact PKCE verification failed', 400);
   }
 
-  return await handleAuthorizationCodeGrant(c, {
-    ...formData,
-    grant_type: 'authorization_code',
-    code: directAuthArtifact,
-    redirect_uri: DIRECT_AUTH_GRANT_REDIRECT_URI,
-    client_id,
-    code_verifier,
-  });
+  return await handleAuthorizationCodeGrant(
+    c,
+    {
+      ...formData,
+      grant_type: 'authorization_code',
+      code: directAuthArtifact,
+      redirect_uri: DIRECT_AUTH_GRANT_REDIRECT_URI,
+      client_id,
+      code_verifier,
+    },
+    assurance.settings
+  );
 }
 
 /**
@@ -1602,7 +1680,9 @@ async function handleDirectAuthFinishGrant(
  */
 async function handleAuthorizationCodeGrant(
   c: Context<{ Bindings: Env }>,
-  formData: Record<string, string>
+  formData: Record<string, string>,
+  /** The assurance settings Direct Auth finish read before spending its artifact. */
+  readAssuranceSettings?: Record<string, unknown>
 ) {
   const log = getLogger(c).module('TOKEN');
   const grant_type = formData.grant_type;
@@ -1718,17 +1798,11 @@ async function handleAuthorizationCodeGrant(
   let fapiRequiresDpop = false;
   try {
     const settings = await timeTokenRequestDiagnosticOperation(c, 'token_security_settings', () =>
-      getSystemSettingsCached(c, c.env, {
-        failOnError: true,
-        clientId: client_id,
-        sections: ['fapi'],
-      })
+      getProtocolSettingsCached(c, c.env, { clientId: client_id, keys: FAPI_TOKEN_SETTINGS })
     );
-    if (settings) {
-      const fapi = (settings.fapi || {}) as { enabled?: boolean; requireDpop?: boolean };
-      // If FAPI is enabled, default to requiring DPoP unless explicitly disabled
-      fapiRequiresDpop = Boolean(fapi.requireDpop || (fapi.enabled && fapi.requireDpop !== false));
-    }
+    const { fapi } = settings;
+    // If FAPI is enabled, default to requiring DPoP unless explicitly disabled
+    fapiRequiresDpop = Boolean(fapi.requireDpop || (fapi.enabled && fapi.requireDpop !== false));
   } catch (error) {
     log.error('Failed to load FAPI settings for DPoP', {}, error as Error);
     throw new SecurityProfileSettingsUnavailableError();
@@ -1788,6 +1862,16 @@ async function handleAuthorizationCodeGrant(
   if ((fapiRequiresDpop || clientRequiresDpop) && !dpopProof) {
     return oauthError(c, 'invalid_request', 'DPoP proof is required for this request', 400);
   }
+
+  // Whether the code meets FAL3 is in the code (authorize found the request pushed and signed):
+  // checked once it is consumed, below.
+  const assurance = await tokenAssurance(
+    c,
+    tenantId,
+    { hasDpopProof: Boolean(dpopProof), fromPushedSignedRequest: true },
+    readAssuranceSettings
+  );
+  if ('error' in assurance) return assurance.error;
 
   // Validate DPoP proof early to get jkt for authorization code binding verification
   let dpopJkt: string | undefined;
@@ -2028,6 +2112,46 @@ async function handleAuthorizationCodeGrant(
       );
     }
 
+    // FAL3: only a code from a request authorize found pushed and signed. A Direct Auth code, or
+    // one issued before FAL3 was required, has no such evidence (and is spent either way).
+    if (
+      falRequiresSignedPushedRequest(assurance.settings) &&
+      consumedData.pushedSignedRequest !== true
+    ) {
+      return oauthError(
+        c,
+        'unauthorized_client',
+        'This grant does not meet the required federation assurance level (FAL3)',
+        400
+      );
+    }
+
+    // Direct Auth issues tokens without authorize: the AAL its authentication reached (recorded on
+    // the code; none recorded is none reached) must meet what the tenant and the scopes require.
+    if (
+      redirect_uri === DIRECT_AUTH_GRANT_REDIRECT_URI &&
+      assurance.settings['assurance.enabled'] === true
+    ) {
+      const { mandatory } = requiredAAL({
+        defaultAAL: (assurance.settings['assurance.default_aal'] as AAL | undefined) ?? 'AAL1',
+        scopes: consumedData.scope.split(' ').filter(Boolean),
+        scopeRequirements: parseScopeAALRequirements(
+          assurance.settings['assurance.scope_aal_requirements']
+        ),
+        acrValues: [],
+        interactive: false,
+      });
+      const reached = isAssuranceLevel(consumedData.aal) ? consumedData.aal : 'AAL0';
+      if (!meetsAAL(reached, mandatory)) {
+        return oauthError(
+          c,
+          'invalid_grant',
+          'The authentication does not meet the required assurance level',
+          400
+        );
+      }
+    }
+
     // Map AuthCodeStore DO response to expected format
     authCodeData = {
       sub: consumedData.userId, // Map userId to sub for JWT claims
@@ -2037,6 +2161,13 @@ async function handleAuthorizationCodeGrant(
       state: consumedData.state,
       auth_time: consumedData.authTime || Math.floor(Date.now() / 1000), // OIDC Core: Time when End-User authentication occurred
       acr: consumedData.acr, // OIDC Core: Authentication Context Class Reference
+      // With assurance on when the code was issued: the AAL reached, and its acr for access tokens.
+      aal: consumedData.aal,
+      assurance_acr: consumedData.assuranceAcr,
+      pushed_signed_request: consumedData.pushedSignedRequest === true,
+      assurance_amr: Array.isArray(consumedData.assuranceAmr)
+        ? consumedData.assuranceAmr.filter((method): method is string => typeof method === 'string')
+        : undefined,
       amr: Array.isArray(consumedData.amr)
         ? consumedData.amr.filter((method): method is string => typeof method === 'string')
         : undefined, // OIDC Core: Authentication Methods References
@@ -2171,8 +2302,8 @@ async function handleAuthorizationCodeGrant(
     () =>
       Promise.all([
         isPolicyEmbeddingEnabled(c.env, getTenantIdFromContext(c)),
-        isIdLevelPermissionsEnabled(c.env),
-        isCustomClaimsEnabled(c.env),
+        isIdLevelPermissionsEnabled(c.env, getTenantIdFromContext(c)),
+        isCustomClaimsEnabled(c.env, getTenantIdFromContext(c)),
         isNativeSSOEnabled(c.env),
       ])
   ).then(
@@ -2510,6 +2641,20 @@ async function handleAuthorizationCodeGrant(
   // Add DPoP confirmation (cnf) claim if DPoP is used
   if (dpopJkt) {
     accessTokenClaims.cnf = { jkt: dpopJkt };
+  }
+
+  // Assurance (include_in_access_token): how the user authenticated, as RFC 9068 carries it.
+  if (
+    assurance.settings['assurance.enabled'] === true &&
+    assurance.settings['assurance.include_in_access_token'] === true
+  ) {
+    accessTokenClaims.auth_time = authCodeData.auth_time;
+    // The acr of the AAL reached and the methods proven (one only registered is not). A code from
+    // before assurance was on records neither, so its access token names none.
+    if (authCodeData.aal) {
+      if (authCodeData.assurance_acr) accessTokenClaims.acr = authCodeData.assurance_acr;
+      if (authCodeData.assurance_amr?.length) accessTokenClaims.amr = authCodeData.assurance_amr;
+    }
   }
 
   // RFC 9396: Add authorization_details to access token if present
@@ -2942,6 +3087,38 @@ async function handleAuthorizationCodeGrant(
               ttl: refreshTokenTtl,
               tenantId: getTenantIdFromContext(c),
               resourceAudience: audienceResolution.audience,
+              // How the user authenticated, so a refresh issues tokens that say the same and keeps
+              // to the assurance this grant met.
+              // The ID token's values as issued (after any claims-request rule omitted one), so a
+              // refreshed ID token says what this one said.
+              authContext: {
+                ...(typeof idTokenClaims.auth_time === 'number'
+                  ? { auth_time: idTokenClaims.auth_time }
+                  : {}),
+                ...(typeof idTokenClaims.acr === 'string' ? { acr: idTokenClaims.acr } : {}),
+                ...(Array.isArray(idTokenClaims.amr)
+                  ? {
+                      amr: idTokenClaims.amr.filter(
+                        (method): method is string => typeof method === 'string'
+                      ),
+                    }
+                  : {}),
+                // The access token's authentication time, as the first access token gets it
+                // whenever assurance claims are on (whatever the code recorded).
+                assurance_auth_time: authCodeData.auth_time,
+                ...(authCodeData.aal
+                  ? {
+                      aal: authCodeData.aal,
+                      ...(authCodeData.assurance_acr
+                        ? { assurance_acr: authCodeData.assurance_acr }
+                        : {}),
+                      ...(authCodeData.assurance_amr
+                        ? { assurance_amr: authCodeData.assurance_amr }
+                        : {}),
+                    }
+                  : {}),
+                ...(authCodeData.pushed_signed_request ? { pushed_signed_request: true } : {}),
+              },
             })
           );
           refreshTokenJti = familyResult.jti;
@@ -3309,6 +3486,13 @@ async function handleRefreshTokenGrant(
   // Cast to ClientMetadata for type safety
   const typedClient = clientMetadata as unknown as ClientMetadata;
   const dpopProof = extractDPoPProof(c.req.raw.headers);
+  // A refresh token continues its family's grant: whether that met FAL3 is recorded on the family,
+  // checked once it is read (below).
+  const assurance = await tokenAssurance(c, getTenantIdFromContext(c), {
+    hasDpopProof: Boolean(dpopProof),
+    fromPushedSignedRequest: true,
+  });
+  if ('error' in assurance) return assurance.error;
   if (
     typedClient.tls_client_certificate_bound_access_tokens !== true &&
     (await isDPoPRequiredForTokenRequest(c, typedClient)) &&
@@ -3336,12 +3520,10 @@ async function handleRefreshTokenGrant(
   // not received or persisted. Non-FAPI tenants keep Authrim's rotation default.
   let prohibitRefreshTokenRotation = false;
   try {
-    const settings = await getSystemSettingsCached(c, c.env, {
-      failOnError: true,
+    const { fapi } = await getProtocolSettingsCached(c, c.env, {
       clientId: client_id,
-      sections: ['fapi'],
+      keys: FAPI_TOKEN_SETTINGS,
     });
-    const fapi = (settings?.fapi || {}) as { enabled?: boolean };
     prohibitRefreshTokenRotation = fapi.enabled === true;
   } catch (error) {
     log.error('Failed to load FAPI refresh-token policy', {}, error as Error);
@@ -3491,6 +3673,22 @@ async function handleRefreshTokenGrant(
     return oauthError(c, 'invalid_grant', 'Refresh token was issued to a different client', 400);
   }
 
+  // FAL3: only a family a pushed, signed authorization request began. One another grant began, or
+  // one made before its grant recorded this, has no such evidence.
+  const familyAuthContext = refreshTokenData.auth_context;
+  if (
+    falRequiresSignedPushedRequest(assurance.settings) &&
+    familyAuthContext?.pushed_signed_request !== true
+  ) {
+    return oauthError(
+      c,
+      'unauthorized_client',
+      'This grant does not meet the required federation assurance level (FAL3)',
+      400
+    );
+  }
+  const assuranceEnabled = assurance.settings['assurance.enabled'] === true;
+
   // If scope is requested, validate it's a subset of the original scope
   let grantedScope = refreshTokenData.scope;
   if (scope) {
@@ -3526,10 +3724,8 @@ async function handleRefreshTokenGrant(
 
   // Token expiration (KV > env > default priority)
   const lifetimes = tokenLifetimes(c, tenantId, client_id);
-  const baseExpiresIn = await lifetimes.access();
-  // Apply Profile-based TTL limit (Human Auth / AI Ephemeral Auth two-layer model)
-  // RFC 6749 §4.2.2: Access token lifetime is controlled by the authorization server
-  const expiresIn = Math.min(baseExpiresIn, tenantProfile.max_token_ttl_seconds);
+  // Capped by the tenant profile's max_token_ttl_seconds (tokenLifetimes).
+  const expiresIn = await lifetimes.access();
   const accountRouteError = await resolveTrustedSubjectAccountRoute(c, refreshTokenData.sub);
   if (accountRouteError) return accountRouteError;
   const authCtx = createAccountAuthContextFromHono(c, tenantId);
@@ -3735,6 +3931,27 @@ async function handleRefreshTokenGrant(
       accessTokenClaims.cnf = { 'x5t#S256': refreshMTLSThumbprint };
     }
 
+    // Assurance (include_in_access_token): the original authentication, as the first access token
+    // had it. A family made while assurance was off records no AAL, so names no acr or methods.
+    if (
+      assuranceEnabled &&
+      assurance.settings['assurance.include_in_access_token'] === true &&
+      familyAuthContext
+    ) {
+      // The access token's own authentication time (an ID token rule may have left the ID token's
+      // out); a family another grant made has none, as its first access token had none.
+      if (familyAuthContext.assurance_auth_time) {
+        accessTokenClaims.auth_time = familyAuthContext.assurance_auth_time;
+      }
+      if (familyAuthContext.aal) {
+        if (familyAuthContext.assurance_acr)
+          accessTokenClaims.acr = familyAuthContext.assurance_acr;
+        if (familyAuthContext.assurance_amr?.length) {
+          accessTokenClaims.amr = familyAuthContext.assurance_amr;
+        }
+      }
+    }
+
     // Generate region-aware JTI for token revocation sharding
     const { jti: regionAwareJti } = await generateRegionAwareJti(c.env, getTenantIdFromContext(c));
     const result = await createAccessToken(
@@ -3762,6 +3979,15 @@ async function handleRefreshTokenGrant(
       at_hash: atHash,
       // Phase 2 RBAC: Add RBAC claims to ID token
       ...idTokenRBACClaims,
+      // With assurance on: the original authentication as the first ID token had it (OIDC Core
+      // 12.2: auth_time is the time of the original authentication).
+      ...(assuranceEnabled && familyAuthContext
+        ? {
+            ...(familyAuthContext.auth_time ? { auth_time: familyAuthContext.auth_time } : {}),
+            ...(familyAuthContext.acr ? { acr: familyAuthContext.acr } : {}),
+            ...(familyAuthContext.amr?.length ? { amr: familyAuthContext.amr } : {}),
+          }
+        : {}),
     };
 
     const mappedIdTokenClaims = await applyOIDCIdentityMappingToIDTokenClaims(
@@ -4054,6 +4280,14 @@ async function handleJWTBearerGrant(
   const scope = formData.scope;
   const requestedAudience = formData.audience;
   const requestedResource = formData.resource;
+
+  // This grant binds no token to a DPoP key and has no pushed request: refused at FAL2 and above
+  // while assurance requires DPoP, and at FAL3.
+  const assurance = await tokenAssurance(c, getTenantIdFromContext(c), {
+    hasDpopProof: false,
+    fromPushedSignedRequest: false,
+  });
+  if ('error' in assurance) return assurance.error;
 
   // Validate assertion parameter
   if (!assertion) {
@@ -4470,6 +4704,11 @@ async function handleDeviceCodeGrant(
   }
 
   const dpopProof = extractDPoPProof(c.req.raw.headers);
+  const assurance = await tokenAssurance(c, tenantId, {
+    hasDpopProof: Boolean(dpopProof),
+    fromPushedSignedRequest: false,
+  });
+  if ('error' in assurance) return assurance.error;
   if (
     (await isDPoPRequiredForTokenRequest(c, clientMetadata as unknown as ClientMetadata)) &&
     !dpopProof
@@ -4596,12 +4835,13 @@ async function handleDeviceCodeGrant(
   }
 
   // Generate ID Token
+  const deviceAuthTime = Math.floor(Date.now() / 1000);
   let idTokenClaims: Record<string, unknown> = {
     iss: getRequestIssuer(c),
     sub: metadata.sub,
     aud: client_id,
     nonce: undefined, // Device flow doesn't use nonce
-    auth_time: Math.floor(Date.now() / 1000),
+    auth_time: deviceAuthTime,
     // Phase 2 RBAC: Add RBAC claims to ID token
     ...idTokenRBACClaims,
   };
@@ -4717,6 +4957,8 @@ async function handleDeviceCodeGrant(
         ttl: refreshTokenExpiry,
         tenantId: getTenantIdFromContext(c),
         resourceAudience: audienceResolution.audience,
+        // As the first ID token had it; no pushed request (a refresh is refused at FAL3).
+        authContext: { auth_time: deviceAuthTime },
       });
       refreshJti = familyResult.jti;
       c.executionCtx.waitUntil(
@@ -5082,6 +5324,11 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
   }
 
   const dpopProof = extractDPoPProof(c.req.raw.headers);
+  const assurance = await tokenAssurance(c, tenantId, {
+    hasDpopProof: Boolean(dpopProof),
+    fromPushedSignedRequest: false,
+  });
+  if ('error' in assurance) return assurance.error;
   if (
     clientMetadata.tls_client_certificate_bound_access_tokens !== true &&
     (await isDPoPRequiredForTokenRequest(c, clientMetadata as unknown as ClientMetadata)) &&
@@ -5351,6 +5598,8 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
       ttl: refreshExpiresIn,
       tenantId: getTenantIdFromContext(c),
       resourceAudience: audienceResolution.audience,
+      // As the first ID token had it; no pushed request (a refresh is refused at FAL3).
+      ...(metadata.authenticated_acr ? { authContext: { acr: metadata.authenticated_acr } } : {}),
     });
     refreshTokenJti = cibaFamilyResult.jti;
     c.executionCtx.waitUntil(
@@ -5516,6 +5765,33 @@ async function recordTokenFamilyIndex(
 // RFC 8693: OAuth 2.0 Token Exchange
 // =============================================================================
 
+/** Resource and audience parameters accepted per request, unless set (DoS prevention). */
+const DEFAULT_TOKEN_EXCHANGE_PARAM_LIMIT = 10;
+
+/** A comma-separated setting as a list. */
+function settingList(value: unknown): string[] {
+  return typeof value === 'string'
+    ? value
+        .split(',')
+        .map((entry) => entry.trim())
+        .filter(Boolean)
+    : [];
+}
+
+/** A list setting's strings (an issuer is matched exactly, so a list keeps commas intact). */
+function stringArray(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((entry): entry is string => typeof entry === 'string')
+    : [];
+}
+
+/** A parameter limit runtime takes (a whole number within 1..100), else the default. */
+function paramLimit(value: unknown): number {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 1 && value <= 100
+    ? value
+    : DEFAULT_TOKEN_EXCHANGE_PARAM_LIMIT;
+}
+
 /**
  * Handle Token Exchange Grant (RFC 8693)
  * https://datatracker.ietf.org/doc/html/rfc8693
@@ -5532,81 +5808,26 @@ async function handleTokenExchangeGrant(
   rawBody: Record<string, string | File | (string | File)[]>
 ): Promise<Response> {
   const log = getLogger(c).module('TOKEN');
-  // Check Feature Flag and settings (hybrid: KV > env > default)
-  let tokenExchangeEnabled = c.env.ENABLE_TOKEN_EXCHANGE === 'true';
-  // Default: only access_token is allowed
-  let allowedSubjectTokenTypes: string[] = ['access_token'];
-  // Default parameter limits (DoS prevention)
-  let maxResourceParams = 10;
-  let maxAudienceParams = 10;
-  // ID-JAG (Identity Assertion Authorization Grant) configuration
-  // draft-ietf-oauth-identity-assertion-authz-grant
-  const idJagConfig: IdJagConfig = { ...DEFAULT_ID_JAG_CONFIG };
-
-  // Parse env variables
-  if (c.env.TOKEN_EXCHANGE_ALLOWED_TYPES) {
-    allowedSubjectTokenTypes = c.env.TOKEN_EXCHANGE_ALLOWED_TYPES.split(',').map((t) => t.trim());
-  }
-  if (c.env.TOKEN_EXCHANGE_MAX_RESOURCE_PARAMS) {
-    const parsed = parseInt(c.env.TOKEN_EXCHANGE_MAX_RESOURCE_PARAMS, 10);
-    if (!isNaN(parsed) && parsed >= 1 && parsed <= 100) {
-      maxResourceParams = parsed;
-    }
-  }
-  if (c.env.TOKEN_EXCHANGE_MAX_AUDIENCE_PARAMS) {
-    const parsed = parseInt(c.env.TOKEN_EXCHANGE_MAX_AUDIENCE_PARAMS, 10);
-    if (!isNaN(parsed) && parsed >= 1 && parsed <= 100) {
-      maxAudienceParams = parsed;
-    }
-  }
-
-  // KV takes priority over env - request-level cached. Read fail-closed: settings that cannot be
-  // read must not fall back to an older or env value that enables the grant.
+  // Token Exchange and ID-JAG settings, as the Settings API resolves them for the tenant (its
+  // values, else the platform's, else the older system settings, else env, else the defaults).
+  // Read fail-closed: settings that cannot be read must not fall back to values that enable the
+  // grant.
+  const settingsTenantId = getTenantIdFromContext(c);
+  let tokens: Record<string, unknown>;
+  let limits: Record<string, unknown>;
+  let flags: Record<string, unknown>;
   try {
-    const settings = await getSystemSettingsCached(c, c.env, {
-      failOnError: true,
-      sections: ['oidc'],
-    });
-    if (settings) {
-      if (settings.oidc?.tokenExchange?.enabled !== undefined) {
-        tokenExchangeEnabled = settings.oidc.tokenExchange.enabled === true;
-      }
-      if (Array.isArray(settings.oidc?.tokenExchange?.allowedSubjectTokenTypes)) {
-        allowedSubjectTokenTypes = settings.oidc.tokenExchange.allowedSubjectTokenTypes as string[];
-      }
-      if (typeof settings.oidc?.tokenExchange?.maxResourceParams === 'number') {
-        const value = settings.oidc.tokenExchange.maxResourceParams;
-        if (value >= 1 && value <= 100) {
-          maxResourceParams = value;
-        }
-      }
-      if (typeof settings.oidc?.tokenExchange?.maxAudienceParams === 'number') {
-        const value = settings.oidc.tokenExchange.maxAudienceParams;
-        if (value >= 1 && value <= 100) {
-          maxAudienceParams = value;
-        }
-      }
-      // ID-JAG (Identity Assertion Authorization Grant) configuration
-      // draft-ietf-oauth-identity-assertion-authz-grant
-      const idJagSettings = settings.oidc?.tokenExchange?.idJag;
-      if (idJagSettings) {
-        if (idJagSettings.enabled === true) {
-          idJagConfig.enabled = true;
-        }
-        if (Array.isArray(idJagSettings.allowedIssuers)) {
-          idJagConfig.allowedIssuers = idJagSettings.allowedIssuers;
-        }
-        if (typeof idJagSettings.maxTokenLifetime === 'number') {
-          idJagConfig.maxTokenLifetime = idJagSettings.maxTokenLifetime;
-        }
-        if (typeof idJagSettings.includeTenantClaim === 'boolean') {
-          idJagConfig.includeTenantClaim = idJagSettings.includeTenantClaim;
-        }
-        if (typeof idJagSettings.requireConfidentialClient === 'boolean') {
-          idJagConfig.requireConfidentialClient = idJagSettings.requireConfidentialClient;
-        }
-      }
-    }
+    [tokens, limits, flags] = await Promise.all([
+      resolveEffectiveSettings(c.env, 'tokens', {
+        tenantId: settingsTenantId,
+      }),
+      resolveEffectiveSettings(c.env, 'limits', {
+        tenantId: settingsTenantId,
+      }),
+      resolveEffectiveSettings(c.env, 'feature-flags', {
+        tenantId: settingsTenantId,
+      }),
+    ]);
   } catch (error) {
     log.error('Token exchange settings could not be read', {}, error as Error);
     return c.json(
@@ -5617,11 +5838,30 @@ async function handleTokenExchangeGrant(
       503
     );
   }
-
-  // Check env fallback for ID-JAG enabled flag
-  if (!idJagConfig.enabled && c.env.ENABLE_ID_JAG === 'true') {
-    idJagConfig.enabled = true;
-  }
+  const tokenExchangeEnabled = tokens['tokens.exchange_enabled'] === true;
+  const allowedSubjectTokenTypes = settingList(
+    tokens['tokens.exchange_allowed_subject_token_types']
+  );
+  const maxResourceParams = paramLimit(limits['limits.token_exchange_max_resource_params']);
+  const maxAudienceParams = paramLimit(limits['limits.token_exchange_max_audience_params']);
+  // ID-JAG (Identity Assertion Authorization Grant)
+  // draft-ietf-oauth-identity-assertion-authz-grant
+  const idJagConfig: IdJagConfig = {
+    enabled: flags['feature.enable_id_jag'] === true,
+    allowedIssuers: stringArray(tokens['tokens.id_jag_allowed_issuers']),
+    maxTokenLifetime:
+      typeof tokens['tokens.id_jag_max_token_lifetime'] === 'number'
+        ? tokens['tokens.id_jag_max_token_lifetime']
+        : DEFAULT_ID_JAG_CONFIG.maxTokenLifetime,
+    includeTenantClaim:
+      typeof tokens['tokens.id_jag_include_tenant_claim'] === 'boolean'
+        ? tokens['tokens.id_jag_include_tenant_claim']
+        : DEFAULT_ID_JAG_CONFIG.includeTenantClaim,
+    requireConfidentialClient:
+      typeof tokens['tokens.id_jag_require_confidential_client'] === 'boolean'
+        ? tokens['tokens.id_jag_require_confidential_client']
+        : DEFAULT_ID_JAG_CONFIG.requireConfidentialClient,
+  };
 
   if (!tokenExchangeEnabled) {
     return c.json(
@@ -5817,6 +6057,11 @@ async function handleTokenExchangeGrant(
   // Cast to ClientMetadata for type safety
   const typedClient = clientMetadata as unknown as ClientMetadata;
   const dpopProof = extractDPoPProof(c.req.raw.headers);
+  const assurance = await tokenAssurance(c, getTenantIdFromContext(c), {
+    hasDpopProof: Boolean(dpopProof),
+    fromPushedSignedRequest: false,
+  });
+  if ('error' in assurance) return assurance.error;
   if ((await isDPoPRequiredForTokenRequest(c, typedClient)) && !dpopProof) {
     return oauthError(c, 'invalid_request', 'DPoP proof is required for this request', 400);
   }
@@ -6525,10 +6770,8 @@ async function handleTokenExchangeGrant(
   }
 
   const lifetimes = tokenLifetimes(c, tenantId, client_id);
-  const baseExpiresIn = await lifetimes.access();
-  // Apply Profile-based TTL limit (Human Auth / AI Ephemeral Auth two-layer model)
-  // RFC 6749 §4.2.2: Access token lifetime is controlled by the authorization server
-  const expiresIn = Math.min(baseExpiresIn, tenantProfile.max_token_ttl_seconds);
+  // Capped by the tenant profile's max_token_ttl_seconds (tokenLifetimes).
+  const expiresIn = await lifetimes.access();
 
   // DPoP support
   let dpopJkt: string | undefined;
@@ -6809,6 +7052,13 @@ async function handleNativeSSOTokenExchange(
       'dpop_proof_missing'
     );
   }
+
+  // Native SSO has no pushed request of its own: refused at FAL3.
+  const assurance = await tokenAssurance(c, tenantId, {
+    hasDpopProof: true,
+    fromPushedSignedRequest: false,
+  });
+  if ('error' in assurance) return assurance.error;
 
   const dpopValidation = await validateDPoPProof(
     dpopProof,
@@ -7413,6 +7663,11 @@ async function handleNativeSSOTokenExchange(
           ttl: refreshTokenExpiresIn,
           tenantId,
           resourceAudience: accessTokenAudience,
+          // As the new ID token has it; no pushed request (a refresh is refused at FAL3).
+          authContext: {
+            ...(typeof authTime === 'number' ? { auth_time: authTime } : {}),
+            ...(typeof acr === 'string' ? { acr } : {}),
+          },
         });
         refreshTokenJti = familyResult.jti;
         rtv = familyResult.family.version;
@@ -7608,14 +7863,11 @@ async function handleClientCredentialsGrant(
   let clientCredentialsEnabled = c.env.ENABLE_CLIENT_CREDENTIALS === 'true';
   try {
     // Fail-closed: settings that cannot be read must not fall back to an enabling env value.
-    const settings = await getSystemSettingsCached(c, c.env, {
-      failOnError: true,
-      sections: ['oidc'],
+    const { oidc } = await getProtocolSettingsCached(c, c.env, {
+      keys: ['feature.enable_client_credentials'],
     });
-    if (settings) {
-      if (settings.oidc?.clientCredentials?.enabled !== undefined) {
-        clientCredentialsEnabled = settings.oidc.clientCredentials.enabled === true;
-      }
+    if (oidc.clientCredentials?.enabled !== undefined) {
+      clientCredentialsEnabled = oidc.clientCredentials.enabled === true;
     }
   } catch (error) {
     log.error('Client credentials settings could not be read', {}, error as Error);
@@ -7817,10 +8069,8 @@ async function handleClientCredentialsGrant(
   }
 
   const lifetimes = tokenLifetimes(c, tenantId, client_id);
-  const baseExpiresIn = await lifetimes.access();
-  // Apply Profile-based TTL limit (Human Auth / AI Ephemeral Auth two-layer model)
-  // RFC 6749 §4.2.2: Access token lifetime is controlled by the authorization server
-  const expiresIn = Math.min(baseExpiresIn, tenantProfile.max_token_ttl_seconds);
+  // Capped by the tenant profile's max_token_ttl_seconds (tokenLifetimes).
+  const expiresIn = await lifetimes.access();
 
   // DPoP support
   let dpopJkt: string | undefined;

@@ -59,13 +59,27 @@ function createContext(
     form?: Record<string, string>;
     offerStub?: OfferStub;
     sign?: ReturnType<typeof vi.fn>;
+    /** The tenant's assurance settings document, or a failure to read it. */
+    assurance?: Record<string, unknown> | Error;
   } = {}
 ): Context<{ Bindings: Env }> {
   const offerStub = options.offerStub ?? createOfferStub();
   const sign = options.sign ?? vi.fn().mockResolvedValue({ token: 'signed-access-token' });
   mocks.getCredentialOfferStoreById.mockReturnValue({ stub: offerStub });
 
+  const assurance = options.assurance;
   const env = {
+    ...(assurance
+      ? {
+          SETTINGS: {
+            get: vi.fn(async (key: string) => {
+              if (key !== 'settings:tenant:tenant-1:assurance') return null;
+              if (assurance instanceof Error) throw assurance;
+              return JSON.stringify(assurance);
+            }),
+          },
+        }
+      : {}),
     VC_TRANSACTION_CODE_HMAC_SECRET: '0123456789abcdef0123456789abcdef',
     KEY_MANAGER: {
       idFromName: vi.fn().mockReturnValue({ toString: () => 'key-manager-id' }),
@@ -122,6 +136,26 @@ describe('VCI token route', () => {
     expect(response.status).toBe(400);
     expect((await response.json()) as { error: string }).toMatchObject({ error: expectedError });
   });
+
+  it.each([
+    ['FAL2 with DPoP', { 'assurance.enabled': true, 'assurance.default_fal': 'FAL2' }, 400],
+    ['FAL3', { 'assurance.enabled': true, 'assurance.default_fal': 'FAL3' }, 400],
+    ['unreadable assurance settings', new Error('KV unavailable'), 503],
+  ])(
+    'refuses a pre-authorized code at %s before the offer is reserved',
+    async (_label, assurance, status) => {
+      const offerStub = createOfferStub();
+      const response = await vciTokenRoute(createContext({ assurance, offerStub }));
+
+      expect(response.status).toBe(status);
+      if (status === 400) {
+        expect((await response.json()) as { error: string }).toMatchObject({
+          error: 'unauthorized_client',
+        });
+      }
+      expect(offerStub.fetch).not.toHaveBeenCalled();
+    }
+  );
 
   it('rejects malformed and unknown single-use codes without touching a shard', async () => {
     mocks.parsePreAuthorizedCode.mockReturnValue(null);

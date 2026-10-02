@@ -364,60 +364,44 @@ export async function hasIdLevelPermission(
 // =============================================================================
 
 /**
- * Check if custom claims feature is enabled
- *
- * @param env - Environment bindings
- * @returns true if custom claims are enabled
+ * A token issuance switch for a tenant (`feature.*`, as the Settings API resolves it: tenant,
+ * platform, env, default). Off when it cannot be read: env does not turn on what a saved value
+ * may have turned off.
  */
-export async function isCustomClaimsEnabled(env: {
-  SETTINGS?: KVNamespace;
-  ENABLE_CUSTOM_CLAIMS?: string;
-}): Promise<boolean> {
-  // Check KV first (dynamic override)
-  if (env.SETTINGS) {
-    try {
-      const kvValue = await env.SETTINGS.get('policy:flags:ENABLE_CUSTOM_CLAIMS');
-      if (kvValue !== null) {
-        return kvValue.toLowerCase() === 'true' || kvValue === '1';
-      }
-    } catch {
-      // Fall through to environment variable
-    }
+async function tokenFeatureEnabled(
+  env: EffectiveSettingsEnv,
+  tenantId: string | undefined,
+  key: string
+): Promise<boolean> {
+  try {
+    const { values } = tenantId
+      ? await resolveEffectiveSettingsWithSources(env, 'feature-flags', { tenantId })
+      : await resolvePlatformSettingsWithSources(env, 'feature-flags', {});
+    return values[key] === true;
+  } catch {
+    return false;
   }
-
-  // Fall back to environment variable (default: false)
-  return env.ENABLE_CUSTOM_CLAIMS === 'true';
 }
 
-/**
- * Check if ID-level permissions feature is enabled
- *
- * @param env - Environment bindings
- * @returns true if ID-level permissions are enabled
- */
-export async function isIdLevelPermissionsEnabled(env: {
-  SETTINGS?: KVNamespace;
-  ENABLE_ID_LEVEL_PERMISSIONS?: string;
-}): Promise<boolean> {
-  // Check KV first (dynamic override)
-  if (env.SETTINGS) {
-    try {
-      const kvValue = await env.SETTINGS.get('policy:flags:ENABLE_ID_LEVEL_PERMISSIONS');
-      if (kvValue !== null) {
-        return kvValue.toLowerCase() === 'true' || kvValue === '1';
-      }
-    } catch {
-      // Fall through to environment variable
-    }
-  }
+/** Whether the token claim rules add claims to access tokens (`feature.enable_custom_claims`). */
+export async function isCustomClaimsEnabled(
+  env: EffectiveSettingsEnv & { ENABLE_CUSTOM_CLAIMS?: string },
+  tenantId?: string
+): Promise<boolean> {
+  return tokenFeatureEnabled(env, tenantId, 'feature.enable_custom_claims');
+}
 
-  // Fall back to environment variable (default: false)
-  return env.ENABLE_ID_LEVEL_PERMISSIONS === 'true';
+/** Whether ID-level permissions are embedded (`feature.enable_id_level_permissions`). */
+export async function isIdLevelPermissionsEnabled(
+  env: EffectiveSettingsEnv & { ENABLE_ID_LEVEL_PERMISSIONS?: string },
+  tenantId?: string
+): Promise<boolean> {
+  return tokenFeatureEnabled(env, tenantId, 'feature.enable_id_level_permissions');
 }
 
 /**
  * Token embedding limits for a tenant: `limits.max_*` as the Settings API resolves them (tenant,
- * else platform, else the older `config:max_*`, else the environment variables, else defaults).
+ * else platform, else the environment variables, else defaults).
  * Without a tenant, the platform's values. The defaults when the settings cannot be read.
  */
 export async function getEmbeddingLimits(
@@ -429,15 +413,12 @@ export async function getEmbeddingLimits(
     max_resource_permissions: 100,
     max_custom_claims: 20,
   };
-  const keys = Object.keys(limits).map((name) => `limits.${name}`);
   try {
     const { values } = tenantId
       ? await resolveEffectiveSettingsWithSources(env, 'limits', {
           tenantId,
-          keys,
-          strictLegacy: true,
         })
-      : await resolvePlatformSettingsWithSources(env, 'limits', { keys, strictLegacy: true });
+      : await resolvePlatformSettingsWithSources(env, 'limits', {});
     for (const name of Object.keys(limits) as Array<keyof TokenEmbeddingLimits>) {
       const value = values[`limits.${name}`];
       if (typeof value === 'number' && Number.isSafeInteger(value) && value > 0) {

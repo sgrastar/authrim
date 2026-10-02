@@ -1,8 +1,10 @@
 import type { Messages } from './ja';
 import { enSettings } from './settings/en';
+import { enCompliance } from './compliance/en';
 
 export const en = {
 	...enSettings,
+	...enCompliance,
 	'app.adminLabel': 'Admin',
 	'app.env.dev': 'Development',
 	'app.env.prod': 'Production',

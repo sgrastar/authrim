@@ -1,9 +1,11 @@
 import { sveltekit } from '@sveltejs/kit/vite';
 import { defineConfig } from 'vite';
 import UnoCSS from 'unocss/vite';
+import { svelteTesting } from '@testing-library/svelte/vite';
 
 export default defineConfig({
-	plugins: [UnoCSS(), sveltekit()],
+	// svelteTesting: under Vitest only, component tests mount Svelte's browser build.
+	plugins: [UnoCSS(), sveltekit(), svelteTesting()],
 	// GitHub Actions processes each of the Admin UI's hundreds of output lines individually.
 	// Keep warnings and errors while avoiding CI log transport becoming the build bottleneck.
 	logLevel: process.env.CI ? 'warn' : 'info',

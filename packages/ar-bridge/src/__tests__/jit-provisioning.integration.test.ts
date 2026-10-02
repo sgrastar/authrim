@@ -229,76 +229,71 @@ const {
 });
 
 // Mock @authrim/ar-lib-core
-vi.mock('@authrim/ar-lib-core', () => ({
-  D1Adapter: MockD1Adapter,
-  // The saved document as it is; JIT enablement as the Settings API resolves it with nothing set
-  // for the tenant: the saved document's `enabled`, else the default (on).
-  legacyJitProvisioningValues: (raw: string | null) => {
-    if (raw === null) return {};
-    let saved: { enabled?: unknown } | null = null;
-    try {
-      saved = JSON.parse(raw) as { enabled?: unknown };
-    } catch {
-      saved = null;
-    }
-    return { 'external_idp.jit_provisioning_enabled': saved?.enabled === true };
-  },
-  parseSettingsDocument: (raw: string | null | undefined) =>
-    raw === null || raw === undefined ? null : (JSON.parse(raw) as Record<string, unknown>),
-  resolveEffectiveSettings: vi.fn(
-    async (env: { SETTINGS?: { get: (key: string) => Promise<string | null> } }) => {
-      const raw = await env.SETTINGS?.get('jit_provisioning_config');
-      const saved = raw ? (JSON.parse(raw) as { enabled?: unknown }) : null;
-      return { 'external_idp.jit_provisioning_enabled': saved ? saved.enabled === true : true };
-    }
-  ),
-  CanonicalRuntimeUserStore: MockCanonicalRuntimeUserStore,
-  ensureDatabaseAdapter: vi.fn().mockImplementation((db: unknown) => new MockD1Adapter({ db })),
-  createLogger: () => ({
-    module: () => ({
-      info: vi.fn(),
-      warn: vi.fn(),
-      error: vi.fn(),
-      debug: vi.fn(),
+vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@authrim/ar-lib-core')>();
+  return {
+    D1Adapter: MockD1Adapter,
+    // JIT settings as the Settings API resolves them with nothing set for the tenant or platform:
+    // the saved document (as the older reader maps it), else the defaults.
+    JIT_PROVISIONING_SETTING_KEYS: actual.JIT_PROVISIONING_SETTING_KEYS,
+    updateProfileOnLogin: actual.updateProfileOnLogin,
+    resolveEffectiveSettings: vi.fn(
+      async (env: { SETTINGS?: { get: (key: string) => Promise<string | null> } }) => {
+        const raw = await env.SETTINGS?.get('jit_provisioning_config');
+        return {
+          ...actual.EXTERNAL_IDP_DEFAULTS,
+          ...actual.legacyJitProvisioningValues(raw ?? null),
+        };
+      }
+    ),
+    CanonicalRuntimeUserStore: MockCanonicalRuntimeUserStore,
+    ensureDatabaseAdapter: vi.fn().mockImplementation((db: unknown) => new MockD1Adapter({ db })),
+    createLogger: () => ({
+      module: () => ({
+        info: vi.fn(),
+        warn: vi.fn(),
+        error: vi.fn(),
+        debug: vi.fn(),
+      }),
     }),
-  }),
-  createRuleEvaluator: vi.fn(() => mockRuleEvaluator),
-  resolveOrgByDomainHash: mockResolveOrgByDomainHash,
-  resolveAllOrgsByDomainHash: vi.fn().mockResolvedValue([]),
-  joinOrganization: mockJoinOrganization,
-  assignRoleToUser: mockAssignRoleToUser,
-  generateEmailDomainHashWithVersion: mockGenerateEmailDomainHash,
-  getEmailDomainHashConfig: vi.fn().mockResolvedValue({
-    current_version: 1,
-    secrets: { 1: 'test-secret-key-16+' },
-    migration_in_progress: false,
-    deprecated_versions: [],
-  }),
-  getJITProvisioningConfig: mockGetJITConfig,
-  validateCustomClaimWrite: mockValidateCustomClaimWrite,
-  persistCustomClaimWrite: mockPersistCustomClaimWrite,
-  syncUserLifecycleState: mockSyncUserLifecycleState,
-  createAuditLog: mockCreateAuditLog,
-  resolveAccountDataContextByIdentifier: mockResolveAccountDataContextByIdentifier,
-  resolveTenantMetadataContext: mockResolveTenantMetadataContext,
-  resolveCustomClaimRuntimeSourcesFromEnv: vi.fn(async (env: Record<string, unknown>) => ({
-    schemaDb: env.DB,
-    nonPiiDb: env.DB,
-    piiDb: env.DB_PII ?? null,
-  })),
-  resolveTenantUserStoreSourcesFromEnv: vi.fn(async (env: Record<string, unknown>) => ({
-    coreDb: env.DB,
-    piiDb: env.DB_PII ?? env.DB,
-  })),
-  DEFAULT_JIT_CONFIG: {
-    enabled: true,
-    auto_create_org_on_domain_match: false,
-    join_all_matching_orgs: false,
-    allow_user_without_org: true,
-    default_role_id: 'role_end_user',
-    allow_unverified_domain_mappings: false,
-  },
-}));
+    createRuleEvaluator: vi.fn(() => mockRuleEvaluator),
+    resolveOrgByDomainHash: mockResolveOrgByDomainHash,
+    resolveAllOrgsByDomainHash: vi.fn().mockResolvedValue([]),
+    joinOrganization: mockJoinOrganization,
+    assignRoleToUser: mockAssignRoleToUser,
+    generateEmailDomainHashWithVersion: mockGenerateEmailDomainHash,
+    getEmailDomainHashConfig: vi.fn().mockResolvedValue({
+      current_version: 1,
+      secrets: { 1: 'test-secret-key-16+' },
+      migration_in_progress: false,
+      deprecated_versions: [],
+    }),
+    getJITProvisioningConfig: mockGetJITConfig,
+    validateCustomClaimWrite: mockValidateCustomClaimWrite,
+    persistCustomClaimWrite: mockPersistCustomClaimWrite,
+    syncUserLifecycleState: mockSyncUserLifecycleState,
+    createAuditLog: mockCreateAuditLog,
+    resolveAccountDataContextByIdentifier: mockResolveAccountDataContextByIdentifier,
+    resolveTenantMetadataContext: mockResolveTenantMetadataContext,
+    resolveCustomClaimRuntimeSourcesFromEnv: vi.fn(async (env: Record<string, unknown>) => ({
+      schemaDb: env.DB,
+      nonPiiDb: env.DB,
+      piiDb: env.DB_PII ?? null,
+    })),
+    resolveTenantUserStoreSourcesFromEnv: vi.fn(async (env: Record<string, unknown>) => ({
+      coreDb: env.DB,
+      piiDb: env.DB_PII ?? env.DB,
+    })),
+    DEFAULT_JIT_CONFIG: {
+      enabled: true,
+      auto_create_org_on_domain_match: false,
+      join_all_matching_orgs: false,
+      allow_user_without_org: true,
+      default_role_id: 'role_end_user',
+      allow_unverified_domain_mappings: false,
+    },
+  };
+});
 
 // Mock linked identity store
 vi.mock('../services/linked-identity-store', () => ({

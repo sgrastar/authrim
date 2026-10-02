@@ -711,52 +711,48 @@ export class HyperdriveAuditAdapter implements IAuditStorageAdapter {
     tenantId?: string,
     batchSize: number = 1000
   ): Promise<EventLogEntry[] | PIILogEntry[]> {
-    try {
-      const client = await this.getClient();
-      const table = logType === 'event' ? 'event_log' : 'pii_log';
-      const selectColumns =
-        logType === 'event'
-          ? `id, tenant_id, event_type, event_category, result, severity,
-             error_code, error_message, anonymized_user_id, client_id,
-             session_id, request_id, duration_ms, details_r2_key, details_json,
-             retention_until, created_at`
-          : `id, tenant_id, user_id, anonymized_user_id, change_type, affected_fields,
-             values_r2_key, values_encrypted, encryption_key_id, encryption_iv,
-             actor_user_id, actor_type, request_id, legal_basis, consent_reference,
-             retention_until, created_at`;
+    const client = await this.getClient();
+    const table = logType === 'event' ? 'event_log' : 'pii_log';
+    const selectColumns =
+      logType === 'event'
+        ? `id, tenant_id, event_type, event_category, result, severity,
+           error_code, error_message, anonymized_user_id, client_id,
+           session_id, request_id, duration_ms, details_r2_key, details_json,
+           retention_until, created_at`
+        : `id, tenant_id, user_id, anonymized_user_id, change_type, affected_fields,
+           values_r2_key, values_encrypted, encryption_key_id, encryption_iv,
+           actor_user_id, actor_type, request_id, legal_basis, consent_reference,
+           retention_until, created_at`;
 
-      let sql: string;
-      let params: unknown[];
-      if (tenantId) {
-        sql = `
-          SELECT ${selectColumns}
-          FROM ${this.schema}.${table}
-          WHERE retention_until < $1 AND tenant_id = $2
-          ORDER BY retention_until ASC, created_at ASC, id ASC
-          LIMIT $3
-        `;
-        params = [beforeTime, tenantId, batchSize];
-      } else {
-        sql = `
-          SELECT ${selectColumns}
-          FROM ${this.schema}.${table}
-          WHERE retention_until < $1
-          ORDER BY retention_until ASC, created_at ASC, id ASC
-          LIMIT $2
-        `;
-        params = [beforeTime, batchSize];
-      }
-
-      if (logType === 'event') {
-        const result = await client.query<EventLogDbRow>(sql, params);
-        return result.rows.map((row) => this.mapEventLogRow(row));
-      }
-
-      const result = await client.query<PIILogDbRow>(sql, params);
-      return result.rows.map((row) => this.mapPIILogRow(row));
-    } catch {
-      return [];
+    let sql: string;
+    let params: unknown[];
+    if (tenantId) {
+      sql = `
+        SELECT ${selectColumns}
+        FROM ${this.schema}.${table}
+        WHERE retention_until < $1 AND tenant_id = $2
+        ORDER BY retention_until ASC, created_at ASC, id ASC
+        LIMIT $3
+      `;
+      params = [beforeTime, tenantId, batchSize];
+    } else {
+      sql = `
+        SELECT ${selectColumns}
+        FROM ${this.schema}.${table}
+        WHERE retention_until < $1
+        ORDER BY retention_until ASC, created_at ASC, id ASC
+        LIMIT $2
+      `;
+      params = [beforeTime, batchSize];
     }
+
+    if (logType === 'event') {
+      const result = await client.query<EventLogDbRow>(sql, params);
+      return result.rows.map((row) => this.mapEventLogRow(row));
+    }
+
+    const result = await client.query<PIILogDbRow>(sql, params);
+    return result.rows.map((row) => this.mapPIILogRow(row));
   }
 
   private async deleteByRetentionInternal(
@@ -765,46 +761,42 @@ export class HyperdriveAuditAdapter implements IAuditStorageAdapter {
     tenantId?: string,
     batchSize: number = 1000
   ): Promise<number> {
-    try {
-      const client = await this.getClient();
-      const table = logType === 'event' ? 'event_log' : 'pii_log';
+    const client = await this.getClient();
+    const table = logType === 'event' ? 'event_log' : 'pii_log';
 
-      let sql: string;
-      let params: unknown[];
+    let sql: string;
+    let params: unknown[];
 
-      if (tenantId) {
-        sql = `
-          WITH doomed AS (
-            SELECT ctid
-            FROM ${this.schema}.${table}
-            WHERE retention_until < $1 AND tenant_id = $2
-            ORDER BY retention_until ASC, created_at ASC, id ASC
-            LIMIT $3
-          )
-          DELETE FROM ${this.schema}.${table}
-          WHERE ctid IN (SELECT ctid FROM doomed)
-        `;
-        params = [beforeTime, tenantId, batchSize];
-      } else {
-        sql = `
-          WITH doomed AS (
-            SELECT ctid
-            FROM ${this.schema}.${table}
-            WHERE retention_until < $1
-            ORDER BY retention_until ASC, created_at ASC, id ASC
-            LIMIT $2
-          )
-          DELETE FROM ${this.schema}.${table}
-          WHERE ctid IN (SELECT ctid FROM doomed)
-        `;
-        params = [beforeTime, batchSize];
-      }
-
-      const result = await client.query(sql, params);
-      return result.rowCount;
-    } catch {
-      return 0;
+    if (tenantId) {
+      sql = `
+        WITH doomed AS (
+          SELECT ctid
+          FROM ${this.schema}.${table}
+          WHERE retention_until < $1 AND tenant_id = $2
+          ORDER BY retention_until ASC, created_at ASC, id ASC
+          LIMIT $3
+        )
+        DELETE FROM ${this.schema}.${table}
+        WHERE ctid IN (SELECT ctid FROM doomed)
+      `;
+      params = [beforeTime, tenantId, batchSize];
+    } else {
+      sql = `
+        WITH doomed AS (
+          SELECT ctid
+          FROM ${this.schema}.${table}
+          WHERE retention_until < $1
+          ORDER BY retention_until ASC, created_at ASC, id ASC
+          LIMIT $2
+        )
+        DELETE FROM ${this.schema}.${table}
+        WHERE ctid IN (SELECT ctid FROM doomed)
+      `;
+      params = [beforeTime, batchSize];
     }
+
+    const result = await client.query(sql, params);
+    return result.rowCount;
   }
 
   // ---------------------------------------------------------------------------

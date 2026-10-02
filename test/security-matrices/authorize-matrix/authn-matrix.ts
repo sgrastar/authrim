@@ -119,6 +119,13 @@ export function authnMutationCandidates(row: Row): AuthnMutationCandidate[] {
   const maxAgeForces = maxAge === 'zero' || maxAge === 'exceeded';
   const candidates: AuthnMutationCandidate[] = [];
 
+  if (row.tenantSso === 'failure' && maxAge !== 'malformed') {
+    // Going on as if the unreadable protocol settings were not saved.
+    candidates.push({
+      id: 'authorize:continue-without-protocol-settings',
+      mutantRow: { ...row, tenantSso: 'default' },
+    });
+  }
   if (maxAge === 'malformed') {
     candidates.push({
       id: 'authorize:accept-malformed-max-age',

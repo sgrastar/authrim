@@ -31,6 +31,7 @@
 	import ConsentPolicyTargetSettings from '$lib/components/admin/ConsentPolicyTargetSettings.svelte';
 	import FlowAssignmentSettings from '$lib/components/admin/FlowAssignmentSettings.svelte';
 	import LoginProviderIconPicker from '$lib/components/admin/LoginProviderIconPicker.svelte';
+	import ProfileUpdateFieldsEditor from '$lib/components/admin/ProfileUpdateFieldsEditor.svelte';
 	import SAMLMappingSetReleasePolicy from '$lib/components/saml/SAMLMappingSetReleasePolicy.svelte';
 	import {
 		buildSAMLFieldReleasePolicies,
@@ -108,6 +109,7 @@
 	let authnContextPolicyMode = $state<'observe' | 'require_any'>('observe');
 	let jitEmailLinkingPolicy = $state<SAMLJitEmailLinkingPolicy>('email_linking');
 	let allowSyntheticEmailFallback = $state(false);
+	let profileUpdateFields = $state<string[] | null>(null);
 	let allowedAuthnContextClassRefs = $state(
 		'urn:oasis:names:tc:SAML:2.0:ac:classes:PasswordProtectedTransport'
 	);
@@ -210,6 +212,7 @@
 		authnContextPolicyMode = data.config.authnContextPolicy?.mode || 'observe';
 		jitEmailLinkingPolicy = data.config.jitEmailLinkingPolicy || 'email_linking';
 		allowSyntheticEmailFallback = data.config.allowSyntheticEmailFallback === true;
+		profileUpdateFields = data.config.profileUpdateFields ?? null;
 		allowedAuthnContextClassRefs = (
 			data.config.authnContextPolicy?.allowedClassRefs?.length
 				? data.config.authnContextPolicy.allowedClassRefs
@@ -533,6 +536,7 @@
 				logoutRequestSignaturePolicy,
 				jitEmailLinkingPolicy,
 				allowSyntheticEmailFallback,
+				profileUpdateFields,
 				authnContextPolicy: {
 					mode: authnContextPolicyMode,
 					allowedClassRefs: allowedAuthnContextClassRefs
@@ -1131,6 +1135,10 @@
 							<p class="field-hint">
 								{$LL.admin_saml_detail_synthetic_email_hint()}
 							</p>
+						</div>
+
+						<div class="admin-field admin-field--full">
+							<ProfileUpdateFieldsEditor bind:value={profileUpdateFields} />
 						</div>
 
 						<div class="admin-field">

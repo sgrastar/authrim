@@ -230,6 +230,32 @@ function buildCompositeRBACCacheKey(subjectId: string, tenantId: string): string
 }
 
 /**
+ * Drops every cached RBAC entry of a subject (the composite entry and the per-token claim sets),
+ * so a removed role or membership leaves tokens issued from now on rather than when the cache
+ * expires. Per-token keys carry a hash of the claims configuration, so they are found by prefix.
+ */
+export async function invalidateSubjectRBACCache(
+  cache: KVNamespace,
+  tenantId: string,
+  subjectId: string
+): Promise<void> {
+  const tenant = requireTenantId(tenantId, 'invalidateSubjectRBACCache');
+  const keys = [buildCompositeRBACCacheKey(subjectId, tenant)];
+  for (const tokenType of ['id', 'access'] as const) {
+    let cursor: string | undefined;
+    do {
+      const listed = await cache.list({
+        prefix: `${RBAC_CACHE_PREFIX}${tenant}:${tokenType}:${subjectId}:`,
+        cursor,
+      });
+      keys.push(...listed.keys.map((key) => key.name));
+      cursor = listed.list_complete ? undefined : listed.cursor;
+    } while (cursor);
+  }
+  await Promise.all(keys.map((key) => cache.delete(key)));
+}
+
+/**
  * Get or create composite RBAC cache for a user
  *
  * This function consolidates all RBAC data into a single KV entry,

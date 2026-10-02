@@ -50,21 +50,21 @@ describe('generated approvals smoke', () => {
       const url = typeof input === 'string' ? input : input.url;
       const method = (init?.method ?? 'GET').toUpperCase();
 
-      if (url.endsWith('/api/admin/settings/token-exchange') && method === 'GET') {
+      if (
+        url.includes('/api/admin/tenants/') &&
+        url.endsWith('/settings/tokens') &&
+        method === 'GET'
+      ) {
         return new Response(
           JSON.stringify({
-            settings: {
-              enabled: { value: true, source: 'kv' },
-              allowedSubjectTokenTypes: { value: ['access_token'], source: 'default' },
-              maxResourceParams: { value: 10, source: 'default' },
-              maxAudienceParams: { value: 10, source: 'default' },
-              idJag: {
-                enabled: { value: false, source: 'default' },
-                allowedIssuers: { value: [], source: 'default' },
-                maxTokenLifetime: { value: 3600, source: 'default' },
-                includeTenantClaim: { value: true, source: 'default' },
-                requireConfidentialClient: { value: true, source: 'default' },
-              },
+            version: 'v1',
+            values: {
+              'tokens.exchange_enabled': true,
+              'tokens.exchange_allowed_subject_token_types': 'access_token',
+            },
+            sources: {
+              'tokens.exchange_enabled': 'kv',
+              'tokens.exchange_allowed_subject_token_types': 'default',
             },
           }),
           { status: 200, headers: { 'content-type': 'application/json' } }
@@ -318,21 +318,21 @@ describe('generated approvals smoke', () => {
       const url = typeof input === 'string' ? input : input.url;
       const method = (init?.method ?? 'GET').toUpperCase();
 
-      if (url.endsWith('/api/admin/settings/token-exchange') && method === 'GET') {
+      if (
+        url.includes('/api/admin/tenants/') &&
+        url.endsWith('/settings/tokens') &&
+        method === 'GET'
+      ) {
         return new Response(
           JSON.stringify({
-            settings: {
-              enabled: { value: true, source: 'kv' },
-              allowedSubjectTokenTypes: { value: ['access_token'], source: 'default' },
-              maxResourceParams: { value: 10, source: 'default' },
-              maxAudienceParams: { value: 10, source: 'default' },
-              idJag: {
-                enabled: { value: false, source: 'default' },
-                allowedIssuers: { value: [], source: 'default' },
-                maxTokenLifetime: { value: 3600, source: 'default' },
-                includeTenantClaim: { value: true, source: 'default' },
-                requireConfidentialClient: { value: true, source: 'default' },
-              },
+            version: 'v1',
+            values: {
+              'tokens.exchange_enabled': true,
+              'tokens.exchange_allowed_subject_token_types': 'access_token',
+            },
+            sources: {
+              'tokens.exchange_enabled': 'kv',
+              'tokens.exchange_allowed_subject_token_types': 'default',
             },
           }),
           { status: 200, headers: { 'content-type': 'application/json' } }

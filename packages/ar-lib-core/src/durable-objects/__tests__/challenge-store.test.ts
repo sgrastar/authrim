@@ -68,6 +68,8 @@ describe('ChallengeStore replay protection', () => {
       email: 'user@example.com',
       redirectUri: 'https://client.example/callback',
       metadata: { attempt: 1 },
+      // When it was stored: a redeemed proof keeps the time it was made.
+      createdAt: expect.any(Number),
     });
     await expect(
       store.consumeChallengeRpc({ id: 'challenge-1', tenantId: 'tenant-a', type: 'email_code' })

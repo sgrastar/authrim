@@ -510,6 +510,20 @@ export class SessionRevocationStore extends DurableObject<Env> {
         }
         throw new Error('account_authentication_lifecycle_conflict');
       }
+      // Deletion only goes forward: an account being deleted becomes deleted, and a deleted one
+      // stays so, whatever a transition of a later version asks. Starting a deletion again once
+      // it is done (a retry of the steps after it) is answered with the done state.
+      if (state.lifecycle === 'deleted' && validatedLifecycle === 'deleting') {
+        return state;
+      }
+      if (
+        (state.lifecycle === 'deleting' &&
+          validatedLifecycle !== 'deleting' &&
+          validatedLifecycle !== 'deleted') ||
+        (state.lifecycle === 'deleted' && validatedLifecycle !== 'deleted')
+      ) {
+        throw new Error('account_authentication_lifecycle_terminal');
+      }
       const next = {
         ...state,
         lifecycle: validatedLifecycle,

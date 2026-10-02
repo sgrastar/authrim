@@ -26,6 +26,7 @@ import {
   type SettingsAuditEvent,
 } from '../utils/settings-manager';
 import { OAUTH_CATEGORY_META } from '../types/settings/oauth';
+import { CHECK_API_AUDIT_CATEGORY_META } from '../types/settings/check-api-audit';
 
 // Test category metadata
 const TEST_CATEGORY_META: CategoryMeta = {
@@ -824,6 +825,74 @@ describe('SettingsManager', () => {
         value: 30,
         source: 'env',
       });
+    });
+
+    it("ignores a number env value outside min..max when envNumber is 'in-range'", async () => {
+      const meta = withMeta('test.number_setting', { envNumber: 'in-range', min: 1, max: 1000 });
+      for (const raw of ['0', '1001', 'abc']) {
+        expect(await read(meta, { TEST_NUMBER_SETTING: raw }, 'test.number_setting')).toEqual({
+          value: 100,
+          source: 'default',
+        });
+      }
+      for (const [raw, value] of [
+        ['1', 1],
+        ['1000', 1000],
+      ] as const) {
+        expect(await read(meta, { TEST_NUMBER_SETTING: raw }, 'test.number_setting')).toEqual({
+          value,
+          source: 'env',
+        });
+      }
+    });
+
+    it("reads a decimal env value in min..max when envNumber is 'fraction-in-range'", async () => {
+      const meta = withMeta('test.number_setting', {
+        envNumber: 'fraction-in-range',
+        min: 0,
+        max: 1,
+      });
+      for (const [raw, value] of [
+        ['0.5', 0.5],
+        ['0.01', 0.01],
+        ['1', 1],
+      ] as const) {
+        expect(await read(meta, { TEST_NUMBER_SETTING: raw }, 'test.number_setting')).toEqual({
+          value,
+          source: 'env',
+        });
+      }
+      for (const raw of ['2', '-0.1', 'abc', 'Infinity']) {
+        expect(await read(meta, { TEST_NUMBER_SETTING: raw }, 'test.number_setting')).toEqual({
+          value: 100,
+          source: 'default',
+        });
+      }
+    });
+
+    it("reads only the exact string 'true' as on for the Check API audit switch", async () => {
+      const read = async (raw: string) => {
+        const m = createSettingsManager({
+          env: { ENABLE_CHECK_API_AUDIT: raw },
+          kv: createMockKV(),
+          cacheTTL: 0,
+        });
+        m.registerCategory(CHECK_API_AUDIT_CATEGORY_META);
+        return (await m.getAll('check-api-audit', { type: 'platform' })).values[
+          'audit.check_api_enabled'
+        ];
+      };
+      expect(await read('true')).toBe(true);
+      for (const raw of ['1', 'TRUE', 'false', '']) expect(await read(raw), raw).toBe(false);
+    });
+
+    it('ignores an enum env value the setting does not offer', async () => {
+      expect(
+        await read(TEST_CATEGORY_META, { TEST_ENUM_SETTING: 'invalid' }, 'test.enum_setting')
+      ).toMatchObject({ source: 'default' });
+      expect(
+        await read(TEST_CATEGORY_META, { TEST_ENUM_SETTING: 'option2' }, 'test.enum_setting')
+      ).toEqual({ value: 'option2', source: 'env' });
     });
 
     it('ignores a number env value that is not a multiple of the step', async () => {

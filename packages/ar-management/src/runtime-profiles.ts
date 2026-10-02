@@ -1,3 +1,4 @@
+import { DatabaseSettingsCanonicalStore } from '@authrim/ar-lib-core/services/settings-canonical-store';
 import { z } from 'zod';
 import type { Context } from 'hono';
 import type {
@@ -18,6 +19,7 @@ import {
   loadEnvironmentProfileDefaultsFromEnv,
   loadTenantProfileOverridesFromEnv,
   purgeTenantRuntimeRegistrySnapshot,
+  requireDedicatedAdminDatabaseAdapter,
 } from '@authrim/ar-lib-core';
 import { validateAuditOperationalConstraints } from './audit-ops-policy';
 import {
@@ -234,6 +236,10 @@ function createInfrastructureSettingsManager(env: Env) {
     },
     kv: env.SETTINGS ?? null,
     cacheTTL: 0,
+    // Platform documents are saved through the canonical store, as the Settings API saves them.
+    canonicalStore: new DatabaseSettingsCanonicalStore(
+      requireDedicatedAdminDatabaseAdapter(env, 'settings-canonical')
+    ),
   });
   manager.registerCategory(INFRASTRUCTURE_CATEGORY_META);
   return manager;

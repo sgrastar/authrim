@@ -2,8 +2,8 @@
  * Check API Audit Settings Category
  *
  * Configuration for permission check audit logging.
- * API: GET/PATCH /api/admin/tenants/:tenantId/settings/check-api-audit
- * Config Level: tenant
+ * API: GET/PATCH /api/admin/platform/settings/check-api-audit
+ * Config Level: platform
  *
  * Supports 3 audit modes:
  * - waitUntil: Non-blocking (recommended for most cases)
@@ -48,6 +48,8 @@ export const CHECK_API_AUDIT_SETTINGS_META: Record<keyof CheckApiAuditSettings, 
     type: 'boolean',
     default: false,
     envKey: 'ENABLE_CHECK_API_AUDIT',
+    // As the Check API read it: only 'true' turns it on.
+    envBoolean: 'exactly-true',
     label: 'Enable Audit Logging',
     description: 'Enable permission check audit logging',
     visibility: 'admin',
@@ -83,6 +85,8 @@ export const CHECK_API_AUDIT_SETTINGS_META: Record<keyof CheckApiAuditSettings, 
     visibility: 'admin',
     min: 0,
     max: 1,
+    // As the Check API read it: a decimal in 0..1, else the default.
+    envNumber: 'fraction-in-range',
   },
   'audit.check_api_retention_days': {
     key: 'audit.check_api_retention_days',
@@ -94,6 +98,9 @@ export const CHECK_API_AUDIT_SETTINGS_META: Record<keyof CheckApiAuditSettings, 
     visibility: 'admin',
     min: 1,
     max: 3650, // 10 years max
+    integer: true,
+    // As the Check API read it: 0 or less left the default.
+    envNumber: 'positive',
   },
 };
 

@@ -507,35 +507,43 @@ describe('CustomClaimSchemaResolver', () => {
 });
 
 describe('loadFeatureConfig', () => {
-  it('returns disabled when cache is null', async () => {
-    const config = await loadFeatureConfig(null);
+  const env = (settings: Record<string, string>) => ({
+    SETTINGS: { get: vi.fn(async (key: string) => settings[key] ?? null) } as never,
+  });
+
+  it('is off with nothing saved', async () => {
+    const config = await loadFeatureConfig({}, 'acme');
     expect(config.enabled).toBe(false);
     expect(config.introspectionEnabled).toBe(false);
     expect(config.maxClaimsPerTarget).toBe(50);
   });
 
-  it('reads values from KV', async () => {
-    const kv = {
-      get: vi.fn().mockImplementation((key: string) => {
-        if (key === 'policy:flags:ENABLE_CUSTOM_CLAIMS') return 'true';
-        if (key === 'policy:flags:ENABLE_CUSTOM_CLAIMS_INTROSPECTION') return 'true';
-        if (key === 'policy:flags:CUSTOM_CLAIMS_MAX_PER_TOKEN') return '30';
-        return null;
+  it("takes the tenant's values over the platform's", async () => {
+    const saved = env({
+      'settings:platform:feature-flags': JSON.stringify({
+        'feature.enable_custom_claim_schemas': true,
+        'feature.enable_custom_claim_schemas_introspection': true,
       }),
-    };
-
-    const config = await loadFeatureConfig(kv as any);
-    expect(config.enabled).toBe(true);
-    expect(config.introspectionEnabled).toBe(true);
-    expect(config.maxClaimsPerTarget).toBe(30);
+      'settings:platform:limits': JSON.stringify({
+        'limits.custom_claim_schemas_max_per_target': 30,
+      }),
+      'settings:tenant:acme:feature-flags': JSON.stringify({
+        'feature.enable_custom_claim_schemas': false,
+      }),
+    });
+    await expect(loadFeatureConfig(saved, 'acme')).resolves.toMatchObject({
+      enabled: false,
+      introspectionEnabled: true,
+      maxClaimsPerTarget: 30,
+    });
+    await expect(loadFeatureConfig(saved, 'other')).resolves.toMatchObject({ enabled: true });
   });
 
-  it('handles KV errors gracefully', async () => {
-    const kv = {
-      get: vi.fn().mockRejectedValue(new Error('KV error')),
-    };
-
-    const config = await loadFeatureConfig(kv as any);
+  it('is off when the settings cannot be read', async () => {
+    const config = await loadFeatureConfig(
+      { SETTINGS: { get: vi.fn().mockRejectedValue(new Error('KV error')) } as never },
+      'acme'
+    );
     expect(config.enabled).toBe(false);
   });
 });

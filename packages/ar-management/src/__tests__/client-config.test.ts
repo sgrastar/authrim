@@ -325,15 +325,11 @@ describe('client-config update handler', () => {
       env: {
         SETTINGS: {
           get: vi.fn().mockImplementation(async (key: string) =>
-            key.includes('certification-profile')
+            key === 'settings:tenant:default:security'
               ? JSON.stringify({
-                  fapi: {
-                    enabled: true,
-                    messageSigning: {
-                      enabled: true,
-                      authorizationSigningAlgorithms: ['ES256'],
-                    },
-                  },
+                  'security.fapi_enabled': true,
+                  'security.fapi_message_signing_enabled': true,
+                  'security.authorization_signing_algs': 'ES256',
                 })
               : null
           ),
@@ -425,8 +421,8 @@ describe('client-config update handler', () => {
           get: vi
             .fn()
             .mockImplementation(async (key: string) =>
-              key.includes('certification-profile')
-                ? JSON.stringify({ fapi: { enabled: true } })
+              key === 'settings:tenant:default:security'
+                ? JSON.stringify({ 'security.fapi_enabled': true })
                 : null
             ),
         } as unknown as KVNamespace,

@@ -514,6 +514,11 @@ export const ADMIN_PERMISSIONS = {
   ACCOUNT_LEGAL_HOLDS_WRITE: 'admin:account_legal_holds:write',
   ACCOUNT_LEGAL_HOLDS_ALL: 'admin:account_legal_holds:*',
 
+  // Identity assurance evidence (the IAL a person was proofed at)
+  ACCOUNT_ASSURANCE_READ: 'admin:account_assurance:read',
+  ACCOUNT_ASSURANCE_WRITE: 'admin:account_assurance:write',
+  ACCOUNT_ASSURANCE_ALL: 'admin:account_assurance:*',
+
   // Email delivery diagnostics
   EMAIL_DELIVERIES_READ: 'admin:email_deliveries:read',
   EMAIL_DELIVERIES_RECIPIENT_MASKED_READ: 'admin:email_deliveries:recipient:masked:read',

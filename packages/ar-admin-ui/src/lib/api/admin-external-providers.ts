@@ -30,6 +30,8 @@ export interface ExternalIdPProvider {
 	attributeMapping: Record<string, string>;
 	autoLinkEmail: boolean;
 	jitProvisioning: boolean;
+	/** The profile fields a login updates: null follows the tenant default, [] updates none. */
+	profileUpdateFields?: string[] | null;
 	requireEmailVerified: boolean;
 	alwaysFetchUserinfo?: boolean;
 	enableSso?: boolean;
@@ -209,6 +211,7 @@ export interface UpdateProviderRequest {
 	userinfo_endpoint?: string;
 	jwks_uri?: string;
 	attribute_mapping?: Record<string, string>;
+	profile_update_fields?: string[] | null;
 	provider_quirks?: Record<string, unknown>;
 }
 

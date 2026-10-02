@@ -184,6 +184,97 @@ describe('managed Direct Auth browser session finish', () => {
       expect(sessionStore.createSessionRpc).not.toHaveBeenCalled();
     }
   );
+  it.each([
+    [
+      'external_idp',
+      'urn:mace:incommon:iap:silver',
+      { upstream_acr: 'urn:mace:incommon:iap:silver' },
+    ],
+    ['passkey', 'urn:mace:incommon:iap:silver', {}],
+    ['external_idp', 'x'.repeat(1025), {}],
+  ])(
+    'keeps the upstream acr of a %s login only from an external IdP (%#)',
+    async (method, upstreamAcr, expected) => {
+      const codeVerifier = 'verifier-for-upstream-acr-session';
+      challengeStore.consumeChallengeRpc.mockResolvedValue({
+        challenge: await s256Challenge(codeVerifier),
+        userId: 'user_123',
+        metadata: { client_id: 'login-ui', channel: 'browser', method, upstream_acr: upstreamAcr },
+      });
+      const { directSessionCreateHandler } = await import('../direct-auth');
+      const response = await directSessionCreateHandler(
+        createContext({
+          direct_auth_artifact: 'artifact_123',
+          client_id: 'login-ui',
+          code_verifier: codeVerifier,
+          channel: 'browser',
+        }) as never
+      );
+      expect(response.status).toBe(200);
+      const data = sessionStore.createSessionRpc.mock.calls.at(-1)?.[3] as Record<string, unknown>;
+      expect(data.amr).toEqual([method]);
+      if ('upstream_acr' in expected) expect(data.upstream_acr).toBe(expected.upstream_acr);
+      else expect(data).not.toHaveProperty('upstream_acr');
+    }
+  );
+
+  it.each([
+    [{ proven_at: 1_700_000_000_123 }, { proven_at: 1_700_000_000_123 }],
+    // The artifact's storage time is not a proof time.
+    [{}, {}],
+  ])(
+    'records when the producer verified the authentication, not when it was stored (%#)',
+    async (extra, expected) => {
+      const codeVerifier = 'verifier-for-proven-at';
+      challengeStore.consumeChallengeRpc.mockResolvedValue({
+        challenge: await s256Challenge(codeVerifier),
+        userId: 'user_123',
+        createdAt: 1_800_000_000_000,
+        metadata: { client_id: 'login-ui', channel: 'browser', method: 'passkey', ...extra },
+      });
+      const { directSessionCreateHandler } = await import('../direct-auth');
+      await directSessionCreateHandler(
+        createContext({
+          direct_auth_artifact: 'artifact_123',
+          client_id: 'login-ui',
+          code_verifier: codeVerifier,
+          channel: 'browser',
+        }) as never
+      );
+      const data = sessionStore.createSessionRpc.mock.calls.at(-1)?.[3] as Record<string, unknown>;
+      if ('proven_at' in expected) expect(data.proven_at).toBe(expected.proven_at);
+      else expect(data).not.toHaveProperty('proven_at');
+    }
+  );
+
+  it.each([
+    // The IdP's times are in its own clock: an external IdP login records no proof time.
+    [{ upstream_auth_time: 1_700_000_000 }, {}],
+    [{ proven_at: 1_700_000_000_123 }, {}],
+    [{}, {}],
+  ])('records no proof time for an external IdP login (%#)', async (extra, expected) => {
+    const codeVerifier = 'verifier-for-upstream-auth-time';
+    challengeStore.consumeChallengeRpc.mockResolvedValue({
+      challenge: await s256Challenge(codeVerifier),
+      userId: 'user_123',
+      createdAt: 1_800_000_000_000,
+      metadata: { client_id: 'login-ui', channel: 'browser', method: 'external_idp', ...extra },
+    });
+    const { directSessionCreateHandler } = await import('../direct-auth');
+    await directSessionCreateHandler(
+      createContext({
+        direct_auth_artifact: 'artifact_123',
+        client_id: 'login-ui',
+        code_verifier: codeVerifier,
+        channel: 'browser',
+      }) as never
+    );
+    const data = sessionStore.createSessionRpc.mock.calls.at(-1)?.[3] as Record<string, unknown>;
+    if ('proven_at' in expected) expect(data.proven_at).toBe(expected.proven_at);
+    // Not the code's minting: the IdP login may be older.
+    else expect(data).not.toHaveProperty('proven_at');
+  });
+
   it('redeems an artifact into a cookie session without returning token material', async () => {
     const codeVerifier = 'verifier-for-managed-browser-session';
     const codeChallenge = await s256Challenge(codeVerifier);
@@ -420,6 +511,63 @@ describe('managed Direct Auth browser session finish', () => {
       })
     );
     expect(response.headers.get('set-cookie')).toContain('authrim_authorize_confirmation=');
+  });
+
+  it('carries a re-authentication time and step-up into its confirmation', async () => {
+    const codeVerifier = 'verifier-for-reauth-continuation';
+    const stepUp = {
+      prior_session_id: 'g1:apac:3:session_prior',
+      required_aal: 'AAL2',
+      issued_at: 5,
+    };
+    challengeStore.consumeChallengeRpc
+      .mockResolvedValueOnce({
+        challenge: await s256Challenge(codeVerifier),
+        userId: 'user_123',
+        metadata: {
+          client_id: 'login-ui',
+          channel: 'browser',
+          method: 'passkey',
+          authorization_challenge_id: 'reauth_challenge_123',
+        },
+      })
+      .mockRejectedValueOnce(new Error('not a login challenge'))
+      .mockResolvedValueOnce({
+        userId: 'user_123',
+        metadata: {
+          response_type: 'code',
+          client_id: 'rp_web',
+          redirect_uri: 'https://rp.example.com/callback',
+          scope: 'openid',
+          state: 'state-123',
+          issuer: 'https://issuer.example.com',
+          sessionUserId: 'user_123',
+          reauth_issued_at: 1_700_000_000_000,
+          assurance_step_up: stepUp,
+        },
+      });
+    const { directSessionCreateHandler } = await import('../direct-auth');
+
+    const response = await directSessionCreateHandler(
+      createContext({
+        direct_auth_artifact: 'artifact_123',
+        client_id: 'login-ui',
+        code_verifier: codeVerifier,
+        channel: 'browser',
+      }) as never
+    );
+
+    expect(response.status).toBe(200);
+    expect(challengeStore.storeChallengeRpc).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'reauth',
+        metadata: expect.objectContaining({
+          purpose: 'authorize_confirmation',
+          reauth_issued_at: 1_700_000_000_000,
+          assurance_step_up: stepUp,
+        }),
+      })
+    );
   });
 
   it('can resume an OAuth login challenge from artifact metadata when the request omits it', async () => {

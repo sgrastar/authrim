@@ -85,6 +85,7 @@ import {
   getAccountId,
   getCloudflareApiToken,
   assertR2BucketOwnershipForUse,
+  createR2BucketOwnershipVerifier,
 } from '../../core/cloudflare.js';
 import { type WorkerComponent, CORE_WORKER_COMPONENTS, getWorkerName } from '../../core/naming.js';
 import {
@@ -193,6 +194,7 @@ import {
   buildCloudflareBootstrapTemplateUrl,
   CloudflareTokenBootstrapError,
   detectCloudflareTokenOwnership,
+  formatCloudflareTokenCapabilityDiagnostic,
   selectPreferredCloudflareTokenOwnership,
   validateDirectControlTokensWithEvidence,
   type CloudflareTokenOwnership,
@@ -2350,12 +2352,11 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
       }
       const releaseSpinner = startDeploySpinner('Publishing migration release artifact...');
       try {
-        const verifyMigrationBucketOwnership = () =>
-          assertR2BucketOwnershipForUse({
-            ...migrationReleaseBucket,
-            environment: env,
-            binding: 'MIGRATION_RELEASES',
-          });
+        const verifyMigrationBucketOwnership = await createR2BucketOwnershipVerifier({
+          ...migrationReleaseBucket,
+          environment: env,
+          binding: 'MIGRATION_RELEASES',
+        });
         await verifyMigrationBucketOwnership();
         const publication = await publishAndActivateMigrationRelease({
           migrationsRoot: migrationsRootResult.path,
@@ -3316,12 +3317,14 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
                 )
           );
           if (error instanceof CloudflareTokenBootstrapError && error.capabilityDiagnostic) {
-            const { issuedFor, probes } = error.capabilityDiagnostic;
+            console.error(
+              chalk.red(formatCloudflareTokenCapabilityDiagnostic(error.capabilityDiagnostic))
+            );
+          }
+          if (error instanceof CloudflareTokenBootstrapError && error.apiOperation) {
             console.error(
               chalk.red(
-                `Scoped token capability mismatch (${issuedFor}): ${Object.entries(probes)
-                  .map(([resourceClass, capability]) => `${resourceClass}=${capability}`)
-                  .join(', ')}`
+                `Cloudflare token API operation failed: ${error.apiOperation} (${error.code})`
               )
             );
           }

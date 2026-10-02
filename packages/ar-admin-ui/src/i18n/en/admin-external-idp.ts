@@ -85,6 +85,17 @@ const adminExternalIdp = {
 		'Automatically link accounts with matching email addresses',
 	admin_external_idp_jit_provisioning: 'JIT Provisioning',
 	admin_external_idp_jit_provisioning_desc: 'Create new user accounts on first login',
+	admin_external_idp_profile_update_fields: 'Profile fields to update on login',
+	admin_external_idp_profile_update_fields_desc:
+		'With Update on Login on for the tenant, a login from this IdP updates the chosen profile fields of a linked user. Turn off to choose the fields for this IdP.',
+	admin_external_idp_profile_update_fields_tenant_default: 'Use the tenant default fields',
+	admin_external_idp_profile_update_fields_tenant_current: 'The tenant default updates:',
+	admin_external_idp_profile_update_fields_tenant_loading: 'Reading the tenant default…',
+	admin_external_idp_profile_update_fields_tenant_failed:
+		'The tenant default could not be read; reload the page to choose fields.',
+	admin_external_idp_profile_update_fields_tenant_empty: 'The tenant default updates no fields.',
+	admin_external_idp_profile_update_fields_none:
+		'No fields chosen: a login from this IdP updates nothing.',
 	admin_external_idp_require_email_verified: 'Require Email Verified',
 	admin_external_idp_require_email_verified_desc: 'Only allow users with verified email addresses',
 	admin_external_idp_always_fetch_userinfo: 'Always Fetch Userinfo',

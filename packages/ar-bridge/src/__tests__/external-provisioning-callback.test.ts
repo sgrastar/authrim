@@ -72,6 +72,7 @@ async function fixture(options: {
       createdAt: Date.now(),
     },
     providerId: 'provider-a',
+    upstreamAcr: 'urn:mace:incommon:iap:silver',
     userInfo: {
       sub: 'provider-user-a',
       email: 'person@example.com',
@@ -254,7 +255,14 @@ describe('external IdP durable provisioning status', () => {
     );
     expect(consumeChallengeRpc).toHaveBeenCalledOnce();
     expect(storeChallengeRpc).toHaveBeenCalledWith(
-      expect.objectContaining({ type: 'direct_auth_code', userId: 'user-a' })
+      expect.objectContaining({
+        type: 'direct_auth_code',
+        userId: 'user-a',
+        // The validated upstream acr survives the provisioning continuation.
+        metadata: expect.objectContaining({
+          upstream_acr: 'urn:mace:incommon:iap:silver',
+        }),
+      })
     );
     expect(mocks.completeJit.mock.invocationCallOrder[0]).toBeLessThan(
       consumeChallengeRpc.mock.invocationCallOrder[0]

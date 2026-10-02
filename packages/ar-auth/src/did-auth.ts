@@ -285,6 +285,8 @@ export async function didAuthVerifyHandler(c: Context<{ Bindings: Env }>): Promi
     if (payload.nonce !== expectedNonce) {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
+    // The DID proof is verified here (milliseconds), before anything else is awaited.
+    const provenAtMs = Date.now();
 
     const account = await resolveAccountDataContextByIdentifierFromHono(c, {
       indexKind: 'external_subject',
@@ -327,6 +329,8 @@ export async function didAuthVerifyHandler(c: Context<{ Bindings: Env }>): Promi
         amr: ['did'],
         acr: 'urn:authrim:acr:did',
         auth_time: Math.floor(Date.now() / 1000),
+        // When the DID proof was verified (milliseconds), for assurance step-ups.
+        proven_at: provenAtMs,
         did,
         verification_method: kid,
       },

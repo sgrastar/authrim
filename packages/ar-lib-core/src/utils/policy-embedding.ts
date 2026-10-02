@@ -367,18 +367,12 @@ export async function isPolicyEmbeddingEnabled(
   env: EffectiveSettingsEnv,
   tenantId?: string
 ): Promise<boolean> {
-  const keys = ['feature.enable_policy_embedding'];
   try {
     const { values } = tenantId
       ? await resolveEffectiveSettingsWithSources(env, 'feature-flags', {
           tenantId,
-          keys,
-          strictLegacy: true,
         })
-      : await resolvePlatformSettingsWithSources(env, 'feature-flags', {
-          keys,
-          strictLegacy: true,
-        });
+      : await resolvePlatformSettingsWithSources(env, 'feature-flags', {});
     return values['feature.enable_policy_embedding'] === true;
   } catch {
     return false;

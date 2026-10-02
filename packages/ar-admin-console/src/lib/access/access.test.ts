@@ -51,7 +51,7 @@ describe('settings, as the settings API decides it for a person', () => {
 	});
 
 	it('offers a category only at the scopes it has', () => {
-		expect(settingsLevel(platform, 'session', 'platform')).toBe('none');
+		expect(settingsLevel(platform, 'ciba', 'platform')).toBe('none');
 		expect(settingsLevel(platform, 'client', 'tenant')).toBe('none');
 	});
 

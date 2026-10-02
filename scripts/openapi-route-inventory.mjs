@@ -123,9 +123,9 @@ const packageSpecs = [
         },
       },
       {
-        file: 'packages/ar-management/src/routes/settings-v2/migrate.ts',
+        file: 'packages/ar-management/src/routes/settings-v2/legacy-import.ts',
         receiverPrefixes: {
-          migrateRouter: '/api/admin/settings',
+          legacyImport: '/api/admin',
         },
       },
       {

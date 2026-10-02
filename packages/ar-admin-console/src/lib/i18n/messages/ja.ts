@@ -1,4 +1,5 @@
 import { jaSettings } from './settings/ja';
+import { jaCompliance } from './compliance/ja';
 
 /**
  * Japanese is the source locale: every other locale must provide exactly these keys.
@@ -6,6 +7,7 @@ import { jaSettings } from './settings/ja';
  */
 export const ja = {
 	...jaSettings,
+	...jaCompliance,
 	'app.adminLabel': '管理コンソール',
 	'app.env.dev': '開発環境',
 	'app.env.prod': '本番環境',

@@ -36,6 +36,8 @@ import {
 import {
   buildInitialTenantBootstrapSql,
   createD1Database,
+  getAccountId,
+  listD1Databases,
   executeD1Command,
   executeD1Migration,
   findMigrationsRoot,
@@ -48,6 +50,7 @@ import {
 } from './cloudflare.js';
 import {
   beginOrResumeProvisioningIntent,
+  calculateProvisioningResourceSpecDigest,
   completeProvisioningIntent,
   loadProvisioningIntent,
   recordProvisionedResource,
@@ -162,6 +165,81 @@ function bootstrapDatabaseName(env: string, nameRole: string): string {
     .slice(0, 24);
   if (!normalizedEnv) throw new Error('initial_control_plane_environment_invalid');
   return `${normalizedEnv}-authrim-tenant-${nameRole}-bootstrap-db`;
+}
+
+function initialTenantShardResourceSpec(env: string) {
+  return {
+    purpose: 'initial_control_plane_tenant_shards',
+    resources: initialTenantShardDefinitions(env).map((definition) => ({
+      kind: 'd1',
+      binding: definition.binding,
+      name: bootstrapDatabaseName(env, definition.nameRole),
+    })),
+  } as const;
+}
+
+/** Recover one interrupted initial D1 create using an operator-supplied immutable ID. */
+export async function recoverInitialControlPlaneD1Identity(input: {
+  rootDir: string;
+  env: string;
+  binding: string;
+  databaseId: string;
+}): Promise<{ name: string; id: string }> {
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu.test(input.databaseId)) {
+    throw new Error('initial_control_plane_recovery_database_id_invalid');
+  }
+  const definition = initialTenantShardDefinitions(input.env).find(
+    (candidate) => candidate.binding === input.binding
+  );
+  if (!definition) throw new Error('initial_control_plane_recovery_binding_invalid');
+  const name = bootstrapDatabaseName(input.env, definition.nameRole);
+  const intent = await loadProvisioningIntent({
+    baseDir: input.rootDir,
+    environment: input.env,
+  });
+  if (!intent) throw new Error('initial_control_plane_recovery_intent_missing');
+  if (
+    intent.resourceSpecDigest !==
+    calculateProvisioningResourceSpecDigest(initialTenantShardResourceSpec(input.env))
+  ) {
+    throw new Error('initial_control_plane_recovery_resource_spec_mismatch');
+  }
+  const checkpoint = intent.resources[`d1:${input.binding}`];
+  if (
+    checkpoint?.state !== 'create_issued' ||
+    checkpoint.kind !== 'd1' ||
+    checkpoint.binding !== input.binding ||
+    checkpoint.name !== name
+  ) {
+    throw new Error('initial_control_plane_recovery_checkpoint_mismatch');
+  }
+  const { lock } = await loadLockFileAuto(input.rootDir, input.env);
+  if (!lock || lock.d1[input.binding]) {
+    throw new Error('initial_control_plane_recovery_lock_conflict');
+  }
+  const accountId = await getAccountId();
+  if (!accountId || accountId !== intent.accountId) {
+    throw new Error('initial_control_plane_recovery_account_mismatch');
+  }
+  const matching = (await listD1Databases()).filter(
+    (database) => database.name === name || database.uuid === input.databaseId
+  );
+  if (matching.length !== 1 || matching[0].name !== name || matching[0].uuid !== input.databaseId) {
+    throw new Error('initial_control_plane_recovery_provider_identity_mismatch');
+  }
+  await recordProvisioningResourceIdentified({
+    baseDir: input.rootDir,
+    environment: input.env,
+    expectedIntentId: intent.id,
+    resource: {
+      kind: 'd1',
+      binding: input.binding,
+      name,
+      state: 'identified',
+      id: input.databaseId,
+    },
+  });
+  return { name, id: input.databaseId };
 }
 
 export function buildInitialControlPlaneResourcePlans(input: {
@@ -1279,14 +1357,7 @@ export async function ensureInitialControlPlaneResources(input: {
         WHERE environment_id = ${sqlString(input.env)}`
     );
     const shardDefinitions = initialTenantShardDefinitions(input.env);
-    const shardResourceSpec = {
-      purpose: 'initial_control_plane_tenant_shards',
-      resources: shardDefinitions.map((definition) => ({
-        kind: 'd1',
-        binding: definition.binding,
-        name: bootstrapDatabaseName(input.env, definition.nameRole),
-      })),
-    } as const;
+    const shardResourceSpec = initialTenantShardResourceSpec(input.env);
     const existingProvisioningIntent = await loadProvisioningIntent({
       baseDir: input.rootDir,
       environment: input.env,
@@ -1390,12 +1461,11 @@ export async function ensureInitialControlPlaneResources(input: {
       if (adoption.recordedState === 'create_issued') {
         throw new Error(
           `initial_control_plane_resource_create_ambiguous:${resource.binding}:${resource.name}:` +
-            'Cloudflare D1 create outcome is unknown and automatic recovery is unavailable; ' +
-            `inspect the exact name "${resource.name}" in Cloudflare, then run ` +
-            `"pnpm run setup delete --env ${input.env} --all --yes"; if deletion stops because ` +
-            `its immutable identity is missing, manually delete only that exact ambiguous name in ` +
-            `Cloudflare and rerun the same setup delete command to clean local state; verify the ` +
-            `environment is empty, then run "pnpm run setup init --env ${input.env}"`
+            'Cloudflare D1 create outcome is unknown. Check the exact name and immutable ID in ' +
+            'Cloudflare D1 inventory. If it exists, run ' +
+            `"pnpm run setup recover-initial-d1 --env ${input.env} --binding ` +
+            `${resource.binding} --database-id <uuid>" with that ID, then resume deployment. ` +
+            'If it does not exist, use the full environment deletion and init recovery path.'
         );
       }
       const database = await createD1Database(

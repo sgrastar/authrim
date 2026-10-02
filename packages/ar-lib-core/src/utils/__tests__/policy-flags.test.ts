@@ -13,11 +13,13 @@ describe('resolvePolicyFlags', () => {
     });
   });
 
-  it('reads the older saved flags, env, and the tenant value over them', async () => {
+  it("reads the platform's flags, env, and the tenant value over them", async () => {
     const env = {
       SETTINGS: kv({
-        'policy:flags:ENABLE_ABAC': 'TRUE',
-        'policy:flags:ENABLE_CUSTOM_RULES': 'false',
+        'settings:platform:feature-flags': JSON.stringify({
+          'feature.enable_abac': true,
+          'feature.enable_custom_rules': false,
+        }),
         'settings:tenant:acme:feature-flags': JSON.stringify({
           'feature.enable_abac': false,
           'feature.enable_sd_jwt': true,
@@ -44,7 +46,7 @@ describe('resolvePolicyFlags', () => {
     const env = {
       SETTINGS: {
         get: async (key: string) => {
-          if (key.startsWith('policy:flags:')) throw new Error('kv unavailable');
+          if (key === 'settings:tenant:acme:feature-flags') throw new Error('kv unavailable');
           return null;
         },
       } as unknown as KVNamespace,

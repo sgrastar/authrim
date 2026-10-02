@@ -113,6 +113,41 @@ export interface AuditServiceDependencies {
 /**
  * Audit service implementation.
  */
+/**
+ * Where an audit log's retention comes from, in the order a write looks: the delivery plan
+ * (a logging destination or routing rule), the audit profile, then the tenant's PII config
+ * (which is the built-in default when the tenant has none).
+ */
+export type AuditRetentionSource = 'delivery_plan' | 'audit_profile' | 'pii_config';
+
+/** The retention a log written now gets (`retention_until` = written + days). */
+export function resolveAuditRetention(
+  profile: AuditProfile,
+  defaults: TenantPIIConfig,
+  logType: 'event' | 'pii',
+  overrideDays?: number | null
+): { days: number; source: AuditRetentionSource } {
+  if (overrideDays != null) {
+    return { days: overrideDays, source: 'delivery_plan' };
+  }
+  if (logType === 'event' && profile.retention?.eventLogRetentionDays != null) {
+    return { days: profile.retention.eventLogRetentionDays, source: 'audit_profile' };
+  }
+  if (logType === 'pii' && profile.retention?.piiLogRetentionDays != null) {
+    return { days: profile.retention.piiLogRetentionDays, source: 'audit_profile' };
+  }
+  if (profile.primary && profile.retention?.primaryDays != null) {
+    return { days: profile.retention.primaryDays, source: 'audit_profile' };
+  }
+  if (!profile.primary && profile.retention?.archiveDays != null) {
+    return { days: profile.retention.archiveDays, source: 'audit_profile' };
+  }
+  return {
+    days: logType === 'event' ? defaults.eventLogRetentionDays : defaults.piiLogRetentionDays,
+    source: 'pii_config',
+  };
+}
+
 export class AuditService implements IAuditService {
   private readonly coreAdapter: DatabaseAdapter;
   private readonly piiAdapter: DatabaseAdapter;
@@ -199,22 +234,7 @@ export class AuditService implements IAuditService {
     logType: 'event' | 'pii',
     overrideDays?: number | null
   ): number {
-    if (overrideDays != null) {
-      return overrideDays;
-    }
-    if (logType === 'event' && profile.retention?.eventLogRetentionDays != null) {
-      return profile.retention.eventLogRetentionDays;
-    }
-    if (logType === 'pii' && profile.retention?.piiLogRetentionDays != null) {
-      return profile.retention.piiLogRetentionDays;
-    }
-    if (profile.primary && profile.retention?.primaryDays != null) {
-      return profile.retention.primaryDays;
-    }
-    if (!profile.primary && profile.retention?.archiveDays != null) {
-      return profile.retention.archiveDays;
-    }
-    return logType === 'event' ? defaults.eventLogRetentionDays : defaults.piiLogRetentionDays;
+    return resolveAuditRetention(profile, defaults, logType, overrideDays).days;
   }
 
   private isD1PrimaryTarget(

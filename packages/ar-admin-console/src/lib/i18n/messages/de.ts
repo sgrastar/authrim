@@ -1,8 +1,10 @@
 import type { Messages } from './ja';
 import { deSettings } from './settings/de';
+import { deCompliance } from './compliance/de';
 
 export const de = {
 	...deSettings,
+	...deCompliance,
 	'app.adminLabel': 'Verwaltungskonsole',
 	'app.env.dev': 'Entwicklung',
 	'app.env.prod': 'Produktion',

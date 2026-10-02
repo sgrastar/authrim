@@ -38,6 +38,7 @@
 	import AdminTabs, { type AdminTabItem } from '$lib/components/admin/AdminTabs.svelte';
 	import AdminDataTable from '$lib/components/admin/AdminDataTable.svelte';
 	import EmailDeliveryTable from '$lib/components/admin/EmailDeliveryTable.svelte';
+	import UserAssuranceSection from '$lib/components/admin/UserAssuranceSection.svelte';
 	import type { OrganizationNode } from '$lib/api/admin-organizations';
 	import { adminAuth } from '$lib/stores/admin-auth.svelte';
 	import { settingsContext } from '$lib/stores/settings-context.svelte';
@@ -108,7 +109,8 @@
 	const canReadAccountGovernance = $derived(
 		adminAuth.hasAnyPermission([
 			'admin:account_support_context:read',
-			'admin:account_legal_holds:read'
+			'admin:account_legal_holds:read',
+			'admin:account_assurance:read'
 		])
 	);
 	type TabId =
@@ -2035,6 +2037,13 @@
 								</div>
 							{/if}
 						</AdminSection>
+					{/if}
+
+					{#if adminAuth.hasPermission('admin:account_assurance:read')}
+						<UserAssuranceSection
+							{userId}
+							canWrite={adminAuth.hasPermission('admin:account_assurance:write')}
+						/>
 					{/if}
 				</div>
 			{/if}

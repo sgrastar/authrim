@@ -35,9 +35,9 @@ import {
   resolveAccountDataContextByIdentifier,
   resolveTenantMetadataContext,
   type AuthAccountProvisioningInput,
-  legacyJitProvisioningValues,
-  parseSettingsDocument,
+  NO_JIT_PROVIDER,
   resolveEffectiveSettings,
+  updateProfileOnLogin,
 } from '@authrim/ar-lib-core';
 import {
   ExternalIdPError,
@@ -82,90 +82,102 @@ export async function getStitchingConfig(env: Env): Promise<StitchingConfig> {
   };
 }
 
-/** Profile fields a login from the provider updates (never the email or the account state). */
-const PROVIDER_PROFILE_FIELDS = ['name', 'given_name', 'family_name', 'picture', 'locale'] as const;
-
 /**
  * Update a linked user's profile from the provider's claims on login, when the tenant turns
- * `external_idp.jit_update_on_login` on (with JIT provisioning on). Only claims the provider sends
- * are written. A failure is logged and never fails the login.
+ * `external_idp.jit_update_on_login` on (with JIT provisioning on): the fields the provider chooses,
+ * else those the tenant chooses (`external_idp.jit_update_fields`), never the email or the account
+ * state. Only claims the
+ * provider sends are written. A failure is logged and never fails the login.
  */
 async function updateUserProfileFromProvider(
   env: Env,
   tenantId: string,
   userId: string,
   userInfo: UserInfo,
-  sources: { coreDb: DatabaseSource; piiDb: DatabaseSource }
+  sources: { coreDb: DatabaseSource; piiDb: DatabaseSource },
+  /** The provider's own list (null: the tenant's). */
+  providerFields: string[] | null | undefined
 ): Promise<void> {
-  const log = createLogger().module('IDENTITY-STITCHING');
+  let users: CanonicalRuntimeUserStore;
   try {
-    const values = await resolveEffectiveSettings(env, 'external-idp', {
-      tenantId,
-      keys: ['external_idp.jit_update_on_login', 'external_idp.jit_provisioning_enabled'],
-      strictLegacy: true,
-    });
-    if (
-      values['external_idp.jit_update_on_login'] !== true ||
-      values['external_idp.jit_provisioning_enabled'] !== true
-    ) {
-      return;
-    }
-    const users = new CanonicalRuntimeUserStore({
+    users = new CanonicalRuntimeUserStore({
       coreAdapter: ensureDatabaseAdapter(sources.coreDb, 'identity-stitching-profile-core'),
       piiAdapter: ensureDatabaseAdapter(sources.piiDb, 'identity-stitching-profile-pii'),
       tenantId,
     });
-    const claims = userInfo as unknown as Record<string, unknown>;
-    const profile = Object.fromEntries(
-      PROVIDER_PROFILE_FIELDS.filter((field) => typeof claims[field] === 'string').map((field) => [
-        field,
-        claims[field] as string,
-      ])
-    );
-    if (Object.keys(profile).length === 0) return;
-    // Only these profile fields: the account state, labels and other attributes stay as they are.
-    await users.updateProfileFields(userId, profile);
   } catch (error) {
-    log.warn('Profile update from the identity provider failed', {
-      action: 'profile_update_on_login',
-      errorName: error instanceof Error ? error.name : 'Unknown error',
-    });
+    createLogger()
+      .module('IDENTITY-STITCHING')
+      .warn('Profile update from the identity provider failed', {
+        action: 'profile_update_on_login',
+        errorName: error instanceof Error ? error.name : 'Unknown error',
+      });
+    return;
   }
+  await updateProfileOnLogin({
+    env,
+    tenantId,
+    userId,
+    claims: userInfo as unknown as Record<string, unknown>,
+    providerFields,
+    users,
+  });
 }
 
 /**
- * Get JIT Provisioning configuration for a tenant.
- *
- * The saved platform document (`jit_provisioning_config`) as it is, else the defaults; its
- * `enabled` is the tenant's `external_idp.jit_provisioning_enabled` as the Settings API resolves
- * it (tenant, else the saved document, else env, else the default). JIT creates accounts, so
- * settings that cannot be read disable it rather than falling back to a value that enables it.
+ * Get JIT Provisioning configuration for a tenant: the tenant's `external_idp.jit_*` settings as
+ * the Settings API resolves them (tenant, platform, the older `jit_provisioning_config` document,
+ * env, defaults). JIT creates accounts, so settings that cannot be read disable it rather than
+ * falling back to values that enable it.
  */
 export async function getJITConfig(env: Env, tenantId: string): Promise<JITProvisioningConfig> {
-  let config: JITProvisioningConfig = DEFAULT_JIT_CONFIG;
-  let raw: string | null | undefined;
+  let values: Record<string, unknown>;
   try {
-    raw = await env.SETTINGS?.get('jit_provisioning_config');
+    // Read as saved now, not a cached copy: this decides whether an account is created (and
+    // runs only then).
+    values = await resolveEffectiveSettings(env, 'external-idp', {
+      tenantId,
+      fresh: true,
+    });
   } catch {
     return { ...DEFAULT_JIT_CONFIG, enabled: false };
   }
-  try {
-    const saved = parseSettingsDocument(raw);
-    if (saved) config = saved as unknown as JITProvisioningConfig;
-  } catch {
-    // Saved but not a JSON object: its other fields are unknown, so the defaults apply to them;
-    // the older value reads as disabled, below the tenant's Settings API value.
+  const switches = [
+    'external_idp.jit_provisioning_enabled',
+    'external_idp.jit_require_verified_email',
+    'external_idp.jit_join_all_matching_orgs',
+    'external_idp.jit_allow_user_without_org',
+    'external_idp.jit_allow_unverified_domain_mappings',
+  ];
+  const providerList = values['external_idp.jit_allowed_provider_ids'];
+  const role = values['external_idp.jit_default_role_id'];
+  // A value of the wrong type is not taken for one that allows more: JIT stays off.
+  if (
+    switches.some((key) => typeof values[key] !== 'boolean') ||
+    typeof providerList !== 'string' ||
+    typeof role !== 'string'
+  ) {
+    return { ...DEFAULT_JIT_CONFIG, enabled: false };
   }
-  try {
-    // The document read above is the older value: one read decides, never a cached copy.
-    const values = await resolveEffectiveSettings(env, 'external-idp', {
-      tenantId,
-      legacy: legacyJitProvisioningValues(raw ?? null),
-    });
-    return { ...config, enabled: values['external_idp.jit_provisioning_enabled'] === true };
-  } catch {
-    return { ...config, enabled: false };
-  }
+  const listed = providerList
+    .split(',')
+    .map((id) => id.trim())
+    .filter(Boolean);
+  // Only an empty value allows every provider: one that names none allows none.
+  const providers = providerList !== '' && listed.length === 0 ? [NO_JIT_PROVIDER] : listed;
+  return {
+    enabled: values['external_idp.jit_provisioning_enabled'] === true,
+    require_verified_email: values['external_idp.jit_require_verified_email'] === true,
+    allowed_provider_ids: providers.length > 0 ? providers : null,
+    join_all_matching_orgs: values['external_idp.jit_join_all_matching_orgs'] === true,
+    allow_user_without_org: values['external_idp.jit_allow_user_without_org'] === true,
+    // Empty: no default role.
+    default_role_id: role,
+    allow_unverified_domain_mappings:
+      values['external_idp.jit_allow_unverified_domain_mappings'] === true,
+    // Not applied by the bridge.
+    auto_create_org_on_domain_match: false,
+  };
 }
 
 /**
@@ -286,7 +298,8 @@ export async function handleIdentity(
       existingLink.tenantId,
       existingLink.userId,
       userInfo,
-      externalRoute ?? defaultUserStoreSources
+      externalRoute ?? defaultUserStoreSources,
+      provider.profileUpdateFields
     );
 
     // Update tokens and last login
@@ -1346,7 +1359,8 @@ async function createTenantD1UserWithJITProvisioning(
     customClaimValidation,
     organizationIds,
     roleAssignments,
-    defaultRoleId: params.jitConfig.default_role_id ?? null,
+    // An empty role ID is none.
+    defaultRoleId: params.jitConfig.default_role_id || null,
     matchedRules: ruleResult.matched_rules,
     attributesSet: ruleResult.attributes_to_set ?? [],
   };

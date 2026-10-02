@@ -442,6 +442,35 @@ export async function createMockEnv(): Promise<Env> {
 
       return jsonResponse({ error: 'not_found' }, 404);
     }
+
+    async storeRequestRpc(request: {
+      requestUri: string;
+      data: Record<string, unknown>;
+      ttl: number;
+    }): Promise<void> {
+      this.requests.set(request.requestUri, {
+        data: request.data,
+        clientId: (request.data as { client_id?: string }).client_id,
+        expiresAt: Date.now() + request.ttl * 1000,
+      });
+    }
+
+    async getRequestRpc(requestUri: string): Promise<Record<string, unknown> | null> {
+      const stored = this.requests.get(requestUri);
+      return stored && stored.expiresAt > Date.now() ? stored.data : null;
+    }
+
+    async consumeRequestRpc(request: {
+      requestUri: string;
+      client_id: string;
+    }): Promise<Record<string, unknown>> {
+      const stored = this.requests.get(request.requestUri);
+      if (!stored || stored.expiresAt <= Date.now() || stored.clientId !== request.client_id) {
+        throw new Error('invalid_request_uri');
+      }
+      this.requests.delete(request.requestUri);
+      return stored.data;
+    }
   }
 
   class MockDPoPJTIStore {

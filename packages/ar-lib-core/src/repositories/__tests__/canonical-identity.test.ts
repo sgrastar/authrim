@@ -267,8 +267,9 @@ describe('CanonicalIdentityRepository', () => {
       subject_id: 'subject-1',
       binding_id: binding.id,
       evidence_type: 'saml_authn_context',
-      assurance_level: 'ial2',
-      evidence_ref: 'artifact://assertion/1',
+      assurance_framework: 'nist_800_63',
+      assurance_level: 'IAL2',
+      evidence_storage_ref: 'artifact://assertion/1',
     });
 
     await expect(
@@ -276,7 +277,7 @@ describe('CanonicalIdentityRepository', () => {
     ).resolves.toEqual(binding);
     expect(JSON.parse(event.reason_codes_json ?? '[]')).toEqual(['hard_match']);
     expect(candidate.decision_state).toBe('pending');
-    expect(evidence.evidence_ref).toBe('artifact://assertion/1');
+    expect(evidence.evidence_storage_ref).toBe('artifact://assertion/1');
 
     await expect(repository.transitionResolutionCandidate('candidate-1', 'approved')).resolves.toBe(
       true

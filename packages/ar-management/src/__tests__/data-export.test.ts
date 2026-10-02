@@ -18,7 +18,6 @@ const {
   mockGetTenantIdFromContext,
   mockCreateAccountAuthContextFromHono,
   mockCreatePIIContextFromHono,
-  mockCreateOAuthConfigManager,
   mockResolveAccountDataContextFromHono,
   mockResolveAccountDataContext,
   mockEnsureDatabaseAdapter,
@@ -62,7 +61,6 @@ const {
     mockCreatePIIContextFromHono: vi.fn().mockReturnValue({
       defaultPiiAdapter: piiAdapter,
     }),
-    mockCreateOAuthConfigManager: vi.fn().mockReturnValue(configMgr),
     mockResolveAccountDataContextFromHono: vi.fn().mockResolvedValue(undefined),
     mockResolveAccountDataContext: vi.fn().mockResolvedValue({
       coreDb: coreSource,
@@ -90,7 +88,9 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     getTenantIdFromContext: mockGetTenantIdFromContext,
     createAccountAuthContextFromHono: mockCreateAccountAuthContextFromHono,
     createPIIContextFromHono: mockCreatePIIContextFromHono,
-    createOAuthConfigManager: mockCreateOAuthConfigManager,
+    getConsentDataExportEnabled: () => mockConfigManager.getConsentDataExportEnabled(),
+    getConsentDataExportSyncThresholdKB: () =>
+      mockConfigManager.getConsentDataExportSyncThresholdKB(),
     resolveAccountDataContextFromHono: mockResolveAccountDataContextFromHono,
     resolveAccountDataContext: mockResolveAccountDataContext,
     ensureDatabaseAdapter: mockEnsureDatabaseAdapter,

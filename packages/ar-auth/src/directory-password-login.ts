@@ -354,12 +354,16 @@ export function createDirectoryPasswordLoginHandler(fetcher?: DirectoryPasswordF
     }
 
     let verdict;
+    // When the password was verified (milliseconds): the proof time of every session and migration
+    // this login leads to.
+    let passwordVerifiedAtMs = 0;
     try {
       verdict = await client.verifyPassword({
         username,
         password,
         attributeNames: connector.attributeNames,
       });
+      passwordVerifiedAtMs = Date.now();
     } catch (error) {
       if (error instanceof DirectoryPasswordError) {
         await publishDirectoryPasswordFailureEvent(
@@ -541,7 +545,7 @@ export function createDirectoryPasswordLoginHandler(fetcher?: DirectoryPasswordF
       return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
     }
 
-    const now = Date.now();
+    const now = passwordVerifiedAtMs;
     const authTime = Math.floor(now / 1000);
     const sessionTtl = await resolveSessionTtl(c.env, tenantId, 'directory_password');
     const migrationDecision = await resolveDirectoryAuthMigrationDecision(authCtx.coreAdapter, {
@@ -629,6 +633,8 @@ export function createDirectoryPasswordLoginHandler(fetcher?: DirectoryPasswordF
         amr: ['pwd', 'directory'],
         acr: 'urn:mace:incommon:iap:bronze',
         authTime,
+        // When the password was verified (milliseconds), for assurance step-ups.
+        proven_at: now,
         directory_connector_id: connector.connectorId,
         wordwarden_connector_id: connector.wordwardenConnectorId,
       },
@@ -1033,6 +1039,8 @@ export async function directoryMigrationPasskeyVerifyHandler(c: Context<{ Bindin
       connectorId: transaction.connector_id ?? 'directory',
       wordwardenConnectorId: transaction.connector_id ?? 'directory',
       requestId: transaction.request_id ?? undefined,
+      // The password was verified when the transaction was made.
+      provenAt: transaction.created_at,
       method: 'directory_password_passkey_migration',
       authorizationChallengeId: transaction.authorization_challenge_id ?? undefined,
       authorizationContinuation,
@@ -1333,6 +1341,9 @@ export async function directoryMigrationEmailCodeVerifyHandler(c: Context<{ Bind
       connectorId: transaction.connector_id ?? 'directory',
       wordwardenConnectorId: transaction.connector_id ?? 'directory',
       requestId: transaction.request_id ?? undefined,
+      // A fallback's password was verified when the transaction was made (before the code); a
+      // recovery proves only the code.
+      provenAt: transaction.scope === 'recovery' ? now : transaction.created_at,
       method:
         transaction.scope === 'recovery'
           ? 'directory_unavailable_email_code_recovery'
@@ -1634,6 +1645,11 @@ async function createDirectorySessionSuccessResponse(
     user: { id: string; email: string | null; name?: string | null };
     authTime: number;
     now: number;
+    /**
+     * When the session's authentication was proven (milliseconds): the earliest proof among its
+     * methods (a migration's password was verified when the transaction was made).
+     */
+    provenAt: number;
     connectorId: string;
     wordwardenConnectorId: string;
     requestId?: string;
@@ -1676,6 +1692,9 @@ async function createDirectorySessionSuccessResponse(
       email: input.user.email,
       name: input.user.name,
       amr: directorySessionAmr(input.method),
+      ...directorySessionUnverifiedAmr(input.method),
+      // When the authentication was proven (milliseconds), for assurance step-ups.
+      proven_at: input.provenAt,
       acr: 'urn:mace:incommon:iap:bronze',
       authTime: input.authTime,
       directory_connector_id: input.connectorId,
@@ -1791,7 +1810,19 @@ async function createDirectorySessionSuccessResponse(
   });
 }
 
-function directorySessionAmr(
+type DirectorySessionMethod = Parameters<typeof directorySessionAmr>[0];
+
+/**
+ * The methods of a directory session no assurance level counts: the passkey of a migration was
+ * registered with attestation none, so no signature proves it until it signs in.
+ */
+export function directorySessionUnverifiedAmr(method: DirectorySessionMethod): {
+  unverified_amr?: string[];
+} {
+  return method === 'directory_password_passkey_migration' ? { unverified_amr: ['passkey'] } : {};
+}
+
+export function directorySessionAmr(
   method:
     | 'directory_password'
     | 'directory_password_passkey_migration'

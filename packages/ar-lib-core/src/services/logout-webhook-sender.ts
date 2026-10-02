@@ -29,7 +29,7 @@ import type {
   SessionClientWithWebhook,
   LogoutRetryConfig,
 } from '../types/logout';
-import { LOGOUT_WEBHOOK_KV_PREFIXES, DEFAULT_LOGOUT_WEBHOOK_CONFIG } from '../types/logout';
+import { LOGOUT_WEBHOOK_KV_PREFIXES } from '../types/logout';
 
 // Re-export common webhook utilities from webhook-sender
 import {
@@ -481,38 +481,4 @@ export function createLogoutWebhookOrchestrator(kv: KVNamespace): LogoutWebhookO
       return results;
     },
   };
-}
-
-/**
- * Get Logout Webhook Configuration
- *
- * Priority: KV → defaults
- *
- * @param env - Environment with KV binding
- * @param settingsKV - KV namespace for settings
- * @returns LogoutWebhookConfig
- */
-export async function getLogoutWebhookConfig(
-  settingsKV: KVNamespace | undefined
-): Promise<LogoutWebhookConfig> {
-  if (settingsKV) {
-    try {
-      const kvConfig = await settingsKV.get('settings:logout_webhook');
-      if (kvConfig) {
-        const parsed = JSON.parse(kvConfig);
-        return {
-          ...DEFAULT_LOGOUT_WEBHOOK_CONFIG,
-          ...parsed,
-          retry: {
-            ...DEFAULT_LOGOUT_WEBHOOK_CONFIG.retry,
-            ...(parsed.retry || {}),
-          },
-        };
-      }
-    } catch {
-      // Ignore KV errors, use defaults
-    }
-  }
-
-  return DEFAULT_LOGOUT_WEBHOOK_CONFIG;
 }

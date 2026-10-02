@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { canonicalizeJson } from '@authrim/ar-agent-access/core';
-import { buildAgentElevatedSettingsToolInput } from '../routes/settings-v2';
+import {
+  agentElevatedSettingsBodyInScope,
+  buildAgentElevatedSettingsToolInput,
+} from '../routes/settings-v2';
 
 describe('Agent settings elevation argument binding', () => {
   it('reconstructs the exact assurance Tool input after the platform route projection', () => {
@@ -9,6 +12,7 @@ describe('Agent settings elevation argument binding', () => {
       enabled: true,
       defaultAAL: 'AAL2',
       scopeAALRequirements: { 'payments:write': 'AAL3' },
+      upstreamAcrMappings: { 'urn:mace:incommon:iap:silver': 'AAL2' },
     };
     const reconstructed = buildAgentElevatedSettingsToolInput('assurance', {
       ifMatch: 'version-1',
@@ -16,12 +20,38 @@ describe('Agent settings elevation argument binding', () => {
         'assurance.enabled': true,
         'assurance.default_aal': 'AAL2',
         'assurance.scope_aal_requirements': canonicalizeJson({ 'payments:write': 'AAL3' }),
+        'assurance.upstream_acr_mappings': canonicalizeJson({
+          'urn:mace:incommon:iap:silver': 'AAL2',
+        }),
       },
     });
     expect(reconstructed).toEqual({
       operation: 'admin.write.assurance.update',
       input: original,
     });
+  });
+
+  it('accepts only what the Tool binds: no other keys, no clear or disable', () => {
+    const set = { 'assurance.enabled': true, 'assurance.upstream_acr_mappings': '{}' };
+    expect(agentElevatedSettingsBodyInScope('assurance', { ifMatch: 'v', set })).toBe(true);
+    for (const body of [
+      { ifMatch: 'v', set: { ...set, 'assurance.default_ial': 'IAL2', 'oauth.x': 1 } },
+      { ifMatch: 'v', set: { 'security.par_required': true } },
+      { ifMatch: 'v', set, clear: ['assurance.default_aal'] },
+      { ifMatch: 'v', set, disable: ['assurance.enabled'] },
+      { ifMatch: 'v', set, extra: true },
+      { ifMatch: 'v', set: [] },
+      null,
+    ]) {
+      expect(agentElevatedSettingsBodyInScope('assurance', body), JSON.stringify(body)).toBe(false);
+    }
+    expect(
+      agentElevatedSettingsBodyInScope('security', {
+        ifMatch: 'v',
+        set: { 'security.fapi_enabled': true, 'security.par_required': true },
+      })
+    ).toBe(false);
+    expect(agentElevatedSettingsBodyInScope('email', { ifMatch: 'v' })).toBe(false);
   });
 
   it('keeps nested security input and rejects unrelated categories from elevation binding', () => {

@@ -5,8 +5,9 @@
  *
  * From the settings effectiveness inventory (2026-09-30), less the settings made to apply
  * since: the older stores consolidated into the Settings API (logout, errors, rate limits,
- * just-in-time provisioning, policy flags and embedding limits, token lifetimes, FAPI, token
- * exchange, introspection, conformance, UI routing) and the IdP profile update on sign-in.
+ * just-in-time provisioning, policy flags and embedding limits, token lifetimes, FAPI and the
+ * other protocol settings (PAR, request objects, response types, DPoP nonces, discovery claims),
+ * token exchange, introspection, conformance, UI routing) and the IdP profile update on sign-in.
  * Update this list when a setting starts to apply or leaves the catalog.
  *
  * Shown in the settings map (Storybook: Pages › Settings map).
@@ -38,7 +39,7 @@ function reason(why: NotApplied, keys: readonly string[]): [string, NotApplied][
 }
 
 export const NOT_APPLIED: ReadonlyMap<string, NotApplied> = new Map([
-	// to-build (30)
+	// to-build (27)
 	...reason('to-build', [
 		'federation.saml_artifact_resolution_timeout',
 		'federation.saml_artifact_ttl',
@@ -51,18 +52,15 @@ export const NOT_APPLIED: ReadonlyMap<string, NotApplied> = new Map([
 		'federation.scim_token_default_expiry',
 		'federation.scim_token_max_expiry',
 		'oauth.id_token_expiry',
-		'oauth.nonce_expiry',
 		'oauth.offline_access_required',
 		'oauth.refresh_id_token_reissue',
 		'oauth.refresh_token_absolute_expiry',
 		'oauth.refresh_token_absolute_expiry_enabled',
 		'oauth.refresh_token_sliding_window_enabled',
-		'oauth.state_expiry',
 		'rate_limit.email_max_requests',
 		'rate_limit.email_window',
 		'security.dpop_bound_access_tokens',
 		'security.https_redirect_only',
-		'security.par_required',
 		'security.pkce_required',
 		'security.require_encrypted_request_object',
 		'session.default_ttl',
@@ -71,26 +69,8 @@ export const NOT_APPLIED: ReadonlyMap<string, NotApplied> = new Map([
 		'tokens.exchange_impersonation_enabled',
 		'tokens.introspection_extended_claims'
 	]),
-	// to-wire (5)
-	...reason('to-wire', [
-		'credentials.email_code_ttl',
-		'feature.enable_check_api',
-		'feature.enable_custom_claims',
-		'feature.enable_id_level_permissions',
-		'rate_limit.auth_max_failed_attempts'
-	]),
-	// to-consolidate (9)
-	...reason('to-consolidate', [
-		'assurance.default_aal',
-		'assurance.default_fal',
-		'assurance.default_ial',
-		'assurance.enabled',
-		'assurance.fal2_requires_dpop',
-		'assurance.fal3_requires_par',
-		'assurance.include_in_access_token',
-		'assurance.include_in_id_token',
-		'assurance.scope_aal_requirements'
-	]),
+	// to-wire (2)
+	...reason('to-wire', ['credentials.email_code_ttl', 'rate_limit.auth_max_failed_attempts']),
 	// duplicate (37)
 	...reason('duplicate', [
 		'authentication-methods.directory_password.auto_provision',
@@ -177,7 +157,7 @@ export const NOT_APPLIED: ReadonlyMap<string, NotApplied> = new Map([
 		'client.userinfo_encrypted_response_enc',
 		'client.userinfo_signed_response_alg'
 	]),
-	// to-remove (130)
+	// to-remove (125)
 	...reason('to-remove', [
 		'cache.api_key',
 		'cache.challenge_shard',
@@ -263,13 +243,8 @@ export const NOT_APPLIED: ReadonlyMap<string, NotApplied> = new Map([
 		'oauth.default_response_mode',
 		'oauth.error_description',
 		'oauth.error_uri',
-		'oauth.https_request_uri_max_size',
-		'oauth.https_request_uri_timeout_ms',
 		'oauth.id_token_aud_format',
 		'oauth.iss_response_param',
-		'oauth.max_codes_per_user',
-		'oauth.par_default_ttl',
-		'oauth.par_fapi_ttl',
 		'oauth.prompt_none_behavior',
 		'oauth.refresh_token_rotation',
 		'oauth.response_modes_supported',
@@ -318,10 +293,9 @@ export const NOT_APPLIED: ReadonlyMap<string, NotApplied> = new Map([
 		'login-ui.published_version',
 		'login-ui.rollback_snapshot'
 	]),
-	// on-hold (4)
+	// on-hold (3)
 	...reason('on-hold', [
 		'discovery.acr_values_supported',
-		'discovery.claims_supported',
 		'oauth.id_token_signing_alg',
 		'oauth.jarm_enabled'
 	]),

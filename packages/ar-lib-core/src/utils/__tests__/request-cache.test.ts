@@ -14,7 +14,7 @@ vi.mock('../kv', () => ({
   getClient: mockGetClient,
 }));
 
-import { getClientCached, getRequestCacheStats, getSystemSettingsCached } from '../request-cache';
+import { getClientCached, getRequestCacheStats, getProtocolSettingsCached } from '../request-cache';
 
 function createContext() {
   const store = new Map<string, unknown>();
@@ -98,38 +98,40 @@ describe('request client cache', () => {
   });
 });
 
-describe('request system-settings cache', () => {
-  it('remembers read failures so a later strict caller cannot observe a disabled profile', async () => {
+describe('request protocol-settings cache', () => {
+  it('remembers read failures, so a later caller in the request fails the same way', async () => {
     const c = createContext();
     c.set('tenantId', 'tenant-a');
     const get = vi.fn().mockRejectedValue(new Error('KV unavailable'));
     const env = { SETTINGS: { get } as unknown as KVNamespace } as Env;
 
-    await expect(getSystemSettingsCached(c, env)).resolves.toBeNull();
-    await expect(getSystemSettingsCached(c, env, { failOnError: true })).rejects.toThrow(
-      'Tenant system settings are unavailable'
-    );
-    expect(get).toHaveBeenCalledTimes(2);
+    await expect(getProtocolSettingsCached(c, env, { sections: ['fapi'] })).rejects.toThrow();
+    const readsForFirstCall = get.mock.calls.length;
+    await expect(getProtocolSettingsCached(c, env, { sections: ['fapi'] })).rejects.toThrow();
+    expect(get).toHaveBeenCalledTimes(readsForFirstCall);
   });
 
-  it('shares a successful strict read with later callers in the same request', async () => {
+  it('shares a successful read with later callers in the same request', async () => {
     const c = createContext();
     c.set('tenantId', 'tenant-a');
     const get = vi.fn(async (key: string) =>
-      key.includes('certification-profile') ? JSON.stringify({ fapi: { enabled: true } }) : null
+      key === 'settings:tenant:tenant-a:security'
+        ? JSON.stringify({ 'security.fapi_enabled': true })
+        : null
     );
     const env = { SETTINGS: { get } as unknown as KVNamespace } as Env;
 
-    await expect(getSystemSettingsCached(c, env, { failOnError: true })).resolves.toMatchObject({
+    await expect(getProtocolSettingsCached(c, env, { sections: ['fapi'] })).resolves.toMatchObject({
       fapi: { enabled: true },
     });
     const readsForFirstCall = get.mock.calls.length;
-    await expect(getSystemSettingsCached(c, env)).resolves.toMatchObject({
+    await expect(getProtocolSettingsCached(c, env, { sections: ['fapi'] })).resolves.toMatchObject({
       fapi: { enabled: true },
     });
     // The later caller in the same request reads nothing more.
     expect(get).toHaveBeenCalledTimes(readsForFirstCall);
   });
+
   it('reads only the sections a caller needs, so an unrelated broken document does not fail it', async () => {
     const c = createContext();
     c.set('tenantId', 'tenant-a');
@@ -141,13 +143,11 @@ describe('request system-settings cache', () => {
     });
     const env = { SETTINGS: { get } as unknown as KVNamespace } as Env;
 
-    await expect(
-      getSystemSettingsCached(c, env, { failOnError: true, sections: ['fapi'] })
-    ).resolves.toMatchObject({ fapi: { enabled: true } });
+    await expect(getProtocolSettingsCached(c, env, { sections: ['fapi'] })).resolves.toMatchObject({
+      fapi: { enabled: true },
+    });
     expect(get).not.toHaveBeenCalledWith('settings:platform:feature-flags');
     // A caller needing that section does not reuse the narrower entry.
-    await expect(
-      getSystemSettingsCached(c, env, { failOnError: true, sections: ['conformance'] })
-    ).rejects.toThrow();
+    await expect(getProtocolSettingsCached(c, env, { sections: ['oidc'] })).rejects.toThrow();
   });
 });

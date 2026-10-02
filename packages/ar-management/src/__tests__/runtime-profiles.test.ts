@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { Hono } from 'hono';
+import { createSettingsCanonicalD1 } from './helpers/settings-canonical-d1';
 import type { D1Database } from '@cloudflare/workers-types';
 import type { Env } from '@authrim/ar-lib-core';
 import {
@@ -101,6 +102,7 @@ function createTestApp() {
 function createEnv(kvData: Record<string, string> = {}): Env {
   return {
     DB: {} as D1Database,
+    DB_ADMIN: createSettingsCanonicalD1(),
     AUTHRIM_CONFIG: createMockKV(kvData),
     SETTINGS: createMockKV(),
     AUDIT_QUEUE: {
@@ -161,7 +163,6 @@ describe('runtime profile admin handlers', () => {
       }),
     });
     env.DB_PII = {} as D1Database;
-    env.DB_ADMIN = {} as D1Database;
     env.AUTHRIM_REGISTERED_SCHEMA_REFS = JSON.stringify([
       'binding:DB_PII:pii-d1',
       'binding:DB_ADMIN:admin-d1',

@@ -69,6 +69,15 @@ describe('DatabaseSettingsCanonicalStore', () => {
         'utf8'
       )
     );
+    db.exec(
+      readFileSync(
+        new URL(
+          '../../../../../migrations/admin/d1/039_platform_settings_documents.sql',
+          import.meta.url
+        ),
+        'utf8'
+      )
+    );
     now = 100;
     values = new Map([
       ['settings:tenant:tenant-a:security', JSON.stringify({ 'security.enabled': true })],
@@ -108,6 +117,117 @@ describe('DatabaseSettingsCanonicalStore', () => {
         'security.enabled': true,
       }
     );
+  });
+
+  it('keeps platform documents too: bootstrap, compare-and-set and the projection listings', async () => {
+    values.set('settings:platform:security', JSON.stringify({ 'security.enabled': true }));
+    const platform = { type: 'platform' } as const;
+    const first = manager();
+    const initial = await first.getAll('security', platform);
+    expect(initial.values).toEqual({ 'security.enabled': true });
+    expect(
+      db.prepare('SELECT category,projection_state FROM platform_settings_documents').all()
+    ).toEqual([{ category: 'security', projection_state: 'applied' }]);
+
+    put.mockRejectedValue(new Error('kv unavailable'));
+    const changed = await first.patch(
+      'security',
+      platform,
+      { ifMatch: initial.version, set: { 'security.enabled': false } },
+      'admin'
+    );
+    expect(changed.projection).toBe('pending');
+    await expect(
+      first.patch(
+        'security',
+        platform,
+        { ifMatch: initial.version, set: { 'security.enabled': true } },
+        'admin'
+      )
+    ).rejects.toBeInstanceOf(ConflictError);
+    expect(await store.pending()).toEqual([
+      expect.objectContaining({
+        tenantId: null,
+        scope: platform,
+        storageKey: 'settings:platform:security',
+      }),
+    ]);
+    expect((await store.leastRecentlyReconciled()).map(({ storageKey }) => storageKey)).toEqual(
+      expect.arrayContaining(['settings:platform:security'])
+    );
+
+    put.mockReset();
+    put.mockImplementation(async (key: string, value: string) => values.set(key, value));
+    await expect(
+      projectLatestSettingsDocument(
+        store,
+        { put } as unknown as KVNamespace,
+        'security',
+        platform,
+        'settings:platform:security'
+      )
+    ).resolves.toBe('applied');
+    expect(JSON.parse(values.get('settings:platform:security')!)).toEqual({
+      'security.enabled': false,
+    });
+    expect(await store.pending()).toEqual([]);
+  });
+
+  it("reads a tenant's documents and the platform's copy state as one snapshot", async () => {
+    const scope = { type: 'tenant' as const, id: 'acme' };
+    const data = { 'security.enabled': true };
+    const version = generateVersion(data);
+    await store.create('security', scope, { data, version });
+    await store.create('oauth', { type: 'tenant', id: 'other' }, { data, version });
+    await store.create('oauth', { type: 'platform' }, { data, version });
+
+    await expect(store.snapshot(['security', 'oauth'], scope)).resolves.toEqual({
+      documents: new Map([
+        ['security', { version, pending: true }],
+        ['oauth', null],
+      ]),
+      platformPending: ['oauth'],
+    });
+    await store.markProjected('security', scope, version);
+    await store.markProjected('oauth', { type: 'platform' }, version);
+    await expect(store.snapshot(['security', 'oauth'], scope)).resolves.toEqual({
+      documents: new Map([
+        ['security', { version, pending: false }],
+        ['oauth', null],
+      ]),
+      platformPending: [],
+    });
+    await expect(store.snapshot([], scope)).resolves.toEqual({
+      documents: new Map(),
+      platformPending: [],
+    });
+  });
+
+  it('reads without creating anything when read-only', async () => {
+    const readOnly = category(
+      new SettingsManager({
+        env: {},
+        kv: { get: async (key: string) => values.get(key) ?? null, put } as unknown as KVNamespace,
+        canonicalStore: store,
+        cacheTTL: 0,
+        strictReads: true,
+        readOnly: true,
+      })
+    );
+    const result = await readOnly.getAll('security', { type: 'tenant', id: 'tenant-a' });
+    expect(result.values).toEqual({ 'security.enabled': true });
+    expect(db.prepare('SELECT count(*) AS n FROM tenant_settings_documents').get()).toEqual({
+      n: 0,
+    });
+    await expect(
+      readOnly.patch(
+        'security',
+        { type: 'tenant', id: 'tenant-a' },
+        { ifMatch: result.version, set: { 'security.enabled': false } },
+        'admin'
+      )
+    ).rejects.toThrow();
+    expect(put).not.toHaveBeenCalled();
   });
 
   it('commits with CAS and leaves a retryable projection when KV fails', async () => {

@@ -33,9 +33,6 @@ import {
 
 const log = createLogger().module('ErrorMiddleware');
 
-// KV key constants for configuration
-const KV_KEY_LOCALE = 'error_locale';
-
 // Defaults
 const DEFAULT_LOCALE: ErrorLocale = 'en';
 const DEFAULT_RESPONSE_FORMAT: ErrorResponseFormat = 'oauth';
@@ -105,7 +102,7 @@ export class RFCError extends Error {
  */
 interface ErrorMiddlewareOptions {
   /**
-   * Default locale (can be overridden by KV)
+   * Default locale, used where the Settings API has no value
    */
   locale?: ErrorLocale;
 
@@ -133,7 +130,7 @@ interface ErrorMiddlewareOptions {
 
 const RESPONSE_FORMATS: readonly ErrorResponseFormat[] = ['oauth', 'problem_details'];
 const ERROR_ID_MODES: readonly ErrorIdMode[] = ['all', '5xx', 'security_only', 'none'];
-const ERROR_SETTING_KEYS = ['oauth.error_response_format', 'oauth.error_id_mode'] as const;
+const ERROR_LOCALES: readonly ErrorLocale[] = ['en', 'ja'];
 
 /**
  * Tenants whose error settings could not be read recently, so error responses (which invalid
@@ -172,29 +169,28 @@ function rememberFailure(env: object, tenantId: string): void {
 }
 
 /**
- * The tenant's `oauth.error_response_format` and `oauth.error_id_mode` where they are set: as
- * the Settings API resolves them (tenant, else the older AUTHRIM_CONFIG values, else env). Null
- * when they cannot be read, so an error response never fails on its own settings.
+ * The tenant's `oauth.error_response_format`, `oauth.error_id_mode` and `oauth.error_locale`
+ * where they are set: as the Settings API resolves them (tenant, else the platform, else the
+ * older AUTHRIM_CONFIG values, else env). Null when they cannot be read, so an error response
+ * never fails on its own settings.
  */
-async function readErrorSettings(
-  c: Context
-): Promise<{ format?: ErrorResponseFormat; errorIdMode?: ErrorIdMode } | null> {
+async function readErrorSettings(c: Context): Promise<{
+  format?: ErrorResponseFormat;
+  errorIdMode?: ErrorIdMode;
+  locale?: ErrorLocale;
+} | null> {
   if (!c.env) return null;
   const env = c.env as EffectiveSettingsEnv;
   // Failures are remembered per settings binding (one per deployment; one per test env).
-  const settingsBinding = (env.SETTINGS ?? env.AUTHRIM_CONFIG ?? env) as object;
+  const settingsBinding = (env.SETTINGS ?? env) as object;
   let tenantId: string | undefined;
   try {
     tenantId = getTenantIdFromContext(c);
     if (recentlyFailed(settingsBinding, tenantId)) return null;
-    // Only the stores that hold these two settings: an unrelated document must not affect them.
-    const { values, sources } = await resolveEffectiveSettingsWithSources(
-      c.env as EffectiveSettingsEnv,
-      'oauth',
-      // Strict: a store that cannot be read fails the whole read (defaults, then the backoff
-      // below), rather than applying whichever of the two values happened to be readable.
-      { tenantId, keys: ERROR_SETTING_KEYS, strictLegacy: true }
-    );
+    // A document that cannot be read fails the whole read (defaults, then the backoff below).
+    const { values, sources } = await resolveEffectiveSettingsWithSources(env, 'oauth', {
+      tenantId,
+    });
     // A value nobody set leaves the middleware's own default in place.
     const configured = <T extends string>(key: string, allowed: readonly T[]): T | undefined => {
       const value = values[key] as T;
@@ -203,6 +199,7 @@ async function readErrorSettings(
     return {
       format: configured('oauth.error_response_format', RESPONSE_FORMATS),
       errorIdMode: configured('oauth.error_id_mode', ERROR_ID_MODES),
+      locale: configured('oauth.error_locale', ERROR_LOCALES),
     };
   } catch (error) {
     if (tenantId !== undefined) rememberFailure(settingsBinding, tenantId);
@@ -215,7 +212,7 @@ async function readErrorSettings(
 
 /**
  * Get error configuration: the tenant's Settings API values where set, else the middleware
- * options, else defaults. The locale is kept in AUTHRIM_CONFIG only.
+ * options, else defaults.
  */
 async function getErrorConfig(
   c: Context,
@@ -225,25 +222,12 @@ async function getErrorConfig(
   format: ErrorResponseFormat;
   errorIdMode: ErrorIdMode;
 }> {
-  const env = (c.env ?? {}) as {
-    AUTHRIM_CONFIG?: { get: (key: string) => Promise<string | null> };
-  };
-
   let locale = options.locale || DEFAULT_LOCALE;
   let format = options.format || DEFAULT_RESPONSE_FORMAT;
   let errorIdMode = options.errorIdMode || DEFAULT_ERROR_ID_MODE;
 
-  const readLocale = async (): Promise<string | null> => {
-    try {
-      return (await env.AUTHRIM_CONFIG?.get(KV_KEY_LOCALE)) ?? null;
-    } catch {
-      return null;
-    }
-  };
-  const [kvLocale, settings] = await Promise.all([readLocale(), readErrorSettings(c)]);
-  if (kvLocale === 'en' || kvLocale === 'ja') {
-    locale = kvLocale;
-  }
+  const settings = await readErrorSettings(c);
+  if (settings?.locale) locale = settings.locale;
   if (settings?.format) format = settings.format;
   if (settings?.errorIdMode) errorIdMode = settings.errorIdMode;
 

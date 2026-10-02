@@ -1,47 +1,77 @@
 import { describe, expect, it } from 'vitest';
-import { getCertificationProfile } from '../certification-profiles';
+import {
+  ALL_CATEGORY_META,
+  createSettingsManager,
+  type CategoryMeta,
+  type Env,
+} from '@authrim/ar-lib-core';
+import {
+  CERTIFICATION_PROFILE_MANAGED_KEYS,
+  certificationProfiles,
+  getCertificationProfile,
+} from '../certification-profiles';
+import { validateSettingValue } from '../routes/settings-v2/patch-validation';
 
 describe('certification profiles', () => {
-  it('defines a tenant-scoped FAPI 2.0 Client Credentials DPoP profile', () => {
-    const profile = getCertificationProfile('fapi-2-client-credentials-dpop');
+  it('sets only managed settings, with values a tenant PATCH accepts', () => {
+    const manager = createSettingsManager({ env: {}, kv: null, cacheTTL: 0 });
+    for (const meta of Object.values(ALL_CATEGORY_META)) {
+      manager.registerCategory(meta as CategoryMeta);
+    }
+    for (const [id, profile] of Object.entries(certificationProfiles)) {
+      for (const [category, values] of Object.entries(profile.settings)) {
+        const managed = CERTIFICATION_PROFILE_MANAGED_KEYS.get(category as never) ?? [];
+        for (const [key, value] of Object.entries(values ?? {})) {
+          expect(managed, `${id} ${key}`).toContain(key);
+          expect(
+            validateSettingValue(category, 'tenant', key, value, {} as Env),
+            `${id} ${key}`
+          ).toBeNull();
+        }
+        expect(manager.validate(category, values ?? {}), `${id} ${category}`).toMatchObject({
+          valid: true,
+        });
+      }
+    }
+  });
 
-    expect(profile).toMatchObject({
-      settings: {
-        fapi: { enabled: true, requireDpop: true, allowPublicClients: false },
-        oidc: {
-          requirePar: false,
-          tokenEndpointAuthMethodsSupported: ['private_key_jwt'],
-          clientCredentials: { enabled: true },
-          aiEphemeralAuth: { enabled: true },
-        },
+  it('defines a FAPI 2.0 Client Credentials DPoP profile', () => {
+    expect(getCertificationProfile('fapi-2-client-credentials-dpop')?.settings).toMatchObject({
+      security: {
+        'security.fapi_enabled': true,
+        'security.dpop_required': 'always',
+        'security.fapi_allow_public_clients': false,
+        'security.par_required': false,
+      },
+      oauth: { 'oauth.token_endpoint_auth_methods_supported': ['private_key_jwt'] },
+      'feature-flags': {
+        'feature.enable_client_credentials': true,
+        'feature.enable_ai_ephemeral_auth': true,
       },
     });
   });
 
   it('defines a FAPI 2.0 Message Signing profile without changing the normal FAPI profile', () => {
-    const profile = getCertificationProfile('fapi-2-message-signing-dpop');
-    const normal = getCertificationProfile('fapi-2-dpop');
-
-    expect(profile).toMatchObject({
-      settings: {
-        fapi: {
-          enabled: true,
-          requireDpop: true,
-          messageSigning: {
-            enabled: true,
-            requireSignedRequestObject: true,
-            requireJarm: true,
-            requestObjectSigningAlgorithms: ['ES256', 'PS256', 'EdDSA'],
-            authorizationSigningAlgorithms: ['ES256'],
-            defaultAuthorizationSigningAlgorithm: 'ES256',
-          },
-        },
-        oidc: {
-          requirePar: true,
-          tokenEndpointAuthMethodsSupported: ['private_key_jwt'],
-        },
+    expect(getCertificationProfile('fapi-2-message-signing-dpop')?.settings).toMatchObject({
+      security: {
+        'security.fapi_enabled': true,
+        'security.dpop_required': 'always',
+        'security.fapi_message_signing_enabled': true,
+        'security.require_signed_request_object': true,
+        'security.require_jarm': true,
+        'security.request_object_signing_algs': 'ES256,PS256,EdDSA',
+        'security.authorization_signing_algs': 'ES256',
+        'security.default_authorization_signing_alg': 'ES256',
+        'security.par_required': true,
       },
     });
-    expect(normal?.settings.fapi.messageSigning).toBeUndefined();
+    expect(getCertificationProfile('fapi-2-dpop')?.settings.security).not.toHaveProperty(
+      'security.fapi_message_signing_enabled'
+    );
+  });
+
+  it('finds only defined profiles', () => {
+    expect(getCertificationProfile('constructor')).toBeNull();
+    expect(getCertificationProfile('unknown')).toBeNull();
   });
 });

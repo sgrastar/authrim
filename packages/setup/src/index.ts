@@ -31,6 +31,8 @@ import {
 } from './cli/commands/signing-key-rotate.js';
 import { rotateLookupHmacKeyCommand } from './cli/commands/lookup-hmac-rotate.js';
 import { controlProvisionCommand } from './cli/commands/control-provision.js';
+import { recoverInitialD1Command } from './cli/commands/recover-initial-d1.js';
+import { recoverAbsentQueueCommand } from './cli/commands/recover-absent-queue.js';
 import {
   resolveApiBaseUrlCandidates,
   resolveAdminUiEntryUrl,
@@ -126,6 +128,21 @@ program
   )
   .option('-y, --yes', 'Skip confirmation prompts')
   .action(deployCommand);
+
+program
+  .command('recover-initial-d1')
+  .description('Verify and recover one D1 database left by an interrupted initial create')
+  .requiredOption('--env <name>', 'Environment name')
+  .requiredOption('--binding <name>', 'Expected initial tenant shard binding')
+  .requiredOption('--database-id <uuid>', 'Immutable D1 database ID shown by Cloudflare')
+  .action(recoverInitialD1Command);
+
+program
+  .command('recover-absent-queue')
+  .description('Verify a Queue is absent before retrying an interrupted initial create')
+  .requiredOption('--env <name>', 'Environment name')
+  .requiredOption('--binding <name>', 'Queue binding recorded by the provisioning attempt')
+  .action(recoverAbsentQueueCommand);
 
 program
   .command('update')

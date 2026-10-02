@@ -117,27 +117,9 @@ function getAuthenticationMethodSettingKey(
     : `authentication-methods.${method}.${usage}_enabled`;
 }
 
-async function getLegacyAuthenticationMethodDefault(
-  env: Env,
-  method: BuiltInAuthenticationMethod
-): Promise<boolean> {
-  if (method === 'totp') {
-    return false;
-  }
-  try {
-    const rawSystemSettings = await env.SETTINGS?.get('system_settings');
-    if (!rawSystemSettings) {
-      return method === 'passkey';
-    }
-    const systemSettings = JSON.parse(rawSystemSettings) as {
-      advanced?: { passkeyEnabled?: boolean; magicLinkEnabled?: boolean };
-    };
-    return method === 'passkey'
-      ? systemSettings.advanced?.passkeyEnabled !== false
-      : systemSettings.advanced?.magicLinkEnabled === true;
-  } catch {
-    return method === 'passkey';
-  }
+/** A method's switch where a tenant sets none: passkeys on, the others off. */
+function defaultAuthenticationMethodEnabled(method: BuiltInAuthenticationMethod): boolean {
+  return method === 'passkey';
 }
 
 async function isAuthenticationMethodUsageAvailable(
@@ -146,25 +128,25 @@ async function isAuthenticationMethodUsageAvailable(
   method: BuiltInAuthenticationMethod,
   usage: AuthenticationMethodUsage
 ): Promise<boolean> {
-  const legacyDefault = await getLegacyAuthenticationMethodDefault(env, method);
+  const methodDefault = defaultAuthenticationMethodEnabled(method);
   try {
     const raw = await env.SETTINGS?.get(
       `settings:tenant:${tenantId}:${AUTHENTICATION_METHODS_CATEGORY}`
     );
     if (!raw) {
-      return legacyDefault;
+      return methodDefault;
     }
     const settings = JSON.parse(raw) as Record<string, unknown>;
     const legacyEnabled = normalizeBoolean(
       settings[`authentication-methods.${method}.enabled`],
-      legacyDefault
+      methodDefault
     );
     return normalizeBoolean(
       settings[getAuthenticationMethodSettingKey(method, usage)],
       legacyEnabled
     );
   } catch {
-    return legacyDefault;
+    return methodDefault;
   }
 }
 

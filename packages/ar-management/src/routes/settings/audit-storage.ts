@@ -14,6 +14,7 @@
  * @packageDocumentation
  */
 
+import { DatabaseSettingsCanonicalStore } from '@authrim/ar-lib-core/services/settings-canonical-store';
 import type { Context } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
 import type {
@@ -34,6 +35,7 @@ import {
   INFRASTRUCTURE_CATEGORY_META,
   loadEnvironmentProfileDefaultsFromEnv,
   normalizeAuditStorageRoutingTargets,
+  requireDedicatedAdminDatabaseAdapter,
   targetToBackendId,
 } from '@authrim/ar-lib-core';
 import {
@@ -122,6 +124,11 @@ function describeAuditTargetStatus(env: Env, target: AuditTarget): AuditTargetSt
   };
 }
 
+/** A retention in whole days (a write adds days to the date, dropping any fraction). */
+function wholeDaysWithin(value: unknown, min: number, max: number): boolean {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= min && value <= max;
+}
+
 function normalizeRoutingRule(
   rule: AuditStorageRoutingRule & { backend?: string }
 ): AuditStorageRoutingRule {
@@ -162,6 +169,17 @@ function validateRoutingRule(
       `${prefix}: at least one target is required (targets.primaryStore, archiveStores, forwardingSinks)`
     );
   }
+  for (const [field, max] of [
+    ['eventLogRetentionDays', 730],
+    ['piiLogRetentionDays', 2555],
+  ] as const) {
+    const days = rule.retention?.[field];
+    if (days != null && !wholeDaysWithin(days, 1, max)) {
+      errors.push(
+        `${prefix}: retention.${field} must be a whole number of days between 1 and ${max}`
+      );
+    }
+  }
 
   return errors;
 }
@@ -197,6 +215,10 @@ async function setEnvironmentDefaultAuditProfileId(env: Env, profileId: string):
     env: env as unknown as Record<string, string | undefined>,
     kv: env.SETTINGS,
     cacheTTL: 0,
+    // Platform documents are saved through the canonical store, as the Settings API saves them.
+    canonicalStore: new DatabaseSettingsCanonicalStore(
+      requireDedicatedAdminDatabaseAdapter(env, 'settings-canonical')
+    ),
   });
   manager.registerCategory(INFRASTRUCTURE_CATEGORY_META);
 
@@ -685,8 +707,8 @@ export async function updateRetentionConfig(c: Context<{ Bindings: Env }>) {
 
   // Validate eventLogRetentionDays
   if (body.eventLogRetentionDays !== undefined) {
-    if (body.eventLogRetentionDays < 1 || body.eventLogRetentionDays > 730) {
-      errors.push('eventLogRetentionDays must be between 1 and 730');
+    if (!wholeDaysWithin(body.eventLogRetentionDays, 1, 730)) {
+      errors.push('eventLogRetentionDays must be a whole number of days between 1 and 730');
     } else {
       existingConfig.eventLogRetentionDays = body.eventLogRetentionDays;
       nextProfile.retention!.eventLogRetentionDays = body.eventLogRetentionDays;
@@ -695,8 +717,8 @@ export async function updateRetentionConfig(c: Context<{ Bindings: Env }>) {
 
   // Validate piiLogRetentionDays
   if (body.piiLogRetentionDays !== undefined) {
-    if (body.piiLogRetentionDays < 1 || body.piiLogRetentionDays > 2555) {
-      errors.push('piiLogRetentionDays must be between 1 and 2555');
+    if (!wholeDaysWithin(body.piiLogRetentionDays, 1, 2555)) {
+      errors.push('piiLogRetentionDays must be a whole number of days between 1 and 2555');
     } else {
       existingConfig.piiLogRetentionDays = body.piiLogRetentionDays;
       nextProfile.retention!.piiLogRetentionDays = body.piiLogRetentionDays;
@@ -715,8 +737,8 @@ export async function updateRetentionConfig(c: Context<{ Bindings: Env }>) {
 
   // Validate minimumRetentionDays
   if (body.minimumRetentionDays !== undefined) {
-    if (body.minimumRetentionDays < 1 || body.minimumRetentionDays > 2555) {
-      errors.push('minimumRetentionDays must be between 1 and 2555');
+    if (!wholeDaysWithin(body.minimumRetentionDays, 1, 2555)) {
+      errors.push('minimumRetentionDays must be a whole number of days between 1 and 2555');
     } else {
       existingConfig.minimumRetentionDays = body.minimumRetentionDays;
       nextProfile.retention!.minimumRetentionDays = body.minimumRetentionDays;

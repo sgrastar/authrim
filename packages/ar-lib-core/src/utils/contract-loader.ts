@@ -11,7 +11,11 @@
 
 import type { Env } from '../types/env';
 import type { TenantContract, ClientContract } from '../types/contracts';
-import { getTenantProfile, type TenantProfile } from '../types/contracts/tenant-profile';
+import {
+  getTenantProfile,
+  isValidProfileType,
+  type TenantProfile,
+} from '../types/contracts/tenant-profile';
 
 // =============================================================================
 // Key Building
@@ -119,6 +123,30 @@ export async function loadTenantProfile(
 ): Promise<TenantProfile> {
   const contract = await loadTenantContract(kv, env, tenantId);
   return getTenantProfile(contract?.profile);
+}
+
+/**
+ * The tenant's profile for an admin view: like loadTenantProfile, but a contract that cannot be
+ * read or parsed throws instead of reading as the default (human) profile. No contract: default.
+ */
+export async function loadTenantProfileStrict(
+  kv: KVNamespace | undefined,
+  env: Env,
+  tenantId: string
+): Promise<TenantProfile> {
+  if (!kv) return getTenantProfile(undefined);
+  const raw = await kv.get(buildContractKey(env, 'tenant', tenantId));
+  if (raw === null) return getTenantProfile(undefined);
+  const contract: unknown = JSON.parse(raw);
+  if (!contract || typeof contract !== 'object' || Array.isArray(contract)) {
+    throw new Error('tenant_contract_invalid');
+  }
+  const profile = (contract as { profile?: unknown }).profile;
+  // No profile is the default one; a profile that is not one Authrim knows is a broken contract.
+  if (profile !== undefined && !isValidProfileType(profile)) {
+    throw new Error('tenant_contract_profile_invalid');
+  }
+  return getTenantProfile(profile);
 }
 
 // =============================================================================

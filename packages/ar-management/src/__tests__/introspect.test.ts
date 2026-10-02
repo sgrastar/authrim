@@ -66,10 +66,30 @@ const {
 });
 
 // Mock the shared module - use importOriginal for error functions
+const introspectionCache = vi.hoisted(() =>
+  vi.fn<() => Promise<{ enabled: boolean; ttlSeconds: number }>>()
+);
+
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@authrim/ar-lib-core')>();
   return {
     ...actual,
+    // The introspection response cache as the test sets it; other settings as resolved.
+    resolveEffectiveSettings: async (
+      ...args: Parameters<typeof actual.resolveEffectiveSettings>
+    ) => {
+      const [, category] = args;
+      const values = await actual.resolveEffectiveSettings(...args);
+      if (category === 'feature-flags') {
+        const cache = await introspectionCache();
+        return { ...values, 'feature.introspection_cache_enabled': cache.enabled };
+      }
+      if (category === 'tokens') {
+        const cache = await introspectionCache();
+        return { ...values, 'tokens.introspection_cache_ttl': cache.ttlSeconds };
+      }
+      return values;
+    },
     validateClientId: mockValidateClientId,
     timingSafeEqual: mockTimingSafeEqual,
     verifyClientSecretHash: mockVerifyClientSecretHash,
@@ -102,11 +122,6 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   };
 });
 
-// Mock the introspection cache settings module
-vi.mock('../routes/settings/introspection-cache', () => ({
-  getIntrospectionCacheConfig: vi.fn(),
-}));
-
 // Mock jose
 vi.mock('jose', () => ({
   importJWK: vi.fn(),
@@ -115,7 +130,6 @@ vi.mock('jose', () => ({
 
 import { introspectHandler } from '../introspect';
 import { importJWK } from 'jose';
-import { getIntrospectionCacheConfig } from '../routes/settings/introspection-cache';
 
 // Use the hoisted mocks directly (already defined above vi.mock)
 const validateClientId = mockValidateClientId;
@@ -195,7 +209,7 @@ describe('Token Introspection Endpoint', () => {
     });
     vi.mocked(importJWK).mockResolvedValue({} as any);
     // Default: cache disabled for most tests to test without cache
-    vi.mocked(getIntrospectionCacheConfig).mockResolvedValue({
+    introspectionCache.mockResolvedValue({
       enabled: false,
       ttlSeconds: 60,
     });
@@ -1605,7 +1619,7 @@ describe('Token Introspection Endpoint', () => {
         jti: 'token-jti-123',
       };
 
-      vi.mocked(getIntrospectionCacheConfig).mockResolvedValue({
+      introspectionCache.mockResolvedValue({
         enabled: true,
         ttlSeconds: 60,
       });
@@ -1655,7 +1669,7 @@ describe('Token Introspection Endpoint', () => {
         exp: Math.floor(Date.now() / 1000) + 3600,
       };
 
-      vi.mocked(getIntrospectionCacheConfig).mockResolvedValue({
+      introspectionCache.mockResolvedValue({
         enabled: true,
         ttlSeconds: 60,
       });
@@ -1704,7 +1718,7 @@ describe('Token Introspection Endpoint', () => {
         exp: Math.floor(Date.now() / 1000) - 100, // Already expired
       };
 
-      vi.mocked(getIntrospectionCacheConfig).mockResolvedValue({
+      introspectionCache.mockResolvedValue({
         enabled: true,
         ttlSeconds: 60,
       });
@@ -1750,7 +1764,7 @@ describe('Token Introspection Endpoint', () => {
     });
 
     it('should store active=true response in cache', async () => {
-      vi.mocked(getIntrospectionCacheConfig).mockResolvedValue({
+      introspectionCache.mockResolvedValue({
         enabled: true,
         ttlSeconds: 60,
       });
@@ -1795,7 +1809,7 @@ describe('Token Introspection Endpoint', () => {
     });
 
     it('should NOT cache when cache is disabled', async () => {
-      vi.mocked(getIntrospectionCacheConfig).mockResolvedValue({
+      introspectionCache.mockResolvedValue({
         enabled: false,
         ttlSeconds: 60,
       });
@@ -1838,7 +1852,7 @@ describe('Token Introspection Endpoint', () => {
     });
 
     it('should handle cache read errors gracefully', async () => {
-      vi.mocked(getIntrospectionCacheConfig).mockResolvedValue({
+      introspectionCache.mockResolvedValue({
         enabled: true,
         ttlSeconds: 60,
       });
@@ -1883,7 +1897,7 @@ describe('Token Introspection Endpoint', () => {
     });
 
     it('should skip cache when JTI is missing', async () => {
-      vi.mocked(getIntrospectionCacheConfig).mockResolvedValue({
+      introspectionCache.mockResolvedValue({
         enabled: true,
         ttlSeconds: 60,
       });
@@ -1926,7 +1940,7 @@ describe('Token Introspection Endpoint', () => {
     });
 
     it('should skip cache when AUTHRIM_CONFIG is undefined', async () => {
-      vi.mocked(getIntrospectionCacheConfig).mockResolvedValue({
+      introspectionCache.mockResolvedValue({
         enabled: true,
         ttlSeconds: 60,
       });
@@ -1980,7 +1994,7 @@ describe('Token Introspection Endpoint', () => {
         jti: 'token-jti-123',
       };
 
-      vi.mocked(getIntrospectionCacheConfig).mockResolvedValue({
+      introspectionCache.mockResolvedValue({
         enabled: true,
         ttlSeconds: 60,
       });
@@ -2044,7 +2058,7 @@ describe('Token Introspection Endpoint', () => {
         client_id: 'client-123',
       };
 
-      vi.mocked(getIntrospectionCacheConfig).mockResolvedValue({
+      introspectionCache.mockResolvedValue({
         enabled: true,
         ttlSeconds: 60,
       });
@@ -2090,7 +2104,7 @@ describe('Token Introspection Endpoint', () => {
     });
 
     it('should use SHA-256 hash format for cache key', async () => {
-      vi.mocked(getIntrospectionCacheConfig).mockResolvedValue({
+      introspectionCache.mockResolvedValue({
         enabled: true,
         ttlSeconds: 60,
       });
@@ -2149,7 +2163,7 @@ describe('Token Introspection Endpoint', () => {
         jti: 'token-jti-123',
       };
 
-      vi.mocked(getIntrospectionCacheConfig).mockResolvedValue({
+      introspectionCache.mockResolvedValue({
         enabled: true,
         ttlSeconds: 60,
       });
@@ -2193,7 +2207,7 @@ describe('Token Introspection Endpoint', () => {
     });
 
     it('should NOT cache active=false response', async () => {
-      vi.mocked(getIntrospectionCacheConfig).mockResolvedValue({
+      introspectionCache.mockResolvedValue({
         enabled: true,
         ttlSeconds: 60,
       });
@@ -2239,7 +2253,7 @@ describe('Token Introspection Endpoint', () => {
       // Edge case: cache somehow contains active=false (should not happen, but defensive)
       const invalidCachedResponse = { active: false };
 
-      vi.mocked(getIntrospectionCacheConfig).mockResolvedValue({
+      introspectionCache.mockResolvedValue({
         enabled: true,
         ttlSeconds: 60,
       });

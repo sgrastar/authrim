@@ -57,6 +57,7 @@ const mocks = vi.hoisted(() => ({
   listWorkers: vi.fn(),
   getWorkerDeployments: vi.fn(),
   assertR2BucketOwnershipForUse: vi.fn(),
+  createR2BucketOwnershipVerifier: vi.fn(),
   queryD1Rows: vi.fn(),
   saveMasterWranglerConfigs: vi.fn(),
   compileControlWorkerInventoryFromArtifacts: vi.fn(),
@@ -177,6 +178,7 @@ vi.mock('../core/cloudflare.js', async (importOriginal) => {
     listWorkers: mocks.listWorkers,
     getWorkerDeployments: mocks.getWorkerDeployments,
     assertR2BucketOwnershipForUse: mocks.assertR2BucketOwnershipForUse,
+    createR2BucketOwnershipVerifier: mocks.createR2BucketOwnershipVerifier,
     queryD1Rows: mocks.queryD1Rows,
   };
 });
@@ -719,6 +721,11 @@ describe('CLI initial deployment', () => {
     });
     mocks.detectCloudflareTokenOwnership.mockResolvedValue('user');
     mocks.assertR2BucketOwnershipForUse.mockResolvedValue(undefined);
+    // The deploy verifies the release bucket through a verifier bound to its identity, checking
+    // ownership the same way.
+    mocks.createR2BucketOwnershipVerifier.mockImplementation(
+      async (identity: unknown) => () => mocks.assertR2BucketOwnershipForUse(identity)
+    );
     mocks.validateDirectControlTokensWithEvidence.mockResolvedValue({
       ownership: 'user',
       childTokens: [

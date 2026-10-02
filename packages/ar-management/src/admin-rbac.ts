@@ -13,6 +13,11 @@
 import { Context } from 'hono';
 import type { Env, AdminAuthContext } from '@authrim/ar-lib-core';
 import {
+  removeOrganizationMembership,
+  removeRoleAssignment,
+  type RevocationContext,
+} from './access-revocation';
+import {
   ADMIN_PERMISSIONS,
   getTenantIdFromContext,
   createAuthContextFromHono,
@@ -85,7 +90,7 @@ function hasMachineFullAdminBypass(authContext: AdminAuthContext | null): boolea
   );
 }
 
-function canManageRoleHierarchy(
+export function canManageRoleHierarchy(
   authContext: AdminAuthContext | null,
   targetHierarchyLevel: unknown
 ): boolean {
@@ -114,6 +119,33 @@ function normalizeMembershipType(value: unknown): MembershipType | null {
   }
 
   return null;
+}
+
+/** Removals made through the Admin API, audited with the request. */
+function revocationContext(
+  c: Context<{ Bindings: Env }>,
+  tenantId: string,
+  adapter: DatabaseAdapter
+): RevocationContext {
+  return {
+    env: c.env,
+    tenantId,
+    adapter,
+    log: getLogger(c).module('ADMIN-RBAC'),
+    audit: (action, resource, resourceId, details, stable) =>
+      createAuditLogFromContext(
+        c,
+        action,
+        resource,
+        resourceId,
+        details,
+        'info',
+        stable?.id,
+        stable?.at
+      ),
+    // The removal is done and answered; caches that cannot be dropped expire on their own.
+    onCacheFailure: 'warn',
+  };
 }
 
 /**
@@ -900,10 +932,10 @@ export async function adminOrganizationMemberRemoveHandler(c: Context<{ Bindings
       );
     }
 
-    await coreAdapter.execute(
-      'DELETE FROM subject_org_membership WHERE tenant_id = ? AND org_id = ? AND subject_id = ?',
-      [tenantId, orgId, subjectId]
-    );
+    await removeOrganizationMembership(revocationContext(c, tenantId, coreAdapter), {
+      userId: subjectId,
+      orgId,
+    });
 
     return c.json({
       success: true,
@@ -1352,10 +1384,10 @@ export async function adminUserRoleRemoveHandler(c: Context<{ Bindings: Env }>) 
       return insufficientAdminPermissions(c);
     }
 
-    await coreAdapter.execute('DELETE FROM role_assignments WHERE tenant_id = ? AND id = ?', [
-      tenantId,
+    await removeRoleAssignment(revocationContext(c, tenantId, coreAdapter), {
+      userId,
       assignmentId,
-    ]);
+    });
 
     return c.json({
       success: true,

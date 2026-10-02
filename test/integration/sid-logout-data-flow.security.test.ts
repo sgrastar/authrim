@@ -114,11 +114,6 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
       registerCategory: vi.fn(),
       getAll: testState.getSettingsAll,
     })),
-    createOAuthConfigManager: vi.fn(() => ({
-      isStateRequired: vi.fn(async () => false),
-      getTokenExpiry: vi.fn(async () => 3600),
-      getRefreshTokenExpiry: vi.fn(async () => 86400),
-    })),
     createAuthContextFromHono: vi.fn(() => authContext),
     createAccountAuthContextFromHono: vi.fn(() => authContext),
     createPIIContextFromHono: vi.fn(() => ({

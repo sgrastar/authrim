@@ -112,6 +112,15 @@ function createAdminD1(): D1Database {
       'utf8'
     )
   );
+  database.exec(
+    readFileSync(
+      new URL(
+        '../../../../migrations/admin/d1/039_platform_settings_documents.sql',
+        import.meta.url
+      ),
+      'utf8'
+    )
+  );
   adminDatabases.add(database);
   const session = {
     prepare: (sql: string) => new SqliteStatement(database.prepare(sql)),
@@ -326,80 +335,31 @@ describe('Settings API v2', () => {
         expect(body).toHaveProperty('sources');
       });
 
-      it('shows FAPI saved through the older system settings as the platform value', async () => {
-        const { app, mockEnv } = createTestApp({
-          kv: createMockKV({ system_settings: JSON.stringify({ fapi: { enabled: true } }) }),
-        });
-
-        const res = await app.request(
-          '/api/admin/tenants/tenant_123/settings/security',
-          { method: 'GET' },
-          mockEnv
-        );
-
-        expect(res.status).toBe(200);
-        const body = (await res.json()) as SettingsGetResult;
-        expect(body.values['security.fapi_enabled']).toBe(true);
-        expect(body.sources['security.fapi_enabled']).toBe('platform');
-      });
-
-      it('shows a value saved through the older oauth-config as the platform value', async () => {
-        const { app, mockEnv } = createTestApp({
-          kv: createMockKV({ 'oauth:config:TOKEN_EXPIRY': '900' }),
-        });
-
-        const res = await app.request(
-          '/api/admin/tenants/tenant_123/settings/oauth',
-          { method: 'GET' },
-          mockEnv
-        );
-
-        expect(res.status).toBe(200);
-        const body = (await res.json()) as SettingsGetResult;
-        expect(body.values['oauth.access_token_expiry']).toBe(900);
-        expect(body.sources['oauth.access_token_expiry']).toBe('platform');
-        expect(body.inherited.values['oauth.access_token_expiry']).toBe(900);
-      });
-
-      it('answers 503 instead of env or defaults when the older settings cannot be read', async () => {
-        const { app, mockEnv } = createTestApp({
-          kv: createMockKV({ system_settings: 'not json' }),
-        });
-
-        const res = await app.request(
-          '/api/admin/tenants/tenant_123/settings/security',
-          { method: 'GET' },
-          mockEnv
-        );
-
-        expect(res.status).toBe(503);
-        const body = (await res.json()) as ApiResponse;
-        expect(body.error).toBe('temporarily_unavailable');
-      });
-
-      it('shows the older logout and error settings as platform values', async () => {
+      it('shows the platform value and no longer the older stores', async () => {
         const { app, mockEnv } = createTestApp({
           kv: createMockKV({
-            'settings:logout': JSON.stringify({
-              backchannel: { logout_token_exp_seconds: 60, on_final_failure: 'alert' },
-            }),
-            error_id_mode: 'all',
+            'settings:platform:security': JSON.stringify({ 'security.fapi_enabled': true }),
+            // The older stores are imported once; the view does not read them.
+            system_settings: 'not json',
+            'oauth:config:TOKEN_EXPIRY': '900',
           }),
         });
 
-        const session = (await (
-          await app.request('/api/admin/tenants/tenant_123/settings/session', {}, mockEnv)
-        ).json()) as SettingsGetResult;
-        expect(session.values['session.backchannel_logout_token_exp']).toBe(60);
-        expect(session.values['session.backchannel_on_failure']).toBe('error');
-        expect(session.sources['session.backchannel_logout_token_exp']).toBe('platform');
-        expect(session.values['session.backchannel_request_timeout_ms']).toBe(5000);
+        const security = await app.request(
+          '/api/admin/tenants/tenant_123/settings/security',
+          { method: 'GET' },
+          mockEnv
+        );
+        expect(security.status).toBe(200);
+        const body = (await security.json()) as SettingsGetResult;
+        expect(body.values['security.fapi_enabled']).toBe(true);
+        expect(body.sources['security.fapi_enabled']).toBe('platform');
 
         const oauth = (await (
           await app.request('/api/admin/tenants/tenant_123/settings/oauth', {}, mockEnv)
         ).json()) as SettingsGetResult;
-        expect(oauth.values['oauth.error_id_mode']).toBe('all');
-        expect(oauth.sources['oauth.error_id_mode']).toBe('platform');
+        expect(oauth.values['oauth.access_token_expiry']).not.toBe(900);
+        expect(oauth.sources['oauth.access_token_expiry']).not.toBe('platform');
       });
 
       it('answers 503 for a tenant view whose document is not an object, and records nothing', async () => {
@@ -953,6 +913,9 @@ describe('Settings API v2', () => {
           { 'tenant.ui_base_url': 'http://login.example.org' },
           { 'tenant.ui_login_path': '//evil.example.net/login' },
           { 'tenant.ui_error_path': 'error' },
+          { 'tenant.ui_device_path': '//evil.example.net/device' },
+          { 'tenant.ui_register_path': '/signup?next=x' },
+          { 'tenant.ui_logged_out_path': '' },
         ]) {
           const res = await patch(set);
           expect(res.status, JSON.stringify(set)).toBe(400);
@@ -2081,17 +2044,41 @@ describe('Settings API v2', () => {
 
   describe('Platform Settings', () => {
     describe('GET /platform/settings/:category', () => {
-      it('does not require the tenant canonical database', async () => {
-        const { app, mockEnv } = createTestApp();
-        delete (mockEnv as unknown as { DB_ADMIN?: unknown }).DB_ADMIN;
+      it('keeps platform documents in the canonical store, starting from the KV copy', async () => {
+        const mockKV = createMockKV({
+          'settings:platform:login-entry': JSON.stringify({
+            'login-entry.email_resolution_policy': 'disabled',
+          }),
+        });
+        const { app, mockEnv } = createTestApp({ kv: mockKV });
+        const url = '/api/admin/platform/settings/login-entry';
+        const current = (await (
+          await app.request(url, { method: 'GET' }, mockEnv)
+        ).json()) as SettingsGetResult;
+        expect(current.values['login-entry.email_resolution_policy']).toBe('disabled');
 
-        const res = await app.request(
-          '/api/admin/platform/settings/infrastructure',
-          { method: 'GET' },
-          mockEnv
-        );
-
-        expect(res.status).toBe(200);
+        const patch = (value: boolean) =>
+          app.request(
+            url,
+            {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                ifMatch: current.version,
+                set: { 'login-entry.skip_discovery_if_only_one_tenant': value },
+              }),
+            },
+            mockEnv
+          );
+        expect((await patch(true)).status).toBe(200);
+        // A second save from the same version conflicts instead of overwriting the first.
+        expect((await patch(false)).status).toBe(409);
+        expect(
+          JSON.parse((await mockKV.get('settings:platform:login-entry')) as string)
+        ).toMatchObject({
+          'login-entry.email_resolution_policy': 'disabled',
+          'login-entry.skip_discovery_if_only_one_tenant': true,
+        });
       });
 
       it('should return platform settings', async () => {
@@ -2222,6 +2209,272 @@ describe('Settings API v2', () => {
         expect(body.applied).toContain('login-entry.email_resolution_policy');
         expect(body.applied).toContain('login-entry.require_common_discovery_before_login');
         expect(body.applied).toContain('login-entry.skip_discovery_if_only_one_tenant');
+      });
+    });
+
+    describe('PATCH validation of list and UI settings', () => {
+      const patchAt = async (
+        app: ReturnType<typeof createTestApp>['app'],
+        mockEnv: ReturnType<typeof createTestApp>['mockEnv'],
+        url: string,
+        set: Record<string, unknown>
+      ) => {
+        const current = (await (
+          await app.request(url, { method: 'GET' }, mockEnv)
+        ).json()) as SettingsGetResult;
+        return app.request(
+          url,
+          {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ifMatch: current.version, set }),
+          },
+          mockEnv
+        );
+      };
+
+      it('accepts only lists of known response types and auth methods, at every scope', async () => {
+        const { app, mockEnv } = createTestApp({ kv: createMockKV() });
+        for (const url of [
+          '/api/admin/platform/settings/oauth',
+          '/api/admin/tenants/tenant_123/settings/oauth',
+        ]) {
+          for (const set of [
+            { 'oauth.response_types_supported': null },
+            { 'oauth.response_types_supported': {} },
+            { 'oauth.response_types_supported': [] },
+            { 'oauth.response_types_supported': '["code"]' },
+            { 'oauth.response_types_supported': ['code', 'code'] },
+            { 'oauth.response_types_supported': ['token'] },
+            { 'oauth.response_types_supported': [123] },
+            { 'oauth.token_endpoint_auth_methods_supported': ['tls_client_auth'] },
+            { 'oauth.token_endpoint_auth_methods_supported': [] },
+          ]) {
+            const res = await patchAt(app, mockEnv, url, set);
+            expect(res.status, `${url} ${JSON.stringify(set)}`).toBe(400);
+            expect((await res.json()) as ApiResponse).toMatchObject({ error: 'validation_failed' });
+          }
+          const res = await patchAt(app, mockEnv, url, {
+            'oauth.response_types_supported': ['code', 'code id_token'],
+            'oauth.token_endpoint_auth_methods_supported': ['private_key_jwt', 'none'],
+          });
+          expect(res.status, url).toBe(200);
+        }
+      });
+
+      it('never accepts refresh_token for Token Exchange, and only https ID-JAG issuers', async () => {
+        const { app, mockEnv } = createTestApp({ kv: createMockKV() });
+        for (const url of [
+          '/api/admin/platform/settings/tokens',
+          '/api/admin/tenants/tenant_123/settings/tokens',
+        ]) {
+          for (const set of [
+            { 'tokens.exchange_allowed_subject_token_types': 'access_token,refresh_token' },
+            { 'tokens.exchange_allowed_subject_token_types': 'saml2' },
+            { 'tokens.id_jag_allowed_issuers': ['http://idp.example.com'] },
+            { 'tokens.id_jag_allowed_issuers': ['https://user:pass@idp.example.com'] },
+            { 'tokens.id_jag_allowed_issuers': ['https://idp.example.com?x=1'] },
+            { 'tokens.id_jag_allowed_issuers': 'https://idp.example.com' },
+          ]) {
+            const res = await patchAt(app, mockEnv, url, set);
+            expect(res.status, `${url} ${JSON.stringify(set)}`).toBe(400);
+          }
+          const res = await patchAt(app, mockEnv, url, {
+            'tokens.exchange_allowed_subject_token_types': 'access_token, id_token',
+            'tokens.id_jag_allowed_issuers': [
+              'https://idp.example.com/t,a',
+              'https://idp2.example.com',
+            ],
+          });
+          expect(res.status, url).toBe(200);
+        }
+      });
+
+      it('accepts only usable signing algorithm lists and DPoP nonce choices', async () => {
+        const { app, mockEnv } = createTestApp({ kv: createMockKV() });
+        for (const url of [
+          '/api/admin/platform/settings/security',
+          '/api/admin/tenants/tenant_123/settings/security',
+        ]) {
+          for (const set of [
+            { 'security.request_object_signing_algs': '' },
+            { 'security.request_object_signing_algs': 'none' },
+            { 'security.request_object_signing_algs': 'PS256,HS256' },
+            { 'security.authorization_signing_algs': 'EdDSA' },
+            { 'security.dpop_nonce_resource_overrides': [] },
+            { 'security.dpop_nonce_resource_overrides': { 'https://api.example': 'false' } },
+            { 'security.dpop_nonce_resource_overrides': { ' ': true } },
+          ]) {
+            const res = await patchAt(app, mockEnv, url, set);
+            expect(res.status, `${url} ${JSON.stringify(set)}`).toBe(400);
+            expect((await res.json()) as ApiResponse).toMatchObject({ error: 'validation_failed' });
+          }
+          const unlimited = await patchAt(app, mockEnv, url, {
+            'security.fapi_message_signing_enabled': true,
+            'security.authorization_signing_algs': '',
+          });
+          expect(unlimited.status, url).toBe(200);
+          expect(((await unlimited.json()) as { rejected?: object }).rejected ?? {}).toEqual({});
+          const res = await patchAt(app, mockEnv, url, {
+            'security.request_object_signing_algs': 'PS256, ES256',
+            'security.authorization_signing_algs': 'ES256,PS256',
+            'security.dpop_nonce_resource_overrides': { 'https://api.example': false },
+          });
+          expect(res.status, url).toBe(200);
+        }
+      });
+
+      it('accepts the assurance maps only as JSON objects of names to AAL1..AAL3', async () => {
+        const { app, mockEnv } = createTestApp({ kv: createMockKV() });
+        const url = '/api/admin/tenants/tenant_123/settings/assurance';
+        for (const set of [
+          { 'assurance.scope_aal_requirements': 'not json' },
+          { 'assurance.scope_aal_requirements': '[]' },
+          { 'assurance.scope_aal_requirements': '{"admin":"AAL0"}' },
+          { 'assurance.upstream_acr_mappings': '{" silver":"AAL2"}' },
+          { 'assurance.upstream_acr_mappings': '{"silver":"high"}' },
+        ]) {
+          const res = await patchAt(app, mockEnv, url, set);
+          expect(res.status, JSON.stringify(set)).toBe(400);
+          expect((await res.json()) as ApiResponse).toMatchObject({ error: 'validation_failed' });
+        }
+        const res = await patchAt(app, mockEnv, url, {
+          'assurance.scope_aal_requirements': '{"admin":"AAL2"}',
+          'assurance.upstream_acr_mappings': '{"urn:mace:incommon:iap:silver":"AAL2"}',
+        });
+        expect(res.status).toBe(200);
+      });
+
+      it('accepts the identity assurance settings only in the shapes runtime reads', async () => {
+        const { app, mockEnv } = createTestApp({ kv: createMockKV() });
+        const url = '/api/admin/tenants/tenant_123/settings/assurance';
+        const gakunin = 'https://www.gakunin.jp/profile/IAL2';
+        for (const set of [
+          { 'assurance.scope_ial_requirements': '{"payroll":"AAL2"}' },
+          { 'assurance.ial_assurance_values': '{"IAL2":"' + gakunin + '"}' },
+          { 'assurance.ial_assurance_values': '{"IAL2":["not a uri"]}' },
+          { 'assurance.ial_assurance_values': '{"IAL4":["' + gakunin + '"]}' },
+          { 'assurance.saml_authn_context_aal': '{"AAL2":"AAL2"}' },
+          { 'assurance.saml_authn_context_aal': '{"https://www.gakunin.jp/profile/AAL2":"IAL2"}' },
+          { 'assurance.ida_profile': '{"trust_framework":"x y","claims":["given_name"]}' },
+          { 'assurance.ida_profile': '{"trust_framework":"nist_800_63A","claims":["sub"]}' },
+          { 'assurance.ida_profile': '{"trust_framework":"nist_800_63A","claims":[]}' },
+          {
+            'assurance.ida_profile':
+              '{"trust_framework":"nist_800_63A","assurance_levels":{"IAL1":"x"},"claims":["name"]}',
+          },
+        ]) {
+          const res = await patchAt(app, mockEnv, url, set);
+          expect(res.status, JSON.stringify(set)).toBe(400);
+          expect((await res.json()) as ApiResponse).toMatchObject({ error: 'validation_failed' });
+        }
+        const res = await patchAt(app, mockEnv, url, {
+          'assurance.default_ial': 'IAL2',
+          'assurance.scope_ial_requirements': '{"payroll":"IAL2"}',
+          'assurance.ial_assurance_values': JSON.stringify({ IAL2: [gakunin] }),
+          'assurance.saml_authn_context_aal': '{"https://www.gakunin.jp/profile/AAL2":"AAL2"}',
+          'assurance.ida_profile': JSON.stringify({
+            trust_framework: 'nist_800_63A',
+            assurance_levels: { IAL2: 'nist_800_63A_ial_2' },
+            claims: ['given_name', 'family_name', 'birthdate'],
+          }),
+        });
+        expect(res.status).toBe(200);
+        expect(((await res.json()) as { rejected?: object }).rejected ?? {}).toEqual({});
+        expect(
+          (await patchAt(app, mockEnv, url, { 'assurance.ida_profile': '{}' })).status
+        ).not.toBe(400);
+      });
+
+      it('accepts advertised claims only as empty or comma-separated names', async () => {
+        const { app, mockEnv } = createTestApp({ kv: createMockKV() });
+        for (const url of [
+          '/api/admin/platform/settings/discovery',
+          '/api/admin/tenants/tenant_123/settings/discovery',
+        ]) {
+          for (const set of [
+            { 'discovery.claims_supported': 'sub,,email' },
+            { 'discovery.claims_supported': ' ' },
+          ]) {
+            const res = await patchAt(app, mockEnv, url, set);
+            expect(res.status, `${url} ${JSON.stringify(set)}`).toBe(400);
+          }
+          for (const value of ['', 'sub,email']) {
+            const res = await patchAt(app, mockEnv, url, { 'discovery.claims_supported': value });
+            expect(res.status, `${url} ${value}`).toBe(200);
+          }
+        }
+      });
+
+      it('accepts a JIT provider list only as empty or IDs, none of them empty', async () => {
+        const { app, mockEnv } = createTestApp({ kv: createMockKV() });
+        for (const url of [
+          '/api/admin/platform/settings/external-idp',
+          '/api/admin/tenants/tenant_123/settings/external-idp',
+        ]) {
+          for (const value of [' ', ',,', 'idp-a,,idp-b', ['idp-a']]) {
+            const res = await patchAt(app, mockEnv, url, {
+              'external_idp.jit_allowed_provider_ids': value,
+            });
+            expect(res.status, `${url} ${JSON.stringify(value)}`).toBe(400);
+          }
+          for (const value of ['', 'idp-a, idp-b', '-']) {
+            const res = await patchAt(app, mockEnv, url, {
+              'external_idp.jit_allowed_provider_ids': value,
+            });
+            expect(res.status, `${url} ${JSON.stringify(value)}`).toBe(200);
+          }
+        }
+      });
+
+      it('accepts only profile fields, each once, as the fields JIT updates on login', async () => {
+        const { app, mockEnv } = createTestApp({ kv: createMockKV() });
+        for (const url of [
+          '/api/admin/platform/settings/external-idp',
+          '/api/admin/tenants/tenant_123/settings/external-idp',
+        ]) {
+          for (const value of ['name', ['email'], ['preferred_username'], ['name', 'name'], [1]]) {
+            // The fields apply with updates on login on (dependsOn).
+            const res = await patchAt(app, mockEnv, url, {
+              'external_idp.jit_update_on_login': true,
+              'external_idp.jit_update_fields': value,
+            });
+            expect(res.status, `${url} ${JSON.stringify(value)}`).toBe(400);
+          }
+          for (const value of [[], ['nickname', 'website', 'locale']]) {
+            // The fields apply with updates on login on (dependsOn).
+            const res = await patchAt(app, mockEnv, url, {
+              'external_idp.jit_update_on_login': true,
+              'external_idp.jit_update_fields': value,
+            });
+            expect(res.status, `${url} ${JSON.stringify(value)}`).toBe(200);
+          }
+        }
+      });
+
+      it('accepts only a platform UI on an allowed origin, with paths on that host', async () => {
+        const { app, mockEnv } = createTestApp({
+          kv: createMockKV(),
+          env: {
+            ISSUER_URL: 'https://id.example.com',
+            ALLOWED_ORIGINS: 'https://login.example.org',
+          },
+        });
+        const url = '/api/admin/platform/settings/tenant';
+        for (const set of [
+          { 'tenant.ui_base_url': 'https://evil.example.net' },
+          { 'tenant.ui_base_url': '' },
+          { 'tenant.ui_login_path': '//evil.example.net/login' },
+          { 'tenant.ui_device_authorize_path': '/device#x' },
+        ]) {
+          const res = await patchAt(app, mockEnv, url, set);
+          expect(res.status, JSON.stringify(set)).toBe(400);
+        }
+        const res = await patchAt(app, mockEnv, url, {
+          'tenant.ui_base_url': 'https://login.example.org',
+          'tenant.ui_device_path': '/activate',
+        });
+        expect(res.status).toBe(200);
       });
     });
 

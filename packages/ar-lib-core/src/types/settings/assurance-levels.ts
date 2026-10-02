@@ -4,7 +4,7 @@
  * Settings for Authentication Assurance Level (AAL), Federation Assurance Level (FAL),
  * and Identity Assurance Level (IAL) per NIST SP 800-63 Revision 4.
  *
- * API: GET/PUT/DELETE /api/admin/settings/assurance-levels
+ * API: the Settings API (assurance category)
  * Config Level: tenant
  */
 
@@ -106,28 +106,6 @@ export const DEFAULT_ACR_MAPPINGS: ACRAssuranceMapping[] = [
 ];
 
 /**
- * AMR (Authentication Methods References) to AAL mapping
- */
-export const AMR_TO_AAL: Record<string, AAL> = {
-  // AAL1 methods
-  pwd: 'AAL1',
-  pin: 'AAL1',
-  sms: 'AAL1',
-  email: 'AAL1',
-
-  // AAL2 methods (multi-factor)
-  otp: 'AAL2',
-  mfa: 'AAL2',
-  swk: 'AAL2', // Software key
-  pop: 'AAL2', // Proof of possession
-
-  // AAL3 methods (hardware)
-  hwk: 'AAL3', // Hardware key
-  fpt: 'AAL3', // Fingerprint (when with hardware)
-  face: 'AAL3', // Face recognition (when with hardware)
-};
-
-/**
  * Assurance Levels Settings Interface
  */
 export interface AssuranceLevelsSettings {
@@ -140,11 +118,26 @@ export interface AssuranceLevelsSettings {
   /** Default FAL when not explicitly set */
   'assurance.default_fal': FAL;
 
-  /** Default IAL for new users */
+  /** The IAL recorded for accounts the organisation creates (admin, SCIM, CSV) */
   'assurance.default_ial': IAL;
+
+  /** Require minimum IAL for specific scopes (JSON) */
+  'assurance.scope_ial_requirements': string;
+
+  /** The assurance values (URIs) released for each IAL (JSON) */
+  'assurance.ial_assurance_values': string;
+
+  /** The AAL a SAML AuthnContextClassRef stands for (JSON) */
+  'assurance.saml_authn_context_aal': string;
+
+  /** The OpenID Connect for Identity Assurance profile verified_claims are released under (JSON) */
+  'assurance.ida_profile': string;
 
   /** Require minimum AAL for specific scopes (JSON) */
   'assurance.scope_aal_requirements': string;
+
+  /** The AAL an external or SAML IdP's acr is taken for (JSON) */
+  'assurance.upstream_acr_mappings': string;
 
   /** Include assurance levels in ID token */
   'assurance.include_in_id_token': boolean;
@@ -169,9 +162,8 @@ export const ASSURANCE_LEVELS_SETTINGS_META: Record<keyof AssuranceLevelsSetting
     default: false,
     envKey: 'ENABLE_NIST_ASSURANCE_LEVELS',
     label: 'Enable Assurance Levels',
-    description: 'Enable explicit AAL/FAL/IAL tracking per NIST SP 800-63-4',
-    // No runtime reads it: saved through the older assurance-levels API for display only.
-    status: 'in_development',
+    description:
+      'Enforce the AAL and FAL below (NIST SP 800-63-4); off leaves authorization, tokens and discovery as they were',
   },
   'assurance.default_aal': {
     key: 'assurance.default_aal',
@@ -179,10 +171,9 @@ export const ASSURANCE_LEVELS_SETTINGS_META: Record<keyof AssuranceLevelsSetting
     default: 'AAL1',
     envKey: 'DEFAULT_AAL',
     label: 'Default AAL',
-    description: 'Default Authentication Assurance Level',
+    description:
+      'The AAL every authorization requires when AAL2 or AAL3: a session below it re-authenticates (guests are exempt). AAL1 requires nothing beyond what a login already does',
     enum: ['AAL1', 'AAL2', 'AAL3'],
-    // No runtime reads it: saved through the older assurance-levels API for display only.
-    status: 'in_development',
   },
   'assurance.default_fal': {
     key: 'assurance.default_fal',
@@ -190,10 +181,9 @@ export const ASSURANCE_LEVELS_SETTINGS_META: Record<keyof AssuranceLevelsSetting
     default: 'FAL1',
     envKey: 'DEFAULT_FAL',
     label: 'Default FAL',
-    description: 'Default Federation Assurance Level',
+    description:
+      'The FAL tokens for a user must meet: FAL1 bearer, FAL2 bound to a DPoP key, FAL3 also from a pushed (PAR) authorization request with a signed request object',
     enum: ['FAL1', 'FAL2', 'FAL3'],
-    // No runtime reads it: saved through the older assurance-levels API for display only.
-    status: 'in_development',
   },
   'assurance.default_ial': {
     key: 'assurance.default_ial',
@@ -201,10 +191,9 @@ export const ASSURANCE_LEVELS_SETTINGS_META: Record<keyof AssuranceLevelsSetting
     default: 'IAL1',
     envKey: 'DEFAULT_IAL',
     label: 'Default IAL',
-    description: 'Default Identity Assurance Level for new users',
+    description:
+      'The IAL recorded, as tenant-policy evidence, for accounts the organisation creates (by an administrator, SCIM or a CSV import) when IAL2 or IAL3. Self-registration, guests and sign-in from another IdP are never given it',
     enum: ['IAL1', 'IAL2', 'IAL3'],
-    // No runtime reads it: saved through the older assurance-levels API for display only.
-    status: 'in_development',
   },
   'assurance.scope_aal_requirements': {
     key: 'assurance.scope_aal_requirements',
@@ -212,48 +201,82 @@ export const ASSURANCE_LEVELS_SETTINGS_META: Record<keyof AssuranceLevelsSetting
     default: '{}',
     label: 'Scope AAL Requirements',
     description:
-      'JSON mapping of scopes to minimum AAL (e.g., {"admin": "AAL2", "financial": "AAL3"})',
-    // No runtime reads it: saved through the older assurance-levels API for display only.
-    status: 'in_development',
+      'JSON mapping of scopes to the AAL they require (e.g., {"admin": "AAL2", "financial": "AAL3"}); a request for such a scope re-authenticates until it is met',
+  },
+  'assurance.upstream_acr_mappings': {
+    key: 'assurance.upstream_acr_mappings',
+    type: 'string',
+    default: '{}',
+    label: 'Upstream ACR Mappings',
+    description:
+      'JSON mapping of the acr (or SAML AuthnContextClassRef) an external IdP returns to the AAL it is taken for (e.g., {"urn:mace:incommon:iap:silver": "AAL2"}); unmapped logins count as AAL1',
+  },
+  'assurance.scope_ial_requirements': {
+    key: 'assurance.scope_ial_requirements',
+    type: 'string',
+    default: '{}',
+    label: 'Scope IAL Requirements',
+    description:
+      'JSON mapping of scopes to the IAL they require (e.g., {"payroll": "IAL2"}); a request for such a scope by someone below it is refused (access_denied), since no sign-in can raise an IAL. Applies while assurance levels are enabled',
+  },
+  'assurance.ial_assurance_values': {
+    key: 'assurance.ial_assurance_values',
+    type: 'string',
+    default: '{}',
+    label: 'IAL Assurance Values',
+    description:
+      'JSON mapping of each IAL to the assurance values (URIs) released for it, e.g. {"IAL2": ["https://www.gakunin.jp/profile/IAL2"]}. A person gets the values of every IAL up to theirs, as the SAML attribute eduPersonAssurance (through attribute mapping) and the OIDC claim eduperson_assurance. Applies while assurance levels are enabled',
+  },
+  'assurance.saml_authn_context_aal': {
+    key: 'assurance.saml_authn_context_aal',
+    type: 'string',
+    default: '{}',
+    label: 'SAML AuthnContext AAL',
+    description:
+      'JSON mapping of SAML AuthnContextClassRef values to the AAL each stands for, e.g. {"https://www.gakunin.jp/profile/AAL2": "AAL2"}. An SP requesting one is answered only from a session at that AAL, after re-authentication if needed. Applies while assurance levels are enabled',
+  },
+  'assurance.ida_profile': {
+    key: 'assurance.ida_profile',
+    type: 'string',
+    default: '{}',
+    label: 'Identity Assurance Profile',
+    description:
+      'JSON describing the OpenID Connect for Identity Assurance verified_claims released to a client that requests them: {"trust_framework": "…", "assurance_levels": {"IAL2": "…"}, "claims": ["given_name", "family_name", "birthdate"]}. Empty releases no verified_claims. Released only for people at IAL2 or above, and only claims the request and its scopes allow. Applies while assurance levels are enabled',
   },
   'assurance.include_in_id_token': {
     key: 'assurance.include_in_id_token',
     type: 'boolean',
     default: true,
     label: 'Include in ID Token',
-    description: 'Include acr/amr/aal/fal claims in ID tokens',
-    // No runtime reads it: saved through the older assurance-levels API for display only.
-    status: 'in_development',
+    description:
+      'Give ID tokens an acr of the form urn:authrim:aal:N: the most preferred requested value the authentication meets, otherwise the acr of the AAL reached (none at AAL0); an essential acr request always gets one of its values',
   },
   'assurance.include_in_access_token': {
     key: 'assurance.include_in_access_token',
     type: 'boolean',
     default: false,
     label: 'Include in Access Token',
-    description: 'Include assurance level claims in access tokens',
+    description:
+      'Give access tokens from an authorization (the authorization code, implicit and hybrid flows, and refreshes of them) auth_time, the acr of the AAL reached and the methods the authentication proved (RFC 9068)',
     visibility: 'admin',
-    // No runtime reads it: saved through the older assurance-levels API for display only.
-    status: 'in_development',
   },
   'assurance.fal2_requires_dpop': {
     key: 'assurance.fal2_requires_dpop',
     type: 'boolean',
     default: true,
     label: 'FAL2 Requires DPoP',
-    description: 'Require DPoP proof-of-possession for FAL2 and higher',
+    description:
+      'At FAL2 and above, refuse token requests without a DPoP proof and access tokens from the authorization endpoint',
     visibility: 'admin',
-    // No runtime reads it: saved through the older assurance-levels API for display only.
-    status: 'in_development',
   },
   'assurance.fal3_requires_par': {
     key: 'assurance.fal3_requires_par',
     type: 'boolean',
     default: true,
     label: 'FAL3 Requires PAR',
-    description: 'Require Pushed Authorization Requests for FAL3',
+    description:
+      'At FAL3, accept only pushed (PAR) authorization requests whose request object the client signed, and refuse flows without one (device, CIBA, token exchange and others)',
     visibility: 'admin',
-    // No runtime reads it: saved through the older assurance-levels API for display only.
-    status: 'in_development',
   },
 };
 
@@ -276,42 +299,16 @@ export const ASSURANCE_LEVELS_DEFAULTS: AssuranceLevelsSettings = {
   'assurance.default_fal': 'FAL1',
   'assurance.default_ial': 'IAL1',
   'assurance.scope_aal_requirements': '{}',
+  'assurance.upstream_acr_mappings': '{}',
+  'assurance.scope_ial_requirements': '{}',
+  'assurance.ial_assurance_values': '{}',
+  'assurance.saml_authn_context_aal': '{}',
+  'assurance.ida_profile': '{}',
   'assurance.include_in_id_token': true,
   'assurance.include_in_access_token': false,
   'assurance.fal2_requires_dpop': true,
   'assurance.fal3_requires_par': true,
 };
-
-/**
- * Determine AAL from authentication methods
- *
- * @param amr - Array of authentication method references
- * @returns The highest AAL level achieved
- */
-export function determineAALFromAMR(amr: string[]): AAL {
-  if (!amr || amr.length === 0) {
-    return 'AAL1';
-  }
-
-  let highestAAL: AAL = 'AAL1';
-
-  for (const method of amr) {
-    const aal = AMR_TO_AAL[method];
-    if (aal === 'AAL3') {
-      return 'AAL3'; // Can't get higher
-    }
-    if (aal === 'AAL2' && highestAAL === 'AAL1') {
-      highestAAL = 'AAL2';
-    }
-  }
-
-  // Multi-factor check: if multiple factors are present, bump to AAL2
-  if (amr.length >= 2 && highestAAL === 'AAL1') {
-    highestAAL = 'AAL2';
-  }
-
-  return highestAAL;
-}
 
 /**
  * Determine FAL based on token binding and assertion signing

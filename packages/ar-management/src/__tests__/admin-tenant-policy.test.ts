@@ -45,8 +45,10 @@ function buildApp(env: Partial<Env>) {
   app.get('/api/admin/platform/tenant-domain-mappings', (c) =>
     c.json({ tenantId: getTenantIdFromContext(c) })
   );
-  app.get('/api/admin/settings/ui-config', (c) => c.json({ tenantId: getTenantIdFromContext(c) }));
-  app.put('/api/admin/settings/ui-config', (c) => c.json({ tenantId: getTenantIdFromContext(c) }));
+  app.get('/api/admin/settings/cache-mode', (c) => c.json({ tenantId: getTenantIdFromContext(c) }));
+  app.post('/api/admin/settings/cache-mode', (c) =>
+    c.json({ tenantId: getTenantIdFromContext(c) })
+  );
   app.post('/api/admin/auth/passkey/options', (c) =>
     c.json({ tenantId: getTenantIdFromContext(c) })
   );
@@ -190,10 +192,10 @@ describe('adminTenantPolicyMiddleware', () => {
       AUTHRIM_CONFIG: createMockKV(),
     });
 
-    const getRes = await app.request(makeRequest('/api/admin/settings/ui-config'), undefined, env);
+    const getRes = await app.request(makeRequest('/api/admin/settings/cache-mode'), undefined, env);
     const putRes = await app.request(
-      new Request('https://admin.pages.dev/api/admin/settings/ui-config', {
-        method: 'PUT',
+      new Request('https://admin.pages.dev/api/admin/settings/cache-mode', {
+        method: 'POST',
         headers: { Host: 'admin.pages.dev' },
       }),
       undefined,

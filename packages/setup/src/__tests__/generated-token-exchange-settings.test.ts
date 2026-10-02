@@ -16,17 +16,37 @@ const input = {
   checkId: 'token-exchange',
   title: 'token exchange',
 };
+const url = 'https://issuer.test/api/admin/tenants/tenant-a/settings/tokens';
+const ENABLED = 'tokens.exchange_enabled';
+const TYPES = 'tokens.exchange_allowed_subject_token_types';
 
-function snapshot(overrides: Record<string, unknown> = {}) {
+function settings(
+  values: Record<string, unknown> = {},
+  sources: Record<string, string> = {},
+  version = 'v1'
+) {
   return {
-    settings: {
-      enabled: { value: false, source: 'default' },
-      allowedSubjectTokenTypes: { value: ['refresh_token'], source: 'default' },
-      maxResourceParams: { value: 4, source: 'default' },
-      maxAudienceParams: { value: 5, source: 'default' },
-      ...overrides,
+    ok: true,
+    status: 200,
+    payload: {
+      version,
+      values: { [ENABLED]: false, [TYPES]: 'jwt', ...values },
+      sources: { [ENABLED]: 'default', [TYPES]: 'default', ...sources },
     },
   };
+}
+const saved = { ok: true, status: 200, payload: { applied: [], rejected: {} } };
+/** The settings while the temporary change is in place. */
+const changed = settings(
+  { [ENABLED]: true, [TYPES]: 'jwt,access_token' },
+  { [ENABLED]: 'kv', [TYPES]: 'kv' },
+  'v2'
+);
+
+async function enable() {
+  const promise = ensureGeneratedTokenExchangeEnabled(input);
+  await vi.runAllTimersAsync();
+  return promise;
 }
 
 describe('ensureGeneratedTokenExchangeEnabled', () => {
@@ -36,112 +56,188 @@ describe('ensureGeneratedTokenExchangeEnabled', () => {
   });
 
   it('leaves already-compatible settings unchanged', async () => {
-    fetchJson.mockResolvedValue({
-      ok: true,
-      status: 200,
-      payload: snapshot({
-        enabled: { value: true, source: 'env' },
-        allowedSubjectTokenTypes: { value: ['access_token'], source: 'env' },
-      }),
-    });
+    fetchJson.mockResolvedValue(settings({ [ENABLED]: true, [TYPES]: 'access_token' }));
 
     const result = await ensureGeneratedTokenExchangeEnabled(input);
 
     expect(result.check.status).toBe('pass');
     expect(fetchJson).toHaveBeenCalledOnce();
+    expect(fetchJson.mock.calls[0][0]).toBe(url);
     await expect(result.restore()).resolves.toBeNull();
   });
 
-  it('enables access-token exchange then deletes a temporary override on restore', async () => {
+  it('enables access-token exchange for the tenant, then clears what the tenant had not set', async () => {
     fetchJson
-      .mockResolvedValueOnce({ ok: true, status: 200, payload: snapshot() })
-      .mockResolvedValueOnce({ ok: true, status: 200, payload: {} })
-      .mockResolvedValueOnce({ ok: true, status: 204, payload: {} });
+      .mockResolvedValueOnce(settings())
+      .mockResolvedValueOnce(saved)
+      .mockResolvedValueOnce(changed)
+      .mockResolvedValueOnce(saved);
 
-    const promise = ensureGeneratedTokenExchangeEnabled(input);
-    await vi.runAllTimersAsync();
-    const result = await promise;
+    const result = await enable();
     expect(result.check.status).toBe('warn');
-    expect(JSON.parse(fetchJson.mock.calls[1][2].body)).toMatchObject({
-      enabled: true,
-      allowedSubjectTokenTypes: ['refresh_token', 'access_token'],
+    expect(fetchJson.mock.calls[1][2].method).toBe('PATCH');
+    expect(JSON.parse(fetchJson.mock.calls[1][2].body)).toEqual({
+      ifMatch: 'v1',
+      set: { [ENABLED]: true, [TYPES]: 'jwt,access_token' },
     });
+
     const restored = await result.restore();
     expect(restored?.status).toBe('pass');
-    expect(fetchJson.mock.calls[2][2]).toMatchObject({ method: 'DELETE' });
+    expect(JSON.parse(fetchJson.mock.calls[3][2].body)).toEqual({
+      ifMatch: 'v2',
+      set: {},
+      clear: [ENABLED, TYPES],
+    });
   });
 
-  it('restores the previous nested KV-backed snapshot with PUT', async () => {
+  it("puts back the tenant's own values on restore", async () => {
     fetchJson
-      .mockResolvedValueOnce({
-        ok: true,
-        status: 200,
-        payload: snapshot({
-          idJag: {
-            enabled: { value: true, source: 'kv' },
-            allowedIssuers: { value: ['https://issuer-a'], source: 'kv' },
-            maxTokenLifetime: { value: 600, source: 'kv' },
-            includeTenantClaim: { value: false, source: 'kv' },
-            requireConfidentialClient: { value: false, source: 'kv' },
-          },
-        }),
-      })
-      .mockResolvedValueOnce({ ok: true, status: 200, payload: {} })
-      .mockResolvedValueOnce({ ok: false, status: 503, error: 'unavailable' });
-    const promise = ensureGeneratedTokenExchangeEnabled(input);
-    await vi.runAllTimersAsync();
-    const result = await promise;
+      .mockResolvedValueOnce(settings({ [ENABLED]: false }, { [ENABLED]: 'kv' }))
+      .mockResolvedValueOnce(saved)
+      .mockResolvedValueOnce(changed)
+      .mockResolvedValueOnce(saved);
+
+    const result = await enable();
+    await result.restore();
+    expect(JSON.parse(fetchJson.mock.calls[3][2].body)).toEqual({
+      ifMatch: 'v2',
+      set: { [ENABLED]: false },
+      clear: [TYPES],
+    });
+  });
+
+  it('fails when the settings cannot be read, are refused, or do not reach runtime', async () => {
+    fetchJson.mockResolvedValueOnce({ ok: false, status: 503, payload: {} });
+    const unreadable = await ensureGeneratedTokenExchangeEnabled(input);
+    expect(unreadable.check.status).toBe('fail');
+    await expect(unreadable.restore()).resolves.toBeNull();
+
+    fetchJson.mockResolvedValueOnce(settings()).mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      payload: { applied: [], rejected: { [ENABLED]: 'not allowed' } },
+    });
+    expect((await ensureGeneratedTokenExchangeEnabled(input)).check.status).toBe('fail');
+
+    fetchJson.mockResolvedValueOnce(settings()).mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      payload: { applied: [ENABLED], rejected: {}, projection: 'pending' },
+    });
+    expect((await ensureGeneratedTokenExchangeEnabled(input)).check.status).toBe('fail');
+  });
+
+  it("puts back what was saved even when the save's answer was lost", async () => {
+    fetchJson
+      .mockResolvedValueOnce(settings())
+      .mockResolvedValueOnce({ ok: false, status: 0, error: 'timeout' })
+      .mockResolvedValueOnce(changed)
+      .mockResolvedValueOnce(saved);
+
+    const result = await ensureGeneratedTokenExchangeEnabled(input);
+    expect(result.check.status).toBe('fail');
+    await expect(result.restore()).resolves.toMatchObject({ status: 'pass' });
+    expect(JSON.parse(fetchJson.mock.calls[3][2].body)).toMatchObject({ clear: [ENABLED, TYPES] });
+  });
+
+  it('leaves a key someone changed meanwhile as it is', async () => {
+    fetchJson
+      .mockResolvedValueOnce(settings())
+      .mockResolvedValueOnce(saved)
+      .mockResolvedValueOnce(
+        settings(
+          { [ENABLED]: true, [TYPES]: 'access_token,id_token' },
+          { [ENABLED]: 'kv', [TYPES]: 'kv' },
+          'v3'
+        )
+      )
+      .mockResolvedValueOnce(saved);
+
+    const result = await enable();
     const restored = await result.restore();
-
-    expect(fetchJson.mock.calls[2][2]).toMatchObject({ method: 'PUT' });
-    expect(JSON.parse(fetchJson.mock.calls[2][2].body).idJag).toEqual({
-      enabled: true,
-      allowedIssuers: ['https://issuer-a'],
-      maxTokenLifetime: 600,
-      includeTenantClaim: false,
-      requireConfidentialClient: false,
-    });
     expect(restored?.status).toBe('warn');
+    expect(JSON.parse(fetchJson.mock.calls[3][2].body)).toEqual({
+      ifMatch: 'v3',
+      set: {},
+      clear: [ENABLED],
+    });
   });
 
-  it('returns actionable checks for read, parse, and update failures', async () => {
-    fetchJson.mockResolvedValueOnce({ ok: false, status: 401, error: 'unauthorized' });
-    expect((await ensureGeneratedTokenExchangeEnabled(input)).check).toMatchObject({
-      status: 'fail',
-      httpStatus: 401,
-    });
-
-    fetchJson.mockResolvedValueOnce({ ok: true, status: 200, payload: { settings: null } });
-    expect((await ensureGeneratedTokenExchangeEnabled(input)).check.status).toBe('fail');
+  it('reads the URNs runtime takes as the names a tenant setting holds', async () => {
+    const urn = 'urn:ietf:params:oauth:token-type:';
+    fetchJson.mockResolvedValueOnce(
+      settings({ [ENABLED]: true, [TYPES]: `${urn}access_token` }, { [TYPES]: 'env' })
+    );
+    expect((await ensureGeneratedTokenExchangeEnabled(input)).changed).toBe(false);
 
     fetchJson
-      .mockResolvedValueOnce({ ok: true, status: 200, payload: snapshot() })
-      .mockResolvedValueOnce({ ok: false, status: 403, bodyText: 'forbidden' });
-    expect((await ensureGeneratedTokenExchangeEnabled(input)).check.status).toBe('fail');
+      .mockResolvedValueOnce(
+        settings(
+          { [TYPES]: `${urn}jwt, ${urn}refresh_token,urn:authrim:token-type:elevation-grant,jwt` },
+          { [TYPES]: 'env' }
+        )
+      )
+      .mockResolvedValueOnce(saved);
+    const result = await enable();
+    expect(result.changed).toBe(true);
+    expect(JSON.parse(fetchJson.mock.calls[2][2].body).set).toEqual({
+      [ENABLED]: true,
+      [TYPES]: 'jwt,access_token',
+    });
   });
 
-  it('retries a rate-limited settings request only when retry_after is usable', async () => {
-    fetchJson
-      .mockResolvedValueOnce({ ok: false, status: 429, payload: { retry_after: 1 } })
-      .mockResolvedValueOnce({
-        ok: true,
-        status: 200,
-        payload: snapshot({
-          enabled: { value: true },
-          allowedSubjectTokenTypes: { value: ['access_token'] },
-        }),
-      });
-    const promise = ensureGeneratedTokenExchangeEnabled(input);
-    await vi.runAllTimersAsync();
-    expect((await promise).check.status).toBe('pass');
-    expect(fetchJson).toHaveBeenCalledTimes(2);
+  it('changes nothing when runtime accepts a type a tenant setting cannot hold', async () => {
+    fetchJson.mockResolvedValueOnce(
+      settings({ [TYPES]: 'urn:example:token-type:custom,jwt' }, { [TYPES]: 'env' })
+    );
 
-    fetchJson.mockReset().mockResolvedValue({
-      ok: false,
-      status: 429,
-      payload: { retry_after: 0 },
+    const result = await ensureGeneratedTokenExchangeEnabled(input);
+    expect(result.check.status).toBe('fail');
+    expect(result.check.details.join(' ')).toContain('urn:example:token-type:custom');
+    expect(result.changed).toBe(false);
+    expect(fetchJson).toHaveBeenCalledOnce();
+    await expect(result.restore()).resolves.toBeNull();
+  });
+
+  it('changes only what is missing', async () => {
+    fetchJson
+      .mockResolvedValueOnce(
+        settings(
+          { [TYPES]: 'urn:ietf:params:oauth:token-type:access_token' },
+          { [ENABLED]: 'kv', [TYPES]: 'kv' }
+        )
+      )
+      .mockResolvedValueOnce(saved)
+      .mockResolvedValueOnce(
+        settings(
+          { [ENABLED]: true, [TYPES]: 'urn:ietf:params:oauth:token-type:access_token' },
+          { [ENABLED]: 'kv', [TYPES]: 'kv' },
+          'v2'
+        )
+      )
+      .mockResolvedValueOnce(saved);
+
+    const result = await enable();
+    expect(JSON.parse(fetchJson.mock.calls[1][2].body).set).toEqual({ [ENABLED]: true });
+    await expect(result.restore()).resolves.toMatchObject({ status: 'pass' });
+    expect(JSON.parse(fetchJson.mock.calls[3][2].body)).toEqual({
+      ifMatch: 'v2',
+      set: { [ENABLED]: false },
+      clear: [],
     });
-    expect((await ensureGeneratedTokenExchangeEnabled(input)).check.status).toBe('fail');
+  });
+
+  it("changes nothing when the tenant's own list could not be saved back", async () => {
+    fetchJson.mockResolvedValueOnce(
+      settings(
+        { [TYPES]: 'urn:ietf:params:oauth:token-type:jwt' },
+        { [ENABLED]: 'kv', [TYPES]: 'kv' }
+      )
+    );
+
+    const result = await ensureGeneratedTokenExchangeEnabled(input);
+    expect(result.check.status).toBe('fail');
+    expect(result.changed).toBe(false);
     expect(fetchJson).toHaveBeenCalledOnce();
   });
 });

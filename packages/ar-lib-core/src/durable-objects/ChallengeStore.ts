@@ -125,6 +125,8 @@ export interface ConsumeChallengeResponse {
   email?: string;
   redirectUri?: string;
   metadata?: Record<string, unknown>;
+  /** When the challenge was stored (milliseconds). */
+  createdAt?: number;
 }
 
 /**
@@ -391,6 +393,7 @@ export class ChallengeStore extends DurableObject<Env> {
       email: challenge.email,
       redirectUri: challenge.redirectUri,
       metadata: challenge.metadata,
+      createdAt: challenge.createdAt,
     };
   }
 
