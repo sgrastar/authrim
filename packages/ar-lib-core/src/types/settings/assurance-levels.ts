@@ -187,12 +187,14 @@ export const ASSURANCE_LEVELS_SETTINGS_META: Record<keyof AssuranceLevelsSetting
   },
   'assurance.default_ial': {
     key: 'assurance.default_ial',
+    // Saved and validated, not applied yet: runtime use lands with the identity assurance work.
+    status: 'in_development',
     type: 'enum',
     default: 'IAL1',
     envKey: 'DEFAULT_IAL',
     label: 'Default IAL',
     description:
-      'The IAL recorded, as tenant-policy evidence, for accounts the organisation creates (by an administrator, SCIM or a CSV import) when IAL2 or IAL3. Self-registration, guests and sign-in from another IdP are never given it',
+      'The IAL recorded, as tenant-policy evidence, for accounts the organisation creates (by an administrator, SCIM or a CSV import) when IAL2 or IAL3. Self-registration, guests and sign-in from another IdP are never given it (not applied yet)',
     enum: ['IAL1', 'IAL2', 'IAL3'],
   },
   'assurance.scope_aal_requirements': {
@@ -213,35 +215,43 @@ export const ASSURANCE_LEVELS_SETTINGS_META: Record<keyof AssuranceLevelsSetting
   },
   'assurance.scope_ial_requirements': {
     key: 'assurance.scope_ial_requirements',
+    // Saved and validated, not applied yet: runtime use lands with the identity assurance work.
+    status: 'in_development',
     type: 'string',
     default: '{}',
     label: 'Scope IAL Requirements',
     description:
-      'JSON mapping of scopes to the IAL they require (e.g., {"payroll": "IAL2"}); a request for such a scope by someone below it is refused (access_denied), since no sign-in can raise an IAL. Applies while assurance levels are enabled',
+      'JSON mapping of scopes to the IAL they require (e.g., {"payroll": "IAL2"}); a request for such a scope by someone below it is refused (access_denied), since no sign-in can raise an IAL. Applies while assurance levels are enabled (not applied yet)',
   },
   'assurance.ial_assurance_values': {
     key: 'assurance.ial_assurance_values',
+    // Saved and validated, not applied yet: runtime use lands with the identity assurance work.
+    status: 'in_development',
     type: 'string',
     default: '{}',
     label: 'IAL Assurance Values',
     description:
-      'JSON mapping of each IAL to the assurance values (URIs) released for it, e.g. {"IAL2": ["https://www.gakunin.jp/profile/IAL2"]}. A person gets the values of every IAL up to theirs, as the SAML attribute eduPersonAssurance (through attribute mapping) and the OIDC claim eduperson_assurance. Applies while assurance levels are enabled',
+      'JSON mapping of each IAL to the assurance values (URIs) released for it, e.g. {"IAL2": ["https://www.gakunin.jp/profile/IAL2"]}. A person gets the values of every IAL up to theirs, as the SAML attribute eduPersonAssurance (through attribute mapping) and the OIDC claim eduperson_assurance. Applies while assurance levels are enabled (not applied yet)',
   },
   'assurance.saml_authn_context_aal': {
     key: 'assurance.saml_authn_context_aal',
+    // Saved and validated, not applied yet: runtime use lands with the identity assurance work.
+    status: 'in_development',
     type: 'string',
     default: '{}',
     label: 'SAML AuthnContext AAL',
     description:
-      'JSON mapping of SAML AuthnContextClassRef values to the AAL each stands for, e.g. {"https://www.gakunin.jp/profile/AAL2": "AAL2"}. An SP requesting one is answered only from a session at that AAL, after re-authentication if needed. Applies while assurance levels are enabled',
+      'JSON mapping of SAML AuthnContextClassRef values to the AAL each stands for, e.g. {"https://www.gakunin.jp/profile/AAL2": "AAL2"}. An SP requesting one is answered only from a session at that AAL, after re-authentication if needed. Applies while assurance levels are enabled (not applied yet)',
   },
   'assurance.ida_profile': {
     key: 'assurance.ida_profile',
+    // Saved and validated, not applied yet: runtime use lands with the identity assurance work.
+    status: 'in_development',
     type: 'string',
     default: '{}',
     label: 'Identity Assurance Profile',
     description:
-      'JSON describing the OpenID Connect for Identity Assurance verified_claims released to a client that requests them: {"trust_framework": "…", "assurance_levels": {"IAL2": "…"}, "claims": ["given_name", "family_name", "birthdate"]}. Empty releases no verified_claims. Released only for people at IAL2 or above, and only claims the request and its scopes allow. Applies while assurance levels are enabled',
+      'JSON describing the OpenID Connect for Identity Assurance verified_claims released to a client that requests them: {"trust_framework": "…", "assurance_levels": {"IAL2": "…"}, "claims": ["given_name", "family_name", "birthdate"]}. Empty releases no verified_claims. Released only for people at IAL2 or above, and only claims the request and its scopes allow. Applies while assurance levels are enabled (not applied yet)',
   },
   'assurance.include_in_id_token': {
     key: 'assurance.include_in_id_token',
