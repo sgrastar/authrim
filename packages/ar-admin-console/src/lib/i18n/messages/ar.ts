@@ -333,6 +333,7 @@ export const ar = {
 	'table.selectRow': 'تحديد {name}',
 	'table.sortBy': 'الفرز حسب {column}',
 	'table.notApplicable': 'لا ينطبق',
+	'table.actions': 'الإجراءات',
 	'tabs.more': 'المزيد',
 	'choice.count': '{n} من {total} محدد',
 	'choice.countMax': '{n} من {max} كحد أقصى',

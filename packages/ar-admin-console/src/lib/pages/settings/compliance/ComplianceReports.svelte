@@ -217,7 +217,13 @@
 				{ key: 'report', label: t('cmp.report.type'), width: '36%' },
 				{ key: 'generated', label: t('cmp.report.generated') },
 				{ key: 'rows', label: t('cmp.ret.col.records'), width: '16%' },
-				{ key: 'download', label: '', width: '10rem', align: 'end' }
+				{
+					key: 'download',
+					label: t('table.actions'),
+					hideLabel: true,
+					width: '10rem',
+					align: 'end'
+				}
 			]}
 			rows={reports}
 			rowKey={(report) => report.report_id}

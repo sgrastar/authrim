@@ -345,6 +345,7 @@ export const de = {
 	'table.selectRow': '{name} auswählen',
 	'table.sortBy': 'Nach {column} sortieren',
 	'table.notApplicable': 'Nicht zutreffend',
+	'table.actions': 'Aktionen',
 	'tabs.more': 'Mehr',
 	'choice.count': '{n} von {total} ausgewählt',
 	'choice.countMax': '{n} von höchstens {max}',

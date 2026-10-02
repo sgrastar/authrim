@@ -69,8 +69,16 @@ export const NOT_APPLIED: ReadonlyMap<string, NotApplied> = new Map([
 		'tokens.exchange_impersonation_enabled',
 		'tokens.introspection_extended_claims'
 	]),
-	// to-wire (2)
-	...reason('to-wire', ['credentials.email_code_ttl', 'rate_limit.auth_max_failed_attempts']),
+	// to-wire (7)
+	...reason('to-wire', [
+		'assurance.default_ial',
+		'assurance.ida_profile',
+		'assurance.ial_assurance_values',
+		'assurance.saml_authn_context_aal',
+		'assurance.scope_ial_requirements',
+		'credentials.email_code_ttl',
+		'rate_limit.auth_max_failed_attempts'
+	]),
 	// duplicate (37)
 	...reason('duplicate', [
 		'authentication-methods.directory_password.auto_provision',

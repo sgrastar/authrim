@@ -339,6 +339,7 @@ export const ja = {
 	'table.selectRow': '{name} を選択',
 	'table.sortBy': '{column} で並べ替え',
 	'table.notApplicable': '対象外',
+	'table.actions': '操作',
 	'tabs.more': 'その他',
 	'choice.count': '{n} / {total} 件を選択',
 	'choice.countMax': '{n} / 最大 {max} 件',

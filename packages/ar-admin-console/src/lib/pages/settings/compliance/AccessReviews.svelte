@@ -166,7 +166,7 @@
 					{ key: 'scope', label: t('cmp.review.scope') },
 					{ key: 'progress', label: t('cmp.review.decided'), width: '14%' },
 					{ key: 'due', label: t('cmp.review.due'), width: '18%' },
-					{ key: 'open', label: '', width: '8rem', align: 'end' }
+					{ key: 'open', label: t('table.actions'), hideLabel: true, width: '8rem', align: 'end' }
 				]}
 				rows={reviews}
 				rowKey={(review) => review.review_id}
