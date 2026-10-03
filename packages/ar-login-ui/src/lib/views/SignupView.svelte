@@ -403,7 +403,7 @@
 										);
 									}}
 								/>
-								<span style="font-size: 0.875rem; color: var(--text);">{field.label}</span>
+								<span style="font-size: 0.875rem; color: var(--text-primary);">{field.label}</span>
 							</label>
 							{#if customFieldErrors[field.key]}
 								<p class="custom-field-error">{customFieldErrors[field.key]}</p>
@@ -686,9 +686,9 @@
 		gap: 12px;
 		margin-top: 12px;
 		padding: 14px;
-		border: 1px solid var(--border-color, var(--border));
+		border: 1px solid var(--border);
 		border-radius: 8px;
-		background: color-mix(in srgb, var(--surface-color, var(--bg-glass)) 90%, transparent);
+		background: color-mix(in srgb, var(--bg-glass) 90%, transparent);
 	}
 
 	.totp-signup-panel h3 {
@@ -700,7 +700,7 @@
 		width: 192px;
 		max-width: 100%;
 		height: auto;
-		border: 1px solid var(--border-color, var(--border));
+		border: 1px solid var(--border);
 		border-radius: 8px;
 		background: #ffffff;
 		padding: 8px;
@@ -738,8 +738,8 @@
 
 	.totp-backup-codes li {
 		padding: 8px 10px;
-		border: 1px solid var(--border-color, var(--border));
+		border: 1px solid var(--border);
 		border-radius: 8px;
-		background: var(--surface-color, var(--surface));
+		background: var(--bg-card);
 	}
 </style>

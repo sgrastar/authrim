@@ -204,7 +204,7 @@
 		display: grid;
 		gap: 0.75rem;
 		padding: 1.25rem;
-		border: 1px solid var(--border-color, #d1d5db);
+		border: 1px solid var(--border);
 		border-radius: 0.75rem;
 	}
 	h2,
@@ -223,11 +223,11 @@
 	button {
 		font: inherit;
 		padding: 0.625rem 0.75rem;
-		border: 1px solid var(--border-color, #9ca3af);
+		border: 1px solid var(--border);
 		border-radius: 0.375rem;
 	}
 	input {
-		background: var(--input-background, transparent);
+		background: var(--bg-input);
 		color: inherit;
 	}
 	button {

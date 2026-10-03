@@ -204,7 +204,7 @@
 		min-width: 28px;
 		padding: 3px 8px;
 		border-radius: 999px;
-		background: var(--surface-secondary);
+		background: var(--bg-subtle);
 		color: var(--text-muted);
 		font-size: 0.75rem;
 		text-align: center;
@@ -233,8 +233,8 @@
 		width: 100%;
 		border: 1px solid var(--border);
 		border-radius: 8px;
-		background: var(--surface);
-		color: var(--text);
+		background: var(--bg-card);
+		color: var(--text-primary);
 		font: inherit;
 	}
 	input[type='search'] {
@@ -273,7 +273,7 @@
 		min-width: 0;
 		border: 1px solid var(--border);
 		border-radius: 10px;
-		background: var(--surface);
+		background: var(--bg-card);
 	}
 	.launcher-tile[data-width='1'] {
 		grid-column: span 1;
@@ -345,11 +345,11 @@
 		cursor: pointer;
 	}
 	.favorite-button:hover {
-		background: var(--surface-secondary);
-		color: var(--text);
+		background: var(--bg-subtle);
+		color: var(--text-primary);
 	}
 	.favorite-button.active {
-		color: #d97706;
+		color: var(--warning-fg);
 	}
 	.favorite-button:disabled {
 		opacity: 0.5;
@@ -396,8 +396,8 @@
 	.legacy {
 		padding: 1px 5px;
 		border-radius: 4px;
-		background: #fef3c7;
-		color: #92400e;
+		background: var(--warning-light);
+		color: var(--warning-fg);
 		font-weight: 650;
 	}
 	.state-message {
@@ -412,8 +412,8 @@
 		margin: 0;
 		padding: 9px 11px;
 		border-radius: 8px;
-		background: color-mix(in srgb, var(--error, #b91c1c) 9%, transparent);
-		color: var(--error, #b91c1c);
+		background: color-mix(in srgb, var(--danger) 9%, transparent);
+		color: var(--danger-fg);
 		font-size: 0.8125rem;
 	}
 	.state-message p {
@@ -423,8 +423,8 @@
 		border: 1px solid var(--border);
 		border-radius: 7px;
 		padding: 7px 12px;
-		background: var(--surface);
-		color: var(--text);
+		background: var(--bg-card);
+		color: var(--text-primary);
 		cursor: pointer;
 	}
 	.launcher-skeleton {
@@ -437,7 +437,7 @@
 	.launcher-skeleton span,
 	.launcher-skeleton i {
 		display: block;
-		background: var(--surface-secondary);
+		background: var(--bg-subtle);
 	}
 	.launcher-skeleton span {
 		width: 42px;

@@ -61,6 +61,12 @@
 	--warning-light: rgba(245, 158, 11, 0.1);
 	--danger: #ef4444;
 	--danger-light: rgba(239, 68, 68, 0.1);
+	/* Destructive buttons and error text: --danger itself is too light for white labels (3.8:1) or
+	   for text on light cards, so filled buttons and text use these (AA in every scheme). */
+	--danger-bg: #b91c1c;
+	--danger-text: #ffffff;
+	--danger-fg: #991b1b;
+	--warning-fg: #92400e;
 
 	/* === Hierarchy Colors === */
 	--system-color: #64748b;
@@ -475,12 +481,15 @@ html[dir='rtl'] .form-select {
 }
 
 .btn-danger {
-	background: var(--danger);
-	color: white;
+	background: var(--danger-bg);
+	color: var(--danger-text);
 }
 
 .btn-danger:hover:not(:disabled) {
-	filter: brightness(1.1);
+	/* As primary: keep the fill and label, which a brighter fill could fail. */
+	background: var(--danger-bg);
+	color: var(--danger-text);
+	transform: translateY(-1px);
 }
 
 .btn-ghost {
@@ -570,6 +579,12 @@ html[dir='rtl'] .form-select {
 	background: var(--primary-light);
 	border-color: var(--primary);
 	color: var(--text-primary);
+}
+
+[data-theme='dark'] {
+	--danger-bg: #dc2626;
+	--danger-fg: #fca5a5;
+	--warning-fg: #fcd34d;
 }
 
 /* Dark theme alert colors */
@@ -6070,9 +6085,9 @@ tr.expired {
 	align-items: center;
 	gap: 10px;
 	padding: 12px 14px;
-	border: 1px solid var(--border-color, var(--border));
+	border: 1px solid var(--border);
 	border-radius: 12px;
-	background: color-mix(in srgb, var(--surface-color, var(--bg-glass)) 88%, transparent);
+	background: color-mix(in srgb, var(--bg-glass) 88%, transparent);
 	color: var(--text-secondary);
 	font-size: 0.9rem;
 	line-height: 1.45;
@@ -7682,7 +7697,7 @@ tr.expired {
 	text-align: center;
 	font-size: var(--auth-pin-cell-font-size, 1.25rem);
 	font-weight: 700;
-	background: var(--input-bg, var(--bg-glass));
+	background: var(--bg-input);
 	border: 2px solid var(--input-border, var(--border));
 	border-radius: var(--input-radius, var(--radius-md));
 	color: var(--text-primary);

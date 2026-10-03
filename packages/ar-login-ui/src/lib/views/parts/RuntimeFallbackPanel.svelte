@@ -179,9 +179,9 @@
 		display: grid;
 		gap: 8px;
 		padding: 12px;
-		border: 1px solid var(--border-color, var(--border));
+		border: 1px solid var(--border);
 		border-radius: 8px;
-		background: color-mix(in srgb, var(--surface-color, var(--bg-glass)) 88%, transparent);
+		background: color-mix(in srgb, var(--bg-glass) 88%, transparent);
 	}
 
 	.runtime-consent-choice {

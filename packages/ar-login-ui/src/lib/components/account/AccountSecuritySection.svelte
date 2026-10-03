@@ -541,7 +541,7 @@
 		padding: 12px;
 		border: 1px solid var(--border);
 		border-radius: 8px;
-		background: color-mix(in srgb, var(--surface) 92%, var(--primary) 8%);
+		background: color-mix(in srgb, var(--bg-card) 92%, var(--primary) 8%);
 	}
 
 	.totp-enrollment h4 {
@@ -590,7 +590,7 @@
 		padding: 8px 10px;
 		border: 1px solid var(--border);
 		border-radius: 8px;
-		background: var(--surface);
+		background: var(--bg-card);
 	}
 
 	.totp-code-input {
@@ -598,7 +598,7 @@
 		min-height: 38px;
 		border: 1px solid var(--border);
 		border-radius: 8px;
-		background: var(--surface);
+		background: var(--bg-card);
 		color: var(--text-primary);
 		font: inherit;
 		letter-spacing: 0.08em;

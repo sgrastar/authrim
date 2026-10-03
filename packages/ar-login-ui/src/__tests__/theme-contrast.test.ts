@@ -173,7 +173,32 @@ const CASES: Case[] = [
 	{ name: 'fullbleed glass light', values: glassLight, behind: imageryUnderScrim(glassLight) }
 ];
 
+/** The destructive / warning colours: the base ones, with the dark scheme's overrides. */
+const status = (dark: boolean) => ({
+	...BASE,
+	...(dark ? tokens(app, "\n[data-theme='dark'] {") : {})
+});
+
 describe('theme contrast', () => {
+	it.each(CASES)(
+		'$name: destructive buttons and error / warning text meet AA',
+		({ name, values, behind }) => {
+			const tones = status(name.includes(' dark'));
+			expect(
+				textContrast(tones['--danger-text'], colour(tones['--danger-bg']).rgb)
+			).toBeGreaterThanOrEqual(4.5);
+			for (const under of behind) {
+				const card = over(colour(values['--bg-card']), under);
+				expect(textContrast(tones['--danger-fg'], card)).toBeGreaterThanOrEqual(4.5);
+				// Warning text sits on the warning tint (a tag, a notice) as well as on the card.
+				const tinted = over(colour(tones['--warning-light']), card);
+				expect(textContrast(tones['--warning-fg'], tinted)).toBeGreaterThanOrEqual(4.5);
+				const errorTinted = over(colour(tones['--danger-light']), card);
+				expect(textContrast(tones['--danger-fg'], errorTinted)).toBeGreaterThanOrEqual(4.5);
+			}
+		}
+	);
+
 	it.each(CASES)('$name: text on the card meets AA', ({ values, behind }) => {
 		expect(behind.length).toBeGreaterThan(0);
 		for (const under of behind) {

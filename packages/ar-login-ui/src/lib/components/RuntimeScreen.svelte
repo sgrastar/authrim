@@ -1196,7 +1196,7 @@
 
 	.runtime-screen-field strong {
 		margin-inline-start: 0.375rem;
-		color: var(--color-danger, #ef4444);
+		color: var(--danger-fg);
 		font-size: 0.75rem;
 	}
 
@@ -1205,7 +1205,7 @@
 		min-height: var(--auth-control-height, 0);
 		border: 1px solid var(--input-border, var(--border));
 		border-radius: var(--input-radius, var(--radius-lg, var(--radius-md)));
-		background: var(--input-bg, var(--bg-glass));
+		background: var(--bg-input);
 		color: var(--text-primary);
 		font: inherit;
 		font-weight: 500;
@@ -1257,7 +1257,7 @@
 	.runtime-code-progress {
 		height: 0.5rem;
 		overflow: hidden;
-		border: 1px solid var(--border-color, var(--border));
+		border: 1px solid var(--border);
 		border-radius: var(--radius-full, 999px);
 		background: var(--bg-glass);
 	}
@@ -1327,7 +1327,7 @@
 	.runtime-screen-consent-widget {
 		display: grid;
 		gap: 0.75rem;
-		border: 1px solid var(--border-color, var(--border));
+		border: 1px solid var(--border);
 		border-radius: var(--radius-lg, var(--radius-md));
 		background: var(--card-bg-muted, var(--surface-muted, var(--bg-glass)));
 		color: var(--text-primary);
@@ -1424,7 +1424,7 @@
 		content: '';
 		flex: 1;
 		height: 1px;
-		background: var(--border-color, var(--border));
+		background: var(--border);
 	}
 
 	@media (max-width: 400px) {

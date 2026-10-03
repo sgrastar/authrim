@@ -314,7 +314,7 @@
 					{#each consentData.consent_items.filter((i) => i.is_required) as item (item.statement_id)}
 						<div
 							class="flex items-start gap-3 p-3 rounded-lg mb-2"
-							style="background: var(--surface-secondary);"
+							style="background: var(--bg-subtle);"
 						>
 							{#if item.checkbox_mode !== 'none'}
 								<input
@@ -393,7 +393,7 @@
 					{#each consentData.consent_items.filter((i) => !i.is_required) as item (item.statement_id)}
 						<div
 							class="flex items-start gap-3 p-3 rounded-lg mb-2"
-							style="background: var(--surface-secondary);"
+							style="background: var(--bg-subtle);"
 						>
 							{#if item.checkbox_mode !== 'none'}
 								<input
@@ -543,7 +543,7 @@
 			{#if hasBlockingConsentItems}
 				<div
 					class="mt-4 p-3 rounded-lg text-sm"
-					style="background: var(--warning-light, #fffbeb); color: var(--warning-dark, #92400e);"
+					style="background: var(--warning-light, #fffbeb); color: var(--warning-fg);"
 				>
 					<p>{$LL.consent_block_message()}</p>
 				</div>

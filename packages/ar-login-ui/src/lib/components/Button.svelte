@@ -153,15 +153,16 @@
 
 	/* Danger variant */
 	.btn-danger {
-		background: var(--danger);
-		color: white;
-		box-shadow: 0 4px 16px rgba(239, 68, 68, 0.3);
+		background: var(--danger-bg);
+		color: var(--danger-text);
+		box-shadow: 0 4px 16px rgba(185, 28, 28, 0.25);
 	}
 
 	.btn-danger:hover:not(:disabled) {
-		background: #dc2626;
+		background: var(--danger-bg);
+		color: var(--danger-text);
 		transform: translateY(-2px);
-		box-shadow: 0 8px 24px rgba(239, 68, 68, 0.4);
+		box-shadow: 0 8px 24px rgba(185, 28, 28, 0.35);
 	}
 
 	/* Size variants */

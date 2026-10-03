@@ -1918,7 +1918,7 @@
 		min-height: 44px;
 		border: 1px solid var(--border);
 		border-radius: 12px;
-		background: var(--surface);
+		background: var(--bg-card);
 		color: var(--text-primary);
 		font: inherit;
 		letter-spacing: 0.08em;
