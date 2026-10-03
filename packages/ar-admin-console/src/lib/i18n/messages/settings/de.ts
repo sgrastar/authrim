@@ -91,6 +91,7 @@ export const deSettings: Record<keyof typeof jaSettings, string> = {
 	'settings.locked.tenant': 'Durch die Mandanten-Einstellungen festgelegt',
 	'settings.badge.locked': 'Gesperrt',
 	'settings.badge.here': 'Überschrieben',
+	'settings.badge.inDevelopment': 'In Entwicklung',
 	'settings.value.on': 'Ein',
 	'settings.value.off': 'Aus',
 	'settings.value.empty': '(keine)',

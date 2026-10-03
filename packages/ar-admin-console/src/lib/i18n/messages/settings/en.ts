@@ -87,6 +87,7 @@ export const enSettings: Record<keyof typeof jaSettings, string> = {
 	'settings.locked.tenant': 'Fixed by the tenant settings',
 	'settings.badge.locked': 'Locked',
 	'settings.badge.here': 'Overridden',
+	'settings.badge.inDevelopment': 'In development',
 	'settings.value.on': 'On',
 	'settings.value.off': 'Off',
 	'settings.value.empty': '(none)',

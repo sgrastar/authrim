@@ -88,6 +88,7 @@ export const jaSettings = {
 	'settings.locked.tenant': 'テナント設定による固定値',
 	'settings.badge.locked': '上書き不可',
 	'settings.badge.here': '上書き中',
+	'settings.badge.inDevelopment': '開発中',
 	'settings.value.on': 'オン',
 	'settings.value.off': 'オフ',
 	'settings.value.empty': '（なし）',

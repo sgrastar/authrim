@@ -334,7 +334,9 @@
 		{:else}
 			{formatSetting(setting.key, meta, entry.v)}
 		{/if}
-		{#if entry.locked}
+		{#if meta.status === 'in_development'}
+			<Badge>{t('settings.badge.inDevelopment')}</Badge>
+		{:else if entry.locked}
 			<Badge>{t('settings.badge.locked')}</Badge>
 		{:else if entry.here}
 			<Badge>{t('settings.badge.here')}</Badge>

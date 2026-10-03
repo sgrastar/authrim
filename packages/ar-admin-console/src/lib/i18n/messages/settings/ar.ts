@@ -85,6 +85,7 @@ export const arSettings: Record<keyof typeof jaSettings, string> = {
 	'settings.locked.tenant': 'قيمة ثابتة بإعدادات المستأجر',
 	'settings.badge.locked': 'مقفل',
 	'settings.badge.here': 'متجاوز',
+	'settings.badge.inDevelopment': 'قيد التطوير',
 	'settings.value.on': 'مفعّل',
 	'settings.value.off': 'متوقف',
 	'settings.value.empty': '(لا شيء)',
