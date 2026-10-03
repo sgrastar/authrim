@@ -205,7 +205,7 @@
 		padding: 3px 8px;
 		border-radius: 999px;
 		background: var(--bg-subtle);
-		color: var(--text-muted);
+		color: var(--text-secondary);
 		font-size: 0.75rem;
 		text-align: center;
 	}

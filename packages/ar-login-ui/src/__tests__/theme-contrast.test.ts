@@ -206,6 +206,27 @@ describe('theme contrast', () => {
 		}
 	);
 
+	it.each(CASES)(
+		'$name: text on subtle fills (counts, tags, hovered controls) meets AA',
+		({ name, values, behind }) => {
+			const tones = status(name.includes(' dark'));
+			for (const under of behind) {
+				const subtle = over(
+					colour(values['--bg-subtle']),
+					over(colour(values['--bg-card']), under)
+				);
+				for (const token of ['--text-primary', '--text-secondary']) {
+					expect(
+						textContrast(values[token], subtle),
+						`${token} ${values[token]} on ${subtle.map(Math.round)}`
+					).toBeGreaterThanOrEqual(4.5);
+				}
+				// An active favourite star (an icon: 3:1) while hovered.
+				expect(textContrast(tones['--warning-fg'], subtle)).toBeGreaterThanOrEqual(3);
+			}
+		}
+	);
+
 	it.each(CASES)('$name: text on the card meets AA', ({ values, behind }) => {
 		expect(behind.length).toBeGreaterThan(0);
 		for (const under of behind) {
