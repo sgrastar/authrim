@@ -14,6 +14,7 @@ const {
   mockRateLimiter,
   mockPasskeyRepo,
   mockConsumeTotpAuthenticationState,
+  mockHasRemainingLoginMethod,
 } = vi.hoisted(() => {
   const sessionStore = {
     getSessionRpc: vi.fn(),
@@ -59,6 +60,7 @@ const {
     mockRateLimiter: rateLimiter,
     mockPasskeyRepo: { findByUserId: vi.fn() },
     mockConsumeTotpAuthenticationState: vi.fn(async () => ({ lastAcceptedTimeStep: 1 })),
+    mockHasRemainingLoginMethod: vi.fn(async () => false),
   };
 });
 
@@ -77,6 +79,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
       deleteCredentialStateRpc: vi.fn().mockResolvedValue(true),
     })),
     createAuditLog: vi.fn().mockResolvedValue(undefined),
+    hasRemainingLoginMethod: mockHasRemainingLoginMethod,
     CanonicalRuntimeUserStore: vi.fn(function CanonicalRuntimeUserStoreMock() {
       return mockRuntimeUserStore;
     }),
@@ -998,7 +1001,7 @@ describe('Account Page TOTP API', () => {
     expect(mockRateLimiter.incrementRpc).not.toHaveBeenCalled();
   });
 
-  it('accepts a passkey as the remaining login method after TOTP deletion', async () => {
+  it('accepts another login method as remaining after TOTP deletion', async () => {
     mockSessionStore.getSessionRpc.mockResolvedValue({
       ...baseSession,
       expiresAt: Date.now() + 60_000,
@@ -1011,7 +1014,7 @@ describe('Account Page TOTP API', () => {
       label: 'Primary',
     });
     mockTotpRepo.findActiveByUserId.mockResolvedValue([{ id: 'totp-001', user_id: 'user-001' }]);
-    mockPasskeyRepo.findByUserId.mockResolvedValue([{ id: 'passkey-1' }]);
+    mockHasRemainingLoginMethod.mockResolvedValueOnce(true);
     mockTotpRepo.delete.mockResolvedValue(true);
     const context = createMockContext({ body: {} });
     context.req.param = vi.fn(() => 'totp-001');
@@ -1019,7 +1022,14 @@ describe('Account Page TOTP API', () => {
     const response = await deleteAccountTotpCredentialHandler(context);
 
     expect(response.status).toBe(200);
-    expect(mockPasskeyRepo.findByUserId).toHaveBeenCalledWith('user-001');
+    expect(mockHasRemainingLoginMethod).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        tenantId: 'default',
+        userId: 'user-001',
+        removing: { kind: 'totp', id: 'totp-001' },
+      })
+    );
   });
 
   it('blocks deletion of the last active login method', async () => {
@@ -1046,6 +1056,7 @@ describe('Account Page TOTP API', () => {
 
     expect(response.status).toBe(400);
     expect(mockTotpRepo.delete).not.toHaveBeenCalled();
+    expect(mockHasRemainingLoginMethod).toHaveBeenCalled();
   });
 
   it('requires a valid proof when deleting active TOTP without TOTP/passkey reauth', async () => {
@@ -1297,7 +1308,7 @@ describe('Account Page TOTP API', () => {
     expect(body.credential.label).toBe('New');
   });
 
-  it('allows verified email OTP as the remaining login method', async () => {
+  it('deletes the last TOTP authenticator when another login method remains', async () => {
     mockSessionStore.getSessionRpc.mockResolvedValue({
       ...baseSession,
       expiresAt: Date.now() + 60_000,
@@ -1314,6 +1325,7 @@ describe('Account Page TOTP API', () => {
       email: 'person@example.com',
       email_verified: 1,
     });
+    mockHasRemainingLoginMethod.mockResolvedValueOnce(true);
     mockTotpRepo.delete.mockResolvedValue(true);
     const context = createMockContext({
       bodyError: new Error('empty body'),
@@ -1329,7 +1341,7 @@ describe('Account Page TOTP API', () => {
     const response = await deleteAccountTotpCredentialHandler(context);
 
     expect(response.status).toBe(200);
-    expect(mockRuntimeUserStore.findById).toHaveBeenCalledWith('user-001');
+    expect(mockHasRemainingLoginMethod).toHaveBeenCalled();
   });
 
   it('rejects activation when account enrollment is disabled', async () => {

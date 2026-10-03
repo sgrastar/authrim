@@ -1,19 +1,20 @@
 import type { AccountDirectoryPublication } from '@authrim/ar-lib-core';
 import type { Context } from 'hono';
 import {
-  CanonicalRuntimeUserStore,
-  persistAccountEmailMutation,
   AR_ERROR_CODES,
+  CanonicalRuntimeUserStore,
   createAccountAuthContextFromHono,
-  encodeCanonicalSensitiveValueRef,
   createLookupBlindIndexes,
   createPIIContextFromHono,
+  encodeCanonicalSensitiveValueRef,
+  type Env,
   getAccountDataContextFromHono,
   getLogger,
   getTenantIdFromContext,
+  isAccountReauthFresh,
   normalizeLookupEmail,
+  persistAccountEmailMutation,
   produceNotificationDelivery,
-  type Env,
 } from '@authrim/ar-lib-core';
 import { requireAccountSession, type AccountSession } from './account-page';
 import { createLookupBucketWriteResolver } from './lookup-bucket-write-route';
@@ -27,7 +28,6 @@ import { IdentifierReplacementOperationRepository } from './identifier-replaceme
 import { publishAccountEmailAddition } from './account-identifier-addition';
 import { recordAccountOperation } from './account-operation-log';
 
-const REAUTH_TTL_SECONDS = 5 * 60;
 const CHALLENGE_TTL_SECONDS = 10 * 60;
 const CONSUMED_CHALLENGE_RECOVERY_TTL_SECONDS = 2 * 60 * 60;
 const ATTEMPT_LIMIT = 5;
@@ -102,7 +102,7 @@ function randomOtpCode(): string {
 }
 
 function recentlyAuthenticated(session: AccountSession, now: number): boolean {
-  return session.authTime <= now && now < session.authTime + REAUTH_TTL_SECONDS;
+  return isAccountReauthFresh(session.authTime, now);
 }
 
 function constantTimeHexEqual(left: string, right: string): boolean {

@@ -1,26 +1,31 @@
 import type { Context } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
 import {
+  ACCOUNT_REAUTH_REQUIRED_ERROR,
+  ACCOUNT_REAUTH_TTL_SECONDS,
   accountDirectoryRemovalOutboxId,
+  type AccountDirectoryRemovalPublication,
+  advancePasskeyAuthenticationState,
+  buildDOKey,
   CanonicalRuntimeUserStore,
-  PasskeyRepository,
-  passkeyCredentialLookupSubject,
   createAccountAuthContextFromHono,
   createPIIContextFromHono,
-  buildDOKey,
+  type ExecuteResult,
   generateId,
   getChallengeStoreByChallengeId,
   getLogger,
+  getSessionRevocationStore,
+  getSessionStoreBySessionId,
+  getTenantIdFromContext,
+  hasRemainingLoginMethod,
+  isAccountAuthenticationDeniedError,
+  isAccountReauthFresh,
+  isAuthenticationMethodUsageAvailable,
   markAccountDirectoryRemovalReady,
+  passkeyCredentialLookupSubject,
+  PasskeyRepository,
   produceNotificationDelivery,
   resolveAccountDataContextFromHono,
-  getSessionStoreBySessionId,
-  getSessionRevocationStore,
-  advancePasskeyAuthenticationState,
-  isAccountAuthenticationDeniedError,
-  getTenantIdFromContext,
-  type AccountDirectoryRemovalPublication,
-  type ExecuteResult,
   runTenantBackupCoveredEffect,
 } from '@authrim/ar-lib-core';
 import { resolveAaguidAuthenticator } from '@authrim/ar-lib-core/webauthn/aaguid-metadata';
@@ -53,13 +58,9 @@ async function resolveAccountAuthContext(
   await resolveAccountDataContextFromHono(c, userId);
   return createAccountAuthContextFromHono(c, tenantId);
 }
-const REAUTH_TTL_SECONDS = 5 * 60;
 const EMAIL_REAUTH_TTL_SECONDS = 5 * 60;
 const RP_NAME = 'Authrim';
-const AUTHENTICATION_METHODS_CATEGORY = 'authentication-methods';
 type AccountAuthenticatorTransport = 'usb' | 'nfc' | 'ble' | 'internal' | 'hybrid';
-type AuthenticationMethodUsage = 'login' | 'signup' | 'reauth' | 'account_link';
-type BuiltInAuthenticationMethod = 'passkey' | 'email_otp';
 
 const VALID_TRANSPORTS: AccountAuthenticatorTransport[] = [
   'usb',
@@ -152,18 +153,11 @@ function buildWebAuthnSignalDetails(
 }
 
 function reauthRequired(c: Context<{ Bindings: Env }>): Response {
-  return c.json(
-    {
-      error: 'reauth_required',
-      error_description: 'Recent authentication is required for this operation',
-      reauth_required: true,
-    },
-    403
-  );
+  return c.json(ACCOUNT_REAUTH_REQUIRED_ERROR, 403);
 }
 
 function isRecentlyAuthenticated(accountSession: AccountSession): boolean {
-  return Math.floor(Date.now() / 1000) < accountSession.authTime + REAUTH_TTL_SECONDS;
+  return isAccountReauthFresh(accountSession.authTime);
 }
 
 function normalizeOrigin(value: string | undefined | null): string | null {
@@ -331,60 +325,6 @@ function normalizeDeviceName(value: unknown): string | null {
   return normalized || null;
 }
 
-function normalizeBoolean(value: unknown, fallback: boolean): boolean {
-  if (typeof value === 'boolean') {
-    return value;
-  }
-  if (typeof value === 'string') {
-    const normalized = value.trim().toLowerCase();
-    if (normalized === 'true') return true;
-    if (normalized === 'false') return false;
-  }
-  return fallback;
-}
-
-function getAuthenticationMethodSettingKey(
-  method: BuiltInAuthenticationMethod,
-  usage: AuthenticationMethodUsage
-): string {
-  return usage === 'account_link'
-    ? `authentication-methods.${method}.account_link_enabled`
-    : `authentication-methods.${method}.${usage}_enabled`;
-}
-
-/** A method's switch where a tenant sets none: passkeys on, the others off. */
-function defaultAuthenticationMethodEnabled(method: BuiltInAuthenticationMethod): boolean {
-  return method === 'passkey';
-}
-
-async function isAuthenticationMethodUsageAvailable(
-  env: Env,
-  tenantId: string,
-  method: BuiltInAuthenticationMethod,
-  usage: AuthenticationMethodUsage
-): Promise<boolean> {
-  const methodDefault = defaultAuthenticationMethodEnabled(method);
-  try {
-    const raw = await env.SETTINGS?.get(
-      `settings:tenant:${tenantId}:${AUTHENTICATION_METHODS_CATEGORY}`
-    );
-    if (!raw) {
-      return methodDefault;
-    }
-    const settings = JSON.parse(raw) as Record<string, unknown>;
-    const legacyEnabled = normalizeBoolean(
-      settings[`authentication-methods.${method}.enabled`],
-      methodDefault
-    );
-    return normalizeBoolean(
-      settings[getAuthenticationMethodSettingKey(method, usage)],
-      legacyEnabled
-    );
-  } catch {
-    return methodDefault;
-  }
-}
-
 function generateEmailCode(): string {
   const array = new Uint32Array(1);
   crypto.getRandomValues(array);
@@ -501,7 +441,7 @@ async function refreshAccountReauthSession(
     ok: true,
     reauth: {
       authenticated_at: authTime,
-      expires_at: authTime + REAUTH_TTL_SECONDS,
+      expires_at: authTime + ACCOUNT_REAUTH_TTL_SECONDS,
       methods: reauthMethods,
     },
   });
@@ -1024,34 +964,6 @@ export async function completeAccountEmailCodeReauthHandler(
   return response;
 }
 
-async function isEmailCodeLoginAvailable(env: Env, tenantId: string): Promise<boolean> {
-  return isAuthenticationMethodUsageAvailable(env, tenantId, 'email_otp', 'login');
-}
-
-async function hasVerifiedEmailLoginMethod(
-  c: Context<{ Bindings: Env }>,
-  accountSession: AccountSession,
-  tenantId: string
-): Promise<boolean> {
-  if (!(await isEmailCodeLoginAvailable(c.env, tenantId))) {
-    return false;
-  }
-
-  try {
-    const authCtx = await resolveAccountAuthContext(c, accountSession.userId, tenantId);
-    const piiCtx = createPIIContextFromHono(c, tenantId);
-    const runtimeUsers = new CanonicalRuntimeUserStore({
-      coreAdapter: authCtx.coreAdapter,
-      piiAdapter: piiCtx.defaultPiiAdapter,
-      tenantId,
-    });
-    const user = await runtimeUsers.findById(accountSession.userId);
-    return Boolean(user?.email && user.email_verified === 1);
-  } catch {
-    return false;
-  }
-}
-
 export async function createAccountPasskeyOptionsHandler(
   c: Context<{ Bindings: Env }>
 ): Promise<Response> {
@@ -1421,7 +1333,14 @@ export async function deleteAccountPasskeyHandler(
   const registeredPasskeys = await passkeyRepo.findByUserId(accountSession.userId);
   const hasAnotherPasskey = registeredPasskeys.some((passkey) => passkey.id !== existing.id);
   const hasOtherLoginMethod =
-    hasAnotherPasskey || (await hasVerifiedEmailLoginMethod(c, accountSession, tenantId));
+    hasAnotherPasskey ||
+    (await hasRemainingLoginMethod(c.env, {
+      tenantId,
+      userId: accountSession.userId,
+      coreAdapter: authCtx.coreAdapter,
+      piiAdapter: createPIIContextFromHono(c, tenantId).defaultPiiAdapter,
+      removing: { kind: 'passkey', id: existing.id },
+    }));
 
   if (!hasOtherLoginMethod) {
     return c.json(

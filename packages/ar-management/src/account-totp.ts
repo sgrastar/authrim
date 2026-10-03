@@ -1,23 +1,28 @@
 import type { Context } from 'hono';
 import type { Env, TotpCredential } from '@authrim/ar-lib-core';
 import {
-  CanonicalRuntimeUserStore,
-  PasskeyRepository,
+  ACCOUNT_REAUTH_REQUIRED_ERROR,
+  ACCOUNT_REAUTH_TTL_SECONDS,
   buildDOKey,
   buildOtpAuthUri,
+  CanonicalRuntimeUserStore,
+  consumeTotpAuthenticationState,
   createAuthContextFromHono,
   createPIIContextFromHono,
   decryptValue,
   encryptValue,
   generateTotpBackupCodes,
   generateTotpSecret,
-  getSessionStoreBySessionId,
-  getSessionRevocationStore,
   getLogger,
-  consumeTotpAuthenticationState,
-  isAccountAuthenticationDeniedError,
+  getSessionRevocationStore,
+  getSessionStoreBySessionId,
   getTenantIdFromContext,
   hashTotpBackupCode,
+  hasRemainingLoginMethod,
+  isAccountAuthenticationDeniedError,
+  isAccountReauthFresh,
+  isAuthenticationMethodUsageAvailable,
+  PasskeyRepository,
   profileForTotpPreset,
   runTenantBackupCoveredEffect,
   verifyTotpCode,
@@ -26,13 +31,9 @@ import { requireAccountSession, type AccountSession } from './account-page';
 import { recordAccountOperation } from './account-operation-log';
 
 const MAX_LABEL_LENGTH = 100;
-const REAUTH_TTL_SECONDS = 5 * 60;
 const ACCOUNT_TOTP_RATE_LIMIT_WINDOW_SECONDS = 5 * 60;
 const ACCOUNT_TOTP_RATE_LIMIT_MAX_ATTEMPTS = 10;
 const AUTHENTICATION_METHODS_CATEGORY = 'authentication-methods';
-
-type AuthenticationMethodUsage = 'login' | 'signup' | 'reauth' | 'account_link';
-type BuiltInAuthenticationMethod = 'passkey' | 'email_otp' | 'totp';
 
 function setNoStore(c: Context<{ Bindings: Env }>): void {
   c.header('Cache-Control', 'no-store');
@@ -40,18 +41,11 @@ function setNoStore(c: Context<{ Bindings: Env }>): void {
 }
 
 function reauthRequired(c: Context<{ Bindings: Env }>): Response {
-  return c.json(
-    {
-      error: 'reauth_required',
-      error_description: 'Recent authentication is required for this operation',
-      reauth_required: true,
-    },
-    403
-  );
+  return c.json(ACCOUNT_REAUTH_REQUIRED_ERROR, 403);
 }
 
 function isRecentlyAuthenticated(accountSession: AccountSession): boolean {
-  return Math.floor(Date.now() / 1000) < accountSession.authTime + REAUTH_TTL_SECONDS;
+  return isAccountReauthFresh(accountSession.authTime);
 }
 
 async function requireRecentAccountSession(
@@ -96,58 +90,6 @@ async function rateLimitAccountTotpVerification(
     },
     429
   );
-}
-
-function normalizeBoolean(value: unknown, fallback: boolean): boolean {
-  if (typeof value === 'boolean') return value;
-  if (typeof value === 'string') {
-    const normalized = value.trim().toLowerCase();
-    if (normalized === 'true') return true;
-    if (normalized === 'false') return false;
-  }
-  return fallback;
-}
-
-function getAuthenticationMethodSettingKey(
-  method: BuiltInAuthenticationMethod,
-  usage: AuthenticationMethodUsage
-): string {
-  return usage === 'account_link'
-    ? `authentication-methods.${method}.account_link_enabled`
-    : `authentication-methods.${method}.${usage}_enabled`;
-}
-
-/** A method's switch where a tenant sets none: passkeys on, the others off. */
-function defaultAuthenticationMethodEnabled(method: BuiltInAuthenticationMethod): boolean {
-  return method === 'passkey';
-}
-
-async function isAuthenticationMethodUsageAvailable(
-  env: Env,
-  tenantId: string,
-  method: BuiltInAuthenticationMethod,
-  usage: AuthenticationMethodUsage
-): Promise<boolean> {
-  const methodDefault = defaultAuthenticationMethodEnabled(method);
-  try {
-    const raw = await env.SETTINGS?.get(
-      `settings:tenant:${tenantId}:${AUTHENTICATION_METHODS_CATEGORY}`
-    );
-    if (!raw) {
-      return methodDefault;
-    }
-    const settings = JSON.parse(raw) as Record<string, unknown>;
-    const legacyEnabled = normalizeBoolean(
-      settings[`authentication-methods.${method}.enabled`],
-      methodDefault
-    );
-    return normalizeBoolean(
-      settings[getAuthenticationMethodSettingKey(method, usage)],
-      legacyEnabled
-    );
-  } catch {
-    return methodDefault;
-  }
 }
 
 async function isTotpAccountManagementAvailable(env: Env, tenantId: string): Promise<boolean> {
@@ -348,30 +290,13 @@ async function hasOtherLoginMethodAfterTotpDelete(
   if (activeTotpCredentials.some((credential) => credential.id !== deletingCredentialId)) {
     return true;
   }
-
-  if (await isAuthenticationMethodUsageAvailable(c.env, tenantId, 'passkey', 'login')) {
-    const passkeys = await new PasskeyRepository(authCtx.coreAdapter, tenantId).findByUserId(
-      accountSession.userId
-    );
-    if (passkeys.length > 0) {
-      return true;
-    }
-  }
-
-  if (await isAuthenticationMethodUsageAvailable(c.env, tenantId, 'email_otp', 'login')) {
-    const piiCtx = createPIIContextFromHono(c, tenantId);
-    const runtimeUsers = new CanonicalRuntimeUserStore({
-      coreAdapter: authCtx.coreAdapter,
-      piiAdapter: piiCtx.defaultPiiAdapter,
-      tenantId,
-    });
-    const user = await runtimeUsers.findById(accountSession.userId);
-    if (user?.email && user.email_verified === 1) {
-      return true;
-    }
-  }
-
-  return false;
+  return hasRemainingLoginMethod(c.env, {
+    tenantId,
+    userId: accountSession.userId,
+    coreAdapter: authCtx.coreAdapter,
+    piiAdapter: createPIIContextFromHono(c, tenantId).defaultPiiAdapter,
+    removing: { kind: 'totp', id: deletingCredentialId },
+  });
 }
 
 async function createBackupCodes(
@@ -433,7 +358,7 @@ async function refreshTotpReauthSession(
     ok: true,
     reauth: {
       authenticated_at: authTime,
-      expires_at: authTime + REAUTH_TTL_SECONDS,
+      expires_at: authTime + ACCOUNT_REAUTH_TTL_SECONDS,
       methods: reauthMethods,
     },
   });
