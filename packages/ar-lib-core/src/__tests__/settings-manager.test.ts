@@ -27,6 +27,8 @@ import {
 } from '../utils/settings-manager';
 import { OAUTH_CATEGORY_META } from '../types/settings/oauth';
 import { CHECK_API_AUDIT_CATEGORY_META } from '../types/settings/check-api-audit';
+import { CREDENTIALS_CATEGORY_META } from '../types/settings/credentials';
+import { RATE_LIMIT_CATEGORY_META } from '../types/settings/rate-limit';
 
 // Test category metadata
 const TEST_CATEGORY_META: CategoryMeta = {
@@ -307,6 +309,36 @@ describe('SettingsManager', () => {
       expect(afterPatch.values['test.string_setting']).toBe('new_value');
       expect(afterPatch.sources['test.string_setting']).toBe('kv');
     });
+
+    it.each([
+      [CREDENTIALS_CATEGORY_META, 'credentials', 'credentials.email_code_ttl', 120.5, 120],
+      [RATE_LIMIT_CATEGORY_META, 'rate-limit', 'rate_limit.auth_max_failed_attempts', 3.5, 8],
+    ] as const)(
+      'stores only whole numbers for %s settings read as whole numbers',
+      async (meta, category, key, fraction, whole) => {
+        manager.registerCategory(meta);
+        const scope = { type: 'tenant', id: 'tenant_1' } as const;
+        const before = await manager.getAll(category, scope);
+
+        const fractional = await manager.patch(
+          category,
+          scope,
+          { ifMatch: before.version, set: { [key]: fraction } },
+          'test_actor'
+        );
+        expect(fractional.applied).not.toContain(key);
+        expect(fractional.rejected[key]).toBeDefined();
+
+        const current = await manager.getAll(category, scope);
+        const accepted = await manager.patch(
+          category,
+          scope,
+          { ifMatch: current.version, set: { [key]: whole } },
+          'test_actor'
+        );
+        expect(accepted.applied).toContain(key);
+      }
+    );
 
     it('should throw ConflictError on version mismatch', async () => {
       await expect(

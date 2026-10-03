@@ -1135,7 +1135,7 @@ describe('directory password login handler', () => {
       authorization_challenge_id: null,
       created_at: 1000,
       updated_at: 1000,
-      expires_at: Date.now() + 600_000,
+      expires_at: Date.now() + 3_600_000,
       completed_at: null,
       blocked_reason: null,
     });
@@ -1167,6 +1167,70 @@ describe('directory password login handler', () => {
         userId: 'user_generated',
         email: 'alice@example.com',
         ttl: 600,
+        metadata: expect.objectContaining({
+          transaction_id: 'damt_email_1',
+          token_hash: tokenHash,
+          purpose: 'directory_migration_email_fallback',
+        }),
+      })
+    );
+    expect(mocks.emailNotifier.send).toHaveBeenCalledWith(
+      expect.objectContaining({
+        channel: 'email',
+        to: 'alice@example.com',
+        subject: 'Your Authrim migration verification code',
+      })
+    );
+  });
+
+  it('never lets a migration code outlast its transaction', async () => {
+    const tokenHash = await testMigrationTokenHash('tenant-a', 'migration-email-token');
+    mocks.coreAdapter.queryOne.mockResolvedValueOnce({
+      id: 'damt_email_1',
+      tenant_id: 'tenant-a',
+      campaign_id: 'damc_1',
+      user_id: 'user_generated',
+      connector_id: 'wwcon_8K4M2Q9F7D3H6P1X',
+      directory_subject: 'uid=alice,ou=People,dc=example,dc=com',
+      token_hash: tokenHash,
+      scope: 'email_code_fallback',
+      state: 'active',
+      request_id: 'wwreq_1',
+      authorization_challenge_id: null,
+      created_at: 1000,
+      updated_at: 1000,
+      expires_at: Date.now() + 120_000,
+      completed_at: null,
+      blocked_reason: null,
+    });
+
+    const response = await directoryMigrationEmailCodeSendHandler(
+      createContext(
+        { transaction_id: 'damt_email_1', transaction_token: 'migration-email-token' },
+        // The tenant's email code lifetime applies to migration codes too.
+        { 'settings:tenant:tenant-a:credentials': { 'credentials.email_code_ttl': 600 } }
+      ) as never
+    );
+    const body = (await response.json()) as Record<string, unknown>;
+
+    expect(response.status).toBe(200);
+    expect(body).toMatchObject({
+      success: true,
+      challenge_id: expect.any(String),
+      masked_email: 'al***@example.com',
+      expires_in: expect.toSatisfy((value: number) => value > 110 && value <= 120),
+    });
+    expect(mocks.rateLimiter.incrementRpc).toHaveBeenCalledWith('transaction:damt_email_1', {
+      windowSeconds: 15 * 60,
+      maxRequests: 3,
+    });
+    expect(mocks.challengeStore.storeChallengeRpc).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tenantId: 'tenant-a',
+        type: 'directory_migration_email',
+        userId: 'user_generated',
+        email: 'alice@example.com',
+        ttl: expect.toSatisfy((value: number) => value > 110 && value <= 120),
         metadata: expect.objectContaining({
           transaction_id: 'damt_email_1',
           token_hash: tokenHash,

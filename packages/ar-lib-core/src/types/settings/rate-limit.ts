@@ -113,6 +113,7 @@ export const RATE_LIMIT_SETTINGS_META: Record<keyof RateLimitSettings, SettingMe
   },
   'rate_limit.auth_max_failed_attempts': {
     key: 'rate_limit.auth_max_failed_attempts',
+    integer: true,
     type: 'number',
     default: 5,
     envKey: 'AUTH_MAX_FAILED_ATTEMPTS',

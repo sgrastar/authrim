@@ -1121,8 +1121,15 @@ export async function directoryMigrationEmailCodeSendHandler(c: Context<{ Bindin
     }
 
     const code = generateEmailCode();
-    // The tenant's email code lifetime (credentials.email_code_ttl).
-    const emailCodeTtlSeconds = await resolveEmailCodeTtlSeconds(c.env, tenantId);
+    // The tenant's email code lifetime (credentials.email_code_ttl), but never past the
+    // transaction the code completes.
+    const emailCodeTtlSeconds = Math.max(
+      1,
+      Math.min(
+        await resolveEmailCodeTtlSeconds(c.env, tenantId),
+        Math.floor((transaction.expires_at - Date.now()) / 1000)
+      )
+    );
     const challengeId = crypto.randomUUID();
     const issuedAt = Date.now();
     const normalizedEmail = runtimeUser.email.toLowerCase();

@@ -308,7 +308,7 @@ const translation = {
 	register_metaDescription: 'የይለፍ ቁልፍ፣ የኢሜይል ኮድ ወይም ሌላ የሚገኝ ዘዴ በመጠቀም መለያ ይፍጠሩ።',
 	emailCode_title: 'የእርስዎ ኢሜይል ይመልከቱ',
 	emailCode_subtitle: 'አንድ የማረጋገጫ ኮድ ላክንለት',
-	emailCode_instructions: 'ከኢሜይልዎ የ6 አሃዝ ኮድ ያስገቡ። ኮዱ በ 5 ደቂቃዎች ውስጥ ይጠናቀቃል።',
+	emailCode_instructions: 'ከኢሜይልዎ የ6 አሃዝ ኮድ ያስገቡ። ኮዱ የሚቆይበት ጊዜ በኢሜይሉ ውስጥ ተገልጿል።',
 	emailCode_codeLabel: 'የማረጋገጫ ኮድ',
 	emailCode_verifyButton: 'ማረጋገጥ',
 	emailCode_resendButton: 'ኮዱን እንደገና ላክ',

@@ -336,7 +336,8 @@ const vi = createTranslation({
 		'Tạo tài khoản bằng khoá truy cập, mã email hoặc một phương thức khác đang khả dụng.',
 	emailCode_title: 'Kiểm tra email của bạn',
 	emailCode_subtitle: 'Chúng tôi đã gửi mã xác minh đến',
-	emailCode_instructions: 'Nhập mã gồm 6 chữ số trong email. Mã sẽ hết hạn sau 5 phút.',
+	emailCode_instructions:
+		'Nhập mã gồm 6 chữ số trong email. Email cho biết mã có hiệu lực trong bao lâu.',
 	emailCode_codeLabel: 'Mã xác minh',
 	emailCode_verifyButton: 'Xác minh',
 	emailCode_resendButton: 'Gửi lại mã',

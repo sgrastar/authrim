@@ -1256,7 +1256,7 @@ type RootTranslation = {
 	 */
 	emailCode_subtitle: string
 	/**
-	 * E​n​t​e​r​ ​t​h​e​ ​6​-​d​i​g​i​t​ ​c​o​d​e​ ​f​r​o​m​ ​y​o​u​r​ ​e​m​a​i​l​.​ ​T​h​e​ ​c​o​d​e​ ​w​i​l​l​ ​e​x​p​i​r​e​ ​i​n​ ​5​ ​m​i​n​u​t​e​s​.
+	 * E​n​t​e​r​ ​t​h​e​ ​6​-​d​i​g​i​t​ ​c​o​d​e​ ​f​r​o​m​ ​y​o​u​r​ ​e​m​a​i​l​.​ ​T​h​e​ ​e​m​a​i​l​ ​s​a​y​s​ ​h​o​w​ ​l​o​n​g​ ​t​h​e​ ​c​o​d​e​ ​l​a​s​t​s​.
 	 */
 	emailCode_instructions: string
 	/**
@@ -2974,7 +2974,7 @@ export type TranslationFunctions = {
 	 */
 	emailCode_subtitle: () => LocalizedString
 	/**
-	 * Enter the 6-digit code from your email. The code will expire in 5 minutes.
+	 * Enter the 6-digit code from your email. The email says how long the code lasts.
 	 */
 	emailCode_instructions: () => LocalizedString
 	/**

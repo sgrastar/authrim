@@ -334,7 +334,8 @@ const translation = {
 		'Utwórz konto za pomocą klucza dostępu, kodu e-mail lub innej dostępnej metody.',
 	emailCode_title: 'Sprawdź pocztę',
 	emailCode_subtitle: 'Wysłaliśmy kod weryfikacyjny do',
-	emailCode_instructions: 'Wpisz 6-cyfrowy kod z poczty e-mail. Kod wygasa za 5 minut.',
+	emailCode_instructions:
+		'Wpisz 6-cyfrowy kod z poczty e-mail. W wiadomości podano, jak długo kod jest ważny.',
 	emailCode_codeLabel: 'Kod weryfikacyjny',
 	emailCode_verifyButton: 'Sprawdź',
 	emailCode_resendButton: 'Wyślij kod ponownie',

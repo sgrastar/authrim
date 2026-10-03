@@ -93,7 +93,6 @@ import {
   resolveAccountDataContextFromHono,
   type CanonicalOtpLoginUser,
   type DatabaseAdapter,
-  CREDENTIALS_DEFAULTS,
   CREDENTIALS_SETTINGS_META,
   resolveEmailCodeTtlSeconds,
 } from '@authrim/ar-lib-core';
@@ -780,6 +779,34 @@ export async function readAuthorizationChallengeType(
   }
 
   return null;
+}
+
+/**
+ * How long an emailed Direct Auth code lasts: the tenant's email code lifetime, but never past the
+ * authorization challenge it continues (a code outliving it could no longer finish the sign-in).
+ */
+async function directEmailCodeTtlSeconds(
+  env: Env,
+  tenantId: string,
+  authorizationChallengeId: string | undefined
+): Promise<number> {
+  const configured = await resolveEmailCodeTtlSeconds(env, tenantId);
+  if (!authorizationChallengeId) return configured;
+  try {
+    const challengeStore = await getChallengeStoreByChallengeId(
+      env,
+      authorizationChallengeId,
+      tenantId
+    );
+    const challenge = (await challengeStore.getChallengeRpc(authorizationChallengeId)) as {
+      expiresAt?: unknown;
+    } | null;
+    const expiresAt = challenge?.expiresAt;
+    if (typeof expiresAt !== 'number') return configured;
+    return Math.max(1, Math.min(configured, Math.floor((expiresAt - Date.now()) / 1000)));
+  } catch {
+    return configured;
+  }
 }
 
 /** The user a re-authentication challenge was issued for (null for a login challenge or none). */
@@ -2881,6 +2908,12 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
       challengeType === 'reauth'
         ? await readAuthorizationChallengeReauthUser(c.env, tenantId, authorization_challenge_id)
         : null;
+    // Every answer, a code sent or not, states the same lifetime.
+    const emailCodeTtl = await directEmailCodeTtlSeconds(
+      c.env,
+      tenantId,
+      authorization_challenge_id
+    );
     // Answered like any other send, so the address's owner is not revealed; nothing else about the
     // address is looked at (no human verification either, whose requirements depend on it).
     if (challengeType === 'reauth' && (!user || !reauthUserId || user.id !== reauthUserId)) {
@@ -2888,7 +2921,7 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
         action: 'direct_email_code_send_suppressed',
         reason: 'reauth_user_mismatch',
       });
-      return acceptedEmailCodeSendResponse(c, normalizedEmail);
+      return acceptedEmailCodeSendResponse(c, normalizedEmail, emailCodeTtl);
     }
     // A send that left its account being provisioned is sent again once the account exists; it is
     // still the send it was (a sign-up, already through its checks), not a new sign-in.
@@ -2973,7 +3006,7 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
     }
 
     if (suppressEmailCodeSend) {
-      return acceptedEmailCodeSendResponse(c, normalizedEmail);
+      return acceptedEmailCodeSendResponse(c, normalizedEmail, emailCodeTtl);
     }
 
     const canonicalProfileFields = buildCanonicalProfileRuntimeUserFields({
@@ -3101,28 +3134,22 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
       deleteChallengeRpc(id: string): Promise<unknown>;
     };
     let challengeStore: DirectEmailCodeChallengeStore | undefined;
-    let emailCodeTtl = CREDENTIALS_DEFAULTS['credentials.email_code_ttl'];
     try {
       const hmacSecret = c.env.OTP_HMAC_SECRET;
       if (!hmacSecret) {
         throw new Error('otp_hmac_secret_missing');
       }
 
-      const [codeHash, emailHash, resolvedChallengeStore, resolvedEmailCodeTtl] = await Promise.all(
-        [
-          hashEmailCode(code, normalizedEmail, attemptId, issuedAt, hmacSecret),
-          hashEmail(normalizedEmail),
-          getChallengeStoreByChallengeId(
-            c.env,
-            attemptId,
-            getTenantIdFromContext(c)
-          ) as Promise<DirectEmailCodeChallengeStore>,
-          // The tenant's email code lifetime (credentials.email_code_ttl).
-          resolveEmailCodeTtlSeconds(c.env, getTenantIdFromContext(c)),
-        ]
-      );
+      const [codeHash, emailHash, resolvedChallengeStore] = await Promise.all([
+        hashEmailCode(code, normalizedEmail, attemptId, issuedAt, hmacSecret),
+        hashEmail(normalizedEmail),
+        getChallengeStoreByChallengeId(
+          c.env,
+          attemptId,
+          getTenantIdFromContext(c)
+        ) as Promise<DirectEmailCodeChallengeStore>,
+      ]);
       challengeStore = resolvedChallengeStore;
-      emailCodeTtl = resolvedEmailCodeTtl;
 
       failureStage = 'challenge_store';
       await challengeStore.storeChallengeRpc({
@@ -3190,7 +3217,7 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
         failureStage,
         errorType: error instanceof Error ? error.name : 'Unknown',
       });
-      return acceptedEmailCodeSendResponse(c, normalizedEmail);
+      return acceptedEmailCodeSendResponse(c, normalizedEmail, emailCodeTtl);
     }
 
     return c.json({
@@ -3223,13 +3250,14 @@ function maskEmail(email: string): string {
 }
 
 /** Answers a send that sent nothing exactly as one that did, its lifetime included. */
-async function acceptedEmailCodeSendResponse(
+function acceptedEmailCodeSendResponse(
   c: Context<{ Bindings: Env }>,
-  normalizedEmail: string
+  normalizedEmail: string,
+  emailCodeTtl: number
 ) {
   return c.json({
     attempt_id: crypto.randomUUID(),
-    expires_in: await resolveEmailCodeTtlSeconds(c.env, getTenantIdFromContext(c)),
+    expires_in: emailCodeTtl,
     masked_email: maskEmail(normalizedEmail),
   });
 }

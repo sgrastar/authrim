@@ -56,12 +56,13 @@ export const CREDENTIALS_SETTINGS_META: Record<keyof CredentialsSettings, Settin
   },
   'credentials.email_code_ttl': {
     key: 'credentials.email_code_ttl',
+    integer: true,
     type: 'duration',
     default: 300,
     envKey: 'EMAIL_CODE_TTL',
     label: 'Email Code TTL',
     description:
-      'Lifetime in seconds of emailed sign-in, sign-up and re-authentication codes (the email states it, rounded up to minutes)',
+      'Lifetime in seconds of emailed sign-in, sign-up (guest registration included) and re-authentication codes, never past the sign-in they continue (the email states it, rounded up to minutes)',
     min: 60,
     max: 900,
     unit: 'seconds',

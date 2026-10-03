@@ -334,7 +334,7 @@ const translation = {
 	emailCode_title: 'E-postanızı kontrol edin',
 	emailCode_subtitle: 'Şu adrese doğrulama kodu gönderdik:',
 	emailCode_instructions:
-		'E-posta adresinden 6 rakamlı kodu girin. Kod 5 dakika sonra sona erecek.',
+		'E-posta adresinden 6 rakamlı kodu girin. Kodun ne kadar geçerli olduğu e-postada yazıyor.',
 	emailCode_codeLabel: 'Doğrulama kodu',
 	emailCode_verifyButton: 'Doğrula',
 	emailCode_resendButton: 'Kodu yeniden gönder',

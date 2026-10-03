@@ -337,7 +337,8 @@ const translation = {
 		'পাসকি, ইমেইল কোড বা অন্য কোনো উপলভ্য পদ্ধতি দিয়ে অ্যাকাউন্ট তৈরি করুন।',
 	emailCode_title: 'আপনার ইমেইল চেক করুন',
 	emailCode_subtitle: 'আমরা একটি যাচাইকরণ কোড পাঠিয়েছি',
-	emailCode_instructions: 'আপনার ই-মেইলের ৬ অঙ্কের কোড লিখুন। কোড ৫ মিনিটের মধ্যে শেষ হয়ে যাবে।',
+	emailCode_instructions:
+		'আপনার ই-মেইলের ৬ অঙ্কের কোড লিখুন। কোডের মেয়াদ কতক্ষণ, তা ই-মেইলে লেখা আছে।',
 	emailCode_codeLabel: 'যাচাইকরণ কোড',
 	emailCode_verifyButton: 'যাচাই করুন',
 	emailCode_resendButton: 'কোড আবার পাঠান',
