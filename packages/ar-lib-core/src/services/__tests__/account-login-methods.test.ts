@@ -36,6 +36,7 @@ vi.mock('../../utils/challenge-sharding', () => ({
 import {
   hasRemainingLoginMethod,
   isAuthenticationMethodUsageAvailable,
+  isLoginMethodRemovalSafe,
   LoginMethodRemovalInProgressError,
   withLoginMethodRemovalLock,
   type LoginMethodRemoval,
@@ -52,6 +53,8 @@ interface Fixture {
   routes?: Record<string, string>;
 }
 
+let safeCheck: (removing: LoginMethodRemoval) => Promise<boolean>;
+
 function setup(fixture: Fixture) {
   const env = {
     SETTINGS: {
@@ -63,22 +66,27 @@ function setup(fixture: Fixture) {
     },
   } as unknown as Env;
   const coreAdapter = {
-    queryOne: vi.fn(async (sql: string, params: unknown[]) => {
-      const skip = params[2];
+    query: vi.fn(async (sql: string) => {
       if (sql.includes('FROM passkeys')) {
-        return { count: (fixture.passkeys ?? []).filter((id) => id !== skip).length };
+        return (fixture.passkeys ?? []).map((id) => ({
+          id,
+          rp_id: 'login.example.com',
+          credential_id: `cred-${id}`,
+        }));
       }
       if (sql.includes('FROM totp_credentials')) {
-        return { count: (fixture.totp ?? []).filter((id) => id !== skip).length };
+        return (fixture.totp ?? []).map((id) => ({ id }));
       }
       throw new Error(`unexpected core query: ${sql}`);
     }),
   } as unknown as DatabaseAdapter;
   const piiAdapter = {
-    query: vi.fn(async (_sql: string, params: unknown[]) =>
-      (fixture.linked ?? [])
-        .filter((row) => row.id !== params[2])
-        .map((row) => ({ provider_id: row.provider_id, provider_user_id: `sub-${row.id}` }))
+    query: vi.fn(async () =>
+      (fixture.linked ?? []).map((row) => ({
+        id: row.id,
+        provider_id: row.provider_id,
+        provider_user_id: `sub-${row.id}`,
+      }))
     ),
   } as unknown as DatabaseAdapter;
   mockFindById.mockResolvedValue(fixture.email ?? null);
@@ -90,6 +98,7 @@ function setup(fixture: Fixture) {
   );
   const routes = fixture.routes ?? {
     ...Object.fromEntries((fixture.linked ?? []).map((row) => [`sub-${row.id}`, 'u1'])),
+    ...Object.fromEntries((fixture.passkeys ?? []).map((id) => [`cred-${id}`, 'u1'])),
     ...(fixture.email?.email ? { [fixture.email.email]: 'u1' } : {}),
   };
   mockResolveRoute.mockImplementation(
@@ -101,6 +110,14 @@ function setup(fixture: Fixture) {
       return { legacyUserId: owner };
     }
   );
+  const input = (removing: LoginMethodRemoval) => ({
+    tenantId: 't1',
+    userId: 'u1',
+    coreAdapter,
+    piiAdapter,
+    removing,
+  });
+  safeCheck = (removing: LoginMethodRemoval) => isLoginMethodRemovalSafe(env, input(removing));
   return (removing: LoginMethodRemoval) =>
     hasRemainingLoginMethod(env, {
       tenantId: 't1',
@@ -232,6 +249,42 @@ describe('hasRemainingLoginMethod', () => {
   });
 });
 
+describe('passkey routes and removal safety', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('does not count a passkey whose credential route is not published', async () => {
+    const check = setup({
+      passkeys: ['pk1', 'pk2'],
+      routes: { 'cred-pk1': 'u1' },
+      linked: [{ id: 'li1', provider_id: 'google' }],
+      enabledProviders: ['google'],
+    });
+    await expect(check({ kind: 'passkey', id: 'pk1' })).resolves.toBe(false);
+  });
+
+  it('lets a method go that could not sign in anyway', async () => {
+    // The only TOTP authenticator, but TOTP login is off: removing it changes nothing.
+    setup({ totp: ['t1'], email: { email: 'a@example.com', email_verified: 0 } });
+    await expect(safeCheck({ kind: 'totp', id: 't1' })).resolves.toBe(true);
+    // The only linked account, but its provider is disabled.
+    setup({ linked: [{ id: 'li1', provider_id: 'google' }], enabledProviders: [] });
+    await expect(safeCheck({ kind: 'linked_identity', id: 'li1' })).resolves.toBe(true);
+  });
+
+  it('keeps the last usable method', async () => {
+    setup({ passkeys: ['pk1'] });
+    await expect(safeCheck({ kind: 'passkey', id: 'pk1' })).resolves.toBe(false);
+    setup({
+      passkeys: ['pk1'],
+      linked: [{ id: 'li1', provider_id: 'google' }],
+      enabledProviders: ['google'],
+    });
+    await expect(safeCheck({ kind: 'passkey', id: 'pk1' })).resolves.toBe(true);
+  });
+});
+
 describe('linked accounts and their directory routes', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -307,7 +360,7 @@ describe('withLoginMethodRemovalLock', () => {
       id: 'login-method-removal:u1',
       tenantId: 't1',
       challenge: claim.challenge,
-      minRemainingMs: 10_000,
+      minRemainingMs: 60_000,
     });
     expect(mockChallengeStore.consumeChallengeRpc).toHaveBeenCalledTimes(1);
   });

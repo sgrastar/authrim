@@ -18,7 +18,7 @@ import {
   getSessionStoreBySessionId,
   getTenantIdFromContext,
   hashTotpBackupCode,
-  hasRemainingLoginMethod,
+  isLoginMethodRemovalSafe,
   isAccountAuthenticationDeniedError,
   isAccountReauthFresh,
   isAuthenticationMethodUsageAvailable,
@@ -290,20 +290,14 @@ async function consumeBackupCode(
   return (await authCtx.repositories.totp.consumeBackupCode(userId, codeHash)) !== null;
 }
 
-async function hasOtherLoginMethodAfterTotpDelete(
+async function isTotpRemovalSafe(
   c: Context<{ Bindings: Env }>,
   accountSession: AccountSession,
   deletingCredentialId: string
 ): Promise<boolean> {
   const tenantId = getTenantIdFromContext(c);
   const authCtx = createAuthContextFromHono(c, tenantId);
-  const activeTotpCredentials = await authCtx.repositories.totp.findActiveByUserId(
-    accountSession.userId
-  );
-  if (activeTotpCredentials.some((credential) => credential.id !== deletingCredentialId)) {
-    return true;
-  }
-  return hasRemainingLoginMethod(c.env, {
+  return isLoginMethodRemovalSafe(c.env, {
     tenantId,
     userId: accountSession.userId,
     coreAdapter: authCtx.coreAdapter,
@@ -672,9 +666,18 @@ export async function deleteAccountTotpCredentialHandler(
       tenantId,
       accountSession.userId,
       async (lease) => {
+        // Decide on the credential as it is now: it may have been activated while the request
+        // was read.
+        const current = await authCtx.repositories.totp.findById(credential.id);
+        if (!current || current.user_id !== accountSession.userId) {
+          return c.json(
+            { error: 'not_found', error_description: 'TOTP credential was not found' },
+            404
+          );
+        }
         if (
-          credential.status === 'active' &&
-          !(await hasOtherLoginMethodAfterTotpDelete(c, accountSession, credential.id))
+          current.status === 'active' &&
+          !(await isTotpRemovalSafe(c, accountSession, current.id))
         ) {
           return c.json(
             {
@@ -686,13 +689,13 @@ export async function deleteAccountTotpCredentialHandler(
         }
 
         const hasTotpReauth = accountSession.amr?.includes('totp') === true;
-        let proofOk = credential.status !== 'active' || hasTotpReauth;
+        let proofOk = current.status !== 'active' || hasTotpReauth;
         if (!proofOk) {
           const rateLimited = await rateLimitAccountTotpVerification(
             c,
             accountSession,
             'delete',
-            credential.id
+            current.id
           );
           if (rateLimited) {
             return rateLimited;
@@ -700,7 +703,7 @@ export async function deleteAccountTotpCredentialHandler(
           try {
             proofOk =
               (typeof body.code === 'string' &&
-                (await verifyTotpCredentialCode(c, credential, body.code)) !== null) ||
+                (await verifyTotpCredentialCode(c, current, body.code)) !== null) ||
               (typeof body.backup_code === 'string' &&
                 (await consumeBackupCode(c, accountSession.userId, body.backup_code)));
           } catch {
@@ -725,15 +728,26 @@ export async function deleteAccountTotpCredentialHandler(
         }
 
         await lease.assertHeld();
+        // Only while it is still as checked (an activation in between keeps it).
         const deleted = await authCtx.repositories.totp.delete(
-          credential.id,
-          accountSession.userId
+          current.id,
+          accountSession.userId,
+          current.status
         );
         if (!deleted) {
-          return c.json(
-            { error: 'not_found', error_description: 'TOTP credential was not found' },
-            404
-          );
+          // Gone (deleted meanwhile), or changed (activated meanwhile): say which.
+          return (await authCtx.repositories.totp.findById(current.id))
+            ? c.json(
+                {
+                  error: 'operation_in_progress',
+                  error_description: 'The TOTP credential changed; reload and try again.',
+                },
+                409
+              )
+            : c.json(
+                { error: 'not_found', error_description: 'TOTP credential was not found' },
+                404
+              );
         }
         c.executionCtx.waitUntil(
           runTenantBackupCoveredEffect(c.env, { tenantId }, () =>
@@ -743,7 +757,7 @@ export async function deleteAccountTotpCredentialHandler(
                 accountSession.userId,
                 `account:${accountSession.userId}`,
                 'totp',
-                credential.id
+                current.id
               )
               .catch((error: unknown) => {
                 getLogger(c)
@@ -760,13 +774,13 @@ export async function deleteAccountTotpCredentialHandler(
           userId: accountSession.userId,
           action: 'account.totp.removed',
           resourceType: 'totp_credential',
-          resourceId: credential.id,
+          resourceId: current.id,
         });
 
         return c.json({
           ok: true,
           credential: {
-            id: credential.id,
+            id: current.id,
             deleted: true,
           },
         });

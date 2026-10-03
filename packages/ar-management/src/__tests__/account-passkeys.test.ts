@@ -121,7 +121,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     createAccountAuthContextFromHono: mockCreateAuthContextFromHono,
     createAuthContextFromHono: mockCreateAuthContextFromHono,
     createAuditLog: mockCreateAuditLog,
-    hasRemainingLoginMethod: mockHasRemainingLoginMethod,
+    isLoginMethodRemovalSafe: mockHasRemainingLoginMethod,
     withLoginMethodRemovalLock: mockWithLoginMethodRemovalLock,
     createPIIContextFromHono: mockCreatePIIContextFromHono,
     ensureAccountAuthenticationState: vi.fn(async () => ({ lifecycle: 'active' })),
@@ -1167,6 +1167,7 @@ describe('Account Page passkey management API', () => {
   });
 
   it('deletes an owned passkey only when another passkey remains', async () => {
+    mockHasRemainingLoginMethod.mockResolvedValueOnce(true);
     mockPasskeyRepo.findByUserId.mockResolvedValueOnce([
       basePasskey,
       { ...basePasskey, id: 'pk_002', credential_id: 'credential-secret-2' },

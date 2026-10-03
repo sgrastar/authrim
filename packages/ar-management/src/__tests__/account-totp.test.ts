@@ -88,7 +88,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
       deleteCredentialStateRpc: vi.fn().mockResolvedValue(true),
     })),
     createAuditLog: vi.fn().mockResolvedValue(undefined),
-    hasRemainingLoginMethod: mockHasRemainingLoginMethod,
+    isLoginMethodRemovalSafe: mockHasRemainingLoginMethod,
     withLoginMethodRemovalLock: mockWithLoginMethodRemovalLock,
     CanonicalRuntimeUserStore: vi.fn(function CanonicalRuntimeUserStoreMock() {
       return mockRuntimeUserStore;
@@ -478,6 +478,7 @@ describe('Account Page TOTP API', () => {
   });
 
   it('rate limits active credential deletion before consuming a backup code', async () => {
+    mockHasRemainingLoginMethod.mockResolvedValueOnce(true);
     mockSessionStore.getSessionRpc.mockResolvedValue({
       ...baseSession,
       expiresAt: Date.now() + 60_000,
@@ -764,7 +765,7 @@ describe('Account Page TOTP API', () => {
     const response = await deleteAccountTotpCredentialHandler(context);
 
     expect(response.status).toBe(200);
-    expect(mockTotpRepo.delete).toHaveBeenCalledWith('totp-pending', 'user-001');
+    expect(mockTotpRepo.delete).toHaveBeenCalledWith('totp-pending', 'user-001', 'pending');
     expect(mockTotpRepo.consumeBackupCode).not.toHaveBeenCalled();
   });
 
@@ -928,11 +929,11 @@ describe('Account Page TOTP API', () => {
   });
 
   it('reports a concurrent pending-credential deletion as not found', async () => {
-    mockTotpRepo.findById.mockResolvedValue({
-      id: 'totp-pending',
-      user_id: 'user-001',
-      status: 'pending',
-    });
+    const pending = { id: 'totp-pending', user_id: 'user-001', status: 'pending' };
+    mockTotpRepo.findById
+      .mockResolvedValueOnce(pending)
+      .mockResolvedValueOnce(pending)
+      .mockResolvedValueOnce(null);
     mockTotpRepo.delete.mockResolvedValue(false);
     const context = createMockContext();
     context.req.param = vi.fn(() => 'totp-pending');
@@ -940,6 +941,40 @@ describe('Account Page TOTP API', () => {
     const response = await deleteAccountTotpCredentialHandler(context);
 
     expect(response.status).toBe(404);
+  });
+
+  it('keeps a pending credential activated while its deletion was in flight', async () => {
+    const pending = { id: 'totp-pending', user_id: 'user-001', status: 'pending' };
+    mockTotpRepo.findById
+      .mockResolvedValueOnce(pending)
+      .mockResolvedValueOnce(pending)
+      .mockResolvedValueOnce({ ...pending, status: 'active' });
+    mockTotpRepo.delete.mockResolvedValue(false);
+    const context = createMockContext();
+    context.req.param = vi.fn(() => 'totp-pending');
+
+    const response = await deleteAccountTotpCredentialHandler(context);
+
+    expect(response.status).toBe(409);
+    expect(mockTotpRepo.delete).toHaveBeenCalledWith('totp-pending', 'user-001', 'pending');
+  });
+
+  it('decides on the credential as it is once the lease is held', async () => {
+    mockTotpRepo.findById
+      .mockResolvedValueOnce({ id: 'totp-1', user_id: 'user-001', status: 'pending' })
+      .mockResolvedValueOnce({ id: 'totp-1', user_id: 'user-001', status: 'active' });
+    const context = createMockContext();
+    context.req.param = vi.fn(() => 'totp-1');
+
+    const response = await deleteAccountTotpCredentialHandler(context);
+
+    // Activated meanwhile and the last usable method: the guard applies, nothing is deleted.
+    expect(response.status).toBe(400);
+    expect(mockHasRemainingLoginMethod).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ removing: { kind: 'totp', id: 'totp-1' } })
+    );
+    expect(mockTotpRepo.delete).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -986,6 +1021,7 @@ describe('Account Page TOTP API', () => {
   });
 
   it('allows deleting one of multiple active TOTP credentials after recent TOTP auth', async () => {
+    mockHasRemainingLoginMethod.mockResolvedValueOnce(true);
     mockSessionStore.getSessionRpc.mockResolvedValue({
       ...baseSession,
       expiresAt: Date.now() + 60_000,
@@ -1095,6 +1131,7 @@ describe('Account Page TOTP API', () => {
   });
 
   it('consumes a valid backup code once as deletion proof', async () => {
+    mockHasRemainingLoginMethod.mockResolvedValueOnce(true);
     mockSessionStore.getSessionRpc.mockResolvedValue({
       ...baseSession,
       expiresAt: Date.now() + 60_000,

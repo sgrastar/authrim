@@ -18,7 +18,7 @@ import {
   ensureDatabaseAdapter,
   getTenantIdFromContext,
   getLogger,
-  hasRemainingLoginMethod,
+  isLoginMethodRemovalSafe,
   isAccountReauthFresh,
   LoginMethodRemovalInProgressError,
   readAccountSession,
@@ -235,14 +235,26 @@ export async function handleUnlinkIdentity(c: Context<{ Bindings: Env }>): Promi
     }
 
     // Only the check and the removal run under the account's removal lease; the provider's token
-    // revocation (a call to another service) waits until after.
-    const removal = await withLoginMethodRemovalLock(
-      c.env,
-      tenantId,
-      session.userId,
-      async (lease) => {
+    // revocation (a call to another service) waits until after. Once the removal was asked for,
+    // the tokens are revoked whatever its answer: it may have removed the link and then failed.
+    let removalAttempted = false;
+    const revokeTokens = async () => {
+      const result = await revokeLinkedIdentityTokens(c.env, identity).catch((error: unknown) => ({
+        success: false,
+        accessTokenRevoked: false,
+        refreshTokenRevoked: false,
+        errors: [error instanceof Error ? error.message : 'revocation_failed'],
+      }));
+      if (!result.success && result.errors.length > 0) {
+        log.warn('Token revocation failed for identity', { errorCount: result.errors.length });
+      }
+      return result;
+    };
+    let removal: Awaited<ReturnType<typeof provisioner.removeExternalIdpRoute>> | null;
+    try {
+      removal = await withLoginMethodRemovalLock(c.env, tenantId, session.userId, async (lease) => {
         // Never remove the last way the account signs in.
-        const remains = await hasRemainingLoginMethod(c.env, {
+        const remains = await isLoginMethodRemovalSafe(c.env, {
           tenantId,
           userId: session.userId,
           coreAdapter: ensureDatabaseAdapter(account.coreDb, 'external-idp-unlink-core'),
@@ -252,6 +264,7 @@ export async function handleUnlinkIdentity(c: Context<{ Bindings: Env }>): Promi
         if (!remains) return null;
 
         await lease.assertHeld();
+        removalAttempted = true;
         return provisioner.removeExternalIdpRoute({
           schemaVersion: 1,
           operationId: removalOperationId,
@@ -263,8 +276,11 @@ export async function handleUnlinkIdentity(c: Context<{ Bindings: Env }>): Promi
           providerId: identity.providerId,
           providerUserId: identity.providerUserId,
         });
-      }
-    );
+      });
+    } catch (error) {
+      if (removalAttempted) await revokeTokens();
+      throw error;
+    }
     if (!removal) {
       return c.json(
         {
@@ -288,12 +304,7 @@ export async function handleUnlinkIdentity(c: Context<{ Bindings: Env }>): Promi
     });
 
     // Revoke the provider's tokens (best-effort, RFC 7009) with the identity read before removal.
-    const revocationResult = await revokeLinkedIdentityTokens(c.env, identity);
-    if (!revocationResult.success && revocationResult.errors.length > 0) {
-      log.warn('Token revocation failed for identity', {
-        errorCount: revocationResult.errors.length,
-      });
-    }
+    const revocationResult = await revokeTokens();
 
     // Include revocation status in response for transparency
     return c.json({

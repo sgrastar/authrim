@@ -22,7 +22,7 @@ vi.mock('@authrim/ar-lib-core', () => ({
   },
   isAccountReauthFresh: (authTime: number) => Math.floor(Date.now() / 1000) < authTime + 300,
   readAccountSession: mocks.readSession,
-  hasRemainingLoginMethod: mocks.hasRemaining,
+  isLoginMethodRemovalSafe: mocks.hasRemaining,
   withLoginMethodRemovalLock: mocks.withLock,
   LoginMethodRemovalInProgressError: class LoginMethodRemovalInProgressError extends Error {},
   ensureDatabaseAdapter: vi.fn((source: unknown) => ({ source })),
@@ -249,6 +249,17 @@ describe('routed-account external identity unlink', () => {
 
     expect(response.status).toBe(200);
     expect(order).toEqual(['assertHeld', 'remove', 'revoke']);
+  });
+
+  it('still revokes the provider tokens when the removal fails after it was asked for', async () => {
+    const removeExternalIdpRoute = vi.fn().mockRejectedValue(new Error('control plane down'));
+
+    const response = await handleUnlinkIdentity(
+      context({ provisioner: { removeExternalIdpRoute } }) as never
+    );
+
+    expect(response.status).toBe(500);
+    expect(mocks.revokeTokens).toHaveBeenCalledTimes(1);
   });
 
   it('removes nothing once the lease is no longer its own', async () => {

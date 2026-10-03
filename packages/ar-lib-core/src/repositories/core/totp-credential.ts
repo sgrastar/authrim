@@ -183,16 +183,30 @@ export class TotpCredentialRepository {
     return this.findById(id);
   }
 
-  async delete(id: string, userId: string): Promise<boolean> {
+  /**
+   * Deletes the credential and its backup codes. With `expectedStatus`, only while the credential
+   * still has that status (a check made before, e.g. that it was only pending, still holds).
+   */
+  async delete(
+    id: string,
+    userId: string,
+    expectedStatus?: TotpCredential['status']
+  ): Promise<boolean> {
+    const result = expectedStatus
+      ? await this.adapter.execute(
+          'DELETE FROM totp_credentials WHERE tenant_id = ? AND id = ? AND user_id = ? AND status = ?',
+          [this.tenantId, id, userId, expectedStatus]
+        )
+      : await this.adapter.execute(
+          'DELETE FROM totp_credentials WHERE tenant_id = ? AND id = ? AND user_id = ?',
+          [this.tenantId, id, userId]
+        );
+    if (result.rowsAffected === 0) return false;
     await this.adapter.execute(
       'DELETE FROM totp_backup_codes WHERE tenant_id = ? AND credential_id = ? AND user_id = ?',
       [this.tenantId, id, userId]
     );
-    const result = await this.adapter.execute(
-      'DELETE FROM totp_credentials WHERE tenant_id = ? AND id = ? AND user_id = ?',
-      [this.tenantId, id, userId]
-    );
-    return result.rowsAffected > 0;
+    return true;
   }
 
   async deleteByUserId(userId: string): Promise<number> {

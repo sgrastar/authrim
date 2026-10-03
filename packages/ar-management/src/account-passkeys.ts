@@ -17,7 +17,7 @@ import {
   getSessionRevocationStore,
   getSessionStoreBySessionId,
   getTenantIdFromContext,
-  hasRemainingLoginMethod,
+  isLoginMethodRemovalSafe,
   isAccountAuthenticationDeniedError,
   isAccountReauthFresh,
   isAuthenticationMethodUsageAvailable,
@@ -1351,15 +1351,13 @@ export async function deleteAccountPasskeyHandler(
       async (lease) => {
         const registeredPasskeys = await passkeyRepo.findByUserId(accountSession.userId);
         const hasAnotherPasskey = registeredPasskeys.some((passkey) => passkey.id !== existing.id);
-        const hasOtherLoginMethod =
-          hasAnotherPasskey ||
-          (await hasRemainingLoginMethod(c.env, {
-            tenantId,
-            userId: accountSession.userId,
-            coreAdapter: authCtx.coreAdapter,
-            piiAdapter: createPIIContextFromHono(c, tenantId).defaultPiiAdapter,
-            removing: { kind: 'passkey', id: existing.id },
-          }));
+        const hasOtherLoginMethod = await isLoginMethodRemovalSafe(c.env, {
+          tenantId,
+          userId: accountSession.userId,
+          coreAdapter: authCtx.coreAdapter,
+          piiAdapter: createPIIContextFromHono(c, tenantId).defaultPiiAdapter,
+          removing: { kind: 'passkey', id: existing.id },
+        });
 
         if (!hasOtherLoginMethod) {
           return c.json(
