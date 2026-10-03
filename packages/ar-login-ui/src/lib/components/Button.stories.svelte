@@ -75,14 +75,12 @@
 	{#snippet template()}
 		<LoginUIFrame>
 			<div style="display:flex;flex-direction:column;gap:12px;max-width:360px">
-				<Button class="w-full"
-					><i class="i-heroicons-key"></i>{$LL.login_signInWithPasskey()}</Button
-				>
+				<Button class="w-full"><i class="i-ph-key"></i>{$LL.login_signInWithPasskey()}</Button>
 				<Button variant="secondary" class="w-full">
-					<i class="i-heroicons-envelope"></i>{$LL.login_sendCode()}
+					<i class="i-ph-envelope-simple"></i>{$LL.login_sendCode()}
 				</Button>
 				<Button variant="ghost" size="sm"
-					><i class="i-heroicons-arrow-left"></i>{$LL.common_backToLogin()}</Button
+					><i class="i-ph-arrow-left"></i>{$LL.common_backToLogin()}</Button
 				>
 			</div>
 		</LoginUIFrame>

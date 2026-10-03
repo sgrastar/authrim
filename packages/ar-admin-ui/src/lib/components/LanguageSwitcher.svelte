@@ -42,7 +42,7 @@
 </script>
 
 <div class="language-switcher">
-	<div class="i-heroicons-globe-alt language-icon"></div>
+	<div class="i-ph-globe language-icon"></div>
 	<select
 		value={currentLang}
 		onchange={(e) => switchLanguage(e.currentTarget.value as Locales)}

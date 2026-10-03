@@ -100,7 +100,7 @@
 		<!-- Icon -->
 		<div class="auth-icon-badge">
 			<div class="auth-icon-badge__circle auth-icon-badge__circle--warning">
-				<div class="i-heroicons-shield-exclamation h-9 w-9 auth-icon-badge__icon"></div>
+				<div class="i-ph-shield-warning h-9 w-9 auth-icon-badge__icon"></div>
 			</div>
 		</div>
 
@@ -151,7 +151,7 @@
 				disabled={emailCodeLoading}
 				onclick={onPasskey}
 			>
-				<div class="i-heroicons-key h-5 w-5"></div>
+				<div class="i-ph-key h-5 w-5"></div>
 				{$LL.reauth_verifyWithPasskey()}
 			</Button>
 			{#if showTurnstileFor('passkey') && turnstileSiteKey}
@@ -187,7 +187,7 @@
 				disabled={passkeyLoading}
 				onclick={onEmailCode}
 			>
-				<div class="i-heroicons-envelope h-5 w-5"></div>
+				<div class="i-ph-envelope-simple h-5 w-5"></div>
 				{$LL.reauth_verifyWithEmailCode()}
 			</Button>
 			{#if showTurnstileFor('email-code') && turnstileSiteKey}
@@ -238,7 +238,7 @@
 				disabled={passkeyLoading || emailCodeLoading}
 				onclick={totpCodeRequested ? onTotpVerify : onTotpStart}
 			>
-				<div class="i-heroicons-device-phone-mobile h-5 w-5"></div>
+				<div class="i-ph-device-mobile h-5 w-5"></div>
 				{totpCodeRequested ? $LL.login_totpVerify() : $LL.reauth_verifyWithTotp()}
 			</Button>
 		{/if}

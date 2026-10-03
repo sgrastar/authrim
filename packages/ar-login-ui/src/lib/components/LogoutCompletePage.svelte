@@ -20,7 +20,7 @@
 	<Card class="text-center">
 		<div class="auth-icon-badge">
 			<div class="auth-icon-badge__circle">
-				<div class="i-heroicons-check h-9 w-9 auth-icon-badge__icon"></div>
+				<div class="i-ph-check h-9 w-9 auth-icon-badge__icon"></div>
 			</div>
 		</div>
 
@@ -32,7 +32,7 @@
 		</p>
 
 		<Button variant="primary" class="w-full" onclick={handleBackToLogin}>
-			<div class="i-heroicons-arrow-left h-5 w-5"></div>
+			<div class="i-ph-arrow-left h-5 w-5"></div>
 			{$LL.common_backToLogin()}
 		</Button>
 	</Card>

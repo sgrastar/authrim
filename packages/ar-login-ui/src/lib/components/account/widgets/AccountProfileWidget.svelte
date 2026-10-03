@@ -96,7 +96,7 @@
 							disabled={!profile}
 							onclick={beginEmailEdit}
 						>
-							<i class="i-heroicons-pencil-square" aria-hidden="true"></i>
+							<i class="i-ph-note-pencil" aria-hidden="true"></i>
 						</Button>
 					{/if}
 				</dd>
