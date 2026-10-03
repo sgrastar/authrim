@@ -2422,7 +2422,7 @@
 														</select>
 													</label>
 												{/if}
-												{#each [{ label: 'Background', key: 'login-ui.background_color', fallback: previewColorMode === 'dark' ? '#0b0e16' : '#eef1f6' }, { label: 'Accent', key: 'login-ui.accent_color', fallback: previewTemplate.id === 'fullbleed-glass' ? (previewColorMode === 'dark' ? '#e8623f' : '#c93a22') : previewColorMode === 'dark' ? '#93aef2' : '#2f52c4' }, { label: 'Title', key: 'login-ui.title_color', fallback: previewColorMode === 'dark' ? '#eef2fa' : '#182238' }, { label: 'Text', key: 'login-ui.text_color', fallback: previewColorMode === 'dark' ? '#eef2fa' : '#182238' }, { label: 'Copy', key: 'login-ui.copy_color', fallback: previewColorMode === 'dark' ? '#aeb9d0' : '#55617c' }] as field (field.key)}
+												{#each [{ label: 'Background', key: 'login-ui.background_color', fallback: previewColorMode === 'dark' ? '#0b0e16' : '#eef1f6' }, { label: 'Accent', key: 'login-ui.accent_color', fallback: previewTemplate.id === 'fullbleed-glass' ? (previewColorMode === 'dark' ? '#e8623f' : '#b0301b') : previewColorMode === 'dark' ? '#93aef2' : '#2f52c4' }, { label: 'Title', key: 'login-ui.title_color', fallback: previewColorMode === 'dark' ? '#eef2fa' : '#182238' }, { label: 'Text', key: 'login-ui.text_color', fallback: previewColorMode === 'dark' ? '#eef2fa' : '#182238' }, { label: 'Copy', key: 'login-ui.copy_color', fallback: previewColorMode === 'dark' ? '#aeb9d0' : '#55617c' }] as field (field.key)}
 													<div class="inspector-color-row">
 														<span class="inspector-field-label">{field.label}</span>
 														<input

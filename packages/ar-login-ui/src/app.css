@@ -6395,8 +6395,9 @@ tr.expired {
 }
 
 :is(:root, .login-ui-theme-boundary)[data-theme='light'][data-login-theme='fullbleed-glass'] {
-	--login-page-background-color: #17110d;
-	--primary: var(--login-accent-color, #c93a22);
+	--login-page-background-color: #ecdfd3;
+	/* Darkened from #c93a22 so links meet 4.5:1 on the translucent card. */
+	--primary: var(--login-accent-color, #b0301b);
 	--primary-hover: color-mix(in srgb, var(--primary) 82%, black);
 	--primary-light: color-mix(in srgb, var(--primary) 12%, transparent);
 	--gradient-primary: linear-gradient(
@@ -6404,7 +6405,7 @@ tr.expired {
 		var(--primary) 0%,
 		color-mix(in srgb, var(--primary) 82%, black) 100%
 	);
-	--bg-page: #17110d;
+	--bg-page: #ecdfd3;
 	--bg-card: rgba(255, 253, 250, 0.5);
 	--bg-glass: rgba(255, 253, 250, 0.5);
 	--bg-input: rgba(255, 255, 255, 0.65);
@@ -6414,7 +6415,7 @@ tr.expired {
 	--border-glass: rgba(255, 255, 255, 0.45);
 	--text-primary: #221b17;
 	--text-secondary: #5c524c;
-	--text-muted: #8c817a;
+	--text-muted: #655a54;
 	--input-border: rgba(34, 27, 23, 0.28);
 	--button-primary-bg: var(--primary);
 	--button-primary-text: #ffffff;
@@ -6868,7 +6869,14 @@ tr.expired {
 	);
 }
 
+/* Light mode keeps the card translucent, so what shows through it must be light: the default
+   imagery is a light gradient (a tenant's own image should be light too). The top and bottom scrims
+   stay dark so the white header and footer text keep reading over it. */
 [data-theme='light'][data-login-theme='fullbleed-glass'] .auth-page {
+	background-image: var(
+		--login-page-background-layer,
+		linear-gradient(160deg, #f6ede5 0%, #ecdfd3 60%, #e0cdbd 100%)
+	);
 	--login-page-overlay:
 		linear-gradient(to top, rgba(10, 7, 6, 0.55), rgba(10, 7, 6, 0.1) 26%, transparent 45%),
 		linear-gradient(to bottom, rgba(10, 7, 6, 0.58), rgba(10, 7, 6, 0.32) 18%, transparent 38%),

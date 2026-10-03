@@ -201,7 +201,7 @@ describe('split page shell', () => {
 		expect(css).toContain('--bg-card: rgba(14, 10, 9, 0.45);');
 		expect(css).toContain('--bg-card: rgba(255, 253, 250, 0.5);');
 		expect(css).toContain('--primary: var(--login-accent-color, #e8623f);');
-		expect(css).toContain('--primary: var(--login-accent-color, #c93a22);');
+		expect(css).toContain('--primary: var(--login-accent-color, #b0301b);');
 		expect(css).toContain('--button-primary-bg: var(--primary);');
 		expect(css).toContain("[data-login-theme='fullbleed-glass'] .auth-page .auth-header__title");
 		expect(css).toMatch(
