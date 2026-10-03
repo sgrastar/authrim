@@ -1067,6 +1067,8 @@ export async function directPasskeyLoginStartHandler(c: Context<{ Bindings: Env 
         origin: webAuthnOrigin,
         rpID,
         authorization_challenge_id,
+        // The switch checked here is checked again before the session is created.
+        usage: turnstileAction,
       },
     });
 
@@ -1138,6 +1140,7 @@ export async function directPasskeyLoginFinishHandler(c: Context<{ Bindings: Env
         origin: string;
         rpID: string;
         authorization_challenge_id?: string;
+        usage?: AuthenticationMethodUsage;
       };
     };
 
@@ -1150,6 +1153,15 @@ export async function directPasskeyLoginFinishHandler(c: Context<{ Bindings: Env
     } catch {
       return createErrorResponse(c, AR_ERROR_CODES.AUTH_SESSION_EXPIRED);
     }
+
+    // Passkey sign-in may have been turned off since the challenge was issued.
+    const methodDisabledError = await rejectIfAuthenticationMethodDisabled(
+      c,
+      getTenantIdFromContext(c),
+      'passkey',
+      challengeData.metadata?.usage === 'reauth' ? 'reauth' : 'login'
+    );
+    if (methodDisabledError) return methodDisabledError;
 
     // Verify PKCE
     const isValidPKCE = await verifyPKCE(

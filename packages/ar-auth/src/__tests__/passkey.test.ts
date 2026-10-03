@@ -351,6 +351,8 @@ function createMockContext(options: {
   dbPII?: D1Database;
   challengeStore?: ReturnType<typeof createMockChallengeStore>;
   sessionStore?: ReturnType<typeof createMockSessionStore>;
+  /** The tenant's authentication-methods settings document. */
+  authenticationMethods?: Record<string, unknown>;
 }) {
   const mockDB =
     options.db ??
@@ -397,6 +399,15 @@ function createMockContext(options: {
       ALLOWED_ORIGINS: 'https://example.com',
       CHALLENGE_STORE: challengeStore,
       SESSION_STORE: sessionStore,
+      ...(options.authenticationMethods && {
+        SETTINGS: {
+          get: vi.fn(async (key: string) =>
+            key === 'settings:tenant:default:authentication-methods'
+              ? JSON.stringify(options.authenticationMethods)
+              : null
+          ),
+        },
+      }),
       SESSION_REVOCATION_STORE: {
         idFromName: vi.fn((name: string) => name),
         get: vi.fn(() => mockAccountAuthStateStub),
@@ -1252,6 +1263,70 @@ describe('Passkey Handlers', () => {
         expect.any(Number)
       );
       expect(mockPasskeyRepository.mirrorCounterAfterAuth).toHaveBeenCalledWith('passkey-1', 1);
+    });
+
+    it.each([
+      ['refuses a user while the tenant turns passkey login off', 'user', 403],
+      ['still signs an administrator in to the console', 'admin', 200],
+    ])('%s', async (_label, userType, status) => {
+      const challengeStore = createMockChallengeStore();
+      const sessionStore = createMockSessionStore();
+      challengeStore._challenges.set('passkey_auth:challenge-123', {
+        id: 'passkey_auth:challenge-123',
+        type: 'passkey_authentication',
+        challenge: 'mock-auth-challenge-base64',
+      });
+      mockPasskeyRepository.findByCredentialId.mockResolvedValue({
+        id: 'passkey-1',
+        user_id: 'user-123',
+        credential_id: 'mock-cred-id',
+        public_key: 'YmFzZTY0LXB1YmxpYy1rZXk=',
+        counter: 0,
+        transports: ['internal'],
+      });
+      mockUserCoreRepository.findById.mockResolvedValue({
+        id: 'user-123',
+        user_type: userType,
+        is_active: true,
+        email_verified: true,
+        created_at: Date.now(),
+        updated_at: Date.now(),
+        last_login_at: Date.now(),
+      });
+      mockUserPIIRepository.findById.mockResolvedValue({
+        id: 'user-123',
+        email: 'test@example.com',
+        name: 'Test User',
+      });
+
+      const response = await passkeyLoginVerifyHandler(
+        createMockContext({
+          body: {
+            challengeId: 'challenge-123',
+            credential: {
+              id: 'mock-cred-id',
+              rawId: 'mock-raw-id',
+              type: 'public-key',
+              response: {
+                clientDataJSON: 'mock-client-data',
+                authenticatorData: 'mock-auth-data',
+                signature: 'mock-signature',
+              },
+            },
+          },
+          headers: { origin: 'https://example.com' },
+          challengeStore,
+          sessionStore,
+          authenticationMethods: { 'authentication-methods.passkey.login_enabled': false },
+        })
+      );
+
+      expect(response.status).toBe(status);
+      if (status === 403) {
+        expect(mockAccountAuthStateStub.advancePasskeyCounterRpc).not.toHaveBeenCalled();
+      } else {
+        expect(mockAccountAuthStateStub.advancePasskeyCounterRpc).toHaveBeenCalled();
+      }
     });
 
     it('rejects a consumed authentication challenge before credential lookup', async () => {

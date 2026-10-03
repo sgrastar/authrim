@@ -147,14 +147,14 @@ describe('hasRemainingLoginMethod', () => {
     await expect(check({ kind: 'passkey', id: 'pk1' })).resolves.toBe(false);
   });
 
-  it('counts a passkey whatever the passkey login switch says (passkey sign-in ignores it)', async () => {
+  it('does not count passkeys while passkey login is off', async () => {
     const check = setup({
       methods: { 'authentication-methods.passkey.login_enabled': false },
       passkeys: ['pk1'],
       linked: [{ id: 'li1', provider_id: 'google' }],
       enabledProviders: ['google'],
     });
-    await expect(check({ kind: 'linked_identity', id: 'li1' })).resolves.toBe(true);
+    await expect(check({ kind: 'linked_identity', id: 'li1' })).resolves.toBe(false);
   });
 
   it('stops on unreadable settings instead of deciding from defaults', async () => {

@@ -801,10 +801,52 @@ describe('Direct Auth primary passkey and email-code flows', () => {
           code_challenge: 'pkce-challenge',
           origin: 'https://app.example.com',
           rpID: 'app.example.com',
+          usage: 'login',
         }),
       })
     );
   }, 10_000);
+
+  it.each([
+    ['login', 'authentication-methods.passkey.login_enabled'],
+    ['reauth', 'authentication-methods.passkey.reauth_enabled'],
+  ])(
+    'refuses to finish a passkey %s turned off since its challenge was issued',
+    async (usage, setting) => {
+      const codeVerifier = 'passkey-login-code-verifier';
+      mocks.challengeStore.consumeChallengeRpc.mockResolvedValue({
+        challenge: 'passkey-login-challenge',
+        metadata: {
+          code_challenge: await s256Challenge(codeVerifier),
+          client_id: 'web-client',
+          channel: 'browser',
+          origin: 'https://app.example.com',
+          rpID: 'app.example.com',
+          usage,
+        },
+      });
+      const { directPasskeyLoginFinishHandler } = await import('../direct-auth');
+      const context = createContext({
+        challenge_id: 'challenge_1',
+        credential: {
+          id: 'credential-id',
+          rawId: 'credential-id',
+          response: {},
+          type: 'public-key',
+        },
+        code_verifier: codeVerifier,
+        channel: 'browser',
+      });
+      context.env.SETTINGS = createMockKV({
+        'settings:tenant:tenant_test:authentication-methods': JSON.stringify({ [setting]: false }),
+      }) as never;
+
+      const response = await directPasskeyLoginFinishHandler(context as never);
+
+      expect(response.status).toBe(403);
+      expect(mocks.authCodeStore.storeCodeRpc).not.toHaveBeenCalled();
+    }
+  );
 
   it('finishes passkey login and stores a direct-auth authorization code artifact', async () => {
     const codeVerifier = 'passkey-login-code-verifier';
