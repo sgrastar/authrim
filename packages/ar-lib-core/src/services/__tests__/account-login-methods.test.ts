@@ -54,6 +54,8 @@ interface Fixture {
 }
 
 let safeCheck: (removing: LoginMethodRemoval) => Promise<boolean>;
+let lastCore: DatabaseAdapter;
+let lastPii: DatabaseAdapter;
 
 function setup(fixture: Fixture) {
   const env = {
@@ -89,6 +91,8 @@ function setup(fixture: Fixture) {
       }))
     ),
   } as unknown as DatabaseAdapter;
+  lastCore = coreAdapter;
+  lastPii = piiAdapter;
   mockFindById.mockResolvedValue(fixture.email ?? null);
   mockProviderAdapter.query.mockImplementation(async (_sql: string, params: unknown[]) =>
     params
@@ -143,14 +147,31 @@ describe('hasRemainingLoginMethod', () => {
     await expect(check({ kind: 'passkey', id: 'pk1' })).resolves.toBe(false);
   });
 
-  it('does not count passkeys while passkey login is off', async () => {
+  it('counts a passkey whatever the passkey login switch says (passkey sign-in ignores it)', async () => {
     const check = setup({
       methods: { 'authentication-methods.passkey.login_enabled': false },
       passkeys: ['pk1'],
       linked: [{ id: 'li1', provider_id: 'google' }],
       enabledProviders: ['google'],
     });
-    await expect(check({ kind: 'linked_identity', id: 'li1' })).resolves.toBe(false);
+    await expect(check({ kind: 'linked_identity', id: 'li1' })).resolves.toBe(true);
+  });
+
+  it('stops on unreadable settings instead of deciding from defaults', async () => {
+    const check = setup({ passkeys: ['pk1'] });
+    const failing = {
+      SETTINGS: { get: vi.fn(async () => '{not json') },
+    } as unknown as Env;
+    await expect(
+      isLoginMethodRemovalSafe(failing, {
+        tenantId: 't1',
+        userId: 'u1',
+        coreAdapter: lastCore,
+        piiAdapter: lastPii,
+        removing: { kind: 'passkey', id: 'pk1' },
+      })
+    ).rejects.toThrow();
+    void check;
   });
 
   it('counts a verified email only while email-code login is on', async () => {

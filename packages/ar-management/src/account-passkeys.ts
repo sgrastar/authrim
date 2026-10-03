@@ -1377,7 +1377,6 @@ export async function deleteAccountPasskeyHandler(
         const deleteParams = hasAnotherPasskey
           ? [existing.id, tenantId, accountSession.userId, tenantId, accountSession.userId]
           : [existing.id, tenantId, accountSession.userId];
-        await lease.assertHeld();
         let result: ExecuteResult;
         let removal: AccountDirectoryRemovalPublication | null = null;
         if (accountDataContext) {
@@ -1400,6 +1399,8 @@ export async function deleteAccountPasskeyHandler(
             now
           );
           const outboxId = accountDirectoryRemovalOutboxId(removal.operationId);
+          // Right before the removing write: the lease must still be this removal's.
+          await lease.assertHeld();
           const results = await authCtx.coreAdapter.batch([
             { sql: deleteSql, params: deleteParams },
             {
@@ -1424,6 +1425,7 @@ export async function deleteAccountPasskeyHandler(
             }
           }
         } else {
+          await lease.assertHeld();
           result = await authCtx.coreAdapter.execute(deleteSql, deleteParams);
         }
 

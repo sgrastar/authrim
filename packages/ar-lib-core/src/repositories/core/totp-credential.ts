@@ -184,29 +184,35 @@ export class TotpCredentialRepository {
   }
 
   /**
-   * Deletes the credential and its backup codes. With `expectedStatus`, only while the credential
-   * still has that status (a check made before, e.g. that it was only pending, still holds).
+   * Deletes the credential and its backup codes together (one batch: neither outlives the other).
+   * With `expectedStatus`, only while the credential still has that status (a check made before,
+   * e.g. that it was only pending, still holds).
    */
   async delete(
     id: string,
     userId: string,
     expectedStatus?: TotpCredential['status']
   ): Promise<boolean> {
-    const result = expectedStatus
-      ? await this.adapter.execute(
-          'DELETE FROM totp_credentials WHERE tenant_id = ? AND id = ? AND user_id = ? AND status = ?',
-          [this.tenantId, id, userId, expectedStatus]
-        )
-      : await this.adapter.execute(
-          'DELETE FROM totp_credentials WHERE tenant_id = ? AND id = ? AND user_id = ?',
-          [this.tenantId, id, userId]
-        );
-    if (result.rowsAffected === 0) return false;
-    await this.adapter.execute(
-      'DELETE FROM totp_backup_codes WHERE tenant_id = ? AND credential_id = ? AND user_id = ?',
-      [this.tenantId, id, userId]
-    );
-    return true;
+    const condition = expectedStatus ? ' AND status = ?' : '';
+    const credentialParams = expectedStatus
+      ? [this.tenantId, id, userId, expectedStatus]
+      : [this.tenantId, id, userId];
+    const [, credentials] = await this.adapter.batch([
+      {
+        sql: `DELETE FROM totp_backup_codes
+               WHERE tenant_id = ? AND credential_id = ? AND user_id = ?
+                 AND EXISTS (
+                   SELECT 1 FROM totp_credentials
+                    WHERE tenant_id = ? AND id = ? AND user_id = ?${condition}
+                 )`,
+        params: [this.tenantId, id, userId, ...credentialParams],
+      },
+      {
+        sql: `DELETE FROM totp_credentials WHERE tenant_id = ? AND id = ? AND user_id = ?${condition}`,
+        params: credentialParams,
+      },
+    ]);
+    return (credentials?.rowsAffected ?? 0) > 0;
   }
 
   async deleteByUserId(userId: string): Promise<number> {

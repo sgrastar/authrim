@@ -58,7 +58,8 @@ export async function isAuthenticationMethodUsageAvailable(
   env: Pick<Env, 'SETTINGS'>,
   tenantId: string,
   method: BuiltInAuthenticationMethod,
-  usage: AuthenticationMethodUsage
+  usage: AuthenticationMethodUsage,
+  options: { strict?: boolean } = {}
 ): Promise<boolean> {
   const methodDefault = defaultAuthenticationMethodEnabled(method);
   try {
@@ -72,7 +73,9 @@ export async function isAuthenticationMethodUsageAvailable(
       methodDefault
     );
     return normalizeBoolean(settings[authenticationMethodSettingKey(method, usage)], legacyEnabled);
-  } catch {
+  } catch (error) {
+    // A decision that removes something (strict) must not rest on a default it fell back to.
+    if (options.strict) throw error;
     return methodDefault;
   }
 }
@@ -109,10 +112,10 @@ async function candidates(env: Env, input: RemainingLoginMethodInput): Promise<C
     indexKind: 'email_exact' | 'external_subject',
     identifier: string | { issuer: string; subject: string }
   ) => routeReachesAccount(env, tenantId, userId, indexKind, identifier);
-  const [passkeyLogin, totpLogin, emailLogin] = await Promise.all([
-    isAuthenticationMethodUsageAvailable(env, tenantId, 'passkey', 'login'),
-    isAuthenticationMethodUsageAvailable(env, tenantId, 'totp', 'login'),
-    isAuthenticationMethodUsageAvailable(env, tenantId, 'email_otp', 'login'),
+  // Read strictly: an unreadable setting stops the removal rather than deciding it.
+  const [totpLogin, emailLogin] = await Promise.all([
+    isAuthenticationMethodUsageAvailable(env, tenantId, 'totp', 'login', { strict: true }),
+    isAuthenticationMethodUsageAvailable(env, tenantId, 'email_otp', 'login', { strict: true }),
   ]);
   const list: Candidate[] = [];
 
@@ -130,7 +133,9 @@ async function candidates(env: Env, input: RemainingLoginMethodInput): Promise<C
       kind: 'passkey',
       id: passkey.id,
       usable: async () => {
-        if (!passkeyLogin || !passkey.rp_id) return false;
+        // Passkey sign-in does not consult the passkey login switch, so a passkey whose route
+        // reaches the account signs in whatever the switch says.
+        if (!passkey.rp_id) return false;
         let subject: { issuer: string; subject: string };
         try {
           subject = passkeyCredentialLookupSubject({
@@ -305,8 +310,32 @@ const LOGIN_METHOD_REMOVAL_LEASE_SECONDS = 120;
  */
 const LOGIN_METHOD_REMOVAL_WRITE_MARGIN_MS = 60_000;
 
+/**
+ * Throws LoginMethodRemovalInProgressError unless the account's removal lease is still held by
+ * `owner` with time to spare. For the service that performs a removal on another's behalf (it
+ * checks right before its own write).
+ */
+export async function assertLoginMethodRemovalLeaseHeld(
+  env: Env,
+  tenantId: string,
+  userId: string,
+  owner: string
+): Promise<void> {
+  const id = `login-method-removal:${userId}`;
+  const store = getChallengeStoreForLease(env, id, tenantId) as LeaseStore;
+  const { held } = await store.isClaimHeldRpc({
+    id,
+    tenantId,
+    challenge: owner,
+    minRemainingMs: LOGIN_METHOD_REMOVAL_WRITE_MARGIN_MS,
+  });
+  if (!held) throw new LoginMethodRemovalInProgressError();
+}
+
 /** What a removal holds while it runs. */
 export interface LoginMethodRemovalLease {
+  /** The lease's owner token, for a service that removes on this removal's behalf. */
+  owner: string;
   /**
    * Throws LoginMethodRemovalInProgressError unless the lease is still this removal's with time to
    * spare. Call it right before the write that removes the method: a removal that outlived its
@@ -344,15 +373,8 @@ export async function withLoginMethodRemovalLock<T>(
   });
   if (!claimed) throw new LoginMethodRemovalInProgressError();
   const lease: LoginMethodRemovalLease = {
-    async assertHeld() {
-      const { held } = await store.isClaimHeldRpc({
-        id,
-        tenantId,
-        challenge: owner,
-        minRemainingMs: LOGIN_METHOD_REMOVAL_WRITE_MARGIN_MS,
-      });
-      if (!held) throw new LoginMethodRemovalInProgressError();
-    },
+    owner,
+    assertHeld: () => assertLoginMethodRemovalLeaseHeld(env, tenantId, userId, owner),
   };
   try {
     return await removal(lease);

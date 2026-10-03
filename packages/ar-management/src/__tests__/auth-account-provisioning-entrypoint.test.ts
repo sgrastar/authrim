@@ -7,6 +7,7 @@ import type {
 } from '@authrim/ar-lib-core';
 
 const mocks = vi.hoisted(() => ({
+  assertLeaseHeld: vi.fn(async () => undefined),
   resolveOperationAdapter: vi.fn(),
   execute: vi.fn(),
   hashRequest: vi.fn(),
@@ -26,6 +27,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     ...actual,
     resolveAuthCorePersistenceAdapterFromEnv: mocks.resolveOperationAdapter,
     resolveAccountDataContext: mocks.resolveAccountDataContext,
+    assertLoginMethodRemovalLeaseHeld: mocks.assertLeaseHeld,
     ensureDatabaseAdapter: vi.fn(() => ({
       queryOne: mocks.tenantQuery,
       execute: mocks.tenantExecute,
@@ -822,6 +824,62 @@ describe('AuthAccountProvisioningEntrypoint', () => {
       }),
       expect.objectContaining({ sql: expect.stringContaining('DELETE FROM linked_identities') }),
     ]);
+  });
+
+  it("checks the caller's removal lease right before removing, and stops when it is gone", async () => {
+    const owner = '6f1c8b9e-2d4a-4f3b-9a1e-0c5d7e8f9a0b';
+    const request = {
+      ...externalIdpRouteInput({
+        operationId: 'external-idp-route-remove-44444444444444444444444444444444',
+        idempotencyKey: `auth-external-idp-route-remove:${'4'.repeat(64)}`,
+      }),
+      removalLeaseOwner: owner,
+    };
+    mocks.tenantQuery.mockResolvedValueOnce(null).mockResolvedValueOnce({
+      id: request.linkedIdentityId,
+      user_id: request.userId,
+      provider_id: request.providerId,
+      provider_user_id: request.providerUserId,
+      provisioning_state: 'active',
+    });
+    mocks.assertLeaseHeld.mockRejectedValueOnce(new Error('login_method_removal_in_progress'));
+
+    await expect(
+      worker({
+        props: {
+          caller: 'ar-bridge',
+          environmentId: 'test',
+          audience: 'authrim-external-idp-account-provisioning-v1',
+        },
+      }).removeExternalIdpRoute(request)
+    ).rejects.toThrow('login_method_removal_in_progress');
+    expect(mocks.assertLeaseHeld).toHaveBeenCalledWith(
+      expect.anything(),
+      request.tenantId,
+      request.userId,
+      owner
+    );
+    expect(mocks.tenantBatch).not.toHaveBeenCalled();
+  });
+
+  it('refuses a malformed removal lease owner', async () => {
+    const request = {
+      ...externalIdpRouteInput({
+        operationId: 'external-idp-route-remove-55555555555555555555555555555555',
+        idempotencyKey: `auth-external-idp-route-remove:${'5'.repeat(64)}`,
+      }),
+      removalLeaseOwner: 'not-a-uuid',
+    };
+
+    await expect(
+      worker({
+        props: {
+          caller: 'ar-bridge',
+          environmentId: 'test',
+          audience: 'authrim-external-idp-account-provisioning-v1',
+        },
+      }).removeExternalIdpRoute(request)
+    ).rejects.toThrow('external_idp_route_removal_input_invalid');
   });
 
   it('rejects external route removal when active authority does not match', async () => {

@@ -134,8 +134,8 @@ describe('routed-account external identity unlink', () => {
         _env: unknown,
         _tenantId: string,
         _userId: string,
-        removal: (lease: { assertHeld: () => Promise<void> }) => Promise<unknown>
-      ) => removal({ assertHeld: mocks.assertHeld })
+        removal: (lease: { owner: string; assertHeld: () => Promise<void> }) => Promise<unknown>
+      ) => removal({ owner: 'lease-owner', assertHeld: mocks.assertHeld })
     );
     mocks.revokeTokens.mockResolvedValue({
       success: true,
@@ -170,6 +170,7 @@ describe('routed-account external identity unlink', () => {
         linkedIdentityId: 'link-a',
         providerId: 'provider-a',
         providerUserId: 'provider-user-a',
+        removalLeaseOwner: 'lease-owner',
       })
     );
     expect(mocks.recordActivity).toHaveBeenCalledWith(

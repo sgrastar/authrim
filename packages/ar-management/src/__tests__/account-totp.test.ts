@@ -1106,6 +1106,7 @@ describe('Account Page TOTP API', () => {
   });
 
   it('requires a valid proof when deleting active TOTP without TOTP/passkey reauth', async () => {
+    mockHasRemainingLoginMethod.mockResolvedValueOnce(true);
     mockSessionStore.getSessionRpc.mockResolvedValue({
       ...baseSession,
       expiresAt: Date.now() + 60_000,
@@ -1127,6 +1128,8 @@ describe('Account Page TOTP API', () => {
     const response = await deleteAccountTotpCredentialHandler(context);
 
     expect(response.status).toBe(400);
+    // Refused for the missing proof, not by the remaining-method guard.
+    await expect(response.json()).resolves.toMatchObject({ error: 'invalid_code' });
     expect(mockTotpRepo.delete).not.toHaveBeenCalled();
   });
 

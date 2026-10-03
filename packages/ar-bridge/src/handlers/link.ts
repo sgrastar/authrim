@@ -275,6 +275,7 @@ export async function handleUnlinkIdentity(c: Context<{ Bindings: Env }>): Promi
           linkedIdentityId,
           providerId: identity.providerId,
           providerUserId: identity.providerUserId,
+          removalLeaseOwner: lease.owner,
         });
       });
     } catch (error) {
@@ -319,7 +320,10 @@ export async function handleUnlinkIdentity(c: Context<{ Bindings: Env }>): Promi
       },
     });
   } catch (error) {
-    if (error instanceof LoginMethodRemovalInProgressError) {
+    if (
+      error instanceof LoginMethodRemovalInProgressError ||
+      (error instanceof Error && error.message === 'login_method_removal_in_progress')
+    ) {
       return c.json(
         {
           error: 'operation_in_progress',
