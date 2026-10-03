@@ -120,7 +120,8 @@ vi.mock('../registration-field-utils', () => ({
   persistRegistrationFieldValuesFromEnv: mocks.persistRegistrationFieldValuesFromEnv,
 }));
 
-vi.mock('../human-verification', () => ({
+vi.mock('../human-verification', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../human-verification')>()),
   verifyHumanVerificationForAction: mocks.verifyHumanVerificationForAction,
 }));
 
@@ -2829,6 +2830,97 @@ describe('Direct Auth primary passkey and email-code flows', () => {
     expect(mocks.hashEmailCode).not.toHaveBeenCalled();
     expect(mocks.challengeStore.storeChallengeRpc).not.toHaveBeenCalled();
     expect(mocks.emailNotifier.send).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    // The sign-up screen, carrying the login challenge it was linked from, signs up a new address.
+    ['signup', 'new@example.com', 'login_challenge', 'signup', []],
+    // The shared login form signs up a new address: its token, plus the sign-up setting.
+    ['login', 'new@example.com', undefined, 'login', ['signup']],
+    ['login', 'user@example.com', 'login_challenge', 'login', []],
+    // A client that does not name its screen keeps the earlier inference.
+    [undefined, 'new@example.com', undefined, 'signup', []],
+  ] as const)(
+    'checks a %s-screen token for %s (challenge %s) as %s, also requiring %j',
+    async (screen, email, challengeId, action, alsoRequiredFor) => {
+      if (challengeId) {
+        mocks.challengeStore.getChallengeRpc.mockResolvedValue({
+          tenantId: 'tenant_test',
+          type: 'login',
+          challenge: challengeId,
+        });
+      }
+      if (email === 'user@example.com') {
+        mocks.userPII.findByTenantAndEmail.mockResolvedValue({ id: 'user_existing', email });
+      }
+      const { directEmailCodeSendHandler } = await import('../direct-auth');
+
+      const response = await directEmailCodeSendHandler(
+        enableEmailOtp(
+          createContext(
+            {
+              client_id: 'web-client',
+              email,
+              code_challenge: 'email-pkce-challenge',
+              code_challenge_method: 'S256',
+              channel: 'browser',
+              ...(challengeId ? { authorization_challenge_id: challengeId } : {}),
+              human_verification_response: 'human-token',
+            },
+            {
+              ...webHeaders(),
+              ...(screen ? { 'X-Authrim-Human-Verification-Action': screen } : {}),
+            }
+          )
+        ) as never
+      );
+
+      expect(response.status).toBe(200);
+      expect(mocks.verifyHumanVerificationForAction).toHaveBeenCalledWith(
+        expect.anything(),
+        action,
+        'human-token',
+        alsoRequiredFor
+      );
+    }
+  );
+
+  it('checks a re-authentication email code against its own screen whatever the client names', async () => {
+    mocks.challengeStore.getChallengeRpc.mockResolvedValue({
+      tenantId: 'tenant_test',
+      type: 'reauth',
+      userId: 'user_existing',
+      challenge: 'reauth_challenge',
+    });
+    mocks.userPII.findByTenantAndEmail.mockResolvedValue({
+      id: 'user_existing',
+      email: 'user@example.com',
+    });
+    const { directEmailCodeSendHandler } = await import('../direct-auth');
+
+    await directEmailCodeSendHandler(
+      enableEmailOtp(
+        createContext(
+          {
+            client_id: 'web-client',
+            email: 'user@example.com',
+            code_challenge: 'email-pkce-challenge',
+            code_challenge_method: 'S256',
+            channel: 'browser',
+            authorization_challenge_id: 'reauth_challenge',
+            human_verification_response: 'human-token',
+          },
+          { ...webHeaders(), 'X-Authrim-Human-Verification-Action': 'signup' }
+        )
+      ) as never
+    );
+
+    expect(mocks.verifyHumanVerificationForAction).toHaveBeenCalledWith(
+      expect.anything(),
+      'reauth',
+      'human-token',
+      []
+    );
   });
 
   it('returns an accepted email-code response when signup field validation fails', async () => {

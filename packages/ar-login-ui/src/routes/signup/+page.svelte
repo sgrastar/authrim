@@ -1384,6 +1384,7 @@
 				authorizationChallengeId: authorizationChallengeId || undefined,
 				custom_fields: submittedCustomFields,
 				human_verification_response: cfTurnstileResponse,
+				humanVerificationScreen: 'signup',
 				deferAuthorizationContinuation: Boolean(runtimeFlow),
 				runtimeInteractionId: runtimeFlow?.interaction.id,
 				emailVerification

@@ -115,8 +115,14 @@
 			data.methods.humanVerification.provider === 'custom'
 				? data.methods.humanVerification.provider
 				: 'turnstile';
+		// An email code asked for a new address on this screen signs it up, so the sign-up setting
+		// asks for a token here too.
+		const emailCodeSignupEnabled =
+			data.methods.emailCode.signupEnabled ?? data.methods.emailCode.enabled;
 		const humanVerificationRequired =
-			data.methods.humanVerification.enabled && data.methods.humanVerification.loginEnabled;
+			data.methods.humanVerification.enabled &&
+			(data.methods.humanVerification.loginEnabled ||
+				(data.methods.humanVerification.signupEnabled && emailCodeSignupEnabled));
 		const turnstileRequired =
 			humanVerificationRequired &&
 			humanVerificationProvider !== 'custom' &&
@@ -1353,6 +1359,7 @@
 				authorizationChallengeId: authorizationChallengeId || undefined,
 				human_verification_response: cfTurnstileResponse || undefined,
 				deferAuthorizationContinuation: shouldDeferAuthorizationContinuation(),
+				humanVerificationScreen: 'login',
 				runtimeInteractionId: runtimeFlow?.interaction.id,
 				emailVerification: options.emailVerification
 			});

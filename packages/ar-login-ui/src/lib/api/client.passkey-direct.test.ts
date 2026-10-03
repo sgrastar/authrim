@@ -281,6 +281,32 @@ describe('LoginUI passkey Direct Auth adapter', () => {
 		expect(fetchMock.mock.calls[1]?.[1]?.body).toBe(fetchMock.mock.calls[0]?.[1]?.body);
 	});
 
+	it('names the screen a human verification token came from when sending an email code', async () => {
+		const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
+			new Response(
+				JSON.stringify({
+					attempt_id: 'attempt_screen',
+					expires_in: 300,
+					masked_email: 'u***@example.com'
+				}),
+				{ status: 200, headers: { 'Content-Type': 'application/json' } }
+			)
+		);
+		Object.defineProperty(globalThis, 'fetch', { value: fetchMock, configurable: true });
+		const { emailCodeAPI } = await loadClient();
+
+		await emailCodeAPI.send({
+			email: 'user@example.com',
+			human_verification_response: 'human-token',
+			humanVerificationScreen: 'signup'
+		});
+		await emailCodeAPI.send({ email: 'user@example.com' });
+
+		const headersOf = (index: number) => new Headers(fetchMock.mock.calls[index]?.[1]?.headers);
+		expect(headersOf(0).get('X-Authrim-Human-Verification-Action')).toBe('signup');
+		expect(headersOf(1).has('X-Authrim-Human-Verification-Action')).toBe(false);
+	});
+
 	it('keeps the Email Code request loading until routed provisioning is ready', async () => {
 		const token = 'A'.repeat(43);
 		const fetchMock = vi

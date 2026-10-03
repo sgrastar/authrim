@@ -130,6 +130,7 @@ import {
   validateRegistrationFieldSubmissionFromEnv,
 } from './registration-field-utils';
 import {
+  readDeclaredHumanVerificationScreen,
   verifyHumanVerificationForAction,
   type HumanVerificationAction,
 } from './human-verification';
@@ -2764,9 +2765,15 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
       : challengeType === 'reauth'
         ? 'reauth'
         : 'login';
-    // Human verification answers the screen the code was asked from (the shared login form asks
-    // with a login token even for a new address), as before.
-    const turnstileAction: HumanVerificationAction = challengeType ?? (user ? 'login' : 'signup');
+    // The token is checked against the screen it came from (a re-authentication only ever takes
+    // its own screen's token). A client that does not say keeps the earlier inference. Whatever the
+    // screen, the setting for what the code does (signing up a new address) asks for a token too.
+    const turnstileAction: HumanVerificationAction =
+      challengeType === 'reauth'
+        ? 'reauth'
+        : (readDeclaredHumanVerificationScreen(c) ?? challengeType ?? (user ? 'login' : 'signup'));
+    const turnstileAlsoRequiredFor: HumanVerificationAction[] =
+      emailCodeUsage === turnstileAction ? [] : [emailCodeUsage];
     if (challengeType === 'reauth' && (!user || !reauthUserId || user.id !== reauthUserId)) {
       // Answered like any other send, so the address's owner is not revealed.
       suppressEmailCodeSend = true;
@@ -2792,7 +2799,8 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
     const turnstileError = await verifyHumanVerificationForAction(
       c,
       turnstileAction,
-      human_verification_response ?? cf_turnstile_response
+      human_verification_response ?? cf_turnstile_response,
+      turnstileAlsoRequiredFor
     );
     if (turnstileError) {
       suppressEmailCodeSend = true;
