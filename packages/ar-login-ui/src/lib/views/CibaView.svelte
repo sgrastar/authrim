@@ -88,7 +88,7 @@
 			<div class="py-8 text-center">
 				<div class="auth-icon-badge">
 					<div class="auth-icon-badge__circle">
-						<div class="i-heroicons-check-badge h-9 w-9 auth-icon-badge__icon"></div>
+						<div class="i-ph-seal-check h-9 w-9 auth-icon-badge__icon"></div>
 					</div>
 				</div>
 				<h3 class="auth-section-title">{$LL.ciba_noPendingRequests()}</h3>
@@ -109,7 +109,7 @@
 							/>
 						{:else}
 							<div class="auth-icon-badge__circle auth-ciba-request__logo" aria-hidden="true">
-								<div class="i-heroicons-device-phone-mobile h-6 w-6 auth-icon-badge__icon"></div>
+								<div class="i-ph-device-mobile h-6 w-6 auth-icon-badge__icon"></div>
 							</div>
 						{/if}
 						<div class="auth-ciba-request__client">
@@ -143,7 +143,7 @@
 						<ul class="auth-scopes-list">
 							{#each request.scope.split(' ').filter(Boolean) as scope (scope)}
 								<li>
-									<div class="i-heroicons-check-circle h-4 w-4 auth-scopes-list__icon"></div>
+									<div class="i-ph-check-circle h-4 w-4 auth-scopes-list__icon"></div>
 									{scope}
 								</li>
 							{/each}
@@ -178,7 +178,7 @@
 	{#if !loading}
 		<div class="text-center">
 			<Button variant="secondary" onclick={onRefresh}>
-				<div class="i-heroicons-arrow-path h-4 w-4" aria-hidden="true"></div>
+				<div class="i-ph-arrow-clockwise h-4 w-4" aria-hidden="true"></div>
 				{$LL.ciba_refresh()}
 			</Button>
 		</div>

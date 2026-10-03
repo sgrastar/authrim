@@ -176,7 +176,7 @@
 			{:else}
 				<div class="auth-icon-badge" style="margin-bottom: 16px;">
 					<div class="auth-icon-badge__circle" style="width: 64px; height: 64px;">
-						<div class="i-heroicons-building-office h-8 w-8 auth-icon-badge__icon"></div>
+						<div class="i-ph-buildings h-8 w-8 auth-icon-badge__icon"></div>
 					</div>
 				</div>
 			{/if}
@@ -192,7 +192,7 @@
 			{#if consentData.client.is_trusted}
 				<div class="mt-2">
 					<span class="auth-badge--trusted">
-						<span class="i-heroicons-shield-check h-3 w-3"></span>
+						<span class="i-ph-shield-check h-3 w-3"></span>
 						{$LL.consent_trustedClient()}
 					</span>
 				</div>
@@ -207,7 +207,7 @@
 					style="color: var(--primary);"
 				>
 					{consentData.client.client_uri}
-					<span class="i-heroicons-arrow-top-right-on-square h-3 w-3"></span>
+					<span class="i-ph-arrow-square-out h-3 w-3"></span>
 				</a>
 			{/if}
 		</div>
@@ -217,7 +217,7 @@
 			<div class="auth-warning-banner mb-6">
 				<div class="flex items-start gap-3">
 					<div
-						class="i-heroicons-exclamation-triangle h-5 w-5 flex-shrink-0 mt-0.5"
+						class="i-ph-warning h-5 w-5 flex-shrink-0 mt-0.5"
 						style="color: var(--warning);"
 					></div>
 					<div>
@@ -375,7 +375,7 @@
 										style="color: var(--primary);"
 									>
 										{$LL.consent_item_view_document()}
-										<span class="i-heroicons-arrow-top-right-on-square h-3 w-3"></span>
+										<span class="i-ph-arrow-square-out h-3 w-3"></span>
 									</a>
 								{/if}
 							</div>
@@ -454,7 +454,7 @@
 										style="color: var(--primary);"
 									>
 										{$LL.consent_item_view_document()}
-										<span class="i-heroicons-arrow-top-right-on-square h-3 w-3"></span>
+										<span class="i-ph-arrow-square-out h-3 w-3"></span>
 									</a>
 								{/if}
 							</div>
@@ -471,7 +471,7 @@
 			<ul class="auth-scopes-list mb-6">
 				{#each consentData.scopes as scope (scope.name)}
 					<li>
-						<div class="i-heroicons-check-circle h-5 w-5 auth-scopes-list__icon"></div>
+						<div class="i-ph-check-circle h-5 w-5 auth-scopes-list__icon"></div>
 						<span>{getScopeLabel(scope.name)}</span>
 					</li>
 				{/each}
@@ -492,7 +492,7 @@
 						/>
 					{:else}
 						<div class="auth-user-info__avatar-placeholder">
-							<div class="i-heroicons-user h-5 w-5" style="color: var(--primary);"></div>
+							<div class="i-ph-user h-5 w-5" style="color: var(--primary);"></div>
 						</div>
 					{/if}
 
@@ -581,7 +581,7 @@
 						style="color: var(--text-muted);"
 					>
 						{$LL.consent_privacyPolicy()}
-						<span class="i-heroicons-arrow-top-right-on-square h-3 w-3"></span>
+						<span class="i-ph-arrow-square-out h-3 w-3"></span>
 					</a>
 				{/if}
 				{#if consentData.client.tos_uri && isValidLinkUrl(consentData.client.tos_uri)}
@@ -593,7 +593,7 @@
 						style="color: var(--text-muted);"
 					>
 						{$LL.consent_termsOfService()}
-						<span class="i-heroicons-arrow-top-right-on-square h-3 w-3"></span>
+						<span class="i-ph-arrow-square-out h-3 w-3"></span>
 					</a>
 				{/if}
 			</div>
@@ -602,10 +602,7 @@
 {:else}
 	<!-- Error State -->
 	<Card class="text-center py-12">
-		<div
-			class="i-heroicons-exclamation-circle h-12 w-12 mx-auto mb-4"
-			style="color: var(--danger);"
-		></div>
+		<div class="i-ph-warning-circle h-12 w-12 mx-auto mb-4" style="color: var(--danger);"></div>
 		<p style="color: var(--danger);">{error || $LL.error_unknown()}</p>
 	</Card>
 {/if}

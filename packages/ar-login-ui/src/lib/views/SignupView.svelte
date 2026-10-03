@@ -472,7 +472,7 @@
 					disabled={busy}
 					onclick={onPasskey}
 				>
-					<div class="i-heroicons-key h-5 w-5"></div>
+					<div class="i-ph-key h-5 w-5"></div>
 					{$LL.register_createWithPasskey()}
 				</Button>
 				<HumanVerification
@@ -501,7 +501,7 @@
 					disabled={busy}
 					onclick={emailVerification.enabled ? undefined : () => onEmailCode?.()}
 				>
-					<div class="i-heroicons-envelope h-5 w-5"></div>
+					<div class="i-ph-envelope-simple h-5 w-5"></div>
 					{$LL.register_sendCode()}
 				</Button>
 				<HumanVerification
@@ -584,7 +584,7 @@
 						disabled={busy}
 						onclick={onTotpStart}
 					>
-						<div class="i-heroicons-device-phone-mobile h-5 w-5"></div>
+						<div class="i-ph-device-mobile h-5 w-5"></div>
 						{$LL.register_createWithTotp()}
 					</Button>
 				{/if}

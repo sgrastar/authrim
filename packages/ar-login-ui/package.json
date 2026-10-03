@@ -30,7 +30,6 @@
 	},
 	"devDependencies": {
 		"@eslint/js": "^9.39.1",
-		"@iconify-json/heroicons": "^1.2.3",
 		"@iconify-json/ph": "^1.2.2",
 		"@melt-ui/pp": "^0.3.2",
 		"@melt-ui/svelte": "^0.86.6",
