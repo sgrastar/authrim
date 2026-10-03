@@ -32,6 +32,9 @@
 		await userEvent.click(summary);
 		// Closed again, the heading still says something inside is unsaved.
 		await waitFor(() => expect(summary).toHaveTextContent(t('common.changed')));
+		// The accessibility check runs after this: let the closing slide (a fade) finish first, so
+		// it never measures a half-faded field.
+		await waitFor(() => expect(summary.closest('details')).not.toHaveAttribute('open'));
 	}}
 >
 	{#snippet template()}<DisclosureDemo />{/snippet}
