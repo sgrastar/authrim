@@ -11,6 +11,7 @@ import { describe, expect, it } from 'vitest';
 
 const themes = readFileSync(new URL('../lib/styles/themes.css', import.meta.url), 'utf8');
 const app = readFileSync(new URL('../app.css', import.meta.url), 'utf8');
+const alert = readFileSync(new URL('../lib/components/Alert.svelte', import.meta.url), 'utf8');
 
 type Rgb = [number, number, number];
 interface Colour {
@@ -90,15 +91,28 @@ function textContrast(value: string, background: Rgb): number {
 /** The status tints every theme shares (app.css :root). */
 const BASE = tokens(app, ':root {');
 
-/** The text colour an alert of `variant` takes in light or dark mode (app.css). */
-function alertColour(variant: string, dark: boolean): string {
-	const selector = dark ? `[data-theme='dark'] .alert-${variant} {` : `.alert-${variant} {`;
-	const at = app.indexOf(`\n${selector}`);
-	if (at < 0) throw new Error(`No rule for ${selector}`);
-	const rule = app.slice(at, app.indexOf('}', at));
-	const colourValue = rule.match(/\n\tcolor:\s*([^;]+);/)?.[1];
-	if (!colourValue) throw new Error(`No colour in ${selector}`);
-	return colourValue.trim();
+/** The `color` declared by the rule for `selector` in `css` (null when it declares none). */
+function declaredColour(css: string, selector: string): string | null {
+	const at = css.indexOf(selector);
+	if (at < 0) return null;
+	const rule = css.slice(at, css.indexOf('}', at));
+	// `color:` as a declaration of its own, not the end of `border-color:`.
+	return rule.match(/\n\s*color:\s*([^;]+);/)?.[1].trim() ?? null;
+}
+
+/**
+ * The colour an alert's `part` (text or title) of `variant` is drawn in: Alert.svelte's own, or,
+ * where it inherits, the scheme's alert colour from app.css.
+ */
+function alertColour(variant: string, part: 'text' | 'title', dark: boolean): string {
+	const own = declaredColour(alert, `.alert-${variant} .alert-${part} {`);
+	if (own && own !== 'inherit') return own;
+	const scheme = declaredColour(
+		app,
+		dark ? `\n[data-theme='dark'] .alert-${variant} {` : `\n.alert-${variant} {`
+	);
+	if (!scheme) throw new Error(`No ${dark ? 'dark' : 'light'} colour for .alert-${variant}`);
+	return scheme;
 }
 
 interface Case {
@@ -187,23 +201,32 @@ describe('theme contrast', () => {
 		}
 	});
 
-	it.each(CASES)('$name: alert text meets AA on its tint', ({ values, behind }) => {
-		// Dark mode is where the primary text is light.
-		const dark = luminance(colour(values['--text-primary']).rgb) > 0.5;
-		const tints: Record<string, string> = {
-			error: '--danger-light',
-			warning: '--warning-light',
-			success: '--success-light'
-		};
-		for (const [variant, tint] of Object.entries(tints)) {
-			const text = alertColour(variant, dark);
-			for (const under of behind) {
-				const card = over(colour(values['--bg-card']), under);
-				const surface = over(colour(BASE[tint]), card);
-				expect(textContrast(text, surface), `${variant} ${text}`).toBeGreaterThanOrEqual(4.5);
+	it.each(CASES)(
+		'$name: alert text meets AA on its tint, on the card or the page',
+		({ values, behind }) => {
+			// Dark mode is where the primary text is light.
+			const dark = luminance(colour(values['--text-primary']).rgb) > 0.5;
+			const tints: Record<string, string> = {
+				error: '--danger-light',
+				warning: '--warning-light',
+				success: '--success-light'
+			};
+			for (const [variant, tint] of Object.entries(tints)) {
+				for (const part of ['text', 'title'] as const) {
+					const text = alertColour(variant, part, dark);
+					for (const under of behind) {
+						for (const surface of [over(colour(values['--bg-card']), under), under]) {
+							const tinted = over(colour(BASE[tint]), surface);
+							expect(
+								textContrast(text, tinted),
+								`${variant} ${part} ${text} on ${tinted.map(Math.round)}`
+							).toBeGreaterThanOrEqual(4.5);
+						}
+					}
+				}
 			}
 		}
-	});
+	);
 
 	it.each([
 		{ name: 'classic light beige', values: lightBeige },
@@ -224,6 +247,27 @@ describe('theme contrast', () => {
 				textContrast(text, colour(stop[0]).rgb),
 				`${text} on ${stop[0]}`
 			).toBeGreaterThanOrEqual(4.5);
+		}
+	});
+
+	it.each([
+		{ name: 'fullbleed glass dark', values: glassDark },
+		{ name: 'fullbleed glass light', values: glassLight }
+	])('$name: text on a tenant image meets AA on its backdrop, over any image', ({ values }) => {
+		const scrim = colour(values['--fullbleed-scrim']);
+		const backdrop = colour(values['--fullbleed-on-image-backdrop-image']);
+		for (const image of [[0, 0, 0] as Rgb, [255, 255, 255] as Rgb]) {
+			const under = over(backdrop, over(scrim, image));
+			for (const token of [
+				'--fullbleed-on-image-title',
+				'--fullbleed-on-image-text',
+				'--fullbleed-on-image-muted'
+			]) {
+				expect(
+					textContrast(values[token], under),
+					`${token} on ${under.map(Math.round)}`
+				).toBeGreaterThanOrEqual(4.5);
+			}
 		}
 	});
 });

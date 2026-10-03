@@ -1592,7 +1592,9 @@
 		--account-control-bg: var(--bg-input, #ffffff);
 		--account-control-hover: var(--surface-muted, var(--bg-subtle, #f7f3ec));
 		--account-primary-bg: var(--button-primary-bg, var(--primary, #2c2724));
-		--account-primary-hover: var(--primary-hover, #1a1715);
+		/* Hover keeps the button's own fill: its label colour is chosen for that fill (a darker
+		   --primary-hover under dark text would fail contrast), and a ring marks the hover. */
+		--account-primary-hover: var(--account-primary-bg);
 		--account-modal-bg: var(--bg-card, #fffaf3);
 		--account-modal-border: var(--border, #ded4c5);
 
@@ -1645,7 +1647,8 @@
 
 	:global(.account-shell .btn-primary:hover:not(:disabled)) {
 		background: var(--account-primary-hover) !important;
-		box-shadow: none !important;
+		box-shadow: inset 0 0 0 2px
+			color-mix(in srgb, var(--button-primary-text, #ffffff) 45%, transparent) !important;
 	}
 
 	:global(.account-shell .btn:hover:not(:disabled)),

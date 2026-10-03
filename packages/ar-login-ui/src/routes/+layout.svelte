@@ -131,6 +131,7 @@
 	data-branding-loaded={brandingStore.isLoaded ? '' : undefined}
 	style:--login-page-background-color={loginUIPageStore.backgroundColor || undefined}
 	style:--login-accent-color={loginUIPageStore.accentColor || undefined}
+	style:--login-accent-text={loginUIPageStore.accentTextColor || undefined}
 	style:--login-title-color={loginUIPageStore.titleColor || undefined}
 	style:--login-text-color={loginUIPageStore.textColor || undefined}
 	style:--login-copy-color={loginUIPageStore.copyColor || undefined}

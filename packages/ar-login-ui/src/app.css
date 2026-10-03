@@ -547,7 +547,8 @@ html[dir='rtl'] .form-select {
 .alert-error {
 	background: var(--danger-light);
 	border-color: var(--danger);
-	color: #b91c1c;
+	/* Dark enough to read on the tint over translucent glass too. */
+	color: #991b1b;
 }
 
 .alert-warning {
@@ -6378,7 +6379,8 @@ tr.expired {
 	--input-radius: 0px;
 	--input-border: rgba(255, 255, 255, 0.26);
 	--button-primary-bg: var(--primary);
-	--button-primary-text: #1c0d08;
+	/* A tenant's accent fills the button: its label takes the colour that reads on it. */
+	--button-primary-text: var(--login-accent-text, #1c0d08);
 	--button-secondary-bg: rgba(255, 255, 255, 0.07);
 	--button-secondary-border: rgba(255, 255, 255, 0.28);
 	--button-secondary-text: #f6efe9;
@@ -6405,6 +6407,9 @@ tr.expired {
 	--fullbleed-on-image-text: rgba(255, 255, 255, 0.88);
 	--fullbleed-on-image-muted: rgba(255, 255, 255, 0.72);
 	--fullbleed-on-image-shadow: rgba(0, 0, 0, 0.5);
+	/* Behind text on a tenant's own image, whose lightness is unknown (none on the default). */
+	--fullbleed-on-image-backdrop: transparent;
+	--fullbleed-on-image-backdrop-image: rgba(14, 10, 9, 0.62);
 }
 
 :is(:root, .login-ui-theme-boundary)[data-theme='light'][data-login-theme='fullbleed-glass'] {
@@ -6431,7 +6436,7 @@ tr.expired {
 	--text-muted: #655a54;
 	--input-border: rgba(34, 27, 23, 0.28);
 	--button-primary-bg: var(--primary);
-	--button-primary-text: #ffffff;
+	--button-primary-text: var(--login-accent-text, #ffffff);
 	--button-secondary-bg: rgba(255, 255, 255, 0.55);
 	--button-secondary-border: rgba(34, 27, 23, 0.35);
 	--button-secondary-text: #221b17;
@@ -6462,6 +6467,16 @@ tr.expired {
 	--fullbleed-on-image-text: #3d332e;
 	--fullbleed-on-image-muted: #4a3f39;
 	--fullbleed-on-image-shadow: rgba(255, 250, 246, 0.6);
+	--fullbleed-on-image-backdrop-image: rgba(250, 245, 240, 0.78);
+}
+
+/* A tenant's image may be light or dark, so text placed on it sits on a backdrop that keeps it
+   readable over any image. */
+:is(
+		:root,
+		.login-ui-theme-boundary
+	)[data-login-theme='fullbleed-glass'][data-has-page-background-image='true'] {
+	--fullbleed-on-image-backdrop: var(--fullbleed-on-image-backdrop-image);
 }
 
 :is(:root, .login-ui-theme-boundary)[data-font-family='rounded'] {
@@ -6931,6 +6946,12 @@ tr.expired {
 	color: var(--fullbleed-on-image-title);
 	text-decoration: underline;
 	text-underline-offset: 3px;
+}
+
+/* The backdrop behind on-image text paints outside the box (no layout shift). */
+[data-login-theme='fullbleed-glass'] .auth-page :is(.auth-header, .auth-footer, .auth-bottom-link) {
+	background: var(--fullbleed-on-image-backdrop);
+	box-shadow: 0 0 0 10px var(--fullbleed-on-image-backdrop);
 }
 
 [data-login-theme='fullbleed-glass'] .runtime-screen-heading h2 {

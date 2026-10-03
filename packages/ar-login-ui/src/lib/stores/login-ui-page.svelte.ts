@@ -1,3 +1,4 @@
+import { accentTextColor } from '$lib/utils/accent-text';
 import { browser } from '$app/environment';
 import type {
 	LoginUIConfig,
@@ -292,6 +293,7 @@ export function createLoginUIPageStore() {
 		);
 		syncLoginUIDocumentSurface();
 		setOptionalStyleProperty('--login-accent-color', sanitizeColor(accentColor) || null);
+		setOptionalStyleProperty('--login-accent-text', accentTextColor(sanitizeColor(accentColor)));
 		setOptionalStyleProperty('--login-title-color', sanitizeColor(titleColor) || null);
 		setOptionalStyleProperty('--login-text-color', sanitizeColor(textColor) || null);
 		setOptionalStyleProperty('--login-copy-color', sanitizeColor(copyColor) || null);
@@ -395,6 +397,10 @@ export function createLoginUIPageStore() {
 		},
 		get accentColor() {
 			return accentColor;
+		},
+		/** The text colour that reads on the accent (null without an accent). */
+		get accentTextColor() {
+			return accentTextColor(accentColor);
 		},
 		get titleColor() {
 			return titleColor;
