@@ -581,6 +581,14 @@ html[dir='rtl'] .form-select {
 	color: var(--text-primary);
 }
 
+/* Set for each scheme, not only on :root: a light boundary inside a dark document (the Storybook
+   frame, a page that switches scheme) must not inherit the dark values. */
+[data-theme='light'] {
+	--danger-bg: #b91c1c;
+	--danger-fg: #991b1b;
+	--warning-fg: #92400e;
+}
+
 [data-theme='dark'] {
 	--danger-bg: #dc2626;
 	--danger-fg: #fca5a5;

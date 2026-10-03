@@ -173,13 +173,20 @@ const CASES: Case[] = [
 	{ name: 'fullbleed glass light', values: glassLight, behind: imageryUnderScrim(glassLight) }
 ];
 
-/** The destructive / warning colours: the base ones, with the dark scheme's overrides. */
+/** The destructive / warning colours: the base ones, with the scheme's own. */
 const status = (dark: boolean) => ({
 	...BASE,
-	...(dark ? tokens(app, "\n[data-theme='dark'] {") : {})
+	...tokens(app, dark ? "[data-theme='dark'] {" : "[data-theme='light'] {")
 });
 
 describe('theme contrast', () => {
+	it('each scheme sets every status colour the other changes', () => {
+		// A boundary of one scheme inside a document of the other inherits whatever it leaves unset.
+		const light = Object.keys(tokens(app, "[data-theme='light'] {")).sort();
+		const dark = Object.keys(tokens(app, "[data-theme='dark'] {")).sort();
+		expect(light).toEqual(dark);
+	});
+
 	it.each(CASES)(
 		'$name: destructive buttons and error / warning text meet AA',
 		({ name, values, behind }) => {
