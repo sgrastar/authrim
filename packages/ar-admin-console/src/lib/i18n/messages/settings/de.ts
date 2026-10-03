@@ -36,14 +36,6 @@ export const deSettings: Record<keyof typeof jaSettings, string> = {
 	'set.k.session.max_ttl': 'Längste erlaubte Anmeldung',
 	'set.k.session.max_ttl.desc':
 		'Die längste Zeit, die für das Angemeldetbleiben festgelegt werden kann.',
-	'set.k.session.min_ttl': 'Kürzeste erlaubte Anmeldung',
-	'set.k.session.min_ttl.desc':
-		'Die kürzeste Zeit, die für das Angemeldetbleiben festgelegt werden kann.',
-	'set.k.session.token_ttl': 'Gültigkeit des Sitzungstokens',
-	'set.k.session.token_ttl.desc': 'Wie lange das Token zur Verwaltung von Sitzungen gültig ist.',
-	'set.k.session.tombstone_ttl': 'Beendete Sitzungen merken für',
-	'set.k.session.tombstone_ttl.desc':
-		'Wie lange eine beendete Sitzung (z. B. nach der Abmeldung) gemerkt wird, um sie abzulehnen.',
 
 	'set.k.oauth.access_token_expiry': 'Gültigkeit des Access-Tokens',
 	'set.k.oauth.access_token_expiry.desc':
@@ -64,10 +56,6 @@ export const deSettings: Record<keyof typeof jaSettings, string> = {
 	'set.k.oauth.refresh_token_absolute_expiry_enabled.desc':
 		'Begrenzt die Zeit seit dem ersten Token. Danach meldet sich die Person erneut an.',
 	'set.k.oauth.refresh_token_absolute_expiry': 'Obergrenze (ab dem ersten Token)',
-	'set.k.oauth.refresh_token_remaining_expiry_inherit':
-		'Ein neues Token übernimmt die Restzeit des alten',
-	'set.k.oauth.refresh_token_remaining_expiry_inherit.desc':
-		'Aus: Die Gültigkeit eines neuen Tokens beginnt bei seiner Ausstellung.',
 	'set.k.oauth.offline_access_required': 'Nur an Apps ausstellen, die offline_access anfordern',
 	'set.k.oauth.offline_access_required.desc':
 		'Aus: Refresh-Tokens werden unabhängig von den angeforderten Scopes ausgestellt.',
@@ -99,6 +87,7 @@ export const deSettings: Record<keyof typeof jaSettings, string> = {
 	'settings.defaultFrom.platform': 'Plattform-Standard: {value}',
 	'settings.defaultFrom.tenant': 'Mandanten-Standard: {value}',
 	'settings.locked.platform': 'Durch die Plattform-Einstellungen festgelegt',
+	'settings.inDevelopment': 'In Entwicklung: Eine Änderung wirkt sich noch nicht aus',
 	'settings.locked.tenant': 'Durch die Mandanten-Einstellungen festgelegt',
 	'settings.badge.locked': 'Gesperrt',
 	'settings.badge.here': 'Überschrieben',

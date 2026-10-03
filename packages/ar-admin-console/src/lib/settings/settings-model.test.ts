@@ -50,17 +50,23 @@ describe('a settings page’s values', () => {
 			'session.refresh_default',
 			'oauth.sso_enabled'
 		]);
-		expect(view.advanced.map((s) => s.key)).not.toContain('session.token_ttl');
 		expect(view.setHere).toBe(0);
+		const logout = sectionView(section('logout'), plain, levels);
+		expect(logout.advanced.map((s) => s.key)).not.toContain('session.backchannel_logout_token_exp');
 
 		const tuned = valuesFrom(
 			STAYING_SIGNED_IN,
 			await load({
-				stored: { 'tenant:acme': { 'session.token_ttl': 600, 'session.ttl.passkey': 86400000 } }
+				stored: {
+					'tenant:acme': {
+						'session.backchannel_logout_token_exp': 600,
+						'session.backchannel_request_timeout_ms': 5000
+					}
+				}
 			})
 		);
-		const tunedView = sectionView(section('sign-in'), tuned, levels);
-		expect(tunedView.advanced.map((s) => s.key)).toContain('session.token_ttl');
+		const tunedView = sectionView(section('logout'), tuned, levels);
+		expect(tunedView.advanced.map((s) => s.key)).toContain('session.backchannel_logout_token_exp');
 		expect(tunedView.setHere).toBe(2);
 	});
 

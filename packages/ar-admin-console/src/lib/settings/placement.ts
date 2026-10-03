@@ -106,10 +106,7 @@ export const STAYING_SIGNED_IN: SettingsPageDef = {
 				{ key: 'session.ttl.did', depth: 'advanced' },
 				{ key: 'session.ttl.guest', depth: 'advanced' },
 				{ key: 'session.ttl.passkey_registration', depth: 'advanced' },
-				{ key: 'session.max_ttl', depth: 'advanced' },
-				{ key: 'session.min_ttl', depth: 'advanced' },
-				{ key: 'session.token_ttl', depth: 'search' },
-				{ key: 'session.tombstone_ttl', depth: 'search' }
+				{ key: 'session.max_ttl', depth: 'advanced' }
 			]
 		},
 		{
@@ -129,7 +126,6 @@ export const STAYING_SIGNED_IN: SettingsPageDef = {
 					depth: 'advanced',
 					when: { key: 'oauth.refresh_token_absolute_expiry_enabled', is: true }
 				},
-				{ key: 'oauth.refresh_token_remaining_expiry_inherit', depth: 'advanced' },
 				{ key: 'oauth.offline_access_required', depth: 'advanced' },
 				{ key: 'oauth.refresh_id_token_reissue', depth: 'advanced' }
 			]

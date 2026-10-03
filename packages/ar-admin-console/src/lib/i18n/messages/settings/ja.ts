@@ -36,13 +36,6 @@ export const jaSettings = {
 	'set.k.session.ttl.passkey_registration': 'パスキーを登録した直後',
 	'set.k.session.max_ttl': 'ログインを保つ時間の上限',
 	'set.k.session.max_ttl.desc': 'ログインを保つ時間として指定できる、いちばん長い値です。',
-	'set.k.session.min_ttl': 'ログインを保つ時間の下限',
-	'set.k.session.min_ttl.desc': 'ログインを保つ時間として指定できる、いちばん短い値です。',
-	'set.k.session.token_ttl': 'セッショントークンの有効期間',
-	'set.k.session.token_ttl.desc': 'セッションの管理に使うトークンの有効期間です。',
-	'set.k.session.tombstone_ttl': '終了したセッションを覚えておく期間',
-	'set.k.session.tombstone_ttl.desc':
-		'ログアウトなどで終了したセッションを、無効と判断するために覚えておく期間です。',
 
 	'set.k.oauth.access_token_expiry': 'アクセストークンの有効期間',
 	'set.k.oauth.access_token_expiry.desc':
@@ -62,10 +55,6 @@ export const jaSettings = {
 	'set.k.oauth.refresh_token_absolute_expiry_enabled.desc':
 		'最初に発行してからの期間に上限を設けます。上限を過ぎると、利用者はログインし直します。',
 	'set.k.oauth.refresh_token_absolute_expiry': '上限（最初の発行から）',
-	'set.k.oauth.refresh_token_remaining_expiry_inherit':
-		'新しいトークンは古いトークンの残りの期間を引き継ぐ',
-	'set.k.oauth.refresh_token_remaining_expiry_inherit.desc':
-		'オフにすると、新しいトークンは発行した時点から数え直します。',
 	'set.k.oauth.offline_access_required': 'offline_access を求めたアプリにだけ発行する',
 	'set.k.oauth.offline_access_required.desc':
 		'オフにすると、スコープに関係なくリフレッシュトークンを発行します。',
@@ -95,6 +84,7 @@ export const jaSettings = {
 	'settings.defaultFrom.platform': 'プラットフォーム既定値: {value}',
 	'settings.defaultFrom.tenant': 'テナント既定値: {value}',
 	'settings.locked.platform': 'プラットフォーム設定による固定値',
+	'settings.inDevelopment': '開発中：変更してもまだ効きません',
 	'settings.locked.tenant': 'テナント設定による固定値',
 	'settings.badge.locked': '上書き不可',
 	'settings.badge.here': '上書き中',

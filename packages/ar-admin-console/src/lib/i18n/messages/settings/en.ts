@@ -34,13 +34,6 @@ export const enSettings: Record<keyof typeof jaSettings, string> = {
 	'set.k.session.ttl.passkey_registration': 'Right after registering a passkey',
 	'set.k.session.max_ttl': 'Longest sign-in allowed',
 	'set.k.session.max_ttl.desc': 'The longest time that can be set for staying signed in.',
-	'set.k.session.min_ttl': 'Shortest sign-in allowed',
-	'set.k.session.min_ttl.desc': 'The shortest time that can be set for staying signed in.',
-	'set.k.session.token_ttl': 'Session token lifetime',
-	'set.k.session.token_ttl.desc': 'How long the token used to manage sessions is valid.',
-	'set.k.session.tombstone_ttl': 'Remember ended sessions for',
-	'set.k.session.tombstone_ttl.desc':
-		'How long a session that ended (by signing out, for example) is remembered, to refuse it.',
 
 	'set.k.oauth.access_token_expiry': 'Access token lifetime',
 	'set.k.oauth.access_token_expiry.desc':
@@ -60,10 +53,6 @@ export const enSettings: Record<keyof typeof jaSettings, string> = {
 	'set.k.oauth.refresh_token_absolute_expiry_enabled.desc':
 		'Limits the time since the first token was issued. After it, the person signs in again.',
 	'set.k.oauth.refresh_token_absolute_expiry': 'Limit (from the first token)',
-	'set.k.oauth.refresh_token_remaining_expiry_inherit':
-		'A new token keeps the time left on the old one',
-	'set.k.oauth.refresh_token_remaining_expiry_inherit.desc':
-		'Off: a new token’s lifetime starts when it is issued.',
 	'set.k.oauth.offline_access_required': 'Issue only to apps that ask for offline_access',
 	'set.k.oauth.offline_access_required.desc':
 		'Off: refresh tokens are issued whatever scopes the app asks for.',
@@ -94,6 +83,7 @@ export const enSettings: Record<keyof typeof jaSettings, string> = {
 	'settings.defaultFrom.platform': 'Platform default: {value}',
 	'settings.defaultFrom.tenant': 'Tenant default: {value}',
 	'settings.locked.platform': 'Fixed by the platform settings',
+	'settings.inDevelopment': 'In development: changing this has no effect yet',
 	'settings.locked.tenant': 'Fixed by the tenant settings',
 	'settings.badge.locked': 'Locked',
 	'settings.badge.here': 'Overridden',

@@ -34,13 +34,6 @@ export const arSettings: Record<keyof typeof jaSettings, string> = {
 	'set.k.session.ttl.passkey_registration': 'مباشرة بعد تسجيل مفتاح مرور',
 	'set.k.session.max_ttl': 'أطول مدة دخول مسموحة',
 	'set.k.session.max_ttl.desc': 'أطول مدة يمكن تحديدها للبقاء مسجلاً للدخول.',
-	'set.k.session.min_ttl': 'أقصر مدة دخول مسموحة',
-	'set.k.session.min_ttl.desc': 'أقصر مدة يمكن تحديدها للبقاء مسجلاً للدخول.',
-	'set.k.session.token_ttl': 'مدة صلاحية رمز الجلسة',
-	'set.k.session.token_ttl.desc': 'مدة صلاحية الرمز المستخدم لإدارة الجلسات.',
-	'set.k.session.tombstone_ttl': 'تذكّر الجلسات المنتهية لمدة',
-	'set.k.session.tombstone_ttl.desc':
-		'المدة التي تُتذكّر فيها الجلسة المنتهية (بتسجيل الخروج مثلاً) لرفضها.',
 
 	'set.k.oauth.access_token_expiry': 'مدة صلاحية رمز الوصول',
 	'set.k.oauth.access_token_expiry.desc':
@@ -60,10 +53,6 @@ export const arSettings: Record<keyof typeof jaSettings, string> = {
 	'set.k.oauth.refresh_token_absolute_expiry_enabled.desc':
 		'يحدّ المدة منذ إصدار أول رمز. بعدها يسجّل الشخص الدخول مجدداً.',
 	'set.k.oauth.refresh_token_absolute_expiry': 'الحد (من أول رمز)',
-	'set.k.oauth.refresh_token_remaining_expiry_inherit':
-		'يحتفظ الرمز الجديد بالمدة المتبقية من القديم',
-	'set.k.oauth.refresh_token_remaining_expiry_inherit.desc':
-		'عند الإيقاف: تبدأ صلاحية الرمز الجديد عند إصداره.',
 	'set.k.oauth.offline_access_required': 'الإصدار فقط للتطبيقات التي تطلب offline_access',
 	'set.k.oauth.offline_access_required.desc':
 		'عند الإيقاف: تُصدر رموز التحديث أياً كانت النطاقات التي يطلبها التطبيق.',
@@ -92,6 +81,7 @@ export const arSettings: Record<keyof typeof jaSettings, string> = {
 	'settings.defaultFrom.platform': 'الافتراضي للمنصة: {value}',
 	'settings.defaultFrom.tenant': 'الافتراضي للمستأجر: {value}',
 	'settings.locked.platform': 'قيمة ثابتة بإعدادات المنصة',
+	'settings.inDevelopment': 'قيد التطوير: لا يؤثر تغييره بعد',
 	'settings.locked.tenant': 'قيمة ثابتة بإعدادات المستأجر',
 	'settings.badge.locked': 'مقفل',
 	'settings.badge.here': 'متجاوز',

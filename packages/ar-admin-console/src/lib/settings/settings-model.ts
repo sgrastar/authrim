@@ -78,7 +78,8 @@ export function fallbackOf(
 
 function applies(setting: PlacedSetting, meta: SettingMeta | undefined, values: Values): boolean {
 	if (!meta || setting.depth === 'hidden') return false;
-	if (meta.visibility === 'internal' || meta.status === 'in_development') return false;
+	// A setting still in development is shown (as not changeable), not hidden.
+	if (meta.visibility === 'internal') return false;
 	if (setting.when && values[fieldOf(setting.when.key)]?.v !== setting.when.is) return false;
 	return true;
 }
