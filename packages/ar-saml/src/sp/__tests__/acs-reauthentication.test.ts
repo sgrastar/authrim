@@ -48,6 +48,18 @@ describe('provenSPReauthentication', () => {
     ).resolves.toBeNull();
   });
 
+  it("refuses a request stored before the IdP's stable id was kept", async () => {
+    const legacy = {
+      authorizationChallengeId: 'reauth_1',
+      requestedAt,
+      providerKeys: ['saml:idp-1', 'idp-1'],
+    } as unknown as typeof reauthentication;
+    await expect(
+      provenSPReauthentication(env, 'tenant-a', legacy, '2026-10-03T10:00:05Z')
+    ).resolves.toBeNull();
+    expect(mockReauthPolicy).not.toHaveBeenCalled();
+  });
+
   it('refuses when the IdP can no longer re-authenticate or settings are unreadable', async () => {
     mockReauthPolicy.mockResolvedValue({ reauthEnabled: false, acceptWithoutAuthTime: false });
     await expect(

@@ -2039,6 +2039,8 @@ export async function provenSPReauthentication(
   reauthentication: NonNullable<NonNullable<SAMLRequestData['context']>['spReauthentication']>,
   authnInstant: string | undefined
 ): Promise<number | null> {
+  // A request stored before the IdP's stable id was kept cannot be matched to its settings.
+  if (!reauthentication.providerId || !Array.isArray(reauthentication.providerIds)) return null;
   const authnInstantMs = authnInstant ? new Date(authnInstant).getTime() : Number.NaN;
   if (
     !Number.isFinite(authnInstantMs) ||

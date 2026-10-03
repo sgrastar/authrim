@@ -78,5 +78,23 @@ describe('readExternalProviderReauthPolicy', () => {
         corp
       )
     ).rejects.toThrow('external_provider_usage_invalid');
+    // An explicit null is a value not understood, not an unset one.
+    await expect(
+      readExternalProviderReauthPolicy(
+        env(usage([{ id: 'corp', providerId: 'provider-a', reauthEnabled: null }])),
+        't',
+        corp
+      )
+    ).rejects.toThrow('external_provider_usage_invalid');
+    await expect(
+      readExternalProviderReauthPolicy(
+        env({ 'authentication-methods.external_provider_usage': null }),
+        't',
+        corp
+      )
+    ).rejects.toThrow('external_provider_usage_invalid');
+    await expect(
+      readExternalProviderReauthPolicy(env(null), 't', { providerId: '', ids: ['corp'] })
+    ).rejects.toThrow('external_provider_key_invalid');
   });
 });

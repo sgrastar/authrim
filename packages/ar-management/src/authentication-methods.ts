@@ -135,6 +135,8 @@ interface ExternalLoginProvider {
   buttonColor?: string;
   buttonText?: string;
   startUrl?: string;
+  /** The provider's stable id, for matching its saved usage; never returned. */
+  stableId?: string;
 }
 
 interface ExternalAuthenticationMethod {
@@ -1544,6 +1546,7 @@ async function fetchExternalLoginProviders(
         const id = truncateString(p.slug || p.id);
         return {
           id,
+          stableId: truncateString(p.id),
           name: truncateString(p.name),
           type,
           startMode: 'oauth_redirect',
@@ -1591,6 +1594,7 @@ async function fetchSAMLLoginProviders(
       .filter((row) => row.id && row.name)
       .map((row) => ({
         id: `saml:${truncateString(row.id)}`,
+        stableId: truncateString(row.id),
         name: truncateString(row.name),
         type: 'saml',
         startMode: 'saml_sp',
@@ -2109,13 +2113,22 @@ function applyExternalProviderUsage(
   providers: ExternalLoginProvider[],
   usageById: Record<string, ExternalLoginProviderUsageConfig>
 ): ExternalLoginProvider[] {
+  const entries = [...new Set(Object.values(usageById))];
   return providers
-    .map((provider) => {
+    .map(({ stableId, ...provider }) => {
       // A pure OAuth 2.0 provider returns no ID token to date a new login, so it cannot answer a
       // re-authentication (the bridge refuses one), whatever the setting says.
       const canReauthenticate = provider.type !== 'oauth2';
+      // The entry naming the provider's stable id, else an older entry without one matched by id:
+      // a slug can be renamed or reused, so it never picks another provider's entry.
       const saved =
-        usageById[provider.id] ?? (provider.slug ? usageById[provider.slug] : undefined);
+        (stableId ? entries.find((entry) => entry.providerId === stableId) : undefined) ??
+        entries.find(
+          (entry) =>
+            !entry.providerId &&
+            typeof entry.id === 'string' &&
+            (entry.id === provider.id || entry.id === provider.slug)
+        );
       if (!saved) {
         return canReauthenticate ? provider : { ...provider, reauthEnabled: false };
       }

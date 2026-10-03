@@ -100,7 +100,7 @@ export interface ExternalProviderUsageKey {
 }
 
 function strictBoolean(value: unknown, fallback: boolean): boolean {
-  if (value === undefined || value === null) return fallback;
+  if (value === undefined) return fallback;
   if (typeof value === 'boolean') return value;
   if (typeof value === 'string') {
     const normalized = value.trim().toLowerCase();
@@ -122,6 +122,7 @@ export async function readExternalProviderReauthPolicy(
   tenantId: string,
   key: ExternalProviderUsageKey
 ): Promise<ExternalProviderReauthPolicy> {
+  if (!key.providerId) throw new Error('external_provider_key_invalid');
   const defaults: ExternalProviderReauthPolicy = {
     reauthEnabled: true,
     acceptWithoutAuthTime: false,
@@ -137,7 +138,8 @@ export async function readExternalProviderReauthPolicy(
   const usageValue = (settings as Record<string, unknown>)[
     'authentication-methods.external_provider_usage'
   ];
-  if (usageValue === undefined || usageValue === null || usageValue === '') return defaults;
+  if (usageValue === undefined) return defaults;
+  if (usageValue === null || usageValue === '') throw new Error('external_provider_usage_invalid');
   const usage = typeof usageValue === 'string' ? (JSON.parse(usageValue) as unknown) : usageValue;
   if (!Array.isArray(usage)) throw new Error('external_provider_usage_invalid');
   const entries = usage.filter(
