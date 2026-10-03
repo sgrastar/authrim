@@ -76,7 +76,10 @@
 	}}
 	play={async ({ args, canvasElement }) => {
 		const canvas = within(canvasElement);
-		await waitFor(() => expect(canvas.getByAltText(get(LL).account_totpQrAlt())).toBeVisible());
+		// The QR library loads on demand, which can outlast waitFor's one-second default.
+		await waitFor(() => expect(canvas.getByAltText(get(LL).account_totpQrAlt())).toBeVisible(), {
+			timeout: 10_000
+		});
 		await userEvent.type(canvas.getByLabelText(get(LL).account_totpActivationCode()), '123456');
 		await userEvent.click(canvas.getByRole('button', { name: get(LL).account_totpActivate() }));
 		await expect(args.onActivateEnrollment).toHaveBeenCalledWith('123456');
