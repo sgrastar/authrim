@@ -2361,12 +2361,15 @@ describe('LoginUI runtime Flow handlers', () => {
   });
 
   it.each([
-    ['older than', 1_700_000_124_000, 'auth:step'],
-    ['newer than', 1_700_000_123_000, null],
-    ['unreadable for', new Error('challenge store unavailable'), 'auth:step'],
+    ['older than', 1_700_000_124_000, 'auth:step', undefined],
+    ['newer than', 1_700_000_123_000, null, undefined],
+    ['unreadable for', new Error('challenge store unavailable'), 'auth:step', undefined],
+    // Within the same second, the session's proof time in milliseconds decides.
+    ['proven just before', 1_700_000_123_500, 'auth:step', 1_700_000_123_400],
+    ['proven just after', 1_700_000_123_500, null, 1_700_000_123_600],
   ] as const)(
     'routes a session %s a re-authentication request accordingly',
-    async (_label, reauthIssuedAt, nextStepId) => {
+    async (_label, reauthIssuedAt, nextStepId, provenAt) => {
       const { data: startData } = await startInteraction(
         { flow_kind: 'login' },
         sessionCheckRuntime
@@ -2395,7 +2398,10 @@ describe('LoginUI runtime Flow handlers', () => {
         userId: 'user_1',
         expiresAt: Date.now() + 60_000,
         createdAt: 1_700_000_000_000,
-        data: { authTime: 1_700_000_123 },
+        data: {
+          authTime: 1_700_000_123,
+          ...(provenAt === undefined ? {} : { proven_at: provenAt }),
+        },
       });
 
       const response = await loginRuntimeInteractionSubmitHandler(
@@ -3208,7 +3214,8 @@ describe('LoginUI runtime Flow handlers', () => {
       'user_1',
       1_700_000_123,
       'https://first.test.authrim.com',
-      // The session's recorded method (its amr); this fixture records none.
+      // The session's recorded method (its amr) and proof time; this fixture records neither.
+      undefined,
       undefined
     );
   });

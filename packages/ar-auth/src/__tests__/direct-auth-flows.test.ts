@@ -2324,6 +2324,8 @@ describe('Direct Auth primary passkey and email-code flows', () => {
         metadata: expect.objectContaining({
           method: 'email_verification_protocol',
           runtime_interaction_id: 'interaction_1',
+          // When the email was proven, for the session redeemed from it.
+          proven_at: expect.any(Number),
         }),
       })
     );
@@ -3284,9 +3286,12 @@ describe('Direct Auth primary passkey and email-code flows', () => {
   });
 
   it.each([
-    ['refuses a proof made before the re-authentication was asked for', 999, true],
-    ['accepts a proof made after it', 1_001, false],
-  ])('%s', async (_label, authTime, refused) => {
+    ['refuses a proof made before the re-authentication was asked for', 999, undefined, true],
+    ['accepts a proof made after it', 1_001, undefined, false],
+    // Within the same second, the proof time in milliseconds decides.
+    ['refuses a proof made just before it in the same second', 1_000, 999_999, true],
+    ['accepts a proof made just after it in the same second', 1_000, 1_000_001, false],
+  ])('%s', async (_label, authTime, provenAtMs, refused) => {
     mocks.challengeStore.consumeChallengeRpc
       .mockRejectedValueOnce(new Error('not a login challenge'))
       .mockResolvedValueOnce({
@@ -3304,7 +3309,8 @@ describe('Direct Auth primary passkey and email-code flows', () => {
       'user_existing',
       authTime,
       'https://op.example.com',
-      'directory_password'
+      'directory_password',
+      provenAtMs
     );
 
     expect('error' in result).toBe(refused);

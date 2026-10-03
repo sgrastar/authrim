@@ -2564,7 +2564,13 @@ async function resolveSessionCheckSelectedHandle(
   } catch {
     return { selectedHandle: 'authenticate', userId: null };
   }
-  if (reauthIssuedAt !== null && getSessionAuthTime(session) < Math.floor(reauthIssuedAt / 1000)) {
+  const provenAtMs = getSessionProvenAtMs(session);
+  if (
+    reauthIssuedAt !== null &&
+    (provenAtMs !== undefined
+      ? provenAtMs < reauthIssuedAt
+      : getSessionAuthTime(session) < Math.floor(reauthIssuedAt / 1000))
+  ) {
     return { selectedHandle: 'authenticate', userId: null };
   }
   return { selectedHandle: 'continue', userId: session.userId };
@@ -2745,6 +2751,14 @@ function getRequestOrigin(c: AuthContext): string {
   return requestOrigin;
 }
 
+/** When the session's authentication was proven (milliseconds), when its producer recorded it. */
+function getSessionProvenAtMs(session: Session): number | undefined {
+  const provenAt = session.data?.proven_at;
+  return typeof provenAt === 'number' && Number.isSafeInteger(provenAt) && provenAt > 0
+    ? provenAt
+    : undefined;
+}
+
 function getSessionAuthTime(session: Session): number {
   return typeof session.data?.authTime === 'number'
     ? session.data.authTime
@@ -2796,7 +2810,8 @@ async function resolveCompletedProtocolRedirect(input: {
     reauthProvenMethodFromAmr(
       Array.isArray(session.data?.amr) ? session.data.amr : undefined,
       Array.isArray(session.data?.unverified_amr) ? session.data.unverified_amr : undefined
-    )
+    ),
+    getSessionProvenAtMs(session)
   );
   if ('error' in continuation) {
     return { response: continuation.error };

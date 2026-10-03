@@ -582,7 +582,9 @@ export async function consumeAuthorizationChallengeContinuation(
    * The method that proved the user. A re-authentication needs one (an unknown method, such as a
    * just-registered passkey, cannot complete it) and requires its re-authentication switch.
    */
-  provenMethod?: ReauthProvenMethod
+  provenMethod?: ReauthProvenMethod,
+  /** When the proof was verified (milliseconds), if known: freshness is then judged exactly. */
+  provenAtMs?: number
 ): Promise<AuthorizationChallengeContinuation | { error: Response }> {
   const env = c.env;
   const challengeStore = await getChallengeStoreByChallengeId(env, challengeId, tenantId);
@@ -648,7 +650,9 @@ export async function consumeAuthorizationChallengeContinuation(
   if (
     type === 'reauth' &&
     typeof reauthIssuedAt === 'number' &&
-    authTime < Math.floor(reauthIssuedAt / 1000)
+    (provenAtMs !== undefined
+      ? provenAtMs < reauthIssuedAt
+      : authTime < Math.floor(reauthIssuedAt / 1000))
   ) {
     return {
       error: new Response(
@@ -2206,6 +2210,8 @@ async function completeDirectEmailVerification(
     assuranceSettings,
   } = input;
   const log = getLogger(c).module('DIRECT-AUTH');
+  // The code (or provider proof) was verified just before this was called.
+  const provenAtMs = Date.now();
   // What the code was sent for still holds: the method's switch for that usage, and a
   // re-authentication proves only the user it was asked of.
   const usage = metadata.usage;
@@ -2362,6 +2368,8 @@ async function completeDirectEmailVerification(
       scope: metadataString(metadata, 'scope'),
       transaction_id: metadataString(metadata, 'transaction_id') || transactionId,
       is_new_user: isNewUser,
+      // When the email was proven (milliseconds), as the passkey artifact records it.
+      proven_at: provenAtMs,
       authorization_challenge_id: metadataString(metadata, 'authorization_challenge_id'),
       runtime_interaction_id: metadataString(metadata, 'runtime_interaction_id'),
     },
@@ -3399,7 +3407,10 @@ export async function directSessionCreateHandler(c: Context<{ Bindings: Env }>) 
 
     const sessionTtl = await resolveSessionTtl(c.env, tenantId, 'direct_auth');
     const now = Date.now();
-    const authTime = Math.floor(now / 1000);
+    // The session was authenticated when its artifact's proof was verified, not when it is
+    // redeemed; an artifact without one (an external IdP login) counts from now.
+    const provenAtMs = directSessionProvenAt(metadata).proven_at;
+    const authTime = Math.floor((provenAtMs ?? now) / 1000);
     const amr = [typeof metadata.method === 'string' ? metadata.method : 'direct_auth'];
     const acr = 'urn:mace:incommon:iap:bronze';
 
@@ -3421,7 +3432,8 @@ export async function directSessionCreateHandler(c: Context<{ Bindings: Env }>) 
         authTime,
         new URL(c.req.url).origin,
         // A passkey only just registered (passkey_signup) proves nothing yet.
-        reauthProvenMethodFromAmr(typeof metadata.method === 'string' ? [metadata.method] : [])
+        reauthProvenMethodFromAmr(typeof metadata.method === 'string' ? [metadata.method] : []),
+        provenAtMs
       );
       if ('error' in continuation) {
         return continuation.error;
