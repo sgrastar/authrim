@@ -576,20 +576,28 @@ function positiveSafeInteger(value: unknown): number | undefined {
 }
 
 /**
- * What a session (or the artifact it is made from) proves for a re-authentication: its method,
- * and when that was proven (milliseconds) when its producer recorded it. A session proven by
- * several methods records the time of the one a re-authentication takes (reauth_proven_at, e.g.
- * the email code of a directory fallback) apart from its oldest proof (proven_at, for assurance).
+ * What a session (or the artifact it is made from) proves for a re-authentication: its method and
+ * when that was proven (milliseconds), as one pair. A session proven by several methods records
+ * the one a re-authentication takes with its own time (reauth_proven_amr and reauth_proven_at,
+ * e.g. the email code of a directory fallback) apart from its oldest proof (proven_at, for
+ * assurance), so methods merged in later (an older TOTP) never borrow a newer method's time.
  */
 export function reauthProofFromRecord(
   record: Record<string, unknown> | undefined,
   amr: readonly string[] | undefined,
   unverifiedAmr: readonly string[] = []
 ): { method?: ReauthProvenMethod; provenAtMs?: number } {
+  const reauthProvenAt = positiveSafeInteger(record?.reauth_proven_at);
+  const reauthProvenAmr = Array.isArray(record?.reauth_proven_amr)
+    ? record.reauth_proven_amr.filter((value): value is string => typeof value === 'string')
+    : undefined;
+  if (reauthProvenAt !== undefined && reauthProvenAmr) {
+    const method = reauthProvenMethodFromAmr(reauthProvenAmr, unverifiedAmr);
+    return method ? { method, provenAtMs: reauthProvenAt } : {};
+  }
   const method = reauthProvenMethodFromAmr(amr, unverifiedAmr);
   if (!method) return {};
-  const provenAtMs =
-    positiveSafeInteger(record?.reauth_proven_at) ?? positiveSafeInteger(record?.proven_at);
+  const provenAtMs = positiveSafeInteger(record?.proven_at);
   return provenAtMs === undefined ? { method } : { method, provenAtMs };
 }
 
@@ -669,13 +677,12 @@ export async function consumeAuthorizationChallengeContinuation(
   const metadata = challengeData.metadata || {};
   // A re-authentication is answered only by a proof made after it was asked for.
   const reauthIssuedAt = metadata.reauth_issued_at;
+  // A re-authentication needs a proof the server dated after the request; a proof of unknown
+  // time (a session or artifact that did not record one) cannot show that.
   if (
     type === 'reauth' &&
     typeof reauthIssuedAt === 'number' &&
-    // Without the proof's milliseconds, only a later second shows it came after the request.
-    (provenAtMs !== undefined
-      ? provenAtMs < reauthIssuedAt
-      : authTime <= Math.floor(reauthIssuedAt / 1000))
+    (provenAtMs === undefined || provenAtMs < reauthIssuedAt)
   ) {
     return {
       error: new Response(
@@ -3553,9 +3560,7 @@ export async function directSessionCreateHandler(c: Context<{ Bindings: Env }>) 
         artifactData.userId,
         authTime,
         new URL(c.req.url).origin,
-        // An artifact that does not say when it was proven (one issued before artifacts recorded
-        // it) cannot show it came after a re-authentication was asked for.
-        reauthProof.provenAtMs === undefined ? undefined : reauthProof.method,
+        reauthProof.method,
         reauthProof.provenAtMs
       );
       if ('error' in continuation) {
@@ -4047,6 +4052,7 @@ const INTERNAL_SESSION_DATA_KEYS = [
   'upstream_acr',
   'proven_at',
   'reauth_proven_at',
+  'reauth_proven_amr',
 ];
 
 function publicSessionData(data: Session['data']): Session['data'] {

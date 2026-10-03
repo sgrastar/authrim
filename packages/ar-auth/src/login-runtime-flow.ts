@@ -2565,14 +2565,10 @@ async function resolveSessionCheckSelectedHandle(
     return { selectedHandle: 'authenticate', userId: null };
   }
   if (reauthIssuedAt !== null) {
-    // So does a session that cannot prove a re-authentication at all. Without the proof's
-    // milliseconds, only a later second shows it came after the request.
+    // So does a session that cannot prove a re-authentication at all, or not when it did.
     const proof = getSessionReauthProof(session);
     const stale =
-      !proof.method ||
-      (proof.provenAtMs !== undefined
-        ? proof.provenAtMs < reauthIssuedAt
-        : getSessionAuthTime(session) <= Math.floor(reauthIssuedAt / 1000));
+      !proof.method || proof.provenAtMs === undefined || proof.provenAtMs < reauthIssuedAt;
     if (stale) return { selectedHandle: 'authenticate', userId: null };
   }
   return { selectedHandle: 'continue', userId: session.userId };

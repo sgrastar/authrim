@@ -3394,8 +3394,10 @@ describe('Direct Auth primary passkey and email-code flows', () => {
   });
 
   it.each([
-    ['refuses a proof made before the re-authentication was asked for', 999, undefined, true],
-    ['accepts a proof made after it', 1_001, undefined, false],
+    ['refuses a proof made before the re-authentication was asked for', 999, 999_000, true],
+    ['accepts a proof made after it', 1_001, 1_001_000, false],
+    // A proof the server did not date cannot show it came after the request, however late.
+    ['refuses a proof of unknown time', 1_001, undefined, true],
     // Within the same second, the proof time in milliseconds decides.
     ['refuses a proof made just before it in the same second', 1_000, 999_999, true],
     ['accepts a proof made just after it in the same second', 1_000, 1_000_001, false],
@@ -3429,12 +3431,22 @@ describe('Direct Auth primary passkey and email-code flows', () => {
 
     // A directory fallback: its email code (taken) was proven after its password (the oldest).
     expect(
-      reauthProofFromRecord({ proven_at: 1_000, reauth_proven_at: 2_000 }, [
-        'pwd',
-        'directory',
-        'otp',
-      ])
+      reauthProofFromRecord(
+        { proven_at: 1_000, reauth_proven_amr: ['otp'], reauth_proven_at: 2_000 },
+        ['pwd', 'directory', 'otp']
+      )
     ).toEqual({ method: 'email_otp', provenAtMs: 2_000 });
+    // A TOTP merged in later never borrows the email code's time.
+    expect(
+      reauthProofFromRecord(
+        { proven_at: 500, reauth_proven_amr: ['otp'], reauth_proven_at: 2_000 },
+        ['pwd', 'directory', 'otp', 'totp']
+      )
+    ).toEqual({ method: 'email_otp', provenAtMs: 2_000 });
+    // A time without its method is not used.
+    expect(reauthProofFromRecord({ reauth_proven_at: 2_000 }, ['totp'])).toEqual({
+      method: 'totp',
+    });
     expect(reauthProofFromRecord({ proven_at: 1_000 }, ['passkey'])).toEqual({
       method: 'passkey',
       provenAtMs: 1_000,

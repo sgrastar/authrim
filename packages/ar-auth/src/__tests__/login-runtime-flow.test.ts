@@ -2362,9 +2362,9 @@ describe('LoginUI runtime Flow handlers', () => {
 
   it.each([
     ['older than', 1_700_000_124_000, 'auth:step', undefined],
-    ['newer than', 1_700_000_122_000, null, undefined],
-    // Without the proof's milliseconds, the request's own second is not shown to be later.
-    ['in the same second as', 1_700_000_123_000, 'auth:step', undefined],
+    ['newer than', 1_700_000_122_000, null, 1_700_000_123_000],
+    // A session that did not record when it was proven cannot show it came after the request.
+    ['of unknown proof time, after', 1_700_000_100_000, 'auth:step', undefined],
     ['unreadable for', new Error('challenge store unavailable'), 'auth:step', undefined],
     // Within the same second, the session's proof time in milliseconds decides.
     ['proven just before', 1_700_000_123_500, 'auth:step', 1_700_000_123_400],

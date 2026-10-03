@@ -1356,7 +1356,7 @@ export async function directoryMigrationEmailCodeVerifyHandler(c: Context<{ Bind
       // recovery proves only the code.
       provenAt: transaction.scope === 'recovery' ? now : transaction.created_at,
       // Its email code, the method a re-authentication takes from it, was proven now.
-      ...(transaction.scope === 'recovery' ? {} : { reauthProvenAt: now }),
+      ...(transaction.scope === 'recovery' ? {} : { reauthProof: { amr: ['otp'], at: now } }),
       method:
         transaction.scope === 'recovery'
           ? 'directory_unavailable_email_code_recovery'
@@ -1663,8 +1663,8 @@ async function createDirectorySessionSuccessResponse(
      * methods (a migration's password was verified when the transaction was made).
      */
     provenAt: number;
-    /** When the method a re-authentication takes was proven, where that differs (ms). */
-    reauthProvenAt?: number;
+    /** The method a re-authentication takes and when it was proven (ms), where that differs. */
+    reauthProof?: { amr: string[]; at: number };
     connectorId: string;
     wordwardenConnectorId: string;
     requestId?: string;
@@ -1710,8 +1710,11 @@ async function createDirectorySessionSuccessResponse(
       ...directorySessionUnverifiedAmr(input.method),
       // When the authentication was proven (milliseconds), for assurance step-ups.
       proven_at: input.provenAt,
-      // When the method a re-authentication takes was proven, where it differs from the oldest.
-      ...(input.reauthProvenAt !== undefined ? { reauth_proven_at: input.reauthProvenAt } : {}),
+      // The method a re-authentication takes and when it was proven, where it differs from the
+      // oldest proof (a fallback's email code).
+      ...(input.reauthProof
+        ? { reauth_proven_amr: input.reauthProof.amr, reauth_proven_at: input.reauthProof.at }
+        : {}),
       acr: 'urn:mace:incommon:iap:bronze',
       authTime: input.authTime,
       directory_connector_id: input.connectorId,
