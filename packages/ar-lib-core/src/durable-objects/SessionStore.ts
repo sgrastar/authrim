@@ -166,6 +166,8 @@ export const SESSION_CLIENT_NAMESPACE_VERSION = 2;
  */
 export class SessionStore extends DurableObject<Env> {
   private sessionCache: Map<string, Session> = new Map();
+  /** Rebinds in progress, per session: one at a time, so none undoes another's index entry. */
+  private sessionRebinds = new Map<string, Promise<unknown>>();
   private actorCtx: ActorContext;
   private tenantId: string | null = null;
 
@@ -740,12 +742,29 @@ export class SessionStore extends DurableObject<Env> {
   /**
    * Update session user ID
    * Used when anonymous user sub changes during upgrade (preserve_sub=false)
+   *
+   * Rebinds of one session run one after another: a rebind that found the session changed
+   * withdraws its index registration, which must not be the one a concurrent rebind kept.
    */
   async updateSessionUserId(sessionId: string, newUserId: string): Promise<Session | null> {
+    const previous = this.sessionRebinds.get(sessionId) ?? Promise.resolve();
+    const run = previous.then(() => this.rebindSessionUser(sessionId, newUserId));
+    const settled = run.catch(() => undefined);
+    this.sessionRebinds.set(sessionId, settled);
+    try {
+      return await run;
+    } finally {
+      if (this.sessionRebinds.get(sessionId) === settled) this.sessionRebinds.delete(sessionId);
+    }
+  }
+
+  private async rebindSessionUser(sessionId: string, newUserId: string): Promise<Session | null> {
     const current = await this.getSession(sessionId);
     if (!current) {
       return null;
     }
+    // Already bound to this user (a repeated rebind): nothing to register or withdraw.
+    if (current.userId === newUserId) return current;
 
     const accountId = `account:${newUserId}`;
     const tenantId = this.requireTenantId(current.tenantId, 'Session user update');

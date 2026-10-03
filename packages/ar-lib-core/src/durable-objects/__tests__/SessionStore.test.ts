@@ -827,6 +827,36 @@ describe('SessionStore', () => {
       );
     });
 
+    it('keeps the index entry of concurrent rebinds to the same user', async () => {
+      const id = '0_session_race_rebind_twice';
+      await create(id);
+      sessionRevocationStub.registerSessionRpc.mockImplementation(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        return { revokedAfterMs: null, revocationBoundAtMs: Date.now() };
+      });
+      sessionRevocationStub.registerSessionRpc.mockClear();
+      sessionRevocationStub.unregisterSessionRpc.mockClear();
+
+      const [first, second] = await Promise.all([
+        sessionStore.updateSessionUserIdRpc(id, 'user_456'),
+        sessionStore.updateSessionUserIdRpc(id, 'user_456'),
+      ]);
+
+      expect(first).toMatchObject({ userId: 'user_456' });
+      expect(second).toEqual(first);
+      // The second finds the session already bound to the user and registers nothing.
+      expect(sessionRevocationStub.registerSessionRpc).toHaveBeenCalledTimes(1);
+      expect(sessionRevocationStub.unregisterSessionRpc).not.toHaveBeenCalledWith(
+        'tenant-a',
+        'user_456',
+        'account:user_456',
+        id
+      );
+      await expect(mockState.storage.get(`session:${id}`)).resolves.toMatchObject({
+        userId: 'user_456',
+      });
+    });
+
     it('keeps a session that was only updated meanwhile', async () => {
       const id = '0_session_race_updated';
       await create(id);
