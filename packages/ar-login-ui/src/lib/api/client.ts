@@ -591,11 +591,18 @@ function createDirectAuthClient(): DirectAuthBrowserSessionClient {
 	});
 }
 
-function directAuthRequestOptions() {
+function directAuthRequestOptions(extraHeaders: Record<string, string> = {}) {
 	return {
-		headers: Object.fromEntries(buildDiagnosticHeaders().entries()),
+		headers: { ...Object.fromEntries(buildDiagnosticHeaders().entries()), ...extraHeaders },
 		timeout: DEFAULT_API_TIMEOUT
 	};
+}
+
+/** Names the screen a human verification token came from, so the server checks it against that. */
+function humanVerificationScreenHeaders(
+	screen: 'login' | 'signup' | undefined
+): Record<string, string> {
+	return screen ? { 'X-Authrim-Human-Verification-Action': screen } : {};
 }
 
 async function withDirectAuthResult<T>(
@@ -1197,6 +1204,8 @@ export const emailCodeAPI = {
 		authorizationChallengeId?: string;
 		custom_fields?: Record<string, unknown>;
 		human_verification_response?: string;
+		/** The screen the human verification token was issued on. */
+		humanVerificationScreen?: 'login' | 'signup';
 		deferAuthorizationContinuation?: boolean;
 		runtimeInteractionId?: string;
 		emailVerification?: {
@@ -1222,7 +1231,7 @@ export const emailCodeAPI = {
 					authorizationChallengeId: data.authorizationChallengeId,
 					deferAuthorizationContinuation: data.deferAuthorizationContinuation === true
 				},
-				directAuthRequestOptions()
+				directAuthRequestOptions(humanVerificationScreenHeaders(data.humanVerificationScreen))
 			)
 		);
 
@@ -1937,7 +1946,9 @@ export const externalIdpAPI = {
 		redirectUri?: string,
 		startUrl?: string,
 		startMode: 'oauth_redirect' | 'saml_sp' = 'oauth_redirect',
-		humanVerification?: { token?: string }
+		humanVerification?: { token?: string },
+		/** The /authorize challenge this sign-in answers (a re-authentication asks the IdP anew). */
+		authorizationChallengeId?: string
 	): Promise<{
 		url: string;
 	}> {
@@ -1946,6 +1957,9 @@ export const externalIdpAPI = {
 
 		if (humanVerification?.token) {
 			targetUrl.searchParams.set('human_verification_response', humanVerification.token);
+		}
+		if (authorizationChallengeId) {
+			targetUrl.searchParams.set('authorization_challenge_id', authorizationChallengeId);
 		}
 
 		if (startMode === 'saml_sp') {

@@ -161,6 +161,10 @@ export interface ExternalIdpAuthState {
   prompt?: string;
   /** Whether SSO is enabled for this authentication flow */
   enableSso?: boolean;
+  /** The Authrim re-authentication challenge this sign-in answers, if any */
+  reauthChallengeId?: string;
+  /** When Authrim asked the IdP for a new login for it (milliseconds, Authrim's clock) */
+  reauthRequestedAt?: number;
   expiresAt: number;
   createdAt: number;
 }
@@ -398,6 +402,13 @@ export const ExternalIdPErrorCode = {
    * OIDC Core 1.0 Section 3.1.2.1
    */
   ACR_VALUES_NOT_SATISFIED: 'acr_values_not_satisfied',
+
+  /**
+   * A re-authentication asked the provider for a new login, and the provider did not show that
+   * one happened after the request (no recent auth_time / AuthnInstant), or the provider cannot be
+   * used to re-authenticate.
+   */
+  REAUTH_NOT_PROVEN: 'reauth_not_proven',
 
   /**
    * Token revocation at the provider failed.

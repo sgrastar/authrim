@@ -458,6 +458,9 @@ const translation = {
 	login_extError_callbackFailed_title: 'प्रमाणीकरण विफल',
 	login_extError_callbackFailed_message:
 		'प्रमाणीकरण के दौरान एक त्रुटि हुई। कृपया पुनः प्रयास करें।',
+	login_extError_reauthNotProven_title: 'साइन-इन की पुष्टि नहीं हुई',
+	login_extError_reauthNotProven_message:
+		'आपके साइन-इन प्रदाता ने पुष्टि नहीं की कि आपने फिर से साइन इन किया। फिर से साइन इन करें या कोई अन्य तरीका चुनें।',
 	login_extError_default_title: 'प्रमाणीकरण त्रुटि',
 	login_extError_default_message: 'बाहरी प्रमाणीकरण के दौरान एक त्रुटि हुई।',
 	login_signingInTo: 'इसमें साइन इन किया जा रहा है:',

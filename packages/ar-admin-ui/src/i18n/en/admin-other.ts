@@ -470,6 +470,11 @@ const adminOther = {
 	admin_authentication_methods_login_enabled: 'Login',
 	admin_authentication_methods_signup_enabled: 'Signup',
 	admin_authentication_methods_reauth_enabled: 'Re-authentication',
+	admin_authentication_methods_reauth_without_auth_time: 'Accept without auth_time',
+	admin_authentication_methods_reauth_without_auth_time_hint:
+		'Accept a re-authentication this provider does not date (no auth_time in the ID token) because a new login was requested. Weaker evidence: turn on only for providers that cannot return auth_time.',
+	admin_authentication_methods_reauth_unavailable_oauth2:
+		'OAuth 2.0 providers return no ID token to date a new login, so they cannot be used to re-authenticate.',
 	admin_authentication_methods_account_link_enabled: 'Account linking',
 	admin_authentication_methods_configured: 'External Identity Providers',
 	admin_authentication_methods_empty: 'No external identity providers configured.',

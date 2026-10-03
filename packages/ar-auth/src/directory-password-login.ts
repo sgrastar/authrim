@@ -599,7 +599,8 @@ export function createDirectoryPasswordLoginHandler(fetcher?: DirectoryPasswordF
         runtimeUser.id,
         authTime,
         new URL(c.req.url).origin,
-        'directory_password'
+        'directory_password',
+        now
       );
       if ('error' in continuation) {
         return continuation.error;
@@ -1024,7 +1025,8 @@ export async function directoryMigrationPasskeyVerifyHandler(c: Context<{ Bindin
         transaction.user_id,
         authTime,
         new URL(c.req.url).origin,
-        'directory_password'
+        'directory_password',
+        transaction.created_at
       );
       if ('error' in continuation) {
         return continuation.error;
@@ -1329,7 +1331,8 @@ export async function directoryMigrationEmailCodeVerifyHandler(c: Context<{ Bind
         // Recovery proves the email now; the fallback follows a password proven when it was made.
         transaction.scope === 'recovery' ? authTime : Math.floor(transaction.created_at / 1000),
         new URL(c.req.url).origin,
-        transaction.scope === 'recovery' ? 'email_otp' : 'directory_password'
+        transaction.scope === 'recovery' ? 'email_otp' : 'directory_password',
+        transaction.scope === 'recovery' ? now : transaction.created_at
       );
       if ('error' in continuation) {
         return continuation.error;
@@ -1352,6 +1355,8 @@ export async function directoryMigrationEmailCodeVerifyHandler(c: Context<{ Bind
       // A fallback's password was verified when the transaction was made (before the code); a
       // recovery proves only the code.
       provenAt: transaction.scope === 'recovery' ? now : transaction.created_at,
+      // Its email code, the method a re-authentication takes from it, was proven now.
+      ...(transaction.scope === 'recovery' ? {} : { reauthProof: { amr: ['otp'], at: now } }),
       method:
         transaction.scope === 'recovery'
           ? 'directory_unavailable_email_code_recovery'
@@ -1658,6 +1663,8 @@ async function createDirectorySessionSuccessResponse(
      * methods (a migration's password was verified when the transaction was made).
      */
     provenAt: number;
+    /** The method a re-authentication takes and when it was proven (ms), where that differs. */
+    reauthProof?: { amr: string[]; at: number };
     connectorId: string;
     wordwardenConnectorId: string;
     requestId?: string;
@@ -1703,6 +1710,11 @@ async function createDirectorySessionSuccessResponse(
       ...directorySessionUnverifiedAmr(input.method),
       // When the authentication was proven (milliseconds), for assurance step-ups.
       proven_at: input.provenAt,
+      // The method a re-authentication takes and when it was proven, where it differs from the
+      // oldest proof (a fallback's email code).
+      ...(input.reauthProof
+        ? { reauth_proven_amr: input.reauthProof.amr, reauth_proven_at: input.reauthProof.at }
+        : {}),
       acr: 'urn:mace:incommon:iap:bronze',
       authTime: input.authTime,
       directory_connector_id: input.connectorId,

@@ -85,6 +85,91 @@ describe('adminAuthenticationMethodsAPI', () => {
 		});
 	});
 
+	it('reads and keeps the per-provider re-authentication evidence setting', async () => {
+		mockAdminSettingsAPI.getSettings.mockResolvedValue({
+			version: 'v1',
+			values: {
+				'authentication-methods.external_provider_usage': JSON.stringify([
+					{
+						id: 'entra',
+						providerId: 'p-entra',
+						reauthEnabled: true,
+						reauthAcceptWithoutAuthTime: true
+					},
+					{ id: 'github', providerId: 'p-github', reauthEnabled: true }
+				])
+			}
+		});
+		mockAdminExternalProvidersAPI.list.mockResolvedValue({
+			providers: [
+				{ id: 'p-entra', slug: 'entra', name: 'Entra', providerType: 'oidc', enabled: true },
+				{ id: 'p-github', slug: 'github', name: 'GitHub', providerType: 'oauth2', enabled: true }
+			]
+		});
+
+		const result = await adminAuthenticationMethodsAPI.get('tenant-a');
+
+		expect(result.externalProviderUsages).toEqual([
+			expect.objectContaining({
+				id: 'entra',
+				reauthEnabled: true,
+				reauthAcceptWithoutAuthTime: true
+			}),
+			// No ID token dates a new login: never re-authenticates, whatever was saved.
+			expect.objectContaining({
+				id: 'github',
+				reauthEnabled: false,
+				reauthAcceptWithoutAuthTime: false
+			})
+		]);
+
+		mockAdminSettingsAPI.updateSettings.mockResolvedValue({ version: 'v2', values: {} });
+		await adminAuthenticationMethodsAPI.update(
+			result.settings,
+			result.builtIn,
+			result.directoryPassword,
+			result.humanVerification,
+			[],
+			result.externalProviderUsages,
+			'tenant-a'
+		);
+		const saved = JSON.parse(
+			mockAdminSettingsAPI.updateSettings.mock.calls[0][1].set[
+				'authentication-methods.external_provider_usage'
+			]
+		) as Array<Record<string, unknown>>;
+		expect(saved[0]).toMatchObject({ id: 'entra', reauthAcceptWithoutAuthTime: true });
+		expect(saved[1]).toMatchObject({ id: 'github', reauthEnabled: false });
+		expect(saved[1]).not.toHaveProperty('reauthAcceptWithoutAuthTime');
+	});
+
+	it("never shows another provider's entry that once had the same slug", async () => {
+		mockAdminSettingsAPI.getSettings.mockResolvedValue({
+			version: 'v1',
+			values: {
+				'authentication-methods.external_provider_usage': JSON.stringify([
+					{
+						id: 'corp',
+						providerId: 'p-old',
+						reauthEnabled: true,
+						reauthAcceptWithoutAuthTime: true
+					}
+				])
+			}
+		});
+		mockAdminExternalProvidersAPI.list.mockResolvedValue({
+			providers: [{ id: 'p-new', slug: 'corp', name: 'Corp', providerType: 'oidc', enabled: true }]
+		});
+
+		const result = await adminAuthenticationMethodsAPI.get('tenant-a');
+
+		expect(result.externalProviderUsages[0]).toMatchObject({
+			id: 'corp',
+			providerId: 'p-new',
+			reauthAcceptWithoutAuthTime: false
+		});
+	});
+
 	it('keeps guest promotion independent from signup and login permissions', async () => {
 		mockAdminSettingsAPI.getSettings.mockResolvedValue({
 			version: 'v3',

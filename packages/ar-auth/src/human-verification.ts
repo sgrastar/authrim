@@ -34,7 +34,8 @@ export async function verifyHumanVerificationForAction<
 >(
   c: AuthContext<TContextEnv>,
   action: HumanVerificationAction,
-  responseToken: unknown
+  responseToken: unknown,
+  alsoRequiredFor: readonly HumanVerificationAction[] = []
 ): Promise<Response | null> {
   const tenantId = getTenantIdFromContext(c);
   try {
@@ -42,6 +43,7 @@ export async function verifyHumanVerificationForAction<
     const result = await verifyHumanVerificationWithRunner(c.env, {
       tenantId,
       action,
+      ...(alsoRequiredFor.length > 0 ? { alsoRequiredFor } : {}),
       responseToken,
       ...(ip ? { remoteIp: ip } : {}),
     });
@@ -49,4 +51,15 @@ export async function verifyHumanVerificationForAction<
   } catch {
     return failedValidationResponse(c);
   }
+}
+
+/** The header a client names its human verification screen with ('login' or 'signup'). */
+export const HUMAN_VERIFICATION_ACTION_HEADER = 'X-Authrim-Human-Verification-Action';
+
+/** The login or sign-up screen a client says its token came from, if it says. */
+export function readDeclaredHumanVerificationScreen<
+  TContextEnv extends HonoEnv & { Bindings: Env },
+>(c: AuthContext<TContextEnv>): 'login' | 'signup' | null {
+  const value = c.req.header(HUMAN_VERIFICATION_ACTION_HEADER)?.trim().toLowerCase();
+  return value === 'login' || value === 'signup' ? value : null;
 }

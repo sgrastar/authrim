@@ -15,7 +15,13 @@ interface AuthenticationMethodSettings {
 
 export interface HumanVerificationRunnerInput {
   tenantId: string;
+  /** The screen the token was issued for; the token must match it. */
   action: HumanVerificationAction;
+  /**
+   * Further actions this operation performs (a sign-up asked from the login screen): a token is
+   * required when any of their settings, or the screen's, asks for one.
+   */
+  alsoRequiredFor?: readonly HumanVerificationAction[];
   responseToken: unknown;
   remoteIp?: string;
 }
@@ -32,7 +38,7 @@ function enabled(value: unknown): boolean {
 async function selection(
   env: Env,
   tenantId: string,
-  action: HumanVerificationAction
+  actions: readonly HumanVerificationAction[]
 ): Promise<{ required: boolean; pluginId: string }> {
   const raw = await env.SETTINGS?.get(`settings:tenant:${tenantId}:authentication-methods`);
   if (!raw) return { required: false, pluginId: DEFAULT_PLUGIN_ID };
@@ -43,7 +49,9 @@ async function selection(
   const settings = parsed as AuthenticationMethodSettings;
   const provider = settings['authentication-methods.human_verification.provider'];
   return {
-    required: enabled(settings[`authentication-methods.human_verification.${action}_enabled`]),
+    required: actions.some((action) =>
+      enabled(settings[`authentication-methods.human_verification.${action}_enabled`])
+    ),
     pluginId: typeof provider === 'string' && provider.trim() ? provider.trim() : DEFAULT_PLUGIN_ID,
   };
 }
@@ -60,7 +68,10 @@ export async function verifyHumanVerificationWithRunner(
   env: Env,
   input: HumanVerificationRunnerInput
 ): Promise<HumanVerificationRunnerResult> {
-  const selected = await selection(env, input.tenantId, input.action);
+  const selected = await selection(env, input.tenantId, [
+    input.action,
+    ...(input.alsoRequiredFor ?? []),
+  ]);
   if (!selected.required) return { required: false, verified: true };
 
   const token = typeof input.responseToken === 'string' ? input.responseToken.trim() : '';

@@ -220,9 +220,17 @@ describe('account guest upgrade API', () => {
       if (expected)
         expect(mocks.updateSession).toHaveBeenCalledWith(
           'session',
-          expect.objectContaining({ is_guest_session: false, amr: ['otp'], authTime: 1234 }),
+          expect.objectContaining({
+            is_guest_session: false,
+            amr: ['otp'],
+            authTime: 1234,
+          }),
           { onlyIfGuestSession: true }
         );
+      if (expected) {
+        // Its completion time is not when the upgrade was proven: no re-authentication proof.
+        expect(mocks.updateSession.mock.calls[0][1]).not.toHaveProperty('reauth_proven_at');
+      }
     }
   );
   it('starts email registration even with guest login disabled and accepts queued delivery', async () => {

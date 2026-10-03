@@ -833,6 +833,18 @@ export interface SAMLRequestData {
 }
 
 export interface SAMLRequestContext {
+  /**
+   * Authrim (as SP) asked the IdP for a new login (ForceAuthn) to answer a re-authentication:
+   * the challenge, when it asked (milliseconds, Authrim's clock), and the keys of the IdP's
+   * re-authentication setting.
+   */
+  spReauthentication?: {
+    authorizationChallengeId: string;
+    requestedAt: number;
+    /** The IdP's stable id and the ids an older usage entry may carry. */
+    providerId: string;
+    providerIds: string[];
+  };
   attributeReleaseConsentChallenge?: {
     challengeId: string;
     subjectId: string;

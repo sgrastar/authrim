@@ -1734,6 +1734,14 @@ type RootTranslation = {
 	 */
 	login_extError_callbackFailed_message: string
 	/**
+	 * S​i​g​n​-​i​n​ ​n​o​t​ ​c​o​n​f​i​r​m​e​d
+	 */
+	login_extError_reauthNotProven_title: string
+	/**
+	 * Y​o​u​r​ ​s​i​g​n​-​i​n​ ​p​r​o​v​i​d​e​r​ ​d​i​d​ ​n​o​t​ ​c​o​n​f​i​r​m​ ​t​h​a​t​ ​y​o​u​ ​s​i​g​n​e​d​ ​i​n​ ​a​g​a​i​n​.​ ​S​i​g​n​ ​i​n​ ​a​g​a​i​n​ ​o​r​ ​c​h​o​o​s​e​ ​a​n​o​t​h​e​r​ ​m​e​t​h​o​d​.
+	 */
+	login_extError_reauthNotProven_message: string
+	/**
 	 * A​u​t​h​e​n​t​i​c​a​t​i​o​n​ ​e​r​r​o​r
 	 */
 	login_extError_default_title: string
@@ -3437,6 +3445,14 @@ export type TranslationFunctions = {
 	 * An error occurred during authentication. Please try again.
 	 */
 	login_extError_callbackFailed_message: () => LocalizedString
+	/**
+	 * Sign-in not confirmed
+	 */
+	login_extError_reauthNotProven_title: () => LocalizedString
+	/**
+	 * Your sign-in provider did not confirm that you signed in again. Sign in again or choose another method.
+	 */
+	login_extError_reauthNotProven_message: () => LocalizedString
 	/**
 	 * Authentication error
 	 */

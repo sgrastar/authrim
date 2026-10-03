@@ -811,7 +811,9 @@ describe('TOTP login handlers', () => {
       'user-001',
       Math.floor(Date.now() / 1000),
       'http://localhost',
-      'totp'
+      'totp',
+      // When the code was verified (milliseconds), for an exact freshness check.
+      expect.any(Number)
     );
     expect(body.redirect_url).toBe('https://rp.example.com/callback?code=abc&state=xyz');
     expect(body.authorization).toEqual({

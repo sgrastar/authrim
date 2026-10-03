@@ -341,6 +341,9 @@ const de = createTranslation({
 	login_extError_callbackFailed_title: 'Authentifizierung fehlgeschlagen',
 	login_extError_callbackFailed_message:
 		'Bei der Authentifizierung ist ein Fehler aufgetreten. Versuchen Sie es erneut.',
+	login_extError_reauthNotProven_title: 'Anmeldung nicht bestätigt',
+	login_extError_reauthNotProven_message:
+		'Ihr Anmeldeanbieter hat nicht bestätigt, dass Sie sich erneut angemeldet haben. Melden Sie sich erneut an oder wählen Sie eine andere Methode.',
 	login_extError_default_title: 'Authentifizierungsfehler',
 	login_extError_default_message: 'Bei der externen Authentifizierung ist ein Fehler aufgetreten.'
 });

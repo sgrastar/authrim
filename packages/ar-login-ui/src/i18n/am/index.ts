@@ -430,6 +430,9 @@ const translation = {
 	login_extError_providerError_message: 'ውጫዊው አቅራቢ ስህተት መልሶ ሰጠ። እባክህ በኋላ ላይ እንደገና ሞክር።',
 	login_extError_callbackFailed_title: 'ማረጋገጫ አልተሳካም',
 	login_extError_callbackFailed_message: 'በማረጋገጫ ወቅት አንድ ስህተት ተከስቷል። እባክህ እንደገና ሞክር።',
+	login_extError_reauthNotProven_title: 'መግባቱ አልተረጋገጠም',
+	login_extError_reauthNotProven_message:
+		'የመግቢያ አቅራቢዎ እንደገና መግባትዎን አላረጋገጠም። እንደገና ይግቡ ወይም ሌላ ዘዴ ይምረጡ።',
 	login_extError_default_title: 'የማረጋገጫ ስህተት',
 	login_extError_default_message: 'በውጫዊ ማረጋገጫ ወቅት አንድ ስህተት ተከስቷል።',
 	login_signingInTo: 'ወደዚህ በመግባት ላይ፦',

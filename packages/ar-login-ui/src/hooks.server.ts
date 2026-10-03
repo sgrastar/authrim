@@ -910,7 +910,9 @@ export function buildProxyHeaders(
 		'x-request-id',
 		'x-correlation-id',
 		'x-session-id',
-		'x-diagnostic-session-id'
+		'x-diagnostic-session-id',
+		// The screen an email-code send's human verification token came from.
+		'x-authrim-human-verification-action'
 	];
 
 	const headers = new Headers();

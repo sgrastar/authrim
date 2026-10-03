@@ -120,7 +120,8 @@ vi.mock('../registration-field-utils', () => ({
   persistRegistrationFieldValuesFromEnv: mocks.persistRegistrationFieldValuesFromEnv,
 }));
 
-vi.mock('../human-verification', () => ({
+vi.mock('../human-verification', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../human-verification')>()),
   verifyHumanVerificationForAction: mocks.verifyHumanVerificationForAction,
 }));
 
@@ -427,6 +428,13 @@ function enableEmailOtp(
   return context;
 }
 
+/** Challenge consumptions apart from looking up a resumed email-code send. */
+function consumesOtherThanSendResume() {
+  return mocks.challengeStore.consumeChallengeRpc.mock.calls.filter(
+    ([request]) => (request as { type?: string })?.type !== 'direct_email_send_resume'
+  );
+}
+
 function webHeaders() {
   return {
     origin: 'https://app.example.com',
@@ -469,6 +477,13 @@ describe('Direct Auth primary passkey and email-code flows', () => {
     mocks.challengeStore.deleteChallengeRpc.mockResolvedValue(undefined);
     mocks.challengeStore.getChallengeRpc.mockReset();
     mocks.challengeStore.consumeChallengeRpc.mockReset();
+    // As the store does, an unknown record cannot be consumed (a send not resumed after provisioning).
+    mocks.challengeStore.consumeChallengeRpc.mockImplementation(
+      async (request: { type?: string }) => {
+        if (request?.type === 'direct_email_send_resume') throw new Error('Challenge not found');
+        return undefined;
+      }
+    );
     mocks.rateLimiter.incrementRpc.mockResolvedValue({ allowed: true });
     mocks.sessionStore.getSessionRpc.mockResolvedValue({
       id: '0_session_existing',
@@ -2063,6 +2078,8 @@ describe('Direct Auth primary passkey and email-code flows', () => {
     expect(response.status).toBe(200);
     expect(storedEmailCodes()).toHaveLength(0);
     expect(mocks.emailNotifier.send).not.toHaveBeenCalled();
+    // Nothing else about the address is looked at, human verification included.
+    expect(mocks.verifyHumanVerificationForAction).not.toHaveBeenCalled();
   });
 
   it('judges a new address as a sign-up whatever challenge it comes with', async () => {
@@ -2194,8 +2211,105 @@ describe('Direct Auth primary passkey and email-code flows', () => {
         }),
       })
     );
-    expect(mocks.challengeStore.storeChallengeRpc).not.toHaveBeenCalled();
+    // No code yet: only the record that resumes this send, as the sign-up it is.
+    expect(mocks.challengeStore.storeChallengeRpc).toHaveBeenCalledTimes(1);
+    expect(mocks.challengeStore.storeChallengeRpc).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'direct_email_send_resume',
+        ttl: 300,
+        metadata: { usage: 'signup' },
+      })
+    );
     expect(mocks.emailNotifier.send).not.toHaveBeenCalled();
+  });
+
+  it('resumes a provisioned send as the sign-up it was, without checking it again', async () => {
+    mocks.challengeStore.consumeChallengeRpc.mockImplementationOnce(
+      async (request: { type?: string; id?: string }) => {
+        expect(request).toMatchObject({
+          type: 'direct_email_send_resume',
+          id: expect.stringMatching(/^direct_email_send_resume:[0-9a-f]{64}$/),
+        });
+        return { metadata: { usage: 'signup' } };
+      }
+    );
+    mocks.userPII.findByTenantAndEmail.mockResolvedValue({
+      id: 'user_existing',
+      email: 'user@example.com',
+    });
+    const { directEmailCodeSendHandler } = await import('../direct-auth');
+
+    const response = await directEmailCodeSendHandler(
+      enableEmailOtp(
+        createContext(
+          {
+            client_id: 'web-client',
+            email: 'user@example.com',
+            code_challenge: 'email-pkce-challenge',
+            code_challenge_method: 'S256',
+            channel: 'browser',
+            human_verification_response: 'spent-token',
+          },
+          { ...webHeaders(), 'X-Authrim-Human-Verification-Action': 'signup' }
+        )
+      ) as never
+    );
+
+    expect(response.status).toBe(200);
+    // Its single-use token was spent when it was first sent.
+    expect(mocks.verifyHumanVerificationForAction).not.toHaveBeenCalled();
+    expect(mocks.emailNotifier.send).toHaveBeenCalled();
+    // The code is issued for what the send was: the sign-up.
+    expect(mocks.challengeStore.storeChallengeRpc).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'direct_email_code',
+        metadata: expect.objectContaining({ usage: 'signup' }),
+      })
+    );
+  });
+
+  it('keys a resume record by the whole send, a screen named or not', async () => {
+    mocks.userPII.findByTenantAndEmail.mockResolvedValue({
+      id: 'user_existing',
+      email: 'user@example.com',
+    });
+    mocks.challengeStore.getChallengeRpc.mockResolvedValue({
+      tenantId: 'tenant_test',
+      type: 'login',
+      challenge: 'login_challenge',
+    });
+    const { directEmailCodeSendHandler } = await import('../direct-auth');
+    const send = (extra: Record<string, unknown>, headers: Record<string, string> = {}) =>
+      directEmailCodeSendHandler(
+        enableEmailOtp(
+          createContext(
+            {
+              client_id: 'web-client',
+              email: 'user@example.com',
+              code_challenge: 'email-pkce-challenge',
+              code_challenge_method: 'S256',
+              channel: 'browser',
+              ...extra,
+            },
+            { ...webHeaders(), ...headers }
+          )
+        ) as never
+      );
+
+    await send({});
+    await send({});
+    await send({ authorization_challenge_id: 'login_challenge' });
+    await send({}, { 'X-Authrim-Human-Verification-Action': 'login' });
+
+    const ids = mocks.challengeStore.consumeChallengeRpc.mock.calls
+      .map(([request]) => request as { type?: string; id?: string })
+      .filter((request) => request.type === 'direct_email_send_resume')
+      .map((request) => request.id);
+    expect(ids).toHaveLength(4);
+    // The same send, sent again without naming a screen, keeps its key.
+    expect(ids[1]).toBe(ids[0]);
+    // Another challenge or screen is another send.
+    expect(new Set(ids).size).toBe(3);
   });
 
   it('uses the routed Core-only OTP read for an existing tenant-D1 account', async () => {
@@ -2323,6 +2437,8 @@ describe('Direct Auth primary passkey and email-code flows', () => {
         metadata: expect.objectContaining({
           method: 'email_verification_protocol',
           runtime_interaction_id: 'interaction_1',
+          // When the email was proven, for the session redeemed from it.
+          proven_at: expect.any(Number),
         }),
       })
     );
@@ -2396,7 +2512,7 @@ describe('Direct Auth primary passkey and email-code flows', () => {
     expect(body).not.toHaveProperty('attempt_id');
     expect(mocks.resolveTenantFromEmailDomain).not.toHaveBeenCalled();
     expect(mocks.verifyEmailVerificationProtocol).toHaveBeenCalledTimes(1);
-    expect(mocks.challengeStore.consumeChallengeRpc).toHaveBeenCalledTimes(1);
+    expect(consumesOtherThanSendResume()).toHaveLength(1);
     expect(mocks.authCodeStore.storeCodeRpc).toHaveBeenCalledWith(
       expect.objectContaining({ tenantId: 'tenant_test', userId: 'user_existing' })
     );
@@ -2440,7 +2556,7 @@ describe('Direct Auth primary passkey and email-code flows', () => {
     expect(mocks.rateLimiter.incrementRpc).not.toHaveBeenCalled();
     expect(mocks.userPII.findByTenantAndEmail).not.toHaveBeenCalled();
     expect(mocks.verifyEmailVerificationProtocol).not.toHaveBeenCalled();
-    expect(mocks.challengeStore.consumeChallengeRpc).not.toHaveBeenCalled();
+    expect(consumesOtherThanSendResume()).toHaveLength(0);
     expect(mocks.authCodeStore.storeCodeRpc).not.toHaveBeenCalled();
     expect(mocks.emailNotifier.send).not.toHaveBeenCalled();
   });
@@ -2490,7 +2606,7 @@ describe('Direct Auth primary passkey and email-code flows', () => {
       expires_in: 300,
     });
     expect(mocks.verifyEmailVerificationProtocol).toHaveBeenCalledTimes(1);
-    expect(mocks.challengeStore.consumeChallengeRpc).not.toHaveBeenCalled();
+    expect(consumesOtherThanSendResume()).toHaveLength(0);
     expect(mocks.challengeStore.storeChallengeRpc).toHaveBeenCalledWith(
       expect.objectContaining({
         type: 'direct_email_code',
@@ -2540,7 +2656,7 @@ describe('Direct Auth primary passkey and email-code flows', () => {
 
     expect(response.status).toBe(200);
     expect(mocks.verifyEmailVerificationProtocol).not.toHaveBeenCalled();
-    expect(mocks.challengeStore.consumeChallengeRpc).not.toHaveBeenCalled();
+    expect(consumesOtherThanSendResume()).toHaveLength(0);
     expect(mocks.emailNotifier.send).toHaveBeenCalledTimes(1);
   });
 
@@ -2592,7 +2708,7 @@ describe('Direct Auth primary passkey and email-code flows', () => {
     expect(response.status).toBe(200);
     expect(body).toHaveProperty('attempt_id');
     expect(mocks.verifyEmailVerificationProtocol).not.toHaveBeenCalled();
-    expect(mocks.challengeStore.consumeChallengeRpc).not.toHaveBeenCalled();
+    expect(consumesOtherThanSendResume()).toHaveLength(0);
     expect(mocks.emailNotifier.send).toHaveBeenCalledTimes(1);
   });
 
@@ -2614,7 +2730,10 @@ describe('Direct Auth primary passkey and email-code flows', () => {
         contract_hash: 'contract_hash',
       },
     });
-    mocks.challengeStore.consumeChallengeRpc.mockRejectedValueOnce(new Error('already consumed'));
+    // Another request consumed the EVP challenge first (no send to resume either).
+    mocks.challengeStore.consumeChallengeRpc.mockImplementation(async () => {
+      throw new Error('already consumed');
+    });
     mocks.verifyEmailVerificationProtocol.mockResolvedValue({
       verified: true,
       issuer: 'https://mail.example.com',
@@ -2829,6 +2948,97 @@ describe('Direct Auth primary passkey and email-code flows', () => {
     expect(mocks.hashEmailCode).not.toHaveBeenCalled();
     expect(mocks.challengeStore.storeChallengeRpc).not.toHaveBeenCalled();
     expect(mocks.emailNotifier.send).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    // The sign-up screen, carrying the login challenge it was linked from, signs up a new address.
+    ['signup', 'new@example.com', 'login_challenge', 'signup', []],
+    // The shared login form signs up a new address: its token, plus the sign-up setting.
+    ['login', 'new@example.com', undefined, 'login', ['signup']],
+    ['login', 'user@example.com', 'login_challenge', 'login', []],
+    // A client that does not name its screen keeps the earlier inference.
+    [undefined, 'new@example.com', undefined, 'signup', []],
+  ] as const)(
+    'checks a %s-screen token for %s (challenge %s) as %s, also requiring %j',
+    async (screen, email, challengeId, action, alsoRequiredFor) => {
+      if (challengeId) {
+        mocks.challengeStore.getChallengeRpc.mockResolvedValue({
+          tenantId: 'tenant_test',
+          type: 'login',
+          challenge: challengeId,
+        });
+      }
+      if (email === 'user@example.com') {
+        mocks.userPII.findByTenantAndEmail.mockResolvedValue({ id: 'user_existing', email });
+      }
+      const { directEmailCodeSendHandler } = await import('../direct-auth');
+
+      const response = await directEmailCodeSendHandler(
+        enableEmailOtp(
+          createContext(
+            {
+              client_id: 'web-client',
+              email,
+              code_challenge: 'email-pkce-challenge',
+              code_challenge_method: 'S256',
+              channel: 'browser',
+              ...(challengeId ? { authorization_challenge_id: challengeId } : {}),
+              human_verification_response: 'human-token',
+            },
+            {
+              ...webHeaders(),
+              ...(screen ? { 'X-Authrim-Human-Verification-Action': screen } : {}),
+            }
+          )
+        ) as never
+      );
+
+      expect(response.status).toBe(200);
+      expect(mocks.verifyHumanVerificationForAction).toHaveBeenCalledWith(
+        expect.anything(),
+        action,
+        'human-token',
+        alsoRequiredFor
+      );
+    }
+  );
+
+  it('checks a re-authentication email code against its own screen whatever the client names', async () => {
+    mocks.challengeStore.getChallengeRpc.mockResolvedValue({
+      tenantId: 'tenant_test',
+      type: 'reauth',
+      userId: 'user_existing',
+      challenge: 'reauth_challenge',
+    });
+    mocks.userPII.findByTenantAndEmail.mockResolvedValue({
+      id: 'user_existing',
+      email: 'user@example.com',
+    });
+    const { directEmailCodeSendHandler } = await import('../direct-auth');
+
+    await directEmailCodeSendHandler(
+      enableEmailOtp(
+        createContext(
+          {
+            client_id: 'web-client',
+            email: 'user@example.com',
+            code_challenge: 'email-pkce-challenge',
+            code_challenge_method: 'S256',
+            channel: 'browser',
+            authorization_challenge_id: 'reauth_challenge',
+            human_verification_response: 'human-token',
+          },
+          { ...webHeaders(), 'X-Authrim-Human-Verification-Action': 'signup' }
+        )
+      ) as never
+    );
+
+    expect(mocks.verifyHumanVerificationForAction).toHaveBeenCalledWith(
+      expect.anything(),
+      'reauth',
+      'human-token',
+      []
+    );
   });
 
   it('returns an accepted email-code response when signup field validation fails', async () => {
@@ -3192,9 +3402,14 @@ describe('Direct Auth primary passkey and email-code flows', () => {
   });
 
   it.each([
-    ['refuses a proof made before the re-authentication was asked for', 999, true],
-    ['accepts a proof made after it', 1_001, false],
-  ])('%s', async (_label, authTime, refused) => {
+    ['refuses a proof made before the re-authentication was asked for', 999, 999_000, true],
+    ['accepts a proof made after it', 1_001, 1_001_000, false],
+    // A proof the server did not date cannot show it came after the request, however late.
+    ['refuses a proof of unknown time', 1_001, undefined, true],
+    // Within the same second, the proof time in milliseconds decides.
+    ['refuses a proof made just before it in the same second', 1_000, 999_999, true],
+    ['accepts a proof made just after it in the same second', 1_000, 1_000_001, false],
+  ])('%s', async (_label, authTime, provenAtMs, refused) => {
     mocks.challengeStore.consumeChallengeRpc
       .mockRejectedValueOnce(new Error('not a login challenge'))
       .mockResolvedValueOnce({
@@ -3212,10 +3427,49 @@ describe('Direct Auth primary passkey and email-code flows', () => {
       'user_existing',
       authTime,
       'https://op.example.com',
-      'directory_password'
+      'directory_password',
+      provenAtMs
     );
 
     expect('error' in result).toBe(refused);
+  });
+
+  it('reads a re-authentication proof with the time of the method it takes', async () => {
+    const { reauthProofFromRecord } = await import('../direct-auth');
+
+    // A directory fallback: its email code (taken) was proven after its password (the oldest).
+    expect(
+      reauthProofFromRecord(
+        { proven_at: 1_000, reauth_proven_amr: ['otp'], reauth_proven_at: 2_000 },
+        ['pwd', 'directory', 'otp']
+      )
+    ).toEqual({ method: 'email_otp', provenAtMs: 2_000 });
+    // A TOTP merged in later never borrows the email code's time.
+    expect(
+      reauthProofFromRecord(
+        { proven_at: 500, reauth_proven_amr: ['otp'], reauth_proven_at: 2_000 },
+        ['pwd', 'directory', 'otp', 'totp']
+      )
+    ).toEqual({ method: 'email_otp', provenAtMs: 2_000 });
+    // A time without its method is not used.
+    expect(reauthProofFromRecord({ reauth_proven_at: 2_000 }, ['totp'])).toEqual({
+      method: 'totp',
+    });
+    expect(reauthProofFromRecord({ proven_at: 1_000 }, ['passkey'])).toEqual({
+      method: 'passkey',
+      provenAtMs: 1_000,
+    });
+    // An unknown proof time (0 records it as unknown) leaves only the method.
+    expect(reauthProofFromRecord({ proven_at: 0 }, ['passkey'])).toEqual({ method: 'passkey' });
+    expect(reauthProofFromRecord({ proven_at: 1_000 }, ['passkey_signup'])).toEqual({});
+    // An external IdP or SAML login only with a verified new upstream login, paired with its time.
+    expect(reauthProofFromRecord({ proven_at: 1_000 }, ['external_idp'])).toEqual({});
+    expect(reauthProofFromRecord({ reauth_proven_at: 3_000 }, ['saml'])).toEqual({});
+    expect(
+      reauthProofFromRecord({ reauth_proven_amr: ['external_idp'], reauth_proven_at: 3_000 }, [
+        'external_idp',
+      ])
+    ).toEqual({ method: 'other', provenAtMs: 3_000 });
   });
 
   it('reads the proving method from what the session recorded', async () => {

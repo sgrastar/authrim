@@ -67,6 +67,20 @@ describe('verifyHumanVerificationWithRunner', () => {
     expect(runHumanVerification).not.toHaveBeenCalled();
   });
 
+  it('requires a token when the operation asks for one, checking it against the screen', async () => {
+    await expect(
+      verifyHumanVerificationWithRunner(env, {
+        tenantId: 'tenant-a',
+        action: 'signup',
+        alsoRequiredFor: ['login'],
+        responseToken: 'browser-token',
+      })
+    ).resolves.toEqual({ required: true, verified: true });
+    expect(runHumanVerification).toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'signup', responseToken: 'browser-token' })
+    );
+  });
+
   it.each(['missing_token', 'disabled_provider', 'missing_runner', 'denied'])(
     'returns a safe denial for %s',
     async (failure) => {

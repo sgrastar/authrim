@@ -339,6 +339,9 @@ const es = createTranslation({
 	login_extError_callbackFailed_title: 'Error de autenticación',
 	login_extError_callbackFailed_message:
 		'Se produjo un error durante la autenticación. Inténtalo de nuevo.',
+	login_extError_reauthNotProven_title: 'Inicio de sesión no confirmado',
+	login_extError_reauthNotProven_message:
+		'Tu proveedor de inicio de sesión no confirmó que volviste a iniciar sesión. Vuelve a iniciar sesión o elige otro método.',
 	login_extError_default_title: 'Error de autenticación',
 	login_extError_default_message: 'Se produjo un error durante la autenticación externa.'
 });

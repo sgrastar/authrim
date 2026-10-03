@@ -484,6 +484,9 @@ const ja = {
 		'外部プロバイダーからエラーが返されました。しばらくしてから再度お試しください。',
 	login_extError_callbackFailed_title: '認証に失敗しました',
 	login_extError_callbackFailed_message: '認証中にエラーが発生しました。再度お試しください。',
+	login_extError_reauthNotProven_title: 'サインインを確認できませんでした',
+	login_extError_reauthNotProven_message:
+		'サインインに使ったサービスから、もう一度サインインしたことを確認できませんでした。もう一度サインインするか、別の方法を選んでください。',
 	login_extError_default_title: '認証エラー',
 	login_extError_default_message: '外部認証中にエラーが発生しました。',
 

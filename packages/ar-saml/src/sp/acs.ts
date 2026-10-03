@@ -38,6 +38,7 @@ import {
   // Audit Log
   createAuditLog,
   updateProfileOnLogin,
+  readExternalProviderReauthPolicy,
 } from '@authrim/ar-lib-core';
 import { executeRuntimeMapping } from '@authrim/ar-lib-field-mapping/runtime';
 import type { SourceValueEnvelope } from '@authrim/ar-lib-field-mapping/contract';
@@ -184,8 +185,35 @@ export async function handleSPACS(c: Context<{ Bindings: Env }>): Promise<Respon
     const identityResolution = await findOrCreateUser(env, userInfo, idpConfig, tenantId);
     const userId = identityResolution.userId;
 
+    // A sign-in that answers a re-authentication needs the IdP to show a new login made after
+    // Authrim asked for one (ForceAuthn): its AuthnInstant, within the usual clock skew.
+    const reauthentication = validatedRequest?.context?.spReauthentication;
+    let reauthProvenAt: number | undefined;
+    if (reauthentication) {
+      const proven = await provenSPReauthentication(
+        env,
+        tenantId,
+        reauthentication,
+        assertion.authnStatement?.authnInstant
+      );
+      if (proven === null) {
+        log.warn('SAML re-authentication was not shown to be a new login', {
+          issuer,
+          authnInstantPresent: Boolean(assertion.authnStatement?.authnInstant),
+        });
+        return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
+      }
+      reauthProvenAt = proven;
+    }
+
     // Create session
-    const sessionId = await createSession(env, userId, tenantId, authnContextClassRef);
+    const sessionId = await createSession(
+      env,
+      userId,
+      tenantId,
+      authnContextClassRef,
+      reauthProvenAt
+    );
 
     // Publish SAML authentication success event (non-blocking)
     publishEvent(c, {
@@ -2001,13 +2029,47 @@ async function createSAMLLinkedIdentity(params: {
 }
 
 /**
+ * Whether the IdP showed a new login made after Authrim asked for one (ForceAuthn): its
+ * AuthnInstant, within the usual clock skew, from an IdP the tenant still lets re-authenticate.
+ * Returns the proof's time (when Authrim asked, its own clock), or null.
+ */
+export async function provenSPReauthentication(
+  env: Env,
+  tenantId: string,
+  reauthentication: NonNullable<NonNullable<SAMLRequestData['context']>['spReauthentication']>,
+  authnInstant: string | undefined
+): Promise<number | null> {
+  // A request stored before the IdP's stable id was kept cannot be matched to its settings.
+  if (!reauthentication.providerId || !Array.isArray(reauthentication.providerIds)) return null;
+  const authnInstantMs = authnInstant ? new Date(authnInstant).getTime() : Number.NaN;
+  if (
+    !Number.isFinite(authnInstantMs) ||
+    authnInstantMs + DEFAULTS.CLOCK_SKEW_SECONDS * 1000 < reauthentication.requestedAt
+  ) {
+    return null;
+  }
+  try {
+    const policy = await readExternalProviderReauthPolicy(env, tenantId, {
+      providerId: reauthentication.providerId,
+      ids: reauthentication.providerIds,
+    });
+    // The proof counts from when Authrim asked, so a re-authentication asked for later (which a
+    // held-back response would otherwise complete) is not.
+    return policy.reauthEnabled ? reauthentication.requestedAt : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Create session for user (sharded)
  */
 async function createSession(
   env: Env,
   userId: string,
   tenantId: string,
-  authnContextClassRef?: string
+  authnContextClassRef?: string,
+  reauthProvenAt?: number
 ): Promise<string> {
   const { stub: sessionStore, sessionId } = await getSessionStoreForNewSession(env, tenantId);
 
@@ -2025,9 +2087,13 @@ async function createSession(
         // The IdP's AuthnContextClassRef, for the AAL assurance takes the login for
         // (upstream_acr_mappings).
         ...(authnContextClassRef ? { upstream_acr: authnContextClassRef } : {}),
-        // No proof time (proven_at): the AuthnInstant is in the IdP's own clock, and nothing yet
-        // asks the IdP for a new authentication (ForceAuthn), so this login is never taken as the
-        // result of a step-up or re-authentication. It can still be the session one starts from.
+        // No proof time (proven_at): the AuthnInstant is in the IdP's own clock, so this login is
+        // never taken as the result of a step-up. It completes a re-authentication only when the
+        // IdP was asked for a new login (ForceAuthn) and showed one (reauth_proven_at, Authrim's
+        // clock). It can still be the session a step-up starts from.
+        ...(reauthProvenAt !== undefined
+          ? { reauth_proven_amr: ['saml'], reauth_proven_at: reauthProvenAt }
+          : {}),
       },
     }),
   });

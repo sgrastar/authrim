@@ -135,6 +135,8 @@ interface ExternalLoginProvider {
   buttonColor?: string;
   buttonText?: string;
   startUrl?: string;
+  /** The provider's stable id, for matching its saved usage; never returned. */
+  stableId?: string;
 }
 
 interface ExternalAuthenticationMethod {
@@ -1544,6 +1546,7 @@ async function fetchExternalLoginProviders(
         const id = truncateString(p.slug || p.id);
         return {
           id,
+          stableId: p.id,
           name: truncateString(p.name),
           type,
           startMode: 'oauth_redirect',
@@ -1591,6 +1594,7 @@ async function fetchSAMLLoginProviders(
       .filter((row) => row.id && row.name)
       .map((row) => ({
         id: `saml:${truncateString(row.id)}`,
+        stableId: row.id,
         name: truncateString(row.name),
         type: 'saml',
         startMode: 'saml_sp',
@@ -1662,6 +1666,8 @@ async function fetchConfiguredExternalLoginProviders(
         const accountLinkEnabled = normalizeBoolean(provider.accountLinkEnabled, legacyEnabled);
         return {
           id: truncateString(provider.id),
+          // A configured provider's id is the one its usage entry names.
+          stableId: provider.id,
           name: truncateString(provider.name),
           type,
           startMode: normalizeExternalStartMode(provider.startMode, type),
@@ -2109,11 +2115,25 @@ function applyExternalProviderUsage(
   providers: ExternalLoginProvider[],
   usageById: Record<string, ExternalLoginProviderUsageConfig>
 ): ExternalLoginProvider[] {
+  const entries = [...new Set(Object.values(usageById))];
   return providers
-    .map((provider) => {
+    .map(({ stableId, ...provider }) => {
+      // A pure OAuth 2.0 provider returns no ID token to date a new login, so it cannot answer a
+      // re-authentication (the bridge refuses one), whatever the setting says.
+      const canReauthenticate = provider.type !== 'oauth2';
+      // The entry naming the provider's stable id, else an older entry without one matched by id:
+      // a slug can be renamed or reused, so it never picks another provider's entry.
       const saved =
-        usageById[provider.id] ?? (provider.slug ? usageById[provider.slug] : undefined);
-      if (!saved) return provider;
+        (stableId ? entries.find((entry) => entry.providerId === stableId) : undefined) ??
+        entries.find(
+          (entry) =>
+            !entry.providerId &&
+            typeof entry.id === 'string' &&
+            (entry.id === provider.id || entry.id === provider.slug)
+        );
+      if (!saved) {
+        return canReauthenticate ? provider : { ...provider, reauthEnabled: false };
+      }
 
       const providerEnabled = provider.enabled !== false;
       const autoLinkEmail = provider.autoLinkEmail !== false;
@@ -2122,7 +2142,9 @@ function applyExternalProviderUsage(
       const signupEnabled =
         providerEnabled && normalizeBoolean(saved.signupEnabled, provider.signupEnabled);
       const reauthEnabled =
-        providerEnabled && normalizeBoolean(saved.reauthEnabled, provider.reauthEnabled);
+        providerEnabled &&
+        canReauthenticate &&
+        normalizeBoolean(saved.reauthEnabled, provider.reauthEnabled);
       const accountLinkEnabled =
         providerEnabled &&
         autoLinkEmail &&

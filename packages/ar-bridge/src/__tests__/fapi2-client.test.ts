@@ -58,6 +58,15 @@ describe('Fapi2Client', () => {
     expect(jose.decodeJwt(proof).ath).toBeTypeOf('string');
   });
 
+  it('keeps numeric parameters (max_age) as JSON numbers in a request object', async () => {
+    const request = await client.createAuthorizationRequestObject(
+      { response_type: 'code', client_id: 'fapi-client', prompt: 'login', max_age: 0 },
+      1_700_000_000
+    );
+
+    expect(jose.decodeJwt(request)).toMatchObject({ prompt: 'login', max_age: 0 });
+  });
+
   it('creates a short-lived ES256 FAPI authorization request object', async () => {
     const request = await client.createAuthorizationRequestObject(
       {

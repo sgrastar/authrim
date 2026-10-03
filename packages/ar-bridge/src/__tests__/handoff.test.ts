@@ -269,6 +269,31 @@ describe('handleHandoffVerify', () => {
     );
   });
 
+  it('carries a verified new upstream login to the RP session, to complete a re-authentication', async () => {
+    mocks.getSessionRpc.mockResolvedValue({
+      data: {
+        amr: ['external_idp'],
+        acr: 'urn:mace:incommon:iap:bronze',
+        reauth_proven_amr: ['external_idp'],
+        reauth_proven_at: 1_700_000_000_000,
+      },
+    });
+
+    const response = await handleHandoffVerify(createContext());
+
+    expect(response.status).toBe(200);
+    expect(mocks.createSessionRpc).toHaveBeenCalledWith(
+      'rp-access-token',
+      'user-123',
+      3600,
+      expect.objectContaining({
+        reauth_proven_amr: ['external_idp'],
+        reauth_proven_at: 1_700_000_000_000,
+      }),
+      'tenant-123'
+    );
+  });
+
   it('returns session and user extensions only for include=session,user', async () => {
     const response = await handleHandoffVerify(
       createContext('https://issuer.example.com/handoff/verify?include=session,user')

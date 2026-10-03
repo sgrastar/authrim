@@ -3820,6 +3820,9 @@ describe('Authorization Handler', () => {
         unverified_amr: [],
         // The earlier session records no proof time: the combined evidence is never fresh again.
         proven_at: 0,
+        // The step-up's own TOTP stays what a later re-authentication can take, with its time.
+        reauth_proven_amr: ['otp', 'totp'],
+        reauth_proven_at: AFTER_STEP_UP,
       });
     });
 
@@ -3863,6 +3866,99 @@ describe('Authorization Handler', () => {
       expect([...data.amr].sort()).toEqual(['did', 'otp', 'pwd', 'totp']);
       expect(data).toMatchObject({ unverified_amr: [], proven_at: 0 });
       expect(store.updateSessionDataRpc).toHaveBeenCalledTimes(2);
+    });
+
+    it('keeps a re-authentication completed while the step-up was being recorded', async () => {
+      seedSessionData(TEST_SESSION_ID, { amr: ['pwd'] });
+      seedSessionData(
+        STEP_UP_SESSION_ID,
+        { amr: ['otp', 'totp'], proven_at: AFTER_STEP_UP },
+        'test-user',
+        AFTER_STEP_UP
+      );
+      await setAssurance({ 'assurance.enabled': true, 'assurance.default_aal': 'AAL2' });
+      seedStepUpConfirmation('step-up-reauth-race', TEST_SESSION_ID);
+      const store = (
+        env.SESSION_STORE as unknown as { get: () => Record<string, ReturnType<typeof vi.fn>> }
+      ).get();
+      const write = store.updateSessionDataRpc.getMockImplementation() as (
+        ...args: unknown[]
+      ) => Promise<unknown>;
+      // Between this request's read and its write, the account page re-authenticated the session.
+      store.updateSessionDataRpc.mockImplementationOnce(async (...args: unknown[]) => {
+        const session = getSessionMap(env).get(STEP_UP_SESSION_ID) as {
+          data: Record<string, unknown>;
+        };
+        session.data = {
+          ...session.data,
+          reauth_proven_amr: ['passkey'],
+          reauth_proven_at: AFTER_STEP_UP + 5_000,
+        };
+        return write(...args);
+      });
+
+      const response = await request('/authorize?_confirmation_challenge=step-up-reauth-race', [
+        `authrim_session=${encodeURIComponent(STEP_UP_SESSION_ID)}`,
+        'authrim_authorize_confirmation=step-up-reauth-race-browser',
+      ]);
+
+      expect(new URL(response.headers.get('Location')!).searchParams.get('code')).toBeTruthy();
+      const data = (getSessionMap(env).get(STEP_UP_SESSION_ID) as { data: { amr: string[] } }).data;
+      expect([...data.amr].sort()).toEqual(['otp', 'pwd', 'totp']);
+      expect(data).toMatchObject({
+        proven_at: 0,
+        // The newer re-authentication stands, not the step-up's older TOTP.
+        reauth_proven_amr: ['passkey'],
+        reauth_proven_at: AFTER_STEP_UP + 5_000,
+      });
+      expect(store.updateSessionDataRpc).toHaveBeenCalledTimes(2);
+    });
+
+    it('records the step-up while re-authentications keep updating the pair', async () => {
+      seedSessionData(TEST_SESSION_ID, { amr: ['pwd'] });
+      seedSessionData(
+        STEP_UP_SESSION_ID,
+        { amr: ['otp', 'totp'], proven_at: AFTER_STEP_UP },
+        'test-user',
+        AFTER_STEP_UP
+      );
+      await setAssurance({ 'assurance.enabled': true, 'assurance.default_aal': 'AAL2' });
+      seedStepUpConfirmation('step-up-reauth-churn', TEST_SESSION_ID);
+      const store = (
+        env.SESSION_STORE as unknown as { get: () => Record<string, ReturnType<typeof vi.fn>> }
+      ).get();
+      const write = store.updateSessionDataRpc.getMockImplementation() as (
+        ...args: unknown[]
+      ) => Promise<unknown>;
+      // Before every write, another account-page re-authentication records a newer pair.
+      let reauthAt = AFTER_STEP_UP;
+      store.updateSessionDataRpc.mockImplementation(async (...args: unknown[]) => {
+        reauthAt += 1_000;
+        const session = getSessionMap(env).get(STEP_UP_SESSION_ID) as {
+          data: Record<string, unknown>;
+        };
+        session.data = {
+          ...session.data,
+          reauth_proven_amr: ['email_code'],
+          reauth_proven_at: reauthAt,
+        };
+        return write(...args);
+      });
+
+      const response = await request('/authorize?_confirmation_challenge=step-up-reauth-churn', [
+        `authrim_session=${encodeURIComponent(STEP_UP_SESSION_ID)}`,
+        'authrim_authorize_confirmation=step-up-reauth-churn-browser',
+      ]);
+
+      expect(new URL(response.headers.get('Location')!).searchParams.get('code')).toBeTruthy();
+      const data = (getSessionMap(env).get(STEP_UP_SESSION_ID) as { data: { amr: string[] } }).data;
+      // The combined evidence is recorded, and the latest re-authentication stands.
+      expect([...data.amr].sort()).toEqual(['otp', 'pwd', 'totp']);
+      expect(data).toMatchObject({
+        proven_at: 0,
+        reauth_proven_amr: ['email_code'],
+        reauth_proven_at: reauthAt,
+      });
     });
 
     it('fails rather than stepping up again when the step-up still falls short', async () => {

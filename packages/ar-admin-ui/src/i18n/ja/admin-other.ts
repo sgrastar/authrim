@@ -472,6 +472,11 @@ const adminOther = {
 	admin_authentication_methods_login_enabled: 'ログイン',
 	admin_authentication_methods_signup_enabled: '新規登録',
 	admin_authentication_methods_reauth_enabled: '再認証',
+	admin_authentication_methods_reauth_without_auth_time: 'auth_time なしでも許可',
+	admin_authentication_methods_reauth_without_auth_time_hint:
+		'新しいログインを要求したことを根拠に、この IdP が日時を示さない（ID トークンに auth_time がない）再認証も受け付けます。証拠としては弱いため、auth_time を返せない IdP でだけオンにしてください。',
+	admin_authentication_methods_reauth_unavailable_oauth2:
+		'OAuth 2.0 の IdP は新しいログインの日時を示す ID トークンを返さないため、再認証には使えません。',
 	admin_authentication_methods_account_link_enabled: 'アカウントリンク対象',
 	admin_authentication_methods_configured: '外部Identity Provider',
 	admin_authentication_methods_empty: '外部Identity Providerは設定されていません。',

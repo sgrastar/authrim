@@ -912,12 +912,88 @@ describe('Authentication Methods API', () => {
         startMode: 'oauth_redirect',
         startUrl: '/api/external/google/start',
         iconName: 'globe',
+        reauthEnabled: true,
       });
       expect(body.methods.external.providers[1]).toMatchObject({
         id: 'github',
         type: 'oauth2',
         startMode: 'oauth_redirect',
+        // No ID token dates a new login, so it cannot answer a re-authentication.
+        reauthEnabled: false,
       });
+    });
+
+    it.each([
+      // Every use turned off: not offered at all.
+      [false, 0],
+      [true, 1],
+    ])(
+      "applies a configured provider's saved usage named by its full id (login %s)",
+      async (loginEnabled, count) => {
+        const id = `p-${'x'.repeat(300)}`;
+        const settingsKV = createMockKV({
+          'settings:tenant:default:authentication-methods': JSON.stringify({
+            'authentication-methods.external_providers': JSON.stringify([
+              { id, name: 'Configured', type: 'vc', enabled: true, startUrl: '/vp/login' },
+            ]),
+            'authentication-methods.external_provider_usage': JSON.stringify([
+              {
+                id: 'corp',
+                providerId: id,
+                loginEnabled,
+                signupEnabled: false,
+                reauthEnabled: false,
+                accountLinkEnabled: false,
+              },
+            ]),
+          }),
+        });
+        const { app, mockEnv } = createTestApp({ settingsKV });
+
+        const res = await app.request(
+          '/api/auth/authentication-methods',
+          { method: 'GET' },
+          mockEnv
+        );
+        const body = (await res.json()) as any;
+
+        expect(body.methods.external.providers).toHaveLength(count);
+      }
+    );
+
+    it("never applies another provider's saved usage that once had the same slug", async () => {
+      const externalIdp = createMockExternalIdp({
+        providers: [
+          { id: 'ggl-123', name: 'Google', slug: 'google', providerType: 'oidc', enabled: true },
+        ],
+      });
+      // Saved for an earlier provider that was then called "google".
+      const settingsKV = createMockKV({
+        'settings:tenant:default:authentication-methods': JSON.stringify({
+          'authentication-methods.external_provider_usage': JSON.stringify([
+            {
+              id: 'google',
+              providerId: 'old-provider',
+              loginEnabled: false,
+              signupEnabled: false,
+              reauthEnabled: false,
+            },
+          ]),
+        }),
+      });
+      const { app, mockEnv } = createTestApp({ externalIdp, settingsKV });
+
+      const res = await app.request('/api/auth/authentication-methods', { method: 'GET' }, mockEnv);
+      const body = (await res.json()) as any;
+
+      expect(body.methods.external.providers).toHaveLength(1);
+      expect(body.methods.external.providers[0]).toMatchObject({
+        id: 'google',
+        loginEnabled: true,
+        reauthEnabled: true,
+      });
+      // The stable id used for matching stays internal.
+      expect(body.methods.external.providers[0]).not.toHaveProperty('stableId');
     });
 
     it('should include enabled SAML IdP providers as external login providers', async () => {

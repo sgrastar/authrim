@@ -130,6 +130,7 @@ import {
   validateRegistrationFieldSubmissionFromEnv,
 } from './registration-field-utils';
 import {
+  readDeclaredHumanVerificationScreen,
   verifyHumanVerificationForAction,
   type HumanVerificationAction,
 } from './human-verification';
@@ -570,6 +571,43 @@ export function reauthProvenMethodFromAmr(
   return undefined;
 }
 
+function positiveSafeInteger(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value > 0 ? value : undefined;
+}
+
+/**
+ * What a session (or the artifact it is made from) proves for a re-authentication: its method and
+ * when that was proven (milliseconds), as one pair. A session proven by several methods records
+ * the one a re-authentication takes with its own time (reauth_proven_amr and reauth_proven_at,
+ * e.g. the email code of a directory fallback) apart from its oldest proof (proven_at, for
+ * assurance), so methods merged in later (an older TOTP) never borrow a newer method's time.
+ */
+export function reauthProofFromRecord(
+  record: Record<string, unknown> | undefined,
+  amr: readonly string[] | undefined,
+  unverifiedAmr: readonly string[] = []
+): { method?: ReauthProvenMethod; provenAtMs?: number } {
+  const reauthProvenAt = positiveSafeInteger(record?.reauth_proven_at);
+  const reauthProvenAmr = Array.isArray(record?.reauth_proven_amr)
+    ? record.reauth_proven_amr.filter((value): value is string => typeof value === 'string')
+    : undefined;
+  if (reauthProvenAt !== undefined && reauthProvenAmr) {
+    // The pair names only methods just proven (a passkey signed for it is no longer unverified).
+    const method = reauthProvenMethodFromAmr(reauthProvenAmr);
+    return method ? { method, provenAtMs: reauthProvenAt } : {};
+  }
+  const method = reauthProvenMethodFromAmr(amr, unverifiedAmr);
+  if (!method) return {};
+  // A login at an external IdP or by SAML proves a re-authentication only with the pair above: the
+  // bridge asked the IdP for a new login and verified that one happened. Otherwise the IdP may have
+  // answered from a session of its own, however old.
+  if (method === 'other' && (amr ?? []).some((m) => m === 'external_idp' || m === 'saml')) {
+    return {};
+  }
+  const provenAtMs = positiveSafeInteger(record?.proven_at);
+  return provenAtMs === undefined ? { method } : { method, provenAtMs };
+}
+
 export async function consumeAuthorizationChallengeContinuation(
   c: Context<{ Bindings: Env }>,
   tenantId: string,
@@ -581,7 +619,9 @@ export async function consumeAuthorizationChallengeContinuation(
    * The method that proved the user. A re-authentication needs one (an unknown method, such as a
    * just-registered passkey, cannot complete it) and requires its re-authentication switch.
    */
-  provenMethod?: ReauthProvenMethod
+  provenMethod?: ReauthProvenMethod,
+  /** When the proof was verified (milliseconds), if known: freshness is then judged exactly. */
+  provenAtMs?: number
 ): Promise<AuthorizationChallengeContinuation | { error: Response }> {
   const env = c.env;
   const challengeStore = await getChallengeStoreByChallengeId(env, challengeId, tenantId);
@@ -644,10 +684,12 @@ export async function consumeAuthorizationChallengeContinuation(
   const metadata = challengeData.metadata || {};
   // A re-authentication is answered only by a proof made after it was asked for.
   const reauthIssuedAt = metadata.reauth_issued_at;
+  // A re-authentication needs a proof the server dated after the request; a proof of unknown
+  // time (a session or artifact that did not record one) cannot show that.
   if (
     type === 'reauth' &&
     typeof reauthIssuedAt === 'number' &&
-    authTime < Math.floor(reauthIssuedAt / 1000)
+    (provenAtMs === undefined || provenAtMs < reauthIssuedAt)
   ) {
     return {
       error: new Response(
@@ -782,6 +824,80 @@ export async function readAuthorizationChallengeReauthIssuedAt(
   if (challenge?.tenantId !== tenantId || challenge.type !== 'reauth') return null;
   const issuedAt = challenge.metadata?.reauth_issued_at;
   return typeof issuedAt === 'number' ? issuedAt : null;
+}
+
+/** How long an email-code send left provisioning its account may be resumed. */
+const DIRECT_EMAIL_SEND_RESUME_TTL_SECONDS = 5 * 60;
+
+/**
+ * The send a resume record stands for: the same address and PKCE, from the same client and
+ * screen (or none named), for the same authorization challenge (or none). Only that send, sent
+ * again once its account exists, may use it.
+ */
+async function directEmailSendResumeKey(input: {
+  tenantId: string;
+  email: string;
+  codeChallenge: string;
+  clientId: string;
+  screen: string;
+  authorizationChallengeId?: string;
+}): Promise<string> {
+  const digest = await crypto.subtle.digest(
+    'SHA-256',
+    new TextEncoder().encode(
+      JSON.stringify([
+        input.tenantId,
+        input.email,
+        input.codeChallenge,
+        input.clientId,
+        input.screen,
+        input.authorizationChallengeId ?? null,
+      ])
+    )
+  );
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+/** Records that a send passed its checks (human verification included) as `usage`. */
+async function recordDirectEmailSendResume(
+  env: Env,
+  tenantId: string,
+  key: string,
+  usage: HumanVerificationAction
+): Promise<void> {
+  const id = `direct_email_send_resume:${key}`;
+  const challengeStore = await getChallengeStoreByChallengeId(env, id, tenantId);
+  await challengeStore.storeChallengeRpc({
+    id,
+    tenantId,
+    type: 'direct_email_send_resume',
+    userId: 'anonymous',
+    challenge: key,
+    ttl: DIRECT_EMAIL_SEND_RESUME_TTL_SECONDS,
+    metadata: { usage },
+  });
+}
+
+/** The usage of the send this one resumes, using its record up (once), or null. */
+async function consumeDirectEmailSendResume(
+  env: Env,
+  tenantId: string,
+  key: string
+): Promise<{ usage: HumanVerificationAction } | null> {
+  const id = `direct_email_send_resume:${key}`;
+  try {
+    const challengeStore = await getChallengeStoreByChallengeId(env, id, tenantId);
+    const record = (await challengeStore.consumeChallengeRpc({
+      id,
+      tenantId,
+      type: 'direct_email_send_resume',
+      challenge: key,
+    })) as { metadata?: { usage?: unknown } } | undefined;
+    const usage = record?.metadata?.usage;
+    return usage === 'signup' || usage === 'login' ? { usage } : null;
+  } catch {
+    return null;
+  }
 }
 
 async function resolveDirectStartTurnstileAction(
@@ -2205,6 +2321,8 @@ async function completeDirectEmailVerification(
     assuranceSettings,
   } = input;
   const log = getLogger(c).module('DIRECT-AUTH');
+  // The code (or provider proof) was verified just before this was called.
+  const provenAtMs = Date.now();
   // What the code was sent for still holds: the method's switch for that usage, and a
   // re-authentication proves only the user it was asked of.
   const usage = metadata.usage;
@@ -2361,6 +2479,8 @@ async function completeDirectEmailVerification(
       scope: metadataString(metadata, 'scope'),
       transaction_id: metadataString(metadata, 'transaction_id') || transactionId,
       is_new_user: isNewUser,
+      // When the email was proven (milliseconds), as the passkey artifact records it.
+      proven_at: provenAtMs,
       authorization_challenge_id: metadataString(metadata, 'authorization_challenge_id'),
       runtime_interaction_id: metadataString(metadata, 'runtime_interaction_id'),
     },
@@ -2759,22 +2879,43 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
       challengeType === 'reauth'
         ? await readAuthorizationChallengeReauthUser(c.env, tenantId, authorization_challenge_id)
         : null;
-    const emailCodeUsage: HumanVerificationAction = !user
-      ? 'signup'
-      : challengeType === 'reauth'
-        ? 'reauth'
-        : 'login';
-    // Human verification answers the screen the code was asked from (the shared login form asks
-    // with a login token even for a new address), as before.
-    const turnstileAction: HumanVerificationAction = challengeType ?? (user ? 'login' : 'signup');
+    // Answered like any other send, so the address's owner is not revealed; nothing else about the
+    // address is looked at (no human verification either, whose requirements depend on it).
     if (challengeType === 'reauth' && (!user || !reauthUserId || user.id !== reauthUserId)) {
-      // Answered like any other send, so the address's owner is not revealed.
-      suppressEmailCodeSend = true;
       log.info('Suppressing email-code send for another user than the re-authentication', {
         action: 'direct_email_code_send_suppressed',
         reason: 'reauth_user_mismatch',
       });
+      return acceptedEmailCodeSendResponse(c, normalizedEmail);
     }
+    // A send that left its account being provisioned is sent again once the account exists; it is
+    // still the send it was (a sign-up, already through its checks), not a new sign-in.
+    const declaredScreen = readDeclaredHumanVerificationScreen(c);
+    const resumeKey = await directEmailSendResumeKey({
+      tenantId,
+      email: normalizedEmail,
+      codeChallenge: code_challenge,
+      clientId: client_id,
+      screen: declaredScreen ?? 'unspecified',
+      ...(authorization_challenge_id
+        ? { authorizationChallengeId: authorization_challenge_id }
+        : {}),
+    });
+    const resumedSend =
+      user && challengeType !== 'reauth'
+        ? await consumeDirectEmailSendResume(c.env, tenantId, resumeKey)
+        : null;
+    const emailCodeUsage: HumanVerificationAction =
+      resumedSend?.usage ?? (!user ? 'signup' : challengeType === 'reauth' ? 'reauth' : 'login');
+    // The token is checked against the screen it came from (a re-authentication only ever takes
+    // its own screen's token). A client that does not say keeps the earlier inference. Whatever the
+    // screen, the setting for what the code does (signing up a new address) asks for a token too.
+    const turnstileAction: HumanVerificationAction =
+      challengeType === 'reauth'
+        ? 'reauth'
+        : (declaredScreen ?? challengeType ?? (user ? 'login' : 'signup'));
+    const turnstileAlsoRequiredFor: HumanVerificationAction[] =
+      emailCodeUsage === turnstileAction ? [] : [emailCodeUsage];
     const emailOtpEnabled = await isAuthenticationMethodUsageEnabled(
       c.env,
       tenantId,
@@ -2789,11 +2930,15 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
         usage: emailCodeUsage,
       });
     }
-    const turnstileError = await verifyHumanVerificationForAction(
-      c,
-      turnstileAction,
-      human_verification_response ?? cf_turnstile_response
-    );
+    // A resumed send already passed human verification (its single-use token is spent).
+    const turnstileError = resumedSend
+      ? null
+      : await verifyHumanVerificationForAction(
+          c,
+          turnstileAction,
+          human_verification_response ?? cf_turnstile_response,
+          turnstileAlsoRequiredFor
+        );
     if (turnstileError) {
       suppressEmailCodeSend = true;
       log.info('Suppressing email-code send because human verification failed', {
@@ -2867,7 +3012,10 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
             email: normalizedEmail,
             runtimeUser,
           });
-          if (provisioned.status === 'pending') return provisioned.response;
+          if (provisioned.status === 'pending') {
+            await recordDirectEmailSendResume(c.env, tenantId, resumeKey, emailCodeUsage);
+            return provisioned.response;
+          }
           user = {
             id: provisioned.userId,
             email: normalizedEmail,
@@ -3391,7 +3539,15 @@ export async function directSessionCreateHandler(c: Context<{ Bindings: Env }>) 
 
     const sessionTtl = await resolveSessionTtl(c.env, tenantId, 'direct_auth');
     const now = Date.now();
-    const authTime = Math.floor(now / 1000);
+    // The session was authenticated when its artifact's proof was verified, not when it is
+    // redeemed; an artifact without one (an external IdP login) counts from now.
+    // A passkey only just registered (passkey_signup) proves nothing yet.
+    const reauthProof = reauthProofFromRecord(
+      metadata,
+      typeof metadata.method === 'string' ? [metadata.method] : []
+    );
+    const provenAtMs = directSessionProvenAt(metadata).proven_at;
+    const authTime = Math.floor((provenAtMs ?? now) / 1000);
     const amr = [typeof metadata.method === 'string' ? metadata.method : 'direct_auth'];
     const acr = 'urn:mace:incommon:iap:bronze';
 
@@ -3412,8 +3568,8 @@ export async function directSessionCreateHandler(c: Context<{ Bindings: Env }>) 
         artifactData.userId,
         authTime,
         new URL(c.req.url).origin,
-        // A passkey only just registered (passkey_signup) proves nothing yet.
-        reauthProvenMethodFromAmr(typeof metadata.method === 'string' ? [metadata.method] : [])
+        reauthProof.method,
+        reauthProof.provenAtMs
       );
       if ('error' in continuation) {
         return continuation.error;
@@ -3442,6 +3598,8 @@ export async function directSessionCreateHandler(c: Context<{ Bindings: Env }>) 
         // When the authentication was proven, not when it is stored or redeemed: an assurance
         // step-up counts only proof made after it began.
         ...directSessionProvenAt(metadata),
+        // The method a re-authentication takes and when (a verified new upstream login).
+        ...directSessionReauthProof(metadata),
         // An external IdP login's upstream acr (from its validated ID token), for assurance.
         ...(metadata.method === 'external_idp' &&
         typeof metadata.upstream_acr === 'string' &&
@@ -3898,8 +4056,27 @@ function directSessionProvenAt(metadata: Record<string, unknown>): { proven_at?:
     : {};
 }
 
+function directSessionReauthProof(metadata: Record<string, unknown>): {
+  reauth_proven_amr?: string[];
+  reauth_proven_at?: number;
+} {
+  const provenAt = positiveSafeInteger(metadata.reauth_proven_at);
+  const provenAmr = Array.isArray(metadata.reauth_proven_amr)
+    ? metadata.reauth_proven_amr.filter((value): value is string => typeof value === 'string')
+    : [];
+  return provenAt !== undefined && provenAmr.length > 0
+    ? { reauth_proven_amr: provenAmr, reauth_proven_at: provenAt }
+    : {};
+}
+
 /** Session data only Authrim reads (assurance evidence): never returned to the client. */
-const INTERNAL_SESSION_DATA_KEYS = ['unverified_amr', 'upstream_acr', 'proven_at'];
+const INTERNAL_SESSION_DATA_KEYS = [
+  'unverified_amr',
+  'upstream_acr',
+  'proven_at',
+  'reauth_proven_at',
+  'reauth_proven_amr',
+];
 
 function publicSessionData(data: Session['data']): Session['data'] {
   if (!data) return data;

@@ -595,6 +595,9 @@ describe('Account Page TOTP API', () => {
       'g1:apac:3:session_current',
       expect.objectContaining({
         amr: ['passkey', 'otp', 'totp'],
+        // The TOTP alone, not the methods merged before it, for a later re-authentication.
+        reauth_proven_amr: ['totp'],
+        reauth_proven_at: expect.any(Number),
       })
     );
   });

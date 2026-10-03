@@ -1045,6 +1045,7 @@ app.use('*', async (c, next) => {
       'If-None-Match',
       'X-Tenant-Id',
       'X-Diagnostic-Session-Id',
+      'X-Authrim-Human-Verification-Action',
       'Idempotency-Key',
       'Authrim-Step-Up-Receipt',
     ],

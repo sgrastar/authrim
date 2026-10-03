@@ -528,6 +528,7 @@ describe('managed Direct Auth browser session finish', () => {
           client_id: 'login-ui',
           channel: 'browser',
           method: 'passkey',
+          proven_at: Date.now(),
           authorization_challenge_id: 'reauth_challenge_123',
         },
       })
@@ -571,11 +572,13 @@ describe('managed Direct Auth browser session finish', () => {
   });
 
   it.each([
-    ['external_idp', 200],
-    ['passkey_signup', 403],
-  ])(
-    're-authenticates from a %s artifact only when the method proves the user',
-    async (method, status) => {
+    // An external IdP login proves a re-authentication only once the bridge verified a renewal.
+    ['external_idp', { reauth_proven_amr: ['external_idp'], reauth_proven_at: Date.now() }, 200],
+    ['external_idp', {}, 403],
+    ['passkey_signup', {}, 403],
+  ] as const)(
+    're-authenticates from a %s artifact (%j) only when the method proves the user',
+    async (method, proof, status) => {
       const codeVerifier = `verifier-for-${method}-reauth`;
       challengeStore.consumeChallengeRpc
         .mockResolvedValueOnce({
@@ -585,6 +588,7 @@ describe('managed Direct Auth browser session finish', () => {
             client_id: 'login-ui',
             channel: 'browser',
             method,
+            ...proof,
             authorization_challenge_id: 'reauth_challenge_123',
           },
         })
@@ -606,7 +610,7 @@ describe('managed Direct Auth browser session finish', () => {
 
       const response = await directSessionCreateHandler(
         createContext({
-          direct_auth_artifact: `artifact_${method}`,
+          direct_auth_artifact: `artifact_${method}_${status}`,
           client_id: 'login-ui',
           code_verifier: codeVerifier,
           channel: 'browser',
@@ -614,6 +618,80 @@ describe('managed Direct Auth browser session finish', () => {
       );
 
       expect(response.status).toBe(status);
+      if (status === 200) {
+        // The session keeps the verified renewal, to complete a re-authentication later too.
+        expect(sessionStore.createSessionRpc).toHaveBeenCalledWith(
+          expect.any(String),
+          'user_123',
+          expect.any(Number),
+          expect.objectContaining({
+            reauth_proven_amr: ['external_idp'],
+            reauth_proven_at: expect.any(Number),
+          }),
+          expect.anything()
+        );
+      }
+    }
+  );
+
+  it.each([
+    // Proven 100 ms before the re-authentication was asked for, in the same second.
+    [1_700_000_000_000 - 100, 403],
+    [1_700_000_000_000 + 100, 200],
+  ])(
+    'dates the session by its proof (%d) and judges a re-authentication by it',
+    async (provenAt, status) => {
+      const codeVerifier = `verifier-for-proof-${provenAt}`;
+      challengeStore.consumeChallengeRpc
+        .mockResolvedValueOnce({
+          challenge: await s256Challenge(codeVerifier),
+          userId: 'user_123',
+          metadata: {
+            client_id: 'login-ui',
+            channel: 'browser',
+            method: 'passkey',
+            proven_at: provenAt,
+            authorization_challenge_id: 'reauth_challenge_123',
+          },
+        })
+        .mockRejectedValueOnce(new Error('not a login challenge'))
+        .mockResolvedValueOnce({
+          userId: 'user_123',
+          metadata: {
+            response_type: 'code',
+            client_id: 'rp_web',
+            redirect_uri: 'https://rp.example.com/callback',
+            scope: 'openid',
+            state: 'state-123',
+            issuer: 'https://issuer.example.com',
+            sessionUserId: 'user_123',
+            reauth_issued_at: 1_700_000_000_000,
+          },
+        });
+      const { directSessionCreateHandler } = await import('../direct-auth');
+
+      const response = await directSessionCreateHandler(
+        createContext({
+          direct_auth_artifact: `artifact_proof_${provenAt}`,
+          client_id: 'login-ui',
+          code_verifier: codeVerifier,
+          channel: 'browser',
+        }) as never
+      );
+
+      expect(response.status).toBe(status);
+      if (status === 200) {
+        expect(sessionStore.createSessionRpc).toHaveBeenCalledWith(
+          expect.any(String),
+          'user_123',
+          expect.any(Number),
+          expect.objectContaining({
+            authTime: Math.floor(provenAt / 1000),
+            proven_at: provenAt,
+          }),
+          expect.anything()
+        );
+      }
     }
   );
 

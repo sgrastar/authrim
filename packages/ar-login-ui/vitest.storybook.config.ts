@@ -13,6 +13,8 @@ export default mergeConfig(
 	viteConfig,
 	defineConfig({
 		plugins: [storybookTest({ configDir: `${dirname}.storybook` })],
+		// Prebundled up front: a dependency found mid-run (the on-demand QR library) reloads the page.
+		optimizeDeps: { include: ['qrcode'] },
 		test: {
 			name: 'storybook',
 			browser: {

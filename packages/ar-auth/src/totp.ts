@@ -730,7 +730,8 @@ export async function totpSignupActivateHandler(c: Context<{ Bindings: Env }>) {
         runtimeUser.id,
         authTime,
         new URL(c.req.url).origin,
-        'totp'
+        'totp',
+        proofVerifiedAtMs
       );
       if ('error' in continuation) {
         return continuation.error;
@@ -1185,7 +1186,8 @@ export async function totpLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
           userId,
           authTime,
           new URL(c.req.url).origin,
-          'totp'
+          'totp',
+          proofVerifiedAtMs
         );
         if ('error' in continuation) {
           return continuation.error;

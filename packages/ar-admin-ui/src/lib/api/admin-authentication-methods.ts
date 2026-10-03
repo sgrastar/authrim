@@ -73,6 +73,11 @@ export interface AuthenticationMethodExternalProviderUsage {
 	loginEnabled: boolean;
 	signupEnabled: boolean;
 	reauthEnabled: boolean;
+	/**
+	 * Accept a re-authentication whose new login the provider did not date (an ID token without
+	 * auth_time), on the strength of having asked for one. Weaker evidence; off unless turned on.
+	 */
+	reauthAcceptWithoutAuthTime: boolean;
 	accountLinkEnabled: boolean;
 }
 
@@ -213,6 +218,25 @@ function parseExternalProviderUsage(
 	return Object.fromEntries(entries);
 }
 
+/**
+ * A provider's saved usage: the entry naming its stable providerId, else an older entry without
+ * one matched by id (a slug can be renamed or reused). As the runtime reads it.
+ */
+function savedUsageFor(
+	usageById: Record<string, Partial<AuthenticationMethodExternalProviderUsage>>,
+	providerId: string,
+	ids: string[]
+): Partial<AuthenticationMethodExternalProviderUsage> {
+	const entries = Object.values(usageById);
+	return (
+		entries.find((entry) => entry.providerId === providerId) ??
+		entries.find(
+			(entry) => !entry.providerId && typeof entry.id === 'string' && ids.includes(entry.id)
+		) ??
+		{}
+	);
+}
+
 function safeParseArray<T>(value: string): T[] {
 	try {
 		const parsed = JSON.parse(value);
@@ -242,6 +266,8 @@ function normalizeSAMLProvider(
 		loginEnabled: provider.enabled,
 		signupEnabled: provider.enabled,
 		reauthEnabled: provider.enabled,
+		// A SAML IdP always dates its login (AuthnInstant).
+		reauthAcceptWithoutAuthTime: false,
 		accountLinkEnabled: provider.enabled
 	};
 }
@@ -253,7 +279,7 @@ function resolveExternalProviderUsages(
 ): AuthenticationMethodExternalProviderUsage[] {
 	const oauthProviders = providers.map((provider) => {
 		const id = providerAuthenticationMethodId(provider);
-		const saved = usageById[id] ?? usageById[provider.id] ?? {};
+		const saved = savedUsageFor(usageById, provider.id, [id, provider.id]);
 		const providerEnabled = provider.enabled !== false;
 		const defaultEnabled = providerEnabled;
 		const accountLinkAvailable = providerEnabled && provider.autoLinkEmail !== false;
@@ -267,7 +293,13 @@ function resolveExternalProviderUsages(
 			priority: provider.priority,
 			loginEnabled: providerEnabled && parseBoolean(saved.loginEnabled, defaultEnabled),
 			signupEnabled: providerEnabled && parseBoolean(saved.signupEnabled, defaultEnabled),
-			reauthEnabled: providerEnabled && parseBoolean(saved.reauthEnabled, defaultEnabled),
+			// A pure OAuth 2.0 provider returns no ID token to date a new login: never re-authenticates.
+			reauthEnabled:
+				providerEnabled &&
+				provider.providerType !== 'oauth2' &&
+				parseBoolean(saved.reauthEnabled, defaultEnabled),
+			reauthAcceptWithoutAuthTime:
+				provider.providerType === 'oidc' && parseBoolean(saved.reauthAcceptWithoutAuthTime, false),
 			accountLinkEnabled:
 				accountLinkAvailable && parseBoolean(saved.accountLinkEnabled, accountLinkAvailable)
 		};
@@ -277,7 +309,10 @@ function resolveExternalProviderUsages(
 		.filter((provider) => provider.providerType === 'saml_idp')
 		.map((provider, index) => {
 			const normalized = normalizeSAMLProvider(provider, providers.length + index);
-			const saved = usageById[normalized.id] ?? usageById[normalized.providerId] ?? {};
+			const saved = savedUsageFor(usageById, normalized.providerId, [
+				normalized.id,
+				normalized.providerId
+			]);
 			const defaultEnabled = normalized.enabled;
 			return {
 				...normalized,
@@ -303,6 +338,9 @@ function serializeExternalProviderUsages(
 			loginEnabled: provider.enabled && provider.loginEnabled,
 			signupEnabled: provider.enabled && provider.signupEnabled,
 			reauthEnabled: provider.enabled && provider.reauthEnabled,
+			...(provider.type === 'oidc'
+				? { reauthAcceptWithoutAuthTime: provider.reauthAcceptWithoutAuthTime }
+				: {}),
 			accountLinkEnabled: provider.enabled && provider.autoLinkEmail && provider.accountLinkEnabled
 		}))
 	);
