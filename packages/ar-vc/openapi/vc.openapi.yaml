@@ -115,6 +115,11 @@ paths:
       tags:
         - OpenID4VCI
       summary: Exchange a pre-authorized code for a credential access token.
+      description: >-
+        The access token is a bearer token from no pushed authorization request. With tenant
+        assurance enabled, a default FAL of FAL2 or above with fal2_requires_dpop, or FAL3 with
+        fal3_requires_par, refuses the grant with unauthorized_client before the offer is
+        reserved. Assurance settings that cannot be read return 503 temporarily_unavailable.
       requestBody:
         $ref: '#/components/requestBodies/VCIToken'
       responses:
@@ -123,6 +128,8 @@ paths:
         '400':
           $ref: '#/components/responses/Error'
         '500':
+          $ref: '#/components/responses/Error'
+        '503':
           $ref: '#/components/responses/Error'
   /vci/nonce:
     post:

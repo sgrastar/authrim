@@ -10,6 +10,7 @@ import { Hono } from 'hono';
 import { clearDiscoveryMetadataCache, discoveryHandler } from '../discovery';
 import type { Env } from '@authrim/ar-lib-core/types/env';
 import type { OIDCProviderMetadata } from '@authrim/ar-lib-core/types/oidc';
+import { systemSettingsPlatformDocuments } from '@authrim/ar-lib-core/utils/system-settings-fields';
 
 /**
  * Create a mock environment for testing
@@ -79,13 +80,12 @@ describe('Discovery Profile Tests', () => {
       const env = createMockEnv();
       env.SETTINGS = {
         get: async (key: string) => {
-          if (key === 'system_settings') {
-            return JSON.stringify({
-              oidc: {
-                aiScopes: { enabled: true },
-              },
-            });
-          }
+          const platform: Record<string, unknown> = systemSettingsPlatformDocuments({
+            oidc: {
+              aiScopes: { enabled: true },
+            },
+          });
+          if (key in platform) return JSON.stringify(platform[key]);
           return null;
         },
       } as unknown as KVNamespace;
@@ -109,13 +109,12 @@ describe('Discovery Profile Tests', () => {
       env.ENABLE_AI_SCOPES = 'true'; // env says enabled
       env.SETTINGS = {
         get: async (key: string) => {
-          if (key === 'system_settings') {
-            return JSON.stringify({
-              oidc: {
-                aiScopes: { enabled: false }, // KV says disabled
-              },
-            });
-          }
+          const platform: Record<string, unknown> = systemSettingsPlatformDocuments({
+            oidc: {
+              aiScopes: { enabled: false }, // KV says disabled
+            },
+          });
+          if (key in platform) return JSON.stringify(platform[key]);
           return null;
         },
       } as unknown as KVNamespace;
@@ -169,13 +168,12 @@ describe('Discovery Profile Tests', () => {
       const env = createMockEnv();
       env.SETTINGS = {
         get: async (key: string) => {
-          if (key === 'system_settings') {
-            return JSON.stringify({
-              oidc: {
-                rar: { enabled: true },
-              },
-            });
-          }
+          const platform: Record<string, unknown> = systemSettingsPlatformDocuments({
+            oidc: {
+              rar: { enabled: true },
+            },
+          });
+          if (key in platform) return JSON.stringify(platform[key]);
           return null;
         },
       } as unknown as KVNamespace;
@@ -197,13 +195,12 @@ describe('Discovery Profile Tests', () => {
       env.ENABLE_RAR = 'true'; // env says enabled
       env.SETTINGS = {
         get: async (key: string) => {
-          if (key === 'system_settings') {
-            return JSON.stringify({
-              oidc: {
-                rar: { enabled: false }, // KV says disabled
-              },
-            });
-          }
+          const platform: Record<string, unknown> = systemSettingsPlatformDocuments({
+            oidc: {
+              rar: { enabled: false }, // KV says disabled
+            },
+          });
+          if (key in platform) return JSON.stringify(platform[key]);
           return null;
         },
       } as unknown as KVNamespace;
@@ -262,6 +259,56 @@ describe('Discovery Profile Tests', () => {
 
       // But ai_agent_action IS included in RAR types
       expect(metadata.authorization_details_types_supported).toContain('ai_agent_action');
+    });
+  });
+
+  describe('Settings API protocol settings', () => {
+    function envWith(documents: Record<string, unknown>): Env {
+      const env = createMockEnv();
+      env.SETTINGS = {
+        get: async (key: string) => (key in documents ? JSON.stringify(documents[key]) : null),
+      } as unknown as KVNamespace;
+      return env;
+    }
+
+    async function metadataFor(env: Env): Promise<OIDCProviderMetadata> {
+      const response = await app.request('/.well-known/openid-configuration', {}, env);
+      expect(response.status).toBe(200);
+      return (await response.json()) as OIDCProviderMetadata;
+    }
+
+    it('advertises only JARM response modes when JARM is required, as authorization enforces', async () => {
+      const metadata = await metadataFor(
+        envWith({ 'settings:tenant:default:security': { 'security.require_jarm': true } })
+      );
+      expect(metadata.response_modes_supported).toEqual([
+        'query.jwt',
+        'fragment.jwt',
+        'form_post.jwt',
+        'jwt',
+      ]);
+    });
+
+    it('advertises the saved claims, PAR requirement and auth methods', async () => {
+      const metadata = await metadataFor(
+        envWith({
+          'settings:tenant:default:discovery': { 'discovery.claims_supported': 'sub, email' },
+          'settings:tenant:default:security': { 'security.par_required': true },
+          'settings:platform:oauth': {
+            'oauth.token_endpoint_auth_methods_supported': ['private_key_jwt'],
+          },
+        })
+      );
+      expect(metadata.claims_supported).toEqual(['sub', 'email']);
+      expect(metadata.require_pushed_authorization_requests).toBe(true);
+      expect(metadata.token_endpoint_auth_methods_supported).toEqual(['private_key_jwt']);
+    });
+
+    it('advertises the claims Authrim can issue when the saved list is empty', async () => {
+      const metadata = await metadataFor(
+        envWith({ 'settings:tenant:default:discovery': { 'discovery.claims_supported': '' } })
+      );
+      expect(metadata.claims_supported).toContain('email_verified');
     });
   });
 

@@ -1,8 +1,10 @@
 import type { Messages } from './ja';
 import { deSettings } from './settings/de';
+import { deCompliance } from './compliance/de';
 
 export const de = {
 	...deSettings,
+	...deCompliance,
 	'app.adminLabel': 'Verwaltungskonsole',
 	'app.env.dev': 'Entwicklung',
 	'app.env.prod': 'Produktion',
@@ -343,6 +345,7 @@ export const de = {
 	'table.selectRow': '{name} auswählen',
 	'table.sortBy': 'Nach {column} sortieren',
 	'table.notApplicable': 'Nicht zutreffend',
+	'table.actions': 'Aktionen',
 	'tabs.more': 'Mehr',
 	'choice.count': '{n} von {total} ausgewählt',
 	'choice.countMax': '{n} von höchstens {max}',

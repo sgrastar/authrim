@@ -7,6 +7,7 @@
   "bindings": [
     { "name": "LOOKUP_DB", "kind": "d1", "required": true, "dataRole": "lookup" },
     { "name": "DB_ADMIN", "kind": "d1", "required": true, "capability": "vc_metadata" },
+    { "name": "SETTINGS", "kind": "kv_namespace", "required": true, "capability": "settings.read" },
     { "name": "AUTHRIM_CONFIG", "kind": "kv_namespace", "required": true },
     { "name": "TENANT_RUNTIME_REGISTRY", "kind": "kv_namespace", "required": true },
     { "name": "KEY_MANAGER", "kind": "durable_object_namespace", "required": true },

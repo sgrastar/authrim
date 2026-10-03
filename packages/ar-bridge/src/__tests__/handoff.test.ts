@@ -9,9 +9,16 @@ const mocks = vi.hoisted(() => ({
   findUserPIIById: vi.fn(),
   extractDPoPProof: vi.fn(),
   validateDPoPProof: vi.fn(),
+  resolveEffectiveSettings: vi.fn(),
 }));
 
-vi.mock('@authrim/ar-lib-core', () => ({
+vi.mock('@authrim/ar-lib-core', async () => ({
+  resolveEffectiveSettings: mocks.resolveEffectiveSettings,
+  falRequiresSignedPushedRequest: (
+    await vi.importActual<typeof import('@authrim/ar-lib-core/services/assurance')>(
+      '@authrim/ar-lib-core/services/assurance'
+    )
+  ).falRequiresSignedPushedRequest,
   CanonicalRuntimeUserStore: class {
     async findById(userId: string) {
       const coreUser = await mocks.findUserById(userId);
@@ -176,6 +183,30 @@ describe('handleHandoffVerify', () => {
       name: 'Example User',
     });
     mocks.createSessionRpc.mockResolvedValue(undefined);
+    mocks.resolveEffectiveSettings.mockResolvedValue({});
+  });
+
+  it('refuses a handoff at FAL3 before the artifact is spent', async () => {
+    mocks.resolveEffectiveSettings.mockResolvedValue({
+      'assurance.enabled': true,
+      'assurance.default_fal': 'FAL3',
+      'assurance.fal3_requires_par': true,
+    });
+
+    const response = await handleHandoffVerify(createContext());
+
+    expect(response.status).toBe(400);
+    expect(((await response.json()) as { error: string }).error).toBe('unauthorized_client');
+    expect(mocks.consumeChallengeRpc).not.toHaveBeenCalled();
+  });
+
+  it('stops before the artifact is spent while the assurance settings cannot be read', async () => {
+    mocks.resolveEffectiveSettings.mockRejectedValue(new Error('KV unavailable'));
+
+    const response = await handleHandoffVerify(createContext());
+
+    expect(response.status).toBe(503);
+    expect(mocks.consumeChallengeRpc).not.toHaveBeenCalled();
   });
 
   it('rejects missing DPoP proof with machine-readable details', async () => {

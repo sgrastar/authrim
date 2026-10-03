@@ -56,6 +56,12 @@ export interface Session {
 export interface SessionData {
   amr?: string[]; // Authentication Methods References
   acr?: string; // Authentication Context Class Reference
+  /** Methods in amr whose possession was not proven (a passkey just registered): no AAL counts them. */
+  unverified_amr?: string[];
+  /** The acr (or SAML AuthnContextClassRef) an external or SAML IdP gave for this login. */
+  upstream_acr?: string;
+  /** When the authentication was proven (milliseconds), where it was before the session was made. */
+  proven_at?: number;
   deviceName?: string;
   ipAddress?: string;
   userAgent?: string;
@@ -95,6 +101,25 @@ export interface SessionResponse {
   expiresAt: number;
   createdAt: number;
   data?: SessionData; // Include session data for OIDC conformance (authTime etc.)
+}
+
+/** Conditions under which a session data update is written (otherwise the session is returned as is). */
+export interface SessionDataUpdateOptions {
+  /** Only while the session is a guest session. */
+  onlyIfGuestSession?: boolean;
+  /** Only while each of these fields still holds this value (absent: undefined). */
+  ifDataMatches?: Partial<SessionData>;
+}
+
+function sessionDataMatches(
+  data: SessionData | undefined,
+  expected: Partial<SessionData>
+): boolean {
+  return Object.entries(expected).every(
+    ([field, value]) =>
+      JSON.stringify((data as Record<string, unknown> | undefined)?.[field]) ===
+      JSON.stringify(value)
+  );
 }
 
 /**
@@ -193,7 +218,7 @@ export class SessionStore extends DurableObject<Env> {
   async updateSessionDataRpc(
     sessionId: string,
     dataUpdates: Partial<SessionData>,
-    options?: { onlyIfGuestSession?: boolean }
+    options?: SessionDataUpdateOptions
   ): Promise<Session | null> {
     return this.updateSessionData(sessionId, dataUpdates, options);
   }
@@ -648,7 +673,7 @@ export class SessionStore extends DurableObject<Env> {
   async updateSessionData(
     sessionId: string,
     dataUpdates: Partial<SessionData>,
-    options?: { onlyIfGuestSession?: boolean }
+    options?: SessionDataUpdateOptions
   ): Promise<Session | null> {
     if (!(await this.getSession(sessionId))) return null;
     // Validation can await another actor. Re-read authoritative data in a storage-only
@@ -660,7 +685,10 @@ export class SessionStore extends DurableObject<Env> {
         this.sessionCache.delete(sessionId);
         return null;
       }
-      if (options?.onlyIfGuestSession && current.data?.is_guest_session !== true) {
+      if (
+        (options?.onlyIfGuestSession && current.data?.is_guest_session !== true) ||
+        (options?.ifDataMatches && !sessionDataMatches(current.data, options.ifDataMatches))
+      ) {
         this.sessionCache.set(sessionId, current);
         return current;
       }

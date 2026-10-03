@@ -553,17 +553,30 @@ function parseRuntimeSnapshot<TPolicy>(
   }
 }
 
+/**
+ * The published snapshot for a scope, or null when none is published. A published one that cannot
+ * be read (its body missing, unreadable, malformed or not the one the pointer names) is null too,
+ * so runtime falls back; with `strict` (admin views) that throws instead, since the policy in
+ * effect is then unknown rather than absent.
+ */
 export async function loadPublishedRuntimeLoggingPolicySnapshot<TPolicy>(input: {
   scopeType: LoggingPolicyScopeType;
   scopeId: string;
   kv: RuntimePolicySnapshotKvStore;
   objectStore?: RuntimePolicySnapshotObjectStore | null;
   prefix?: string;
+  strict?: boolean;
 }): Promise<RuntimeLoggingPolicySnapshot<TPolicy> | null> {
-  const pointerKey = buildRuntimeLoggingPolicySnapshotPointerKey(input);
-  const pointer = parseSnapshotPointer(await input.kv.get(pointerKey));
-  if (!pointer?.objectRef) {
+  const unreadable = (): null => {
+    if (input.strict) throw new Error('logging_policy_snapshot_unreadable');
     return null;
+  };
+  const pointerKey = buildRuntimeLoggingPolicySnapshotPointerKey(input);
+  const rawPointer = await input.kv.get(pointerKey);
+  if (rawPointer === null) return null;
+  const pointer = parseSnapshotPointer(rawPointer);
+  if (!pointer?.objectRef) {
+    return unreadable();
   }
 
   const snapshotObject =
@@ -584,7 +597,7 @@ export async function loadPublishedRuntimeLoggingPolicySnapshot<TPolicy>(input: 
     snapshot.scopeType !== pointer.scopeType ||
     snapshot.scopeId !== pointer.scopeId
   ) {
-    return null;
+    return unreadable();
   }
   return snapshot;
 }

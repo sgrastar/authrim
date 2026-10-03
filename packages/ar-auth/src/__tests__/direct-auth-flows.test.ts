@@ -871,6 +871,8 @@ describe('Direct Auth primary passkey and email-code flows', () => {
           method: 'passkey',
           passkey_id: 'passkey_1',
           transaction_id: 'transaction_1',
+          // When the assertion was verified, for the session redeemed from it.
+          proven_at: expect.any(Number),
         }),
       })
     );
@@ -913,6 +915,100 @@ describe('Direct Auth primary passkey and email-code flows', () => {
     expect(mocks.challengeStore.storeChallengeRpc).toHaveBeenCalledWith(
       expect.objectContaining({ type: 'direct_auth_code', ttl: 120 })
     );
+  });
+
+  it.each([
+    [
+      'off',
+      {},
+      { acr: 'urn:mace:incommon:iap:bronze' },
+      ['aal', 'amr', 'assuranceAcr', 'assuranceAmr'],
+    ],
+    [
+      'on, with the acr in ID tokens',
+      { 'assurance.enabled': true },
+      {
+        acr: 'urn:authrim:aal:2',
+        aal: 'AAL2',
+        amr: ['passkey'],
+        assuranceAcr: 'urn:authrim:aal:2',
+      },
+      [],
+    ],
+    [
+      'on, without it',
+      { 'assurance.enabled': true, 'assurance.include_in_id_token': false },
+      {
+        acr: 'urn:mace:incommon:iap:bronze',
+        aal: 'AAL2',
+        amr: ['passkey'],
+        assuranceAcr: 'urn:authrim:aal:2',
+      },
+      [],
+    ],
+  ])(
+    'records how a passkey login authenticated on its code with assurance %s',
+    async (_label, assurance, recorded, absent) => {
+      const codeVerifier = 'passkey-login-code-verifier';
+      mocks.challengeStore.consumeChallengeRpc.mockResolvedValue({
+        challenge: 'passkey-login-challenge',
+        metadata: {
+          code_challenge: await s256Challenge(codeVerifier),
+          client_id: 'web-client',
+          channel: 'browser',
+          scope: 'openid profile',
+          transaction_id: 'transaction_1',
+          origin: 'https://app.example.com',
+          rpID: 'app.example.com',
+        },
+      });
+      const { directPasskeyLoginFinishHandler } = await import('../direct-auth');
+      const context = createContext({
+        challenge_id: 'challenge_1',
+        credential: {
+          id: 'credential-id',
+          rawId: 'credential-id',
+          response: {},
+          type: 'public-key',
+        },
+        code_verifier: codeVerifier,
+        channel: 'browser',
+      });
+      context.env.SETTINGS = createMockKV({
+        'settings:tenant:tenant_test:assurance': JSON.stringify(assurance),
+      }) as never;
+
+      expect((await directPasskeyLoginFinishHandler(context as never)).status).toBe(200);
+
+      const stored = mocks.authCodeStore.storeCodeRpc.mock.calls.at(-1)?.[0] as Record<
+        string,
+        unknown
+      >;
+      expect(stored).toMatchObject(recorded);
+      for (const field of absent) expect(stored).not.toHaveProperty(field);
+    }
+  );
+
+  it('spends no passkey login challenge while the assurance settings cannot be read', async () => {
+    const { directPasskeyLoginFinishHandler } = await import('../direct-auth');
+    const context = createContext({
+      challenge_id: 'challenge_1',
+      credential: { id: 'credential-id', rawId: 'credential-id', response: {}, type: 'public-key' },
+      code_verifier: 'passkey-login-code-verifier',
+      channel: 'browser',
+    });
+    context.env.SETTINGS = {
+      get: vi.fn(async (key: string) => {
+        if (key === 'settings:tenant:tenant_test:assurance') throw new Error('KV unavailable');
+        return null;
+      }),
+    } as never;
+
+    const response = await directPasskeyLoginFinishHandler(context as never);
+
+    expect(response.status).toBe(503);
+    expect(mocks.challengeStore.consumeChallengeRpc).not.toHaveBeenCalled();
+    expect(mocks.authCodeStore.storeCodeRpc).not.toHaveBeenCalled();
   });
 
   it('keeps login successful when the asynchronous Passkey D1 mirror is write-fenced', async () => {
@@ -2654,6 +2750,91 @@ describe('Direct Auth primary passkey and email-code flows', () => {
     );
 
     expect(response.status).toBe(200);
+  });
+
+  it.each([
+    ['with a presentation, refuses it before the send limit is counted', true],
+    ['without one, sends a code as before', false],
+  ])(
+    'while the assurance settings cannot be read, an email code send %s',
+    async (_label, presented) => {
+      const { directEmailCodeSendHandler } = await import('../direct-auth');
+      const context = enableEmailOtp(
+        createContext(
+          {
+            client_id: 'web-client',
+            email: 'existing@example.com',
+            code_challenge: 'email-pkce-challenge',
+            code_challenge_method: 'S256',
+            channel: 'browser',
+            scope: 'openid email',
+            ...(presented
+              ? {
+                  email_verification_token: 'presentation-token',
+                  email_verification_challenge_id: 'challenge_1',
+                  runtime_interaction_id: 'interaction_1',
+                }
+              : {}),
+          },
+          webHeaders()
+        )
+      ) as { env: { SETTINGS: { get: (key: string) => Promise<string | null> } } };
+      const settings = context.env.SETTINGS;
+      context.env.SETTINGS = {
+        ...settings,
+        get: async (key: string) => {
+          if (key === 'settings:tenant:tenant_test:assurance') throw new Error('KV unavailable');
+          return settings.get(key);
+        },
+      };
+
+      const response = await directEmailCodeSendHandler(context as never);
+
+      if (presented) {
+        expect(response.status).toBe(503);
+        expect(mocks.rateLimiter.incrementRpc).not.toHaveBeenCalled();
+      } else {
+        expect(response.status).toBe(200);
+        expect(mocks.rateLimiter.incrementRpc).toHaveBeenCalled();
+      }
+    }
+  );
+
+  it('spends no email code while the assurance settings cannot be read', async () => {
+    const challengeData = {
+      challenge: 'hashed-email-code',
+      userId: 'user_existing',
+      email: 'user@example.com',
+      metadata: {
+        code_challenge: await s256Challenge('email-code-verifier'),
+        client_id: 'web-client',
+        channel: 'browser',
+        scope: 'openid email',
+        transaction_id: 'attempt_1',
+        issued_at: Date.now() - 10_000,
+      },
+    };
+    mocks.challengeStore.getChallengeRpc.mockResolvedValue(challengeData);
+    const { directEmailCodeVerifyHandler } = await import('../direct-auth');
+    const context = createContext({
+      attempt_id: 'attempt_1',
+      code: '123456',
+      code_verifier: 'email-code-verifier',
+      channel: 'browser',
+    });
+    context.env.SETTINGS = {
+      get: vi.fn(async (key: string) => {
+        if (key === 'settings:tenant:tenant_test:assurance') throw new Error('KV unavailable');
+        return null;
+      }),
+    } as never;
+
+    const response = await directEmailCodeVerifyHandler(context as never);
+
+    expect(response.status).toBe(503);
+    expect(mocks.challengeStore.consumeChallengeRpc).not.toHaveBeenCalled();
+    // No attempt is counted either: the same code still works once the settings can be read.
+    expect(mocks.rateLimiter.incrementRpc).not.toHaveBeenCalled();
   });
 
   it('verifies an email code and returns a direct-auth artifact bound to PKCE', async () => {

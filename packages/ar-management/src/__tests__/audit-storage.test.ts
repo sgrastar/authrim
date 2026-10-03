@@ -11,6 +11,7 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { Hono } from 'hono';
+import { createSettingsCanonicalD1 } from './helpers/settings-canonical-d1';
 import type { Env } from '@authrim/ar-lib-core';
 import { DEFAULT_AUDIT_PROFILE_ID, DEFAULT_AUDIT_STORAGE_CONFIG } from '@authrim/ar-lib-core';
 import {
@@ -104,6 +105,7 @@ function createTestApp(
     AUTHRIM_CONFIG: mockKV,
     SETTINGS: mockSettingsKV,
     DB: mockDB,
+    DB_ADMIN: createSettingsCanonicalD1(),
     AUDIT_QUEUE: {
       send: vi.fn(),
       sendBatch: vi.fn(),
@@ -583,8 +585,29 @@ describe('Audit Storage Configuration API', () => {
       expect(res.status).toBe(400);
       const body = (await res.json()) as any;
 
-      // Error format: "must be between X and Y"
-      expect(body.error_description).toContain('must be between');
+      // Error format: "must be a whole number of days between X and Y"
+      expect(body.error_description).toContain('whole number of days between');
+    });
+
+    it('rejects retention that is not a whole number of days', async () => {
+      const { app, mockEnv } = createTestApp();
+      for (const body of [
+        { eventLogRetentionDays: 1.5 },
+        { piiLogRetentionDays: 'broken' },
+        { minimumRetentionDays: 30.25 },
+      ]) {
+        const res = await app.request(
+          '/api/admin/settings/audit-storage/retention',
+          {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+          },
+          mockEnv
+        );
+        expect(res.status).toBe(400);
+        expect(((await res.json()) as any).error_description).toContain('whole number of days');
+      }
     });
 
     it('should reject retention days exceeding maximum', async () => {
@@ -605,8 +628,8 @@ describe('Audit Storage Configuration API', () => {
       expect(res.status).toBe(400);
       const body = (await res.json()) as any;
 
-      // Error format: "must be between X and Y"
-      expect(body.error_description).toContain('must be between');
+      // Error format: "must be a whole number of days between X and Y"
+      expect(body.error_description).toContain('whole number of days between');
     });
 
     it('rejects archiveBeforeDelete when no archive target is configured', async () => {
@@ -743,6 +766,30 @@ describe('Audit Storage Configuration API', () => {
         primaryStore: 'd1-core',
         forwardingSinks: ['logpush-premium'],
       });
+    });
+
+    it('rejects a rule whose retention is not a whole number of days', async () => {
+      const { app, mockEnv } = createTestApp();
+      const res = await app.request(
+        '/api/admin/settings/audit-storage/routing-rules',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: 'Fractional',
+            priority: 100,
+            enabled: true,
+            conditions: { tenantId: 'tenant-a' },
+            targets: { primaryStore: 'd1-core' },
+            retention: { eventLogRetentionDays: 1.5 },
+          }),
+        },
+        mockEnv
+      );
+      expect(res.status).toBe(400);
+      expect(((await res.json()) as any).error_description).toContain(
+        'retention.eventLogRetentionDays must be a whole number of days'
+      );
     });
 
     it('should reject rule without name', async () => {

@@ -1,4 +1,5 @@
 import type {
+  AccountAuthenticationLifecycle,
   DatabaseAdapter,
   Env,
   ObjectClass,
@@ -16,8 +17,14 @@ import {
   putTenantExistsCache,
   deleteTenantExistsCache,
   transitionAccountAuthenticationState,
+  readAccountAuthenticationState,
   getTenantSettingsDocument,
 } from '@authrim/ar-lib-core';
+import {
+  initializeFromAccount,
+  isLifecycleTransitionRefused,
+  transitionAccountLifecycle,
+} from './account-status';
 import { materializeEncryptedObjectArtifact } from './object-artifact-materialization';
 import { createLoggingTenantKeyResolver } from './logging-tenant-key';
 import { listScimTokens } from '@authrim/ar-lib-scim';
@@ -504,6 +511,8 @@ export interface BulkUserUpdateConfig {
   dry_run?: boolean;
   batch_size?: number;
   result_delivery?: AdminJobResultDelivery;
+  /** The version of the job's status transitions, set by the server when the job is created. */
+  lifecycle_version_ms?: number;
 }
 
 interface BulkUserUpdateProgress {
@@ -781,6 +790,10 @@ function buildUserFilterWhere(
 export function validateBulkUserUpdateConfig(config: BulkUserUpdateConfig): void {
   if (!Array.isArray(config.fields) || config.fields.length === 0) {
     throw new Error('fields must include at least one field');
+  }
+  // Every field sets the account's status: one transition per job.
+  if (config.fields.length > 1) {
+    throw new Error('fields must include exactly one field (each sets the account status)');
   }
   for (const field of config.fields) {
     const column = USER_BULK_UPDATE_COLUMNS[field as keyof typeof USER_BULK_UPDATE_COLUMNS];
@@ -1569,6 +1582,46 @@ async function processTenantDatabasePurgeBackupJob(
   };
 }
 
+/**
+ * The status a bulk update sets (its one field, normalized as validated): the authentication
+ * state, the account's status and lifecycle state (one value, as single-account changes set
+ * them), and the status timestamps those changes set (as of the transition).
+ */
+function bulkLifecycleTarget(
+  config: BulkUserUpdateConfig,
+  versionMs: number
+): {
+  authentication: AccountAuthenticationLifecycle;
+  state: string;
+  metadataPatch: Record<string, unknown>;
+} {
+  const field = config.fields[0] as keyof typeof USER_BULK_UPDATE_COLUMNS;
+  const normalized = USER_BULK_UPDATE_COLUMNS[field].normalize(config.values[field]);
+  const state =
+    field === 'is_active' ? (normalized === 1 ? 'active' : 'deprovisioned') : String(normalized);
+  const authentication: AccountAuthenticationLifecycle =
+    state === 'active' || state === 'suspended' || state === 'locked' ? state : 'inactive';
+  // As of the transition, so a retry sets the same.
+  const nowSeconds = Math.floor(versionMs / 1000);
+  const metadataPatch: Record<string, unknown> =
+    state === 'active'
+      ? { suspended_at: null, suspended_until: null, locked_at: null, locked_until: null }
+      : state === 'suspended'
+        ? { suspended_at: nowSeconds, suspended_until: null }
+        : state === 'locked'
+          ? { locked_at: nowSeconds, locked_until: null }
+          : {};
+  return { authentication, state, metadataPatch };
+}
+
+/** The version of a bulk update's transitions: fixed when the job was created. */
+function bulkLifecycleVersionMs(config: BulkUserUpdateConfig, job: AdminJobRow): number {
+  const stored = config.lifecycle_version_ms;
+  if (typeof stored === 'number' && Number.isSafeInteger(stored) && stored > 0) return stored;
+  // A job created before the version was stored: its creation time (seconds).
+  return job.created_at < 1e12 ? job.created_at * 1000 : job.created_at;
+}
+
 async function processBulkUserUpdateJob(
   env: Env,
   adapter: DatabaseAdapter,
@@ -1577,7 +1630,12 @@ async function processBulkUserUpdateJob(
   const config = parseJsonConfig<BulkUserUpdateConfig>(job);
   validateBulkUserUpdateConfig(config);
   const filter = buildUserFilterWhere(job.tenant_id, config.filter);
-  const total = await countBulkUserUpdateTargets(adapter, job.tenant_id, config);
+  const previous = parseJsonProgress<BulkUserUpdateProgress>(job) ?? {};
+  // Counted once, when the job starts: accounts it updates may leave the filter.
+  const total =
+    typeof previous.total === 'number'
+      ? previous.total
+      : await countBulkUserUpdateTargets(adapter, job.tenant_id, config);
   const nowMs = Date.now();
 
   if (config.dry_run) {
@@ -1591,11 +1649,14 @@ async function processBulkUserUpdateJob(
     };
   }
 
-  const previous = parseJsonProgress<BulkUserUpdateProgress>(job) ?? {};
   const batchSize = Math.min(config.batch_size ?? DEFAULT_JOB_BATCH_SIZE, MAX_JOB_BATCH_SIZE);
   const cursor = typeof previous.cursor === 'string' ? previous.cursor : null;
-  const selectionClauses = [filter.whereSql];
-  const selectionParams = [...filter.params];
+  // The filter's accounts, and those this job already changed: an attempt that stopped after
+  // changing an account (which may then no longer match the filter) is finished by the retry.
+  const selectionClauses = [
+    `(${filter.whereSql} OR (tenant_id = ? AND json_extract(metadata_json, '$.lifecycle_operation_id') = ? || legacy_user_id))`,
+  ];
+  const selectionParams = [...filter.params, job.tenant_id, `bulk-job:${job.id}:`];
   if (cursor) {
     selectionClauses.push('legacy_user_id > ?');
     selectionParams.push(cursor);
@@ -1630,77 +1691,176 @@ async function processBulkUserUpdateJob(
     };
   }
 
-  const assignments: string[] = [];
-  const values: unknown[] = [];
-  for (const field of config.fields) {
-    const column = USER_BULK_UPDATE_COLUMNS[field as keyof typeof USER_BULK_UPDATE_COLUMNS];
-    const normalized = column.normalize(config.values[field]);
-    if (field === 'status') {
-      assignments.push(`metadata_json = json_set(COALESCE(metadata_json, '{}'), '$.status', ?)`);
-      values.push(normalized);
-    } else if (field === 'is_active') {
-      assignments.push('lifecycle_state = ?');
-      values.push(normalized === 1 ? 'active' : 'deprovisioned');
-    } else {
-      assignments.push(`${column.sql} = ?`);
-      values.push(normalized);
-    }
-  }
-  assignments.push('updated_at = ?');
-  values.push(nowMs);
-
   const ids = selected.map((row) => row.id);
-  const requestedStatus =
-    typeof config.values.status === 'string' ? config.values.status : undefined;
-  const requestedActive =
-    typeof config.values.is_active === 'boolean' ? config.values.is_active : undefined;
-  const targetLifecycle =
-    requestedActive === false
-      ? 'inactive'
-      : requestedActive === true || requestedStatus === 'active'
-        ? 'active'
-        : requestedStatus === 'suspended' || requestedStatus === 'locked'
-          ? requestedStatus
-          : null;
-  if (targetLifecycle && targetLifecycle !== 'active') {
-    await Promise.all(
-      ids.map((userId) =>
+  const versionMs = bulkLifecycleVersionMs(config, job);
+  const target = bulkLifecycleTarget(config, versionMs);
+  // This job's transition for each account (stable per job and account, with the version fixed
+  // when the job was created), so a retry finishes it and a newer status change is never
+  // overwritten. As every status change does it: an activation takes the accounts first and
+  // then their authentication state, anything else the authentication state first, so sign-in
+  // stays refused while the two disagree.
+  const operationPrefix = `bulk-job:${job.id}:`;
+  /** Each account's authentication state takes it, under the version given (else the job's). */
+  const authentication = (userIds: string[], versions?: Map<string, number>) =>
+    Promise.allSettled(
+      userIds.map((userId) =>
         transitionAccountAuthenticationState(env, {
           tenantId: job.tenant_id,
           userId,
-          lifecycle: targetLifecycle,
-          sourceVersionMs: nowMs,
-          operationId: crypto.randomUUID(),
-          revokeSessions: true,
+          lifecycle: target.authentication,
+          sourceVersionMs: versions?.get(userId) ?? versionMs,
+          operationId: `${operationPrefix}${userId}`,
+          revokeSessions: target.authentication !== 'active',
         })
       )
     );
-  }
-  const idPlaceholders = ids.map(() => '?').join(', ');
-  const updateResult = await adapter.execute(
-    `UPDATE identity_accounts SET ${assignments.join(', ')} WHERE tenant_id = ? AND legacy_user_id IN (${idPlaceholders})`,
-    [...values, job.tenant_id, ...ids]
-  );
-  if (targetLifecycle === 'active') {
+  /** Accounts whose authentication state refused it: those this very job took before stand. */
+  const takenBefore = async (userIds: string[]) => {
+    const states = await Promise.all(
+      userIds.map(async (userId) => ({
+        userId,
+        state: await readAccountAuthenticationState(env, job.tenant_id, userId),
+      }))
+    );
+    return states.filter(
+      ({ userId, state }) =>
+        state.lifecycleOperationId === `${operationPrefix}${userId}` &&
+        state.lifecycle === target.authentication
+    );
+  };
+  const metadataPaths = [
+    "'$.status', ?",
+    "'$.lifecycle_version_ms', ?",
+    "'$.lifecycle_operation_id', ? || legacy_user_id",
+    ...Object.keys(target.metadataPatch).map((key) => `'$.${key}', ?`),
+  ];
+  const versionOf = `COALESCE(CAST(json_extract(metadata_json, '$.lifecycle_version_ms') AS INTEGER), 0)`;
+  const operationOf = `json_extract(metadata_json, '$.lifecycle_operation_id')`;
+  /** The accounts (and their subjects) take it while no newer transition did, or it is this one. */
+  const accounts = async (userIds: string[]) => {
+    if (userIds.length === 0) return;
+    const idPlaceholders = userIds.map(() => '?').join(', ');
+    await adapter.batch([
+      {
+        sql: `UPDATE identity_accounts
+                 SET lifecycle_state = ?,
+                     metadata_json = json_set(COALESCE(metadata_json, '{}'), ${metadataPaths.join(', ')}),
+                     updated_at = ?
+               WHERE tenant_id = ? AND legacy_user_id IN (${idPlaceholders})
+                 AND lifecycle_state NOT IN ('deleting', 'deleted')
+                 AND (${versionOf} < ? OR (${versionOf} = ? AND ${operationOf} = ? || legacy_user_id))`,
+        params: [
+          target.state,
+          target.state,
+          versionMs,
+          operationPrefix,
+          ...Object.values(target.metadataPatch),
+          nowMs,
+          job.tenant_id,
+          ...userIds,
+          versionMs,
+          versionMs,
+          operationPrefix,
+        ],
+      },
+      {
+        sql: `UPDATE identity_subjects SET lifecycle_state = ?, updated_at = ?
+               WHERE tenant_id = ?
+                 AND lifecycle_state NOT IN ('deleting', 'deleted')
+                 AND id IN (
+                   SELECT primary_subject_id FROM identity_accounts
+                    WHERE tenant_id = ? AND legacy_user_id IN (${idPlaceholders})
+                      AND lifecycle_state = ?
+                      AND ${versionOf} = ? AND ${operationOf} = ? || legacy_user_id
+                 )`,
+        params: [
+          target.state,
+          nowMs,
+          job.tenant_id,
+          job.tenant_id,
+          ...userIds,
+          target.state,
+          versionMs,
+          operationPrefix,
+        ],
+      },
+    ]);
+  };
+  /** The accounts holding this job's transition, with the version each took it under. */
+  const accountsTaken = async (userIds: string[]) => {
+    if (userIds.length === 0) return [];
+    return adapter.query<{ id: string; version: number }>(
+      `SELECT legacy_user_id AS id, ${versionOf} AS version FROM identity_accounts
+        WHERE tenant_id = ? AND legacy_user_id IN (${userIds.map(() => '?').join(', ')})
+          AND ${operationOf} = ? || legacy_user_id`,
+      [job.tenant_id, ...userIds, operationPrefix]
+    );
+  };
+  const settle = async (
+    userIds: string[],
+    outcomes: PromiseSettledResult<unknown>[]
+  ): Promise<{ accepted: string[]; refused: string[] }> => {
+    const accepted: string[] = [];
+    const refused: string[] = [];
+    for (const [index, outcome] of outcomes.entries()) {
+      if (outcome.status === 'fulfilled') accepted.push(userIds[index]!);
+      else if (isLifecycleTransitionRefused(outcome.reason)) refused.push(userIds[index]!);
+      else throw outcome.reason;
+    }
+    return { accepted, refused };
+  };
+
+  let batchSucceeded = 0;
+  if (target.authentication === 'active') {
+    // Authentication states not initialized yet start from the accounts as they are now (as a
+    // single activation does), not from the accounts this job is about to activate.
     await Promise.all(
-      ids.map((userId) =>
-        transitionAccountAuthenticationState(env, {
-          tenantId: job.tenant_id,
-          userId,
-          lifecycle: 'active',
-          sourceVersionMs: nowMs,
-          operationId: crypto.randomUUID(),
-          revokeSessions: false,
-        })
+      ids.map((userId) => initializeFromAccount(env, adapter, job.tenant_id, userId))
+    );
+    await accounts(ids);
+    const tookRows = await accountsTaken(ids);
+    const took = tookRows.map((row) => row.id);
+    // Each under the version its account took it (an earlier attempt's, for a job started
+    // before versions were stored).
+    const versions = new Map(tookRows.map((row) => [row.id, Number(row.version)]));
+    const { accepted, refused } = await settle(took, await authentication(took, versions));
+    // An activation crossed by another transition keeps sign-in refused (activating again
+    // settles it). One whose state is active already (this job's earlier attempt, or a state
+    // initialized from the account that attempt activated) is done.
+    const active = await Promise.all(
+      refused.map(
+        async (userId) =>
+          (await readAccountAuthenticationState(env, job.tenant_id, userId)).lifecycle === 'active'
       )
     );
+    batchSucceeded = accepted.length + active.filter(Boolean).length;
+  } else {
+    const { accepted, refused } = await settle(ids, await authentication(ids));
+    // Taken by an earlier attempt of this job (under the version it had then): finish those
+    // accounts under that version.
+    for (const { userId, state } of await takenBefore(refused)) {
+      await transitionAccountLifecycle(env, adapter, {
+        tenantId: job.tenant_id,
+        userId,
+        lifecycle: target.authentication,
+        status: target.state,
+        metadataPatch: target.metadataPatch,
+        versionMs: state.lifecycleVersionMs ?? versionMs,
+        operationId: `${operationPrefix}${userId}`,
+        revokeSessions: true,
+      });
+    }
+    await accounts(accepted);
+    batchSucceeded = (await accountsTaken(ids)).length;
   }
-  const batchSucceeded = updateResult.rowsAffected ?? selected.length;
   const processed = (previous.processed ?? 0) + selected.length;
   const succeeded = (previous.succeeded ?? 0) + batchSucceeded;
-  const failed = previous.failed ?? 0;
+  // Refused by a newer status change.
+  const failed = (previous.failed ?? 0) + (selected.length - batchSucceeded);
   const nextCursor = ids[ids.length - 1] ?? cursor;
-  const completed = selected.length < batchSize || processed >= total;
+  // Done once the cursor passes the last target: the count changes as accounts leave the filter
+  // (one this job set no longer matches it), so it cannot say when.
+  const completed = selected.length < batchSize;
   const progress = {
     total,
     processed,
@@ -1732,21 +1892,20 @@ function toUnixSeconds(value: string): number {
   return Math.floor(ts / 1000);
 }
 
-function toCsv(rows: Array<Record<string, unknown>>): string {
+/** Rows as CSV, with cells a spreadsheet would read as formulas made inert. */
+export function toCsv(rows: Array<Record<string, unknown>>): string {
   if (rows.length === 0) return '';
   const headers = Object.keys(rows[0] ?? {});
   const escape = (value: unknown) => {
     const rawText = value === null || value === undefined ? '' : String(value);
     const trimmed = rawText.trimStart();
+    // Text a spreadsheet would read as a formula (=, +, -, @, or a leading tab or CR) is made
+    // inert; a number is written as it is.
     const text =
-      trimmed.startsWith('=') ||
-      trimmed.startsWith('+') ||
-      trimmed.startsWith('@') ||
-      /^-\D/.test(trimmed) ||
-      /^[\t\r]/.test(rawText)
+      typeof value !== 'number' && (/^[=+\-@]/.test(trimmed) || /^[\t\r]/.test(rawText))
         ? `'${rawText}`
         : rawText;
-    return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+    return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
   };
   return [
     headers.join(','),

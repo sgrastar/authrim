@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
   fetchJson: vi.fn(),
@@ -207,7 +207,9 @@ describe('createGeneratedApprovalLoadContext', () => {
   });
 
   it('stops before approval creation when no usable client credentials are available', async () => {
-    mocks.fetchJson.mockResolvedValueOnce(jsonResponse(201, { user: { id: 'user-1' } }));
+    mocks.fetchJson
+      .mockResolvedValueOnce(jsonResponse(201, { user: { id: 'user-1' } }))
+      .mockResolvedValueOnce(jsonResponse(204, undefined));
     mocks.resolveClient.mockResolvedValueOnce({
       clientId: null,
       clientSecret: null,
@@ -215,9 +217,12 @@ describe('createGeneratedApprovalLoadContext', () => {
     });
 
     await expect(createGeneratedApprovalLoadContext({ env: 'test' })).rejects.toThrow(
-      'approval_load_client_unavailable'
+      /^approval_load_client_unavailable$/
     );
-    expect(mocks.fetchJson).toHaveBeenCalledOnce();
+    // Only the user it created is removed again.
+    expect(mocks.fetchJson).toHaveBeenCalledTimes(2);
+    expect(mocks.fetchJson.mock.calls[1][2]).toMatchObject({ method: 'DELETE' });
+    expect(mocks.adminCleanup).toHaveBeenCalledOnce();
   });
 
   it('rejects an approval request that cannot produce a completion artifact', async () => {
@@ -230,12 +235,16 @@ describe('createGeneratedApprovalLoadContext', () => {
           notification_results: [],
         })
       )
-      .mockResolvedValueOnce(jsonResponse(200, {}));
+      .mockResolvedValueOnce(jsonResponse(200, {}))
+      .mockResolvedValueOnce(jsonResponse(204, undefined));
 
     await expect(createGeneratedApprovalLoadContext({ env: 'test' })).rejects.toThrow(
-      'approval_load_artifact_unavailable'
+      /^approval_load_artifact_unavailable$/
     );
-    expect(mocks.fetchJson).toHaveBeenCalledTimes(3);
+    expect(mocks.fetchJson).toHaveBeenCalledTimes(4);
+    expect(mocks.cleanupClient).toHaveBeenCalledWith(
+      expect.objectContaining({ clientId: 'temporary-client' })
+    );
   });
 
   it('rejects completion responses without a grant identifier', async () => {
@@ -312,5 +321,161 @@ describe('createGeneratedApprovalLoadContext', () => {
     await expect(createGeneratedApprovalLoadContext({ env: 'test' })).rejects.toThrow(
       'approval_load_downstream_access_token_missing'
     );
+  });
+
+  /** Answers every request up to the subject token; `/token` answers come from `exchange`. */
+  function bootstrapUntilExchange(exchange: () => unknown) {
+    mocks.fetchJson.mockImplementation(
+      async (url: string, _timeout: number, init?: globalThis.RequestInit) => {
+        const path = new URL(url).pathname;
+        if (path === '/api/admin/users') return jsonResponse(201, { user: { id: 'user-1' } });
+        if (path === '/api/admin/approvals') {
+          return jsonResponse(201, {
+            public_request_id: 'request-1',
+            approvals: [{ id: 'approval-1' }],
+            notification_results: [
+              { completion_artifact: { path: '/approval-artifacts/artifact-1/portal' } },
+            ],
+          });
+        }
+        if (path.endsWith('/complete')) return jsonResponse(200, { grant_ids: ['grant-1'] });
+        if (path.endsWith('/subject-token')) {
+          return jsonResponse(200, {
+            subject_token: 'subject-token',
+            integration_hint: {
+              target_audience: 'svc://userinfo',
+              product_route: { path_template: '/userinfo/:userId' },
+            },
+          });
+        }
+        if (path === '/token') return exchange();
+        if (path === '/userinfo/user-1') return jsonResponse(200, {});
+        if (path === '/api/admin/users/user-1' && init?.method === 'DELETE') {
+          return jsonResponse(204, undefined);
+        }
+        throw new Error(`unexpected request: ${init?.method ?? 'GET'} ${path}`);
+      }
+    );
+  }
+  const refused = jsonResponse(400, { error: 'unsupported_grant_type' });
+  const exchangeCalls = () =>
+    mocks.fetchJson.mock.calls.filter(([url]) => String(url).endsWith('/token')).length;
+
+  it('removes the user, the client and the temporary Token Exchange settings when setup fails', async () => {
+    bootstrapUntilExchange(() => jsonResponse(500, { error: 'server_error' }));
+
+    await expect(createGeneratedApprovalLoadContext({ env: 'test' })).rejects.toThrow(
+      /^approval_load_downstream_access_token_missing$/
+    );
+    expect(mocks.cleanupClient).toHaveBeenCalledOnce();
+    expect(mocks.restoreTokenExchange).toHaveBeenCalledOnce();
+    expect(mocks.adminCleanup).toHaveBeenCalledOnce();
+    expect(
+      mocks.fetchJson.mock.calls.some(
+        ([url, , init]) => String(url).endsWith('/users/user-1') && init?.method === 'DELETE'
+      )
+    ).toBe(true);
+  });
+
+  it('stops before Token Exchange when its settings could not be prepared', async () => {
+    bootstrapUntilExchange(() => jsonResponse(200, { access_token: 'access-token' }));
+    mocks.enableTokenExchange.mockResolvedValueOnce({
+      check: { id: 'token-settings', title: 'token settings', status: 'fail', details: [] },
+      restore: mocks.restoreTokenExchange,
+      changed: true,
+    });
+
+    await expect(createGeneratedApprovalLoadContext({ env: 'test' })).rejects.toThrow(
+      /^approval_load_token_exchange_settings_failed$/
+    );
+    expect(exchangeCalls()).toBe(0);
+    expect(mocks.restoreTokenExchange).toHaveBeenCalledOnce();
+  });
+
+  it('names what could not be cleaned up after a failed setup', async () => {
+    bootstrapUntilExchange(() => jsonResponse(500, { error: 'server_error' }));
+    mocks.restoreTokenExchange.mockResolvedValueOnce({
+      id: 'token-settings-restore',
+      title: 'restore token settings',
+      status: 'fail',
+      details: ['tokens.exchange_enabled could not be restored'],
+    });
+
+    const failure = await createGeneratedApprovalLoadContext({ env: 'test' }).catch((e) => e);
+    expect(failure.message).toBe(
+      'approval_load_downstream_access_token_missing; cleanup incomplete: ' +
+        'token-settings-restore: tokens.exchange_enabled could not be restored'
+    );
+    expect(failure.cause.message).toBe('approval_load_downstream_access_token_missing');
+  });
+
+  describe('when Token Exchange was just enabled', () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+      mocks.enableTokenExchange.mockResolvedValue({
+        check: { id: 'token-settings', title: 'token settings', status: 'warn', details: [] },
+        restore: mocks.restoreTokenExchange,
+        changed: true,
+      });
+    });
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('waits for runtime to accept the grant', async () => {
+      let attempts = 0;
+      bootstrapUntilExchange(() =>
+        ++attempts < 3 ? refused : jsonResponse(200, { access_token: 'access-token' })
+      );
+
+      const promise = createGeneratedApprovalLoadContext({ env: 'test' });
+      await vi.runAllTimersAsync();
+      const context = await promise;
+
+      expect(context.downstreamAccessToken).toBe('access-token');
+      expect(exchangeCalls()).toBe(3);
+      expect(mocks.restoreTokenExchange).not.toHaveBeenCalled();
+    });
+
+    it('still waits for the settings when the grant is refused after a rate limit', async () => {
+      const answers = [
+        jsonResponse(429, { error: 'rate_limited' }),
+        refused,
+        refused,
+        jsonResponse(200, { access_token: 'access-token' }),
+      ];
+      bootstrapUntilExchange(() => answers.shift());
+
+      const promise = createGeneratedApprovalLoadContext({ env: 'test' });
+      await vi.runAllTimersAsync();
+      const context = await promise;
+
+      expect(context.downstreamAccessToken).toBe('access-token');
+      expect(exchangeCalls()).toBe(4);
+    });
+
+    it('gives up after the wait and puts the settings back', async () => {
+      bootstrapUntilExchange(() => refused);
+
+      const promise = createGeneratedApprovalLoadContext({ env: 'test' });
+      const outcome = expect(promise).rejects.toThrow(
+        /^approval_load_downstream_access_token_missing$/
+      );
+      await vi.runAllTimersAsync();
+      await outcome;
+
+      // The attempt, then one every 5 seconds for 2 minutes.
+      expect(exchangeCalls()).toBe(25);
+      expect(mocks.restoreTokenExchange).toHaveBeenCalledOnce();
+    });
+  });
+
+  it('does not wait when it did not change the settings', async () => {
+    bootstrapUntilExchange(() => refused);
+
+    await expect(createGeneratedApprovalLoadContext({ env: 'test' })).rejects.toThrow(
+      'approval_load_downstream_access_token_missing'
+    );
+    expect(exchangeCalls()).toBe(1);
   });
 });

@@ -5,7 +5,6 @@
  * - getConformanceConfig: KV > env > default priority
  * - isConformanceMode: convenience check
  * - shouldUseBuiltinForms: form rendering decision
- * - getConformanceConfigSource: debugging info
  * - createConfigurationError: error response
  */
 
@@ -14,7 +13,6 @@ import {
   getConformanceConfig,
   isConformanceMode,
   shouldUseBuiltinForms,
-  getConformanceConfigSource,
   createConfigurationError,
   DEFAULT_CONFORMANCE_CONFIG,
 } from '../conformance-config';
@@ -29,7 +27,8 @@ describe('Conformance Mode Configuration', () => {
     describe('priority: KV > env > default', () => {
       it('should return KV config when available', async () => {
         const mockSettings = createMockSettings({
-          conformance: { enabled: true, useBuiltinForms: false },
+          'feature.conformance_enabled': true,
+          'feature.conformance_use_builtin_forms': false,
         });
 
         const result = await getConformanceConfig({
@@ -74,9 +73,7 @@ describe('Conformance Mode Configuration', () => {
 
     describe('KV partial config handling', () => {
       it('should use default for missing enabled field', async () => {
-        const mockSettings = createMockSettings({
-          conformance: { useBuiltinForms: false },
-        });
+        const mockSettings = createMockSettings({ 'feature.conformance_use_builtin_forms': false });
 
         const result = await getConformanceConfig({
           SETTINGS: mockSettings as unknown as KVNamespace,
@@ -87,9 +84,7 @@ describe('Conformance Mode Configuration', () => {
       });
 
       it('should use default for missing useBuiltinForms field', async () => {
-        const mockSettings = createMockSettings({
-          conformance: { enabled: true },
-        });
+        const mockSettings = createMockSettings({ 'feature.conformance_enabled': true });
 
         const result = await getConformanceConfig({
           SETTINGS: mockSettings as unknown as KVNamespace,
@@ -177,37 +172,11 @@ describe('Conformance Mode Configuration', () => {
         expect(result.enabled).toBe(false);
       });
 
-      it('stays disabled when the older settings cannot be read, even if the Settings API enables it', async () => {
-        const mockSettings = {
-          get: vi.fn(async (key: string) => {
-            if (key === 'system_settings') return 'invalid json';
-            if (key === 'settings:platform:feature-flags') {
-              return JSON.stringify({
-                'feature.conformance_enabled': true,
-                'feature.conformance_use_builtin_forms': true,
-              });
-            }
-            return null;
-          }),
-        };
-
-        const result = await getConformanceConfig({
-          SETTINGS: mockSettings as unknown as KVNamespace,
-        });
-
-        expect(result).toEqual({ enabled: false, useBuiltinForms: false });
-      });
-
-      it('stays disabled when the Settings API cannot be read, even if older settings enable it', async () => {
-        const documents: Record<string, string> = {
-          system_settings: JSON.stringify({
-            conformance: { enabled: true, useBuiltinForms: true },
-          }),
-        };
+      it('stays disabled when the Settings API cannot be read, even if env enables it', async () => {
         const mockSettings = {
           get: vi.fn(async (key: string) => {
             if (key === 'settings:platform:feature-flags') throw new Error('KV error');
-            return documents[key] ?? null;
+            return null;
           }),
         };
 
@@ -223,9 +192,7 @@ describe('Conformance Mode Configuration', () => {
 
   describe('isConformanceMode', () => {
     it('should return true when conformance is enabled', async () => {
-      const mockSettings = createMockSettings({
-        conformance: { enabled: true },
-      });
+      const mockSettings = createMockSettings({ 'feature.conformance_enabled': true });
 
       const result = await isConformanceMode({
         SETTINGS: mockSettings as unknown as KVNamespace,
@@ -235,9 +202,7 @@ describe('Conformance Mode Configuration', () => {
     });
 
     it('should return false when conformance is disabled', async () => {
-      const mockSettings = createMockSettings({
-        conformance: { enabled: false },
-      });
+      const mockSettings = createMockSettings({ 'feature.conformance_enabled': false });
 
       const result = await isConformanceMode({
         SETTINGS: mockSettings as unknown as KVNamespace,
@@ -256,7 +221,8 @@ describe('Conformance Mode Configuration', () => {
   describe('shouldUseBuiltinForms', () => {
     it('should return true when both enabled and useBuiltinForms are true', async () => {
       const mockSettings = createMockSettings({
-        conformance: { enabled: true, useBuiltinForms: true },
+        'feature.conformance_enabled': true,
+        'feature.conformance_use_builtin_forms': true,
       });
 
       const result = await shouldUseBuiltinForms({
@@ -268,7 +234,8 @@ describe('Conformance Mode Configuration', () => {
 
     it('should return false when enabled but useBuiltinForms is false', async () => {
       const mockSettings = createMockSettings({
-        conformance: { enabled: true, useBuiltinForms: false },
+        'feature.conformance_enabled': true,
+        'feature.conformance_use_builtin_forms': false,
       });
 
       const result = await shouldUseBuiltinForms({
@@ -280,7 +247,8 @@ describe('Conformance Mode Configuration', () => {
 
     it('should return false when disabled even if useBuiltinForms is true', async () => {
       const mockSettings = createMockSettings({
-        conformance: { enabled: false, useBuiltinForms: true },
+        'feature.conformance_enabled': false,
+        'feature.conformance_use_builtin_forms': true,
       });
 
       const result = await shouldUseBuiltinForms({
@@ -295,67 +263,6 @@ describe('Conformance Mode Configuration', () => {
 
       // Default: enabled=false, so result is false regardless of useBuiltinForms
       expect(result).toBe(false);
-    });
-  });
-
-  describe('getConformanceConfigSource', () => {
-    it('should return "kv" when KV has conformance config', async () => {
-      const mockSettings = createMockSettings({
-        conformance: { enabled: true },
-      });
-
-      const source = await getConformanceConfigSource({
-        SETTINGS: mockSettings as unknown as KVNamespace,
-        ENABLE_CONFORMANCE_MODE: 'true',
-      });
-
-      expect(source).toBe('kv');
-    });
-
-    it('should return "env" when only env configured', async () => {
-      const mockSettings = createMockSettings(null);
-
-      const source = await getConformanceConfigSource({
-        SETTINGS: mockSettings as unknown as KVNamespace,
-        ENABLE_CONFORMANCE_MODE: 'true',
-      });
-
-      expect(source).toBe('env');
-    });
-
-    it('should return "default" when nothing configured', async () => {
-      const mockSettings = createMockSettings(null);
-
-      const source = await getConformanceConfigSource({
-        SETTINGS: mockSettings as unknown as KVNamespace,
-      });
-
-      expect(source).toBe('default');
-    });
-
-    it('should return "env" even when ENABLE_CONFORMANCE_MODE is "false"', async () => {
-      const mockSettings = createMockSettings(null);
-
-      const source = await getConformanceConfigSource({
-        SETTINGS: mockSettings as unknown as KVNamespace,
-        ENABLE_CONFORMANCE_MODE: 'false',
-      });
-
-      // env var is defined, even if value is "false"
-      expect(source).toBe('env');
-    });
-
-    it('should handle KV error gracefully', async () => {
-      const mockSettings = {
-        get: vi.fn().mockRejectedValue(new Error('KV error')),
-      };
-
-      const source = await getConformanceConfigSource({
-        SETTINGS: mockSettings as unknown as KVNamespace,
-        ENABLE_CONFORMANCE_MODE: 'true',
-      });
-
-      expect(source).toBe('env');
     });
   });
 

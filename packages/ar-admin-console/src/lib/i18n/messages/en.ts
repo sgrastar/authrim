@@ -1,8 +1,10 @@
 import type { Messages } from './ja';
 import { enSettings } from './settings/en';
+import { enCompliance } from './compliance/en';
 
 export const en = {
 	...enSettings,
+	...enCompliance,
 	'app.adminLabel': 'Admin',
 	'app.env.dev': 'Development',
 	'app.env.prod': 'Production',
@@ -332,6 +334,7 @@ export const en = {
 	'table.selectRow': 'Select {name}',
 	'table.sortBy': 'Sort by {column}',
 	'table.notApplicable': 'Not applicable',
+	'table.actions': 'Actions',
 	'tabs.more': 'More',
 	'choice.count': '{n} of {total} chosen',
 	'choice.countMax': '{n} of up to {max}',

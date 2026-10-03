@@ -9,10 +9,6 @@
 
 import { createLogger } from './logger';
 import {
-  applySystemSettingsOverrides,
-  readSystemSettingsOverrides,
-} from './system-settings-overrides';
-import {
   CATEGORY_SCOPE_CONFIG,
   isCategoryAvailableAtScope,
   type CategoryName,
@@ -32,7 +28,7 @@ export type TenantSettingsCategory =
   | 'support-ops'
   | 'plugin';
 
-/** Tenant-scoped compatibility overlay for legacy `system_settings` consumers. */
+/** A tenant's older certification profile document (an overlay of `system_settings`), read by the one-time import. */
 export const TENANT_SYSTEM_SETTINGS_CATEGORY = 'certification-profile';
 
 export function buildTenantSystemSettingsKey(tenantId: string): string {
@@ -53,86 +49,6 @@ export function parseSettingsDocument(
     throw new TypeError('Tenant system settings must be a JSON object');
   }
   return parsed as Record<string, unknown>;
-}
-
-function parseSettingsObject(raw: string | null, failOnError = false): Record<string, unknown> {
-  try {
-    return parseSettingsDocument(raw) ?? {};
-  } catch (error) {
-    if (failOnError) throw error;
-    return {};
-  }
-}
-
-export interface TenantSystemSettingsReadOptions {
-  /** Propagate KV and malformed-JSON errors so security profiles can fail closed. */
-  failOnError?: boolean;
-  /** The client the settings are for, so values set for that client apply too. */
-  clientId?: string;
-  /**
-   * The top-level sections the caller reads (`fapi`, `oidc`, `conformance`); Settings API values
-   * are read only for those. All when omitted.
-   */
-  sections?: readonly string[];
-}
-
-/**
- * Read effective legacy system settings for a tenant, with the values set through the
- * Settings API applied (client over tenant over platform); see `system-settings-overrides`.
- * Settings not set there keep the older document's value and fallbacks.
- */
-export async function getTenantSystemSettings(
-  kv: KVNamespace | undefined,
-  tenantId: string,
-  options: TenantSystemSettingsReadOptions = {}
-): Promise<Record<string, unknown> | null> {
-  if (!kv) return null;
-  const base = await getTenantSystemSettingsBase(kv, tenantId, options);
-  let overrides: Record<string, unknown>;
-  try {
-    overrides = await readSystemSettingsOverrides(kv, {
-      tenantId,
-      clientId: options.clientId,
-      sections: options.sections,
-    });
-  } catch (error) {
-    if (options.failOnError) throw error;
-    // Callers that do not fail closed already accept missing settings; keep the older values.
-    log.warn('Settings API values for system settings could not be read');
-    return base;
-  }
-  if (Object.keys(overrides).length === 0) return base;
-  return applySystemSettingsOverrides(base ?? {}, overrides);
-}
-
-/**
- * The older system settings document for a tenant, without Settings API values.
- *
- * The global `system_settings` value remains the deployment default. A tenant may
- * override complete top-level sections (for example `oidc` and `fapi`) without
- * changing the behavior of other tenants.
- */
-export async function getTenantSystemSettingsBase(
-  kv: KVNamespace | undefined,
-  tenantId: string,
-  options: TenantSystemSettingsReadOptions = {}
-): Promise<Record<string, unknown> | null> {
-  if (!kv) return null;
-
-  try {
-    const [globalRaw, tenantRaw] = await Promise.all([
-      kv.get('system_settings'),
-      kv.get(buildTenantSystemSettingsKey(tenantId)),
-    ]);
-    if ((globalRaw ?? null) === null && (tenantRaw ?? null) === null) return null;
-    return {
-      ...parseSettingsObject(globalRaw, options.failOnError),
-      ...parseSettingsObject(tenantRaw, options.failOnError),
-    };
-  } catch (error) {
-    if (options.failOnError) throw error;
-    return null;
-  }
 }
 
 /**

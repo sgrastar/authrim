@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'vitest';
-import { CONFIG_NAMES } from '../../../utils/oauth-config';
 import { buildContractKey } from '../../../utils/contract-loader';
 import type { Env } from '../../../types/env';
 import { VC_CONFIG_NAMES } from '../../../../../ar-vc/src/utils/vc-config';
@@ -67,7 +66,25 @@ describe('reviewed legacy KV backup keys', () => {
   );
 
   it('requires review when OAuth or VC adds a dynamic setting', () => {
-    expect([...LEGACY_OAUTH_SETTING_NAMES].sort()).toEqual([...CONFIG_NAMES].sort());
+    // The names the older oauth-config API wrote (oauth:config:<name>), which older environments
+    // may still hold; the Settings API reads them only through the one-time import.
+    expect([...LEGACY_OAUTH_SETTING_NAMES].sort()).toEqual(
+      [
+        'AUTH_CODE_TTL',
+        'CODE_SHARDS',
+        'CONFIG_CACHE_TTL',
+        'CONSENT_CACHE_TTL',
+        'MAX_CODES_PER_USER',
+        'NONCE_EXPIRY',
+        'REFRESH_TOKEN_EXPIRY',
+        'REFRESH_TOKEN_ROTATION_ENABLED',
+        'STATE_EXPIRY',
+        'STATE_REQUIRED',
+        'TOKEN_EXPIRY',
+        'USERINFO_REQUIRE_OPENID_SCOPE',
+        'USER_CACHE_TTL',
+      ].sort()
+    );
     expect([...LEGACY_VC_SETTING_NAMES].sort()).toEqual([...VC_CONFIG_NAMES].sort());
   });
 

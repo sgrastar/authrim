@@ -10,6 +10,13 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { Env } from '@authrim/ar-lib-core/types/env';
 import { getConsentItemsForScreen, processConsentItemDecisions } from '@authrim/ar-lib-core';
 import { consentGetHandler, consentPostHandler } from '../consent';
+import { systemSettingsPlatformDocuments } from '@authrim/ar-lib-core/utils/system-settings-fields';
+
+/** A SETTINGS mock holding an older `system_settings` document's values as platform values. */
+function platformSettingsGet(document: Record<string, unknown>) {
+  const documents = systemSettingsPlatformDocuments(document);
+  return vi.fn(async (key: string) => (key in documents ? JSON.stringify(documents[key]) : null));
+}
 
 const mockRedirectWithError = vi.hoisted(() => vi.fn());
 const mockResolveClientTrustPolicy = vi.hoisted(() => vi.fn());
@@ -858,17 +865,15 @@ describe('Consent Handlers', () => {
         challengeStore,
         env: {
           SETTINGS: {
-            get: vi.fn().mockResolvedValue(
-              JSON.stringify({
-                fapi: {
-                  messageSigning: {
-                    enabled: true,
-                    requireJarm: true,
-                    authorizationSigningAlgorithms: ['ES256'],
-                  },
+            get: platformSettingsGet({
+              fapi: {
+                messageSigning: {
+                  enabled: true,
+                  requireJarm: true,
+                  authorizationSigningAlgorithms: ['ES256'],
                 },
-              })
-            ),
+              },
+            }),
           },
         },
       });

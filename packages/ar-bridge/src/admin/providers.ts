@@ -16,6 +16,7 @@ import {
   getDiagnosticSessionId,
   hasAdminPermission,
   validateWebhookUrl,
+  profileUpdateFieldsProblem,
 } from '@authrim/ar-lib-core';
 import {
   listAllProviders,
@@ -270,6 +271,20 @@ function mergeProviderQuirksPreservingSecrets(
   return merged;
 }
 
+/**
+ * The refusal of a provider's own profile update fields, or null when they are acceptable: null
+ * (follow the tenant) or a list of standard profile claim names, each once.
+ */
+async function profileUpdateFieldsError(c: Context, value: unknown): Promise<Response | null> {
+  if (value === undefined || value === null) return null;
+  const problem = profileUpdateFieldsProblem(value);
+  return problem
+    ? createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
+        variables: { field: 'profile_update_fields', reason: problem },
+      })
+    : null;
+}
+
 function sanitizeProvider<
   T extends {
     clientSecretEncrypted?: string;
@@ -392,6 +407,7 @@ export async function handleAdminCreateProvider(c: AdminProviderContext): Promis
       jwks_uri?: string;
       token_endpoint_auth_method?: 'client_secret_basic' | 'client_secret_post';
       attribute_mapping?: Record<string, string>;
+      profile_update_fields?: string[] | null;
       provider_quirks?: Record<string, unknown>;
       template?: 'google' | 'github' | 'microsoft' | 'linkedin' | 'facebook' | 'twitter' | 'apple';
       // Request Object (JAR - RFC 9101) settings
@@ -407,6 +423,8 @@ export async function handleAdminCreateProvider(c: AdminProviderContext): Promis
         variables: { field: 'name, client_id, client_secret' },
       });
     }
+    const profileFieldsError = await profileUpdateFieldsError(c, body.profile_update_fields);
+    if (profileFieldsError) return profileFieldsError;
 
     // Apply template defaults if specified
     let defaults: Record<string, unknown> = {};
@@ -607,6 +625,7 @@ export async function handleAdminCreateProvider(c: AdminProviderContext): Promis
       scopes: body.scopes || defaultScopes,
       tokenEndpointAuthMethod: body.token_endpoint_auth_method,
       attributeMapping: body.attribute_mapping || defaultAttributeMapping,
+      profileUpdateFields: body.profile_update_fields ?? null,
       autoLinkEmail:
         body.auto_link_email ?? (defaults.autoLinkEmail as boolean | undefined) ?? true,
       jitProvisioning: body.jit_provisioning !== false,
@@ -783,6 +802,7 @@ export async function handleAdminUpdateProvider(c: AdminProviderContext): Promis
       jwks_uri?: string;
       token_endpoint_auth_method?: 'client_secret_basic' | 'client_secret_post';
       attribute_mapping?: Record<string, string>;
+      profile_update_fields?: string[] | null;
       provider_quirks?: Record<string, unknown>;
       // Request Object (JAR - RFC 9101) settings
       use_request_object?: boolean;
@@ -841,6 +861,11 @@ export async function handleAdminUpdateProvider(c: AdminProviderContext): Promis
     if (body.token_endpoint_auth_method !== undefined)
       updates.tokenEndpointAuthMethod = body.token_endpoint_auth_method;
     if (body.attribute_mapping !== undefined) updates.attributeMapping = body.attribute_mapping;
+    if (body.profile_update_fields !== undefined) {
+      const profileFieldsError = await profileUpdateFieldsError(c, body.profile_update_fields);
+      if (profileFieldsError) return profileFieldsError;
+      updates.profileUpdateFields = body.profile_update_fields;
+    }
     if (body.provider_quirks !== undefined) {
       if (hasClientSuppliedEncryptedProviderSecret(body.provider_quirks)) {
         return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {

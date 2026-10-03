@@ -37,6 +37,7 @@ import {
   type SessionEventData,
   // Audit Log
   createAuditLog,
+  updateProfileOnLogin,
 } from '@authrim/ar-lib-core';
 import { executeRuntimeMapping } from '@authrim/ar-lib-field-mapping/runtime';
 import type { SourceValueEnvelope } from '@authrim/ar-lib-field-mapping/contract';
@@ -184,7 +185,7 @@ export async function handleSPACS(c: Context<{ Bindings: Env }>): Promise<Respon
     const userId = identityResolution.userId;
 
     // Create session
-    const sessionId = await createSession(env, userId, tenantId);
+    const sessionId = await createSession(env, userId, tenantId, authnContextClassRef);
 
     // Publish SAML authentication success event (non-blocking)
     publishEvent(c, {
@@ -1207,7 +1208,26 @@ interface UserInfo {
   nameIdFormat: string;
   attributes: Record<string, string[]>;
   customClaims: Record<string, unknown>;
+  /** Standard profile claims the field mapping produced (`authrim.profile`), by claim name. */
+  profile: Record<string, string>;
 }
+
+/** An `authrim.profile` mapping target, as the standard profile claim a login may update. */
+const SAML_PROFILE_PATH_TO_CLAIM: Readonly<Record<string, string>> = {
+  name: 'name',
+  given_name: 'given_name',
+  family_name: 'family_name',
+  middle_name: 'middle_name',
+  nickname: 'nickname',
+  profile: 'profile',
+  picture: 'picture',
+  picture_url: 'picture',
+  website: 'website',
+  gender: 'gender',
+  birthdate: 'birthdate',
+  zoneinfo: 'zoneinfo',
+  locale: 'locale',
+};
 
 type SAMLIdentityResolutionAction = 'existing_link' | 'email_link' | 'jit_create';
 
@@ -1277,6 +1297,7 @@ async function extractUserInfo(
     nameIdFormat: assertion.subject.nameIdFormat,
     attributes: {},
     customClaims: {},
+    profile: {},
   };
 
   // Build attributes map
@@ -1381,6 +1402,9 @@ function applySAMLInboundMappedValues(userInfo: UserInfo, values: SourceValueEnv
     if (value === undefined) continue;
     const namespace = mappedValue.sourceRef.namespace;
     const path = mappedValue.sourceRef.path;
+    if (namespace === 'authrim.profile' && Object.hasOwn(SAML_PROFILE_PATH_TO_CLAIM, path)) {
+      userInfo.profile[SAML_PROFILE_PATH_TO_CLAIM[path]] = value;
+    }
 
     if (path === 'email') {
       userInfo.email = value;
@@ -1525,6 +1549,17 @@ async function findOrCreateUser(
       existingLink.id,
       Boolean(piiAdapter)
     );
+    // The user's profile from the IdP's attributes (after the field mapping), where the tenant
+    // turns updates on login on: the IdP's own fields, else the tenant's.
+    await updateProfileOnLogin({
+      env,
+      tenantId,
+      userId: activeUser.id,
+      // The standard profile claims the mapping produced, and the user's name as the login sets it.
+      claims: { ...userInfo.profile, ...(userInfo.name ? { name: userInfo.name } : {}) },
+      providerFields: idpConfig.profileUpdateFields,
+      users: runtimeUsers,
+    });
     return {
       userId: activeUser.id,
       action: 'existing_link',
@@ -1968,7 +2003,12 @@ async function createSAMLLinkedIdentity(params: {
 /**
  * Create session for user (sharded)
  */
-async function createSession(env: Env, userId: string, tenantId: string): Promise<string> {
+async function createSession(
+  env: Env,
+  userId: string,
+  tenantId: string,
+  authnContextClassRef?: string
+): Promise<string> {
   const { stub: sessionStore, sessionId } = await getSessionStoreForNewSession(env, tenantId);
 
   const response = await sessionStore.fetch('https://session-store/session', {
@@ -1982,6 +2022,12 @@ async function createSession(env: Env, userId: string, tenantId: string): Promis
       data: {
         amr: ['saml'],
         acr: 'urn:mace:incommon:iap:bronze',
+        // The IdP's AuthnContextClassRef, for the AAL assurance takes the login for
+        // (upstream_acr_mappings).
+        ...(authnContextClassRef ? { upstream_acr: authnContextClassRef } : {}),
+        // No proof time (proven_at): the AuthnInstant is in the IdP's own clock, and nothing yet
+        // asks the IdP for a new authentication (ForceAuthn), so this login is never taken as the
+        // result of a step-up or re-authentication. It can still be the session one starts from.
       },
     }),
   });

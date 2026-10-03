@@ -181,7 +181,7 @@ async function loadMappedCustomClaimSources(
   );
   if (referencedKeys.length === 0) return claims;
 
-  const featureConfig = await loadFeatureConfig(input.env.AUTHRIM_CONFIG || null);
+  const featureConfig = await loadFeatureConfig(input.env as Env, input.tenantId);
   if (!featureConfig.enabled) return claims;
   const sources = await resolveCustomClaimRuntimeSourcesFromEnv(input.env as Env, input.tenantId, {
     accountId: subjectId,

@@ -80,7 +80,6 @@ uses the public npm registry to install the tarball into a temporary directory, 
 runtime dependencies, and checks launcher help/version without any Authrim source checkout. It does
 not publish packages or deploy resources.
 
-
 ## Requirements
 
 - Node.js `>=20.0.0`
@@ -199,6 +198,32 @@ Deploy an existing configured environment.
 npx @authrim/setup deploy --env prod --yes
 ```
 
+If an initial Control Plane D1 create stops after Cloudflare receives the request but before Setup
+records the database ID, inspect the exact database in Cloudflare D1 inventory. When it exists, use
+its UUID to recover that one pending create checkpoint, then resume the initial deployment:
+
+```bash
+pnpm run setup recover-initial-d1 --env test \
+  --binding TEST_TDB_PII_BOOTSTRAP_PII --database-id <cloudflare-d1-uuid>
+```
+
+The command checks the pinned account, expected binding and name, and live Cloudflare inventory
+before recording the ID. It does not create or modify a Cloudflare database. If the database is
+absent, this command refuses recovery; use the environment deletion and fresh-init procedure.
+
+If an initial Queue create times out without a `queue_id`, Setup preserves its pending checkpoint.
+After at least five minutes, use the targeted recovery command for a Queue that is absent from the
+pinned Cloudflare account:
+
+```bash
+pnpm run setup recover-absent-queue --env test --binding LOGGING_DELIVERY_BULK_QUEUE
+pnpm run setup init --cli --env test --lang en
+```
+
+Recovery requires two complete Cloudflare API inventory reads and refuses to release the checkpoint
+if the Queue exists. It changes only the local provisioning journal; the resumed setup repeats its
+strict absence check before issuing a new create. Never use this command to adopt a same-name Queue.
+
 Setup remains Authrim's release and deployment plane after the initial deployment. It owns version
 updates, Worker deployment and rollback, whole-environment migrations, Control Worker updates,
 environment deletion, and operator-driven D1 provisioning or repair. The Control Worker does not
@@ -221,11 +246,13 @@ session and refresh that session once when Cloudflare rejects an expired access 
 - **On:** setup opens a Cloudflare Dashboard link prefilled with only API-token creation permission.
   The Control Worker needs this one-time bootstrap token to create its scoped execution credentials;
   setup displays an explicit required-token message if it has not been entered. Enter the token once.
+  The temporary token may have additional permissions; Setup requires an active token with
+  token-management write access for the selected account and revokes it after cutover.
   Setup creates distinct account-scoped D1 and
   Workers Scripts tokens and, when the enabled capability requires them, separate KV and R2 tokens.
-  Before registering a child secret, setup verifies that the token can list only its own resource
-  class and that Cloudflare rejects the other D1, Workers Scripts, KV, and R2 list endpoints with
-  `401` or `403`. Transport errors and other provider responses are not accepted as denial evidence.
+  Before registering a child secret, Setup reads back its exact account policy and checks that
+  the token can access its intended API. An unrelated list endpoint's response is not used to
+  infer the child's write permissions.
   Setup then registers the values directly as Control Worker secrets and revokes the bootstrap token.
   Dashboard authentication is separate from Wrangler OAuth and may require another login.
 - **Off / Skip:** no Cloudflare API token is stored on the Control Worker. Setup continues to use the

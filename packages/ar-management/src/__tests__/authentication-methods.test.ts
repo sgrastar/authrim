@@ -527,14 +527,15 @@ describe('Authentication Methods API', () => {
   });
 
   // ===========================================================================
-  // Method enable/disable via system settings
+  // Method enable/disable via the tenant's settings
   // ===========================================================================
 
   describe('method toggling via SETTINGS KV', () => {
-    it('should disable passkey when advanced.passkeyEnabled is false', async () => {
+    it('should disable passkey when the tenant turns it off', async () => {
       const settingsKV = createMockKV({
-        system_settings: JSON.stringify({
-          advanced: { passkeyEnabled: false, magicLinkEnabled: true },
+        'settings:tenant:default:authentication-methods': JSON.stringify({
+          'authentication-methods.passkey.enabled': false,
+          'authentication-methods.email_otp.enabled': true,
         }),
       });
       const { app, mockEnv } = createTestApp({ settingsKV });
@@ -547,10 +548,11 @@ describe('Authentication Methods API', () => {
       expect(body.methods.emailCode.enabled).toBe(true);
     });
 
-    it('should disable emailCode when advanced.magicLinkEnabled is false', async () => {
+    it('should disable emailCode when the tenant turns it off', async () => {
       const settingsKV = createMockKV({
-        system_settings: JSON.stringify({
-          advanced: { passkeyEnabled: true, magicLinkEnabled: false },
+        'settings:tenant:default:authentication-methods': JSON.stringify({
+          'authentication-methods.passkey.enabled': true,
+          'authentication-methods.email_otp.enabled': false,
         }),
       });
       const { app, mockEnv } = createTestApp({ settingsKV });
@@ -615,8 +617,9 @@ describe('Authentication Methods API', () => {
 
     it('should enable directory password from directory connector settings without exposing connector secrets', async () => {
       const settingsKV = createMockKV({
-        system_settings: JSON.stringify({
-          advanced: { passkeyEnabled: false, magicLinkEnabled: false },
+        'settings:tenant:default:authentication-methods': JSON.stringify({
+          'authentication-methods.passkey.enabled': false,
+          'authentication-methods.email_otp.enabled': false,
         }),
         'settings:tenant:default:directory-connectors': JSON.stringify({
           enabled: true,
@@ -656,8 +659,9 @@ describe('Authentication Methods API', () => {
 
     it('should enable directory password from outbound relay directory connector settings', async () => {
       const settingsKV = createMockKV({
-        system_settings: JSON.stringify({
-          advanced: { passkeyEnabled: false, magicLinkEnabled: false },
+        'settings:tenant:default:authentication-methods': JSON.stringify({
+          'authentication-methods.passkey.enabled': false,
+          'authentication-methods.email_otp.enabled': false,
         }),
         'settings:tenant:default:directory-connectors': JSON.stringify({
           enabled: true,
@@ -1118,8 +1122,9 @@ describe('Authentication Methods API', () => {
   describe('no methods available', () => {
     it('should return 503 when all methods are disabled', async () => {
       const settingsKV = createMockKV({
-        system_settings: JSON.stringify({
-          advanced: { passkeyEnabled: false, magicLinkEnabled: false },
+        'settings:tenant:default:authentication-methods': JSON.stringify({
+          'authentication-methods.passkey.enabled': false,
+          'authentication-methods.email_otp.enabled': false,
         }),
       });
       // No EXTERNAL_IDP → no external login
@@ -1136,8 +1141,9 @@ describe('Authentication Methods API', () => {
 
     it('should log a warning when no methods are available', async () => {
       const settingsKV = createMockKV({
-        system_settings: JSON.stringify({
-          advanced: { passkeyEnabled: false, magicLinkEnabled: false },
+        'settings:tenant:default:authentication-methods': JSON.stringify({
+          'authentication-methods.passkey.enabled': false,
+          'authentication-methods.email_otp.enabled': false,
         }),
       });
       const { app, mockEnv } = createTestApp({ settingsKV });
@@ -1432,35 +1438,28 @@ describe('Authentication Methods API', () => {
       ]);
     });
 
-    it('should fall back to legacy system_settings.loginUI', async () => {
+    it('no longer reads the older system_settings.loginUI', async () => {
       const settingsKV = createMockKV({
         system_settings: JSON.stringify({
           general: { siteName: 'Legacy App', logoUrl: 'https://legacy.com/logo.png' },
           loginUI: { theme: 'dark', variant: 'slate', supportedLocales: ['en'] },
+          advanced: { passkeyEnabled: false, magicLinkEnabled: true },
         }),
       });
-      // Empty configKV → no settings-v2
       const { app, mockEnv } = createTestApp({ settingsKV });
 
       const res = await app.request('/api/auth/authentication-methods', { method: 'GET' }, mockEnv);
       const body = (await res.json()) as any;
 
-      expect(body.ui.theme).toBe('dark');
-      expect(body.ui.variant).toBe('slate');
-      expect(body.ui.branding.brandName).toBe('Legacy App');
-      expect(body.ui.branding.logoUrl).toBe('https://legacy.com/logo.png');
-      expect(body.ui.branding.faviconUrl).toBeNull();
-      expect(body.ui.supportedLocales).toEqual(['en']);
-      // Legacy fallback returns default appearance values
-      expect(body.ui.appearance.backgroundImageUrl).toBeNull();
-      expect(body.ui.appearance.customCss).toBeNull();
-      expect(body.ui.appearance.headerText).toBeNull();
-      expect(body.ui.appearance.footerText).toBeNull();
-      expect(body.ui.appearance.footerLinks).toEqual([]);
-      expect(body.ui.appearance.customBlocks).toEqual([]);
+      // The older values are imported (and reported for each tenant to set), not read here.
+      expect(body.ui.branding.brandName).not.toBe('Legacy App');
+      expect(body.ui.branding.logoUrl).not.toBe('https://legacy.com/logo.png');
+      expect(body.ui.supportedLocales).not.toEqual(['en']);
+      expect(body.methods.passkey.enabled).toBe(true);
+      expect(body.methods.emailCode.enabled).toBe(false);
     });
 
-    it('should prioritize settings-v2 over legacy settings', async () => {
+    it("uses the tenant's Login UI settings", async () => {
       const settingsKV = createMockKV({
         system_settings: JSON.stringify({
           general: { siteName: 'Legacy App' },
@@ -1489,8 +1488,6 @@ describe('Authentication Methods API', () => {
 
   describe('error handling', () => {
     it('should gracefully handle KV read failure and return defaults', async () => {
-      // getSystemSettings catches KV errors internally and returns {}
-      // This results in default settings (passkey-only built-in methods)
       const settingsKV = {
         get: vi.fn(async () => {
           throw new Error('KV read failed');

@@ -1,4 +1,5 @@
 import { jaSettings } from './settings/ja';
+import { jaCompliance } from './compliance/ja';
 
 /**
  * Japanese is the source locale: every other locale must provide exactly these keys.
@@ -6,6 +7,7 @@ import { jaSettings } from './settings/ja';
  */
 export const ja = {
 	...jaSettings,
+	...jaCompliance,
 	'app.adminLabel': '管理コンソール',
 	'app.env.dev': '開発環境',
 	'app.env.prod': '本番環境',
@@ -337,6 +339,7 @@ export const ja = {
 	'table.selectRow': '{name} を選択',
 	'table.sortBy': '{column} で並べ替え',
 	'table.notApplicable': '対象外',
+	'table.actions': '操作',
 	'tabs.more': 'その他',
 	'choice.count': '{n} / {total} 件を選択',
 	'choice.countMax': '{n} / 最大 {max} 件',

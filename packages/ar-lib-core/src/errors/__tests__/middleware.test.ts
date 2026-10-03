@@ -92,21 +92,18 @@ describe('error middleware', () => {
 
   it('uses valid KV locale, format, and error-id settings', async () => {
     const values: Record<string, string> = {
-      error_locale: 'ja',
-      error_response_format: 'problem_details',
-      error_id_mode: 'all',
+      'settings:platform:oauth': JSON.stringify({
+        'oauth.error_locale': 'ja',
+        'oauth.error_response_format': 'problem_details',
+        'oauth.error_id_mode': 'all',
+      }),
     };
     const kv = { get: vi.fn(async (key: string) => values[key] ?? null) };
-    const { app, env } = appWithError(new RFCError('invalid_request', 400), {
-      AUTHRIM_CONFIG: kv,
-    });
+    const { app, env } = appWithError(new RFCError('invalid_request', 400), { SETTINGS: kv });
 
     const response = await app.request('/test', {}, env);
 
     expect(response.headers.get('content-type')).toContain('application/problem+json');
-    expect(kv.get).toHaveBeenCalledWith('error_locale');
-    expect(kv.get).toHaveBeenCalledWith('error_response_format');
-    expect(kv.get).toHaveBeenCalledWith('error_id_mode');
   });
 
   it.each([
@@ -151,11 +148,13 @@ describe('error middleware', () => {
 
   it('applies saved error settings even when unrelated settings documents are broken', async () => {
     const { app, env } = appWithError(new RFCError('invalid_request', 400), {
-      AUTHRIM_CONFIG: {
-        get: async (key) => (key === 'error_response_format' ? 'problem_details' : null),
-      },
       SETTINGS: {
-        get: async (key) => (key === 'system_settings' ? 'not json' : null),
+        get: async (key) =>
+          key === 'settings:platform:oauth'
+            ? JSON.stringify({ 'oauth.error_response_format': 'problem_details' })
+            : key === 'settings:platform:security'
+              ? 'not json'
+              : null,
       },
     });
 
@@ -166,20 +165,20 @@ describe('error middleware', () => {
 
   it('uses its defaults when a saved error setting cannot be read, and backs off re-reading', async () => {
     const get = vi.fn(async (key: string) => {
-      if (key === 'error_id_mode') throw new Error('kv unavailable');
-      return key === 'error_response_format' ? 'problem_details' : null;
+      if (key === 'settings:platform:oauth') throw new Error('kv unavailable');
+      return null;
     });
     const { app, env } = appWithError(new RFCError('invalid_request', 400), {
-      AUTHRIM_CONFIG: { get },
-      SETTINGS: { get: async () => null },
+      SETTINGS: { get },
     });
 
     const first = await app.request('/test', {}, env);
     expect(first.headers.get('content-type')).toContain('application/json');
-    const readsAfterFirst = get.mock.calls.filter(([key]) => key === 'error_id_mode').length;
+    const readsAfterFirst = get.mock.calls.length;
+    expect(readsAfterFirst).toBeGreaterThan(0);
     await app.request('/test', {}, env);
     await app.request('/test', {}, env);
-    expect(get.mock.calls.filter(([key]) => key === 'error_id_mode').length).toBe(readsAfterFirst);
+    expect(get.mock.calls.length).toBe(readsAfterFirst);
   });
 
   it('keeps the OAuth format when the Settings API cannot be read', async () => {

@@ -17,15 +17,23 @@ export interface RateLimitSettings {
   'rate_limit.moderate': number;
   'rate_limit.lenient': number;
 
-  // Window Settings
-  'rate_limit.window_ms': number;
-
   // Email Rate Limits
   'rate_limit.email_max_requests': number;
   'rate_limit.email_window': number;
 
   // Auth Rate Limits
   'rate_limit.auth_max_failed_attempts': number;
+  'rate_limit.public_read': number;
+  'rate_limit.login_start': number;
+  'rate_limit.send_challenge': number;
+  'rate_limit.loadtest': number;
+  'rate_limit.strict_window_seconds': number;
+  'rate_limit.moderate_window_seconds': number;
+  'rate_limit.lenient_window_seconds': number;
+  'rate_limit.public_read_window_seconds': number;
+  'rate_limit.login_start_window_seconds': number;
+  'rate_limit.send_challenge_window_seconds': number;
+  'rate_limit.loadtest_window_seconds': number;
 }
 
 /**
@@ -40,7 +48,7 @@ export const RATE_LIMIT_SETTINGS_META: Record<keyof RateLimitSettings, SettingMe
     envNumber: 'positive',
     label: 'Strict Rate Limit',
     description:
-      'Requests per window for sensitive endpoints (token, register, and others), for the whole platform. Unset: 10, or the value saved through the older rate-limit API.',
+      'Requests per window for sensitive endpoints (token, register, and others), for the whole platform. Unset: 10, or the value saved through the older rate-limit API, or env.',
     min: 1,
     max: 1000000,
     integer: true,
@@ -56,7 +64,7 @@ export const RATE_LIMIT_SETTINGS_META: Record<keyof RateLimitSettings, SettingMe
     envNumber: 'positive',
     label: 'Moderate Rate Limit',
     description:
-      'Requests per window for standard API endpoints, for the whole platform. Unset: 60, or the value saved through the older rate-limit API.',
+      'Requests per window for standard API endpoints, for the whole platform. Unset: 60, or the value saved through the older rate-limit API, or env.',
     min: 1,
     max: 1000000,
     integer: true,
@@ -72,28 +80,11 @@ export const RATE_LIMIT_SETTINGS_META: Record<keyof RateLimitSettings, SettingMe
     envNumber: 'positive',
     label: 'Lenient Rate Limit',
     description:
-      'Requests per window for public endpoints (discovery, JWKS), for the whole platform. Unset: 300, or the value saved through the older rate-limit API.',
+      'Requests per window for public endpoints (discovery, JWKS), for the whole platform. Unset: 300, or the value saved through the older rate-limit API, or env.',
     min: 1,
     max: 1000000,
     integer: true,
     // Rate limit counters are shared across tenants: platform only.
-    scopes: ['platform'],
-    visibility: 'admin',
-  },
-  'rate_limit.window_ms': {
-    key: 'rate_limit.window_ms',
-    type: 'duration',
-    default: 60000,
-    envKey: 'RATE_LIMIT_WINDOW_MS',
-    envNumber: 'positive',
-    label: 'Rate Limit Window',
-    description:
-      'Window of the strict, moderate and lenient limits in milliseconds (whole seconds), for the whole platform. Unset: each keeps its own window (60 seconds, or the value saved through the older rate-limit API).',
-    min: 1000,
-    max: 86400000,
-    unit: 'ms',
-    integer: true,
-    step: 1000,
     scopes: ['platform'],
     visibility: 'admin',
   },
@@ -131,6 +122,147 @@ export const RATE_LIMIT_SETTINGS_META: Record<keyof RateLimitSettings, SettingMe
     max: 20,
     visibility: 'admin',
   },
+  'rate_limit.public_read': {
+    key: 'rate_limit.public_read',
+    type: 'number',
+    label: 'Public Read Rate Limit',
+    description:
+      'Requests per window for public read-only bootstrap endpoints, for the whole platform',
+    min: 1,
+    max: 1000000,
+    integer: true,
+    scopes: ['platform'],
+    visibility: 'admin',
+    default: 600,
+  },
+  'rate_limit.login_start': {
+    key: 'rate_limit.login_start',
+    type: 'number',
+    label: 'Login Start Rate Limit',
+    description: 'Requests per window for starting a login interaction, for the whole platform',
+    min: 1,
+    max: 1000000,
+    integer: true,
+    scopes: ['platform'],
+    visibility: 'admin',
+    default: 300,
+  },
+  'rate_limit.send_challenge': {
+    key: 'rate_limit.send_challenge',
+    type: 'number',
+    label: 'Send Challenge Rate Limit',
+    description:
+      'Requests per window for endpoints that send a challenge (such as an email code), for the whole platform',
+    min: 1,
+    max: 1000000,
+    integer: true,
+    scopes: ['platform'],
+    visibility: 'admin',
+    default: 30,
+  },
+  'rate_limit.loadtest': {
+    key: 'rate_limit.loadtest',
+    type: 'number',
+    label: 'Load Test Rate Limit',
+    description: 'Requests per window under the load-test profile, for the whole platform',
+    min: 1,
+    max: 1000000,
+    integer: true,
+    scopes: ['platform'],
+    visibility: 'admin',
+    default: 10000,
+  },
+  'rate_limit.strict_window_seconds': {
+    key: 'rate_limit.strict_window_seconds',
+    type: 'number',
+    label: 'Strict Window',
+    description: 'Window of the strict limit, for the whole platform',
+    unit: 'seconds',
+    min: 1,
+    max: 86400,
+    integer: true,
+    scopes: ['platform'],
+    visibility: 'admin',
+    default: 60,
+  },
+  'rate_limit.moderate_window_seconds': {
+    key: 'rate_limit.moderate_window_seconds',
+    type: 'number',
+    label: 'Moderate Window',
+    description: 'Window of the moderate limit, for the whole platform',
+    unit: 'seconds',
+    min: 1,
+    max: 86400,
+    integer: true,
+    scopes: ['platform'],
+    visibility: 'admin',
+    default: 60,
+  },
+  'rate_limit.lenient_window_seconds': {
+    key: 'rate_limit.lenient_window_seconds',
+    type: 'number',
+    label: 'Lenient Window',
+    description: 'Window of the lenient limit, for the whole platform',
+    unit: 'seconds',
+    min: 1,
+    max: 86400,
+    integer: true,
+    scopes: ['platform'],
+    visibility: 'admin',
+    default: 60,
+  },
+  'rate_limit.public_read_window_seconds': {
+    key: 'rate_limit.public_read_window_seconds',
+    type: 'number',
+    label: 'Public Read Window',
+    description: 'Window of the public read limit, for the whole platform',
+    unit: 'seconds',
+    min: 1,
+    max: 86400,
+    integer: true,
+    scopes: ['platform'],
+    visibility: 'admin',
+    default: 60,
+  },
+  'rate_limit.login_start_window_seconds': {
+    key: 'rate_limit.login_start_window_seconds',
+    type: 'number',
+    label: 'Login Start Window',
+    description: 'Window of the login start limit, for the whole platform',
+    unit: 'seconds',
+    min: 1,
+    max: 86400,
+    integer: true,
+    scopes: ['platform'],
+    visibility: 'admin',
+    default: 60,
+  },
+  'rate_limit.send_challenge_window_seconds': {
+    key: 'rate_limit.send_challenge_window_seconds',
+    type: 'number',
+    label: 'Send Challenge Window',
+    description: 'Window of the send challenge limit, for the whole platform',
+    unit: 'seconds',
+    min: 1,
+    max: 86400,
+    integer: true,
+    scopes: ['platform'],
+    visibility: 'admin',
+    default: 60,
+  },
+  'rate_limit.loadtest_window_seconds': {
+    key: 'rate_limit.loadtest_window_seconds',
+    type: 'number',
+    label: 'Load Test Window',
+    description: 'Window of the load test limit, for the whole platform',
+    unit: 'seconds',
+    min: 1,
+    max: 86400,
+    integer: true,
+    scopes: ['platform'],
+    visibility: 'admin',
+    default: 60,
+  },
 };
 
 /**
@@ -150,8 +282,50 @@ export const RATE_LIMIT_DEFAULTS: RateLimitSettings = {
   'rate_limit.strict': 10,
   'rate_limit.moderate': 60,
   'rate_limit.lenient': 300,
-  'rate_limit.window_ms': 60000,
   'rate_limit.email_max_requests': 3,
   'rate_limit.email_window': 900,
   'rate_limit.auth_max_failed_attempts': 5,
+  'rate_limit.public_read': 600,
+  'rate_limit.login_start': 300,
+  'rate_limit.send_challenge': 30,
+  'rate_limit.loadtest': 10000,
+  'rate_limit.strict_window_seconds': 60,
+  'rate_limit.moderate_window_seconds': 60,
+  'rate_limit.lenient_window_seconds': 60,
+  'rate_limit.public_read_window_seconds': 60,
+  'rate_limit.login_start_window_seconds': 60,
+  'rate_limit.send_challenge_window_seconds': 60,
+  'rate_limit.loadtest_window_seconds': 60,
 };
+
+/** The rate limiter's profiles, by the name of their Settings API keys. */
+export const RATE_LIMIT_PROFILE_SETTING_NAMES = {
+  strict: 'strict',
+  moderate: 'moderate',
+  lenient: 'lenient',
+  publicRead: 'public_read',
+  loginStart: 'login_start',
+  sendChallenge: 'send_challenge',
+  loadTest: 'loadtest',
+} as const;
+
+export type RateLimitProfileName = keyof typeof RATE_LIMIT_PROFILE_SETTING_NAMES;
+
+/**
+ * A profile's Settings API keys (`rate_limit.<name>`, `rate_limit.<name>_window_seconds`) and the
+ * AUTHRIM_CONFIG keys the older rate-limit API saved them under.
+ */
+export function rateLimitProfileKeys(profile: RateLimitProfileName): {
+  maxRequests: string;
+  windowSeconds: string;
+  legacyMaxRequests: string;
+  legacyWindowSeconds: string;
+} {
+  const name = RATE_LIMIT_PROFILE_SETTING_NAMES[profile];
+  return {
+    maxRequests: `rate_limit.${name}`,
+    windowSeconds: `rate_limit.${name}_window_seconds`,
+    legacyMaxRequests: `rate_limit_${name}_max_requests`,
+    legacyWindowSeconds: `rate_limit_${name}_window_seconds`,
+  };
+}

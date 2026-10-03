@@ -751,6 +751,8 @@ export async function totpSignupActivateHandler(c: Context<{ Bindings: Env }>) {
         amr: ['otp', 'totp'],
         acr: defaultAcr,
         authTime,
+        // When the code was verified (milliseconds), for assurance step-ups.
+        proven_at: proofVerifiedAtMs,
         totp_credential_id: activated.id,
       },
       tenantId
@@ -1201,6 +1203,8 @@ export async function totpLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
             amr: ['otp', 'totp'],
             acr: defaultAcr,
             authTime,
+            // When the code was verified (milliseconds), for assurance step-ups.
+            proven_at: proofVerifiedAtMs,
             totp_credential_id: verifiedCredentialId,
           },
           tenantId

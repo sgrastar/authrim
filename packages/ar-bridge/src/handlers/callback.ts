@@ -203,6 +203,8 @@ async function completeExternalAuthentication(
     provider: UpstreamProvider;
     userInfo: UserInfo;
     upstreamIdToken?: string;
+    /** The acr of the upstream ID token, as validated (not from userinfo). */
+    upstreamAcr?: string;
     result: HandleIdentityReadyResult;
   }
 ): Promise<Response> {
@@ -281,6 +283,11 @@ async function completeExternalAuthentication(
         external_provider_sub: userInfo.sub,
         external_provider_sid: typeof userInfo.sid === 'string' ? userInfo.sid : undefined,
         upstream_id_token_encrypted: upstreamIdTokenEncrypted,
+        // The upstream acr, for the AAL assurance takes the login for (upstream_acr_mappings).
+        ...(input.upstreamAcr ? { upstream_acr: input.upstreamAcr } : {}),
+        // No proof time (proven_at): the IdP's auth_time is in its own clock, and nothing yet asks
+        // it for a new authentication, so this login is never taken as the result of a step-up
+        // or re-authentication. It can still be the session a step-up starts from.
       },
       tenantId
     );
@@ -345,6 +352,8 @@ async function completeExternalAuthentication(
     client_id: clientId,
     is_new_user: result.isNewUser,
     stitched_from_existing: result.stitchedFromExisting,
+    // The session made from this code keeps the upstream acr, as the SSO path does.
+    ...(input.upstreamAcr ? { upstream_acr: input.upstreamAcr } : {}),
   });
   const redirectUrl = new URL(authState.redirectUri);
   redirectUrl.searchParams.set('code', authCode);
@@ -368,6 +377,7 @@ interface ExternalIdpProvisioningContinuation {
   providerId: string;
   userInfo: UserInfo;
   upstreamIdToken?: string;
+  upstreamAcr?: string;
   result: HandleIdentityPendingResult;
 }
 
@@ -476,7 +486,8 @@ function parseContinuation(value: string): ExternalIdpProvisioningContinuation {
     !boundedString(result.providerUserId) ||
     result.accountId !== `account:${result.userId}` ||
     continuation.providerId !== result.providerId ||
-    userInfo.sub !== result.providerUserId
+    userInfo.sub !== result.providerUserId ||
+    (continuation.upstreamAcr !== undefined && !boundedString(continuation.upstreamAcr, 1024))
   ) {
     throw new Error('external_idp_provisioning_continuation_invalid');
   }
@@ -648,6 +659,7 @@ export async function handleExternalProvisioningResume(
       provider,
       userInfo: loaded.continuation.userInfo,
       upstreamIdToken: loaded.continuation.upstreamIdToken,
+      upstreamAcr: loaded.continuation.upstreamAcr,
       result: {
         status: 'ready',
         userId: expected.userId,
@@ -1029,6 +1041,8 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
 
     // 6. Validate ID token and/or fetch user info
     let userInfo;
+    // The acr of the validated ID token, kept apart from userinfo data merged in below.
+    let upstreamAcr: string | undefined;
     let idTokenSub: string | undefined;
     const diagnostics = diagnosticLogger
       ? {
@@ -1053,6 +1067,11 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
         diagnostics
       );
       idTokenSub = userInfo.sub;
+      // An acr longer than the continuation accepts is not kept (nor used for assurance).
+      upstreamAcr =
+        typeof userInfo.acr === 'string' && userInfo.acr && userInfo.acr.length <= 1024
+          ? userInfo.acr
+          : undefined;
       if (
         authorizationIdTokenClaims &&
         (authorizationIdTokenClaims.iss !== userInfo.iss ||
@@ -1290,6 +1309,7 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
         providerId: provider.id,
         userInfo,
         upstreamIdToken: tokens.id_token,
+        upstreamAcr,
         result,
       });
     }
@@ -1298,6 +1318,7 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
       provider,
       userInfo,
       upstreamIdToken: tokens.id_token,
+      upstreamAcr,
       result,
     });
   } catch (error) {

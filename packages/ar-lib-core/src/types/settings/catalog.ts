@@ -145,32 +145,34 @@ export const CATEGORY_SCOPE_CONFIG: Record<
     allowedScopes: ['platform', 'tenant'],
   },
   'check-api-audit': {
-    allowedScopes: ['platform', 'tenant'],
+    // The Check API reads the platform's audit settings (it audits before a check's tenant is known).
+    allowedScopes: ['platform'],
   },
 
-  // Tenant + Client categories (can be overridden at client level)
+  // Categories a tenant (and, for some, a client) can override; several also have
+  // platform-wide values the tenants inherit
   oauth: {
-    allowedScopes: ['tenant', 'client'],
+    allowedScopes: ['platform', 'tenant', 'client'],
   },
   security: {
-    allowedScopes: ['tenant', 'client'],
+    allowedScopes: ['platform', 'tenant', 'client'],
   },
   'device-flow': {
     allowedScopes: ['tenant', 'client'],
   },
 
-  // Tenant-only categories
+  // Tenant categories (some with platform-wide values the tenants inherit)
   session: {
-    allowedScopes: ['tenant'],
+    allowedScopes: ['platform', 'tenant'],
   },
   ciba: {
     allowedScopes: ['tenant'],
   },
   tokens: {
-    allowedScopes: ['tenant'],
+    allowedScopes: ['platform', 'tenant'],
   },
   'external-idp': {
-    allowedScopes: ['tenant'],
+    allowedScopes: ['platform', 'tenant'],
   },
   credentials: {
     allowedScopes: ['tenant'],
@@ -179,7 +181,7 @@ export const CATEGORY_SCOPE_CONFIG: Record<
     allowedScopes: ['tenant'],
   },
   tenant: {
-    allowedScopes: ['tenant'],
+    allowedScopes: ['platform', 'tenant'],
     scopePermissions: {
       tenant: {
         viewRoles: ['system_admin', 'distributor_admin', 'org_admin', 'admin', 'viewer'],
@@ -191,7 +193,7 @@ export const CATEGORY_SCOPE_CONFIG: Record<
     allowedScopes: ['tenant'],
   },
   discovery: {
-    allowedScopes: ['tenant'],
+    allowedScopes: ['platform', 'tenant'],
   },
   plugin: {
     allowedScopes: ['tenant'],

@@ -1,8 +1,10 @@
 import type { Messages } from './ja';
 import { arSettings } from './settings/ar';
+import { arCompliance } from './compliance/ar';
 
 export const ar = {
 	...arSettings,
+	...arCompliance,
 	'app.adminLabel': 'وحدة التحكم الإدارية',
 	'app.env.dev': 'التطوير',
 	'app.env.prod': 'الإنتاج',
@@ -331,6 +333,7 @@ export const ar = {
 	'table.selectRow': 'تحديد {name}',
 	'table.sortBy': 'الفرز حسب {column}',
 	'table.notApplicable': 'لا ينطبق',
+	'table.actions': 'الإجراءات',
 	'tabs.more': 'المزيد',
 	'choice.count': '{n} من {total} محدد',
 	'choice.countMax': '{n} من {max} كحد أقصى',

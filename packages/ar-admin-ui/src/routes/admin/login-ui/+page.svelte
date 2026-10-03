@@ -6,7 +6,6 @@
 	import { adminConsentPoliciesAPI } from '$lib/api/admin-consent-policies';
 	import {
 		adminSettingsAPI,
-		adminUiConfigAPI,
 		scopedSettingsAPI,
 		SettingsConflictError,
 		type CategorySettings,
@@ -169,7 +168,6 @@
 		try {
 			const selectedTenantId = resolveSelectedTenantId();
 			const tenantInfo = await getTenantInfo(selectedTenantId);
-			const uiConfigResult = await adminUiConfigAPI.get();
 			const tenantSettingsResult = await adminSettingsAPI.getSettings('tenant', selectedTenantId);
 			const postLoginSettingsResult = await adminSettingsAPI.getSettings(
 				'login-entry',
@@ -234,7 +232,8 @@
 			);
 			initialTrustedOriginsInput = trustedOriginsInput;
 			loginUiAvailable = tenantInfo.components.login_ui;
-			loginUiConfigured = !!uiConfigResult.config.baseUrl;
+			// The UI the login redirects use for this tenant (validated as at runtime).
+			loginUiConfigured = !!tenantInfo.login_ui_base_url;
 			loginUiStatusMessage = !loginUiAvailable
 				? $LL.admin_login_ui_status_not_deployed()
 				: loginUiConfigured

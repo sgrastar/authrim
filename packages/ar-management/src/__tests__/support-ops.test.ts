@@ -8,7 +8,8 @@ const { mockAdapter, mockAdminAdapter, mockGetTenantSettings, mockListTenantStor
       query: vi.fn(),
       queryOne: vi.fn(),
       execute: vi.fn(),
-    } satisfies Pick<DatabaseAdapter, 'query' | 'queryOne' | 'execute'>,
+      batch: vi.fn(),
+    } satisfies Pick<DatabaseAdapter, 'query' | 'queryOne' | 'execute' | 'batch'>,
     mockAdminAdapter: {
       query: vi.fn(),
       queryOne: vi.fn(),
@@ -766,9 +767,9 @@ describe('support operations admin router', () => {
     mockAdminAdapter.query.mockResolvedValueOnce([approvalEntity()]);
     mockAdapter.execute
       .mockResolvedValueOnce({ rowsAffected: 1 })
-      .mockResolvedValueOnce({ rowsAffected: 1 })
-      .mockResolvedValueOnce({ rowsAffected: 12 })
       .mockResolvedValueOnce({ rowsAffected: 1 });
+    // The accounts and their subjects, together and only as the newest transition.
+    mockAdapter.batch.mockResolvedValueOnce([{ rowsAffected: 12 }, { rowsAffected: 12 }]);
 
     const response = await createApp().request(
       '/api/admin/support-ops/actions/action-1/execute',
@@ -779,6 +780,16 @@ describe('support operations admin router', () => {
 
     expect(response.status).toBe(200);
     expect(payload.status).toBe('completed');
+    // Each account records this action's transition, and only a newer one is never overwritten.
+    const [statements] = mockAdapter.batch.mock.calls[0]! as [
+      Array<{ sql: string; params: unknown[] }>,
+    ];
+    expect(statements[0]!.sql).toContain("'$.lifecycle_operation_id', ? || legacy_user_id");
+    expect(statements[0]!.sql).toContain("'$.lifecycle_version_ms') AS INTEGER), 0) < ?");
+    expect(statements[0]!.params).toContain('support-op:action-1:');
+    expect(statements[1]!.sql).toContain(
+      "json_extract(metadata_json, '$.lifecycle_operation_id') = ?"
+    );
   });
 
   it('uses a conditional approved-to-running transition before execution', async () => {
@@ -862,8 +873,8 @@ describe('support operations admin router', () => {
     });
     mockAdapter.execute
       .mockResolvedValueOnce({ rowsAffected: 1 })
-      .mockRejectedValueOnce(new Error('database unavailable'))
       .mockResolvedValueOnce({ rowsAffected: 1 });
+    mockAdapter.batch.mockRejectedValueOnce(new Error('database unavailable'));
 
     const response = await createApp().request(
       '/api/admin/support-ops/actions/action-1/execute',

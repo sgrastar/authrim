@@ -27,7 +27,6 @@ import type {
   FrontchannelLogoutRequest,
 } from '../types/logout';
 import type { SessionClientWithDetails } from '../repositories/core/session-client';
-import { DEFAULT_LOGOUT_CONFIG } from '../types/logout';
 
 /**
  * Build frontchannel logout URI with query parameters
@@ -267,35 +266,4 @@ export function shouldUseFrontchannelLogout(
 
   const frontchannelClients = clients.filter((c) => c.frontchannel_logout_uri);
   return frontchannelClients.length > 0;
-}
-
-/**
- * Get frontchannel logout configuration from KV or defaults
- *
- * @param kv - KV namespace for settings
- * @param settingsKey - Key for logout settings
- * @returns Frontchannel logout configuration
- */
-export async function getFrontchannelLogoutConfig(
-  kv: KVNamespace | undefined,
-  settingsKey: string
-): Promise<FrontchannelLogoutConfig> {
-  if (kv) {
-    try {
-      const kvConfig = await kv.get(settingsKey);
-      if (kvConfig) {
-        const parsed = JSON.parse(kvConfig);
-        if (parsed.frontchannel) {
-          return {
-            ...DEFAULT_LOGOUT_CONFIG.frontchannel,
-            ...parsed.frontchannel,
-          };
-        }
-      }
-    } catch {
-      // Ignore KV errors, use defaults
-    }
-  }
-
-  return DEFAULT_LOGOUT_CONFIG.frontchannel;
 }

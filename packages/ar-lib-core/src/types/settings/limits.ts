@@ -20,10 +20,12 @@ export interface LimitsSettings {
   'limits.max_embedded_permissions': number;
   'limits.max_resource_permissions': number;
   'limits.max_custom_claims': number;
+  'limits.custom_claim_schemas_max_per_target': number;
 
   // Token Exchange Limits
   'limits.token_exchange_max_resource_params': number;
   'limits.token_exchange_max_audience_params': number;
+  'limits.check_api_batch_size': number;
 }
 
 /**
@@ -82,6 +84,17 @@ export const LIMITS_SETTINGS_META: Record<keyof LimitsSettings, SettingMeta> = {
     max: 1000,
     visibility: 'admin',
   },
+  'limits.custom_claim_schemas_max_per_target': {
+    key: 'limits.custom_claim_schemas_max_per_target',
+    type: 'number',
+    default: 50,
+    label: 'Custom Claim Schemas per Token',
+    description:
+      'Most claims of the custom claim schemas added to one ID token, UserInfo response, introspection response or credential',
+    min: 1,
+    integer: true,
+    visibility: 'admin',
+  },
   'limits.max_custom_claims': {
     key: 'limits.max_custom_claims',
     type: 'number',
@@ -102,10 +115,13 @@ export const LIMITS_SETTINGS_META: Record<keyof LimitsSettings, SettingMeta> = {
     type: 'number',
     default: 10,
     envKey: 'TOKEN_EXCHANGE_MAX_RESOURCE_PARAMS',
+    // As Token Exchange reads it: a value outside 1..100 is ignored.
+    envNumber: 'in-range',
     label: 'Token Exchange Max Resource Params',
     description: 'Maximum resource parameters in token exchange request',
     min: 1,
-    max: 50,
+    max: 100,
+    integer: true,
     visibility: 'admin',
   },
   'limits.token_exchange_max_audience_params': {
@@ -113,11 +129,29 @@ export const LIMITS_SETTINGS_META: Record<keyof LimitsSettings, SettingMeta> = {
     type: 'number',
     default: 10,
     envKey: 'TOKEN_EXCHANGE_MAX_AUDIENCE_PARAMS',
+    // As Token Exchange reads it: a value outside 1..100 is ignored.
+    envNumber: 'in-range',
     label: 'Token Exchange Max Audience Params',
     description: 'Maximum audience parameters in token exchange request',
     min: 1,
-    max: 50,
+    max: 100,
+    integer: true,
     visibility: 'admin',
+  },
+  'limits.check_api_batch_size': {
+    key: 'limits.check_api_batch_size',
+    type: 'number',
+    envKey: 'CHECK_API_BATCH_SIZE_LIMIT',
+    // As the Check API reads it: a value outside 1..1000 is ignored.
+    envNumber: 'in-range',
+    label: 'Check API Batch Size',
+    description: 'Most checks in one Check API batch request, for the whole platform',
+    min: 1,
+    max: 1000,
+    integer: true,
+    scopes: ['platform'],
+    visibility: 'admin',
+    default: 100,
   },
 };
 
@@ -140,6 +174,8 @@ export const LIMITS_DEFAULTS: LimitsSettings = {
   'limits.max_embedded_permissions': 50,
   'limits.max_resource_permissions': 100,
   'limits.max_custom_claims': 20,
+  'limits.custom_claim_schemas_max_per_target': 50,
   'limits.token_exchange_max_resource_params': 10,
   'limits.token_exchange_max_audience_params': 10,
+  'limits.check_api_batch_size': 100,
 };

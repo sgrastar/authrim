@@ -1004,6 +1004,8 @@ describe('directory password login handler', () => {
       86400,
       expect.objectContaining({
         amr: ['pwd', 'directory', 'passkey'],
+        // The password was verified when the transaction was made, not when it completed.
+        proven_at: 1000,
       }),
       'tenant-a'
     );
@@ -1235,6 +1237,8 @@ describe('directory password login handler', () => {
       86400,
       expect.objectContaining({
         amr: ['pwd', 'directory', 'otp'],
+        // The password was verified when the transaction was made, not when it completed.
+        proven_at: 1000,
       }),
       'tenant-a'
     );
@@ -2462,5 +2466,22 @@ describe('directory password login handler', () => {
 
     expect(response.status).toBe(404);
     expect(body.error).toBe('directory_password_not_configured');
+  });
+});
+
+describe('directory session assurance evidence', () => {
+  it('counts a migration only for the password until its new passkey signs in', async () => {
+    const { directorySessionAmr, directorySessionUnverifiedAmr } =
+      await import('../directory-password-login');
+    const { computeAAL } = await import('@authrim/ar-lib-core');
+    const migration = 'directory_password_passkey_migration' as const;
+    expect(directorySessionAmr(migration)).toEqual(['pwd', 'directory', 'passkey']);
+    expect(
+      computeAAL({
+        amr: directorySessionAmr(migration),
+        unverifiedMethods: directorySessionUnverifiedAmr(migration).unverified_amr,
+      })
+    ).toBe('AAL1');
+    expect(directorySessionUnverifiedAmr('directory_password')).toEqual({});
   });
 });

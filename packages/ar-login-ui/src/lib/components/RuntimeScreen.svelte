@@ -798,10 +798,10 @@
 					{/each}
 				</div>
 			{:else if !destinationFieldConsent?.fields.length}
-				<span class="runtime-checkbox-row">
+				<label class="runtime-checkbox-row">
 					<input {disabled} type="checkbox" />
 					<span>{$LL.consent_items_required_title()}</span>
-				</span>
+				</label>
 			{/if}
 		</div>
 	{:else if blockType === 'divider'}

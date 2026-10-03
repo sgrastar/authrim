@@ -19,6 +19,8 @@ import {
   assertCloudflareOAuthRefreshAccount,
   assertR2BucketOwnershipForUse,
   createR2Bucket,
+  createR2BucketOwnershipVerifier,
+  createR2ObjectApiUploader,
   deleteR2Bucket,
   getR2BucketDashboardUrl,
   getRequiredR2Buckets,
@@ -576,6 +578,112 @@ describe('Cloudflare R2 helpers', () => {
     expect(args[fileIndex + 1]).toBe(temporaryPath);
     expect(existsSync(temporaryPath)).toBe(false);
     expect(existsSync(dirname(temporaryPath))).toBe(false);
+  });
+
+  it('uploads release objects directly with one account credential and preserves paths and content types', async () => {
+    process.env.CLOUDFLARE_API_TOKEN = 'test-r2-token';
+    process.env.CLOUDFLARE_ACCOUNT_ID = oauthAccountId;
+    const objectKey = 'releases/0.4.2/streams/pii-postgresql/005_service_dynamic_groups.sql';
+    const bytes = new TextEncoder().encode('CREATE TABLE groups (id TEXT);\n');
+    fetchMock.mockImplementation(async (_url: string, init: FetchInit) => ({
+      ok: true,
+      status: 200,
+      headers: new Headers(),
+      json: async () => ({
+        success: true,
+        // As Cloudflare documents it: the size as a string.
+        result: { key: objectKey, size: String((init.body as Buffer).byteLength) },
+      }),
+    }));
+
+    const upload = await createR2ObjectApiUploader();
+    expect(upload).not.toBeNull();
+    await upload!({
+      bucketName: 'test-migration-releases',
+      objectKey,
+      bytes,
+      contentType: 'application/sql',
+    });
+    await upload!({
+      bucketName: 'test-migration-releases',
+      objectKey,
+      bytes,
+      contentType: 'application/json',
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    for (const [url, init] of fetchMock.mock.calls as [string, FetchInit][]) {
+      expect(url).toBe(
+        `https://api.cloudflare.com/client/v4/accounts/${oauthAccountId}/r2/buckets/test-migration-releases/objects/${objectKey}`
+      );
+      expect(init.method).toBe('PUT');
+      expect(new Headers(init.headers).get('Authorization')).toBe('Bearer test-r2-token');
+      expect(Buffer.from(init.body as Buffer)).toEqual(Buffer.from(bytes));
+    }
+    expect(
+      new Headers((fetchMock.mock.calls[0] as [string, FetchInit])[1].headers).get('Content-Type')
+    ).toBe('application/sql');
+    expect(
+      new Headers((fetchMock.mock.calls[1] as [string, FetchInit])[1].headers).get('Content-Type')
+    ).toBe('application/json');
+    expect(execaMock).not.toHaveBeenCalled();
+  });
+
+  it('rejects an R2 upload response with another size, as a string or a number', async () => {
+    process.env.CLOUDFLARE_API_TOKEN = 'test-r2-token';
+    process.env.CLOUDFLARE_ACCOUNT_ID = oauthAccountId;
+    const objectKey = 'releases/0.4.2/manifest.json';
+    const upload = await createR2ObjectApiUploader();
+    for (const size of ['3', 3]) {
+      fetchMock.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        headers: new Headers(),
+        json: async () => ({ success: true, result: { key: objectKey, size } }),
+      });
+      await expect(
+        upload!({
+          bucketName: 'test-migration-releases',
+          objectKey,
+          bytes: new TextEncoder().encode('{}'),
+          contentType: 'application/json',
+        })
+      ).rejects.toThrow('cloudflare_r2_object_upload_response_invalid');
+    }
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      headers: new Headers(),
+      json: async () => ({ success: true, result: { key: objectKey, size: 2 } }),
+    });
+    await expect(
+      upload!({
+        bucketName: 'test-migration-releases',
+        objectKey,
+        bytes: new TextEncoder().encode('{}'),
+        contentType: 'application/json',
+      })
+    ).resolves.toBeUndefined();
+  });
+
+  it('rejects an R2 upload response for a different object', async () => {
+    process.env.CLOUDFLARE_API_TOKEN = 'test-r2-token';
+    process.env.CLOUDFLARE_ACCOUNT_ID = oauthAccountId;
+    fetchMock.mockResolvedValue({
+      ok: true,
+      status: 200,
+      headers: new Headers(),
+      json: async () => ({ success: true, result: { key: 'other.sql', size: 2 } }),
+    });
+    const upload = await createR2ObjectApiUploader();
+    await expect(
+      upload!({
+        bucketName: 'test-migration-releases',
+        objectKey: 'releases/0.4.2/manifest.json',
+        bytes: new TextEncoder().encode('{}'),
+        contentType: 'application/json',
+      })
+    ).rejects.toThrow('cloudflare_r2_object_upload_response_invalid');
   });
 
   it.each([
@@ -1413,6 +1521,55 @@ describe('Cloudflare R2 helpers', () => {
         binding: 'MIGRATION_RELEASES',
       })
     ).rejects.toThrow('ownership marker does not match');
+  });
+
+  it('checks the live R2 generation on every upload with a scoped verifier', async () => {
+    process.env.CLOUDFLARE_API_TOKEN = 'test-token';
+    process.env.CLOUDFLARE_ACCOUNT_ID = oauthAccountId;
+    fetchMock.mockImplementation(
+      createOwnedR2ApiHandler({
+        name: 'prod-migration-releases',
+        markerOverrides: { environment: 'prod', binding: 'MIGRATION_RELEASES' },
+      })
+    );
+    const verify = await createR2BucketOwnershipVerifier({
+      ...ownedR2('prod-migration-releases'),
+      environment: 'prod',
+      binding: 'MIGRATION_RELEASES',
+    });
+
+    await verify();
+    await verify();
+
+    expect(fetchMock).toHaveBeenCalledTimes(8);
+    expect(execaMock).not.toHaveBeenCalled();
+  });
+
+  it('stops scoped uploads when the bucket generation changes after marker verification', async () => {
+    process.env.CLOUDFLARE_API_TOKEN = 'test-token';
+    process.env.CLOUDFLARE_ACCOUNT_ID = oauthAccountId;
+    const ownedBucket = createOwnedR2ApiHandler({ name: 'prod-migration-releases' });
+    fetchMock.mockImplementation(async (rawUrl: string | URL, init: FetchInit = {}) => {
+      if (String(rawUrl).includes('/r2/buckets?')) {
+        return {
+          ok: true,
+          status: 200,
+          headers: new Headers(),
+          json: async () => ({
+            success: true,
+            result: {
+              buckets: [
+                { name: 'prod-migration-releases', creation_date: '2026-09-24T00:00:00.000Z' },
+              ],
+            },
+          }),
+        };
+      }
+      return ownedBucket(rawUrl, init);
+    });
+    const verify = await createR2BucketOwnershipVerifier(ownedR2('prod-migration-releases'));
+
+    await expect(verify()).rejects.toThrow('changed while Setup verified its ownership marker');
   });
 
   it('blocks name-only R2 artifact use before contacting Cloudflare', async () => {

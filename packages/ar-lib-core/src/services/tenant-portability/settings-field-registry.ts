@@ -265,7 +265,6 @@ const REVIEWED_FIELDS: readonly [string, TenantSettingValueType, TenantSettingHa
       'duration',
       'value',
       `
-    rate_limit.window_ms
     rate_limit.email_window
   `,
     ],
@@ -358,6 +357,14 @@ const REVIEWED_FIELDS: readonly [string, TenantSettingValueType, TenantSettingHa
     external_idp.jit_provisioning_enabled
     external_idp.jit_update_on_login
     external_idp.token_encryption_enabled
+  `,
+    ],
+    [
+      'external-idp',
+      'json',
+      'structured',
+      `
+    external_idp.jit_update_fields
   `,
     ],
     [
@@ -601,6 +608,8 @@ const REVIEWED_FIELDS: readonly [string, TenantSettingValueType, TenantSettingHa
     feature.enable_token_exchange
     feature.enable_client_credentials
     feature.enable_custom_claims
+    feature.enable_custom_claim_schemas
+    feature.enable_custom_claim_schemas_introspection
     feature.enable_test_endpoints
     feature.enable_check_api
     feature.enable_mock_auth
@@ -620,6 +629,7 @@ const REVIEWED_FIELDS: readonly [string, TenantSettingValueType, TenantSettingHa
     limits.max_embedded_permissions
     limits.max_resource_permissions
     limits.max_custom_claims
+    limits.custom_claim_schemas_max_per_target
     limits.token_exchange_max_resource_params
     limits.token_exchange_max_audience_params
   `,
@@ -868,6 +878,11 @@ const REVIEWED_FIELDS: readonly [string, TenantSettingValueType, TenantSettingHa
       'structured',
       `
     assurance.scope_aal_requirements
+    assurance.upstream_acr_mappings
+    assurance.scope_ial_requirements
+    assurance.ial_assurance_values
+    assurance.saml_authn_context_aal
+    assurance.ida_profile
   `,
     ],
     [
@@ -1308,6 +1323,197 @@ const REVIEWED_FIELDS: readonly [string, TenantSettingValueType, TenantSettingHa
       'value',
       `
     service-site.fallback_enabled
+  `,
+    ],
+    [
+      'oauth',
+      'enum',
+      'value',
+      `
+    oauth.error_locale
+  `,
+    ],
+    [
+      'oauth',
+      'json',
+      'structured',
+      `
+    oauth.response_types_supported
+    oauth.token_endpoint_auth_methods_supported
+  `,
+    ],
+    [
+      'security',
+      'boolean',
+      'value',
+      `
+    security.allow_unsigned_request_object
+    security.fapi_require_private_key_jwt
+    security.fapi_message_signing_enabled
+    security.require_jarm
+  `,
+    ],
+    [
+      'security',
+      'enum',
+      'value',
+      `
+    security.dpop_required
+    security.fapi_client_assertion_audience
+    security.default_authorization_signing_alg
+  `,
+    ],
+    [
+      'security',
+      'string',
+      'value',
+      `
+    security.request_object_signing_algs
+    security.authorization_signing_algs
+  `,
+    ],
+    [
+      'security',
+      'json',
+      'url_or_asset',
+      `
+    security.dpop_nonce_resource_overrides
+  `,
+    ],
+    [
+      'security',
+      'number',
+      'value',
+      `
+    security.request_object_max_age_seconds
+    security.request_object_max_lifetime_seconds
+    security.request_object_clock_skew_seconds
+  `,
+    ],
+    [
+      'feature-flags',
+      'boolean',
+      'value',
+      `
+    feature.enable_rar
+    feature.enable_ai_scopes
+    feature.enable_ai_ephemeral_auth
+    feature.enable_id_jag
+  `,
+    ],
+    [
+      'tokens',
+      'string',
+      'value',
+      `
+    tokens.exchange_allowed_subject_token_types
+  `,
+    ],
+    [
+      'tokens',
+      'string',
+      'url_or_asset',
+      `
+    tokens.introspection_expected_audience
+  `,
+    ],
+    [
+      'tokens',
+      'json',
+      'url_or_asset',
+      `
+    tokens.id_jag_allowed_issuers
+  `,
+    ],
+    [
+      'tokens',
+      'number',
+      'value',
+      `
+    tokens.id_jag_max_token_lifetime
+  `,
+    ],
+    [
+      'tokens',
+      'boolean',
+      'value',
+      `
+    tokens.id_jag_include_tenant_claim
+    tokens.id_jag_require_confidential_client
+  `,
+    ],
+    [
+      'limits',
+      'number',
+      'value',
+      `
+    limits.check_api_batch_size
+  `,
+    ],
+    [
+      'session',
+      'boolean',
+      'value',
+      `
+    session.backchannel_enabled
+    session.backchannel_include_sub
+    session.backchannel_include_sid
+    session.frontchannel_enabled
+    session.session_management_enabled
+    session.check_session_iframe_enabled
+    session.logout_webhook_enabled
+    session.logout_webhook_include_sub
+    session.logout_webhook_include_sid
+  `,
+    ],
+    [
+      'rate-limit',
+      'number',
+      'value',
+      `
+    rate_limit.public_read
+    rate_limit.login_start
+    rate_limit.send_challenge
+    rate_limit.loadtest
+    rate_limit.strict_window_seconds
+    rate_limit.moderate_window_seconds
+    rate_limit.lenient_window_seconds
+    rate_limit.public_read_window_seconds
+    rate_limit.login_start_window_seconds
+    rate_limit.send_challenge_window_seconds
+    rate_limit.loadtest_window_seconds
+  `,
+    ],
+    [
+      'external-idp',
+      'boolean',
+      'value',
+      `
+    external_idp.jit_require_verified_email
+    external_idp.jit_join_all_matching_orgs
+    external_idp.jit_allow_user_without_org
+    external_idp.jit_allow_unverified_domain_mappings
+  `,
+    ],
+    [
+      'external-idp',
+      'string',
+      'logical_reference',
+      `
+    external_idp.jit_allowed_provider_ids
+    external_idp.jit_default_role_id
+  `,
+    ],
+    [
+      'tenant',
+      'string',
+      'value',
+      `
+    tenant.ui_device_path
+    tenant.ui_device_authorize_path
+    tenant.ui_logout_complete_path
+    tenant.ui_logged_out_path
+    tenant.ui_register_path
   `,
     ],
   ];

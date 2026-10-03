@@ -126,6 +126,47 @@ export interface AccountLegalHold {
 	updated_at: number;
 }
 
+/** One piece of identity assurance evidence (GET /api/admin/users/:id/assurance). */
+export interface AssuranceEvidence {
+	evidence_id: string;
+	evidence_type: string;
+	issuer_ref: string | null;
+	assurance_framework: string | null;
+	assurance_level: string | null;
+	evidence_hash: string | null;
+	evidence_storage_ref: string | null;
+	verified_at: string | null;
+	expires_at: string | null;
+	revoked_at: string | null;
+	revoked_by: string | null;
+	created_at: string | null;
+	status: 'active' | 'pending' | 'expired' | 'revoked';
+}
+
+export interface UserAssurance {
+	effective_ial: {
+		level: 'IAL1' | 'IAL2' | 'IAL3';
+		evidence_id: string | null;
+		verified_at: string | null;
+	};
+	evidence: AssuranceEvidence[];
+	truncated: boolean;
+}
+
+export type AdminEvidenceType =
+	| 'admin_attestation'
+	| 'document_check'
+	| 'in_person_check'
+	| 'remote_supervised_check';
+
+export interface RecordAssuranceEvidenceInput {
+	assurance_level: 'IAL1' | 'IAL2' | 'IAL3';
+	evidence_type: AdminEvidenceType;
+	verified_at?: string;
+	expires_at?: string;
+	evidence_storage_ref?: string;
+}
+
 /**
  * Pagination info
  */
@@ -530,6 +571,50 @@ export const adminUsersAPI = {
 		if (!response.ok) {
 			const error = await response.json().catch(() => ({ error: 'unknown_error' }));
 			throw new Error(error.error_description || error.error || 'Failed to release legal hold');
+		}
+		return response.json();
+	},
+
+	async getAssurance(id: string): Promise<UserAssurance> {
+		const response = await adminFetch(`${adminUserPath(id)}/assurance`);
+		if (!response.ok) throw new Error('Failed to fetch identity assurance');
+		const result = (await response.json()) as UserAssurance;
+		if (!result?.effective_ial || !Array.isArray(result.evidence)) {
+			throw new Error('Invalid identity assurance response');
+		}
+		return result;
+	},
+
+	/**
+	 * Records evidence. The idempotency key is the caller's, so a retry of the same recording
+	 * (after a failure) records it once.
+	 */
+	async recordAssuranceEvidence(
+		id: string,
+		input: RecordAssuranceEvidenceInput,
+		idempotencyKey: string
+	): Promise<AssuranceEvidence> {
+		const response = await adminFetch(`${adminUserPath(id)}/assurance/evidence`, {
+			method: 'POST',
+			includeJsonContentType: true,
+			headers: { 'Idempotency-Key': idempotencyKey },
+			body: JSON.stringify(input)
+		});
+		if (!response.ok) {
+			const error = await response.json().catch(() => ({ error: 'unknown_error' }));
+			throw new Error(error.error_description || error.error || 'Failed to record evidence');
+		}
+		return response.json();
+	},
+
+	async revokeAssuranceEvidence(id: string, evidenceId: string): Promise<AssuranceEvidence> {
+		const response = await adminFetch(
+			`${adminUserPath(id)}/assurance/evidence/${encodeURIComponent(evidenceId)}/revoke`,
+			{ method: 'POST' }
+		);
+		if (!response.ok) {
+			const error = await response.json().catch(() => ({ error: 'unknown_error' }));
+			throw new Error(error.error_description || error.error || 'Failed to revoke evidence');
 		}
 		return response.json();
 	},

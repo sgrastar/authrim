@@ -11,7 +11,7 @@ function source(path: string): string {
 
 describe('UI URL sink guards', () => {
 	it('guards consent document and deletion links with link URL validation', () => {
-		const consentSource = source('routes/consent/+page.svelte');
+		const consentSource = source('lib/views/ConsentView.svelte');
 
 		expect(consentSource.match(/isValidLinkUrl\(item\.document_url\)/g)).toHaveLength(2);
 		expect(consentSource).toContain('isValidLinkUrl(i.deletion_url)');

@@ -434,7 +434,7 @@ describe('approval artifacts router', () => {
     });
     mockPasskeyRepo.updateCounter.mockResolvedValue(true);
     mockSessionRepo.setMfaVerified.mockResolvedValue(true);
-    (mockEnv.AUTHRIM_CONFIG!.get as any).mockResolvedValue(null);
+    (mockEnv.AUTHRIM_CONFIG!.get as any).mockReset().mockResolvedValue(null);
     (mockEnv.AUTHRIM_CONFIG!.put as any).mockResolvedValue(undefined);
     (mockEnv.AUTHRIM_CONFIG!.delete as any).mockResolvedValue(undefined);
     mockSwitchApprovalArtifactMethod.mockResolvedValue({
@@ -607,13 +607,6 @@ describe('approval artifacts router', () => {
         subject_id: 'customer-1',
         method: 'ciba',
         transport_channel: 'customer@example.com',
-      })
-    );
-    (mockEnv.AUTHRIM_CONFIG!.get as any).mockResolvedValueOnce(
-      JSON.stringify({
-        auth_req_id: 'g1:apac:1:cba_internal',
-        notification_count: 1,
-        last_notified_at: Date.now(),
       })
     );
     mockAssertApprovalCibaNotificationCooldown.mockRejectedValueOnce(

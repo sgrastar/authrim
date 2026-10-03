@@ -276,7 +276,7 @@ describe('migration release artifact publication', () => {
             const attempt = (attempts.get(objectKey) ?? 0) + 1;
             attempts.set(objectKey, attempt);
             if (objectKey === expectedArtifact.objects[0]?.objectKey && attempt === 1) {
-              throw new Error('Failed to fetch /r2/object - 524: A timeout occurred');
+              throw new Error('Cloudflare R2 object upload failed (524): A timeout occurred');
             }
           },
           executeBatch: sqliteBatchExecutor(database),
@@ -315,7 +315,7 @@ describe('migration release artifact publication', () => {
         actorId: 'setup:test',
         upload: async () => {
           attempts += 1;
-          throw new Error('Failed to fetch /r2/object - 403: forbidden');
+          throw new Error('Cloudflare R2 object upload failed (403): forbidden');
         },
         executeBatch: async () => {
           catalogStarted = true;
@@ -325,7 +325,7 @@ describe('migration release artifact publication', () => {
           throw new Error('sleep_must_not_run');
         },
       })
-    ).rejects.toThrow('403: forbidden');
+    ).rejects.toThrow('failed (403): forbidden');
     expect(attempts).toBe(expectedArtifact.objects.length - 1);
     expect(catalogStarted).toBe(false);
   });

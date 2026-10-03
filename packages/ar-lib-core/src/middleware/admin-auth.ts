@@ -389,6 +389,15 @@ async function authenticateMachineAccessToken(
   }
 }
 
+/** The roles an admin needs (one of) to use the Admin API unless a route asks for others. */
+export const DEFAULT_ADMIN_SIGN_IN_ROLES: readonly string[] = [
+  'super_admin',
+  'security_admin',
+  'admin',
+  'support',
+  'viewer',
+];
+
 /**
  * Authenticate using session cookie
  *
@@ -403,7 +412,7 @@ async function authenticateMachineAccessToken(
 export async function authenticateAdminSessionForTenant(
   c: Context<{ Bindings: Env }>,
   sessionId: string,
-  requiredRoles: string[] = ['super_admin', 'security_admin', 'admin', 'support', 'viewer'],
+  requiredRoles: readonly string[] = DEFAULT_ADMIN_SIGN_IN_ROLES,
   targetTenantId?: string
 ): Promise<AdminAuthContext | null> {
   try {
@@ -798,13 +807,7 @@ function isPlatformAdminSessionPath(path: string): boolean {
  */
 export function adminAuthMiddleware(options: AdminAuthOptions = {}) {
   const plane = options.plane || 'tenant';
-  const requiredRoles = options.requireRoles || [
-    'super_admin',
-    'security_admin',
-    'admin',
-    'support',
-    'viewer',
-  ];
+  const requiredRoles = options.requireRoles || DEFAULT_ADMIN_SIGN_IN_ROLES;
 
   return async (c: Context<{ Bindings: Env }>, next: Next) => {
     const existingAuthContext = (c as unknown as { get?: (key: string) => unknown }).get?.(

@@ -9,6 +9,7 @@ import {
   detectCloudflareTokenOwnership,
   inspectCloudflareBootstrapRecoveryToken,
   inspectCloudflarePendingBootstrapRecoveryState,
+  preflightCloudflareBootstrapToken,
   reconcileCloudflareBootstrapRevocationWithRecoveryToken,
   selectPreferredCloudflareTokenOwnership,
   resumeCloudflareBootstrapTokenRevocation,
@@ -58,9 +59,13 @@ class FakeAuthority implements CloudflareTokenAuthority {
   makeChildrenIdentical = false;
   loseMissingBootstrapVerifyResponse = false;
   allowChildCrossResource = false;
+  broadenChildPolicyOnReadback = false;
+  omitChildPolicyOnReadback = false;
   deniedCapabilityProbeRounds = 0;
+  transientMixedCapabilityProbeRounds = 0;
   capabilityProbeFailuresRemaining = 0;
   capabilityProbeCalls = 0;
+  readonly probedResourceClasses: Array<'d1' | 'workers' | 'kv' | 'r2'> = [];
   lostCreateVisibilityDelayLists = 0;
   pendingLostCreate: CloudflareTokenRecord | null = null;
   getTokenError: Error | null = null;
@@ -94,7 +99,25 @@ class FakeAuthority implements CloudflareTokenAuthority {
 
   async getToken(tokenId: string) {
     if (this.getTokenError) throw this.getTokenError;
-    return this.records.get(tokenId) ?? null;
+    const record = this.records.get(tokenId) ?? null;
+    if (record && tokenId !== this.selfTokenId && this.omitChildPolicyOnReadback) {
+      return { ...record, policies: undefined as never };
+    }
+    if (record && tokenId !== this.selfTokenId && this.broadenChildPolicyOnReadback) {
+      return {
+        ...record,
+        policies: [
+          {
+            ...record.policies[0]!,
+            permission_groups: [
+              ...record.policies[0]!.permission_groups,
+              { id: 'pg-workers', name: 'Workers Scripts Write' },
+            ],
+          },
+        ],
+      };
+    }
+    return record;
   }
 
   async listTokens() {
@@ -155,12 +178,16 @@ class FakeAuthority implements CloudflareTokenAuthority {
 
   async probeIssuedToken(token: string, resourceClass: 'd1' | 'workers' | 'kv' | 'r2') {
     this.capabilityProbeCalls += 1;
+    this.probedResourceClasses.push(resourceClass);
     if (this.capabilityProbeFailuresRemaining > 0) {
       this.capabilityProbeFailuresRemaining -= 1;
       throw new CloudflareTokenBootstrapError('cloudflare_token_capability_probe_unavailable');
     }
-    if (this.capabilityProbeCalls <= this.deniedCapabilityProbeRounds * 4) {
+    if (this.capabilityProbeCalls <= this.deniedCapabilityProbeRounds) {
       return 'denied' as const;
+    }
+    if (this.capabilityProbeCalls <= this.transientMixedCapabilityProbeRounds) {
+      return resourceClass === 'workers' ? ('allowed' as const) : ('denied' as const);
     }
     const record = [...this.records.values()].find((candidate) => candidate.value === token);
     if (!record) return 'denied' as const;
@@ -386,7 +413,9 @@ describe('Cloudflare Control token bootstrap', () => {
       const allowed =
         (token === 'Bearer direct-d1' && path.includes('/d1/database')) ||
         (token === 'Bearer direct-workers' && path.includes('/workers/scripts'));
-      return new Response('{}', { status: allowed ? 200 : 403 });
+      return allowed
+        ? Response.json({ success: true, result: [] })
+        : new Response('{}', { status: 403 });
     }) as typeof fetch;
     await expect(
       validateDirectControlTokens({
@@ -448,7 +477,9 @@ describe('Cloudflare Control token bootstrap', () => {
       const allowed =
         token === 'Bearer overprivileged' ||
         (token === 'Bearer direct-workers' && path.includes('/workers/scripts'));
-      return new Response('{}', { status: allowed ? 200 : 403 });
+      return allowed
+        ? Response.json({ success: true, result: [] })
+        : new Response('{}', { status: 403 });
     }) as typeof fetch;
     await expect(
       validateDirectControlTokens({
@@ -478,7 +509,9 @@ describe('Cloudflare Control token bootstrap', () => {
         const allowed =
           (token === 'Bearer direct-d1' && path.includes('/d1/database')) ||
           (token === 'Bearer direct-workers' && path.includes('/workers/scripts'));
-        return new Response('{}', { status: allowed ? 200 : 403 });
+        return allowed
+          ? Response.json({ success: true, result: [] })
+          : new Response('{}', { status: 403 });
       }) as typeof fetch;
 
     await expect(
@@ -548,6 +581,20 @@ describe('Cloudflare Control token bootstrap', () => {
       code: 'cloudflare_token_capability_probe_unavailable',
     });
     expect(calls).toBe(4);
+  });
+
+  it('does not treat an HTTP 200 error envelope as a token capability', async () => {
+    const client = new CloudflareTokenAuthorityHttpClient({
+      accountId: ACCOUNT_ID,
+      ownership: 'account',
+      bootstrapToken: 'bootstrap-token-value',
+      fetcher: (async () =>
+        Response.json({ success: false, errors: [{ code: 10000 }] })) as typeof fetch,
+    });
+
+    await expect(client.probeIssuedToken('child-token-value', 'workers')).rejects.toMatchObject({
+      code: 'cloudflare_token_capability_probe_unavailable',
+    });
   });
 
   it('retries a transient child capability probe without recreating tokens', async () => {
@@ -663,6 +710,7 @@ describe('Cloudflare Control token bootstrap', () => {
       'kv',
       'r2',
     ]);
+    expect(authority.probedResourceClasses).toEqual(['d1', 'workers', 'kv', 'r2']);
   });
 
   it('waits for an active child token capability to stabilize before rejecting it', async () => {
@@ -679,14 +727,30 @@ describe('Cloudflare Control token bootstrap', () => {
         capabilityStabilizationDelaysMs: [0, 0],
       })
     ).resolves.toMatchObject({ bootstrapRevoked: true });
-    expect(authority.capabilityProbeCalls).toBeGreaterThanOrEqual(12);
+    expect(authority.capabilityProbeCalls).toBeGreaterThanOrEqual(4);
   });
 
-  it('rejects a child token that the provider allows across resource classes', async () => {
+  it('rechecks a mixed child capability result before rejecting a newly issued token', async () => {
+    const authority = new FakeAuthority();
+    authority.transientMixedCapabilityProbeRounds = 1;
+
+    await expect(
+      bootstrapControlWorkerTokens({
+        accountId: ACCOUNT_ID,
+        environment: 'test',
+        ownership: 'account',
+        authority,
+        secretSink: new FakeSecretSink(),
+        capabilityStabilizationDelaysMs: [0],
+      })
+    ).resolves.toMatchObject({ bootstrapRevoked: true });
+    expect(authority.capabilityProbeCalls).toBeGreaterThanOrEqual(3);
+  });
+
+  it('checks only each child resource after validating its exact policy readback', async () => {
     const authority = new FakeAuthority();
     authority.allowChildCrossResource = true;
-
-    const failure = bootstrapControlWorkerTokens({
+    const result = await bootstrapControlWorkerTokens({
       accountId: ACCOUNT_ID,
       environment: 'test',
       ownership: 'account',
@@ -694,15 +758,68 @@ describe('Cloudflare Control token bootstrap', () => {
       secretSink: new FakeSecretSink(),
       capabilityStabilizationDelaysMs: [],
     });
-    await expect(failure).rejects.toMatchObject({
+
+    expect(result.bootstrapRevoked).toBe(true);
+    expect(authority.capabilityProbeCalls).toBe(2);
+    expect(authority.probedResourceClasses).toEqual(['d1', 'workers']);
+  });
+
+  it('rejects a child whose provider policy readback gains Workers Write', async () => {
+    const authority = new FakeAuthority();
+    authority.broadenChildPolicyOnReadback = true;
+
+    await expect(
+      bootstrapControlWorkerTokens({
+        accountId: ACCOUNT_ID,
+        environment: 'test',
+        ownership: 'account',
+        authority,
+        secretSink: new FakeSecretSink(),
+      })
+    ).rejects.toMatchObject({
+      code: 'cloudflare_child_token_scope_invalid',
+    });
+    expect(authority.records.size).toBe(0);
+  });
+
+  it('rejects an incomplete child policy readback without a runtime TypeError', async () => {
+    const authority = new FakeAuthority();
+    authority.omitChildPolicyOnReadback = true;
+
+    await expect(
+      bootstrapControlWorkerTokens({
+        accountId: ACCOUNT_ID,
+        environment: 'test',
+        ownership: 'account',
+        authority,
+        secretSink: new FakeSecretSink(),
+      })
+    ).rejects.toMatchObject({ code: 'cloudflare_child_token_scope_invalid' });
+    expect(authority.records.size).toBe(0);
+  });
+
+  it('rejects a child that cannot access its own resource and reports untested classes honestly', async () => {
+    const authority = new FakeAuthority();
+    authority.deniedCapabilityProbeRounds = 100;
+
+    await expect(
+      bootstrapControlWorkerTokens({
+        accountId: ACCOUNT_ID,
+        environment: 'test',
+        ownership: 'account',
+        authority,
+        secretSink: new FakeSecretSink(),
+        capabilityStabilizationDelaysMs: [],
+      })
+    ).rejects.toMatchObject({
       code: 'cloudflare_child_token_capability_invalid',
       capabilityDiagnostic: {
         issuedFor: 'd1',
         probes: {
-          d1: 'allowed',
-          workers: 'allowed',
-          kv: 'allowed',
-          r2: 'allowed',
+          d1: 'denied',
+          workers: 'not_checked',
+          kv: 'not_checked',
+          r2: 'not_checked',
         },
       },
     });
@@ -900,6 +1017,30 @@ describe('Cloudflare Control token bootstrap', () => {
     expect(authority.records.has(BOOTSTRAP_ID)).toBe(true);
     expect(authority.deleted).not.toContain(BOOTSTRAP_ID);
     expect(authority.createCalls).toBe(0);
+  });
+
+  it('preserves the rejected token API operation through bootstrap cleanup', async () => {
+    const authority = new FakeAuthority();
+    authority.getTokenError = new CloudflareTokenBootstrapError(
+      'cloudflare_token_api_http_403',
+      false,
+      undefined,
+      false,
+      'read_token'
+    );
+
+    await expect(
+      bootstrapControlWorkerTokens({
+        accountId: ACCOUNT_ID,
+        environment: 'test',
+        ownership: 'account',
+        authority,
+        secretSink: new FakeSecretSink(),
+      })
+    ).rejects.toMatchObject({
+      code: 'cloudflare_token_api_http_403',
+      apiOperation: 'read_token',
+    });
   });
 
   it('retains bootstrap and removes an unregistered child after indeterminate verification', async () => {
@@ -1452,6 +1593,176 @@ describe('Cloudflare Control token bootstrap', () => {
     expect(permissionGroupCalls).toBe(2);
   });
 
+  it('preflights a temporary token with additional privileges without mutations', async () => {
+    const requests: string[] = [];
+    const bootstrap = {
+      id: BOOTSTRAP_ID,
+      name: 'authrim-test-bootstrap',
+      status: 'active',
+      policies: [
+        {
+          effect: 'allow' as const,
+          permission_groups: [
+            { id: 'pg-bootstrap', name: 'Account API Tokens Write' },
+            { id: 'pg-d1', name: 'D1 Write' },
+          ],
+          resources: { 'com.cloudflare.api.account.*': '*' },
+        },
+        policy({ id: 'pg-r2', name: 'Workers R2 Storage Write' }),
+      ],
+    };
+    const fetcher = (async (url: string | URL | Request, init?: Parameters<typeof fetch>[1]) => {
+      const parsed = new URL(String(url));
+      requests.push(`${init?.method ?? 'GET'} ${parsed.pathname}`);
+      if (parsed.pathname === '/client/v4/user/tokens/verify') {
+        return new Response('{}', { status: 403 });
+      }
+      if (parsed.pathname.endsWith('/tokens/verify')) {
+        return Response.json({ success: true, result: { id: BOOTSTRAP_ID, status: 'active' } });
+      }
+      if (parsed.pathname.endsWith(`/tokens/${BOOTSTRAP_ID}`)) {
+        return Response.json({ success: true, result: bootstrap });
+      }
+      if (parsed.pathname.endsWith('/tokens/permission_groups')) {
+        return Response.json({ success: true, result: groups });
+      }
+      if (parsed.pathname.endsWith('/tokens')) {
+        return Response.json({
+          success: true,
+          result: [bootstrap],
+          result_info: { count: 1, page: 1, per_page: 50, total_count: 1 },
+        });
+      }
+      throw new Error('unexpected request');
+    }) as typeof fetch;
+
+    await expect(
+      preflightCloudflareBootstrapToken({
+        accountId: ACCOUNT_ID,
+        token: 'bootstrap-secret-value',
+        fetcher,
+        tokenApiRetryDelaysMs: [],
+      })
+    ).resolves.toBe('account');
+    expect(requests).toContain(`GET /client/v4/accounts/${ACCOUNT_ID}/tokens/permission_groups`);
+    expect(requests.every((request) => request.startsWith('GET '))).toBe(true);
+  });
+
+  it('preflights from the complete token inventory when reading the exact token returns 403', async () => {
+    const requests: string[] = [];
+    const bootstrap = {
+      id: BOOTSTRAP_ID,
+      name: 'authrim-test-bootstrap',
+      status: 'active',
+      policies: [policy({ id: 'pg-bootstrap', name: 'Account API Tokens Write' })],
+    };
+    const fetcher = (async (url: string | URL | Request, init?: Parameters<typeof fetch>[1]) => {
+      const parsed = new URL(String(url));
+      requests.push(`${init?.method ?? 'GET'} ${parsed.pathname}`);
+      if (parsed.pathname === '/client/v4/user/tokens/verify') {
+        return new Response('{}', { status: 403 });
+      }
+      if (parsed.pathname.endsWith('/tokens/verify')) {
+        return Response.json({ success: true, result: { id: BOOTSTRAP_ID, status: 'active' } });
+      }
+      if (parsed.pathname.endsWith(`/tokens/${BOOTSTRAP_ID}`)) {
+        return new Response('{}', { status: 403 });
+      }
+      if (parsed.pathname.endsWith('/tokens/permission_groups')) {
+        return Response.json({ success: true, result: groups });
+      }
+      if (parsed.pathname.endsWith('/tokens')) {
+        return Response.json({
+          success: true,
+          result: [bootstrap],
+          result_info: { count: 1, page: 1, per_page: 50, total_count: 1 },
+        });
+      }
+      throw new Error('unexpected request');
+    }) as typeof fetch;
+
+    await expect(
+      preflightCloudflareBootstrapToken({
+        accountId: ACCOUNT_ID,
+        token: 'bootstrap-secret-value',
+        fetcher,
+        tokenApiRetryDelaysMs: [],
+      })
+    ).resolves.toBe('account');
+    expect(requests).toContain(`GET /client/v4/accounts/${ACCOUNT_ID}/tokens/${BOOTSTRAP_ID}`);
+    expect(requests).toContain(`GET /client/v4/accounts/${ACCOUNT_ID}/tokens`);
+    expect(requests.every((request) => request.startsWith('GET '))).toBe(true);
+  });
+
+  it('does not trust an inventory entry with an invalid bootstrap policy after a token-read 403', async () => {
+    const fetcher = (async (url: string | URL | Request) => {
+      const pathname = new URL(String(url)).pathname;
+      if (pathname === '/client/v4/user/tokens/verify') {
+        return new Response('{}', { status: 403 });
+      }
+      if (pathname.endsWith('/tokens/verify')) {
+        return Response.json({ success: true, result: { id: BOOTSTRAP_ID, status: 'active' } });
+      }
+      if (pathname.endsWith(`/tokens/${BOOTSTRAP_ID}`)) {
+        return new Response('{}', { status: 403 });
+      }
+      if (pathname.endsWith('/tokens')) {
+        return Response.json({
+          success: true,
+          result: [
+            {
+              id: BOOTSTRAP_ID,
+              name: 'authrim-test-bootstrap',
+              status: 'active',
+              policies: [policy({ id: 'pg-d1', name: 'D1 Write' })],
+            },
+          ],
+          result_info: { count: 1, page: 1, per_page: 50, total_count: 1 },
+        });
+      }
+      throw new Error('unexpected request');
+    }) as typeof fetch;
+
+    await expect(
+      preflightCloudflareBootstrapToken({
+        accountId: ACCOUNT_ID,
+        token: 'bootstrap-secret-value',
+        fetcher,
+        tokenApiRetryDelaysMs: [],
+      })
+    ).rejects.toMatchObject({ code: 'cloudflare_bootstrap_token_scope_invalid' });
+  });
+
+  it('reports token-list denial if both exact token read and inventory access return 403', async () => {
+    const client = new CloudflareTokenAuthorityHttpClient({
+      accountId: ACCOUNT_ID,
+      ownership: 'account',
+      bootstrapToken: 'bootstrap-secret-value',
+      fetcher: (async () => new Response('{}', { status: 403 })) as typeof fetch,
+      tokenApiRetryDelaysMs: [],
+    });
+
+    await expect(client.getToken(BOOTSTRAP_ID)).rejects.toMatchObject({
+      code: 'cloudflare_token_api_http_403',
+      apiOperation: 'list_tokens',
+    });
+  });
+
+  it('identifies which token API operation returned HTTP 403', async () => {
+    const client = new CloudflareTokenAuthorityHttpClient({
+      accountId: ACCOUNT_ID,
+      ownership: 'account',
+      bootstrapToken: 'bootstrap-secret-value',
+      fetcher: (async () => new Response('{}', { status: 403 })) as typeof fetch,
+      tokenApiRetryDelaysMs: [],
+    });
+
+    await expect(client.listPermissionGroups()).rejects.toMatchObject({
+      code: 'cloudflare_token_api_http_403',
+      apiOperation: 'list_permission_groups',
+    });
+  });
+
   it('retries bootstrap self verification after transport and 5xx failures', async () => {
     let calls = 0;
     const client = new CloudflareTokenAuthorityHttpClient({
@@ -1927,7 +2238,7 @@ describe('Cloudflare Control token bootstrap', () => {
     expect(authority.records.has(BOOTSTRAP_ID)).toBe(true);
   });
 
-  it('revokes bootstrap when its policy has extra privilege', async () => {
+  it('accepts and revokes a temporary bootstrap token with extra privileges', async () => {
     const authority = new FakeAuthority({
       effect: 'allow',
       permission_groups: [
@@ -1944,8 +2255,27 @@ describe('Cloudflare Control token bootstrap', () => {
         authority,
         secretSink: new FakeSecretSink(),
       })
-    ).rejects.toMatchObject({ code: 'cloudflare_bootstrap_token_scope_invalid' });
+    ).resolves.toMatchObject({ bootstrapRevoked: true });
     expect(authority.deleted).toContain(BOOTSTRAP_ID);
+  });
+
+  it('rejects a temporary token whose management permission is scoped to another account', async () => {
+    const authority = new FakeAuthority({
+      effect: 'allow',
+      permission_groups: [{ id: 'pg-bootstrap', name: 'Account API Tokens Write' }],
+      resources: { [`com.cloudflare.api.account.${'f'.repeat(32)}`]: '*' },
+    });
+
+    await expect(
+      bootstrapControlWorkerTokens({
+        accountId: ACCOUNT_ID,
+        environment: 'test',
+        ownership: 'account',
+        authority,
+        secretSink: new FakeSecretSink(),
+      })
+    ).rejects.toMatchObject({ code: 'cloudflare_bootstrap_token_scope_invalid' });
+    expect(authority.records.size).toBe(0);
   });
 
   it('does not delete a token that may back an earlier cutover when identity is reused', async () => {

@@ -104,7 +104,7 @@ function buildApp(env: TestEnv, requireTenant = true) {
   app.get('/api/admin/platform/tenant-domain-mappings', (c) => {
     return c.json({ tenantId: getTenantIdFromContext(c) });
   });
-  app.get('/api/admin/settings/ui-config', (c) => {
+  app.get('/api/admin/settings/cache-mode', (c) => {
     return c.json({ tenantId: getTenantIdFromContext(c) });
   });
   app.post('/api/admin/auth/passkey/options', (c) => {
@@ -649,7 +649,7 @@ describe('requestContextMiddleware – tenant existence check', () => {
       const app = buildApp(env);
 
       const res = await app.request(
-        makeRequest('admin.pages.dev', '/api/admin/settings/ui-config'),
+        makeRequest('admin.pages.dev', '/api/admin/settings/cache-mode'),
         undefined,
         env as Env
       );

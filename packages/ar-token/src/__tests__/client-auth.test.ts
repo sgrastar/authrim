@@ -67,7 +67,7 @@ const mocks = vi.hoisted(() => {
     // Caching
     mockGetClientCached: vi.fn().mockResolvedValue(null),
     mockLoadTenantProfileCached: vi.fn().mockResolvedValue(null),
-    mockGetSystemSettingsCached: vi.fn().mockResolvedValue(null),
+    mockGetProtocolSettingsCached: vi.fn().mockResolvedValue(null),
     mockGetChallengeStoreByChallengeId: vi.fn().mockResolvedValue({
       consumeChallengeRpc: vi.fn().mockRejectedValue(new Error('Artifact not found')),
     }),
@@ -218,8 +218,12 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     validateRedirectUri: mocks.mockValidateRedirectUri,
     getClientCached: mocks.mockGetClientCached,
     loadTenantProfileCached: mocks.mockLoadTenantProfileCached,
-    getSystemSettingsCached: mocks.mockGetSystemSettingsCached,
-    getTenantSystemSettings: mocks.mockGetSystemSettingsCached,
+    getProtocolSettingsCached: async (...args: unknown[]) => ({
+      fapi: {},
+      oidc: {},
+      security: {},
+      ...((await mocks.mockGetProtocolSettingsCached(...args)) ?? {}),
+    }),
     getChallengeStoreByChallengeId: mocks.mockGetChallengeStoreByChallengeId,
     createAccessToken: mocks.mockCreateAccessToken,
     createIDToken: mocks.mockCreateIDToken,
@@ -307,6 +311,14 @@ vi.mock('jose', async (importOriginal) => {
 });
 
 import { tokenHandler } from '../token';
+import { settingsFromSystemSettings } from './helpers/effective-settings';
+
+/** The older system settings the test describes, as both the document and the Settings API. */
+let systemSettings: Record<string, unknown> | null = null;
+function setSystemSettings(value: Record<string, unknown> | null): void {
+  systemSettings = value;
+  mocks.mockGetProtocolSettingsCached.mockResolvedValue(value);
+}
 
 const DIRECT_AUTH_GRANT_TYPE = 'urn:authrim:params:oauth:grant-type:direct-auth-finish';
 const DIRECT_AUTH_REDIRECT_URI = 'https://authrim.local/direct-auth/callback';
@@ -442,7 +454,7 @@ function resetAllMocks() {
   // Reset caching mocks
   mocks.mockGetClientCached.mockReset().mockResolvedValue(null);
   mocks.mockLoadTenantProfileCached.mockReset().mockResolvedValue(null);
-  mocks.mockGetSystemSettingsCached.mockReset().mockResolvedValue(null);
+  mocks.mockGetProtocolSettingsCached.mockReset().mockResolvedValue(null);
   mocks.mockGetChallengeStoreByChallengeId.mockReset().mockResolvedValue({
     consumeChallengeRpc: vi.fn().mockRejectedValue(new Error('Artifact not found')),
   });
@@ -658,11 +670,14 @@ describe('Client Authentication Tests', () => {
       allows_refresh_token: true,
     });
 
-    // Token lifetimes from the effective settings
-    mocks.mockResolveEffectiveSettings.mockResolvedValue({
-      'oauth.access_token_expiry': 3600,
-      'oauth.refresh_token_expiry': 86400 * 30,
-    });
+    // Token lifetimes from the effective settings; other categories as the older system settings
+    // the test describes resolve them.
+    setSystemSettings(null);
+    mocks.mockResolveEffectiveSettings.mockImplementation(async (env: unknown, category: string) =>
+      category === 'oauth'
+        ? { 'oauth.access_token_expiry': 3600, 'oauth.refresh_token_expiry': 86400 * 30 }
+        : settingsFromSystemSettings(env, systemSettings, category)
+    );
 
     // Setup token creation mocks
     mocks.mockCreateAccessToken.mockResolvedValue({
@@ -746,7 +761,7 @@ describe('Client Authentication Tests', () => {
         const code = 'guest-registration-claims';
         const { store } = attachActualAuthorizationCodeStore(mockEnv);
         mocks.mockGetClientCached.mockResolvedValue(client);
-        mocks.mockGetSystemSettingsCached.mockResolvedValue({ fapi: { enabled: false } });
+        setSystemSettings({ fapi: { enabled: false } });
         mocks.mockVerifyClientSecretHash.mockResolvedValue(true);
         mocks.mockFindCanonicalRuntimeAccount.mockResolvedValue({
           tenant_id: 'default',
@@ -795,7 +810,7 @@ describe('Client Authentication Tests', () => {
           attachActualAuthorizationCodeStore(mockEnv);
 
         mocks.mockGetClientCached.mockResolvedValue(client);
-        mocks.mockGetSystemSettingsCached.mockResolvedValue({ fapi: { enabled: false } });
+        setSystemSettings({ fapi: { enabled: false } });
         mocks.mockVerifyClientSecretHash.mockResolvedValue(true);
         await storeCode(store, client.client_id, code);
 
@@ -838,7 +853,7 @@ describe('Client Authentication Tests', () => {
         const { state, store, consumeCodeRpc } = attachActualAuthorizationCodeStore(mockEnv);
 
         mocks.mockGetClientCached.mockResolvedValue(client);
-        mocks.mockGetSystemSettingsCached.mockResolvedValue({ fapi: { enabled: false } });
+        setSystemSettings({ fapi: { enabled: false } });
         mocks.mockVerifyClientSecretHash.mockResolvedValue(true);
         await storeCode(store, client.client_id, code);
 
@@ -870,7 +885,7 @@ describe('Client Authentication Tests', () => {
         attachActualAuthorizationCodeStore(mockEnv);
 
       mocks.mockGetClientCached.mockResolvedValue(client);
-      mocks.mockGetSystemSettingsCached.mockResolvedValue({ fapi: { enabled: false } });
+      setSystemSettings({ fapi: { enabled: false } });
       mocks.mockVerifyClientSecretHash.mockResolvedValueOnce(false).mockResolvedValueOnce(true);
       await storeCode(store, client.client_id, code);
 
@@ -907,7 +922,7 @@ describe('Client Authentication Tests', () => {
           attachActualAuthorizationCodeStore(mockEnv);
 
         mocks.mockGetClientCached.mockResolvedValue(client);
-        mocks.mockGetSystemSettingsCached.mockResolvedValue({ fapi: { enabled: false } });
+        setSystemSettings({ fapi: { enabled: false } });
         mocks.mockVerifyClientSecretHash.mockResolvedValue(true);
         mocks.mockExtractDPoPProof.mockReturnValue('valid-attacker-proof');
         mocks.mockValidateDPoPProof.mockResolvedValue({ valid: true, jkt: 'attacker-jkt' });
@@ -957,7 +972,7 @@ describe('Client Authentication Tests', () => {
         attachActualAuthorizationCodeStore(mockEnv);
 
       mocks.mockGetClientCached.mockResolvedValue(client);
-      mocks.mockGetSystemSettingsCached.mockResolvedValue({ fapi: { enabled: false } });
+      setSystemSettings({ fapi: { enabled: false } });
       mocks.mockVerifyClientSecretHash.mockResolvedValue(true);
       mocks.mockExtractDPoPProof.mockReturnValue('presented-proof');
       mocks.mockValidateDPoPProof
@@ -1006,7 +1021,7 @@ describe('Client Authentication Tests', () => {
         const { store, registerIssuedTokensRpc } = attachActualAuthorizationCodeStore(mockEnv);
 
         mocks.mockGetClientCached.mockResolvedValue(client);
-        mocks.mockGetSystemSettingsCached.mockResolvedValue({ fapi: { enabled: false } });
+        setSystemSettings({ fapi: { enabled: false } });
         mocks.mockVerifyClientSecretHash.mockResolvedValue(true);
         await storeCode(store, client.client_id, code);
         registerIssuedTokensRpc.mockResolvedValueOnce(false);
@@ -1953,6 +1968,21 @@ describe('Client Authentication Tests', () => {
       expect(mocks.mockCreateIDToken).toHaveBeenCalledTimes(1);
       expect(mocks.mockCreateRefreshToken).toHaveBeenCalledTimes(1);
     });
+
+    it("caps the access token at the tenant profile's lifetime, as every grant does", async () => {
+      configureDeviceCode(baseDeviceMetadata({ status: 'approved', sub: 'user-123' }));
+      mocks.mockGetClientCached.mockResolvedValue(createPublicClient({ client_id: clientId }));
+      mocks.mockLoadTenantProfileCached.mockResolvedValue({
+        tenant_id: 'default',
+        max_token_ttl_seconds: 900,
+        allows_refresh_token: true,
+      });
+
+      const { response, body } = await requestDeviceToken();
+
+      expect(response.status).toBe(200);
+      expect((body as { expires_in: number }).expires_in).toBe(900);
+    });
   });
 
   // ==========================================================================
@@ -2034,6 +2064,114 @@ describe('Client Authentication Tests', () => {
         expectedSubjectType: 'end_user',
       });
     });
+
+    it('reads the assurance settings once, so nothing fails after the artifact is spent', async () => {
+      const client = createPublicClient();
+      const codeVerifier = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~';
+      const authCodeData = createAuthCodeData({ redirectUri: DIRECT_AUTH_REDIRECT_URI });
+      // The settings store fails after the first read (as when the cache expires meanwhile).
+      const resolveSettings = mocks.mockResolveEffectiveSettings.getMockImplementation()!;
+      let assuranceReads = 0;
+      mocks.mockResolveEffectiveSettings.mockImplementation(
+        async (...args: Parameters<typeof resolveSettings>) => {
+          if (args[1] !== 'assurance') return resolveSettings(...args);
+          assuranceReads += 1;
+          if (assuranceReads > 1) throw new Error('KV unavailable');
+          return { 'assurance.enabled': true };
+        }
+      );
+      const consumeArtifactRpcMock = vi.fn().mockResolvedValue({
+        challenge: await createPkceChallenge(codeVerifier),
+        userId: authCodeData.userId,
+        metadata: { client_id: client.client_id, channel: 'browser' },
+      });
+      mocks.mockGetClientCached.mockResolvedValue(client);
+      mocks.mockGetChallengeStoreByChallengeId.mockResolvedValue({
+        consumeChallengeRpc: consumeArtifactRpcMock,
+      });
+      mocks.mockExtractDPoPProof.mockReturnValue('dpop-proof');
+      mocks.mockValidateDPoPProof.mockResolvedValue({ valid: true, jkt: 'browser-jkt' });
+      mockEnv.AUTH_CODE_STORE.get = vi.fn().mockReturnValue({
+        consumeCodeRpc: vi.fn().mockResolvedValue(authCodeData),
+        registerIssuedTokensRpc: vi.fn().mockResolvedValue(true),
+      });
+
+      const response = await tokenHandler(
+        createMockContext({
+          headers: { DPoP: 'dpop-proof' },
+          body: {
+            grant_type: DIRECT_AUTH_GRANT_TYPE,
+            direct_auth_artifact: 'direct-artifact-assurance',
+            client_id: client.client_id,
+            code_verifier: codeVerifier,
+            channel: 'browser',
+          },
+          env: mockEnv,
+        })
+      );
+
+      expect(consumeArtifactRpcMock).toHaveBeenCalled();
+      expect(response.status).toBe(200);
+      expect(assuranceReads).toBe(1);
+    });
+
+    it.each([
+      ['an AAL below the default', { aal: 'AAL1' }, 400],
+      ['no AAL recorded', {}, 400],
+      ['the default AAL', { aal: 'AAL2' }, 200],
+    ])(
+      'issues Direct Auth tokens for %s only when it meets the default',
+      async (_label, extra, status) => {
+        const client = createPublicClient();
+        const codeVerifier = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~';
+        const authCodeData = createAuthCodeData({
+          redirectUri: DIRECT_AUTH_REDIRECT_URI,
+          ...extra,
+        } as Parameters<typeof createAuthCodeData>[0]);
+        const resolveSettings = mocks.mockResolveEffectiveSettings.getMockImplementation()!;
+        mocks.mockResolveEffectiveSettings.mockImplementation(
+          async (...args: Parameters<typeof resolveSettings>) =>
+            args[1] === 'assurance'
+              ? { 'assurance.enabled': true, 'assurance.default_aal': 'AAL2' }
+              : resolveSettings(...args)
+        );
+        mocks.mockGetClientCached.mockResolvedValue(client);
+        mocks.mockGetChallengeStoreByChallengeId.mockResolvedValue({
+          consumeChallengeRpc: vi.fn().mockResolvedValue({
+            challenge: await createPkceChallenge(codeVerifier),
+            userId: authCodeData.userId,
+            metadata: { client_id: client.client_id, channel: 'browser' },
+          }),
+        });
+        mocks.mockExtractDPoPProof.mockReturnValue('dpop-proof');
+        mocks.mockValidateDPoPProof.mockResolvedValue({ valid: true, jkt: 'browser-jkt' });
+        mockEnv.AUTH_CODE_STORE.get = vi.fn().mockReturnValue({
+          consumeCodeRpc: vi.fn().mockResolvedValue(authCodeData),
+          registerIssuedTokensRpc: vi.fn().mockResolvedValue(true),
+        });
+
+        const response = await tokenHandler(
+          createMockContext({
+            headers: { DPoP: 'dpop-proof' },
+            body: {
+              grant_type: DIRECT_AUTH_GRANT_TYPE,
+              direct_auth_artifact: 'direct-artifact-aal',
+              client_id: client.client_id,
+              code_verifier: codeVerifier,
+              channel: 'browser',
+            },
+            env: mockEnv,
+          })
+        );
+
+        expect(response.status).toBe(status);
+        if (status === 400) {
+          expect((await parseJsonResponse<{ error: string }>(response)).error).toBe(
+            'invalid_grant'
+          );
+        }
+      }
+    );
 
     it('should use client default_resource as the Direct Auth access token audience', async () => {
       const client = createPublicClient({ default_resource: 'svc://browser-api' });
@@ -2450,7 +2588,7 @@ describe('Client Authentication Tests', () => {
       });
       const now = Math.floor(Date.now() / 1000);
 
-      mocks.mockGetSystemSettingsCached.mockResolvedValue({
+      setSystemSettings({
         oidc: {
           tokenExchange: {
             enabled: true,
@@ -2568,7 +2706,7 @@ describe('Client Authentication Tests', () => {
       });
       const now = Math.floor(Date.now() / 1000);
 
-      mocks.mockGetSystemSettingsCached.mockResolvedValue({
+      setSystemSettings({
         oidc: {
           tokenExchange: {
             enabled: true,
@@ -2646,7 +2784,7 @@ describe('Client Authentication Tests', () => {
         allowed_scopes: ['openid', 'profile'],
       });
 
-      mocks.mockGetSystemSettingsCached.mockResolvedValue({
+      setSystemSettings({
         oidc: {
           tokenExchange: {
             enabled: true,
@@ -2699,7 +2837,7 @@ describe('Client Authentication Tests', () => {
         allowed_scopes: ['openid', 'profile'],
       });
 
-      mocks.mockGetSystemSettingsCached.mockResolvedValue({
+      setSystemSettings({
         oidc: {
           tokenExchange: {
             enabled: true,
@@ -3694,7 +3832,7 @@ describe('Client Authentication Tests', () => {
       });
       const now = Math.floor(Date.now() / 1000);
 
-      mocks.mockGetSystemSettingsCached.mockResolvedValue({
+      setSystemSettings({
         oidc: {
           tokenExchange: {
             enabled: true,
@@ -3770,7 +3908,7 @@ describe('Client Authentication Tests', () => {
       });
       const now = Math.floor(Date.now() / 1000);
 
-      mocks.mockGetSystemSettingsCached.mockResolvedValue({
+      setSystemSettings({
         oidc: {
           tokenExchange: {
             enabled: true,
@@ -3992,7 +4130,7 @@ describe('Client Authentication Tests', () => {
       const authCodeData = createAuthCodeData();
       mocks.mockGetClientCached.mockResolvedValue(client);
       // FAPI is off for the tenant and on for this client (Settings API, client scope).
-      mocks.mockGetSystemSettingsCached.mockImplementation(
+      mocks.mockGetProtocolSettingsCached.mockImplementation(
         async (_c: unknown, _env: unknown, options?: { clientId?: string }) =>
           options?.clientId === client.client_id
             ? { fapi: { enabled: true, requireDpop: true } }
@@ -4028,7 +4166,7 @@ describe('Client Authentication Tests', () => {
       });
       expect(consumeCodeRpcMock).not.toHaveBeenCalled();
       // The client's own settings were asked for.
-      expect(mocks.mockGetSystemSettingsCached).toHaveBeenCalledWith(
+      expect(mocks.mockGetProtocolSettingsCached).toHaveBeenCalledWith(
         expect.anything(),
         expect.anything(),
         expect.objectContaining({ clientId: client.client_id })
@@ -4039,7 +4177,7 @@ describe('Client Authentication Tests', () => {
       const client = createPrivateKeyJwtClient();
       const authCodeData = createAuthCodeData();
       mocks.mockGetClientCached.mockResolvedValue(client);
-      mocks.mockGetSystemSettingsCached.mockResolvedValue({
+      setSystemSettings({
         fapi: { enabled: true, requireDpop: true },
       });
       mocks.mockExtractDPoPProof.mockReturnValue('dpop-proof');
@@ -4371,7 +4509,7 @@ describe('Client Authentication Tests', () => {
       );
 
       mocks.mockGetClientCached.mockResolvedValue(client);
-      mocks.mockGetSystemSettingsCached.mockResolvedValue({
+      setSystemSettings({
         fapi: { enabled: true, requireDpop: true },
       });
       mocks.mockParseToken.mockReturnValue({ iss: client.client_id, sub: client.client_id });
@@ -4433,7 +4571,7 @@ describe('Client Authentication Tests', () => {
       );
 
       mocks.mockGetClientCached.mockResolvedValue(client);
-      mocks.mockGetSystemSettingsCached.mockResolvedValue({
+      setSystemSettings({
         fapi: { enabled: true, requireDpop: true },
       });
       mocks.mockParseToken.mockReturnValue({ iss: client.client_id, sub: client.client_id });
@@ -5084,7 +5222,7 @@ describe('Client Authentication Tests', () => {
       mocks.mockGetClientCached.mockResolvedValue(client);
       mocks.mockParseBasicAuth.mockReturnValue({ success: false });
       // Enable client_credentials feature flag so we get to the authorization check
-      mocks.mockGetSystemSettingsCached.mockResolvedValue({
+      setSystemSettings({
         feature_client_credentials_enabled: true,
       });
       mocks.mockLoadTenantProfileCached.mockResolvedValue({
@@ -5131,7 +5269,7 @@ describe('Client Authentication Tests', () => {
         const authCodeData = createAuthCodeData();
 
         mocks.mockGetClientCached.mockResolvedValue(client);
-        mocks.mockGetSystemSettingsCached.mockResolvedValue({ fapi: { enabled: false } });
+        setSystemSettings({ fapi: { enabled: false } });
         mocks.mockVerifyClientSecretHash.mockResolvedValue(true); // Secret matches
         mocks.mockParseBasicAuth.mockReturnValue({
           success: true,
@@ -5547,7 +5685,7 @@ describe('Client Authentication Tests', () => {
 
     it('honors settings overrides and fails closed when profile state is unavailable', async () => {
       const client = setupM2MClient();
-      mocks.mockGetSystemSettingsCached.mockResolvedValueOnce({
+      setSystemSettings({
         oidc: { clientCredentials: { enabled: false } },
       });
       const disabled = await requestM2M(client);
@@ -5557,7 +5695,7 @@ describe('Client Authentication Tests', () => {
         error_description: 'Client Credentials grant is not enabled',
       });
 
-      mocks.mockGetSystemSettingsCached.mockRejectedValue(new Error('settings unavailable'));
+      mocks.mockGetProtocolSettingsCached.mockRejectedValue(new Error('settings unavailable'));
       const fallback = await requestM2M(client);
       expect(fallback.response.status).toBe(503);
       expect(fallback.body).toMatchObject({
@@ -5568,7 +5706,7 @@ describe('Client Authentication Tests', () => {
 
     it('refuses the grant when its settings cannot be read, even if env enables it', async () => {
       const client = setupM2MClient();
-      mocks.mockGetSystemSettingsCached.mockRejectedValue(new Error('settings unavailable'));
+      mocks.mockGetProtocolSettingsCached.mockRejectedValue(new Error('settings unavailable'));
 
       const refused = await requestM2M(client);
 
@@ -6113,7 +6251,7 @@ describe('Client Authentication Tests', () => {
       );
 
       expect(response.status).toBe(200);
-      expect(mocks.mockGetSystemSettingsCached).not.toHaveBeenCalled();
+      expect(mocks.mockGetProtocolSettingsCached).not.toHaveBeenCalled();
       expect(mocks.mockGetClientCached).not.toHaveBeenCalled();
       expect(mocks.mockCreateAccessToken).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -6406,7 +6544,7 @@ describe('Client Authentication Tests', () => {
         allows_refresh_token: true,
       });
       // Mock system settings to enable client_credentials feature flag
-      mocks.mockGetSystemSettingsCached.mockResolvedValue({
+      setSystemSettings({
         feature_client_credentials_enabled: true,
       });
 
@@ -6458,7 +6596,7 @@ describe('Client Authentication Tests', () => {
         max_token_ttl_seconds: 3600,
         allows_client_credentials: true,
       });
-      mocks.mockGetSystemSettingsCached.mockResolvedValue({
+      setSystemSettings({
         feature_client_credentials_enabled: true,
       });
 
@@ -6506,7 +6644,7 @@ describe('Client Authentication Tests', () => {
         max_token_ttl_seconds: 3600,
         allows_client_credentials: true,
       });
-      mocks.mockGetSystemSettingsCached.mockResolvedValue({
+      setSystemSettings({
         feature_client_credentials_enabled: true,
       });
 
@@ -6555,7 +6693,7 @@ describe('Client Authentication Tests', () => {
         max_token_ttl_seconds: 3600,
         allows_client_credentials: true,
       });
-      mocks.mockGetSystemSettingsCached.mockResolvedValue({
+      setSystemSettings({
         feature_client_credentials_enabled: true,
       });
 
@@ -6593,7 +6731,7 @@ describe('Client Authentication Tests', () => {
       mocks.mockParseBasicAuth.mockReturnValue({ success: false }); // No auth provided
       mocks.mockVerifyClientSecretHash.mockResolvedValue(false);
       // Enable client_credentials feature flag
-      mocks.mockGetSystemSettingsCached.mockResolvedValue({
+      setSystemSettings({
         feature_client_credentials_enabled: true,
       });
       mocks.mockLoadTenantProfileCached.mockResolvedValue({

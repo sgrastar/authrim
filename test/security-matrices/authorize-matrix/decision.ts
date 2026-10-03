@@ -150,6 +150,22 @@ export function decideAuthn(row: Row): { outcome: Outcome; sideEffects: SideEffe
     };
   }
 
+  if (row.tenantSso === 'failure') {
+    // This fixture fails the whole tenant OAuth document, which the protocol settings read
+    // (authorize's security profile, before redirect_uri, the session and SSO): authorization
+    // stops with 503 rather than going on without settings it cannot read.
+    return {
+      outcome: { kind: 'direct-error', status: 503, error: 'temporarily_unavailable' },
+      sideEffects: {
+        ...sideEffects,
+        sessionReadAttempted: false,
+        sessionReadFailed: false,
+        sessionBindingRejected: false,
+        clientSsoReadFailed: false,
+      },
+    };
+  }
+
   if (prompt === 'none-invalid') {
     // prompt=none combined with other values is rejected after the session read
     // (authorize.ts:3134).
@@ -213,19 +229,6 @@ export function decideAuthn(row: Row): { outcome: Outcome; sideEffects: SideEffe
     sideEffects.consentLookup = true;
     if (authnConsentSatisfied(row.consent, prompt)) {
       sideEffects.consentWrite = row.consent === 'auto-grant';
-      if (row.tenantSso === 'failure') {
-        // This fixture fails the whole tenant OAuth document, including the authoritative
-        // authorization-code lifetime. Consent may be saved, but no code can be issued.
-        return {
-          outcome: {
-            kind: 'error-redirect',
-            error: 'server_error',
-            mode: 'query',
-            target: 'registered',
-          },
-          sideEffects,
-        };
-      }
       sideEffects.codeIssued = true;
       return { outcome: { kind: 'code-success', mode: 'query' }, sideEffects };
     }
@@ -244,17 +247,6 @@ export function decideAuthn(row: Row): { outcome: Outcome; sideEffects: SideEffe
   sideEffects.consentLookup = true;
   if (authnConsentSatisfied(row.consent, prompt)) {
     sideEffects.consentWrite = row.consent === 'auto-grant';
-    if (row.tenantSso === 'failure') {
-      return {
-        outcome: {
-          kind: 'error-redirect',
-          error: 'server_error',
-          mode: 'query',
-          target: 'registered',
-        },
-        sideEffects,
-      };
-    }
     sideEffects.codeIssued = true;
     return { outcome: { kind: 'code-success', mode: 'query' }, sideEffects };
   }

@@ -157,6 +157,8 @@ export interface SAMLProviderConfig {
 	};
 	jitEmailLinkingPolicy?: SAMLJitEmailLinkingPolicy;
 	allowSyntheticEmailFallback?: boolean;
+	/** Profile fields a login updates; null/absent follows the tenant, [] updates none. */
+	profileUpdateFields?: string[] | null;
 	authnContextClassRefMode?: 'legacy_static' | 'session';
 	defaultAuthnContextClassRef?: string;
 	passkeyAuthnContextClassRef?: string;

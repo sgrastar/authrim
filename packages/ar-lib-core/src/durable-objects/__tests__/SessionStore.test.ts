@@ -166,6 +166,31 @@ describe('SessionStore', () => {
     sessionStore = new SessionStore(mockState as unknown as DurableObjectState, mockEnv);
   });
 
+  describe('updates conditional on the data read', () => {
+    const id = '0_evidence_update';
+    it('writes while the fields still hold what was read, and only then', async () => {
+      await sessionStore.createSessionRpc(id, 'user', 3600, { amr: ['totp'] }, 'tenant');
+
+      const written = await sessionStore.updateSessionDataRpc(
+        id,
+        { amr: ['pwd', 'totp'], proven_at: 5 },
+        { ifDataMatches: { amr: ['totp'], proven_at: undefined } }
+      );
+      expect(written?.data).toMatchObject({ amr: ['pwd', 'totp'], proven_at: 5 });
+
+      const stale = await sessionStore.updateSessionDataRpc(
+        id,
+        { amr: ['otp', 'totp'], proven_at: 7 },
+        { ifDataMatches: { amr: ['totp'], proven_at: undefined } }
+      );
+      expect(stale?.data).toMatchObject({ amr: ['pwd', 'totp'], proven_at: 5 });
+      expect((await mockState.storage.get<Session>(`session:${id}`))?.data).toMatchObject({
+        amr: ['pwd', 'totp'],
+        proven_at: 5,
+      });
+    });
+  });
+
   describe('conditional guest upgrade session repair', () => {
     const id = '0_guest_repair';
     const repair = { is_guest_session: false, authTime: 100, amr: ['otp'] };

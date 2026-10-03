@@ -433,44 +433,6 @@ const DEFAULT_UI_CONFIG: UIConfig = {
 // Internal helpers
 // =============================================================================
 
-interface SystemSettings {
-  general?: {
-    siteName?: string;
-    logoUrl?: string;
-    language?: string;
-  };
-  appearance?: {
-    primaryColor?: string;
-    secondaryColor?: string;
-    fontFamily?: string;
-  };
-  advanced?: {
-    passkeyEnabled?: boolean;
-    magicLinkEnabled?: boolean;
-  };
-  loginUI?: {
-    theme?: string;
-    variant?: string;
-    supportedLocales?: string[];
-  };
-  [key: string]: unknown;
-}
-
-/**
- * Read system settings from KV
- */
-async function getSystemSettings(env: Env): Promise<SystemSettings> {
-  try {
-    const json = await env.SETTINGS?.get('system_settings');
-    if (json) {
-      return JSON.parse(json);
-    }
-  } catch {
-    // Invalid JSON — use defaults
-  }
-  return {};
-}
-
 /**
  * Login UI settings stored in AUTHRIM_CONFIG KV (settings-v2 format)
  */
@@ -591,10 +553,7 @@ interface ExternalLoginProviderUsageConfig {
   accountLinkEnabled?: boolean;
 }
 
-/**
- * Read Login UI settings from AUTHRIM_CONFIG KV (settings-v2 system)
- * Falls back to system_settings.loginUI for backward compatibility
- */
+/** The Login UI settings the sign-in page uses. */
 interface LoginUIResolved {
   theme: string;
   variant: string;
@@ -1254,13 +1213,11 @@ async function applyClientLoginUIOverride(
 }
 
 /**
- * Read Login UI settings from AUTHRIM_CONFIG KV (settings-v2 system)
- * Falls back to system_settings.loginUI for backward compatibility
+ * Login UI settings: the client's, else the tenant's, else the platform's, else the defaults.
  */
 async function getLoginUISettings(
   env: Env,
   tenantId: string,
-  systemSettings: SystemSettings,
   clientId?: string | null
 ): Promise<LoginUIResolved> {
   const defaults: LoginUIResolved = {
@@ -1322,7 +1279,6 @@ async function getLoginUISettings(
   // Resolve settings-v2 from platform to tenant to client so the Admin UI scope
   // hierarchy is reflected by the public Login UI configuration.
   let inheritedDefaults = defaults;
-  let hasPlatformSettings = false;
   try {
     const platformJson = await env.SETTINGS?.get('settings:platform:login-ui');
     if (platformJson) {
@@ -1330,10 +1286,9 @@ async function getLoginUISettings(
         JSON.parse(platformJson) as LoginUIKVSettings,
         defaults
       );
-      hasPlatformSettings = true;
     }
   } catch {
-    // Invalid platform settings do not prevent tenant or legacy settings from loading.
+    // Invalid platform settings do not prevent the tenant's settings from loading.
   }
 
   try {
@@ -1348,70 +1303,10 @@ async function getLoginUISettings(
       );
     }
   } catch {
-    // Invalid JSON — fall through to legacy
+    // Invalid JSON — the platform's settings, else the defaults
   }
 
-  if (hasPlatformSettings) {
-    return applyClientLoginUIOverride(env, tenantId, clientId, inheritedDefaults);
-  }
-
-  // Fallback to legacy system_settings.loginUI
-  return applyClientLoginUIOverride(env, tenantId, clientId, {
-    theme: systemSettings.loginUI?.theme || defaults.theme,
-    variant: systemSettings.loginUI?.variant || defaults.variant,
-    themeTemplate: defaults.themeTemplate,
-    pageLayout: defaults.pageLayout,
-    fontFamily: defaults.fontFamily,
-    fontScale: defaults.fontScale,
-    backgroundColor: defaults.backgroundColor,
-    accentColor: defaults.accentColor,
-    titleColor: defaults.titleColor,
-    textColor: defaults.textColor,
-    copyColor: defaults.copyColor,
-    brandName: systemSettings.general?.siteName || defaults.brandName,
-    logoUrl: isValidLoginUIImageUrl(systemSettings.general?.logoUrl)
-      ? systemSettings.general!.logoUrl!
-      : defaults.logoUrl,
-    faviconUrl: defaults.faviconUrl,
-    thumbnailUrl: defaults.thumbnailUrl,
-    logoDisplay: defaults.logoDisplay,
-    logoLayout: defaults.logoLayout,
-    brandPanelTitle: defaults.brandPanelTitle,
-    brandPanelText: defaults.brandPanelText,
-    supportedLocales: systemSettings.loginUI?.supportedLocales || defaults.supportedLocales,
-    defaultLocale: defaults.defaultLocale,
-    primaryLocales: defaults.primaryLocales,
-    showEnglishLanguageNames: defaults.showEnglishLanguageNames,
-    backgroundImageUrl: defaults.backgroundImageUrl,
-    loginPanelBackgroundImageUrl: defaults.loginPanelBackgroundImageUrl,
-    customCss: defaults.customCss,
-    headerEnabled: defaults.headerEnabled,
-    subtitleEnabled: defaults.subtitleEnabled,
-    footerEnabled: defaults.footerEnabled,
-    poweredByEnabled: defaults.poweredByEnabled,
-    authSwitchLinkEnabled: defaults.authSwitchLinkEnabled,
-    topbarPosition: defaults.topbarPosition,
-    themeToggleEnabled: defaults.themeToggleEnabled,
-    languageSelectEnabled: defaults.languageSelectEnabled,
-    languageSwitcherPosition: defaults.languageSwitcherPosition,
-    headerStyle: defaults.headerStyle,
-    footerStyle: defaults.footerStyle,
-    splitFrame: defaults.splitFrame,
-    splitPanelSide: defaults.splitPanelSide,
-    splitPanelWidth: defaults.splitPanelWidth,
-    splitBackgroundMode: defaults.splitBackgroundMode,
-    loginPanelBackgroundColor: defaults.loginPanelBackgroundColor,
-    loginPanelBackgroundGradientColor: defaults.loginPanelBackgroundGradientColor,
-    loginPanelBackgroundOpacity: defaults.loginPanelBackgroundOpacity,
-    brandContentMode: defaults.brandContentMode,
-    brandPosition: defaults.brandPosition,
-    brandAlign: defaults.brandAlign,
-    headerText: defaults.headerText,
-    textLocalizations: defaults.textLocalizations,
-    footerText: defaults.footerText,
-    footerLinks: defaults.footerLinks,
-    customBlocks: defaults.customBlocks,
-  });
+  return applyClientLoginUIOverride(env, tenantId, clientId, inheritedDefaults);
 }
 
 /**
@@ -1813,21 +1708,20 @@ interface BuiltInMethodsResolved {
 
 async function resolveBuiltInAuthenticationMethods(
   env: Env,
-  tenantId: string,
-  systemSettings?: SystemSettings
+  tenantId: string
 ): Promise<BuiltInMethodsResolved> {
-  const legacySettings = systemSettings ?? (await getSystemSettings(env));
-  const legacyPasskeyDefault = legacySettings.advanced?.passkeyEnabled !== false;
-  const legacyEmailCodeDefault = legacySettings.advanced?.magicLinkEnabled === true;
+  // Where the tenant sets none: passkeys on, email codes off.
+  const passkeyDefault = true;
+  const emailCodeDefault = false;
   const defaults: BuiltInMethodsResolved = {
-    passkeyLoginEnabled: legacyPasskeyDefault,
-    passkeySignupEnabled: legacyPasskeyDefault,
-    passkeyReauthEnabled: legacyPasskeyDefault,
-    passkeyAccountLinkEnabled: legacyPasskeyDefault,
-    emailCodeLoginEnabled: legacyEmailCodeDefault,
-    emailCodeSignupEnabled: legacyEmailCodeDefault,
-    emailCodeReauthEnabled: legacyEmailCodeDefault,
-    emailCodeAccountLinkEnabled: legacyEmailCodeDefault,
+    passkeyLoginEnabled: passkeyDefault,
+    passkeySignupEnabled: passkeyDefault,
+    passkeyReauthEnabled: passkeyDefault,
+    passkeyAccountLinkEnabled: passkeyDefault,
+    emailCodeLoginEnabled: emailCodeDefault,
+    emailCodeSignupEnabled: emailCodeDefault,
+    emailCodeReauthEnabled: emailCodeDefault,
+    emailCodeAccountLinkEnabled: emailCodeDefault,
     totpLoginEnabled: false,
     totpSignupEnabled: false,
     totpReauthEnabled: false,
@@ -2438,7 +2332,6 @@ export async function getAuthenticationMethodsHandler(c: Context<{ Bindings: Env
 
     // Fetch data in parallel
     const [
-      settings,
       bridgeProviders,
       samlProviders,
       configuredProviders,
@@ -2447,7 +2340,6 @@ export async function getAuthenticationMethodsHandler(c: Context<{ Bindings: Env
       externalProviderUsage,
     ] = await measureAuthenticationMethodsTiming(timing, 'fanout', () =>
       Promise.all([
-        getSystemSettings(env),
         bridgeProvidersPromise,
         fetchSAMLLoginProviders(env, tenantId),
         fetchConfiguredExternalLoginProviders(env, tenantId),
@@ -2464,7 +2356,7 @@ export async function getAuthenticationMethodsHandler(c: Context<{ Bindings: Env
     const builtInMethods = await measureAuthenticationMethodsTiming(
       timing,
       'built_in_methods',
-      () => resolveBuiltInAuthenticationMethods(env, tenantId, settings)
+      () => resolveBuiltInAuthenticationMethods(env, tenantId)
     );
     const passkeyLoginEnabled = builtInMethods.passkeyLoginEnabled;
     const passkeySignupEnabled = builtInMethods.passkeySignupEnabled;
@@ -2576,7 +2468,7 @@ export async function getAuthenticationMethodsHandler(c: Context<{ Bindings: Env
       'ui_config',
       () =>
         Promise.all([
-          getLoginUISettings(env, tenantId, settings, requestedClientId),
+          getLoginUISettings(env, tenantId, requestedClientId),
           resolveSelfServiceUIConfig(env, tenantId),
           resolveCacheTTL(env, tenantId),
         ])

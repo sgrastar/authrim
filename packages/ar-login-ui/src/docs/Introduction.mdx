@@ -1,0 +1,70 @@
+import { Meta } from '@storybook/addon-docs/blocks';
+
+<Meta title="Introduction" />
+
+# Authrim Login UI
+
+This Storybook catalogues what the Login UI shows: the buttons, text, links and inputs, the screens an admin arranges in the Admin console, and the four themes. It does not replace the pages; it renders the **same components and the same stylesheet** (`src/app.css`) the pages use, so a change to either shows up here.
+
+The Login UI will not get a next-generation rewrite. This Storybook exists so that design stays consistent, changes are cheaper to check, and quality can be held with tests.
+
+## What is where
+
+| Section            | Shows                                                                                                          |
+| ------------------ | -------------------------------------------------------------------------------------------------------------- |
+| **Foundations**    | Theme tokens read live from the CSS, the settings an admin can change (**Page options**), the icon sets.       |
+| **Catalog**        | Every button, link, piece of text, input and feedback element, with its class or component and where it shows. |
+| **Components**     | The shared components one by one, with controls and interaction tests.                                         |
+| **Runtime screen** | The server-driven screens of login and signup: each block type, the conditions, and whole screens.             |
+| **Page shell**     | The page around the card under every setting, and all themes and layouts side by side.                         |
+| **Screens**        | Whole pages: logout, error, and consent, device and re-authentication through their view components.           |
+
+## Toolbar
+
+- **Theme** — Meridian (default), Classic, Split brand panel, Full-bleed glass. A story that does not pin its own theme follows this.
+- **Scheme** and **Variant** — light or dark, and the colour variant (light: beige, blue-gray, green; dark: brown, navy, slate). Variants only change **Classic**; the other themes carry their own palette.
+- **Language** — all 21 languages of the Login UI. Arabic switches the layout to right-to-left. Labels an admin typed in a screen stay as typed, as they do on the real page.
+
+The galleries (**Page shell / Themes and layouts**) pin their own theme per cell, so they show every theme whatever the toolbar says.
+
+## Theme, layout and elements that only some themes show
+
+A tenant sets three things independently:
+
+1. **Theme** (`themeTemplate`) — palette and shape. Full-bleed glass also restyles the header (spaced capitals), footer and cards (frosted, square).
+2. **Layout** (`pageTemplate.layout`) — `centered_card`, `split_panel`, `fullbleed_card`. The **brand panel** (logo, title and text beside the form) exists only in `split_panel` and only when its content is not "none". It disappears below 640px width.
+3. **Colour variant** — see above.
+
+The Admin console's theme page bundles a theme with the layout it was designed for (Split brand panel with the split layout, Full-bleed glass with the full-bleed layout), but the data keeps them apart, so any combination is possible.
+
+## How a story is set up
+
+Every story wraps its content in `LoginUIFrame` (`src/lib/storybook`). It does what `src/routes/+layout.svelte` does: it provides the Login UI stores and the `login-ui-theme-boundary` element with the `data-*` attributes `app.css` keys on. Stories describe a tenant the way the Admin console saves it:
+
+```svelte
+<LoginUIFrame theme="split-brand-panel" ui={{ pageTemplate: { layout: 'split_panel' } }}>
+	<PageSample />
+</LoginUIFrame>
+```
+
+- `fit="surface"` (default) puts a part on the page colour; `fit="page"` fills the viewport; `fit="cell"` is a fixed box for side-by-side galleries.
+- Screens are built from the blocks in `src/lib/storybook/fixtures.ts` (`blocks.passkey()`, `blocks.divider('or', 'mail_otp')`, …) and shown by `RuntimeScreenHarness`, which keeps the typed values and reports every callback to the **Actions** panel.
+- The stores run as if server-side (`$app/environment` is replaced in `.storybook/main.ts`), so nothing is written to `<html>`, cookies or localStorage and several themes can share one page.
+- Human-verification widgets are replaced by a sample box (`fake-captcha.ts`), so no story talks to the network.
+
+## Running
+
+```bash
+pnpm --filter @authrim/ar-login-ui storybook          # http://localhost:6007
+pnpm --filter @authrim/ar-login-ui build-storybook
+pnpm --filter @authrim/ar-login-ui test:stories       # every story in Chromium, with play functions
+```
+
+`test:stories` needs `pnpm exec playwright install chromium` once per machine.
+
+## Adding to the catalog
+
+- A new button, link or text style: add a `Specimen` to the matching **Catalog** story with the class, where it shows and when.
+- A new block type or condition in screens: add it to `blocks` in `fixtures.ts` and a story in **Runtime screen / Blocks** or **Conditions**.
+- A new tenant setting: add it to **Page options** and, if it changes the page, a story in **Page shell / Settings**.
+- Styles that live in a route file's `<style>` block cannot be shown here. When you need to catalogue one, move it into `app.css` or a component first.

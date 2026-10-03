@@ -9,6 +9,7 @@ import {
 } from '../utils/refresh-token-sharding';
 import type {
   CreateFamilyRequestV3,
+  RefreshTokenAuthContext,
   RotateTokenRequestV2,
   RotateTokenResponseV2,
   TokenFamilyV2,
@@ -43,6 +44,8 @@ export interface CreateRefreshTokenFamilyInput {
   ttl: number;
   tenantId: string;
   resourceAudience?: string | string[];
+  /** How the user authenticated for the grant beginning the family (RefreshTokenAuthContext). */
+  authContext?: RefreshTokenAuthContext;
 }
 
 export interface CreateRefreshTokenFamilyResult {
@@ -132,6 +135,7 @@ export async function createRefreshTokenFamily(
     ttl: input.ttl,
     tenantId: input.tenantId,
     ...(input.resourceAudience && { resourceAudience: input.resourceAudience }),
+    ...(input.authContext && { authContext: input.authContext }),
     generation: shardConfig.currentGeneration,
     shardIndex,
   });

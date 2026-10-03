@@ -35,7 +35,8 @@ import {
   getSessionStoreBySessionId,
   getSessionRevocationStore,
   isShardedSessionId,
-  createOAuthConfigManager,
+  getConsentDataExportEnabled,
+  getConsentDataExportSyncThresholdKB,
   getLogger,
   resolveAccountDataContext,
   resolveAccountDataContextFromHono,
@@ -429,8 +430,7 @@ export async function dataExportRequestHandler(c: Context<{ Bindings: Env }>) {
     const authCtx = await resolveExportAccountCore(c, tenantId, userId);
 
     // Check if data export is enabled
-    const configManager = createOAuthConfigManager(c.env);
-    const exportEnabled = await configManager.getConsentDataExportEnabled();
+    const exportEnabled = await getConsentDataExportEnabled(c.env);
 
     if (!exportEnabled) {
       return c.json(
@@ -443,7 +443,7 @@ export async function dataExportRequestHandler(c: Context<{ Bindings: Env }>) {
     }
 
     // Get sync threshold from config
-    const syncThresholdKB = await configManager.getConsentDataExportSyncThresholdKB();
+    const syncThresholdKB = await getConsentDataExportSyncThresholdKB(c.env);
 
     // Estimate data size (simplified - just count records)
     const estimatedSize = await estimateExportSize(authCtx.coreAdapter, tenantId, userId, sections);

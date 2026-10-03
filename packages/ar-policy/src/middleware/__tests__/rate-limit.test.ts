@@ -15,8 +15,6 @@ import {
   checkRateLimit,
   addRateLimitHeaders,
   getRateLimitConfig,
-  setRateLimitConfig,
-  clearRateLimitConfig,
   DEFAULT_RATE_LIMIT_CONFIG,
   type RateLimitResult,
 } from '../rate-limit';
@@ -67,74 +65,8 @@ function createAuthResult(overrides: Partial<CheckAuthResult> = {}): CheckAuthRe
 
 describe('Rate Limiting Middleware', () => {
   describe('getRateLimitConfig', () => {
-    test('returns default config when KV not provided', async () => {
-      const config = await getRateLimitConfig('strict');
-      expect(config).toEqual(DEFAULT_RATE_LIMIT_CONFIG.strict);
-    });
-
-    test('returns default config when KV returns null', async () => {
-      const mockKV = createMockKV();
-      mockKV.get.mockResolvedValue(null);
-
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const config = await getRateLimitConfig('moderate', mockKV as any);
-      expect(config).toEqual(DEFAULT_RATE_LIMIT_CONFIG.moderate);
-    });
-
-    test('returns KV override when available', async () => {
-      const mockKV = createMockKV();
-      const customConfig = { requests: 200, windowMs: 30000 };
-      mockKV.get.mockResolvedValue(JSON.stringify(customConfig));
-
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const config = await getRateLimitConfig('strict', mockKV as any);
-      expect(config).toEqual(customConfig);
-    });
-
-    test('falls back to default on KV error', async () => {
-      const mockKV = createMockKV();
-      mockKV.get.mockRejectedValue(new Error('KV error'));
-
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const config = await getRateLimitConfig('lenient', mockKV as any);
-      expect(config).toEqual(DEFAULT_RATE_LIMIT_CONFIG.lenient);
-    });
-
-    test('falls back to default on invalid JSON', async () => {
-      const mockKV = createMockKV();
-      mockKV.get.mockResolvedValue('invalid json');
-
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const config = await getRateLimitConfig('strict', mockKV as any);
-      expect(config).toEqual(DEFAULT_RATE_LIMIT_CONFIG.strict);
-    });
-
-    test('falls back to default on invalid config structure', async () => {
-      const mockKV = createMockKV();
-      mockKV.get.mockResolvedValue(JSON.stringify({ invalid: 'config' }));
-
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const config = await getRateLimitConfig('strict', mockKV as any);
-      expect(config).toEqual(DEFAULT_RATE_LIMIT_CONFIG.strict);
-    });
-  });
-
-  describe('setRateLimitConfig / clearRateLimitConfig', () => {
-    test('sets and clears config in KV', async () => {
-      const mockKV = createMockKV();
-      const customConfig = { requests: 300, windowMs: 120000 };
-
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      await setRateLimitConfig('moderate', customConfig, mockKV as any);
-
-      expect(mockKV.put).toHaveBeenCalledWith(
-        'ratelimit:config:moderate',
-        JSON.stringify(customConfig)
-      );
-
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      await clearRateLimitConfig('moderate', mockKV as any);
-      expect(mockKV.delete).toHaveBeenCalledWith('ratelimit:config:moderate');
+    test.each(['strict', 'moderate', 'lenient'] as const)('returns the fixed %s limit', (tier) => {
+      expect(getRateLimitConfig(tier)).toEqual(DEFAULT_RATE_LIMIT_CONFIG[tier]);
     });
   });
 

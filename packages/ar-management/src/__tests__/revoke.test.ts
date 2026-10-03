@@ -23,7 +23,6 @@ const {
   mockGetTenantIdFromContext,
   mockCreateAuthContextFromHono,
   mockValidateClientAssertion,
-  mockCreateOAuthConfigManager,
   mockGetKeyByKid,
   mockDeviceSecretRepository,
 } = vi.hoisted(() => {
@@ -60,7 +59,6 @@ const {
       },
     }),
     mockValidateClientAssertion: vi.fn().mockResolvedValue({ valid: true }),
-    mockCreateOAuthConfigManager: vi.fn().mockReturnValue(mockConfigManager),
     mockGetKeyByKid: vi.fn().mockResolvedValue({
       kty: 'RSA',
       kid: 'key-1',
@@ -87,7 +85,6 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     getTenantIdFromContext: mockGetTenantIdFromContext,
     createAuthContextFromHono: mockCreateAuthContextFromHono,
     validateClientAssertion: mockValidateClientAssertion,
-    createOAuthConfigManager: mockCreateOAuthConfigManager,
     getKeyByKid: mockGetKeyByKid,
     DeviceSecretRepository: vi.fn(function DeviceSecretRepositoryMock() {
       return mockDeviceSecretRepository;
@@ -628,6 +625,28 @@ describe('Token Revocation Endpoint', () => {
 
       expect(revokeToken).toHaveBeenCalledWith(c.env, 'token-jti-123', 3600, undefined, 'tenant1');
       expect(c.body).toHaveBeenCalledWith(null, 200);
+    });
+
+    it('keeps a revocation until the token itself expires, beyond the access token lifetime', async () => {
+      const c = createMockContext({
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: { token: 'valid.jwt.token', client_id: 'client-123', client_secret: 'client-secret' },
+      });
+      const exp = Math.floor(Date.now() / 1000) + 86400;
+      vi.mocked(validateClientId).mockReturnValue({ valid: true });
+      vi.mocked(parseToken).mockReturnValue({ jti: 'long-jti', client_id: 'client-123', exp });
+      vi.mocked(getRefreshToken).mockResolvedValue(null);
+      mockClientRepository.findByClientId.mockResolvedValue({
+        client_id: 'client-123',
+        client_secret_hash: 'hash_client-secret',
+      });
+
+      await revokeHandler(c);
+
+      const ttl = vi.mocked(revokeToken).mock.calls[0][2] as number;
+      // The token was issued with a longer lifetime than the access token setting now gives.
+      expect(ttl).toBeGreaterThanOrEqual(86399);
+      expect(ttl).toBeLessThanOrEqual(86401);
     });
 
     it('should return 200 for invalid token (per RFC 7009)', async () => {

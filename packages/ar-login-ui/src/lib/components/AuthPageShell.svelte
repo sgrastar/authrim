@@ -10,9 +10,11 @@
 	type Props = {
 		children: Snippet;
 		wide?: boolean;
+		/** Reveal the page parts one after another; login and signup turn it on while they load. */
+		entryMotion?: boolean;
 	};
 
-	let { children, wide = false }: Props = $props();
+	let { children, wide = false, entryMotion = false }: Props = $props();
 	const { brandingStore, loginUIPageStore } = useLoginUIStores();
 	const localizedBrandPanelTitle = $derived(
 		loginUIPageStore.getLocalizedText(getLocale(), 'brandPanelTitle')
@@ -36,6 +38,7 @@
 
 <div
 	class="auth-page"
+	class:auth-page--entry-motion={entryMotion}
 	class:auth-page--has-footer={loginUIPageStore.footerEnabled}
 	style:--login-page-background-color={loginUIPageStore.backgroundColor || undefined}
 	style:--login-accent-color={loginUIPageStore.accentColor || undefined}

@@ -21,6 +21,7 @@ import {
   buildDOInstanceName,
 } from '@authrim/ar-lib-core';
 import { resolveAsyncTenantId } from './tenant';
+import { fal3Refusal } from './assurance';
 
 /**
  * POST /device_authorization
@@ -36,6 +37,8 @@ export async function deviceAuthorizationHandler(c: Context<{ Bindings: Env }>) 
       variables: { field: 'tenant context' },
     });
   }
+  const assuranceRefusal = await fal3Refusal(c, tenantId);
+  if (assuranceRefusal) return assuranceRefusal;
 
   try {
     // Parse request body

@@ -114,19 +114,41 @@ describe('admin-info tenant base URL resolution', () => {
     const env = {
       UI_URL: 'https://nodomain-ar-login-ui.pages.dev',
       ADMIN_UI_URL: 'https://nodomain-ar-admin-ui.pages.dev',
+      ALLOWED_ORIGINS: 'https://configured-login.example.com',
       SETTINGS: {
-        get: async () =>
-          JSON.stringify({
-            ui: {
-              baseUrl: 'https://configured-login.example.com',
-            },
-          }),
+        get: async (key: string) =>
+          key === 'settings:platform:tenant'
+            ? JSON.stringify({ 'tenant.ui_base_url': 'https://configured-login.example.com' })
+            : null,
       },
     } as unknown as Env;
 
     await expect(getConfiguredUiUrls(env)).resolves.toEqual({
       loginUiUrl: 'https://configured-login.example.com',
       adminUiUrl: 'https://nodomain-ar-admin-ui.pages.dev',
+    });
+  });
+
+  it("returns the tenant's own UI as the login redirects use it, not one they would skip", async () => {
+    const documents: Record<string, unknown> = {
+      'settings:tenant:acme:tenant': { 'tenant.ui_base_url': 'https://login.acme.example' },
+      'settings:tenant:other:tenant': { 'tenant.ui_base_url': 'https://evil.example.net' },
+    };
+    const env = {
+      UI_URL: 'https://login.example.com',
+      ISSUER_URL: 'https://id.example.com',
+      ALLOWED_ORIGINS: 'https://login.acme.example',
+      SETTINGS: {
+        get: async (key: string) => (key in documents ? JSON.stringify(documents[key]) : null),
+      },
+    } as unknown as Env;
+
+    await expect(getConfiguredUiUrls(env, null, 'acme')).resolves.toMatchObject({
+      loginUiUrl: 'https://login.acme.example',
+    });
+    // Not an allowed UI origin: the platform's UI, as the redirects fall back to it.
+    await expect(getConfiguredUiUrls(env, null, 'other')).resolves.toMatchObject({
+      loginUiUrl: 'https://login.example.com',
     });
   });
 
@@ -141,6 +163,79 @@ describe('admin-info tenant base URL resolution', () => {
       loginUiUrl: 'https://nodomain-ar-login-ui.pages.dev',
       adminUiUrl: 'https://nodomain-ar-admin-ui.pages.dev',
     });
+  });
+
+  it("returns the tenant's sign-in UI apart from the platform's entry URLs", async () => {
+    const documents: Record<string, unknown> = {
+      'settings:tenant:default:tenant': { 'tenant.ui_base_url': 'https://login.acme.example' },
+    };
+    const env = {
+      UI_URL: 'https://nodomain-ar-login-ui.pages.dev',
+      BASE_DOMAIN: 'auth.example.com',
+      ISSUER_URL: 'https://auth.example.com',
+      ALLOWED_ORIGINS: 'https://login.acme.example',
+      SETTINGS: {
+        get: async (key: string) => (key in documents ? JSON.stringify(documents[key]) : null),
+      },
+      DB: {
+        prepare: vi.fn().mockReturnValue({
+          bind: vi.fn().mockReturnValue({
+            first: vi.fn().mockResolvedValue({ id: 'default', name: 'Default Tenant' }),
+          }),
+        }),
+      },
+    } as unknown as Env;
+
+    const response = await adminTenantInfoHandler({
+      req: { param: () => 'default' },
+      env,
+      json: (body: unknown, status = 200) =>
+        new Response(JSON.stringify(body), {
+          status,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      get: vi.fn((key: string) =>
+        key === 'adminAuth' ? { roles: ['system_admin'], tenantScope: ['*'] } : undefined
+      ),
+    } as any);
+
+    const body = (await response.json()) as Record<string, unknown>;
+    expect(body.login_ui_base_url).toBe('https://login.acme.example');
+    expect(body.global_login_ui_url).toBe('https://nodomain-ar-login-ui.pages.dev/login');
+  });
+
+  it('answers 503 while the UI settings cannot be read, rather than showing no UI', async () => {
+    const env = {
+      BASE_DOMAIN: 'auth.example.com',
+      SETTINGS: {
+        get: async (key: string) => {
+          if (key === 'settings:platform:tenant') throw new Error('kv unavailable');
+          return null;
+        },
+      },
+      DB: {
+        prepare: vi.fn().mockReturnValue({
+          bind: vi.fn().mockReturnValue({
+            first: vi.fn().mockResolvedValue({ id: 'default', name: 'Default Tenant' }),
+          }),
+        }),
+      },
+    } as unknown as Env;
+
+    const response = await adminTenantInfoHandler({
+      req: { param: () => 'default' },
+      env,
+      json: (body: unknown, status = 200) =>
+        new Response(JSON.stringify(body), {
+          status,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      get: vi.fn((key: string) =>
+        key === 'adminAuth' ? { roles: ['system_admin'], tenantScope: ['*'] } : undefined
+      ),
+    } as any);
+
+    expect(response.status).toBe(503);
   });
 
   it('reads tenant inventory without requiring request-scoped tenant metadata', async () => {

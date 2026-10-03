@@ -64,7 +64,7 @@ import {
   withTenantBackupMutationCoverage,
   type TenantBackupMutationCoverage,
 } from '@authrim/ar-lib-core';
-import { cleanupResolvedAuditPrimaries } from './audit-maintenance';
+import { runRetentionMaintenance } from './retention-maintenance';
 import { runObjectArtifactCleanup } from './artifact-cleanup';
 import { processLoggingStorageMaintenanceJobs } from './logging-storage-maintenance-jobs';
 import {
@@ -346,6 +346,11 @@ import {
 } from './admin-consent-policies';
 import { revokeHandler, batchRevokeHandler } from './revoke';
 import {
+  adminUserAssuranceEvidenceCreateHandler,
+  adminUserAssuranceEvidenceRevokeHandler,
+  adminUserAssuranceGetHandler,
+} from './admin-user-assurance';
+import {
   adminAccountLegalHoldCreateHandler,
   adminAccountLegalHoldReleaseHandler,
   adminAccountLegalHoldsListHandler,
@@ -380,10 +385,6 @@ import {
   adminUserRevokeAllSessionsHandler,
   adminAuditLogListHandler,
   adminAuditLogGetHandler,
-  adminSettingsGetHandler,
-  adminSettingsUpdateHandler,
-  adminListCertificationProfilesHandler,
-  adminApplyCertificationProfileHandler,
   adminTestSessionCreateHandler,
   adminSigningKeyGetHandler,
   adminTokenRegisterHandler,
@@ -592,19 +593,27 @@ import {
   adminSecurityThreatsHandler,
   adminSecurityIpReputationHandler,
 } from './admin-security';
+import { adminComplianceStatusHandler } from './admin-compliance';
 import {
-  adminComplianceStatusHandler,
-  adminComplianceAccessReviewsListHandler,
-  adminComplianceAccessReviewsCreateHandler,
-  adminComplianceReportsListHandler,
-  adminDataRetentionStatusHandler,
-} from './admin-compliance';
+  cancelAccessReview,
+  completeAccessReview,
+  createAccessReview,
+  decideAccessReviewItems,
+  getAccessReview,
+  listAccessReviewItems,
+  listAccessReviews,
+} from './compliance/access-reviews';
 import {
-  adminSettingsDiffHandler,
-  adminSettingsSchemaHandler,
-  adminSettingsValidateHandler,
-} from './admin-settings-meta';
+  createComplianceReport,
+  downloadComplianceReport,
+  getComplianceReport,
+  listComplianceReports,
+} from './compliance/report-routes';
 import { adminTenantCloneHandler } from './admin-tenant-clone';
+import {
+  applyCertificationProfileHandler,
+  listCertificationProfilesHandler,
+} from './routes/certification-profiles';
 import { adminTenantInfoHandler } from './admin-info';
 import {
   adminRuntimeProfileDefaultsHandler,
@@ -729,33 +738,17 @@ import {
   revokeAllUserRefreshTokens,
 } from './routes/settings/refresh-token-sharding';
 import {
-  getOAuthConfig,
-  updateOAuthConfig,
-  clearOAuthConfig,
-  clearAllOAuthConfig,
-} from './routes/settings/oauth-config';
-import {
   listGuestUsers,
   getGuestUser,
   getGuestUserUpgrades,
   deleteGuestUser,
   cleanupExpiredGuestUsers,
 } from './routes/guest-users';
-import { getPolicyFlags, updatePolicyFlag, clearPolicyFlag } from './routes/settings/policy-flags';
 import {
-  getCheckApiAuditSettings,
-  updateCheckApiAuditSetting,
-  clearCheckApiAuditSetting,
-} from './routes/settings/check-api-audit';
-import {
-  getRateLimitSettings,
-  getRateLimitProfile,
-  updateRateLimitProfile,
-  resetRateLimitProfile,
   getProfileOverride,
   setProfileOverride,
   clearProfileOverride,
-} from './routes/settings/rate-limit';
+} from './routes/rate-limit-override';
 import {
   getPlatformCacheModeHandler,
   setPlatformCacheModeHandler,
@@ -763,33 +756,6 @@ import {
   setClientCacheModeHandler,
   getCacheModeInfoHandler,
 } from './routes/settings/cache-mode';
-import {
-  getErrorConfig,
-  getErrorLocale,
-  updateErrorLocale,
-  resetErrorLocale,
-  getErrorResponseFormat,
-  updateErrorResponseFormat,
-  resetErrorResponseFormat,
-  getErrorIdMode,
-  updateErrorIdMode,
-  resetErrorIdMode,
-} from './routes/settings/error-config';
-import {
-  getTokenExchangeConfig,
-  updateTokenExchangeConfig,
-  clearTokenExchangeConfig,
-} from './routes/settings/token-exchange';
-import {
-  getIntrospectionValidationConfig,
-  updateIntrospectionValidationConfig,
-  clearIntrospectionValidationConfig,
-} from './routes/settings/introspection-validation';
-import {
-  getIntrospectionCacheConfigHandler,
-  updateIntrospectionCacheConfigHandler,
-  clearIntrospectionCacheConfigHandler,
-} from './routes/settings/introspection-cache';
 import {
   listTombstones,
   listPlatformTombstones,
@@ -803,33 +769,10 @@ import {
   deletePlatformTombstone,
 } from './routes/settings/tombstones';
 import {
-  getFapiSecurityConfig,
-  updateFapiSecurityConfig,
-  clearFapiSecurityConfig,
-} from './routes/settings/fapi-security';
-import {
-  getAssuranceLevelsConfig,
-  updateAssuranceLevelsConfig,
-  deleteAssuranceLevelsConfig,
-} from './routes/settings/assurance-levels';
-import {
   getIpSecurityConfig,
   updateIpSecurityConfig,
   clearIpSecurityConfig,
 } from './routes/settings/ip-security';
-import {
-  getUIConfigHandler,
-  updateUIConfigHandler,
-  deleteUIConfigHandler,
-  getUIRoutingHandler,
-  updateUIRoutingHandler,
-  deleteUIRoutingHandler,
-} from './routes/settings/ui-config';
-import {
-  getConformanceConfigHandler,
-  updateConformanceConfigHandler,
-  deleteConformanceConfigHandler,
-} from './routes/settings/conformance-config';
 import {
   createRoleAssignmentRule,
   listRoleAssignmentRules,
@@ -850,11 +793,6 @@ import {
   verifyDomainOwnership,
   confirmDomainVerification,
 } from './routes/settings/org-domain-mappings';
-import {
-  getJITProvisioningConfig,
-  updateJITProvisioningConfig,
-  resetJITProvisioningConfig,
-} from './routes/settings/jit-provisioning';
 import {
   getDomainHashKeysConfig,
   rotateDomainHashKey,
@@ -880,10 +818,6 @@ import {
   checkResourcePermission,
 } from './routes/settings/resource-permissions';
 import {
-  getTokenEmbeddingSettings,
-  updateTokenEmbeddingSettings,
-} from './routes/settings/token-embedding';
-import {
   createCheckApiKey,
   listCheckApiKeys,
   getCheckApiKey,
@@ -891,23 +825,14 @@ import {
   rotateCheckApiKey,
 } from './routes/settings/check-api-keys';
 import {
-  getLogoutConfig,
-  updateLogoutConfig,
-  resetLogoutConfig,
-} from './routes/settings/logout-config';
-import {
-  getLogoutWebhookConfig,
-  updateLogoutWebhookConfig,
-  resetLogoutWebhookConfig,
-} from './routes/settings/logout-webhook-config';
-import {
   listLogoutFailures,
   getLogoutFailure,
   clearLogoutFailure,
   clearAllLogoutFailures,
-} from './routes/settings/logout-failures';
+} from './routes/logout-failures';
 import { getEncryptionStatus } from './routes/settings/encryption-config';
 import settingsV2 from './routes/settings-v2';
+import { processLegacySettingsImport } from './legacy-settings-import';
 import policyRouter from './routes/policy';
 import adminManagementRouter from './routes/admin-management';
 import diagnosticLoggingRouter from './routes/diagnostic-logging';
@@ -1115,9 +1040,8 @@ import {
 } from './routes/settings/audit-storage';
 import {
   getDataRetentionEstimate,
+  getDataRetentionStatus,
   updateCategoryRetention,
-  runDataRetentionCleanup,
-  getCleanupRunStatus,
   listRetentionCategories,
 } from './routes/settings/data-retention';
 import {
@@ -1657,6 +1581,12 @@ app.put('/api/admin/users/:id/support-context', adminAccountSupportContextPutHan
 app.get('/api/admin/users/:id/legal-holds', adminAccountLegalHoldsListHandler);
 app.post('/api/admin/users/:id/legal-holds', adminAccountLegalHoldCreateHandler);
 app.post('/api/admin/users/:id/legal-holds/:holdId/release', adminAccountLegalHoldReleaseHandler);
+app.get('/api/admin/users/:id/assurance', adminUserAssuranceGetHandler);
+app.post('/api/admin/users/:id/assurance/evidence', adminUserAssuranceEvidenceCreateHandler);
+app.post(
+  '/api/admin/users/:id/assurance/evidence/:evidenceId/revoke',
+  adminUserAssuranceEvidenceRevokeHandler
+);
 app.get('/api/admin/users/:id/email-deliveries', adminUserEmailDeliveriesHandler);
 app.get('/api/admin/users/:id/identifier-replacements', adminUserIdentifierReplacementsHandler);
 app.post(
@@ -1776,16 +1706,6 @@ app.get('/api/admin/email-deliveries', adminEmailDeliveriesListHandler);
 app.get('/api/admin/account-lifecycle/guests', listGuestLifecycleHandler);
 app.post('/api/admin/account-lifecycle/guest-retention/preview', previewGuestRetentionHandler);
 app.post('/api/admin/account-lifecycle/guest-retention/apply', applyGuestRetentionHandler);
-app.get('/api/admin/settings', adminSettingsGetHandler);
-app.put('/api/admin/settings', adminSettingsUpdateHandler);
-
-// Settings Metadata API (Phase 2)
-// - GET /api/admin/settings/diff     - Compare settings between versions
-// - GET /api/admin/settings/schema   - Get settings schema definition
-// - POST /api/admin/settings/validate - Validate settings before applying (Phase 3)
-app.get('/api/admin/settings/diff', adminSettingsDiffHandler);
-app.get('/api/admin/settings/schema', adminSettingsSchemaHandler);
-app.post('/api/admin/settings/validate', adminSettingsValidateHandler);
 
 // Runtime Profile Registry API
 // - GET    /api/admin/runtime-profiles                 - List runtime profiles
@@ -2249,10 +2169,9 @@ app.route('/api/admin/diagnostic-logging', diagnosticLoggingRouter);
 // - POST /api/v1/diagnostic-logs/ingest - Ingest logs from SDK (public API with client auth)
 app.route('/api/v1/diagnostic-logs/ingest', diagnosticLogIngestRouter);
 
-// Admin Certification Profile endpoints (OpenID Certification)
-// NOTE: Profiles apply predefined settings - kept for certification testing
-app.get('/api/admin/settings/profiles', adminListCertificationProfilesHandler);
-app.put('/api/admin/settings/profile/:profileName', adminApplyCertificationProfileHandler);
+// Certification profiles (OpenID certification test plans): predefined protocol settings
+app.get('/api/admin/certification-profiles', listCertificationProfilesHandler);
+app.post('/api/admin/certification-profiles/:id/apply', applyCertificationProfileHandler);
 
 // =============================================================================
 // Legacy Settings Endpoints (DEPRECATED - Use settings-v2)
@@ -2322,13 +2241,6 @@ app.post('/api/admin/platform/tombstones/cleanup', requireSystemAdmin(), cleanup
 app.get('/api/admin/platform/tombstones/:id', requireSystemAdmin(), getPlatformTombstone);
 app.delete('/api/admin/platform/tombstones/:id', requireSystemAdmin(), deletePlatformTombstone);
 
-// [DEPRECATED] Admin OAuth/OIDC Configuration
-// → Migrate to: /api/admin/tenants/:tenantId/settings/oauth
-app.get('/api/admin/settings/oauth-config', getOAuthConfig);
-app.put('/api/admin/settings/oauth-config/:name', updateOAuthConfig);
-app.delete('/api/admin/settings/oauth-config/:name', clearOAuthConfig);
-app.delete('/api/admin/settings/oauth-config', clearAllOAuthConfig);
-
 // Browser guest account administration.
 app.get('/api/admin/guest-users', listGuestUsers);
 app.get('/api/admin/guest-users/:id', getGuestUser);
@@ -2340,37 +2252,11 @@ app.post('/api/admin/guest-users/cleanup', cleanupExpiredGuestUsers);
 // → Migrate to: /api/admin/platform/settings/encryption
 app.get('/api/admin/settings/encryption/status', getEncryptionStatus);
 
-// [DEPRECATED] Admin Policy Flags (Check API) Configuration
-// → Migrate to: /api/admin/tenants/:tenantId/settings/security
-app.get('/api/admin/settings/policy-flags', getPolicyFlags);
-app.put('/api/admin/settings/policy-flags/:name', updatePolicyFlag);
-app.delete('/api/admin/settings/policy-flags/:name', clearPolicyFlag);
-
-// Check API Audit Configuration (Phase 3 - Access Control)
-// Manages permission check audit logging settings
-// RBAC: Requires tenant_admin or higher role
-app.use(
-  '/api/admin/settings/check-api-audit',
-  requireAnyRole(['system_admin', 'distributor_admin', 'tenant_admin'])
-);
-app.use(
-  '/api/admin/settings/check-api-audit/*',
-  requireAnyRole(['system_admin', 'distributor_admin', 'tenant_admin'])
-);
-app.get('/api/admin/settings/check-api-audit', getCheckApiAuditSettings);
-app.put('/api/admin/settings/check-api-audit/:name', updateCheckApiAuditSetting);
-app.delete('/api/admin/settings/check-api-audit/:name', clearCheckApiAuditSetting);
-
-// [DEPRECATED] Admin Rate Limit Configuration
-// → Migrate to: /api/admin/tenants/:tenantId/settings/rate-limit
-// NOTE: Has profile-based overrides - complex functionality
-app.get('/api/admin/settings/rate-limits', getRateLimitSettings);
-app.get('/api/admin/settings/rate-limits/profile-override', getProfileOverride);
-app.put('/api/admin/settings/rate-limits/profile-override', setProfileOverride);
-app.delete('/api/admin/settings/rate-limits/profile-override', clearProfileOverride);
-app.get('/api/admin/settings/rate-limits/:profile', getRateLimitProfile);
-app.put('/api/admin/settings/rate-limits/:profile', updateRateLimitProfile);
-app.delete('/api/admin/settings/rate-limits/:profile', resetRateLimitProfile);
+// Rate limit profile override (an operation: a loadTest override always expires). The profiles'
+// limits are Settings API values: /api/admin/platform/settings/rate-limit.
+app.get('/api/admin/rate-limits/profile-override', getProfileOverride);
+app.put('/api/admin/rate-limits/profile-override', setProfileOverride);
+app.delete('/api/admin/rate-limits/profile-override', clearProfileOverride);
 
 // Admin Cache Mode Configuration (P0 KV Cache Optimization)
 // Platform-level cache mode (maintenance/fixed)
@@ -2381,86 +2267,12 @@ app.get('/api/admin/settings/cache-mode/info', getCacheModeInfoHandler);
 app.get('/api/admin/clients/:clientId/cache-mode', getClientCacheModeHandler);
 app.post('/api/admin/clients/:clientId/cache-mode', setClientCacheModeHandler);
 
-// [DEPRECATED] Admin Error Configuration
-// → Migrate to: /api/admin/tenants/:tenantId/settings/oauth (error settings)
-app.get('/api/admin/settings/error-config', getErrorConfig);
-app.get('/api/admin/settings/error-locale', getErrorLocale);
-app.put('/api/admin/settings/error-locale', updateErrorLocale);
-app.delete('/api/admin/settings/error-locale', resetErrorLocale);
-app.get('/api/admin/settings/error-response-format', getErrorResponseFormat);
-app.put('/api/admin/settings/error-response-format', updateErrorResponseFormat);
-app.delete('/api/admin/settings/error-response-format', resetErrorResponseFormat);
-app.get('/api/admin/settings/error-id-mode', getErrorIdMode);
-app.put('/api/admin/settings/error-id-mode', updateErrorIdMode);
-app.delete('/api/admin/settings/error-id-mode', resetErrorIdMode);
-
-// [DEPRECATED] Admin Token Exchange Configuration (RFC 8693)
-// → Migrate to: /api/admin/tenants/:tenantId/settings/tokens
-// Rate limiting: moderate profile (60 req/min) - sensitive configuration endpoint
-app.use('/api/admin/settings/token-exchange', async (c, next) => {
-  const profile = await getRateLimitProfileAsync(c.env, 'moderate');
-  return rateLimitMiddleware({
-    ...profile,
-    endpoints: ['/api/admin/settings/token-exchange'],
-  })(c, next);
-});
-app.get('/api/admin/settings/token-exchange', getTokenExchangeConfig);
-app.put('/api/admin/settings/token-exchange', updateTokenExchangeConfig);
-app.delete('/api/admin/settings/token-exchange', clearTokenExchangeConfig);
-
-// [DEPRECATED] Admin Introspection Validation Configuration (RFC 7662)
-// → Migrate to: /api/admin/tenants/:tenantId/settings/tokens
-app.get('/api/admin/settings/introspection-validation', getIntrospectionValidationConfig);
-app.put('/api/admin/settings/introspection-validation', updateIntrospectionValidationConfig);
-app.delete('/api/admin/settings/introspection-validation', clearIntrospectionValidationConfig);
-
-// [DEPRECATED] Admin Introspection Cache Configuration
-// → Migrate to: /api/admin/tenants/:tenantId/settings/tokens
-app.get('/api/admin/settings/introspection-cache', getIntrospectionCacheConfigHandler);
-app.put('/api/admin/settings/introspection-cache', updateIntrospectionCacheConfigHandler);
-app.delete('/api/admin/settings/introspection-cache', clearIntrospectionCacheConfigHandler);
-
-// [DEPRECATED] Admin FAPI/Security Configuration
-// → Migrate to: /api/admin/tenants/:tenantId/settings/security
-app.get('/api/admin/settings/fapi-security', getFapiSecurityConfig);
-app.put('/api/admin/settings/fapi-security', updateFapiSecurityConfig);
-app.delete('/api/admin/settings/fapi-security', clearFapiSecurityConfig);
-
-// NIST SP 800-63-4 Assurance Levels Configuration
-// → Migrate to: /api/admin/tenants/:tenantId/settings/security
-// Rate limiting: moderate profile (60 req/min) - security-sensitive configuration
-app.use('/api/admin/settings/assurance-levels', async (c, next) => {
-  const profile = await getRateLimitProfileAsync(c.env, 'moderate');
-  return rateLimitMiddleware({
-    ...profile,
-    endpoints: ['/api/admin/settings/assurance-levels'],
-  })(c, next);
-});
-app.get('/api/admin/settings/assurance-levels', getAssuranceLevelsConfig);
-app.put('/api/admin/settings/assurance-levels', updateAssuranceLevelsConfig);
-app.delete('/api/admin/settings/assurance-levels', deleteAssuranceLevelsConfig);
-
 // [DEPRECATED] Admin IP Security Configuration
 // → Migrate to: /api/admin/tenants/:tenantId/settings/security
 // Security: Requires system_admin role
 app.get('/api/admin/settings/ip-security', requireSystemAdmin(), getIpSecurityConfig);
 app.put('/api/admin/settings/ip-security', requireSystemAdmin(), updateIpSecurityConfig);
 app.delete('/api/admin/settings/ip-security', requireSystemAdmin(), clearIpSecurityConfig);
-
-// [DEPRECATED] Admin UI Configuration
-// → Migrate to: /api/admin/tenants/:tenantId/settings/oauth (ui settings)
-app.get('/api/admin/settings/ui-config', getUIConfigHandler);
-app.put('/api/admin/settings/ui-config', updateUIConfigHandler);
-app.delete('/api/admin/settings/ui-config', deleteUIConfigHandler);
-app.get('/api/admin/settings/ui-routing', getUIRoutingHandler);
-app.put('/api/admin/settings/ui-routing', updateUIRoutingHandler);
-app.delete('/api/admin/settings/ui-routing', deleteUIRoutingHandler);
-
-// [DEPRECATED] Admin Conformance Mode Configuration
-// → Migrate to: /api/admin/tenants/:tenantId/settings/oauth
-app.get('/api/admin/settings/conformance', getConformanceConfigHandler);
-app.put('/api/admin/settings/conformance', updateConformanceConfigHandler);
-app.delete('/api/admin/settings/conformance', deleteConformanceConfigHandler);
 
 // [DEPRECATED] Admin Refresh Token Sharding Configuration
 // → Migrate to: /api/admin/platform/settings/infrastructure
@@ -2870,12 +2682,6 @@ app.put('/api/admin/org-domain-mappings/:id', updateOrgDomainMapping);
 app.delete('/api/admin/org-domain-mappings/:id', deleteOrgDomainMapping);
 app.get('/api/admin/organizations/:org_id/domain-mappings', listOrgDomainMappingsByOrg);
 
-// [DEPRECATED] JIT Provisioning Configuration
-// → Migrate to: /api/admin/tenants/:tenantId/settings/federation
-app.get('/api/admin/settings/jit-provisioning', getJITProvisioningConfig);
-app.put('/api/admin/settings/jit-provisioning', updateJITProvisioningConfig);
-app.delete('/api/admin/settings/jit-provisioning', resetJITProvisioningConfig);
-
 // [DEPRECATED] Domain Hash Key Rotation
 // → Migrate to: /api/admin/platform/settings/encryption
 // NOTE: Has rotate/complete lifecycle operations - keep for key management
@@ -2906,36 +2712,12 @@ app.get('/api/admin/resource-permissions/subject/:id', getPermissionsBySubject);
 app.get('/api/admin/resource-permissions/resource/:type/:id', getPermissionsByResource);
 app.delete('/api/admin/resource-permissions/:id', deleteResourcePermission);
 
-// [DEPRECATED] Token Embedding Settings
-// → Migrate to: /api/admin/tenants/:tenantId/settings/tokens
-app.get('/api/admin/settings/token-embedding', getTokenEmbeddingSettings);
-app.put('/api/admin/settings/token-embedding', updateTokenEmbeddingSettings);
-
-// [DEPRECATED] Logout Configuration (Phase A-6)
-// → Migrate to: /api/admin/tenants/:tenantId/settings/session
-app.get('/api/admin/settings/logout', getLogoutConfig);
-app.put('/api/admin/settings/logout', updateLogoutConfig);
-app.delete('/api/admin/settings/logout', resetLogoutConfig);
-
-// Logout Failure Visibility endpoints (Phase A-6)
-app.get('/api/admin/settings/logout/failures', listLogoutFailures);
-app.get('/api/admin/settings/logout/failures/:clientId', getLogoutFailure);
-app.delete('/api/admin/settings/logout/failures/:clientId', clearLogoutFailure);
-app.delete('/api/admin/settings/logout/failures', clearAllLogoutFailures);
-
-// Logout Webhook Configuration (Simple Logout Webhook - Authrim Extension)
-// Rate limited with RateLimitProfiles.moderate to prevent abuse
-app.use('/api/admin/settings/logout-webhook', async (c, next) => {
-  const profile = await getRateLimitProfileAsync(c.env, 'moderate');
-  return rateLimitMiddleware({
-    ...profile,
-    endpoints: ['/api/admin/settings/logout-webhook'],
-  })(c, next);
-});
-
-app.get('/api/admin/settings/logout-webhook', getLogoutWebhookConfig);
-app.put('/api/admin/settings/logout-webhook', updateLogoutWebhookConfig);
-app.delete('/api/admin/settings/logout-webhook', resetLogoutWebhookConfig);
+// Logout notification failures (Phase A-6). The logout settings are the Settings API
+// `session.*` keys: /api/admin/tenants/:tenantId/settings/session.
+app.get('/api/admin/logout-failures', listLogoutFailures);
+app.get('/api/admin/logout-failures/:clientId', getLogoutFailure);
+app.delete('/api/admin/logout-failures/:clientId', clearLogoutFailure);
+app.delete('/api/admin/logout-failures', clearAllLogoutFailures);
 
 // Check API Key Management endpoints (Phase 8.3)
 app.post('/api/admin/check-api-keys', createCheckApiKey);
@@ -3726,9 +3508,11 @@ app.post('/api/admin/security/ip-reputation', adminSecurityIpReputationHandler);
 // =============================================================================
 // Compliance API
 // =============================================================================
-// Compliance monitoring and status overview.
+// Compliance status, access reviews and reports.
 // Routes:
-// - GET /api/admin/compliance/status - Get compliance status
+// - GET /api/admin/compliance/status - Compliance checks and the facts behind them
+// - /api/admin/compliance/access-reviews[/:id[/items|/decisions|/complete|/cancel]]
+// - /api/admin/compliance/reports[/:id[/download]]
 //
 // Security:
 // - RBAC: tenant_admin or higher required
@@ -3740,16 +3524,28 @@ app.use(
 );
 
 app.get('/api/admin/compliance/status', adminComplianceStatusHandler);
-app.get('/api/admin/compliance/access-reviews', adminComplianceAccessReviewsListHandler);
-app.post('/api/admin/compliance/access-reviews', adminComplianceAccessReviewsCreateHandler);
-app.get('/api/admin/compliance/reports', adminComplianceReportsListHandler);
+app.get('/api/admin/compliance/access-reviews', listAccessReviews);
+app.post('/api/admin/compliance/access-reviews', createAccessReview);
+app.get('/api/admin/compliance/access-reviews/:id', getAccessReview);
+app.get('/api/admin/compliance/access-reviews/:id/items', listAccessReviewItems);
+app.post('/api/admin/compliance/access-reviews/:id/decisions', decideAccessReviewItems);
+app.post('/api/admin/compliance/access-reviews/:id/complete', completeAccessReview);
+app.post('/api/admin/compliance/access-reviews/:id/cancel', cancelAccessReview);
+app.get('/api/admin/compliance/reports', listComplianceReports);
+app.post('/api/admin/compliance/reports', createComplianceReport);
+app.get('/api/admin/compliance/reports/:id', getComplianceReport);
+app.get('/api/admin/compliance/reports/:id/download', downloadComplianceReport);
 
 // =============================================================================
 // Data Retention API (Phase 3)
 // =============================================================================
-// Data retention policy status and statistics.
+// How long each kind of data is kept, what decides it and what deletes it (the scheduled
+// retention tasks and expiry; there is no on-request cleanup).
 // Routes:
-// - GET /api/admin/data-retention/status - Get retention policy status
+// - GET /api/admin/data-retention/status - Every category with record counts
+// - GET /api/admin/data-retention/categories - Every category
+// - GET /api/admin/data-retention/estimate - Records past their retention
+// - PUT /api/admin/data-retention/categories/:category - The lookup directory only
 //
 // Security:
 // - RBAC: tenant_admin or higher required
@@ -3759,12 +3555,10 @@ app.use(
   '/api/admin/data-retention/*',
   requireAnyRole(['system_admin', 'distributor_admin', 'tenant_admin'])
 );
-app.get('/api/admin/data-retention/status', adminDataRetentionStatusHandler);
+app.get('/api/admin/data-retention/status', getDataRetentionStatus);
 app.get('/api/admin/data-retention/estimate', getDataRetentionEstimate);
 app.get('/api/admin/data-retention/categories', listRetentionCategories);
 app.put('/api/admin/data-retention/categories/:category', updateCategoryRetention);
-app.post('/api/admin/data-retention/cleanup', runDataRetentionCleanup);
-app.get('/api/admin/data-retention/cleanup/:runId', getCleanupRunStatus);
 
 // =============================================================================
 // User Consent Management API (GDPR Article 7 - User Rights)
@@ -4290,6 +4084,14 @@ async function handleCoveredScheduled(
     }
   }
   try {
+    // Until it has completed: one SETTINGS read per run afterwards.
+    await processLegacySettingsImport(env);
+  } catch (error) {
+    log.warn('Settings import from the older stores did not complete', {
+      errorType: error instanceof Error ? error.name : 'Unknown',
+    });
+  }
+  try {
     await processProviderReprojectionJobs(env, log.module('PROVIDER-REPROJECTION'));
   } catch (error) {
     log.warn('Provider reprojection scheduler failed', {
@@ -4418,7 +4220,7 @@ async function handleCoveredScheduled(
     });
 
     // 2. Legacy audit_log cleanup is disabled. Unified audit retention is handled below
-    // by cleanupResolvedAuditPrimaries(), which resolves the effective audit profile per tenant
+    // by runRetentionMaintenance(), which resolves the effective audit profile per tenant
     // and applies retention to D1/Postgres primaries or skips archive-only installs.
     const auditLogsDeleted = 0;
 
@@ -4524,27 +4326,9 @@ async function handleCoveredScheduled(
       });
     }
 
-    let unifiedAuditCleanup = {
-      tenantCount: 0,
-      processedTenants: 0,
-      archiveOnlyTenants: 0,
-      pendingSupportTenants: 0,
-      archiveCopyFailures: 0,
-      eventArchived: 0,
-      piiArchived: 0,
-      eventDeleted: 0,
-      piiDeleted: 0,
-    };
-
-    try {
-      unifiedAuditCleanup = await cleanupResolvedAuditPrimaries(env, {
-        tenantIds: maintenanceTenantIds,
-        logger: log.module('AUDIT-MAINTENANCE'),
-      });
-      log.debug('Unified audit retention cleanup completed', unifiedAuditCleanup);
-    } catch (auditCleanupError) {
-      log.error('Unified audit retention cleanup failed', {}, auditCleanupError as Error);
-    }
+    // Audit logs, Check API decisions and deleted users' tombstones past their retention;
+    // each task records its own run and, per tenant, when it last ran.
+    await runRetentionMaintenance(env, maintenanceTargets, log.module('RETENTION-MAINTENANCE'));
 
     log.info('Scheduled maintenance cleanup completed', {
       passwordTokensDeleted,
@@ -4554,7 +4338,6 @@ async function handleCoveredScheduled(
       idempotencyKeysDeleted,
       flowInteractionsExpired,
       flowInteractionStepsDeleted,
-      unifiedAuditCleanup,
     });
     await env.AUTHRIM_CONFIG!.put(maintenancePage.cursorKey, maintenancePage.nextCursor);
   } catch (error) {

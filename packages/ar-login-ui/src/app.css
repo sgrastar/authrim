@@ -6045,7 +6045,49 @@ tr.expired {
 
 /* Reserve the form area while the runtime contract is resolved without flashing the generic Card. */
 .auth-initial-loading {
-	min-height: 12rem;
+	display: flex;
+	justify-content: center;
+	align-items: center;
+	min-height: 190px;
+}
+
+.auth-initial-loading__spinner {
+	width: 30px;
+	height: 30px;
+	border: 3px solid color-mix(in srgb, var(--text-primary) 18%, transparent);
+	border-top-color: var(--accent-color, var(--primary));
+	border-radius: 999px;
+	animation: auth-progress-spin 0.8s linear infinite;
+}
+
+/* A status line with a spinner: "Waiting for your passkey…", "Code sent". */
+.auth-progress {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	padding: 12px 14px;
+	border: 1px solid var(--border-color, var(--border));
+	border-radius: 12px;
+	background: color-mix(in srgb, var(--surface-color, var(--bg-glass)) 88%, transparent);
+	color: var(--text-secondary);
+	font-size: 0.9rem;
+	line-height: 1.45;
+}
+
+.auth-progress__spinner {
+	width: 16px;
+	height: 16px;
+	flex: 0 0 16px;
+	border: 2px solid color-mix(in srgb, currentColor 24%, transparent);
+	border-top-color: currentColor;
+	border-radius: 999px;
+	animation: auth-progress-spin 0.8s linear infinite;
+}
+
+@keyframes auth-progress-spin {
+	to {
+		transform: rotate(360deg);
+	}
 }
 
 /* --- Login and signup entry motion ---
@@ -6235,7 +6277,7 @@ tr.expired {
 	--border-glass: rgba(24, 34, 56, 0.1);
 	--text-primary: #182238;
 	--text-secondary: #55617c;
-	--text-muted: #8a94ab;
+	--text-muted: #656c7d;
 	--radius-sm: 8px;
 	--radius-md: 10px;
 	--radius-lg: 12px;

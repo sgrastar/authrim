@@ -62,6 +62,9 @@ import {
 const D1_MIGRATION_EXECUTE_TIMEOUT_MS = 180_000;
 const D1_MIGRATION_MAX_ATTEMPTS = 4;
 const D1_MIGRATION_AUTH_MAX_ATTEMPTS = 8;
+// Queue creation can take longer than the default API read deadline. Aborting a POST after
+// Cloudflare commits it loses the queue_id needed to safely resume provisioning.
+const CLOUDFLARE_QUEUE_CREATE_TIMEOUT_MS = 120_000;
 const QUEUE_PROVISIONING_DEFINITIONS = [
   { binding: 'AUDIT_QUEUE', nameSuffix: 'audit-queue' },
   { binding: 'LOGGING_DELIVERY_CRITICAL_QUEUE', nameSuffix: 'logging-delivery-critical-queue' },
@@ -884,7 +887,9 @@ async function wranglerCreateWithDefiniteRejectionRetry(
   const oauthRefresh: WranglerOAuthRefreshState = { attempted: false };
   for (let attempt = 1; attempt <= D1_MIGRATION_AUTH_MAX_ATTEMPTS; attempt++) {
     try {
-      return await wrangler(args);
+      // Cloudflare can take longer than the default 30 seconds to commit a resource create.
+      // A killed Wrangler process can leave the create outcome unknown.
+      return await wrangler(args, { timeout: 120_000 });
     } catch (error) {
       lastError = error;
       const message = error instanceof Error ? error.message : String(error);
@@ -987,6 +992,12 @@ async function wrangler(
       reject: false,
       timeout: options.timeout ?? 30000,
     });
+
+    // With reject:false, execa can resolve a timed-out process even when a child handles
+    // SIGTERM and exits successfully. Never interpret its partial output as a successful create.
+    if (result.timedOut) {
+      throw new Error(`Wrangler command timed out: ${args.join(' ')}`);
+    }
 
     if (result.exitCode !== 0) {
       const detail = [result.stderr, result.stdout].filter(Boolean).join('\n');
@@ -3522,8 +3533,9 @@ async function listCloudflarePaginatedResourcesViaApi<T>(input: {
   normalizeRows: (rows: unknown) => T[];
   identityKey: (row: T) => string;
   perPage?: number;
+  accountId?: string;
 }): Promise<T[] | null> {
-  let credentials = await resolveCloudflareInventoryCredentials();
+  let credentials = await resolveCloudflareInventoryCredentials(input.accountId);
   if (!credentials) return null;
 
   const resources: T[] = [];
@@ -7231,7 +7243,11 @@ async function createQueueViaApi(name: string): Promise<{ id: string; name: stri
         },
         body: JSON.stringify({ queue_name: name }),
       },
-      { label: 'Cloudflare Queue create', retryMode: 'non_idempotent_mutation' }
+      {
+        label: 'Cloudflare Queue create',
+        retryMode: 'non_idempotent_mutation',
+        timeoutMs: CLOUDFLARE_QUEUE_CREATE_TIMEOUT_MS,
+      }
     );
     const queueId = typeof data.result?.queue_id === 'string' ? data.result.queue_id.trim() : '';
     const queueName =
@@ -7368,7 +7384,8 @@ export async function createQueue(
     if (!responseId) {
       throw new Error(
         `Queue ${name} creation outcome is ambiguous and Cloudflare returned no immutable queue ` +
-          'ID. Setup will not adopt a same-name Queue; inspect or delete it before retrying.',
+          `ID (${sanitizeError(error)}). Setup will not adopt a same-name Queue; inspect or ` +
+          'delete it before retrying.',
         { cause: error }
       );
     }
@@ -7829,6 +7846,50 @@ export async function putR2Object(input: {
   );
 }
 
+/** Reuse one resolved account and credential across a release's small R2 object uploads. */
+export async function createR2ObjectApiUploader(): Promise<typeof putR2Object | null> {
+  const credentials = await getR2ApiCredentials();
+  if (!credentials) return null;
+
+  return async (input) => {
+    if (!R2_BUCKET_NAME_PATTERN.test(input.bucketName)) throw new Error('invalid_r2_bucket_name');
+    assertSafeR2ObjectKey(input.objectKey);
+    if (input.bytes.byteLength === 0 || input.bytes.byteLength > 16 * 1024 * 1024) {
+      throw new Error('invalid_r2_object_size');
+    }
+
+    const { data } = await requestR2Api<{
+      success?: boolean;
+      // Cloudflare documents size as a string ("1048576"); a number is read the same way.
+      result?: { key?: string; size?: string | number };
+      errors?: CloudflareApiMessage[];
+      messages?: CloudflareApiMessage[];
+    }>(
+      `https://api.cloudflare.com/client/v4/accounts/${credentials.accountId}/r2/buckets/${encodeURIComponent(input.bucketName)}/objects/${encodeR2ObjectKeyPath(input.objectKey)}`,
+      {
+        method: 'PUT',
+        headers: {
+          Authorization: `Bearer ${credentials.token}`,
+          'Content-Type': input.contentType,
+        },
+        body: Buffer.from(input.bytes),
+      },
+      'Cloudflare R2 object upload',
+      false,
+      credentials.source,
+      180_000
+    );
+    if (
+      data.success !== true ||
+      (data.result?.key !== undefined && data.result.key !== input.objectKey) ||
+      (data.result?.size !== undefined &&
+        String(data.result.size) !== String(input.bytes.byteLength))
+    ) {
+      throw new Error('cloudflare_r2_object_upload_response_invalid');
+    }
+  };
+}
+
 export async function getR2ObjectBytes(input: {
   bucketName: string;
   objectKey: string;
@@ -7907,12 +7968,13 @@ export async function assertR2OwnershipMarker(input: {
   ownershipId: string;
   environment?: string;
   binding?: string;
+  credentials?: CloudflareInventoryCredentials;
 }): Promise<void> {
   if (input.markerKey !== buildR2OwnershipMarkerKey(input.ownershipId)) {
     throw new Error(`R2 ownership marker identity is invalid for ${input.bucketName}`);
   }
 
-  const credentials = await getR2ApiCredentials();
+  const credentials = input.credentials ?? (await getR2ApiCredentials());
   let marker: Uint8Array | null;
   if (credentials) {
     const rows = await listR2ObjectRowsViaApi({
@@ -8202,15 +8264,18 @@ function isRecognizedR2BucketListOutput(stdout: string): boolean {
   return parseR2BucketRows(trimmed).length > 0;
 }
 
-async function listR2BucketsViaApi(): Promise<R2BucketProviderIdentity[] | null> {
+async function listR2BucketsViaApi(
+  pinnedCredentials?: CloudflareInventoryCredentials
+): Promise<R2BucketProviderIdentity[] | null> {
   if (
+    !pinnedCredentials &&
     process.env.NODE_ENV === 'test' &&
     (!process.env.CLOUDFLARE_ACCOUNT_ID?.trim() || !process.env.CLOUDFLARE_API_TOKEN?.trim())
   ) {
     return null;
   }
 
-  const credentials = await resolveCloudflareInventoryCredentials();
+  const credentials = pinnedCredentials ?? (await resolveCloudflareInventoryCredentials());
   if (!credentials) return null;
 
   const buckets: R2BucketProviderIdentity[] = [];
@@ -8266,10 +8331,13 @@ function assertR2BucketIdentityComplete(
   }
 }
 
-async function listR2BucketIdentitiesStrict(): Promise<
-  Array<R2BucketProviderIdentity & { creationDate: string }>
-> {
-  const buckets = await listR2Buckets({ throwOnError: true, requireIdentity: true });
+async function listR2BucketIdentitiesStrict(
+  credentials?: CloudflareInventoryCredentials
+): Promise<Array<R2BucketProviderIdentity & { creationDate: string }>> {
+  const buckets = credentials
+    ? await listR2BucketsViaApi(credentials)
+    : await listR2Buckets({ throwOnError: true, requireIdentity: true });
+  if (!buckets) throw new Error('cloudflare_r2_bucket_list_unavailable');
   buckets.forEach(assertR2BucketIdentityComplete);
   return buckets.map((bucket) => ({ name: bucket.name, creationDate: bucket.creationDate! }));
 }
@@ -9118,17 +9186,20 @@ async function reconcileR2DeletionIdentities(input: {
   }
 
   for (const pinned of input.pinned) {
+    const remote = remoteByName.get(pinned.name);
+    // A previous manual or interrupted cleanup may already have removed this bucket. A
+    // name-only legacy lock cannot prove ownership of a live bucket, but no ownership proof is
+    // needed to reconcile an absent one without sending a deletion request.
+    if (!remote) {
+      targets.push(pinned);
+      continue;
+    }
     const complete = pinned.creationDate && pinned.ownershipMarkerKey && pinned.ownershipId;
     if (!complete) {
       mismatches.push(
         `R2 ownership for ${pinned.name} is name-only legacy state. No resources were deleted. ` +
           `Delete that bucket manually in Cloudflare, or use an explicit ownership-adoption workflow.`
       );
-      continue;
-    }
-    const remote = remoteByName.get(pinned.name);
-    if (!remote) {
-      targets.push(pinned);
       continue;
     }
     if (remote.creationDate !== pinned.creationDate) {
@@ -9814,29 +9885,36 @@ function isRecognizedQueueListOutput(stdout: string): boolean {
   }
 }
 
-async function listQueuesViaApi(): Promise<QueueListRow[] | null> {
+async function listQueuesViaApi(accountId?: string): Promise<QueueListRow[] | null> {
   return listCloudflarePaginatedResourcesViaApi({
     path: 'queues',
     label: 'Queue list',
     normalizeRows: normalizeQueueRows,
     identityKey: (row) => `${row.name}\u0000${row.id ?? ''}`,
+    accountId,
   });
 }
 
 export async function listQueues(
-  options: { strictOutput?: boolean; requireIds?: boolean } = {}
+  options: { strictOutput?: boolean; requireIds?: boolean; accountId?: string } = {}
 ): Promise<Array<{ name: string; id?: string }>> {
   let apiError: unknown;
   try {
     // Wrangler's Queue command exposes one page at a time. Prefer the REST inventory because it
     // carries stable pagination metadata and is therefore the authoritative complete snapshot.
-    const apiQueues = await listQueuesViaApi();
+    const apiQueues = await listQueuesViaApi(options.accountId);
     if (apiQueues) {
       if (options.requireIds) assertQueueInventoryHasUniqueIds(apiQueues, 'Cloudflare API');
       return apiQueues;
     }
   } catch (error) {
     apiError = error;
+  }
+
+  // Recovery must inspect the exact account pinned by the provisioning journal. Wrangler's
+  // ambient-account fallback cannot prove that a same-name Queue is absent from that account.
+  if (options.accountId) {
+    throw new Error('Pinned Cloudflare Queue inventory is unavailable', { cause: apiError });
   }
 
   let wranglerError: unknown;
@@ -11142,7 +11220,8 @@ async function requestR2Api<
   init: NonNullable<Parameters<typeof fetch>[1]>,
   label: string,
   acceptNotFound = false,
-  credentialSource: CloudflareApiToken['source'] = 'env'
+  credentialSource: CloudflareApiToken['source'] = 'env',
+  timeoutMs?: number
 ): Promise<{ data: T; notFound: boolean }> {
   const method = (init.method ?? 'GET').toUpperCase();
   const retryMode: CloudflareApiRetryMode =
@@ -11152,6 +11231,7 @@ async function requestR2Api<
     const { response, data } = await requestCloudflareApiJson<T>(url, requestInit, {
       label,
       retryMode,
+      timeoutMs,
       maxAttempts: 7,
       isRetryableResponse: (_response, payload) => {
         const errors =
@@ -11226,13 +11306,14 @@ function parseR2BucketInfoOutput(
  * the account-wide list when Cloudflare exposes a bucket-scoped identity endpoint.
  */
 async function getR2BucketIdentityStrict(
-  name: string
+  name: string,
+  pinnedCredentials?: CloudflareInventoryCredentials
 ): Promise<(R2BucketProviderIdentity & { creationDate: string }) | null> {
   if (!R2_BUCKET_NAME_PATTERN.test(name)) throw new Error('invalid_r2_bucket_name');
 
   let apiError: unknown;
   try {
-    const credentials = await resolveCloudflareInventoryCredentials();
+    const credentials = pinnedCredentials ?? (await resolveCloudflareInventoryCredentials());
     if (credentials) {
       const { data, notFound } = await requestR2Api<CloudflareR2BucketGetResponse>(
         `https://api.cloudflare.com/client/v4/accounts/${credentials.accountId}/r2/buckets/${encodeURIComponent(name)}`,
@@ -11455,9 +11536,9 @@ async function removeAllR2ObjectsViaApi(
 
 async function assertLiveR2DeletionIdentity(
   identity: ExactDeletionR2Identity,
-  options: { requireMarker: boolean }
+  options: { requireMarker: boolean; credentials?: CloudflareInventoryCredentials }
 ): Promise<'present' | 'absent'> {
-  const live = await getR2BucketIdentityStrict(identity.name);
+  const live = await getR2BucketIdentityStrict(identity.name, options.credentials);
   if (!live) return 'absent';
   if (live.creationDate !== identity.creationDate) {
     throw new Error(
@@ -11471,6 +11552,7 @@ async function assertLiveR2DeletionIdentity(
       ownershipId: identity.ownershipId,
       environment: identity.environment,
       binding: identity.binding,
+      credentials: options.credentials,
     });
   }
   return 'present';
@@ -11508,17 +11590,31 @@ export async function assertR2BucketOwnershipIdentity(identity: DeletionR2Identi
  * an R2 bucket. Unlike binding-only verification, legacy name-only locks are intentionally denied:
  * a same-name replacement could otherwise supply untrusted migration SQL or receive plugin code.
  */
-export async function assertR2BucketOwnershipForUse(identity: DeletionR2Identity): Promise<void> {
+export async function assertR2BucketOwnershipForUse(
+  identity: DeletionR2Identity,
+  credentials?: CloudflareInventoryCredentials
+): Promise<void> {
   const exact = requireCompleteR2DeletionIdentity(identity.name, identity);
-  if ((await assertLiveR2DeletionIdentity(exact, { requireMarker: true })) === 'absent') {
+  if (
+    (await assertLiveR2DeletionIdentity(exact, { requireMarker: true, credentials })) === 'absent'
+  ) {
     throw new Error(`R2 bucket ${identity.name} recorded in lock.json is missing`);
   }
-  const afterMarker = (await listR2BucketIdentitiesStrict()).find(
+  const afterMarker = (await listR2BucketIdentitiesStrict(credentials)).find(
     (bucket) => bucket.name === exact.name
   );
   if (!afterMarker || afterMarker.creationDate !== exact.creationDate) {
     throw new Error(`R2 bucket ${identity.name} changed while Setup verified its ownership marker`);
   }
+}
+
+/** Resolve credentials once, while checking the live bucket generation on every write boundary. */
+export async function createR2BucketOwnershipVerifier(
+  identity: DeletionR2Identity
+): Promise<() => Promise<void>> {
+  requireCompleteR2DeletionIdentity(identity.name, identity);
+  const credentials = await resolveCloudflareInventoryCredentials();
+  return () => assertR2BucketOwnershipForUse(identity, credentials ?? undefined);
 }
 
 /**
@@ -12365,12 +12461,14 @@ export async function deleteEnvironment(options: DeleteOptions): Promise<{
     onProgress(`📁 Deleting R2 Buckets (${envInfo.r2.length})...`);
     for (const bucket of envInfo.r2) {
       onProgress(`  ⏳ Deleting: ${bucket.name}...`);
-      const r2Result = await deleteR2Bucket(bucket.name, {
-        objectKeys: knownR2ObjectsByBucket.get(bucket.name) ?? [],
-        onProgress,
-        apiCredentials: r2ApiCredentials,
-        ownership: bucket,
-      });
+      const r2Result = r2Preflight.liveNames.has(bucket.name)
+        ? await deleteR2Bucket(bucket.name, {
+            objectKeys: knownR2ObjectsByBucket.get(bucket.name) ?? [],
+            onProgress,
+            apiCredentials: r2ApiCredentials,
+            ownership: bucket,
+          })
+        : ({ status: 'deleted' } as const);
       if (r2Result.status === 'deleted') {
         deleted.r2.push(bucket.name);
         onProgress(`  ✅ ${bucket.name}`);

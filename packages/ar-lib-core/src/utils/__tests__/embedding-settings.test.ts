@@ -7,11 +7,15 @@ function kv(values: Record<string, string>): KVNamespace {
 }
 
 describe('token embedding settings at runtime', () => {
-  it('keeps the older behavior with nothing set for the tenant', async () => {
+  it("uses the platform's values with nothing set for the tenant", async () => {
     const env = {
       SETTINGS: kv({
-        'policy:flags:ENABLE_POLICY_EMBEDDING': '1',
-        'config:max_embedded_permissions': '70',
+        'settings:platform:feature-flags': JSON.stringify({
+          'feature.enable_policy_embedding': true,
+        }),
+        'settings:platform:limits': JSON.stringify({ 'limits.max_embedded_permissions': 70 }),
+        // The older stores are no longer read.
+        'config:max_resource_permissions': '7',
       }),
       MAX_CUSTOM_CLAIMS: '30',
     };
@@ -30,7 +34,9 @@ describe('token embedding settings at runtime', () => {
   it("applies the tenant's Settings API values", async () => {
     const env = {
       SETTINGS: kv({
-        'policy:flags:ENABLE_POLICY_EMBEDDING': 'true',
+        'settings:platform:feature-flags': JSON.stringify({
+          'feature.enable_policy_embedding': true,
+        }),
         'settings:tenant:acme:feature-flags': JSON.stringify({
           'feature.enable_policy_embedding': false,
         }),
@@ -53,26 +59,6 @@ describe('token embedding settings at runtime', () => {
       max_embedded_permissions: 50,
       max_resource_permissions: 100,
       max_custom_claims: 20,
-    });
-  });
-
-  it('does not fall back to env when only the older saved value cannot be read', async () => {
-    const env = {
-      SETTINGS: {
-        get: async (key: string) => {
-          if (key.startsWith('policy:flags:') || key.startsWith('config:max_')) {
-            throw new Error('kv unavailable');
-          }
-          return null;
-        },
-      } as unknown as KVNamespace,
-      ENABLE_POLICY_EMBEDDING: 'true',
-      MAX_RESOURCE_PERMISSIONS: '900',
-    };
-
-    await expect(isPolicyEmbeddingEnabled(env, 'acme')).resolves.toBe(false);
-    await expect(getEmbeddingLimits(env, 'acme')).resolves.toMatchObject({
-      max_resource_permissions: 100,
     });
   });
 });

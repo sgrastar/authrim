@@ -1783,7 +1783,9 @@ export async function adminJobsUsersBulkUpdateHandler(c: Context<{ Bindings: Env
         'users/bulk-update',
         'pending',
         JSON.stringify({ total: affectedCount, processed: 0, succeeded: 0, failed: 0 }),
-        JSON.stringify(options),
+        // The version of the job's status transitions, fixed now (set here, never from the
+        // request): a status change made after the job was created is newer and wins.
+        JSON.stringify({ ...options, lifecycle_version_ms: Date.now() }),
         createdBy,
         nowTs,
         nowTs,

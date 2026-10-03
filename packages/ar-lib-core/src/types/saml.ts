@@ -758,6 +758,12 @@ export interface SAMLIdPConfig {
    */
   jitEmailLinkingPolicy?: SAMLJitEmailLinkingPolicy;
   /**
+   * The profile fields a login from this IdP updates (standard profile claim names, after the
+   * field mapping), overriding the tenant's `external_idp.jit_update_fields`. Null or absent
+   * follows the tenant; an empty list updates none.
+   */
+  profileUpdateFields?: string[] | null;
+  /**
    * Legacy compatibility escape hatch. When false/omitted, ACS rejects assertions that
    * cannot produce an email. When true, ACS uses a non-PII synthetic local email.
    */

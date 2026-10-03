@@ -18,8 +18,18 @@ import {
   resolveGeneratedApprovalSmokeClient,
 } from './generated-approvals-smoke-client.js';
 import { ensureGeneratedTokenExchangeEnabled } from './generated-token-exchange-settings.js';
+import { waitForSettingsToApply } from './generated-settings-v2.js';
 
 const ELEVATION_GRANT_SUBJECT_TOKEN_TYPE = 'urn:authrim:token-type:elevation-grant';
+
+/** Token Exchange refused as not enabled (runtime has not seen the setting yet). */
+function isRefusedGrant(response: { status: number; payload?: unknown }): boolean {
+  return (
+    response.status === 400 &&
+    isRecord(response.payload) &&
+    response.payload.error === 'unsupported_grant_type'
+  );
+}
 const PROTECTED_RESOURCE_GRANT_RETRY_DELAY_MS = 750;
 const PROTECTED_RESOURCE_GRANT_MAX_RETRIES = 5;
 
@@ -759,25 +769,33 @@ export async function runGeneratedApprovalsSmoke(
         `${target.baseUrl}/token`
       );
       let downstreamAccessToken: string | undefined;
-      const tokenExchangeResponse = await fetchJsonWithTimeout(
-        `${target.baseUrl}/token`,
-        timeoutMs,
-        {
+      const exchangeBody = new URLSearchParams({
+        grant_type: 'urn:ietf:params:oauth:grant-type:token-exchange',
+        subject_token: subjectToken,
+        subject_token_type: ELEVATION_GRANT_SUBJECT_TOKEN_TYPE,
+        requested_token_type: 'urn:ietf:params:oauth:token-type:access_token',
+        audience: targetAudience,
+      }).toString();
+      const exchange = () =>
+        fetchJsonWithTimeout(`${target.baseUrl}/token`, timeoutMs, {
           method: 'POST',
           headers: {
             authorization: `Basic ${encodeBasicAuth(resolvedClientId, resolvedClientSecret)}`,
             accept: 'application/json',
             'content-type': 'application/x-www-form-urlencoded',
           },
-          body: new URLSearchParams({
-            grant_type: 'urn:ietf:params:oauth:grant-type:token-exchange',
-            subject_token: subjectToken,
-            subject_token_type: ELEVATION_GRANT_SUBJECT_TOKEN_TYPE,
-            requested_token_type: 'urn:ietf:params:oauth:token-type:access_token',
-            audience: targetAudience,
-          }).toString(),
-        }
-      );
+          body: exchangeBody,
+        });
+      let tokenExchangeResponse = await exchange();
+      // Settings just changed reach runtime within about a minute: until then it may still
+      // refuse the grant (before reading the subject token, so retrying is safe).
+      if (tokenExchangeEnable.changed) {
+        await waitForSettingsToApply(async () => {
+          if (!isRefusedGrant(tokenExchangeResponse)) return true;
+          tokenExchangeResponse = await exchange();
+          return !isRefusedGrant(tokenExchangeResponse);
+        });
+      }
       tokenExchangeCheck.httpStatus = tokenExchangeResponse.status;
 
       if (!tokenExchangeResponse.ok) {

@@ -315,6 +315,23 @@ describe('Audit PII Configuration API', () => {
       expect(body.error_description).toContain('at least');
     });
 
+    it('rejects retention that is not a whole number of days', async () => {
+      const { app, mockEnv } = createTestApp();
+      for (const body of [{ eventLogRetentionDays: 90.5 }, { piiLogRetentionDays: '365' }]) {
+        const res = await app.request(
+          '/api/admin/tenants/tenant-1/audit/pii-config',
+          {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+          },
+          mockEnv
+        );
+        expect(res.status).toBe(400);
+        expect(((await res.json()) as any).error_description).toContain('whole number of days');
+      }
+    });
+
     it('should reject retention days above maximum', async () => {
       const { app, mockEnv } = createTestApp();
 

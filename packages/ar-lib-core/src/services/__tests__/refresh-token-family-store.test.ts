@@ -132,7 +132,8 @@ describe('refresh-token-family-store', () => {
     );
 
     expect(result?.resource_aud).toEqual(['svc://api', 'svc://admin']);
-    expect(validateRpc).toHaveBeenCalledWith('user_123', 1, 'client_123');
+    // Only the family's latest token is valid: the presented JWT ID goes with the check.
+    expect(validateRpc).toHaveBeenCalledWith('user_123', 1, 'client_123', 'g1:wnam:7:rt_abc123');
   });
 
   it('resolves an existing rotator stub from a sharded refresh token JTI', () => {

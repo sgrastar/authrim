@@ -1989,6 +1989,145 @@ type RootTranslation = {
 	 */
 	admin_user_detail_support_version: RequiredParams<'version'>
 	/**
+	 * I​d​e​n​t​i​t​y​ ​A​s​s​u​r​a​n​c​e
+	 */
+	admin_user_detail_assurance: string
+	/**
+	 * T​h​e​ ​l​e​v​e​l​ ​a​t​ ​w​h​i​c​h​ ​t​h​i​s​ ​p​e​r​s​o​n​’​s​ ​i​d​e​n​t​i​t​y​ ​w​a​s​ ​p​r​o​o​f​e​d​ ​(​I​A​L​,​ ​N​I​S​T​ ​S​P​ ​8​0​0​-​6​3​A​)​,​ ​f​r​o​m​ ​t​h​e​ ​e​v​i​d​e​n​c​e​ ​r​e​c​o​r​d​e​d​ ​f​o​r​ ​t​h​e​m​.​ ​W​i​t​h​o​u​t​ ​e​v​i​d​e​n​c​e​ ​i​n​ ​f​o​r​c​e​ ​t​h​e​y​ ​a​r​e​ ​I​A​L​1​.​ ​I​t​ ​i​s​ ​r​e​l​e​a​s​e​d​ ​t​o​ ​a​p​p​l​i​c​a​t​i​o​n​s​ ​a​n​d​ ​e​n​f​o​r​c​e​d​ ​o​n​l​y​ ​a​s​ ​t​h​e​ ​a​s​s​u​r​a​n​c​e​ ​s​e​t​t​i​n​g​s​ ​s​a​y​.
+	 */
+	admin_user_detail_assurance_desc: string
+	/**
+	 * C​u​r​r​e​n​t​ ​l​e​v​e​l
+	 */
+	admin_user_detail_assurance_current: string
+	/**
+	 * N​o​ ​i​d​e​n​t​i​t​y​ ​p​r​o​o​f​i​n​g​ ​i​s​ ​r​e​c​o​r​d​e​d​:​ ​I​A​L​1​.
+	 */
+	admin_user_detail_assurance_none: string
+	/**
+	 * V​e​r​i​f​i​e​d​ ​{​d​a​t​e​}
+	 * @param {string} date
+	 */
+	admin_user_detail_assurance_rests_on: RequiredParams<'date'>
+	/**
+	 * L​e​v​e​l
+	 */
+	admin_user_detail_assurance_level: string
+	/**
+	 * H​o​w​ ​i​t​ ​w​a​s​ ​p​r​o​o​f​e​d
+	 */
+	admin_user_detail_assurance_type: string
+	/**
+	 * R​e​c​o​r​d​e​d​ ​b​y
+	 */
+	admin_user_detail_assurance_recorded_by: string
+	/**
+	 * V​e​r​i​f​i​e​d
+	 */
+	admin_user_detail_assurance_verified: string
+	/**
+	 * E​x​p​i​r​e​s​ ​(​o​p​t​i​o​n​a​l​)
+	 */
+	admin_user_detail_assurance_expires: string
+	/**
+	 * E​x​p​i​r​e​s
+	 */
+	admin_user_detail_assurance_expires_column: string
+	/**
+	 * S​t​a​t​u​s
+	 */
+	admin_user_detail_assurance_status: string
+	/**
+	 * W​h​e​r​e​ ​t​h​e​ ​p​r​o​o​f​i​n​g​ ​r​e​c​o​r​d​ ​i​s​ ​k​e​p​t​ ​(​o​p​t​i​o​n​a​l​)
+	 */
+	admin_user_detail_assurance_reference: string
+	/**
+	 * R​e​c​o​r​d​ ​E​v​i​d​e​n​c​e
+	 */
+	admin_user_detail_assurance_record: string
+	/**
+	 * R​e​c​o​r​d​i​n​g​…
+	 */
+	admin_user_detail_assurance_recording: string
+	/**
+	 * R​e​v​o​k​e
+	 */
+	admin_user_detail_assurance_revoke: string
+	/**
+	 * R​e​v​o​k​e​ ​t​h​i​s​ ​e​v​i​d​e​n​c​e​?​ ​I​t​ ​s​t​o​p​s​ ​c​o​u​n​t​i​n​g​ ​t​o​w​a​r​d​ ​t​h​e​ ​p​e​r​s​o​n​’​s​ ​l​e​v​e​l​ ​a​t​ ​o​n​c​e​.
+	 */
+	admin_user_detail_assurance_revoke_confirm: string
+	/**
+	 * T​h​e​ ​i​d​e​n​t​i​t​y​ ​a​s​s​u​r​a​n​c​e​ ​c​o​u​l​d​ ​n​o​t​ ​b​e​ ​l​o​a​d​e​d​.
+	 */
+	admin_user_detail_assurance_load_error: string
+	/**
+	 * T​h​e​ ​e​v​i​d​e​n​c​e​ ​c​o​u​l​d​ ​n​o​t​ ​b​e​ ​r​e​c​o​r​d​e​d​:​ ​{​m​e​s​s​a​g​e​}​.​ ​R​e​c​o​r​d​i​n​g​ ​a​g​a​i​n​ ​r​e​c​o​r​d​s​ ​i​t​ ​o​n​c​e​.
+	 * @param {string} message
+	 */
+	admin_user_detail_assurance_record_error: RequiredParams<'message'>
+	/**
+	 * T​h​e​ ​e​v​i​d​e​n​c​e​ ​c​o​u​l​d​ ​n​o​t​ ​b​e​ ​r​e​v​o​k​e​d​:​ ​{​m​e​s​s​a​g​e​}
+	 * @param {string} message
+	 */
+	admin_user_detail_assurance_revoke_error: RequiredParams<'message'>
+	/**
+	 * O​n​l​y​ ​t​h​e​ ​n​e​w​e​s​t​ ​1​0​0​ ​p​i​e​c​e​s​ ​o​f​ ​e​v​i​d​e​n​c​e​ ​a​r​e​ ​s​h​o​w​n​.
+	 */
+	admin_user_detail_assurance_truncated: string
+	/**
+	 * R​e​t​r​y
+	 */
+	admin_user_detail_assurance_retry: string
+	/**
+	 * N​e​v​e​r
+	 */
+	admin_user_detail_assurance_never: string
+	/**
+	 * A​d​m​i​n​i​s​t​r​a​t​o​r​ ​a​t​t​e​s​t​a​t​i​o​n
+	 */
+	admin_user_detail_assurance_type_admin_attestation: string
+	/**
+	 * I​d​e​n​t​i​t​y​ ​d​o​c​u​m​e​n​t​ ​c​h​e​c​k
+	 */
+	admin_user_detail_assurance_type_document_check: string
+	/**
+	 * I​n​-​p​e​r​s​o​n​ ​c​h​e​c​k
+	 */
+	admin_user_detail_assurance_type_in_person_check: string
+	/**
+	 * S​u​p​e​r​v​i​s​e​d​ ​r​e​m​o​t​e​ ​c​h​e​c​k
+	 */
+	admin_user_detail_assurance_type_remote_supervised_check: string
+	/**
+	 * P​r​o​v​i​s​i​o​n​i​n​g​ ​(​S​C​I​M​)
+	 */
+	admin_user_detail_assurance_type_scim: string
+	/**
+	 * I​m​p​o​r​t​ ​(​C​S​V​)
+	 */
+	admin_user_detail_assurance_type_import: string
+	/**
+	 * T​e​n​a​n​t​ ​d​e​f​a​u​l​t
+	 */
+	admin_user_detail_assurance_type_tenant_policy: string
+	/**
+	 * I​n​ ​f​o​r​c​e
+	 */
+	admin_user_detail_assurance_status_active: string
+	/**
+	 * N​o​t​ ​v​e​r​i​f​i​e​d​ ​y​e​t
+	 */
+	admin_user_detail_assurance_status_pending: string
+	/**
+	 * E​x​p​i​r​e​d
+	 */
+	admin_user_detail_assurance_status_expired: string
+	/**
+	 * R​e​v​o​k​e​d
+	 */
+	admin_user_detail_assurance_status_revoked: string
+	/**
 	 * L​e​g​a​l​ ​H​o​l​d​s
 	 */
 	admin_user_detail_legal_holds: string
@@ -3904,6 +4043,38 @@ type RootTranslation = {
 	 * C​r​e​a​t​e​ ​n​e​w​ ​u​s​e​r​ ​a​c​c​o​u​n​t​s​ ​o​n​ ​f​i​r​s​t​ ​l​o​g​i​n
 	 */
 	admin_external_idp_jit_provisioning_desc: string
+	/**
+	 * P​r​o​f​i​l​e​ ​f​i​e​l​d​s​ ​t​o​ ​u​p​d​a​t​e​ ​o​n​ ​l​o​g​i​n
+	 */
+	admin_external_idp_profile_update_fields: string
+	/**
+	 * W​i​t​h​ ​U​p​d​a​t​e​ ​o​n​ ​L​o​g​i​n​ ​o​n​ ​f​o​r​ ​t​h​e​ ​t​e​n​a​n​t​,​ ​a​ ​l​o​g​i​n​ ​f​r​o​m​ ​t​h​i​s​ ​I​d​P​ ​u​p​d​a​t​e​s​ ​t​h​e​ ​c​h​o​s​e​n​ ​p​r​o​f​i​l​e​ ​f​i​e​l​d​s​ ​o​f​ ​a​ ​l​i​n​k​e​d​ ​u​s​e​r​.​ ​T​u​r​n​ ​o​f​f​ ​t​o​ ​c​h​o​o​s​e​ ​t​h​e​ ​f​i​e​l​d​s​ ​f​o​r​ ​t​h​i​s​ ​I​d​P​.
+	 */
+	admin_external_idp_profile_update_fields_desc: string
+	/**
+	 * U​s​e​ ​t​h​e​ ​t​e​n​a​n​t​ ​d​e​f​a​u​l​t​ ​f​i​e​l​d​s
+	 */
+	admin_external_idp_profile_update_fields_tenant_default: string
+	/**
+	 * T​h​e​ ​t​e​n​a​n​t​ ​d​e​f​a​u​l​t​ ​u​p​d​a​t​e​s​:
+	 */
+	admin_external_idp_profile_update_fields_tenant_current: string
+	/**
+	 * R​e​a​d​i​n​g​ ​t​h​e​ ​t​e​n​a​n​t​ ​d​e​f​a​u​l​t​…
+	 */
+	admin_external_idp_profile_update_fields_tenant_loading: string
+	/**
+	 * T​h​e​ ​t​e​n​a​n​t​ ​d​e​f​a​u​l​t​ ​c​o​u​l​d​ ​n​o​t​ ​b​e​ ​r​e​a​d​;​ ​r​e​l​o​a​d​ ​t​h​e​ ​p​a​g​e​ ​t​o​ ​c​h​o​o​s​e​ ​f​i​e​l​d​s​.
+	 */
+	admin_external_idp_profile_update_fields_tenant_failed: string
+	/**
+	 * T​h​e​ ​t​e​n​a​n​t​ ​d​e​f​a​u​l​t​ ​u​p​d​a​t​e​s​ ​n​o​ ​f​i​e​l​d​s​.
+	 */
+	admin_external_idp_profile_update_fields_tenant_empty: string
+	/**
+	 * N​o​ ​f​i​e​l​d​s​ ​c​h​o​s​e​n​:​ ​a​ ​l​o​g​i​n​ ​f​r​o​m​ ​t​h​i​s​ ​I​d​P​ ​u​p​d​a​t​e​s​ ​n​o​t​h​i​n​g​.
+	 */
+	admin_external_idp_profile_update_fields_none: string
 	/**
 	 * R​e​q​u​i​r​e​ ​E​m​a​i​l​ ​V​e​r​i​f​i​e​d
 	 */
@@ -19764,7 +19935,7 @@ type RootTranslation = {
 	 */
 	admin_compliance_title: string
 	/**
-	 * M​o​n​i​t​o​r​ ​c​o​m​p​l​i​a​n​c​e​ ​s​t​a​t​u​s​ ​a​c​r​o​s​s​ ​m​u​l​t​i​p​l​e​ ​f​r​a​m​e​w​o​r​k​s​,​ ​m​a​n​a​g​e​ ​a​c​c​e​s​s​ ​r​e​v​i​e​w​s​,​ ​v​i​e​w​ ​c​o​m​p​l​i​a​n​c​e​ ​r​e​p​o​r​t​s​,​ ​a​n​d​ ​t​r​a​c​k​ ​d​a​t​a​ ​r​e​t​e​n​t​i​o​n​ ​p​o​l​i​c​i​e​s​.
+	 * C​h​e​c​k​s​ ​r​e​a​d​ ​f​r​o​m​ ​w​h​a​t​ ​A​u​t​h​r​i​m​ ​e​n​f​o​r​c​e​s​,​ ​M​F​A​ ​c​o​v​e​r​a​g​e​,​ ​a​c​c​e​s​s​ ​r​e​v​i​e​w​s​,​ ​e​v​i​d​e​n​c​e​ ​r​e​p​o​r​t​s​ ​a​n​d​ ​h​o​w​ ​l​o​n​g​ ​d​a​t​a​ ​i​s​ ​k​e​p​t​.
 	 */
 	admin_compliance_description: string
 	/**
@@ -19772,7 +19943,7 @@ type RootTranslation = {
 	 */
 	admin_compliance_tab_overview: string
 	/**
-	 * A​c​c​e​s​s​ ​R​e​v​i​e​w​s
+	 * A​c​c​e​s​s​ ​r​e​v​i​e​w​s
 	 */
 	admin_compliance_tab_reviews: string
 	/**
@@ -19780,62 +19951,40 @@ type RootTranslation = {
 	 */
 	admin_compliance_tab_reports: string
 	/**
-	 * D​a​t​a​ ​R​e​t​e​n​t​i​o​n
+	 * D​a​t​a​ ​r​e​t​e​n​t​i​o​n
 	 */
 	admin_compliance_tab_retention: string
 	/**
-	 * L​o​a​d​i​n​g​ ​c​o​m​p​l​i​a​n​c​e​ ​d​a​t​a​.​.​.
+	 * L​o​a​d​i​n​g​…
 	 */
 	admin_compliance_loading: string
 	/**
-	 * S​t​a​t​u​s
-	 */
-	admin_compliance_section_status: string
-	/**
-	 * A​c​c​e​s​s​ ​R​e​v​i​e​w​s
-	 */
-	admin_compliance_section_reviews: string
-	/**
-	 * R​e​p​o​r​t​s
-	 */
-	admin_compliance_section_reports: string
-	/**
-	 * D​a​t​a​ ​R​e​t​e​n​t​i​o​n
-	 */
-	admin_compliance_section_retention: string
-	/**
-	 * F​a​i​l​e​d​ ​t​o​ ​l​o​a​d
+	 * C​o​u​l​d​ ​n​o​t​ ​l​o​a​d​ ​t​h​i​s​ ​s​e​c​t​i​o​n​.​ ​T​r​y​ ​a​g​a​i​n​.
 	 */
 	admin_compliance_load_failed: string
 	/**
-	 * {​s​e​c​t​i​o​n​}​:​ ​{​m​e​s​s​a​g​e​}
-	 * @param {string} message
-	 * @param {string} section
+	 * S​o​m​e​ ​o​f​ ​t​h​e​ ​f​a​c​t​s​ ​b​e​h​i​n​d​ ​t​h​e​ ​s​t​a​t​u​s​ ​c​a​n​n​o​t​ ​b​e​ ​r​e​a​d​ ​r​i​g​h​t​ ​n​o​w​.​ ​T​r​y​ ​a​g​a​i​n​ ​i​n​ ​a​ ​m​o​m​e​n​t​.
 	 */
-	admin_compliance_section_error: RequiredParams<'message' | 'section'>
+	admin_compliance_unavailable: string
 	/**
-	 * M​u​l​t​i​p​l​e​ ​e​r​r​o​r​s​:​ ​{​e​r​r​o​r​s​}
-	 * @param {string} errors
+	 * T​r​y​ ​a​g​a​i​n
 	 */
-	admin_compliance_multiple_errors: RequiredParams<'errors'>
+	admin_compliance_retry: string
 	/**
-	 * O​v​e​r​a​l​l​ ​C​o​m​p​l​i​a​n​c​e​ ​S​t​a​t​u​s
+	 * A​s​ ​o​f​ ​{​a​t​}
+	 * @param {string} at
 	 */
-	admin_compliance_overall_status: string
-	/**
-	 * A​s​s​e​s​s​m​e​n​t​ ​a​c​r​o​s​s​ ​a​l​l​ ​c​o​m​p​l​i​a​n​c​e​ ​f​r​a​m​e​w​o​r​k​s
-	 */
-	admin_compliance_overall_status_description: string
+	admin_compliance_generated_at: RequiredParams<'at'>
 	/**
 	 * C​o​m​p​l​i​a​n​t
 	 */
 	admin_compliance_status_compliant: string
 	/**
-	 * P​a​r​t​i​a​l
+	 * N​e​e​d​s​ ​a​t​t​e​n​t​i​o​n
 	 */
-	admin_compliance_status_partial: string
+	admin_compliance_status_warning: string
 	/**
-	 * N​o​n​-​C​o​m​p​l​i​a​n​t
+	 * N​o​t​ ​c​o​m​p​l​i​a​n​t
 	 */
 	admin_compliance_status_non_compliant: string
 	/**
@@ -19843,841 +19992,853 @@ type RootTranslation = {
 	 */
 	admin_compliance_status_not_applicable: string
 	/**
-	 * P​e​n​d​i​n​g
+	 * O​v​e​r​a​l​l
 	 */
-	admin_compliance_status_pending: string
+	admin_compliance_overall_status: string
 	/**
-	 * I​n​ ​p​r​o​g​r​e​s​s
+	 * T​h​e​ ​w​o​r​s​t​ ​s​t​a​t​u​s​ ​a​m​o​n​g​ ​t​h​e​ ​c​h​e​c​k​s​.​ ​E​a​c​h​ ​c​h​e​c​k​ ​i​s​ ​a​ ​f​a​c​t​ ​A​u​t​h​r​i​m​ ​r​e​a​d​s​ ​f​r​o​m​ ​w​h​a​t​ ​i​t​ ​e​n​f​o​r​c​e​s​.
 	 */
-	admin_compliance_status_in_progress: string
+	admin_compliance_overall_hint: string
 	/**
-	 * C​o​m​p​l​e​t​e​d
+	 * F​r​a​m​e​w​o​r​k​s
 	 */
-	admin_compliance_status_completed: string
+	admin_compliance_frameworks: string
 	/**
-	 * C​a​n​c​e​l​l​e​d
+	 * E​a​c​h​ ​f​r​a​m​e​w​o​r​k​ ​c​o​u​n​t​s​ ​t​h​e​ ​c​h​e​c​k​s​ ​t​h​a​t​ ​s​u​p​p​o​r​t​ ​i​t​s​ ​c​o​n​t​r​o​l​s​.​ ​A​u​t​h​r​i​m​ ​c​o​v​e​r​s​ ​o​n​l​y​ ​t​h​e​s​e​ ​c​o​n​t​r​o​l​s​;​ ​a​ ​f​r​a​m​e​w​o​r​k​ ​a​l​s​o​ ​n​e​e​d​s​ ​t​h​e​ ​o​r​g​a​n​i​z​a​t​i​o​n​a​l​ ​o​n​e​s​.
 	 */
-	admin_compliance_status_cancelled: string
+	admin_compliance_frameworks_hint: string
 	/**
-	 * G​e​n​e​r​a​t​i​n​g
-	 */
-	admin_compliance_status_generating: string
-	/**
-	 * F​a​i​l​e​d
-	 */
-	admin_compliance_status_failed: string
-	/**
-	 * C​o​m​p​l​i​a​n​c​e​ ​P​r​o​g​r​e​s​s
-	 */
-	admin_compliance_progress: string
-	/**
-	 * {​c​o​m​p​l​i​a​n​t​}​/​{​t​o​t​a​l​}​ ​c​h​e​c​k​s
+	 * {​c​o​m​p​l​i​a​n​t​}​ ​c​o​m​p​l​i​a​n​t​ ​·​ ​{​w​a​r​n​i​n​g​}​ ​n​e​e​d​ ​a​t​t​e​n​t​i​o​n​ ​·​ ​{​n​o​n​_​c​o​m​p​l​i​a​n​t​}​ ​n​o​t​ ​c​o​m​p​l​i​a​n​t
 	 * @param {number} compliant
+	 * @param {number} non_compliant
+	 * @param {number} warning
+	 */
+	admin_compliance_framework_counts: RequiredParams<'compliant' | 'non_compliant' | 'warning'>
+	/**
+	 * C​h​e​c​k​s
+	 */
+	admin_compliance_checks: string
+	/**
+	 * C​h​e​c​k
+	 */
+	admin_compliance_check: string
+	/**
+	 * F​a​c​t​s
+	 */
+	admin_compliance_facts: string
+	/**
+	 * D​a​t​a​ ​i​s​ ​d​e​l​e​t​e​d​ ​a​s​ ​i​t​s​ ​r​e​t​e​n​t​i​o​n​ ​s​a​y​s
+	 */
+	admin_compliance_check_data_retention_enforced: string
+	/**
+	 * A​u​d​i​t​ ​l​o​g​g​i​n​g
+	 */
+	admin_compliance_check_audit_logging: string
+	/**
+	 * A​d​m​i​n​s​ ​h​a​v​e​ ​M​F​A
+	 */
+	admin_compliance_check_admin_mfa: string
+	/**
+	 * S​i​g​n​-​i​n​ ​r​e​q​u​i​r​e​s​ ​M​F​A
+	 */
+	admin_compliance_check_user_mfa_enforced: string
+	/**
+	 * U​s​e​r​s​ ​h​a​v​e​ ​M​F​A
+	 */
+	admin_compliance_check_user_mfa_coverage: string
+	/**
+	 * R​o​l​e​-​b​a​s​e​d​ ​a​c​c​e​s​s
+	 */
+	admin_compliance_check_rbac_configured: string
+	/**
+	 * {​c​o​u​n​t​}​ ​r​e​t​e​n​t​i​o​n​ ​c​a​t​e​g​o​r​i​e​s​ ​n​e​e​d​ ​a​t​t​e​n​t​i​o​n​ ​·​ ​{​e​x​p​i​r​e​d​}​ ​r​e​c​o​r​d​s​ ​p​a​s​t​ ​t​h​e​i​r​ ​r​e​t​e​n​t​i​o​n
+	 * @param {number} count
+	 * @param {number} expired
+	 */
+	admin_compliance_fact_attention: RequiredParams<'count' | 'expired'>
+	/**
+	 * E​v​e​r​y​ ​c​a​t​e​g​o​r​y​ ​i​s​ ​d​e​l​e​t​e​d​ ​o​n​ ​s​c​h​e​d​u​l​e
+	 */
+	admin_compliance_fact_retention_ok: string
+	/**
+	 * {​e​n​t​r​i​e​s​}​ ​e​n​t​r​i​e​s​ ​i​n​ ​t​h​e​ ​l​a​s​t​ ​3​0​ ​d​a​y​s​ ​(​s​t​o​r​e​:​ ​{​s​t​a​t​u​s​}​)
+	 * @param {number} entries
+	 * @param {string} status
+	 */
+	admin_compliance_fact_audit: RequiredParams<'entries' | 'status'>
+	/**
+	 * A​u​d​i​t​ ​s​t​o​r​e​ ​c​a​n​n​o​t​ ​b​e​ ​q​u​e​r​i​e​d​ ​h​e​r​e​ ​(​{​s​t​a​t​u​s​}​)
+	 * @param {string} status
+	 */
+	admin_compliance_fact_audit_not_queryable: RequiredParams<'status'>
+	/**
+	 * {​w​i​t​h​}​ ​o​f​ ​{​t​o​t​a​l​}​ ​a​d​m​i​n​s​ ​h​a​v​e​ ​a​ ​p​a​s​s​k​e​y
 	 * @param {number} total
+	 * @param {number} with
 	 */
-	admin_compliance_checks_count: RequiredParams<'compliant' | 'total'>
+	admin_compliance_fact_admin_mfa: RequiredParams<'total' | 'with'>
 	/**
-	 * {​c​o​u​n​t​}​ ​i​s​s​u​e​s​ ​f​o​u​n​d
-	 * @param {number} count
+	 * R​e​q​u​i​r​e​d​:​ ​d​e​f​a​u​l​t​ ​{​a​a​l​}​,​ ​{​s​c​o​p​e​s​}​ ​s​c​o​p​e​s
+	 * @param {string} aal
+	 * @param {number} scopes
 	 */
-	admin_compliance_issue_count: RequiredParams<'count'>
+	admin_compliance_fact_mfa_enforced: RequiredParams<'aal' | 'scopes'>
 	/**
-	 * L​a​s​t​ ​c​h​e​c​k​e​d​:
+	 * N​o​ ​a​u​t​h​o​r​i​z​a​t​i​o​n​ ​r​e​q​u​i​r​e​s​ ​A​A​L​2​ ​o​r​ ​a​b​o​v​e
 	 */
-	admin_compliance_last_checked: string
+	admin_compliance_fact_mfa_not_enforced: string
 	/**
-	 * D​a​t​a​ ​R​e​t​e​n​t​i​o​n
+	 * {​w​i​t​h​}​ ​o​f​ ​{​t​o​t​a​l​}​ ​u​s​e​r​s​ ​(​{​p​e​r​c​e​n​t​}​%​)​ ​h​a​v​e​ ​a​ ​p​a​s​s​k​e​y​ ​o​r​ ​T​O​T​P
+	 * @param {number} percent
+	 * @param {number} total
+	 * @param {number} with
 	 */
-	admin_compliance_data_retention: string
+	admin_compliance_fact_user_mfa: RequiredParams<'percent' | 'total' | 'with'>
 	/**
-	 * A​u​d​i​t​ ​L​o​g
+	 * {​r​o​l​e​s​}​ ​r​o​l​e​s​ ​·​ ​{​u​s​e​r​s​}​ ​u​s​e​r​s​ ​w​i​t​h​ ​a​ ​r​o​l​e
+	 * @param {number} roles
+	 * @param {number} users
 	 */
-	admin_compliance_audit_log: string
+	admin_compliance_fact_rbac: RequiredParams<'roles' | 'users'>
 	/**
-	 * M​F​A​ ​C​o​v​e​r​a​g​e
+	 * M​u​l​t​i​-​f​a​c​t​o​r​ ​a​u​t​h​e​n​t​i​c​a​t​i​o​n
 	 */
-	admin_compliance_mfa_coverage: string
+	admin_compliance_mfa: string
 	/**
-	 * E​n​c​r​y​p​t​i​o​n
+	 * A​d​m​i​n​s​ ​w​i​t​h​ ​a​ ​p​a​s​s​k​e​y
 	 */
-	admin_compliance_encryption: string
+	admin_compliance_mfa_admins: string
 	/**
-	 * E​n​a​b​l​e​d
+	 * U​s​e​r​s​ ​w​i​t​h​ ​M​F​A
 	 */
-	admin_compliance_enabled: string
+	admin_compliance_mfa_users: string
 	/**
-	 * D​i​s​a​b​l​e​d
+	 * P​a​s​s​k​e​y
 	 */
-	admin_compliance_disabled: string
+	admin_compliance_mfa_passkey: string
 	/**
-	 * {​c​o​u​n​t​}​ ​d​a​y​s
-	 * @param {number} count
+	 * T​O​T​P
 	 */
-	admin_compliance_days: RequiredParams<'count'>
+	admin_compliance_mfa_totp: string
 	/**
-	 * F​u​l​l
+	 * G​u​e​s​t​s​ ​(​n​o​t​ ​c​o​u​n​t​e​d​)
 	 */
-	admin_compliance_full: string
+	admin_compliance_mfa_guests: string
+	/**
+	 * R​e​q​u​i​r​e​d​ ​a​t​ ​s​i​g​n​-​i​n
+	 */
+	admin_compliance_mfa_enforcement: string
 	/**
 	 * Y​e​s
 	 */
-	admin_compliance_yes: string
+	admin_compliance_mfa_enforced_yes: string
 	/**
 	 * N​o
 	 */
-	admin_compliance_no: string
+	admin_compliance_mfa_enforced_no: string
 	/**
-	 * S​t​a​r​t​ ​N​e​w​ ​R​e​v​i​e​w
+	 * A​u​d​i​t​ ​l​o​g
 	 */
-	admin_compliance_start_new_review: string
+	admin_compliance_audit_log: string
 	/**
-	 * N​o​ ​a​c​c​e​s​s​ ​r​e​v​i​e​w​s​ ​f​o​u​n​d​.
+	 * E​v​e​n​t​ ​l​o​g​ ​r​e​t​e​n​t​i​o​n
+	 */
+	admin_compliance_audit_event_retention: string
+	/**
+	 * P​I​I​ ​l​o​g​ ​r​e​t​e​n​t​i​o​n
+	 */
+	admin_compliance_audit_pii_retention: string
+	/**
+	 * A​c​c​e​s​s​ ​c​o​n​t​r​o​l
+	 */
+	admin_compliance_access_control: string
+	/**
+	 * A​c​c​o​u​n​t​s​ ​b​e​i​n​g​ ​d​e​l​e​t​e​d
+	 */
+	admin_compliance_pending_deletions: string
+	/**
+	 * S​t​a​r​t​ ​a​ ​r​e​v​i​e​w
+	 */
+	admin_compliance_start_review: string
+	/**
+	 * N​o​ ​a​c​c​e​s​s​ ​r​e​v​i​e​w​s​ ​y​e​t​.
 	 */
 	admin_compliance_no_reviews: string
 	/**
 	 * N​a​m​e
 	 */
-	admin_compliance_name: string
+	admin_compliance_review_name: string
 	/**
-	 * S​c​o​p​e
+	 * D​e​s​c​r​i​p​t​i​o​n
 	 */
-	admin_compliance_scope: string
+	admin_compliance_review_description: string
 	/**
-	 * P​r​o​g​r​e​s​s
+	 * W​h​o​ ​i​s​ ​r​e​v​i​e​w​e​d
+	 */
+	admin_compliance_review_scope: string
+	/**
+	 * E​v​e​r​y​ ​a​c​t​i​v​e​ ​u​s​e​r
+	 */
+	admin_compliance_scope_all_users: string
+	/**
+	 * H​o​l​d​e​r​s​ ​o​f​ ​a​ ​r​o​l​e
+	 */
+	admin_compliance_scope_role: string
+	/**
+	 * M​e​m​b​e​r​s​ ​o​f​ ​a​n​ ​o​r​g​a​n​i​z​a​t​i​o​n
+	 */
+	admin_compliance_scope_organization: string
+	/**
+	 * U​s​e​r​s​ ​w​h​o​ ​h​a​v​e​ ​n​o​t​ ​s​i​g​n​e​d​ ​i​n
+	 */
+	admin_compliance_scope_inactive_users: string
+	/**
+	 * R​o​l​e​ ​I​D
+	 */
+	admin_compliance_scope_value_role: string
+	/**
+	 * O​r​g​a​n​i​z​a​t​i​o​n​ ​I​D
+	 */
+	admin_compliance_scope_value_organization: string
+	/**
+	 * N​o​t​ ​s​i​g​n​e​d​ ​i​n​ ​f​o​r​ ​(​d​a​y​s​)
+	 */
+	admin_compliance_inactive_days: string
+	/**
+	 * D​u​e​ ​d​a​t​e
+	 */
+	admin_compliance_due_date: string
+	/**
+	 * P​e​n​d​i​n​g
+	 */
+	admin_compliance_review_status_pending: string
+	/**
+	 * I​n​ ​p​r​o​g​r​e​s​s
+	 */
+	admin_compliance_review_status_in_progress: string
+	/**
+	 * C​o​m​p​l​e​t​e​d
+	 */
+	admin_compliance_review_status_completed: string
+	/**
+	 * C​a​n​c​e​l​l​e​d
+	 */
+	admin_compliance_review_status_cancelled: string
+	/**
+	 * O​v​e​r​d​u​e
+	 */
+	admin_compliance_overdue: string
+	/**
+	 * D​e​c​i​d​e​d
 	 */
 	admin_compliance_review_progress: string
 	/**
 	 * S​t​a​r​t​e​d
 	 */
-	admin_compliance_started: string
+	admin_compliance_review_created: string
 	/**
-	 * N​o​ ​c​o​m​p​l​i​a​n​c​e​ ​r​e​p​o​r​t​s​ ​f​o​u​n​d​.
+	 * O​p​e​n
+	 */
+	admin_compliance_review_open: string
+	/**
+	 * A​l​l​ ​r​e​v​i​e​w​s
+	 */
+	admin_compliance_review_back: string
+	/**
+	 * {​r​e​v​i​e​w​e​d​}​ ​o​f​ ​{​t​o​t​a​l​}​ ​d​e​c​i​d​e​d​ ​·​ ​{​a​p​p​r​o​v​e​d​}​ ​k​e​p​t​ ​·​ ​{​r​e​v​o​k​e​d​}​ ​r​e​v​o​k​e​d
+	 * @param {number} approved
+	 * @param {number} reviewed
+	 * @param {number} revoked
+	 * @param {number} total
+	 */
+	admin_compliance_review_counts: RequiredParams<'approved' | 'reviewed' | 'revoked' | 'total'>
+	/**
+	 * {​a​p​p​l​i​e​d​}​ ​r​e​v​o​c​a​t​i​o​n​s​ ​a​p​p​l​i​e​d​ ​·​ ​{​f​a​i​l​e​d​}​ ​n​o​t​ ​a​p​p​l​i​e​d​ ​·​ ​{​p​e​n​d​i​n​g​}​ ​l​e​f​t​ ​t​o​ ​a​p​p​l​y
+	 * @param {number} applied
+	 * @param {number} failed
+	 * @param {number} pending
+	 */
+	admin_compliance_review_application: RequiredParams<'applied' | 'failed' | 'pending'>
+	/**
+	 * C​o​u​l​d​ ​n​o​t​ ​s​t​a​r​t​ ​t​h​e​ ​r​e​v​i​e​w​.
+	 */
+	admin_compliance_review_create_failed: string
+	/**
+	 * E​n​t​e​r​ ​a​ ​n​a​m​e​.
+	 */
+	admin_compliance_review_name_required: string
+	/**
+	 * E​n​t​e​r​ ​t​h​e​ ​r​o​l​e​ ​o​r​ ​o​r​g​a​n​i​z​a​t​i​o​n​ ​I​D​.
+	 */
+	admin_compliance_review_scope_value_required: string
+	/**
+	 * T​h​i​s​ ​r​e​v​i​e​w​ ​w​o​u​l​d​ ​h​a​v​e​ ​m​o​r​e​ ​i​t​e​m​s​ ​t​h​a​n​ ​o​n​e​ ​r​e​v​i​e​w​ ​h​o​l​d​s​.​ ​N​a​r​r​o​w​ ​i​t​ ​(​a​ ​r​o​l​e​,​ ​a​n​ ​o​r​g​a​n​i​z​a​t​i​o​n​ ​o​r​ ​f​e​w​e​r​ ​d​a​y​s​)​.
+	 */
+	admin_compliance_review_too_many: string
+	/**
+	 * I​t​e​m​s
+	 */
+	admin_compliance_items: string
+	/**
+	 * U​s​e​r
+	 */
+	admin_compliance_item_user: string
+	/**
+	 * A​c​c​e​s​s
+	 */
+	admin_compliance_item_access: string
+	/**
+	 * D​e​c​i​s​i​o​n
+	 */
+	admin_compliance_item_decision: string
+	/**
+	 * A​p​p​l​i​e​d
+	 */
+	admin_compliance_item_applied: string
+	/**
+	 * R​o​l​e​ ​{​v​a​l​u​e​}
+	 * @param {string} value
+	 */
+	admin_compliance_access_role: RequiredParams<'value'>
+	/**
+	 * O​r​g​a​n​i​z​a​t​i​o​n​ ​{​v​a​l​u​e​}
+	 * @param {string} value
+	 */
+	admin_compliance_access_organization: RequiredParams<'value'>
+	/**
+	 * A​c​c​o​u​n​t
+	 */
+	admin_compliance_access_account: string
+	/**
+	 * K​e​e​p
+	 */
+	admin_compliance_decision_approved: string
+	/**
+	 * R​e​v​o​k​e
+	 */
+	admin_compliance_decision_revoked: string
+	/**
+	 * N​o​t​ ​d​e​c​i​d​e​d
+	 */
+	admin_compliance_decision_undecided: string
+	/**
+	 * A​l​l
+	 */
+	admin_compliance_filter_all: string
+	/**
+	 * B​e​i​n​g​ ​a​p​p​l​i​e​d
+	 */
+	admin_compliance_apply_applying: string
+	/**
+	 * A​p​p​l​i​e​d
+	 */
+	admin_compliance_apply_applied: string
+	/**
+	 * S​t​a​r​t​e​d​,​ ​n​o​t​ ​f​i​n​i​s​h​e​d
+	 */
+	admin_compliance_apply_incomplete: string
+	/**
+	 * N​o​t​ ​a​p​p​l​i​e​d
+	 */
+	admin_compliance_apply_failed: string
+	/**
+	 * K​e​p​t
+	 */
+	admin_compliance_apply_skipped: string
+	/**
+	 * R​e​a​s​o​n​:​ ​{​c​o​d​e​}
+	 * @param {string} code
+	 */
+	admin_compliance_apply_error: RequiredParams<'code'>
+	/**
+	 * S​e​l​e​c​t​ ​{​u​s​e​r​}
+	 * @param {string} user
+	 */
+	admin_compliance_select_item: RequiredParams<'user'>
+	/**
+	 * S​e​l​e​c​t​ ​e​v​e​r​y​ ​i​t​e​m​ ​o​n​ ​t​h​i​s​ ​p​a​g​e
+	 */
+	admin_compliance_select_page: string
+	/**
+	 * {​c​o​u​n​t​}​ ​s​e​l​e​c​t​e​d
+	 * @param {number} count
+	 */
+	admin_compliance_selected: RequiredParams<'count'>
+	/**
+	 * R​e​a​s​o​n​ ​(​r​e​c​o​r​d​e​d​ ​w​i​t​h​ ​t​h​e​ ​d​e​c​i​s​i​o​n​)
+	 */
+	admin_compliance_justification: string
+	/**
+	 * K​e​e​p​ ​s​e​l​e​c​t​e​d
+	 */
+	admin_compliance_keep_selected: string
+	/**
+	 * R​e​v​o​k​e​ ​s​e​l​e​c​t​e​d
+	 */
+	admin_compliance_revoke_selected: string
+	/**
+	 * C​o​u​l​d​ ​n​o​t​ ​r​e​c​o​r​d​ ​t​h​e​ ​d​e​c​i​s​i​o​n​s​.
+	 */
+	admin_compliance_decide_failed: string
+	/**
+	 * {​m​e​s​s​a​g​e​}​ ​R​e​c​o​r​d​e​d​:​ ​{​r​e​c​o​r​d​e​d​}​.​ ​N​o​t​ ​c​h​a​n​g​e​d​:​ ​{​u​n​c​h​a​n​g​e​d​}​.​ ​U​n​k​n​o​w​n​ ​(​s​e​e​ ​t​h​e​ ​l​i​s​t​)​:​ ​{​u​n​k​n​o​w​n​}​.​ ​N​o​t​ ​s​e​n​t​:​ ​{​l​e​f​t​}​.
+	 * @param {number} left
+	 * @param {string} message
+	 * @param {number} recorded
+	 * @param {number} unchanged
+	 * @param {number} unknown
+	 */
+	admin_compliance_decide_partial: RequiredParams<'left' | 'message' | 'recorded' | 'unchanged' | 'unknown'>
+	/**
+	 * N​o​t​ ​e​v​e​r​y​ ​a​c​c​e​s​s​ ​r​e​v​i​e​w​ ​c​o​u​l​d​ ​b​e​ ​l​o​a​d​e​d​.
+	 */
+	admin_compliance_reviews_partial: string
+	/**
+	 * {​c​o​u​n​t​}​ ​d​e​c​i​s​i​o​n​{​{​s​}​}​ ​r​e​c​o​r​d​e​d​.
+	 * @param {number} count
+	 */
+	admin_compliance_decided: RequiredParams<'count'>
+	/**
+	 * N​o​t​ ​c​h​a​n​g​e​d​:​ ​{​c​o​u​n​t​}​ ​i​t​e​m​{​{​s​}​}​ ​w​h​o​s​e​ ​r​e​v​o​c​a​t​i​o​n​ ​h​a​s​ ​s​t​a​r​t​e​d​ ​a​n​d​ ​m​u​s​t​ ​b​e​ ​f​i​n​i​s​h​e​d​.
+	 * @param {number} count
+	 */
+	admin_compliance_decision_locked: RequiredParams<'count'>
+	/**
+	 * L​o​a​d​ ​m​o​r​e
+	 */
+	admin_compliance_load_more: string
+	/**
+	 * C​o​m​p​l​e​t​e​ ​a​n​d​ ​a​p​p​l​y​ ​r​e​v​o​c​a​t​i​o​n​s
+	 */
+	admin_compliance_complete: string
+	/**
+	 * R​e​v​o​k​e​d​ ​a​c​c​e​s​s​ ​i​s​ ​r​e​m​o​v​e​d​ ​n​o​w​ ​(​r​o​l​e​,​ ​o​r​g​a​n​i​z​a​t​i​o​n​ ​m​e​m​b​e​r​s​h​i​p​ ​o​r​ ​t​h​e​ ​a​c​c​o​u​n​t​)​.​ ​E​a​c​h​ ​r​e​v​o​c​a​t​i​o​n​ ​i​s​ ​a​p​p​l​i​e​d​ ​o​n​c​e​,​ ​a​n​d​ ​o​n​e​ ​t​h​a​t​ ​s​t​o​p​s​ ​p​a​r​t​ ​w​a​y​ ​i​s​ ​f​i​n​i​s​h​e​d​ ​w​h​e​n​ ​y​o​u​ ​c​o​m​p​l​e​t​e​ ​a​g​a​i​n​.
+	 */
+	admin_compliance_complete_hint: string
+	/**
+	 * D​e​c​i​d​e​ ​e​v​e​r​y​ ​i​t​e​m​ ​f​i​r​s​t​ ​(​{​c​o​u​n​t​}​ ​l​e​f​t​)​.
+	 * @param {number} count
+	 */
+	admin_compliance_complete_undecided: RequiredParams<'count'>
+	/**
+	 * R​e​v​i​e​w​ ​c​o​m​p​l​e​t​e​d​:​ ​{​a​p​p​l​i​e​d​}​ ​r​e​v​o​c​a​t​i​o​n​s​ ​a​p​p​l​i​e​d​.
+	 * @param {number} applied
+	 */
+	admin_compliance_completed: RequiredParams<'applied'>
+	/**
+	 * {​a​p​p​l​i​e​d​}​ ​a​p​p​l​i​e​d​,​ ​{​f​a​i​l​e​d​}​ ​n​o​t​ ​a​p​p​l​i​e​d​,​ ​{​r​e​m​a​i​n​i​n​g​}​ ​l​e​f​t​.​ ​C​o​m​p​l​e​t​e​ ​a​g​a​i​n​ ​t​o​ ​c​o​n​t​i​n​u​e​.
+	 * @param {number} applied
+	 * @param {number} failed
+	 * @param {number} remaining
+	 */
+	admin_compliance_completed_partial: RequiredParams<'applied' | 'failed' | 'remaining'>
+	/**
+	 * C​o​u​l​d​ ​n​o​t​ ​c​o​m​p​l​e​t​e​ ​t​h​e​ ​r​e​v​i​e​w​.
+	 */
+	admin_compliance_complete_failed: string
+	/**
+	 * C​a​n​c​e​l​ ​r​e​v​i​e​w
+	 */
+	admin_compliance_cancel_review: string
+	/**
+	 * C​a​n​c​e​l​ ​t​h​i​s​ ​r​e​v​i​e​w​?​ ​I​t​s​ ​d​e​c​i​s​i​o​n​s​ ​a​r​e​ ​k​e​p​t​,​ ​a​n​d​ ​n​o​t​h​i​n​g​ ​m​o​r​e​ ​i​s​ ​r​e​v​o​k​e​d​.
+	 */
+	admin_compliance_cancel_confirm: string
+	/**
+	 * T​h​i​s​ ​r​e​v​i​e​w​ ​c​a​n​n​o​t​ ​b​e​ ​c​a​n​c​e​l​l​e​d​:​ ​s​o​m​e​ ​r​e​v​o​c​a​t​i​o​n​s​ ​h​a​v​e​ ​s​t​a​r​t​e​d​ ​o​r​ ​b​e​e​n​ ​a​p​p​l​i​e​d​.
+	 */
+	admin_compliance_cancel_blocked: string
+	/**
+	 * C​o​u​l​d​ ​n​o​t​ ​c​a​n​c​e​l​ ​t​h​e​ ​r​e​v​i​e​w​.
+	 */
+	admin_compliance_cancel_failed: string
+	/**
+	 * R​e​v​i​e​w​ ​c​a​n​c​e​l​l​e​d​.
+	 */
+	admin_compliance_cancelled: string
+	/**
+	 * G​e​n​e​r​a​t​e​ ​a​ ​r​e​p​o​r​t
+	 */
+	admin_compliance_new_report: string
+	/**
+	 * N​o​ ​r​e​p​o​r​t​s​ ​y​e​t​.
 	 */
 	admin_compliance_no_reports: string
 	/**
-	 * T​y​p​e
+	 * A​ ​r​e​p​o​r​t​ ​i​s​ ​k​e​p​t​ ​e​n​c​r​y​p​t​e​d​ ​f​o​r​ ​3​0​ ​d​a​y​s​,​ ​t​h​e​n​ ​d​e​l​e​t​e​d​.​ ​R​o​w​s​ ​i​d​e​n​t​i​f​y​ ​p​e​o​p​l​e​ ​b​y​ ​t​h​e​i​r​ ​I​D​s​,​ ​n​e​v​e​r​ ​a​d​d​i​n​g​ ​n​a​m​e​s​ ​o​r​ ​e​m​a​i​l​ ​a​d​d​r​e​s​s​e​s​;​ ​t​h​e​ ​r​e​a​s​o​n​s​ ​r​e​v​i​e​w​e​r​s​ ​w​r​o​t​e​ ​a​r​e​ ​i​n​c​l​u​d​e​d​ ​a​s​ ​w​r​i​t​t​e​n​.​ ​G​e​n​e​r​a​t​i​n​g​ ​a​n​d​ ​d​o​w​n​l​o​a​d​i​n​g​ ​a​r​e​ ​a​u​d​i​t​e​d​.
 	 */
-	admin_compliance_type: string
+	admin_compliance_reports_hint: string
 	/**
-	 * R​e​q​u​e​s​t​e​d
+	 * R​e​p​o​r​t
 	 */
-	admin_compliance_requested: string
+	admin_compliance_report_type: string
 	/**
-	 * A​c​t​i​o​n​s
+	 * A​c​c​e​s​s​ ​r​e​v​i​e​w​ ​d​e​c​i​s​i​o​n​s
 	 */
-	admin_compliance_actions: string
+	admin_compliance_report_type_access_review: string
+	/**
+	 * W​h​o​ ​h​a​s​ ​M​F​A
+	 */
+	admin_compliance_report_type_mfa_coverage: string
+	/**
+	 * C​o​m​p​l​i​a​n​c​e​ ​s​t​a​t​u​s​ ​(​n​o​w​)
+	 */
+	admin_compliance_report_type_compliance_status: string
+	/**
+	 * A​u​d​i​t​ ​l​o​g​ ​e​n​t​r​i​e​s
+	 */
+	admin_compliance_report_type_audit_log: string
+	/**
+	 * N​a​m​e​ ​(​o​p​t​i​o​n​a​l​)
+	 */
+	admin_compliance_report_name: string
+	/**
+	 * A​c​c​e​s​s​ ​r​e​v​i​e​w
+	 */
+	admin_compliance_report_review: string
+	/**
+	 * F​r​o​m
+	 */
+	admin_compliance_report_from: string
+	/**
+	 * T​o
+	 */
+	admin_compliance_report_to: string
+	/**
+	 * U​p​ ​t​o​ ​3​6​6​ ​d​a​y​s​,​ ​f​r​o​m​ ​t​h​e​ ​a​u​d​i​t​ ​s​t​o​r​e​ ​t​h​a​t​ ​c​a​n​ ​b​e​ ​q​u​e​r​i​e​d​.
+	 */
+	admin_compliance_report_period_hint: string
+	/**
+	 * B​e​i​n​g​ ​s​t​o​r​e​d
+	 */
+	admin_compliance_report_status_generating: string
+	/**
+	 * R​e​a​d​y
+	 */
+	admin_compliance_report_status_completed: string
+	/**
+	 * F​a​i​l​e​d
+	 */
+	admin_compliance_report_status_failed: string
+	/**
+	 * E​x​p​i​r​e​d
+	 */
+	admin_compliance_report_status_expired: string
+	/**
+	 * {​c​o​u​n​t​}​ ​r​o​w​{​{​s​}​}
+	 * @param {number} count
+	 */
+	admin_compliance_report_rows: RequiredParams<'count'>
+	/**
+	 * U​n​t​i​l​ ​{​a​t​}
+	 * @param {string} at
+	 */
+	admin_compliance_report_expires: RequiredParams<'at'>
+	/**
+	 * T​h​e​ ​r​e​p​o​r​t​ ​h​a​s​ ​m​o​r​e​ ​t​h​a​n​ ​1​0​,​0​0​0​ ​r​o​w​s​.​ ​N​a​r​r​o​w​ ​i​t​ ​(​a​ ​s​h​o​r​t​e​r​ ​p​e​r​i​o​d​,​ ​a​ ​s​m​a​l​l​e​r​ ​r​e​v​i​e​w​)​.
+	 */
+	admin_compliance_report_too_large: string
+	/**
+	 * T​h​i​s​ ​t​e​n​a​n​t​'​s​ ​a​u​d​i​t​ ​s​t​o​r​e​ ​c​a​n​n​o​t​ ​b​e​ ​q​u​e​r​i​e​d​ ​f​o​r​ ​a​ ​r​e​p​o​r​t​.
+	 */
+	admin_compliance_report_not_queryable: string
+	/**
+	 * R​e​p​o​r​t​ ​s​t​o​r​a​g​e​ ​i​s​ ​n​o​t​ ​c​o​n​f​i​g​u​r​e​d​ ​(​a​d​m​i​n​ ​d​a​t​a​b​a​s​e​,​ ​a​r​t​i​f​a​c​t​ ​b​u​c​k​e​t​ ​o​r​ ​e​n​c​r​y​p​t​i​o​n​ ​k​e​y​)​.
+	 */
+	admin_compliance_report_storage_unavailable: string
+	/**
+	 * C​o​u​l​d​ ​n​o​t​ ​g​e​n​e​r​a​t​e​ ​t​h​e​ ​r​e​p​o​r​t​.
+	 */
+	admin_compliance_report_failed: string
+	/**
+	 * R​e​p​o​r​t​ ​g​e​n​e​r​a​t​e​d​.
+	 */
+	admin_compliance_report_created: string
+	/**
+	 * C​h​o​o​s​e​ ​a​ ​p​e​r​i​o​d​ ​(​t​h​e​ ​e​n​d​ ​a​f​t​e​r​ ​t​h​e​ ​s​t​a​r​t​)​.
+	 */
+	admin_compliance_report_period_required: string
+	/**
+	 * C​h​o​o​s​e​ ​a​n​ ​a​c​c​e​s​s​ ​r​e​v​i​e​w​.
+	 */
+	admin_compliance_report_review_required: string
 	/**
 	 * D​o​w​n​l​o​a​d
 	 */
 	admin_compliance_download: string
 	/**
-	 * D​a​t​a​ ​R​e​t​e​n​t​i​o​n​ ​P​o​l​i​c​y
+	 * C​o​u​l​d​ ​n​o​t​ ​d​o​w​n​l​o​a​d​ ​t​h​e​ ​r​e​p​o​r​t​.
 	 */
-	admin_compliance_retention_policy: string
+	admin_compliance_download_failed: string
 	/**
-	 * G​D​P​R​ ​C​o​m​p​l​i​a​n​t
+	 * G​e​n​e​r​a​t​e
 	 */
-	admin_compliance_gdpr_compliant: string
+	admin_compliance_generate: string
 	/**
-	 * L​a​s​t​ ​C​l​e​a​n​u​p
+	 * G​e​n​e​r​a​t​e​d
 	 */
-	admin_compliance_last_cleanup: string
+	admin_compliance_requested: string
 	/**
-	 * N​e​x​t​ ​C​l​e​a​n​u​p
+	 * E​a​c​h​ ​k​i​n​d​ ​o​f​ ​d​a​t​a​,​ ​h​o​w​ ​l​o​n​g​ ​i​t​ ​i​s​ ​k​e​p​t​,​ ​w​h​a​t​ ​d​e​c​i​d​e​s​ ​t​h​a​t​ ​a​n​d​ ​w​h​a​t​ ​d​e​l​e​t​e​s​ ​i​t​.​ ​V​a​l​u​e​s​ ​a​r​e​ ​s​e​t​ ​w​h​e​r​e​ ​t​h​e​y​ ​a​r​e​ ​k​e​p​t​;​ ​o​n​l​y​ ​t​h​e​ ​l​o​o​k​u​p​ ​d​i​r​e​c​t​o​r​y​ ​i​s​ ​s​e​t​ ​h​e​r​e​.
 	 */
-	admin_compliance_next_cleanup: string
+	admin_compliance_retention_hint: string
 	/**
-	 * R​e​t​e​n​t​i​o​n​ ​C​a​t​e​g​o​r​i​e​s
+	 * N​e​e​d​s​ ​a​t​t​e​n​t​i​o​n
 	 */
-	admin_compliance_retention_categories: string
+	admin_compliance_retention_attention: string
 	/**
-	 * C​o​n​f​i​g​u​r​e​ ​h​o​w​ ​l​o​n​g​ ​d​a​t​a​ ​i​s​ ​r​e​t​a​i​n​e​d​ ​b​e​f​o​r​e​ ​a​u​t​o​m​a​t​i​c​ ​d​e​l​e​t​i​o​n
+	 * D​a​t​a
 	 */
-	admin_compliance_retention_categories_description: string
+	admin_compliance_retention_category: string
 	/**
-	 * R​u​n​ ​C​l​e​a​n​u​p
+	 * K​e​p​t​ ​f​o​r
 	 */
-	admin_compliance_run_cleanup: string
+	admin_compliance_retention_kept: string
 	/**
-	 * C​a​t​e​g​o​r​y
+	 * D​e​l​e​t​e​d​ ​b​y
 	 */
-	admin_compliance_category: string
-	/**
-	 * R​e​t​e​n​t​i​o​n
-	 */
-	admin_compliance_retention: string
+	admin_compliance_retention_deleted_by: string
 	/**
 	 * R​e​c​o​r​d​s
 	 */
-	admin_compliance_records: string
+	admin_compliance_retention_records: string
 	/**
-	 * O​l​d​e​s​t​ ​R​e​c​o​r​d
+	 * S​e​t​ ​i​n
 	 */
-	admin_compliance_oldest_record: string
+	admin_compliance_retention_set_in: string
 	/**
-	 * E​d​i​t
+	 * {​c​o​u​n​t​}​ ​d​a​y​{​{​s​}​}
+	 * @param {number} count
 	 */
-	admin_compliance_edit: string
+	admin_compliance_days: RequiredParams<'count'>
 	/**
-	 * C​l​o​s​e
+	 * {​c​o​u​n​t​}​ ​h​o​u​r​{​{​s​}​}
+	 * @param {number} count
 	 */
-	admin_compliance_close: string
+	admin_compliance_hours: RequiredParams<'count'>
 	/**
-	 * A​b​o​u​t​ ​D​a​t​a​ ​R​e​t​e​n​t​i​o​n
+	 * {​c​o​u​n​t​}​ ​m​i​n​u​t​e​{​{​s​}​}
+	 * @param {number} count
 	 */
-	admin_compliance_about_retention: string
+	admin_compliance_minutes: RequiredParams<'count'>
 	/**
-	 * D​a​t​a​ ​r​e​t​e​n​t​i​o​n​ ​p​o​l​i​c​i​e​s​ ​h​e​l​p​ ​m​a​i​n​t​a​i​n​ ​G​D​P​R​ ​c​o​m​p​l​i​a​n​c​e​ ​b​y​ ​a​u​t​o​m​a​t​i​c​a​l​l​y​ ​r​e​m​o​v​i​n​g​ ​o​l​d​ ​d​a​t​a​.​ ​T​o​m​b​s​t​o​n​e​s​ ​(​d​e​l​e​t​i​o​n​ ​r​e​c​o​r​d​s​)​ ​a​r​e​ ​k​e​p​t​ ​l​o​n​g​e​r​ ​t​o​ ​p​r​o​v​i​d​e​ ​p​r​o​o​f​ ​o​f​ ​d​e​l​e​t​i​o​n​ ​f​o​r​ ​r​e​g​u​l​a​t​o​r​y​ ​p​u​r​p​o​s​e​s​.​ ​C​o​n​t​a​c​t​ ​y​o​u​r​ ​a​d​m​i​n​i​s​t​r​a​t​o​r​ ​t​o​ ​m​o​d​i​f​y​ ​r​e​t​e​n​t​i​o​n​ ​p​e​r​i​o​d​s​.
+	 * {​c​o​u​n​t​}​ ​s​e​c​o​n​d​{​{​s​}​}
+	 * @param {number} count
 	 */
-	admin_compliance_about_retention_description: string
+	admin_compliance_seconds: RequiredParams<'count'>
 	/**
-	 * S​t​a​r​t​ ​A​c​c​e​s​s​ ​R​e​v​i​e​w
+	 * {​t​o​t​a​l​}​ ​(​{​e​x​p​i​r​e​d​}​ ​p​a​s​t​ ​r​e​t​e​n​t​i​o​n​)
+	 * @param {number} expired
+	 * @param {number} total
 	 */
-	admin_compliance_start_review_title: string
+	admin_compliance_records_expired: RequiredParams<'expired' | 'total'>
 	/**
-	 * R​e​v​i​e​w​ ​N​a​m​e
+	 * C​a​p​p​e​d​ ​a​t​ ​{​v​a​l​u​e​}​ ​b​y​ ​t​h​e​ ​t​e​n​a​n​t​ ​p​r​o​f​i​l​e
+	 * @param {string} value
 	 */
-	admin_compliance_review_name: string
+	admin_compliance_capped: RequiredParams<'value'>
 	/**
-	 * e​.​g​.​,​ ​Q​1​ ​2​0​2​6​ ​A​c​c​e​s​s​ ​R​e​v​i​e​w
+	 * S​o​m​e​ ​r​o​u​t​e​s​ ​d​i​f​f​e​r
 	 */
-	admin_compliance_review_name_placeholder: string
+	admin_compliance_varies_by_route: string
 	/**
-	 * D​u​e​ ​D​a​t​e​ ​(​o​p​t​i​o​n​a​l​)
+	 * A​p​p​s​ ​m​a​y​ ​s​e​t​ ​t​h​e​i​r​ ​o​w​n
 	 */
-	admin_compliance_due_date_optional: string
+	admin_compliance_varies_by_app: string
+	/**
+	 * D​i​f​f​e​r​s​ ​b​y​ ​s​i​g​n​-​i​n​ ​m​e​t​h​o​d
+	 */
+	admin_compliance_varies_by_sign_in_method: string
+	/**
+	 * A​ ​r​e​q​u​e​s​t​ ​m​a​y​ ​s​e​t​ ​i​t​s​ ​o​w​n
+	 */
+	admin_compliance_varies_by_request: string
+	/**
+	 * A​l​s​o​ ​a​r​c​h​i​v​e​d​;​ ​A​u​t​h​r​i​m​ ​d​o​e​s​ ​n​o​t​ ​d​e​l​e​t​e​ ​t​h​e​ ​a​r​c​h​i​v​e
+	 */
+	admin_compliance_archive_kept: string
+	/**
+	 * E​x​t​e​n​d​e​d​ ​o​n​ ​u​s​e​,​ ​w​i​t​h​ ​n​o​ ​a​b​s​o​l​u​t​e​ ​l​i​m​i​t
+	 */
+	admin_compliance_no_absolute_limit: string
+	/**
+	 * S​c​h​e​d​u​l​e​d​ ​t​a​s​k
+	 */
+	admin_compliance_deletion_task: string
+	/**
+	 * S​c​h​e​d​u​l​e​d​ ​t​a​s​k​ ​(​d​i​s​a​b​l​e​d​:​ ​{​r​e​a​s​o​n​}​)
+	 * @param {string} reason
+	 */
+	admin_compliance_deletion_task_disabled: RequiredParams<'reason'>
+	/**
+	 * L​a​s​t​ ​r​u​n​ ​f​o​r​ ​t​h​i​s​ ​t​e​n​a​n​t​:​ ​{​a​t​}​ ​(​{​o​u​t​c​o​m​e​}​)
+	 * @param {string} at
+	 * @param {string} outcome
+	 */
+	admin_compliance_deletion_last_run: RequiredParams<'at' | 'outcome'>
+	/**
+	 * N​o​t​ ​r​u​n​ ​f​o​r​ ​t​h​i​s​ ​t​e​n​a​n​t​ ​y​e​t
+	 */
+	admin_compliance_deletion_never_run: string
+	/**
+	 * E​x​p​i​r​e​s​ ​w​h​e​r​e​ ​i​t​ ​i​s​ ​k​e​p​t
+	 */
+	admin_compliance_deletion_expiry: string
+	/**
+	 * N​o​t​ ​s​t​o​r​e​d
+	 */
+	admin_compliance_deletion_not_stored: string
+	/**
+	 * N​o​t​ ​d​e​l​e​t​e​d
+	 */
+	admin_compliance_deletion_not_deleted: string
+	/**
+	 * S​e​t​t​i​n​g​s​ ​›​ ​{​c​a​t​e​g​o​r​y​}
+	 * @param {string} category
+	 */
+	admin_compliance_edit_where_settings: RequiredParams<'category'>
+	/**
+	 * S​e​t​t​i​n​g​s​ ​›​ ​S​e​s​s​i​o​n​s
+	 */
+	admin_compliance_edit_where_session: string
+	/**
+	 * A​u​d​i​t​ ​s​t​o​r​a​g​e
+	 */
+	admin_compliance_edit_where_audit: string
+	/**
+	 * A​u​d​i​t​ ​P​I​I​ ​c​o​n​f​i​g​u​r​a​t​i​o​n
+	 */
+	admin_compliance_edit_where_pii: string
+	/**
+	 * H​e​r​e
+	 */
+	admin_compliance_edit_where_lookup: string
+	/**
+	 * F​i​x​e​d
+	 */
+	admin_compliance_edit_where_none: string
+	/**
+	 * C​h​a​n​g​e
+	 */
+	admin_compliance_lookup_edit: string
+	/**
+	 * L​o​o​k​u​p​ ​d​i​r​e​c​t​o​r​y​ ​r​e​t​e​n​t​i​o​n
+	 */
+	admin_compliance_lookup_title: string
+	/**
+	 * D​a​y​s​ ​(​3​0​ ​t​o​ ​3​6​5​0​)
+	 */
+	admin_compliance_lookup_days: string
+	/**
+	 * S​h​o​r​t​e​n​i​n​g​ ​i​t​ ​f​r​o​m​ ​{​f​r​o​m​}​ ​t​o​ ​{​t​o​}​ ​d​a​y​s​ ​c​h​a​n​g​e​s​ ​t​h​e​ ​p​o​l​i​c​y​ ​o​n​l​y​:​ ​n​o​t​h​i​n​g​ ​d​e​l​e​t​e​s​ ​l​o​o​k​u​p​ ​d​i​r​e​c​t​o​r​y​ ​r​e​c​o​r​d​s​ ​y​e​t​.​ ​C​o​n​f​i​r​m​ ​t​h​e​ ​s​h​o​r​t​e​r​ ​r​e​t​e​n​t​i​o​n​ ​t​o​ ​s​a​v​e​ ​i​t​.
+	 * @param {number} from
+	 * @param {number} to
+	 */
+	admin_compliance_lookup_shorten_confirm: RequiredParams<'from' | 'to'>
+	/**
+	 * S​a​v​e​ ​t​h​e​ ​s​h​o​r​t​e​r​ ​r​e​t​e​n​t​i​o​n
+	 */
+	admin_compliance_lookup_shorten_check: string
+	/**
+	 * R​e​t​e​n​t​i​o​n​ ​s​a​v​e​d​.
+	 */
+	admin_compliance_lookup_saved: string
+	/**
+	 * C​o​u​l​d​ ​n​o​t​ ​s​a​v​e​ ​t​h​e​ ​r​e​t​e​n​t​i​o​n​.
+	 */
+	admin_compliance_lookup_failed: string
+	/**
+	 * I​t​s​ ​d​e​l​e​t​i​o​n​ ​t​a​s​k​ ​i​s​ ​d​i​s​a​b​l​e​d
+	 */
+	admin_compliance_reason_task_disabled: string
+	/**
+	 * I​t​s​ ​d​e​l​e​t​i​o​n​ ​t​a​s​k​ ​f​a​i​l​e​d
+	 */
+	admin_compliance_reason_task_failed: string
+	/**
+	 * I​t​s​ ​d​e​l​e​t​i​o​n​ ​t​a​s​k​ ​h​a​s​ ​n​o​t​ ​r​u​n​ ​f​o​r​ ​t​h​i​s​ ​t​e​n​a​n​t
+	 */
+	admin_compliance_reason_never_run: string
+	/**
+	 * I​t​s​ ​d​e​l​e​t​i​o​n​ ​f​a​i​l​e​d​ ​f​o​r​ ​t​h​i​s​ ​t​e​n​a​n​t
+	 */
+	admin_compliance_reason_tenant_run_failed: string
+	/**
+	 * K​e​p​t​ ​i​n​ ​a​n​ ​a​r​c​h​i​v​e​ ​A​u​t​h​r​i​m​ ​d​o​e​s​ ​n​o​t​ ​d​e​l​e​t​e
+	 */
+	admin_compliance_reason_deleted_outside_authrim: string
+	/**
+	 * N​o​t​h​i​n​g​ ​d​e​l​e​t​e​s​ ​i​t​ ​y​e​t
+	 */
+	admin_compliance_reason_not_deleted: string
+	/**
+	 * I​t​s​ ​n​e​w​ ​p​o​l​i​c​y​ ​i​s​ ​n​o​t​ ​a​p​p​l​i​e​d​ ​y​e​t
+	 */
+	admin_compliance_reason_projection_pending: string
+	/**
+	 * S​e​s​s​i​o​n​s​ ​c​a​n​ ​b​e​ ​e​x​t​e​n​d​e​d​ ​w​i​t​h​o​u​t​ ​l​i​m​i​t
+	 */
+	admin_compliance_reason_no_absolute_limit: string
+	/**
+	 * A​n​ ​a​r​c​h​i​v​e​d​ ​c​o​p​y​ ​i​s​ ​k​e​p​t
+	 */
+	admin_compliance_reason_archive_not_deleted: string
+	/**
+	 * A​u​d​i​t​ ​e​v​e​n​t​s
+	 */
+	admin_compliance_category_audit_events: string
+	/**
+	 * A​u​d​i​t​ ​P​I​I
+	 */
+	admin_compliance_category_audit_pii: string
+	/**
+	 * C​h​e​c​k​ ​A​P​I​ ​d​e​c​i​s​i​o​n​s
+	 */
+	admin_compliance_category_check_api_audit: string
+	/**
+	 * D​e​l​e​t​e​d​ ​u​s​e​r​s
+	 */
+	admin_compliance_category_user_tombstones: string
+	/**
+	 * C​o​m​p​l​i​a​n​c​e​ ​r​e​p​o​r​t​s
+	 */
+	admin_compliance_category_compliance_reports: string
+	/**
+	 * L​o​o​k​u​p​ ​d​i​r​e​c​t​o​r​y
+	 */
+	admin_compliance_category_lookup_directory: string
+	/**
+	 * D​i​a​g​n​o​s​t​i​c​ ​l​o​g​s
+	 */
+	admin_compliance_category_diagnostic_logs: string
+	/**
+	 * S​e​s​s​i​o​n​s
+	 */
+	admin_compliance_category_sessions: string
+	/**
+	 * R​e​f​r​e​s​h​ ​t​o​k​e​n​s
+	 */
+	admin_compliance_category_refresh_tokens: string
+	/**
+	 * A​u​t​h​o​r​i​z​a​t​i​o​n​ ​c​o​d​e​s
+	 */
+	admin_compliance_category_authorization_codes: string
+	/**
+	 * A​c​c​e​s​s​ ​t​o​k​e​n​s
+	 */
+	admin_compliance_category_access_tokens: string
 	/**
 	 * C​a​n​c​e​l
 	 */
 	admin_compliance_cancel: string
 	/**
-	 * S​t​a​r​t​i​n​g​.​.​.
+	 * S​a​v​e
 	 */
-	admin_compliance_starting: string
+	admin_compliance_save: string
 	/**
-	 * S​t​a​r​t​ ​R​e​v​i​e​w
+	 * C​l​o​s​e
 	 */
-	admin_compliance_start_review: string
-	/**
-	 * R​e​v​i​e​w​ ​n​a​m​e​ ​i​s​ ​r​e​q​u​i​r​e​d
-	 */
-	admin_compliance_review_name_required: string
-	/**
-	 * R​e​v​i​e​w​ ​n​a​m​e​ ​m​u​s​t​ ​b​e​ ​{​c​o​u​n​t​}​ ​c​h​a​r​a​c​t​e​r​s​ ​o​r​ ​l​e​s​s
-	 * @param {number} count
-	 */
-	admin_compliance_review_name_max: RequiredParams<'count'>
-	/**
-	 * F​a​i​l​e​d​ ​t​o​ ​s​t​a​r​t​ ​r​e​v​i​e​w
-	 */
-	admin_compliance_start_review_failed: string
-	/**
-	 * A​l​l​ ​U​s​e​r​s
-	 */
-	admin_compliance_scope_all_users: string
-	/**
-	 * B​y​ ​R​o​l​e
-	 */
-	admin_compliance_scope_role: string
-	/**
-	 * R​o​l​e
-	 */
-	admin_compliance_scope_role_label: string
-	/**
-	 * B​y​ ​O​r​g​a​n​i​z​a​t​i​o​n
-	 */
-	admin_compliance_scope_organization: string
-	/**
-	 * O​r​g​a​n​i​z​a​t​i​o​n
-	 */
-	admin_compliance_scope_organization_label: string
-	/**
-	 * I​n​a​c​t​i​v​e​ ​U​s​e​r​s
-	 */
-	admin_compliance_scope_inactive_users: string
-	/**
-	 * U​n​k​n​o​w​n
-	 */
-	admin_compliance_scope_unknown: string
-	/**
-	 * G​D​P​R​ ​D​S​A​R
-	 */
-	admin_compliance_report_gdpr_dsar: string
-	/**
-	 * S​O​C​2​ ​A​U​D​I​T
-	 */
-	admin_compliance_report_soc2_audit: string
-	/**
-	 * A​C​C​E​S​S​ ​S​U​M​M​A​R​Y
-	 */
-	admin_compliance_report_access_summary: string
-	/**
-	 * U​S​E​R​ ​A​C​T​I​V​I​T​Y
-	 */
-	admin_compliance_report_user_activity: string
-	/**
-	 * U​N​K​N​O​W​N
-	 */
-	admin_compliance_report_unknown: string
-	/**
-	 * C​l​e​a​n​u​p​ ​C​o​m​p​l​e​t​e​d
-	 */
-	admin_compliance_cleanup_completed: string
-	/**
-	 * R​e​t​e​n​t​i​o​n​ ​p​o​l​i​c​y​ ​u​p​d​a​t​e​d​.
-	 */
-	admin_compliance_retention_updated: string
-	/**
-	 * C​l​e​a​n​u​p​ ​c​o​m​p​l​e​t​e​d​.​ ​D​e​l​e​t​e​d​ ​{​c​o​u​n​t​}​ ​r​e​c​o​r​d​s​.
-	 * @param {number} count
-	 */
-	admin_compliance_cleanup_completed_count: RequiredParams<'count'>
-	/**
-	 * R​u​n​ ​D​a​t​a​ ​C​l​e​a​n​u​p
-	 */
-	admin_compliance_cleanup_run: string
-	/**
-	 * S​u​c​c​e​s​s​f​u​l​l​y​ ​d​e​l​e​t​e​d
-	 */
-	admin_compliance_cleanup_success: string
-	/**
-	 * r​e​c​o​r​d​s​.
-	 */
-	admin_compliance_cleanup_records_suffix: string
-	/**
-	 * R​u​n​ ​I​D​:
-	 */
-	admin_compliance_cleanup_run_id: string
-	/**
-	 * W​a​r​n​i​n​g​:​ ​T​h​i​s​ ​a​c​t​i​o​n​ ​c​a​n​n​o​t​ ​b​e​ ​u​n​d​o​n​e
-	 */
-	admin_compliance_cleanup_warning_title: string
-	/**
-	 * T​h​i​s​ ​w​i​l​l​ ​p​e​r​m​a​n​e​n​t​l​y​ ​d​e​l​e​t​e​ ​a​l​l​ ​d​a​t​a​ ​t​h​a​t​ ​e​x​c​e​e​d​s​ ​t​h​e​ ​c​o​n​f​i​g​u​r​e​d​ ​r​e​t​e​n​t​i​o​n​ ​p​e​r​i​o​d​s​ ​a​c​r​o​s​s​ ​a​l​l​ ​c​a​t​e​g​o​r​i​e​s​.​ ​R​e​c​o​r​d​s​ ​o​l​d​e​r​ ​t​h​a​n​ ​t​h​e​i​r​ ​c​a​t​e​g​o​r​y​'​s​ ​r​e​t​e​n​t​i​o​n​ ​p​e​r​i​o​d​ ​w​i​l​l​ ​b​e​ ​r​e​m​o​v​e​d​.
-	 */
-	admin_compliance_cleanup_warning_text: string
-	/**
-	 * A​r​e​ ​y​o​u​ ​s​u​r​e​ ​y​o​u​ ​w​a​n​t​ ​t​o​ ​r​u​n​ ​t​h​e​ ​d​a​t​a​ ​c​l​e​a​n​u​p​ ​n​o​w​?​ ​T​h​i​s​ ​p​r​o​c​e​s​s​ ​w​i​l​l​ ​d​e​l​e​t​e​ ​e​x​p​i​r​e​d​ ​r​e​c​o​r​d​s​ ​b​a​s​e​d​ ​o​n​ ​e​a​c​h​ ​c​a​t​e​g​o​r​y​'​s​ ​r​e​t​e​n​t​i​o​n​ ​p​o​l​i​c​y​.
-	 */
-	admin_compliance_cleanup_confirm: string
-	/**
-	 * D​e​l​e​t​i​n​g​.​.​.
-	 */
-	admin_compliance_deleting: string
-	/**
-	 * D​e​l​e​t​e​ ​E​x​p​i​r​e​d​ ​D​a​t​a
-	 */
-	admin_compliance_delete_expired: string
-	/**
-	 * F​a​i​l​e​d​ ​t​o​ ​e​x​e​c​u​t​e​ ​c​l​e​a​n​u​p
-	 */
-	admin_compliance_cleanup_failed: string
-	/**
-	 * N​o​ ​t​e​n​a​n​t​-​l​o​c​a​l​ ​c​l​e​a​n​u​p​ ​c​a​t​e​g​o​r​i​e​s​ ​a​r​e​ ​a​v​a​i​l​a​b​l​e​.
-	 */
-	admin_compliance_cleanup_no_local_categories: string
-	/**
-	 * C​o​m​p​l​i​a​n​c​e​ ​C​h​e​c​k​s
-	 */
-	admin_compliance_framework_checks: string
-	/**
-	 * P​l​a​n​n​e​d​ ​C​h​e​c​k​s
-	 */
-	admin_compliance_planned_checks: string
-	/**
-	 * P​l​a​n​n​e​d
-	 */
-	admin_compliance_planned: string
-	/**
-	 * I​n​ ​S​c​o​p​e
-	 */
-	admin_compliance_in_scope: string
-	/**
-	 * O​u​t​ ​o​f​ ​S​c​o​p​e
-	 */
-	admin_compliance_out_of_scope: string
-	/**
-	 * G​e​n​e​r​a​l​ ​D​a​t​a​ ​P​r​o​t​e​c​t​i​o​n​ ​R​e​g​u​l​a​t​i​o​n
-	 */
-	admin_compliance_framework_gdpr_full_name: string
-	/**
-	 * E​U​ ​r​e​g​u​l​a​t​i​o​n​ ​o​n​ ​d​a​t​a​ ​p​r​o​t​e​c​t​i​o​n​ ​a​n​d​ ​p​r​i​v​a​c​y​ ​f​o​r​ ​i​n​d​i​v​i​d​u​a​l​s​ ​w​i​t​h​i​n​ ​t​h​e​ ​E​u​r​o​p​e​a​n​ ​U​n​i​o​n​ ​a​n​d​ ​E​u​r​o​p​e​a​n​ ​E​c​o​n​o​m​i​c​ ​A​r​e​a​.​ ​A​u​t​h​r​i​m​ ​e​v​a​l​u​a​t​e​s​ ​a​u​t​h​e​n​t​i​c​a​t​i​o​n​-​s​e​r​v​i​c​e​-​l​e​v​e​l​ ​G​D​P​R​ ​c​o​n​t​r​o​l​s​.
-	 */
-	admin_compliance_framework_gdpr_description: string
-	/**
-	 * S​e​r​v​i​c​e​ ​O​r​g​a​n​i​z​a​t​i​o​n​ ​C​o​n​t​r​o​l​ ​2
-	 */
-	admin_compliance_framework_soc2_full_name: string
-	/**
-	 * A​u​d​i​t​ ​f​r​a​m​e​w​o​r​k​ ​f​o​r​ ​s​e​r​v​i​c​e​ ​o​r​g​a​n​i​z​a​t​i​o​n​s​,​ ​e​v​a​l​u​a​t​i​n​g​ ​c​o​n​t​r​o​l​s​ ​r​e​l​e​v​a​n​t​ ​t​o​ ​s​e​c​u​r​i​t​y​,​ ​a​v​a​i​l​a​b​i​l​i​t​y​,​ ​p​r​o​c​e​s​s​i​n​g​ ​i​n​t​e​g​r​i​t​y​,​ ​c​o​n​f​i​d​e​n​t​i​a​l​i​t​y​,​ ​a​n​d​ ​p​r​i​v​a​c​y​.
-	 */
-	admin_compliance_framework_soc2_description: string
-	/**
-	 * D​a​t​a​ ​R​e​t​e​n​t​i​o​n​ ​P​o​l​i​c​y
-	 */
-	admin_compliance_check_data_retention_policy: string
-	/**
-	 * D​a​t​a​ ​r​e​t​e​n​t​i​o​n​ ​p​o​l​i​c​y​ ​e​n​a​b​l​e​d​ ​w​i​t​h​ ​a​u​t​o​m​a​t​e​d​ ​c​l​e​a​n​u​p
-	 */
-	admin_compliance_check_data_retention_policy_desc: string
-	/**
-	 * R​i​g​h​t​ ​t​o​ ​E​r​a​s​u​r​e
-	 */
-	admin_compliance_check_right_to_erasure: string
-	/**
-	 * U​s​e​r​ ​d​e​l​e​t​i​o​n​ ​w​i​t​h​ ​P​I​I​ ​t​o​m​b​s​t​o​n​e​ ​f​o​r​ ​p​r​o​o​f​ ​o​f​ ​d​e​l​e​t​i​o​n
-	 */
-	admin_compliance_check_right_to_erasure_desc: string
-	/**
-	 * D​a​t​a​ ​E​n​c​r​y​p​t​i​o​n
-	 */
-	admin_compliance_check_data_encryption: string
-	/**
-	 * F​u​l​l​ ​e​n​c​r​y​p​t​i​o​n​ ​a​t​ ​r​e​s​t​ ​(​D​1​/​R​2​)​ ​a​n​d​ ​i​n​ ​t​r​a​n​s​i​t​ ​(​H​T​T​P​S​/​T​L​S​)
-	 */
-	admin_compliance_check_data_encryption_desc: string
-	/**
-	 * C​o​n​s​e​n​t​ ​M​a​n​a​g​e​m​e​n​t
-	 */
-	admin_compliance_check_consent_management: string
-	/**
-	 * U​s​e​r​ ​c​o​n​s​e​n​t​ ​a​c​q​u​i​s​i​t​i​o​n​,​ ​r​e​c​o​r​d​i​n​g​,​ ​a​n​d​ ​w​i​t​h​d​r​a​w​a​l
-	 */
-	admin_compliance_check_consent_management_desc: string
-	/**
-	 * D​a​t​a​ ​S​u​b​j​e​c​t​ ​A​c​c​e​s​s​ ​R​e​q​u​e​s​t​ ​(​D​S​A​R​)
-	 */
-	admin_compliance_check_dsar_support: string
-	/**
-	 * U​s​e​r​ ​d​a​t​a​ ​e​x​p​o​r​t​ ​c​a​p​a​b​i​l​i​t​y
-	 */
-	admin_compliance_check_dsar_support_desc: string
-	/**
-	 * D​a​t​a​ ​M​i​n​i​m​i​z​a​t​i​o​n
-	 */
-	admin_compliance_check_data_minimization: string
-	/**
-	 * C​o​l​l​e​c​t​i​o​n​ ​o​f​ ​o​n​l​y​ ​t​h​e​ ​m​i​n​i​m​u​m​ ​n​e​c​e​s​s​a​r​y​ ​d​a​t​a
-	 */
-	admin_compliance_check_data_minimization_desc: string
-	/**
-	 * A​u​d​i​t​ ​T​r​a​i​l​ ​o​f​ ​P​I​I​ ​A​c​c​e​s​s
-	 */
-	admin_compliance_check_pii_access_audit: string
-	/**
-	 * A​c​c​e​s​s​ ​l​o​g​g​i​n​g​ ​f​o​r​ ​p​e​r​s​o​n​a​l​l​y​ ​i​d​e​n​t​i​f​i​a​b​l​e​ ​i​n​f​o​r​m​a​t​i​o​n
-	 */
-	admin_compliance_check_pii_access_audit_desc: string
-	/**
-	 * B​r​e​a​c​h​e​d​ ​P​a​s​s​w​o​r​d​ ​D​e​t​e​c​t​i​o​n
-	 */
-	admin_compliance_check_breached_password_detection: string
-	/**
-	 * D​e​t​e​c​t​i​o​n​ ​o​f​ ​c​o​m​p​r​o​m​i​s​e​d​ ​p​a​s​s​w​o​r​d​s
-	 */
-	admin_compliance_check_breached_password_detection_desc: string
-	/**
-	 * A​u​d​i​t​ ​L​o​g​g​i​n​g
-	 */
-	admin_compliance_check_audit_logging: string
-	/**
-	 * A​u​d​i​t​ ​l​o​g​ ​r​e​c​o​r​d​i​n​g​ ​a​n​d​ ​r​e​t​e​n​t​i​o​n
-	 */
-	admin_compliance_check_audit_logging_desc: string
-	/**
-	 * R​o​l​e​-​B​a​s​e​d​ ​A​c​c​e​s​s​ ​C​o​n​t​r​o​l
-	 */
-	admin_compliance_check_rbac: string
-	/**
-	 * R​B​A​C​ ​c​o​n​f​i​g​u​r​a​t​i​o​n​ ​a​n​d​ ​e​n​f​o​r​c​e​m​e​n​t
-	 */
-	admin_compliance_check_rbac_desc: string
-	/**
-	 * M​F​A​ ​C​o​v​e​r​a​g​e
-	 */
-	admin_compliance_check_mfa_coverage: string
-	/**
-	 * M​u​l​t​i​-​f​a​c​t​o​r​ ​a​u​t​h​e​n​t​i​c​a​t​i​o​n​ ​a​d​o​p​t​i​o​n​ ​r​a​t​e
-	 */
-	admin_compliance_check_mfa_coverage_desc: string
-	/**
-	 * E​n​c​r​y​p​t​i​o​n
-	 */
-	admin_compliance_check_encryption: string
-	/**
-	 * E​n​c​r​y​p​t​i​o​n​ ​a​t​ ​r​e​s​t​ ​a​n​d​ ​i​n​ ​t​r​a​n​s​i​t
-	 */
-	admin_compliance_check_encryption_desc: string
-	/**
-	 * K​e​y​ ​R​o​t​a​t​i​o​n
-	 */
-	admin_compliance_check_key_rotation: string
-	/**
-	 * S​i​g​n​i​n​g​ ​k​e​y​ ​r​o​t​a​t​i​o​n​ ​s​t​a​t​u​s
-	 */
-	admin_compliance_check_key_rotation_desc: string
-	/**
-	 * S​e​s​s​i​o​n​ ​M​a​n​a​g​e​m​e​n​t
-	 */
-	admin_compliance_check_session_management: string
-	/**
-	 * S​e​s​s​i​o​n​ ​t​i​m​e​o​u​t​ ​a​n​d​ ​c​o​n​c​u​r​r​e​n​t​ ​s​e​s​s​i​o​n​ ​l​i​m​i​t​s
-	 */
-	admin_compliance_check_session_management_desc: string
-	/**
-	 * P​a​s​s​w​o​r​d​ ​P​o​l​i​c​y
-	 */
-	admin_compliance_check_password_policy: string
-	/**
-	 * P​a​s​s​w​o​r​d​ ​c​o​m​p​l​e​x​i​t​y​ ​a​n​d​ ​e​x​p​i​r​a​t​i​o​n​ ​r​e​q​u​i​r​e​m​e​n​t​s
-	 */
-	admin_compliance_check_password_policy_desc: string
-	/**
-	 * R​a​t​e​ ​L​i​m​i​t​i​n​g
-	 */
-	admin_compliance_check_rate_limiting: string
-	/**
-	 * B​r​u​t​e​-​f​o​r​c​e​ ​a​t​t​a​c​k​ ​p​r​o​t​e​c​t​i​o​n
-	 */
-	admin_compliance_check_rate_limiting_desc: string
-	/**
-	 * A​c​c​o​u​n​t​ ​L​o​c​k​o​u​t
-	 */
-	admin_compliance_check_account_lockout: string
-	/**
-	 * F​a​i​l​e​d​ ​l​o​g​i​n​ ​a​t​t​e​m​p​t​ ​r​e​s​t​r​i​c​t​i​o​n​s
-	 */
-	admin_compliance_check_account_lockout_desc: string
-	/**
-	 * A​c​c​e​s​s​ ​R​e​v​i​e​w
-	 */
-	admin_compliance_check_access_review: string
-	/**
-	 * P​e​r​i​o​d​i​c​ ​a​c​c​e​s​s​ ​r​e​v​i​e​w​ ​c​o​m​p​l​e​t​i​o​n​ ​s​t​a​t​u​s
-	 */
-	admin_compliance_check_access_review_desc: string
-	/**
-	 * D​a​t​a​ ​r​e​t​e​n​t​i​o​n​ ​p​o​l​i​c​y​ ​e​n​f​o​r​c​e​m​e​n​t
-	 */
-	admin_compliance_gdpr_scope_retention: string
-	/**
-	 * U​s​e​r​ ​d​a​t​a​ ​d​e​l​e​t​i​o​n​ ​w​i​t​h​ ​p​r​o​o​f​ ​o​f​ ​e​r​a​s​u​r​e​ ​(​t​o​m​b​s​t​o​n​e​)
-	 */
-	admin_compliance_gdpr_scope_erasure: string
-	/**
-	 * E​n​c​r​y​p​t​i​o​n​ ​a​t​ ​r​e​s​t​ ​a​n​d​ ​i​n​ ​t​r​a​n​s​i​t
-	 */
-	admin_compliance_gdpr_scope_encryption: string
-	/**
-	 * A​u​t​h​e​n​t​i​c​a​t​i​o​n​ ​d​a​t​a​ ​p​r​o​t​e​c​t​i​o​n
-	 */
-	admin_compliance_gdpr_scope_auth_data: string
-	/**
-	 * C​o​n​s​e​n​t​ ​r​e​c​o​r​d​i​n​g​ ​f​o​r​ ​a​u​t​h​e​n​t​i​c​a​t​i​o​n​ ​f​l​o​w​s
-	 */
-	admin_compliance_gdpr_scope_consent: string
-	/**
-	 * D​a​t​a​ ​P​r​o​c​e​s​s​i​n​g​ ​A​g​r​e​e​m​e​n​t​s​ ​(​D​P​A​)
-	 */
-	admin_compliance_gdpr_out_dpa: string
-	/**
-	 * L​e​g​a​l​ ​d​o​c​u​m​e​n​t​,​ ​t​e​n​a​n​t​ ​r​e​s​p​o​n​s​i​b​i​l​i​t​y
-	 */
-	admin_compliance_gdpr_out_dpa_reason: string
-	/**
-	 * C​o​o​k​i​e​ ​c​o​n​s​e​n​t​ ​b​a​n​n​e​r​s
-	 */
-	admin_compliance_gdpr_out_cookie: string
-	/**
-	 * A​p​p​l​i​c​a​t​i​o​n​ ​l​a​y​e​r​ ​r​e​s​p​o​n​s​i​b​i​l​i​t​y
-	 */
-	admin_compliance_gdpr_out_cookie_reason: string
-	/**
-	 * D​a​t​a​ ​p​o​r​t​a​b​i​l​i​t​y​ ​(​n​o​n​-​a​u​t​h​ ​d​a​t​a​)
-	 */
-	admin_compliance_gdpr_out_portability: string
-	/**
-	 * A​p​p​l​i​c​a​t​i​o​n​ ​s​i​d​e​ ​r​e​s​p​o​n​s​i​b​i​l​i​t​y
-	 */
-	admin_compliance_gdpr_out_portability_reason: string
-	/**
-	 * D​P​I​A​ ​(​D​a​t​a​ ​P​r​o​t​e​c​t​i​o​n​ ​I​m​p​a​c​t​ ​A​s​s​e​s​s​m​e​n​t​)
-	 */
-	admin_compliance_gdpr_out_dpia: string
-	/**
-	 * O​r​g​a​n​i​z​a​t​i​o​n​a​l​ ​p​r​o​c​e​s​s
-	 */
-	admin_compliance_gdpr_out_dpia_reason: string
-	/**
-	 * B​r​e​a​c​h​ ​n​o​t​i​f​i​c​a​t​i​o​n​ ​t​o​ ​a​u​t​h​o​r​i​t​y
-	 */
-	admin_compliance_gdpr_out_breach: string
-	/**
-	 * 7​2​-​h​o​u​r​ ​o​b​l​i​g​a​t​i​o​n​,​ ​o​r​g​a​n​i​z​a​t​i​o​n​a​l​ ​p​r​o​c​e​s​s
-	 */
-	admin_compliance_gdpr_out_breach_reason: string
-	/**
-	 * L​a​w​f​u​l​ ​b​a​s​i​s​ ​f​o​r​ ​p​r​o​c​e​s​s​i​n​g
-	 */
-	admin_compliance_gdpr_out_lawful_basis: string
-	/**
-	 * T​e​n​a​n​t​ ​b​u​s​i​n​e​s​s​ ​d​e​c​i​s​i​o​n
-	 */
-	admin_compliance_gdpr_out_lawful_basis_reason: string
-	/**
-	 * D​P​O​ ​a​p​p​o​i​n​t​m​e​n​t
-	 */
-	admin_compliance_gdpr_out_dpo: string
-	/**
-	 * O​r​g​a​n​i​z​a​t​i​o​n​a​l​ ​r​e​q​u​i​r​e​m​e​n​t
-	 */
-	admin_compliance_gdpr_out_dpo_reason: string
-	/**
-	 * I​n​t​e​r​n​a​t​i​o​n​a​l​ ​d​a​t​a​ ​t​r​a​n​s​f​e​r​ ​(​S​C​C​s​)
-	 */
-	admin_compliance_gdpr_out_transfer: string
-	/**
-	 * L​e​g​a​l​/​o​r​g​a​n​i​z​a​t​i​o​n​a​l​ ​r​e​q​u​i​r​e​m​e​n​t
-	 */
-	admin_compliance_gdpr_out_transfer_reason: string
-	/**
-	 * A​u​d​i​t​ ​l​o​g​ ​r​e​c​o​r​d​i​n​g​ ​a​n​d​ ​r​e​t​e​n​t​i​o​n
-	 */
-	admin_compliance_soc2_scope_audit: string
-	/**
-	 * R​o​l​e​-​b​a​s​e​d​ ​a​c​c​e​s​s​ ​c​o​n​t​r​o​l​ ​e​n​f​o​r​c​e​m​e​n​t
-	 */
-	admin_compliance_soc2_scope_rbac: string
-	/**
-	 * M​u​l​t​i​-​f​a​c​t​o​r​ ​a​u​t​h​e​n​t​i​c​a​t​i​o​n​ ​c​o​v​e​r​a​g​e
-	 */
-	admin_compliance_soc2_scope_mfa: string
-	/**
-	 * D​a​t​a​ ​e​n​c​r​y​p​t​i​o​n​ ​a​t​ ​r​e​s​t​ ​a​n​d​ ​i​n​ ​t​r​a​n​s​i​t
-	 */
-	admin_compliance_soc2_scope_encryption: string
-	/**
-	 * A​u​t​h​e​n​t​i​c​a​t​i​o​n​ ​a​n​d​ ​s​e​s​s​i​o​n​ ​s​e​c​u​r​i​t​y
-	 */
-	admin_compliance_soc2_scope_auth: string
-	/**
-	 * S​O​C​2​ ​T​y​p​e​ ​I​I​ ​f​o​r​m​a​l​ ​a​u​d​i​t
-	 */
-	admin_compliance_soc2_out_formal_audit: string
-	/**
-	 * R​e​q​u​i​r​e​s​ ​e​x​t​e​r​n​a​l​ ​C​P​A​ ​a​u​d​i​t
-	 */
-	admin_compliance_soc2_out_formal_audit_reason: string
-	/**
-	 * P​h​y​s​i​c​a​l​ ​s​e​c​u​r​i​t​y​ ​c​o​n​t​r​o​l​s
-	 */
-	admin_compliance_soc2_out_physical: string
-	/**
-	 * C​l​o​u​d​f​l​a​r​e​ ​i​n​f​r​a​s​t​r​u​c​t​u​r​e​ ​r​e​s​p​o​n​s​i​b​i​l​i​t​y
-	 */
-	admin_compliance_soc2_out_physical_reason: string
-	/**
-	 * N​e​t​w​o​r​k​ ​s​e​c​u​r​i​t​y​ ​m​o​n​i​t​o​r​i​n​g
-	 */
-	admin_compliance_soc2_out_network: string
-	/**
-	 * C​l​o​u​d​f​l​a​r​e​ ​r​e​s​p​o​n​s​i​b​i​l​i​t​y
-	 */
-	admin_compliance_soc2_out_network_reason: string
-	/**
-	 * E​m​p​l​o​y​e​e​ ​b​a​c​k​g​r​o​u​n​d​ ​c​h​e​c​k​s
-	 */
-	admin_compliance_soc2_out_background: string
-	/**
-	 * O​r​g​a​n​i​z​a​t​i​o​n​a​l​ ​p​r​o​c​e​s​s
-	 */
-	admin_compliance_soc2_out_background_reason: string
-	/**
-	 * V​e​n​d​o​r​ ​r​i​s​k​ ​m​a​n​a​g​e​m​e​n​t
-	 */
-	admin_compliance_soc2_out_vendor: string
-	/**
-	 * O​r​g​a​n​i​z​a​t​i​o​n​a​l​ ​p​r​o​c​e​s​s
-	 */
-	admin_compliance_soc2_out_vendor_reason: string
-	/**
-	 * B​u​s​i​n​e​s​s​ ​c​o​n​t​i​n​u​i​t​y​ ​/​ ​D​R
-	 */
-	admin_compliance_soc2_out_bcdr: string
-	/**
-	 * I​n​f​r​a​s​t​r​u​c​t​u​r​e​ ​l​a​y​e​r​ ​(​C​l​o​u​d​f​l​a​r​e​ ​W​o​r​k​e​r​s​/​D​1​)
-	 */
-	admin_compliance_soc2_out_bcdr_reason: string
-	/**
-	 * C​h​a​n​g​e​ ​m​a​n​a​g​e​m​e​n​t​ ​p​r​o​c​e​d​u​r​e​s
-	 */
-	admin_compliance_soc2_out_change: string
-	/**
-	 * D​e​v​e​l​o​p​m​e​n​t​ ​p​r​o​c​e​s​s
-	 */
-	admin_compliance_soc2_out_change_reason: string
-	/**
-	 * A​u​d​i​t​ ​L​o​g​s
-	 */
-	admin_compliance_category_audit_logs: string
-	/**
-	 * S​e​c​u​r​i​t​y​ ​a​n​d​ ​a​c​t​i​v​i​t​y​ ​l​o​g​s​ ​f​o​r​ ​c​o​m​p​l​i​a​n​c​e​ ​t​r​a​c​k​i​n​g
-	 */
-	admin_compliance_category_audit_logs_desc: string
-	/**
-	 * S​e​s​s​i​o​n​ ​D​a​t​a
-	 */
-	admin_compliance_category_session_data: string
-	/**
-	 * U​s​e​r​ ​s​e​s​s​i​o​n​ ​i​n​f​o​r​m​a​t​i​o​n​ ​a​n​d​ ​a​u​t​h​e​n​t​i​c​a​t​i​o​n​ ​s​t​a​t​e
-	 */
-	admin_compliance_category_session_data_desc: string
-	/**
-	 * D​e​l​e​t​i​o​n​ ​R​e​c​o​r​d​s​ ​(​T​o​m​b​s​t​o​n​e​s​)
-	 */
-	admin_compliance_category_tombstones: string
-	/**
-	 * R​e​c​o​r​d​s​ ​o​f​ ​d​e​l​e​t​e​d​ ​d​a​t​a​ ​f​o​r​ ​G​D​P​R​ ​c​o​m​p​l​i​a​n​c​e​ ​(​d​e​l​e​t​i​o​n​ ​p​r​o​o​f​)
-	 */
-	admin_compliance_category_tombstones_desc: string
-	/**
-	 * A​u​t​h​o​r​i​z​a​t​i​o​n​ ​C​o​d​e​s
-	 */
-	admin_compliance_category_auth_codes: string
-	/**
-	 * O​A​u​t​h​ ​a​u​t​h​o​r​i​z​a​t​i​o​n​ ​c​o​d​e​s​ ​(​s​h​o​r​t​-​l​i​v​e​d​)
-	 */
-	admin_compliance_category_auth_codes_desc: string
-	/**
-	 * R​e​f​r​e​s​h​ ​T​o​k​e​n​s
-	 */
-	admin_compliance_category_refresh_tokens: string
-	/**
-	 * O​A​u​t​h​ ​r​e​f​r​e​s​h​ ​t​o​k​e​n​s​ ​f​o​r​ ​s​e​s​s​i​o​n​ ​r​e​n​e​w​a​l
-	 */
-	admin_compliance_category_refresh_tokens_desc: string
-	/**
-	 * A​c​c​e​s​s​ ​T​o​k​e​n​s
-	 */
-	admin_compliance_category_access_tokens: string
-	/**
-	 * O​A​u​t​h​ ​a​c​c​e​s​s​ ​t​o​k​e​n​s​ ​f​o​r​ ​A​P​I​ ​a​u​t​h​e​n​t​i​c​a​t​i​o​n
-	 */
-	admin_compliance_category_access_tokens_desc: string
-	/**
-	 * L​o​o​k​u​p​ ​D​i​r​e​c​t​o​r​y
-	 */
-	admin_compliance_category_lookup_directory: string
-	/**
-	 * I​n​a​c​t​i​v​e​ ​a​c​c​o​u​n​t​ ​l​o​o​k​u​p​ ​r​e​c​o​r​d​s​ ​s​t​o​r​e​d​ ​a​c​r​o​s​s​ ​s​h​a​r​e​d​ ​L​o​o​k​u​p​ ​s​h​a​r​d​s
-	 */
-	admin_compliance_category_lookup_directory_desc: string
-	/**
-	 * D​a​t​a​ ​r​e​t​e​n​t​i​o​n​ ​c​a​t​e​g​o​r​y
-	 */
-	admin_compliance_category_unknown_desc: string
-	/**
-	 * E​d​i​t​ ​R​e​t​e​n​t​i​o​n​ ​P​o​l​i​c​y
-	 */
-	admin_compliance_edit_retention_title: string
-	/**
-	 * R​e​t​e​n​t​i​o​n​ ​P​e​r​i​o​d​ ​(​d​a​y​s​)
-	 */
-	admin_compliance_retention_period_days: string
-	/**
-	 * R​e​c​o​r​d​s​ ​o​l​d​e​r​ ​t​h​a​n​ ​t​h​i​s​ ​w​i​l​l​ ​b​e​ ​e​l​i​g​i​b​l​e​ ​f​o​r​ ​d​e​l​e​t​i​o​n​.​ ​R​a​n​g​e​:​ ​1​-​3​6​5​0​ ​d​a​y​s​ ​(​1​0​ ​y​e​a​r​s​)
-	 */
-	admin_compliance_retention_help: string
-	/**
-	 * I​n​a​c​t​i​v​e​ ​L​o​o​k​u​p​ ​r​e​c​o​r​d​s​ ​o​l​d​e​r​ ​t​h​a​n​ ​t​h​i​s​ ​b​e​c​o​m​e​ ​e​l​i​g​i​b​l​e​ ​f​o​r​ ​d​u​r​a​b​l​e​ ​c​l​e​a​n​u​p​.​ ​R​a​n​g​e​:​ ​3​0​-​3​6​5​0​ ​d​a​y​s​.
-	 */
-	admin_compliance_lookup_retention_help: string
-	/**
-	 * Q​u​i​c​k​ ​s​e​l​e​c​t​:
-	 */
-	admin_compliance_quick_select: string
-	/**
-	 * 7​ ​d​a​y​s
-	 */
-	admin_compliance_preset_7_days: string
-	/**
-	 * 3​0​ ​d​a​y​s
-	 */
-	admin_compliance_preset_30_days: string
-	/**
-	 * 9​0​ ​d​a​y​s
-	 */
-	admin_compliance_preset_90_days: string
-	/**
-	 * 1​ ​y​e​a​r
-	 */
-	admin_compliance_preset_1_year: string
-	/**
-	 * 2​ ​y​e​a​r​s
-	 */
-	admin_compliance_preset_2_years: string
-	/**
-	 * 5​ ​y​e​a​r​s
-	 */
-	admin_compliance_preset_5_years: string
-	/**
-	 * I​m​p​a​c​t​ ​E​s​t​i​m​a​t​e
-	 */
-	admin_compliance_impact_estimate: string
-	/**
-	 * L​o​a​d​i​n​g​ ​e​s​t​i​m​a​t​e​.​.​.
-	 */
-	admin_compliance_loading_estimate: string
-	/**
-	 * R​e​c​o​r​d​s​ ​t​o​ ​d​e​l​e​t​e​:
-	 */
-	admin_compliance_records_to_delete: string
-	/**
-	 * O​l​d​e​s​t​ ​r​e​c​o​r​d​:
-	 */
-	admin_compliance_oldest_record_label: string
-	/**
-	 * N​o​ ​e​s​t​i​m​a​t​e​ ​a​v​a​i​l​a​b​l​e
-	 */
-	admin_compliance_no_estimate: string
-	/**
-	 * W​a​r​n​i​n​g​:
-	 */
-	admin_compliance_short_retention_warning_title: string
-	/**
-	 * S​h​o​r​t​ ​r​e​t​e​n​t​i​o​n​ ​p​e​r​i​o​d​s​ ​m​a​y​ ​i​m​p​a​c​t​ ​c​o​m​p​l​i​a​n​c​e​ ​r​e​q​u​i​r​e​m​e​n​t​s​.​ ​E​n​s​u​r​e​ ​t​h​i​s​ ​m​e​e​t​s​ ​y​o​u​r​ ​o​r​g​a​n​i​z​a​t​i​o​n​'​s​ ​d​a​t​a​ ​r​e​t​e​n​t​i​o​n​ ​p​o​l​i​c​i​e​s​.
-	 */
-	admin_compliance_short_retention_warning: string
-	/**
-	 * I​ ​r​e​v​i​e​w​e​d​ ​t​h​e​ ​e​s​t​i​m​a​t​e​ ​a​n​d​ ​c​o​n​f​i​r​m​ ​s​h​o​r​t​e​n​i​n​g​ ​r​e​t​e​n​t​i​o​n​ ​f​r​o​m​ ​{​c​u​r​r​e​n​t​}​ ​t​o​ ​{​r​e​q​u​e​s​t​e​d​}​ ​d​a​y​s​.
-	 * @param {number} current
-	 * @param {number} requested
-	 */
-	admin_compliance_retention_shortening_confirm: RequiredParams<'current' | 'requested'>
-	/**
-	 * R​e​v​i​e​w​ ​t​h​e​ ​e​s​t​i​m​a​t​e​ ​a​n​d​ ​c​o​n​f​i​r​m​ ​t​h​e​ ​s​h​o​r​t​e​r​ ​r​e​t​e​n​t​i​o​n​ ​p​e​r​i​o​d​ ​b​e​f​o​r​e​ ​s​a​v​i​n​g​.
-	 */
-	admin_compliance_retention_shortening_confirmation_required: string
-	/**
-	 * F​a​i​l​e​d​ ​t​o​ ​s​a​v​e​ ​r​e​t​e​n​t​i​o​n​ ​p​o​l​i​c​y
-	 */
-	admin_compliance_save_failed: string
-	/**
-	 * R​e​t​e​n​t​i​o​n​ ​d​a​y​s​ ​m​u​s​t​ ​b​e​ ​b​e​t​w​e​e​n​ ​1​ ​a​n​d​ ​3​6​5​0​ ​(​1​0​ ​y​e​a​r​s​)
-	 */
-	admin_compliance_retention_days_invalid: string
-	/**
-	 * L​o​o​k​u​p​ ​r​e​t​e​n​t​i​o​n​ ​d​a​y​s​ ​m​u​s​t​ ​b​e​ ​b​e​t​w​e​e​n​ ​3​0​ ​a​n​d​ ​3​6​5​0​ ​(​1​0​ ​y​e​a​r​s​)
-	 */
-	admin_compliance_lookup_retention_days_invalid: string
-	/**
-	 * S​a​v​i​n​g​.​.​.
-	 */
-	admin_compliance_saving: string
-	/**
-	 * S​a​v​e​ ​C​h​a​n​g​e​s
-	 */
-	admin_compliance_save_changes: string
+	admin_compliance_close: string
 	/**
 	 * S​t​o​r​a​g​e​ ​D​e​s​t​i​n​a​t​i​o​n​s​ ​-​ ​A​u​t​h​r​i​m
 	 */
@@ -35922,6 +36083,142 @@ export type TranslationFunctions = {
 	 */
 	admin_user_detail_support_version: (arg: { version: number }) => LocalizedString
 	/**
+	 * Identity Assurance
+	 */
+	admin_user_detail_assurance: () => LocalizedString
+	/**
+	 * The level at which this person’s identity was proofed (IAL, NIST SP 800-63A), from the evidence recorded for them. Without evidence in force they are IAL1. It is released to applications and enforced only as the assurance settings say.
+	 */
+	admin_user_detail_assurance_desc: () => LocalizedString
+	/**
+	 * Current level
+	 */
+	admin_user_detail_assurance_current: () => LocalizedString
+	/**
+	 * No identity proofing is recorded: IAL1.
+	 */
+	admin_user_detail_assurance_none: () => LocalizedString
+	/**
+	 * Verified {date}
+	 */
+	admin_user_detail_assurance_rests_on: (arg: { date: string }) => LocalizedString
+	/**
+	 * Level
+	 */
+	admin_user_detail_assurance_level: () => LocalizedString
+	/**
+	 * How it was proofed
+	 */
+	admin_user_detail_assurance_type: () => LocalizedString
+	/**
+	 * Recorded by
+	 */
+	admin_user_detail_assurance_recorded_by: () => LocalizedString
+	/**
+	 * Verified
+	 */
+	admin_user_detail_assurance_verified: () => LocalizedString
+	/**
+	 * Expires (optional)
+	 */
+	admin_user_detail_assurance_expires: () => LocalizedString
+	/**
+	 * Expires
+	 */
+	admin_user_detail_assurance_expires_column: () => LocalizedString
+	/**
+	 * Status
+	 */
+	admin_user_detail_assurance_status: () => LocalizedString
+	/**
+	 * Where the proofing record is kept (optional)
+	 */
+	admin_user_detail_assurance_reference: () => LocalizedString
+	/**
+	 * Record Evidence
+	 */
+	admin_user_detail_assurance_record: () => LocalizedString
+	/**
+	 * Recording…
+	 */
+	admin_user_detail_assurance_recording: () => LocalizedString
+	/**
+	 * Revoke
+	 */
+	admin_user_detail_assurance_revoke: () => LocalizedString
+	/**
+	 * Revoke this evidence? It stops counting toward the person’s level at once.
+	 */
+	admin_user_detail_assurance_revoke_confirm: () => LocalizedString
+	/**
+	 * The identity assurance could not be loaded.
+	 */
+	admin_user_detail_assurance_load_error: () => LocalizedString
+	/**
+	 * The evidence could not be recorded: {message}. Recording again records it once.
+	 */
+	admin_user_detail_assurance_record_error: (arg: { message: string }) => LocalizedString
+	/**
+	 * The evidence could not be revoked: {message}
+	 */
+	admin_user_detail_assurance_revoke_error: (arg: { message: string }) => LocalizedString
+	/**
+	 * Only the newest 100 pieces of evidence are shown.
+	 */
+	admin_user_detail_assurance_truncated: () => LocalizedString
+	/**
+	 * Retry
+	 */
+	admin_user_detail_assurance_retry: () => LocalizedString
+	/**
+	 * Never
+	 */
+	admin_user_detail_assurance_never: () => LocalizedString
+	/**
+	 * Administrator attestation
+	 */
+	admin_user_detail_assurance_type_admin_attestation: () => LocalizedString
+	/**
+	 * Identity document check
+	 */
+	admin_user_detail_assurance_type_document_check: () => LocalizedString
+	/**
+	 * In-person check
+	 */
+	admin_user_detail_assurance_type_in_person_check: () => LocalizedString
+	/**
+	 * Supervised remote check
+	 */
+	admin_user_detail_assurance_type_remote_supervised_check: () => LocalizedString
+	/**
+	 * Provisioning (SCIM)
+	 */
+	admin_user_detail_assurance_type_scim: () => LocalizedString
+	/**
+	 * Import (CSV)
+	 */
+	admin_user_detail_assurance_type_import: () => LocalizedString
+	/**
+	 * Tenant default
+	 */
+	admin_user_detail_assurance_type_tenant_policy: () => LocalizedString
+	/**
+	 * In force
+	 */
+	admin_user_detail_assurance_status_active: () => LocalizedString
+	/**
+	 * Not verified yet
+	 */
+	admin_user_detail_assurance_status_pending: () => LocalizedString
+	/**
+	 * Expired
+	 */
+	admin_user_detail_assurance_status_expired: () => LocalizedString
+	/**
+	 * Revoked
+	 */
+	admin_user_detail_assurance_status_revoked: () => LocalizedString
+	/**
 	 * Legal Holds
 	 */
 	admin_user_detail_legal_holds: () => LocalizedString
@@ -37813,6 +38110,38 @@ export type TranslationFunctions = {
 	 * Create new user accounts on first login
 	 */
 	admin_external_idp_jit_provisioning_desc: () => LocalizedString
+	/**
+	 * Profile fields to update on login
+	 */
+	admin_external_idp_profile_update_fields: () => LocalizedString
+	/**
+	 * With Update on Login on for the tenant, a login from this IdP updates the chosen profile fields of a linked user. Turn off to choose the fields for this IdP.
+	 */
+	admin_external_idp_profile_update_fields_desc: () => LocalizedString
+	/**
+	 * Use the tenant default fields
+	 */
+	admin_external_idp_profile_update_fields_tenant_default: () => LocalizedString
+	/**
+	 * The tenant default updates:
+	 */
+	admin_external_idp_profile_update_fields_tenant_current: () => LocalizedString
+	/**
+	 * Reading the tenant default…
+	 */
+	admin_external_idp_profile_update_fields_tenant_loading: () => LocalizedString
+	/**
+	 * The tenant default could not be read; reload the page to choose fields.
+	 */
+	admin_external_idp_profile_update_fields_tenant_failed: () => LocalizedString
+	/**
+	 * The tenant default updates no fields.
+	 */
+	admin_external_idp_profile_update_fields_tenant_empty: () => LocalizedString
+	/**
+	 * No fields chosen: a login from this IdP updates nothing.
+	 */
+	admin_external_idp_profile_update_fields_none: () => LocalizedString
 	/**
 	 * Require Email Verified
 	 */
@@ -53432,7 +53761,7 @@ Remove this role from {email}?
 	 */
 	admin_compliance_title: () => LocalizedString
 	/**
-	 * Monitor compliance status across multiple frameworks, manage access reviews, view compliance reports, and track data retention policies.
+	 * Checks read from what Authrim enforces, MFA coverage, access reviews, evidence reports and how long data is kept.
 	 */
 	admin_compliance_description: () => LocalizedString
 	/**
@@ -53440,7 +53769,7 @@ Remove this role from {email}?
 	 */
 	admin_compliance_tab_overview: () => LocalizedString
 	/**
-	 * Access Reviews
+	 * Access reviews
 	 */
 	admin_compliance_tab_reviews: () => LocalizedString
 	/**
@@ -53448,59 +53777,39 @@ Remove this role from {email}?
 	 */
 	admin_compliance_tab_reports: () => LocalizedString
 	/**
-	 * Data Retention
+	 * Data retention
 	 */
 	admin_compliance_tab_retention: () => LocalizedString
 	/**
-	 * Loading compliance data...
+	 * Loading…
 	 */
 	admin_compliance_loading: () => LocalizedString
 	/**
-	 * Status
-	 */
-	admin_compliance_section_status: () => LocalizedString
-	/**
-	 * Access Reviews
-	 */
-	admin_compliance_section_reviews: () => LocalizedString
-	/**
-	 * Reports
-	 */
-	admin_compliance_section_reports: () => LocalizedString
-	/**
-	 * Data Retention
-	 */
-	admin_compliance_section_retention: () => LocalizedString
-	/**
-	 * Failed to load
+	 * Could not load this section. Try again.
 	 */
 	admin_compliance_load_failed: () => LocalizedString
 	/**
-	 * {section}: {message}
+	 * Some of the facts behind the status cannot be read right now. Try again in a moment.
 	 */
-	admin_compliance_section_error: (arg: { message: string, section: string }) => LocalizedString
+	admin_compliance_unavailable: () => LocalizedString
 	/**
-	 * Multiple errors: {errors}
+	 * Try again
 	 */
-	admin_compliance_multiple_errors: (arg: { errors: string }) => LocalizedString
+	admin_compliance_retry: () => LocalizedString
 	/**
-	 * Overall Compliance Status
+	 * As of {at}
 	 */
-	admin_compliance_overall_status: () => LocalizedString
-	/**
-	 * Assessment across all compliance frameworks
-	 */
-	admin_compliance_overall_status_description: () => LocalizedString
+	admin_compliance_generated_at: (arg: { at: string }) => LocalizedString
 	/**
 	 * Compliant
 	 */
 	admin_compliance_status_compliant: () => LocalizedString
 	/**
-	 * Partial
+	 * Needs attention
 	 */
-	admin_compliance_status_partial: () => LocalizedString
+	admin_compliance_status_warning: () => LocalizedString
 	/**
-	 * Non-Compliant
+	 * Not compliant
 	 */
 	admin_compliance_status_non_compliant: () => LocalizedString
 	/**
@@ -53508,833 +53817,797 @@ Remove this role from {email}?
 	 */
 	admin_compliance_status_not_applicable: () => LocalizedString
 	/**
-	 * Pending
+	 * Overall
 	 */
-	admin_compliance_status_pending: () => LocalizedString
+	admin_compliance_overall_status: () => LocalizedString
 	/**
-	 * In progress
+	 * The worst status among the checks. Each check is a fact Authrim reads from what it enforces.
 	 */
-	admin_compliance_status_in_progress: () => LocalizedString
+	admin_compliance_overall_hint: () => LocalizedString
 	/**
-	 * Completed
+	 * Frameworks
 	 */
-	admin_compliance_status_completed: () => LocalizedString
+	admin_compliance_frameworks: () => LocalizedString
 	/**
-	 * Cancelled
+	 * Each framework counts the checks that support its controls. Authrim covers only these controls; a framework also needs the organizational ones.
 	 */
-	admin_compliance_status_cancelled: () => LocalizedString
+	admin_compliance_frameworks_hint: () => LocalizedString
 	/**
-	 * Generating
+	 * {compliant} compliant · {warning} need attention · {non_compliant} not compliant
 	 */
-	admin_compliance_status_generating: () => LocalizedString
+	admin_compliance_framework_counts: (arg: { compliant: number, non_compliant: number, warning: number }) => LocalizedString
 	/**
-	 * Failed
+	 * Checks
 	 */
-	admin_compliance_status_failed: () => LocalizedString
+	admin_compliance_checks: () => LocalizedString
 	/**
-	 * Compliance Progress
+	 * Check
 	 */
-	admin_compliance_progress: () => LocalizedString
+	admin_compliance_check: () => LocalizedString
 	/**
-	 * {compliant}/{total} checks
+	 * Facts
 	 */
-	admin_compliance_checks_count: (arg: { compliant: number, total: number }) => LocalizedString
+	admin_compliance_facts: () => LocalizedString
 	/**
-	 * {count} issues found
+	 * Data is deleted as its retention says
 	 */
-	admin_compliance_issue_count: (arg: { count: number }) => LocalizedString
+	admin_compliance_check_data_retention_enforced: () => LocalizedString
 	/**
-	 * Last checked:
+	 * Audit logging
 	 */
-	admin_compliance_last_checked: () => LocalizedString
+	admin_compliance_check_audit_logging: () => LocalizedString
 	/**
-	 * Data Retention
+	 * Admins have MFA
 	 */
-	admin_compliance_data_retention: () => LocalizedString
+	admin_compliance_check_admin_mfa: () => LocalizedString
 	/**
-	 * Audit Log
+	 * Sign-in requires MFA
 	 */
-	admin_compliance_audit_log: () => LocalizedString
+	admin_compliance_check_user_mfa_enforced: () => LocalizedString
 	/**
-	 * MFA Coverage
+	 * Users have MFA
 	 */
-	admin_compliance_mfa_coverage: () => LocalizedString
+	admin_compliance_check_user_mfa_coverage: () => LocalizedString
 	/**
-	 * Encryption
+	 * Role-based access
 	 */
-	admin_compliance_encryption: () => LocalizedString
+	admin_compliance_check_rbac_configured: () => LocalizedString
 	/**
-	 * Enabled
+	 * {count} retention categories need attention · {expired} records past their retention
 	 */
-	admin_compliance_enabled: () => LocalizedString
+	admin_compliance_fact_attention: (arg: { count: number, expired: number }) => LocalizedString
 	/**
-	 * Disabled
+	 * Every category is deleted on schedule
 	 */
-	admin_compliance_disabled: () => LocalizedString
+	admin_compliance_fact_retention_ok: () => LocalizedString
 	/**
-	 * {count} days
+	 * {entries} entries in the last 30 days (store: {status})
 	 */
-	admin_compliance_days: (arg: { count: number }) => LocalizedString
+	admin_compliance_fact_audit: (arg: { entries: number, status: string }) => LocalizedString
 	/**
-	 * Full
+	 * Audit store cannot be queried here ({status})
 	 */
-	admin_compliance_full: () => LocalizedString
+	admin_compliance_fact_audit_not_queryable: (arg: { status: string }) => LocalizedString
+	/**
+	 * {with} of {total} admins have a passkey
+	 */
+	admin_compliance_fact_admin_mfa: (arg: { total: number, with: number }) => LocalizedString
+	/**
+	 * Required: default {aal}, {scopes} scopes
+	 */
+	admin_compliance_fact_mfa_enforced: (arg: { aal: string, scopes: number }) => LocalizedString
+	/**
+	 * No authorization requires AAL2 or above
+	 */
+	admin_compliance_fact_mfa_not_enforced: () => LocalizedString
+	/**
+	 * {with} of {total} users ({percent}%) have a passkey or TOTP
+	 */
+	admin_compliance_fact_user_mfa: (arg: { percent: number, total: number, with: number }) => LocalizedString
+	/**
+	 * {roles} roles · {users} users with a role
+	 */
+	admin_compliance_fact_rbac: (arg: { roles: number, users: number }) => LocalizedString
+	/**
+	 * Multi-factor authentication
+	 */
+	admin_compliance_mfa: () => LocalizedString
+	/**
+	 * Admins with a passkey
+	 */
+	admin_compliance_mfa_admins: () => LocalizedString
+	/**
+	 * Users with MFA
+	 */
+	admin_compliance_mfa_users: () => LocalizedString
+	/**
+	 * Passkey
+	 */
+	admin_compliance_mfa_passkey: () => LocalizedString
+	/**
+	 * TOTP
+	 */
+	admin_compliance_mfa_totp: () => LocalizedString
+	/**
+	 * Guests (not counted)
+	 */
+	admin_compliance_mfa_guests: () => LocalizedString
+	/**
+	 * Required at sign-in
+	 */
+	admin_compliance_mfa_enforcement: () => LocalizedString
 	/**
 	 * Yes
 	 */
-	admin_compliance_yes: () => LocalizedString
+	admin_compliance_mfa_enforced_yes: () => LocalizedString
 	/**
 	 * No
 	 */
-	admin_compliance_no: () => LocalizedString
+	admin_compliance_mfa_enforced_no: () => LocalizedString
 	/**
-	 * Start New Review
+	 * Audit log
 	 */
-	admin_compliance_start_new_review: () => LocalizedString
+	admin_compliance_audit_log: () => LocalizedString
 	/**
-	 * No access reviews found.
+	 * Event log retention
+	 */
+	admin_compliance_audit_event_retention: () => LocalizedString
+	/**
+	 * PII log retention
+	 */
+	admin_compliance_audit_pii_retention: () => LocalizedString
+	/**
+	 * Access control
+	 */
+	admin_compliance_access_control: () => LocalizedString
+	/**
+	 * Accounts being deleted
+	 */
+	admin_compliance_pending_deletions: () => LocalizedString
+	/**
+	 * Start a review
+	 */
+	admin_compliance_start_review: () => LocalizedString
+	/**
+	 * No access reviews yet.
 	 */
 	admin_compliance_no_reviews: () => LocalizedString
 	/**
 	 * Name
 	 */
-	admin_compliance_name: () => LocalizedString
+	admin_compliance_review_name: () => LocalizedString
 	/**
-	 * Scope
+	 * Description
 	 */
-	admin_compliance_scope: () => LocalizedString
+	admin_compliance_review_description: () => LocalizedString
 	/**
-	 * Progress
+	 * Who is reviewed
+	 */
+	admin_compliance_review_scope: () => LocalizedString
+	/**
+	 * Every active user
+	 */
+	admin_compliance_scope_all_users: () => LocalizedString
+	/**
+	 * Holders of a role
+	 */
+	admin_compliance_scope_role: () => LocalizedString
+	/**
+	 * Members of an organization
+	 */
+	admin_compliance_scope_organization: () => LocalizedString
+	/**
+	 * Users who have not signed in
+	 */
+	admin_compliance_scope_inactive_users: () => LocalizedString
+	/**
+	 * Role ID
+	 */
+	admin_compliance_scope_value_role: () => LocalizedString
+	/**
+	 * Organization ID
+	 */
+	admin_compliance_scope_value_organization: () => LocalizedString
+	/**
+	 * Not signed in for (days)
+	 */
+	admin_compliance_inactive_days: () => LocalizedString
+	/**
+	 * Due date
+	 */
+	admin_compliance_due_date: () => LocalizedString
+	/**
+	 * Pending
+	 */
+	admin_compliance_review_status_pending: () => LocalizedString
+	/**
+	 * In progress
+	 */
+	admin_compliance_review_status_in_progress: () => LocalizedString
+	/**
+	 * Completed
+	 */
+	admin_compliance_review_status_completed: () => LocalizedString
+	/**
+	 * Cancelled
+	 */
+	admin_compliance_review_status_cancelled: () => LocalizedString
+	/**
+	 * Overdue
+	 */
+	admin_compliance_overdue: () => LocalizedString
+	/**
+	 * Decided
 	 */
 	admin_compliance_review_progress: () => LocalizedString
 	/**
 	 * Started
 	 */
-	admin_compliance_started: () => LocalizedString
+	admin_compliance_review_created: () => LocalizedString
 	/**
-	 * No compliance reports found.
+	 * Open
+	 */
+	admin_compliance_review_open: () => LocalizedString
+	/**
+	 * All reviews
+	 */
+	admin_compliance_review_back: () => LocalizedString
+	/**
+	 * {reviewed} of {total} decided · {approved} kept · {revoked} revoked
+	 */
+	admin_compliance_review_counts: (arg: { approved: number, reviewed: number, revoked: number, total: number }) => LocalizedString
+	/**
+	 * {applied} revocations applied · {failed} not applied · {pending} left to apply
+	 */
+	admin_compliance_review_application: (arg: { applied: number, failed: number, pending: number }) => LocalizedString
+	/**
+	 * Could not start the review.
+	 */
+	admin_compliance_review_create_failed: () => LocalizedString
+	/**
+	 * Enter a name.
+	 */
+	admin_compliance_review_name_required: () => LocalizedString
+	/**
+	 * Enter the role or organization ID.
+	 */
+	admin_compliance_review_scope_value_required: () => LocalizedString
+	/**
+	 * This review would have more items than one review holds. Narrow it (a role, an organization or fewer days).
+	 */
+	admin_compliance_review_too_many: () => LocalizedString
+	/**
+	 * Items
+	 */
+	admin_compliance_items: () => LocalizedString
+	/**
+	 * User
+	 */
+	admin_compliance_item_user: () => LocalizedString
+	/**
+	 * Access
+	 */
+	admin_compliance_item_access: () => LocalizedString
+	/**
+	 * Decision
+	 */
+	admin_compliance_item_decision: () => LocalizedString
+	/**
+	 * Applied
+	 */
+	admin_compliance_item_applied: () => LocalizedString
+	/**
+	 * Role {value}
+	 */
+	admin_compliance_access_role: (arg: { value: string }) => LocalizedString
+	/**
+	 * Organization {value}
+	 */
+	admin_compliance_access_organization: (arg: { value: string }) => LocalizedString
+	/**
+	 * Account
+	 */
+	admin_compliance_access_account: () => LocalizedString
+	/**
+	 * Keep
+	 */
+	admin_compliance_decision_approved: () => LocalizedString
+	/**
+	 * Revoke
+	 */
+	admin_compliance_decision_revoked: () => LocalizedString
+	/**
+	 * Not decided
+	 */
+	admin_compliance_decision_undecided: () => LocalizedString
+	/**
+	 * All
+	 */
+	admin_compliance_filter_all: () => LocalizedString
+	/**
+	 * Being applied
+	 */
+	admin_compliance_apply_applying: () => LocalizedString
+	/**
+	 * Applied
+	 */
+	admin_compliance_apply_applied: () => LocalizedString
+	/**
+	 * Started, not finished
+	 */
+	admin_compliance_apply_incomplete: () => LocalizedString
+	/**
+	 * Not applied
+	 */
+	admin_compliance_apply_failed: () => LocalizedString
+	/**
+	 * Kept
+	 */
+	admin_compliance_apply_skipped: () => LocalizedString
+	/**
+	 * Reason: {code}
+	 */
+	admin_compliance_apply_error: (arg: { code: string }) => LocalizedString
+	/**
+	 * Select {user}
+	 */
+	admin_compliance_select_item: (arg: { user: string }) => LocalizedString
+	/**
+	 * Select every item on this page
+	 */
+	admin_compliance_select_page: () => LocalizedString
+	/**
+	 * {count} selected
+	 */
+	admin_compliance_selected: (arg: { count: number }) => LocalizedString
+	/**
+	 * Reason (recorded with the decision)
+	 */
+	admin_compliance_justification: () => LocalizedString
+	/**
+	 * Keep selected
+	 */
+	admin_compliance_keep_selected: () => LocalizedString
+	/**
+	 * Revoke selected
+	 */
+	admin_compliance_revoke_selected: () => LocalizedString
+	/**
+	 * Could not record the decisions.
+	 */
+	admin_compliance_decide_failed: () => LocalizedString
+	/**
+	 * {message} Recorded: {recorded}. Not changed: {unchanged}. Unknown (see the list): {unknown}. Not sent: {left}.
+	 */
+	admin_compliance_decide_partial: (arg: { left: number, message: string, recorded: number, unchanged: number, unknown: number }) => LocalizedString
+	/**
+	 * Not every access review could be loaded.
+	 */
+	admin_compliance_reviews_partial: () => LocalizedString
+	/**
+	 * {count} decision{{s}} recorded.
+	 */
+	admin_compliance_decided: (arg: { count: number }) => LocalizedString
+	/**
+	 * Not changed: {count} item{{s}} whose revocation has started and must be finished.
+	 */
+	admin_compliance_decision_locked: (arg: { count: number }) => LocalizedString
+	/**
+	 * Load more
+	 */
+	admin_compliance_load_more: () => LocalizedString
+	/**
+	 * Complete and apply revocations
+	 */
+	admin_compliance_complete: () => LocalizedString
+	/**
+	 * Revoked access is removed now (role, organization membership or the account). Each revocation is applied once, and one that stops part way is finished when you complete again.
+	 */
+	admin_compliance_complete_hint: () => LocalizedString
+	/**
+	 * Decide every item first ({count} left).
+	 */
+	admin_compliance_complete_undecided: (arg: { count: number }) => LocalizedString
+	/**
+	 * Review completed: {applied} revocations applied.
+	 */
+	admin_compliance_completed: (arg: { applied: number }) => LocalizedString
+	/**
+	 * {applied} applied, {failed} not applied, {remaining} left. Complete again to continue.
+	 */
+	admin_compliance_completed_partial: (arg: { applied: number, failed: number, remaining: number }) => LocalizedString
+	/**
+	 * Could not complete the review.
+	 */
+	admin_compliance_complete_failed: () => LocalizedString
+	/**
+	 * Cancel review
+	 */
+	admin_compliance_cancel_review: () => LocalizedString
+	/**
+	 * Cancel this review? Its decisions are kept, and nothing more is revoked.
+	 */
+	admin_compliance_cancel_confirm: () => LocalizedString
+	/**
+	 * This review cannot be cancelled: some revocations have started or been applied.
+	 */
+	admin_compliance_cancel_blocked: () => LocalizedString
+	/**
+	 * Could not cancel the review.
+	 */
+	admin_compliance_cancel_failed: () => LocalizedString
+	/**
+	 * Review cancelled.
+	 */
+	admin_compliance_cancelled: () => LocalizedString
+	/**
+	 * Generate a report
+	 */
+	admin_compliance_new_report: () => LocalizedString
+	/**
+	 * No reports yet.
 	 */
 	admin_compliance_no_reports: () => LocalizedString
 	/**
-	 * Type
+	 * A report is kept encrypted for 30 days, then deleted. Rows identify people by their IDs, never adding names or email addresses; the reasons reviewers wrote are included as written. Generating and downloading are audited.
 	 */
-	admin_compliance_type: () => LocalizedString
+	admin_compliance_reports_hint: () => LocalizedString
 	/**
-	 * Requested
+	 * Report
 	 */
-	admin_compliance_requested: () => LocalizedString
+	admin_compliance_report_type: () => LocalizedString
 	/**
-	 * Actions
+	 * Access review decisions
 	 */
-	admin_compliance_actions: () => LocalizedString
+	admin_compliance_report_type_access_review: () => LocalizedString
+	/**
+	 * Who has MFA
+	 */
+	admin_compliance_report_type_mfa_coverage: () => LocalizedString
+	/**
+	 * Compliance status (now)
+	 */
+	admin_compliance_report_type_compliance_status: () => LocalizedString
+	/**
+	 * Audit log entries
+	 */
+	admin_compliance_report_type_audit_log: () => LocalizedString
+	/**
+	 * Name (optional)
+	 */
+	admin_compliance_report_name: () => LocalizedString
+	/**
+	 * Access review
+	 */
+	admin_compliance_report_review: () => LocalizedString
+	/**
+	 * From
+	 */
+	admin_compliance_report_from: () => LocalizedString
+	/**
+	 * To
+	 */
+	admin_compliance_report_to: () => LocalizedString
+	/**
+	 * Up to 366 days, from the audit store that can be queried.
+	 */
+	admin_compliance_report_period_hint: () => LocalizedString
+	/**
+	 * Being stored
+	 */
+	admin_compliance_report_status_generating: () => LocalizedString
+	/**
+	 * Ready
+	 */
+	admin_compliance_report_status_completed: () => LocalizedString
+	/**
+	 * Failed
+	 */
+	admin_compliance_report_status_failed: () => LocalizedString
+	/**
+	 * Expired
+	 */
+	admin_compliance_report_status_expired: () => LocalizedString
+	/**
+	 * {count} row{{s}}
+	 */
+	admin_compliance_report_rows: (arg: { count: number }) => LocalizedString
+	/**
+	 * Until {at}
+	 */
+	admin_compliance_report_expires: (arg: { at: string }) => LocalizedString
+	/**
+	 * The report has more than 10,000 rows. Narrow it (a shorter period, a smaller review).
+	 */
+	admin_compliance_report_too_large: () => LocalizedString
+	/**
+	 * This tenant's audit store cannot be queried for a report.
+	 */
+	admin_compliance_report_not_queryable: () => LocalizedString
+	/**
+	 * Report storage is not configured (admin database, artifact bucket or encryption key).
+	 */
+	admin_compliance_report_storage_unavailable: () => LocalizedString
+	/**
+	 * Could not generate the report.
+	 */
+	admin_compliance_report_failed: () => LocalizedString
+	/**
+	 * Report generated.
+	 */
+	admin_compliance_report_created: () => LocalizedString
+	/**
+	 * Choose a period (the end after the start).
+	 */
+	admin_compliance_report_period_required: () => LocalizedString
+	/**
+	 * Choose an access review.
+	 */
+	admin_compliance_report_review_required: () => LocalizedString
 	/**
 	 * Download
 	 */
 	admin_compliance_download: () => LocalizedString
 	/**
-	 * Data Retention Policy
+	 * Could not download the report.
 	 */
-	admin_compliance_retention_policy: () => LocalizedString
+	admin_compliance_download_failed: () => LocalizedString
 	/**
-	 * GDPR Compliant
+	 * Generate
 	 */
-	admin_compliance_gdpr_compliant: () => LocalizedString
+	admin_compliance_generate: () => LocalizedString
 	/**
-	 * Last Cleanup
+	 * Generated
 	 */
-	admin_compliance_last_cleanup: () => LocalizedString
+	admin_compliance_requested: () => LocalizedString
 	/**
-	 * Next Cleanup
+	 * Each kind of data, how long it is kept, what decides that and what deletes it. Values are set where they are kept; only the lookup directory is set here.
 	 */
-	admin_compliance_next_cleanup: () => LocalizedString
+	admin_compliance_retention_hint: () => LocalizedString
 	/**
-	 * Retention Categories
+	 * Needs attention
 	 */
-	admin_compliance_retention_categories: () => LocalizedString
+	admin_compliance_retention_attention: () => LocalizedString
 	/**
-	 * Configure how long data is retained before automatic deletion
+	 * Data
 	 */
-	admin_compliance_retention_categories_description: () => LocalizedString
+	admin_compliance_retention_category: () => LocalizedString
 	/**
-	 * Run Cleanup
+	 * Kept for
 	 */
-	admin_compliance_run_cleanup: () => LocalizedString
+	admin_compliance_retention_kept: () => LocalizedString
 	/**
-	 * Category
+	 * Deleted by
 	 */
-	admin_compliance_category: () => LocalizedString
-	/**
-	 * Retention
-	 */
-	admin_compliance_retention: () => LocalizedString
+	admin_compliance_retention_deleted_by: () => LocalizedString
 	/**
 	 * Records
 	 */
-	admin_compliance_records: () => LocalizedString
+	admin_compliance_retention_records: () => LocalizedString
 	/**
-	 * Oldest Record
+	 * Set in
 	 */
-	admin_compliance_oldest_record: () => LocalizedString
+	admin_compliance_retention_set_in: () => LocalizedString
 	/**
-	 * Edit
+	 * {count} day{{s}}
 	 */
-	admin_compliance_edit: () => LocalizedString
+	admin_compliance_days: (arg: { count: number }) => LocalizedString
 	/**
-	 * Close
+	 * {count} hour{{s}}
 	 */
-	admin_compliance_close: () => LocalizedString
+	admin_compliance_hours: (arg: { count: number }) => LocalizedString
 	/**
-	 * About Data Retention
+	 * {count} minute{{s}}
 	 */
-	admin_compliance_about_retention: () => LocalizedString
+	admin_compliance_minutes: (arg: { count: number }) => LocalizedString
 	/**
-	 * Data retention policies help maintain GDPR compliance by automatically removing old data. Tombstones (deletion records) are kept longer to provide proof of deletion for regulatory purposes. Contact your administrator to modify retention periods.
+	 * {count} second{{s}}
 	 */
-	admin_compliance_about_retention_description: () => LocalizedString
+	admin_compliance_seconds: (arg: { count: number }) => LocalizedString
 	/**
-	 * Start Access Review
+	 * {total} ({expired} past retention)
 	 */
-	admin_compliance_start_review_title: () => LocalizedString
+	admin_compliance_records_expired: (arg: { expired: number, total: number }) => LocalizedString
 	/**
-	 * Review Name
+	 * Capped at {value} by the tenant profile
 	 */
-	admin_compliance_review_name: () => LocalizedString
+	admin_compliance_capped: (arg: { value: string }) => LocalizedString
 	/**
-	 * e.g., Q1 2026 Access Review
+	 * Some routes differ
 	 */
-	admin_compliance_review_name_placeholder: () => LocalizedString
+	admin_compliance_varies_by_route: () => LocalizedString
 	/**
-	 * Due Date (optional)
+	 * Apps may set their own
 	 */
-	admin_compliance_due_date_optional: () => LocalizedString
+	admin_compliance_varies_by_app: () => LocalizedString
+	/**
+	 * Differs by sign-in method
+	 */
+	admin_compliance_varies_by_sign_in_method: () => LocalizedString
+	/**
+	 * A request may set its own
+	 */
+	admin_compliance_varies_by_request: () => LocalizedString
+	/**
+	 * Also archived; Authrim does not delete the archive
+	 */
+	admin_compliance_archive_kept: () => LocalizedString
+	/**
+	 * Extended on use, with no absolute limit
+	 */
+	admin_compliance_no_absolute_limit: () => LocalizedString
+	/**
+	 * Scheduled task
+	 */
+	admin_compliance_deletion_task: () => LocalizedString
+	/**
+	 * Scheduled task (disabled: {reason})
+	 */
+	admin_compliance_deletion_task_disabled: (arg: { reason: string }) => LocalizedString
+	/**
+	 * Last run for this tenant: {at} ({outcome})
+	 */
+	admin_compliance_deletion_last_run: (arg: { at: string, outcome: string }) => LocalizedString
+	/**
+	 * Not run for this tenant yet
+	 */
+	admin_compliance_deletion_never_run: () => LocalizedString
+	/**
+	 * Expires where it is kept
+	 */
+	admin_compliance_deletion_expiry: () => LocalizedString
+	/**
+	 * Not stored
+	 */
+	admin_compliance_deletion_not_stored: () => LocalizedString
+	/**
+	 * Not deleted
+	 */
+	admin_compliance_deletion_not_deleted: () => LocalizedString
+	/**
+	 * Settings › {category}
+	 */
+	admin_compliance_edit_where_settings: (arg: { category: string }) => LocalizedString
+	/**
+	 * Settings › Sessions
+	 */
+	admin_compliance_edit_where_session: () => LocalizedString
+	/**
+	 * Audit storage
+	 */
+	admin_compliance_edit_where_audit: () => LocalizedString
+	/**
+	 * Audit PII configuration
+	 */
+	admin_compliance_edit_where_pii: () => LocalizedString
+	/**
+	 * Here
+	 */
+	admin_compliance_edit_where_lookup: () => LocalizedString
+	/**
+	 * Fixed
+	 */
+	admin_compliance_edit_where_none: () => LocalizedString
+	/**
+	 * Change
+	 */
+	admin_compliance_lookup_edit: () => LocalizedString
+	/**
+	 * Lookup directory retention
+	 */
+	admin_compliance_lookup_title: () => LocalizedString
+	/**
+	 * Days (30 to 3650)
+	 */
+	admin_compliance_lookup_days: () => LocalizedString
+	/**
+	 * Shortening it from {from} to {to} days changes the policy only: nothing deletes lookup directory records yet. Confirm the shorter retention to save it.
+	 */
+	admin_compliance_lookup_shorten_confirm: (arg: { from: number, to: number }) => LocalizedString
+	/**
+	 * Save the shorter retention
+	 */
+	admin_compliance_lookup_shorten_check: () => LocalizedString
+	/**
+	 * Retention saved.
+	 */
+	admin_compliance_lookup_saved: () => LocalizedString
+	/**
+	 * Could not save the retention.
+	 */
+	admin_compliance_lookup_failed: () => LocalizedString
+	/**
+	 * Its deletion task is disabled
+	 */
+	admin_compliance_reason_task_disabled: () => LocalizedString
+	/**
+	 * Its deletion task failed
+	 */
+	admin_compliance_reason_task_failed: () => LocalizedString
+	/**
+	 * Its deletion task has not run for this tenant
+	 */
+	admin_compliance_reason_never_run: () => LocalizedString
+	/**
+	 * Its deletion failed for this tenant
+	 */
+	admin_compliance_reason_tenant_run_failed: () => LocalizedString
+	/**
+	 * Kept in an archive Authrim does not delete
+	 */
+	admin_compliance_reason_deleted_outside_authrim: () => LocalizedString
+	/**
+	 * Nothing deletes it yet
+	 */
+	admin_compliance_reason_not_deleted: () => LocalizedString
+	/**
+	 * Its new policy is not applied yet
+	 */
+	admin_compliance_reason_projection_pending: () => LocalizedString
+	/**
+	 * Sessions can be extended without limit
+	 */
+	admin_compliance_reason_no_absolute_limit: () => LocalizedString
+	/**
+	 * An archived copy is kept
+	 */
+	admin_compliance_reason_archive_not_deleted: () => LocalizedString
+	/**
+	 * Audit events
+	 */
+	admin_compliance_category_audit_events: () => LocalizedString
+	/**
+	 * Audit PII
+	 */
+	admin_compliance_category_audit_pii: () => LocalizedString
+	/**
+	 * Check API decisions
+	 */
+	admin_compliance_category_check_api_audit: () => LocalizedString
+	/**
+	 * Deleted users
+	 */
+	admin_compliance_category_user_tombstones: () => LocalizedString
+	/**
+	 * Compliance reports
+	 */
+	admin_compliance_category_compliance_reports: () => LocalizedString
+	/**
+	 * Lookup directory
+	 */
+	admin_compliance_category_lookup_directory: () => LocalizedString
+	/**
+	 * Diagnostic logs
+	 */
+	admin_compliance_category_diagnostic_logs: () => LocalizedString
+	/**
+	 * Sessions
+	 */
+	admin_compliance_category_sessions: () => LocalizedString
+	/**
+	 * Refresh tokens
+	 */
+	admin_compliance_category_refresh_tokens: () => LocalizedString
+	/**
+	 * Authorization codes
+	 */
+	admin_compliance_category_authorization_codes: () => LocalizedString
+	/**
+	 * Access tokens
+	 */
+	admin_compliance_category_access_tokens: () => LocalizedString
 	/**
 	 * Cancel
 	 */
 	admin_compliance_cancel: () => LocalizedString
 	/**
-	 * Starting...
+	 * Save
 	 */
-	admin_compliance_starting: () => LocalizedString
+	admin_compliance_save: () => LocalizedString
 	/**
-	 * Start Review
+	 * Close
 	 */
-	admin_compliance_start_review: () => LocalizedString
-	/**
-	 * Review name is required
-	 */
-	admin_compliance_review_name_required: () => LocalizedString
-	/**
-	 * Review name must be {count} characters or less
-	 */
-	admin_compliance_review_name_max: (arg: { count: number }) => LocalizedString
-	/**
-	 * Failed to start review
-	 */
-	admin_compliance_start_review_failed: () => LocalizedString
-	/**
-	 * All Users
-	 */
-	admin_compliance_scope_all_users: () => LocalizedString
-	/**
-	 * By Role
-	 */
-	admin_compliance_scope_role: () => LocalizedString
-	/**
-	 * Role
-	 */
-	admin_compliance_scope_role_label: () => LocalizedString
-	/**
-	 * By Organization
-	 */
-	admin_compliance_scope_organization: () => LocalizedString
-	/**
-	 * Organization
-	 */
-	admin_compliance_scope_organization_label: () => LocalizedString
-	/**
-	 * Inactive Users
-	 */
-	admin_compliance_scope_inactive_users: () => LocalizedString
-	/**
-	 * Unknown
-	 */
-	admin_compliance_scope_unknown: () => LocalizedString
-	/**
-	 * GDPR DSAR
-	 */
-	admin_compliance_report_gdpr_dsar: () => LocalizedString
-	/**
-	 * SOC2 AUDIT
-	 */
-	admin_compliance_report_soc2_audit: () => LocalizedString
-	/**
-	 * ACCESS SUMMARY
-	 */
-	admin_compliance_report_access_summary: () => LocalizedString
-	/**
-	 * USER ACTIVITY
-	 */
-	admin_compliance_report_user_activity: () => LocalizedString
-	/**
-	 * UNKNOWN
-	 */
-	admin_compliance_report_unknown: () => LocalizedString
-	/**
-	 * Cleanup Completed
-	 */
-	admin_compliance_cleanup_completed: () => LocalizedString
-	/**
-	 * Retention policy updated.
-	 */
-	admin_compliance_retention_updated: () => LocalizedString
-	/**
-	 * Cleanup completed. Deleted {count} records.
-	 */
-	admin_compliance_cleanup_completed_count: (arg: { count: number }) => LocalizedString
-	/**
-	 * Run Data Cleanup
-	 */
-	admin_compliance_cleanup_run: () => LocalizedString
-	/**
-	 * Successfully deleted
-	 */
-	admin_compliance_cleanup_success: () => LocalizedString
-	/**
-	 * records.
-	 */
-	admin_compliance_cleanup_records_suffix: () => LocalizedString
-	/**
-	 * Run ID:
-	 */
-	admin_compliance_cleanup_run_id: () => LocalizedString
-	/**
-	 * Warning: This action cannot be undone
-	 */
-	admin_compliance_cleanup_warning_title: () => LocalizedString
-	/**
-	 * This will permanently delete all data that exceeds the configured retention periods across all categories. Records older than their category's retention period will be removed.
-	 */
-	admin_compliance_cleanup_warning_text: () => LocalizedString
-	/**
-	 * Are you sure you want to run the data cleanup now? This process will delete expired records based on each category's retention policy.
-	 */
-	admin_compliance_cleanup_confirm: () => LocalizedString
-	/**
-	 * Deleting...
-	 */
-	admin_compliance_deleting: () => LocalizedString
-	/**
-	 * Delete Expired Data
-	 */
-	admin_compliance_delete_expired: () => LocalizedString
-	/**
-	 * Failed to execute cleanup
-	 */
-	admin_compliance_cleanup_failed: () => LocalizedString
-	/**
-	 * No tenant-local cleanup categories are available.
-	 */
-	admin_compliance_cleanup_no_local_categories: () => LocalizedString
-	/**
-	 * Compliance Checks
-	 */
-	admin_compliance_framework_checks: () => LocalizedString
-	/**
-	 * Planned Checks
-	 */
-	admin_compliance_planned_checks: () => LocalizedString
-	/**
-	 * Planned
-	 */
-	admin_compliance_planned: () => LocalizedString
-	/**
-	 * In Scope
-	 */
-	admin_compliance_in_scope: () => LocalizedString
-	/**
-	 * Out of Scope
-	 */
-	admin_compliance_out_of_scope: () => LocalizedString
-	/**
-	 * General Data Protection Regulation
-	 */
-	admin_compliance_framework_gdpr_full_name: () => LocalizedString
-	/**
-	 * EU regulation on data protection and privacy for individuals within the European Union and European Economic Area. Authrim evaluates authentication-service-level GDPR controls.
-	 */
-	admin_compliance_framework_gdpr_description: () => LocalizedString
-	/**
-	 * Service Organization Control 2
-	 */
-	admin_compliance_framework_soc2_full_name: () => LocalizedString
-	/**
-	 * Audit framework for service organizations, evaluating controls relevant to security, availability, processing integrity, confidentiality, and privacy.
-	 */
-	admin_compliance_framework_soc2_description: () => LocalizedString
-	/**
-	 * Data Retention Policy
-	 */
-	admin_compliance_check_data_retention_policy: () => LocalizedString
-	/**
-	 * Data retention policy enabled with automated cleanup
-	 */
-	admin_compliance_check_data_retention_policy_desc: () => LocalizedString
-	/**
-	 * Right to Erasure
-	 */
-	admin_compliance_check_right_to_erasure: () => LocalizedString
-	/**
-	 * User deletion with PII tombstone for proof of deletion
-	 */
-	admin_compliance_check_right_to_erasure_desc: () => LocalizedString
-	/**
-	 * Data Encryption
-	 */
-	admin_compliance_check_data_encryption: () => LocalizedString
-	/**
-	 * Full encryption at rest (D1/R2) and in transit (HTTPS/TLS)
-	 */
-	admin_compliance_check_data_encryption_desc: () => LocalizedString
-	/**
-	 * Consent Management
-	 */
-	admin_compliance_check_consent_management: () => LocalizedString
-	/**
-	 * User consent acquisition, recording, and withdrawal
-	 */
-	admin_compliance_check_consent_management_desc: () => LocalizedString
-	/**
-	 * Data Subject Access Request (DSAR)
-	 */
-	admin_compliance_check_dsar_support: () => LocalizedString
-	/**
-	 * User data export capability
-	 */
-	admin_compliance_check_dsar_support_desc: () => LocalizedString
-	/**
-	 * Data Minimization
-	 */
-	admin_compliance_check_data_minimization: () => LocalizedString
-	/**
-	 * Collection of only the minimum necessary data
-	 */
-	admin_compliance_check_data_minimization_desc: () => LocalizedString
-	/**
-	 * Audit Trail of PII Access
-	 */
-	admin_compliance_check_pii_access_audit: () => LocalizedString
-	/**
-	 * Access logging for personally identifiable information
-	 */
-	admin_compliance_check_pii_access_audit_desc: () => LocalizedString
-	/**
-	 * Breached Password Detection
-	 */
-	admin_compliance_check_breached_password_detection: () => LocalizedString
-	/**
-	 * Detection of compromised passwords
-	 */
-	admin_compliance_check_breached_password_detection_desc: () => LocalizedString
-	/**
-	 * Audit Logging
-	 */
-	admin_compliance_check_audit_logging: () => LocalizedString
-	/**
-	 * Audit log recording and retention
-	 */
-	admin_compliance_check_audit_logging_desc: () => LocalizedString
-	/**
-	 * Role-Based Access Control
-	 */
-	admin_compliance_check_rbac: () => LocalizedString
-	/**
-	 * RBAC configuration and enforcement
-	 */
-	admin_compliance_check_rbac_desc: () => LocalizedString
-	/**
-	 * MFA Coverage
-	 */
-	admin_compliance_check_mfa_coverage: () => LocalizedString
-	/**
-	 * Multi-factor authentication adoption rate
-	 */
-	admin_compliance_check_mfa_coverage_desc: () => LocalizedString
-	/**
-	 * Encryption
-	 */
-	admin_compliance_check_encryption: () => LocalizedString
-	/**
-	 * Encryption at rest and in transit
-	 */
-	admin_compliance_check_encryption_desc: () => LocalizedString
-	/**
-	 * Key Rotation
-	 */
-	admin_compliance_check_key_rotation: () => LocalizedString
-	/**
-	 * Signing key rotation status
-	 */
-	admin_compliance_check_key_rotation_desc: () => LocalizedString
-	/**
-	 * Session Management
-	 */
-	admin_compliance_check_session_management: () => LocalizedString
-	/**
-	 * Session timeout and concurrent session limits
-	 */
-	admin_compliance_check_session_management_desc: () => LocalizedString
-	/**
-	 * Password Policy
-	 */
-	admin_compliance_check_password_policy: () => LocalizedString
-	/**
-	 * Password complexity and expiration requirements
-	 */
-	admin_compliance_check_password_policy_desc: () => LocalizedString
-	/**
-	 * Rate Limiting
-	 */
-	admin_compliance_check_rate_limiting: () => LocalizedString
-	/**
-	 * Brute-force attack protection
-	 */
-	admin_compliance_check_rate_limiting_desc: () => LocalizedString
-	/**
-	 * Account Lockout
-	 */
-	admin_compliance_check_account_lockout: () => LocalizedString
-	/**
-	 * Failed login attempt restrictions
-	 */
-	admin_compliance_check_account_lockout_desc: () => LocalizedString
-	/**
-	 * Access Review
-	 */
-	admin_compliance_check_access_review: () => LocalizedString
-	/**
-	 * Periodic access review completion status
-	 */
-	admin_compliance_check_access_review_desc: () => LocalizedString
-	/**
-	 * Data retention policy enforcement
-	 */
-	admin_compliance_gdpr_scope_retention: () => LocalizedString
-	/**
-	 * User data deletion with proof of erasure (tombstone)
-	 */
-	admin_compliance_gdpr_scope_erasure: () => LocalizedString
-	/**
-	 * Encryption at rest and in transit
-	 */
-	admin_compliance_gdpr_scope_encryption: () => LocalizedString
-	/**
-	 * Authentication data protection
-	 */
-	admin_compliance_gdpr_scope_auth_data: () => LocalizedString
-	/**
-	 * Consent recording for authentication flows
-	 */
-	admin_compliance_gdpr_scope_consent: () => LocalizedString
-	/**
-	 * Data Processing Agreements (DPA)
-	 */
-	admin_compliance_gdpr_out_dpa: () => LocalizedString
-	/**
-	 * Legal document, tenant responsibility
-	 */
-	admin_compliance_gdpr_out_dpa_reason: () => LocalizedString
-	/**
-	 * Cookie consent banners
-	 */
-	admin_compliance_gdpr_out_cookie: () => LocalizedString
-	/**
-	 * Application layer responsibility
-	 */
-	admin_compliance_gdpr_out_cookie_reason: () => LocalizedString
-	/**
-	 * Data portability (non-auth data)
-	 */
-	admin_compliance_gdpr_out_portability: () => LocalizedString
-	/**
-	 * Application side responsibility
-	 */
-	admin_compliance_gdpr_out_portability_reason: () => LocalizedString
-	/**
-	 * DPIA (Data Protection Impact Assessment)
-	 */
-	admin_compliance_gdpr_out_dpia: () => LocalizedString
-	/**
-	 * Organizational process
-	 */
-	admin_compliance_gdpr_out_dpia_reason: () => LocalizedString
-	/**
-	 * Breach notification to authority
-	 */
-	admin_compliance_gdpr_out_breach: () => LocalizedString
-	/**
-	 * 72-hour obligation, organizational process
-	 */
-	admin_compliance_gdpr_out_breach_reason: () => LocalizedString
-	/**
-	 * Lawful basis for processing
-	 */
-	admin_compliance_gdpr_out_lawful_basis: () => LocalizedString
-	/**
-	 * Tenant business decision
-	 */
-	admin_compliance_gdpr_out_lawful_basis_reason: () => LocalizedString
-	/**
-	 * DPO appointment
-	 */
-	admin_compliance_gdpr_out_dpo: () => LocalizedString
-	/**
-	 * Organizational requirement
-	 */
-	admin_compliance_gdpr_out_dpo_reason: () => LocalizedString
-	/**
-	 * International data transfer (SCCs)
-	 */
-	admin_compliance_gdpr_out_transfer: () => LocalizedString
-	/**
-	 * Legal/organizational requirement
-	 */
-	admin_compliance_gdpr_out_transfer_reason: () => LocalizedString
-	/**
-	 * Audit log recording and retention
-	 */
-	admin_compliance_soc2_scope_audit: () => LocalizedString
-	/**
-	 * Role-based access control enforcement
-	 */
-	admin_compliance_soc2_scope_rbac: () => LocalizedString
-	/**
-	 * Multi-factor authentication coverage
-	 */
-	admin_compliance_soc2_scope_mfa: () => LocalizedString
-	/**
-	 * Data encryption at rest and in transit
-	 */
-	admin_compliance_soc2_scope_encryption: () => LocalizedString
-	/**
-	 * Authentication and session security
-	 */
-	admin_compliance_soc2_scope_auth: () => LocalizedString
-	/**
-	 * SOC2 Type II formal audit
-	 */
-	admin_compliance_soc2_out_formal_audit: () => LocalizedString
-	/**
-	 * Requires external CPA audit
-	 */
-	admin_compliance_soc2_out_formal_audit_reason: () => LocalizedString
-	/**
-	 * Physical security controls
-	 */
-	admin_compliance_soc2_out_physical: () => LocalizedString
-	/**
-	 * Cloudflare infrastructure responsibility
-	 */
-	admin_compliance_soc2_out_physical_reason: () => LocalizedString
-	/**
-	 * Network security monitoring
-	 */
-	admin_compliance_soc2_out_network: () => LocalizedString
-	/**
-	 * Cloudflare responsibility
-	 */
-	admin_compliance_soc2_out_network_reason: () => LocalizedString
-	/**
-	 * Employee background checks
-	 */
-	admin_compliance_soc2_out_background: () => LocalizedString
-	/**
-	 * Organizational process
-	 */
-	admin_compliance_soc2_out_background_reason: () => LocalizedString
-	/**
-	 * Vendor risk management
-	 */
-	admin_compliance_soc2_out_vendor: () => LocalizedString
-	/**
-	 * Organizational process
-	 */
-	admin_compliance_soc2_out_vendor_reason: () => LocalizedString
-	/**
-	 * Business continuity / DR
-	 */
-	admin_compliance_soc2_out_bcdr: () => LocalizedString
-	/**
-	 * Infrastructure layer (Cloudflare Workers/D1)
-	 */
-	admin_compliance_soc2_out_bcdr_reason: () => LocalizedString
-	/**
-	 * Change management procedures
-	 */
-	admin_compliance_soc2_out_change: () => LocalizedString
-	/**
-	 * Development process
-	 */
-	admin_compliance_soc2_out_change_reason: () => LocalizedString
-	/**
-	 * Audit Logs
-	 */
-	admin_compliance_category_audit_logs: () => LocalizedString
-	/**
-	 * Security and activity logs for compliance tracking
-	 */
-	admin_compliance_category_audit_logs_desc: () => LocalizedString
-	/**
-	 * Session Data
-	 */
-	admin_compliance_category_session_data: () => LocalizedString
-	/**
-	 * User session information and authentication state
-	 */
-	admin_compliance_category_session_data_desc: () => LocalizedString
-	/**
-	 * Deletion Records (Tombstones)
-	 */
-	admin_compliance_category_tombstones: () => LocalizedString
-	/**
-	 * Records of deleted data for GDPR compliance (deletion proof)
-	 */
-	admin_compliance_category_tombstones_desc: () => LocalizedString
-	/**
-	 * Authorization Codes
-	 */
-	admin_compliance_category_auth_codes: () => LocalizedString
-	/**
-	 * OAuth authorization codes (short-lived)
-	 */
-	admin_compliance_category_auth_codes_desc: () => LocalizedString
-	/**
-	 * Refresh Tokens
-	 */
-	admin_compliance_category_refresh_tokens: () => LocalizedString
-	/**
-	 * OAuth refresh tokens for session renewal
-	 */
-	admin_compliance_category_refresh_tokens_desc: () => LocalizedString
-	/**
-	 * Access Tokens
-	 */
-	admin_compliance_category_access_tokens: () => LocalizedString
-	/**
-	 * OAuth access tokens for API authentication
-	 */
-	admin_compliance_category_access_tokens_desc: () => LocalizedString
-	/**
-	 * Lookup Directory
-	 */
-	admin_compliance_category_lookup_directory: () => LocalizedString
-	/**
-	 * Inactive account lookup records stored across shared Lookup shards
-	 */
-	admin_compliance_category_lookup_directory_desc: () => LocalizedString
-	/**
-	 * Data retention category
-	 */
-	admin_compliance_category_unknown_desc: () => LocalizedString
-	/**
-	 * Edit Retention Policy
-	 */
-	admin_compliance_edit_retention_title: () => LocalizedString
-	/**
-	 * Retention Period (days)
-	 */
-	admin_compliance_retention_period_days: () => LocalizedString
-	/**
-	 * Records older than this will be eligible for deletion. Range: 1-3650 days (10 years)
-	 */
-	admin_compliance_retention_help: () => LocalizedString
-	/**
-	 * Inactive Lookup records older than this become eligible for durable cleanup. Range: 30-3650 days.
-	 */
-	admin_compliance_lookup_retention_help: () => LocalizedString
-	/**
-	 * Quick select:
-	 */
-	admin_compliance_quick_select: () => LocalizedString
-	/**
-	 * 7 days
-	 */
-	admin_compliance_preset_7_days: () => LocalizedString
-	/**
-	 * 30 days
-	 */
-	admin_compliance_preset_30_days: () => LocalizedString
-	/**
-	 * 90 days
-	 */
-	admin_compliance_preset_90_days: () => LocalizedString
-	/**
-	 * 1 year
-	 */
-	admin_compliance_preset_1_year: () => LocalizedString
-	/**
-	 * 2 years
-	 */
-	admin_compliance_preset_2_years: () => LocalizedString
-	/**
-	 * 5 years
-	 */
-	admin_compliance_preset_5_years: () => LocalizedString
-	/**
-	 * Impact Estimate
-	 */
-	admin_compliance_impact_estimate: () => LocalizedString
-	/**
-	 * Loading estimate...
-	 */
-	admin_compliance_loading_estimate: () => LocalizedString
-	/**
-	 * Records to delete:
-	 */
-	admin_compliance_records_to_delete: () => LocalizedString
-	/**
-	 * Oldest record:
-	 */
-	admin_compliance_oldest_record_label: () => LocalizedString
-	/**
-	 * No estimate available
-	 */
-	admin_compliance_no_estimate: () => LocalizedString
-	/**
-	 * Warning:
-	 */
-	admin_compliance_short_retention_warning_title: () => LocalizedString
-	/**
-	 * Short retention periods may impact compliance requirements. Ensure this meets your organization's data retention policies.
-	 */
-	admin_compliance_short_retention_warning: () => LocalizedString
-	/**
-	 * I reviewed the estimate and confirm shortening retention from {current} to {requested} days.
-	 */
-	admin_compliance_retention_shortening_confirm: (arg: { current: number, requested: number }) => LocalizedString
-	/**
-	 * Review the estimate and confirm the shorter retention period before saving.
-	 */
-	admin_compliance_retention_shortening_confirmation_required: () => LocalizedString
-	/**
-	 * Failed to save retention policy
-	 */
-	admin_compliance_save_failed: () => LocalizedString
-	/**
-	 * Retention days must be between 1 and 3650 (10 years)
-	 */
-	admin_compliance_retention_days_invalid: () => LocalizedString
-	/**
-	 * Lookup retention days must be between 30 and 3650 (10 years)
-	 */
-	admin_compliance_lookup_retention_days_invalid: () => LocalizedString
-	/**
-	 * Saving...
-	 */
-	admin_compliance_saving: () => LocalizedString
-	/**
-	 * Save Changes
-	 */
-	admin_compliance_save_changes: () => LocalizedString
+	admin_compliance_close: () => LocalizedString
 	/**
 	 * Storage Destinations - Authrim
 	 */

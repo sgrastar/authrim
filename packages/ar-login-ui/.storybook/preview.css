@@ -1,0 +1,13 @@
+/*
+ * Docs pages keep Storybook's own light chrome. The Login UI frames paint their own surface,
+ * so only the story wrapper needs to stay out of the way.
+ */
+.sbdocs .docs-story {
+	background: transparent;
+}
+
+/* Canvas behind a story: the page colour of the selected theme, scheme and variant. */
+body {
+	background: var(--login-page-background-color, var(--bg-page));
+	color: var(--text-primary);
+}

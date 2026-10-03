@@ -59,6 +59,8 @@ export interface PARRequestData {
   cancel_uri?: string;
   /** RFC 8707 target resource, when the journey requires an exact resource binding. */
   resource?: string;
+  /** The pushed request carried a request object the client signed (verified at the PAR endpoint). */
+  request_object_signed?: boolean;
   createdAt?: number;
   expiresAt?: number;
   consumed?: boolean;

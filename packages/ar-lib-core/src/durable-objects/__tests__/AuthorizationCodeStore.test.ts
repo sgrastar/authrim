@@ -271,6 +271,30 @@ describe('AuthorizationCodeStore', () => {
       expect(body.amr).toEqual(['passkey', 'webauthn']);
     });
 
+    it.each([
+      ['keeps', true, true],
+      ['records nothing of', undefined, undefined],
+    ])('%s the FAL3 evidence of a pushed, signed request', async (_label, stored, consumed) => {
+      const code = `auth_code_fal3_${String(stored)}`;
+      await codeStore.storeCodeRpc({
+        code,
+        clientId: 'client_1',
+        tenantId: 'default',
+        redirectUri: 'https://app.example.com/callback',
+        userId: 'user_123',
+        scope: 'openid',
+        ...(stored ? { pushedSignedRequest: stored } : {}),
+      });
+
+      const result = await codeStore.consumeCodeRpc({
+        code,
+        clientId: 'client_1',
+        tenantId: 'default',
+      });
+
+      expect(result.pushedSignedRequest).toBe(consumed);
+    });
+
     securityRegressionIt(
       '[security regression][AO-01] permits only one grant-bearing concurrent code redemption',
       async () => {
@@ -931,6 +955,38 @@ describe('AuthorizationCodeStore', () => {
       await expect(limitedStore.deleteCodeRpc('delete-counter-original')).resolves.toBe(true);
       await expect(
         limitedStore.storeCodeRpc({ code: 'delete-counter-replacement', ...request })
+      ).resolves.toMatchObject({ success: true });
+    });
+  });
+
+  describe('per-request limits', () => {
+    it("applies the request's per-user code limit over the store's own", async () => {
+      const limitedState = new MockDurableObjectState();
+      const limitedStore = new AuthorizationCodeStore(
+        limitedState as unknown as DurableObjectState,
+        { AUTH_CODE_EXPIRY: '60', MAX_CODES_PER_USER: '100' } as Env
+      );
+      await limitedState.waitForBlockedInitialization();
+      const request = {
+        clientId: 'client_1',
+        tenantId: 'default',
+        redirectUri: 'https://app.example.com/callback',
+        userId: 'per-request-limit',
+        scope: 'openid',
+        maxCodesPerUser: 1,
+      };
+
+      await limitedStore.storeCodeRpc({ code: 'per-request-first', ...request });
+      await expect(
+        limitedStore.storeCodeRpc({ code: 'per-request-second', ...request })
+      ).rejects.toThrow('Too many authorization codes');
+      // Without one, the store's limit applies.
+      await expect(
+        limitedStore.storeCodeRpc({
+          code: 'per-request-third',
+          ...request,
+          maxCodesPerUser: undefined,
+        })
       ).resolves.toMatchObject({ success: true });
     });
   });

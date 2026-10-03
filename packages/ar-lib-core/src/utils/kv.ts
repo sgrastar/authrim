@@ -13,7 +13,7 @@ import type { Env } from '../types/env';
 import type { ClientMetadata, RefreshTokenData } from '../types/oidc';
 import { ensureDatabaseAdapter, type DatabaseSource } from '../db';
 import { buildKVKey, buildDOInstanceName } from './tenant-context';
-import { createOAuthConfigManager } from './oauth-config';
+import { resolveEffectiveSettings } from '../services/effective-settings';
 import { getRevocationStoreByJti } from './token-revocation-sharding';
 import type { DatabaseAdapter, PIIStatus } from '../db/adapter';
 import { createLogger } from './logger';
@@ -26,6 +26,28 @@ import {
   deleteRefreshToken as deleteRefreshTokenCanonical,
 } from './refresh-token-store';
 import { CanonicalRuntimeUserStore } from '../repositories/identity';
+
+/** User cache lifetime unless USER_CACHE_TTL sets one (it includes PII). */
+const DEFAULT_USER_CACHE_TTL_SECONDS = 3600;
+/** Consent cache lifetime unless CONSENT_CACHE_TTL sets one (consent changes rarely). */
+const DEFAULT_CONSENT_CACHE_TTL_SECONDS = 86400;
+
+/** A cache lifetime from its environment variable (whole positive seconds), else the default. */
+function cacheTtlSeconds(value: string | undefined, fallback: number): number {
+  const parsed = value ? parseInt(value, 10) : NaN;
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+/** A state or nonce lifetime as the Settings API resolves it for the client. */
+async function oauthLifetime(
+  env: Env,
+  tenantId: string,
+  clientId: string,
+  key: 'oauth.state_expiry' | 'oauth.nonce_expiry'
+): Promise<number> {
+  const value = (await resolveEffectiveSettings(env, 'oauth', { tenantId, clientId }))[key];
+  return typeof value === 'number' && Number.isSafeInteger(value) && value > 0 ? value : 300;
+}
 
 const log = createLogger().module('KV');
 const textEncoder = new TextEncoder();
@@ -361,10 +383,9 @@ export async function getCachedUser(
     return null;
   }
 
-  // Step 3: Populate USER_CACHE (TTL from KV > env > default)
+  // Step 3: Populate USER_CACHE (TTL from USER_CACHE_TTL, else the default)
   try {
-    const configManager = createOAuthConfigManager(env);
-    const userCacheTTL = await configManager.getUserCacheTTL();
+    const userCacheTTL = cacheTtlSeconds(env.USER_CACHE_TTL, DEFAULT_USER_CACHE_TTL_SECONDS);
     if (piiCacheMode === 'encrypted_short_ttl') {
       const encrypted = await encryptCachedUser(
         env,
@@ -453,7 +474,9 @@ async function getUserFromD1(
 export async function invalidateUserCache(
   env: Env,
   tenantId: string,
-  userId: string
+  userId: string,
+  /** `throwOnFailure`: report a failed delete (a caller that retries until the cache is gone). */
+  options: { throwOnFailure?: boolean } = {}
 ): Promise<void> {
   if (!env.USER_CACHE) {
     return;
@@ -464,9 +487,9 @@ export async function invalidateUserCache(
   try {
     await env.USER_CACHE.delete(cacheKey);
   } catch (error) {
-    // Log but don't throw - cache invalidation failure is not critical
     // PII Protection: Don't log userId
     log.warn('Failed to invalidate user cache');
+    if (options.throwOnFailure) throw error;
   }
 }
 
@@ -605,10 +628,12 @@ export async function getCachedConsent(
     return null;
   }
 
-  // Step 3: Populate CONSENT_CACHE (TTL from KV > env > default)
+  // Step 3: Populate CONSENT_CACHE (TTL from CONSENT_CACHE_TTL, else the default)
   try {
-    const configManager = createOAuthConfigManager(env);
-    const consentCacheTTL = await configManager.getConsentCacheTTL();
+    const consentCacheTTL = cacheTtlSeconds(
+      env.CONSENT_CACHE_TTL,
+      DEFAULT_CONSENT_CACHE_TTL_SECONDS
+    );
     await env.CONSENT_CACHE.put(cacheKey, JSON.stringify(consent), {
       expirationTtl: consentCacheTTL,
     });
@@ -704,9 +729,7 @@ export async function storeState(
   clientId: string,
   tenantId: string
 ): Promise<void> {
-  // KV > env > default priority
-  const configManager = createOAuthConfigManager(env);
-  const ttl = await configManager.getStateExpiry();
+  const ttl = await oauthLifetime(env, tenantId, clientId, 'oauth.state_expiry');
   const key = buildKVKey('state', state, tenantId);
 
   await env.STATE_STORE.put(key, clientId, {
@@ -755,9 +778,7 @@ export async function storeNonce(
   clientId: string,
   tenantId: string
 ): Promise<void> {
-  // KV > env > default priority
-  const configManager = createOAuthConfigManager(env);
-  const ttl = await configManager.getNonceExpiry();
+  const ttl = await oauthLifetime(env, tenantId, clientId, 'oauth.nonce_expiry');
   const key = buildKVKey('nonce', nonce, tenantId);
 
   await env.NONCE_STORE.put(key, clientId, {

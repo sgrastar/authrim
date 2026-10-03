@@ -12585,6 +12585,12 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         return t('web.envDetail.initialDeployRecoveryRecreate');
       }
       if (result?.status === 'blocked') {
+        if (
+          result.reasonCode === 'initial_d1_identity_recovery_required' &&
+          typeof result.recoveryCommand === 'string'
+        ) {
+          return t('web.envDetail.initialDeployRecoveryBlocked') + '\\n' + result.recoveryCommand;
+        }
         return t('web.envDetail.initialDeployRecoveryBlocked');
       }
       if (result?.status !== 'resumable') {

@@ -999,19 +999,15 @@ describe('Dynamic Client Registration Handler', () => {
     });
 
     it('rejects a JARM signing algorithm excluded by the active Message Signing profile', async () => {
-      mockKVStore.set(
-        'settings:tenant:default:certification-profile',
+      mockEnv.SETTINGS = createMockKV();
+      await mockEnv.SETTINGS.put(
+        'settings:tenant:default:security',
         JSON.stringify({
-          fapi: {
-            enabled: true,
-            messageSigning: {
-              enabled: true,
-              authorizationSigningAlgorithms: ['ES256'],
-            },
-          },
+          'security.fapi_enabled': true,
+          'security.fapi_message_signing_enabled': true,
+          'security.authorization_signing_algs': 'ES256',
         })
       );
-      mockEnv.SETTINGS = createMockKV();
 
       const res = await app.request(
         '/register',
@@ -1035,11 +1031,11 @@ describe('Dynamic Client Registration Handler', () => {
     });
 
     it('rejects secret-based client authentication in an active FAPI profile', async () => {
-      mockKVStore.set(
-        'settings:tenant:default:certification-profile',
-        JSON.stringify({ fapi: { enabled: true } })
-      );
       mockEnv.SETTINGS = createMockKV();
+      await mockEnv.SETTINGS.put(
+        'settings:tenant:default:security',
+        JSON.stringify({ 'security.fapi_enabled': true })
+      );
 
       const res = await app.request(
         '/register',

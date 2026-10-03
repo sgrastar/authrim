@@ -85,9 +85,6 @@ interface Env extends SharedEnv {
   /** Internal API secret for service-to-service auth */
   POLICY_API_SECRET: string;
 
-  /** KV namespace for feature flags (optional) */
-  POLICY_FLAGS_KV?: KVNamespace;
-
   /** KV namespace for ReBAC caching (optional) */
   REBAC_CACHE_KV?: KVNamespace;
 
@@ -235,18 +232,15 @@ policyRoutes.get('/flags', async (c) => {
   }
 
   const tenantId = getAuthenticatedTenantId(c);
-  const keys = Object.values(POLICY_FLAG_SETTINGS);
   let resolved: Awaited<ReturnType<typeof resolvePlatformSettingsWithSources>>;
   try {
     resolved = tenantId
       ? await resolveEffectiveSettingsWithSources(c.env, 'feature-flags', {
           tenantId,
-          keys,
-          freshLegacy: true,
+          fresh: true,
         })
       : await resolvePlatformSettingsWithSources(c.env, 'feature-flags', {
-          keys,
-          freshLegacy: true,
+          fresh: true,
         });
   } catch {
     return c.json(

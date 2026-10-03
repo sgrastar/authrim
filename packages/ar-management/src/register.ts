@@ -52,7 +52,7 @@ import {
   SUPPORTED_JWE_ENC,
   CLIENT_ASSERTION_SIGNING_ALGS,
   FAPI2_MESSAGE_SIGNING_ALGS,
-  getTenantSystemSettings,
+  resolveProtocolSettings,
 } from '@authrim/ar-lib-core';
 import { isOIDCSigningAlgorithm } from '@authrim/ar-lib-core/utils/oidc-signing';
 import { getRequestAwareIssuerUrl } from './request-issuer';
@@ -1600,22 +1600,12 @@ export async function registerHandler(c: Context<{ Bindings: Env }>): Promise<Re
       request.application_type = request.application_type ?? 'native';
     }
     // A client being registered has no client settings yet: the tenant's apply.
-    const systemSettings = (await getTenantSystemSettings(c.env.SETTINGS, tenantId, {
-      failOnError: true,
+    const systemSettings = await resolveProtocolSettings(c.env, tenantId, {
       sections: ['fapi'],
-    })) as {
-      fapi?: {
-        enabled?: boolean;
-        messageSigning?: {
-          enabled?: boolean;
-          requestObjectSigningAlgorithms?: string[];
-          authorizationSigningAlgorithms?: string[];
-        };
-      };
-    } | null;
+    });
     if (
       !restrictedAgentRegistration &&
-      systemSettings?.fapi?.enabled === true &&
+      systemSettings.fapi.enabled === true &&
       (request.token_endpoint_auth_method ?? 'client_secret_basic') !== 'private_key_jwt'
     ) {
       return c.json(
@@ -1629,7 +1619,7 @@ export async function registerHandler(c: Context<{ Bindings: Env }>): Promise<Re
     }
     if (
       !restrictedAgentRegistration &&
-      systemSettings?.fapi?.enabled === true &&
+      systemSettings.fapi.enabled === true &&
       request.token_endpoint_auth_signing_alg &&
       !FAPI2_MESSAGE_SIGNING_ALGS.includes(
         request.token_endpoint_auth_signing_alg as (typeof FAPI2_MESSAGE_SIGNING_ALGS)[number]
@@ -1645,7 +1635,7 @@ export async function registerHandler(c: Context<{ Bindings: Env }>): Promise<Re
       );
     }
 
-    const messageSigning = systemSettings?.fapi?.messageSigning;
+    const messageSigning = systemSettings.fapi.messageSigning;
     if (
       messageSigning?.enabled === true &&
       request.request_object_signing_alg &&
@@ -1664,7 +1654,7 @@ export async function registerHandler(c: Context<{ Bindings: Env }>): Promise<Re
     if (
       messageSigning?.enabled === true &&
       request.authorization_signed_response_alg &&
-      !(messageSigning.authorizationSigningAlgorithms ?? ['ES256']).includes(
+      !((messageSigning.authorizationSigningAlgorithms ?? ['ES256']) as string[]).includes(
         request.authorization_signed_response_alg
       )
     ) {

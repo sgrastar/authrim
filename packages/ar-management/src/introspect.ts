@@ -27,15 +27,64 @@ import {
   requireDedicatedAdminDatabaseAdapter,
   createPhase1ErrorDetails,
   getDeviceSecretInstallationId,
+  resolveEffectiveSettings,
 } from '@authrim/ar-lib-core';
 import { importJWK, decodeProtectedHeader, type CryptoKey } from 'jose';
-import { getIntrospectionValidationSettings } from './routes/settings/introspection-validation';
-import { getIntrospectionCacheConfig } from './routes/settings/introspection-cache';
 import { getRequestAwareIssuerUrl } from './request-issuer';
 import {
   evaluateDeviceSecretIntrospectionPolicy,
   type DeviceSecretPolicyErrorCode,
 } from './device-secret-policy';
+
+/**
+ * The introspection response cache for the tenant, as the Settings API resolves it. Settings
+ * that cannot be read turn the cache off rather than enabling it from an older or env value: a
+ * cached response can outlive a change.
+ */
+async function introspectionCacheSettings(
+  env: Env,
+  tenantId: string
+): Promise<{ enabled: boolean; ttlSeconds: number }> {
+  try {
+    const [flags, tokens] = await Promise.all([
+      resolveEffectiveSettings(env, 'feature-flags', {
+        tenantId,
+      }),
+      resolveEffectiveSettings(env, 'tokens', {
+        tenantId,
+      }),
+    ]);
+    const ttl = tokens['tokens.introspection_cache_ttl'];
+    return {
+      enabled: flags['feature.introspection_cache_enabled'] === true,
+      ttlSeconds:
+        typeof ttl === 'number' && ttl > 0 ? ttl : DEFAULT_INTROSPECTION_CACHE_TTL_SECONDS,
+    };
+  } catch {
+    return { enabled: false, ttlSeconds: DEFAULT_INTROSPECTION_CACHE_TTL_SECONDS };
+  }
+}
+
+/** 60 seconds, the `tokens.introspection_cache_ttl` default. */
+const DEFAULT_INTROSPECTION_CACHE_TTL_SECONDS = 60;
+
+/**
+ * Strict introspection and the audience it expects, as the Settings API resolves them for the
+ * tenant (an empty audience: the issuer). Throws when they cannot be read.
+ */
+async function introspectionValidationSettings(
+  env: Env,
+  tenantId: string
+): Promise<{ strictValidation: boolean; expectedAudience: string | null }> {
+  const tokens = await resolveEffectiveSettings(env, 'tokens', {
+    tenantId,
+  });
+  const audience = tokens['tokens.introspection_expected_audience'];
+  return {
+    strictValidation: tokens['tokens.introspection_strict_validation'] === true,
+    expectedAudience: typeof audience === 'string' && audience !== '' ? audience : null,
+  };
+}
 
 // Introspection Response Cache
 // Key format: introspect_cache:{sha256(jti)}
@@ -375,7 +424,7 @@ export async function introspectHandler(c: Context<{ Bindings: Env }>) {
   // Cache keys may be derived from decoded JWT claims, but cached responses are
   // never returned until after signature, issuer, audience, expiry, and
   // revocation validation below has completed for the submitted token.
-  const cacheConfig = await getIntrospectionCacheConfig(c.env, getTenantIdFromContext(c));
+  const cacheConfig = await introspectionCacheSettings(c.env, getTenantIdFromContext(c));
   let cacheKey: string | null = null;
 
   if (cacheConfig.enabled && jti && c.env.AUTHRIM_CONFIG) {
@@ -458,14 +507,9 @@ export async function introspectHandler(c: Context<{ Bindings: Env }>) {
   // ========== Strict Validation Mode (KV-controlled) ==========
   // RFC 7662 does not require aud/client_id validation, but strictValidation
   // enables additional security checks for Token Introspection Control Plane Test
-  let validationSettings: Awaited<
-    ReturnType<typeof getIntrospectionValidationSettings>
-  >['settings'];
+  let validationSettings: { strictValidation: boolean; expectedAudience: string | null };
   try {
-    ({ settings: validationSettings } = await getIntrospectionValidationSettings(
-      c.env,
-      getTenantIdFromContext(c)
-    ));
+    validationSettings = await introspectionValidationSettings(c.env, getTenantIdFromContext(c));
   } catch {
     // Unknown settings must not relax validation: refuse instead of answering active=true.
     return c.json(

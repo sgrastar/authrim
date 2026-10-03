@@ -2,7 +2,6 @@
 	import { onMount } from 'svelte';
 	import {
 		adminSettingsAPI,
-		adminTokenExchangeSettingsAPI,
 		scopedSettingsAPI,
 		isInternalSetting,
 		isPageManagedSetting,
@@ -16,11 +15,7 @@
 		type CategoryName,
 		type ScopeContext
 	} from '$lib/api/admin-settings';
-	import {
-		applyRuntimeFeatureFlagOverrides,
-		shouldRenderRuntimeFeatureFlag,
-		splitRuntimeFeatureFlagPatches
-	} from '$lib/admin/runtime-feature-flags';
+	import { shouldRenderRuntimeFeatureFlag } from '$lib/admin/runtime-feature-flags';
 	import {
 		AdminPageHeader,
 		AdminPageShell,
@@ -47,6 +42,9 @@
 
 	// Track pending changes
 	let pendingPatches = $state<UIPatch[]>([]);
+	// JSON settings as typed, by key, and those whose text does not parse (saving waits for them)
+	let jsonDrafts = $state<Record<string, string>>({});
+	let jsonErrors = $state<Record<string, string>>({});
 
 	// Get current scope context from store
 	let scopeContext = $derived(settingsContext.scopeContext as ScopeContext);
@@ -86,6 +84,8 @@
 		loading = true;
 		error = '';
 		pendingPatches = [];
+		jsonDrafts = {};
+		jsonErrors = {};
 
 		try {
 			// Fetch meta
@@ -99,13 +99,6 @@
 			} catch {
 				// Fall back to tenant settings if scope-specific fails
 				settingsResult = await adminSettingsAPI.getSettings(data.category);
-			}
-
-			if (data.category === 'feature-flags' && scopeContext.level === 'platform') {
-				const tokenExchangeConfig = await adminTokenExchangeSettingsAPI.getConfig();
-				settingsResult = applyRuntimeFeatureFlagOverrides(settingsResult, {
-					tokenExchangeEnabled: tokenExchangeConfig.settings.enabled
-				});
 			}
 
 			settings = settingsResult;
@@ -150,21 +143,40 @@
 		// Remove any existing patch for this key
 		pendingPatches = pendingPatches.filter((p) => p.key !== key);
 
-		// Only add patch if value differs from original
+		// Only add patch if value differs from original (JSON values compared by content)
 		const originalValue = settings?.values[key];
-		if (value !== originalValue) {
+		if (JSON.stringify(value) !== JSON.stringify(originalValue)) {
 			pendingPatches = [...pendingPatches, { op: 'set', key, value }];
+		}
+	}
+
+	// A JSON setting's text: kept as typed; its value changes only when the text parses
+	function handleJsonChange(key: string, text: string) {
+		jsonDrafts = { ...jsonDrafts, [key]: text };
+		try {
+			const parsed: unknown = JSON.parse(text);
+			const { [key]: _removed, ...rest } = jsonErrors;
+			jsonErrors = rest;
+			handleChange(key, parsed);
+		} catch {
+			jsonErrors = { ...jsonErrors, [key]: 'Not valid JSON' };
 		}
 	}
 
 	// Discard all changes
 	function discardChanges() {
+		jsonDrafts = {};
+		jsonErrors = {};
 		pendingPatches = [];
 	}
 
 	// Save changes
 	async function saveChanges() {
 		if (!settings || pendingPatches.length === 0) return;
+		if (Object.keys(jsonErrors).length > 0) {
+			error = `Correct the JSON of ${Object.keys(jsonErrors).join(', ')} before saving`;
+			return;
+		}
 
 		// Check if editing is allowed at current scope
 		if (!canEdit) {
@@ -177,12 +189,10 @@
 		successMessage = '';
 
 		try {
-			const { genericPatches, tokenExchangeEnabled } =
-				splitRuntimeFeatureFlagPatches(pendingPatches);
 			let appliedCount = 0;
 
-			if (genericPatches.length > 0) {
-				const patchData = convertPatchesToAPIRequest(genericPatches);
+			if (pendingPatches.length > 0) {
+				const patchData = convertPatchesToAPIRequest(pendingPatches);
 				const result = await scopedSettingsAPI.updateSettingsForScope(data.category, scopeContext, {
 					ifMatch: settings.version,
 					...patchData
@@ -190,19 +200,10 @@
 				appliedCount += result.applied.length + result.cleared.length + result.disabled.length;
 			}
 
-			if (
-				data.category === 'feature-flags' &&
-				scopeContext.level === 'platform' &&
-				tokenExchangeEnabled !== undefined
-			) {
-				await adminTokenExchangeSettingsAPI.updateConfig({
-					enabled: tokenExchangeEnabled
-				});
-				appliedCount += 1;
-			}
-
 			// Clear pending patches
 			pendingPatches = [];
+			jsonDrafts = {};
+			jsonErrors = {};
 
 			// Show success message
 			successMessage =
@@ -369,6 +370,19 @@
 											<option value={option}>{option}</option>
 										{/each}
 									</select>
+								{:else if settingMeta.type === 'json'}
+									<textarea
+										id={key}
+										value={jsonDrafts[key] ?? JSON.stringify(value ?? null, null, 2)}
+										disabled={locked}
+										rows="4"
+										oninput={(e) => handleJsonChange(key, e.currentTarget.value)}
+										class="settings-input"
+										aria-invalid={jsonErrors[key] ? 'true' : undefined}
+									></textarea>
+									{#if jsonErrors[key]}
+										<p class="settings-range-hint" role="alert">{jsonErrors[key]}</p>
+									{/if}
 								{:else}
 									<input
 										type={getInputType(settingMeta)}

@@ -38,7 +38,9 @@ vi.mock('../user-import-jobs', async (importOriginal) => {
   };
 });
 
+import { readTenantRetentionRuns } from '../retention-tenant-runs';
 import {
+  cleanupDiagnosticLogs,
   cleanupOrphanedAuditTransientPayloads,
   cleanupOrphanedPublicAssets,
   deleteTenantPublicAssets,
@@ -145,7 +147,7 @@ describe('R2 scheduled storage maintenance', () => {
     await processR2StorageMaintenance(env, log);
     const dashboard = await getR2MaintenanceDashboard(env);
 
-    expect(dashboard.schedules).toHaveLength(7);
+    expect(dashboard.schedules).toHaveLength(11);
     expect(dashboard.schedules).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -207,6 +209,133 @@ describe('R2 scheduled storage maintenance', () => {
       }),
       expect.any(Error)
     );
+  });
+
+  it('records a tenant cleaned once all its diagnostic logs were scanned, not before', async () => {
+    const kv = createKv();
+    const env = { AUTHRIM_CONFIG: kv, SETTINGS: kv, DIAGNOSTIC_LOGS: createBucket() } as never;
+    const log = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+    const tenants: Record<string, string | undefined> = {
+      '': 'tenant-a',
+      'tenant-a': 'tenant-b',
+      'tenant-b': 'tenant-c',
+    };
+    mockListEnvironmentTenantDefaultStores.mockReset();
+    mockListEnvironmentTenantDefaultStores.mockImplementation(
+      async (_env: unknown, options: { afterTenantId?: string }) => {
+        const next = tenants[options.afterTenantId ?? ''];
+        return next ? [{ tenantId: next, store: {} }] : [];
+      }
+    );
+    // tenant-a has two pages of objects, tenant-b one whose cleanup fails, tenant-c one.
+    mockDeleteByRetentionPage.mockReset();
+    mockDeleteByRetentionPage
+      .mockResolvedValueOnce({ deleted: 500, scanned: 500, cursor: 'page-2' })
+      .mockResolvedValueOnce({ deleted: 1, scanned: 1 })
+      .mockRejectedValueOnce(new Error('r2_unavailable'))
+      .mockResolvedValueOnce({ deleted: 0, scanned: 0 });
+
+    // The first run ends in tenant-a's first page: no tenant has finished.
+    await cleanupDiagnosticLogs(env, log);
+    expect(await readTenantRetentionRuns(env, 'tenant-a')).toEqual({});
+
+    // The next run finishes tenant-a, fails tenant-b and cleans tenant-c.
+    await expect(cleanupDiagnosticLogs(env, log)).rejects.toThrow(
+      'diagnostic_log_retention_partial_failure'
+    );
+    expect(mockDeleteByRetentionPage).toHaveBeenNthCalledWith(2, expect.any(Number), 500, 'page-2');
+    expect((await readTenantRetentionRuns(env, 'tenant-a')).r2_diagnostic_log_retention).toEqual({
+      at: expect.any(Number),
+      outcome: 'cleaned',
+    });
+    expect(
+      (await readTenantRetentionRuns(env, 'tenant-b')).r2_diagnostic_log_retention?.outcome
+    ).toBe('failed');
+    expect(
+      (await readTenantRetentionRuns(env, 'tenant-c')).r2_diagnostic_log_retention?.outcome
+    ).toBe('cleaned');
+  });
+
+  it('cleans the bucket the tenant writes to, and fails a tenant whose settings cannot be read', async () => {
+    const kv = createKv();
+    const custom = createBucket();
+    const env = {
+      AUTHRIM_CONFIG: kv,
+      SETTINGS: kv,
+      DIAGNOSTIC_LOGS: createBucket(),
+      CUSTOM_DIAGNOSTICS: custom,
+    } as never;
+    const log = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+    const tenants: Record<string, string | undefined> = {
+      '': 'tenant-a',
+      'tenant-a': 'tenant-b',
+      'tenant-b': 'tenant-c',
+    };
+    mockListEnvironmentTenantDefaultStores.mockReset();
+    mockListEnvironmentTenantDefaultStores.mockImplementation(
+      async (_env: unknown, options: { afterTenantId?: string }) => {
+        const next = tenants[options.afterTenantId ?? ''];
+        return next ? [{ tenantId: next, store: {} }] : [];
+      }
+    );
+    const settings: Record<string, () => Promise<Record<string, unknown>>> = {
+      // Writes to another bucket, under its own prefix.
+      'tenant-a': async () => ({
+        'diagnostic-logging.retention_days': 7,
+        'diagnostic-logging.r2_bucket_binding': 'CUSTOM_DIAGNOSTICS',
+        'diagnostic-logging.r2_path_prefix': 'custom-diagnostic',
+      }),
+      // Its settings cannot be read: not the default prefix instead.
+      'tenant-b': async () => {
+        throw new Error('settings_read_failed');
+      },
+      // A bucket this worker does not have.
+      'tenant-c': async () => ({ 'diagnostic-logging.r2_bucket_binding': 'MISSING' }),
+    };
+    mockCreateSettingsManager.mockImplementation((options: { strictReads?: boolean }) => {
+      expect(options.strictReads).toBe(true);
+      return {
+        registerCategory: vi.fn(),
+        getAll: vi.fn(async (_category: string, scope: { id: string }) => ({
+          values: await settings[scope.id]!(),
+        })),
+      };
+    });
+    mockDeleteByRetentionPage.mockReset();
+    mockDeleteByRetentionPage.mockResolvedValue({ deleted: 0, scanned: 0 });
+
+    await expect(cleanupDiagnosticLogs(env, log)).rejects.toThrow(
+      'diagnostic_log_retention_partial_failure'
+    );
+    expect(mockCreateDiagnosticLogR2Adapter).toHaveBeenCalledOnce();
+    expect(mockCreateDiagnosticLogR2Adapter).toHaveBeenCalledWith(
+      custom,
+      expect.objectContaining({ pathPrefix: 'custom-diagnostic', tenantId: 'tenant-a' })
+    );
+    const outcome = async (tenantId: string) =>
+      (await readTenantRetentionRuns(env, tenantId)).r2_diagnostic_log_retention?.outcome;
+    expect(await outcome('tenant-a')).toBe('cleaned');
+    expect(await outcome('tenant-b')).toBe('failed');
+    expect(await outcome('tenant-c')).toBe('failed');
+  });
+
+  it('continues a saved position only in the listing it came from', async () => {
+    const kv = createKv();
+    const env = { AUTHRIM_CONFIG: kv, SETTINGS: kv, DIAGNOSTIC_LOGS: createBucket() } as never;
+    const log = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+    mockListEnvironmentTenantDefaultStores.mockReset();
+    mockListEnvironmentTenantDefaultStores
+      .mockResolvedValueOnce([{ tenantId: 'tenant-a', store: {} }])
+      .mockResolvedValue([]);
+    mockDeleteByRetentionPage.mockReset();
+    mockDeleteByRetentionPage.mockResolvedValue({ deleted: 0, scanned: 0 });
+    // Saved before positions named their listing (or for another bucket): it starts over.
+    kv.values.set(
+      'jobs:r2-maintenance:diagnostic-tenant-cursor',
+      JSON.stringify({ afterTenantId: null, objectCursor: 'old-bucket-key' })
+    );
+    await cleanupDiagnosticLogs(env, log);
+    expect(mockDeleteByRetentionPage).toHaveBeenCalledWith(expect.any(Number), 500, undefined);
   });
 
   it('removes only expired audit delivery payload orphans and persists scan progress', async () => {

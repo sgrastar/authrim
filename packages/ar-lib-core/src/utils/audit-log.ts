@@ -29,8 +29,13 @@ import {
   type IAuditService,
   type IAuditStorageAdapter,
   normalizeAuditStorageRoutingTargets,
+  hasAuditStorageRoutingTargets,
   resolveAuditRoutingTargets,
+  resolveAuditRetention,
+  DEFAULT_PII_CONFIG,
+  type AuditRetentionSource,
   type AuditStorageRoutingRule,
+  type TenantPIIConfig,
 } from '../services/audit';
 import { resolveTenantRuntimeProfilesFromEnv } from '../services/runtime-profile-resolver';
 import type { AuditProfile, AuditTarget } from '../types/runtime-profile';
@@ -734,10 +739,38 @@ async function resolveSnapshotAuditDeliveryPlanFromEnv(
   }
 ) {
   const policies = await loadRuntimeLoggingPolicySnapshot(env, input.tenantId);
-  if (!policies) {
-    return null;
-  }
+  return policies ? snapshotAuditDeliveryPlan(policies, input) : null;
+}
 
+/**
+ * The tenant's published logging policies read for an admin view: not cached, and a published
+ * snapshot that cannot be read throws (runtime would fall back to the routing rules).
+ */
+async function loadRuntimeLoggingPolicySnapshotStrict(
+  env: Env,
+  tenantId: string
+): Promise<RuntimeLoggingPolicySnapshotPayload | null> {
+  if (!env.AUTHRIM_CONFIG) return null;
+  const load = (scopeType: LoggingPolicyScopeType, scopeId: string) =>
+    loadPublishedRuntimeLoggingPolicySnapshot<RuntimeLoggingPolicySnapshotPayload>({
+      scopeType,
+      scopeId,
+      kv: env.AUTHRIM_CONFIG!,
+      objectStore: env.DIAGNOSTIC_LOGS,
+      strict: true,
+    });
+  const snapshot = (await load('tenant', tenantId)) ?? (await load('platform', 'global'));
+  return snapshot?.policies ?? null;
+}
+
+function snapshotAuditDeliveryPlan(
+  policies: RuntimeLoggingPolicySnapshotPayload,
+  input: {
+    tenantId: string;
+    logType: 'event' | 'pii';
+    auditProfile: AuditProfile;
+  }
+) {
   const logType: LogType = input.logType === 'pii' ? 'pii' : 'audit';
   const assignments = policies.assignments.map(mapSnapshotAssignment).filter(isPresent);
   const fallbacks = policies.fallbacks.map(mapSnapshotFallback).filter(isPresent);
@@ -781,10 +814,9 @@ async function resolveSnapshotAuditDeliveryPlanFromEnv(
     primary: input.auditProfile.primary ?? null,
     archives: archive ? [archive] : [],
     sinks: sink ? [sink] : [],
-    retentionDays:
-      input.logType === 'event'
-        ? input.auditProfile.retention?.eventLogRetentionDays
-        : input.auditProfile.retention?.piiLogRetentionDays,
+    // A logging policy picks destinations, not retention: the profile's retention applies, so
+    // it is left to the profile (and reported as the profile's), not passed as an override.
+    retentionDays: undefined,
     archiveFailureMode: input.auditProfile.archiveFailureMode,
     sinkFailureMode: input.auditProfile.sinkFailureMode,
     matchedRuleNames: ['logging_policy_snapshot'],
@@ -889,6 +921,142 @@ async function resolveAuditDeliveryPlanFromEnv(
     sinkFailureMode: input.auditProfile.sinkFailureMode,
     matchedRuleNames: resolved.matchedRuleNames,
   };
+}
+
+/** The retention an audit log of each type gets when written for a tenant now. */
+export interface TenantAuditRetentionEntry {
+  days: number;
+  source: AuditRetentionSource;
+  variesByRoute: boolean;
+  /**
+   * The tenant's logs of this type are also copied to an archive (R2), as they are written or
+   * before the cleanup deletes them. Authrim deletes past-retention logs from the primary store
+   * only; what reaches an archive stays there.
+   */
+  archived: boolean;
+}
+
+export interface TenantAuditRetention {
+  event: TenantAuditRetentionEntry;
+  pii: TenantAuditRetentionEntry;
+}
+
+/**
+ * A routing rule that sets this log type's retention for some writes of the tenant only (those of
+ * an app or an event category); a rule for all its writes is the value itself, not a variation.
+ */
+function routeRetentionRuleApplies(
+  rule: AuditStorageRoutingRule,
+  tenantId: string,
+  logType: 'event' | 'pii'
+): boolean {
+  const retention =
+    logType === 'event'
+      ? rule.retention?.eventLogRetentionDays
+      : rule.retention?.piiLogRetentionDays;
+  const conditions = rule.conditions;
+  const narrows = (expected: string | string[] | undefined) =>
+    expected !== undefined && expected !== '*';
+  const matches = (expected: string | string[] | undefined, actual: string) =>
+    expected === undefined ||
+    expected === '*' ||
+    (Array.isArray(expected) ? expected.includes(actual) : expected === actual);
+  return (
+    rule.enabled &&
+    retention !== undefined &&
+    // Writes carry no region, so only a rule for any region ('*') applies.
+    (conditions.region === undefined || conditions.region === '*') &&
+    (narrows(conditions.clientId) || narrows(conditions.eventCategory)) &&
+    matches(conditions.tenantId, tenantId) &&
+    matches(conditions.logType, logType) &&
+    hasAuditStorageRoutingTargets(normalizeAuditStorageRoutingTargets(rule.targets, rule.backend))
+  );
+}
+
+/**
+ * The audit log retention a write for this tenant uses, resolved the way AuditService does
+ * (delivery plan, then audit profile, then the tenant's PII config) for a write with no event
+ * category or app. Shown to admins, so unlike a write it does not fall back to defaults when
+ * the profile, the PII config or the routing rules cannot be read: it throws. `variesByRoute`:
+ * a routing rule sets another retention for some event categories or apps of the tenant.
+ */
+export async function resolveTenantAuditRetentionFromEnv(
+  env: Env,
+  tenantId: string,
+  /** The tenant's audit profile, already read strictly (so other views share it). */
+  options: { auditProfile?: AuditProfile } = {}
+): Promise<TenantAuditRetention> {
+  const auditProfile =
+    options.auditProfile ??
+    (await resolveTenantRuntimeProfilesFromEnv(env, tenantId, { strict: true })).auditProfile;
+  let defaults: TenantPIIConfig = DEFAULT_PII_CONFIG;
+  let routingRules: AuditStorageRoutingRule[] = [];
+  if (env.AUTHRIM_CONFIG) {
+    const [storedConfig, storedRules] = await Promise.all([
+      env.AUTHRIM_CONFIG.get(`pii_config:${tenantId}`),
+      env.AUTHRIM_CONFIG.get(KV_KEY_ROUTING_RULES),
+    ]);
+    // A write ignores a config it cannot parse; shown to admins, it is unreadable, not absent.
+    if (storedConfig !== null) {
+      const parsed: unknown = JSON.parse(storedConfig);
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        throw new Error('pii_config_invalid');
+      }
+      defaults = parsed as TenantPIIConfig;
+    }
+    // Only a missing value is no rules; anything stored must parse (an empty string does not).
+    if (storedRules !== null) {
+      const parsed: unknown = JSON.parse(storedRules);
+      if (!Array.isArray(parsed)) throw new Error('audit_routing_rules_invalid');
+      routingRules = parseStoredAuditRoutingRules(storedRules);
+    }
+  }
+
+  const policies = await loadRuntimeLoggingPolicySnapshotStrict(env, tenantId);
+  const resolve = async (logType: 'event' | 'pii') => {
+    // A published logging policy decides destinations and leaves retention to the profile; the
+    // routing rules apply only without one (as for a write).
+    const snapshotPlan = policies
+      ? snapshotAuditDeliveryPlan(policies, { tenantId, logType, auditProfile })
+      : null;
+    // The cleanup copies past-retention logs to the profile's archive before deleting them.
+    const archivedBeforeDelete = Boolean(
+      auditProfile.retention?.archiveBeforeDelete && auditProfile.archive
+    );
+    if (snapshotPlan) {
+      return {
+        ...resolveAuditRetention(auditProfile, defaults, logType),
+        variesByRoute: false,
+        archived: snapshotPlan.archives.length > 0 || archivedBeforeDelete,
+      };
+    }
+    const storageConfig = buildAuditStorageConfigFromProfile(auditProfile, { routingRules });
+    const resolved = resolveAuditRoutingTargets(storageConfig, { tenantId, logType });
+    const backendById = new Map(storageConfig.backends.map((backend) => [backend.id, backend]));
+    // As the delivery plan picks archives: the profile's own, and R2 backends a rule names (a
+    // rule can name only the profile's backends, so one for some writes adds no other archive).
+    const isArchive = (backendId: string) => {
+      const backend = backendById.get(backendId);
+      return Boolean(backend && auditTargetFromBackendConfig(backend)?.type === 'r2');
+    };
+    const archived =
+      Boolean(auditProfile.archive) ||
+      archivedBeforeDelete ||
+      resolved.archiveStores.some(isArchive);
+    const override =
+      logType === 'event'
+        ? resolved.retention.eventLogRetentionDays
+        : resolved.retention.piiLogRetentionDays;
+    return {
+      ...resolveAuditRetention(auditProfile, defaults, logType, override),
+      variesByRoute: routingRules.some((rule) =>
+        routeRetentionRuleApplies(rule, tenantId, logType)
+      ),
+      archived,
+    };
+  };
+  const [event, pii] = await Promise.all([resolve('event'), resolve('pii')]);
+  return { event, pii };
 }
 
 async function mirrorLegacyAuditLogToUnifiedService(

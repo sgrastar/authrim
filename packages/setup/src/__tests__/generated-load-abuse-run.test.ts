@@ -49,6 +49,9 @@ const context = {
   cleanup: mocks.contextCleanup,
 };
 
+const TOKEN_SETTINGS_PATH = '/api/admin/tenants/tenant-a/settings/tokens';
+const STRICT_KEY = 'tokens.introspection_strict_validation';
+
 describe('generated load and abuse orchestration', () => {
   let strictValidation = true;
 
@@ -75,16 +78,19 @@ describe('generated load and abuse orchestration', () => {
       async (url: string, _timeout: number, init?: globalThis.RequestInit) => {
         const authorization = (init?.headers as Record<string, string> | undefined)?.authorization;
         if (url.endsWith('/api/admin/approvals')) return { ok: true, status: 200, payload: {} };
-        if (url.endsWith('/api/admin/settings/introspection-validation')) {
-          if (init?.method === 'PUT') {
-            strictValidation = JSON.parse(String(init.body)).strictValidation;
-            return { ok: true, status: 200, payload: {} };
+        if (url.endsWith(TOKEN_SETTINGS_PATH)) {
+          if (init?.method === 'PATCH') {
+            const set = JSON.parse(String(init.body)).set as Record<string, unknown>;
+            strictValidation = set[STRICT_KEY] as boolean;
+            return { ok: true, status: 200, payload: { applied: [STRICT_KEY], rejected: {} } };
           }
           return {
             ok: true,
             status: 200,
             payload: {
-              settings: { strictValidation: { value: strictValidation, source: 'tenant' } },
+              version: `v-${String(strictValidation)}`,
+              values: { [STRICT_KEY]: strictValidation },
+              sources: { [STRICT_KEY]: 'kv' },
             },
           };
         }
@@ -147,19 +153,19 @@ describe('generated load and abuse orchestration', () => {
     expect(result.cleanupNotes).toEqual(['cleanup: removed']);
     expect(strictValidation).toBe(true);
     expect(mocks.contextCleanup).toHaveBeenCalledOnce();
-    const putBodies = mocks.fetchJsonWithTimeout.mock.calls
-      .filter(([, , init]) => init?.method === 'PUT')
-      .map(([, , init]) => JSON.parse(String(init.body)).strictValidation);
-    expect(putBodies).toEqual([false, true]);
+    const patchBodies = mocks.fetchJsonWithTimeout.mock.calls
+      .filter(([, , init]) => init?.method === 'PATCH')
+      .map(([, , init]) => JSON.parse(String(init.body)).set[STRICT_KEY]);
+    expect(patchBodies).toEqual([false, true]);
   });
 
   it('does not rewrite introspection setting when already disabled', async () => {
     strictValidation = false;
     const result = await runGeneratedLoadAbuse({});
     expect(result.ok).toBe(true);
-    expect(mocks.fetchJsonWithTimeout.mock.calls.some(([, , init]) => init?.method === 'PUT')).toBe(
-      false
-    );
+    expect(
+      mocks.fetchJsonWithTimeout.mock.calls.some(([, , init]) => init?.method === 'PATCH')
+    ).toBe(false);
   });
 
   it('reports stage semantic failures while still cleaning up', async () => {
@@ -181,7 +187,7 @@ describe('generated load and abuse orchestration', () => {
     const implementation = mocks.fetchJsonWithTimeout.getMockImplementation()!;
     mocks.fetchJsonWithTimeout.mockImplementation(
       async (...args: Parameters<typeof implementation>) => {
-        if (args[2]?.method === 'PUT') {
+        if (args[2]?.method === 'PATCH') {
           putCount += 1;
           if (putCount === 2) return { ok: false, status: 500, error: 'restore failed' };
         }
@@ -190,7 +196,7 @@ describe('generated load and abuse orchestration', () => {
     );
     const result = await runGeneratedLoadAbuse({});
     expect(result.cleanupNotes).toEqual([
-      expect.stringContaining('load_introspection_validation_put_failed'),
+      expect.stringContaining('settings_update_failed'),
       'cleanup: removed',
     ]);
   });
@@ -199,15 +205,13 @@ describe('generated load and abuse orchestration', () => {
     const implementation = mocks.fetchJsonWithTimeout.getMockImplementation()!;
     mocks.fetchJsonWithTimeout.mockImplementation(
       async (...args: Parameters<typeof implementation>) => {
-        if (String(args[0]).endsWith('/api/admin/settings/introspection-validation')) {
+        if (String(args[0]).endsWith(TOKEN_SETTINGS_PATH)) {
           return { ok: false, status: 503, error: 'settings unavailable' };
         }
         return implementation(...args);
       }
     );
-    await expect(runGeneratedLoadAbuse({})).rejects.toThrow(
-      'load_introspection_validation_get_failed'
-    );
+    await expect(runGeneratedLoadAbuse({})).rejects.toThrow('settings_read_failed');
     expect(mocks.contextCleanup).toHaveBeenCalledOnce();
   });
 });

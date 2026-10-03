@@ -625,6 +625,9 @@ export async function passkeyRegisterVerifyHandler(c: Context<{ Bindings: Env }>
         {
           ...getSessionClientMetadata(c.req.raw),
           amr: ['passkey'],
+          // Registered with attestation none: no signature proves the key yet, so no assurance
+          // level counts this passkey until it signs in.
+          unverified_amr: ['passkey'],
           acr: 'urn:mace:incommon:iap:bronze',
         },
         tenantId
@@ -1060,6 +1063,8 @@ export async function passkeyLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
           amr: ['passkey'],
           acr: 'urn:mace:incommon:iap:bronze',
           authTime,
+          // When the assertion was verified (milliseconds), for assurance step-ups.
+          proven_at: proofVerifiedAtMs,
         },
         tenantId
       )) as Session;

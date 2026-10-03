@@ -205,23 +205,6 @@ export const API_GROUPS: readonly ApiGroup[] = [
 		paths: [`${A}/resource-permissions`]
 	},
 	{
-		id: 'policy-flags',
-		name: 'Check API switch and batch limit',
-		kind: 'settings',
-		page: 'access/policies',
-		paths: [`${A}/settings/policy-flags`],
-		note: 'CHECK_API_ENABLED and CHECK_API_BATCH_SIZE_LIMIT (AUTHRIM_CONFIG); feature.enable_check_api is a separate key. To reconcile.'
-	},
-	{
-		id: 'token-embedding',
-		name: 'Token embedding',
-		kind: 'settings',
-		page: 'access/policies',
-		paths: [`${A}/settings/token-embedding`],
-		overlaps:
-			'feature.enable_policy_embedding, feature.enable_custom_claims, feature.enable_id_level_permissions, limits.max_embedded_permissions, limits.max_resource_permissions, limits.max_custom_claims'
-	},
-	{
 		id: 'custom-claims',
 		name: 'Custom claims',
 		kind: 'records',
@@ -372,42 +355,7 @@ export const API_GROUPS: readonly ApiGroup[] = [
 		name: 'Certification profiles',
 		kind: 'actions',
 		page: 'applications/defaults',
-		paths: [`${A}/settings/profiles`, `${A}/settings/profile`]
-	},
-	{
-		id: 'oauth-config',
-		name: 'OAuth configuration',
-		kind: 'settings',
-		page: 'applications/defaults',
-		paths: [`${A}/settings/oauth-config`],
-		overlaps:
-			'oauth.access_token_expiry, oauth.refresh_token_expiry, oauth.auth_code_ttl, oauth.state_required, oauth.userinfo_require_openid'
-	},
-	{
-		id: 'fapi-security',
-		name: 'FAPI and security',
-		kind: 'settings',
-		page: 'applications/defaults',
-		paths: [`${A}/settings/fapi-security`],
-		overlaps:
-			'security.fapi_enabled, security.fapi_strict_dpop, security.fapi_allow_public_clients, security.require_signed_request_object'
-	},
-	{
-		id: 'token-exchange',
-		name: 'Token exchange',
-		kind: 'settings',
-		page: 'applications/defaults',
-		paths: [`${A}/settings/token-exchange`],
-		overlaps: 'tokens.exchange_enabled'
-	},
-	{
-		id: 'introspection',
-		name: 'Token introspection',
-		kind: 'settings',
-		page: 'applications/defaults',
-		paths: [`${A}/settings/introspection-cache`, `${A}/settings/introspection-validation`],
-		overlaps:
-			'feature.introspection_cache_enabled, tokens.introspection_cache_ttl, tokens.introspection_strict_validation'
+		paths: [`${A}/certification-profiles`]
 	},
 	{
 		id: 'native-sso',
@@ -417,53 +365,21 @@ export const API_GROUPS: readonly ApiGroup[] = [
 		paths: [`${A}/settings/native-sso`]
 	},
 	{
-		id: 'logout',
-		name: 'Logout and back-channel notifications',
-		kind: 'settings',
+		id: 'logout-failures',
+		name: 'Failed logout notifications',
+		kind: 'monitoring',
 		page: 'authentication/staying-signed-in',
-		paths: [`${A}/settings/logout`, `${A}/settings/logout-webhook`],
-		overlaps:
-			'session.backchannel_logout_token_exp, session.backchannel_request_timeout_ms, session.backchannel_retry_*, session.backchannel_on_failure',
-		note: 'Failed notifications (…/logout/failures) are a monitoring list.'
-	},
-	{
-		id: 'error-config',
-		name: 'Error responses',
-		kind: 'settings',
-		page: 'applications/defaults',
-		paths: [
-			`${A}/settings/error-config`,
-			`${A}/settings/error-id-mode`,
-			`${A}/settings/error-locale`,
-			`${A}/settings/error-response-format`
-		],
-		overlaps: 'oauth.error_response_format, oauth.error_id_mode'
+		paths: [`${A}/logout-failures`]
 	},
 
 	// -------------------------------------------------------------------------------------------
 	// Authentication
-	{
-		id: 'assurance-levels',
-		name: 'Assurance levels',
-		kind: 'settings',
-		page: 'authentication/methods',
-		paths: [`${A}/settings/assurance-levels`],
-		overlaps: 'assurance.* (not applied yet)'
-	},
 	{
 		id: 'external-providers',
 		name: 'Social and OIDC providers',
 		kind: 'records',
 		page: 'authentication/social',
 		paths: [`${A}/external-providers`]
-	},
-	{
-		id: 'jit-provisioning',
-		name: 'Just-in-time provisioning',
-		kind: 'settings',
-		page: 'authentication/social',
-		paths: [`${A}/settings/jit-provisioning`],
-		overlaps: 'external_idp.jit_provisioning_enabled'
 	},
 	{
 		id: 'external-token-refresh',
@@ -520,12 +436,11 @@ export const API_GROUPS: readonly ApiGroup[] = [
 		paths: [`${A}/security`]
 	},
 	{
-		id: 'rate-limits',
-		name: 'Rate limit profiles',
-		kind: 'settings',
+		id: 'rate-limit-override',
+		name: 'Rate limit profile override (load tests)',
+		kind: 'actions',
 		page: 'authentication/protection',
-		paths: [`${A}/settings/rate-limits`],
-		overlaps: 'rate_limit.strict, rate_limit.moderate, rate_limit.lenient, rate_limit.window_ms'
+		paths: [`${A}/rate-limits/profile-override`]
 	},
 	{
 		id: 'admin-ip-allowlist',
@@ -551,14 +466,6 @@ export const API_GROUPS: readonly ApiGroup[] = [
 		kind: 'records',
 		page: 'customization/screens',
 		paths: [`${A}/screens`]
-	},
-	{
-		id: 'ui-config',
-		name: 'Platform UI URL and routing',
-		kind: 'settings',
-		page: 'customization/screens',
-		paths: [`${A}/settings/ui-config`, `${A}/settings/ui-routing`],
-		overlaps: 'tenant.ui_base_url, tenant.ui_*_path (per tenant, over these)'
 	},
 	{
 		id: 'launchers',
@@ -659,14 +566,6 @@ export const API_GROUPS: readonly ApiGroup[] = [
 		paths: [`${A}/settings/audit-storage`, `${A}/settings/audit`, `${A}/tenants/{tenantId}/audit`]
 	},
 	{
-		id: 'check-api-audit',
-		name: 'Permission check logs',
-		kind: 'settings',
-		page: 'monitoring/log-settings',
-		paths: [`${A}/settings/check-api-audit`],
-		note: 'Beside the check-api-audit category of the Settings API; which store applies is to check.'
-	},
-	{
 		id: 'log-destinations',
 		name: 'Log destinations',
 		kind: 'records',
@@ -713,14 +612,6 @@ export const API_GROUPS: readonly ApiGroup[] = [
 		paths: [`${A}/tenants/{id}/info`]
 	},
 	{
-		id: 'legacy-settings',
-		name: 'Older whole settings document',
-		kind: 'settings',
-		page: 'settings/tenant-config',
-		paths: [`${A}/settings`],
-		note: 'GET/PUT of the older system settings document; the Settings API holds the same values.'
-	},
-	{
 		id: 'signing-keys',
 		name: 'Signing key rotation',
 		kind: 'actions',
@@ -753,14 +644,6 @@ export const API_GROUPS: readonly ApiGroup[] = [
 			`${A}/settings/refresh-token-sharding`
 		],
 		note: 'Platform infrastructure; the legacy page sits under settings.'
-	},
-	{
-		id: 'conformance',
-		name: 'Conformance mode',
-		kind: 'settings',
-		page: 'settings/runtime',
-		paths: [`${A}/settings/conformance`],
-		overlaps: 'feature.conformance_enabled, feature.conformance_use_builtin_forms'
 	},
 	{
 		id: 'tenant-domains',
@@ -816,16 +699,13 @@ export const API_GROUPS: readonly ApiGroup[] = [
 	},
 	{
 		id: 'settings-api-meta',
-		name: 'Catalog, history, roll-back, validation and migration',
+		name: 'Catalog, history, roll-back and import of the older stores',
 		kind: 'settings-api',
 		page: 'settings-api',
 		paths: [
 			`${A}/settings/meta`,
-			`${A}/settings/schema`,
-			`${A}/settings/validate`,
-			`${A}/settings/diff`,
 			`${A}/settings/{category}`,
-			`${A}/settings/migrate`
+			`${A}/platform/settings/legacy-import`
 		]
 	},
 

@@ -50,6 +50,11 @@ paths:
       description: >-
         Rejects response types that are disabled by the tenant OIDC policy. Internal consent
         continuations are accepted only from the originating live session and browser binding.
+        With tenant assurance enabled, a default FAL of FAL3 (with fal3_requires_par) accepts only
+        a pushed request whose request object the client signed, and refuses any other with
+        invalid_request; FAL2 and above with fal2_requires_dpop refuse response types that return
+        an access token (token, code token, id_token token) with unsupported_response_type.
+        Assurance settings that cannot be read stop the request with temporarily_unavailable.
       parameters:
         - $ref: '#/components/parameters/ClientIdQuery'
         - name: redirect_uri
@@ -89,7 +94,7 @@ paths:
       summary: Submit an OAuth/OIDC authorization request.
       description: >-
         Internal consent continuations are accepted only from the originating live session and
-        browser binding.
+        browser binding. The tenant assurance FAL requirements described for GET apply.
       requestBody:
         $ref: '#/components/requestBodies/FormOrJson'
       responses:
@@ -109,7 +114,13 @@ paths:
           $ref: '#/components/responses/PushedAuthorization'
         '400':
           $ref: '#/components/responses/Error'
-      description: Stores OAuth/OIDC authorization parameters and returns a request_uri per RFC 9126.
+        '503':
+          $ref: '#/components/responses/Error'
+      description: >-
+        Stores OAuth/OIDC authorization parameters and returns a request_uri per RFC 9126. With
+        tenant assurance enabled and a default FAL of FAL3 (with fal3_requires_par), a request
+        without a request object the client signed is refused with invalid_request. Assurance
+        settings that cannot be read return 503 temporarily_unavailable.
     get:
       tags:
         - Auth
@@ -1495,7 +1506,8 @@ paths:
       summary: Finish Direct Auth passkey signup.
       description:
         Verifies a signup passkey registration response, creates the user when needed, and
-        returns a Direct Auth artifact.
+        returns a Direct Auth artifact. Tenant assurance settings that cannot be read return 503
+        temporarily_unavailable before the challenge is spent or a credential is saved.
       responses:
         '200':
           $ref: '#/components/responses/DirectAuthArtifact'
@@ -1504,6 +1516,8 @@ paths:
         '401':
           $ref: '#/components/responses/Error'
         '403':
+          $ref: '#/components/responses/Error'
+        '503':
           $ref: '#/components/responses/Error'
       requestBody:
         $ref: '#/components/requestBodies/DirectPasskeySignupFinish'

@@ -18,6 +18,7 @@ import {
   createMockEnv,
   createMockContext,
   createMockDurableObjectNamespace,
+  createMockKV,
   createTestJWT,
   base64UrlEncode,
   parseJsonResponse,
@@ -87,7 +88,7 @@ const mocks = vi.hoisted(() => ({
   // Caching
   mockGetClientCached: vi.fn().mockResolvedValue(null),
   mockLoadTenantProfileCached: vi.fn().mockResolvedValue(null),
-  mockGetSystemSettingsCached: vi.fn().mockResolvedValue(null),
+  mockGetProtocolSettingsCached: vi.fn().mockResolvedValue(null),
 
   // Token operations
   mockCreateAccessToken: vi
@@ -190,10 +191,6 @@ const mocks = vi.hoisted(() => ({
   mockGetEmbeddingLimits: vi.fn().mockReturnValue({ maxClaims: 50, maxSize: 4096 }),
 
   // Configuration
-  mockCreateOAuthConfigManager: vi.fn().mockReturnValue({
-    getTokenExpiry: vi.fn().mockResolvedValue(3600),
-    getRefreshTokenExpiry: vi.fn().mockResolvedValue(86400 * 30),
-  }),
 
   // Timing-safe comparison
   mockTimingSafeEqual: vi.fn().mockReturnValue(true),
@@ -230,8 +227,12 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     // Caching
     getClientCached: mocks.mockGetClientCached,
     loadTenantProfileCached: mocks.mockLoadTenantProfileCached,
-    getSystemSettingsCached: mocks.mockGetSystemSettingsCached,
-    getTenantSystemSettings: mocks.mockGetSystemSettingsCached,
+    getProtocolSettingsCached: async (...args: unknown[]) => ({
+      fapi: {},
+      oidc: {},
+      security: {},
+      ...((await mocks.mockGetProtocolSettingsCached(...args)) ?? {}),
+    }),
     // Token operations
     createAccessToken: mocks.mockCreateAccessToken,
     createIDToken: mocks.mockCreateIDToken,
@@ -310,7 +311,6 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     parseCIBARequestId: mocks.mockParseCIBARequestId,
     getCIBARequestStoreById: mocks.mockGetCIBARequestStoreById,
     // Configuration
-    createOAuthConfigManager: mocks.mockCreateOAuthConfigManager,
     // Timing-safe comparison
     timingSafeEqual: mocks.mockTimingSafeEqual,
     // Events
@@ -374,7 +374,7 @@ function resetAllMocks() {
   // Reset caching mocks
   mocks.mockGetClientCached.mockReset().mockResolvedValue(null);
   mocks.mockLoadTenantProfileCached.mockReset().mockResolvedValue(null);
-  mocks.mockGetSystemSettingsCached.mockReset().mockResolvedValue(null);
+  mocks.mockGetProtocolSettingsCached.mockReset().mockResolvedValue(null);
 
   // Reset token operation mocks
   mocks.mockCreateAccessToken
@@ -521,10 +521,6 @@ describe('Security-Critical Tests', () => {
     });
 
     // Setup default config manager
-    mocks.mockCreateOAuthConfigManager.mockReturnValue({
-      getTokenExpiry: vi.fn().mockResolvedValue(3600),
-      getRefreshTokenExpiry: vi.fn().mockResolvedValue(86400 * 30),
-    });
 
     // Setup token creation mocks
     mocks.mockCreateAccessToken.mockResolvedValue({
@@ -1159,7 +1155,7 @@ describe('Security-Critical Tests', () => {
 
         mocks.mockGetClientCached.mockResolvedValue(client);
         mocks.mockExtractDPoPProof.mockReturnValue(null);
-        mocks.mockGetSystemSettingsCached.mockResolvedValue({
+        mocks.mockGetProtocolSettingsCached.mockResolvedValue({
           feature_client_credentials_enabled: true,
         });
 
@@ -1194,7 +1190,7 @@ describe('Security-Critical Tests', () => {
 
         mocks.mockGetClientCached.mockResolvedValue(client);
         mocks.mockExtractDPoPProof.mockReturnValue(null);
-        mocks.mockGetSystemSettingsCached.mockResolvedValue({
+        mocks.mockGetProtocolSettingsCached.mockResolvedValue({
           fapi: { enabled: true, requireDpop: true },
         });
 
@@ -1358,8 +1354,8 @@ describe('Security-Critical Tests', () => {
         const client = createFAPIClient();
 
         mocks.mockGetClientCached.mockResolvedValue(client);
-        mocks.mockGetSystemSettingsCached.mockResolvedValue({
-          'security.dpop_nonce_enabled': false,
+        mocks.mockGetProtocolSettingsCached.mockResolvedValue({
+          security: { dpop_nonce_enabled: false },
         });
         mocks.mockExtractDPoPProof.mockReturnValue('replayed-dpop-proof');
         mocks.mockValidateDPoPProof.mockResolvedValue({
@@ -1629,6 +1625,637 @@ describe('Security-Critical Tests', () => {
   // ==========================================================================
   // Replay Attack Prevention Tests
   // ==========================================================================
+
+  describe('Assurance (FAL and access token claims)', () => {
+    const ASSURANCE_KEY = 'settings:tenant:default:assurance';
+    function setAssurance(values: Record<string, unknown> | Error) {
+      const kv = createMockKV();
+      if (values instanceof Error) {
+        kv.get.mockImplementation(async (key: string) => {
+          if (key === ASSURANCE_KEY) throw values;
+          return null;
+        });
+      } else {
+        void kv.put(ASSURANCE_KEY, JSON.stringify(values));
+      }
+      (mockEnv as unknown as { SETTINGS: unknown }).SETTINGS = kv;
+    }
+
+    async function exchangeCode(options: { dpop: boolean; authCodeData?: TestAuthCodeData }) {
+      const client = createFAPIClient({
+        token_endpoint_auth_method: 'client_secret_post',
+        client_secret_hash: 'test-secret-hash',
+        dpop_bound_access_tokens: false,
+      });
+      const authCodeData = options.authCodeData ?? createAuthCodeData({ amr: ['passkey'] });
+      mocks.mockGetClientCached.mockResolvedValue(client);
+      mocks.mockExtractDPoPProof.mockReturnValue(options.dpop ? 'valid-dpop-proof' : null);
+      mocks.mockValidateDPoPProof.mockResolvedValue({ valid: true, jkt: 'dpop-jkt' });
+      const consumeCodeRpc = vi.fn().mockResolvedValue(authCodeData);
+      mockEnv.AUTH_CODE_STORE.get = vi.fn().mockReturnValue({
+        consumeCodeRpc,
+        registerIssuedTokensRpc: vi.fn().mockResolvedValue(true),
+      });
+      const response = await tokenHandler(
+        createMockContext({
+          method: 'POST',
+          headers: options.dpop ? { DPoP: 'valid-dpop-proof' } : {},
+          body: {
+            grant_type: 'authorization_code',
+            code: 'valid-auth-code',
+            redirect_uri: authCodeData.redirectUri,
+            client_id: client.client_id,
+            client_secret: 'valid-secret',
+          },
+          env: mockEnv,
+        })
+      );
+      return { response, consumeCodeRpc };
+    }
+
+    it('refuses a code without a DPoP proof at FAL2, before the code is used', async () => {
+      setAssurance({ 'assurance.enabled': true, 'assurance.default_fal': 'FAL2' });
+
+      const { response, consumeCodeRpc } = await exchangeCode({ dpop: false });
+      const body = await parseJsonResponse<{ error: string; error_description: string }>(response);
+
+      expect(response.status).toBe(400);
+      expect(body.error).toBe('invalid_request');
+      expect(body.error_description).toContain('FAL2');
+      expect(consumeCodeRpc).not.toHaveBeenCalled();
+    });
+
+    it('exchanges a code with a DPoP proof at FAL2', async () => {
+      setAssurance({ 'assurance.enabled': true, 'assurance.default_fal': 'FAL2' });
+
+      const { consumeCodeRpc } = await exchangeCode({ dpop: true });
+
+      expect(consumeCodeRpc).toHaveBeenCalled();
+      expect(mocks.mockCreateAccessToken).toHaveBeenCalledWith(
+        expect.objectContaining({ cnf: { jkt: 'dpop-jkt' } }),
+        expect.anything(),
+        expect.anything(),
+        expect.anything(),
+        expect.anything()
+      );
+    });
+
+    it('exchanges a code without DPoP while fal2_requires_dpop is off', async () => {
+      setAssurance({
+        'assurance.enabled': true,
+        'assurance.default_fal': 'FAL2',
+        'assurance.fal2_requires_dpop': false,
+      });
+
+      const { consumeCodeRpc } = await exchangeCode({ dpop: false });
+
+      expect(consumeCodeRpc).toHaveBeenCalled();
+    });
+
+    it('puts how the user authenticated in the access token with include_in_access_token', async () => {
+      setAssurance({
+        'assurance.enabled': true,
+        'assurance.include_in_access_token': true,
+        'assurance.include_in_id_token': false,
+      });
+      // ID tokens keep the session's acr; access tokens get the acr of the AAL reached.
+      const authCodeData = createAuthCodeData({
+        amr: ['passkey'],
+        acr: 'urn:mace:incommon:iap:bronze',
+        aal: 'AAL2',
+        assuranceAcr: 'urn:authrim:aal:2',
+        assuranceAmr: ['passkey'],
+        authTime: 1_700_000_000,
+      } as Partial<TestAuthCodeData>);
+
+      await exchangeCode({ dpop: true, authCodeData });
+
+      expect(mocks.mockCreateAccessToken).toHaveBeenCalledWith(
+        expect.objectContaining({
+          acr: 'urn:authrim:aal:2',
+          amr: ['passkey'],
+          auth_time: 1_700_000_000,
+        }),
+        expect.anything(),
+        expect.anything(),
+        expect.anything(),
+        expect.anything()
+      );
+    });
+
+    it('reports in the access token only the methods the authentication proved', async () => {
+      setAssurance({ 'assurance.enabled': true, 'assurance.include_in_access_token': true });
+
+      await exchangeCode({
+        dpop: true,
+        authCodeData: createAuthCodeData({
+          // A passkey registered after a directory login: in the session, not proven.
+          amr: ['pwd', 'directory', 'passkey'],
+          aal: 'AAL1',
+          assuranceAcr: 'urn:authrim:aal:1',
+          assuranceAmr: ['pwd', 'directory'],
+        } as Partial<TestAuthCodeData>),
+      });
+
+      const claims = mocks.mockCreateAccessToken.mock.calls.at(-1)?.[0] as Record<string, unknown>;
+      expect(claims.amr).toEqual(['pwd', 'directory']);
+    });
+
+    it('names no acr or methods for a code issued before assurance was on', async () => {
+      setAssurance({ 'assurance.enabled': true, 'assurance.include_in_access_token': true });
+
+      await exchangeCode({
+        dpop: true,
+        // Issued while assurance was off: no AAL, nothing proven recorded.
+        authCodeData: createAuthCodeData({
+          amr: ['pwd', 'directory', 'passkey'],
+          acr: 'urn:mace:incommon:iap:bronze',
+          authTime: 1_700_000_000,
+        }),
+      });
+
+      const claims = mocks.mockCreateAccessToken.mock.calls.at(-1)?.[0] as Record<string, unknown>;
+      expect(claims).toMatchObject({ auth_time: 1_700_000_000 });
+      expect(claims).not.toHaveProperty('acr');
+      expect(claims).not.toHaveProperty('amr');
+    });
+
+    it('reports no acr in the access token for a code at AAL0', async () => {
+      setAssurance({ 'assurance.enabled': true, 'assurance.include_in_access_token': true });
+
+      await exchangeCode({
+        dpop: true,
+        authCodeData: createAuthCodeData({
+          amr: ['otp'],
+          acr: 'urn:mace:incommon:iap:bronze',
+          aal: 'AAL0',
+          assuranceAmr: ['otp'],
+        } as Partial<TestAuthCodeData>),
+      });
+
+      const claims = mocks.mockCreateAccessToken.mock.calls.at(-1)?.[0] as Record<string, unknown>;
+      expect(claims).not.toHaveProperty('acr');
+      expect(claims).toMatchObject({ amr: ['otp'] });
+    });
+
+    it.each([
+      ['assurance is off', { 'assurance.include_in_access_token': true }],
+      ['include_in_access_token is off', { 'assurance.enabled': true }],
+    ])('leaves them out while %s', async (_label, values) => {
+      setAssurance(values);
+
+      await exchangeCode({ dpop: true });
+
+      const claims = mocks.mockCreateAccessToken.mock.calls.at(-1)?.[0] as Record<string, unknown>;
+      expect(claims).not.toHaveProperty('acr');
+      expect(claims).not.toHaveProperty('amr');
+      expect(claims).not.toHaveProperty('auth_time');
+    });
+
+    it('refuses a refresh without a DPoP proof at FAL2, before the refresh token is read', async () => {
+      setAssurance({ 'assurance.enabled': true, 'assurance.default_fal': 'FAL2' });
+      const client = createConfidentialClient();
+      mocks.mockGetClientCached.mockResolvedValue(client);
+      mocks.mockExtractDPoPProof.mockReturnValue(null);
+
+      const response = await tokenHandler(
+        createMockContext({
+          method: 'POST',
+          body: {
+            grant_type: 'refresh_token',
+            refresh_token: createTestRefreshTokenJWT({
+              client_id: client.client_id,
+              sub: 'user-001',
+            }),
+            client_id: client.client_id,
+            client_secret: 'valid-secret',
+          },
+          env: mockEnv,
+        })
+      );
+
+      expect(response.status).toBe(400);
+      expect(
+        (await parseJsonResponse<{ error_description: string }>(response)).error_description
+      ).toContain('FAL2');
+      expect(mocks.mockGetRefreshToken).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['a code from a pushed, signed request', true, true],
+      ['any other code (Direct Auth, or issued before FAL3)', undefined, false],
+    ])('at FAL3 exchanges %s only', async (_label, pushedSignedRequest, accepted) => {
+      setAssurance({ 'assurance.enabled': true, 'assurance.default_fal': 'FAL3' });
+
+      const { response } = await exchangeCode({
+        dpop: true,
+        authCodeData: createAuthCodeData({
+          amr: ['passkey'],
+          ...(pushedSignedRequest ? { pushedSignedRequest } : {}),
+        } as Partial<TestAuthCodeData>),
+      });
+
+      if (accepted) {
+        expect(mocks.mockCreateAccessToken).toHaveBeenCalled();
+      } else {
+        expect(response.status).toBe(400);
+        expect((await parseJsonResponse<{ error: string }>(response)).error).toBe(
+          'unauthorized_client'
+        );
+        expect(mocks.mockCreateAccessToken).not.toHaveBeenCalled();
+      }
+    });
+
+    it.each([
+      ['FAL3', { DPoP: 'valid-dpop-proof' }, 'unauthorized_client'],
+      ['FAL2', {}, 'invalid_request'],
+    ])(
+      'refuses a Direct Auth finish at %s before its artifact is spent',
+      async (fal, headers, error) => {
+        setAssurance({ 'assurance.enabled': true, 'assurance.default_fal': fal });
+        mocks.mockExtractDPoPProof.mockReturnValue('DPoP' in headers ? 'valid-dpop-proof' : null);
+        const consumeChallengeRpc = vi.fn();
+        (mockEnv as unknown as { CHALLENGE_STORE: unknown }).CHALLENGE_STORE =
+          createMockDurableObjectNamespace({
+            rpcMethods: { consumeChallengeRpc } as Record<string, unknown>,
+          } as never);
+
+        const response = await tokenHandler(
+          createMockContext({
+            method: 'POST',
+            headers,
+            body: {
+              grant_type: 'urn:authrim:params:oauth:grant-type:direct-auth-finish',
+              direct_auth_artifact: 'artifact-1',
+              client_id: 'client-1',
+              code_verifier: 'v'.repeat(43),
+              channel: 'browser',
+            },
+            env: mockEnv,
+          })
+        );
+
+        expect(response.status).toBe(400);
+        expect((await parseJsonResponse<{ error: string }>(response)).error).toBe(error);
+        expect(consumeChallengeRpc).not.toHaveBeenCalled();
+      }
+    );
+
+    it('records how the user authenticated on the refresh token family it begins', async () => {
+      setAssurance({ 'assurance.enabled': true });
+      const createFamilyRpc = vi.fn().mockResolvedValue({
+        version: 1,
+        newJti: 'mock-refresh-jti',
+        expiresIn: 2592000,
+        allowedScope: 'openid profile',
+      });
+      mockEnv.REFRESH_TOKEN_ROTATOR.get = vi.fn().mockReturnValue({ createFamilyRpc });
+
+      await exchangeCode({
+        dpop: true,
+        authCodeData: createAuthCodeData({
+          scope: 'openid profile offline_access',
+          amr: ['passkey'],
+          acr: 'urn:authrim:aal:2',
+          aal: 'AAL2',
+          assuranceAcr: 'urn:authrim:aal:2',
+          assuranceAmr: ['passkey'],
+          pushedSignedRequest: true,
+          authTime: 1_700_000_000,
+        } as Partial<TestAuthCodeData>),
+      });
+
+      expect(createFamilyRpc).toHaveBeenCalledWith(
+        expect.objectContaining({
+          authContext: {
+            auth_time: 1_700_000_000,
+            acr: 'urn:authrim:aal:2',
+            amr: ['passkey'],
+            assurance_auth_time: 1_700_000_000,
+            aal: 'AAL2',
+            assurance_acr: 'urn:authrim:aal:2',
+            assurance_amr: ['passkey'],
+            pushed_signed_request: true,
+          },
+        })
+      );
+    });
+
+    it('records the ID token values as issued, a claim a request rule omitted included', async () => {
+      setAssurance({ 'assurance.enabled': true });
+      const createFamilyRpc = vi.fn().mockResolvedValue({
+        version: 1,
+        newJti: 'mock-refresh-jti',
+        expiresIn: 2592000,
+        allowedScope: 'openid profile',
+      });
+      mockEnv.REFRESH_TOKEN_ROTATOR.get = vi.fn().mockReturnValue({ createFamilyRpc });
+
+      await exchangeCode({
+        dpop: true,
+        authCodeData: createAuthCodeData({
+          scope: 'openid profile offline_access',
+          acr: 'urn:authrim:aal:1',
+          amr: ['pwd'],
+          aal: 'AAL1',
+          assuranceAcr: 'urn:authrim:aal:1',
+          assuranceAmr: ['pwd'],
+          authTime: 1_700_000_000,
+          // A signed claims request: amr only when the acr is AAL2.
+          claims: JSON.stringify({
+            id_token: { acr: null, amr: null },
+            _asc: {
+              sao: {
+                id_token: [
+                  {
+                    loc: '/acr',
+                    method: 'simple',
+                    value: 'urn:authrim:aal:2',
+                    else: 'omit',
+                    what: ['/amr'],
+                  },
+                ],
+              },
+            },
+          }),
+          claimsRequestProtected: true,
+        } as Partial<TestAuthCodeData>),
+      });
+
+      const idClaims = mocks.mockCreateIDToken.mock.calls.at(-1)?.[0] as Record<string, unknown>;
+      expect(idClaims).not.toHaveProperty('amr');
+      const familyContext = createFamilyRpc.mock.calls.at(-1)?.[0]?.authContext as Record<
+        string,
+        unknown
+      >;
+      expect(familyContext).not.toHaveProperty('amr');
+      expect(familyContext).toMatchObject({ acr: 'urn:authrim:aal:1', assurance_amr: ['pwd'] });
+    });
+
+    it('keeps the access token auth_time on refresh when a request rule left the ID token without it', async () => {
+      setAssurance({ 'assurance.enabled': true, 'assurance.include_in_access_token': true });
+      const createFamilyRpc = vi.fn().mockResolvedValue({
+        version: 1,
+        newJti: 'mock-refresh-jti',
+        expiresIn: 2592000,
+        allowedScope: 'openid profile',
+      });
+      mockEnv.REFRESH_TOKEN_ROTATOR.get = vi.fn().mockReturnValue({ createFamilyRpc });
+
+      await exchangeCode({
+        dpop: true,
+        authCodeData: createAuthCodeData({
+          scope: 'openid profile offline_access',
+          acr: 'urn:authrim:aal:1',
+          amr: ['pwd'],
+          aal: 'AAL1',
+          assuranceAcr: 'urn:authrim:aal:1',
+          assuranceAmr: ['pwd'],
+          authTime: 1_700_000_000,
+          claims: JSON.stringify({
+            id_token: { acr: null, auth_time: null },
+            _asc: {
+              sao: {
+                id_token: [
+                  {
+                    loc: '/acr',
+                    method: 'simple',
+                    value: 'urn:authrim:aal:2',
+                    else: 'omit',
+                    what: ['/auth_time'],
+                  },
+                ],
+              },
+            },
+          }),
+          claimsRequestProtected: true,
+        } as Partial<TestAuthCodeData>),
+      });
+
+      expect(mocks.mockCreateAccessToken.mock.calls.at(-1)?.[0]).toMatchObject({
+        auth_time: 1_700_000_000,
+      });
+      const familyContext = createFamilyRpc.mock.calls.at(-1)?.[0]?.authContext as Record<
+        string,
+        unknown
+      >;
+      expect(familyContext).not.toHaveProperty('auth_time');
+      mocks.mockCreateAccessToken.mockClear();
+      mocks.mockCreateIDToken.mockClear();
+
+      const { response } = await refreshWith(familyContext);
+
+      // The refresh succeeded and issued its own tokens.
+      expect(response.status).toBe(200);
+      expect(mocks.mockCreateAccessToken).toHaveBeenCalledTimes(1);
+      expect(mocks.mockCreateIDToken).toHaveBeenCalledTimes(1);
+      expect(mocks.mockCreateAccessToken.mock.calls.at(-1)?.[0]).toMatchObject({
+        auth_time: 1_700_000_000,
+      });
+      expect(mocks.mockCreateIDToken.mock.calls.at(-1)?.[0]).not.toHaveProperty('auth_time');
+    });
+
+    it('keeps auth_time on refresh for a code issued before assurance was on', async () => {
+      setAssurance({ 'assurance.enabled': true, 'assurance.include_in_access_token': true });
+      const createFamilyRpc = vi.fn().mockResolvedValue({
+        version: 1,
+        newJti: 'mock-refresh-jti',
+        expiresIn: 2592000,
+        allowedScope: 'openid profile',
+      });
+      mockEnv.REFRESH_TOKEN_ROTATOR.get = vi.fn().mockReturnValue({ createFamilyRpc });
+
+      // Issued while assurance was off: no AAL recorded.
+      await exchangeCode({
+        dpop: true,
+        authCodeData: createAuthCodeData({
+          scope: 'openid profile offline_access',
+          amr: ['pwd'],
+          authTime: 1_700_000_000,
+        }),
+      });
+      expect(mocks.mockCreateAccessToken.mock.calls.at(-1)?.[0]).toMatchObject({
+        auth_time: 1_700_000_000,
+      });
+
+      mocks.mockCreateAccessToken.mockClear();
+
+      const { response } = await refreshWith(createFamilyRpc.mock.calls.at(-1)?.[0]?.authContext);
+
+      // The refresh succeeded and issued its own access token.
+      expect(response.status).toBe(200);
+      expect(mocks.mockCreateAccessToken).toHaveBeenCalledTimes(1);
+      const refreshed = mocks.mockCreateAccessToken.mock.calls.at(-1)?.[0] as Record<
+        string,
+        unknown
+      >;
+      expect(refreshed.auth_time).toBe(1_700_000_000);
+      expect(refreshed).not.toHaveProperty('acr');
+      expect(refreshed).not.toHaveProperty('amr');
+    });
+
+    async function refreshWith(authContext: Record<string, unknown> | undefined) {
+      const client = createConfidentialClient();
+      const refreshTokenPayload = createRefreshTokenPayload({
+        client_id: client.client_id,
+        sub: 'user-001',
+      });
+      mocks.mockGetClientCached.mockResolvedValue(client);
+      mocks.mockParseToken.mockReturnValue(refreshTokenPayload);
+      mocks.mockExtractDPoPProof.mockReturnValue('valid-dpop-proof');
+      mocks.mockValidateDPoPProof.mockResolvedValue({ valid: true, jkt: 'dpop-jkt' });
+      mocks.mockGetRefreshToken.mockResolvedValue({
+        sub: refreshTokenPayload.sub,
+        scope: refreshTokenPayload.scope,
+        client_id: refreshTokenPayload.client_id,
+        ...(authContext ? { auth_context: authContext } : {}),
+      });
+      mocks.mockParseRefreshTokenJti.mockReturnValue({
+        generation: 1,
+        shardIndex: 0,
+        randomPart: 'abc',
+      });
+      const rotateRpc = vi.fn().mockResolvedValue({ newJti: 'rt-new-jti-002', newVersion: 2 });
+      mockEnv.REFRESH_TOKEN_ROTATOR.get = vi.fn().mockReturnValue({ rotateRpc });
+      const response = await tokenHandler(
+        createMockContext({
+          method: 'POST',
+          headers: { DPoP: 'valid-dpop-proof' },
+          body: {
+            grant_type: 'refresh_token',
+            refresh_token: createTestRefreshTokenJWT({
+              client_id: client.client_id,
+              sub: 'user-001',
+            }),
+            client_id: client.client_id,
+            client_secret: 'valid-secret',
+          },
+          env: mockEnv,
+        })
+      );
+      return { response, rotateRpc };
+    }
+
+    const FAMILY_CONTEXT = {
+      auth_time: 1_700_000_000,
+      assurance_auth_time: 1_700_000_000,
+      acr: 'urn:mace:incommon:iap:bronze',
+      amr: ['pwd', 'directory', 'passkey'],
+      aal: 'AAL1',
+      assurance_acr: 'urn:authrim:aal:1',
+      assurance_amr: ['pwd', 'directory'],
+    };
+
+    it.each([
+      [
+        'a family a pushed, signed request began',
+        { ...FAMILY_CONTEXT, pushed_signed_request: true },
+        200,
+      ],
+      ['a family another grant began', FAMILY_CONTEXT, 400],
+      ['a family with no recorded context', undefined, 400],
+    ])('at FAL3 refreshes %s only', async (_label, authContext, status) => {
+      setAssurance({ 'assurance.enabled': true, 'assurance.default_fal': 'FAL3' });
+
+      const { response, rotateRpc } = await refreshWith(authContext);
+
+      expect(response.status).toBe(status);
+      if (status === 400) {
+        expect((await parseJsonResponse<{ error: string }>(response)).error).toBe(
+          'unauthorized_client'
+        );
+        expect(rotateRpc).not.toHaveBeenCalled();
+      }
+    });
+
+    it('issues refreshed tokens that say how the user first authenticated', async () => {
+      setAssurance({ 'assurance.enabled': true, 'assurance.include_in_access_token': true });
+
+      const { response } = await refreshWith(FAMILY_CONTEXT);
+
+      expect(response.status).toBe(200);
+      expect(mocks.mockCreateAccessToken.mock.calls.at(-1)?.[0]).toMatchObject({
+        auth_time: 1_700_000_000,
+        acr: 'urn:authrim:aal:1',
+        amr: ['pwd', 'directory'],
+      });
+      expect(mocks.mockCreateIDToken.mock.calls.at(-1)?.[0]).toMatchObject({
+        auth_time: 1_700_000_000,
+        acr: 'urn:mace:incommon:iap:bronze',
+        amr: ['pwd', 'directory', 'passkey'],
+      });
+    });
+
+    it.each([
+      ['assurance is off', {}, false, false],
+      [
+        'the family was made while assurance was off',
+        { 'assurance.enabled': true, 'assurance.include_in_access_token': true },
+        true,
+        true,
+      ],
+    ])(
+      'names no acr or methods on refresh while %s',
+      async (_label, settings, idTokenHasThem, timeOnly) => {
+        setAssurance(settings);
+
+        const { response } = await refreshWith(
+          idTokenHasThem
+            ? { auth_time: 1_700_000_000, acr: 'urn:mace:incommon:iap:bronze', amr: ['pwd'] }
+            : FAMILY_CONTEXT
+        );
+
+        expect(response.status).toBe(200);
+
+        const accessClaims = mocks.mockCreateAccessToken.mock.calls.at(-1)?.[0] as Record<
+          string,
+          unknown
+        >;
+        expect(accessClaims).not.toHaveProperty('acr');
+        expect(accessClaims).not.toHaveProperty('amr');
+        // A family that recorded no access token authentication time (another grant made it).
+        if (timeOnly) expect(accessClaims).not.toHaveProperty('auth_time');
+        const idClaims = mocks.mockCreateIDToken.mock.calls.at(-1)?.[0] as Record<string, unknown>;
+        if (idTokenHasThem) {
+          expect(idClaims).toMatchObject({ acr: 'urn:mace:incommon:iap:bronze', amr: ['pwd'] });
+        } else {
+          expect(idClaims).not.toHaveProperty('auth_time');
+          expect(idClaims).not.toHaveProperty('acr');
+          expect(idClaims).not.toHaveProperty('amr');
+        }
+      }
+    );
+
+    it('stops when the assurance settings cannot be read', async () => {
+      setAssurance(new Error('KV unavailable'));
+
+      const { response, consumeCodeRpc } = await exchangeCode({ dpop: true });
+
+      expect(response.status).toBe(503);
+      expect(consumeCodeRpc).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['FAL3', 'unauthorized_client'],
+      ['FAL2', 'invalid_request'],
+    ])('refuses the JWT bearer grant at %s', async (fal, error) => {
+      setAssurance({ 'assurance.enabled': true, 'assurance.default_fal': fal });
+
+      const response = await tokenHandler(
+        createMockContext({
+          method: 'POST',
+          body: {
+            grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer',
+            assertion: 'header.payload.signature',
+          },
+          env: mockEnv,
+        })
+      );
+
+      expect(response.status).toBe(400);
+      expect((await parseJsonResponse<{ error: string }>(response)).error).toBe(error);
+    });
+  });
 
   describe('Replay Attack Prevention', () => {
     describe('Authorization Code Single-Use', () => {
@@ -1977,7 +2604,7 @@ describe('Security-Critical Tests', () => {
           rotateRpc: rotateRpcMock,
         });
 
-        mocks.mockGetSystemSettingsCached.mockResolvedValue({
+        mocks.mockGetProtocolSettingsCached.mockResolvedValue({
           fapi: { enabled: true, requireDpop: false },
         });
         mocks.mockGetClientCached.mockResolvedValue(client);

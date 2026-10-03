@@ -5,6 +5,7 @@
 
 import { Context } from 'hono';
 import type { Env, Session } from '@authrim/ar-lib-core';
+import { getCanonicalAccountStatus, transitionAccountLifecycle } from './account-status';
 import { getRefreshTokenRotatorStubByJti } from '@authrim/ar-lib-core/services/refresh-token-family-store';
 import {
   invalidateConsentCache,
@@ -42,11 +43,11 @@ import {
   // Write-Through KV Cache (Phase 3)
   readResponseTextWithLimit,
   CanonicalRuntimeUserStore,
-  buildTenantSystemSettingsKey,
   getTenantMetadataContextFromHono,
   resolveOtpAccountCoreDataContextByIdentifierFromHono,
   createDataTemporarilyUnavailableResponse,
   transitionAccountAuthenticationState,
+  readAccountAuthenticationState,
   produceNotificationDelivery,
   type CanonicalOtpLoginUser,
 } from '@authrim/ar-lib-core';
@@ -107,18 +108,6 @@ function emptyAuditLogListResponse(page: number, limit: number) {
   };
 }
 
-function parseJsonObject(value: string | null | undefined): Record<string, unknown> {
-  if (!value) return {};
-  try {
-    const parsed = JSON.parse(value);
-    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
-      ? (parsed as Record<string, unknown>)
-      : {};
-  } catch {
-    return {};
-  }
-}
-
 async function findCanonicalRuntimeUser(
   c: Context<{ Bindings: Env }>,
   tenantId: string,
@@ -132,72 +121,6 @@ async function findCanonicalRuntimeUser(
     piiAdapter: piiCtx.defaultPiiAdapter,
     tenantId,
   }).findById(userId, options);
-}
-
-async function getCanonicalAccountStatus(
-  adapter: DatabaseAdapter,
-  tenantId: string,
-  userId: string
-): Promise<{ id: string; lifecycle_state: string; status: string } | null> {
-  const account = await adapter.queryOne<{
-    id: string;
-    lifecycle_state: string;
-    metadata_json: string | null;
-  }>(
-    'SELECT id, lifecycle_state, metadata_json FROM identity_accounts WHERE legacy_user_id = ? AND tenant_id = ?',
-    [userId, tenantId]
-  );
-  if (!account) return null;
-  const metadata = parseJsonObject(account.metadata_json);
-  return {
-    id: account.id,
-    lifecycle_state: account.lifecycle_state,
-    status:
-      typeof metadata.status === 'string'
-        ? metadata.status
-        : account.lifecycle_state === 'active'
-          ? 'active'
-          : account.lifecycle_state,
-  };
-}
-
-async function updateCanonicalAccountStatus(
-  adapter: DatabaseAdapter,
-  tenantId: string,
-  userId: string,
-  status: string,
-  metadataPatch: Record<string, unknown> = {},
-  now = Date.now()
-) {
-  const lifecycleState = status === 'active' ? 'active' : status;
-  const account = await adapter.queryOne<{ id: string; primary_subject_id: string | null }>(
-    'SELECT id, primary_subject_id FROM identity_accounts WHERE legacy_user_id = ? AND tenant_id = ?',
-    [userId, tenantId]
-  );
-  if (!account) return false;
-  await adapter.execute(
-    `UPDATE identity_accounts
-        SET lifecycle_state = ?,
-            metadata_json = json_set(COALESCE(metadata_json, '{}'), '$.status', ?),
-            updated_at = ?
-      WHERE id = ? AND tenant_id = ?`,
-    [lifecycleState, status, now, account.id, tenantId]
-  );
-  for (const [key, value] of Object.entries(metadataPatch)) {
-    await adapter.execute(
-      `UPDATE identity_accounts
-          SET metadata_json = json_set(COALESCE(metadata_json, '{}'), ?, ?), updated_at = ?
-        WHERE id = ? AND tenant_id = ?`,
-      [`$.${key}`, value, now, account.id, tenantId]
-    );
-  }
-  if (account.primary_subject_id) {
-    await adapter.execute(
-      'UPDATE identity_subjects SET lifecycle_state = ?, updated_at = ? WHERE id = ? AND tenant_id = ?',
-      [lifecycleState, now, account.primary_subject_id, tenantId]
-    );
-  }
-  return true;
 }
 
 async function auditHotTableExists(
@@ -438,131 +361,6 @@ function buildAuditResourceFilter(
 }
 
 // =============================================================================
-// Policy Configuration
-// =============================================================================
-
-/**
- * Policy feature flag names mapped to camelCase property names
- */
-const POLICY_FLAG_MAPPING: Record<string, string> = {
-  ENABLE_ABAC: 'enableAbac',
-  ENABLE_REBAC: 'enableRebac',
-  ENABLE_POLICY_LOGGING: 'enablePolicyLogging',
-  ENABLE_VERIFIED_ATTRIBUTES: 'enableVerifiedAttributes',
-  ENABLE_CUSTOM_RULES: 'enableCustomRules',
-  ENABLE_SD_JWT: 'enableSdJwt',
-  ENABLE_POLICY_EMBEDDING: 'enablePolicyEmbedding',
-};
-
-/**
- * KV key prefix for policy feature flags (matches policy-core/feature-flags.ts)
- */
-const POLICY_FLAGS_PREFIX = 'policy:flags:';
-
-/**
- * KV keys for policy claims configuration
- */
-const POLICY_CLAIMS_KEYS = {
-  ACCESS_TOKEN_CLAIMS: 'policy:claims:access_token',
-  ID_TOKEN_CLAIMS: 'policy:claims:id_token',
-};
-
-/**
- * Read policy feature flags from KV
- * Returns an object with flag values that have been set in KV
- */
-async function readPolicyFlagsFromKV(env: Env): Promise<Record<string, boolean>> {
-  const flags: Record<string, boolean> = {};
-
-  if (!env.SETTINGS) {
-    return flags;
-  }
-
-  for (const [kvKey, camelKey] of Object.entries(POLICY_FLAG_MAPPING)) {
-    try {
-      const value = await env.SETTINGS.get(`${POLICY_FLAGS_PREFIX}${kvKey}`);
-      if (value !== null) {
-        flags[camelKey] = value.toLowerCase() === 'true' || value === '1';
-      }
-    } catch {
-      // Skip on error
-    }
-  }
-
-  return flags;
-}
-
-/**
- * Read policy claims configuration from KV
- */
-async function readPolicyClaimsFromKV(env: Env): Promise<Record<string, string>> {
-  const claims: Record<string, string> = {};
-
-  if (!env.SETTINGS) {
-    return claims;
-  }
-
-  try {
-    const accessTokenClaims = await env.SETTINGS.get(POLICY_CLAIMS_KEYS.ACCESS_TOKEN_CLAIMS);
-    if (accessTokenClaims) {
-      claims.accessTokenClaims = accessTokenClaims;
-    }
-
-    const idTokenClaims = await env.SETTINGS.get(POLICY_CLAIMS_KEYS.ID_TOKEN_CLAIMS);
-    if (idTokenClaims) {
-      claims.idTokenClaims = idTokenClaims;
-    }
-  } catch {
-    // Skip on error
-  }
-
-  return claims;
-}
-
-/**
- * Sync policy settings to KV
- * Writes feature flags and claims to individual KV keys for runtime access
- */
-async function syncPolicyFlagsToKV(
-  env: Env,
-  policy: {
-    enableAbac?: boolean;
-    enableRebac?: boolean;
-    enablePolicyLogging?: boolean;
-    enableVerifiedAttributes?: boolean;
-    enableCustomRules?: boolean;
-    enableSdJwt?: boolean;
-    enablePolicyEmbedding?: boolean;
-    accessTokenClaims?: string;
-    idTokenClaims?: string;
-  }
-): Promise<void> {
-  if (!env.SETTINGS) {
-    return;
-  }
-
-  const writes: Promise<void>[] = [];
-
-  // Sync feature flags to individual KV keys
-  for (const [kvKey, camelKey] of Object.entries(POLICY_FLAG_MAPPING)) {
-    const value = policy[camelKey as keyof typeof policy];
-    if (typeof value === 'boolean') {
-      writes.push(env.SETTINGS.put(`${POLICY_FLAGS_PREFIX}${kvKey}`, value.toString()));
-    }
-  }
-
-  // Sync claims configuration
-  if (policy.accessTokenClaims !== undefined) {
-    writes.push(env.SETTINGS.put(POLICY_CLAIMS_KEYS.ACCESS_TOKEN_CLAIMS, policy.accessTokenClaims));
-  }
-  if (policy.idTokenClaims !== undefined) {
-    writes.push(env.SETTINGS.put(POLICY_CLAIMS_KEYS.ID_TOKEN_CLAIMS, policy.idTokenClaims));
-  }
-
-  await Promise.all(writes);
-}
-
-// =============================================================================
 // User Suspend/Lock API
 // =============================================================================
 
@@ -663,25 +461,30 @@ export async function adminUserSuspendHandler(c: Context<{ Bindings: Env }>) {
     const nowTs = Math.floor(lifecycleVersionMs / 1000);
     const expiresAt = body.duration_hours ? nowTs + body.duration_hours * 3600 : null;
 
-    await transitionAccountAuthenticationState(c.env, {
+    const lifecycleOperationId = crypto.randomUUID();
+    const lifecycle = await transitionAccountLifecycle(c.env, adapter, {
       tenantId,
       userId,
       lifecycle: 'suspended',
-      sourceVersionMs: lifecycleVersionMs,
-      operationId: crypto.randomUUID(),
-      revokeSessions: true,
-    });
-    await updateCanonicalAccountStatus(
-      adapter,
-      tenantId,
-      userId,
-      'suspended',
-      {
+      status: 'suspended',
+      metadataPatch: {
         suspended_at: nowTs,
         suspended_until: expiresAt,
       },
-      lifecycleVersionMs
-    );
+      versionMs: lifecycleVersionMs,
+      operationId: lifecycleOperationId,
+      revokeSessions: true,
+    });
+    if (lifecycle === 'superseded') {
+      // Another status change of a newer (or the same) version got there first.
+      return c.json(
+        {
+          error: 'lifecycle_conflict',
+          error_description: 'The account status changed meanwhile; read it and try again',
+        },
+        409
+      );
+    }
 
     // AccountAuthState DO already rejects new authentication and advances the user session
     // revocation epoch. Token introspection also retains its status-based invalidation check.
@@ -847,25 +650,30 @@ export async function adminUserLockHandler(c: Context<{ Bindings: Env }>) {
     const lifecycleVersionMs = Date.now();
     const nowTs = Math.floor(lifecycleVersionMs / 1000);
 
-    await transitionAccountAuthenticationState(c.env, {
+    const lifecycleOperationId = crypto.randomUUID();
+    const lifecycle = await transitionAccountLifecycle(c.env, adapter, {
       tenantId,
       userId,
       lifecycle: 'locked',
-      sourceVersionMs: lifecycleVersionMs,
-      operationId: crypto.randomUUID(),
-      revokeSessions: true,
-    });
-    await updateCanonicalAccountStatus(
-      adapter,
-      tenantId,
-      userId,
-      'locked',
-      {
+      status: 'locked',
+      metadataPatch: {
         locked_at: nowTs,
         locked_until: unlockAtTs,
       },
-      lifecycleVersionMs
-    );
+      versionMs: lifecycleVersionMs,
+      operationId: lifecycleOperationId,
+      revokeSessions: true,
+    });
+    if (lifecycle === 'superseded') {
+      // Another status change of a newer (or the same) version got there first.
+      return c.json(
+        {
+          error: 'lifecycle_conflict',
+          error_description: 'The account status changed meanwhile; read it and try again',
+        },
+        409
+      );
+    }
 
     // Same account-wide DO session revocation and token status invalidation as suspension.
     const revokedTokens = body.revoke_tokens !== false ? -1 : 0; // -1 indicates implicit revocation via status
@@ -1027,8 +835,26 @@ export async function adminUserActivateHandler(c: Context<{ Bindings: Env }>) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
 
-    // Check if user is already active
-    if (user.status === 'active') {
+    // A deleted account, or one being deleted, is never activated (whatever its status says).
+    const authenticationLifecycle = (await readAccountAuthenticationState(c.env, tenantId, userId))
+      .lifecycle;
+    if (
+      ['deleting', 'deleted'].includes(user.lifecycle_state) ||
+      authenticationLifecycle === 'deleting' ||
+      authenticationLifecycle === 'deleted'
+    ) {
+      return c.json(
+        { error: 'invalid_request', error_description: 'Cannot activate a deleted user' },
+        400
+      );
+    }
+    // Already active, unless its authentication state still holds a restriction (one that
+    // crossed an activation): activating again settles both.
+    if (
+      user.status === 'active' &&
+      user.lifecycle_state === 'active' &&
+      (authenticationLifecycle === null || authenticationLifecycle === 'active')
+    ) {
       return c.json(
         {
           error: 'invalid_request',
@@ -1051,29 +877,34 @@ export async function adminUserActivateHandler(c: Context<{ Bindings: Env }>) {
 
     const previousStatus = user.status;
     const lifecycleVersionMs = Date.now();
+    const lifecycleOperationId = crypto.randomUUID();
     const nowTs = Math.floor(lifecycleVersionMs / 1000);
 
-    await updateCanonicalAccountStatus(
-      adapter,
+    const lifecycle = await transitionAccountLifecycle(c.env, adapter, {
       tenantId,
       userId,
-      'active',
-      {
+      lifecycle: 'active',
+      status: 'active',
+      metadataPatch: {
         suspended_at: null,
         suspended_until: null,
         locked_at: null,
         locked_until: null,
       },
-      lifecycleVersionMs
-    );
-    await transitionAccountAuthenticationState(c.env, {
-      tenantId,
-      userId,
-      lifecycle: 'active',
-      sourceVersionMs: lifecycleVersionMs,
-      operationId: crypto.randomUUID(),
+      versionMs: lifecycleVersionMs,
+      operationId: lifecycleOperationId,
       revokeSessions: false,
     });
+    if (lifecycle === 'superseded') {
+      // Another status change of a newer (or the same) version got there first.
+      return c.json(
+        {
+          error: 'lifecycle_conflict',
+          error_description: 'The account status changed meanwhile; read it and try again',
+        },
+        409
+      );
+    }
 
     // Write audit log (reason_code only, not reason_detail for privacy)
     await createAuditLogFromContext(c, 'user.activate', 'user', userId, {
@@ -1955,381 +1786,6 @@ export async function adminAuditLogGetHandler(c: Context<{ Bindings: Env }>) {
       {
         error: 'server_error',
         error_description: 'Failed to fetch audit log entry',
-      },
-      500
-    );
-  }
-}
-
-/**
- * GET /api/admin/settings
- * Get system settings
- */
-export async function adminSettingsGetHandler(c: Context<{ Bindings: Env }>) {
-  try {
-    const env = c.env as Env;
-
-    // Get settings from KV
-    const settingsJson = await env.SETTINGS?.get('system_settings');
-
-    // Default settings
-    const defaultSettings = {
-      general: {
-        siteName: 'Authrim',
-        logoUrl: '',
-        language: 'en',
-        timezone: 'UTC',
-      },
-      appearance: {
-        primaryColor: '#3B82F6',
-        secondaryColor: '#10B981',
-        fontFamily: 'Inter',
-      },
-      security: {
-        sessionTimeout: 86400, // 24 hours
-        mfaEnforced: false,
-        passwordMinLength: 8,
-        passwordRequireSpecialChar: true,
-      },
-      email: {
-        emailProvider: 'resend',
-        smtpHost: '',
-        smtpPort: 587,
-        smtpUsername: '',
-        smtpPassword: '',
-      },
-      advanced: {
-        accessTokenTtl: 3600, // 1 hour
-        idTokenTtl: 3600, // 1 hour
-        refreshTokenTtl: 2592000, // 30 days
-        passkeyEnabled: true,
-        magicLinkEnabled: false,
-      },
-      ciba: {
-        enabled: true,
-        defaultExpiresIn: 300, // 5 minutes
-        minExpiresIn: 60, // 1 minute
-        maxExpiresIn: 600, // 10 minutes
-        defaultInterval: 5, // 5 seconds
-        minInterval: 2, // 2 seconds
-        maxInterval: 60, // 60 seconds
-        supportedDeliveryModes: ['poll', 'ping', 'push'],
-        userCodeEnabled: true,
-        bindingMessageMaxLength: 140,
-        notificationsEnabled: false,
-        notificationProviders: {
-          email: false,
-          sms: false,
-          push: false,
-        },
-      },
-      oidc: {
-        // Discovery metadata configuration
-        requirePar: false, // Require Pushed Authorization Requests
-        claimsSupported: [
-          'sub',
-          'iss',
-          'aud',
-          'exp',
-          'iat',
-          'auth_time',
-          'nonce',
-          'acr',
-          'amr',
-          'azp',
-          'at_hash',
-          'c_hash',
-          'name',
-          'given_name',
-          'family_name',
-          'middle_name',
-          'nickname',
-          'preferred_username',
-          'profile',
-          'picture',
-          'website',
-          'email',
-          'email_verified',
-          'gender',
-          'birthdate',
-          'zoneinfo',
-          'locale',
-          'phone_number',
-          'phone_number_verified',
-          'address',
-          'updated_at',
-        ],
-        responseTypesSupported: ['code'], // Authorization code flow only by default
-        tokenEndpointAuthMethodsSupported: [
-          'client_secret_basic',
-          'client_secret_post',
-          'client_secret_jwt',
-          'private_key_jwt',
-          'none',
-        ],
-      },
-      fapi: {
-        // FAPI 2.0 Security Profile configuration
-        enabled: false, // FAPI 2.0 mode disabled by default
-        requireDpop: false, // Require DPoP (or MTLS) for sender-constrained tokens
-        allowPublicClients: true, // Allow public clients (disable for strict FAPI 2.0)
-      },
-      policy: {
-        // Policy system feature flags
-        enableAbac: false, // ABAC (Attribute-Based Access Control)
-        enableRebac: false, // ReBAC (Relationship-Based Access Control)
-        enablePolicyLogging: false, // Detailed policy evaluation logging
-        enableVerifiedAttributes: false, // Verified attributes checking
-        enableCustomRules: true, // Custom policy rules
-        enableSdJwt: false, // SD-JWT (Selective Disclosure JWT)
-        enablePolicyEmbedding: false, // Permission embedding in Access Token
-        // Token claims configuration
-        accessTokenClaims: 'roles,org_id,org_type', // Default claims for Access Token
-        idTokenClaims: 'roles,user_type,org_id,plan,org_type', // Default claims for ID Token
-      },
-      loginUI: {
-        theme: 'light',
-        variant: 'beige',
-        supportedLocales: [
-          'en',
-          'ja',
-          'zh-CN',
-          'zh-TW',
-          'es',
-          'pt',
-          'fr',
-          'de',
-          'ko',
-          'ru',
-          'id',
-          'ar',
-          'it',
-          'th',
-          'vi',
-          'hi',
-          'bn',
-          'tr',
-          'sw',
-          'am',
-          'pl',
-        ],
-      },
-    };
-
-    // Read policy feature flags from KV (dynamic overrides)
-    const policyFlags = await readPolicyFlagsFromKV(env);
-    const policyClaimsSettings = await readPolicyClaimsFromKV(env);
-
-    // Merge with stored settings if they exist
-    const settings = settingsJson
-      ? { ...defaultSettings, ...JSON.parse(settingsJson) }
-      : defaultSettings;
-
-    // Apply policy feature flags from KV (priority: KV > stored settings > defaults)
-    if (Object.keys(policyFlags).length > 0) {
-      settings.policy = {
-        ...settings.policy,
-        ...policyFlags,
-      };
-    }
-
-    // Apply policy claims settings from KV
-    if (Object.keys(policyClaimsSettings).length > 0) {
-      settings.policy = {
-        ...settings.policy,
-        ...policyClaimsSettings,
-      };
-    }
-
-    return c.json({ settings });
-  } catch (error) {
-    logSanitizedError('Admin settings get error', error);
-    return c.json(
-      {
-        error: 'server_error',
-        error_description: 'Failed to fetch settings',
-      },
-      500
-    );
-  }
-}
-
-/**
- * PUT /api/admin/settings
- * Update system settings
- */
-export async function adminSettingsUpdateHandler(c: Context<{ Bindings: Env }>) {
-  try {
-    const env = c.env as Env;
-    const body = await c.req.json();
-
-    if (!body.settings) {
-      return c.json(
-        {
-          error: 'invalid_request',
-          error_description: 'Settings object is required',
-        },
-        400
-      );
-    }
-
-    // Validate settings structure
-    const allowedSections = [
-      'general',
-      'appearance',
-      'security',
-      'email',
-      'advanced',
-      'ciba',
-      'oidc',
-      'fapi',
-      'policy',
-      'loginUI',
-    ];
-    const settings = body.settings;
-
-    for (const section of Object.keys(settings)) {
-      if (!allowedSections.includes(section)) {
-        return c.json(
-          {
-            error: 'invalid_request',
-            error_description: `Invalid settings section: ${section}`,
-          },
-          400
-        );
-      }
-    }
-
-    // Store settings in KV
-    if (env.SETTINGS) {
-      await env.SETTINGS.put('system_settings', JSON.stringify(settings));
-
-      // Sync policy feature flags to individual KV keys
-      if (settings.policy) {
-        await syncPolicyFlagsToKV(env, settings.policy);
-      }
-    } else {
-      return c.json(
-        {
-          error: 'server_error',
-          error_description: 'Settings storage is not configured',
-        },
-        500
-      );
-    }
-
-    return c.json({
-      success: true,
-      message: 'Settings updated successfully',
-      settings,
-    });
-  } catch (error) {
-    logSanitizedError('Admin settings update error', error);
-    return c.json(
-      {
-        error: 'server_error',
-        error_description: 'Failed to update settings',
-      },
-      500
-    );
-  }
-}
-
-/**
- * GET /api/admin/settings/profiles
- * List available certification profiles
- */
-export async function adminListCertificationProfilesHandler(c: Context<{ Bindings: Env }>) {
-  try {
-    const { listCertificationProfiles } = await import('./certification-profiles');
-    const profiles = listCertificationProfiles();
-    return c.json({ profiles });
-  } catch (error) {
-    logSanitizedError('Admin list profiles error', error);
-    return c.json(
-      {
-        error: 'server_error',
-        error_description: 'Failed to list certification profiles',
-      },
-      500
-    );
-  }
-}
-
-/**
- * PUT /api/admin/settings/profile/:profileName
- * Apply a certification profile
- */
-export async function adminApplyCertificationProfileHandler(c: Context<{ Bindings: Env }>) {
-  try {
-    const env = c.env as Env;
-    const profileName = c.req.param('profileName')!;
-    const tenantId = getTenantIdFromContext(c);
-
-    if (!profileName) {
-      return c.json(
-        {
-          error: 'invalid_request',
-          error_description: 'Profile name is required',
-        },
-        400
-      );
-    }
-
-    const { getCertificationProfile } = await import('./certification-profiles');
-    const profile = getCertificationProfile(profileName);
-
-    if (!profile) {
-      return c.json(
-        {
-          error: 'not_found',
-          error_description: `Certification profile '${profileName}' not found`,
-        },
-        404
-      );
-    }
-
-    // Certification profiles are tenant-scoped. The legacy global settings remain
-    // deployment defaults and must not be mutated by a tenant profile switch.
-    const settingsKey = buildTenantSystemSettingsKey(tenantId);
-    const settingsJson = await env.SETTINGS?.get(settingsKey);
-    const currentSettings = settingsJson ? JSON.parse(settingsJson) : {};
-
-    // Merge profile settings with current settings
-    const updatedSettings = {
-      ...currentSettings,
-      ...profile.settings,
-    };
-
-    // Store updated settings
-    if (env.SETTINGS) {
-      await env.SETTINGS.put(settingsKey, JSON.stringify(updatedSettings));
-    } else {
-      return c.json(
-        {
-          error: 'server_error',
-          error_description: 'Settings storage is not configured',
-        },
-        500
-      );
-    }
-
-    return c.json({
-      success: true,
-      message: `Applied certification profile: ${profile.name}`,
-      profile: {
-        name: profile.name,
-        description: profile.description,
-      },
-      tenant_id: tenantId,
-      settings: updatedSettings,
-    });
-  } catch (error) {
-    logSanitizedError('Admin apply profile error', error);
-    return c.json(
-      {
-        error: 'server_error',
-        error_description: 'Failed to apply certification profile',
       },
       500
     );

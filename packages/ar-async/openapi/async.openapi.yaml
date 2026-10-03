@@ -18,11 +18,20 @@ paths:
       tags:
         - Device Authorization
       summary: Start an OAuth Device Authorization Grant.
+      description: >-
+        With tenant assurance enabled and a default FAL of FAL3 (with fal3_requires_par), which
+        needs a pushed, signed authorization request, every request is refused with
+        unauthorized_client. Assurance settings that cannot be read return 503
+        temporarily_unavailable.
       requestBody:
         $ref: '#/components/requestBodies/DeviceAuthorization'
       responses:
         '200':
           $ref: '#/components/responses/DeviceAuthorization'
+        '400':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
   /device:
     get:
       tags:
@@ -55,11 +64,20 @@ paths:
       tags:
         - CIBA
       summary: Start a CIBA backchannel authentication request.
+      description: >-
+        With tenant assurance enabled and a default FAL of FAL3 (with fal3_requires_par), which
+        needs a pushed, signed authorization request, every request is refused with
+        unauthorized_client. Assurance settings that cannot be read return 503
+        temporarily_unavailable.
       requestBody:
         $ref: '#/components/requestBodies/CibaAuthorization'
       responses:
         '200':
           $ref: '#/components/responses/CibaAuthorization'
+        '400':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
   /api/ciba/pending:
     get:
       tags:
@@ -244,6 +262,19 @@ components:
             auth_req_id: auth_req_123
             user_id: user_123
   responses:
+    Error:
+      description: OAuth error response.
+      content:
+        application/json:
+          schema:
+            type: object
+            required:
+              - error
+            properties:
+              error:
+                type: string
+              error_description:
+                type: string
     Ok:
       description: Successful JSON response.
       content:

@@ -51,6 +51,27 @@ paths:
         Request account:lifecycle:read and call UserInfo for authrim_account_lifecycle,
         including registration_state and operational status; this object is not embedded in tokens.
         Guest scope restrictions and account availability checks also apply on refresh.
+        With tenant assurance enabled, grants that issue tokens for a user (authorization code,
+        refresh token, device code, CIBA, token exchange, Native SSO and JWT bearer) follow the
+        default FAL: FAL2 and above with fal2_requires_dpop refuse a request without a DPoP proof
+        with invalid_request (JWT bearer, which binds no token, is always refused then); FAL3 with
+        fal3_requires_par refuses with unauthorized_client every such grant but an authorization
+        code carrying the evidence that its request was pushed with a request object the client
+        signed (a Direct Auth code never carries it), and a refresh token whose family such a
+        code began (recorded on the family when it was made). A Direct Auth
+        finish, which issues tokens without the authorization endpoint, is refused with
+        invalid_grant when the AAL its authentication reached (none recorded counts as AAL0) is
+        below the required AAL: the tenant default when it is above AAL1 (AAL1, the baseline every
+        login has always passed, is not required), and each requested scope's requirement. With include_in_access_token, an access token from the
+        authorization code grant carries auth_time and, from the assurance evidence the code
+        recorded when it was issued, the acr of the AAL reached (none at AAL0) and amr with the
+        methods the authentication proved (none merely registered; none when no method was
+        proven), whether or not ID tokens carry assurance claims (RFC 9068). A code issued while
+        assurance was off records no such evidence, so its access token carries auth_time only.
+        A refresh keeps to how the user first authenticated, recorded on the token family: with
+        assurance enabled, the refreshed ID token carries the original auth_time, acr and amr
+        (OIDC Core 12.2), and the refreshed access token the claims described above. Assurance settings
+        that cannot be read return 503 temporarily_unavailable.
       requestBody:
         required: true
         content:
@@ -79,6 +100,8 @@ paths:
         '401':
           $ref: '#/components/responses/Error'
         '500':
+          $ref: '#/components/responses/Error'
+        '503':
           $ref: '#/components/responses/Error'
   /oauth/admin-agent/token:
     post:

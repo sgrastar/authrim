@@ -142,12 +142,12 @@ export const ADMIN_WRITE_TOOL_DEFINITIONS: readonly AgentToolDefinition[] =
       name: 'update_assurance_settings',
       title: 'Update authentication assurance settings',
       description:
-        'Update AAL, FAL, IAL, token-claim, DPoP, and PAR assurance policy through the fixed owner API. Requires operation-bound human approval.',
+        'Update AAL, FAL, IAL, upstream acr mapping, token-claim, DPoP, and PAR assurance policy through the fixed owner API. Requires operation-bound human approval.',
       contractVersion: '1',
       requiredPermissions: [ADMIN_PERMISSIONS.SETTINGS_ASSURANCE_UPDATE],
       requiredScope: 'agent:write',
       riskLevel: 'high',
-      schemaDigest: 'sha256:3017561b5f274bf9182b2e877d1b6f896413b7f40f2ba74c3b2d34881b7f9347',
+      schemaDigest: 'sha256:b345a477e3c32a502b0c2ab0603e31840d0fff752ff80f813b23644d67fcd4c9',
       inputSchema: {
         ...objectSchema(
           {
@@ -157,6 +157,12 @@ export const ADMIN_WRITE_TOOL_DEFINITIONS: readonly AgentToolDefinition[] =
             defaultFAL: { type: 'string', enum: ['FAL1', 'FAL2', 'FAL3'] },
             defaultIAL: { type: 'string', enum: ['IAL1', 'IAL2', 'IAL3'] },
             scopeAALRequirements: {
+              type: 'object',
+              maxProperties: 100,
+              propertyNames: { type: 'string', minLength: 1, maxLength: 200 },
+              additionalProperties: { type: 'string', enum: ['AAL1', 'AAL2', 'AAL3'] },
+            },
+            upstreamAcrMappings: {
               type: 'object',
               maxProperties: 100,
               propertyNames: { type: 'string', minLength: 1, maxLength: 200 },

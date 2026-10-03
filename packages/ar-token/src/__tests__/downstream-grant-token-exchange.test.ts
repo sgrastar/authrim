@@ -24,7 +24,8 @@ const mocks = vi.hoisted(() => ({
   }),
   mockGetClientCached: vi.fn(),
   mockLoadTenantProfileCached: vi.fn(),
-  mockGetSystemSettingsCached: vi.fn().mockResolvedValue(null),
+  mockGetProtocolSettingsCached: vi.fn().mockResolvedValue(null),
+  mockResolveEffectiveSettings: vi.fn(),
   mockValidateClientId: vi.fn().mockReturnValue({ valid: true }),
   mockVerifyClientSecretHash: vi.fn().mockResolvedValue(true),
   mockValidateClientAssertion: vi.fn().mockResolvedValue({ valid: true }),
@@ -33,9 +34,6 @@ const mocks = vi.hoisted(() => ({
   mockParseTokenHeader: vi.fn(),
   mockVerifyToken: vi.fn().mockResolvedValue({}),
   mockIsTokenRevoked: vi.fn().mockResolvedValue(false),
-  mockCreateOAuthConfigManager: vi.fn().mockReturnValue({
-    getTokenExpiry: vi.fn().mockResolvedValue(3600),
-  }),
   mockGenerateRegionAwareJti: vi.fn().mockResolvedValue({ jti: 'region-jti-1' }),
   mockCreateAccessToken: vi.fn().mockResolvedValue({
     token: 'downstream-access-token',
@@ -56,8 +54,13 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     createLogger: mocks.mockCreateLogger,
     getClientCached: mocks.mockGetClientCached,
     loadTenantProfileCached: mocks.mockLoadTenantProfileCached,
-    getSystemSettingsCached: mocks.mockGetSystemSettingsCached,
-    getTenantSystemSettings: mocks.mockGetSystemSettingsCached,
+    getProtocolSettingsCached: async (...args: unknown[]) => ({
+      fapi: {},
+      oidc: {},
+      security: {},
+      ...((await mocks.mockGetProtocolSettingsCached(...args)) ?? {}),
+    }),
+    resolveEffectiveSettings: mocks.mockResolveEffectiveSettings,
     validateClientId: mocks.mockValidateClientId,
     verifyClientSecretHash: mocks.mockVerifyClientSecretHash,
     validateClientAssertion: mocks.mockValidateClientAssertion,
@@ -66,7 +69,6 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     parseTokenHeader: mocks.mockParseTokenHeader,
     verifyToken: mocks.mockVerifyToken,
     isTokenRevoked: mocks.mockIsTokenRevoked,
-    createOAuthConfigManager: mocks.mockCreateOAuthConfigManager,
     generateRegionAwareJti: mocks.mockGenerateRegionAwareJti,
     createAccessToken: mocks.mockCreateAccessToken,
     extractDPoPProof: mocks.mockExtractDPoPProof,
@@ -81,11 +83,25 @@ vi.mock('../external-id-jag-verifier', () => ({
 }));
 
 import { tokenHandler } from '../token';
+import { settingsFromSystemSettings } from './helpers/effective-settings';
+
+/** The older system settings the test describes, as both the document and the Settings API. */
+let systemSettings: Record<string, unknown> | null = null;
+function setSystemSettings(value: Record<string, unknown> | null): void {
+  systemSettings = value;
+  mocks.mockGetProtocolSettingsCached.mockResolvedValue(value);
+}
 
 describe('downstream elevation grant token exchange', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mocks.mockGetSystemSettingsCached.mockReset().mockResolvedValue(null);
+    mocks.mockGetProtocolSettingsCached.mockReset().mockResolvedValue(null);
+    setSystemSettings(null);
+    mocks.mockResolveEffectiveSettings.mockImplementation(async (env: unknown, category: string) =>
+      category === 'oauth'
+        ? { 'oauth.access_token_expiry': 3600, 'oauth.refresh_token_expiry': 86400 * 30 }
+        : settingsFromSystemSettings(env, systemSettings, category)
+    );
     mocks.mockVerifyExternalIdJagSubjectToken.mockReset();
     mocks.mockVerifyToken.mockReset().mockResolvedValue({});
     mocks.mockIsTokenRevoked.mockReset().mockResolvedValue(false);
@@ -241,22 +257,22 @@ describe('downstream elevation grant token exchange', () => {
     });
 
     it('refuses token exchange when its settings cannot be read, even if env enables it', async () => {
-      mocks.mockGetSystemSettingsCached.mockRejectedValue(new Error('kv unavailable'));
+      mocks.mockResolveEffectiveSettings.mockRejectedValue(new Error('kv unavailable'));
       await expectOAuthError(
         request(),
         503,
         'temporarily_unavailable',
         'Token Exchange settings are unavailable; try again later'
       );
-      expect(mocks.mockGetSystemSettingsCached).toHaveBeenCalledWith(
+      expect(mocks.mockResolveEffectiveSettings).toHaveBeenCalledWith(
         expect.anything(),
-        expect.anything(),
-        expect.objectContaining({ failOnError: true })
+        'tokens',
+        expect.anything()
       );
     });
 
     it('uses cached settings to disable an environment-enabled exchange', async () => {
-      mocks.mockGetSystemSettingsCached.mockResolvedValue({
+      setSystemSettings({
         oidc: { tokenExchange: { enabled: false } },
       });
       await expectOAuthError(
@@ -648,7 +664,7 @@ describe('downstream elevation grant token exchange', () => {
     });
 
     it('restricts ID-JAG to identity-bearing subject token types', async () => {
-      mocks.mockGetSystemSettingsCached.mockResolvedValue({
+      setSystemSettings({
         oidc: {
           tokenExchange: {
             enabled: true,
@@ -672,7 +688,7 @@ describe('downstream elevation grant token exchange', () => {
       };
       mocks.mockParseTokenHeader.mockReturnValue({ kid: 'external-kid' });
 
-      mocks.mockGetSystemSettingsCached.mockResolvedValueOnce({
+      setSystemSettings({
         oidc: {
           tokenExchange: {
             enabled: true,
@@ -689,7 +705,7 @@ describe('downstream elevation grant token exchange', () => {
         'Subject token is missing issuer (iss) claim'
       );
 
-      mocks.mockGetSystemSettingsCached.mockResolvedValueOnce({
+      setSystemSettings({
         oidc: {
           tokenExchange: {
             enabled: true,
@@ -706,7 +722,7 @@ describe('downstream elevation grant token exchange', () => {
         'ID-JAG is enabled but no allowed issuers are configured. Configure allowedIssuers via Admin API.'
       );
 
-      mocks.mockGetSystemSettingsCached.mockResolvedValueOnce({
+      setSystemSettings({
         oidc: {
           tokenExchange: {
             enabled: true,
@@ -725,7 +741,7 @@ describe('downstream elevation grant token exchange', () => {
     });
 
     it('returns a generic ID-JAG error when external signature verification fails', async () => {
-      mocks.mockGetSystemSettingsCached.mockResolvedValue({
+      setSystemSettings({
         oidc: {
           tokenExchange: {
             enabled: true,
@@ -759,7 +775,7 @@ describe('downstream elevation grant token exchange', () => {
 
     it('issues a short-lived ID-JAG token with preserved authentication context', async () => {
       const env = await createVerificationEnv();
-      mocks.mockGetSystemSettingsCached.mockResolvedValue({
+      setSystemSettings({
         oidc: {
           tokenExchange: {
             enabled: true,
@@ -1281,7 +1297,7 @@ describe('downstream elevation grant token exchange', () => {
   });
 
   it('applies settings configured audience limits before client authentication', async () => {
-    mocks.mockGetSystemSettingsCached.mockResolvedValueOnce({
+    setSystemSettings({
       oidc: {
         tokenExchange: {
           maxAudienceParams: 1,

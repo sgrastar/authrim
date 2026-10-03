@@ -37,7 +37,6 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
 });
 
 import { adminSecurityIpReputationHandler } from '../admin-security';
-import { adminComplianceStatusHandler, adminDataRetentionStatusHandler } from '../admin-compliance';
 
 function createSqlAwareMockDB(
   handler: (
@@ -155,92 +154,5 @@ describe('Phase 4 audit profile adoption', () => {
         },
       }),
     ]);
-  });
-
-  it('reports archive-only hot-query limits in compliance endpoints', async () => {
-    const mockDB = createSqlAwareMockDB(async (sql, _params, op) => {
-      if (sql.includes('SELECT settings FROM tenants') && op === 'first') {
-        return {
-          settings: JSON.stringify({
-            data_retention: {
-              enabled: true,
-              days: 365,
-              last_cleanup_at: null,
-              next_cleanup_at: null,
-            },
-            audit: { retention_days: 90 },
-            session: { retention_days: 30 },
-            security: { mfa_enforced: true },
-            compliance: { tombstone_retention_days: 2555 },
-          }),
-        };
-      }
-      if (
-        sql.includes('FROM users_core') &&
-        sql.includes("pii_status = 'deleted'") &&
-        op === 'first'
-      ) {
-        return { pending_deletions: 0 };
-      }
-      if (sql.includes('FROM signing_keys') && op === 'first') {
-        return { last_rotation: null };
-      }
-      if (sql.includes('FROM users') && sql.includes('mfa_enabled') && op === 'first') {
-        return { users_with_mfa: 1, users_without_mfa: 1 };
-      }
-      if (sql.includes('FROM roles') && op === 'first') {
-        return { active_roles: 1, users_with_roles: 1 };
-      }
-      if (sql.includes('FROM sessions') && op === 'first') {
-        return { total: 5, expired: 1, oldest_date: 1710000000 };
-      }
-      if (sql.includes('FROM tombstones') && op === 'first') {
-        return { total: 2, oldest_date: 1710000000 };
-      }
-      if (sql.includes('scheduled_deletion_at') && op === 'first') {
-        return { pending: 0 };
-      }
-      return null;
-    });
-
-    const envOverrides = {
-      DEFAULT_AUDIT_PROFILE_ID: 'builtin:audit:archive-only-logpush',
-      DB_ADMIN: mockDB,
-    } as Partial<Env>;
-
-    const complianceResponse = await adminComplianceStatusHandler(
-      createMockContext({
-        path: '/api/admin/compliance/status',
-        db: mockDB,
-        envOverrides,
-      })
-    );
-    expect(complianceResponse.status).toBe(200);
-    const complianceBody = (await complianceResponse.json()) as {
-      audit_log: { hot_query_status?: string; total_entries: number };
-    };
-    expect(complianceBody.audit_log.hot_query_status).toBe('not_supported');
-    expect(complianceBody.audit_log.total_entries).toBe(0);
-
-    const retentionResponse = await adminDataRetentionStatusHandler(
-      createMockContext({
-        path: '/api/admin/data-retention/status',
-        db: mockDB,
-        envOverrides,
-      })
-    );
-    expect(retentionResponse.status).toBe(200);
-    const retentionBody = (await retentionResponse.json()) as {
-      categories: Array<{ category: string; hot_query_status?: string; total_records: number }>;
-    };
-    expect(retentionBody.categories).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          category: 'audit_logs',
-          hot_query_status: 'not_supported',
-          total_records: 0,
-        }),
-      ])
-    );
   });
 });

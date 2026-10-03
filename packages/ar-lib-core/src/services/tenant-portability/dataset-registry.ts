@@ -187,8 +187,12 @@ const TABLE_GROUPS: Partial<
     artifacts: `
       object_catalog object_catalog_objects
     `,
+    // platform_settings_documents holds platform-wide settings and settings_legacy_import_state
+    // the environment's one-time settings import (no tenant identity): the target environment
+    // keeps its own, so a tenant backup neither exports nor replaces them.
     external: `
-      admin_database_connections admin_storage_destinations
+      admin_database_connections admin_storage_destinations platform_settings_documents
+      settings_legacy_import_state
       admin_machine_credential_permissions admin_machine_credential_tenant_scopes admin_machine_credentials
       admin_machine_principal_permissions admin_machine_principal_tenant_scopes admin_machine_principals
       admin_machine_resource_scopes

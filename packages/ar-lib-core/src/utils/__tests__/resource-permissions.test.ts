@@ -357,6 +357,10 @@ describe('Resource Permissions Utilities', () => {
   });
 
   describe('Feature Flags', () => {
+    // A new store for each read: the older values are cached per store for a minute.
+    const freshKv = (get: (key: string) => Promise<string | null>) =>
+      ({ get: vi.fn(get) }) as unknown as KVNamespace;
+
     describe('isCustomClaimsEnabled', () => {
       it('should return false by default', async () => {
         const result = await isCustomClaimsEnabled({});
@@ -368,26 +372,45 @@ describe('Resource Permissions Utilities', () => {
         expect(result).toBe(true);
       });
 
-      it('should prefer KV value over env var', async () => {
-        mockKV.get.mockResolvedValue('false');
+      it("should prefer the platform's saved value over env var", async () => {
+        const kv = freshKv(async (key: string) =>
+          key === 'settings:platform:feature-flags'
+            ? JSON.stringify({ 'feature.enable_custom_claims': false })
+            : null
+        );
 
         const result = await isCustomClaimsEnabled({
-          SETTINGS: mockKV as unknown as KVNamespace,
+          SETTINGS: kv,
           ENABLE_CUSTOM_CLAIMS: 'true',
         });
 
         expect(result).toBe(false);
       });
 
-      it('should handle KV value "1" as true', async () => {
-        mockKV.get.mockResolvedValue('1');
-
-        const result = await isCustomClaimsEnabled({
-          SETTINGS: mockKV as unknown as KVNamespace,
-        });
-
-        expect(result).toBe(true);
+      it("takes the tenant's value over the platform's, and env only as 'true'", async () => {
+        const kv = freshKv(async (key: string) =>
+          key === 'settings:tenant:acme:feature-flags'
+            ? JSON.stringify({ 'feature.enable_custom_claims': true })
+            : key === 'settings:platform:feature-flags'
+              ? JSON.stringify({ 'feature.enable_custom_claims': false })
+              : null
+        );
+        await expect(isCustomClaimsEnabled({ SETTINGS: kv }, 'acme')).resolves.toBe(true);
+        await expect(isCustomClaimsEnabled({ ENABLE_CUSTOM_CLAIMS: '1' })).resolves.toBe(false);
       });
+    });
+
+    it.each([
+      ['a read failure', async () => Promise.reject(new Error('kv unavailable'))],
+      ['a document that is not JSON', async () => 'not json'],
+    ])('keeps both token switches off after %s, even if env enables them', async (_label, get) => {
+      const env = {
+        SETTINGS: freshKv(get),
+        ENABLE_CUSTOM_CLAIMS: 'true',
+        ENABLE_ID_LEVEL_PERMISSIONS: 'true',
+      };
+      await expect(isCustomClaimsEnabled(env, 'acme')).resolves.toBe(false);
+      await expect(isIdLevelPermissionsEnabled(env)).resolves.toBe(false);
     });
 
     describe('isIdLevelPermissionsEnabled', () => {
@@ -401,11 +424,15 @@ describe('Resource Permissions Utilities', () => {
         expect(result).toBe(true);
       });
 
-      it('should prefer KV value over env var', async () => {
-        mockKV.get.mockResolvedValue('true');
+      it("should prefer the platform's saved value over env var", async () => {
+        const kv = freshKv(async (key: string) =>
+          key === 'settings:platform:feature-flags'
+            ? JSON.stringify({ 'feature.enable_id_level_permissions': true })
+            : null
+        );
 
         const result = await isIdLevelPermissionsEnabled({
-          SETTINGS: mockKV as unknown as KVNamespace,
+          SETTINGS: kv,
           ENABLE_ID_LEVEL_PERMISSIONS: 'false',
         });
 
@@ -436,7 +463,9 @@ describe('Resource Permissions Utilities', () => {
 
       it('should prefer KV values over env vars', async () => {
         mockKV.get.mockImplementation((key: string) => {
-          if (key === 'config:max_embedded_permissions') return '200';
+          if (key === 'settings:platform:limits') {
+            return JSON.stringify({ 'limits.max_embedded_permissions': 200 });
+          }
           return null;
         });
 

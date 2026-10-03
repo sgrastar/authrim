@@ -713,6 +713,50 @@ describe('SAML aggregate provider API', () => {
     expect(coreAdapter.execute).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ['refuses', ['email'], 400],
+    ['refuses', ['preferred_username'], 400],
+    ['refuses', 'name', 400],
+    ['keeps', ['locale', 'nickname'], 201],
+    ['keeps', [], 201],
+    ['keeps', null, 201],
+  ])('%s profile update fields %j on create', async (_verb, fields, status) => {
+    const coreAdapter = createMockAdapter();
+    mocks.createAuthContextFromHono.mockReturnValue({ coreAdapter });
+
+    const response = await handleCreateProvider(
+      createContext({
+        body: {
+          name: 'Example IdP',
+          providerType: 'saml_idp',
+          enabled: true,
+          config: {
+            entityId: 'https://idp.example.test/idp',
+            ssoUrl: 'https://idp.example.test/sso',
+            certificate: 'invalid-test-certificate',
+            nameIdFormat: 'urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress',
+            attributeMapping: { email: 'email' },
+            identityMapping: { fieldMappingSetId: 'test-saml-inbound' },
+            allowedBindings: ['post'],
+            profileUpdateFields: fields,
+          },
+        },
+      })
+    );
+
+    expect(response.status).toBe(status);
+    if (status === 400) {
+      expect(coreAdapter.execute).not.toHaveBeenCalled();
+    } else {
+      expect(coreAdapter.execute).toHaveBeenCalledWith(
+        expect.stringContaining('INSERT INTO identity_providers'),
+        expect.arrayContaining([
+          expect.stringContaining(`"profileUpdateFields":${JSON.stringify(fields)}`),
+        ])
+      );
+    }
+  });
+
   it('rejects invalid SAML IdP JIT linking policy values on update', async () => {
     const coreAdapter = createMockAdapter();
     coreAdapter.queryOne.mockResolvedValue({
@@ -741,6 +785,40 @@ describe('SAML aggregate provider API', () => {
           config: {
             jitEmailLinkingPolicy: 'unsafe_email_takeover',
           },
+        },
+      })
+    );
+
+    expect(response.status).toBe(400);
+    expect(coreAdapter.execute).not.toHaveBeenCalled();
+  });
+
+  it('rejects invalid profile update fields on update', async () => {
+    const coreAdapter = createMockAdapter();
+    coreAdapter.queryOne.mockResolvedValue({
+      id: 'idp-1',
+      name: 'Example IdP',
+      provider_type: 'saml_idp',
+      enabled: 1,
+      updated_at: providerUpdatedAt,
+      config_json: JSON.stringify({
+        entityId: 'https://idp.example.test/idp',
+        ssoUrl: 'https://idp.example.test/sso',
+        certificate: 'invalid-test-certificate',
+        nameIdFormat: 'urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress',
+        attributeMapping: { email: 'mail' },
+        identityMapping: { fieldMappingSetId: 'test-saml-inbound' },
+        allowedBindings: ['post'],
+      }),
+    });
+    mocks.createAuthContextFromHono.mockReturnValue({ coreAdapter });
+
+    const response = await handleUpdateProvider(
+      createContext({
+        params: { id: 'idp-1' },
+        body: {
+          expectedUpdatedAt: providerUpdatedAtIso,
+          config: { profileUpdateFields: ['name', 'name'] },
         },
       })
     );

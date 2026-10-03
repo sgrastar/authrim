@@ -497,6 +497,51 @@ describe('resolveLoggingPolicy', () => {
     });
   });
 
+  it('reads an unreadable published snapshot as none, or throws when strict', async () => {
+    const snapshot = await createRuntimeLoggingPolicySnapshot({
+      scopeType: 'tenant',
+      scopeId: 'tenant-a',
+      version: 2,
+      synchronizedAt: 1714550400000,
+      sourceUpdatedAt: 1714550399000,
+      snapshotId: 'snap_missing_body',
+      policies: { assignments: [] },
+    });
+    const kvValues = new Map<string, string>();
+    const kv = {
+      put: async (key: string, value: string) => {
+        kvValues.set(key, value);
+      },
+      get: async (key: string) => kvValues.get(key) ?? null,
+    };
+    await publishRuntimeLoggingPolicySnapshot({
+      snapshot,
+      kv,
+      objectStore: { put: async () => {}, get: async () => null },
+      now: 1714550400000,
+    });
+    // The pointer is published, its body is gone.
+    const read = (strict: boolean) =>
+      loadPublishedRuntimeLoggingPolicySnapshot({
+        scopeType: 'tenant',
+        scopeId: 'tenant-a',
+        kv,
+        objectStore: { put: async () => {}, get: async () => null },
+        strict,
+      });
+    await expect(read(false)).resolves.toBeNull();
+    await expect(read(true)).rejects.toThrow('logging_policy_snapshot_unreadable');
+
+    // Nothing published is none either way.
+    const none = await loadPublishedRuntimeLoggingPolicySnapshot({
+      scopeType: 'tenant',
+      scopeId: 'tenant-b',
+      kv: { put: async () => {}, get: async () => null },
+      strict: true,
+    });
+    expect(none).toBeNull();
+  });
+
   it('rejects oversized object-store runtime policy snapshots', async () => {
     const pointer = {
       snapshotId: 'snap_large',

@@ -445,6 +445,94 @@ describe('RefreshTokenRotator V2', () => {
       expect(rotation.resourceAudience).toEqual(['svc://api', 'svc://admin']);
     });
 
+    it('keeps how the user authenticated across rotations, only as well-formed fields', async () => {
+      await rotator.createFamilyRpc({
+        jti: 'context-jti',
+        userId: 'user_123',
+        clientId: 'client_1',
+        tenantId: 'default',
+        scope: 'openid',
+        ttl: 2592000,
+        authContext: {
+          auth_time: 1_700_000_000,
+          acr: 'urn:authrim:aal:2',
+          amr: ['passkey'],
+          assurance_auth_time: 1_700_000_000,
+          aal: 'AAL2',
+          assurance_acr: 'urn:authrim:aal:2',
+          assurance_amr: ['passkey'],
+          pushed_signed_request: true,
+          // Not part of the context, or not well-formed: dropped.
+          injected: 'x',
+          assurance_amr_extra: ['y'],
+        } as never,
+      });
+      await rotator.rotateRpc({
+        incomingVersion: 1,
+        incomingJti: 'context-jti',
+        userId: 'user_123',
+        clientId: 'client_1',
+        tenantId: 'default',
+      });
+
+      const validation = await rotator.validateRpc('user_123', 2, 'client_1');
+
+      expect(validation.family?.auth_context).toEqual({
+        auth_time: 1_700_000_000,
+        acr: 'urn:authrim:aal:2',
+        amr: ['passkey'],
+        assurance_auth_time: 1_700_000_000,
+        aal: 'AAL2',
+        assurance_acr: 'urn:authrim:aal:2',
+        assurance_amr: ['passkey'],
+        pushed_signed_request: true,
+      });
+    });
+
+    it('takes a token of a family made earlier for the user and client for no token', async () => {
+      const create = (jti: string, authContext?: Record<string, unknown>) =>
+        rotator.createFamilyRpc({
+          jti,
+          userId: 'user_123',
+          clientId: 'client_1',
+          tenantId: 'default',
+          scope: 'openid',
+          ttl: 2592000,
+          ...(authContext ? { authContext } : {}),
+        });
+      await create('earlier-family-jti');
+      // Made again for the same user and client: version 1 again, with FAL3 evidence.
+      await create('current-family-jti', { pushed_signed_request: true });
+
+      const earlier = await rotator.validateRpc('user_123', 1, 'client_1', 'earlier-family-jti');
+      const current = await rotator.validateRpc('user_123', 1, 'client_1', 'current-family-jti');
+
+      expect(earlier).toEqual({ valid: false });
+      expect(current.valid).toBe(true);
+      expect(current.family?.auth_context).toEqual({ pushed_signed_request: true });
+    });
+
+    it('stores no context whose fields are all malformed', async () => {
+      await rotator.createFamilyRpc({
+        jti: 'bad-context-jti',
+        userId: 'user_123',
+        clientId: 'client_1',
+        tenantId: 'default',
+        scope: 'openid',
+        ttl: 2592000,
+        authContext: {
+          auth_time: -1,
+          acr: 'x'.repeat(513),
+          amr: [1],
+          pushed_signed_request: 'true',
+        } as never,
+      });
+
+      const validation = await rotator.validateRpc('user_123', 1, 'client_1');
+
+      expect(validation.family).not.toHaveProperty('auth_context');
+    });
+
     it('should reject tenant mismatch on the same rotator instance', async () => {
       await rotator.createFamilyRpc({
         jti: 'tenant-bound-jti',

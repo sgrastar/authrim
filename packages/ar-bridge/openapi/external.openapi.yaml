@@ -118,6 +118,255 @@ paths:
               schema:
                 type: string
                 format: uri
+  /handoff/verify:
+    post:
+      operationId: verifyExternalHandoff
+      summary: Exchange a handoff token for a DPoP-bound access token
+      description: >-
+        Redeems the one-time handoff artifact an external IdP login produced, for the client and
+        state it was bound to, and returns an access token bound to the DPoP proof's key. With
+        tenant assurance enabled and a default FAL of FAL3 (with fal3_requires_par), which needs
+        a pushed, signed authorization request a handed-off login never had, every request is
+        refused with unauthorized_client; assurance settings that cannot be read return 503
+        temporarily_unavailable. Neither refusal spends the artifact. The request must come from
+        an origin of the client's registered redirect URIs, given by Origin or, without it,
+        Referer; a request with neither, or from another origin, is refused with 403.
+      parameters:
+        - name: DPoP
+          in: header
+          required: true
+          schema:
+            type: string
+        - name: Origin
+          in: header
+          description: The requesting origin; one of the client's registered redirect URI origins.
+          schema:
+            type: string
+        - name: Referer
+          in: header
+          description: Used for the origin when Origin is absent.
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/HandoffVerifyRequest'
+      responses:
+        '200':
+          description: A DPoP-bound access token (and, when included, the session and user).
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          description: Invalid request, DPoP proof or handoff, or the required FAL not met.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OAuthError'
+        '401':
+          description: Unknown client, or an expired handoff session.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '403':
+          description: No Origin or Referer, or an origin the client has not registered.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '429':
+          description: Too many handoff attempts.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '500':
+          description: Internal error.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '503':
+          description: Assurance settings are temporarily unavailable.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OAuthError'
+  /auth/external/handoff/verify:
+    post:
+      operationId: verifyExternalHandoffAuthPath
+      summary: Exchange a handoff token for a DPoP-bound access token (alternative path)
+      description: >-
+        Redeems the one-time handoff artifact an external IdP login produced, for the client and
+        state it was bound to, and returns an access token bound to the DPoP proof's key. With
+        tenant assurance enabled and a default FAL of FAL3 (with fal3_requires_par), which needs
+        a pushed, signed authorization request a handed-off login never had, every request is
+        refused with unauthorized_client; assurance settings that cannot be read return 503
+        temporarily_unavailable. Neither refusal spends the artifact. The request must come from
+        an origin of the client's registered redirect URIs, given by Origin or, without it,
+        Referer; a request with neither, or from another origin, is refused with 403.
+      parameters:
+        - name: DPoP
+          in: header
+          required: true
+          schema:
+            type: string
+        - name: Origin
+          in: header
+          description: The requesting origin; one of the client's registered redirect URI origins.
+          schema:
+            type: string
+        - name: Referer
+          in: header
+          description: Used for the origin when Origin is absent.
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/HandoffVerifyRequest'
+      responses:
+        '200':
+          description: A DPoP-bound access token (and, when included, the session and user).
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          description: Invalid request, DPoP proof or handoff, or the required FAL not met.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OAuthError'
+        '401':
+          description: Unknown client, or an expired handoff session.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '403':
+          description: No Origin or Referer, or an origin the client has not registered.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '429':
+          description: Too many handoff attempts.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '500':
+          description: Internal error.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '503':
+          description: Assurance settings are temporarily unavailable.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OAuthError'
+  /api/external/handoff/verify:
+    post:
+      operationId: verifyExternalHandoffApiPath
+      summary: Exchange a handoff token for a DPoP-bound access token (alternative path)
+      description: >-
+        Redeems the one-time handoff artifact an external IdP login produced, for the client and
+        state it was bound to, and returns an access token bound to the DPoP proof's key. With
+        tenant assurance enabled and a default FAL of FAL3 (with fal3_requires_par), which needs
+        a pushed, signed authorization request a handed-off login never had, every request is
+        refused with unauthorized_client; assurance settings that cannot be read return 503
+        temporarily_unavailable. Neither refusal spends the artifact. The request must come from
+        an origin of the client's registered redirect URIs, given by Origin or, without it,
+        Referer; a request with neither, or from another origin, is refused with 403.
+      parameters:
+        - name: DPoP
+          in: header
+          required: true
+          schema:
+            type: string
+        - name: Origin
+          in: header
+          description: The requesting origin; one of the client's registered redirect URI origins.
+          schema:
+            type: string
+        - name: Referer
+          in: header
+          description: Used for the origin when Origin is absent.
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/HandoffVerifyRequest'
+      responses:
+        '200':
+          description: A DPoP-bound access token (and, when included, the session and user).
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          description: Invalid request, DPoP proof or handoff, or the required FAL not met.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OAuthError'
+        '401':
+          description: Unknown client, or an expired handoff session.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '403':
+          description: No Origin or Referer, or an origin the client has not registered.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '429':
+          description: Too many handoff attempts.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '500':
+          description: Internal error.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '503':
+          description: Assurance settings are temporarily unavailable.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OAuthError'
 components:
   securitySchemes:
     authrimSession:
@@ -130,6 +379,28 @@ components:
       name: authrim_external_provisioning_<digest-prefix>
       description: Dynamically named HttpOnly browser-binding cookie.
   schemas:
+    HandoffVerifyRequest:
+      type: object
+      required:
+        - handoff_token
+        - state
+        - client_id
+      properties:
+        handoff_token:
+          type: string
+        state:
+          type: string
+        client_id:
+          type: string
+    OAuthError:
+      type: object
+      required:
+        - error
+      properties:
+        error:
+          type: string
+        error_description:
+          type: string
     ExternalIdentityUnlinkResponse:
       type: object
       additionalProperties: false

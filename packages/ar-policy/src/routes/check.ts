@@ -23,6 +23,8 @@ import {
   createLogger,
   resolveOptionalCoreAdapterFromHono,
   UserVerifiedAttributeRepository,
+  resolvePlatformSettingsWithSources,
+  CHECK_API_AUDIT_DEFAULTS,
   type CheckApiRequest,
 } from '@authrim/ar-lib-core';
 import {
@@ -62,10 +64,6 @@ interface Env extends SharedEnv {
   REBAC_CACHE_KV?: KVNamespace;
   /** KV namespace for Check API caching */
   CHECK_CACHE_KV?: KVNamespace;
-  /** KV namespace for feature flags (dynamic override) - uses AUTHRIM_CONFIG if not set */
-  POLICY_FLAGS_KV?: KVNamespace;
-  /** Shared config KV namespace (fallback for POLICY_FLAGS_KV) */
-  AUTHRIM_CONFIG?: KVNamespace;
   /** Default tenant ID */
   DEFAULT_TENANT_ID?: string;
   /** Feature flag: Enable Check API */
@@ -92,115 +90,68 @@ interface Env extends SharedEnv {
 // Helpers
 // =============================================================================
 
-/** KV key for Check API enable flag */
-const KV_CHECK_API_ENABLED_KEY = 'CHECK_API_ENABLED';
-
-/** KV key for batch size limit */
-const KV_BATCH_SIZE_LIMIT_KEY = 'CHECK_API_BATCH_SIZE_LIMIT';
-
 /** Default batch size limit (secure default: not too large to prevent DoS) */
 const DEFAULT_BATCH_SIZE_LIMIT = 100;
 
-/** KV keys for audit configuration */
-const KV_AUDIT_ENABLED_KEY = 'CHECK_API_AUDIT_ENABLED';
-const KV_AUDIT_MODE_KEY = 'CHECK_API_AUDIT_MODE';
-const KV_AUDIT_LOG_ALLOW_KEY = 'CHECK_API_AUDIT_LOG_ALLOW';
-const KV_AUDIT_SAMPLE_RATE_KEY = 'CHECK_API_AUDIT_SAMPLE_RATE';
-const KV_AUDIT_RETENTION_DAYS_KEY = 'CHECK_API_AUDIT_RETENTION_DAYS';
+/** A batch size limit as the Check API applies it: a whole number in 1..1000, else unset. */
+function batchSizeLimitOf(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 1 && value <= 1000
+    ? value
+    : undefined;
+}
 
-/** In-memory cache for batch size limit (to reduce KV reads) */
-let batchSizeLimitCache: { value: number; expiresAt: number } | null = null;
-
-/**
- * Clear batch size limit cache (for testing)
- */
-export function clearBatchSizeLimitCache(): void {
-  batchSizeLimitCache = null;
+/** The batch size from env alone (CHECK_API_BATCH_SIZE_LIMIT), else the default. */
+function envBatchSizeLimit(env: Env): number {
+  const batch = env.CHECK_API_BATCH_SIZE_LIMIT
+    ? batchSizeLimitOf(parseInt(env.CHECK_API_BATCH_SIZE_LIMIT, 10))
+    : undefined;
+  return batch ?? DEFAULT_BATCH_SIZE_LIMIT;
 }
 
 /**
- * Get config KV namespace (POLICY_FLAGS_KV or AUTHRIM_CONFIG)
- * Priority: POLICY_FLAGS_KV → AUTHRIM_CONFIG
+ * Whether the Check API is on, and the most checks in one batch, for the whole platform: the
+ * Settings API values (`feature.enable_check_api`, `limits.check_api_batch_size`), else env,
+ * else off and 100. When the switch cannot be read the Check API is off (env does not turn on what
+ * a saved value may have turned off); a batch size that cannot be read is env's, else 100.
  */
-function getConfigKV(env: Env): KVNamespace | undefined {
-  return env.POLICY_FLAGS_KV || env.AUTHRIM_CONFIG;
-}
-
-/**
- * Get batch size limit from KV → Environment Variable → Default
- * Uses in-memory cache to reduce KV reads
- */
-async function getBatchSizeLimit(env: Env): Promise<number> {
-  // 1. Check in-memory cache first (5 minute TTL)
-  const now = Date.now();
-  if (batchSizeLimitCache && batchSizeLimitCache.expiresAt > now) {
-    return batchSizeLimitCache.value;
-  }
-
-  let limit = DEFAULT_BATCH_SIZE_LIMIT;
-
-  // 2. Check KV for dynamic override (highest priority)
-  const configKV = getConfigKV(env);
-  if (configKV) {
-    try {
-      const kvValue = await configKV.get(KV_BATCH_SIZE_LIMIT_KEY);
-      if (kvValue !== null) {
-        const parsed = parseInt(kvValue, 10);
-        if (!isNaN(parsed) && parsed > 0 && parsed <= 1000) {
-          limit = parsed;
-          // Cache the KV value
-          batchSizeLimitCache = { value: limit, expiresAt: now + 5 * 60 * 1000 };
-          return limit;
-        }
-      }
-    } catch (error) {
+async function readCheckApiSettings(
+  env: Env
+): Promise<{ enabled: boolean; batchSizeLimit: number }> {
+  // Each read apart, as before: one that fails leaves the other's value in effect.
+  const [flags, limits] = await Promise.allSettled([
+    resolvePlatformSettingsWithSources(env, 'feature-flags', {}),
+    resolvePlatformSettingsWithSources(env, 'limits', {}),
+  ]);
+  for (const result of [flags, limits]) {
+    if (result.status === 'rejected') {
       log.error(
-        'Failed to read batch size limit from KV',
-        { error: String(error) },
-        error as Error
+        'Failed to read Check API settings',
+        { error: String(result.reason) },
+        result.reason as Error
       );
     }
   }
-
-  // 3. Check environment variable
-  if (env.CHECK_API_BATCH_SIZE_LIMIT) {
-    const parsed = parseInt(env.CHECK_API_BATCH_SIZE_LIMIT, 10);
-    if (!isNaN(parsed) && parsed > 0 && parsed <= 1000) {
-      limit = parsed;
-    }
-  }
-
-  // Cache the resolved value
-  batchSizeLimitCache = { value: limit, expiresAt: now + 5 * 60 * 1000 };
-  return limit;
+  return {
+    enabled:
+      flags.status === 'fulfilled'
+        ? flags.value.values['feature.enable_check_api'] === true
+        : false,
+    batchSizeLimit:
+      limits.status === 'fulfilled'
+        ? (batchSizeLimitOf(limits.value.values['limits.check_api_batch_size']) ??
+          DEFAULT_BATCH_SIZE_LIMIT)
+        : envBatchSizeLimit(env),
+  };
 }
 
-/**
- * Check if Check API feature is enabled
- * Priority: KV → Environment Variable → Default (disabled for security)
- */
+/** Whether the Check API is on (see readCheckApiSettings). */
 async function isCheckApiEnabled(env: Env): Promise<boolean> {
-  // 1. Check KV for dynamic override (highest priority)
-  const configKV = getConfigKV(env);
-  if (configKV) {
-    try {
-      const kvValue = await configKV.get(KV_CHECK_API_ENABLED_KEY);
-      if (kvValue !== null) {
-        return kvValue === 'true';
-      }
-    } catch (error) {
-      // KV error: log and fall through to env var check
-      log.error('Failed to read KV flag', { error: String(error) }, error as Error);
-    }
-  }
+  return (await readCheckApiSettings(env)).enabled;
+}
 
-  // 2. Check environment variable
-  if (env.ENABLE_CHECK_API === 'true') {
-    return true;
-  }
-
-  // 3. Default: disabled (secure default)
-  return false;
+/** The most checks in one batch request (see readCheckApiSettings). */
+async function getBatchSizeLimit(env: Env): Promise<number> {
+  return (await readCheckApiSettings(env)).batchSizeLimit;
 }
 
 /**
@@ -211,157 +162,29 @@ function isDebugModeEnabled(env: Env): boolean {
 }
 
 /**
- * Get audit configuration from KV → Environment Variable → Default
+ * The Check API's audit settings for the whole platform: the Settings API values
+ * (`audit.check_api_*`), else env, else the defaults. When they cannot be read, auditing stays on
+ * with the defaults: a read failure must not stop an audit that may have been turned on.
  */
 async function getAuditConfig(env: Env): Promise<{
   enabled: boolean;
   config: CheckAuditServiceConfig;
 }> {
-  const configKV = getConfigKV(env);
-
-  // Check enabled status
-  let enabled = false;
-  if (configKV) {
-    try {
-      const kvValue = await configKV.get(KV_AUDIT_ENABLED_KEY);
-      if (kvValue !== null) {
-        enabled = kvValue === 'true';
-      } else if (env.ENABLE_CHECK_API_AUDIT === 'true') {
-        enabled = true;
-      }
-    } catch {
-      enabled = env.ENABLE_CHECK_API_AUDIT === 'true';
-    }
-  } else {
-    enabled = env.ENABLE_CHECK_API_AUDIT === 'true';
+  let values: Record<string, unknown>;
+  try {
+    values = (await resolvePlatformSettingsWithSources(env, 'check-api-audit', {})).values;
+  } catch (error) {
+    log.error('Failed to read Check API audit settings', { error: String(error) }, error as Error);
+    values = { ...CHECK_API_AUDIT_DEFAULTS, 'audit.check_api_enabled': true };
   }
-
-  // Get mode
-  let mode: AuditMode = 'waitUntil';
-  if (configKV) {
-    try {
-      const kvMode = await configKV.get(KV_AUDIT_MODE_KEY);
-      if (kvMode && ['waitUntil', 'sync', 'queue'].includes(kvMode)) {
-        mode = kvMode as AuditMode;
-      } else if (
-        env.CHECK_API_AUDIT_MODE &&
-        ['waitUntil', 'sync', 'queue'].includes(env.CHECK_API_AUDIT_MODE)
-      ) {
-        mode = env.CHECK_API_AUDIT_MODE as AuditMode;
-      }
-    } catch {
-      if (
-        env.CHECK_API_AUDIT_MODE &&
-        ['waitUntil', 'sync', 'queue'].includes(env.CHECK_API_AUDIT_MODE)
-      ) {
-        mode = env.CHECK_API_AUDIT_MODE as AuditMode;
-      }
-    }
-  } else if (
-    env.CHECK_API_AUDIT_MODE &&
-    ['waitUntil', 'sync', 'queue'].includes(env.CHECK_API_AUDIT_MODE)
-  ) {
-    mode = env.CHECK_API_AUDIT_MODE as AuditMode;
-  }
-
-  // Get log allow policy
-  let logAllow: 'always' | 'sample' | 'never' = 'sample';
-  if (configKV) {
-    try {
-      const kvLogAllow = await configKV.get(KV_AUDIT_LOG_ALLOW_KEY);
-      if (kvLogAllow && ['always', 'sample', 'never'].includes(kvLogAllow)) {
-        logAllow = kvLogAllow as 'always' | 'sample' | 'never';
-      } else if (
-        env.CHECK_API_AUDIT_LOG_ALLOW &&
-        ['always', 'sample', 'never'].includes(env.CHECK_API_AUDIT_LOG_ALLOW)
-      ) {
-        logAllow = env.CHECK_API_AUDIT_LOG_ALLOW as 'always' | 'sample' | 'never';
-      }
-    } catch {
-      if (
-        env.CHECK_API_AUDIT_LOG_ALLOW &&
-        ['always', 'sample', 'never'].includes(env.CHECK_API_AUDIT_LOG_ALLOW)
-      ) {
-        logAllow = env.CHECK_API_AUDIT_LOG_ALLOW as 'always' | 'sample' | 'never';
-      }
-    }
-  } else if (
-    env.CHECK_API_AUDIT_LOG_ALLOW &&
-    ['always', 'sample', 'never'].includes(env.CHECK_API_AUDIT_LOG_ALLOW)
-  ) {
-    logAllow = env.CHECK_API_AUDIT_LOG_ALLOW as 'always' | 'sample' | 'never';
-  }
-
-  // Get sample rate
-  let sampleRate = 0.01;
-  if (configKV) {
-    try {
-      const kvRate = await configKV.get(KV_AUDIT_SAMPLE_RATE_KEY);
-      if (kvRate !== null) {
-        const parsed = parseFloat(kvRate);
-        if (!isNaN(parsed) && parsed >= 0 && parsed <= 1) {
-          sampleRate = parsed;
-        }
-      } else if (env.CHECK_API_AUDIT_SAMPLE_RATE) {
-        const parsed = parseFloat(env.CHECK_API_AUDIT_SAMPLE_RATE);
-        if (!isNaN(parsed) && parsed >= 0 && parsed <= 1) {
-          sampleRate = parsed;
-        }
-      }
-    } catch {
-      if (env.CHECK_API_AUDIT_SAMPLE_RATE) {
-        const parsed = parseFloat(env.CHECK_API_AUDIT_SAMPLE_RATE);
-        if (!isNaN(parsed) && parsed >= 0 && parsed <= 1) {
-          sampleRate = parsed;
-        }
-      }
-    }
-  } else if (env.CHECK_API_AUDIT_SAMPLE_RATE) {
-    const parsed = parseFloat(env.CHECK_API_AUDIT_SAMPLE_RATE);
-    if (!isNaN(parsed) && parsed >= 0 && parsed <= 1) {
-      sampleRate = parsed;
-    }
-  }
-
-  // Get retention days
-  let retentionDays = 90;
-  if (configKV) {
-    try {
-      const kvDays = await configKV.get(KV_AUDIT_RETENTION_DAYS_KEY);
-      if (kvDays !== null) {
-        const parsed = parseInt(kvDays, 10);
-        if (!isNaN(parsed) && parsed > 0) {
-          retentionDays = parsed;
-        }
-      } else if (env.CHECK_API_AUDIT_RETENTION_DAYS) {
-        const parsed = parseInt(env.CHECK_API_AUDIT_RETENTION_DAYS, 10);
-        if (!isNaN(parsed) && parsed > 0) {
-          retentionDays = parsed;
-        }
-      }
-    } catch {
-      if (env.CHECK_API_AUDIT_RETENTION_DAYS) {
-        const parsed = parseInt(env.CHECK_API_AUDIT_RETENTION_DAYS, 10);
-        if (!isNaN(parsed) && parsed > 0) {
-          retentionDays = parsed;
-        }
-      }
-    }
-  } else if (env.CHECK_API_AUDIT_RETENTION_DAYS) {
-    const parsed = parseInt(env.CHECK_API_AUDIT_RETENTION_DAYS, 10);
-    if (!isNaN(parsed) && parsed > 0) {
-      retentionDays = parsed;
-    }
-  }
-
   return {
-    enabled,
+    enabled: values['audit.check_api_enabled'] === true,
     config: {
-      mode,
+      mode: values['audit.check_api_mode'] as AuditMode,
       logDeny: 'always',
-      logAllow,
-      sampleRate,
-      retentionDays,
+      logAllow: values['audit.check_api_log_allow'] as 'always' | 'sample' | 'never',
+      sampleRate: values['audit.check_api_sample_rate'] as number,
+      retentionDays: values['audit.check_api_retention_days'] as number,
     },
   };
 }
@@ -483,7 +306,6 @@ checkRoutes.post('/', async (c) => {
   // Check rate limit
   const rateLimitCtx: RateLimitContext = {
     cache: c.env.CHECK_CACHE_KV,
-    configKv: getConfigKV(c.env),
   };
   const rateLimitResult = await checkRateLimit(auth, rateLimitCtx);
 
@@ -658,7 +480,6 @@ checkRoutes.post('/batch', async (c) => {
   // Check rate limit
   const rateLimitCtx: RateLimitContext = {
     cache: c.env.CHECK_CACHE_KV,
-    configKv: getConfigKV(c.env),
   };
   const rateLimitResult = await checkRateLimit(auth, rateLimitCtx);
 

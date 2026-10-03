@@ -368,12 +368,12 @@ controls:
     evidence:
       - check: asvs.v10_4_2.authorization_code_single_use_and_expiry
         note: Verify authorization-code TTL default and expiration enforcement.
-      - path: packages/ar-lib-core/src/utils/oauth-config.ts
-        line: 85
-        note: AUTH_CODE_TTL defaults to 60 seconds.
+      - path: packages/ar-lib-core/src/types/settings/oauth.ts
+        line: 139
+        note: The oauth.auth_code_ttl setting defaults to 60 seconds.
       - path: packages/ar-lib-core/src/durable-objects/AuthorizationCodeStore.ts
-        line: 536
-        note: Stored authorization codes receive expiresAt based on CODE_TTL.
+        line: 540
+        note: Stored authorization codes receive expiresAt from the configured lifetime (else CODE_TTL).
 
   - id: v5.0.0-V10.4.4
     chapter: V10

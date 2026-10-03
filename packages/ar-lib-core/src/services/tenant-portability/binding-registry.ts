@@ -37,13 +37,6 @@ const groups: Array<{
   },
   {
     kind: 'KVNamespace',
-    disposition: 'canonical',
-    names: 'POLICY_FLAGS_KV',
-    reason:
-      'Resolve shared feature flags and policy limits as authorized effective configuration; binding presence does not prove tenant ownership.',
-  },
-  {
-    kind: 'KVNamespace',
     disposition: 'rebuild',
     names:
       'CHECK_CACHE_KV CLIENTS_CACHE CONSENT_CACHE JWKS_CACHE REBAC_CACHE REBAC_CACHE_KV TENANT_RUNTIME_REGISTRY USER_CACHE',

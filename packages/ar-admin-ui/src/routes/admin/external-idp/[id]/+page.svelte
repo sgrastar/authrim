@@ -12,6 +12,7 @@
 	} from '$lib/api/admin-external-providers';
 	import { AdminPageHeader, AdminPageShell, AdminSection } from '$lib/components/admin';
 	import LoginProviderIconPicker from '$lib/components/admin/LoginProviderIconPicker.svelte';
+	import ProfileUpdateFieldsEditor from '$lib/components/admin/ProfileUpdateFieldsEditor.svelte';
 	import { ToggleSwitch } from '$lib/components';
 	import { settingsContext } from '$lib/stores/settings-context.svelte';
 
@@ -38,6 +39,8 @@
 	let jwksUri = $state('');
 	let autoLinkEmail = $state(true);
 	let jitProvisioning = $state(true);
+	// The provider's own profile update fields (null: the tenant default).
+	let profileUpdateFields = $state<string[] | null>(null);
 	let requireEmailVerified = $state(true);
 	let alwaysFetchUserinfo = $state(false);
 	let enableSso = $state(true);
@@ -184,6 +187,7 @@
 			jwksUri = data.jwksUri || '';
 			autoLinkEmail = data.autoLinkEmail;
 			jitProvisioning = data.jitProvisioning;
+			profileUpdateFields = data.profileUpdateFields ?? null;
 			requireEmailVerified = data.requireEmailVerified;
 			alwaysFetchUserinfo = data.alwaysFetchUserinfo || false;
 			enableSso = data.enableSso !== false;
@@ -261,6 +265,7 @@
 				jwks_uri: jwksUri || undefined,
 				auto_link_email: autoLinkEmail,
 				jit_provisioning: jitProvisioning,
+				profile_update_fields: profileUpdateFields,
 				require_email_verified: requireEmailVerified,
 				always_fetch_userinfo: alwaysFetchUserinfo,
 				enable_sso: enableSso,
@@ -722,6 +727,10 @@
 						label={$LL.admin_external_idp_jit_provisioning()}
 						description={$LL.admin_external_idp_jit_provisioning_desc()}
 					/>
+
+					{#if !loading}
+						<ProfileUpdateFieldsEditor bind:value={profileUpdateFields} />
+					{/if}
 
 					<ToggleSwitch
 						bind:checked={requireEmailVerified}

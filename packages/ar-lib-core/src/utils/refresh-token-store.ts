@@ -1,9 +1,12 @@
 import type { Env } from '../types/env';
 import type { RefreshTokenData } from '../types/oidc';
-import { createOAuthConfigManager } from './oauth-config';
+import { resolveEffectiveSettings } from '../services/effective-settings';
 import { createLogger } from './logger';
 
 const log = createLogger().module('REFRESH_TOKEN_STORE');
+
+/** 90 days, the `oauth.refresh_token_expiry` default. */
+const DEFAULT_REFRESH_TOKEN_TTL_SECONDS = 7776000;
 
 /**
  * Store refresh token metadata using RefreshTokenRotator DO.
@@ -33,8 +36,17 @@ export async function storeRefreshToken(
   const id = env.REFRESH_TOKEN_ROTATOR.idFromName(instanceName);
   const stub = env.REFRESH_TOKEN_ROTATOR.get(id);
 
-  const configManager = createOAuthConfigManager(env);
-  const refreshTokenTTL = await configManager.getRefreshTokenExpiry();
+  // The refresh token lifetime for the client, as the Settings API resolves it.
+  const configuredTTL = (
+    await resolveEffectiveSettings(env, 'oauth', {
+      tenantId,
+      clientId: data.client_id,
+    })
+  )['oauth.refresh_token_expiry'];
+  const refreshTokenTTL =
+    typeof configuredTTL === 'number' && Number.isSafeInteger(configuredTTL) && configuredTTL > 0
+      ? configuredTTL
+      : DEFAULT_REFRESH_TOKEN_TTL_SECONDS;
 
   await stub.createFamilyRpc({
     jti,
@@ -44,6 +56,7 @@ export async function storeRefreshToken(
     ttl: refreshTokenTTL,
     tenantId,
     ...(data.resource_aud && { resourceAudience: data.resource_aud }),
+    ...(data.auth_context && { authContext: data.auth_context }),
     ...(parsedJti.generation > 0 &&
       parsedJti.shardIndex !== null && {
         generation: parsedJti.generation,
@@ -83,7 +96,9 @@ export async function getRefreshToken(
   const stub = env.REFRESH_TOKEN_ROTATOR.get(id);
 
   try {
-    const result = await stub.validateRpc(userId, version, clientId);
+    // Only the family's latest token: one from a family made earlier for the same user and client
+    // must not read the current family (its evidence and authentication).
+    const result = await stub.validateRpc(userId, version, clientId, jti);
 
     if (!result.valid || !result.family) {
       return null;
@@ -95,6 +110,7 @@ export async function getRefreshToken(
       sub: userId,
       scope: result.family.allowed_scope || '',
       resource_aud: result.family.resource_aud,
+      ...(result.family.auth_context && { auth_context: result.family.auth_context }),
       iat: Math.floor(Date.now() / 1000),
       exp: Math.floor((result.family.expires_at || Date.now()) / 1000),
       familyId: `${userId}:${clientId}`,

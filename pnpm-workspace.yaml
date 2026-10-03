@@ -21,7 +21,7 @@ overrides:
   'external-editor@3.1.0>tmp': '0.2.6'
   '@lhci/cli@0.15.1>tmp': '0.2.6'
   'cookie': '>=0.7.0'
-  'basic-ftp': '>=5.3.1'
+  'basic-ftp': '>=6.2.1'
   'path-to-regexp@<0.1.13': '0.1.13'
   'express@4.21.2>path-to-regexp': '0.1.13'
   'picomatch': '>=4.0.4'

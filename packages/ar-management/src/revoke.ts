@@ -12,7 +12,7 @@ import {
   createAuthContextFromHono,
   getTenantIdFromContext,
   validateClientAssertion,
-  createOAuthConfigManager,
+  resolveEffectiveSettings,
   createErrorResponse,
   AR_ERROR_CODES,
   getLogger,
@@ -51,6 +51,38 @@ function deviceSecretPolicyErrorResponse(
   );
 }
 
+/** 1 hour, the `oauth.access_token_expiry` default. */
+const DEFAULT_ACCESS_TOKEN_TTL_SECONDS = 3600;
+
+/** 1 year: the longest `oauth.refresh_token_expiry`. */
+const MAX_REVOCATION_LIFETIME_SECONDS = 31536000;
+
+/**
+ * How long a revocation must last: until the token itself expires (its `exp`), and at least as
+ * long as the client's access tokens can live (`oauth.access_token_expiry`), which covers the
+ * access tokens a refresh token's revocation also revokes. A setting changed after the token was
+ * issued therefore never ends a revocation early.
+ */
+function revocationLifetime(tokenPayload: Record<string, unknown>, accessLifetime: number): number {
+  const exp = tokenPayload.exp;
+  const remaining =
+    typeof exp === 'number' && Number.isFinite(exp) ? Math.ceil(exp - Date.now() / 1000) : 0;
+  // Bounded by the longest lifetime a token can be configured with (a refresh token's maximum).
+  return Math.min(Math.max(remaining, accessLifetime), MAX_REVOCATION_LIFETIME_SECONDS);
+}
+
+/** The access token lifetime the Settings API resolves for the client. */
+async function accessTokenLifetime(env: Env, tenantId: string, clientId: string): Promise<number> {
+  const value = (
+    await resolveEffectiveSettings(env, 'oauth', {
+      tenantId,
+      clientId,
+    })
+  )['oauth.access_token_expiry'];
+  return typeof value === 'number' && Number.isSafeInteger(value) && value > 0
+    ? value
+    : DEFAULT_ACCESS_TOKEN_TTL_SECONDS;
+}
 /**
  * Token Revocation Endpoint Handler
  * https://tools.ietf.org/html/rfc7009
@@ -324,9 +356,10 @@ export async function revokeHandler(c: Context<{ Bindings: Env }>) {
   // Token Revocation with Cascade Support (RFC 7009 Section 2.1)
   // When revoking refresh_token, SHOULD revoke related access tokens
   // =========================================================================
-  // P4: Use ConfigManager for TOKEN_EXPIRY (KV → env → default)
-  const configManager = createOAuthConfigManager(c.env);
-  const expiresIn = await configManager.getNumber('TOKEN_EXPIRY');
+  const expiresIn = revocationLifetime(
+    tokenPayload,
+    await accessTokenLifetime(c.env, tenantId, client_id)
+  );
 
   // P1: Helper function for cascade revocation
   const performCascadeRevocation = async (refreshTokenJti: string, familyId?: string) => {
@@ -577,8 +610,7 @@ export async function batchRevokeHandler(c: Context<{ Bindings: Env }>) {
   // Batch Revocation Processing
   // =========================================================================
 
-  const configManager = createOAuthConfigManager(c.env);
-  const expiresIn = await configManager.getNumber('TOKEN_EXPIRY');
+  const accessLifetime = await accessTokenLifetime(c.env, tenantId, client_id);
 
   // Process all tokens in parallel
   const results = await Promise.allSettled(
@@ -603,6 +635,7 @@ export async function batchRevokeHandler(c: Context<{ Bindings: Env }>) {
         const userId = tokenPayload.sub as string;
         const version = typeof tokenPayload.rtv === 'number' ? tokenPayload.rtv : 1;
         const aud = tokenPayload.aud as string;
+        const expiresIn = revocationLifetime(tokenPayload, accessLifetime);
 
         if (!jti) {
           return { token_hint: tokenHint, status: 'invalid' };

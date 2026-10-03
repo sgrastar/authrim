@@ -63,6 +63,15 @@ describe('processPendingSettingsProjections', () => {
         'utf8'
       )
     );
+    db.exec(
+      readFileSync(
+        new URL(
+          '../../../../migrations/admin/d1/039_platform_settings_documents.sql',
+          import.meta.url
+        ),
+        'utf8'
+      )
+    );
     database.current = adapter(db);
     store = new DatabaseSettingsCanonicalStore(adapter(db), () => 1_000);
     values = new Map();

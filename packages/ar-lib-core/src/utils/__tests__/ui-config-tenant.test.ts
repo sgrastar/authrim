@@ -24,7 +24,10 @@ function kv(values: Record<string, unknown>): KVNamespace {
 }
 
 const platformUi = {
-  system_settings: { ui: { baseUrl: 'https://login.example.com', paths: { login: '/signin' } } },
+  'settings:platform:tenant': {
+    'tenant.ui_base_url': 'https://login.example.com',
+    'tenant.ui_login_path': '/signin',
+  },
 };
 
 describe("a tenant's UI settings", () => {
@@ -43,6 +46,7 @@ describe("a tenant's UI settings", () => {
         'settings:tenant:other:tenant': { 'tenant.ui_base_url': 'https://identity.acme.example' },
       }),
       ISSUER_URL: 'https://id.example.com',
+      ALLOWED_ORIGINS: 'https://login.example.com',
     };
 
     await expect(getTenantUIConfig(env, 'acme')).resolves.toMatchObject({
@@ -60,7 +64,11 @@ describe("a tenant's UI settings", () => {
   });
 
   it('keeps the platform UI when the tenant sets nothing', async () => {
-    const env = { SETTINGS: kv(platformUi), ISSUER_URL: 'https://id.example.com' };
+    const env = {
+      SETTINGS: kv(platformUi),
+      ISSUER_URL: 'https://id.example.com',
+      ALLOWED_ORIGINS: 'https://login.example.com',
+    };
     await expect(getUIConfig(env, 'acme')).resolves.toEqual(await getUIConfig(env));
     await expect(getTenantUIConfig(env, 'acme')).resolves.toMatchObject({ tenantBaseUrl: false });
   });
@@ -75,7 +83,7 @@ describe("a tenant's UI settings", () => {
         },
       }),
       ISSUER_URL: 'https://id.example.com',
-      ALLOWED_ORIGINS: 'https://acme-login.example.org',
+      ALLOWED_ORIGINS: 'https://acme-login.example.org,https://login.example.com',
     };
 
     const { config, tenantBaseUrl } = await getTenantUIConfig(env, 'acme');
@@ -116,6 +124,7 @@ describe("a tenant's UI settings", () => {
         },
       }),
       ISSUER_URL: 'https://id.example.com',
+      ALLOWED_ORIGINS: 'https://login.example.com',
     };
     const { config, tenantBaseUrl } = await getTenantUIConfig(env, 'acme');
     expect(tenantBaseUrl).toBe(false);
@@ -132,6 +141,7 @@ describe("a tenant's UI settings", () => {
         'settings:tenant:acme:tenant': { 'tenant.ui_base_url': '   ' },
       }),
       ISSUER_URL: 'https://id.example.com',
+      ALLOWED_ORIGINS: 'https://login.example.com',
     };
     await expect(getTenantUIConfig(env, 'acme')).resolves.toMatchObject({
       config: { baseUrl: 'https://login.example.com' },
@@ -152,15 +162,130 @@ describe("a tenant's UI settings", () => {
     });
   });
 
+  it("puts the platform's Settings API UI before UI_URL, and the tenant's before both", async () => {
+    const env = {
+      SETTINGS: kv({
+        'settings:platform:tenant': {
+          'tenant.ui_base_url': 'https://ui.example.org',
+          'tenant.ui_consent_path': '/approve',
+        },
+        'settings:tenant:acme:tenant': { 'tenant.ui_login_path': '/acme-in' },
+      }),
+      UI_URL: 'https://login.example.com',
+      ISSUER_URL: 'https://id.example.com',
+      ALLOWED_ORIGINS: 'https://ui.example.org,https://login.example.com',
+    };
+    await expect(getUIConfig(env)).resolves.toEqual({
+      baseUrl: 'https://ui.example.org',
+      paths: expect.objectContaining({ login: DEFAULT_UI_PATHS.login, consent: '/approve' }),
+    });
+    // The platform's base URL is not the tenant's own choice.
+    await expect(getTenantUIConfig(env, 'acme')).resolves.toMatchObject({
+      config: {
+        baseUrl: 'https://ui.example.org',
+        paths: { login: '/acme-in', consent: '/approve' },
+      },
+      tenantBaseUrl: false,
+    });
+  });
+
+  it('ignores a platform base URL that is not an allowed UI origin, and platform values it cannot read', async () => {
+    const invalid = {
+      SETTINGS: kv({
+        'settings:platform:tenant': { 'tenant.ui_base_url': 'https://evil.example.net' },
+      }),
+      UI_URL: 'https://login.example.com',
+      ISSUER_URL: 'https://id.example.com',
+      ALLOWED_ORIGINS: 'https://login.example.com',
+    };
+    await expect(getUIConfig(invalid)).resolves.toMatchObject({
+      baseUrl: 'https://login.example.com',
+    });
+    const unreadable = {
+      SETTINGS: kv({ 'settings:platform:tenant': new Error('kv down') }),
+      UI_URL: 'https://login.example.com',
+    };
+    await expect(getUIConfig(unreadable)).resolves.toMatchObject({
+      baseUrl: 'https://login.example.com',
+    });
+  });
+
+  it('fails a strict read when the custom domain lookup fails, and falls back otherwise', async () => {
+    vanity.primary.mockImplementation(
+      async (_env: unknown, _tenantId: string, options?: { strict?: boolean }) => {
+        if (options?.strict) throw new Error('db unavailable');
+        return null;
+      }
+    );
+    const env = {
+      ISSUER_URL: 'https://id.example.com',
+      ALLOWED_ORIGINS: 'https://login.example.com',
+      SETTINGS: kv({
+        ...platformUi,
+        'settings:tenant:acme:tenant': { 'tenant.ui_base_url': 'https://identity.acme.example' },
+      }),
+    };
+
+    await expect(getTenantUIConfig(env, 'acme', { strict: true })).rejects.toThrow();
+    // At runtime the lookup failure allows nothing more: the platform's UI.
+    await expect(getUIConfig(env, 'acme')).resolves.toMatchObject({
+      baseUrl: 'https://login.example.com',
+    });
+  });
+
   it("uses the platform's UI when the tenant's settings cannot be read", async () => {
     const env = {
       SETTINGS: kv({ ...platformUi, 'settings:tenant:acme:tenant': new Error('kv down') }),
+      ISSUER_URL: 'https://id.example.com',
+      ALLOWED_ORIGINS: 'https://login.example.com',
     };
     await expect(getTenantUIConfig(env, 'acme')).resolves.toEqual({
       config: { baseUrl: 'https://login.example.com', paths: expect.any(Object) },
       tenantBaseUrl: false,
       paths: expect.objectContaining({ login: '/signin' }),
     });
+  });
+});
+
+describe('the UI paths beyond sign-in', () => {
+  it('reads every path from the platform and the tenant', async () => {
+    const env = {
+      ISSUER_URL: 'https://id.example.com',
+      ALLOWED_ORIGINS: 'https://login.example.com',
+      SETTINGS: kv({
+        'settings:platform:tenant': {
+          'tenant.ui_base_url': 'https://login.example.com',
+          'tenant.ui_device_path': '/activate',
+          'tenant.ui_register_path': '/join',
+          'tenant.ui_logged_out_path': '/bye',
+        },
+        'settings:tenant:acme:tenant': { 'tenant.ui_register_path': '/signup' },
+      }),
+    };
+
+    const platform = await getUIConfig(env);
+    expect(platform?.baseUrl).toBe('https://login.example.com');
+    expect(platform?.paths).toMatchObject({
+      device: '/activate',
+      register: '/join',
+      loggedOut: '/bye',
+      deviceAuthorize: DEFAULT_UI_PATHS.deviceAuthorize,
+    });
+
+    const tenant = await getUIConfig(env, 'acme');
+    expect(tenant?.paths).toMatchObject({
+      device: '/activate',
+      register: '/signup',
+      loggedOut: '/bye',
+    });
+  });
+
+  it('uses UI_URL with the default paths when no base URL is saved', async () => {
+    const config = await getUIConfig({
+      UI_URL: 'https://ui.example.com/',
+      SETTINGS: kv({}),
+    });
+    expect(config).toEqual({ baseUrl: 'https://ui.example.com', paths: DEFAULT_UI_PATHS });
   });
 });
 

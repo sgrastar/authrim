@@ -1,0 +1,75 @@
+import { Meta } from '@storybook/addon-docs/blocks';
+
+<Meta title="Foundations/Page options" />
+
+# Page options
+
+Everything the Admin console can set for the Login UI, what it changes and where to see it. All settings arrive with the authentication-methods response (`ui`) and are applied by `loginUIPageStore`; an invalid value falls back to the default shown.
+
+## Theme and colours
+
+| Setting                                                   | Values                                                                | Default                                                | Effect                                                                        |
+| --------------------------------------------------------- | --------------------------------------------------------------------- | ------------------------------------------------------ | ----------------------------------------------------------------------------- |
+| `themeTemplate`                                           | `classic`, `meridian`, `split-brand-panel`, `fullbleed-glass`         | `meridian`                                             | Palette and shape. **Themes and layouts / All themes**                        |
+| `theme`                                                   | `light`, `dark`                                                       | visitor's choice, then tenant, then system, then light | Colour scheme. The top bar toggle lets visitors change it                     |
+| `variant`                                                 | light: `beige` `blue-gray` `green`; dark: `brown` `navy` `slate`      | `beige` / `brown`                                      | Palette of **Classic**. Other themes ignore it                                |
+| `backgroundColor`, `titleColor`, `textColor`, `copyColor` | any CSS colour                                                        | theme's own                                            | Page background and text colours. **Settings / Background image and colours** |
+| `accentColor`                                             | any CSS colour                                                        | `#e8623f`                                              | Only **Full-bleed glass** derives its primary colour from it                  |
+| `appearance.backgroundImageUrl`                           | image URL                                                             | none                                                   | Page background image                                                         |
+| `fontFamily`, `fontScale`                                 | `system` `rounded` `serif` `mono`; `compact` `comfortable` `spacious` | `system`, `comfortable`                                | **Settings / Fonts and density**                                              |
+| `appearance.customCss`                                    | limited CSS (selectors and properties are allow-listed, 16 KiB)       | none                                                   | Injected after the theme                                                      |
+
+## Layout and header
+
+| Setting                            | Values                                                                                                | Default           | Effect                                                            |
+| ---------------------------------- | ----------------------------------------------------------------------------------------------------- | ----------------- | ----------------------------------------------------------------- |
+| `layout`                           | `centered_card`, `split_panel`, `fullbleed_card`                                                      | `centered_card`   | **Themes and layouts / Layouts**                                  |
+| `headerEnabled`, `subtitleEnabled` | on / off                                                                                              | on, on            | Header and tagline. **Settings / Header**                         |
+| `headerStyle`, `logoLayout`        | `center` `bar`; `stack` `row`                                                                         | `center`, `stack` | Shape of the header                                               |
+| `logoDisplay`                      | `auto` `image` `text` `hidden`                                                                        | `auto`            | Logo image, brand name, both or none. **Settings / Logo display** |
+| `branding.brandName`, `logoUrl`    | text, image URL                                                                                       | brand name only   | The name and the logo                                             |
+| `appearance.textLocalizations`     | per language: tagline, brand panel title and text, footer text, login, registration and account title | defaults          | Text the tenant wrote, per language                               |
+
+## Split layout and brand panel
+
+| Setting                                                   | Values                                           | Default          |
+| --------------------------------------------------------- | ------------------------------------------------ | ---------------- |
+| `splitPanelSide`                                          | `left`, `right`                                  | `left`           |
+| `splitPanelWidth`                                         | `narrow` (form 40%), `wide` (form 60%)           | `narrow`         |
+| `splitFrame`                                              | `full`, `card`                                   | `full`           |
+| `splitBackgroundMode`                                     | `shared`, `brand`, `panel`                       | `shared`         |
+| `loginPanelBackgroundColor`, `…GradientColor`, `…Opacity` | colours, 0–100                                   | 70               |
+| `brandContentMode`                                        | `logo_copy`, `logo`, `none`                      | `logo_copy`      |
+| `brandPosition`, `brandAlign`                             | `top` `center` `bottom`; `left` `center` `right` | `center`, `left` |
+
+See **Themes and layouts / Split panel …**.
+
+## Top bar, footer, links
+
+| Setting                                       | Values                                                                                   | Default      |
+| --------------------------------------------- | ---------------------------------------------------------------------------------------- | ------------ |
+| `topbarPosition`                              | `below_card` `in_card` `top_right` `bottom_left` `bottom_center` `bottom_right` `hidden` | `below_card` |
+| `themeToggleEnabled`, `languageSelectEnabled` | on / off                                                                                 | on, on       |
+| `footerEnabled`, `poweredByEnabled`           | on / off                                                                                 | on, on       |
+| `footerStyle`                                 | `simple`, `bar`                                                                          | `simple`     |
+| `appearance.footerText`, `footerLinks`        | text; up to 8 `{label, url}`                                                             | none         |
+| `authSwitchLinkEnabled`                       | on / off                                                                                 | on           |
+
+See **Settings / Footer**, **Top bar position**, **Switch link: off**.
+
+## Screens (login, signup, code entry, consent)
+
+An admin builds each screen from **blocks** in the Admin console. Per block:
+
+| Setting                           | Values                                                                                                                                                   | Effect                               |
+| --------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------ |
+| `block_type`                      | `heading` `text` `divider` `auth_widget` `guest_login_widget` `code_input_widget` `consent_widget` `security_verification` `identity_field` `layout_row` | **Runtime screen / Blocks**          |
+| `auth_method`                     | `passkey` `mail_otp` `mail_otp_totp` `totp` `external_idp` `directory_password`                                                                          | Which method an auth widget starts   |
+| `display_condition`               | `always`; `hidden`; `feature_enabled` + a method                                                                                                         | **Runtime screen / Conditions**      |
+| `layout_columns`, `layout_column` | 1 or 2 (the editor stores up to 4; the page shows 2)                                                                                                     | Two-column rows                      |
+| `external_idp_show_action_text`   | on / off                                                                                                                                                 | “Continue with Google” or “Google”   |
+| `human_verification_timing`       | `initial`, `submit`                                                                                                                                      | When the verification widget appears |
+| `settings.canvas_layout`          | `narrow`, `wide`                                                                                                                                         | Width of the card                    |
+| order                             | position in the list                                                                                                                                     | Blocks render in saved order         |
+
+A method that is off (or not offered by the flow) hides its widget even without a condition. Guest login shows on login only.

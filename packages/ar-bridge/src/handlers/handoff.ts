@@ -21,6 +21,8 @@ import {
   getSessionStoreForNewSession,
   isShardedSessionId,
   getTenantIdFromContext,
+  resolveEffectiveSettings,
+  falRequiresSignedPushedRequest,
   createAuthContextFromHono,
   createPIIContextFromHono,
   CanonicalRuntimeUserStore,
@@ -103,7 +105,7 @@ function handoffOAuthError(
   c: Context<{ Bindings: Env }>,
   error: string,
   errorDescription: string,
-  status: 400 | 401 | 403 = 400,
+  status: 400 | 401 | 403 | 503 = 400,
   detailsCode?: 'dpop_proof_missing' | 'dpop_proof_invalid'
 ): Response {
   c.header('Cache-Control', 'no-store');
@@ -425,6 +427,13 @@ async function createHandoffSession(
       name: runtimeUser.name,
       amr: asSession.data?.amr || ['external_idp'],
       acr: asSession.data?.acr || 'urn:mace:incommon:iap:bronze',
+      // The assurance evidence of the AS session goes with its amr.
+      ...(asSession.data?.unverified_amr !== undefined
+        ? { unverified_amr: asSession.data.unverified_amr }
+        : {}),
+      ...(typeof asSession.data?.upstream_acr === 'string'
+        ? { upstream_acr: asSession.data.upstream_acr }
+        : {}),
       client_id,
       audience: 'rp', // Mark explicitly as an RP token
       source_session_id: asSessionId, // Record the AS SessionID (for audit)
@@ -503,6 +512,37 @@ export async function handleHandoffVerify(c: Context<{ Bindings: Env }>): Promis
       );
     }
     const dpopJkt = dpopValidation.jkt;
+
+    // Assurance FAL3 (fal3_requires_par) needs a pushed, signed authorization request, which an
+    // external IdP login handed off here never had: decided before the artifact is spent.
+    let fal3Required: boolean;
+    try {
+      fal3Required = falRequiresSignedPushedRequest(
+        await resolveEffectiveSettings(c.env, 'assurance', {
+          tenantId: getTenantIdFromContext(c),
+        })
+      );
+    } catch (error) {
+      log.error(
+        'Failed to load assurance settings',
+        { action: 'assurance_settings' },
+        error as Error
+      );
+      return handoffOAuthError(
+        c,
+        'temporarily_unavailable',
+        'Assurance settings are temporarily unavailable',
+        503
+      );
+    }
+    if (fal3Required) {
+      return handoffOAuthError(
+        c,
+        'unauthorized_client',
+        'A handoff does not meet the required federation assurance level (FAL3)',
+        400
+      );
+    }
 
     const handoffSession = await createHandoffSession(c, body, { dpopJkt });
     if (handoffSession instanceof Response) {

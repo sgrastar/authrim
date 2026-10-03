@@ -150,23 +150,23 @@ describe('isPolicyEmbeddingEnabled', () => {
     expect(result).toBe(false);
   });
 
-  it('should return false when env variable is not set', async () => {
-    (mockSettings.get as ReturnType<typeof vi.fn>).mockImplementation(async (key: string) =>
-      key === 'policy:flags:ENABLE_POLICY_EMBEDDING' ? null : null
-    );
+  const saved = (value: unknown) => async (key: string) =>
+    key === 'settings:platform:feature-flags'
+      ? JSON.stringify({ 'feature.enable_policy_embedding': value })
+      : null;
+
+  it('should return false when nothing is saved and env is not set', async () => {
+    (mockSettings.get as ReturnType<typeof vi.fn>).mockResolvedValue(null);
 
     const result = await isPolicyEmbeddingEnabled({
       SETTINGS: mockSettings as KVNamespace,
     });
 
     expect(result).toBe(false);
-    expect(mockSettings.get).toHaveBeenCalledWith('policy:flags:ENABLE_POLICY_EMBEDDING');
   });
 
-  it('should return true when KV value is "true"', async () => {
-    (mockSettings.get as ReturnType<typeof vi.fn>).mockImplementation(async (key: string) =>
-      key === 'policy:flags:ENABLE_POLICY_EMBEDDING' ? 'true' : null
-    );
+  it('should return true when the platform saved it on', async () => {
+    (mockSettings.get as ReturnType<typeof vi.fn>).mockImplementation(saved(true));
 
     const result = await isPolicyEmbeddingEnabled({
       SETTINGS: mockSettings as KVNamespace,
@@ -175,34 +175,19 @@ describe('isPolicyEmbeddingEnabled', () => {
     expect(result).toBe(true);
   });
 
-  it('should return true when KV value is "1"', async () => {
-    (mockSettings.get as ReturnType<typeof vi.fn>).mockImplementation(async (key: string) =>
-      key === 'policy:flags:ENABLE_POLICY_EMBEDDING' ? '1' : null
-    );
+  it('should return false when the platform saved it off, even if env enables it', async () => {
+    (mockSettings.get as ReturnType<typeof vi.fn>).mockImplementation(saved(false));
 
     const result = await isPolicyEmbeddingEnabled({
       SETTINGS: mockSettings as KVNamespace,
-    });
-
-    expect(result).toBe(true);
-  });
-
-  it('should return false when KV value is "false"', async () => {
-    (mockSettings.get as ReturnType<typeof vi.fn>).mockImplementation(async (key: string) =>
-      key === 'policy:flags:ENABLE_POLICY_EMBEDDING' ? 'false' : null
-    );
-
-    const result = await isPolicyEmbeddingEnabled({
-      SETTINGS: mockSettings as KVNamespace,
+      ENABLE_POLICY_EMBEDDING: 'true',
     });
 
     expect(result).toBe(false);
   });
 
   it('should fall back to env variable when KV returns null', async () => {
-    (mockSettings.get as ReturnType<typeof vi.fn>).mockImplementation(async (key: string) =>
-      key === 'policy:flags:ENABLE_POLICY_EMBEDDING' ? null : null
-    );
+    (mockSettings.get as ReturnType<typeof vi.fn>).mockResolvedValue(null);
 
     const result = await isPolicyEmbeddingEnabled({
       SETTINGS: mockSettings as KVNamespace,
@@ -221,18 +206,6 @@ describe('isPolicyEmbeddingEnabled', () => {
     });
 
     expect(result).toBe(false);
-  });
-
-  it('should handle case-insensitive KV value', async () => {
-    (mockSettings.get as ReturnType<typeof vi.fn>).mockImplementation(async (key: string) =>
-      key === 'policy:flags:ENABLE_POLICY_EMBEDDING' ? 'TRUE' : null
-    );
-
-    const result = await isPolicyEmbeddingEnabled({
-      SETTINGS: mockSettings as KVNamespace,
-    });
-
-    expect(result).toBe(true);
   });
 });
 

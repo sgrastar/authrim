@@ -44,6 +44,12 @@ export interface UpstreamProvider {
   // - custom_fields.<field_key>
   // to populate Authrim custom claims from upstream provider claims.
   attributeMapping: Record<string, string>;
+  /**
+   * The profile fields a login from this provider updates (standard profile claim names, after
+   * attribute mapping), overriding the tenant's `external_idp.jit_update_fields`. Null or absent
+   * follows the tenant; an empty list updates none.
+   */
+  profileUpdateFields?: string[] | null;
   autoLinkEmail: boolean;
   jitProvisioning: boolean;
   requireEmailVerified: boolean;

@@ -37,6 +37,69 @@ const MAX_ROTATOR_JSON_BODY_BYTES = 512 * 1024;
 const MAX_FAMILY_CACHE_ENTRIES = 1024;
 
 /**
+ * How the user authenticated for the grant that began a token family, so a refresh issues tokens
+ * that say the same as the first ones (OIDC Core 12.2) and keeps to the assurance the grant met.
+ */
+export interface RefreshTokenAuthContext {
+  /** The original authentication time (seconds). */
+  auth_time?: number;
+  /** The acr and amr the grant's ID token carried. */
+  acr?: string;
+  amr?: string[];
+  /**
+   * With assurance on when the grant was made, for access tokens: the authentication time, the AAL
+   * reached, its acr and the methods proven (apart from the ID token's, which a claims request may
+   * have left out).
+   */
+  assurance_auth_time?: number;
+  aal?: string;
+  assurance_acr?: string;
+  assurance_amr?: string[];
+  /** The grant's authorization request was pushed with a signed request object (FAL3). */
+  pushed_signed_request?: true;
+}
+
+const AUTH_CONTEXT_STRING_MAX = 512;
+const AUTH_CONTEXT_LIST_MAX = 16;
+
+function boundedString(value: unknown): string | undefined {
+  return typeof value === 'string' && value.length > 0 && value.length <= AUTH_CONTEXT_STRING_MAX
+    ? value
+    : undefined;
+}
+
+function boundedStringList(value: unknown): string[] | undefined {
+  if (!Array.isArray(value) || value.length > AUTH_CONTEXT_LIST_MAX) return undefined;
+  const list = value.filter((item): item is string => boundedString(item) !== undefined);
+  return list.length === value.length ? list : undefined;
+}
+
+/** The authentication context as stored: only well-formed, bounded fields are kept. */
+export function normalizeRefreshTokenAuthContext(
+  value: unknown
+): RefreshTokenAuthContext | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const input = value as Record<string, unknown>;
+  const positiveTime = (time: unknown): number | undefined =>
+    typeof time === 'number' && Number.isSafeInteger(time) && time > 0 ? time : undefined;
+  const authTime = positiveTime(input.auth_time);
+  const assuranceAuthTime = positiveTime(input.assurance_auth_time);
+  const context: RefreshTokenAuthContext = {
+    ...(authTime !== undefined ? { auth_time: authTime } : {}),
+    ...(boundedString(input.acr) ? { acr: input.acr as string } : {}),
+    ...(boundedStringList(input.amr) ? { amr: boundedStringList(input.amr) } : {}),
+    ...(assuranceAuthTime !== undefined ? { assurance_auth_time: assuranceAuthTime } : {}),
+    ...(boundedString(input.aal) ? { aal: input.aal as string } : {}),
+    ...(boundedString(input.assurance_acr) ? { assurance_acr: input.assurance_acr as string } : {}),
+    ...(boundedStringList(input.assurance_amr)
+      ? { assurance_amr: boundedStringList(input.assurance_amr) }
+      : {}),
+    ...(input.pushed_signed_request === true ? { pushed_signed_request: true as const } : {}),
+  };
+  return Object.keys(context).length > 0 ? context : undefined;
+}
+
+/**
  * Token Family V2 - Minimal state for high-performance rotation
  */
 export interface TokenFamilyV2 {
@@ -49,6 +112,7 @@ export interface TokenFamilyV2 {
   client_id: string; // For scope validation
   allowed_scope: string; // Prevent scope amplification
   resource_aud?: string | string[]; // Original access token resource audience
+  auth_context?: RefreshTokenAuthContext; // How the user authenticated for the first grant
 }
 
 /**
@@ -62,6 +126,7 @@ export interface CreateFamilyRequestV2 {
   ttl: number; // Time to live in seconds
   tenantId: string;
   resourceAudience?: string | string[];
+  authContext?: RefreshTokenAuthContext;
 }
 
 /**
@@ -284,9 +349,10 @@ export class RefreshTokenRotator extends DurableObject<Env> {
   async validateRpc(
     userId: string,
     version: number,
-    clientId: string
+    clientId: string,
+    jti?: string
   ): Promise<{ valid: boolean; family?: TokenFamilyV2 }> {
-    return this.validate(userId, version, clientId);
+    return this.validate(userId, version, clientId, jti);
   }
 
   /**
@@ -518,6 +584,7 @@ export class RefreshTokenRotator extends DurableObject<Env> {
     const now = Date.now();
     const expiresAt = now + request.ttl * 1000;
     const resourceAudience = normalizeResourceAudience(request.resourceAudience);
+    const authContext = normalizeRefreshTokenAuthContext(request.authContext);
     const family: TokenFamilyV2 = {
       tenant_id: normalizedTenantId,
       version: 1,
@@ -528,6 +595,7 @@ export class RefreshTokenRotator extends DurableObject<Env> {
       client_id: request.clientId,
       allowed_scope: request.scope,
       ...(resourceAudience && { resource_aud: resourceAudience }),
+      ...(authContext && { auth_context: authContext }),
     };
 
     const writes: Record<string, unknown> = {
@@ -857,7 +925,13 @@ export class RefreshTokenRotator extends DurableObject<Env> {
   async validate(
     userId: string,
     version: number,
-    clientId: string
+    clientId: string,
+    /**
+     * The presented token's JWT ID: when given, only the family's latest token is valid. A family
+     * made again for the same user and client starts at version 1 too, so the version alone does
+     * not tell an older family's token from the current one's.
+     */
+    jti?: string
   ): Promise<{ valid: boolean; family?: TokenFamilyV2 }> {
     await this.initializeState();
 
@@ -873,6 +947,9 @@ export class RefreshTokenRotator extends DurableObject<Env> {
 
     // Check version and client
     if (family.version !== version || family.client_id !== clientId) {
+      return { valid: false };
+    }
+    if (jti !== undefined && family.last_jti !== jti) {
       return { valid: false };
     }
 
@@ -1017,6 +1094,7 @@ export class RefreshTokenRotator extends DurableObject<Env> {
           ...(body.resourceAudience !== undefined && {
             resourceAudience: body.resourceAudience,
           }),
+          ...(body.authContext !== undefined && { authContext: body.authContext }),
           ...(body.generation !== undefined &&
             body.shardIndex !== undefined && {
               generation: body.generation,
@@ -1179,7 +1257,8 @@ export class RefreshTokenRotator extends DurableObject<Env> {
         }
 
         const version = parseInt(versionStr, 10);
-        const result = await this.validate(userId, version, clientId);
+        const jti = url.searchParams.get('jti') ?? undefined;
+        const result = await this.validate(userId, version, clientId, jti);
 
         return new Response(
           JSON.stringify({

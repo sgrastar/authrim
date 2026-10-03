@@ -4708,39 +4708,6 @@ const storageDestinations = new Map<string, DevStorageDestination>([
 
 const storageDestinationUsages = new Map<string, DevStorageDestinationUsage[]>();
 
-const devRetentionCategories = [
-	{
-		category: 'audit_logs',
-		retention_days: 365,
-		total_records: 12840,
-		records_pending_deletion: 18,
-		oldest_record_date: new Date(NOW - 86400000 * 420).toISOString(),
-		next_cleanup_date: new Date(NOW + 86400000).toISOString(),
-		last_cleanup_date: new Date(NOW - 86400000 * 6).toISOString(),
-		records_deleted_last_30_days: 124
-	},
-	{
-		category: 'session_data',
-		retention_days: 90,
-		total_records: 2410,
-		records_pending_deletion: 7,
-		oldest_record_date: new Date(NOW - 86400000 * 110).toISOString(),
-		next_cleanup_date: new Date(NOW + 86400000 * 2).toISOString(),
-		last_cleanup_date: new Date(NOW - 86400000 * 5).toISOString(),
-		records_deleted_last_30_days: 88
-	},
-	{
-		category: 'tombstones',
-		retention_days: 730,
-		total_records: 318,
-		records_pending_deletion: 0,
-		oldest_record_date: new Date(NOW - 86400000 * 260).toISOString(),
-		next_cleanup_date: new Date(NOW + 86400000 * 7).toISOString(),
-		last_cleanup_date: new Date(NOW - 86400000 * 14).toISOString(),
-		records_deleted_last_30_days: 0
-	}
-];
-
 const controlPlaneDestinations = new Map<string, DevControlPlaneDestination>([
 	[
 		'dev-destination-tenant-r2',
@@ -4843,45 +4810,6 @@ const controlPlaneDestinations = new Map<string, DevControlPlaneDestination>([
 		}
 	]
 ]);
-
-const defaultUiPaths = {
-	login: '/login',
-	consent: '/consent',
-	reauth: '/reauth',
-	error: '/error',
-	device: '/device',
-	deviceAuthorize: '/device/authorize',
-	logoutComplete: '/logout-complete',
-	loggedOut: '/logged-out',
-	register: '/signup'
-};
-
-let devUiConfig: { baseUrl: string | null; paths: typeof defaultUiPaths } = {
-	baseUrl: 'http://127.0.0.1:5175',
-	paths: { ...defaultUiPaths }
-};
-
-function uiConfigResponse(source: 'kv' | 'env' | 'none' = 'kv') {
-	return {
-		config: devUiConfig,
-		source,
-		defaults: defaultUiPaths,
-		metadata: {
-			login: { label: 'Login', description: 'Primary login route.' },
-			consent: { label: 'Consent', description: 'Consent confirmation route.' },
-			reauth: { label: 'Reauthentication', description: 'Step-up authentication route.' },
-			error: { label: 'Error', description: 'Authentication error route.' },
-			device: { label: 'Device', description: 'Device flow entry route.' },
-			deviceAuthorize: {
-				label: 'Device Authorization',
-				description: 'Device authorization route.'
-			},
-			logoutComplete: { label: 'Logout Complete', description: 'Logout completion route.' },
-			loggedOut: { label: 'Logged Out', description: 'Logged-out landing route.' },
-			register: { label: 'Register', description: 'Registration entry route.' }
-		}
-	};
-}
 
 function settingMeta(
 	key: string,
@@ -8317,6 +8245,7 @@ function buildTenantInfo(origin: string) {
 			vc: false
 		},
 		login_ui_url: `${origin}/login`,
+		login_ui_base_url: origin,
 		global_login_ui_url: `${origin}/login`,
 		discover_url: `${origin}/discover`,
 		admin_ui_url: `${origin}/admin`,
@@ -8370,7 +8299,7 @@ function buildTenantInfo(origin: string) {
 			clients: `${apiBase}/clients`,
 			sessions: `${apiBase}/sessions`,
 			audit_logs: `${apiBase}/audit-logs`,
-			settings: `${apiBase}/settings`,
+			settings: `${apiBase}/settings/meta`,
 			tenants: `${apiBase}/tenants`,
 			custom_claims: `${apiBase}/custom-claims`,
 			organizations: `${apiBase}/organizations`,
@@ -9296,248 +9225,339 @@ async function handleDirectoryConnectors(
 	return null;
 }
 
+const complianceReviewItems = Array.from({ length: 6 }, (_, index) => ({
+	item_id: `item-${index + 1}`,
+	user_id: `user-${index + 1}`,
+	user: { email: `user${index + 1}@example.test`, name: `User ${index + 1}` },
+	permission_type: index % 3 === 2 ? 'organization' : 'role',
+	permission_value: index % 3 === 2 ? 'org-sales' : 'role-admin',
+	decision: (index < 2 ? 'approved' : index === 2 ? 'revoked' : null) as string | null,
+	decided_by: (index < 3 ? 'dev-admin' : null) as string | null,
+	decided_at: (index < 3 ? new Date(NOW - 3600_000).toISOString() : null) as string | null,
+	justification: (index === 2 ? 'Moved to another team' : null) as string | null,
+	apply_status: index < 2 ? 'skipped' : null,
+	applied_at: null,
+	apply_error: null
+}));
+
+function complianceReview() {
+	const reviewed = complianceReviewItems.filter((item) => item.decision !== null);
+	return {
+		review_id: 'review-q3',
+		name: 'Q3 admin role review',
+		description: 'Quarterly review of administrator roles',
+		scope: 'role',
+		scope_value: 'role-admin',
+		inactive_days: null,
+		status: 'in_progress',
+		reviewer_id: 'dev-admin',
+		created_by: 'dev-admin',
+		completed_by: null,
+		progress: {
+			total_items: complianceReviewItems.length,
+			reviewed_items: reviewed.length,
+			approved_items: reviewed.filter((item) => item.decision === 'approved').length,
+			revoked_items: reviewed.filter((item) => item.decision === 'revoked').length,
+			completion_percent: Math.round((reviewed.length / complianceReviewItems.length) * 100)
+		},
+		created_at: new Date(NOW - 86400_000).toISOString(),
+		started_at: new Date(NOW - 86400_000).toISOString(),
+		completed_at: null,
+		due_date: new Date(NOW + 7 * 86400_000).toISOString(),
+		overdue: false
+	};
+}
+
+const complianceReports: Array<Record<string, unknown>> = [
+	{
+		report_id: 'report-1',
+		type: 'mfa_coverage',
+		name: 'MFA coverage',
+		status: 'completed',
+		requested_by: 'dev-admin',
+		parameters: null,
+		format: 'csv',
+		row_count: 42,
+		size_bytes: 1800,
+		sha256: 'a'.repeat(64),
+		error: null,
+		created_at: new Date(NOW - 2 * 86400_000).toISOString(),
+		completed_at: new Date(NOW - 2 * 86400_000).toISOString(),
+		expires_at: new Date(NOW + 28 * 86400_000).toISOString(),
+		downloadable: true
+	}
+];
+
+function complianceScheduledTask(task: string, outcome: string | null) {
+	return {
+		kind: 'scheduled_task',
+		task,
+		enabled: true,
+		disabled_reason: null,
+		status: 'succeeded',
+		last_started_at: NOW - 3600_000,
+		last_completed_at: NOW - 3500_000,
+		last_error_code: null,
+		next_run_at: NOW + 18000_000,
+		tenant_last_run: outcome ? { at: NOW - 3500_000, outcome } : null
+	};
+}
+
+/** Compliance: status, access reviews, reports and data retention, as the Admin API answers them. */
 async function handleCompliance(event: RequestEvent, segments: string[]): Promise<Response | null> {
 	const method = event.request.method;
-	const nowIso = new Date(NOW).toISOString();
-
-	if (segments[0] === 'compliance') {
-		if (segments[1] === 'status' && method === 'GET') {
+	if (segments[0] === 'data-retention' && segments[1] === 'status' && method === 'GET') {
+		return json({
+			tenant_id: TENANT_ID,
+			categories: [
+				{
+					id: 'audit_events',
+					retention: { value: 90, unit: 'days' },
+					source: { kind: 'audit', from: 'audit_profile' },
+					edit: { kind: 'audit_profile' },
+					deletion: complianceScheduledTask('audit_retention', 'cleaned'),
+					varies: null,
+					counts: { total: 1200, expired: 0 },
+					archive: { deletion: 'not_deleted' }
+				},
+				{
+					id: 'compliance_reports',
+					retention: { value: 30, unit: 'days' },
+					source: { kind: 'default' },
+					edit: { kind: 'none' },
+					deletion: complianceScheduledTask('compliance_report_retention', null),
+					varies: null,
+					counts: { total: 1, expired: 0 }
+				},
+				{
+					id: 'lookup_directory',
+					retention: { value: 180, unit: 'days' },
+					source: { kind: 'lookup_policy' },
+					edit: { kind: 'lookup_directory' },
+					deletion: {
+						kind: 'not_deleted',
+						reason: 'lookup_purge_not_available',
+						projection: 'current'
+					},
+					varies: null,
+					counts: null
+				},
+				{
+					id: 'sessions',
+					retention: { value: 604800, unit: 'seconds' },
+					source: { kind: 'session_settings', keys: ['session.ttl.default'] },
+					edit: { kind: 'session_settings' },
+					deletion: { kind: 'expiry' },
+					varies: 'by_sign_in_method',
+					counts: null,
+					extension: { per_refresh_seconds: 86400, absolute_limit_seconds: null }
+				},
+				{
+					id: 'access_tokens',
+					retention: { value: 3600, unit: 'seconds' },
+					source: { kind: 'setting', category: 'oauth', key: 'oauth.access_token_expiry' },
+					edit: { kind: 'settings', category: 'oauth', key: 'oauth.access_token_expiry' },
+					deletion: { kind: 'not_stored' },
+					varies: 'by_app',
+					counts: null
+				}
+			],
+			summary: {
+				expired_records: 0,
+				attention: [
+					{ category: 'audit_events', reason: 'archive_not_deleted' },
+					{ category: 'compliance_reports', reason: 'never_run' },
+					{ category: 'lookup_directory', reason: 'not_deleted' },
+					{ category: 'sessions', reason: 'no_absolute_limit' }
+				]
+			},
+			generated_at: new Date(NOW).toISOString()
+		});
+	}
+	if (segments[0] === 'data-retention' && segments[1] === 'categories' && method === 'PUT') {
+		return json({ category: segments[2], ...(await readJson(event.request)) });
+	}
+	if (segments[0] !== 'compliance') return null;
+	if (segments[1] === 'status' && method === 'GET') {
+		return json({
+			tenant_id: TENANT_ID,
+			overall_status: 'warning',
+			frameworks: (
+				[
+					['gdpr', 'warning', 1, 1],
+					['soc2', 'warning', 4, 2],
+					['iso27001', 'warning', 4, 2],
+					['pci_dss', 'compliant', 3, 0]
+				] as const
+			).map(([framework, status, compliant, warning]) => ({
+				framework,
+				status,
+				compliant_checks: compliant,
+				warning_checks: warning,
+				non_compliant_checks: 0,
+				not_applicable_checks: 0,
+				total_checks: compliant + warning
+			})),
+			checks: [
+				{
+					id: 'data_retention_enforced',
+					frameworks: ['gdpr', 'soc2', 'iso27001'],
+					status: 'warning',
+					facts: { attention: ['lookup_directory:not_deleted'], expired_records: 0 }
+				},
+				{
+					id: 'audit_logging',
+					frameworks: ['soc2', 'iso27001', 'pci_dss'],
+					status: 'compliant',
+					facts: { hot_query_status: 'supported', entries_last_30_days: 3120 }
+				},
+				{
+					id: 'admin_mfa',
+					frameworks: ['soc2', 'iso27001', 'pci_dss'],
+					status: 'compliant',
+					facts: { admins: 3, with_passkey: 3 }
+				},
+				{
+					id: 'user_mfa_enforced',
+					frameworks: ['soc2', 'iso27001'],
+					status: 'warning',
+					facts: { assurance_enabled: false, default_aal: null, scopes_requiring_mfa: [] }
+				},
+				{
+					id: 'user_mfa_coverage',
+					frameworks: ['soc2', 'iso27001'],
+					status: 'compliant',
+					facts: { users: 120, with_mfa: 104, percent: 87 }
+				},
+				{
+					id: 'rbac_configured',
+					frameworks: ['gdpr', 'soc2', 'iso27001', 'pci_dss'],
+					status: 'compliant',
+					facts: { active_roles: 6, users_with_roles: 18 }
+				}
+			],
+			data_retention: {
+				expired_records: 0,
+				attention: [{ category: 'lookup_directory', reason: 'not_deleted' }]
+			},
+			audit_log: {
+				enabled: true,
+				event_retention_days: 90,
+				pii_retention_days: 365,
+				total_entries: 48200,
+				entries_last_30_days: 3120,
+				hot_query_status: 'supported'
+			},
+			mfa: {
+				enforcement: {
+					enforced: false,
+					assurance_enabled: false,
+					default_aal: null,
+					scopes_requiring_mfa: []
+				},
+				admins: { admins: 3, with_passkey: 3 },
+				users: {
+					users: 120,
+					with_passkey: 80,
+					with_totp: 40,
+					with_any: 104,
+					guests: 7,
+					deleting: 1
+				}
+			},
+			access_control: { active_roles: 6, users_with_roles: 18 },
+			accounts: { pending_deletions: 1 },
+			generated_at: new Date(NOW).toISOString()
+		});
+	}
+	if (segments[1] === 'access-reviews') {
+		if (segments.length === 2 && method === 'GET') {
+			return json({ data: [complianceReview()], pagination: { has_more: false } });
+		}
+		if (segments.length === 2 && method === 'POST') {
+			return json({ ...complianceReview(), ...(await readJson(event.request)) }, 201);
+		}
+		if (segments.length === 3 && method === 'GET') {
 			return json({
-				tenant_id: TENANT_ID,
-				overall_status: 'partial',
-				frameworks: [
-					{
-						framework: 'gdpr',
-						status: 'partial',
-						compliant_checks: 3,
-						warning_checks: 1,
-						non_compliant_checks: 0,
-						total_checks: 6,
-						last_assessment: nowIso
-					},
-					{
-						framework: 'soc2',
-						status: 'compliant',
-						compliant_checks: 4,
-						warning_checks: 0,
-						non_compliant_checks: 0,
-						total_checks: 4,
-						last_assessment: nowIso
-					},
-					{
-						framework: 'iso27001',
-						status: 'not_applicable',
-						compliant_checks: 0,
-						warning_checks: 0,
-						non_compliant_checks: 0,
-						total_checks: 5,
-						last_assessment: null
-					}
-				],
-				recent_checks: [
-					{
-						id: 'dev-check-retention',
-						name: 'Data retention policy',
-						description: 'Retention policy is configured for key data categories.',
-						framework: 'gdpr',
-						status: 'compliant',
-						last_checked: nowIso,
-						details: 'Default retention and cleanup schedule are enabled.'
-					},
-					{
-						id: 'dev-check-mfa',
-						name: 'MFA coverage',
-						description: 'Administrative MFA coverage is monitored.',
-						framework: 'soc2',
-						status: 'partial',
-						last_checked: nowIso,
-						details: 'Dev mock coverage is below the target threshold.'
-					}
-				],
-				data_retention: {
-					policy_enabled: true,
-					retention_days: 365,
-					last_cleanup: new Date(NOW - 86400000 * 6).toISOString(),
-					pending_deletions: 25,
-					gdpr_compliant: true
-				},
-				audit_log: {
-					enabled: true,
-					retention_days: 365,
-					total_entries: 12840,
-					entries_last_30_days: 930
-				},
-				mfa_status: {
-					enabled: true,
-					users_with_mfa: 18,
-					users_without_mfa: 2,
-					mfa_coverage_percent: 90
-				},
-				encryption: {
-					data_at_rest: true,
-					data_in_transit: true,
-					key_rotation_enabled: true,
-					last_key_rotation: new Date(NOW - 86400000 * 21).toISOString()
-				},
-				access_control: {
-					rbac_enabled: true,
-					active_roles: 8,
-					users_with_roles: 20,
-					orphaned_permissions: 0,
-					last_review: new Date(NOW - 86400000 * 12).toISOString()
-				},
-				last_updated: nowIso
+				...complianceReview(),
+				application: { applied: 0, failed: 0, pending_revocations: 1 }
 			});
 		}
-
-		if (segments[1] === 'access-reviews') {
-			if (method === 'POST') {
-				const input = await readJson(event.request);
-				return json(
-					{
-						review_id: `dev-review-${Date.now()}`,
-						tenant_id: TENANT_ID,
-						name: typeof input.name === 'string' ? input.name : 'Dev access review',
-						scope: typeof input.scope === 'string' ? input.scope : 'all_users',
-						scope_value: typeof input.scope_target === 'string' ? input.scope_target : null,
-						status: 'in_progress',
-						reviewer_id: 'dev-admin',
-						progress: { total_items: 20, reviewed_items: 0 },
-						started_at: nowIso,
-						due_date: typeof input.due_date === 'string' ? input.due_date : null
-					},
-					201
-				);
-			}
+		if (segments[3] === 'items' && method === 'GET') {
+			const decision = event.url.searchParams.get('decision');
 			return json({
-				data: [
-					{
-						review_id: 'dev-review-quarterly',
-						tenant_id: TENANT_ID,
-						name: 'Quarterly privileged access review',
-						scope: 'all_users',
-						scope_value: null,
-						status: 'in_progress',
-						reviewer_id: 'dev-admin',
-						progress: {
-							total_items: 20,
-							reviewed_items: 12,
-							approved_items: 11,
-							revoked_items: 1,
-							completion_percent: 60
-						},
-						started_at: new Date(NOW - 86400000 * 4).toISOString(),
-						due_date: new Date(NOW + 86400000 * 10).toISOString()
-					}
-				],
+				data: complianceReviewItems.filter((item) =>
+					decision === 'pending'
+						? item.decision === null
+						: decision
+							? item.decision === decision
+							: true
+				),
 				pagination: { has_more: false }
 			});
 		}
-
-		if (segments[1] === 'reports' && method === 'GET') {
+		if (segments[3] === 'decisions' && method === 'POST') {
+			const body = (await readJson(event.request)) as {
+				item_ids?: string[];
+				decision?: 'approved' | 'revoked';
+				justification?: string;
+			};
+			for (const item of complianceReviewItems) {
+				if (body.item_ids?.includes(item.item_id)) {
+					item.decision = body.decision ?? null;
+					item.decided_by = 'dev-admin';
+					item.decided_at = new Date().toISOString();
+					item.justification = body.justification ?? null;
+				}
+			}
 			return json({
-				data: [
-					{
-						report_id: 'dev-report-gdpr',
-						tenant_id: TENANT_ID,
-						type: 'gdpr',
-						name: 'GDPR readiness summary',
-						status: 'completed',
-						requested_by: 'dev-admin',
-						parameters: { include_evidence: true },
-						result_url: null,
-						created_at: new Date(NOW - 86400000 * 3).toISOString(),
-						completed_at: new Date(NOW - 86400000 * 3 + 120000).toISOString(),
-						expires_at: new Date(NOW + 86400000 * 27).toISOString()
-					}
-				],
-				pagination: { has_more: false }
+				updated: body.item_ids?.length ?? 0,
+				unchanged: 0,
+				review: complianceReview()
+			});
+		}
+		if (segments[3] === 'complete' && method === 'POST') {
+			const undecided = complianceReviewItems.filter((item) => item.decision === null).length;
+			if (undecided > 0) {
+				return json({ error: 'access_review_undecided_items', undecided_items: undecided }, 409);
+			}
+			return json({
+				completed: true,
+				applied: 1,
+				failed: 0,
+				remaining: 0,
+				review: complianceReview()
+			});
+		}
+		if (segments[3] === 'cancel' && method === 'POST') {
+			return json({ ...complianceReview(), status: 'cancelled' });
+		}
+	}
+	if (segments[1] === 'reports') {
+		if (segments.length === 2 && method === 'GET') {
+			return json({ data: complianceReports, pagination: { has_more: false } });
+		}
+		if (segments.length === 2 && method === 'POST') {
+			const body = (await readJson(event.request)) as { type?: string; name?: string };
+			const report = {
+				...complianceReports[0],
+				report_id: `report-${complianceReports.length + 1}`,
+				type: body.type ?? 'compliance_status',
+				name: body.name ?? `${body.type ?? 'compliance_status'} report`,
+				created_at: new Date().toISOString()
+			};
+			complianceReports.unshift(report);
+			return json(report, 201);
+		}
+		if (segments[3] === 'download' && method === 'GET') {
+			return new Response('kind,id,registration_state,passkey,totp\nadmin,dev-admin,,yes,\n', {
+				headers: {
+					'Content-Type': 'text/csv; charset=utf-8',
+					'Content-Disposition': `attachment; filename="compliance-${segments[2]}.csv"`
+				}
 			});
 		}
 	}
-
-	if (segments[0] === 'data-retention') {
-		if (segments[1] === 'status' && method === 'GET') {
-			return json({
-				tenant_id: TENANT_ID,
-				policy: {
-					enabled: true,
-					default_retention_days: 365,
-					cleanup_schedule: 'daily',
-					last_cleanup_run: new Date(NOW - 86400000 * 6).toISOString(),
-					next_cleanup_run: new Date(NOW + 86400000).toISOString()
-				},
-				categories: devRetentionCategories,
-				summary: {
-					total_records: devRetentionCategories.reduce(
-						(sum, category) => sum + category.total_records,
-						0
-					),
-					records_pending_deletion: devRetentionCategories.reduce(
-						(sum, category) => sum + category.records_pending_deletion,
-						0
-					),
-					records_deleted_last_30_days: devRetentionCategories.reduce(
-						(sum, category) => sum + category.records_deleted_last_30_days,
-						0
-					),
-					storage_savings_estimate_mb: 128
-				},
-				gdpr_compliance: {
-					right_to_erasure_supported: true,
-					anonymization_supported: true,
-					tombstone_retention_days: 730,
-					pending_erasure_requests: 2
-				},
-				last_updated: nowIso
-			});
-		}
-
-		if (segments[1] === 'categories') {
-			if (segments.length === 2 && method === 'GET') {
-				return json({
-					categories: devRetentionCategories.map((category) => ({
-						category: category.category,
-						retention_days: category.retention_days,
-						updated_at: nowIso
-					}))
-				});
-			}
-
-			if (segments[2] && method === 'PUT') {
-				const input = await readJson(event.request);
-				const retentionDays = typeof input.retention_days === 'number' ? input.retention_days : 365;
-				return json({
-					category: segments[2],
-					retention_days: retentionDays,
-					updated_at: nowIso
-				});
-			}
-		}
-
-		if (segments[1] === 'cleanup' && method === 'POST') {
-			return json({
-				id: `dev-cleanup-${Date.now()}`,
-				status: 'completed',
-				records_deleted: { audit_logs: 18, session_data: 7 },
-				started_at: nowIso,
-				completed_at: new Date(NOW + 1500).toISOString(),
-				error_message: null
-			});
-		}
-
-		if (segments[1] === 'cleanup' && segments[2] && method === 'GET') {
-			return json({
-				id: segments[2],
-				status: 'completed',
-				records_deleted: { audit_logs: 18, session_data: 7 },
-				started_at: nowIso,
-				completed_at: new Date(NOW + 1500).toISOString(),
-				error_message: null
-			});
-		}
-	}
-
 	return null;
 }
 
@@ -11646,30 +11666,6 @@ async function handleSettings(event: RequestEvent, segments: string[]): Promise<
 		}
 		if (segments[1] === 'meta' && segments[2]) {
 			return json(settingsMetaResponse(segments[2]));
-		}
-		if (segments[1] === 'ui-config') {
-			if (method === 'PUT') {
-				const input = await readJson(event.request);
-				const baseUrl =
-					typeof input.baseUrl === 'string' && input.baseUrl.trim() ? input.baseUrl.trim() : null;
-				const inputPaths =
-					input.paths && typeof input.paths === 'object'
-						? (input.paths as Record<string, unknown>)
-						: {};
-				devUiConfig = {
-					baseUrl,
-					paths: {
-						...devUiConfig.paths,
-						...Object.fromEntries(
-							Object.entries(inputPaths)
-								.filter(([, value]) => typeof value === 'string')
-								.map(([key, value]) => [key, String(value)])
-						)
-					}
-				};
-				return json({ config: devUiConfig });
-			}
-			return json(uiConfigResponse());
 		}
 		if (segments[1] === 'cache-mode' && segments[2] === 'info') {
 			return json({

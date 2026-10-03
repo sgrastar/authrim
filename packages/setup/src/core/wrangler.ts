@@ -320,10 +320,12 @@ const COMPONENT_KV_BINDINGS: Record<WorkerComponent, KVNamespace[]> = {
     'AUTHRIM_CONFIG',
     'TENANT_RUNTIME_REGISTRY',
   ],
+  // REBAC_CACHE: removing a role or a membership drops the subject's cached RBAC claims.
   'ar-management': [
     'CLIENTS_CACHE',
     'SETTINGS',
     'USER_CACHE',
+    'REBAC_CACHE',
     'INITIAL_ACCESS_TOKENS',
     'AUTHRIM_CONFIG',
     'TENANT_RUNTIME_REGISTRY',
@@ -334,7 +336,8 @@ const COMPONENT_KV_BINDINGS: Record<WorkerComponent, KVNamespace[]> = {
   'ar-policy': ['SETTINGS', 'REBAC_CACHE', 'AUTHRIM_CONFIG', 'TENANT_RUNTIME_REGISTRY'],
   'ar-saml': ['SETTINGS', 'AUTHRIM_CONFIG', 'STATE_STORE', 'TENANT_RUNTIME_REGISTRY'],
   'ar-bridge': ['SETTINGS', 'AUTHRIM_CONFIG', 'TENANT_RUNTIME_REGISTRY'],
-  'ar-vc': ['AUTHRIM_CONFIG', 'TENANT_RUNTIME_REGISTRY'],
+  // SETTINGS: the Settings API values credential issuance reads (custom claim schemas).
+  'ar-vc': ['SETTINGS', 'AUTHRIM_CONFIG', 'TENANT_RUNTIME_REGISTRY'],
 };
 
 // =============================================================================

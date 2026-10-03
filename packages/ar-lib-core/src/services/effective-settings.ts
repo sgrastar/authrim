@@ -2,8 +2,8 @@
  * Effective settings for runtime workers.
  *
  * Resolves a category the way the Settings API shows it: the client's value, else the tenant's,
- * else the platform's (where the category has those scopes), else a value saved in an older
- * platform-wide store, else the environment variable, else the built-in default.
+ * else the platform's (where the category has those scopes), else the environment variable, else
+ * the built-in default.
  */
 
 import {
@@ -19,9 +19,8 @@ import {
   type SettingSource,
   type SettingsManager,
 } from '../utils/settings-manager';
-import { readLegacySettings, type LegacySettingsEnv } from './legacy-settings';
 
-export interface EffectiveSettingsEnv extends LegacySettingsEnv {
+export interface EffectiveSettingsEnv {
   SETTINGS?: KVNamespace;
 }
 
@@ -30,23 +29,10 @@ export interface EffectiveSettingsTarget {
   /** The client, for categories that can be set per client. */
   clientId?: string;
   /**
-   * Read the Settings API documents and the older stores without the per-isolate caches, for
-   * admin responses that must show a value just saved; a store that cannot be read then fails
-   * the call.
+   * Read the settings documents without the per-isolate cache, for admin responses that must
+   * show a value just saved.
    */
-  freshLegacy?: boolean;
-  /**
-   * The older stores' values, already read by the caller (so a decision uses one read of them);
-   * the older stores are then not read here.
-   */
-  legacy?: Record<string, unknown>;
-  /** The keys the caller needs: only the older stores that can hold them are read. */
-  keys?: readonly string[];
-  /**
-   * Fail when an older store cannot be read, instead of skipping its values: for callers that
-   * fall back to those stores themselves. Implied by `freshLegacy`.
-   */
-  strictLegacy?: boolean;
+  fresh?: boolean;
 }
 
 const RUNTIME_CACHE_TTL_MS = 60_000;
@@ -99,46 +85,24 @@ export async function resolveEffectiveSettingsWithSources(
     clientId && isCategoryAvailableAtScope(category, 'client')
       ? { type: 'client', id: clientId, tenantId: target.tenantId }
       : { type: 'tenant', id: target.tenantId };
-  const legacy =
-    target.legacy ??
-    (await readLegacySettings(env, category, {
-      tenantId: target.tenantId,
-      fresh: target.freshLegacy,
-      strict: target.strictLegacy ?? target.freshLegacy,
-      keys: target.keys,
-    }));
-  const { values, sources } = await managerFor(env, target.freshLegacy === true).getAll(
-    category,
-    scope,
-    {
-      parents: settingsParentScopes(category, scope),
-      legacy,
-    }
-  );
+  const { values, sources } = await managerFor(env, target.fresh === true).getAll(category, scope, {
+    parents: settingsParentScopes(category, scope),
+  });
   return { values, sources };
 }
 
 /**
  * The effective values of one category for the whole platform (for settings that only the
- * platform can set): the platform's Settings API value, else a value saved in an older store,
- * else the environment variable, else the built-in default; with where each value came from.
+ * platform can set): the platform's value, else the environment variable, else the built-in
+ * default; with where each value came from.
  */
 export async function resolvePlatformSettingsWithSources(
   env: EffectiveSettingsEnv,
   category: CategoryName,
-  options: Pick<EffectiveSettingsTarget, 'keys' | 'strictLegacy' | 'freshLegacy' | 'legacy'> = {}
+  options: Pick<EffectiveSettingsTarget, 'fresh'> = {}
 ): Promise<{ values: Record<string, unknown>; sources: Record<string, SettingSource> }> {
-  const legacy =
-    options.legacy ??
-    (await readLegacySettings(env, category, {
-      fresh: options.freshLegacy,
-      strict: options.strictLegacy ?? options.freshLegacy,
-      keys: options.keys,
-    }));
-  const { values, sources } = await managerFor(env, options.freshLegacy === true).getAll(
-    category,
-    { type: 'platform' },
-    { legacy }
-  );
+  const { values, sources } = await managerFor(env, options.fresh === true).getAll(category, {
+    type: 'platform',
+  });
   return { values, sources };
 }

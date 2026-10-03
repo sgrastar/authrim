@@ -754,6 +754,8 @@ export async function emailCodeVerifyHandler(c: Context<{ Bindings: Env }>) {
               amr: ['otp'],
               acr: 'urn:mace:incommon:iap:bronze',
               authTime,
+              // When the code was verified (milliseconds), for assurance step-ups.
+              proven_at: now,
             },
             tenantId
           )

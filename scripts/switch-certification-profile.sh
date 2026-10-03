@@ -1,10 +1,10 @@
 #!/bin/bash
 
 # OpenID Certification Profile Switcher
-# Usage: ./switch-certification-profile.sh <profile-name> [api-url]
+# Usage: ADMIN_TOKEN=<token> ./switch-certification-profile.sh <profile-name> [api-url]
 #
-# Note: Admin API currently does not require authentication.
-#       ADMIN_TOKEN is optional and reserved for future ABAC implementation.
+# Applies a certification profile (a set of Settings API values) to the tenant the API URL
+# resolves to. ADMIN_TOKEN is an Admin API bearer token allowed to change that tenant's settings.
 
 set -e
 
@@ -38,20 +38,18 @@ print_warning() {
     echo -e "${YELLOW}⚠${NC} $1"
 }
 
+# The Admin API request headers (an array, so the token is passed as one argument)
+AUTH_HEADERS=(-H "Authorization: Bearer ${ADMIN_TOKEN}")
+
 # Function to list available profiles
 list_profiles() {
     print_info "Fetching available certification profiles..."
 
-    local auth_header=""
-    if [ -n "$ADMIN_TOKEN" ]; then
-        auth_header="-H \"Authorization: Bearer ${ADMIN_TOKEN}\""
-    fi
-
-    local response=$(curl -s -X GET "${API_URL}/api/admin/settings/profiles" \
-        ${auth_header})
+    local response=$(curl -s -X GET "${API_URL}/api/admin/certification-profiles" \
+        "${AUTH_HEADERS[@]}")
 
     if [ $? -eq 0 ]; then
-        echo "$response" | jq -r '.profiles[] | "\(.name): \(.description)"'
+        echo "$response" | jq -r '.profiles[] | "\(.id): \(.name) - \(.description)"'
         return 0
     else
         print_error "Failed to fetch profiles"
@@ -65,25 +63,21 @@ apply_profile() {
 
     print_info "Applying certification profile: ${profile}"
 
-    local auth_header=""
-    if [ -n "$ADMIN_TOKEN" ]; then
-        auth_header="-H \"Authorization: Bearer ${ADMIN_TOKEN}\""
-    fi
-
-    local response=$(curl -s -w "\n%{http_code}" -X PUT \
-        "${API_URL}/api/admin/settings/profile/${profile}" \
+    local response=$(curl -s -w "\n%{http_code}" -X POST \
+        "${API_URL}/api/admin/certification-profiles/${profile}/apply" \
         -H "Content-Type: application/json" \
-        ${auth_header})
+        "${AUTH_HEADERS[@]}")
 
     local http_code=$(echo "$response" | tail -n1)
-    local body=$(echo "$response" | head -n-1)
+    local body=$(echo "$response" | sed '$d')
 
     if [ "$http_code" -eq 200 ]; then
         print_success "Profile applied successfully"
         echo "$body" | jq '{
             profile: .profile,
-            fapi: .settings.fapi,
-            oidc: .settings.oidc
+            tenant_id: .tenant_id,
+            applied: (.results | map_values(.applied)),
+            cleared: (.results | map_values(.cleared))
         }'
         return 0
     else
@@ -122,13 +116,10 @@ main() {
         exit 1
     fi
 
-    # Note about authentication
     if [ -z "$ADMIN_TOKEN" ]; then
-        print_warning "ADMIN_TOKEN not set (authentication currently not required)"
-        print_info "Note: Admin API is currently accessible without authentication."
-        print_info "      ABAC-based authentication will be implemented in the future."
-    else
-        print_info "Using ADMIN_TOKEN for authentication"
+        print_error "ADMIN_TOKEN is required (an Admin API bearer token)"
+        print_info "Usage: ADMIN_TOKEN=<token> $0 <profile-name> [api-url]"
+        exit 1
     fi
 
     print_info "API URL: ${API_URL}"
@@ -140,10 +131,9 @@ main() {
         echo ""
         list_profiles
         echo ""
-        print_info "Usage: $0 <profile-name> [api-url]"
-        print_info "Example: $0 fapi-2"
-        print_info "Example: $0 basic-op https://your-authrim.com"
-        print_info "Example: $0 fapi-2-dpop http://localhost:8786"
+        print_info "Usage: ADMIN_TOKEN=<token> $0 <profile-name> [api-url]"
+        print_info "Example: ADMIN_TOKEN=<token> $0 basic-op https://auth.example.com"
+        print_info "Example: ADMIN_TOKEN=<token> $0 fapi-2 http://localhost:8786"
         echo ""
         exit 0
     fi

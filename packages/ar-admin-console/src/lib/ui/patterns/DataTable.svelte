@@ -8,6 +8,8 @@
 		align?: 'start' | 'center' | 'end';
 		/** Header becomes a sort button. Sorting itself is up to the page (client or server). */
 		sortable?: boolean;
+		/** The label is for screen readers only (a column of row actions, say); never empty. */
+		hideLabel?: boolean;
 	}
 
 	export type SortDirection = 'asc' | 'desc';
@@ -153,6 +155,8 @@
 											: 'arrowDown'}
 								/>
 							</button>
+						{:else if column.hideLabel}
+							<span class="sr-only">{column.label}</span>
 						{:else}
 							{column.label}
 						{/if}

@@ -26,6 +26,8 @@ export interface FeatureFlagsSettings {
   'feature.enable_token_exchange': boolean;
   'feature.enable_client_credentials': boolean;
   'feature.enable_custom_claims': boolean;
+  'feature.enable_custom_claim_schemas': boolean;
+  'feature.enable_custom_claim_schemas_introspection': boolean;
 
   // Development & Testing
   'feature.enable_test_endpoints': boolean;
@@ -41,6 +43,10 @@ export interface FeatureFlagsSettings {
 
   // UI Contract / Flow Engine
   'feature.enable_flow_engine': boolean;
+  'feature.enable_rar': boolean;
+  'feature.enable_ai_scopes': boolean;
+  'feature.enable_ai_ephemeral_auth': boolean;
+  'feature.enable_id_jag': boolean;
 }
 
 /**
@@ -111,6 +117,8 @@ export const FEATURE_FLAGS_SETTINGS_META: Record<keyof FeatureFlagsSettings, Set
     type: 'boolean',
     default: false,
     envKey: 'ENABLE_ID_LEVEL_PERMISSIONS',
+    // As token issuance reads it.
+    envBoolean: 'exactly-true',
     label: 'Enable ID-Level Permissions',
     description: 'Enable fine-grained ID-level permission checks',
     visibility: 'admin',
@@ -152,9 +160,29 @@ export const FEATURE_FLAGS_SETTINGS_META: Record<keyof FeatureFlagsSettings, Set
     type: 'boolean',
     default: false,
     envKey: 'ENABLE_CUSTOM_CLAIMS',
-    label: 'Enable Custom Claims',
-    description: 'Allow custom claims in ID tokens and UserInfo',
+    // As token issuance reads it.
+    envBoolean: 'exactly-true',
+    label: 'Enable Token Claim Rules',
+    description: 'Add the claims of the token claim rules to access tokens',
     visibility: 'admin',
+  },
+  'feature.enable_custom_claim_schemas': {
+    key: 'feature.enable_custom_claim_schemas',
+    type: 'boolean',
+    default: false,
+    label: 'Enable Custom Claim Schemas',
+    description:
+      'Add the claims of the custom claim schemas to ID tokens, UserInfo and verifiable credentials',
+    visibility: 'admin',
+  },
+  'feature.enable_custom_claim_schemas_introspection': {
+    key: 'feature.enable_custom_claim_schemas_introspection',
+    type: 'boolean',
+    default: false,
+    label: 'Custom Claim Schemas in Introspection',
+    description: 'Also add the claims of the custom claim schemas to token introspection responses',
+    visibility: 'admin',
+    dependsOn: [{ key: 'feature.enable_custom_claim_schemas', value: true }],
   },
 
   // Development & Testing
@@ -169,11 +197,15 @@ export const FEATURE_FLAGS_SETTINGS_META: Record<keyof FeatureFlagsSettings, Set
   },
   'feature.enable_check_api': {
     key: 'feature.enable_check_api',
+    // The Check API is turned on or off before the request's tenant is known: platform only.
+    scopes: ['platform'],
     type: 'boolean',
     default: false,
     envKey: 'ENABLE_CHECK_API',
+    // As the Check API reads it: on only as 'true'.
+    envBoolean: 'exactly-true',
     label: 'Enable Check API',
-    description: 'Enable /api/check endpoint for permission checking',
+    description: 'Enable /api/check endpoint for permission checking, for the whole platform',
     visibility: 'admin',
   },
   'feature.enable_mock_auth': {
@@ -235,6 +267,47 @@ export const FEATURE_FLAGS_SETTINGS_META: Record<keyof FeatureFlagsSettings, Set
       'Enable server-driven UI flows (UI Contract). When disabled, standard OIDC flows will be used.',
     visibility: 'admin',
   },
+  'feature.enable_rar': {
+    key: 'feature.enable_rar',
+    type: 'boolean',
+    envKey: 'ENABLE_RAR',
+    envBoolean: 'exactly-true',
+    label: 'Rich Authorization Requests',
+    description:
+      'Accept authorization_details (RFC 9396) at authorize and PAR, and advertise the supported types',
+    visibility: 'admin',
+    default: false,
+  },
+  'feature.enable_ai_scopes': {
+    key: 'feature.enable_ai_scopes',
+    type: 'boolean',
+    envKey: 'ENABLE_AI_SCOPES',
+    envBoolean: 'exactly-true',
+    label: 'AI Scopes',
+    description: 'Advertise the ai:* scopes (ai:read, ai:write, ai:execute, ai:admin) in discovery',
+    visibility: 'admin',
+    default: false,
+  },
+  'feature.enable_ai_ephemeral_auth': {
+    key: 'feature.enable_ai_ephemeral_auth',
+    type: 'boolean',
+    envKey: 'ENABLE_AI_EPHEMERAL_AUTH',
+    envBoolean: 'exactly-true',
+    label: 'AI Ephemeral Auth',
+    description: "Allow tenants to use the 'ai_ephemeral' tenant profile",
+    visibility: 'admin',
+    default: false,
+  },
+  'feature.enable_id_jag': {
+    key: 'feature.enable_id_jag',
+    type: 'boolean',
+    envKey: 'ENABLE_ID_JAG',
+    envBoolean: 'exactly-true',
+    label: 'ID-JAG',
+    description: 'Issue Identity Assertion Authorization Grants (ID-JAG) through Token Exchange',
+    visibility: 'admin',
+    default: false,
+  },
 };
 
 /**
@@ -265,6 +338,8 @@ export const FEATURE_FLAGS_DEFAULTS: FeatureFlagsSettings = {
   'feature.enable_token_exchange': false,
   'feature.enable_client_credentials': false,
   'feature.enable_custom_claims': false,
+  'feature.enable_custom_claim_schemas': false,
+  'feature.enable_custom_claim_schemas_introspection': false,
 
   // Development & Testing
   'feature.enable_test_endpoints': false,
@@ -280,4 +355,8 @@ export const FEATURE_FLAGS_DEFAULTS: FeatureFlagsSettings = {
 
   // UI Contract / Flow Engine
   'feature.enable_flow_engine': false,
+  'feature.enable_rar': false,
+  'feature.enable_ai_scopes': false,
+  'feature.enable_ai_ephemeral_auth': false,
+  'feature.enable_id_jag': false,
 };

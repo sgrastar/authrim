@@ -6,8 +6,7 @@ const TENANT_SCOPED_PATH_TENANT_ID_PATTERNS = [
 ] as const;
 const SETTINGS_METADATA_PATH =
   /^\/api\/admin\/settings\/(?:schema|diff|validate|meta(?:\/.*)?)\/?$/;
-const SETTINGS_PLATFORM_PATH =
-  /^\/api\/admin\/settings\/(?:ui-config|ui-routing|cache-mode(?:\/info)?)\/?$/;
+const SETTINGS_PLATFORM_PATH = /^\/api\/admin\/settings\/cache-mode(?:\/info)?\/?$/;
 const RUNTIME_PROFILE_PLATFORM_PATH = /^\/api\/admin\/runtime-profiles(?:\/.*)?\/?$/;
 const ADMIN_PLATFORM_AUTH_PATH =
   /^\/api\/admin\/(?:auth\/.*|setup-token\/.*|sessions\/me|me\/session|logout)\/?$/;

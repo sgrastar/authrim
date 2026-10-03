@@ -209,6 +209,7 @@ function createApp(options: {
   db?: D1Database;
   tenantId?: string;
   adminAuth?: { userId?: string; authMethod?: string; roles?: string[] };
+  env?: Record<string, string>;
 }) {
   const mockKV = options.kv === null ? undefined : (options.kv ?? createMockKV({}));
   const mockDB = options.db ?? createMockDB();
@@ -226,6 +227,7 @@ function createApp(options: {
       DB: mockDB,
       SETTINGS: mockKV,
       ENVIRONMENT: 'test',
+      ...options.env,
     };
     await next();
   });
@@ -616,12 +618,12 @@ describe('Policy API - Tenant Policy', () => {
       expect(body.message).toContain('Invalid profile type');
     });
 
-    it('allows ai_ephemeral when enabled by this tenant certification profile', async () => {
+    it("allows ai_ephemeral when this tenant's Settings API turns it on", async () => {
       const mockKV = createMockKV({
         getValues: {
           'test:contract:tenant:test-tenant': createTenantContract({ version: 1 }),
-          'settings:tenant:test-tenant:certification-profile': {
-            oidc: { aiEphemeralAuth: { enabled: true } },
+          'settings:tenant:test-tenant:feature-flags': {
+            'feature.enable_ai_ephemeral_auth': true,
           },
         },
       });
@@ -640,6 +642,46 @@ describe('Policy API - Tenant Policy', () => {
       expect(await parseJson(res)).toMatchObject({
         policy: { profile: 'ai_ephemeral', version: 2 },
       });
+    });
+
+    it('keeps ai_ephemeral refused when the Settings API turns it off, even if env enables it', async () => {
+      const mockKV = createMockKV({
+        getValues: {
+          'test:contract:tenant:test-tenant': createTenantContract({ version: 1 }),
+          'settings:tenant:test-tenant:feature-flags': {
+            'feature.enable_ai_ephemeral_auth': false,
+          },
+        },
+      });
+      const { app } = createApp({ kv: mockKV, env: { ENABLE_AI_EPHEMERAL_AUTH: 'true' } });
+
+      const res = await app.request('/api/admin/tenant-policy', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ policy: { profile: 'ai_ephemeral' }, ifMatch: '1' }),
+      });
+
+      expect(res.status).toBe(400);
+      expect(await parseJson(res)).toMatchObject({ error: 'feature_disabled' });
+    });
+
+    it('refuses ai_ephemeral when its setting cannot be read, even if env enables it', async () => {
+      const mockKV = createMockKV({
+        getValues: {
+          'test:contract:tenant:test-tenant': createTenantContract({ version: 1 }),
+          'settings:tenant:test-tenant:feature-flags': [],
+        },
+      });
+      const { app } = createApp({ kv: mockKV, env: { ENABLE_AI_EPHEMERAL_AUTH: 'true' } });
+
+      const res = await app.request('/api/admin/tenant-policy', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ policy: { profile: 'ai_ephemeral' }, ifMatch: '1' }),
+      });
+
+      expect(res.status).toBe(503);
+      expect(await parseJson(res)).toMatchObject({ error: 'temporarily_unavailable' });
     });
 
     it('should track status changes in history', async () => {

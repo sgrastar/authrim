@@ -9,7 +9,6 @@ const {
   mockValidateRedirectUri,
   mockValidateScope,
   mockIsRedirectUriRegistered,
-  mockCreateOAuthConfigManager,
   mockValidateClientAssertion,
   mockValidateDPoPProof,
   mockVerifyClientSecretHash,
@@ -40,7 +39,6 @@ const {
     mockValidateRedirectUri: vi.fn(),
     mockValidateScope: vi.fn(),
     mockIsRedirectUriRegistered: vi.fn(),
-    mockCreateOAuthConfigManager: vi.fn(),
     mockValidateClientAssertion: vi.fn(),
     mockValidateDPoPProof: vi.fn(),
     mockVerifyClientSecretHash: vi.fn(),
@@ -68,7 +66,6 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     validateRedirectUri: mockValidateRedirectUri,
     validateScope: mockValidateScope,
     isRedirectUriRegistered: mockIsRedirectUriRegistered,
-    createOAuthConfigManager: mockCreateOAuthConfigManager,
     validateClientAssertion: mockValidateClientAssertion,
     validateDPoPProof: mockValidateDPoPProof,
     verifyClientSecretHash: mockVerifyClientSecretHash,
@@ -98,6 +95,13 @@ vi.mock('jose', async (importOriginal) => {
 });
 
 import { parHandler } from '../par';
+import { systemSettingsPlatformDocuments } from '@authrim/ar-lib-core/utils/system-settings-fields';
+
+/** A SETTINGS mock holding an older `system_settings` document's values as platform values. */
+function platformSettingsGet(document: Record<string, unknown>) {
+  const documents = systemSettingsPlatformDocuments(document);
+  return vi.fn(async (key: string) => (key in documents ? JSON.stringify(documents[key]) : null));
+}
 
 function createMockContext(options: {
   method?: string;
@@ -150,7 +154,6 @@ describe('PAR Handler', () => {
     mockValidateRedirectUri.mockReturnValue({ valid: true });
     mockValidateScope.mockReturnValue({ valid: true });
     mockIsRedirectUriRegistered.mockReturnValue(true);
-    mockCreateOAuthConfigManager.mockReturnValue({});
     mockValidateClientAssertion.mockResolvedValue({ valid: true });
     mockValidateDPoPProof.mockResolvedValue({ valid: true, jkt: 'thumbprint' });
     mockVerifyClientSecretHash.mockResolvedValue(true);
@@ -422,13 +425,11 @@ describe('PAR Handler', () => {
       },
       env: {
         SETTINGS: {
-          get: vi.fn().mockResolvedValue(
-            JSON.stringify({
-              fapi: {
-                enabled: true,
-              },
-            })
-          ),
+          get: platformSettingsGet({
+            fapi: {
+              enabled: true,
+            },
+          }),
         } as unknown as KVNamespace,
       },
     });
@@ -465,13 +466,11 @@ describe('PAR Handler', () => {
       },
       env: {
         SETTINGS: {
-          get: vi.fn().mockResolvedValue(
-            JSON.stringify({
-              fapi: {
-                enabled: true,
-              },
-            })
-          ),
+          get: platformSettingsGet({
+            fapi: {
+              enabled: true,
+            },
+          }),
         } as unknown as KVNamespace,
       },
     });
@@ -552,14 +551,12 @@ describe('PAR Handler', () => {
       },
       env: {
         SETTINGS: {
-          get: vi.fn().mockResolvedValue(
-            JSON.stringify({
-              fapi: {
-                enabled: true,
-                requirePrivateKeyJwt: false,
-              },
-            })
-          ),
+          get: platformSettingsGet({
+            fapi: {
+              enabled: true,
+              requirePrivateKeyJwt: false,
+            },
+          }),
         } as unknown as KVNamespace,
       },
     });
@@ -621,13 +618,11 @@ describe('PAR Handler', () => {
       env: {
         ENVIRONMENT: 'development',
         SETTINGS: {
-          get: vi.fn().mockResolvedValue(
-            JSON.stringify({
-              oidc: {
-                allowNoneAlgorithm: true,
-              },
-            })
-          ),
+          get: platformSettingsGet({
+            oidc: {
+              allowNoneAlgorithm: true,
+            },
+          }),
         } as unknown as KVNamespace,
       },
     });
@@ -695,6 +690,126 @@ describe('PAR Handler', () => {
       }
     );
     expect(mockStoreRequestRpc).toHaveBeenCalled();
+  });
+
+  describe('assurance FAL3 (fal3_requires_par)', () => {
+    const ASSURANCE_KEY = 'settings:tenant:default:assurance';
+    const fal3 = (read?: () => Promise<string | null>) =>
+      ({
+        get: vi.fn(async (key: string) =>
+          key === ASSURANCE_KEY
+            ? read
+              ? read()
+              : JSON.stringify({ 'assurance.enabled': true, 'assurance.default_fal': 'FAL3' })
+            : null
+        ),
+      }) as unknown as KVNamespace;
+    const plainBody = {
+      client_id: 'client-123',
+      response_type: 'code',
+      redirect_uri: 'https://client.example.com/callback',
+      scope: 'openid profile',
+    };
+
+    it('refuses a request without a signed request object', async () => {
+      const c = createMockContext({
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        body: plainBody,
+        env: { SETTINGS: fal3() },
+      });
+
+      const response = await parHandler(c);
+
+      expect(response.status).toBe(400);
+      await expect(response.json()).resolves.toMatchObject({ error: 'invalid_request' });
+      expect(mockStoreRequestRpc).not.toHaveBeenCalled();
+    });
+
+    it('records that a signed request object was verified', async () => {
+      const key = { kty: 'RSA', kid: 'client-key', alg: 'RS256', use: 'sig', n: 'n', e: 'AQAB' };
+      mockGetClientCached.mockResolvedValue({
+        client_id: 'client-123',
+        token_endpoint_auth_method: 'none',
+        redirect_uris: ['https://client.example.com/callback'],
+        jwks: { keys: [key] },
+      });
+      mockParseTokenHeader.mockReturnValue({ alg: 'RS256', kid: 'client-key' });
+      const c = createMockContext({
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        body: { ...plainBody, request: 'signed-request-object' },
+        env: { SETTINGS: fal3() },
+      });
+
+      const response = await parHandler(c);
+
+      expect(response.status).toBe(201);
+      expect(mockStoreRequestRpc).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ request_object_signed: true }),
+        })
+      );
+    });
+
+    it.each([
+      [
+        'a request object signed over its issuer alone',
+        { iss: 'client-123', aud: 'https://op.example.com' },
+        {},
+      ],
+      [
+        'unsigned PKCE added in the form',
+        { ...plainBody },
+        { code_challenge: 'a'.repeat(43), code_challenge_method: 'S256' },
+      ],
+    ])('takes %s for no signed request', async (_label, payload, extraForm) => {
+      const key = { kty: 'RSA', kid: 'client-key', alg: 'RS256', use: 'sig', n: 'n', e: 'AQAB' };
+      mockGetClientCached.mockResolvedValue({
+        client_id: 'client-123',
+        token_endpoint_auth_method: 'none',
+        redirect_uris: ['https://client.example.com/callback'],
+        jwks: { keys: [key] },
+      });
+      mockParseTokenHeader.mockReturnValue({ alg: 'RS256', kid: 'client-key' });
+      mockJwtVerify.mockResolvedValue({ payload });
+      const c = createMockContext({
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        body: { ...plainBody, ...extraForm, request: 'signed-request-object' },
+        env: { SETTINGS: fal3() },
+      });
+
+      const response = await parHandler(c);
+
+      expect(response.status).toBe(400);
+      await expect(response.json()).resolves.toMatchObject({ error: 'invalid_request' });
+      expect(mockStoreRequestRpc).not.toHaveBeenCalled();
+    });
+
+    it('stops when the assurance settings cannot be read', async () => {
+      const c = createMockContext({
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        body: plainBody,
+        env: {
+          SETTINGS: fal3(async () => {
+            throw new Error('KV unavailable');
+          }),
+        },
+      });
+
+      const response = await parHandler(c);
+
+      expect(response.status).toBe(503);
+      expect(mockStoreRequestRpc).not.toHaveBeenCalled();
+    });
+
+    it('records nothing of the kind for a request without one', async () => {
+      const c = createMockContext({
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        body: plainBody,
+      });
+
+      expect((await parHandler(c)).status).toBe(201);
+      expect(mockStoreRequestRpc.mock.calls[0][0].data).not.toHaveProperty('request_object_signed');
+    });
   });
 
   it('rejects signed request objects that do not use RS256', async () => {
@@ -786,23 +901,19 @@ describe('PAR Handler', () => {
       },
       env: {
         SETTINGS: {
-          get: vi.fn().mockImplementation(async (key: string) =>
-            key.includes('certification-profile')
-              ? JSON.stringify({
-                  fapi: {
-                    enabled: true,
-                    messageSigning: {
-                      enabled: true,
-                      requireSignedRequestObject: true,
-                      requestObjectSigningAlgorithms: ['ES256', 'PS256', 'EdDSA'],
-                      maxRequestObjectAgeSeconds: 3600,
-                      maxRequestObjectLifetimeSeconds: 3600,
-                      clockSkewSeconds: 10,
-                    },
-                  },
-                })
-              : null
-          ),
+          get: platformSettingsGet({
+            fapi: {
+              enabled: true,
+              messageSigning: {
+                enabled: true,
+                requireSignedRequestObject: true,
+                requestObjectSigningAlgorithms: ['ES256', 'PS256', 'EdDSA'],
+                maxRequestObjectAgeSeconds: 3600,
+                maxRequestObjectLifetimeSeconds: 3600,
+                clockSkewSeconds: 10,
+              },
+            },
+          }),
         } as unknown as KVNamespace,
       },
     });
@@ -867,20 +978,16 @@ describe('PAR Handler', () => {
       },
       env: {
         SETTINGS: {
-          get: vi.fn().mockImplementation(async (key: string) =>
-            key.includes('certification-profile')
-              ? JSON.stringify({
-                  fapi: {
-                    enabled: true,
-                    messageSigning: {
-                      enabled: true,
-                      requireSignedRequestObject: true,
-                      requestObjectSigningAlgorithms: ['ES256'],
-                    },
-                  },
-                })
-              : null
-          ),
+          get: platformSettingsGet({
+            fapi: {
+              enabled: true,
+              messageSigning: {
+                enabled: true,
+                requireSignedRequestObject: true,
+                requestObjectSigningAlgorithms: ['ES256'],
+              },
+            },
+          }),
         } as unknown as KVNamespace,
       },
     });
@@ -934,20 +1041,16 @@ describe('PAR Handler', () => {
       },
       env: {
         SETTINGS: {
-          get: vi.fn().mockImplementation(async (key: string) =>
-            key.includes('certification-profile')
-              ? JSON.stringify({
-                  fapi: {
-                    enabled: true,
-                    messageSigning: {
-                      enabled: true,
-                      requireSignedRequestObject: true,
-                      requestObjectSigningAlgorithms: ['ES256'],
-                    },
-                  },
-                })
-              : null
-          ),
+          get: platformSettingsGet({
+            fapi: {
+              enabled: true,
+              messageSigning: {
+                enabled: true,
+                requireSignedRequestObject: true,
+                requestObjectSigningAlgorithms: ['ES256'],
+              },
+            },
+          }),
         } as unknown as KVNamespace,
       },
     });
@@ -1037,19 +1140,15 @@ describe('PAR Handler', () => {
       },
       env: {
         SETTINGS: {
-          get: vi.fn().mockImplementation(async (key: string) =>
-            key.includes('certification-profile')
-              ? JSON.stringify({
-                  fapi: {
-                    enabled: true,
-                    messageSigning: {
-                      enabled: true,
-                      requestObjectSigningAlgorithms: ['ES256'],
-                    },
-                  },
-                })
-              : null
-          ),
+          get: platformSettingsGet({
+            fapi: {
+              enabled: true,
+              messageSigning: {
+                enabled: true,
+                requestObjectSigningAlgorithms: ['ES256'],
+              },
+            },
+          }),
         } as unknown as KVNamespace,
       },
     });
@@ -1269,7 +1368,7 @@ describe('PAR Handler', () => {
       },
       env: {
         SETTINGS: {
-          get: vi.fn().mockResolvedValue(JSON.stringify({ fapi: { enabled: true } })),
+          get: platformSettingsGet({ fapi: { enabled: true } }),
         } as unknown as KVNamespace,
       },
     });
@@ -1340,6 +1439,47 @@ describe('PAR Handler', () => {
     expect(mockStoreRequestRpc).not.toHaveBeenCalled();
   });
 
+  it.each([
+    [{ 'oauth.par_default_ttl': 120 }, false, 120],
+    [{ 'oauth.par_default_ttl': 120, 'oauth.par_fapi_ttl': 30 }, true, 30],
+    // No FAPI lifetime: FAPI mode uses the PAR lifetime.
+    [{ 'oauth.par_default_ttl': 45 }, true, 45],
+  ])(
+    'uses the request_uri lifetimes saved in the Settings API (%j, FAPI %s)',
+    async (oauth, fapi, expiresIn) => {
+      const documents: Record<string, unknown> = {
+        'settings:tenant:default:oauth': oauth,
+        'settings:tenant:default:security': {
+          'security.fapi_enabled': fapi,
+          'security.fapi_require_private_key_jwt': false,
+        },
+      };
+      const c = createMockContext({
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        body: {
+          client_id: 'client-123',
+          response_type: 'code',
+          redirect_uri: 'https://client.example.com/callback',
+          scope: 'openid profile',
+          code_challenge: 'a'.repeat(43),
+          code_challenge_method: 'S256',
+        },
+        env: {
+          SETTINGS: {
+            get: vi.fn(async (key: string) =>
+              key in documents ? JSON.stringify(documents[key]) : null
+            ),
+          } as unknown as KVNamespace,
+        },
+      });
+
+      const response = await parHandler(c);
+
+      expect(response.status).toBe(201);
+      await expect(response.json()).resolves.toMatchObject({ expires_in: expiresIn });
+    }
+  );
+
   it('caps FAPI request_uri expiry at 60 seconds on successful requests', async () => {
     const c = createMockContext({
       headers: {
@@ -1356,15 +1496,13 @@ describe('PAR Handler', () => {
       },
       env: {
         SETTINGS: {
-          get: vi.fn().mockResolvedValue(
-            JSON.stringify({
-              fapi: {
-                enabled: true,
-                requirePrivateKeyJwt: false,
-                maxRequestUriExpiry: 120,
-              },
-            })
-          ),
+          get: platformSettingsGet({
+            fapi: {
+              enabled: true,
+              requirePrivateKeyJwt: false,
+              maxRequestUriExpiry: 120,
+            },
+          }),
         } as unknown as KVNamespace,
       },
     });
@@ -1662,14 +1800,12 @@ describe('PAR Handler', () => {
       },
       env: {
         SETTINGS: {
-          get: vi.fn().mockResolvedValue(
-            JSON.stringify({
-              fapi: {
-                enabled: true,
-                clientAssertionAudience: 'issuer',
-              },
-            })
-          ),
+          get: platformSettingsGet({
+            fapi: {
+              enabled: true,
+              clientAssertionAudience: 'issuer',
+            },
+          }),
         } as unknown as KVNamespace,
       },
     });
@@ -1711,11 +1847,7 @@ describe('PAR Handler', () => {
       env: {
         ENVIRONMENT: 'development',
         SETTINGS: {
-          get: vi
-            .fn()
-            .mockResolvedValue(
-              JSON.stringify({ oidc: { allowNoneAlgorithm: true, parExpiry: 90 } })
-            ),
+          get: platformSettingsGet({ oidc: { allowNoneAlgorithm: true, parExpiry: 90 } }),
         } as unknown as KVNamespace,
       },
     });
@@ -1746,9 +1878,7 @@ describe('PAR Handler', () => {
       env: {
         ENVIRONMENT: environment,
         SETTINGS: {
-          get: vi
-            .fn()
-            .mockResolvedValue(JSON.stringify({ oidc: { allowNoneAlgorithm: allowNone } })),
+          get: platformSettingsGet({ oidc: { allowNoneAlgorithm: allowNone } }),
         } as unknown as KVNamespace,
       },
     });
@@ -1800,11 +1930,7 @@ describe('PAR Handler', () => {
       env: {
         ENVIRONMENT: 'development',
         SETTINGS: {
-          get: vi
-            .fn()
-            .mockResolvedValue(
-              JSON.stringify({ oidc: { allowNoneAlgorithm: true, parExpiry: 90 } })
-            ),
+          get: platformSettingsGet({ oidc: { allowNoneAlgorithm: true, parExpiry: 90 } }),
         } as unknown as KVNamespace,
       },
     });

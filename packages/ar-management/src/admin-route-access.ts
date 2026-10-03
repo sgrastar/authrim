@@ -405,6 +405,16 @@ export const ADMIN_ROUTE_ACCESS_RULES: AdminRouteAccessRule[] = [
     ADMIN_PERMISSIONS.ACCOUNT_LEGAL_HOLDS_WRITE,
     'account legal hold lifecycle'
   ),
+  readOnly(
+    '/api/admin/users/:id/assurance',
+    ADMIN_PERMISSIONS.ACCOUNT_ASSURANCE_READ,
+    'identity assurance of a person'
+  ),
+  writeOnly(
+    '/api/admin/users/:id/assurance/*',
+    ADMIN_PERMISSIONS.ACCOUNT_ASSURANCE_WRITE,
+    'identity assurance evidence'
+  ),
   ...byMethod(
     '/api/admin/users',
     ADMIN_PERMISSIONS.USERS_READ,
@@ -989,6 +999,41 @@ export const ADMIN_ROUTE_ACCESS_RULES: AdminRouteAccessRule[] = [
     ADMIN_PERMISSIONS.SECURITY_WRITE,
     ADMIN_PERMISSIONS.SECURITY_WRITE,
     'SCIM inbound settings'
+  ),
+  ...byMethod(
+    '/api/admin/certification-profiles',
+    ADMIN_PERMISSIONS.SETTINGS_READ,
+    ADMIN_PERMISSIONS.SETTINGS_WRITE,
+    ADMIN_PERMISSIONS.SETTINGS_WRITE,
+    'certification profiles'
+  ),
+  ...byMethod(
+    '/api/admin/certification-profiles/*',
+    ADMIN_PERMISSIONS.SETTINGS_READ,
+    ADMIN_PERMISSIONS.SETTINGS_WRITE,
+    ADMIN_PERMISSIONS.SETTINGS_WRITE,
+    'certification profiles'
+  ),
+  ...byMethod(
+    '/api/admin/rate-limits/profile-override',
+    ADMIN_PERMISSIONS.SETTINGS_READ,
+    ADMIN_PERMISSIONS.SETTINGS_WRITE,
+    ADMIN_PERMISSIONS.SETTINGS_WRITE,
+    'rate limit profile override'
+  ),
+  ...byMethod(
+    '/api/admin/logout-failures',
+    ADMIN_PERMISSIONS.SETTINGS_READ,
+    ADMIN_PERMISSIONS.SETTINGS_WRITE,
+    ADMIN_PERMISSIONS.SETTINGS_WRITE,
+    'logout notification failures'
+  ),
+  ...byMethod(
+    '/api/admin/logout-failures/*',
+    ADMIN_PERMISSIONS.SETTINGS_READ,
+    ADMIN_PERMISSIONS.SETTINGS_WRITE,
+    ADMIN_PERMISSIONS.SETTINGS_WRITE,
+    'logout notification failures'
   ),
   ...byMethod(
     '/api/admin/check-api-keys',

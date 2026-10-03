@@ -11,13 +11,18 @@ describe('login and signup entry motion', () => {
 		for (const page of ['routes/login/+page.svelte', 'routes/signup/+page.svelte']) {
 			const pageSource = source(page);
 
-			expect(pageSource).toContain('class="auth-page"');
-			expect(pageSource).toContain('class:auth-page--entry-motion={entryMotionEnabled}');
+			expect(pageSource).toContain('entryMotion={entryMotionEnabled}');
 			expect(pageSource).toContain('class="auth-entry-form"');
 			expect(pageSource).toContain('class="auth-provider-stack space-y-3"');
 			expect(pageSource).toContain('if (initialAuthUiLoading) return;');
 			expect(pageSource).toContain('entryMotionEnabled = false;');
 		}
+	});
+
+	it('lets the shared shell carry the reveal class', () => {
+		expect(source('lib/components/AuthPageShell.svelte')).toContain(
+			'class:auth-page--entry-motion={entryMotion}'
+		);
 	});
 
 	it('reveals only transform and opacity in reading order', () => {

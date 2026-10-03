@@ -148,6 +148,42 @@ export async function consumeTotpAuthenticationState(
   }
 }
 
+/**
+ * The account's authentication state as its Durable Object holds it (lifecycle null: not
+ * initialized yet; sign-in then hydrates it from the canonical account).
+ */
+export async function readAccountAuthenticationState(
+  env: Pick<Env, 'SESSION_REVOCATION_STORE'>,
+  tenantId: string,
+  userId: string
+): Promise<AccountAuthenticationSnapshot> {
+  return getSessionRevocationStore(env, tenantId, userId).getAccountStateRpc(
+    tenantId,
+    userId,
+    `account:${userId}`
+  );
+}
+
+/**
+ * Initializes an account's authentication state that has none yet from the canonical account
+ * (as sign-in does), so a change made to the canonical account next is not read back as the
+ * state it started from. An initialized state is left as it is.
+ */
+export async function initializeAccountAuthenticationFromAccount(
+  env: Pick<Env, 'SESSION_REVOCATION_STORE'>,
+  tenantId: string,
+  userId: string,
+  hydration: AccountAuthenticationHydration
+): Promise<AccountAuthenticationSnapshot> {
+  return getSessionRevocationStore(env, tenantId, userId).initializeAccountStateRpc(
+    tenantId,
+    userId,
+    `account:${userId}`,
+    hydration.lifecycle,
+    hydration.sourceVersionMs
+  );
+}
+
 export async function transitionAccountAuthenticationState(
   env: Pick<Env, 'SESSION_REVOCATION_STORE'>,
   input: {

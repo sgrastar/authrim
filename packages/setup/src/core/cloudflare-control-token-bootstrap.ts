@@ -168,7 +168,14 @@ export type ControlTokenSecretName =
 
 export interface CloudflareTokenCapabilityDiagnostic {
   issuedFor: ControlTokenResourceClass;
-  probes: Readonly<Record<ControlTokenResourceClass, CloudflareTokenCapability>>;
+  probes: Readonly<Record<ControlTokenResourceClass, CloudflareTokenCapability | 'not_checked'>>;
+}
+
+export function formatCloudflareTokenCapabilityDiagnostic(
+  diagnostic: CloudflareTokenCapabilityDiagnostic
+): string {
+  const { issuedFor, probes } = diagnostic;
+  return `Scoped token capability mismatch (${issuedFor}): d1=${probes.d1}, workers=${probes.workers}, kv=${probes.kv}, r2=${probes.r2}`;
 }
 
 export interface CloudflareTokenPermissionGroup {
@@ -275,11 +282,30 @@ export class CloudflareTokenBootstrapError extends Error {
     readonly code: string,
     readonly cleanupRequired: boolean = false,
     readonly capabilityDiagnostic?: CloudflareTokenCapabilityDiagnostic,
-    readonly bootstrapRetainedForRetry: boolean = false
+    readonly bootstrapRetainedForRetry: boolean = false,
+    readonly apiOperation?: CloudflareTokenApiOperation
   ) {
     super(code);
     this.name = 'CloudflareTokenBootstrapError';
   }
+}
+
+export type CloudflareTokenApiOperation =
+  | 'verify_token'
+  | 'read_token'
+  | 'list_tokens'
+  | 'list_permission_groups'
+  | 'create_token'
+  | 'delete_token';
+
+function tokenApiOperation(path: string, method: string): CloudflareTokenApiOperation {
+  const pathname = new URL(path).pathname;
+  if (pathname.endsWith('/permission_groups')) return 'list_permission_groups';
+  if (pathname.endsWith('/verify')) return 'verify_token';
+  if (method === 'POST') return 'create_token';
+  if (method === 'DELETE') return 'delete_token';
+  if (/\/tokens\/[0-9a-f]{32}$/u.test(pathname)) return 'read_token';
+  return 'list_tokens';
 }
 
 function requiredAccountId(accountId: string): string {
@@ -392,9 +418,9 @@ async function probeScopedToken(input: {
     r2: `/accounts/${input.accountId}/r2/buckets?per_page=1`,
   }[input.resource];
   for (let attempt = 0; ; attempt += 1) {
-    let status: number;
+    let response: { status: number; success?: boolean; hasResult?: boolean };
     try {
-      status = await fetchWithinDeadline({
+      response = await fetchWithinDeadline({
         fetcher: input.fetcher,
         url: `${API_BASE}${path}`,
         init: {
@@ -404,7 +430,15 @@ async function probeScopedToken(input: {
         deadline,
         attemptTimeoutMs,
         timeoutCode: 'cloudflare_token_capability_probe_timeout',
-        consume: (response) => response.status,
+        consume: async (result) => {
+          if (!result.ok) return { status: result.status };
+          const envelope = (await result.json()) as CloudflareEnvelope<unknown>;
+          return {
+            status: result.status,
+            success: envelope.success,
+            hasResult: envelope.result !== undefined,
+          };
+        },
       });
     } catch {
       const delayMs = TOKEN_CAPABILITY_PROBE_RETRY_DELAYS_MS[attempt];
@@ -418,10 +452,13 @@ async function probeScopedToken(input: {
       }
       throw new CloudflareTokenBootstrapError('cloudflare_token_capability_probe_unavailable');
     }
-    if (status >= 200 && status < 300) return 'allowed';
-    if (status === 401 || status === 403) return 'denied';
+    if (response.status >= 200 && response.status < 300) {
+      if (response.success === true && response.hasResult === true) return 'allowed';
+      throw new CloudflareTokenBootstrapError('cloudflare_token_capability_probe_unavailable');
+    }
+    if (response.status === 401 || response.status === 403) return 'denied';
     const delayMs = TOKEN_CAPABILITY_PROBE_RETRY_DELAYS_MS[attempt];
-    if (isRetryableTokenApiStatus(status) && delayMs !== undefined) {
+    if (isRetryableTokenApiStatus(response.status) && delayMs !== undefined) {
       try {
         await waitWithinDeadline(delayMs, deadline, 'cloudflare_token_capability_probe_timeout');
         continue;
@@ -759,13 +796,6 @@ const CHILD_TOKEN_SPEC = {
   },
 } as const;
 
-const CONTROL_TOKEN_RESOURCE_CLASSES: readonly ControlTokenResourceClass[] = [
-  'd1',
-  'workers',
-  'kv',
-  'r2',
-];
-
 const CHILD_TOKEN_CAPABILITY_STABILIZATION_DELAYS_MS = [
   500, 1_000, 2_000, 4_000, 8_000, 8_000, 8_000,
 ] as const;
@@ -782,17 +812,11 @@ async function validateIssuedChildCapabilities(input: {
 }): Promise<void> {
   const delays = input.stabilizationDelaysMs ?? CHILD_TOKEN_CAPABILITY_STABILIZATION_DELAYS_MS;
   for (let attempt = 0; ; attempt += 1) {
-    let capabilities: Array<{
-      resourceClass: ControlTokenResourceClass;
-      capability: CloudflareTokenCapability;
-    }>;
+    let capability: CloudflareTokenCapability;
     try {
-      capabilities = await Promise.all(
-        CONTROL_TOKEN_RESOURCE_CLASSES.map(async (resourceClass) => ({
-          resourceClass,
-          capability: await input.authority.probeIssuedToken(input.token, resourceClass),
-        }))
-      );
+      // The caller's policy readback proves the token's declared scope. A successful GET against
+      // another product only proves that endpoint is readable; it cannot prove write authority.
+      capability = await input.authority.probeIssuedToken(input.token, input.resourceClass);
     } catch (error) {
       const delayMs = delays[attempt];
       if (
@@ -805,25 +829,21 @@ async function validateIssuedChildCapabilities(input: {
       }
       throw error;
     }
-    const probes = Object.fromEntries(
-      capabilities.map(({ resourceClass, capability }) => [resourceClass, capability])
-    ) as Record<ControlTokenResourceClass, CloudflareTokenCapability>;
-    if (
-      capabilities.every(({ resourceClass, capability }) =>
-        resourceClass === input.resourceClass ? capability === 'allowed' : capability === 'denied'
-      )
-    ) {
-      return;
-    }
-    const allDenied = capabilities.every(({ capability }) => capability === 'denied');
+    if (capability === 'allowed') return;
     const delayMs = delays[attempt];
-    if (allDenied && delayMs !== undefined) {
+    if (delayMs !== undefined) {
       await waitForCapabilityStabilization(delayMs);
       continue;
     }
     throw new CloudflareTokenBootstrapError('cloudflare_child_token_capability_invalid', false, {
       issuedFor: input.resourceClass,
-      probes,
+      probes: {
+        d1: 'not_checked',
+        workers: 'not_checked',
+        kv: 'not_checked',
+        r2: 'not_checked',
+        [input.resourceClass]: capability,
+      },
     });
   }
 }
@@ -847,14 +867,21 @@ function validateExactChildPolicy(
   permissionGroupId: string
 ): void {
   const expectedResource = `${ACCOUNT_RESOURCE_PREFIX}${accountId}`;
+  const policies = Array.isArray(token.policies) ? token.policies : [];
+  const policy = policies[0];
+  const groups = Array.isArray(policy?.permission_groups) ? policy.permission_groups : [];
+  const resources = policy?.resources;
   if (
     token.status !== 'active' ||
-    token.policies.length !== 1 ||
-    token.policies[0]?.effect !== 'allow' ||
-    token.policies[0]?.permission_groups.length !== 1 ||
-    token.policies[0]?.permission_groups[0]?.id !== permissionGroupId ||
-    Object.keys(token.policies[0]?.resources ?? {}).length !== 1 ||
-    token.policies[0]?.resources[expectedResource] !== '*'
+    policies.length !== 1 ||
+    policy?.effect !== 'allow' ||
+    groups.length !== 1 ||
+    groups[0]?.id !== permissionGroupId ||
+    !resources ||
+    typeof resources !== 'object' ||
+    Array.isArray(resources) ||
+    Object.keys(resources).length !== 1 ||
+    resources[expectedResource] !== '*'
   ) {
     throw new CloudflareTokenBootstrapError('cloudflare_child_token_scope_invalid');
   }
@@ -869,24 +896,56 @@ function validateBootstrapPolicy(
     ownership === 'account'
       ? ['Account API Tokens Write', 'Account API Tokens Edit']
       : ['API Tokens Write', 'API Tokens Edit'];
-  const groups = token.policies.flatMap((policy) => policy.permission_groups);
-  const resources = token.policies[0]?.resources ?? {};
+  const policies = Array.isArray(token.policies) ? token.policies : [];
+  const expectedAccountResource = `${ACCOUNT_RESOURCE_PREFIX}${requiredAccountId(accountId)}`;
+  const grantsTokenManagement = policies.some((policy) => {
+    if (policy.effect !== 'allow' || !Array.isArray(policy.permission_groups)) return false;
+    const permissionGroups: readonly { id: string; name?: string }[] = policy.permission_groups;
+    if (!permissionGroups.some((group) => allowedNames.includes(group.name ?? ''))) {
+      return false;
+    }
+    const resources = policy.resources;
+    if (!resources || typeof resources !== 'object' || Array.isArray(resources)) return false;
+    if (ownership === 'account') {
+      return (
+        resources[expectedAccountResource] === '*' ||
+        resources[`${ACCOUNT_RESOURCE_PREFIX}*`] === '*'
+      );
+    }
+    return Object.entries(resources).some(
+      ([key, value]) =>
+        value === '*' && /^com\.cloudflare\.api\.user\.(?:[A-Za-z0-9_-]{1,128}|\*)$/u.test(key)
+    );
+  });
+  if (token.status !== 'active' || !grantsTokenManagement) {
+    throw new CloudflareTokenBootstrapError('cloudflare_bootstrap_token_scope_invalid');
+  }
+}
+
+/** Recovery authority is separately supplied and must not be a broad operator credential. */
+function validateNarrowRecoveryTokenPolicy(
+  token: CloudflareTokenRecord,
+  ownership: CloudflareTokenOwnership,
+  accountId: string
+): void {
+  validateBootstrapPolicy(token, ownership, accountId);
+  const policies = Array.isArray(token.policies) ? token.policies : [];
+  const policy = policies[0];
+  const groups = Array.isArray(policy?.permission_groups) ? policy.permission_groups : [];
+  const resources =
+    policy?.resources && typeof policy.resources === 'object' && !Array.isArray(policy.resources)
+      ? policy.resources
+      : {};
   const resourceEntries = Object.entries(resources);
   const expectedAccountResource = `${ACCOUNT_RESOURCE_PREFIX}${requiredAccountId(accountId)}`;
-  const hasExactResource =
-    resourceEntries.length === 1 &&
-    resourceEntries[0]?.[1] === '*' &&
-    (ownership === 'account'
-      ? resourceEntries[0]?.[0] === expectedAccountResource
-      : /^com\.cloudflare\.api\.user\.[A-Za-z0-9_-]{1,128}$/u.test(resourceEntries[0]?.[0] ?? ''));
   if (
-    token.status !== 'active' ||
-    token.policies.length !== 1 ||
-    token.policies[0]?.effect !== 'allow' ||
+    policies.length !== 1 ||
     groups.length !== 1 ||
-    !groups[0]?.name ||
-    !allowedNames.includes(groups[0].name) ||
-    !hasExactResource
+    resourceEntries.length !== 1 ||
+    resourceEntries[0]?.[1] !== '*' ||
+    (ownership === 'account'
+      ? resourceEntries[0]?.[0] !== expectedAccountResource
+      : !/^com\.cloudflare\.api\.user\.[A-Za-z0-9_-]{1,128}$/u.test(resourceEntries[0]?.[0] ?? ''))
   ) {
     throw new CloudflareTokenBootstrapError('cloudflare_bootstrap_token_scope_invalid');
   }
@@ -1026,7 +1085,13 @@ async function createRecoverably(
         error.code !== 'cloudflare_token_api_response_lost' &&
         (status === null || !isRetryableTokenApiStatus(status))
       ) {
-        throw new CloudflareTokenBootstrapError('cloudflare_child_token_create_failed');
+        throw new CloudflareTokenBootstrapError(
+          'cloudflare_child_token_create_failed',
+          false,
+          undefined,
+          false,
+          error.apiOperation
+        );
       }
       await reconcileAmbiguousChildTokenCreation(
         authority,
@@ -1182,7 +1247,7 @@ export async function inspectCloudflareBootstrapRecoveryToken(input: {
       'cloudflare_bootstrap_recovery_token_identity_mismatch'
     );
   }
-  validateBootstrapPolicy(record, input.ownership, input.accountId);
+  validateNarrowRecoveryTokenPolicy(record, input.ownership, input.accountId);
   return { tokenId: self.id };
 }
 
@@ -1427,6 +1492,11 @@ export async function bootstrapControlWorkerTokens(input: {
       if (!verified || verified.id !== token.id || verified.status !== 'active') {
         throw new CloudflareTokenBootstrapError('cloudflare_child_token_verification_failed');
       }
+      const readback = await input.authority.getToken(token.id);
+      if (!readback || readback.id !== token.id || readback.name !== tokenName) {
+        throw new CloudflareTokenBootstrapError('cloudflare_child_token_scope_invalid');
+      }
+      validateExactChildPolicy(readback, accountId, permissionGroup.id);
       await validateIssuedChildCapabilities({
         authority: input.authority,
         token: token.value,
@@ -1576,7 +1646,8 @@ export async function bootstrapControlWorkerTokens(input: {
         error.code,
         preserveBootstrap ? false : error.cleanupRequired || cleanupRequired,
         error.capabilityDiagnostic,
-        preserveBootstrap
+        preserveBootstrap,
+        error.apiOperation
       );
     }
     throw new CloudflareTokenBootstrapError('cloudflare_token_bootstrap_failed', cleanupRequired);
@@ -1722,11 +1793,23 @@ export class CloudflareTokenAuthorityHttpClient implements CloudflareTokenAuthor
       throw new CloudflareTokenBootstrapError('cloudflare_token_api_response_lost');
     }
     if (!response.ok) {
-      throw new CloudflareTokenBootstrapError(`cloudflare_token_api_http_${response.status}`);
+      throw new CloudflareTokenBootstrapError(
+        `cloudflare_token_api_http_${response.status}`,
+        false,
+        undefined,
+        false,
+        tokenApiOperation(path, method)
+      );
     }
     const payload = response.payload!;
     if (payload.success === false || payload.result === undefined) {
-      throw new CloudflareTokenBootstrapError('cloudflare_token_api_rejected');
+      throw new CloudflareTokenBootstrapError(
+        'cloudflare_token_api_rejected',
+        false,
+        undefined,
+        false,
+        tokenApiOperation(path, method)
+      );
     }
     return payload;
   }
@@ -1755,6 +1838,14 @@ export class CloudflareTokenAuthorityHttpClient implements CloudflareTokenAuthor
         error.code === 'cloudflare_token_api_http_404'
       ) {
         return null;
+      }
+      if (
+        error instanceof CloudflareTokenBootstrapError &&
+        error.code === 'cloudflare_token_api_http_403'
+      ) {
+        // If exact-token reads are denied, accept only this ID from a complete,
+        // validated token inventory. Policy validation still runs at the call site.
+        return (await this.listTokens()).find((token) => token.id === tokenId) ?? null;
       }
       throw error;
     }
@@ -1882,6 +1973,45 @@ export class CloudflareTokenAuthorityHttpClient implements CloudflareTokenAuthor
       tokenApiOperationTimeoutMs: this.input.tokenApiOperationTimeoutMs,
     });
   }
+}
+
+/** Checks the supplied one-time token before a long initial deployment without mutating Cloudflare. */
+export async function preflightCloudflareBootstrapToken(input: {
+  accountId: string;
+  token: string;
+  fetcher?: typeof fetch;
+  tokenApiRetryDelaysMs?: readonly number[];
+}): Promise<CloudflareTokenOwnership> {
+  const accountId = requiredAccountId(input.accountId);
+  const token = input.token.trim();
+  const ownership = await detectCloudflareTokenOwnership({
+    accountId,
+    token,
+    fetcher: input.fetcher,
+    retryDelaysMs: input.tokenApiRetryDelaysMs,
+  });
+  if (!ownership) {
+    throw new CloudflareTokenBootstrapError('cloudflare_bootstrap_token_inactive');
+  }
+  const authority = new CloudflareTokenAuthorityHttpClient({
+    accountId,
+    ownership,
+    bootstrapToken: token,
+    fetcher: input.fetcher,
+    tokenApiRetryDelaysMs: input.tokenApiRetryDelaysMs,
+  });
+  const self = await authority.verifySelf();
+  if (!self || self.status !== 'active' || !TOKEN_ID.test(self.id)) {
+    throw new CloudflareTokenBootstrapError('cloudflare_bootstrap_token_inactive');
+  }
+  const record = await authority.getToken(self.id);
+  if (!record || record.id !== self.id) {
+    throw new CloudflareTokenBootstrapError('cloudflare_bootstrap_token_identity_mismatch');
+  }
+  validateBootstrapPolicy(record, ownership, accountId);
+  await authority.listTokens();
+  await authority.listPermissionGroups();
+  return ownership;
 }
 
 interface WranglerSecretCommandResult {

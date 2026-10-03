@@ -4,6 +4,17 @@ import { SignJWT, decodeJwt, exportJWK, exportPKCS8, generateKeyPair } from 'jos
 import { authorizeConfirmHandler, authorizeHandler, authorizeLoginHandler } from '../authorize';
 import { buildPolicyConstrainedRegionShardConfig } from '@authrim/ar-lib-core';
 import type { Env } from '@authrim/ar-lib-core/types/env';
+import { systemSettingsPlatformDocuments } from '@authrim/ar-lib-core/utils/system-settings-fields';
+
+/** Save an older `system_settings` document's values as the platform's Settings API values. */
+async function putSystemSettings(
+  kv: { put(key: string, value: string): Promise<unknown> },
+  document: Record<string, unknown>
+): Promise<void> {
+  for (const [key, values] of Object.entries(systemSettingsPlatformDocuments(document))) {
+    await kv.put(key, JSON.stringify(values));
+  }
+}
 
 const securityRegressionIt =
   process.env.AUTHRIM_SECURITY_REGRESSION_SUITE === 'true' ? it : it.skip;
@@ -219,6 +230,23 @@ function createMockSessionStore() {
               data,
             });
             return { id: sessionId };
+          }
+        ),
+      updateSessionDataRpc: vi
+        .fn()
+        .mockImplementation(
+          async (
+            sessionId: string,
+            updates: Record<string, unknown>,
+            options?: { ifDataMatches?: Record<string, unknown> }
+          ) => {
+            const session = sessions.get(sessionId);
+            if (!session) return null;
+            const stale = Object.entries(options?.ifDataMatches ?? {}).some(
+              ([field, value]) => JSON.stringify(session.data?.[field]) !== JSON.stringify(value)
+            );
+            if (!stale) session.data = { ...session.data, ...updates };
+            return session;
           }
         ),
       fetch: vi.fn().mockResolvedValue(new Response(JSON.stringify({ success: true }))),
@@ -817,14 +845,16 @@ describe('Authorization Handler', () => {
     });
 
     it('refuses a request without state when the state setting cannot be read', async () => {
+      // The state setting lives with the response types and PAR settings, which authorize reads
+      // first: the request is refused as soon as those cannot be read.
       await (env.SETTINGS as unknown as MockKVNamespace).put('settings:tenant:default:oauth', '');
       const response = await app.request(
         '/authorize?response_type=code&client_id=test-client&redirect_uri=https%3A%2F%2Fexample.com%2Fcallback&scope=openid',
         {},
         env
       );
-      expect(response.status).toBe(302);
-      expect(response.headers.get('location')).toContain('error=server_error');
+      expect(response.status).toBe(503);
+      await expect(response.json()).resolves.toMatchObject({ error: 'temporarily_unavailable' });
     });
 
     it.each([
@@ -879,10 +909,9 @@ describe('Authorization Handler', () => {
     });
 
     it('requires PAR by default when FAPI mode is enabled', async () => {
-      await (env.SETTINGS as unknown as MockKVNamespace).put(
-        'system_settings',
-        JSON.stringify({ fapi: { enabled: true } })
-      );
+      await putSystemSettings(env.SETTINGS as unknown as MockKVNamespace, {
+        fapi: { enabled: true },
+      });
       const response = await app.request(
         `${base}&code_challenge=${'a'.repeat(43)}&code_challenge_method=S256`,
         {},
@@ -916,10 +945,9 @@ describe('Authorization Handler', () => {
           token_endpoint_auth_method: 'private_key_jwt',
           jwks: { keys: [publicJwk] },
         });
-        await (env.SETTINGS as unknown as MockKVNamespace).put(
-          'system_settings',
-          JSON.stringify({ fapi: { enabled: true } })
-        );
+        await putSystemSettings(env.SETTINGS as unknown as MockKVNamespace, {
+          fapi: { enabled: true },
+        });
         await configureClientSettings(env, { 'client.sso_enabled': true });
         configureClientTrustPolicy(env);
         seedSession(env, 'par-jar-user');
@@ -1026,10 +1054,9 @@ describe('Authorization Handler', () => {
 
     it('resumes a server-side PAR authorization transaction after login without reusing request_uri', async () => {
       configureClientTrustPolicy(env);
-      await (env.SETTINGS as unknown as MockKVNamespace).put(
-        'system_settings',
-        JSON.stringify({ fapi: { enabled: true } })
-      );
+      await putSystemSettings(env.SETTINGS as unknown as MockKVNamespace, {
+        fapi: { enabled: true },
+      });
       getChallengeMap(env).set('fapi_login_confirmation', {
         id: 'fapi_login_confirmation',
         tenantId: 'default',
@@ -1282,10 +1309,9 @@ describe('Authorization Handler', () => {
     });
 
     it('does not let a front-channel continuation bypass FAPI PAR enforcement', async () => {
-      await (env.SETTINGS as unknown as MockKVNamespace).put(
-        'system_settings',
-        JSON.stringify({ fapi: { enabled: true } })
-      );
+      await putSystemSettings(env.SETTINGS as unknown as MockKVNamespace, {
+        fapi: { enabled: true },
+      });
       getChallengeMap(env).set('non_par_confirmation', {
         id: 'non_par_confirmation',
         tenantId: 'default',
@@ -1326,14 +1352,27 @@ describe('Authorization Handler', () => {
       expect(redirect.searchParams.get('error_description')).toContain('PAR is required');
     });
 
-    it('rejects public clients when FAPI explicitly disallows them', async () => {
-      await (env.SETTINGS as unknown as MockKVNamespace).put(
-        'system_settings',
-        JSON.stringify({
-          fapi: { enabled: true, allowPublicClients: false },
-          oidc: { requirePar: false },
-        })
-      );
+    /** A pushed request for test-client (FAPI requires PAR), as authorize reads it back. */
+    function pushedRequest(request: Record<string, unknown> = {}): string {
+      const requestUri = 'urn:ietf:params:oauth:request_uri:fapi_checks';
+      env.PAR_REQUEST_STORE = createMockPARRequestStore({
+        client_id: 'test-client',
+        response_type: 'code',
+        redirect_uri: 'https://example.com/callback',
+        scope: 'openid',
+        state: 'test-state',
+        code_challenge: 'a'.repeat(43),
+        code_challenge_method: 'S256',
+        ...request,
+      }) as unknown as Env['PAR_REQUEST_STORE'];
+      return `/authorize?client_id=test-client&request_uri=${encodeURIComponent(requestUri)}`;
+    }
+
+    it('requires PAR in FAPI mode even when the older document turns requirePar off', async () => {
+      await putSystemSettings(env.SETTINGS as unknown as MockKVNamespace, {
+        fapi: { enabled: true },
+        oidc: { requirePar: false },
+      });
       const response = await app.request(
         `${base}&code_challenge=${'a'.repeat(43)}&code_challenge_method=S256`,
         {},
@@ -1341,38 +1380,62 @@ describe('Authorization Handler', () => {
       );
       expect(response.status).toBe(302);
       const redirect = new URL(response.headers.get('location')!);
-      expect(redirect.searchParams.get('error')).toBe('invalid_client');
-      expect(redirect.searchParams.get('error_description')).toContain('Public clients');
+      expect(redirect.searchParams.get('error')).toBe('invalid_request');
+      expect(redirect.searchParams.get('error_description')).toContain('PAR is required in FAPI');
     });
 
-    it('rejects public clients when FAPI_ALLOW_PUBLIC_CLIENTS is false and nothing is saved', async () => {
-      await (env.SETTINGS as unknown as MockKVNamespace).put(
-        'system_settings',
-        JSON.stringify({ fapi: { enabled: true }, oidc: { requirePar: false } })
-      );
-      env.FAPI_ALLOW_PUBLIC_CLIENTS = 'false';
+    it('requires PAR outside FAPI mode when the tenant requires it', async () => {
+      await putSystemSettings(env.SETTINGS as unknown as MockKVNamespace, {
+        oidc: { requirePar: true },
+      });
       const refused = await app.request(
         `${base}&code_challenge=${'a'.repeat(43)}&code_challenge_method=S256`,
         {},
         env
       );
+      expect(refused.status).toBe(302);
+      const redirect = new URL(refused.headers.get('location')!);
+      expect(redirect.searchParams.get('error')).toBe('invalid_request');
+      expect(redirect.searchParams.get('error_description')).toBe(
+        'PAR is required. Use /par endpoint first.'
+      );
+
+      // A pushed request passes the check.
+      const pushed = await app.request(pushedRequest(), {}, env);
+      expect(pushed.headers.get('location') ?? '').not.toContain('PAR+is+required');
+    });
+
+    it('rejects public clients when FAPI explicitly disallows them', async () => {
+      await putSystemSettings(env.SETTINGS as unknown as MockKVNamespace, {
+        fapi: { enabled: true, allowPublicClients: false },
+      });
+      const response = await app.request(pushedRequest(), {}, env);
+      expect(response.status).toBe(302);
+      const redirect = new URL(response.headers.get('location')!);
+      expect(redirect.searchParams.get('error')).toBe('invalid_client');
+      expect(redirect.searchParams.get('error_description')).toContain('Public clients');
+    });
+
+    it('rejects public clients when FAPI_ALLOW_PUBLIC_CLIENTS is false and nothing is saved', async () => {
+      await putSystemSettings(env.SETTINGS as unknown as MockKVNamespace, {
+        fapi: { enabled: true },
+      });
+      env.FAPI_ALLOW_PUBLIC_CLIENTS = 'false';
+      const refused = await app.request(pushedRequest(), {}, env);
       expect(new URL(refused.headers.get('location')!).searchParams.get('error')).toBe(
         'invalid_client'
       );
 
-      // A saved value wins over the environment variable.
+      // A saved value wins over the environment variable (a new store: settings are cached).
+      env.SETTINGS = new MockKVNamespace() as unknown as KVNamespace;
       await (env.SETTINGS as unknown as MockKVNamespace).put(
-        'system_settings',
+        'settings:tenant:default:security',
         JSON.stringify({
-          fapi: { enabled: true, allowPublicClients: true },
-          oidc: { requirePar: false },
+          'security.fapi_enabled': true,
+          'security.fapi_allow_public_clients': true,
         })
       );
-      const allowed = await app.request(
-        `${base}&code_challenge=${'a'.repeat(43)}&code_challenge_method=S256`,
-        {},
-        env
-      );
+      const allowed = await app.request(pushedRequest(), {}, env);
       expect(allowed.headers.get('location')).not.toContain('error=invalid_client');
     });
 
@@ -1384,11 +1447,14 @@ describe('Authorization Handler', () => {
         response_types: ['code'],
         scope: 'openid',
       });
-      await (env.SETTINGS as unknown as MockKVNamespace).put(
-        'system_settings',
-        JSON.stringify({ fapi: { enabled: true }, oidc: { requirePar: false } })
+      await putSystemSettings(env.SETTINGS as unknown as MockKVNamespace, {
+        fapi: { enabled: true },
+      });
+      const response = await app.request(
+        pushedRequest({ code_challenge: undefined, code_challenge_method: undefined }),
+        {},
+        env
       );
-      const response = await app.request(base, {}, env);
       expect(response.status).toBe(302);
       const redirect = new URL(response.headers.get('location')!);
       expect(redirect.searchParams.get('error')).toBe('invalid_request');
@@ -1396,7 +1462,10 @@ describe('Authorization Handler', () => {
     });
 
     it('fails closed when security profile settings JSON is malformed', async () => {
-      await (env.SETTINGS as unknown as MockKVNamespace).put('system_settings', '{');
+      await (env.SETTINGS as unknown as MockKVNamespace).put(
+        'settings:tenant:default:security',
+        '{'
+      );
       const response = await app.request(base, {}, env);
       expect(response.status).toBe(503);
       await expect(response.json()).resolves.toMatchObject({
@@ -1489,8 +1558,8 @@ describe('Authorization Handler', () => {
       expect(redirectUrl.searchParams.get('error')).toBe('invalid_request');
       expect(redirectUrl.searchParams.get('error_description')).toContain('S256');
       const settingsKeys = settingsGet.mock.calls.map(([key]) => key);
+      // The client's settings are not read for a request refused before they are needed.
       expect(settingsKeys).not.toContain('settings:client:default:test-client:client');
-      expect(settingsKeys).not.toContain('settings:tenant:default:oauth');
     });
 
     it('should reject invalid code_challenge format', async () => {
@@ -1589,14 +1658,11 @@ describe('Authorization Handler', () => {
 
     it('should return a local 400 error page when response_type is missing and external UI is configured', async () => {
       env.ENABLE_CONFORMANCE_MODE = 'false';
-      await (env.SETTINGS as unknown as MockKVNamespace).put(
-        'system_settings',
-        JSON.stringify({
-          ui: {
-            baseUrl: 'https://login.example.com',
-          },
-        })
-      );
+      await putSystemSettings(env.SETTINGS as unknown as MockKVNamespace, {
+        ui: {
+          baseUrl: 'https://login.example.com',
+        },
+      });
 
       const response = await app.request(
         '/authorize?client_id=test-client&redirect_uri=https://example.com/callback&scope=openid',
@@ -1627,14 +1693,11 @@ describe('Authorization Handler', () => {
 
     it('should return a local 400 error page when response_type is unsupported and external UI is configured', async () => {
       env.ENABLE_CONFORMANCE_MODE = 'false';
-      await (env.SETTINGS as unknown as MockKVNamespace).put(
-        'system_settings',
-        JSON.stringify({
-          ui: {
-            baseUrl: 'https://login.example.com',
-          },
-        })
-      );
+      await putSystemSettings(env.SETTINGS as unknown as MockKVNamespace, {
+        ui: {
+          baseUrl: 'https://login.example.com',
+        },
+      });
 
       const response = await app.request(
         '/authorize?response_type=token&client_id=test-client&redirect_uri=https://example.com/callback&scope=openid',
@@ -1652,14 +1715,11 @@ describe('Authorization Handler', () => {
 
     it('escapes attacker-controlled values in local authorization error pages', async () => {
       env.ENABLE_CONFORMANCE_MODE = 'false';
-      await (env.SETTINGS as unknown as MockKVNamespace).put(
-        'system_settings',
-        JSON.stringify({
-          ui: {
-            baseUrl: 'https://login.example.com',
-          },
-        })
-      );
+      await putSystemSettings(env.SETTINGS as unknown as MockKVNamespace, {
+        ui: {
+          baseUrl: 'https://login.example.com',
+        },
+      });
 
       const response = await app.request(
         '/authorize?response_type=%3Cimg%20src%3Dx%20onerror%3Dalert(1)%3E&client_id=test-client&redirect_uri=https://example.com/callback&scope=openid',
@@ -2066,10 +2126,9 @@ describe('Authorization Handler', () => {
     securityRegressionIt(
       '[security regression] enforces a tenant code-only response type policy',
       async () => {
-        await (env.SETTINGS as unknown as MockKVNamespace).put(
-          'system_settings',
-          JSON.stringify({ oidc: { responseTypesSupported: ['code'] } })
-        );
+        await putSystemSettings(env.SETTINGS as unknown as MockKVNamespace, {
+          oidc: { responseTypesSupported: ['code'] },
+        });
         mockGetClient.mockResolvedValue({
           client_id: 'test-client',
           client_secret: 'test-secret',
@@ -2968,13 +3027,10 @@ describe('Authorization Handler', () => {
     it('should not reuse cached UI settings across different SETTINGS bindings', async () => {
       const envWithUi = createMockEnv();
       envWithUi.ENABLE_CONFORMANCE_MODE = 'false';
+      envWithUi.ALLOWED_ORIGINS = 'https://login.example.com';
       await (envWithUi.SETTINGS as unknown as MockKVNamespace).put(
-        'system_settings',
-        JSON.stringify({
-          ui: {
-            baseUrl: 'https://login.example.com',
-          },
-        })
+        'settings:platform:tenant',
+        JSON.stringify({ 'tenant.ui_base_url': 'https://login.example.com' })
       );
 
       const firstResponse = await app.request(
@@ -3143,14 +3199,11 @@ describe('Authorization Handler', () => {
     it('should return a local 400 error page for an unknown client when external UI is configured', async () => {
       env.ENABLE_CONFORMANCE_MODE = 'false';
       mockGetClient.mockResolvedValue(null);
-      await (env.SETTINGS as unknown as MockKVNamespace).put(
-        'system_settings',
-        JSON.stringify({
-          ui: {
-            baseUrl: 'https://login.example.com',
-          },
-        })
-      );
+      await putSystemSettings(env.SETTINGS as unknown as MockKVNamespace, {
+        ui: {
+          baseUrl: 'https://login.example.com',
+        },
+      });
 
       const response = await app.request(
         '/authorize?response_type=code&client_id=unknown-client&redirect_uri=https://example.com/callback&scope=openid',
@@ -3587,6 +3640,864 @@ describe('Authorization Handler', () => {
       const location = response.headers.get('Location');
       expect(location).toBeTruthy();
       expect(location).toContain('/flow/login');
+    });
+  });
+
+  describe('assurance (AAL enforcement)', () => {
+    const STEP_UP_SESSION_ID = 'g1:apac:3:session_step-up';
+    // When the step-up began (milliseconds), and the session its authentication made, after it.
+    const STEP_UP_STARTED_AT = Date.now() - 30_000;
+    const AFTER_STEP_UP = Date.now();
+    const authorizeUrl = (extra = '') =>
+      `/authorize?response_type=code&client_id=test-client&redirect_uri=https://example.com/callback&scope=openid&state=aal-state&code_challenge=${'a'.repeat(43)}&code_challenge_method=S256${extra}`;
+
+    async function setAssurance(values: Record<string, unknown>) {
+      await (env.SETTINGS as unknown as MockKVNamespace).put(
+        'settings:tenant:default:assurance',
+        JSON.stringify(values)
+      );
+    }
+
+    function seedSessionData(
+      id: string,
+      data: Record<string, unknown>,
+      userId = 'test-user',
+      createdAt = Date.now() - 60000
+    ) {
+      getSessionMap(env).set(id, {
+        id,
+        userId,
+        createdAt,
+        expiresAt: Date.now() + 3600000,
+        data: { authTime: Math.floor(Date.now() / 1000) - 60, ...data },
+      });
+    }
+
+    async function request(
+      url: string,
+      cookies: string[] = [`authrim_session=${encodeURIComponent(TEST_SESSION_ID)}`]
+    ) {
+      return app.request(url, { method: 'GET', headers: { Cookie: cookies.join('; ') } }, env);
+    }
+
+    beforeEach(async () => {
+      env.ENABLE_CONFORMANCE_MODE = 'false';
+      env.UI_URL = 'https://login.example.com';
+      await configureClientSettings(env, { 'client.sso_enabled': true });
+      configureClientTrustPolicy(env);
+    });
+
+    it('changes nothing while assurance is off', async () => {
+      seedSessionData(TEST_SESSION_ID, { amr: ['pwd'], acr: 'urn:mace:incommon:iap:bronze' });
+      await setAssurance({ 'assurance.default_aal': 'AAL2' });
+
+      const response = await request(authorizeUrl());
+
+      expect(new URL(response.headers.get('Location')!).searchParams.get('code')).toBeTruthy();
+      const stored = getAuthCodeStore(env).storeCodeRpc.mock.calls.at(-1)?.[0];
+      expect(stored).toMatchObject({ acr: 'urn:mace:incommon:iap:bronze', amr: ['pwd'] });
+      expect(stored).not.toHaveProperty('aal');
+    });
+
+    it('issues the acr and AAL of a session that meets the requirement', async () => {
+      seedSessionData(TEST_SESSION_ID, { amr: ['passkey'], acr: 'urn:mace:incommon:iap:bronze' });
+      await setAssurance({ 'assurance.enabled': true, 'assurance.default_aal': 'AAL2' });
+
+      const response = await request(authorizeUrl());
+
+      expect(new URL(response.headers.get('Location')!).searchParams.get('code')).toBeTruthy();
+      expect(getAuthCodeStore(env).storeCodeRpc).toHaveBeenCalledWith(
+        expect.objectContaining({ acr: 'urn:authrim:aal:2', aal: 'AAL2' })
+      );
+    });
+
+    it('steps up a session below the required AAL through re-authentication', async () => {
+      seedSessionData(TEST_SESSION_ID, { amr: ['pwd'] });
+      await setAssurance({ 'assurance.enabled': true, 'assurance.default_aal': 'AAL2' });
+
+      const response = await request(authorizeUrl());
+
+      expect(response.status).toBe(302);
+      const location = new URL(response.headers.get('Location')!);
+      expect(location.origin + location.pathname).toBe('https://login.example.com/reauth');
+      expect(location.searchParams.get('required_aal')).toBe('AAL2');
+      expect(getChallengeMap(env).get(location.searchParams.get('challenge_id')!)).toMatchObject({
+        type: 'reauth',
+        metadata: expect.objectContaining({
+          assurance_step_up: {
+            prior_session_id: TEST_SESSION_ID,
+            required_aal: 'AAL2',
+            issued_at: expect.any(Number),
+          },
+        }),
+      });
+      expect(getAuthCodeStore(env).storeCodeRpc).not.toHaveBeenCalled();
+    });
+
+    it('answers login_required for prompt=none below the required AAL', async () => {
+      seedSessionData(TEST_SESSION_ID, { amr: ['pwd'] });
+      await setAssurance({ 'assurance.enabled': true, 'assurance.default_aal': 'AAL2' });
+
+      const response = await request(authorizeUrl('&prompt=none'));
+
+      const location = new URL(response.headers.get('Location')!);
+      expect(location.searchParams.get('error')).toBe('login_required');
+      expect(getAuthCodeStore(env).storeCodeRpc).not.toHaveBeenCalled();
+    });
+
+    it('fails an essential acr request naming no value Authrim issues', async () => {
+      seedSessionData(TEST_SESSION_ID, { amr: ['passkey'] });
+      await setAssurance({ 'assurance.enabled': true });
+      const claims = encodeURIComponent(
+        JSON.stringify({ id_token: { acr: { essential: true, values: ['urn:other:acr'] } } })
+      );
+
+      const response = await request(authorizeUrl(`&claims=${claims}`));
+
+      const location = new URL(response.headers.get('Location')!);
+      expect(location.searchParams.get('error')).toBe('unmet_authentication_requirements');
+    });
+
+    function seedStepUpConfirmation(id: string, priorSessionId: string) {
+      getChallengeMap(env).set(id, {
+        id,
+        tenantId: 'default',
+        type: 'reauth',
+        userId: 'test-user',
+        challenge: id,
+        metadata: {
+          purpose: 'authorize_confirmation',
+          authTime: Math.floor(Date.now() / 1000),
+          sessionUserId: 'test-user',
+          browserBinding: `${id}-browser`,
+          assurance_step_up: {
+            prior_session_id: priorSessionId,
+            required_aal: 'AAL2',
+            issued_at: STEP_UP_STARTED_AT,
+          },
+          authorization_request: {
+            source: 'frontchannel',
+            authorization_server: 'default',
+            integrity_protected: false,
+            response_type: 'code',
+            client_id: 'test-client',
+            redirect_uri: 'https://example.com/callback',
+            scope: 'openid',
+            state: 'aal-state',
+            code_challenge: 'a'.repeat(43),
+            code_challenge_method: 'S256',
+          },
+        },
+      });
+    }
+
+    it("combines the earlier session's password with the TOTP of the step-up", async () => {
+      seedSessionData(TEST_SESSION_ID, { amr: ['pwd'] });
+      seedSessionData(
+        STEP_UP_SESSION_ID,
+        { amr: ['otp', 'totp'], proven_at: AFTER_STEP_UP },
+        'test-user',
+        AFTER_STEP_UP
+      );
+      await setAssurance({ 'assurance.enabled': true, 'assurance.default_aal': 'AAL2' });
+      seedStepUpConfirmation('step-up-ok', TEST_SESSION_ID);
+
+      const response = await request('/authorize?_confirmation_challenge=step-up-ok', [
+        `authrim_session=${encodeURIComponent(STEP_UP_SESSION_ID)}`,
+        'authrim_authorize_confirmation=step-up-ok-browser',
+      ]);
+
+      expect(new URL(response.headers.get('Location')!).searchParams.get('code')).toBeTruthy();
+      expect(getAuthCodeStore(env).storeCodeRpc).toHaveBeenCalledWith(
+        expect.objectContaining({
+          acr: 'urn:authrim:aal:2',
+          aal: 'AAL2',
+          amr: ['pwd', 'otp', 'totp'],
+        })
+      );
+      expect((getSessionMap(env).get(STEP_UP_SESSION_ID) as { data: unknown }).data).toMatchObject({
+        amr: ['pwd', 'otp', 'totp'],
+        unverified_amr: [],
+        // The earlier session records no proof time: the combined evidence is never fresh again.
+        proven_at: 0,
+      });
+    });
+
+    it('keeps what a concurrent step-up of the same session combined', async () => {
+      seedSessionData(TEST_SESSION_ID, { amr: ['pwd'] });
+      seedSessionData(
+        STEP_UP_SESSION_ID,
+        { amr: ['otp', 'totp'], proven_at: AFTER_STEP_UP },
+        'test-user',
+        AFTER_STEP_UP
+      );
+      await setAssurance({ 'assurance.enabled': true, 'assurance.default_aal': 'AAL2' });
+      seedStepUpConfirmation('step-up-race', TEST_SESSION_ID);
+      const store = (
+        env.SESSION_STORE as unknown as { get: () => Record<string, ReturnType<typeof vi.fn>> }
+      ).get();
+      const write = store.updateSessionDataRpc.getMockImplementation() as (
+        ...args: unknown[]
+      ) => Promise<unknown>;
+      // Between this request's read and its write, another step-up of the session wrote first.
+      store.updateSessionDataRpc.mockImplementationOnce(async (...args: unknown[]) => {
+        (getSessionMap(env).get(STEP_UP_SESSION_ID) as { data: Record<string, unknown> }).data = {
+          amr: ['did', 'otp', 'totp'],
+          unverified_amr: [],
+          proven_at: STEP_UP_STARTED_AT - 1,
+        };
+        return write(...args);
+      });
+
+      const response = await request('/authorize?_confirmation_challenge=step-up-race', [
+        `authrim_session=${encodeURIComponent(STEP_UP_SESSION_ID)}`,
+        'authrim_authorize_confirmation=step-up-race-browser',
+      ]);
+
+      expect(new URL(response.headers.get('Location')!).searchParams.get('code')).toBeTruthy();
+      // The code reports this request's evidence; the session keeps both step-ups'.
+      expect(getAuthCodeStore(env).storeCodeRpc).toHaveBeenCalledWith(
+        expect.objectContaining({ aal: 'AAL2', amr: ['pwd', 'otp', 'totp'] })
+      );
+      const data = (getSessionMap(env).get(STEP_UP_SESSION_ID) as { data: { amr: string[] } }).data;
+      expect([...data.amr].sort()).toEqual(['did', 'otp', 'pwd', 'totp']);
+      expect(data).toMatchObject({ unverified_amr: [], proven_at: 0 });
+      expect(store.updateSessionDataRpc).toHaveBeenCalledTimes(2);
+    });
+
+    it('fails rather than stepping up again when the step-up still falls short', async () => {
+      seedSessionData(TEST_SESSION_ID, { amr: ['pwd'] });
+      // An emailed code is never a second factor.
+      seedSessionData(
+        STEP_UP_SESSION_ID,
+        { amr: ['otp'], proven_at: AFTER_STEP_UP },
+        'test-user',
+        AFTER_STEP_UP
+      );
+      await setAssurance({ 'assurance.enabled': true, 'assurance.default_aal': 'AAL2' });
+      seedStepUpConfirmation('step-up-short', TEST_SESSION_ID);
+
+      const response = await request('/authorize?_confirmation_challenge=step-up-short', [
+        `authrim_session=${encodeURIComponent(STEP_UP_SESSION_ID)}`,
+        'authrim_authorize_confirmation=step-up-short-browser',
+      ]);
+
+      const location = new URL(response.headers.get('Location')!);
+      expect(location.searchParams.get('error')).toBe('unmet_authentication_requirements');
+      expect(getAuthCodeStore(env).storeCodeRpc).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ["another user's session", 'other-user', true],
+      ['an older session of the same user', 'test-user', false],
+    ])('does not count the evidence of %s as the step-up', async (_label, owner, fresh) => {
+      seedSessionData(TEST_SESSION_ID, { amr: ['pwd'] });
+      const data = { amr: ['otp', 'totp'] };
+      // A proof made 1 ms before the step-up began does not count either.
+      const provenAt = fresh ? AFTER_STEP_UP : STEP_UP_STARTED_AT - 1;
+      seedSessionData(STEP_UP_SESSION_ID, { ...data, proven_at: provenAt }, owner, provenAt);
+      await setAssurance({ 'assurance.enabled': true, 'assurance.default_aal': 'AAL2' });
+      seedStepUpConfirmation('step-up-switched', TEST_SESSION_ID);
+
+      const response = await request('/authorize?_confirmation_challenge=step-up-switched', [
+        `authrim_session=${encodeURIComponent(STEP_UP_SESSION_ID)}`,
+        'authrim_authorize_confirmation=step-up-switched-browser',
+      ]);
+
+      expect(new URL(response.headers.get('Location')!).searchParams.get('error')).toBe(
+        'unmet_authentication_requirements'
+      );
+      expect(getAuthCodeStore(env).storeCodeRpc).not.toHaveBeenCalled();
+      expect((getSessionMap(env).get(STEP_UP_SESSION_ID) as { data: unknown }).data).toMatchObject({
+        amr: ['otp', 'totp'],
+      });
+    });
+
+    it('keeps the upstream acr of the session stepped up from, so the next request agrees', async () => {
+      seedSessionData(TEST_SESSION_ID, {
+        amr: ['external_idp'],
+        upstream_acr: 'urn:mace:incommon:iap:silver',
+      });
+      seedSessionData(
+        STEP_UP_SESSION_ID,
+        { amr: ['otp', 'totp'], proven_at: AFTER_STEP_UP },
+        'test-user',
+        AFTER_STEP_UP
+      );
+      await setAssurance({
+        'assurance.enabled': true,
+        'assurance.default_aal': 'AAL2',
+        'assurance.upstream_acr_mappings': '{"urn:mace:incommon:iap:silver":"AAL2"}',
+      });
+      seedStepUpConfirmation('step-up-upstream', TEST_SESSION_ID);
+
+      await request('/authorize?_confirmation_challenge=step-up-upstream', [
+        `authrim_session=${encodeURIComponent(STEP_UP_SESSION_ID)}`,
+        'authrim_authorize_confirmation=step-up-upstream-browser',
+      ]);
+
+      expect((getSessionMap(env).get(STEP_UP_SESSION_ID) as { data: unknown }).data).toMatchObject({
+        upstream_acr: 'urn:mace:incommon:iap:silver',
+      });
+      const next = await request(authorizeUrl('&prompt=none'), [
+        `authrim_session=${encodeURIComponent(STEP_UP_SESSION_ID)}`,
+      ]);
+      expect(new URL(next.headers.get('Location')!).searchParams.get('code')).toBeTruthy();
+    });
+
+    it('aims for a voluntary acr_value before consent, never again on the way back from it', async () => {
+      seedSessionData(TEST_SESSION_ID, { amr: ['passkey'] });
+      await setAssurance({ 'assurance.enabled': true });
+      const voluntary = `&acr_values=${encodeURIComponent('urn:authrim:aal:3')}`;
+
+      const first = await request(authorizeUrl(voluntary));
+      expect(new URL(first.headers.get('Location')!).pathname).toBe('/reauth');
+
+      getChallengeMap(env).set('aal-consent', {
+        id: 'aal-consent',
+        tenantId: 'default',
+        type: 'consent',
+        userId: 'test-user',
+        challenge: 'aal-consent',
+        metadata: {
+          purpose: 'authorize_consent_confirmation',
+          sessionId: TEST_SESSION_ID,
+          browserBinding: 'aal-consent-browser',
+        },
+      });
+      const back = await request(
+        `${authorizeUrl(voluntary)}&_consent_confirmation_challenge=aal-consent`,
+        [
+          `authrim_session=${encodeURIComponent(TEST_SESSION_ID)}`,
+          'authrim_consent_confirmation=aal-consent-browser',
+        ]
+      );
+      expect(new URL(back.headers.get('Location')!).searchParams.get('code')).toBeTruthy();
+      expect(getAuthCodeStore(env).storeCodeRpc).toHaveBeenCalledWith(
+        expect.objectContaining({ acr: 'urn:authrim:aal:2', aal: 'AAL2' })
+      );
+    });
+
+    it('returns one of the essential values even when assurance claims are not included', async () => {
+      seedSessionData(TEST_SESSION_ID, { amr: ['passkey'], acr: 'urn:mace:incommon:iap:bronze' });
+      await setAssurance({ 'assurance.enabled': true, 'assurance.include_in_id_token': false });
+      const claims = encodeURIComponent(
+        JSON.stringify({ id_token: { acr: { essential: true, values: ['urn:authrim:aal:2'] } } })
+      );
+
+      await request(authorizeUrl(`&claims=${claims}`));
+      expect(getAuthCodeStore(env).storeCodeRpc).toHaveBeenLastCalledWith(
+        expect.objectContaining({ acr: 'urn:authrim:aal:2' })
+      );
+
+      // Without an essential request, the setting keeps the session's own acr.
+      await request(authorizeUrl());
+      expect(getAuthCodeStore(env).storeCodeRpc).toHaveBeenLastCalledWith(
+        expect.objectContaining({ acr: 'urn:mace:incommon:iap:bronze' })
+      );
+    });
+
+    it("does not exempt a request from the default for another user's guest session", async () => {
+      // The confirmation names test-user; the cookie carries someone else's guest session.
+      seedSessionData(STEP_UP_SESSION_ID, { amr: ['anon'], is_guest_session: true }, 'guest-user');
+      await setAssurance({ 'assurance.enabled': true, 'assurance.default_aal': 'AAL2' });
+      getChallengeMap(env).set('login-confirmation', {
+        id: 'login-confirmation',
+        tenantId: 'default',
+        type: 'reauth',
+        userId: 'test-user',
+        challenge: 'login-confirmation',
+        metadata: {
+          purpose: 'authorize_confirmation',
+          authTime: Math.floor(Date.now() / 1000),
+          sessionUserId: 'test-user',
+          browserBinding: 'login-confirmation-browser',
+          authorization_request: {
+            source: 'frontchannel',
+            authorization_server: 'default',
+            integrity_protected: false,
+            response_type: 'code',
+            client_id: 'test-client',
+            redirect_uri: 'https://example.com/callback',
+            scope: 'openid',
+            state: 'aal-state',
+            code_challenge: 'a'.repeat(43),
+            code_challenge_method: 'S256',
+          },
+        },
+      });
+
+      const response = await request('/authorize?_confirmation_challenge=login-confirmation', [
+        `authrim_session=${encodeURIComponent(STEP_UP_SESSION_ID)}`,
+        'authrim_authorize_confirmation=login-confirmation-browser',
+      ]);
+
+      expect(new URL(response.headers.get('Location')!).searchParams.get('code')).toBeNull();
+      expect(getAuthCodeStore(env).storeCodeRpc).not.toHaveBeenCalled();
+    });
+
+    it('does not combine a session that does not record when its proof was made', async () => {
+      seedSessionData(TEST_SESSION_ID, { amr: ['pwd'] });
+      // Made after the step-up began, but its proof may predate it (no proven_at).
+      seedSessionData(STEP_UP_SESSION_ID, { amr: ['otp', 'totp'] }, 'test-user', AFTER_STEP_UP);
+      await setAssurance({ 'assurance.enabled': true, 'assurance.default_aal': 'AAL2' });
+      seedStepUpConfirmation('step-up-no-proof-time', TEST_SESSION_ID);
+
+      const response = await request('/authorize?_confirmation_challenge=step-up-no-proof-time', [
+        `authrim_session=${encodeURIComponent(STEP_UP_SESSION_ID)}`,
+        'authrim_authorize_confirmation=step-up-no-proof-time-browser',
+      ]);
+
+      expect(new URL(response.headers.get('Location')!).searchParams.get('error')).toBe(
+        'unmet_authentication_requirements'
+      );
+    });
+
+    it('does not count a proof made before the step-up, even in a session made after it', async () => {
+      seedSessionData(TEST_SESSION_ID, { amr: ['otp', 'totp'] });
+      // A Direct Auth artifact proven before the step-up began, redeemed after it.
+      seedSessionData(
+        STEP_UP_SESSION_ID,
+        { amr: ['pwd'], proven_at: STEP_UP_STARTED_AT - 1 },
+        'test-user',
+        AFTER_STEP_UP
+      );
+      await setAssurance({ 'assurance.enabled': true, 'assurance.default_aal': 'AAL2' });
+      seedStepUpConfirmation('step-up-stale-proof', TEST_SESSION_ID);
+
+      const response = await request('/authorize?_confirmation_challenge=step-up-stale-proof', [
+        `authrim_session=${encodeURIComponent(STEP_UP_SESSION_ID)}`,
+        'authrim_authorize_confirmation=step-up-stale-proof-browser',
+      ]);
+
+      expect(new URL(response.headers.get('Location')!).searchParams.get('error')).toBe(
+        'unmet_authentication_requirements'
+      );
+    });
+
+    it('keeps the step-up through the built-in re-authentication confirmation', async () => {
+      env.ENABLE_TEST_ENDPOINTS = 'true';
+      const stepUp = { prior_session_id: TEST_SESSION_ID, required_aal: 'AAL2', issued_at: 1 };
+      getChallengeMap(env).set('builtin-step-up', {
+        id: 'builtin-step-up',
+        type: 'reauth',
+        userId: 'test-user',
+        metadata: {
+          response_type: 'code',
+          client_id: 'test-client',
+          redirect_uri: 'https://example.com/callback',
+          scope: 'openid',
+          state: 'aal-state',
+          sessionUserId: 'test-user',
+          assurance_step_up: stepUp,
+        },
+      });
+
+      const response = await app.request(
+        '/flow/confirm',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({ challenge_id: 'builtin-step-up' }),
+        },
+        env
+      );
+
+      const confirmation = new URL(
+        response.headers.get('Location')!,
+        'https://test.example.com'
+      ).searchParams.get('_confirmation_challenge');
+      expect(getChallengeMap(env).get(confirmation!)).toMatchObject({
+        metadata: expect.objectContaining({ assurance_step_up: stepUp }),
+      });
+    });
+
+    it('does not let a combined session pass for the authentication of a later step-up', async () => {
+      // An earlier password proof, combined with a fresh TOTP step-up.
+      seedSessionData(TEST_SESSION_ID, { amr: ['pwd'], proven_at: STEP_UP_STARTED_AT - 10_000 });
+      seedSessionData(
+        STEP_UP_SESSION_ID,
+        { amr: ['otp', 'totp'], proven_at: AFTER_STEP_UP },
+        'test-user',
+        AFTER_STEP_UP
+      );
+      await setAssurance({ 'assurance.enabled': true, 'assurance.default_aal': 'AAL2' });
+      seedStepUpConfirmation('first-step-up', TEST_SESSION_ID);
+      await request('/authorize?_confirmation_challenge=first-step-up', [
+        `authrim_session=${encodeURIComponent(STEP_UP_SESSION_ID)}`,
+        'authrim_authorize_confirmation=first-step-up-browser',
+      ]);
+      expect((getSessionMap(env).get(STEP_UP_SESSION_ID) as { data: unknown }).data).toMatchObject({
+        amr: ['pwd', 'otp', 'totp'],
+        proven_at: STEP_UP_STARTED_AT - 10_000,
+      });
+
+      // A later step-up cannot take that session as its own fresh authentication: nothing of the
+      // session it stepped up from is combined in.
+      const OTHER_PRIOR = 'g1:apac:3:session_other-prior';
+      seedSessionData(OTHER_PRIOR, { amr: ['did'] });
+      seedStepUpConfirmation('second-step-up', OTHER_PRIOR);
+      await request('/authorize?_confirmation_challenge=second-step-up', [
+        `authrim_session=${encodeURIComponent(STEP_UP_SESSION_ID)}`,
+        'authrim_authorize_confirmation=second-step-up-browser',
+      ]);
+      expect(
+        (getSessionMap(env).get(STEP_UP_SESSION_ID) as { data: { amr: string[] } }).data.amr
+      ).not.toContain('did');
+    });
+
+    it('does not step up again after a step-up that had no session to combine with', async () => {
+      seedSessionData(
+        STEP_UP_SESSION_ID,
+        { amr: ['pwd'], proven_at: AFTER_STEP_UP },
+        'test-user',
+        AFTER_STEP_UP
+      );
+      await setAssurance({ 'assurance.enabled': true, 'assurance.default_aal': 'AAL2' });
+      seedStepUpConfirmation('step-up-sessionless', TEST_SESSION_ID);
+      const confirmation = getChallengeMap(env).get('step-up-sessionless') as {
+        metadata: { assurance_step_up: Record<string, unknown> };
+      };
+      delete confirmation.metadata.assurance_step_up.prior_session_id;
+
+      const response = await request('/authorize?_confirmation_challenge=step-up-sessionless', [
+        `authrim_session=${encodeURIComponent(STEP_UP_SESSION_ID)}`,
+        'authrim_authorize_confirmation=step-up-sessionless-browser',
+      ]);
+
+      expect(new URL(response.headers.get('Location')!).searchParams.get('error')).toBe(
+        'unmet_authentication_requirements'
+      );
+    });
+
+    it.each([
+      ['an assurance step-up', true],
+      ['a prompt=login re-authentication', false],
+    ])('takes no older session of the user as the result of %s', async (_label, stepUp) => {
+      // An old passkey session (AAL2 on its own), switched in after the re-authentication.
+      const OLD_PASSKEY_SESSION = 'g1:apac:3:session_old-passkey';
+      seedSessionData(OLD_PASSKEY_SESSION, {
+        amr: ['passkey'],
+        proven_at: STEP_UP_STARTED_AT - 60_000,
+      });
+      seedSessionData(TEST_SESSION_ID, { amr: ['pwd'] });
+      await setAssurance({ 'assurance.enabled': true, 'assurance.default_aal': 'AAL2' });
+      seedStepUpConfirmation('reauth-swapped', TEST_SESSION_ID);
+      const confirmation = getChallengeMap(env).get('reauth-swapped') as {
+        metadata: Record<string, unknown>;
+      };
+      confirmation.metadata.reauth_issued_at = STEP_UP_STARTED_AT;
+      if (!stepUp) delete confirmation.metadata.assurance_step_up;
+
+      const response = await request('/authorize?_confirmation_challenge=reauth-swapped', [
+        `authrim_session=${encodeURIComponent(OLD_PASSKEY_SESSION)}`,
+        'authrim_authorize_confirmation=reauth-swapped-browser',
+      ]);
+
+      expect(new URL(response.headers.get('Location')!).searchParams.get('code')).toBeNull();
+      expect(getAuthCodeStore(env).storeCodeRpc).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ["another user's session", 'other-user', STEP_UP_STARTED_AT + 1],
+      ['an older session of the same user', 'test-user', STEP_UP_STARTED_AT - 60_000],
+    ])('reports none of the methods of %s in the code', async (_label, owner, provenAt) => {
+      const SWAPPED_SESSION = 'g1:apac:3:session_swapped';
+      seedSessionData(
+        SWAPPED_SESSION,
+        { amr: ['passkey'], acr: 'urn:mace:incommon:iap:silver', proven_at: provenAt },
+        owner,
+        provenAt
+      );
+      seedSessionData(TEST_SESSION_ID, { amr: ['pwd'] });
+      // No mandatory level beyond the baseline: the request goes through.
+      await setAssurance({ 'assurance.enabled': true });
+      seedStepUpConfirmation('reauth-methods', TEST_SESSION_ID);
+      const confirmation = getChallengeMap(env).get('reauth-methods') as {
+        metadata: Record<string, unknown>;
+      };
+      confirmation.metadata.reauth_issued_at = STEP_UP_STARTED_AT;
+      delete confirmation.metadata.assurance_step_up;
+
+      const response = await request('/authorize?_confirmation_challenge=reauth-methods', [
+        `authrim_session=${encodeURIComponent(SWAPPED_SESSION)}`,
+        'authrim_authorize_confirmation=reauth-methods-browser',
+      ]);
+
+      expect(new URL(response.headers.get('Location')!).searchParams.get('code')).toBeTruthy();
+      expect(getAuthCodeStore(env).storeCodeRpc).toHaveBeenCalledWith(
+        expect.objectContaining({
+          userId: 'test-user',
+          amr: undefined,
+          acr: undefined,
+          aal: 'AAL0',
+        })
+      );
+    });
+
+    it.each([
+      ['a passkey proven 1 ms before it was asked for', ['passkey'], -1, false],
+      ['a passkey proven as it was asked for', ['passkey'], 0, true],
+      // An external IdP login records no proof time (the IdP's times are in its own clock).
+      ['an external IdP login', ['external_idp'], undefined, false],
+    ])(
+      'takes %s as the result of a re-authentication only when proven after it',
+      async (_label, amr, offset, accepted) => {
+        const REQUESTED_AT = STEP_UP_STARTED_AT;
+        const provenAt = offset === undefined ? undefined : REQUESTED_AT + offset;
+        const RESULT_SESSION = 'g1:apac:3:session_result';
+        seedSessionData(
+          RESULT_SESSION,
+          {
+            amr,
+            upstream_acr: 'urn:example:mfa',
+            ...(provenAt === undefined ? {} : { proven_at: provenAt }),
+          },
+          'test-user',
+          AFTER_STEP_UP
+        );
+        await setAssurance({
+          'assurance.enabled': true,
+          'assurance.default_aal': 'AAL2',
+          'assurance.upstream_acr_mappings': '{"urn:example:mfa":"AAL2"}',
+        });
+        seedStepUpConfirmation('reauth-result', TEST_SESSION_ID);
+        const confirmation = getChallengeMap(env).get('reauth-result') as {
+          metadata: Record<string, unknown>;
+        };
+        confirmation.metadata.reauth_issued_at = REQUESTED_AT;
+        delete confirmation.metadata.assurance_step_up;
+
+        const response = await request('/authorize?_confirmation_challenge=reauth-result', [
+          `authrim_session=${encodeURIComponent(RESULT_SESSION)}`,
+          'authrim_authorize_confirmation=reauth-result-browser',
+        ]);
+
+        const code = new URL(response.headers.get('Location')!).searchParams.get('code');
+        expect(Boolean(code)).toBe(accepted);
+      }
+    );
+
+    describe('FAL', () => {
+      const PAR_URI = 'urn:ietf:params:oauth:request_uri:par_fal';
+      const pushedUrl = `/authorize?client_id=test-client&request_uri=${encodeURIComponent(PAR_URI)}`;
+      function push(extra: Record<string, unknown>) {
+        env.PAR_REQUEST_STORE = createMockPARRequestStore({
+          client_id: 'test-client',
+          response_type: 'code',
+          redirect_uri: 'https://example.com/callback',
+          scope: 'openid',
+          state: 'aal-state',
+          code_challenge: 'a'.repeat(43),
+          code_challenge_method: 'S256',
+          ...extra,
+        }) as unknown as Env['PAR_REQUEST_STORE'];
+      }
+
+      it.each([
+        ['a front-channel request', undefined, false],
+        ['a pushed request without a signed request object', {}, false],
+        ['a pushed request with a signed request object', { request_object_signed: true }, true],
+      ])('at FAL3 takes %s only when pushed and signed', async (_label, pushed, accepted) => {
+        seedSessionData(TEST_SESSION_ID, { amr: ['passkey'] });
+        await setAssurance({ 'assurance.enabled': true, 'assurance.default_fal': 'FAL3' });
+        if (pushed) push(pushed);
+
+        const response = await request(pushed ? pushedUrl : authorizeUrl());
+
+        const location = new URL(response.headers.get('Location')!);
+        if (accepted) {
+          expect(location.searchParams.get('code')).toBeTruthy();
+          // The token endpoint checks this evidence at FAL3.
+          expect(getAuthCodeStore(env).storeCodeRpc).toHaveBeenCalledWith(
+            expect.objectContaining({ pushedSignedRequest: true })
+          );
+        } else {
+          expect(location.searchParams.get('error')).toBe('invalid_request');
+          expect(getAuthCodeStore(env).storeCodeRpc).not.toHaveBeenCalled();
+        }
+      });
+
+      it('keeps that the pushed request was signed across the login', async () => {
+        await setAssurance({ 'assurance.enabled': true, 'assurance.default_fal': 'FAL3' });
+        push({ request_object_signed: true });
+
+        const response = await request(pushedUrl, []);
+
+        const challengeId = new URL(response.headers.get('Location')!).searchParams.get(
+          'challenge_id'
+        );
+        expect(getChallengeMap(env).get(challengeId!)).toMatchObject({
+          metadata: expect.objectContaining({
+            authorization_request_source: 'par',
+            authorization_request_signed: true,
+          }),
+        });
+      });
+
+      it('takes a pushed request as is while fal3_requires_par is off', async () => {
+        seedSessionData(TEST_SESSION_ID, { amr: ['passkey'] });
+        await setAssurance({
+          'assurance.enabled': true,
+          'assurance.default_fal': 'FAL3',
+          'assurance.fal3_requires_par': false,
+        });
+
+        const response = await request(authorizeUrl());
+
+        expect(new URL(response.headers.get('Location')!).searchParams.get('code')).toBeTruthy();
+        // A front-channel request carries no FAL3 evidence.
+        expect(getAuthCodeStore(env).storeCodeRpc).toHaveBeenCalledWith(
+          expect.not.objectContaining({ pushedSignedRequest: true })
+        );
+      });
+
+      it.each([
+        ['FAL2', 'code token', 'unsupported_response_type'],
+        ['FAL2', 'code', null],
+        ['FAL1', 'code token', null],
+      ])(
+        'at %s with DPoP issues %s from the front channel unless it holds an access token',
+        async (fal, responseType, error) => {
+          seedSessionData(TEST_SESSION_ID, { amr: ['passkey'] });
+          await setAssurance({ 'assurance.enabled': true, 'assurance.default_fal': fal });
+          mockGetClient.mockResolvedValue({
+            client_id: 'test-client',
+            client_secret: 'test-secret',
+            redirect_uris: ['https://example.com/callback'],
+            grant_types: ['authorization_code', 'implicit'],
+            response_types: ['code', 'code token'],
+            scope: 'openid profile email',
+            token_endpoint_auth_method: 'client_secret_basic',
+          });
+
+          const response = await request(
+            authorizeUrl(`&nonce=n-1`).replace(
+              'response_type=code',
+              `response_type=${encodeURIComponent(responseType)}`
+            )
+          );
+
+          const location = new URL(response.headers.get('Location')!.replace('#', '?'));
+          if (error) {
+            expect(location.searchParams.get('error')).toBe(error);
+          } else {
+            // Not refused for its FAL (whatever else the test environment makes of it).
+            expect(location.searchParams.get('error_description') ?? '').not.toContain('FAL');
+          }
+        }
+      );
+    });
+
+    it('records for access tokens only the methods the authentication proved', async () => {
+      // A passkey registered after a directory login: in the session, not proven.
+      seedSessionData(TEST_SESSION_ID, {
+        amr: ['pwd', 'directory', 'passkey'],
+        unverified_amr: ['passkey'],
+      });
+      await setAssurance({ 'assurance.enabled': true });
+
+      await request(authorizeUrl());
+
+      expect(getAuthCodeStore(env).storeCodeRpc).toHaveBeenCalledWith(
+        expect.objectContaining({
+          amr: ['pwd', 'directory', 'passkey'],
+          aal: 'AAL1',
+          assuranceAmr: ['pwd', 'directory'],
+        })
+      );
+    });
+
+    it('records the acr of the AAL reached for access tokens, not a lower one asked for', async () => {
+      seedSessionData(TEST_SESSION_ID, { amr: ['passkey'] });
+      await setAssurance({ 'assurance.enabled': true });
+
+      await request(authorizeUrl(`&acr_values=${encodeURIComponent('urn:authrim:aal:1')}`));
+
+      expect(getAuthCodeStore(env).storeCodeRpc).toHaveBeenCalledWith(
+        expect.objectContaining({
+          // The ID token answers the request; the access token reports what was reached.
+          acr: 'urn:authrim:aal:1',
+          aal: 'AAL2',
+          assuranceAcr: 'urn:authrim:aal:2',
+        })
+      );
+    });
+
+    it('records the acr of the AAL reached for access tokens, whatever ID tokens get', async () => {
+      seedSessionData(TEST_SESSION_ID, { amr: ['passkey'], acr: 'urn:mace:incommon:iap:bronze' });
+      await setAssurance({ 'assurance.enabled': true, 'assurance.include_in_id_token': false });
+
+      await request(authorizeUrl());
+
+      expect(getAuthCodeStore(env).storeCodeRpc).toHaveBeenCalledWith(
+        expect.objectContaining({
+          acr: 'urn:mace:incommon:iap:bronze',
+          aal: 'AAL2',
+          assuranceAcr: 'urn:authrim:aal:2',
+        })
+      );
+    });
+
+    it('records when a re-authentication was asked for', async () => {
+      seedSessionData(TEST_SESSION_ID, { amr: ['pwd'] });
+      await setAssurance({ 'assurance.enabled': true, 'assurance.default_aal': 'AAL2' });
+
+      const response = await request(authorizeUrl());
+
+      const challengeId = new URL(response.headers.get('Location')!).searchParams.get(
+        'challenge_id'
+      );
+      expect(getChallengeMap(env).get(challengeId!)).toMatchObject({
+        metadata: expect.objectContaining({ reauth_issued_at: expect.any(Number) }),
+      });
+    });
+
+    it('stops when the session ends before the step-up is recorded', async () => {
+      seedSessionData(TEST_SESSION_ID, { amr: ['pwd'] });
+      seedSessionData(
+        STEP_UP_SESSION_ID,
+        { amr: ['otp', 'totp'], proven_at: AFTER_STEP_UP },
+        'test-user',
+        AFTER_STEP_UP
+      );
+      await setAssurance({ 'assurance.enabled': true, 'assurance.default_aal': 'AAL2' });
+      seedStepUpConfirmation('step-up-ended', TEST_SESSION_ID);
+      const store = (
+        env.SESSION_STORE as unknown as { get: () => Record<string, ReturnType<typeof vi.fn>> }
+      ).get();
+      store.updateSessionDataRpc.mockResolvedValueOnce(null);
+
+      const response = await request('/authorize?_confirmation_challenge=step-up-ended', [
+        `authrim_session=${encodeURIComponent(STEP_UP_SESSION_ID)}`,
+        'authrim_authorize_confirmation=step-up-ended-browser',
+      ]);
+
+      expect(new URL(response.headers.get('Location')!).searchParams.get('error')).toBe(
+        'login_required'
+      );
+      expect(getAuthCodeStore(env).storeCodeRpc).not.toHaveBeenCalled();
+    });
+
+    it("does not take another user's session as the one stepped up from", async () => {
+      seedSessionData(TEST_SESSION_ID, { amr: ['pwd'] }, 'other-user');
+      seedSessionData(
+        STEP_UP_SESSION_ID,
+        { amr: ['otp', 'totp'], proven_at: AFTER_STEP_UP },
+        'test-user',
+        AFTER_STEP_UP
+      );
+      await setAssurance({ 'assurance.enabled': true, 'assurance.default_aal': 'AAL2' });
+      seedStepUpConfirmation('step-up-other', TEST_SESSION_ID);
+
+      const response = await request('/authorize?_confirmation_challenge=step-up-other', [
+        `authrim_session=${encodeURIComponent(STEP_UP_SESSION_ID)}`,
+        'authrim_authorize_confirmation=step-up-other-browser',
+      ]);
+
+      expect(new URL(response.headers.get('Location')!).searchParams.get('error')).toBe(
+        'unmet_authentication_requirements'
+      );
     });
   });
 });

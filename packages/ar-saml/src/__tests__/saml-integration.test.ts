@@ -43,6 +43,7 @@ const {
   mockRuntimeUsersByEmail,
   mockRuntimeSyncUser,
   mockRuntimeDeleteUser,
+  mockRuntimeUpdateProfileFields,
   mockGetSigningKey,
   mockGetSigningCertificate,
   mockGetSPConfig,
@@ -64,6 +65,7 @@ const {
   mockRuntimeUsersByEmail: new Map<string, any>(),
   mockRuntimeSyncUser: vi.fn(),
   mockRuntimeDeleteUser: vi.fn(),
+  mockRuntimeUpdateProfileFields: vi.fn().mockResolvedValue(true),
   mockGetSigningKey: vi.fn().mockResolvedValue({
     kid: 'mock-kid',
     privateKeyPem: 'mock-key',
@@ -167,6 +169,10 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
         return user;
       }
 
+      async updateProfileFields(userId: string, values: Record<string, string>) {
+        return mockRuntimeUpdateProfileFields(userId, values);
+      }
+
       async deleteUser(userId: string) {
         mockRuntimeDeleteUser(userId);
         const current = mockRuntimeUsersById.get(userId);
@@ -251,6 +257,12 @@ function createTestSAMLInboundMappingBinding() {
       ),
       fieldCatalogEntry('field.profile.email', 'authrim.profile', 'email', 'canonical'),
       fieldCatalogEntry('field.profile.name', 'authrim.profile', 'name', 'canonical'),
+      fieldCatalogEntry('field.saml.attribute.givenName', 'saml.attribute', 'givenName', 'source'),
+      fieldCatalogEntry('field.saml.attribute.locale', 'saml.attribute', 'locale', 'source'),
+      fieldCatalogEntry('field.saml.attribute.photo', 'saml.attribute', 'photo', 'source'),
+      fieldCatalogEntry('field.profile.given_name', 'authrim.profile', 'given_name', 'canonical'),
+      fieldCatalogEntry('field.profile.locale', 'authrim.profile', 'locale', 'canonical'),
+      fieldCatalogEntry('field.profile.picture_url', 'authrim.profile', 'picture_url', 'canonical'),
       fieldCatalogEntry(
         'field.customClaims.department',
         'authrim.custom_claims',
@@ -274,6 +286,21 @@ function createTestSAMLInboundMappingBinding() {
         'displayName',
         'authrim.profile',
         'name'
+      ),
+      mappingEdge(
+        'edge.givenName.given_name',
+        'saml.attribute',
+        'givenName',
+        'authrim.profile',
+        'given_name'
+      ),
+      mappingEdge('edge.locale.locale', 'saml.attribute', 'locale', 'authrim.profile', 'locale'),
+      mappingEdge(
+        'edge.photo.picture_url',
+        'saml.attribute',
+        'photo',
+        'authrim.profile',
+        'picture_url'
       ),
       mappingEdge(
         'edge.department.customClaim',
@@ -343,6 +370,9 @@ function createMockSAMLResponse(
     signatureReferenceUri?: string;
     includeUnsignedReferenceToResponse?: boolean;
     assertionIssuer?: string;
+    /** The IdP's clock (ISO 8601): when it issued the assertion, and when the user authenticated. */
+    issueInstant?: string;
+    authnInstant?: string;
   } = {}
 ): string {
   const {
@@ -360,6 +390,8 @@ function createMockSAMLResponse(
     signatureReferenceUri = undefined,
     includeUnsignedReferenceToResponse = false,
     assertionIssuer = issuer,
+    issueInstant = new Date().toISOString(),
+    authnInstant = new Date().toISOString(),
   } = options;
   const uniqueId = `${Date.now()}_${crypto.randomUUID().replace(/-/g, '')}`;
   const responseId = `_${uniqueId}`;
@@ -388,7 +420,7 @@ function createMockSAMLResponse(
   <samlp:Status>
     <samlp:StatusCode Value="${statusCode}"/>
   </samlp:Status>
-  <saml:Assertion ID="${assertionId}" Version="2.0" IssueInstant="${new Date().toISOString()}">
+  <saml:Assertion ID="${assertionId}" Version="2.0" IssueInstant="${issueInstant}">
     <saml:Issuer>${assertionIssuer}</saml:Issuer>
     <saml:Subject>
       <saml:NameID Format="${nameIdFormat}">${nameId}</saml:NameID>
@@ -404,7 +436,7 @@ function createMockSAMLResponse(
         <saml:Audience>${audience}</saml:Audience>
       </saml:AudienceRestriction>
     </saml:Conditions>
-    <saml:AuthnStatement AuthnInstant="${new Date().toISOString()}">
+    <saml:AuthnStatement AuthnInstant="${authnInstant}">
       <saml:AuthnContext>
         <saml:AuthnContextClassRef>${authnContextClassRef}</saml:AuthnContextClassRef>
       </saml:AuthnContext>
@@ -1164,6 +1196,60 @@ describe('SAML Integration', () => {
       );
     });
 
+    it('records no proof time even for a response answering a request, whatever the IdP clock', async () => {
+      const requestId = `_${'c'.repeat(32)}`;
+      const requestedAt = Date.now() - 10_000;
+      mockEnv.SAML_REQUEST_STORE = {
+        idFromName: vi.fn((name: string) => name),
+        get: vi.fn(() => ({
+          fetch: vi.fn().mockResolvedValue(
+            Response.json({
+              requestId,
+              issuer: 'https://idp.example.com',
+              destination: 'https://idp.example.com/sso',
+              binding: 'post',
+              used: true,
+              type: 'authn_request',
+              createdAt: requestedAt,
+              expiresAt: requestedAt + 300_000,
+            })
+          ),
+        })),
+      } as unknown as Env['SAML_REQUEST_STORE'];
+      // The IdP clock runs 30 s ahead: an authentication 5 s before the request reads as after it.
+      const ahead = 30_000;
+      const authenticatedAt = requestedAt - 5_000 + ahead;
+      const issuedAt = requestedAt + 2_000 + ahead;
+
+      const res = await callACSDirectly(
+        createMockSAMLResponse({
+          inResponseTo: requestId,
+          issueInstant: new Date(issuedAt).toISOString(),
+          authnInstant: new Date(authenticatedAt).toISOString(),
+        }),
+        'https://auth.example.com/dashboard'
+      );
+
+      expect(res.status).toBe(302);
+      const body = JSON.parse(mockSessionStoreFetch.mock.calls.at(-1)![1].body as string);
+      expect(body.data).toMatchObject({
+        amr: ['saml'],
+        upstream_acr: 'urn:oasis:names:tc:SAML:2.0:ac:classes:Password',
+      });
+      expect(body.data).not.toHaveProperty('proven_at');
+    });
+
+    it('records no proof time for a response that answers no request', async () => {
+      const res = await callACSDirectly(
+        createMockSAMLResponse(),
+        'https://auth.example.com/dashboard'
+      );
+
+      expect(res.status).toBe(302);
+      const body = JSON.parse(mockSessionStoreFetch.mock.calls.at(-1)![1].body as string);
+      expect(body.data).not.toHaveProperty('proven_at');
+    });
+
     it('should reject when verified signature references do not cover the processed Response or Assertion', async () => {
       const res = await callACSDirectly(
         createMockSAMLResponse({
@@ -1508,6 +1594,99 @@ describe('SAML Integration', () => {
         expect.arrayContaining(['default', 'saml-link-001'])
       );
     });
+
+    it.each([
+      [
+        "the IdP's own fields",
+        ['name', 'given_name', 'locale', 'picture'],
+        { 'external_idp.jit_update_on_login': true },
+        {
+          name: 'New Name',
+          given_name: 'Ann',
+          locale: 'ja',
+          picture: 'https://idp.example.com/photo.png',
+        },
+      ],
+      [
+        "only the IdP's own fields",
+        ['locale'],
+        { 'external_idp.jit_update_on_login': true },
+        { locale: 'ja' },
+      ],
+      [
+        'nothing while updates on login are off',
+        ['name'],
+        { 'external_idp.jit_update_on_login': false },
+        undefined,
+      ],
+      [
+        'nothing when the IdP chooses none',
+        [],
+        { 'external_idp.jit_update_on_login': true },
+        undefined,
+      ],
+    ])(
+      "updates a linked user's profile from the IdP with %s",
+      async (_label, profileUpdateFields, externalIdp, expected) => {
+        const nameIdFormat = 'urn:oasis:names:tc:SAML:2.0:nameid-format:persistent';
+        mockGetIdPConfigByEntityId.mockResolvedValueOnce({
+          entityId: 'https://idp.example.com',
+          ssoUrl: 'https://idp.example.com/sso',
+          certificate: 'mock-certificate',
+          attributeMapping: { email: 'email', name: 'displayName' },
+          profileUpdateFields,
+        });
+        (mockEnv as unknown as { SETTINGS: unknown }).SETTINGS = {
+          get: vi.fn(async (key: string) =>
+            key === 'settings:tenant:default:external-idp' ? JSON.stringify(externalIdp) : null
+          ),
+        };
+        mockRuntimeUsersById.set('linked-user-001', {
+          id: 'linked-user-001',
+          email: 'linked@example.com',
+          active: true,
+          lifecycle_state: 'active',
+          email_verified: true,
+        });
+        const coreAdapter = createMockAdapter({
+          queryOne: (sql) =>
+            sql.includes('SELECT id, email_verified FROM users_core WHERE id')
+              ? { id: 'linked-user-001', email_verified: 1 }
+              : null,
+        });
+        const piiAdapter = createMockAdapter({
+          queryOne: (sql) =>
+            sql.includes('WHERE tenant_id = ? AND provider_id = ? AND provider_user_id = ?')
+              ? { id: 'saml-link-001', user_id: 'linked-user-001' }
+              : null,
+        });
+        mockResolveAccountDataContextByIdentifier.mockResolvedValueOnce({
+          coreDb: coreAdapter,
+          piiDb: piiAdapter,
+        });
+        mockRuntimeUpdateProfileFields.mockClear();
+
+        const res = await callACSDirectly(
+          createMockSAMLResponse({
+            nameId: 'persistent-subject-123',
+            nameIdFormat,
+            attributes: [
+              { name: 'displayName', value: 'New Name' },
+              { name: 'givenName', value: 'Ann' },
+              { name: 'locale', value: 'ja' },
+              { name: 'photo', value: 'https://idp.example.com/photo.png' },
+            ],
+          })
+        );
+
+        expect(res.status).toBe(302);
+        if (expected) {
+          expect(mockRuntimeUpdateProfileFields).toHaveBeenCalledWith('linked-user-001', expected);
+        } else {
+          expect(mockRuntimeUpdateProfileFields).not.toHaveBeenCalled();
+        }
+      }
+    );
 
     it('should create a SAML linked identity when verified email matches a provisioned user', async () => {
       const nameIdFormat = 'urn:oasis:names:tc:SAML:2.0:nameid-format:persistent';
