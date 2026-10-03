@@ -102,7 +102,7 @@ describe('Account Page audit coverage', () => {
       'packages/ar-admin-ui/src/lib/admin/account-audit-action-label.ts'
     );
     const accountActivity = readRepositoryFile(
-      'packages/ar-login-ui/src/lib/components/account/AccountActivitySection.svelte'
+      'packages/ar-login-ui/src/lib/components/account/widgets/AccountActivityWidget.svelte'
     );
     for (const action of ACCOUNT_AUDIT_ACTIONS) {
       expect(adminLabels).toContain(`'${action}'`);
