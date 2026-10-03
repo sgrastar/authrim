@@ -8,6 +8,7 @@ import { setCookie } from 'hono/cookie';
 import type { Env, Session } from '@authrim/ar-lib-core';
 import {
   assertGuestCredentialAuthenticationAllowed,
+  isAuthenticationMethodUsageAvailable,
   isAllowedOrigin,
   parseAllowedOrigins,
   getSessionStoreForNewSession,
@@ -982,6 +983,34 @@ export async function passkeyLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
     ]);
     if (!accountAuthenticationRecord) {
       return createErrorResponse(c, AR_ERROR_CODES.AUTH_PASSKEY_FAILED);
+    }
+    // The tenant's passkey sign-in switch governs its users (administrators sign in to the
+    // console through this endpoint whatever the tenant's end-user settings say).
+    if (accountAuthenticationRecord.accountType !== 'admin') {
+      let passkeyLogin: boolean;
+      try {
+        // Strict: a switch that cannot be read must not let a user in.
+        passkeyLogin = await isAuthenticationMethodUsageAvailable(
+          c.env,
+          tenantId,
+          'passkey',
+          'login',
+          { strict: true }
+        );
+      } catch {
+        return c.json(
+          {
+            error: 'temporarily_unavailable',
+            error_description: 'Authentication settings are unavailable.',
+          },
+          503
+        );
+      }
+      if (!passkeyLogin) {
+        return createErrorResponse(c, AR_ERROR_CODES.POLICY_INSUFFICIENT_PERMISSIONS, {
+          extensions: { authentication_method: 'passkey', usage: 'login' },
+        });
+      }
     }
     const authTime = Math.floor(proofVerifiedAtMs / 1000);
     try {

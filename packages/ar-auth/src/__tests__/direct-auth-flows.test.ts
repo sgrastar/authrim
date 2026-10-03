@@ -684,6 +684,7 @@ describe('Direct Auth primary passkey and email-code flows', () => {
       id: 'reauth_challenge',
       tenantId: 'tenant_test',
       type: 'reauth',
+      userId: 'user_existing',
       challenge: 'reauth_challenge',
     });
     const { directPasskeyLoginStartHandler } = await import('../direct-auth');
@@ -717,6 +718,68 @@ describe('Direct Auth primary passkey and email-code flows', () => {
 
     expect(response.status).toBe(400);
     expect(mocks.generateAuthenticationOptions).not.toHaveBeenCalled();
+  });
+
+  it('binds a passkey re-authentication to the user it was asked of', async () => {
+    mocks.challengeStore.getChallengeRpc.mockResolvedValue({
+      id: 'reauth_challenge',
+      tenantId: 'tenant_test',
+      type: 'reauth',
+      userId: 'anonymous',
+      metadata: { sessionUserId: 'user_existing' },
+      challenge: 'reauth_challenge',
+    });
+    const { directPasskeyLoginStartHandler } = await import('../direct-auth');
+
+    const response = await directPasskeyLoginStartHandler(
+      createContext(
+        {
+          client_id: 'web-client',
+          code_challenge: 'challenge',
+          code_challenge_method: 'S256',
+          channel: 'browser',
+          authorization_challenge_id: 'reauth_challenge',
+        },
+        webHeaders(),
+        'https://app.example.com/api/v1/auth/direct/passkey/login/start'
+      ) as never
+    );
+
+    expect(response.status).toBe(200);
+    expect(mocks.challengeStore.storeChallengeRpc).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'direct_passkey_login',
+        metadata: expect.objectContaining({ usage: 'reauth', reauth_user_id: 'user_existing' }),
+      })
+    );
+  });
+
+  it('refuses a re-authentication challenge that names no user', async () => {
+    mocks.challengeStore.getChallengeRpc.mockResolvedValue({
+      id: 'reauth_challenge',
+      tenantId: 'tenant_test',
+      type: 'reauth',
+      userId: 'anonymous',
+      challenge: 'reauth_challenge',
+    });
+    const { directPasskeyLoginStartHandler } = await import('../direct-auth');
+
+    const response = await directPasskeyLoginStartHandler(
+      createContext(
+        {
+          client_id: 'web-client',
+          code_challenge: 'challenge',
+          code_challenge_method: 'S256',
+          channel: 'browser',
+          authorization_challenge_id: 'reauth_challenge',
+        },
+        webHeaders(),
+        'https://app.example.com/api/v1/auth/direct/passkey/login/start'
+      ) as never
+    );
+
+    expect(response.status).toBe(400);
+    expect(mocks.challengeStore.storeChallengeRpc).not.toHaveBeenCalled();
   });
 
   it('rejects passkey login start when the login usage is disabled', async () => {
@@ -801,10 +864,86 @@ describe('Direct Auth primary passkey and email-code flows', () => {
           code_challenge: 'pkce-challenge',
           origin: 'https://app.example.com',
           rpID: 'app.example.com',
+          usage: 'login',
         }),
       })
     );
   }, 10_000);
+
+  it.each([
+    ['login', 'authentication-methods.passkey.login_enabled'],
+    ['reauth', 'authentication-methods.passkey.reauth_enabled'],
+  ])(
+    'refuses to finish a passkey %s turned off since its challenge was issued',
+    async (usage, setting) => {
+      const codeVerifier = 'passkey-login-code-verifier';
+      mocks.challengeStore.consumeChallengeRpc.mockResolvedValue({
+        challenge: 'passkey-login-challenge',
+        metadata: {
+          code_challenge: await s256Challenge(codeVerifier),
+          client_id: 'web-client',
+          channel: 'browser',
+          origin: 'https://app.example.com',
+          rpID: 'app.example.com',
+          usage,
+        },
+      });
+      const { directPasskeyLoginFinishHandler } = await import('../direct-auth');
+      const context = createContext({
+        challenge_id: 'challenge_1',
+        credential: {
+          id: 'credential-id',
+          rawId: 'credential-id',
+          response: {},
+          type: 'public-key',
+        },
+        code_verifier: codeVerifier,
+        channel: 'browser',
+      });
+      context.env.SETTINGS = createMockKV({
+        'settings:tenant:tenant_test:authentication-methods': JSON.stringify({ [setting]: false }),
+      }) as never;
+
+      const response = await directPasskeyLoginFinishHandler(context as never);
+
+      expect(response.status).toBe(403);
+      expect(mocks.authCodeStore.storeCodeRpc).not.toHaveBeenCalled();
+    }
+  );
+
+  it("refuses a passkey re-authentication finished with another user's passkey", async () => {
+    const codeVerifier = 'passkey-login-code-verifier';
+    mocks.challengeStore.consumeChallengeRpc.mockResolvedValue({
+      challenge: 'passkey-login-challenge',
+      metadata: {
+        code_challenge: await s256Challenge(codeVerifier),
+        client_id: 'web-client',
+        channel: 'browser',
+        origin: 'https://app.example.com',
+        rpID: 'app.example.com',
+        usage: 'reauth',
+        reauth_user_id: 'user_someone_else',
+      },
+    });
+    const { directPasskeyLoginFinishHandler } = await import('../direct-auth');
+
+    const response = await directPasskeyLoginFinishHandler(
+      createContext({
+        challenge_id: 'challenge_1',
+        credential: {
+          id: 'credential-id',
+          rawId: 'credential-id',
+          response: {},
+          type: 'public-key',
+        },
+        code_verifier: codeVerifier,
+        channel: 'browser',
+      }) as never
+    );
+
+    expect(response.status).toBeGreaterThanOrEqual(400);
+    expect(mocks.authCodeStore.storeCodeRpc).not.toHaveBeenCalled();
+  });
 
   it('finishes passkey login and stores a direct-auth authorization code artifact', async () => {
     const codeVerifier = 'passkey-login-code-verifier';
@@ -1133,6 +1272,44 @@ describe('Direct Auth primary passkey and email-code flows', () => {
         }),
       })
     );
+  });
+
+  it.each([
+    ['refuses a sign-up carried by a re-authentication challenge', 'reauth', {}, 400],
+    [
+      'checks the sign-up switch for a sign-up carried by a login challenge',
+      'login',
+      { 'authentication-methods.passkey.signup_enabled': false },
+      403,
+    ],
+  ])('%s', async (_label, type, settings, status) => {
+    mocks.challengeStore.getChallengeRpc.mockResolvedValue({
+      id: 'authorization_challenge',
+      tenantId: 'tenant_test',
+      type,
+      userId: 'user_existing',
+      challenge: 'authorization_challenge',
+    });
+    const { directPasskeySignupStartHandler } = await import('../direct-auth');
+    const context = createContext(
+      {
+        client_id: 'web-client',
+        email: 'new@example.com',
+        code_challenge: 'signup-pkce-challenge',
+        code_challenge_method: 'S256',
+        channel: 'browser',
+        authorization_challenge_id: 'authorization_challenge',
+      },
+      webHeaders()
+    );
+    context.env.SETTINGS = createMockKV({
+      'settings:tenant:tenant_test:authentication-methods': JSON.stringify(settings),
+    }) as never;
+
+    const response = await directPasskeySignupStartHandler(context as never);
+
+    expect(response.status).toBe(status);
+    expect(mocks.generateRegistrationOptions).not.toHaveBeenCalled();
   });
 
   it('starts passkey signup by creating a new user and storing challenge mapping', async () => {
@@ -1815,6 +1992,104 @@ describe('Direct Auth primary passkey and email-code flows', () => {
         }),
       })
     );
+  });
+
+  const emailSendBody = (extra: Record<string, unknown> = {}) => ({
+    client_id: 'web-client',
+    email: 'same@example.com',
+    code_challenge: 'email-pkce-challenge',
+    code_challenge_method: 'S256',
+    channel: 'browser',
+    scope: 'openid email',
+    ...extra,
+  });
+  const reauthChallenge = (userId: string) => ({
+    id: 'reauth_challenge',
+    tenantId: 'tenant_test',
+    type: 'reauth',
+    userId,
+    challenge: 'reauth_challenge',
+  });
+  const storedEmailCodes = () =>
+    mocks.challengeStore.storeChallengeRpc.mock.calls.filter(
+      ([request]) => (request as { type?: string }).type === 'direct_email_code'
+    );
+
+  it('sends a re-authentication code only to the user the challenge names', async () => {
+    mocks.userPII.findByTenantAndEmail.mockResolvedValue({
+      id: 'user_existing',
+      email: 'same@example.com',
+      name: 'Existing User',
+    });
+    mocks.challengeStore.getChallengeRpc.mockResolvedValue(reauthChallenge('user_existing'));
+    const { directEmailCodeSendHandler } = await import('../direct-auth');
+
+    const response = await directEmailCodeSendHandler(
+      enableEmailOtp(
+        createContext(
+          emailSendBody({ authorization_challenge_id: 'reauth_challenge' }),
+          webHeaders()
+        )
+      ) as never
+    );
+
+    expect(response.status).toBe(200);
+    expect(storedEmailCodes()).toHaveLength(1);
+    expect(storedEmailCodes()[0][0]).toMatchObject({
+      metadata: expect.objectContaining({ usage: 'reauth', reauth_user_id: 'user_existing' }),
+    });
+  });
+
+  it('answers but sends nothing for a re-authentication challenge naming someone else', async () => {
+    mocks.userPII.findByTenantAndEmail.mockResolvedValue({
+      id: 'user_existing',
+      email: 'same@example.com',
+      name: 'Existing User',
+    });
+    mocks.challengeStore.getChallengeRpc.mockResolvedValue(reauthChallenge('user_other'));
+    const { directEmailCodeSendHandler } = await import('../direct-auth');
+
+    const response = await directEmailCodeSendHandler(
+      enableEmailOtp(
+        createContext(
+          emailSendBody({ authorization_challenge_id: 'reauth_challenge' }),
+          webHeaders()
+        ),
+        {},
+        { 'authentication-methods.email_otp.login_enabled': false }
+      ) as never
+    );
+
+    expect(response.status).toBe(200);
+    expect(storedEmailCodes()).toHaveLength(0);
+    expect(mocks.emailNotifier.send).not.toHaveBeenCalled();
+  });
+
+  it('judges a new address as a sign-up whatever challenge it comes with', async () => {
+    mocks.challengeStore.getChallengeRpc.mockResolvedValue({
+      id: 'login_challenge',
+      tenantId: 'tenant_test',
+      type: 'login',
+      challenge: 'login_challenge',
+    });
+    const { directEmailCodeSendHandler } = await import('../direct-auth');
+
+    const response = await directEmailCodeSendHandler(
+      enableEmailOtp(
+        createContext(
+          emailSendBody({
+            email: 'brand-new@example.com',
+            authorization_challenge_id: 'login_challenge',
+          }),
+          webHeaders()
+        ),
+        {},
+        { 'authentication-methods.email_otp.signup_enabled': false }
+      ) as never
+    );
+
+    expect(response.status).toBe(200);
+    expect(storedEmailCodes()).toHaveLength(0);
   });
 
   it('keeps the accepted response indistinguishable when delivery fails or the account is absent', async () => {
@@ -2837,6 +3112,203 @@ describe('Direct Auth primary passkey and email-code flows', () => {
     expect(mocks.rateLimiter.incrementRpc).not.toHaveBeenCalled();
   });
 
+  it.each([
+    [
+      'for another user than the re-authentication',
+      { usage: 'reauth', reauth_user_id: 'user_other' },
+      {},
+    ],
+    [
+      'once its usage has been turned off',
+      { usage: 'login' },
+      { 'authentication-methods.email_otp.login_enabled': false },
+    ],
+  ])('issues nothing for a code sent %s', async (_label, extra, overrides) => {
+    const codeVerifier = 'email-code-verifier';
+    const challengeData = {
+      challenge: 'hashed-email-code',
+      userId: 'user_existing',
+      email: 'user@example.com',
+      metadata: {
+        code_challenge: await s256Challenge(codeVerifier),
+        client_id: 'web-client',
+        channel: 'browser',
+        scope: 'openid email',
+        transaction_id: 'attempt_1',
+        issued_at: Date.now() - 10_000,
+        ...extra,
+      },
+    };
+    mocks.challengeStore.getChallengeRpc.mockResolvedValue(challengeData);
+    mocks.challengeStore.consumeChallengeRpc.mockResolvedValue(challengeData);
+    const { directEmailCodeVerifyHandler } = await import('../direct-auth');
+
+    const response = await directEmailCodeVerifyHandler(
+      enableEmailOtp(
+        createContext({
+          attempt_id: 'attempt_1',
+          code: '123456',
+          code_verifier: codeVerifier,
+          channel: 'browser',
+        }),
+        {},
+        overrides
+      ) as never
+    );
+
+    expect(response.status).toBeGreaterThanOrEqual(400);
+    expect(mocks.authCodeStore.storeCodeRpc).not.toHaveBeenCalled();
+    expect(mocks.coreAdapter.execute).not.toHaveBeenCalledWith(
+      expect.stringContaining('email_verified = 1'),
+      expect.anything()
+    );
+  });
+
+  it.each([
+    ['refuses a re-authentication by an unknown method', undefined, true],
+    ['lets a directory password complete a re-authentication', 'directory_password', false],
+  ] as const)('%s', async (_label, method, refused) => {
+    mocks.challengeStore.consumeChallengeRpc
+      .mockRejectedValueOnce(new Error('not a login challenge'))
+      .mockResolvedValueOnce({
+        userId: 'user_existing',
+        metadata: { sessionUserId: 'user_existing' },
+      });
+    const { consumeAuthorizationChallengeContinuation } = await import('../direct-auth');
+    const context = createContext({});
+    (context as unknown as { header: unknown }).header = vi.fn();
+
+    const result = await consumeAuthorizationChallengeContinuation(
+      context as never,
+      'tenant_test',
+      'reauth_challenge',
+      'user_existing',
+      1_000,
+      'https://op.example.com',
+      method
+    );
+
+    expect('error' in result).toBe(refused);
+  });
+
+  it.each([
+    ['refuses a proof made before the re-authentication was asked for', 999, true],
+    ['accepts a proof made after it', 1_001, false],
+  ])('%s', async (_label, authTime, refused) => {
+    mocks.challengeStore.consumeChallengeRpc
+      .mockRejectedValueOnce(new Error('not a login challenge'))
+      .mockResolvedValueOnce({
+        userId: 'user_existing',
+        metadata: { sessionUserId: 'user_existing', reauth_issued_at: 1_000_000 },
+      });
+    const { consumeAuthorizationChallengeContinuation } = await import('../direct-auth');
+    const context = createContext({});
+    (context as unknown as { header: unknown }).header = vi.fn();
+
+    const result = await consumeAuthorizationChallengeContinuation(
+      context as never,
+      'tenant_test',
+      'reauth_challenge',
+      'user_existing',
+      authTime,
+      'https://op.example.com',
+      'directory_password'
+    );
+
+    expect('error' in result).toBe(refused);
+  });
+
+  it('reads the proving method from what the session recorded', async () => {
+    const { reauthProvenMethodFromAmr } = await import('../direct-auth');
+
+    expect(reauthProvenMethodFromAmr(['passkey'])).toBe('passkey');
+    expect(reauthProvenMethodFromAmr(['otp', 'totp'])).toBe('totp');
+    expect(reauthProvenMethodFromAmr(['otp'])).toBe('email_otp');
+    expect(reauthProvenMethodFromAmr(['email_code'])).toBe('email_otp');
+    expect(reauthProvenMethodFromAmr(['pwd', 'directory'])).toBe('directory_password');
+    expect(reauthProvenMethodFromAmr(['did'])).toBe('other');
+    expect(reauthProvenMethodFromAmr(['external_idp'])).toBe('other');
+    expect(reauthProvenMethodFromAmr(['saml'])).toBe('other');
+    expect(reauthProvenMethodFromAmr(['anon'])).toBeUndefined();
+    // A passkey only just registered proves nothing yet.
+    expect(reauthProvenMethodFromAmr(['passkey'], ['passkey'])).toBeUndefined();
+    expect(reauthProvenMethodFromAmr(['passkey_signup'])).toBeUndefined();
+    expect(reauthProvenMethodFromAmr(undefined)).toBeUndefined();
+  });
+
+  it('asks for a new code when the code carries no usage', async () => {
+    const codeVerifier = 'email-code-verifier';
+    const challengeData = {
+      challenge: 'hashed-email-code',
+      userId: 'user_existing',
+      email: 'user@example.com',
+      metadata: {
+        code_challenge: await s256Challenge(codeVerifier),
+        client_id: 'web-client',
+        channel: 'browser',
+        transaction_id: 'attempt_1',
+        issued_at: Date.now() - 10_000,
+      },
+    };
+    mocks.challengeStore.getChallengeRpc.mockResolvedValue(challengeData);
+    mocks.challengeStore.consumeChallengeRpc.mockResolvedValue(challengeData);
+    const { directEmailCodeVerifyHandler } = await import('../direct-auth');
+
+    const response = await directEmailCodeVerifyHandler(
+      enableEmailOtp(
+        createContext({
+          attempt_id: 'attempt_1',
+          code: '123456',
+          code_verifier: codeVerifier,
+          channel: 'browser',
+        })
+      ) as never
+    );
+
+    expect(response.status).toBeGreaterThanOrEqual(400);
+    expect(mocks.authCodeStore.storeCodeRpc).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['refuses', false, 403],
+    ['continues', true, 200],
+  ])(
+    '%s a re-authentication by a method whose re-authentication switch is %s',
+    async (_label, enabled, status) => {
+      mocks.challengeStore.consumeChallengeRpc
+        .mockRejectedValueOnce(new Error('not a login challenge'))
+        .mockResolvedValueOnce({
+          userId: 'user_existing',
+          metadata: { sessionUserId: 'user_existing' },
+        });
+      const { consumeAuthorizationChallengeContinuation } = await import('../direct-auth');
+      const context = enableEmailOtp(
+        createContext({}),
+        {},
+        {
+          'authentication-methods.email_otp.reauth_enabled': enabled,
+        }
+      );
+      (context as unknown as { header: unknown }).header = vi.fn();
+
+      const result = await consumeAuthorizationChallengeContinuation(
+        context as never,
+        'tenant_test',
+        'reauth_challenge',
+        'user_existing',
+        1_000,
+        'https://op.example.com',
+        'email_otp'
+      );
+
+      if (status === 403) {
+        expect('error' in result && result.error.status).toBe(403);
+      } else {
+        expect('error' in result).toBe(false);
+      }
+    }
+  );
+
   it('verifies an email code and returns a direct-auth artifact bound to PKCE', async () => {
     const codeVerifier = 'email-code-verifier';
     const codeChallenge = await s256Challenge(codeVerifier);
@@ -2850,6 +3322,7 @@ describe('Direct Auth primary passkey and email-code flows', () => {
         client_id: 'web-client',
         channel: 'browser',
         scope: 'openid email',
+        usage: 'login',
         transaction_id: 'attempt_1',
         issued_at: issuedAt,
       },
@@ -2859,12 +3332,14 @@ describe('Direct Auth primary passkey and email-code flows', () => {
     const { directEmailCodeVerifyHandler } = await import('../direct-auth');
 
     const response = await directEmailCodeVerifyHandler(
-      createContext({
-        attempt_id: 'attempt_1',
-        code: '123456',
-        code_verifier: codeVerifier,
-        channel: 'browser',
-      }) as never
+      enableEmailOtp(
+        createContext({
+          attempt_id: 'attempt_1',
+          code: '123456',
+          code_verifier: codeVerifier,
+          channel: 'browser',
+        })
+      ) as never
     );
     const body = (await response.json()) as Record<string, unknown>;
 
@@ -2912,18 +3387,21 @@ describe('Direct Auth primary passkey and email-code flows', () => {
         client_id: 'web-client',
         channel: 'browser',
         scope: 'openid email',
+        usage: 'login',
         transaction_id: 'attempt_tenant_d1',
         issued_at: Date.now() - 10_000,
       },
     };
     mocks.challengeStore.getChallengeRpc.mockResolvedValue(challengeData);
     mocks.challengeStore.consumeChallengeRpc.mockResolvedValue(challengeData);
-    const context = createContext({
-      attempt_id: 'attempt_tenant_d1',
-      code: '123456',
-      code_verifier: codeVerifier,
-      channel: 'browser',
-    });
+    const context = enableEmailOtp(
+      createContext({
+        attempt_id: 'attempt_tenant_d1',
+        code: '123456',
+        code_verifier: codeVerifier,
+        channel: 'browser',
+      })
+    );
     context.get = vi.fn((key: string) => {
       if (key === 'tenantId') return 'tenant_test';
       if (key === 'tenantMetadataContext') {
@@ -2987,6 +3465,7 @@ describe('Direct Auth primary passkey and email-code flows', () => {
         client_id: 'web-client',
         channel: 'browser',
         scope: 'openid email',
+        usage: 'login',
         transaction_id: 'attempt_retry',
         issued_at: Date.now() - 10_000,
       },
@@ -3002,12 +3481,16 @@ describe('Direct Auth primary passkey and email-code flows', () => {
       channel: 'browser',
     };
 
-    const invalidResponse = await directEmailCodeVerifyHandler(createContext(request) as never);
+    const invalidResponse = await directEmailCodeVerifyHandler(
+      enableEmailOtp(createContext(request)) as never
+    );
 
     expect(invalidResponse.ok).toBe(false);
     expect(mocks.challengeStore.consumeChallengeRpc).not.toHaveBeenCalled();
 
-    const validResponse = await directEmailCodeVerifyHandler(createContext(request) as never);
+    const validResponse = await directEmailCodeVerifyHandler(
+      enableEmailOtp(createContext(request)) as never
+    );
 
     expect(validResponse.status).toBe(200);
     expect(mocks.challengeStore.getChallengeRpc).toHaveBeenCalledTimes(2);

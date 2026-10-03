@@ -22,6 +22,7 @@ import { setCookie, getCookie, deleteCookie } from 'hono/cookie';
 import type { Env, Session } from '@authrim/ar-lib-core';
 import { getRefreshTokenRotatorStubByJti } from '@authrim/ar-lib-core/services/refresh-token-family-store';
 import {
+  isAuthenticationMethodUsageAvailable,
   revokeGuestResumeForSession,
   GUEST_RESUME_COOKIE,
   isAllowedOrigin,
@@ -542,13 +543,45 @@ function metadataString(metadata: Record<string, unknown>, key: string): string 
   return typeof value === 'string' && value ? value : undefined;
 }
 
+/**
+ * A method that can complete a re-authentication. Directory passwords and 'other' methods (DID,
+ * an external IdP, SAML) have no re-authentication switch of their own.
+ */
+export type ReauthProvenMethod = 'passkey' | 'email_otp' | 'totp' | 'directory_password' | 'other';
+
+/**
+ * The method a session's authentication proved, from its amr (methods recorded as unverified, such
+ * as a passkey only just registered, do not count).
+ */
+export function reauthProvenMethodFromAmr(
+  amr: readonly string[] | undefined,
+  unverifiedAmr: readonly string[] = []
+): ReauthProvenMethod | undefined {
+  const proven = (amr ?? []).filter((method) => !unverifiedAmr.includes(method));
+  if (proven.includes('totp')) return 'totp';
+  if (proven.includes('passkey')) return 'passkey';
+  if (
+    proven.some((m) => m === 'otp' || m === 'email_code' || m === 'email_verification_protocol')
+  ) {
+    return 'email_otp';
+  }
+  if (proven.includes('pwd')) return 'directory_password';
+  if (proven.some((m) => m === 'did' || m === 'external_idp' || m === 'saml')) return 'other';
+  return undefined;
+}
+
 export async function consumeAuthorizationChallengeContinuation(
   c: Context<{ Bindings: Env }>,
   tenantId: string,
   challengeId: string,
   authenticatedUserId: string,
   authTime: number,
-  fallbackIssuer: string
+  fallbackIssuer: string,
+  /**
+   * The method that proved the user. A re-authentication needs one (an unknown method, such as a
+   * just-registered passkey, cannot complete it) and requires its re-authentication switch.
+   */
+  provenMethod?: ReauthProvenMethod
 ): Promise<AuthorizationChallengeContinuation | { error: Response }> {
   const env = c.env;
   const challengeStore = await getChallengeStoreByChallengeId(env, challengeId, tenantId);
@@ -588,7 +621,44 @@ export async function consumeAuthorizationChallengeContinuation(
     }
   }
 
+  if (
+    type === 'reauth' &&
+    (!provenMethod ||
+      (provenMethod !== 'directory_password' &&
+        provenMethod !== 'other' &&
+        !(await isAuthenticationMethodUsageAvailable(env, tenantId, provenMethod, 'reauth', {
+          strict: true,
+        }).catch(() => false))))
+  ) {
+    return {
+      error: new Response(
+        JSON.stringify({
+          error: 'access_denied',
+          error_description: 'This method cannot be used to re-authenticate',
+        }),
+        { status: 403, headers: { 'Content-Type': 'application/json' } }
+      ),
+    };
+  }
+
   const metadata = challengeData.metadata || {};
+  // A re-authentication is answered only by a proof made after it was asked for.
+  const reauthIssuedAt = metadata.reauth_issued_at;
+  if (
+    type === 'reauth' &&
+    typeof reauthIssuedAt === 'number' &&
+    authTime < Math.floor(reauthIssuedAt / 1000)
+  ) {
+    return {
+      error: new Response(
+        JSON.stringify({
+          error: 'login_required',
+          error_description: 'Authenticate again to complete the re-authentication',
+        }),
+        { status: 403, headers: { 'Content-Type': 'application/json' } }
+      ),
+    };
+  }
   const expectedUserId =
     type === 'reauth'
       ? metadataString(metadata, 'sessionUserId') || challengeData.userId
@@ -666,6 +736,52 @@ export async function readAuthorizationChallengeType(
   }
 
   return null;
+}
+
+/** The user a re-authentication challenge was issued for (null for a login challenge or none). */
+async function readAuthorizationChallengeReauthUser(
+  env: Env,
+  tenantId: string,
+  challengeId: string | undefined
+): Promise<string | null> {
+  if (!challengeId) return null;
+  try {
+    const challengeStore = await getChallengeStoreByChallengeId(env, challengeId, tenantId);
+    const challenge = (await challengeStore.getChallengeRpc(challengeId)) as {
+      tenantId?: string;
+      type?: string;
+      userId?: string;
+      metadata?: Record<string, unknown>;
+    } | null;
+    if (challenge?.tenantId !== tenantId || challenge.type !== 'reauth') return null;
+    const sessionUserId = challenge.metadata?.sessionUserId;
+    const userId =
+      typeof sessionUserId === 'string' && sessionUserId ? sessionUserId : challenge.userId;
+    return userId && userId !== 'anonymous' ? userId : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * When a re-authentication challenge was issued (ms), or null for no challenge or another kind.
+ * Throws when the challenge cannot be read, so the caller can choose a safe path.
+ */
+export async function readAuthorizationChallengeReauthIssuedAt(
+  env: Env,
+  tenantId: string,
+  challengeId: string | undefined | null
+): Promise<number | null> {
+  if (!challengeId) return null;
+  const challengeStore = await getChallengeStoreByChallengeId(env, challengeId, tenantId);
+  const challenge = (await challengeStore.getChallengeRpc(challengeId)) as {
+    tenantId?: string;
+    type?: string;
+    metadata?: Record<string, unknown>;
+  } | null;
+  if (challenge?.tenantId !== tenantId || challenge.type !== 'reauth') return null;
+  const issuedAt = challenge.metadata?.reauth_issued_at;
+  return typeof issuedAt === 'number' ? issuedAt : null;
 }
 
 async function resolveDirectStartTurnstileAction(
@@ -1011,6 +1127,17 @@ export async function directPasskeyLoginStartHandler(c: Context<{ Bindings: Env 
       turnstileAction
     );
     if (methodDisabledError) return methodDisabledError;
+    // A re-authentication may only prove the user it was asked of: a passkey login turned off must
+    // not be reachable through someone else's re-authentication challenge.
+    const reauthUserId =
+      turnstileAction === 'reauth'
+        ? await readAuthorizationChallengeReauthUser(c.env, tenantId, authorization_challenge_id)
+        : null;
+    if (turnstileAction === 'reauth' && !reauthUserId) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
+        variables: { field: 'authorization_challenge_id' },
+      });
+    }
     const turnstileError = await verifyHumanVerificationForAction(
       c,
       turnstileAction,
@@ -1067,6 +1194,9 @@ export async function directPasskeyLoginStartHandler(c: Context<{ Bindings: Env 
         origin: webAuthnOrigin,
         rpID,
         authorization_challenge_id,
+        // The switch checked here is checked again before the session is created.
+        usage: turnstileAction,
+        ...(reauthUserId ? { reauth_user_id: reauthUserId } : {}),
       },
     });
 
@@ -1138,6 +1268,8 @@ export async function directPasskeyLoginFinishHandler(c: Context<{ Bindings: Env
         origin: string;
         rpID: string;
         authorization_challenge_id?: string;
+        usage?: AuthenticationMethodUsage;
+        reauth_user_id?: string;
       };
     };
 
@@ -1150,6 +1282,15 @@ export async function directPasskeyLoginFinishHandler(c: Context<{ Bindings: Env
     } catch {
       return createErrorResponse(c, AR_ERROR_CODES.AUTH_SESSION_EXPIRED);
     }
+
+    // Passkey sign-in may have been turned off since the challenge was issued.
+    const methodDisabledError = await rejectIfAuthenticationMethodDisabled(
+      c,
+      getTenantIdFromContext(c),
+      'passkey',
+      challengeData.metadata?.usage === 'reauth' ? 'reauth' : 'login'
+    );
+    if (methodDisabledError) return methodDisabledError;
 
     // Verify PKCE
     const isValidPKCE = await verifyPKCE(
@@ -1216,6 +1357,14 @@ export async function directPasskeyLoginFinishHandler(c: Context<{ Bindings: Env
           },
         },
       });
+    }
+
+    // A re-authentication proves only the user it was asked of.
+    if (
+      challengeData.metadata?.usage === 'reauth' &&
+      challengeData.metadata.reauth_user_id !== passkey.user_id
+    ) {
+      return createErrorResponse(c, AR_ERROR_CODES.AUTH_PASSKEY_FAILED);
     }
 
     if (
@@ -1449,16 +1598,23 @@ export async function directPasskeySignupStartHandler(c: Context<{ Bindings: Env
       ? await resolveDirectStartTurnstileAction(c, tenantId, authorization_challenge_id)
       : 'signup';
     if (typeof passkeySignupUsage !== 'string') return passkeySignupUsage.error;
+    // A sign-up whatever challenge it arrives with: a re-authentication cannot carry one, and a
+    // login challenge must not stand in for the sign-up switch.
+    if (passkeySignupUsage === 'reauth') {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
+        variables: { field: 'authorization_challenge_id' },
+      });
+    }
     const methodDisabledError = await rejectIfAuthenticationMethodDisabled(
       c,
       tenantId,
       'passkey',
-      passkeySignupUsage
+      'signup'
     );
     if (methodDisabledError) return methodDisabledError;
     const turnstileError = await verifyHumanVerificationForAction(
       c,
-      passkeySignupUsage,
+      'signup',
       human_verification_response ?? cf_turnstile_response
     );
     if (turnstileError) return turnstileError;
@@ -2049,6 +2205,18 @@ async function completeDirectEmailVerification(
     assuranceSettings,
   } = input;
   const log = getLogger(c).module('DIRECT-AUTH');
+  // What the code was sent for still holds: the method's switch for that usage, and a
+  // re-authentication proves only the user it was asked of.
+  const usage = metadata.usage;
+  if (usage !== 'login' && usage !== 'signup' && usage !== 'reauth') {
+    // Sent before the usage was recorded (or tampered with): ask for a new code.
+    return createErrorResponse(c, AR_ERROR_CODES.AUTH_SESSION_EXPIRED);
+  }
+  const disabled = await rejectIfAuthenticationMethodDisabled(c, tenantId, 'email_otp', usage);
+  if (disabled) return disabled;
+  if (usage === 'reauth' && metadata.reauth_user_id !== userId) {
+    return createErrorResponse(c, AR_ERROR_CODES.AUTH_INVALID_CODE);
+  }
   const tenantD1 = usesRoutedAccountStorage(c);
   let runtimeUser: CanonicalOtpLoginUser | null;
   let coreAdapter: DatabaseAdapter;
@@ -2574,7 +2742,10 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
 
     let suppressEmailCodeSend = false;
 
-    let turnstileAction: HumanVerificationAction;
+    // The usage is what this code will do (sign up a new address, re-authenticate the user a
+    // re-authentication challenge names, or sign in), not merely the challenge's type: a login or
+    // re-authentication challenge must not carry a sign-up, nor someone else's re-authentication.
+    let challengeType: HumanVerificationAction | null = null;
     if (authorization_challenge_id) {
       const resolvedAction = await resolveDirectStartTurnstileAction(
         c,
@@ -2582,11 +2753,28 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
         authorization_challenge_id
       );
       if (typeof resolvedAction !== 'string') return resolvedAction.error;
-      turnstileAction = resolvedAction;
-    } else {
-      turnstileAction = user ? 'login' : 'signup';
+      challengeType = resolvedAction;
     }
-    const emailCodeUsage = turnstileAction;
+    const reauthUserId =
+      challengeType === 'reauth'
+        ? await readAuthorizationChallengeReauthUser(c.env, tenantId, authorization_challenge_id)
+        : null;
+    const emailCodeUsage: HumanVerificationAction = !user
+      ? 'signup'
+      : challengeType === 'reauth'
+        ? 'reauth'
+        : 'login';
+    // Human verification answers the screen the code was asked from (the shared login form asks
+    // with a login token even for a new address), as before.
+    const turnstileAction: HumanVerificationAction = challengeType ?? (user ? 'login' : 'signup');
+    if (challengeType === 'reauth' && (!user || !reauthUserId || user.id !== reauthUserId)) {
+      // Answered like any other send, so the address's owner is not revealed.
+      suppressEmailCodeSend = true;
+      log.info('Suppressing email-code send for another user than the re-authentication', {
+        action: 'direct_email_code_send_suppressed',
+        reason: 'reauth_user_mismatch',
+      });
+    }
     const emailOtpEnabled = await isAuthenticationMethodUsageEnabled(
       c.env,
       tenantId,
@@ -2714,6 +2902,9 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
       channel,
       scope,
       authorization_challenge_id,
+      // Checked again when the code is verified.
+      usage: emailCodeUsage,
+      ...(reauthUserId ? { reauth_user_id: reauthUserId } : {}),
       ...(boundRuntimeInteractionId ? { runtime_interaction_id: boundRuntimeInteractionId } : {}),
       ...(inviteData
         ? {
@@ -3220,7 +3411,9 @@ export async function directSessionCreateHandler(c: Context<{ Bindings: Env }>) 
         effectiveAuthorizationChallengeId,
         artifactData.userId,
         authTime,
-        new URL(c.req.url).origin
+        new URL(c.req.url).origin,
+        // A passkey only just registered (passkey_signup) proves nothing yet.
+        reauthProvenMethodFromAmr(typeof metadata.method === 'string' ? [metadata.method] : [])
       );
       if ('error' in continuation) {
         return continuation.error;

@@ -1318,6 +1318,14 @@ const REVIEWED_FIELDS: readonly [string, TenantSettingValueType, TenantSettingHa
   `,
     ],
     [
+      'self-service',
+      'number',
+      'value',
+      `
+    self-service.reauth_ttl_seconds
+  `,
+    ],
+    [
       'service-site',
       'boolean',
       'value',

@@ -51,6 +51,7 @@ const mocks = vi.hoisted(() => {
     resolveRuntimeIdentityMappingBinding: vi.fn(),
     idQueue,
     consumeAuthorizationChallengeContinuation: vi.fn(),
+    readAuthorizationChallengeReauthIssuedAt: vi.fn(),
     getFeatureFlag: vi.fn(),
     info: vi.fn(),
     warn: vi.fn(),
@@ -88,9 +89,14 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   };
 });
 
-vi.mock('../direct-auth', () => ({
-  consumeAuthorizationChallengeContinuation: mocks.consumeAuthorizationChallengeContinuation,
-}));
+vi.mock('../direct-auth', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../direct-auth')>();
+  return {
+    consumeAuthorizationChallengeContinuation: mocks.consumeAuthorizationChallengeContinuation,
+    readAuthorizationChallengeReauthIssuedAt: mocks.readAuthorizationChallengeReauthIssuedAt,
+    reauthProvenMethodFromAmr: actual.reauthProvenMethodFromAmr,
+  };
+});
 
 type RuntimeContext = Context<{ Bindings: Env }>;
 
@@ -768,6 +774,8 @@ function resetAdapter() {
   mocks.challengeStore.storeChallengeRpc.mockReset();
   mocks.runtimeUsers.findById.mockReset();
   mocks.consumeAuthorizationChallengeContinuation.mockReset();
+  mocks.readAuthorizationChallengeReauthIssuedAt.mockReset();
+  mocks.readAuthorizationChallengeReauthIssuedAt.mockResolvedValue(null);
   clearLoginRuntimeFlowVersionCacheForTests();
   mocks.idQueue.splice(
     0,
@@ -2352,6 +2360,74 @@ describe('LoginUI runtime Flow handlers', () => {
     expect(data.step).toBeNull();
   });
 
+  it.each([
+    ['older than', 1_700_000_124_000, 'auth:step'],
+    ['newer than', 1_700_000_123_000, null],
+    ['unreadable for', new Error('challenge store unavailable'), 'auth:step'],
+  ] as const)(
+    'routes a session %s a re-authentication request accordingly',
+    async (_label, reauthIssuedAt, nextStepId) => {
+      const { data: startData } = await startInteraction(
+        { flow_kind: 'login' },
+        sessionCheckRuntime
+      );
+      resetAdapter();
+      mockSubmitQueries({
+        expiresAt: Number((startData.interaction as Record<string, unknown>).expires_at),
+        contractHash: String(startData.contract_hash),
+        signature: String(startData.signature),
+        currentNodeId: 'session-check',
+        currentStepId: 'session-check:step',
+        stepState: 'pending',
+        runtimeSnapshot: sessionCheckRuntime,
+        editorSnapshot: sessionCheckEditor,
+        context: { authorization_challenge_id: 'reauth_challenge_1' },
+      });
+      if (reauthIssuedAt instanceof Error) {
+        mocks.readAuthorizationChallengeReauthIssuedAt.mockRejectedValue(reauthIssuedAt);
+      } else {
+        mocks.readAuthorizationChallengeReauthIssuedAt.mockResolvedValue(reauthIssuedAt);
+      }
+      mocks.consumeAuthorizationChallengeContinuation.mockResolvedValue({
+        redirectUrl: 'https://rp.example.com/callback?code=abc',
+      });
+      mocks.sessionStore.getSessionRpc.mockResolvedValue({
+        userId: 'user_1',
+        expiresAt: Date.now() + 60_000,
+        createdAt: 1_700_000_000_000,
+        data: { authTime: 1_700_000_123 },
+      });
+
+      const response = await loginRuntimeInteractionSubmitHandler(
+        createContext({
+          params: { interaction_id: 'interaction_1' },
+          headers: { Cookie: 'authrim_session=sess_runtime_1' },
+          body: {
+            step_id: 'session-check:step',
+            node_id: 'session-check',
+            contract_hash: startData.contract_hash,
+            signature: startData.signature,
+          },
+        })
+      );
+      const data = await readJson(response);
+
+      expect(response.status).toBe(200);
+      expect(mocks.readAuthorizationChallengeReauthIssuedAt).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.any(String),
+        'reauth_challenge_1'
+      );
+      if (nextStepId) {
+        expect(data.completed).toBe(false);
+        expect(data.step).toMatchObject({ id: nextStepId });
+      } else {
+        expect(data.completed).toBe(true);
+        expect(data.step).toBeNull();
+      }
+    }
+  );
+
   it('prefers the completion branch matching the active protocol when handles overlap', async () => {
     const { data: startData } = await startInteraction({ flow_kind: 'login' }, sessionCheckRuntime);
     resetAdapter();
@@ -3131,8 +3207,73 @@ describe('LoginUI runtime Flow handlers', () => {
       'login_challenge_1',
       'user_1',
       1_700_000_123,
-      'https://first.test.authrim.com'
+      'https://first.test.authrim.com',
+      // The session's recorded method (its amr); this fixture records none.
+      undefined
     );
+  });
+
+  it("refuses to continue with a session that is not the interaction user's", async () => {
+    const { data: startData } = await startInteraction(
+      {
+        flow_kind: 'login',
+        client_id: 'client_1',
+        requested_scope: 'openid profile',
+        authorization_challenge_id: 'login_challenge_1',
+      },
+      oidcCompletionRuntime
+    );
+    resetAdapter();
+    mockSubmitQueries({
+      expiresAt: Number((startData.interaction as Record<string, unknown>).expires_at),
+      contractHash: String(startData.contract_hash),
+      signature: String(startData.signature),
+      currentNodeId: 'complete',
+      currentStepId: 'complete:step',
+      stepState: 'waiting_input',
+      runtimeSnapshot: oidcCompletionRuntime,
+      editorSnapshot: null,
+      context: {
+        target_type: 'oidc_client',
+        target_id: 'client_1',
+        client_id: 'client_1',
+        authorization_challenge_id: 'login_challenge_1',
+      },
+    });
+    mocks.coreAdapter.queryOne.mockResolvedValueOnce(null);
+    mocks.coreAdapter.query.mockResolvedValueOnce([
+      { step_id: 'complete:step', selected_handle: 'completed' },
+    ]);
+    mocks.sessionStore.getSessionRpc
+      .mockResolvedValueOnce({
+        userId: 'user_1',
+        expiresAt: Date.now() + 60_000,
+        createdAt: 1_700_000_000_000,
+        data: { authTime: 1_700_000_123 },
+      })
+      .mockResolvedValueOnce({
+        userId: 'user_2',
+        expiresAt: Date.now() + 60_000,
+        createdAt: 1_700_000_000_000,
+        data: { authTime: 1_700_000_123 },
+      });
+
+    const response = await loginRuntimeInteractionSubmitHandler(
+      createContext({
+        params: { interaction_id: 'interaction_1' },
+        headers: { Cookie: 'authrim_session=sess_runtime_1' },
+        url: 'https://first.test.authrim.com/api/v1/login/interactions/interaction_1/submit',
+        body: {
+          step_id: 'complete:step',
+          node_id: 'complete',
+          selected_handle: 'completed',
+          contract_hash: startData.contract_hash,
+          signature: startData.signature,
+        },
+      })
+    );
+    expect(response.status).toBe(403);
+    expect(mocks.consumeAuthorizationChallengeContinuation).not.toHaveBeenCalled();
   });
 
   it('returns an OIDC continuation redirect after an authentication method step completes', async () => {

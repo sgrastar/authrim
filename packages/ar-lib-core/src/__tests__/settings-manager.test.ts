@@ -846,6 +846,31 @@ describe('SettingsManager', () => {
       }
     });
 
+    it("takes only a whole, in-range number when envNumber is 'strict-in-range'", async () => {
+      const meta = withMeta('test.number_setting', {
+        envNumber: 'strict-in-range',
+        integer: true,
+        min: 60,
+        max: 1800,
+      });
+      for (const raw of ['600junk', '1800.9', '90.5', '59', '1801', 'abc', '0x100']) {
+        expect(await read(meta, { TEST_NUMBER_SETTING: raw }, 'test.number_setting')).toEqual({
+          value: 100,
+          source: 'default',
+        });
+      }
+      for (const [raw, value] of [
+        ['60', 60],
+        [' 900 ', 900],
+        ['1800', 1800],
+      ] as const) {
+        expect(await read(meta, { TEST_NUMBER_SETTING: raw }, 'test.number_setting')).toEqual({
+          value,
+          source: 'env',
+        });
+      }
+    });
+
     it("reads a decimal env value in min..max when envNumber is 'fraction-in-range'", async () => {
       const meta = withMeta('test.number_setting', {
         envNumber: 'fraction-in-range',

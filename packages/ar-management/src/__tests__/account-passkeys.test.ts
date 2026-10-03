@@ -1200,6 +1200,34 @@ describe('Account Page passkey management API', () => {
     });
   });
 
+  it.each([
+    ['the default five minutes', undefined, 200],
+    ["a tenant's two-minute window", { 'self-service.reauth_ttl_seconds': 120 }, 403],
+  ])('measures recent authentication with %s', async (_label, selfService, status) => {
+    mockSessionStore.getSessionRpc.mockResolvedValue({
+      id: 'g1:apac:3:session_current',
+      tenantId: 'default',
+      userId: 'user-001',
+      createdAt: 1_777_000_000_000,
+      expiresAt: Date.now() + 60_000,
+      data: { authTime: Math.floor(Date.now() / 1000) - 200 },
+    });
+    if (status === 200) mockHasRemainingLoginMethod.mockResolvedValueOnce(true);
+
+    const response = await deleteAccountPasskeyHandler(
+      createMockContext({
+        cookie: 'authrim_session=g1%3Aapac%3A3%3Asession_current',
+        params: { id: 'pk_001' },
+        settings: selfService ? { 'settings:tenant:default:self-service': selfService } : {},
+      })
+    );
+
+    expect(response.status).toBe(status);
+    if (status === 403) {
+      await expect(response.json()).resolves.toMatchObject({ error: 'reauth_required' });
+    }
+  });
+
   it('blocks deleting the last available login method', async () => {
     const response = await deleteAccountPasskeyHandler(
       createMockContext({

@@ -3,10 +3,10 @@
  * authenticator, a linked external account) never leaves the user locked out.
  *
  * A method counts only where the tenant lets it sign in and sign-in can find the account with it:
- * a passkey while passkey login is on and its credential route reaches the account; a verified
- * email while email-code login is on and a TOTP authenticator while TOTP login is on, both only
- * when the account's email route reaches it; and a linked external account while its provider is
- * enabled and its route reaches the account.
+ * a passkey while passkey login is on (the switch every passkey sign-in path enforces) and its
+ * credential route reaches the account; a verified email while email-code login is on and a TOTP
+ * authenticator while TOTP login is on, both only when the account's email route reaches it; and
+ * a linked external account while its provider is enabled and its route reaches the account.
  */
 
 import type { Env } from '../types/env';
@@ -113,7 +113,8 @@ async function candidates(env: Env, input: RemainingLoginMethodInput): Promise<C
     identifier: string | { issuer: string; subject: string }
   ) => routeReachesAccount(env, tenantId, userId, indexKind, identifier);
   // Read strictly: an unreadable setting stops the removal rather than deciding it.
-  const [totpLogin, emailLogin] = await Promise.all([
+  const [passkeyLogin, totpLogin, emailLogin] = await Promise.all([
+    isAuthenticationMethodUsageAvailable(env, tenantId, 'passkey', 'login', { strict: true }),
     isAuthenticationMethodUsageAvailable(env, tenantId, 'totp', 'login', { strict: true }),
     isAuthenticationMethodUsageAvailable(env, tenantId, 'email_otp', 'login', { strict: true }),
   ]);
@@ -133,9 +134,7 @@ async function candidates(env: Env, input: RemainingLoginMethodInput): Promise<C
       kind: 'passkey',
       id: passkey.id,
       usable: async () => {
-        // Passkey sign-in does not consult the passkey login switch, so a passkey whose route
-        // reaches the account signs in whatever the switch says.
-        if (!passkey.rp_id) return false;
+        if (!passkeyLogin || !passkey.rp_id) return false;
         let subject: { issuer: string; subject: string };
         try {
           subject = passkeyCredentialLookupSubject({

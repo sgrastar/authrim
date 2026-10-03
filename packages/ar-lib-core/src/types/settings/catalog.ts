@@ -232,7 +232,9 @@ export const CATEGORY_SCOPE_CONFIG: Record<
     allowedScopes: ['tenant'],
   },
   'self-service': {
-    allowedScopes: ['tenant'],
+    // The platform sets defaults (the re-authentication window); account page placement stays
+    // per tenant (each such setting is limited to the tenant scope).
+    allowedScopes: ['platform', 'tenant'],
   },
   'service-site': {
     allowedScopes: ['tenant'],

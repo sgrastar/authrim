@@ -598,7 +598,8 @@ export function createDirectoryPasswordLoginHandler(fetcher?: DirectoryPasswordF
         authorizationChallengeId,
         runtimeUser.id,
         authTime,
-        new URL(c.req.url).origin
+        new URL(c.req.url).origin,
+        'directory_password'
       );
       if ('error' in continuation) {
         return continuation.error;
@@ -1011,7 +1012,9 @@ export async function directoryMigrationPasskeyVerifyHandler(c: Context<{ Bindin
       return createErrorResponse(c, AR_ERROR_CODES.USER_INVALID_CREDENTIALS);
     }
 
-    const authTime = Math.floor(now / 1000);
+    // The password was proven when the transaction was made; the new passkey proves nothing yet,
+    // so the session counts as authenticated then, not now.
+    const authTime = Math.floor(transaction.created_at / 1000);
     let authorizationContinuation: AuthorizationChallengeContinuation | undefined;
     if (transaction.authorization_challenge_id) {
       const continuation = await consumeAuthorizationChallengeContinuation(
@@ -1020,11 +1023,13 @@ export async function directoryMigrationPasskeyVerifyHandler(c: Context<{ Bindin
         transaction.authorization_challenge_id,
         transaction.user_id,
         authTime,
-        new URL(c.req.url).origin
+        new URL(c.req.url).origin,
+        'directory_password'
       );
-      if (!('error' in continuation)) {
-        authorizationContinuation = continuation;
+      if ('error' in continuation) {
+        return continuation.error;
       }
+      authorizationContinuation = continuation;
     }
 
     return createDirectorySessionSuccessResponse(c, {
@@ -1321,12 +1326,15 @@ export async function directoryMigrationEmailCodeVerifyHandler(c: Context<{ Bind
         tenantId,
         transaction.authorization_challenge_id,
         transaction.user_id,
-        authTime,
-        new URL(c.req.url).origin
+        // Recovery proves the email now; the fallback follows a password proven when it was made.
+        transaction.scope === 'recovery' ? authTime : Math.floor(transaction.created_at / 1000),
+        new URL(c.req.url).origin,
+        transaction.scope === 'recovery' ? 'email_otp' : 'directory_password'
       );
-      if (!('error' in continuation)) {
-        authorizationContinuation = continuation;
+      if ('error' in continuation) {
+        return continuation.error;
       }
+      authorizationContinuation = continuation;
     }
 
     return createDirectorySessionSuccessResponse(c, {

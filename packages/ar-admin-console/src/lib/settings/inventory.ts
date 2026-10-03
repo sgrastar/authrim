@@ -778,7 +778,7 @@ place('customization/screens', 'Screen flows', {
 });
 place('customization/account-page', 'Account page', {
 	primary: ['self-service.account_page_enabled'],
-	advanced: ['self-service.account_page_path']
+	advanced: ['self-service.account_page_path', 'self-service.reauth_ttl_seconds']
 });
 place(
 	'customization/account-page',

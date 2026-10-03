@@ -570,6 +570,53 @@ describe('managed Direct Auth browser session finish', () => {
     );
   });
 
+  it.each([
+    ['external_idp', 200],
+    ['passkey_signup', 403],
+  ])(
+    're-authenticates from a %s artifact only when the method proves the user',
+    async (method, status) => {
+      const codeVerifier = `verifier-for-${method}-reauth`;
+      challengeStore.consumeChallengeRpc
+        .mockResolvedValueOnce({
+          challenge: await s256Challenge(codeVerifier),
+          userId: 'user_123',
+          metadata: {
+            client_id: 'login-ui',
+            channel: 'browser',
+            method,
+            authorization_challenge_id: 'reauth_challenge_123',
+          },
+        })
+        .mockRejectedValueOnce(new Error('not a login challenge'))
+        .mockResolvedValueOnce({
+          userId: 'user_123',
+          metadata: {
+            response_type: 'code',
+            client_id: 'rp_web',
+            redirect_uri: 'https://rp.example.com/callback',
+            scope: 'openid',
+            state: 'state-123',
+            issuer: 'https://issuer.example.com',
+            sessionUserId: 'user_123',
+            reauth_issued_at: 1_700_000_000_000,
+          },
+        });
+      const { directSessionCreateHandler } = await import('../direct-auth');
+
+      const response = await directSessionCreateHandler(
+        createContext({
+          direct_auth_artifact: `artifact_${method}`,
+          client_id: 'login-ui',
+          code_verifier: codeVerifier,
+          channel: 'browser',
+        }) as never
+      );
+
+      expect(response.status).toBe(status);
+    }
+  );
+
   it('can resume an OAuth login challenge from artifact metadata when the request omits it', async () => {
     const codeVerifier = 'verifier-for-oauth-login-continuation-metadata';
     const codeChallenge = await s256Challenge(codeVerifier);

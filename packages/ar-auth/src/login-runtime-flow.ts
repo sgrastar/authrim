@@ -1,5 +1,9 @@
 import type { Context } from 'hono';
-import { consumeAuthorizationChallengeContinuation } from './direct-auth';
+import {
+  consumeAuthorizationChallengeContinuation,
+  readAuthorizationChallengeReauthIssuedAt,
+  reauthProvenMethodFromAmr,
+} from './direct-auth';
 import {
   getTenantSettingsDocument,
   readSettingsFlag,
@@ -2541,13 +2545,29 @@ async function resolveConditionSelectedHandle(input: {
 
 async function resolveSessionCheckSelectedHandle(
   c: AuthContext,
-  tenantId: string
+  tenantId: string,
+  requestContext: FlowRequestContext
 ): Promise<{ selectedHandle: 'continue' | 'authenticate'; userId: string | null }> {
   const session = await getCurrentSession(c, tenantId);
-  return {
-    selectedHandle: session?.userId ? 'continue' : 'authenticate',
-    userId: session?.userId ?? null,
-  };
+  if (!session?.userId) {
+    return { selectedHandle: 'authenticate', userId: null };
+  }
+  // A re-authentication needs a proof made after it was asked for, so an older session signs in
+  // again; so does any session when the request cannot be read (signing in again is always safe).
+  let reauthIssuedAt: number | null;
+  try {
+    reauthIssuedAt = await readAuthorizationChallengeReauthIssuedAt(
+      c.env,
+      tenantId,
+      requestContext.authorization_challenge_id
+    );
+  } catch {
+    return { selectedHandle: 'authenticate', userId: null };
+  }
+  if (reauthIssuedAt !== null && getSessionAuthTime(session) < Math.floor(reauthIssuedAt / 1000)) {
+    return { selectedHandle: 'authenticate', userId: null };
+  }
+  return { selectedHandle: 'continue', userId: session.userId };
 }
 
 function getStepStateForRuntimeStep(step: FlowRuntimeStep): 'pending' | 'waiting_input' {
@@ -2626,7 +2646,11 @@ async function resolveAutoAdvanceForStep(input: {
   }
 
   if (input.step.component === 'session_check') {
-    return resolveSessionCheckSelectedHandle(input.c, input.tenantId);
+    return resolveSessionCheckSelectedHandle(
+      input.c,
+      input.tenantId,
+      getRequestContextFromInteraction(input.interaction)
+    );
   }
 
   const selectedHandle = autoAdvanceHandleForStep(input.step);
@@ -2748,6 +2772,18 @@ async function resolveCompletedProtocolRedirect(input: {
   if (!session || !userId) {
     return {};
   }
+  // The session supplies the proof (its method and time): it must be the flow's user's.
+  if (session.userId !== userId) {
+    return {
+      response: input.c.json(
+        {
+          error: 'access_denied',
+          error_description: 'The signed-in session does not belong to this interaction',
+        },
+        403
+      ),
+    };
+  }
 
   const continuation = await consumeAuthorizationChallengeContinuation(
     input.c,
@@ -2755,7 +2791,12 @@ async function resolveCompletedProtocolRedirect(input: {
     input.requestContext.authorization_challenge_id,
     userId,
     getSessionAuthTime(session),
-    getRequestOrigin(input.c)
+    getRequestOrigin(input.c),
+    // The method the server recorded for this session, never one the client names.
+    reauthProvenMethodFromAmr(
+      Array.isArray(session.data?.amr) ? session.data.amr : undefined,
+      Array.isArray(session.data?.unverified_amr) ? session.data.unverified_amr : undefined
+    )
   );
   if ('error' in continuation) {
     return { response: continuation.error };
@@ -4973,7 +5014,7 @@ export async function loginRuntimeInteractionSubmitHandler(c: AuthContext) {
       step: current.step,
     });
   } else if (current.step.component === 'session_check') {
-    branchResolution = await resolveSessionCheckSelectedHandle(c, tenantId);
+    branchResolution = await resolveSessionCheckSelectedHandle(c, tenantId, requestContext);
   } else {
     branchResolution = { selectedHandle };
   }

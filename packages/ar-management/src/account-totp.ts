@@ -2,7 +2,6 @@ import type { Context } from 'hono';
 import type { Env, TotpCredential } from '@authrim/ar-lib-core';
 import {
   ACCOUNT_REAUTH_REQUIRED_ERROR,
-  ACCOUNT_REAUTH_TTL_SECONDS,
   buildDOKey,
   buildOtpAuthUri,
   CanonicalRuntimeUserStore,
@@ -18,13 +17,14 @@ import {
   getSessionStoreBySessionId,
   getTenantIdFromContext,
   hashTotpBackupCode,
-  isLoginMethodRemovalSafe,
   isAccountAuthenticationDeniedError,
   isAccountReauthFresh,
   isAuthenticationMethodUsageAvailable,
+  isLoginMethodRemovalSafe,
   LoginMethodRemovalInProgressError,
   PasskeyRepository,
   profileForTotpPreset,
+  resolveAccountReauthTtlSeconds,
   runTenantBackupCoveredEffect,
   verifyTotpCode,
   withLoginMethodRemovalLock,
@@ -57,8 +57,13 @@ function reauthRequired(c: Context<{ Bindings: Env }>): Response {
   return c.json(ACCOUNT_REAUTH_REQUIRED_ERROR, 403);
 }
 
-function isRecentlyAuthenticated(accountSession: AccountSession): boolean {
-  return isAccountReauthFresh(accountSession.authTime);
+/** Whether the session was authenticated within the tenant's re-authentication window. */
+async function isRecentlyAuthenticated(
+  c: Context<{ Bindings: Env }>,
+  accountSession: AccountSession
+): Promise<boolean> {
+  const ttlSeconds = await resolveAccountReauthTtlSeconds(c.env, getTenantIdFromContext(c));
+  return isAccountReauthFresh(accountSession.authTime, undefined, ttlSeconds);
 }
 
 async function requireRecentAccountSession(
@@ -69,7 +74,7 @@ async function requireRecentAccountSession(
     return accountSession;
   }
   if (accountSession.isGuestSession) return c.json({ error: 'guest_registration_required' }, 403);
-  if (!isRecentlyAuthenticated(accountSession)) {
+  if (!(await isRecentlyAuthenticated(c, accountSession))) {
     return reauthRequired(c);
   }
   return accountSession;
@@ -365,7 +370,7 @@ async function refreshTotpReauthSession(
     ok: true,
     reauth: {
       authenticated_at: authTime,
-      expires_at: authTime + ACCOUNT_REAUTH_TTL_SECONDS,
+      expires_at: authTime + (await resolveAccountReauthTtlSeconds(c.env, tenantId)),
       methods: reauthMethods,
     },
   });

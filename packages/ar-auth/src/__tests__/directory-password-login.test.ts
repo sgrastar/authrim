@@ -1006,12 +1006,94 @@ describe('directory password login handler', () => {
         amr: ['pwd', 'directory', 'passkey'],
         // The password was verified when the transaction was made, not when it completed.
         proven_at: 1000,
+        // The new passkey proves nothing yet, so the session was authenticated by the password.
+        authTime: 1,
       }),
       'tenant-a'
     );
     expect(response.headers.get('set-cookie')).toContain('authrim_session=sess_directory');
     expect(JSON.stringify(mocks.coreAdapter.execute.mock.calls)).not.toContain('migration-token');
   });
+
+  it.each([
+    ['after', 1_699_999_999_000, 200],
+    ['before', 1_700_000_001_000, 403],
+  ])(
+    'continues a re-authentication from a migration only when the password was proven %s it was asked for',
+    async (_label, reauthIssuedAt, status) => {
+      const tokenHash = await testMigrationTokenHash('tenant-a', 'migration-token');
+      mocks.coreAdapter.queryOne.mockResolvedValueOnce({
+        id: 'damt_1',
+        tenant_id: 'tenant-a',
+        campaign_id: 'damc_1',
+        user_id: 'user_generated',
+        connector_id: 'wwcon_8K4M2Q9F7D3H6P1X',
+        directory_subject: 'uid=alice,ou=People,dc=example,dc=com',
+        token_hash: tokenHash,
+        scope: 'passkey_enrollment',
+        state: 'active',
+        request_id: 'wwreq_1',
+        authorization_challenge_id: 'reauth_challenge',
+        created_at: 1_700_000_000_000,
+        updated_at: 1_700_000_000_000,
+        expires_at: Date.now() + 600_000,
+        completed_at: null,
+        blocked_reason: null,
+      });
+      mocks.challengeStore.consumeChallengeRpc
+        .mockResolvedValueOnce({
+          challenge: 'webauthn-challenge',
+          userId: 'user_generated',
+          metadata: {
+            transaction_id: 'damt_1',
+            token_hash: tokenHash,
+            origin: 'https://auth.example.com',
+            rpID: 'auth.example.com',
+          },
+        })
+        .mockRejectedValueOnce(new Error('not a login challenge'))
+        .mockResolvedValueOnce({
+          userId: 'user_generated',
+          metadata: {
+            issuer: 'https://auth.example.com',
+            response_type: 'code',
+            client_id: 'client-a',
+            redirect_uri: 'https://app.example.com/callback',
+            scope: 'openid',
+            state: 'state-123',
+            sessionUserId: 'user_generated',
+            reauth_issued_at: reauthIssuedAt,
+          },
+        });
+
+      const response = await directoryMigrationPasskeyVerifyHandler(
+        createContext({
+          transaction_id: 'damt_1',
+          transaction_token: 'migration-token',
+          challenge_id: 'challenge_1',
+          credential: {
+            id: 'credential-id',
+            rawId: 'credential-id',
+            response: {
+              clientDataJSON: 'client',
+              attestationObject: 'attestation',
+              transports: ['internal'],
+            },
+            type: 'public-key',
+            clientExtensionResults: {},
+          },
+        }) as never
+      );
+      const body = (await response.json()) as { redirect_url?: string };
+
+      expect(response.status).toBe(status);
+      if (status === 200) {
+        expect(body.redirect_url).toContain('https://auth.example.com/authorize?');
+      } else {
+        expect(mocks.sessionStore.createSessionRpc).not.toHaveBeenCalled();
+      }
+    }
+  );
 
   it('sends an email code for an active directory migration fallback transaction', async () => {
     const tokenHash = await testMigrationTokenHash('tenant-a', 'migration-email-token');
