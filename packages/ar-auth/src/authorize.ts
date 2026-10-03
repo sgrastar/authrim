@@ -3605,12 +3605,27 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
           let stored = evidence;
           let storedProvenAt = combinedProvenAt;
           let written = false;
+          // The step-up's own login, just proven, stays what a later re-authentication can take,
+          // paired with its own time, while the combined evidence counts from its oldest proof.
+          const ownUnverified = Array.isArray(sessionData?.unverified_amr)
+            ? sessionData.unverified_amr
+            : [];
+          const ownProvenAmr = (Array.isArray(sessionData?.amr) ? sessionData.amr : []).filter(
+            (method) => !ownUnverified.includes(method)
+          );
+          const ownReauthProof =
+            typeof sessionData?.reauth_proven_at === 'number' ||
+            ownProvenAmr.length === 0 ||
+            provenAt === undefined
+              ? {}
+              : { reauth_proven_amr: ownProvenAmr, reauth_proven_at: provenAt };
           for (let attempt = 0; attempt < 3 && !written; attempt++) {
             const updates = {
               amr: [...stored.amr],
               unverified_amr: [...(stored.unverifiedMethods ?? [])],
               ...(stored.upstreamAcr ? { upstream_acr: stored.upstreamAcr } : {}),
               proven_at: storedProvenAt,
+              ...ownReauthProof,
             };
             const updated = (await store.updateSessionDataRpc(sessionId, updates, {
               ifDataMatches: {

@@ -592,7 +592,8 @@ export function reauthProofFromRecord(
     ? record.reauth_proven_amr.filter((value): value is string => typeof value === 'string')
     : undefined;
   if (reauthProvenAt !== undefined && reauthProvenAmr) {
-    const method = reauthProvenMethodFromAmr(reauthProvenAmr, unverifiedAmr);
+    // The pair names only methods just proven (a passkey signed for it is no longer unverified).
+    const method = reauthProvenMethodFromAmr(reauthProvenAmr);
     return method ? { method, provenAtMs: reauthProvenAt } : {};
   }
   const method = reauthProvenMethodFromAmr(amr, unverifiedAmr);

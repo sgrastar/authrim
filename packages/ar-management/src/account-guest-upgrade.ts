@@ -227,9 +227,6 @@ export async function getAccountGuestUpgradeHandler(c: C): Promise<Response> {
             upgraded_at: (ctx.row.upgraded_at ?? operation.updated_at) * 1000,
             amr: [operation.method === 'email' ? 'otp' : 'webauthn'],
             authTime: ctx.row.upgraded_at ?? operation.updated_at,
-            // The upgrade's own proof, to the second, for a later re-authentication request.
-            reauth_proven_amr: [operation.method === 'email' ? 'otp' : 'webauthn'],
-            reauth_proven_at: (ctx.row.upgraded_at ?? operation.updated_at) * 1000,
           },
           { onlyIfGuestSession: true }
         );
@@ -822,9 +819,6 @@ export async function completeAccountGuestUpgradeHandler(c: C): Promise<Response
           upgraded_at: authenticatedAt * 1000,
           amr: [operation.method === 'email' ? 'otp' : 'webauthn'],
           authTime: authenticatedAt,
-          // The upgrade's own proof, for a later re-authentication request (to the second).
-          reauth_proven_amr: [operation.method === 'email' ? 'otp' : 'webauthn'],
-          reauth_proven_at: authenticatedAt * 1000,
         },
         { onlyIfGuestSession: true }
       );

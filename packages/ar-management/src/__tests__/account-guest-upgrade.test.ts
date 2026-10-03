@@ -224,12 +224,13 @@ describe('account guest upgrade API', () => {
             is_guest_session: false,
             amr: ['otp'],
             authTime: 1234,
-            // The upgrade's own proof, to the second, for a later re-authentication request.
-            reauth_proven_amr: ['otp'],
-            reauth_proven_at: 1_234_000,
           }),
           { onlyIfGuestSession: true }
         );
+      if (expected) {
+        // Its completion time is not when the upgrade was proven: no re-authentication proof.
+        expect(mocks.updateSession.mock.calls[0][1]).not.toHaveProperty('reauth_proven_at');
+      }
     }
   );
   it('starts email registration even with guest login disabled and accepts queued delivery', async () => {

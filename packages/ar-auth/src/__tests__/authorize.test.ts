@@ -3820,6 +3820,9 @@ describe('Authorization Handler', () => {
         unverified_amr: [],
         // The earlier session records no proof time: the combined evidence is never fresh again.
         proven_at: 0,
+        // The step-up's own TOTP stays what a later re-authentication can take, with its time.
+        reauth_proven_amr: ['otp', 'totp'],
+        reauth_proven_at: AFTER_STEP_UP,
       });
     });
 
