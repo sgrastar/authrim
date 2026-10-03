@@ -3633,9 +3633,14 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
                 unverified_amr: read?.unverified_amr,
                 upstream_acr: read?.upstream_acr,
                 proven_at: read?.proven_at,
-                // A re-authentication completed meanwhile records a newer pair: kept, not replaced.
-                reauth_proven_amr: read?.reauth_proven_amr,
-                reauth_proven_at: read?.reauth_proven_at,
+                // Writing its own pair, a re-authentication completed meanwhile (a newer pair) must
+                // fail the write rather than be replaced; without one, the newer pair is merged over.
+                ...('reauth_proven_at' in ownReauthProof
+                  ? {
+                      reauth_proven_amr: read?.reauth_proven_amr,
+                      reauth_proven_at: read?.reauth_proven_at,
+                    }
+                  : {}),
               } as Partial<SessionData>,
             })) as Session | null;
             if (!updated) {

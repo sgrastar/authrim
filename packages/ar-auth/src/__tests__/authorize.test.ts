@@ -3914,6 +3914,53 @@ describe('Authorization Handler', () => {
       expect(store.updateSessionDataRpc).toHaveBeenCalledTimes(2);
     });
 
+    it('records the step-up while re-authentications keep updating the pair', async () => {
+      seedSessionData(TEST_SESSION_ID, { amr: ['pwd'] });
+      seedSessionData(
+        STEP_UP_SESSION_ID,
+        { amr: ['otp', 'totp'], proven_at: AFTER_STEP_UP },
+        'test-user',
+        AFTER_STEP_UP
+      );
+      await setAssurance({ 'assurance.enabled': true, 'assurance.default_aal': 'AAL2' });
+      seedStepUpConfirmation('step-up-reauth-churn', TEST_SESSION_ID);
+      const store = (
+        env.SESSION_STORE as unknown as { get: () => Record<string, ReturnType<typeof vi.fn>> }
+      ).get();
+      const write = store.updateSessionDataRpc.getMockImplementation() as (
+        ...args: unknown[]
+      ) => Promise<unknown>;
+      // Before every write, another account-page re-authentication records a newer pair.
+      let reauthAt = AFTER_STEP_UP;
+      store.updateSessionDataRpc.mockImplementation(async (...args: unknown[]) => {
+        reauthAt += 1_000;
+        const session = getSessionMap(env).get(STEP_UP_SESSION_ID) as {
+          data: Record<string, unknown>;
+        };
+        session.data = {
+          ...session.data,
+          reauth_proven_amr: ['email_code'],
+          reauth_proven_at: reauthAt,
+        };
+        return write(...args);
+      });
+
+      const response = await request('/authorize?_confirmation_challenge=step-up-reauth-churn', [
+        `authrim_session=${encodeURIComponent(STEP_UP_SESSION_ID)}`,
+        'authrim_authorize_confirmation=step-up-reauth-churn-browser',
+      ]);
+
+      expect(new URL(response.headers.get('Location')!).searchParams.get('code')).toBeTruthy();
+      const data = (getSessionMap(env).get(STEP_UP_SESSION_ID) as { data: { amr: string[] } }).data;
+      // The combined evidence is recorded, and the latest re-authentication stands.
+      expect([...data.amr].sort()).toEqual(['otp', 'pwd', 'totp']);
+      expect(data).toMatchObject({
+        proven_at: 0,
+        reauth_proven_amr: ['email_code'],
+        reauth_proven_at: reauthAt,
+      });
+    });
+
     it('fails rather than stepping up again when the step-up still falls short', async () => {
       seedSessionData(TEST_SESSION_ID, { amr: ['pwd'] });
       // An emailed code is never a second factor.
