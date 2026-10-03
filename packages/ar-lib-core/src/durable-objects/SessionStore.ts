@@ -130,6 +130,22 @@ function sessionDataMatches(
 }
 
 /**
+ * Whether two copies are the same session binding: the same user, account and revocation
+ * registration. A session deleted and created again, or rebound to another user, is not.
+ */
+function sameRevocationBinding(a: Session, b: Session): boolean {
+  return (
+    a.id === b.id &&
+    a.tenantId === b.tenantId &&
+    a.userId === b.userId &&
+    a.accountId === b.accountId &&
+    a.revocationAuthority === b.revocationAuthority &&
+    a.revocationBoundAtMs === b.revocationBoundAtMs &&
+    a.sessionClientNamespaceVersion === b.sessionClientNamespaceVersion
+  );
+}
+
+/**
  * Storage key prefix for sessions
  */
 const SESSION_KEY_PREFIX = 'session:';
@@ -420,52 +436,59 @@ export class SessionStore extends DurableObject<Env> {
 
   /**
    * Get session by ID (cache → Durable Object storage)
+   *
+   * The revocation check awaits another Durable Object, and an invalidation of this session can
+   * run meanwhile. A copy read before that await is therefore never put back: the cache is filled
+   * only from storage re-read without interleaving, and a cached copy is returned only while it
+   * is still the cached one.
    */
   async getSession(sessionId: string): Promise<Session | null> {
     // 1. Check in-memory cache (hot)
-    let session = this.sessionCache.get(sessionId);
-    if (session) {
-      await this.validateStoredSessionBinding(sessionId, session);
-      if (!this.usesCurrentSessionClientNamespace(session)) {
-        await this.dropLegacySessionClientNamespace(session);
-        return null;
-      }
-      if (await this.isRevokedByUserEpoch(session)) {
-        await this.dropRevokedSession(session);
-        return null;
-      }
-      if (!this.isExpired(session)) {
-        return session;
-      }
-      // Cleanup expired session
-      this.sessionCache.delete(sessionId);
-      await this.actorCtx.storage.delete(this.buildSessionKey(sessionId));
-      return null;
+    const cached = this.sessionCache.get(sessionId);
+    if (cached) {
+      if (!(await this.admitSession(sessionId, cached))) return null;
+      if (this.sessionCache.get(sessionId) === cached) return cached;
+      // Invalidated, evicted or replaced meanwhile: decide from storage.
     }
 
     // 2. Check Durable Storage
-    const storedSession = await this.actorCtx.storage.get<Session>(this.buildSessionKey(sessionId));
-    if (storedSession) {
-      await this.validateStoredSessionBinding(sessionId, storedSession);
-      if (!this.usesCurrentSessionClientNamespace(storedSession)) {
-        await this.dropLegacySessionClientNamespace(storedSession);
+    const key = this.buildSessionKey(sessionId);
+    const storedSession = await this.actorCtx.storage.get<Session>(key);
+    if (!storedSession) return null;
+    if (!(await this.admitSession(sessionId, storedSession))) return null;
+    return this.actorCtx.blockConcurrencyWhile(async () => {
+      const current = await this.actorCtx.storage.get<Session>(key);
+      if (!current || !sameRevocationBinding(current, storedSession) || this.isExpired(current)) {
+        this.sessionCache.delete(sessionId);
         return null;
       }
-      if (await this.isRevokedByUserEpoch(storedSession)) {
-        await this.dropRevokedSession(storedSession);
-        return null;
-      }
-      if (!this.isExpired(storedSession)) {
-        // Promote to cache
-        this.sessionCache.set(sessionId, storedSession);
-        return storedSession;
-      }
-      // Cleanup expired session
-      await this.actorCtx.storage.delete(this.buildSessionKey(sessionId));
-      return null;
-    }
+      // Promote to cache
+      this.sessionCache.set(sessionId, current);
+      return current;
+    });
+  }
 
-    return null;
+  /**
+   * Whether a session read from the cache or storage may be used: bound to this store, in the
+   * current client namespace, not revoked for its user, and not expired. Drops it otherwise.
+   */
+  private async admitSession(sessionId: string, session: Session): Promise<boolean> {
+    await this.validateStoredSessionBinding(sessionId, session);
+    if (!this.usesCurrentSessionClientNamespace(session)) {
+      await this.dropLegacySessionClientNamespace(session);
+      return false;
+    }
+    if (await this.isRevokedByUserEpoch(session)) {
+      await this.dropRevokedSession(session);
+      return false;
+    }
+    if (this.isExpired(session)) {
+      // Cleanup expired session
+      this.sessionCache.delete(sessionId);
+      await this.actorCtx.storage.delete(this.buildSessionKey(sessionId));
+      return false;
+    }
+    return true;
   }
 
   /**
@@ -667,10 +690,18 @@ export class SessionStore extends DurableObject<Env> {
       throw new Error('session_revocation_store_unavailable');
     }
     if (!indexUpdated) throw new Error('session_revocation_index_missing');
-    await this.persistSession(session);
-    this.sessionCache.set(sessionId, session);
-
-    return session;
+    // The index update awaited another actor: write only if the session is still the one read.
+    return this.actorCtx.blockConcurrencyWhile(async () => {
+      const stored = await this.actorCtx.storage.get<Session>(this.buildSessionKey(sessionId));
+      if (!stored || !sameRevocationBinding(stored, current) || this.isExpired(stored)) {
+        this.sessionCache.delete(sessionId);
+        return null;
+      }
+      const extended = { ...stored, expiresAt: session.expiresAt };
+      await this.persistSession(extended);
+      this.sessionCache.set(sessionId, extended);
+      return extended;
+    });
   }
 
   /**
@@ -732,16 +763,7 @@ export class SessionStore extends DurableObject<Env> {
         userAgent: current.data?.userAgent,
       }
     );
-    const session = {
-      ...current,
-      userId: newUserId,
-      accountId,
-      revocationAuthority: SESSION_REVOCATION_AUTHORITY,
-      revocationBoundAtMs: registration.revocationBoundAtMs,
-    };
-    try {
-      await this.persistSession(session);
-    } catch (error) {
+    const compensate = async (): Promise<void> => {
       try {
         await revocationStore.unregisterSessionRpc(tenantId, newUserId, accountId, sessionId);
       } catch (cleanupError) {
@@ -749,14 +771,42 @@ export class SessionStore extends DurableObject<Env> {
           error: cleanupError instanceof Error ? cleanupError.message : 'unknown_error',
         });
       }
-      throw new Error('session_storage_write_failed', { cause: error });
+    };
+    // The registration awaited another actor: rebind only if the session is still the one read.
+    const outcome = await this.actorCtx.blockConcurrencyWhile(async () => {
+      const stored = await this.actorCtx.storage.get<Session>(this.buildSessionKey(sessionId));
+      if (!stored || !sameRevocationBinding(stored, current) || this.isExpired(stored)) {
+        this.sessionCache.delete(sessionId);
+        return null;
+      }
+      const rebound = {
+        ...stored,
+        userId: newUserId,
+        accountId,
+        revocationAuthority: SESSION_REVOCATION_AUTHORITY,
+        revocationBoundAtMs: registration.revocationBoundAtMs,
+      };
+      try {
+        await this.persistSession(rebound);
+      } catch (error) {
+        return { error };
+      }
+      this.sessionCache.set(sessionId, rebound);
+      return { rebound };
+    });
+    if (!outcome) {
+      await compensate();
+      return null;
     }
-    this.sessionCache.set(sessionId, session);
+    if ('error' in outcome) {
+      await compensate();
+      throw new Error('session_storage_write_failed', { cause: outcome.error });
+    }
     this.unregisterSessionIndex(current);
 
     log.info('Updated session user binding');
 
-    return session;
+    return outcome.rebound;
   }
 
   /**
