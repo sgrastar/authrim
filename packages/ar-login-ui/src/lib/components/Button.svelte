@@ -93,7 +93,9 @@
 		font-weight: var(--auth-control-font-weight, 600);
 		border: none;
 		cursor: pointer;
-		transition: all var(--transition-fast);
+		/* --surface-*, --control-* and --button-*: unset except where a page asks for flat, still
+		   controls (AccountShell); see Card. */
+		transition: var(--surface-transition, all var(--transition-fast));
 		white-space: nowrap;
 		position: relative;
 		overflow: hidden;
@@ -109,34 +111,34 @@
 	.btn-primary {
 		/* The theme's primary button, the same as the sign-in buttons (white text on a dark
 		   primary would fail on the light primaries of dark themes). */
-		background: var(--button-primary-bg, var(--gradient-primary));
+		background: var(--button-primary-surface, var(--button-primary-bg, var(--gradient-primary)));
 		color: var(--button-primary-text, white);
-		box-shadow: 0 4px 16px rgba(51, 51, 51, 0.3);
+		box-shadow: var(--button-shadow, 0 4px 16px rgba(51, 51, 51, 0.3));
 	}
 
 	/* The fill and label stay the theme's on hover: a same-named UnoCSS shortcut would otherwise
 	   paint a fixed blue background with white text. */
 	.btn-primary:hover:not(:disabled) {
-		background: var(--button-primary-bg, var(--gradient-primary));
+		background: var(--button-primary-surface, var(--button-primary-bg, var(--gradient-primary)));
 		color: var(--button-primary-text, white);
-		transform: translateY(-2px);
-		box-shadow: 0 8px 24px rgba(51, 51, 51, 0.4);
+		transform: var(--surface-hover-transform, translateY(-2px));
+		box-shadow: var(--button-primary-hover-shadow, 0 8px 24px rgba(51, 51, 51, 0.4));
 	}
 
 	/* Secondary variant - glass effect */
 	.btn-secondary {
-		background: var(--bg-glass);
+		background: var(--control-surface, var(--bg-glass));
 		color: var(--text-primary);
 		border: 1px solid var(--border);
-		backdrop-filter: var(--blur-sm);
-		-webkit-backdrop-filter: var(--blur-sm);
+		backdrop-filter: var(--surface-backdrop-filter, var(--blur-sm));
+		-webkit-backdrop-filter: var(--surface-backdrop-filter, var(--blur-sm));
 	}
 
 	.btn-secondary:hover:not(:disabled) {
-		background: var(--bg-card);
+		background: var(--control-hover-surface, var(--bg-card));
 		border-color: var(--primary);
 		color: var(--primary);
-		transform: translateY(-2px);
+		transform: var(--surface-hover-transform, translateY(-2px));
 	}
 
 	/* Ghost variant */
@@ -147,7 +149,7 @@
 	}
 
 	.btn-ghost:hover:not(:disabled) {
-		background: var(--primary-light);
+		background: var(--control-hover-surface, var(--primary-light));
 		color: var(--primary);
 	}
 
@@ -155,14 +157,14 @@
 	.btn-danger {
 		background: var(--danger-bg);
 		color: var(--danger-text);
-		box-shadow: 0 4px 16px rgba(185, 28, 28, 0.25);
+		box-shadow: var(--button-shadow, 0 4px 16px rgba(185, 28, 28, 0.25));
 	}
 
 	.btn-danger:hover:not(:disabled) {
 		background: var(--danger-bg);
 		color: var(--danger-text);
-		transform: translateY(-2px);
-		box-shadow: 0 8px 24px rgba(185, 28, 28, 0.35);
+		transform: var(--surface-hover-transform, translateY(-2px));
+		box-shadow: var(--button-shadow, 0 8px 24px rgba(185, 28, 28, 0.35));
 	}
 
 	/* Size variants */

@@ -25,26 +25,26 @@ describe('Account Page published composition', () => {
 		expect(source).toContain('placementVisible(item)');
 	});
 
-	it('renders only validated links and uses the dynamic viewport height', () => {
-		expect(source).toContain("field.block_type === 'link' && safeHref(field.href)");
-		expect(source).toContain('return target?.enabled && placementVisible(target) ? value : null;');
-		expect(source).toContain('min-height: 100dvh');
-		expect(source).not.toContain('min-height: 100vh');
+	// Link validation itself: account-screen-href.test.ts; the link block: AccountScreenBlock.test.ts.
+	it('renders only validated links, anchored to placements the page shows', () => {
+		expect(source).toContain("href={field.block_type === 'link' ? safeHref(field.href) : null}");
+		expect(source).toContain('return safeAccountScreenHref(value, (placementId) => {');
+		expect(source).toContain('return Boolean(target?.enabled && placementVisible(target));');
 	});
 
+	// The placement's classes and styles: AccountScreenPlacement.test.ts.
 	it('renders full-width overview placements as a visible card spanning the account grid', () => {
-		expect(source).toContain("class:full={placement.width === 'full'}");
-		expect(source).toContain("class:overview={screen.screen_key === 'account_overview'}");
-		expect(source).toMatch(/\.account-screen\.full\s*\{[^}]*grid-column:\s*1\s*\/\s*-1;/s);
-		expect(source).toMatch(/\.account-screen\.overview\s*\{[^}]*background:/s);
+		expect(source).toContain("full={placement.width === 'full'}");
+		expect(source).toContain("overview={screen.screen_key === 'account_overview'}");
 	});
 
-	it('shares the configured footer and preference controls with authentication pages', () => {
-		expect(source).toContain('<ConfiguredFooter locale={currentLocale} class="account-footer" />');
-		expect(source).toContain('{#if loginUIPageStore.showTopbar}');
-		expect(source).toContain('data-position={loginUIPageStore.topbarPosition}');
-		expect(source).toContain('showThemeToggle={loginUIPageStore.themeToggleEnabled}');
-		expect(source).toContain('showLanguageSelect={loginUIPageStore.languageSelectEnabled}');
+	// The footer, preference controls and viewport height: AccountShell.test.ts.
+	it('draws the page in the account shell with its title, sign-out and re-authentication', () => {
+		expect(source).toMatch(/<AccountShell\s/);
+		expect(source).toContain('locale={currentLocale}');
+		expect(source).toContain('pageError={accountError}');
+		expect(source).toMatch(/\{#snippet dialog\(\)\}\s*<AccountReauthDialog/);
+		expect(source).not.toContain('<style>');
 	});
 
 	it('connects identifier replacement to reauthentication and bounded status polling', () => {
@@ -65,7 +65,7 @@ describe('Account Page published composition', () => {
 		expect(source).not.toContain('loading={profileLoading || consentsLoading}');
 		expect(source).not.toContain('loading={profileLoading || operationsLoading}');
 		expect(source).not.toContain('if (profileLoading) return areas;');
-		expect(source).toContain('aria-busy={profileLoading || capabilitiesLoading}');
+		expect(source).toContain('busy={profileLoading || capabilitiesLoading}');
 		expect(source).toContain('const profileRequest = accountAPI.getProfile()');
 		expect(source).toContain('.getDevices()');
 		expect(source).toContain('.getCapabilities()');
@@ -99,14 +99,13 @@ describe('Account Page published composition', () => {
 			'{:else if accountCapabilities?.account_page}',
 			compositionGate
 		);
-		const fallbackComposition = source.indexOf(
-			'\n\t\t\t{:else}\n\t\t\t\t<AccountProfileWidget',
-			configuredComposition
-		);
+		const fallbackComposition = source
+			.slice(configuredComposition)
+			.search(/\n\t*\{:else\}\n\t*<AccountProfileWidget/);
 
 		expect(compositionGate).toBeGreaterThan(-1);
 		expect(configuredComposition).toBeGreaterThan(compositionGate);
-		expect(fallbackComposition).toBeGreaterThan(configuredComposition);
+		expect(fallbackComposition).toBeGreaterThan(0);
 		expect(source).not.toContain(
 			'return authenticationMethodsLoading || Boolean(authenticationMethods?.passkey?.enabled);'
 		);
@@ -128,6 +127,6 @@ describe('Account Page published composition', () => {
 it('passes the localized configured title into the guest widget and guards both logout paths', () => {
 	expect(source).toMatch(/<AccountUpgradeSection\s+title=\{accountWidgetTitle\(field\)\}/);
 	expect(source).toContain("await handleLogout('/login?prompt=login')");
-	expect(source).toContain('onclick={() => handleLogout()}');
+	expect(source).toContain('onLogout={() => handleLogout()}');
 	expect(source).toContain('await logoutWithGuestWarning(');
 });
