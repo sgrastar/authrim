@@ -130,3 +130,17 @@ it('passes the localized configured title into the guest widget and guards both 
 	expect(source).toContain('onLogout={() => handleLogout()}');
 	expect(source).toContain('await logoutWithGuestWarning(');
 });
+
+it('loads linked accounts and links / unlinks them through re-authentication', () => {
+	expect(source).toContain('accountAPI.getLinkedIdentities()');
+	expect(source).toContain('onLink={startSocialLink}');
+	expect(source).toContain('onUnlink={unlinkSocialAccount}');
+	// A refused link or unlink resumes after re-authentication.
+	expect(source).toContain("requestReauth({ type: 'link-social', providerId })");
+	expect(source).toContain("requestReauth({ type: 'unlink-social', id })");
+	expect(source).toMatch(/pending\?\.type === 'link-social'\) \{\s*await startSocialLink\(/);
+	expect(source).toMatch(/pending\?\.type === 'unlink-social'\) \{\s*await unlinkSocialAccount\(/);
+	// The provider's answer is shown once and taken out of the address.
+	expect(source).toContain("url.searchParams.delete('social_link')");
+	expect(source).toContain('window.history.replaceState(');
+});

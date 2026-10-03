@@ -7,6 +7,7 @@
 		type AccountConsent,
 		type AccountCapabilities,
 		type AccountDevice,
+		type AccountLinkedIdentity,
 		type AccountOperation,
 		type AccountPasskey,
 		type AccountProfile,
@@ -109,6 +110,9 @@
 		backupCodes: string[];
 	} | null>(null);
 	let operations = $state<AccountOperation[]>([]);
+	let linkedIdentities = $state<AccountLinkedIdentity[]>([]);
+	let linkedIdentitiesLoading = $state(true);
+	let socialNotice = $state<{ kind: 'success' | 'error'; message: string } | null>(null);
 	let consents = $state<AccountConsent[]>([]);
 	let authenticationMethods = $state<AuthenticationMethods | null>(
 		embeddedAuthenticationMethods?.methods ?? null
@@ -148,6 +152,8 @@
 		| { type: 'delete-totp'; id: string; code: string }
 		| { type: 'regenerate-totp-backup-codes'; code: string }
 		| { type: 'change-email'; email: string }
+		| { type: 'link-social'; providerId: string }
+		| { type: 'unlink-social'; id: string }
 		| null
 	>(null);
 
@@ -218,7 +224,7 @@
 			case 'totp':
 				return totpLoading || authenticationMethodsLoading;
 			case 'social':
-				return authenticationMethodsLoading;
+				return authenticationMethodsLoading || linkedIdentitiesLoading;
 		}
 	}
 
@@ -471,6 +477,8 @@
 			return;
 		}
 
+		takeSocialLinkResult();
+
 		// Start account data immediately. WebAuthn capability detection can take noticeably
 		// longer in Safari and must not hold back the composition request or widget skeletons.
 		const accountLoadRequest = loadAccountPage();
@@ -603,6 +611,16 @@
 			.finally(() => {
 				operationsLoading = false;
 			});
+		linkedIdentitiesLoading = true;
+		void accountAPI
+			.getLinkedIdentities()
+			.then((result) => {
+				linkedIdentities = result.data?.identities ?? [];
+				recordSecurityLoadError('social', result.error);
+			})
+			.finally(() => {
+				linkedIdentitiesLoading = false;
+			});
 		void accountAPI
 			.getConsents(getLocale())
 			.then((result) => {
@@ -675,26 +693,34 @@
 		beginSecurityRefresh(requestedAreas);
 		try {
 			reauthNeeded = false;
-			const [devicesResult, sessionsResult, passkeysResult, totpResult, operationsResult] =
-				await Promise.all([
-					requestedAreas.includes('devices') ? accountAPI.getDevices() : null,
-					requestedAreas.includes('sessions') ? accountAPI.getSessions() : null,
-					requestedAreas.includes('passkeys') ? accountAPI.getPasskeys() : null,
-					requestedAreas.includes('totp') ? accountAPI.getTotpCredentials() : null,
-					refreshAll ? accountAPI.getOperations() : null
-				]);
+			const [
+				devicesResult,
+				sessionsResult,
+				passkeysResult,
+				totpResult,
+				socialResult,
+				operationsResult
+			] = await Promise.all([
+				requestedAreas.includes('devices') ? accountAPI.getDevices() : null,
+				requestedAreas.includes('sessions') ? accountAPI.getSessions() : null,
+				requestedAreas.includes('passkeys') ? accountAPI.getPasskeys() : null,
+				requestedAreas.includes('totp') ? accountAPI.getTotpCredentials() : null,
+				requestedAreas.includes('social') ? accountAPI.getLinkedIdentities() : null,
+				refreshAll ? accountAPI.getOperations() : null
+			]);
 			devices = devicesResult?.data?.devices ?? devices;
 			sessions = sessionsResult?.data?.sessions ?? sessions;
 			passkeys = passkeysResult?.data?.passkeys ?? passkeys;
 			totpCredentials = totpResult?.data?.credentials ?? totpCredentials;
 			totpBackupCodes = totpResult?.data?.backup_codes ?? totpBackupCodes;
+			linkedIdentities = socialResult?.data?.identities ?? linkedIdentities;
 			operations = operationsResult?.data?.operations ?? operations;
 			await signalAllAcceptedCredentials(passkeysResult?.data?.webauthn_signal);
 			if (devicesResult) recordSecurityLoadError('devices', devicesResult.error);
 			if (sessionsResult) recordSecurityLoadError('sessions', sessionsResult.error);
 			if (passkeysResult) recordSecurityLoadError('passkeys', passkeysResult.error);
 			if (totpResult) recordSecurityLoadError('totp', totpResult.error);
-			if (requestedAreas.includes('social')) setSecurityError('social', '');
+			if (socialResult) recordSecurityLoadError('social', socialResult.error);
 		} finally {
 			endSecurityRefresh(requestedAreas);
 		}
@@ -737,6 +763,10 @@
 			await regenerateTotpBackupCodes(pending.code);
 		} else if (pending?.type === 'change-email') {
 			await startEmailChange(pending.email);
+		} else if (pending?.type === 'link-social') {
+			await startSocialLink(pending.providerId);
+		} else if (pending?.type === 'unlink-social') {
+			await unlinkSocialAccount(pending.id);
 		}
 	}
 
@@ -1056,6 +1086,119 @@
 		}
 	}
 
+	/** The account page's message for a social link outcome or a refused unlink. */
+	function socialErrorMessage(code: string | null | undefined): string {
+		switch (code) {
+			case 'already_linked':
+				return $LL.account_socialErrorAlreadyLinked();
+			case 'email_not_verified':
+				return $LL.account_socialErrorEmailNotVerified();
+			case 'session_expired':
+				return $LL.account_socialErrorSessionExpired();
+			case 'cancelled':
+				return $LL.account_socialErrorCancelled();
+			case 'remaining_login_method_required':
+				return $LL.account_socialErrorLastMethod();
+			case 'operation_in_progress':
+				return $LL.account_socialErrorInProgress();
+			default:
+				return $LL.account_socialErrorFailed();
+		}
+	}
+
+	async function startSocialLink(providerId: string) {
+		actionLoading = `social:link:${providerId}`;
+		setSecurityError('social', '');
+		socialNotice = null;
+		let leaving = false;
+		try {
+			const result = await accountAPI.startLinkIdentity(providerId);
+			if (result.error) {
+				if (result.error.error === 'reauth_required') {
+					setSecurityError('social', $LL.account_reauthRequired());
+					reauthNeeded = true;
+					requestReauth({ type: 'link-social', providerId });
+					return;
+				}
+				setSecurityError(
+					'social',
+					result.error.error === 'already_linked'
+						? $LL.account_socialErrorAlreadyLinked()
+						: localizeApiError(result.error, $LL.account_actionFailed())
+				);
+				return;
+			}
+			const target = safeLinkStartUrl(result.data?.authorization_url);
+			if (!target) {
+				setSecurityError('social', $LL.account_socialErrorFailed());
+				return;
+			}
+			// The provider answers back to this page (?social_link=...).
+			leaving = true;
+			window.location.assign(target);
+		} finally {
+			if (!leaving) actionLoading = '';
+		}
+	}
+
+	/** The bridge's start URL, only as an http(s) URL on this origin or the issuer's. */
+	function safeLinkStartUrl(value: string | undefined): string | null {
+		if (!value) return null;
+		try {
+			const url = new URL(value, window.location.origin);
+			return url.protocol === 'https:' ||
+				(url.protocol === 'http:' && url.hostname === window.location.hostname)
+				? url.toString()
+				: null;
+		} catch {
+			return null;
+		}
+	}
+
+	async function unlinkSocialAccount(id: string) {
+		actionLoading = `social:unlink:${id}`;
+		setSecurityError('social', '');
+		socialNotice = null;
+		try {
+			const result = await accountAPI.unlinkIdentity(id);
+			if (result.error) {
+				if (result.error.error === 'reauth_required') {
+					setSecurityError('social', $LL.account_reauthRequired());
+					reauthNeeded = true;
+					requestReauth({ type: 'unlink-social', id });
+					return;
+				}
+				setSecurityError(
+					'social',
+					result.error.error === 'remaining_login_method_required' ||
+						result.error.error === 'operation_in_progress'
+						? socialErrorMessage(result.error.error)
+						: localizeApiError(result.error, $LL.account_actionFailed())
+				);
+				return;
+			}
+			linkedIdentities = linkedIdentities.filter((identity) => identity.id !== id);
+			socialNotice = { kind: 'success', message: $LL.account_socialUnlinked() };
+			await refreshSecurity(['social']);
+		} finally {
+			actionLoading = '';
+		}
+	}
+
+	/** The outcome of a link the provider sent back (?social_link=), shown once. */
+	function takeSocialLinkResult() {
+		const url = new URL(window.location.href);
+		const outcome = url.searchParams.get('social_link');
+		if (!outcome) return;
+		socialNotice =
+			outcome === 'linked'
+				? { kind: 'success', message: $LL.account_socialLinked() }
+				: { kind: 'error', message: socialErrorMessage(url.searchParams.get('reason')) };
+		url.searchParams.delete('social_link');
+		url.searchParams.delete('reason');
+		window.history.replaceState(window.history.state, '', url.toString());
+	}
+
 	async function startTotpEnrollment(label: string) {
 		actionLoading = 'totp:add';
 		setSecurityError('totp', '');
@@ -1309,7 +1452,21 @@
 								onClearEnrollment={() => (totpEnrollment = null)}
 							/>
 						{:else if field.block_type === 'account_social_account_widget'}
-							<AccountSocialAccountsWidget title={accountWidgetTitle(field)} />
+							<AccountSocialAccountsWidget
+								title={accountWidgetTitle(field)}
+								identities={linkedIdentities}
+								providers={authenticationMethods?.external.providers ?? []}
+								notice={socialNotice}
+								loading={securityAreaLoading('social')}
+								refreshing={securityAreasRefreshing(['social'])}
+								{actionLoading}
+								error={securityErrorFor(['social'])}
+								{reauthNeeded}
+								onRefresh={() => refreshSecurity(['social'])}
+								onReauthenticate={() => requestReauth()}
+								onLink={startSocialLink}
+								onUnlink={unlinkSocialAccount}
+							/>
 						{:else if field.block_type === 'account_launcher_widget'}
 							<AccountLauncherSection title={accountWidgetTitle(field)} />
 						{/if}
@@ -1372,7 +1529,16 @@
 				onRegenerateBackupCodes={regenerateTotpBackupCodes}
 				onClearEnrollment={() => (totpEnrollment = null)}
 			/>
-			<AccountSocialAccountsWidget headingLevel={3} />
+			<AccountSocialAccountsWidget
+				headingLevel={3}
+				identities={linkedIdentities}
+				providers={authenticationMethods?.external.providers ?? []}
+				notice={socialNotice}
+				loading={securityAreaLoading('social')}
+				{actionLoading}
+				onLink={startSocialLink}
+				onUnlink={unlinkSocialAccount}
+			/>
 		</AccountWidgetPanel>
 		<AccountConsentWidget {consents} loading={consentsLoading} error={consentError} />
 		<AccountActivityWidget {operations} loading={operationsLoading} />
