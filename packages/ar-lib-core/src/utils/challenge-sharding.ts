@@ -271,6 +271,25 @@ export async function getChallengeStoreByChallengeId(
 }
 
 /**
+ * Partitions for leases. Fixed in code, never the configurable shard count: every request for the
+ * same lease must reach the same instance even while the challenge shard count changes.
+ */
+const CHALLENGE_LEASE_PARTITIONS = 16;
+
+/**
+ * The ChallengeStore instance that holds the lease `leaseKey` in `tenantId` (claimChallengeRpc).
+ */
+export function getChallengeStoreForLease(
+  env: Env,
+  leaseKey: string,
+  tenantId: string
+): ChallengeStoreStub {
+  const partition = fnv1a32(leaseKey) % CHALLENGE_LEASE_PARTITIONS;
+  const id = env.CHALLENGE_STORE.idFromName(`tenant:${tenantId}:challenge:lease-${partition}`);
+  return env.CHALLENGE_STORE.get(id) as ChallengeStoreStub;
+}
+
+/**
  * Reset the cached shard count.
  * Useful for testing or when immediate configuration reload is needed.
  */

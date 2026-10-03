@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   createIntent: vi.fn(),
   recordActivity: vi.fn(),
   withLock: vi.fn(),
+  assertHeld: vi.fn(),
 }));
 
 vi.mock('@authrim/ar-lib-core', () => ({
@@ -127,9 +128,14 @@ describe('routed-account external identity unlink', () => {
       updatedAt: Date.now(),
     });
     mocks.hasRemaining.mockResolvedValue(true);
+    mocks.assertHeld.mockResolvedValue(undefined);
     mocks.withLock.mockImplementation(
-      async (_env: unknown, _tenantId: string, _userId: string, removal: () => Promise<unknown>) =>
-        removal()
+      async (
+        _env: unknown,
+        _tenantId: string,
+        _userId: string,
+        removal: (lease: { assertHeld: () => Promise<void> }) => Promise<unknown>
+      ) => removal({ assertHeld: mocks.assertHeld })
     );
     mocks.revokeTokens.mockResolvedValue({
       success: true,
@@ -221,6 +227,42 @@ describe('routed-account external identity unlink', () => {
       expect.any(Function)
     );
     expect(removeExternalIdpRoute).not.toHaveBeenCalled();
+  });
+
+  it('removes only while it holds the lease, and revokes provider tokens after', async () => {
+    const order: string[] = [];
+    mocks.assertHeld.mockImplementation(async () => {
+      order.push('assertHeld');
+    });
+    mocks.revokeTokens.mockImplementation(async () => {
+      order.push('revoke');
+      return { success: true, accessTokenRevoked: true, refreshTokenRevoked: true, errors: [] };
+    });
+    const removeExternalIdpRoute = vi.fn().mockImplementation(async (request) => {
+      order.push('remove');
+      return { status: 201, operationId: request.operationId, accountId: request.accountId };
+    });
+
+    const response = await handleUnlinkIdentity(
+      context({ provisioner: { removeExternalIdpRoute } }) as never
+    );
+
+    expect(response.status).toBe(200);
+    expect(order).toEqual(['assertHeld', 'remove', 'revoke']);
+  });
+
+  it('removes nothing once the lease is no longer its own', async () => {
+    const core = await import('@authrim/ar-lib-core');
+    mocks.assertHeld.mockRejectedValueOnce(new core.LoginMethodRemovalInProgressError());
+    const removeExternalIdpRoute = removal();
+
+    const response = await handleUnlinkIdentity(
+      context({ provisioner: { removeExternalIdpRoute } }) as never
+    );
+
+    expect(response.status).toBe(409);
+    expect(removeExternalIdpRoute).not.toHaveBeenCalled();
+    expect(mocks.revokeTokens).not.toHaveBeenCalled();
   });
 
   it('requires a recent authentication', async () => {

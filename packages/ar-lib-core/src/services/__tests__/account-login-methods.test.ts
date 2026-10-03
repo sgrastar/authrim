@@ -7,7 +7,11 @@ const { mockFindById, mockProviderAdapter, mockResolveRoute, mockChallengeStore 
     mockFindById: vi.fn(),
     mockProviderAdapter: { query: vi.fn() },
     mockResolveRoute: vi.fn(),
-    mockChallengeStore: { claimChallengeRpc: vi.fn(), consumeChallengeRpc: vi.fn() },
+    mockChallengeStore: {
+      claimChallengeRpc: vi.fn(),
+      isClaimHeldRpc: vi.fn(),
+      consumeChallengeRpc: vi.fn(),
+    },
   })
 );
 
@@ -26,7 +30,7 @@ vi.mock('../runtime-data-context', () => ({
 }));
 
 vi.mock('../../utils/challenge-sharding', () => ({
-  getChallengeStoreByChallengeId: vi.fn(async () => mockChallengeStore),
+  getChallengeStoreForLease: vi.fn(() => mockChallengeStore),
 }));
 
 import {
@@ -284,6 +288,28 @@ describe('withLoginMethodRemovalLock', () => {
       type: 'login_method_removal_lock',
       challenge: claim.challenge,
     });
+  });
+
+  it('lets the removal check, right before its write, that the lease is still its own', async () => {
+    mockChallengeStore.claimChallengeRpc.mockResolvedValueOnce({ claimed: true });
+    mockChallengeStore.isClaimHeldRpc.mockResolvedValueOnce({ held: true });
+    mockChallengeStore.isClaimHeldRpc.mockResolvedValueOnce({ held: false });
+
+    await expect(
+      withLoginMethodRemovalLock(env, 't1', 'u1', async (lease) => {
+        await lease.assertHeld();
+        await lease.assertHeld();
+      })
+    ).rejects.toBeInstanceOf(LoginMethodRemovalInProgressError);
+
+    const claim = mockChallengeStore.claimChallengeRpc.mock.calls[0][0];
+    expect(mockChallengeStore.isClaimHeldRpc).toHaveBeenCalledWith({
+      id: 'login-method-removal:u1',
+      tenantId: 't1',
+      challenge: claim.challenge,
+      minRemainingMs: 10_000,
+    });
+    expect(mockChallengeStore.consumeChallengeRpc).toHaveBeenCalledTimes(1);
   });
 
   it('refuses while another removal holds the lease', async () => {

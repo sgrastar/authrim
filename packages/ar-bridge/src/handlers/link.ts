@@ -228,79 +228,84 @@ export async function handleUnlinkIdentity(c: Context<{ Bindings: Env }>): Promi
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
 
-    return await withLoginMethodRemovalLock(c.env, tenantId, session.userId, async () => {
-      // Never remove the last way the account signs in.
-      const remains = await hasRemainingLoginMethod(c.env, {
-        tenantId,
-        userId: session.userId,
-        coreAdapter: ensureDatabaseAdapter(account.coreDb, 'external-idp-unlink-core'),
-        piiAdapter: ensureDatabaseAdapter(account.piiDb, 'external-idp-unlink-pii'),
-        removing: { kind: 'linked_identity', id: identity.id },
-      });
-      if (!remains) {
-        return c.json(
-          {
-            error: 'remaining_login_method_required',
-            error_description: 'Cannot remove the last available login method.',
-          },
-          400
-        );
-      }
+    const provisioner = c.env.EXTERNAL_IDP_ACCOUNT_PROVISIONER;
+    if (!provisioner) throw new Error('external_idp_account_provisioner_unavailable');
+    if (!removalDigest || !removalOperationId) {
+      throw new Error('external_idp_route_removal_operation_invalid');
+    }
 
-      // Attempt to revoke tokens at the provider (best-effort, RFC 7009)
-      // This is done before deletion to ensure we have the tokens to revoke
-      const revocationResult = await revokeLinkedIdentityTokens(c.env, identity);
-      if (!revocationResult.success && revocationResult.errors.length > 0) {
-        log.warn('Token revocation failed for identity', {
-          errorCount: revocationResult.errors.length,
+    // Only the check and the removal run under the account's removal lease; the provider's token
+    // revocation (a call to another service) waits until after.
+    const removal = await withLoginMethodRemovalLock(
+      c.env,
+      tenantId,
+      session.userId,
+      async (lease) => {
+        // Never remove the last way the account signs in.
+        const remains = await hasRemainingLoginMethod(c.env, {
+          tenantId,
+          userId: session.userId,
+          coreAdapter: ensureDatabaseAdapter(account.coreDb, 'external-idp-unlink-core'),
+          piiAdapter: ensureDatabaseAdapter(account.piiDb, 'external-idp-unlink-pii'),
+          removing: { kind: 'linked_identity', id: identity.id },
+        });
+        if (!remains) return null;
+
+        await lease.assertHeld();
+        return provisioner.removeExternalIdpRoute({
+          schemaVersion: 1,
+          operationId: removalOperationId,
+          idempotencyKey: `auth-external-idp-route-remove:${removalDigest}`,
+          tenantId,
+          accountId: account.accountId,
+          userId: session.userId,
+          linkedIdentityId,
+          providerId: identity.providerId,
+          providerUserId: identity.providerUserId,
         });
       }
-
-      let cleanupPending = false;
-      let cleanupOperationId: string | undefined;
-      const provisioner = c.env.EXTERNAL_IDP_ACCOUNT_PROVISIONER;
-      if (!provisioner) throw new Error('external_idp_account_provisioner_unavailable');
-      if (!removalDigest || !removalOperationId) {
-        throw new Error('external_idp_route_removal_operation_invalid');
-      }
-      cleanupOperationId = removalOperationId;
-      const removal = await provisioner.removeExternalIdpRoute({
-        schemaVersion: 1,
-        operationId: cleanupOperationId,
-        idempotencyKey: `auth-external-idp-route-remove:${removalDigest}`,
-        tenantId,
-        accountId: account.accountId,
-        userId: session.userId,
-        linkedIdentityId,
-        providerId: identity.providerId,
-        providerUserId: identity.providerUserId,
-      });
-      if (
-        removal.operationId !== cleanupOperationId ||
-        removal.accountId !== account.accountId ||
-        (removal.status !== 201 && removal.status !== 202)
-      ) {
-        throw new Error('external_idp_route_removal_response_invalid');
-      }
-      cleanupPending = removal.status === 202;
-
-      await recordSocialAccountActivity(c, session.userId, 'account.social_account.unlinked', {
-        linkedIdentityId: identity.id,
-        providerId: identity.providerId,
-      });
-
-      // Include revocation status in response for transparency
-      return c.json({
-        success: true,
-        cleanup_pending: cleanupPending,
-        operation_id: cleanupOperationId,
-        token_revocation: {
-          attempted: true,
-          access_token_revoked: revocationResult.accessTokenRevoked,
-          refresh_token_revoked: revocationResult.refreshTokenRevoked,
-          warnings: revocationResult.errors.length > 0 ? revocationResult.errors : undefined,
+    );
+    if (!removal) {
+      return c.json(
+        {
+          error: 'remaining_login_method_required',
+          error_description: 'Cannot remove the last available login method.',
         },
+        400
+      );
+    }
+    if (
+      removal.operationId !== removalOperationId ||
+      removal.accountId !== account.accountId ||
+      (removal.status !== 201 && removal.status !== 202)
+    ) {
+      throw new Error('external_idp_route_removal_response_invalid');
+    }
+
+    await recordSocialAccountActivity(c, session.userId, 'account.social_account.unlinked', {
+      linkedIdentityId: identity.id,
+      providerId: identity.providerId,
+    });
+
+    // Revoke the provider's tokens (best-effort, RFC 7009) with the identity read before removal.
+    const revocationResult = await revokeLinkedIdentityTokens(c.env, identity);
+    if (!revocationResult.success && revocationResult.errors.length > 0) {
+      log.warn('Token revocation failed for identity', {
+        errorCount: revocationResult.errors.length,
       });
+    }
+
+    // Include revocation status in response for transparency
+    return c.json({
+      success: true,
+      cleanup_pending: removal.status === 202,
+      operation_id: removalOperationId,
+      token_revocation: {
+        attempted: true,
+        access_token_revoked: revocationResult.accessTokenRevoked,
+        refresh_token_revoked: revocationResult.refreshTokenRevoked,
+        warnings: revocationResult.errors.length > 0 ? revocationResult.errors : undefined,
+      },
     });
   } catch (error) {
     if (error instanceof LoginMethodRemovalInProgressError) {

@@ -207,6 +207,31 @@ export class ChallengeStore extends DurableObject<Env> {
   }
 
   /**
+   * RPC: Whether the lease `id` is still held by `challenge` (its owner) with at least
+   * `minRemainingMs` left, so the owner can stop before a write it no longer guards.
+   */
+  async isClaimHeldRpc(request: {
+    id: string;
+    tenantId: string;
+    challenge: string;
+    minRemainingMs: number;
+  }): Promise<{ held: boolean }> {
+    assertValidTenantId(request.tenantId);
+    const existing =
+      this.challengeCache.get(request.id) ??
+      (await this.ctx.storage.get<Challenge>(this.buildChallengeKey(request.id)));
+    return {
+      held: Boolean(
+        existing &&
+        !existing.consumed &&
+        existing.tenantId === request.tenantId &&
+        existing.challenge === request.challenge &&
+        existing.expiresAt - Date.now() >= request.minRemainingMs
+      ),
+    };
+  }
+
+  /**
    * RPC: Delete a challenge
    */
   async deleteChallengeRpc(id: string): Promise<{ deleted: boolean }> {

@@ -63,8 +63,12 @@ const {
     mockConsumeTotpAuthenticationState: vi.fn(async () => ({ lastAcceptedTimeStep: 1 })),
     mockHasRemainingLoginMethod: vi.fn(async () => false),
     mockWithLoginMethodRemovalLock: vi.fn(
-      async (_env: unknown, _tenantId: string, _userId: string, removal: () => Promise<unknown>) =>
-        removal()
+      async (
+        _env: unknown,
+        _tenantId: string,
+        _userId: string,
+        removal: (lease: { assertHeld: () => Promise<void> }) => Promise<unknown>
+      ) => removal({ assertHeld: async () => undefined })
     ),
   };
 });

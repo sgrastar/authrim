@@ -15,7 +15,7 @@ import type {
   StoreChallengeRequest,
 } from '../durable-objects/ChallengeStore';
 import { CanonicalRuntimeUserStore } from '../repositories/identity/canonical-runtime-user-store';
-import { getChallengeStoreByChallengeId } from '../utils/challenge-sharding';
+import { getChallengeStoreForLease } from '../utils/challenge-sharding';
 import { resolveAuthCorePersistenceAdapterFromEnv } from './auth-core-persistence-context';
 import { resolveAccountDataContextByIdentifier } from './runtime-data-context';
 
@@ -203,14 +203,32 @@ export class LoginMethodRemovalInProgressError extends Error {
   }
 }
 
-/** The challenge store calls the lease makes (the sharded stub is untyped). */
+/** The challenge store calls the lease makes (the stub is untyped). */
 interface LeaseStore {
   claimChallengeRpc(request: StoreChallengeRequest): Promise<{ claimed: boolean }>;
+  isClaimHeldRpc(request: {
+    id: string;
+    tenantId: string;
+    challenge: string;
+    minRemainingMs: number;
+  }): Promise<{ held: boolean }>;
   consumeChallengeRpc(request: ConsumeChallengeRequest): Promise<unknown>;
 }
 
 /** Longest a removal may hold the account's lease (it is released as soon as it finishes). */
 const LOGIN_METHOD_REMOVAL_LEASE_SECONDS = 60;
+/** The lease must outlast the write it guards by at least this much. */
+const LOGIN_METHOD_REMOVAL_WRITE_MARGIN_MS = 10_000;
+
+/** What a removal holds while it runs. */
+export interface LoginMethodRemovalLease {
+  /**
+   * Throws LoginMethodRemovalInProgressError unless the lease is still this removal's with time to
+   * spare. Call it right before the write that removes the method: a removal that outlived its
+   * lease (a stalled request) must not remove anything after another removal has checked.
+   */
+  assertHeld(): Promise<void>;
+}
 
 /**
  * Runs `removal` (the remaining-method check and the removal itself) while no other removal of the
@@ -218,16 +236,19 @@ const LOGIN_METHOD_REMOVAL_LEASE_SECONDS = 60;
  * that remains. The sign-in methods live in different databases, so no single transaction covers
  * them; a lease in the challenge store does. Throws LoginMethodRemovalInProgressError when another
  * removal holds it.
+ *
+ * Keep slow work (reading the request, calls to other services) outside `removal` where it can be,
+ * and call `lease.assertHeld()` right before the removing write.
  */
 export async function withLoginMethodRemovalLock<T>(
   env: Env,
   tenantId: string,
   userId: string,
-  removal: () => Promise<T>
+  removal: (lease: LoginMethodRemovalLease) => Promise<T>
 ): Promise<T> {
   const id = `login-method-removal:${userId}`;
   const owner = crypto.randomUUID();
-  const store = (await getChallengeStoreByChallengeId(env, id, tenantId)) as LeaseStore;
+  const store = getChallengeStoreForLease(env, id, tenantId) as LeaseStore;
   const { claimed } = await store.claimChallengeRpc({
     id,
     tenantId,
@@ -237,8 +258,19 @@ export async function withLoginMethodRemovalLock<T>(
     ttl: LOGIN_METHOD_REMOVAL_LEASE_SECONDS,
   });
   if (!claimed) throw new LoginMethodRemovalInProgressError();
+  const lease: LoginMethodRemovalLease = {
+    async assertHeld() {
+      const { held } = await store.isClaimHeldRpc({
+        id,
+        tenantId,
+        challenge: owner,
+        minRemainingMs: LOGIN_METHOD_REMOVAL_WRITE_MARGIN_MS,
+      });
+      if (!held) throw new LoginMethodRemovalInProgressError();
+    },
+  };
   try {
-    return await removal();
+    return await removal(lease);
   } finally {
     // Release only our own lease (a lapsed one may already belong to the next removal).
     await store
