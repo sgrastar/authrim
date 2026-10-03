@@ -31,7 +31,7 @@
 		<div class="py-8" role="status">
 			<div class="auth-icon-badge">
 				<div class="auth-icon-badge__circle">
-					<span class="i-heroicons-check-circle h-9 w-9 auth-icon-badge__icon"></span>
+					<span class="i-ph-check-circle h-9 w-9 auth-icon-badge__icon"></span>
 				</div>
 			</div>
 			<h2 class="auth-section-title text-center">
@@ -44,7 +44,7 @@
 	{:else}
 		<div class="auth-icon-badge">
 			<div class="auth-icon-badge__circle auth-icon-badge__circle--danger">
-				<span class="i-heroicons-exclamation-circle h-9 w-9 auth-icon-badge__icon"></span>
+				<span class="i-ph-warning-circle h-9 w-9 auth-icon-badge__icon"></span>
 			</div>
 		</div>
 
