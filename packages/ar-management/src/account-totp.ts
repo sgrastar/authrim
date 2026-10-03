@@ -361,6 +361,9 @@ async function refreshTotpReauthSession(
     authTime,
     acr: accountSession.acr ?? 'urn:authrim:aal:2',
     amr: reauthMethods,
+    // The TOTP, just proven, is what a later re-authentication request can take from here.
+    reauth_proven_amr: ['totp'],
+    reauth_proven_at: authenticatedAtMs,
   });
   if (!updatedSession) {
     return c.json({ error: 'server_error', error_description: 'Failed to update session' }, 500);

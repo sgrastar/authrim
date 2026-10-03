@@ -62,6 +62,13 @@ export interface SessionData {
   upstream_acr?: string;
   /** When the authentication was proven (milliseconds), where it was before the session was made. */
   proven_at?: number;
+  /**
+   * The method a re-authentication takes from this session and when it was proven (milliseconds),
+   * as one pair, where that differs from the oldest proof (proven_at): a later re-authentication
+   * by one method, or a verified new upstream login.
+   */
+  reauth_proven_amr?: string[];
+  reauth_proven_at?: number;
   deviceName?: string;
   ipAddress?: string;
   userAgent?: string;

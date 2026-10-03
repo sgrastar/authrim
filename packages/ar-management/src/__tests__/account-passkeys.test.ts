@@ -521,6 +521,9 @@ describe('Account Page passkey management API', () => {
       expect.objectContaining({
         authTime: Math.floor(Date.now() / 1000),
         amr: ['passkey'],
+        // The method just proven, paired with when, for a later re-authentication request.
+        reauth_proven_amr: ['passkey'],
+        reauth_proven_at: expect.any(Number),
       })
     );
     expect(body.ok).toBe(true);
@@ -749,6 +752,9 @@ describe('Account Page passkey management API', () => {
       expect.objectContaining({
         authTime: Math.floor(Date.now() / 1000),
         amr: ['email_code'],
+        // The method just proven, paired with when, for a later re-authentication request.
+        reauth_proven_amr: ['email_code'],
+        reauth_proven_at: expect.any(Number),
       })
     );
     expect(body.ok).toBe(true);

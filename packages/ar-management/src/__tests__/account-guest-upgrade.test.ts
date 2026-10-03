@@ -220,7 +220,14 @@ describe('account guest upgrade API', () => {
       if (expected)
         expect(mocks.updateSession).toHaveBeenCalledWith(
           'session',
-          expect.objectContaining({ is_guest_session: false, amr: ['otp'], authTime: 1234 }),
+          expect.objectContaining({
+            is_guest_session: false,
+            amr: ['otp'],
+            authTime: 1234,
+            // The upgrade's own proof, to the second, for a later re-authentication request.
+            reauth_proven_amr: ['otp'],
+            reauth_proven_at: 1_234_000,
+          }),
           { onlyIfGuestSession: true }
         );
     }
