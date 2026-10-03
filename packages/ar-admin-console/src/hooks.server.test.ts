@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import {
 	apiProxy,
 	buildProxyHeaders,
@@ -112,6 +112,12 @@ describe('securityHeaders', () => {
 });
 
 describe('apiProxy', () => {
+	// The dev mock, imported on first use, brings in the fake Settings API and the whole settings
+	// catalog. Load it here, outside the per-test time limit, which a busy full run can exceed.
+	beforeAll(async () => {
+		await import('$lib/server/dev-console-mock');
+	}, 60_000);
+
 	it('preserves binary proxy request bodies and enforces a byte limit', async () => {
 		const expected = new Uint8Array([0x00, 0xff, 0xfe, 0x41]);
 		const accepted = new Request('https://admin.example.com/api/admin/import', {
