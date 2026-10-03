@@ -165,120 +165,129 @@
 	{/if}
 {/snippet}
 
-<Card class="auth-discover">
-	<div class="auth-discover__header">
-		<p class="auth-discover__kicker">{kickerText}</p>
-		<h2 class="auth-section-title">{titleText}</h2>
-		<p class="auth-section-subtitle">{subtitleText}</p>
-	</div>
-
-	{#if tenantOnly}
-		<Alert variant="info">{$LL.discover_notice_disabled()}</Alert>
-	{/if}
-
-	{#if manualOnly}
-		<Alert variant="info">{$LL.discover_notice_manualOnly()}</Alert>
-	{/if}
-
-	{#if errorMessage}
-		<Alert variant="error">{errorMessage}</Alert>
-	{/if}
-
-	{#if showTenantChooser && rememberedCandidate && !wayfOnly}
-		<div class="auth-discover__list">
-			<p class="auth-discover__label">{$LL.discover_recentTenant()}</p>
-			{@render tenant(rememberedCandidate)}
+<Card>
+	<div class="auth-discover">
+		<div class="auth-discover__header">
+			<p class="auth-discover__kicker">{kickerText}</p>
+			<h2 class="auth-section-title">{titleText}</h2>
+			<p class="auth-section-subtitle">{subtitleText}</p>
 		</div>
-	{/if}
 
-	{#if showTenantChooser}
-		<form method="POST" action="/discover?/resolve" class="auth-discover__form" onsubmit={onSubmit}>
-			{@render carried(true)}
+		{#if tenantOnly}
+			<Alert variant="info">{$LL.discover_notice_disabled()}</Alert>
+		{/if}
 
-			{#if interactiveMethods.length > 1}
-				<div class="form-group">
-					<label class="auth-discover__label" for="mode">{$LL.discover_methodLabel()}</label>
-					<select id="mode" name="mode" class="form-select" bind:value={selectedMode}>
-						{#if interactiveMethods.includes('email_exact')}
-							<option value="email">{$LL.discover_method_email()}</option>
-						{/if}
-						{#if interactiveMethods.includes('tenant_code')}
-							<option value="tenant_code">{$LL.discover_method_tenantCode()}</option>
-						{/if}
-						{#if interactiveMethods.includes('tenant_slug')}
-							<option value="tenant_slug">{$LL.discover_method_tenantSlug()}</option>
-						{/if}
-						{#if interactiveMethods.includes('wayf')}
-							<option value="wayf">WAYF</option>
-						{/if}
-					</select>
-				</div>
-			{:else}
-				<input type="hidden" name="mode" value={getDefaultDiscoveryMode(interactiveMethods)} />
-			{/if}
+		{#if manualOnly}
+			<Alert variant="info">{$LL.discover_notice_manualOnly()}</Alert>
+		{/if}
 
-			{#if selectedMode === 'wayf'}
-				<div class="form-group">
-					<label class="auth-discover__label" for="value">
-						{wayfOnly ? $LL.discover_selectTenant() : modeLabel(selectedMode)}
-					</label>
-					<select id="value" name="value" class="form-select" bind:value required>
-						<option value="" disabled>{$LL.discover_selectTenant()}</option>
-						{#each wayfCandidates as candidate (candidate.tenant_id)}
-							<option value={candidate.tenant_id}>{candidate.display_name}</option>
-						{/each}
-					</select>
-				</div>
-			{:else}
-				<div class="form-group">
-					<label class="auth-discover__label" for="value">{modeLabel(selectedMode)}</label>
-					<input
-						id="value"
-						name="value"
-						class="form-input"
-						type={selectedMode === 'email' ? 'email' : 'text'}
-						bind:value
-						placeholder={placeholderFor(selectedMode)}
-						readonly={selectedMode === 'email' && Boolean(hidden.emailChallengeId)}
-						required
-					/>
-				</div>
-				{#if selectedMode === 'email' && hidden.emailChallengeId}
+		{#if errorMessage}
+			<Alert variant="error">{errorMessage}</Alert>
+		{/if}
+
+		{#if showTenantChooser && rememberedCandidate && !wayfOnly}
+			<div class="auth-discover__list">
+				<p class="auth-discover__label">{$LL.discover_recentTenant()}</p>
+				{@render tenant(rememberedCandidate)}
+			</div>
+		{/if}
+
+		{#if showTenantChooser}
+			<form
+				method="POST"
+				action="/discover?/resolve"
+				class="auth-discover__form"
+				onsubmit={onSubmit}
+			>
+				{@render carried(true)}
+
+				{#if interactiveMethods.length > 1}
 					<div class="form-group">
-						<label class="auth-discover__label" for="email-code">{$LL.emailCode_codeLabel()}</label>
+						<label class="auth-discover__label" for="mode">{$LL.discover_methodLabel()}</label>
+						<select id="mode" name="mode" class="form-select" bind:value={selectedMode}>
+							{#if interactiveMethods.includes('email_exact')}
+								<option value="email">{$LL.discover_method_email()}</option>
+							{/if}
+							{#if interactiveMethods.includes('tenant_code')}
+								<option value="tenant_code">{$LL.discover_method_tenantCode()}</option>
+							{/if}
+							{#if interactiveMethods.includes('tenant_slug')}
+								<option value="tenant_slug">{$LL.discover_method_tenantSlug()}</option>
+							{/if}
+							{#if interactiveMethods.includes('wayf')}
+								<option value="wayf">WAYF</option>
+							{/if}
+						</select>
+					</div>
+				{:else}
+					<input type="hidden" name="mode" value={getDefaultDiscoveryMode(interactiveMethods)} />
+				{/if}
+
+				{#if selectedMode === 'wayf'}
+					<div class="form-group">
+						<label class="auth-discover__label" for="value">
+							{wayfOnly ? $LL.discover_selectTenant() : modeLabel(selectedMode)}
+						</label>
+						<select id="value" name="value" class="form-select" bind:value required>
+							<option value="" disabled>{$LL.discover_selectTenant()}</option>
+							{#each wayfCandidates as candidate (candidate.tenant_id)}
+								<option value={candidate.tenant_id}>{candidate.display_name}</option>
+							{/each}
+						</select>
+					</div>
+				{:else}
+					<div class="form-group">
+						<label class="auth-discover__label" for="value">{modeLabel(selectedMode)}</label>
 						<input
-							id="email-code"
-							name="email_code"
+							id="value"
+							name="value"
 							class="form-input"
-							type="text"
-							inputmode="numeric"
-							autocomplete="one-time-code"
-							pattern="[0-9]{6}"
-							maxlength="6"
+							type={selectedMode === 'email' ? 'email' : 'text'}
+							bind:value
+							placeholder={placeholderFor(selectedMode)}
+							readonly={selectedMode === 'email' && Boolean(hidden.emailChallengeId)}
 							required
 						/>
 					</div>
+					{#if selectedMode === 'email' && hidden.emailChallengeId}
+						<div class="form-group">
+							<label class="auth-discover__label" for="email-code"
+								>{$LL.emailCode_codeLabel()}</label
+							>
+							<input
+								id="email-code"
+								name="email_code"
+								class="form-input"
+								type="text"
+								inputmode="numeric"
+								autocomplete="one-time-code"
+								pattern="[0-9]{6}"
+								maxlength="6"
+								required
+							/>
+						</div>
+					{/if}
 				{/if}
-			{/if}
 
-			<Button
-				type="submit"
-				variant="primary"
-				class="w-full"
-				loading={submitting}
-				disabled={selectedMode === 'wayf' && wayfCandidates.length === 0}
-			>
-				{$LL.common_continue()}
-			</Button>
-		</form>
-	{/if}
+				<Button
+					type="submit"
+					variant="primary"
+					class="w-full"
+					loading={submitting}
+					disabled={selectedMode === 'wayf' && wayfCandidates.length === 0}
+				>
+					{$LL.common_continue()}
+				</Button>
+			</form>
+		{/if}
 
-	{#if showTenantChooser && candidates.length > 0}
-		<div class="auth-discover__list">
-			<h3 class="auth-discover__label">{$LL.discover_selectTenant()}</h3>
-			{#each candidates as candidate (candidate.tenant_id)}
-				{@render tenant(candidate)}
-			{/each}
-		</div>
-	{/if}
+		{#if showTenantChooser && candidates.length > 0}
+			<div class="auth-discover__list">
+				<h3 class="auth-discover__label">{$LL.discover_selectTenant()}</h3>
+				{#each candidates as candidate (candidate.tenant_id)}
+					{@render tenant(candidate)}
+				{/each}
+			</div>
+		{/if}
+	</div>
 </Card>

@@ -5,9 +5,9 @@
 	import { useLoginUIStores } from '$lib/stores/login-ui-context';
 	import { LL } from '$i18n/i18n-svelte';
 	import { isValidImageUrl } from '$lib/utils/url-validation';
-	import { onMount, untrack } from 'svelte';
+	import { onMount } from 'svelte';
 
-	const { brandingStore, themeStore } = useLoginUIStores();
+	const { themeStore } = useLoginUIStores();
 
 	interface PageData {
 		config: {
@@ -82,20 +82,19 @@
 	const titleText = $derived(ui.title_text || $LL.discover_title());
 	const subtitleText = $derived(ui.subtitle_text || $LL.discover_subtitle());
 
-	// The common entry host loads no tenant branding (+layout.server): the shell shows the
-	// discovery page's own brand instead, from the first render (server too) and on later loads.
-	function applyDiscoveryBranding(config: PageData['config']) {
-		if (!config.is_common_entry_host || config.single_tenant_mode) return;
-		brandingStore.set(
-			config.ui.brand_name || '',
-			config.ui.logo_url && isValidImageUrl(config.ui.logo_url) ? config.ui.logo_url : null
-		);
-	}
-	untrack(() => applyDiscoveryBranding(data.config));
-	$effect.pre(() => {
-		const config = data.config;
-		untrack(() => applyDiscoveryBranding(config));
-	});
+	// The common entry host (as this page resolved it, the common discovery URL included) loads no
+	// tenant branding: the shell shows the discovery page's own brand, known as the page renders.
+	const discoveryBrand = $derived(
+		data.config.is_common_entry_host && !data.config.single_tenant_mode
+			? {
+					name: data.config.ui.brand_name || '',
+					logoUrl:
+						data.config.ui.logo_url && isValidImageUrl(data.config.ui.logo_url)
+							? data.config.ui.logo_url
+							: null
+				}
+			: undefined
+	);
 
 	let discoverySubmitting = $state(false);
 
@@ -144,7 +143,7 @@
 	<title>{pageTitle}</title>
 </svelte:head>
 
-<AuthPageShell>
+<AuthPageShell brand={discoveryBrand}>
 	<DiscoverView
 		{kickerText}
 		{titleText}

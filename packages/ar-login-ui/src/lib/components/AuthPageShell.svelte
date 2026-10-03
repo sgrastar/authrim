@@ -12,19 +12,24 @@
 		wide?: boolean;
 		/** Reveal the page parts one after another; login and signup turn it on while they load. */
 		entryMotion?: boolean;
+		/**
+		 * The brand this page shows instead of the tenant's (the discovery page on the common entry
+		 * host, which loads no tenant branding). Known when the page renders, so it shows at once.
+		 */
+		brand?: { name: string; logoUrl: string | null };
 	};
 
-	let { children, wide = false, entryMotion = false }: Props = $props();
+	let { children, wide = false, entryMotion = false, brand }: Props = $props();
 	const { brandingStore, loginUIPageStore } = useLoginUIStores();
+	const brandName = $derived(brand ? brand.name : brandingStore.brandName);
+	const brandLogoUrl = $derived(brand ? brand.logoUrl : brandingStore.logoUrl);
 	const localizedBrandPanelTitle = $derived(
 		loginUIPageStore.getLocalizedText(getLocale(), 'brandPanelTitle')
 	);
 	const localizedBrandPanelText = $derived(
 		loginUIPageStore.getLocalizedText(getLocale(), 'brandPanelText')
 	);
-	const hasBrandingLogo = $derived(
-		Boolean(brandingStore.logoUrl && isValidImageUrl(brandingStore.logoUrl))
-	);
+	const hasBrandingLogo = $derived(Boolean(brandLogoUrl && isValidImageUrl(brandLogoUrl)));
 	const showBrandLogo = $derived(
 		loginUIPageStore.logoDisplay !== 'hidden' &&
 			loginUIPageStore.logoDisplay !== 'text' &&
@@ -41,6 +46,7 @@
 <div
 	class="auth-page"
 	class:auth-page--entry-motion={entryMotion}
+	data-branding-loaded={brand ? '' : undefined}
 	class:auth-page--has-footer={loginUIPageStore.footerEnabled}
 	style:--login-page-background-color={loginUIPageStore.backgroundColor || undefined}
 	style:--login-accent-color={loginUIPageStore.accentColor || undefined}
@@ -74,9 +80,9 @@
 		{#if loginUIPageStore.showBrandPanel}
 			<aside class="auth-brand-panel" aria-hidden="true">
 				<div class="auth-brand-panel__content">
-					{#if showBrandLogo && brandingStore.logoUrl}
+					{#if showBrandLogo && brandLogoUrl}
 						<img
-							src={brandingStore.logoUrl}
+							src={brandLogoUrl}
 							alt=""
 							class="auth-brand-panel__logo"
 							onerror={(event) =>
@@ -85,7 +91,7 @@
 					{/if}
 					{#if loginUIPageStore.brandContentMode === 'logo_copy'}
 						<p class="auth-brand-panel__eyebrow">
-							{brandingStore.brandName || $LL.app_title()}
+							{brandName || $LL.app_title()}
 						</p>
 						{#if localizedBrandPanelTitle}
 							<h2>{localizedBrandPanelTitle}</h2>
@@ -94,7 +100,7 @@
 							<p>{localizedBrandPanelText}</p>
 						{/if}
 					{:else if !showBrandLogo}
-						<h2>{brandingStore.brandName || $LL.app_title()}</h2>
+						<h2>{brandName || $LL.app_title()}</h2>
 					{/if}
 				</div>
 			</aside>
@@ -102,14 +108,14 @@
 
 		<div class="auth-container" class:auth-container--wide={wide}>
 			{#if !showVisibleHeading}
-				<h1 class="sr-only">{brandingStore.brandName || $LL.app_title()}</h1>
+				<h1 class="sr-only">{brandName || $LL.app_title()}</h1>
 			{/if}
 			{#if loginUIPageStore.headerEnabled}
 				<header class="auth-header">
-					{#if showBrandLogo && brandingStore.logoUrl}
+					{#if showBrandLogo && brandLogoUrl}
 						<img
-							src={brandingStore.logoUrl}
-							alt={brandingStore.brandName || $LL.common_logoAlt()}
+							src={brandLogoUrl}
+							alt={brandName || $LL.common_logoAlt()}
 							class="auth-header__logo"
 							onerror={(event) =>
 								((event.currentTarget as HTMLImageElement).style.display = 'none')}
@@ -117,7 +123,7 @@
 					{/if}
 					{#if showBrandText}
 						<h1 class="auth-header__title">
-							{brandingStore.brandName || $LL.app_title()}
+							{brandName || $LL.app_title()}
 						</h1>
 					{/if}
 					{#if loginUIPageStore.subtitleEnabled}
