@@ -290,16 +290,21 @@ controls:
     level: 1
     requirement: Verify that when session termination is triggered (such as logout or expiration), the application disallows any further use of the session. For reference tokens or stateful sessions, this means invalidating the session data at the application backend. Applications using self-contained tokens will need a solution such as maintaining a list of terminated tokens, disallowing tokens produced before a per-user date and time or rotating a per-user signing key.
     status: covered
-    rationale: Logout invalidates backend SessionStore state and expiration is enforced during backend lookup. Durable Object storage is the only session store, so no cold copy can resurrect a deleted session.
+    rationale: Logout invalidates backend SessionStore state; lookup enforces expiration and user-wide revocation. Durable Object storage is the only session store, so no cold copy can resurrect a deleted session, and a lookup, extension or rebinding that awaited another actor re-reads storage without interleaving before it caches or writes, so a concurrent logout is never undone.
     evidence:
       - check: asvs.v7_4_1.logout_and_expiration_invalidate_backend_session
-        note: Verify logout calls invalidateSessionRpc, SessionStore deletes hot and Durable Object state, lookup enforces expiry, and SessionStore reads no other store.
+        note: Verify logout calls invalidateSessionRpc, SessionStore deletes hot and Durable Object state, reads no other store, and run the regression tests for logout, expiry and revocation from cache and storage, and for invalidations racing a lookup, extension or rebinding.
       - path: packages/ar-auth/src/logout.ts
         line: 459
         note: RP-initiated logout invalidates the current sharded session in SessionStore.
       - path: packages/ar-lib-core/src/durable-objects/SessionStore.ts
-        line: 538
+        line: 562
         note: invalidateSession deletes the cached session and its Durable Object storage, and removes it from the user's session index.
+      - path: packages/ar-lib-core/src/durable-objects/SessionStore.ts
+        line: 445
+        note: getSession admits cached and stored sessions alike and caches only what storage still holds after the revocation check.
+      - path: packages/ar-lib-core/src/durable-objects/__tests__/SessionStore.test.ts
+        note: Regression tests the check runs (ASVS V7.4.1 block and the invalidation race block).
 
   - id: v5.0.0-V7.4.2
     chapter: V7
@@ -325,16 +330,16 @@ controls:
     level: 1
     requirement: Verify that the authorization server validates redirect URIs based on a client-specific allowlist of pre-registered URIs using exact string comparison.
     status: covered
-    rationale: Authorization and token endpoints validate redirect URI format, require client-specific registered redirect URI matches, and compare the token request redirect URI with the value bound to the authorization code. The one exception is RFC 8252 section 7.3, a native app's http loopback IP redirect, whose port may vary; scheme, IP, path and query still match exactly.
+    rationale: Authorization and token endpoints validate redirect URI format, require client-specific registered redirect URI matches, and compare the token request redirect URI with the value bound to the authorization code. The one exception is RFC 8252 section 7.3. For clients registered as native apps (application_type native), the port of an http 127.0.0.1 or [::1] redirect may vary; scheme, IP, path and query still match exactly, and every other client matches exactly, port included.
     evidence:
       - check: asvs.v10_4_1.redirect_uri_exact_allowlist
-        note: Verify exact redirect_uri matching, the port-only loopback IP exception, and token-request redirect_uri binding.
+        note: Verify exact redirect_uri matching, the native-only, port-only loopback IP exception, and token-request redirect_uri binding, and run the matching tests.
       - path: packages/ar-auth/src/authorize.ts
-        line: 1247
-        note: Authorization endpoint checks redirect_uri against registered client redirect URIs.
+        line: 2604
+        note: Authorization endpoint checks redirect_uri against registered client redirect URIs, with the client type deciding the loopback port rule.
       - path: packages/ar-lib-core/src/utils/validation.ts
-        line: 915
-        note: isRedirectUriRegistered uses exact string comparison, except the port of a loopback IP redirect (RFC 8252).
+        line: 933
+        note: isRedirectUriRegistered uses exact string comparison, except the port of a native app's loopback IP redirect (RFC 8252).
       - path: packages/ar-token/src/token.ts
         line: 2240
         note: Token endpoint rejects redirect_uri values that differ from the authorization code binding.
