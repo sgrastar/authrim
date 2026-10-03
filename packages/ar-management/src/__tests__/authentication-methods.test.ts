@@ -923,6 +923,33 @@ describe('Authentication Methods API', () => {
       });
     });
 
+    it("applies a configured provider's saved usage named by its id", async () => {
+      const settingsKV = createMockKV({
+        'settings:tenant:default:authentication-methods': JSON.stringify({
+          'authentication-methods.external_providers': JSON.stringify([
+            { id: 'p-1', name: 'Configured', type: 'oidc', enabled: true },
+          ]),
+          'authentication-methods.external_provider_usage': JSON.stringify([
+            {
+              id: 'p-1',
+              providerId: 'p-1',
+              loginEnabled: false,
+              signupEnabled: false,
+              reauthEnabled: false,
+              accountLinkEnabled: false,
+            },
+          ]),
+        }),
+      });
+      const { app, mockEnv } = createTestApp({ settingsKV });
+
+      const res = await app.request('/api/auth/authentication-methods', { method: 'GET' }, mockEnv);
+      const body = (await res.json()) as any;
+
+      // Every use turned off: not offered at all.
+      expect(body.methods.external.providers).toEqual([]);
+    });
+
     it("never applies another provider's saved usage that once had the same slug", async () => {
       const externalIdp = createMockExternalIdp({
         providers: [

@@ -1666,6 +1666,8 @@ async function fetchConfiguredExternalLoginProviders(
         const accountLinkEnabled = normalizeBoolean(provider.accountLinkEnabled, legacyEnabled);
         return {
           id: truncateString(provider.id),
+          // A configured provider's id is the one its usage entry names.
+          stableId: truncateString(provider.id),
           name: truncateString(provider.name),
           type,
           startMode: normalizeExternalStartMode(provider.startMode, type),
