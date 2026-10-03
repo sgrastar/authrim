@@ -3613,7 +3613,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
           const ownProvenAmr = (Array.isArray(sessionData?.amr) ? sessionData.amr : []).filter(
             (method) => !ownUnverified.includes(method)
           );
-          const ownReauthProof =
+          let ownReauthProof =
             typeof sessionData?.reauth_proven_at === 'number' ||
             ownProvenAmr.length === 0 ||
             provenAt === undefined
@@ -3633,6 +3633,9 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
                 unverified_amr: read?.unverified_amr,
                 upstream_acr: read?.upstream_acr,
                 proven_at: read?.proven_at,
+                // A re-authentication completed meanwhile records a newer pair: kept, not replaced.
+                reauth_proven_amr: read?.reauth_proven_amr,
+                reauth_proven_at: read?.reauth_proven_at,
               } as Partial<SessionData>,
             })) as Session | null;
             if (!updated) {
@@ -3645,6 +3648,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
             );
             if (!written) {
               read = latest;
+              if (typeof latest?.reauth_proven_at === 'number') ownReauthProof = {};
               stored = mergeStepUpEvidence(
                 sessionAssuranceEvidence(latest, upstreamAcrMappings),
                 evidence

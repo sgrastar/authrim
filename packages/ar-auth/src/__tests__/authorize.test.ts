@@ -3868,6 +3868,52 @@ describe('Authorization Handler', () => {
       expect(store.updateSessionDataRpc).toHaveBeenCalledTimes(2);
     });
 
+    it('keeps a re-authentication completed while the step-up was being recorded', async () => {
+      seedSessionData(TEST_SESSION_ID, { amr: ['pwd'] });
+      seedSessionData(
+        STEP_UP_SESSION_ID,
+        { amr: ['otp', 'totp'], proven_at: AFTER_STEP_UP },
+        'test-user',
+        AFTER_STEP_UP
+      );
+      await setAssurance({ 'assurance.enabled': true, 'assurance.default_aal': 'AAL2' });
+      seedStepUpConfirmation('step-up-reauth-race', TEST_SESSION_ID);
+      const store = (
+        env.SESSION_STORE as unknown as { get: () => Record<string, ReturnType<typeof vi.fn>> }
+      ).get();
+      const write = store.updateSessionDataRpc.getMockImplementation() as (
+        ...args: unknown[]
+      ) => Promise<unknown>;
+      // Between this request's read and its write, the account page re-authenticated the session.
+      store.updateSessionDataRpc.mockImplementationOnce(async (...args: unknown[]) => {
+        const session = getSessionMap(env).get(STEP_UP_SESSION_ID) as {
+          data: Record<string, unknown>;
+        };
+        session.data = {
+          ...session.data,
+          reauth_proven_amr: ['passkey'],
+          reauth_proven_at: AFTER_STEP_UP + 5_000,
+        };
+        return write(...args);
+      });
+
+      const response = await request('/authorize?_confirmation_challenge=step-up-reauth-race', [
+        `authrim_session=${encodeURIComponent(STEP_UP_SESSION_ID)}`,
+        'authrim_authorize_confirmation=step-up-reauth-race-browser',
+      ]);
+
+      expect(new URL(response.headers.get('Location')!).searchParams.get('code')).toBeTruthy();
+      const data = (getSessionMap(env).get(STEP_UP_SESSION_ID) as { data: { amr: string[] } }).data;
+      expect([...data.amr].sort()).toEqual(['otp', 'pwd', 'totp']);
+      expect(data).toMatchObject({
+        proven_at: 0,
+        // The newer re-authentication stands, not the step-up's older TOTP.
+        reauth_proven_amr: ['passkey'],
+        reauth_proven_at: AFTER_STEP_UP + 5_000,
+      });
+      expect(store.updateSessionDataRpc).toHaveBeenCalledTimes(2);
+    });
+
     it('fails rather than stepping up again when the step-up still falls short', async () => {
       seedSessionData(TEST_SESSION_ID, { amr: ['pwd'] });
       // An emailed code is never a second factor.
