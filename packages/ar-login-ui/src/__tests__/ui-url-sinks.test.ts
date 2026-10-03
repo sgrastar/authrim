@@ -20,13 +20,15 @@ describe('UI URL sink guards', () => {
 	});
 
 	it('does not render discovery candidate login URLs without link validation', () => {
-		const discoverSource = source('routes/discover/+page.svelte');
+		// The view draws every tenant (remembered or found) through one validated link.
+		const discoverSource = source('lib/views/DiscoverView.svelte');
 
 		expect(discoverSource).toContain('isValidLinkUrl(candidate.login_url)');
-		expect(discoverSource).toContain('href={rememberedHref}');
+		expect(discoverSource).toContain('{@const href = candidateHref(candidate)}');
 		expect(discoverSource).toContain('class="tenant-option" {href}');
 		expect(discoverSource).not.toContain('href={candidate.login_url}');
 		expect(discoverSource).not.toContain('return candidate.login_url;');
+		expect(source('routes/discover/+page.svelte')).not.toContain('href=');
 	});
 
 	it('guards external provider image URLs before using them as img src values', () => {

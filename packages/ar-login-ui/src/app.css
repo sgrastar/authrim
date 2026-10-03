@@ -7675,6 +7675,120 @@ tr.expired {
 	margin: 0;
 }
 
+/* Tenant discovery (discover page): how to find the organisation and the tenants found, on theme
+   tokens only. */
+.auth-discover {
+	display: grid;
+	gap: 16px;
+}
+
+.auth-discover__header {
+	text-align: center;
+}
+
+.auth-discover__kicker {
+	margin: 0 0 4px;
+	font-size: 0.75rem;
+	font-weight: 600;
+	letter-spacing: 0.08em;
+	text-transform: uppercase;
+	color: var(--text-muted);
+}
+
+.auth-discover__label {
+	display: block;
+	margin: 0 0 6px;
+	font-size: 0.875rem;
+	font-weight: 600;
+	color: var(--text-secondary);
+}
+
+.auth-discover__form .form-group {
+	margin-bottom: 14px;
+}
+
+.auth-discover__form :is(.form-input, .form-select) {
+	min-height: var(--auth-control-height, 2.75rem);
+	border-color: var(--input-border, var(--border));
+	border-radius: var(--input-radius, var(--radius-md));
+	font-size: 0.9375rem;
+}
+
+.auth-discover__list {
+	display: grid;
+	gap: 10px;
+}
+
+.auth-discover .tenant-option {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 16px;
+	width: 100%;
+	padding: 14px 16px;
+	border: 1px solid var(--border);
+	border-radius: var(--input-radius, var(--radius-md));
+	background: var(--bg-input, var(--bg-page));
+	color: var(--text-primary);
+	font: inherit;
+	text-align: start;
+	text-decoration: none;
+	cursor: pointer;
+	transition:
+		border-color var(--transition-fast),
+		transform var(--transition-fast);
+}
+
+.auth-discover .tenant-option:hover:not(:disabled),
+.auth-discover .tenant-option:focus-visible {
+	border-color: var(--primary);
+	transform: translateY(-1px);
+}
+
+.auth-discover .tenant-option:disabled {
+	opacity: 0.6;
+	cursor: not-allowed;
+}
+
+.auth-discover .tenant-option-form {
+	margin: 0;
+}
+
+.auth-discover .tenant-branding {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	min-width: 0;
+}
+
+.auth-discover .tenant-branding img {
+	width: 40px;
+	height: 40px;
+	flex-shrink: 0;
+	object-fit: cover;
+	border: 1px solid var(--border);
+	border-radius: var(--radius-md);
+}
+
+.auth-discover .tenant-branding strong {
+	display: block;
+	color: var(--text-primary);
+}
+
+.auth-discover .tenant-branding p,
+.auth-discover .tenant-option__host {
+	margin: 0;
+	font-size: 0.8125rem;
+	color: var(--text-secondary);
+}
+
+@media (max-width: 640px) {
+	.auth-discover .tenant-option {
+		flex-direction: column;
+		align-items: flex-start;
+	}
+}
+
 /* CIBA request (ciba page): client, expiry and the code to compare, on theme tokens only. */
 .auth-ciba-request__head {
 	display: flex;
