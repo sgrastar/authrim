@@ -3,9 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { setLocale } from '$i18n/i18n-svelte';
 import AccountUpgradeWidget from './AccountUpgradeWidget.svelte';
 import { guestUpgradeStatus } from './fixtures';
-
-/** Svelte's SSR hydration comments, which split text from closing tags. */
-const HYDRATION_MARKERS = /<!--[\s\S]*?-->/g;
+import { HYDRATION_MARKERS } from '$lib/testing/ssr-html';
 
 function renderUpgrade(props: Partial<Parameters<typeof AccountUpgradeWidget>[1]> = {}) {
 	return render(AccountUpgradeWidget, {

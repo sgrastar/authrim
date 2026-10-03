@@ -3,9 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { setLocale } from '$i18n/i18n-svelte';
 import AccountActivityWidget from './AccountActivityWidget.svelte';
 import { FIXTURE_NOW, operation } from './fixtures';
-
-/** Svelte's SSR hydration comments, which split text from closing tags. */
-const HYDRATION_MARKERS = /<!--[\s\S]*?-->/g;
+import { HYDRATION_MARKERS } from '$lib/testing/ssr-html';
 
 function renderActivity(props: Partial<Parameters<typeof AccountActivityWidget>[1]> = {}) {
 	return render(AccountActivityWidget, { props }).body.replace(HYDRATION_MARKERS, '');

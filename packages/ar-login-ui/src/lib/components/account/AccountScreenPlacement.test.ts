@@ -4,9 +4,7 @@ import { render } from 'svelte/server';
 import { describe, expect, it } from 'vitest';
 import type { AccountPageScreenField } from '$lib/api/account';
 import AccountScreenPlacement from './AccountScreenPlacement.svelte';
-
-/** Svelte's SSR hydration comments, which split text from closing tags. */
-const HYDRATION_MARKERS = /<!--[\s\S]*?-->/g;
+import { HYDRATION_MARKERS } from '$lib/testing/ssr-html';
 
 const placementSource = readFileSync(
 	new URL('./AccountScreenPlacement.svelte', import.meta.url),
