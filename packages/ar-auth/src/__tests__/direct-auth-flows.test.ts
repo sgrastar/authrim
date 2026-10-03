@@ -3191,6 +3191,33 @@ describe('Direct Auth primary passkey and email-code flows', () => {
     expect('error' in result).toBe(refused);
   });
 
+  it.each([
+    ['refuses a proof made before the re-authentication was asked for', 999, true],
+    ['accepts a proof made after it', 1_001, false],
+  ])('%s', async (_label, authTime, refused) => {
+    mocks.challengeStore.consumeChallengeRpc
+      .mockRejectedValueOnce(new Error('not a login challenge'))
+      .mockResolvedValueOnce({
+        userId: 'user_existing',
+        metadata: { sessionUserId: 'user_existing', reauth_issued_at: 1_000_000 },
+      });
+    const { consumeAuthorizationChallengeContinuation } = await import('../direct-auth');
+    const context = createContext({});
+    (context as unknown as { header: unknown }).header = vi.fn();
+
+    const result = await consumeAuthorizationChallengeContinuation(
+      context as never,
+      'tenant_test',
+      'reauth_challenge',
+      'user_existing',
+      authTime,
+      'https://op.example.com',
+      'directory_password'
+    );
+
+    expect('error' in result).toBe(refused);
+  });
+
   it('reads the proving method from what the session recorded', async () => {
     const { reauthProvenMethodFromAmr } = await import('../direct-auth');
 
@@ -3199,6 +3226,10 @@ describe('Direct Auth primary passkey and email-code flows', () => {
     expect(reauthProvenMethodFromAmr(['otp'])).toBe('email_otp');
     expect(reauthProvenMethodFromAmr(['email_code'])).toBe('email_otp');
     expect(reauthProvenMethodFromAmr(['pwd', 'directory'])).toBe('directory_password');
+    expect(reauthProvenMethodFromAmr(['did'])).toBe('other');
+    expect(reauthProvenMethodFromAmr(['external_idp'])).toBe('other');
+    expect(reauthProvenMethodFromAmr(['saml'])).toBe('other');
+    expect(reauthProvenMethodFromAmr(['anon'])).toBeUndefined();
     // A passkey only just registered proves nothing yet.
     expect(reauthProvenMethodFromAmr(['passkey'], ['passkey'])).toBeUndefined();
     expect(reauthProvenMethodFromAmr(['passkey_signup'])).toBeUndefined();

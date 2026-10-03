@@ -2751,6 +2751,18 @@ async function resolveCompletedProtocolRedirect(input: {
   if (!session || !userId) {
     return {};
   }
+  // The session supplies the proof (its method and time): it must be the flow's user's.
+  if (session.userId !== userId) {
+    return {
+      response: input.c.json(
+        {
+          error: 'access_denied',
+          error_description: 'The signed-in session does not belong to this interaction',
+        },
+        403
+      ),
+    };
+  }
 
   const continuation = await consumeAuthorizationChallengeContinuation(
     input.c,

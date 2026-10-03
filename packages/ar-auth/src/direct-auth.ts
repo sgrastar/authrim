@@ -543,8 +543,11 @@ function metadataString(metadata: Record<string, unknown>, key: string): string 
   return typeof value === 'string' && value ? value : undefined;
 }
 
-/** A method that can complete a re-authentication (directory passwords have no switch of their own). */
-export type ReauthProvenMethod = 'passkey' | 'email_otp' | 'totp' | 'directory_password';
+/**
+ * A method that can complete a re-authentication. Directory passwords and 'other' methods (DID,
+ * an external IdP, SAML) have no re-authentication switch of their own.
+ */
+export type ReauthProvenMethod = 'passkey' | 'email_otp' | 'totp' | 'directory_password' | 'other';
 
 /**
  * The method a session's authentication proved, from its amr (methods recorded as unverified, such
@@ -563,6 +566,7 @@ export function reauthProvenMethodFromAmr(
     return 'email_otp';
   }
   if (proven.includes('pwd')) return 'directory_password';
+  if (proven.some((m) => m === 'did' || m === 'external_idp' || m === 'saml')) return 'other';
   return undefined;
 }
 
@@ -621,6 +625,7 @@ export async function consumeAuthorizationChallengeContinuation(
     type === 'reauth' &&
     (!provenMethod ||
       (provenMethod !== 'directory_password' &&
+        provenMethod !== 'other' &&
         !(await isAuthenticationMethodUsageAvailable(env, tenantId, provenMethod, 'reauth', {
           strict: true,
         }).catch(() => false))))
@@ -637,6 +642,23 @@ export async function consumeAuthorizationChallengeContinuation(
   }
 
   const metadata = challengeData.metadata || {};
+  // A re-authentication is answered only by a proof made after it was asked for.
+  const reauthIssuedAt = metadata.reauth_issued_at;
+  if (
+    type === 'reauth' &&
+    typeof reauthIssuedAt === 'number' &&
+    authTime < Math.floor(reauthIssuedAt / 1000)
+  ) {
+    return {
+      error: new Response(
+        JSON.stringify({
+          error: 'login_required',
+          error_description: 'Authenticate again to complete the re-authentication',
+        }),
+        { status: 403, headers: { 'Content-Type': 'application/json' } }
+      ),
+    };
+  }
   const expectedUserId =
     type === 'reauth'
       ? metadataString(metadata, 'sessionUserId') || challengeData.userId

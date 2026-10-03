@@ -3141,6 +3141,69 @@ describe('LoginUI runtime Flow handlers', () => {
     );
   });
 
+  it("refuses to continue with a session that is not the interaction user's", async () => {
+    const { data: startData } = await startInteraction(
+      {
+        flow_kind: 'login',
+        client_id: 'client_1',
+        requested_scope: 'openid profile',
+        authorization_challenge_id: 'login_challenge_1',
+      },
+      oidcCompletionRuntime
+    );
+    resetAdapter();
+    mockSubmitQueries({
+      expiresAt: Number((startData.interaction as Record<string, unknown>).expires_at),
+      contractHash: String(startData.contract_hash),
+      signature: String(startData.signature),
+      currentNodeId: 'complete',
+      currentStepId: 'complete:step',
+      stepState: 'waiting_input',
+      runtimeSnapshot: oidcCompletionRuntime,
+      editorSnapshot: null,
+      context: {
+        target_type: 'oidc_client',
+        target_id: 'client_1',
+        client_id: 'client_1',
+        authorization_challenge_id: 'login_challenge_1',
+      },
+    });
+    mocks.coreAdapter.queryOne.mockResolvedValueOnce(null);
+    mocks.coreAdapter.query.mockResolvedValueOnce([
+      { step_id: 'complete:step', selected_handle: 'completed' },
+    ]);
+    mocks.sessionStore.getSessionRpc
+      .mockResolvedValueOnce({
+        userId: 'user_1',
+        expiresAt: Date.now() + 60_000,
+        createdAt: 1_700_000_000_000,
+        data: { authTime: 1_700_000_123 },
+      })
+      .mockResolvedValueOnce({
+        userId: 'user_2',
+        expiresAt: Date.now() + 60_000,
+        createdAt: 1_700_000_000_000,
+        data: { authTime: 1_700_000_123 },
+      });
+
+    const response = await loginRuntimeInteractionSubmitHandler(
+      createContext({
+        params: { interaction_id: 'interaction_1' },
+        headers: { Cookie: 'authrim_session=sess_runtime_1' },
+        url: 'https://first.test.authrim.com/api/v1/login/interactions/interaction_1/submit',
+        body: {
+          step_id: 'complete:step',
+          node_id: 'complete',
+          selected_handle: 'completed',
+          contract_hash: startData.contract_hash,
+          signature: startData.signature,
+        },
+      })
+    );
+    expect(response.status).toBe(403);
+    expect(mocks.consumeAuthorizationChallengeContinuation).not.toHaveBeenCalled();
+  });
+
   it('returns an OIDC continuation redirect after an authentication method step completes', async () => {
     const { data: startData } = await startInteraction(
       {
