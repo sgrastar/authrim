@@ -305,6 +305,8 @@ const adminOther = {
 	admin_info_organizations: 'Organizations',
 	admin_info_roles: 'Roles',
 	admin_info_webhooks: 'Webhooks',
+	admin_theme_accent_not_applied:
+		'この色は適用されません（#rgb、#rrggbb、rgb() のいずれかで指定してください）。上位の設定か、テーマの既定のアクセント色が使われます。',
 	admin_theme_head_title: 'テーマ - Authrim Admin',
 	admin_theme_page_description_list:
 		'Login UIのテーマテンプレートを管理します。テンプレートを選び、編集可能なコピーを作成して使います。',

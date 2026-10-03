@@ -32161,6 +32161,10 @@ type RootTranslation = {
 	 */
 	admin_info_webhooks: string
 	/**
+	 * A​u​t​h​r​i​m​ ​d​o​e​s​ ​n​o​t​ ​a​p​p​l​y​ ​t​h​i​s​ ​c​o​l​o​r​ ​(​u​s​e​ ​#​r​g​b​,​ ​#​r​r​g​g​b​b​ ​o​r​ ​r​g​b​(​)​)​.​ ​T​h​e​ ​p​a​r​e​n​t​ ​s​c​o​p​e​'​s​ ​a​c​c​e​n​t​,​ ​o​r​ ​t​h​e​ ​t​h​e​m​e​'​s​ ​o​w​n​,​ ​i​s​ ​u​s​e​d​ ​i​n​s​t​e​a​d​.
+	 */
+	admin_theme_accent_not_applied: string
+	/**
 	 * T​h​e​m​e​ ​-​ ​A​u​t​h​r​i​m​ ​A​d​m​i​n
 	 */
 	admin_theme_head_title: string
@@ -65776,6 +65780,10 @@ Remove this role from {email}?
 	 * Webhooks
 	 */
 	admin_info_webhooks: () => LocalizedString
+	/**
+	 * Authrim does not apply this color (use #rgb, #rrggbb or rgb()). The parent scope's accent, or the theme's own, is used instead.
+	 */
+	admin_theme_accent_not_applied: () => LocalizedString
 	/**
 	 * Theme - Authrim Admin
 	 */
