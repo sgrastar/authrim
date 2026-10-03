@@ -155,3 +155,9 @@ it('abandons the pending action when re-authentication is closed, and keeps soci
 	expect(source).toContain('if (socialAction) return;');
 	expect(source).toContain("actionLoading={socialAction ?? ''}");
 });
+
+it('keeps the already-linked explanation through the reload of the list', () => {
+	expect(source).toMatch(
+		/await refreshSecurity\(\['social'\]\);\s*socialNotice = \{ kind: 'error', message: \$LL\.account_socialErrorAlreadyLinkedHere\(\) \};/
+	);
+});

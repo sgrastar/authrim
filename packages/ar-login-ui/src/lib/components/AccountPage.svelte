@@ -1132,9 +1132,10 @@
 					return;
 				}
 				if (result.error.error === 'already_linked') {
-					// Linked meanwhile (another tab): show the account as it is.
-					setSecurityError('social', $LL.account_socialErrorAlreadyLinkedHere());
+					// Linked meanwhile (another tab): show the account as it is, and say why nothing
+					// happened (a notice, which the reload does not clear).
 					await refreshSecurity(['social']);
+					socialNotice = { kind: 'error', message: $LL.account_socialErrorAlreadyLinkedHere() };
 					return;
 				}
 				setSecurityError('social', localizeApiError(result.error, $LL.account_actionFailed()));
