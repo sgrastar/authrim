@@ -7,9 +7,6 @@ import { describe, expect, it } from 'vitest';
  * Every CSS custom property a component reads must be one the Login UI defines. An undefined one
  * resolves to nothing (or silently to its fallback), which is how account surfaces ended up
  * transparent and skeletons invisible.
- *
- * app.css is a definition source only: it still carries unused rules whose references are cleaned
- * up separately.
  */
 
 const SRC = fileURLToPath(new URL('..', import.meta.url));
@@ -35,17 +32,15 @@ const defined = new Set(
 );
 
 describe('CSS custom properties', () => {
-	it('components read only properties the Login UI defines', () => {
-		const undefinedReads = files
-			.filter(({ path }) => !path.endsWith('app.css'))
-			.flatMap(({ path, text }) =>
-				[...text.matchAll(/var\(\s*(--[a-zA-Z0-9-]+)/g)]
-					.filter((match) => !defined.has(match[1]))
-					.map((match) => {
-						const line = text.slice(0, match.index).split('\n').length;
-						return `${relative(SRC, path)}:${line} ${match[1]}`;
-					})
-			);
+	it('components and app.css read only properties the Login UI defines', () => {
+		const undefinedReads = files.flatMap(({ path, text }) =>
+			[...text.matchAll(/var\(\s*(--[a-zA-Z0-9-]+)/g)]
+				.filter((match) => !defined.has(match[1]))
+				.map((match) => {
+					const line = text.slice(0, match.index).split('\n').length;
+					return `${relative(SRC, path)}:${line} ${match[1]}`;
+				})
+		);
 		expect(undefinedReads).toEqual([]);
 	});
 });
