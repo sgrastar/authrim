@@ -684,6 +684,7 @@ describe('Direct Auth primary passkey and email-code flows', () => {
       id: 'reauth_challenge',
       tenantId: 'tenant_test',
       type: 'reauth',
+      userId: 'user_existing',
       challenge: 'reauth_challenge',
     });
     const { directPasskeyLoginStartHandler } = await import('../direct-auth');
@@ -717,6 +718,68 @@ describe('Direct Auth primary passkey and email-code flows', () => {
 
     expect(response.status).toBe(400);
     expect(mocks.generateAuthenticationOptions).not.toHaveBeenCalled();
+  });
+
+  it('binds a passkey re-authentication to the user it was asked of', async () => {
+    mocks.challengeStore.getChallengeRpc.mockResolvedValue({
+      id: 'reauth_challenge',
+      tenantId: 'tenant_test',
+      type: 'reauth',
+      userId: 'anonymous',
+      metadata: { sessionUserId: 'user_existing' },
+      challenge: 'reauth_challenge',
+    });
+    const { directPasskeyLoginStartHandler } = await import('../direct-auth');
+
+    const response = await directPasskeyLoginStartHandler(
+      createContext(
+        {
+          client_id: 'web-client',
+          code_challenge: 'challenge',
+          code_challenge_method: 'S256',
+          channel: 'browser',
+          authorization_challenge_id: 'reauth_challenge',
+        },
+        webHeaders(),
+        'https://app.example.com/api/v1/auth/direct/passkey/login/start'
+      ) as never
+    );
+
+    expect(response.status).toBe(200);
+    expect(mocks.challengeStore.storeChallengeRpc).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'direct_passkey_login',
+        metadata: expect.objectContaining({ usage: 'reauth', reauth_user_id: 'user_existing' }),
+      })
+    );
+  });
+
+  it('refuses a re-authentication challenge that names no user', async () => {
+    mocks.challengeStore.getChallengeRpc.mockResolvedValue({
+      id: 'reauth_challenge',
+      tenantId: 'tenant_test',
+      type: 'reauth',
+      userId: 'anonymous',
+      challenge: 'reauth_challenge',
+    });
+    const { directPasskeyLoginStartHandler } = await import('../direct-auth');
+
+    const response = await directPasskeyLoginStartHandler(
+      createContext(
+        {
+          client_id: 'web-client',
+          code_challenge: 'challenge',
+          code_challenge_method: 'S256',
+          channel: 'browser',
+          authorization_challenge_id: 'reauth_challenge',
+        },
+        webHeaders(),
+        'https://app.example.com/api/v1/auth/direct/passkey/login/start'
+      ) as never
+    );
+
+    expect(response.status).toBe(400);
+    expect(mocks.challengeStore.storeChallengeRpc).not.toHaveBeenCalled();
   });
 
   it('rejects passkey login start when the login usage is disabled', async () => {
@@ -847,6 +910,40 @@ describe('Direct Auth primary passkey and email-code flows', () => {
       expect(mocks.authCodeStore.storeCodeRpc).not.toHaveBeenCalled();
     }
   );
+
+  it("refuses a passkey re-authentication finished with another user's passkey", async () => {
+    const codeVerifier = 'passkey-login-code-verifier';
+    mocks.challengeStore.consumeChallengeRpc.mockResolvedValue({
+      challenge: 'passkey-login-challenge',
+      metadata: {
+        code_challenge: await s256Challenge(codeVerifier),
+        client_id: 'web-client',
+        channel: 'browser',
+        origin: 'https://app.example.com',
+        rpID: 'app.example.com',
+        usage: 'reauth',
+        reauth_user_id: 'user_someone_else',
+      },
+    });
+    const { directPasskeyLoginFinishHandler } = await import('../direct-auth');
+
+    const response = await directPasskeyLoginFinishHandler(
+      createContext({
+        challenge_id: 'challenge_1',
+        credential: {
+          id: 'credential-id',
+          rawId: 'credential-id',
+          response: {},
+          type: 'public-key',
+        },
+        code_verifier: codeVerifier,
+        channel: 'browser',
+      }) as never
+    );
+
+    expect(response.status).toBeGreaterThanOrEqual(400);
+    expect(mocks.authCodeStore.storeCodeRpc).not.toHaveBeenCalled();
+  });
 
   it('finishes passkey login and stores a direct-auth authorization code artifact', async () => {
     const codeVerifier = 'passkey-login-code-verifier';

@@ -1268,6 +1268,7 @@ describe('Passkey Handlers', () => {
     it.each([
       ['refuses a user while the tenant turns passkey login off', 'user', 403],
       ['still signs an administrator in to the console', 'admin', 200],
+      ['stops a user when the switch cannot be read', 'user', 503],
     ])('%s', async (_label, userType, status) => {
       const challengeStore = createMockChallengeStore();
       const sessionStore = createMockSessionStore();
@@ -1299,30 +1300,32 @@ describe('Passkey Handlers', () => {
         name: 'Test User',
       });
 
-      const response = await passkeyLoginVerifyHandler(
-        createMockContext({
-          body: {
-            challengeId: 'challenge-123',
-            credential: {
-              id: 'mock-cred-id',
-              rawId: 'mock-raw-id',
-              type: 'public-key',
-              response: {
-                clientDataJSON: 'mock-client-data',
-                authenticatorData: 'mock-auth-data',
-                signature: 'mock-signature',
-              },
+      const context = createMockContext({
+        body: {
+          challengeId: 'challenge-123',
+          credential: {
+            id: 'mock-cred-id',
+            rawId: 'mock-raw-id',
+            type: 'public-key',
+            response: {
+              clientDataJSON: 'mock-client-data',
+              authenticatorData: 'mock-auth-data',
+              signature: 'mock-signature',
             },
           },
-          headers: { origin: 'https://example.com' },
-          challengeStore,
-          sessionStore,
-          authenticationMethods: { 'authentication-methods.passkey.login_enabled': false },
-        })
-      );
+        },
+        headers: { origin: 'https://example.com' },
+        challengeStore,
+        sessionStore,
+        authenticationMethods: { 'authentication-methods.passkey.login_enabled': false },
+      });
+      if (status === 503) {
+        context.env.SETTINGS = { get: vi.fn(async () => '{not json') };
+      }
+      const response = await passkeyLoginVerifyHandler(context);
 
       expect(response.status).toBe(status);
-      if (status === 403) {
+      if (status !== 200) {
         expect(mockAccountAuthStateStub.advancePasskeyCounterRpc).not.toHaveBeenCalled();
       } else {
         expect(mockAccountAuthStateStub.advancePasskeyCounterRpc).toHaveBeenCalled();

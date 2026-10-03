@@ -668,6 +668,31 @@ export async function readAuthorizationChallengeType(
   return null;
 }
 
+/** The user a re-authentication challenge was issued for (null for a login challenge or none). */
+async function readAuthorizationChallengeReauthUser(
+  env: Env,
+  tenantId: string,
+  challengeId: string | undefined
+): Promise<string | null> {
+  if (!challengeId) return null;
+  try {
+    const challengeStore = await getChallengeStoreByChallengeId(env, challengeId, tenantId);
+    const challenge = (await challengeStore.getChallengeRpc(challengeId)) as {
+      tenantId?: string;
+      type?: string;
+      userId?: string;
+      metadata?: Record<string, unknown>;
+    } | null;
+    if (challenge?.tenantId !== tenantId || challenge.type !== 'reauth') return null;
+    const sessionUserId = challenge.metadata?.sessionUserId;
+    const userId =
+      typeof sessionUserId === 'string' && sessionUserId ? sessionUserId : challenge.userId;
+    return userId && userId !== 'anonymous' ? userId : null;
+  } catch {
+    return null;
+  }
+}
+
 async function resolveDirectStartTurnstileAction(
   c: Context<{ Bindings: Env }>,
   tenantId: string,
@@ -1011,6 +1036,17 @@ export async function directPasskeyLoginStartHandler(c: Context<{ Bindings: Env 
       turnstileAction
     );
     if (methodDisabledError) return methodDisabledError;
+    // A re-authentication may only prove the user it was asked of: a passkey login turned off must
+    // not be reachable through someone else's re-authentication challenge.
+    const reauthUserId =
+      turnstileAction === 'reauth'
+        ? await readAuthorizationChallengeReauthUser(c.env, tenantId, authorization_challenge_id)
+        : null;
+    if (turnstileAction === 'reauth' && !reauthUserId) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
+        variables: { field: 'authorization_challenge_id' },
+      });
+    }
     const turnstileError = await verifyHumanVerificationForAction(
       c,
       turnstileAction,
@@ -1069,6 +1105,7 @@ export async function directPasskeyLoginStartHandler(c: Context<{ Bindings: Env 
         authorization_challenge_id,
         // The switch checked here is checked again before the session is created.
         usage: turnstileAction,
+        ...(reauthUserId ? { reauth_user_id: reauthUserId } : {}),
       },
     });
 
@@ -1141,6 +1178,7 @@ export async function directPasskeyLoginFinishHandler(c: Context<{ Bindings: Env
         rpID: string;
         authorization_challenge_id?: string;
         usage?: AuthenticationMethodUsage;
+        reauth_user_id?: string;
       };
     };
 
@@ -1228,6 +1266,14 @@ export async function directPasskeyLoginFinishHandler(c: Context<{ Bindings: Env
           },
         },
       });
+    }
+
+    // A re-authentication proves only the user it was asked of.
+    if (
+      challengeData.metadata?.usage === 'reauth' &&
+      challengeData.metadata.reauth_user_id !== passkey.user_id
+    ) {
+      return createErrorResponse(c, AR_ERROR_CODES.AUTH_PASSKEY_FAILED);
     }
 
     if (
