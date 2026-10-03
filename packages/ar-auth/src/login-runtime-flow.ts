@@ -1,6 +1,7 @@
 import type { Context } from 'hono';
 import {
   consumeAuthorizationChallengeContinuation,
+  readAuthorizationChallengeReauthIssuedAt,
   reauthProvenMethodFromAmr,
 } from './direct-auth';
 import {
@@ -2544,13 +2545,23 @@ async function resolveConditionSelectedHandle(input: {
 
 async function resolveSessionCheckSelectedHandle(
   c: AuthContext,
-  tenantId: string
+  tenantId: string,
+  requestContext: FlowRequestContext
 ): Promise<{ selectedHandle: 'continue' | 'authenticate'; userId: string | null }> {
   const session = await getCurrentSession(c, tenantId);
-  return {
-    selectedHandle: session?.userId ? 'continue' : 'authenticate',
-    userId: session?.userId ?? null,
-  };
+  if (!session?.userId) {
+    return { selectedHandle: 'authenticate', userId: null };
+  }
+  // A re-authentication needs a proof made after it was asked for, so an older session signs in again.
+  const reauthIssuedAt = await readAuthorizationChallengeReauthIssuedAt(
+    c.env,
+    tenantId,
+    requestContext.authorization_challenge_id
+  );
+  if (reauthIssuedAt !== null && getSessionAuthTime(session) < Math.floor(reauthIssuedAt / 1000)) {
+    return { selectedHandle: 'authenticate', userId: null };
+  }
+  return { selectedHandle: 'continue', userId: session.userId };
 }
 
 function getStepStateForRuntimeStep(step: FlowRuntimeStep): 'pending' | 'waiting_input' {
@@ -2629,7 +2640,11 @@ async function resolveAutoAdvanceForStep(input: {
   }
 
   if (input.step.component === 'session_check') {
-    return resolveSessionCheckSelectedHandle(input.c, input.tenantId);
+    return resolveSessionCheckSelectedHandle(
+      input.c,
+      input.tenantId,
+      getRequestContextFromInteraction(input.interaction)
+    );
   }
 
   const selectedHandle = autoAdvanceHandleForStep(input.step);
@@ -4993,7 +5008,7 @@ export async function loginRuntimeInteractionSubmitHandler(c: AuthContext) {
       step: current.step,
     });
   } else if (current.step.component === 'session_check') {
-    branchResolution = await resolveSessionCheckSelectedHandle(c, tenantId);
+    branchResolution = await resolveSessionCheckSelectedHandle(c, tenantId, requestContext);
   } else {
     branchResolution = { selectedHandle };
   }

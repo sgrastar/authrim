@@ -51,6 +51,7 @@ const mocks = vi.hoisted(() => {
     resolveRuntimeIdentityMappingBinding: vi.fn(),
     idQueue,
     consumeAuthorizationChallengeContinuation: vi.fn(),
+    readAuthorizationChallengeReauthIssuedAt: vi.fn(),
     getFeatureFlag: vi.fn(),
     info: vi.fn(),
     warn: vi.fn(),
@@ -92,6 +93,7 @@ vi.mock('../direct-auth', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../direct-auth')>();
   return {
     consumeAuthorizationChallengeContinuation: mocks.consumeAuthorizationChallengeContinuation,
+    readAuthorizationChallengeReauthIssuedAt: mocks.readAuthorizationChallengeReauthIssuedAt,
     reauthProvenMethodFromAmr: actual.reauthProvenMethodFromAmr,
   };
 });
@@ -772,6 +774,8 @@ function resetAdapter() {
   mocks.challengeStore.storeChallengeRpc.mockReset();
   mocks.runtimeUsers.findById.mockReset();
   mocks.consumeAuthorizationChallengeContinuation.mockReset();
+  mocks.readAuthorizationChallengeReauthIssuedAt.mockReset();
+  mocks.readAuthorizationChallengeReauthIssuedAt.mockResolvedValue(null);
   clearLoginRuntimeFlowVersionCacheForTests();
   mocks.idQueue.splice(
     0,
@@ -2355,6 +2359,69 @@ describe('LoginUI runtime Flow handlers', () => {
     expect(data.completed).toBe(true);
     expect(data.step).toBeNull();
   });
+
+  it.each([
+    ['older than', 1_700_000_124_000, 'auth:step'],
+    ['newer than', 1_700_000_123_000, null],
+  ])(
+    'routes a session %s a re-authentication request accordingly',
+    async (_label, reauthIssuedAt, nextStepId) => {
+      const { data: startData } = await startInteraction(
+        { flow_kind: 'login' },
+        sessionCheckRuntime
+      );
+      resetAdapter();
+      mockSubmitQueries({
+        expiresAt: Number((startData.interaction as Record<string, unknown>).expires_at),
+        contractHash: String(startData.contract_hash),
+        signature: String(startData.signature),
+        currentNodeId: 'session-check',
+        currentStepId: 'session-check:step',
+        stepState: 'pending',
+        runtimeSnapshot: sessionCheckRuntime,
+        editorSnapshot: sessionCheckEditor,
+        context: { authorization_challenge_id: 'reauth_challenge_1' },
+      });
+      mocks.readAuthorizationChallengeReauthIssuedAt.mockResolvedValue(reauthIssuedAt);
+      mocks.consumeAuthorizationChallengeContinuation.mockResolvedValue({
+        redirectUrl: 'https://rp.example.com/callback?code=abc',
+      });
+      mocks.sessionStore.getSessionRpc.mockResolvedValue({
+        userId: 'user_1',
+        expiresAt: Date.now() + 60_000,
+        createdAt: 1_700_000_000_000,
+        data: { authTime: 1_700_000_123 },
+      });
+
+      const response = await loginRuntimeInteractionSubmitHandler(
+        createContext({
+          params: { interaction_id: 'interaction_1' },
+          headers: { Cookie: 'authrim_session=sess_runtime_1' },
+          body: {
+            step_id: 'session-check:step',
+            node_id: 'session-check',
+            contract_hash: startData.contract_hash,
+            signature: startData.signature,
+          },
+        })
+      );
+      const data = await readJson(response);
+
+      expect(response.status).toBe(200);
+      expect(mocks.readAuthorizationChallengeReauthIssuedAt).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.any(String),
+        'reauth_challenge_1'
+      );
+      if (nextStepId) {
+        expect(data.completed).toBe(false);
+        expect(data.step).toMatchObject({ id: nextStepId });
+      } else {
+        expect(data.completed).toBe(true);
+        expect(data.step).toBeNull();
+      }
+    }
+  );
 
   it('prefers the completion branch matching the active protocol when handles overlap', async () => {
     const { data: startData } = await startInteraction({ flow_kind: 'login' }, sessionCheckRuntime);

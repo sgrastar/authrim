@@ -763,6 +763,31 @@ async function readAuthorizationChallengeReauthUser(
   }
 }
 
+/**
+ * When a re-authentication challenge was issued (ms), or null for other challenges and on read
+ * failure (the continuation still enforces freshness).
+ */
+export async function readAuthorizationChallengeReauthIssuedAt(
+  env: Env,
+  tenantId: string,
+  challengeId: string | undefined | null
+): Promise<number | null> {
+  if (!challengeId) return null;
+  try {
+    const challengeStore = await getChallengeStoreByChallengeId(env, challengeId, tenantId);
+    const challenge = (await challengeStore.getChallengeRpc(challengeId)) as {
+      tenantId?: string;
+      type?: string;
+      metadata?: Record<string, unknown>;
+    } | null;
+    if (challenge?.tenantId !== tenantId || challenge.type !== 'reauth') return null;
+    const issuedAt = challenge.metadata?.reauth_issued_at;
+    return typeof issuedAt === 'number' ? issuedAt : null;
+  } catch {
+    return null;
+  }
+}
+
 async function resolveDirectStartTurnstileAction(
   c: Context<{ Bindings: Env }>,
   tenantId: string,
@@ -3391,11 +3416,8 @@ export async function directSessionCreateHandler(c: Context<{ Bindings: Env }>) 
         artifactData.userId,
         authTime,
         new URL(c.req.url).origin,
-        metadata.method === 'passkey'
-          ? 'passkey'
-          : metadata.method === 'email_code' || metadata.method === 'email_verification_protocol'
-            ? 'email_otp'
-            : undefined
+        // A passkey only just registered (passkey_signup) proves nothing yet.
+        reauthProvenMethodFromAmr(typeof metadata.method === 'string' ? [metadata.method] : [])
       );
       if ('error' in continuation) {
         return continuation.error;

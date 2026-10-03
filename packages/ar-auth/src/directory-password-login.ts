@@ -1020,12 +1020,15 @@ export async function directoryMigrationPasskeyVerifyHandler(c: Context<{ Bindin
         tenantId,
         transaction.authorization_challenge_id,
         transaction.user_id,
-        authTime,
-        new URL(c.req.url).origin
+        // The password was proven when the transaction was made; the new passkey proves nothing yet.
+        Math.floor(transaction.created_at / 1000),
+        new URL(c.req.url).origin,
+        'directory_password'
       );
-      if (!('error' in continuation)) {
-        authorizationContinuation = continuation;
+      if ('error' in continuation) {
+        return continuation.error;
       }
+      authorizationContinuation = continuation;
     }
 
     return createDirectorySessionSuccessResponse(c, {
@@ -1322,9 +1325,9 @@ export async function directoryMigrationEmailCodeVerifyHandler(c: Context<{ Bind
         tenantId,
         transaction.authorization_challenge_id,
         transaction.user_id,
-        authTime,
+        // Recovery proves the email now; the fallback follows a password proven when it was made.
+        transaction.scope === 'recovery' ? authTime : Math.floor(transaction.created_at / 1000),
         new URL(c.req.url).origin,
-        // Recovery proves only the email; the fallback follows a proven directory password.
         transaction.scope === 'recovery' ? 'email_otp' : 'directory_password'
       );
       if ('error' in continuation) {
