@@ -218,11 +218,41 @@ export async function handleIdentity(
     if (accountContext && accountContext.legacyUserId !== linkingUserId) {
       throw new Error('external_idp_link_account_mismatch');
     }
-    const existingIdentity = accountContext
-      ? await findLinkedIdentity(env, tenantId, provider.id, userInfo.sub, accountContext.piiDb)
-      : null;
+    // The external account may already sign in to another account, whose data lives elsewhere:
+    // the directory says whose it is before anything is written here.
+    let externalOwner: string | null = null;
+    try {
+      const route = await resolveAccountDataContextByIdentifier(env, {
+        tenantId,
+        indexKind: 'external_subject',
+        identifier: { issuer: provider.id, subject: userInfo.sub },
+      });
+      externalOwner = route.legacyUserId;
+    } catch (routeError) {
+      if (!(routeError instanceof Error && routeError.message === 'account_data_route_not_found')) {
+        throw routeError;
+      }
+    }
+    if (externalOwner !== null && externalOwner !== linkingUserId) {
+      throw new ExternalIdPError(
+        ExternalIdPErrorCode.ACCOUNT_ALREADY_LINKED,
+        'This external account is already linked to another account.',
+        { providerName: provider.name }
+      );
+    }
+    const existingIdentity = await findLinkedIdentity(
+      env,
+      tenantId,
+      provider.id,
+      userInfo.sub,
+      accountContext?.piiDb ?? defaultUserStoreSources.piiDb
+    );
     if (existingIdentity && existingIdentity.userId !== linkingUserId) {
-      throw new Error('external_idp_link_authority_conflict');
+      throw new ExternalIdPError(
+        ExternalIdPErrorCode.ACCOUNT_ALREADY_LINKED,
+        'This external account is already linked to another account.',
+        { providerName: provider.name }
+      );
     }
     const identityInput = {
       userId: linkingUserId,

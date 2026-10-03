@@ -128,7 +128,15 @@ describe('Account Page capabilities API', () => {
           requires_reauth: true,
           planned_phase: '4E-2',
         }),
+        expect.objectContaining({
+          id: 'social_accounts.manage',
+          status: 'available',
+          requires_reauth: true,
+        }),
       ])
+    );
+    expect(body.sections).toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: 'connections', status: 'available' })])
     );
     expect(body.sections).toEqual(
       expect.arrayContaining([

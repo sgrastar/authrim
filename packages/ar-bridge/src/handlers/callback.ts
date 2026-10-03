@@ -12,6 +12,7 @@ import * as jose from 'jose';
 import type { Env } from '@authrim/ar-lib-core';
 import {
   getSessionStoreForNewSession,
+  readAccountSession,
   getUIConfig,
   buildIssuerUrl,
   shouldUseBuiltinForms,
@@ -48,6 +49,7 @@ import { getProviderByIdOrSlug } from '../services/provider-store';
 import { OIDCRPClient } from '../clients/oidc-client';
 import { Fapi2Client } from '../clients/fapi2-client';
 import { completeExternalIdpJIT, handleIdentity } from '../services/identity-stitching';
+import { accountPageLinkResultUrl, recordSocialAccountActivity } from '../services/link-intent';
 import { decrypt, encrypt, getEncryptionKeyOrUndefined } from '../utils/crypto';
 import {
   ExternalIdPError,
@@ -708,6 +710,8 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
     | 'resource-response' = 'authorization-response';
   // Declared outside the try block for failure event and diagnostic correlation.
   let provider: UpstreamProvider | null = null;
+  // Set once the state shows this is a link from the account page, whose outcome returns there.
+  let link: { tenantId: string; userId: string; sessionId?: string } | null = null;
 
   if (c.req.method === 'GET' && !code && !state && !error && !responseJwt) {
     return createHybridFragmentRelayResponse();
@@ -779,6 +783,13 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
         fapi2: fapi2Flow,
       });
       return redirectWithError(c, 'invalid_state', 'Provider mismatch');
+    }
+    if (authState.userId) {
+      link = {
+        tenantId: authState.tenantId,
+        userId: authState.userId,
+        sessionId: authState.sessionId,
+      };
     }
 
     const flowId = authState.flowId;
@@ -901,9 +912,16 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
     // signature/issuer/audience validation have completed.
     if (error) {
       log.error('External IdP returned error', { error });
+      if (link) {
+        return redirectToLinkResult(c, link.tenantId, {
+          linked: false,
+          reason: error === 'access_denied' ? 'cancelled' : 'failed',
+        });
+      }
       return redirectWithError(c, error, errorDescription);
     }
     if (!code) {
+      if (link) return redirectToLinkResult(c, link.tenantId, { linked: false, reason: 'failed' });
       return redirectWithError(c, 'invalid_request', 'Missing code');
     }
 
@@ -1287,11 +1305,41 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
 
     // Ensure sub is present (required for identity linking)
     if (!userInfo.sub) {
+      if (link) return redirectToLinkResult(c, link.tenantId, { linked: false, reason: 'failed' });
       return redirectWithError(
         c,
         ExternalIdPErrorCode.CALLBACK_FAILED,
         'Provider did not return a user identifier. Check attributeMapping configuration.'
       );
+    }
+
+    // 7a. A link attaches the identity to the account that asked for it, while that session still
+    // stands, and signs no one in.
+    if (link) {
+      const session = link.sessionId
+        ? await readAccountSession(c.env, link.tenantId, link.sessionId)
+        : null;
+      if (!session || session.userId !== link.userId) {
+        return redirectToLinkResult(c, link.tenantId, {
+          linked: false,
+          reason: 'session_expired',
+        });
+      }
+      const linked = await handleIdentity(c.env, {
+        provider,
+        userInfo,
+        tokens,
+        linkingUserId: link.userId,
+        tenantId: link.tenantId,
+      });
+      if (linked.status !== 'ready' || linked.userId !== link.userId || !linked.linkedIdentityId) {
+        throw new Error('external_idp_link_not_completed');
+      }
+      await recordSocialAccountActivity(c, link.userId, 'account.social_account.linked', {
+        linkedIdentityId: linked.linkedIdentityId,
+        providerId: provider.id,
+      });
+      return redirectToLinkResult(c, link.tenantId, { linked: true });
     }
 
     // 7. Handle identity stitching or account creation
@@ -1412,6 +1460,20 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
     }).catch((err: unknown) => {
       log.error('Failed to publish auth.external_idp.failed', {}, err as Error);
     });
+
+    if (link) {
+      return redirectToLinkResult(c, link.tenantId, {
+        linked: false,
+        reason:
+          error instanceof ExternalIdPError &&
+          error.code === ExternalIdPErrorCode.ACCOUNT_ALREADY_LINKED
+            ? 'already_linked'
+            : error instanceof ExternalIdPError &&
+                error.code === ExternalIdPErrorCode.EMAIL_NOT_VERIFIED
+              ? 'email_not_verified'
+              : 'failed',
+      });
+    }
 
     // Handle specific ExternalIdPError with appropriate error codes
     // SECURITY: Do not expose internal error details in redirect URL
@@ -1588,6 +1650,22 @@ export function extractUnverifiedJarmState(responseJwt: string): string | undefi
  * Redirect with error parameters
  * Uses UI config if available, falls back to issuer URL
  */
+/** Back to the account page with a link's outcome. */
+async function redirectToLinkResult(
+  c: Context<{ Bindings: Env }>,
+  tenantId: string,
+  outcome: Parameters<typeof accountPageLinkResultUrl>[2]
+): Promise<Response> {
+  return new Response(null, {
+    status: 302,
+    headers: {
+      Location: await accountPageLinkResultUrl(c.env, tenantId, outcome),
+      'Referrer-Policy': 'no-referrer',
+      'Cache-Control': 'no-store',
+    },
+  });
+}
+
 async function redirectWithError(
   c: Context<{ Bindings: Env }>,
   error: string,

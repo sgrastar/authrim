@@ -5,15 +5,16 @@
  * Security Features:
  * - Rate limiting per IP to prevent auth flooding
  * - Open redirect prevention
- * - Session verification for linking flows
+ * - Linking from the account page (a one-use link intent)
  */
 
 import type { Context } from 'hono';
 import { setCookie } from 'hono/cookie';
-import type { Env, Session } from '@authrim/ar-lib-core';
+import type { AccountSession, Env, Session } from '@authrim/ar-lib-core';
 import {
   getSessionStoreBySessionId,
-  isShardedSessionId,
+  isAccountReauthFresh,
+  readAccountSession,
   getUIConfig,
   buildIssuerUrl,
   getTenantIdFromContext,
@@ -27,6 +28,7 @@ import {
   verifyHumanVerificationWithRunner,
 } from '@authrim/ar-lib-core';
 import { getProviderByIdOrSlug } from '../services/provider-store';
+import { accountPageLinkResultUrl, consumeLinkIntent } from '../services/link-intent';
 import {
   ensureDynamicClientRegistration,
   getDynamicClientRegistrationConfig,
@@ -118,6 +120,8 @@ export async function handleExternalStart(c: Context<{ Bindings: Env }>): Promis
   const log = getLogger(c).module('START');
   let diagnosticLogger: Awaited<ReturnType<typeof createDiagnosticLoggerFromContext>> = null;
   let diagnosticFlowId: string | undefined;
+  // Once a link intent is consumed, every outcome returns to the account page (tenant id).
+  let linkTenantId: string | null = null;
   try {
     // Rate limiting check
     const rateLimitResult = await checkRateLimit(c);
@@ -140,22 +144,55 @@ export async function handleExternalStart(c: Context<{ Bindings: Env }>): Promis
       return c.json({ error: 'invalid_request', error_description: 'Missing provider' }, 400);
     }
     const requestedRedirectUri = c.req.query('redirect_uri');
-    const isLinking = c.req.query('link') === 'true';
-    const prompt = c.req.query('prompt');
-    const loginHint = c.req.query('login_hint');
+    const linkIntentToken = c.req.query('link_intent');
+    let loginHint = c.req.query('login_hint');
     const maxAgeParam = c.req.query('max_age');
-    const acrValues = c.req.query('acr_values');
+    let acrValues = c.req.query('acr_values');
     const tenantId = getTenantIdFromContext(c);
     const clientId = c.req.query('client_id');
     const codeChallenge = c.req.query('code_challenge');
     const codeChallengeMethod = c.req.query('code_challenge_method');
     const stateParam = c.req.query('state');
-    const turnstileError = await verifyExternalStartHumanVerification(c, tenantId);
-    if (turnstileError) return turnstileError;
+
+    // Linking from the account page: only a one-use intent, issued to this browser's own
+    // re-authenticated session, starts it. It replaces the sign-in checks (human verification,
+    // the client's PKCE) because nobody signs in.
+    let link: { userId: string; sessionId: string; providerId: string } | null = null;
+    if (linkIntentToken !== undefined) {
+      const intent = await consumeLinkIntent(c.env, tenantId, linkIntentToken);
+      const session = intent ? await readStartSession(c, tenantId) : null;
+      if (
+        !intent ||
+        !session ||
+        session.sessionId !== intent.sessionId ||
+        session.userId !== intent.userId ||
+        session.isGuestSession ||
+        !isAccountReauthFresh(session.authTime)
+      ) {
+        return c.redirect(
+          await accountPageLinkResultUrl(c.env, tenantId, {
+            linked: false,
+            reason: 'session_expired',
+          })
+        );
+      }
+      link = intent;
+      linkTenantId = tenantId;
+      loginHint = undefined;
+      acrValues = undefined;
+    }
+    // Linking never answers silently or for a client.
+    const prompt = link ? undefined : c.req.query('prompt');
+
+    if (!link) {
+      const turnstileError = await verifyExternalStartHumanVerification(c, tenantId);
+      if (turnstileError) return turnstileError;
+    }
 
     // Parse max_age parameter (OIDC Core)
-    const maxAge = maxAgeParam ? parseInt(maxAgeParam, 10) : undefined;
-    if (maxAgeParam && (isNaN(maxAge!) || maxAge! < 0)) {
+    // A link asks the provider for nothing but the account (no max_age either).
+    const maxAge = !link && maxAgeParam ? parseInt(maxAgeParam, 10) : undefined;
+    if (!link && maxAgeParam && (isNaN(maxAge!) || maxAge! < 0)) {
       return c.json(
         {
           error: 'invalid_request',
@@ -192,19 +229,30 @@ export async function handleExternalStart(c: Context<{ Bindings: Env }>): Promis
       }
     }
 
-    // Validate and sanitize redirect_uri to prevent Open Redirect attacks
-    const redirectUri = await validateRedirectUri(
-      requestedRedirectUri,
-      c.env,
-      tenantIdResolved,
-      clientId,
-      clientRedirectUris
-    );
+    // Validate and sanitize redirect_uri to prevent Open Redirect attacks. A link always returns
+    // to the account page.
+    const redirectUri = link
+      ? await accountPageLinkResultUrl(c.env, tenantIdResolved, { linked: true })
+      : await validateRedirectUri(
+          requestedRedirectUri,
+          c.env,
+          tenantIdResolved,
+          clientId,
+          clientRedirectUris
+        );
 
     // 2. Get provider configuration (by slug or ID)
     let provider = await getProviderByIdOrSlug(c.env, providerIdOrName, tenantIdResolved);
 
     if (!provider || !provider.enabled) {
+      if (link) {
+        return c.redirect(
+          await accountPageLinkResultUrl(c.env, tenantIdResolved, {
+            linked: false,
+            reason: 'failed',
+          })
+        );
+      }
       return c.json(
         {
           error: 'unknown_provider',
@@ -214,28 +262,17 @@ export async function handleExternalStart(c: Context<{ Bindings: Env }>): Promis
       );
     }
 
-    // 2. If linking, verify session
-    let userId: string | undefined;
-    let sessionId: string | undefined;
-
-    if (isLinking) {
-      // Try to get session from cookie or Authorization header
-      const session = await verifySession(c);
-      if (!session) {
-        return c.json(
-          {
-            error: 'invalid_token',
-            error_description: 'Session required for linking',
-          },
-          401
-        );
-      }
-      userId = session.userId;
-      sessionId = session.id;
+    // 2. A link is for the provider it was asked for.
+    if (link && link.providerId !== provider.id) {
+      return c.redirect(
+        await accountPageLinkResultUrl(c.env, tenantIdResolved, { linked: false, reason: 'failed' })
+      );
     }
+    const userId = link?.userId;
+    const sessionId = link?.sessionId;
 
-    // 3. Validate PKCE parameters from client
-    if (!clientId) {
+    // 3. Validate PKCE parameters from client (sign-in only)
+    if (!link && !clientId) {
       return c.json(
         {
           error: 'invalid_request',
@@ -245,7 +282,7 @@ export async function handleExternalStart(c: Context<{ Bindings: Env }>): Promis
       );
     }
 
-    if (!codeChallenge || codeChallengeMethod !== 'S256') {
+    if (!link && (!codeChallenge || codeChallengeMethod !== 'S256')) {
       return c.json(
         {
           error: 'invalid_request',
@@ -296,12 +333,12 @@ export async function handleExternalStart(c: Context<{ Bindings: Env }>): Promis
     // 8. Store state in D1 (including code_challenge for client-side PKCE)
     await storeAuthState(c.env, {
       tenantId: tenantIdResolved,
-      clientId,
+      clientId: link ? undefined : clientId,
       providerId: provider.id,
       state,
       nonce,
       codeVerifier: externalIdpPKCE.codeVerifier,
-      codeChallenge,
+      codeChallenge: link ? undefined : codeChallenge,
       flowId,
       redirectUri,
       userId,
@@ -804,6 +841,16 @@ export async function handleExternalStart(c: Context<{ Bindings: Env }>): Promis
       err
     );
 
+    if (linkTenantId) {
+      try {
+        return c.redirect(
+          await accountPageLinkResultUrl(c.env, linkTenantId, { linked: false, reason: 'failed' })
+        );
+      } catch {
+        // Fall through to the JSON error.
+      }
+    }
+
     // Include error details in development/conformance mode
     const isDev = c.env.ENABLE_CONFORMANCE_MODE === 'true';
 
@@ -927,50 +974,20 @@ function getClientIp(c: Context<{ Bindings: Env }>): string {
 // Session Verification
 // =============================================================================
 
-interface SessionInfo {
-  id: string;
-  userId: string;
-}
-
 /**
- * Verify session from cookie or Authorization header
+ * The browser's account session (cookie only), or null when there is none or it cannot be read.
  */
-async function verifySession(c: Context<{ Bindings: Env }>): Promise<SessionInfo | null> {
-  // Try cookie first
-  const sessionCookie = c.req.header('Cookie')?.match(/authrim_session=([^;]+)/)?.[1];
-
-  // Try Authorization header
-  const authHeader = c.req.header('Authorization');
-  const bearerToken = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : null;
-
-  const sessionToken = sessionCookie || bearerToken;
-  if (!sessionToken) {
-    return null;
-  }
-
-  // Verify session token using SESSION_STORE Durable Object (sharded)
-  if (!isShardedSessionId(sessionToken)) {
-    return null;
-  }
-
+async function readStartSession(
+  c: Context<{ Bindings: Env }>,
+  tenantId: string
+): Promise<AccountSession | null> {
+  const sessionId = c.req.header('Cookie')?.match(/(?:^|;\s*)authrim_session=([^;]+)/)?.[1];
   try {
-    const { stub: sessionStore } = getSessionStoreBySessionId(
+    return await readAccountSession(
       c.env,
-      sessionToken,
-      getTenantIdFromContext(c)
+      tenantId,
+      sessionId ? decodeURIComponent(sessionId) : null
     );
-    const response = await sessionStore.fetch(
-      new Request(`https://session-store/session/${sessionToken}`, {
-        method: 'GET',
-      })
-    );
-
-    if (!response.ok) {
-      return null;
-    }
-
-    const session = (await response.json()) as { userId: string; sessionId: string };
-    return { id: session.sessionId, userId: session.userId };
   } catch {
     return null;
   }
