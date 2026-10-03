@@ -22,6 +22,7 @@ import { setCookie, getCookie, deleteCookie } from 'hono/cookie';
 import type { Env, Session } from '@authrim/ar-lib-core';
 import { getRefreshTokenRotatorStubByJti } from '@authrim/ar-lib-core/services/refresh-token-family-store';
 import {
+  isAuthenticationMethodUsageAvailable,
   revokeGuestResumeForSession,
   GUEST_RESUME_COOKIE,
   isAllowedOrigin,
@@ -548,7 +549,9 @@ export async function consumeAuthorizationChallengeContinuation(
   challengeId: string,
   authenticatedUserId: string,
   authTime: number,
-  fallbackIssuer: string
+  fallbackIssuer: string,
+  /** The method that proved the user: a re-authentication requires its re-authentication switch. */
+  provenMethod?: 'passkey' | 'email_otp' | 'totp'
 ): Promise<AuthorizationChallengeContinuation | { error: Response }> {
   const env = c.env;
   const challengeStore = await getChallengeStoreByChallengeId(env, challengeId, tenantId);
@@ -586,6 +589,24 @@ export async function consumeAuthorizationChallengeContinuation(
         ),
       };
     }
+  }
+
+  if (
+    type === 'reauth' &&
+    provenMethod &&
+    !(await isAuthenticationMethodUsageAvailable(env, tenantId, provenMethod, 'reauth', {
+      strict: true,
+    }).catch(() => false))
+  ) {
+    return {
+      error: new Response(
+        JSON.stringify({
+          error: 'access_denied',
+          error_description: 'This method cannot be used to re-authenticate',
+        }),
+        { status: 403, headers: { 'Content-Type': 'application/json' } }
+      ),
+    };
   }
 
   const metadata = challengeData.metadata || {};
@@ -1523,7 +1544,7 @@ export async function directPasskeySignupStartHandler(c: Context<{ Bindings: Env
     if (methodDisabledError) return methodDisabledError;
     const turnstileError = await verifyHumanVerificationForAction(
       c,
-      passkeySignupUsage,
+      'signup',
       human_verification_response ?? cf_turnstile_response
     );
     if (turnstileError) return turnstileError;
@@ -2117,10 +2138,12 @@ async function completeDirectEmailVerification(
   // What the code was sent for still holds: the method's switch for that usage, and a
   // re-authentication proves only the user it was asked of.
   const usage = metadata.usage;
-  if (usage === 'login' || usage === 'signup' || usage === 'reauth') {
-    const disabled = await rejectIfAuthenticationMethodDisabled(c, tenantId, 'email_otp', usage);
-    if (disabled) return disabled;
+  if (usage !== 'login' && usage !== 'signup' && usage !== 'reauth') {
+    // Sent before the usage was recorded (or tampered with): ask for a new code.
+    return createErrorResponse(c, AR_ERROR_CODES.AUTH_SESSION_EXPIRED);
   }
+  const disabled = await rejectIfAuthenticationMethodDisabled(c, tenantId, 'email_otp', usage);
+  if (disabled) return disabled;
   if (usage === 'reauth' && metadata.reauth_user_id !== userId) {
     return createErrorResponse(c, AR_ERROR_CODES.AUTH_INVALID_CODE);
   }
@@ -2671,7 +2694,9 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
       : challengeType === 'reauth'
         ? 'reauth'
         : 'login';
-    const turnstileAction = emailCodeUsage;
+    // Human verification answers the screen the code was asked from (the shared login form asks
+    // with a login token even for a new address), as before.
+    const turnstileAction: HumanVerificationAction = challengeType ?? (user ? 'login' : 'signup');
     if (challengeType === 'reauth' && (!user || !reauthUserId || user.id !== reauthUserId)) {
       // Answered like any other send, so the address's owner is not revealed.
       suppressEmailCodeSend = true;
@@ -3316,7 +3341,12 @@ export async function directSessionCreateHandler(c: Context<{ Bindings: Env }>) 
         effectiveAuthorizationChallengeId,
         artifactData.userId,
         authTime,
-        new URL(c.req.url).origin
+        new URL(c.req.url).origin,
+        metadata.method === 'passkey'
+          ? 'passkey'
+          : metadata.method === 'email_code' || metadata.method === 'email_verification_protocol'
+            ? 'email_otp'
+            : undefined
       );
       if ('error' in continuation) {
         return continuation.error;

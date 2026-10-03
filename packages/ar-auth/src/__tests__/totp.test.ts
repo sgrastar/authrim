@@ -810,7 +810,8 @@ describe('TOTP login handlers', () => {
       'login_challenge',
       'user-001',
       Math.floor(Date.now() / 1000),
-      'http://localhost'
+      'http://localhost',
+      'totp'
     );
     expect(body.redirect_url).toBe('https://rp.example.com/callback?code=abc&state=xyz');
     expect(body.authorization).toEqual({

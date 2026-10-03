@@ -729,7 +729,8 @@ export async function totpSignupActivateHandler(c: Context<{ Bindings: Env }>) {
         authorizationChallengeId,
         runtimeUser.id,
         authTime,
-        new URL(c.req.url).origin
+        new URL(c.req.url).origin,
+        'totp'
       );
       if ('error' in continuation) {
         return continuation.error;
@@ -1183,7 +1184,8 @@ export async function totpLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
           authorizationChallengeId,
           userId,
           authTime,
-          new URL(c.req.url).origin
+          new URL(c.req.url).origin,
+          'totp'
         );
         if ('error' in continuation) {
           return continuation.error;
