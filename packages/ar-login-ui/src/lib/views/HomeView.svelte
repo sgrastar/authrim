@@ -5,6 +5,7 @@
 	 */
 	import LanguageSwitcher from '$lib/components/LanguageSwitcher.svelte';
 	import FooterText from '$lib/components/FooterText.svelte';
+	import { Button } from '$lib/components';
 	import { LL } from '$i18n/i18n-svelte';
 
 	type Props = {
@@ -51,16 +52,16 @@
 
 				{#if isAuthenticated}
 					{#if accountPageEnabled}
-						<a href={accountPagePath} class="btn btn-secondary">{$LL.account_openPage()}</a>
+						<Button href={accountPagePath} variant="secondary">{$LL.account_openPage()}</Button>
 					{/if}
 				{:else}
 					<div class="landing__auth-buttons">
-						<a href="/signup" class="btn btn-ghost" data-sveltekit-reload>
+						<Button href="/signup" variant="ghost" reload>
 							{$LL.header_signUp()}
-						</a>
-						<a href="/discover" class="btn btn-primary" data-sveltekit-reload>
+						</Button>
+						<Button href="/discover" variant="primary" reload>
 							{$LL.header_login()}
-						</a>
+						</Button>
 					</div>
 				{/if}
 			</div>

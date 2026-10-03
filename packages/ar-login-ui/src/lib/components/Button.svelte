@@ -7,6 +7,10 @@
 		size?: 'sm' | 'md' | 'lg';
 		loading?: boolean;
 		icon?: boolean;
+		/** Navigates instead: the same button, drawn as a link (one control, not a button in a link). */
+		href?: string;
+		/** With `href`: reload the page instead of client-side navigation. */
+		reload?: boolean;
 		children: Snippet;
 	}
 
@@ -15,6 +19,8 @@
 		size = 'md',
 		loading = false,
 		icon = false,
+		href,
+		reload = false,
 		disabled = false,
 		type = 'button',
 		class: className = '',
@@ -23,22 +29,34 @@
 	}: Props = $props();
 </script>
 
-<button
-	{type}
-	disabled={disabled || loading}
-	aria-busy={loading}
-	class="btn btn-{variant} btn-{size} {className}"
-	class:btn-icon={icon}
-	{...restProps}
->
-	{#if loading}
-		<i class="spinner i-ph-circle-notch"></i>
-	{/if}
-	{@render children()}
-</button>
+{#if href}
+	<a
+		{href}
+		class="btn btn-{variant} btn-{size} {className}"
+		class:btn-icon={icon}
+		data-sveltekit-reload={reload ? '' : undefined}
+	>
+		{@render children()}
+	</a>
+{:else}
+	<button
+		{type}
+		disabled={disabled || loading}
+		aria-busy={loading}
+		class="btn btn-{variant} btn-{size} {className}"
+		class:btn-icon={icon}
+		{...restProps}
+	>
+		{#if loading}
+			<i class="spinner i-ph-circle-notch"></i>
+		{/if}
+		{@render children()}
+	</button>
+{/if}
 
 <style>
 	.btn {
+		text-decoration: none;
 		display: inline-flex;
 		align-items: center;
 		justify-content: center;
@@ -72,7 +90,11 @@
 		box-shadow: 0 4px 16px rgba(51, 51, 51, 0.3);
 	}
 
+	/* The fill and label stay the theme's on hover: a same-named UnoCSS shortcut would otherwise
+	   paint a fixed blue background with white text. */
 	.btn-primary:hover:not(:disabled) {
+		background: var(--button-primary-bg, var(--gradient-primary));
+		color: var(--button-primary-text, white);
 		transform: translateY(-2px);
 		box-shadow: 0 8px 24px rgba(51, 51, 51, 0.4);
 	}

@@ -456,6 +456,9 @@ html[dir='rtl'] .form-select {
 }
 
 .btn-primary:hover:not(:disabled) {
+	/* Keep the theme's fill and label (a same-named UnoCSS shortcut and a:hover would recolour them). */
+	background: var(--button-primary-bg, var(--gradient-primary));
+	color: var(--button-primary-text, white);
 	filter: brightness(1.1);
 	transform: translateY(-1px);
 }
