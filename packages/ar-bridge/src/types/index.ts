@@ -325,6 +325,8 @@ export interface LinkedIdentityListResponse {
     id: string;
     providerId: string;
     providerName: string;
+    /** The provider's slug, which the authentication-methods API uses as its id. */
+    providerSlug?: string;
     providerEmail?: string;
     linkedAt: number;
     lastLoginAt?: number;
@@ -429,6 +431,11 @@ export const ExternalIdPErrorCode = {
    * Maps to OIDC error: login_required
    */
   POLICY_LOGIN_REQUIRED: 'policy_login_required',
+
+  /**
+   * The external account being linked already belongs to another Authrim account.
+   */
+  ACCOUNT_ALREADY_LINKED: 'account_already_linked',
 } as const;
 
 export type ExternalIdPErrorCode = (typeof ExternalIdPErrorCode)[keyof typeof ExternalIdPErrorCode];

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { accentTextColor, normalizeAccentColor } from '$lib/utils/accent-color';
 	import { onDestroy, onMount } from 'svelte';
 	import {
 		scopedSettingsAPI,
@@ -524,7 +525,16 @@
 	let previewBackgroundColor = $derived(
 		getStringSetting('login-ui.background_color', previewTemplate.backgroundColor)
 	);
-	let previewAccentColor = $derived(getStringSetting('login-ui.accent_color', ''));
+	// As the login pages apply it: opaque, or not at all (accent-color.ts).
+	let previewAccentColor = $derived(
+		normalizeAccentColor(getStringSetting('login-ui.accent_color', '')) ?? ''
+	);
+	let previewAccentText = $derived(accentTextColor(previewAccentColor));
+	// Set but not a colour the pages apply: the API uses the parent scope's accent (or the theme's),
+	// which this preview cannot see, so say so instead of previewing it as if it applied.
+	let accentNotApplied = $derived(
+		Boolean(getStringSetting('login-ui.accent_color', '')) && !previewAccentColor
+	);
 	let previewTitleColor = $derived(getStringSetting('login-ui.title_color', ''));
 	let previewTextColor = $derived(getStringSetting('login-ui.text_color', ''));
 	let previewCopyColor = $derived(getStringSetting('login-ui.copy_color', ''));
@@ -649,6 +659,7 @@
 		[
 			previewBackgroundColor ? `--preview-background-color:${previewBackgroundColor}` : '',
 			previewAccentColor ? `--preview-primary:${previewAccentColor}` : '',
+			previewAccentText ? `--preview-primary-text:${previewAccentText}` : '',
 			previewTitleColor ? `--preview-title-color:${previewTitleColor}` : '',
 			previewTextColor ? `--preview-text-color:${previewTextColor}` : '',
 			previewCopyColor ? `--preview-copy-color:${previewCopyColor}` : '',
@@ -2422,7 +2433,7 @@
 														</select>
 													</label>
 												{/if}
-												{#each [{ label: 'Background', key: 'login-ui.background_color', fallback: previewColorMode === 'dark' ? '#0b0e16' : '#eef1f6' }, { label: 'Accent', key: 'login-ui.accent_color', fallback: previewTemplate.id === 'fullbleed-glass' ? (previewColorMode === 'dark' ? '#e8623f' : '#c93a22') : previewColorMode === 'dark' ? '#93aef2' : '#2f52c4' }, { label: 'Title', key: 'login-ui.title_color', fallback: previewColorMode === 'dark' ? '#eef2fa' : '#182238' }, { label: 'Text', key: 'login-ui.text_color', fallback: previewColorMode === 'dark' ? '#eef2fa' : '#182238' }, { label: 'Copy', key: 'login-ui.copy_color', fallback: previewColorMode === 'dark' ? '#aeb9d0' : '#55617c' }] as field (field.key)}
+												{#each [{ label: 'Background', key: 'login-ui.background_color', fallback: previewColorMode === 'dark' ? '#0b0e16' : '#eef1f6' }, { label: 'Accent', key: 'login-ui.accent_color', fallback: previewTemplate.id === 'fullbleed-glass' ? (previewColorMode === 'dark' ? '#e8623f' : '#b0301b') : previewColorMode === 'dark' ? '#93aef2' : '#2f52c4' }, { label: 'Title', key: 'login-ui.title_color', fallback: previewColorMode === 'dark' ? '#eef2fa' : '#182238' }, { label: 'Text', key: 'login-ui.text_color', fallback: previewColorMode === 'dark' ? '#eef2fa' : '#182238' }, { label: 'Copy', key: 'login-ui.copy_color', fallback: previewColorMode === 'dark' ? '#aeb9d0' : '#55617c' }] as field (field.key)}
 													<div class="inspector-color-row">
 														<span class="inspector-field-label">{field.label}</span>
 														<input
@@ -2437,6 +2448,15 @@
 															value={getStringSetting(field.key, '')}
 															placeholder="Default"
 															disabled={!canEditLoginUiSettings}
+															aria-label={field.label}
+															aria-invalid={field.key === 'login-ui.accent_color' &&
+															accentNotApplied
+																? 'true'
+																: undefined}
+															aria-describedby={field.key === 'login-ui.accent_color' &&
+															accentNotApplied
+																? 'theme-accent-not-applied'
+																: undefined}
 															oninput={(e) =>
 																handleEditorChange(field.key, e.currentTarget.value.trim())}
 														/>
@@ -2447,6 +2467,11 @@
 														>
 															Reset
 														</button>
+														{#if field.key === 'login-ui.accent_color' && accentNotApplied}
+															<p id="theme-accent-not-applied" class="inspector-color-hint">
+																{$LL.admin_theme_accent_not_applied()}
+															</p>
+														{/if}
 													</div>
 												{/each}
 											</div>
@@ -3625,6 +3650,14 @@
 		align-items: center;
 		gap: 6px;
 		min-width: 0;
+	}
+
+	.inspector-color-hint {
+		grid-column: 1 / -1;
+		margin: 0;
+		color: var(--color-text-muted, var(--color-text));
+		font-size: 0.72rem;
+		line-height: 1.4;
 	}
 
 	.inspector-color-row input[type='color'] {

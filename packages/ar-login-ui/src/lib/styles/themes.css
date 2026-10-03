@@ -4,6 +4,9 @@
                Dark (Brown, Navy, Slate)
    ============================================ */
 
+/* Button gradients stay within one band of each hue, so the button text (white on the light
+   variants, --text-inverse on the dark ones) meets 4.5:1 across the whole button. */
+
 /* === Light Theme - Beige Variant (Default) === */
 :root,
 [data-theme='light'],
@@ -59,7 +62,7 @@
 	--primary-hover: #1e40af;
 	--primary-light: rgba(59, 130, 246, 0.1);
 	--primary-glow: rgba(59, 130, 246, 0.4);
-	--gradient-primary: linear-gradient(135deg, #3b82f6 0%, #2563eb 50%, #1e40af 100%);
+	--gradient-primary: linear-gradient(135deg, #2563eb 0%, #1d4ed8 50%, #1e40af 100%);
 	--gradient-accent: linear-gradient(135deg, #60a5fa 0%, #3b82f6 100%);
 
 	/* Surfaces */
@@ -93,7 +96,7 @@
 	--primary-hover: #065f46;
 	--primary-light: rgba(16, 185, 129, 0.1);
 	--primary-glow: rgba(16, 185, 129, 0.4);
-	--gradient-primary: linear-gradient(135deg, #10b981 0%, #059669 50%, #047857 100%);
+	--gradient-primary: linear-gradient(135deg, #047857 0%, #065f46 50%, #064e3b 100%);
 	--gradient-accent: linear-gradient(135deg, #34d399 0%, #10b981 100%);
 
 	/* Surfaces */
@@ -136,7 +139,7 @@
 		--primary-hover: #9d8b7a;
 		--primary-light: rgba(200, 184, 168, 0.15);
 		--primary-glow: rgba(200, 184, 168, 0.4);
-		--gradient-primary: linear-gradient(135deg, #c8b8a8 0%, #9d8b7a 50%, #7a6a5a 100%);
+		--gradient-primary: linear-gradient(135deg, #d4c6b8 0%, #c8b8a8 50%, #b8a794 100%);
 		--gradient-accent: linear-gradient(135deg, #d4c4b4 0%, #c8b8a8 100%);
 
 		/* Surfaces */
@@ -190,7 +193,7 @@
 	--primary-hover: #9d8b7a;
 	--primary-light: rgba(200, 184, 168, 0.15);
 	--primary-glow: rgba(200, 184, 168, 0.4);
-	--gradient-primary: linear-gradient(135deg, #c8b8a8 0%, #9d8b7a 50%, #7a6a5a 100%);
+	--gradient-primary: linear-gradient(135deg, #d4c6b8 0%, #c8b8a8 50%, #b8a794 100%);
 	--gradient-accent: linear-gradient(135deg, #d4c4b4 0%, #c8b8a8 100%);
 
 	/* Surfaces */
@@ -238,7 +241,7 @@
 	--primary-hover: #4169e1;
 	--primary-light: rgba(100, 149, 237, 0.15);
 	--primary-glow: rgba(100, 149, 237, 0.4);
-	--gradient-primary: linear-gradient(135deg, #6495ed 0%, #4169e1 50%, #1e3a8a 100%);
+	--gradient-primary: linear-gradient(135deg, #a9c1f5 0%, #93b2f2 50%, #7ea2ee 100%);
 	--gradient-accent: linear-gradient(135deg, #93c5fd 0%, #6495ed 100%);
 
 	/* Surfaces */
@@ -274,7 +277,7 @@
 	--primary-hover: #64748b;
 	--primary-light: rgba(148, 163, 184, 0.15);
 	--primary-glow: rgba(148, 163, 184, 0.4);
-	--gradient-primary: linear-gradient(135deg, #94a3b8 0%, #64748b 50%, #475569 100%);
+	--gradient-primary: linear-gradient(135deg, #b8c4d4 0%, #a6b4c7 50%, #94a3b8 100%);
 	--gradient-accent: linear-gradient(135deg, #cbd5e1 0%, #94a3b8 100%);
 
 	/* Surfaces */

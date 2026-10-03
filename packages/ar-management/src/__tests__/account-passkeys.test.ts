@@ -21,6 +21,8 @@ const {
   mockVerifyRegistrationResponse,
   mockAdvancePasskeyAuthenticationState,
   mockCreateAuditLog,
+  mockHasRemainingLoginMethod,
+  mockWithLoginMethodRemovalLock,
 } = vi.hoisted(() => {
   const sessionStore = {
     getSessionRpc: vi.fn(),
@@ -74,6 +76,15 @@ const {
       advanced: true,
     })),
     mockCreateAuditLog: vi.fn().mockResolvedValue(undefined),
+    mockHasRemainingLoginMethod: vi.fn(async () => false),
+    mockWithLoginMethodRemovalLock: vi.fn(
+      async (
+        _env: unknown,
+        _tenantId: string,
+        _userId: string,
+        removal: (lease: { assertHeld: () => Promise<void> }) => Promise<unknown>
+      ) => removal({ assertHeld: async () => undefined })
+    ),
   };
 });
 
@@ -110,6 +121,8 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     createAccountAuthContextFromHono: mockCreateAuthContextFromHono,
     createAuthContextFromHono: mockCreateAuthContextFromHono,
     createAuditLog: mockCreateAuditLog,
+    isLoginMethodRemovalSafe: mockHasRemainingLoginMethod,
+    withLoginMethodRemovalLock: mockWithLoginMethodRemovalLock,
     createPIIContextFromHono: mockCreatePIIContextFromHono,
     ensureAccountAuthenticationState: vi.fn(async () => ({ lifecycle: 'active' })),
     advancePasskeyAuthenticationState: mockAdvancePasskeyAuthenticationState,
@@ -1154,6 +1167,7 @@ describe('Account Page passkey management API', () => {
   });
 
   it('deletes an owned passkey only when another passkey remains', async () => {
+    mockHasRemainingLoginMethod.mockResolvedValueOnce(true);
     mockPasskeyRepo.findByUserId.mockResolvedValueOnce([
       basePasskey,
       { ...basePasskey, id: 'pk_002', credential_id: 'credential-secret-2' },
@@ -1198,14 +1212,69 @@ describe('Account Page passkey management API', () => {
     expect(response.status).toBe(400);
     expect(body.error).toBe('remaining_login_method_required');
     expect(mockCoreAdapter.execute).not.toHaveBeenCalled();
+    expect(mockHasRemainingLoginMethod).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        tenantId: 'default',
+        userId: 'user-001',
+        removing: { kind: 'passkey', id: 'pk_001' },
+      })
+    );
   });
 
-  it('allows deleting the last passkey when verified email code login remains available', async () => {
-    mockRuntimeUserStore.findById.mockResolvedValueOnce({
-      id: 'user-001',
-      email: 'user@example.com',
-      email_verified: 1,
-    });
+  it('answers 409 while another removal of a sign-in method runs', async () => {
+    const { LoginMethodRemovalInProgressError } =
+      await vi.importActual<typeof import('@authrim/ar-lib-core')>('@authrim/ar-lib-core');
+    mockWithLoginMethodRemovalLock.mockRejectedValueOnce(new LoginMethodRemovalInProgressError());
+
+    const response = await deleteAccountPasskeyHandler(
+      createMockContext({
+        cookie: 'authrim_session=g1%3Aapac%3A3%3Asession_current',
+        params: { id: 'pk_001' },
+      })
+    );
+
+    expect(response.status).toBe(409);
+    expect(mockCoreAdapter.execute).not.toHaveBeenCalled();
+    expect(mockWithLoginMethodRemovalLock).toHaveBeenCalledWith(
+      expect.anything(),
+      'default',
+      'user-001',
+      expect.any(Function)
+    );
+  });
+
+  it('removes nothing once the removal lease is no longer its own', async () => {
+    const { LoginMethodRemovalInProgressError } =
+      await vi.importActual<typeof import('@authrim/ar-lib-core')>('@authrim/ar-lib-core');
+    mockHasRemainingLoginMethod.mockResolvedValueOnce(true);
+    mockWithLoginMethodRemovalLock.mockImplementationOnce(
+      async (
+        _env: unknown,
+        _tenantId: string,
+        _userId: string,
+        removal: (lease: { assertHeld: () => Promise<void> }) => Promise<unknown>
+      ) =>
+        removal({
+          assertHeld: async () => {
+            throw new LoginMethodRemovalInProgressError();
+          },
+        })
+    );
+
+    const response = await deleteAccountPasskeyHandler(
+      createMockContext({
+        cookie: 'authrim_session=g1%3Aapac%3A3%3Asession_current',
+        params: { id: 'pk_001' },
+      })
+    );
+
+    expect(response.status).toBe(409);
+    expect(mockCoreAdapter.execute).not.toHaveBeenCalled();
+  });
+
+  it('allows deleting the last passkey when another login method remains', async () => {
+    mockHasRemainingLoginMethod.mockResolvedValueOnce(true);
 
     const response = await deleteAccountPasskeyHandler(
       createMockContext({
@@ -1237,32 +1306,5 @@ describe('Account Page passkey management API', () => {
       user_id: 'dXNlci0wMDE',
       credential_ids: [],
     });
-  });
-
-  it('does not treat email account linking as a remaining login method', async () => {
-    mockRuntimeUserStore.findById.mockResolvedValueOnce({
-      id: 'user-001',
-      email: 'user@example.com',
-      email_verified: 1,
-    });
-
-    const response = await deleteAccountPasskeyHandler(
-      createMockContext({
-        cookie: 'authrim_session=g1%3Aapac%3A3%3Asession_current',
-        params: { id: 'pk_001' },
-        settings: {
-          'settings:tenant:default:authentication-methods': {
-            'authentication-methods.email_otp.enabled': true,
-            'authentication-methods.email_otp.login_enabled': false,
-            'authentication-methods.email_otp.account_link_enabled': true,
-          },
-        },
-      })
-    );
-    const body = (await response.json()) as Record<string, unknown>;
-
-    expect(response.status).toBe(400);
-    expect(body.error).toBe('remaining_login_method_required');
-    expect(mockCoreAdapter.execute).not.toHaveBeenCalled();
   });
 });

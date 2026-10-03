@@ -865,7 +865,10 @@ paths:
       summary: Delete one current user's passkey.
       description:
         Deletes a passkey owned by the authenticated Account Page user. Recent authentication
-        is required, and at least one other login method must remain.
+        is required, and at least one other login method must remain (another passkey, or a
+        verified email, TOTP authenticator or linked external account the tenant lets sign in).
+        Answers 409 `operation_in_progress` while another removal of the account's sign-in methods
+        runs.
       responses:
         '200':
           $ref: '#/components/responses/AccountPasskeyDelete'
@@ -876,6 +879,8 @@ paths:
         '403':
           $ref: '#/components/responses/Error'
         '404':
+          $ref: '#/components/responses/Error'
+        '409':
           $ref: '#/components/responses/Error'
       parameters:
         - $ref: '#/components/parameters/Id'
@@ -1031,6 +1036,8 @@ paths:
         '403':
           $ref: '#/components/responses/Error'
         '404':
+          $ref: '#/components/responses/Error'
+        '409':
           $ref: '#/components/responses/Error'
       parameters:
         - $ref: '#/components/parameters/Id'

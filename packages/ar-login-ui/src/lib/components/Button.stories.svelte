@@ -99,7 +99,23 @@
 >
 	{#snippet template(args)}
 		<LoginUIFrame>
-			<Button onclick={args.onclick}>{$LL.common_continue()}</Button>
+			<Button onclick={args.onclick as (event: MouseEvent) => void}>{$LL.common_continue()}</Button>
+		</LoginUIFrame>
+	{/snippet}
+</Story>
+
+<Story
+	name="As a link"
+	play={async ({ canvasElement }) => {
+		// Navigation is one link drawn as a button, never a button inside a link.
+		const link = within(canvasElement).getByRole('link');
+		await expect(link.getAttribute('href')).toBe('/discover');
+		await expect(canvasElement.querySelector('a button, button a')).toBeNull();
+	}}
+>
+	{#snippet template()}
+		<LoginUIFrame>
+			<Button href="/discover" reload>{$LL.header_login()}</Button>
 		</LoginUIFrame>
 	{/snippet}
 </Story>

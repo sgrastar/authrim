@@ -153,6 +153,7 @@ const preview: Preview = {
 					'Components',
 					'Runtime screen',
 					'Page shell',
+					'Account',
 					'Screens'
 				]
 			}

@@ -122,7 +122,13 @@ export interface ExternalIdpRoutePublicationInput {
 
 export type ExternalIdpRoutePublicationResult = AuthPasskeyRoutePublicationResult;
 
-export type ExternalIdpRouteRemovalInput = ExternalIdpRoutePublicationInput;
+export type ExternalIdpRouteRemovalInput = ExternalIdpRoutePublicationInput & {
+  /**
+   * The owner token of the account's sign-in-method removal lease the caller holds; the removal
+   * checks it is still held right before it writes (withLoginMethodRemovalLock).
+   */
+  removalLeaseOwner?: string;
+};
 export type ExternalIdpRouteRemovalResult = AuthPasskeyRoutePublicationResult;
 
 export interface ExternalIdpRouteRemovalStatusInput {

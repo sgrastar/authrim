@@ -2,12 +2,12 @@
 	import { onDestroy, onMount, untrack } from 'svelte';
 	import { SvelteMap } from 'svelte/reactivity';
 	import { startAuthentication, startRegistration } from '@simplewebauthn/browser';
-	import { Button } from '$lib/components';
 	import {
 		accountAPI,
 		type AccountConsent,
 		type AccountCapabilities,
 		type AccountDevice,
+		type AccountLinkedIdentity,
 		type AccountOperation,
 		type AccountPasskey,
 		type AccountProfile,
@@ -18,14 +18,25 @@
 		type AccountPageScreenField,
 		type AccountTotpCredential
 	} from '$lib/api/account';
-	import AccountActivitySection from '$lib/components/account/AccountActivitySection.svelte';
-	import AccountConsentSection from '$lib/components/account/AccountConsentSection.svelte';
 	import AccountLauncherSection from '$lib/components/account/AccountLauncherSection.svelte';
-	import AccountProfileSection from '$lib/components/account/AccountProfileSection.svelte';
+	import AccountReauthDialog, {
+		type AccountReauthMethod
+	} from '$lib/components/account/AccountReauthDialog.svelte';
+	import AccountScreenBlock, {
+		isAccountScreenStaticBlock
+	} from '$lib/components/account/AccountScreenBlock.svelte';
+	import AccountScreenPlacement from '$lib/components/account/AccountScreenPlacement.svelte';
+	import AccountShell from '$lib/components/account/AccountShell.svelte';
 	import AccountUpgradeSection from '$lib/components/account/AccountUpgradeSection.svelte';
-	import AccountSecuritySection from '$lib/components/account/AccountSecuritySection.svelte';
-	import ConfiguredFooter from '$lib/components/ConfiguredFooter.svelte';
-	import LanguageSwitcher from '$lib/components/LanguageSwitcher.svelte';
+	import AccountActivityWidget from '$lib/components/account/widgets/AccountActivityWidget.svelte';
+	import AccountConsentWidget from '$lib/components/account/widgets/AccountConsentWidget.svelte';
+	import AccountDevicesWidget from '$lib/components/account/widgets/AccountDevicesWidget.svelte';
+	import AccountPasskeysWidget from '$lib/components/account/widgets/AccountPasskeysWidget.svelte';
+	import AccountProfileWidget from '$lib/components/account/widgets/AccountProfileWidget.svelte';
+	import AccountSessionsWidget from '$lib/components/account/widgets/AccountSessionsWidget.svelte';
+	import AccountSocialAccountsWidget from '$lib/components/account/widgets/AccountSocialAccountsWidget.svelte';
+	import AccountTotpWidget from '$lib/components/account/widgets/AccountTotpWidget.svelte';
+	import AccountWidgetPanel from '$lib/components/account/widgets/AccountWidgetPanel.svelte';
 	import {
 		fetchAuthenticationMethods,
 		type AuthenticationMethods,
@@ -33,6 +44,7 @@
 	} from '$lib/api/authentication-methods';
 	import { logoutWithGuestWarning } from '$lib/account/guest-logout';
 	import { isPlacementVisibleForRegistrationState } from '$lib/account/account-page-visibility';
+	import { safeAccountScreenHref } from '$lib/account/account-screen-href';
 	import { auth } from '$lib/stores/auth';
 	import {
 		signalAllAcceptedCredentials,
@@ -98,6 +110,12 @@
 		backupCodes: string[];
 	} | null>(null);
 	let operations = $state<AccountOperation[]>([]);
+	let linkedIdentities = $state<AccountLinkedIdentity[]>([]);
+	let linkedIdentitiesLoading = $state(true);
+	let socialNotice = $state<{ kind: 'success' | 'error'; message: string } | null>(null);
+	/** The link or unlink in flight (`social:link:<provider>` / `social:unlink:<id>`), apart from
+	 * actionLoading so another widget's action cannot clear it. */
+	let socialAction = $state<string | null>(null);
 	let consents = $state<AccountConsent[]>([]);
 	let authenticationMethods = $state<AuthenticationMethods | null>(
 		embeddedAuthenticationMethods?.methods ?? null
@@ -123,7 +141,7 @@
 	let passkeySupported = $state(false);
 	let currentLocale = $state<Locales>(getLocale());
 	let reauthModalOpen = $state(false);
-	let reauthLoading = $state(false);
+	let reauthPending = $state<AccountReauthMethod | null>(null);
 	let reauthError = $state('');
 	let emailReauthChallengeId = $state('');
 	let emailReauthCode = $state('');
@@ -137,6 +155,8 @@
 		| { type: 'delete-totp'; id: string; code: string }
 		| { type: 'regenerate-totp-backup-codes'; code: string }
 		| { type: 'change-email'; email: string }
+		| { type: 'link-social'; providerId: string }
+		| { type: 'unlink-social'; id: string }
 		| null
 	>(null);
 
@@ -188,9 +208,6 @@
 			(authenticationMethods.totp.reauthEnabled ?? authenticationMethods.totp.enabled)
 		)
 	);
-	let hasReauthMethod = $derived(
-		passkeyReauthAvailable || emailCodeReauthAvailable || totpReauthAvailable
-	);
 	let totpManagementEnabled = $derived(
 		Boolean(
 			authenticationMethods?.totp &&
@@ -198,21 +215,20 @@
 				(authenticationMethods.totp.accountLinkEnabled ?? false))
 		)
 	);
-	function initialLoadingAreas(areas: SecurityArea[]): SecurityArea[] {
-		return areas.filter((area) => {
-			switch (area) {
-				case 'devices':
-					return devicesLoading;
-				case 'sessions':
-					return sessionsLoading;
-				case 'passkeys':
-					return passkeysLoading || authenticationMethodsLoading;
-				case 'totp':
-					return totpLoading || authenticationMethodsLoading;
-				case 'social':
-					return authenticationMethodsLoading;
-			}
-		});
+	/** First load of one security area: its widget draws a skeleton instead of an empty list. */
+	function securityAreaLoading(area: SecurityArea): boolean {
+		switch (area) {
+			case 'devices':
+				return devicesLoading;
+			case 'sessions':
+				return sessionsLoading;
+			case 'passkeys':
+				return passkeysLoading || authenticationMethodsLoading;
+			case 'totp':
+				return totpLoading || authenticationMethodsLoading;
+			case 'social':
+				return authenticationMethodsLoading || linkedIdentitiesLoading;
+		}
 	}
 
 	function setSecurityError(area: SecurityArea, message: string) {
@@ -351,20 +367,12 @@
 	}
 
 	function safeHref(value: string | null | undefined): string | null {
-		if (!value) return null;
-		if (/^#[a-zA-Z][\w-]*$/u.test(value)) {
+		return safeAccountScreenHref(value, (placementId) => {
 			const target = accountCapabilities?.account_page?.definition.screens.find(
-				(placement) => placement.id === value.slice(1)
+				(placement) => placement.id === placementId
 			);
-			return target?.enabled && placementVisible(target) ? value : null;
-		}
-		if (/^\/(?!\/)/u.test(value)) return value;
-		try {
-			const url = new URL(value);
-			return url.protocol === 'https:' ? url.toString() : null;
-		} catch {
-			return null;
-		}
+			return Boolean(target?.enabled && placementVisible(target));
+		});
 	}
 
 	function localizedScreenFields(screen: AccountPageScreen): AccountPageScreenField[] {
@@ -471,6 +479,8 @@
 			window.location.replace(canonicalAccountUrl);
 			return;
 		}
+
+		takeSocialLinkResult();
 
 		// Start account data immediately. WebAuthn capability detection can take noticeably
 		// longer in Safari and must not hold back the composition request or widget skeletons.
@@ -604,6 +614,16 @@
 			.finally(() => {
 				operationsLoading = false;
 			});
+		linkedIdentitiesLoading = true;
+		void accountAPI
+			.getLinkedIdentities()
+			.then((result) => {
+				linkedIdentities = result.data?.identities ?? [];
+				recordSecurityLoadError('social', result.error);
+			})
+			.finally(() => {
+				linkedIdentitiesLoading = false;
+			});
 		void accountAPI
 			.getConsents(getLocale())
 			.then((result) => {
@@ -676,33 +696,42 @@
 		beginSecurityRefresh(requestedAreas);
 		try {
 			reauthNeeded = false;
-			const [devicesResult, sessionsResult, passkeysResult, totpResult, operationsResult] =
-				await Promise.all([
-					requestedAreas.includes('devices') ? accountAPI.getDevices() : null,
-					requestedAreas.includes('sessions') ? accountAPI.getSessions() : null,
-					requestedAreas.includes('passkeys') ? accountAPI.getPasskeys() : null,
-					requestedAreas.includes('totp') ? accountAPI.getTotpCredentials() : null,
-					refreshAll ? accountAPI.getOperations() : null
-				]);
+			const [
+				devicesResult,
+				sessionsResult,
+				passkeysResult,
+				totpResult,
+				socialResult,
+				operationsResult
+			] = await Promise.all([
+				requestedAreas.includes('devices') ? accountAPI.getDevices() : null,
+				requestedAreas.includes('sessions') ? accountAPI.getSessions() : null,
+				requestedAreas.includes('passkeys') ? accountAPI.getPasskeys() : null,
+				requestedAreas.includes('totp') ? accountAPI.getTotpCredentials() : null,
+				requestedAreas.includes('social') ? accountAPI.getLinkedIdentities() : null,
+				refreshAll ? accountAPI.getOperations() : null
+			]);
 			devices = devicesResult?.data?.devices ?? devices;
 			sessions = sessionsResult?.data?.sessions ?? sessions;
 			passkeys = passkeysResult?.data?.passkeys ?? passkeys;
 			totpCredentials = totpResult?.data?.credentials ?? totpCredentials;
 			totpBackupCodes = totpResult?.data?.backup_codes ?? totpBackupCodes;
+			linkedIdentities = socialResult?.data?.identities ?? linkedIdentities;
 			operations = operationsResult?.data?.operations ?? operations;
 			await signalAllAcceptedCredentials(passkeysResult?.data?.webauthn_signal);
 			if (devicesResult) recordSecurityLoadError('devices', devicesResult.error);
 			if (sessionsResult) recordSecurityLoadError('sessions', sessionsResult.error);
 			if (passkeysResult) recordSecurityLoadError('passkeys', passkeysResult.error);
 			if (totpResult) recordSecurityLoadError('totp', totpResult.error);
-			if (requestedAreas.includes('social')) setSecurityError('social', '');
+			if (socialResult) recordSecurityLoadError('social', socialResult.error);
 		} finally {
 			endSecurityRefresh(requestedAreas);
 		}
 	}
 
+	/** Opens re-authentication; `action` resumes after it (a manual re-authentication resumes none). */
 	function requestReauth(action?: typeof pendingReauthAction) {
-		pendingReauthAction = action ?? pendingReauthAction;
+		pendingReauthAction = action ?? null;
 		reauthError = '';
 		emailReauthChallengeId = '';
 		emailReauthCode = '';
@@ -710,6 +739,12 @@
 		emailReauthCodeSent = false;
 		totpReauthCode = '';
 		reauthModalOpen = true;
+	}
+
+	/** Closing the dialog abandons the action it was opened for. */
+	function cancelReauth() {
+		reauthModalOpen = false;
+		pendingReauthAction = null;
 	}
 
 	async function finishReauth() {
@@ -738,12 +773,16 @@
 			await regenerateTotpBackupCodes(pending.code);
 		} else if (pending?.type === 'change-email') {
 			await startEmailChange(pending.email);
+		} else if (pending?.type === 'link-social') {
+			await startSocialLink(pending.providerId);
+		} else if (pending?.type === 'unlink-social') {
+			await unlinkSocialAccount(pending.id);
 		}
 	}
 
 	async function completePasskeyReauth() {
-		if (!passkeyReauthAvailable || reauthLoading) return;
-		reauthLoading = true;
+		if (!passkeyReauthAvailable || reauthPending) return;
+		reauthPending = 'passkey';
 		reauthError = '';
 		try {
 			const optionsResult = await accountAPI.createPasskeyReauthOptions();
@@ -768,13 +807,13 @@
 		} catch (error) {
 			reauthError = messageForCaughtError(error, $LL.account_actionFailed());
 		} finally {
-			reauthLoading = false;
+			reauthPending = null;
 		}
 	}
 
 	async function sendEmailCodeReauth() {
-		if (!emailCodeReauthAvailable || reauthLoading) return;
-		reauthLoading = true;
+		if (!emailCodeReauthAvailable || reauthPending) return;
+		reauthPending = 'email';
 		reauthError = '';
 		try {
 			const result = await accountAPI.sendEmailCodeReauth();
@@ -789,13 +828,13 @@
 		} catch (error) {
 			reauthError = messageForCaughtError(error, $LL.account_actionFailed());
 		} finally {
-			reauthLoading = false;
+			reauthPending = null;
 		}
 	}
 
 	async function completeEmailCodeReauth() {
-		if (!emailCodeReauthAvailable || !emailReauthChallengeId || reauthLoading) return;
-		reauthLoading = true;
+		if (!emailCodeReauthAvailable || !emailReauthChallengeId || reauthPending) return;
+		reauthPending = 'email';
 		reauthError = '';
 		try {
 			const result = await accountAPI.completeEmailCodeReauth(
@@ -810,13 +849,13 @@
 		} catch (error) {
 			reauthError = messageForCaughtError(error, $LL.account_actionFailed());
 		} finally {
-			reauthLoading = false;
+			reauthPending = null;
 		}
 	}
 
 	async function completeTotpReauth() {
-		if (!totpReauthAvailable || reauthLoading) return;
-		reauthLoading = true;
+		if (!totpReauthAvailable || reauthPending) return;
+		reauthPending = 'totp';
 		reauthError = '';
 		try {
 			const result = await accountAPI.completeTotpReauth(totpReauthCode.trim());
@@ -828,7 +867,7 @@
 		} catch (error) {
 			reauthError = messageForCaughtError(error, $LL.account_actionFailed());
 		} finally {
-			reauthLoading = false;
+			reauthPending = null;
 		}
 	}
 
@@ -1057,6 +1096,123 @@
 		}
 	}
 
+	/** The account page's message for a social link outcome or a refused unlink. */
+	function socialErrorMessage(code: string | null | undefined): string {
+		switch (code) {
+			case 'already_linked':
+				return $LL.account_socialErrorAlreadyLinked();
+			case 'email_not_verified':
+				return $LL.account_socialErrorEmailNotVerified();
+			case 'session_expired':
+				return $LL.account_socialErrorSessionExpired();
+			case 'cancelled':
+				return $LL.account_socialErrorCancelled();
+			case 'remaining_login_method_required':
+				return $LL.account_socialErrorLastMethod();
+			case 'operation_in_progress':
+				return $LL.account_socialErrorInProgress();
+			default:
+				return $LL.account_socialErrorFailed();
+		}
+	}
+
+	async function startSocialLink(providerId: string) {
+		if (socialAction) return;
+		socialAction = `social:link:${providerId}`;
+		setSecurityError('social', '');
+		socialNotice = null;
+		let leaving = false;
+		try {
+			const result = await accountAPI.startLinkIdentity(providerId);
+			if (result.error) {
+				if (result.error.error === 'reauth_required') {
+					setSecurityError('social', $LL.account_reauthRequired());
+					reauthNeeded = true;
+					requestReauth({ type: 'link-social', providerId });
+					return;
+				}
+				if (result.error.error === 'already_linked') {
+					// Linked meanwhile (another tab): show the account as it is, and say why nothing
+					// happened (a notice, which the reload does not clear).
+					await refreshSecurity(['social']);
+					socialNotice = { kind: 'error', message: $LL.account_socialErrorAlreadyLinkedHere() };
+					return;
+				}
+				setSecurityError('social', localizeApiError(result.error, $LL.account_actionFailed()));
+				return;
+			}
+			const target = safeLinkStartUrl(result.data?.authorization_url);
+			if (!target) {
+				setSecurityError('social', $LL.account_socialErrorFailed());
+				return;
+			}
+			// The provider answers back to this page (?social_link=...).
+			leaving = true;
+			window.location.assign(target);
+		} finally {
+			if (!leaving) socialAction = null;
+		}
+	}
+
+	/** The bridge's start URL, only as an http(s) URL on this origin or the issuer's. */
+	function safeLinkStartUrl(value: string | undefined): string | null {
+		if (!value) return null;
+		try {
+			const url = new URL(value, window.location.origin);
+			return url.protocol === 'https:' ||
+				(url.protocol === 'http:' && url.hostname === window.location.hostname)
+				? url.toString()
+				: null;
+		} catch {
+			return null;
+		}
+	}
+
+	async function unlinkSocialAccount(id: string) {
+		if (socialAction) return;
+		socialAction = `social:unlink:${id}`;
+		setSecurityError('social', '');
+		socialNotice = null;
+		try {
+			const result = await accountAPI.unlinkIdentity(id);
+			if (result.error) {
+				if (result.error.error === 'reauth_required') {
+					setSecurityError('social', $LL.account_reauthRequired());
+					reauthNeeded = true;
+					requestReauth({ type: 'unlink-social', id });
+					return;
+				}
+				setSecurityError(
+					'social',
+					result.error.error === 'remaining_login_method_required' ||
+						result.error.error === 'operation_in_progress'
+						? socialErrorMessage(result.error.error)
+						: localizeApiError(result.error, $LL.account_actionFailed())
+				);
+				return;
+			}
+			linkedIdentities = linkedIdentities.filter((identity) => identity.id !== id);
+			socialNotice = { kind: 'success', message: $LL.account_socialUnlinked() };
+			await refreshSecurity(['social']);
+		} finally {
+			socialAction = null;
+		}
+	}
+
+	/** The outcome of a link the provider sent back (?social_link=), shown once. */
+	function takeSocialLinkResult() {
+		const url = new URL(window.location.href);
+		const outcome = url.searchParams.get('social_link');
+		if (!outcome) return;
+		socialNotice =
+			outcome === 'linked'
+				? { kind: 'success', message: $LL.account_socialLinked() }
+				: { kind: 'error', message: socialErrorMessage(url.searchParams.get('reason')) };
+		url.searchParams.delete('social_link');
+		url.searchParams.delete('reason');
+		window.history.replaceState(window.history.state, '', url.toString());
+	}
+
 	async function startTotpEnrollment(label: string) {
 		actionLoading = 'totp:add';
 		setSecurityError('totp', '');
@@ -1182,767 +1338,243 @@
 	}
 </script>
 
-<svelte:head>
-	<title
-		>{localizedPageCopy().title || $LL.account_title()} - {brandingStore.brandName ||
-			$LL.app_title()}</title
-	>
-</svelte:head>
-
-<div class="account-shell">
-	<div class="account-layout">
-		<header class="account-header">
-			<div>
-				<p class="account-kicker">{brandingStore.brandName || $LL.app_title()}</p>
-				<h1>{localizedPageCopy().title}</h1>
-				{#if localizedPageCopy().description}<p class="account-description">
-						{localizedPageCopy().description}
-					</p>{/if}
-			</div>
-			<Button variant="secondary" loading={logoutLoading} onclick={() => handleLogout()}>
-				{$LL.header_logout()}
-			</Button>
-		</header>
-
-		{#if accountError}
-			<p class="account-error" role="alert">{accountError}</p>
-		{/if}
-
-		<section class="account-grid" aria-busy={profileLoading || capabilitiesLoading}>
-			{#if capabilitiesLoading || !capabilitiesResolved}
-				<!-- Wait for the published composition so unused widgets never flash as skeletons. -->
-			{:else if accountCapabilities?.account_page}
-				{#each accountCapabilities.account_page.definition.screens.filter((item) => item.enabled && placementVisible(item)) as placement (placement.id)}
-					{@const screen = configuredScreen(placement.screen_key)}
-					{#if screen}
-						<section
-							id={placement.id}
-							class="account-screen"
-							class:full={placement.width === 'full'}
-							class:overview={screen.screen_key === 'account_overview'}
-						>
-							{#each localizedScreenFields(screen) as field, fieldIndex (`${field.block_id ?? field.field}-${fieldIndex}`)}
-								{#if field.block_type !== 'layout_row'}
-									<div
-										class="account-screen__block"
-										style={placement.width === 'full' &&
-										(field.layout_column === 1 || field.layout_column === 2)
-											? `grid-column: ${field.layout_column};`
-											: undefined}
-									>
-										{#if field.block_type === 'heading'}
-											<header class="account-screen__heading">
-												<h2>{field.label}</h2>
-												{#if field.text}<p>{field.text}</p>{/if}
-											</header>
-										{:else if field.block_type === 'text'}
-											<p class="account-screen__text">{field.text || field.label}</p>
-										{:else if field.block_type === 'link' && safeHref(field.href)}
-											<a class="account-screen__link" href={safeHref(field.href) ?? '#'}
-												>{field.label}</a
-											>
-										{:else if field.block_type === 'divider'}
-											<div class="account-screen__divider"><span>{field.text ?? ''}</span></div>
-										{:else if field.block_type === 'account_upgrade_widget'}
-											<AccountUpgradeSection
-												title={accountWidgetTitle(field)}
-												onExistingLogin={async () => {
-													await handleLogout('/login?prompt=login');
-												}}
-												onCompleted={async () => {
-													await auth.refreshFromSession();
-													await loadAccountPage();
-												}}
-											/>
-										{:else if field.block_type === 'account_profile_widget'}
-											<AccountProfileSection
-												{profile}
-												loading={profileLoading}
-												title={accountWidgetTitle(field)}
-												saving={profileSaving}
-												error={profileError}
-												saved={profileSaved}
-												{emailChangeStage}
-												{emailChangeLoading}
-												{emailChangeError}
-												onSave={saveProfileName}
-												onStartEmailChange={startEmailChange}
-												onCompleteEmailChange={completeEmailChange}
-												onCancelEmailChange={cancelEmailChange}
-											/>
-										{:else if field.block_type === 'account_consent_widget'}
-											<AccountConsentSection
-												{consents}
-												loading={consentsLoading}
-												title={accountWidgetTitle(field)}
-												error={consentError}
-											/>
-										{:else if field.block_type === 'account_activity_widget'}
-											<AccountActivitySection
-												{operations}
-												loading={operationsLoading}
-												title={accountWidgetTitle(field)}
-											/>
-										{:else if field.block_type === 'account_device_list_widget'}
-											<AccountSecuritySection
-												{devices}
-												{sessions}
-												{passkeys}
-												{totpCredentials}
-												{totpBackupCodes}
-												{totpEnrollment}
-												areas={['devices']}
-												title={accountWidgetTitle(field)}
-												showSectionHeadings={false}
-												loading={securityAreasRefreshing(['devices'])}
-												loadingAreas={initialLoadingAreas(['devices'])}
-												{actionLoading}
-												error={securityErrorFor(['devices'])}
-												{reauthNeeded}
-												{passkeySupported}
-												{totpManagementEnabled}
-												onRefresh={refreshSecurity}
-												onRevokeSession={revokeSession}
-												onAddPasskey={addPasskey}
-												onDeletePasskey={deletePasskey}
-												onStartTotpEnrollment={startTotpEnrollment}
-												onActivateTotpEnrollment={activateTotpEnrollment}
-												onDeleteTotpCredential={deleteTotpCredential}
-												onRegenerateTotpBackupCodes={regenerateTotpBackupCodes}
-												onClearTotpEnrollment={() => (totpEnrollment = null)}
-												onReauth={() => requestReauth()}
-											/>
-										{:else if field.block_type === 'account_session_widget'}
-											<AccountSecuritySection
-												{devices}
-												{sessions}
-												{passkeys}
-												{totpCredentials}
-												{totpBackupCodes}
-												{totpEnrollment}
-												areas={['sessions']}
-												title={accountWidgetTitle(field)}
-												showSectionHeadings={false}
-												loading={securityAreasRefreshing(['sessions'])}
-												loadingAreas={initialLoadingAreas(['sessions'])}
-												{actionLoading}
-												error={securityErrorFor(['sessions'])}
-												{reauthNeeded}
-												{passkeySupported}
-												{totpManagementEnabled}
-												onRefresh={refreshSecurity}
-												onRevokeSession={revokeSession}
-												onAddPasskey={addPasskey}
-												onDeletePasskey={deletePasskey}
-												onStartTotpEnrollment={startTotpEnrollment}
-												onActivateTotpEnrollment={activateTotpEnrollment}
-												onDeleteTotpCredential={deleteTotpCredential}
-												onRegenerateTotpBackupCodes={regenerateTotpBackupCodes}
-												onClearTotpEnrollment={() => (totpEnrollment = null)}
-												onReauth={() => requestReauth()}
-											/>
-										{:else if field.block_type === 'account_passkey_widget'}
-											<AccountSecuritySection
-												{devices}
-												{sessions}
-												{passkeys}
-												{totpCredentials}
-												{totpBackupCodes}
-												{totpEnrollment}
-												areas={['passkeys']}
-												title={accountWidgetTitle(field)}
-												showSectionHeadings={false}
-												loading={securityAreasRefreshing(['passkeys'])}
-												loadingAreas={initialLoadingAreas(['passkeys'])}
-												{actionLoading}
-												error={securityErrorFor(['passkeys'])}
-												{reauthNeeded}
-												{passkeySupported}
-												{totpManagementEnabled}
-												onRefresh={refreshSecurity}
-												onRevokeSession={revokeSession}
-												onAddPasskey={addPasskey}
-												onDeletePasskey={deletePasskey}
-												onStartTotpEnrollment={startTotpEnrollment}
-												onActivateTotpEnrollment={activateTotpEnrollment}
-												onDeleteTotpCredential={deleteTotpCredential}
-												onRegenerateTotpBackupCodes={regenerateTotpBackupCodes}
-												onClearTotpEnrollment={() => (totpEnrollment = null)}
-												onReauth={() => requestReauth()}
-											/>
-										{:else if field.block_type === 'account_totp_widget'}
-											<AccountSecuritySection
-												{devices}
-												{sessions}
-												{passkeys}
-												{totpCredentials}
-												{totpBackupCodes}
-												{totpEnrollment}
-												areas={['totp']}
-												title={accountWidgetTitle(field)}
-												showSectionHeadings={false}
-												loading={securityAreasRefreshing(['totp'])}
-												loadingAreas={initialLoadingAreas(['totp'])}
-												{actionLoading}
-												error={securityErrorFor(['totp'])}
-												{reauthNeeded}
-												{passkeySupported}
-												{totpManagementEnabled}
-												onRefresh={refreshSecurity}
-												onRevokeSession={revokeSession}
-												onAddPasskey={addPasskey}
-												onDeletePasskey={deletePasskey}
-												onStartTotpEnrollment={startTotpEnrollment}
-												onActivateTotpEnrollment={activateTotpEnrollment}
-												onDeleteTotpCredential={deleteTotpCredential}
-												onRegenerateTotpBackupCodes={regenerateTotpBackupCodes}
-												onClearTotpEnrollment={() => (totpEnrollment = null)}
-												onReauth={() => requestReauth()}
-											/>
-										{:else if field.block_type === 'account_social_account_widget'}
-											<AccountSecuritySection
-												{devices}
-												{sessions}
-												{passkeys}
-												{totpCredentials}
-												{totpBackupCodes}
-												{totpEnrollment}
-												areas={['social']}
-												title={accountWidgetTitle(field)}
-												showSectionHeadings={false}
-												loading={securityAreasRefreshing(['social'])}
-												loadingAreas={initialLoadingAreas(['social'])}
-												{actionLoading}
-												error={securityErrorFor(['social'])}
-												{reauthNeeded}
-												{passkeySupported}
-												{totpManagementEnabled}
-												onRefresh={refreshSecurity}
-												onRevokeSession={revokeSession}
-												onAddPasskey={addPasskey}
-												onDeletePasskey={deletePasskey}
-												onStartTotpEnrollment={startTotpEnrollment}
-												onActivateTotpEnrollment={activateTotpEnrollment}
-												onDeleteTotpCredential={deleteTotpCredential}
-												onRegenerateTotpBackupCodes={regenerateTotpBackupCodes}
-												onClearTotpEnrollment={() => (totpEnrollment = null)}
-												onReauth={() => requestReauth()}
-											/>
-										{:else if field.block_type === 'account_launcher_widget'}
-											<AccountLauncherSection title={accountWidgetTitle(field)} />
-										{/if}
-									</div>
-								{/if}
-							{/each}
-						</section>
-					{/if}
-				{/each}
-			{:else}
-				<AccountProfileSection
-					{profile}
-					loading={profileLoading}
-					saving={profileSaving}
-					error={profileError}
-					saved={profileSaved}
-					{emailChangeStage}
-					{emailChangeLoading}
-					{emailChangeError}
-					onSave={saveProfileName}
-					onStartEmailChange={startEmailChange}
-					onCompleteEmailChange={completeEmailChange}
-					onCancelEmailChange={cancelEmailChange}
-				/>
-				<AccountSecuritySection
-					{devices}
-					{sessions}
-					{passkeys}
-					{totpCredentials}
-					{totpBackupCodes}
-					{totpEnrollment}
-					loading={securityAreasRefreshing(ALL_SECURITY_AREAS)}
-					loadingAreas={initialLoadingAreas(['devices', 'sessions', 'passkeys', 'totp', 'social'])}
-					{actionLoading}
-					error={securityErrorFor(ALL_SECURITY_AREAS)}
-					{reauthNeeded}
-					{passkeySupported}
-					{totpManagementEnabled}
-					onRefresh={refreshSecurity}
-					onRevokeSession={revokeSession}
-					onAddPasskey={addPasskey}
-					onDeletePasskey={deletePasskey}
-					onStartTotpEnrollment={startTotpEnrollment}
-					onActivateTotpEnrollment={activateTotpEnrollment}
-					onDeleteTotpCredential={deleteTotpCredential}
-					onRegenerateTotpBackupCodes={regenerateTotpBackupCodes}
-					onClearTotpEnrollment={() => (totpEnrollment = null)}
-					onReauth={() => requestReauth()}
-				/>
-				<AccountConsentSection {consents} loading={consentsLoading} error={consentError} />
-				<AccountActivitySection {operations} loading={operationsLoading} />
-			{/if}
-		</section>
-	</div>
-
-	{#if loginUIPageStore.showTopbar}
-		<div class="account-preferences" data-position={loginUIPageStore.topbarPosition}>
-			<LanguageSwitcher
-				showThemeToggle={loginUIPageStore.themeToggleEnabled}
-				showLanguageSelect={loginUIPageStore.languageSelectEnabled}
-			/>
-		</div>
-	{/if}
-
-	<ConfiguredFooter locale={currentLocale} class="account-footer" />
-
-	{#if reauthModalOpen}
-		<button
-			type="button"
-			class="reauth-backdrop"
-			aria-label={$LL.dialog_close()}
-			onclick={() => (reauthModalOpen = false)}
-		></button>
-		<div
-			class="reauth-modal"
-			role="dialog"
-			aria-modal="true"
-			aria-labelledby="account-reauth-title"
-		>
-			<div class="reauth-modal__header">
-				<h2 id="account-reauth-title">{$LL.account_reauthTitle()}</h2>
-				<button
-					type="button"
-					class="reauth-modal__close"
-					aria-label={$LL.dialog_close()}
-					onclick={() => (reauthModalOpen = false)}
+<AccountShell
+	brandName={brandingStore.brandName}
+	title={localizedPageCopy().title}
+	description={localizedPageCopy().description}
+	locale={currentLocale}
+	{logoutLoading}
+	onLogout={() => handleLogout()}
+	pageError={accountError}
+	busy={profileLoading || capabilitiesLoading}
+>
+	{#if capabilitiesLoading || !capabilitiesResolved}
+		<!-- Wait for the published composition so unused widgets never flash as skeletons. -->
+	{:else if accountCapabilities?.account_page}
+		{#each accountCapabilities.account_page.definition.screens.filter((item) => item.enabled && placementVisible(item)) as placement (placement.id)}
+			{@const screen = configuredScreen(placement.screen_key)}
+			{#if screen}
+				<AccountScreenPlacement
+					id={placement.id}
+					full={placement.width === 'full'}
+					overview={screen.screen_key === 'account_overview'}
+					fields={localizedScreenFields(screen)}
 				>
-					x
-				</button>
-			</div>
-			<p>{$LL.account_reauthDescription()}</p>
-			{#if reauthError}
-				<p class="reauth-error">{reauthError}</p>
-			{/if}
-			{#if !hasReauthMethod}
-				<p class="reauth-error">{$LL.account_reauthNoMethods()}</p>
-			{/if}
-			<div class="reauth-actions">
-				{#if passkeyReauthAvailable}
-					<Button variant="primary" loading={reauthLoading} onclick={completePasskeyReauth}>
-						{$LL.account_reauthWithPasskey()}
-					</Button>
-				{/if}
-				{#if emailCodeReauthAvailable}
-					{#if emailReauthCodeSent}
-						<div class="reauth-email-code">
-							<p>{$LL.account_reauthEmailCodeSent({ email: emailReauthMaskedEmail })}</p>
-							<input
-								class="reauth-code-input"
-								autocomplete="one-time-code"
-								inputmode="numeric"
-								maxlength={6}
-								placeholder={$LL.account_reauthEmailCodePlaceholder()}
-								bind:value={emailReauthCode}
+					{#snippet block(field)}
+						{#if isAccountScreenStaticBlock(field.block_type)}
+							<AccountScreenBlock
+								{field}
+								href={field.block_type === 'link' ? safeHref(field.href) : null}
 							/>
-							<Button
-								variant="primary"
-								loading={reauthLoading}
-								disabled={emailReauthCode.trim().length !== 6}
-								onclick={completeEmailCodeReauth}
-							>
-								{$LL.account_reauthVerifyEmailCode()}
-							</Button>
-						</div>
-					{:else}
-						<Button variant="secondary" loading={reauthLoading} onclick={sendEmailCodeReauth}>
-							{$LL.account_reauthWithEmailCode()}
-						</Button>
-					{/if}
-				{/if}
-				{#if totpReauthAvailable}
-					<div class="reauth-email-code">
-						<input
-							class="reauth-code-input"
-							autocomplete="one-time-code"
-							inputmode="numeric"
-							maxlength={8}
-							placeholder={$LL.account_reauthTotpCodePlaceholder()}
-							bind:value={totpReauthCode}
-						/>
-						<Button
-							variant="secondary"
-							loading={reauthLoading}
-							disabled={!/^\d{6}$|^\d{8}$/.test(totpReauthCode.trim())}
-							onclick={completeTotpReauth}
-						>
-							{$LL.account_reauthWithTotp()}
-						</Button>
-					</div>
-				{/if}
-				<Button variant="secondary" onclick={() => (reauthModalOpen = false)}>
-					{$LL.dialog_cancel()}
-				</Button>
-			</div>
-		</div>
+						{:else if field.block_type === 'account_upgrade_widget'}
+							<AccountUpgradeSection
+								title={accountWidgetTitle(field)}
+								onExistingLogin={async () => {
+									await handleLogout('/login?prompt=login');
+								}}
+								onCompleted={async () => {
+									await auth.refreshFromSession();
+									await loadAccountPage();
+								}}
+							/>
+						{:else if field.block_type === 'account_profile_widget'}
+							<AccountProfileWidget
+								{profile}
+								loading={profileLoading}
+								title={accountWidgetTitle(field)}
+								saving={profileSaving}
+								error={profileError}
+								saved={profileSaved}
+								{emailChangeStage}
+								{emailChangeLoading}
+								{emailChangeError}
+								onSave={saveProfileName}
+								onStartEmailChange={startEmailChange}
+								onCompleteEmailChange={completeEmailChange}
+								onCancelEmailChange={cancelEmailChange}
+							/>
+						{:else if field.block_type === 'account_consent_widget'}
+							<AccountConsentWidget
+								{consents}
+								loading={consentsLoading}
+								title={accountWidgetTitle(field)}
+								error={consentError}
+							/>
+						{:else if field.block_type === 'account_activity_widget'}
+							<AccountActivityWidget
+								{operations}
+								loading={operationsLoading}
+								title={accountWidgetTitle(field)}
+							/>
+						{:else if field.block_type === 'account_device_list_widget'}
+							<AccountDevicesWidget
+								{devices}
+								title={accountWidgetTitle(field)}
+								loading={securityAreaLoading('devices')}
+								refreshing={securityAreasRefreshing(['devices'])}
+								error={securityErrorFor(['devices'])}
+								{reauthNeeded}
+								onRefresh={() => refreshSecurity(['devices'])}
+								onReauthenticate={() => requestReauth()}
+							/>
+						{:else if field.block_type === 'account_session_widget'}
+							<AccountSessionsWidget
+								{sessions}
+								title={accountWidgetTitle(field)}
+								loading={securityAreaLoading('sessions')}
+								refreshing={securityAreasRefreshing(['sessions'])}
+								{actionLoading}
+								error={securityErrorFor(['sessions'])}
+								{reauthNeeded}
+								onRefresh={() => refreshSecurity(['sessions'])}
+								onReauthenticate={() => requestReauth()}
+								onRevokeSession={revokeSession}
+							/>
+						{:else if field.block_type === 'account_passkey_widget'}
+							<AccountPasskeysWidget
+								{passkeys}
+								{passkeySupported}
+								title={accountWidgetTitle(field)}
+								loading={securityAreaLoading('passkeys')}
+								refreshing={securityAreasRefreshing(['passkeys'])}
+								{actionLoading}
+								error={securityErrorFor(['passkeys'])}
+								{reauthNeeded}
+								onRefresh={() => refreshSecurity(['passkeys'])}
+								onReauthenticate={() => requestReauth()}
+								onAddPasskey={addPasskey}
+								onDeletePasskey={deletePasskey}
+							/>
+						{:else if field.block_type === 'account_totp_widget'}
+							<AccountTotpWidget
+								credentials={totpCredentials}
+								backupCodes={totpBackupCodes}
+								enrollment={totpEnrollment}
+								managementEnabled={totpManagementEnabled}
+								title={accountWidgetTitle(field)}
+								loading={securityAreaLoading('totp')}
+								refreshing={securityAreasRefreshing(['totp'])}
+								{actionLoading}
+								error={securityErrorFor(['totp'])}
+								{reauthNeeded}
+								onRefresh={() => refreshSecurity(['totp'])}
+								onReauthenticate={() => requestReauth()}
+								onStartEnrollment={startTotpEnrollment}
+								onActivateEnrollment={activateTotpEnrollment}
+								onDeleteCredential={deleteTotpCredential}
+								onRegenerateBackupCodes={regenerateTotpBackupCodes}
+								onClearEnrollment={() => (totpEnrollment = null)}
+							/>
+						{:else if field.block_type === 'account_social_account_widget'}
+							<AccountSocialAccountsWidget
+								title={accountWidgetTitle(field)}
+								identities={linkedIdentities}
+								providers={authenticationMethods?.external.providers ?? []}
+								notice={socialNotice}
+								loading={securityAreaLoading('social')}
+								refreshing={securityAreasRefreshing(['social'])}
+								actionLoading={socialAction ?? ''}
+								error={securityErrorFor(['social'])}
+								{reauthNeeded}
+								onRefresh={() => refreshSecurity(['social'])}
+								onReauthenticate={() => requestReauth()}
+								onLink={startSocialLink}
+								onUnlink={unlinkSocialAccount}
+							/>
+						{:else if field.block_type === 'account_launcher_widget'}
+							<AccountLauncherSection title={accountWidgetTitle(field)} />
+						{/if}
+					{/snippet}
+				</AccountScreenPlacement>
+			{/if}
+		{/each}
+	{:else}
+		<AccountProfileWidget
+			{profile}
+			loading={profileLoading}
+			saving={profileSaving}
+			error={profileError}
+			saved={profileSaved}
+			{emailChangeStage}
+			{emailChangeLoading}
+			{emailChangeError}
+			onSave={saveProfileName}
+			onStartEmailChange={startEmailChange}
+			onCompleteEmailChange={completeEmailChange}
+			onCancelEmailChange={cancelEmailChange}
+		/>
+		<AccountWidgetPanel
+			title={$LL.account_securityTitle()}
+			busy={ALL_SECURITY_AREAS.some(securityAreaLoading)}
+			refreshing={securityAreasRefreshing(ALL_SECURITY_AREAS)}
+			error={securityErrorFor(ALL_SECURITY_AREAS)}
+			{reauthNeeded}
+			onRefresh={() => refreshSecurity([...ALL_SECURITY_AREAS])}
+			onReauthenticate={() => requestReauth()}
+		>
+			<AccountDevicesWidget headingLevel={3} {devices} loading={securityAreaLoading('devices')} />
+			<AccountSessionsWidget
+				headingLevel={3}
+				{sessions}
+				loading={securityAreaLoading('sessions')}
+				{actionLoading}
+				onRevokeSession={revokeSession}
+			/>
+			<AccountPasskeysWidget
+				headingLevel={3}
+				{passkeys}
+				{passkeySupported}
+				loading={securityAreaLoading('passkeys')}
+				{actionLoading}
+				onAddPasskey={addPasskey}
+				onDeletePasskey={deletePasskey}
+			/>
+			<AccountTotpWidget
+				headingLevel={3}
+				credentials={totpCredentials}
+				backupCodes={totpBackupCodes}
+				enrollment={totpEnrollment}
+				managementEnabled={totpManagementEnabled}
+				loading={securityAreaLoading('totp')}
+				{actionLoading}
+				onStartEnrollment={startTotpEnrollment}
+				onActivateEnrollment={activateTotpEnrollment}
+				onDeleteCredential={deleteTotpCredential}
+				onRegenerateBackupCodes={regenerateTotpBackupCodes}
+				onClearEnrollment={() => (totpEnrollment = null)}
+			/>
+			<AccountSocialAccountsWidget
+				headingLevel={3}
+				identities={linkedIdentities}
+				providers={authenticationMethods?.external.providers ?? []}
+				notice={socialNotice}
+				loading={securityAreaLoading('social')}
+				actionLoading={socialAction ?? ''}
+				onLink={startSocialLink}
+				onUnlink={unlinkSocialAccount}
+			/>
+		</AccountWidgetPanel>
+		<AccountConsentWidget {consents} loading={consentsLoading} error={consentError} />
+		<AccountActivityWidget {operations} loading={operationsLoading} />
 	{/if}
-</div>
 
-<style>
-	.account-shell {
-		--account-card-bg: var(--bg-card, #fefdfa);
-		--account-control-bg: var(--bg-input, #ffffff);
-		--account-control-hover: var(--surface-muted, var(--bg-subtle, #f7f3ec));
-		--account-primary-bg: var(--button-primary-bg, var(--primary, #2c2724));
-		--account-primary-hover: var(--primary-hover, #1a1715);
-		--account-modal-bg: var(--bg-card, #fffaf3);
-		--account-modal-border: var(--border, #ded4c5);
-
-		min-height: 100dvh;
-		background: var(--bg-page);
-		color: var(--text-primary);
-		isolation: isolate;
-		padding: 24px;
-		display: flex;
-		flex-direction: column;
-	}
-
-	:global(.account-shell .card),
-	:global(.account-shell .form-input),
-	:global(.account-shell .theme-toggle),
-	:global(.account-shell .auth-lang-select),
-	:global(.account-shell .btn),
-	:global(.account-shell .btn::after),
-	:global(.account-shell .btn::before) {
-		transform: none !important;
-		filter: none !important;
-		backdrop-filter: none !important;
-		-webkit-backdrop-filter: none !important;
-		transition: none !important;
-	}
-
-	:global(.account-shell .card) {
-		background: var(--account-card-bg) !important;
-		box-shadow: none !important;
-	}
-
-	:global(.account-shell .form-input),
-	:global(.account-shell .theme-toggle),
-	:global(.account-shell .auth-lang-select),
-	:global(.account-shell .btn-secondary) {
-		background: var(--account-control-bg) !important;
-	}
-
-	:global(.account-shell .theme-toggle:hover),
-	:global(.account-shell .auth-lang-select:hover),
-	:global(.account-shell .btn-secondary:hover:not(:disabled)),
-	:global(.account-shell .btn-ghost:hover:not(:disabled)) {
-		background: var(--account-control-hover) !important;
-	}
-
-	:global(.account-shell .btn-primary) {
-		background: var(--account-primary-bg) !important;
-		box-shadow: none !important;
-	}
-
-	:global(.account-shell .btn-primary:hover:not(:disabled)) {
-		background: var(--account-primary-hover) !important;
-		box-shadow: none !important;
-	}
-
-	:global(.account-shell .btn:hover:not(:disabled)),
-	:global(.account-shell .btn-primary:hover:not(:disabled)),
-	:global(.account-shell .btn-secondary:hover:not(:disabled)),
-	:global(.account-shell .btn-danger:hover:not(:disabled)),
-	:global(.account-shell .theme-toggle:hover) {
-		transform: none !important;
-		filter: none !important;
-	}
-
-	:global(.account-shell .btn-primary::after) {
-		display: none;
-	}
-
-	:global(.account-shell .btn-danger) {
-		box-shadow: none !important;
-	}
-
-	:global(.account-shell .btn-danger:hover:not(:disabled)) {
-		box-shadow: none !important;
-	}
-
-	.account-preferences {
-		order: 2;
-		width: min(1040px, 100%);
-		margin: 24px auto 0;
-		display: flex;
-		justify-content: center;
-	}
-
-	.account-preferences[data-position='in_card'] {
-		order: -1;
-		justify-content: flex-end;
-		margin: 0 auto 24px;
-	}
-
-	.account-preferences[data-position='top_right'],
-	.account-preferences[data-position='bottom_left'],
-	.account-preferences[data-position='bottom_center'],
-	.account-preferences[data-position='bottom_right'] {
-		position: fixed;
-		z-index: 40;
-		width: auto;
-		margin: 0;
-	}
-
-	.account-preferences[data-position='top_right'] {
-		top: max(20px, env(safe-area-inset-top));
-		right: max(20px, env(safe-area-inset-right));
-	}
-
-	.account-preferences[data-position='bottom_left'],
-	.account-preferences[data-position='bottom_center'],
-	.account-preferences[data-position='bottom_right'] {
-		bottom: max(20px, env(safe-area-inset-bottom));
-	}
-
-	.account-preferences[data-position='bottom_left'] {
-		left: max(20px, env(safe-area-inset-left));
-	}
-
-	.account-preferences[data-position='bottom_center'] {
-		left: 50%;
-		transform: translateX(-50%);
-	}
-
-	.account-preferences[data-position='bottom_right'] {
-		right: max(20px, env(safe-area-inset-right));
-	}
-
-	:global(.account-shell .account-footer) {
-		order: 3;
-		align-self: center;
-		margin-top: 32px;
-		padding-bottom: max(0px, env(safe-area-inset-bottom));
-	}
-
-	:global(.account-shell .account-footer p) {
-		margin: 0;
-	}
-
-	:global(.account-shell .account-footer p + p) {
-		margin-top: 6px;
-	}
-
-	.account-layout {
-		width: min(1040px, 100%);
-		margin: 0 auto;
-	}
-
-	.account-header {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		margin-bottom: 24px;
-	}
-
-	.account-description {
-		max-width: 60ch;
-		margin: 6px 0 0;
-		color: var(--text-muted);
-		font-size: 0.875rem;
-		line-height: 1.6;
-	}
-
-	.account-kicker {
-		margin: 0 0 4px;
-		font-size: 0.8125rem;
-		color: var(--text-muted);
-	}
-
-	h1 {
-		margin: 0;
-	}
-
-	h1 {
-		font-size: 1.75rem;
-	}
-
-	.account-grid {
-		display: grid;
-		grid-template-columns: repeat(2, minmax(0, 1fr));
-		gap: 16px;
-	}
-
-	.account-screen {
-		display: grid;
-		min-width: 0;
-		gap: 12px;
-	}
-
-	.account-screen.full {
-		grid-column: 1 / -1;
-		grid-template-columns: repeat(2, minmax(0, 1fr));
-	}
-
-	.account-screen.overview {
-		border: 1px solid var(--border-glass);
-		border-radius: var(--card-radius, var(--radius-xl));
-		background: var(--account-card-bg);
-		box-shadow: none;
-		padding: var(--auth-card-padding, var(--card-padding, 24px));
-	}
-
-	.account-screen__block {
-		min-width: 0;
-		grid-column: 1 / -1;
-	}
-
-	.account-screen__heading h2,
-	.account-screen__heading p,
-	.account-screen__text {
-		margin: 0;
-	}
-
-	.account-screen__heading h2 {
-		font-size: 1.05rem;
-	}
-
-	.account-screen__heading p,
-	.account-screen__text {
-		margin-top: 4px;
-		color: var(--text-muted);
-		font-size: 0.875rem;
-		line-height: 1.65;
-	}
-
-	.account-screen__divider {
-		display: flex;
-		align-items: center;
-		gap: 10px;
-		color: var(--text-muted);
-		font-size: 0.75rem;
-	}
-
-	.account-screen__divider::before,
-	.account-screen__divider::after {
-		content: '';
-		flex: 1;
-		border-top: 1px solid var(--border);
-	}
-
-	.account-error {
-		margin: 0;
-		color: var(--danger);
-	}
-
-	.reauth-backdrop {
-		position: fixed;
-		inset: 0;
-		z-index: 40;
-		border: 0;
-		background: rgb(0 0 0 / 0.62);
-		backdrop-filter: blur(3px);
-		-webkit-backdrop-filter: blur(3px);
-		cursor: default;
-	}
-
-	.reauth-modal {
-		position: fixed;
-		z-index: 41;
-		top: 50%;
-		left: 50%;
-		width: min(calc(100vw - 32px), 420px);
-		transform: translate(-50%, -50%);
-		display: grid;
-		gap: 16px;
-		padding: 24px;
-		border-radius: 16px;
-		border: 1px solid var(--account-modal-border);
-		background: var(--account-modal-bg);
-		box-shadow: 0 24px 70px rgb(0 0 0 / 0.28);
-		isolation: isolate;
-	}
-
-	.reauth-modal__header {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		gap: 12px;
-	}
-
-	.reauth-modal h2,
-	.reauth-modal p {
-		margin: 0;
-	}
-
-	.reauth-modal h2 {
-		font-size: 1.125rem;
-	}
-
-	.reauth-modal p {
-		color: var(--text-muted);
-		line-height: 1.6;
-	}
-
-	.reauth-modal__close {
-		width: 32px;
-		height: 32px;
-		border: 1px solid var(--border);
-		border-radius: 999px;
-		background: transparent;
-		color: var(--text-muted);
-		cursor: pointer;
-		font-size: 1.25rem;
-		line-height: 1;
-	}
-
-	.reauth-error {
-		color: var(--danger) !important;
-		font-weight: 600;
-	}
-
-	.reauth-actions {
-		display: grid;
-		gap: 8px;
-	}
-
-	.reauth-email-code {
-		display: grid;
-		gap: 10px;
-	}
-
-	.reauth-code-input {
-		width: 100%;
-		min-height: 44px;
-		border: 1px solid var(--border);
-		border-radius: 12px;
-		background: var(--surface);
-		color: var(--text-primary);
-		font: inherit;
-		letter-spacing: 0.08em;
-		padding: 0 14px;
-	}
-
-	@media (max-width: 760px) {
-		.account-shell {
-			padding: 16px;
-		}
-
-		.account-grid {
-			grid-template-columns: 1fr;
-		}
-
-		.account-screen.full {
-			grid-column: auto;
-			grid-template-columns: 1fr;
-		}
-
-		.account-screen__block {
-			grid-column: 1 !important;
-		}
-
-		.account-header {
-			align-items: flex-start;
-			gap: 16px;
-		}
-	}
-</style>
+	{#snippet dialog()}
+		<AccountReauthDialog
+			open={reauthModalOpen}
+			passkeyAvailable={passkeyReauthAvailable}
+			emailCodeAvailable={emailCodeReauthAvailable}
+			totpAvailable={totpReauthAvailable}
+			pending={reauthPending}
+			emailCodeSent={emailReauthCodeSent}
+			maskedEmail={emailReauthMaskedEmail}
+			bind:emailCode={emailReauthCode}
+			bind:totpCode={totpReauthCode}
+			error={reauthError}
+			onPasskey={completePasskeyReauth}
+			onSendEmailCode={sendEmailCodeReauth}
+			onVerifyEmailCode={completeEmailCodeReauth}
+			onVerifyTotp={completeTotpReauth}
+			onClose={cancelReauth}
+		/>
+	{/snippet}
+</AccountShell>

@@ -1,3 +1,4 @@
+import { accentTextColor, normalizeAccentColor } from '$lib/utils/accent-text';
 import { browser } from '$app/environment';
 import type {
 	LoginUIConfig,
@@ -291,7 +292,8 @@ export function createLoginUIPageStore() {
 			sanitizeColor(backgroundColor) || null
 		);
 		syncLoginUIDocumentSurface();
-		setOptionalStyleProperty('--login-accent-color', sanitizeColor(accentColor) || null);
+		setOptionalStyleProperty('--login-accent-color', accentColor || null);
+		setOptionalStyleProperty('--login-accent-text', accentTextColor(accentColor));
 		setOptionalStyleProperty('--login-title-color', sanitizeColor(titleColor) || null);
 		setOptionalStyleProperty('--login-text-color', sanitizeColor(textColor) || null);
 		setOptionalStyleProperty('--login-copy-color', sanitizeColor(copyColor) || null);
@@ -330,7 +332,8 @@ export function createLoginUIPageStore() {
 		fontFamily = readFontFamily(page?.fontFamily);
 		fontScale = readFontScale(page?.fontScale);
 		backgroundColor = sanitizeColor(page?.backgroundColor) || '';
-		accentColor = sanitizeColor(page?.accentColor) || '';
+		// Applied opaque, from a colour every renderer resolves alike (see accent-text.ts).
+		accentColor = normalizeAccentColor(sanitizeColor(page?.accentColor)) || '';
 		titleColor = sanitizeColor(page?.titleColor) || '';
 		textColor = sanitizeColor(page?.textColor) || '';
 		copyColor = sanitizeColor(page?.copyColor) || '';
@@ -395,6 +398,10 @@ export function createLoginUIPageStore() {
 		},
 		get accentColor() {
 			return accentColor;
+		},
+		/** The text colour that reads on the accent (null without an accent). */
+		get accentTextColor() {
+			return accentTextColor(accentColor);
 		},
 		get titleColor() {
 			return titleColor;

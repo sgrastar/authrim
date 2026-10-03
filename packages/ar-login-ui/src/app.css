@@ -61,6 +61,12 @@
 	--warning-light: rgba(245, 158, 11, 0.1);
 	--danger: #ef4444;
 	--danger-light: rgba(239, 68, 68, 0.1);
+	/* Destructive buttons and error text: --danger itself is too light for white labels (3.8:1) or
+	   for text on light cards, so filled buttons and text use these (AA in every scheme). */
+	--danger-bg: #b91c1c;
+	--danger-text: #ffffff;
+	--danger-fg: #991b1b;
+	--warning-fg: #92400e;
 
 	/* === Hierarchy Colors === */
 	--system-color: #64748b;
@@ -451,12 +457,15 @@ html[dir='rtl'] .form-select {
 }
 
 .btn-primary {
-	background: var(--gradient-primary);
-	color: white;
+	background: var(--button-primary-bg, var(--gradient-primary));
+	color: var(--button-primary-text, white);
 }
 
 .btn-primary:hover:not(:disabled) {
-	filter: brightness(1.1);
+	/* Keep the theme's fill and label (a same-named UnoCSS shortcut and a:hover would recolour
+	   them, and a brighter fill could fail the label): hover lifts the button instead. */
+	background: var(--button-primary-bg, var(--gradient-primary));
+	color: var(--button-primary-text, white);
 	transform: translateY(-1px);
 }
 
@@ -472,12 +481,15 @@ html[dir='rtl'] .form-select {
 }
 
 .btn-danger {
-	background: var(--danger);
-	color: white;
+	background: var(--danger-bg);
+	color: var(--danger-text);
 }
 
 .btn-danger:hover:not(:disabled) {
-	filter: brightness(1.1);
+	/* As primary: keep the fill and label, which a brighter fill could fail. */
+	background: var(--danger-bg);
+	color: var(--danger-text);
+	transform: translateY(-1px);
 }
 
 .btn-ghost {
@@ -547,7 +559,8 @@ html[dir='rtl'] .form-select {
 .alert-error {
 	background: var(--danger-light);
 	border-color: var(--danger);
-	color: #b91c1c;
+	/* Dark enough to read on the tint over translucent glass too. */
+	color: #991b1b;
 }
 
 .alert-warning {
@@ -566,6 +579,20 @@ html[dir='rtl'] .form-select {
 	background: var(--primary-light);
 	border-color: var(--primary);
 	color: var(--text-primary);
+}
+
+/* Set for each scheme, not only on :root: a light boundary inside a dark document (the Storybook
+   frame, a page that switches scheme) must not inherit the dark values. */
+[data-theme='light'] {
+	--danger-bg: #b91c1c;
+	--danger-fg: #991b1b;
+	--warning-fg: #92400e;
+}
+
+[data-theme='dark'] {
+	--danger-bg: #dc2626;
+	--danger-fg: #fca5a5;
+	--warning-fg: #fcd34d;
 }
 
 /* Dark theme alert colors */
@@ -6066,9 +6093,9 @@ tr.expired {
 	align-items: center;
 	gap: 10px;
 	padding: 12px 14px;
-	border: 1px solid var(--border-color, var(--border));
+	border: 1px solid var(--border);
 	border-radius: 12px;
-	background: color-mix(in srgb, var(--surface-color, var(--bg-glass)) 88%, transparent);
+	background: color-mix(in srgb, var(--bg-glass) 88%, transparent);
 	color: var(--text-secondary);
 	font-size: 0.9rem;
 	line-height: 1.45;
@@ -6378,7 +6405,8 @@ tr.expired {
 	--input-radius: 0px;
 	--input-border: rgba(255, 255, 255, 0.26);
 	--button-primary-bg: var(--primary);
-	--button-primary-text: #1c0d08;
+	/* A tenant's accent fills the button: its label takes the colour that reads on it. */
+	--button-primary-text: var(--login-accent-text, #1c0d08);
 	--button-secondary-bg: rgba(255, 255, 255, 0.07);
 	--button-secondary-border: rgba(255, 255, 255, 0.28);
 	--button-secondary-text: #f6efe9;
@@ -6392,11 +6420,28 @@ tr.expired {
 		sans-serif;
 	--font-body: 'Avenir Next', 'Helvetica Neue', 'Hiragino Sans', 'Noto Sans JP', sans-serif;
 	--login-page-max-width: 420px;
+	/* The page: default imagery, then a page-wide scrim (under everything, wherever text sits)
+	   and darker top and bottom bands behind the header and footer. */
+	--fullbleed-default-image: linear-gradient(160deg, #3a2018 0%, #17100c 60%, #0d0908 100%);
+	--fullbleed-scrim: rgba(8, 5, 4, 0.5);
+	--fullbleed-overlay:
+		linear-gradient(to top, rgba(10, 7, 6, 0.55), rgba(10, 7, 6, 0.1) 26%, transparent 45%),
+		linear-gradient(to bottom, rgba(10, 7, 6, 0.4), transparent 32%),
+		linear-gradient(var(--fullbleed-scrim), var(--fullbleed-scrim));
+	/* Text placed on the imagery (header, footer, links under the card). */
+	--fullbleed-on-image-title: #fffaf6;
+	--fullbleed-on-image-text: rgba(255, 255, 255, 0.88);
+	--fullbleed-on-image-muted: rgba(255, 255, 255, 0.72);
+	--fullbleed-on-image-shadow: rgba(0, 0, 0, 0.5);
+	/* Behind text on a tenant's own image, whose lightness is unknown (none on the default). */
+	--fullbleed-on-image-backdrop-image: rgba(14, 10, 9, 0.62);
+	--fullbleed-alert-base: #1b1412;
 }
 
 :is(:root, .login-ui-theme-boundary)[data-theme='light'][data-login-theme='fullbleed-glass'] {
-	--login-page-background-color: #17110d;
-	--primary: var(--login-accent-color, #c93a22);
+	--login-page-background-color: #ecdfd3;
+	/* Darkened from #c93a22 so links meet 4.5:1 on the translucent card. */
+	--primary: var(--login-accent-color, #b0301b);
 	--primary-hover: color-mix(in srgb, var(--primary) 82%, black);
 	--primary-light: color-mix(in srgb, var(--primary) 12%, transparent);
 	--gradient-primary: linear-gradient(
@@ -6404,7 +6449,7 @@ tr.expired {
 		var(--primary) 0%,
 		color-mix(in srgb, var(--primary) 82%, black) 100%
 	);
-	--bg-page: #17110d;
+	--bg-page: #ecdfd3;
 	--bg-card: rgba(255, 253, 250, 0.5);
 	--bg-glass: rgba(255, 253, 250, 0.5);
 	--bg-input: rgba(255, 255, 255, 0.65);
@@ -6414,10 +6459,10 @@ tr.expired {
 	--border-glass: rgba(255, 255, 255, 0.45);
 	--text-primary: #221b17;
 	--text-secondary: #5c524c;
-	--text-muted: #8c817a;
+	--text-muted: #655a54;
 	--input-border: rgba(34, 27, 23, 0.28);
 	--button-primary-bg: var(--primary);
-	--button-primary-text: #ffffff;
+	--button-primary-text: var(--login-accent-text, #ffffff);
 	--button-secondary-bg: rgba(255, 255, 255, 0.55);
 	--button-secondary-border: rgba(34, 27, 23, 0.35);
 	--button-secondary-text: #221b17;
@@ -6426,6 +6471,30 @@ tr.expired {
 	--accent-color: var(--primary);
 	--border-color: rgba(34, 27, 23, 0.16);
 	--shadow-sm: 0 24px 64px rgba(12, 8, 6, 0.3);
+	/* Light mode keeps the card translucent, so what shows through it is light: light default
+	   imagery (a tenant's own image should be light too), light scrims, and dark text on it. */
+	--fullbleed-default-image: linear-gradient(160deg, #f6ede5 0%, #ecdfd3 60%, #e0cdbd 100%);
+	--fullbleed-scrim: rgba(250, 245, 240, 0.12);
+	--fullbleed-overlay:
+		linear-gradient(
+			to top,
+			rgba(250, 245, 240, 0.72),
+			rgba(250, 245, 240, 0.18) 26%,
+			transparent 45%
+		),
+		linear-gradient(
+			to bottom,
+			rgba(250, 245, 240, 0.78),
+			rgba(250, 245, 240, 0.36) 18%,
+			transparent 38%
+		),
+		linear-gradient(var(--fullbleed-scrim), var(--fullbleed-scrim));
+	--fullbleed-on-image-title: #221b17;
+	--fullbleed-on-image-text: #3d332e;
+	--fullbleed-on-image-muted: #4a3f39;
+	--fullbleed-on-image-shadow: rgba(255, 250, 246, 0.6);
+	--fullbleed-on-image-backdrop-image: rgba(250, 245, 240, 0.78);
+	--fullbleed-alert-base: #fbf7f3;
 }
 
 :is(:root, .login-ui-theme-boundary)[data-font-family='rounded'] {
@@ -6855,58 +6924,98 @@ tr.expired {
 }
 
 /* --- Vermilion (fullbleed-glass) page treatment ---
-   Placed after the fullbleed_card overlay so the theme scrims win.
-   Top/bottom scrims keep header/footer text readable over imagery (mock parity). */
+   Placed after the fullbleed_card overlay so the theme scrims win. The imagery, the scrims and the
+   colours of text placed on the imagery are tokens of the theme boundary (dark below, light in the
+   light block), so a page always follows its own boundary's scheme. */
 [data-login-theme='fullbleed-glass'] .auth-page {
-	--login-page-overlay:
-		linear-gradient(to top, rgba(10, 7, 6, 0.55), rgba(10, 7, 6, 0.1) 26%, transparent 45%),
-		linear-gradient(to bottom, rgba(10, 7, 6, 0.4), transparent 32%),
-		linear-gradient(rgba(8, 5, 4, 0.5), rgba(8, 5, 4, 0.5));
-	background-image: var(
-		--login-page-background-layer,
-		linear-gradient(160deg, #3a2018 0%, #17100c 60%, #0d0908 100%)
-	);
-}
-
-[data-theme='light'][data-login-theme='fullbleed-glass'] .auth-page {
-	--login-page-overlay:
-		linear-gradient(to top, rgba(10, 7, 6, 0.55), rgba(10, 7, 6, 0.1) 26%, transparent 45%),
-		linear-gradient(to bottom, rgba(10, 7, 6, 0.58), rgba(10, 7, 6, 0.32) 18%, transparent 38%),
-		linear-gradient(rgba(20, 12, 8, 0.12), rgba(20, 12, 8, 0.12));
+	--login-page-overlay: var(--fullbleed-overlay);
+	background-image: var(--login-page-background-layer, var(--fullbleed-default-image));
 }
 
 /* Vermilion bold typography and on-image readability (mock parity) */
 [data-login-theme='fullbleed-glass'] .auth-page .auth-header__title {
-	color: #fffaf6;
+	color: var(--fullbleed-on-image-title);
 	font-size: 2em;
 	font-weight: 300;
 	letter-spacing: 0.5em;
 	text-indent: 0.5em;
 	text-transform: uppercase;
 	line-height: 1.05;
-	text-shadow: 0 2px 28px rgba(0, 0, 0, 0.5);
+	text-shadow: 0 2px 28px var(--fullbleed-on-image-shadow);
 }
 
 [data-login-theme='fullbleed-glass'] .auth-page .auth-header__subtitle {
-	color: rgba(255, 255, 255, 0.88);
+	color: var(--fullbleed-on-image-text);
 	letter-spacing: 0.12em;
-	text-shadow: 0 1px 16px rgba(0, 0, 0, 0.5);
+	text-shadow: 0 1px 16px var(--fullbleed-on-image-shadow);
 }
 
 [data-login-theme='fullbleed-glass'] .auth-page .auth-footer {
-	color: rgba(255, 255, 255, 0.72);
-	text-shadow: 0 1px 12px rgba(0, 0, 0, 0.5);
+	color: var(--fullbleed-on-image-muted);
+	text-shadow: 0 1px 12px var(--fullbleed-on-image-shadow);
 }
 
 [data-login-theme='fullbleed-glass'] .auth-page .auth-bottom-link {
-	color: rgba(255, 255, 255, 0.85);
-	text-shadow: 0 1px 12px rgba(0, 0, 0, 0.5);
+	color: var(--fullbleed-on-image-text);
+	text-shadow: 0 1px 12px var(--fullbleed-on-image-shadow);
 }
 
 [data-login-theme='fullbleed-glass'] .auth-page .auth-bottom-link a {
-	color: #fffaf6;
+	color: var(--fullbleed-on-image-title);
 	text-decoration: underline;
 	text-underline-offset: 3px;
+}
+
+/* Behind on-image text on a tenant's image (never on the default imagery, and never over a bar,
+   which has its own surface); it paints outside the box, so nothing shifts. */
+[data-login-theme='fullbleed-glass'][data-has-page-background-image='true']:not(
+		[data-header-style='bar']
+	)
+	.auth-page
+	.auth-header,
+[data-login-theme='fullbleed-glass'][data-has-page-background-image='true']:not(
+		[data-footer-style='bar']
+	)
+	.auth-page
+	.auth-footer,
+[data-login-theme='fullbleed-glass'][data-has-page-background-image='true']
+	.auth-page
+	.auth-bottom-link {
+	background: var(--fullbleed-on-image-backdrop-image);
+	box-shadow: 0 0 0 10px var(--fullbleed-on-image-backdrop-image);
+}
+
+/* A bar over a tenant's image is a surface of its own: as opaque as the backdrop, so its text
+   reads over any image too. */
+[data-login-theme='fullbleed-glass'][data-has-page-background-image='true'][data-header-style='bar']
+	.auth-page
+	.auth-header,
+[data-login-theme='fullbleed-glass'][data-has-page-background-image='true'][data-footer-style='bar']
+	.auth-page
+	.auth-footer {
+	background: var(--fullbleed-on-image-backdrop-image);
+}
+
+/* Alerts may sit on the imagery (outside the card): their tint goes over an opaque base, so their
+   text reads over any image. */
+[data-login-theme='fullbleed-glass'] .alert.alert-error {
+	background:
+		linear-gradient(var(--danger-light), var(--danger-light)), var(--fullbleed-alert-base);
+}
+
+[data-login-theme='fullbleed-glass'] .alert.alert-warning {
+	background:
+		linear-gradient(var(--warning-light), var(--warning-light)), var(--fullbleed-alert-base);
+}
+
+[data-login-theme='fullbleed-glass'] .alert.alert-success {
+	background:
+		linear-gradient(var(--success-light), var(--success-light)), var(--fullbleed-alert-base);
+}
+
+[data-login-theme='fullbleed-glass'] .alert.alert-info {
+	background:
+		linear-gradient(var(--primary-light), var(--primary-light)), var(--fullbleed-alert-base);
 }
 
 [data-login-theme='fullbleed-glass'] .runtime-screen-heading h2 {
@@ -6939,9 +7048,16 @@ tr.expired {
 }
 
 /* --- Theme template interaction states (mock parity) --- */
-[data-login-theme]:not([data-login-theme='classic'])
+[data-login-theme]:not([data-login-theme='classic']):not([data-login-theme='fullbleed-glass'])
 	.runtime-auth-button:not(.secondary):not(:disabled):hover {
 	background: var(--primary-hover);
+}
+
+/* Full bleed fills with a tenant's accent, its label chosen for that fill: hover keeps the fill
+   (a lighter or darker one could fail the label) and marks itself with a ring. */
+[data-login-theme='fullbleed-glass'] .runtime-auth-button:not(.secondary):not(:disabled):hover {
+	background: var(--button-primary-bg);
+	box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--button-primary-text) 45%, transparent);
 }
 
 [data-login-theme]:not([data-login-theme='classic'])
@@ -7589,7 +7705,7 @@ tr.expired {
 	text-align: center;
 	font-size: var(--auth-pin-cell-font-size, 1.25rem);
 	font-weight: 700;
-	background: var(--input-bg, var(--bg-glass));
+	background: var(--bg-input);
 	border: 2px solid var(--input-border, var(--border));
 	border-radius: var(--input-radius, var(--radius-md));
 	color: var(--text-primary);
@@ -7628,6 +7744,189 @@ tr.expired {
 	font-weight: 600;
 	color: var(--text-primary);
 	margin: 0;
+}
+
+/* Tenant discovery (discover page): how to find the organisation and the tenants found, on theme
+   tokens only. */
+.auth-discover {
+	display: grid;
+	gap: 16px;
+}
+
+.auth-discover__header {
+	text-align: center;
+}
+
+.auth-discover__kicker {
+	margin: 0 0 4px;
+	font-size: 0.75rem;
+	font-weight: 600;
+	letter-spacing: 0.08em;
+	text-transform: uppercase;
+	color: var(--text-muted);
+}
+
+.auth-discover__label {
+	display: block;
+	margin: 0 0 6px;
+	font-size: 0.875rem;
+	font-weight: 600;
+	color: var(--text-secondary);
+}
+
+.auth-discover__form .form-group {
+	margin-bottom: 14px;
+}
+
+.auth-discover__form :is(.form-input, .form-select) {
+	min-height: var(--auth-control-height, 2.75rem);
+	border-color: var(--input-border, var(--border));
+	border-radius: var(--input-radius, var(--radius-md));
+	font-size: 0.9375rem;
+}
+
+.auth-discover__list {
+	display: grid;
+	gap: 10px;
+}
+
+.auth-discover .tenant-option {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 16px;
+	width: 100%;
+	padding: 14px 16px;
+	border: 1px solid var(--border);
+	border-radius: var(--input-radius, var(--radius-md));
+	background: var(--bg-input, var(--bg-page));
+	color: var(--text-primary);
+	font: inherit;
+	text-align: start;
+	text-decoration: none;
+	cursor: pointer;
+	transition:
+		border-color var(--transition-fast),
+		transform var(--transition-fast);
+}
+
+.auth-discover .tenant-option:hover:not(:disabled),
+.auth-discover .tenant-option:focus-visible {
+	border-color: var(--primary);
+	transform: translateY(-1px);
+}
+
+.auth-discover .tenant-option:disabled {
+	opacity: 0.6;
+	cursor: not-allowed;
+}
+
+.auth-discover .tenant-option-form {
+	margin: 0;
+}
+
+.auth-discover .tenant-branding {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	min-width: 0;
+}
+
+.auth-discover .tenant-branding img {
+	width: 40px;
+	height: 40px;
+	flex-shrink: 0;
+	object-fit: cover;
+	border: 1px solid var(--border);
+	border-radius: var(--radius-md);
+}
+
+.auth-discover .tenant-branding strong {
+	display: block;
+	color: var(--text-primary);
+}
+
+.auth-discover .tenant-branding p,
+.auth-discover .tenant-option__host {
+	margin: 0;
+	font-size: 0.8125rem;
+	color: var(--text-secondary);
+}
+
+@media (max-width: 640px) {
+	.auth-discover .tenant-option {
+		flex-direction: column;
+		align-items: flex-start;
+	}
+}
+
+/* CIBA request (ciba page): client, expiry and the code to compare, on theme tokens only. */
+.auth-ciba-request__head {
+	display: flex;
+	align-items: center;
+	gap: 16px;
+}
+
+.auth-ciba-request__logo {
+	width: 48px;
+	height: 48px;
+	flex-shrink: 0;
+	border-radius: var(--radius-md);
+	object-fit: cover;
+}
+
+.auth-ciba-request__client {
+	flex: 1;
+	min-width: 0;
+}
+
+.auth-ciba-request__expiry {
+	text-align: end;
+}
+
+.auth-ciba-request__code {
+	margin: 0;
+	font-family: var(--font-mono, ui-monospace, monospace);
+	font-size: 1.5rem;
+	font-weight: 700;
+	letter-spacing: 0.08em;
+	color: var(--text-primary);
+}
+
+/* The email-code page's accepted status, instructions and code label. */
+.auth-email-code__lead {
+	margin: 0;
+	font-weight: 500;
+	color: var(--text-secondary);
+}
+
+.auth-email-code__address {
+	margin: 0;
+	font-size: 0.875rem;
+	font-weight: 500;
+	overflow-wrap: anywhere;
+	color: var(--text-primary);
+}
+
+.auth-email-code__instructions {
+	margin: 0;
+	font-size: 0.875rem;
+	color: var(--text-secondary);
+}
+
+.auth-email-code__label {
+	display: block;
+	margin-bottom: 8px;
+	font-size: 0.875rem;
+	font-weight: 500;
+	text-align: center;
+	color: var(--text-secondary);
+}
+
+/* The callback page's progress spinner, centred above its heading. */
+.auth-callback__spinner {
+	display: block;
+	margin: 0 auto 16px;
 }
 
 /* --- Error code box --- */

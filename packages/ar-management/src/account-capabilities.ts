@@ -124,9 +124,8 @@ const CAPABILITIES: AccountCapability[] = [
   },
   {
     id: 'social_accounts.manage',
-    status: 'planned',
+    status: 'available',
     requires_reauth: true,
-    planned_phase: '4E-3',
   },
   {
     id: 'rp_sessions.manage',
@@ -155,7 +154,7 @@ const SECTIONS = [
   },
   {
     id: 'connections',
-    status: 'planned',
+    status: 'available',
     capabilities: ['social_accounts.manage'],
   },
   {

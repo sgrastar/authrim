@@ -1,44 +1,86 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
-	import type { HTMLButtonAttributes } from 'svelte/elements';
+	import type { HTMLAnchorAttributes, HTMLButtonAttributes } from 'svelte/elements';
 
-	interface Props extends HTMLButtonAttributes {
+	interface Common {
 		variant?: 'primary' | 'secondary' | 'ghost' | 'danger';
 		size?: 'sm' | 'md' | 'lg';
-		loading?: boolean;
 		icon?: boolean;
 		children: Snippet;
 	}
 
+	/** A button. */
+	type ButtonProps = Common &
+		Omit<HTMLButtonAttributes, keyof Common> & {
+			href?: undefined;
+			reload?: undefined;
+			loading?: boolean;
+		};
+
+	/**
+	 * The same button drawn as a link, for navigation (one control, not a button in a link). A link
+	 * is never disabled or busy: render a button for an action that can be.
+	 */
+	type LinkProps = Common &
+		Omit<HTMLAnchorAttributes, keyof Common | 'href' | 'type'> & {
+			href: string;
+			/** Reload the page instead of client-side navigation. */
+			reload?: boolean;
+			loading?: never;
+			disabled?: never;
+			type?: never;
+		};
+
+	type Props = ButtonProps | LinkProps;
+
 	let {
 		variant = 'primary',
 		size = 'md',
-		loading = false,
 		icon = false,
-		disabled = false,
-		type = 'button',
 		class: className = '',
 		children,
-		...restProps
+		...rest
 	}: Props = $props();
 </script>
 
-<button
-	{type}
-	disabled={disabled || loading}
-	aria-busy={loading}
-	class="btn btn-{variant} btn-{size} {className}"
-	class:btn-icon={icon}
-	{...restProps}
->
-	{#if loading}
-		<i class="spinner i-ph-circle-notch"></i>
-	{/if}
-	{@render children()}
-</button>
+{#if rest.href !== undefined}
+	{@const { href, reload, ...anchor } = rest as LinkProps}
+	<a
+		{...anchor}
+		{href}
+		class="btn btn-{variant} btn-{size} {className}"
+		class:btn-icon={icon}
+		data-sveltekit-reload={reload ? '' : undefined}
+	>
+		{@render children()}
+	</a>
+{:else}
+	{@const {
+		loading = false,
+		disabled = false,
+		type = 'button',
+		href: _href,
+		reload: _reload,
+		...button
+	} = rest as ButtonProps}
+	<button
+		{...button}
+		{type}
+		disabled={disabled || loading}
+		aria-busy={loading}
+		class="btn btn-{variant} btn-{size} {className}"
+		class:btn-icon={icon}
+	>
+		{#if loading}
+			<i class="spinner i-ph-circle-notch"></i>
+		{/if}
+		{@render children()}
+	</button>
+{/if}
 
 <style>
 	.btn {
+		text-decoration: none;
 		display: inline-flex;
 		align-items: center;
 		justify-content: center;
@@ -51,7 +93,9 @@
 		font-weight: var(--auth-control-font-weight, 600);
 		border: none;
 		cursor: pointer;
-		transition: all var(--transition-fast);
+		/* --surface-*, --control-* and --button-*: unset except where a page asks for flat, still
+		   controls (AccountShell); see Card. */
+		transition: var(--surface-transition, all var(--transition-fast));
 		white-space: nowrap;
 		position: relative;
 		overflow: hidden;
@@ -65,43 +109,36 @@
 
 	/* Primary variant - gradient with glow */
 	.btn-primary {
-		background: var(--gradient-primary);
-		color: white;
-		box-shadow: 0 4px 16px rgba(51, 51, 51, 0.3);
+		/* The theme's primary button, the same as the sign-in buttons (white text on a dark
+		   primary would fail on the light primaries of dark themes). */
+		background: var(--button-primary-surface, var(--button-primary-bg, var(--gradient-primary)));
+		color: var(--button-primary-text, white);
+		box-shadow: var(--button-shadow, 0 4px 16px rgba(51, 51, 51, 0.3));
 	}
 
+	/* The fill and label stay the theme's on hover: a same-named UnoCSS shortcut would otherwise
+	   paint a fixed blue background with white text. */
 	.btn-primary:hover:not(:disabled) {
-		transform: translateY(-2px);
-		box-shadow: 0 8px 24px rgba(51, 51, 51, 0.4);
-	}
-
-	.btn-primary::after {
-		content: '';
-		position: absolute;
-		inset: 0;
-		background: linear-gradient(rgba(255, 255, 255, 0.2), transparent);
-		opacity: 0;
-		transition: opacity var(--transition-fast);
-	}
-
-	.btn-primary:hover::after {
-		opacity: 1;
+		background: var(--button-primary-surface, var(--button-primary-bg, var(--gradient-primary)));
+		color: var(--button-primary-text, white);
+		transform: var(--surface-hover-transform, translateY(-2px));
+		box-shadow: var(--button-primary-hover-shadow, 0 8px 24px rgba(51, 51, 51, 0.4));
 	}
 
 	/* Secondary variant - glass effect */
 	.btn-secondary {
-		background: var(--bg-glass);
+		background: var(--control-surface, var(--bg-glass));
 		color: var(--text-primary);
 		border: 1px solid var(--border);
-		backdrop-filter: var(--blur-sm);
-		-webkit-backdrop-filter: var(--blur-sm);
+		backdrop-filter: var(--surface-backdrop-filter, var(--blur-sm));
+		-webkit-backdrop-filter: var(--surface-backdrop-filter, var(--blur-sm));
 	}
 
 	.btn-secondary:hover:not(:disabled) {
-		background: var(--bg-card);
+		background: var(--control-hover-surface, var(--bg-card));
 		border-color: var(--primary);
 		color: var(--primary);
-		transform: translateY(-2px);
+		transform: var(--surface-hover-transform, translateY(-2px));
 	}
 
 	/* Ghost variant */
@@ -112,21 +149,22 @@
 	}
 
 	.btn-ghost:hover:not(:disabled) {
-		background: var(--primary-light);
+		background: var(--control-hover-surface, var(--primary-light));
 		color: var(--primary);
 	}
 
 	/* Danger variant */
 	.btn-danger {
-		background: var(--danger);
-		color: white;
-		box-shadow: 0 4px 16px rgba(239, 68, 68, 0.3);
+		background: var(--danger-bg);
+		color: var(--danger-text);
+		box-shadow: var(--button-shadow, 0 4px 16px rgba(185, 28, 28, 0.25));
 	}
 
 	.btn-danger:hover:not(:disabled) {
-		background: #dc2626;
-		transform: translateY(-2px);
-		box-shadow: 0 8px 24px rgba(239, 68, 68, 0.4);
+		background: var(--danger-bg);
+		color: var(--danger-text);
+		transform: var(--surface-hover-transform, translateY(-2px));
+		box-shadow: var(--button-shadow, 0 8px 24px rgba(185, 28, 28, 0.35));
 	}
 
 	/* Size variants */
@@ -161,10 +199,14 @@
 		height: 48px;
 	}
 
-	/* Focus state */
+	/* Focus: a solid outline for keyboard focus, apart from the shadows hover changes. */
 	.btn:focus {
 		outline: none;
-		box-shadow: 0 0 0 3px var(--primary-light);
+	}
+
+	.btn:focus-visible {
+		outline: 2px solid var(--primary);
+		outline-offset: 2px;
 	}
 
 	/* Disabled state */

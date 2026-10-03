@@ -201,7 +201,7 @@ describe('split page shell', () => {
 		expect(css).toContain('--bg-card: rgba(14, 10, 9, 0.45);');
 		expect(css).toContain('--bg-card: rgba(255, 253, 250, 0.5);');
 		expect(css).toContain('--primary: var(--login-accent-color, #e8623f);');
-		expect(css).toContain('--primary: var(--login-accent-color, #c93a22);');
+		expect(css).toContain('--primary: var(--login-accent-color, #b0301b);');
 		expect(css).toContain('--button-primary-bg: var(--primary);');
 		expect(css).toContain("[data-login-theme='fullbleed-glass'] .auth-page .auth-header__title");
 		expect(css).toMatch(
@@ -209,7 +209,10 @@ describe('split page shell', () => {
 		);
 		expect(css).toContain("[data-login-theme='fullbleed-glass'] .auth-page .auth-header__subtitle");
 		expect(css).toContain("[data-login-theme='fullbleed-glass'] .auth-page .auth-bottom-link");
-		expect(css).toContain('rgba(10, 7, 6, 0.58)');
+		// Text on the imagery follows the boundary's scheme (contrast: theme-contrast.test.ts).
+		expect(css).toContain('color: var(--fullbleed-on-image-title);');
+		expect(css).toContain('--fullbleed-on-image-title: #fffaf6;');
+		expect(css).toContain('--fullbleed-on-image-title: #221b17;');
 	});
 
 	it('keeps split brand copy readable independently from light form colors', () => {
@@ -244,19 +247,29 @@ describe('split page shell', () => {
 
 	it('shows one generic accepted status on the email-code screen without branching on identity', () => {
 		const page = source('routes/verify-email-code/+page.svelte');
+		const view = source('lib/views/VerifyEmailCodeView.svelte');
 
-		expect(page).toContain('role="status" aria-live="polite"');
-		expect(page).toContain('$LL.emailCode_subtitle()');
-		expect(page).not.toMatch(/userExists|accountExists|emailExists/);
+		expect(page).toContain('<VerifyEmailCodeView');
+		expect(view).toContain('role="status" aria-live="polite"');
+		expect(view).toContain('$LL.emailCode_subtitle()');
+		for (const each of [page, view]) {
+			expect(each).not.toMatch(/userExists|accountExists|emailExists/);
+		}
 	});
 
 	it('announces email-code send progress on both login and signup', () => {
-		for (const pagePath of ['routes/login/+page.svelte', 'routes/signup/+page.svelte']) {
+		for (const [pagePath, viewPath] of [
+			['routes/login/+page.svelte', 'lib/views/LoginView.svelte'],
+			['routes/signup/+page.svelte', 'lib/views/SignupView.svelte']
+		]) {
 			const page = source(pagePath);
+			const view = source(viewPath);
 
 			expect(page).toContain('const emailCodeProgressMessage');
-			expect(page).toContain('{#if emailCodeProgressMessage}');
-			expect(page).toContain('role="status" aria-live="polite"');
+			expect(page).toContain('emailCodeProgress: emailCodeProgressMessage');
+			expect(view).toMatch(
+				/\{#if alerts\.emailCodeProgress\}\s*<div class="auth-progress mb-4" role="status" aria-live="polite">/
+			);
 		}
 	});
 });

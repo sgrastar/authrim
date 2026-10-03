@@ -303,6 +303,8 @@ const adminOther = {
 	admin_info_organizations: 'Organizations',
 	admin_info_roles: 'Roles',
 	admin_info_webhooks: 'Webhooks',
+	admin_theme_accent_not_applied:
+		"Authrim does not apply this color (use #rgb, #rrggbb or rgb()). The parent scope's accent, or the theme's own, is used instead.",
 	admin_theme_head_title: 'Theme - Authrim Admin',
 	admin_theme_page_description_list:
 		'Manage Login UI theme templates. Choose a template, then use it to create an editable copy.',

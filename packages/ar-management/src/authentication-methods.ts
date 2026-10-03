@@ -955,6 +955,22 @@ function readSafeColor(value: unknown, fallback: string): string {
   return fallback;
 }
 
+/**
+ * An accent the Login UI applies (ar-login-ui accent-text.ts): `#rgb`, `#rrggbb` or rgb()/rgba() with
+ * 0-255 channels. Anything else falls back to the parent scope here, rather than reaching the page and
+ * being dropped there for the theme's own accent, so the API, the pages and the admin preview agree.
+ */
+function readAccentColor(value: unknown, fallback: string): string {
+  if (typeof value !== 'string') return fallback;
+  const trimmed = value.trim();
+  if (/^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/iu.test(trimmed)) return trimmed;
+  const rgb = trimmed.match(
+    /^rgba?\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})\s*(?:,\s*(?:0|1|0?\.\d+))?\s*\)$/iu
+  );
+  if (rgb && [rgb[1], rgb[2], rgb[3]].every((channel) => Number(channel) <= 255)) return trimmed;
+  return fallback;
+}
+
 function readBoundedNumber(value: unknown, fallback: number, min: number, max: number): number {
   const parsed =
     typeof value === 'number' ? value : typeof value === 'string' ? Number(value) : NaN;
@@ -1018,7 +1034,7 @@ function resolveLoginUIFromKVSettings(
       kvSettings['login-ui.background_color'],
       defaults.backgroundColor
     ),
-    accentColor: readSafeColor(kvSettings['login-ui.accent_color'], defaults.accentColor),
+    accentColor: readAccentColor(kvSettings['login-ui.accent_color'], defaults.accentColor),
     titleColor: readSafeColor(kvSettings['login-ui.title_color'], defaults.titleColor),
     textColor: readSafeColor(kvSettings['login-ui.text_color'], defaults.textColor),
     copyColor: readSafeColor(kvSettings['login-ui.copy_color'], defaults.copyColor),

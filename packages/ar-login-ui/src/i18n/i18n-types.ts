@@ -34,7 +34,7 @@ export type Translations = RootTranslation
 
 type RootTranslation = {
 	/**
-	 * L​o​g​g​i​n​g​ ​o​u​t​ ​w​i​l​l​ ​p​r​e​v​e​n​t​ ​y​o​u​ ​f​r​o​m​ ​r​e​t​u​r​n​i​n​g​ ​t​o​ ​t​h​i​s​ ​g​u​e​s​t​ ​a​c​c​o​u​n​t​,​ ​e​v​e​n​ ​i​f​ ​a​u​t​o​m​a​t​i​c​ ​d​e​l​e​t​i​o​n​ ​i​s​ ​d​i​s​a​b​l​e​d​.​ ​R​e​g​i​s​t​e​r​ ​f​i​r​s​t​ ​t​o​ ​k​e​e​p​ ​a​c​c​e​s​s​ ​t​o​ ​y​o​u​r​ ​a​c​c​o​u​n​t​ ​a​n​d​ ​d​a​t​a​.​ ​L​o​g​ ​o​u​t​ ​a​n​y​w​a​y​?
+	 * L​o​g​g​i​n​g​ ​o​u​t​ ​w​i​l​l​ ​p​r​e​v​e​n​t​ ​y​o​u​ ​f​r​o​m​ ​r​e​t​u​r​n​i​n​g​ ​t​o​ ​t​h​i​s​ ​g​u​e​s​t​ ​a​c​c​o​u​n​t​.​ ​R​e​g​i​s​t​e​r​ ​f​i​r​s​t​ ​t​o​ ​k​e​e​p​ ​a​c​c​e​s​s​ ​t​o​ ​y​o​u​r​ ​a​c​c​o​u​n​t​ ​a​n​d​ ​d​a​t​a​.​ ​L​o​g​ ​o​u​t​ ​a​n​y​w​a​y​?
 	 */
 	account_guestLogoutWarning: string
 	/**
@@ -440,6 +440,95 @@ type RootTranslation = {
 	 */
 	account_planned: string
 	/**
+	 * N​o​ ​e​x​t​e​r​n​a​l​ ​a​c​c​o​u​n​t​s​ ​a​r​e​ ​l​i​n​k​e​d​.
+	 */
+	account_socialEmpty: string
+	/**
+	 * L​i​n​k​ ​a​n​ ​a​c​c​o​u​n​t
+	 */
+	account_socialLinkHeading: string
+	/**
+	 * L​i​n​k​ ​{​p​r​o​v​i​d​e​r​}
+	 * @param {unknown} provider
+	 */
+	account_socialLinkWith: RequiredParams<'provider'>
+	/**
+	 * N​o​ ​o​t​h​e​r​ ​p​r​o​v​i​d​e​r​s​ ​a​r​e​ ​a​v​a​i​l​a​b​l​e​ ​t​o​ ​l​i​n​k​.
+	 */
+	account_socialNoProviders: string
+	/**
+	 * L​i​n​k​e​d​ ​{​d​a​t​e​}
+	 * @param {unknown} date
+	 */
+	account_socialLinkedAt: RequiredParams<'date'>
+	/**
+	 * L​a​s​t​ ​u​s​e​d​ ​{​d​a​t​e​}
+	 * @param {unknown} date
+	 */
+	account_socialLastUsed: RequiredParams<'date'>
+	/**
+	 * U​n​l​i​n​k
+	 */
+	account_socialUnlink: string
+	/**
+	 * U​n​l​i​n​k​ ​{​p​r​o​v​i​d​e​r​}​?​ ​Y​o​u​ ​w​i​l​l​ ​n​o​ ​l​o​n​g​e​r​ ​b​e​ ​a​b​l​e​ ​t​o​ ​l​o​g​ ​i​n​ ​w​i​t​h​ ​i​t​.
+	 * @param {unknown} provider
+	 */
+	account_socialUnlinkConfirm: RequiredParams<'provider'>
+	/**
+	 * U​n​l​i​n​k​ ​{​p​r​o​v​i​d​e​r​}
+	 * @param {unknown} provider
+	 */
+	account_socialUnlinkConfirmAction: RequiredParams<'provider'>
+	/**
+	 * T​h​e​ ​a​c​c​o​u​n​t​ ​w​a​s​ ​l​i​n​k​e​d​.
+	 */
+	account_socialLinked: string
+	/**
+	 * T​h​e​ ​a​c​c​o​u​n​t​ ​w​a​s​ ​u​n​l​i​n​k​e​d​.
+	 */
+	account_socialUnlinked: string
+	/**
+	 * T​h​a​t​ ​a​c​c​o​u​n​t​ ​i​s​ ​a​l​r​e​a​d​y​ ​l​i​n​k​e​d​ ​t​o​ ​a​n​o​t​h​e​r​ ​u​s​e​r​.
+	 */
+	account_socialErrorAlreadyLinked: string
+	/**
+	 * T​h​a​t​ ​p​r​o​v​i​d​e​r​ ​i​s​ ​a​l​r​e​a​d​y​ ​l​i​n​k​e​d​ ​t​o​ ​y​o​u​r​ ​a​c​c​o​u​n​t​.
+	 */
+	account_socialErrorAlreadyLinkedHere: string
+	/**
+	 * T​h​e​ ​p​r​o​v​i​d​e​r​ ​h​a​s​ ​n​o​t​ ​v​e​r​i​f​i​e​d​ ​t​h​a​t​ ​a​c​c​o​u​n​t​'​s​ ​e​m​a​i​l​ ​a​d​d​r​e​s​s​.
+	 */
+	account_socialErrorEmailNotVerified: string
+	/**
+	 * Y​o​u​r​ ​c​o​n​f​i​r​m​a​t​i​o​n​ ​e​x​p​i​r​e​d​ ​b​e​f​o​r​e​ ​t​h​e​ ​l​i​n​k​ ​f​i​n​i​s​h​e​d​.​ ​C​o​n​f​i​r​m​ ​a​g​a​i​n​ ​a​n​d​ ​r​e​t​r​y​.
+	 */
+	account_socialErrorSessionExpired: string
+	/**
+	 * L​i​n​k​i​n​g​ ​w​a​s​ ​c​a​n​c​e​l​l​e​d​.
+	 */
+	account_socialErrorCancelled: string
+	/**
+	 * T​h​e​ ​a​c​c​o​u​n​t​ ​c​o​u​l​d​ ​n​o​t​ ​b​e​ ​l​i​n​k​e​d​.​ ​T​r​y​ ​a​g​a​i​n​.
+	 */
+	account_socialErrorFailed: string
+	/**
+	 * T​h​i​s​ ​i​s​ ​y​o​u​r​ ​l​a​s​t​ ​w​a​y​ ​t​o​ ​l​o​g​ ​i​n​.​ ​A​d​d​ ​a​ ​p​a​s​s​k​e​y​ ​o​r​ ​a​n​o​t​h​e​r​ ​l​o​g​i​n​ ​m​e​t​h​o​d​ ​f​i​r​s​t​.
+	 */
+	account_socialErrorLastMethod: string
+	/**
+	 * A​n​o​t​h​e​r​ ​c​h​a​n​g​e​ ​t​o​ ​y​o​u​r​ ​l​o​g​i​n​ ​m​e​t​h​o​d​s​ ​i​s​ ​i​n​ ​p​r​o​g​r​e​s​s​.​ ​T​r​y​ ​a​g​a​i​n​ ​i​n​ ​a​ ​m​o​m​e​n​t​.
+	 */
+	account_socialErrorInProgress: string
+	/**
+	 * E​x​t​e​r​n​a​l​ ​a​c​c​o​u​n​t​ ​l​i​n​k​e​d
+	 */
+	account_operationSocialLinked: string
+	/**
+	 * E​x​t​e​r​n​a​l​ ​a​c​c​o​u​n​t​ ​u​n​l​i​n​k​e​d
+	 */
+	account_operationSocialUnlinked: string
+	/**
 	 * T​h​i​s​ ​b​r​o​w​s​e​r​ ​d​o​e​s​ ​n​o​t​ ​s​u​p​p​o​r​t​ ​p​a​s​s​k​e​y​ ​r​e​g​i​s​t​r​a​t​i​o​n​.
 	 */
 	account_passkeyUnsupported: string
@@ -582,6 +671,70 @@ type RootTranslation = {
 	 * S​e​s​s​i​o​n​ ​e​n​d​e​d
 	 */
 	account_operationSessionRevoked: string
+	/**
+	 * G​u​e​s​t​ ​a​c​c​o​u​n​t​ ​c​r​e​a​t​e​d
+	 */
+	account_operationGuestCreated: string
+	/**
+	 * G​u​e​s​t​ ​r​e​g​i​s​t​r​a​t​i​o​n​ ​f​a​i​l​e​d
+	 */
+	account_operationGuestUpgradeFailed: string
+	/**
+	 * G​u​e​s​t​ ​r​e​g​i​s​t​r​a​t​i​o​n​ ​s​t​a​r​t​e​d
+	 */
+	account_operationGuestUpgradeStarted: string
+	/**
+	 * G​u​e​s​t​ ​a​c​c​o​u​n​t​ ​r​e​g​i​s​t​e​r​e​d
+	 */
+	account_operationGuestUpgraded: string
+	/**
+	 * E​m​a​i​l​ ​a​d​d​e​d
+	 */
+	account_operationEmailAdded: string
+	/**
+	 * E​m​a​i​l​ ​c​h​a​n​g​e​d
+	 */
+	account_operationEmailChanged: string
+	/**
+	 * R​e​-​a​u​t​h​e​n​t​i​c​a​t​e​d​ ​b​y​ ​e​m​a​i​l
+	 */
+	account_operationEmailReauthenticated: string
+	/**
+	 * D​e​v​i​c​e​ ​r​e​n​a​m​e​d
+	 */
+	account_operationDeviceUpdated: string
+	/**
+	 * D​e​v​i​c​e​ ​u​n​l​i​n​k​e​d
+	 */
+	account_operationDeviceUnlinked: string
+	/**
+	 * R​e​-​a​u​t​h​e​n​t​i​c​a​t​e​d​ ​b​y​ ​P​a​s​s​k​e​y
+	 */
+	account_operationPasskeyReauthenticated: string
+	/**
+	 * A​u​t​h​e​n​t​i​c​a​t​o​r​ ​s​e​t​u​p​ ​s​t​a​r​t​e​d
+	 */
+	account_operationTotpEnrollmentStarted: string
+	/**
+	 * A​u​t​h​e​n​t​i​c​a​t​o​r​ ​a​c​t​i​v​a​t​e​d
+	 */
+	account_operationTotpActivated: string
+	/**
+	 * A​u​t​h​e​n​t​i​c​a​t​o​r​ ​r​e​n​a​m​e​d
+	 */
+	account_operationTotpUpdated: string
+	/**
+	 * A​u​t​h​e​n​t​i​c​a​t​o​r​ ​r​e​m​o​v​e​d
+	 */
+	account_operationTotpRemoved: string
+	/**
+	 * B​a​c​k​u​p​ ​c​o​d​e​s​ ​r​e​g​e​n​e​r​a​t​e​d
+	 */
+	account_operationTotpBackupCodesRegenerated: string
+	/**
+	 * R​e​-​a​u​t​h​e​n​t​i​c​a​t​e​d​ ​b​y​ ​a​u​t​h​e​n​t​i​c​a​t​o​r
+	 */
+	account_operationTotpReauthenticated: string
 	/**
 	 * M​y​ ​a​p​p​l​i​c​a​t​i​o​n​s
 	 */
@@ -2009,6 +2162,90 @@ export type TranslationFunctions = {
 	 */
 	account_planned: () => LocalizedString
 	/**
+	 * No external accounts are linked.
+	 */
+	account_socialEmpty: () => LocalizedString
+	/**
+	 * Link an account
+	 */
+	account_socialLinkHeading: () => LocalizedString
+	/**
+	 * Link {provider}
+	 */
+	account_socialLinkWith: (arg: { provider: unknown }) => LocalizedString
+	/**
+	 * No other providers are available to link.
+	 */
+	account_socialNoProviders: () => LocalizedString
+	/**
+	 * Linked {date}
+	 */
+	account_socialLinkedAt: (arg: { date: unknown }) => LocalizedString
+	/**
+	 * Last used {date}
+	 */
+	account_socialLastUsed: (arg: { date: unknown }) => LocalizedString
+	/**
+	 * Unlink
+	 */
+	account_socialUnlink: () => LocalizedString
+	/**
+	 * Unlink {provider}? You will no longer be able to log in with it.
+	 */
+	account_socialUnlinkConfirm: (arg: { provider: unknown }) => LocalizedString
+	/**
+	 * Unlink {provider}
+	 */
+	account_socialUnlinkConfirmAction: (arg: { provider: unknown }) => LocalizedString
+	/**
+	 * The account was linked.
+	 */
+	account_socialLinked: () => LocalizedString
+	/**
+	 * The account was unlinked.
+	 */
+	account_socialUnlinked: () => LocalizedString
+	/**
+	 * That account is already linked to another user.
+	 */
+	account_socialErrorAlreadyLinked: () => LocalizedString
+	/**
+	 * That provider is already linked to your account.
+	 */
+	account_socialErrorAlreadyLinkedHere: () => LocalizedString
+	/**
+	 * The provider has not verified that account's email address.
+	 */
+	account_socialErrorEmailNotVerified: () => LocalizedString
+	/**
+	 * Your confirmation expired before the link finished. Confirm again and retry.
+	 */
+	account_socialErrorSessionExpired: () => LocalizedString
+	/**
+	 * Linking was cancelled.
+	 */
+	account_socialErrorCancelled: () => LocalizedString
+	/**
+	 * The account could not be linked. Try again.
+	 */
+	account_socialErrorFailed: () => LocalizedString
+	/**
+	 * This is your last way to log in. Add a passkey or another login method first.
+	 */
+	account_socialErrorLastMethod: () => LocalizedString
+	/**
+	 * Another change to your login methods is in progress. Try again in a moment.
+	 */
+	account_socialErrorInProgress: () => LocalizedString
+	/**
+	 * External account linked
+	 */
+	account_operationSocialLinked: () => LocalizedString
+	/**
+	 * External account unlinked
+	 */
+	account_operationSocialUnlinked: () => LocalizedString
+	/**
 	 * This browser does not support passkey registration.
 	 */
 	account_passkeyUnsupported: () => LocalizedString
@@ -2148,6 +2385,70 @@ export type TranslationFunctions = {
 	 * Session ended
 	 */
 	account_operationSessionRevoked: () => LocalizedString
+	/**
+	 * Guest account created
+	 */
+	account_operationGuestCreated: () => LocalizedString
+	/**
+	 * Guest registration failed
+	 */
+	account_operationGuestUpgradeFailed: () => LocalizedString
+	/**
+	 * Guest registration started
+	 */
+	account_operationGuestUpgradeStarted: () => LocalizedString
+	/**
+	 * Guest account registered
+	 */
+	account_operationGuestUpgraded: () => LocalizedString
+	/**
+	 * Email added
+	 */
+	account_operationEmailAdded: () => LocalizedString
+	/**
+	 * Email changed
+	 */
+	account_operationEmailChanged: () => LocalizedString
+	/**
+	 * Re-authenticated by email
+	 */
+	account_operationEmailReauthenticated: () => LocalizedString
+	/**
+	 * Device renamed
+	 */
+	account_operationDeviceUpdated: () => LocalizedString
+	/**
+	 * Device unlinked
+	 */
+	account_operationDeviceUnlinked: () => LocalizedString
+	/**
+	 * Re-authenticated by Passkey
+	 */
+	account_operationPasskeyReauthenticated: () => LocalizedString
+	/**
+	 * Authenticator setup started
+	 */
+	account_operationTotpEnrollmentStarted: () => LocalizedString
+	/**
+	 * Authenticator activated
+	 */
+	account_operationTotpActivated: () => LocalizedString
+	/**
+	 * Authenticator renamed
+	 */
+	account_operationTotpUpdated: () => LocalizedString
+	/**
+	 * Authenticator removed
+	 */
+	account_operationTotpRemoved: () => LocalizedString
+	/**
+	 * Backup codes regenerated
+	 */
+	account_operationTotpBackupCodesRegenerated: () => LocalizedString
+	/**
+	 * Re-authenticated by authenticator
+	 */
+	account_operationTotpReauthenticated: () => LocalizedString
 	/**
 	 * My applications
 	 */

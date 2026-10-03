@@ -1,5 +1,6 @@
 import { WorkerEntrypoint } from 'cloudflare:workers';
 import {
+  assertLoginMethodRemovalLeaseHeld,
   guestResumeCredentialLookupSubject,
   GuestLifecycleRepository,
   directoryIdentityLookupSubject,
@@ -686,12 +687,20 @@ function validateExternalIdpRouteInput(value: unknown): ExternalIdpRoutePublicat
   return value as unknown as ExternalIdpRoutePublicationInput;
 }
 
+const REMOVAL_LEASE_OWNER = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u;
+
 function validateExternalIdpRouteRemovalInput(value: unknown): ExternalIdpRouteRemovalInput {
   boundedJson(value);
+  const keys = jsonObject(value)
+    ? Object.keys(value).filter((key) => key !== 'removalLeaseOwner')
+    : [];
   if (
     !jsonObject(value) ||
-    Object.keys(value).length !== EXTERNAL_IDP_ROUTE_INPUT_KEYS.size ||
-    Object.keys(value).some((key) => !EXTERNAL_IDP_ROUTE_INPUT_KEYS.has(key)) ||
+    keys.length !== EXTERNAL_IDP_ROUTE_INPUT_KEYS.size ||
+    keys.some((key) => !EXTERNAL_IDP_ROUTE_INPUT_KEYS.has(key)) ||
+    (value.removalLeaseOwner !== undefined &&
+      (typeof value.removalLeaseOwner !== 'string' ||
+        !REMOVAL_LEASE_OWNER.test(value.removalLeaseOwner))) ||
     value.schemaVersion !== 1 ||
     typeof value.operationId !== 'string' ||
     !SAFE_ID.test(value.operationId) ||
@@ -1106,6 +1115,15 @@ export class AuthAccountProvisioningEntrypoint extends WorkerEntrypoint<
             ) {
               throw new Error('external_idp_route_removal_authority_not_found');
             }
+            // The caller's removal lease must still be its own right before the removal writes.
+            if (validated.removalLeaseOwner) {
+              await assertLoginMethodRemovalLeaseHeld(
+                this.env,
+                validated.tenantId,
+                validated.userId,
+                validated.removalLeaseOwner
+              );
+            }
             const now = Math.floor(Date.now() / 1000);
             const results = await tenantPii.batch([
               {
@@ -1181,7 +1199,7 @@ export class AuthAccountProvisioningEntrypoint extends WorkerEntrypoint<
       rethrowBackupMutationUnavailable(error);
       if (
         error instanceof Error &&
-        /^(external_idp_(account_provisioning_rpc_caller_unauthorized|route_removal_(input_invalid|account_mismatch|operation_conflict|authority_not_found|write_conflict|reflection_conflict)))$/u.test(
+        /^(login_method_removal_in_progress|external_idp_(account_provisioning_rpc_caller_unauthorized|route_removal_(input_invalid|account_mismatch|operation_conflict|authority_not_found|write_conflict|reflection_conflict)))$/u.test(
           error.message
         )
       ) {

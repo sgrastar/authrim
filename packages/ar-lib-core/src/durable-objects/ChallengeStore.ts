@@ -66,7 +66,9 @@ export type ChallengeType =
   | 'external_idp_provisioning_resume' // Browser-bound external IdP JIT continuation
   | 'email_verification_protocol' // Browser/provider email ownership verification nonce
   | 'passkey_reauth' // Account Page passkey re-authentication challenge
-  | 'account_email_reauth'; // Account Page email code re-authentication challenge
+  | 'account_email_reauth' // Account Page email code re-authentication challenge
+  | 'external_idp_link_intent' // Account Page request to link an external account (one use)
+  | 'login_method_removal_lock'; // Serialises an account's removals of sign-in methods
 
 /**
  * Challenge metadata
@@ -185,6 +187,48 @@ export class ChallengeStore extends DurableObject<Env> {
    */
   async consumeChallengeRpc(request: ConsumeChallengeRequest): Promise<ConsumeChallengeResponse> {
     return this.consumeChallenge(request);
+  }
+
+  /**
+   * RPC: Store a challenge only when no live (unexpired, unconsumed) one has this id, so it can
+   * serve as a short lease. Atomic within the DO: no other request runs between the check and the
+   * write.
+   */
+  async claimChallengeRpc(request: StoreChallengeRequest): Promise<{ claimed: boolean }> {
+    assertValidTenantId(request.tenantId);
+    const existing =
+      this.challengeCache.get(request.id) ??
+      (await this.ctx.storage.get<Challenge>(this.buildChallengeKey(request.id)));
+    if (existing && !existing.consumed && existing.expiresAt > Date.now()) {
+      return { claimed: false };
+    }
+    await this.storeChallenge(request);
+    return { claimed: true };
+  }
+
+  /**
+   * RPC: Whether the lease `id` is still held by `challenge` (its owner) with at least
+   * `minRemainingMs` left, so the owner can stop before a write it no longer guards.
+   */
+  async isClaimHeldRpc(request: {
+    id: string;
+    tenantId: string;
+    challenge: string;
+    minRemainingMs: number;
+  }): Promise<{ held: boolean }> {
+    assertValidTenantId(request.tenantId);
+    const existing =
+      this.challengeCache.get(request.id) ??
+      (await this.ctx.storage.get<Challenge>(this.buildChallengeKey(request.id)));
+    return {
+      held: Boolean(
+        existing &&
+        !existing.consumed &&
+        existing.tenantId === request.tenantId &&
+        existing.challenge === request.challenge &&
+        existing.expiresAt - Date.now() >= request.minRemainingMs
+      ),
+    };
   }
 
   /**

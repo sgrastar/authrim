@@ -1218,6 +1218,44 @@ describe('Authentication Methods API', () => {
       expect(body.ui.primaryLocales).toEqual([]);
     });
 
+    it.each(['hsl(220 80% 50%)', '#a1b2c3d4', 'yellow', 'rgb(300, 0, 0)', 'rgb(10%, 0%, 0%)'])(
+      'falls back to the platform accent when the tenant accent %s is not one the pages apply',
+      async (tenantAccent) => {
+        const settingsKV = createMockKV({
+          'settings:platform:login-ui': JSON.stringify({ 'login-ui.accent_color': '#2563eb' }),
+          'settings:tenant:default:login-ui': JSON.stringify({
+            'login-ui.accent_color': tenantAccent,
+          }),
+        });
+        const { app, mockEnv } = createTestApp({ settingsKV });
+
+        const res = await app.request(
+          '/api/auth/authentication-methods',
+          { method: 'GET' },
+          mockEnv
+        );
+        const body = (await res.json()) as any;
+
+        expect(res.status).toBe(200);
+        expect(body.ui.pageTemplate.accentColor).toBe('#2563eb');
+      }
+    );
+
+    it('keeps a tenant accent the pages apply over the platform accent', async () => {
+      const settingsKV = createMockKV({
+        'settings:platform:login-ui': JSON.stringify({ 'login-ui.accent_color': '#2563eb' }),
+        'settings:tenant:default:login-ui': JSON.stringify({
+          'login-ui.accent_color': 'rgba(22, 163, 74, 0.5)',
+        }),
+      });
+      const { app, mockEnv } = createTestApp({ settingsKV });
+
+      const res = await app.request('/api/auth/authentication-methods', { method: 'GET' }, mockEnv);
+      const body = (await res.json()) as any;
+
+      expect(body.ui.pageTemplate.accentColor).toBe('rgba(22, 163, 74, 0.5)');
+    });
+
     it('preserves manually configured primary languages instead of recalculating them', async () => {
       const settingsKV = createMockKV({
         'settings:platform:login-ui': JSON.stringify({

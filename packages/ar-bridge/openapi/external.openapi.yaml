@@ -4,6 +4,75 @@ info:
   version: 0.4.2
   description: Browser continuation endpoints owned by the external identity bridge.
 paths:
+  /api/external/links:
+    get:
+      operationId: listLinkedExternalIdentities
+      summary: List the external accounts linked to the current account
+      security:
+        - authrimSession: []
+      responses:
+        '200':
+          description: The account's active linked external identities, newest first.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LinkedExternalIdentityList'
+        '401':
+          description: A valid Authrim session is required.
+        '500':
+          description: The session or the linked identities could not be read.
+    post:
+      operationId: startExternalIdentityLink
+      summary: Start linking an external account to the current account
+      description: >-
+        Requires a full (not guest) session authenticated within the last five minutes. Returns the
+        external start URL with a one-use link intent bound to this session; the provider's answer
+        returns to the account page as `/account?social_link=linked` or
+        `/account?social_link=error&reason=already_linked|email_not_verified|session_expired|cancelled|failed`.
+        Linking never creates a session.
+      security:
+        - authrimSession: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required:
+                - provider_id
+              properties:
+                provider_id:
+                  type: string
+                  minLength: 1
+                  maxLength: 256
+                  description: The provider's id or slug.
+      responses:
+        '200':
+          description: The URL the browser navigates to.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - authorization_url
+                properties:
+                  authorization_url:
+                    type: string
+                    format: uri
+        '400':
+          description: '`provider_id` is missing.'
+        '401':
+          description: A valid Authrim session is required.
+        '403':
+          description: >-
+            Re-authentication is required (`reauth_required`) or the session is a guest session
+            (`guest_registration_required`).
+        '404':
+          description: The provider is unknown or disabled.
+        '409':
+          description: An account from this provider is already linked (`already_linked`).
   /api/external/links/{id}:
     delete:
       operationId: unlinkExternalIdentity
@@ -29,11 +98,20 @@ paths:
               schema:
                 $ref: '#/components/schemas/ExternalIdentityUnlinkResponse'
         '400':
-          description: Unlinking would remove the account's final authentication method.
+          description: >-
+            Unlinking would remove the account's last way to sign in
+            (`remaining_login_method_required`).
         '401':
           description: A valid Authrim session is required.
+        '403':
+          description: >-
+            Re-authentication is required (`reauth_required`) or the session is a guest session
+            (`guest_registration_required`).
         '404':
           description: The linked identity or prior unlink operation does not exist for this account.
+        '409':
+          description: >-
+            Another removal of the account's sign-in methods is running (`operation_in_progress`).
         '500':
           description: The authority or durable cleanup operation could not be safely updated.
   /api/external/provisioning/status:
@@ -401,6 +479,40 @@ components:
           type: string
         error_description:
           type: string
+    LinkedExternalIdentityList:
+      type: object
+      additionalProperties: false
+      required:
+        - identities
+      properties:
+        identities:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required:
+              - id
+              - providerId
+              - providerName
+              - linkedAt
+            properties:
+              id:
+                type: string
+              providerId:
+                type: string
+              providerName:
+                type: string
+              providerSlug:
+                type: string
+                description: The provider's slug, which the authentication-methods API uses as its id.
+              providerEmail:
+                type: string
+              linkedAt:
+                type: integer
+                description: Milliseconds since the epoch.
+              lastLoginAt:
+                type: integer
+                description: Milliseconds since the epoch.
     ExternalIdentityUnlinkResponse:
       type: object
       additionalProperties: false

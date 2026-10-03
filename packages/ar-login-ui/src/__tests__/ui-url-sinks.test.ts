@@ -20,25 +20,36 @@ describe('UI URL sink guards', () => {
 	});
 
 	it('does not render discovery candidate login URLs without link validation', () => {
-		const discoverSource = source('routes/discover/+page.svelte');
+		// The view draws every tenant (remembered or found) through one validated link.
+		const discoverSource = source('lib/views/DiscoverView.svelte');
 
 		expect(discoverSource).toContain('isValidLinkUrl(candidate.login_url)');
-		expect(discoverSource).toContain('href={rememberedHref}');
+		expect(discoverSource).toContain('{@const href = candidateHref(candidate)}');
 		expect(discoverSource).toContain('class="tenant-option" {href}');
 		expect(discoverSource).not.toContain('href={candidate.login_url}');
 		expect(discoverSource).not.toContain('return candidate.login_url;');
+		expect(source('routes/discover/+page.svelte')).not.toContain('href=');
 	});
 
 	it('guards external provider image URLs before using them as img src values', () => {
-		const sources = [
+		const sinks = [
 			source('lib/components/AuthenticationMethodSelector.svelte'),
-			source('routes/login/+page.svelte'),
-			source('routes/signup/+page.svelte')
+			// Login and signup draw their provider buttons through the shared stack.
+			source('lib/views/parts/ExternalProviderStack.svelte')
 		];
 
-		for (const componentSource of sources) {
+		for (const componentSource of sinks) {
 			expect(componentSource).toContain('provider.iconUrl && isValidImageUrl(provider.iconUrl)');
 			expect(componentSource).toContain('src={provider.iconUrl}');
+		}
+		// The routes hand the views (and the runtime screen) only an icon URL that passed the check.
+		for (const page of ['routes/login/+page.svelte', 'routes/signup/+page.svelte']) {
+			const pageSource = source(page);
+
+			expect(pageSource).toContain(
+				'iconUrl: provider.iconUrl && isValidImageUrl(provider.iconUrl) ? provider.iconUrl : null'
+			);
+			expect(pageSource).not.toContain('src={provider.iconUrl}');
 		}
 	});
 });

@@ -1,7 +1,6 @@
 <script lang="ts">
-	import { Button, Card, Alert } from '$lib/components';
 	import AuthPageShell from '$lib/components/AuthPageShell.svelte';
-	import PinCodeInput from '$lib/components/PinCodeInput.svelte';
+	import VerifyEmailCodeView from '$lib/views/VerifyEmailCodeView.svelte';
 	import { LL } from '$i18n/i18n-svelte';
 	import { accountAPI } from '$lib/api/account';
 	import { emailCodeAPI } from '$lib/api/client';
@@ -368,111 +367,21 @@
 </svelte:head>
 
 <AuthPageShell>
-	<Card class="mb-6">
-		<!-- Icon -->
-		<div class="auth-icon-badge">
-			<div class="auth-icon-badge__circle">
-				<div class="i-heroicons-envelope-solid h-9 w-9 auth-icon-badge__icon"></div>
-			</div>
-		</div>
-
-		<!-- Title -->
-		<h2 class="auth-section-title text-center">
-			{$LL.emailCode_title()}
-		</h2>
-
-		<!-- The same accepted status is shown regardless of account existence. -->
-		<div class="auth-progress mb-6" role="status" aria-live="polite">
-			<span class="i-heroicons-check-circle h-5 w-5" aria-hidden="true"></span>
-			<div class="min-w-0">
-				<p class="font-medium" style="color: var(--text-secondary);">
-					{$LL.emailCode_subtitle()}
-				</p>
-				<p class="text-sm font-medium break-all" style="color: var(--text-primary);">
-					{email}
-				</p>
-			</div>
-		</div>
-
-		<!-- Instructions -->
-		<div class="auth-binding-message mb-6">
-			<p class="text-sm" style="color: var(--text-secondary);">
-				{$LL.emailCode_instructions()}
-			</p>
-		</div>
-
-		<!-- Success Message -->
-		{#if success}
-			<Alert variant="success" dismissible={true} onDismiss={() => (success = '')} class="mb-4">
-				{success}
-			</Alert>
-		{/if}
-
-		{#if resendNotice}
-			<Alert
-				variant="success"
-				dismissible={true}
-				onDismiss={() => (resendNotice = '')}
-				class="mb-4"
-			>
-				{resendNotice}
-			</Alert>
-		{/if}
-
-		<!-- Error Message -->
-		{#if error}
-			<Alert variant="error" dismissible={true} onDismiss={() => (error = '')} class="mb-4">
-				{error}
-			</Alert>
-		{/if}
-
-		<!-- Pin Input -->
-		<div class="mb-6">
-			<div class="block text-sm font-medium mb-2 text-center" style="color: var(--text-secondary);">
-				{$LL.emailCode_codeLabel()}
-			</div>
-
-			<PinCodeInput
-				value={code}
-				length={6}
-				disabled={loading || resendLoading || !!success}
-				label={$LL.emailCode_codeLabel()}
-				digitLabel={(position) => $LL.emailCode_digitLabel({ position })}
-				onValueChange={(nextValue) => (code = nextValue)}
-			/>
-		</div>
-
-		<!-- Verify Button -->
-		<Button
-			variant="primary"
-			class="w-full mb-4"
-			disabled={code.length !== 6 || loading || resendLoading || !!success}
-			{loading}
-			onclick={() => handleVerify()}
-		>
-			{$LL.emailCode_verifyButton()}
-		</Button>
-
-		<!-- Resend Button -->
-		<Button
-			variant="secondary"
-			class="w-full"
-			disabled={!canResend || resendLoading || !!success}
-			loading={resendLoading}
-			onclick={handleResend}
-		>
-			{#if canResend || resendLoading}
-				{$LL.emailCode_resendButton()}
-			{:else}
-				{$LL.emailCode_resendTimer({ seconds: countdown })}
-			{/if}
-		</Button>
-	</Card>
-
-	<p class="auth-bottom-link">
-		<a href="/login" class="inline-flex items-center gap-2" data-sveltekit-reload>
-			<span class="i-heroicons-arrow-left h-4 w-4"></span>
-			{$LL.common_backToLogin()}
-		</a>
-	</p>
+	<VerifyEmailCodeView
+		{email}
+		{code}
+		{countdown}
+		{canResend}
+		{loading}
+		{resendLoading}
+		{error}
+		{success}
+		{resendNotice}
+		onCodeChange={(nextValue) => (code = nextValue)}
+		onVerify={() => handleVerify()}
+		onResend={handleResend}
+		onDismissError={() => (error = '')}
+		onDismissSuccess={() => (success = '')}
+		onDismissResendNotice={() => (resendNotice = '')}
+	/>
 </AuthPageShell>

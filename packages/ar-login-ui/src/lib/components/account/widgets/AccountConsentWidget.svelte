@@ -1,21 +1,30 @@
 <script lang="ts">
-	import { Card } from '$lib/components';
-	import AccountSectionSkeleton from './AccountSectionSkeleton.svelte';
+	/**
+	 * What the account has agreed to: OAuth clients with their scopes, and consent statements
+	 * (terms, policies) with their version and choice. Read-only.
+	 */
+	import AccountSectionSkeleton from '../AccountSectionSkeleton.svelte';
 	import type { AccountConsent } from '$lib/api/account';
 	import { formatTimestamp } from '$lib/utils/date';
 	import { LL, getLocale } from '$i18n/i18n-svelte';
+	import AccountWidgetPanel from './AccountWidgetPanel.svelte';
+	import type { AccountWidgetHeadingLevel } from './types';
 
 	let {
 		consents = [],
 		loading = false,
 		error = '',
-		title = ''
-	} = $props<{
+		title = '',
+		headingLevel = 2
+	}: {
 		consents?: AccountConsent[];
+		/** First load: a skeleton instead of the (possibly empty) list. */
 		loading?: boolean;
+		/** Loading failed: an alert instead of the list. */
 		error?: string;
 		title?: string;
-	}>();
+		headingLevel?: AccountWidgetHeadingLevel;
+	} = $props();
 
 	function formatScopes(consent: AccountConsent): string {
 		if (consent.kind !== 'oauth_client') {
@@ -75,117 +84,102 @@
 	}
 </script>
 
-<Card>
-	<section class="consent-panel" aria-busy={loading}>
-		<div class="panel-heading">
-			<h2>{title || $LL.account_consentTitle()}</h2>
-			{#if !loading}<span class="count-badge">{consents.length}</span>{/if}
-		</div>
-		<p class="panel-description">{$LL.account_consentDescription()}</p>
+<AccountWidgetPanel
+	title={title || $LL.account_consentTitle()}
+	{headingLevel}
+	busy={loading}
+	{error}
+>
+	{#snippet headingAside()}
+		{#if !loading && !error}<span class="count-badge">{consents.length}</span>{/if}
+	{/snippet}
+	<p class="panel-description">{$LL.account_consentDescription()}</p>
 
-		{#if loading}
-			<AccountSectionSkeleton variant="list" />
-		{:else if error}
-			<p class="panel-error">{error}</p>
-		{:else if consents.length === 0}
-			<p class="empty-text">{$LL.account_consentEmpty()}</p>
-		{:else}
-			<ul class="consent-list">
-				{#each consents as consent (consent.id)}
-					<li>
-						<div class="consent-app" class:statement-consent={consent.kind === 'statement'}>
-							{#if consent.kind === 'oauth_client' && consent.clientLogoUri}
-								<img src={consent.clientLogoUri} alt="" loading="lazy" />
-							{:else}
-								<span class="consent-icon" aria-hidden="true">
-									{consent.kind === 'statement' ? 'C' : 'A'}
-								</span>
-							{/if}
-							<div>
-								<strong>
-									{consent.kind === 'statement'
-										? consent.title
-										: (consent.clientName ?? consent.clientId)}
-								</strong>
-								<span>
-									{consent.kind === 'statement'
-										? (consent.category ?? consent.statementId)
-										: consent.clientId}
-								</span>
-							</div>
+	{#if loading}
+		<AccountSectionSkeleton variant="list" />
+	{:else if error}
+		<!-- The panel frame shows the error in place of the list. -->
+	{:else if consents.length === 0}
+		<p class="empty-text">{$LL.account_consentEmpty()}</p>
+	{:else}
+		<ul class="consent-list">
+			{#each consents as consent (consent.id)}
+				<li>
+					<div class="consent-app" class:statement-consent={consent.kind === 'statement'}>
+						{#if consent.kind === 'oauth_client' && consent.clientLogoUri}
+							<img src={consent.clientLogoUri} alt="" loading="lazy" />
+						{:else}
+							<span class="consent-icon" aria-hidden="true">
+								{consent.kind === 'statement' ? 'C' : 'A'}
+							</span>
+						{/if}
+						<div>
+							<strong>
+								{consent.kind === 'statement'
+									? consent.title
+									: (consent.clientName ?? consent.clientId)}
+							</strong>
+							<span>
+								{consent.kind === 'statement'
+									? (consent.category ?? consent.statementId)
+									: consent.clientId}
+							</span>
 						</div>
-						<dl>
-							{#if consent.kind === 'statement'}
-								<div>
-									<dt>{$LL.account_consentStatus()}</dt>
-									<dd>{formatStatus(consent.status)}</dd>
-								</div>
-								<div>
-									<dt>{$LL.account_consentVersionLabel()}</dt>
-									<dd>{consent.version}</dd>
-								</div>
-								<div>
-									<dt>{$LL.account_consentStatementId()}</dt>
-									<dd>{consent.statementId}</dd>
-								</div>
-								{#if consent.selectedValue}
-									<div>
-										<dt>{selectedValueLabel()}</dt>
-										<dd>{formatSelectedValue(consent.selectedValue)}</dd>
-									</div>
-								{/if}
-							{:else}
-								<div>
-									<dt>{$LL.account_consentScopes()}</dt>
-									<dd>{formatScopes(consent)}</dd>
-								</div>
-							{/if}
+					</div>
+					<dl>
+						{#if consent.kind === 'statement'}
 							<div>
-								<dt>{$LL.account_consentGrantedAt()}</dt>
-								<dd>
-									{consent.grantedAt ? formatTimestamp(consent.grantedAt, getLocale()) : '-'}
-								</dd>
+								<dt>{$LL.account_consentStatus()}</dt>
+								<dd>{formatStatus(consent.status)}</dd>
 							</div>
 							<div>
-								<dt>{$LL.account_consentExpiresAt()}</dt>
-								<dd>
-									{consent.expiresAt
-										? formatTimestamp(consent.expiresAt, getLocale())
-										: $LL.account_consentNoExpiry()}
-								</dd>
+								<dt>{$LL.account_consentVersionLabel()}</dt>
+								<dd>{consent.version}</dd>
 							</div>
-							{#if consent.kind === 'oauth_client'}
+							<div>
+								<dt>{$LL.account_consentStatementId()}</dt>
+								<dd>{consent.statementId}</dd>
+							</div>
+							{#if consent.selectedValue}
 								<div>
-									<dt>{$LL.account_consentPolicyVersions()}</dt>
-									<dd>{formatPolicyVersions(consent)}</dd>
+									<dt>{selectedValueLabel()}</dt>
+									<dd>{formatSelectedValue(consent.selectedValue)}</dd>
 								</div>
 							{/if}
-						</dl>
-					</li>
-				{/each}
-			</ul>
-		{/if}
-	</section>
-</Card>
+						{:else}
+							<div>
+								<dt>{$LL.account_consentScopes()}</dt>
+								<dd>{formatScopes(consent)}</dd>
+							</div>
+						{/if}
+						<div>
+							<dt>{$LL.account_consentGrantedAt()}</dt>
+							<dd>
+								{consent.grantedAt ? formatTimestamp(consent.grantedAt, getLocale()) : '-'}
+							</dd>
+						</div>
+						<div>
+							<dt>{$LL.account_consentExpiresAt()}</dt>
+							<dd>
+								{consent.expiresAt
+									? formatTimestamp(consent.expiresAt, getLocale())
+									: $LL.account_consentNoExpiry()}
+							</dd>
+						</div>
+						{#if consent.kind === 'oauth_client'}
+							<div>
+								<dt>{$LL.account_consentPolicyVersions()}</dt>
+								<dd>{formatPolicyVersions(consent)}</dd>
+							</div>
+						{/if}
+					</dl>
+				</li>
+			{/each}
+		</ul>
+	{/if}
+</AccountWidgetPanel>
 
 <style>
-	.consent-panel {
-		display: grid;
-		gap: 12px;
-	}
-
-	.panel-heading {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		gap: 12px;
-	}
-
-	h2 {
-		margin: 0;
-		font-size: 1rem;
-	}
-
 	.count-badge {
 		display: inline-flex;
 		align-items: center;
@@ -201,19 +195,10 @@
 	}
 
 	.panel-description,
-	.empty-text,
-	.panel-error {
+	.empty-text {
 		margin: 0;
 		font-size: 0.8125rem;
-	}
-
-	.panel-description,
-	.empty-text {
 		color: var(--text-muted);
-	}
-
-	.panel-error {
-		color: var(--danger);
 	}
 
 	.consent-list {
@@ -256,8 +241,8 @@
 		height: 36px;
 		border-radius: 8px;
 		border: 1px solid var(--border);
-		background: var(--success-light);
-		color: var(--success);
+		background: var(--bg-subtle);
+		color: var(--text-secondary);
 		font-size: 0.9375rem;
 		font-weight: 700;
 	}
