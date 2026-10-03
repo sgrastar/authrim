@@ -15,6 +15,7 @@ const {
   mockPasskeyRepo,
   mockConsumeTotpAuthenticationState,
   mockHasRemainingLoginMethod,
+  mockWithLoginMethodRemovalLock,
 } = vi.hoisted(() => {
   const sessionStore = {
     getSessionRpc: vi.fn(),
@@ -61,6 +62,10 @@ const {
     mockPasskeyRepo: { findByUserId: vi.fn() },
     mockConsumeTotpAuthenticationState: vi.fn(async () => ({ lastAcceptedTimeStep: 1 })),
     mockHasRemainingLoginMethod: vi.fn(async () => false),
+    mockWithLoginMethodRemovalLock: vi.fn(
+      async (_env: unknown, _tenantId: string, _userId: string, removal: () => Promise<unknown>) =>
+        removal()
+    ),
   };
 });
 
@@ -80,6 +85,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     })),
     createAuditLog: vi.fn().mockResolvedValue(undefined),
     hasRemainingLoginMethod: mockHasRemainingLoginMethod,
+    withLoginMethodRemovalLock: mockWithLoginMethodRemovalLock,
     CanonicalRuntimeUserStore: vi.fn(function CanonicalRuntimeUserStoreMock() {
       return mockRuntimeUserStore;
     }),

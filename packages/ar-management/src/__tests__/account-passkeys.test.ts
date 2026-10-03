@@ -22,6 +22,7 @@ const {
   mockAdvancePasskeyAuthenticationState,
   mockCreateAuditLog,
   mockHasRemainingLoginMethod,
+  mockWithLoginMethodRemovalLock,
 } = vi.hoisted(() => {
   const sessionStore = {
     getSessionRpc: vi.fn(),
@@ -76,6 +77,10 @@ const {
     })),
     mockCreateAuditLog: vi.fn().mockResolvedValue(undefined),
     mockHasRemainingLoginMethod: vi.fn(async () => false),
+    mockWithLoginMethodRemovalLock: vi.fn(
+      async (_env: unknown, _tenantId: string, _userId: string, removal: () => Promise<unknown>) =>
+        removal()
+    ),
   };
 });
 
@@ -113,6 +118,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     createAuthContextFromHono: mockCreateAuthContextFromHono,
     createAuditLog: mockCreateAuditLog,
     hasRemainingLoginMethod: mockHasRemainingLoginMethod,
+    withLoginMethodRemovalLock: mockWithLoginMethodRemovalLock,
     createPIIContextFromHono: mockCreatePIIContextFromHono,
     ensureAccountAuthenticationState: vi.fn(async () => ({ lifecycle: 'active' })),
     advancePasskeyAuthenticationState: mockAdvancePasskeyAuthenticationState,
@@ -1208,6 +1214,28 @@ describe('Account Page passkey management API', () => {
         userId: 'user-001',
         removing: { kind: 'passkey', id: 'pk_001' },
       })
+    );
+  });
+
+  it('answers 409 while another removal of a sign-in method runs', async () => {
+    const { LoginMethodRemovalInProgressError } =
+      await vi.importActual<typeof import('@authrim/ar-lib-core')>('@authrim/ar-lib-core');
+    mockWithLoginMethodRemovalLock.mockRejectedValueOnce(new LoginMethodRemovalInProgressError());
+
+    const response = await deleteAccountPasskeyHandler(
+      createMockContext({
+        cookie: 'authrim_session=g1%3Aapac%3A3%3Asession_current',
+        params: { id: 'pk_001' },
+      })
+    );
+
+    expect(response.status).toBe(409);
+    expect(mockCoreAdapter.execute).not.toHaveBeenCalled();
+    expect(mockWithLoginMethodRemovalLock).toHaveBeenCalledWith(
+      expect.anything(),
+      'default',
+      'user-001',
+      expect.any(Function)
     );
   });
 

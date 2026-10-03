@@ -22,10 +22,12 @@ import {
   isAccountAuthenticationDeniedError,
   isAccountReauthFresh,
   isAuthenticationMethodUsageAvailable,
+  LoginMethodRemovalInProgressError,
   PasskeyRepository,
   profileForTotpPreset,
   runTenantBackupCoveredEffect,
   verifyTotpCode,
+  withLoginMethodRemovalLock,
 } from '@authrim/ar-lib-core';
 import { requireAccountSession, type AccountSession } from './account-page';
 import { recordAccountOperation } from './account-operation-log';
@@ -38,6 +40,17 @@ const AUTHENTICATION_METHODS_CATEGORY = 'authentication-methods';
 function setNoStore(c: Context<{ Bindings: Env }>): void {
   c.header('Cache-Control', 'no-store');
   c.header('Pragma', 'no-cache');
+}
+
+/** Another removal of the account's sign-in methods is running (409, retry shortly). */
+function loginMethodRemovalInProgress(c: Context<{ Bindings: Env }>): Response {
+  return c.json(
+    {
+      error: 'operation_in_progress',
+      error_description: 'Another change to how this account signs in is in progress.',
+    },
+    409
+  );
 }
 
 function reauthRequired(c: Context<{ Bindings: Env }>): Response {
@@ -644,101 +657,111 @@ export async function deleteAccountTotpCredentialHandler(
     return c.json({ error: 'not_found', error_description: 'TOTP credential was not found' }, 404);
   }
 
-  if (
-    credential.status === 'active' &&
-    !(await hasOtherLoginMethodAfterTotpDelete(c, accountSession, credential.id))
-  ) {
-    return c.json(
-      {
-        error: 'remaining_login_method_required',
-        error_description: 'Cannot delete the last available login method.',
-      },
-      400
-    );
-  }
-
-  let body: { code?: unknown; backup_code?: unknown } = {};
   try {
-    body = await c.req.json();
-  } catch {
-    body = {};
-  }
+    return await withLoginMethodRemovalLock(c.env, tenantId, accountSession.userId, async () => {
+      if (
+        credential.status === 'active' &&
+        !(await hasOtherLoginMethodAfterTotpDelete(c, accountSession, credential.id))
+      ) {
+        return c.json(
+          {
+            error: 'remaining_login_method_required',
+            error_description: 'Cannot delete the last available login method.',
+          },
+          400
+        );
+      }
 
-  const hasTotpReauth = accountSession.amr?.includes('totp') === true;
-  let proofOk = credential.status !== 'active' || hasTotpReauth;
-  if (!proofOk) {
-    const rateLimited = await rateLimitAccountTotpVerification(
-      c,
-      accountSession,
-      'delete',
-      credential.id
-    );
-    if (rateLimited) {
-      return rateLimited;
-    }
-    try {
-      proofOk =
-        (typeof body.code === 'string' &&
-          (await verifyTotpCredentialCode(c, credential, body.code)) !== null) ||
-        (typeof body.backup_code === 'string' &&
-          (await consumeBackupCode(c, accountSession.userId, body.backup_code)));
-    } catch {
-      return c.json(
-        {
-          error: 'temporarily_unavailable',
-          error_description: 'Authentication state unavailable.',
-        },
-        503,
-        { 'Retry-After': '1' }
-      );
-    }
-  }
-  if (!proofOk) {
-    return c.json(
-      { error: 'invalid_code', error_description: 'A current TOTP or backup code is required' },
-      400
-    );
-  }
+      let body: { code?: unknown; backup_code?: unknown } = {};
+      try {
+        body = await c.req.json();
+      } catch {
+        body = {};
+      }
 
-  const deleted = await authCtx.repositories.totp.delete(credential.id, accountSession.userId);
-  if (!deleted) {
-    return c.json({ error: 'not_found', error_description: 'TOTP credential was not found' }, 404);
-  }
-  c.executionCtx.waitUntil(
-    runTenantBackupCoveredEffect(c.env, { tenantId }, () =>
-      getSessionRevocationStore(c.env, tenantId, accountSession.userId)
-        .deleteCredentialStateRpc(
-          tenantId,
-          accountSession.userId,
-          `account:${accountSession.userId}`,
-          'totp',
+      const hasTotpReauth = accountSession.amr?.includes('totp') === true;
+      let proofOk = credential.status !== 'active' || hasTotpReauth;
+      if (!proofOk) {
+        const rateLimited = await rateLimitAccountTotpVerification(
+          c,
+          accountSession,
+          'delete',
           credential.id
+        );
+        if (rateLimited) {
+          return rateLimited;
+        }
+        try {
+          proofOk =
+            (typeof body.code === 'string' &&
+              (await verifyTotpCredentialCode(c, credential, body.code)) !== null) ||
+            (typeof body.backup_code === 'string' &&
+              (await consumeBackupCode(c, accountSession.userId, body.backup_code)));
+        } catch {
+          return c.json(
+            {
+              error: 'temporarily_unavailable',
+              error_description: 'Authentication state unavailable.',
+            },
+            503,
+            { 'Retry-After': '1' }
+          );
+        }
+      }
+      if (!proofOk) {
+        return c.json(
+          { error: 'invalid_code', error_description: 'A current TOTP or backup code is required' },
+          400
+        );
+      }
+
+      const deleted = await authCtx.repositories.totp.delete(credential.id, accountSession.userId);
+      if (!deleted) {
+        return c.json(
+          { error: 'not_found', error_description: 'TOTP credential was not found' },
+          404
+        );
+      }
+      c.executionCtx.waitUntil(
+        runTenantBackupCoveredEffect(c.env, { tenantId }, () =>
+          getSessionRevocationStore(c.env, tenantId, accountSession.userId)
+            .deleteCredentialStateRpc(
+              tenantId,
+              accountSession.userId,
+              `account:${accountSession.userId}`,
+              'totp',
+              credential.id
+            )
+            .catch((error: unknown) => {
+              getLogger(c)
+                .module('ACCOUNT_TOTP')
+                .error('Failed to clean TOTP DO state', {
+                  action: 'totp_state_cleanup',
+                  errorType: error instanceof Error ? error.name : 'Unknown',
+                });
+            })
         )
-        .catch((error: unknown) => {
-          getLogger(c)
-            .module('ACCOUNT_TOTP')
-            .error('Failed to clean TOTP DO state', {
-              action: 'totp_state_cleanup',
-              errorType: error instanceof Error ? error.name : 'Unknown',
-            });
-        })
-    )
-  );
+      );
 
-  await recordAccountOperation(c, {
-    userId: accountSession.userId,
-    action: 'account.totp.removed',
-    resourceType: 'totp_credential',
-    resourceId: credential.id,
-  });
+      await recordAccountOperation(c, {
+        userId: accountSession.userId,
+        action: 'account.totp.removed',
+        resourceType: 'totp_credential',
+        resourceId: credential.id,
+      });
 
-  return c.json({
-    ok: true,
-    credential: {
-      id: credential.id,
-      deleted: true,
-    },
-  });
+      return c.json({
+        ok: true,
+        credential: {
+          id: credential.id,
+          deleted: true,
+        },
+      });
+    });
+  } catch (error) {
+    if (error instanceof LoginMethodRemovalInProgressError) return loginMethodRemovalInProgress(c);
+    throw error;
+  }
 }
 
 export async function regenerateAccountTotpBackupCodesHandler(

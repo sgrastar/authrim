@@ -2,10 +2,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DatabaseAdapter } from '../../db/adapter';
 import type { Env } from '../../types/env';
 
-const { mockFindById, mockProviderAdapter } = vi.hoisted(() => ({
-  mockFindById: vi.fn(),
-  mockProviderAdapter: { queryOne: vi.fn() },
-}));
+const { mockFindById, mockProviderAdapter, mockResolveRoute, mockChallengeStore } = vi.hoisted(
+  () => ({
+    mockFindById: vi.fn(),
+    mockProviderAdapter: { query: vi.fn() },
+    mockResolveRoute: vi.fn(),
+    mockChallengeStore: { claimChallengeRpc: vi.fn(), consumeChallengeRpc: vi.fn() },
+  })
+);
 
 vi.mock('../../repositories/identity/canonical-runtime-user-store', () => ({
   CanonicalRuntimeUserStore: vi.fn(function CanonicalRuntimeUserStoreMock() {
@@ -17,9 +21,19 @@ vi.mock('../auth-core-persistence-context', () => ({
   resolveAuthCorePersistenceAdapterFromEnv: vi.fn(async () => mockProviderAdapter),
 }));
 
+vi.mock('../runtime-data-context', () => ({
+  resolveAccountDataContextByIdentifier: mockResolveRoute,
+}));
+
+vi.mock('../../utils/challenge-sharding', () => ({
+  getChallengeStoreByChallengeId: vi.fn(async () => mockChallengeStore),
+}));
+
 import {
   hasRemainingLoginMethod,
   isAuthenticationMethodUsageAvailable,
+  LoginMethodRemovalInProgressError,
+  withLoginMethodRemovalLock,
   type LoginMethodRemoval,
 } from '../account-login-methods';
 
@@ -30,6 +44,8 @@ interface Fixture {
   email?: { email: string | null; email_verified: number } | null;
   linked?: Array<{ id: string; provider_id: string }>;
   enabledProviders?: string[];
+  /** Whose account each external subject's directory route reaches (absent: unpublished). */
+  routes?: Record<string, string>;
 }
 
 function setup(fixture: Fixture) {
@@ -58,14 +74,24 @@ function setup(fixture: Fixture) {
     query: vi.fn(async (_sql: string, params: unknown[]) =>
       (fixture.linked ?? [])
         .filter((row) => row.id !== params[2])
-        .map((row) => ({ provider_id: row.provider_id }))
+        .map((row) => ({ provider_id: row.provider_id, provider_user_id: `sub-${row.id}` }))
     ),
   } as unknown as DatabaseAdapter;
   mockFindById.mockResolvedValue(fixture.email ?? null);
-  mockProviderAdapter.queryOne.mockImplementation(async (_sql: string, params: unknown[]) => ({
-    count: params.slice(1).filter((id) => (fixture.enabledProviders ?? []).includes(String(id)))
-      .length,
-  }));
+  mockProviderAdapter.query.mockImplementation(async (_sql: string, params: unknown[]) =>
+    params
+      .slice(1)
+      .filter((id) => (fixture.enabledProviders ?? []).includes(String(id)))
+      .map((id) => ({ id }))
+  );
+  const routes =
+    fixture.routes ??
+    Object.fromEntries((fixture.linked ?? []).map((row) => [`sub-${row.id}`, 'u1']));
+  mockResolveRoute.mockImplementation(async (_env, input: { identifier: { subject: string } }) => {
+    const owner = routes[input.identifier.subject];
+    if (!owner) throw new Error('account_data_route_not_found');
+    return { legacyUserId: owner };
+  });
   return (removing: LoginMethodRemoval) =>
     hasRemainingLoginMethod(env, {
       tenantId: 't1',
@@ -165,6 +191,86 @@ describe('hasRemainingLoginMethod', () => {
       enabledProviders: ['google'],
     });
     await expect(check({ kind: 'passkey', id: 'pk1' })).resolves.toBe(true);
+  });
+});
+
+describe('linked accounts and their directory routes', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  const linked = [{ id: 'li2', provider_id: 'google' }];
+
+  it('does not count a link whose route is not published', async () => {
+    const check = setup({ passkeys: ['pk1'], linked, enabledProviders: ['google'], routes: {} });
+    await expect(check({ kind: 'passkey', id: 'pk1' })).resolves.toBe(false);
+  });
+
+  it('does not count a link whose route reaches another account', async () => {
+    const check = setup({
+      passkeys: ['pk1'],
+      linked,
+      enabledProviders: ['google'],
+      routes: { 'sub-li2': 'someone-else' },
+    });
+    await expect(check({ kind: 'passkey', id: 'pk1' })).resolves.toBe(false);
+  });
+
+  it('lets a directory failure stop the removal', async () => {
+    const check = setup({ passkeys: ['pk1'], linked, enabledProviders: ['google'] });
+    mockResolveRoute.mockRejectedValueOnce(new Error('lookup unavailable'));
+    await expect(check({ kind: 'passkey', id: 'pk1' })).rejects.toThrow('lookup unavailable');
+  });
+});
+
+describe('withLoginMethodRemovalLock', () => {
+  const env = {} as Env;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockChallengeStore.consumeChallengeRpc.mockResolvedValue({});
+  });
+
+  it('runs the removal under the account lease and releases its own lease', async () => {
+    mockChallengeStore.claimChallengeRpc.mockResolvedValueOnce({ claimed: true });
+
+    await expect(withLoginMethodRemovalLock(env, 't1', 'u1', async () => 'done')).resolves.toBe(
+      'done'
+    );
+
+    const claim = mockChallengeStore.claimChallengeRpc.mock.calls[0][0];
+    expect(claim).toMatchObject({
+      id: 'login-method-removal:u1',
+      tenantId: 't1',
+      type: 'login_method_removal_lock',
+    });
+    expect(mockChallengeStore.consumeChallengeRpc).toHaveBeenCalledWith({
+      id: 'login-method-removal:u1',
+      tenantId: 't1',
+      type: 'login_method_removal_lock',
+      challenge: claim.challenge,
+    });
+  });
+
+  it('refuses while another removal holds the lease', async () => {
+    mockChallengeStore.claimChallengeRpc.mockResolvedValueOnce({ claimed: false });
+    const removal = vi.fn();
+
+    await expect(withLoginMethodRemovalLock(env, 't1', 'u1', removal)).rejects.toBeInstanceOf(
+      LoginMethodRemovalInProgressError
+    );
+    expect(removal).not.toHaveBeenCalled();
+  });
+
+  it('releases the lease when the removal fails', async () => {
+    mockChallengeStore.claimChallengeRpc.mockResolvedValueOnce({ claimed: true });
+
+    await expect(
+      withLoginMethodRemovalLock(env, 't1', 'u1', async () => {
+        throw new Error('boom');
+      })
+    ).rejects.toThrow('boom');
+    expect(mockChallengeStore.consumeChallengeRpc).toHaveBeenCalledTimes(1);
   });
 });
 

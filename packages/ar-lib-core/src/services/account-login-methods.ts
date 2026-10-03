@@ -10,7 +10,9 @@
 import type { Env } from '../types/env';
 import type { DatabaseAdapter } from '../db/adapter';
 import { CanonicalRuntimeUserStore } from '../repositories/identity/canonical-runtime-user-store';
+import { getChallengeStoreByChallengeId } from '../utils/challenge-sharding';
 import { resolveAuthCorePersistenceAdapterFromEnv } from './auth-core-persistence-context';
+import { resolveAccountDataContextByIdentifier } from './runtime-data-context';
 
 const AUTHENTICATION_METHODS_CATEGORY = 'authentication-methods';
 
@@ -126,8 +128,8 @@ export async function hasRemainingLoginMethod(
 
   {
     const skip = excluded(removing, 'linked_identity');
-    const linked = await piiAdapter.query<{ provider_id: string }>(
-      `SELECT DISTINCT provider_id FROM linked_identities
+    const linked = await piiAdapter.query<{ provider_id: string; provider_user_id: string }>(
+      `SELECT provider_id, provider_user_id FROM linked_identities
         WHERE tenant_id = ? AND user_id = ? AND provisioning_state = 'active' AND id <> ?`,
       [tenantId, userId, skip ?? '']
     );
@@ -137,15 +139,91 @@ export async function hasRemainingLoginMethod(
         'account-login-methods:providers',
         { tenantId }
       );
-      const placeholders = linked.map(() => '?').join(', ');
-      const enabled = await providers.queryOne<{ count: number }>(
-        `SELECT COUNT(*) AS count FROM upstream_providers
-          WHERE tenant_id = ? AND enabled = 1 AND id IN (${placeholders})`,
-        [tenantId, ...linked.map((row) => row.provider_id)]
+      const providerIds = [...new Set(linked.map((row) => row.provider_id))];
+      const enabled = await providers.query<{ id: string }>(
+        `SELECT id FROM upstream_providers
+          WHERE tenant_id = ? AND enabled = 1 AND id IN (${providerIds.map(() => '?').join(', ')})`,
+        [tenantId, ...providerIds]
       );
-      if ((enabled?.count ?? 0) > 0) return true;
+      const enabledIds = new Set(enabled.map((row) => row.id));
+      for (const row of linked) {
+        if (!enabledIds.has(row.provider_id)) continue;
+        // Sign-in finds an external account through its directory route; a link whose route is not
+        // (yet) published to this account cannot sign anyone in.
+        if (await externalRouteReachesAccount(env, tenantId, userId, row)) return true;
+      }
     }
   }
 
   return false;
+}
+
+async function externalRouteReachesAccount(
+  env: Env,
+  tenantId: string,
+  userId: string,
+  link: { provider_id: string; provider_user_id: string }
+): Promise<boolean> {
+  try {
+    const route = await resolveAccountDataContextByIdentifier(env, {
+      tenantId,
+      indexKind: 'external_subject',
+      identifier: { issuer: link.provider_id, subject: link.provider_user_id },
+    });
+    return route.legacyUserId === userId;
+  } catch (error) {
+    if (error instanceof Error && error.message === 'account_data_route_not_found') return false;
+    throw error;
+  }
+}
+
+/** Another removal of this account's sign-in methods is running; retry shortly. */
+export class LoginMethodRemovalInProgressError extends Error {
+  constructor() {
+    super('login_method_removal_in_progress');
+    this.name = 'LoginMethodRemovalInProgressError';
+  }
+}
+
+/** Longest a removal may hold the account's lease (it is released as soon as it finishes). */
+const LOGIN_METHOD_REMOVAL_LEASE_SECONDS = 60;
+
+/**
+ * Runs `removal` (the remaining-method check and the removal itself) while no other removal of the
+ * account's sign-in methods runs, so two removals cannot each count the other's method as the one
+ * that remains. The sign-in methods live in different databases, so no single transaction covers
+ * them; a lease in the challenge store does. Throws LoginMethodRemovalInProgressError when another
+ * removal holds it.
+ */
+export async function withLoginMethodRemovalLock<T>(
+  env: Env,
+  tenantId: string,
+  userId: string,
+  removal: () => Promise<T>
+): Promise<T> {
+  const id = `login-method-removal:${userId}`;
+  const owner = crypto.randomUUID();
+  const store = await getChallengeStoreByChallengeId(env, id, tenantId);
+  const { claimed } = (await store.claimChallengeRpc({
+    id,
+    tenantId,
+    type: 'login_method_removal_lock',
+    userId,
+    challenge: owner,
+    ttl: LOGIN_METHOD_REMOVAL_LEASE_SECONDS,
+  })) as { claimed: boolean };
+  if (!claimed) throw new LoginMethodRemovalInProgressError();
+  try {
+    return await removal();
+  } finally {
+    // Release only our own lease (a lapsed one may already belong to the next removal).
+    await store
+      .consumeChallengeRpc({
+        id,
+        tenantId,
+        type: 'login_method_removal_lock',
+        challenge: owner,
+      })
+      .catch(() => undefined);
+  }
 }
