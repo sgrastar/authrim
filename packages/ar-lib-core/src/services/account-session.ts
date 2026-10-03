@@ -106,9 +106,10 @@ export function isAccountReauthFresh(
 }
 
 /**
- * The tenant's re-authentication window in seconds (tenant, platform, env, default). A value that
- * cannot be read or lies outside the allowed range gives the default, the safer of the two choices
- * a failure leaves.
+ * The tenant's re-authentication window in seconds (tenant, platform, env, default). When the
+ * settings cannot be read the shortest allowed window applies: a tenant that shortened it must not
+ * get a longer one from an outage. A stored value outside the range (which the settings API does
+ * not accept) gives the default.
  */
 export async function resolveAccountReauthTtlSeconds(
   env: EffectiveSettingsEnv,
@@ -125,6 +126,6 @@ export async function resolveAccountReauthTtlSeconds(
       ? value
       : ACCOUNT_REAUTH_TTL_SECONDS;
   } catch {
-    return ACCOUNT_REAUTH_TTL_SECONDS;
+    return meta.min ?? ACCOUNT_REAUTH_TTL_SECONDS;
   }
 }

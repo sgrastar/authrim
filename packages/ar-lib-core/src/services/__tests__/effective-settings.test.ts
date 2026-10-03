@@ -38,6 +38,23 @@ describe('resolveEffectiveSettings', () => {
     expect(forTenant['oauth.access_token_expiry']).toBe(900);
   });
 
+  it('lets the platform set the re-authentication window but not the account page placement', async () => {
+    const env = {
+      SETTINGS: kv({
+        'settings:platform:self-service': JSON.stringify({
+          'self-service.reauth_ttl_seconds': 120,
+          'self-service.account_page_path': '/platform-account',
+        }),
+      }),
+    };
+
+    const values = await resolveEffectiveSettings(env, 'self-service', { tenantId: 'acme' });
+
+    expect(values['self-service.reauth_ttl_seconds']).toBe(120);
+    // Tenant-only: a value stored at the platform is ignored.
+    expect(values['self-service.account_page_path']).toBe('/account');
+  });
+
   it('reads the oauth-config booleans from env the way the older config manager did', async () => {
     for (const [raw, expected] of [
       ['yes', true],

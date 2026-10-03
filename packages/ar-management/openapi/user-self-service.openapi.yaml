@@ -349,7 +349,7 @@ paths:
       summary: Read Account Page reauthentication status.
       description:
         Returns whether sensitive Account Page operations currently require reauthentication.
-        The initial reauthentication window is five minutes from the session auth_time.
+        The reauthentication window runs from the session auth_time for the tenant's re-authentication window (`self-service.reauth_ttl_seconds`, 60-1800 seconds, default 300); `ttl_seconds` reports it.
       responses:
         '200':
           $ref: '#/components/responses/AccountReauthStatus'
@@ -508,7 +508,7 @@ paths:
         - Account Page
       operationId: postApiAccountIdentifierReplacementsStart
       summary: Start an email address addition or replacement.
-      description: Requires authentication within the last five minutes and sends a one-time code to the new address. Adds the first email address when the account does not have one; otherwise replaces the current address.
+      description: Requires authentication within the tenant's re-authentication window (`self-service.reauth_ttl_seconds`, 60-1800 seconds, default 300) and sends a one-time code to the new address. Adds the first email address when the account does not have one; otherwise replaces the current address.
       responses:
         '202':
           description: Verification challenge accepted.

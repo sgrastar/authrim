@@ -39,10 +39,10 @@ describe('resolveAccountReauthTtlSeconds', () => {
     );
   });
 
-  it('falls back to the default when the settings cannot be read', async () => {
+  it('uses the shortest window when the settings cannot be read', async () => {
     mockResolve.mockRejectedValueOnce(new Error('kv down'));
 
-    await expect(resolveAccountReauthTtlSeconds(env, 'tenant-a')).resolves.toBe(300);
+    await expect(resolveAccountReauthTtlSeconds(env, 'tenant-a')).resolves.toBe(60);
   });
 });
 

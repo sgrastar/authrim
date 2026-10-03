@@ -123,7 +123,7 @@ export interface SettingMeta {
    * 'fraction-in-range': read as a decimal (not cut to its whole part), and ignored outside
    * min..max, for a setting such as a sample rate.
    */
-  envNumber?: 'any' | 'positive' | 'in-range' | 'fraction-in-range';
+  envNumber?: 'any' | 'positive' | 'in-range' | 'fraction-in-range' | 'strict-in-range';
   /** Human-readable label */
   label: string;
   /** Description for admin UI */
@@ -346,12 +346,22 @@ function parseEnvValue(
   switch (type) {
     case 'number':
     case 'duration': {
+      // 'strict-in-range': the whole value must be a number ('600junk' and '1800.9' are not 600
+      // and 1800); it is then checked like 'in-range' (and as an integer where required).
       const parsed =
-        parsing.envNumber === 'fraction-in-range' ? parseFloat(value) : parseInt(value, 10);
+        parsing.envNumber === 'fraction-in-range'
+          ? parseFloat(value)
+          : parsing.envNumber === 'strict-in-range'
+            ? /^\s*-?\d+(?:\.\d+)?\s*$/.test(value)
+              ? Number(value)
+              : NaN
+            : parseInt(value, 10);
       if (!Number.isFinite(parsed)) return undefined;
       if (parsing.envNumber === 'positive' && parsed <= 0) return undefined;
       if (
-        (parsing.envNumber === 'in-range' || parsing.envNumber === 'fraction-in-range') &&
+        (parsing.envNumber === 'in-range' ||
+          parsing.envNumber === 'fraction-in-range' ||
+          parsing.envNumber === 'strict-in-range') &&
         ((parsing.min !== undefined && parsed < parsing.min) ||
           (parsing.max !== undefined && parsed > parsing.max))
       ) {

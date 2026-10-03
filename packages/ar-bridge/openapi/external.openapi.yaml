@@ -25,7 +25,7 @@ paths:
       operationId: startExternalIdentityLink
       summary: Start linking an external account to the current account
       description: >-
-        Requires a full (not guest) session authenticated within the last five minutes. Returns the
+        Requires a full (not guest) session authenticated within the tenant's re-authentication window (`self-service.reauth_ttl_seconds`, 60-1800 seconds, default 300). Returns the
         external start URL with a one-use link intent bound to this session; the provider's answer
         returns to the account page as `/account?social_link=linked` or
         `/account?social_link=error&reason=already_linked|email_not_verified|session_expired|cancelled|failed`.
