@@ -25,6 +25,7 @@ import {
   validateRedirectUri,
   validateScope,
   isRedirectUriRegistered,
+  redirectUriMatchOptionsFor,
   validateClientAssertion,
   validateDPoPProof,
   timingSafeEqual,
@@ -959,7 +960,13 @@ export async function parHandler(c: Context<{ Bindings: Env }>): Promise<Respons
 
     // RFC 6749 Section 3.1.2.3: Use URL normalization for secure comparison
     // to prevent Open Redirect attacks via URL manipulation
-    if (!isRedirectUriRegistered(params.redirect_uri, clientData.redirect_uris as string[])) {
+    if (
+      !isRedirectUriRegistered(
+        params.redirect_uri,
+        clientData.redirect_uris,
+        redirectUriMatchOptionsFor(clientData)
+      )
+    ) {
       throw new RFCError('invalid_request', 400, 'redirect_uri not registered for this client');
     }
 

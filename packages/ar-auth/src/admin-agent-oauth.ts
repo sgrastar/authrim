@@ -29,6 +29,7 @@ import {
   getTenantIdFromContext,
   hasAdminPermission,
   isRedirectUriRegistered,
+  redirectUriMatchOptionsFor,
   parseOAuthClientAuthenticationParams,
   requireDedicatedAdminDatabaseAdapter,
   safeFetchJson,
@@ -116,7 +117,10 @@ function isCimdPortlessLocalhostRedirectMatch(providedUri: string, registeredUri
 }
 
 function isAdminAgentRedirectUriRegistered(providedUri: string, client: ClientMetadata): boolean {
-  if (isRedirectUriRegistered(providedUri, client.redirect_uris)) return true;
+  if (
+    isRedirectUriRegistered(providedUri, client.redirect_uris, redirectUriMatchOptionsFor(client))
+  )
+    return true;
   if (client.agent_access_registration_mode !== 'cimd') return false;
   return client.redirect_uris.some((registeredUri) =>
     isCimdPortlessLocalhostRedirectMatch(providedUri, registeredUri)

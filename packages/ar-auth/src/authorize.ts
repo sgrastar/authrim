@@ -10,6 +10,7 @@ import {
   validateState,
   validateNonce,
   isRedirectUriRegistered,
+  redirectUriMatchOptionsFor,
   resolveEffectiveSettings,
   falRequiresDpop,
   falRequiresSignedPushedRequest,
@@ -1244,7 +1245,11 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
           errorClientTenantId === requestTenantId &&
           Array.isArray(registeredRedirectUris) &&
           redirectValidation.valid &&
-          isRedirectUriRegistered(redirect_uri, registeredRedirectUris as string[])
+          isRedirectUriRegistered(
+            redirect_uri,
+            registeredRedirectUris,
+            redirectUriMatchOptionsFor(errorClient)
+          )
         ) {
           return redirectWithError(c, redirect_uri, error, description, state, {
             responseMode: response_mode,
@@ -1718,7 +1723,11 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
               errorClientTenantId === requestTenantId &&
               Array.isArray(registeredRedirectUris) &&
               validateRedirectUri(redirect_uri).valid &&
-              isRedirectUriRegistered(redirect_uri, registeredRedirectUris as string[])
+              isRedirectUriRegistered(
+                redirect_uri,
+                registeredRedirectUris,
+                redirectUriMatchOptionsFor(errorClient)
+              )
             ) {
               return redirectWithError(
                 c,
@@ -2594,7 +2603,8 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   // to prevent Open Redirect attacks via URL manipulation
   const redirectUriMatches = isRedirectUriRegistered(
     redirect_uri as string,
-    registeredRedirectUris
+    registeredRedirectUris,
+    redirectUriMatchOptionsFor(clientMetadata)
   );
   if (!redirectUriMatches) {
     return c.html(

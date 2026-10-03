@@ -901,20 +901,43 @@ export function normalizeRedirectUri(uri: string): string | null {
   }
 }
 
+export interface RedirectUriMatchOptions {
+  /**
+   * The client is a native app (`application_type: native`): its http loopback IP redirects
+   * may use any port (RFC 8252 section 7.3). Off by default, so other clients match exactly.
+   */
+  nativeLoopbackAnyPort?: boolean;
+}
+
+/** Match options for a registered client: native apps get the RFC 8252 loopback port rule. */
+export function redirectUriMatchOptionsFor(client: {
+  application_type?: string | null;
+}): RedirectUriMatchOptions {
+  return { nativeLoopbackAnyPort: client.application_type === 'native' };
+}
+
 /**
  * Check if a provided redirect_uri matches any registered URI
  *
  * OAuth 2.0 requires simple string comparison for fully registered redirect URIs. RFC 8252
- * requires native-app loopback IP redirects to accept the ephemeral port selected at runtime;
- * every other component remains an exact string match and hostname aliases are not accepted.
+ * requires a native app's loopback IP redirects to accept the ephemeral port selected at
+ * runtime, so for native clients (and only when the caller says so) the port of an http
+ * 127.0.0.1 / [::1] redirect may differ; every other component remains an exact string match
+ * and hostname aliases are not accepted.
  *
  * @param providedUri - The redirect_uri from the authorization request
  * @param registeredUris - Array of registered redirect_uris for the client
+ * @param options - Whether the client is a native app (see RedirectUriMatchOptions)
  * @returns true if the providedUri matches any registered URI
  */
-export function isRedirectUriRegistered(providedUri: string, registeredUris: string[]): boolean {
+export function isRedirectUriRegistered(
+  providedUri: string,
+  registeredUris: string[],
+  options: RedirectUriMatchOptions = {}
+): boolean {
   return registeredUris.some((registeredUri) => {
     if (registeredUri === providedUri) return true;
+    if (options.nativeLoopbackAnyPort !== true) return false;
     const provided = parseLoopbackRedirect(providedUri);
     const registered = parseLoopbackRedirect(registeredUri);
     return (

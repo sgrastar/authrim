@@ -433,12 +433,36 @@ describe('Admin Agent PAR', () => {
     });
   });
 
+  it('rejects another port for the loopback callback of a client that is not native', async () => {
+    mocks.getClientCached.mockResolvedValue({
+      client_id: 'mcp-client',
+      redirect_uris: ['http://127.0.0.1:58483/callback/nonce'],
+      token_endpoint_auth_method: 'none',
+      requestable_scopes: ['agent:read'],
+    });
+    const { app, env } = createApp({
+      ENABLE_AGENT_MCP: 'true',
+      PAR_REQUEST_STORE: {} as never,
+    });
+    const parameters = body({ redirect_uri: 'http://127.0.0.1:58848/callback/nonce' });
+    const response = await app.fetch(
+      new Request(
+        `https://tenant.example.com/oauth/admin-agent/authorize?${parameters.toString()}`
+      ),
+      env
+    );
+
+    expect(response.status).toBe(400);
+    expect(mocks.storeRequestRpc).not.toHaveBeenCalled();
+  });
+
   it('accepts the runtime port selected for a registered RFC 8252 loopback callback', async () => {
     mocks.getClientCached.mockResolvedValue({
       client_id: 'mcp-client',
       redirect_uris: ['http://127.0.0.1:58483/callback/nonce'],
       token_endpoint_auth_method: 'none',
       requestable_scopes: ['agent:read'],
+      application_type: 'native',
     });
     const { app, env } = createApp({
       ENABLE_AGENT_MCP: 'true',
