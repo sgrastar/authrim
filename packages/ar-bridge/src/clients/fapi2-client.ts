@@ -106,7 +106,7 @@ export class Fapi2Client {
   }
 
   async createAuthorizationRequestObject(
-    authorizationParams: Record<string, string>,
+    authorizationParams: Record<string, string | number>,
     now = Math.floor(Date.now() / 1000)
   ): Promise<string> {
     const alg = this.config.clientAssertionAlg ?? 'ES256';

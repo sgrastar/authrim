@@ -15,7 +15,8 @@ const requestedAt = Date.parse('2026-10-03T10:00:00Z');
 const reauthentication = {
   authorizationChallengeId: 'reauth_1',
   requestedAt,
-  providerKeys: ['saml:idp-1', 'idp-1'],
+  providerId: 'idp-1',
+  providerIds: ['saml:idp-1', 'idp-1'],
 };
 
 describe('provenSPReauthentication', () => {
@@ -27,11 +28,14 @@ describe('provenSPReauthentication', () => {
   it.each([
     ['after the request', '2026-10-03T10:00:05Z'],
     ['within the clock skew before it', '2026-10-03T09:59:00Z'],
-  ])('accepts a login made %s', async (_label, authnInstant) => {
+  ])('accepts a login made %s, as proven when Authrim asked', async (_label, authnInstant) => {
     await expect(
       provenSPReauthentication(env, 'tenant-a', reauthentication, authnInstant)
-    ).resolves.toEqual(expect.any(Number));
-    expect(mockReauthPolicy).toHaveBeenCalledWith(env, 'tenant-a', ['saml:idp-1', 'idp-1']);
+    ).resolves.toBe(requestedAt);
+    expect(mockReauthPolicy).toHaveBeenCalledWith(env, 'tenant-a', {
+      providerId: 'idp-1',
+      ids: ['saml:idp-1', 'idp-1'],
+    });
   });
 
   it.each([

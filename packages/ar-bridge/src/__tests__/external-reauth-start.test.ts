@@ -138,7 +138,10 @@ describe('external start: answering a re-authentication', () => {
     expect(response.status).toBe(302);
     expect(response.headers.get('location')).toBe(IDP_AUTHORIZE);
     expect(mocks.challengeKind).toHaveBeenCalledWith(env, 'default', 'reauth_1');
-    expect(mocks.reauthPolicy).toHaveBeenCalledWith(env, 'default', ['provider-a', 'corp']);
+    expect(mocks.reauthPolicy).toHaveBeenCalledWith(env, 'default', {
+      providerId: 'provider-a',
+      ids: ['provider-a', 'corp'],
+    });
     // Never answered silently, whatever prompt the client asked for.
     expect(mocks.createAuthorizationUrl).toHaveBeenCalledWith(
       expect.objectContaining({ prompt: 'login', maxAge: 0 })

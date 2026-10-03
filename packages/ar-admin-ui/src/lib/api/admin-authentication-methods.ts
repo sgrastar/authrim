@@ -218,6 +218,25 @@ function parseExternalProviderUsage(
 	return Object.fromEntries(entries);
 }
 
+/**
+ * A provider's saved usage: the entry naming its stable providerId, else an older entry without
+ * one matched by id (a slug can be renamed or reused). As the runtime reads it.
+ */
+function savedUsageFor(
+	usageById: Record<string, Partial<AuthenticationMethodExternalProviderUsage>>,
+	providerId: string,
+	ids: string[]
+): Partial<AuthenticationMethodExternalProviderUsage> {
+	const entries = Object.values(usageById);
+	return (
+		entries.find((entry) => entry.providerId === providerId) ??
+		entries.find(
+			(entry) => !entry.providerId && typeof entry.id === 'string' && ids.includes(entry.id)
+		) ??
+		{}
+	);
+}
+
 function safeParseArray<T>(value: string): T[] {
 	try {
 		const parsed = JSON.parse(value);
@@ -260,7 +279,7 @@ function resolveExternalProviderUsages(
 ): AuthenticationMethodExternalProviderUsage[] {
 	const oauthProviders = providers.map((provider) => {
 		const id = providerAuthenticationMethodId(provider);
-		const saved = usageById[id] ?? usageById[provider.id] ?? {};
+		const saved = savedUsageFor(usageById, provider.id, [id, provider.id]);
 		const providerEnabled = provider.enabled !== false;
 		const defaultEnabled = providerEnabled;
 		const accountLinkAvailable = providerEnabled && provider.autoLinkEmail !== false;
@@ -290,7 +309,10 @@ function resolveExternalProviderUsages(
 		.filter((provider) => provider.providerType === 'saml_idp')
 		.map((provider, index) => {
 			const normalized = normalizeSAMLProvider(provider, providers.length + index);
-			const saved = usageById[normalized.id] ?? usageById[normalized.providerId] ?? {};
+			const saved = savedUsageFor(usageById, normalized.providerId, [
+				normalized.id,
+				normalized.providerId
+			]);
 			const defaultEnabled = normalized.enabled;
 			return {
 				...normalized,

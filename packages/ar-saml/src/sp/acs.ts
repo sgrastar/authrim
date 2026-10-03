@@ -2031,7 +2031,7 @@ async function createSAMLLinkedIdentity(params: {
 /**
  * Whether the IdP showed a new login made after Authrim asked for one (ForceAuthn): its
  * AuthnInstant, within the usual clock skew, from an IdP the tenant still lets re-authenticate.
- * Returns when this was verified (Authrim's clock), or null.
+ * Returns the proof's time (when Authrim asked, its own clock), or null.
  */
 export async function provenSPReauthentication(
   env: Env,
@@ -2047,12 +2047,13 @@ export async function provenSPReauthentication(
     return null;
   }
   try {
-    const policy = await readExternalProviderReauthPolicy(
-      env,
-      tenantId,
-      reauthentication.providerKeys
-    );
-    return policy.reauthEnabled ? Date.now() : null;
+    const policy = await readExternalProviderReauthPolicy(env, tenantId, {
+      providerId: reauthentication.providerId,
+      ids: reauthentication.providerIds,
+    });
+    // The proof counts from when Authrim asked, so a re-authentication asked for later (which a
+    // held-back response would otherwise complete) is not.
+    return policy.reauthEnabled ? reauthentication.requestedAt : null;
   } catch {
     return null;
   }

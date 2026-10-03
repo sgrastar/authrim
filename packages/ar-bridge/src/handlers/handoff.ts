@@ -434,6 +434,14 @@ async function createHandoffSession(
       ...(typeof asSession.data?.upstream_acr === 'string'
         ? { upstream_acr: asSession.data.upstream_acr }
         : {}),
+      // A verified new upstream login goes with it, to complete a re-authentication.
+      ...(Array.isArray(asSession.data?.reauth_proven_amr) &&
+      typeof asSession.data?.reauth_proven_at === 'number'
+        ? {
+            reauth_proven_amr: asSession.data.reauth_proven_amr,
+            reauth_proven_at: asSession.data.reauth_proven_at,
+          }
+        : {}),
       client_id,
       audience: 'rp', // Mark explicitly as an RP token
       source_session_id: asSessionId, // Record the AS SessionID (for audit)

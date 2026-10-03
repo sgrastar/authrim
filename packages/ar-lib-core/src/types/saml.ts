@@ -841,7 +841,9 @@ export interface SAMLRequestContext {
   spReauthentication?: {
     authorizationChallengeId: string;
     requestedAt: number;
-    providerKeys: string[];
+    /** The IdP's stable id and the ids an older usage entry may carry. */
+    providerId: string;
+    providerIds: string[];
   };
   attributeReleaseConsentChallenge?: {
     challengeId: string;

@@ -97,7 +97,14 @@ export async function handleSPLogin(c: Context<{ Bindings: Env }>): Promise<Resp
     if (!idpId) {
       // Return list of available IdPs if no IdP specified
       const idps = await listIdPConfigs(env, tenantId);
-      return c.html(buildIdPSelectionPage(issuerUrl, idps, returnUrl));
+      return c.html(
+        buildIdPSelectionPage(
+          issuerUrl,
+          idps,
+          returnUrl,
+          c.req.query('authorization_challenge_id') || undefined
+        )
+      );
     }
 
     // Get IdP configuration
@@ -124,12 +131,20 @@ export async function handleSPLogin(c: Context<{ Bindings: Env }>): Promise<Resp
         });
       }
       if (challengeKind === 'reauth') {
-        const providerKeys = [`saml:${idpId}`, idpId];
-        const policy = await readExternalProviderReauthPolicy(env, tenantId, providerKeys);
+        const providerIds = [`saml:${idpId}`, idpId];
+        const policy = await readExternalProviderReauthPolicy(env, tenantId, {
+          providerId: idpId,
+          ids: providerIds,
+        });
         if (!policy.reauthEnabled) {
           return createErrorResponse(c, AR_ERROR_CODES.POLICY_INSUFFICIENT_PERMISSIONS);
         }
-        reauthentication = { authorizationChallengeId, requestedAt: Date.now(), providerKeys };
+        reauthentication = {
+          authorizationChallengeId,
+          requestedAt: Date.now(),
+          providerId: idpId,
+          providerIds,
+        };
       }
     }
 
@@ -339,12 +354,17 @@ function postToIdP(
 function buildIdPSelectionPage(
   issuerUrl: string,
   idps: Array<{ id: string; name: string; entityId: string }>,
-  returnUrl: string
+  returnUrl: string,
+  authorizationChallengeId?: string
 ): string {
+  // A choice answering an authorization challenge (a re-authentication) keeps answering it.
+  const challenge = authorizationChallengeId
+    ? `&authorization_challenge_id=${encodeURIComponent(authorizationChallengeId)}`
+    : '';
   const idpLinks = idps
     .map(
       (idp) =>
-        `<li><a href="${issuerUrl}/saml/sp/login?idp=${encodeURIComponent(idp.id)}&return_url=${encodeURIComponent(returnUrl)}">${escapeHtml(idp.name)}</a></li>`
+        `<li><a href="${issuerUrl}/saml/sp/login?idp=${encodeURIComponent(idp.id)}&return_url=${encodeURIComponent(returnUrl)}${challenge}">${escapeHtml(idp.name)}</a></li>`
     )
     .join('\n');
 

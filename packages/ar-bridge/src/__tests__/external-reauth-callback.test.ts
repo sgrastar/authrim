@@ -41,10 +41,13 @@ describe('provenUpstreamReauthentication', () => {
   it.each([
     ['after the request', requestedSecond + 5],
     ['within the clock skew before it', requestedSecond - 60],
-  ])('accepts a login made %s', async (_label, authTime) => {
-    const before = Date.now();
-    await expect(prove({ idTokenAuthTime: authTime })).resolves.toBeGreaterThanOrEqual(before);
-    expect(mocks.reauthPolicy).toHaveBeenCalledWith(env, 'default', ['provider-a', 'corp']);
+  ])('accepts a login made %s, as proven when Authrim asked', async (_label, authTime) => {
+    // Not when the answer arrived: a re-authentication asked for after that is not completed.
+    await expect(prove({ idTokenAuthTime: authTime })).resolves.toBe(requestedAt);
+    expect(mocks.reauthPolicy).toHaveBeenCalledWith(env, 'default', {
+      providerId: 'provider-a',
+      ids: ['provider-a', 'corp'],
+    });
   });
 
   it('refuses a login made before the request (an IdP answering from its own session)', async () => {
@@ -63,7 +66,7 @@ describe('provenUpstreamReauthentication', () => {
     await expect(prove({})).rejects.toMatchObject({ code: 'reauth_not_proven' });
 
     mocks.reauthPolicy.mockResolvedValue({ reauthEnabled: true, acceptWithoutAuthTime: true });
-    await expect(prove({})).resolves.toEqual(expect.any(Number));
+    await expect(prove({})).resolves.toBe(requestedAt);
   });
 
   it('refuses when the provider can no longer re-authenticate or settings are unreadable', async () => {

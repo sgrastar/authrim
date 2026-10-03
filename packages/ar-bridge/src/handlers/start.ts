@@ -300,11 +300,10 @@ export async function handleExternalStart(c: Context<{ Bindings: Env }>): Promis
         reauthEnabled =
           provider.providerType === 'oidc' &&
           (
-            await readExternalProviderReauthPolicy(
-              c.env,
-              tenantIdResolved,
-              [provider.id, provider.slug ?? ''].filter(Boolean)
-            )
+            await readExternalProviderReauthPolicy(c.env, tenantIdResolved, {
+              providerId: provider.id,
+              ids: [provider.id, provider.slug ?? ''].filter(Boolean),
+            })
           ).reauthEnabled;
       } catch {
         return c.json(
@@ -752,13 +751,17 @@ export async function handleExternalStart(c: Context<{ Bindings: Env }>): Promis
         code_challenge_method: 'S256',
         ...(fapiConfig.jarm ? { response_mode: 'jwt' } : {}),
         // A re-authentication asks for a new login here too.
-        ...(reauth ? { prompt: 'login', max_age: '0' } : {}),
+        ...(reauth ? { prompt: 'login' } : {}),
       };
-      const parParameters = fapiConfig.requestObjectSigning
+      // max_age is a JSON number inside a request object (RFC 9101), a string in a form.
+      const parParameters: Record<string, string> = fapiConfig.requestObjectSigning
         ? {
-            request: await fapiClient.createAuthorizationRequestObject(authorizationParams),
+            request: await fapiClient.createAuthorizationRequestObject({
+              ...authorizationParams,
+              ...(reauth ? { max_age: 0 } : {}),
+            }),
           }
-        : authorizationParams;
+        : { ...authorizationParams, ...(reauth ? { max_age: '0' } : {}) };
       const par = await fapiClient.pushAuthorizationRequest(
         metadata.pushed_authorization_request_endpoint!,
         parParameters

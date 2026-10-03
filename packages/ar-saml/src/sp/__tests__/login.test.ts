@@ -238,14 +238,38 @@ describe('SP login answering a re-authentication', () => {
 
     expect(res.status).toBe(200);
     expect(authnRequestXml(await res.text())).toContain('ForceAuthn="true"');
-    expect(mockReauthPolicy).toHaveBeenCalledWith(mockEnv, 'tenant-a', ['saml:idp-1', 'idp-1']);
+    expect(mockReauthPolicy).toHaveBeenCalledWith(mockEnv, 'tenant-a', {
+      providerId: 'idp-1',
+      ids: ['saml:idp-1', 'idp-1'],
+    });
     const reauth = (storeBodies[0]?.context as { spReauthentication?: Record<string, unknown> })
       ?.spReauthentication;
     expect(reauth).toMatchObject({
       authorizationChallengeId: 'reauth_1',
-      providerKeys: ['saml:idp-1', 'idp-1'],
+      providerId: 'idp-1',
+      providerIds: ['saml:idp-1', 'idp-1'],
     });
     expect(reauth?.requestedAt).toBeGreaterThanOrEqual(before);
+  });
+
+  it('keeps the challenge on the IdP choice, so the choice still answers it', async () => {
+    mockListIdPConfigs.mockResolvedValue([
+      { id: 'idp-1', name: 'Campus', entityId: 'https://idp.example.com' },
+    ]);
+    const { context } = createLoginContext(mockEnv, 'tenant-a', {
+      authorization_challenge_id: 'reauth_1',
+    });
+    (context.req.query as ReturnType<typeof vi.fn>).mockImplementation((name: string) =>
+      name === 'authorization_challenge_id' ? 'reauth_1' : undefined
+    );
+
+    const res = await handleSPLogin(context);
+
+    expect(await res.text()).toContain('idp=idp-1&return_url=');
+    expect(mockListIdPConfigs).toHaveBeenCalled();
+    expect((context.html as ReturnType<typeof vi.fn>).mock.calls[0][0] as string).toContain(
+      '&authorization_challenge_id=reauth_1'
+    );
   });
 
   it('leaves a sign-in for a login challenge without ForceAuthn', async () => {

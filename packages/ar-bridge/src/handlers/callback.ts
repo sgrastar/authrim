@@ -205,7 +205,9 @@ const REAUTH_CLOCK_SKEW_SECONDS = 60;
 /**
  * Whether the provider showed a new login made after Authrim asked it for one (prompt=login,
  * max_age=0): the validated ID token's auth_time, or, where the tenant accepts that for this
- * provider, the request alone. Returns when this was verified (Authrim's clock); throws otherwise.
+ * provider, the request alone. Returns the proof's time: when Authrim asked (its own clock), so a
+ * re-authentication asked for later, which a held-back answer would otherwise complete, is not.
+ * Throws otherwise.
  */
 export async function provenUpstreamReauthentication(
   env: Env,
@@ -220,11 +222,10 @@ export async function provenUpstreamReauthentication(
   const notProven = (message: string) =>
     new ExternalIdPError(ExternalIdPErrorCode.REAUTH_NOT_PROVEN, message);
   if (!input.idTokenValidated) throw notProven('No validated ID token dates the new login');
-  const policy = await readExternalProviderReauthPolicy(
-    env,
-    input.tenantId,
-    [input.provider.id, input.provider.slug ?? ''].filter(Boolean)
-  ).catch(() => {
+  const policy = await readExternalProviderReauthPolicy(env, input.tenantId, {
+    providerId: input.provider.id,
+    ids: [input.provider.id, input.provider.slug ?? ''].filter(Boolean),
+  }).catch(() => {
     throw notProven('Re-authentication settings are unavailable');
   });
   if (!policy.reauthEnabled) throw notProven('This provider cannot be used to re-authenticate');
@@ -232,10 +233,10 @@ export async function provenUpstreamReauthentication(
     if (input.idTokenAuthTime + REAUTH_CLOCK_SKEW_SECONDS < Math.floor(input.requestedAt / 1000)) {
       throw notProven('The provider answered with a login made before it was asked for one');
     }
-    return Date.now();
+    return input.requestedAt;
   }
   if (!policy.acceptWithoutAuthTime) throw notProven('The provider did not date the new login');
-  return Date.now();
+  return input.requestedAt;
 }
 
 async function completeExternalAuthentication(

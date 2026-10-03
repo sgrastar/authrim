@@ -91,16 +91,36 @@ export interface ExternalProviderReauthPolicy {
   acceptWithoutAuthTime: boolean;
 }
 
+/** Where a provider's saved usage is found: its stable id, and the ids an older entry used. */
+export interface ExternalProviderUsageKey {
+  /** The provider's stable id (the bridge provider id, or a SAML IdP's id). */
+  providerId: string;
+  /** Ids an entry without a providerId may carry (a slug, `saml:<id>`). */
+  ids: readonly string[];
+}
+
+function strictBoolean(value: unknown, fallback: boolean): boolean {
+  if (value === undefined || value === null) return fallback;
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    if (normalized === 'true') return true;
+    if (normalized === 'false') return false;
+  }
+  throw new Error('external_provider_usage_invalid');
+}
+
 /**
  * The re-authentication policy saved for an external provider in
- * `authentication-methods.external_provider_usage`, matched by any of `keys` (its id, slug, or
- * `saml:<id>`). A provider with no saved entry keeps the defaults the admin pages show. Read
- * strictly: an unreadable setting throws rather than allowing a re-authentication.
+ * `authentication-methods.external_provider_usage`. An entry naming a providerId applies only to
+ * that provider (a slug can be renamed or reused); an older entry without one is matched by id.
+ * A provider with no saved entry keeps the defaults the admin pages show. Read strictly: settings
+ * that cannot be read or understood throw rather than allowing a re-authentication.
  */
 export async function readExternalProviderReauthPolicy(
   env: Pick<Env, 'SETTINGS'>,
   tenantId: string,
-  keys: readonly string[]
+  key: ExternalProviderUsageKey
 ): Promise<ExternalProviderReauthPolicy> {
   const defaults: ExternalProviderReauthPolicy = {
     reauthEnabled: true,
@@ -110,23 +130,32 @@ export async function readExternalProviderReauthPolicy(
     `settings:tenant:${tenantId}:${AUTHENTICATION_METHODS_CATEGORY}`
   );
   if (!raw) return defaults;
-  const settings = JSON.parse(raw) as Record<string, unknown>;
-  const usageValue = settings['authentication-methods.external_provider_usage'];
+  const settings = JSON.parse(raw) as unknown;
+  if (!settings || typeof settings !== 'object' || Array.isArray(settings)) {
+    throw new Error('authentication_methods_settings_invalid');
+  }
+  const usageValue = (settings as Record<string, unknown>)[
+    'authentication-methods.external_provider_usage'
+  ];
   if (usageValue === undefined || usageValue === null || usageValue === '') return defaults;
   const usage = typeof usageValue === 'string' ? (JSON.parse(usageValue) as unknown) : usageValue;
   if (!Array.isArray(usage)) throw new Error('external_provider_usage_invalid');
-  const wanted = new Set(keys.filter((key) => key));
-  const entry = usage.find(
+  const entries = usage.filter(
     (item): item is Record<string, unknown> =>
-      Boolean(item) &&
-      typeof item === 'object' &&
-      ((typeof item.id === 'string' && wanted.has(item.id)) ||
-        (typeof item.providerId === 'string' && wanted.has(item.providerId)))
+      Boolean(item) && typeof item === 'object' && !Array.isArray(item)
   );
+  const entry =
+    entries.find((item) => item.providerId === key.providerId) ??
+    entries.find(
+      (item) =>
+        (item.providerId === undefined || item.providerId === null || item.providerId === '') &&
+        typeof item.id === 'string' &&
+        key.ids.includes(item.id)
+    );
   if (!entry) return defaults;
   return {
-    reauthEnabled: normalizeBoolean(entry.reauthEnabled, defaults.reauthEnabled),
-    acceptWithoutAuthTime: normalizeBoolean(
+    reauthEnabled: strictBoolean(entry.reauthEnabled, defaults.reauthEnabled),
+    acceptWithoutAuthTime: strictBoolean(
       entry.reauthAcceptWithoutAuthTime,
       defaults.acceptWithoutAuthTime
     ),
