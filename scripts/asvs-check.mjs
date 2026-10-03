@@ -123,6 +123,22 @@ function requirePattern(content, pattern, description) {
   }
 }
 
+function requireText(content, text, description) {
+  if (!content.includes(text)) {
+    throw new Error(description);
+  }
+}
+
+/** The source of one function or method, from its signature to its closing brace. */
+function functionBody(content, signature, description) {
+  const start = content.indexOf(signature);
+  if (start === -1) throw new Error(description);
+  const indent = content.slice(content.lastIndexOf('\n', start) + 1, start);
+  const end = content.indexOf(`\n${indent}}\n`, start);
+  if (end === -1) throw new Error(description);
+  return content.slice(start, end + indent.length + 2);
+}
+
 function forbidPattern(content, pattern, description) {
   const match = content.match(pattern);
   if (match) {
@@ -501,37 +517,48 @@ async function runIndependentCheck(repoRoot, id) {
       /invalidateSessionRpc\(sessionId\)/,
       'Direct-auth logout must invalidate the session in SessionStore.'
     );
-    requirePattern(
+    const invalidate = functionBody(
       sessionStore,
-      /async invalidateSession\(sessionId: string\): Promise<boolean>/,
+      'async invalidateSession(sessionId: string): Promise<boolean>',
       'SessionStore must implement immediate session invalidation.'
     );
-    requirePattern(
-      sessionStore,
-      /this\.sessionCache\.delete\(sessionId\)/,
+    requireText(
+      invalidate,
+      'this.sessionCache.delete(sessionId)',
       'Session invalidation must delete hot cache state.'
     );
-    requirePattern(
-      sessionStore,
-      /this\.actorCtx\.storage\.delete\(storageKey\)/,
-      'Session invalidation must delete Durable Object storage state.'
+    requireText(
+      invalidate,
+      'await this.actorCtx.storage.delete(storageKey)',
+      'Session invalidation must delete Durable Object storage state before returning.'
     );
-    requirePattern(
-      sessionStore,
-      /await this\.deleteFromPersistence\(sessionId\)/,
-      'Session invalidation must delete cold persistence before returning.'
+    requireText(
+      invalidate,
+      'this.unregisterSessionIndex(session)',
+      "Session invalidation must remove the session from the user's session index."
     );
-    requirePattern(
+    const lookup = functionBody(
       sessionStore,
-      /createTombstone\(sessionId\)/,
-      'Session invalidation must protect against stale persistence resurrection.'
+      'async getSession(sessionId: string): Promise<Session | null>',
+      'SessionStore must implement session lookup.'
+    );
+    requireText(
+      lookup,
+      'this.isExpired(storedSession)',
+      'Session lookup must enforce expiration of stored sessions.'
+    );
+    // Durable Object storage is the only store: no cold copy can bring back a deleted session.
+    forbidPattern(
+      sessionStore,
+      /\.prepare\(|D1Database|DB_SESSIONS|fromPersistence/,
+      'SessionStore must not read a second store that could resurrect an invalidated session'
     );
 
     return {
       id,
       result: 'pass',
       description:
-        'Logout and session-store invalidation remove backend session state and guard against cold-persistence resurrection.',
+        'Logout invalidates the session in SessionStore, which deletes its cache and Durable Object storage state; lookup enforces expiration and reads no other store that could resurrect it.',
       evidence:
         'packages/ar-auth/src/logout.ts; packages/ar-auth/src/direct-auth.ts; packages/ar-lib-core/src/durable-objects/SessionStore.ts',
     };
@@ -556,10 +583,37 @@ async function runIndependentCheck(repoRoot, id) {
       /authCodeData\.redirect_uri !== redirect_uri/,
       'Token endpoint must bind authorization code redemption to the original redirect_uri.'
     );
-    requirePattern(
+    const registered = functionBody(
       validation,
-      /registeredUris\.some\(\(registeredUri\) => registeredUri === providedUri\)/,
+      'export function isRedirectUriRegistered(',
+      'Registered redirect_uri matching must be implemented.'
+    );
+    requireText(
+      registered,
+      'if (registeredUri === providedUri) return true;',
       'Registered redirect_uri comparison must be exact string comparison.'
+    );
+    // RFC 8252 section 7.3: a native app's loopback IP redirect may use any port; everything
+    // else (scheme, the loopback IP, path and query) must still match exactly.
+    requirePattern(
+      registered,
+      /provided\.host === registered\.host &&\s*provided\.suffix === registered\.suffix/,
+      'The loopback redirect exception may vary only the port.'
+    );
+    const loopback = functionBody(
+      validation,
+      'function parseLoopbackRedirect(',
+      'Loopback redirect parsing must be implemented.'
+    );
+    requireText(
+      loopback,
+      String.raw`/^http:\/\/(127\.0\.0\.1|\[::1\])(?::([0-9]{1,5}))?(\/.*)$/u`,
+      'The port exception must apply only to http redirects on a loopback IP literal.'
+    );
+    forbidPattern(
+      loopback,
+      /localhost/,
+      'The port exception must not accept localhost or other host names'
     );
     requirePattern(
       validation,
@@ -571,7 +625,7 @@ async function runIndependentCheck(repoRoot, id) {
       id,
       result: 'pass',
       description:
-        'OAuth redirect URIs are format-validated, require exact registration matches, and are rebound during authorization-code redemption.',
+        'OAuth redirect URIs are format-validated, require exact registration matches (only the port of a native app loopback IP redirect may vary, per RFC 8252), and are rebound during authorization-code redemption.',
       evidence:
         'packages/ar-auth/src/authorize.ts; packages/ar-token/src/token.ts; packages/ar-lib-core/src/utils/validation.ts',
     };
