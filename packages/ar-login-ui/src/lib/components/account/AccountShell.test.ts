@@ -8,9 +8,7 @@ import { applyAuthenticationMethodsToLoginUI } from '$lib/stores/login-ui-config
 import type { AuthenticationMethodsResponse } from '$lib/api/authentication-methods';
 import WithLoginUIStores from '$lib/testing/WithLoginUIStores.svelte';
 import AccountShell from './AccountShell.svelte';
-
-/** Svelte's SSR hydration comments, which split text from closing tags. */
-const HYDRATION_MARKERS = /<!--[\s\S]*?-->/g;
+import { HYDRATION_MARKERS } from '$lib/testing/ssr-html';
 
 const source = readFileSync(new URL('./AccountShell.svelte', import.meta.url), 'utf8');
 

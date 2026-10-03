@@ -3,9 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { setLocale } from '$i18n/i18n-svelte';
 import AccountSocialAccountsWidget from './AccountSocialAccountsWidget.svelte';
 import { linkedIdentity, socialProviders } from './social-fixtures';
-
-/** Svelte's SSR hydration comments, which split text from closing tags. */
-const HYDRATION_MARKERS = /<!--[\s\S]*?-->/g;
+import { HYDRATION_MARKERS } from '$lib/testing/ssr-html';
 
 const handlers = {
 	onLink: (_providerId: string) => undefined,
