@@ -3164,6 +3164,47 @@ describe('Direct Auth primary passkey and email-code flows', () => {
     );
   });
 
+  it.each([
+    ['refuses a re-authentication by an unknown method', undefined, true],
+    ['lets a directory password complete a re-authentication', 'directory_password', false],
+  ] as const)('%s', async (_label, method, refused) => {
+    mocks.challengeStore.consumeChallengeRpc
+      .mockRejectedValueOnce(new Error('not a login challenge'))
+      .mockResolvedValueOnce({
+        userId: 'user_existing',
+        metadata: { sessionUserId: 'user_existing' },
+      });
+    const { consumeAuthorizationChallengeContinuation } = await import('../direct-auth');
+    const context = createContext({});
+    (context as unknown as { header: unknown }).header = vi.fn();
+
+    const result = await consumeAuthorizationChallengeContinuation(
+      context as never,
+      'tenant_test',
+      'reauth_challenge',
+      'user_existing',
+      1_000,
+      'https://op.example.com',
+      method
+    );
+
+    expect('error' in result).toBe(refused);
+  });
+
+  it('reads the proving method from what the session recorded', async () => {
+    const { reauthProvenMethodFromAmr } = await import('../direct-auth');
+
+    expect(reauthProvenMethodFromAmr(['passkey'])).toBe('passkey');
+    expect(reauthProvenMethodFromAmr(['otp', 'totp'])).toBe('totp');
+    expect(reauthProvenMethodFromAmr(['otp'])).toBe('email_otp');
+    expect(reauthProvenMethodFromAmr(['email_code'])).toBe('email_otp');
+    expect(reauthProvenMethodFromAmr(['pwd', 'directory'])).toBe('directory_password');
+    // A passkey only just registered proves nothing yet.
+    expect(reauthProvenMethodFromAmr(['passkey'], ['passkey'])).toBeUndefined();
+    expect(reauthProvenMethodFromAmr(['passkey_signup'])).toBeUndefined();
+    expect(reauthProvenMethodFromAmr(undefined)).toBeUndefined();
+  });
+
   it('asks for a new code when the code carries no usage', async () => {
     const codeVerifier = 'email-code-verifier';
     const challengeData = {

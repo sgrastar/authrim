@@ -1,5 +1,8 @@
 import type { Context } from 'hono';
-import { consumeAuthorizationChallengeContinuation } from './direct-auth';
+import {
+  consumeAuthorizationChallengeContinuation,
+  reauthProvenMethodFromAmr,
+} from './direct-auth';
 import {
   getTenantSettingsDocument,
   readSettingsFlag,
@@ -2755,7 +2758,12 @@ async function resolveCompletedProtocolRedirect(input: {
     input.requestContext.authorization_challenge_id,
     userId,
     getSessionAuthTime(session),
-    getRequestOrigin(input.c)
+    getRequestOrigin(input.c),
+    // The method the server recorded for this session, never one the client names.
+    reauthProvenMethodFromAmr(
+      Array.isArray(session.data?.amr) ? session.data.amr : undefined,
+      Array.isArray(session.data?.unverified_amr) ? session.data.unverified_amr : undefined
+    )
   );
   if ('error' in continuation) {
     return { response: continuation.error };

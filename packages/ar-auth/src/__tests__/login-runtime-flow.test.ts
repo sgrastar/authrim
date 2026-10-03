@@ -88,9 +88,13 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   };
 });
 
-vi.mock('../direct-auth', () => ({
-  consumeAuthorizationChallengeContinuation: mocks.consumeAuthorizationChallengeContinuation,
-}));
+vi.mock('../direct-auth', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../direct-auth')>();
+  return {
+    consumeAuthorizationChallengeContinuation: mocks.consumeAuthorizationChallengeContinuation,
+    reauthProvenMethodFromAmr: actual.reauthProvenMethodFromAmr,
+  };
+});
 
 type RuntimeContext = Context<{ Bindings: Env }>;
 
@@ -3131,7 +3135,9 @@ describe('LoginUI runtime Flow handlers', () => {
       'login_challenge_1',
       'user_1',
       1_700_000_123,
-      'https://first.test.authrim.com'
+      'https://first.test.authrim.com',
+      // The session's recorded method (its amr); this fixture records none.
+      undefined
     );
   });
 

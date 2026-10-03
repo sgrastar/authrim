@@ -543,6 +543,29 @@ function metadataString(metadata: Record<string, unknown>, key: string): string 
   return typeof value === 'string' && value ? value : undefined;
 }
 
+/** A method that can complete a re-authentication (directory passwords have no switch of their own). */
+export type ReauthProvenMethod = 'passkey' | 'email_otp' | 'totp' | 'directory_password';
+
+/**
+ * The method a session's authentication proved, from its amr (methods recorded as unverified, such
+ * as a passkey only just registered, do not count).
+ */
+export function reauthProvenMethodFromAmr(
+  amr: readonly string[] | undefined,
+  unverifiedAmr: readonly string[] = []
+): ReauthProvenMethod | undefined {
+  const proven = (amr ?? []).filter((method) => !unverifiedAmr.includes(method));
+  if (proven.includes('totp')) return 'totp';
+  if (proven.includes('passkey')) return 'passkey';
+  if (
+    proven.some((m) => m === 'otp' || m === 'email_code' || m === 'email_verification_protocol')
+  ) {
+    return 'email_otp';
+  }
+  if (proven.includes('pwd')) return 'directory_password';
+  return undefined;
+}
+
 export async function consumeAuthorizationChallengeContinuation(
   c: Context<{ Bindings: Env }>,
   tenantId: string,
@@ -550,8 +573,11 @@ export async function consumeAuthorizationChallengeContinuation(
   authenticatedUserId: string,
   authTime: number,
   fallbackIssuer: string,
-  /** The method that proved the user: a re-authentication requires its re-authentication switch. */
-  provenMethod?: 'passkey' | 'email_otp' | 'totp'
+  /**
+   * The method that proved the user. A re-authentication needs one (an unknown method, such as a
+   * just-registered passkey, cannot complete it) and requires its re-authentication switch.
+   */
+  provenMethod?: ReauthProvenMethod
 ): Promise<AuthorizationChallengeContinuation | { error: Response }> {
   const env = c.env;
   const challengeStore = await getChallengeStoreByChallengeId(env, challengeId, tenantId);
@@ -593,10 +619,11 @@ export async function consumeAuthorizationChallengeContinuation(
 
   if (
     type === 'reauth' &&
-    provenMethod &&
-    !(await isAuthenticationMethodUsageAvailable(env, tenantId, provenMethod, 'reauth', {
-      strict: true,
-    }).catch(() => false))
+    (!provenMethod ||
+      (provenMethod !== 'directory_password' &&
+        !(await isAuthenticationMethodUsageAvailable(env, tenantId, provenMethod, 'reauth', {
+          strict: true,
+        }).catch(() => false))))
   ) {
     return {
       error: new Response(

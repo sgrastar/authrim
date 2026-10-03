@@ -598,7 +598,8 @@ export function createDirectoryPasswordLoginHandler(fetcher?: DirectoryPasswordF
         authorizationChallengeId,
         runtimeUser.id,
         authTime,
-        new URL(c.req.url).origin
+        new URL(c.req.url).origin,
+        'directory_password'
       );
       if ('error' in continuation) {
         return continuation.error;
@@ -1322,11 +1323,14 @@ export async function directoryMigrationEmailCodeVerifyHandler(c: Context<{ Bind
         transaction.authorization_challenge_id,
         transaction.user_id,
         authTime,
-        new URL(c.req.url).origin
+        new URL(c.req.url).origin,
+        // Recovery proves only the email; the fallback follows a proven directory password.
+        transaction.scope === 'recovery' ? 'email_otp' : 'directory_password'
       );
-      if (!('error' in continuation)) {
-        authorizationContinuation = continuation;
+      if ('error' in continuation) {
+        return continuation.error;
       }
+      authorizationContinuation = continuation;
     }
 
     return createDirectorySessionSuccessResponse(c, {
