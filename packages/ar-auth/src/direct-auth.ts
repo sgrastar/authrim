@@ -789,6 +789,59 @@ export async function readAuthorizationChallengeReauthIssuedAt(
   return typeof issuedAt === 'number' ? issuedAt : null;
 }
 
+/** How long a send that passed human verification may be resumed after provisioning. */
+const DIRECT_EMAIL_SEND_VERIFIED_TTL_SECONDS = 5 * 60;
+
+async function directEmailSendVerifiedKey(
+  tenantId: string,
+  email: string,
+  codeChallenge: string
+): Promise<string> {
+  const digest = await crypto.subtle.digest(
+    'SHA-256',
+    new TextEncoder().encode(`${tenantId}\n${email}\n${codeChallenge}`)
+  );
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+async function recordDirectEmailSendVerified(
+  env: Env,
+  tenantId: string,
+  key: string
+): Promise<void> {
+  const id = `direct_email_send_verified:${key}`;
+  const challengeStore = await getChallengeStoreByChallengeId(env, id, tenantId);
+  await challengeStore.storeChallengeRpc({
+    id,
+    tenantId,
+    type: 'direct_email_send_verified',
+    userId: 'anonymous',
+    challenge: key,
+    ttl: DIRECT_EMAIL_SEND_VERIFIED_TTL_SECONDS,
+  });
+}
+
+/** Whether a verified send for this key was recorded, using the record up (once). */
+async function consumeDirectEmailSendVerified(
+  env: Env,
+  tenantId: string,
+  key: string
+): Promise<boolean> {
+  const id = `direct_email_send_verified:${key}`;
+  try {
+    const challengeStore = await getChallengeStoreByChallengeId(env, id, tenantId);
+    await challengeStore.consumeChallengeRpc({
+      id,
+      tenantId,
+      type: 'direct_email_send_verified',
+      challenge: key,
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function resolveDirectStartTurnstileAction(
   c: Context<{ Bindings: Env }>,
   tenantId: string,
@@ -2782,13 +2835,14 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
         : (readDeclaredHumanVerificationScreen(c) ?? challengeType ?? (user ? 'login' : 'signup'));
     const turnstileAlsoRequiredFor: HumanVerificationAction[] =
       emailCodeUsage === turnstileAction ? [] : [emailCodeUsage];
+    // Answered like any other send, so the address's owner is not revealed; nothing else about the
+    // address is looked at (no human verification either, whose requirements depend on it).
     if (challengeType === 'reauth' && (!user || !reauthUserId || user.id !== reauthUserId)) {
-      // Answered like any other send, so the address's owner is not revealed.
-      suppressEmailCodeSend = true;
       log.info('Suppressing email-code send for another user than the re-authentication', {
         action: 'direct_email_code_send_suppressed',
         reason: 'reauth_user_mismatch',
       });
+      return acceptedEmailCodeSendResponse(c, normalizedEmail);
     }
     const emailOtpEnabled = await isAuthenticationMethodUsageEnabled(
       c.env,
@@ -2804,12 +2858,25 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
         usage: emailCodeUsage,
       });
     }
-    const turnstileError = await verifyHumanVerificationForAction(
+    let turnstileError = await verifyHumanVerificationForAction(
       c,
       turnstileAction,
       human_verification_response ?? cf_turnstile_response,
       turnstileAlsoRequiredFor
     );
+    // A send resumed after its account was provisioned already passed human verification (its
+    // single-use token is spent): the record of that, kept for the same address and PKCE, stands in.
+    const verifiedSendKey = await directEmailSendVerifiedKey(
+      tenantId,
+      normalizedEmail,
+      code_challenge
+    );
+    if (
+      turnstileError &&
+      (await consumeDirectEmailSendVerified(c.env, tenantId, verifiedSendKey))
+    ) {
+      turnstileError = null;
+    }
     if (turnstileError) {
       suppressEmailCodeSend = true;
       log.info('Suppressing email-code send because human verification failed', {
@@ -2883,7 +2950,10 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
             email: normalizedEmail,
             runtimeUser,
           });
-          if (provisioned.status === 'pending') return provisioned.response;
+          if (provisioned.status === 'pending') {
+            await recordDirectEmailSendVerified(c.env, tenantId, verifiedSendKey);
+            return provisioned.response;
+          }
           user = {
             id: provisioned.userId,
             email: normalizedEmail,

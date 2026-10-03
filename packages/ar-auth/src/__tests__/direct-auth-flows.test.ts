@@ -470,6 +470,13 @@ describe('Direct Auth primary passkey and email-code flows', () => {
     mocks.challengeStore.deleteChallengeRpc.mockResolvedValue(undefined);
     mocks.challengeStore.getChallengeRpc.mockReset();
     mocks.challengeStore.consumeChallengeRpc.mockReset();
+    // As the store does, an unknown record cannot be consumed (a send not resumed after provisioning).
+    mocks.challengeStore.consumeChallengeRpc.mockImplementation(
+      async (request: { type?: string }) => {
+        if (request?.type === 'direct_email_send_verified') throw new Error('Challenge not found');
+        return undefined;
+      }
+    );
     mocks.rateLimiter.incrementRpc.mockResolvedValue({ allowed: true });
     mocks.sessionStore.getSessionRpc.mockResolvedValue({
       id: '0_session_existing',
@@ -2064,6 +2071,8 @@ describe('Direct Auth primary passkey and email-code flows', () => {
     expect(response.status).toBe(200);
     expect(storedEmailCodes()).toHaveLength(0);
     expect(mocks.emailNotifier.send).not.toHaveBeenCalled();
+    // Nothing else about the address is looked at, human verification included.
+    expect(mocks.verifyHumanVerificationForAction).not.toHaveBeenCalled();
   });
 
   it('judges a new address as a sign-up whatever challenge it comes with', async () => {
@@ -2195,8 +2204,51 @@ describe('Direct Auth primary passkey and email-code flows', () => {
         }),
       })
     );
-    expect(mocks.challengeStore.storeChallengeRpc).not.toHaveBeenCalled();
+    // No code yet: only the record that this send passed human verification, for its resumption.
+    expect(mocks.challengeStore.storeChallengeRpc).toHaveBeenCalledTimes(1);
+    expect(mocks.challengeStore.storeChallengeRpc).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'direct_email_send_verified', ttl: 300 })
+    );
     expect(mocks.emailNotifier.send).not.toHaveBeenCalled();
+  });
+
+  it('resumes a send after provisioning without its spent human verification token', async () => {
+    mocks.verifyHumanVerificationForAction.mockResolvedValueOnce(
+      new Response(JSON.stringify({ error: 'invalid_request' }), { status: 400 })
+    );
+    mocks.challengeStore.consumeChallengeRpc.mockImplementationOnce(
+      async (request: { type?: string; id?: string }) => {
+        expect(request).toMatchObject({
+          type: 'direct_email_send_verified',
+          id: expect.stringMatching(/^direct_email_send_verified:[0-9a-f]{64}$/),
+        });
+        return undefined;
+      }
+    );
+    mocks.userPII.findByTenantAndEmail.mockResolvedValue({
+      id: 'user_existing',
+      email: 'user@example.com',
+    });
+    const { directEmailCodeSendHandler } = await import('../direct-auth');
+
+    const response = await directEmailCodeSendHandler(
+      enableEmailOtp(
+        createContext(
+          {
+            client_id: 'web-client',
+            email: 'user@example.com',
+            code_challenge: 'email-pkce-challenge',
+            code_challenge_method: 'S256',
+            channel: 'browser',
+            human_verification_response: 'spent-token',
+          },
+          webHeaders()
+        )
+      ) as never
+    );
+
+    expect(response.status).toBe(200);
+    expect(mocks.emailNotifier.send).toHaveBeenCalled();
   });
 
   it('uses the routed Core-only OTP read for an existing tenant-D1 account', async () => {
