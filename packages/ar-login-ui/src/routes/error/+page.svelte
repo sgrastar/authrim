@@ -52,7 +52,7 @@
 		<!-- Error Icon -->
 		<div class="auth-icon-badge">
 			<div class="auth-icon-badge__circle auth-icon-badge__circle--danger">
-				<div class="i-heroicons-exclamation-circle h-9 w-9 auth-icon-badge__icon"></div>
+				<div class="i-ph-warning-circle h-9 w-9 auth-icon-badge__icon"></div>
 			</div>
 		</div>
 
@@ -84,12 +84,12 @@
 		<!-- Action Buttons -->
 		<div class="space-y-3">
 			<Button variant="primary" class="w-full" onclick={handleBackToLogin}>
-				<div class="i-heroicons-arrow-left h-5 w-5"></div>
+				<div class="i-ph-arrow-left h-5 w-5"></div>
 				{$LL.common_backToLogin()}
 			</Button>
 
 			<Button variant="ghost" class="w-full" onclick={handleContactSupport}>
-				<div class="i-heroicons-question-mark-circle h-5 w-5"></div>
+				<div class="i-ph-question h-5 w-5"></div>
 				{$LL.common_contactSupport()}
 			</Button>
 		</div>

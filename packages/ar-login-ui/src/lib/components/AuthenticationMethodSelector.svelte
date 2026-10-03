@@ -106,7 +106,7 @@
 		disabled={emailCodeLoading || directoryPasswordLoading || externalIdpLoading !== null}
 		onclick={onPasskeyLogin}
 	>
-		<div class="i-heroicons-key h-5 w-5"></div>
+		<div class="i-ph-key h-5 w-5"></div>
 		{$LL.login_signInWithPasskey()}
 	</Button>
 
@@ -160,7 +160,7 @@
 		disabled={passkeyLoading || emailCodeLoading || externalIdpLoading !== null}
 		onclick={() => onDirectoryPasswordLogin?.(directoryUsername, directoryPassword)}
 	>
-		<div class="i-heroicons-identification h-5 w-5"></div>
+		<div class="i-ph-identification-card h-5 w-5"></div>
 		{$LL.login_signInWithDirectory({ label: directoryPasswordLabel })}
 	</Button>
 
@@ -190,7 +190,7 @@
 			required
 		>
 			{#snippet icon()}
-				<div class="i-heroicons-envelope h-5 w-5" style="color: var(--text-muted);"></div>
+				<div class="i-ph-envelope-simple h-5 w-5" style="color: var(--text-muted);"></div>
 			{/snippet}
 		</Input>
 	</div>
@@ -202,7 +202,7 @@
 		disabled={passkeyLoading || directoryPasswordLoading || externalIdpLoading !== null}
 		onclick={() => onEmailCodeSend?.(email)}
 	>
-		<div class="i-heroicons-envelope h-5 w-5"></div>
+		<div class="i-ph-envelope-simple h-5 w-5"></div>
 		{$LL.login_sendCode()}
 	</Button>
 {/if}

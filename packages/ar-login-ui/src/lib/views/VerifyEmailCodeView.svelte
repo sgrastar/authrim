@@ -51,7 +51,7 @@
 <Card class="mb-6">
 	<div class="auth-icon-badge">
 		<div class="auth-icon-badge__circle">
-			<div class="i-heroicons-envelope-solid h-9 w-9 auth-icon-badge__icon"></div>
+			<div class="i-ph-envelope-simple-fill h-9 w-9 auth-icon-badge__icon"></div>
 		</div>
 	</div>
 
@@ -61,7 +61,7 @@
 
 	<!-- The same accepted status is shown regardless of account existence. -->
 	<div class="auth-progress mb-6" role="status" aria-live="polite">
-		<span class="i-heroicons-check-circle h-5 w-5" aria-hidden="true"></span>
+		<span class="i-ph-check-circle h-5 w-5" aria-hidden="true"></span>
 		<div class="min-w-0">
 			<p class="auth-email-code__lead">{$LL.emailCode_subtitle()}</p>
 			<p class="auth-email-code__address">{email}</p>
@@ -129,7 +129,7 @@
 
 <p class="auth-bottom-link">
 	<a href="/login" class="inline-flex items-center gap-2" data-sveltekit-reload>
-		<span class="i-heroicons-arrow-left h-4 w-4"></span>
+		<span class="i-ph-arrow-left h-4 w-4"></span>
 		{$LL.common_backToLogin()}
 	</a>
 </p>
