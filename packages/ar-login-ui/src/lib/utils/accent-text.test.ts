@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { accentTextColor, normalizeAccentColor } from './accent-text';
+import { sanitizeColor } from './url-validation';
 
 function contrast(a: string, b: string): number {
 	const lum = (hex: string) =>
@@ -15,13 +16,21 @@ describe('accent colours', () => {
 	it('applies an accent opaque, from hex, rgb() or hsl()', () => {
 		expect(normalizeAccentColor('#123')).toBe('#112233');
 		expect(normalizeAccentColor('#2563EB')).toBe('#2563eb');
-		expect(normalizeAccentColor('#2563eb80')).toBe('#2563eb');
 		expect(normalizeAccentColor('rgba(0, 0, 0, 0.01)')).toBe('#000000');
-		expect(normalizeAccentColor('hsl(48, 96%, 63%)')).toMatch(/^#[0-9a-f]{6}$/);
+		expect(normalizeAccentColor('rgb(37, 99, 235)')).toBe('#2563eb');
 	});
 
 	it('does not apply a colour it cannot resolve the same everywhere', () => {
-		for (const value of ['', 'yellow', 'red', 'rgb(300, 0, 0)', undefined]) {
+		for (const value of [
+			'',
+			'yellow',
+			'red',
+			'rgb(300, 0, 0)',
+			'rgb(0,0,0,)',
+			'#2563eb80',
+			'hsl(48, 96%, 63%)',
+			undefined
+		]) {
 			expect(normalizeAccentColor(value)).toBeNull();
 			expect(accentTextColor(value)).toBeNull();
 		}
@@ -34,6 +43,19 @@ describe('accent colours', () => {
 		}
 		for (const accent of ['#2563eb', '#16a34a', '#e8623f', '#fde047', '#797979', '#7a7a7a']) {
 			expect(contrast(accentTextColor(accent)!, accent), accent).toBeGreaterThanOrEqual(4.5);
+		}
+	});
+
+	it('applies only colours sanitizeColor also lets through', () => {
+		for (const value of [
+			'#abc',
+			'#a1b2c3',
+			'rgb(1, 2, 3)',
+			'rgba(1, 2, 3, 0.5)',
+			'rgb(0,0,0,)',
+			'#a1b2c3d4'
+		]) {
+			if (normalizeAccentColor(value)) expect(sanitizeColor(value), value).not.toBe('');
 		}
 	});
 });

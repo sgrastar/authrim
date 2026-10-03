@@ -15,13 +15,21 @@ describe('accent colours', () => {
 	it('applies an accent opaque, from hex, rgb() or hsl()', () => {
 		expect(normalizeAccentColor('#123')).toBe('#112233');
 		expect(normalizeAccentColor('#2563EB')).toBe('#2563eb');
-		expect(normalizeAccentColor('#2563eb80')).toBe('#2563eb');
 		expect(normalizeAccentColor('rgba(0, 0, 0, 0.01)')).toBe('#000000');
-		expect(normalizeAccentColor('hsl(48, 96%, 63%)')).toMatch(/^#[0-9a-f]{6}$/);
+		expect(normalizeAccentColor('rgb(37, 99, 235)')).toBe('#2563eb');
 	});
 
 	it('does not apply a colour it cannot resolve the same everywhere', () => {
-		for (const value of ['', 'yellow', 'red', 'rgb(300, 0, 0)', undefined]) {
+		for (const value of [
+			'',
+			'yellow',
+			'red',
+			'rgb(300, 0, 0)',
+			'rgb(0,0,0,)',
+			'#2563eb80',
+			'hsl(48, 96%, 63%)',
+			undefined
+		]) {
 			expect(normalizeAccentColor(value)).toBeNull();
 			expect(accentTextColor(value)).toBeNull();
 		}

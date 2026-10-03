@@ -3,40 +3,30 @@
  * colour that reads on them.
  *
  * An accent fills primary buttons, so it must be one colour every renderer resolves the same way
- * (server and browser) and that the label can be chosen against: a hex, rgb() or hsl() colour,
- * applied opaque (an alpha is dropped). Anything else (a named colour, say) is not applied and the
- * theme's own accent is used.
+ * (server and browser) and that the label can be chosen against: `#rgb`, `#rrggbb` or rgb()/rgba(),
+ * applied opaque (an alpha is dropped). Anything else (a named colour, hsl(), 8-digit hex) is not
+ * applied and the theme's own accent is used.
  */
 
 type Rgb = [number, number, number];
 
 function parse(color: string): Rgb | null {
 	const value = color.trim();
-	const hex = value.match(/^#([0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/i);
+	// Only what every step lets through: the authentication-methods API (hex, rgb()), the Login
+	// UI's sanitizeColor (each channel and the alpha checked) and this parser.
+	const hex = value.match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/i);
 	if (hex) {
 		const digits = hex[1].length === 3 ? [...hex[1]].map((d) => d + d).join('') : hex[1];
 		return [0, 2, 4].map((i) => parseInt(digits.slice(i, i + 2), 16)) as Rgb;
 	}
-	const rgb = value.match(/^rgba?\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})\s*(?:,[^)]*)?\)$/i);
+	const rgb = value.match(
+		/^rgba?\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})\s*(?:,\s*(0|1|0?\.\d+))?\s*\)$/i
+	);
 	if (rgb) {
 		const channels = [Number(rgb[1]), Number(rgb[2]), Number(rgb[3])];
 		return channels.every((c) => c <= 255) ? (channels as Rgb) : null;
 	}
-	const hsl = value.match(
-		/^hsla?\(\s*(\d{1,3})\s*,\s*(\d{1,3})%\s*,\s*(\d{1,3})%\s*(?:,[^)]*)?\)$/i
-	);
-	if (hsl) {
-		const [h, s, l] = [Number(hsl[1]), Number(hsl[2]), Number(hsl[3])];
-		return h <= 360 && s <= 100 && l <= 100 ? fromHsl(h, s / 100, l / 100) : null;
-	}
 	return null;
-}
-
-function fromHsl(h: number, s: number, l: number): Rgb {
-	const k = (n: number) => (n + h / 30) % 12;
-	const a = s * Math.min(l, 1 - l);
-	const f = (n: number) => l - a * Math.max(-1, Math.min(k(n) - 3, 9 - k(n), 1));
-	return [f(0), f(8), f(4)].map((v) => Math.round(v * 255)) as Rgb;
 }
 
 function luminance([r, g, b]: Rgb): number {
