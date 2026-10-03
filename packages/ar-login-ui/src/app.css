@@ -7638,6 +7638,39 @@ tr.expired {
 	margin: 0;
 }
 
+/* CIBA request (ciba page): client, expiry and the code to compare, on theme tokens only. */
+.auth-ciba-request__head {
+	display: flex;
+	align-items: center;
+	gap: 16px;
+}
+
+.auth-ciba-request__logo {
+	width: 48px;
+	height: 48px;
+	flex-shrink: 0;
+	border-radius: var(--radius-md);
+	object-fit: cover;
+}
+
+.auth-ciba-request__client {
+	flex: 1;
+	min-width: 0;
+}
+
+.auth-ciba-request__expiry {
+	text-align: end;
+}
+
+.auth-ciba-request__code {
+	margin: 0;
+	font-family: var(--font-mono, ui-monospace, monospace);
+	font-size: 1.5rem;
+	font-weight: 700;
+	letter-spacing: 0.08em;
+	color: var(--text-primary);
+}
+
 /* --- Error code box --- */
 .auth-error-code-box {
 	background: var(--bg-subtle);
