@@ -117,7 +117,8 @@ export const RATE_LIMIT_SETTINGS_META: Record<keyof RateLimitSettings, SettingMe
     default: 5,
     envKey: 'AUTH_MAX_FAILED_ATTEMPTS',
     label: 'Max Failed Auth Attempts',
-    description: 'Maximum failed authentication attempts before lockout',
+    description:
+      'Failed password attempts (directory passwords, within 15 minutes) after which the account is locked for the rest of that time',
     min: 3,
     max: 20,
     visibility: 'admin',

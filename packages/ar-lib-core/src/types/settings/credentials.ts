@@ -60,7 +60,8 @@ export const CREDENTIALS_SETTINGS_META: Record<keyof CredentialsSettings, Settin
     default: 300,
     envKey: 'EMAIL_CODE_TTL',
     label: 'Email Code TTL',
-    description: 'Email verification code lifetime in seconds',
+    description:
+      'Lifetime in seconds of emailed sign-in, sign-up and re-authentication codes (the email states it, rounded up to minutes)',
     min: 60,
     max: 900,
     unit: 'seconds',

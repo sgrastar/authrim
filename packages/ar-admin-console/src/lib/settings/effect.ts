@@ -7,7 +7,8 @@
  * since: the older stores consolidated into the Settings API (logout, errors, rate limits,
  * just-in-time provisioning, policy flags and embedding limits, token lifetimes, FAPI and the
  * other protocol settings (PAR, request objects, response types, DPoP nonces, discovery claims),
- * token exchange, introspection, conformance, UI routing) and the IdP profile update on sign-in.
+ * token exchange, introspection, conformance, UI routing), the IdP profile update on sign-in, and
+the password lockout threshold and email code lifetime.
  * Update this list when a setting starts to apply or leaves the catalog.
  *
  * Shown in the settings map (Storybook: Pages › Settings map).
@@ -69,15 +70,13 @@ export const NOT_APPLIED: ReadonlyMap<string, NotApplied> = new Map([
 		'tokens.exchange_impersonation_enabled',
 		'tokens.introspection_extended_claims'
 	]),
-	// to-wire (7)
+	// to-wire (5)
 	...reason('to-wire', [
 		'assurance.default_ial',
 		'assurance.ida_profile',
 		'assurance.ial_assurance_values',
 		'assurance.saml_authn_context_aal',
-		'assurance.scope_ial_requirements',
-		'credentials.email_code_ttl',
-		'rate_limit.auth_max_failed_attempts'
+		'assurance.scope_ial_requirements'
 	]),
 	// duplicate (37)
 	...reason('duplicate', [

@@ -351,6 +351,30 @@ describe('email code handlers through HTTP', () => {
       expect(mocks.storeChallengeRpc).not.toHaveBeenCalled();
     });
 
+    it("uses the tenant's email code lifetime for the code and its cookie", async () => {
+      const response = await post(
+        '/send',
+        { email: 'user@example.com' },
+        {
+          OTP_HMAC_SECRET: 'private-secret',
+          EMAIL_FROM: 'login@example.com',
+          SETTINGS: {
+            get: vi.fn(async (key: string) =>
+              key === 'settings:tenant:tenant-1:credentials'
+                ? JSON.stringify({ 'credentials.email_code_ttl': 90 })
+                : null
+            ),
+          },
+        }
+      );
+
+      expect(response.status).toBe(200);
+      expect(mocks.storeChallengeRpc).toHaveBeenCalledWith(
+        expect.objectContaining({ type: 'email_code', ttl: 90 })
+      );
+      expect(response.headers.get('set-cookie')).toContain('Max-Age=90');
+    });
+
     it('stores only the hashed OTP and sends the plaintext through the notifier', async () => {
       const response = await post(
         '/send',

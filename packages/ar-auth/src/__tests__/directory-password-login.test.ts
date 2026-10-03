@@ -341,6 +341,30 @@ describe('directory password login handler', () => {
     );
   });
 
+  it.each([
+    ['the tenant setting', { 'rate_limit.auth_max_failed_attempts': 8 }, 8],
+    ['its default where none is set', null, 5],
+    ['its default for a value out of range', { 'rate_limit.auth_max_failed_attempts': 50 }, 5],
+  ])('locks an account after %s of failed password attempts', async (_label, saved, limit) => {
+    mocks.rateLimiter.incrementRpc.mockResolvedValueOnce({ allowed: false, retryAfter: 60 });
+    const fetcher = vi.fn();
+    const handler = createDirectoryPasswordLoginHandler(fetcher);
+
+    const response = await handler(
+      createContext(
+        { username: 'alice', password: 'wrong' },
+        saved ? { 'settings:tenant:tenant-a:rate-limit': saved } : {}
+      ) as never
+    );
+
+    expect(response.status).toBe(429);
+    expect(fetcher).not.toHaveBeenCalled();
+    expect(mocks.rateLimiter.incrementRpc).toHaveBeenCalledWith(
+      expect.stringMatching(/^account:[0-9a-f]{64}$/),
+      { windowSeconds: 15 * 60, maxRequests: limit }
+    );
+  });
+
   it('verifies Wordwarden credentials and creates an Authrim session', async () => {
     const fetcher = vi.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {
       const headers = init?.headers as Headers;
@@ -1117,10 +1141,11 @@ describe('directory password login handler', () => {
     });
 
     const response = await directoryMigrationEmailCodeSendHandler(
-      createContext({
-        transaction_id: 'damt_email_1',
-        transaction_token: 'migration-email-token',
-      }) as never
+      createContext(
+        { transaction_id: 'damt_email_1', transaction_token: 'migration-email-token' },
+        // The tenant's email code lifetime applies to migration codes too.
+        { 'settings:tenant:tenant-a:credentials': { 'credentials.email_code_ttl': 600 } }
+      ) as never
     );
     const body = (await response.json()) as Record<string, unknown>;
 
@@ -1129,6 +1154,7 @@ describe('directory password login handler', () => {
       success: true,
       challenge_id: expect.any(String),
       masked_email: 'al***@example.com',
+      expires_in: 600,
     });
     expect(mocks.rateLimiter.incrementRpc).toHaveBeenCalledWith('transaction:damt_email_1', {
       windowSeconds: 15 * 60,
@@ -1140,6 +1166,7 @@ describe('directory password login handler', () => {
         type: 'directory_migration_email',
         userId: 'user_generated',
         email: 'alice@example.com',
+        ttl: 600,
         metadata: expect.objectContaining({
           transaction_id: 'damt_email_1',
           token_hash: tokenHash,

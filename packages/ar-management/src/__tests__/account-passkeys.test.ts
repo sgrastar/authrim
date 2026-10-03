@@ -646,6 +646,8 @@ describe('Account Page passkey management API', () => {
           'settings:tenant:default:authentication-methods': {
             'authentication-methods.email_otp.enabled': true,
           },
+          // The tenant's email code lifetime applies to re-authentication codes too.
+          'settings:tenant:default:credentials': { 'credentials.email_code_ttl': 120 },
         },
       })
     );
@@ -653,6 +655,7 @@ describe('Account Page passkey management API', () => {
 
     expect(response.status).toBe(200);
     expect(body.masked_email).toBe('u***r@example.com');
+    expect(body.expires_in).toBe(120);
     expect(mockChallengeStore.storeChallengeRpc).toHaveBeenCalledWith(
       expect.objectContaining({
         id: expect.stringMatching(/^account_email_reauth:/),
@@ -660,6 +663,7 @@ describe('Account Page passkey management API', () => {
         type: 'account_email_reauth',
         userId: 'user-001',
         email: 'user@example.com',
+        ttl: 120,
         metadata: expect.objectContaining({
           sessionId: 'g1:apac:3:session_current',
         }),

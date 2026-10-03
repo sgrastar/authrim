@@ -93,6 +93,9 @@ import {
   resolveAccountDataContextFromHono,
   type CanonicalOtpLoginUser,
   type DatabaseAdapter,
+  CREDENTIALS_DEFAULTS,
+  CREDENTIALS_SETTINGS_META,
+  resolveEmailCodeTtlSeconds,
 } from '@authrim/ar-lib-core';
 import {
   applyInvitationAssignments,
@@ -154,7 +157,6 @@ import {
 const RP_NAME = 'Authrim';
 const CHALLENGE_TTL = 5 * 60; // 5 minutes
 const AUTH_CODE_TTL = 60; // 60 seconds, when oauth.auth_code_ttl is not usable
-const EMAIL_CODE_TTL = 5 * 60; // 5 minutes
 const REFRESH_TOKEN_TTL = 30 * 24 * 60 * 60; // 30 days
 const DIRECT_AUTH_GRANT_REDIRECT_URI = 'https://authrim.local/direct-auth/callback';
 
@@ -3099,22 +3101,28 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
       deleteChallengeRpc(id: string): Promise<unknown>;
     };
     let challengeStore: DirectEmailCodeChallengeStore | undefined;
+    let emailCodeTtl = CREDENTIALS_DEFAULTS['credentials.email_code_ttl'];
     try {
       const hmacSecret = c.env.OTP_HMAC_SECRET;
       if (!hmacSecret) {
         throw new Error('otp_hmac_secret_missing');
       }
 
-      const [codeHash, emailHash, resolvedChallengeStore] = await Promise.all([
-        hashEmailCode(code, normalizedEmail, attemptId, issuedAt, hmacSecret),
-        hashEmail(normalizedEmail),
-        getChallengeStoreByChallengeId(
-          c.env,
-          attemptId,
-          getTenantIdFromContext(c)
-        ) as Promise<DirectEmailCodeChallengeStore>,
-      ]);
+      const [codeHash, emailHash, resolvedChallengeStore, resolvedEmailCodeTtl] = await Promise.all(
+        [
+          hashEmailCode(code, normalizedEmail, attemptId, issuedAt, hmacSecret),
+          hashEmail(normalizedEmail),
+          getChallengeStoreByChallengeId(
+            c.env,
+            attemptId,
+            getTenantIdFromContext(c)
+          ) as Promise<DirectEmailCodeChallengeStore>,
+          // The tenant's email code lifetime (credentials.email_code_ttl).
+          resolveEmailCodeTtlSeconds(c.env, getTenantIdFromContext(c)),
+        ]
+      );
       challengeStore = resolvedChallengeStore;
+      emailCodeTtl = resolvedEmailCodeTtl;
 
       failureStage = 'challenge_store';
       await challengeStore.storeChallengeRpc({
@@ -3123,7 +3131,7 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
         type: 'direct_email_code',
         userId: user.id,
         challenge: codeHash,
-        ttl: EMAIL_CODE_TTL,
+        ttl: emailCodeTtl,
         email: normalizedEmail,
         metadata: {
           ...emailVerificationMetadata,
@@ -3142,7 +3150,7 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
         notificationKind: 'auth.direct-email-code',
         accountId: user.id,
         idempotencyKey: `direct-email-code:${attemptId}`,
-        expiresAt: Math.floor(issuedAt / 1000) + EMAIL_CODE_TTL,
+        expiresAt: Math.floor(issuedAt / 1000) + emailCodeTtl,
         payload: {
           channel: 'email',
           to: normalizedEmail,
@@ -3152,7 +3160,7 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
             name: user.name || undefined,
             email: normalizedEmail,
             code,
-            expiresInMinutes: EMAIL_CODE_TTL / 60,
+            expiresInMinutes: Math.ceil(emailCodeTtl / 60),
             appName: 'Authrim',
             logoUrl: undefined,
           }),
@@ -3161,7 +3169,7 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
               name: user.name || undefined,
               email: normalizedEmail,
               code,
-              expiresInMinutes: EMAIL_CODE_TTL / 60,
+              expiresInMinutes: Math.ceil(emailCodeTtl / 60),
               appName: 'Authrim',
             }),
           },
@@ -3187,7 +3195,7 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
 
     return c.json({
       attempt_id: attemptId,
-      expires_in: EMAIL_CODE_TTL,
+      expires_in: emailCodeTtl,
       masked_email: maskEmail(normalizedEmail),
     });
   } catch (error) {
@@ -3214,10 +3222,14 @@ function maskEmail(email: string): string {
   return `${masked}@${domain}`;
 }
 
-function acceptedEmailCodeSendResponse(c: Context<{ Bindings: Env }>, normalizedEmail: string) {
+/** Answers a send that sent nothing exactly as one that did, its lifetime included. */
+async function acceptedEmailCodeSendResponse(
+  c: Context<{ Bindings: Env }>,
+  normalizedEmail: string
+) {
   return c.json({
     attempt_id: crypto.randomUUID(),
-    expires_in: EMAIL_CODE_TTL,
+    expires_in: await resolveEmailCodeTtlSeconds(c.env, getTenantIdFromContext(c)),
     masked_email: maskEmail(normalizedEmail),
   });
 }
@@ -3264,7 +3276,8 @@ export async function directEmailCodeVerifyHandler(c: Context<{ Bindings: Env }>
     const rateLimiter = c.env.RATE_LIMITER.get(rateLimiterId);
 
     const attemptResult = await rateLimiter.incrementRpc(`verify:${attempt_id}`, {
-      windowSeconds: EMAIL_CODE_TTL,
+      // As long as any code can last, so a code's five attempts never reset while it is valid.
+      windowSeconds: CREDENTIALS_SETTINGS_META['credentials.email_code_ttl'].max ?? 900,
       maxRequests: 5, // Max 5 attempts per code
     });
 

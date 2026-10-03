@@ -30,6 +30,7 @@ export * from './services/logout-settings';
 export * from './services/account-session';
 export * from './services/account-login-methods';
 export * from './services/authorization-challenge-kind';
+export * from './services/sign-in-limits';
 export * from './services/protocol-settings';
 export {
   StoredLegacyValue,
