@@ -706,6 +706,18 @@ async function runIndependentCheck(repoRoot, id) {
       },
       'redirect_uri matching must be exact apart from the port of a native app loopback IP redirect'
     );
+    // The admin agent authorization server adds one exception for clients known only by a Client
+    // ID Metadata Document: the port of a portless http://localhost callback.
+    await requirePassingTests(
+      repoRoot,
+      {
+        packageDir: 'packages/ar-auth',
+        file: 'src/__tests__/admin-agent-oauth.test.ts',
+        name: 'loopback callback|CIMD localhost|portless CIMD callback',
+        minimum: 13,
+      },
+      'Admin agent redirect_uri matching must be exact apart from the CIMD localhost port'
+    );
     requirePattern(
       validation,
       /redirect_uri must not contain a fragment/,
@@ -716,9 +728,9 @@ async function runIndependentCheck(repoRoot, id) {
       id,
       result: 'pass',
       description:
-        'OAuth redirect URIs are format-validated, require exact registration matches (only the port of a native app loopback IP redirect may vary, per RFC 8252), and are rebound during authorization-code redemption (matching tests run).',
+        "OAuth redirect URIs are format-validated, require exact registration matches (only the port of a native app loopback IP redirect, or of a CIMD agent client's portless localhost callback, may vary), and are rebound during authorization-code redemption (matching tests run).",
       evidence:
-        'packages/ar-auth/src/authorize.ts; packages/ar-token/src/token.ts; packages/ar-lib-core/src/utils/validation.ts; packages/ar-lib-core/src/utils/__tests__/validation.property.test.ts',
+        'packages/ar-auth/src/authorize.ts; packages/ar-auth/src/admin-agent-oauth.ts; packages/ar-token/src/token.ts; packages/ar-lib-core/src/utils/validation.ts; packages/ar-lib-core/src/utils/__tests__/validation.property.test.ts; packages/ar-auth/src/__tests__/admin-agent-oauth.test.ts',
     };
   }
 

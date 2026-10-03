@@ -330,16 +330,19 @@ controls:
     level: 1
     requirement: Verify that the authorization server validates redirect URIs based on a client-specific allowlist of pre-registered URIs using exact string comparison.
     status: covered
-    rationale: Authorization and token endpoints validate redirect URI format, require client-specific registered redirect URI matches, and compare the token request redirect URI with the value bound to the authorization code. The one exception is RFC 8252 section 7.3. For clients registered as native apps (application_type native), the port of an http 127.0.0.1 or [::1] redirect may vary; scheme, IP, path and query still match exactly, and every other client matches exactly, port included.
+    rationale: Authorization and token endpoints validate redirect URI format, require client-specific registered redirect URI matches, and compare the token request redirect URI with the value bound to the authorization code. The one exception is RFC 8252 section 7.3. For clients registered as native apps (application_type native), the port of an http 127.0.0.1 or [::1] redirect may vary; scheme, IP, path and query still match exactly, and every other client matches exactly, port included. The admin agent authorization server adds one compatibility exception for clients known only by a Client ID Metadata Document (such as Claude Code). A registered portless http://localhost callback accepts a request that is the same URI with only a port inserted after the host, compared as text.
     evidence:
       - check: asvs.v10_4_1.redirect_uri_exact_allowlist
-        note: Verify exact redirect_uri matching, the native-only, port-only loopback IP exception, and token-request redirect_uri binding, and run the matching tests.
+        note: Verify exact redirect_uri matching, the native-only, port-only loopback IP exception, and token-request redirect_uri binding, and run the matching tests, including the admin agent CIMD localhost exception.
       - path: packages/ar-auth/src/authorize.ts
         line: 2604
         note: Authorization endpoint checks redirect_uri against registered client redirect URIs, with the client type deciding the loopback port rule.
       - path: packages/ar-lib-core/src/utils/validation.ts
         line: 933
         note: isRedirectUriRegistered uses exact string comparison, except the port of a native app's loopback IP redirect (RFC 8252).
+      - path: packages/ar-auth/src/admin-agent-oauth.ts
+        line: 88
+        note: The CIMD-only localhost exception inserts a port into the registered URI and compares the result as text.
       - path: packages/ar-token/src/token.ts
         line: 2240
         note: Token endpoint rejects redirect_uri values that differ from the authorization code binding.
