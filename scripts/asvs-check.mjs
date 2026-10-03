@@ -148,8 +148,34 @@ function functionBody(content, signature, description) {
 /**
  * Runs the named regression tests of one package and requires them to pass: behaviour, which a
  * source pattern cannot show. `name` is Vitest's `-t` pattern; at least `minimum` must pass.
+ * `buildDependenciesOf` names a package whose tests import its workspace dependencies' builds:
+ * those are built first (through Turbo, so an up-to-date build costs nothing), as `pnpm test` does.
  */
-async function requirePassingTests(repoRoot, { packageDir, file, name, minimum }, description) {
+async function requirePassingTests(
+  repoRoot,
+  { packageDir, file, name, minimum, buildDependenciesOf },
+  description
+) {
+  if (buildDependenciesOf) {
+    const build = spawnSync(
+      'pnpm',
+      [
+        'exec',
+        'turbo',
+        'run',
+        'build',
+        `--filter=${buildDependenciesOf}^...`,
+        '--output-logs=errors-only',
+      ],
+      { cwd: repoRoot, encoding: 'utf8' }
+    );
+    if (build.status !== 0) {
+      const detail = `${build.stdout ?? ''}${build.stderr ?? ''}${build.error?.message ?? ''}`
+        .trim()
+        .slice(-300);
+      throw new Error(`${description}: the packages the tests import did not build (${detail})`);
+    }
+  }
   const outputFile = path.join(os.tmpdir(), `asvs-vitest-${process.pid}-${Date.now()}.json`);
   const result = spawnSync(
     'pnpm',
@@ -714,7 +740,8 @@ async function runIndependentCheck(repoRoot, id) {
         packageDir: 'packages/ar-auth',
         file: 'src/__tests__/admin-agent-oauth.test.ts',
         name: 'loopback callback|CIMD localhost|portless CIMD callback',
-        minimum: 13,
+        minimum: 15,
+        buildDependenciesOf: '@authrim/ar-auth',
       },
       'Admin agent redirect_uri matching must be exact apart from the CIMD localhost port'
     );
