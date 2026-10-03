@@ -1,36 +1,52 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
-	import type { HTMLButtonAttributes } from 'svelte/elements';
+	import type { HTMLAnchorAttributes, HTMLButtonAttributes } from 'svelte/elements';
 
-	interface Props extends HTMLButtonAttributes {
+	interface Common {
 		variant?: 'primary' | 'secondary' | 'ghost' | 'danger';
 		size?: 'sm' | 'md' | 'lg';
-		loading?: boolean;
 		icon?: boolean;
-		/** Navigates instead: the same button, drawn as a link (one control, not a button in a link). */
-		href?: string;
-		/** With `href`: reload the page instead of client-side navigation. */
-		reload?: boolean;
 		children: Snippet;
 	}
+
+	/** A button. */
+	type ButtonProps = Common &
+		Omit<HTMLButtonAttributes, keyof Common> & {
+			href?: undefined;
+			reload?: undefined;
+			loading?: boolean;
+		};
+
+	/**
+	 * The same button drawn as a link, for navigation (one control, not a button in a link). A link
+	 * is never disabled or busy: render a button for an action that can be.
+	 */
+	type LinkProps = Common &
+		Omit<HTMLAnchorAttributes, keyof Common | 'href' | 'type'> & {
+			href: string;
+			/** Reload the page instead of client-side navigation. */
+			reload?: boolean;
+			loading?: never;
+			disabled?: never;
+			type?: never;
+		};
+
+	type Props = ButtonProps | LinkProps;
 
 	let {
 		variant = 'primary',
 		size = 'md',
-		loading = false,
 		icon = false,
-		href,
-		reload = false,
-		disabled = false,
-		type = 'button',
 		class: className = '',
 		children,
-		...restProps
+		...rest
 	}: Props = $props();
 </script>
 
-{#if href}
+{#if rest.href !== undefined}
+	{@const { href, reload, ...anchor } = rest as LinkProps}
 	<a
+		{...anchor}
 		{href}
 		class="btn btn-{variant} btn-{size} {className}"
 		class:btn-icon={icon}
@@ -39,13 +55,21 @@
 		{@render children()}
 	</a>
 {:else}
+	{@const {
+		loading = false,
+		disabled = false,
+		type = 'button',
+		href: _href,
+		reload: _reload,
+		...button
+	} = rest as ButtonProps}
 	<button
+		{...button}
 		{type}
 		disabled={disabled || loading}
 		aria-busy={loading}
 		class="btn btn-{variant} btn-{size} {className}"
 		class:btn-icon={icon}
-		{...restProps}
 	>
 		{#if loading}
 			<i class="spinner i-ph-circle-notch"></i>
@@ -172,10 +196,14 @@
 		height: 48px;
 	}
 
-	/* Focus state */
+	/* Focus: a solid outline for keyboard focus, apart from the shadows hover changes. */
 	.btn:focus {
 		outline: none;
-		box-shadow: 0 0 0 3px var(--primary-light);
+	}
+
+	.btn:focus-visible {
+		outline: 2px solid var(--primary);
+		outline-offset: 2px;
 	}
 
 	/* Disabled state */
