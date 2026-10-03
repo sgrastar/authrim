@@ -50,14 +50,9 @@ const REVIEWED_FIELDS: readonly [string, TenantSettingValueType, TenantSettingHa
     oauth.offline_access_required
     oauth.refresh_token_sliding_window_enabled
     oauth.refresh_token_absolute_expiry_enabled
-    oauth.refresh_token_remaining_expiry_inherit
     oauth.state_required
-    oauth.scope_required
     oauth.userinfo_require_openid
     oauth.sso_enabled
-    oauth.error_description
-    oauth.error_uri
-    oauth.iss_response_param
     oauth.jarm_enabled
     oauth.https_request_uri_enabled
   `,
@@ -67,12 +62,8 @@ const REVIEWED_FIELDS: readonly [string, TenantSettingValueType, TenantSettingHa
       'enum',
       'value',
       `
-    oauth.id_token_aud_format
-    oauth.prompt_none_behavior
     oauth.error_response_format
     oauth.error_id_mode
-    oauth.default_response_mode
-    oauth.backchannel_token_delivery_mode
   `,
     ],
     [
@@ -81,8 +72,6 @@ const REVIEWED_FIELDS: readonly [string, TenantSettingValueType, TenantSettingHa
       'value',
       `
     oauth.id_token_signing_alg
-    oauth.response_modes_supported
-    oauth.backchannel_token_delivery_modes_supported
   `,
     ],
     [
@@ -109,7 +98,6 @@ const REVIEWED_FIELDS: readonly [string, TenantSettingValueType, TenantSettingHa
       `
     session.default_ttl
     session.max_ttl
-    session.min_ttl
     session.ttl.email_code
     session.ttl.directory_password
     session.ttl.direct_auth
@@ -118,8 +106,6 @@ const REVIEWED_FIELDS: readonly [string, TenantSettingValueType, TenantSettingHa
     session.ttl.admin_passkey
     session.ttl.guest
     session.ttl.did
-    session.token_ttl
-    session.tombstone_ttl
     session.backchannel_logout_token_exp
     session.backchannel_request_timeout_ms
     session.backchannel_retry_initial_delay_ms
@@ -161,45 +147,11 @@ const REVIEWED_FIELDS: readonly [string, TenantSettingValueType, TenantSettingHa
     security.fapi_allow_public_clients
     security.dpop_bound_access_tokens
     security.dpop_nonce_enabled
-    security.enable_abac
-    security.enable_rebac
-    security.enable_policy_logging
-    security.enable_verified_attributes
     security.pkce_required
-    security.pkce_s256_required
     security.par_required
-    security.nonce_required
     security.https_redirect_only
-    security.allow_http_redirect
-    security.loopback_flexible_port
-    security.https_request_uri
-    security.token_binding_required
-    security.mutual_tls_required
-    security.sender_constrained_tokens
     security.require_signed_request_object
     security.require_encrypted_request_object
-    security.ip_allowlist_enabled
-    security.ip_blocklist_enabled
-  `,
-    ],
-    [
-      'security',
-      'duration',
-      'value',
-      `
-    security.dpop_nonce_ttl
-    security.dpop_jti_ttl
-    security.min_response_time
-    security.jitter
-  `,
-    ],
-    [
-      'security',
-      'number',
-      'value',
-      `
-    security.jwt_clock_skew_seconds
-    security.saml_clock_skew_seconds
   `,
     ],
     [
@@ -307,10 +259,8 @@ const REVIEWED_FIELDS: readonly [string, TenantSettingValueType, TenantSettingHa
     tokens.exchange_enabled
     tokens.exchange_delegation_enabled
     tokens.exchange_impersonation_enabled
-    tokens.introspection_require_client_auth
     tokens.introspection_strict_validation
     tokens.introspection_extended_claims
-    tokens.access_token_singularization
   `,
     ],
     [
@@ -319,25 +269,6 @@ const REVIEWED_FIELDS: readonly [string, TenantSettingValueType, TenantSettingHa
       'value',
       `
     tokens.introspection_cache_ttl
-    tokens.introspection_cache_inactive
-  `,
-    ],
-    [
-      'tokens',
-      'number',
-      'value',
-      `
-    tokens.introspection_cache_max_size
-  `,
-    ],
-    [
-      'tokens',
-      'string',
-      'key_reference',
-      `
-    tokens.access_token_signing_key_id
-    tokens.id_token_signing_key_id
-    tokens.userinfo_signing_key_id
   `,
     ],
     [
@@ -356,7 +287,6 @@ const REVIEWED_FIELDS: readonly [string, TenantSettingValueType, TenantSettingHa
       `
     external_idp.jit_provisioning_enabled
     external_idp.jit_update_on_login
-    external_idp.token_encryption_enabled
   `,
     ],
     [
@@ -368,34 +298,11 @@ const REVIEWED_FIELDS: readonly [string, TenantSettingValueType, TenantSettingHa
   `,
     ],
     [
-      'external-idp',
-      'duration',
-      'value',
-      `
-    external_idp.jwks_cache_ttl
-    external_idp.jwks_fetch_timeout_ms
-    external_idp.request_timeout_ms
-  `,
-    ],
-    [
       'credentials',
       'duration',
       'value',
       `
-    credentials.passkey_registration_ttl
-    credentials.passkey_expiry
     credentials.email_code_ttl
-    credentials.did_link_ttl
-    credentials.did_auth_ttl
-    credentials.did_session_ttl
-  `,
-    ],
-    [
-      'credentials',
-      'number',
-      'value',
-      `
-    credentials.email_code_length
   `,
     ],
     [
@@ -404,9 +311,6 @@ const REVIEWED_FIELDS: readonly [string, TenantSettingValueType, TenantSettingHa
       'value',
       `
     federation.saml_enabled
-    federation.allow_unverified_email
-    federation.auto_link_accounts
-    federation.require_signed_requests
   `,
     ],
     [
@@ -418,12 +322,8 @@ const REVIEWED_FIELDS: readonly [string, TenantSettingValueType, TenantSettingHa
     federation.saml_request_ttl
     federation.saml_artifact_ttl
     federation.saml_artifact_resolution_timeout
-    federation.scim_lockout_seconds
-    federation.scim_failure_window_seconds
-    federation.scim_token_min_expiry
     federation.scim_token_max_expiry
     federation.scim_token_default_expiry
-    federation.metadata_cache_ttl
   `,
     ],
     [
@@ -437,93 +337,12 @@ const REVIEWED_FIELDS: readonly [string, TenantSettingValueType, TenantSettingHa
   `,
     ],
     [
-      'federation',
-      'number',
-      'value',
-      `
-    federation.scim_default_page_size
-    federation.scim_max_page_size
-    federation.scim_max_filter_complexity
-  `,
-    ],
-    [
-      'client',
-      'duration',
-      'value',
-      `
-    client.access_token_ttl
-    client.refresh_token_ttl
-    client.id_token_ttl
-  `,
-    ],
-    [
       'client',
       'boolean',
       'value',
       `
-    client.pkce_required
-    client.par_required
-    client.dpop_required
     client.app_login_enabled
     client.sso_enabled
-    client.refresh_token_rotation
-    client.reuse_refresh_token
-    client.allow_authorization_code
-    client.allow_client_credentials
-    client.allow_refresh_token
-    client.allow_device_code
-    client.allow_ciba
-    client.allow_code_response
-    client.allow_token_response
-    client.allow_id_token_response
-    client.strict_redirect_matching
-    client.allow_localhost_redirect
-    client.dpop_bound_access_tokens
-    client.token_exchange_allowed
-    client.frontchannel_logout_session_required
-    client.backchannel_logout_session_required
-    client.allowed_scopes_restriction_enabled
-    client.client_credentials_allowed
-    client.native_sso_enabled
-    client.native_channel_allowed
-    client.require_auth_time
-  `,
-    ],
-    [
-      'client',
-      'enum',
-      'value',
-      `
-    client.userinfo_signed_response_alg
-    client.token_endpoint_auth_method
-    client.subject_type
-    client.dpop_mode
-    client.delegation_mode
-    client.application_type
-    client.browser_public_client_mode
-    client.browser_refresh_token_policy
-    client.id_token_signing_alg
-    client.id_token_encrypted_response_alg
-    client.id_token_encrypted_response_enc
-    client.userinfo_encrypted_response_alg
-    client.userinfo_encrypted_response_enc
-    client.request_object_signing_alg
-    client.request_object_encryption_alg
-    client.request_object_encryption_enc
-    client.jwt_bearer_signing_alg
-    client.token_endpoint_auth_signing_alg
-  `,
-    ],
-    [
-      'client',
-      'string',
-      'value',
-      `
-    client.grant_types
-    client.response_types
-    client.contacts
-    client.allowed_channels
-    client.default_acr_values
   `,
     ],
     [
@@ -531,65 +350,8 @@ const REVIEWED_FIELDS: readonly [string, TenantSettingValueType, TenantSettingHa
       'string',
       'url_or_asset',
       `
-    client.frontchannel_logout_uri
-    client.backchannel_logout_uri
     client.default_audience
     client.default_resource
-    client.logo_uri
-    client.tos_uri
-    client.policy_uri
-    client.client_uri
-    client.initiate_login_uri
-    client.login_ui_url
-    client.sector_identifier_uri
-    client.request_uris
-  `,
-    ],
-    [
-      'client',
-      'string',
-      'logical_reference',
-      `
-    client.allowed_scopes
-    client.default_scope
-    client.trust_group
-  `,
-    ],
-    [
-      'client',
-      'number',
-      'value',
-      `
-    client.default_max_age
-  `,
-    ],
-    [
-      'cache',
-      'duration',
-      'value',
-      `
-    cache.jwks
-    cache.api_key
-    cache.default
-    cache.config
-    cache.plugin_context
-    cache.tenant_context
-    cache.ec_key
-    cache.introspection_key
-    cache.challenge_shard
-    cache.refresh_token_shard
-    cache.region_shard
-    cache.status_list
-    cache.status_list_jwks
-    cache.feature_flags
-    cache.version_check
-    cache.token_revocation
-    cache.user
-    cache.consent
-    cache.partition_settings
-    cache.rules
-    cache.rbac
-    cache.introspection
   `,
     ],
     [
@@ -605,14 +367,11 @@ const REVIEWED_FIELDS: readonly [string, TenantSettingValueType, TenantSettingHa
     feature.enable_policy_embedding
     feature.enable_id_level_permissions
     feature.enable_sd_jwt
-    feature.enable_token_exchange
     feature.enable_client_credentials
     feature.enable_custom_claims
     feature.enable_custom_claim_schemas
     feature.enable_custom_claim_schemas_introspection
-    feature.enable_test_endpoints
     feature.enable_check_api
-    feature.enable_mock_auth
     feature.introspection_cache_enabled
     feature.conformance_enabled
     feature.conformance_use_builtin_forms
@@ -624,8 +383,6 @@ const REVIEWED_FIELDS: readonly [string, TenantSettingValueType, TenantSettingHa
       'number',
       'value',
       `
-    limits.max_query_limit
-    limits.default_batch_size
     limits.max_embedded_permissions
     limits.max_resource_permissions
     limits.max_custom_claims
@@ -639,30 +396,11 @@ const REVIEWED_FIELDS: readonly [string, TenantSettingValueType, TenantSettingHa
       'string',
       'url_or_asset',
       `
-    tenant.base_domain
     tenant.allowed_origins
     tenant.allowed_domains
     tenant.allowed_identifiers
     tenant.logo_uri
-    tenant.tos_uri
-    tenant.policy_uri
     tenant.ui_base_url
-  `,
-    ],
-    [
-      'tenant',
-      'string',
-      'environment_mapping',
-      `
-    tenant.default_id
-  `,
-    ],
-    [
-      'tenant',
-      'boolean',
-      'value',
-      `
-    tenant.isolation_enabled
   `,
     ],
     [
@@ -697,25 +435,11 @@ const REVIEWED_FIELDS: readonly [string, TenantSettingValueType, TenantSettingHa
   `,
     ],
     [
-      'vc',
-      'duration',
-      'value',
-      `
-    vc.vp_request_expiry
-    vc.c_nonce_expiry
-    vc.credential_offer_expiry
-    vc.pop_validity
-    vc.pop_clock_skew
-    vc.did_cache_ttl
-  `,
-    ],
-    [
       'discovery',
       'string',
       'value',
       `
     discovery.claims_supported
-    discovery.claims_locales_supported
     discovery.acr_values_supported
   `,
     ],
@@ -748,106 +472,11 @@ const REVIEWED_FIELDS: readonly [string, TenantSettingValueType, TenantSettingHa
     ],
     [
       'infrastructure',
-      'duration',
-      'value',
-      `
-    infra.config_cache_ttl
-    infra.tenant_context_cache_ttl
-    infra.key_cache_ttl
-    infra.jwks_cache_ttl
-    infra.feature_flags_cache_ttl
-    infra.retry_initial_delay
-    infra.retry_max_delay
-    infra.default_fetch_timeout_ms
-    infra.do_cleanup_interval
-    infra.do_audit_flush_delay
-    infra.do_saml_request_expiry
-    infra.do_saml_artifact_expiry
-  `,
-    ],
-    [
-      'infrastructure',
-      'number',
-      'value',
-      `
-    infra.retry_max
-    infra.backoff_multiplier
-  `,
-    ],
-    [
-      'infrastructure',
-      'string',
-      'value',
-      `
-    infra.supported_signing_algs
-    infra.dpop_signing_alg_values_supported
-  `,
-    ],
-    [
-      'infrastructure',
       'string',
       'logical_reference',
       `
     infra.default_audit_profile_id
     infra.default_residency_profile_id
-  `,
-    ],
-    [
-      'encryption',
-      'boolean',
-      'value',
-      `
-    encryption.key_rotation_enabled
-    encryption.pii_encryption_enabled
-    encryption.domain_hash_enabled
-    encryption.rp_token_encryption_enabled
-  `,
-    ],
-    [
-      'encryption',
-      'duration',
-      'value',
-      `
-    encryption.key_rotation_interval
-    encryption.key_overlap_period
-    encryption.domain_hash_salt_rotation
-  `,
-    ],
-    [
-      'encryption',
-      'string',
-      'value',
-      `
-    encryption.default_signing_alg
-    encryption.default_encryption_alg
-    encryption.default_encryption_enc
-    encryption.pii_key_derivation
-    encryption.pii_fields
-    encryption.password_version
-  `,
-    ],
-    [
-      'encryption',
-      'enum',
-      'value',
-      `
-    encryption.pii_algorithm
-  `,
-    ],
-    [
-      'encryption',
-      'string',
-      'key_reference',
-      `
-    encryption.pii_key_version
-  `,
-    ],
-    [
-      'encryption',
-      'number',
-      'value',
-      `
-    encryption.password_iterations
   `,
     ],
     [
@@ -1057,7 +686,6 @@ const REVIEWED_FIELDS: readonly [string, TenantSettingValueType, TenantSettingHa
     authentication-methods.human_verification.signup_enabled
     authentication-methods.human_verification.reauth_enabled
     authentication-methods.directory_password.enabled
-    authentication-methods.directory_password.auto_provision
   `,
     ],
     [
@@ -1101,7 +729,6 @@ const REVIEWED_FIELDS: readonly [string, TenantSettingValueType, TenantSettingHa
       'logical_reference',
       `
     authentication-methods.human_verification.provider
-    authentication-methods.directory_password.connector_id
   `,
     ],
     [

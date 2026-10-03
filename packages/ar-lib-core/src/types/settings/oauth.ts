@@ -27,11 +27,9 @@ export interface OAuthSettings {
   'oauth.refresh_token_sliding_window_enabled': boolean;
   'oauth.refresh_token_absolute_expiry_enabled': boolean;
   'oauth.refresh_token_absolute_expiry': number;
-  'oauth.refresh_token_remaining_expiry_inherit': boolean;
 
   // Security Settings (note: pkce_required, pkce_s256_required, nonce_required moved to security.ts)
   'oauth.state_required': boolean;
-  'oauth.scope_required': boolean;
 
   // UserInfo Settings
   'oauth.userinfo_require_openid': boolean;
@@ -39,13 +37,6 @@ export interface OAuthSettings {
   // SSO Settings
   'oauth.sso_enabled': boolean;
 
-  // Error Response Settings
-  'oauth.error_description': boolean;
-  'oauth.error_uri': boolean;
-  'oauth.iss_response_param': boolean;
-
-  // ID Token Settings
-  'oauth.id_token_aud_format': 'array' | 'string';
   'oauth.id_token_signing_alg': string;
 
   // DDoS Protection
@@ -65,20 +56,9 @@ export interface OAuthSettings {
   'oauth.https_request_uri_max_size': number;
   'oauth.https_request_uri_timeout_ms': number;
 
-  // Prompt Settings
-  'oauth.prompt_none_behavior': 'error' | 'login';
-
   // Error Response Format Settings
   'oauth.error_response_format': 'oauth' | 'problem_details';
   'oauth.error_id_mode': 'all' | '5xx' | 'security_only' | 'none';
-
-  // Response Mode Settings
-  'oauth.default_response_mode': 'query' | 'fragment' | 'form_post';
-  'oauth.response_modes_supported': string;
-
-  // Backchannel Token Delivery Settings
-  'oauth.backchannel_token_delivery_mode': 'poll' | 'ping' | 'push';
-  'oauth.backchannel_token_delivery_modes_supported': string;
 
   // HTTPS Request URI Allowed Domains
   'oauth.https_request_uri_allowed_domains': string;
@@ -181,8 +161,10 @@ export const OAUTH_SETTINGS_META: Record<keyof OAuthSettings, SettingMeta> = {
     default: true,
     envKey: 'ENABLE_REFRESH_TOKEN_ROTATION',
     label: 'Refresh Token Rotation',
-    description: 'Enable refresh token rotation (security best practice)',
+    description:
+      'Enable refresh token rotation (security best practice). In development: rotation follows ENABLE_REFRESH_TOKEN_ROTATION; this setting is not read yet.',
     visibility: 'public',
+    status: 'in_development',
   },
   'oauth.refresh_id_token_reissue': {
     key: 'oauth.refresh_id_token_reissue',
@@ -242,17 +224,6 @@ export const OAUTH_SETTINGS_META: Record<keyof OAuthSettings, SettingMeta> = {
     unit: 'seconds',
     visibility: 'public',
   },
-  'oauth.refresh_token_remaining_expiry_inherit': {
-    key: 'oauth.refresh_token_remaining_expiry_inherit',
-    // Per tenant (or app) only, as before the category had platform values.
-    scopes: ['tenant', 'client'],
-    type: 'boolean',
-    default: false,
-    envKey: 'REFRESH_TOKEN_REMAINING_EXPIRY_INHERIT',
-    label: 'Inherit Remaining Expiry',
-    description: 'New refresh token inherits remaining expiry from old token',
-    visibility: 'public',
-  },
 
   // Security Settings
   'oauth.state_required': {
@@ -263,17 +234,6 @@ export const OAUTH_SETTINGS_META: Record<keyof OAuthSettings, SettingMeta> = {
     envBoolean: 'unless-false',
     label: 'State Required',
     description: 'Require state parameter for CSRF protection (recommended for production)',
-    visibility: 'public',
-  },
-  'oauth.scope_required': {
-    key: 'oauth.scope_required',
-    // Per tenant (or app) only, as before the category had platform values.
-    scopes: ['tenant', 'client'],
-    type: 'boolean',
-    default: false,
-    envKey: 'SCOPE_REQUIRED',
-    label: 'Scope Required',
-    description: 'Require scope parameter in authorization requests',
     visibility: 'public',
   },
   // Note: pkce_required, pkce_s256_required, nonce_required moved to security.ts
@@ -304,54 +264,6 @@ export const OAUTH_SETTINGS_META: Record<keyof OAuthSettings, SettingMeta> = {
     visibility: 'public',
   },
 
-  // Error Response Settings
-  'oauth.error_description': {
-    key: 'oauth.error_description',
-    // Per tenant (or app) only, as before the category had platform values.
-    scopes: ['tenant', 'client'],
-    type: 'boolean',
-    default: true,
-    envKey: 'ENABLE_ERROR_DESCRIPTION',
-    label: 'Error Description',
-    description: 'Include error_description in error responses',
-    visibility: 'public',
-  },
-  'oauth.error_uri': {
-    key: 'oauth.error_uri',
-    // Per tenant (or app) only, as before the category had platform values.
-    scopes: ['tenant', 'client'],
-    type: 'boolean',
-    default: false,
-    envKey: 'ENABLE_ERROR_URI',
-    label: 'Error URI',
-    description: 'Include error_uri in error responses',
-    visibility: 'public',
-  },
-  'oauth.iss_response_param': {
-    key: 'oauth.iss_response_param',
-    // Per tenant (or app) only, as before the category had platform values.
-    scopes: ['tenant', 'client'],
-    type: 'boolean',
-    default: true,
-    envKey: 'ENABLE_ISS_RESPONSE_PARAM',
-    label: 'Include iss in Response',
-    description: 'Include iss parameter in authorization response (RFC 9207)',
-    visibility: 'public',
-  },
-
-  // ID Token Settings
-  'oauth.id_token_aud_format': {
-    key: 'oauth.id_token_aud_format',
-    // Per tenant (or app) only, as before the category had platform values.
-    scopes: ['tenant', 'client'],
-    type: 'enum',
-    default: 'array',
-    envKey: 'ID_TOKEN_AUD_FORMAT',
-    label: 'ID Token aud Format',
-    description: 'Format of aud claim in ID token (array or string)',
-    enum: ['array', 'string'],
-    visibility: 'public',
-  },
   'oauth.id_token_signing_alg': {
     key: 'oauth.id_token_signing_alg',
     // Per tenant (or app) only, as before the category had platform values.
@@ -457,20 +369,6 @@ export const OAUTH_SETTINGS_META: Record<keyof OAuthSettings, SettingMeta> = {
     visibility: 'admin',
   },
 
-  // Prompt Settings
-  'oauth.prompt_none_behavior': {
-    key: 'oauth.prompt_none_behavior',
-    // Per tenant (or app) only, as before the category had platform values.
-    scopes: ['tenant', 'client'],
-    type: 'enum',
-    default: 'error',
-    envKey: 'PROMPT_NONE_BEHAVIOR',
-    label: 'Prompt None Behavior',
-    description: 'Behavior when prompt=none and no session exists',
-    enum: ['error', 'login'],
-    visibility: 'public',
-  },
-
   // Error Response Format Settings
   'oauth.error_response_format': {
     key: 'oauth.error_response_format',
@@ -494,56 +392,6 @@ export const OAUTH_SETTINGS_META: Record<keyof OAuthSettings, SettingMeta> = {
     enum: ['all', '5xx', 'security_only', 'none'],
     // Error responses are built before a client is known: not per client.
     scopes: ['platform', 'tenant'],
-    visibility: 'admin',
-  },
-
-  // Response Mode Settings
-  'oauth.default_response_mode': {
-    key: 'oauth.default_response_mode',
-    // Per tenant (or app) only, as before the category had platform values.
-    scopes: ['tenant', 'client'],
-    type: 'enum',
-    default: 'query',
-    envKey: 'DEFAULT_RESPONSE_MODE',
-    label: 'Default Response Mode',
-    description: 'Default response mode for authorization requests',
-    enum: ['query', 'fragment', 'form_post'],
-    visibility: 'admin',
-  },
-  'oauth.response_modes_supported': {
-    key: 'oauth.response_modes_supported',
-    // Per tenant (or app) only, as before the category had platform values.
-    scopes: ['tenant', 'client'],
-    type: 'string',
-    default: 'query,fragment,form_post',
-    envKey: 'RESPONSE_MODES_SUPPORTED',
-    label: 'Supported Response Modes',
-    description: 'Comma-separated list of supported response modes',
-    visibility: 'admin',
-  },
-
-  // Backchannel Token Delivery Settings
-  'oauth.backchannel_token_delivery_mode': {
-    key: 'oauth.backchannel_token_delivery_mode',
-    // Per tenant (or app) only, as before the category had platform values.
-    scopes: ['tenant', 'client'],
-    type: 'enum',
-    default: 'poll',
-    envKey: 'BACKCHANNEL_TOKEN_DELIVERY_MODE',
-    label: 'Backchannel Token Delivery Mode',
-    description: 'Default token delivery mode for CIBA',
-    enum: ['poll', 'ping', 'push'],
-    visibility: 'admin',
-  },
-  'oauth.backchannel_token_delivery_modes_supported': {
-    key: 'oauth.backchannel_token_delivery_modes_supported',
-    // Per tenant (or app) only, as before the category had platform values.
-    scopes: ['tenant', 'client'],
-    type: 'string',
-    default: 'poll,ping',
-    envKey: 'BACKCHANNEL_TOKEN_DELIVERY_MODES_SUPPORTED',
-    label: 'Supported Token Delivery Modes',
-    description: 'Comma-separated list of supported CIBA token delivery modes',
     visibility: 'admin',
   },
 
@@ -621,16 +469,10 @@ export const OAUTH_DEFAULTS: OAuthSettings = {
   'oauth.refresh_token_sliding_window_enabled': true,
   'oauth.refresh_token_absolute_expiry_enabled': false,
   'oauth.refresh_token_absolute_expiry': 31536000,
-  'oauth.refresh_token_remaining_expiry_inherit': false,
   'oauth.state_required': false,
-  'oauth.scope_required': false,
   // Note: pkce_required, pkce_s256_required, nonce_required moved to security.ts
   'oauth.userinfo_require_openid': true,
   'oauth.sso_enabled': false,
-  'oauth.error_description': true,
-  'oauth.error_uri': false,
-  'oauth.iss_response_param': true,
-  'oauth.id_token_aud_format': 'array',
   'oauth.id_token_signing_alg': 'RS256',
   'oauth.max_codes_per_user': 100,
   // Note: par_required moved to security.ts
@@ -641,13 +483,8 @@ export const OAUTH_DEFAULTS: OAuthSettings = {
   'oauth.https_request_uri_enabled': false,
   'oauth.https_request_uri_max_size': 102400,
   'oauth.https_request_uri_timeout_ms': 5000,
-  'oauth.prompt_none_behavior': 'error',
   'oauth.error_response_format': 'oauth',
   'oauth.error_id_mode': 'security_only',
-  'oauth.default_response_mode': 'query',
-  'oauth.response_modes_supported': 'query,fragment,form_post',
-  'oauth.backchannel_token_delivery_mode': 'poll',
-  'oauth.backchannel_token_delivery_modes_supported': 'poll,ping',
   'oauth.https_request_uri_allowed_domains': '',
   'oauth.error_locale': 'en',
   'oauth.response_types_supported': [

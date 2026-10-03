@@ -1710,8 +1710,8 @@ describe('Settings API v2', () => {
             body: JSON.stringify({
               ifMatch: getData.version,
               set: {
-                'client.access_token_ttl': 7200,
-                'client.pkce_required': true,
+                'client.sso_enabled': true,
+                'client.default_audience': 'https://api.example.com',
               },
             }),
           },
@@ -1720,8 +1720,8 @@ describe('Settings API v2', () => {
 
         expect(res.status).toBe(200);
         const body = (await res.json()) as SettingsPatchResult;
-        expect(body.applied).toContain('client.access_token_ttl');
-        expect(body.applied).toContain('client.pkce_required');
+        expect(body.applied).toContain('client.sso_enabled');
+        expect(body.applied).toContain('client.default_audience');
       });
 
       it.each(['client.consent_required', 'client.first_party'])(
@@ -2924,7 +2924,7 @@ it.each(['', '/client'])(
     const update = {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json', 'X-Tenant-Id': 'test-tenant' },
-      body: JSON.stringify({ ifMatch: current.version, set: { 'client.access_token_ttl': 7200 } }),
+      body: JSON.stringify({ ifMatch: current.version, set: { 'client.sso_enabled': true } }),
     };
     expect((await app.request(url, update, mockEnv)).status).toBe(503);
     expect(vi.mocked(mockKV).put.mock.calls).toHaveLength(0);

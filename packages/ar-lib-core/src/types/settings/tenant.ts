@@ -14,10 +14,6 @@ import type { SAMLAttributeReleaseFailureUserMessageMode } from '../saml';
  * Tenant Settings Interface
  */
 export interface TenantSettings {
-  // Core Settings
-  'tenant.base_domain': string;
-  'tenant.default_id': string;
-  'tenant.isolation_enabled': boolean;
   'tenant.user_id_format': UserIdFormat;
 
   // CORS Settings
@@ -38,8 +34,6 @@ export interface TenantSettings {
   // Branding
   'tenant.name': string;
   'tenant.logo_uri': string;
-  'tenant.tos_uri': string;
-  'tenant.policy_uri': string;
 
   // UI Paths
   'tenant.ui_base_url': string;
@@ -58,40 +52,6 @@ export interface TenantSettings {
  * Tenant Settings Metadata
  */
 export const TENANT_SETTINGS_META: Record<keyof TenantSettings, SettingMeta> = {
-  // Core Settings
-  'tenant.base_domain': {
-    key: 'tenant.base_domain',
-    // Per tenant (or app) only, as before the category had platform values.
-    scopes: ['tenant'],
-    type: 'string',
-    default: '',
-    envKey: 'BASE_DOMAIN',
-    label: 'Base Domain',
-    description: 'Base domain for this tenant',
-    visibility: 'admin',
-  },
-  'tenant.default_id': {
-    key: 'tenant.default_id',
-    // Per tenant (or app) only, as before the category had platform values.
-    scopes: ['tenant'],
-    type: 'string',
-    default: 'default',
-    envKey: 'DEFAULT_TENANT_ID',
-    label: 'Default Tenant ID',
-    description: 'Default tenant identifier',
-    visibility: 'internal',
-  },
-  'tenant.isolation_enabled': {
-    key: 'tenant.isolation_enabled',
-    // Per tenant (or app) only, as before the category had platform values.
-    scopes: ['tenant'],
-    type: 'boolean',
-    default: false,
-    envKey: 'TENANT_ISOLATION_ENABLED',
-    label: 'Tenant Isolation',
-    description: 'Enable strict tenant isolation',
-    visibility: 'admin',
-  },
   'tenant.user_id_format': {
     key: 'tenant.user_id_format',
     // Per tenant (or app) only, as before the category had platform values.
@@ -212,28 +172,6 @@ export const TENANT_SETTINGS_META: Record<keyof TenantSettings, SettingMeta> = {
     description: 'URL to tenant logo image',
     visibility: 'public',
   },
-  'tenant.tos_uri': {
-    key: 'tenant.tos_uri',
-    // Per tenant (or app) only, as before the category had platform values.
-    scopes: ['tenant'],
-    type: 'string',
-    default: '',
-    envKey: 'TENANT_TOS_URI',
-    label: 'Terms of Service URI',
-    description: 'URL to tenant terms of service',
-    visibility: 'public',
-  },
-  'tenant.policy_uri': {
-    key: 'tenant.policy_uri',
-    // Per tenant (or app) only, as before the category had platform values.
-    scopes: ['tenant'],
-    type: 'string',
-    default: '',
-    envKey: 'TENANT_POLICY_URI',
-    label: 'Privacy Policy URI',
-    description: 'URL to tenant privacy policy',
-    visibility: 'public',
-  },
 
   // UI Paths
   'tenant.ui_base_url': {
@@ -345,9 +283,6 @@ export const TENANT_CATEGORY_META: CategoryMeta = {
  * Default Tenant settings values
  */
 export const TENANT_DEFAULTS: TenantSettings = {
-  'tenant.base_domain': '',
-  'tenant.default_id': 'default',
-  'tenant.isolation_enabled': false,
   'tenant.user_id_format': 'nanoid',
   // CORS Settings
   'tenant.allowed_origins': '',
@@ -360,8 +295,6 @@ export const TENANT_DEFAULTS: TenantSettings = {
   // Branding
   'tenant.name': '',
   'tenant.logo_uri': '',
-  'tenant.tos_uri': '',
-  'tenant.policy_uri': '',
   // UI Paths
   'tenant.ui_base_url': '',
   'tenant.ui_login_path': '/login',

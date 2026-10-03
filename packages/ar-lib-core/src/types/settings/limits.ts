@@ -12,10 +12,6 @@ import type { CategoryMeta, SettingMeta } from '../../utils/settings-manager';
  * Limits Settings Interface
  */
 export interface LimitsSettings {
-  // Query Limits
-  'limits.max_query_limit': number;
-  'limits.default_batch_size': number;
-
   // Permission Limits
   'limits.max_embedded_permissions': number;
   'limits.max_resource_permissions': number;
@@ -32,30 +28,6 @@ export interface LimitsSettings {
  * Limits Settings Metadata
  */
 export const LIMITS_SETTINGS_META: Record<keyof LimitsSettings, SettingMeta> = {
-  // Query Limits
-  'limits.max_query_limit': {
-    key: 'limits.max_query_limit',
-    type: 'number',
-    default: 1000,
-    envKey: 'MAX_QUERY_LIMIT',
-    label: 'Max Query Limit',
-    description: 'Maximum items per query (pagination limit)',
-    min: 10,
-    max: 10000,
-    visibility: 'admin',
-  },
-  'limits.default_batch_size': {
-    key: 'limits.default_batch_size',
-    type: 'number',
-    default: 100,
-    envKey: 'DEFAULT_BATCH_SIZE_LIMIT',
-    label: 'Default Batch Size',
-    description: 'Default batch size for bulk operations',
-    min: 10,
-    max: 1000,
-    visibility: 'admin',
-  },
-
   // Permission Limits
   'limits.max_embedded_permissions': {
     key: 'limits.max_embedded_permissions',
@@ -169,8 +141,6 @@ export const LIMITS_CATEGORY_META: CategoryMeta = {
  * Default Limits settings values
  */
 export const LIMITS_DEFAULTS: LimitsSettings = {
-  'limits.max_query_limit': 1000,
-  'limits.default_batch_size': 100,
   'limits.max_embedded_permissions': 50,
   'limits.max_resource_permissions': 100,
   'limits.max_custom_claims': 20,

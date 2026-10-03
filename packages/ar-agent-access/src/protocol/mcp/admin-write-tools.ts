@@ -230,7 +230,11 @@ export const ADMIN_WRITE_TOOL_DEFINITIONS: readonly AgentToolDefinition[] =
           {
             resource_version: RESOURCE_VERSION,
             enabled: { type: 'boolean' },
-            delegationEnabled: { type: 'boolean' },
+            delegationEnabled: {
+              type: 'boolean',
+              description:
+                "In development: saved but not applied yet (each app's delegation_mode decides delegation).",
+            },
             impersonationEnabled: { type: 'boolean' },
           },
           ['resource_version']
@@ -260,7 +264,11 @@ export const ADMIN_WRITE_TOOL_DEFINITIONS: readonly AgentToolDefinition[] =
             idTokenExpiry: { type: 'integer', minimum: 60, maximum: 86400 },
             authCodeTtl: { type: 'integer', minimum: 10, maximum: 86400 },
             stateRequired: { type: 'boolean' },
-            refreshTokenRotation: { type: 'boolean' },
+            refreshTokenRotation: {
+              type: 'boolean',
+              description:
+                'In development: saved but not applied yet (rotation follows ENABLE_REFRESH_TOKEN_ROTATION).',
+            },
             offlineAccessRequired: { type: 'boolean' },
             jarmEnabled: { type: 'boolean' },
           },

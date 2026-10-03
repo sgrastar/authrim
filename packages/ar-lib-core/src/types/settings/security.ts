@@ -20,46 +20,16 @@ export interface SecuritySettings {
   // DPoP Settings
   'security.dpop_bound_access_tokens': boolean;
   'security.dpop_nonce_enabled': boolean;
-  'security.dpop_nonce_ttl': number;
   'security.dpop_nonce_resource_overrides': Record<string, boolean>;
-  'security.dpop_jti_ttl': number;
-
-  // Feature Flags (Security-related)
-  'security.enable_abac': boolean;
-  'security.enable_rebac': boolean;
-  'security.enable_policy_logging': boolean;
-  'security.enable_verified_attributes': boolean;
 
   // OAuth Security Requirements
   'security.pkce_required': boolean;
-  'security.pkce_s256_required': boolean;
   'security.par_required': boolean;
-  'security.nonce_required': boolean;
   'security.https_redirect_only': boolean;
-  'security.allow_http_redirect': boolean;
-  'security.loopback_flexible_port': boolean;
-  'security.https_request_uri': boolean;
-
-  // Clock Skew Settings
-  'security.jwt_clock_skew_seconds': number;
-  'security.saml_clock_skew_seconds': number;
-
-  // Timing Attack Protection
-  'security.min_response_time': number;
-  'security.jitter': number;
-
-  // Advanced Security
-  'security.token_binding_required': boolean;
-  'security.mutual_tls_required': boolean;
-  'security.sender_constrained_tokens': boolean;
 
   // Request Object Requirements
   'security.require_signed_request_object': boolean;
   'security.require_encrypted_request_object': boolean;
-
-  // IP Filtering
-  'security.ip_allowlist_enabled': boolean;
-  'security.ip_blocklist_enabled': boolean;
 
   // Redirect Safety
   'security.trusted_redirect_origins': string;
@@ -133,20 +103,6 @@ export const SECURITY_SETTINGS_META: Record<keyof SecuritySettings, SettingMeta>
     description: 'Require server-provided nonce in DPoP proofs',
     visibility: 'public',
   },
-  'security.dpop_nonce_ttl': {
-    key: 'security.dpop_nonce_ttl',
-    // Per tenant (or app) only, as before the category had platform values.
-    scopes: ['tenant', 'client'],
-    type: 'duration',
-    default: 300,
-    envKey: 'DPOP_NONCE_TTL',
-    label: 'DPoP Nonce TTL',
-    description: 'DPoP nonce lifetime in seconds',
-    min: 60,
-    max: 3600,
-    unit: 'seconds',
-    visibility: 'admin',
-  },
   'security.dpop_nonce_resource_overrides': {
     key: 'security.dpop_nonce_resource_overrides',
     type: 'json',
@@ -154,66 +110,6 @@ export const SECURITY_SETTINGS_META: Record<keyof SecuritySettings, SettingMeta>
     label: 'DPoP Nonce by Resource',
     description:
       'Whether the token endpoint asks for a DPoP nonce, by resource URI (true or false); these go before DPoP Nonce Required',
-    visibility: 'admin',
-  },
-  'security.dpop_jti_ttl': {
-    key: 'security.dpop_jti_ttl',
-    // Per tenant (or app) only, as before the category had platform values.
-    scopes: ['tenant', 'client'],
-    type: 'duration',
-    default: 300,
-    envKey: 'DPOP_JTI_DEFAULT_TTL',
-    label: 'DPoP JTI TTL',
-    description: 'DPoP proof JTI replay prevention window in seconds',
-    min: 60,
-    max: 3600,
-    unit: 'seconds',
-    visibility: 'admin',
-  },
-
-  // Feature Flags (Security-related)
-  'security.enable_abac': {
-    key: 'security.enable_abac',
-    // Per tenant (or app) only, as before the category had platform values.
-    scopes: ['tenant', 'client'],
-    type: 'boolean',
-    default: false,
-    envKey: 'ENABLE_ABAC',
-    label: 'Enable ABAC',
-    description: 'Enable Attribute-Based Access Control policy evaluation',
-    visibility: 'admin',
-  },
-  'security.enable_rebac': {
-    key: 'security.enable_rebac',
-    // Per tenant (or app) only, as before the category had platform values.
-    scopes: ['tenant', 'client'],
-    type: 'boolean',
-    default: false,
-    envKey: 'ENABLE_REBAC',
-    label: 'Enable ReBAC',
-    description: 'Enable Relationship-Based Access Control',
-    visibility: 'admin',
-  },
-  'security.enable_policy_logging': {
-    key: 'security.enable_policy_logging',
-    // Per tenant (or app) only, as before the category had platform values.
-    scopes: ['tenant', 'client'],
-    type: 'boolean',
-    default: false,
-    envKey: 'ENABLE_POLICY_LOGGING',
-    label: 'Policy Logging',
-    description: 'Enable detailed logging of policy evaluations',
-    visibility: 'admin',
-  },
-  'security.enable_verified_attributes': {
-    key: 'security.enable_verified_attributes',
-    // Per tenant (or app) only, as before the category had platform values.
-    scopes: ['tenant', 'client'],
-    type: 'boolean',
-    default: false,
-    envKey: 'ENABLE_VERIFIED_ATTRIBUTES',
-    label: 'Verified Attributes',
-    description: 'Enable verified attribute checking in policies',
     visibility: 'admin',
   },
 
@@ -229,34 +125,12 @@ export const SECURITY_SETTINGS_META: Record<keyof SecuritySettings, SettingMeta>
     description: 'Require PKCE for all authorization code flows',
     visibility: 'public',
   },
-  'security.pkce_s256_required': {
-    key: 'security.pkce_s256_required',
-    // Per tenant (or app) only, as before the category had platform values.
-    scopes: ['tenant', 'client'],
-    type: 'boolean',
-    default: true,
-    envKey: 'SECURITY_PKCE_S256_REQUIRED',
-    label: 'PKCE S256 Required',
-    description: 'Require S256 code challenge method when PKCE is used (plain disallowed)',
-    visibility: 'public',
-  },
   'security.par_required': {
     key: 'security.par_required',
     type: 'boolean',
     default: false,
     label: 'PAR Required',
     description: 'Require Pushed Authorization Requests (FAPI mode always requires them)',
-    visibility: 'public',
-  },
-  'security.nonce_required': {
-    key: 'security.nonce_required',
-    // Per tenant (or app) only, as before the category had platform values.
-    scopes: ['tenant', 'client'],
-    type: 'boolean',
-    default: true,
-    envKey: 'SECURITY_NONCE_REQUIRED',
-    label: 'Nonce Required',
-    description: 'Require nonce for implicit/hybrid flows',
     visibility: 'public',
   },
   'security.https_redirect_only': {
@@ -268,134 +142,6 @@ export const SECURITY_SETTINGS_META: Record<keyof SecuritySettings, SettingMeta>
     envKey: 'HTTPS_REDIRECT_ONLY',
     label: 'HTTPS Redirect Only',
     description: 'Only allow HTTPS redirect URIs (except localhost)',
-    visibility: 'admin',
-  },
-  'security.allow_http_redirect': {
-    key: 'security.allow_http_redirect',
-    // Per tenant (or app) only, as before the category had platform values.
-    scopes: ['tenant', 'client'],
-    type: 'boolean',
-    default: false,
-    envKey: 'ALLOW_HTTP_REDIRECT',
-    label: 'Allow HTTP Redirect',
-    description: 'Allow HTTP redirect URIs for non-production environments',
-    visibility: 'admin',
-  },
-  'security.loopback_flexible_port': {
-    key: 'security.loopback_flexible_port',
-    // Per tenant (or app) only, as before the category had platform values.
-    scopes: ['tenant', 'client'],
-    type: 'boolean',
-    default: true,
-    envKey: 'SECURITY_LOOPBACK_FLEXIBLE_PORT',
-    label: 'Loopback Flexible Port',
-    description: 'Allow any port for localhost/loopback redirect URIs (RFC 8252)',
-    visibility: 'admin',
-  },
-  'security.https_request_uri': {
-    key: 'security.https_request_uri',
-    // Per tenant (or app) only, as before the category had platform values.
-    scopes: ['tenant', 'client'],
-    type: 'boolean',
-    default: true,
-    envKey: 'HTTPS_REQUEST_URI',
-    label: 'HTTPS Request URI',
-    description: 'Require HTTPS for request_uri parameter (JAR)',
-    visibility: 'admin',
-  },
-
-  // Clock Skew Settings
-  'security.jwt_clock_skew_seconds': {
-    key: 'security.jwt_clock_skew_seconds',
-    // Per tenant (or app) only, as before the category had platform values.
-    scopes: ['tenant', 'client'],
-    type: 'number',
-    default: 60,
-    envKey: 'JWT_CLOCK_SKEW_SECONDS',
-    label: 'JWT Clock Skew',
-    description: 'Allowed clock skew for JWT validation in seconds',
-    min: 0,
-    max: 600,
-    unit: 'seconds',
-    visibility: 'admin',
-  },
-  'security.saml_clock_skew_seconds': {
-    key: 'security.saml_clock_skew_seconds',
-    // Per tenant (or app) only, as before the category had platform values.
-    scopes: ['tenant', 'client'],
-    type: 'number',
-    default: 180,
-    envKey: 'SAML_CLOCK_SKEW_SECONDS',
-    label: 'SAML Clock Skew',
-    description: 'Allowed clock skew for SAML assertion validation',
-    min: 0,
-    max: 600,
-    unit: 'seconds',
-    visibility: 'admin',
-  },
-
-  // Timing Attack Protection
-  'security.min_response_time': {
-    key: 'security.min_response_time',
-    // Per tenant (or app) only, as before the category had platform values.
-    scopes: ['tenant', 'client'],
-    type: 'duration',
-    default: 500,
-    envKey: 'MIN_RESPONSE_TIME_MS',
-    label: 'Minimum Response Time',
-    description: 'Minimum response time for security-sensitive endpoints',
-    min: 0,
-    max: 5000,
-    unit: 'ms',
-    visibility: 'admin',
-  },
-  'security.jitter': {
-    key: 'security.jitter',
-    // Per tenant (or app) only, as before the category had platform values.
-    scopes: ['tenant', 'client'],
-    type: 'duration',
-    default: 100,
-    envKey: 'RESPONSE_JITTER_MS',
-    label: 'Response Jitter',
-    description: 'Random jitter added to responses to prevent timing attacks',
-    min: 0,
-    max: 1000,
-    unit: 'ms',
-    visibility: 'admin',
-  },
-
-  // Advanced Security
-  'security.token_binding_required': {
-    key: 'security.token_binding_required',
-    // Per tenant (or app) only, as before the category had platform values.
-    scopes: ['tenant', 'client'],
-    type: 'boolean',
-    default: false,
-    envKey: 'TOKEN_BINDING_REQUIRED',
-    label: 'Token Binding Required',
-    description: 'Require token binding for enhanced security',
-    visibility: 'admin',
-  },
-  'security.mutual_tls_required': {
-    key: 'security.mutual_tls_required',
-    // Per tenant (or app) only, as before the category had platform values.
-    scopes: ['tenant', 'client'],
-    type: 'boolean',
-    default: false,
-    envKey: 'MTLS_REQUIRED',
-    label: 'Mutual TLS Required',
-    description: 'Require mutual TLS client authentication',
-    visibility: 'admin',
-  },
-  'security.sender_constrained_tokens': {
-    key: 'security.sender_constrained_tokens',
-    // Per tenant (or app) only, as before the category had platform values.
-    scopes: ['tenant', 'client'],
-    type: 'boolean',
-    default: false,
-    envKey: 'SENDER_CONSTRAINED_TOKENS',
-    label: 'Sender Constrained Tokens',
-    description: 'Enable sender-constrained access tokens',
     visibility: 'admin',
   },
 
@@ -420,29 +166,6 @@ export const SECURITY_SETTINGS_META: Record<keyof SecuritySettings, SettingMeta>
     visibility: 'admin',
   },
 
-  // IP Filtering
-  'security.ip_allowlist_enabled': {
-    key: 'security.ip_allowlist_enabled',
-    // Per tenant (or app) only, as before the category had platform values.
-    scopes: ['tenant', 'client'],
-    type: 'boolean',
-    default: false,
-    envKey: 'IP_ALLOWLIST_ENABLED',
-    label: 'IP Allowlist Enabled',
-    description: 'Enable IP allowlist filtering',
-    visibility: 'admin',
-  },
-  'security.ip_blocklist_enabled': {
-    key: 'security.ip_blocklist_enabled',
-    // Per tenant (or app) only, as before the category had platform values.
-    scopes: ['tenant', 'client'],
-    type: 'boolean',
-    default: false,
-    envKey: 'IP_BLOCKLIST_ENABLED',
-    label: 'IP Blocklist Enabled',
-    description: 'Enable IP blocklist filtering',
-    visibility: 'admin',
-  },
   'security.trusted_redirect_origins': {
     key: 'security.trusted_redirect_origins',
     // Per tenant (or app) only, as before the category had platform values.
@@ -598,33 +321,13 @@ export const SECURITY_DEFAULTS: SecuritySettings = {
   'security.fapi_allow_public_clients': true,
   'security.dpop_bound_access_tokens': false,
   'security.dpop_nonce_enabled': true,
-  'security.dpop_nonce_ttl': 300,
   'security.dpop_nonce_resource_overrides': {},
-  'security.dpop_jti_ttl': 300,
-  'security.enable_abac': false,
-  'security.enable_rebac': false,
-  'security.enable_policy_logging': false,
-  'security.enable_verified_attributes': false,
   // New settings
   'security.pkce_required': false,
-  'security.pkce_s256_required': true,
   'security.par_required': false,
-  'security.nonce_required': true,
   'security.https_redirect_only': true,
-  'security.allow_http_redirect': false,
-  'security.loopback_flexible_port': true,
-  'security.https_request_uri': true,
-  'security.jwt_clock_skew_seconds': 60,
-  'security.saml_clock_skew_seconds': 180,
-  'security.min_response_time': 500,
-  'security.jitter': 100,
-  'security.token_binding_required': false,
-  'security.mutual_tls_required': false,
-  'security.sender_constrained_tokens': false,
   'security.require_signed_request_object': false,
   'security.require_encrypted_request_object': false,
-  'security.ip_allowlist_enabled': false,
-  'security.ip_blocklist_enabled': false,
   'security.trusted_redirect_origins': '[]',
   'security.allow_unsigned_request_object': false,
   'security.dpop_required': 'with_fapi',
