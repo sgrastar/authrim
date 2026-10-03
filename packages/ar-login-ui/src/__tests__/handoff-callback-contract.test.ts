@@ -5,6 +5,10 @@ import { describe, expect, it } from 'vitest';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const callbackSource = readFileSync(resolve(__dirname, '../routes/callback/+page.svelte'), 'utf8');
+const callbackViewSource = readFileSync(
+	resolve(__dirname, '../lib/views/CallbackView.svelte'),
+	'utf8'
+);
 
 describe('hosted handoff callback contract', () => {
 	it('uses cookie-only finalize instead of the JSON token verification path', () => {
@@ -38,7 +42,11 @@ describe('hosted handoff callback contract', () => {
 		expect(callbackSource).toContain("params.get('provisioning_token')");
 		expect(callbackSource).toContain('/api/external/provisioning/status');
 		expect(callbackSource).toContain('retry_after_ms');
-		expect(callbackSource).toContain("status === 'processing'");
+		expect(callbackSource).toContain(
+			"let status = $state<'processing' | 'success' | 'error'>('processing');"
+		);
+		expect(callbackSource).toContain('<CallbackView {status}');
+		expect(callbackViewSource).toContain("status === 'processing'");
 		expect(callbackSource).toContain("history.replaceState(null, '', window.location.pathname)");
 	});
 

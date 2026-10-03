@@ -244,10 +244,14 @@ describe('split page shell', () => {
 
 	it('shows one generic accepted status on the email-code screen without branching on identity', () => {
 		const page = source('routes/verify-email-code/+page.svelte');
+		const view = source('lib/views/VerifyEmailCodeView.svelte');
 
-		expect(page).toContain('role="status" aria-live="polite"');
-		expect(page).toContain('$LL.emailCode_subtitle()');
-		expect(page).not.toMatch(/userExists|accountExists|emailExists/);
+		expect(page).toContain('<VerifyEmailCodeView');
+		expect(view).toContain('role="status" aria-live="polite"');
+		expect(view).toContain('$LL.emailCode_subtitle()');
+		for (const each of [page, view]) {
+			expect(each).not.toMatch(/userExists|accountExists|emailExists/);
+		}
 	});
 
 	it('announces email-code send progress on both login and signup', () => {

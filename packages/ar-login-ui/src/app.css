@@ -7671,6 +7671,42 @@ tr.expired {
 	color: var(--text-primary);
 }
 
+/* The email-code page's accepted status, instructions and code label. */
+.auth-email-code__lead {
+	margin: 0;
+	font-weight: 500;
+	color: var(--text-secondary);
+}
+
+.auth-email-code__address {
+	margin: 0;
+	font-size: 0.875rem;
+	font-weight: 500;
+	overflow-wrap: anywhere;
+	color: var(--text-primary);
+}
+
+.auth-email-code__instructions {
+	margin: 0;
+	font-size: 0.875rem;
+	color: var(--text-secondary);
+}
+
+.auth-email-code__label {
+	display: block;
+	margin-bottom: 8px;
+	font-size: 0.875rem;
+	font-weight: 500;
+	text-align: center;
+	color: var(--text-secondary);
+}
+
+/* The callback page's progress spinner, centred above its heading. */
+.auth-callback__spinner {
+	display: block;
+	margin: 0 auto 16px;
+}
+
 /* --- Error code box --- */
 .auth-error-code-box {
 	background: var(--bg-subtle);
