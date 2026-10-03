@@ -1231,6 +1231,8 @@ describe('directory password login handler', () => {
         userId: 'user_generated',
         email: 'alice@example.com',
         ttl: expect.toSatisfy((value: number) => value > 110 && value <= 120),
+        // The store also ends it with the transaction, however long storing takes.
+        notAfterMs: expect.any(Number),
         metadata: expect.objectContaining({
           transaction_id: 'damt_email_1',
           token_hash: tokenHash,

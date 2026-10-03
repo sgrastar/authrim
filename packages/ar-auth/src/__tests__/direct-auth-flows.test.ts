@@ -2058,8 +2058,13 @@ describe('Direct Auth primary passkey and email-code flows', () => {
 
     expect(body.expires_in).toBeGreaterThan(110);
     expect(body.expires_in).toBeLessThanOrEqual(120);
+    // The store also ends it with the challenge, however long storing takes.
     expect(mocks.challengeStore.storeChallengeRpc).toHaveBeenCalledWith(
-      expect.objectContaining({ type: 'direct_email_code', ttl: body.expires_in })
+      expect.objectContaining({
+        type: 'direct_email_code',
+        ttl: body.expires_in,
+        notAfterMs: expect.any(Number),
+      })
     );
   });
 

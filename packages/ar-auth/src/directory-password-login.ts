@@ -1140,17 +1140,19 @@ export async function directoryMigrationEmailCodeSendHandler(c: Context<{ Bindin
       getChallengeStoreByChallengeId(c.env, challengeId, tenantId),
     ]);
 
+    const codeExpiresAtMs = Math.min(
+      Date.now() + emailCodeTtlSeconds * 1000,
+      transaction.expires_at
+    );
     await challengeStore.storeChallengeRpc({
       id: `directory_migration_email:${challengeId}`,
       tenantId,
       type: 'directory_migration_email',
       userId: transaction.user_id,
       challenge: codeHash,
-      // Capped again now, so a code stored after a wait still ends with its transaction.
-      ttl: Math.max(
-        1,
-        Math.min(emailCodeTtlSeconds, Math.floor((transaction.expires_at - Date.now()) / 1000))
-      ),
+      // The store ends the code with its transaction, however long storing takes.
+      ttl: emailCodeTtlSeconds,
+      notAfterMs: transaction.expires_at,
       email: normalizedEmail,
       metadata: {
         transaction_id: transaction.id,
@@ -1169,7 +1171,7 @@ export async function directoryMigrationEmailCodeSendHandler(c: Context<{ Bindin
       notificationKind: 'auth.directory-email-code',
       accountId: transaction.user_id,
       idempotencyKey: `directory-email-code:${challengeId}`,
-      expiresAt: Math.floor(issuedAt / 1000) + emailCodeTtlSeconds,
+      expiresAt: Math.floor(codeExpiresAtMs / 1000),
       payload: {
         channel: 'email',
         to: normalizedEmail,
@@ -1182,7 +1184,7 @@ export async function directoryMigrationEmailCodeSendHandler(c: Context<{ Bindin
           name: runtimeUser.name || undefined,
           email: normalizedEmail,
           code,
-          expiresInMinutes: Math.ceil(emailCodeTtlSeconds / 60),
+          expiresInMinutes: Math.max(1, Math.ceil((codeExpiresAtMs - Date.now()) / 60_000)),
           appName: 'Authrim',
           logoUrl: undefined,
         }),
@@ -1191,7 +1193,7 @@ export async function directoryMigrationEmailCodeSendHandler(c: Context<{ Bindin
             name: runtimeUser.name || undefined,
             email: normalizedEmail,
             code,
-            expiresInMinutes: Math.ceil(emailCodeTtlSeconds / 60),
+            expiresInMinutes: Math.max(1, Math.ceil((codeExpiresAtMs - Date.now()) / 60_000)),
             appName: 'Authrim',
           }),
           headers: {

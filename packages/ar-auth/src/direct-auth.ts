@@ -3164,14 +3164,22 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
       challengeStore = resolvedChallengeStore;
 
       failureStage = 'challenge_store';
-      const storedEmailCodeTtl = remainingCodeSeconds(emailCodeTtl, emailCodeLifetime.notAfterMs);
+      // The store ends the code with the challenge it continues, however long storing takes.
+      const storedAtMs = Date.now();
+      const codeExpiresAtMs = Math.min(
+        storedAtMs + emailCodeTtl * 1000,
+        emailCodeLifetime.notAfterMs ?? Number.POSITIVE_INFINITY
+      );
       await challengeStore.storeChallengeRpc({
         id: `direct_email_code:${attemptId}`,
         tenantId: getTenantIdFromContext(c),
         type: 'direct_email_code',
         userId: user.id,
         challenge: codeHash,
-        ttl: storedEmailCodeTtl,
+        ttl: emailCodeTtl,
+        ...(emailCodeLifetime.notAfterMs !== undefined
+          ? { notAfterMs: emailCodeLifetime.notAfterMs }
+          : {}),
         email: normalizedEmail,
         metadata: {
           ...emailVerificationMetadata,
@@ -3190,7 +3198,7 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
         notificationKind: 'auth.direct-email-code',
         accountId: user.id,
         idempotencyKey: `direct-email-code:${attemptId}`,
-        expiresAt: Math.floor(issuedAt / 1000) + storedEmailCodeTtl,
+        expiresAt: Math.floor(codeExpiresAtMs / 1000),
         payload: {
           channel: 'email',
           to: normalizedEmail,
@@ -3200,7 +3208,7 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
             name: user.name || undefined,
             email: normalizedEmail,
             code,
-            expiresInMinutes: Math.ceil(emailCodeTtl / 60),
+            expiresInMinutes: Math.max(1, Math.ceil((codeExpiresAtMs - Date.now()) / 60_000)),
             appName: 'Authrim',
             logoUrl: undefined,
           }),
@@ -3209,7 +3217,7 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
               name: user.name || undefined,
               email: normalizedEmail,
               code,
-              expiresInMinutes: Math.ceil(emailCodeTtl / 60),
+              expiresInMinutes: Math.max(1, Math.ceil((codeExpiresAtMs - Date.now()) / 60_000)),
               appName: 'Authrim',
             }),
           },
