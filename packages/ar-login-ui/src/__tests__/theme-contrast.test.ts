@@ -65,12 +65,40 @@ function contrast(a: Rgb, b: Rgb): number {
 	return (light + 0.05) / (dark + 0.05);
 }
 
-/** The colour stops of the default imagery a fullbleed page shows through its card. */
-function imageryStops(selector: string): Rgb[] {
+/** The colour stops of a fullbleed theme's default imagery (its `--fullbleed-default-image`). */
+function imageryStops(values: Record<string, string>): Rgb[] {
+	return [...values['--fullbleed-default-image'].matchAll(/#[0-9a-f]{6}/gi)].map(
+		(m) => colour(m[0]).rgb
+	);
+}
+
+/**
+ * What shows through at the darkest and lightest places of a fullbleed page: each stop of the
+ * imagery under the page-wide scrim. The top and bottom bands only push further the same way
+ * (dark in dark mode, light in light mode), so leaving them out is the worst case for the text.
+ */
+function imageryUnderScrim(values: Record<string, string>): Rgb[] {
+	const scrim = colour(values['--fullbleed-scrim']);
+	return imageryStops(values).map((stop) => over(scrim, stop));
+}
+
+/** Contrast of a token's colour, composited (it may be translucent), on a background. */
+function textContrast(value: string, background: Rgb): number {
+	return contrast(over(colour(value), background), background);
+}
+
+/** The status tints every theme shares (app.css :root). */
+const BASE = tokens(app, ':root {');
+
+/** The text colour an alert of `variant` takes in light or dark mode (app.css). */
+function alertColour(variant: string, dark: boolean): string {
+	const selector = dark ? `[data-theme='dark'] .alert-${variant} {` : `.alert-${variant} {`;
 	const at = app.indexOf(`\n${selector}`);
+	if (at < 0) throw new Error(`No rule for ${selector}`);
 	const rule = app.slice(at, app.indexOf('}', at));
-	const gradient = rule.match(/linear-gradient\(160deg,[^)]+\)/)?.[0] ?? '';
-	return [...gradient.matchAll(/#[0-9a-f]{6}/gi)].map((m) => colour(m[0]).rgb);
+	const colourValue = rule.match(/\n\tcolor:\s*([^;]+);/)?.[1];
+	if (!colourValue) throw new Error(`No colour in ${selector}`);
+	return colourValue.trim();
 }
 
 interface Case {
@@ -91,9 +119,6 @@ const glassLight = {
 	...glassDark,
 	...tokens(app, `${BOUNDARY}[data-theme='light'][data-login-theme='fullbleed-glass'] {`)
 };
-// The full-page scrims over the imagery (the last layer of each page's overlay).
-const glassDarkScrim = colour('rgba(8, 5, 4, 0.5)');
-const glassLightScrim = colour('rgba(20, 12, 8, 0.12)');
 
 const lightBeige = classic(":root,\n[data-theme='light'],");
 const lightBlueGray = classic("[data-theme='light'][data-variant='blue-gray'] {");
@@ -111,20 +136,8 @@ const CASES: Case[] = [
 	{ name: 'classic dark slate', values: darkSlate, behind: page(darkSlate) },
 	{ name: 'meridian / split light', values: meridianLight, behind: page(meridianLight) },
 	{ name: 'meridian / split dark', values: meridianDark, behind: page(meridianDark) },
-	{
-		name: 'fullbleed glass dark',
-		values: glassDark,
-		behind: imageryStops("[data-login-theme='fullbleed-glass'] .auth-page {").map((stop) =>
-			over(glassDarkScrim, stop)
-		)
-	},
-	{
-		name: 'fullbleed glass light',
-		values: glassLight,
-		behind: imageryStops(
-			"[data-theme='light'][data-login-theme='fullbleed-glass'] .auth-page {"
-		).map((stop) => over(glassLightScrim, stop))
-	}
+	{ name: 'fullbleed glass dark', values: glassDark, behind: imageryUnderScrim(glassDark) },
+	{ name: 'fullbleed glass light', values: glassLight, behind: imageryUnderScrim(glassLight) }
 ];
 
 describe('theme contrast', () => {
@@ -133,7 +146,7 @@ describe('theme contrast', () => {
 		for (const under of behind) {
 			const card = over(colour(values['--bg-card']), under);
 			for (const token of ['--text-primary', '--text-secondary', '--text-muted', '--primary']) {
-				const ratio = contrast(colour(values[token]).rgb, card);
+				const ratio = textContrast(values[token], card);
 				expect(
 					ratio,
 					`${token} ${values[token]} on ${card.map(Math.round)}`
@@ -153,8 +166,64 @@ describe('theme contrast', () => {
 				? values['--primary']
 				: values['--button-primary-bg']
 		).rgb;
-		expect(
-			contrast(colour(values['--button-primary-text']).rgb, background)
-		).toBeGreaterThanOrEqual(4.5);
+		expect(textContrast(values['--button-primary-text'], background)).toBeGreaterThanOrEqual(4.5);
+	});
+
+	it.each([
+		{ name: 'fullbleed glass dark', values: glassDark },
+		{ name: 'fullbleed glass light', values: glassLight }
+	])('$name: text placed on the imagery meets AA', ({ values }) => {
+		for (const under of imageryUnderScrim(values)) {
+			for (const token of [
+				'--fullbleed-on-image-title',
+				'--fullbleed-on-image-text',
+				'--fullbleed-on-image-muted'
+			]) {
+				expect(
+					textContrast(values[token], under),
+					`${token} ${values[token]} on ${under.map(Math.round)}`
+				).toBeGreaterThanOrEqual(4.5);
+			}
+		}
+	});
+
+	it.each(CASES)('$name: alert text meets AA on its tint', ({ values, behind }) => {
+		// Dark mode is where the primary text is light.
+		const dark = luminance(colour(values['--text-primary']).rgb) > 0.5;
+		const tints: Record<string, string> = {
+			error: '--danger-light',
+			warning: '--warning-light',
+			success: '--success-light'
+		};
+		for (const [variant, tint] of Object.entries(tints)) {
+			const text = alertColour(variant, dark);
+			for (const under of behind) {
+				const card = over(colour(values['--bg-card']), under);
+				const surface = over(colour(BASE[tint]), card);
+				expect(textContrast(text, surface), `${variant} ${text}`).toBeGreaterThanOrEqual(4.5);
+			}
+		}
+	});
+
+	it.each([
+		{ name: 'classic light beige', values: lightBeige },
+		{ name: 'classic light blue-gray', values: lightBlueGray },
+		{ name: 'classic light green', values: lightGreen },
+		{ name: 'classic dark brown', values: darkBrown },
+		{ name: 'classic dark navy', values: darkNavy },
+		{ name: 'classic dark slate', values: darkSlate }
+	])('$name: primary button text meets AA across the whole gradient', ({ values }) => {
+		// Classic buttons are --gradient-primary with --text-inverse (app.css classic block); a
+		// variant without its own --text-inverse inherits its scheme's (the beige or brown block).
+		const dark = luminance(colour(values['--text-primary']).rgb) > 0.5;
+		const text = values['--text-inverse'] ?? (dark ? darkBrown : lightBeige)['--text-inverse'];
+		const stops = [...values['--gradient-primary'].matchAll(/#[0-9a-f]{6}/gi)];
+		expect(stops.length).toBeGreaterThan(1);
+		for (const stop of stops) {
+			expect(
+				textContrast(text, colour(stop[0]).rgb),
+				`${text} on ${stop[0]}`
+			).toBeGreaterThanOrEqual(4.5);
+		}
 	});
 });

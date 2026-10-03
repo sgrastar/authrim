@@ -451,8 +451,8 @@ html[dir='rtl'] .form-select {
 }
 
 .btn-primary {
-	background: var(--gradient-primary);
-	color: white;
+	background: var(--button-primary-bg, var(--gradient-primary));
+	color: var(--button-primary-text, white);
 }
 
 .btn-primary:hover:not(:disabled) {
@@ -6392,6 +6392,19 @@ tr.expired {
 		sans-serif;
 	--font-body: 'Avenir Next', 'Helvetica Neue', 'Hiragino Sans', 'Noto Sans JP', sans-serif;
 	--login-page-max-width: 420px;
+	/* The page: default imagery, then a page-wide scrim (under everything, wherever text sits)
+	   and darker top and bottom bands behind the header and footer. */
+	--fullbleed-default-image: linear-gradient(160deg, #3a2018 0%, #17100c 60%, #0d0908 100%);
+	--fullbleed-scrim: rgba(8, 5, 4, 0.5);
+	--fullbleed-overlay:
+		linear-gradient(to top, rgba(10, 7, 6, 0.55), rgba(10, 7, 6, 0.1) 26%, transparent 45%),
+		linear-gradient(to bottom, rgba(10, 7, 6, 0.4), transparent 32%),
+		linear-gradient(var(--fullbleed-scrim), var(--fullbleed-scrim));
+	/* Text placed on the imagery (header, footer, links under the card). */
+	--fullbleed-on-image-title: #fffaf6;
+	--fullbleed-on-image-text: rgba(255, 255, 255, 0.88);
+	--fullbleed-on-image-muted: rgba(255, 255, 255, 0.72);
+	--fullbleed-on-image-shadow: rgba(0, 0, 0, 0.5);
 }
 
 :is(:root, .login-ui-theme-boundary)[data-theme='light'][data-login-theme='fullbleed-glass'] {
@@ -6427,6 +6440,28 @@ tr.expired {
 	--accent-color: var(--primary);
 	--border-color: rgba(34, 27, 23, 0.16);
 	--shadow-sm: 0 24px 64px rgba(12, 8, 6, 0.3);
+	/* Light mode keeps the card translucent, so what shows through it is light: light default
+	   imagery (a tenant's own image should be light too), light scrims, and dark text on it. */
+	--fullbleed-default-image: linear-gradient(160deg, #f6ede5 0%, #ecdfd3 60%, #e0cdbd 100%);
+	--fullbleed-scrim: rgba(250, 245, 240, 0.12);
+	--fullbleed-overlay:
+		linear-gradient(
+			to top,
+			rgba(250, 245, 240, 0.72),
+			rgba(250, 245, 240, 0.18) 26%,
+			transparent 45%
+		),
+		linear-gradient(
+			to bottom,
+			rgba(250, 245, 240, 0.78),
+			rgba(250, 245, 240, 0.36) 18%,
+			transparent 38%
+		),
+		linear-gradient(var(--fullbleed-scrim), var(--fullbleed-scrim));
+	--fullbleed-on-image-title: #221b17;
+	--fullbleed-on-image-text: #3d332e;
+	--fullbleed-on-image-muted: #4a3f39;
+	--fullbleed-on-image-shadow: rgba(255, 250, 246, 0.6);
 }
 
 :is(:root, .login-ui-theme-boundary)[data-font-family='rounded'] {
@@ -6856,63 +6891,44 @@ tr.expired {
 }
 
 /* --- Vermilion (fullbleed-glass) page treatment ---
-   Placed after the fullbleed_card overlay so the theme scrims win.
-   Top/bottom scrims keep header/footer text readable over imagery (mock parity). */
+   Placed after the fullbleed_card overlay so the theme scrims win. The imagery, the scrims and the
+   colours of text placed on the imagery are tokens of the theme boundary (dark below, light in the
+   light block), so a page always follows its own boundary's scheme. */
 [data-login-theme='fullbleed-glass'] .auth-page {
-	--login-page-overlay:
-		linear-gradient(to top, rgba(10, 7, 6, 0.55), rgba(10, 7, 6, 0.1) 26%, transparent 45%),
-		linear-gradient(to bottom, rgba(10, 7, 6, 0.4), transparent 32%),
-		linear-gradient(rgba(8, 5, 4, 0.5), rgba(8, 5, 4, 0.5));
-	background-image: var(
-		--login-page-background-layer,
-		linear-gradient(160deg, #3a2018 0%, #17100c 60%, #0d0908 100%)
-	);
-}
-
-/* Light mode keeps the card translucent, so what shows through it must be light: the default
-   imagery is a light gradient (a tenant's own image should be light too). The top and bottom scrims
-   stay dark so the white header and footer text keep reading over it. */
-[data-theme='light'][data-login-theme='fullbleed-glass'] .auth-page {
-	background-image: var(
-		--login-page-background-layer,
-		linear-gradient(160deg, #f6ede5 0%, #ecdfd3 60%, #e0cdbd 100%)
-	);
-	--login-page-overlay:
-		linear-gradient(to top, rgba(10, 7, 6, 0.55), rgba(10, 7, 6, 0.1) 26%, transparent 45%),
-		linear-gradient(to bottom, rgba(10, 7, 6, 0.58), rgba(10, 7, 6, 0.32) 18%, transparent 38%),
-		linear-gradient(rgba(20, 12, 8, 0.12), rgba(20, 12, 8, 0.12));
+	--login-page-overlay: var(--fullbleed-overlay);
+	background-image: var(--login-page-background-layer, var(--fullbleed-default-image));
 }
 
 /* Vermilion bold typography and on-image readability (mock parity) */
 [data-login-theme='fullbleed-glass'] .auth-page .auth-header__title {
-	color: #fffaf6;
+	color: var(--fullbleed-on-image-title);
 	font-size: 2em;
 	font-weight: 300;
 	letter-spacing: 0.5em;
 	text-indent: 0.5em;
 	text-transform: uppercase;
 	line-height: 1.05;
-	text-shadow: 0 2px 28px rgba(0, 0, 0, 0.5);
+	text-shadow: 0 2px 28px var(--fullbleed-on-image-shadow);
 }
 
 [data-login-theme='fullbleed-glass'] .auth-page .auth-header__subtitle {
-	color: rgba(255, 255, 255, 0.88);
+	color: var(--fullbleed-on-image-text);
 	letter-spacing: 0.12em;
-	text-shadow: 0 1px 16px rgba(0, 0, 0, 0.5);
+	text-shadow: 0 1px 16px var(--fullbleed-on-image-shadow);
 }
 
 [data-login-theme='fullbleed-glass'] .auth-page .auth-footer {
-	color: rgba(255, 255, 255, 0.72);
-	text-shadow: 0 1px 12px rgba(0, 0, 0, 0.5);
+	color: var(--fullbleed-on-image-muted);
+	text-shadow: 0 1px 12px var(--fullbleed-on-image-shadow);
 }
 
 [data-login-theme='fullbleed-glass'] .auth-page .auth-bottom-link {
-	color: rgba(255, 255, 255, 0.85);
-	text-shadow: 0 1px 12px rgba(0, 0, 0, 0.5);
+	color: var(--fullbleed-on-image-text);
+	text-shadow: 0 1px 12px var(--fullbleed-on-image-shadow);
 }
 
 [data-login-theme='fullbleed-glass'] .auth-page .auth-bottom-link a {
-	color: #fffaf6;
+	color: var(--fullbleed-on-image-title);
 	text-decoration: underline;
 	text-underline-offset: 3px;
 }

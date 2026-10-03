@@ -1,5 +1,7 @@
 <script module lang="ts">
 	import { defineMeta } from '@storybook/addon-svelte-csf';
+	import { get } from 'svelte/store';
+	import { LL } from '$i18n/i18n-svelte';
 	import { expect, fn, userEvent, within } from 'storybook/test';
 	import AuthPageShell from '$lib/components/AuthPageShell.svelte';
 	import LoginUIFrame from '$lib/storybook/LoginUIFrame.svelte';
@@ -67,7 +69,7 @@
 	play={async ({ args, canvasElement }) => {
 		const canvas = within(canvasElement);
 		await expect(canvas.getByText('4:05')).toBeInTheDocument();
-		await userEvent.click(canvas.getByRole('button', { name: /approve|承認/i }));
+		await userEvent.click(canvas.getByRole('button', { name: get(LL).ciba_approveButton() }));
 		await expect(args.onApprove).toHaveBeenCalledWith('req-1');
 	}}
 >

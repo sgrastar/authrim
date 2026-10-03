@@ -209,7 +209,10 @@ describe('split page shell', () => {
 		);
 		expect(css).toContain("[data-login-theme='fullbleed-glass'] .auth-page .auth-header__subtitle");
 		expect(css).toContain("[data-login-theme='fullbleed-glass'] .auth-page .auth-bottom-link");
-		expect(css).toContain('rgba(10, 7, 6, 0.58)');
+		// Text on the imagery follows the boundary's scheme (contrast: theme-contrast.test.ts).
+		expect(css).toContain('color: var(--fullbleed-on-image-title);');
+		expect(css).toContain('--fullbleed-on-image-title: #fffaf6;');
+		expect(css).toContain('--fullbleed-on-image-title: #221b17;');
 	});
 
 	it('keeps split brand copy readable independently from light form colors', () => {

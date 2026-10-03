@@ -34,6 +34,8 @@
 		loginUIPageStore.logoDisplay !== 'hidden' &&
 			(loginUIPageStore.logoDisplay !== 'image' || !hasBrandingLogo)
 	);
+	/** The page always has a level-one heading: the brand, shown in the header or for screen readers. */
+	const showVisibleHeading = $derived(loginUIPageStore.headerEnabled && showBrandText);
 </script>
 
 <div
@@ -98,6 +100,9 @@
 		{/if}
 
 		<div class="auth-container" class:auth-container--wide={wide}>
+			{#if !showVisibleHeading}
+				<h1 class="sr-only">{brandingStore.brandName || $LL.app_title()}</h1>
+			{/if}
 			{#if loginUIPageStore.headerEnabled}
 				<header class="auth-header">
 					{#if showBrandLogo && brandingStore.logoUrl}

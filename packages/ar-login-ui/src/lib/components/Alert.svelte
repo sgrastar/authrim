@@ -130,11 +130,12 @@
 	}
 
 	.alert-success .alert-title {
-		color: var(--success);
+		color: inherit;
 	}
 
 	.alert-success .alert-text {
-		color: #065f46;
+		/* The scheme's alert colour (app.css), dark mode included. */
+		color: inherit;
 	}
 
 	/* Error variant */
@@ -149,11 +150,12 @@
 	}
 
 	.alert-error .alert-title {
-		color: var(--danger);
+		color: inherit;
 	}
 
 	.alert-error .alert-text {
-		color: #991b1b;
+		/* The scheme's alert colour (app.css), dark mode included. */
+		color: inherit;
 	}
 
 	/* Warning variant */
@@ -168,11 +170,13 @@
 	}
 
 	.alert-warning .alert-title {
-		color: #92400e;
+		/* The scheme's alert colour (app.css), dark mode included. */
+		color: inherit;
 	}
 
 	.alert-warning .alert-text {
-		color: #92400e;
+		/* The scheme's alert colour (app.css), dark mode included. */
+		color: inherit;
 	}
 
 	/* Info variant */

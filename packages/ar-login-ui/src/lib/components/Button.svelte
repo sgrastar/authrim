@@ -65,8 +65,10 @@
 
 	/* Primary variant - gradient with glow */
 	.btn-primary {
-		background: var(--gradient-primary);
-		color: white;
+		/* The theme's primary button, the same as the sign-in buttons (white text on a dark
+		   primary would fail on the light primaries of dark themes). */
+		background: var(--button-primary-bg, var(--gradient-primary));
+		color: var(--button-primary-text, white);
 		box-shadow: 0 4px 16px rgba(51, 51, 51, 0.3);
 	}
 
