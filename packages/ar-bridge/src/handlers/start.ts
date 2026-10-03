@@ -15,6 +15,7 @@ import {
   getSessionStoreBySessionId,
   isAccountReauthFresh,
   readAccountSession,
+  resolveAccountReauthTtlSeconds,
   getUIConfig,
   buildIssuerUrl,
   getTenantIdFromContext,
@@ -167,7 +168,11 @@ export async function handleExternalStart(c: Context<{ Bindings: Env }>): Promis
         session.sessionId !== intent.sessionId ||
         session.userId !== intent.userId ||
         session.isGuestSession ||
-        !isAccountReauthFresh(session.authTime)
+        !isAccountReauthFresh(
+          session.authTime,
+          undefined,
+          await resolveAccountReauthTtlSeconds(c.env, tenantId)
+        )
       ) {
         return c.redirect(
           await accountPageLinkResultUrl(c.env, tenantId, {

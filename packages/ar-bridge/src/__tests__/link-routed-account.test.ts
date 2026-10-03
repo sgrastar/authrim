@@ -22,6 +22,7 @@ vi.mock('@authrim/ar-lib-core', () => ({
   },
   isAccountReauthFresh: (authTime: number) => Math.floor(Date.now() / 1000) < authTime + 300,
   readAccountSession: mocks.readSession,
+  resolveAccountReauthTtlSeconds: vi.fn(async () => 300),
   isLoginMethodRemovalSafe: mocks.hasRemaining,
   withLoginMethodRemovalLock: mocks.withLock,
   LoginMethodRemovalInProgressError: class LoginMethodRemovalInProgressError extends Error {},

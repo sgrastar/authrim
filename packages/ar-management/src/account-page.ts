@@ -2,7 +2,6 @@ import type { Context } from 'hono';
 import { getCookie } from 'hono/cookie';
 import type { AccountSession, Env, Session } from '@authrim/ar-lib-core';
 import {
-  ACCOUNT_REAUTH_TTL_SECONDS,
   CanonicalRuntimeUserStore,
   createAccountAuthContextFromHono,
   createPIIContextFromHono,
@@ -13,6 +12,7 @@ import {
   isLiveAccountSession,
   isShardedSessionId,
   resolveAccountDataContextFromHono,
+  resolveAccountReauthTtlSeconds,
   toAccountSession,
 } from '@authrim/ar-lib-core';
 import { recordAccountOperation } from './account-operation-log';
@@ -228,12 +228,13 @@ export async function getAccountReauthStatusHandler(
     return accountSession;
   }
 
+  const ttlSeconds = await resolveAccountReauthTtlSeconds(c.env, getTenantIdFromContext(c));
   return c.json({
     reauth: {
-      required: !isAccountReauthFresh(accountSession.authTime),
+      required: !isAccountReauthFresh(accountSession.authTime, undefined, ttlSeconds),
       authenticated_at: accountSession.authTime,
-      expires_at: accountSession.authTime + ACCOUNT_REAUTH_TTL_SECONDS,
-      ttl_seconds: ACCOUNT_REAUTH_TTL_SECONDS,
+      expires_at: accountSession.authTime + ttlSeconds,
+      ttl_seconds: ttlSeconds,
       methods: accountSession.amr ?? [],
     },
   });

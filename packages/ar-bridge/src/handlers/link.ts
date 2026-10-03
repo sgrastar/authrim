@@ -23,6 +23,7 @@ import {
   LoginMethodRemovalInProgressError,
   readAccountSession,
   resolveAccountDataContext,
+  resolveAccountReauthTtlSeconds,
   withLoginMethodRemovalLock,
   type AccountSession,
 } from '@authrim/ar-lib-core';
@@ -374,6 +375,9 @@ async function verifyRecentSession(
   const session = await verifySession(c);
   if (session instanceof Response) return session;
   if (session.isGuestSession) return c.json({ error: 'guest_registration_required' }, 403);
-  if (!isAccountReauthFresh(session.authTime)) return c.json(ACCOUNT_REAUTH_REQUIRED_ERROR, 403);
+  const ttlSeconds = await resolveAccountReauthTtlSeconds(c.env, getTenantIdFromContext(c));
+  if (!isAccountReauthFresh(session.authTime, undefined, ttlSeconds)) {
+    return c.json(ACCOUNT_REAUTH_REQUIRED_ERROR, 403);
+  }
   return session;
 }

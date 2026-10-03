@@ -10,9 +10,14 @@
 import type { Env } from '../types/env';
 import type { Session } from '../durable-objects/SessionStore';
 import { getSessionStoreBySessionId, isShardedSessionId } from '../utils/session-helper';
+import { SELF_SERVICE_DEFAULTS, SELF_SERVICE_SETTINGS_META } from '../types/settings/self-service';
+import { resolveEffectiveSettings, type EffectiveSettingsEnv } from './effective-settings';
 
-/** How long an authentication (or re-authentication) allows sensitive self-service operations. */
-export const ACCOUNT_REAUTH_TTL_SECONDS = 5 * 60;
+/**
+ * How long an authentication (or re-authentication) allows sensitive self-service operations,
+ * unless the tenant sets `self-service.reauth_ttl_seconds` (resolveAccountReauthTtlSeconds).
+ */
+export const ACCOUNT_REAUTH_TTL_SECONDS = SELF_SERVICE_DEFAULTS['self-service.reauth_ttl_seconds'];
 
 export type AccountSession = {
   /** Session authentication proof, not the account's current registration_state. */
@@ -94,7 +99,32 @@ export function isLiveAccountSession(
  */
 export function isAccountReauthFresh(
   authTime: number,
-  now: number = Math.floor(Date.now() / 1000)
+  now: number = Math.floor(Date.now() / 1000),
+  ttlSeconds: number = ACCOUNT_REAUTH_TTL_SECONDS
 ): boolean {
-  return now < authTime + ACCOUNT_REAUTH_TTL_SECONDS;
+  return now < authTime + ttlSeconds;
+}
+
+/**
+ * The tenant's re-authentication window in seconds (tenant, platform, env, default). A value that
+ * cannot be read or lies outside the allowed range gives the default, the safer of the two choices
+ * a failure leaves.
+ */
+export async function resolveAccountReauthTtlSeconds(
+  env: EffectiveSettingsEnv,
+  tenantId: string
+): Promise<number> {
+  const meta = SELF_SERVICE_SETTINGS_META['self-service.reauth_ttl_seconds'];
+  try {
+    const values = await resolveEffectiveSettings(env, 'self-service', { tenantId });
+    const value = values['self-service.reauth_ttl_seconds'];
+    return typeof value === 'number' &&
+      Number.isInteger(value) &&
+      value >= (meta.min ?? 0) &&
+      value <= (meta.max ?? Number.MAX_SAFE_INTEGER)
+      ? value
+      : ACCOUNT_REAUTH_TTL_SECONDS;
+  } catch {
+    return ACCOUNT_REAUTH_TTL_SECONDS;
+  }
 }

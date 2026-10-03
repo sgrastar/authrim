@@ -15,6 +15,7 @@ import {
   normalizeLookupEmail,
   persistAccountEmailMutation,
   produceNotificationDelivery,
+  resolveAccountReauthTtlSeconds,
 } from '@authrim/ar-lib-core';
 import { requireAccountSession, type AccountSession } from './account-page';
 import { createLookupBucketWriteResolver } from './lookup-bucket-write-route';
@@ -101,8 +102,14 @@ function randomOtpCode(): string {
   return digits.join('');
 }
 
-function recentlyAuthenticated(session: AccountSession, now: number): boolean {
-  return isAccountReauthFresh(session.authTime, now);
+/** Whether the session was authenticated within the tenant's re-authentication window. */
+async function recentlyAuthenticated(
+  c: Context<{ Bindings: Env }>,
+  session: AccountSession,
+  now: number
+): Promise<boolean> {
+  const ttlSeconds = await resolveAccountReauthTtlSeconds(c.env, getTenantIdFromContext(c));
+  return isAccountReauthFresh(session.authTime, now, ttlSeconds);
 }
 
 function constantTimeHexEqual(left: string, right: string): boolean {
@@ -319,7 +326,7 @@ export async function startAccountIdentifierReplacementHandler(
   if (accountSession instanceof Response) return accountSession;
   const now = Math.floor(Date.now() / 1000);
   if (accountSession.isGuestSession) return c.json({ error: 'guest_registration_required' }, 403);
-  if (!recentlyAuthenticated(accountSession, now)) {
+  if (!(await recentlyAuthenticated(c, accountSession, now))) {
     return c.json(
       {
         error: 'reauthentication_required',
@@ -590,7 +597,7 @@ export async function completeAccountIdentifierReplacementHandler(
   if (accountSession instanceof Response) return accountSession;
   const now = Math.floor(Date.now() / 1000);
   if (accountSession.isGuestSession) return c.json({ error: 'guest_registration_required' }, 403);
-  if (!recentlyAuthenticated(accountSession, now)) {
+  if (!(await recentlyAuthenticated(c, accountSession, now))) {
     return c.json(
       {
         error: 'reauthentication_required',
