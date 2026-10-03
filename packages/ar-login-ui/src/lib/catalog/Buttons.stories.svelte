@@ -44,9 +44,7 @@
 				card
 			>
 				<Button class="w-full">{$LL.common_continue()}</Button>
-				<Button class="w-full"
-					><i class="i-heroicons-key"></i>{$LL.login_signInWithPasskey()}</Button
-				>
+				<Button class="w-full"><i class="i-ph-key"></i>{$LL.login_signInWithPasskey()}</Button>
 			</Specimen>
 			<Specimen
 				name="Secondary"
@@ -55,7 +53,7 @@
 				card
 			>
 				<Button variant="secondary" class="w-full"
-					><i class="i-heroicons-envelope"></i>{$LL.login_sendCode()}</Button
+					><i class="i-ph-envelope-simple"></i>{$LL.login_sendCode()}</Button
 				>
 				<Button variant="secondary" class="w-full">{$LL.consent_denyButton()}</Button>
 			</Specimen>
@@ -67,7 +65,7 @@
 			>
 				<Button variant="ghost" size="sm">{$LL.common_backToLogin()}</Button>
 				<Button variant="ghost" class="w-full"
-					><i class="i-heroicons-question-mark-circle"></i>{$LL.common_contactSupport()}</Button
+					><i class="i-ph-question"></i>{$LL.common_contactSupport()}</Button
 				>
 			</Specimen>
 			<Specimen

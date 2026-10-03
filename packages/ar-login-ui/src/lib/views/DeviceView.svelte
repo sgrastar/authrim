@@ -53,7 +53,7 @@
 	<!-- Icon -->
 	<div class="auth-icon-badge">
 		<div class="auth-icon-badge__circle">
-			<div class="i-heroicons-device-phone-mobile h-9 w-9 auth-icon-badge__icon"></div>
+			<div class="i-ph-device-mobile h-9 w-9 auth-icon-badge__icon"></div>
 		</div>
 	</div>
 
@@ -159,7 +159,7 @@
 						<ul class="auth-scopes-list">
 							{#each deviceInfo.scopes as scope (scope)}
 								<li>
-									<div class="i-heroicons-check-circle h-4 w-4 auth-scopes-list__icon"></div>
+									<div class="i-ph-check-circle h-4 w-4 auth-scopes-list__icon"></div>
 									{scope}
 								</li>
 							{/each}

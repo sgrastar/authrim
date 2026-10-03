@@ -478,7 +478,7 @@
 									externalIdpBusy}
 								onclick={onMigrationPasskey}
 							>
-								<div class="i-heroicons-key h-5 w-5"></div>
+								<div class="i-ph-key h-5 w-5"></div>
 								{$LL.register_createWithPasskey()}
 							</Button>
 						{/if}
@@ -495,7 +495,7 @@
 										externalIdpBusy}
 									onclick={onMigrationEmailSend}
 								>
-									<div class="i-heroicons-envelope h-5 w-5"></div>
+									<div class="i-ph-envelope-simple h-5 w-5"></div>
 									{$LL.login_sendCode()}
 								</Button>
 								{#if migration.codeSent}
@@ -521,7 +521,7 @@
 												externalIdpBusy}
 											onclick={onMigrationEmailVerify}
 										>
-											<div class="i-heroicons-check h-5 w-5"></div>
+											<div class="i-ph-check h-5 w-5"></div>
 											{$LL.emailCode_verifyButton()}
 										</Button>
 									</div>
@@ -547,7 +547,7 @@
 					{disabled}
 					onclick={onPasskey}
 				>
-					<div class="i-heroicons-key h-5 w-5"></div>
+					<div class="i-ph-key h-5 w-5"></div>
 					{$LL.login_signInWithPasskey()}
 				</Button>
 				<HumanVerification
@@ -601,7 +601,7 @@
 					{disabled}
 					onclick={onDirectoryPassword}
 				>
-					<div class="i-heroicons-identification h-5 w-5"></div>
+					<div class="i-ph-identification-card h-5 w-5"></div>
 					{$LL.login_signInWithDirectory({ label: directoryPasswordLabel })}
 				</Button>
 				<HumanVerification
@@ -644,7 +644,7 @@
 					{disabled}
 					onclick={emailVerification.enabled ? undefined : () => onEmailCode?.()}
 				>
-					<div class="i-heroicons-envelope h-5 w-5"></div>
+					<div class="i-ph-envelope-simple h-5 w-5"></div>
 					{$LL.login_sendCode()}
 				</Button>
 				<HumanVerification
@@ -705,7 +705,7 @@
 					{disabled}
 					onclick={totpCodeRequested ? onTotpVerify : onTotpStart}
 				>
-					<div class="i-heroicons-key h-5 w-5"></div>
+					<div class="i-ph-key h-5 w-5"></div>
 					{totpCodeRequested ? $LL.login_totpVerify() : $LL.login_totpContinue()}
 				</Button>
 			{/if}

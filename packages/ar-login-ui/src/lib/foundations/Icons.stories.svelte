@@ -9,59 +9,44 @@
 			docs: {
 				description: {
 					component:
-						'Icons the login pages use today. **Heroicons** (`i-heroicons-*`) draw the page markup; **Phosphor** (`i-ph-*`) draw screens, alerts and provider buttons. Both are UnoCSS icon classes, so an icon must appear as a literal class name in source (or in the safelist in `uno.config.ts`) to be generated. Two sets for one UI is a candidate for consolidation.'
+						'Icons the login pages use, all from **Phosphor** (`i-ph-*`, regular weight unless the name ends in `-fill`). They are UnoCSS icon classes, so an icon must appear as a literal class name in source (or in the safelist in `uno.config.ts`) to be generated.'
 				}
 			}
 		}
 	});
 
 	// Literal class names so UnoCSS generates every one of them.
-	const heroicons = [
-		['i-heroicons-arrow-left', 'back links and buttons'],
-		['i-heroicons-arrow-path', 'refresh (ciba)'],
-		['i-heroicons-arrow-right', 'landing call to action'],
-		['i-heroicons-arrow-top-right-on-square', 'external links (consent)'],
-		['i-heroicons-building-office', 'client placeholder (consent)'],
-		['i-heroicons-check', 'logout complete, approve'],
-		['i-heroicons-check-badge', 'no pending requests (ciba)'],
-		['i-heroicons-check-circle', 'success, scopes, callback'],
-		['i-heroicons-device-phone-mobile', 'device, authenticator app'],
-		['i-heroicons-envelope', 'email code'],
-		['i-heroicons-envelope-solid', 'verify-email-code badge'],
-		['i-heroicons-exclamation-circle', 'error badge'],
-		['i-heroicons-exclamation-triangle', 'delegated access warning'],
-		['i-heroicons-identification', 'directory password'],
-		['i-heroicons-information-circle', 'binding message (ciba)'],
-		['i-heroicons-key', 'passkey'],
-		['i-heroicons-moon', 'theme toggle (to dark)'],
-		['i-heroicons-pencil-square', 'account page'],
-		['i-heroicons-question-mark-circle', 'contact support'],
-		['i-heroicons-shield-check', 'trusted client'],
-		['i-heroicons-shield-exclamation', 'reauth badge'],
-		['i-heroicons-sun', 'theme toggle (to light)'],
-		['i-heroicons-user', 'avatar placeholder'],
-		['i-heroicons-x-mark', 'reject (ciba)']
-	] as const;
-
-	const phosphor = [
-		['i-ph-arrow-clockwise', 'resend code'],
-		['i-ph-arrow-left', 'back (screen)'],
-		['i-ph-arrow-right', 'account launcher'],
-		['i-ph-arrow-square-out', 'account launcher'],
-		['i-ph-check-circle', 'verify, success alert'],
+	const icons = [
+		['i-ph-arrow-clockwise', 'refresh, resend code'],
+		['i-ph-arrow-left', 'back links and buttons'],
+		['i-ph-arrow-right', 'call to action, account launcher'],
+		['i-ph-arrow-square-out', 'external links, account launcher'],
+		['i-ph-buildings', 'client placeholder (consent)'],
+		['i-ph-check', 'logout complete, approve'],
+		['i-ph-check-circle', 'success, scopes, verify'],
 		['i-ph-circle-notch', 'busy spinner'],
-		['i-ph-device-mobile', 'authenticator app (screen)'],
-		['i-ph-envelope-simple', 'email code (screen)'],
-		['i-ph-globe', 'provider fallback'],
+		['i-ph-device-mobile', 'device, authenticator app'],
+		['i-ph-envelope-simple', 'email code'],
+		['i-ph-envelope-simple-fill', 'verify-email-code badge'],
+		['i-ph-globe', 'language, provider fallback'],
 		['i-ph-handshake', 'consent block'],
-		['i-ph-identification-card', 'directory password (screen)'],
-		['i-ph-info', 'info alert'],
-		['i-ph-key', 'passkey (screen)'],
+		['i-ph-identification-card', 'directory password'],
+		['i-ph-info', 'info alert, binding message'],
+		['i-ph-key', 'passkey'],
 		['i-ph-magnifying-glass', 'account launcher search'],
+		['i-ph-moon', 'theme toggle (to dark)'],
+		['i-ph-note-pencil', 'account page'],
+		['i-ph-question', 'contact support'],
+		['i-ph-seal-check', 'no pending requests (ciba)'],
+		['i-ph-shield-check', 'trusted client'],
+		['i-ph-shield-warning', 'reauth badge'],
 		['i-ph-star', 'account launcher'],
 		['i-ph-star-fill', 'account launcher'],
-		['i-ph-warning', 'warning alert'],
-		['i-ph-x', 'dismiss alert'],
+		['i-ph-sun', 'theme toggle (to light)'],
+		['i-ph-user', 'avatar placeholder'],
+		['i-ph-warning', 'warning alert, delegated access'],
+		['i-ph-warning-circle', 'error badge'],
+		['i-ph-x', 'dismiss, reject'],
 		['i-ph-x-circle', 'error alert']
 	] as const;
 
@@ -91,12 +76,8 @@
 	</div>
 {/snippet}
 
-<Story name="Heroicons (page markup)">
-	{#snippet template()}<Catalog>{@render grid(heroicons)}</Catalog>{/snippet}
-</Story>
-
-<Story name="Phosphor (screens and alerts)">
-	{#snippet template()}<Catalog>{@render grid(phosphor)}</Catalog>{/snippet}
+<Story name="Interface">
+	{#snippet template()}<Catalog>{@render grid(icons)}</Catalog>{/snippet}
 </Story>
 
 <Story name="Provider logos">

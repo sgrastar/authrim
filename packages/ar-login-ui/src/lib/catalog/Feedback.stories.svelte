@@ -141,14 +141,14 @@
 			>
 				<div class="auth-icon-badge">
 					<div class="auth-icon-badge__circle">
-						<div class="i-heroicons-check-circle h-9 w-9 auth-icon-badge__icon"></div>
+						<div class="i-ph-check-circle h-9 w-9 auth-icon-badge__icon"></div>
 					</div>
 				</div>
 			</Specimen>
 			<Specimen name="Warning" source=".auth-icon-badge__circle--warning" where="reauth." card>
 				<div class="auth-icon-badge">
 					<div class="auth-icon-badge__circle auth-icon-badge__circle--warning">
-						<div class="i-heroicons-shield-exclamation h-9 w-9 auth-icon-badge__icon"></div>
+						<div class="i-ph-shield-warning h-9 w-9 auth-icon-badge__icon"></div>
 					</div>
 				</div>
 			</Specimen>
@@ -160,7 +160,7 @@
 			>
 				<div class="auth-icon-badge">
 					<div class="auth-icon-badge__circle auth-icon-badge__circle--danger">
-						<div class="i-heroicons-exclamation-circle h-9 w-9 auth-icon-badge__icon"></div>
+						<div class="i-ph-warning-circle h-9 w-9 auth-icon-badge__icon"></div>
 					</div>
 				</div>
 			</Specimen>
@@ -177,7 +177,7 @@
 				where="consent, for clients marked trusted."
 			>
 				<span class="auth-badge--trusted"
-					><span class="i-heroicons-shield-check h-3 w-3"></span>{$LL.consent_trustedClient()}</span
+					><span class="i-ph-shield-check h-3 w-3"></span>{$LL.consent_trustedClient()}</span
 				>
 			</Specimen>
 			<Specimen
@@ -187,7 +187,7 @@
 				card
 			>
 				<div class="auth-warning-banner">
-					<div class="i-heroicons-exclamation-triangle h-5 w-5"></div>
+					<div class="i-ph-warning h-5 w-5"></div>
 					<div>
 						<h3 class="auth-warning-banner__title">{$LL.consent_delegatedAccess()}</h3>
 						<p class="auth-warning-banner__text">
@@ -204,11 +204,11 @@
 			>
 				<ul class="auth-scopes-list">
 					<li>
-						<div class="i-heroicons-check-circle h-5 w-5 auth-scopes-list__icon"></div>
+						<div class="i-ph-check-circle h-5 w-5 auth-scopes-list__icon"></div>
 						<span>Read your profile</span>
 					</li>
 					<li>
-						<div class="i-heroicons-check-circle h-5 w-5 auth-scopes-list__icon"></div>
+						<div class="i-ph-check-circle h-5 w-5 auth-scopes-list__icon"></div>
 						<span>Read your email address</span>
 					</li>
 				</ul>
@@ -223,7 +223,7 @@
 					<p class="auth-info-box__label mb-2">{$LL.consent_userInfo()}</p>
 					<div class="auth-user-info">
 						<div class="auth-user-info__avatar-placeholder">
-							<div class="i-heroicons-user h-5 w-5" style="color:var(--primary)"></div>
+							<div class="i-ph-user h-5 w-5" style="color:var(--primary)"></div>
 						</div>
 						<div>
 							<p class="auth-user-info__name">Ada Lovelace</p>

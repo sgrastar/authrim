@@ -91,7 +91,7 @@
 						<div class="landing__cta">
 							<a href={accountPagePath} class="landing__cta-primary">
 								<span>{$LL.account_openPage()}</span>
-								<div class="i-heroicons-arrow-right h-4 w-4" aria-hidden="true"></div>
+								<div class="i-ph-arrow-right h-4 w-4" aria-hidden="true"></div>
 							</a>
 						</div>
 					{/if}
@@ -100,7 +100,7 @@
 					<div class="landing__cta">
 						<a href="/discover" class="landing__cta-primary" data-sveltekit-reload>
 							<span>{$LL.header_login()}</span>
-							<div class="i-heroicons-arrow-right h-4 w-4" aria-hidden="true"></div>
+							<div class="i-ph-arrow-right h-4 w-4" aria-hidden="true"></div>
 						</a>
 						<a href="/signup" class="landing__cta-secondary" data-sveltekit-reload>
 							{$LL.header_signUp()}

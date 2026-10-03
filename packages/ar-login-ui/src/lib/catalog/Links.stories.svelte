@@ -56,7 +56,7 @@
 			>
 				<p class="auth-bottom-link">
 					<a href="/login" class="inline-flex items-center gap-2" data-sveltekit-reload>
-						<i class="i-heroicons-arrow-left h-4 w-4"></i>{$LL.common_backToLogin()}
+						<i class="i-ph-arrow-left h-4 w-4"></i>{$LL.common_backToLogin()}
 					</a>
 				</p>
 			</Specimen>
@@ -132,7 +132,7 @@
 			</Specimen>
 			<Specimen
 				name="Client website, policy and terms"
-				source="a.inline-flex + i-heroicons-arrow-top-right-on-square"
+				source="a.inline-flex + i-ph-arrow-square-out"
 				where="consent: client website under the title; policy and terms at the bottom (muted)."
 			>
 				<div style="display:flex;flex-direction:column;gap:8px;font-size:0.75rem">
@@ -140,15 +140,13 @@
 						href="https://example.com"
 						class="inline-flex items-center gap-1"
 						style="color:var(--primary)"
-						>example.com<span class="i-heroicons-arrow-top-right-on-square h-3 w-3"></span></a
+						>example.com<span class="i-ph-arrow-square-out h-3 w-3"></span></a
 					>
 					<a
 						href="https://example.com/privacy"
 						class="inline-flex items-center gap-1"
 						style="color:var(--text-muted)"
-						>{$LL.consent_privacyPolicy()}<span
-							class="i-heroicons-arrow-top-right-on-square h-3 w-3"
-						></span></a
+						>{$LL.consent_privacyPolicy()}<span class="i-ph-arrow-square-out h-3 w-3"></span></a
 					>
 				</div>
 			</Specimen>
