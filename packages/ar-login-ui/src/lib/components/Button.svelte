@@ -99,19 +99,6 @@
 		box-shadow: 0 8px 24px rgba(51, 51, 51, 0.4);
 	}
 
-	.btn-primary::after {
-		content: '';
-		position: absolute;
-		inset: 0;
-		background: linear-gradient(rgba(255, 255, 255, 0.2), transparent);
-		opacity: 0;
-		transition: opacity var(--transition-fast);
-	}
-
-	.btn-primary:hover::after {
-		opacity: 1;
-	}
-
 	/* Secondary variant - glass effect */
 	.btn-secondary {
 		background: var(--bg-glass);

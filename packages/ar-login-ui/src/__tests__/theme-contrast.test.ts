@@ -214,14 +214,25 @@ describe('theme contrast', () => {
 			for (const [variant, tint] of Object.entries(tints)) {
 				for (const part of ['text', 'title'] as const) {
 					const text = alertColour(variant, part, dark);
-					for (const under of behind) {
-						for (const surface of [over(colour(values['--bg-card']), under), under]) {
-							const tinted = over(colour(BASE[tint]), surface);
-							expect(
-								textContrast(text, tinted),
-								`${variant} ${part} ${text} on ${tinted.map(Math.round)}`
-							).toBeGreaterThanOrEqual(4.5);
-						}
+					// Full bleed alerts sit on an opaque base (so over any image); elsewhere on the
+					// card or straight on the page.
+					const base = values['--fullbleed-alert-base'];
+					if (base) {
+						expect(app).toMatch(
+							new RegExp(
+								`\\[data-login-theme='fullbleed-glass'\\] \\.alert\\.alert-${variant} \\{[^}]*var\\(--fullbleed-alert-base\\)`
+							)
+						);
+					}
+					const surfaces = base
+						? [colour(base).rgb]
+						: behind.flatMap((under) => [over(colour(values['--bg-card']), under), under]);
+					for (const surface of surfaces) {
+						const tinted = over(colour(BASE[tint]), surface);
+						expect(
+							textContrast(text, tinted),
+							`${variant} ${part} ${text} on ${tinted.map(Math.round)}`
+						).toBeGreaterThanOrEqual(4.5);
 					}
 				}
 			}

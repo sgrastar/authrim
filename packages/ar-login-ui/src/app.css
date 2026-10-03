@@ -456,10 +456,10 @@ html[dir='rtl'] .form-select {
 }
 
 .btn-primary:hover:not(:disabled) {
-	/* Keep the theme's fill and label (a same-named UnoCSS shortcut and a:hover would recolour them). */
+	/* Keep the theme's fill and label (a same-named UnoCSS shortcut and a:hover would recolour
+	   them, and a brighter fill could fail the label): hover lifts the button instead. */
 	background: var(--button-primary-bg, var(--gradient-primary));
 	color: var(--button-primary-text, white);
-	filter: brightness(1.1);
 	transform: translateY(-1px);
 }
 
@@ -6411,8 +6411,8 @@ tr.expired {
 	--fullbleed-on-image-muted: rgba(255, 255, 255, 0.72);
 	--fullbleed-on-image-shadow: rgba(0, 0, 0, 0.5);
 	/* Behind text on a tenant's own image, whose lightness is unknown (none on the default). */
-	--fullbleed-on-image-backdrop: transparent;
 	--fullbleed-on-image-backdrop-image: rgba(14, 10, 9, 0.62);
+	--fullbleed-alert-base: #1b1412;
 }
 
 :is(:root, .login-ui-theme-boundary)[data-theme='light'][data-login-theme='fullbleed-glass'] {
@@ -6471,15 +6471,7 @@ tr.expired {
 	--fullbleed-on-image-muted: #4a3f39;
 	--fullbleed-on-image-shadow: rgba(255, 250, 246, 0.6);
 	--fullbleed-on-image-backdrop-image: rgba(250, 245, 240, 0.78);
-}
-
-/* A tenant's image may be light or dark, so text placed on it sits on a backdrop that keeps it
-   readable over any image. */
-:is(
-		:root,
-		.login-ui-theme-boundary
-	)[data-login-theme='fullbleed-glass'][data-has-page-background-image='true'] {
-	--fullbleed-on-image-backdrop: var(--fullbleed-on-image-backdrop-image);
+	--fullbleed-alert-base: #fbf7f3;
 }
 
 :is(:root, .login-ui-theme-boundary)[data-font-family='rounded'] {
@@ -6951,10 +6943,45 @@ tr.expired {
 	text-underline-offset: 3px;
 }
 
-/* The backdrop behind on-image text paints outside the box (no layout shift). */
-[data-login-theme='fullbleed-glass'] .auth-page :is(.auth-header, .auth-footer, .auth-bottom-link) {
-	background: var(--fullbleed-on-image-backdrop);
-	box-shadow: 0 0 0 10px var(--fullbleed-on-image-backdrop);
+/* Behind on-image text on a tenant's image (never on the default imagery, and never over a bar,
+   which has its own surface); it paints outside the box, so nothing shifts. */
+[data-login-theme='fullbleed-glass'][data-has-page-background-image='true']:not(
+		[data-header-style='bar']
+	)
+	.auth-page
+	.auth-header,
+[data-login-theme='fullbleed-glass'][data-has-page-background-image='true']:not(
+		[data-footer-style='bar']
+	)
+	.auth-page
+	.auth-footer,
+[data-login-theme='fullbleed-glass'][data-has-page-background-image='true']
+	.auth-page
+	.auth-bottom-link {
+	background: var(--fullbleed-on-image-backdrop-image);
+	box-shadow: 0 0 0 10px var(--fullbleed-on-image-backdrop-image);
+}
+
+/* Alerts may sit on the imagery (outside the card): their tint goes over an opaque base, so their
+   text reads over any image. */
+[data-login-theme='fullbleed-glass'] .alert.alert-error {
+	background:
+		linear-gradient(var(--danger-light), var(--danger-light)), var(--fullbleed-alert-base);
+}
+
+[data-login-theme='fullbleed-glass'] .alert.alert-warning {
+	background:
+		linear-gradient(var(--warning-light), var(--warning-light)), var(--fullbleed-alert-base);
+}
+
+[data-login-theme='fullbleed-glass'] .alert.alert-success {
+	background:
+		linear-gradient(var(--success-light), var(--success-light)), var(--fullbleed-alert-base);
+}
+
+[data-login-theme='fullbleed-glass'] .alert.alert-info {
+	background:
+		linear-gradient(var(--primary-light), var(--primary-light)), var(--fullbleed-alert-base);
 }
 
 [data-login-theme='fullbleed-glass'] .runtime-screen-heading h2 {
@@ -6987,9 +7014,16 @@ tr.expired {
 }
 
 /* --- Theme template interaction states (mock parity) --- */
-[data-login-theme]:not([data-login-theme='classic'])
+[data-login-theme]:not([data-login-theme='classic']):not([data-login-theme='fullbleed-glass'])
 	.runtime-auth-button:not(.secondary):not(:disabled):hover {
 	background: var(--primary-hover);
+}
+
+/* Full bleed fills with a tenant's accent, its label chosen for that fill: hover keeps the fill
+   (a lighter or darker one could fail the label) and marks itself with a ring. */
+[data-login-theme='fullbleed-glass'] .runtime-auth-button:not(.secondary):not(:disabled):hover {
+	background: var(--button-primary-bg);
+	box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--button-primary-text) 45%, transparent);
 }
 
 [data-login-theme]:not([data-login-theme='classic'])
