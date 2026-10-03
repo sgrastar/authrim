@@ -110,6 +110,33 @@ describe('Account Page audit coverage', () => {
     }
   });
 
+  it('keeps the external identity bridge account actions visible in Admin and Account Activity', () => {
+    const bridgeSource = [
+      'packages/ar-bridge/src/handlers/link.ts',
+      'packages/ar-bridge/src/handlers/callback.ts',
+      'packages/ar-bridge/src/services/link-intent.ts',
+    ]
+      .map(readRepositoryFile)
+      .join('\n');
+    const emitted = [
+      ...new Set(
+        [...bridgeSource.matchAll(/'(account\.social_account\.[a-z_]+)'/gu)].map((m) => m[1])
+      ),
+    ].sort();
+    expect(emitted).toEqual(['account.social_account.linked', 'account.social_account.unlinked']);
+
+    const adminLabels = readRepositoryFile(
+      'packages/ar-admin-ui/src/lib/admin/account-audit-action-label.ts'
+    );
+    const accountActivity = readRepositoryFile(
+      'packages/ar-login-ui/src/lib/components/account/widgets/AccountActivityWidget.svelte'
+    );
+    for (const action of emitted) {
+      expect(adminLabels).toContain(`'${action}'`);
+      expect(accountActivity).toContain(`'${action}'`);
+    }
+  });
+
   it('records the names of fields changed by an administrator without copying field values', () => {
     const source = readRepositoryFile('packages/ar-management/src/admin-users.ts');
     expect(source).toContain('changed_fields: changedFields');

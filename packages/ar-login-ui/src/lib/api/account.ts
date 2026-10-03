@@ -327,6 +327,18 @@ async function accountFetch<T>(endpoint: string, options: RequestInit = {}): Acc
 	}
 }
 
+/** An external account linked to this one. Times are milliseconds since the epoch. */
+export type AccountLinkedIdentity = {
+	id: string;
+	providerId: string;
+	/** The provider's slug, which the authentication-methods API uses as the provider id. */
+	providerSlug?: string;
+	providerName: string;
+	providerEmail?: string;
+	linkedAt: number;
+	lastLoginAt?: number;
+};
+
 export type GuestUpgradeStatus = {
 	registration_state: AccountRegistrationState;
 	status: string;
@@ -613,5 +625,22 @@ export const accountAPI = {
 	getConsents: (locale?: string) =>
 		accountFetch<{ consents: AccountConsent[]; total: number }>('/api/account/consents', {
 			headers: locale ? { 'Accept-Language': locale.replace('_', '-') } : undefined
-		})
+		}),
+
+	// Linked external accounts (served by the external identity bridge).
+	getLinkedIdentities: () =>
+		accountFetch<{ identities: AccountLinkedIdentity[] }>('/api/external/links'),
+
+	/** Starts linking: the browser goes to `authorization_url` and returns to the account page. */
+	startLinkIdentity: (providerId: string) =>
+		accountFetch<{ authorization_url: string }>('/api/external/links', {
+			method: 'POST',
+			body: JSON.stringify({ provider_id: providerId })
+		}),
+
+	unlinkIdentity: (id: string) =>
+		accountFetch<{ success: boolean; cleanup_pending: boolean }>(
+			`/api/external/links/${encodeURIComponent(id)}`,
+			{ method: 'DELETE' }
+		)
 };

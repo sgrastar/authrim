@@ -440,6 +440,91 @@ type RootTranslation = {
 	 */
 	account_planned: string
 	/**
+	 * N​o​ ​e​x​t​e​r​n​a​l​ ​a​c​c​o​u​n​t​s​ ​a​r​e​ ​l​i​n​k​e​d​.
+	 */
+	account_socialEmpty: string
+	/**
+	 * L​i​n​k​ ​a​n​ ​a​c​c​o​u​n​t
+	 */
+	account_socialLinkHeading: string
+	/**
+	 * L​i​n​k​ ​{​p​r​o​v​i​d​e​r​}
+	 * @param {unknown} provider
+	 */
+	account_socialLinkWith: RequiredParams<'provider'>
+	/**
+	 * N​o​ ​o​t​h​e​r​ ​p​r​o​v​i​d​e​r​s​ ​a​r​e​ ​a​v​a​i​l​a​b​l​e​ ​t​o​ ​l​i​n​k​.
+	 */
+	account_socialNoProviders: string
+	/**
+	 * L​i​n​k​e​d​ ​{​d​a​t​e​}
+	 * @param {unknown} date
+	 */
+	account_socialLinkedAt: RequiredParams<'date'>
+	/**
+	 * L​a​s​t​ ​u​s​e​d​ ​{​d​a​t​e​}
+	 * @param {unknown} date
+	 */
+	account_socialLastUsed: RequiredParams<'date'>
+	/**
+	 * U​n​l​i​n​k
+	 */
+	account_socialUnlink: string
+	/**
+	 * U​n​l​i​n​k​ ​{​p​r​o​v​i​d​e​r​}​?​ ​Y​o​u​ ​w​i​l​l​ ​n​o​ ​l​o​n​g​e​r​ ​b​e​ ​a​b​l​e​ ​t​o​ ​l​o​g​ ​i​n​ ​w​i​t​h​ ​i​t​.
+	 * @param {unknown} provider
+	 */
+	account_socialUnlinkConfirm: RequiredParams<'provider'>
+	/**
+	 * U​n​l​i​n​k​ ​{​p​r​o​v​i​d​e​r​}
+	 * @param {unknown} provider
+	 */
+	account_socialUnlinkConfirmAction: RequiredParams<'provider'>
+	/**
+	 * T​h​e​ ​a​c​c​o​u​n​t​ ​w​a​s​ ​l​i​n​k​e​d​.
+	 */
+	account_socialLinked: string
+	/**
+	 * T​h​e​ ​a​c​c​o​u​n​t​ ​w​a​s​ ​u​n​l​i​n​k​e​d​.
+	 */
+	account_socialUnlinked: string
+	/**
+	 * T​h​a​t​ ​a​c​c​o​u​n​t​ ​i​s​ ​a​l​r​e​a​d​y​ ​l​i​n​k​e​d​ ​t​o​ ​a​n​o​t​h​e​r​ ​u​s​e​r​.
+	 */
+	account_socialErrorAlreadyLinked: string
+	/**
+	 * T​h​e​ ​p​r​o​v​i​d​e​r​ ​h​a​s​ ​n​o​t​ ​v​e​r​i​f​i​e​d​ ​t​h​a​t​ ​a​c​c​o​u​n​t​'​s​ ​e​m​a​i​l​ ​a​d​d​r​e​s​s​.
+	 */
+	account_socialErrorEmailNotVerified: string
+	/**
+	 * Y​o​u​r​ ​c​o​n​f​i​r​m​a​t​i​o​n​ ​e​x​p​i​r​e​d​ ​b​e​f​o​r​e​ ​t​h​e​ ​l​i​n​k​ ​f​i​n​i​s​h​e​d​.​ ​C​o​n​f​i​r​m​ ​a​g​a​i​n​ ​a​n​d​ ​r​e​t​r​y​.
+	 */
+	account_socialErrorSessionExpired: string
+	/**
+	 * L​i​n​k​i​n​g​ ​w​a​s​ ​c​a​n​c​e​l​l​e​d​.
+	 */
+	account_socialErrorCancelled: string
+	/**
+	 * T​h​e​ ​a​c​c​o​u​n​t​ ​c​o​u​l​d​ ​n​o​t​ ​b​e​ ​l​i​n​k​e​d​.​ ​T​r​y​ ​a​g​a​i​n​.
+	 */
+	account_socialErrorFailed: string
+	/**
+	 * T​h​i​s​ ​i​s​ ​y​o​u​r​ ​l​a​s​t​ ​w​a​y​ ​t​o​ ​l​o​g​ ​i​n​.​ ​A​d​d​ ​a​ ​p​a​s​s​k​e​y​ ​o​r​ ​a​n​o​t​h​e​r​ ​l​o​g​i​n​ ​m​e​t​h​o​d​ ​f​i​r​s​t​.
+	 */
+	account_socialErrorLastMethod: string
+	/**
+	 * A​n​o​t​h​e​r​ ​c​h​a​n​g​e​ ​t​o​ ​y​o​u​r​ ​l​o​g​i​n​ ​m​e​t​h​o​d​s​ ​i​s​ ​i​n​ ​p​r​o​g​r​e​s​s​.​ ​T​r​y​ ​a​g​a​i​n​ ​i​n​ ​a​ ​m​o​m​e​n​t​.
+	 */
+	account_socialErrorInProgress: string
+	/**
+	 * E​x​t​e​r​n​a​l​ ​a​c​c​o​u​n​t​ ​l​i​n​k​e​d
+	 */
+	account_operationSocialLinked: string
+	/**
+	 * E​x​t​e​r​n​a​l​ ​a​c​c​o​u​n​t​ ​u​n​l​i​n​k​e​d
+	 */
+	account_operationSocialUnlinked: string
+	/**
 	 * T​h​i​s​ ​b​r​o​w​s​e​r​ ​d​o​e​s​ ​n​o​t​ ​s​u​p​p​o​r​t​ ​p​a​s​s​k​e​y​ ​r​e​g​i​s​t​r​a​t​i​o​n​.
 	 */
 	account_passkeyUnsupported: string
@@ -2072,6 +2157,86 @@ export type TranslationFunctions = {
 	 * Planned
 	 */
 	account_planned: () => LocalizedString
+	/**
+	 * No external accounts are linked.
+	 */
+	account_socialEmpty: () => LocalizedString
+	/**
+	 * Link an account
+	 */
+	account_socialLinkHeading: () => LocalizedString
+	/**
+	 * Link {provider}
+	 */
+	account_socialLinkWith: (arg: { provider: unknown }) => LocalizedString
+	/**
+	 * No other providers are available to link.
+	 */
+	account_socialNoProviders: () => LocalizedString
+	/**
+	 * Linked {date}
+	 */
+	account_socialLinkedAt: (arg: { date: unknown }) => LocalizedString
+	/**
+	 * Last used {date}
+	 */
+	account_socialLastUsed: (arg: { date: unknown }) => LocalizedString
+	/**
+	 * Unlink
+	 */
+	account_socialUnlink: () => LocalizedString
+	/**
+	 * Unlink {provider}? You will no longer be able to log in with it.
+	 */
+	account_socialUnlinkConfirm: (arg: { provider: unknown }) => LocalizedString
+	/**
+	 * Unlink {provider}
+	 */
+	account_socialUnlinkConfirmAction: (arg: { provider: unknown }) => LocalizedString
+	/**
+	 * The account was linked.
+	 */
+	account_socialLinked: () => LocalizedString
+	/**
+	 * The account was unlinked.
+	 */
+	account_socialUnlinked: () => LocalizedString
+	/**
+	 * That account is already linked to another user.
+	 */
+	account_socialErrorAlreadyLinked: () => LocalizedString
+	/**
+	 * The provider has not verified that account's email address.
+	 */
+	account_socialErrorEmailNotVerified: () => LocalizedString
+	/**
+	 * Your confirmation expired before the link finished. Confirm again and retry.
+	 */
+	account_socialErrorSessionExpired: () => LocalizedString
+	/**
+	 * Linking was cancelled.
+	 */
+	account_socialErrorCancelled: () => LocalizedString
+	/**
+	 * The account could not be linked. Try again.
+	 */
+	account_socialErrorFailed: () => LocalizedString
+	/**
+	 * This is your last way to log in. Add a passkey or another login method first.
+	 */
+	account_socialErrorLastMethod: () => LocalizedString
+	/**
+	 * Another change to your login methods is in progress. Try again in a moment.
+	 */
+	account_socialErrorInProgress: () => LocalizedString
+	/**
+	 * External account linked
+	 */
+	account_operationSocialLinked: () => LocalizedString
+	/**
+	 * External account unlinked
+	 */
+	account_operationSocialUnlinked: () => LocalizedString
 	/**
 	 * This browser does not support passkey registration.
 	 */

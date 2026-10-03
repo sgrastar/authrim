@@ -44,7 +44,9 @@
 		'account.totp.backup_codes_regenerated': (ll) =>
 			ll.account_operationTotpBackupCodesRegenerated(),
 		'account.totp.reauthenticated': (ll) => ll.account_operationTotpReauthenticated(),
-		'account.session.revoked': (ll) => ll.account_operationSessionRevoked()
+		'account.session.revoked': (ll) => ll.account_operationSessionRevoked(),
+		'account.social_account.linked': (ll) => ll.account_operationSocialLinked(),
+		'account.social_account.unlinked': (ll) => ll.account_operationSocialUnlinked()
 	};
 
 	function formatAction(action: string): string {

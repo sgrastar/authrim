@@ -93,6 +93,30 @@ const es = createTranslation({
 	account_delete: 'Eliminar',
 	account_empty: 'No hay elementos',
 	account_planned: 'Planificado',
+	account_socialEmpty: 'No external accounts are linked.',
+	account_socialLinkHeading: 'Link an account',
+	account_socialLinkWith: 'Link {provider}',
+	account_socialNoProviders: 'No other providers are available to link.',
+	account_socialLinkedAt: 'Linked {date}',
+	account_socialLastUsed: 'Last used {date}',
+	account_socialUnlink: 'Unlink',
+	account_socialUnlinkConfirm: 'Unlink {provider}? You will no longer be able to log in with it.',
+	account_socialUnlinkConfirmAction: 'Unlink {provider}',
+	account_socialLinked: 'The account was linked.',
+	account_socialUnlinked: 'The account was unlinked.',
+	account_socialErrorAlreadyLinked: 'That account is already linked to another user.',
+	account_socialErrorEmailNotVerified:
+		"The provider has not verified that account's email address.",
+	account_socialErrorSessionExpired:
+		'Your confirmation expired before the link finished. Confirm again and retry.',
+	account_socialErrorCancelled: 'Linking was cancelled.',
+	account_socialErrorFailed: 'The account could not be linked. Try again.',
+	account_socialErrorLastMethod:
+		'This is your last way to log in. Add a passkey or another login method first.',
+	account_socialErrorInProgress:
+		'Another change to your login methods is in progress. Try again in a moment.',
+	account_operationSocialLinked: 'External account linked',
+	account_operationSocialUnlinked: 'External account unlinked',
 	account_passkeyUnsupported: 'Este navegador no permite registrar Passkeys.',
 	account_passkeyRegistrationCancelled:
 		'El registro de la Passkey se canceló o agotó el tiempo de espera. Inténtalo de nuevo.',

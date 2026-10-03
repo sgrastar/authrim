@@ -109,6 +109,31 @@ const ja = {
 	account_delete: '削除',
 	account_empty: '項目がありません',
 	account_planned: '今後対応予定',
+	account_socialEmpty: '連携しているアカウントはありません。',
+	account_socialLinkHeading: 'アカウントを連携',
+	account_socialLinkWith: '{provider} と連携',
+	account_socialNoProviders: 'ほかに連携できるプロバイダーはありません。',
+	account_socialLinkedAt: '{date} に連携',
+	account_socialLastUsed: '最終利用 {date}',
+	account_socialUnlink: '連携を解除',
+	account_socialUnlinkConfirm:
+		'{provider} との連携を解除しますか？このアカウントではログインできなくなります。',
+	account_socialUnlinkConfirmAction: '{provider} との連携を解除',
+	account_socialLinked: 'アカウントを連携しました。',
+	account_socialUnlinked: 'アカウントの連携を解除しました。',
+	account_socialErrorAlreadyLinked: 'そのアカウントは、ほかのユーザーに連携されています。',
+	account_socialErrorEmailNotVerified:
+		'そのアカウントのメールアドレスが、プロバイダーで確認されていません。',
+	account_socialErrorSessionExpired:
+		'連携が終わる前に、本人確認の有効期限が切れました。もう一度確認してからやり直してください。',
+	account_socialErrorCancelled: '連携を取り消しました。',
+	account_socialErrorFailed: 'アカウントを連携できませんでした。もう一度お試しください。',
+	account_socialErrorLastMethod:
+		'これが最後のログイン方法です。先に Passkey など、ほかのログイン方法を追加してください。',
+	account_socialErrorInProgress:
+		'ログイン方法の別の変更を処理中です。少し待ってからやり直してください。',
+	account_operationSocialLinked: '外部アカウントを連携',
+	account_operationSocialUnlinked: '外部アカウントの連携を解除',
 	account_passkeyUnsupported: 'このブラウザはPasskey登録に対応していません。',
 	account_passkeyRegistrationCancelled:
 		'Passkeyの登録がキャンセルされたか、時間切れになりました。もう一度お試しください。',

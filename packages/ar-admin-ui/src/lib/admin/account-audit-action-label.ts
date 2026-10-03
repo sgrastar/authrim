@@ -56,6 +56,14 @@ const ACCOUNT_AUDIT_ACTION_LABELS = {
 		en: 'Account Page: Passkey deleted',
 		ja: 'アカウントページ: Passkey削除'
 	},
+	'account.social_account.linked': {
+		en: 'Account Page: External account linked',
+		ja: 'アカウントページ: 外部アカウント連携'
+	},
+	'account.social_account.unlinked': {
+		en: 'Account Page: External account unlinked',
+		ja: 'アカウントページ: 外部アカウント連携解除'
+	},
 	'account.passkey.reauthenticated': {
 		en: 'Account Page: Re-authenticated by Passkey',
 		ja: 'アカウントページ: Passkeyで再認証'
