@@ -819,19 +819,20 @@ export async function readAuthorizationChallengeReauthIssuedAt(
   return typeof issuedAt === 'number' ? issuedAt : null;
 }
 
-/** How long a send that passed human verification may be resumed after provisioning. */
-const DIRECT_EMAIL_SEND_VERIFIED_TTL_SECONDS = 5 * 60;
+/** How long an email-code send left provisioning its account may be resumed. */
+const DIRECT_EMAIL_SEND_RESUME_TTL_SECONDS = 5 * 60;
 
 /**
- * The send a verified-send record stands for: the same address and PKCE, from the same client and
- * screen, for the same authorization challenge (or none). Only that send, resumed, may use it.
+ * The send a resume record stands for: the same address and PKCE, from the same client and
+ * screen (or none named), for the same authorization challenge (or none). Only that send, sent
+ * again once its account exists, may use it.
  */
-async function directEmailSendVerifiedKey(input: {
+async function directEmailSendResumeKey(input: {
   tenantId: string;
   email: string;
   codeChallenge: string;
   clientId: string;
-  screen: HumanVerificationAction;
+  screen: string;
   authorizationChallengeId?: string;
 }): Promise<string> {
   const digest = await crypto.subtle.digest(
@@ -850,41 +851,45 @@ async function directEmailSendVerifiedKey(input: {
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
 }
 
-async function recordDirectEmailSendVerified(
+/** Records that a send passed its checks (human verification included) as `usage`. */
+async function recordDirectEmailSendResume(
   env: Env,
   tenantId: string,
-  key: string
+  key: string,
+  usage: HumanVerificationAction
 ): Promise<void> {
-  const id = `direct_email_send_verified:${key}`;
+  const id = `direct_email_send_resume:${key}`;
   const challengeStore = await getChallengeStoreByChallengeId(env, id, tenantId);
   await challengeStore.storeChallengeRpc({
     id,
     tenantId,
-    type: 'direct_email_send_verified',
+    type: 'direct_email_send_resume',
     userId: 'anonymous',
     challenge: key,
-    ttl: DIRECT_EMAIL_SEND_VERIFIED_TTL_SECONDS,
+    ttl: DIRECT_EMAIL_SEND_RESUME_TTL_SECONDS,
+    metadata: { usage },
   });
 }
 
-/** Whether a verified send for this key was recorded, using the record up (once). */
-async function consumeDirectEmailSendVerified(
+/** The usage of the send this one resumes, using its record up (once), or null. */
+async function consumeDirectEmailSendResume(
   env: Env,
   tenantId: string,
   key: string
-): Promise<boolean> {
-  const id = `direct_email_send_verified:${key}`;
+): Promise<{ usage: HumanVerificationAction } | null> {
+  const id = `direct_email_send_resume:${key}`;
   try {
     const challengeStore = await getChallengeStoreByChallengeId(env, id, tenantId);
-    await challengeStore.consumeChallengeRpc({
+    const record = (await challengeStore.consumeChallengeRpc({
       id,
       tenantId,
-      type: 'direct_email_send_verified',
+      type: 'direct_email_send_resume',
       challenge: key,
-    });
-    return true;
+    })) as { metadata?: { usage?: unknown } } | undefined;
+    const usage = record?.metadata?.usage;
+    return usage === 'signup' || usage === 'login' ? { usage } : null;
   } catch {
-    return false;
+    return null;
   }
 }
 
@@ -2867,20 +2872,6 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
       challengeType === 'reauth'
         ? await readAuthorizationChallengeReauthUser(c.env, tenantId, authorization_challenge_id)
         : null;
-    const emailCodeUsage: HumanVerificationAction = !user
-      ? 'signup'
-      : challengeType === 'reauth'
-        ? 'reauth'
-        : 'login';
-    // The token is checked against the screen it came from (a re-authentication only ever takes
-    // its own screen's token). A client that does not say keeps the earlier inference. Whatever the
-    // screen, the setting for what the code does (signing up a new address) asks for a token too.
-    const turnstileAction: HumanVerificationAction =
-      challengeType === 'reauth'
-        ? 'reauth'
-        : (readDeclaredHumanVerificationScreen(c) ?? challengeType ?? (user ? 'login' : 'signup'));
-    const turnstileAlsoRequiredFor: HumanVerificationAction[] =
-      emailCodeUsage === turnstileAction ? [] : [emailCodeUsage];
     // Answered like any other send, so the address's owner is not revealed; nothing else about the
     // address is looked at (no human verification either, whose requirements depend on it).
     if (challengeType === 'reauth' && (!user || !reauthUserId || user.id !== reauthUserId)) {
@@ -2890,6 +2881,34 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
       });
       return acceptedEmailCodeSendResponse(c, normalizedEmail);
     }
+    // A send that left its account being provisioned is sent again once the account exists; it is
+    // still the send it was (a sign-up, already through its checks), not a new sign-in.
+    const declaredScreen = readDeclaredHumanVerificationScreen(c);
+    const resumeKey = await directEmailSendResumeKey({
+      tenantId,
+      email: normalizedEmail,
+      codeChallenge: code_challenge,
+      clientId: client_id,
+      screen: declaredScreen ?? 'unspecified',
+      ...(authorization_challenge_id
+        ? { authorizationChallengeId: authorization_challenge_id }
+        : {}),
+    });
+    const resumedSend =
+      user && challengeType !== 'reauth'
+        ? await consumeDirectEmailSendResume(c.env, tenantId, resumeKey)
+        : null;
+    const emailCodeUsage: HumanVerificationAction =
+      resumedSend?.usage ?? (!user ? 'signup' : challengeType === 'reauth' ? 'reauth' : 'login');
+    // The token is checked against the screen it came from (a re-authentication only ever takes
+    // its own screen's token). A client that does not say keeps the earlier inference. Whatever the
+    // screen, the setting for what the code does (signing up a new address) asks for a token too.
+    const turnstileAction: HumanVerificationAction =
+      challengeType === 'reauth'
+        ? 'reauth'
+        : (declaredScreen ?? challengeType ?? (user ? 'login' : 'signup'));
+    const turnstileAlsoRequiredFor: HumanVerificationAction[] =
+      emailCodeUsage === turnstileAction ? [] : [emailCodeUsage];
     const emailOtpEnabled = await isAuthenticationMethodUsageEnabled(
       c.env,
       tenantId,
@@ -2904,30 +2923,15 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
         usage: emailCodeUsage,
       });
     }
-    let turnstileError = await verifyHumanVerificationForAction(
-      c,
-      turnstileAction,
-      human_verification_response ?? cf_turnstile_response,
-      turnstileAlsoRequiredFor
-    );
-    // A send resumed after its account was provisioned already passed human verification (its
-    // single-use token is spent): the record of that, kept for the same address and PKCE, stands in.
-    const verifiedSendKey = await directEmailSendVerifiedKey({
-      tenantId,
-      email: normalizedEmail,
-      codeChallenge: code_challenge,
-      clientId: client_id,
-      screen: turnstileAction,
-      ...(authorization_challenge_id
-        ? { authorizationChallengeId: authorization_challenge_id }
-        : {}),
-    });
-    if (
-      turnstileError &&
-      (await consumeDirectEmailSendVerified(c.env, tenantId, verifiedSendKey))
-    ) {
-      turnstileError = null;
-    }
+    // A resumed send already passed human verification (its single-use token is spent).
+    const turnstileError = resumedSend
+      ? null
+      : await verifyHumanVerificationForAction(
+          c,
+          turnstileAction,
+          human_verification_response ?? cf_turnstile_response,
+          turnstileAlsoRequiredFor
+        );
     if (turnstileError) {
       suppressEmailCodeSend = true;
       log.info('Suppressing email-code send because human verification failed', {
@@ -3002,10 +3006,7 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
             runtimeUser,
           });
           if (provisioned.status === 'pending') {
-            // Only a token that was presented (and so spent) needs standing in for on resumption.
-            if (human_verification_response ?? cf_turnstile_response) {
-              await recordDirectEmailSendVerified(c.env, tenantId, verifiedSendKey);
-            }
+            await recordDirectEmailSendResume(c.env, tenantId, resumeKey, emailCodeUsage);
             return provisioned.response;
           }
           user = {
