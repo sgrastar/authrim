@@ -1012,7 +1012,9 @@ export async function directoryMigrationPasskeyVerifyHandler(c: Context<{ Bindin
       return createErrorResponse(c, AR_ERROR_CODES.USER_INVALID_CREDENTIALS);
     }
 
-    const authTime = Math.floor(now / 1000);
+    // The password was proven when the transaction was made; the new passkey proves nothing yet,
+    // so the session counts as authenticated then, not now.
+    const authTime = Math.floor(transaction.created_at / 1000);
     let authorizationContinuation: AuthorizationChallengeContinuation | undefined;
     if (transaction.authorization_challenge_id) {
       const continuation = await consumeAuthorizationChallengeContinuation(
@@ -1020,8 +1022,7 @@ export async function directoryMigrationPasskeyVerifyHandler(c: Context<{ Bindin
         tenantId,
         transaction.authorization_challenge_id,
         transaction.user_id,
-        // The password was proven when the transaction was made; the new passkey proves nothing yet.
-        Math.floor(transaction.created_at / 1000),
+        authTime,
         new URL(c.req.url).origin,
         'directory_password'
       );

@@ -1006,6 +1006,8 @@ describe('directory password login handler', () => {
         amr: ['pwd', 'directory', 'passkey'],
         // The password was verified when the transaction was made, not when it completed.
         proven_at: 1000,
+        // The new passkey proves nothing yet, so the session was authenticated by the password.
+        authTime: 1,
       }),
       'tenant-a'
     );

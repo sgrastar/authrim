@@ -2363,7 +2363,8 @@ describe('LoginUI runtime Flow handlers', () => {
   it.each([
     ['older than', 1_700_000_124_000, 'auth:step'],
     ['newer than', 1_700_000_123_000, null],
-  ])(
+    ['unreadable for', new Error('challenge store unavailable'), 'auth:step'],
+  ] as const)(
     'routes a session %s a re-authentication request accordingly',
     async (_label, reauthIssuedAt, nextStepId) => {
       const { data: startData } = await startInteraction(
@@ -2382,7 +2383,11 @@ describe('LoginUI runtime Flow handlers', () => {
         editorSnapshot: sessionCheckEditor,
         context: { authorization_challenge_id: 'reauth_challenge_1' },
       });
-      mocks.readAuthorizationChallengeReauthIssuedAt.mockResolvedValue(reauthIssuedAt);
+      if (reauthIssuedAt instanceof Error) {
+        mocks.readAuthorizationChallengeReauthIssuedAt.mockRejectedValue(reauthIssuedAt);
+      } else {
+        mocks.readAuthorizationChallengeReauthIssuedAt.mockResolvedValue(reauthIssuedAt);
+      }
       mocks.consumeAuthorizationChallengeContinuation.mockResolvedValue({
         redirectUrl: 'https://rp.example.com/callback?code=abc',
       });

@@ -764,8 +764,8 @@ async function readAuthorizationChallengeReauthUser(
 }
 
 /**
- * When a re-authentication challenge was issued (ms), or null for other challenges and on read
- * failure (the continuation still enforces freshness).
+ * When a re-authentication challenge was issued (ms), or null for no challenge or another kind.
+ * Throws when the challenge cannot be read, so the caller can choose a safe path.
  */
 export async function readAuthorizationChallengeReauthIssuedAt(
   env: Env,
@@ -773,19 +773,15 @@ export async function readAuthorizationChallengeReauthIssuedAt(
   challengeId: string | undefined | null
 ): Promise<number | null> {
   if (!challengeId) return null;
-  try {
-    const challengeStore = await getChallengeStoreByChallengeId(env, challengeId, tenantId);
-    const challenge = (await challengeStore.getChallengeRpc(challengeId)) as {
-      tenantId?: string;
-      type?: string;
-      metadata?: Record<string, unknown>;
-    } | null;
-    if (challenge?.tenantId !== tenantId || challenge.type !== 'reauth') return null;
-    const issuedAt = challenge.metadata?.reauth_issued_at;
-    return typeof issuedAt === 'number' ? issuedAt : null;
-  } catch {
-    return null;
-  }
+  const challengeStore = await getChallengeStoreByChallengeId(env, challengeId, tenantId);
+  const challenge = (await challengeStore.getChallengeRpc(challengeId)) as {
+    tenantId?: string;
+    type?: string;
+    metadata?: Record<string, unknown>;
+  } | null;
+  if (challenge?.tenantId !== tenantId || challenge.type !== 'reauth') return null;
+  const issuedAt = challenge.metadata?.reauth_issued_at;
+  return typeof issuedAt === 'number' ? issuedAt : null;
 }
 
 async function resolveDirectStartTurnstileAction(

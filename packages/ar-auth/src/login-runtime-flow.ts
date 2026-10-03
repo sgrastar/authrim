@@ -2552,12 +2552,18 @@ async function resolveSessionCheckSelectedHandle(
   if (!session?.userId) {
     return { selectedHandle: 'authenticate', userId: null };
   }
-  // A re-authentication needs a proof made after it was asked for, so an older session signs in again.
-  const reauthIssuedAt = await readAuthorizationChallengeReauthIssuedAt(
-    c.env,
-    tenantId,
-    requestContext.authorization_challenge_id
-  );
+  // A re-authentication needs a proof made after it was asked for, so an older session signs in
+  // again; so does any session when the request cannot be read (signing in again is always safe).
+  let reauthIssuedAt: number | null;
+  try {
+    reauthIssuedAt = await readAuthorizationChallengeReauthIssuedAt(
+      c.env,
+      tenantId,
+      requestContext.authorization_challenge_id
+    );
+  } catch {
+    return { selectedHandle: 'authenticate', userId: null };
+  }
   if (reauthIssuedAt !== null && getSessionAuthTime(session) < Math.floor(reauthIssuedAt / 1000)) {
     return { selectedHandle: 'authenticate', userId: null };
   }
