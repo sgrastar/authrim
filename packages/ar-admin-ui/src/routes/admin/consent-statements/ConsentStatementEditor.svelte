@@ -1159,7 +1159,7 @@
 								bind:value={versionFormData.version}
 								placeholder="YYYYMMDD"
 								maxlength="8"
-								pattern="\d{8}"
+								pattern={'\\d{8}'}
 							/>
 						</div>
 						<div class="form-group">
