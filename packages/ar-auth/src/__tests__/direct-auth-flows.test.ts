@@ -1995,6 +1995,36 @@ describe('Direct Auth primary passkey and email-code flows', () => {
     ).toHaveLength(1);
   });
 
+  it('gives no lifetime to a code whose sign-in challenge is gone by the time it is sent', async () => {
+    mocks.challengeStore.getChallengeRpc
+      .mockResolvedValueOnce({
+        tenantId: 'tenant_test',
+        type: 'login',
+        challenge: 'login_challenge',
+        expiresAt: Date.now() + 120_000,
+      })
+      .mockResolvedValueOnce(null);
+    const { directEmailCodeSendHandler } = await import('../direct-auth');
+
+    const response = await directEmailCodeSendHandler(
+      enableEmailOtp(
+        createContext(
+          {
+            client_id: 'web-client',
+            email: 'new@example.com',
+            code_challenge: 'email-pkce-challenge',
+            code_challenge_method: 'S256',
+            channel: 'browser',
+            authorization_challenge_id: 'login_challenge',
+          },
+          webHeaders()
+        )
+      ) as never
+    );
+
+    expect(((await response.json()) as { expires_in: number }).expires_in).toBe(1);
+  });
+
   it('never lets a code outlast the sign-in challenge it continues', async () => {
     mocks.challengeStore.getChallengeRpc.mockResolvedValue({
       tenantId: 'tenant_test',

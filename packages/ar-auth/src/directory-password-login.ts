@@ -1146,7 +1146,11 @@ export async function directoryMigrationEmailCodeSendHandler(c: Context<{ Bindin
       type: 'directory_migration_email',
       userId: transaction.user_id,
       challenge: codeHash,
-      ttl: emailCodeTtlSeconds,
+      // Capped again now, so a code stored after a wait still ends with its transaction.
+      ttl: Math.max(
+        1,
+        Math.min(emailCodeTtlSeconds, Math.floor((transaction.expires_at - Date.now()) / 1000))
+      ),
       email: normalizedEmail,
       metadata: {
         transaction_id: transaction.id,

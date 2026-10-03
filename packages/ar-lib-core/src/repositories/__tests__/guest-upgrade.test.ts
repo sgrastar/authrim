@@ -56,6 +56,12 @@ describe.each(['d1', 'postgresql'])('guest upgrade operations (%s schema)', (dia
     await operations.create(input);
   });
   afterEach(() => db.close());
+  it('keeps a proof for up to the longest email code lifetime', async () => {
+    const at = (operationId: string, seconds: number) =>
+      operations.create({ ...input, operationId, now: 1000, expiresAt: 1000 + seconds });
+    await expect(at('op-900', 900)).resolves.toBeUndefined();
+    await expect(at('op-901', 901)).rejects.toThrow('invalid_guest_upgrade_operation');
+  });
   it('binds proof to account, session, tenant, and request token', async () => {
     expect(await operations.verifyEmail({ ...proof, userId: 'different' })).toBe(false);
     expect(await operations.verifyEmail({ ...proof, sessionId: 'different' })).toBe(false);

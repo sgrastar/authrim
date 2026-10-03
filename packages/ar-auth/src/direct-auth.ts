@@ -784,14 +784,18 @@ export async function readAuthorizationChallengeType(
 /**
  * How long an emailed Direct Auth code lasts: the tenant's email code lifetime, but never past the
  * authorization challenge it continues (a code outliving it could no longer finish the sign-in).
+ * `notAfterMs` is that challenge's end, to cap the stored code again when it is stored. A challenge
+ * that can no longer be read cannot be continued, so its code lasts no time at all (the same for
+ * every address).
  */
-async function directEmailCodeTtlSeconds(
+async function directEmailCodeLifetime(
   env: Env,
   tenantId: string,
   authorizationChallengeId: string | undefined
-): Promise<number> {
+): Promise<{ ttlSeconds: number; notAfterMs?: number }> {
   const configured = await resolveEmailCodeTtlSeconds(env, tenantId);
-  if (!authorizationChallengeId) return configured;
+  if (!authorizationChallengeId) return { ttlSeconds: configured };
+  let expiresAt: unknown;
   try {
     const challengeStore = await getChallengeStoreByChallengeId(
       env,
@@ -801,12 +805,18 @@ async function directEmailCodeTtlSeconds(
     const challenge = (await challengeStore.getChallengeRpc(authorizationChallengeId)) as {
       expiresAt?: unknown;
     } | null;
-    const expiresAt = challenge?.expiresAt;
-    if (typeof expiresAt !== 'number') return configured;
-    return Math.max(1, Math.min(configured, Math.floor((expiresAt - Date.now()) / 1000)));
+    expiresAt = challenge?.expiresAt;
   } catch {
-    return configured;
+    expiresAt = undefined;
   }
+  const notAfterMs = typeof expiresAt === 'number' ? expiresAt : Date.now();
+  return { ttlSeconds: remainingCodeSeconds(configured, notAfterMs), notAfterMs };
+}
+
+/** At most `ttlSeconds`, and no later than `notAfterMs` (at least a second, so it is stored). */
+function remainingCodeSeconds(ttlSeconds: number, notAfterMs: number | undefined): number {
+  if (notAfterMs === undefined) return ttlSeconds;
+  return Math.max(1, Math.min(ttlSeconds, Math.floor((notAfterMs - Date.now()) / 1000)));
 }
 
 /** The user a re-authentication challenge was issued for (null for a login challenge or none). */
@@ -2908,12 +2918,14 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
       challengeType === 'reauth'
         ? await readAuthorizationChallengeReauthUser(c.env, tenantId, authorization_challenge_id)
         : null;
-    // Every answer, a code sent or not, states the same lifetime.
-    const emailCodeTtl = await directEmailCodeTtlSeconds(
+    // Every answer, a code sent or not, states the same lifetime; a stored code is capped again
+    // when it is stored, by the challenge it continues.
+    const emailCodeLifetime = await directEmailCodeLifetime(
       c.env,
       tenantId,
       authorization_challenge_id
     );
+    const emailCodeTtl = emailCodeLifetime.ttlSeconds;
     // Answered like any other send, so the address's owner is not revealed; nothing else about the
     // address is looked at (no human verification either, whose requirements depend on it).
     if (challengeType === 'reauth' && (!user || !reauthUserId || user.id !== reauthUserId)) {
@@ -3152,13 +3164,14 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
       challengeStore = resolvedChallengeStore;
 
       failureStage = 'challenge_store';
+      const storedEmailCodeTtl = remainingCodeSeconds(emailCodeTtl, emailCodeLifetime.notAfterMs);
       await challengeStore.storeChallengeRpc({
         id: `direct_email_code:${attemptId}`,
         tenantId: getTenantIdFromContext(c),
         type: 'direct_email_code',
         userId: user.id,
         challenge: codeHash,
-        ttl: emailCodeTtl,
+        ttl: storedEmailCodeTtl,
         email: normalizedEmail,
         metadata: {
           ...emailVerificationMetadata,
@@ -3177,7 +3190,7 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
         notificationKind: 'auth.direct-email-code',
         accountId: user.id,
         idempotencyKey: `direct-email-code:${attemptId}`,
-        expiresAt: Math.floor(issuedAt / 1000) + emailCodeTtl,
+        expiresAt: Math.floor(issuedAt / 1000) + storedEmailCodeTtl,
         payload: {
           channel: 'email',
           to: normalizedEmail,

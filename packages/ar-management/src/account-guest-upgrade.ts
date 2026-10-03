@@ -415,7 +415,7 @@ export async function startAccountGuestUpgradeHandler(c: C): Promise<Response> {
       operation_id: operationId,
       upgrade_token: token,
       method,
-      expires_at: now + 600,
+      expires_at: now + lifetimeSeconds,
       ...(options && { options }),
     });
   } catch (error) {

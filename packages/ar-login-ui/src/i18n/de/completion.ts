@@ -42,7 +42,7 @@ const completion = {
 	emailCode_title: 'Prüfen Sie Ihre E-Mails',
 	emailCode_subtitle: 'Wir haben einen Bestätigungscode gesendet an',
 	emailCode_instructions:
-		'Geben Sie den sechsstelligen Code aus Ihrer E-Mail ein. Der Code ist fünf Minuten gültig.',
+		'Geben Sie den sechsstelligen Code aus Ihrer E-Mail ein. Die E-Mail nennt, wie lange er gültig ist.',
 	emailCode_codeLabel: 'Bestätigungscode',
 	emailCode_resendSuccess: 'Code wurde erfolgreich gesendet',
 	emailCode_success: 'Bestätigung abgeschlossen. Sie werden weitergeleitet...',
