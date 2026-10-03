@@ -144,3 +144,14 @@ it('loads linked accounts and links / unlinks them through re-authentication', (
 	expect(source).toContain("url.searchParams.delete('social_link')");
 	expect(source).toContain('window.history.replaceState(');
 });
+
+it('abandons the pending action when re-authentication is closed, and keeps social actions apart', () => {
+	expect(source).toContain('pendingReauthAction = action ?? null;');
+	expect(source).toMatch(
+		/function cancelReauth\(\) \{\s*reauthModalOpen = false;\s*pendingReauthAction = null;/
+	);
+	expect(source).toContain('onClose={cancelReauth}');
+	// Another widget's action must not re-enable a link or unlink in flight.
+	expect(source).toContain('if (socialAction) return;');
+	expect(source).toContain("actionLoading={socialAction ?? ''}");
+});

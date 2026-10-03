@@ -493,6 +493,10 @@ type RootTranslation = {
 	 */
 	account_socialErrorAlreadyLinked: string
 	/**
+	 * T​h​a​t​ ​p​r​o​v​i​d​e​r​ ​i​s​ ​a​l​r​e​a​d​y​ ​l​i​n​k​e​d​ ​t​o​ ​y​o​u​r​ ​a​c​c​o​u​n​t​.
+	 */
+	account_socialErrorAlreadyLinkedHere: string
+	/**
 	 * T​h​e​ ​p​r​o​v​i​d​e​r​ ​h​a​s​ ​n​o​t​ ​v​e​r​i​f​i​e​d​ ​t​h​a​t​ ​a​c​c​o​u​n​t​'​s​ ​e​m​a​i​l​ ​a​d​d​r​e​s​s​.
 	 */
 	account_socialErrorEmailNotVerified: string
@@ -2205,6 +2209,10 @@ export type TranslationFunctions = {
 	 * That account is already linked to another user.
 	 */
 	account_socialErrorAlreadyLinked: () => LocalizedString
+	/**
+	 * That provider is already linked to your account.
+	 */
+	account_socialErrorAlreadyLinkedHere: () => LocalizedString
 	/**
 	 * The provider has not verified that account's email address.
 	 */

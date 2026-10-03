@@ -113,6 +113,9 @@
 	let linkedIdentities = $state<AccountLinkedIdentity[]>([]);
 	let linkedIdentitiesLoading = $state(true);
 	let socialNotice = $state<{ kind: 'success' | 'error'; message: string } | null>(null);
+	/** The link or unlink in flight (`social:link:<provider>` / `social:unlink:<id>`), apart from
+	 * actionLoading so another widget's action cannot clear it. */
+	let socialAction = $state<string | null>(null);
 	let consents = $state<AccountConsent[]>([]);
 	let authenticationMethods = $state<AuthenticationMethods | null>(
 		embeddedAuthenticationMethods?.methods ?? null
@@ -726,8 +729,9 @@
 		}
 	}
 
+	/** Opens re-authentication; `action` resumes after it (a manual re-authentication resumes none). */
 	function requestReauth(action?: typeof pendingReauthAction) {
-		pendingReauthAction = action ?? pendingReauthAction;
+		pendingReauthAction = action ?? null;
 		reauthError = '';
 		emailReauthChallengeId = '';
 		emailReauthCode = '';
@@ -735,6 +739,12 @@
 		emailReauthCodeSent = false;
 		totpReauthCode = '';
 		reauthModalOpen = true;
+	}
+
+	/** Closing the dialog abandons the action it was opened for. */
+	function cancelReauth() {
+		reauthModalOpen = false;
+		pendingReauthAction = null;
 	}
 
 	async function finishReauth() {
@@ -1107,7 +1117,8 @@
 	}
 
 	async function startSocialLink(providerId: string) {
-		actionLoading = `social:link:${providerId}`;
+		if (socialAction) return;
+		socialAction = `social:link:${providerId}`;
 		setSecurityError('social', '');
 		socialNotice = null;
 		let leaving = false;
@@ -1120,12 +1131,13 @@
 					requestReauth({ type: 'link-social', providerId });
 					return;
 				}
-				setSecurityError(
-					'social',
-					result.error.error === 'already_linked'
-						? $LL.account_socialErrorAlreadyLinked()
-						: localizeApiError(result.error, $LL.account_actionFailed())
-				);
+				if (result.error.error === 'already_linked') {
+					// Linked meanwhile (another tab): show the account as it is.
+					setSecurityError('social', $LL.account_socialErrorAlreadyLinkedHere());
+					await refreshSecurity(['social']);
+					return;
+				}
+				setSecurityError('social', localizeApiError(result.error, $LL.account_actionFailed()));
 				return;
 			}
 			const target = safeLinkStartUrl(result.data?.authorization_url);
@@ -1137,7 +1149,7 @@
 			leaving = true;
 			window.location.assign(target);
 		} finally {
-			if (!leaving) actionLoading = '';
+			if (!leaving) socialAction = null;
 		}
 	}
 
@@ -1156,7 +1168,8 @@
 	}
 
 	async function unlinkSocialAccount(id: string) {
-		actionLoading = `social:unlink:${id}`;
+		if (socialAction) return;
+		socialAction = `social:unlink:${id}`;
 		setSecurityError('social', '');
 		socialNotice = null;
 		try {
@@ -1181,7 +1194,7 @@
 			socialNotice = { kind: 'success', message: $LL.account_socialUnlinked() };
 			await refreshSecurity(['social']);
 		} finally {
-			actionLoading = '';
+			socialAction = null;
 		}
 	}
 
@@ -1459,7 +1472,7 @@
 								notice={socialNotice}
 								loading={securityAreaLoading('social')}
 								refreshing={securityAreasRefreshing(['social'])}
-								{actionLoading}
+								actionLoading={socialAction ?? ''}
 								error={securityErrorFor(['social'])}
 								{reauthNeeded}
 								onRefresh={() => refreshSecurity(['social'])}
@@ -1535,7 +1548,7 @@
 				providers={authenticationMethods?.external.providers ?? []}
 				notice={socialNotice}
 				loading={securityAreaLoading('social')}
-				{actionLoading}
+				actionLoading={socialAction ?? ''}
 				onLink={startSocialLink}
 				onUnlink={unlinkSocialAccount}
 			/>
@@ -1560,7 +1573,7 @@
 			onSendEmailCode={sendEmailCodeReauth}
 			onVerifyEmailCode={completeEmailCodeReauth}
 			onVerifyTotp={completeTotpReauth}
-			onClose={() => (reauthModalOpen = false)}
+			onClose={cancelReauth}
 		/>
 	{/snippet}
 </AccountShell>

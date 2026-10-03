@@ -122,6 +122,7 @@ const ja = {
 	account_socialLinked: 'アカウントを連携しました。',
 	account_socialUnlinked: 'アカウントの連携を解除しました。',
 	account_socialErrorAlreadyLinked: 'そのアカウントは、ほかのユーザーに連携されています。',
+	account_socialErrorAlreadyLinkedHere: 'このプロバイダーとはすでに連携しています。',
 	account_socialErrorEmailNotVerified:
 		'そのアカウントのメールアドレスが、プロバイダーで確認されていません。',
 	account_socialErrorSessionExpired:

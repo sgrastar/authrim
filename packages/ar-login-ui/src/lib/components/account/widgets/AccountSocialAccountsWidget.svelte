@@ -56,7 +56,11 @@
 	const linkable = $derived(
 		providers.filter(
 			(provider) =>
-				provider.enabled !== false && provider.loginEnabled !== false && !isLinked(provider)
+				// Linking runs the OAuth / OIDC redirect; SAML providers cannot be linked here.
+				provider.startMode === 'oauth_redirect' &&
+				provider.enabled !== false &&
+				provider.loginEnabled !== false &&
+				!isLinked(provider)
 		)
 	);
 	const busy = $derived(actionLoading.startsWith('social:'));

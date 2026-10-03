@@ -106,6 +106,7 @@ const fr = createTranslation({
 	account_socialLinked: 'The account was linked.',
 	account_socialUnlinked: 'The account was unlinked.',
 	account_socialErrorAlreadyLinked: 'That account is already linked to another user.',
+	account_socialErrorAlreadyLinkedHere: 'That provider is already linked to your account.',
 	account_socialErrorEmailNotVerified:
 		"The provider has not verified that account's email address.",
 	account_socialErrorSessionExpired:

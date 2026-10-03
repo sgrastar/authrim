@@ -59,6 +59,27 @@ describe('AccountSocialAccountsWidget', () => {
 		expect(body).not.toContain('Link GitHub');
 	});
 
+	it('does not offer SAML providers, which link through another flow', () => {
+		setLocale('en');
+		const body = html({
+			identities: [],
+			providers: [
+				...socialProviders(),
+				{
+					id: 'saml:campus',
+					name: 'Campus SSO',
+					type: 'saml',
+					startMode: 'saml_sp',
+					enabled: true,
+					loginEnabled: true
+				}
+			]
+		});
+
+		expect(body).toContain('Link Google');
+		expect(body).not.toContain('Link Campus SSO');
+	});
+
 	it('says when nothing is linked and when nothing more can be', () => {
 		setLocale('en');
 		expect(html({ identities: [], providers: [] })).toContain('No external accounts are linked.');
