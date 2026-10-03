@@ -1,9 +1,15 @@
 /** Story fixtures for the account widgets. Factories, so each story gets its own objects. */
 import type {
 	AccountDevice,
+	AccountLauncher,
+	AccountOAuthClientConsent,
+	AccountOperation,
 	AccountPasskey,
+	AccountProfile,
 	AccountSession,
-	AccountTotpCredential
+	AccountStatementConsent,
+	AccountTotpCredential,
+	GuestUpgradeStatus
 } from '$lib/api/account';
 import type { AccountTotpEnrollment } from './types';
 
@@ -89,3 +95,127 @@ export const backupCodes = (): string[] => [
 	'W2NT6RB3ZQ5L',
 	'E7CG1YH8VJ4S'
 ];
+
+export const launcher = (overrides: Partial<AccountLauncher> = {}): AccountLauncher => ({
+	id: 'launcher-calendar',
+	name: 'Team calendar',
+	description: 'Meetings, rooms and shared schedules.',
+	category: 'Productivity',
+	launch_type: 'oidc_third_party_initiated',
+	open_in_new_tab: false,
+	icon_type: 'phosphor',
+	icon_value: 'calendar',
+	icon_color: '#ffffff',
+	background_color: '#2563eb',
+	grid_width: 2,
+	sort_order: 1,
+	enabled: true,
+	allow_favorite: true,
+	created_at: FIXTURE_NOW - 90 * DAY,
+	updated_at: FIXTURE_NOW - 10 * DAY,
+	favorite: false,
+	launch_href: '#launch-calendar',
+	...overrides
+});
+
+/** A mixed set: favourites, two categories, an image icon, a legacy SAML app, a fixed tile. */
+export const launchers = (): AccountLauncher[] => [
+	launcher({ favorite: true }),
+	launcher({
+		id: 'launcher-expenses',
+		name: 'Expenses',
+		description: 'Submit receipts and track reimbursements.',
+		category: 'Finance',
+		icon_value: 'chart-line-up',
+		background_color: '#047857',
+		open_in_new_tab: true,
+		launch_href: '#launch-expenses'
+	}),
+	launcher({
+		id: 'launcher-payroll',
+		name: 'Payroll (legacy portal)',
+		description: null,
+		category: 'Finance',
+		launch_type: 'saml_idp_initiated',
+		icon_type: 'image',
+		icon_value: providerIcon('#7c3aed', 'P'),
+		launch_href: '#launch-payroll'
+	}),
+	launcher({
+		id: 'launcher-mail',
+		name: 'Mail',
+		description: 'Company email.',
+		category: null,
+		icon_value: 'envelope-simple',
+		icon_color: '#1f2937',
+		background_color: '#fde68a',
+		allow_favorite: false,
+		launch_href: '#launch-mail'
+	})
+];
+
+export const guestUpgradeStatus = (
+	overrides: Partial<GuestUpgradeStatus> = {}
+): GuestUpgradeStatus => ({
+	registration_state: 'guest',
+	status: 'active',
+	deletion_due_at: (FIXTURE_NOW + 30 * DAY) / 1000,
+	upgrade_hold_until: null,
+	upgrade_eligible: true,
+	allowed_methods: ['email', 'passkey'],
+	upgrade_in_progress: false,
+	profile_complete: false,
+	...overrides
+});
+
+export const profile = (overrides: Partial<AccountProfile> = {}): AccountProfile => ({
+	user_id: 'user-1',
+	registration_state: 'registered',
+	email: 'alice@example.com',
+	email_verified: true,
+	name: 'Alice Example',
+	given_name: 'Alice',
+	family_name: 'Example',
+	locale: 'en',
+	picture: null,
+	...overrides
+});
+
+export const clientConsent = (
+	overrides: Partial<AccountOAuthClientConsent> = {}
+): AccountOAuthClientConsent => ({
+	kind: 'oauth_client',
+	id: 'consent-client-1',
+	clientId: 'client-docs',
+	clientName: 'Docs',
+	scopes: ['openid', 'profile', 'email'],
+	grantedAt: FIXTURE_NOW - 20 * DAY,
+	policyVersions: { privacyPolicyVersion: '2026-04', tosVersion: '3.1' },
+	...overrides
+});
+
+export const statementConsent = (
+	overrides: Partial<AccountStatementConsent> = {}
+): AccountStatementConsent => ({
+	kind: 'statement',
+	id: 'consent-statement-1',
+	statementId: 'marketing-email',
+	versionId: 'marketing-email-v2',
+	version: '2',
+	status: 'granted',
+	title: 'Product news by email',
+	category: 'Marketing',
+	grantedAt: FIXTURE_NOW - 5 * DAY,
+	updatedAt: FIXTURE_NOW - 5 * DAY,
+	selectedValue: 'always',
+	...overrides
+});
+
+export const operation = (overrides: Partial<AccountOperation> = {}): AccountOperation => ({
+	id: 'operation-1',
+	action: 'account.passkey.created',
+	resource_type: 'passkey',
+	resource_id: 'passkey-1',
+	created_at: FIXTURE_NOW - 2 * 60 * 60 * 1000,
+	...overrides
+});

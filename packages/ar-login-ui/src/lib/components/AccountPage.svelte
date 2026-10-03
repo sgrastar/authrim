@@ -18,13 +18,13 @@
 		type AccountPageScreenField,
 		type AccountTotpCredential
 	} from '$lib/api/account';
-	import AccountActivitySection from '$lib/components/account/AccountActivitySection.svelte';
-	import AccountConsentSection from '$lib/components/account/AccountConsentSection.svelte';
 	import AccountLauncherSection from '$lib/components/account/AccountLauncherSection.svelte';
-	import AccountProfileSection from '$lib/components/account/AccountProfileSection.svelte';
 	import AccountUpgradeSection from '$lib/components/account/AccountUpgradeSection.svelte';
+	import AccountActivityWidget from '$lib/components/account/widgets/AccountActivityWidget.svelte';
+	import AccountConsentWidget from '$lib/components/account/widgets/AccountConsentWidget.svelte';
 	import AccountDevicesWidget from '$lib/components/account/widgets/AccountDevicesWidget.svelte';
 	import AccountPasskeysWidget from '$lib/components/account/widgets/AccountPasskeysWidget.svelte';
+	import AccountProfileWidget from '$lib/components/account/widgets/AccountProfileWidget.svelte';
 	import AccountSessionsWidget from '$lib/components/account/widgets/AccountSessionsWidget.svelte';
 	import AccountSocialAccountsWidget from '$lib/components/account/widgets/AccountSocialAccountsWidget.svelte';
 	import AccountTotpWidget from '$lib/components/account/widgets/AccountTotpWidget.svelte';
@@ -1259,7 +1259,7 @@
 												}}
 											/>
 										{:else if field.block_type === 'account_profile_widget'}
-											<AccountProfileSection
+											<AccountProfileWidget
 												{profile}
 												loading={profileLoading}
 												title={accountWidgetTitle(field)}
@@ -1275,14 +1275,14 @@
 												onCancelEmailChange={cancelEmailChange}
 											/>
 										{:else if field.block_type === 'account_consent_widget'}
-											<AccountConsentSection
+											<AccountConsentWidget
 												{consents}
 												loading={consentsLoading}
 												title={accountWidgetTitle(field)}
 												error={consentError}
 											/>
 										{:else if field.block_type === 'account_activity_widget'}
-											<AccountActivitySection
+											<AccountActivityWidget
 												{operations}
 												loading={operationsLoading}
 												title={accountWidgetTitle(field)}
@@ -1358,7 +1358,7 @@
 					{/if}
 				{/each}
 			{:else}
-				<AccountProfileSection
+				<AccountProfileWidget
 					{profile}
 					loading={profileLoading}
 					saving={profileSaving}
@@ -1418,8 +1418,8 @@
 					/>
 					<AccountSocialAccountsWidget headingLevel={3} />
 				</AccountWidgetPanel>
-				<AccountConsentSection {consents} loading={consentsLoading} error={consentError} />
-				<AccountActivitySection {operations} loading={operationsLoading} />
+				<AccountConsentWidget {consents} loading={consentsLoading} error={consentError} />
+				<AccountActivityWidget {operations} loading={operationsLoading} />
 			{/if}
 		</section>
 	</div>

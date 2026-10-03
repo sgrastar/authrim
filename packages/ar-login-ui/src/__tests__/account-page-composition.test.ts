@@ -100,7 +100,7 @@ describe('Account Page published composition', () => {
 			compositionGate
 		);
 		const fallbackComposition = source.indexOf(
-			'\n\t\t\t{:else}\n\t\t\t\t<AccountProfileSection',
+			'\n\t\t\t{:else}\n\t\t\t\t<AccountProfileWidget',
 			configuredComposition
 		);
 

@@ -20,6 +20,7 @@
 		reauthNeeded = false,
 		onRefresh,
 		onReauthenticate,
+		headingAside,
 		children
 	}: {
 		title: string;
@@ -31,6 +32,8 @@
 		reauthNeeded?: boolean;
 		onRefresh?: () => void;
 		onReauthenticate?: () => void;
+		/** Drawn at the end of the heading row, e.g. a count; next to the refresh button if both. */
+		headingAside?: Snippet;
 		children: Snippet;
 	} = $props();
 
@@ -47,6 +50,9 @@
 	>
 		<div class="widget-heading">
 			<svelte:element this={`h${headingLevel}`} id={headingId}>{title}</svelte:element>
+			{#if headingAside}
+				<span class="widget-heading-aside">{@render headingAside()}</span>
+			{/if}
 			{#if onRefresh}
 				<Button variant="ghost" size="sm" loading={busy || refreshing} onclick={() => onRefresh()}>
 					{$LL.account_refresh()}
@@ -92,6 +98,13 @@
 		align-items: center;
 		justify-content: space-between;
 		gap: 12px;
+	}
+
+	.widget-heading-aside {
+		display: inline-flex;
+		align-items: center;
+		gap: 8px;
+		margin-inline-start: auto;
 	}
 
 	.widget-heading :global(h2) {

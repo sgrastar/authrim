@@ -34,7 +34,7 @@ export type Translations = RootTranslation
 
 type RootTranslation = {
 	/**
-	 * L​o​g​g​i​n​g​ ​o​u​t​ ​w​i​l​l​ ​p​r​e​v​e​n​t​ ​y​o​u​ ​f​r​o​m​ ​r​e​t​u​r​n​i​n​g​ ​t​o​ ​t​h​i​s​ ​g​u​e​s​t​ ​a​c​c​o​u​n​t​,​ ​e​v​e​n​ ​i​f​ ​a​u​t​o​m​a​t​i​c​ ​d​e​l​e​t​i​o​n​ ​i​s​ ​d​i​s​a​b​l​e​d​.​ ​R​e​g​i​s​t​e​r​ ​f​i​r​s​t​ ​t​o​ ​k​e​e​p​ ​a​c​c​e​s​s​ ​t​o​ ​y​o​u​r​ ​a​c​c​o​u​n​t​ ​a​n​d​ ​d​a​t​a​.​ ​L​o​g​ ​o​u​t​ ​a​n​y​w​a​y​?
+	 * L​o​g​g​i​n​g​ ​o​u​t​ ​w​i​l​l​ ​p​r​e​v​e​n​t​ ​y​o​u​ ​f​r​o​m​ ​r​e​t​u​r​n​i​n​g​ ​t​o​ ​t​h​i​s​ ​g​u​e​s​t​ ​a​c​c​o​u​n​t​.​ ​R​e​g​i​s​t​e​r​ ​f​i​r​s​t​ ​t​o​ ​k​e​e​p​ ​a​c​c​e​s​s​ ​t​o​ ​y​o​u​r​ ​a​c​c​o​u​n​t​ ​a​n​d​ ​d​a​t​a​.​ ​L​o​g​ ​o​u​t​ ​a​n​y​w​a​y​?
 	 */
 	account_guestLogoutWarning: string
 	/**
@@ -582,6 +582,70 @@ type RootTranslation = {
 	 * S​e​s​s​i​o​n​ ​e​n​d​e​d
 	 */
 	account_operationSessionRevoked: string
+	/**
+	 * G​u​e​s​t​ ​a​c​c​o​u​n​t​ ​c​r​e​a​t​e​d
+	 */
+	account_operationGuestCreated: string
+	/**
+	 * G​u​e​s​t​ ​r​e​g​i​s​t​r​a​t​i​o​n​ ​f​a​i​l​e​d
+	 */
+	account_operationGuestUpgradeFailed: string
+	/**
+	 * G​u​e​s​t​ ​r​e​g​i​s​t​r​a​t​i​o​n​ ​s​t​a​r​t​e​d
+	 */
+	account_operationGuestUpgradeStarted: string
+	/**
+	 * G​u​e​s​t​ ​a​c​c​o​u​n​t​ ​r​e​g​i​s​t​e​r​e​d
+	 */
+	account_operationGuestUpgraded: string
+	/**
+	 * E​m​a​i​l​ ​a​d​d​e​d
+	 */
+	account_operationEmailAdded: string
+	/**
+	 * E​m​a​i​l​ ​c​h​a​n​g​e​d
+	 */
+	account_operationEmailChanged: string
+	/**
+	 * R​e​-​a​u​t​h​e​n​t​i​c​a​t​e​d​ ​b​y​ ​e​m​a​i​l
+	 */
+	account_operationEmailReauthenticated: string
+	/**
+	 * D​e​v​i​c​e​ ​r​e​n​a​m​e​d
+	 */
+	account_operationDeviceUpdated: string
+	/**
+	 * D​e​v​i​c​e​ ​u​n​l​i​n​k​e​d
+	 */
+	account_operationDeviceUnlinked: string
+	/**
+	 * R​e​-​a​u​t​h​e​n​t​i​c​a​t​e​d​ ​b​y​ ​P​a​s​s​k​e​y
+	 */
+	account_operationPasskeyReauthenticated: string
+	/**
+	 * A​u​t​h​e​n​t​i​c​a​t​o​r​ ​s​e​t​u​p​ ​s​t​a​r​t​e​d
+	 */
+	account_operationTotpEnrollmentStarted: string
+	/**
+	 * A​u​t​h​e​n​t​i​c​a​t​o​r​ ​a​c​t​i​v​a​t​e​d
+	 */
+	account_operationTotpActivated: string
+	/**
+	 * A​u​t​h​e​n​t​i​c​a​t​o​r​ ​r​e​n​a​m​e​d
+	 */
+	account_operationTotpUpdated: string
+	/**
+	 * A​u​t​h​e​n​t​i​c​a​t​o​r​ ​r​e​m​o​v​e​d
+	 */
+	account_operationTotpRemoved: string
+	/**
+	 * B​a​c​k​u​p​ ​c​o​d​e​s​ ​r​e​g​e​n​e​r​a​t​e​d
+	 */
+	account_operationTotpBackupCodesRegenerated: string
+	/**
+	 * R​e​-​a​u​t​h​e​n​t​i​c​a​t​e​d​ ​b​y​ ​a​u​t​h​e​n​t​i​c​a​t​o​r
+	 */
+	account_operationTotpReauthenticated: string
 	/**
 	 * M​y​ ​a​p​p​l​i​c​a​t​i​o​n​s
 	 */
@@ -2148,6 +2212,70 @@ export type TranslationFunctions = {
 	 * Session ended
 	 */
 	account_operationSessionRevoked: () => LocalizedString
+	/**
+	 * Guest account created
+	 */
+	account_operationGuestCreated: () => LocalizedString
+	/**
+	 * Guest registration failed
+	 */
+	account_operationGuestUpgradeFailed: () => LocalizedString
+	/**
+	 * Guest registration started
+	 */
+	account_operationGuestUpgradeStarted: () => LocalizedString
+	/**
+	 * Guest account registered
+	 */
+	account_operationGuestUpgraded: () => LocalizedString
+	/**
+	 * Email added
+	 */
+	account_operationEmailAdded: () => LocalizedString
+	/**
+	 * Email changed
+	 */
+	account_operationEmailChanged: () => LocalizedString
+	/**
+	 * Re-authenticated by email
+	 */
+	account_operationEmailReauthenticated: () => LocalizedString
+	/**
+	 * Device renamed
+	 */
+	account_operationDeviceUpdated: () => LocalizedString
+	/**
+	 * Device unlinked
+	 */
+	account_operationDeviceUnlinked: () => LocalizedString
+	/**
+	 * Re-authenticated by Passkey
+	 */
+	account_operationPasskeyReauthenticated: () => LocalizedString
+	/**
+	 * Authenticator setup started
+	 */
+	account_operationTotpEnrollmentStarted: () => LocalizedString
+	/**
+	 * Authenticator activated
+	 */
+	account_operationTotpActivated: () => LocalizedString
+	/**
+	 * Authenticator renamed
+	 */
+	account_operationTotpUpdated: () => LocalizedString
+	/**
+	 * Authenticator removed
+	 */
+	account_operationTotpRemoved: () => LocalizedString
+	/**
+	 * Backup codes regenerated
+	 */
+	account_operationTotpBackupCodesRegenerated: () => LocalizedString
+	/**
+	 * Re-authenticated by authenticator
+	 */
+	account_operationTotpReauthenticated: () => LocalizedString
 	/**
 	 * My applications
 	 */
