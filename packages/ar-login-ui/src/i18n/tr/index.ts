@@ -461,6 +461,9 @@ const translation = {
 	login_extError_callbackFailed_title: 'Doğrulama başarısız oldu',
 	login_extError_callbackFailed_message:
 		'Doğrulama sırasında bir hata oluştu. Lütfen tekrar deneyin.',
+	login_extError_reauthNotProven_title: 'Oturum açma doğrulanmadı',
+	login_extError_reauthNotProven_message:
+		'Oturum açma sağlayıcınız yeniden oturum açtığınızı doğrulamadı. Yeniden oturum açın veya başka bir yöntem seçin.',
 	login_extError_default_title: 'Doğrulama hatası',
 	login_extError_default_message: 'Dış doğrulama sırasında bir hata oluştu.',
 	login_signingInTo: 'Giriş yapılan uygulama:',

@@ -304,6 +304,9 @@ const zhCN = createTranslation({
 	login_extError_providerError_message: '外部提供商返回错误。请稍后重试。',
 	login_extError_callbackFailed_title: '身份验证失败',
 	login_extError_callbackFailed_message: '身份验证过程中发生错误。请重试。',
+	login_extError_reauthNotProven_title: '无法确认登录',
+	login_extError_reauthNotProven_message:
+		'您的登录提供方未确认您已重新登录。请重新登录或选择其他方式。',
 	login_extError_default_title: '身份验证错误',
 	login_extError_default_message: '外部身份验证过程中发生错误。'
 });

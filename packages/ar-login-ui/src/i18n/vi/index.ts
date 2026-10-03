@@ -461,6 +461,9 @@ const vi = createTranslation({
 	login_extError_providerError_message: 'Nhà cung cấp bên ngoài trả về lỗi. Hãy thử lại sau.',
 	login_extError_callbackFailed_title: 'Xác thực không thành công',
 	login_extError_callbackFailed_message: 'Đã xảy ra lỗi trong quá trình xác thực. Hãy thử lại.',
+	login_extError_reauthNotProven_title: 'Chưa xác nhận đăng nhập',
+	login_extError_reauthNotProven_message:
+		'Nhà cung cấp đăng nhập không xác nhận rằng bạn đã đăng nhập lại. Hãy đăng nhập lại hoặc chọn phương thức khác.',
 	login_extError_default_title: 'Lỗi xác thực',
 	login_extError_default_message: 'Đã xảy ra lỗi trong quá trình xác thực bên ngoài.',
 	login_signingInTo: 'Đang đăng nhập vào',

@@ -32717,6 +32717,18 @@ type RootTranslation = {
 	 */
 	admin_authentication_methods_reauth_enabled: string
 	/**
+	 * A​c​c​e​p​t​ ​w​i​t​h​o​u​t​ ​a​u​t​h​_​t​i​m​e
+	 */
+	admin_authentication_methods_reauth_without_auth_time: string
+	/**
+	 * A​c​c​e​p​t​ ​a​ ​r​e​-​a​u​t​h​e​n​t​i​c​a​t​i​o​n​ ​t​h​i​s​ ​p​r​o​v​i​d​e​r​ ​d​o​e​s​ ​n​o​t​ ​d​a​t​e​ ​(​n​o​ ​a​u​t​h​_​t​i​m​e​ ​i​n​ ​t​h​e​ ​I​D​ ​t​o​k​e​n​)​ ​b​e​c​a​u​s​e​ ​a​ ​n​e​w​ ​l​o​g​i​n​ ​w​a​s​ ​r​e​q​u​e​s​t​e​d​.​ ​W​e​a​k​e​r​ ​e​v​i​d​e​n​c​e​:​ ​t​u​r​n​ ​o​n​ ​o​n​l​y​ ​f​o​r​ ​p​r​o​v​i​d​e​r​s​ ​t​h​a​t​ ​c​a​n​n​o​t​ ​r​e​t​u​r​n​ ​a​u​t​h​_​t​i​m​e​.
+	 */
+	admin_authentication_methods_reauth_without_auth_time_hint: string
+	/**
+	 * O​A​u​t​h​ ​2​.​0​ ​p​r​o​v​i​d​e​r​s​ ​r​e​t​u​r​n​ ​n​o​ ​I​D​ ​t​o​k​e​n​ ​t​o​ ​d​a​t​e​ ​a​ ​n​e​w​ ​l​o​g​i​n​,​ ​s​o​ ​t​h​e​y​ ​c​a​n​n​o​t​ ​b​e​ ​u​s​e​d​ ​t​o​ ​r​e​-​a​u​t​h​e​n​t​i​c​a​t​e​.
+	 */
+	admin_authentication_methods_reauth_unavailable_oauth2: string
+	/**
 	 * A​c​c​o​u​n​t​ ​l​i​n​k​i​n​g
 	 */
 	admin_authentication_methods_account_link_enabled: string
@@ -66324,6 +66336,18 @@ Remove this role from {email}?
 	 * Re-authentication
 	 */
 	admin_authentication_methods_reauth_enabled: () => LocalizedString
+	/**
+	 * Accept without auth_time
+	 */
+	admin_authentication_methods_reauth_without_auth_time: () => LocalizedString
+	/**
+	 * Accept a re-authentication this provider does not date (no auth_time in the ID token) because a new login was requested. Weaker evidence: turn on only for providers that cannot return auth_time.
+	 */
+	admin_authentication_methods_reauth_without_auth_time_hint: () => LocalizedString
+	/**
+	 * OAuth 2.0 providers return no ID token to date a new login, so they cannot be used to re-authenticate.
+	 */
+	admin_authentication_methods_reauth_unavailable_oauth2: () => LocalizedString
 	/**
 	 * Account linking
 	 */

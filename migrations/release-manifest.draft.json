@@ -79,6 +79,10 @@
             {
               "path": "016_assurance_evidence_revoked_by.sql",
               "checksum": "6d36852f67139e572e202db4f5730cead2031f28e9985ad26a1bd316c7772c41"
+            },
+            {
+              "path": "017_external_idp_auth_state_reauth.sql",
+              "checksum": "8655277dbd439b276b7ae05961c1c07605f4fdf9d0f75d7529041e4a891e1de8"
             }
           ]
         },
@@ -548,6 +552,10 @@
         {
           "path": "016_assurance_evidence_revoked_by.sql",
           "checksum": "6d36852f67139e572e202db4f5730cead2031f28e9985ad26a1bd316c7772c41"
+        },
+        {
+          "path": "017_external_idp_auth_state_reauth.sql",
+          "checksum": "8655277dbd439b276b7ae05961c1c07605f4fdf9d0f75d7529041e4a891e1de8"
         }
       ]
     },

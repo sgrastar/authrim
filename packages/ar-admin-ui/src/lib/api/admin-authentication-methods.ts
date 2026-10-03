@@ -73,6 +73,11 @@ export interface AuthenticationMethodExternalProviderUsage {
 	loginEnabled: boolean;
 	signupEnabled: boolean;
 	reauthEnabled: boolean;
+	/**
+	 * Accept a re-authentication whose new login the provider did not date (an ID token without
+	 * auth_time), on the strength of having asked for one. Weaker evidence; off unless turned on.
+	 */
+	reauthAcceptWithoutAuthTime: boolean;
 	accountLinkEnabled: boolean;
 }
 
@@ -242,6 +247,8 @@ function normalizeSAMLProvider(
 		loginEnabled: provider.enabled,
 		signupEnabled: provider.enabled,
 		reauthEnabled: provider.enabled,
+		// A SAML IdP always dates its login (AuthnInstant).
+		reauthAcceptWithoutAuthTime: false,
 		accountLinkEnabled: provider.enabled
 	};
 }
@@ -267,7 +274,13 @@ function resolveExternalProviderUsages(
 			priority: provider.priority,
 			loginEnabled: providerEnabled && parseBoolean(saved.loginEnabled, defaultEnabled),
 			signupEnabled: providerEnabled && parseBoolean(saved.signupEnabled, defaultEnabled),
-			reauthEnabled: providerEnabled && parseBoolean(saved.reauthEnabled, defaultEnabled),
+			// A pure OAuth 2.0 provider returns no ID token to date a new login: never re-authenticates.
+			reauthEnabled:
+				providerEnabled &&
+				provider.providerType !== 'oauth2' &&
+				parseBoolean(saved.reauthEnabled, defaultEnabled),
+			reauthAcceptWithoutAuthTime:
+				provider.providerType === 'oidc' && parseBoolean(saved.reauthAcceptWithoutAuthTime, false),
 			accountLinkEnabled:
 				accountLinkAvailable && parseBoolean(saved.accountLinkEnabled, accountLinkAvailable)
 		};
@@ -303,6 +316,9 @@ function serializeExternalProviderUsages(
 			loginEnabled: provider.enabled && provider.loginEnabled,
 			signupEnabled: provider.enabled && provider.signupEnabled,
 			reauthEnabled: provider.enabled && provider.reauthEnabled,
+			...(provider.type === 'oidc'
+				? { reauthAcceptWithoutAuthTime: provider.reauthAcceptWithoutAuthTime }
+				: {}),
 			accountLinkEnabled: provider.enabled && provider.autoLinkEmail && provider.accountLinkEnabled
 		}))
 	);

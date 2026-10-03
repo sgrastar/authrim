@@ -572,12 +572,13 @@ describe('managed Direct Auth browser session finish', () => {
   });
 
   it.each([
-    // Neither says when it was proven, so neither can follow a re-authentication request.
-    ['external_idp', 403],
-    ['passkey_signup', 403],
-  ])(
-    're-authenticates from a %s artifact only when the method proves the user',
-    async (method, status) => {
+    // An external IdP login proves a re-authentication only once the bridge verified a renewal.
+    ['external_idp', { reauth_proven_amr: ['external_idp'], reauth_proven_at: Date.now() }, 200],
+    ['external_idp', {}, 403],
+    ['passkey_signup', {}, 403],
+  ] as const)(
+    're-authenticates from a %s artifact (%j) only when the method proves the user',
+    async (method, proof, status) => {
       const codeVerifier = `verifier-for-${method}-reauth`;
       challengeStore.consumeChallengeRpc
         .mockResolvedValueOnce({
@@ -587,6 +588,7 @@ describe('managed Direct Auth browser session finish', () => {
             client_id: 'login-ui',
             channel: 'browser',
             method,
+            ...proof,
             authorization_challenge_id: 'reauth_challenge_123',
           },
         })
@@ -608,7 +610,7 @@ describe('managed Direct Auth browser session finish', () => {
 
       const response = await directSessionCreateHandler(
         createContext({
-          direct_auth_artifact: `artifact_${method}`,
+          direct_auth_artifact: `artifact_${method}_${status}`,
           client_id: 'login-ui',
           code_verifier: codeVerifier,
           channel: 'browser',
@@ -616,6 +618,19 @@ describe('managed Direct Auth browser session finish', () => {
       );
 
       expect(response.status).toBe(status);
+      if (status === 200) {
+        // The session keeps the verified renewal, to complete a re-authentication later too.
+        expect(sessionStore.createSessionRpc).toHaveBeenCalledWith(
+          expect.any(String),
+          'user_123',
+          expect.any(Number),
+          expect.objectContaining({
+            reauth_proven_amr: ['external_idp'],
+            reauth_proven_at: expect.any(Number),
+          }),
+          expect.anything()
+        );
+      }
     }
   );
 

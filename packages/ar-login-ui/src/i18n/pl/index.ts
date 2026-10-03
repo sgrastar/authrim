@@ -462,6 +462,9 @@ const translation = {
 	login_extError_callbackFailed_title: 'Nie udało się uwierzytelnić',
 	login_extError_callbackFailed_message:
 		'Wystąpił błąd podczas uwierzytelniania. Spróbuj ponownie.',
+	login_extError_reauthNotProven_title: 'Nie potwierdzono logowania',
+	login_extError_reauthNotProven_message:
+		'Twój dostawca logowania nie potwierdził, że zalogowałeś się ponownie. Zaloguj się ponownie lub wybierz inną metodę.',
 	login_extError_default_title: 'Błąd uwierzytelniania',
 	login_extError_default_message: 'Wystąpił błąd podczas uwierzytelniania zewnętrznego.',
 	login_signingInTo: 'Logowanie do',

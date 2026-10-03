@@ -344,6 +344,10 @@
 			callback_failed: {
 				title: $LL.login_extError_callbackFailed_title(),
 				message: $LL.login_extError_callbackFailed_message()
+			},
+			reauth_not_proven: {
+				title: $LL.login_extError_reauthNotProven_title(),
+				message: $LL.login_extError_reauthNotProven_message()
 			}
 		};
 		return messages[code] || null;
@@ -1822,7 +1826,8 @@
 				redirectUri,
 				provider.startUrl,
 				provider.startMode,
-				turnstileRequired ? { token: cfTurnstileResponse } : undefined
+				turnstileRequired ? { token: cfTurnstileResponse } : undefined,
+				authorizationChallengeId || undefined
 			);
 
 			if (!isValidRedirectUrl(url)) {

@@ -333,6 +333,9 @@ const pt = createTranslation({
 		'O provedor externo retornou um erro. Tente novamente mais tarde.',
 	login_extError_callbackFailed_title: 'Falha na autenticação',
 	login_extError_callbackFailed_message: 'Ocorreu um erro durante a autenticação. Tente novamente.',
+	login_extError_reauthNotProven_title: 'Login não confirmado',
+	login_extError_reauthNotProven_message:
+		'Seu provedor de login não confirmou que você entrou novamente. Entre novamente ou escolha outro método.',
 	login_extError_default_title: 'Erro de autenticação',
 	login_extError_default_message: 'Ocorreu um erro durante a autenticação externa.'
 });

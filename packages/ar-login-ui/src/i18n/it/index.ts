@@ -467,6 +467,9 @@ const it = createTranslation({
 	login_extError_callbackFailed_title: 'Autenticazione non riuscita',
 	login_extError_callbackFailed_message:
 		'Si è verificato un errore durante l’autenticazione. Riprova.',
+	login_extError_reauthNotProven_title: 'Accesso non confermato',
+	login_extError_reauthNotProven_message:
+		"Il tuo provider di accesso non ha confermato che hai effettuato di nuovo l'accesso. Accedi di nuovo o scegli un altro metodo.",
 	login_extError_default_title: 'Errore di autenticazione',
 	login_extError_default_message: 'Si è verificato un errore durante l’autenticazione esterna.',
 	login_signingInTo: 'Accesso a',

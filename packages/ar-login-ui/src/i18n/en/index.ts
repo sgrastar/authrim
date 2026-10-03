@@ -481,6 +481,9 @@ const en = {
 	login_extError_callbackFailed_title: 'Authentication failed',
 	login_extError_callbackFailed_message:
 		'An error occurred during authentication. Please try again.',
+	login_extError_reauthNotProven_title: 'Sign-in not confirmed',
+	login_extError_reauthNotProven_message:
+		'Your sign-in provider did not confirm that you signed in again. Sign in again or choose another method.',
 	login_extError_default_title: 'Authentication error',
 	login_extError_default_message: 'An error occurred during external authentication.',
 

@@ -598,6 +598,12 @@ export function reauthProofFromRecord(
   }
   const method = reauthProvenMethodFromAmr(amr, unverifiedAmr);
   if (!method) return {};
+  // A login at an external IdP or by SAML proves a re-authentication only with the pair above: the
+  // bridge asked the IdP for a new login and verified that one happened. Otherwise the IdP may have
+  // answered from a session of its own, however old.
+  if (method === 'other' && (amr ?? []).some((m) => m === 'external_idp' || m === 'saml')) {
+    return {};
+  }
   const provenAtMs = positiveSafeInteger(record?.proven_at);
   return provenAtMs === undefined ? { method } : { method, provenAtMs };
 }
@@ -3592,6 +3598,8 @@ export async function directSessionCreateHandler(c: Context<{ Bindings: Env }>) 
         // When the authentication was proven, not when it is stored or redeemed: an assurance
         // step-up counts only proof made after it began.
         ...directSessionProvenAt(metadata),
+        // The method a re-authentication takes and when (a verified new upstream login).
+        ...directSessionReauthProof(metadata),
         // An external IdP login's upstream acr (from its validated ID token), for assurance.
         ...(metadata.method === 'external_idp' &&
         typeof metadata.upstream_acr === 'string' &&
@@ -4045,6 +4053,19 @@ function directSessionProvenAt(metadata: Record<string, unknown>): { proven_at?:
   const proven = metadata.method === 'external_idp' ? undefined : metadata.proven_at;
   return typeof proven === 'number' && Number.isSafeInteger(proven) && proven > 0
     ? { proven_at: proven }
+    : {};
+}
+
+function directSessionReauthProof(metadata: Record<string, unknown>): {
+  reauth_proven_amr?: string[];
+  reauth_proven_at?: number;
+} {
+  const provenAt = positiveSafeInteger(metadata.reauth_proven_at);
+  const provenAmr = Array.isArray(metadata.reauth_proven_amr)
+    ? metadata.reauth_proven_amr.filter((value): value is string => typeof value === 'string')
+    : [];
+  return provenAt !== undefined && provenAmr.length > 0
+    ? { reauth_proven_amr: provenAmr, reauth_proven_at: provenAt }
     : {};
 }
 

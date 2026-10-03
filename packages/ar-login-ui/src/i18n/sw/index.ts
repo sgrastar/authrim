@@ -462,6 +462,9 @@ const translation = {
 	login_extError_callbackFailed_title: 'Uthibitisho ulishindwa',
 	login_extError_callbackFailed_message:
 		'Hitilafu ilitokea wakati wa uthibitisho. Tafadhali jaribu tena.',
+	login_extError_reauthNotProven_title: 'Kuingia hakujathibitishwa',
+	login_extError_reauthNotProven_message:
+		'Mtoa huduma wako wa kuingia hakuthibitisha kuwa uliingia tena. Ingia tena au chagua njia nyingine.',
 	login_extError_default_title: 'Kosa la uthibitisho',
 	login_extError_default_message: 'Kosa lilitokea wakati wa uthibitisho wa nje.',
 	login_signingInTo: 'Inaingia kwenye:',

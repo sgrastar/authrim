@@ -441,6 +441,9 @@ const ar = createTranslation({
 	login_extError_providerError_message: 'أعاد موفّر الهوية الخارجي خطأ. حاول مرة أخرى لاحقًا.',
 	login_extError_callbackFailed_title: 'فشلت المصادقة',
 	login_extError_callbackFailed_message: 'حدث خطأ أثناء المصادقة. حاول مرة أخرى.',
+	login_extError_reauthNotProven_title: 'لم يتم تأكيد تسجيل الدخول',
+	login_extError_reauthNotProven_message:
+		'لم يؤكد مزوّد تسجيل الدخول أنك سجّلت الدخول مرة أخرى. سجّل الدخول مرة أخرى أو اختر طريقة أخرى.',
 	login_extError_default_title: 'خطأ في المصادقة',
 	login_extError_default_message: 'حدث خطأ أثناء المصادقة الخارجية.',
 	login_signingInTo: 'تسجيل الدخول إلى',

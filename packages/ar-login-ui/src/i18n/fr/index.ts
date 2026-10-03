@@ -340,6 +340,9 @@ const fr = createTranslation({
 	login_extError_callbackFailed_title: 'Échec de l’authentification',
 	login_extError_callbackFailed_message:
 		'Une erreur s’est produite pendant l’authentification. Réessayez.',
+	login_extError_reauthNotProven_title: 'Connexion non confirmée',
+	login_extError_reauthNotProven_message:
+		"Votre fournisseur de connexion n'a pas confirmé que vous vous êtes reconnecté. Reconnectez-vous ou choisissez une autre méthode.",
 	login_extError_default_title: 'Erreur d’authentification',
 	login_extError_default_message: 'Une erreur s’est produite pendant l’authentification externe.'
 });

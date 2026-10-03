@@ -445,6 +445,9 @@ const th = createTranslation({
 		'ผู้ให้บริการภายนอกส่งข้อผิดพลาดกลับมา โปรดลองอีกครั้งภายหลัง',
 	login_extError_callbackFailed_title: 'ยืนยันตัวตนไม่สำเร็จ',
 	login_extError_callbackFailed_message: 'เกิดข้อผิดพลาดระหว่างยืนยันตัวตน โปรดลองอีกครั้ง',
+	login_extError_reauthNotProven_title: 'ไม่สามารถยืนยันการลงชื่อเข้าใช้',
+	login_extError_reauthNotProven_message:
+		'ผู้ให้บริการลงชื่อเข้าใช้ไม่ได้ยืนยันว่าคุณลงชื่อเข้าใช้อีกครั้ง โปรดลงชื่อเข้าใช้อีกครั้งหรือเลือกวิธีอื่น',
 	login_extError_default_title: 'ข้อผิดพลาดในการยืนยันตัวตน',
 	login_extError_default_message: 'เกิดข้อผิดพลาดระหว่างการยืนยันตัวตนภายนอก',
 	login_signingInTo: 'กำลังเข้าสู่ระบบ',

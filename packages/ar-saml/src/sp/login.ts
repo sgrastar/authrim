@@ -7,7 +7,7 @@
 
 import type { Context } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
-import type { SAMLIdPConfig } from '@authrim/ar-lib-core';
+import type { SAMLIdPConfig, SAMLRequestContext } from '@authrim/ar-lib-core';
 import {
   createErrorResponse,
   AR_ERROR_CODES,
@@ -15,6 +15,8 @@ import {
   buildIssuerUrl,
   buildSAMLRequestStoreInstanceName,
   getLogger,
+  readAuthorizationChallengeKind,
+  readExternalProviderReauthPolicy,
   verifyHumanVerificationWithRunner,
 } from '@authrim/ar-lib-core';
 import * as pako from 'pako';
@@ -106,8 +108,35 @@ export async function handleSPLogin(c: Context<{ Bindings: Env }>): Promise<Resp
 
     const outboundIdpConfig = withSPInitiatedSsoEndpoint(idpConfig);
 
+    // A sign-in that answers an Authrim re-authentication asks the IdP for a new login
+    // (ForceAuthn), and only an IdP the tenant lets re-authenticate is asked.
+    let reauthentication: SAMLRequestContext['spReauthentication'];
+    const authorizationChallengeId = c.req.query('authorization_challenge_id');
+    if (authorizationChallengeId) {
+      const challengeKind = await readAuthorizationChallengeKind(
+        env,
+        tenantId,
+        authorizationChallengeId
+      );
+      if (!challengeKind) {
+        return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
+          variables: { field: 'authorization_challenge_id' },
+        });
+      }
+      if (challengeKind === 'reauth') {
+        const providerKeys = [`saml:${idpId}`, idpId];
+        const policy = await readExternalProviderReauthPolicy(env, tenantId, providerKeys);
+        if (!policy.reauthEnabled) {
+          return createErrorResponse(c, AR_ERROR_CODES.POLICY_INSUFFICIENT_PERMISSIONS);
+        }
+        reauthentication = { authorizationChallengeId, requestedAt: Date.now(), providerKeys };
+      }
+    }
+
     // Generate AuthnRequest
-    const authnRequestXml = buildAuthnRequest(issuerUrl, spEntityId, outboundIdpConfig);
+    const authnRequestXml = buildAuthnRequest(issuerUrl, spEntityId, outboundIdpConfig, {
+      forceAuthn: reauthentication !== undefined,
+    });
 
     // Store request in SAMLRequestStore for later validation
     const requestId = authnRequestXml.match(/ID="([^"]+)"/)?.[1] || '';
@@ -120,7 +149,8 @@ export async function handleSPLogin(c: Context<{ Bindings: Env }>): Promise<Resp
       requestId,
       spEntityId,
       outboundIdpConfig.entityId,
-      returnUrl
+      returnUrl,
+      reauthentication ? { spReauthentication: reauthentication } : undefined
     );
 
     // RelayState is limited by the SAML bindings; use the opaque request ID, not the return URL.
@@ -174,7 +204,8 @@ function withSPInitiatedSsoEndpoint(idpConfig: SAMLIdPConfig): SAMLIdPConfig {
 function buildAuthnRequest(
   issuerUrl: string,
   spEntityId: string,
-  idpConfig: SAMLIdPConfig
+  idpConfig: SAMLIdPConfig,
+  options: { forceAuthn?: boolean } = {}
 ): string {
   const acsUrl = `${issuerUrl}/saml/sp/acs`;
   const providerName = idpConfig.providerName?.trim() || 'Authrim';
@@ -190,6 +221,7 @@ function buildAuthnRequest(
   setAttribute(authnRequest, 'AssertionConsumerServiceURL', acsUrl);
   setAttribute(authnRequest, 'ProtocolBinding', BINDING_URIS.HTTP_POST);
   setAttribute(authnRequest, 'ProviderName', providerName);
+  if (options.forceAuthn) setAttribute(authnRequest, 'ForceAuthn', 'true');
 
   // Add namespace declarations
   addNamespaceDeclarations(authnRequest, {
@@ -224,7 +256,8 @@ async function storeAuthnRequest(
   requestId: string,
   spEntityId: string,
   idpEntityId: string,
-  returnUrl: string
+  returnUrl: string,
+  context?: SAMLRequestContext
 ): Promise<void> {
   const samlRequestStoreId = env.SAML_REQUEST_STORE.idFromName(
     buildSAMLRequestStoreInstanceName(tenantId, 'sp', idpEntityId)
@@ -241,6 +274,7 @@ async function storeAuthnRequest(
       binding: 'post',
       type: 'authn_request',
       relayState: returnUrl,
+      ...(context ? { context } : {}),
       expiresAt: Date.now() + 300 * 1000, // 5 minutes
     }),
   });

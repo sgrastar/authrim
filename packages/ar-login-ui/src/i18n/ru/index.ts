@@ -331,6 +331,9 @@ const ru = createTranslation({
 	login_extError_callbackFailed_title: 'Ошибка аутентификации',
 	login_extError_callbackFailed_message:
 		'Во время аутентификации произошла ошибка. Повторите попытку.',
+	login_extError_reauthNotProven_title: 'Вход не подтверждён',
+	login_extError_reauthNotProven_message:
+		'Ваш поставщик входа не подтвердил, что вы вошли снова. Войдите снова или выберите другой способ.',
 	login_extError_default_title: 'Ошибка аутентификации',
 	login_extError_default_message: 'Во время внешней аутентификации произошла ошибка.'
 });

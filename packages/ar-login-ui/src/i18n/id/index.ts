@@ -331,6 +331,9 @@ const id = createTranslation({
 		'Penyedia eksternal mengembalikan kesalahan. Coba lagi nanti.',
 	login_extError_callbackFailed_title: 'Autentikasi gagal',
 	login_extError_callbackFailed_message: 'Terjadi kesalahan saat autentikasi. Coba lagi.',
+	login_extError_reauthNotProven_title: 'Masuk tidak terkonfirmasi',
+	login_extError_reauthNotProven_message:
+		'Penyedia masuk Anda tidak mengonfirmasi bahwa Anda masuk lagi. Masuk lagi atau pilih metode lain.',
 	login_extError_default_title: 'Kesalahan autentikasi',
 	login_extError_default_message: 'Terjadi kesalahan saat autentikasi eksternal.'
 });

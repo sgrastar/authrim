@@ -1946,7 +1946,9 @@ export const externalIdpAPI = {
 		redirectUri?: string,
 		startUrl?: string,
 		startMode: 'oauth_redirect' | 'saml_sp' = 'oauth_redirect',
-		humanVerification?: { token?: string }
+		humanVerification?: { token?: string },
+		/** The /authorize challenge this sign-in answers (a re-authentication asks the IdP anew). */
+		authorizationChallengeId?: string
 	): Promise<{
 		url: string;
 	}> {
@@ -1955,6 +1957,9 @@ export const externalIdpAPI = {
 
 		if (humanVerification?.token) {
 			targetUrl.searchParams.set('human_verification_response', humanVerification.token);
+		}
+		if (authorizationChallengeId) {
+			targetUrl.searchParams.set('authorization_challenge_id', authorizationChallengeId);
 		}
 
 		if (startMode === 'saml_sp') {

@@ -27,6 +27,7 @@ import {
   resolveAccountDataContextByIdentifier,
   // Challenge Store for auth_code generation
   getChallengeStoreByChallengeId,
+  readExternalProviderReauthPolicy,
   // Event System
   publishEvent,
   AUTH_EVENTS,
@@ -198,6 +199,45 @@ async function generateAuthCode(
   return authCode;
 }
 
+/** Leeway between Authrim's clock and a provider's (OIDC Core's usual skew allowance). */
+const REAUTH_CLOCK_SKEW_SECONDS = 60;
+
+/**
+ * Whether the provider showed a new login made after Authrim asked it for one (prompt=login,
+ * max_age=0): the validated ID token's auth_time, or, where the tenant accepts that for this
+ * provider, the request alone. Returns when this was verified (Authrim's clock); throws otherwise.
+ */
+export async function provenUpstreamReauthentication(
+  env: Env,
+  input: {
+    tenantId: string;
+    provider: UpstreamProvider;
+    requestedAt: number;
+    idTokenValidated: boolean;
+    idTokenAuthTime?: number;
+  }
+): Promise<number> {
+  const notProven = (message: string) =>
+    new ExternalIdPError(ExternalIdPErrorCode.REAUTH_NOT_PROVEN, message);
+  if (!input.idTokenValidated) throw notProven('No validated ID token dates the new login');
+  const policy = await readExternalProviderReauthPolicy(
+    env,
+    input.tenantId,
+    [input.provider.id, input.provider.slug ?? ''].filter(Boolean)
+  ).catch(() => {
+    throw notProven('Re-authentication settings are unavailable');
+  });
+  if (!policy.reauthEnabled) throw notProven('This provider cannot be used to re-authenticate');
+  if (input.idTokenAuthTime !== undefined) {
+    if (input.idTokenAuthTime + REAUTH_CLOCK_SKEW_SECONDS < Math.floor(input.requestedAt / 1000)) {
+      throw notProven('The provider answered with a login made before it was asked for one');
+    }
+    return Date.now();
+  }
+  if (!policy.acceptWithoutAuthTime) throw notProven('The provider did not date the new login');
+  return Date.now();
+}
+
 async function completeExternalAuthentication(
   c: Context<{ Bindings: Env }>,
   input: {
@@ -207,6 +247,8 @@ async function completeExternalAuthentication(
     upstreamIdToken?: string;
     /** The acr of the upstream ID token, as validated (not from userinfo). */
     upstreamAcr?: string;
+    /** When a new login the provider was asked for was verified (milliseconds, Authrim's clock). */
+    reauthProvenAt?: number;
     result: HandleIdentityReadyResult;
   }
 ): Promise<Response> {
@@ -287,9 +329,12 @@ async function completeExternalAuthentication(
         upstream_id_token_encrypted: upstreamIdTokenEncrypted,
         // The upstream acr, for the AAL assurance takes the login for (upstream_acr_mappings).
         ...(input.upstreamAcr ? { upstream_acr: input.upstreamAcr } : {}),
-        // No proof time (proven_at): the IdP's auth_time is in its own clock, and nothing yet asks
-        // it for a new authentication, so this login is never taken as the result of a step-up
-        // or re-authentication. It can still be the session a step-up starts from.
+        // No proof time (proven_at): the IdP's auth_time is in its own clock, so this login is
+        // never taken as the result of a step-up. It completes a re-authentication only when the
+        // IdP was asked for a new login and showed one (reauth_proven_at, Authrim's clock).
+        ...(input.reauthProvenAt !== undefined
+          ? { reauth_proven_amr: ['external_idp'], reauth_proven_at: input.reauthProvenAt }
+          : {}),
       },
       tenantId
     );
@@ -356,6 +401,9 @@ async function completeExternalAuthentication(
     stitched_from_existing: result.stitchedFromExisting,
     // The session made from this code keeps the upstream acr, as the SSO path does.
     ...(input.upstreamAcr ? { upstream_acr: input.upstreamAcr } : {}),
+    ...(input.reauthProvenAt !== undefined
+      ? { reauth_proven_amr: ['external_idp'], reauth_proven_at: input.reauthProvenAt }
+      : {}),
   });
   const redirectUrl = new URL(authState.redirectUri);
   redirectUrl.searchParams.set('code', authCode);
@@ -975,7 +1023,8 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
           nonce: authState.nonce,
           code,
           requireCodeHash: true,
-          maxAge: authState.maxAge,
+          // A re-authentication dates its new login itself, from the token-endpoint ID token.
+          maxAge: authState.reauthRequestedAt === undefined ? authState.maxAge : undefined,
           acrValues: authState.acrValues,
         },
         diagnosticLogger ? { logger: diagnosticLogger, flowId, diagnosticSessionId } : undefined
@@ -1062,6 +1111,9 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
     // The acr of the validated ID token, kept apart from userinfo data merged in below.
     let upstreamAcr: string | undefined;
     let idTokenSub: string | undefined;
+    // The ID token's own auth_time (not userinfo's, merged in below), when one was validated.
+    let idTokenValidated = false;
+    let idTokenAuthTime: number | undefined;
     const diagnostics = diagnosticLogger
       ? {
           logger: diagnosticLogger,
@@ -1077,7 +1129,10 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
         {
           nonce: authState.nonce,
           accessToken: tokens.access_token, // For at_hash validation if present
-          maxAge: authState.maxAge, // For auth_time validation if max_age was requested
+          // For auth_time validation if max_age was requested. A re-authentication dates the new
+          // login itself below (against when it asked), so a provider without auth_time can be
+          // accepted where the tenant allows it.
+          maxAge: authState.reauthRequestedAt === undefined ? authState.maxAge : undefined,
           acrValues: authState.acrValues, // For acr validation if acr_values was requested
           requireExactAudience: fapi2Enabled,
           expectedSigningAlgorithms: fapi2IdTokenSigningAlgorithms,
@@ -1085,6 +1140,11 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
         diagnostics
       );
       idTokenSub = userInfo.sub;
+      idTokenValidated = true;
+      idTokenAuthTime =
+        typeof userInfo.auth_time === 'number' && Number.isFinite(userInfo.auth_time)
+          ? userInfo.auth_time
+          : undefined;
       // An acr longer than the continuation accepts is not kept (nor used for assurance).
       upstreamAcr =
         typeof userInfo.acr === 'string' && userInfo.acr && userInfo.acr.length <= 1024
@@ -1342,7 +1402,19 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
       return redirectToLinkResult(c, link.tenantId, { linked: true });
     }
 
-    // 7. Handle identity stitching or account creation
+    // 7. A re-authentication needs the provider to show a new login made after it asked.
+    const reauthProvenAt =
+      authState.reauthRequestedAt === undefined
+        ? undefined
+        : await provenUpstreamReauthentication(c.env, {
+            tenantId: authState.tenantId,
+            provider,
+            requestedAt: authState.reauthRequestedAt,
+            idTokenValidated,
+            idTokenAuthTime,
+          });
+
+    // 8. Handle identity stitching or account creation
     const result = await handleIdentity(c.env, {
       provider,
       userInfo,
@@ -1367,6 +1439,7 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
       userInfo,
       upstreamIdToken: tokens.id_token,
       upstreamAcr,
+      reauthProvenAt,
       result,
     });
   } catch (error) {

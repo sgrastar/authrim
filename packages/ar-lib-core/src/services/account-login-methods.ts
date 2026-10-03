@@ -80,6 +80,59 @@ export async function isAuthenticationMethodUsageAvailable(
   }
 }
 
+/** How a tenant lets one external provider (an OIDC/OAuth provider or a SAML IdP) re-authenticate. */
+export interface ExternalProviderReauthPolicy {
+  /** The provider's re-authentication switch (on unless the tenant turned it off). */
+  reauthEnabled: boolean;
+  /**
+   * Accept a new login the provider could not date (an ID token without auth_time) on the strength
+   * of having asked for one (prompt=login). Off unless the tenant turns it on: weaker evidence.
+   */
+  acceptWithoutAuthTime: boolean;
+}
+
+/**
+ * The re-authentication policy saved for an external provider in
+ * `authentication-methods.external_provider_usage`, matched by any of `keys` (its id, slug, or
+ * `saml:<id>`). A provider with no saved entry keeps the defaults the admin pages show. Read
+ * strictly: an unreadable setting throws rather than allowing a re-authentication.
+ */
+export async function readExternalProviderReauthPolicy(
+  env: Pick<Env, 'SETTINGS'>,
+  tenantId: string,
+  keys: readonly string[]
+): Promise<ExternalProviderReauthPolicy> {
+  const defaults: ExternalProviderReauthPolicy = {
+    reauthEnabled: true,
+    acceptWithoutAuthTime: false,
+  };
+  const raw = await env.SETTINGS?.get(
+    `settings:tenant:${tenantId}:${AUTHENTICATION_METHODS_CATEGORY}`
+  );
+  if (!raw) return defaults;
+  const settings = JSON.parse(raw) as Record<string, unknown>;
+  const usageValue = settings['authentication-methods.external_provider_usage'];
+  if (usageValue === undefined || usageValue === null || usageValue === '') return defaults;
+  const usage = typeof usageValue === 'string' ? (JSON.parse(usageValue) as unknown) : usageValue;
+  if (!Array.isArray(usage)) throw new Error('external_provider_usage_invalid');
+  const wanted = new Set(keys.filter((key) => key));
+  const entry = usage.find(
+    (item): item is Record<string, unknown> =>
+      Boolean(item) &&
+      typeof item === 'object' &&
+      ((typeof item.id === 'string' && wanted.has(item.id)) ||
+        (typeof item.providerId === 'string' && wanted.has(item.providerId)))
+  );
+  if (!entry) return defaults;
+  return {
+    reauthEnabled: normalizeBoolean(entry.reauthEnabled, defaults.reauthEnabled),
+    acceptWithoutAuthTime: normalizeBoolean(
+      entry.reauthAcceptWithoutAuthTime,
+      defaults.acceptWithoutAuthTime
+    ),
+  };
+}
+
 /** The sign-in method being removed, which does not count as remaining. */
 export type LoginMethodRemoval =
   | { kind: 'passkey'; id: string }

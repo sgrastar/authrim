@@ -2365,6 +2365,9 @@ describe('LoginUI runtime Flow handlers', () => {
     ['newer than', 1_700_000_122_000, null, 1_700_000_123_000],
     // A session that did not record when it was proven cannot show it came after the request.
     ['of unknown proof time, after', 1_700_000_100_000, 'auth:step', undefined],
+    // An external IdP login that was not asked to renew proves no re-authentication.
+    ['from an unrenewed external login', 1_700_000_100_000, 'auth:step', 'external'],
+    ['from a renewed external login', 1_700_000_100_000, null, 'external-renewed'],
     ['unreadable for', new Error('challenge store unavailable'), 'auth:step', undefined],
     // Within the same second, the session's proof time in milliseconds decides.
     ['proven just before', 1_700_000_123_500, 'auth:step', 1_700_000_123_400],
@@ -2401,9 +2404,12 @@ describe('LoginUI runtime Flow handlers', () => {
         expiresAt: Date.now() + 60_000,
         createdAt: 1_700_000_000_000,
         data: {
-          amr: ['passkey'],
+          amr: typeof provenAt === 'string' ? ['external_idp'] : ['passkey'],
           authTime: 1_700_000_123,
-          ...(provenAt === undefined ? {} : { proven_at: provenAt }),
+          ...(typeof provenAt === 'number' ? { proven_at: provenAt } : {}),
+          ...(provenAt === 'external-renewed'
+            ? { reauth_proven_amr: ['external_idp'], reauth_proven_at: 1_700_000_123_000 }
+            : {}),
         },
       });
 

@@ -912,11 +912,14 @@ describe('Authentication Methods API', () => {
         startMode: 'oauth_redirect',
         startUrl: '/api/external/google/start',
         iconName: 'globe',
+        reauthEnabled: true,
       });
       expect(body.methods.external.providers[1]).toMatchObject({
         id: 'github',
         type: 'oauth2',
         startMode: 'oauth_redirect',
+        // No ID token dates a new login, so it cannot answer a re-authentication.
+        reauthEnabled: false,
       });
     });
 

@@ -1078,6 +1078,29 @@ describe('LoginUI external IdP adapter boundary', () => {
 		expect(url.searchParams.has('code_challenge')).toBe(false);
 	});
 
+	it.each([
+		['oauth_redirect', undefined, '/api/external/corp/start'],
+		['saml_sp', '/saml/sp/login?idp=saml-idp-1', '/saml/sp/login']
+	] as const)(
+		'passes the authorization challenge a %s sign-in answers',
+		async (startMode, startUrl, pathname) => {
+			const { externalIdpAPI } = await loadClient();
+
+			const result = await externalIdpAPI.startLogin(
+				'corp',
+				'https://login.example.com/callback',
+				startUrl,
+				startMode,
+				undefined,
+				'reauth_challenge'
+			);
+			const url = new URL(result.url);
+
+			expect(url.pathname).toBe(pathname);
+			expect(url.searchParams.get('authorization_challenge_id')).toBe('reauth_challenge');
+		}
+	);
+
 	it('adds human verification responses only to Authrim-managed external start URLs', async () => {
 		const { externalIdpAPI } = await loadClient();
 

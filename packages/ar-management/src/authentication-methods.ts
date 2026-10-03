@@ -2111,9 +2111,14 @@ function applyExternalProviderUsage(
 ): ExternalLoginProvider[] {
   return providers
     .map((provider) => {
+      // A pure OAuth 2.0 provider returns no ID token to date a new login, so it cannot answer a
+      // re-authentication (the bridge refuses one), whatever the setting says.
+      const canReauthenticate = provider.type !== 'oauth2';
       const saved =
         usageById[provider.id] ?? (provider.slug ? usageById[provider.slug] : undefined);
-      if (!saved) return provider;
+      if (!saved) {
+        return canReauthenticate ? provider : { ...provider, reauthEnabled: false };
+      }
 
       const providerEnabled = provider.enabled !== false;
       const autoLinkEmail = provider.autoLinkEmail !== false;
@@ -2122,7 +2127,9 @@ function applyExternalProviderUsage(
       const signupEnabled =
         providerEnabled && normalizeBoolean(saved.signupEnabled, provider.signupEnabled);
       const reauthEnabled =
-        providerEnabled && normalizeBoolean(saved.reauthEnabled, provider.reauthEnabled);
+        providerEnabled &&
+        canReauthenticate &&
+        normalizeBoolean(saved.reauthEnabled, provider.reauthEnabled);
       const accountLinkEnabled =
         providerEnabled &&
         autoLinkEmail &&

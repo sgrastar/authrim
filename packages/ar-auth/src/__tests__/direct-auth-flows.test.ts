@@ -3462,6 +3462,14 @@ describe('Direct Auth primary passkey and email-code flows', () => {
     // An unknown proof time (0 records it as unknown) leaves only the method.
     expect(reauthProofFromRecord({ proven_at: 0 }, ['passkey'])).toEqual({ method: 'passkey' });
     expect(reauthProofFromRecord({ proven_at: 1_000 }, ['passkey_signup'])).toEqual({});
+    // An external IdP or SAML login only with a verified new upstream login, paired with its time.
+    expect(reauthProofFromRecord({ proven_at: 1_000 }, ['external_idp'])).toEqual({});
+    expect(reauthProofFromRecord({ reauth_proven_at: 3_000 }, ['saml'])).toEqual({});
+    expect(
+      reauthProofFromRecord({ reauth_proven_amr: ['external_idp'], reauth_proven_at: 3_000 }, [
+        'external_idp',
+      ])
+    ).toEqual({ method: 'other', provenAtMs: 3_000 });
   });
 
   it('reads the proving method from what the session recorded', async () => {

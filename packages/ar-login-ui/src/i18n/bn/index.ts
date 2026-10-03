@@ -466,6 +466,9 @@ const translation = {
 	login_extError_callbackFailed_title: 'প্রমাণীকরণ ব্যর্থ',
 	login_extError_callbackFailed_message:
 		'প্রমাণীকরণের সময় একটি ত্রুটি ঘটেছে। দয়া করে আবার চেষ্টা করুন।',
+	login_extError_reauthNotProven_title: 'সাইন-ইন নিশ্চিত হয়নি',
+	login_extError_reauthNotProven_message:
+		'আপনার সাইন-ইন প্রদানকারী নিশ্চিত করেনি যে আপনি আবার সাইন ইন করেছেন। আবার সাইন ইন করুন বা অন্য একটি পদ্ধতি বেছে নিন।',
 	login_extError_default_title: 'প্রমাণীকরণ ত্রুটি',
 	login_extError_default_message: 'বাহ্যিক প্রমাণীকরণের সময় একটি ত্রুটি ঘটেছে।',
 	login_signingInTo: 'যে অ্যাপ্লিকেশনে সাইন ইন করছেন:',

@@ -26,6 +26,8 @@ import {
   createAuthContextFromHono,
   getChallengeStoreByChallengeId,
   DIAGNOSTIC_FLOW_ID_HEADER,
+  readAuthorizationChallengeKind,
+  readExternalProviderReauthPolicy,
   verifyHumanVerificationWithRunner,
 } from '@authrim/ar-lib-core';
 import { getProviderByIdOrSlug } from '../services/provider-store';
@@ -186,8 +188,30 @@ export async function handleExternalStart(c: Context<{ Bindings: Env }>): Promis
       loginHint = undefined;
       acrValues = undefined;
     }
-    // Linking never answers silently or for a client.
-    const prompt = link ? undefined : c.req.query('prompt');
+    // A sign-in that answers an Authrim re-authentication must be a new login at the provider.
+    const authorizationChallengeId = link ? undefined : c.req.query('authorization_challenge_id');
+    let reauth: { challengeId: string; requestedAt: number } | null = null;
+    if (authorizationChallengeId) {
+      const challengeType = await readAuthorizationChallengeKind(
+        c.env,
+        tenantId,
+        authorizationChallengeId
+      );
+      if (!challengeType) {
+        return c.json(
+          {
+            error: 'invalid_request',
+            error_description: 'Authorization challenge is invalid or expired',
+          },
+          400
+        );
+      }
+      if (challengeType === 'reauth') {
+        reauth = { challengeId: authorizationChallengeId, requestedAt: Date.now() };
+      }
+    }
+    // Linking never answers silently or for a client; a re-authentication always asks again.
+    const prompt = link ? undefined : reauth ? 'login' : c.req.query('prompt');
 
     if (!link) {
       const turnstileError = await verifyExternalStartHumanVerification(c, tenantId);
@@ -195,9 +219,10 @@ export async function handleExternalStart(c: Context<{ Bindings: Env }>): Promis
     }
 
     // Parse max_age parameter (OIDC Core)
-    // A link asks the provider for nothing but the account (no max_age either).
-    const maxAge = !link && maxAgeParam ? parseInt(maxAgeParam, 10) : undefined;
-    if (!link && maxAgeParam && (isNaN(maxAge!) || maxAge! < 0)) {
+    // A link asks the provider for nothing but the account (no max_age either). A
+    // re-authentication asks for a login made now (max_age=0), which also makes auth_time required.
+    const maxAge = reauth ? 0 : !link && maxAgeParam ? parseInt(maxAgeParam, 10) : undefined;
+    if (!reauth && !link && maxAgeParam && (isNaN(maxAge!) || maxAge! < 0)) {
       return c.json(
         {
           error: 'invalid_request',
@@ -265,6 +290,41 @@ export async function handleExternalStart(c: Context<{ Bindings: Env }>): Promis
         },
         404
       );
+    }
+
+    // 2. Only a provider that can date a new login (an OIDC ID token's auth_time), and that the
+    // tenant lets re-authenticate, answers a re-authentication.
+    if (reauth) {
+      let reauthEnabled = false;
+      try {
+        reauthEnabled =
+          provider.providerType === 'oidc' &&
+          (
+            await readExternalProviderReauthPolicy(
+              c.env,
+              tenantIdResolved,
+              [provider.id, provider.slug ?? ''].filter(Boolean)
+            )
+          ).reauthEnabled;
+      } catch {
+        return c.json(
+          {
+            error: 'temporarily_unavailable',
+            error_description: 'Re-authentication settings are unavailable',
+          },
+          503,
+          { 'Retry-After': '1' }
+        );
+      }
+      if (!reauthEnabled) {
+        return c.json(
+          {
+            error: 'access_denied',
+            error_description: 'This provider cannot be used to re-authenticate',
+          },
+          403
+        );
+      }
     }
 
     // 2. A link is for the provider it was asked for.
@@ -352,6 +412,9 @@ export async function handleExternalStart(c: Context<{ Bindings: Env }>): Promis
       acrValues,
       prompt,
       enableSso: provider.enableSso !== false,
+      ...(reauth
+        ? { reauthChallengeId: reauth.challengeId, reauthRequestedAt: reauth.requestedAt }
+        : {}),
       expiresAt: getStateExpiresAt(),
     });
 
@@ -688,6 +751,8 @@ export async function handleExternalStart(c: Context<{ Bindings: Env }>): Promis
         code_challenge: externalIdpPKCE.codeChallenge,
         code_challenge_method: 'S256',
         ...(fapiConfig.jarm ? { response_mode: 'jwt' } : {}),
+        // A re-authentication asks for a new login here too.
+        ...(reauth ? { prompt: 'login', max_age: '0' } : {}),
       };
       const parParameters = fapiConfig.requestObjectSigning
         ? {

@@ -189,7 +189,11 @@
 		providerId: string,
 		key: keyof Pick<
 			AuthenticationMethodExternalProviderUsage,
-			'loginEnabled' | 'signupEnabled' | 'reauthEnabled' | 'accountLinkEnabled'
+			| 'loginEnabled'
+			| 'signupEnabled'
+			| 'reauthEnabled'
+			| 'reauthAcceptWithoutAuthTime'
+			| 'accountLinkEnabled'
 		>,
 		value: boolean
 	) {
@@ -491,14 +495,37 @@
 									updateExternalProviderUsage(provider.id, 'loginEnabled', checked)}
 							/>
 						</div>
-						<div class="method-cell">
+						<div class="method-cell reauth-cell">
 							<ToggleSwitch
 								checked={provider.reauthEnabled}
-								disabled={!canEdit || !provider.enabled}
+								disabled={!canEdit || !provider.enabled || provider.type === 'oauth2'}
 								size="sm"
 								onchange={(checked) =>
 									updateExternalProviderUsage(provider.id, 'reauthEnabled', checked)}
 							/>
+							{#if provider.type === 'oauth2'}
+								<span class="reauth-note">
+									{$LL.admin_authentication_methods_reauth_unavailable_oauth2()}
+								</span>
+							{:else if provider.type === 'oidc'}
+								<label
+									class="reauth-option"
+									title={$LL.admin_authentication_methods_reauth_without_auth_time_hint()}
+								>
+									<input
+										type="checkbox"
+										checked={provider.reauthAcceptWithoutAuthTime}
+										disabled={!canEdit || !provider.enabled || !provider.reauthEnabled}
+										onchange={(event) =>
+											updateExternalProviderUsage(
+												provider.id,
+												'reauthAcceptWithoutAuthTime',
+												event.currentTarget.checked
+											)}
+									/>
+									{$LL.admin_authentication_methods_reauth_without_auth_time()}
+								</label>
+							{/if}
 						</div>
 						<div class="method-cell">
 							<ToggleSwitch
@@ -654,6 +681,25 @@
 	.method-cell {
 		display: flex;
 		align-items: center;
+	}
+
+	.reauth-cell {
+		flex-direction: column;
+		align-items: flex-start;
+		gap: 6px;
+	}
+
+	.reauth-note,
+	.reauth-option {
+		color: var(--color-text-muted);
+		font-size: 0.75rem;
+		line-height: 1.4;
+	}
+
+	.reauth-option {
+		display: inline-flex;
+		align-items: center;
+		gap: 6px;
 	}
 
 	.method-options {

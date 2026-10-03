@@ -305,6 +305,9 @@ const zhTW = createTranslation({
 	login_extError_providerError_message: '外部提供者傳回錯誤。請稍後再試。',
 	login_extError_callbackFailed_title: '驗證失敗',
 	login_extError_callbackFailed_message: '驗證期間發生錯誤。請再試一次。',
+	login_extError_reauthNotProven_title: '無法確認登入',
+	login_extError_reauthNotProven_message:
+		'您的登入提供者未確認您已重新登入。請重新登入或選擇其他方式。',
 	login_extError_default_title: '驗證錯誤',
 	login_extError_default_message: '外部驗證期間發生錯誤。'
 });
