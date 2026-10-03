@@ -23,7 +23,12 @@
 	import AccountLauncherSection from '$lib/components/account/AccountLauncherSection.svelte';
 	import AccountProfileSection from '$lib/components/account/AccountProfileSection.svelte';
 	import AccountUpgradeSection from '$lib/components/account/AccountUpgradeSection.svelte';
-	import AccountSecuritySection from '$lib/components/account/AccountSecuritySection.svelte';
+	import AccountDevicesWidget from '$lib/components/account/widgets/AccountDevicesWidget.svelte';
+	import AccountPasskeysWidget from '$lib/components/account/widgets/AccountPasskeysWidget.svelte';
+	import AccountSessionsWidget from '$lib/components/account/widgets/AccountSessionsWidget.svelte';
+	import AccountSocialAccountsWidget from '$lib/components/account/widgets/AccountSocialAccountsWidget.svelte';
+	import AccountTotpWidget from '$lib/components/account/widgets/AccountTotpWidget.svelte';
+	import AccountWidgetPanel from '$lib/components/account/widgets/AccountWidgetPanel.svelte';
 	import ConfiguredFooter from '$lib/components/ConfiguredFooter.svelte';
 	import LanguageSwitcher from '$lib/components/LanguageSwitcher.svelte';
 	import {
@@ -198,21 +203,20 @@
 				(authenticationMethods.totp.accountLinkEnabled ?? false))
 		)
 	);
-	function initialLoadingAreas(areas: SecurityArea[]): SecurityArea[] {
-		return areas.filter((area) => {
-			switch (area) {
-				case 'devices':
-					return devicesLoading;
-				case 'sessions':
-					return sessionsLoading;
-				case 'passkeys':
-					return passkeysLoading || authenticationMethodsLoading;
-				case 'totp':
-					return totpLoading || authenticationMethodsLoading;
-				case 'social':
-					return authenticationMethodsLoading;
-			}
-		});
+	/** First load of one security area: its widget draws a skeleton instead of an empty list. */
+	function securityAreaLoading(area: SecurityArea): boolean {
+		switch (area) {
+			case 'devices':
+				return devicesLoading;
+			case 'sessions':
+				return sessionsLoading;
+			case 'passkeys':
+				return passkeysLoading || authenticationMethodsLoading;
+			case 'totp':
+				return totpLoading || authenticationMethodsLoading;
+			case 'social':
+				return authenticationMethodsLoading;
+		}
 	}
 
 	function setSecurityError(area: SecurityArea, message: string) {
@@ -1284,150 +1288,66 @@
 												title={accountWidgetTitle(field)}
 											/>
 										{:else if field.block_type === 'account_device_list_widget'}
-											<AccountSecuritySection
+											<AccountDevicesWidget
 												{devices}
-												{sessions}
-												{passkeys}
-												{totpCredentials}
-												{totpBackupCodes}
-												{totpEnrollment}
-												areas={['devices']}
 												title={accountWidgetTitle(field)}
-												showSectionHeadings={false}
-												loading={securityAreasRefreshing(['devices'])}
-												loadingAreas={initialLoadingAreas(['devices'])}
-												{actionLoading}
+												loading={securityAreaLoading('devices')}
+												refreshing={securityAreasRefreshing(['devices'])}
 												error={securityErrorFor(['devices'])}
 												{reauthNeeded}
-												{passkeySupported}
-												{totpManagementEnabled}
-												onRefresh={refreshSecurity}
-												onRevokeSession={revokeSession}
-												onAddPasskey={addPasskey}
-												onDeletePasskey={deletePasskey}
-												onStartTotpEnrollment={startTotpEnrollment}
-												onActivateTotpEnrollment={activateTotpEnrollment}
-												onDeleteTotpCredential={deleteTotpCredential}
-												onRegenerateTotpBackupCodes={regenerateTotpBackupCodes}
-												onClearTotpEnrollment={() => (totpEnrollment = null)}
-												onReauth={() => requestReauth()}
+												onRefresh={() => refreshSecurity(['devices'])}
+												onReauthenticate={() => requestReauth()}
 											/>
 										{:else if field.block_type === 'account_session_widget'}
-											<AccountSecuritySection
-												{devices}
+											<AccountSessionsWidget
 												{sessions}
-												{passkeys}
-												{totpCredentials}
-												{totpBackupCodes}
-												{totpEnrollment}
-												areas={['sessions']}
 												title={accountWidgetTitle(field)}
-												showSectionHeadings={false}
-												loading={securityAreasRefreshing(['sessions'])}
-												loadingAreas={initialLoadingAreas(['sessions'])}
+												loading={securityAreaLoading('sessions')}
+												refreshing={securityAreasRefreshing(['sessions'])}
 												{actionLoading}
 												error={securityErrorFor(['sessions'])}
 												{reauthNeeded}
-												{passkeySupported}
-												{totpManagementEnabled}
-												onRefresh={refreshSecurity}
+												onRefresh={() => refreshSecurity(['sessions'])}
+												onReauthenticate={() => requestReauth()}
 												onRevokeSession={revokeSession}
-												onAddPasskey={addPasskey}
-												onDeletePasskey={deletePasskey}
-												onStartTotpEnrollment={startTotpEnrollment}
-												onActivateTotpEnrollment={activateTotpEnrollment}
-												onDeleteTotpCredential={deleteTotpCredential}
-												onRegenerateTotpBackupCodes={regenerateTotpBackupCodes}
-												onClearTotpEnrollment={() => (totpEnrollment = null)}
-												onReauth={() => requestReauth()}
 											/>
 										{:else if field.block_type === 'account_passkey_widget'}
-											<AccountSecuritySection
-												{devices}
-												{sessions}
+											<AccountPasskeysWidget
 												{passkeys}
-												{totpCredentials}
-												{totpBackupCodes}
-												{totpEnrollment}
-												areas={['passkeys']}
+												{passkeySupported}
 												title={accountWidgetTitle(field)}
-												showSectionHeadings={false}
-												loading={securityAreasRefreshing(['passkeys'])}
-												loadingAreas={initialLoadingAreas(['passkeys'])}
+												loading={securityAreaLoading('passkeys')}
+												refreshing={securityAreasRefreshing(['passkeys'])}
 												{actionLoading}
 												error={securityErrorFor(['passkeys'])}
 												{reauthNeeded}
-												{passkeySupported}
-												{totpManagementEnabled}
-												onRefresh={refreshSecurity}
-												onRevokeSession={revokeSession}
+												onRefresh={() => refreshSecurity(['passkeys'])}
+												onReauthenticate={() => requestReauth()}
 												onAddPasskey={addPasskey}
 												onDeletePasskey={deletePasskey}
-												onStartTotpEnrollment={startTotpEnrollment}
-												onActivateTotpEnrollment={activateTotpEnrollment}
-												onDeleteTotpCredential={deleteTotpCredential}
-												onRegenerateTotpBackupCodes={regenerateTotpBackupCodes}
-												onClearTotpEnrollment={() => (totpEnrollment = null)}
-												onReauth={() => requestReauth()}
 											/>
 										{:else if field.block_type === 'account_totp_widget'}
-											<AccountSecuritySection
-												{devices}
-												{sessions}
-												{passkeys}
-												{totpCredentials}
-												{totpBackupCodes}
-												{totpEnrollment}
-												areas={['totp']}
+											<AccountTotpWidget
+												credentials={totpCredentials}
+												backupCodes={totpBackupCodes}
+												enrollment={totpEnrollment}
+												managementEnabled={totpManagementEnabled}
 												title={accountWidgetTitle(field)}
-												showSectionHeadings={false}
-												loading={securityAreasRefreshing(['totp'])}
-												loadingAreas={initialLoadingAreas(['totp'])}
+												loading={securityAreaLoading('totp')}
+												refreshing={securityAreasRefreshing(['totp'])}
 												{actionLoading}
 												error={securityErrorFor(['totp'])}
 												{reauthNeeded}
-												{passkeySupported}
-												{totpManagementEnabled}
-												onRefresh={refreshSecurity}
-												onRevokeSession={revokeSession}
-												onAddPasskey={addPasskey}
-												onDeletePasskey={deletePasskey}
-												onStartTotpEnrollment={startTotpEnrollment}
-												onActivateTotpEnrollment={activateTotpEnrollment}
-												onDeleteTotpCredential={deleteTotpCredential}
-												onRegenerateTotpBackupCodes={regenerateTotpBackupCodes}
-												onClearTotpEnrollment={() => (totpEnrollment = null)}
-												onReauth={() => requestReauth()}
+												onRefresh={() => refreshSecurity(['totp'])}
+												onReauthenticate={() => requestReauth()}
+												onStartEnrollment={startTotpEnrollment}
+												onActivateEnrollment={activateTotpEnrollment}
+												onDeleteCredential={deleteTotpCredential}
+												onRegenerateBackupCodes={regenerateTotpBackupCodes}
+												onClearEnrollment={() => (totpEnrollment = null)}
 											/>
 										{:else if field.block_type === 'account_social_account_widget'}
-											<AccountSecuritySection
-												{devices}
-												{sessions}
-												{passkeys}
-												{totpCredentials}
-												{totpBackupCodes}
-												{totpEnrollment}
-												areas={['social']}
-												title={accountWidgetTitle(field)}
-												showSectionHeadings={false}
-												loading={securityAreasRefreshing(['social'])}
-												loadingAreas={initialLoadingAreas(['social'])}
-												{actionLoading}
-												error={securityErrorFor(['social'])}
-												{reauthNeeded}
-												{passkeySupported}
-												{totpManagementEnabled}
-												onRefresh={refreshSecurity}
-												onRevokeSession={revokeSession}
-												onAddPasskey={addPasskey}
-												onDeletePasskey={deletePasskey}
-												onStartTotpEnrollment={startTotpEnrollment}
-												onActivateTotpEnrollment={activateTotpEnrollment}
-												onDeleteTotpCredential={deleteTotpCredential}
-												onRegenerateTotpBackupCodes={regenerateTotpBackupCodes}
-												onClearTotpEnrollment={() => (totpEnrollment = null)}
-												onReauth={() => requestReauth()}
-											/>
+											<AccountSocialAccountsWidget title={accountWidgetTitle(field)} />
 										{:else if field.block_type === 'account_launcher_widget'}
 											<AccountLauncherSection title={accountWidgetTitle(field)} />
 										{/if}
@@ -1452,31 +1372,52 @@
 					onCompleteEmailChange={completeEmailChange}
 					onCancelEmailChange={cancelEmailChange}
 				/>
-				<AccountSecuritySection
-					{devices}
-					{sessions}
-					{passkeys}
-					{totpCredentials}
-					{totpBackupCodes}
-					{totpEnrollment}
-					loading={securityAreasRefreshing(ALL_SECURITY_AREAS)}
-					loadingAreas={initialLoadingAreas(['devices', 'sessions', 'passkeys', 'totp', 'social'])}
-					{actionLoading}
+				<AccountWidgetPanel
+					title={$LL.account_securityTitle()}
+					busy={ALL_SECURITY_AREAS.some(securityAreaLoading)}
+					refreshing={securityAreasRefreshing(ALL_SECURITY_AREAS)}
 					error={securityErrorFor(ALL_SECURITY_AREAS)}
 					{reauthNeeded}
-					{passkeySupported}
-					{totpManagementEnabled}
-					onRefresh={refreshSecurity}
-					onRevokeSession={revokeSession}
-					onAddPasskey={addPasskey}
-					onDeletePasskey={deletePasskey}
-					onStartTotpEnrollment={startTotpEnrollment}
-					onActivateTotpEnrollment={activateTotpEnrollment}
-					onDeleteTotpCredential={deleteTotpCredential}
-					onRegenerateTotpBackupCodes={regenerateTotpBackupCodes}
-					onClearTotpEnrollment={() => (totpEnrollment = null)}
-					onReauth={() => requestReauth()}
-				/>
+					onRefresh={() => refreshSecurity([...ALL_SECURITY_AREAS])}
+					onReauthenticate={() => requestReauth()}
+				>
+					<AccountDevicesWidget
+						headingLevel={3}
+						{devices}
+						loading={securityAreaLoading('devices')}
+					/>
+					<AccountSessionsWidget
+						headingLevel={3}
+						{sessions}
+						loading={securityAreaLoading('sessions')}
+						{actionLoading}
+						onRevokeSession={revokeSession}
+					/>
+					<AccountPasskeysWidget
+						headingLevel={3}
+						{passkeys}
+						{passkeySupported}
+						loading={securityAreaLoading('passkeys')}
+						{actionLoading}
+						onAddPasskey={addPasskey}
+						onDeletePasskey={deletePasskey}
+					/>
+					<AccountTotpWidget
+						headingLevel={3}
+						credentials={totpCredentials}
+						backupCodes={totpBackupCodes}
+						enrollment={totpEnrollment}
+						managementEnabled={totpManagementEnabled}
+						loading={securityAreaLoading('totp')}
+						{actionLoading}
+						onStartEnrollment={startTotpEnrollment}
+						onActivateEnrollment={activateTotpEnrollment}
+						onDeleteCredential={deleteTotpCredential}
+						onRegenerateBackupCodes={regenerateTotpBackupCodes}
+						onClearEnrollment={() => (totpEnrollment = null)}
+					/>
+					<AccountSocialAccountsWidget headingLevel={3} />
+				</AccountWidgetPanel>
 				<AccountConsentSection {consents} loading={consentsLoading} error={consentError} />
 				<AccountActivitySection {operations} loading={operationsLoading} />
 			{/if}

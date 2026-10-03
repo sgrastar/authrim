@@ -58,7 +58,8 @@ describe('Account Page published composition', () => {
 	it('renders the account shell immediately and resolves account sections independently', () => {
 		expect(source).not.toContain('<Spinner size="lg" />');
 		expect(source).toContain('loading={profileLoading}');
-		expect(source).toContain("loadingAreas={initialLoadingAreas(['devices'])}");
+		expect(source).toContain("loading={securityAreaLoading('devices')}");
+		expect(source).toContain("loading={securityAreaLoading('sessions')}");
 		expect(source).toContain('loading={consentsLoading}');
 		expect(source).toContain('loading={operationsLoading}');
 		expect(source).not.toContain('loading={profileLoading || consentsLoading}');
@@ -78,7 +79,8 @@ describe('Account Page published composition', () => {
 		expect(source).toContain(
 			"requestedAreas.includes('passkeys') ? accountAPI.getPasskeys() : null"
 		);
-		expect(source).toContain("loading={securityAreasRefreshing(['passkeys'])}");
+		expect(source).toContain("refreshing={securityAreasRefreshing(['passkeys'])}");
+		expect(source).toContain("onRefresh={() => refreshSecurity(['passkeys'])}");
 		expect(source).not.toContain('loading={securityLoading}');
 	});
 
