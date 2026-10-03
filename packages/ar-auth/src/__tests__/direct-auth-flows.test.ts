@@ -2204,12 +2204,68 @@ describe('Direct Auth primary passkey and email-code flows', () => {
         }),
       })
     );
-    // No code yet: only the record that this send passed human verification, for its resumption.
-    expect(mocks.challengeStore.storeChallengeRpc).toHaveBeenCalledTimes(1);
-    expect(mocks.challengeStore.storeChallengeRpc).toHaveBeenCalledWith(
-      expect.objectContaining({ type: 'direct_email_send_verified', ttl: 300 })
-    );
+    // No code yet, and no token was spent, so nothing to stand in for on resumption either.
+    expect(mocks.challengeStore.storeChallengeRpc).not.toHaveBeenCalled();
     expect(mocks.emailNotifier.send).not.toHaveBeenCalled();
+  });
+
+  it('keeps a record of a spent token only for the same send, resumed', async () => {
+    const pending = () => ({
+      status: 'pending' as const,
+      response: Response.json({ status: 'provisioning' }, { status: 202 }),
+    });
+    const send = async (extra: Record<string, unknown>) => {
+      const context = enableEmailOtp(
+        createContext(
+          {
+            client_id: 'web-client',
+            email: 'new@example.com',
+            code_challenge: 'email-pkce-challenge',
+            code_challenge_method: 'S256',
+            channel: 'browser',
+            human_verification_response: 'human-token',
+            ...extra,
+          },
+          { ...webHeaders(), 'X-Authrim-Human-Verification-Action': 'signup' }
+        )
+      );
+      context.get = vi.fn((key: string) => {
+        if (key === 'tenantId') return 'tenant_test';
+        if (key === 'tenantMetadataContext') {
+          return { tenantId: 'tenant_test', storageProfileId: 'builtin:storage:tenant-d1' };
+        }
+        return undefined;
+      }) as never;
+      const { directEmailCodeSendHandler } = await import('../direct-auth');
+      return directEmailCodeSendHandler(context as never);
+    };
+    mocks.resolveOtpAccountCoreDataContextByIdentifierFromHono.mockRejectedValue(
+      new Error('account_data_route_not_found')
+    );
+    mocks.provisionTenantD1EmailAccount.mockResolvedValueOnce(pending());
+    mocks.challengeStore.getChallengeRpc.mockResolvedValue({
+      tenantId: 'tenant_test',
+      type: 'login',
+      challenge: 'login_challenge',
+    });
+
+    expect((await send({})).status).toBe(202);
+    const recorded = mocks.challengeStore.storeChallengeRpc.mock.calls.find(
+      ([request]) => request?.type === 'direct_email_send_verified'
+    )?.[0] as { id: string; ttl: number };
+    expect(recorded).toMatchObject({ ttl: 300 });
+
+    // The same address and PKCE for another challenge is another send: its failed check stands.
+    mocks.verifyHumanVerificationForAction.mockResolvedValueOnce(
+      new Response(JSON.stringify({ error: 'invalid_request' }), { status: 400 })
+    );
+    mocks.provisionTenantD1EmailAccount.mockResolvedValueOnce(pending());
+    await send({ authorization_challenge_id: 'login_challenge' });
+    const consumed = mocks.challengeStore.consumeChallengeRpc.mock.calls
+      .map(([request]) => request as { type?: string; id?: string })
+      .filter((request) => request.type === 'direct_email_send_verified');
+    expect(consumed).toHaveLength(1);
+    expect(consumed[0].id).not.toBe(recorded.id);
   });
 
   it('resumes a send after provisioning without its spent human verification token', async () => {

@@ -815,14 +815,30 @@ export async function readAuthorizationChallengeReauthIssuedAt(
 /** How long a send that passed human verification may be resumed after provisioning. */
 const DIRECT_EMAIL_SEND_VERIFIED_TTL_SECONDS = 5 * 60;
 
-async function directEmailSendVerifiedKey(
-  tenantId: string,
-  email: string,
-  codeChallenge: string
-): Promise<string> {
+/**
+ * The send a verified-send record stands for: the same address and PKCE, from the same client and
+ * screen, for the same authorization challenge (or none). Only that send, resumed, may use it.
+ */
+async function directEmailSendVerifiedKey(input: {
+  tenantId: string;
+  email: string;
+  codeChallenge: string;
+  clientId: string;
+  screen: HumanVerificationAction;
+  authorizationChallengeId?: string;
+}): Promise<string> {
   const digest = await crypto.subtle.digest(
     'SHA-256',
-    new TextEncoder().encode(`${tenantId}\n${email}\n${codeChallenge}`)
+    new TextEncoder().encode(
+      JSON.stringify([
+        input.tenantId,
+        input.email,
+        input.codeChallenge,
+        input.clientId,
+        input.screen,
+        input.authorizationChallengeId ?? null,
+      ])
+    )
   );
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
 }
@@ -2889,11 +2905,16 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
     );
     // A send resumed after its account was provisioned already passed human verification (its
     // single-use token is spent): the record of that, kept for the same address and PKCE, stands in.
-    const verifiedSendKey = await directEmailSendVerifiedKey(
+    const verifiedSendKey = await directEmailSendVerifiedKey({
       tenantId,
-      normalizedEmail,
-      code_challenge
-    );
+      email: normalizedEmail,
+      codeChallenge: code_challenge,
+      clientId: client_id,
+      screen: turnstileAction,
+      ...(authorization_challenge_id
+        ? { authorizationChallengeId: authorization_challenge_id }
+        : {}),
+    });
     if (
       turnstileError &&
       (await consumeDirectEmailSendVerified(c.env, tenantId, verifiedSendKey))
@@ -2974,7 +2995,10 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
             runtimeUser,
           });
           if (provisioned.status === 'pending') {
-            await recordDirectEmailSendVerified(c.env, tenantId, verifiedSendKey);
+            // Only a token that was presented (and so spent) needs standing in for on resumption.
+            if (human_verification_response ?? cf_turnstile_response) {
+              await recordDirectEmailSendVerified(c.env, tenantId, verifiedSendKey);
+            }
             return provisioned.response;
           }
           user = {
