@@ -10,6 +10,10 @@
 
 import type { Env } from '../types/env';
 import type { DatabaseAdapter } from '../db/adapter';
+import type {
+  ConsumeChallengeRequest,
+  StoreChallengeRequest,
+} from '../durable-objects/ChallengeStore';
 import { CanonicalRuntimeUserStore } from '../repositories/identity/canonical-runtime-user-store';
 import { getChallengeStoreByChallengeId } from '../utils/challenge-sharding';
 import { resolveAuthCorePersistenceAdapterFromEnv } from './auth-core-persistence-context';
@@ -120,10 +124,10 @@ export async function hasRemainingLoginMethod(
   if (totpLogin || emailLogin) {
     const users = new CanonicalRuntimeUserStore({ coreAdapter, piiAdapter, tenantId });
     const user = await users.findById(userId);
+    const email = user?.email ?? null;
     const reachable =
-      Boolean(user?.email) &&
-      (await routeReachesAccount(env, tenantId, userId, 'email_exact', user!.email!));
-    if (reachable && emailLogin && user!.email_verified === 1) return true;
+      email !== null && (await routeReachesAccount(env, tenantId, userId, 'email_exact', email));
+    if (reachable && emailLogin && user?.email_verified === 1) return true;
     if (reachable && totpLogin) {
       const skip = excluded(removing, 'totp');
       const row = await coreAdapter.queryOne<{ count: number }>(
@@ -199,6 +203,12 @@ export class LoginMethodRemovalInProgressError extends Error {
   }
 }
 
+/** The challenge store calls the lease makes (the sharded stub is untyped). */
+interface LeaseStore {
+  claimChallengeRpc(request: StoreChallengeRequest): Promise<{ claimed: boolean }>;
+  consumeChallengeRpc(request: ConsumeChallengeRequest): Promise<unknown>;
+}
+
 /** Longest a removal may hold the account's lease (it is released as soon as it finishes). */
 const LOGIN_METHOD_REMOVAL_LEASE_SECONDS = 60;
 
@@ -217,15 +227,15 @@ export async function withLoginMethodRemovalLock<T>(
 ): Promise<T> {
   const id = `login-method-removal:${userId}`;
   const owner = crypto.randomUUID();
-  const store = await getChallengeStoreByChallengeId(env, id, tenantId);
-  const { claimed } = (await store.claimChallengeRpc({
+  const store = (await getChallengeStoreByChallengeId(env, id, tenantId)) as LeaseStore;
+  const { claimed } = await store.claimChallengeRpc({
     id,
     tenantId,
     type: 'login_method_removal_lock',
     userId,
     challenge: owner,
     ttl: LOGIN_METHOD_REMOVAL_LEASE_SECONDS,
-  })) as { claimed: boolean };
+  });
   if (!claimed) throw new LoginMethodRemovalInProgressError();
   try {
     return await removal();
