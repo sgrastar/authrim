@@ -1507,11 +1507,18 @@ export async function directPasskeySignupStartHandler(c: Context<{ Bindings: Env
       ? await resolveDirectStartTurnstileAction(c, tenantId, authorization_challenge_id)
       : 'signup';
     if (typeof passkeySignupUsage !== 'string') return passkeySignupUsage.error;
+    // A sign-up whatever challenge it arrives with: a re-authentication cannot carry one, and a
+    // login challenge must not stand in for the sign-up switch.
+    if (passkeySignupUsage === 'reauth') {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
+        variables: { field: 'authorization_challenge_id' },
+      });
+    }
     const methodDisabledError = await rejectIfAuthenticationMethodDisabled(
       c,
       tenantId,
       'passkey',
-      passkeySignupUsage
+      'signup'
     );
     if (methodDisabledError) return methodDisabledError;
     const turnstileError = await verifyHumanVerificationForAction(
@@ -2107,6 +2114,16 @@ async function completeDirectEmailVerification(
     assuranceSettings,
   } = input;
   const log = getLogger(c).module('DIRECT-AUTH');
+  // What the code was sent for still holds: the method's switch for that usage, and a
+  // re-authentication proves only the user it was asked of.
+  const usage = metadata.usage;
+  if (usage === 'login' || usage === 'signup' || usage === 'reauth') {
+    const disabled = await rejectIfAuthenticationMethodDisabled(c, tenantId, 'email_otp', usage);
+    if (disabled) return disabled;
+  }
+  if (usage === 'reauth' && metadata.reauth_user_id !== userId) {
+    return createErrorResponse(c, AR_ERROR_CODES.AUTH_INVALID_CODE);
+  }
   const tenantD1 = usesRoutedAccountStorage(c);
   let runtimeUser: CanonicalOtpLoginUser | null;
   let coreAdapter: DatabaseAdapter;
@@ -2632,7 +2649,10 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
 
     let suppressEmailCodeSend = false;
 
-    let turnstileAction: HumanVerificationAction;
+    // The usage is what this code will do (sign up a new address, re-authenticate the user a
+    // re-authentication challenge names, or sign in), not merely the challenge's type: a login or
+    // re-authentication challenge must not carry a sign-up, nor someone else's re-authentication.
+    let challengeType: HumanVerificationAction | null = null;
     if (authorization_challenge_id) {
       const resolvedAction = await resolveDirectStartTurnstileAction(
         c,
@@ -2640,11 +2660,26 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
         authorization_challenge_id
       );
       if (typeof resolvedAction !== 'string') return resolvedAction.error;
-      turnstileAction = resolvedAction;
-    } else {
-      turnstileAction = user ? 'login' : 'signup';
+      challengeType = resolvedAction;
     }
-    const emailCodeUsage = turnstileAction;
+    const reauthUserId =
+      challengeType === 'reauth'
+        ? await readAuthorizationChallengeReauthUser(c.env, tenantId, authorization_challenge_id)
+        : null;
+    const emailCodeUsage: HumanVerificationAction = !user
+      ? 'signup'
+      : challengeType === 'reauth'
+        ? 'reauth'
+        : 'login';
+    const turnstileAction = emailCodeUsage;
+    if (challengeType === 'reauth' && (!user || !reauthUserId || user.id !== reauthUserId)) {
+      // Answered like any other send, so the address's owner is not revealed.
+      suppressEmailCodeSend = true;
+      log.info('Suppressing email-code send for another user than the re-authentication', {
+        action: 'direct_email_code_send_suppressed',
+        reason: 'reauth_user_mismatch',
+      });
+    }
     const emailOtpEnabled = await isAuthenticationMethodUsageEnabled(
       c.env,
       tenantId,
@@ -2772,6 +2807,9 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
       channel,
       scope,
       authorization_challenge_id,
+      // Checked again when the code is verified.
+      usage: emailCodeUsage,
+      ...(reauthUserId ? { reauth_user_id: reauthUserId } : {}),
       ...(boundRuntimeInteractionId ? { runtime_interaction_id: boundRuntimeInteractionId } : {}),
       ...(inviteData
         ? {
