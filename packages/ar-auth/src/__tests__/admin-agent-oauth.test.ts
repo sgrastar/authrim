@@ -653,6 +653,52 @@ describe('Admin Agent PAR', () => {
     }
   );
 
+  it.each([
+    ['HTTP://LOCALHOST:3118/callback', 302],
+    ['http://localhost:3118/callback', 400],
+  ])(
+    'compares a CIMD localhost callback with the registered one as written: %s',
+    async (redirectUri, status) => {
+      const clientId = 'https://client.example.com/oauth/client-metadata';
+      const metadata = {
+        client_id: clientId,
+        client_name: 'Upper-case host',
+        redirect_uris: ['HTTP://LOCALHOST/callback'],
+        token_endpoint_auth_method: 'none',
+        grant_types: ['authorization_code', 'refresh_token'],
+        response_types: ['code'],
+        scope: 'agent:read',
+      };
+      mocks.safeFetchJson.mockResolvedValue(metadata);
+      const metadataHash = await sha256Base64Url(
+        canonicalizeJson({ ...metadata, dpop_bound_access_tokens: false } as never)
+      );
+      mocks.getClientCached.mockResolvedValue({
+        client_id: clientId,
+        redirect_uris: metadata.redirect_uris,
+        token_endpoint_auth_method: 'none',
+        requestable_scopes: ['agent:read'],
+        agent_access_registration_mode: 'cimd',
+        agent_access_expires_at: Date.now() + 60_000,
+        client_metadata_hash: metadataHash,
+      });
+      const { app, env } = createApp({
+        ENABLE_AGENT_MCP: 'true',
+        PAR_REQUEST_STORE: {} as never,
+      });
+      const parameters = body({ client_id: clientId, redirect_uri: redirectUri });
+
+      const response = await app.fetch(
+        new Request(
+          `https://tenant.example.com/oauth/admin-agent/authorize?${parameters.toString()}`
+        ),
+        env
+      );
+
+      expect(response.status).toBe(status);
+    }
+  );
+
   it('does not apply the CIMD localhost exception to a pre-registered client', async () => {
     mocks.getClientCached.mockResolvedValue({
       client_id: 'mcp-client',

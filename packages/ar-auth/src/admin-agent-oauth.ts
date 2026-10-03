@@ -86,12 +86,12 @@ interface ClientIdMetadataDocument {
  * no case, encoding or dot-segment variant of the rest is accepted.
  */
 function isCimdPortlessLocalhostRedirectMatch(providedUri: string, registeredUri: string): boolean {
-  const origin = 'http://localhost';
+  // The registered authority as written (its case included), then the rest of the URI.
+  const origin = registeredUri.slice(0, 'http://localhost'.length);
   const rest = registeredUri.slice(origin.length);
-  if (!registeredUri.startsWith(origin) || !/^(?:[/?]|$)/u.test(rest) || rest.includes('#')) {
-    return false;
-  }
-  const portMatch = /^http:\/\/localhost:([1-9][0-9]{0,4})(?=[/?]|$)/u.exec(providedUri);
+  if (origin.toLowerCase() !== 'http://localhost' || !/^(?:[/?]|$)/u.test(rest)) return false;
+  if (rest.includes('#') || !providedUri.startsWith(`${origin}:`)) return false;
+  const portMatch = /^([1-9][0-9]{0,4})(?=[/?]|$)/u.exec(providedUri.slice(origin.length + 1));
   if (!portMatch || Number(portMatch[1]) > 65_535) return false;
   return providedUri === `${origin}:${portMatch[1]}${rest}`;
 }
