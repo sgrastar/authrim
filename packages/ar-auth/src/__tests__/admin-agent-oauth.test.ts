@@ -591,57 +591,67 @@ describe('Admin Agent PAR', () => {
   it.each([
     'http://localhost:3118/different-callback',
     'http://localhost:3118/callback?unexpected=true',
-  ])('rejects a CIMD localhost callback when path or query changes: %s', async (redirectUri) => {
-    const clientId = 'https://claude.ai/oauth/claude-code-client-metadata';
-    mocks.safeFetchJson.mockResolvedValue({
-      client_id: clientId,
-      client_name: 'Claude Code',
-      redirect_uris: ['http://localhost/callback'],
-      token_endpoint_auth_method: 'none',
-      grant_types: ['authorization_code', 'refresh_token'],
-      response_types: ['code'],
-      scope: 'agent:read',
-    });
-    const normalizedMetadata = {
-      client_id: clientId,
-      client_name: 'Claude Code',
-      redirect_uris: ['http://localhost/callback'],
-      token_endpoint_auth_method: 'none',
-      grant_types: ['authorization_code', 'refresh_token'],
-      response_types: ['code'],
-      scope: 'agent:read',
-      dpop_bound_access_tokens: false,
-    };
-    const metadataHash = await sha256Base64Url(canonicalizeJson(normalizedMetadata as never));
-    mocks.getClientCached.mockResolvedValue({
-      client_id: clientId,
-      redirect_uris: ['http://localhost/callback'],
-      token_endpoint_auth_method: 'none',
-      requestable_scopes: ['agent:read'],
-      agent_access_registration_mode: 'cimd',
-      agent_access_expires_at: Date.now() + 60_000,
-      client_metadata_hash: metadataHash,
-    });
-    const { app, env } = createApp({
-      ENABLE_AGENT_MCP: 'true',
-      PAR_REQUEST_STORE: {} as never,
-    });
-    const parameters = body({ client_id: clientId, redirect_uri: redirectUri });
+    'HTTP://LOCALHOST:3118/callback',
+    'http://localhost:3118/a/../callback',
+    'http://localhost:3118/%63allback',
+    'http://localhost:3118/callback#fragment',
+    'http://localhost:03118/callback',
+    'http://localhost:65536/callback',
+    'http://user@localhost:3118/callback',
+  ])(
+    'rejects a CIMD localhost callback that differs from the registered one other than by its port: %s',
+    async (redirectUri) => {
+      const clientId = 'https://claude.ai/oauth/claude-code-client-metadata';
+      mocks.safeFetchJson.mockResolvedValue({
+        client_id: clientId,
+        client_name: 'Claude Code',
+        redirect_uris: ['http://localhost/callback'],
+        token_endpoint_auth_method: 'none',
+        grant_types: ['authorization_code', 'refresh_token'],
+        response_types: ['code'],
+        scope: 'agent:read',
+      });
+      const normalizedMetadata = {
+        client_id: clientId,
+        client_name: 'Claude Code',
+        redirect_uris: ['http://localhost/callback'],
+        token_endpoint_auth_method: 'none',
+        grant_types: ['authorization_code', 'refresh_token'],
+        response_types: ['code'],
+        scope: 'agent:read',
+        dpop_bound_access_tokens: false,
+      };
+      const metadataHash = await sha256Base64Url(canonicalizeJson(normalizedMetadata as never));
+      mocks.getClientCached.mockResolvedValue({
+        client_id: clientId,
+        redirect_uris: ['http://localhost/callback'],
+        token_endpoint_auth_method: 'none',
+        requestable_scopes: ['agent:read'],
+        agent_access_registration_mode: 'cimd',
+        agent_access_expires_at: Date.now() + 60_000,
+        client_metadata_hash: metadataHash,
+      });
+      const { app, env } = createApp({
+        ENABLE_AGENT_MCP: 'true',
+        PAR_REQUEST_STORE: {} as never,
+      });
+      const parameters = body({ client_id: clientId, redirect_uri: redirectUri });
 
-    const response = await app.fetch(
-      new Request(
-        `https://tenant.example.com/oauth/admin-agent/authorize?${parameters.toString()}`
-      ),
-      env
-    );
+      const response = await app.fetch(
+        new Request(
+          `https://tenant.example.com/oauth/admin-agent/authorize?${parameters.toString()}`
+        ),
+        env
+      );
 
-    expect(response.status).toBe(400);
-    expect(await response.json()).toMatchObject({
-      error: 'invalid_request',
-      error_description: 'redirect_uri is not registered for this client',
-    });
-    expect(mocks.storeRequestRpc).not.toHaveBeenCalled();
-  });
+      expect(response.status).toBe(400);
+      expect(await response.json()).toMatchObject({
+        error: 'invalid_request',
+        error_description: 'redirect_uri is not registered for this client',
+      });
+      expect(mocks.storeRequestRpc).not.toHaveBeenCalled();
+    }
+  );
 
   it('does not apply the CIMD localhost exception to a pre-registered client', async () => {
     mocks.getClientCached.mockResolvedValue({

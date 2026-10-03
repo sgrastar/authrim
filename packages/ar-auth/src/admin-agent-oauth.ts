@@ -81,39 +81,19 @@ interface ClientIdMetadataDocument {
  * Claude Code and some other native MCP hosts publish a portless localhost callback in their
  * Client ID Metadata Document, then bind an ephemeral localhost port for each login. Keep this
  * compatibility rule scoped to CIMD clients: ordinary pre-registered/DCR clients continue to use
- * the shared exact/RFC 8252 IP-literal comparison.
+ * the shared exact/RFC 8252 IP-literal comparison. The comparison is textual, like the exact
+ * match: the request must be the registered URI with only `:<port>` inserted after the host, so
+ * no case, encoding or dot-segment variant of the rest is accepted.
  */
 function isCimdPortlessLocalhostRedirectMatch(providedUri: string, registeredUri: string): boolean {
-  const registeredAuthority = /^http:\/\/localhost(?:[/?]|$)/iu;
-  const providedAuthority = /^http:\/\/localhost:([0-9]{1,5})(?:[/?]|$)/iu;
-  const portMatch = providedAuthority.exec(providedUri);
-  if (!registeredAuthority.test(registeredUri) || !portMatch) return false;
-
-  const port = Number(portMatch[1]);
-  if (!Number.isInteger(port) || port < 1 || port > 65_535) return false;
-
-  try {
-    const provided = new URL(providedUri);
-    const registered = new URL(registeredUri);
-    return (
-      provided.protocol === 'http:' &&
-      registered.protocol === 'http:' &&
-      provided.hostname === 'localhost' &&
-      registered.hostname === 'localhost' &&
-      provided.port === String(port) &&
-      registered.port === '' &&
-      provided.username === '' &&
-      provided.password === '' &&
-      registered.username === '' &&
-      registered.password === '' &&
-      provided.hash === '' &&
-      registered.hash === '' &&
-      provided.pathname === registered.pathname &&
-      provided.search === registered.search
-    );
-  } catch {
+  const origin = 'http://localhost';
+  const rest = registeredUri.slice(origin.length);
+  if (!registeredUri.startsWith(origin) || !/^(?:[/?]|$)/u.test(rest) || rest.includes('#')) {
     return false;
   }
+  const portMatch = /^http:\/\/localhost:([1-9][0-9]{0,4})(?=[/?]|$)/u.exec(providedUri);
+  if (!portMatch || Number(portMatch[1]) > 65_535) return false;
+  return providedUri === `${origin}:${portMatch[1]}${rest}`;
 }
 
 function isAdminAgentRedirectUriRegistered(providedUri: string, client: ClientMetadata): boolean {
