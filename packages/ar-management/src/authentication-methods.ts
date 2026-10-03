@@ -1546,7 +1546,7 @@ async function fetchExternalLoginProviders(
         const id = truncateString(p.slug || p.id);
         return {
           id,
-          stableId: truncateString(p.id),
+          stableId: p.id,
           name: truncateString(p.name),
           type,
           startMode: 'oauth_redirect',
@@ -1594,7 +1594,7 @@ async function fetchSAMLLoginProviders(
       .filter((row) => row.id && row.name)
       .map((row) => ({
         id: `saml:${truncateString(row.id)}`,
-        stableId: truncateString(row.id),
+        stableId: row.id,
         name: truncateString(row.name),
         type: 'saml',
         startMode: 'saml_sp',
@@ -1667,7 +1667,7 @@ async function fetchConfiguredExternalLoginProviders(
         return {
           id: truncateString(provider.id),
           // A configured provider's id is the one its usage entry names.
-          stableId: truncateString(provider.id),
+          stableId: provider.id,
           name: truncateString(provider.name),
           type,
           startMode: normalizeExternalStartMode(provider.startMode, type),
