@@ -8,15 +8,23 @@ function source(path: string): string {
 
 describe('login and signup entry motion', () => {
 	it('enables the shared staggered reveal on both authentication forms', () => {
-		for (const page of ['routes/login/+page.svelte', 'routes/signup/+page.svelte']) {
+		for (const [page, view] of [
+			['routes/login/+page.svelte', 'lib/views/LoginView.svelte'],
+			['routes/signup/+page.svelte', 'lib/views/SignupView.svelte']
+		]) {
 			const pageSource = source(page);
+			const viewSource = source(view);
 
+			// The route owns the timer; the view draws the form and the provider stack it staggers.
 			expect(pageSource).toContain('entryMotion={entryMotionEnabled}');
-			expect(pageSource).toContain('class="auth-entry-form"');
-			expect(pageSource).toContain('class="auth-provider-stack space-y-3"');
 			expect(pageSource).toContain('if (initialAuthUiLoading) return;');
 			expect(pageSource).toContain('entryMotionEnabled = false;');
+			expect(viewSource).toContain('class="auth-entry-form"');
+			expect(viewSource).toContain('<ExternalProviderStack');
 		}
+		expect(source('lib/views/parts/ExternalProviderStack.svelte')).toContain(
+			'class="auth-provider-stack space-y-3"'
+		);
 	});
 
 	it('lets the shared shell carry the reveal class', () => {

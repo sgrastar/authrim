@@ -32,15 +32,24 @@ describe('UI URL sink guards', () => {
 	});
 
 	it('guards external provider image URLs before using them as img src values', () => {
-		const sources = [
+		const sinks = [
 			source('lib/components/AuthenticationMethodSelector.svelte'),
-			source('routes/login/+page.svelte'),
-			source('routes/signup/+page.svelte')
+			// Login and signup draw their provider buttons through the shared stack.
+			source('lib/views/parts/ExternalProviderStack.svelte')
 		];
 
-		for (const componentSource of sources) {
+		for (const componentSource of sinks) {
 			expect(componentSource).toContain('provider.iconUrl && isValidImageUrl(provider.iconUrl)');
 			expect(componentSource).toContain('src={provider.iconUrl}');
+		}
+		// The routes hand the views (and the runtime screen) only an icon URL that passed the check.
+		for (const page of ['routes/login/+page.svelte', 'routes/signup/+page.svelte']) {
+			const pageSource = source(page);
+
+			expect(pageSource).toContain(
+				'iconUrl: provider.iconUrl && isValidImageUrl(provider.iconUrl) ? provider.iconUrl : null'
+			);
+			expect(pageSource).not.toContain('src={provider.iconUrl}');
 		}
 	});
 });

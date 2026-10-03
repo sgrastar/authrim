@@ -11,7 +11,7 @@
 			docs: {
 				description: {
 					component:
-						'Whole pages rendered from the real route components that need no server data. Consent, device and re-authentication have their own sections (**Screens / Consent**, **Device code**, **Re-authentication**): their routes fetch and submit, and a view component draws what it is given. Login, signup, verify-email-code, ciba, callback, discover and the home page still fetch inside the route, so their parts are catalogued instead (see **Catalog**, **Runtime screen** and **Page shell**).'
+						'Whole pages rendered from the real route components that need no server data. Every page that fetches or submits has its own section under **Screens** (login, sign-up, consent, device code, re-authentication, CIBA, callback, email code, discover and home): its route fetches and submits, and a view component draws what it is given. The parts those views share are catalogued under **Catalog**, **Runtime screen** and **Page shell**.'
 				}
 			}
 		}

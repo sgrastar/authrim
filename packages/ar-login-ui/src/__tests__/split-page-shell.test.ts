@@ -258,12 +258,18 @@ describe('split page shell', () => {
 	});
 
 	it('announces email-code send progress on both login and signup', () => {
-		for (const pagePath of ['routes/login/+page.svelte', 'routes/signup/+page.svelte']) {
+		for (const [pagePath, viewPath] of [
+			['routes/login/+page.svelte', 'lib/views/LoginView.svelte'],
+			['routes/signup/+page.svelte', 'lib/views/SignupView.svelte']
+		]) {
 			const page = source(pagePath);
+			const view = source(viewPath);
 
 			expect(page).toContain('const emailCodeProgressMessage');
-			expect(page).toContain('{#if emailCodeProgressMessage}');
-			expect(page).toContain('role="status" aria-live="polite"');
+			expect(page).toContain('emailCodeProgress: emailCodeProgressMessage');
+			expect(view).toMatch(
+				/\{#if alerts\.emailCodeProgress\}\s*<div class="auth-progress mb-4" role="status" aria-live="polite">/
+			);
 		}
 	});
 });
