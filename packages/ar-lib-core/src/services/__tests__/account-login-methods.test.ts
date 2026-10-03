@@ -84,14 +84,19 @@ function setup(fixture: Fixture) {
       .filter((id) => (fixture.enabledProviders ?? []).includes(String(id)))
       .map((id) => ({ id }))
   );
-  const routes =
-    fixture.routes ??
-    Object.fromEntries((fixture.linked ?? []).map((row) => [`sub-${row.id}`, 'u1']));
-  mockResolveRoute.mockImplementation(async (_env, input: { identifier: { subject: string } }) => {
-    const owner = routes[input.identifier.subject];
-    if (!owner) throw new Error('account_data_route_not_found');
-    return { legacyUserId: owner };
-  });
+  const routes = fixture.routes ?? {
+    ...Object.fromEntries((fixture.linked ?? []).map((row) => [`sub-${row.id}`, 'u1'])),
+    ...(fixture.email?.email ? { [fixture.email.email]: 'u1' } : {}),
+  };
+  mockResolveRoute.mockImplementation(
+    async (_env, input: { identifier: string | { subject: string } }) => {
+      const key =
+        typeof input.identifier === 'string' ? input.identifier : input.identifier.subject;
+      const owner = routes[key];
+      if (!owner) throw new Error('account_data_route_not_found');
+      return { legacyUserId: owner };
+    }
+  );
   return (removing: LoginMethodRemoval) =>
     hasRemainingLoginMethod(env, {
       tenantId: 't1',
@@ -162,13 +167,42 @@ describe('hasRemainingLoginMethod', () => {
   });
 
   it('counts another active TOTP authenticator only while TOTP login is on', async () => {
-    await expect(setup({ totp: ['t1', 't2'] })({ kind: 'totp', id: 't1' })).resolves.toBe(false);
+    const email = { email: 'a@example.com', email_verified: 0 };
+    await expect(setup({ email, totp: ['t1', 't2'] })({ kind: 'totp', id: 't1' })).resolves.toBe(
+      false
+    );
     await expect(
       setup({
+        email,
         totp: ['t1', 't2'],
         methods: { 'authentication-methods.totp.login_enabled': true },
       })({ kind: 'totp', id: 't1' })
     ).resolves.toBe(true);
+  });
+
+  it('does not count TOTP or email sign-in that cannot find the account by its email', async () => {
+    const methods = {
+      'authentication-methods.totp.login_enabled': true,
+      'authentication-methods.email_otp.login_enabled': true,
+    };
+    // No email at all: TOTP sign-in has nothing to look the account up by.
+    await expect(
+      setup({ methods, email: { email: null, email_verified: 0 }, totp: ['t1'] })({
+        kind: 'passkey',
+        id: 'pk1',
+      })
+    ).resolves.toBe(false);
+    // The email's route is not published, or reaches another account.
+    for (const routes of [{}, { 'a@example.com': 'someone-else' }]) {
+      await expect(
+        setup({
+          methods,
+          email: { email: 'a@example.com', email_verified: 1 },
+          totp: ['t1'],
+          routes,
+        })({ kind: 'passkey', id: 'pk1' })
+      ).resolves.toBe(false);
+    }
   });
 
   it('counts another linked account only when its provider is enabled', async () => {

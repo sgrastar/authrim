@@ -2,9 +2,10 @@
  * The ways an account can still sign in, so self-service removal of one (a passkey, a TOTP
  * authenticator, a linked external account) never leaves the user locked out.
  *
- * A method counts only where the tenant lets it sign in: a passkey while passkey login is on, a
- * verified email while email-code login is on, a TOTP authenticator while TOTP login is on, and a
- * linked external account while its provider is enabled.
+ * A method counts only where the tenant lets it sign in and sign-in can find the account with it:
+ * a passkey while passkey login is on; a verified email while email-code login is on and a TOTP
+ * authenticator while TOTP login is on, both only when the account's email route reaches it; and a
+ * linked external account while its provider is enabled and its route reaches the account.
  */
 
 import type { Env } from '../types/env';
@@ -110,20 +111,28 @@ export async function hasRemainingLoginMethod(
     if ((row?.count ?? 0) > 0) return true;
   }
 
-  if (await isAuthenticationMethodUsageAvailable(env, tenantId, 'totp', 'login')) {
-    const skip = excluded(removing, 'totp');
-    const row = await coreAdapter.queryOne<{ count: number }>(
-      `SELECT COUNT(*) AS count FROM totp_credentials
-        WHERE tenant_id = ? AND user_id = ? AND status = 'active' AND id <> ?`,
-      [tenantId, userId, skip ?? '']
-    );
-    if ((row?.count ?? 0) > 0) return true;
-  }
-
-  if (await isAuthenticationMethodUsageAvailable(env, tenantId, 'email_otp', 'login')) {
+  // TOTP and email-code sign-in find the account by its email address (the directory's email
+  // route), so they count only when that route reaches this account.
+  const [totpLogin, emailLogin] = await Promise.all([
+    isAuthenticationMethodUsageAvailable(env, tenantId, 'totp', 'login'),
+    isAuthenticationMethodUsageAvailable(env, tenantId, 'email_otp', 'login'),
+  ]);
+  if (totpLogin || emailLogin) {
     const users = new CanonicalRuntimeUserStore({ coreAdapter, piiAdapter, tenantId });
     const user = await users.findById(userId);
-    if (user?.email && user.email_verified === 1) return true;
+    const reachable =
+      Boolean(user?.email) &&
+      (await routeReachesAccount(env, tenantId, userId, 'email_exact', user!.email!));
+    if (reachable && emailLogin && user!.email_verified === 1) return true;
+    if (reachable && totpLogin) {
+      const skip = excluded(removing, 'totp');
+      const row = await coreAdapter.queryOne<{ count: number }>(
+        `SELECT COUNT(*) AS count FROM totp_credentials
+          WHERE tenant_id = ? AND user_id = ? AND status = 'active' AND id <> ?`,
+        [tenantId, userId, skip ?? '']
+      );
+      if ((row?.count ?? 0) > 0) return true;
+    }
   }
 
   {
@@ -150,7 +159,10 @@ export async function hasRemainingLoginMethod(
         if (!enabledIds.has(row.provider_id)) continue;
         // Sign-in finds an external account through its directory route; a link whose route is not
         // (yet) published to this account cannot sign anyone in.
-        if (await externalRouteReachesAccount(env, tenantId, userId, row)) return true;
+        const subject = { issuer: row.provider_id, subject: row.provider_user_id };
+        if (await routeReachesAccount(env, tenantId, userId, 'external_subject', subject)) {
+          return true;
+        }
       }
     }
   }
@@ -158,17 +170,19 @@ export async function hasRemainingLoginMethod(
   return false;
 }
 
-async function externalRouteReachesAccount(
+/** Whether sign-in by this identifier (its directory route) reaches this account. */
+async function routeReachesAccount(
   env: Env,
   tenantId: string,
   userId: string,
-  link: { provider_id: string; provider_user_id: string }
+  indexKind: 'email_exact' | 'external_subject',
+  identifier: string | { issuer: string; subject: string }
 ): Promise<boolean> {
   try {
     const route = await resolveAccountDataContextByIdentifier(env, {
       tenantId,
-      indexKind: 'external_subject',
-      identifier: { issuer: link.provider_id, subject: link.provider_user_id },
+      indexKind,
+      identifier,
     });
     return route.legacyUserId === userId;
   } catch (error) {
