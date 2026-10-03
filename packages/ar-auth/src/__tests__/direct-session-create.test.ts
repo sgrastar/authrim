@@ -528,6 +528,7 @@ describe('managed Direct Auth browser session finish', () => {
           client_id: 'login-ui',
           channel: 'browser',
           method: 'passkey',
+          proven_at: Date.now(),
           authorization_challenge_id: 'reauth_challenge_123',
         },
       })
@@ -571,7 +572,8 @@ describe('managed Direct Auth browser session finish', () => {
   });
 
   it.each([
-    ['external_idp', 200],
+    // Neither says when it was proven, so neither can follow a re-authentication request.
+    ['external_idp', 403],
     ['passkey_signup', 403],
   ])(
     're-authenticates from a %s artifact only when the method proves the user',

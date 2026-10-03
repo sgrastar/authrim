@@ -3368,6 +3368,26 @@ describe('Direct Auth primary passkey and email-code flows', () => {
     expect('error' in result).toBe(refused);
   });
 
+  it('reads a re-authentication proof with the time of the method it takes', async () => {
+    const { reauthProofFromRecord } = await import('../direct-auth');
+
+    // A directory fallback: its email code (taken) was proven after its password (the oldest).
+    expect(
+      reauthProofFromRecord({ proven_at: 1_000, reauth_proven_at: 2_000 }, [
+        'pwd',
+        'directory',
+        'otp',
+      ])
+    ).toEqual({ method: 'email_otp', provenAtMs: 2_000 });
+    expect(reauthProofFromRecord({ proven_at: 1_000 }, ['passkey'])).toEqual({
+      method: 'passkey',
+      provenAtMs: 1_000,
+    });
+    // An unknown proof time (0 records it as unknown) leaves only the method.
+    expect(reauthProofFromRecord({ proven_at: 0 }, ['passkey'])).toEqual({ method: 'passkey' });
+    expect(reauthProofFromRecord({ proven_at: 1_000 }, ['passkey_signup'])).toEqual({});
+  });
+
   it('reads the proving method from what the session recorded', async () => {
     const { reauthProvenMethodFromAmr } = await import('../direct-auth');
 

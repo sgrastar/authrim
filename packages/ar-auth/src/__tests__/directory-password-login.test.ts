@@ -1321,6 +1321,8 @@ describe('directory password login handler', () => {
         amr: ['pwd', 'directory', 'otp'],
         // The password was verified when the transaction was made, not when it completed.
         proven_at: 1000,
+        // Its email code, which a re-authentication takes, was proven when it completed.
+        reauth_proven_at: expect.any(Number),
       }),
       'tenant-a'
     );

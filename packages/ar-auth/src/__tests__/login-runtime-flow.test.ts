@@ -94,7 +94,7 @@ vi.mock('../direct-auth', async (importOriginal) => {
   return {
     consumeAuthorizationChallengeContinuation: mocks.consumeAuthorizationChallengeContinuation,
     readAuthorizationChallengeReauthIssuedAt: mocks.readAuthorizationChallengeReauthIssuedAt,
-    reauthProvenMethodFromAmr: actual.reauthProvenMethodFromAmr,
+    reauthProofFromRecord: actual.reauthProofFromRecord,
   };
 });
 
@@ -2362,7 +2362,9 @@ describe('LoginUI runtime Flow handlers', () => {
 
   it.each([
     ['older than', 1_700_000_124_000, 'auth:step', undefined],
-    ['newer than', 1_700_000_123_000, null, undefined],
+    ['newer than', 1_700_000_122_000, null, undefined],
+    // Without the proof's milliseconds, the request's own second is not shown to be later.
+    ['in the same second as', 1_700_000_123_000, 'auth:step', undefined],
     ['unreadable for', new Error('challenge store unavailable'), 'auth:step', undefined],
     // Within the same second, the session's proof time in milliseconds decides.
     ['proven just before', 1_700_000_123_500, 'auth:step', 1_700_000_123_400],
@@ -2399,6 +2401,7 @@ describe('LoginUI runtime Flow handlers', () => {
         expiresAt: Date.now() + 60_000,
         createdAt: 1_700_000_000_000,
         data: {
+          amr: ['passkey'],
           authTime: 1_700_000_123,
           ...(provenAt === undefined ? {} : { proven_at: provenAt }),
         },

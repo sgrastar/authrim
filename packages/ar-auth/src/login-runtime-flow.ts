@@ -2,7 +2,7 @@ import type { Context } from 'hono';
 import {
   consumeAuthorizationChallengeContinuation,
   readAuthorizationChallengeReauthIssuedAt,
-  reauthProvenMethodFromAmr,
+  reauthProofFromRecord,
 } from './direct-auth';
 import {
   getTenantSettingsDocument,
@@ -2564,14 +2564,16 @@ async function resolveSessionCheckSelectedHandle(
   } catch {
     return { selectedHandle: 'authenticate', userId: null };
   }
-  const provenAtMs = getSessionProvenAtMs(session);
-  if (
-    reauthIssuedAt !== null &&
-    (provenAtMs !== undefined
-      ? provenAtMs < reauthIssuedAt
-      : getSessionAuthTime(session) < Math.floor(reauthIssuedAt / 1000))
-  ) {
-    return { selectedHandle: 'authenticate', userId: null };
+  if (reauthIssuedAt !== null) {
+    // So does a session that cannot prove a re-authentication at all. Without the proof's
+    // milliseconds, only a later second shows it came after the request.
+    const proof = getSessionReauthProof(session);
+    const stale =
+      !proof.method ||
+      (proof.provenAtMs !== undefined
+        ? proof.provenAtMs < reauthIssuedAt
+        : getSessionAuthTime(session) <= Math.floor(reauthIssuedAt / 1000));
+    if (stale) return { selectedHandle: 'authenticate', userId: null };
   }
   return { selectedHandle: 'continue', userId: session.userId };
 }
@@ -2751,12 +2753,13 @@ function getRequestOrigin(c: AuthContext): string {
   return requestOrigin;
 }
 
-/** When the session's authentication was proven (milliseconds), when its producer recorded it. */
-function getSessionProvenAtMs(session: Session): number | undefined {
-  const provenAt = session.data?.proven_at;
-  return typeof provenAt === 'number' && Number.isSafeInteger(provenAt) && provenAt > 0
-    ? provenAt
-    : undefined;
+/** What the session proves for a re-authentication: the server-recorded method and proof time. */
+function getSessionReauthProof(session: Session) {
+  return reauthProofFromRecord(
+    session.data as Record<string, unknown> | undefined,
+    Array.isArray(session.data?.amr) ? session.data.amr : undefined,
+    Array.isArray(session.data?.unverified_amr) ? session.data.unverified_amr : undefined
+  );
 }
 
 function getSessionAuthTime(session: Session): number {
@@ -2799,6 +2802,7 @@ async function resolveCompletedProtocolRedirect(input: {
     };
   }
 
+  const reauthProof = getSessionReauthProof(session);
   const continuation = await consumeAuthorizationChallengeContinuation(
     input.c,
     input.tenantId,
@@ -2807,11 +2811,8 @@ async function resolveCompletedProtocolRedirect(input: {
     getSessionAuthTime(session),
     getRequestOrigin(input.c),
     // The method the server recorded for this session, never one the client names.
-    reauthProvenMethodFromAmr(
-      Array.isArray(session.data?.amr) ? session.data.amr : undefined,
-      Array.isArray(session.data?.unverified_amr) ? session.data.unverified_amr : undefined
-    ),
-    getSessionProvenAtMs(session)
+    reauthProof.method,
+    reauthProof.provenAtMs
   );
   if ('error' in continuation) {
     return { response: continuation.error };
