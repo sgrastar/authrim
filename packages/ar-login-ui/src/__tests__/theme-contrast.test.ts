@@ -49,6 +49,25 @@ function colour(value: string): Colour {
 	throw new Error(`Not a literal colour: ${value}`);
 }
 
+/**
+ * A colour as a theme declares it: a literal, a variable of the theme (resolved in `values`, then
+ * the shared tokens), or `color-mix(in srgb, X p%, transparent)` (X at p% opacity).
+ */
+function resolveColour(value: string, values: Record<string, string>): Colour {
+	const variable = value.match(/^var\((--[\w-]+)(?:,\s*(.+))?\)$/);
+	if (variable) {
+		const declared = values[variable[1]] ?? BASE[variable[1]] ?? variable[2];
+		if (!declared) throw new Error(`No value for ${variable[1]}`);
+		return resolveColour(declared, values);
+	}
+	const mix = value.match(/^color-mix\(in srgb,\s*(.+?)\s+(\d+)%,\s*transparent\)$/);
+	if (mix) {
+		const base = resolveColour(mix[1], values);
+		return { rgb: base.rgb, alpha: base.alpha * (Number(mix[2]) / 100) };
+	}
+	return colour(value);
+}
+
 function over(top: Colour, bottom: Rgb): Rgb {
 	return top.rgb.map((value, i) => value * top.alpha + bottom[i] * (1 - top.alpha)) as Rgb;
 }
@@ -209,7 +228,8 @@ describe('theme contrast', () => {
 			const tints: Record<string, string> = {
 				error: '--danger-light',
 				warning: '--warning-light',
-				success: '--success-light'
+				success: '--success-light',
+				info: '--primary-light'
 			};
 			for (const [variant, tint] of Object.entries(tints)) {
 				for (const part of ['text', 'title'] as const) {
@@ -228,9 +248,10 @@ describe('theme contrast', () => {
 						? [colour(base).rgb]
 						: behind.flatMap((under) => [over(colour(values['--bg-card']), under), under]);
 					for (const surface of surfaces) {
-						const tinted = over(colour(BASE[tint]), surface);
+						const tinted = over(resolveColour(values[tint] ?? BASE[tint], values), surface);
+						const drawn = resolveColour(text, values);
 						expect(
-							textContrast(text, tinted),
+							contrast(over(drawn, tinted), tinted),
 							`${variant} ${part} ${text} on ${tinted.map(Math.round)}`
 						).toBeGreaterThanOrEqual(4.5);
 					}

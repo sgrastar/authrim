@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { accentTextColor, normalizeAccentColor } from '$lib/utils/accent-color';
 	import { onDestroy, onMount } from 'svelte';
 	import {
 		scopedSettingsAPI,
@@ -524,7 +525,11 @@
 	let previewBackgroundColor = $derived(
 		getStringSetting('login-ui.background_color', previewTemplate.backgroundColor)
 	);
-	let previewAccentColor = $derived(getStringSetting('login-ui.accent_color', ''));
+	// As the login pages apply it: opaque, or not at all (accent-color.ts).
+	let previewAccentColor = $derived(
+		normalizeAccentColor(getStringSetting('login-ui.accent_color', '')) ?? ''
+	);
+	let previewAccentText = $derived(accentTextColor(previewAccentColor));
 	let previewTitleColor = $derived(getStringSetting('login-ui.title_color', ''));
 	let previewTextColor = $derived(getStringSetting('login-ui.text_color', ''));
 	let previewCopyColor = $derived(getStringSetting('login-ui.copy_color', ''));
@@ -649,6 +654,7 @@
 		[
 			previewBackgroundColor ? `--preview-background-color:${previewBackgroundColor}` : '',
 			previewAccentColor ? `--preview-primary:${previewAccentColor}` : '',
+			previewAccentText ? `--preview-primary-text:${previewAccentText}` : '',
 			previewTitleColor ? `--preview-title-color:${previewTitleColor}` : '',
 			previewTextColor ? `--preview-text-color:${previewTextColor}` : '',
 			previewCopyColor ? `--preview-copy-color:${previewCopyColor}` : '',

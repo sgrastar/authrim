@@ -6962,6 +6962,17 @@ tr.expired {
 	box-shadow: 0 0 0 10px var(--fullbleed-on-image-backdrop-image);
 }
 
+/* A bar over a tenant's image is a surface of its own: as opaque as the backdrop, so its text
+   reads over any image too. */
+[data-login-theme='fullbleed-glass'][data-has-page-background-image='true'][data-header-style='bar']
+	.auth-page
+	.auth-header,
+[data-login-theme='fullbleed-glass'][data-has-page-background-image='true'][data-footer-style='bar']
+	.auth-page
+	.auth-footer {
+	background: var(--fullbleed-on-image-backdrop-image);
+}
+
 /* Alerts may sit on the imagery (outside the card): their tint goes over an opaque base, so their
    text reads over any image. */
 [data-login-theme='fullbleed-glass'] .alert.alert-error {

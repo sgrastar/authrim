@@ -191,7 +191,8 @@
 	}
 
 	.alert-info .alert-title {
-		color: var(--primary);
+		/* The text colour, not the accent: a tenant's accent may not read on the tint. */
+		color: var(--text-primary);
 	}
 
 	.alert-info .alert-text {
