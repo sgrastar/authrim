@@ -110,8 +110,10 @@ export interface SettingMeta {
    * How a boolean environment variable reads. 'true-or-1' (default): only `true` or `1` is true.
    * 'unless-false': anything but `false` or `0` is true, as the older oauth-config read it.
    * 'exactly-true': only the exact string `true` is true, as the older system settings read it.
+   * 'unless-exactly-false': anything but the exact string `false` is true, for a protection that
+   * only an explicit `false` turns off.
    */
-  envBoolean?: 'true-or-1' | 'unless-false' | 'exactly-true';
+  envBoolean?: 'true-or-1' | 'unless-false' | 'exactly-true' | 'unless-exactly-false';
   /**
    * 'false': a defined but empty boolean env value reads as false (not as unset), for settings
    * whose runtime treats any defined value as set. Implied by envBoolean 'exactly-true'.
@@ -374,6 +376,7 @@ function parseEnvValue(
     case 'boolean':
       if (envBoolean === 'unless-false') return value.toLowerCase() !== 'false' && value !== '0';
       if (envBoolean === 'exactly-true') return value === 'true';
+      if (envBoolean === 'unless-exactly-false') return value !== 'false';
       return value.toLowerCase() === 'true' || value === '1';
     case 'string':
       return parsing.envString === 'strip-trailing-slash' ? value.replace(/\/$/, '') : value;

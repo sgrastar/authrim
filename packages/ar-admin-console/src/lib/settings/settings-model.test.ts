@@ -7,6 +7,7 @@ import {
 	changes,
 	fallbackOf,
 	fieldOf,
+	readBadge,
 	sectionView,
 	valuesFrom,
 	type Loaded
@@ -25,6 +26,17 @@ async function load(options: Parameters<typeof createFakeSettings>[0] = {}): Pro
 
 const section = (id: string): SettingsSection =>
 	STAYING_SIGNED_IN.sections.find((s) => s.id === id)!;
+
+describe('the badge of a setting that is only read', () => {
+	it('says a setting in development has no effect yet, before anything else', () => {
+		expect(readBadge({ status: 'in_development' }, { v: 1, here: true, locked: true })).toBe(
+			'inDevelopment'
+		);
+		expect(readBadge({}, { v: 1, here: true, locked: true })).toBe('locked');
+		expect(readBadge({ status: 'active' }, { v: 1, here: true })).toBe('here');
+		expect(readBadge({}, { v: 1, here: false })).toBeNull();
+	});
+});
 
 describe('a settings page’s values', () => {
 	it('knows which values are set here and which are inherited', async () => {

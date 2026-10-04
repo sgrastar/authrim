@@ -2591,6 +2591,78 @@ describe('Security-Critical Tests', () => {
         expect(body.refresh_token).toBe(refreshTokenJWT);
       });
 
+      describe('follows oauth.refresh_token_rotation', () => {
+        async function refreshWith(options: {
+          tenantOAuth?: Record<string, unknown>;
+          env?: string;
+        }) {
+          const client = createConfidentialClient();
+          const refreshTokenPayload = createRefreshTokenPayload({ client_id: client.client_id });
+          const refreshTokenJWT = createTestRefreshTokenJWT({ client_id: client.client_id });
+          if (options.tenantOAuth) {
+            const kv = createMockKV();
+            void kv.put('settings:tenant:default:oauth', JSON.stringify(options.tenantOAuth));
+            (mockEnv as unknown as { SETTINGS: unknown }).SETTINGS = kv;
+          }
+          if (options.env !== undefined) mockEnv.ENABLE_REFRESH_TOKEN_ROTATION = options.env;
+          mocks.mockGetClientCached.mockResolvedValue(client);
+          mocks.mockParseToken.mockReturnValue(refreshTokenPayload);
+          mocks.mockGetRefreshToken.mockResolvedValue({
+            sub: refreshTokenPayload.sub,
+            scope: refreshTokenPayload.scope,
+            client_id: refreshTokenPayload.client_id,
+          });
+          mocks.mockParseRefreshTokenJti.mockReturnValue({
+            generation: 1,
+            shardIndex: 0,
+            randomPart: 'abc',
+          });
+          const rotateRpc = vi.fn().mockResolvedValue({ newJti: 'rt-new-jti-002', newVersion: 2 });
+          mockEnv.REFRESH_TOKEN_ROTATOR.get = vi.fn().mockReturnValue({ rotateRpc });
+          const response = await tokenHandler(
+            createMockContext({
+              method: 'POST',
+              body: {
+                grant_type: 'refresh_token',
+                refresh_token: refreshTokenJWT,
+                client_id: client.client_id,
+                client_secret: 'valid-secret',
+              },
+              env: mockEnv,
+            })
+          );
+          const body = await parseJsonResponse<{ refresh_token: string }>(response);
+          return { response, body, rotateRpc, refreshTokenJWT };
+        }
+
+        it("keeps the refresh token when the tenant's setting turns rotation off", async () => {
+          const { response, body, rotateRpc, refreshTokenJWT } = await refreshWith({
+            tenantOAuth: { 'oauth.refresh_token_rotation': false },
+          });
+
+          expect(response.status).toBe(200);
+          expect(rotateRpc).not.toHaveBeenCalled();
+          expect(body.refresh_token).toBe(refreshTokenJWT);
+        });
+
+        it('rotates unless the environment says exactly false', async () => {
+          const { response, rotateRpc } = await refreshWith({ env: 'FALSE' });
+
+          expect(response.status).toBe(200);
+          expect(rotateRpc).toHaveBeenCalled();
+        });
+
+        it("rotates when the tenant's setting turns it on over the environment", async () => {
+          const { response, rotateRpc } = await refreshWith({
+            tenantOAuth: { 'oauth.refresh_token_rotation': true },
+            env: 'false',
+          });
+
+          expect(response.status).toBe(200);
+          expect(rotateRpc).toHaveBeenCalled();
+        });
+      });
+
       it('should not rotate refresh tokens for a FAPI 2.0 tenant', async () => {
         const client = createFAPIClient({ dpop_bound_access_tokens: false });
         const refreshTokenPayload = createRefreshTokenPayload({

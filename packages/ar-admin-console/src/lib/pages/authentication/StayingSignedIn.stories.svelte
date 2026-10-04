@@ -43,8 +43,6 @@
 		// Values as text: no controls to change them.
 		expect(canvas.queryByRole('checkbox')).toBeNull();
 		expect(canvas.queryByRole('button', { name: t('common.save') })).toBeNull();
-		// A setting still in development says so here too, not only where it can be edited.
-		expect(await canvas.findAllByText(t('settings.badge.inDevelopment'))).not.toHaveLength(0);
 	}}
 >
 	{#snippet template()}

@@ -211,16 +211,20 @@ class SecurityProfileSettingsUnavailableError extends Error {
  * The settings are read once, when a lifetime is first asked for.
  */
 /**
- * The lifetimes of the tokens a grant issues: the client's, else the tenant's settings. An access
- * token never outlives the tenant profile's max_token_ttl_seconds (Human Auth / AI Ephemeral Auth
- * two-layer model; RFC 6749 §4.2.2: the authorization server controls access token lifetime),
- * whatever the grant.
+ * The lifetimes of the tokens a grant issues, and whether a refresh rotates the refresh token:
+ * the client's, else the tenant's settings. An access token never outlives the tenant profile's
+ * max_token_ttl_seconds (Human Auth / AI Ephemeral Auth two-layer model; RFC 6749 §4.2.2: the
+ * authorization server controls access token lifetime), whatever the grant.
  */
 function tokenLifetimes(
   c: Context<{ Bindings: Env }>,
   tenantId: string,
   clientId?: string
-): { access(): Promise<number>; refresh(): Promise<number> } {
+): {
+  access(): Promise<number>;
+  refresh(): Promise<number>;
+  refreshRotation(): Promise<boolean>;
+} {
   let values: Promise<Record<string, unknown>> | undefined;
   const read = async (key: string) => {
     values ??= resolveEffectiveSettings(c.env, 'oauth', { tenantId, clientId });
@@ -235,6 +239,11 @@ function tokenLifetimes(
       return Math.min(configured, profile.max_token_ttl_seconds);
     },
     refresh: () => read('oauth.refresh_token_expiry'),
+    // Only an explicit false turns rotation off: anything else keeps the protection.
+    refreshRotation: async () => {
+      values ??= resolveEffectiveSettings(c.env, 'oauth', { tenantId, clientId });
+      return (await values)['oauth.refresh_token_rotation'] !== false;
+    },
   };
 }
 
@@ -4046,10 +4055,10 @@ async function handleRefreshTokenGrant(
     return oauthError(c, 'server_error', 'Failed to create ID token', 500);
   }
 
-  // Rotation remains enabled by default except for FAPI 2.0 tenants, where routine rotation is
-  // explicitly prohibited by the security profile.
-  const rotationEnabled =
-    !prohibitRefreshTokenRotation && c.env.ENABLE_REFRESH_TOKEN_ROTATION !== 'false';
+  // Rotation follows oauth.refresh_token_rotation (the client's, else the tenant's, else
+  // ENABLE_REFRESH_TOKEN_ROTATION, else on), except for FAPI 2.0 tenants, where routine rotation
+  // is explicitly prohibited by the security profile.
+  const rotationEnabled = !prohibitRefreshTokenRotation && (await lifetimes.refreshRotation());
 
   let newRefreshToken: string;
   const refreshTokenExpiresIn = await lifetimes.refresh();
@@ -4153,8 +4162,8 @@ async function handleRefreshTokenGrant(
       );
     }
   } else {
-    // A FAPI tenant uses stable refresh tokens by profile requirement. Other tenants may reach
-    // this branch only through the explicit environment override.
+    // A FAPI tenant uses stable refresh tokens by profile requirement. Other tenants reach this
+    // branch only when the setting (or its environment variable) turns rotation off.
     newRefreshToken = refreshTokenValue;
     log.debug('Refresh token rotation disabled - returning same token', {
       fapiProfile: prohibitRefreshTokenRotation,

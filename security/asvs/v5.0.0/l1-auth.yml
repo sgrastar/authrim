@@ -410,16 +410,16 @@ controls:
     level: 1
     requirement: Verify that the authorization server mitigates refresh token replay attacks for public clients, preferably using sender-constrained refresh tokens, i.e., Demonstrating Proof of Possession (DPoP) or Certificate-Bound Access Tokens using mutual TLS (mTLS). For L1 and L2 applications, refresh token rotation may be used. If refresh token rotation is used, the authorization server must invalidate the refresh token after usage, and revoke all refresh tokens for that authorization if an already used and invalidated refresh token is provided.
     status: covered
-    rationale: Public-client refresh token use requires DPoP binding, refresh token rotation is enabled by default, and replay/theft detection revokes the refresh token family.
+    rationale: Public-client refresh token use requires DPoP binding, refresh token rotation is enabled by default (a tenant or app can turn it off only with an explicit false), and replay/theft detection revokes the refresh token family.
     evidence:
       - check: asvs.v10_4_5.public_refresh_token_replay_protection
         note: Verify DPoP-bound public refresh tokens and default refresh-token rotation with family revocation on replay/theft.
       - path: packages/ar-token/src/token.ts
-        line: 3004
+        line: 3840
         note: Public client refresh tokens must be DPoP-bound.
       - path: packages/ar-token/src/token.ts
-        line: 3183
-        note: Refresh token rotation is enabled by default and uses RefreshTokenRotator.
+        line: 4061
+        note: Refresh token rotation follows oauth.refresh_token_rotation (on by default; only an explicit false, or the FAPI 2.0 profile, turns it off) and uses RefreshTokenRotator.
       - path: packages/ar-lib-core/src/durable-objects/RefreshTokenRotator.ts
         line: 512
         note: RefreshTokenRotator rejects expired/revoked families and detects stale token versions.

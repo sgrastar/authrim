@@ -160,11 +160,12 @@ export const OAUTH_SETTINGS_META: Record<keyof OAuthSettings, SettingMeta> = {
     type: 'boolean',
     default: true,
     envKey: 'ENABLE_REFRESH_TOKEN_ROTATION',
+    // As the token endpoint read it: only an explicit `false` turns rotation off.
+    envBoolean: 'unless-exactly-false',
     label: 'Refresh Token Rotation',
     description:
-      'Enable refresh token rotation (security best practice). In development: rotation follows ENABLE_REFRESH_TOKEN_ROTATION; this setting is not read yet.',
+      'Issue a new refresh token on each refresh and detect reuse of an old one (security best practice). FAPI 2.0 tenants never rotate, as the profile requires.',
     visibility: 'public',
-    status: 'in_development',
   },
   'oauth.refresh_id_token_reissue': {
     key: 'oauth.refresh_id_token_reissue',

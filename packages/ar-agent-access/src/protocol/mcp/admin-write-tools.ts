@@ -264,11 +264,7 @@ export const ADMIN_WRITE_TOOL_DEFINITIONS: readonly AgentToolDefinition[] =
             idTokenExpiry: { type: 'integer', minimum: 60, maximum: 86400 },
             authCodeTtl: { type: 'integer', minimum: 10, maximum: 86400 },
             stateRequired: { type: 'boolean' },
-            refreshTokenRotation: {
-              type: 'boolean',
-              description:
-                'In development: saved but not applied yet (rotation follows ENABLE_REFRESH_TOKEN_ROTATION).',
-            },
+            refreshTokenRotation: { type: 'boolean' },
             offlineAccessRequired: { type: 'boolean' },
             jarmEnabled: { type: 'boolean' },
           },

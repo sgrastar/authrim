@@ -882,8 +882,13 @@ async function runIndependentCheck(repoRoot, id) {
     );
     requirePattern(
       token,
-      /const rotationEnabled =\s*!prohibitRefreshTokenRotation && c\.env\.ENABLE_REFRESH_TOKEN_ROTATION !== 'false'/,
-      'Refresh token rotation must be enabled by default.'
+      /const rotationEnabled =\s*!prohibitRefreshTokenRotation && \(await lifetimes\.refreshRotation\(\)\)/,
+      'Refresh token rotation must follow the oauth.refresh_token_rotation setting.'
+    );
+    requirePattern(
+      token,
+      /refreshRotation: async \(\) => \{[\s\S]{0,200}\['oauth\.refresh_token_rotation'\] !== false;/,
+      'Refresh token rotation must stay on unless the setting is explicitly false.'
     );
     requirePattern(
       token,
@@ -899,6 +904,11 @@ async function runIndependentCheck(repoRoot, id) {
       oauthSettings,
       /'oauth\.refresh_token_rotation': \{[\s\S]{0,200}default: true,/,
       'The oauth.refresh_token_rotation setting must default to enabled.'
+    );
+    requirePattern(
+      oauthSettings,
+      /'oauth\.refresh_token_rotation': \{[\s\S]{0,500}envBoolean: 'unless-exactly-false',/,
+      'Only the exact environment value false may turn refresh token rotation off.'
     );
     requirePattern(
       rotator,

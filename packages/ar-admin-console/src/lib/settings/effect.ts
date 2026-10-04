@@ -7,9 +7,9 @@
  * just-in-time provisioning, policy flags and embedding limits, token lifetimes, FAPI and the
  * other protocol settings (PAR, request objects, response types, DPoP nonces, discovery claims),
  * token exchange, introspection, conformance, UI routing), the IdP profile update on sign-in, and
- * the password lockout threshold and email code lifetime; and less the settings that left the
- * catalog (duplicates, copies of the app registration, and values too fine or fixed at
- * deployment). Update this list when a setting starts to apply or leaves the catalog.
+ * the password lockout threshold, email code lifetime, refresh token rotation and the advertised
+ * ACR values; and less the settings that left the catalog (duplicates, copies of the app
+ * registration, and values too fine or fixed at deployment). Update this list when a setting starts to apply or leaves the catalog.
  *
  * Shown in the settings map (Storybook: Pages › Settings map).
  */
@@ -65,14 +65,13 @@ export const NOT_APPLIED: ReadonlyMap<string, NotApplied> = new Map([
 		'tokens.exchange_impersonation_enabled',
 		'tokens.introspection_extended_claims'
 	]),
-	// to-wire (6)
+	// to-wire (5)
 	...reason('to-wire', [
 		'assurance.default_ial',
 		'assurance.ida_profile',
 		'assurance.ial_assurance_values',
 		'assurance.saml_authn_context_aal',
-		'assurance.scope_ial_requirements',
-		'oauth.refresh_token_rotation'
+		'assurance.scope_ial_requirements'
 	]),
 	// internal (5)
 	...reason('internal', [
@@ -82,12 +81,8 @@ export const NOT_APPLIED: ReadonlyMap<string, NotApplied> = new Map([
 		'login-ui.published_version',
 		'login-ui.rollback_snapshot'
 	]),
-	// on-hold (3)
-	...reason('on-hold', [
-		'discovery.acr_values_supported',
-		'oauth.id_token_signing_alg',
-		'oauth.jarm_enabled'
-	]),
+	// on-hold (2)
+	...reason('on-hold', ['oauth.id_token_signing_alg', 'oauth.jarm_enabled']),
 	// to-check (2)
 	...reason('to-check', [
 		'authentication-methods.directory_password.label',

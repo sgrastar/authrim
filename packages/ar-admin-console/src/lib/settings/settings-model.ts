@@ -41,6 +41,19 @@ export type Loaded = Partial<Record<CategoryName, SettingsGetResult>>;
 export const fieldOf = (key: string): string => key.replaceAll('.', ':');
 export const keyOf = (field: string): string => field.replaceAll(':', '.');
 
+/**
+ * The badge a setting carries where it is only read: still in development first (a saved value
+ * has no effect), then fixed by the scope above, then set at this scope.
+ */
+export function readBadge(
+	meta: Pick<SettingMeta, 'status'>,
+	entry: Entry
+): 'inDevelopment' | 'locked' | 'here' | null {
+	if (meta.status === 'in_development') return 'inDevelopment';
+	if (entry.locked) return 'locked';
+	return entry.here ? 'here' : null;
+}
+
 export function metaOf(key: string): SettingMeta | undefined {
 	const category = ALL_CATEGORY_META[categoryOf(key)];
 	return category?.settings[key] as SettingMeta | undefined;

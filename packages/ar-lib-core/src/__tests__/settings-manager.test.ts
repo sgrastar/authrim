@@ -927,6 +927,22 @@ describe('SettingsManager', () => {
       }
     });
 
+    it('turns refresh token rotation off only for the exact environment value false', async () => {
+      const read = async (raw: string) => {
+        const m = createSettingsManager({
+          env: { ENABLE_REFRESH_TOKEN_ROTATION: raw },
+          kv: createMockKV(),
+          cacheTTL: 0,
+        });
+        m.registerCategory(OAUTH_CATEGORY_META);
+        return (await m.getAll('oauth', { type: 'tenant', id: 't1' })).values[
+          'oauth.refresh_token_rotation'
+        ];
+      };
+      expect(await read('false')).toBe(false);
+      for (const raw of ['FALSE', '0', 'no', 'true', '']) expect(await read(raw), raw).toBe(true);
+    });
+
     it("reads only the exact string 'true' as on for the Check API audit switch", async () => {
       const read = async (raw: string) => {
         const m = createSettingsManager({
