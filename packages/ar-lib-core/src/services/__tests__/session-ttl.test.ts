@@ -188,6 +188,16 @@ describe('session.default_ttl and session.max_ttl', () => {
         )
       ).toMatchObject({ enabled });
     }
+    // The Settings API's disable operation stores a marker: it reads as off, before the variable.
+    expect(
+      await resolveSessionExtensionPolicy(
+        createEnv({
+          settings: { 'session.refresh_default': '__DISABLED__' },
+          env: { SESSION_REFRESH_DEFAULT: 'true' },
+        }),
+        'tenant-a'
+      )
+    ).toMatchObject({ enabled: false });
     // A tenant value wins over the variable.
     expect(
       await resolveSessionExtensionPolicy(

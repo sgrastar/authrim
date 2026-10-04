@@ -1,4 +1,5 @@
 import type { Env } from '../types/env';
+import { readSettingsFlag } from '../utils/tenant-settings';
 
 export type SessionTtlContext =
   | 'email_code'
@@ -173,8 +174,9 @@ export async function resolveSessionExtensionPolicy(
 }
 
 function sessionRefreshEnabled(env: Env, settings: Record<string, unknown>): boolean {
-  const setting = settings['session.refresh_default'];
-  if (typeof setting === 'boolean') return setting;
+  // The tenant's value, the Settings API's disabled marker included (it reads as false).
+  const setting = readSettingsFlag(settings, 'session.refresh_default');
+  if (setting !== null) return setting;
   // As the Settings API reads the variable: set, it is on only as `true` (any case) or `1`.
   const envValue = (env as unknown as Record<string, unknown>)['SESSION_REFRESH_DEFAULT'];
   if (typeof envValue === 'string' && envValue !== '') {

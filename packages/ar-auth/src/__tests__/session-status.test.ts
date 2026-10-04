@@ -592,6 +592,13 @@ describe('ITP session token lifecycle', () => {
       error_description: 'Session extension is disabled',
     });
     expect(mocks.sessionStore.extendSessionRpc).not.toHaveBeenCalled();
+
+    // Turned off with the Settings API's disable operation (its stored marker).
+    const disabled = await refreshSessionHandler(
+      withSettings({ 'session.refresh_default': '__DISABLED__' }) as never
+    );
+    expect(disabled.status).toBe(403);
+    expect(mocks.sessionStore.extendSessionRpc).not.toHaveBeenCalled();
   });
 
   it('rejects refresh requests with an unsafe extension duration', async () => {
