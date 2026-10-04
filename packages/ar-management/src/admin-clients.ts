@@ -316,7 +316,8 @@ function isLoopbackRedirectHost(hostname: string): boolean {
 function isAgentAccessConnection(...scopeSources: unknown[]): boolean {
   return scopeSources.some((source) =>
     (Array.isArray(source) ? source : typeof source === 'string' ? source.split(/\s+/u) : []).some(
-      (scope) => typeof scope === 'string' && scope.startsWith('agent:')
+      // As the scope validation will read it (trimmed).
+      (scope) => typeof scope === 'string' && scope.trim().startsWith('agent:')
     )
   );
 }
@@ -2078,7 +2079,11 @@ export async function adminClientUpdateHandler(c: Context<{ Bindings: Env }>) {
       const updateRedirectPolicy = await redirectUriPolicyResponse(c, {
         redirectUris:
           redirectUrisValidation.value ?? parseClientStringArray(existingClient.redirect_uris, []),
-        applicationType: application_type ?? existingClient.application_type ?? 'web',
+        // An explicit null clears the type, which then reads as web.
+        applicationType:
+          application_type !== undefined
+            ? (application_type ?? 'web')
+            : (existingClient.application_type ?? 'web'),
         clientId,
       });
       if (updateRedirectPolicy) return updateRedirectPolicy;

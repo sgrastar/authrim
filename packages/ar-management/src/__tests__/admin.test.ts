@@ -4963,6 +4963,51 @@ describe('Admin API Handlers', () => {
       expect(res.status).not.toBe(400);
     });
 
+    it('checks a cleared application type as web', async () => {
+      const mockDB = createMockDB({
+        firstResult: {
+          client_id: 'native-app',
+          client_name: 'Native app',
+          application_type: 'native',
+          redirect_uris: '["http://127.0.0.1:49152/callback"]',
+          grant_types: '["authorization_code"]',
+          response_types: '["code"]',
+        },
+      });
+      const c = createMockContext({
+        method: 'PUT',
+        params: { id: 'native-app' },
+        body: { application_type: null },
+        db: mockDB,
+      });
+
+      const res = await adminClientUpdateHandler(c);
+
+      expect(res.status).toBe(400);
+    });
+
+    it('recognizes agent scopes as the scope validation reads them (trimmed)', async () => {
+      const mockDB = createMockDB({
+        firstResult: {
+          client_id: 'agent-connection',
+          client_name: 'MCP client',
+          redirect_uris: '["http://localhost:18080/callback"]',
+          grant_types: '["authorization_code","refresh_token"]',
+          response_types: '["code"]',
+        },
+      });
+      const c = createMockContext({
+        method: 'PUT',
+        params: { id: 'agent-connection' },
+        body: { requestable_scopes: [' agent:read '] },
+        db: mockDB,
+      });
+
+      const res = await adminClientUpdateHandler(c);
+
+      expect(res.status).not.toBe(400);
+    });
+
     it('checks the redirect URIs again when an Agent Access connection loses its agent scopes', async () => {
       const mockDB = createMockDB({
         firstResult: {
