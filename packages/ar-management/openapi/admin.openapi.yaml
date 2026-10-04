@@ -46294,11 +46294,11 @@ components:
           type:
             - string
             - 'null'
-          default: RS256
-          description: JWS algorithm used for ID Tokens. RS256 is used when omitted.
+          description: JWS algorithm for this app's ID Tokens. Null or omitted means the tenant's oauth.id_token_signing_alg (RS256 by default). Refused (400 invalid_request) when it differs from the tenant's algorithm while oauth.id_token_signing_alg_client_override is false, and 503 temporarily_unavailable when that policy cannot be read.
           enum:
             - RS256
             - ES256
+            - PS256
             - null
         userinfo_signed_response_alg:
           type:
@@ -46310,6 +46310,7 @@ components:
             - none
             - RS256
             - ES256
+            - PS256
             - null
     OIDCIdentityMappingSelector:
       type: object

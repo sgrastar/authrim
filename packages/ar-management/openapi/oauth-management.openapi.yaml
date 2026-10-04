@@ -491,7 +491,7 @@ components:
             - PS256
         id_token_signed_response_alg:
           type: string
-          default: RS256
+          description: Omitted means the tenant's ID token algorithm (RS256 unless the tenant chose another; the registration response then names it). Refused (400 invalid_client_metadata) when it differs from the tenant's algorithm while the tenant does not let apps choose; 503 temporarily_unavailable when that policy cannot be read.
           enum:
             - RS256
             - ES256
@@ -630,6 +630,7 @@ components:
             - PS256
         id_token_signed_response_alg:
           type: string
+          description: The algorithm the app's ID Tokens are signed with (named when not RS256, even if the app registered none).
           enum:
             - RS256
             - ES256

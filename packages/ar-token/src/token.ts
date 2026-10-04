@@ -77,6 +77,8 @@ import {
   resolveDeviceSecretRouteHint,
   resolvePolicyFlags,
   resolveIDTokenSigningPolicy,
+  getIssuedIDTokenKeys,
+  importIssuedTokenKey,
 } from '@authrim/ar-lib-core';
 import {
   resolveIDTokenSigningAlgorithm,
@@ -1140,6 +1142,27 @@ interface CachedJWKS {
 }
 const cachedJWKSMap = new Map<string, CachedJWKS>(); // tenantId → CachedJWKS
 const JWKS_CACHE_TTL = 0; // Verification keys must reflect emergency revocation immediately.
+
+/**
+ * The key that signed a token Authrim issued, by its parsed header: an RS256 token (access,
+ * refresh, or an RS256 ID token) from the cached JWKS; with `idToken`, an ID token signed with
+ * another algorithm Authrim signs ID tokens with, from the tenant's OIDC keys. The algorithm
+ * returned is the only one the signature is then verified with.
+ */
+async function getIssuedTokenVerificationKey(
+  env: Env,
+  tenantId: string,
+  token: string,
+  header: { alg?: unknown; kid?: unknown },
+  options: { idToken: boolean }
+): Promise<{ key: CryptoKey; algorithm: OIDCSigningAlgorithm }> {
+  if (header.alg === undefined || header.alg === 'RS256') {
+    const kid = typeof header.kid === 'string' ? header.kid : undefined;
+    return { key: await getVerificationKeyFromJWKS(env, tenantId, kid), algorithm: 'RS256' };
+  }
+  if (!options.idToken) throw new Error('Unsupported token signing algorithm');
+  return importIssuedTokenKey(await getIssuedIDTokenKeys(env, tenantId), token);
+}
 
 /**
  * Get verification key from JWKS with caching
@@ -6372,10 +6395,20 @@ async function handleTokenExchangeGrant(
 
   // For non-ID-JAG requests or when verifying our own tokens
   const [publicKey, revoked] = await Promise.all([
-    // Only fetch our own JWKS for non-ID-JAG requests
+    // Only fetch our own JWKS for non-ID-JAG requests. A key that cannot be found (or a header
+    // naming an algorithm Authrim does not sign this token type with) fails verification below.
     isIdJagTokenRequest
       ? Promise.resolve(null)
-      : getVerificationKeyFromJWKS(c.env, getTenantIdFromContext(c), subjectTokenKid),
+      : getIssuedTokenVerificationKey(
+          c.env,
+          getTenantIdFromContext(c),
+          subject_token,
+          subjectTokenHeader,
+          { idToken: subject_token_type === 'urn:ietf:params:oauth:token-type:id_token' }
+        ).then(
+          (key) => ({ key }),
+          (error: unknown) => ({ error })
+        ),
     subjectJti
       ? isTokenRevoked(c.env, subjectJti, getTenantIdFromContext(c))
       : Promise.resolve(false),
@@ -6383,11 +6416,13 @@ async function handleTokenExchangeGrant(
 
   // Verify first-party subject_token signature (aud validated separately).
   // ID-JAG external tokens were verified against the issuer's discovered JWKS above.
-  if (!isIdJagTokenRequest && publicKey) {
+  if (!isIdJagTokenRequest) {
     try {
+      if (!publicKey || 'error' in publicKey) throw publicKey?.error ?? new Error('No key');
       // Verify signature and issuer only; audience is validated in the authorization check below
-      await verifyToken(subject_token, publicKey, getRequestIssuer(c), {
+      await verifyToken(subject_token, publicKey.key.key, getRequestIssuer(c), {
         skipAudienceCheck: true, // We validate audience ourselves in Token Exchange
+        algorithms: [publicKey.key.algorithm],
       });
     } catch (error) {
       log.error('Subject token verification failed', {}, error as Error);
@@ -7288,9 +7323,16 @@ async function handleNativeSSOTokenExchange(
 
   // Verify ID Token signature
   try {
-    const publicKey = await getVerificationKeyFromJWKS(c.env, tenantId, idTokenKid);
-    await verifyToken(idToken, publicKey, expectedIssuer, {
+    const { key, algorithm } = await getIssuedTokenVerificationKey(
+      c.env,
+      tenantId,
+      idToken,
+      idTokenHeader,
+      { idToken: true }
+    );
+    await verifyToken(idToken, key, expectedIssuer, {
       skipAudienceCheck: true, // We validate audience ourselves
+      algorithms: [algorithm],
     });
   } catch (error) {
     log.error('ID token verification failed', { action: 'NativeSSO' }, error as Error);

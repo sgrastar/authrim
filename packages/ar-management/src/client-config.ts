@@ -41,13 +41,17 @@ import {
   FAPI2_MESSAGE_SIGNING_ALGS,
   resolveProtocolSettings,
 } from '@authrim/ar-lib-core';
-import { isOIDCSigningAlgorithm } from '@authrim/ar-lib-core/utils/oidc-signing';
+import {
+  isOIDCSigningAlgorithm,
+  resolveIDTokenSigningAlgorithm,
+  type IDTokenSigningPolicy,
+} from '@authrim/ar-lib-core/utils/oidc-signing';
 import { getRequestAwareIssuerUrl } from './request-issuer';
 import {
   disableTenantDiscoveryAliasDirectory,
   resolveTenantDiscoveryAliasDirectoryInput,
 } from './tenant-alias-directory';
-import { refuseIDTokenSigningAlgorithm } from './id-token-signing-policy';
+import { readIDTokenSigningPolicy, refuseIDTokenSigningAlgorithm } from './id-token-signing-policy';
 
 const VALID_GRANT_TYPES: ReadonlySet<string> = new Set([
   GRANT_TYPES.AUTHORIZATION_CODE,
@@ -479,7 +483,8 @@ async function validateRegistrationAccessToken(
  */
 function buildClientResponse(
   client: ClientMetadata,
-  issuerUrl: string
+  issuerUrl: string,
+  idTokenSigning: IDTokenSigningPolicy
 ): Partial<ClientRegistrationResponse> {
   const response: Partial<ClientRegistrationResponse> = {
     client_id: client.client_id as string,
@@ -509,8 +514,18 @@ function buildClientResponse(
     response.sector_identifier_uri = client.sector_identifier_uri as string;
   if (client.userinfo_signed_response_alg)
     response.userinfo_signed_response_alg = client.userinfo_signed_response_alg as string;
-  if (client.id_token_signed_response_alg)
-    response.id_token_signed_response_alg = client.id_token_signed_response_alg as string;
+  // The algorithm the app's ID tokens are actually signed with: its own, or the tenant's (named
+  // when it is not RS256, which an omitted value means).
+  let idTokenAlgorithm: string | undefined = client.id_token_signed_response_alg as
+    | string
+    | undefined;
+  try {
+    idTokenAlgorithm = resolveIDTokenSigningAlgorithm(client, idTokenSigning);
+  } catch {
+    // An unsupported stored value is reported as stored.
+  }
+  if (idTokenAlgorithm && (client.id_token_signed_response_alg || idTokenAlgorithm !== 'RS256'))
+    response.id_token_signed_response_alg = idTokenAlgorithm;
   if (client.request_object_signing_alg)
     response.request_object_signing_alg = client.request_object_signing_alg as string;
   if (client.authorization_signed_response_alg)
@@ -597,7 +612,9 @@ export async function clientConfigGetHandler(c: Context<{ Bindings: Env }>): Pro
     }
 
     // Build response (excludes sensitive fields)
-    const response = buildClientResponse(client, issuerUrl);
+    const idTokenSigning = await readIDTokenSigningPolicy(c, tenantId);
+    if (idTokenSigning instanceof Response) return idTokenSigning;
+    const response = buildClientResponse(client, issuerUrl, idTokenSigning);
 
     const log = getLogger(c).module('RFC7592');
     // Publish event (non-blocking)
@@ -918,7 +935,9 @@ export async function clientConfigUpdateHandler(c: Context<{ Bindings: Env }>): 
       return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
     }
 
-    const response = buildClientResponse(updatedClient, issuerUrl);
+    const idTokenSigning = await readIDTokenSigningPolicy(c, tenantId);
+    if (idTokenSigning instanceof Response) return idTokenSigning;
+    const response = buildClientResponse(updatedClient, issuerUrl, idTokenSigning);
 
     // Audit log (non-blocking) - client self-modification is security-relevant
     createAuditLog(c.env, {

@@ -20,7 +20,7 @@ import {
   createErrorResponse,
   AR_ERROR_CODES,
   getLogger,
-  getJwksWithCache,
+  getIssuedIDTokenKeys,
   publishEvent,
   buildDOInstanceName,
   parseOAuthClientAuthenticationParams,
@@ -238,8 +238,8 @@ export async function cibaAuthorizationHandler(c: Context<{ Bindings: Env }>) {
 
     // Validate id_token_hint if provided (JWT signed by this server)
     if (id_token_hint) {
-      // Get JWKS for signature verification (this server's keys)
-      const { keys: jwksKeys } = await getJwksWithCache(c.env, tenantId);
+      // The keys this tenant signs ID tokens with (any algorithm an app's ID tokens may use)
+      const jwksKeys = await getIssuedIDTokenKeys(c.env, tenantId);
       const idTokenValidation = await validateCIBAIdTokenHint(id_token_hint, {
         issuerUrl: requestIssuer,
         jwks: { keys: jwksKeys },

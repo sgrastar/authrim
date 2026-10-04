@@ -7,6 +7,7 @@
  */
 
 import { jwtVerify, errors } from 'jose';
+import { ISSUED_ID_TOKEN_ALGORITHMS } from './issued-id-token';
 import type { JWTPayload, JWTVerifyOptions, CryptoKey } from 'jose';
 import type { ValidationResult } from './validation';
 
@@ -84,7 +85,7 @@ export async function validateIdTokenHint(
     // even after their session has expired
     const verifyOptions: JWTVerifyOptions = {
       issuer,
-      algorithms: ['RS256'],
+      algorithms: [...ISSUED_ID_TOKEN_ALGORITHMS],
     };
 
     // If we don't allow expired tokens, include clock tolerance

@@ -953,6 +953,42 @@ describe('Dynamic Client Registration Handler', () => {
       expect((await register('ES256')).status).toBe(201);
     });
 
+    it("names the tenant's ID token algorithm when an app registers none", async () => {
+      mockEnv.SETTINGS = createMockKV();
+      await mockEnv.SETTINGS.put(
+        'settings:tenant:default:oauth',
+        JSON.stringify({ 'oauth.id_token_signing_alg': 'PS256' })
+      );
+
+      const res = await app.request(
+        '/register',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ redirect_uris: ['https://example.com/callback'] }),
+        },
+        mockEnv
+      );
+
+      expect(res.status).toBe(201);
+      await expect(res.json()).resolves.toMatchObject({ id_token_signed_response_alg: 'PS256' });
+    });
+
+    it('leaves the algorithm unnamed when the tenant signs with RS256, as omitted means', async () => {
+      const res = await app.request(
+        '/register',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ redirect_uris: ['https://example.com/callback'] }),
+        },
+        mockEnv
+      );
+
+      expect(res.status).toBe(201);
+      expect(await res.json()).not.toHaveProperty('id_token_signed_response_alg');
+    });
+
     it('accepts ES256 for ID Token and signed UserInfo responses', async () => {
       const res = await app.request(
         '/register',
