@@ -166,9 +166,9 @@ export const SECURITY_SETTINGS_META: Record<keyof SecuritySettings, SettingMeta>
     default: false,
     envKey: 'REQUIRE_ENCRYPTED_REQUEST_OBJECT',
     label: 'Encrypted Request Required',
-    description: 'Require encrypted request objects',
+    description:
+      "Require every authorization request to come as a request object encrypted to the tenant (RFC 9101): sent directly, by reference, or pushed (PAR). Apps encrypt to the request object encryption key in the tenant's JWKS (use enc, RSA-OAEP-256 or RSA-OAEP). An app can turn it on as well, but cannot waive the tenant's requirement",
     visibility: 'admin',
-    status: 'in_development',
   },
 
   'security.trusted_redirect_origins': {

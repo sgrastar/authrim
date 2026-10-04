@@ -13,6 +13,7 @@ const {
   mockValidateDPoPProof,
   mockVerifyClientSecretHash,
   mockGetTokenFormat,
+  mockDecryptRequestObject,
   mockParseToken,
   mockParseTokenHeader,
   mockIsInternalUrl,
@@ -43,6 +44,7 @@ const {
     mockValidateDPoPProof: vi.fn(),
     mockVerifyClientSecretHash: vi.fn(),
     mockGetTokenFormat: vi.fn(),
+    mockDecryptRequestObject: vi.fn(),
     mockParseToken: vi.fn(),
     mockParseTokenHeader: vi.fn(),
     mockIsInternalUrl: vi.fn(),
@@ -70,6 +72,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     validateDPoPProof: mockValidateDPoPProof,
     verifyClientSecretHash: mockVerifyClientSecretHash,
     getTokenFormat: mockGetTokenFormat,
+    decryptRequestObject: mockDecryptRequestObject,
     parseToken: mockParseToken,
     parseTokenHeader: mockParseTokenHeader,
     isInternalUrl: mockIsInternalUrl,
@@ -567,6 +570,81 @@ describe('PAR Handler', () => {
       error_description: 'PKCE with S256 is required for this client',
     });
     expect(mockStoreRequestRpc).not.toHaveBeenCalled();
+  });
+
+  describe('security.require_encrypted_request_object', () => {
+    const requireEncryption = {
+      SETTINGS: {
+        get: async (key: string) =>
+          key === 'settings:tenant:default:security'
+            ? JSON.stringify({ 'security.require_encrypted_request_object': true })
+            : null,
+      } as unknown as KVNamespace,
+    };
+    const body = {
+      client_id: 'client-123',
+      response_type: 'code',
+      redirect_uri: 'https://client.example.com/callback',
+      scope: 'openid profile',
+    };
+
+    it('refuses a request without an encrypted request object', async () => {
+      for (const request of [undefined, 'signed-request-object']) {
+        mockGetTokenFormat.mockReturnValue('jwt');
+        const response = await parHandler(
+          createMockContext({
+            headers: { 'content-type': 'application/x-www-form-urlencoded' },
+            body: request ? { ...body, request } : body,
+            env: requireEncryption,
+          })
+        );
+        expect(response.status).toBe(400);
+        await expect(response.json()).resolves.toMatchObject({
+          error: 'invalid_request_object',
+          error_description: 'An encrypted request object is required for this client',
+        });
+      }
+      expect(mockStoreRequestRpc).not.toHaveBeenCalled();
+    });
+
+    it('records a signed request object encrypted to the tenant', async () => {
+      mockGetClientCached.mockResolvedValue({
+        client_id: 'client-123',
+        token_endpoint_auth_method: 'none',
+        redirect_uris: ['https://client.example.com/callback'],
+        jwks: {
+          keys: [{ kty: 'RSA', kid: 'client-key', alg: 'RS256', use: 'sig', n: 'n', e: 'AQAB' }],
+        },
+      });
+      mockGetTokenFormat.mockImplementation((value: string) =>
+        value === 'encrypted-request-object' ? 'jwe' : 'jwt'
+      );
+      mockDecryptRequestObject.mockResolvedValue('signed-request-object');
+      mockParseTokenHeader.mockReturnValue({ alg: 'RS256', kid: 'client-key' });
+
+      const response = await parHandler(
+        createMockContext({
+          headers: { 'content-type': 'application/x-www-form-urlencoded' },
+          body: { ...body, request: 'encrypted-request-object' },
+          env: requireEncryption,
+        })
+      );
+
+      expect(response.status).toBe(201);
+      expect(mockDecryptRequestObject).toHaveBeenCalledWith(
+        expect.anything(),
+        'default',
+        'encrypted-request-object'
+      );
+      expect(mockStoreRequestRpc).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            request_object_encrypted: true,
+            request_object_signed: true,
+          }),
+        })
+      );
+    });
   });
 
   it('rejects FAPI requests that do not use S256 PKCE', async () => {

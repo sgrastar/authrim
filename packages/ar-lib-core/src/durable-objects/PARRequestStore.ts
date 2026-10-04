@@ -61,6 +61,8 @@ export interface PARRequestData {
   resource?: string;
   /** The pushed request carried a request object the client signed (verified at the PAR endpoint). */
   request_object_signed?: boolean;
+  /** The pushed request carried a request object encrypted to this tenant (decrypted at PAR). */
+  request_object_encrypted?: boolean;
   createdAt?: number;
   expiresAt?: number;
   consumed?: boolean;

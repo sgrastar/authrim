@@ -797,27 +797,33 @@ describe('HTTPS Request URI Security', () => {
         .setProtectedHeader({ alg: 'RSA-OAEP', enc: 'A256GCM' })
         .encrypt(encryptionKeyPair.publicKey);
 
-      // Negative control: the JWE and key are valid when the key retains its RSA-OAEP usage.
+      // Negative control: the JWE and key are valid.
       const locallyDecrypted = await compactDecrypt(jwe, encryptionKeyPair.privateKey);
       expect(JSON.parse(new TextDecoder().decode(locallyDecrypted.plaintext))).toEqual(
         directJsonClaims
       );
 
+      // The tenant's request object encryption key decrypts it: the bare JSON inside is not
+      // signed by the client (anyone can encrypt to the public key), so it counts as an
+      // unsigned request object, which this environment does not allow.
+      const privatePEM = await exportPKCS8(encryptionKeyPair.privateKey);
       const response = await app.request(
         `/authorize?client_id=test-client&request=${encodeURIComponent(jwe)}`,
         { method: 'GET' },
         {
           ...mockEnv,
-          PRIVATE_KEY_PEM: await exportPKCS8(encryptionKeyPair.privateKey),
+          KEY_MANAGER: {
+            idFromName: () => 'key-manager',
+            get: () => ({ getRequestObjectDecryptionKeyRpc: async () => ({ privatePEM }) }),
+          },
         }
       );
 
-      // Current code imports PRIVATE_KEY_PEM for RS256 signing, producing a CryptoKey that
-      // cannot perform RSA-OAEP decryption. The unsigned JSON branch is therefore unreachable.
       expect(response.status).toBe(400);
       await expect(response.json()).resolves.toEqual({
         error: 'invalid_request_object',
-        error_description: 'Failed to decrypt request object',
+        error_description:
+          'Unsigned request objects (alg=none) are not allowed in this environment',
       });
       expect(
         (mockEnv.CHALLENGE_STORE as unknown as ReturnType<typeof createMockChallengeStore>)

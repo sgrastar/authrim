@@ -560,8 +560,28 @@ describe('Authorization Handler', () => {
       expect(response.headers.get('Location')).toContain('/flow/login');
     });
 
+    it('requires an encrypted request object when the tenant does (security.require_encrypted_request_object)', async () => {
+      await env.SETTINGS!.put(
+        'settings:tenant:default:security',
+        JSON.stringify({ 'security.require_encrypted_request_object': true })
+      );
+      const response = await app.request(
+        '/authorize?response_type=code&client_id=test-client&redirect_uri=https://example.com/callback&scope=openid&state=s1',
+        { method: 'GET' },
+        env
+      );
+
+      expect(response.status).toBe(302);
+      const location = new URL(response.headers.get('Location')!);
+      expect(location.origin + location.pathname).toBe('https://example.com/callback');
+      expect(location.searchParams.get('error')).toBe('invalid_request_object');
+      expect(location.searchParams.get('error_description')).toBe(
+        'An encrypted request object is required for this client'
+      );
+    });
+
     it('requires PKCE when the tenant requires it (security.pkce_required)', async () => {
-      await env.SETTINGS.put(
+      await env.SETTINGS!.put(
         'settings:tenant:default:security',
         JSON.stringify({ 'security.pkce_required': true })
       );

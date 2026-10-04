@@ -99,6 +99,7 @@ export * from './utils/dr-bundle';
 export * from './utils/errors';
 export * from './utils/issuer';
 export * from './utils/jwe';
+export * from './utils/request-object-encryption';
 export * from './utils/jwt';
 export * from './utils/oidc-signing';
 export * from './utils/issued-id-token';

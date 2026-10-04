@@ -34,7 +34,7 @@ function reason(why: NotApplied, keys: readonly string[]): [string, NotApplied][
 }
 
 export const NOT_APPLIED: ReadonlyMap<string, NotApplied> = new Map([
-	// to-build (26)
+	// to-build (25)
 	...reason('to-build', [
 		'diagnostic-logging.filter_pii',
 		'diagnostic-logging.filter_tokens',
@@ -57,7 +57,6 @@ export const NOT_APPLIED: ReadonlyMap<string, NotApplied> = new Map([
 		'plugin.notifier_console_enabled',
 		'rate_limit.email_max_requests',
 		'rate_limit.email_window',
-		'security.require_encrypted_request_object',
 		'tenant.ui_register_path',
 		'tokens.exchange_delegation_enabled',
 		'tokens.exchange_impersonation_enabled',

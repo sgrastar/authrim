@@ -178,6 +178,7 @@ async function createPortableSnapshot(): Promise<KeyManagerTenantBackupSnapshot>
     },
     oidcEs256: { keys: [], activeKeyId: null, config, lastRotation: null },
     oidcPs256: { keys: [], activeKeyId: null, config, lastRotation: null },
+    requestObjectEnc: { keys: [], activeKeyId: null, config, lastRotation: null },
   };
 }
 
@@ -274,6 +275,40 @@ describe('KeyManager Durable Object', () => {
     await expect(keyManager.startTenantBackupSnapshotRpc('../state')).rejects.toThrow(
       'backup_key_manager_snapshot_id_invalid'
     );
+  });
+
+  describe('request object encryption keys', () => {
+    it('publishes a dedicated encryption key and decrypts with it only', async () => {
+      const keys = await keyManager.getAllOIDCPublicKeysRpc();
+      const encryptionKey = keys.find((key) => key.use === 'enc');
+      expect(encryptionKey).toMatchObject({ kty: 'RSA', use: 'enc', alg: 'RSA-OAEP-256' });
+      expect(encryptionKey?.kid).toMatch(/^request-object-enc-/);
+      // Never a signing key.
+      const signingKids = keys.filter((key) => key.use === 'sig').map((key) => key.kid);
+      expect(signingKids).not.toContain(encryptionKey?.kid);
+
+      // Its private key, by its kid (the round trip is covered with real keys in
+      // request-object-encryption.test.ts; keys are mocked here).
+      await expect(
+        keyManager.getRequestObjectDecryptionKeyRpc(encryptionKey!.kid)
+      ).resolves.toMatchObject({ kid: encryptionKey!.kid, status: 'active' });
+
+      // A signing key's kid, or an unknown one, names no decryption key.
+      await expect(keyManager.getRequestObjectDecryptionKeyRpc(signingKids[0])).resolves.toBeNull();
+      await expect(keyManager.getRequestObjectDecryptionKeyRpc('unknown')).resolves.toBeNull();
+    });
+
+    it('keeps decrypting with the previous key after a rotation', async () => {
+      const previous = await keyManager.getRequestObjectDecryptionKeyRpc();
+      const next = await keyManager.rotateRequestObjectEncKeyRpc();
+      expect(next.kid).not.toBe(previous!.kid);
+      await expect(
+        keyManager.getRequestObjectDecryptionKeyRpc(previous!.kid)
+      ).resolves.toMatchObject({ kid: previous!.kid, status: 'overlap' });
+      await expect(keyManager.getRequestObjectDecryptionKeyRpc()).resolves.toMatchObject({
+        kid: next.kid,
+      });
+    });
   });
 
   describe('purpose-separated OIDC signing keys', () => {

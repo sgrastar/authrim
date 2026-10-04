@@ -92,6 +92,8 @@ import {
   resolveIDTokenSigningPolicy,
   resolveAppSecurityRequirements,
   type AppSecurityRequirements,
+  decryptRequestObject,
+  RequestObjectDecryptionError,
   validateIdTokenHint,
   getIssuedIDTokenKeys,
   importIssuedTokenKey,
@@ -143,7 +145,7 @@ import {
   getSessionCookieSameSite,
   getBrowserStateCookieSameSite,
 } from '@authrim/ar-lib-core';
-import { SignJWT, importJWK, importPKCS8, compactDecrypt, type CryptoKey } from 'jose';
+import { SignJWT, importJWK, importPKCS8, type CryptoKey } from 'jose';
 // NIST SP 800-63-4 Assurance Levels
 import { type FAL } from '@authrim/ar-lib-core';
 import { getRequestIssuer } from './issuer';
@@ -752,6 +754,8 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   let claimsRequestIntegrityProtected = false;
   // The request came in a request object the client signed (verified), directly or pushed.
   let requestObjectSigned = false;
+  // The request came in a request object encrypted to this tenant, directly or pushed.
+  let requestObjectEncrypted = false;
   let authorizationRequestSource: AuthorizationRequestSource = 'frontchannel';
   let restoredAuthorizationRequest: AuthorizationRequestContinuation | undefined;
   let _confirmed: string | undefined;
@@ -1223,6 +1227,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
     authorizationRequestSource = restoredAuthorizationRequest.source;
     claimsRequestIntegrityProtected = restoredAuthorizationRequest.integrity_protected;
     requestObjectSigned = restoredAuthorizationRequest.request_object_signed === true;
+    requestObjectEncrypted = restoredAuthorizationRequest.request_object_encrypted === true;
   }
 
   const sendRequestUriError = async (error: string, description: string): Promise<Response> => {
@@ -1634,6 +1639,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         error_uri?: string;
         cancel_uri?: string;
         request_object_signed?: boolean;
+        request_object_encrypted?: boolean;
       } | null = null;
 
       if (!c.env.PAR_REQUEST_STORE) {
@@ -1709,6 +1715,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
           error_uri: stored.error_uri,
           cancel_uri: stored.cancel_uri,
           request_object_signed: stored.request_object_signed === true,
+          request_object_encrypted: stored.request_object_encrypted === true,
         };
       } catch {
         // RPC error (invalid/expired request_uri)
@@ -1788,6 +1795,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         error_uri?: string;
         cancel_uri?: string;
         request_object_signed?: boolean;
+        request_object_encrypted?: boolean;
       } = parsedData;
 
       try {
@@ -1815,6 +1823,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         dpop_jkt = parData.dpop_jkt;
         claimsRequestIntegrityProtected = true;
         requestObjectSigned = parData.request_object_signed === true;
+        requestObjectEncrypted = parData.request_object_encrypted === true;
         authorization_details = parData.authorization_details; // RFC 9396 RAR
         response_mode = parData.response_mode;
         prompt = parData.prompt;
@@ -1863,33 +1872,80 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         );
       }
 
-      // Step 1: Decrypt JWE if needed (RFC 9101 Section 6.1)
-      let jwtRequest = request;
-      if (tokenFormat === 'jwe') {
-        // JWE: Decrypt using server's private key
-        const privateKeyPem = c.env.PRIVATE_KEY_PEM;
-        if (!privateKeyPem) {
+      // An unsigned request object (alg=none, or an encrypted bare JSON object: anyone can encrypt
+      // to the tenant's public key) is refused in production, and elsewhere unless the tenant
+      // allows it (security.allow_unsigned_request_object).
+      const refuseUnsignedRequestObject = async (): Promise<Response | null> => {
+        // SECURITY: Block alg=none in production environment regardless of settings
+        // This is a critical security measure to prevent unsigned JWT attacks
+        const isProduction = c.env.ENVIRONMENT === 'production' || c.env.NODE_ENV === 'production';
+
+        if (isProduction) {
+          log.error('SECURITY CRITICAL: Blocked unsigned request object (alg=none) in production', {
+            action: 'security_block',
+            algorithm: 'none',
+          });
           return c.json(
             {
-              error: 'server_error',
-              error_description: 'Server private key not configured',
+              error: 'invalid_request_object',
+              error_description:
+                'Unsigned request objects (alg=none) are not permitted in production',
             },
-            500
+            400
           );
         }
 
-        const privateKey = await importPKCS8(privateKeyPem, 'RS256');
-
+        // Check if 'none' algorithm is allowed (security.allow_unsigned_request_object).
+        // Only applies to non-production environments; settings that cannot be read do not
+        // allow it.
+        let allowNoneAlgorithm = false;
         try {
-          // Decrypt JWE to get inner JWT/payload
-          const { plaintext } = await compactDecrypt(request, privateKey);
-          const decoder = new TextDecoder();
-          const decrypted = decoder.decode(plaintext);
+          const settings = await resolveProtocolSettings(c.env, getTenantIdFromContext(c), {
+            clientId: client_id,
+            keys: ['security.allow_unsigned_request_object'],
+          });
+          allowNoneAlgorithm = settings.oidc.allowNoneAlgorithm ?? false;
+        } catch (error) {
+          log.error(
+            'Unsigned request object settings could not be read',
+            { action: 'settings_load' },
+            error as Error
+          );
+        }
+
+        if (!allowNoneAlgorithm) {
+          log.warn('Rejected unsigned request object (alg=none) - not allowed in configuration', {
+            action: 'security_block',
+            algorithm: 'none',
+          });
+          return c.json(
+            {
+              error: 'invalid_request_object',
+              error_description:
+                'Unsigned request objects (alg=none) are not allowed in this environment',
+            },
+            400
+          );
+        }
+        return null;
+      };
+
+      // Step 1: Decrypt JWE if needed (RFC 9101 Section 6.1)
+      let jwtRequest = request;
+      if (tokenFormat === 'jwe') {
+        try {
+          // Encrypted to this tenant's request object encryption key (use enc in its JWKS).
+          const decrypted = await decryptRequestObject(c.env, getTenantIdFromContext(c), request);
+          requestObjectEncrypted = true;
 
           // Check if decrypted content is a JWT (needs verification) or direct JSON payload
-          if (decrypted.startsWith('{')) {
-            // Direct JSON payload
+          if (decrypted.trimStart().startsWith('{')) {
+            // Direct JSON payload: encrypted, but not signed by the client.
+            const unsignedRefusal = await refuseUnsignedRequestObject();
+            if (unsignedRefusal) return unsignedRefusal;
             requestObjectClaims = JSON.parse(decrypted) as Record<string, unknown>;
+            claimsRequestIntegrityProtected = false;
+            requestObjectSigned = false;
           } else {
             // Nested JWT - need to verify signature
             jwtRequest = decrypted;
@@ -1902,6 +1958,18 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
             { action: 'jwe_decrypt' },
             decryptError as Error
           );
+          if (
+            decryptError instanceof RequestObjectDecryptionError &&
+            decryptError.reason === 'unavailable'
+          ) {
+            return c.json(
+              {
+                error: 'temporarily_unavailable',
+                error_description: 'Request object decryption is temporarily unavailable',
+              },
+              503
+            );
+          }
           return c.json(
             {
               error: 'invalid_request_object',
@@ -1922,58 +1990,8 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         const alg = header.alg;
 
         if (alg === 'none') {
-          // SECURITY: Block alg=none in production environment regardless of settings
-          // This is a critical security measure to prevent unsigned JWT attacks
-          const isProduction =
-            c.env.ENVIRONMENT === 'production' || c.env.NODE_ENV === 'production';
-
-          if (isProduction) {
-            log.error(
-              'SECURITY CRITICAL: Blocked unsigned request object (alg=none) in production',
-              { action: 'security_block', algorithm: 'none' }
-            );
-            return c.json(
-              {
-                error: 'invalid_request_object',
-                error_description:
-                  'Unsigned request objects (alg=none) are not permitted in production',
-              },
-              400
-            );
-          }
-
-          // Check if 'none' algorithm is allowed (security.allow_unsigned_request_object).
-          // Only applies to non-production environments; settings that cannot be read do not
-          // allow it.
-          let allowNoneAlgorithm = false;
-          try {
-            const settings = await resolveProtocolSettings(c.env, getTenantIdFromContext(c), {
-              clientId: client_id,
-              keys: ['security.allow_unsigned_request_object'],
-            });
-            allowNoneAlgorithm = settings.oidc.allowNoneAlgorithm ?? false;
-          } catch (error) {
-            log.error(
-              'Unsigned request object settings could not be read',
-              { action: 'settings_load' },
-              error as Error
-            );
-          }
-
-          if (!allowNoneAlgorithm) {
-            log.warn('Rejected unsigned request object (alg=none) - not allowed in configuration', {
-              action: 'security_block',
-              algorithm: 'none',
-            });
-            return c.json(
-              {
-                error: 'invalid_request_object',
-                error_description:
-                  'Unsigned request objects (alg=none) are not allowed in this environment',
-              },
-              400
-            );
-          }
+          const unsignedRefusal = await refuseUnsignedRequestObject();
+          if (unsignedRefusal) return unsignedRefusal;
 
           // Unsigned request object - just parse without verification
           // Note: This is ONLY allowed in development/testing environments
@@ -2835,6 +2853,15 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   const messageSigning = fapiConfig.messageSigning;
   if (messageSigning?.requireSignedRequestObject === true && !claimsRequestIntegrityProtected) {
     return sendError('invalid_request', 'A signed request object is required for this client');
+  }
+
+  // security.require_encrypted_request_object (the tenant's or the app's): the request came in a
+  // request object encrypted to this tenant, sent here directly, by reference, or pushed (PAR).
+  if (securityPolicy.requireEncryptedRequestObject && !requestObjectEncrypted) {
+    return sendError(
+      'invalid_request_object',
+      'An encrypted request object is required for this client'
+    );
   }
 
   // Validate scope
@@ -3792,6 +3819,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         authorization_request_source: authorizationRequestSource,
         authorization_request_integrity_protected: claimsRequestIntegrityProtected,
         authorization_request_signed: requestObjectSigned,
+        authorization_request_encrypted: requestObjectEncrypted,
         authorization_server: 'default',
         session_mode:
           clientMetadata?.browser_public_client_mode === 'strict'
@@ -3916,6 +3944,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         authorization_request_source: authorizationRequestSource,
         authorization_request_integrity_protected: claimsRequestIntegrityProtected,
         authorization_request_signed: requestObjectSigned,
+        authorization_request_encrypted: requestObjectEncrypted,
         authorization_server: 'default',
         // Custom Redirect URIs (Authrim Extension)
         error_uri: validatedErrorUri,
@@ -4268,6 +4297,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
             authorization_request_source: authorizationRequestSource,
             authorization_request_integrity_protected: claimsRequestIntegrityProtected,
             authorization_request_signed: requestObjectSigned,
+            authorization_request_encrypted: requestObjectEncrypted,
             authorization_server: 'default',
             // Phase 2-B RBAC extensions
             org_id,
@@ -4426,6 +4456,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
                 authorization_request_source: authorizationRequestSource,
                 authorization_request_integrity_protected: claimsRequestIntegrityProtected,
                 authorization_request_signed: requestObjectSigned,
+                authorization_request_encrypted: requestObjectEncrypted,
                 authorization_server: 'default',
                 org_id,
                 acting_as,
