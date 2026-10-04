@@ -176,9 +176,9 @@ export const OAUTH_SETTINGS_META: Record<keyof OAuthSettings, SettingMeta> = {
     default: true,
     envKey: 'REFRESH_ID_TOKEN_REISSUE',
     label: 'Reissue ID Token on Refresh',
-    description: 'Issue new ID token when refresh token is used',
+    description:
+      'Issue a new ID token when a refresh token is used, for grants with the openid scope (OpenID Connect).',
     visibility: 'public',
-    status: 'in_development',
   },
   'oauth.offline_access_required': {
     key: 'oauth.offline_access_required',

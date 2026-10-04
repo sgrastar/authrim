@@ -2689,9 +2689,13 @@ describe('Security-Critical Tests', () => {
         async function refreshWith(options: {
           tenantOAuth?: Record<string, unknown>;
           env?: string;
+          scope?: string;
         }) {
           const client = createConfidentialClient();
-          const refreshTokenPayload = createRefreshTokenPayload({ client_id: client.client_id });
+          const refreshTokenPayload = createRefreshTokenPayload({
+            client_id: client.client_id,
+            ...(options.scope ? { scope: options.scope } : {}),
+          });
           const refreshTokenJWT = createTestRefreshTokenJWT({ client_id: client.client_id });
           if (options.tenantOAuth) {
             const kv = createMockKV();
@@ -2725,9 +2729,33 @@ describe('Security-Critical Tests', () => {
               env: mockEnv,
             })
           );
-          const body = await parseJsonResponse<{ refresh_token: string }>(response);
+          const body = await parseJsonResponse<{ refresh_token: string; id_token?: string }>(
+            response
+          );
           return { response, body, rotateRpc, refreshTokenJWT };
         }
+
+        it('issues a new ID token on refresh for an OpenID Connect grant, by default', async () => {
+          const { response, body } = await refreshWith({});
+          expect(response.status).toBe(200);
+          expect(body.id_token).toBeTruthy();
+        });
+
+        it('issues no ID token when oauth.refresh_id_token_reissue is off', async () => {
+          const { response, body } = await refreshWith({
+            tenantOAuth: { 'oauth.refresh_id_token_reissue': false },
+          });
+          expect(response.status).toBe(200);
+          expect(body.id_token).toBeUndefined();
+          expect(mocks.mockCreateIDToken).not.toHaveBeenCalled();
+        });
+
+        it('issues no ID token for a grant without the openid scope', async () => {
+          const { response, body } = await refreshWith({ scope: 'api:read offline_access' });
+          expect(response.status).toBe(200);
+          expect(body.id_token).toBeUndefined();
+          expect(mocks.mockCreateIDToken).not.toHaveBeenCalled();
+        });
 
         it("keeps the refresh token when the tenant's setting turns rotation off", async () => {
           const { response, body, rotateRpc, refreshTokenJWT } = await refreshWith({

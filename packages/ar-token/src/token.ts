@@ -223,6 +223,7 @@ function tokenLifetimes(
   idToken(): Promise<number>;
   refresh(): Promise<number>;
   refreshRotation(): Promise<boolean>;
+  refreshIdTokenReissue(): Promise<boolean>;
 } {
   let values: Promise<Record<string, unknown>> | undefined;
   const read = async (key: string) => {
@@ -250,6 +251,11 @@ function tokenLifetimes(
     refreshRotation: async () => {
       values ??= resolveEffectiveSettings(c.env, 'oauth', { tenantId, clientId });
       return (await values)['oauth.refresh_token_rotation'] !== false;
+    },
+    // Whether a refresh issues a new ID token (oauth.refresh_id_token_reissue, on by default).
+    refreshIdTokenReissue: async () => {
+      values ??= resolveEffectiveSettings(c.env, 'oauth', { tenantId, clientId });
+      return (await values)['oauth.refresh_id_token_reissue'] !== false;
     },
   };
 }
@@ -4012,82 +4018,85 @@ async function handleRefreshTokenGrant(
     return oauthError(c, 'server_error', 'Failed to create access token', 500);
   }
 
-  // Generate new ID Token (optional for refresh flow, but included for consistency)
-  let idToken: string;
-  try {
-    const atHash = await calculateAtHash(accessToken);
-    let idTokenClaims: Record<string, unknown> = {
-      iss: getRequestIssuer(c),
-      sub: refreshTokenData.sub,
-      aud: client_id,
-      at_hash: atHash,
-      // Phase 2 RBAC: Add RBAC claims to ID token
-      ...idTokenRBACClaims,
-      // With assurance on: the original authentication as the first ID token had it (OIDC Core
-      // 12.2: auth_time is the time of the original authentication).
-      ...(assuranceEnabled && familyAuthContext
-        ? {
-            ...(familyAuthContext.auth_time ? { auth_time: familyAuthContext.auth_time } : {}),
-            ...(familyAuthContext.acr ? { acr: familyAuthContext.acr } : {}),
-            ...(familyAuthContext.amr?.length ? { amr: familyAuthContext.amr } : {}),
-          }
-        : {}),
-    };
+  // A new ID Token (OIDC Core 12.2: optional on refresh): for OpenID Connect grants (scope openid)
+  // while oauth.refresh_id_token_reissue is on.
+  let idToken: string | undefined;
+  if (splitScope(grantedScope).includes('openid') && (await lifetimes.refreshIdTokenReissue())) {
+    try {
+      const atHash = await calculateAtHash(accessToken);
+      let idTokenClaims: Record<string, unknown> = {
+        iss: getRequestIssuer(c),
+        sub: refreshTokenData.sub,
+        aud: client_id,
+        at_hash: atHash,
+        // Phase 2 RBAC: Add RBAC claims to ID token
+        ...idTokenRBACClaims,
+        // With assurance on: the original authentication as the first ID token had it (OIDC Core
+        // 12.2: auth_time is the time of the original authentication).
+        ...(assuranceEnabled && familyAuthContext
+          ? {
+              ...(familyAuthContext.auth_time ? { auth_time: familyAuthContext.auth_time } : {}),
+              ...(familyAuthContext.acr ? { acr: familyAuthContext.acr } : {}),
+              ...(familyAuthContext.amr?.length ? { amr: familyAuthContext.amr } : {}),
+            }
+          : {}),
+      };
 
-    const mappedIdTokenClaims = await applyOIDCIdentityMappingToIDTokenClaims(
-      c,
-      tenantId,
-      client_id,
-      clientMetadata as ClientMetadata,
-      idTokenClaims,
-      splitScope(grantedScope)
-    );
-    if (!mappedIdTokenClaims.ok) {
-      return mappedIdTokenClaims.response;
-    }
-    idTokenClaims = mappedIdTokenClaims.claims;
+      const mappedIdTokenClaims = await applyOIDCIdentityMappingToIDTokenClaims(
+        c,
+        tenantId,
+        client_id,
+        clientMetadata as ClientMetadata,
+        idTokenClaims,
+        splitScope(grantedScope)
+      );
+      if (!mappedIdTokenClaims.ok) {
+        return mappedIdTokenClaims.response;
+      }
+      idTokenClaims = mappedIdTokenClaims.claims;
 
-    const idTokenConsent = await enforceOIDCAttributeReleaseConsentForIDTokenClaims(
-      c,
-      tenantId,
-      clientMetadata as ClientMetadata,
-      idTokenClaims
-    );
-    if (!idTokenConsent.ok) {
-      return idTokenConsent.response;
-    }
-
-    // Check if client requests SD-JWT ID Token (RFC 9901)
-    // SD-JWT for a client that requests it, where the tenant enables it (feature.enable_sd_jwt).
-    const useSDJWT =
-      clientMetadata.id_token_signed_response_type === 'sd-jwt' &&
-      (await resolvePolicyFlags(c.env, getTenantIdFromContext(c))).sdJwt;
-
-    if (useSDJWT) {
-      const rawSelectiveClaims = clientMetadata.sd_jwt_selective_claims;
-      const selectiveClaims: string[] = Array.isArray(rawSelectiveClaims)
-        ? rawSelectiveClaims
-        : ['email', 'phone_number', 'address', 'birthdate'];
-      idToken = await createClientSDJWTIDToken(
-        c.env,
+      const idTokenConsent = await enforceOIDCAttributeReleaseConsentForIDTokenClaims(
+        c,
         tenantId,
         clientMetadata as ClientMetadata,
-        idTokenClaims as Omit<IDTokenClaims, 'iat' | 'exp'>,
-        await lifetimes.idToken(),
-        selectiveClaims
+        idTokenClaims
       );
-    } else {
-      idToken = await createClientIDToken(
-        c.env,
-        tenantId,
-        clientMetadata as ClientMetadata,
-        idTokenClaims as Omit<IDTokenClaims, 'iat' | 'exp'>,
-        await lifetimes.idToken()
-      );
+      if (!idTokenConsent.ok) {
+        return idTokenConsent.response;
+      }
+
+      // Check if client requests SD-JWT ID Token (RFC 9901)
+      // SD-JWT for a client that requests it, where the tenant enables it (feature.enable_sd_jwt).
+      const useSDJWT =
+        clientMetadata.id_token_signed_response_type === 'sd-jwt' &&
+        (await resolvePolicyFlags(c.env, getTenantIdFromContext(c))).sdJwt;
+
+      if (useSDJWT) {
+        const rawSelectiveClaims = clientMetadata.sd_jwt_selective_claims;
+        const selectiveClaims: string[] = Array.isArray(rawSelectiveClaims)
+          ? rawSelectiveClaims
+          : ['email', 'phone_number', 'address', 'birthdate'];
+        idToken = await createClientSDJWTIDToken(
+          c.env,
+          tenantId,
+          clientMetadata as ClientMetadata,
+          idTokenClaims as Omit<IDTokenClaims, 'iat' | 'exp'>,
+          await lifetimes.idToken(),
+          selectiveClaims
+        );
+      } else {
+        idToken = await createClientIDToken(
+          c.env,
+          tenantId,
+          clientMetadata as ClientMetadata,
+          idTokenClaims as Omit<IDTokenClaims, 'iat' | 'exp'>,
+          await lifetimes.idToken()
+        );
+      }
+    } catch (error) {
+      log.error('Failed to create ID token', {}, error as Error);
+      return oauthError(c, 'server_error', 'Failed to create ID token', 500);
     }
-  } catch (error) {
-    log.error('Failed to create ID token', {}, error as Error);
-    return oauthError(c, 'server_error', 'Failed to create ID token', 500);
   }
 
   // Rotation follows oauth.refresh_token_rotation (the client's, else the tenant's, else
