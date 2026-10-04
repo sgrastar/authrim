@@ -197,6 +197,9 @@ const mocks = vi.hoisted(() => ({
 
   // Events
   mockPublishEvent: vi.fn().mockResolvedValue(undefined),
+
+  // Refresh token family index
+  mockUpdateFamilyIndexExpiry: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
@@ -315,6 +318,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     timingSafeEqual: mocks.mockTimingSafeEqual,
     // Events
     publishEvent: mocks.mockPublishEvent,
+    updateRefreshTokenFamilyIndexExpiry: mocks.mockUpdateFamilyIndexExpiry,
     TOKEN_EVENTS: {
       ACCESS_ISSUED: 'token.access.issued',
       ID_ISSUED: 'token.id.issued',
@@ -2746,6 +2750,8 @@ describe('Security-Critical Tests', () => {
           scope?: string;
           rotateExpiresIn?: number;
           exp?: number;
+          familyExp?: number;
+          rotateResult?: Record<string, unknown>;
         }) {
           const client = createConfidentialClient();
           const refreshTokenPayload = createRefreshTokenPayload({
@@ -2766,6 +2772,7 @@ describe('Security-Critical Tests', () => {
             sub: refreshTokenPayload.sub,
             scope: refreshTokenPayload.scope,
             client_id: refreshTokenPayload.client_id,
+            ...(options.familyExp !== undefined ? { exp: options.familyExp } : {}),
           });
           mocks.mockParseRefreshTokenJti.mockReturnValue({
             generation: 1,
@@ -2776,6 +2783,7 @@ describe('Security-Critical Tests', () => {
             newJti: 'rt-new-jti-002',
             newVersion: 2,
             expiresIn: options.rotateExpiresIn ?? 2592000,
+            ...options.rotateResult,
           });
           mockEnv.REFRESH_TOKEN_ROTATOR.get = vi.fn().mockReturnValue({ rotateRpc });
           const response = await tokenHandler(
@@ -2835,6 +2843,42 @@ describe('Security-Critical Tests', () => {
             .refresh_token_expires_in;
           expect(expiresIn).toBeGreaterThan(590);
           expect(expiresIn).toBeLessThanOrEqual(600);
+        });
+
+        it('states the family’s remaining lifetime when it ends before the presented token', async () => {
+          const now = Math.floor(Date.now() / 1000);
+          const { response, body } = await refreshWith({
+            tenantOAuth: { 'oauth.refresh_token_rotation': false },
+            exp: now + 600,
+            familyExp: now + 120,
+          });
+          expect(response.status).toBe(200);
+          const expiresIn = (body as { refresh_token_expires_in?: number })
+            .refresh_token_expires_in;
+          expect(expiresIn).toBeGreaterThan(110);
+          expect(expiresIn).toBeLessThanOrEqual(120);
+        });
+
+        it('moves the family’s index expiry to where the rotation left it', async () => {
+          mocks.mockUpdateFamilyIndexExpiry.mockClear();
+          const expiresAt = Date.now() + 1234 * 1000;
+          const { response } = await refreshWith({
+            rotateExpiresIn: 1234,
+            rotateResult: { expiresAt, familyJti: 'rt-first-jti-001' },
+          });
+          expect(response.status).toBe(200);
+          expect(mocks.mockUpdateFamilyIndexExpiry).toHaveBeenCalledWith(expect.anything(), {
+            tenantId: 'default',
+            jti: 'rt-first-jti-001',
+            expiresAt,
+          });
+        });
+
+        it('leaves the index alone for a family that did not record its first JWT ID', async () => {
+          mocks.mockUpdateFamilyIndexExpiry.mockClear();
+          const { response } = await refreshWith({ rotateExpiresIn: 1234 });
+          expect(response.status).toBe(200);
+          expect(mocks.mockUpdateFamilyIndexExpiry).not.toHaveBeenCalled();
         });
 
         it('issues a new ID token on refresh for an OpenID Connect grant, by default', async () => {

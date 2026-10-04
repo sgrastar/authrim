@@ -50,6 +50,7 @@ import {
   falRequiresDpop,
   falRequiresSignedPushedRequest,
   recordRefreshTokenFamilyIndex,
+  updateRefreshTokenFamilyIndexExpiry,
   // Request-level caching (P0 KV Cache Optimization)
   getClientCached,
   loadTenantProfileCached,
@@ -4157,11 +4158,15 @@ async function handleRefreshTokenGrant(
 
   let newRefreshToken: string;
   // The refresh token's remaining lifetime: from the family after a rotation (it may slide), else
-  // the presented token's own expiry (a token that is not rotated cannot slide).
-  let refreshTokenExpiresIn =
-    typeof refreshTokenPayload.exp === 'number'
-      ? Math.max(0, refreshTokenPayload.exp - Math.floor(Date.now() / 1000))
-      : await lifetimes.refresh();
+  // whichever ends first of the presented token and its family (a token that is not rotated
+  // cannot slide, and a family can end before a token issued under an older lifetime).
+  const presentedExpiry = Math.min(
+    typeof refreshTokenPayload.exp === 'number' ? refreshTokenPayload.exp : Infinity,
+    typeof refreshTokenData.exp === 'number' ? refreshTokenData.exp : Infinity
+  );
+  let refreshTokenExpiresIn = Number.isFinite(presentedExpiry)
+    ? Math.max(0, presentedExpiry - Math.floor(Date.now() / 1000))
+    : await lifetimes.refresh();
 
   if (rotationEnabled) {
     // V2: Implement refresh token rotation with version-based theft detection
@@ -4201,6 +4206,17 @@ async function handleRefreshTokenGrant(
       newRefreshTokenJti = rotateResult.newJti;
       newVersion = rotateResult.newVersion;
       refreshTokenExpiresIn = rotateResult.expiresIn;
+      // The family's expiry may have moved: keep its index row (user-wide revocation) in step.
+      if (rotateResult.familyJti) {
+        c.executionCtx.waitUntil(
+          updateTokenFamilyIndexExpiry(
+            authCtx.coreAdapter,
+            tenantId,
+            rotateResult.familyJti,
+            rotateResult.expiresAt
+          )
+        );
+      }
 
       // Create JWT with new version (rtv claim)
       const refreshTokenClaims = {
@@ -5899,6 +5915,21 @@ async function recordTokenFamilyIndex(
   } catch (error) {
     // Log but don't fail - this is a non-critical operation
     moduleLogger.error('Failed to record token family in index', {}, error as Error);
+  }
+}
+
+/** Keep a family's index expiry in step with a rotation; like the record, failure is logged only. */
+async function updateTokenFamilyIndexExpiry(
+  db: DatabaseSource | null | undefined,
+  tenantId: string,
+  jti: string,
+  expiresAt: number
+): Promise<void> {
+  if (!db) return;
+  try {
+    await updateRefreshTokenFamilyIndexExpiry(db, { tenantId, jti, expiresAt });
+  } catch (error) {
+    moduleLogger.error('Failed to update token family expiry in index', {}, error as Error);
   }
 }
 
@@ -7802,7 +7833,8 @@ async function handleNativeSSOTokenExchange(
     const tenantProfile = await loadTenantProfileCached(c, c.env.AUTHRIM_CONFIG, c.env, tenantId);
 
     // The device_secret was issued only with a grant that got a refresh token (offline_access for
-    // OpenID Connect), so it stands for that offline grant here.
+    // OpenID Connect), so it stands for that offline grant here. Secrets from before
+    // oauth.offline_access_required came with a refresh token as well, under the older rule.
     if (tenantProfile.allows_refresh_token !== false) {
       const refreshTokenClaims = {
         iss: getRequestIssuer(c),

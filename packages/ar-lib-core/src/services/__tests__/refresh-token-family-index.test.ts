@@ -8,6 +8,7 @@ import {
   listRefreshTokenFamiliesByUser,
   recordRefreshTokenFamilyIndex,
   revokeRefreshTokenFamiliesByUser,
+  updateRefreshTokenFamilyIndexExpiry,
 } from '../refresh-token-family-index';
 
 type FamilyRow = {
@@ -136,6 +137,16 @@ class InMemoryRefreshTokenFamilyIndexAdapter implements DatabaseAdapter {
         expires_at: expiresAt,
         is_revoked: 0,
       });
+      return { success: true, rowsAffected: 1 };
+    }
+
+    if (sql.includes('SET expires_at = ?')) {
+      const [expiresAt, tenantId, jti] = params as [number, string, string];
+      const row = this.rows.get(jti);
+      if (!row || row.tenant_id !== tenantId || row.is_revoked !== 0 || row.expires_at <= 0) {
+        return { success: true, rowsAffected: 0 };
+      }
+      row.expires_at = expiresAt;
       return { success: true, rowsAffected: 1 };
     }
 
@@ -314,6 +325,44 @@ describe('refresh-token-family-index', () => {
         expires_at: 5_000,
         is_revoked: 0,
       }),
+    ]);
+  });
+
+  it('moves an active family’s expiry, but not a revoked or expired one, nor another tenant’s', async () => {
+    const adapter = new InMemoryRefreshTokenFamilyIndexAdapter();
+    const row = (
+      jti: string,
+      overrides: Partial<{ tenant_id: string; expires_at: number; is_revoked: number }> = {}
+    ) => ({
+      jti,
+      tenant_id: 'tenant_a',
+      user_id: 'user_1',
+      client_id: 'client_1',
+      generation: 1,
+      expires_at: 5_000,
+      is_revoked: 0,
+      ...overrides,
+    });
+    adapter.seed([
+      row('active'),
+      row('revoked', { is_revoked: 1 }),
+      row('expired', { expires_at: 0 }),
+      row('other-tenant', { tenant_id: 'tenant_b' }),
+    ]);
+
+    for (const jti of ['active', 'revoked', 'expired', 'other-tenant']) {
+      await updateRefreshTokenFamilyIndexExpiry(adapter, {
+        tenantId: 'tenant_a',
+        jti,
+        expiresAt: 9_000,
+      });
+    }
+
+    expect(adapter.all().map((entry) => [entry.jti, entry.expires_at])).toEqual([
+      ['active', 9_000],
+      ['revoked', 5_000],
+      ['expired', 0],
+      ['other-tenant', 5_000],
     ]);
   });
 

@@ -109,6 +109,7 @@ export interface TokenFamilyV2 {
   last_used_at: number; // Timestamp of last use (ms)
   expires_at: number; // When the family expires (ms): moved on by a sliding rotation
   created_at?: number; // When the family was first issued (ms): the start of the absolute lifetime
+  first_jti?: string; // The JWT ID the family was issued with: its row in the relational family index
   user_id: string; // For tenant boundary enforcement
   client_id: string; // For scope validation
   allowed_scope: string; // Prevent scope amplification
@@ -173,6 +174,8 @@ export interface RotateTokenResponseV2 {
   newVersion: number; // New version for the rotated token
   newJti: string; // New JWT ID for the rotated token
   expiresIn: number; // Seconds until expiration
+  expiresAt: number; // When the family now expires (ms)
+  familyJti?: string; // The family's first JWT ID (its index row), when the family recorded it
   allowedScope: string; // Scope to include in new token
   resourceAudience?: string | string[]; // Original access token resource audience
 }
@@ -220,6 +223,17 @@ function normalizeResourceAudience(value: unknown): string | string[] | undefine
  * never past the absolute limit (from created_at). A family without created_at (recorded before
  * the lifetime model) keeps its expiry.
  */
+/** A lifetime policy sent over HTTP, or undefined when it is missing or not well formed. */
+function refreshTokenLifetimePolicy(value: unknown): RefreshTokenLifetimePolicy | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const { ttl, sliding, absoluteTtl } = value as Record<string, unknown>;
+  const positive = (n: unknown): n is number =>
+    typeof n === 'number' && Number.isFinite(n) && n > 0;
+  if (!positive(ttl) || typeof sliding !== 'boolean') return undefined;
+  if (absoluteTtl !== null && !positive(absoluteTtl)) return undefined;
+  return { ttl, sliding, absoluteTtl };
+}
+
 export function rotatedExpiry(
   family: Pick<TokenFamilyV2, 'expires_at' | 'created_at'>,
   lifetime: RefreshTokenLifetimePolicy | undefined,
@@ -471,7 +485,9 @@ export class RefreshTokenRotator extends DurableObject<Env> {
       family.version < 1 ||
       !family.last_jti ||
       !Number.isFinite(family.expires_at) ||
-      (family.created_at !== undefined && !Number.isFinite(family.created_at))
+      (family.created_at !== undefined && !Number.isFinite(family.created_at)) ||
+      (family.first_jti !== undefined &&
+        (typeof family.first_jti !== 'string' || !family.first_jti))
     ) {
       throw new Error('refresh_token_family_storage_invalid');
     }
@@ -626,6 +642,7 @@ export class RefreshTokenRotator extends DurableObject<Env> {
       last_used_at: now,
       expires_at: expiresAt,
       created_at: now,
+      first_jti: request.jti,
       user_id: request.userId,
       client_id: request.clientId,
       allowed_scope: request.scope,
@@ -836,6 +853,8 @@ export class RefreshTokenRotator extends DurableObject<Env> {
       newVersion,
       newJti,
       expiresIn: Math.floor((updatedFamily.expires_at - now) / 1000),
+      expiresAt: updatedFamily.expires_at,
+      ...(updatedFamily.first_jti && { familyJti: updatedFamily.first_jti }),
       allowedScope: request.requestedScope || updatedFamily.allowed_scope,
       ...(updatedFamily.resource_aud && { resourceAudience: updatedFamily.resource_aud }),
     };
@@ -1183,6 +1202,7 @@ export class RefreshTokenRotator extends DurableObject<Env> {
             clientId: body.clientId,
             tenantId: body.tenantId,
             requestedScope: body.requestedScope,
+            lifetime: refreshTokenLifetimePolicy(body.lifetime),
           });
 
           return new Response(JSON.stringify(result), {

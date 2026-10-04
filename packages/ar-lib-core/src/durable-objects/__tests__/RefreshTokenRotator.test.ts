@@ -607,6 +607,35 @@ describe('RefreshTokenRotator V2', () => {
       );
     });
 
+    it('returns the family’s new expiry and its first JWT ID for the index', async () => {
+      await create();
+      vi.advanceTimersByTime(500_000);
+      const result = await rotate({ ttl: 1000, sliding: true, absoluteTtl: null });
+      expect(result.expiresAt).toBe(Date.now() + 1_000_000);
+      expect(result.familyJti).toBe('jti-1');
+    });
+
+    it('applies the lifetime sent over HTTP as over RPC', async () => {
+      await create();
+      vi.advanceTimersByTime(500_000);
+      const response = await rotator.fetch(
+        new Request('http://localhost/rotate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            incomingVersion: 1,
+            incomingJti: 'jti-1',
+            userId: 'user_life',
+            clientId: 'client_1',
+            tenantId: 'default',
+            lifetime: { ttl: 1000, sliding: true, absoluteTtl: null },
+          }),
+        })
+      );
+      expect(response.status).toBe(200);
+      expect(((await response.json()) as { expiresIn: number }).expiresIn).toBe(1000);
+    });
+
     it('keeps the expiry of a family recorded before the lifetime model', () => {
       const now = 10_000_000;
       expect(

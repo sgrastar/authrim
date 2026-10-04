@@ -397,10 +397,14 @@ components:
         refresh_token:
           type: string
           description: >-
-            For OpenID Connect requests (scope includes openid), returned only
-            when the granted scope includes offline_access, unless the tenant
-            setting oauth.offline_access_required is disabled. Requests without
-            openid are not affected by that setting.
+            On a new grant (authorization_code, device_code, CIBA) for OpenID
+            Connect (scope includes openid), returned only when the granted
+            scope includes offline_access, unless the tenant setting
+            oauth.offline_access_required is disabled. Requests without openid
+            are not affected by that setting. The refresh_token grant returns
+            one for an existing grant whatever its scope, and so does a Native
+            SSO exchange (the device_secret was issued only with a grant that
+            got a refresh token).
         refresh_token_expires_in:
           type: integer
           description: >-
