@@ -877,7 +877,8 @@ export async function parHandler(c: Context<{ Bindings: Env }>): Promise<Respons
             params.max_age = String(requestObjectClaims.max_age);
           if (requestObjectClaims.ui_locales)
             params.ui_locales = requestObjectClaims.ui_locales as string;
-          if (requestObjectClaims.id_token_hint)
+          // Present means given, whatever its value: authorize refuses a non-string.
+          if (requestObjectClaims.id_token_hint !== undefined)
             params.id_token_hint = requestObjectClaims.id_token_hint as string;
           if (requestObjectClaims.login_hint)
             params.login_hint = requestObjectClaims.login_hint as string;

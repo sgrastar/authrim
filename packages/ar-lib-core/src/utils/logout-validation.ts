@@ -55,8 +55,8 @@ export async function validateIdTokenHint(
 ): Promise<IdTokenHintValidationResult> {
   const { required = false, allowExpired = true } = options;
 
-  // Check if id_token_hint is required
-  if (!idTokenHint) {
+  // Not given (absent, or an empty query parameter). Any other non-string is refused below.
+  if (idTokenHint === undefined || idTokenHint === '') {
     if (required) {
       return {
         valid: false,

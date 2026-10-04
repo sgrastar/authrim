@@ -93,7 +93,7 @@ import {
   validateIdTokenHint,
   getIssuedIDTokenKeys,
   importIssuedTokenKey,
-  applyOIDCIdentityMapping,
+  deriveOIDCSubject,
   selectJWEEncryptionKey,
   setBoundedMapEntry,
   timingSafeEqual,
@@ -2169,7 +2169,8 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         if (requestObjectClaims.max_age !== undefined) {
           max_age = String(requestObjectClaims.max_age);
         }
-        if (requestObjectClaims.id_token_hint)
+        // Present means given, whatever its value: a non-string is refused below.
+        if (requestObjectClaims.id_token_hint !== undefined)
           id_token_hint = requestObjectClaims.id_token_hint as string;
         if (requestObjectClaims.acr_values) acr_values = requestObjectClaims.acr_values as string;
         if (requestObjectClaims.display) display = requestObjectClaims.display as string;
@@ -5086,7 +5087,7 @@ async function idTokenHintNamesUser(
 ): Promise<boolean> {
   if (hintSubject === userId) return true;
   try {
-    const mapped = await applyOIDCIdentityMapping({
+    const subject = await deriveOIDCSubject({
       adapter: createAuthContextFromHono(c, tenantId).coreAdapter,
       env: c.env,
       tenantId,
@@ -5095,9 +5096,9 @@ async function idTokenHintNamesUser(
       selector: clientMetadata.identity_mapping,
       destinationSurface: 'id_token',
       grantedScopes: scope?.split(' ').filter(Boolean),
-      claims: { sub: userId },
+      userId,
     });
-    return mapped.claims.sub === hintSubject;
+    return subject === hintSubject;
   } catch (error) {
     getLogger(c)
       .module('AUTHORIZE')

@@ -60,14 +60,19 @@ describe('keys of ID tokens this tenant issued', () => {
   });
 
   it('refuses an id_token_hint that is not a string (a request object may carry any JSON)', async () => {
-    const result = await validateIdTokenHint(
-      { sub: 'user-1' } as unknown as string,
-      async () => {
-        throw new Error('not reached');
-      },
-      'https://op.example.com'
-    );
-    expect(result).toMatchObject({ valid: false, errorCode: 'invalid_request' });
+    for (const hint of [{ sub: 'user-1' }, false, 0, null]) {
+      const result = await validateIdTokenHint(
+        hint as unknown as string,
+        async () => {
+          throw new Error('not reached');
+        },
+        'https://op.example.com'
+      );
+      expect(result, JSON.stringify(hint)).toMatchObject({
+        valid: false,
+        errorCode: 'invalid_request',
+      });
+    }
   });
 
   it('accepts an id_token_hint signed with ES256 at logout', async () => {

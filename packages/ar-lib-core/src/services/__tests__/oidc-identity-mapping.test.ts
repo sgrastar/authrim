@@ -41,6 +41,7 @@ vi.mock('../destination-profile-consent', async (importOriginal) => ({
 
 import {
   applyOIDCIdentityMapping,
+  deriveOIDCSubject,
   OIDCIdentityMappingRuntimeError,
 } from '../oidc-identity-mapping';
 
@@ -369,5 +370,43 @@ describe('applyOIDCIdentityMapping fail-closed behavior', () => {
         }),
       })
     );
+  });
+});
+
+describe('deriveOIDCSubject', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    resolveBinding.mockResolvedValue(binding);
+    loadDescriptor.mockResolvedValue(null);
+  });
+
+  it('takes the mapped sub even when other fields fail validation, without release consent', async () => {
+    executeMapping.mockReturnValue({
+      status: 'failed',
+      values: [
+        {
+          sourceRef: { side: 'destination', namespace: 'oidc.claim', path: 'sub' },
+          value: 'pairwise-1',
+        },
+      ],
+    });
+
+    await expect(
+      deriveOIDCSubject({ adapter, tenantId: 'tenant-a', clientId: 'client-a', userId: 'user-1' })
+    ).resolves.toBe('pairwise-1');
+    expect(filterClaims).not.toHaveBeenCalled();
+  });
+
+  it("keeps the user's id when the mapping issues no sub, or there is no mapping", async () => {
+    executeMapping.mockReturnValue({ status: 'success', values: [] });
+    await expect(
+      deriveOIDCSubject({ adapter, tenantId: 'tenant-a', clientId: 'client-a', userId: 'user-1' })
+    ).resolves.toBe('user-1');
+
+    resolveBinding.mockResolvedValue(null);
+    await expect(
+      deriveOIDCSubject({ adapter, tenantId: 'tenant-a', clientId: 'client-a', userId: 'user-1' })
+    ).resolves.toBe('user-1');
+    expect(filterBaselineClaims).not.toHaveBeenCalled();
   });
 });

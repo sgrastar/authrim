@@ -43,11 +43,8 @@ const TEST_REGION_CONFIG = buildPolicyConstrainedRegionShardConfig({
 // Mock getClient and getClientCached at module level
 const mockGetClient = vi.hoisted(() => vi.fn());
 // The app's identity mapping (id_token_hint subjects): no mapping unless a test sets one.
-const mockApplyOIDCIdentityMapping = vi.hoisted(() =>
-  vi.fn(async (input: { claims: Record<string, unknown> }) => ({
-    claims: input.claims,
-    binding: null,
-  }))
+const mockDeriveOIDCSubject = vi.hoisted(() =>
+  vi.fn(async (input: { userId: string }) => input.userId)
 );
 const mockResolveAccountDataContextFromHono = vi.hoisted(() =>
   vi.fn(async (c: { env: Env; set: (key: string, value: unknown) => void }, userId: string) => {
@@ -79,7 +76,7 @@ vi.mock('@authrim/ar-lib-core', async () => {
       .fn()
       .mockImplementation((_c, env, clientId) => mockGetClient(env, clientId)),
     resolveAccountDataContextFromHono: mockResolveAccountDataContextFromHono,
-    applyOIDCIdentityMapping: mockApplyOIDCIdentityMapping,
+    deriveOIDCSubject: mockDeriveOIDCSubject,
   };
 });
 
@@ -2089,15 +2086,12 @@ describe('Authorization Handler', () => {
 
       it("matches a hint carrying the sub this app's identity mapping issues", async () => {
         const sign = await hintSigner();
-        mockApplyOIDCIdentityMapping.mockResolvedValueOnce({
-          claims: { sub: 'pairwise-for-test-client' },
-          binding: null,
-        });
+        mockDeriveOIDCSubject.mockResolvedValueOnce('pairwise-for-test-client');
         const redirect = await authorizeWithHint(await sign('pairwise-for-test-client'));
         expect(redirect.searchParams.get('error')).toBeNull();
         expect(redirect.searchParams.get('code')).toBeTruthy();
-        expect(mockApplyOIDCIdentityMapping).toHaveBeenCalledWith(
-          expect.objectContaining({ clientId: 'test-client', claims: { sub: 'test-user' } })
+        expect(mockDeriveOIDCSubject).toHaveBeenCalledWith(
+          expect.objectContaining({ clientId: 'test-client', userId: 'test-user' })
         );
       });
 
