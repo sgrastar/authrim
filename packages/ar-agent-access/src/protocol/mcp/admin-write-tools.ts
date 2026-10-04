@@ -268,10 +268,7 @@ export const ADMIN_WRITE_TOOL_DEFINITIONS: readonly AgentToolDefinition[] =
             authCodeTtl: { type: 'integer', minimum: 10, maximum: 86400 },
             stateRequired: { type: 'boolean' },
             refreshTokenRotation: { type: 'boolean' },
-            offlineAccessRequired: {
-              type: 'boolean',
-              description: 'In development: saved but not applied yet.',
-            },
+            offlineAccessRequired: { type: 'boolean' },
           },
           ['resource_version']
         ),

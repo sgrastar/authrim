@@ -2196,6 +2196,48 @@ describe('Authorization Handler', () => {
       }
     );
 
+    it('ignores offline_access when the response returns no code (OIDC Core 11)', async () => {
+      mockGetClient.mockResolvedValue({
+        client_id: 'test-client',
+        redirect_uris: ['https://example.com/callback'],
+        grant_types: ['implicit', 'authorization_code'],
+        response_types: ['id_token token', 'code id_token token'],
+        scope: 'openid profile offline_access',
+        token_endpoint_auth_method: 'none',
+      });
+      await configureClientSettings(env, { 'client.sso_enabled': true });
+      configureClientTrustPolicy(env);
+      seedSession(env, 'offline-user');
+      const keyPair = await generateKeyPair('RS256', { extractable: true });
+      const privatePEM = await exportPKCS8(keyPair.privateKey);
+      env.KEY_MANAGER = {
+        idFromName: vi.fn().mockReturnValue({ toString: () => 'default-v3' }),
+        get: vi.fn().mockReturnValue({
+          getActiveOIDCSigningKeyWithPrivateRpc: vi.fn().mockResolvedValue({
+            kid: 'offline-signing-key',
+            privatePEM,
+          }),
+        }),
+      } as unknown as Env['KEY_MANAGER'];
+
+      const response = await app.request(
+        '/authorize?response_type=id_token%20token&client_id=test-client&redirect_uri=https://example.com/callback&scope=openid%20profile%20offline_access&state=offline&nonce=offline-nonce',
+        {
+          method: 'GET',
+          headers: { Cookie: `authrim_session=${encodeURIComponent(TEST_SESSION_ID)}` },
+        },
+        env
+      );
+
+      expect(response.status).toBe(302);
+      const fragment = new URLSearchParams(
+        new URL(response.headers.get('Location')!).hash.slice(1)
+      );
+      const accessClaims = decodeJwt(fragment.get('access_token')!);
+      expect(String(accessClaims.scope).split(' ')).not.toContain('offline_access');
+      expect(String(accessClaims.scope).split(' ')).toContain('openid');
+    });
+
     it('issues implicit and hybrid tokens with the configured token lifetimes', async () => {
       mockGetClient.mockResolvedValue({
         client_id: 'test-client',

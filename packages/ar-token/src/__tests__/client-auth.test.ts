@@ -677,11 +677,17 @@ describe('Client Authentication Tests', () => {
     });
 
     // Token lifetimes from the effective settings; other categories as the older system settings
-    // the test describes resolve them.
+    // the test describes resolve them. These tests are about client authentication and the
+    // grants' state: refresh tokens without offline_access (oauth.offline_access_required) are
+    // covered in security-critical.test.ts.
     setSystemSettings(null);
     mocks.mockResolveEffectiveSettings.mockImplementation(async (env: unknown, category: string) =>
       category === 'oauth'
-        ? { 'oauth.access_token_expiry': 3600, 'oauth.refresh_token_expiry': 86400 * 30 }
+        ? {
+            'oauth.access_token_expiry': 3600,
+            'oauth.refresh_token_expiry': 86400 * 30,
+            'oauth.offline_access_required': false,
+          }
         : settingsFromSystemSettings(env, systemSettings, category)
     );
 

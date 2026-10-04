@@ -587,6 +587,54 @@ describe('Security-Critical Tests', () => {
       );
     });
 
+    describe('offline_access (oauth.offline_access_required)', () => {
+      async function exchangeCode(scope: string, tenantOAuth?: Record<string, unknown>) {
+        const client = createConfidentialClient({ require_pkce: false });
+        const authCodeData = createAuthCodeData({ userId: 'user-001', scope });
+        if (tenantOAuth) {
+          const settings = createMockKV();
+          void settings.put('settings:tenant:default:oauth', JSON.stringify(tenantOAuth));
+          (mockEnv as unknown as { SETTINGS: unknown }).SETTINGS = settings;
+        }
+        mocks.mockGetClientCached.mockResolvedValue(client);
+        mockEnv.AUTH_CODE_STORE.get = vi.fn().mockReturnValue({
+          consumeCodeRpc: vi.fn().mockResolvedValue(authCodeData),
+          registerIssuedTokensRpc: vi.fn().mockResolvedValue(undefined),
+        });
+        const response = await tokenHandler(
+          createMockContext({
+            method: 'POST',
+            body: {
+              grant_type: 'authorization_code',
+              code: 'valid-auth-code',
+              redirect_uri: authCodeData.redirectUri,
+              client_id: client.client_id,
+              client_secret: 'valid-secret',
+            },
+            env: mockEnv,
+          })
+        );
+        expect(response.status).toBe(200);
+        return parseJsonResponse<{ refresh_token?: string }>(response);
+      }
+
+      it('issues no refresh token to an OpenID Connect grant without offline_access', async () => {
+        expect((await exchangeCode('openid profile')).refresh_token).toBeUndefined();
+      });
+
+      it('issues one with offline_access, or for an OAuth grant without openid', async () => {
+        expect((await exchangeCode('openid profile offline_access')).refresh_token).toBeTruthy();
+        expect((await exchangeCode('api:read')).refresh_token).toBeTruthy();
+      });
+
+      it('issues one without offline_access when the tenant does not require it', async () => {
+        const body = await exchangeCode('openid profile', {
+          'oauth.offline_access_required': false,
+        });
+        expect(body.refresh_token).toBeTruthy();
+      });
+    });
+
     it('gives the ID token its own lifetime (oauth.id_token_expiry)', async () => {
       const client = createConfidentialClient({ require_pkce: false });
       const authCodeData = createAuthCodeData({ userId: 'user-001', scope: 'openid profile' });

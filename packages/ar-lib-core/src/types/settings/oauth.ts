@@ -188,9 +188,9 @@ export const OAUTH_SETTINGS_META: Record<keyof OAuthSettings, SettingMeta> = {
     default: true,
     envKey: 'OFFLINE_ACCESS_REQUIRED_FOR_REFRESH',
     label: 'Require offline_access for Refresh',
-    description: 'Require offline_access scope to issue refresh tokens',
+    description:
+      'OpenID Connect grants (scope openid) get a refresh token only with the offline_access scope (OIDC Core 11). OAuth grants without openid are not affected.',
     visibility: 'public',
-    status: 'in_development',
   },
   'oauth.refresh_token_sliding_window_enabled': {
     key: 'oauth.refresh_token_sliding_window_enabled',

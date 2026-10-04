@@ -2824,6 +2824,14 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
     return sendError('invalid_scope', scopeValidation.error);
   }
 
+  // OIDC Core 11: offline_access is ignored unless the response returns an authorization code
+  // (only a code can be exchanged for a refresh token).
+  if (scope && !(response_type ?? '').split(' ').includes('code')) {
+    scope = splitScopes(scope)
+      .filter((value) => value !== 'offline_access')
+      .join(' ');
+  }
+
   const requestedScopes = splitScopes(scope);
   const clientAllowedScopes = getClientAllowedScopes(clientMetadata);
   if (requestedScopes.length > 0 && clientAllowedScopes.length > 0) {
