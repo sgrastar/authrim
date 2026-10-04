@@ -98,6 +98,7 @@ export const PLUGIN_SETTINGS_META: Record<keyof PluginSettings, SettingMeta> = {
       'Enable the Console notifier plugin (development only, logs notifications to console)',
     visibility: 'admin',
     dependsOn: [{ key: 'plugin.enabled', value: true }],
+    status: 'in_development',
   },
 };
 

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { CLIENT_DEFAULTS, CLIENT_SETTINGS_META } from '../client';
 
 describe('CLIENT_SETTINGS_META', () => {
-  it('keeps only per-app settings the runtime reads', () => {
+  it('keeps only per-app settings (the registration metadata lives elsewhere)', () => {
     // The app's registration metadata (grant types, URIs, channels, token policy) lives in the
     // client registration, not in the settings catalog.
     expect(Object.keys(CLIENT_SETTINGS_META).sort()).toEqual([

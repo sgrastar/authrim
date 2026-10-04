@@ -160,6 +160,7 @@ export const TENANT_SETTINGS_META: Record<keyof TenantSettings, SettingMeta> = {
     label: 'Tenant Name',
     description: 'Display name for this tenant',
     visibility: 'public',
+    status: 'in_development',
   },
   'tenant.logo_uri': {
     key: 'tenant.logo_uri',
@@ -266,6 +267,7 @@ export const TENANT_SETTINGS_META: Record<keyof TenantSettings, SettingMeta> = {
       "Path of the sign-up page on this tenant's sign-in UI (starts with a single /; no query or fragment). Unset: the platform's.",
     visibility: 'page',
     default: '/signup',
+    status: 'in_development',
   },
 };
 

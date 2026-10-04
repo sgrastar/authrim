@@ -249,6 +249,7 @@ export const DIAGNOSTIC_LOGGING_SETTINGS_META: Record<
     label: 'Filter PII',
     description: 'Exclude Personally Identifiable Information from logs',
     visibility: 'admin',
+    status: 'in_development',
   },
   'diagnostic-logging.filter_tokens': {
     key: 'diagnostic-logging.filter_tokens',
@@ -258,6 +259,7 @@ export const DIAGNOSTIC_LOGGING_SETTINGS_META: Record<
     label: 'Hash Tokens',
     description: 'Hash token values using SHA-256 (irreversible)',
     visibility: 'admin',
+    status: 'in_development',
   },
   'diagnostic-logging.token_hash_prefix_length': {
     key: 'diagnostic-logging.token_hash_prefix_length',
@@ -334,6 +336,7 @@ export const DIAGNOSTIC_LOGGING_SETTINGS_META: Record<
     description:
       'Export server and SDK logs in a single merged timeline using diagnosticSessionId correlation',
     visibility: 'admin',
+    status: 'in_development',
   },
 };
 

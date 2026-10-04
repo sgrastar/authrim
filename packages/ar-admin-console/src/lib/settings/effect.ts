@@ -34,8 +34,11 @@ function reason(why: NotApplied, keys: readonly string[]): [string, NotApplied][
 }
 
 export const NOT_APPLIED: ReadonlyMap<string, NotApplied> = new Map([
-	// to-build (33)
+	// to-build (38)
 	...reason('to-build', [
+		'diagnostic-logging.filter_pii',
+		'diagnostic-logging.filter_tokens',
+		'diagnostic-logging.merged_output_enabled',
 		'dr-backup.storage_destination_id',
 		'federation.saml_artifact_resolution_timeout',
 		'federation.saml_artifact_ttl',
@@ -57,6 +60,7 @@ export const NOT_APPLIED: ReadonlyMap<string, NotApplied> = new Map([
 		'plugin.enabled',
 		'plugin.execution_timeout_ms',
 		'plugin.memory_limit_mb',
+		'plugin.notifier_console_enabled',
 		'rate_limit.email_max_requests',
 		'rate_limit.email_window',
 		'security.dpop_bound_access_tokens',
@@ -66,11 +70,12 @@ export const NOT_APPLIED: ReadonlyMap<string, NotApplied> = new Map([
 		'session.default_ttl',
 		'session.max_ttl',
 		'session.refresh_default',
+		'tenant.ui_register_path',
 		'tokens.exchange_delegation_enabled',
 		'tokens.exchange_impersonation_enabled',
 		'tokens.introspection_extended_claims'
 	]),
-	// to-wire (32)
+	// to-wire (35)
 	...reason('to-wire', [
 		'assurance.default_ial',
 		'assurance.ial_assurance_values',
@@ -94,6 +99,8 @@ export const NOT_APPLIED: ReadonlyMap<string, NotApplied> = new Map([
 		'ciba.push_notification_timeout_ms',
 		'ciba.slow_down_increment',
 		'ciba.user_code_enabled',
+		'client.default_audience',
+		'client.default_resource',
 		'device_flow.expires_in',
 		'device_flow.max_expires_in',
 		'device_flow.max_interval',
@@ -103,7 +110,8 @@ export const NOT_APPLIED: ReadonlyMap<string, NotApplied> = new Map([
 		'device_flow.poll_interval',
 		'device_flow.slow_down_increment',
 		'device_flow.user_code_charset',
-		'device_flow.user_code_length'
+		'device_flow.user_code_length',
+		'tenant.name'
 	]),
 	// internal (5)
 	...reason('internal', [

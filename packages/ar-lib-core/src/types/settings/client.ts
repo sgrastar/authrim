@@ -54,6 +54,7 @@ export const CLIENT_SETTINGS_META: Record<keyof ClientSettings, SettingMeta> = {
     label: 'Default Audience',
     description: 'Default audience for tokens',
     visibility: 'admin',
+    status: 'in_development',
   },
   'client.default_resource': {
     key: 'client.default_resource',
@@ -64,6 +65,7 @@ export const CLIENT_SETTINGS_META: Record<keyof ClientSettings, SettingMeta> = {
     description:
       'Default resource target for access tokens when the token request omits resource/audience.',
     visibility: 'admin',
+    status: 'in_development',
   },
 };
 
