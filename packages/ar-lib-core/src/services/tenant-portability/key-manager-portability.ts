@@ -1,4 +1,12 @@
-import { CompactSign, compactVerify, importJWK, importPKCS8, type JWK } from 'jose';
+import {
+  CompactEncrypt,
+  CompactSign,
+  compactDecrypt,
+  compactVerify,
+  importJWK,
+  importPKCS8,
+  type JWK,
+} from 'jose';
 
 export type PortableKeyStatus = 'active' | 'overlap' | 'revoked';
 export type PortableECAlgorithm = 'ES256' | 'ES384' | 'ES512';
@@ -76,7 +84,17 @@ export interface KeyManagerTenantBackupSnapshot {
     config: RotationConfig;
     lastRotation: number | null;
   };
+  /** RSA-OAEP-256 keys apps encrypt request objects to. Absent in snapshots made before them. */
+  requestObjectEnc: {
+    keys: PortableRsaKey[];
+    activeKeyId: string | null;
+    config: RotationConfig;
+    lastRotation: number | null;
+  };
 }
+
+/** The algorithm of the request object encryption keys (key management, RFC 7518 4.3). */
+const REQUEST_OBJECT_ENC_ALG = 'RSA-OAEP-256';
 
 const MAX_SNAPSHOT_BYTES = 8 * 1024 * 1024;
 const MAX_KEYS_PER_STATE = 128;
@@ -147,7 +165,7 @@ function jwk(value: unknown, kid: string, algorithm: string, curve?: string): JW
   const source = object(value) as JWK;
   if (
     source.kid !== kid ||
-    source.use !== 'sig' ||
+    source.use !== (algorithm === REQUEST_OBJECT_ENC_ALG ? 'enc' : 'sig') ||
     source.alg !== algorithm ||
     (curve ? source.kty !== 'EC' || source.crv !== curve : source.kty !== 'RSA') ||
     'd' in source
@@ -187,7 +205,10 @@ function commonKey(
   return { source, result };
 }
 
-function rsaKey(value: unknown, algorithm: 'RS256' | 'PS256'): PortableRsaKey {
+function rsaKey(
+  value: unknown,
+  algorithm: 'RS256' | 'PS256' | typeof REQUEST_OBJECT_ENC_ALG
+): PortableRsaKey {
   const { source, result } = commonKey(
     value,
     [],
@@ -231,6 +252,7 @@ function ecKey(value: unknown, requiredAlgorithm?: PortableECAlgorithm): Portabl
 }
 
 async function verifyPair(key: PortableRsaKey | PortableEcKey, algorithm: string): Promise<void> {
+  if (algorithm === REQUEST_OBJECT_ENC_ALG) return verifyEncryptionPair(key);
   try {
     const privateKey = await importPKCS8(key.privatePEM, algorithm);
     const publicKey = await importJWK(key.publicJWK, algorithm);
@@ -239,6 +261,25 @@ async function verifyPair(key: PortableRsaKey | PortableEcKey, algorithm: string
       .setProtectedHeader({ alg: algorithm, kid: key.kid })
       .sign(privateKey);
     await compactVerify(token, publicKey, { algorithms: [algorithm] });
+  } catch {
+    invalid();
+  }
+}
+
+/** An encryption key pair: what its public key encrypts, its private key decrypts. */
+async function verifyEncryptionPair(key: PortableRsaKey | PortableEcKey): Promise<void> {
+  try {
+    const privateKey = await importPKCS8(key.privatePEM, REQUEST_OBJECT_ENC_ALG);
+    const publicKey = await importJWK(key.publicJWK, REQUEST_OBJECT_ENC_ALG);
+    if (publicKey instanceof Uint8Array) invalid();
+    const plaintext = 'authrim-backup-key-check';
+    const token = await new CompactEncrypt(new TextEncoder().encode(plaintext))
+      .setProtectedHeader({ alg: REQUEST_OBJECT_ENC_ALG, enc: 'A256GCM', kid: key.kid })
+      .encrypt(publicKey);
+    const decrypted = await compactDecrypt(token, privateKey, {
+      keyManagementAlgorithms: [REQUEST_OBJECT_ENC_ALG],
+    });
+    if (new TextDecoder().decode(decrypted.plaintext) !== plaintext) invalid();
   } catch {
     invalid();
   }
@@ -319,20 +360,30 @@ export async function normalizeKeyManagerTenantBackupSnapshot(
   }
   if (!encoded || new TextEncoder().encode(encoded).length > MAX_SNAPSHOT_BYTES) invalid();
   const source = object(input);
-  exactKeys(source, ['kind', 'version', 'rsa', 'vcEc', 'oidcEs256', 'oidcPs256']);
+  exactKeys(
+    source,
+    ['kind', 'version', 'rsa', 'vcEc', 'oidcEs256', 'oidcPs256'],
+    ['requestObjectEnc']
+  );
   if (source.kind !== 'authrim.key_manager_tenant_backup.v1' || source.version !== 1) invalid();
   const rsaSource = object(source.rsa);
   const vcSource = object(source.vcEc);
   const oidcEsSource = object(source.oidcEs256);
   const oidcPsSource = object(source.oidcPs256);
+  const requestObjectEncSource =
+    source.requestObjectEnc === undefined ? emptyPurposeState() : object(source.requestObjectEnc);
   exactKeys(rsaSource, ['keys', 'activeKeyId', 'config', 'lastRotation', 'secrets']);
   exactKeys(vcSource, ['keys', 'activeKeyIds', 'config', 'lastRotation']);
   exactKeys(oidcEsSource, ['keys', 'activeKeyId', 'config', 'lastRotation']);
   exactKeys(oidcPsSource, ['keys', 'activeKeyId', 'config', 'lastRotation']);
+  exactKeys(requestObjectEncSource, ['keys', 'activeKeyId', 'config', 'lastRotation']);
   const rsaKeys = keyArray(rsaSource.keys, (key) => rsaKey(key, 'RS256'));
   const vcKeys = keyArray(vcSource.keys, (key) => ecKey(key));
   const oidcEsKeys = keyArray(oidcEsSource.keys, (key) => ecKey(key, 'ES256'));
   const oidcPsKeys = keyArray(oidcPsSource.keys, (key) => rsaKey(key, 'PS256'));
+  const requestObjectEncKeys = keyArray(requestObjectEncSource.keys, (key) =>
+    rsaKey(key, REQUEST_OBJECT_ENC_ALG)
+  );
   const vcActiveSource = object(vcSource.activeKeyIds);
   exactKeys(vcActiveSource, ['ES256', 'ES384', 'ES512']);
   const vcActive = Object.fromEntries(
@@ -349,6 +400,7 @@ export async function normalizeKeyManagerTenantBackupSnapshot(
     ...vcKeys.map((key) => verifyPair(key, key.algorithm)),
     ...oidcEsKeys.map((key) => verifyPair(key, 'ES256')),
     ...oidcPsKeys.map((key) => verifyPair(key, 'PS256')),
+    ...requestObjectEncKeys.map((key) => verifyPair(key, REQUEST_OBJECT_ENC_ALG)),
   ]);
   return {
     kind: 'authrim.key_manager_tenant_backup.v1',
@@ -378,6 +430,21 @@ export async function normalizeKeyManagerTenantBackupSnapshot(
       config: rotationConfig(oidcPsSource.config),
       lastRotation: nullableTimestamp(oidcPsSource.lastRotation),
     },
+    requestObjectEnc: {
+      keys: requestObjectEncKeys,
+      activeKeyId: assertActive(requestObjectEncKeys, requestObjectEncSource.activeKeyId),
+      config: rotationConfig(requestObjectEncSource.config),
+      lastRotation: nullableTimestamp(requestObjectEncSource.lastRotation),
+    },
+  };
+}
+
+function emptyPurposeState(): Record<string, unknown> {
+  return {
+    keys: [],
+    activeKeyId: null,
+    config: { rotationIntervalDays: 90, retentionPeriodDays: 30 },
+    lastRotation: null,
   };
 }
 
@@ -389,7 +456,8 @@ export function keyManagerTenantBackupSnapshotIsEmpty(
     Object.keys(snapshot.rsa.secrets).length === 0 &&
     snapshot.vcEc.keys.length === 0 &&
     snapshot.oidcEs256.keys.length === 0 &&
-    snapshot.oidcPs256.keys.length === 0
+    snapshot.oidcPs256.keys.length === 0 &&
+    snapshot.requestObjectEnc.keys.length === 0
   );
 }
 
@@ -407,6 +475,7 @@ export function emptyKeyManagerTenantBackupSnapshot(): KeyManagerTenantBackupSna
     },
     oidcEs256: { keys: [], activeKeyId: null, config: { ...config }, lastRotation: null },
     oidcPs256: { keys: [], activeKeyId: null, config: { ...config }, lastRotation: null },
+    requestObjectEnc: { keys: [], activeKeyId: null, config: { ...config }, lastRotation: null },
   };
 }
 

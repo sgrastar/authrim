@@ -35,6 +35,23 @@ describe('certification profiles', () => {
     }
   });
 
+  it('turns off the tenant’s app security floor, which the test plans would trip on', () => {
+    expect(CERTIFICATION_PROFILE_MANAGED_KEYS.get('security')).toEqual(
+      expect.arrayContaining([
+        'security.pkce_required',
+        'security.dpop_bound_access_tokens',
+        'security.require_encrypted_request_object',
+      ])
+    );
+    for (const [id, profile] of Object.entries(certificationProfiles)) {
+      expect(profile.settings.security, id).toMatchObject({
+        'security.pkce_required': false,
+        'security.dpop_bound_access_tokens': false,
+        'security.require_encrypted_request_object': false,
+      });
+    }
+  });
+
   it('defines a FAPI 2.0 Client Credentials DPoP profile', () => {
     expect(getCertificationProfile('fapi-2-client-credentials-dpop')?.settings).toMatchObject({
       security: {

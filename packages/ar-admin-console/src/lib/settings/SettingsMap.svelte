@@ -122,9 +122,13 @@
 				section.settings.map((s) => row(s.key, t(section.title), s.depth))
 			)
 		}));
+		// A built page whose draft is not all placed yet keeps the rest as a group of its own.
+		const builtIds = new Set(built.map((group) => group.id));
 		const drafted: Unnumbered[] = DRAFT_PAGES.map((page) => ({
-			id: page.id,
-			title: pageTitle(page.id, page.title),
+			id: builtIds.has(page.id) ? `${page.id}#draft` : page.id,
+			title: builtIds.has(page.id)
+				? `${pageTitle(page.id, page.title)} (draft)`
+				: pageTitle(page.id, page.title),
 			status: page.id === 'hidden' ? 'hidden' : page.proposed ? 'proposed' : 'draft',
 			scope: page.scope,
 			note: page.note,
@@ -285,8 +289,10 @@
 					proposed: false,
 					...tally(`${area.id}/${item.id}`)
 				}));
+				// Proposed draft pages not in the navigation yet (a built page already is).
 				for (const page of DRAFT_PAGES.filter(
-					(p) => p.proposed && p.id.startsWith(`${area.id}/`)
+					(p) =>
+						p.proposed && p.id.startsWith(`${area.id}/`) && !items.some((item) => item.id === p.id)
 				)) {
 					items.push({
 						id: page.id,

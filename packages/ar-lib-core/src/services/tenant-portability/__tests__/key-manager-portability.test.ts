@@ -21,6 +21,18 @@ async function rsa(algorithm: 'RS256' | 'PS256', kid: string) {
   };
 }
 
+/** A request object encryption key (RSA-OAEP-256, use enc). */
+async function rsaEncryption(kid: string) {
+  const pair = await generateKeyPair('RSA-OAEP-256', { extractable: true });
+  return {
+    kid,
+    publicJWK: { ...(await exportJWK(pair.publicKey)), kid, use: 'enc', alg: 'RSA-OAEP-256' },
+    privatePEM: await exportPKCS8(pair.privateKey),
+    createdAt: 100,
+    status: 'active' as const,
+  };
+}
+
 async function ec(algorithm: PortableECAlgorithm, kid: string) {
   const pair = await generateKeyPair(algorithm, { extractable: true });
   const curve = { ES256: 'P-256', ES384: 'P-384', ES512: 'P-521' }[algorithm] as
@@ -43,6 +55,7 @@ async function snapshot(): Promise<KeyManagerTenantBackupSnapshot> {
   const vcKey = await ec('ES256', 'vc-a');
   const oidcEsKey = await ec('ES256', 'oidc-es-a');
   const oidcPsKey = await rsa('PS256', 'oidc-ps-a');
+  const encKey = await rsaEncryption('request-object-enc-a');
   return {
     kind: 'authrim.key_manager_tenant_backup.v1',
     version: 1,
@@ -74,6 +87,12 @@ async function snapshot(): Promise<KeyManagerTenantBackupSnapshot> {
     oidcPs256: {
       keys: [oidcPsKey],
       activeKeyId: oidcPsKey.kid,
+      config,
+      lastRotation: 100,
+    },
+    requestObjectEnc: {
+      keys: [encKey],
+      activeKeyId: encKey.kid,
       config,
       lastRotation: 100,
     },
@@ -137,4 +156,44 @@ it('recognizes an empty initialized target without treating configuration as dat
     oidcPs256: { keys: [], activeKeyId: null, config, lastRotation: null },
   });
   expect(keyManagerTenantBackupSnapshotIsEmpty(empty)).toBe(true);
+});
+
+it('reads a snapshot made before request object encryption keys as having none', async () => {
+  const { requestObjectEnc: _omitted, ...older } = await snapshot();
+  const normalized = await normalizeKeyManagerTenantBackupSnapshot(older);
+  expect(normalized.requestObjectEnc).toEqual({
+    keys: [],
+    activeKeyId: null,
+    config,
+    lastRotation: null,
+  });
+});
+
+it('rejects an encryption key whose private key does not decrypt for its public key', async () => {
+  const source = await snapshot();
+  const other = await rsaEncryption('request-object-enc-a');
+  await expect(
+    normalizeKeyManagerTenantBackupSnapshot({
+      ...source,
+      requestObjectEnc: {
+        ...source.requestObjectEnc,
+        keys: [{ ...source.requestObjectEnc.keys[0], privatePEM: other.privatePEM }],
+      },
+    })
+  ).rejects.toThrow('backup_key_manager_snapshot_invalid');
+  // Nor a signing key in its place.
+  await expect(
+    normalizeKeyManagerTenantBackupSnapshot({
+      ...source,
+      requestObjectEnc: {
+        ...source.requestObjectEnc,
+        keys: [
+          {
+            ...source.requestObjectEnc.keys[0],
+            publicJWK: { ...source.requestObjectEnc.keys[0].publicJWK, use: 'sig' },
+          },
+        ],
+      },
+    })
+  ).rejects.toThrow('backup_key_manager_snapshot_invalid');
 });

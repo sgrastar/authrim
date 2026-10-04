@@ -49,6 +49,7 @@ import {
 } from './tenant-alias-directory';
 import { refuseIDTokenSigningAlgorithm } from './id-token-signing-policy';
 import { OIDC_SIGNING_ALGORITHMS } from '@authrim/ar-lib-core/utils/oidc-signing';
+import { REDIRECT_URI_POLICY_DESCRIPTION, redirectUriRefusedByPolicy } from './redirect-uri-policy';
 
 type AdminClientApplicationType = 'web' | 'native' | 'spa' | 'service';
 type AdminBrowserPublicClientMode = 'strict' | 'cookie_fallback';
@@ -295,7 +296,61 @@ function validateOptionalStrictBooleanField(
 }
 
 function isLoopbackRedirectHost(hostname: string): boolean {
-  return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1';
+  // URL.hostname writes an IPv6 address in brackets.
+  return (
+    hostname === 'localhost' ||
+    hostname === '127.0.0.1' ||
+    hostname === '[::1]' ||
+    hostname === '::1'
+  );
+}
+
+/**
+ * A response refusing redirect URIs the tenant's policy does not allow (security.https_redirect_only,
+ * as authorize applies it), or null.
+ */
+/**
+ * An Agent Access connection (agent:* scopes): it signs in through the Admin Agent OAuth flow,
+ * which takes a loopback redirect as a local MCP client's (RFC 8252), not through authorize.
+ */
+function isAgentAccessConnection(...scopeSources: unknown[]): boolean {
+  return scopeSources.some((source) =>
+    (Array.isArray(source) ? source : typeof source === 'string' ? source.split(/\s+/u) : []).some(
+      // As the scope validation will read it (trimmed).
+      (scope) => typeof scope === 'string' && scope.trim().startsWith('agent:')
+    )
+  );
+}
+
+async function redirectUriPolicyResponse(
+  c: Context<{ Bindings: Env }>,
+  input: {
+    redirectUris: readonly string[] | undefined;
+    applicationType: unknown;
+    clientId?: string;
+  }
+): Promise<Response | null> {
+  let refused: string | null;
+  try {
+    refused = await redirectUriRefusedByPolicy(c.env, getTenantIdFromContext(c), input);
+  } catch (error) {
+    getLogger(c)
+      .module('ADMIN-CLIENT')
+      .error('Redirect URI policy could not be read', {}, error as Error);
+    return c.json(
+      { error: 'server_error', error_description: 'Redirect URI policy is unavailable' },
+      503
+    );
+  }
+  return refused
+    ? c.json(
+        {
+          error: 'invalid_request',
+          error_description: `${REDIRECT_URI_POLICY_DESCRIPTION}: ${refused}`,
+        },
+        400
+      )
+    : null;
 }
 
 function validateRedirectUriList(
@@ -891,6 +946,13 @@ export async function adminClientCreateHandler(c: Context<{ Bindings: Env }>) {
         400
       );
     }
+    const createRedirectPolicy = isAgentAccessConnection(body.scope, body.requestable_scopes)
+      ? null
+      : await redirectUriPolicyResponse(c, {
+          redirectUris: redirectUrisValidation.value,
+          applicationType: body.application_type ?? 'web',
+        });
+    if (createRedirectPolicy) return createRedirectPolicy;
 
     const grantTypesValidation = validateGrantTypes(body.grant_types, 'grant_types', [
       GRANT_TYPES.AUTHORIZATION_CODE,
@@ -1998,6 +2060,33 @@ export async function adminClientUpdateHandler(c: Context<{ Bindings: Env }>) {
         },
         400
       );
+    }
+    // The URIs, type and scopes the client will have (a null clears a value: it is not the stored
+    // one): a change of any is checked against the policy, an Agent Access connection excepted.
+    if (
+      (redirect_uris !== undefined ||
+        application_type !== undefined ||
+        body.scope !== undefined ||
+        body.requestable_scopes !== undefined) &&
+      !isAgentAccessConnection(
+        body.scope !== undefined ? body.scope : existingClient.scope,
+        body.requestable_scopes !== undefined
+          ? body.requestable_scopes
+          : // Stored as a JSON array.
+            parseClientStringArray(existingClient.requestable_scopes, [])
+      )
+    ) {
+      const updateRedirectPolicy = await redirectUriPolicyResponse(c, {
+        redirectUris:
+          redirectUrisValidation.value ?? parseClientStringArray(existingClient.redirect_uris, []),
+        // An explicit null clears the type, which then reads as web.
+        applicationType:
+          application_type !== undefined
+            ? (application_type ?? 'web')
+            : (existingClient.application_type ?? 'web'),
+        clientId,
+      });
+      if (updateRedirectPolicy) return updateRedirectPolicy;
     }
 
     const grantTypesValidation = validateGrantTypes(grant_types, 'grant_types');

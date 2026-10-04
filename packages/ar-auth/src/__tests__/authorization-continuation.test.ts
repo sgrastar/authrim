@@ -26,6 +26,30 @@ describe('authorization request continuation', () => {
     });
   });
 
+  it('carries that the request came in a request object encrypted to the tenant', () => {
+    const continuation = createAuthorizationRequestContinuation({
+      ...request,
+      authorization_request_source: 'par',
+      authorization_request_integrity_protected: true,
+      authorization_request_encrypted: true,
+    });
+
+    expect(continuation).toMatchObject({ request_object_encrypted: true });
+    expect(parseAuthorizationRequestContinuation(continuation)).toMatchObject({
+      request_object_encrypted: true,
+    });
+    // Only true is recorded; anything else makes the record unreadable.
+    expect(
+      createAuthorizationRequestContinuation({
+        ...request,
+        authorization_request_encrypted: 'true',
+      })
+    ).not.toHaveProperty('request_object_encrypted');
+    expect(
+      parseAuthorizationRequestContinuation({ ...continuation, request_object_encrypted: false })
+    ).toBeNull();
+  });
+
   it('records nothing of the kind for a request that was not signed', () => {
     const continuation = createAuthorizationRequestContinuation({
       ...request,

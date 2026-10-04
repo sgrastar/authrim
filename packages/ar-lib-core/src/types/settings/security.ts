@@ -93,9 +93,9 @@ export const SECURITY_SETTINGS_META: Record<keyof SecuritySettings, SettingMeta>
     default: false,
     envKey: 'DPOP_BOUND_ACCESS_TOKENS',
     label: 'DPoP Bound Tokens',
-    description: 'Bind access tokens to DPoP keys by default',
+    description:
+      "Require a DPoP proof at the token endpoint, so every access token is DPoP-bound (RFC 9449). An app can turn it on as well, but cannot waive the tenant's requirement. Authorization requests are not affected. security.dpop_required governs DPoP under FAPI",
     visibility: 'public',
-    status: 'in_development',
   },
   'security.dpop_nonce_enabled': {
     key: 'security.dpop_nonce_enabled',
@@ -124,9 +124,9 @@ export const SECURITY_SETTINGS_META: Record<keyof SecuritySettings, SettingMeta>
     default: false,
     envKey: 'SECURITY_PKCE_REQUIRED',
     label: 'PKCE Required',
-    description: 'Require PKCE for all authorization code flows',
+    description:
+      "Require PKCE (S256) for every authorization code request. An app can require it as well, but cannot waive the tenant's requirement",
     visibility: 'public',
-    status: 'in_development',
   },
   'security.par_required': {
     key: 'security.par_required',
@@ -144,9 +144,9 @@ export const SECURITY_SETTINGS_META: Record<keyof SecuritySettings, SettingMeta>
     default: true,
     envKey: 'HTTPS_REDIRECT_ONLY',
     label: 'HTTPS Redirect Only',
-    description: 'Only allow HTTPS redirect URIs (except localhost)',
+    description:
+      "Allow only HTTPS redirect URIs, except a native app's loopback (RFC 8252). Off: a web app may also use http on a loopback host (development). An app can keep HTTPS only where the tenant allows http",
     visibility: 'admin',
-    status: 'in_development',
   },
 
   // Request Object Requirements
@@ -166,9 +166,9 @@ export const SECURITY_SETTINGS_META: Record<keyof SecuritySettings, SettingMeta>
     default: false,
     envKey: 'REQUIRE_ENCRYPTED_REQUEST_OBJECT',
     label: 'Encrypted Request Required',
-    description: 'Require encrypted request objects',
+    description:
+      "Require every authorization request to come as a request object encrypted to the tenant (RFC 9101): sent directly, by reference, or pushed (PAR). Apps encrypt to the request object encryption key in the tenant's JWKS (use enc, RSA-OAEP-256 or RSA-OAEP). An app can turn it on as well, but cannot waive the tenant's requirement",
     visibility: 'admin',
-    status: 'in_development',
   },
 
   'security.trusted_redirect_origins': {

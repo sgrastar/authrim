@@ -494,7 +494,7 @@ export interface Env {
 
   // Core OAuth/OIDC Features
   ENABLE_REFRESH_TOKEN_ROTATION?: string; // "false" to disable token rotation (for load testing only!)
-  ENABLE_HTTP_REDIRECT?: string; // "true" to allow http:// redirect URIs for development
+  HTTPS_REDIRECT_ONLY?: string; // security.https_redirect_only: "false" allows a web app's http loopback (development)
   ALLOW_LOCALHOST?: string; // "true" or "1" to allow localhost origins in handoff verify (development only)
   ENABLE_STATE_REQUIRED?: string; // "true" to require state parameter (CSRF protection)
   ENABLE_USERINFO_REQUIRE_OPENID_SCOPE?: string; // "false" to allow UserInfo without openid scope (OAuth 2.0 compatibility)

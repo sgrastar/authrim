@@ -260,14 +260,8 @@ place('authentication/protection', 'API rate limits', {
 // Applications: the tenant's defaults for every app, and one app's own settings
 
 place('applications/defaults', 'Authorization requests', {
-	primary: ['security.pkce_required', 'security.par_required', 'oauth.state_required'],
-	advanced: [
-		'security.require_signed_request_object',
-		'security.require_encrypted_request_object',
-		'oauth.response_types_supported'
-	],
+	advanced: ['oauth.response_types_supported'],
 	search: [
-		'security.allow_unsigned_request_object',
 		'oauth.auth_code_ttl',
 		'oauth.state_expiry',
 		'oauth.nonce_expiry',
@@ -280,27 +274,11 @@ place('applications/defaults', 'Request objects by reference (request_uri)', {
 	advanced: ['oauth.https_request_uri_enabled', 'oauth.https_request_uri_allowed_domains'],
 	search: ['oauth.https_request_uri_max_size', 'oauth.https_request_uri_timeout_ms']
 });
-place('applications/defaults', 'Redirect URIs', {
-	primary: ['security.https_redirect_only']
-});
 place('applications/defaults', 'Sender-constrained tokens', {
-	primary: ['security.dpop_bound_access_tokens'],
-	advanced: [
-		'security.dpop_required',
-		'security.dpop_nonce_enabled',
-		'security.dpop_nonce_resource_overrides'
-	]
+	advanced: ['security.dpop_nonce_resource_overrides']
 });
 place('applications/defaults', 'FAPI', {
-	primary: ['security.fapi_enabled'],
-	advanced: [
-		'security.fapi_strict_dpop',
-		'security.fapi_allow_public_clients',
-		'security.fapi_require_private_key_jwt',
-		'security.fapi_client_assertion_audience',
-		'security.fapi_message_signing_enabled',
-		'security.require_jarm'
-	],
+	advanced: ['security.fapi_client_assertion_audience', 'security.fapi_message_signing_enabled'],
 	search: [
 		'security.request_object_signing_algs',
 		'security.authorization_signing_algs',
@@ -317,10 +295,7 @@ place('applications/defaults', 'Machine-to-machine (client credentials)', {
 	primary: ['feature.enable_client_credentials']
 });
 place('applications/defaults', 'Token exchange', {
-	primary: ['tokens.exchange_enabled'],
 	advanced: [
-		'tokens.exchange_delegation_enabled',
-		'tokens.exchange_impersonation_enabled',
 		'tokens.exchange_allowed_subject_token_types',
 		'feature.enable_id_jag',
 		'tokens.id_jag_allowed_issuers'

@@ -38,6 +38,7 @@ export const en = {
 	'nav.access.policies': 'Policies',
 	'nav.access.simulator': 'Access simulator',
 	'nav.apps.all': 'Service flows',
+	'nav.apps.defaults': 'App defaults',
 	'nav.apps.apis': 'APIs / Resources',
 	'nav.apps.keys': 'Initial access tokens',
 	'nav.apps.webhooks': 'Webhooks',

@@ -24,10 +24,22 @@ const OIDC_AUTH_METHODS = [
   'none',
 ];
 
+/**
+ * The tenant's security floor for its apps (requirements an app cannot waive). Off for the test
+ * plans, which send requests without PKCE, DPoP or encrypted request objects unless the plan
+ * itself requires them (FAPI's DPoP and PKCE come with the FAPI settings).
+ */
+const NO_APP_SECURITY_FLOOR = {
+  'security.pkce_required': false,
+  'security.dpop_bound_access_tokens': false,
+  'security.require_encrypted_request_object': false,
+};
+
 /** The protocol settings of an OpenID Connect OP profile (no FAPI, unsigned request objects). */
 function oidcOp(responseTypes: string[], authMethods: string[]) {
   return {
     security: {
+      ...NO_APP_SECURITY_FLOOR,
       'security.fapi_enabled': false,
       'security.dpop_required': 'never',
       'security.fapi_allow_public_clients': true,
@@ -46,6 +58,7 @@ function oidcOp(responseTypes: string[], authMethods: string[]) {
 function fapi2(options: { dpop: boolean; par: boolean; issuerAudience: boolean }) {
   return {
     security: {
+      ...NO_APP_SECURITY_FLOOR,
       'security.fapi_enabled': true,
       'security.dpop_required': options.dpop ? 'always' : 'never',
       'security.fapi_allow_public_clients': false,
@@ -120,6 +133,7 @@ export const certificationProfiles: Record<string, CertificationProfile> = {
     description: 'Financial-grade API Security Profile 1.0 - Advanced',
     settings: {
       security: {
+        ...NO_APP_SECURITY_FLOOR,
         // FAPI 1.0 uses different validation rules than FAPI 2.0 mode.
         'security.fapi_enabled': false,
         'security.dpop_required': 'never',
@@ -202,7 +216,12 @@ export const certificationProfiles: Record<string, CertificationProfile> = {
  * one out clears it, so the tenant inherits it again.
  */
 export const CERTIFICATION_PROFILE_MANAGED_KEYS: ReadonlyMap<CategoryName, readonly string[]> =
-  protocolSettingKeys(['fapi', 'oidc']);
+  (() => {
+    const keys = protocolSettingKeys(['fapi', 'oidc']);
+    // And the tenant's security floor for its apps, which a test plan would otherwise trip on.
+    keys.set('security', [...(keys.get('security') ?? []), ...Object.keys(NO_APP_SECURITY_FLOOR)]);
+    return keys;
+  })();
 
 /**
  * Get a certification profile by id

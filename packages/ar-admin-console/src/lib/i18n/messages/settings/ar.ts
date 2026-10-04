@@ -59,6 +59,71 @@ export const arSettings: Record<keyof typeof jaSettings, string> = {
 		'عند الإيقاف: يُوقَّع كل رمز هوية بخوارزمية المستأجر، ويُرفض تسجيل التطبيقات بخوارزمية أخرى.',
 	'set.k.security.fapi_enabled': 'تطبيق FAPI 2.0',
 	'set.k.security.fapi_enabled.desc': 'تطبيق ملف أمان FAPI 2.0 على كل تطبيقات المستأجر.',
+	'set.page.appDefaults': 'الإعدادات الافتراضية للتطبيقات',
+	'set.page.appDefaults.desc':
+		'قواعد طلبات التفويض والرموز التي تنطبق على كل تطبيقات المستأجر. يمكن لإعدادات التطبيق إضافة متطلب أمني لكن لا يمكنها إلغاؤه.',
+	'set.section.authRequests': 'طلبات التفويض',
+	'set.section.authRequests.desc': 'ما يجب أن يتضمنه طلب تسجيل الدخول من التطبيق.',
+	'set.section.authRequests.advanced': 'كائنات الطلب الموقّعة والمشفّرة',
+	'set.section.redirectUris': 'عناوين إعادة التوجيه',
+	'set.section.redirectUris.desc': 'الأماكن التي قد يعود إليها تسجيل الدخول في التطبيق.',
+	'set.section.senderConstrained': 'الرموز المقيدة بالمرسل',
+	'set.section.senderConstrained.desc': 'رموز مرتبطة بمفتاح التطبيق الذي استلمها.',
+	'set.section.senderConstrained.advanced': 'DPoP مع FAPI وقيم nonce',
+	'set.section.fapi': 'FAPI',
+	'set.section.fapi.desc': 'ملف الأمان من الدرجة المالية (FAPI 2.0).',
+	'set.section.fapi.advanced': 'متطلبات FAPI التفصيلية',
+	'set.section.tokenExchange': 'تبادل الرموز',
+	'set.section.tokenExchange.desc': 'استبدال رمز يحمله التطبيق برمز آخر.',
+	'set.section.tokenExchange.advanced': 'التفويض وانتحال الهوية',
+	'set.k.security.pkce_required': 'اشتراط PKCE',
+	'set.k.security.pkce_required.desc':
+		'يجب أن يتضمن كل طلب رمز تفويض PKCE (S256). يمكن للتطبيق اشتراطه أيضًا، لكن لا يمكنه إلغاء اشتراط المستأجر.',
+	'set.k.security.par_required': 'اشتراط PAR',
+	'set.k.security.par_required.desc':
+		'يجب دفع طلبات التفويض أولًا من خادم إلى خادم (Pushed Authorization Request).',
+	'set.k.oauth.state_required': 'اشتراط معامل state',
+	'set.k.oauth.state_required.desc': 'رفض طلبات التفويض التي لا تحتوي على state (حماية CSRF).',
+	'set.k.security.require_signed_request_object': 'اشتراط كائنات طلب موقّعة',
+	'set.k.security.require_signed_request_object.desc':
+		'يجب أن تصل طلبات التفويض في كائن طلب وقّعه التطبيق.',
+	'set.k.security.require_encrypted_request_object': 'اشتراط كائنات طلب مشفّرة',
+	'set.k.security.require_encrypted_request_object.desc':
+		'يجب أن تصل طلبات التفويض في كائن طلب مشفّر بمفتاح التشفير الخاص بالمستأجر (use enc في JWKS). يجب أن تدعم التطبيقات ذلك.',
+	'set.k.security.allow_unsigned_request_object': 'السماح بكائنات طلب غير موقّعة (للتطوير)',
+	'set.k.security.allow_unsigned_request_object.desc':
+		'غير مسموح بها أبدًا في بيئة الإنتاج مهما كان هذا الإعداد.',
+	'set.k.security.https_redirect_only': 'السماح فقط بعناوين إعادة توجيه HTTPS',
+	'set.k.security.https_redirect_only.desc':
+		'يمكن للتطبيق الأصلي استخدام http على عنوان الاسترجاع (مثل localhost). عند الإيقاف: يمكن لتطبيق الويب أيضًا استخدام http على مضيف الاسترجاع (للتطوير).',
+	'set.k.security.dpop_bound_access_tokens': 'ربط رموز الوصول بـ DPoP',
+	'set.k.security.dpop_bound_access_tokens.desc':
+		'يلزم إثبات DPoP للحصول على الرموز، حتى لا يتمكن أي شخص آخر من استخدام رمز مسرّب. يجب أن تدعم التطبيقات ذلك.',
+	'set.k.security.dpop_required': 'DPoP مع FAPI',
+	'set.k.security.dpop_required.desc': 'ما إذا كان DPoP مطلوبًا أثناء تطبيق FAPI.',
+	'set.k.security.dpop_required.with_fapi': 'مطلوب مع FAPI',
+	'set.k.security.dpop_required.always': 'مطلوب دائمًا',
+	'set.k.security.dpop_required.never': 'غير مطلوب أبدًا',
+	'set.k.security.dpop_nonce_enabled': 'استخدام nonce الخادم لـ DPoP',
+	'set.k.security.dpop_nonce_enabled.desc':
+		'يجب أن تتضمن إثباتات DPoP قيمة nonce أصدرها الخادم، مما يمنع إعادة استخدامها.',
+	'set.k.security.fapi_strict_dpop': 'التحقق الصارم من DPoP',
+	'set.k.security.fapi_strict_dpop.desc': 'رفض طلب التفويض الذي يكون إثبات DPoP فيه غير صالح.',
+	'set.k.security.fapi_allow_public_clients': 'السماح بالعملاء العامين',
+	'set.k.security.fapi_allow_public_clients.desc':
+		'السماح بالتطبيقات بلا سر (تطبيقات المتصفح والجوال) أثناء تطبيق FAPI.',
+	'set.k.security.fapi_require_private_key_jwt': 'اشتراط private_key_jwt',
+	'set.k.security.fapi_require_private_key_jwt.desc':
+		'تصادق التطبيقات باستخدام private_key_jwt فقط.',
+	'set.k.security.require_jarm': 'اشتراط استجابات تفويض موقّعة (JARM)',
+	'set.k.tokens.exchange_enabled': 'تفعيل تبادل الرموز',
+	'set.k.tokens.exchange_enabled.desc': 'يمكن للتطبيقات استبدال رمز تحمله برمز آخر (RFC 8693).',
+	'set.k.tokens.exchange_delegation_enabled': 'السماح بالتفويض',
+	'set.k.tokens.exchange_delegation_enabled.desc':
+		'يمكن للتطبيق الحصول على رمز لخدمة أخرى نيابةً عن شخص.',
+	'set.k.tokens.exchange_impersonation_enabled': 'السماح بانتحال الهوية',
+	'set.k.tokens.exchange_impersonation_enabled.desc':
+		'يمكن للتطبيق الحصول على رمز يتصرف بصفته الشخص نفسه.',
 	'set.k.oauth.id_token_signing_alg.RS256': 'RS256',
 	'set.k.oauth.id_token_signing_alg.ES256': 'ES256',
 	'set.k.oauth.id_token_signing_alg.PS256': 'PS256',

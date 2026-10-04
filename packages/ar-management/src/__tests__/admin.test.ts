@@ -4393,6 +4393,42 @@ describe('Admin API Handlers', () => {
       );
     });
 
+    it('refuses a web app’s http loopback redirect URI while security.https_redirect_only is on', async () => {
+      const c = createMockContext({
+        method: 'POST',
+        body: {
+          client_name: 'Web app',
+          redirect_uris: ['http://localhost:3000/callback'],
+        },
+        db: createMockDB({ firstResult: null, runResult: { success: true } }),
+      });
+
+      await adminClientCreateHandler(c);
+
+      expect(c.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          error: 'invalid_request',
+          error_description: expect.stringContaining('http://localhost:3000/callback'),
+        }),
+        400
+      );
+    });
+
+    it('refuses an uppercase HTTP loopback redirect URI for a web app as well', async () => {
+      const c = createMockContext({
+        method: 'POST',
+        body: { client_name: 'Web app', redirect_uris: ['HTTP://LOCALHOST:3000/callback'] },
+        db: createMockDB({ firstResult: null, runResult: { success: true } }),
+      });
+
+      await adminClientCreateHandler(c);
+
+      expect(c.json).toHaveBeenCalledWith(
+        expect.objectContaining({ error: 'invalid_request' }),
+        400
+      );
+    });
+
     it('should reject malformed requestable scope tokens', async () => {
       const c = createMockContext({
         method: 'POST',
@@ -4902,6 +4938,98 @@ describe('Admin API Handlers', () => {
           severity: 'fatal',
         }),
       });
+    });
+
+    it('lets an Agent Access connection keep its loopback redirect, by its stored scopes', async () => {
+      const mockDB = createMockDB({
+        firstResult: {
+          client_id: 'agent-connection',
+          client_name: 'MCP client',
+          redirect_uris: '["http://localhost:18080/callback"]',
+          grant_types: '["authorization_code","refresh_token"]',
+          response_types: '["code"]',
+          requestable_scopes: '["agent:read"]',
+        },
+      });
+      const c = createMockContext({
+        method: 'PUT',
+        params: { id: 'agent-connection' },
+        body: { redirect_uris: ['http://localhost:18081/callback'] },
+        db: mockDB,
+      });
+
+      const res = await adminClientUpdateHandler(c);
+
+      expect(res.status).not.toBe(400);
+    });
+
+    it('checks a cleared application type as web', async () => {
+      const mockDB = createMockDB({
+        firstResult: {
+          client_id: 'native-app',
+          client_name: 'Native app',
+          application_type: 'native',
+          redirect_uris: '["http://127.0.0.1:49152/callback"]',
+          grant_types: '["authorization_code"]',
+          response_types: '["code"]',
+        },
+      });
+      const c = createMockContext({
+        method: 'PUT',
+        params: { id: 'native-app' },
+        body: { application_type: null },
+        db: mockDB,
+      });
+
+      const res = await adminClientUpdateHandler(c);
+
+      expect(res.status).toBe(400);
+    });
+
+    it('recognizes agent scopes as the scope validation reads them (trimmed)', async () => {
+      const mockDB = createMockDB({
+        firstResult: {
+          client_id: 'agent-connection',
+          client_name: 'MCP client',
+          redirect_uris: '["http://localhost:18080/callback"]',
+          grant_types: '["authorization_code","refresh_token"]',
+          response_types: '["code"]',
+        },
+      });
+      const c = createMockContext({
+        method: 'PUT',
+        params: { id: 'agent-connection' },
+        body: { requestable_scopes: [' agent:read '] },
+        db: mockDB,
+      });
+
+      const res = await adminClientUpdateHandler(c);
+
+      expect(res.status).not.toBe(400);
+    });
+
+    it('checks the redirect URIs again when an Agent Access connection loses its agent scopes', async () => {
+      const mockDB = createMockDB({
+        firstResult: {
+          client_id: 'former-agent',
+          client_name: 'MCP client',
+          redirect_uris: '["https://example.com/callback"]',
+          grant_types: '["authorization_code"]',
+          response_types: '["code"]',
+          scope: 'openid',
+          requestable_scopes: '["agent:read"]',
+        },
+      });
+      const c = createMockContext({
+        method: 'PUT',
+        params: { id: 'former-agent' },
+        body: { requestable_scopes: null, redirect_uris: ['http://localhost:3000/callback'] },
+        db: mockDB,
+      });
+
+      const res = await adminClientUpdateHandler(c);
+
+      expect(res.status).toBe(400);
     });
 
     it('refuses another ID token algorithm while the tenant signs every ID token with its own', async () => {

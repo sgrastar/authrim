@@ -81,7 +81,7 @@ describe('certification profiles API', () => {
       // The tenant's own values: one the profile manages but leaves out, one it does not manage.
       'settings:tenant:fapi2:security': {
         'security.fapi_strict_dpop': false,
-        'security.pkce_required': true,
+        'security.https_redirect_only': false,
       },
       // An older profile: its fapi and oidc sections would apply what the new one leaves out.
       [buildTenantSystemSettingsKey('fapi2')]: {
@@ -103,7 +103,7 @@ describe('certification profiles API', () => {
         'security.fapi_enabled': true,
         'security.dpop_required': 'never',
         'security.par_required': true,
-        'security.pkce_required': true,
+        'security.https_redirect_only': false,
       })
     );
     expect(JSON.parse(store.get('settings:tenant:fapi2:security')!)).not.toHaveProperty(
