@@ -2808,7 +2808,14 @@ async function handleAuthorizationCodeGrant(
     formData.channel
   );
 
-  if (nativeSSOGloballyEnabled && clientNativeSSOIssuanceEligible && authCodeData.sid) {
+  // A device_secret obtains tokens without the user, as a refresh token does: it is issued only
+  // with a grant that gets a refresh token (for OpenID Connect, one with offline_access).
+  if (
+    nativeSSOGloballyEnabled &&
+    clientNativeSSOIssuanceEligible &&
+    authCodeData.sid &&
+    shouldIssueRefreshToken
+  ) {
     try {
       const nativeSSOConfig = await getNativeSSOConfig(c.env);
       const deviceSecretRepo = new DeviceSecretRepository(authCtx.coreAdapter, tenantId);
@@ -3468,23 +3475,28 @@ async function handleAuthorizationCodeGrant(
       }).catch((err: unknown) => {
         log.error('Failed to publish token.access.issued event', { action: 'Event' }, err as Error);
       }),
-      publishEvent(c, {
-        type: TOKEN_EVENTS.REFRESH_ISSUED,
-        tenantId,
-        data: {
-          jti: refreshTokenJti,
-          clientId: client_id,
-          userId: authCodeData.sub,
-          scopes: authCodeData.scope.split(' '),
-          grantType: 'authorization_code',
-        } satisfies TokenEventData,
-      }).catch((err: unknown) => {
-        log.error(
-          'Failed to publish token.refresh.issued event',
-          { action: 'Event' },
-          err as Error
-        );
-      }),
+      // Only for a refresh token actually issued (none without offline_access for OIDC).
+      ...(refreshTokenJti
+        ? [
+            publishEvent(c, {
+              type: TOKEN_EVENTS.REFRESH_ISSUED,
+              tenantId,
+              data: {
+                jti: refreshTokenJti,
+                clientId: client_id,
+                userId: authCodeData.sub,
+                scopes: authCodeData.scope.split(' '),
+                grantType: 'authorization_code',
+              } satisfies TokenEventData,
+            }).catch((err: unknown) => {
+              log.error(
+                'Failed to publish token.refresh.issued event',
+                { action: 'Event' },
+                err as Error
+              );
+            }),
+          ]
+        : []),
       // ID Token issued event (OIDC flows always include ID token)
       publishEvent(c, {
         type: TOKEN_EVENTS.ID_ISSUED,
@@ -7789,10 +7801,9 @@ async function handleNativeSSOTokenExchange(
   try {
     const tenantProfile = await loadTenantProfileCached(c, c.env.AUTHRIM_CONFIG, c.env, tenantId);
 
-    if (
-      tenantProfile.allows_refresh_token !== false &&
-      (await lifetimes.issuesRefreshTokenFor(grantedScope))
-    ) {
+    // The device_secret was issued only with a grant that got a refresh token (offline_access for
+    // OpenID Connect), so it stands for that offline grant here.
+    if (tenantProfile.allows_refresh_token !== false) {
       const refreshTokenClaims = {
         iss: getRequestIssuer(c),
         sub: idTokenSub,

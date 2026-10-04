@@ -619,7 +619,13 @@ describe('Security-Critical Tests', () => {
       }
 
       it('issues no refresh token to an OpenID Connect grant without offline_access', async () => {
+        mocks.mockPublishEvent.mockClear();
         expect((await exchangeCode('openid profile')).refresh_token).toBeUndefined();
+        const eventTypes = mocks.mockPublishEvent.mock.calls.map(
+          ([, event]) => (event as { type: string }).type
+        );
+        expect(eventTypes).toContain('token.access.issued');
+        expect(eventTypes).not.toContain('token.refresh.issued');
       });
 
       it('issues one with offline_access, or for an OAuth grant without openid', async () => {

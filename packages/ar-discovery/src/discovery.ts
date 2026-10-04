@@ -348,6 +348,8 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
       'email',
       'address',
       'phone',
+      // OIDC Core 11: refresh tokens for OpenID Connect grants come with offline_access
+      'offline_access',
       // Include AI scopes when enabled
       ...(aiScopesEnabled ? ['ai:read', 'ai:write', 'ai:execute', 'ai:admin'] : []),
     ],

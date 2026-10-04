@@ -55,7 +55,7 @@ describe('refresh, introspection, and revocation lifecycle', () => {
         JSON.stringify([REDIRECT_URI]),
         JSON.stringify(['authorization_code', 'refresh_token']),
         JSON.stringify(['code']),
-        'openid api.read api.write',
+        'openid api.read api.write offline_access',
         'client_secret_post',
         'default',
         RESOURCE
@@ -81,7 +81,7 @@ describe('refresh, introspection, and revocation lifecycle', () => {
           clientId: CLIENT_ID,
           redirectUri: REDIRECT_URI,
           userId: USER_ID,
-          scope: 'openid api.read api.write',
+          scope: 'openid api.read api.write offline_access',
           resource: RESOURCE,
           authorizationServer: 'default',
           subjectType: 'end_user',
@@ -208,7 +208,7 @@ describe('refresh, introspection, and revocation lifecycle', () => {
       active: true,
       client_id: CLIENT_ID,
       sub: USER_ID,
-      scope: 'openid api.read api.write',
+      scope: 'openid api.read api.write offline_access',
     });
   });
 

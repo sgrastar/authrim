@@ -3370,6 +3370,50 @@ describe('Client Authentication Tests', () => {
       );
     });
 
+    it('withholds the device_secret when the grant gets no refresh token (no offline_access)', async () => {
+      mocks.mockResolveEffectiveSettings.mockImplementation(
+        async (env: unknown, category: string) =>
+          category === 'oauth'
+            ? {
+                'oauth.access_token_expiry': 3600,
+                'oauth.refresh_token_expiry': 86400 * 30,
+                'oauth.offline_access_required': true,
+              }
+            : settingsFromSystemSettings(env, systemSettings, category)
+      );
+      const client = createConfidentialClient({
+        token_endpoint_auth_method: 'client_secret_post',
+        application_type: 'native',
+      });
+      const authCodeData = createAuthCodeData({ scope: 'openid profile' });
+
+      mocks.mockGetClientCached.mockResolvedValue(client);
+      mocks.mockIsNativeSSOEnabled.mockResolvedValue(true);
+      mockEnv.AUTH_CODE_STORE.get = vi.fn().mockReturnValue({
+        consumeCodeRpc: vi.fn().mockResolvedValue(authCodeData),
+        registerIssuedTokensRpc: vi.fn().mockResolvedValue(true),
+      });
+
+      const response = await tokenHandler(
+        createMockContext({
+          body: {
+            grant_type: 'authorization_code',
+            code: 'valid-auth-code',
+            redirect_uri: authCodeData.redirectUri,
+            client_id: client.client_id,
+            client_secret: 'valid-secret',
+          },
+          env: mockEnv,
+        })
+      );
+      const body = await parseJsonResponse<Record<string, unknown>>(response);
+
+      expect(response.status).toBe(200);
+      expect(body.refresh_token).toBeUndefined();
+      expect(body.device_secret).toBeUndefined();
+      expect(mocks.mockDeviceSecretRepository.createSecret).not.toHaveBeenCalled();
+    });
+
     it('should suppress default device_secret issuance when native_sso_enabled is explicitly false', async () => {
       const client = createConfidentialClient({
         token_endpoint_auth_method: 'client_secret_post',
