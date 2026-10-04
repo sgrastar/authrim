@@ -98,6 +98,7 @@ export const RATE_LIMIT_SETTINGS_META: Record<keyof RateLimitSettings, SettingMe
     min: 1,
     max: 10,
     visibility: 'admin',
+    status: 'in_development',
   },
   'rate_limit.email_window': {
     key: 'rate_limit.email_window',
@@ -110,6 +111,7 @@ export const RATE_LIMIT_SETTINGS_META: Record<keyof RateLimitSettings, SettingMe
     max: 3600,
     unit: 'seconds',
     visibility: 'admin',
+    status: 'in_development',
   },
   'rate_limit.auth_max_failed_attempts': {
     key: 'rate_limit.auth_max_failed_attempts',

@@ -72,6 +72,7 @@ export const TOKENS_SETTINGS_META: Record<keyof TokensSettings, SettingMeta> = {
     description: 'Allow impersonation use case in token exchange (security sensitive)',
     visibility: 'admin',
     dependsOn: [{ key: 'tokens.exchange_enabled', value: true }],
+    status: 'in_development',
   },
   'tokens.introspection_cache_ttl': {
     key: 'tokens.introspection_cache_ttl',
@@ -108,6 +109,7 @@ export const TOKENS_SETTINGS_META: Record<keyof TokensSettings, SettingMeta> = {
     label: 'Extended Introspection Claims',
     description: 'Include extended claims in introspection response',
     visibility: 'admin',
+    status: 'in_development',
   },
 
   // RBAC Claims Embedding

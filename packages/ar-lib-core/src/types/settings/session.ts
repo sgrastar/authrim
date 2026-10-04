@@ -62,6 +62,7 @@ export const SESSION_SETTINGS_META: Record<keyof SessionSettings, SettingMeta> =
     max: 604800000,
     unit: 'ms',
     visibility: 'public',
+    status: 'in_development',
   },
   'session.max_ttl': {
     key: 'session.max_ttl',
@@ -76,6 +77,7 @@ export const SESSION_SETTINGS_META: Record<keyof SessionSettings, SettingMeta> =
     max: 2592000000,
     unit: 'ms',
     visibility: 'admin',
+    status: 'in_development',
   },
   'session.ttl.email_code': {
     key: 'session.ttl.email_code',
@@ -200,6 +202,7 @@ export const SESSION_SETTINGS_META: Record<keyof SessionSettings, SettingMeta> =
     label: 'Refresh Session by Default',
     description: 'Extend session on activity by default',
     visibility: 'public',
+    status: 'in_development',
   },
 
   // Logout Configuration

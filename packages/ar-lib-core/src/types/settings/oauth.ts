@@ -97,6 +97,7 @@ export const OAUTH_SETTINGS_META: Record<keyof OAuthSettings, SettingMeta> = {
     max: 86400,
     unit: 'seconds',
     visibility: 'public',
+    status: 'in_development',
   },
   'oauth.refresh_token_expiry': {
     key: 'oauth.refresh_token_expiry',
@@ -176,6 +177,7 @@ export const OAUTH_SETTINGS_META: Record<keyof OAuthSettings, SettingMeta> = {
     label: 'Reissue ID Token on Refresh',
     description: 'Issue new ID token when refresh token is used',
     visibility: 'public',
+    status: 'in_development',
   },
   'oauth.offline_access_required': {
     key: 'oauth.offline_access_required',
@@ -187,6 +189,7 @@ export const OAUTH_SETTINGS_META: Record<keyof OAuthSettings, SettingMeta> = {
     label: 'Require offline_access for Refresh',
     description: 'Require offline_access scope to issue refresh tokens',
     visibility: 'public',
+    status: 'in_development',
   },
   'oauth.refresh_token_sliding_window_enabled': {
     key: 'oauth.refresh_token_sliding_window_enabled',
@@ -198,6 +201,7 @@ export const OAUTH_SETTINGS_META: Record<keyof OAuthSettings, SettingMeta> = {
     label: 'Sliding Window Refresh',
     description: 'Enable sliding window for refresh token expiry',
     visibility: 'public',
+    status: 'in_development',
   },
   'oauth.refresh_token_absolute_expiry_enabled': {
     key: 'oauth.refresh_token_absolute_expiry_enabled',
@@ -209,6 +213,7 @@ export const OAUTH_SETTINGS_META: Record<keyof OAuthSettings, SettingMeta> = {
     label: 'Absolute Expiry Enabled',
     description: 'Enable absolute expiry limit for refresh tokens',
     visibility: 'public',
+    status: 'in_development',
   },
   'oauth.refresh_token_absolute_expiry': {
     key: 'oauth.refresh_token_absolute_expiry',
@@ -223,6 +228,7 @@ export const OAUTH_SETTINGS_META: Record<keyof OAuthSettings, SettingMeta> = {
     max: 63072000,
     unit: 'seconds',
     visibility: 'public',
+    status: 'in_development',
   },
 
   // Security Settings

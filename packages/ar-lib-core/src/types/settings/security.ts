@@ -95,6 +95,7 @@ export const SECURITY_SETTINGS_META: Record<keyof SecuritySettings, SettingMeta>
     label: 'DPoP Bound Tokens',
     description: 'Bind access tokens to DPoP keys by default',
     visibility: 'public',
+    status: 'in_development',
   },
   'security.dpop_nonce_enabled': {
     key: 'security.dpop_nonce_enabled',
@@ -125,6 +126,7 @@ export const SECURITY_SETTINGS_META: Record<keyof SecuritySettings, SettingMeta>
     label: 'PKCE Required',
     description: 'Require PKCE for all authorization code flows',
     visibility: 'public',
+    status: 'in_development',
   },
   'security.par_required': {
     key: 'security.par_required',
@@ -144,6 +146,7 @@ export const SECURITY_SETTINGS_META: Record<keyof SecuritySettings, SettingMeta>
     label: 'HTTPS Redirect Only',
     description: 'Only allow HTTPS redirect URIs (except localhost)',
     visibility: 'admin',
+    status: 'in_development',
   },
 
   // Request Object Requirements
@@ -165,6 +168,7 @@ export const SECURITY_SETTINGS_META: Record<keyof SecuritySettings, SettingMeta>
     label: 'Encrypted Request Required',
     description: 'Require encrypted request objects',
     visibility: 'admin',
+    status: 'in_development',
   },
 
   'security.trusted_redirect_origins': {

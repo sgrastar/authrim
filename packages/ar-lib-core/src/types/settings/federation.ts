@@ -38,6 +38,7 @@ export const FEDERATION_SETTINGS_META: Record<keyof FederationSettings, SettingM
     label: 'SAML Enabled',
     description: 'Enable SAML 2.0 federation',
     visibility: 'public',
+    status: 'in_development',
   },
   'federation.saml_assertion_ttl': {
     key: 'federation.saml_assertion_ttl',
@@ -50,6 +51,7 @@ export const FEDERATION_SETTINGS_META: Record<keyof FederationSettings, SettingM
     max: 600,
     unit: 'seconds',
     visibility: 'admin',
+    status: 'in_development',
   },
   'federation.saml_request_ttl': {
     key: 'federation.saml_request_ttl',
@@ -62,6 +64,7 @@ export const FEDERATION_SETTINGS_META: Record<keyof FederationSettings, SettingM
     max: 600,
     unit: 'seconds',
     visibility: 'admin',
+    status: 'in_development',
   },
   'federation.saml_artifact_ttl': {
     key: 'federation.saml_artifact_ttl',
@@ -74,6 +77,7 @@ export const FEDERATION_SETTINGS_META: Record<keyof FederationSettings, SettingM
     max: 300,
     unit: 'seconds',
     visibility: 'admin',
+    status: 'in_development',
   },
   'federation.saml_artifact_resolution_timeout': {
     key: 'federation.saml_artifact_resolution_timeout',
@@ -86,6 +90,7 @@ export const FEDERATION_SETTINGS_META: Record<keyof FederationSettings, SettingM
     max: 30000,
     unit: 'ms',
     visibility: 'admin',
+    status: 'in_development',
   },
   'federation.saml_sso_binding': {
     key: 'federation.saml_sso_binding',
@@ -96,6 +101,7 @@ export const FEDERATION_SETTINGS_META: Record<keyof FederationSettings, SettingM
     description: 'SAML Single Sign-On request binding (HTTP-POST recommended)',
     enum: ['HTTP-POST', 'HTTP-Redirect'],
     visibility: 'admin',
+    status: 'in_development',
   },
   'federation.saml_slo_binding': {
     key: 'federation.saml_slo_binding',
@@ -106,6 +112,7 @@ export const FEDERATION_SETTINGS_META: Record<keyof FederationSettings, SettingM
     description: 'SAML Single Logout request binding',
     enum: ['HTTP-POST', 'HTTP-Redirect'],
     visibility: 'admin',
+    status: 'in_development',
   },
   'federation.saml_nameid_format': {
     key: 'federation.saml_nameid_format',
@@ -116,6 +123,7 @@ export const FEDERATION_SETTINGS_META: Record<keyof FederationSettings, SettingM
     description: 'SAML NameID format (persistent provides privacy protection)',
     enum: ['emailAddress', 'persistent', 'transient', 'unspecified'],
     visibility: 'admin',
+    status: 'in_development',
   },
 
   'federation.scim_token_max_expiry': {
@@ -129,6 +137,7 @@ export const FEDERATION_SETTINGS_META: Record<keyof FederationSettings, SettingM
     max: 31536000,
     unit: 'seconds',
     visibility: 'admin',
+    status: 'in_development',
   },
   'federation.scim_token_default_expiry': {
     key: 'federation.scim_token_default_expiry',
@@ -141,6 +150,7 @@ export const FEDERATION_SETTINGS_META: Record<keyof FederationSettings, SettingM
     max: 31536000,
     unit: 'seconds',
     visibility: 'admin',
+    status: 'in_development',
   },
 };
 
