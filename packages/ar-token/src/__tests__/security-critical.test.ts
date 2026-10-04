@@ -2738,11 +2738,14 @@ describe('Security-Critical Tests', () => {
           tenantOAuth?: Record<string, unknown>;
           env?: string;
           scope?: string;
+          rotateExpiresIn?: number;
+          exp?: number;
         }) {
           const client = createConfidentialClient();
           const refreshTokenPayload = createRefreshTokenPayload({
             client_id: client.client_id,
             ...(options.scope ? { scope: options.scope } : {}),
+            ...(options.exp ? { exp: options.exp } : {}),
           });
           const refreshTokenJWT = createTestRefreshTokenJWT({ client_id: client.client_id });
           if (options.tenantOAuth) {
@@ -2763,7 +2766,11 @@ describe('Security-Critical Tests', () => {
             shardIndex: 0,
             randomPart: 'abc',
           });
-          const rotateRpc = vi.fn().mockResolvedValue({ newJti: 'rt-new-jti-002', newVersion: 2 });
+          const rotateRpc = vi.fn().mockResolvedValue({
+            newJti: 'rt-new-jti-002',
+            newVersion: 2,
+            expiresIn: options.rotateExpiresIn ?? 2592000,
+          });
           mockEnv.REFRESH_TOKEN_ROTATOR.get = vi.fn().mockReturnValue({ rotateRpc });
           const response = await tokenHandler(
             createMockContext({
@@ -2782,6 +2789,47 @@ describe('Security-Critical Tests', () => {
           );
           return { response, body, rotateRpc, refreshTokenJWT };
         }
+
+        it('rotates under the lifetime model and states the remaining lifetime it returns', async () => {
+          const { response, rotateRpc, body } = await refreshWith({
+            tenantOAuth: {
+              'oauth.refresh_token_expiry': 2592000,
+              'oauth.refresh_token_sliding_window_enabled': true,
+              'oauth.refresh_token_absolute_expiry_enabled': true,
+              'oauth.refresh_token_absolute_expiry': 31536000,
+            },
+            rotateExpiresIn: 1234,
+          });
+          expect(response.status).toBe(200);
+          expect(rotateRpc).toHaveBeenCalledWith(
+            expect.objectContaining({
+              lifetime: { ttl: 2592000, sliding: true, absoluteTtl: 31536000 },
+            })
+          );
+          expect((body as { refresh_token_expires_in?: number }).refresh_token_expires_in).toBe(
+            1234
+          );
+          expect(mocks.mockCreateRefreshToken).toHaveBeenCalledWith(
+            expect.anything(),
+            expect.anything(),
+            expect.anything(),
+            1234,
+            expect.anything(),
+            expect.anything()
+          );
+        });
+
+        it('states the presented token’s own remaining lifetime when it is not rotated', async () => {
+          const { response, body } = await refreshWith({
+            tenantOAuth: { 'oauth.refresh_token_rotation': false },
+            exp: Math.floor(Date.now() / 1000) + 600,
+          });
+          expect(response.status).toBe(200);
+          const expiresIn = (body as { refresh_token_expires_in?: number })
+            .refresh_token_expires_in;
+          expect(expiresIn).toBeGreaterThan(590);
+          expect(expiresIn).toBeLessThanOrEqual(600);
+        });
 
         it('issues a new ID token on refresh for an OpenID Connect grant, by default', async () => {
           const { response, body } = await refreshWith({});

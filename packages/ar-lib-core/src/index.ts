@@ -574,7 +574,10 @@ export type {
 } from './durable-objects/SessionRevocationStore';
 export { AuthorizationCodeStore } from './durable-objects/AuthorizationCodeStore';
 export { RefreshTokenRotator } from './durable-objects/RefreshTokenRotator';
-export type { RefreshTokenAuthContext } from './durable-objects/RefreshTokenRotator';
+export type {
+  RefreshTokenAuthContext,
+  RefreshTokenLifetimePolicy,
+} from './durable-objects/RefreshTokenRotator';
 export { RateLimiterCounter } from './durable-objects/RateLimiterCounter';
 export { PARRequestStore } from './durable-objects/PARRequestStore';
 export type { PARRequestData } from './durable-objects/PARRequestStore';

@@ -85,6 +85,7 @@ describe('a settings page’s values', () => {
 	it('shows a dependent setting only while what it depends on is on the screen', async () => {
 		const values = valuesFrom(STAYING_SIGNED_IN, await load());
 		const limit = 'oauth.refresh_token_absolute_expiry';
+		values[fieldOf('oauth.refresh_token_absolute_expiry_enabled')] = { v: false, here: true };
 		expect(
 			sectionView(section('app-tokens'), values, levels).advanced.map((s) => s.key)
 		).not.toContain(limit);

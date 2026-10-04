@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { RefreshTokenRotator } from '../RefreshTokenRotator';
+import { RefreshTokenRotator, rotatedExpiry } from '../RefreshTokenRotator';
 import type { Env } from '../../types/env';
 
 // Mock DurableObjectState
@@ -552,6 +552,70 @@ describe('RefreshTokenRotator V2', () => {
           tenantId: 'tenant-b',
         })
       ).rejects.toThrow('Tenant mismatch');
+    });
+  });
+
+  describe('lifetime model (sliding window and absolute limit)', () => {
+    const create = () =>
+      rotator.createFamilyRpc({
+        jti: 'jti-1',
+        userId: 'user_life',
+        clientId: 'client_1',
+        tenantId: 'default',
+        scope: 'openid offline_access',
+        ttl: 1000,
+      });
+    const rotate = (lifetime: { ttl: number; sliding: boolean; absoluteTtl: number | null }) =>
+      rotator.rotateRpc({
+        incomingVersion: 1,
+        incomingJti: 'jti-1',
+        userId: 'user_life',
+        clientId: 'client_1',
+        tenantId: 'default',
+        lifetime,
+      });
+
+    it('moves the expiry on by the lifetime when sliding', async () => {
+      await create();
+      vi.advanceTimersByTime(500_000);
+      const result = await rotate({ ttl: 1000, sliding: true, absoluteTtl: null });
+      expect(result.expiresIn).toBe(1000);
+    });
+
+    it('keeps the expiry when not sliding', async () => {
+      await create();
+      vi.advanceTimersByTime(500_000);
+      const result = await rotate({ ttl: 1000, sliding: false, absoluteTtl: null });
+      expect(result.expiresIn).toBe(500);
+    });
+
+    it('never slides past the absolute limit from the first issuance', async () => {
+      await create();
+      vi.advanceTimersByTime(500_000);
+      const result = await rotate({ ttl: 1000, sliding: true, absoluteTtl: 1200 });
+      expect(result.expiresIn).toBe(700);
+    });
+
+    it('ends a family whose absolute limit, enabled since, has passed', async () => {
+      await create();
+      vi.advanceTimersByTime(600_000);
+      await expect(rotate({ ttl: 1000, sliding: true, absoluteTtl: 500 })).rejects.toThrow(
+        'invalid_grant: Refresh token expired'
+      );
+      await expect(rotate({ ttl: 1000, sliding: true, absoluteTtl: null })).rejects.toThrow(
+        'invalid_grant: Token family not found'
+      );
+    });
+
+    it('keeps the expiry of a family recorded before the lifetime model', () => {
+      const now = 10_000_000;
+      expect(
+        rotatedExpiry(
+          { expires_at: now + 5_000 },
+          { ttl: 1000, sliding: true, absoluteTtl: null },
+          now
+        )
+      ).toBe(now + 5_000);
     });
   });
 

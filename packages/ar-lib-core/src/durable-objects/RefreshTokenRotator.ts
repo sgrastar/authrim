@@ -107,7 +107,8 @@ export interface TokenFamilyV2 {
   version: number; // Rotation version (monotonically increasing)
   last_jti: string; // Last issued JWT ID
   last_used_at: number; // Timestamp of last use (ms)
-  expires_at: number; // Absolute expiration (ms)
+  expires_at: number; // When the family expires (ms): moved on by a sliding rotation
+  created_at?: number; // When the family was first issued (ms): the start of the absolute lifetime
   user_id: string; // For tenant boundary enforcement
   client_id: string; // For scope validation
   allowed_scope: string; // Prevent scope amplification
@@ -148,6 +149,21 @@ export interface RotateTokenRequestV2 {
   clientId: string; // From JWT aud/client_id claim
   tenantId: string;
   requestedScope?: string; // Requested scope (must be subset of allowed_scope)
+  lifetime?: RefreshTokenLifetimePolicy; // The tenant's lifetime model at this rotation
+}
+
+/**
+ * How long a refresh token family lives, as the tenant (or app) sets it at a rotation:
+ * - `ttl`: seconds a refresh token lasts once issued;
+ * - `sliding`: each rotation moves the expiry on by `ttl` (an unused family still expires);
+ * - `absoluteTtl`: seconds from the first issuance after which the family ends whatever its
+ *   use, or null for no absolute limit.
+ * A family recorded before created_at existed keeps its expiry (it never slides).
+ */
+export interface RefreshTokenLifetimePolicy {
+  ttl: number;
+  sliding: boolean;
+  absoluteTtl: number | null;
 }
 
 /**
@@ -197,6 +213,23 @@ function normalizeResourceAudience(value: unknown): string | string[] | undefine
   }
 
   return undefined;
+}
+
+/**
+ * A family's expiry after a rotation under a lifetime policy: moved on by `ttl` when sliding,
+ * never past the absolute limit (from created_at). A family without created_at (recorded before
+ * the lifetime model) keeps its expiry.
+ */
+export function rotatedExpiry(
+  family: Pick<TokenFamilyV2, 'expires_at' | 'created_at'>,
+  lifetime: RefreshTokenLifetimePolicy | undefined,
+  now: number
+): number {
+  if (!lifetime || family.created_at === undefined) return family.expires_at;
+  const cap =
+    lifetime.absoluteTtl === null ? Infinity : family.created_at + lifetime.absoluteTtl * 1000;
+  const next = lifetime.sliding ? now + lifetime.ttl * 1000 : family.expires_at;
+  return Math.min(next, cap);
 }
 
 /**
@@ -437,7 +470,8 @@ export class RefreshTokenRotator extends DurableObject<Env> {
       !Number.isSafeInteger(family.version) ||
       family.version < 1 ||
       !family.last_jti ||
-      !Number.isFinite(family.expires_at)
+      !Number.isFinite(family.expires_at) ||
+      (family.created_at !== undefined && !Number.isFinite(family.created_at))
     ) {
       throw new Error('refresh_token_family_storage_invalid');
     }
@@ -591,6 +625,7 @@ export class RefreshTokenRotator extends DurableObject<Env> {
       last_jti: request.jti,
       last_used_at: now,
       expires_at: expiresAt,
+      created_at: now,
       user_id: request.userId,
       client_id: request.clientId,
       allowed_scope: request.scope,
@@ -776,7 +811,13 @@ export class RefreshTokenRotator extends DurableObject<Env> {
       version: newVersion,
       last_jti: newJti,
       last_used_at: now,
+      expires_at: rotatedExpiry(family, request.lifetime, now),
     };
+    // An absolute limit enabled since the family was issued may already have passed.
+    if (updatedFamily.expires_at <= now) {
+      await this.deleteFamily(request.userId);
+      throw new Error('invalid_grant: Refresh token expired');
+    }
 
     // Keep the prior cached family authoritative if the durable write fails.
     await this.saveFamily(request.userId, updatedFamily);

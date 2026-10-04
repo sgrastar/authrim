@@ -200,21 +200,21 @@ export const OAUTH_SETTINGS_META: Record<keyof OAuthSettings, SettingMeta> = {
     default: true,
     envKey: 'REFRESH_TOKEN_SLIDING_WINDOW',
     label: 'Sliding Window Refresh',
-    description: 'Enable sliding window for refresh token expiry',
+    description:
+      'Each rotation moves the refresh token expiry on by its lifetime (oauth.refresh_token_expiry), so an unused family still expires. Needs rotation: a token that is not rotated (rotation off, or FAPI 2.0) keeps its expiry.',
     visibility: 'public',
-    status: 'in_development',
   },
   'oauth.refresh_token_absolute_expiry_enabled': {
     key: 'oauth.refresh_token_absolute_expiry_enabled',
     // Per tenant (or app) only, as before the category had platform values.
     scopes: ['tenant', 'client'],
     type: 'boolean',
-    default: false,
+    default: true,
     envKey: 'REFRESH_TOKEN_ABSOLUTE_EXPIRY_ENABLED',
     label: 'Absolute Expiry Enabled',
-    description: 'Enable absolute expiry limit for refresh tokens',
+    description:
+      'End a refresh token family a fixed time after it was first issued (oauth.refresh_token_absolute_expiry), however it is used.',
     visibility: 'public',
-    status: 'in_development',
   },
   'oauth.refresh_token_absolute_expiry': {
     key: 'oauth.refresh_token_absolute_expiry',
@@ -224,12 +224,13 @@ export const OAUTH_SETTINGS_META: Record<keyof OAuthSettings, SettingMeta> = {
     default: 31536000,
     envKey: 'REFRESH_TOKEN_ABSOLUTE_EXPIRY',
     label: 'Absolute Expiry',
-    description: 'Absolute maximum refresh token lifetime in seconds (1 year)',
+    description:
+      'Seconds from the first issuance after which a refresh token family ends (1 year). Applied at each rotation, so changing it reaches existing families.',
     min: 86400,
     max: 63072000,
+    integer: true,
     unit: 'seconds',
     visibility: 'public',
-    status: 'in_development',
   },
 
   // Security Settings
@@ -474,7 +475,7 @@ export const OAUTH_DEFAULTS: OAuthSettings = {
   'oauth.refresh_id_token_reissue': true,
   'oauth.offline_access_required': true,
   'oauth.refresh_token_sliding_window_enabled': true,
-  'oauth.refresh_token_absolute_expiry_enabled': false,
+  'oauth.refresh_token_absolute_expiry_enabled': true,
   'oauth.refresh_token_absolute_expiry': 31536000,
   'oauth.state_required': false,
   // Note: pkce_required, pkce_s256_required, nonce_required moved to security.ts

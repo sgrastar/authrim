@@ -1,5 +1,10 @@
 import type { Context } from 'hono';
-import type { DatabaseAdapter, DatabaseSource, Env } from '@authrim/ar-lib-core';
+import type {
+  DatabaseAdapter,
+  DatabaseSource,
+  Env,
+  RefreshTokenLifetimePolicy,
+} from '@authrim/ar-lib-core';
 import {
   CanonicalRuntimeUserProjectionRepository,
   areGuestScopesAllowed,
@@ -222,6 +227,7 @@ function tokenLifetimes(
   access(): Promise<number>;
   idToken(): Promise<number>;
   refresh(): Promise<number>;
+  refreshLifetime(): Promise<RefreshTokenLifetimePolicy>;
   refreshRotation(): Promise<boolean>;
   refreshIdTokenReissue(): Promise<boolean>;
   issuesRefreshTokenFor(scope: string | undefined): Promise<boolean>;
@@ -230,6 +236,23 @@ function tokenLifetimes(
   const read = async (key: string) => {
     values ??= resolveEffectiveSettings(c.env, 'oauth', { tenantId, clientId });
     return Number((await values)[key]);
+  };
+  // The refresh token lifetime model: sliding (on by default) and an absolute limit (on by
+  // default), each settable on its own.
+  const refreshLifetime = async (): Promise<RefreshTokenLifetimePolicy> => {
+    values ??= resolveEffectiveSettings(c.env, 'oauth', { tenantId, clientId });
+    const settings = await values;
+    const absoluteTtl = Number(settings['oauth.refresh_token_absolute_expiry']);
+    return {
+      ttl: Number(settings['oauth.refresh_token_expiry']),
+      sliding: settings['oauth.refresh_token_sliding_window_enabled'] !== false,
+      absoluteTtl:
+        settings['oauth.refresh_token_absolute_expiry_enabled'] !== false &&
+        Number.isFinite(absoluteTtl) &&
+        absoluteTtl > 0
+          ? absoluteTtl
+          : null,
+    };
   };
   return {
     access: async () => {
@@ -247,7 +270,12 @@ function tokenLifetimes(
       ]);
       return Math.min(configured, profile.max_token_ttl_seconds);
     },
-    refresh: () => read('oauth.refresh_token_expiry'),
+    // A new refresh token's lifetime: refresh_token_expiry, never past the absolute limit.
+    refresh: async () => {
+      const policy = await refreshLifetime();
+      return policy.absoluteTtl === null ? policy.ttl : Math.min(policy.ttl, policy.absoluteTtl);
+    },
+    refreshLifetime: () => refreshLifetime(),
     // Only an explicit false turns rotation off: anything else keeps the protection.
     refreshRotation: async () => {
       values ??= resolveEffectiveSettings(c.env, 'oauth', { tenantId, clientId });
@@ -4116,7 +4144,12 @@ async function handleRefreshTokenGrant(
   const rotationEnabled = !prohibitRefreshTokenRotation && (await lifetimes.refreshRotation());
 
   let newRefreshToken: string;
-  const refreshTokenExpiresIn = await lifetimes.refresh();
+  // The refresh token's remaining lifetime: from the family after a rotation (it may slide), else
+  // the presented token's own expiry (a token that is not rotated cannot slide).
+  let refreshTokenExpiresIn =
+    typeof refreshTokenPayload.exp === 'number'
+      ? Math.max(0, refreshTokenPayload.exp - Math.floor(Date.now() / 1000))
+      : await lifetimes.refresh();
 
   if (rotationEnabled) {
     // V2: Implement refresh token rotation with version-based theft detection
@@ -4148,12 +4181,14 @@ async function handleRefreshTokenGrant(
         clientId: client_id,
         tenantId,
         requestedScope: scope || undefined, // Pass requested scope for validation
+        lifetime: await lifetimes.refreshLifetime(),
       });
 
       // V3: DO now returns full JTIs with generation/shard prefix
       // No wrapping needed - use the JTI directly from DO
       newRefreshTokenJti = rotateResult.newJti;
       newVersion = rotateResult.newVersion;
+      refreshTokenExpiresIn = rotateResult.expiresIn;
 
       // Create JWT with new version (rtv claim)
       const refreshTokenClaims = {
