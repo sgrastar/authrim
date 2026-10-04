@@ -92,12 +92,13 @@ export const OAUTH_SETTINGS_META: Record<keyof OAuthSettings, SettingMeta> = {
     default: 3600,
     envKey: 'ID_TOKEN_EXPIRY',
     label: 'ID Token TTL',
-    description: 'ID token lifetime in seconds (default: 1 hour)',
+    description:
+      'ID token lifetime in seconds (default: 1 hour), under the tenant profile’s token lifetime cap.',
     min: 60,
     max: 86400,
+    integer: true,
     unit: 'seconds',
     visibility: 'public',
-    status: 'in_development',
   },
   'oauth.refresh_token_expiry': {
     key: 'oauth.refresh_token_expiry',

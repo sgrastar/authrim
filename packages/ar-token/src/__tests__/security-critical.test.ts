@@ -587,6 +587,47 @@ describe('Security-Critical Tests', () => {
       );
     });
 
+    it('gives the ID token its own lifetime (oauth.id_token_expiry)', async () => {
+      const client = createConfidentialClient({ require_pkce: false });
+      const authCodeData = createAuthCodeData({ userId: 'user-001', scope: 'openid profile' });
+      const settings = createMockKV();
+      void settings.put(
+        'settings:tenant:default:oauth',
+        JSON.stringify({ 'oauth.access_token_expiry': 3600, 'oauth.id_token_expiry': 600 })
+      );
+      (mockEnv as unknown as { SETTINGS: unknown }).SETTINGS = settings;
+      mocks.mockGetClientCached.mockResolvedValue(client);
+      mockEnv.AUTH_CODE_STORE.get = vi.fn().mockReturnValue({
+        consumeCodeRpc: vi.fn().mockResolvedValue(authCodeData),
+        registerIssuedTokensRpc: vi.fn().mockResolvedValue(undefined),
+      });
+
+      const response = await tokenHandler(
+        createMockContext({
+          method: 'POST',
+          body: {
+            grant_type: 'authorization_code',
+            code: 'valid-auth-code',
+            redirect_uri: authCodeData.redirectUri,
+            client_id: client.client_id,
+            client_secret: 'valid-secret',
+          },
+          env: mockEnv,
+        })
+      );
+
+      expect(response.status).toBe(200);
+      expect(mocks.mockCreateIDToken).toHaveBeenCalledWith(
+        expect.any(Object),
+        expect.anything(),
+        expect.any(String),
+        600,
+        expect.any(String)
+      );
+      const body = await parseJsonResponse<{ expires_in: number }>(response);
+      expect(body.expires_in).toBe(3600);
+    });
+
     it("signs every ID token with the tenant's algorithm while apps may not choose", async () => {
       const { privateKey } = await generateKeyPair('PS256', { extractable: true });
       const privatePEM = await exportPKCS8(privateKey);

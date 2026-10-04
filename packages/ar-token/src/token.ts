@@ -209,11 +209,6 @@ class SecurityProfileSettingsUnavailableError extends Error {
 }
 
 /**
- * Access and refresh token lifetimes for a tenant, or one of its clients: the Settings API
- * value (client, then tenant), else the older oauth-config value, else env, else the default.
- * The settings are read once, when a lifetime is first asked for.
- */
-/**
  * The lifetimes of the tokens a grant issues, and whether a refresh rotates the refresh token:
  * the client's, else the tenant's settings. An access token never outlives the tenant profile's
  * max_token_ttl_seconds (Human Auth / AI Ephemeral Auth two-layer model; RFC 6749 §4.2.2: the
@@ -225,6 +220,7 @@ function tokenLifetimes(
   clientId?: string
 ): {
   access(): Promise<number>;
+  idToken(): Promise<number>;
   refresh(): Promise<number>;
   refreshRotation(): Promise<boolean>;
 } {
@@ -237,6 +233,14 @@ function tokenLifetimes(
     access: async () => {
       const [configured, profile] = await Promise.all([
         read('oauth.access_token_expiry'),
+        loadTenantProfileCached(c, c.env.AUTHRIM_CONFIG, c.env, tenantId),
+      ]);
+      return Math.min(configured, profile.max_token_ttl_seconds);
+    },
+    // An ID token has its own lifetime (oauth.id_token_expiry), under the same profile cap.
+    idToken: async () => {
+      const [configured, profile] = await Promise.all([
+        read('oauth.id_token_expiry'),
         loadTenantProfileCached(c, c.env.AUTHRIM_CONFIG, c.env, tenantId),
       ]);
       return Math.min(configured, profile.max_token_ttl_seconds);
@@ -3005,20 +3009,21 @@ async function handleAuthorizationCodeGrant(
         tenantId,
         clientMetadata as ClientMetadata,
         idTokenClaims as Omit<IDTokenClaims, 'iat' | 'exp'>,
-        expiresIn,
+        await lifetimes.idToken(),
         selectiveClaims
       );
       log.debug('Created SD-JWT ID Token', { clientId: client_id, action: 'SD-JWT' });
     } else {
       // For Authorization Code Flow, ID token should only contain standard claims
       // Scope-based claims (profile, email) are returned from UserInfo endpoint
+      const idTokenExpiresIn = await lifetimes.idToken();
       idToken = await timeTokenRequestDiagnosticOperation(c, 'token_id_create', () =>
         createClientIDToken(
           c.env,
           tenantId,
           clientMetadata as ClientMetadata,
           idTokenClaims as Omit<IDTokenClaims, 'iat' | 'exp'>,
-          expiresIn
+          idTokenExpiresIn
         )
       );
     }
@@ -4068,7 +4073,7 @@ async function handleRefreshTokenGrant(
         tenantId,
         clientMetadata as ClientMetadata,
         idTokenClaims as Omit<IDTokenClaims, 'iat' | 'exp'>,
-        expiresIn,
+        await lifetimes.idToken(),
         selectiveClaims
       );
     } else {
@@ -4077,7 +4082,7 @@ async function handleRefreshTokenGrant(
         tenantId,
         clientMetadata as ClientMetadata,
         idTokenClaims as Omit<IDTokenClaims, 'iat' | 'exp'>,
-        expiresIn
+        await lifetimes.idToken()
       );
     }
   } catch (error) {
@@ -4915,7 +4920,7 @@ async function handleDeviceCodeGrant(
       getTenantIdFromContext(c),
       clientMetadata as ClientMetadata,
       idTokenClaims as Omit<IDTokenClaims, 'iat' | 'exp'>,
-      expiresIn
+      await lifetimes.idToken()
     );
   } catch (error) {
     log.error('Failed to create ID token', {}, error as Error);
@@ -5594,7 +5599,7 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
     getTenantIdFromContext(c),
     clientMetadata as ClientMetadata,
     idTokenClaims as Omit<IDTokenClaims, 'iat' | 'exp'>,
-    expiresIn
+    await lifetimes.idToken()
   );
 
   // Encrypt ID token if required
@@ -7679,7 +7684,7 @@ async function handleNativeSSOTokenExchange(
       tenantId,
       clientMetadata,
       newIdTokenClaims as Omit<IDTokenClaims, 'iat' | 'exp'>,
-      expiresIn
+      await lifetimes.idToken()
     );
   } catch (error) {
     log.error('Failed to create ID token', { action: 'NativeSSO' }, error as Error);

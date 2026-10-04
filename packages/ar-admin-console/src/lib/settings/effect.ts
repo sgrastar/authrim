@@ -34,7 +34,7 @@ function reason(why: NotApplied, keys: readonly string[]): [string, NotApplied][
 }
 
 export const NOT_APPLIED: ReadonlyMap<string, NotApplied> = new Map([
-	// to-build (38)
+	// to-build (37)
 	...reason('to-build', [
 		'diagnostic-logging.filter_pii',
 		'diagnostic-logging.filter_tokens',
@@ -50,7 +50,6 @@ export const NOT_APPLIED: ReadonlyMap<string, NotApplied> = new Map([
 		'federation.saml_sso_binding',
 		'federation.scim_token_default_expiry',
 		'federation.scim_token_max_expiry',
-		'oauth.id_token_expiry',
 		'oauth.offline_access_required',
 		'oauth.refresh_id_token_reissue',
 		'oauth.refresh_token_absolute_expiry',

@@ -2196,7 +2196,7 @@ describe('Authorization Handler', () => {
       }
     );
 
-    it('issues implicit and hybrid tokens with the configured token lifetime', async () => {
+    it('issues implicit and hybrid tokens with the configured token lifetimes', async () => {
       mockGetClient.mockResolvedValue({
         client_id: 'test-client',
         redirect_uris: ['https://example.com/callback'],
@@ -2209,7 +2209,7 @@ describe('Authorization Handler', () => {
       configureClientTrustPolicy(env);
       await (env.SETTINGS as unknown as MockKVNamespace).put(
         'settings:tenant:default:oauth',
-        JSON.stringify({ 'oauth.access_token_expiry': 300 })
+        JSON.stringify({ 'oauth.access_token_expiry': 300, 'oauth.id_token_expiry': 120 })
       );
       seedSession(env, 'lifetime-user');
 
@@ -2239,10 +2239,11 @@ describe('Authorization Handler', () => {
         new URL(response.headers.get('Location')!).hash.slice(1)
       );
       expect(fragment.get('expires_in')).toBe('300');
-      for (const token of [fragment.get('access_token'), fragment.get('id_token')]) {
-        const claims = decodeJwt(token!);
-        expect(claims.exp! - claims.iat!).toBe(300);
-      }
+      const accessClaims = decodeJwt(fragment.get('access_token')!);
+      expect(accessClaims.exp! - accessClaims.iat!).toBe(300);
+      // The ID token has its own lifetime (oauth.id_token_expiry).
+      const idClaims = decodeJwt(fragment.get('id_token')!);
+      expect(idClaims.exp! - idClaims.iat!).toBe(120);
     });
 
     describe('signs implicit and hybrid ID tokens as the token endpoint does', () => {

@@ -4726,20 +4726,27 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
     }
   }
 
-  // Token lifetime for the client or tenant (Settings API, else the older oauth-config value,
-  // else env, else the default), used for both tokens as the token endpoint uses it.
+  // Token lifetimes for the client or tenant (Settings API, else env, else the default), as the
+  // token endpoint reads them: the access token's and the ID token's, each under the tenant
+  // profile's max_token_ttl_seconds.
   let tokenLifetimeSeconds = 3600;
+  let idTokenLifetimeSeconds = 3600;
   if (includesToken || includesIdToken) {
     try {
-      const configured = Number(
-        (
-          await resolveEffectiveSettings(c.env, 'oauth', {
-            tenantId: getTenantIdFromContext(c),
-            clientId: validClientId,
-          })
-        )['oauth.access_token_expiry']
-      );
-      if (Number.isFinite(configured) && configured > 0) tokenLifetimeSeconds = configured;
+      const [oauthSettings, profile] = await Promise.all([
+        resolveEffectiveSettings(c.env, 'oauth', {
+          tenantId: getTenantIdFromContext(c),
+          clientId: validClientId,
+        }),
+        tenantProfilePromise,
+      ]);
+      const lifetime = (key: string, fallback: number) => {
+        const configured = Number(oauthSettings[key]);
+        const seconds = Number.isFinite(configured) && configured > 0 ? configured : fallback;
+        return Math.min(seconds, profile.max_token_ttl_seconds);
+      };
+      tokenLifetimeSeconds = lifetime('oauth.access_token_expiry', tokenLifetimeSeconds);
+      idTokenLifetimeSeconds = lifetime('oauth.id_token_expiry', idTokenLifetimeSeconds);
     } catch (error) {
       log.error('Token lifetime settings could not be read', {}, error as Error);
       return sendError('server_error', 'Failed to process authorization request');
@@ -4903,7 +4910,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         idTokenClaims as Parameters<typeof createIDToken>[0],
         privateKey,
         signingKeyId,
-        tokenLifetimeSeconds,
+        idTokenLifetimeSeconds,
         idTokenSigningAlgorithm
       );
 
