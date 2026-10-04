@@ -1454,7 +1454,6 @@ export function generateEnvVars(
   }
 
   // Security settings
-  vars['ENABLE_HTTP_REDIRECT'] = 'false';
   vars['ENABLE_OPEN_REGISTRATION'] = 'false';
   if (component === 'ar-auth') {
     vars['ENABLE_LOGIN_RUNTIME_FLOW'] = 'true';

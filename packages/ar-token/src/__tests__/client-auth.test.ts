@@ -5419,6 +5419,44 @@ describe('Client Authentication Tests', () => {
       };
     }
 
+    it('refuses the grant while the tenant, or the issuer as an app, requires DPoP-bound tokens', async () => {
+      // A binding of its own per case: settings are cached per binding.
+      const settings = (documents: Record<string, unknown>) => {
+        (mockEnv as unknown as { SETTINGS: unknown }).SETTINGS = {
+          get: async (key: string) => (key in documents ? JSON.stringify(documents[key]) : null),
+        };
+      };
+
+      // The issuer acts as the app: its own requirement applies, the tenant's being off.
+      settings({
+        'settings:tenant:default:security': { 'security.dpop_bound_access_tokens': false },
+        'settings:client:default:service-a:security': {
+          'security.dpop_bound_access_tokens': true,
+        },
+      });
+      mocks.mockParseTrustedIssuers.mockReturnValueOnce(
+        new Map([['service-a', { issuer: 'service-a' }]])
+      );
+      mocks.mockValidateJWTBearerAssertion.mockResolvedValueOnce({
+        valid: true,
+        claims: { iss: 'service-a', sub: 'service-account' },
+      });
+      const app = await requestJWTBearer();
+      expect(app.response.status).toBe(400);
+      expect(app.body).toMatchObject({
+        error: 'invalid_request',
+        error_description: 'DPoP-bound access tokens are required, which this grant cannot issue',
+      });
+
+      settings({
+        'settings:tenant:default:security': { 'security.dpop_bound_access_tokens': true },
+      });
+      const tenantWide = await requestJWTBearer();
+      expect(tenantWide.response.status).toBe(400);
+      expect(tenantWide.body).toMatchObject({ error: 'invalid_request' });
+      expect(mocks.mockCreateAccessToken).not.toHaveBeenCalled();
+    });
+
     it('requires an assertion and at least one configured trusted issuer', async () => {
       const missing = await requestJWTBearer({ assertion: undefined });
       expect(missing.response.status).toBe(400);

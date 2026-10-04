@@ -32,6 +32,7 @@ export * from './services/account-login-methods';
 export * from './services/authorization-challenge-kind';
 export * from './services/sign-in-limits';
 export * from './services/id-token-signing';
+export * from './services/app-security-requirements';
 export * from './services/protocol-settings';
 export {
   StoredLegacyValue,
@@ -98,6 +99,7 @@ export * from './utils/dr-bundle';
 export * from './utils/errors';
 export * from './utils/issuer';
 export * from './utils/jwe';
+export * from './utils/request-object-encryption';
 export * from './utils/jwt';
 export * from './utils/oidc-signing';
 export * from './utils/issued-id-token';

@@ -390,7 +390,7 @@ function createMockEnv(): Env {
     STATE_EXPIRY: '300',
     NONCE_EXPIRY: '300',
     REFRESH_TOKEN_EXPIRY: '2592000',
-    ENABLE_HTTP_REDIRECT: 'true',
+    HTTPS_REDIRECT_ONLY: 'false',
     ENABLE_CONFORMANCE_MODE: 'true', // Enable conformance mode for testing (uses built-in forms)
     STATE_STORE: new MockKVNamespace() as unknown as KVNamespace,
     NONCE_STORE: new MockKVNamespace() as unknown as KVNamespace,
@@ -512,7 +512,7 @@ describe('Authorization Handler', () => {
       expect(location).toContain('/flow/login');
     });
 
-    it('should accept http://localhost redirect_uri when ENABLE_HTTP_REDIRECT is true', async () => {
+    it('should accept http://localhost redirect_uri for a web app when security.https_redirect_only is off', async () => {
       const response = await app.request(
         '/authorize?response_type=code&client_id=test-client&redirect_uri=http://localhost:3000/callback&scope=openid',
         { method: 'GET' },
@@ -523,6 +523,81 @@ describe('Authorization Handler', () => {
       expect(response.status).toBe(302);
       const location = response.headers.get('Location');
       expect(location).toContain('/flow/login');
+    });
+
+    it('refuses a web app’s http loopback redirect_uri while security.https_redirect_only is on', async () => {
+      delete (env as { HTTPS_REDIRECT_ONLY?: string }).HTTPS_REDIRECT_ONLY;
+      const response = await app.request(
+        '/authorize?response_type=code&client_id=test-client&redirect_uri=http://localhost:3000/callback&scope=openid',
+        { method: 'GET' },
+        env
+      );
+
+      // Not redirected to an http callback the policy does not allow: an error page instead.
+      expect(response.status).toBe(400);
+      expect(await response.text()).toContain('Invalid Redirect URI');
+    });
+
+    it('accepts a native app’s http loopback redirect_uri (RFC 8252) while HTTPS only is on', async () => {
+      delete (env as { HTTPS_REDIRECT_ONLY?: string }).HTTPS_REDIRECT_ONLY;
+      mockGetClient.mockResolvedValue({
+        client_id: 'test-client',
+        client_secret: 'test-secret',
+        application_type: 'native',
+        redirect_uris: ['http://localhost:3000/callback'],
+        grant_types: ['authorization_code'],
+        response_types: ['code'],
+        scope: 'openid profile email',
+        token_endpoint_auth_method: 'client_secret_basic',
+      });
+      const response = await app.request(
+        '/authorize?response_type=code&client_id=test-client&redirect_uri=http://localhost:3000/callback&scope=openid',
+        { method: 'GET' },
+        env
+      );
+
+      expect(response.status).toBe(302);
+      expect(response.headers.get('Location')).toContain('/flow/login');
+    });
+
+    it('requires an encrypted request object when the tenant does (security.require_encrypted_request_object)', async () => {
+      await env.SETTINGS!.put(
+        'settings:tenant:default:security',
+        JSON.stringify({ 'security.require_encrypted_request_object': true })
+      );
+      const response = await app.request(
+        '/authorize?response_type=code&client_id=test-client&redirect_uri=https://example.com/callback&scope=openid&state=s1',
+        { method: 'GET' },
+        env
+      );
+
+      expect(response.status).toBe(302);
+      const location = new URL(response.headers.get('Location')!);
+      expect(location.origin + location.pathname).toBe('https://example.com/callback');
+      expect(location.searchParams.get('error')).toBe('invalid_request_object');
+      expect(location.searchParams.get('error_description')).toBe(
+        'An encrypted request object is required for this client'
+      );
+    });
+
+    it('requires PKCE when the tenant requires it (security.pkce_required)', async () => {
+      await env.SETTINGS!.put(
+        'settings:tenant:default:security',
+        JSON.stringify({ 'security.pkce_required': true })
+      );
+      const response = await app.request(
+        '/authorize?response_type=code&client_id=test-client&redirect_uri=https://example.com/callback&scope=openid&state=s1',
+        { method: 'GET' },
+        env
+      );
+
+      expect(response.status).toBe(302);
+      const location = new URL(response.headers.get('Location')!);
+      expect(location.origin + location.pathname).toBe('https://example.com/callback');
+      expect(location.searchParams.get('error')).toBe('invalid_request');
+      expect(location.searchParams.get('error_description')).toBe(
+        'PKCE with S256 is required for this client'
+      );
     });
 
     it('should redirect with temporarily_unavailable when login UI is not configured', async () => {

@@ -65,6 +65,7 @@ import {
   prepareTenantDiscoveryAliasDirectory,
   resolveTenantDiscoveryAliasDirectoryInput,
 } from './tenant-alias-directory';
+import { REDIRECT_URI_POLICY_DESCRIPTION, redirectUriRefusedByPolicy } from './redirect-uri-policy';
 
 type ClientRegistrationRequestWithPkce = Omit<ClientRegistrationRequest, 'redirect_uris'> & {
   redirect_uris: string[];
@@ -188,8 +189,6 @@ async function validateSectorIdentifierContent(
 interface RegistrationValidationOptions {
   /** Allow localhost HTTP for webhook URLs (development only) */
   allowLocalhostHttp?: boolean;
-  /** Allow RFC 8252 loopback IP redirects for the dedicated Agent public-client profile. */
-  allowLoopbackHttp?: boolean;
 }
 
 function isLoopbackIp(hostname: string): boolean {
@@ -288,8 +287,9 @@ function validateRegistrationRequest(
         parsed.protocol !== 'https:' &&
         !(
           parsed.protocol === 'http:' &&
-          (parsed.hostname === 'localhost' ||
-            (options.allowLoopbackHttp === true && isLoopbackIp(parsed.hostname)))
+          // Any loopback host here: whether this app may use http there (a native app, or a
+          // tenant that allows web apps) is the redirect URI policy's, applied below.
+          (parsed.hostname === 'localhost' || isLoopbackIp(parsed.hostname))
         )
       ) {
         return {
@@ -1498,7 +1498,6 @@ export async function registerHandler(c: Context<{ Bindings: Env }>): Promise<Re
     const isDevelopment = c.env.ENVIRONMENT === 'development' || c.env.NODE_ENV === 'development';
     const validation = validateRegistrationRequest(body, {
       allowLocalhostHttp: isDevelopment,
-      allowLoopbackHttp: restrictedAgentRegistration,
     });
     if (!validation.valid) {
       return c.json(validation.error, 400);
@@ -1765,6 +1764,28 @@ export async function registerHandler(c: Context<{ Bindings: Env }>): Promise<Re
     const grantTypes = request.grant_types || ['authorization_code'];
     const responseTypes = request.response_types || ['code'];
     const applicationType = request.application_type || 'web';
+    // The tenant's redirect URI policy, as authorize will apply it (security.https_redirect_only).
+    let refusedRedirectUri: string | null;
+    try {
+      refusedRedirectUri = await redirectUriRefusedByPolicy(c.env, tenantId, {
+        redirectUris: request.redirect_uris,
+        applicationType,
+      });
+    } catch (error) {
+      getLogger(c)
+        .module('DCR')
+        .error('Redirect URI policy could not be read', {}, error as Error);
+      return c.json({ error: 'server_error', error_description: 'Failed to register client' }, 500);
+    }
+    if (refusedRedirectUri) {
+      return c.json(
+        {
+          error: 'invalid_redirect_uri',
+          error_description: `${REDIRECT_URI_POLICY_DESCRIPTION}: ${refusedRedirectUri}`,
+        },
+        400
+      );
+    }
     const requirePkce =
       request.require_pkce ??
       (tokenEndpointAuthMethod === 'none' && grantTypes.includes('authorization_code'));

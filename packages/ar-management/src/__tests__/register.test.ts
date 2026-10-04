@@ -89,7 +89,7 @@ function createMockEnv(options?: { db?: D1Database }): Env {
     STATE_EXPIRY: '300',
     NONCE_EXPIRY: '300',
     REFRESH_TOKEN_EXPIRY: '2592000',
-    ENABLE_HTTP_REDIRECT: 'true',
+    HTTPS_REDIRECT_ONLY: 'false',
     PRIVATE_KEY_PEM: 'mock-private-key',
     PUBLIC_JWK_JSON: '{"kty":"RSA"}',
     KEY_ID: 'test-key-id',
@@ -797,6 +797,38 @@ describe('Dynamic Client Registration Handler', () => {
 
       const json = (await res.json()) as RegistrationResponse;
       expect(json.redirect_uris).toEqual(['http://localhost:3000/callback']);
+    });
+
+    it('refuses a web app’s http loopback redirect_uri while security.https_redirect_only is on', async () => {
+      delete (mockEnv as { HTTPS_REDIRECT_ONLY?: string }).HTTPS_REDIRECT_ONLY;
+      const register = (body: Record<string, unknown>) =>
+        app.request(
+          '/register',
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+          },
+          mockEnv
+        );
+
+      const web = await register({ redirect_uris: ['http://localhost:3000/callback'] });
+      expect(web.status).toBe(400);
+      expect(((await web.json()) as { error: string }).error).toBe('invalid_redirect_uri');
+
+      // A native app's loopback (RFC 8252) stays allowed.
+      const native = await register({
+        redirect_uris: ['http://localhost:3000/callback'],
+        application_type: 'native',
+      });
+      expect(native.status).toBe(201);
+
+      // Its loopback IP literals too (RFC 8252 7.3), IPv6 included.
+      const nativeIp = await register({
+        redirect_uris: ['http://127.0.0.1:49152/callback', 'http://[::1]:49152/callback'],
+        application_type: 'native',
+      });
+      expect(nativeIp.status).toBe(201);
     });
 
     it('should build registration_client_uri with default tenant subdomain when naked domain is disabled', async () => {

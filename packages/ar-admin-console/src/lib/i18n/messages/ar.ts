@@ -38,6 +38,7 @@ export const ar = {
 	'nav.access.policies': 'السياسات',
 	'nav.access.simulator': 'محاكي الوصول',
 	'nav.apps.all': 'مسارات الخدمة',
+	'nav.apps.defaults': 'الإعدادات الافتراضية للتطبيقات',
 	'nav.apps.apis': 'الواجهات / الموارد',
 	'nav.apps.keys': 'رموز الوصول الأولية',
 	'nav.apps.webhooks': 'خطافات الويب',

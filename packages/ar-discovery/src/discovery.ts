@@ -9,6 +9,8 @@ import type {
 import {
   SUPPORTED_JWE_ALG,
   SUPPORTED_JWE_ENC,
+  REQUEST_OBJECT_ENCRYPTION_ALGS,
+  REQUEST_OBJECT_ENCRYPTION_ENCS,
   ALLOWED_DPOP_ALGS,
   buildRequestIssuerUrl,
   DEFAULT_LOGOUT_CONFIG,
@@ -422,8 +424,9 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
     request_parameter_supported: true,
     request_uri_parameter_supported: true,
     request_object_signing_alg_values_supported: requestObjectSigningAlgorithms,
-    request_object_encryption_alg_values_supported: [...SUPPORTED_JWE_ALG],
-    request_object_encryption_enc_values_supported: [...SUPPORTED_JWE_ENC],
+    // Encrypted to the tenant's request object encryption key (use enc in its JWKS, RSA).
+    request_object_encryption_alg_values_supported: [...REQUEST_OBJECT_ENCRYPTION_ALGS],
+    request_object_encryption_enc_values_supported: [...REQUEST_OBJECT_ENCRYPTION_ENCS],
     // JARM (JWT-Secured Authorization Response Mode) support
     // Authorization requires a JARM response mode whenever requireJarm is set.
     response_modes_supported: fapiConfig.messageSigning?.requireJarm

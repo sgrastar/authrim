@@ -591,6 +591,45 @@ describe('Security-Critical Tests', () => {
       );
     });
 
+    it('requires a DPoP proof when the tenant binds access tokens to DPoP (security.dpop_bound_access_tokens)', async () => {
+      const client = createConfidentialClient({ require_pkce: false });
+      const authCodeData = createAuthCodeData({ userId: 'user-001', scope: 'openid' });
+      const settings = createMockKV();
+      void settings.put(
+        'settings:tenant:default:security',
+        JSON.stringify({ 'security.dpop_bound_access_tokens': true })
+      );
+      (mockEnv as unknown as { SETTINGS: unknown }).SETTINGS = settings;
+      mocks.mockGetClientCached.mockResolvedValue(client);
+      const consumeCodeRpc = vi.fn().mockResolvedValue(authCodeData);
+      mockEnv.AUTH_CODE_STORE.get = vi.fn().mockReturnValue({
+        consumeCodeRpc,
+        registerIssuedTokensRpc: vi.fn().mockResolvedValue(undefined),
+      });
+
+      const response = await tokenHandler(
+        createMockContext({
+          method: 'POST',
+          body: {
+            grant_type: 'authorization_code',
+            code: 'valid-auth-code',
+            redirect_uri: authCodeData.redirectUri,
+            client_id: client.client_id,
+            client_secret: 'valid-secret',
+          },
+          env: mockEnv,
+        })
+      );
+
+      expect(response.status).toBe(400);
+      expect(await parseJsonResponse(response)).toMatchObject({
+        error: 'invalid_request',
+        error_description: 'DPoP proof is required for this request',
+      });
+      // Refused before the code is spent.
+      expect(consumeCodeRpc).not.toHaveBeenCalled();
+    });
+
     describe('offline_access (oauth.offline_access_required)', () => {
       async function exchangeCode(scope: string, tenantOAuth?: Record<string, unknown>) {
         const client = createConfidentialClient({ require_pkce: false });

@@ -60,6 +60,74 @@ export const deSettings: Record<keyof typeof jaSettings, string> = {
 	'set.k.security.fapi_enabled': 'FAPI 2.0 anwenden',
 	'set.k.security.fapi_enabled.desc':
 		'Das FAPI-2.0-Sicherheitsprofil auf alle Apps des Mandanten anwenden.',
+	'set.page.appDefaults': 'App-Standards',
+	'set.page.appDefaults.desc':
+		'Regeln für Autorisierungsanfragen und Tokens, die für alle Apps des Mandanten gelten. Die Einstellungen einer App können eine Sicherheitsanforderung hinzufügen, aber keine aufheben.',
+	'set.section.authRequests': 'Autorisierungsanfragen',
+	'set.section.authRequests.desc': 'Was die Anmeldeanfrage einer App enthalten muss.',
+	'set.section.authRequests.advanced': 'Signierte und verschlüsselte Request Objects',
+	'set.section.redirectUris': 'Weiterleitungs-URIs',
+	'set.section.redirectUris.desc': 'Wohin die Anmeldung zu einer App zurückkehren darf.',
+	'set.section.senderConstrained': 'Absendergebundene Tokens',
+	'set.section.senderConstrained.desc': 'An den Schlüssel der empfangenden App gebundene Tokens.',
+	'set.section.senderConstrained.advanced': 'DPoP unter FAPI und Nonces',
+	'set.section.fapi': 'FAPI',
+	'set.section.fapi.desc': 'Das Sicherheitsprofil für Finanzanwendungen (FAPI 2.0).',
+	'set.section.fapi.advanced': 'Einzelne FAPI-Anforderungen',
+	'set.section.tokenExchange': 'Token-Austausch',
+	'set.section.tokenExchange.desc': 'Der Austausch eines Tokens einer App gegen ein anderes.',
+	'set.section.tokenExchange.advanced': 'Delegation und Identitätsübernahme',
+	'set.k.security.pkce_required': 'PKCE verlangen',
+	'set.k.security.pkce_required.desc':
+		'Jede Anfrage mit Autorisierungscode muss PKCE (S256) enthalten. Eine App kann es ebenfalls verlangen, die Anforderung des Mandanten aber nicht aufheben.',
+	'set.k.security.par_required': 'PAR verlangen',
+	'set.k.security.par_required.desc':
+		'Autorisierungsanfragen müssen zuerst serverseitig übermittelt werden (Pushed Authorization Request).',
+	'set.k.oauth.state_required': 'state-Parameter verlangen',
+	'set.k.oauth.state_required.desc': 'Autorisierungsanfragen ohne state ablehnen (CSRF-Schutz).',
+	'set.k.security.require_signed_request_object': 'Signierte Request Objects verlangen',
+	'set.k.security.require_signed_request_object.desc':
+		'Autorisierungsanfragen müssen in einem von der App signierten Request Object kommen.',
+	'set.k.security.require_encrypted_request_object': 'Verschlüsselte Request Objects verlangen',
+	'set.k.security.require_encrypted_request_object.desc':
+		'Autorisierungsanfragen müssen in einem Request Object kommen, das mit dem Verschlüsselungsschlüssel des Mandanten (use enc im JWKS) verschlüsselt ist. Apps müssen das unterstützen.',
+	'set.k.security.allow_unsigned_request_object':
+		'Unsignierte Request Objects zulassen (Entwicklung)',
+	'set.k.security.allow_unsigned_request_object.desc':
+		'In der Produktion nie zugelassen, unabhängig von dieser Einstellung.',
+	'set.k.security.https_redirect_only': 'Nur HTTPS-Weiterleitungs-URIs zulassen',
+	'set.k.security.https_redirect_only.desc':
+		'Der Loopback einer nativen App (localhost u. Ä.) darf http verwenden. Aus: Auch eine Web-App darf auf einem Loopback-Host http verwenden (Entwicklung).',
+	'set.k.security.dpop_bound_access_tokens': 'Zugriffstokens an DPoP binden',
+	'set.k.security.dpop_bound_access_tokens.desc':
+		'Zum Erhalt von Tokens ist ein DPoP-Nachweis erforderlich, damit ein abgeflossenes Token von niemand anderem verwendet werden kann. Apps müssen das unterstützen.',
+	'set.k.security.dpop_required': 'DPoP unter FAPI',
+	'set.k.security.dpop_required.desc': 'Ob DPoP verlangt wird, solange FAPI gilt.',
+	'set.k.security.dpop_required.with_fapi': 'Mit FAPI verlangt',
+	'set.k.security.dpop_required.always': 'Immer verlangt',
+	'set.k.security.dpop_required.never': 'Nie verlangt',
+	'set.k.security.dpop_nonce_enabled': 'DPoP-Server-Nonces verwenden',
+	'set.k.security.dpop_nonce_enabled.desc':
+		'DPoP-Nachweise müssen eine vom Server ausgegebene Nonce enthalten, was ihre Wiederverwendung verhindert.',
+	'set.k.security.fapi_strict_dpop': 'DPoP streng prüfen',
+	'set.k.security.fapi_strict_dpop.desc':
+		'Eine Autorisierungsanfrage mit ungültigem DPoP-Nachweis ablehnen.',
+	'set.k.security.fapi_allow_public_clients': 'Öffentliche Clients zulassen',
+	'set.k.security.fapi_allow_public_clients.desc':
+		'Apps ohne Geheimnis (Browser- und Mobil-Apps) zulassen, solange FAPI gilt.',
+	'set.k.security.fapi_require_private_key_jwt': 'private_key_jwt verlangen',
+	'set.k.security.fapi_require_private_key_jwt.desc':
+		'Apps authentifizieren sich nur mit private_key_jwt.',
+	'set.k.security.require_jarm': 'Signierte Autorisierungsantworten (JARM) verlangen',
+	'set.k.tokens.exchange_enabled': 'Token-Austausch aktivieren',
+	'set.k.tokens.exchange_enabled.desc':
+		'Apps können ein Token gegen ein anderes austauschen (RFC 8693).',
+	'set.k.tokens.exchange_delegation_enabled': 'Delegation zulassen',
+	'set.k.tokens.exchange_delegation_enabled.desc':
+		'Eine App kann im Namen einer Person ein Token für einen anderen Dienst erhalten.',
+	'set.k.tokens.exchange_impersonation_enabled': 'Identitätsübernahme zulassen',
+	'set.k.tokens.exchange_impersonation_enabled.desc':
+		'Eine App kann ein Token erhalten, das als die Person selbst handelt.',
 	'set.k.oauth.id_token_signing_alg.RS256': 'RS256',
 	'set.k.oauth.id_token_signing_alg.ES256': 'ES256',
 	'set.k.oauth.id_token_signing_alg.PS256': 'PS256',

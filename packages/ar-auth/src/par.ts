@@ -41,6 +41,10 @@ import {
   getTenantIdFromContext,
   isSigningJWK,
   resolveProtocolSettings,
+  decryptRequestObject,
+  RequestObjectDecryptionError,
+  resolveAppSecurityRequirements,
+  type AppSecurityRequirements,
   resolveEffectiveSettings,
   falRequiresSignedPushedRequest,
   type FAPIProtocolSettings,
@@ -95,7 +99,7 @@ function signedRequestCoversParameters(
     return value === undefined || value === null || value === '' || fromRequestObject(claims[name]);
   });
 }
-import { jwtVerify, compactDecrypt, importJWK } from 'jose';
+import { jwtVerify, importJWK } from 'jose';
 import {
   type FAPI2MessageSigningConfig,
   validateFAPI2MessageSigningRequestObjectClaims,
@@ -366,8 +370,14 @@ export async function parHandler(c: Context<{ Bindings: Env }>): Promise<Respons
     // =========================================================================
     let fapiConfig: FAPIProtocolSettings;
     let oidcConfig: OIDCProtocolSettings;
+    let securityPolicy: AppSecurityRequirements;
 
     try {
+      securityPolicy = await resolveAppSecurityRequirements(
+        c.env,
+        (clientMetadata.tenant_id as string) || getTenantIdFromContext(c),
+        clientMetadata.client_id
+      );
       const settings = await resolveProtocolSettings(
         c.env,
         (clientMetadata.tenant_id as string) || getTenantIdFromContext(c),
@@ -522,6 +532,22 @@ export async function parHandler(c: Context<{ Bindings: Env }>): Promise<Respons
     }
     // Whether the client signed the request object (verified), for the authorization endpoint.
     let requestObjectSigned = false;
+    // Whether the request object was encrypted to this tenant, for the authorization endpoint.
+    let requestObjectEncrypted = false;
+
+    // security.require_encrypted_request_object: the request comes as an encrypted request object.
+    if (
+      securityPolicy.requireEncryptedRequestObject &&
+      (!requestParam || getTokenFormat(requestParam) !== 'jwe')
+    ) {
+      return c.json(
+        {
+          error: 'invalid_request_object',
+          error_description: 'An encrypted request object is required for this client',
+        },
+        400
+      );
+    }
 
     if (messageSigningConfig?.requireSignedRequestObject && !requestParam) {
       return c.json(
@@ -557,33 +583,31 @@ export async function parHandler(c: Context<{ Bindings: Env }>): Promise<Respons
         // Handle JWE-encrypted request objects (nested JWT: JWE containing JWS)
         if (tokenFormat === 'jwe') {
           try {
-            // Get private key for decryption from KeyManager
-            const keyManagerId = c.env.KEY_MANAGER.idFromName(`${getTenantIdFromContext(c)}-v3`);
-            const keyManager = c.env.KEY_MANAGER.get(keyManagerId);
-            const keyData = await keyManager.getActiveKeyWithPrivateRpc();
-
-            if (!keyData?.privatePEM) {
-              return c.json(
-                {
-                  error: 'server_error',
-                  error_description: 'Decryption key not available',
-                },
-                500
-              );
-            }
-
-            const { importPKCS8 } = await import('jose');
-            const privateKey = await importPKCS8(keyData.privatePEM, 'RSA-OAEP');
-
-            const { plaintext } = await compactDecrypt(requestParam, privateKey);
-            jwtRequest = new TextDecoder().decode(plaintext);
+            // Encrypted to this tenant's request object encryption key (use enc in its JWKS).
+            jwtRequest = await decryptRequestObject(
+              c.env,
+              (clientMetadata.tenant_id as string) || getTenantIdFromContext(c),
+              requestParam
+            );
+            requestObjectEncrypted = true;
 
             // Check inner format
             tokenFormat = getTokenFormat(jwtRequest);
             if (tokenFormat === 'unknown' && jwtRequest.trimStart().startsWith('{')) {
-              // A directly encrypted JSON request object has JWE integrity protection,
-              // but it is not a client signature and is therefore rejected by the
-              // Message Signing profile below.
+              // A directly encrypted JSON request object is not signed by the client (anyone
+              // can encrypt to the tenant's public key): it is an unsigned request object, as
+              // alg=none is (refused in production, and elsewhere unless the tenant allows it),
+              // and the Message Signing profile below rejects it as well.
+              const environment = c.env.ENVIRONMENT || c.env.NODE_ENV || 'production';
+              if (environment === 'production' || !(oidcConfig.allowNoneAlgorithm ?? false)) {
+                return c.json(
+                  {
+                    error: 'invalid_request_object',
+                    error_description: 'Unsigned request objects are not allowed',
+                  },
+                  400
+                );
+              }
               requestObjectClaims = JSON.parse(jwtRequest) as Record<string, unknown>;
               requestProcessed = true;
             } else if (tokenFormat !== 'jwt') {
@@ -601,6 +625,18 @@ export async function parHandler(c: Context<{ Bindings: Env }>): Promise<Respons
               { action: 'jwe_decrypt' },
               decryptError as Error
             );
+            if (
+              decryptError instanceof RequestObjectDecryptionError &&
+              decryptError.reason === 'unavailable'
+            ) {
+              return c.json(
+                {
+                  error: 'temporarily_unavailable',
+                  error_description: 'Request object decryption is temporarily unavailable',
+                },
+                503
+              );
+            }
             return c.json(
               {
                 error: 'invalid_request_object',
@@ -944,13 +980,26 @@ export async function parHandler(c: Context<{ Bindings: Env }>): Promise<Respons
     if (fapiConfig.enabled && (!params.code_challenge || params.code_challenge_method !== 'S256')) {
       throw new RFCError('invalid_request', 400, 'FAPI 2.0 requires PKCE with S256 method');
     }
+    // The tenant's (or app's) PKCE requirement, checked here as authorize will.
+    if (
+      securityPolicy.pkceRequired &&
+      typeof params.response_type === 'string' &&
+      params.response_type.split(' ').includes('code') &&
+      (!params.code_challenge || params.code_challenge_method !== 'S256')
+    ) {
+      throw new RFCError('invalid_request', 400, 'PKCE with S256 is required for this client');
+    }
 
     // =========================================================================
     // Standard Validations
     // =========================================================================
 
     // Validate redirect_uri against registered URIs
-    const redirectValidation = validateRedirectUri(params.redirect_uri);
+    // http only on a loopback host, for a native app or as the tenant allows (as authorize).
+    const redirectValidation = validateRedirectUri(
+      params.redirect_uri,
+      clientMetadata.application_type === 'native' || !securityPolicy.httpsRedirectOnly
+    );
     if (!redirectValidation.valid) {
       throw new RFCError(
         'invalid_request',
@@ -1180,6 +1229,7 @@ export async function parHandler(c: Context<{ Bindings: Env }>): Promise<Respons
       error_uri: params.error_uri,
       cancel_uri: params.cancel_uri,
       ...(requestObjectSigned ? { request_object_signed: true } : {}),
+      ...(requestObjectEncrypted ? { request_object_encrypted: true } : {}),
     };
 
     // Store in PARRequestStore DO with region-aware sharding (issue #11: single-use guarantee)

@@ -39,6 +39,8 @@ export type AuthorizationRequestContinuation = {
   integrity_protected: boolean;
   /** The request came in a request object the client signed (verified). */
   request_object_signed?: true;
+  /** The request came in a request object encrypted to this tenant. */
+  request_object_encrypted?: true;
 } & Partial<Record<AuthorizationRequestStringField, string>>;
 
 function readString(record: Record<string, unknown>, key: string): string | undefined {
@@ -56,6 +58,9 @@ export function createAuthorizationRequestContinuation(
     issuer: readString(metadata, 'issuer'),
     integrity_protected: metadata.authorization_request_integrity_protected === true,
     ...(metadata.authorization_request_signed === true ? { request_object_signed: true } : {}),
+    ...(metadata.authorization_request_encrypted === true
+      ? { request_object_encrypted: true }
+      : {}),
   };
 
   for (const key of AUTHORIZATION_REQUEST_STRING_FIELDS) {
@@ -80,7 +85,8 @@ export function parseAuthorizationRequestContinuation(
     (record.source !== 'frontchannel' && record.source !== 'par') ||
     record.authorization_server !== 'default' ||
     typeof record.integrity_protected !== 'boolean' ||
-    (record.request_object_signed !== undefined && record.request_object_signed !== true)
+    (record.request_object_signed !== undefined && record.request_object_signed !== true) ||
+    (record.request_object_encrypted !== undefined && record.request_object_encrypted !== true)
   ) {
     return null;
   }
@@ -90,6 +96,7 @@ export function parseAuthorizationRequestContinuation(
     authorization_server: 'default',
     integrity_protected: record.integrity_protected,
     ...(record.request_object_signed === true ? { request_object_signed: true } : {}),
+    ...(record.request_object_encrypted === true ? { request_object_encrypted: true } : {}),
   };
   const issuer = readString(record, 'issuer');
   if (issuer) result.issuer = issuer;

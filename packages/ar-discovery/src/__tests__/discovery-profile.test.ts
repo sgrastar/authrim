@@ -52,6 +52,11 @@ describe('Discovery Profile Tests', () => {
       expect(metadata.scopes_supported).toContain('profile');
       expect(metadata.scopes_supported).toContain('email');
       expect(metadata.scopes_supported).toContain('offline_access');
+      // Only what the request object encryption key (RSA) decrypts.
+      expect(metadata.request_object_encryption_alg_values_supported).toEqual([
+        'RSA-OAEP-256',
+        'RSA-OAEP',
+      ]);
       expect(metadata.scopes_supported).not.toContain('ai:read');
       expect(metadata.scopes_supported).not.toContain('ai:write');
       expect(metadata.scopes_supported).not.toContain('ai:execute');

@@ -189,6 +189,20 @@ interface OIDCPS256KeyManagerState {
   lastRotation: number | null;
 }
 
+/**
+ * Dedicated RSA state for the keys apps encrypt request objects to (RSA-OAEP-256, use enc).
+ * Never shared with a signing key.
+ */
+type RequestObjectEncKeyManagerState = OIDCPS256KeyManagerState;
+
+/** The key management algorithm of the request object encryption keys. */
+export const REQUEST_OBJECT_ENCRYPTION_KEY_ALG = 'RSA-OAEP-256';
+
+/** An encryption key apps may still encrypt to: not revoked, and not past its overlap. */
+function isUsableRequestObjectEncKey(key: StoredKey, now: number): boolean {
+  return key.status !== 'revoked' && (key.expiresAt === undefined || key.expiresAt > now);
+}
+
 function normalizeImportedKeyStatus(status: unknown): KeyStatus {
   return status === 'overlap' || status === 'revoked' ? status : 'active';
 }
@@ -284,6 +298,8 @@ export class KeyManager extends DurableObject<Env> {
   private oidcPS256KeyManagerState: OIDCPS256KeyManagerState | null = null;
   private oidcES256CreationPromise: Promise<StoredECKey> | null = null;
   private oidcPS256CreationPromise: Promise<StoredKey> | null = null;
+  private requestObjectEncKeyManagerState: RequestObjectEncKeyManagerState | null = null;
+  private requestObjectEncCreationPromise: Promise<StoredKey> | null = null;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -291,10 +307,13 @@ export class KeyManager extends DurableObject<Env> {
     // Block all requests until initialization completes
     // This ensures the DO is in a consistent state before processing any requests
     // Critical for cryptographic key management and migration
-    ctx.blockConcurrencyWhile(async () => {
+    this.initialization = ctx.blockConcurrencyWhile(async () => {
       await this.initializeStateBlocking();
     });
   }
+
+  /** The initialization the constructor started; a call made before it ends waits for it. */
+  private readonly initialization: Promise<void>;
 
   /**
    * Initialize state from Durable Storage
@@ -381,6 +400,23 @@ export class KeyManager extends DurableObject<Env> {
       };
       await this.saveOIDCPS256State();
     }
+
+    const storedRequestObjectEncState =
+      await this.ctx.storage.get<RequestObjectEncKeyManagerState>('requestObjectEncState');
+    if (storedRequestObjectEncState) {
+      this.requestObjectEncKeyManagerState = storedRequestObjectEncState;
+    } else {
+      this.requestObjectEncKeyManagerState = {
+        keys: [],
+        activeKeyId: null,
+        config: {
+          rotationIntervalDays: 90,
+          retentionPeriodDays: 30,
+        },
+        lastRotation: null,
+      };
+      await this.saveRequestObjectEncState();
+    }
   }
 
   // ==========================================
@@ -433,11 +469,34 @@ export class KeyManager extends DurableObject<Env> {
     }
     await this.ensureActiveOIDCES256Key();
     await this.ensureActiveOIDCPS256Key();
+    await this.ensureActiveRequestObjectEncKey();
     return [
       ...(await this.getAllPublicKeys()),
       ...this.getAllOIDCECPublicKeys(),
       ...this.getAllOIDCPS256PublicKeys(),
+      ...this.getAllRequestObjectEncPublicKeys(),
     ];
+  }
+
+  /**
+   * RPC: The private key to decrypt a request object with: the one its kid names (active or still
+   * overlapping), else the active one. Null when the kid names none of them.
+   */
+  async getRequestObjectDecryptionKeyRpc(kid?: string): Promise<StoredKey | null> {
+    await this.initializeState();
+    if (kid === undefined) return this.ensureActiveRequestObjectEncKey();
+    const now = Date.now();
+    return (
+      this.getRequestObjectEncState().keys.find(
+        (key) => key.kid === kid && isUsableRequestObjectEncKey(key, now)
+      ) ?? null
+    );
+  }
+
+  /** RPC: Rotate only the request object encryption key. */
+  async rotateRequestObjectEncKeyRpc(): Promise<Omit<StoredKey, 'privatePEM'>> {
+    await this.initializeState();
+    return this.sanitizeKey(await this.rotateRequestObjectEncKey());
   }
 
   /** RPC: Rotate only the purpose-separated OIDC ES256 key. */
@@ -615,7 +674,8 @@ export class KeyManager extends DurableObject<Env> {
       Object.keys(current.rsa.secrets).length === 0 &&
       current.vcEc.keys.length === 0 &&
       singleActivePurposeKey(current.oidcEs256) &&
-      singleActivePurposeKey(current.oidcPs256);
+      singleActivePurposeKey(current.oidcPs256) &&
+      singleActivePurposeKey(current.requestObjectEnc);
     if (
       !exactRetry &&
       !keyManagerTenantBackupSnapshotIsEmpty(current) &&
@@ -629,18 +689,23 @@ export class KeyManager extends DurableObject<Env> {
           ecState: snapshot.vcEc,
           oidcECState: snapshot.oidcEs256,
           oidcPS256State: snapshot.oidcPs256,
+          requestObjectEncState: snapshot.requestObjectEnc,
         });
       });
       this.keyManagerState = structuredClone(snapshot.rsa);
       this.ecKeyManagerState = structuredClone(snapshot.vcEc);
       this.oidcECKeyManagerState = structuredClone(snapshot.oidcEs256);
       this.oidcPS256KeyManagerState = structuredClone(snapshot.oidcPs256);
+      this.requestObjectEncKeyManagerState = structuredClone(snapshot.requestObjectEnc);
     }
     return {
       imported: !exactRetry,
       rsaKeys: snapshot.rsa.keys.length,
       vcKeys: snapshot.vcEc.keys.length,
-      oidcKeys: snapshot.oidcEs256.keys.length + snapshot.oidcPs256.keys.length,
+      oidcKeys:
+        snapshot.oidcEs256.keys.length +
+        snapshot.oidcPs256.keys.length +
+        snapshot.requestObjectEnc.keys.length,
       secrets: Object.keys(snapshot.rsa.secrets).length,
     };
   }
@@ -872,6 +937,7 @@ export class KeyManager extends DurableObject<Env> {
    * Note: With blockConcurrencyWhile() in constructor, this is now a no-op guard.
    */
   private async initializeState(): Promise<void> {
+    await this.initialization;
     if (this.keyManagerState !== null) {
       return;
     }
@@ -923,6 +989,7 @@ export class KeyManager extends DurableObject<Env> {
       vcEc: this.getECState(),
       oidcEs256: this.getOIDCECState(),
       oidcPs256: this.getOIDCPS256State(),
+      requestObjectEnc: this.getRequestObjectEncState(),
     });
   }
 
@@ -954,6 +1021,70 @@ export class KeyManager extends DurableObject<Env> {
     if (this.oidcPS256KeyManagerState) {
       await this.ctx.storage.put('oidcPS256State', this.oidcPS256KeyManagerState);
     }
+  }
+
+  private async saveRequestObjectEncState(): Promise<void> {
+    if (this.requestObjectEncKeyManagerState) {
+      await this.ctx.storage.put('requestObjectEncState', this.requestObjectEncKeyManagerState);
+    }
+  }
+
+  private getRequestObjectEncState(): RequestObjectEncKeyManagerState {
+    if (!this.requestObjectEncKeyManagerState) {
+      throw new Error('Request object encryption KeyManager state not initialized');
+    }
+    return this.requestObjectEncKeyManagerState;
+  }
+
+  private getAllRequestObjectEncPublicKeys(): JWK[] {
+    const now = Date.now();
+    return this.getRequestObjectEncState()
+      .keys.filter((key) => isUsableRequestObjectEncKey(key, now))
+      .map((key) => key.publicJWK);
+  }
+
+  private async ensureActiveRequestObjectEncKey(): Promise<StoredKey> {
+    const state = this.getRequestObjectEncState();
+    const active = state.keys.find(
+      (key) => key.kid === state.activeKeyId && key.status === 'active'
+    );
+    if (active) return active;
+
+    if (!this.requestObjectEncCreationPromise) {
+      this.requestObjectEncCreationPromise = this.rotateRequestObjectEncKey().finally(() => {
+        this.requestObjectEncCreationPromise = null;
+      });
+    }
+    return this.requestObjectEncCreationPromise;
+  }
+
+  private async rotateRequestObjectEncKey(): Promise<StoredKey> {
+    const state = this.getRequestObjectEncState();
+    const now = Date.now();
+    const previousActive = state.keys.find((key) => key.status === 'active');
+    if (previousActive) {
+      // Apps may still encrypt to the previous key until they fetch the JWKS again.
+      previousActive.status = 'overlap';
+      previousActive.expiresAt = now + 24 * 60 * 60 * 1000;
+    }
+
+    const kid = `request-object-enc-${now}-${crypto.randomUUID()}`;
+    const keySet = await generateKeySet(kid);
+    const newKey: StoredKey = {
+      kid,
+      publicJWK: { ...keySet.publicJWK, kid, use: 'enc', alg: REQUEST_OBJECT_ENCRYPTION_KEY_ALG },
+      privatePEM: keySet.privatePEM,
+      createdAt: now,
+      status: 'active',
+    };
+    state.keys.push(newKey);
+    state.activeKeyId = kid;
+    state.lastRotation = now;
+    state.keys = state.keys.filter(
+      (key) => key.status === 'active' || !key.expiresAt || key.expiresAt >= now
+    );
+    await this.saveRequestObjectEncState();
+    return newKey;
   }
 
   private getOIDCECState(): OIDCECKeyManagerState {
