@@ -46,9 +46,6 @@ export interface OAuthSettings {
   'oauth.par_default_ttl': number;
   'oauth.par_fapi_ttl': number;
 
-  // JARM Settings
-  'oauth.jarm_enabled': boolean;
-
   // Loopback Settings moved to security.ts
 
   // HTTP Request URI Settings
@@ -319,19 +316,6 @@ export const OAUTH_SETTINGS_META: Record<keyof OAuthSettings, SettingMeta> = {
     visibility: 'admin',
   },
 
-  // JARM Settings
-  'oauth.jarm_enabled': {
-    key: 'oauth.jarm_enabled',
-    // Per tenant (or app) only, as before the category had platform values.
-    scopes: ['tenant', 'client'],
-    type: 'boolean',
-    default: false,
-    envKey: 'ENABLE_JARM',
-    label: 'JARM Enabled',
-    description: 'Enable JWT Secured Authorization Response Mode',
-    visibility: 'public',
-  },
-
   // Loopback Settings moved to security.ts
 
   // HTTP Request URI Settings
@@ -479,7 +463,6 @@ export const OAUTH_DEFAULTS: OAuthSettings = {
   // Note: par_required moved to security.ts
   'oauth.par_default_ttl': 600,
   'oauth.par_fapi_ttl': 0,
-  'oauth.jarm_enabled': false,
   // Note: loopback_flexible_port moved to security.ts
   'oauth.https_request_uri_enabled': false,
   'oauth.https_request_uri_max_size': 102400,

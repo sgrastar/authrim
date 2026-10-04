@@ -181,7 +181,6 @@ const AGENT_ELEVATED_SETTINGS = {
         ['stateRequired', settingValue(body, 'oauth.state_required')],
         ['refreshTokenRotation', settingValue(body, 'oauth.refresh_token_rotation')],
         ['offlineAccessRequired', settingValue(body, 'oauth.offline_access_required')],
-        ['jarmEnabled', settingValue(body, 'oauth.jarm_enabled')],
       ]),
   },
   session: {
@@ -233,7 +232,6 @@ const AGENT_ELEVATED_SETTING_KEYS: Record<keyof typeof AGENT_ELEVATED_SETTINGS, 
       'oauth.state_required',
       'oauth.refresh_token_rotation',
       'oauth.offline_access_required',
-      'oauth.jarm_enabled',
     ],
     session: [
       'session.default_ttl',

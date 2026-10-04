@@ -34,8 +34,9 @@ function reason(why: NotApplied, keys: readonly string[]): [string, NotApplied][
 }
 
 export const NOT_APPLIED: ReadonlyMap<string, NotApplied> = new Map([
-	// to-build (28)
+	// to-build (29)
 	...reason('to-build', [
+		'dr-backup.storage_destination_id',
 		'federation.saml_artifact_resolution_timeout',
 		'federation.saml_artifact_ttl',
 		'federation.saml_assertion_ttl',
@@ -81,11 +82,6 @@ export const NOT_APPLIED: ReadonlyMap<string, NotApplied> = new Map([
 		'login-ui.published_version',
 		'login-ui.rollback_snapshot'
 	]),
-	// on-hold (2)
-	...reason('on-hold', ['oauth.id_token_signing_alg', 'oauth.jarm_enabled']),
-	// to-check (2)
-	...reason('to-check', [
-		'authentication-methods.directory_password.label',
-		'dr-backup.storage_destination_id'
-	])
+	// on-hold (1)
+	...reason('on-hold', ['oauth.id_token_signing_alg'])
 ]);

@@ -53,7 +53,6 @@ const REVIEWED_FIELDS: readonly [string, TenantSettingValueType, TenantSettingHa
     oauth.state_required
     oauth.userinfo_require_openid
     oauth.sso_enabled
-    oauth.jarm_enabled
     oauth.https_request_uri_enabled
   `,
     ],
@@ -711,7 +710,6 @@ const REVIEWED_FIELDS: readonly [string, TenantSettingValueType, TenantSettingHa
       `
     authentication-methods.totp.preset
     authentication-methods.totp.default_acr
-    authentication-methods.directory_password.label
   `,
     ],
     [

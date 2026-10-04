@@ -266,7 +266,6 @@ export const ADMIN_WRITE_TOOL_DEFINITIONS: readonly AgentToolDefinition[] =
             stateRequired: { type: 'boolean' },
             refreshTokenRotation: { type: 'boolean' },
             offlineAccessRequired: { type: 'boolean' },
-            jarmEnabled: { type: 'boolean' },
           },
           ['resource_version']
         ),

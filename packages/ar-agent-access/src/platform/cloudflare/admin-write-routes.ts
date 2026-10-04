@@ -134,7 +134,6 @@ export const CLOUDFLARE_ADMIN_WRITE_ROUTES: Readonly<Record<string, ManagementOp
         ['stateRequired', 'oauth.state_required'],
         ['refreshTokenRotation', 'oauth.refresh_token_rotation'],
         ['offlineAccessRequired', 'oauth.offline_access_required'],
-        ['jarmEnabled', 'oauth.jarm_enabled'],
       ]),
     response: projectAgentInspectionResponse,
   },

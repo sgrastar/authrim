@@ -35,7 +35,6 @@ export interface AuthenticationMethodsSettings {
   'authentication-methods.external_provider_usage': string;
   'authentication-methods.external_providers': string;
   'authentication-methods.directory_password.enabled': boolean;
-  'authentication-methods.directory_password.label': string;
 }
 
 export const AUTHENTICATION_METHODS_SETTINGS_META: Record<
@@ -254,14 +253,6 @@ export const AUTHENTICATION_METHODS_SETTINGS_META: Record<
     description: 'Enable organization directory password login via Authrim Wordwarden',
     visibility: 'admin',
   },
-  'authentication-methods.directory_password.label': {
-    key: 'authentication-methods.directory_password.label',
-    type: 'string',
-    default: 'Organization ID',
-    label: 'Directory Password Label',
-    description: 'Public label shown for directory password login',
-    visibility: 'page',
-  },
 };
 
 export const AUTHENTICATION_METHODS_CATEGORY_META: CategoryMeta = {
@@ -299,5 +290,4 @@ export const AUTHENTICATION_METHODS_DEFAULTS: AuthenticationMethodsSettings = {
   'authentication-methods.external_provider_usage': '[]',
   'authentication-methods.external_providers': '[]',
   'authentication-methods.directory_password.enabled': false,
-  'authentication-methods.directory_password.label': 'Organization ID',
 };

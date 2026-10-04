@@ -216,10 +216,7 @@ place('authentication/enterprise', 'SAML', {
 });
 
 place('authentication/directory', 'Directory password', {
-	primary: [
-		'authentication-methods.directory_password.enabled',
-		'authentication-methods.directory_password.label'
-	]
+	primary: ['authentication-methods.directory_password.enabled']
 });
 
 place('authentication/protection', 'Failed sign-ins', {
@@ -265,7 +262,6 @@ place('authentication/protection', 'API rate limits', {
 place('applications/defaults', 'Authorization requests', {
 	primary: ['security.pkce_required', 'security.par_required', 'oauth.state_required'],
 	advanced: [
-		'oauth.jarm_enabled',
 		'security.require_signed_request_object',
 		'security.require_encrypted_request_object',
 		'oauth.response_types_supported'
@@ -655,7 +651,7 @@ place(
 	{ primary: ['dr-backup.storage_destination_id'] },
 	{
 		'dr-backup.storage_destination_id':
-			'Storage destinations are chosen in one place for every feature (logs, backups).'
+			'Storage destinations are chosen in one place for every feature (logs, backups). In development: backups go to the deployment’s export bucket for now.'
 	}
 );
 place('integrations/plugins', 'Plugins', {
