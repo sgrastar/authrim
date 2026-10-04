@@ -6,6 +6,11 @@ export const jaSettings = {
 	'set.page.stayingSignedIn': 'ログイン状態の維持',
 	'set.page.stayingSignedIn.desc':
 		'一度ログインした利用者と、そのアプリが、どれくらいの間ログインしたままでいられるかを決めます。',
+	'set.page.signingKeys': '署名鍵',
+	'set.page.signingKeys.desc': 'このテナントがトークンに署名する方法。',
+	'set.section.idTokenSigning': 'ID トークンの署名',
+	'set.section.idTokenSigning.desc':
+		'ID トークンを署名するアルゴリズムと、アプリが自分で選べるかどうか。',
 
 	'set.section.signIn': 'ログインの長さ',
 	'set.section.signIn.desc': '利用者が Authrim にログインしたままでいられる時間です。',

@@ -4,6 +4,11 @@ export const arSettings: Record<keyof typeof jaSettings, string> = {
 	'set.page.stayingSignedIn': 'البقاء مسجلاً للدخول',
 	'set.page.stayingSignedIn.desc':
 		'المدة التي يبقى فيها الأشخاص مسجلين للدخول بعد تسجيل دخولهم، والمدة التي تحتفظ فيها تطبيقاتهم بهذا الدخول.',
+	'set.page.signingKeys': 'مفاتيح التوقيع',
+	'set.page.signingKeys.desc': 'كيف يوقّع هذا المستأجر رموزه.',
+	'set.section.idTokenSigning': 'توقيع رموز الهوية',
+	'set.section.idTokenSigning.desc':
+		'الخوارزمية التي تُوقَّع بها رموز الهوية، وهل يمكن للتطبيقات اختيار خوارزميتها.',
 
 	'set.section.signIn': 'مدة تسجيل الدخول',
 	'set.section.signIn.desc': 'المدة التي يبقى فيها الشخص مسجلاً للدخول إلى Authrim.',

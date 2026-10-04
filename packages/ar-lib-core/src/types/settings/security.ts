@@ -57,7 +57,8 @@ export const SECURITY_SETTINGS_META: Record<keyof SecuritySettings, SettingMeta>
     type: 'boolean',
     default: false,
     label: 'FAPI Mode',
-    description: 'Enable Financial-grade API security profile',
+    description:
+      'Enable the FAPI 2.0 Security Profile. Requests it does not allow, such as authorization requests without PAR, are refused, so apps that do not support FAPI may stop working. Discovery keeps working as the specification describes.',
     visibility: 'public',
   },
   'security.fapi_strict_dpop': {

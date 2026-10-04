@@ -4,6 +4,11 @@ export const enSettings: Record<keyof typeof jaSettings, string> = {
 	'set.page.stayingSignedIn': 'Staying signed in',
 	'set.page.stayingSignedIn.desc':
 		'How long people stay signed in once they have signed in, and how long their apps keep that sign-in.',
+	'set.page.signingKeys': 'Signing keys',
+	'set.page.signingKeys.desc': 'How this tenant signs its tokens.',
+	'set.section.idTokenSigning': 'ID token signing',
+	'set.section.idTokenSigning.desc':
+		'The algorithm ID tokens are signed with, and whether apps may choose their own.',
 
 	'set.section.signIn': 'Sign-in length',
 	'set.section.signIn.desc': 'How long a person stays signed in to Authrim.',

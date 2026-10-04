@@ -4,6 +4,11 @@ export const deSettings: Record<keyof typeof jaSettings, string> = {
 	'set.page.stayingSignedIn': 'Angemeldet bleiben',
 	'set.page.stayingSignedIn.desc':
 		'Wie lange Personen nach der Anmeldung angemeldet bleiben und wie lange ihre Apps diese Anmeldung behalten.',
+	'set.page.signingKeys': 'Signaturschlüssel',
+	'set.page.signingKeys.desc': 'Wie dieser Mandant seine Tokens signiert.',
+	'set.section.idTokenSigning': 'Signatur von ID-Tokens',
+	'set.section.idTokenSigning.desc':
+		'Der Algorithmus, mit dem ID-Tokens signiert werden, und ob Apps ihren eigenen wählen dürfen.',
 
 	'set.section.signIn': 'Dauer der Anmeldung',
 	'set.section.signIn.desc': 'Wie lange eine Person bei Authrim angemeldet bleibt.',

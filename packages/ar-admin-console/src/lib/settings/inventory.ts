@@ -679,9 +679,6 @@ place('settings/domains', 'Domains and origins', {
 		'service-site.fallback_enabled'
 	]
 });
-place('settings/signing-keys', 'Token signing', {
-	primary: ['oauth.id_token_signing_alg', 'oauth.id_token_signing_alg_client_override']
-});
 place('settings/compliance', 'Audit and data residency', {
 	primary: [
 		'tenant.audit_profile_id',
