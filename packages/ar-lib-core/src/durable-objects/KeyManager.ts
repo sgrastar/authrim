@@ -198,6 +198,11 @@ type RequestObjectEncKeyManagerState = OIDCPS256KeyManagerState;
 /** The key management algorithm of the request object encryption keys. */
 export const REQUEST_OBJECT_ENCRYPTION_KEY_ALG = 'RSA-OAEP-256';
 
+/** An encryption key apps may still encrypt to: not revoked, and not past its overlap. */
+function isUsableRequestObjectEncKey(key: StoredKey, now: number): boolean {
+  return key.status !== 'revoked' && (key.expiresAt === undefined || key.expiresAt > now);
+}
+
 function normalizeImportedKeyStatus(status: unknown): KeyStatus {
   return status === 'overlap' || status === 'revoked' ? status : 'active';
 }
@@ -480,9 +485,10 @@ export class KeyManager extends DurableObject<Env> {
   async getRequestObjectDecryptionKeyRpc(kid?: string): Promise<StoredKey | null> {
     await this.initializeState();
     if (kid === undefined) return this.ensureActiveRequestObjectEncKey();
+    const now = Date.now();
     return (
       this.getRequestObjectEncState().keys.find(
-        (key) => key.kid === kid && key.status !== 'revoked'
+        (key) => key.kid === kid && isUsableRequestObjectEncKey(key, now)
       ) ?? null
     );
   }
@@ -1031,8 +1037,9 @@ export class KeyManager extends DurableObject<Env> {
   }
 
   private getAllRequestObjectEncPublicKeys(): JWK[] {
+    const now = Date.now();
     return this.getRequestObjectEncState()
-      .keys.filter((key) => key.status !== 'revoked')
+      .keys.filter((key) => isUsableRequestObjectEncKey(key, now))
       .map((key) => key.publicJWK);
   }
 

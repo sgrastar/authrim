@@ -4414,6 +4414,21 @@ describe('Admin API Handlers', () => {
       );
     });
 
+    it('refuses an uppercase HTTP loopback redirect URI for a web app as well', async () => {
+      const c = createMockContext({
+        method: 'POST',
+        body: { client_name: 'Web app', redirect_uris: ['HTTP://LOCALHOST:3000/callback'] },
+        db: createMockDB({ firstResult: null, runResult: { success: true } }),
+      });
+
+      await adminClientCreateHandler(c);
+
+      expect(c.json).toHaveBeenCalledWith(
+        expect.objectContaining({ error: 'invalid_request' }),
+        400
+      );
+    });
+
     it('should reject malformed requestable scope tokens', async () => {
       const c = createMockContext({
         method: 'POST',
@@ -4923,6 +4938,29 @@ describe('Admin API Handlers', () => {
           severity: 'fatal',
         }),
       });
+    });
+
+    it('lets an Agent Access connection keep its loopback redirect, by its stored scopes', async () => {
+      const mockDB = createMockDB({
+        firstResult: {
+          client_id: 'agent-connection',
+          client_name: 'MCP client',
+          redirect_uris: '["http://localhost:18080/callback"]',
+          grant_types: '["authorization_code","refresh_token"]',
+          response_types: '["code"]',
+          requestable_scopes: '["agent:read"]',
+        },
+      });
+      const c = createMockContext({
+        method: 'PUT',
+        params: { id: 'agent-connection' },
+        body: { redirect_uris: ['http://localhost:18081/callback'] },
+        db: mockDB,
+      });
+
+      const res = await adminClientUpdateHandler(c);
+
+      expect(res.status).not.toBe(400);
     });
 
     it('refuses another ID token algorithm while the tenant signs every ID token with its own', async () => {

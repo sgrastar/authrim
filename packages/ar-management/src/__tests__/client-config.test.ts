@@ -117,6 +117,34 @@ describe('client-config update handler', () => {
     mocked.publishEvent.mockResolvedValue(undefined);
   });
 
+  it('refuses to update a web app to an http loopback redirect URI while HTTPS only is on', async () => {
+    const adapter = createMockAdapter();
+    mocked.createAuthContextFromHono.mockReturnValue({ coreAdapter: adapter });
+    mocked.getClientCached.mockResolvedValue({
+      client_id: 'client-123',
+      client_name: 'Smoke Client',
+      redirect_uris: ['https://example.com/callback'],
+      grant_types: ['authorization_code'],
+      response_types: ['code'],
+      registration_access_token_hash: 'token-hash',
+    });
+
+    const res = await clientConfigUpdateHandler(
+      createMockContext({
+        body: {
+          client_id: 'client-123',
+          redirect_uris: ['HTTP://LOCALHOST:3000/callback'],
+          grant_types: ['authorization_code'],
+          response_types: ['code'],
+        },
+      })
+    );
+
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: string }).error).toBe('invalid_redirect_uri');
+    expect(adapter.execute).not.toHaveBeenCalled();
+  });
+
   it('normalizes undefined optional fields to null and clears request cache before re-read', async () => {
     const adapter = createMockAdapter();
     mocked.createAuthContextFromHono.mockReturnValue({ coreAdapter: adapter });

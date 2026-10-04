@@ -23,7 +23,14 @@ export async function redirectUriRefusedByPolicy(
     clientId?: string;
   }
 ): Promise<string | null> {
-  const httpUris = (input.redirectUris ?? []).filter((uri) => uri.startsWith('http:'));
+  // By the parsed scheme (URL schemes are case-insensitive: HTTP://LOCALHOST is http).
+  const httpUris = (input.redirectUris ?? []).filter((uri) => {
+    try {
+      return new URL(uri).protocol === 'http:';
+    } catch {
+      return false;
+    }
+  });
   if (httpUris.length === 0) return null;
   const nativeApp = input.applicationType === 'native';
   const { httpsRedirectOnly } = await resolveAppSecurityRequirements(env, tenantId, input.clientId);

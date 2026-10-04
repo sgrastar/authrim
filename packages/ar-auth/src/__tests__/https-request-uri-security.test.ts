@@ -779,6 +779,35 @@ describe('HTTPS Request URI Security', () => {
   });
 
   describe('Request Object Fetching', () => {
+    it('does not let an encrypted payload that is no request object stand in for one', async () => {
+      const encryptionKeyPair = await generateKeyPair('RSA-OAEP', {
+        extractable: true,
+        modulusLength: 2048,
+      });
+      const jwe = await new CompactEncrypt(new TextEncoder().encode('hello'))
+        .setProtectedHeader({ alg: 'RSA-OAEP', enc: 'A256GCM' })
+        .encrypt(encryptionKeyPair.publicKey);
+      const privatePEM = await exportPKCS8(encryptionKeyPair.privateKey);
+
+      const response = await app.request(
+        `/authorize?client_id=test-client&response_type=code&redirect_uri=${encodeURIComponent('https://example.com/callback')}&scope=openid&request=${encodeURIComponent(jwe)}`,
+        { method: 'GET' },
+        {
+          ...mockEnv,
+          KEY_MANAGER: {
+            idFromName: () => 'key-manager',
+            get: () => ({ getRequestObjectDecryptionKeyRpc: async () => ({ privatePEM }) }),
+          },
+        }
+      );
+
+      expect(response.status).toBe(400);
+      await expect(response.json()).resolves.toEqual({
+        error: 'invalid_request_object',
+        error_description: 'Decrypted request object must be a JWT or JSON object',
+      });
+    });
+
     it('does not accept an encrypted unsigned JSON Request Object as authenticated input', async () => {
       const encryptionKeyPair = await generateKeyPair('RSA-OAEP', {
         extractable: true,

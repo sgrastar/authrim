@@ -4440,6 +4440,23 @@ async function handleJWTBearerGrant(
   });
   if ('error' in assurance) return assurance.error;
 
+  // Nor while the tenant binds every access token to DPoP (security.dpop_bound_access_tokens).
+  try {
+    if (
+      (await resolveAppSecurityRequirements(c.env, getTenantIdFromContext(c))).dpopBoundAccessTokens
+    ) {
+      return oauthError(
+        c,
+        'invalid_request',
+        'DPoP-bound access tokens are required, which this grant cannot issue',
+        400
+      );
+    }
+  } catch (error) {
+    log.error('Security requirements could not be read', {}, error as Error);
+    throw new SecurityProfileSettingsUnavailableError();
+  }
+
   // Validate assertion parameter
   if (!assertion) {
     return c.json(

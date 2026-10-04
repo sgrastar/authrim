@@ -2059,7 +2059,8 @@ export async function adminClientUpdateHandler(c: Context<{ Bindings: Env }>) {
       (redirect_uris !== undefined || application_type !== undefined) &&
       !isAgentAccessConnection(
         body.scope ?? existingClient.scope,
-        body.requestable_scopes ?? existingClient.requestable_scopes
+        // Stored as a JSON array.
+        body.requestable_scopes ?? parseClientStringArray(existingClient.requestable_scopes, [])
       )
     ) {
       const updateRedirectPolicy = await redirectUriPolicyResponse(c, {

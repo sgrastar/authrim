@@ -1250,10 +1250,17 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
             ? errorClient.tenant_id
             : requestTenantId;
         const registeredRedirectUris = errorClient?.redirect_uris;
-        // Only a native app's loopback may be http here (the tenant's policy is not read yet).
+        // http only on a loopback host, for a native app or as the tenant allows (as the main
+        // path decides); a policy that cannot be read allows the native app's only.
+        const errorPolicy = errorClient
+          ? await resolveAppSecurityRequirements(c.env, requestTenantId, client_id).catch(
+              () => null
+            )
+          : null;
         const redirectValidation = validateRedirectUri(
           redirect_uri,
-          errorClient?.application_type === 'native'
+          errorClient?.application_type === 'native' ||
+            (errorPolicy !== null && !errorPolicy.httpsRedirectOnly)
         );
         if (
           errorClient &&
@@ -1735,11 +1742,21 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
                 ? errorClient.tenant_id
                 : requestTenantId;
             const registeredRedirectUris = errorClient?.redirect_uris;
+            // As the main path decides; a policy that cannot be read allows a native app's only.
+            const errorPolicy = errorClient
+              ? await resolveAppSecurityRequirements(c.env, requestTenantId, client_id).catch(
+                  () => null
+                )
+              : null;
             if (
               errorClient &&
               errorClientTenantId === requestTenantId &&
               Array.isArray(registeredRedirectUris) &&
-              validateRedirectUri(redirect_uri, errorClient.application_type === 'native').valid &&
+              validateRedirectUri(
+                redirect_uri,
+                errorClient.application_type === 'native' ||
+                  (errorPolicy !== null && !errorPolicy.httpsRedirectOnly)
+              ).valid &&
               isRedirectUriRegistered(
                 redirect_uri,
                 registeredRedirectUris,
@@ -1950,7 +1967,16 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
             // Nested JWT - need to verify signature
             jwtRequest = decrypted;
             tokenFormat = getTokenFormat(jwtRequest);
-            // Continue to JWT verification below
+            // Anything else is not a request object: encrypting it must not stand in for one.
+            if (tokenFormat !== 'jwt') {
+              return c.json(
+                {
+                  error: 'invalid_request_object',
+                  error_description: 'Decrypted request object must be a JWT or JSON object',
+                },
+                400
+              );
+            }
           }
         } catch (decryptError) {
           log.error(

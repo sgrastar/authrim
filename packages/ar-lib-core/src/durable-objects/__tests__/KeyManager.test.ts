@@ -298,6 +298,22 @@ describe('KeyManager Durable Object', () => {
       await expect(keyManager.getRequestObjectDecryptionKeyRpc('unknown')).resolves.toBeNull();
     });
 
+    it('stops publishing and decrypting with the previous key once its overlap ends', async () => {
+      vi.useFakeTimers({ now: Date.UTC(2026, 9, 4) });
+      try {
+        const previous = await keyManager.getRequestObjectDecryptionKeyRpc();
+        await keyManager.rotateRequestObjectEncKeyRpc();
+        vi.setSystemTime(Date.UTC(2026, 9, 5) + 60_000);
+        await expect(
+          keyManager.getRequestObjectDecryptionKeyRpc(previous!.kid)
+        ).resolves.toBeNull();
+        const kids = (await keyManager.getAllOIDCPublicKeysRpc()).map((key) => key.kid);
+        expect(kids).not.toContain(previous!.kid);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
     it('keeps decrypting with the previous key after a rotation', async () => {
       const previous = await keyManager.getRequestObjectDecryptionKeyRpc();
       const next = await keyManager.rotateRequestObjectEncKeyRpc();

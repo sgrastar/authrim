@@ -52,6 +52,7 @@ import {
   resolveTenantDiscoveryAliasDirectoryInput,
 } from './tenant-alias-directory';
 import { readIDTokenSigningPolicy, refuseIDTokenSigningAlgorithm } from './id-token-signing-policy';
+import { REDIRECT_URI_POLICY_DESCRIPTION, redirectUriRefusedByPolicy } from './redirect-uri-policy';
 
 const VALID_GRANT_TYPES: ReadonlySet<string> = new Set([
   GRANT_TYPES.AUTHORIZATION_CODE,
@@ -750,6 +751,28 @@ export async function clientConfigUpdateHandler(c: Context<{ Bindings: Env }>): 
         },
         404
       );
+    }
+    // The tenant's redirect URI policy, as at registration and authorize.
+    if (Array.isArray(body.redirect_uris)) {
+      let refusedRedirectUri: string | null;
+      try {
+        refusedRedirectUri = await redirectUriRefusedByPolicy(c.env, tenantId, {
+          redirectUris: body.redirect_uris as string[],
+          applicationType: existingClient.application_type ?? 'web',
+          clientId,
+        });
+      } catch {
+        return c.json({ error: 'server_error', error_description: 'Failed to update client' }, 500);
+      }
+      if (refusedRedirectUri) {
+        return c.json(
+          {
+            error: 'invalid_redirect_uri',
+            error_description: `${REDIRECT_URI_POLICY_DESCRIPTION}: ${refusedRedirectUri}`,
+          },
+          400
+        );
+      }
     }
     if (
       systemSettings.fapi.enabled === true &&
