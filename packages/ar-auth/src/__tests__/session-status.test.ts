@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => {
     sessionStore,
     challengeStore,
     getCookie: vi.fn(),
+    setCookie: vi.fn(),
     getSessionStoreBySessionId: vi.fn(() => ({ stub: sessionStore })),
     getChallengeStoreByChallengeId: vi.fn(async () => challengeStore),
     isShardedSessionId: vi.fn((sessionId: string) => /^\d+_session_/.test(sessionId)),
@@ -32,6 +33,7 @@ const mocks = vi.hoisted(() => {
 
 vi.mock('hono/cookie', () => ({
   getCookie: mocks.getCookie,
+  setCookie: mocks.setCookie,
 }));
 
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
@@ -63,6 +65,7 @@ function createContext(options: { headers?: Record<string, string>; url?: string
   return {
     req: {
       path: '/session/status',
+      url,
       raw: new Request(url),
       header: vi.fn((name: string) => headers[name.toLowerCase()]),
       json: vi.fn(async () => ({})),
@@ -366,7 +369,7 @@ describe('ITP session token lifecycle', () => {
       id: '0_session_rp',
       userId: 'user_123',
       createdAt: 1700000000000,
-      expiresAt: 1700003600000,
+      expiresAt: 1700001800000,
       data: {},
     });
     const { verifySessionTokenHandler } = await import('../session-management');
@@ -375,10 +378,11 @@ describe('ITP session token lifecycle', () => {
     const body = (await response.json()) as Record<string, unknown>;
 
     expect(response.status).toBe(200);
+    // The RP session's own expiry, not its parent's.
     expect(body).toEqual({
       session_id: '0_session_rp',
       user_id: 'user_123',
-      expires_at: 1700003600000,
+      expires_at: 1700001800000,
       verified: true,
     });
     expect(mocks.challengeStore.consumeChallengeRpc).toHaveBeenCalledWith({
@@ -507,7 +511,94 @@ describe('ITP session token lifecycle', () => {
       extended_by: 120,
       message: 'Session extended successfully',
     });
-    expect(mocks.sessionStore.extendSessionRpc).toHaveBeenCalledWith('0_session_123', 120);
+    // Bounded by session.max_ttl (30 days by default) from sign-in.
+    expect(mocks.sessionStore.extendSessionRpc).toHaveBeenCalledWith(
+      '0_session_123',
+      120,
+      30 * 86400 * 1000
+    );
+  });
+
+  it('gives the session cookies the extended lifetime when the cookie names the session', async () => {
+    vi.useFakeTimers({ now: 1700000000000 });
+    try {
+      mocks.getCookie.mockReturnValue('0_session_123');
+      mocks.setCookie.mockClear();
+      // Plain http (local development) as well: Secure, as at sign-in.
+      const context = createContext({ url: 'http://localhost:8787/api/sessions/refresh' });
+      context.req.json = vi.fn(async () => ({ extend_seconds: 3600 }));
+      mocks.sessionStore.extendSessionRpc.mockResolvedValue({
+        id: '0_session_123',
+        userId: 'user_123',
+        createdAt: 1700000000000,
+        expiresAt: 1700003600000,
+        data: {},
+      });
+      const { refreshSessionHandler } = await import('../session-management');
+
+      expect((await refreshSessionHandler(context as never)).status).toBe(200);
+      expect(mocks.setCookie).toHaveBeenCalledWith(
+        context,
+        'authrim_session',
+        '0_session_123',
+        expect.objectContaining({ httpOnly: true, secure: true, maxAge: 3600 })
+      );
+      expect(mocks.setCookie).toHaveBeenCalledWith(
+        context,
+        'authrim_browser_state',
+        expect.any(String),
+        expect.objectContaining({ maxAge: 3600 })
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('extends within the tenant’s session.max_ttl, and not at all when refresh is off', async () => {
+    const { refreshSessionHandler } = await import('../session-management');
+    const withSettings = (settings: Record<string, unknown>) => {
+      const context = createContext();
+      context.req.json = vi.fn(async () => ({ extend_seconds: 120 }));
+      (context as { env: unknown }).env = {
+        SETTINGS: { get: vi.fn(async () => JSON.stringify(settings)) },
+      };
+      return context;
+    };
+    mocks.sessionStore.extendSessionRpc.mockResolvedValue({
+      id: '0_session_123',
+      userId: 'user_123',
+      createdAt: 1700000000000,
+      expiresAt: 1700003720000,
+      data: {},
+    });
+
+    const capped = await refreshSessionHandler(
+      withSettings({ 'session.max_ttl': 2 * 86400 * 1000 }) as never
+    );
+    expect(capped.status).toBe(200);
+    expect(mocks.sessionStore.extendSessionRpc).toHaveBeenLastCalledWith(
+      '0_session_123',
+      120,
+      2 * 86400 * 1000
+    );
+
+    mocks.sessionStore.extendSessionRpc.mockClear();
+    const off = await refreshSessionHandler(
+      withSettings({ 'session.refresh_default': false }) as never
+    );
+    expect(off.status).toBe(403);
+    expect(await off.json()).toEqual({
+      error: 'access_denied',
+      error_description: 'Session extension is disabled',
+    });
+    expect(mocks.sessionStore.extendSessionRpc).not.toHaveBeenCalled();
+
+    // Turned off with the Settings API's disable operation (its stored marker).
+    const disabled = await refreshSessionHandler(
+      withSettings({ 'session.refresh_default': '__DISABLED__' }) as never
+    );
+    expect(disabled.status).toBe(403);
+    expect(mocks.sessionStore.extendSessionRpc).not.toHaveBeenCalled();
   });
 
   it('rejects refresh requests with an unsafe extension duration', async () => {

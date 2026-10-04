@@ -7,11 +7,11 @@ const {
   listRefreshTokenFamiliesByUser,
   expireRefreshTokenFamiliesByUser,
   getRefreshTokenRotatorStubByJti,
-  revokeByJtiRpc,
+  revokeFamilyRpc,
   createAuditLog,
 } = vi.hoisted(() => {
   const rotatorStub = {
-    revokeByJtiRpc: vi.fn(),
+    revokeFamilyRpc: vi.fn(),
   };
 
   return {
@@ -23,8 +23,11 @@ const {
     revokeDeviceSecretsForLogoutScope: vi.fn(),
     listRefreshTokenFamiliesByUser: vi.fn(),
     expireRefreshTokenFamiliesByUser: vi.fn(),
-    getRefreshTokenRotatorStubByJti: vi.fn(() => ({ stub: rotatorStub })),
-    revokeByJtiRpc: rotatorStub.revokeByJtiRpc,
+    getRefreshTokenRotatorStubByJti: vi.fn((_env: unknown, _clientId: string, jti: string) => ({
+      stub: rotatorStub,
+      resolution: { instanceName: `rotator:${jti}` },
+    })),
+    revokeFamilyRpc: rotatorStub.revokeFamilyRpc,
     createAuditLog: vi.fn(),
   };
 });
@@ -116,7 +119,7 @@ describe('Direct Auth logout scope', () => {
         jti: 'refresh-family-2',
       },
     ]);
-    revokeByJtiRpc.mockResolvedValue(undefined);
+    revokeFamilyRpc.mockResolvedValue(undefined);
     expireRefreshTokenFamiliesByUser.mockResolvedValue(undefined);
     createAuditLog.mockResolvedValue(undefined);
   });
@@ -201,16 +204,10 @@ describe('Direct Auth logout scope', () => {
       'refresh-family-2',
       'tenant_test'
     );
-    expect(revokeByJtiRpc).toHaveBeenNthCalledWith(
-      1,
-      'refresh-family-1',
-      'direct_auth_revoke_tokens'
-    );
-    expect(revokeByJtiRpc).toHaveBeenNthCalledWith(
-      2,
-      'refresh-family-2',
-      'direct_auth_revoke_tokens'
-    );
+    // By user in each rotator: the indexed JWT ID is the family's first, gone once rotated.
+    expect(revokeFamilyRpc).toHaveBeenCalledTimes(2);
+    expect(revokeFamilyRpc).toHaveBeenNthCalledWith(1, 'user_123', 'direct_auth_revoke_tokens');
+    expect(revokeFamilyRpc).toHaveBeenNthCalledWith(2, 'user_123', 'direct_auth_revoke_tokens');
     expect(expireRefreshTokenFamiliesByUser).toHaveBeenCalledWith(
       {},
       {
@@ -218,6 +215,47 @@ describe('Direct Auth logout scope', () => {
         userId: 'user_123',
       }
     );
+  });
+
+  it('keeps the index when a rotator could not revoke, so a retry can find the family', async () => {
+    getRefreshTokenRotatorStubByJti.mockImplementation(
+      () =>
+        ({
+          stub: { revokeFamilyRpc },
+          resolution: { instanceName: 'rotator:shared' },
+        }) as never
+    );
+    revokeFamilyRpc.mockReset().mockRejectedValueOnce(new Error('unavailable'));
+    expireRefreshTokenFamiliesByUser.mockClear();
+    const { directLogoutHandler } = await import('../direct-auth');
+
+    const response = await directLogoutHandler(
+      createContext({ client_id: 'client-a', revoke_tokens: true }) as never
+    );
+
+    expect(response.status).toBe(200);
+    expect(revokeFamilyRpc).toHaveBeenCalledWith('user_123', 'direct_auth_revoke_tokens');
+    expect(expireRefreshTokenFamiliesByUser).not.toHaveBeenCalled();
+    revokeFamilyRpc.mockReset().mockResolvedValue(undefined);
+  });
+
+  it('revokes the user’s family once in a rotator the index names twice', async () => {
+    getRefreshTokenRotatorStubByJti.mockImplementation(
+      () =>
+        ({
+          stub: { revokeFamilyRpc },
+          resolution: { instanceName: 'rotator:shared' },
+        }) as never
+    );
+    revokeFamilyRpc.mockClear();
+    const { directLogoutHandler } = await import('../direct-auth');
+
+    await directLogoutHandler(
+      createContext({ client_id: 'client-a', revoke_tokens: true }) as never
+    );
+
+    expect(revokeFamilyRpc).toHaveBeenCalledTimes(1);
+    expect(revokeFamilyRpc).toHaveBeenCalledWith('user_123', 'direct_auth_revoke_tokens');
   });
 });
 

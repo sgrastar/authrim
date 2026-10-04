@@ -147,6 +147,7 @@ import { type FAL } from '@authrim/ar-lib-core';
 import { getRequestIssuer } from './issuer';
 import type { FAPI2MessageSigningConfig } from './fapi-message-signing';
 import { timeAuthRequestDiagnosticOperation } from './request-diagnostics';
+import { resolveSessionTtl } from './session-ttl';
 
 const DEFAULT_HANDOFF_ARTIFACT_TTL_SECONDS = 60;
 const MIN_HANDOFF_ARTIFACT_TTL_SECONDS = 30;
@@ -2824,6 +2825,14 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
     return sendError('invalid_scope', scopeValidation.error);
   }
 
+  // OIDC Core 11: offline_access is ignored unless the response returns an authorization code
+  // (only a code can be exchanged for a refresh token).
+  if (scope && !(response_type ?? '').split(' ').includes('code')) {
+    scope = splitScopes(scope)
+      .filter((value) => value !== 'offline_access')
+      .join(' ');
+  }
+
   const requestedScopes = splitScopes(scope);
   const clientAllowedScopes = getClientAllowedScopes(clientMetadata);
   if (requestedScopes.length > 0 && clientAllowedScopes.length > 0) {
@@ -4726,20 +4735,27 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
     }
   }
 
-  // Token lifetime for the client or tenant (Settings API, else the older oauth-config value,
-  // else env, else the default), used for both tokens as the token endpoint uses it.
+  // Token lifetimes for the client or tenant (Settings API, else env, else the default), as the
+  // token endpoint reads them: the access token's and the ID token's, each under the tenant
+  // profile's max_token_ttl_seconds.
   let tokenLifetimeSeconds = 3600;
+  let idTokenLifetimeSeconds = 3600;
   if (includesToken || includesIdToken) {
     try {
-      const configured = Number(
-        (
-          await resolveEffectiveSettings(c.env, 'oauth', {
-            tenantId: getTenantIdFromContext(c),
-            clientId: validClientId,
-          })
-        )['oauth.access_token_expiry']
-      );
-      if (Number.isFinite(configured) && configured > 0) tokenLifetimeSeconds = configured;
+      const [oauthSettings, profile] = await Promise.all([
+        resolveEffectiveSettings(c.env, 'oauth', {
+          tenantId: getTenantIdFromContext(c),
+          clientId: validClientId,
+        }),
+        tenantProfilePromise,
+      ]);
+      const lifetime = (key: string, fallback: number) => {
+        const configured = Number(oauthSettings[key]);
+        const seconds = Number.isFinite(configured) && configured > 0 ? configured : fallback;
+        return Math.min(seconds, profile.max_token_ttl_seconds);
+      };
+      tokenLifetimeSeconds = lifetime('oauth.access_token_expiry', tokenLifetimeSeconds);
+      idTokenLifetimeSeconds = lifetime('oauth.id_token_expiry', idTokenLifetimeSeconds);
     } catch (error) {
       log.error('Token lifetime settings could not be read', {}, error as Error);
       return sendError('server_error', 'Failed to process authorization request');
@@ -4903,7 +4919,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         idTokenClaims as Parameters<typeof createIDToken>[0],
         privateKey,
         signingKeyId,
-        tokenLifetimeSeconds,
+        idTokenLifetimeSeconds,
         idTokenSigningAlgorithm
       );
 
@@ -6022,10 +6038,11 @@ export async function authorizeLoginHandler(c: Context<{ Bindings: Env }>) {
     );
 
     try {
+      const sessionTtl = await resolveSessionTtl(c.env, tenantId, 'default');
       await sessionStore.createSessionRpc(
         newSessionId, // Required: Sharded session ID
         userId,
-        3600, // 1 hour session
+        sessionTtl.seconds,
         {
           ...getSessionClientMetadata(c.req.raw),
           clientId: metadata.client_id as string,
@@ -6039,7 +6056,7 @@ export async function authorizeLoginHandler(c: Context<{ Bindings: Env }>) {
       const sessionSameSiteValue = getSessionCookieSameSite(c.env);
       c.header(
         'Set-Cookie',
-        `authrim_session=${newSessionId}; Path=/; HttpOnly; SameSite=${sessionSameSiteValue}; Secure; Max-Age=3600`
+        `authrim_session=${newSessionId}; Path=/; HttpOnly; SameSite=${sessionSameSiteValue}; Secure; Max-Age=${sessionTtl.seconds}`
       );
 
       // Generate and set browser state cookie for OIDC Session Management
@@ -6048,7 +6065,7 @@ export async function authorizeLoginHandler(c: Context<{ Bindings: Env }>) {
       const browserStateSameSiteValue = getBrowserStateCookieSameSite(c.env);
       c.res.headers.append(
         'Set-Cookie',
-        `${BROWSER_STATE_COOKIE_NAME}=${browserState}; Path=/; SameSite=${browserStateSameSiteValue}; Secure; Max-Age=3600`
+        `${BROWSER_STATE_COOKIE_NAME}=${browserState}; Path=/; SameSite=${browserStateSameSiteValue}; Secure; Max-Age=${sessionTtl.seconds}`
       );
       browserSessionId = newSessionId;
     } catch (error) {

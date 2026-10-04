@@ -166,6 +166,8 @@ export const SESSION_CLIENT_NAMESPACE_VERSION = 2;
  */
 export class SessionStore extends DurableObject<Env> {
   private sessionCache: Map<string, Session> = new Map();
+  // Extensions in progress, per session: the next one waits for the last (extendSession).
+  private sessionExtensions: Map<string, Promise<Session | null>> = new Map();
   /** Rebinds in progress, per session: one at a time, so none undoes another's index entry. */
   private sessionRebinds = new Map<string, Promise<unknown>>();
   private actorCtx: ActorContext;
@@ -232,8 +234,12 @@ export class SessionStore extends DurableObject<Env> {
   /**
    * RPC: Extend session expiration
    */
-  async extendSessionRpc(sessionId: string, additionalSeconds: number): Promise<Session | null> {
-    return this.extendSession(sessionId, additionalSeconds);
+  async extendSessionRpc(
+    sessionId: string,
+    additionalSeconds: number,
+    maxLifetimeMs?: number
+  ): Promise<Session | null> {
+    return this.extendSession(sessionId, additionalSeconds, maxLifetimeMs);
   }
 
   /**
@@ -661,18 +667,45 @@ export class SessionStore extends DurableObject<Env> {
   }
 
   /**
-   * Extend session expiration (Active TTL)
+   * Extend session expiration (Active TTL): to `additionalSeconds` from now, but never past its
+   * creation plus `maxLifetimeMs` (session.max_ttl). An extension never shortens a session: one
+   * made under a longer limit keeps its expiry and is not extended. Null when the session is gone.
+   * Extensions of a session run one at a time, each from the expiry the previous one left.
    */
-  async extendSession(sessionId: string, additionalSeconds: number): Promise<Session | null> {
+  async extendSession(
+    sessionId: string,
+    additionalSeconds: number,
+    maxLifetimeMs?: number
+  ): Promise<Session | null> {
+    const previous = this.sessionExtensions.get(sessionId) ?? Promise.resolve();
+    const run = previous
+      .catch(() => undefined)
+      .then(() => this.extendSessionNow(sessionId, additionalSeconds, maxLifetimeMs));
+    this.sessionExtensions.set(sessionId, run);
+    try {
+      return await run;
+    } finally {
+      if (this.sessionExtensions.get(sessionId) === run) this.sessionExtensions.delete(sessionId);
+    }
+  }
+
+  private async extendSessionNow(
+    sessionId: string,
+    additionalSeconds: number,
+    maxLifetimeMs?: number
+  ): Promise<Session | null> {
     const current = await this.getSession(sessionId);
     if (!current) {
       return null;
     }
 
-    const session = {
-      ...current,
-      expiresAt: current.expiresAt + additionalSeconds * 1000,
-    };
+    const requested = Date.now() + additionalSeconds * 1000;
+    const expiresAt =
+      maxLifetimeMs === undefined
+        ? requested
+        : Math.min(requested, current.createdAt + maxLifetimeMs);
+    if (expiresAt <= current.expiresAt) return current;
+    const session = { ...current, expiresAt };
     const tenantId = this.requireTenantId(current.tenantId, 'Session extension');
     let indexUpdated: boolean;
     try {

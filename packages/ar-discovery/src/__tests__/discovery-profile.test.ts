@@ -51,6 +51,7 @@ describe('Discovery Profile Tests', () => {
       expect(metadata.scopes_supported).toContain('account:lifecycle:read');
       expect(metadata.scopes_supported).toContain('profile');
       expect(metadata.scopes_supported).toContain('email');
+      expect(metadata.scopes_supported).toContain('offline_access');
       expect(metadata.scopes_supported).not.toContain('ai:read');
       expect(metadata.scopes_supported).not.toContain('ai:write');
       expect(metadata.scopes_supported).not.toContain('ai:execute');

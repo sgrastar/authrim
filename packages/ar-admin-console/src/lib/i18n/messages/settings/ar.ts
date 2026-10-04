@@ -24,9 +24,10 @@ export const arSettings: Record<keyof typeof jaSettings, string> = {
 
 	'set.k.session.default_ttl': 'إبقاء الأشخاص مسجلين للدخول لمدة',
 	'set.k.session.default_ttl.desc':
-		'المدة من تسجيل الدخول حتى يحتاج الشخص إلى تسجيل الدخول مرة أخرى. لتحديدها لكل طريقة، استخدم الإعدادات المتقدمة.',
+		'المدة حتى يحتاج الشخص إلى تسجيل الدخول مرة أخرى، لعمليات تسجيل الدخول التي ليست لها مدة خاصة بها، مثل موفر هوية خارجي أو SAML. حدّد مدد مفاتيح المرور ورموز البريد الإلكتروني والطرق الأخرى في الإعدادات المتقدمة.',
 	'set.k.session.refresh_default': 'تمديد تسجيل الدخول أثناء استخدامه',
-	'set.k.session.refresh_default.desc': 'كل إجراء يبدأ المدة من جديد (ما لم يطلب التطبيق غير ذلك).',
+	'set.k.session.refresh_default.desc':
+		'عندما يطلب التطبيق تمديد تسجيل الدخول (/api/sessions/refresh)، تبدأ المدة من جديد من تلك اللحظة. عند الإيقاف: لا تمديد. لا يتجاوز التمديد أطول مدة للبقاء مسجلاً للدخول.',
 	'set.k.oauth.sso_enabled': 'مشاركة تسجيل الدخول بين التطبيقات (تسجيل الدخول الموحد)',
 	'set.k.oauth.sso_enabled.desc':
 		'بعد تسجيل الدخول مرة واحدة، يفتح الشخص تطبيقات المستأجر الأخرى دون تسجيل الدخول مجدداً. عند الإيقاف: يطلب كل تطبيق تسجيل الدخول.',
@@ -38,7 +39,8 @@ export const arSettings: Record<keyof typeof jaSettings, string> = {
 	'set.k.session.ttl.guest': 'بعد تسجيل الدخول كضيف',
 	'set.k.session.ttl.passkey_registration': 'مباشرة بعد تسجيل مفتاح مرور',
 	'set.k.session.max_ttl': 'أطول مدة دخول مسموحة',
-	'set.k.session.max_ttl.desc': 'أطول مدة يمكن تحديدها للبقاء مسجلاً للدخول.',
+	'set.k.session.max_ttl.desc':
+		'أطول مدة يبقى فيها تسجيل الدخول، بما في ذلك التمديدات. تُقصَّر المدة الأطول لأي طريقة إليها.',
 
 	'set.k.oauth.access_token_expiry': 'مدة صلاحية رمز الوصول',
 	'set.k.oauth.access_token_expiry.desc':

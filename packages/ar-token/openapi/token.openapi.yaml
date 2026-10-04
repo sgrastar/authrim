@@ -239,7 +239,7 @@ components:
             expires_in: 3600
             id_token: eyJhbGciOiJSUzI1NiJ9...
             refresh_token: refresh_123
-            scope: openid profile
+            scope: openid profile offline_access
   schemas:
     AdminAgentAuthorizationCodeTokenRequest:
       type: object
@@ -390,10 +390,27 @@ components:
           type: integer
         id_token:
           type: string
+          description: >-
+            Returned when the granted scope includes openid. On the
+            refresh_token grant it is returned only while the tenant setting
+            oauth.refresh_id_token_reissue is enabled.
         refresh_token:
           type: string
+          description: >-
+            On a new grant (authorization_code, device_code, CIBA) for OpenID
+            Connect (scope includes openid), returned only when the granted
+            scope includes offline_access, unless the tenant setting
+            oauth.offline_access_required is disabled. Requests without openid
+            are not affected by that setting. The refresh_token grant returns
+            one for an existing grant whatever its scope, and so does a Native
+            SSO exchange (the device_secret was issued only with a grant that
+            got a refresh token).
         refresh_token_expires_in:
           type: integer
+          description: >-
+            Seconds until the refresh token expires. With sliding expiry each
+            rotation extends it, but never past the absolute lifetime counted
+            from the first issuance of the token family.
         refresh_token_expires_at:
           type: string
           format: date-time

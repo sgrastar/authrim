@@ -24,10 +24,10 @@ export const deSettings: Record<keyof typeof jaSettings, string> = {
 
 	'set.k.session.default_ttl': 'Angemeldet halten für',
 	'set.k.session.default_ttl.desc':
-		'Zeit von der Anmeldung, bis sich die Person erneut anmelden muss. Je Anmeldemethode unter „Erweitert“ festlegen.',
+		'Zeit, bis sich die Person erneut anmelden muss, für Anmeldungen ohne eigene Zeit, etwa über einen externen IdP oder SAML. Passkeys, E-Mail-Codes und die anderen Methoden unter „Erweitert“ festlegen.',
 	'set.k.session.refresh_default': 'Anmeldung verlängern, solange sie genutzt wird',
 	'set.k.session.refresh_default.desc':
-		'Jede Aktion startet die Zeit neu (sofern eine App nichts anderes verlangt).',
+		'Wenn eine App die Verlängerung anfordert (/api/sessions/refresh), beginnt die Zeit ab dann neu. Aus: keine Verlängerung. Eine Verlängerung überschreitet nie die längste Zeit zum Angemeldetbleiben.',
 	'set.k.oauth.sso_enabled': 'Anmeldung zwischen Apps teilen (Single Sign-on)',
 	'set.k.oauth.sso_enabled.desc':
 		'Einmal angemeldet, öffnet eine Person die anderen Apps des Mandanten ohne erneute Anmeldung. Aus: Jede App verlangt eine Anmeldung.',
@@ -40,7 +40,7 @@ export const deSettings: Record<keyof typeof jaSettings, string> = {
 	'set.k.session.ttl.passkey_registration': 'Direkt nach dem Registrieren eines Passkeys',
 	'set.k.session.max_ttl': 'Längste erlaubte Anmeldung',
 	'set.k.session.max_ttl.desc':
-		'Die längste Zeit, die für das Angemeldetbleiben festgelegt werden kann.',
+		'Die längste Dauer einer Anmeldung, Verlängerungen eingeschlossen. Eine längere Zeit einer Anmeldemethode wird darauf gekürzt.',
 
 	'set.k.oauth.access_token_expiry': 'Gültigkeit des Access-Tokens',
 	'set.k.oauth.access_token_expiry.desc':

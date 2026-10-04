@@ -57,27 +57,27 @@ export const SESSION_SETTINGS_META: Record<keyof SessionSettings, SettingMeta> =
     default: 86400000,
     envKey: 'DEFAULT_SESSION_TTL',
     label: 'Default Session TTL',
-    description: 'Default session lifetime in milliseconds (24 hours)',
+    description:
+      'Session lifetime in milliseconds for sign-ins without a lifetime setting of their own: external IdP and SAML sign-in, and a session made for an app from a session token (24 hours)',
     min: 60000,
     max: 604800000,
     unit: 'ms',
     visibility: 'public',
-    status: 'in_development',
   },
   'session.max_ttl': {
     key: 'session.max_ttl',
     // Per tenant (or app) only, as before the category had platform values.
     scopes: ['tenant'],
     type: 'duration',
-    default: 604800000,
+    default: 2592000000,
     envKey: 'MAX_SESSION_TTL_MS',
     label: 'Max Session TTL',
-    description: 'Maximum allowed session lifetime in milliseconds (7 days)',
+    description:
+      'Longest a session lasts from sign-in in milliseconds, extensions included; longer per-method lifetimes are cut to it (30 days)',
     min: 86400000,
     max: 2592000000,
     unit: 'ms',
     visibility: 'admin',
-    status: 'in_development',
   },
   'session.ttl.email_code': {
     key: 'session.ttl.email_code',
@@ -200,9 +200,9 @@ export const SESSION_SETTINGS_META: Record<keyof SessionSettings, SettingMeta> =
     default: true,
     envKey: 'SESSION_REFRESH_DEFAULT',
     label: 'Refresh Session by Default',
-    description: 'Extend session on activity by default',
+    description:
+      'Allow POST /api/sessions/refresh to extend an active session (up to the max session TTL)',
     visibility: 'public',
-    status: 'in_development',
   },
 
   // Logout Configuration

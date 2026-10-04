@@ -44,7 +44,7 @@ describe('critical authorization-code token lifecycle', () => {
         JSON.stringify([REDIRECT_URI]),
         JSON.stringify(['authorization_code']),
         JSON.stringify(['code']),
-        'openid',
+        'openid offline_access',
         'client_secret_post',
         'default',
         RESOURCE
@@ -69,7 +69,7 @@ describe('critical authorization-code token lifecycle', () => {
           clientId: CLIENT_ID,
           redirectUri: REDIRECT_URI,
           userId: USER_ID,
-          scope: 'openid',
+          scope: 'openid offline_access',
           resource: RESOURCE,
           authorizationServer: 'default',
           subjectType: 'end_user',
@@ -118,7 +118,7 @@ describe('critical authorization-code token lifecycle', () => {
     const firstBody = (await first.json()) as Record<string, unknown>;
     expect(first.status, JSON.stringify(firstBody)).toBe(200);
     expect(first.headers.get('cache-control')).toBe('no-store');
-    expect(firstBody).toMatchObject({ token_type: 'Bearer', scope: 'openid' });
+    expect(firstBody).toMatchObject({ token_type: 'Bearer', scope: 'openid offline_access' });
     expect(firstBody.access_token).toEqual(expect.any(String));
     expect(firstBody.id_token).toEqual(expect.any(String));
     expect(firstBody.refresh_token).toEqual(expect.any(String));

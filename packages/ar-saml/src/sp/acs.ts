@@ -39,6 +39,7 @@ import {
   createAuditLog,
   updateProfileOnLogin,
   readExternalProviderReauthPolicy,
+  resolveSessionTtl,
 } from '@authrim/ar-lib-core';
 import { executeRuntimeMapping } from '@authrim/ar-lib-field-mapping/runtime';
 import type { SourceValueEnvelope } from '@authrim/ar-lib-field-mapping/contract';
@@ -69,7 +70,6 @@ import {
 } from './request-browser-binding';
 
 const SESSION_COOKIE_NAME = 'authrim_session';
-const SESSION_COOKIE_MAX_AGE_SECONDS = 3600;
 const SESSION_HANDOFF_TTL_SECONDS = 60;
 const SAML_SP_HANDOFF_AUDIENCE = 'saml_sp_cookie_handoff';
 const SAML_JIT_EMAIL_LINKING_POLICIES = new Set(['email_linking', 'jit_create_only', 'disabled']);
@@ -206,11 +206,13 @@ export async function handleSPACS(c: Context<{ Bindings: Env }>): Promise<Respon
       reauthProvenAt = proven;
     }
 
-    // Create session
+    // Create session (session.default_ttl: SAML sign-in has no lifetime setting of its own)
+    const sessionTtl = await resolveSessionTtl(env, tenantId, 'default');
     const sessionId = await createSession(
       env,
       userId,
       tenantId,
+      sessionTtl.seconds,
       authnContextClassRef,
       reauthProvenAt
     );
@@ -236,7 +238,7 @@ export async function handleSPACS(c: Context<{ Bindings: Env }>): Promise<Respon
       data: {
         sessionId,
         userId,
-        ttlSeconds: 3600,
+        ttlSeconds: sessionTtl.seconds,
       } satisfies SessionEventData,
     }).catch((err: unknown) => {
       log.error('Failed to publish session.user.created event', {}, err as Error);
@@ -298,7 +300,7 @@ export async function handleSPACS(c: Context<{ Bindings: Env }>): Promise<Respon
 
     // Set session cookie and redirect
     const headers = new Headers({ Location: returnUrl });
-    headers.append('Set-Cookie', buildSessionCookie(sessionId));
+    headers.append('Set-Cookie', buildSessionCookie(sessionId, sessionTtl.seconds));
     if (inResponseTo) {
       headers.append('Set-Cookie', buildSAMLRequestBindingClearCookie(inResponseTo));
     }
@@ -487,8 +489,8 @@ function shouldUseSessionHandoff(env: Env, requestUrl: string, returnUrl: string
   );
 }
 
-function buildSessionCookie(sessionId: string): string {
-  return `${SESSION_COOKIE_NAME}=${sessionId}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${SESSION_COOKIE_MAX_AGE_SECONDS}`;
+function buildSessionCookie(sessionId: string, maxAgeSeconds: number): string {
+  return `${SESSION_COOKIE_NAME}=${sessionId}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${maxAgeSeconds}`;
 }
 
 function createHandoffToken(): string {
@@ -2068,6 +2070,7 @@ async function createSession(
   env: Env,
   userId: string,
   tenantId: string,
+  ttlSeconds: number,
   authnContextClassRef?: string,
   reauthProvenAt?: number
 ): Promise<string> {
@@ -2079,7 +2082,7 @@ async function createSession(
     body: JSON.stringify({
       sessionId,
       userId,
-      ttl: 3600, // 1 hour
+      ttl: ttlSeconds,
       tenantId,
       data: {
         amr: ['saml'],

@@ -23,10 +23,10 @@ export const enSettings: Record<keyof typeof jaSettings, string> = {
 
 	'set.k.session.default_ttl': 'Keep people signed in for',
 	'set.k.session.default_ttl.desc':
-		'Time from signing in until the person has to sign in again. To set it per sign-in method, use Advanced.',
+		'Time until the person has to sign in again, for sign-ins without a time of their own, such as with an external IdP or SAML. Set passkeys, email codes and the other methods under Advanced.',
 	'set.k.session.refresh_default': 'Extend the sign-in while it is in use',
 	'set.k.session.refresh_default.desc':
-		'Each action starts the time again (unless an app asks otherwise).',
+		'When an app asks to extend the sign-in (/api/sessions/refresh), the time starts again from then. Off: no extension. An extension never goes past the longest time to stay signed in.',
 	'set.k.oauth.sso_enabled': 'Share the sign-in between apps (single sign-on)',
 	'set.k.oauth.sso_enabled.desc':
 		'Signed in once, a person opens the tenant’s other apps without signing in again. Off: every app asks them to sign in.',
@@ -38,7 +38,8 @@ export const enSettings: Record<keyof typeof jaSettings, string> = {
 	'set.k.session.ttl.guest': 'After signing in as a guest',
 	'set.k.session.ttl.passkey_registration': 'Right after registering a passkey',
 	'set.k.session.max_ttl': 'Longest sign-in allowed',
-	'set.k.session.max_ttl.desc': 'The longest time that can be set for staying signed in.',
+	'set.k.session.max_ttl.desc':
+		'The longest a sign-in lasts, extensions included. A longer time for a sign-in method is cut to this.',
 
 	'set.k.oauth.access_token_expiry': 'Access token lifetime',
 	'set.k.oauth.access_token_expiry.desc':

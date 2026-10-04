@@ -25,10 +25,10 @@ export const jaSettings = {
 
 	'set.k.session.default_ttl': 'ログインを保つ時間',
 	'set.k.session.default_ttl.desc':
-		'ログインしてから、もう一度ログインが必要になるまでの時間です。ログイン方法ごとに変えるときは、詳細設定で指定します。',
+		'外部の IdP や SAML でのログインなど、方法ごとの時間がないログインで、もう一度ログインが必要になるまでの時間です。パスキーやメールのコードなどの時間は、詳細設定で指定します。',
 	'set.k.session.refresh_default': '使っている間はログインを延長する',
 	'set.k.session.refresh_default.desc':
-		'操作があるたびに、ログインを保つ時間を数え直します（アプリが個別に指定しないとき）。',
+		'アプリが延長を求めたとき（/api/sessions/refresh）、その時点から数え直してログインを延ばします。オフにすると延長しません。延長しても、ログインを保つ時間の上限は超えません。',
 	'set.k.oauth.sso_enabled': 'アプリ間でログインを共有する（シングルサインオン）',
 	'set.k.oauth.sso_enabled.desc':
 		'一度ログインすれば、このテナントのほかのアプリにもログインし直さずに入れます。オフにすると、アプリごとにログインが必要です。',
@@ -40,7 +40,8 @@ export const jaSettings = {
 	'set.k.session.ttl.guest': 'ゲストとしてログインしたとき',
 	'set.k.session.ttl.passkey_registration': 'パスキーを登録した直後',
 	'set.k.session.max_ttl': 'ログインを保つ時間の上限',
-	'set.k.session.max_ttl.desc': 'ログインを保つ時間として指定できる、いちばん長い値です。',
+	'set.k.session.max_ttl.desc':
+		'ログインしてから、延長を含めてログインを保てるいちばん長い時間です。方法ごとの時間がこれより長くても、ここで打ち切ります。',
 
 	'set.k.oauth.access_token_expiry': 'アクセストークンの有効期間',
 	'set.k.oauth.access_token_expiry.desc':

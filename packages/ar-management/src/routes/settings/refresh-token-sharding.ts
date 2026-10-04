@@ -356,43 +356,30 @@ export async function revokeAllUserRefreshTokens(c: Context<{ Bindings: Env }>) 
       });
     }
 
-    // Group by shard for parallel revocation
-    const shardGroups = new Map<string, { clientId: string; jtis: string[] }>();
+    // One revocation per shard: by user, not by the indexed JWT ID (the family's first one,
+    // gone once it has rotated). A shard holds at most one family per user.
+    const instanceNames = new Set<string>();
 
     for (const family of families) {
       const parsed = parseRefreshTokenJti(family.jti);
-      const instanceName = buildRefreshTokenRotatorInstanceName(
-        family.client_id,
-        parsed.generation,
-        parsed.shardIndex,
-        tenantId
+      instanceNames.add(
+        buildRefreshTokenRotatorInstanceName(
+          family.client_id,
+          parsed.generation,
+          parsed.shardIndex,
+          tenantId
+        )
       );
-
-      if (!shardGroups.has(instanceName)) {
-        shardGroups.set(instanceName, { clientId: family.client_id, jtis: [] });
-      }
-      shardGroups.get(instanceName)!.jtis.push(family.jti);
     }
 
-    // Revoke in parallel
-    const revokePromises = Array.from(shardGroups.entries()).map(
-      async ([instanceName, { jtis }]) => {
-        const rotatorId = c.env.REFRESH_TOKEN_ROTATOR.idFromName(instanceName);
-        const rotator = c.env.REFRESH_TOKEN_ROTATOR.get(rotatorId);
-
-        const response = await rotator.fetch(
-          new Request('http://internal/batch-revoke', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ jtis, reason: 'user_wide_revocation' }),
-          })
-        );
-
-        return response.ok;
-      }
+    // Revoke in parallel; a failure leaves the index as it was (the request fails).
+    await Promise.all(
+      Array.from(instanceNames).map((instanceName) =>
+        c.env.REFRESH_TOKEN_ROTATOR.get(
+          c.env.REFRESH_TOKEN_ROTATOR.idFromName(instanceName)
+        ).revokeFamilyRpc(userId, 'user_wide_revocation')
+      )
     );
-
-    await Promise.all(revokePromises);
 
     // Update D1 via Adapter
     await revokeRefreshTokenFamiliesByUser(authCtx.coreAdapter, {

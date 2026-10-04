@@ -1,5 +1,10 @@
 import type { Context } from 'hono';
-import type { DatabaseAdapter, DatabaseSource, Env } from '@authrim/ar-lib-core';
+import type {
+  DatabaseAdapter,
+  DatabaseSource,
+  Env,
+  RefreshTokenLifetimePolicy,
+} from '@authrim/ar-lib-core';
 import {
   CanonicalRuntimeUserProjectionRepository,
   areGuestScopesAllowed,
@@ -15,6 +20,7 @@ import {
   registerSessionClientInStore,
   createRefreshTokenFamily,
   getRefreshTokenRotatorStubByJti,
+  parseRefreshTokenJti,
   // Logging
   getLogger,
   createLogger,
@@ -45,6 +51,7 @@ import {
   falRequiresDpop,
   falRequiresSignedPushedRequest,
   recordRefreshTokenFamilyIndex,
+  updateRefreshTokenFamilyIndexExpiry,
   // Request-level caching (P0 KV Cache Optimization)
   getClientCached,
   loadTenantProfileCached,
@@ -209,11 +216,6 @@ class SecurityProfileSettingsUnavailableError extends Error {
 }
 
 /**
- * Access and refresh token lifetimes for a tenant, or one of its clients: the Settings API
- * value (client, then tenant), else the older oauth-config value, else env, else the default.
- * The settings are read once, when a lifetime is first asked for.
- */
-/**
  * The lifetimes of the tokens a grant issues, and whether a refresh rotates the refresh token:
  * the client's, else the tenant's settings. An access token never outlives the tenant profile's
  * max_token_ttl_seconds (Human Auth / AI Ephemeral Auth two-layer model; RFC 6749 §4.2.2: the
@@ -225,13 +227,34 @@ function tokenLifetimes(
   clientId?: string
 ): {
   access(): Promise<number>;
+  idToken(): Promise<number>;
   refresh(): Promise<number>;
+  refreshLifetime(): Promise<RefreshTokenLifetimePolicy>;
   refreshRotation(): Promise<boolean>;
+  refreshIdTokenReissue(): Promise<boolean>;
+  issuesRefreshTokenFor(scope: string | undefined): Promise<boolean>;
 } {
   let values: Promise<Record<string, unknown>> | undefined;
   const read = async (key: string) => {
     values ??= resolveEffectiveSettings(c.env, 'oauth', { tenantId, clientId });
     return Number((await values)[key]);
+  };
+  // The refresh token lifetime model: sliding (on by default) and an absolute limit (on by
+  // default), each settable on its own.
+  const refreshLifetime = async (): Promise<RefreshTokenLifetimePolicy> => {
+    values ??= resolveEffectiveSettings(c.env, 'oauth', { tenantId, clientId });
+    const settings = await values;
+    const absoluteTtl = Number(settings['oauth.refresh_token_absolute_expiry']);
+    return {
+      ttl: Number(settings['oauth.refresh_token_expiry']),
+      sliding: settings['oauth.refresh_token_sliding_window_enabled'] !== false,
+      absoluteTtl:
+        settings['oauth.refresh_token_absolute_expiry_enabled'] !== false &&
+        Number.isFinite(absoluteTtl) &&
+        absoluteTtl > 0
+          ? absoluteTtl
+          : null,
+    };
   };
   return {
     access: async () => {
@@ -241,11 +264,38 @@ function tokenLifetimes(
       ]);
       return Math.min(configured, profile.max_token_ttl_seconds);
     },
-    refresh: () => read('oauth.refresh_token_expiry'),
+    // An ID token has its own lifetime (oauth.id_token_expiry), under the same profile cap.
+    idToken: async () => {
+      const [configured, profile] = await Promise.all([
+        read('oauth.id_token_expiry'),
+        loadTenantProfileCached(c, c.env.AUTHRIM_CONFIG, c.env, tenantId),
+      ]);
+      return Math.min(configured, profile.max_token_ttl_seconds);
+    },
+    // A new refresh token's lifetime: refresh_token_expiry, never past the absolute limit.
+    refresh: async () => {
+      const policy = await refreshLifetime();
+      return policy.absoluteTtl === null ? policy.ttl : Math.min(policy.ttl, policy.absoluteTtl);
+    },
+    refreshLifetime: () => refreshLifetime(),
     // Only an explicit false turns rotation off: anything else keeps the protection.
     refreshRotation: async () => {
       values ??= resolveEffectiveSettings(c.env, 'oauth', { tenantId, clientId });
       return (await values)['oauth.refresh_token_rotation'] !== false;
+    },
+    // Whether a refresh issues a new ID token (oauth.refresh_id_token_reissue, on by default).
+    refreshIdTokenReissue: async () => {
+      values ??= resolveEffectiveSettings(c.env, 'oauth', { tenantId, clientId });
+      return (await values)['oauth.refresh_id_token_reissue'] !== false;
+    },
+    // OIDC Core 11: an OpenID Connect grant (scope openid) gets a refresh token only with
+    // offline_access while oauth.offline_access_required is on (the default). Other grants are
+    // OAuth grants and keep their refresh tokens.
+    issuesRefreshTokenFor: async (scope) => {
+      const scopes = splitScope(scope);
+      if (!scopes.includes('openid') || scopes.includes('offline_access')) return true;
+      values ??= resolveEffectiveSettings(c.env, 'oauth', { tenantId, clientId });
+      return (await values)['oauth.offline_access_required'] === false;
     },
   };
 }
@@ -2331,10 +2381,11 @@ async function handleAuthorizationCodeGrant(
 
   const tokenType: 'Bearer' | 'DPoP' = dpopProof ? 'DPoP' : 'Bearer';
   const browserRefreshTokenPolicy = getBrowserRefreshTokenPolicy(clientMetadata);
-  const shouldIssueRefreshToken =
-    !isBrowserPublicClientRequest ||
-    (browserRefreshTokenPolicy === 'dpop_bound' && tokenType === 'DPoP' && Boolean(dpopJkt));
   const lifetimes = tokenLifetimes(c, tenantId, client_id);
+  const shouldIssueRefreshToken =
+    (!isBrowserPublicClientRequest ||
+      (browserRefreshTokenPolicy === 'dpop_bound' && tokenType === 'DPoP' && Boolean(dpopJkt))) &&
+    (await lifetimes.issuesRefreshTokenFor(authCodeData.scope));
   const optionalFeatureStatePromise = timeTokenRequestDiagnosticOperation(
     c,
     'token_optional_features',
@@ -2759,7 +2810,14 @@ async function handleAuthorizationCodeGrant(
     formData.channel
   );
 
-  if (nativeSSOGloballyEnabled && clientNativeSSOIssuanceEligible && authCodeData.sid) {
+  // A device_secret obtains tokens without the user, as a refresh token does: it is issued only
+  // with a grant that gets a refresh token (for OpenID Connect, one with offline_access).
+  if (
+    nativeSSOGloballyEnabled &&
+    clientNativeSSOIssuanceEligible &&
+    authCodeData.sid &&
+    shouldIssueRefreshToken
+  ) {
     try {
       const nativeSSOConfig = await getNativeSSOConfig(c.env);
       const deviceSecretRepo = new DeviceSecretRepository(authCtx.coreAdapter, tenantId);
@@ -3005,20 +3063,21 @@ async function handleAuthorizationCodeGrant(
         tenantId,
         clientMetadata as ClientMetadata,
         idTokenClaims as Omit<IDTokenClaims, 'iat' | 'exp'>,
-        expiresIn,
+        await lifetimes.idToken(),
         selectiveClaims
       );
       log.debug('Created SD-JWT ID Token', { clientId: client_id, action: 'SD-JWT' });
     } else {
       // For Authorization Code Flow, ID token should only contain standard claims
       // Scope-based claims (profile, email) are returned from UserInfo endpoint
+      const idTokenExpiresIn = await lifetimes.idToken();
       idToken = await timeTokenRequestDiagnosticOperation(c, 'token_id_create', () =>
         createClientIDToken(
           c.env,
           tenantId,
           clientMetadata as ClientMetadata,
           idTokenClaims as Omit<IDTokenClaims, 'iat' | 'exp'>,
-          expiresIn
+          idTokenExpiresIn
         )
       );
     }
@@ -3418,23 +3477,28 @@ async function handleAuthorizationCodeGrant(
       }).catch((err: unknown) => {
         log.error('Failed to publish token.access.issued event', { action: 'Event' }, err as Error);
       }),
-      publishEvent(c, {
-        type: TOKEN_EVENTS.REFRESH_ISSUED,
-        tenantId,
-        data: {
-          jti: refreshTokenJti,
-          clientId: client_id,
-          userId: authCodeData.sub,
-          scopes: authCodeData.scope.split(' '),
-          grantType: 'authorization_code',
-        } satisfies TokenEventData,
-      }).catch((err: unknown) => {
-        log.error(
-          'Failed to publish token.refresh.issued event',
-          { action: 'Event' },
-          err as Error
-        );
-      }),
+      // Only for a refresh token actually issued (none without offline_access for OIDC).
+      ...(refreshTokenJti
+        ? [
+            publishEvent(c, {
+              type: TOKEN_EVENTS.REFRESH_ISSUED,
+              tenantId,
+              data: {
+                jti: refreshTokenJti,
+                clientId: client_id,
+                userId: authCodeData.sub,
+                scopes: authCodeData.scope.split(' '),
+                grantType: 'authorization_code',
+              } satisfies TokenEventData,
+            }).catch((err: unknown) => {
+              log.error(
+                'Failed to publish token.refresh.issued event',
+                { action: 'Event' },
+                err as Error
+              );
+            }),
+          ]
+        : []),
       // ID Token issued event (OIDC flows always include ID token)
       publishEvent(c, {
         type: TOKEN_EVENTS.ID_ISSUED,
@@ -4007,82 +4071,85 @@ async function handleRefreshTokenGrant(
     return oauthError(c, 'server_error', 'Failed to create access token', 500);
   }
 
-  // Generate new ID Token (optional for refresh flow, but included for consistency)
-  let idToken: string;
-  try {
-    const atHash = await calculateAtHash(accessToken);
-    let idTokenClaims: Record<string, unknown> = {
-      iss: getRequestIssuer(c),
-      sub: refreshTokenData.sub,
-      aud: client_id,
-      at_hash: atHash,
-      // Phase 2 RBAC: Add RBAC claims to ID token
-      ...idTokenRBACClaims,
-      // With assurance on: the original authentication as the first ID token had it (OIDC Core
-      // 12.2: auth_time is the time of the original authentication).
-      ...(assuranceEnabled && familyAuthContext
-        ? {
-            ...(familyAuthContext.auth_time ? { auth_time: familyAuthContext.auth_time } : {}),
-            ...(familyAuthContext.acr ? { acr: familyAuthContext.acr } : {}),
-            ...(familyAuthContext.amr?.length ? { amr: familyAuthContext.amr } : {}),
-          }
-        : {}),
-    };
+  // A new ID Token (OIDC Core 12.2: optional on refresh): for OpenID Connect grants (scope openid)
+  // while oauth.refresh_id_token_reissue is on.
+  let idToken: string | undefined;
+  if (splitScope(grantedScope).includes('openid') && (await lifetimes.refreshIdTokenReissue())) {
+    try {
+      const atHash = await calculateAtHash(accessToken);
+      let idTokenClaims: Record<string, unknown> = {
+        iss: getRequestIssuer(c),
+        sub: refreshTokenData.sub,
+        aud: client_id,
+        at_hash: atHash,
+        // Phase 2 RBAC: Add RBAC claims to ID token
+        ...idTokenRBACClaims,
+        // With assurance on: the original authentication as the first ID token had it (OIDC Core
+        // 12.2: auth_time is the time of the original authentication).
+        ...(assuranceEnabled && familyAuthContext
+          ? {
+              ...(familyAuthContext.auth_time ? { auth_time: familyAuthContext.auth_time } : {}),
+              ...(familyAuthContext.acr ? { acr: familyAuthContext.acr } : {}),
+              ...(familyAuthContext.amr?.length ? { amr: familyAuthContext.amr } : {}),
+            }
+          : {}),
+      };
 
-    const mappedIdTokenClaims = await applyOIDCIdentityMappingToIDTokenClaims(
-      c,
-      tenantId,
-      client_id,
-      clientMetadata as ClientMetadata,
-      idTokenClaims,
-      splitScope(grantedScope)
-    );
-    if (!mappedIdTokenClaims.ok) {
-      return mappedIdTokenClaims.response;
-    }
-    idTokenClaims = mappedIdTokenClaims.claims;
+      const mappedIdTokenClaims = await applyOIDCIdentityMappingToIDTokenClaims(
+        c,
+        tenantId,
+        client_id,
+        clientMetadata as ClientMetadata,
+        idTokenClaims,
+        splitScope(grantedScope)
+      );
+      if (!mappedIdTokenClaims.ok) {
+        return mappedIdTokenClaims.response;
+      }
+      idTokenClaims = mappedIdTokenClaims.claims;
 
-    const idTokenConsent = await enforceOIDCAttributeReleaseConsentForIDTokenClaims(
-      c,
-      tenantId,
-      clientMetadata as ClientMetadata,
-      idTokenClaims
-    );
-    if (!idTokenConsent.ok) {
-      return idTokenConsent.response;
-    }
-
-    // Check if client requests SD-JWT ID Token (RFC 9901)
-    // SD-JWT for a client that requests it, where the tenant enables it (feature.enable_sd_jwt).
-    const useSDJWT =
-      clientMetadata.id_token_signed_response_type === 'sd-jwt' &&
-      (await resolvePolicyFlags(c.env, getTenantIdFromContext(c))).sdJwt;
-
-    if (useSDJWT) {
-      const rawSelectiveClaims = clientMetadata.sd_jwt_selective_claims;
-      const selectiveClaims: string[] = Array.isArray(rawSelectiveClaims)
-        ? rawSelectiveClaims
-        : ['email', 'phone_number', 'address', 'birthdate'];
-      idToken = await createClientSDJWTIDToken(
-        c.env,
+      const idTokenConsent = await enforceOIDCAttributeReleaseConsentForIDTokenClaims(
+        c,
         tenantId,
         clientMetadata as ClientMetadata,
-        idTokenClaims as Omit<IDTokenClaims, 'iat' | 'exp'>,
-        expiresIn,
-        selectiveClaims
+        idTokenClaims
       );
-    } else {
-      idToken = await createClientIDToken(
-        c.env,
-        tenantId,
-        clientMetadata as ClientMetadata,
-        idTokenClaims as Omit<IDTokenClaims, 'iat' | 'exp'>,
-        expiresIn
-      );
+      if (!idTokenConsent.ok) {
+        return idTokenConsent.response;
+      }
+
+      // Check if client requests SD-JWT ID Token (RFC 9901)
+      // SD-JWT for a client that requests it, where the tenant enables it (feature.enable_sd_jwt).
+      const useSDJWT =
+        clientMetadata.id_token_signed_response_type === 'sd-jwt' &&
+        (await resolvePolicyFlags(c.env, getTenantIdFromContext(c))).sdJwt;
+
+      if (useSDJWT) {
+        const rawSelectiveClaims = clientMetadata.sd_jwt_selective_claims;
+        const selectiveClaims: string[] = Array.isArray(rawSelectiveClaims)
+          ? rawSelectiveClaims
+          : ['email', 'phone_number', 'address', 'birthdate'];
+        idToken = await createClientSDJWTIDToken(
+          c.env,
+          tenantId,
+          clientMetadata as ClientMetadata,
+          idTokenClaims as Omit<IDTokenClaims, 'iat' | 'exp'>,
+          await lifetimes.idToken(),
+          selectiveClaims
+        );
+      } else {
+        idToken = await createClientIDToken(
+          c.env,
+          tenantId,
+          clientMetadata as ClientMetadata,
+          idTokenClaims as Omit<IDTokenClaims, 'iat' | 'exp'>,
+          await lifetimes.idToken()
+        );
+      }
+    } catch (error) {
+      log.error('Failed to create ID token', {}, error as Error);
+      return oauthError(c, 'server_error', 'Failed to create ID token', 500);
     }
-  } catch (error) {
-    log.error('Failed to create ID token', {}, error as Error);
-    return oauthError(c, 'server_error', 'Failed to create ID token', 500);
   }
 
   // Rotation follows oauth.refresh_token_rotation (the client's, else the tenant's, else
@@ -4091,7 +4158,16 @@ async function handleRefreshTokenGrant(
   const rotationEnabled = !prohibitRefreshTokenRotation && (await lifetimes.refreshRotation());
 
   let newRefreshToken: string;
-  const refreshTokenExpiresIn = await lifetimes.refresh();
+  // The refresh token's remaining lifetime: from the family after a rotation (it may slide), else
+  // whichever ends first of the presented token and its family (a token that is not rotated
+  // cannot slide, and a family can end before a token issued under an older lifetime).
+  const presentedExpiry = Math.min(
+    typeof refreshTokenPayload.exp === 'number' ? refreshTokenPayload.exp : Infinity,
+    typeof refreshTokenData.exp === 'number' ? refreshTokenData.exp : Infinity
+  );
+  let refreshTokenExpiresIn = Number.isFinite(presentedExpiry)
+    ? Math.max(0, presentedExpiry - Math.floor(Date.now() / 1000))
+    : await lifetimes.refresh();
 
   if (rotationEnabled) {
     // V2: Implement refresh token rotation with version-based theft detection
@@ -4123,12 +4199,27 @@ async function handleRefreshTokenGrant(
         clientId: client_id,
         tenantId,
         requestedScope: scope || undefined, // Pass requested scope for validation
+        lifetime: await lifetimes.refreshLifetime(),
       });
 
       // V3: DO now returns full JTIs with generation/shard prefix
       // No wrapping needed - use the JTI directly from DO
       newRefreshTokenJti = rotateResult.newJti;
       newVersion = rotateResult.newVersion;
+      refreshTokenExpiresIn = rotateResult.expiresIn;
+      // The family's expiry may have moved: keep its index row (user-wide revocation) in step.
+      if (rotateResult.familyJti) {
+        c.executionCtx.waitUntil(
+          updateTokenFamilyIndexExpiry(authCtx.coreAdapter, {
+            tenantId,
+            jti: rotateResult.familyJti,
+            userId: refreshTokenData.sub,
+            clientId: client_id,
+            generation: parseRefreshTokenJti(rotateResult.familyJti).generation,
+            expiresAt: rotateResult.expiresAt,
+          })
+        );
+      }
 
       // Create JWT with new version (rtv claim)
       const refreshTokenClaims = {
@@ -4915,7 +5006,7 @@ async function handleDeviceCodeGrant(
       getTenantIdFromContext(c),
       clientMetadata as ClientMetadata,
       idTokenClaims as Omit<IDTokenClaims, 'iat' | 'exp'>,
-      expiresIn
+      await lifetimes.idToken()
     );
   } catch (error) {
     log.error('Failed to create ID token', {}, error as Error);
@@ -4982,79 +5073,81 @@ async function handleDeviceCodeGrant(
     );
   }
 
-  // Generate Refresh Token with V3 sharding support
+  // Generate Refresh Token with V3 sharding support (OpenID Connect grants need offline_access)
   const refreshTokenExpiry = await lifetimes.refresh();
-  let refreshToken: string;
-  let refreshJti: string;
-  try {
-    let familyResult: Awaited<ReturnType<typeof createRefreshTokenFamily>> | undefined;
-    if (c.env.REFRESH_TOKEN_ROTATOR) {
-      familyResult = await createRefreshTokenFamily(c.env, {
-        userId: metadata.sub!,
-        clientId: client_id,
-        scope: metadata.scope || '',
-        ttl: refreshTokenExpiry,
-        tenantId: getTenantIdFromContext(c),
-        resourceAudience: audienceResolution.audience,
-        // As the first ID token had it; no pushed request (a refresh is refused at FAL3).
-        authContext: { auth_time: deviceAuthTime },
-      });
-      refreshJti = familyResult.jti;
-      c.executionCtx.waitUntil(
-        recordTokenFamilyIndex(
-          authCtx.coreAdapter,
-          getTenantIdFromContext(c),
+  let refreshToken: string | undefined;
+  let refreshJti: string | undefined;
+  if (await lifetimes.issuesRefreshTokenFor(metadata.scope)) {
+    try {
+      let familyResult: Awaited<ReturnType<typeof createRefreshTokenFamily>> | undefined;
+      if (c.env.REFRESH_TOKEN_ROTATOR) {
+        familyResult = await createRefreshTokenFamily(c.env, {
+          userId: metadata.sub!,
+          clientId: client_id,
+          scope: metadata.scope || '',
+          ttl: refreshTokenExpiry,
+          tenantId: getTenantIdFromContext(c),
+          resourceAudience: audienceResolution.audience,
+          // As the first ID token had it; no pushed request (a refresh is refused at FAL3).
+          authContext: { auth_time: deviceAuthTime },
+        });
+        refreshJti = familyResult.jti;
+        c.executionCtx.waitUntil(
+          recordTokenFamilyIndex(
+            authCtx.coreAdapter,
+            getTenantIdFromContext(c),
+            refreshJti,
+            metadata.sub!,
+            client_id,
+            familyResult.resolution.generation,
+            refreshTokenExpiry
+          )
+        );
+      } else {
+        refreshJti = `rt_${crypto.randomUUID()}`;
+      }
+
+      const refreshTokenClaims = {
+        sub: metadata.sub!,
+        scope: metadata.scope,
+        client_id,
+        ...(dpopJkt ? { cnf: { jkt: dpopJkt } } : {}),
+      };
+      const result = await createRefreshToken(
+        refreshTokenClaims,
+        privateKey,
+        keyId,
+        refreshTokenExpiry,
+        refreshJti // V3: Pass pre-generated sharded JTI
+      );
+      refreshToken = result.token;
+
+      if (!familyResult) {
+        await storeRefreshToken(
+          c.env,
           refreshJti,
-          metadata.sub!,
-          client_id,
-          familyResult.resolution.generation,
-          refreshTokenExpiry
-        )
-      );
-    } else {
-      refreshJti = `rt_${crypto.randomUUID()}`;
-    }
-
-    const refreshTokenClaims = {
-      sub: metadata.sub!,
-      scope: metadata.scope,
-      client_id,
-      ...(dpopJkt ? { cnf: { jkt: dpopJkt } } : {}),
-    };
-    const result = await createRefreshToken(
-      refreshTokenClaims,
-      privateKey,
-      keyId,
-      refreshTokenExpiry,
-      refreshJti // V3: Pass pre-generated sharded JTI
-    );
-    refreshToken = result.token;
-
-    if (!familyResult) {
-      await storeRefreshToken(
-        c.env,
-        refreshJti,
+          {
+            jti: refreshJti,
+            client_id,
+            sub: metadata.sub!,
+            scope: metadata.scope,
+            resource_aud: audienceResolution.audience,
+            iat: Math.floor(Date.now() / 1000),
+            exp: Math.floor(Date.now() / 1000) + refreshTokenExpiry,
+          },
+          getTenantIdFromContext(c)
+        );
+      }
+    } catch (error) {
+      log.error('Failed to create refresh token', {}, error as Error);
+      return c.json(
         {
-          jti: refreshJti,
-          client_id,
-          sub: metadata.sub!,
-          scope: metadata.scope,
-          resource_aud: audienceResolution.audience,
-          iat: Math.floor(Date.now() / 1000),
-          exp: Math.floor(Date.now() / 1000) + refreshTokenExpiry,
+          error: 'server_error',
+          error_description: 'Failed to create refresh token',
         },
-        getTenantIdFromContext(c)
+        500
       );
     }
-  } catch (error) {
-    log.error('Failed to create refresh token', {}, error as Error);
-    return c.json(
-      {
-        error: 'server_error',
-        error_description: 'Failed to create refresh token',
-      },
-      500
-    );
   }
 
   // Publish token events (non-blocking, use waitUntil to ensure completion)
@@ -5074,20 +5167,28 @@ async function handleDeviceCodeGrant(
     }).catch((err: unknown) => {
       log.error('Failed to publish token.access.issued event', { action: 'Event' }, err as Error);
     }),
-    publishEvent(c, {
-      type: TOKEN_EVENTS.REFRESH_ISSUED,
-      tenantId: getTenantIdFromContext(c),
-      data: {
-        jti: refreshJti,
-        clientId: client_id,
-        userId: metadata.sub,
-        scopes: metadata.scope?.split(' ') ?? [],
-        grantType: 'urn:ietf:params:oauth:grant-type:device_code',
-      } satisfies TokenEventData,
-    }).catch((err: unknown) => {
-      log.error('Failed to publish token.refresh.issued event', { action: 'Event' }, err as Error);
-    }),
   ];
+  if (refreshJti) {
+    deviceEventPromises.push(
+      publishEvent(c, {
+        type: TOKEN_EVENTS.REFRESH_ISSUED,
+        tenantId: getTenantIdFromContext(c),
+        data: {
+          jti: refreshJti,
+          clientId: client_id,
+          userId: metadata.sub,
+          scopes: metadata.scope?.split(' ') ?? [],
+          grantType: 'urn:ietf:params:oauth:grant-type:device_code',
+        } satisfies TokenEventData,
+      }).catch((err: unknown) => {
+        log.error(
+          'Failed to publish token.refresh.issued event',
+          { action: 'Event' },
+          err as Error
+        );
+      })
+    );
+  }
 
   // ID Token issued event (device code grant)
   if (idToken) {
@@ -5116,8 +5217,12 @@ async function handleDeviceCodeGrant(
     token_type: dpopJkt ? 'DPoP' : 'Bearer',
     expires_in: expiresIn,
     id_token: idToken,
-    refresh_token: refreshToken,
-    ...buildRefreshTokenExpiryMetadata(nowEpoch, refreshTokenExpiry),
+    ...(refreshToken
+      ? {
+          refresh_token: refreshToken,
+          ...buildRefreshTokenExpiryMetadata(nowEpoch, refreshTokenExpiry),
+        }
+      : {}),
     scope: metadata.scope,
   });
 }
@@ -5594,7 +5699,7 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
     getTenantIdFromContext(c),
     clientMetadata as ClientMetadata,
     idTokenClaims as Omit<IDTokenClaims, 'iat' | 'exp'>,
-    expiresIn
+    await lifetimes.idToken()
   );
 
   // Encrypt ID token if required
@@ -5626,69 +5731,73 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
     idToken = await encryptJWT(idToken, clientPublicKey, { alg, enc });
   }
 
-  // Create Refresh Token with canonical family registration
-  let refreshTokenJti: string;
-  let cibaFamilyResult: Awaited<ReturnType<typeof createRefreshTokenFamily>> | undefined;
-  if (c.env.REFRESH_TOKEN_ROTATOR) {
-    cibaFamilyResult = await createRefreshTokenFamily(c.env, {
-      userId: metadata.sub!,
-      clientId: metadata.client_id,
-      scope: metadata.scope || '',
-      ttl: refreshExpiresIn,
-      tenantId: getTenantIdFromContext(c),
-      resourceAudience: audienceResolution.audience,
-      // As the first ID token had it; no pushed request (a refresh is refused at FAL3).
-      ...(metadata.authenticated_acr ? { authContext: { acr: metadata.authenticated_acr } } : {}),
-    });
-    refreshTokenJti = cibaFamilyResult.jti;
-    c.executionCtx.waitUntil(
-      recordTokenFamilyIndex(
-        authCtx.coreAdapter,
-        getTenantIdFromContext(c),
+  // Create Refresh Token with canonical family registration (OpenID Connect grants need
+  // offline_access)
+  let refreshTokenJti: string | undefined;
+  let refreshToken: string | undefined;
+  if (await lifetimes.issuesRefreshTokenFor(metadata.scope)) {
+    let cibaFamilyResult: Awaited<ReturnType<typeof createRefreshTokenFamily>> | undefined;
+    if (c.env.REFRESH_TOKEN_ROTATOR) {
+      cibaFamilyResult = await createRefreshTokenFamily(c.env, {
+        userId: metadata.sub!,
+        clientId: metadata.client_id,
+        scope: metadata.scope || '',
+        ttl: refreshExpiresIn,
+        tenantId: getTenantIdFromContext(c),
+        resourceAudience: audienceResolution.audience,
+        // As the first ID token had it; no pushed request (a refresh is refused at FAL3).
+        ...(metadata.authenticated_acr ? { authContext: { acr: metadata.authenticated_acr } } : {}),
+      });
+      refreshTokenJti = cibaFamilyResult.jti;
+      c.executionCtx.waitUntil(
+        recordTokenFamilyIndex(
+          authCtx.coreAdapter,
+          getTenantIdFromContext(c),
+          refreshTokenJti,
+          metadata.sub!,
+          metadata.client_id,
+          cibaFamilyResult.resolution.generation,
+          refreshExpiresIn
+        )
+      );
+    } else {
+      refreshTokenJti = `rt_${crypto.randomUUID()}`;
+    }
+
+    const refreshTokenClaims = {
+      iss: getRequestIssuer(c),
+      sub: metadata.sub!,
+      aud: metadata.client_id,
+      client_id: metadata.client_id,
+      scope: metadata.scope,
+      resource_aud: audienceResolution.audience,
+      ...(mtlsThumbprint ? { cnf: { 'x5t#S256': mtlsThumbprint } } : {}),
+    };
+
+    ({ token: refreshToken } = await createRefreshToken(
+      refreshTokenClaims,
+      privateKey,
+      kid,
+      refreshExpiresIn,
+      refreshTokenJti // V3: Pass pre-generated sharded JTI
+    ));
+
+    if (!cibaFamilyResult) {
+      await storeRefreshToken(
+        c.env,
         refreshTokenJti,
-        metadata.sub!,
-        metadata.client_id,
-        cibaFamilyResult.resolution.generation,
-        refreshExpiresIn
-      )
-    );
-  } else {
-    refreshTokenJti = `rt_${crypto.randomUUID()}`;
-  }
-
-  const refreshTokenClaims = {
-    iss: getRequestIssuer(c),
-    sub: metadata.sub!,
-    aud: metadata.client_id,
-    client_id: metadata.client_id,
-    scope: metadata.scope,
-    resource_aud: audienceResolution.audience,
-    ...(mtlsThumbprint ? { cnf: { 'x5t#S256': mtlsThumbprint } } : {}),
-  };
-
-  const { token: refreshToken } = await createRefreshToken(
-    refreshTokenClaims,
-    privateKey,
-    kid,
-    refreshExpiresIn,
-    refreshTokenJti // V3: Pass pre-generated sharded JTI
-  );
-
-  if (!cibaFamilyResult) {
-    await storeRefreshToken(
-      c.env,
-      refreshTokenJti,
-      {
-        client_id: metadata.client_id,
-        sub: metadata.sub!,
-        scope: metadata.scope,
-        resource_aud: audienceResolution.audience,
-        iat: Math.floor(Date.now() / 1000),
-        exp: Math.floor(Date.now() / 1000) + refreshExpiresIn,
-        jti: refreshTokenJti,
-      },
-      getTenantIdFromContext(c)
-    );
+        {
+          client_id: metadata.client_id,
+          sub: metadata.sub!,
+          scope: metadata.scope,
+          resource_aud: audienceResolution.audience,
+          iat: Math.floor(Date.now() / 1000),
+          exp: Math.floor(Date.now() / 1000) + refreshExpiresIn,
+          jti: refreshTokenJti,
+        },
+        getTenantIdFromContext(c)
+      );
+    }
   }
 
   // Keep the issued request as a short-lived tombstone until its original expiry. This lets a
@@ -5711,20 +5820,28 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
     }).catch((err: unknown) => {
       log.error('Failed to publish token.access.issued event', { action: 'Event' }, err as Error);
     }),
-    publishEvent(c, {
-      type: TOKEN_EVENTS.REFRESH_ISSUED,
-      tenantId: getTenantIdFromContext(c),
-      data: {
-        jti: refreshTokenJti,
-        clientId: metadata.client_id,
-        userId: metadata.sub,
-        scopes: metadata.scope?.split(' ') ?? [],
-        grantType: 'urn:openid:params:grant-type:ciba',
-      } satisfies TokenEventData,
-    }).catch((err: unknown) => {
-      log.error('Failed to publish token.refresh.issued event', { action: 'Event' }, err as Error);
-    }),
   ];
+  if (refreshTokenJti) {
+    cibaEventPromises.push(
+      publishEvent(c, {
+        type: TOKEN_EVENTS.REFRESH_ISSUED,
+        tenantId: getTenantIdFromContext(c),
+        data: {
+          jti: refreshTokenJti,
+          clientId: metadata.client_id,
+          userId: metadata.sub,
+          scopes: metadata.scope?.split(' ') ?? [],
+          grantType: 'urn:openid:params:grant-type:ciba',
+        } satisfies TokenEventData,
+      }).catch((err: unknown) => {
+        log.error(
+          'Failed to publish token.refresh.issued event',
+          { action: 'Event' },
+          err as Error
+        );
+      })
+    );
+  }
 
   // ID Token issued event (CIBA grant)
   if (idToken) {
@@ -5753,8 +5870,12 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
     token_type: dpopJkt ? 'DPoP' : 'Bearer',
     expires_in: expiresIn,
     id_token: idToken,
-    refresh_token: refreshToken,
-    ...buildRefreshTokenExpiryMetadata(nowEpoch, refreshExpiresIn),
+    ...(refreshToken
+      ? {
+          refresh_token: refreshToken,
+          ...buildRefreshTokenExpiryMetadata(nowEpoch, refreshExpiresIn),
+        }
+      : {}),
     scope: metadata.scope,
   });
 }
@@ -5797,6 +5918,19 @@ async function recordTokenFamilyIndex(
   } catch (error) {
     // Log but don't fail - this is a non-critical operation
     moduleLogger.error('Failed to record token family in index', {}, error as Error);
+  }
+}
+
+/** Keep a family's index expiry in step with a rotation; like the record, failure is logged only. */
+async function updateTokenFamilyIndexExpiry(
+  db: DatabaseSource | null | undefined,
+  input: Parameters<typeof updateRefreshTokenFamilyIndexExpiry>[1]
+): Promise<void> {
+  if (!db) return;
+  try {
+    await updateRefreshTokenFamilyIndexExpiry(db, input);
+  } catch (error) {
+    moduleLogger.error('Failed to update token family expiry in index', {}, error as Error);
   }
 }
 
@@ -7679,7 +7813,7 @@ async function handleNativeSSOTokenExchange(
       tenantId,
       clientMetadata,
       newIdTokenClaims as Omit<IDTokenClaims, 'iat' | 'exp'>,
-      expiresIn
+      await lifetimes.idToken()
     );
   } catch (error) {
     log.error('Failed to create ID token', { action: 'NativeSSO' }, error as Error);
@@ -7699,6 +7833,9 @@ async function handleNativeSSOTokenExchange(
   try {
     const tenantProfile = await loadTenantProfileCached(c, c.env.AUTHRIM_CONFIG, c.env, tenantId);
 
+    // The device_secret was issued only with a grant that got a refresh token (offline_access for
+    // OpenID Connect), so it stands for that offline grant here. Secrets from before
+    // oauth.offline_access_required came with a refresh token as well, under the older rule.
     if (tenantProfile.allows_refresh_token !== false) {
       const refreshTokenClaims = {
         iss: getRequestIssuer(c),

@@ -197,6 +197,9 @@ const mocks = vi.hoisted(() => ({
 
   // Events
   mockPublishEvent: vi.fn().mockResolvedValue(undefined),
+
+  // Refresh token family index
+  mockUpdateFamilyIndexExpiry: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
@@ -315,6 +318,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     timingSafeEqual: mocks.mockTimingSafeEqual,
     // Events
     publishEvent: mocks.mockPublishEvent,
+    updateRefreshTokenFamilyIndexExpiry: mocks.mockUpdateFamilyIndexExpiry,
     TOKEN_EVENTS: {
       ACCESS_ISSUED: 'token.access.issued',
       ID_ISSUED: 'token.id.issued',
@@ -585,6 +589,101 @@ describe('Security-Critical Tests', () => {
         expect.any(Number),
         'ES256'
       );
+    });
+
+    describe('offline_access (oauth.offline_access_required)', () => {
+      async function exchangeCode(scope: string, tenantOAuth?: Record<string, unknown>) {
+        const client = createConfidentialClient({ require_pkce: false });
+        const authCodeData = createAuthCodeData({ userId: 'user-001', scope });
+        if (tenantOAuth) {
+          const settings = createMockKV();
+          void settings.put('settings:tenant:default:oauth', JSON.stringify(tenantOAuth));
+          (mockEnv as unknown as { SETTINGS: unknown }).SETTINGS = settings;
+        }
+        mocks.mockGetClientCached.mockResolvedValue(client);
+        mockEnv.AUTH_CODE_STORE.get = vi.fn().mockReturnValue({
+          consumeCodeRpc: vi.fn().mockResolvedValue(authCodeData),
+          registerIssuedTokensRpc: vi.fn().mockResolvedValue(undefined),
+        });
+        const response = await tokenHandler(
+          createMockContext({
+            method: 'POST',
+            body: {
+              grant_type: 'authorization_code',
+              code: 'valid-auth-code',
+              redirect_uri: authCodeData.redirectUri,
+              client_id: client.client_id,
+              client_secret: 'valid-secret',
+            },
+            env: mockEnv,
+          })
+        );
+        expect(response.status).toBe(200);
+        return parseJsonResponse<{ refresh_token?: string }>(response);
+      }
+
+      it('issues no refresh token to an OpenID Connect grant without offline_access', async () => {
+        mocks.mockPublishEvent.mockClear();
+        expect((await exchangeCode('openid profile')).refresh_token).toBeUndefined();
+        const eventTypes = mocks.mockPublishEvent.mock.calls.map(
+          ([, event]) => (event as { type: string }).type
+        );
+        expect(eventTypes).toContain('token.access.issued');
+        expect(eventTypes).not.toContain('token.refresh.issued');
+      });
+
+      it('issues one with offline_access, or for an OAuth grant without openid', async () => {
+        expect((await exchangeCode('openid profile offline_access')).refresh_token).toBeTruthy();
+        expect((await exchangeCode('api:read')).refresh_token).toBeTruthy();
+      });
+
+      it('issues one without offline_access when the tenant does not require it', async () => {
+        const body = await exchangeCode('openid profile', {
+          'oauth.offline_access_required': false,
+        });
+        expect(body.refresh_token).toBeTruthy();
+      });
+    });
+
+    it('gives the ID token its own lifetime (oauth.id_token_expiry)', async () => {
+      const client = createConfidentialClient({ require_pkce: false });
+      const authCodeData = createAuthCodeData({ userId: 'user-001', scope: 'openid profile' });
+      const settings = createMockKV();
+      void settings.put(
+        'settings:tenant:default:oauth',
+        JSON.stringify({ 'oauth.access_token_expiry': 3600, 'oauth.id_token_expiry': 600 })
+      );
+      (mockEnv as unknown as { SETTINGS: unknown }).SETTINGS = settings;
+      mocks.mockGetClientCached.mockResolvedValue(client);
+      mockEnv.AUTH_CODE_STORE.get = vi.fn().mockReturnValue({
+        consumeCodeRpc: vi.fn().mockResolvedValue(authCodeData),
+        registerIssuedTokensRpc: vi.fn().mockResolvedValue(undefined),
+      });
+
+      const response = await tokenHandler(
+        createMockContext({
+          method: 'POST',
+          body: {
+            grant_type: 'authorization_code',
+            code: 'valid-auth-code',
+            redirect_uri: authCodeData.redirectUri,
+            client_id: client.client_id,
+            client_secret: 'valid-secret',
+          },
+          env: mockEnv,
+        })
+      );
+
+      expect(response.status).toBe(200);
+      expect(mocks.mockCreateIDToken).toHaveBeenCalledWith(
+        expect.any(Object),
+        expect.anything(),
+        expect.any(String),
+        600,
+        expect.any(String)
+      );
+      const body = await parseJsonResponse<{ expires_in: number }>(response);
+      expect(body.expires_in).toBe(3600);
     });
 
     it("signs every ID token with the tenant's algorithm while apps may not choose", async () => {
@@ -2648,9 +2747,18 @@ describe('Security-Critical Tests', () => {
         async function refreshWith(options: {
           tenantOAuth?: Record<string, unknown>;
           env?: string;
+          scope?: string;
+          rotateExpiresIn?: number;
+          exp?: number;
+          familyExp?: number;
+          rotateResult?: Record<string, unknown>;
         }) {
           const client = createConfidentialClient();
-          const refreshTokenPayload = createRefreshTokenPayload({ client_id: client.client_id });
+          const refreshTokenPayload = createRefreshTokenPayload({
+            client_id: client.client_id,
+            ...(options.scope ? { scope: options.scope } : {}),
+            ...(options.exp ? { exp: options.exp } : {}),
+          });
           const refreshTokenJWT = createTestRefreshTokenJWT({ client_id: client.client_id });
           if (options.tenantOAuth) {
             const kv = createMockKV();
@@ -2664,13 +2772,19 @@ describe('Security-Critical Tests', () => {
             sub: refreshTokenPayload.sub,
             scope: refreshTokenPayload.scope,
             client_id: refreshTokenPayload.client_id,
+            ...(options.familyExp !== undefined ? { exp: options.familyExp } : {}),
           });
           mocks.mockParseRefreshTokenJti.mockReturnValue({
             generation: 1,
             shardIndex: 0,
             randomPart: 'abc',
           });
-          const rotateRpc = vi.fn().mockResolvedValue({ newJti: 'rt-new-jti-002', newVersion: 2 });
+          const rotateRpc = vi.fn().mockResolvedValue({
+            newJti: 'rt-new-jti-002',
+            newVersion: 2,
+            expiresIn: options.rotateExpiresIn ?? 2592000,
+            ...options.rotateResult,
+          });
           mockEnv.REFRESH_TOKEN_ROTATOR.get = vi.fn().mockReturnValue({ rotateRpc });
           const response = await tokenHandler(
             createMockContext({
@@ -2684,9 +2798,113 @@ describe('Security-Critical Tests', () => {
               env: mockEnv,
             })
           );
-          const body = await parseJsonResponse<{ refresh_token: string }>(response);
+          const body = await parseJsonResponse<{ refresh_token: string; id_token?: string }>(
+            response
+          );
           return { response, body, rotateRpc, refreshTokenJWT };
         }
+
+        it('rotates under the lifetime model and states the remaining lifetime it returns', async () => {
+          const { response, rotateRpc, body } = await refreshWith({
+            tenantOAuth: {
+              'oauth.refresh_token_expiry': 2592000,
+              'oauth.refresh_token_sliding_window_enabled': true,
+              'oauth.refresh_token_absolute_expiry_enabled': true,
+              'oauth.refresh_token_absolute_expiry': 31536000,
+            },
+            rotateExpiresIn: 1234,
+          });
+          expect(response.status).toBe(200);
+          expect(rotateRpc).toHaveBeenCalledWith(
+            expect.objectContaining({
+              lifetime: { ttl: 2592000, sliding: true, absoluteTtl: 31536000 },
+            })
+          );
+          expect((body as { refresh_token_expires_in?: number }).refresh_token_expires_in).toBe(
+            1234
+          );
+          expect(mocks.mockCreateRefreshToken).toHaveBeenCalledWith(
+            expect.anything(),
+            expect.anything(),
+            expect.anything(),
+            1234,
+            expect.anything(),
+            expect.anything()
+          );
+        });
+
+        it('states the presented token’s own remaining lifetime when it is not rotated', async () => {
+          const { response, body } = await refreshWith({
+            tenantOAuth: { 'oauth.refresh_token_rotation': false },
+            exp: Math.floor(Date.now() / 1000) + 600,
+          });
+          expect(response.status).toBe(200);
+          const expiresIn = (body as { refresh_token_expires_in?: number })
+            .refresh_token_expires_in;
+          expect(expiresIn).toBeGreaterThan(590);
+          expect(expiresIn).toBeLessThanOrEqual(600);
+        });
+
+        it('states the family’s remaining lifetime when it ends before the presented token', async () => {
+          const now = Math.floor(Date.now() / 1000);
+          const { response, body } = await refreshWith({
+            tenantOAuth: { 'oauth.refresh_token_rotation': false },
+            exp: now + 600,
+            familyExp: now + 120,
+          });
+          expect(response.status).toBe(200);
+          const expiresIn = (body as { refresh_token_expires_in?: number })
+            .refresh_token_expires_in;
+          expect(expiresIn).toBeGreaterThan(110);
+          expect(expiresIn).toBeLessThanOrEqual(120);
+        });
+
+        it('moves the family’s index expiry to where the rotation left it', async () => {
+          mocks.mockUpdateFamilyIndexExpiry.mockClear();
+          const expiresAt = Date.now() + 1234 * 1000;
+          const { response } = await refreshWith({
+            rotateExpiresIn: 1234,
+            rotateResult: { expiresAt, familyJti: 'rt-first-jti-001' },
+          });
+          expect(response.status).toBe(200);
+          expect(mocks.mockUpdateFamilyIndexExpiry).toHaveBeenCalledWith(expect.anything(), {
+            tenantId: 'default',
+            jti: 'rt-first-jti-001',
+            userId: expect.any(String),
+            clientId: expect.any(String),
+            generation: 1,
+            expiresAt,
+          });
+        });
+
+        it('leaves the index alone for a family that did not record its first JWT ID', async () => {
+          mocks.mockUpdateFamilyIndexExpiry.mockClear();
+          const { response } = await refreshWith({ rotateExpiresIn: 1234 });
+          expect(response.status).toBe(200);
+          expect(mocks.mockUpdateFamilyIndexExpiry).not.toHaveBeenCalled();
+        });
+
+        it('issues a new ID token on refresh for an OpenID Connect grant, by default', async () => {
+          const { response, body } = await refreshWith({});
+          expect(response.status).toBe(200);
+          expect(body.id_token).toBeTruthy();
+        });
+
+        it('issues no ID token when oauth.refresh_id_token_reissue is off', async () => {
+          const { response, body } = await refreshWith({
+            tenantOAuth: { 'oauth.refresh_id_token_reissue': false },
+          });
+          expect(response.status).toBe(200);
+          expect(body.id_token).toBeUndefined();
+          expect(mocks.mockCreateIDToken).not.toHaveBeenCalled();
+        });
+
+        it('issues no ID token for a grant without the openid scope', async () => {
+          const { response, body } = await refreshWith({ scope: 'api:read offline_access' });
+          expect(response.status).toBe(200);
+          expect(body.id_token).toBeUndefined();
+          expect(mocks.mockCreateIDToken).not.toHaveBeenCalled();
+        });
 
         it("keeps the refresh token when the tenant's setting turns rotation off", async () => {
           const { response, body, rotateRpc, refreshTokenJWT } = await refreshWith({

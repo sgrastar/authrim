@@ -42,9 +42,41 @@ export async function recordRefreshTokenFamilyIndex(
     return;
   }
 
+  // A rotation's update may have created the row meanwhile, with a later expiry: keep it.
   await adapter.execute(
     `INSERT INTO user_token_families (jti, tenant_id, user_id, client_id, generation, expires_at)
-     VALUES (?, ?, ?, ?, ?, ?)`,
+     VALUES (?, ?, ?, ?, ?, ?)
+     ON CONFLICT (jti) DO NOTHING`,
+    [input.jti, input.tenantId, input.userId, input.clientId, input.generation, input.expiresAt]
+  );
+}
+
+/**
+ * Record where a rotation left a family's expiry, so revocation that looks for active families
+ * still finds it. Updates run in the background and may land in any order, even before the row
+ * from issuance: the row is created if missing, and its expiry only ever moves later (a later
+ * expiry than the family's only makes the index look further, which revocation tolerates). A row
+ * the index marks revoked or expired (expires_at 0) stays so.
+ */
+export async function updateRefreshTokenFamilyIndexExpiry(
+  db: DatabaseSource,
+  input: {
+    tenantId: string;
+    jti: string;
+    userId: string;
+    clientId: string;
+    generation: number;
+    expiresAt: number;
+  }
+): Promise<void> {
+  await getAdapter(db).execute(
+    `INSERT INTO user_token_families (jti, tenant_id, user_id, client_id, generation, expires_at)
+     VALUES (?, ?, ?, ?, ?, ?)
+     ON CONFLICT (jti) DO UPDATE SET expires_at = excluded.expires_at
+     WHERE user_token_families.tenant_id = excluded.tenant_id
+       AND user_token_families.is_revoked = 0
+       AND user_token_families.expires_at > 0
+       AND user_token_families.expires_at < excluded.expires_at`,
     [input.jti, input.tenantId, input.userId, input.clientId, input.generation, input.expiresAt]
   );
 }

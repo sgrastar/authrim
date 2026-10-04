@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { Env } from '../../types/env';
-import { readTenantSessionSettingsStrict, resolveSessionTtl } from '../session-ttl';
+import {
+  readTenantSessionSettingsStrict,
+  resolveSessionExtensionPolicy,
+  resolveSessionTtl,
+} from '../session-ttl';
 
 function createEnv(input: {
   settings?: Record<string, unknown>;
@@ -125,5 +129,84 @@ describe('resolveSessionTtl', () => {
         'tenant-a'
       )
     ).toEqual({ 'session.ttl.passkey': 1000 });
+  });
+});
+
+describe('session.default_ttl and session.max_ttl', () => {
+  it('gives sign-ins without their own setting session.default_ttl', async () => {
+    expect((await resolveSessionTtl(createEnv({}), 'tenant-a', 'default')).seconds).toBe(86400);
+    const env = createEnv({ settings: { 'session.default_ttl': 2 * 60 * 60 * 1000 } });
+    const ttl = await resolveSessionTtl(env, 'tenant-a', 'default');
+    expect(ttl).toMatchObject({ key: 'session.default_ttl', seconds: 2 * 60 * 60 });
+  });
+
+  it('cuts every lifetime to session.max_ttl', async () => {
+    const env = createEnv({
+      settings: {
+        'session.max_ttl': 2 * 86400000,
+        'session.ttl.passkey': 7 * 86400000,
+      },
+    });
+    expect((await resolveSessionTtl(env, 'tenant-a', 'passkey')).seconds).toBe(2 * 86400);
+    // The default for registration (30 days) as well.
+    expect((await resolveSessionTtl(env, 'tenant-a', 'passkey_registration')).seconds).toBe(
+      2 * 86400
+    );
+    // A shorter lifetime stays as set.
+    expect((await resolveSessionTtl(env, 'tenant-a', 'email_code')).seconds).toBe(86400);
+  });
+
+  it('keeps the defaults within the default session.max_ttl (30 days)', async () => {
+    expect(
+      (await resolveSessionTtl(createEnv({}), 'tenant-a', 'passkey_registration')).seconds
+    ).toBe(30 * 86400);
+  });
+
+  it('reads the extension policy: on and 30 days by default, else as the tenant sets it', async () => {
+    expect(await resolveSessionExtensionPolicy(createEnv({}), 'tenant-a')).toEqual({
+      enabled: true,
+      maxLifetimeMs: 30 * 86400000,
+    });
+    expect(
+      await resolveSessionExtensionPolicy(
+        createEnv({ settings: { 'session.refresh_default': false, 'session.max_ttl': 86400000 } }),
+        'tenant-a'
+      )
+    ).toEqual({ enabled: false, maxLifetimeMs: 86400000 });
+    // The variable reads as the Settings API reads it: on only as `true` or `1`.
+    for (const [value, enabled] of [
+      ['false', false],
+      ['FALSE', false],
+      ['0', false],
+      ['TRUE', true],
+      ['1', true],
+    ] as const) {
+      expect(
+        await resolveSessionExtensionPolicy(
+          createEnv({ env: { SESSION_REFRESH_DEFAULT: value } }),
+          'tenant-a'
+        )
+      ).toMatchObject({ enabled });
+    }
+    // The Settings API's disable operation stores a marker: it reads as off, before the variable.
+    expect(
+      await resolveSessionExtensionPolicy(
+        createEnv({
+          settings: { 'session.refresh_default': '__DISABLED__' },
+          env: { SESSION_REFRESH_DEFAULT: 'true' },
+        }),
+        'tenant-a'
+      )
+    ).toMatchObject({ enabled: false });
+    // A tenant value wins over the variable.
+    expect(
+      await resolveSessionExtensionPolicy(
+        createEnv({
+          settings: { 'session.refresh_default': true },
+          env: { SESSION_REFRESH_DEFAULT: 'false' },
+        }),
+        'tenant-a'
+      )
+    ).toMatchObject({ enabled: true });
   });
 });

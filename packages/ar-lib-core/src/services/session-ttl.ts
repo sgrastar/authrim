@@ -1,4 +1,5 @@
 import type { Env } from '../types/env';
+import { readSettingsFlag } from '../utils/tenant-settings';
 
 export type SessionTtlContext =
   | 'email_code'
@@ -9,7 +10,10 @@ export type SessionTtlContext =
   | 'passkey_registration'
   | 'admin_passkey'
   | 'guest'
-  | 'did';
+  | 'did'
+  // Sign-ins without a setting of their own: external IdP and SAML sign-in, a session made for an
+  // app from a session token, and the authorization endpoint's test login.
+  | 'default';
 
 export interface SessionTtlDefinition {
   key: string;
@@ -88,6 +92,22 @@ export const SESSION_TTL_DEFINITIONS: Record<SessionTtlContext, SessionTtlDefini
     minMs: ONE_MINUTE_MS,
     maxMs: THIRTY_DAYS_MS,
   },
+  default: {
+    key: 'session.default_ttl',
+    envKey: 'DEFAULT_SESSION_TTL',
+    defaultMs: ONE_DAY_MS,
+    minMs: ONE_MINUTE_MS,
+    maxMs: SEVEN_DAYS_MS,
+  },
+};
+
+/** session.max_ttl: no session lasts longer than this from its creation, extensions included. */
+export const SESSION_MAX_TTL_DEFINITION: SessionTtlDefinition = {
+  key: 'session.max_ttl',
+  envKey: 'MAX_SESSION_TTL_MS',
+  defaultMs: THIRTY_DAYS_MS,
+  minMs: ONE_DAY_MS,
+  maxMs: THIRTY_DAYS_MS,
 };
 
 export interface SessionTtlResolution {
@@ -111,19 +131,71 @@ export function sessionTtlFromSettings(
   context: SessionTtlContext
 ): SessionTtlResolution {
   const definition = SESSION_TTL_DEFINITIONS[context];
-  const rawSettingValue = settings[definition.key];
-  const rawEnvValue = (env as unknown as Record<string, unknown>)[definition.envKey];
-  const configuredValue =
-    parsePositiveInteger(rawSettingValue) ??
-    parsePositiveInteger(rawEnvValue) ??
-    definition.defaultMs;
-  const milliseconds = clamp(configuredValue, definition.minMs, definition.maxMs);
+  // A lifetime above session.max_ttl is cut to it.
+  const milliseconds = Math.min(
+    configuredMilliseconds(env, settings, definition),
+    sessionMaxTtlFromSettings(env, settings)
+  );
 
   return {
     milliseconds,
     seconds: Math.max(1, Math.floor(milliseconds / 1000)),
     key: definition.key,
   };
+}
+
+/** session.max_ttl in milliseconds, from the tenant's session settings, the environment, or the default. */
+export function sessionMaxTtlFromSettings(env: Env, settings: Record<string, unknown>): number {
+  return configuredMilliseconds(env, settings, SESSION_MAX_TTL_DEFINITION);
+}
+
+export interface SessionExtensionPolicy {
+  /** session.refresh_default: whether POST /api/sessions/refresh may extend a session. */
+  enabled: boolean;
+  /** session.max_ttl: an extension never takes a session past its creation plus this. */
+  maxLifetimeMs: number;
+}
+
+export function sessionExtensionPolicyFromSettings(
+  env: Env,
+  settings: Record<string, unknown>
+): SessionExtensionPolicy {
+  return {
+    enabled: sessionRefreshEnabled(env, settings),
+    maxLifetimeMs: sessionMaxTtlFromSettings(env, settings),
+  };
+}
+
+export async function resolveSessionExtensionPolicy(
+  env: Env,
+  tenantId: string
+): Promise<SessionExtensionPolicy> {
+  return sessionExtensionPolicyFromSettings(env, await readTenantSessionSettings(env, tenantId));
+}
+
+function sessionRefreshEnabled(env: Env, settings: Record<string, unknown>): boolean {
+  // The tenant's value, the Settings API's disabled marker included (it reads as false).
+  const setting = readSettingsFlag(settings, 'session.refresh_default');
+  if (setting !== null) return setting;
+  // As the Settings API reads the variable: set, it is on only as `true` (any case) or `1`.
+  const envValue = (env as unknown as Record<string, unknown>)['SESSION_REFRESH_DEFAULT'];
+  if (typeof envValue === 'string' && envValue !== '') {
+    return envValue.toLowerCase() === 'true' || envValue === '1';
+  }
+  return true;
+}
+
+function configuredMilliseconds(
+  env: Env,
+  settings: Record<string, unknown>,
+  definition: SessionTtlDefinition
+): number {
+  const rawEnvValue = (env as unknown as Record<string, unknown>)[definition.envKey];
+  const configuredValue =
+    parsePositiveInteger(settings[definition.key]) ??
+    parsePositiveInteger(rawEnvValue) ??
+    definition.defaultMs;
+  return clamp(configuredValue, definition.minMs, definition.maxMs);
 }
 
 /**

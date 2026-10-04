@@ -8,6 +8,7 @@ import {
   listRefreshTokenFamiliesByUser,
   recordRefreshTokenFamilyIndex,
   revokeRefreshTokenFamiliesByUser,
+  updateRefreshTokenFamilyIndexExpiry,
 } from '../refresh-token-family-index';
 
 type FamilyRow = {
@@ -127,6 +128,24 @@ class InMemoryRefreshTokenFamilyIndexAdapter implements DatabaseAdapter {
         number,
         number,
       ];
+      const existing = this.rows.get(jti);
+      if (existing) {
+        if (sql.includes('DO NOTHING')) return { success: true, rowsAffected: 0 };
+        if (!sql.includes('DO UPDATE SET expires_at = excluded.expires_at')) {
+          throw new Error('UNIQUE constraint failed: user_token_families.jti');
+        }
+        // WHERE same tenant, not revoked or expired, and only later.
+        if (
+          existing.tenant_id !== tenantId ||
+          existing.is_revoked !== 0 ||
+          existing.expires_at <= 0 ||
+          existing.expires_at >= expiresAt
+        ) {
+          return { success: true, rowsAffected: 0 };
+        }
+        existing.expires_at = expiresAt;
+        return { success: true, rowsAffected: 1 };
+      }
       this.rows.set(jti, {
         jti,
         tenant_id: tenantId,
@@ -315,6 +334,65 @@ describe('refresh-token-family-index', () => {
         is_revoked: 0,
       }),
     ]);
+  });
+
+  it('moves an active family’s expiry only later, never revives one, and keeps tenants apart', async () => {
+    const adapter = new InMemoryRefreshTokenFamilyIndexAdapter();
+    const row = (
+      jti: string,
+      overrides: Partial<{ tenant_id: string; expires_at: number; is_revoked: number }> = {}
+    ) => ({
+      jti,
+      tenant_id: 'tenant_a',
+      user_id: 'user_1',
+      client_id: 'client_1',
+      generation: 1,
+      expires_at: 5_000,
+      is_revoked: 0,
+      ...overrides,
+    });
+    adapter.seed([
+      row('active'),
+      row('later', { expires_at: 12_000 }),
+      row('revoked', { is_revoked: 1 }),
+      row('expired', { expires_at: 0 }),
+      row('other-tenant', { tenant_id: 'tenant_b' }),
+    ]);
+    const update = (jti: string) =>
+      updateRefreshTokenFamilyIndexExpiry(adapter, {
+        tenantId: 'tenant_a',
+        jti,
+        userId: 'user_1',
+        clientId: 'client_1',
+        generation: 1,
+        expiresAt: 9_000,
+      });
+
+    for (const jti of ['active', 'later', 'revoked', 'expired', 'other-tenant', 'missing']) {
+      await update(jti);
+    }
+
+    expect(adapter.all().map((entry) => [entry.jti, entry.expires_at])).toEqual([
+      ['active', 9_000],
+      // An update that lands after a later one does not move it back.
+      ['later', 12_000],
+      ['revoked', 5_000],
+      ['expired', 0],
+      ['other-tenant', 5_000],
+      // One that lands before the row from issuance creates it.
+      ['missing', 9_000],
+    ]);
+
+    // The row from issuance, recorded after, keeps the rotation's expiry.
+    await recordRefreshTokenFamilyIndex(adapter, {
+      jti: 'missing',
+      tenantId: 'tenant_a',
+      userId: 'user_1',
+      clientId: 'client_1',
+      generation: 1,
+      expiresAt: 3_000,
+    });
+    expect(adapter.all().find((entry) => entry.jti === 'missing')?.expires_at).toBe(9_000);
   });
 
   it('computes generation stats and cleanup with tenant guards', async () => {
