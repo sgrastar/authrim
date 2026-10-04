@@ -296,7 +296,13 @@ function validateOptionalStrictBooleanField(
 }
 
 function isLoopbackRedirectHost(hostname: string): boolean {
-  return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1';
+  // URL.hostname writes an IPv6 address in brackets.
+  return (
+    hostname === 'localhost' ||
+    hostname === '127.0.0.1' ||
+    hostname === '[::1]' ||
+    hostname === '::1'
+  );
 }
 
 /**
@@ -2054,13 +2060,19 @@ export async function adminClientUpdateHandler(c: Context<{ Bindings: Env }>) {
         400
       );
     }
-    // The URIs and type the client will have: a change of either is checked against the policy.
+    // The URIs, type and scopes the client will have (a null clears a value: it is not the stored
+    // one): a change of any is checked against the policy, an Agent Access connection excepted.
     if (
-      (redirect_uris !== undefined || application_type !== undefined) &&
+      (redirect_uris !== undefined ||
+        application_type !== undefined ||
+        body.scope !== undefined ||
+        body.requestable_scopes !== undefined) &&
       !isAgentAccessConnection(
-        body.scope ?? existingClient.scope,
-        // Stored as a JSON array.
-        body.requestable_scopes ?? parseClientStringArray(existingClient.requestable_scopes, [])
+        body.scope !== undefined ? body.scope : existingClient.scope,
+        body.requestable_scopes !== undefined
+          ? body.requestable_scopes
+          : // Stored as a JSON array.
+            parseClientStringArray(existingClient.requestable_scopes, [])
       )
     ) {
       const updateRedirectPolicy = await redirectUriPolicyResponse(c, {

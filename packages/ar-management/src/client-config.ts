@@ -64,7 +64,13 @@ const VALID_GRANT_TYPES: ReadonlySet<string> = new Set([
 ]);
 
 function isLoopbackRedirectHost(hostname: string): boolean {
-  return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1';
+  // URL.hostname writes an IPv6 address in brackets.
+  return (
+    hostname === 'localhost' ||
+    hostname === '127.0.0.1' ||
+    hostname === '[::1]' ||
+    hostname === '::1'
+  );
 }
 
 /**

@@ -822,6 +822,13 @@ describe('Dynamic Client Registration Handler', () => {
         application_type: 'native',
       });
       expect(native.status).toBe(201);
+
+      // Its loopback IP literals too (RFC 8252 7.3), IPv6 included.
+      const nativeIp = await register({
+        redirect_uris: ['http://127.0.0.1:49152/callback', 'http://[::1]:49152/callback'],
+        application_type: 'native',
+      });
+      expect(nativeIp.status).toBe(201);
     });
 
     it('should build registration_client_uri with default tenant subdomain when naked domain is disabled', async () => {

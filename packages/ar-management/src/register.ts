@@ -189,8 +189,6 @@ async function validateSectorIdentifierContent(
 interface RegistrationValidationOptions {
   /** Allow localhost HTTP for webhook URLs (development only) */
   allowLocalhostHttp?: boolean;
-  /** Allow RFC 8252 loopback IP redirects for the dedicated Agent public-client profile. */
-  allowLoopbackHttp?: boolean;
 }
 
 function isLoopbackIp(hostname: string): boolean {
@@ -289,8 +287,9 @@ function validateRegistrationRequest(
         parsed.protocol !== 'https:' &&
         !(
           parsed.protocol === 'http:' &&
-          (parsed.hostname === 'localhost' ||
-            (options.allowLoopbackHttp === true && isLoopbackIp(parsed.hostname)))
+          // Any loopback host here: whether this app may use http there (a native app, or a
+          // tenant that allows web apps) is the redirect URI policy's, applied below.
+          (parsed.hostname === 'localhost' || isLoopbackIp(parsed.hostname))
         )
       ) {
         return {
@@ -1499,7 +1498,6 @@ export async function registerHandler(c: Context<{ Bindings: Env }>): Promise<Re
     const isDevelopment = c.env.ENVIRONMENT === 'development' || c.env.NODE_ENV === 'development';
     const validation = validateRegistrationRequest(body, {
       allowLocalhostHttp: isDevelopment,
-      allowLoopbackHttp: restrictedAgentRegistration,
     });
     if (!validation.valid) {
       return c.json(validation.error, 400);

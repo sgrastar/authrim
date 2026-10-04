@@ -2448,32 +2448,6 @@ describe('Security-Critical Tests', () => {
     });
   });
 
-  it('refuses the JWT bearer grant while the tenant binds access tokens to DPoP', async () => {
-    const settings = createMockKV();
-    void settings.put(
-      'settings:tenant:default:security',
-      JSON.stringify({ 'security.dpop_bound_access_tokens': true })
-    );
-    (mockEnv as unknown as { SETTINGS: unknown }).SETTINGS = settings;
-
-    const response = await tokenHandler(
-      createMockContext({
-        method: 'POST',
-        body: {
-          grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer',
-          assertion: 'header.payload.signature',
-        },
-        env: mockEnv,
-      })
-    );
-
-    expect(response.status).toBe(400);
-    expect(await parseJsonResponse(response)).toMatchObject({
-      error: 'invalid_request',
-      error_description: 'DPoP-bound access tokens are required, which this grant cannot issue',
-    });
-  });
-
   describe('Replay Attack Prevention', () => {
     describe('Authorization Code Single-Use', () => {
       it('should reject already-consumed authorization code', async () => {

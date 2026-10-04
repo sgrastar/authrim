@@ -4963,6 +4963,30 @@ describe('Admin API Handlers', () => {
       expect(res.status).not.toBe(400);
     });
 
+    it('checks the redirect URIs again when an Agent Access connection loses its agent scopes', async () => {
+      const mockDB = createMockDB({
+        firstResult: {
+          client_id: 'former-agent',
+          client_name: 'MCP client',
+          redirect_uris: '["https://example.com/callback"]',
+          grant_types: '["authorization_code"]',
+          response_types: '["code"]',
+          scope: 'openid',
+          requestable_scopes: '["agent:read"]',
+        },
+      });
+      const c = createMockContext({
+        method: 'PUT',
+        params: { id: 'former-agent' },
+        body: { requestable_scopes: null, redirect_uris: ['http://localhost:3000/callback'] },
+        db: mockDB,
+      });
+
+      const res = await adminClientUpdateHandler(c);
+
+      expect(res.status).toBe(400);
+    });
+
     it('refuses another ID token algorithm while the tenant signs every ID token with its own', async () => {
       const mockDB = createMockDB({
         firstResult: {
