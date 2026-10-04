@@ -4,6 +4,11 @@ export const arSettings: Record<keyof typeof jaSettings, string> = {
 	'set.page.stayingSignedIn': 'البقاء مسجلاً للدخول',
 	'set.page.stayingSignedIn.desc':
 		'المدة التي يبقى فيها الأشخاص مسجلين للدخول بعد تسجيل دخولهم، والمدة التي تحتفظ فيها تطبيقاتهم بهذا الدخول.',
+	'set.page.signingKeys': 'مفاتيح التوقيع',
+	'set.page.signingKeys.desc': 'كيف يوقّع هذا المستأجر رموزه.',
+	'set.section.idTokenSigning': 'توقيع رموز الهوية',
+	'set.section.idTokenSigning.desc':
+		'الخوارزمية التي تُوقَّع بها رموز الهوية، وهل يمكن للتطبيقات اختيار خوارزميتها.',
 
 	'set.section.signIn': 'مدة تسجيل الدخول',
 	'set.section.signIn.desc': 'المدة التي يبقى فيها الشخص مسجلاً للدخول إلى Authrim.',
@@ -34,13 +39,6 @@ export const arSettings: Record<keyof typeof jaSettings, string> = {
 	'set.k.session.ttl.passkey_registration': 'مباشرة بعد تسجيل مفتاح مرور',
 	'set.k.session.max_ttl': 'أطول مدة دخول مسموحة',
 	'set.k.session.max_ttl.desc': 'أطول مدة يمكن تحديدها للبقاء مسجلاً للدخول.',
-	'set.k.session.min_ttl': 'أقصر مدة دخول مسموحة',
-	'set.k.session.min_ttl.desc': 'أقصر مدة يمكن تحديدها للبقاء مسجلاً للدخول.',
-	'set.k.session.token_ttl': 'مدة صلاحية رمز الجلسة',
-	'set.k.session.token_ttl.desc': 'مدة صلاحية الرمز المستخدم لإدارة الجلسات.',
-	'set.k.session.tombstone_ttl': 'تذكّر الجلسات المنتهية لمدة',
-	'set.k.session.tombstone_ttl.desc':
-		'المدة التي تُتذكّر فيها الجلسة المنتهية (بتسجيل الخروج مثلاً) لرفضها.',
 
 	'set.k.oauth.access_token_expiry': 'مدة صلاحية رمز الوصول',
 	'set.k.oauth.access_token_expiry.desc':
@@ -51,6 +49,17 @@ export const arSettings: Record<keyof typeof jaSettings, string> = {
 	'set.k.oauth.id_token_expiry': 'مدة صلاحية رمز الهوية',
 	'set.k.oauth.id_token_expiry.desc': 'الرمز الذي يُبلغ التطبيق بمن سجّل الدخول.',
 	'set.k.oauth.refresh_token_rotation': 'استبدال رمز التحديث في كل مرة يُستخدم فيها',
+	'set.k.oauth.id_token_signing_alg': 'خوارزمية توقيع رموز الهوية',
+	'set.k.oauth.id_token_signing_alg.desc':
+		'تُوقّع رموز الهوية للتطبيقات التي لا تختار خوارزميتها بنفسها.',
+	'set.k.oauth.id_token_signing_alg_client_override': 'السماح للتطبيقات باختيار خوارزميتها',
+	'set.k.oauth.id_token_signing_alg_client_override.desc':
+		'عند الإيقاف: يُوقَّع كل رمز هوية بخوارزمية المستأجر، ويُرفض تسجيل التطبيقات بخوارزمية أخرى.',
+	'set.k.security.fapi_enabled': 'تطبيق FAPI 2.0',
+	'set.k.security.fapi_enabled.desc': 'تطبيق ملف أمان FAPI 2.0 على كل تطبيقات المستأجر.',
+	'set.k.oauth.id_token_signing_alg.RS256': 'RS256',
+	'set.k.oauth.id_token_signing_alg.ES256': 'ES256',
+	'set.k.oauth.id_token_signing_alg.PS256': 'PS256',
 	'set.k.oauth.refresh_token_rotation.desc':
 		'يتوقف الرمز المستخدم عن العمل، فلا يمكن إعادة استخدام رمز مسرّب. يُنصح بإبقاء هذا الخيار مفعّلاً.',
 	'set.k.oauth.refresh_token_sliding_window_enabled': 'تمديد الصلاحية في كل مرة يُستخدم فيها',
@@ -60,10 +69,6 @@ export const arSettings: Record<keyof typeof jaSettings, string> = {
 	'set.k.oauth.refresh_token_absolute_expiry_enabled.desc':
 		'يحدّ المدة منذ إصدار أول رمز. بعدها يسجّل الشخص الدخول مجدداً.',
 	'set.k.oauth.refresh_token_absolute_expiry': 'الحد (من أول رمز)',
-	'set.k.oauth.refresh_token_remaining_expiry_inherit':
-		'يحتفظ الرمز الجديد بالمدة المتبقية من القديم',
-	'set.k.oauth.refresh_token_remaining_expiry_inherit.desc':
-		'عند الإيقاف: تبدأ صلاحية الرمز الجديد عند إصداره.',
 	'set.k.oauth.offline_access_required': 'الإصدار فقط للتطبيقات التي تطلب offline_access',
 	'set.k.oauth.offline_access_required.desc':
 		'عند الإيقاف: تُصدر رموز التحديث أياً كانت النطاقات التي يطلبها التطبيق.',
@@ -92,9 +97,17 @@ export const arSettings: Record<keyof typeof jaSettings, string> = {
 	'settings.defaultFrom.platform': 'الافتراضي للمنصة: {value}',
 	'settings.defaultFrom.tenant': 'الافتراضي للمستأجر: {value}',
 	'settings.locked.platform': 'قيمة ثابتة بإعدادات المنصة',
+	'settings.inDevelopment': 'قيد التطوير: لا يؤثر تغييره بعد',
 	'settings.locked.tenant': 'قيمة ثابتة بإعدادات المستأجر',
 	'settings.badge.locked': 'مقفل',
 	'settings.badge.here': 'متجاوز',
+	'settings.badge.inDevelopment': 'قيد التطوير',
+	'settings.notice.idTokenAlgorithm.title': 'يخالف هذا مواصفة OpenID Connect Discovery',
+	'settings.notice.idTokenAlgorithm.body':
+		'تُوقَّع كل رموز الهوية بخوارزمية غير RS256 ولا يمكن للتطبيقات اختيار RS256، لذا لم يعد مستند الاكتشاف يعرض RS256 الذي تشترطه مواصفة OpenID Connect Discovery. يظل الاكتشاف نفسه يعمل.',
+	'settings.notice.fapi.title': 'تنطبق متطلبات FAPI 2.0',
+	'settings.notice.fapi.body':
+		'تُرفض الطلبات التي لا يسمح بها FAPI 2.0، مثل طلبات التفويض بدون PAR، لذا قد تتوقف التطبيقات التي لا تدعم FAPI عن العمل. يظل الاكتشاف يعمل وفق المواصفة.',
 	'settings.value.on': 'مفعّل',
 	'settings.value.off': 'متوقف',
 	'settings.value.empty': '(لا شيء)',

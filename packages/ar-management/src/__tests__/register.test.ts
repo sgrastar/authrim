@@ -226,6 +226,33 @@ describe('Dynamic Client Registration Handler', () => {
       expect(syncUser).not.toHaveBeenCalled();
     });
 
+    it('registers a restricted Agent client under a tenant that signs ID tokens with PS256', async () => {
+      mockEnv.SETTINGS = createMockKV();
+      await mockEnv.SETTINGS.put(
+        'settings:tenant:default:oauth',
+        JSON.stringify({ 'oauth.id_token_signing_alg': 'PS256' })
+      );
+
+      const res = await app.request(
+        '/oauth/admin-agent/register',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            redirect_uris: ['http://127.0.0.1:57939/callback/session'],
+            client_name: 'Codex',
+            token_endpoint_auth_method: 'none',
+            grant_types: ['authorization_code', 'refresh_token'],
+            response_types: ['code'],
+          }),
+        },
+        { ...mockEnv, ENABLE_AGENT_MCP: 'true' } as Env
+      );
+
+      expect(res.status).toBe(201);
+      await expect(res.json()).resolves.toMatchObject({ id_token_signed_response_alg: 'PS256' });
+    });
+
     it('registers a restricted Agent public client without an initial access token', async () => {
       const res = await app.request(
         '/oauth/admin-agent/register',
@@ -919,6 +946,74 @@ describe('Dynamic Client Registration Handler', () => {
 
       expect(res.status).toBe(400);
       await expect(res.json()).resolves.toMatchObject({ error: 'invalid_client_metadata' });
+    });
+
+    it('refuses another ID token algorithm while the tenant signs every ID token with its own', async () => {
+      mockEnv.SETTINGS = createMockKV();
+      await mockEnv.SETTINGS.put(
+        'settings:tenant:default:oauth',
+        JSON.stringify({
+          'oauth.id_token_signing_alg': 'ES256',
+          'oauth.id_token_signing_alg_client_override': false,
+        })
+      );
+      const register = (algorithm: string) =>
+        app.request(
+          '/register',
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              redirect_uris: ['https://example.com/callback'],
+              id_token_signed_response_alg: algorithm,
+            }),
+          },
+          mockEnv
+        );
+
+      const refused = await register('PS256');
+      expect(refused.status).toBe(400);
+      await expect(refused.json()).resolves.toMatchObject({
+        error: 'invalid_client_metadata',
+        error_description: expect.stringContaining('must be ES256'),
+      });
+      expect((await register('ES256')).status).toBe(201);
+    });
+
+    it("names the tenant's ID token algorithm when an app registers none", async () => {
+      mockEnv.SETTINGS = createMockKV();
+      await mockEnv.SETTINGS.put(
+        'settings:tenant:default:oauth',
+        JSON.stringify({ 'oauth.id_token_signing_alg': 'PS256' })
+      );
+
+      const res = await app.request(
+        '/register',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ redirect_uris: ['https://example.com/callback'] }),
+        },
+        mockEnv
+      );
+
+      expect(res.status).toBe(201);
+      await expect(res.json()).resolves.toMatchObject({ id_token_signed_response_alg: 'PS256' });
+    });
+
+    it('leaves the algorithm unnamed when the tenant signs with RS256, as omitted means', async () => {
+      const res = await app.request(
+        '/register',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ redirect_uris: ['https://example.com/callback'] }),
+        },
+        mockEnv
+      );
+
+      expect(res.status).toBe(201);
+      expect(await res.json()).not.toHaveProperty('id_token_signed_response_alg');
     });
 
     it('accepts ES256 for ID Token and signed UserInfo responses', async () => {

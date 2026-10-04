@@ -4,6 +4,11 @@ export const deSettings: Record<keyof typeof jaSettings, string> = {
 	'set.page.stayingSignedIn': 'Angemeldet bleiben',
 	'set.page.stayingSignedIn.desc':
 		'Wie lange Personen nach der Anmeldung angemeldet bleiben und wie lange ihre Apps diese Anmeldung behalten.',
+	'set.page.signingKeys': 'Signaturschlüssel',
+	'set.page.signingKeys.desc': 'Wie dieser Mandant seine Tokens signiert.',
+	'set.section.idTokenSigning': 'Signatur von ID-Tokens',
+	'set.section.idTokenSigning.desc':
+		'Der Algorithmus, mit dem ID-Tokens signiert werden, und ob Apps ihren eigenen wählen dürfen.',
 
 	'set.section.signIn': 'Dauer der Anmeldung',
 	'set.section.signIn.desc': 'Wie lange eine Person bei Authrim angemeldet bleibt.',
@@ -36,14 +41,6 @@ export const deSettings: Record<keyof typeof jaSettings, string> = {
 	'set.k.session.max_ttl': 'Längste erlaubte Anmeldung',
 	'set.k.session.max_ttl.desc':
 		'Die längste Zeit, die für das Angemeldetbleiben festgelegt werden kann.',
-	'set.k.session.min_ttl': 'Kürzeste erlaubte Anmeldung',
-	'set.k.session.min_ttl.desc':
-		'Die kürzeste Zeit, die für das Angemeldetbleiben festgelegt werden kann.',
-	'set.k.session.token_ttl': 'Gültigkeit des Sitzungstokens',
-	'set.k.session.token_ttl.desc': 'Wie lange das Token zur Verwaltung von Sitzungen gültig ist.',
-	'set.k.session.tombstone_ttl': 'Beendete Sitzungen merken für',
-	'set.k.session.tombstone_ttl.desc':
-		'Wie lange eine beendete Sitzung (z. B. nach der Abmeldung) gemerkt wird, um sie abzulehnen.',
 
 	'set.k.oauth.access_token_expiry': 'Gültigkeit des Access-Tokens',
 	'set.k.oauth.access_token_expiry.desc':
@@ -54,6 +51,18 @@ export const deSettings: Record<keyof typeof jaSettings, string> = {
 	'set.k.oauth.id_token_expiry': 'Gültigkeit des ID-Tokens',
 	'set.k.oauth.id_token_expiry.desc': 'Das Token, das einer App mitteilt, wer sich angemeldet hat.',
 	'set.k.oauth.refresh_token_rotation': 'Refresh-Token bei jeder Nutzung ersetzen',
+	'set.k.oauth.id_token_signing_alg': 'Signaturalgorithmus für ID-Tokens',
+	'set.k.oauth.id_token_signing_alg.desc':
+		'Signiert die ID-Tokens von Apps, die keinen eigenen Algorithmus wählen.',
+	'set.k.oauth.id_token_signing_alg_client_override': 'Apps dürfen ihren Algorithmus wählen',
+	'set.k.oauth.id_token_signing_alg_client_override.desc':
+		'Aus: Jedes ID-Token wird mit dem Algorithmus des Mandanten signiert, und Apps mit einem anderen werden abgelehnt.',
+	'set.k.security.fapi_enabled': 'FAPI 2.0 anwenden',
+	'set.k.security.fapi_enabled.desc':
+		'Das FAPI-2.0-Sicherheitsprofil auf alle Apps des Mandanten anwenden.',
+	'set.k.oauth.id_token_signing_alg.RS256': 'RS256',
+	'set.k.oauth.id_token_signing_alg.ES256': 'ES256',
+	'set.k.oauth.id_token_signing_alg.PS256': 'PS256',
 	'set.k.oauth.refresh_token_rotation.desc':
 		'Ein benutztes Token wird ungültig, ein kompromittiertes kann also nicht erneut verwendet werden. Empfohlen: eingeschaltet lassen.',
 	'set.k.oauth.refresh_token_sliding_window_enabled': 'Gültigkeit bei jeder Nutzung verlängern',
@@ -64,10 +73,6 @@ export const deSettings: Record<keyof typeof jaSettings, string> = {
 	'set.k.oauth.refresh_token_absolute_expiry_enabled.desc':
 		'Begrenzt die Zeit seit dem ersten Token. Danach meldet sich die Person erneut an.',
 	'set.k.oauth.refresh_token_absolute_expiry': 'Obergrenze (ab dem ersten Token)',
-	'set.k.oauth.refresh_token_remaining_expiry_inherit':
-		'Ein neues Token übernimmt die Restzeit des alten',
-	'set.k.oauth.refresh_token_remaining_expiry_inherit.desc':
-		'Aus: Die Gültigkeit eines neuen Tokens beginnt bei seiner Ausstellung.',
 	'set.k.oauth.offline_access_required': 'Nur an Apps ausstellen, die offline_access anfordern',
 	'set.k.oauth.offline_access_required.desc':
 		'Aus: Refresh-Tokens werden unabhängig von den angeforderten Scopes ausgestellt.',
@@ -99,9 +104,17 @@ export const deSettings: Record<keyof typeof jaSettings, string> = {
 	'settings.defaultFrom.platform': 'Plattform-Standard: {value}',
 	'settings.defaultFrom.tenant': 'Mandanten-Standard: {value}',
 	'settings.locked.platform': 'Durch die Plattform-Einstellungen festgelegt',
+	'settings.inDevelopment': 'In Entwicklung: Eine Änderung wirkt sich noch nicht aus',
 	'settings.locked.tenant': 'Durch die Mandanten-Einstellungen festgelegt',
 	'settings.badge.locked': 'Gesperrt',
 	'settings.badge.here': 'Überschrieben',
+	'settings.badge.inDevelopment': 'In Entwicklung',
+	'settings.notice.idTokenAlgorithm.title': 'Weicht von OpenID Connect Discovery ab',
+	'settings.notice.idTokenAlgorithm.body':
+		'Alle ID-Tokens werden nicht mit RS256 signiert und Apps können RS256 nicht wählen, daher bietet das Discovery-Dokument RS256 nicht mehr an, was OpenID Connect Discovery verlangt. Discovery selbst funktioniert weiterhin.',
+	'settings.notice.fapi.title': 'FAPI-2.0-Anforderungen gelten',
+	'settings.notice.fapi.body':
+		'Anfragen, die FAPI 2.0 nicht erlaubt, etwa Autorisierungsanfragen ohne PAR, werden abgelehnt, daher funktionieren Apps ohne FAPI-Unterstützung möglicherweise nicht mehr. Discovery funktioniert weiterhin wie spezifiziert.',
 	'settings.value.on': 'Ein',
 	'settings.value.off': 'Aus',
 	'settings.value.empty': '(keine)',

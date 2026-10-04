@@ -40,8 +40,7 @@ const completion = {
 	landing_signedInAs: 'Выполнен вход как',
 	emailCode_title: 'Проверьте почту',
 	emailCode_subtitle: 'Мы отправили код подтверждения на адрес',
-	emailCode_instructions:
-		'Введите шестизначный код из письма. Срок действия кода истечёт через 5 минут.',
+	emailCode_instructions: 'Введите шестизначный код из письма. Срок действия кода указан в письме.',
 	emailCode_codeLabel: 'Код подтверждения',
 	emailCode_resendSuccess: 'Код успешно отправлен',
 	emailCode_success: 'Проверка завершена. Выполняется перенаправление...',

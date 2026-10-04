@@ -54,7 +54,11 @@ import {
   FAPI2_MESSAGE_SIGNING_ALGS,
   resolveProtocolSettings,
 } from '@authrim/ar-lib-core';
-import { isOIDCSigningAlgorithm } from '@authrim/ar-lib-core/utils/oidc-signing';
+import {
+  idTokenSigningAlgorithmRefusal,
+  isOIDCSigningAlgorithm,
+} from '@authrim/ar-lib-core/utils/oidc-signing';
+import { readIDTokenSigningPolicy } from './id-token-signing-policy';
 import { getRequestAwareIssuerUrl } from './request-issuer';
 import {
   ensureActiveTenantDiscoveryAliasDirectory,
@@ -1499,8 +1503,27 @@ export async function registerHandler(c: Context<{ Bindings: Env }>): Promise<Re
     if (!validation.valid) {
       return c.json(validation.error, 400);
     }
+    const idTokenSigning = await readIDTokenSigningPolicy(c, tenantId);
+    if (idTokenSigning instanceof Response) return idTokenSigning;
+    const idTokenAlgorithmRefusal = idTokenSigningAlgorithmRefusal(
+      body?.id_token_signed_response_alg,
+      idTokenSigning
+    );
+    if (idTokenAlgorithmRefusal) {
+      return c.json(
+        { error: 'invalid_client_metadata', error_description: idTokenAlgorithmRefusal },
+        400
+      );
+    }
 
-    const request = validation.data;
+    // A copy: the checks below read the request as the app sent it (`body`).
+    const request = { ...validation.data };
+    // OIDC Registration §2: an omitted id_token_signed_response_alg means RS256. When the
+    // tenant signs with another algorithm, register (and answer) that one, so the app is told
+    // what it gets.
+    if (!request.id_token_signed_response_alg && idTokenSigning.algorithm !== 'RS256') {
+      request.id_token_signed_response_alg = idTokenSigning.algorithm;
+    }
     if (restrictedAgentRegistration) {
       const unsupported = Object.keys(body ?? {}).filter(
         (key) =>

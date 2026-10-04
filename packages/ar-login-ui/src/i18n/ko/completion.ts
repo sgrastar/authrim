@@ -37,7 +37,8 @@ const completion = {
 	landing_signedInAs: '로그인 계정',
 	emailCode_title: '이메일을 확인하세요',
 	emailCode_subtitle: '다음 주소로 인증 코드를 보냈습니다',
-	emailCode_instructions: '이메일로 받은 6자리 코드를 입력하세요. 코드는 5분 후 만료됩니다.',
+	emailCode_instructions:
+		'이메일로 받은 6자리 코드를 입력하세요. 코드의 유효 기간은 이메일에 적혀 있습니다.',
 	emailCode_codeLabel: '인증 코드',
 	emailCode_resendSuccess: '코드를 보냈습니다',
 	emailCode_success: '인증되었습니다. 이동 중입니다...',

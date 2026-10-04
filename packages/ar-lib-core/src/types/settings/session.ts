@@ -15,7 +15,6 @@ export interface SessionSettings {
   // Session TTL
   'session.default_ttl': number;
   'session.max_ttl': number;
-  'session.min_ttl': number;
   'session.ttl.email_code': number;
   'session.ttl.directory_password': number;
   'session.ttl.direct_auth': number;
@@ -25,8 +24,6 @@ export interface SessionSettings {
   'session.ttl.guest': number;
   'session.ttl.did': number;
   'session.refresh_default': boolean;
-  'session.token_ttl': number;
-  'session.tombstone_ttl': number;
 
   // Logout Configuration
   'session.backchannel_logout_token_exp': number;
@@ -65,6 +62,7 @@ export const SESSION_SETTINGS_META: Record<keyof SessionSettings, SettingMeta> =
     max: 604800000,
     unit: 'ms',
     visibility: 'public',
+    status: 'in_development',
   },
   'session.max_ttl': {
     key: 'session.max_ttl',
@@ -79,20 +77,7 @@ export const SESSION_SETTINGS_META: Record<keyof SessionSettings, SettingMeta> =
     max: 2592000000,
     unit: 'ms',
     visibility: 'admin',
-  },
-  'session.min_ttl': {
-    key: 'session.min_ttl',
-    // Per tenant (or app) only, as before the category had platform values.
-    scopes: ['tenant'],
-    type: 'duration',
-    default: 60000,
-    envKey: 'MIN_SESSION_TTL_MS',
-    label: 'Min Session TTL',
-    description: 'Minimum allowed session lifetime in milliseconds (1 minute)',
-    min: 30000,
-    max: 86400000,
-    unit: 'ms',
-    visibility: 'admin',
+    status: 'in_development',
   },
   'session.ttl.email_code': {
     key: 'session.ttl.email_code',
@@ -217,34 +202,7 @@ export const SESSION_SETTINGS_META: Record<keyof SessionSettings, SettingMeta> =
     label: 'Refresh Session by Default',
     description: 'Extend session on activity by default',
     visibility: 'public',
-  },
-  'session.token_ttl': {
-    key: 'session.token_ttl',
-    // Per tenant (or app) only, as before the category had platform values.
-    scopes: ['tenant'],
-    type: 'duration',
-    default: 300,
-    envKey: 'SESSION_TOKEN_TTL',
-    label: 'Session Token TTL',
-    description: 'Session token lifetime in seconds (for session management)',
-    min: 60,
-    max: 3600,
-    unit: 'seconds',
-    visibility: 'admin',
-  },
-  'session.tombstone_ttl': {
-    key: 'session.tombstone_ttl',
-    // Per tenant (or app) only, as before the category had platform values.
-    scopes: ['tenant'],
-    type: 'duration',
-    default: 86400000,
-    envKey: 'SESSION_TOMBSTONE_TTL',
-    label: 'Tombstone TTL',
-    description: 'How long to keep deleted session markers in milliseconds (24 hours)',
-    min: 3600000,
-    max: 604800000,
-    unit: 'ms',
-    visibility: 'admin',
+    status: 'in_development',
   },
 
   // Logout Configuration
@@ -430,7 +388,6 @@ export const SESSION_CATEGORY_META: CategoryMeta = {
 export const SESSION_DEFAULTS: SessionSettings = {
   'session.default_ttl': 86400000,
   'session.max_ttl': 604800000,
-  'session.min_ttl': 60000,
   'session.ttl.email_code': 86400000,
   'session.ttl.directory_password': 86400000,
   'session.ttl.direct_auth': 86400000,
@@ -440,8 +397,6 @@ export const SESSION_DEFAULTS: SessionSettings = {
   'session.ttl.guest': 86400000,
   'session.ttl.did': 86400000,
   'session.refresh_default': true,
-  'session.token_ttl': 300,
-  'session.tombstone_ttl': 86400000,
   'session.backchannel_logout_token_exp': 120,
   'session.backchannel_request_timeout_ms': 5000,
   'session.backchannel_retry_max_attempts': 3,

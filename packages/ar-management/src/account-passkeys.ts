@@ -29,6 +29,8 @@ import {
   resolveAccountReauthTtlSeconds,
   runTenantBackupCoveredEffect,
   withLoginMethodRemovalLock,
+  CREDENTIALS_SETTINGS_META,
+  resolveEmailCodeTtlSeconds,
 } from '@authrim/ar-lib-core';
 import { resolveAaguidAuthenticator } from '@authrim/ar-lib-core/webauthn/aaguid-metadata';
 import { requireAccountSession, type AccountSession } from './account-page';
@@ -60,7 +62,6 @@ async function resolveAccountAuthContext(
   await resolveAccountDataContextFromHono(c, userId);
   return createAccountAuthContextFromHono(c, tenantId);
 }
-const EMAIL_REAUTH_TTL_SECONDS = 5 * 60;
 const RP_NAME = 'Authrim';
 type AccountAuthenticatorTransport = 'usb' | 'nfc' | 'ble' | 'internal' | 'hybrid';
 
@@ -788,6 +789,8 @@ export async function sendAccountEmailCodeReauthHandler(
     );
   }
 
+  // The tenant's email code lifetime (credentials.email_code_ttl).
+  const emailCodeTtlSeconds = await resolveEmailCodeTtlSeconds(c.env, tenantId);
   const challengeId = crypto.randomUUID();
   const code = generateEmailCode();
   const issuedAt = Date.now();
@@ -799,7 +802,7 @@ export async function sendAccountEmailCodeReauthHandler(
     type: 'account_email_reauth',
     userId: accountSession.userId,
     challenge: codeHash,
-    ttl: EMAIL_REAUTH_TTL_SECONDS,
+    ttl: emailCodeTtlSeconds,
     email: normalizedEmail,
     metadata: {
       sessionId: accountSession.sessionId,
@@ -814,7 +817,7 @@ export async function sendAccountEmailCodeReauthHandler(
     notificationKind: 'account.email-reauth',
     accountId: accountSession.userId,
     idempotencyKey: `account-email-reauth:${challengeId}`,
-    expiresAt: Math.floor(issuedAt / 1000) + EMAIL_REAUTH_TTL_SECONDS,
+    expiresAt: Math.floor(issuedAt / 1000) + emailCodeTtlSeconds,
     payload: {
       channel: 'email',
       to: normalizedEmail,
@@ -824,14 +827,14 @@ export async function sendAccountEmailCodeReauthHandler(
         name: user.name,
         email: normalizedEmail,
         code,
-        expiresInMinutes: EMAIL_REAUTH_TTL_SECONDS / 60,
+        expiresInMinutes: Math.ceil(emailCodeTtlSeconds / 60),
       }),
       metadata: {
         textBody: getEmailReauthText({
           name: user.name,
           email: normalizedEmail,
           code,
-          expiresInMinutes: EMAIL_REAUTH_TTL_SECONDS / 60,
+          expiresInMinutes: Math.ceil(emailCodeTtlSeconds / 60),
         }),
       },
     },
@@ -845,7 +848,7 @@ export async function sendAccountEmailCodeReauthHandler(
 
   return c.json({
     challenge_id: challengeId,
-    expires_in: EMAIL_REAUTH_TTL_SECONDS,
+    expires_in: emailCodeTtlSeconds,
     masked_email: maskEmail(normalizedEmail),
   });
 }
@@ -902,7 +905,8 @@ export async function completeAccountEmailCodeReauthHandler(
     c.env.RATE_LIMITER.idFromName(buildDOKey('rate-limit', 'account-email-reauth', tenantId))
   );
   const attemptResult = await rateLimiter.incrementRpc(`verify:${body.challenge_id}`, {
-    windowSeconds: EMAIL_REAUTH_TTL_SECONDS,
+    // As long as any code can last, so a code's attempts never reset while it is valid.
+    windowSeconds: CREDENTIALS_SETTINGS_META['credentials.email_code_ttl'].max ?? 900,
     maxRequests: 5,
   });
   if (!attemptResult.allowed) {

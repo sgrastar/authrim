@@ -103,6 +103,27 @@ describe('ChallengeStore replay protection', () => {
     }
   );
 
+  it('never keeps a challenge past the moment it must end by, whatever its TTL', async () => {
+    const { store } = createStore();
+    await store.storeChallenge({ ...challenge, ttl: 600, notAfterMs: Date.now() + 2000 });
+    await expect(store.getChallenge('challenge-1')).resolves.toMatchObject({
+      expiresAt: Date.now() + 2000,
+    });
+    vi.advanceTimersByTime(2001);
+    await expect(store.getChallenge('challenge-1')).resolves.toBeNull();
+
+    // A later end leaves the TTL in charge.
+    await store.storeChallenge({
+      ...challenge,
+      id: 'longer',
+      ttl: 5,
+      notAfterMs: Date.now() + 60_000,
+    });
+    await expect(store.getChallenge('longer')).resolves.toMatchObject({
+      expiresAt: Date.now() + 5000,
+    });
+  });
+
   it('removes expired challenges from cache and storage', async () => {
     const { store, storage } = createStore();
     await store.storeChallenge({ ...challenge, ttl: 1 });

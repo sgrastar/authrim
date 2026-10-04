@@ -176,6 +176,14 @@ jobs:
           AUTHRIM_TEST_REPORT: ${{ github.workspace }}/ci-reports/authrim-security-matrices.json
         run: pnpm run test:security-matrices
 
+      # Ledger, evidence files and independent checks (some run regression tests). The monthly
+      # report is written outside the repository: committing it stays a manual review step.
+      - name: Run ASVS evidence checks
+        run: >-
+          node scripts/asvs-check.mjs
+          --json-output ci-reports/asvs-coverage-summary.json
+          --report-root "$RUNNER_TEMP/asvs-reports"
+
       - name: Run Phase 1 scale-out correctness tests
         env:
           AUTHRIM_TEST_REPORT: ${{ github.workspace }}/ci-reports/authrim-scale-out-phase1-tests.json

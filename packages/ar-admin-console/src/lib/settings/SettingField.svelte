@@ -25,7 +25,8 @@
 	 * setting takes its value from a list (On / Off), so two checkboxes never sit together.
 	 *
 	 * A setting the scope above has fixed shows why (a lock and "Fixed by the platform") and
-	 * its value as text: nothing to check, nothing that looks editable.
+	 * its value as text: nothing to check, nothing that looks editable. So does a setting still
+	 * in development, saying that changing it has no effect yet.
 	 */
 	interface Props {
 		key: string;
@@ -78,6 +79,8 @@
 		if (!on) entry.v = fallback.value;
 	}
 
+	// Not applied yet: shown with its value, never offered for change.
+	const inDevelopment = $derived(meta.status === 'in_development');
 	const lockedText = $derived(
 		level === 'client' ? t('settings.locked.tenant') : t('settings.locked.platform')
 	);
@@ -87,10 +90,12 @@
 </script>
 
 <FieldRow {label} info={hint} align="text">
-	{#if entry.locked}
+	{#if entry.locked || inDevelopment}
 		<div class="setting">
 			<p class="setting__locked">
-				<span class="setting__lock" aria-hidden="true"><Icon name="lock" /></span>{lockedText}
+				<span class="setting__lock" aria-hidden="true"><Icon name="lock" /></span>{inDevelopment
+					? t('settings.inDevelopment')
+					: lockedText}
 			</p>
 			<p class="setting__value">
 				{#if meta.type === 'boolean'}

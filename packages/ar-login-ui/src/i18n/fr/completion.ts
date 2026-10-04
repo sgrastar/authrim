@@ -42,7 +42,7 @@ const completion = {
 	emailCode_title: 'Consultez votre messagerie',
 	emailCode_subtitle: 'Nous avons envoyé un code de vérification à',
 	emailCode_instructions:
-		'Saisissez le code à 6 chiffres reçu par e-mail. Le code expirera dans 5 minutes.',
+		"Saisissez le code à 6 chiffres reçu par e-mail. L'e-mail indique sa durée de validité.",
 	emailCode_codeLabel: 'Code de vérification',
 	emailCode_resendSuccess: 'Code envoyé',
 	emailCode_success: 'Vérification terminée. Redirection en cours...',

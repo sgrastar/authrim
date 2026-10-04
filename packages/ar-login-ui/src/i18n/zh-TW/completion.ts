@@ -36,7 +36,7 @@ const completion = {
 	landing_signedInAs: '登入身分',
 	emailCode_title: '請查看您的電子郵件',
 	emailCode_subtitle: '我們已將驗證碼傳送至',
-	emailCode_instructions: '請輸入電子郵件中的 6 位數驗證碼。驗證碼將於 5 分鐘後到期。',
+	emailCode_instructions: '請輸入電子郵件中的 6 位數驗證碼。驗證碼的有效期限已寫在電子郵件中。',
 	emailCode_codeLabel: '驗證碼',
 	emailCode_resendSuccess: '驗證碼已傳送',
 	emailCode_success: '驗證成功！正在重新導向...',

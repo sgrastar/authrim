@@ -4,6 +4,11 @@ export const enSettings: Record<keyof typeof jaSettings, string> = {
 	'set.page.stayingSignedIn': 'Staying signed in',
 	'set.page.stayingSignedIn.desc':
 		'How long people stay signed in once they have signed in, and how long their apps keep that sign-in.',
+	'set.page.signingKeys': 'Signing keys',
+	'set.page.signingKeys.desc': 'How this tenant signs its tokens.',
+	'set.section.idTokenSigning': 'ID token signing',
+	'set.section.idTokenSigning.desc':
+		'The algorithm ID tokens are signed with, and whether apps may choose their own.',
 
 	'set.section.signIn': 'Sign-in length',
 	'set.section.signIn.desc': 'How long a person stays signed in to Authrim.',
@@ -34,13 +39,6 @@ export const enSettings: Record<keyof typeof jaSettings, string> = {
 	'set.k.session.ttl.passkey_registration': 'Right after registering a passkey',
 	'set.k.session.max_ttl': 'Longest sign-in allowed',
 	'set.k.session.max_ttl.desc': 'The longest time that can be set for staying signed in.',
-	'set.k.session.min_ttl': 'Shortest sign-in allowed',
-	'set.k.session.min_ttl.desc': 'The shortest time that can be set for staying signed in.',
-	'set.k.session.token_ttl': 'Session token lifetime',
-	'set.k.session.token_ttl.desc': 'How long the token used to manage sessions is valid.',
-	'set.k.session.tombstone_ttl': 'Remember ended sessions for',
-	'set.k.session.tombstone_ttl.desc':
-		'How long a session that ended (by signing out, for example) is remembered, to refuse it.',
 
 	'set.k.oauth.access_token_expiry': 'Access token lifetime',
 	'set.k.oauth.access_token_expiry.desc':
@@ -51,6 +49,18 @@ export const enSettings: Record<keyof typeof jaSettings, string> = {
 	'set.k.oauth.id_token_expiry': 'ID token lifetime',
 	'set.k.oauth.id_token_expiry.desc': 'The token that tells an app who signed in.',
 	'set.k.oauth.refresh_token_rotation': 'Replace the refresh token each time it is used',
+	'set.k.oauth.id_token_signing_alg': 'ID token signing algorithm',
+	'set.k.oauth.id_token_signing_alg.desc':
+		'Signs the ID tokens of apps that do not choose their own algorithm.',
+	'set.k.oauth.id_token_signing_alg_client_override': 'Apps may choose their own algorithm',
+	'set.k.oauth.id_token_signing_alg_client_override.desc':
+		'Off: every ID token is signed with the tenant’s algorithm, and an app registered with another one is refused.',
+	'set.k.security.fapi_enabled': 'Apply FAPI 2.0',
+	'set.k.security.fapi_enabled.desc':
+		'Apply the FAPI 2.0 Security Profile to every app of the tenant.',
+	'set.k.oauth.id_token_signing_alg.RS256': 'RS256',
+	'set.k.oauth.id_token_signing_alg.ES256': 'ES256',
+	'set.k.oauth.id_token_signing_alg.PS256': 'PS256',
 	'set.k.oauth.refresh_token_rotation.desc':
 		'A used token stops working, so a leaked one cannot be used again. Keeping this on is recommended.',
 	'set.k.oauth.refresh_token_sliding_window_enabled': 'Extend the lifetime each time it is used',
@@ -60,10 +70,6 @@ export const enSettings: Record<keyof typeof jaSettings, string> = {
 	'set.k.oauth.refresh_token_absolute_expiry_enabled.desc':
 		'Limits the time since the first token was issued. After it, the person signs in again.',
 	'set.k.oauth.refresh_token_absolute_expiry': 'Limit (from the first token)',
-	'set.k.oauth.refresh_token_remaining_expiry_inherit':
-		'A new token keeps the time left on the old one',
-	'set.k.oauth.refresh_token_remaining_expiry_inherit.desc':
-		'Off: a new token’s lifetime starts when it is issued.',
 	'set.k.oauth.offline_access_required': 'Issue only to apps that ask for offline_access',
 	'set.k.oauth.offline_access_required.desc':
 		'Off: refresh tokens are issued whatever scopes the app asks for.',
@@ -94,9 +100,17 @@ export const enSettings: Record<keyof typeof jaSettings, string> = {
 	'settings.defaultFrom.platform': 'Platform default: {value}',
 	'settings.defaultFrom.tenant': 'Tenant default: {value}',
 	'settings.locked.platform': 'Fixed by the platform settings',
+	'settings.inDevelopment': 'In development: changing this has no effect yet',
 	'settings.locked.tenant': 'Fixed by the tenant settings',
 	'settings.badge.locked': 'Locked',
 	'settings.badge.here': 'Overridden',
+	'settings.badge.inDevelopment': 'In development',
+	'settings.notice.idTokenAlgorithm.title': 'This departs from OpenID Connect Discovery',
+	'settings.notice.idTokenAlgorithm.body':
+		'Every ID token is signed with an algorithm other than RS256 and apps may not choose RS256, so the discovery document no longer offers RS256, which OpenID Connect Discovery requires. Discovery itself keeps working.',
+	'settings.notice.fapi.title': 'FAPI 2.0 requirements apply',
+	'settings.notice.fapi.body':
+		'Requests FAPI 2.0 does not allow, such as authorization requests without PAR, are refused, so apps that do not support FAPI may stop working. Discovery keeps working as the specification describes.',
 	'settings.value.on': 'On',
 	'settings.value.off': 'Off',
 	'settings.value.empty': '(none)',

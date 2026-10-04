@@ -98,6 +98,11 @@ export interface StoreChallengeRequest {
   userId: string;
   challenge: string;
   ttl: number; // Time to live in seconds
+  /**
+   * Never to outlast this moment (milliseconds), whatever the TTL: what the challenge continues
+   * ends then, counted where it is stored rather than where the request was made.
+   */
+  notAfterMs?: number;
   email?: string;
   redirectUri?: string;
   metadata?: Record<string, unknown>;
@@ -353,7 +358,10 @@ export class ChallengeStore extends DurableObject<Env> {
       redirectUri: request.redirectUri,
       metadata: request.metadata,
       createdAt: now,
-      expiresAt: now + request.ttl * 1000,
+      expiresAt:
+        typeof request.notAfterMs === 'number'
+          ? Math.min(now + request.ttl * 1000, request.notAfterMs)
+          : now + request.ttl * 1000,
       consumed: false,
     };
 

@@ -30,6 +30,8 @@ export * from './services/logout-settings';
 export * from './services/account-session';
 export * from './services/account-login-methods';
 export * from './services/authorization-challenge-kind';
+export * from './services/sign-in-limits';
+export * from './services/id-token-signing';
 export * from './services/protocol-settings';
 export {
   StoredLegacyValue,
@@ -98,6 +100,7 @@ export * from './utils/issuer';
 export * from './utils/jwe';
 export * from './utils/jwt';
 export * from './utils/oidc-signing';
+export * from './utils/issued-id-token';
 export * from './utils/mtls';
 export * from './utils/jwt-bearer';
 export * from './utils/keys';

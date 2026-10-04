@@ -54,15 +54,15 @@ describe('backup settings metadata inventory', () => {
     const fields = inspectBackupSettingFields({
       tokens: {
         settings: {
-          'tokens.access_token_signing_key_id': {
-            key: 'tokens.access_token_signing_key_id',
+          'tokens.exchange_enabled': {
+            key: 'tokens.exchange_enabled',
             type: 'future-secret-reference',
           },
         },
       },
     });
     expect(checkTenantSettingFieldCoverage(fields).changedShape).toEqual([
-      'tokens.access_token_signing_key_id',
+      'tokens.exchange_enabled',
     ]);
   });
 });

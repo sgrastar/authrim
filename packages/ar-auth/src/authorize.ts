@@ -1,5 +1,5 @@
 import type { Context } from 'hono';
-import type { Env } from '@authrim/ar-lib-core';
+import type { ClientMetadata, Env } from '@authrim/ar-lib-core';
 import {
   CanonicalRuntimeUserProjectionRepository,
   CanonicalSensitiveValueResolver,
@@ -10,6 +10,7 @@ import {
   validateState,
   validateNonce,
   isRedirectUriRegistered,
+  redirectUriMatchOptionsFor,
   resolveEffectiveSettings,
   falRequiresDpop,
   falRequiresSignedPushedRequest,
@@ -87,6 +88,12 @@ import {
   type FAPIProtocolSettings,
   type OIDCProtocolSettings,
   resolveAuthorizationResponseSigningAlgorithm,
+  resolveIDTokenSigningAlgorithm,
+  resolveIDTokenSigningPolicy,
+  validateIdTokenHint,
+  getIssuedIDTokenKeys,
+  importIssuedTokenKey,
+  deriveOIDCSubject,
   selectJWEEncryptionKey,
   setBoundedMapEntry,
   timingSafeEqual,
@@ -1244,7 +1251,11 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
           errorClientTenantId === requestTenantId &&
           Array.isArray(registeredRedirectUris) &&
           redirectValidation.valid &&
-          isRedirectUriRegistered(redirect_uri, registeredRedirectUris as string[])
+          isRedirectUriRegistered(
+            redirect_uri,
+            registeredRedirectUris,
+            redirectUriMatchOptionsFor(errorClient)
+          )
         ) {
           return redirectWithError(c, redirect_uri, error, description, state, {
             responseMode: response_mode,
@@ -1718,7 +1729,11 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
               errorClientTenantId === requestTenantId &&
               Array.isArray(registeredRedirectUris) &&
               validateRedirectUri(redirect_uri).valid &&
-              isRedirectUriRegistered(redirect_uri, registeredRedirectUris as string[])
+              isRedirectUriRegistered(
+                redirect_uri,
+                registeredRedirectUris,
+                redirectUriMatchOptionsFor(errorClient)
+              )
             ) {
               return redirectWithError(
                 c,
@@ -2154,7 +2169,8 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         if (requestObjectClaims.max_age !== undefined) {
           max_age = String(requestObjectClaims.max_age);
         }
-        if (requestObjectClaims.id_token_hint)
+        // Present means given, whatever its value: a non-string is refused below.
+        if (requestObjectClaims.id_token_hint !== undefined)
           id_token_hint = requestObjectClaims.id_token_hint as string;
         if (requestObjectClaims.acr_values) acr_values = requestObjectClaims.acr_values as string;
         if (requestObjectClaims.display) display = requestObjectClaims.display as string;
@@ -2594,7 +2610,8 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   // to prevent Open Redirect attacks via URL manipulation
   const redirectUriMatches = isRedirectUriRegistered(
     redirect_uri as string,
-    registeredRedirectUris
+    registeredRedirectUris,
+    redirectUriMatchOptionsFor(clientMetadata)
   );
   if (!redirectUriMatches) {
     return c.html(
@@ -3236,88 +3253,43 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
     ssoEnabled = true;
   }
 
-  // Handle id_token_hint parameter (fallback if no session cookie)
-  if (id_token_hint && !sessionUserId) {
-    try {
-      // Decode JWT header to get kid (Key ID)
-      const parts = id_token_hint.split('.');
-      if (parts.length !== 3) {
-        throw new Error('Invalid JWT format');
-      }
-      const headerBase64url = parts[0];
-      const headerBase64 = headerBase64url.replace(/-/g, '+').replace(/_/g, '/');
-      const headerJson = JSON.parse(atob(headerBase64)) as { kid?: string; alg?: string };
-      const kid = headerJson.kid;
-
-      // Fetch JWKS from KeyManager DO
-      let publicKey: CryptoKey | null = null;
-
-      if (c.env.KEY_MANAGER) {
-        try {
-          const tenantId = getTenantIdFromContext(c);
-          const keyManagerId = c.env.KEY_MANAGER.idFromName(`${tenantId}-v3`);
-          const keyManager = c.env.KEY_MANAGER.get(keyManagerId);
-          const keys = await keyManager.getAllPublicKeysRpc();
-
-          // Find key by kid
-          const jwk = kid ? keys.find((k: { kid?: string }) => k.kid === kid) : keys[0];
-          if (jwk) {
-            publicKey = (await importJWK(jwk, 'RS256')) as CryptoKey;
-          }
-        } catch (kmError) {
-          log.warn('Failed to fetch key from KeyManager, falling back to PUBLIC_JWK_JSON', {
-            action: 'key_manager_fallback',
-          });
-        }
-      }
-
-      // Fallback to PUBLIC_JWK_JSON if KeyManager unavailable
-      if (!publicKey) {
-        const publicJwkJson = c.env.PUBLIC_JWK_JSON;
-        if (publicJwkJson) {
-          const publicJwk = JSON.parse(publicJwkJson);
-          // Check if kid matches (if available)
-          if (!kid || publicJwk.kid === kid) {
-            publicKey = (await importJWK(publicJwk, 'RS256')) as CryptoKey;
-          }
-        }
-      }
-
-      if (publicKey) {
-        const verified = await verifyToken(id_token_hint, publicKey, getRequestIssuer(c), {
-          audience: client_id || '',
-        });
-        const idTokenPayload = verified.payload as Record<string, unknown>;
-
-        // Extract user identifier and auth_time from ID token
-        sessionUserId = idTokenPayload.sub as string;
-        authTime = idTokenPayload.auth_time as number;
-        sessionAcr = idTokenPayload.acr as string;
-        if (Array.isArray(idTokenPayload.amr)) {
-          const normalizedAmr = idTokenPayload.amr.filter(
-            (method): method is string => typeof method === 'string' && method.length > 0
-          );
-          if (normalizedAmr.length > 0) {
-            sessionAmr = normalizedAmr;
-          }
-        }
-        log.info('id_token_hint verified successfully', {
-          action: 'id_token_hint_verify',
-          sub: sessionUserId,
-          authTime,
-        });
-      } else {
-        log.error('No matching public key found for id_token_hint verification', {
-          action: 'id_token_hint_key_missing',
-        });
-      }
-    } catch (error) {
-      log.error(
-        'Failed to verify id_token_hint',
-        { action: 'id_token_hint_verify' },
-        error as Error
+  // id_token_hint (OIDC Core 3.1.2.1, 3.1.2.2): an ID token this server issued, naming the
+  // End-User the client expects. It is never a sign-in: without a session it stands in for
+  // nothing (an ID token reaches every app it was issued to, so any holder could replay it with
+  // prompt=none). It must verify (signature and issuer; it may have expired), and the signed-in
+  // End-User must be the one it names, else login_required (the request is not completed for
+  // someone else, prompt=none or not). It is kept with the request, not shown to the login UI.
+  if (id_token_hint !== undefined) {
+    const hintToken: unknown = id_token_hint;
+    if (typeof hintToken !== 'string') {
+      return sendError('invalid_request', 'id_token_hint must be a string');
+    }
+    const hint = await validateIdTokenHint(
+      hintToken,
+      async () =>
+        (await importIssuedTokenKey(await getIssuedIDTokenKeys(c.env, tenantId), hintToken)).key,
+      getRequestIssuer(c),
+      { allowExpired: true }
+    );
+    if (!hint.valid || !hint.userId) {
+      return sendError('invalid_request', 'id_token_hint is not an ID token this server issued');
+    }
+    if (
+      sessionUserId &&
+      !(await idTokenHintNamesUser(
+        c,
+        tenantId,
+        validClientId,
+        clientMetadata,
+        scope,
+        hint.userId,
+        sessionUserId
+      ))
+    ) {
+      return sendError(
+        'login_required',
+        'The End-User identified by id_token_hint is not signed in'
       );
-      // Invalid id_token_hint - treat as if no session exists
     }
   }
 
@@ -4842,9 +4814,15 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       // Get issuer from environment
       const issuer = getRequestIssuer(c);
 
+      // Signed as the token endpoint signs this app's ID tokens.
+      const idTokenSigningAlgorithm = resolveIDTokenSigningAlgorithm(
+        clientMetadata,
+        await resolveIDTokenSigningPolicy(c.env, getTenantIdFromContext(c))
+      );
       const { privateKey, kid: signingKeyId } = await getSigningKeyFromKeyManager(
         c.env,
-        getTenantIdFromContext(c)
+        getTenantIdFromContext(c),
+        idTokenSigningAlgorithm
       );
 
       // Calculate c_hash if code is present (for hybrid flows)
@@ -4925,7 +4903,8 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         idTokenClaims as Parameters<typeof createIDToken>[0],
         privateKey,
         signingKeyId,
-        tokenLifetimeSeconds
+        tokenLifetimeSeconds,
+        idTokenSigningAlgorithm
       );
 
       log.info('Generated id_token for hybrid/implicit flow', {
@@ -5089,6 +5068,51 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   } else {
     // Query mode (for code-only flow)
     return createQueryResponse(c, validRedirectUri, responseParams);
+  }
+}
+
+/**
+ * Whether an id_token_hint's sub names this user: the user's id, or the sub this app's ID tokens
+ * carry for them when its identity mapping issues another one (pairwise or persistent
+ * identifiers). A mapping that cannot be applied names no one.
+ */
+async function idTokenHintNamesUser(
+  c: Context<{ Bindings: Env }>,
+  tenantId: string,
+  clientId: string,
+  clientMetadata: ClientMetadata,
+  scope: string | undefined,
+  hintSubject: string,
+  userId: string
+): Promise<boolean> {
+  if (hintSubject === userId) return true;
+  try {
+    // The user's claims, as an ID token is built from them: a mapping may derive sub from one.
+    // Without them the sub is derived from the id alone (a mismatch at worst, never a match).
+    const user = await resolveAccountDataContextFromHono(c, userId)
+      .then(() => loadOIDCClaimsUser(c, tenantId, userId, createPIIContextFromHono(c, tenantId)))
+      .catch(() => null);
+    const subject = await deriveOIDCSubject({
+      adapter: createAuthContextFromHono(c, tenantId).coreAdapter,
+      env: c.env,
+      tenantId,
+      clientId,
+      sectorIdentifier: clientMetadata.sector_identifier_uri,
+      selector: clientMetadata.identity_mapping,
+      destinationSurface: 'id_token',
+      grantedScopes: scope?.split(' ').filter(Boolean),
+      claims: { ...(user ? buildStandardUserClaims(user) : {}), sub: userId },
+    });
+    return subject === hintSubject;
+  } catch (error) {
+    getLogger(c)
+      .module('AUTHORIZE')
+      .warn('id_token_hint subject could not be mapped for this app', {
+        action: 'id_token_hint_mapping_failed',
+        clientId,
+        error: error instanceof Error ? error.message : 'unknown_error',
+      });
+    return false;
   }
 }
 

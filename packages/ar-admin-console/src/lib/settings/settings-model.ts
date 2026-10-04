@@ -41,6 +41,19 @@ export type Loaded = Partial<Record<CategoryName, SettingsGetResult>>;
 export const fieldOf = (key: string): string => key.replaceAll('.', ':');
 export const keyOf = (field: string): string => field.replaceAll(':', '.');
 
+/**
+ * The badge a setting carries where it is only read: still in development first (a saved value
+ * has no effect), then fixed by the scope above, then set at this scope.
+ */
+export function readBadge(
+	meta: Pick<SettingMeta, 'status'>,
+	entry: Entry
+): 'inDevelopment' | 'locked' | 'here' | null {
+	if (meta.status === 'in_development') return 'inDevelopment';
+	if (entry.locked) return 'locked';
+	return entry.here ? 'here' : null;
+}
+
 export function metaOf(key: string): SettingMeta | undefined {
 	const category = ALL_CATEGORY_META[categoryOf(key)];
 	return category?.settings[key] as SettingMeta | undefined;
@@ -78,7 +91,8 @@ export function fallbackOf(
 
 function applies(setting: PlacedSetting, meta: SettingMeta | undefined, values: Values): boolean {
 	if (!meta || setting.depth === 'hidden') return false;
-	if (meta.visibility === 'internal' || meta.status === 'in_development') return false;
+	// A setting still in development is shown (as not changeable), not hidden.
+	if (meta.visibility === 'internal') return false;
 	if (setting.when && values[fieldOf(setting.when.key)]?.v !== setting.when.is) return false;
 	return true;
 }

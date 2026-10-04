@@ -325,7 +325,7 @@ describe('admin tenant clone', () => {
         )!
       )
     ).toEqual({
-      'tenant.default_id': 'destination',
+      // tenant.default_id is no longer a setting: the source's stale value is dropped.
       'tenant.name': 'Destination',
       'tenant.logo_uri': 'https://cdn.example/logo.svg',
     });
@@ -345,10 +345,8 @@ describe('admin tenant clone', () => {
         )!
       )
     ).toEqual({
+      // Signing key ids are no longer settings: the source's are dropped, not carried over.
       'tokens.access_token_ttl': 300,
-      'tokens.access_token_signing_key_id': '',
-      'tokens.id_token_signing_key_id': '',
-      'tokens.userinfo_signing_key_id': '',
     });
 
     expect(
@@ -440,7 +438,7 @@ describe('admin tenant clone', () => {
     ) as Record<string, unknown>;
 
     expect(copied['authentication-methods.directory_password.enabled']).toBe(false);
-    expect(copied['authentication-methods.directory_password.auto_provision']).toBe(false);
+    expect(copied).not.toHaveProperty('authentication-methods.directory_password.auto_provision');
     expect(copied['authentication-methods.human_verification.login_enabled']).toBe(false);
     expect(JSON.parse(String(copied['authentication-methods.totp.requirement_policy']))).toEqual({
       mode: 'required_for_selected',
@@ -731,7 +729,6 @@ describe('admin tenant clone', () => {
 
     expect(response.status).toBe(201);
     expect(JSON.parse(config.values.get('settings:tenant:destination:tenant')!)).toEqual({
-      'tenant.default_id': 'destination',
       'tenant.name': 'Destination',
       'tenant.logo_uri': 'https://cdn.example/logo.svg',
     });

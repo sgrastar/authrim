@@ -44,8 +44,21 @@ export interface ApplyOIDCIdentityMappingResult {
   binding: RuntimeIdentityMappingBinding | null;
 }
 
+/**
+ * The sub an app's ID tokens carry for a user: `claims.sub` (the user's id) unless the app's
+ * identity mapping issues another (pairwise or persistent identifiers, or one derived from the
+ * user's claims, which `claims` should then hold as at issuance). Only the subject is derived:
+ * the other fields' validation and release consent do not apply. A mapping that produces no sub
+ * leaves `claims.sub`.
+ */
+export async function deriveOIDCSubject(input: ApplyOIDCIdentityMappingInput): Promise<string> {
+  const userId = typeof input.claims.sub === 'string' ? input.claims.sub : '';
+  const { claims } = await applyOIDCIdentityMapping({ ...input, subjectOnly: true });
+  return typeof claims.sub === 'string' ? claims.sub : userId;
+}
+
 export async function applyOIDCIdentityMapping(
-  input: ApplyOIDCIdentityMappingInput
+  input: ApplyOIDCIdentityMappingInput & { subjectOnly?: boolean }
 ): Promise<ApplyOIDCIdentityMappingResult> {
   let binding: RuntimeIdentityMappingBinding | null;
   try {
@@ -65,6 +78,7 @@ export async function applyOIDCIdentityMapping(
     });
   } catch (error) {
     if (!input.selector?.fieldMappingSetId) {
+      if (input.subjectOnly) return { claims: input.claims, binding: null };
       return {
         claims: await applyOIDCDestinationFieldConsent(input, input.claims, null),
         binding: null,
@@ -84,6 +98,7 @@ export async function applyOIDCIdentityMapping(
         }
       );
     }
+    if (input.subjectOnly) return { claims: input.claims, binding: null };
     return {
       claims: await applyOIDCDestinationFieldConsent(input, input.claims, null),
       binding: null,
@@ -132,6 +147,21 @@ export async function applyOIDCIdentityMapping(
       },
     },
   });
+
+  if (input.subjectOnly) {
+    // The last value wins, as issuance overwrites edge outputs with transform results.
+    let subject: unknown = input.claims.sub;
+    for (const value of runtimeResult.values) {
+      if (
+        value.sourceRef.side === 'destination' &&
+        value.sourceRef.namespace === destinationNamespace &&
+        value.sourceRef.path === 'sub'
+      ) {
+        subject = value.value;
+      }
+    }
+    return { claims: { sub: subject }, binding };
+  }
 
   if (runtimeResult.status === 'failed') {
     throw new OIDCIdentityMappingRuntimeError('OIDC identity mapping failed', {

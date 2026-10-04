@@ -55,6 +55,7 @@ export const CIBA_SETTINGS_META: Record<keyof CIBASettings, SettingMeta> = {
     max: 600,
     unit: 'seconds',
     visibility: 'public',
+    status: 'in_development',
   },
   'ciba.poll_interval': {
     key: 'ciba.poll_interval',
@@ -67,6 +68,7 @@ export const CIBA_SETTINGS_META: Record<keyof CIBASettings, SettingMeta> = {
     max: 60,
     unit: 'seconds',
     visibility: 'public',
+    status: 'in_development',
   },
   'ciba.max_poll_count': {
     key: 'ciba.max_poll_count',
@@ -78,6 +80,7 @@ export const CIBA_SETTINGS_META: Record<keyof CIBASettings, SettingMeta> = {
     min: 10,
     max: 500,
     visibility: 'admin',
+    status: 'in_development',
   },
   'ciba.slow_down_increment': {
     key: 'ciba.slow_down_increment',
@@ -90,6 +93,7 @@ export const CIBA_SETTINGS_META: Record<keyof CIBASettings, SettingMeta> = {
     max: 30,
     unit: 'seconds',
     visibility: 'admin',
+    status: 'in_development',
   },
 
   // Expiry Limits
@@ -104,6 +108,7 @@ export const CIBA_SETTINGS_META: Record<keyof CIBASettings, SettingMeta> = {
     max: 600,
     unit: 'seconds',
     visibility: 'admin',
+    status: 'in_development',
   },
   'ciba.max_expires_in': {
     key: 'ciba.max_expires_in',
@@ -116,6 +121,7 @@ export const CIBA_SETTINGS_META: Record<keyof CIBASettings, SettingMeta> = {
     max: 3600,
     unit: 'seconds',
     visibility: 'admin',
+    status: 'in_development',
   },
   'ciba.min_interval': {
     key: 'ciba.min_interval',
@@ -128,6 +134,7 @@ export const CIBA_SETTINGS_META: Record<keyof CIBASettings, SettingMeta> = {
     max: 60,
     unit: 'seconds',
     visibility: 'admin',
+    status: 'in_development',
   },
   'ciba.max_interval': {
     key: 'ciba.max_interval',
@@ -140,6 +147,7 @@ export const CIBA_SETTINGS_META: Record<keyof CIBASettings, SettingMeta> = {
     max: 300,
     unit: 'seconds',
     visibility: 'admin',
+    status: 'in_development',
   },
   'ciba.max_binding_message_length': {
     key: 'ciba.max_binding_message_length',
@@ -151,6 +159,7 @@ export const CIBA_SETTINGS_META: Record<keyof CIBASettings, SettingMeta> = {
     min: 50,
     max: 500,
     visibility: 'admin',
+    status: 'in_development',
   },
   'ciba.binding_message_required': {
     key: 'ciba.binding_message_required',
@@ -160,6 +169,7 @@ export const CIBA_SETTINGS_META: Record<keyof CIBASettings, SettingMeta> = {
     label: 'Binding Message Required',
     description: 'Require binding_message parameter (FAPI-CIBA)',
     visibility: 'public',
+    status: 'in_development',
   },
   'ciba.user_code_enabled': {
     key: 'ciba.user_code_enabled',
@@ -169,6 +179,7 @@ export const CIBA_SETTINGS_META: Record<keyof CIBASettings, SettingMeta> = {
     label: 'User Code Support',
     description: 'Enable user_code parameter support',
     visibility: 'public',
+    status: 'in_development',
   },
   'ciba.auth_request_ttl': {
     key: 'ciba.auth_request_ttl',
@@ -181,6 +192,7 @@ export const CIBA_SETTINGS_META: Record<keyof CIBASettings, SettingMeta> = {
     max: 600,
     unit: 'seconds',
     visibility: 'admin',
+    status: 'in_development',
   },
 
   // Notification Timeout Settings
@@ -195,6 +207,7 @@ export const CIBA_SETTINGS_META: Record<keyof CIBASettings, SettingMeta> = {
     max: 30000,
     unit: 'ms',
     visibility: 'admin',
+    status: 'in_development',
   },
   'ciba.push_notification_timeout_ms': {
     key: 'ciba.push_notification_timeout_ms',
@@ -207,6 +220,7 @@ export const CIBA_SETTINGS_META: Record<keyof CIBASettings, SettingMeta> = {
     max: 30000,
     unit: 'ms',
     visibility: 'admin',
+    status: 'in_development',
   },
   'ciba.notifier_default_timeout_ms': {
     key: 'ciba.notifier_default_timeout_ms',
@@ -219,6 +233,7 @@ export const CIBA_SETTINGS_META: Record<keyof CIBASettings, SettingMeta> = {
     max: 60000,
     unit: 'ms',
     visibility: 'admin',
+    status: 'in_development',
   },
   'ciba.notifier_max_timeout_ms': {
     key: 'ciba.notifier_max_timeout_ms',
@@ -231,6 +246,7 @@ export const CIBA_SETTINGS_META: Record<keyof CIBASettings, SettingMeta> = {
     max: 120000,
     unit: 'ms',
     visibility: 'admin',
+    status: 'in_development',
   },
   'ciba.notifier_retry_delay_base_ms': {
     key: 'ciba.notifier_retry_delay_base_ms',
@@ -243,6 +259,7 @@ export const CIBA_SETTINGS_META: Record<keyof CIBASettings, SettingMeta> = {
     max: 10000,
     unit: 'ms',
     visibility: 'admin',
+    status: 'in_development',
   },
 };
 

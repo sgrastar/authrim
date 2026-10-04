@@ -106,10 +106,7 @@ export const STAYING_SIGNED_IN: SettingsPageDef = {
 				{ key: 'session.ttl.did', depth: 'advanced' },
 				{ key: 'session.ttl.guest', depth: 'advanced' },
 				{ key: 'session.ttl.passkey_registration', depth: 'advanced' },
-				{ key: 'session.max_ttl', depth: 'advanced' },
-				{ key: 'session.min_ttl', depth: 'advanced' },
-				{ key: 'session.token_ttl', depth: 'search' },
-				{ key: 'session.tombstone_ttl', depth: 'search' }
+				{ key: 'session.max_ttl', depth: 'advanced' }
 			]
 		},
 		{
@@ -129,7 +126,6 @@ export const STAYING_SIGNED_IN: SettingsPageDef = {
 					depth: 'advanced',
 					when: { key: 'oauth.refresh_token_absolute_expiry_enabled', is: true }
 				},
-				{ key: 'oauth.refresh_token_remaining_expiry_inherit', depth: 'advanced' },
 				{ key: 'oauth.offline_access_required', depth: 'advanced' },
 				{ key: 'oauth.refresh_id_token_reissue', depth: 'advanced' }
 			]
@@ -152,4 +148,23 @@ export const STAYING_SIGNED_IN: SettingsPageDef = {
 	]
 };
 
-export const SETTINGS_PAGES: readonly SettingsPageDef[] = [STAYING_SIGNED_IN];
+/** Settings → Signing keys: how the tenant signs ID tokens, and whether apps may choose. */
+export const SIGNING_KEYS: SettingsPageDef = {
+	id: 'signing-keys',
+	nav: 'settings/signing-keys',
+	title: 'set.page.signingKeys',
+	description: 'set.page.signingKeys.desc',
+	sections: [
+		{
+			id: 'id-token-signing',
+			title: 'set.section.idTokenSigning',
+			description: 'set.section.idTokenSigning.desc',
+			settings: [
+				{ key: 'oauth.id_token_signing_alg', depth: 'primary' },
+				{ key: 'oauth.id_token_signing_alg_client_override', depth: 'primary' }
+			]
+		}
+	]
+};
+
+export const SETTINGS_PAGES: readonly SettingsPageDef[] = [STAYING_SIGNED_IN, SIGNING_KEYS];

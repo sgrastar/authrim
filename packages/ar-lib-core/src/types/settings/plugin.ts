@@ -37,6 +37,7 @@ export const PLUGIN_SETTINGS_META: Record<keyof PluginSettings, SettingMeta> = {
     label: 'Plugins Enabled',
     description: 'Enable plugin execution for this tenant',
     visibility: 'admin',
+    status: 'in_development',
   },
   'plugin.execution_timeout_ms': {
     key: 'plugin.execution_timeout_ms',
@@ -50,6 +51,7 @@ export const PLUGIN_SETTINGS_META: Record<keyof PluginSettings, SettingMeta> = {
     unit: 'ms',
     visibility: 'admin',
     dependsOn: [{ key: 'plugin.enabled', value: true }],
+    status: 'in_development',
   },
   'plugin.memory_limit_mb': {
     key: 'plugin.memory_limit_mb',
@@ -62,6 +64,7 @@ export const PLUGIN_SETTINGS_META: Record<keyof PluginSettings, SettingMeta> = {
     max: 512,
     visibility: 'admin',
     dependsOn: [{ key: 'plugin.enabled', value: true }],
+    status: 'in_development',
   },
   'plugin.auto_update_check': {
     key: 'plugin.auto_update_check',
@@ -72,6 +75,7 @@ export const PLUGIN_SETTINGS_META: Record<keyof PluginSettings, SettingMeta> = {
     description: 'Automatically check for plugin updates',
     visibility: 'admin',
     dependsOn: [{ key: 'plugin.enabled', value: true }],
+    status: 'in_development',
   },
   'plugin.notifier_resend_enabled': {
     key: 'plugin.notifier_resend_enabled',
@@ -94,6 +98,7 @@ export const PLUGIN_SETTINGS_META: Record<keyof PluginSettings, SettingMeta> = {
       'Enable the Console notifier plugin (development only, logs notifications to console)',
     visibility: 'admin',
     dependsOn: [{ key: 'plugin.enabled', value: true }],
+    status: 'in_development',
   },
 };
 

@@ -290,16 +290,21 @@ controls:
     level: 1
     requirement: Verify that when session termination is triggered (such as logout or expiration), the application disallows any further use of the session. For reference tokens or stateful sessions, this means invalidating the session data at the application backend. Applications using self-contained tokens will need a solution such as maintaining a list of terminated tokens, disallowing tokens produced before a per-user date and time or rotating a per-user signing key.
     status: covered
-    rationale: Logout invalidates backend SessionStore state, expiration is enforced during backend lookup, and persistence tombstones prevent stale deleted sessions from being resurrected.
+    rationale: Logout invalidates backend SessionStore state; lookup enforces expiration and user-wide revocation. Durable Object storage is the only session store, so no cold copy can resurrect a deleted session, and a lookup, extension or rebinding that awaited another actor re-reads storage without interleaving before it caches or writes, so a concurrent logout is never undone.
     evidence:
       - check: asvs.v7_4_1.logout_and_expiration_invalidate_backend_session
-        note: Verify logout calls invalidateSessionRpc and SessionStore deletes hot, durable, and cold persistence state.
+        note: Verify logout calls invalidateSessionRpc, SessionStore deletes hot and Durable Object state, reads no other store, and run the regression tests for logout, expiry and revocation from cache and storage, and for invalidations racing a lookup, extension or rebinding.
       - path: packages/ar-auth/src/logout.ts
-        line: 381
+        line: 459
         note: RP-initiated logout invalidates the current sharded session in SessionStore.
       - path: packages/ar-lib-core/src/durable-objects/SessionStore.ts
-        line: 680
-        note: invalidateSession deletes cache, Durable Object storage, and cold persistence, creating tombstones on persistence-delete failure.
+        line: 562
+        note: invalidateSession deletes the cached session and its Durable Object storage, and removes it from the user's session index.
+      - path: packages/ar-lib-core/src/durable-objects/SessionStore.ts
+        line: 445
+        note: getSession admits cached and stored sessions alike and caches only what storage still holds after the revocation check.
+      - path: packages/ar-lib-core/src/durable-objects/__tests__/SessionStore.test.ts
+        note: Regression tests the check runs (ASVS V7.4.1 block and the invalidation race block).
 
   - id: v5.0.0-V7.4.2
     chapter: V7
@@ -325,18 +330,21 @@ controls:
     level: 1
     requirement: Verify that the authorization server validates redirect URIs based on a client-specific allowlist of pre-registered URIs using exact string comparison.
     status: covered
-    rationale: Authorization and token endpoints validate redirect URI format, require client-specific registered redirect URI matches, and compare the token request redirect URI with the value bound to the authorization code.
+    rationale: Authorization and token endpoints validate redirect URI format, require client-specific registered redirect URI matches, and compare the token request redirect URI with the value bound to the authorization code. The one exception is RFC 8252 section 7.3. For clients registered as native apps (application_type native), the port of an http 127.0.0.1 or [::1] redirect may vary; scheme, IP, path and query still match exactly, and every other client matches exactly, port included. The admin agent authorization server adds one compatibility exception for clients known only by a Client ID Metadata Document (such as Claude Code). A registered portless http://localhost callback accepts a request that is the same URI with only a port inserted after the host, compared as text.
     evidence:
       - check: asvs.v10_4_1.redirect_uri_exact_allowlist
-        note: Verify exact redirect_uri matching and token-request redirect_uri binding.
+        note: Verify exact redirect_uri matching, the native-only, port-only loopback IP exception, and token-request redirect_uri binding, and run the matching tests, including the admin agent CIMD localhost exception.
       - path: packages/ar-auth/src/authorize.ts
-        line: 2027
-        note: Authorization endpoint checks redirect_uri against registered client redirect URIs.
+        line: 2604
+        note: Authorization endpoint checks redirect_uri against registered client redirect URIs, with the client type deciding the loopback port rule.
       - path: packages/ar-lib-core/src/utils/validation.ts
-        line: 911
-        note: isRedirectUriRegistered uses exact string comparison.
+        line: 933
+        note: isRedirectUriRegistered uses exact string comparison, except the port of a native app's loopback IP redirect (RFC 8252).
+      - path: packages/ar-auth/src/admin-agent-oauth.ts
+        line: 88
+        note: The CIMD-only localhost exception inserts a port into the registered URI and compares the result as text.
       - path: packages/ar-token/src/token.ts
-        line: 1656
+        line: 2240
         note: Token endpoint rejects redirect_uri values that differ from the authorization code binding.
 
   - id: v5.0.0-V10.4.2
@@ -402,16 +410,16 @@ controls:
     level: 1
     requirement: Verify that the authorization server mitigates refresh token replay attacks for public clients, preferably using sender-constrained refresh tokens, i.e., Demonstrating Proof of Possession (DPoP) or Certificate-Bound Access Tokens using mutual TLS (mTLS). For L1 and L2 applications, refresh token rotation may be used. If refresh token rotation is used, the authorization server must invalidate the refresh token after usage, and revoke all refresh tokens for that authorization if an already used and invalidated refresh token is provided.
     status: covered
-    rationale: Public-client refresh token use requires DPoP binding, refresh token rotation is enabled by default, and replay/theft detection revokes the refresh token family.
+    rationale: Public-client refresh token use requires DPoP binding, refresh token rotation is enabled by default (a tenant or app can turn it off only with an explicit false), and replay/theft detection revokes the refresh token family.
     evidence:
       - check: asvs.v10_4_5.public_refresh_token_replay_protection
         note: Verify DPoP-bound public refresh tokens and default refresh-token rotation with family revocation on replay/theft.
       - path: packages/ar-token/src/token.ts
-        line: 3004
+        line: 3840
         note: Public client refresh tokens must be DPoP-bound.
       - path: packages/ar-token/src/token.ts
-        line: 3183
-        note: Refresh token rotation is enabled by default and uses RefreshTokenRotator.
+        line: 4061
+        note: Refresh token rotation follows oauth.refresh_token_rotation (on by default; only an explicit false, or the FAPI 2.0 profile, turns it off) and uses RefreshTokenRotator.
       - path: packages/ar-lib-core/src/durable-objects/RefreshTokenRotator.ts
         line: 512
         note: RefreshTokenRotator rejects expired/revoked families and detects stale token versions.

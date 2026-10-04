@@ -43,6 +43,8 @@ import {
   type DirectoryAuthMigrationDecision,
   type Env,
   type SessionEventData,
+  resolveAuthMaxFailedAttempts,
+  resolveEmailCodeTtlSeconds,
 } from '@authrim/ar-lib-core';
 import {
   DirectoryPasswordClient,
@@ -89,10 +91,8 @@ const MAX_DIRECTORY_FACTS_JSON_BYTES = 32 * 1024;
 const WORDWARDEN_CONNECTOR_ID_PATTERN = /^wwcon_[a-zA-Z0-9]{16}$/;
 const RP_NAME = 'Authrim';
 const MIGRATION_PASSKEY_CHALLENGE_TTL_SECONDS = 5 * 60;
-const MIGRATION_EMAIL_CODE_TTL_SECONDS = 5 * 60;
 const DIRECTORY_UNAVAILABLE_RECOVERY_REQUEST_PREFIX = 'directory_unavailable_recovery:';
 const DIRECTORY_PASSWORD_ACCOUNT_WINDOW_SECONDS = 15 * 60;
-const DIRECTORY_PASSWORD_ACCOUNT_MAX_FAILURES = 5;
 
 async function getDirectoryPasswordAccountLimiter(env: Env, tenantId: string, username: string) {
   const normalizedUsername = username.normalize('NFKC').toLocaleLowerCase('en-US');
@@ -336,7 +336,8 @@ export function createDirectoryPasswordLoginHandler(fetcher?: DirectoryPasswordF
     // burst to send many password guesses before any failure is recorded.
     const accountAttempt = await accountRateLimit.limiter.incrementRpc(accountRateLimit.key, {
       windowSeconds: DIRECTORY_PASSWORD_ACCOUNT_WINDOW_SECONDS,
-      maxRequests: DIRECTORY_PASSWORD_ACCOUNT_MAX_FAILURES,
+      // The tenant's lockout threshold (rate_limit.auth_max_failed_attempts).
+      maxRequests: await resolveAuthMaxFailedAttempts(c.env, tenantId),
     });
     if (!accountAttempt.allowed) {
       return c.json(
@@ -1120,6 +1121,15 @@ export async function directoryMigrationEmailCodeSendHandler(c: Context<{ Bindin
     }
 
     const code = generateEmailCode();
+    // The tenant's email code lifetime (credentials.email_code_ttl), but never past the
+    // transaction the code completes.
+    const emailCodeTtlSeconds = Math.max(
+      1,
+      Math.min(
+        await resolveEmailCodeTtlSeconds(c.env, tenantId),
+        Math.floor((transaction.expires_at - Date.now()) / 1000)
+      )
+    );
     const challengeId = crypto.randomUUID();
     const issuedAt = Date.now();
     const normalizedEmail = runtimeUser.email.toLowerCase();
@@ -1130,13 +1140,19 @@ export async function directoryMigrationEmailCodeSendHandler(c: Context<{ Bindin
       getChallengeStoreByChallengeId(c.env, challengeId, tenantId),
     ]);
 
+    const codeExpiresAtMs = Math.min(
+      Date.now() + emailCodeTtlSeconds * 1000,
+      transaction.expires_at
+    );
     await challengeStore.storeChallengeRpc({
       id: `directory_migration_email:${challengeId}`,
       tenantId,
       type: 'directory_migration_email',
       userId: transaction.user_id,
       challenge: codeHash,
-      ttl: MIGRATION_EMAIL_CODE_TTL_SECONDS,
+      // The store ends the code with its transaction, however long storing takes.
+      ttl: emailCodeTtlSeconds,
+      notAfterMs: transaction.expires_at,
       email: normalizedEmail,
       metadata: {
         transaction_id: transaction.id,
@@ -1155,7 +1171,7 @@ export async function directoryMigrationEmailCodeSendHandler(c: Context<{ Bindin
       notificationKind: 'auth.directory-email-code',
       accountId: transaction.user_id,
       idempotencyKey: `directory-email-code:${challengeId}`,
-      expiresAt: Math.floor(issuedAt / 1000) + MIGRATION_EMAIL_CODE_TTL_SECONDS,
+      expiresAt: Math.floor(codeExpiresAtMs / 1000),
       payload: {
         channel: 'email',
         to: normalizedEmail,
@@ -1168,7 +1184,7 @@ export async function directoryMigrationEmailCodeSendHandler(c: Context<{ Bindin
           name: runtimeUser.name || undefined,
           email: normalizedEmail,
           code,
-          expiresInMinutes: MIGRATION_EMAIL_CODE_TTL_SECONDS / 60,
+          expiresInMinutes: Math.max(1, Math.ceil((codeExpiresAtMs - Date.now()) / 60_000)),
           appName: 'Authrim',
           logoUrl: undefined,
         }),
@@ -1177,7 +1193,7 @@ export async function directoryMigrationEmailCodeSendHandler(c: Context<{ Bindin
             name: runtimeUser.name || undefined,
             email: normalizedEmail,
             code,
-            expiresInMinutes: MIGRATION_EMAIL_CODE_TTL_SECONDS / 60,
+            expiresInMinutes: Math.max(1, Math.ceil((codeExpiresAtMs - Date.now()) / 60_000)),
             appName: 'Authrim',
           }),
           headers: {
@@ -1198,7 +1214,7 @@ export async function directoryMigrationEmailCodeSendHandler(c: Context<{ Bindin
     return c.json({
       success: true,
       challenge_id: challengeId,
-      expires_in: MIGRATION_EMAIL_CODE_TTL_SECONDS,
+      expires_in: emailCodeTtlSeconds,
       masked_email: maskEmail(normalizedEmail),
     });
   } catch (error) {

@@ -330,7 +330,8 @@ const translation = {
 	register_metaDescription: 'पासकी, ईमेल कोड या किसी अन्य उपलब्ध विधि से खाता बनाएँ।',
 	emailCode_title: 'अपने ईमेल की जाँच करें',
 	emailCode_subtitle: 'हमने एक सत्यापन कोड भेजा है',
-	emailCode_instructions: 'अपने ईमेल से 6 अंकों का कोड दर्ज करें। कोड 5 मिनट में समाप्त हो जाएगा.',
+	emailCode_instructions:
+		'अपने ईमेल से 6 अंकों का कोड दर्ज करें। कोड कितनी देर मान्य है, यह ईमेल में लिखा है।',
 	emailCode_codeLabel: 'सत्यापन कोड',
 	emailCode_verifyButton: 'सत्यापित करें',
 	emailCode_resendButton: 'फिर से कोड भेजें',
