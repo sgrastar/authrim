@@ -980,7 +980,8 @@ export function generateWranglerConfig(
   }
 
   // Service Bindings for standard services used by auth/runtime and admin proxies.
-  if (component === 'ar-discovery') {
+  // Discovery publishes the OIDC JWKS; ar-async verifies CIBA id_token_hints signed with them.
+  if (component === 'ar-discovery' || component === 'ar-async') {
     wranglerConfig.services = [
       {
         binding: 'KEY_MANAGER_PUBLIC',

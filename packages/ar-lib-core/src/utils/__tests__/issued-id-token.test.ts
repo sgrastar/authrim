@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { SignJWT, exportJWK, generateKeyPair, type JWK } from 'jose';
-import { importIssuedTokenKey } from '../issued-id-token';
+import { getIssuedIDTokenKeys, importIssuedTokenKey } from '../issued-id-token';
+import type { Env } from '../../types/env';
 import { validateIdTokenHint } from '../logout-validation';
 
 async function signedWith(algorithm: 'RS256' | 'ES256' | 'PS256', kid: string) {
@@ -41,6 +42,21 @@ describe('keys of ID tokens this tenant issued', () => {
     await expect(importIssuedTokenKey([rs.jwk], unsigned)).rejects.toThrow(
       'Unsupported token signing algorithm'
     );
+  });
+
+  it('reads the keys from the KeyManager, else its public-key-only facade', async () => {
+    const oidcKeys = [{ kid: 'es', alg: 'ES256' }];
+    const viaKeyManager = {
+      KEY_MANAGER: {
+        idFromName: (name: string) => name,
+        get: () => ({ getAllOIDCPublicKeysRpc: async () => oidcKeys }),
+      },
+    } as unknown as Env;
+    await expect(getIssuedIDTokenKeys(viaKeyManager, 't')).resolves.toEqual(oidcKeys);
+
+    const getAllPublicKeys = async (tenantId: string) => (tenantId === 't' ? oidcKeys : []);
+    const viaPublicFacade = { KEY_MANAGER_PUBLIC: { getAllPublicKeys } } as unknown as Env;
+    await expect(getIssuedIDTokenKeys(viaPublicFacade, 't')).resolves.toEqual(oidcKeys);
   });
 
   it('accepts an id_token_hint signed with ES256 at logout', async () => {

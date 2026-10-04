@@ -1516,7 +1516,8 @@ export async function registerHandler(c: Context<{ Bindings: Env }>): Promise<Re
       );
     }
 
-    const request = validation.data;
+    // A copy: the checks below read the request as the app sent it (`body`).
+    const request = { ...validation.data };
     // OIDC Registration §2: an omitted id_token_signed_response_alg means RS256. When the
     // tenant signs with another algorithm, register (and answer) that one, so the app is told
     // what it gets.

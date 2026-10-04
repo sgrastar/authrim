@@ -6,6 +6,7 @@
 
 import { decodeProtectedHeader, importJWK, type JWK } from 'jose';
 import type { Env } from '../types/env';
+import { getJwksWithCache } from './jwks-cache';
 import {
   isOIDCSigningAlgorithm,
   OIDC_SIGNING_ALGORITHMS,
@@ -15,14 +16,20 @@ import {
 /** The algorithms an ID token Authrim issued can be signed with. */
 export const ISSUED_ID_TOKEN_ALGORITHMS: readonly OIDCSigningAlgorithm[] = OIDC_SIGNING_ALGORITHMS;
 
-/** The public keys this tenant signs ID tokens with: RS256, and the ES256 and PS256 keys. */
-export async function getIssuedIDTokenKeys(
-  env: Pick<Env, 'KEY_MANAGER'>,
-  tenantId: string
-): Promise<JWK[]> {
-  if (!env.KEY_MANAGER) throw new Error('KEY_MANAGER binding not available');
-  const keyManager = env.KEY_MANAGER.get(env.KEY_MANAGER.idFromName(`${tenantId}-v3`));
-  return (await keyManager.getAllOIDCPublicKeysRpc()) as JWK[];
+/**
+ * The public keys this tenant signs ID tokens with: RS256, and the ES256 and PS256 keys. From the
+ * KeyManager, or its public-key-only facade (KEY_MANAGER_PUBLIC); a Worker with neither keeps the
+ * cached RS256 JWKS it used before.
+ */
+export async function getIssuedIDTokenKeys(env: Env, tenantId: string): Promise<JWK[]> {
+  if (env.KEY_MANAGER) {
+    const keyManager = env.KEY_MANAGER.get(env.KEY_MANAGER.idFromName(`${tenantId}-v3`));
+    return (await keyManager.getAllOIDCPublicKeysRpc()) as JWK[];
+  }
+  if (env.KEY_MANAGER_PUBLIC) {
+    return env.KEY_MANAGER_PUBLIC.getAllPublicKeys(tenantId);
+  }
+  return (await getJwksWithCache(env, tenantId)).keys;
 }
 
 /**
