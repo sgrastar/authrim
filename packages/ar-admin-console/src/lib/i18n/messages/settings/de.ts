@@ -46,6 +46,18 @@ export const deSettings: Record<keyof typeof jaSettings, string> = {
 	'set.k.oauth.id_token_expiry': 'Gültigkeit des ID-Tokens',
 	'set.k.oauth.id_token_expiry.desc': 'Das Token, das einer App mitteilt, wer sich angemeldet hat.',
 	'set.k.oauth.refresh_token_rotation': 'Refresh-Token bei jeder Nutzung ersetzen',
+	'set.k.oauth.id_token_signing_alg': 'Signaturalgorithmus für ID-Tokens',
+	'set.k.oauth.id_token_signing_alg.desc':
+		'Signiert die ID-Tokens von Apps, die keinen eigenen Algorithmus wählen.',
+	'set.k.oauth.id_token_signing_alg_client_override': 'Apps dürfen ihren Algorithmus wählen',
+	'set.k.oauth.id_token_signing_alg_client_override.desc':
+		'Aus: Jedes ID-Token wird mit dem Algorithmus des Mandanten signiert, und Apps mit einem anderen werden abgelehnt.',
+	'set.k.security.fapi_enabled': 'FAPI 2.0 anwenden',
+	'set.k.security.fapi_enabled.desc':
+		'Das FAPI-2.0-Sicherheitsprofil auf alle Apps des Mandanten anwenden.',
+	'set.k.oauth.id_token_signing_alg.RS256': 'RS256',
+	'set.k.oauth.id_token_signing_alg.ES256': 'ES256',
+	'set.k.oauth.id_token_signing_alg.PS256': 'PS256',
 	'set.k.oauth.refresh_token_rotation.desc':
 		'Ein benutztes Token wird ungültig, ein kompromittiertes kann also nicht erneut verwendet werden. Empfohlen: eingeschaltet lassen.',
 	'set.k.oauth.refresh_token_sliding_window_enabled': 'Gültigkeit bei jeder Nutzung verlängern',
@@ -92,6 +104,12 @@ export const deSettings: Record<keyof typeof jaSettings, string> = {
 	'settings.badge.locked': 'Gesperrt',
 	'settings.badge.here': 'Überschrieben',
 	'settings.badge.inDevelopment': 'In Entwicklung',
+	'settings.notice.idTokenAlgorithm.title': 'Weicht von OpenID Connect Discovery ab',
+	'settings.notice.idTokenAlgorithm.body':
+		'Alle ID-Tokens werden nicht mit RS256 signiert und Apps können RS256 nicht wählen, daher bietet das Discovery-Dokument RS256 nicht mehr an, was OpenID Connect Discovery verlangt. Discovery selbst funktioniert weiterhin.',
+	'settings.notice.fapi.title': 'FAPI-2.0-Anforderungen gelten',
+	'settings.notice.fapi.body':
+		'Anfragen, die FAPI 2.0 nicht erlaubt, etwa Autorisierungsanfragen ohne PAR, werden abgelehnt, daher funktionieren Apps ohne FAPI-Unterstützung möglicherweise nicht mehr. Discovery funktioniert weiterhin wie spezifiziert.',
 	'settings.value.on': 'Ein',
 	'settings.value.off': 'Aus',
 	'settings.value.empty': '(keine)',

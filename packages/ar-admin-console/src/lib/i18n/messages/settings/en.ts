@@ -44,6 +44,18 @@ export const enSettings: Record<keyof typeof jaSettings, string> = {
 	'set.k.oauth.id_token_expiry': 'ID token lifetime',
 	'set.k.oauth.id_token_expiry.desc': 'The token that tells an app who signed in.',
 	'set.k.oauth.refresh_token_rotation': 'Replace the refresh token each time it is used',
+	'set.k.oauth.id_token_signing_alg': 'ID token signing algorithm',
+	'set.k.oauth.id_token_signing_alg.desc':
+		'Signs the ID tokens of apps that do not choose their own algorithm.',
+	'set.k.oauth.id_token_signing_alg_client_override': 'Apps may choose their own algorithm',
+	'set.k.oauth.id_token_signing_alg_client_override.desc':
+		'Off: every ID token is signed with the tenant’s algorithm, and an app registered with another one is refused.',
+	'set.k.security.fapi_enabled': 'Apply FAPI 2.0',
+	'set.k.security.fapi_enabled.desc':
+		'Apply the FAPI 2.0 Security Profile to every app of the tenant.',
+	'set.k.oauth.id_token_signing_alg.RS256': 'RS256',
+	'set.k.oauth.id_token_signing_alg.ES256': 'ES256',
+	'set.k.oauth.id_token_signing_alg.PS256': 'PS256',
 	'set.k.oauth.refresh_token_rotation.desc':
 		'A used token stops working, so a leaked one cannot be used again. Keeping this on is recommended.',
 	'set.k.oauth.refresh_token_sliding_window_enabled': 'Extend the lifetime each time it is used',
@@ -88,6 +100,12 @@ export const enSettings: Record<keyof typeof jaSettings, string> = {
 	'settings.badge.locked': 'Locked',
 	'settings.badge.here': 'Overridden',
 	'settings.badge.inDevelopment': 'In development',
+	'settings.notice.idTokenAlgorithm.title': 'This departs from OpenID Connect Discovery',
+	'settings.notice.idTokenAlgorithm.body':
+		'Every ID token is signed with an algorithm other than RS256 and apps may not choose RS256, so the discovery document no longer offers RS256, which OpenID Connect Discovery requires. Discovery itself keeps working.',
+	'settings.notice.fapi.title': 'FAPI 2.0 requirements apply',
+	'settings.notice.fapi.body':
+		'Requests FAPI 2.0 does not allow, such as authorization requests without PAR, are refused, so apps that do not support FAPI may stop working. Discovery keeps working as the specification describes.',
 	'settings.value.on': 'On',
 	'settings.value.off': 'Off',
 	'settings.value.empty': '(none)',

@@ -285,7 +285,7 @@ export const OAUTH_SETTINGS_META: Record<keyof OAuthSettings, SettingMeta> = {
     default: true,
     label: 'Apps May Choose the ID Token Signing Algorithm',
     description:
-      "On: an app's id_token_signed_response_alg is used. Off: every ID token is signed with the tenant's algorithm, discovery advertises only it, and registering or updating an app with another one is refused. Off with ES256 or PS256 departs from OpenID Connect Discovery, which expects RS256 to be offered (as FAPI profiles do).",
+      "On: an app's id_token_signed_response_alg is used. Off: every ID token is signed with the tenant's algorithm, discovery advertises only it, and registering or updating an app with another one is refused. Off with ES256 or PS256 departs from OpenID Connect Discovery, which expects RS256 to be offered; Discovery itself keeps working.",
     visibility: 'admin',
   },
 
