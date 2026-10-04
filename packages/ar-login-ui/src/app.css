@@ -957,8 +957,8 @@ tr.expired {
 }
 
 /* --- Built-in Login UI theme templates --- */
-/* Classic: explicit legacy Authrim preset. Colors continue to come from the
-   selected light/dark variant, while component geometry is fixed here. */
+/* Classic: explicit legacy Authrim preset. Colors come from the base light/dark palette
+   (themes.css), while component geometry is fixed here. */
 :is(:root, .login-ui-theme-boundary)[data-login-theme='classic'] {
 	--login-page-background-color: var(--bg-page);
 	--login-page-overlay: transparent;

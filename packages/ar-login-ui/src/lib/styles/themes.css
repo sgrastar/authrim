@@ -1,16 +1,15 @@
 /* ============================================
-   THEME VARIANTS - Authrim Login UI
-   6 Variants: Light (Beige, Blue-Gray, Green)
-               Dark (Brown, Navy, Slate)
+   THEME PALETTES - Authrim Login UI
+   The base light and dark palettes (Classic uses them as they are; the other theme templates
+   redefine their own in app.css).
    ============================================ */
 
 /* Button gradients stay within one band of each hue, so the button text (white on the light
-   variants, --text-inverse on the dark ones) meets 4.5:1 across the whole button. */
+   palette, --text-inverse on the dark one) meets 4.5:1 across the whole button. */
 
-/* === Light Theme - Beige Variant (Default) === */
+/* === Light Theme === */
 :root,
-[data-theme='light'],
-[data-theme='light'][data-variant='beige'] {
+[data-theme='light'] {
 	color-scheme: light;
 
 	/* Navigation */
@@ -49,74 +48,6 @@
 	/* Accent */
 	--accent: #666666;
 	--accent-light: rgba(102, 102, 102, 0.1);
-}
-
-/* === Light Theme - Blue-Gray Variant === */
-[data-theme='light'][data-variant='blue-gray'] {
-	/* Navigation */
-	--bg-nav: rgba(51, 65, 85, 0.95);
-	--nav-active-bg: rgba(255, 255, 255, 0.15);
-
-	/* Primary Colors */
-	--primary: #1d4ed8;
-	--primary-hover: #1e40af;
-	--primary-light: rgba(59, 130, 246, 0.1);
-	--primary-glow: rgba(59, 130, 246, 0.4);
-	--gradient-primary: linear-gradient(135deg, #2563eb 0%, #1d4ed8 50%, #1e40af 100%);
-	--gradient-accent: linear-gradient(135deg, #60a5fa 0%, #3b82f6 100%);
-
-	/* Surfaces */
-	--bg-page: #e8edf2;
-	--bg-card: rgba(248, 250, 252, 0.92);
-	--bg-glass: rgba(248, 250, 252, 0.7);
-	--bg-input: rgba(255, 255, 255, 0.6);
-	--bg-subtle: rgba(51, 65, 85, 0.05);
-
-	/* Text */
-	--text-primary: #1e293b;
-	--text-secondary: #475569;
-	--text-muted: #606a78;
-
-	/* Borders */
-	--border: rgba(51, 65, 85, 0.1);
-
-	/* Accent */
-	--accent: #6366f1;
-	--accent-light: rgba(99, 102, 241, 0.1);
-}
-
-/* === Light Theme - Green Variant === */
-[data-theme='light'][data-variant='green'] {
-	/* Navigation */
-	--bg-nav: rgba(34, 51, 34, 0.95);
-	--nav-active-bg: rgba(255, 255, 255, 0.15);
-
-	/* Primary Colors */
-	--primary: #047857;
-	--primary-hover: #065f46;
-	--primary-light: rgba(16, 185, 129, 0.1);
-	--primary-glow: rgba(16, 185, 129, 0.4);
-	--gradient-primary: linear-gradient(135deg, #047857 0%, #065f46 50%, #064e3b 100%);
-	--gradient-accent: linear-gradient(135deg, #34d399 0%, #10b981 100%);
-
-	/* Surfaces */
-	--bg-page: #e8f2e8;
-	--bg-card: rgba(248, 252, 248, 0.92);
-	--bg-glass: rgba(248, 252, 248, 0.7);
-	--bg-input: rgba(255, 255, 255, 0.6);
-	--bg-subtle: rgba(34, 51, 34, 0.05);
-
-	/* Text */
-	--text-primary: #1a2e1a;
-	--text-secondary: #2d5a2d;
-	--text-muted: #507450;
-
-	/* Borders */
-	--border: rgba(34, 51, 34, 0.1);
-
-	/* Accent */
-	--accent: #059669;
-	--accent-light: rgba(5, 150, 105, 0.1);
 }
 
 /* === System Preference Detection ===
@@ -176,9 +107,8 @@
 	}
 }
 
-/* === Dark Theme - Brown Variant (Default Dark) === */
-[data-theme='dark'],
-[data-theme='dark'][data-variant='brown'] {
+/* === Dark Theme === */
+[data-theme='dark'] {
 	color-scheme: dark;
 
 	/* Navigation */
@@ -227,78 +157,6 @@
 	--client-bg: rgba(251, 191, 36, 0.2);
 	--compliance-color: #34d399;
 	--compliance-bg: rgba(52, 211, 153, 0.2);
-}
-
-/* === Dark Theme - Navy Variant === */
-[data-theme='dark'][data-variant='navy'] {
-	/* Navigation */
-	--bg-nav: rgba(28, 37, 48, 0.98);
-	--nav-active-bg: rgba(100, 149, 237, 0.25);
-	--nav-border: rgba(100, 149, 237, 0.2);
-
-	/* Primary Colors */
-	--primary: #6495ed;
-	--primary-hover: #4169e1;
-	--primary-light: rgba(100, 149, 237, 0.15);
-	--primary-glow: rgba(100, 149, 237, 0.4);
-	--gradient-primary: linear-gradient(135deg, #a9c1f5 0%, #93b2f2 50%, #7ea2ee 100%);
-	--gradient-accent: linear-gradient(135deg, #93c5fd 0%, #6495ed 100%);
-
-	/* Surfaces */
-	--bg-page: #0a0e14;
-	--bg-card: rgba(35, 44, 56, 0.95);
-	--bg-glass: rgba(35, 44, 56, 0.8);
-	--bg-input: rgba(45, 55, 72, 0.8);
-	--bg-subtle: rgba(45, 55, 72, 0.5);
-
-	/* Text */
-	--text-primary: #e8f0ff;
-	--text-secondary: #c5d5ea;
-	--text-muted: #8b9bb5;
-
-	/* Borders */
-	--border: rgba(100, 149, 237, 0.15);
-	--border-glass: rgba(100, 149, 237, 0.2);
-
-	/* Accent */
-	--accent: #93c5fd;
-	--accent-light: rgba(147, 197, 253, 0.15);
-}
-
-/* === Dark Theme - Slate Variant === */
-[data-theme='dark'][data-variant='slate'] {
-	/* Navigation */
-	--bg-nav: rgba(38, 42, 48, 0.98);
-	--nav-active-bg: rgba(148, 163, 184, 0.25);
-	--nav-border: rgba(148, 163, 184, 0.2);
-
-	/* Primary Colors */
-	--primary: #94a3b8;
-	--primary-hover: #64748b;
-	--primary-light: rgba(148, 163, 184, 0.15);
-	--primary-glow: rgba(148, 163, 184, 0.4);
-	--gradient-primary: linear-gradient(135deg, #b8c4d4 0%, #a6b4c7 50%, #94a3b8 100%);
-	--gradient-accent: linear-gradient(135deg, #cbd5e1 0%, #94a3b8 100%);
-
-	/* Surfaces */
-	--bg-page: #0f1419;
-	--bg-card: rgba(45, 52, 60, 0.95);
-	--bg-glass: rgba(45, 52, 60, 0.8);
-	--bg-input: rgba(55, 65, 81, 0.8);
-	--bg-subtle: rgba(55, 65, 81, 0.5);
-
-	/* Text */
-	--text-primary: #f1f5f9;
-	--text-secondary: #cbd5e1;
-	--text-muted: #94a3b8;
-
-	/* Borders */
-	--border: rgba(148, 163, 184, 0.15);
-	--border-glass: rgba(148, 163, 184, 0.2);
-
-	/* Accent */
-	--accent: #cbd5e1;
-	--accent-light: rgba(203, 213, 225, 0.15);
 }
 
 /* ============================================
@@ -359,11 +217,6 @@
 [data-theme='dark'] .stat-icon.purple {
 	background: rgba(100, 149, 237, 0.2);
 	color: #6495ed;
-}
-
-[data-theme='dark'][data-variant='slate'] .stat-icon.purple {
-	background: rgba(148, 163, 184, 0.2);
-	color: #94a3b8;
 }
 
 [data-theme='dark'] .stat-icon.green {
@@ -496,10 +349,6 @@
 	background: rgba(100, 149, 237, 0.15);
 }
 
-[data-theme='dark'][data-variant='slate'] .activity-icon.stat-icon.purple {
-	background: rgba(148, 163, 184, 0.15);
-}
-
 [data-theme='dark'] .activity-icon.stat-icon.pink {
 	background: rgba(236, 72, 153, 0.15);
 }
@@ -547,66 +396,4 @@
 
 #theme-toggle:active {
 	transform: rotate(360deg);
-}
-
-/* ============================================
-   VARIANT SELECTOR STYLES
-   ============================================ */
-
-#light-variant-selector,
-#dark-variant-selector {
-	display: flex;
-	gap: 4px;
-	align-items: center;
-	padding: 4px;
-	background: rgba(255, 255, 255, 0.05);
-	border-radius: 8px;
-}
-
-.variant-btn {
-	padding: 6px !important;
-	min-width: unset !important;
-	width: 32px !important;
-	height: 32px !important;
-	display: flex;
-	align-items: center;
-	justify-content: center;
-	opacity: 0.5;
-	transition: all 0.2s ease;
-}
-
-.variant-btn:hover {
-	opacity: 0.8;
-	transform: scale(1.1);
-}
-
-.variant-btn.active {
-	opacity: 1;
-	background: rgba(255, 255, 255, 0.1) !important;
-	box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.2);
-}
-
-/* ============================================
-   RESPONSIVE VARIANT SELECTOR ADJUSTMENTS
-   ============================================ */
-
-@media (max-width: 900px) {
-	#light-variant-selector,
-	#dark-variant-selector {
-		gap: 2px;
-		padding: 2px;
-	}
-
-	.variant-btn {
-		width: 28px !important;
-		height: 28px !important;
-		padding: 4px !important;
-	}
-}
-
-@media (max-width: 640px) {
-	#light-variant-selector,
-	#dark-variant-selector {
-		display: none !important;
-	}
 }

@@ -22,7 +22,6 @@
 			};
 			ui: {
 				theme: string;
-				variant: string;
 				brand_name: string;
 				logo_url: string | null;
 				page_title: string;
@@ -99,7 +98,7 @@
 	let discoverySubmitting = $state(false);
 
 	onMount(() => {
-		themeStore.setTenantDefaults(ui.theme, ui.variant);
+		themeStore.setTenantDefaults(ui.theme);
 	});
 
 	function getErrorMessage(code: string): string {

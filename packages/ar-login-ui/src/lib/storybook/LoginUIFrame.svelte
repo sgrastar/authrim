@@ -25,12 +25,11 @@
 		/** Explicit values pin a frame; omitted values follow the toolbar. */
 		theme?: ThemeTemplate;
 		scheme?: Scheme;
-		variant?: string;
 		/** What the Admin console would save for this tenant, on top of the theme's defaults. */
 		ui?: LoginUIOverrides;
 	};
 
-	let { children, fit = 'surface', height = 640, theme, scheme, variant, ui }: Props = $props();
+	let { children, fit = 'surface', height = 640, theme, scheme, ui }: Props = $props();
 
 	const stores = initializeLoginUIStores();
 	const { brandingStore, loginUIPageStore, themeStore } = stores;
@@ -48,8 +47,7 @@
 		ui: buildLoginUIConfig(
 			{
 				theme: theme ?? sbGlobals.theme,
-				scheme: scheme ?? sbGlobals.scheme,
-				variant: variant ?? sbGlobals.variant
+				scheme: scheme ?? sbGlobals.scheme
 			},
 			effectiveUi
 		),
@@ -75,7 +73,6 @@
 <div
 	class="login-ui-theme-boundary"
 	data-theme={themeStore.mode}
-	data-variant={themeStore.currentVariant}
 	data-login-theme={loginUIPageStore.themeTemplate}
 	data-page-layout={loginUIPageStore.layout}
 	data-font-family={loginUIPageStore.fontFamily}

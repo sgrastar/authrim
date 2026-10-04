@@ -501,7 +501,6 @@ place('customization/branding', 'Brand', {
 place('customization/login-ui', 'Theme', {
 	primary: [
 		'login-ui.theme',
-		'login-ui.variant',
 		'login-ui.theme_template',
 		'login-ui.page_layout',
 		'login-ui.font_family',
@@ -736,7 +735,6 @@ place('plat-tenants/discovery', 'Discovery screen', {
 	advanced: [
 		'tenant-discovery-ui.override_enabled',
 		'tenant-discovery-ui.theme',
-		'tenant-discovery-ui.variant',
 		'tenant-discovery-ui.brand_name',
 		'tenant-discovery-ui.logo_url',
 		'tenant-discovery-ui.page_title',

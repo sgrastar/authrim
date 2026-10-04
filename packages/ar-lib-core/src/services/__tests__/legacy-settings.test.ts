@@ -93,7 +93,7 @@ describe('the older stores, read for the import', () => {
     });
     await expect(readLegacyStore(saved, 'SETTINGS system_settings.loginUI')).resolves.toEqual({
       'login-ui.theme': 'dark',
-      'login-ui.variant': 'slate',
+      // The older colour variant is no longer a setting: it is not imported.
       'login-ui.supported_locales': ['en'],
       'login-ui.brand_name': 'Example',
       'login-ui.logo_url': 'https://example.com/logo.png',

@@ -260,7 +260,6 @@ async function readLoginUiDefaults(env: LegacySettingsEnv): Promise<Record<strin
   const general = sectionOf(document, 'general');
   const values: Record<string, unknown> = {};
   if (loginUi.theme) values['login-ui.theme'] = loginUi.theme;
-  if (loginUi.variant) values['login-ui.variant'] = loginUi.variant;
   if (loginUi.supportedLocales) values['login-ui.supported_locales'] = loginUi.supportedLocales;
   if (general.siteName) values['login-ui.brand_name'] = general.siteName;
   if (general.logoUrl) values['login-ui.logo_url'] = general.logoUrl;
@@ -600,7 +599,6 @@ const READERS: Record<string, LegacySource[]> = {
       id: 'SETTINGS system_settings.loginUI',
       keys: [
         'login-ui.theme',
-        'login-ui.variant',
         'login-ui.supported_locales',
         'login-ui.brand_name',
         'login-ui.logo_url',

@@ -6,7 +6,7 @@
 	background: transparent;
 }
 
-/* Canvas behind a story: the page colour of the selected theme, scheme and variant. */
+/* Canvas behind a story: the page colour of the selected theme and scheme. */
 body {
 	background: var(--login-page-background-color, var(--bg-page));
 	color: var(--text-primary);

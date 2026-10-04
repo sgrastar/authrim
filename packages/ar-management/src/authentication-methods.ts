@@ -156,7 +156,6 @@ interface AuthenticationMethods {
 
 interface UIConfig {
   theme: string;
-  variant: string;
   themeTemplate: 'classic' | 'meridian' | 'split-brand-panel' | 'fullbleed-glass';
   branding: {
     logoUrl: string | null;
@@ -346,7 +345,6 @@ const LOGIN_PROVIDER_ICON_NAMES = new Set([
 
 const DEFAULT_UI_CONFIG: UIConfig = {
   theme: 'light',
-  variant: 'beige',
   themeTemplate: 'meridian',
   branding: {
     logoUrl: null,
@@ -440,7 +438,6 @@ const DEFAULT_UI_CONFIG: UIConfig = {
  */
 interface LoginUIKVSettings {
   'login-ui.theme'?: string;
-  'login-ui.variant'?: string;
   'login-ui.theme_template'?: string;
   'login-ui.page_layout'?: string;
   'login-ui.font_family'?: string;
@@ -558,7 +555,6 @@ interface ExternalLoginProviderUsageConfig {
 /** The Login UI settings the sign-in page uses. */
 interface LoginUIResolved {
   theme: string;
-  variant: string;
   themeTemplate: UIConfig['themeTemplate'];
   pageLayout: UIConfig['pageTemplate']['layout'];
   fontFamily: UIConfig['pageTemplate']['fontFamily'];
@@ -1011,7 +1007,6 @@ function resolveLoginUIFromKVSettings(
 
   return {
     theme: kvSettings['login-ui.theme'] || defaults.theme,
-    variant: kvSettings['login-ui.variant'] || defaults.variant,
     themeTemplate: readEnum(
       kvSettings['login-ui.theme_template'],
       ['classic', 'meridian', 'split-brand-panel', 'fullbleed-glass'],
@@ -1240,7 +1235,6 @@ async function getLoginUISettings(
 ): Promise<LoginUIResolved> {
   const defaults: LoginUIResolved = {
     theme: DEFAULT_UI_CONFIG.theme,
-    variant: DEFAULT_UI_CONFIG.variant,
     themeTemplate: DEFAULT_UI_CONFIG.themeTemplate,
     pageLayout: DEFAULT_UI_CONFIG.pageTemplate.layout,
     fontFamily: DEFAULT_UI_CONFIG.pageTemplate.fontFamily,
@@ -2168,7 +2162,6 @@ function applyExternalProviderUsage(
 function buildUIConfig(loginUI: LoginUIResolved): UIConfig {
   return {
     theme: loginUI.theme,
-    variant: loginUI.variant,
     themeTemplate: loginUI.themeTemplate,
     branding: {
       logoUrl: loginUI.logoUrl,

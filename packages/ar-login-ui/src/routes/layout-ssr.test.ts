@@ -11,7 +11,6 @@ function authenticationMethods(): AuthenticationMethodsResponse {
 		methods: {} as AuthenticationMethodsResponse['methods'],
 		ui: {
 			theme: 'dark',
-			variant: 'navy',
 			themeTemplate: 'split-brand-panel',
 			branding: {
 				brandName: 'Example Identity',
@@ -110,7 +109,7 @@ describe('Login UI layout SSR theme bootstrap', () => {
 		});
 
 		expect(body).toContain('data-theme="dark"');
-		expect(body).toContain('data-variant="navy"');
+		expect(body).not.toContain('data-variant');
 		expect(body).toContain('data-login-theme="split-brand-panel"');
 		expect(body).toContain('data-page-layout="split_panel"');
 		expect(body).toContain('data-split-panel-side="right"');

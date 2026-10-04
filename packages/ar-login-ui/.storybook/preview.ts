@@ -13,8 +13,6 @@ import {
 	toDocumentDirection
 } from '../src/lib/i18n/locales';
 import {
-	DARK_VARIANT_IDS,
-	LIGHT_VARIANT_IDS,
 	THEME_TEMPLATES,
 	THEME_TEMPLATE_LABELS,
 	isThemeTemplate,
@@ -26,7 +24,6 @@ installFakeCaptcha();
 function applyGlobals(globals: Record<string, unknown>): void {
 	sbGlobals.theme = isThemeTemplate(globals.theme) ? globals.theme : 'meridian';
 	sbGlobals.scheme = globals.scheme === 'dark' ? 'dark' : 'light';
-	sbGlobals.variant = typeof globals.variant === 'string' ? globals.variant : 'default';
 	const locale = typeof globals.locale === 'string' ? globals.locale : 'ja';
 	sbGlobals.locale = isLoginUILocale(locale) ? locale : 'ja';
 	setLocale(sbGlobals.locale);
@@ -35,13 +32,6 @@ function applyGlobals(globals: Record<string, unknown>): void {
 	const root = document.documentElement;
 	root.setAttribute('data-theme', sbGlobals.scheme);
 	root.setAttribute('data-login-theme', sbGlobals.theme);
-	const variant = (
-		sbGlobals.scheme === 'dark' ? DARK_VARIANT_IDS : LIGHT_VARIANT_IDS
-	) as readonly string[];
-	root.setAttribute(
-		'data-variant',
-		variant.includes(sbGlobals.variant) ? sbGlobals.variant : variant[0]
-	);
 	root.lang = sbGlobals.locale;
 	root.dir = toDocumentDirection(sbGlobals.locale);
 }
@@ -101,22 +91,6 @@ const preview: Preview = {
 				dynamicTitle: true
 			}
 		},
-		variant: {
-			description:
-				'Colour variant. Light: beige / blue-gray / green. Dark: brown / navy / slate. A variant of the other scheme is ignored.',
-			toolbar: {
-				title: 'Variant',
-				icon: 'photo',
-				items: [
-					{ value: 'default', title: 'Default of scheme' },
-					...[...LIGHT_VARIANT_IDS, ...DARK_VARIANT_IDS].map((value) => ({
-						value,
-						title: value
-					}))
-				],
-				dynamicTitle: true
-			}
-		},
 		locale: {
 			description: 'Language (ar switches to right-to-left)',
 			toolbar: {
@@ -130,7 +104,7 @@ const preview: Preview = {
 			}
 		}
 	},
-	initialGlobals: { theme: 'meridian', scheme: 'light', variant: 'default', locale: 'ja' },
+	initialGlobals: { theme: 'meridian', scheme: 'light', locale: 'ja' },
 	// Globals are applied before the story renders: state cannot change during Svelte's render phase.
 	beforeEach: ({ globals }) => applyGlobals(globals),
 	decorators: [

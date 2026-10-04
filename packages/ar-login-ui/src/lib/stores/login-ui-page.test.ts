@@ -24,7 +24,6 @@ describe('loginUIPageStore', () => {
 		const loginUIPageStore = createLoginUIPageStore();
 		const config: LoginUIConfig = {
 			theme: 'dark',
-			variant: 'navy',
 			themeTemplate: 'split-brand-panel',
 			branding: {
 				brandName: 'Example',

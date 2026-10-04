@@ -118,7 +118,6 @@ describe('Login UI proxy hooks', () => {
 				authenticationMethods: {
 					ui: {
 						theme: 'dark',
-						variant: 'navy',
 						pageTemplate: { backgroundColor: '#112233' }
 					}
 				}
@@ -806,33 +805,28 @@ describe('Login UI proxy hooks', () => {
 			resolveInitialLoginUIAppearance({
 				ui: {
 					theme: 'dark',
-					variant: 'navy',
 					pageTemplate: { backgroundColor: '#112233' }
 				}
 			} as never)
 		).toEqual({ background: '#112233', colorScheme: 'dark' });
+		// Without a configured colour: the page background of the theme template in the mode
+		// (Meridian when none is set), as app.css paints it.
 		expect(resolveInitialLoginUIAppearance(null)).toEqual({
-			background: '#eeeae3',
+			background: '#eef1f6',
 			colorScheme: 'light'
 		});
-		expect(
-			resolveInitialLoginUIAppearance(null, {
-				theme: 'dark',
-				darkVariant: 'navy'
-			})
-		).toEqual({
-			background: '#0a0e14',
+		expect(resolveInitialLoginUIAppearance(null, { theme: 'dark' })).toEqual({
+			background: '#0b0e16',
 			colorScheme: 'dark'
 		});
 		expect(
-			resolveInitialLoginUIAppearance(null, {
-				theme: 'light',
-				lightVariant: 'green'
-			})
-		).toEqual({
-			background: '#e8f2e8',
-			colorScheme: 'light'
-		});
+			resolveInitialLoginUIAppearance({ ui: { theme: 'light', themeTemplate: 'classic' } } as never)
+		).toEqual({ background: '#eeeae3', colorScheme: 'light' });
+		expect(
+			resolveInitialLoginUIAppearance({
+				ui: { theme: 'dark', themeTemplate: 'fullbleed-glass' }
+			} as never)
+		).toEqual({ background: '#0d0908', colorScheme: 'dark' });
 	});
 
 	it('skips server-side theme bootstrap for same-origin plain /login', async () => {

@@ -9,7 +9,6 @@
 		label: string;
 		theme?: ThemeTemplate;
 		scheme?: Scheme;
-		variant?: string;
 		ui?: LoginUIOverrides;
 		kind?: 'login' | 'signup';
 		client?: boolean;
@@ -24,14 +23,7 @@
 	{#each cells as cell (cell.label)}
 		<figure>
 			<figcaption>{cell.label}</figcaption>
-			<LoginUIFrame
-				fit="cell"
-				{height}
-				theme={cell.theme}
-				scheme={cell.scheme}
-				variant={cell.variant}
-				ui={cell.ui}
-			>
+			<LoginUIFrame fit="cell" {height} theme={cell.theme} scheme={cell.scheme} ui={cell.ui}>
 				<PageSample kind={cell.kind} client={cell.client} />
 			</LoginUIFrame>
 		</figure>
