@@ -5087,6 +5087,11 @@ async function idTokenHintNamesUser(
 ): Promise<boolean> {
   if (hintSubject === userId) return true;
   try {
+    // The user's claims, as an ID token is built from them: a mapping may derive sub from one.
+    // Without them the sub is derived from the id alone (a mismatch at worst, never a match).
+    const user = await resolveAccountDataContextFromHono(c, userId)
+      .then(() => loadOIDCClaimsUser(c, tenantId, userId, createPIIContextFromHono(c, tenantId)))
+      .catch(() => null);
     const subject = await deriveOIDCSubject({
       adapter: createAuthContextFromHono(c, tenantId).coreAdapter,
       env: c.env,
@@ -5096,7 +5101,7 @@ async function idTokenHintNamesUser(
       selector: clientMetadata.identity_mapping,
       destinationSurface: 'id_token',
       grantedScopes: scope?.split(' ').filter(Boolean),
-      userId,
+      claims: { ...(user ? buildStandardUserClaims(user) : {}), sub: userId },
     });
     return subject === hintSubject;
   } catch (error) {

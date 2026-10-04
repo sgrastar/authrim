@@ -45,20 +45,15 @@ export interface ApplyOIDCIdentityMappingResult {
 }
 
 /**
- * The sub an app's ID tokens carry for a user: the user's id unless the app's identity mapping
- * issues another (pairwise or persistent identifiers). Only the subject is derived: the other
- * fields' validation and release consent, which need the full claims of a real issuance, do not
- * apply. A mapping that produces no sub leaves the user's id.
+ * The sub an app's ID tokens carry for a user: `claims.sub` (the user's id) unless the app's
+ * identity mapping issues another (pairwise or persistent identifiers, or one derived from the
+ * user's claims, which `claims` should then hold as at issuance). Only the subject is derived:
+ * the other fields' validation and release consent do not apply. A mapping that produces no sub
+ * leaves `claims.sub`.
  */
-export async function deriveOIDCSubject(
-  input: Omit<ApplyOIDCIdentityMappingInput, 'claims'> & { userId: string }
-): Promise<string> {
-  const { userId, ...rest } = input;
-  const { claims } = await applyOIDCIdentityMapping({
-    ...rest,
-    claims: { sub: userId },
-    subjectOnly: true,
-  });
+export async function deriveOIDCSubject(input: ApplyOIDCIdentityMappingInput): Promise<string> {
+  const userId = typeof input.claims.sub === 'string' ? input.claims.sub : '';
+  const { claims } = await applyOIDCIdentityMapping({ ...input, subjectOnly: true });
   return typeof claims.sub === 'string' ? claims.sub : userId;
 }
 
@@ -154,16 +149,18 @@ export async function applyOIDCIdentityMapping(
   });
 
   if (input.subjectOnly) {
-    const subject = runtimeResult.values.find(
-      (value) =>
+    // The last value wins, as issuance overwrites edge outputs with transform results.
+    let subject: unknown = input.claims.sub;
+    for (const value of runtimeResult.values) {
+      if (
         value.sourceRef.side === 'destination' &&
         value.sourceRef.namespace === destinationNamespace &&
         value.sourceRef.path === 'sub'
-    );
-    return {
-      claims: { sub: typeof subject?.value === 'string' ? subject.value : input.claims.sub },
-      binding,
-    };
+      ) {
+        subject = value.value;
+      }
+    }
+    return { claims: { sub: subject }, binding };
   }
 
   if (runtimeResult.status === 'failed') {

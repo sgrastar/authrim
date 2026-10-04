@@ -44,7 +44,7 @@ const TEST_REGION_CONFIG = buildPolicyConstrainedRegionShardConfig({
 const mockGetClient = vi.hoisted(() => vi.fn());
 // The app's identity mapping (id_token_hint subjects): no mapping unless a test sets one.
 const mockDeriveOIDCSubject = vi.hoisted(() =>
-  vi.fn(async (input: { userId: string }) => input.userId)
+  vi.fn(async (input: { claims: { sub?: unknown } }) => String(input.claims.sub))
 );
 const mockResolveAccountDataContextFromHono = vi.hoisted(() =>
   vi.fn(async (c: { env: Env; set: (key: string, value: unknown) => void }, userId: string) => {
@@ -2091,7 +2091,10 @@ describe('Authorization Handler', () => {
         expect(redirect.searchParams.get('error')).toBeNull();
         expect(redirect.searchParams.get('code')).toBeTruthy();
         expect(mockDeriveOIDCSubject).toHaveBeenCalledWith(
-          expect.objectContaining({ clientId: 'test-client', userId: 'test-user' })
+          expect.objectContaining({
+            clientId: 'test-client',
+            claims: expect.objectContaining({ sub: 'test-user' }),
+          })
         );
       });
 
