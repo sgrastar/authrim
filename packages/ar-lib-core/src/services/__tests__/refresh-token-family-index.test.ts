@@ -128,6 +128,24 @@ class InMemoryRefreshTokenFamilyIndexAdapter implements DatabaseAdapter {
         number,
         number,
       ];
+      const existing = this.rows.get(jti);
+      if (existing) {
+        if (sql.includes('DO NOTHING')) return { success: true, rowsAffected: 0 };
+        if (!sql.includes('DO UPDATE SET expires_at = excluded.expires_at')) {
+          throw new Error('UNIQUE constraint failed: user_token_families.jti');
+        }
+        // WHERE same tenant, not revoked or expired, and only later.
+        if (
+          existing.tenant_id !== tenantId ||
+          existing.is_revoked !== 0 ||
+          existing.expires_at <= 0 ||
+          existing.expires_at >= expiresAt
+        ) {
+          return { success: true, rowsAffected: 0 };
+        }
+        existing.expires_at = expiresAt;
+        return { success: true, rowsAffected: 1 };
+      }
       this.rows.set(jti, {
         jti,
         tenant_id: tenantId,
@@ -137,16 +155,6 @@ class InMemoryRefreshTokenFamilyIndexAdapter implements DatabaseAdapter {
         expires_at: expiresAt,
         is_revoked: 0,
       });
-      return { success: true, rowsAffected: 1 };
-    }
-
-    if (sql.includes('SET expires_at = ?')) {
-      const [expiresAt, tenantId, jti] = params as [number, string, string];
-      const row = this.rows.get(jti);
-      if (!row || row.tenant_id !== tenantId || row.is_revoked !== 0 || row.expires_at <= 0) {
-        return { success: true, rowsAffected: 0 };
-      }
-      row.expires_at = expiresAt;
       return { success: true, rowsAffected: 1 };
     }
 
@@ -328,7 +336,7 @@ describe('refresh-token-family-index', () => {
     ]);
   });
 
-  it('moves an active family’s expiry, but not a revoked or expired one, nor another tenant’s', async () => {
+  it('moves an active family’s expiry only later, never revives one, and keeps tenants apart', async () => {
     const adapter = new InMemoryRefreshTokenFamilyIndexAdapter();
     const row = (
       jti: string,
@@ -345,25 +353,46 @@ describe('refresh-token-family-index', () => {
     });
     adapter.seed([
       row('active'),
+      row('later', { expires_at: 12_000 }),
       row('revoked', { is_revoked: 1 }),
       row('expired', { expires_at: 0 }),
       row('other-tenant', { tenant_id: 'tenant_b' }),
     ]);
-
-    for (const jti of ['active', 'revoked', 'expired', 'other-tenant']) {
-      await updateRefreshTokenFamilyIndexExpiry(adapter, {
+    const update = (jti: string) =>
+      updateRefreshTokenFamilyIndexExpiry(adapter, {
         tenantId: 'tenant_a',
         jti,
+        userId: 'user_1',
+        clientId: 'client_1',
+        generation: 1,
         expiresAt: 9_000,
       });
+
+    for (const jti of ['active', 'later', 'revoked', 'expired', 'other-tenant', 'missing']) {
+      await update(jti);
     }
 
     expect(adapter.all().map((entry) => [entry.jti, entry.expires_at])).toEqual([
       ['active', 9_000],
+      // An update that lands after a later one does not move it back.
+      ['later', 12_000],
       ['revoked', 5_000],
       ['expired', 0],
       ['other-tenant', 5_000],
+      // One that lands before the row from issuance creates it.
+      ['missing', 9_000],
     ]);
+
+    // The row from issuance, recorded after, keeps the rotation's expiry.
+    await recordRefreshTokenFamilyIndex(adapter, {
+      jti: 'missing',
+      tenantId: 'tenant_a',
+      userId: 'user_1',
+      clientId: 'client_1',
+      generation: 1,
+      expiresAt: 3_000,
+    });
+    expect(adapter.all().find((entry) => entry.jti === 'missing')?.expires_at).toBe(9_000);
   });
 
   it('computes generation stats and cleanup with tenant guards', async () => {

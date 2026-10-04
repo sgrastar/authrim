@@ -2870,6 +2870,9 @@ describe('Security-Critical Tests', () => {
           expect(mocks.mockUpdateFamilyIndexExpiry).toHaveBeenCalledWith(expect.anything(), {
             tenantId: 'default',
             jti: 'rt-first-jti-001',
+            userId: expect.any(String),
+            clientId: expect.any(String),
+            generation: 1,
             expiresAt,
           });
         });

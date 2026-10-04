@@ -4311,16 +4311,20 @@ export async function directLogoutHandler(c: Context<{ Bindings: Env }>) {
               nowMs: Date.now(),
             });
 
-            // Revoke each family in the RefreshTokenRotator
+            // Revoke the user's family in each RefreshTokenRotator the index names. By user, not
+            // by the indexed JWT ID: that is the family's first one, gone once it has rotated.
+            const revokedInstances = new Set<string>();
             for (const family of families) {
               try {
-                const { stub: rotator } = getRefreshTokenRotatorStubByJti(
+                const { stub: rotator, resolution } = getRefreshTokenRotatorStubByJti(
                   c.env,
                   family.client_id,
                   family.jti,
                   getTenantIdFromContext(c)
                 );
-                await rotator.revokeByJtiRpc(family.jti, 'direct_auth_revoke_tokens');
+                if (revokedInstances.has(resolution.instanceName)) continue;
+                await rotator.revokeFamilyRpc(session.userId, 'direct_auth_revoke_tokens');
+                revokedInstances.add(resolution.instanceName);
               } catch (familyError) {
                 // Log but continue with other families
                 log.warn('Failed to revoke token family', {

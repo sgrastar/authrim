@@ -20,6 +20,7 @@ import {
   registerSessionClientInStore,
   createRefreshTokenFamily,
   getRefreshTokenRotatorStubByJti,
+  parseRefreshTokenJti,
   // Logging
   getLogger,
   createLogger,
@@ -4209,12 +4210,14 @@ async function handleRefreshTokenGrant(
       // The family's expiry may have moved: keep its index row (user-wide revocation) in step.
       if (rotateResult.familyJti) {
         c.executionCtx.waitUntil(
-          updateTokenFamilyIndexExpiry(
-            authCtx.coreAdapter,
+          updateTokenFamilyIndexExpiry(authCtx.coreAdapter, {
             tenantId,
-            rotateResult.familyJti,
-            rotateResult.expiresAt
-          )
+            jti: rotateResult.familyJti,
+            userId: refreshTokenData.sub,
+            clientId: client_id,
+            generation: parseRefreshTokenJti(rotateResult.familyJti).generation,
+            expiresAt: rotateResult.expiresAt,
+          })
         );
       }
 
@@ -5921,13 +5924,11 @@ async function recordTokenFamilyIndex(
 /** Keep a family's index expiry in step with a rotation; like the record, failure is logged only. */
 async function updateTokenFamilyIndexExpiry(
   db: DatabaseSource | null | undefined,
-  tenantId: string,
-  jti: string,
-  expiresAt: number
+  input: Parameters<typeof updateRefreshTokenFamilyIndexExpiry>[1]
 ): Promise<void> {
   if (!db) return;
   try {
-    await updateRefreshTokenFamilyIndexExpiry(db, { tenantId, jti, expiresAt });
+    await updateRefreshTokenFamilyIndexExpiry(db, input);
   } catch (error) {
     moduleLogger.error('Failed to update token family expiry in index', {}, error as Error);
   }

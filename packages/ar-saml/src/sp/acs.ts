@@ -238,7 +238,7 @@ export async function handleSPACS(c: Context<{ Bindings: Env }>): Promise<Respon
       data: {
         sessionId,
         userId,
-        ttlSeconds: 3600,
+        ttlSeconds: sessionTtl.seconds,
       } satisfies SessionEventData,
     }).catch((err: unknown) => {
       log.error('Failed to publish session.user.created event', {}, err as Error);

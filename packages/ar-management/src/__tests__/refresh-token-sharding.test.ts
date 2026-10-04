@@ -8,6 +8,8 @@ const {
   mockSaveRefreshTokenShardConfig,
   mockClearShardConfigCache,
   mockGetTenantIdFromContext,
+  mockListFamilies,
+  mockRevokeFamiliesIndex,
 } = vi.hoisted(() => {
   const logger = {
     debug: vi.fn(),
@@ -24,6 +26,8 @@ const {
     mockSaveRefreshTokenShardConfig: vi.fn(),
     mockClearShardConfigCache: vi.fn(),
     mockGetTenantIdFromContext: vi.fn().mockReturnValue('tenant-a'),
+    mockListFamilies: vi.fn(),
+    mockRevokeFamiliesIndex: vi.fn(),
   };
 });
 
@@ -37,10 +41,27 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     saveRefreshTokenShardConfig: mockSaveRefreshTokenShardConfig,
     clearShardConfigCache: mockClearShardConfigCache,
     getTenantIdFromContext: mockGetTenantIdFromContext,
+    createAuthContextFromHono: vi.fn(() => ({ coreAdapter: {} })),
+    listRefreshTokenFamiliesByUser: mockListFamilies,
+    revokeRefreshTokenFamiliesByUser: mockRevokeFamiliesIndex,
+    parseRefreshTokenJti: (jti: string) => ({
+      generation: 1,
+      shardIndex: Number(jti.split(':')[1]),
+      randomPart: jti,
+    }),
+    buildRefreshTokenRotatorInstanceName: (
+      clientId: string,
+      generation: number,
+      shardIndex: number,
+      tenantId: string
+    ) => `${tenantId}:${clientId}:${generation}:${shardIndex}`,
   };
 });
 
-import { updateRefreshTokenShardingConfig } from '../routes/settings/refresh-token-sharding';
+import {
+  revokeAllUserRefreshTokens,
+  updateRefreshTokenShardingConfig,
+} from '../routes/settings/refresh-token-sharding';
 
 function createMockKV() {
   return {
@@ -170,5 +191,70 @@ describe('refresh-token sharding settings', () => {
     expect(response.status).toBe(200);
     expect(mockSaveRefreshTokenShardConfig).toHaveBeenCalledTimes(1);
     expect(mockClearShardConfigCache).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('revoking all of a user’s refresh tokens', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockLogger.module.mockReturnValue(mockLogger);
+    mockGetTenantIdFromContext.mockReturnValue('tenant-a');
+  });
+
+  it('revokes the user’s family once in each rotator, by user, then marks the index', async () => {
+    // Indexed by the families' first JWT IDs; two of them in the same rotator (shard 0).
+    mockListFamilies.mockResolvedValue([
+      { jti: 'rt:0:first-a', client_id: 'client-1', generation: 1 },
+      { jti: 'rt:0:first-b', client_id: 'client-1', generation: 1 },
+      { jti: 'rt:1:first-c', client_id: 'client-1', generation: 1 },
+    ]);
+    const revokeFamilyRpc = vi.fn().mockResolvedValue(undefined);
+    const c = {
+      env: {
+        REFRESH_TOKEN_ROTATOR: {
+          idFromName: vi.fn((name: string) => name),
+          get: vi.fn(() => ({ revokeFamilyRpc })),
+        },
+      },
+      req: {
+        param: vi.fn(() => 'user-1'),
+        query: vi.fn(() => undefined),
+      },
+      json: vi.fn((body, status = 200) => new Response(JSON.stringify(body), { status })),
+    } as any;
+
+    const response = await revokeAllUserRefreshTokens(c);
+
+    expect(response.status).toBe(200);
+    expect(
+      c.env.REFRESH_TOKEN_ROTATOR.idFromName.mock.calls.map(([name]: [string]) => name)
+    ).toEqual(['tenant-a:client-1:1:0', 'tenant-a:client-1:1:1']);
+    expect(revokeFamilyRpc).toHaveBeenCalledTimes(2);
+    expect(revokeFamilyRpc).toHaveBeenCalledWith('user-1', 'user_wide_revocation');
+    expect(mockRevokeFamiliesIndex).toHaveBeenCalledWith(
+      {},
+      { tenantId: 'tenant-a', userId: 'user-1', clientId: null }
+    );
+  });
+
+  it('leaves the index as it was when a rotator cannot revoke', async () => {
+    mockListFamilies.mockResolvedValue([
+      { jti: 'rt:0:first-a', client_id: 'client-1', generation: 1 },
+    ]);
+    const c = {
+      env: {
+        REFRESH_TOKEN_ROTATOR: {
+          idFromName: vi.fn((name: string) => name),
+          get: vi.fn(() => ({ revokeFamilyRpc: vi.fn().mockRejectedValue(new Error('down')) })),
+        },
+      },
+      req: { param: vi.fn(() => 'user-1'), query: vi.fn(() => undefined) },
+      json: vi.fn((body, status = 200) => new Response(JSON.stringify(body), { status })),
+    } as any;
+
+    const response = await revokeAllUserRefreshTokens(c);
+
+    expect(response.status).toBe(500);
+    expect(mockRevokeFamiliesIndex).not.toHaveBeenCalled();
   });
 });

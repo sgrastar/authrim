@@ -173,11 +173,30 @@ describe('session.default_ttl and session.max_ttl', () => {
         'tenant-a'
       )
     ).toEqual({ enabled: false, maxLifetimeMs: 86400000 });
+    // The variable reads as the Settings API reads it: on only as `true` or `1`.
+    for (const [value, enabled] of [
+      ['false', false],
+      ['FALSE', false],
+      ['0', false],
+      ['TRUE', true],
+      ['1', true],
+    ] as const) {
+      expect(
+        await resolveSessionExtensionPolicy(
+          createEnv({ env: { SESSION_REFRESH_DEFAULT: value } }),
+          'tenant-a'
+        )
+      ).toMatchObject({ enabled });
+    }
+    // A tenant value wins over the variable.
     expect(
       await resolveSessionExtensionPolicy(
-        createEnv({ env: { SESSION_REFRESH_DEFAULT: 'false' } }),
+        createEnv({
+          settings: { 'session.refresh_default': true },
+          env: { SESSION_REFRESH_DEFAULT: 'false' },
+        }),
         'tenant-a'
       )
-    ).toMatchObject({ enabled: false });
+    ).toMatchObject({ enabled: true });
   });
 });

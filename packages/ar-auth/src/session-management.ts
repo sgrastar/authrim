@@ -12,7 +12,7 @@
  */
 
 import { Context } from 'hono';
-import { getCookie } from 'hono/cookie';
+import { getCookie, setCookie } from 'hono/cookie';
 import type { Env, Session } from '@authrim/ar-lib-core';
 import {
   generateCheckSessionIframeHtml,
@@ -25,6 +25,10 @@ import {
   CanonicalRuntimeUserStore,
   getTenantIdFromContext,
   getLogger,
+  getSessionCookieSameSite,
+  getBrowserStateCookieSameSite,
+  generateBrowserState,
+  BROWSER_STATE_COOKIE_NAME,
 } from '@authrim/ar-lib-core';
 import { getRequestIssuer } from './issuer';
 import { resolveSessionExtensionPolicy, resolveSessionTtl } from './session-ttl';
@@ -248,6 +252,7 @@ export async function verifySessionTokenHandler(c: Context<{ Bindings: Env }>) {
     // Create a new session for the RP domain (if rp_origin provided)
     // This allows the RP to have its own session cookie
     let rpSessionId = session.id;
+    let rpSessionExpiresAt = session.expiresAt;
     const normalizedRpOrigin = normalizeSessionOrigin(rp_origin);
 
     if (rp_origin) {
@@ -287,6 +292,7 @@ export async function verifySessionTokenHandler(c: Context<{ Bindings: Env }>) {
           getTenantIdFromContext(c)
         )) as Session;
         rpSessionId = newSession.id;
+        rpSessionExpiresAt = newSession.expiresAt;
       } catch (error) {
         log.warn('Failed to create RP session', { action: 'create_rp_session' });
         // Fall back to original session ID
@@ -296,7 +302,7 @@ export async function verifySessionTokenHandler(c: Context<{ Bindings: Env }>) {
     return c.json({
       session_id: rpSessionId,
       user_id: session.userId,
-      expires_at: session.expiresAt,
+      expires_at: rpSessionExpiresAt,
       verified: true,
     });
   } catch (error) {
@@ -449,6 +455,7 @@ export async function refreshSessionHandler(c: Context<{ Bindings: Env }>) {
   try {
     // Get session from cookie or body
     let sessionId = getCookie(c, 'authrim_session');
+    const fromCookie = Boolean(sessionId);
 
     // Get extension duration (default: 1 hour)
     let extendSeconds = 3600; // Default: 1 hour
@@ -528,6 +535,25 @@ export async function refreshSessionHandler(c: Context<{ Bindings: Env }>) {
         },
         404
       );
+    }
+
+    // A session the browser's cookie names: its cookies last as long as the session now does.
+    if (fromCookie) {
+      const maxAge = Math.max(0, Math.floor((session.expiresAt - Date.now()) / 1000));
+      const secure = new URL(c.req.url).protocol === 'https:';
+      setCookie(c, 'authrim_session', session.id, {
+        path: '/',
+        httpOnly: true,
+        secure,
+        sameSite: getSessionCookieSameSite(c.env),
+        maxAge,
+      });
+      setCookie(c, BROWSER_STATE_COOKIE_NAME, await generateBrowserState(session.id), {
+        path: '/',
+        secure,
+        sameSite: getBrowserStateCookieSameSite(c.env),
+        maxAge,
+      });
     }
 
     return c.json({

@@ -803,7 +803,7 @@ describe('SessionStore', () => {
         return true;
       });
 
-      await expect(sessionStore.extendSessionRpc(id, 3600)).resolves.toBeNull();
+      await expect(sessionStore.extendSessionRpc(id, 7200)).resolves.toBeNull();
       await expect(mockState.storage.get(`session:${id}`)).resolves.toBeUndefined();
       await expect(sessionStore.getSessionRpc(id)).resolves.toBeNull();
     });
@@ -1052,7 +1052,7 @@ describe('SessionStore', () => {
       const created = await sessionStore.createSessionRpc(
         sessionId,
         'user_123',
-        3600,
+        60,
         undefined,
         'default'
       );
@@ -1087,7 +1087,7 @@ describe('SessionStore', () => {
       const created = await sessionStore.createSessionRpc(
         sessionId,
         'user_123',
-        3600,
+        60,
         undefined,
         'default'
       );
@@ -1095,7 +1095,7 @@ describe('SessionStore', () => {
       expect(extended?.expiresAt).toBe(created.createdAt + 1800 * 1000);
     });
 
-    it('does not extend a session already past its maximum lifetime', async () => {
+    it('does not shorten a session made under a longer limit, nor extend it', async () => {
       const sessionId = '0_session_extend_past_cap';
       const created = await sessionStore.createSessionRpc(
         sessionId,
@@ -1104,11 +1104,28 @@ describe('SessionStore', () => {
         undefined,
         'default'
       );
-      await new Promise((resolve) => setTimeout(resolve, 5));
-      await expect(sessionStore.extendSessionRpc(sessionId, 3600, 1)).resolves.toBeNull();
+      const extended = await sessionStore.extendSessionRpc(sessionId, 7200, 1800 * 1000);
+      expect(extended?.expiresAt).toBe(created.expiresAt);
       await expect(mockState.storage.get<Session>(`session:${sessionId}`)).resolves.toMatchObject({
         expiresAt: created.expiresAt,
       });
+    });
+
+    it('runs concurrent extensions one at a time, so a shorter one cannot undo a longer one', async () => {
+      const sessionId = '0_session_extend_concurrent';
+      await sessionStore.createSessionRpc(sessionId, 'user_123', 60, undefined, 'default');
+      const [longer, shorter] = await Promise.all([
+        sessionStore.extendSessionRpc(sessionId, 3600),
+        sessionStore.extendSessionRpc(sessionId, 120),
+      ]);
+      expect(shorter?.expiresAt).toBe(longer?.expiresAt);
+      await expect(mockState.storage.get<Session>(`session:${sessionId}`)).resolves.toMatchObject({
+        expiresAt: longer?.expiresAt,
+      });
+      const indexed = sessionRevocationStub.updateSessionExpirationRpc.mock.calls.filter(
+        (call: unknown[]) => call[3] === sessionId
+      );
+      expect(indexed.at(-1)?.[4]).toBe(longer?.expiresAt);
     });
 
     it('should reject extension with invalid seconds', async () => {

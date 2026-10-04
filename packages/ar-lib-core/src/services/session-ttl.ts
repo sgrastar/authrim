@@ -175,8 +175,11 @@ export async function resolveSessionExtensionPolicy(
 function sessionRefreshEnabled(env: Env, settings: Record<string, unknown>): boolean {
   const setting = settings['session.refresh_default'];
   if (typeof setting === 'boolean') return setting;
+  // As the Settings API reads the variable: set, it is on only as `true` (any case) or `1`.
   const envValue = (env as unknown as Record<string, unknown>)['SESSION_REFRESH_DEFAULT'];
-  if (envValue === 'false' || envValue === false) return false;
+  if (typeof envValue === 'string' && envValue !== '') {
+    return envValue.toLowerCase() === 'true' || envValue === '1';
+  }
   return true;
 }
 

@@ -949,6 +949,8 @@ export class RefreshTokenRotator extends DurableObject<Env> {
       const userId = key.substring(STORAGE_PREFIX.FAMILY.length);
       this.validateStoredFamily(userId, family);
       jtiToUserMap.set(family.last_jti, userId);
+      // The family index names a family by the JWT ID it was issued with.
+      if (family.first_jti) jtiToUserMap.set(family.first_jti, userId);
     }
 
     // Revoke each JTI
