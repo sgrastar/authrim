@@ -44,6 +44,7 @@ export const DEVICE_FLOW_SETTINGS_META: Record<keyof DeviceFlowSettings, Setting
     max: 1800,
     unit: 'seconds',
     visibility: 'public',
+    status: 'in_development',
   },
   'device_flow.poll_interval': {
     key: 'device_flow.poll_interval',
@@ -56,6 +57,7 @@ export const DEVICE_FLOW_SETTINGS_META: Record<keyof DeviceFlowSettings, Setting
     max: 60,
     unit: 'seconds',
     visibility: 'public',
+    status: 'in_development',
   },
   'device_flow.max_poll_count': {
     key: 'device_flow.max_poll_count',
@@ -67,6 +69,7 @@ export const DEVICE_FLOW_SETTINGS_META: Record<keyof DeviceFlowSettings, Setting
     min: 10,
     max: 500,
     visibility: 'admin',
+    status: 'in_development',
   },
   'device_flow.slow_down_increment': {
     key: 'device_flow.slow_down_increment',
@@ -79,6 +82,7 @@ export const DEVICE_FLOW_SETTINGS_META: Record<keyof DeviceFlowSettings, Setting
     max: 30,
     unit: 'seconds',
     visibility: 'admin',
+    status: 'in_development',
   },
 
   // Expiry Limits (for client configuration)
@@ -93,6 +97,7 @@ export const DEVICE_FLOW_SETTINGS_META: Record<keyof DeviceFlowSettings, Setting
     max: 1800,
     unit: 'seconds',
     visibility: 'admin',
+    status: 'in_development',
   },
   'device_flow.max_expires_in': {
     key: 'device_flow.max_expires_in',
@@ -105,6 +110,7 @@ export const DEVICE_FLOW_SETTINGS_META: Record<keyof DeviceFlowSettings, Setting
     max: 3600,
     unit: 'seconds',
     visibility: 'admin',
+    status: 'in_development',
   },
   'device_flow.min_interval': {
     key: 'device_flow.min_interval',
@@ -117,6 +123,7 @@ export const DEVICE_FLOW_SETTINGS_META: Record<keyof DeviceFlowSettings, Setting
     max: 60,
     unit: 'seconds',
     visibility: 'admin',
+    status: 'in_development',
   },
   'device_flow.max_interval': {
     key: 'device_flow.max_interval',
@@ -129,6 +136,7 @@ export const DEVICE_FLOW_SETTINGS_META: Record<keyof DeviceFlowSettings, Setting
     max: 300,
     unit: 'seconds',
     visibility: 'admin',
+    status: 'in_development',
   },
   'device_flow.user_code_charset': {
     key: 'device_flow.user_code_charset',
@@ -139,6 +147,7 @@ export const DEVICE_FLOW_SETTINGS_META: Record<keyof DeviceFlowSettings, Setting
     description: 'Character set for user codes (BASE20: BCDFGHJKLMNPQRSTVWXZ, NUMERIC: 0-9)',
     enum: ['BASE20', 'NUMERIC'],
     visibility: 'public',
+    status: 'in_development',
   },
   'device_flow.user_code_length': {
     key: 'device_flow.user_code_length',
@@ -150,6 +159,7 @@ export const DEVICE_FLOW_SETTINGS_META: Record<keyof DeviceFlowSettings, Setting
     min: 4,
     max: 16,
     visibility: 'public',
+    status: 'in_development',
   },
 };
 

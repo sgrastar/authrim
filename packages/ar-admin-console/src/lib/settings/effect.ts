@@ -34,7 +34,7 @@ function reason(why: NotApplied, keys: readonly string[]): [string, NotApplied][
 }
 
 export const NOT_APPLIED: ReadonlyMap<string, NotApplied> = new Map([
-	// to-build (29)
+	// to-build (33)
 	...reason('to-build', [
 		'dr-backup.storage_destination_id',
 		'federation.saml_artifact_resolution_timeout',
@@ -53,6 +53,10 @@ export const NOT_APPLIED: ReadonlyMap<string, NotApplied> = new Map([
 		'oauth.refresh_token_absolute_expiry',
 		'oauth.refresh_token_absolute_expiry_enabled',
 		'oauth.refresh_token_sliding_window_enabled',
+		'plugin.auto_update_check',
+		'plugin.enabled',
+		'plugin.execution_timeout_ms',
+		'plugin.memory_limit_mb',
 		'rate_limit.email_max_requests',
 		'rate_limit.email_window',
 		'security.dpop_bound_access_tokens',
@@ -66,13 +70,40 @@ export const NOT_APPLIED: ReadonlyMap<string, NotApplied> = new Map([
 		'tokens.exchange_impersonation_enabled',
 		'tokens.introspection_extended_claims'
 	]),
-	// to-wire (5)
+	// to-wire (32)
 	...reason('to-wire', [
 		'assurance.default_ial',
-		'assurance.ida_profile',
 		'assurance.ial_assurance_values',
+		'assurance.ida_profile',
 		'assurance.saml_authn_context_aal',
-		'assurance.scope_ial_requirements'
+		'assurance.scope_ial_requirements',
+		'ciba.auth_request_ttl',
+		'ciba.binding_message_required',
+		'ciba.expires_in',
+		'ciba.max_binding_message_length',
+		'ciba.max_expires_in',
+		'ciba.max_interval',
+		'ciba.max_poll_count',
+		'ciba.min_expires_in',
+		'ciba.min_interval',
+		'ciba.notifier_default_timeout_ms',
+		'ciba.notifier_max_timeout_ms',
+		'ciba.notifier_retry_delay_base_ms',
+		'ciba.ping_notification_timeout_ms',
+		'ciba.poll_interval',
+		'ciba.push_notification_timeout_ms',
+		'ciba.slow_down_increment',
+		'ciba.user_code_enabled',
+		'device_flow.expires_in',
+		'device_flow.max_expires_in',
+		'device_flow.max_interval',
+		'device_flow.max_poll_count',
+		'device_flow.min_expires_in',
+		'device_flow.min_interval',
+		'device_flow.poll_interval',
+		'device_flow.slow_down_increment',
+		'device_flow.user_code_charset',
+		'device_flow.user_code_length'
 	]),
 	// internal (5)
 	...reason('internal', [
