@@ -3248,90 +3248,10 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
     ssoEnabled = true;
   }
 
-  // Handle id_token_hint parameter (fallback if no session cookie)
-  if (id_token_hint && !sessionUserId) {
-    try {
-      // Decode JWT header to get kid (Key ID)
-      const parts = id_token_hint.split('.');
-      if (parts.length !== 3) {
-        throw new Error('Invalid JWT format');
-      }
-      const headerBase64url = parts[0];
-      const headerBase64 = headerBase64url.replace(/-/g, '+').replace(/_/g, '/');
-      const headerJson = JSON.parse(atob(headerBase64)) as { kid?: string; alg?: string };
-      const kid = headerJson.kid;
-
-      // Fetch JWKS from KeyManager DO
-      let publicKey: CryptoKey | null = null;
-
-      if (c.env.KEY_MANAGER) {
-        try {
-          const tenantId = getTenantIdFromContext(c);
-          const keyManagerId = c.env.KEY_MANAGER.idFromName(`${tenantId}-v3`);
-          const keyManager = c.env.KEY_MANAGER.get(keyManagerId);
-          const keys = await keyManager.getAllPublicKeysRpc();
-
-          // Find key by kid
-          const jwk = kid ? keys.find((k: { kid?: string }) => k.kid === kid) : keys[0];
-          if (jwk) {
-            publicKey = (await importJWK(jwk, 'RS256')) as CryptoKey;
-          }
-        } catch (kmError) {
-          log.warn('Failed to fetch key from KeyManager, falling back to PUBLIC_JWK_JSON', {
-            action: 'key_manager_fallback',
-          });
-        }
-      }
-
-      // Fallback to PUBLIC_JWK_JSON if KeyManager unavailable
-      if (!publicKey) {
-        const publicJwkJson = c.env.PUBLIC_JWK_JSON;
-        if (publicJwkJson) {
-          const publicJwk = JSON.parse(publicJwkJson);
-          // Check if kid matches (if available)
-          if (!kid || publicJwk.kid === kid) {
-            publicKey = (await importJWK(publicJwk, 'RS256')) as CryptoKey;
-          }
-        }
-      }
-
-      if (publicKey) {
-        const verified = await verifyToken(id_token_hint, publicKey, getRequestIssuer(c), {
-          audience: client_id || '',
-        });
-        const idTokenPayload = verified.payload as Record<string, unknown>;
-
-        // Extract user identifier and auth_time from ID token
-        sessionUserId = idTokenPayload.sub as string;
-        authTime = idTokenPayload.auth_time as number;
-        sessionAcr = idTokenPayload.acr as string;
-        if (Array.isArray(idTokenPayload.amr)) {
-          const normalizedAmr = idTokenPayload.amr.filter(
-            (method): method is string => typeof method === 'string' && method.length > 0
-          );
-          if (normalizedAmr.length > 0) {
-            sessionAmr = normalizedAmr;
-          }
-        }
-        log.info('id_token_hint verified successfully', {
-          action: 'id_token_hint_verify',
-          sub: sessionUserId,
-          authTime,
-        });
-      } else {
-        log.error('No matching public key found for id_token_hint verification', {
-          action: 'id_token_hint_key_missing',
-        });
-      }
-    } catch (error) {
-      log.error(
-        'Failed to verify id_token_hint',
-        { action: 'id_token_hint_verify' },
-        error as Error
-      );
-      // Invalid id_token_hint - treat as if no session exists
-    }
-  }
+  // id_token_hint is a hint about the End-User (OIDC Core 3.1.2.1), not proof that they are
+  // signed in: without a session it never stands in for one. An ID token reaches every app it
+  // was issued to, so treating it as a sign-in would let any holder replay it (with prompt=none)
+  // for a code. It is passed on to the login screen as a hint only.
 
   // ============================================================
   // OIDC Compliance: Authentication State Evaluation Order
