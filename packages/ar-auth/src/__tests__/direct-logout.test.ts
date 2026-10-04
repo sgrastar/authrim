@@ -216,9 +216,7 @@ describe('Direct Auth logout scope', () => {
       }
     );
   });
-});
 
-describe('Direct Auth logout token revocation per rotator', () => {
   it('keeps the index when a rotator could not revoke, so a retry can find the family', async () => {
     getRefreshTokenRotatorStubByJti.mockImplementation(
       () =>
@@ -236,6 +234,7 @@ describe('Direct Auth logout token revocation per rotator', () => {
     );
 
     expect(response.status).toBe(200);
+    expect(revokeFamilyRpc).toHaveBeenCalledWith('user_123', 'direct_auth_revoke_tokens');
     expect(expireRefreshTokenFamiliesByUser).not.toHaveBeenCalled();
     revokeFamilyRpc.mockReset().mockResolvedValue(undefined);
   });
