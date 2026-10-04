@@ -21,6 +21,7 @@ import {
   createRefreshTokenFamily,
   getRefreshTokenRotatorStubByJti,
   parseRefreshTokenJti,
+  resolveAppSecurityRequirements,
   // Logging
   getLogger,
   createLogger,
@@ -1024,12 +1025,22 @@ async function isDPoPRequiredForTokenRequest(
   clientMetadata: ClientMetadata
 ): Promise<boolean> {
   let fapiRequiresDpop = false;
+  let tenantRequiresDpop = false;
   try {
-    const { fapi } = await getProtocolSettingsCached(c, c.env, {
-      clientId: clientMetadata.client_id,
-      keys: FAPI_TOKEN_SETTINGS,
-    });
+    const [{ fapi }, requirements] = await Promise.all([
+      getProtocolSettingsCached(c, c.env, {
+        clientId: clientMetadata.client_id,
+        keys: FAPI_TOKEN_SETTINGS,
+      }),
+      resolveAppSecurityRequirements(
+        c.env,
+        (clientMetadata.tenant_id as string) || getTenantIdFromContext(c),
+        clientMetadata.client_id
+      ),
+    ]);
     fapiRequiresDpop = Boolean(fapi.requireDpop || (fapi.enabled && fapi.requireDpop !== false));
+    // security.dpop_bound_access_tokens: the tenant (or app) binds every access token to DPoP.
+    tenantRequiresDpop = requirements.dpopBoundAccessTokens;
   } catch (error) {
     getLogger(c)
       .module('TOKEN')
@@ -1044,7 +1055,7 @@ async function isDPoPRequiredForTokenRequest(
     Boolean(clientMetadata.dpop_bound_access_tokens)
   );
 
-  return fapiRequiresDpop || clientRequiresDpop;
+  return fapiRequiresDpop || tenantRequiresDpop || clientRequiresDpop;
 }
 
 async function resolveClientAssertionValidationOptions(
@@ -1886,13 +1897,22 @@ async function handleAuthorizationCodeGrant(
 
   // DPoP requirement (FAPI 2.0 / sender-constrained tokens) - request-level cached
   let fapiRequiresDpop = false;
+  let tenantRequiresDpop = false;
   try {
-    const settings = await timeTokenRequestDiagnosticOperation(c, 'token_security_settings', () =>
-      getProtocolSettingsCached(c, c.env, { clientId: client_id, keys: FAPI_TOKEN_SETTINGS })
+    const [settings, requirements] = await timeTokenRequestDiagnosticOperation(
+      c,
+      'token_security_settings',
+      () =>
+        Promise.all([
+          getProtocolSettingsCached(c, c.env, { clientId: client_id, keys: FAPI_TOKEN_SETTINGS }),
+          resolveAppSecurityRequirements(c.env, tenantId, client_id),
+        ])
     );
     const { fapi } = settings;
     // If FAPI is enabled, default to requiring DPoP unless explicitly disabled
     fapiRequiresDpop = Boolean(fapi.requireDpop || (fapi.enabled && fapi.requireDpop !== false));
+    // security.dpop_bound_access_tokens: the tenant (or app) binds every access token to DPoP.
+    tenantRequiresDpop = requirements.dpopBoundAccessTokens;
   } catch (error) {
     log.error('Failed to load FAPI settings for DPoP', {}, error as Error);
     throw new SecurityProfileSettingsUnavailableError();
@@ -1949,7 +1969,7 @@ async function handleAuthorizationCodeGrant(
     );
   }
 
-  if ((fapiRequiresDpop || clientRequiresDpop) && !dpopProof) {
+  if ((fapiRequiresDpop || tenantRequiresDpop || clientRequiresDpop) && !dpopProof) {
     return oauthError(c, 'invalid_request', 'DPoP proof is required for this request', 400);
   }
 

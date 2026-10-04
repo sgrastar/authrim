@@ -93,9 +93,9 @@ export const SECURITY_SETTINGS_META: Record<keyof SecuritySettings, SettingMeta>
     default: false,
     envKey: 'DPOP_BOUND_ACCESS_TOKENS',
     label: 'DPoP Bound Tokens',
-    description: 'Bind access tokens to DPoP keys by default',
+    description:
+      "Require a DPoP proof at the token endpoint, so every access token is DPoP-bound (RFC 9449). An app can turn it on as well, but cannot waive the tenant's requirement. Authorization requests are not affected. security.dpop_required governs DPoP under FAPI",
     visibility: 'public',
-    status: 'in_development',
   },
   'security.dpop_nonce_enabled': {
     key: 'security.dpop_nonce_enabled',
