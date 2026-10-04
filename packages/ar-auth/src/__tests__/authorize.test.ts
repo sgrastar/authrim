@@ -1,6 +1,13 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { Hono } from 'hono';
-import { SignJWT, decodeJwt, exportJWK, exportPKCS8, generateKeyPair } from 'jose';
+import {
+  SignJWT,
+  decodeJwt,
+  decodeProtectedHeader,
+  exportJWK,
+  exportPKCS8,
+  generateKeyPair,
+} from 'jose';
 import { authorizeConfirmHandler, authorizeHandler, authorizeLoginHandler } from '../authorize';
 import { buildPolicyConstrainedRegionShardConfig } from '@authrim/ar-lib-core';
 import type { Env } from '@authrim/ar-lib-core/types/env';
@@ -2121,6 +2128,81 @@ describe('Authorization Handler', () => {
         const claims = decodeJwt(token!);
         expect(claims.exp! - claims.iat!).toBe(300);
       }
+    });
+
+    describe('signs implicit and hybrid ID tokens as the token endpoint does', () => {
+      async function implicitIdTokenAlgorithm(options: {
+        appAlgorithm?: string;
+        tenantOAuth?: Record<string, unknown>;
+      }) {
+        mockGetClient.mockResolvedValue({
+          client_id: 'test-client',
+          redirect_uris: ['https://example.com/callback'],
+          grant_types: ['implicit', 'authorization_code'],
+          response_types: ['id_token token', 'code id_token token'],
+          scope: 'openid profile',
+          token_endpoint_auth_method: 'none',
+          ...(options.appAlgorithm ? { id_token_signed_response_alg: options.appAlgorithm } : {}),
+        });
+        await configureClientSettings(env, { 'client.sso_enabled': true });
+        configureClientTrustPolicy(env);
+        if (options.tenantOAuth) {
+          await (env.SETTINGS as unknown as MockKVNamespace).put(
+            'settings:tenant:default:oauth',
+            JSON.stringify(options.tenantOAuth)
+          );
+        }
+        seedSession(env, 'signing-user');
+        const pems = Object.fromEntries(
+          await Promise.all(
+            (['RS256', 'ES256', 'PS256'] as const).map(async (algorithm) => [
+              algorithm,
+              await exportPKCS8(
+                (await generateKeyPair(algorithm, { extractable: true })).privateKey
+              ),
+            ])
+          )
+        ) as Record<string, string>;
+        env.KEY_MANAGER = {
+          idFromName: vi.fn().mockReturnValue({ toString: () => 'default-v3' }),
+          get: vi.fn().mockReturnValue({
+            getActiveOIDCSigningKeyWithPrivateRpc: vi.fn(async (algorithm: string) => ({
+              kid: `signing-${algorithm}`,
+              privatePEM: pems[algorithm],
+            })),
+          }),
+        } as unknown as Env['KEY_MANAGER'];
+
+        const response = await app.request(
+          '/authorize?response_type=id_token%20token&client_id=test-client&redirect_uri=https://example.com/callback&scope=openid%20profile&state=signing&nonce=signing-nonce',
+          {
+            method: 'GET',
+            headers: { Cookie: `authrim_session=${encodeURIComponent(TEST_SESSION_ID)}` },
+          },
+          env
+        );
+        expect(response.status).toBe(302);
+        const fragment = new URLSearchParams(
+          new URL(response.headers.get('Location')!).hash.slice(1)
+        );
+        return decodeProtectedHeader(fragment.get('id_token')!).alg;
+      }
+
+      it("uses the app's id_token_signed_response_alg", async () => {
+        await expect(implicitIdTokenAlgorithm({ appAlgorithm: 'ES256' })).resolves.toBe('ES256');
+      });
+
+      it("uses the tenant's algorithm while apps may not choose", async () => {
+        await expect(
+          implicitIdTokenAlgorithm({
+            appAlgorithm: 'ES256',
+            tenantOAuth: {
+              'oauth.id_token_signing_alg': 'PS256',
+              'oauth.id_token_signing_alg_client_override': false,
+            },
+          })
+        ).resolves.toBe('PS256');
+      });
     });
 
     securityRegressionIt(

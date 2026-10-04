@@ -680,7 +680,7 @@ place('settings/domains', 'Domains and origins', {
 	]
 });
 place('settings/signing-keys', 'Token signing', {
-	advanced: ['oauth.id_token_signing_alg']
+	primary: ['oauth.id_token_signing_alg', 'oauth.id_token_signing_alg_client_override']
 });
 place('settings/compliance', 'Audit and data residency', {
 	primary: [

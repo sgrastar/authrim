@@ -88,6 +88,8 @@ import {
   type FAPIProtocolSettings,
   type OIDCProtocolSettings,
   resolveAuthorizationResponseSigningAlgorithm,
+  resolveIDTokenSigningAlgorithm,
+  resolveIDTokenSigningPolicy,
   selectJWEEncryptionKey,
   setBoundedMapEntry,
   timingSafeEqual,
@@ -4852,9 +4854,15 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       // Get issuer from environment
       const issuer = getRequestIssuer(c);
 
+      // Signed as the token endpoint signs this app's ID tokens.
+      const idTokenSigningAlgorithm = resolveIDTokenSigningAlgorithm(
+        clientMetadata,
+        await resolveIDTokenSigningPolicy(c.env, getTenantIdFromContext(c))
+      );
       const { privateKey, kid: signingKeyId } = await getSigningKeyFromKeyManager(
         c.env,
-        getTenantIdFromContext(c)
+        getTenantIdFromContext(c),
+        idTokenSigningAlgorithm
       );
 
       // Calculate c_hash if code is present (for hybrid flows)
@@ -4935,7 +4943,8 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         idTokenClaims as Parameters<typeof createIDToken>[0],
         privateKey,
         signingKeyId,
-        tokenLifetimeSeconds
+        tokenLifetimeSeconds,
+        idTokenSigningAlgorithm
       );
 
       log.info('Generated id_token for hybrid/implicit flow', {

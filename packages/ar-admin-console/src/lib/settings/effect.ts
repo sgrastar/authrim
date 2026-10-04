@@ -7,8 +7,8 @@
  * just-in-time provisioning, policy flags and embedding limits, token lifetimes, FAPI and the
  * other protocol settings (PAR, request objects, response types, DPoP nonces, discovery claims),
  * token exchange, introspection, conformance, UI routing), the IdP profile update on sign-in, and
- * the password lockout threshold, email code lifetime, refresh token rotation and the advertised
- * ACR values; and less the settings that left the catalog (duplicates, copies of the app
+ * the password lockout threshold, email code lifetime, refresh token rotation, the advertised
+ * ACR values and the tenant's ID token signing algorithm; and less the settings that left the catalog (duplicates, copies of the app
  * registration, and values too fine or fixed at deployment). Update this list when a setting starts to apply or leaves the catalog.
  *
  * Shown in the settings map (Storybook: Pages › Settings map).
@@ -81,7 +81,5 @@ export const NOT_APPLIED: ReadonlyMap<string, NotApplied> = new Map([
 		'login-ui.published_snapshot',
 		'login-ui.published_version',
 		'login-ui.rollback_snapshot'
-	]),
-	// on-hold (1)
-	...reason('on-hold', ['oauth.id_token_signing_alg'])
+	])
 ]);

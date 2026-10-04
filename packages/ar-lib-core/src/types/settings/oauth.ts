@@ -37,7 +37,9 @@ export interface OAuthSettings {
   // SSO Settings
   'oauth.sso_enabled': boolean;
 
-  'oauth.id_token_signing_alg': string;
+  // ID Token Signing
+  'oauth.id_token_signing_alg': 'RS256' | 'ES256' | 'PS256';
+  'oauth.id_token_signing_alg_client_override': boolean;
 
   // DDoS Protection
   'oauth.max_codes_per_user': number;
@@ -264,13 +266,26 @@ export const OAUTH_SETTINGS_META: Record<keyof OAuthSettings, SettingMeta> = {
 
   'oauth.id_token_signing_alg': {
     key: 'oauth.id_token_signing_alg',
-    // Per tenant (or app) only, as before the category had platform values.
-    scopes: ['tenant', 'client'],
-    type: 'string',
+    // The tenant's algorithm; an app chooses its own with id_token_signed_response_alg.
+    scopes: ['tenant'],
+    type: 'enum',
+    enum: ['RS256', 'ES256', 'PS256'],
     default: 'RS256',
     envKey: 'ID_TOKEN_SIGNING_ALG',
     label: 'ID Token Signing Algorithm',
-    description: 'Default signing algorithm for ID tokens',
+    description:
+      'Signs the ID tokens of every app that does not choose its own algorithm (id_token_signed_response_alg), or of every app while apps may not choose.',
+    visibility: 'admin',
+  },
+  'oauth.id_token_signing_alg_client_override': {
+    key: 'oauth.id_token_signing_alg_client_override',
+    scopes: ['tenant'],
+    type: 'boolean',
+    // On, as OpenID Connect registration expects: an app's registered algorithm is honoured.
+    default: true,
+    label: 'Apps May Choose the ID Token Signing Algorithm',
+    description:
+      "On: an app's id_token_signed_response_alg is used. Off: every ID token is signed with the tenant's algorithm, and registering or updating an app with another one is refused.",
     visibility: 'admin',
   },
 
@@ -459,6 +474,7 @@ export const OAUTH_DEFAULTS: OAuthSettings = {
   'oauth.userinfo_require_openid': true,
   'oauth.sso_enabled': false,
   'oauth.id_token_signing_alg': 'RS256',
+  'oauth.id_token_signing_alg_client_override': true,
   'oauth.max_codes_per_user': 100,
   // Note: par_required moved to security.ts
   'oauth.par_default_ttl': 600,

@@ -76,6 +76,7 @@ import {
   recordDeviceSecretRouteHint,
   resolveDeviceSecretRouteHint,
   resolvePolicyFlags,
+  resolveIDTokenSigningPolicy,
 } from '@authrim/ar-lib-core';
 import {
   resolveIDTokenSigningAlgorithm,
@@ -1450,7 +1451,10 @@ async function createClientIDToken(
   claims: Omit<IDTokenClaims, 'iat' | 'exp'>,
   expiresIn: number
 ): Promise<string> {
-  const algorithm = resolveIDTokenSigningAlgorithm(clientMetadata);
+  const algorithm = resolveIDTokenSigningAlgorithm(
+    clientMetadata,
+    await resolveIDTokenSigningPolicy(env, tenantId)
+  );
   const { privateKey, kid } = await getSigningKeyFromKeyManager(
     env,
     tenantId,
@@ -1468,7 +1472,10 @@ async function createClientSDJWTIDToken(
   expiresIn: number,
   selectiveClaims: string[]
 ): Promise<string> {
-  const algorithm = resolveIDTokenSigningAlgorithm(clientMetadata);
+  const algorithm = resolveIDTokenSigningAlgorithm(
+    clientMetadata,
+    await resolveIDTokenSigningPolicy(env, tenantId)
+  );
   const { privateKey, kid } = await getSigningKeyFromKeyManager(
     env,
     tenantId,

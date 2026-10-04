@@ -921,6 +921,38 @@ describe('Dynamic Client Registration Handler', () => {
       await expect(res.json()).resolves.toMatchObject({ error: 'invalid_client_metadata' });
     });
 
+    it('refuses another ID token algorithm while the tenant signs every ID token with its own', async () => {
+      mockEnv.SETTINGS = createMockKV();
+      await mockEnv.SETTINGS.put(
+        'settings:tenant:default:oauth',
+        JSON.stringify({
+          'oauth.id_token_signing_alg': 'ES256',
+          'oauth.id_token_signing_alg_client_override': false,
+        })
+      );
+      const register = (algorithm: string) =>
+        app.request(
+          '/register',
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              redirect_uris: ['https://example.com/callback'],
+              id_token_signed_response_alg: algorithm,
+            }),
+          },
+          mockEnv
+        );
+
+      const refused = await register('PS256');
+      expect(refused.status).toBe(400);
+      await expect(refused.json()).resolves.toMatchObject({
+        error: 'invalid_client_metadata',
+        error_description: expect.stringContaining('must be ES256'),
+      });
+      expect((await register('ES256')).status).toBe(201);
+    });
+
     it('accepts ES256 for ID Token and signed UserInfo responses', async () => {
       const res = await app.request(
         '/register',

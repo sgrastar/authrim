@@ -47,6 +47,7 @@ import {
   disableTenantDiscoveryAliasDirectory,
   resolveTenantDiscoveryAliasDirectoryInput,
 } from './tenant-alias-directory';
+import { refuseIDTokenSigningAlgorithm } from './id-token-signing-policy';
 
 const VALID_GRANT_TYPES: ReadonlySet<string> = new Set([
   GRANT_TYPES.AUTHORIZATION_CODE,
@@ -188,7 +189,7 @@ function validateUpdateRequest(
   ) {
     return {
       error: 'invalid_client_metadata',
-      error_description: 'id_token_signed_response_alg must be one of: RS256, ES256',
+      error_description: 'id_token_signed_response_alg must be one of: RS256, ES256, PS256',
     };
   }
   if (
@@ -675,6 +676,13 @@ export async function clientConfigUpdateHandler(c: Context<{ Bindings: Env }>): 
     if (validationError) {
       return c.json(validationError, 400);
     }
+    const idTokenAlgorithmError = await refuseIDTokenSigningAlgorithm(
+      c,
+      tenantId,
+      body.id_token_signed_response_alg,
+      'invalid_client_metadata'
+    );
+    if (idTokenAlgorithmError) return idTokenAlgorithmError;
 
     // FAPI can be set per client, so validate with the settings as they apply to this client.
     const systemSettings = await resolveProtocolSettings(c.env, tenantId, {

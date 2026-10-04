@@ -54,6 +54,7 @@ const REVIEWED_FIELDS: readonly [string, TenantSettingValueType, TenantSettingHa
     oauth.userinfo_require_openid
     oauth.sso_enabled
     oauth.https_request_uri_enabled
+    oauth.id_token_signing_alg_client_override
   `,
     ],
     [
@@ -63,13 +64,6 @@ const REVIEWED_FIELDS: readonly [string, TenantSettingValueType, TenantSettingHa
       `
     oauth.error_response_format
     oauth.error_id_mode
-  `,
-    ],
-    [
-      'oauth',
-      'string',
-      'value',
-      `
     oauth.id_token_signing_alg
   `,
     ],

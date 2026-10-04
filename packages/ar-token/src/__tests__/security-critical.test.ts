@@ -587,6 +587,59 @@ describe('Security-Critical Tests', () => {
       );
     });
 
+    it("signs every ID token with the tenant's algorithm while apps may not choose", async () => {
+      const { privateKey } = await generateKeyPair('PS256', { extractable: true });
+      const privatePEM = await exportPKCS8(privateKey);
+      const client = createConfidentialClient({
+        require_pkce: false,
+        id_token_signed_response_alg: 'ES256',
+      });
+      const authCodeData = createAuthCodeData({ userId: 'user-001', scope: 'openid profile' });
+      const settings = createMockKV();
+      void settings.put(
+        'settings:tenant:default:oauth',
+        JSON.stringify({
+          'oauth.id_token_signing_alg': 'PS256',
+          'oauth.id_token_signing_alg_client_override': false,
+        })
+      );
+      (mockEnv as unknown as { SETTINGS: unknown }).SETTINGS = settings;
+      const getOIDCKey = vi.fn().mockResolvedValue({ kid: 'oidc-ps256-tenant', privatePEM });
+      const keyManagerStub = mockEnv.KEY_MANAGER.get(
+        mockEnv.KEY_MANAGER.idFromName('default-v3')
+      ) as unknown as Record<string, unknown>;
+      Object.assign(keyManagerStub, { getActiveOIDCSigningKeyWithPrivateRpc: getOIDCKey });
+
+      mocks.mockGetClientCached.mockResolvedValue(client);
+      mockEnv.AUTH_CODE_STORE.get = vi.fn().mockReturnValue({
+        consumeCodeRpc: vi.fn().mockResolvedValue(authCodeData),
+        registerIssuedTokensRpc: vi.fn().mockResolvedValue(undefined),
+      });
+      const response = await tokenHandler(
+        createMockContext({
+          method: 'POST',
+          body: {
+            grant_type: 'authorization_code',
+            code: 'valid-auth-code',
+            redirect_uri: authCodeData.redirectUri,
+            client_id: client.client_id,
+            client_secret: 'valid-secret',
+          },
+          env: mockEnv,
+        })
+      );
+
+      expect(response.status).toBe(200);
+      expect(getOIDCKey).toHaveBeenCalledWith('PS256');
+      expect(mocks.mockCreateIDToken).toHaveBeenCalledWith(
+        expect.any(Object),
+        expect.anything(),
+        'oidc-ps256-tenant',
+        expect.any(Number),
+        'PS256'
+      );
+    });
+
     it('uses the runtime-resolved core adapter for authorization_code RBAC and policy lookups', async () => {
       const client = createConfidentialClient({ require_pkce: false });
       const authCodeData = createAuthCodeData({

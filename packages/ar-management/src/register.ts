@@ -55,6 +55,7 @@ import {
   resolveProtocolSettings,
 } from '@authrim/ar-lib-core';
 import { isOIDCSigningAlgorithm } from '@authrim/ar-lib-core/utils/oidc-signing';
+import { refuseIDTokenSigningAlgorithm } from './id-token-signing-policy';
 import { getRequestAwareIssuerUrl } from './request-issuer';
 import {
   ensureActiveTenantDiscoveryAliasDirectory,
@@ -1499,6 +1500,13 @@ export async function registerHandler(c: Context<{ Bindings: Env }>): Promise<Re
     if (!validation.valid) {
       return c.json(validation.error, 400);
     }
+    const idTokenAlgorithmError = await refuseIDTokenSigningAlgorithm(
+      c,
+      tenantId,
+      body?.id_token_signed_response_alg,
+      'invalid_client_metadata'
+    );
+    if (idTokenAlgorithmError) return idTokenAlgorithmError;
 
     const request = validation.data;
     if (restrictedAgentRegistration) {
