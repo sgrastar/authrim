@@ -230,7 +230,11 @@ export const ADMIN_WRITE_TOOL_DEFINITIONS: readonly AgentToolDefinition[] =
           {
             resource_version: RESOURCE_VERSION,
             enabled: { type: 'boolean' },
-            delegationEnabled: { type: 'boolean' },
+            delegationEnabled: {
+              type: 'boolean',
+              description:
+                "In development: saved but not applied yet (each app's delegation_mode decides delegation).",
+            },
             impersonationEnabled: { type: 'boolean' },
           },
           ['resource_version']
@@ -262,7 +266,6 @@ export const ADMIN_WRITE_TOOL_DEFINITIONS: readonly AgentToolDefinition[] =
             stateRequired: { type: 'boolean' },
             refreshTokenRotation: { type: 'boolean' },
             offlineAccessRequired: { type: 'boolean' },
-            jarmEnabled: { type: 'boolean' },
           },
           ['resource_version']
         ),

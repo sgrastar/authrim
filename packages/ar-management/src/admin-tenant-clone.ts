@@ -336,10 +336,11 @@ export function sanitizeCopiedSettingsValue(
       'tenant.audit_profile_id',
       'tenant.base_domain',
       'tenant.residency_profile_id',
+      // No longer settings (deployment and key management hold them): stale values are dropped.
+      'tenant.default_id',
     ]) {
       delete record[key];
     }
-    record['tenant.default_id'] = context.targetTenantId;
     record['tenant.name'] = context.targetTenantName;
   }
 
@@ -349,10 +350,11 @@ export function sanitizeCopiedSettingsValue(
   }
 
   if (category === 'tokens') {
-    // The clone receives an isolated KeyManager namespace and a newly generated key.
-    record['tokens.access_token_signing_key_id'] = '';
-    record['tokens.id_token_signing_key_id'] = '';
-    record['tokens.userinfo_signing_key_id'] = '';
+    // The clone receives an isolated KeyManager namespace and a newly generated key; signing key
+    // ids are no longer settings, so stale values from the source are dropped.
+    delete record['tokens.access_token_signing_key_id'];
+    delete record['tokens.id_token_signing_key_id'];
+    delete record['tokens.userinfo_signing_key_id'];
   }
 
   if (category === 'saml') {
@@ -377,7 +379,8 @@ export function sanitizeCopiedSettingsValue(
     }
     if (!includeSecrets) {
       record['authentication-methods.directory_password.enabled'] = false;
-      record['authentication-methods.directory_password.auto_provision'] = false;
+      // Not a setting (the directory connectors decide it): a stale value is dropped.
+      delete record['authentication-methods.directory_password.auto_provision'];
       record['authentication-methods.human_verification.login_enabled'] = false;
       record['authentication-methods.human_verification.signup_enabled'] = false;
       record['authentication-methods.human_verification.reauth_enabled'] = false;
@@ -1622,7 +1625,7 @@ async function executeTenantCloneHandler(
           if (key in targetValues) mergedValues[key] = targetValues[key];
           else delete mergedValues[key];
         }
-        mergedValues['tenant.default_id'] = targetTenantId;
+        delete mergedValues['tenant.default_id'];
         mergedValues['tenant.name'] = parsed.data.name;
         await putTrackedKv(
           c.env.AUTHRIM_CONFIG,

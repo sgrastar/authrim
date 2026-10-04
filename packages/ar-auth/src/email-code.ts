@@ -56,6 +56,7 @@ import {
   resolveOtpAccountCoreDataContextByIdentifierFromHono,
   type CanonicalOtpLoginUser,
   type OtpAccountCoreDataContext,
+  resolveEmailCodeTtlSeconds,
 } from '@authrim/ar-lib-core';
 import { getRequestIssuer } from './issuer';
 import { getEmailCodeHtml, getEmailCodeText } from './utils/email/templates';
@@ -74,7 +75,6 @@ import { resolveSessionTtl } from './session-ttl';
 import { provisionTenantD1EmailAccount, usesTenantD1AccountStorage } from './account-provisioning';
 import { timeAuthRequestDiagnosticOperation } from './request-diagnostics';
 
-const EMAIL_CODE_TTL = 5 * 60; // 5 minutes in seconds
 const OTP_SESSION_COOKIE = 'authrim_otp_session';
 
 /**
@@ -339,11 +339,13 @@ export async function emailCodeSendHandler(c: Context<{ Bindings: Env }>) {
         return createErrorResponse(c, AR_ERROR_CODES.CONFIG_MISSING_SECRET);
       }
 
-      // Hash the code and get ChallengeStore in parallel (independent operations)
-      const [codeHash, emailHash, challengeStore] = await Promise.all([
+      // Hash the code and get ChallengeStore in parallel (independent operations), with the
+      // tenant's email code lifetime (credentials.email_code_ttl).
+      const [codeHash, emailHash, challengeStore, emailCodeTtl] = await Promise.all([
         hashEmailCode(code, email.toLowerCase(), otpSessionId, issuedAt, hmacSecret),
         hashEmail(email.toLowerCase()),
         getChallengeStoreByChallengeId(c.env, otpSessionId, getTenantIdFromContext(c)),
+        resolveEmailCodeTtlSeconds(c.env, getTenantIdFromContext(c)),
       ]);
 
       await challengeStore.storeChallengeRpc({
@@ -352,7 +354,7 @@ export async function emailCodeSendHandler(c: Context<{ Bindings: Env }>) {
         type: 'email_code',
         userId: user.id as string,
         challenge: codeHash, // Store hash, not plaintext
-        ttl: EMAIL_CODE_TTL, // 5 minutes
+        ttl: emailCodeTtl,
         email: email.toLowerCase(),
         metadata: {
           email_hash: emailHash,
@@ -371,7 +373,7 @@ export async function emailCodeSendHandler(c: Context<{ Bindings: Env }>) {
         httpOnly: true,
         secure: true,
         sameSite: 'Lax',
-        maxAge: EMAIL_CODE_TTL,
+        maxAge: emailCodeTtl,
       });
 
       const fromEmail = c.env.EMAIL_FROM || 'noreply@authrim.dev';
@@ -387,7 +389,7 @@ export async function emailCodeSendHandler(c: Context<{ Bindings: Env }>) {
         notificationKind: 'auth.email-code',
         accountId: user.id as string,
         idempotencyKey: `email-code:${otpSessionId}`,
-        expiresAt: Math.floor(issuedAt / 1000) + EMAIL_CODE_TTL,
+        expiresAt: Math.floor(issuedAt / 1000) + emailCodeTtl,
         payload: {
           channel: 'email',
           to: email,
@@ -397,7 +399,7 @@ export async function emailCodeSendHandler(c: Context<{ Bindings: Env }>) {
             name: (user.name as string) || undefined,
             email,
             code,
-            expiresInMinutes: EMAIL_CODE_TTL / 60,
+            expiresInMinutes: Math.ceil(emailCodeTtl / 60),
             appName: 'Authrim',
             logoUrl: undefined,
           }),
@@ -407,7 +409,7 @@ export async function emailCodeSendHandler(c: Context<{ Bindings: Env }>) {
               name: (user.name as string) || undefined,
               email,
               code,
-              expiresInMinutes: EMAIL_CODE_TTL / 60,
+              expiresInMinutes: Math.ceil(emailCodeTtl / 60),
               appName: 'Authrim',
             }),
             // OTP AutoFill header for Safari/iOS

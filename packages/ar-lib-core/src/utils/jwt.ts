@@ -149,6 +149,12 @@ export interface VerifyTokenOptions {
    * Default: false
    */
   skipAudienceCheck?: boolean;
+
+  /**
+   * The signing algorithms accepted (default RS256, Authrim's access and refresh tokens). An ID
+   * token may use any of ISSUED_ID_TOKEN_ALGORITHMS.
+   */
+  algorithms?: readonly string[];
 }
 
 /**
@@ -167,7 +173,7 @@ export async function verifyToken(
   issuer: string,
   options: VerifyTokenOptions = {}
 ): Promise<JWTPayload> {
-  const { audience, skipAudienceCheck = false } = options;
+  const { audience, skipAudienceCheck = false, algorithms = ['RS256'] } = options;
 
   // SECURITY: Require audience by default to prevent accidental skipping
   if (!audience && !skipAudienceCheck) {
@@ -180,7 +186,7 @@ export async function verifyToken(
     issuer,
     // Only include audience in options if provided and not skipping
     ...(audience && !skipAudienceCheck && { audience }),
-    algorithms: ['RS256'],
+    algorithms: [...algorithms],
   });
 
   return payload;

@@ -27,6 +27,7 @@ import {
   type Env,
   type GuestUpgradeOperation,
   type Session,
+  resolveEmailCodeTtlSeconds,
 } from '@authrim/ar-lib-core';
 import {
   generateRegistrationOptions,
@@ -360,6 +361,10 @@ export async function startAccountGuestUpgradeHandler(c: C): Promise<Response> {
         stage: 'start',
         status: 409,
       });
+    // An emailed code lasts as the tenant's email codes do (credentials.email_code_ttl); a
+    // passkey registration keeps its own ten minutes.
+    const lifetimeSeconds =
+      method === 'email' ? await resolveEmailCodeTtlSeconds(c.env, ctx.tenantId) : 600;
     await ctx.operations.create({
       operationId,
       userId: ctx.session.userId,
@@ -370,7 +375,7 @@ export async function startAccountGuestUpgradeHandler(c: C): Promise<Response> {
       payloadJson: JSON.stringify(payload),
       verifier,
       now,
-      expiresAt: now + 600,
+      expiresAt: now + lifetimeSeconds,
     });
     await recordAccountOperation(c, {
       userId: ctx.session.userId,
@@ -386,13 +391,13 @@ export async function startAccountGuestUpgradeHandler(c: C): Promise<Response> {
         notificationKind: 'account.guest-upgrade-otp',
         accountId: ctx.session.userId,
         idempotencyKey: `guest-upgrade:${operationId}`,
-        expiresAt: now + 600,
+        expiresAt: now + lifetimeSeconds,
         payload: {
           channel: 'email',
           to: payload.email!,
           from: c.env.EMAIL_FROM || 'noreply@authrim.dev',
           subject: 'Register your guest account',
-          body: `Your confirmation code is ${code}. It expires in 10 minutes.`,
+          body: `Your confirmation code is ${code}. It expires in ${Math.ceil(lifetimeSeconds / 60)} minutes.`,
         },
       });
       if (delivery.delivery === 'permanent_failure') {
@@ -410,7 +415,7 @@ export async function startAccountGuestUpgradeHandler(c: C): Promise<Response> {
       operation_id: operationId,
       upgrade_token: token,
       method,
-      expires_at: now + 600,
+      expires_at: now + lifetimeSeconds,
       ...(options && { options }),
     });
   } catch (error) {

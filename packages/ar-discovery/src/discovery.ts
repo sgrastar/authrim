@@ -15,6 +15,7 @@ import {
   resolveLogoutConfig,
   getTenantIdFromContext,
   resolveEffectiveSettings,
+  resolveIDTokenSigningPolicy,
   AAL_ACR_VALUES,
   isNativeSSOEnabled,
   loadTenantProfileCached,
@@ -103,9 +104,12 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
   // The acr values advertised: discovery.acr_values_supported, and with assurance enabled the
   // values Authrim issues for each AAL (urn:authrim:aal:1..3).
   let acrValuesSupported: string[] = [];
+  // The ID token algorithms: every published one while apps choose their own, else only the
+  // tenant's (oauth.id_token_signing_alg).
+  let idTokenSigningAlgorithms: OIDCSigningAlgorithm[] = publishedSigningAlgorithms;
 
   try {
-    const [tokens, flags, discoverySettings, assurance] = await Promise.all([
+    const [tokens, flags, discoverySettings, assurance, idTokenSigning] = await Promise.all([
       resolveEffectiveSettings(c.env, 'tokens', {
         tenantId,
       }),
@@ -114,7 +118,13 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
       }),
       resolveEffectiveSettings(c.env, 'discovery', { tenantId }),
       resolveEffectiveSettings(c.env, 'assurance', { tenantId }),
+      resolveIDTokenSigningPolicy(c.env, tenantId),
     ]);
+    if (!idTokenSigning.appsMayChoose) {
+      idTokenSigningAlgorithms = publishedSigningAlgorithms.filter(
+        (algorithm) => algorithm === idTokenSigning.algorithm
+      );
+    }
     const configuredAcrValues = discoverySettings['discovery.acr_values_supported'];
     acrValuesSupported = [
       ...new Set([
@@ -203,7 +213,7 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
   // stale metadata for a different environment or component set.
   const logoutHash = `bc=${logoutConfig.backchannel.enabled}:fc=${logoutConfig.frontchannel.enabled}:sm=${logoutConfig.session_management.enabled}:sm_iframe=${logoutConfig.session_management.check_session_iframe_enabled}`;
   const profileHash = `profile=${tenantProfile.type}`;
-  const signingAlgorithmsHash = `oidc_algs=${publishedSigningAlgorithms.join(',')}`;
+  const signingAlgorithmsHash = `oidc_algs=${publishedSigningAlgorithms.join(',')}:id_token_algs=${idTokenSigningAlgorithms.join(',')}`;
   const settingsHash = `${currentSettingsJson}:acr=${acrValuesSupported.join(',')}:issuer=${issuer}:async=${asyncEnabled}:te=${tokenExchangeEnabled}:cc=${clientCredentialsEnabled}:ns=${nativeSSOEnabled}:rar=${rarEnabled}:ai=${aiScopesEnabled}:idjag=${idJagEnabled}:fe=${flowEngineEnabled}:${profileHash}:${logoutHash}:${signingAlgorithmsHash}`;
   // A digest of everything the metadata depends on: a fixed-length key, however long the settings
   // (a KV key is at most 512 bytes).
@@ -327,7 +337,7 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
       tenantProfile,
       { tokenExchangeEnabled, clientCredentialsEnabled }
     ),
-    id_token_signing_alg_values_supported: publishedSigningAlgorithms,
+    id_token_signing_alg_values_supported: idTokenSigningAlgorithms,
     // OIDC Core 8: Both public and pairwise subject identifiers are supported
     subject_types_supported: ['public', 'pairwise'],
     // Dynamic scopes based on AI Ephemeral Auth configuration

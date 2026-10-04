@@ -346,7 +346,7 @@ const ja = {
 	emailCode_title: 'メールを確認してください',
 	emailCode_subtitle: '認証コードを送信しました',
 	emailCode_instructions:
-		'メールに届いた6桁のコードを入力してください。コードは5分で期限切れになります。',
+		'メールに届いた6桁のコードを入力してください。コードの有効期限はメールに記載しています。',
 	emailCode_codeLabel: '認証コード',
 	emailCode_verifyButton: '確認',
 	emailCode_resendButton: 'コードを再送信',

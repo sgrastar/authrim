@@ -17,8 +17,10 @@ export const DR_BACKUP_SETTINGS_META: Record<keyof DRBackupSettings, SettingMeta
     type: 'string',
     default: '',
     label: 'Storage Destination',
-    description: 'Storage destination used for DR backup artifacts',
+    description:
+      'Storage destination for DR backup artifacts. In development: backups are written to the deployment’s export bucket (EXPORT_ARTIFACTS) whatever this says.',
     visibility: 'admin',
+    status: 'in_development',
   },
 };
 

@@ -14,7 +14,6 @@ import type { CategoryMeta, SettingMeta } from '../../utils/settings-manager';
 export interface DiscoverySettings {
   // Claims Configuration
   'discovery.claims_supported': string;
-  'discovery.claims_locales_supported': string;
 
   // ACR Configuration
   'discovery.acr_values_supported': string;
@@ -32,15 +31,6 @@ export const DISCOVERY_SETTINGS_META: Record<keyof DiscoverySettings, SettingMet
     label: 'Supported Claims',
     description:
       'Comma-separated claims discovery advertises as claims_supported; empty advertises the claims Authrim can issue',
-    visibility: 'admin',
-  },
-  'discovery.claims_locales_supported': {
-    key: 'discovery.claims_locales_supported',
-    type: 'string',
-    default: 'en,ja',
-    envKey: 'DISCOVERY_CLAIMS_LOCALES_SUPPORTED',
-    label: 'Supported Claim Locales',
-    description: 'Comma-separated list of supported locales for claims',
     visibility: 'admin',
   },
   'discovery.acr_values_supported': {
@@ -70,6 +60,5 @@ export const DISCOVERY_CATEGORY_META: CategoryMeta = {
  */
 export const DISCOVERY_DEFAULTS: DiscoverySettings = {
   'discovery.claims_supported': '',
-  'discovery.claims_locales_supported': 'en,ja',
   'discovery.acr_values_supported': 'urn:mace:incommon:iap:silver,urn:mace:incommon:iap:bronze',
 };

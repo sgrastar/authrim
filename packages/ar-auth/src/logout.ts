@@ -24,6 +24,8 @@ import {
   timingSafeEqual,
   verifyClientSecretHash,
   validateIdTokenHint,
+  getIssuedIDTokenKeys,
+  importIssuedTokenKey,
   validatePostLogoutRedirectUri,
   validateLogoutParameters,
   getSessionStoreBySessionId,
@@ -282,49 +284,12 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
     let clientId: string | undefined;
     let sid: string | undefined;
 
-    // Helper function to get public key from KeyManager via RPC
-    // Matches the key by 'kid' from the JWT header
+    // The key that signed the id_token_hint: any algorithm Authrim signs ID tokens with, the key
+    // its kid names in the tenant's OIDC JWKS.
     const getPublicKey = async (): Promise<CryptoKey> => {
-      const tenantId = getTenantIdFromContext(c);
-      const keyManagerId = c.env.KEY_MANAGER.idFromName(`${tenantId}-v3`);
-      const keyManager = c.env.KEY_MANAGER.get(keyManagerId);
-
-      const keys = await keyManager.getAllPublicKeysRpc();
-
-      if (!keys || keys.length === 0) {
-        throw new Error('No keys in JWKS');
-      }
-
-      const jwks = { keys } as JSONWebKeySet;
-
-      // Extract kid from id_token_hint header if available
-      let targetKid: string | undefined;
-      if (idTokenHint) {
-        try {
-          const headerPart = idTokenHint.split('.')[0];
-          const header = JSON.parse(atob(headerPart.replace(/-/g, '+').replace(/_/g, '/')));
-          targetKid = header.kid;
-        } catch {
-          // If we can't parse the header, fall back to first key
-        }
-      }
-
-      // Find the matching key by kid, or use the first key as fallback
-      let key;
-      if (targetKid) {
-        key = jwks.keys.find((k) => k.kid === targetKid);
-        if (!key) {
-          // SECURITY: Do not expose kid value in error to prevent key enumeration
-          throw new Error('Key verification failed');
-        }
-      } else {
-        key = jwks.keys[0];
-        if (!key) {
-          throw new Error('Key verification failed');
-        }
-      }
-
-      return (await importJWK(key)) as CryptoKey;
+      if (!idTokenHint) throw new Error('Key verification failed');
+      const keys = await getIssuedIDTokenKeys(c.env, getTenantIdFromContext(c));
+      return (await importIssuedTokenKey(keys, idTokenHint)).key;
     };
 
     // ========================================

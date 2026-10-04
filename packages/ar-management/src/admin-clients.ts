@@ -47,6 +47,8 @@ import {
   ensureActiveTenantDiscoveryAliasDirectory,
   resolveTenantDiscoveryAliasDirectoryInput,
 } from './tenant-alias-directory';
+import { refuseIDTokenSigningAlgorithm } from './id-token-signing-policy';
+import { OIDC_SIGNING_ALGORITHMS } from '@authrim/ar-lib-core/utils/oidc-signing';
 
 type AdminClientApplicationType = 'web' | 'native' | 'spa' | 'service';
 type AdminBrowserPublicClientMode = 'strict' | 'cookie_fallback';
@@ -107,8 +109,8 @@ const VALID_TOKEN_ENDPOINT_AUTH_METHODS = new Set<AdminTokenEndpointAuthMethod>(
   'client_secret_post',
   'private_key_jwt',
 ]);
-const VALID_ID_TOKEN_SIGNING_ALGORITHMS = new Set(['RS256', 'ES256']);
-const VALID_USERINFO_SIGNING_ALGORITHMS = new Set(['none', 'RS256', 'ES256']);
+const VALID_ID_TOKEN_SIGNING_ALGORITHMS = new Set<string>(OIDC_SIGNING_ALGORITHMS);
+const VALID_USERINFO_SIGNING_ALGORITHMS = new Set<string>(['none', ...OIDC_SIGNING_ALGORITHMS]);
 const UNSUPPORTED_LEGACY_CLIENT_FIELDS = new Set([
   'app_suite',
   'trust_group_id',
@@ -1904,6 +1906,13 @@ export async function adminClientUpdateHandler(c: Context<{ Bindings: Env }>) {
         400
       );
     }
+    const idTokenAlgorithmError = await refuseIDTokenSigningAlgorithm(
+      c,
+      tenantId,
+      idTokenSigningAlgorithmValidation.value,
+      'invalid_request'
+    );
+    if (idTokenAlgorithmError) return idTokenAlgorithmError;
     const userInfoSigningAlgorithmValidation = validateOptionalEnumField(
       userinfo_signed_response_alg,
       'userinfo_signed_response_alg',

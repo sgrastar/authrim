@@ -39,7 +39,7 @@ const completion = {
 	emailCode_title: 'Periksa email Anda',
 	emailCode_subtitle: 'Kami telah mengirim kode verifikasi ke',
 	emailCode_instructions:
-		'Masukkan kode 6 digit dari email Anda. Kode akan kedaluwarsa dalam 5 menit.',
+		'Masukkan kode 6 digit dari email Anda. Masa berlaku kode tercantum di email.',
 	emailCode_codeLabel: 'Kode verifikasi',
 	emailCode_resendSuccess: 'Kode berhasil dikirim',
 	emailCode_success: 'Verifikasi berhasil. Anda sedang dialihkan...',

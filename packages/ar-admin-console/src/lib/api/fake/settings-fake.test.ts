@@ -16,7 +16,7 @@ describe('the in-memory Settings API', () => {
 		expect(result.sources['session.default_ttl']).toBe('kv');
 		expect(result.sources['session.max_ttl']).toBe('env');
 		expect(result.values['session.max_ttl']).toBe(172800000);
-		expect(result.sources['session.min_ttl']).toBe('default');
+		expect(result.sources['session.ttl.passkey']).toBe('default');
 	});
 
 	it('inherits from the scopes above, as the API does, and says what applies without an override', async () => {
@@ -44,15 +44,15 @@ describe('the in-memory Settings API', () => {
 		const { version } = await api.get(tenant, 'session');
 		const saved = await api.patch(tenant, 'session', {
 			ifMatch: version,
-			set: { 'session.default_ttl': 7200000, 'session.min_ttl': 1 }
+			set: { 'session.default_ttl': 7200000, 'session.max_ttl': 1 }
 		});
 		expect(saved.applied).toEqual(['session.default_ttl']);
-		expect(saved.rejected['session.min_ttl']).toMatch(/>=/);
+		expect(saved.rejected['session.max_ttl']).toMatch(/>=/);
 		await expect(
 			api.patch(tenant, 'session', { ifMatch: version, set: { 'session.default_ttl': 60000 } })
 		).rejects.toBeInstanceOf(ConflictError);
 		await expect(
-			api.patch(tenant, 'session', { ifMatch: saved.version, set: { 'session.min_ttl': 1 } })
+			api.patch(tenant, 'session', { ifMatch: saved.version, set: { 'session.max_ttl': 1 } })
 		).rejects.toBeInstanceOf(RejectedError);
 
 		const viewer = createFakeSettings({ access: () => persona('viewer').access });

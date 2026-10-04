@@ -6,6 +6,11 @@ export const jaSettings = {
 	'set.page.stayingSignedIn': 'ログイン状態の維持',
 	'set.page.stayingSignedIn.desc':
 		'一度ログインした利用者と、そのアプリが、どれくらいの間ログインしたままでいられるかを決めます。',
+	'set.page.signingKeys': '署名鍵',
+	'set.page.signingKeys.desc': 'このテナントがトークンに署名する方法。',
+	'set.section.idTokenSigning': 'ID トークンの署名',
+	'set.section.idTokenSigning.desc':
+		'ID トークンを署名するアルゴリズムと、アプリが自分で選べるかどうか。',
 
 	'set.section.signIn': 'ログインの長さ',
 	'set.section.signIn.desc': '利用者が Authrim にログインしたままでいられる時間です。',
@@ -36,13 +41,6 @@ export const jaSettings = {
 	'set.k.session.ttl.passkey_registration': 'パスキーを登録した直後',
 	'set.k.session.max_ttl': 'ログインを保つ時間の上限',
 	'set.k.session.max_ttl.desc': 'ログインを保つ時間として指定できる、いちばん長い値です。',
-	'set.k.session.min_ttl': 'ログインを保つ時間の下限',
-	'set.k.session.min_ttl.desc': 'ログインを保つ時間として指定できる、いちばん短い値です。',
-	'set.k.session.token_ttl': 'セッショントークンの有効期間',
-	'set.k.session.token_ttl.desc': 'セッションの管理に使うトークンの有効期間です。',
-	'set.k.session.tombstone_ttl': '終了したセッションを覚えておく期間',
-	'set.k.session.tombstone_ttl.desc':
-		'ログアウトなどで終了したセッションを、無効と判断するために覚えておく期間です。',
 
 	'set.k.oauth.access_token_expiry': 'アクセストークンの有効期間',
 	'set.k.oauth.access_token_expiry.desc':
@@ -53,6 +51,18 @@ export const jaSettings = {
 	'set.k.oauth.id_token_expiry': 'ID トークンの有効期間',
 	'set.k.oauth.id_token_expiry.desc': 'ログインした人をアプリに伝えるトークンです。',
 	'set.k.oauth.refresh_token_rotation': '使うたびに新しいリフレッシュトークンに替える',
+	'set.k.oauth.id_token_signing_alg': 'ID トークンの署名アルゴリズム',
+	'set.k.oauth.id_token_signing_alg.desc':
+		'自分でアルゴリズムを選ばないアプリの ID トークンを、このアルゴリズムで署名します。',
+	'set.k.oauth.id_token_signing_alg_client_override': 'アプリごとのアルゴリズムを認める',
+	'set.k.oauth.id_token_signing_alg_client_override.desc':
+		'オフにすると、すべての ID トークンをテナントのアルゴリズムで署名し、ほかのアルゴリズムでのアプリ登録を拒否します。',
+	'set.k.security.fapi_enabled': 'FAPI 2.0 を適用',
+	'set.k.security.fapi_enabled.desc':
+		'テナントのすべてのアプリに FAPI 2.0 セキュリティプロファイルを適用します。',
+	'set.k.oauth.id_token_signing_alg.RS256': 'RS256',
+	'set.k.oauth.id_token_signing_alg.ES256': 'ES256',
+	'set.k.oauth.id_token_signing_alg.PS256': 'PS256',
 	'set.k.oauth.refresh_token_rotation.desc':
 		'使ったトークンは無効になります。漏れたトークンの使い回しを防ぐため、オンのままにしておくことをおすすめします。',
 	'set.k.oauth.refresh_token_sliding_window_enabled': '使うたびに有効期間を延ばす',
@@ -62,10 +72,6 @@ export const jaSettings = {
 	'set.k.oauth.refresh_token_absolute_expiry_enabled.desc':
 		'最初に発行してからの期間に上限を設けます。上限を過ぎると、利用者はログインし直します。',
 	'set.k.oauth.refresh_token_absolute_expiry': '上限（最初の発行から）',
-	'set.k.oauth.refresh_token_remaining_expiry_inherit':
-		'新しいトークンは古いトークンの残りの期間を引き継ぐ',
-	'set.k.oauth.refresh_token_remaining_expiry_inherit.desc':
-		'オフにすると、新しいトークンは発行した時点から数え直します。',
 	'set.k.oauth.offline_access_required': 'offline_access を求めたアプリにだけ発行する',
 	'set.k.oauth.offline_access_required.desc':
 		'オフにすると、スコープに関係なくリフレッシュトークンを発行します。',
@@ -95,9 +101,17 @@ export const jaSettings = {
 	'settings.defaultFrom.platform': 'プラットフォーム既定値: {value}',
 	'settings.defaultFrom.tenant': 'テナント既定値: {value}',
 	'settings.locked.platform': 'プラットフォーム設定による固定値',
+	'settings.inDevelopment': '開発中：変更してもまだ効きません',
 	'settings.locked.tenant': 'テナント設定による固定値',
 	'settings.badge.locked': '上書き不可',
 	'settings.badge.here': '上書き中',
+	'settings.badge.inDevelopment': '開発中',
+	'settings.notice.idTokenAlgorithm.title': 'OpenID Connect Discovery の仕様から外れます',
+	'settings.notice.idTokenAlgorithm.body':
+		'すべての ID トークンを RS256 以外で署名し、アプリが RS256 を選べないため、Discovery に RS256 が載らなくなります。OpenID Connect Discovery は RS256 を求めています。Discovery そのものは引き続き使えます。',
+	'settings.notice.fapi.title': 'FAPI 2.0 の要件が適用されます',
+	'settings.notice.fapi.body':
+		'PAR を使わない認可要求など、FAPI 2.0 が認めない要求は受け付けなくなります。FAPI に対応していないアプリは動かない場合があります。Discovery は引き続き仕様どおり使えます。',
 	'settings.value.on': 'オン',
 	'settings.value.off': 'オフ',
 	'settings.value.empty': '（なし）',

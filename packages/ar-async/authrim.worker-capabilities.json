@@ -16,6 +16,12 @@
     { "name": "DEVICE_CODE_STORE", "kind": "durable_object_namespace", "required": true },
     { "name": "CIBA_REQUEST_STORE", "kind": "durable_object_namespace", "required": true },
     { "name": "DPOP_JTI_STORE", "kind": "durable_object_namespace", "required": true },
+    {
+      "name": "KEY_MANAGER_PUBLIC",
+      "kind": "service",
+      "required": false,
+      "capability": "signing_keys.public.read"
+    },
     { "name": "DIAGNOSTIC_LOGS", "kind": "r2_bucket", "required": false },
     { "name": "AUDIT_ARCHIVE", "kind": "r2_bucket", "required": false },
     { "name": "LOGGING_DELIVERY_CRITICAL_QUEUE", "kind": "queue", "required": false },

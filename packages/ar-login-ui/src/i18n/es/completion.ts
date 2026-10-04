@@ -41,7 +41,7 @@ const completion = {
 	emailCode_title: 'Revisa tu correo',
 	emailCode_subtitle: 'Hemos enviado un código de verificación a',
 	emailCode_instructions:
-		'Introduce el código de 6 dígitos de tu correo. El código caducará en 5 minutos.',
+		'Introduce el código de 6 dígitos de tu correo. El correo indica cuánto tiempo es válido.',
 	emailCode_codeLabel: 'Código de verificación',
 	emailCode_resendSuccess: 'Código enviado correctamente',
 	emailCode_success: 'Verificación completada. Redirigiendo...',

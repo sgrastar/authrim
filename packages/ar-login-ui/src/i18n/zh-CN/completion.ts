@@ -36,7 +36,7 @@ const completion = {
 	landing_signedInAs: '登录身份',
 	emailCode_title: '请查收电子邮件',
 	emailCode_subtitle: '我们已将验证码发送至',
-	emailCode_instructions: '请输入电子邮件中的 6 位验证码。验证码将在 5 分钟后过期。',
+	emailCode_instructions: '请输入电子邮件中的 6 位验证码。验证码的有效期已写在电子邮件中。',
 	emailCode_codeLabel: '验证码',
 	emailCode_resendSuccess: '验证码已发送',
 	emailCode_success: '验证成功！正在跳转...',

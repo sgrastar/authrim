@@ -51,7 +51,6 @@ describe('settings field portability coverage', () => {
   });
 
   it.each([
-    ['tokens.access_token_signing_key_id', 'key_reference'],
     ['tenant.audit_profile_id', 'logical_reference'],
     ['login-entry.app_login_client_id', 'logical_reference'],
     ['dr-backup.storage_destination_id', 'environment_mapping'],

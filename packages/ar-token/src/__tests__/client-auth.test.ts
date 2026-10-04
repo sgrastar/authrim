@@ -83,6 +83,8 @@ const mocks = vi.hoisted(() => {
     mockVerifyToken: vi.fn().mockResolvedValue({ valid: true, payload: {} }),
     mockParseToken: vi.fn().mockReturnValue({}),
     mockParseTokenHeader: vi.fn().mockReturnValue({ alg: 'RS256', kid: 'test-kid' }),
+    mockGetIssuedIDTokenKeys: vi.fn().mockResolvedValue([]),
+    mockImportIssuedTokenKey: vi.fn(),
     mockCalculateAtHash: vi.fn().mockResolvedValue('at-hash-value'),
     mockCalculateDsHash: vi.fn().mockResolvedValue('presented-ds-hash'),
 
@@ -231,6 +233,8 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     verifyToken: mocks.mockVerifyToken,
     parseToken: mocks.mockParseToken,
     parseTokenHeader: mocks.mockParseTokenHeader,
+    getIssuedIDTokenKeys: mocks.mockGetIssuedIDTokenKeys,
+    importIssuedTokenKey: mocks.mockImportIssuedTokenKey,
     calculateAtHash: mocks.mockCalculateAtHash,
     calculateDsHash: mocks.mockCalculateDsHash,
     validateJWTBearerAssertion: mocks.mockValidateJWTBearerAssertion,
@@ -470,6 +474,8 @@ function resetAllMocks() {
   mocks.mockVerifyToken.mockReset().mockResolvedValue({ valid: true, payload: {} });
   mocks.mockParseToken.mockReset().mockReturnValue({});
   mocks.mockParseTokenHeader.mockReset().mockReturnValue({ alg: 'RS256', kid: 'test-kid' });
+  mocks.mockGetIssuedIDTokenKeys.mockReset().mockResolvedValue([]);
+  mocks.mockImportIssuedTokenKey.mockReset();
   mocks.mockCalculateAtHash.mockReset().mockResolvedValue('at-hash-value');
   mocks.mockCalculateDsHash.mockReset().mockResolvedValue('presented-ds-hash');
 
@@ -2896,6 +2902,26 @@ describe('Client Authentication Tests', () => {
       expect(body.token_type).toBe('DPoP');
       expectNativeSSOInstallationMetadata(body, client.client_id);
       expect(mocks.mockVerifyClientSecretHash).not.toHaveBeenCalled();
+    });
+
+    it('verifies a subject ID Token signed with ES256 with the tenant OIDC key of that algorithm', async () => {
+      const client = setupNativeSSOPublicClientTest();
+      mocks.mockExtractDPoPProof.mockReturnValue('dpop-proof');
+      mocks.mockValidateDPoPProof.mockResolvedValue({ valid: true, jkt: 'native-jkt' });
+      mocks.mockParseTokenHeader.mockReturnValue({ alg: 'ES256', kid: 'oidc-es256' });
+      const es256Key = { type: 'public' } as unknown as CryptoKey;
+      mocks.mockImportIssuedTokenKey.mockResolvedValue({ key: es256Key, algorithm: 'ES256' });
+
+      const response = await tokenHandler(createNativeSSOPublicClientContext(client.client_id));
+
+      expect(response.status).toBe(200);
+      expect(mocks.mockImportIssuedTokenKey).toHaveBeenCalledWith([], 'subject-id-token');
+      expect(mocks.mockVerifyToken).toHaveBeenCalledWith(
+        'subject-id-token',
+        es256Key,
+        expect.any(String),
+        expect.objectContaining({ algorithms: ['ES256'] })
+      );
     });
 
     it('should return resolved app display name and omit fallback for user-named devices', async () => {

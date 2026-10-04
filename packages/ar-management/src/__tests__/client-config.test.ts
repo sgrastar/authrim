@@ -182,6 +182,44 @@ describe('client-config update handler', () => {
     expect(mocked.getClientCached).toHaveBeenCalledTimes(3);
   });
 
+  it("answers with the algorithm the app's ID tokens are signed with", async () => {
+    const adapter = createMockAdapter();
+    mocked.createAuthContextFromHono.mockReturnValue({ coreAdapter: adapter });
+    const client = {
+      client_id: 'client-123',
+      client_name: 'Smoke Client',
+      redirect_uris: ['https://example.com/callback'],
+      grant_types: ['authorization_code'],
+      response_types: ['code'],
+      registration_access_token_hash: 'token-hash',
+    };
+    mocked.getClientCached.mockResolvedValue(client);
+    const c = createMockContext({
+      body: {
+        client_id: 'client-123',
+        redirect_uris: ['https://example.com/callback'],
+        grant_types: ['authorization_code'],
+        response_types: ['code'],
+      },
+      env: {
+        SETTINGS: {
+          get: vi
+            .fn()
+            .mockImplementation(async (key: string) =>
+              key === 'settings:tenant:default:oauth'
+                ? JSON.stringify({ 'oauth.id_token_signing_alg': 'PS256' })
+                : null
+            ),
+        } as unknown as KVNamespace,
+      },
+    });
+
+    const res = await clientConfigUpdateHandler(c);
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toMatchObject({ id_token_signed_response_alg: 'PS256' });
+  });
+
   it('rejects backchannel logout URIs that target internal addresses', async () => {
     mocked.getClientCached.mockResolvedValueOnce({
       client_id: 'client-123',

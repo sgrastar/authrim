@@ -23,16 +23,12 @@ export interface FeatureFlagsSettings {
 
   // Token Features
   'feature.enable_sd_jwt': boolean;
-  'feature.enable_token_exchange': boolean;
   'feature.enable_client_credentials': boolean;
   'feature.enable_custom_claims': boolean;
   'feature.enable_custom_claim_schemas': boolean;
   'feature.enable_custom_claim_schemas_introspection': boolean;
 
-  // Development & Testing
-  'feature.enable_test_endpoints': boolean;
   'feature.enable_check_api': boolean;
-  'feature.enable_mock_auth': boolean;
 
   // Cache Features
   'feature.introspection_cache_enabled': boolean;
@@ -136,15 +132,6 @@ export const FEATURE_FLAGS_SETTINGS_META: Record<keyof FeatureFlagsSettings, Set
     description: 'Issue SD-JWT ID tokens (RFC 9901) to clients that request them',
     visibility: 'admin',
   },
-  'feature.enable_token_exchange': {
-    key: 'feature.enable_token_exchange',
-    type: 'boolean',
-    default: false,
-    envKey: 'ENABLE_TOKEN_EXCHANGE',
-    label: 'Enable Token Exchange',
-    description: 'Enable OAuth 2.0 Token Exchange (RFC 8693)',
-    visibility: 'admin',
-  },
   'feature.enable_client_credentials': {
     key: 'feature.enable_client_credentials',
     type: 'boolean',
@@ -185,16 +172,6 @@ export const FEATURE_FLAGS_SETTINGS_META: Record<keyof FeatureFlagsSettings, Set
     dependsOn: [{ key: 'feature.enable_custom_claim_schemas', value: true }],
   },
 
-  // Development & Testing
-  'feature.enable_test_endpoints': {
-    key: 'feature.enable_test_endpoints',
-    type: 'boolean',
-    default: false,
-    envKey: 'ENABLE_TEST_ENDPOINTS',
-    label: 'Enable Test Endpoints',
-    description: 'Enable test/debug API endpoints (development only)',
-    visibility: 'internal',
-  },
   'feature.enable_check_api': {
     key: 'feature.enable_check_api',
     // The Check API is turned on or off before the request's tenant is known: platform only.
@@ -207,15 +184,6 @@ export const FEATURE_FLAGS_SETTINGS_META: Record<keyof FeatureFlagsSettings, Set
     label: 'Enable Check API',
     description: 'Enable /api/check endpoint for permission checking, for the whole platform',
     visibility: 'admin',
-  },
-  'feature.enable_mock_auth': {
-    key: 'feature.enable_mock_auth',
-    type: 'boolean',
-    default: false,
-    envKey: 'ENABLE_MOCK_AUTH',
-    label: 'Enable Mock Auth',
-    description: 'Enable mock authentication for testing (development only)',
-    visibility: 'internal',
   },
 
   // Cache Features
@@ -335,16 +303,12 @@ export const FEATURE_FLAGS_DEFAULTS: FeatureFlagsSettings = {
 
   // Token Features
   'feature.enable_sd_jwt': false,
-  'feature.enable_token_exchange': false,
   'feature.enable_client_credentials': false,
   'feature.enable_custom_claims': false,
   'feature.enable_custom_claim_schemas': false,
   'feature.enable_custom_claim_schemas_introspection': false,
 
-  // Development & Testing
-  'feature.enable_test_endpoints': false,
   'feature.enable_check_api': false,
-  'feature.enable_mock_auth': false,
 
   // Cache Features
   'feature.introspection_cache_enabled': true,

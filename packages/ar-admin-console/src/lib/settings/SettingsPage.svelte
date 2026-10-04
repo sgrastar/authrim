@@ -12,6 +12,7 @@
 	} from '$lib/api/settings';
 	import { t } from '$lib/i18n/i18n.svelte';
 	import Callout from '$lib/ui/patterns/Callout.svelte';
+	import { sectionNotices } from './setting-notices';
 	import Card from '$lib/ui/patterns/Card.svelte';
 	import DetailItem from '$lib/ui/patterns/DetailItem.svelte';
 	import DetailList from '$lib/ui/patterns/DetailList.svelte';
@@ -37,6 +38,7 @@
 		fallbackOf,
 		fieldOf,
 		metaOf,
+		readBadge,
 		sectionView,
 		valuesFrom,
 		type Loaded,
@@ -252,6 +254,16 @@
 							title={t(section.title)}
 							description={section.description ? t(section.description) : undefined}
 						>
+							{@const notices = sectionNotices(section, draft!.value)}
+							{#if notices.length > 0}
+								<div class="settings__notices">
+									{#each notices as notice (notice.id)}
+										<Callout tone={notice.tone} title={t(`settings.notice.${notice.id}.title`)}
+											>{t(`settings.notice.${notice.id}.body`)}</Callout
+										>
+									{/each}
+								</div>
+							{/if}
 							<div class="settings__fields">
 								{@render rows(view.primary)}
 								{#if view.advanced.length > 0}
@@ -334,10 +346,9 @@
 		{:else}
 			{formatSetting(setting.key, meta, entry.v)}
 		{/if}
-		{#if entry.locked}
-			<Badge>{t('settings.badge.locked')}</Badge>
-		{:else if entry.here}
-			<Badge>{t('settings.badge.here')}</Badge>
+		{@const badge = readBadge(meta, entry)}
+		{#if badge}
+			<Badge>{t(`settings.badge.${badge}`)}</Badge>
 		{/if}
 	</DetailItem>
 {/snippet}
@@ -358,6 +369,12 @@
 
 	.settings__fields :global(.disclosure__inner) {
 		--row-name-col: calc((100cqi - var(--space-columns)) * 0.4 - var(--row-indent));
+	}
+
+	.settings__notices {
+		display: grid;
+		gap: var(--space-related);
+		margin-bottom: var(--space-section);
 	}
 
 	.settings__more {

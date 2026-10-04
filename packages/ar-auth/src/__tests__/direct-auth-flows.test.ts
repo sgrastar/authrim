@@ -1952,6 +1952,122 @@ describe('Direct Auth primary passkey and email-code flows', () => {
     );
   });
 
+  it("uses the tenant's email code lifetime, for a code sent and for a send that sends nothing", async () => {
+    const { directEmailCodeSendHandler } = await import('../direct-auth');
+    const lifetime = {
+      'settings:tenant:tenant_test:credentials': JSON.stringify({
+        'credentials.email_code_ttl': 600,
+      }),
+    };
+    const send = (email: string, overrides: Record<string, boolean | string> = {}) =>
+      directEmailCodeSendHandler(
+        enableEmailOtp(
+          createContext(
+            {
+              client_id: 'web-client',
+              email,
+              code_challenge: 'email-pkce-challenge',
+              code_challenge_method: 'S256',
+              channel: 'browser',
+            },
+            webHeaders()
+          ),
+          lifetime,
+          overrides
+        ) as never
+      );
+
+    const sent = (await (await send('new@example.com')).json()) as Record<string, unknown>;
+    expect(sent).toMatchObject({ expires_in: 600 });
+    expect(mocks.challengeStore.storeChallengeRpc).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'direct_email_code', ttl: 600 })
+    );
+
+    // Signing up by email turned off: nothing is sent, and the answer looks the same.
+    const suppressed = (await (
+      await send('other@example.com', { 'authentication-methods.email_otp.signup_enabled': false })
+    ).json()) as Record<string, unknown>;
+    expect(suppressed).toMatchObject({ expires_in: 600 });
+    expect(
+      mocks.challengeStore.storeChallengeRpc.mock.calls.filter(
+        ([request]) => (request as { type?: string }).type === 'direct_email_code'
+      )
+    ).toHaveLength(1);
+  });
+
+  it('gives no lifetime to a code whose sign-in challenge is gone by the time it is sent', async () => {
+    mocks.challengeStore.getChallengeRpc
+      .mockResolvedValueOnce({
+        tenantId: 'tenant_test',
+        type: 'login',
+        challenge: 'login_challenge',
+        expiresAt: Date.now() + 120_000,
+      })
+      .mockResolvedValueOnce(null);
+    const { directEmailCodeSendHandler } = await import('../direct-auth');
+
+    const response = await directEmailCodeSendHandler(
+      enableEmailOtp(
+        createContext(
+          {
+            client_id: 'web-client',
+            email: 'new@example.com',
+            code_challenge: 'email-pkce-challenge',
+            code_challenge_method: 'S256',
+            channel: 'browser',
+            authorization_challenge_id: 'login_challenge',
+          },
+          webHeaders()
+        )
+      ) as never
+    );
+
+    expect(((await response.json()) as { expires_in: number }).expires_in).toBe(1);
+  });
+
+  it('never lets a code outlast the sign-in challenge it continues', async () => {
+    mocks.challengeStore.getChallengeRpc.mockResolvedValue({
+      tenantId: 'tenant_test',
+      type: 'login',
+      challenge: 'login_challenge',
+      expiresAt: Date.now() + 120_000,
+    });
+    const { directEmailCodeSendHandler } = await import('../direct-auth');
+
+    const response = await directEmailCodeSendHandler(
+      enableEmailOtp(
+        createContext(
+          {
+            client_id: 'web-client',
+            email: 'new@example.com',
+            code_challenge: 'email-pkce-challenge',
+            code_challenge_method: 'S256',
+            channel: 'browser',
+            authorization_challenge_id: 'login_challenge',
+          },
+          webHeaders()
+        ),
+        {
+          'settings:tenant:tenant_test:credentials': JSON.stringify({
+            'credentials.email_code_ttl': 600,
+          }),
+        }
+      ) as never
+    );
+    const body = (await response.json()) as { expires_in: number };
+
+    expect(body.expires_in).toBeGreaterThan(110);
+    expect(body.expires_in).toBeLessThanOrEqual(120);
+    // The store also ends it with the challenge, however long storing takes.
+    expect(mocks.challengeStore.storeChallengeRpc).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'direct_email_code',
+        ttl: body.expires_in,
+        notAfterMs: expect.any(Number),
+      })
+    );
+  });
+
   it('sends an email code for a new user and stores a hashed one-time challenge', async () => {
     const { directEmailCodeSendHandler } = await import('../direct-auth');
 

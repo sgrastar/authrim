@@ -35,9 +35,6 @@ export interface AuthenticationMethodsSettings {
   'authentication-methods.external_provider_usage': string;
   'authentication-methods.external_providers': string;
   'authentication-methods.directory_password.enabled': boolean;
-  'authentication-methods.directory_password.connector_id': string;
-  'authentication-methods.directory_password.label': string;
-  'authentication-methods.directory_password.auto_provision': boolean;
 }
 
 export const AUTHENTICATION_METHODS_SETTINGS_META: Record<
@@ -256,31 +253,6 @@ export const AUTHENTICATION_METHODS_SETTINGS_META: Record<
     description: 'Enable organization directory password login via Authrim Wordwarden',
     visibility: 'admin',
   },
-  'authentication-methods.directory_password.connector_id': {
-    key: 'authentication-methods.directory_password.connector_id',
-    type: 'string',
-    default: 'default',
-    label: 'Directory Connector ID',
-    description: 'Tenant-scoped Wordwarden connector ID used for directory password login',
-    visibility: 'admin',
-  },
-  'authentication-methods.directory_password.label': {
-    key: 'authentication-methods.directory_password.label',
-    type: 'string',
-    default: 'Organization ID',
-    label: 'Directory Password Label',
-    description: 'Public label shown for directory password login',
-    visibility: 'page',
-  },
-  'authentication-methods.directory_password.auto_provision': {
-    key: 'authentication-methods.directory_password.auto_provision',
-    type: 'boolean',
-    default: false,
-    label: 'Directory Password Auto Provision',
-    description:
-      'Create an Authrim user automatically after successful directory verification when no mapped user exists',
-    visibility: 'admin',
-  },
 };
 
 export const AUTHENTICATION_METHODS_CATEGORY_META: CategoryMeta = {
@@ -318,7 +290,4 @@ export const AUTHENTICATION_METHODS_DEFAULTS: AuthenticationMethodsSettings = {
   'authentication-methods.external_provider_usage': '[]',
   'authentication-methods.external_providers': '[]',
   'authentication-methods.directory_password.enabled': false,
-  'authentication-methods.directory_password.connector_id': 'default',
-  'authentication-methods.directory_password.label': 'Organization ID',
-  'authentication-methods.directory_password.auto_provision': false,
 };

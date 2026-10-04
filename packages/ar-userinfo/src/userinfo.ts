@@ -30,9 +30,11 @@ import {
   OIDCAttributeReleaseConsentRequiredError,
   setBoundedMapEntry,
   resolveAccountDataContextFromHono,
+  resolveIDTokenSigningPolicy,
 } from '@authrim/ar-lib-core';
 import {
   resolveUserInfoSigningAlgorithm,
+  resolveIDTokenSigningAlgorithm,
   type OIDCSigningAlgorithm,
 } from '@authrim/ar-lib-core/utils/oidc-signing';
 import { SignJWT } from 'jose';
@@ -452,7 +454,15 @@ export async function userinfoHandler(c: Context<{ Bindings: Env }>) {
     // For UserInfo encryption, we need to sign the claims first (JWT), then encrypt (JWE)
     // This creates a nested JWT: JWS inside JWE
     try {
-      const signingAlgorithm = resolveUserInfoSigningAlgorithm(clientMetadata, true);
+      // Unless the app names a UserInfo algorithm, signed as its ID tokens are.
+      const signingAlgorithm = resolveUserInfoSigningAlgorithm(
+        clientMetadata,
+        true,
+        resolveIDTokenSigningAlgorithm(
+          clientMetadata,
+          await resolveIDTokenSigningPolicy(c.env, getTenantIdFromContext(c))
+        )
+      );
       if (signingAlgorithm === 'none') {
         throw new Error('Encrypted UserInfo requires a signing algorithm');
       }

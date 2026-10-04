@@ -4904,6 +4904,41 @@ describe('Admin API Handlers', () => {
       });
     });
 
+    it('refuses another ID token algorithm while the tenant signs every ID token with its own', async () => {
+      const mockDB = createMockDB({
+        firstResult: {
+          client_id: 'client-locked-alg',
+          client_name: 'Existing Client',
+          redirect_uris: '["https://example.com/callback"]',
+          grant_types: '["authorization_code"]',
+          response_types: '["code"]',
+        },
+      });
+      const c = createMockContext({
+        method: 'PUT',
+        params: { id: 'client-locked-alg' },
+        body: { id_token_signed_response_alg: 'PS256' },
+        db: mockDB,
+        envOverrides: {
+          SETTINGS: createMockKVNamespace({
+            'settings:tenant:default:oauth': JSON.stringify({
+              'oauth.id_token_signing_alg': 'ES256',
+              'oauth.id_token_signing_alg_client_override': false,
+            }),
+          }) as unknown as KVNamespace,
+        },
+      });
+
+      const res = await adminClientUpdateHandler(c);
+
+      expect(res.status).toBe(400);
+      await expect(res.json()).resolves.toMatchObject({
+        error: 'invalid_request',
+        error_description: expect.stringContaining('must be ES256'),
+      });
+      expect(mockDB.prepare).not.toHaveBeenCalledWith(expect.stringContaining('UPDATE'));
+    });
+
     it('should update client fields', async () => {
       const clientId = 'client-to-update';
       const mockDB = createMockDB({

@@ -54,7 +54,8 @@ export class GuestUpgradeRepository {
       !Number.isSafeInteger(input.expiresAt) ||
       input.now < 0 ||
       input.expiresAt <= input.now ||
-      input.expiresAt > input.now + 600 ||
+      // At most the longest email code lifetime (credentials.email_code_ttl).
+      input.expiresAt > input.now + 900 ||
       input.payloadJson.length > 65536 ||
       !input.verifier
     )

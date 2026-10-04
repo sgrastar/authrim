@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 
+import { spawnSync } from 'node:child_process';
 import { promises as fs } from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import YAML from 'yaml';
 
@@ -120,6 +122,85 @@ async function collectFiles(repoRoot, dirs, extensions) {
 function requirePattern(content, pattern, description) {
   if (!pattern.test(content)) {
     throw new Error(description);
+  }
+}
+
+function requireText(content, text, description) {
+  if (!content.includes(text)) {
+    throw new Error(description);
+  }
+}
+
+/**
+ * The source of one function or method, from the line of its signature to its closing brace
+ * (the first line after it that closes at the signature's indentation).
+ */
+function functionBody(content, signature, description) {
+  const start = content.indexOf(signature);
+  if (start === -1) throw new Error(description);
+  const lineStart = content.lastIndexOf('\n', start) + 1;
+  const indent = content.slice(lineStart, start).match(/^[ \t]*/)[0];
+  const end = content.indexOf(`\n${indent}}\n`, start);
+  if (end === -1) throw new Error(description);
+  return content.slice(lineStart, end + indent.length + 2);
+}
+
+/**
+ * Runs the named regression tests of one package and requires them to pass: behaviour, which a
+ * source pattern cannot show. `name` is Vitest's `-t` pattern; at least `minimum` must pass.
+ * `buildDependenciesOf` names a package whose tests import its workspace dependencies' builds:
+ * those are built first (through Turbo, so an up-to-date build costs nothing), as `pnpm test` does.
+ */
+async function requirePassingTests(
+  repoRoot,
+  { packageDir, file, name, minimum, buildDependenciesOf },
+  description
+) {
+  if (buildDependenciesOf) {
+    const build = spawnSync(
+      'pnpm',
+      [
+        'exec',
+        'turbo',
+        'run',
+        'build',
+        `--filter=${buildDependenciesOf}^...`,
+        '--output-logs=errors-only',
+      ],
+      { cwd: repoRoot, encoding: 'utf8' }
+    );
+    if (build.status !== 0) {
+      const detail = `${build.stdout ?? ''}${build.stderr ?? ''}${build.error?.message ?? ''}`
+        .trim()
+        .slice(-300);
+      throw new Error(`${description}: the packages the tests import did not build (${detail})`);
+    }
+  }
+  const outputFile = path.join(os.tmpdir(), `asvs-vitest-${process.pid}-${Date.now()}.json`);
+  const result = spawnSync(
+    'pnpm',
+    ['exec', 'vitest', 'run', file, '-t', name, '--reporter=json', `--outputFile=${outputFile}`],
+    {
+      cwd: path.resolve(repoRoot, packageDir),
+      encoding: 'utf8',
+      env: { ...process.env, CI: 'true' },
+    }
+  );
+  let report;
+  try {
+    report = JSON.parse(await fs.readFile(outputFile, 'utf8'));
+  } catch {
+    const detail = `${result.stderr ?? ''}${result.error?.message ?? ''}`.trim().slice(-300);
+    throw new Error(`${description}: the tests did not run${detail ? ` (${detail})` : ''}`);
+  } finally {
+    await fs.rm(outputFile, { force: true });
+  }
+  const passed = report.numPassedTests ?? 0;
+  const failed = report.numFailedTests ?? 0;
+  if (result.status !== 0 || failed > 0 || passed < minimum) {
+    throw new Error(
+      `${description}: ${passed} passed and ${failed} failed in ${file} (at least ${minimum} must pass)`
+    );
   }
 }
 
@@ -501,39 +582,82 @@ async function runIndependentCheck(repoRoot, id) {
       /invalidateSessionRpc\(sessionId\)/,
       'Direct-auth logout must invalidate the session in SessionStore.'
     );
-    requirePattern(
+    const invalidate = functionBody(
       sessionStore,
-      /async invalidateSession\(sessionId: string\): Promise<boolean>/,
+      'async invalidateSession(sessionId: string): Promise<boolean>',
       'SessionStore must implement immediate session invalidation.'
     );
-    requirePattern(
-      sessionStore,
-      /this\.sessionCache\.delete\(sessionId\)/,
+    requireText(
+      invalidate,
+      'this.sessionCache.delete(sessionId)',
       'Session invalidation must delete hot cache state.'
     );
-    requirePattern(
+    requireText(
+      invalidate,
+      'await this.actorCtx.storage.delete(storageKey)',
+      'Session invalidation must delete Durable Object storage state before returning.'
+    );
+    requireText(
+      invalidate,
+      'this.unregisterSessionIndex(session)',
+      "Session invalidation must remove the session from the user's session index."
+    );
+    const lookup = functionBody(
       sessionStore,
-      /this\.actorCtx\.storage\.delete\(storageKey\)/,
-      'Session invalidation must delete Durable Object storage state.'
+      'async getSession(sessionId: string): Promise<Session | null>',
+      'SessionStore must implement session lookup.'
     );
     requirePattern(
-      sessionStore,
-      /await this\.deleteFromPersistence\(sessionId\)/,
-      'Session invalidation must delete cold persistence before returning.'
+      lookup,
+      /admitSession\(sessionId, cached\)[\s\S]*admitSession\(sessionId, storedSession\)/,
+      'Session lookup must check cached and stored sessions alike.'
     );
-    requirePattern(
+    const admit = functionBody(
       sessionStore,
-      /createTombstone\(sessionId\)/,
-      'Session invalidation must protect against stale persistence resurrection.'
+      'private async admitSession(sessionId: string, session: Session): Promise<boolean>',
+      'SessionStore must check a session before using it.'
+    );
+    requireText(
+      admit,
+      'await this.isRevokedByUserEpoch(session)',
+      "Session lookup must enforce the user's revocation of all sessions."
+    );
+    requireText(
+      admit,
+      'this.isExpired(session)',
+      'Session lookup must enforce expiration of stored sessions.'
+    );
+    // Durable Object storage is the only store: no cold copy can bring back a deleted session.
+    forbidPattern(
+      sessionStore,
+      /\.prepare\(|D1Database|DB_SESSIONS|fromPersistence/,
+      'SessionStore must not read a second store that could resurrect an invalidated session'
+    );
+    // An invalidation can run while a lookup awaits another actor: what the lookup read must
+    // not be put back.
+    requireText(
+      lookup,
+      'this.actorCtx.blockConcurrencyWhile(',
+      'Session lookup must re-read storage without interleaving before caching a session.'
+    );
+    await requirePassingTests(
+      repoRoot,
+      {
+        packageDir: 'packages/ar-lib-core',
+        file: 'src/durable-objects/__tests__/SessionStore.test.ts',
+        name: 'ASVS V7.4.1|an invalidation while another actor is awaited',
+        minimum: 11,
+      },
+      'A terminated session must not be usable again (logout, expiry, user-wide revocation, races)'
     );
 
     return {
       id,
       result: 'pass',
       description:
-        'Logout and session-store invalidation remove backend session state and guard against cold-persistence resurrection.',
+        'Logout invalidates the session in SessionStore, which deletes its cache and Durable Object storage state; lookup enforces expiration and user-wide revocation, reads no other store, and never puts back a copy read before a concurrent invalidation (regression tests run).',
       evidence:
-        'packages/ar-auth/src/logout.ts; packages/ar-auth/src/direct-auth.ts; packages/ar-lib-core/src/durable-objects/SessionStore.ts',
+        'packages/ar-auth/src/logout.ts; packages/ar-auth/src/direct-auth.ts; packages/ar-lib-core/src/durable-objects/SessionStore.ts; packages/ar-lib-core/src/durable-objects/__tests__/SessionStore.test.ts',
     };
   }
 
@@ -548,18 +672,78 @@ async function runIndependentCheck(repoRoot, id) {
     );
     requirePattern(
       authorize,
-      /isRedirectUriRegistered\(\s*redirect_uri as string,\s*registeredRedirectUris\s*\)/,
-      'Authorization endpoint must require registered redirect_uri.'
+      /isRedirectUriRegistered\(\s*redirect_uri as string,\s*registeredRedirectUris,\s*redirectUriMatchOptionsFor\(clientMetadata\)\s*\)/,
+      'Authorization endpoint must require registered redirect_uri, with the client type deciding the loopback port rule.'
     );
     requirePattern(
       token,
       /authCodeData\.redirect_uri !== redirect_uri/,
       'Token endpoint must bind authorization code redemption to the original redirect_uri.'
     );
-    requirePattern(
+    const registered = functionBody(
       validation,
-      /registeredUris\.some\(\(registeredUri\) => registeredUri === providedUri\)/,
+      'export function isRedirectUriRegistered(',
+      'Registered redirect_uri matching must be implemented.'
+    );
+    requireText(
+      registered,
+      'if (registeredUri === providedUri) return true;',
       'Registered redirect_uri comparison must be exact string comparison.'
+    );
+    // RFC 8252 section 7.3: a native app's loopback IP redirect may use any port; everything
+    // else (scheme, the loopback IP, path and query) must still match exactly.
+    requirePattern(
+      registered,
+      /provided\.host === registered\.host &&\s*provided\.suffix === registered\.suffix/,
+      'The loopback redirect exception may vary only the port.'
+    );
+    const loopback = functionBody(
+      validation,
+      'function parseLoopbackRedirect(',
+      'Loopback redirect parsing must be implemented.'
+    );
+    requireText(
+      loopback,
+      String.raw`/^http:\/\/(127\.0\.0\.1|\[::1\])(?::([0-9]{1,5}))?(\/.*)$/u`,
+      'The port exception must apply only to http redirects on a loopback IP literal.'
+    );
+    forbidPattern(
+      loopback,
+      /localhost/,
+      'The port exception must not accept localhost or other host names'
+    );
+    requireText(
+      registered,
+      'if (options.nativeLoopbackAnyPort !== true) return false;',
+      'The port exception must apply only when the caller says the client is a native app.'
+    );
+    requireText(
+      validation,
+      "nativeLoopbackAnyPort: client.application_type === 'native'",
+      'Only native clients may get the loopback port exception.'
+    );
+    await requirePassingTests(
+      repoRoot,
+      {
+        packageDir: 'packages/ar-lib-core',
+        file: 'src/utils/__tests__/validation.property.test.ts',
+        name: 'Redirect URI Registration Properties',
+        minimum: 7,
+      },
+      'redirect_uri matching must be exact apart from the port of a native app loopback IP redirect'
+    );
+    // The admin agent authorization server adds one exception for clients known only by a Client
+    // ID Metadata Document: the port of a portless http://localhost callback.
+    await requirePassingTests(
+      repoRoot,
+      {
+        packageDir: 'packages/ar-auth',
+        file: 'src/__tests__/admin-agent-oauth.test.ts',
+        name: 'loopback callback|CIMD localhost|portless CIMD callback',
+        minimum: 15,
+        buildDependenciesOf: '@authrim/ar-auth',
+      },
+      'Admin agent redirect_uri matching must be exact apart from the CIMD localhost port'
     );
     requirePattern(
       validation,
@@ -571,9 +755,9 @@ async function runIndependentCheck(repoRoot, id) {
       id,
       result: 'pass',
       description:
-        'OAuth redirect URIs are format-validated, require exact registration matches, and are rebound during authorization-code redemption.',
+        "OAuth redirect URIs are format-validated, require exact registration matches (only the port of a native app loopback IP redirect, or of a CIMD agent client's portless localhost callback, may vary), and are rebound during authorization-code redemption (matching tests run).",
       evidence:
-        'packages/ar-auth/src/authorize.ts; packages/ar-token/src/token.ts; packages/ar-lib-core/src/utils/validation.ts',
+        'packages/ar-auth/src/authorize.ts; packages/ar-auth/src/admin-agent-oauth.ts; packages/ar-token/src/token.ts; packages/ar-lib-core/src/utils/validation.ts; packages/ar-lib-core/src/utils/__tests__/validation.property.test.ts; packages/ar-auth/src/__tests__/admin-agent-oauth.test.ts',
     };
   }
 
@@ -698,8 +882,13 @@ async function runIndependentCheck(repoRoot, id) {
     );
     requirePattern(
       token,
-      /const rotationEnabled =\s*!prohibitRefreshTokenRotation && c\.env\.ENABLE_REFRESH_TOKEN_ROTATION !== 'false'/,
-      'Refresh token rotation must be enabled by default.'
+      /const rotationEnabled =\s*!prohibitRefreshTokenRotation && \(await lifetimes\.refreshRotation\(\)\)/,
+      'Refresh token rotation must follow the oauth.refresh_token_rotation setting.'
+    );
+    requirePattern(
+      token,
+      /refreshRotation: async \(\) => \{[\s\S]{0,200}\['oauth\.refresh_token_rotation'\] !== false;/,
+      'Refresh token rotation must stay on unless the setting is explicitly false.'
     );
     requirePattern(
       token,
@@ -715,6 +904,11 @@ async function runIndependentCheck(repoRoot, id) {
       oauthSettings,
       /'oauth\.refresh_token_rotation': \{[\s\S]{0,200}default: true,/,
       'The oauth.refresh_token_rotation setting must default to enabled.'
+    );
+    requirePattern(
+      oauthSettings,
+      /'oauth\.refresh_token_rotation': \{[\s\S]{0,500}envBoolean: 'unless-exactly-false',/,
+      'Only the exact environment value false may turn refresh token rotation off.'
     );
     requirePattern(
       rotator,

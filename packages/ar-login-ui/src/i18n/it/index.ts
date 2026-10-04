@@ -335,7 +335,7 @@ const it = createTranslation({
 	emailCode_title: 'Controlla la tua email',
 	emailCode_subtitle: 'Abbiamo inviato un codice di verifica a',
 	emailCode_instructions:
-		'Inserisci il codice di 6 cifre ricevuto via email. Il codice scade tra 5 minuti.',
+		"Inserisci il codice di 6 cifre ricevuto via email. L'email indica per quanto tempo è valido.",
 	emailCode_codeLabel: 'Codice di verifica',
 	emailCode_verifyButton: 'Verifica',
 	emailCode_resendButton: 'Invia di nuovo il codice',

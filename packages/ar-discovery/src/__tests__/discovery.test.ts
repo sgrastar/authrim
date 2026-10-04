@@ -363,6 +363,44 @@ describe('Discovery Handler', () => {
       expect(metadata.userinfo_signing_alg_values_supported).toEqual(['RS256', 'ES256']);
     });
 
+    it("advertises only the tenant's ID token algorithm while apps may not choose", async () => {
+      const env = createMockEnv();
+      env.KEY_MANAGER_PUBLIC = {
+        getAllPublicKeys: vi.fn().mockResolvedValue([
+          JSON.parse(env.PUBLIC_JWK_JSON!) as JsonWebKey,
+          {
+            kty: 'EC',
+            use: 'sig',
+            alg: 'ES256',
+            kid: 'oidc-es256-test',
+            crv: 'P-256',
+            x: 'test-x',
+            y: 'test-y',
+          },
+        ]),
+      } as Env['KEY_MANAGER_PUBLIC'];
+      const documents: Record<string, unknown> = {
+        'settings:tenant:default:oauth': {
+          'oauth.id_token_signing_alg': 'ES256',
+          'oauth.id_token_signing_alg_client_override': false,
+        },
+      };
+      env.SETTINGS = {
+        get: async (key: string) => (key in documents ? JSON.stringify(documents[key]) : null),
+      } as unknown as KVNamespace;
+
+      const response = await app.request(
+        '/.well-known/openid-configuration',
+        { method: 'GET' },
+        env
+      );
+      const metadata = (await response.json()) as OIDCProviderMetadata;
+
+      expect(metadata.id_token_signing_alg_values_supported).toEqual(['ES256']);
+      // UserInfo is still signed as each app asks.
+      expect(metadata.userinfo_signing_alg_values_supported).toEqual(['RS256', 'ES256']);
+    });
+
     it('should support public and pairwise subject types', async () => {
       const env = createMockEnv();
       const response = await app.request(

@@ -233,6 +233,33 @@ describe('account guest upgrade API', () => {
       }
     }
   );
+  it.each([
+    ["the tenant's", 120, '2 minutes'],
+    ['the default', undefined, '5 minutes'],
+  ])('gives an emailed registration code %s email code lifetime', async (_label, ttl, stated) => {
+    const ctx = context({ method: 'email', email: 'test@example.org' });
+    (ctx.env as unknown as Record<string, unknown>).SETTINGS = {
+      get: vi.fn(async (key: string) =>
+        key === 'settings:tenant:tenant:credentials' && ttl !== undefined
+          ? JSON.stringify({ 'credentials.email_code_ttl': ttl })
+          : null
+      ),
+    };
+
+    const response = await startAccountGuestUpgradeHandler(ctx);
+
+    expect(response.status).toBe(200);
+    const created = mocks.create.mock.calls[0][0] as { now: number; expiresAt: number };
+    expect(created.expiresAt - created.now).toBe(ttl ?? 300);
+    expect(mocks.notification).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        expiresAt: created.now + (ttl ?? 300),
+        payload: expect.objectContaining({ body: expect.stringContaining(`expires in ${stated}`) }),
+      })
+    );
+  });
+
   it('starts email registration even with guest login disabled and accepts queued delivery', async () => {
     const response = await startAccountGuestUpgradeHandler(
       context({ method: 'email', email: 'test@example.org' })

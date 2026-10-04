@@ -317,7 +317,7 @@ const ar = createTranslation({
 	emailCode_title: 'تحقق من بريدك الإلكتروني',
 	emailCode_subtitle: 'أرسلنا رمز تحقق إلى',
 	emailCode_instructions:
-		'أدخل الرمز المكوّن من 6 أرقام من بريدك الإلكتروني. تنتهي صلاحيته خلال 5 دقائق.',
+		'أدخل الرمز المكوّن من 6 أرقام من بريدك الإلكتروني. يذكر البريد الإلكتروني مدة صلاحية الرمز.',
 	emailCode_codeLabel: 'رمز التحقق',
 	emailCode_verifyButton: 'تحقق',
 	emailCode_resendButton: 'إعادة إرسال الرمز',

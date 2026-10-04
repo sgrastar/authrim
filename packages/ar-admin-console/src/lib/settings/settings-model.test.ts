@@ -7,6 +7,7 @@ import {
 	changes,
 	fallbackOf,
 	fieldOf,
+	readBadge,
 	sectionView,
 	valuesFrom,
 	type Loaded
@@ -25,6 +26,17 @@ async function load(options: Parameters<typeof createFakeSettings>[0] = {}): Pro
 
 const section = (id: string): SettingsSection =>
 	STAYING_SIGNED_IN.sections.find((s) => s.id === id)!;
+
+describe('the badge of a setting that is only read', () => {
+	it('says a setting in development has no effect yet, before anything else', () => {
+		expect(readBadge({ status: 'in_development' }, { v: 1, here: true, locked: true })).toBe(
+			'inDevelopment'
+		);
+		expect(readBadge({}, { v: 1, here: true, locked: true })).toBe('locked');
+		expect(readBadge({ status: 'active' }, { v: 1, here: true })).toBe('here');
+		expect(readBadge({}, { v: 1, here: false })).toBeNull();
+	});
+});
 
 describe('a settings page’s values', () => {
 	it('knows which values are set here and which are inherited', async () => {
@@ -50,17 +62,23 @@ describe('a settings page’s values', () => {
 			'session.refresh_default',
 			'oauth.sso_enabled'
 		]);
-		expect(view.advanced.map((s) => s.key)).not.toContain('session.token_ttl');
 		expect(view.setHere).toBe(0);
+		const logout = sectionView(section('logout'), plain, levels);
+		expect(logout.advanced.map((s) => s.key)).not.toContain('session.backchannel_logout_token_exp');
 
 		const tuned = valuesFrom(
 			STAYING_SIGNED_IN,
 			await load({
-				stored: { 'tenant:acme': { 'session.token_ttl': 600, 'session.ttl.passkey': 86400000 } }
+				stored: {
+					'tenant:acme': {
+						'session.backchannel_logout_token_exp': 600,
+						'session.backchannel_request_timeout_ms': 5000
+					}
+				}
 			})
 		);
-		const tunedView = sectionView(section('sign-in'), tuned, levels);
-		expect(tunedView.advanced.map((s) => s.key)).toContain('session.token_ttl');
+		const tunedView = sectionView(section('logout'), tuned, levels);
+		expect(tunedView.advanced.map((s) => s.key)).toContain('session.backchannel_logout_token_exp');
 		expect(tunedView.setHere).toBe(2);
 	});
 

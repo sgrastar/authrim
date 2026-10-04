@@ -335,7 +335,7 @@ const translation = {
 	emailCode_title: 'Angalia barua pepe yako',
 	emailCode_subtitle: 'Tumetuma nambari ya uthibitisho kwa',
 	emailCode_instructions:
-		'Ingiza msimbo wa tarakimu 6 kutoka kwenye barua pepe yako. Msimbo utaisha baada ya dakika 5.',
+		'Ingiza msimbo wa tarakimu 6 kutoka kwenye barua pepe yako. Barua pepe inaeleza muda ambao msimbo utadumu.',
 	emailCode_codeLabel: 'Nambari ya uthibitisho',
 	emailCode_verifyButton: 'Thibitisha',
 	emailCode_resendButton: 'Tuma msimbo tena',

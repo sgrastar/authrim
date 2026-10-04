@@ -531,6 +531,12 @@ describe('generateRoutes', () => {
     expect(toToml(discoveryConfig, 'emailtest')).toContain(
       'entrypoint = "KeyManagerPublicEntrypoint"'
     );
+    // ar-async verifies CIBA id_token_hints with the same public keys (any ID token algorithm).
+    expect(generateWranglerConfig('ar-async', config, resourceIds).services).toContainEqual({
+      binding: 'KEY_MANAGER_PUBLIC',
+      service: 'emailtest-ar-lib-core',
+      entrypoint: 'KeyManagerPublicEntrypoint',
+    });
     expect(tokenConfig.send_email).toBeUndefined();
     expect(agentAccessConfig.main).toBe('src/platform/cloudflare/worker.ts');
     expect(agentAccessConfig.vars.AUTHRIM_ENVIRONMENT_NAME).toBe('emailtest');

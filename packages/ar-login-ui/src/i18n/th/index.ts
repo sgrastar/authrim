@@ -319,7 +319,7 @@ const th = createTranslation({
 	register_metaDescription: 'สร้างบัญชีด้วยพาสคีย์ รหัสทางอีเมล หรือวิธีอื่นที่ใช้งานได้',
 	emailCode_title: 'ตรวจสอบอีเมลของคุณ',
 	emailCode_subtitle: 'เราได้ส่งรหัสยืนยันไปยัง',
-	emailCode_instructions: 'กรอกรหัส 6 หลักจากอีเมลของคุณ รหัสจะหมดอายุใน 5 นาที',
+	emailCode_instructions: 'กรอกรหัส 6 หลักจากอีเมลของคุณ อีเมลระบุว่ารหัสใช้ได้นานเท่าใด',
 	emailCode_codeLabel: 'รหัสยืนยัน',
 	emailCode_verifyButton: 'ยืนยัน',
 	emailCode_resendButton: 'ส่งรหัสอีกครั้ง',

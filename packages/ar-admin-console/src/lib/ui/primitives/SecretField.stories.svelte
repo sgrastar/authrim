@@ -26,12 +26,7 @@
 <Story name="Shown once">
 	{#snippet template()}
 		<div style="max-width:560px">
-			<SecretField
-				label={secret()}
-				mode="show"
-				once
-				value="demo_secret_for_storybook_only"
-			/>
+			<SecretField label={secret()} mode="show" once value="demo_secret_for_storybook_only" />
 		</div>
 	{/snippet}
 </Story>

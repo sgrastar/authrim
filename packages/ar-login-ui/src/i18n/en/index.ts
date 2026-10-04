@@ -340,7 +340,7 @@ const en = {
 	emailCode_title: 'Check your email',
 	emailCode_subtitle: "We've sent a verification code to",
 	emailCode_instructions:
-		'Enter the 6-digit code from your email. The code will expire in 5 minutes.',
+		'Enter the 6-digit code from your email. The email says how long the code lasts.',
 	emailCode_codeLabel: 'Verification code',
 	emailCode_verifyButton: 'Verify',
 	emailCode_resendButton: 'Resend code',
