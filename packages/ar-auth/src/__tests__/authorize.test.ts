@@ -1495,7 +1495,6 @@ describe('Authorization Handler', () => {
         response_mode: 'query',
         prompt: 'login',
         max_age: '0',
-        id_token_hint: 'invalid.jwt.value',
         acr_values: 'urn:mace:incommon:iap:bronze',
         display: 'page',
         ui_locales: 'ja en',
@@ -1963,6 +1962,7 @@ describe('Authorization Handler', () => {
         idFromName: vi.fn().mockReturnValue({ toString: () => 'default-v3' }),
         get: vi.fn().mockReturnValue({
           getAllPublicKeysRpc: vi.fn().mockResolvedValue([publicJwk]),
+          getAllOIDCPublicKeysRpc: vi.fn().mockResolvedValue([publicJwk]),
         }),
       } as unknown as Env['KEY_MANAGER'];
 
@@ -2002,6 +2002,101 @@ describe('Authorization Handler', () => {
       expect(redirect.searchParams.get('code')).toBeNull();
       expect(redirect.searchParams.get('state')).toBe('id-token-hint-poc');
       expect(getAuthCodeStore(env).storeCodeRpc).not.toHaveBeenCalled();
+    });
+
+    describe('id_token_hint names the End-User, it does not sign them in', () => {
+      async function hintSigner() {
+        const keyPair = await generateKeyPair('RS256', { extractable: true });
+        const publicJwk = {
+          ...(await exportJWK(keyPair.publicKey)),
+          kid: 'hint-key',
+          alg: 'RS256',
+        };
+        env.KEY_MANAGER = {
+          idFromName: vi.fn().mockReturnValue({ toString: () => 'default-v3' }),
+          get: vi.fn().mockReturnValue({
+            getAllOIDCPublicKeysRpc: vi.fn().mockResolvedValue([publicJwk]),
+          }),
+        } as unknown as Env['KEY_MANAGER'];
+        return (sub: string, options: { issuer?: string; expired?: boolean } = {}) => {
+          const now = Math.floor(Date.now() / 1000);
+          return new SignJWT({ sub })
+            .setProtectedHeader({ alg: 'RS256', kid: 'hint-key' })
+            .setIssuer(options.issuer ?? 'https://test.example.com')
+            .setAudience('test-client')
+            .setIssuedAt(now - 7200)
+            .setExpirationTime(options.expired ? now - 3600 : now + 3600)
+            .sign(keyPair.privateKey);
+        };
+      }
+      async function authorizeWithHint(hint: string, prompt = 'none') {
+        const response = await app.request(
+          `/authorize?response_type=code&client_id=test-client&redirect_uri=https://example.com/callback&scope=openid&state=hint&prompt=${prompt}&id_token_hint=${encodeURIComponent(hint)}`,
+          {
+            method: 'GET',
+            headers: { Cookie: `authrim_session=${encodeURIComponent(TEST_SESSION_ID)}` },
+          },
+          env
+        );
+        expect(response.status).toBe(302);
+        return new URL(response.headers.get('Location')!);
+      }
+
+      beforeEach(async () => {
+        await configureClientSettings(env, { 'client.sso_enabled': true });
+        configureClientTrustPolicy(env);
+        seedSession(env, 'test-user');
+      });
+
+      it('issues a code when the signed-in End-User is the one the hint names, expired or not', async () => {
+        const sign = await hintSigner();
+        const redirect = await authorizeWithHint(await sign('test-user', { expired: true }));
+        expect(redirect.searchParams.get('error')).toBeNull();
+        expect(redirect.searchParams.get('code')).toBeTruthy();
+      });
+
+      it('answers login_required to prompt=none when another End-User is signed in', async () => {
+        const sign = await hintSigner();
+        const redirect = await authorizeWithHint(await sign('another-user'));
+        expect(redirect.searchParams.get('error')).toBe('login_required');
+        expect(redirect.searchParams.get('code')).toBeNull();
+        expect(getAuthCodeStore(env).storeCodeRpc).not.toHaveBeenCalled();
+      });
+
+      it('asks the named End-User to sign in when another one is signed in', async () => {
+        const sign = await hintSigner();
+        const response = await app.request(
+          `/authorize?response_type=code&client_id=test-client&redirect_uri=https://example.com/callback&scope=openid&state=hint&code_challenge=${'a'.repeat(43)}&code_challenge_method=S256&id_token_hint=${encodeURIComponent(await sign('another-user'))}`,
+          {
+            method: 'GET',
+            headers: { Cookie: `authrim_session=${encodeURIComponent(TEST_SESSION_ID)}` },
+          },
+          env
+        );
+        expect(response.status).toBe(302);
+        expect(response.headers.get('location')).toContain('/flow/login');
+        expect(getAuthCodeStore(env).storeCodeRpc).not.toHaveBeenCalled();
+      });
+
+      it('refuses a hint this server did not issue, even with a session', async () => {
+        const sign = await hintSigner();
+        for (const hint of [
+          await sign('test-user', { issuer: 'https://other.example.com' }),
+          'invalid.jwt.value',
+        ]) {
+          const redirect = await authorizeWithHint(hint);
+          expect(redirect.searchParams.get('error')).toBe('invalid_request');
+          expect(redirect.searchParams.get('code')).toBeNull();
+        }
+        const otherKey = await generateKeyPair('RS256', { extractable: true });
+        const forged = await new SignJWT({ sub: 'test-user' })
+          .setProtectedHeader({ alg: 'RS256', kid: 'hint-key' })
+          .setIssuer('https://test.example.com')
+          .setExpirationTime('1h')
+          .sign(otherKey.privateKey);
+        const redirect = await authorizeWithHint(forged);
+        expect(redirect.searchParams.get('error')).toBe('invalid_request');
+      });
     });
 
     securityRegressionIt(

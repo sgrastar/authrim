@@ -90,6 +90,9 @@ import {
   resolveAuthorizationResponseSigningAlgorithm,
   resolveIDTokenSigningAlgorithm,
   resolveIDTokenSigningPolicy,
+  validateIdTokenHint,
+  getIssuedIDTokenKeys,
+  importIssuedTokenKey,
   selectJWEEncryptionKey,
   setBoundedMapEntry,
   timingSafeEqual,
@@ -3248,10 +3251,40 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
     ssoEnabled = true;
   }
 
-  // id_token_hint is a hint about the End-User (OIDC Core 3.1.2.1), not proof that they are
-  // signed in: without a session it never stands in for one. An ID token reaches every app it
-  // was issued to, so treating it as a sign-in would let any holder replay it (with prompt=none)
-  // for a code. It is passed on to the login screen as a hint only.
+  // id_token_hint (OIDC Core 3.1.2.1, 3.1.2.2): an ID token this server issued, naming the
+  // End-User the client expects. It is never a sign-in: without a session it stands in for
+  // nothing (an ID token reaches every app it was issued to, so any holder could replay it with
+  // prompt=none). It must verify (signature and issuer; it may have expired), and a signed-in
+  // End-User must be the one it names. It is kept with the request, not shown to the login UI.
+  if (id_token_hint) {
+    const hintToken = id_token_hint;
+    const hint = await validateIdTokenHint(
+      hintToken,
+      async () =>
+        (await importIssuedTokenKey(await getIssuedIDTokenKeys(c.env, tenantId), hintToken)).key,
+      getRequestIssuer(c),
+      { allowExpired: true }
+    );
+    if (!hint.valid || !hint.userId) {
+      return sendError('invalid_request', 'id_token_hint is not an ID token this server issued');
+    }
+    if (sessionUserId && sessionUserId !== hint.userId) {
+      if (prompt?.split(' ').includes('none') || _confirmed === 'true') {
+        return sendError(
+          'login_required',
+          'The End-User identified by id_token_hint is not signed in'
+        );
+      }
+      // Another End-User is signed in: the one the hint names has to sign in.
+      log.info('id_token_hint names another End-User than the session', {
+        action: 'id_token_hint_other_user',
+        clientId: validClientId,
+      });
+      sessionUserId = undefined;
+      authTime = undefined;
+      isAnonymousSession = false;
+    }
+  }
 
   // ============================================================
   // OIDC Compliance: Authentication State Evaluation Order
