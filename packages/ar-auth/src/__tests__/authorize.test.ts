@@ -42,6 +42,13 @@ const TEST_REGION_CONFIG = buildPolicyConstrainedRegionShardConfig({
 
 // Mock getClient and getClientCached at module level
 const mockGetClient = vi.hoisted(() => vi.fn());
+// The app's identity mapping (id_token_hint subjects): no mapping unless a test sets one.
+const mockApplyOIDCIdentityMapping = vi.hoisted(() =>
+  vi.fn(async (input: { claims: Record<string, unknown> }) => ({
+    claims: input.claims,
+    binding: null,
+  }))
+);
 const mockResolveAccountDataContextFromHono = vi.hoisted(() =>
   vi.fn(async (c: { env: Env; set: (key: string, value: unknown) => void }, userId: string) => {
     const context = {
@@ -72,6 +79,7 @@ vi.mock('@authrim/ar-lib-core', async () => {
       .fn()
       .mockImplementation((_c, env, clientId) => mockGetClient(env, clientId)),
     resolveAccountDataContextFromHono: mockResolveAccountDataContextFromHono,
+    applyOIDCIdentityMapping: mockApplyOIDCIdentityMapping,
   };
 });
 
@@ -2063,7 +2071,7 @@ describe('Authorization Handler', () => {
         expect(getAuthCodeStore(env).storeCodeRpc).not.toHaveBeenCalled();
       });
 
-      it('asks the named End-User to sign in when another one is signed in', async () => {
+      it('answers login_required to an interactive request when another End-User is signed in', async () => {
         const sign = await hintSigner();
         const response = await app.request(
           `/authorize?response_type=code&client_id=test-client&redirect_uri=https://example.com/callback&scope=openid&state=hint&code_challenge=${'a'.repeat(43)}&code_challenge_method=S256&id_token_hint=${encodeURIComponent(await sign('another-user'))}`,
@@ -2074,8 +2082,23 @@ describe('Authorization Handler', () => {
           env
         );
         expect(response.status).toBe(302);
-        expect(response.headers.get('location')).toContain('/flow/login');
+        const redirect = new URL(response.headers.get('Location')!);
+        expect(redirect.searchParams.get('error')).toBe('login_required');
         expect(getAuthCodeStore(env).storeCodeRpc).not.toHaveBeenCalled();
+      });
+
+      it("matches a hint carrying the sub this app's identity mapping issues", async () => {
+        const sign = await hintSigner();
+        mockApplyOIDCIdentityMapping.mockResolvedValueOnce({
+          claims: { sub: 'pairwise-for-test-client' },
+          binding: null,
+        });
+        const redirect = await authorizeWithHint(await sign('pairwise-for-test-client'));
+        expect(redirect.searchParams.get('error')).toBeNull();
+        expect(redirect.searchParams.get('code')).toBeTruthy();
+        expect(mockApplyOIDCIdentityMapping).toHaveBeenCalledWith(
+          expect.objectContaining({ clientId: 'test-client', claims: { sub: 'test-user' } })
+        );
       });
 
       it('refuses a hint this server did not issue, even with a session', async () => {

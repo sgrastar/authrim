@@ -59,6 +59,17 @@ describe('keys of ID tokens this tenant issued', () => {
     await expect(getIssuedIDTokenKeys(viaPublicFacade, 't')).resolves.toEqual(oidcKeys);
   });
 
+  it('refuses an id_token_hint that is not a string (a request object may carry any JSON)', async () => {
+    const result = await validateIdTokenHint(
+      { sub: 'user-1' } as unknown as string,
+      async () => {
+        throw new Error('not reached');
+      },
+      'https://op.example.com'
+    );
+    expect(result).toMatchObject({ valid: false, errorCode: 'invalid_request' });
+  });
+
   it('accepts an id_token_hint signed with ES256 at logout', async () => {
     const { jwk, token } = await signedWith('ES256', 'es-logout');
     const result = await validateIdTokenHint(

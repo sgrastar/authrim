@@ -1,5 +1,5 @@
 import type { Context } from 'hono';
-import type { Env } from '@authrim/ar-lib-core';
+import type { ClientMetadata, Env } from '@authrim/ar-lib-core';
 import {
   CanonicalRuntimeUserProjectionRepository,
   CanonicalSensitiveValueResolver,
@@ -93,6 +93,7 @@ import {
   validateIdTokenHint,
   getIssuedIDTokenKeys,
   importIssuedTokenKey,
+  applyOIDCIdentityMapping,
   selectJWEEncryptionKey,
   setBoundedMapEntry,
   timingSafeEqual,
@@ -3254,10 +3255,14 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   // id_token_hint (OIDC Core 3.1.2.1, 3.1.2.2): an ID token this server issued, naming the
   // End-User the client expects. It is never a sign-in: without a session it stands in for
   // nothing (an ID token reaches every app it was issued to, so any holder could replay it with
-  // prompt=none). It must verify (signature and issuer; it may have expired), and a signed-in
-  // End-User must be the one it names. It is kept with the request, not shown to the login UI.
-  if (id_token_hint) {
-    const hintToken = id_token_hint;
+  // prompt=none). It must verify (signature and issuer; it may have expired), and the signed-in
+  // End-User must be the one it names, else login_required (the request is not completed for
+  // someone else, prompt=none or not). It is kept with the request, not shown to the login UI.
+  if (id_token_hint !== undefined) {
+    const hintToken: unknown = id_token_hint;
+    if (typeof hintToken !== 'string') {
+      return sendError('invalid_request', 'id_token_hint must be a string');
+    }
     const hint = await validateIdTokenHint(
       hintToken,
       async () =>
@@ -3268,21 +3273,22 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
     if (!hint.valid || !hint.userId) {
       return sendError('invalid_request', 'id_token_hint is not an ID token this server issued');
     }
-    if (sessionUserId && sessionUserId !== hint.userId) {
-      if (prompt?.split(' ').includes('none') || _confirmed === 'true') {
-        return sendError(
-          'login_required',
-          'The End-User identified by id_token_hint is not signed in'
-        );
-      }
-      // Another End-User is signed in: the one the hint names has to sign in.
-      log.info('id_token_hint names another End-User than the session', {
-        action: 'id_token_hint_other_user',
-        clientId: validClientId,
-      });
-      sessionUserId = undefined;
-      authTime = undefined;
-      isAnonymousSession = false;
+    if (
+      sessionUserId &&
+      !(await idTokenHintNamesUser(
+        c,
+        tenantId,
+        validClientId,
+        clientMetadata,
+        scope,
+        hint.userId,
+        sessionUserId
+      ))
+    ) {
+      return sendError(
+        'login_required',
+        'The End-User identified by id_token_hint is not signed in'
+      );
     }
   }
 
@@ -5061,6 +5067,46 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   } else {
     // Query mode (for code-only flow)
     return createQueryResponse(c, validRedirectUri, responseParams);
+  }
+}
+
+/**
+ * Whether an id_token_hint's sub names this user: the user's id, or the sub this app's ID tokens
+ * carry for them when its identity mapping issues another one (pairwise or persistent
+ * identifiers). A mapping that cannot be applied names no one.
+ */
+async function idTokenHintNamesUser(
+  c: Context<{ Bindings: Env }>,
+  tenantId: string,
+  clientId: string,
+  clientMetadata: ClientMetadata,
+  scope: string | undefined,
+  hintSubject: string,
+  userId: string
+): Promise<boolean> {
+  if (hintSubject === userId) return true;
+  try {
+    const mapped = await applyOIDCIdentityMapping({
+      adapter: createAuthContextFromHono(c, tenantId).coreAdapter,
+      env: c.env,
+      tenantId,
+      clientId,
+      sectorIdentifier: clientMetadata.sector_identifier_uri,
+      selector: clientMetadata.identity_mapping,
+      destinationSurface: 'id_token',
+      grantedScopes: scope?.split(' ').filter(Boolean),
+      claims: { sub: userId },
+    });
+    return mapped.claims.sub === hintSubject;
+  } catch (error) {
+    getLogger(c)
+      .module('AUTHORIZE')
+      .warn('id_token_hint subject could not be mapped for this app', {
+        action: 'id_token_hint_mapping_failed',
+        clientId,
+        error: error instanceof Error ? error.message : 'unknown_error',
+      });
+    return false;
   }
 }
 

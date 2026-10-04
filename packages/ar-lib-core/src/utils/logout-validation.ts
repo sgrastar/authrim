@@ -67,6 +67,15 @@ export async function validateIdTokenHint(
     return { valid: true };
   }
 
+  // A request object or PAR may carry any JSON value: only a string can be an ID token.
+  if (typeof idTokenHint !== 'string') {
+    return {
+      valid: false,
+      error: 'id_token_hint is not a valid JWT format',
+      errorCode: 'invalid_request',
+    };
+  }
+
   // Validate token format (3 parts separated by dots)
   const parts = idTokenHint.split('.');
   if (parts.length !== 3) {
