@@ -4393,6 +4393,27 @@ describe('Admin API Handlers', () => {
       );
     });
 
+    it('refuses a web app’s http loopback redirect URI while security.https_redirect_only is on', async () => {
+      const c = createMockContext({
+        method: 'POST',
+        body: {
+          client_name: 'Web app',
+          redirect_uris: ['http://localhost:3000/callback'],
+        },
+        db: createMockDB({ firstResult: null, runResult: { success: true } }),
+      });
+
+      await adminClientCreateHandler(c);
+
+      expect(c.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          error: 'invalid_request',
+          error_description: expect.stringContaining('http://localhost:3000/callback'),
+        }),
+        400
+      );
+    });
+
     it('should reject malformed requestable scope tokens', async () => {
       const c = createMockContext({
         method: 'POST',

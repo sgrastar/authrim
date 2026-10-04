@@ -124,9 +124,9 @@ export const SECURITY_SETTINGS_META: Record<keyof SecuritySettings, SettingMeta>
     default: false,
     envKey: 'SECURITY_PKCE_REQUIRED',
     label: 'PKCE Required',
-    description: 'Require PKCE for all authorization code flows',
+    description:
+      "Require PKCE (S256) for every authorization code request. An app can require it as well, but cannot waive the tenant's requirement",
     visibility: 'public',
-    status: 'in_development',
   },
   'security.par_required': {
     key: 'security.par_required',
@@ -144,9 +144,9 @@ export const SECURITY_SETTINGS_META: Record<keyof SecuritySettings, SettingMeta>
     default: true,
     envKey: 'HTTPS_REDIRECT_ONLY',
     label: 'HTTPS Redirect Only',
-    description: 'Only allow HTTPS redirect URIs (except localhost)',
+    description:
+      "Allow only HTTPS redirect URIs, except a native app's loopback (RFC 8252). Off: a web app may also use http on a loopback host (development). An app can keep HTTPS only where the tenant allows http",
     visibility: 'admin',
-    status: 'in_development',
   },
 
   // Request Object Requirements

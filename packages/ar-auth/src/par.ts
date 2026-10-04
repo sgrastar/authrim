@@ -41,6 +41,8 @@ import {
   getTenantIdFromContext,
   isSigningJWK,
   resolveProtocolSettings,
+  resolveAppSecurityRequirements,
+  type AppSecurityRequirements,
   resolveEffectiveSettings,
   falRequiresSignedPushedRequest,
   type FAPIProtocolSettings,
@@ -366,8 +368,14 @@ export async function parHandler(c: Context<{ Bindings: Env }>): Promise<Respons
     // =========================================================================
     let fapiConfig: FAPIProtocolSettings;
     let oidcConfig: OIDCProtocolSettings;
+    let securityPolicy: AppSecurityRequirements;
 
     try {
+      securityPolicy = await resolveAppSecurityRequirements(
+        c.env,
+        (clientMetadata.tenant_id as string) || getTenantIdFromContext(c),
+        clientMetadata.client_id
+      );
       const settings = await resolveProtocolSettings(
         c.env,
         (clientMetadata.tenant_id as string) || getTenantIdFromContext(c),
@@ -944,13 +952,26 @@ export async function parHandler(c: Context<{ Bindings: Env }>): Promise<Respons
     if (fapiConfig.enabled && (!params.code_challenge || params.code_challenge_method !== 'S256')) {
       throw new RFCError('invalid_request', 400, 'FAPI 2.0 requires PKCE with S256 method');
     }
+    // The tenant's (or app's) PKCE requirement, checked here as authorize will.
+    if (
+      securityPolicy.pkceRequired &&
+      typeof params.response_type === 'string' &&
+      params.response_type.split(' ').includes('code') &&
+      (!params.code_challenge || params.code_challenge_method !== 'S256')
+    ) {
+      throw new RFCError('invalid_request', 400, 'PKCE with S256 is required for this client');
+    }
 
     // =========================================================================
     // Standard Validations
     // =========================================================================
 
     // Validate redirect_uri against registered URIs
-    const redirectValidation = validateRedirectUri(params.redirect_uri);
+    // http only on a loopback host, for a native app or as the tenant allows (as authorize).
+    const redirectValidation = validateRedirectUri(
+      params.redirect_uri,
+      clientMetadata.application_type === 'native' || !securityPolicy.httpsRedirectOnly
+    );
     if (!redirectValidation.valid) {
       throw new RFCError(
         'invalid_request',

@@ -65,6 +65,7 @@ import {
   prepareTenantDiscoveryAliasDirectory,
   resolveTenantDiscoveryAliasDirectoryInput,
 } from './tenant-alias-directory';
+import { REDIRECT_URI_POLICY_DESCRIPTION, redirectUriRefusedByPolicy } from './redirect-uri-policy';
 
 type ClientRegistrationRequestWithPkce = Omit<ClientRegistrationRequest, 'redirect_uris'> & {
   redirect_uris: string[];
@@ -1765,6 +1766,28 @@ export async function registerHandler(c: Context<{ Bindings: Env }>): Promise<Re
     const grantTypes = request.grant_types || ['authorization_code'];
     const responseTypes = request.response_types || ['code'];
     const applicationType = request.application_type || 'web';
+    // The tenant's redirect URI policy, as authorize will apply it (security.https_redirect_only).
+    let refusedRedirectUri: string | null;
+    try {
+      refusedRedirectUri = await redirectUriRefusedByPolicy(c.env, tenantId, {
+        redirectUris: request.redirect_uris,
+        applicationType,
+      });
+    } catch (error) {
+      getLogger(c)
+        .module('DCR')
+        .error('Redirect URI policy could not be read', {}, error as Error);
+      return c.json({ error: 'server_error', error_description: 'Failed to register client' }, 500);
+    }
+    if (refusedRedirectUri) {
+      return c.json(
+        {
+          error: 'invalid_redirect_uri',
+          error_description: `${REDIRECT_URI_POLICY_DESCRIPTION}: ${refusedRedirectUri}`,
+        },
+        400
+      );
+    }
     const requirePkce =
       request.require_pkce ??
       (tokenEndpointAuthMethod === 'none' && grantTypes.includes('authorization_code'));

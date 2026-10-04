@@ -126,7 +126,7 @@ export interface MockEnv {
   KEY_MANAGER_SECRET: string;
   ENVIRONMENT: string;
   PUBLIC_JWK_JSON?: string;
-  ENABLE_HTTP_REDIRECT?: string;
+  HTTPS_REDIRECT_ONLY?: string;
   ENABLE_TOKEN_EXCHANGE?: string;
   ENABLE_NATIVE_SSO?: string;
   ENABLE_CIBA?: string;

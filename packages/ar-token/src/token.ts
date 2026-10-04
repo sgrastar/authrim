@@ -1862,8 +1862,9 @@ async function handleAuthorizationCodeGrant(
   if (!redirect_uri) {
     return oauthError(c, 'invalid_request', 'redirect_uri is required', 400);
   }
-  const allowHttp = c.env.ENABLE_HTTP_REDIRECT === 'true';
-  const redirectUriValidation = validateRedirectUri(redirect_uri, allowHttp);
+  // Well formed, and http only on a loopback host: whether this app may use http there was
+  // decided at authorize (security.https_redirect_only), and the code is bound to that URI.
+  const redirectUriValidation = validateRedirectUri(redirect_uri, true);
   if (!redirectUriValidation.valid) {
     return oauthError(c, 'invalid_request', redirectUriValidation.error as string, 400);
   }

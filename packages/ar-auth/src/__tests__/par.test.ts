@@ -538,6 +538,37 @@ describe('PAR Handler', () => {
     expect(mockGetClientCached).not.toHaveBeenCalled();
   });
 
+  it('rejects a request without PKCE when the tenant requires it (security.pkce_required)', async () => {
+    const c = createMockContext({
+      headers: {
+        'content-type': 'application/x-www-form-urlencoded',
+      },
+      body: {
+        client_id: 'client-123',
+        response_type: 'code',
+        redirect_uri: 'https://client.example.com/callback',
+        scope: 'openid profile',
+      },
+      env: {
+        SETTINGS: {
+          get: async (key: string) =>
+            key === 'settings:tenant:default:security'
+              ? JSON.stringify({ 'security.pkce_required': true })
+              : null,
+        } as unknown as KVNamespace,
+      },
+    });
+
+    const response = await parHandler(c);
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({
+      error: 'invalid_request',
+      error_description: 'PKCE with S256 is required for this client',
+    });
+    expect(mockStoreRequestRpc).not.toHaveBeenCalled();
+  });
+
   it('rejects FAPI requests that do not use S256 PKCE', async () => {
     const c = createMockContext({
       headers: {

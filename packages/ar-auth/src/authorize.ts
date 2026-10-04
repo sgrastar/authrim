@@ -90,6 +90,8 @@ import {
   resolveAuthorizationResponseSigningAlgorithm,
   resolveIDTokenSigningAlgorithm,
   resolveIDTokenSigningPolicy,
+  resolveAppSecurityRequirements,
+  type AppSecurityRequirements,
   validateIdTokenHint,
   getIssuedIDTokenKeys,
   importIssuedTokenKey,
@@ -1243,9 +1245,10 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
             ? errorClient.tenant_id
             : requestTenantId;
         const registeredRedirectUris = errorClient?.redirect_uris;
+        // Only a native app's loopback may be http here (the tenant's policy is not read yet).
         const redirectValidation = validateRedirectUri(
           redirect_uri,
-          c.env.ENABLE_HTTP_REDIRECT === 'true'
+          errorClient?.application_type === 'native'
         );
         if (
           errorClient &&
@@ -1729,7 +1732,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
               errorClient &&
               errorClientTenantId === requestTenantId &&
               Array.isArray(registeredRedirectUris) &&
-              validateRedirectUri(redirect_uri).valid &&
+              validateRedirectUri(redirect_uri, errorClient.application_type === 'native').valid &&
               isRedirectUriRegistered(
                 redirect_uri,
                 registeredRedirectUris,
@@ -2470,8 +2473,23 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
     }
   }
 
-  // Validate redirect_uri format (allow http for development)
-  const allowHttp = c.env.ENABLE_HTTP_REDIRECT === 'true';
+  // The tenant's security floor for its apps (PKCE, http loopback, encrypted request objects).
+  // Read strictly: requirements that cannot be read refuse the request rather than lapse.
+  let securityPolicy: AppSecurityRequirements;
+  try {
+    securityPolicy = await resolveAppSecurityRequirements(c.env, requestTenantId, validClientId);
+  } catch (error) {
+    log.error('Security policy settings could not be read', {}, error as Error);
+    return c.json(
+      { error: 'server_error', error_description: 'Failed to process authorization request' },
+      500
+    );
+  }
+
+  // Validate redirect_uri format: http only on a loopback host, for a native app (RFC 8252) or
+  // when the tenant allows it for web apps (security.https_redirect_only off).
+  const allowHttp =
+    clientMetadata.application_type === 'native' || !securityPolicy.httpsRedirectOnly;
   const redirectUriValidation = validateRedirectUri(redirect_uri, allowHttp);
   if (!redirectUriValidation.valid) {
     // Invalid redirect_uri format - cannot redirect, must show error page
@@ -3020,7 +3038,9 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
 
   const requiresPkce =
     responseTypeIssuesAuthorizationCode(response_type) &&
-    (clientMetadata.require_pkce === true || isClientPublic(clientMetadata));
+    (clientMetadata.require_pkce === true ||
+      isClientPublic(clientMetadata) ||
+      securityPolicy.pkceRequired);
   if (requiresPkce && (!code_challenge || code_challenge_method !== 'S256')) {
     return sendError('invalid_request', 'PKCE with S256 is required for this client');
   }
