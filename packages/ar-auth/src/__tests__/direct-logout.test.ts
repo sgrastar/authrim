@@ -219,6 +219,27 @@ describe('Direct Auth logout scope', () => {
 });
 
 describe('Direct Auth logout token revocation per rotator', () => {
+  it('keeps the index when a rotator could not revoke, so a retry can find the family', async () => {
+    getRefreshTokenRotatorStubByJti.mockImplementation(
+      () =>
+        ({
+          stub: { revokeFamilyRpc },
+          resolution: { instanceName: 'rotator:shared' },
+        }) as never
+    );
+    revokeFamilyRpc.mockReset().mockRejectedValueOnce(new Error('unavailable'));
+    expireRefreshTokenFamiliesByUser.mockClear();
+    const { directLogoutHandler } = await import('../direct-auth');
+
+    const response = await directLogoutHandler(
+      createContext({ client_id: 'client-a', revoke_tokens: true }) as never
+    );
+
+    expect(response.status).toBe(200);
+    expect(expireRefreshTokenFamiliesByUser).not.toHaveBeenCalled();
+    revokeFamilyRpc.mockReset().mockResolvedValue(undefined);
+  });
+
   it('revokes the user’s family once in a rotator the index names twice', async () => {
     getRefreshTokenRotatorStubByJti.mockImplementation(
       () =>

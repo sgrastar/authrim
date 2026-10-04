@@ -4314,6 +4314,7 @@ export async function directLogoutHandler(c: Context<{ Bindings: Env }>) {
             // Revoke the user's family in each RefreshTokenRotator the index names. By user, not
             // by the indexed JWT ID: that is the family's first one, gone once it has rotated.
             const revokedInstances = new Set<string>();
+            let revocationFailed = false;
             for (const family of families) {
               try {
                 const { stub: rotator, resolution } = getRefreshTokenRotatorStubByJti(
@@ -4327,6 +4328,7 @@ export async function directLogoutHandler(c: Context<{ Bindings: Env }>) {
                 revokedInstances.add(resolution.instanceName);
               } catch (familyError) {
                 // Log but continue with other families
+                revocationFailed = true;
                 log.warn('Failed to revoke token family', {
                   action: 'revoke_token_family',
                   jti: family.jti,
@@ -4335,11 +4337,18 @@ export async function directLogoutHandler(c: Context<{ Bindings: Env }>) {
               }
             }
 
-            // Mark families as revoked in D1
-            await expireRefreshTokenFamiliesByUser(authCtx.coreAdapter, {
-              tenantId,
-              userId: session.userId,
-            });
+            // Mark families as revoked in D1, only when every rotator revoked: a family left
+            // live must stay findable, so that revoking again (or an admin) can still reach it.
+            if (revocationFailed) {
+              log.warn('Refresh token families left in the index for a retry', {
+                action: 'revoke_refresh_tokens_partial',
+              });
+            } else {
+              await expireRefreshTokenFamiliesByUser(authCtx.coreAdapter, {
+                tenantId,
+                userId: session.userId,
+              });
+            }
 
             log.info('Revoked refresh tokens on logout', {
               action: 'revoke_refresh_tokens',

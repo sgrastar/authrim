@@ -540,7 +540,8 @@ export async function refreshSessionHandler(c: Context<{ Bindings: Env }>) {
     // A session the browser's cookie names: its cookies last as long as the session now does.
     if (fromCookie) {
       const maxAge = Math.max(0, Math.floor((session.expiresAt - Date.now()) / 1000));
-      const secure = new URL(c.req.url).protocol === 'https:';
+      // Secure as at sign-in: SameSite=None needs it, and browsers take it on http://localhost.
+      const secure = true;
       setCookie(c, 'authrim_session', session.id, {
         path: '/',
         httpOnly: true,

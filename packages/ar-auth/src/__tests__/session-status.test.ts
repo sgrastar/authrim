@@ -524,7 +524,8 @@ describe('ITP session token lifecycle', () => {
     try {
       mocks.getCookie.mockReturnValue('0_session_123');
       mocks.setCookie.mockClear();
-      const context = createContext();
+      // Plain http (local development) as well: Secure, as at sign-in.
+      const context = createContext({ url: 'http://localhost:8787/api/sessions/refresh' });
       context.req.json = vi.fn(async () => ({ extend_seconds: 3600 }));
       mocks.sessionStore.extendSessionRpc.mockResolvedValue({
         id: '0_session_123',
