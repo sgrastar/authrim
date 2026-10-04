@@ -147,6 +147,7 @@ import { type FAL } from '@authrim/ar-lib-core';
 import { getRequestIssuer } from './issuer';
 import type { FAPI2MessageSigningConfig } from './fapi-message-signing';
 import { timeAuthRequestDiagnosticOperation } from './request-diagnostics';
+import { resolveSessionTtl } from './session-ttl';
 
 const DEFAULT_HANDOFF_ARTIFACT_TTL_SECONDS = 60;
 const MIN_HANDOFF_ARTIFACT_TTL_SECONDS = 30;
@@ -6037,10 +6038,11 @@ export async function authorizeLoginHandler(c: Context<{ Bindings: Env }>) {
     );
 
     try {
+      const sessionTtl = await resolveSessionTtl(c.env, tenantId, 'default');
       await sessionStore.createSessionRpc(
         newSessionId, // Required: Sharded session ID
         userId,
-        3600, // 1 hour session
+        sessionTtl.seconds,
         {
           ...getSessionClientMetadata(c.req.raw),
           clientId: metadata.client_id as string,
@@ -6054,7 +6056,7 @@ export async function authorizeLoginHandler(c: Context<{ Bindings: Env }>) {
       const sessionSameSiteValue = getSessionCookieSameSite(c.env);
       c.header(
         'Set-Cookie',
-        `authrim_session=${newSessionId}; Path=/; HttpOnly; SameSite=${sessionSameSiteValue}; Secure; Max-Age=3600`
+        `authrim_session=${newSessionId}; Path=/; HttpOnly; SameSite=${sessionSameSiteValue}; Secure; Max-Age=${sessionTtl.seconds}`
       );
 
       // Generate and set browser state cookie for OIDC Session Management
@@ -6063,7 +6065,7 @@ export async function authorizeLoginHandler(c: Context<{ Bindings: Env }>) {
       const browserStateSameSiteValue = getBrowserStateCookieSameSite(c.env);
       c.res.headers.append(
         'Set-Cookie',
-        `${BROWSER_STATE_COOKIE_NAME}=${browserState}; Path=/; SameSite=${browserStateSameSiteValue}; Secure; Max-Age=3600`
+        `${BROWSER_STATE_COOKIE_NAME}=${browserState}; Path=/; SameSite=${browserStateSameSiteValue}; Secure; Max-Age=${sessionTtl.seconds}`
       );
       browserSessionId = newSessionId;
     } catch (error) {

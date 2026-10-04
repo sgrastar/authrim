@@ -255,21 +255,35 @@ describe('retention inventory', () => {
     // passkey is set to 3 days; the default of the longest method (30 days) still wins.
     expect(sessions.retention).toEqual({ value: 30 * 86400, unit: 'seconds' });
     expect(sessions.varies).toBe('by_sign_in_method');
-    // A refresh extends a session by up to a day, without an absolute limit.
+    // A refresh extends a session by up to a day, up to session.max_ttl (30 days) from sign-in.
     expect(sessions.extension).toEqual({
       per_refresh_seconds: 86400,
-      absolute_limit_seconds: null,
+      absolute_limit_seconds: 30 * 86400,
     });
     expect(sessions.breakdown).toEqual(
       expect.arrayContaining([
         { key: 'session.ttl.passkey', seconds: 3 * 86400 },
+        // External IdP and SAML sign-in take session.default_ttl.
+        { key: 'session.default_ttl', seconds: 86400 },
         // Paths whose lifetime is fixed in code are listed too.
-        { key: 'external_idp_login', seconds: 86400, fixed: true },
-        { key: 'saml_login', seconds: 3600, fixed: true },
+        { key: 'session_handoff', seconds: 3600, fixed: true },
       ])
     );
     expect(sessions.source).toMatchObject({ kind: 'session_settings' });
-    expect((sessions.source as { keys: string[] }).keys).not.toContain('external_idp_login');
+    expect((sessions.source as { keys: string[] }).keys).not.toContain('session_handoff');
+  });
+
+  it('caps session lifetimes at session.max_ttl, and shows no extension when it is off', async () => {
+    mocks.readTenantSessionSettingsStrict.mockResolvedValueOnce({
+      'session.max_ttl': 2 * 86400000,
+      'session.refresh_default': false,
+    });
+    const sessions = byId(await build()).sessions!;
+    expect(sessions.retention).toEqual({ value: 2 * 86400, unit: 'seconds' });
+    expect(sessions.breakdown).toEqual(
+      expect.arrayContaining([{ key: 'session.ttl.passkey_registration', seconds: 2 * 86400 }])
+    );
+    expect(sessions.extension).toBeUndefined();
   });
 
   it('counts records for the tenant only, past retention by their own cutoff', async () => {

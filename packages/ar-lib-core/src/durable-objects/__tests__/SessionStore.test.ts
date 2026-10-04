@@ -1068,6 +1068,49 @@ describe('SessionStore', () => {
       });
     });
 
+    it('extends to the time from now, not by adding to the current expiry', async () => {
+      const sessionId = '0_session_extend_from_now';
+      const created = await sessionStore.createSessionRpc(
+        sessionId,
+        'user_123',
+        3600,
+        undefined,
+        'default'
+      );
+      // A shorter extension than the time left changes nothing.
+      const extended = await sessionStore.extendSessionRpc(sessionId, 60);
+      expect(extended?.expiresAt).toBe(created.expiresAt);
+    });
+
+    it('never extends past its creation plus the maximum lifetime', async () => {
+      const sessionId = '0_session_extend_capped';
+      const created = await sessionStore.createSessionRpc(
+        sessionId,
+        'user_123',
+        3600,
+        undefined,
+        'default'
+      );
+      const extended = await sessionStore.extendSessionRpc(sessionId, 7200, 1800 * 1000);
+      expect(extended?.expiresAt).toBe(created.createdAt + 1800 * 1000);
+    });
+
+    it('does not extend a session already past its maximum lifetime', async () => {
+      const sessionId = '0_session_extend_past_cap';
+      const created = await sessionStore.createSessionRpc(
+        sessionId,
+        'user_123',
+        3600,
+        undefined,
+        'default'
+      );
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      await expect(sessionStore.extendSessionRpc(sessionId, 3600, 1)).resolves.toBeNull();
+      await expect(mockState.storage.get<Session>(`session:${sessionId}`)).resolves.toMatchObject({
+        expiresAt: created.expiresAt,
+      });
+    });
+
     it('should reject extension with invalid seconds', async () => {
       const request = new Request('http://localhost/session/0_session_invalid_extend/extend', {
         method: 'POST',

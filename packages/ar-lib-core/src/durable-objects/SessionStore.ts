@@ -232,8 +232,12 @@ export class SessionStore extends DurableObject<Env> {
   /**
    * RPC: Extend session expiration
    */
-  async extendSessionRpc(sessionId: string, additionalSeconds: number): Promise<Session | null> {
-    return this.extendSession(sessionId, additionalSeconds);
+  async extendSessionRpc(
+    sessionId: string,
+    additionalSeconds: number,
+    maxLifetimeMs?: number
+  ): Promise<Session | null> {
+    return this.extendSession(sessionId, additionalSeconds, maxLifetimeMs);
   }
 
   /**
@@ -661,18 +665,29 @@ export class SessionStore extends DurableObject<Env> {
   }
 
   /**
-   * Extend session expiration (Active TTL)
+   * Extend session expiration (Active TTL): to `additionalSeconds` from now (never earlier than it
+   * already ends), and never past its creation plus `maxLifetimeMs` (session.max_ttl), which can
+   * also shorten a session made under a longer limit. Null when the session is gone or already
+   * past that limit.
    */
-  async extendSession(sessionId: string, additionalSeconds: number): Promise<Session | null> {
+  async extendSession(
+    sessionId: string,
+    additionalSeconds: number,
+    maxLifetimeMs?: number
+  ): Promise<Session | null> {
     const current = await this.getSession(sessionId);
     if (!current) {
       return null;
     }
 
-    const session = {
-      ...current,
-      expiresAt: current.expiresAt + additionalSeconds * 1000,
-    };
+    const now = Date.now();
+    const requested = Math.max(current.expiresAt, now + additionalSeconds * 1000);
+    const expiresAt =
+      maxLifetimeMs === undefined
+        ? requested
+        : Math.min(requested, current.createdAt + maxLifetimeMs);
+    if (expiresAt <= now) return null;
+    const session = { ...current, expiresAt };
     const tenantId = this.requireTenantId(current.tenantId, 'Session extension');
     let indexUpdated: boolean;
     try {

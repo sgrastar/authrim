@@ -870,11 +870,29 @@ paths:
       tags:
         - Sessions
       summary: Refresh current browser session expiration.
+      description:
+        Extends the session to extend_seconds (default 3600, at most 86400) from now; a session that
+        already ends later keeps its expiry. A session never lasts past its sign-in plus the tenant's
+        session.max_ttl, and the tenant can turn extension off with session.refresh_default.
       security:
         - sessionCookie: []
       responses:
         '200':
           $ref: '#/components/responses/SessionRefresh'
+        '400':
+          $ref: '#/components/responses/Error'
+        '403':
+          description: Session extension is disabled for the tenant (session.refresh_default).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: The session is gone or already past its maximum lifetime.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
   /session/check:
     get:
       tags:

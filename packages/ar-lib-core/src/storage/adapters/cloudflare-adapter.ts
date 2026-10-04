@@ -66,7 +66,11 @@ type SessionStoreRpcStub = {
     tenantId: string
   ): Promise<Session>;
   invalidateSessionRpc(sessionId: string): Promise<boolean>;
-  extendSessionRpc(sessionId: string, additionalSeconds: number): Promise<Session | null>;
+  extendSessionRpc(
+    sessionId: string,
+    additionalSeconds: number,
+    maxLifetimeMs?: number
+  ): Promise<Session | null>;
 };
 
 function toExecuteResult(result: D1Result): ExecuteResult {

@@ -27,6 +27,7 @@ import {
   getLogger,
 } from '@authrim/ar-lib-core';
 import { getRequestIssuer } from './issuer';
+import { resolveSessionExtensionPolicy, resolveSessionTtl } from './session-ttl';
 
 function normalizeSessionOrigin(value: string | undefined | null): string | null {
   if (!value) {
@@ -273,10 +274,11 @@ export async function verifySessionTokenHandler(c: Context<{ Bindings: Env }>) {
 
       // Create new session linked to the same user via RPC
       try {
+        const rpSessionTtl = await resolveSessionTtl(c.env, getTenantIdFromContext(c), 'default');
         const newSession = (await sessionStore.createSessionRpc(
           crypto.randomUUID(), // Generate new session ID
           session.userId,
-          86400, // 24 hours TTL
+          rpSessionTtl.seconds,
           {
             ...getSessionClientMetadata(c.req.raw),
             rpOrigin: normalizedRpOrigin,
@@ -498,14 +500,24 @@ export async function refreshSessionHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
-    const { stub: sessionStore } = getSessionStoreBySessionId(
-      c.env,
-      sessionId,
-      getTenantIdFromContext(c)
-    );
+    const tenantId = getTenantIdFromContext(c);
+    // session.refresh_default turns extension off; session.max_ttl bounds it from creation.
+    const extension = await resolveSessionExtensionPolicy(c.env, tenantId);
+    if (!extension.enabled) {
+      return c.json(
+        {
+          error: 'access_denied',
+          error_description: 'Session extension is disabled',
+        },
+        403
+      );
+    }
+
+    const { stub: sessionStore } = getSessionStoreBySessionId(c.env, sessionId, tenantId);
     const session = (await sessionStore.extendSessionRpc(
       sessionId,
-      extendSeconds
+      extendSeconds,
+      extension.maxLifetimeMs
     )) as Session | null;
 
     if (!session) {

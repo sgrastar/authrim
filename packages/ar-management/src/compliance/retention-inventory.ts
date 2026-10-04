@@ -16,6 +16,7 @@ import {
   resolveTenantAuditRetentionFromEnv,
   readTenantSessionSettingsStrict,
   loadTenantProfileStrict,
+  sessionExtensionPolicyFromSettings,
   sessionTtlFromSettings,
   SESSION_TTL_DEFINITIONS,
   type AuditRetentionSource,
@@ -126,8 +127,8 @@ export interface RetentionCategory {
   /** Records kept now and those past their retention; null when they cannot be counted here. */
   counts: { total: number; expired: number } | null;
   /**
-   * For sessions: an active session can be extended by `per_refresh_seconds` at a time, and
-   * nothing bounds how long it may last in all (`absolute_limit_seconds` null).
+   * For sessions: an active session can be extended by `per_refresh_seconds` at a time, up to
+   * `absolute_limit_seconds` from sign-in (null: nothing bounds it). Absent when extension is off.
    */
   extension?: { per_refresh_seconds: number; absolute_limit_seconds: number | null };
   /**
@@ -161,15 +162,10 @@ const DAY_SECONDS = 24 * 60 * 60;
 /** The most one session refresh extends a session by (ar-auth session-management.ts). */
 const SESSION_REFRESH_MAX_SECONDS = DAY_SECONDS;
 /** Sign-in paths whose sessions have a lifetime fixed in code, not set by session settings. */
+// External IdP and SAML sign-in and a session made for an RP take session.default_ttl.
 const FIXED_SESSION_LIFETIMES: ReadonlyArray<{ key: string; seconds: number; fixed: true }> = [
-  // ar-bridge handlers/callback.ts
-  { key: 'external_idp_login', seconds: DAY_SECONDS, fixed: true },
-  // ar-saml sp/acs.ts
-  { key: 'saml_login', seconds: 60 * 60, fixed: true },
   // ar-bridge handlers/handoff.ts
   { key: 'session_handoff', seconds: 60 * 60, fixed: true },
-  // ar-auth session-management.ts (a session made for an RP from a session token)
-  { key: 'rp_session', seconds: DAY_SECONDS, fixed: true },
 ];
 /** Deleted users' tombstones get this retention unless the deletion asks for another. */
 export const USER_TOMBSTONE_RETENTION_DAYS = 90;
@@ -386,6 +382,7 @@ export async function buildRetentionInventory(
     }),
     ...FIXED_SESSION_LIFETIMES,
   ];
+  const sessionExtension = sessionExtensionPolicyFromSettings(env, sessionSettings);
 
   const oauthSeconds = (key: string) => positiveInteger(oauth[key], key.replace('oauth.', ''));
   const oauthCategory = (
@@ -513,8 +510,16 @@ export async function buildRetentionInventory(
       deletion: { kind: 'expiry' },
       varies: 'by_sign_in_method',
       counts: null,
-      // POST /api/sessions/refresh extends by up to a day each time, with no absolute limit.
-      extension: { per_refresh_seconds: SESSION_REFRESH_MAX_SECONDS, absolute_limit_seconds: null },
+      // POST /api/sessions/refresh extends by up to a day each time (unless
+      // session.refresh_default turns it off), never past session.max_ttl from sign-in.
+      ...(sessionExtension.enabled
+        ? {
+            extension: {
+              per_refresh_seconds: SESSION_REFRESH_MAX_SECONDS,
+              absolute_limit_seconds: Math.floor(sessionExtension.maxLifetimeMs / 1000),
+            },
+          }
+        : {}),
       breakdown: sessionBreakdown,
     },
     // A family ends its validity at expiry but its record stays until it is rotated or revoked.

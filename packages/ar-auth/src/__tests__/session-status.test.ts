@@ -507,7 +507,52 @@ describe('ITP session token lifecycle', () => {
       extended_by: 120,
       message: 'Session extended successfully',
     });
-    expect(mocks.sessionStore.extendSessionRpc).toHaveBeenCalledWith('0_session_123', 120);
+    // Bounded by session.max_ttl (30 days by default) from sign-in.
+    expect(mocks.sessionStore.extendSessionRpc).toHaveBeenCalledWith(
+      '0_session_123',
+      120,
+      30 * 86400 * 1000
+    );
+  });
+
+  it('extends within the tenant’s session.max_ttl, and not at all when refresh is off', async () => {
+    const { refreshSessionHandler } = await import('../session-management');
+    const withSettings = (settings: Record<string, unknown>) => {
+      const context = createContext();
+      context.req.json = vi.fn(async () => ({ extend_seconds: 120 }));
+      (context as { env: unknown }).env = {
+        SETTINGS: { get: vi.fn(async () => JSON.stringify(settings)) },
+      };
+      return context;
+    };
+    mocks.sessionStore.extendSessionRpc.mockResolvedValue({
+      id: '0_session_123',
+      userId: 'user_123',
+      createdAt: 1700000000000,
+      expiresAt: 1700003720000,
+      data: {},
+    });
+
+    const capped = await refreshSessionHandler(
+      withSettings({ 'session.max_ttl': 2 * 86400 * 1000 }) as never
+    );
+    expect(capped.status).toBe(200);
+    expect(mocks.sessionStore.extendSessionRpc).toHaveBeenLastCalledWith(
+      '0_session_123',
+      120,
+      2 * 86400 * 1000
+    );
+
+    mocks.sessionStore.extendSessionRpc.mockClear();
+    const off = await refreshSessionHandler(
+      withSettings({ 'session.refresh_default': false }) as never
+    );
+    expect(off.status).toBe(403);
+    expect(await off.json()).toEqual({
+      error: 'access_denied',
+      error_description: 'Session extension is disabled',
+    });
+    expect(mocks.sessionStore.extendSessionRpc).not.toHaveBeenCalled();
   });
 
   it('rejects refresh requests with an unsafe extension duration', async () => {

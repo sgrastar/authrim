@@ -44,6 +44,7 @@ import {
   AR_ERROR_CODES,
   createErrorResponse,
   safeFetchJson,
+  resolveSessionTtl,
 } from '@authrim/ar-lib-core';
 import { consumeAuthState, getAuthStateCookieName, matchesAuthStateCookie } from '../utils/state';
 import { getProviderByIdOrSlug } from '../services/provider-store';
@@ -307,7 +308,8 @@ async function completeExternalAuthentication(
     if (!runtimeUser) return createErrorResponse(c, AR_ERROR_CODES.USER_INACTIVE);
 
     const { stub: sessionStore, sessionId } = await getSessionStoreForNewSession(c.env, tenantId);
-    const sessionTTL = 24 * 60 * 60;
+    // session.default_ttl: external IdP sign-in has no lifetime setting of its own.
+    const sessionTTL = (await resolveSessionTtl(c.env, tenantId, 'default')).seconds;
     const encryptionKey = getEncryptionKeyOrUndefined(c.env);
     const upstreamIdTokenEncrypted =
       input.upstreamIdToken && encryptionKey
