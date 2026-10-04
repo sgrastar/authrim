@@ -24,7 +24,7 @@
 			docs: {
 				description: {
 					component:
-						"The page around the card: header (logo, name, tagline), top bar (theme toggle, language), optional brand panel, footer. Everything here is a tenant setting in the Admin console. Each story changes **one** setting on the toolbar's theme; the full-page stories follow **Theme**, **Scheme**, **Variant** and **Language**, the galleries pin their own.\n\n" +
+						"The page around the card: header (logo, name, tagline), top bar (theme toggle, language), optional brand panel, footer. Everything here is a tenant setting in the Admin console. Each story changes **one** setting on the toolbar's theme; the full-page stories follow **Theme**, **Scheme** and **Language**, the galleries pin their own.\n\n" +
 						'Every page that has this chrome renders it through `AuthPageShell`: login, signup, verify-email-code, consent, device, reauth, ciba, callback, error and logout.'
 				}
 			}

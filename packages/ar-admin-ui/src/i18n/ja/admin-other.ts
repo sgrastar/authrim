@@ -356,7 +356,7 @@ const adminOther = {
 	admin_theme_template_fullbleed_glass_description:
 		'全面ビジュアル背景と半透明のフォーム面を組み合わせます。',
 	admin_theme_template_classic_description:
-		'Light/Darkカラーバリアントで構成する従来のAuthrimデザインです。',
+		'温かみのあるライト／ダークの配色による、従来のAuthrimデザインです。',
 	admin_theme_preview_controls: 'テーマプレビュー操作',
 	admin_theme_preview_screen: 'プレビュー画面',
 	admin_theme_preview_color_mode: 'プレビューのカラーモード',

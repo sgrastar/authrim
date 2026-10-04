@@ -32304,7 +32304,7 @@ type RootTranslation = {
 	 */
 	admin_theme_template_fullbleed_glass_description: string
 	/**
-	 * L​e​g​a​c​y​ ​A​u​t​h​r​i​m​ ​l​o​o​k​ ​d​r​i​v​e​n​ ​b​y​ ​t​h​e​ ​l​i​g​h​t​/​d​a​r​k​ ​c​o​l​o​r​ ​v​a​r​i​a​n​t​s​.
+	 * L​e​g​a​c​y​ ​A​u​t​h​r​i​m​ ​l​o​o​k​,​ ​i​n​ ​i​t​s​ ​w​a​r​m​ ​l​i​g​h​t​ ​a​n​d​ ​d​a​r​k​ ​p​a​l​e​t​t​e​s​.
 	 */
 	admin_theme_template_classic_description: string
 	/**
@@ -65901,7 +65901,7 @@ Remove this role from {email}?
 	 */
 	admin_theme_template_fullbleed_glass_description: () => LocalizedString
 	/**
-	 * Legacy Authrim look driven by the light/dark color variants.
+	 * Legacy Authrim look, in its warm light and dark palettes.
 	 */
 	admin_theme_template_classic_description: () => LocalizedString
 	/**

@@ -352,7 +352,7 @@ const adminOther = {
 	admin_theme_template_fullbleed_glass_description:
 		'Full-bleed visual background with a translucent form surface.',
 	admin_theme_template_classic_description:
-		'Legacy Authrim look driven by the light/dark color variants.',
+		'Legacy Authrim look, in its warm light and dark palettes.',
 	admin_theme_preview_controls: 'Theme preview controls',
 	admin_theme_preview_screen: 'Preview screen',
 	admin_theme_preview_color_mode: 'Preview color mode',
