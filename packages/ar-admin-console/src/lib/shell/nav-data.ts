@@ -195,6 +195,13 @@ export const TENANT_AREAS: readonly NavArea[] = [
 					'/admin/iat-tokens',
 					'/admin/scim-tokens'
 				]
+			},
+			{
+				id: 'defaults',
+				label: 'nav.apps.defaults',
+				icon: 'gear',
+				platform: 'tenant',
+				legacyRoutes: []
 			}
 		],
 		legacyRoutes: []

@@ -38,6 +38,7 @@ export const de = {
 	'nav.access.policies': 'Richtlinien',
 	'nav.access.simulator': 'Zugriffssimulator',
 	'nav.apps.all': 'Serviceabläufe',
+	'nav.apps.defaults': 'App-Standards',
 	'nav.apps.apis': 'APIs / Ressourcen',
 	'nav.apps.keys': 'Initiale Zugriffstoken',
 	'nav.apps.webhooks': 'Webhooks',

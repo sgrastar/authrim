@@ -61,6 +61,73 @@ export const jaSettings = {
 	'set.k.security.fapi_enabled': 'FAPI 2.0 を適用',
 	'set.k.security.fapi_enabled.desc':
 		'テナントのすべてのアプリに FAPI 2.0 セキュリティプロファイルを適用します。',
+	'set.page.appDefaults': 'アプリの既定',
+	'set.page.appDefaults.desc':
+		'このテナントのすべてのアプリに適用する、認可リクエストとトークンの決まりです。セキュリティの要件は、アプリごとの設定で強めることはできても、緩めることはできません。',
+	'set.section.authRequests': '認可リクエスト',
+	'set.section.authRequests.desc': 'アプリがログインを求めるときのリクエストに求めることです。',
+	'set.section.authRequests.advanced': 'request object の署名と暗号化',
+	'set.section.redirectUris': 'リダイレクト URI',
+	'set.section.redirectUris.desc': 'ログインのあとにアプリへ戻る先として認めるアドレスです。',
+	'set.section.senderConstrained': '送信者に結び付けたトークン',
+	'set.section.senderConstrained.desc': 'トークンを、受け取ったアプリの鍵に結び付けます。',
+	'set.section.senderConstrained.advanced': 'FAPI での DPoP と nonce',
+	'set.section.fapi': 'FAPI',
+	'set.section.fapi.desc': '金融グレードのセキュリティプロファイル（FAPI 2.0）です。',
+	'set.section.fapi.advanced': 'FAPI の細かな要件',
+	'set.section.tokenExchange': 'トークン交換',
+	'set.section.tokenExchange.desc':
+		'アプリが持っているトークンを、別のトークンに交換することです。',
+	'set.section.tokenExchange.advanced': '委任となりすまし',
+	'set.k.security.pkce_required': 'PKCE を必須にする',
+	'set.k.security.pkce_required.desc':
+		'認可コードを使うすべてのリクエストに PKCE（S256）を求めます。アプリ側で必須にもできますが、テナントの必須を外すことはできません。',
+	'set.k.security.par_required': 'PAR を必須にする',
+	'set.k.security.par_required.desc':
+		'認可リクエストを、先にサーバー間で送る（Pushed Authorization Request）ことを求めます。',
+	'set.k.oauth.state_required': 'state パラメーターを必須にする',
+	'set.k.oauth.state_required.desc': 'CSRF 対策の state を持たない認可リクエストを拒否します。',
+	'set.k.security.require_signed_request_object': '署名済みの request object を必須にする',
+	'set.k.security.require_signed_request_object.desc':
+		'アプリが署名した request object で認可リクエストを送ることを求めます。',
+	'set.k.security.require_encrypted_request_object': '暗号化した request object を必須にする',
+	'set.k.security.require_encrypted_request_object.desc':
+		'このテナントの暗号化用の鍵（JWKS の use=enc）で暗号化した request object で、認可リクエストを送ることを求めます。アプリの対応が必要です。',
+	'set.k.security.allow_unsigned_request_object': '署名のない request object を認める（開発用）',
+	'set.k.security.allow_unsigned_request_object.desc':
+		'本番環境では、この設定にかかわらず認めません。',
+	'set.k.security.https_redirect_only': 'リダイレクト URI を HTTPS に限る',
+	'set.k.security.https_redirect_only.desc':
+		'ネイティブアプリのループバック（localhost など）は http でも使えます。オフにすると、Web アプリもループバックで http を使えます（開発用）。',
+	'set.k.security.dpop_bound_access_tokens': 'アクセストークンを DPoP に結び付ける',
+	'set.k.security.dpop_bound_access_tokens.desc':
+		'トークンを受け取るときに DPoP の証明を求め、漏れたトークンを他人が使えないようにします。アプリの対応が必要です。',
+	'set.k.security.dpop_required': 'FAPI での DPoP',
+	'set.k.security.dpop_required.desc': 'FAPI を適用しているときに DPoP を求めるかどうかです。',
+	'set.k.security.dpop_required.with_fapi': 'FAPI のとき求める',
+	'set.k.security.dpop_required.always': '常に求める',
+	'set.k.security.dpop_required.never': '求めない',
+	'set.k.security.dpop_nonce_enabled': 'DPoP のサーバー nonce を使う',
+	'set.k.security.dpop_nonce_enabled.desc':
+		'DPoP の証明に、サーバーが渡した nonce を含めることを求め、使い回しを防ぎます。',
+	'set.k.security.fapi_strict_dpop': 'DPoP を厳密に検証する',
+	'set.k.security.fapi_strict_dpop.desc': '認可リクエストの DPoP 証明が正しくなければ拒否します。',
+	'set.k.security.fapi_allow_public_clients': '公開クライアントを認める',
+	'set.k.security.fapi_allow_public_clients.desc':
+		'FAPI の適用中も、秘密を持たないアプリ（ブラウザやモバイル）を認めます。',
+	'set.k.security.fapi_require_private_key_jwt': 'private_key_jwt を必須にする',
+	'set.k.security.fapi_require_private_key_jwt.desc':
+		'アプリの認証方式を private_key_jwt に限ります。',
+	'set.k.security.require_jarm': '認可レスポンスの署名（JARM）を必須にする',
+	'set.k.tokens.exchange_enabled': 'トークン交換を使う',
+	'set.k.tokens.exchange_enabled.desc':
+		'アプリが持っているトークンを、別のトークンに交換できるようにします（RFC 8693）。',
+	'set.k.tokens.exchange_delegation_enabled': '委任を認める',
+	'set.k.tokens.exchange_delegation_enabled.desc':
+		'アプリが利用者に代わって、別のサービス向けのトークンを受け取れるようにします。',
+	'set.k.tokens.exchange_impersonation_enabled': 'なりすましを認める',
+	'set.k.tokens.exchange_impersonation_enabled.desc':
+		'アプリが、利用者そのものとして振る舞うトークンを受け取れるようにします。',
 	'set.k.oauth.id_token_signing_alg.RS256': 'RS256',
 	'set.k.oauth.id_token_signing_alg.ES256': 'ES256',
 	'set.k.oauth.id_token_signing_alg.PS256': 'PS256',

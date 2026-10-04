@@ -167,4 +167,77 @@ export const SIGNING_KEYS: SettingsPageDef = {
 	]
 };
 
-export const SETTINGS_PAGES: readonly SettingsPageDef[] = [STAYING_SIGNED_IN, SIGNING_KEYS];
+/**
+ * Applications → App defaults: what every app of the tenant must meet (the tenant's security
+ * floor: an app's own settings can add a requirement but not waive one) and the tenant-wide
+ * protocol rules. More of the draft in `inventory.ts` moves here as it is built.
+ */
+export const APP_DEFAULTS: SettingsPageDef = {
+	id: 'app-defaults',
+	nav: 'applications/defaults',
+	title: 'set.page.appDefaults',
+	description: 'set.page.appDefaults.desc',
+	sections: [
+		{
+			id: 'authorization-requests',
+			title: 'set.section.authRequests',
+			description: 'set.section.authRequests.desc',
+			advanced: 'set.section.authRequests.advanced',
+			settings: [
+				{ key: 'security.pkce_required', depth: 'primary' },
+				{ key: 'security.par_required', depth: 'primary' },
+				{ key: 'oauth.state_required', depth: 'primary' },
+				{ key: 'security.require_signed_request_object', depth: 'advanced' },
+				{ key: 'security.require_encrypted_request_object', depth: 'advanced' },
+				{ key: 'security.allow_unsigned_request_object', depth: 'advanced' }
+			]
+		},
+		{
+			id: 'redirect-uris',
+			title: 'set.section.redirectUris',
+			description: 'set.section.redirectUris.desc',
+			settings: [{ key: 'security.https_redirect_only', depth: 'primary' }]
+		},
+		{
+			id: 'sender-constrained-tokens',
+			title: 'set.section.senderConstrained',
+			description: 'set.section.senderConstrained.desc',
+			advanced: 'set.section.senderConstrained.advanced',
+			settings: [
+				{ key: 'security.dpop_bound_access_tokens', depth: 'primary' },
+				{ key: 'security.dpop_required', depth: 'advanced' },
+				{ key: 'security.dpop_nonce_enabled', depth: 'advanced' }
+			]
+		},
+		{
+			id: 'fapi',
+			title: 'set.section.fapi',
+			description: 'set.section.fapi.desc',
+			advanced: 'set.section.fapi.advanced',
+			settings: [
+				{ key: 'security.fapi_enabled', depth: 'primary' },
+				{ key: 'security.fapi_strict_dpop', depth: 'advanced' },
+				{ key: 'security.fapi_allow_public_clients', depth: 'advanced' },
+				{ key: 'security.fapi_require_private_key_jwt', depth: 'advanced' },
+				{ key: 'security.require_jarm', depth: 'advanced' }
+			]
+		},
+		{
+			id: 'token-exchange',
+			title: 'set.section.tokenExchange',
+			description: 'set.section.tokenExchange.desc',
+			advanced: 'set.section.tokenExchange.advanced',
+			settings: [
+				{ key: 'tokens.exchange_enabled', depth: 'primary' },
+				{ key: 'tokens.exchange_delegation_enabled', depth: 'advanced' },
+				{ key: 'tokens.exchange_impersonation_enabled', depth: 'advanced' }
+			]
+		}
+	]
+};
+
+export const SETTINGS_PAGES: readonly SettingsPageDef[] = [
+	STAYING_SIGNED_IN,
+	SIGNING_KEYS,
+	APP_DEFAULTS
+];

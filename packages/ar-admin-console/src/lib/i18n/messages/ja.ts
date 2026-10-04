@@ -41,6 +41,7 @@ export const ja = {
 	'nav.access.policies': 'ポリシー',
 	'nav.access.simulator': 'アクセス検証',
 	'nav.apps.all': 'サービスフロー',
+	'nav.apps.defaults': 'アプリの既定',
 	'nav.apps.apis': 'API / リソース',
 	'nav.apps.keys': 'Initial Access Token',
 	'nav.apps.webhooks': 'Webhook',
