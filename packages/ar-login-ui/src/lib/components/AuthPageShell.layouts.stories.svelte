@@ -24,7 +24,7 @@
 			docs: {
 				description: {
 					component:
-						'A tenant picks a **theme** (palette and shape: Meridian, Classic, Split brand panel, Full-bleed glass), a **layout** (centred card, split panel, full-bleed card) and a light or dark **colour variant**. They are three separate settings; the Admin console\'s theme page offers them as presets. The **brand panel** is the element only the split layout adds, and it needs `brand content` other than "none". On narrow screens (up to 640px) the panel is hidden.'
+						'A tenant picks a **theme** (palette and shape: Meridian, Classic, Split brand panel, Full-bleed glass), a **layout** (centred card, split panel, full-bleed card) and light or dark. They are separate settings; the Admin console\'s theme page offers them as presets. The **brand panel** is the element only the split layout adds, and it needs `brand content` other than "none". On narrow screens (up to 640px) the panel is hidden.'
 				}
 			}
 		}
@@ -75,23 +75,6 @@
 				theme,
 				kind: 'signup' as const
 			}))}
-		/>
-	{/snippet}
-</Story>
-
-<Story name="Colour variants of Classic">
-	{#snippet template()}
-		<ShellGallery
-			columns={3}
-			height={520}
-			cells={[
-				{ label: 'light / beige', theme: 'classic', scheme: 'light', variant: 'beige' },
-				{ label: 'light / blue-gray', theme: 'classic', scheme: 'light', variant: 'blue-gray' },
-				{ label: 'light / green', theme: 'classic', scheme: 'light', variant: 'green' },
-				{ label: 'dark / brown', theme: 'classic', scheme: 'dark', variant: 'brown' },
-				{ label: 'dark / navy', theme: 'classic', scheme: 'dark', variant: 'navy' },
-				{ label: 'dark / slate', theme: 'classic', scheme: 'dark', variant: 'slate' }
-			]}
 		/>
 	{/snippet}
 </Story>

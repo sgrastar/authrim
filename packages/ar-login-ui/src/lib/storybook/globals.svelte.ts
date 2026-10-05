@@ -14,9 +14,6 @@ export const THEME_TEMPLATES = [
 ] as const;
 export type ThemeTemplate = (typeof THEME_TEMPLATES)[number];
 
-export const LIGHT_VARIANT_IDS = ['beige', 'blue-gray', 'green'] as const;
-export const DARK_VARIANT_IDS = ['brown', 'navy', 'slate'] as const;
-
 export type Scheme = 'light' | 'dark';
 
 export const THEME_TEMPLATE_LABELS: Record<ThemeTemplate, string> = {
@@ -29,10 +26,8 @@ export const THEME_TEMPLATE_LABELS: Record<ThemeTemplate, string> = {
 export const sbGlobals = $state<{
 	theme: ThemeTemplate;
 	scheme: Scheme;
-	/** `default` keeps the first variant of the scheme. */
-	variant: string;
 	locale: LoginUILocale;
-}>({ theme: 'meridian', scheme: 'light', variant: 'default', locale: 'ja' });
+}>({ theme: 'meridian', scheme: 'light', locale: 'ja' });
 
 export function isThemeTemplate(value: unknown): value is ThemeTemplate {
 	return (THEME_TEMPLATES as readonly unknown[]).includes(value);

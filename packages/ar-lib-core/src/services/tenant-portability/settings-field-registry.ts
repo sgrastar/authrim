@@ -550,7 +550,6 @@ const REVIEWED_FIELDS: readonly [string, TenantSettingValueType, TenantSettingHa
       'value',
       `
     login-ui.theme
-    login-ui.variant
     login-ui.theme_template
     login-ui.page_layout
     login-ui.font_family
@@ -881,7 +880,6 @@ const REVIEWED_FIELDS: readonly [string, TenantSettingValueType, TenantSettingHa
       'value',
       `
     tenant-discovery-ui.theme
-    tenant-discovery-ui.variant
   `,
     ],
     [

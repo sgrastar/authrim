@@ -29,7 +29,6 @@ export type LoginUITextLocalizations = Record<string, Partial<Record<LoginUIText
 export interface LoginUISettings {
   // Theme
   'login-ui.theme': string;
-  'login-ui.variant': string;
   'login-ui.theme_template': string;
   'login-ui.published_version': number;
   'login-ui.published_at': string;
@@ -110,17 +109,6 @@ export const LOGIN_UI_SETTINGS_META: Record<keyof LoginUISettings, SettingMeta> 
     label: 'Theme Mode',
     description: 'Default theme mode for the Login UI (light or dark)',
     enum: ['light', 'dark'],
-    visibility: 'public',
-  },
-  'login-ui.variant': {
-    key: 'login-ui.variant',
-    type: 'enum',
-    default: 'beige',
-    envKey: 'LOGIN_UI_VARIANT',
-    label: 'Theme Variant',
-    description:
-      'Color variant for the Login UI. Light: beige, blue-gray, green. Dark: brown, navy, slate',
-    enum: ['beige', 'blue-gray', 'green', 'brown', 'navy', 'slate'],
     visibility: 'public',
   },
   'login-ui.theme_template': {
@@ -748,7 +736,6 @@ export const LOGIN_UI_CATEGORY_META: CategoryMeta = {
  */
 export const LOGIN_UI_DEFAULTS: LoginUISettings = {
   'login-ui.theme': 'light',
-  'login-ui.variant': 'beige',
   'login-ui.theme_template': 'meridian',
   'login-ui.published_version': 0,
   'login-ui.published_at': '',

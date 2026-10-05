@@ -29,7 +29,6 @@ export interface DiscoveryConfigResponse {
 	};
 	ui: {
 		theme: string;
-		variant: string;
 		brand_name: string;
 		logo_url: string | null;
 		page_title: string;

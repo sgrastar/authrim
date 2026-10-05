@@ -13206,10 +13206,6 @@ type RootTranslation = {
 	 */
 	admin_tenant_discovery_theme: string
 	/**
-	 * V​a​r​i​a​n​t
-	 */
-	admin_tenant_discovery_variant: string
-	/**
 	 * I​n​h​e​r​i​t​ ​/​ ​d​e​f​a​u​l​t
 	 */
 	admin_tenant_discovery_inherit_default: string
@@ -13221,30 +13217,6 @@ type RootTranslation = {
 	 * d​a​r​k
 	 */
 	admin_tenant_discovery_dark: string
-	/**
-	 * b​e​i​g​e
-	 */
-	admin_tenant_discovery_beige: string
-	/**
-	 * b​l​u​e​-​g​r​a​y
-	 */
-	admin_tenant_discovery_blue_gray: string
-	/**
-	 * g​r​e​e​n
-	 */
-	admin_tenant_discovery_green: string
-	/**
-	 * b​r​o​w​n
-	 */
-	admin_tenant_discovery_brown: string
-	/**
-	 * n​a​v​y
-	 */
-	admin_tenant_discovery_navy: string
-	/**
-	 * s​l​a​t​e
-	 */
-	admin_tenant_discovery_slate: string
 	/**
 	 * B​r​a​n​d​ ​N​a​m​e
 	 */
@@ -32332,7 +32304,7 @@ type RootTranslation = {
 	 */
 	admin_theme_template_fullbleed_glass_description: string
 	/**
-	 * L​e​g​a​c​y​ ​A​u​t​h​r​i​m​ ​l​o​o​k​ ​d​r​i​v​e​n​ ​b​y​ ​t​h​e​ ​l​i​g​h​t​/​d​a​r​k​ ​c​o​l​o​r​ ​v​a​r​i​a​n​t​s​.
+	 * L​e​g​a​c​y​ ​A​u​t​h​r​i​m​ ​l​o​o​k​,​ ​i​n​ ​i​t​s​ ​w​a​r​m​ ​l​i​g​h​t​ ​a​n​d​ ​d​a​r​k​ ​p​a​l​e​t​t​e​s​.
 	 */
 	admin_theme_template_classic_description: string
 	/**
@@ -47123,10 +47095,6 @@ Actual results vary by authentication flow, token TTL, and usage patterns.
 	 */
 	admin_tenant_discovery_theme: () => LocalizedString
 	/**
-	 * Variant
-	 */
-	admin_tenant_discovery_variant: () => LocalizedString
-	/**
 	 * Inherit / default
 	 */
 	admin_tenant_discovery_inherit_default: () => LocalizedString
@@ -47138,30 +47106,6 @@ Actual results vary by authentication flow, token TTL, and usage patterns.
 	 * dark
 	 */
 	admin_tenant_discovery_dark: () => LocalizedString
-	/**
-	 * beige
-	 */
-	admin_tenant_discovery_beige: () => LocalizedString
-	/**
-	 * blue-gray
-	 */
-	admin_tenant_discovery_blue_gray: () => LocalizedString
-	/**
-	 * green
-	 */
-	admin_tenant_discovery_green: () => LocalizedString
-	/**
-	 * brown
-	 */
-	admin_tenant_discovery_brown: () => LocalizedString
-	/**
-	 * navy
-	 */
-	admin_tenant_discovery_navy: () => LocalizedString
-	/**
-	 * slate
-	 */
-	admin_tenant_discovery_slate: () => LocalizedString
 	/**
 	 * Brand Name
 	 */
@@ -65957,7 +65901,7 @@ Remove this role from {email}?
 	 */
 	admin_theme_template_fullbleed_glass_description: () => LocalizedString
 	/**
-	 * Legacy Authrim look driven by the light/dark color variants.
+	 * Legacy Authrim look, in its warm light and dark palettes.
 	 */
 	admin_theme_template_classic_description: () => LocalizedString
 	/**

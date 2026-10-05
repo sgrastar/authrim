@@ -33,7 +33,6 @@
 	const CATEGORY = 'login-ui';
 	const LOGIN_UI_PUBLISH_KEYS = [
 		'login-ui.theme',
-		'login-ui.variant',
 		'login-ui.theme_template',
 		'login-ui.page_layout',
 		'login-ui.font_family',
@@ -90,7 +89,6 @@
 		description: string;
 		layout: 'centered_card' | 'split_panel' | 'fullbleed_card';
 		theme: 'light' | 'dark';
-		variant: string;
 		backgroundColor: string;
 		fontFamily: 'system' | 'rounded' | 'serif' | 'mono';
 		swatch: string[];
@@ -133,7 +131,6 @@
 			description: 'Centered card, cobalt on cool paper, image optional.',
 			layout: 'centered_card',
 			theme: 'light',
-			variant: 'beige',
 			backgroundColor: '',
 			fontFamily: 'system',
 			swatch: ['#eef1f6', '#ffffff', '#2f52c4']
@@ -144,7 +141,6 @@
 			description: 'Two-column page with a brand panel and compact form area.',
 			layout: 'split_panel',
 			theme: 'light',
-			variant: 'beige',
 			backgroundColor: '',
 			fontFamily: 'system',
 			swatch: ['#101a38', '#f7f9fc', '#2f52c4'],
@@ -164,7 +160,6 @@
 			description: 'Full-bleed visual background with a translucent form surface.',
 			layout: 'fullbleed_card',
 			theme: 'dark',
-			variant: 'brown',
 			backgroundColor: '',
 			fontFamily: 'system',
 			swatch: ['#17100c', '#e8623f', '#f6efe9'],
@@ -176,10 +171,9 @@
 		{
 			id: 'classic',
 			name: 'Classic',
-			description: 'Legacy Authrim look driven by the light/dark color variants.',
+			description: 'Legacy Authrim look, in its warm light and dark palettes.',
 			layout: 'centered_card',
 			theme: 'light',
-			variant: 'beige',
 			backgroundColor: '',
 			fontFamily: 'system',
 			swatch: ['#eeeae3', '#fffdf8', '#2c2724']
@@ -207,7 +201,6 @@
 	const MAX_CUSTOM_THEMES = 24;
 	const THEME_VALUE_KEYS = new Set([
 		'login-ui.theme',
-		'login-ui.variant',
 		'login-ui.page_layout',
 		'login-ui.font_family',
 		'login-ui.font_scale',
@@ -264,14 +257,6 @@
 	const MODE_CHOICES: Choice[] = [
 		{ value: 'light', label: 'Light' },
 		{ value: 'dark', label: 'Dark' }
-	];
-	const VARIANT_CHOICES: Choice[] = [
-		{ value: 'beige', label: 'Beige (light)' },
-		{ value: 'blue-gray', label: 'Blue gray (light)' },
-		{ value: 'green', label: 'Green (light)' },
-		{ value: 'brown', label: 'Brown (dark)' },
-		{ value: 'navy', label: 'Navy (dark)' },
-		{ value: 'slate', label: 'Slate (dark)' }
 	];
 	const FONT_FAMILY_CHOICES: Choice[] = [
 		{ value: 'system', label: 'System' },
@@ -776,7 +761,6 @@
 	function builtinPresetValues(option: ThemeTemplateOption): Record<string, unknown> {
 		const values: Record<string, unknown> = {
 			'login-ui.theme': option.theme,
-			'login-ui.variant': option.variant,
 			'login-ui.page_layout': option.layout,
 			'login-ui.font_family': option.fontFamily,
 			'login-ui.background_color': option.backgroundColor,
@@ -2418,21 +2402,6 @@
 											class="preview-accordion-content"
 										>
 											<div class="inspector-fields">
-												{#if previewTemplate.id === 'classic'}
-													<label class="inspector-field">
-														<span class="inspector-field-label">Variant</span>
-														<select
-															value={getStringSetting('login-ui.variant', previewTemplate.variant)}
-															disabled={!canEditLoginUiSettings}
-															onchange={(e) =>
-																handleEditorChange('login-ui.variant', e.currentTarget.value)}
-														>
-															{#each VARIANT_CHOICES as choice (choice.value)}
-																<option value={choice.value}>{choice.label}</option>
-															{/each}
-														</select>
-													</label>
-												{/if}
 												{#each [{ label: 'Background', key: 'login-ui.background_color', fallback: previewColorMode === 'dark' ? '#0b0e16' : '#eef1f6' }, { label: 'Accent', key: 'login-ui.accent_color', fallback: previewTemplate.id === 'fullbleed-glass' ? (previewColorMode === 'dark' ? '#e8623f' : '#b0301b') : previewColorMode === 'dark' ? '#93aef2' : '#2f52c4' }, { label: 'Title', key: 'login-ui.title_color', fallback: previewColorMode === 'dark' ? '#eef2fa' : '#182238' }, { label: 'Text', key: 'login-ui.text_color', fallback: previewColorMode === 'dark' ? '#eef2fa' : '#182238' }, { label: 'Copy', key: 'login-ui.copy_color', fallback: previewColorMode === 'dark' ? '#aeb9d0' : '#55617c' }] as field (field.key)}
 													<div class="inspector-color-row">
 														<span class="inspector-field-label">{field.label}</span>

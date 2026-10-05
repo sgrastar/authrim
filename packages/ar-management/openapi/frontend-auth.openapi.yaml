@@ -464,7 +464,6 @@ components:
                 providers: []
             ui:
               theme: light
-              variant: beige
               supportedLocales:
                 - en
                 - ja
@@ -494,7 +493,6 @@ components:
               allow_manual_tenant_entry: true
             ui:
               theme: light
-              variant: beige
               brand_name: Authrim
             single_tenant_mode: false
             is_common_entry_host: true

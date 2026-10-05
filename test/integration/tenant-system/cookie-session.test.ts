@@ -54,7 +54,6 @@ function discoveryConfig(rememberLastTenant = true) {
     },
     ui: {
       theme: 'light',
-      variant: 'blue-gray',
       brand_name: 'Authrim',
       logo_url: null,
       page_title: '',

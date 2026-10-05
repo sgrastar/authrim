@@ -106,7 +106,6 @@
 <div
 	class="login-ui-theme-boundary"
 	data-theme={themeStore.mode}
-	data-variant={themeStore.currentVariant}
 	data-login-theme={loginUIPageStore.themeTemplate}
 	data-page-layout={loginUIPageStore.layout}
 	data-font-family={loginUIPageStore.fontFamily}

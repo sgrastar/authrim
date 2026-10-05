@@ -207,7 +207,8 @@ describe('Authentication Methods API', () => {
       const body = (await res.json()) as any;
 
       expect(body.ui.theme).toBe('light');
-      expect(body.ui.variant).toBe('beige');
+      // The colour variants are gone: a value stored before is not served.
+      expect(body.ui).not.toHaveProperty('variant');
       expect(body.ui.branding.brandName).toBe('Authrim');
       expect(body.ui.branding.logoUrl).toBeNull();
       expect(body.ui.branding.faviconUrl).toBeNull();
@@ -1484,7 +1485,8 @@ describe('Authentication Methods API', () => {
       const body = (await res.json()) as any;
 
       expect(body.ui.theme).toBe('dark');
-      expect(body.ui.variant).toBe('navy');
+      // The colour variants are gone: a value stored before is not served.
+      expect(body.ui).not.toHaveProperty('variant');
       expect(body.ui.branding.brandName).toBe('My App');
       expect(body.ui.branding.logoUrl).toBe('https://example.com/logo.png');
       expect(body.ui.branding.faviconUrl).toBe('https://example.com/favicon.ico');
@@ -1591,7 +1593,8 @@ describe('Authentication Methods API', () => {
       const body = (await res.json()) as any;
 
       expect(body.ui.theme).toBe('dark');
-      expect(body.ui.variant).toBe('navy');
+      // The colour variants are gone: a value stored before is not served.
+      expect(body.ui).not.toHaveProperty('variant');
       expect(body.ui.branding.brandName).toBe('Settings V2 App');
     });
   });
@@ -1649,7 +1652,8 @@ describe('Authentication Methods API', () => {
       const body = (await res.json()) as any;
 
       expect(body.ui.theme).toBe('light');
-      expect(body.ui.variant).toBe('beige');
+      // The colour variants are gone: a value stored before is not served.
+      expect(body.ui).not.toHaveProperty('variant');
       expect(body.ui.appearance.footerLinks).toEqual([]);
       expect(body.ui.appearance.customBlocks).toEqual([]);
     });

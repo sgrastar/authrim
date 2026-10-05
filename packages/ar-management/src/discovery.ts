@@ -211,7 +211,6 @@ interface DiscoveryConfigResponse {
   };
   ui: {
     theme: string;
-    variant: string;
     brand_name: string;
     logo_url: string | null;
     page_title: string;
@@ -385,14 +384,6 @@ type DiscoveryMethod = DiscoveryConfigResponse['config']['discovery_methods'][nu
 type DiscoveryUIConfig = DiscoveryConfigResponse['ui'];
 
 const DISCOVERY_UI_THEME_OPTIONS = ['light', 'dark'] as const;
-const DISCOVERY_UI_VARIANT_OPTIONS = [
-  'beige',
-  'blue-gray',
-  'green',
-  'brown',
-  'navy',
-  'slate',
-] as const;
 
 async function readSettingsRecord(
   kv: KVNamespace | undefined,
@@ -733,13 +724,6 @@ function normalizeThemeValue(value: string | null): string | null {
     : null;
 }
 
-function normalizeVariantValue(value: string | null): string | null {
-  return value &&
-    DISCOVERY_UI_VARIANT_OPTIONS.includes(value as (typeof DISCOVERY_UI_VARIANT_OPTIONS)[number])
-    ? value
-    : null;
-}
-
 async function getDiscoveryUiSettingsRecord(
   env: Env,
   scope: { type: 'platform' } | { type: 'tenant'; id: string }
@@ -841,13 +825,6 @@ async function getDiscoveryUiConfig(
         defaultValue: LOGIN_UI_DEFAULTS['login-ui.theme'],
         normalize: normalizeThemeValue,
       }) ?? LOGIN_UI_DEFAULTS['login-ui.theme'],
-    variant:
-      resolveDiscoveryVisualSetting(effectiveTenantSettings, platformSettings, loginUiSettings, {
-        tenantKey: 'tenant-discovery-ui.variant',
-        loginUiKey: 'login-ui.variant',
-        defaultValue: LOGIN_UI_DEFAULTS['login-ui.variant'],
-        normalize: normalizeVariantValue,
-      }) ?? LOGIN_UI_DEFAULTS['login-ui.variant'],
     brand_name:
       resolveDiscoveryVisualSetting(effectiveTenantSettings, platformSettings, loginUiSettings, {
         tenantKey: 'tenant-discovery-ui.brand_name',

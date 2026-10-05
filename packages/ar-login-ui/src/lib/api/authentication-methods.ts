@@ -123,7 +123,6 @@ export interface AuthenticationMethods {
 
 export interface LoginUIConfig {
 	theme: string;
-	variant: string;
 	themeTemplate?: 'classic' | 'meridian' | 'split-brand-panel' | 'fullbleed-glass';
 	branding: {
 		logoUrl: string | null;

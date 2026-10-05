@@ -1,8 +1,9 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
+import { resolveLoginUIThemeBackground } from '../lib/theme-bootstrap';
 
 /**
- * Text contrast of every built-in theme, scheme and variant, read from the stylesheets.
+ * Text contrast of every built-in theme and scheme, read from the stylesheets.
  *
  * The Storybook a11y check cannot judge text on a translucent card over imagery (axe reports it as
  * incomplete, not as a violation), so the tokens are checked here: each card colour is composited
@@ -153,20 +154,12 @@ const glassLight = {
 	...tokens(app, `${BOUNDARY}[data-theme='light'][data-login-theme='fullbleed-glass'] {`)
 };
 
-const lightBeige = classic(":root,\n[data-theme='light'],");
-const lightBlueGray = classic("[data-theme='light'][data-variant='blue-gray'] {");
-const lightGreen = classic("[data-theme='light'][data-variant='green'] {");
-const darkBrown = classic("[data-theme='dark'],\n[data-theme='dark'][data-variant='brown'] {");
-const darkNavy = classic("[data-theme='dark'][data-variant='navy'] {");
-const darkSlate = classic("[data-theme='dark'][data-variant='slate'] {");
+const classicLight = classic(":root,\n[data-theme='light'] {");
+const classicDark = classic("/* === Dark Theme === */\n[data-theme='dark'] {");
 
 const CASES: Case[] = [
-	{ name: 'classic light beige', values: lightBeige, behind: page(lightBeige) },
-	{ name: 'classic light blue-gray', values: lightBlueGray, behind: page(lightBlueGray) },
-	{ name: 'classic light green', values: lightGreen, behind: page(lightGreen) },
-	{ name: 'classic dark brown', values: darkBrown, behind: page(darkBrown) },
-	{ name: 'classic dark navy', values: darkNavy, behind: page(darkNavy) },
-	{ name: 'classic dark slate', values: darkSlate, behind: page(darkSlate) },
+	{ name: 'classic light', values: classicLight, behind: page(classicLight) },
+	{ name: 'classic dark', values: classicDark, behind: page(classicDark) },
 	{ name: 'meridian / split light', values: meridianLight, behind: page(meridianLight) },
 	{ name: 'meridian / split dark', values: meridianDark, behind: page(meridianDark) },
 	{ name: 'fullbleed glass dark', values: glassDark, behind: imageryUnderScrim(glassDark) },
@@ -314,17 +307,11 @@ describe('theme contrast', () => {
 	);
 
 	it.each([
-		{ name: 'classic light beige', values: lightBeige },
-		{ name: 'classic light blue-gray', values: lightBlueGray },
-		{ name: 'classic light green', values: lightGreen },
-		{ name: 'classic dark brown', values: darkBrown },
-		{ name: 'classic dark navy', values: darkNavy },
-		{ name: 'classic dark slate', values: darkSlate }
+		{ name: 'classic light', values: classicLight },
+		{ name: 'classic dark', values: classicDark }
 	])('$name: primary button text meets AA across the whole gradient', ({ values }) => {
-		// Classic buttons are --gradient-primary with --text-inverse (app.css classic block); a
-		// variant without its own --text-inverse inherits its scheme's (the beige or brown block).
-		const dark = luminance(colour(values['--text-primary']).rgb) > 0.5;
-		const text = values['--text-inverse'] ?? (dark ? darkBrown : lightBeige)['--text-inverse'];
+		// Classic buttons are --gradient-primary with --text-inverse (app.css classic block).
+		const text = values['--text-inverse'];
 		const stops = [...values['--gradient-primary'].matchAll(/#[0-9a-f]{6}/gi)];
 		expect(stops.length).toBeGreaterThan(1);
 		for (const stop of stops) {
@@ -353,6 +340,28 @@ describe('theme contrast', () => {
 					`${token} on ${under.map(Math.round)}`
 				).toBeGreaterThanOrEqual(4.5);
 			}
+		}
+	});
+});
+
+describe('first paint', () => {
+	it('paints the page background each theme template has in each mode', () => {
+		const pageColour = (values: Record<string, string>) =>
+			values['--login-page-background-color'] ?? values['--bg-page'];
+		const expected: Array<[string, 'light' | 'dark', Record<string, string>]> = [
+			['classic', 'light', classicLight],
+			['classic', 'dark', classicDark],
+			['meridian', 'light', meridianLight],
+			['meridian', 'dark', meridianDark],
+			['split-brand-panel', 'light', meridianLight],
+			['split-brand-panel', 'dark', meridianDark],
+			['fullbleed-glass', 'light', glassLight],
+			['fullbleed-glass', 'dark', glassDark]
+		];
+		for (const [template, mode, values] of expected) {
+			expect(resolveLoginUIThemeBackground(mode, template), `${template} ${mode}`).toBe(
+				pageColour(values).toLowerCase()
+			);
 		}
 	});
 });

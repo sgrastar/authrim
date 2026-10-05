@@ -13,7 +13,6 @@ export interface TenantDiscoveryUISettings {
   'tenant-discovery-ui.override_enabled': boolean;
   'tenant-discovery-ui.inherit_from_login_ui': boolean;
   'tenant-discovery-ui.theme': string;
-  'tenant-discovery-ui.variant': string;
   'tenant-discovery-ui.brand_name': string;
   'tenant-discovery-ui.logo_url': string;
   'tenant-discovery-ui.page_title': string;
@@ -51,15 +50,6 @@ export const TENANT_DISCOVERY_UI_SETTINGS_META: Record<
     label: 'Theme Mode',
     description: 'Optional theme mode override for the tenant discovery screen.',
     enum: ['', 'light', 'dark'],
-    visibility: 'public',
-  },
-  'tenant-discovery-ui.variant': {
-    key: 'tenant-discovery-ui.variant',
-    type: 'enum',
-    default: '',
-    label: 'Theme Variant',
-    description: 'Optional theme variant override for the tenant discovery screen.',
-    enum: ['', 'beige', 'blue-gray', 'green', 'brown', 'navy', 'slate'],
     visibility: 'public',
   },
   'tenant-discovery-ui.brand_name': {
@@ -123,7 +113,6 @@ export const TENANT_DISCOVERY_UI_DEFAULTS: TenantDiscoveryUISettings = {
   'tenant-discovery-ui.override_enabled': false,
   'tenant-discovery-ui.inherit_from_login_ui': true,
   'tenant-discovery-ui.theme': '',
-  'tenant-discovery-ui.variant': '',
   'tenant-discovery-ui.brand_name': '',
   'tenant-discovery-ui.logo_url': '',
   'tenant-discovery-ui.page_title': '',

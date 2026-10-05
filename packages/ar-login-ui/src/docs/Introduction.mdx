@@ -22,18 +22,18 @@ The Login UI will not get a next-generation rewrite. This Storybook exists so th
 ## Toolbar
 
 - **Theme** — Meridian (default), Classic, Split brand panel, Full-bleed glass. A story that does not pin its own theme follows this.
-- **Scheme** and **Variant** — light or dark, and the colour variant (light: beige, blue-gray, green; dark: brown, navy, slate). Variants only change **Classic**; the other themes carry their own palette.
+- **Scheme** — light or dark. Each theme carries its own palette in each.
 - **Language** — all 21 languages of the Login UI. Arabic switches the layout to right-to-left. Labels an admin typed in a screen stay as typed, as they do on the real page.
 
 The galleries (**Page shell / Themes and layouts**) pin their own theme per cell, so they show every theme whatever the toolbar says.
 
 ## Theme, layout and elements that only some themes show
 
-A tenant sets three things independently:
+A tenant sets these independently:
 
 1. **Theme** (`themeTemplate`) — palette and shape. Full-bleed glass also restyles the header (spaced capitals), footer and cards (frosted, square).
 2. **Layout** (`pageTemplate.layout`) — `centered_card`, `split_panel`, `fullbleed_card`. The **brand panel** (logo, title and text beside the form) exists only in `split_panel` and only when its content is not "none". It disappears below 640px width.
-3. **Colour variant** — see above.
+3. **Light or dark** — see above.
 
 The Admin console's theme page bundles a theme with the layout it was designed for (Split brand panel with the split layout, Full-bleed glass with the full-bleed layout), but the data keeps them apart, so any combination is possible.
 

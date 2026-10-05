@@ -5,12 +5,7 @@
  */
 import type { LoginUIConfig } from '$lib/api/authentication-methods';
 import { LOGIN_UI_LOCALES } from '$lib/i18n/locales';
-import {
-	DARK_VARIANT_IDS,
-	LIGHT_VARIANT_IDS,
-	type Scheme,
-	type ThemeTemplate
-} from './globals.svelte';
+import type { Scheme, ThemeTemplate } from './globals.svelte';
 
 type PageTemplate = NonNullable<LoginUIConfig['pageTemplate']>;
 type Appearance = NonNullable<LoginUIConfig['appearance']>;
@@ -43,13 +38,8 @@ export function layoutForTheme(theme: ThemeTemplate): PageTemplate['layout'] {
 	return 'centered_card';
 }
 
-export function resolveVariant(scheme: Scheme, variant: string | undefined): string {
-	const choices: readonly string[] = scheme === 'dark' ? DARK_VARIANT_IDS : LIGHT_VARIANT_IDS;
-	return variant && choices.includes(variant) ? variant : choices[0];
-}
-
 export function buildLoginUIConfig(
-	input: { theme: ThemeTemplate; scheme: Scheme; variant?: string },
+	input: { theme: ThemeTemplate; scheme: Scheme },
 	overrides: LoginUIOverrides = {}
 ): LoginUIConfig {
 	const pageTemplate: PageTemplate = {
@@ -83,7 +73,6 @@ export function buildLoginUIConfig(
 	};
 	return {
 		theme: input.scheme,
-		variant: resolveVariant(input.scheme, input.variant),
 		themeTemplate: input.theme,
 		branding: {
 			logoUrl: SAMPLE_LOGO_URL,

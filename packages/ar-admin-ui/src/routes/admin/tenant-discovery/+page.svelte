@@ -41,7 +41,6 @@
 		overrideEnabled: boolean;
 		inheritFromLoginUi: boolean;
 		theme: '' | 'light' | 'dark';
-		variant: '' | 'beige' | 'blue-gray' | 'green' | 'brown' | 'navy' | 'slate';
 		brandName: string;
 		logoUrl: string;
 		pageTitle: string;
@@ -52,7 +51,6 @@
 
 	interface LoginUiFallback {
 		theme: string;
-		variant: string;
 		brandName: string;
 		logoUrl: string;
 	}
@@ -62,7 +60,6 @@
 	const DISCOVERY_UI_CATEGORY = 'tenant-discovery-ui';
 	const DISCOVERY_UI_RUNTIME_DEFAULTS = {
 		theme: 'light',
-		variant: 'beige',
 		brandName: 'Authrim',
 		pageTitle: 'Tenant Discovery',
 		kickerText: 'Tenant discovery',
@@ -319,10 +316,6 @@
 				(typeof loginUiValues['login-ui.theme'] === 'string' &&
 					String(loginUiValues['login-ui.theme']).trim()) ||
 				DISCOVERY_UI_RUNTIME_DEFAULTS.theme,
-			variant:
-				(typeof loginUiValues['login-ui.variant'] === 'string' &&
-					String(loginUiValues['login-ui.variant']).trim()) ||
-				DISCOVERY_UI_RUNTIME_DEFAULTS.variant,
 			brandName:
 				(typeof loginUiValues['login-ui.brand_name'] === 'string' &&
 					String(loginUiValues['login-ui.brand_name']).trim()) ||
@@ -351,10 +344,6 @@
 				((readString(settings.values, 'tenant-discovery-ui.theme') ||
 					(inheritFromLoginUi ? loginUiFallback.theme : '') ||
 					DISCOVERY_UI_RUNTIME_DEFAULTS.theme) as DiscoveryUiForm['theme']) || '',
-			variant:
-				((readString(settings.values, 'tenant-discovery-ui.variant') ||
-					(inheritFromLoginUi ? loginUiFallback.variant : '') ||
-					DISCOVERY_UI_RUNTIME_DEFAULTS.variant) as DiscoveryUiForm['variant']) || '',
 			brandName:
 				readString(settings.values, 'tenant-discovery-ui.brand_name') ||
 				(inheritFromLoginUi ? loginUiFallback.brandName : '') ||
@@ -447,7 +436,6 @@
 			...values,
 			'tenant-discovery-ui.inherit_from_login_ui': form.inheritFromLoginUi,
 			'tenant-discovery-ui.theme': form.theme,
-			'tenant-discovery-ui.variant': form.variant,
 			'tenant-discovery-ui.brand_name': form.brandName.trim(),
 			'tenant-discovery-ui.logo_url': form.logoUrl.trim(),
 			'tenant-discovery-ui.page_title': form.pageTitle.trim(),
@@ -1368,22 +1356,6 @@
 							</select>
 						</div>
 						<div class="form-group">
-							<label for="common-variant">{$LL.admin_tenant_discovery_variant()}</label>
-							<select
-								id="common-variant"
-								bind:value={commonEntryForm.variant}
-								disabled={!canEditPlatform || commonEntrySaving}
-							>
-								<option value="">{$LL.admin_tenant_discovery_inherit_default()}</option>
-								<option value="beige">{$LL.admin_tenant_discovery_beige()}</option>
-								<option value="blue-gray">{$LL.admin_tenant_discovery_blue_gray()}</option>
-								<option value="green">{$LL.admin_tenant_discovery_green()}</option>
-								<option value="brown">{$LL.admin_tenant_discovery_brown()}</option>
-								<option value="navy">{$LL.admin_tenant_discovery_navy()}</option>
-								<option value="slate">{$LL.admin_tenant_discovery_slate()}</option>
-							</select>
-						</div>
-						<div class="form-group">
 							<label for="common-brand-name">{$LL.admin_tenant_discovery_brand_name()}</label>
 							<input
 								id="common-brand-name"
@@ -1522,22 +1494,6 @@
 								<option value="">{$LL.admin_tenant_discovery_inherit_default()}</option>
 								<option value="light">{$LL.admin_tenant_discovery_light()}</option>
 								<option value="dark">{$LL.admin_tenant_discovery_dark()}</option>
-							</select>
-						</div>
-						<div class="form-group">
-							<label for="tenant-variant">{$LL.admin_tenant_discovery_variant()}</label>
-							<select
-								id="tenant-variant"
-								bind:value={tenantUiForm.variant}
-								disabled={!canEditTenant || tenantUiSaving}
-							>
-								<option value="">{$LL.admin_tenant_discovery_inherit_default()}</option>
-								<option value="beige">{$LL.admin_tenant_discovery_beige()}</option>
-								<option value="blue-gray">{$LL.admin_tenant_discovery_blue_gray()}</option>
-								<option value="green">{$LL.admin_tenant_discovery_green()}</option>
-								<option value="brown">{$LL.admin_tenant_discovery_brown()}</option>
-								<option value="navy">{$LL.admin_tenant_discovery_navy()}</option>
-								<option value="slate">{$LL.admin_tenant_discovery_slate()}</option>
 							</select>
 						</div>
 						<div class="form-group">

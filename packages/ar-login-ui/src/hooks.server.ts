@@ -40,12 +40,8 @@ import {
 } from '$lib/server/account-page-initial-data';
 import { sanitizeColor } from '$lib/utils/url-validation';
 import {
-	LOGIN_UI_DARK_VARIANT_HINT_COOKIE,
-	LOGIN_UI_LIGHT_VARIANT_HINT_COOKIE,
 	LOGIN_UI_THEME_HINT_COOKIE,
 	LOGIN_UI_THEME_HINT_MAX_AGE_SECONDS,
-	normalizeLoginUIDarkVariant,
-	normalizeLoginUILightVariant,
 	normalizeLoginUIThemeMode,
 	resolveLoginUIThemeBackground
 } from '$lib/theme-bootstrap';
@@ -577,101 +573,64 @@ export function shouldBootstrapLoginUIThemeForRequest(
 
 export function resolveInitialLoginUIAppearance(
 	authenticationMethods: AuthenticationMethodsResponse | null | undefined,
-	themeHint?: {
-		theme?: string | null;
-		lightVariant?: string | null;
-		darkVariant?: string | null;
-	}
+	themeHint?: { theme?: string | null }
 ): { background: string; colorScheme: 'light' | 'dark' | 'light dark' } {
 	const ui = authenticationMethods?.ui;
 	const configuredBackground = sanitizeColor(ui?.pageTemplate?.backgroundColor);
+	// The page background of the theme template in the mode the page opens in.
+	const template = ui?.themeTemplate;
 	const theme = ui?.theme?.trim().toLowerCase();
 	if (theme === 'dark') {
-		const variant = ui?.variant?.trim().toLowerCase() || 'brown';
 		return {
-			background: resolveLoginUIThemeBackground('dark', variant, configuredBackground),
+			background: resolveLoginUIThemeBackground('dark', template, configuredBackground),
 			colorScheme: 'dark'
 		};
 	}
 	if (theme === 'auto') {
 		return {
-			background: configuredBackground || '#eeeae3',
+			background: resolveLoginUIThemeBackground('light', template, configuredBackground),
 			colorScheme: 'light dark'
 		};
 	}
 	if (theme === 'light') {
-		const variant = ui?.variant?.trim().toLowerCase() || 'beige';
 		return {
-			background: resolveLoginUIThemeBackground('light', variant, configuredBackground),
+			background: resolveLoginUIThemeBackground('light', template, configuredBackground),
 			colorScheme: 'light'
 		};
 	}
 
 	const hintedTheme = normalizeLoginUIThemeMode(themeHint?.theme);
-	if (hintedTheme === 'dark') {
+	if (hintedTheme) {
 		return {
-			background: resolveLoginUIThemeBackground('dark', themeHint?.darkVariant),
-			colorScheme: 'dark'
-		};
-	}
-	if (hintedTheme === 'light') {
-		return {
-			background: resolveLoginUIThemeBackground('light', themeHint?.lightVariant),
-			colorScheme: 'light'
+			background: resolveLoginUIThemeBackground(hintedTheme, template),
+			colorScheme: hintedTheme
 		};
 	}
 
 	return {
-		background: configuredBackground || '#eeeae3',
+		background: resolveLoginUIThemeBackground('light', template, configuredBackground),
 		colorScheme: 'light'
 	};
 }
 
-function getInitialLoginUIThemeHint(event: RequestEvent): {
-	theme?: string | null;
-	lightVariant?: string | null;
-	darkVariant?: string | null;
-} {
-	return {
-		theme: event.cookies.get(LOGIN_UI_THEME_HINT_COOKIE),
-		lightVariant: event.cookies.get(LOGIN_UI_LIGHT_VARIANT_HINT_COOKIE),
-		darkVariant: event.cookies.get(LOGIN_UI_DARK_VARIANT_HINT_COOKIE)
-	};
+function getInitialLoginUIThemeHint(event: RequestEvent): { theme?: string | null } {
+	return { theme: event.cookies.get(LOGIN_UI_THEME_HINT_COOKIE) };
 }
 
 function setInitialLoginUIThemeHint(
 	event: RequestEvent,
 	authenticationMethods: AuthenticationMethodsResponse | null | undefined
 ): void {
-	const ui = authenticationMethods?.ui;
-	const theme = normalizeLoginUIThemeMode(ui?.theme);
+	const theme = normalizeLoginUIThemeMode(authenticationMethods?.ui?.theme);
 	if (!theme) return;
 
-	const cookieOptions = {
+	event.cookies.set(LOGIN_UI_THEME_HINT_COOKIE, theme, {
 		path: '/',
 		maxAge: LOGIN_UI_THEME_HINT_MAX_AGE_SECONDS,
 		httpOnly: false,
-		sameSite: 'lax' as const,
+		sameSite: 'lax',
 		secure: event.url.protocol === 'https:'
-	};
-
-	event.cookies.set(LOGIN_UI_THEME_HINT_COOKIE, theme, cookieOptions);
-
-	const variant = ui?.variant?.trim().toLowerCase();
-	if (theme === 'light') {
-		event.cookies.set(
-			LOGIN_UI_LIGHT_VARIANT_HINT_COOKIE,
-			normalizeLoginUILightVariant(variant) ?? 'beige',
-			cookieOptions
-		);
-	}
-	if (theme === 'dark') {
-		event.cookies.set(
-			LOGIN_UI_DARK_VARIANT_HINT_COOKIE,
-			normalizeLoginUIDarkVariant(variant) ?? 'brown',
-			cookieOptions
-		);
-	}
+	});
 }
 
 function parseHumanVerificationProviderForCsp(
