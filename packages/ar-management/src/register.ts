@@ -51,6 +51,7 @@ import {
   CLIENT_ASSERTION_SIGNING_ALGS,
   FAPI2_MESSAGE_SIGNING_ALGS,
   resolveProtocolSettings,
+  isConformanceMode,
 } from '@authrim/ar-lib-core';
 import {
   idTokenSigningAlgorithmRefusal,
@@ -83,6 +84,12 @@ type ClientRegistrationResponseWithPkce = ClientRegistrationResponse & {
   default_audience?: string;
   default_resource?: string;
 };
+
+/**
+ * The scope a certification-suite client gets in conformance mode when it registers without one:
+ * the Suite asks for every standard scope (OIDC Core 5.4) and for offline_access.
+ */
+const CONFORMANCE_CLIENT_DEFAULT_SCOPE = 'openid profile email address phone offline_access';
 
 function getContextTenantId(c: Context<{ Bindings: Env }>): string | null {
   try {
@@ -1987,6 +1994,14 @@ export async function registerHandler(c: Context<{ Bindings: Env }>): Promise<Re
         return false;
       }
     });
+
+    // The OpenID certification suite registers its clients without `scope`, then asks for every
+    // standard scope. Only in conformance mode (feature.conformance_enabled) does such a client get
+    // them implicitly; otherwise a client can ask only for what it registers (or the default
+    // openid/profile/email), so nothing is granted behind the operator's back.
+    if (isCertificationTest && !request.scope && (await isConformanceMode(c.env))) {
+      response.scope = CONFORMANCE_CLIENT_DEFAULT_SCOPE;
+    }
 
     // Hash client secret for secure storage
     const clientSecretHash = await hashClientSecret(clientSecret);

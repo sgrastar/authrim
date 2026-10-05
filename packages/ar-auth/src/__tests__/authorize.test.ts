@@ -2540,6 +2540,50 @@ describe('Authorization Handler', () => {
       );
     });
 
+    it('records a confirmed re-authentication in the consent challenge it sends the user to', async () => {
+      env.ENABLE_CONFORMANCE_MODE = 'false';
+      env.UI_URL = 'https://login.example.com';
+      seedSession(env);
+      getChallengeMap(env).set('confirm_reauth_before_consent', {
+        id: 'confirm_reauth_before_consent',
+        tenantId: 'default',
+        type: 'reauth',
+        userId: 'test-user',
+        challenge: 'confirm_reauth_before_consent',
+        metadata: {
+          purpose: 'authorize_confirmation',
+          authTime: 1_700_000_100,
+          sessionUserId: 'test-user',
+          browserBinding: 'confirm-reauth-browser',
+        },
+      });
+
+      const response = await app.request(
+        '/authorize?response_type=code&client_id=test-client&redirect_uri=https://example.com/callback&scope=openid&state=reauth-then-consent&prompt=login&_confirmation_challenge=confirm_reauth_before_consent',
+        {
+          method: 'GET',
+          headers: {
+            Cookie:
+              `authrim_session=${encodeURIComponent(TEST_SESSION_ID)}; ` +
+              'authrim_authorize_confirmation=confirm-reauth-browser',
+          },
+        },
+        env
+      );
+
+      expect(response.status).toBe(302);
+      const location = new URL(response.headers.get('Location')!);
+      expect(location.origin + location.pathname).toBe('https://login.example.com/consent');
+      const consentChallenge = getChallengeMap(env).get(location.searchParams.get('challenge_id')!);
+      expect(consentChallenge).toMatchObject({
+        type: 'consent',
+        metadata: expect.objectContaining({
+          prompt: 'login',
+          confirmed_reauth: { auth_time: expect.any(Number) },
+        }),
+      });
+    });
+
     it('issues an authorization code for confirmed consent even when SSO is disabled', async () => {
       seedSession(env);
       getChallengeMap(env).set('confirm_consent', {
@@ -2586,6 +2630,88 @@ describe('Authorization Handler', () => {
           state: 'consent-confirmed-state',
         })
       );
+    });
+
+    it.each([
+      ['prompt=login', '&prompt=login'],
+      ['max_age', '&max_age=1'],
+    ])(
+      'issues the code after consent that followed a %s re-authentication, with its auth_time',
+      async (_label, query) => {
+        env.UI_URL = 'https://login.example.com';
+        seedSession(env);
+        getChallengeMap(env).set('confirm_consent_after_reauth', {
+          id: 'confirm_consent_after_reauth',
+          tenantId: 'default',
+          type: 'consent',
+          userId: 'test-user',
+          challenge: 'confirm_consent_after_reauth',
+          metadata: {
+            purpose: 'authorize_consent_confirmation',
+            sessionId: TEST_SESSION_ID,
+            browserBinding: 'consent-browser-binding',
+            confirmed_reauth: { auth_time: 1_700_000_200 },
+          },
+        });
+        const authCodeStore = getAuthCodeStore(env);
+
+        const response = await app.request(
+          `/authorize?response_type=code&client_id=test-client&redirect_uri=https://example.com/callback&scope=openid&state=reauth-consent-state${query}&_consent_confirmation_challenge=confirm_consent_after_reauth`,
+          {
+            method: 'GET',
+            headers: {
+              Cookie:
+                `authrim_session=${encodeURIComponent(TEST_SESSION_ID)}; ` +
+                'authrim_consent_confirmation=consent-browser-binding',
+            },
+          },
+          env
+        );
+
+        expect(response.status).toBe(302);
+        const redirectUrl = new URL(response.headers.get('Location')!);
+        expect(redirectUrl.origin + redirectUrl.pathname).toBe('https://example.com/callback');
+        expect(redirectUrl.searchParams.get('code')).toBeTruthy();
+        expect(authCodeStore.storeCodeRpc).toHaveBeenCalledWith(
+          expect.objectContaining({ userId: 'test-user', authTime: 1_700_000_200 })
+        );
+      }
+    );
+
+    it('still asks for re-authentication after consent that carries no completed one', async () => {
+      env.ENABLE_CONFORMANCE_MODE = 'false';
+      env.UI_URL = 'https://login.example.com';
+      configureClientTrustPolicy(env);
+      seedSession(env);
+      getChallengeMap(env).set('confirm_consent_without_reauth', {
+        id: 'confirm_consent_without_reauth',
+        tenantId: 'default',
+        type: 'consent',
+        userId: 'test-user',
+        challenge: 'confirm_consent_without_reauth',
+        metadata: {
+          purpose: 'authorize_consent_confirmation',
+          sessionId: TEST_SESSION_ID,
+          browserBinding: 'consent-browser-binding',
+        },
+      });
+
+      const response = await app.request(
+        '/authorize?response_type=code&client_id=test-client&redirect_uri=https://example.com/callback&scope=openid&state=no-reauth-state&prompt=login&_consent_confirmation_challenge=confirm_consent_without_reauth',
+        {
+          method: 'GET',
+          headers: {
+            Cookie:
+              `authrim_session=${encodeURIComponent(TEST_SESSION_ID)}; ` +
+              'authrim_consent_confirmation=consent-browser-binding',
+          },
+        },
+        env
+      );
+
+      expect(response.status).toBe(302);
+      const location = new URL(response.headers.get('Location')!);
+      expect(location.origin + location.pathname).toBe('https://login.example.com/reauth');
     });
 
     it('does not consume consent confirmation without the originating browser session', async () => {

@@ -254,6 +254,42 @@ describe('Dynamic Client Registration Handler', () => {
       expect(syncUser).not.toHaveBeenCalled();
     });
 
+    describe('certification client registered without scope', () => {
+      const registerCertificationClient = () =>
+        app.request(
+          '/register',
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              redirect_uris: [
+                'https://www.certification.openid.net/test/a/authrim-basic-op/callback',
+              ],
+              grant_types: ['authorization_code'],
+              response_types: ['code'],
+              token_endpoint_auth_method: 'client_secret_basic',
+            }),
+          },
+          mockEnv
+        );
+
+      it('gets the standard scopes in conformance mode', async () => {
+        mockEnv.ENABLE_CONFORMANCE_MODE = 'true';
+        const res = await registerCertificationClient();
+        const body = (await res.json()) as { scope?: string };
+        expect(res.status, JSON.stringify(body)).toBe(201);
+        expect(body.scope).toBe('openid profile email address phone offline_access');
+      });
+
+      it('gets no scope implicitly outside conformance mode', async () => {
+        mockEnv.ENABLE_CONFORMANCE_MODE = 'false';
+        const res = await registerCertificationClient();
+        const body = (await res.json()) as { scope?: string };
+        expect(res.status, JSON.stringify(body)).toBe(201);
+        expect(body.scope).toBeUndefined();
+      });
+    });
+
     it('registers a restricted Agent client under a tenant that signs ID tokens with PS256', async () => {
       mockEnv.SETTINGS = createMockKV();
       await mockEnv.SETTINGS.put(
