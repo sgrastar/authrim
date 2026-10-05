@@ -54,7 +54,7 @@ vi.mock('../tenant-alias-directory', () => ({
   ensureActiveTenantDiscoveryAliasDirectory: vi.fn(async () => undefined),
 }));
 
-import { buildConformanceTestUserId, registerHandler } from '../register';
+import { registerHandler } from '../register';
 
 // Helper to create mock D1Database
 function createMockDB() {
@@ -216,6 +216,34 @@ describe('Dynamic Client Registration Handler', () => {
                 },
               ],
             },
+          }),
+        },
+        mockEnv
+      );
+
+      const responseBody = await res.json();
+      expect(res.status, JSON.stringify(responseBody)).toBe(201);
+      expect(syncUser).not.toHaveBeenCalled();
+    });
+
+    it('registers a certification authorization code client without creating a user', async () => {
+      // The Login UI signs the Suite's tester in as a normal user; registration must not need the
+      // account data context that writing a user requires.
+      const syncUser = vi.spyOn(CanonicalRuntimeUserStore.prototype, 'syncUser');
+      const res = await app.request(
+        '/register',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            client_name: 'OIDF Conformance Test',
+            redirect_uris: [
+              'https://www.certification.openid.net/test/a/authrim-basic-op/callback',
+            ],
+            grant_types: ['authorization_code'],
+            response_types: ['code'],
+            token_endpoint_auth_method: 'client_secret_basic',
+            contacts: ['certification@oidf.org'],
           }),
         },
         mockEnv
@@ -2295,13 +2323,5 @@ describe('Dynamic Client Registration Handler', () => {
       expect(json.error).toBe('invalid_client_metadata');
       expect(json.error_description).toContain('internal addresses');
     });
-  });
-});
-
-describe('conformance test user tenant isolation', () => {
-  it('keeps the legacy ID for the default tenant and scopes other tenant IDs', () => {
-    expect(buildConformanceTestUserId('default')).toBe('user-oidc-conformance-test');
-    expect(buildConformanceTestUserId('fapi2')).toBe('user-oidc-conformance-test-fapi2');
-    expect(buildConformanceTestUserId('primary', 'primary')).toBe('user-oidc-conformance-test');
   });
 });
