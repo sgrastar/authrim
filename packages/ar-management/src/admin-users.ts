@@ -1938,15 +1938,21 @@ export async function adminUserRetryPiiHandler(c: Context<{ Bindings: Env }>) {
   try {
     const userId = c.req.param('id')!;
     const tenantId = getTenantIdFromContext(c);
-    const authCtx = createAuthContextFromHono(c, tenantId);
-    const projectionRepository = createCanonicalRuntimeUserProjectionRepository(
-      c,
-      authCtx.coreAdapter,
-      tenantId
-    );
-    if (!projectionRepository) {
-      return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
+    // Read and write the user in its account's databases, as the update handler does: once tenant
+    // D1 routing places accounts, the tenant metadata database does not hold the user.
+    const accountSources = await resolveCustomClaimRuntimeSourcesFromEnv(c.env, tenantId, {
+      accountId: userId,
+    });
+    if (!accountSources.nonPiiDb || !accountSources.piiDb) {
+      throw new Error('admin_user_account_sources_required');
     }
+    const accountCore = ensureDatabaseAdapter(accountSources.nonPiiDb, 'admin-retry-pii-core');
+    const accountPii = ensureDatabaseAdapter(accountSources.piiDb, 'admin-retry-pii-pii');
+    const projectionRepository = new CanonicalRuntimeUserProjectionRepository(
+      accountCore,
+      tenantId,
+      new CanonicalSensitiveValueResolver(accountPii)
+    );
     const projection = await projectionRepository.findByLegacyUserId(userId, {
       includeInactive: true,
     });
@@ -1995,7 +2001,12 @@ export async function adminUserRetryPiiHandler(c: Context<{ Bindings: Env }>) {
     }
 
     const addressJson = buildAddressJsonFromAdminBody(body);
-    await createCanonicalRuntimeUserWriter(c, authCtx.coreAdapter, tenantId).syncFromRuntimeUser({
+    await createCanonicalRuntimeUserWriter(
+      c,
+      accountCore,
+      tenantId,
+      accountPii
+    ).syncFromRuntimeUser({
       userId,
       tenantId,
       active: Boolean(projection.active),

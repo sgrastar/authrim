@@ -517,6 +517,7 @@ import {
   adminUserUpdateHandler,
   adminUserDeleteHandler,
   adminUserDeletePiiHandler,
+  adminUserRetryPiiHandler,
   adminUserAnonymizeHandler,
   adminUserSendEmailHandler,
   adminAuditLogListHandler,
@@ -3105,6 +3106,59 @@ describe('Admin API Handlers', () => {
         },
         500
       );
+    });
+  });
+
+  describe('adminUserRetryPiiHandler', () => {
+    it('finds and writes the user in its account databases, not the tenant metadata database', async () => {
+      const userId = 'user-routed-account';
+      const accountDb = createMockDB({
+        firstResult: {
+          id: userId,
+          tenant_id: 'default',
+          email_verified: 1,
+          phone_number_verified: 0,
+          is_active: 1,
+          user_type: 'end_user',
+          pii_status: 'active',
+          created_at: Date.now(),
+          updated_at: Date.now(),
+        },
+      });
+      const accountPiiDb = createMockDB({
+        firstResult: { id: userId, email: 'routed@example.com' },
+      });
+      resolveCustomClaimRuntimeSources.mockImplementationOnce(async (env: Partial<Env>) => ({
+        storageProfile: {
+          id: 'builtin:storage:tenant-d1',
+          kind: 'storage',
+          label: 'Tenant D1',
+          slices: {},
+        },
+        schemaDb: env.DB,
+        nonPiiDb: accountDb,
+        piiDb: accountPiiDb,
+      }));
+
+      const c = createMockContext({
+        method: 'POST',
+        params: { id: userId },
+        body: {
+          email: 'routed@example.com',
+          given_name: 'Jane',
+          address_locality: 'Chiyoda-ku',
+          address_country: 'JP',
+        },
+        db: createMockDB({ firstResult: null, allResults: [] }),
+        dbPII: createMockDB({ firstResult: null }),
+      });
+
+      await adminUserRetryPiiHandler(c);
+
+      expect(c.json).toHaveBeenCalledWith(
+        expect.objectContaining({ success: true, user_id: userId })
+      );
+      expect(canonicalRuntimeUsers.get(userId)).toBeDefined();
     });
   });
 

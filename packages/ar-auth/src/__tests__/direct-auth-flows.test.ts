@@ -3550,6 +3550,88 @@ describe('Direct Auth primary passkey and email-code flows', () => {
     expect('error' in result).toBe(refused);
   });
 
+  it.each([
+    // SSO off for the client: the browser's earlier sign-in must not answer the challenge.
+    [
+      'refuses an earlier session for an SSO-off sign-in',
+      { fresh_sign_in_after: 1_000_000 },
+      900,
+      900_000,
+      true,
+    ],
+    [
+      'accepts a sign-in made after the challenge',
+      { fresh_sign_in_after: 1_000_000 },
+      1_001,
+      1_000_500,
+      false,
+    ],
+    // A proof the server did not date falls back to its auth_time (whole seconds).
+    [
+      'accepts an undated sign-in whose auth_time follows the challenge',
+      { fresh_sign_in_after: 1_000_000 },
+      1_000,
+      undefined,
+      false,
+    ],
+    [
+      'refuses an undated sign-in whose auth_time precedes the challenge',
+      { fresh_sign_in_after: 1_000_000 },
+      900,
+      undefined,
+      true,
+    ],
+    // SSO on: an existing session answers as before.
+    ['accepts an earlier session when SSO is on', {}, 900, 900_000, false],
+  ])('%s', async (_label, metadata, authTime, provenAtMs, refused) => {
+    mocks.challengeStore.consumeChallengeRpc.mockResolvedValueOnce({
+      userId: 'anonymous',
+      metadata,
+    });
+    const { consumeAuthorizationChallengeContinuation } = await import('../direct-auth');
+    const context = createContext({});
+    (context as unknown as { header: unknown }).header = vi.fn();
+
+    const result = await consumeAuthorizationChallengeContinuation(
+      context as never,
+      'tenant_test',
+      'login_challenge',
+      'user_existing',
+      authTime,
+      'https://op.example.com',
+      'totp',
+      provenAtMs
+    );
+
+    expect('error' in result).toBe(refused);
+  });
+
+  it.each([
+    [
+      'a re-authentication',
+      { type: 'reauth', metadata: { reauth_issued_at: 1_000_000 } },
+      1_000_000,
+    ],
+    [
+      'an SSO-off sign-in',
+      { type: 'login', metadata: { fresh_sign_in_after: 2_000_000 } },
+      2_000_000,
+    ],
+    ['an ordinary sign-in', { type: 'login', metadata: {} }, null],
+    // Only a re-authentication carries reauth_issued_at; a sign-in does not borrow it.
+    ['a sign-in naming a reauth time', { type: 'login', metadata: { reauth_issued_at: 1 } }, null],
+  ])('tells the session check when %s needs a newer proof', async (_label, challenge, expected) => {
+    mocks.challengeStore.getChallengeRpc.mockResolvedValueOnce({
+      tenantId: 'tenant_test',
+      ...challenge,
+    });
+    const { readAuthorizationChallengeReauthIssuedAt } = await import('../direct-auth');
+
+    await expect(
+      readAuthorizationChallengeReauthIssuedAt({} as never, 'tenant_test', 'challenge')
+    ).resolves.toBe(expected);
+  });
+
   it('reads a re-authentication proof with the time of the method it takes', async () => {
     const { reauthProofFromRecord } = await import('../direct-auth');
 

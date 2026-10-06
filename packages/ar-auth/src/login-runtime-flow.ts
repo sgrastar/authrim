@@ -2552,8 +2552,9 @@ async function resolveSessionCheckSelectedHandle(
   if (!session?.userId) {
     return { selectedHandle: 'authenticate', userId: null };
   }
-  // A re-authentication needs a proof made after it was asked for, so an older session signs in
-  // again; so does any session when the request cannot be read (signing in again is always safe).
+  // A re-authentication, and a sign-in for a client whose SSO is off, need a proof made after the
+  // challenge, so an older session signs in again; so does any session when the request cannot be
+  // read (signing in again is always safe).
   let reauthIssuedAt: number | null;
   try {
     reauthIssuedAt = await readAuthorizationChallengeReauthIssuedAt(
