@@ -34,7 +34,11 @@ const testState = vi.hoisted(() => {
   const adapter = {
     query: vi.fn(async () => []),
     queryOne: vi.fn(async () => null),
-    execute: vi.fn(async () => ({ success: true, rowsAffected: 0 })),
+    // The consent write is conditional on the consent generation and checks it wrote a row.
+    execute: vi.fn(async (sql: string) => ({
+      success: true,
+      rowsAffected: sql.includes('oauth_client_consents') ? 1 : 0,
+    })),
     transaction: vi.fn(async (callback: (value: unknown) => unknown) => callback(adapter)),
     batch: vi.fn(async () => []),
     isHealthy: vi.fn(async () => ({ healthy: true, latencyMs: 0, type: 'mock' })),
