@@ -52,6 +52,10 @@ import {
   falRequiresDpop,
   falRequiresSignedPushedRequest,
   recordRefreshTokenFamilyIndex,
+  findOAuthClientConsentRevocation,
+  isOAuthClientConsentGrantWithdrawn,
+  predatesOAuthClientConsentRevocation,
+  type OAuthClientConsentRevocationState,
   updateRefreshTokenFamilyIndexExpiry,
   // Request-level caching (P0 KV Cache Optimization)
   getClientCached,
@@ -801,6 +805,87 @@ async function resolveTrustedSubjectAccountRoute(
   }
 }
 
+const CONSENT_WITHDRAWN_DESCRIPTION =
+  'The provided authorization grant is invalid, expired, or revoked';
+
+/**
+ * The user's consent withdrawals for the client (generation and time), read from the user's
+ * account database `core` with one keyed query. Read before a one-time credential is consumed, so
+ * a failed read leaves the request retryable. A read failure throws.
+ */
+function readConsentWithdrawal(
+  core: DatabaseAdapter,
+  input: { tenantId: string; userId: string; clientId: string }
+): Promise<OAuthClientConsentRevocationState> {
+  return findOAuthClientConsentRevocation(core, input);
+}
+
+/**
+ * Confirm a family just created under consent generation `generation` was not withdrawn while it
+ * was being created: the withdrawal may have revoked the indexed families before this one existed.
+ * When the generation has moved on, or cannot be read, exactly this family is revoked (by the JWT
+ * ID it was issued with, so a family issued since is left alone).
+ */
+async function confirmFamilyConsentGeneration(
+  c: Context<{ Bindings: Env }>,
+  core: DatabaseAdapter,
+  input: {
+    tenantId: string;
+    userId: string;
+    clientId: string;
+    generation: number;
+    familyJti: string;
+  }
+): Promise<'confirmed' | 'withdrawn' | 'unavailable'> {
+  const log = getLogger(c).module('TOKEN');
+  let outcome: 'confirmed' | 'withdrawn' | 'unavailable';
+  try {
+    outcome =
+      (await readConsentWithdrawal(core, input)).generation === input.generation
+        ? 'confirmed'
+        : 'withdrawn';
+  } catch (error) {
+    log.error('Failed to confirm the consent generation of a new family', {}, error as Error);
+    outcome = 'unavailable';
+  }
+  if (outcome === 'confirmed') return outcome;
+  try {
+    await getRefreshTokenRotatorStubByJti(
+      c.env,
+      input.clientId,
+      input.familyJti,
+      input.tenantId
+    ).stub.revokeFamilyIfFirstJtiRpc(input.userId, input.familyJti, 'consent_revoked');
+  } catch (error) {
+    // Its recorded generation keeps the family refused; revoking it only ends it sooner.
+    log.warn('Failed to revoke a refresh token family of a withdrawn consent', {
+      errorType: error instanceof Error ? error.name : 'Unknown',
+    });
+  }
+  return outcome;
+}
+
+/**
+ * The OAuth error for a family confirmFamilyConsentGeneration did not confirm, else null. The
+ * grant behind it (a code, a reserved device code or CIBA request) is consumed by then, so a retry
+ * cannot succeed: an unreadable generation is refused like a withdrawn one, not as retryable, and
+ * the client starts the authorization again.
+ */
+function familyConsentGenerationError(
+  c: Context<{ Bindings: Env }>,
+  outcome: 'confirmed' | 'withdrawn' | 'unavailable'
+): Response | null {
+  if (outcome === 'confirmed') return null;
+  return outcome === 'unavailable'
+    ? oauthError(
+        c,
+        'invalid_grant',
+        'The authorization grant could not be confirmed; start the authorization again',
+        400
+      )
+    : oauthError(c, 'invalid_grant', CONSENT_WITHDRAWN_DESCRIPTION, 400);
+}
+
 async function applyOIDCIdentityMappingToIDTokenClaims(
   c: Context<{ Bindings: Env }>,
   tenantId: string,
@@ -1401,6 +1486,7 @@ interface AuthCodeStoreResponse {
   nonce?: string;
   state?: string;
   createdAt?: number;
+  consentGeneration?: number; // The user's consent withdrawal generation when the code was granted
   claims?: string; // JSON string of claims parameter
   claimsRequestProtected?: boolean;
   authTime?: number;
@@ -2287,6 +2373,8 @@ async function handleAuthorizationCodeGrant(
       sid: consumedData.sid, // OIDC Session Management: Session ID for RP-Initiated Logout
       sessionId: consumedData.sessionId,
       authorizationDetails: consumedData.authorizationDetails, // RFC 9396: Rich Authorization Requests
+      created_at: consumedData.createdAt, // When the code was issued (ms)
+      consent_generation: consumedData.consentGeneration, // Its consent withdrawal generation
     };
   } catch (error) {
     // RPC throws error for invalid codes (not found, already consumed, PKCE mismatch, client mismatch)
@@ -2495,14 +2583,47 @@ async function handleAuthorizationCodeGrant(
     return oauthError(c, 'temporarily_unavailable', 'Authentication state is unavailable', 503);
   }
   let subjectAccount: Awaited<ReturnType<typeof findCanonicalRuntimeAccount>> = null;
-  const [subjectAccountResult, tenantRBACClaimsConfigResult] = await Promise.allSettled([
-    timeTokenRequestDiagnosticOperation(c, 'token_subject_account', () =>
-      findCanonicalRuntimeAccount(authCtx.coreAdapter, tenantId, authCodeData.sub)
-    ),
-    timeTokenRequestDiagnosticOperation(c, 'token_rbac_config', () =>
-      resolveTenantRBACClaimsConfig(c.env, tenantId)
-    ),
-  ] as const);
+  const [subjectAccountResult, tenantRBACClaimsConfigResult, consentWithdrawalResult] =
+    await Promise.allSettled([
+      timeTokenRequestDiagnosticOperation(c, 'token_subject_account', () =>
+        findCanonicalRuntimeAccount(authCtx.coreAdapter, tenantId, authCodeData.sub)
+      ),
+      timeTokenRequestDiagnosticOperation(c, 'token_rbac_config', () =>
+        resolveTenantRBACClaimsConfig(c.env, tenantId)
+      ),
+      timeTokenRequestDiagnosticOperation(c, 'token_consent_withdrawal', () =>
+        readConsentWithdrawal(authCtx.coreAdapter, {
+          tenantId,
+          userId: authCodeData.sub,
+          clientId: client_id,
+        })
+      ),
+    ] as const);
+  // A code granted under a consent the user has since withdrawn ends with it (no new family): it
+  // recorded an earlier generation, or, one recorded before generations, was issued before.
+  if (consentWithdrawalResult.status === 'rejected') {
+    log.error(
+      'Failed to read the consent withdrawal for token issuance',
+      {},
+      consentWithdrawalResult.reason as Error
+    );
+    // The code is consumed already: a retry cannot succeed, so the client starts again.
+    return oauthError(
+      c,
+      'invalid_grant',
+      'The authorization grant could not be confirmed; start the authorization again',
+      400
+    );
+  }
+  const consentWithdrawal = consentWithdrawalResult.value;
+  if (
+    isOAuthClientConsentGrantWithdrawn(consentWithdrawal, {
+      generation: authCodeData.consent_generation,
+      issuedAt: authCodeData.created_at,
+    })
+  ) {
+    return oauthError(c, 'invalid_grant', CONSENT_WITHDRAWN_DESCRIPTION, 400);
+  }
   if (subjectAccountResult.status === 'fulfilled') {
     subjectAccount = subjectAccountResult.value;
     if (!subjectAccount && tokenPIIRequirement.requiresPII) {
@@ -3238,6 +3359,7 @@ async function handleAuthorizationCodeGrant(
                   : {}),
                 ...(authCodeData.pushed_signed_request ? { pushed_signed_request: true } : {}),
               },
+              consentGeneration: consentWithdrawal.generation,
             })
           );
           refreshTokenJti = familyResult.jti;
@@ -3252,6 +3374,18 @@ async function handleAuthorizationCodeGrant(
           );
         }
         rtv = familyResult.family.version;
+
+        const familyWithdrawn = familyConsentGenerationError(
+          c,
+          await confirmFamilyConsentGeneration(c, authCtx.coreAdapter, {
+            tenantId: getTenantIdFromContext(c),
+            userId: authCodeData.sub,
+            clientId: client_id,
+            generation: consentWithdrawal.generation,
+            familyJti: familyResult.jti,
+          })
+        );
+        if (familyWithdrawn) return familyWithdrawn;
 
         // Keep issuance non-blocking while extending the Worker event until the index write settles.
         c.executionCtx.waitUntil(
@@ -3853,6 +3987,31 @@ async function handleRefreshTokenGrant(
   const accountRouteError = await resolveTrustedSubjectAccountRoute(c, refreshTokenData.sub);
   if (accountRouteError) return accountRouteError;
   const authCtx = createAccountAuthContextFromHono(c, tenantId);
+
+  // A family granted under a consent the user has since withdrawn ends with it, including one the
+  // family index never recorded (so the withdrawal could not revoke it): it recorded an earlier
+  // generation, or, one recorded before generations, was created before the withdrawal. It is only
+  // refused: revoking the user's family here could end one issued since in the same rotator.
+  let familyConsentWithdrawn: boolean;
+  try {
+    familyConsentWithdrawn = isOAuthClientConsentGrantWithdrawn(
+      await readConsentWithdrawal(authCtx.coreAdapter, {
+        tenantId,
+        userId: refreshTokenData.sub,
+        clientId: client_id,
+      }),
+      {
+        generation: refreshTokenData.family_consent_generation,
+        issuedAt: refreshTokenData.family_created_at,
+      }
+    );
+  } catch (error) {
+    log.error('Failed to read the consent withdrawal for token refresh', {}, error as Error);
+    return oauthError(c, 'temporarily_unavailable', 'Consent state is unavailable', 503);
+  }
+  if (familyConsentWithdrawn) {
+    return oauthError(c, 'invalid_grant', 'Refresh token is invalid or expired', 400);
+  }
 
   // Phase 2 RBAC: Fetch fresh RBAC claims for token refresh
   // User's roles/organization may have changed since the original token was issued
@@ -4785,6 +4944,7 @@ async function handleDeviceCodeGrant(
     poll_count?: number;
     created_at: number;
     expires_at: number;
+    consent_generation?: number;
   };
 
   if (!metadata || !metadata.device_code) {
@@ -4914,6 +5074,31 @@ async function handleDeviceCodeGrant(
 
   const accountRouteError = await resolveTrustedSubjectAccountRoute(c, metadata.sub);
   if (accountRouteError) return accountRouteError;
+  const authCtx = createAccountAuthContextFromHono(c, getTenantIdFromContext(c));
+
+  // A device code requested before the user withdrew the client's consent, or approved under a
+  // generation the withdrawals have moved past, ends with it. Read before the code is reserved, so
+  // a failed read leaves it for the next poll.
+  let deviceConsentWithdrawal: OAuthClientConsentRevocationState;
+  try {
+    deviceConsentWithdrawal = await readConsentWithdrawal(authCtx.coreAdapter, {
+      tenantId: getTenantIdFromContext(c),
+      userId: metadata.sub,
+      clientId: client_id,
+    });
+  } catch (error) {
+    log.error('Failed to read the consent withdrawal for a device code', {}, error as Error);
+    return oauthError(c, 'temporarily_unavailable', 'Consent state is unavailable', 503);
+  }
+  if (
+    predatesOAuthClientConsentRevocation(metadata.created_at, deviceConsentWithdrawal.revokedAt) ||
+    isOAuthClientConsentGrantWithdrawn(deviceConsentWithdrawal, {
+      generation: metadata.consent_generation,
+      issuedAt: metadata.created_at,
+    })
+  ) {
+    return oauthError(c, 'invalid_grant', CONSENT_WITHDRAWN_DESCRIPTION, 400);
+  }
 
   // Atomically reserve the approved device code before issuing tokens. This closes
   // the get-then-delete race where concurrent polls could both observe approved.
@@ -4955,7 +5140,6 @@ async function handleDeviceCodeGrant(
   // Token expiration (KV > env > default priority)
   const lifetimes = tokenLifetimes(c, tenantId, client_id);
   const expiresIn = await lifetimes.access();
-  const authCtx = createAccountAuthContextFromHono(c, getTenantIdFromContext(c));
 
   // Phase 2 RBAC: Fetch RBAC claims for device flow tokens
   let accessTokenRBACClaims: Awaited<ReturnType<typeof getAccessTokenRBACClaims>> = {};
@@ -5130,8 +5314,20 @@ async function handleDeviceCodeGrant(
           resourceAudience: audienceResolution.audience,
           // As the first ID token had it; no pushed request (a refresh is refused at FAL3).
           authContext: { auth_time: deviceAuthTime },
+          consentGeneration: deviceConsentWithdrawal.generation,
         });
         refreshJti = familyResult.jti;
+        const familyWithdrawn = familyConsentGenerationError(
+          c,
+          await confirmFamilyConsentGeneration(c, authCtx.coreAdapter, {
+            tenantId: getTenantIdFromContext(c),
+            userId: metadata.sub!,
+            clientId: client_id,
+            generation: deviceConsentWithdrawal.generation,
+            familyJti: familyResult.jti,
+          })
+        );
+        if (familyWithdrawn) return familyWithdrawn;
         c.executionCtx.waitUntil(
           recordTokenFamilyIndex(
             authCtx.coreAdapter,
@@ -5407,6 +5603,7 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
     created_at: number;
     expires_at: number;
     token_issued?: boolean;
+    consent_generation?: number;
   };
 
   if (!metadata || !metadata.auth_req_id) {
@@ -5550,6 +5747,31 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
 
   const accountRouteError = await resolveTrustedSubjectAccountRoute(c, metadata.sub);
   if (accountRouteError) return accountRouteError;
+  const authCtx = createAccountAuthContextFromHono(c, getTenantIdFromContext(c));
+
+  // A request made before the user withdrew the client's consent, or approved under a generation
+  // the withdrawals have moved past, ends with it. Read before the request is reserved, so a failed
+  // read leaves it for the next poll.
+  let cibaConsentWithdrawal: OAuthClientConsentRevocationState;
+  try {
+    cibaConsentWithdrawal = await readConsentWithdrawal(authCtx.coreAdapter, {
+      tenantId: getTenantIdFromContext(c),
+      userId: metadata.sub,
+      clientId: client_id,
+    });
+  } catch (error) {
+    log.error('Failed to read the consent withdrawal for a CIBA request', {}, error as Error);
+    return oauthError(c, 'temporarily_unavailable', 'Consent state is unavailable', 503);
+  }
+  if (
+    predatesOAuthClientConsentRevocation(metadata.created_at, cibaConsentWithdrawal.revokedAt) ||
+    isOAuthClientConsentGrantWithdrawn(cibaConsentWithdrawal, {
+      generation: metadata.consent_generation,
+      issuedAt: metadata.created_at,
+    })
+  ) {
+    return oauthError(c, 'invalid_grant', CONSENT_WITHDRAWN_DESCRIPTION, 400);
+  }
 
   // Mark tokens as issued (one-time use enforcement)
   const markIssuedResponse = await cibaRequestStore.fetch(
@@ -5576,8 +5798,6 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
       400
     );
   }
-
-  const authCtx = createAccountAuthContextFromHono(c, getTenantIdFromContext(c));
 
   // Verify user exists in canonical runtime account tables without reading PII.
   const userAccount = await findCanonicalRuntimeAccount(
@@ -5787,8 +6007,20 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
         resourceAudience: audienceResolution.audience,
         // As the first ID token had it; no pushed request (a refresh is refused at FAL3).
         ...(metadata.authenticated_acr ? { authContext: { acr: metadata.authenticated_acr } } : {}),
+        consentGeneration: cibaConsentWithdrawal.generation,
       });
       refreshTokenJti = cibaFamilyResult.jti;
+      const familyWithdrawn = familyConsentGenerationError(
+        c,
+        await confirmFamilyConsentGeneration(c, authCtx.coreAdapter, {
+          tenantId: getTenantIdFromContext(c),
+          userId: metadata.sub!,
+          clientId: metadata.client_id,
+          generation: cibaConsentWithdrawal.generation,
+          familyJti: cibaFamilyResult.jti,
+        })
+      );
+      if (familyWithdrawn) return familyWithdrawn;
       c.executionCtx.waitUntil(
         recordTokenFamilyIndex(
           authCtx.coreAdapter,
@@ -7431,6 +7663,30 @@ async function handleNativeSSOTokenExchange(
     }
   }
   const authCtx = createAccountAuthContextFromHono(c, tenantId);
+  // The device secret owner's consent withdrawals for this client, read before the secret's use
+  // and the ID token are consumed, so a failed read leaves the exchange retryable. The owner is
+  // the account the secret routes to; validation below confirms the secret belongs to it.
+  const deviceSecretAccountId = deviceSecretRouteHint!.accountId;
+  let nativeSSOConsentWithdrawal: OAuthClientConsentRevocationState;
+  try {
+    nativeSSOConsentWithdrawal = await readConsentWithdrawal(authCtx.coreAdapter, {
+      tenantId,
+      userId: deviceSecretAccountId.startsWith('account:')
+        ? deviceSecretAccountId.slice('account:'.length)
+        : deviceSecretAccountId,
+      clientId,
+    });
+  } catch (error) {
+    log.error('Failed to read the consent withdrawal for Native SSO', {}, error as Error);
+    return exchangeError(
+      'temporarily_unavailable',
+      'Consent state is unavailable',
+      'native_sso_server_error',
+      503,
+      'retry',
+      { retryable: true, severity: 'warning' }
+    );
+  }
   const deviceSecretRepo = new DeviceSecretRepository(authCtx.coreAdapter, tenantId);
   const deviceInstallationRepo = new DeviceInstallationRepository(authCtx.coreAdapter, tenantId);
   const deviceSecretValidation = await deviceSecretRepo.validateAndUse(deviceSecret, {
@@ -7564,6 +7820,19 @@ async function handleNativeSSOTokenExchange(
     return exchangeInvalidGrant(
       'ID token subject does not match device secret owner',
       'device_secret_binding_failed'
+    );
+  }
+
+  // A device secret issued before the user withdrew this client's consent ends with it.
+  if (
+    predatesOAuthClientConsentRevocation(
+      validatedDeviceSecret.created_at,
+      nativeSSOConsentWithdrawal.revokedAt
+    )
+  ) {
+    return exchangeInvalidGrant(
+      'The device secret predates the withdrawal of consent for this client',
+      'device_secret_inactive'
     );
   }
 
@@ -7903,9 +8172,35 @@ async function handleNativeSSOTokenExchange(
             ...(typeof authTime === 'number' ? { auth_time: authTime } : {}),
             ...(typeof acr === 'string' ? { acr } : {}),
           },
+          consentGeneration: nativeSSOConsentWithdrawal.generation,
         });
         refreshTokenJti = familyResult.jti;
         rtv = familyResult.family.version;
+        const familyConsent = await confirmFamilyConsentGeneration(c, authCtx.coreAdapter, {
+          tenantId,
+          userId: idTokenSub,
+          clientId,
+          generation: nativeSSOConsentWithdrawal.generation,
+          familyJti: familyResult.jti,
+        });
+        if (familyConsent === 'withdrawn') {
+          return exchangeInvalidGrant(
+            'Consent for this client was withdrawn during the exchange',
+            'device_secret_inactive'
+          );
+        }
+        if (familyConsent === 'unavailable') {
+          // The device secret use and the ID token are consumed already (a retry would be refused
+          // as a replay), and the family is revoked: not retryable, the user signs in again.
+          return exchangeError(
+            'invalid_grant',
+            'Consent state could not be confirmed; sign in again',
+            'native_sso_server_error',
+            400,
+            'reauthenticate',
+            { retryable: false, severity: 'error' }
+          );
+        }
         c.executionCtx.waitUntil(
           recordTokenFamilyIndex(
             authCtx.coreAdapter,

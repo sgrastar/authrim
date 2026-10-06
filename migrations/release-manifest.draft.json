@@ -83,6 +83,10 @@
             {
               "path": "017_external_idp_auth_state_reauth.sql",
               "checksum": "8655277dbd439b276b7ae05961c1c07605f4fdf9d0f75d7529041e4a891e1de8"
+            },
+            {
+              "path": "018_oauth_client_consent_revocations.sql",
+              "checksum": "d636cc6fc3913b19096c8fb2273ea7b48e9607fb1ad9e8e06d0f698a36028c87"
             }
           ]
         },
@@ -440,6 +444,10 @@
             {
               "path": "009_assurance_evidence_revoked_by.sql",
               "checksum": "6d36852f67139e572e202db4f5730cead2031f28e9985ad26a1bd316c7772c41"
+            },
+            {
+              "path": "010_oauth_client_consent_revocations.sql",
+              "checksum": "c0132f95f721dd906a5767b17acfe3d1fe843d29107f0b5db6f752d7513b555b"
             }
           ]
         },
@@ -556,6 +564,10 @@
         {
           "path": "017_external_idp_auth_state_reauth.sql",
           "checksum": "8655277dbd439b276b7ae05961c1c07605f4fdf9d0f75d7529041e4a891e1de8"
+        },
+        {
+          "path": "018_oauth_client_consent_revocations.sql",
+          "checksum": "d636cc6fc3913b19096c8fb2273ea7b48e9607fb1ad9e8e06d0f698a36028c87"
         }
       ]
     },
@@ -937,6 +949,10 @@
         {
           "path": "009_assurance_evidence_revoked_by.sql",
           "checksum": "6d36852f67139e572e202db4f5730cead2031f28e9985ad26a1bd316c7772c41"
+        },
+        {
+          "path": "010_oauth_client_consent_revocations.sql",
+          "checksum": "c0132f95f721dd906a5767b17acfe3d1fe843d29107f0b5db6f752d7513b555b"
         }
       ]
     },

@@ -38,6 +38,9 @@ import {
   getCachedUser,
   getCachedConsent,
   upsertOAuthClientConsent,
+  isOAuthClientConsentGenerationChanged,
+  findOAuthClientConsentRevocation,
+  type OAuthClientConsentRevocationState,
   getChallengeStoreByChallengeId,
   generateRegionAwareJti,
   createAuthContextFromHono,
@@ -722,6 +725,8 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   let _confirmation_challenge: string | undefined;
   let _consent_confirmation_challenge: string | undefined;
   let confirmedConsentUserId: string | undefined;
+  // The consent withdrawal generation the confirmed consent was approved under.
+  let confirmedConsentGeneration: number | undefined;
   // Phase 2-B RBAC extensions
   let org_id: string | undefined; // Target organization ID
   let acting_as: string | undefined; // Acting on behalf of user ID
@@ -1014,6 +1019,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         browserBinding?: string;
         authorization_request?: unknown;
         confirmed_reauth?: unknown;
+        consent_generation?: unknown;
       };
     };
 
@@ -1132,6 +1138,11 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
 
     _consent_confirmed = 'true';
     confirmedConsentUserId = confirmationData.userId;
+    const approvedGeneration = confirmationData.metadata.consent_generation;
+    confirmedConsentGeneration =
+      typeof approvedGeneration === 'number' && Number.isSafeInteger(approvedGeneration)
+        ? approvedGeneration
+        : undefined;
     // A re-authentication (prompt=login, max_age, step-up) completed before the consent screen
     // stays completed: the restored request still carries prompt=login / max_age, and asking
     // again would send the user back and forth between the two screens.
@@ -3977,6 +3988,52 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
     return sendError('invalid_request', 'Consent confirmation does not match the active session');
   }
 
+  // The user's consent withdrawals for this client, read before the consent is checked: the code
+  // records this generation, so a withdrawal completing while the old consent is still seen here
+  // refuses the code at the token endpoint. A consent a cache still holds from before the last
+  // withdrawal is not used.
+  let consentWithdrawal: OAuthClientConsentRevocationState;
+  try {
+    consentWithdrawal = await timeAuthRequestDiagnosticOperation(
+      c,
+      'auth_authorize_consent_withdrawal',
+      () =>
+        findOAuthClientConsentRevocation(
+          createAccountAuthContextFromHono(c, tenantId).coreAdapter,
+          {
+            tenantId,
+            userId: sub,
+            clientId: validClientId,
+          }
+        )
+    );
+  } catch (error) {
+    log.error(
+      'Unable to read consent withdrawals for authorization',
+      { action: 'consent_withdrawal_read' },
+      error as Error
+    );
+    return sendError('temporarily_unavailable', 'Account data is temporarily unavailable');
+  }
+  // A consent confirmed on the consent screen counts only while no withdrawal has moved the
+  // generation on since it was approved; otherwise it is checked (and asked for) again. A
+  // confirmation without a generation predates generations and is checked again too.
+  const consentConfirmed =
+    _consent_confirmed === 'true' && confirmedConsentGeneration === consentWithdrawal.generation;
+  const findCurrentConsent = async (
+    adapter: Parameters<typeof getCachedConsent>[4]
+  ): Promise<CachedConsent | null> => {
+    const consent = await getCachedConsent(c.env, sub, validClientId, tenantId, adapter);
+    if (!consent || consent.consent_generation === consentWithdrawal.generation) return consent;
+    // Cached under another generation (or before generations were cached): the database holds
+    // the consent now (one given again, or none), and the cache is refreshed from it. A consent
+    // recorded under an earlier generation (an approval racing a withdrawal) counts as absent.
+    const current = await getCachedConsent(c.env, sub, validClientId, tenantId, adapter, {
+      refresh: true,
+    });
+    return current?.consent_generation === consentWithdrawal.generation ? current : null;
+  };
+
   // Enforce PAR request_uri one-time use only after the request has reached an authenticated
   // authorization journey. The Durable Object consume remains atomic, so concurrent attempts
   // cannot both proceed.
@@ -4000,7 +4057,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
 
   // Check if consent is required (unless already confirmed)
   // Note: _consent_confirmed is already parsed at the top of this function
-  if (_consent_confirmed !== 'true') {
+  if (!consentConfirmed) {
     // Get client metadata for logging (request-level cached)
     const clientMetadata = await getClientCached(c, c.env, validClientId);
     // Trust and sign-in confirmation policies are the tenant's; a user's consents live with the
@@ -4099,7 +4156,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       const existingConsent = await timeAuthRequestDiagnosticOperation(
         c,
         'auth_authorize_consent_lookup',
-        () => getCachedConsent(c.env, sub, validClientId, tenantId, accountAuthCtx.coreAdapter)
+        () => findCurrentConsent(accountAuthCtx.coreAdapter)
       );
 
       if (!existingConsent) {
@@ -4109,18 +4166,28 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         const consentId = crypto.randomUUID();
         const now = Date.now();
 
-        await timeAuthRequestDiagnosticOperation(c, 'auth_authorize_consent_grant', () =>
-          upsertOAuthClientConsent(accountAuthCtx.coreAdapter, {
-            consentId,
-            tenantId,
-            userId: sub,
-            clientId: validClientId,
-            scope: scope ?? '',
-            grantedAt: now,
-            expiresAt: null,
-            now,
-          })
-        );
+        try {
+          await timeAuthRequestDiagnosticOperation(c, 'auth_authorize_consent_grant', () =>
+            upsertOAuthClientConsent(accountAuthCtx.coreAdapter, {
+              consentId,
+              tenantId,
+              userId: sub,
+              clientId: validClientId,
+              scope: scope ?? '',
+              grantedAt: now,
+              expiresAt: null,
+              now,
+              consentGeneration: consentWithdrawal.generation,
+            })
+          );
+        } catch (error) {
+          // Withdrawn while this request granted it: nothing was recorded; a new request starts
+          // from the withdrawal.
+          if (isOAuthClientConsentGenerationChanged(error)) {
+            return sendError('temporarily_unavailable', 'Consent changed during authorization');
+          }
+          throw error;
+        }
 
         // getCachedConsent does not negative-cache misses, so there is no stale entry to delete.
 
@@ -4138,13 +4205,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       let consentRequired = false;
       try {
         // Use cached consent check (Read-Through Cache)
-        const existingConsent = await getCachedConsent(
-          c.env,
-          sub,
-          validClientId,
-          tenantId,
-          accountAuthCtx.coreAdapter
-        );
+        const existingConsent = await findCurrentConsent(accountAuthCtx.coreAdapter);
 
         if (!existingConsent) {
           // No consent record exists
@@ -4313,7 +4374,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   // Consent Management Check (SAP CDC-like consent items)
   // Only when consent_management_enabled and not already confirmed
   // ==========================================================================
-  if (_consent_confirmed !== 'true') {
+  if (!consentConfirmed) {
     try {
       const tenantId = getTenantIdFromContext(c);
 
@@ -4737,6 +4798,12 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
           sessionId, // Internal OP session key for logout target lookup
           authorizationDetails: authorization_details, // RFC 9396 RAR
           resource: authorizationGrantResource,
+          // The generation the consent was approved under (the current one, checked above), or the
+          // one read before the consent was checked here.
+          consentGeneration:
+            consentConfirmed && confirmedConsentGeneration !== undefined
+              ? confirmedConsentGeneration
+              : consentWithdrawal.generation,
         })
       );
       log.info('Stored authorization code', {

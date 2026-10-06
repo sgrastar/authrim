@@ -7,6 +7,9 @@ const mocks = vi.hoisted(() => ({
   isMockAuthEnabled: vi.fn(),
   storeFetch: vi.fn(),
   limiterFetch: vi.fn(),
+  resolveAccount: vi.fn(),
+  // The approving user's consent withdrawals for the client, as its account database holds them.
+  withdrawalRow: vi.fn(),
   logger: {
     warn: vi.fn(),
     error: vi.fn(),
@@ -23,6 +26,22 @@ vi.mock('@authrim/ar-lib-core', async () => {
     ...actual,
     isMockAuthEnabled: mocks.isMockAuthEnabled,
     getLogger: () => mocks.logger,
+    resolveAccountDataContextFromHono: mocks.resolveAccount,
+    createAccountAuthContextFromHono: () => ({
+      coreAdapter: {
+        query: vi.fn(),
+        queryOne: async (sql: string, params: unknown[]) =>
+          sql.includes('FROM oauth_client_consent_revocations')
+            ? mocks.withdrawalRow(params)
+            : null,
+        execute: vi.fn(),
+        transaction: vi.fn(),
+        batch: vi.fn(),
+        isHealthy: vi.fn(),
+        getType: () => 'mock',
+        close: vi.fn(),
+      },
+    }),
   };
 });
 
@@ -98,6 +117,8 @@ describe('device verification API branch security', () => {
       email: 'user@example.com',
     });
     mocks.isMockAuthEnabled.mockResolvedValue(false);
+    mocks.resolveAccount.mockResolvedValue({ tenantId: 'tenant-a' });
+    mocks.withdrawalRow.mockResolvedValue(null);
     mocks.storeFetch.mockImplementation(async (input: Request) => {
       const path = new URL(input.url).pathname;
       if (path === '/get-by-user-code') return Response.json(pendingMetadata());
@@ -193,11 +214,66 @@ describe('device verification API branch security', () => {
       user_code: 'WDJB-MJHT',
       user_id: 'user-1',
       sub: 'subject-1',
+      consent_generation: 0,
     });
     expect(mocks.logger.warn).toHaveBeenCalledWith(
       'Ignoring caller-supplied device approval subject',
       expect.anything()
     );
+  });
+
+  describe('after the user withdrew the client consent', () => {
+    const requestedAt = Date.now() - 10_000;
+
+    function approveCall() {
+      return mocks.storeFetch.mock.calls
+        .map(([input]) => input as Request)
+        .find((input) => new URL(input.url).pathname === '/approve');
+    }
+
+    beforeEach(() => {
+      mocks.storeFetch.mockImplementation(async (input: Request) => {
+        const path = new URL(input.url).pathname;
+        if (path === '/get-by-user-code') {
+          return Response.json(pendingMetadata({ created_at: requestedAt }));
+        }
+        if (path === '/approve') return Response.json({ success: true });
+        return Response.json({ error: 'not_found' }, { status: 404 });
+      });
+    });
+
+    it('refuses to approve a code requested before the withdrawal: the device starts again', async () => {
+      mocks.withdrawalRow.mockResolvedValue({ generation: 1, revoked_at: requestedAt + 1 });
+
+      const response = await request({ user_code: 'WDJB-MJHT' });
+
+      expect(response.status).toBe(400);
+      await expect(response.json()).resolves.toMatchObject({
+        success: false,
+        error: 'consent_withdrawn',
+        error_description: expect.stringContaining('Start again'),
+      });
+      expect(approveCall()).toBeUndefined();
+      expect(mocks.withdrawalRow).toHaveBeenCalledWith(['tenant-a', 'subject-1', 'client-1']);
+    });
+
+    it('approves a code requested after the withdrawal under the current generation', async () => {
+      mocks.withdrawalRow.mockResolvedValue({ generation: 2, revoked_at: requestedAt - 1 });
+
+      const response = await request({ user_code: 'WDJB-MJHT' });
+
+      expect(response.status).toBe(200);
+      await expect(approveCall()?.json()).resolves.toMatchObject({ consent_generation: 2 });
+    });
+
+    it('leaves the code pending when the withdrawals cannot be read', async () => {
+      mocks.withdrawalRow.mockRejectedValue(new Error('account database unavailable'));
+
+      const response = await request({ user_code: 'WDJB-MJHT' });
+
+      expect(response.status).toBe(503);
+      expect(approveCall()).toBeUndefined();
+    });
   });
 
   it('allows generated development subjects only when mock authentication is enabled', async () => {

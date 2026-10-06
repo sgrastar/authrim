@@ -94,6 +94,9 @@ describe('tenant backup dataset registry coverage', () => {
       ['core', 'account_legal_hold_states'],
       ['core', 'webhook_deliveries'],
       ['core', 'account_webhook_outbox'],
+      // Restored with the device secrets and consents it refuses or ends.
+      ['core', 'device_secrets'],
+      ['core', 'oauth_client_consent_revocations'],
     ]) {
       expect(
         TENANT_DATASET_POLICIES.find((entry) => entry.family === family && entry.table === table)

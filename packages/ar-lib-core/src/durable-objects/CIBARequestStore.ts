@@ -238,14 +238,23 @@ export class CIBARequestStore {
 
       // Approve CIBA request (user approved the request)
       if (path === '/approve' && request.method === 'POST') {
-        const { auth_req_id, user_id, sub, nonce, authenticated_acr } = (await request.json()) as {
-          auth_req_id: string;
-          user_id: string;
-          sub: string;
-          nonce?: string;
-          authenticated_acr?: string;
-        };
-        await this.approveCIBARequest(auth_req_id, user_id, sub, nonce, authenticated_acr);
+        const { auth_req_id, user_id, sub, nonce, authenticated_acr, consent_generation } =
+          (await request.json()) as {
+            auth_req_id: string;
+            user_id: string;
+            sub: string;
+            nonce?: string;
+            authenticated_acr?: string;
+            consent_generation?: number;
+          };
+        await this.approveCIBARequest(
+          auth_req_id,
+          user_id,
+          sub,
+          nonce,
+          authenticated_acr,
+          consent_generation
+        );
         return new Response(JSON.stringify({ success: true }), {
           headers: { 'Content-Type': 'application/json' },
         });
@@ -468,8 +477,15 @@ export class CIBARequestStore {
     userId: string,
     sub: string,
     nonce?: string,
-    authenticatedAcr?: string
+    authenticatedAcr?: string,
+    consentGeneration?: number
   ): Promise<void> {
+    if (
+      consentGeneration !== undefined &&
+      (!Number.isSafeInteger(consentGeneration) || consentGeneration < 0)
+    ) {
+      throw new Error('Invalid consent generation');
+    }
     const metadata = await this.getByAuthReqId(authReqId);
 
     if (!metadata) {
@@ -493,6 +509,9 @@ export class CIBARequestStore {
     }
     if (authenticatedAcr) {
       metadata.authenticated_acr = authenticatedAcr;
+    }
+    if (consentGeneration !== undefined) {
+      metadata.consent_generation = consentGeneration;
     }
 
     // Update in memory

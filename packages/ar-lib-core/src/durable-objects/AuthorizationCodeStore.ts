@@ -64,6 +64,7 @@ export interface AuthorizationCode {
   agentGrantId?: string;
   agentGrantGeneration?: number;
   agentConsentVersion?: number;
+  consentGeneration?: number; // The user's consent withdrawal generation for the client
   used: boolean;
   expiresAt: number;
   createdAt: number;
@@ -124,6 +125,8 @@ export interface StoreCodeRequest {
   agentGrantId?: string;
   agentGrantGeneration?: number;
   agentConsentVersion?: number;
+  /** The user's consent withdrawal generation for the client when the code was granted. */
+  consentGeneration?: number;
 }
 
 function assertValidTenantId(tenantId: unknown): asserts tenantId is string {
@@ -180,6 +183,8 @@ export interface ConsumeCodeResponse {
   agentGrantId?: string;
   agentGrantGeneration?: number;
   agentConsentVersion?: number;
+  consentGeneration?: number;
+  createdAt?: number; // When the code was issued (ms): a consent withdrawn since refuses it
   // Present when replay attack is detected - contains JTIs to revoke
   replayAttack?: {
     accessTokenJti?: string;
@@ -513,6 +518,12 @@ export class AuthorizationCodeStore extends DurableObject<Env> {
   async storeCode(request: StoreCodeRequest): Promise<{ success: boolean; expiresAt: number }> {
     await this.initializeState();
     assertValidTenantId(request.tenantId);
+    if (
+      request.consentGeneration !== undefined &&
+      (!Number.isSafeInteger(request.consentGeneration) || request.consentGeneration < 0)
+    ) {
+      throw new Error('invalid_request: Invalid consent generation');
+    }
 
     // DDoS protection: Limit codes per user
     const userCodeCount = this.countUserCodes(request.userId);
@@ -552,6 +563,9 @@ export class AuthorizationCodeStore extends DurableObject<Env> {
       agentGrantId: request.agentGrantId,
       agentGrantGeneration: request.agentGrantGeneration,
       agentConsentVersion: request.agentConsentVersion,
+      ...(request.consentGeneration !== undefined
+        ? { consentGeneration: request.consentGeneration }
+        : {}),
       used: false,
       expiresAt: now + positiveIntegerOr(request.ttlSeconds, this.CODE_TTL) * 1000,
       createdAt: now,
@@ -780,6 +794,8 @@ export class AuthorizationCodeStore extends DurableObject<Env> {
         agentGrantId: stored.agentGrantId,
         agentGrantGeneration: stored.agentGrantGeneration,
         agentConsentVersion: stored.agentConsentVersion,
+        consentGeneration: stored.consentGeneration,
+        createdAt: stored.createdAt,
       };
     } finally {
       this.consumingCodes.delete(request.code);

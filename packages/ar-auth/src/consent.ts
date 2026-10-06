@@ -61,6 +61,8 @@ import {
   processConsentItemDecisions,
   hashIpAddress,
   upsertOAuthClientConsent,
+  findOAuthClientConsentRevocation,
+  isOAuthClientConsentGenerationChanged,
   parseClaimsRequest,
   // Logger
   getLogger,
@@ -172,7 +174,9 @@ async function createConsentConfirmationChallenge(
   sessionId: string,
   authorizationRequest: Record<string, unknown>,
   /** A re-authentication /authorize completed before sending the user here; it hands it back. */
-  confirmedReauth?: unknown
+  confirmedReauth: unknown,
+  /** The user's consent withdrawal generation for the client when the consent was approved. */
+  consentGeneration: number
 ): Promise<{ id: string; browserBinding: string }> {
   const confirmationId = crypto.randomUUID();
   const browserBinding = generateSecureRandomString(32);
@@ -190,6 +194,7 @@ async function createConsentConfirmationChallenge(
       browserBinding,
       authorization_request: authorizationRequest,
       ...(confirmedReauth !== undefined ? { confirmed_reauth: confirmedReauth } : {}),
+      consent_generation: consentGeneration,
     },
   });
   return { id: confirmationId, browserBinding };
@@ -687,6 +692,42 @@ export async function consentPostHandler(c: Context<{ Bindings: Env }>) {
     if (sessionError) return sessionError;
     const consentSessionId = pendingChallenge.metadata!.session_id as string;
 
+    // The consent withdrawal generation an approval is given under, read before the challenge is
+    // consumed so a failed read leaves the consent screen usable. The consent is recorded only
+    // while it is still current, and /authorize issues the code under it.
+    let consentGeneration = 0;
+    if (approved) {
+      const pendingClientId = pendingChallenge.metadata?.client_id;
+      if (typeof pendingClientId !== 'string' || pendingClientId.length === 0) {
+        return c.json(
+          { error: 'invalid_request', error_description: 'Invalid or expired challenge' },
+          400
+        );
+      }
+      try {
+        await resolveAccountDataContextFromHono(c, pendingChallenge.userId);
+        consentGeneration = (
+          await findOAuthClientConsentRevocation(
+            createAccountAuthContextFromHono(c, getTenantIdFromContext(c)).coreAdapter,
+            {
+              tenantId: getTenantIdFromContext(c),
+              userId: pendingChallenge.userId,
+              clientId: pendingClientId,
+            }
+          )
+        ).generation;
+      } catch (error) {
+        log.error('Failed to read consent withdrawals', { action: 'grant' }, error as Error);
+        return c.json(
+          {
+            error: 'temporarily_unavailable',
+            error_description: 'Consent state is temporarily unavailable',
+          },
+          503
+        );
+      }
+    }
+
     let consumedChallengeData: {
       userId: string;
       metadata?: ConsentChallengeMetadata;
@@ -956,19 +997,35 @@ export async function consentPostHandler(c: Context<{ Bindings: Env }>) {
     const privacyPolicyVersion = acknowledged_policy_versions?.privacy_policy || null;
     const tosVersion = acknowledged_policy_versions?.terms_of_service || null;
 
-    await upsertOAuthClientConsent(authCtx.coreAdapter, {
-      consentId,
-      userId,
-      clientId: client_id,
-      tenantId,
-      scope: effectiveScope,
-      selectedScopesJson,
-      grantedAt: now,
-      expiresAt,
-      privacyPolicyVersion,
-      tosVersion,
-      now,
-    });
+    try {
+      await upsertOAuthClientConsent(authCtx.coreAdapter, {
+        consentId,
+        userId,
+        clientId: client_id,
+        tenantId,
+        scope: effectiveScope,
+        selectedScopesJson,
+        grantedAt: now,
+        expiresAt,
+        privacyPolicyVersion,
+        tosVersion,
+        now,
+        consentGeneration,
+      });
+    } catch (error) {
+      // Withdrawn while the user was approving: nothing was recorded; approve again.
+      if (isOAuthClientConsentGenerationChanged(error)) {
+        return c.json(
+          {
+            error: 'consent_withdrawn',
+            error_description:
+              'Consent for this application changed while it was being approved. Start again.',
+          },
+          409
+        );
+      }
+      throw error;
+    }
 
     // Invalidate consent cache so next check reflects updated consent
     await invalidateConsentCache(c.env, userId, tenantId, client_id);
@@ -1107,7 +1164,8 @@ export async function consentPostHandler(c: Context<{ Bindings: Env }>) {
       userId,
       consentSessionId,
       authorizationRequest,
-      authorizationMetadata.confirmed_reauth
+      authorizationMetadata.confirmed_reauth,
+      consentGeneration
     );
     const redirectUrl = buildAuthorizeContinuationUrl(
       authorizationMetadata,

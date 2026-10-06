@@ -63,7 +63,8 @@ const TABLE_GROUPS: Partial<
       guest_account_lifecycle guest_account_upgrades guest_deletion_audit_outbox guest_devices
       idempotency_keys identity_accounts identity_bindings identity_resolution_candidates
       identity_subjects issued_credentials launcher_favorites legal_holds
-      notification_delivery_intents oauth_client_consents passkeys plugin_account_metadata
+      notification_delivery_intents oauth_client_consent_revocations oauth_client_consents passkeys
+      plugin_account_metadata
       plugin_account_metadata_mutations plugin_hook_outbox profile_attribute_values
       profiles provisioning_assignment_ownership relationships role_assignments
       service_group_inputs service_group_manual service_group_write_boundaries structured_attribute_values subject_account_links

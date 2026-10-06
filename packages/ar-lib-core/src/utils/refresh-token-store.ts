@@ -111,6 +111,12 @@ export async function getRefreshToken(
       scope: result.family.allowed_scope || '',
       resource_aud: result.family.resource_aud,
       ...(result.family.auth_context && { auth_context: result.family.auth_context }),
+      ...(typeof result.family.created_at === 'number' && {
+        family_created_at: result.family.created_at,
+      }),
+      ...(typeof result.family.consent_generation === 'number' && {
+        family_consent_generation: result.family.consent_generation,
+      }),
       iat: Math.floor(Date.now() / 1000),
       exp: Math.floor((result.family.expires_at || Date.now()) / 1000),
       familyId: `${userId}:${clientId}`,

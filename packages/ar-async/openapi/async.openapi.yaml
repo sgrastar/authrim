@@ -54,11 +54,19 @@ paths:
       tags:
         - Device Authorization
       summary: Verify or approve a device authorization request.
+      description: >-
+        A code requested before the user last withdrew the client's consent cannot be approved:
+        400 consent_withdrawn, and the device has to start again. Consent state that cannot be
+        read returns 503 temporarily_unavailable and leaves the code pending.
       requestBody:
         $ref: '#/components/requestBodies/DeviceVerify'
       responses:
         '200':
           $ref: '#/components/responses/DeviceVerify'
+        '400':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
   /bc-authorize:
     post:
       tags:
@@ -119,6 +127,10 @@ paths:
       tags:
         - CIBA
       summary: Approve a CIBA request.
+      description: >-
+        A request made before the user last withdrew the client's consent cannot be approved: 400
+        consent_withdrawn, and the client has to start again. Consent state that cannot be read
+        returns 503 temporarily_unavailable and leaves the request pending.
       security:
         - sessionCookie: []
         - sessionHeader: []
@@ -127,6 +139,10 @@ paths:
       responses:
         '200':
           $ref: '#/components/responses/CibaDecision'
+        '400':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
         '401':
           $ref: '#/components/responses/CibaAuthenticationRequired'
         '403':

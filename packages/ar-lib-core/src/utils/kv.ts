@@ -576,6 +576,8 @@ export interface CachedConsent {
   scope: string;
   granted_at: number;
   expires_at: number | null;
+  /** The consent withdrawal generation it was given under; absent in entries cached before. */
+  consent_generation?: number;
 }
 
 /**
@@ -596,7 +598,12 @@ export async function getCachedConsent(
   userId: string,
   clientId: string,
   tenantId: string,
-  coreDbSource: DatabaseSource
+  coreDbSource: DatabaseSource,
+  /**
+   * `refresh` skips the cached entry and replaces it with the database's answer: for an entry the
+   * caller knows is stale (e.g. cached before the consent was withdrawn).
+   */
+  options: { refresh?: boolean } = {}
 ): Promise<CachedConsent | null> {
   // If CONSENT_CACHE is not configured, fall back to D1 directly
   if (!env.CONSENT_CACHE) {
@@ -606,7 +613,7 @@ export async function getCachedConsent(
   const cacheKey = buildKVKey('consent', `${userId}:${clientId}`, tenantId);
 
   // Step 1: Try CONSENT_CACHE (Read-Through Cache)
-  const cached = await env.CONSENT_CACHE.get(cacheKey);
+  const cached = options.refresh ? null : await env.CONSENT_CACHE.get(cacheKey);
 
   if (cached) {
     try {
@@ -625,6 +632,12 @@ export async function getCachedConsent(
   const consent = await getConsentFromDatabase(userId, clientId, tenantId, coreDbSource);
 
   if (!consent) {
+    if (options.refresh) {
+      // Misses are not cached: drop the stale entry instead.
+      await env.CONSENT_CACHE.delete(cacheKey).catch(() => {
+        log.warn('Failed to delete stale consent cache');
+      });
+    }
     return null;
   }
 
@@ -660,8 +673,9 @@ async function getConsentFromDatabase(
     scope: string;
     granted_at: number;
     expires_at: number | null;
+    consent_generation: number | string | null;
   }>(
-    `SELECT scope, granted_at, expires_at
+    `SELECT scope, granted_at, expires_at, consent_generation
        FROM oauth_client_consents
       WHERE tenant_id = ? AND user_id = ? AND client_id = ?`,
     [tenantId, userId, clientId]
@@ -675,6 +689,7 @@ async function getConsentFromDatabase(
     scope: result.scope,
     granted_at: result.granted_at,
     expires_at: result.expires_at,
+    consent_generation: Number(result.consent_generation ?? 0),
   };
 }
 

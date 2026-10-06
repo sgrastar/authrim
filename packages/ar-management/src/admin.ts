@@ -6,11 +6,11 @@
 import { Context } from 'hono';
 import type { Env, Session } from '@authrim/ar-lib-core';
 import { getCanonicalAccountStatus, transitionAccountLifecycle } from './account-status';
+import { withdrawOAuthClientConsent } from './oauth-client-consent-withdrawal';
 import { getRefreshTokenRotatorStubByJti } from '@authrim/ar-lib-core/services/refresh-token-family-store';
 import {
   invalidateConsentCache,
   listOAuthClientConsentsWithClients,
-  revokeToken,
   getSessionStoreForNewSession,
   getChallengeStoreByChallengeId,
   getTenantIdFromContext,
@@ -2565,35 +2565,19 @@ export async function adminUserConsentRevokeHandler(c: Context<{ Bindings: Env }
 
     const consent = existingConsent[0];
     const previousScopes = consent.scope.split(' ');
-    const now = Date.now();
 
-    // Delete consent
-    await authCtx.coreAdapter.execute(
-      'DELETE FROM oauth_client_consents WHERE tenant_id = ? AND user_id = ? AND client_id = ?',
-      [tenantId, userId, clientId]
-    );
-
-    // Record in consent history
-    const historyId = crypto.randomUUID();
-    await authCtx.coreAdapter.execute(
-      `INSERT INTO consent_history (id, tenant_id, user_id, client_id, action, scopes_before, scopes_after, created_at)
-       VALUES (?, ?, ?, ?, 'revoked', ?, NULL, ?)`,
-      [historyId, tenantId, userId, clientId, JSON.stringify(previousScopes), now]
+    // Ends the tokens issued under the consent, then deletes it; a failure leaves the consent in
+    // place so that a retry can complete the withdrawal.
+    const { revokedAt: now, refreshTokenFamilies: familyCount } = await withdrawOAuthClientConsent(
+      c.env,
+      authCtx.coreAdapter,
+      { tenantId, userId, clientId, previousScopes }
     );
 
     // Invalidate consent cache
     await invalidateConsentCache(c.env, userId, tenantId, clientId);
 
     const log = getLogger(c).module('ADMIN');
-    // Add to revocation list
-    try {
-      const revocationKey = `consent_revoked:${userId}:${clientId}`;
-      const revocationTTL = 86400 * 90;
-      await revokeToken(c.env, revocationKey, revocationTTL, undefined, tenantId);
-    } catch (error) {
-      log.warn('Token revocation warning', { action: 'token_revocation', userId, clientId });
-    }
-
     // Publish consent.revoked event
     publishEvent(c, {
       type: CONSENT_EVENTS.REVOKED,
@@ -2614,7 +2598,12 @@ export async function adminUserConsentRevokeHandler(c: Context<{ Bindings: Env }
       );
     });
 
-    log.info('Revoked consent', { action: 'consent_revoke', userId, clientId });
+    log.info('Revoked consent', {
+      action: 'consent_revoke',
+      userId,
+      clientId,
+      refreshTokenFamilies: familyCount,
+    });
 
     await createAuditLogFromContext(c, 'consent.revoked', 'user', userId, {
       client_id: clientId,

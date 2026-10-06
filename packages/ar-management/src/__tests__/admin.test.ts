@@ -868,9 +868,9 @@ function createRoutedAccountDatabases(userId: string) {
   const accountCoreSqls: string[] = [];
   const accountCoreResults: {
     first: Array<[string, unknown]>;
-    all: Array<[string, unknown[]]>;
+    all: Array<[string, unknown[] | ((params: unknown[]) => unknown[])]>;
   } = { first: [], all: [] };
-  const accountCoreDb = createSqlAwareMockDB(async (sql, _params, op) => {
+  const accountCoreDb = createSqlAwareMockDB(async (sql, params, op) => {
     accountCoreSqls.push(sql);
     if (op === 'first') {
       if (sql.includes('FROM identity_accounts WHERE legacy_user_id = ?')) {
@@ -888,10 +888,16 @@ function createRoutedAccountDatabases(userId: string) {
       return accountCoreResults.first.find(([fragment]) => sql.includes(fragment))?.[1];
     }
     if (op === 'all') {
-      return accountCoreResults.all.find(([fragment]) => sql.includes(fragment))?.[1] ?? [];
+      const rows = accountCoreResults.all.find(([fragment]) => sql.includes(fragment))?.[1] ?? [];
+      return typeof rows === 'function' ? rows(params) : rows;
     }
     return { success: true, meta: { changes: 1 } };
   });
+  // A batch runs each statement through the handler, so its SQL is recorded too.
+  (accountCoreDb as unknown as { batch: unknown }).batch = vi.fn(
+    async (statements: Array<{ run(): Promise<unknown> }>) =>
+      Promise.all(statements.map((statement) => statement.run()))
+  );
   const accountPiiSqls: string[] = [];
   const accountPiiDb = createSqlAwareMockDB(async (sql, _params, op) => {
     accountPiiSqls.push(sql);
@@ -910,7 +916,7 @@ function createRoutedAccountDatabases(userId: string) {
   // Audit logging legitimately writes to the metadata/admin databases; user rows must not.
   const metadataUserSqls = () =>
     metadataSqls.filter((sql) =>
-      /identity_accounts|legal_holds|users_pii_tombstone|identity_sensitive_values|guest_account_lifecycle|oauth_client_consents|consent_history/.test(
+      /identity_accounts|legal_holds|users_pii_tombstone|identity_sensitive_values|guest_account_lifecycle|oauth_client_consents|consent_history|user_token_families|oauth_client_consent_revocations/.test(
         sql
       )
     );
@@ -3390,6 +3396,117 @@ describe('Admin API Handlers', () => {
         expect.stringContaining('INSERT INTO consent_history')
       );
       expect(dbs.metadataUserSqls()).toEqual([]);
+    });
+
+    it("revokes the client's refresh-token families in the account database before the consent", async () => {
+      const userId = 'user-routed-revoke';
+      const dbs = createRoutedAccountDatabases(userId);
+      const families = [
+        { jti: 'g1:wnam:3:rt_a1', client_id: 'client-a', generation: 1 },
+        { jti: 'g1:wnam:5:rt_a2', client_id: 'client-a', generation: 1 },
+        { jti: 'g1:wnam:3:rt_b1', client_id: 'client-b', generation: 1 },
+      ];
+      dbs.accountCoreResults.all.push(
+        ['FROM oauth_client_consents', [{ id: 'consent-1', scope: 'openid profile' }]],
+        [
+          'FROM user_token_families',
+          (params) => families.filter((family) => params.includes(family.client_id)),
+        ]
+      );
+      resolveAccountDataContext.mockImplementation(async (c: any) => dbs.attachAccount(c));
+      const revokedInstances: string[] = [];
+      const revokeFamilyRpc = vi.fn(async (_user: string, _reason?: string) => {
+        // The consent is still there while its refresh tokens are revoked.
+        expect(dbs.accountCoreSqls).not.toContainEqual(
+          expect.stringContaining('DELETE FROM oauth_client_consents')
+        );
+      });
+      const tokenRevocationStore = { idFromName: vi.fn(), get: vi.fn() };
+      const c = createMockContext({
+        method: 'DELETE',
+        params: { userId, clientId: 'client-a' },
+        db: dbs.metadataDb,
+        dbPII: dbs.metadataPiiDb,
+        envOverrides: {
+          REFRESH_TOKEN_ROTATOR: {
+            idFromName: vi.fn((name: string) => name),
+            get: vi.fn((name: string) => ({
+              revokeFamilyRpc: async (user: string, reason?: string) => {
+                await revokeFamilyRpc(user, reason);
+                revokedInstances.push(name);
+              },
+            })),
+          },
+          TOKEN_REVOCATION_STORE: tokenRevocationStore,
+        } as unknown as Partial<Env>,
+      });
+
+      const response = await adminUserConsentRevokeHandler(c);
+
+      expect(response.status).toBe(200);
+      expect(revokeFamilyRpc).toHaveBeenCalledTimes(2);
+      expect(revokeFamilyRpc).toHaveBeenCalledWith(userId, 'consent_revoked');
+      expect(revokedInstances.sort()).toEqual([
+        'tenant:default:refresh-rotator:client-a:v1:shard-3',
+        'tenant:default:refresh-rotator:client-a:v1:shard-5',
+      ]);
+      expect(dbs.accountCoreSqls).toContainEqual(
+        expect.stringContaining('UPDATE user_token_families')
+      );
+      expect(dbs.accountCoreSqls).toContainEqual(
+        expect.stringContaining('DELETE FROM oauth_client_consents')
+      );
+      // The withdrawal is recorded before the families are revoked and again with the deletion.
+      const withdrawals = dbs.accountCoreSqls.flatMap((sql, index) =>
+        sql.includes('INSERT INTO oauth_client_consent_revocations') ? [index] : []
+      );
+      expect(withdrawals).toHaveLength(2);
+      expect(withdrawals[0]).toBeLessThan(
+        dbs.accountCoreSqls.findIndex((sql) => sql.includes('FROM user_token_families'))
+      );
+      expect(withdrawals[1]).toBeGreaterThan(
+        dbs.accountCoreSqls.findIndex((sql) => sql.includes('DELETE FROM oauth_client_consents'))
+      );
+      expect(dbs.metadataUserSqls()).toEqual([]);
+      // No unread consent_revoked marker is written any more.
+      expect(tokenRevocationStore.get).not.toHaveBeenCalled();
+    });
+
+    it('keeps the consent and fails when a refresh-token family cannot be revoked', async () => {
+      const userId = 'user-routed-revoke';
+      const dbs = createRoutedAccountDatabases(userId);
+      dbs.accountCoreResults.all.push(
+        ['FROM oauth_client_consents', [{ id: 'consent-1', scope: 'openid profile' }]],
+        ['FROM user_token_families', [{ jti: 'g1:wnam:3:rt_a1', client_id: 'client-a' }]]
+      );
+      resolveAccountDataContext.mockImplementation(async (c: any) => dbs.attachAccount(c));
+      const c = createMockContext({
+        method: 'DELETE',
+        params: { userId, clientId: 'client-a' },
+        db: dbs.metadataDb,
+        dbPII: dbs.metadataPiiDb,
+        envOverrides: {
+          REFRESH_TOKEN_ROTATOR: {
+            idFromName: vi.fn((name: string) => name),
+            get: vi.fn(() => ({
+              revokeFamilyRpc: vi.fn().mockRejectedValue(new Error('rotator unavailable')),
+            })),
+          },
+        } as unknown as Partial<Env>,
+      });
+
+      const response = await adminUserConsentRevokeHandler(c);
+
+      expect(response.status).toBe(500);
+      expect(dbs.accountCoreSqls).not.toContainEqual(
+        expect.stringContaining('DELETE FROM oauth_client_consents')
+      );
+      expect(dbs.accountCoreSqls).not.toContainEqual(
+        expect.stringContaining('INSERT INTO consent_history')
+      );
+      expect(dbs.accountCoreSqls).not.toContainEqual(
+        expect.stringContaining('UPDATE user_token_families')
+      );
     });
 
     it('answers 404 when the user has no account route', async () => {

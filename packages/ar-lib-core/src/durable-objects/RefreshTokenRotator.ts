@@ -110,6 +110,7 @@ export interface TokenFamilyV2 {
   expires_at: number; // When the family expires (ms): moved on by a sliding rotation
   created_at?: number; // When the family was first issued (ms): the start of the absolute lifetime
   first_jti?: string; // The JWT ID the family was issued with: its row in the relational family index
+  consent_generation?: number; // The consent withdrawal generation the family was granted under
   user_id: string; // For tenant boundary enforcement
   client_id: string; // For scope validation
   allowed_scope: string; // Prevent scope amplification
@@ -129,6 +130,8 @@ export interface CreateFamilyRequestV2 {
   tenantId: string;
   resourceAudience?: string | string[];
   authContext?: RefreshTokenAuthContext;
+  /** The user's consent withdrawal generation for the client when the grant was given. */
+  consentGeneration?: number;
 }
 
 /**
@@ -367,6 +370,22 @@ export class RefreshTokenRotator extends DurableObject<Env> {
   }
 
   /**
+   * RPC: Revoke the user's family only while it is the one issued with `firstJti`, so a family
+   * issued since for the same user and client is left alone. Returns whether it was revoked.
+   */
+  async revokeFamilyIfFirstJtiRpc(
+    userId: string,
+    firstJti: string,
+    reason?: string
+  ): Promise<boolean> {
+    await this.initializeState();
+    const family = await this.loadFamily(userId);
+    if (!family || family.first_jti !== firstJti) return false;
+    await this.revokeFamily(userId, reason);
+    return true;
+  }
+
+  /**
    * RPC: Get family info
    */
   async getFamilyRpc(userId: string): Promise<TokenFamilyV2 | null> {
@@ -487,7 +506,9 @@ export class RefreshTokenRotator extends DurableObject<Env> {
       !Number.isFinite(family.expires_at) ||
       (family.created_at !== undefined && !Number.isFinite(family.created_at)) ||
       (family.first_jti !== undefined &&
-        (typeof family.first_jti !== 'string' || !family.first_jti))
+        (typeof family.first_jti !== 'string' || !family.first_jti)) ||
+      (family.consent_generation !== undefined &&
+        (!Number.isSafeInteger(family.consent_generation) || family.consent_generation < 0))
     ) {
       throw new Error('refresh_token_family_storage_invalid');
     }
@@ -596,7 +617,9 @@ export class RefreshTokenRotator extends DurableObject<Env> {
       !request.userId.trim() ||
       !request.clientId.trim() ||
       !Number.isSafeInteger(request.ttl) ||
-      request.ttl < 1
+      request.ttl < 1 ||
+      (request.consentGeneration !== undefined &&
+        (!Number.isSafeInteger(request.consentGeneration) || request.consentGeneration < 0))
     ) {
       throw new Error('invalid_request: Invalid refresh token family input');
     }
@@ -648,6 +671,9 @@ export class RefreshTokenRotator extends DurableObject<Env> {
       allowed_scope: request.scope,
       ...(resourceAudience && { resource_aud: resourceAudience }),
       ...(authContext && { auth_context: authContext }),
+      ...(request.consentGeneration !== undefined && {
+        consent_generation: request.consentGeneration,
+      }),
     };
 
     const writes: Record<string, unknown> = {

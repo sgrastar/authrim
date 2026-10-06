@@ -655,6 +655,10 @@ export interface RefreshTokenData {
   familyId?: string; // Refresh token family ID for token rotation
   /** How the user authenticated for the grant that began the family (RefreshTokenAuthContext). */
   auth_context?: import('../durable-objects/RefreshTokenRotator').RefreshTokenAuthContext;
+  /** When the family was first issued (ms); absent for a family recorded before it was kept. */
+  family_created_at?: number;
+  /** The consent withdrawal generation the family was granted under; absent for older families. */
+  family_consent_generation?: number;
 }
 
 /**
@@ -827,6 +831,7 @@ export interface DeviceCodeMetadata {
   poll_count?: number; // Number of times the device has polled
   user_id?: string; // Set when user approves the device
   sub?: string; // Subject (user identifier) - set when approved
+  consent_generation?: number; // The user's consent withdrawal generation at approval
   // Token issuance tracking (RFC 8628 token replay prevention)
   token_issued?: boolean; // True if tokens have been issued
   token_issued_at?: number; // Timestamp when tokens were issued
@@ -888,6 +893,7 @@ export interface CIBARequestMetadata {
   sub?: string; // Subject (user identifier) - set when approved
   nonce?: string; // Nonce for ID token (optional)
   authenticated_acr?: string; // Authentication context established by the approval step
+  consent_generation?: number; // The user's consent withdrawal generation at approval
   // Token issuance tracking
   token_issued?: boolean; // True if tokens have been issued
   token_issued_at?: number; // Timestamp when tokens were issued

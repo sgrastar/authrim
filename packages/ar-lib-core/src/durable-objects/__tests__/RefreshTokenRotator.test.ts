@@ -147,6 +147,44 @@ describe('RefreshTokenRotator V2', () => {
     vi.useRealTimers();
   });
 
+  describe('consent generation and revocation by family identity', () => {
+    const create = (jti: string, consentGeneration?: number) =>
+      rotator.createFamilyRpc({
+        jti,
+        userId: 'user-1',
+        clientId: 'client_1',
+        tenantId: 'default',
+        scope: 'openid',
+        ttl: 2592000,
+        generation: 1,
+        shardIndex: 0,
+        ...(consentGeneration !== undefined ? { consentGeneration } : {}),
+      });
+
+    it('records the consent generation the family was granted under', async () => {
+      await create('first-a', 3);
+
+      expect(await rotator.getFamilyRpc('user-1')).toMatchObject({ consent_generation: 3 });
+      await expect(create('first-b', -1)).rejects.toThrow('Invalid refresh token family input');
+    });
+
+    it('revokes the family only while it is the one issued with that JWT ID', async () => {
+      await create('first-a');
+      // A family issued since for the same user replaces it.
+      await create('first-b');
+
+      expect(await rotator.revokeFamilyIfFirstJtiRpc('user-1', 'first-a', 'consent_revoked')).toBe(
+        false
+      );
+      expect(await rotator.getFamilyRpc('user-1')).toMatchObject({ first_jti: 'first-b' });
+
+      expect(await rotator.revokeFamilyIfFirstJtiRpc('user-1', 'first-b', 'consent_revoked')).toBe(
+        true
+      );
+      expect(await rotator.getFamilyRpc('user-1')).toBeNull();
+    });
+  });
+
   describe('Token Family Creation', () => {
     it('does not enumerate all families on cold start and lazily restores one family', async () => {
       await rotator.createFamilyRpc({

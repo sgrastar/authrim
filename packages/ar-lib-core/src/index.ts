@@ -265,6 +265,7 @@ export * from './services/account-provisioning';
 export * from './services/device-secret-route';
 export * from './services/consent-store';
 export * from './services/refresh-token-family-index';
+export * from './services/oauth-client-consent-revocation';
 export * from './services/object-artifact-crypto';
 export * from './services/object-artifact-store';
 export * from './services/notification-intent-envelope';

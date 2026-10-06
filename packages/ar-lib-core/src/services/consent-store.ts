@@ -12,6 +12,29 @@ export interface UpsertOAuthClientConsentInput {
   privacyPolicyVersion?: string | null;
   tosVersion?: string | null;
   now: number;
+  /**
+   * The user's consent withdrawal generation for the client the consent is given under, read
+   * beforehand. The consent is written only while it is still current (one atomic statement), so
+   * an approval racing a withdrawal records nothing.
+   */
+  consentGeneration: number;
+}
+
+/** Thrown when a withdrawal moved the generation on before the consent could be recorded. */
+export const OAUTH_CLIENT_CONSENT_GENERATION_CHANGED = 'oauth_client_consent_generation_changed';
+
+export function isOAuthClientConsentGenerationChanged(error: unknown): boolean {
+  return error instanceof Error && error.message === OAUTH_CLIENT_CONSENT_GENERATION_CHANGED;
+}
+
+/** The condition that the user's withdrawal generation for the client is still `?`. */
+const CURRENT_GENERATION_CONDITION = `COALESCE((
+         SELECT generation FROM oauth_client_consent_revocations
+          WHERE tenant_id = ? AND user_id = ? AND client_id = ?
+       ), 0) = ?`;
+
+function currentGenerationParams(input: UpsertOAuthClientConsentInput): unknown[] {
+  return [input.tenantId, input.userId, input.clientId, input.consentGeneration];
 }
 
 export interface UpsertOAuthClientConsentResult {
@@ -71,7 +94,7 @@ async function updateOAuthClientConsent(
   }
 ): Promise<UpsertOAuthClientConsentResult> {
   const nextConsentVersion = (existing.consent_version ?? 0) + 1;
-  await adapter.execute(
+  const result = await adapter.execute(
     `UPDATE oauth_client_consents
         SET scope = ?,
             selected_scopes = ?,
@@ -80,8 +103,10 @@ async function updateOAuthClientConsent(
             privacy_policy_version = ?,
             tos_version = ?,
             consent_version = ?,
+            consent_generation = ?,
             updated_at = ?
-      WHERE tenant_id = ? AND user_id = ? AND client_id = ?`,
+      WHERE tenant_id = ? AND user_id = ? AND client_id = ?
+        AND ${CURRENT_GENERATION_CONDITION}`,
     [
       input.scope,
       input.selectedScopesJson ?? null,
@@ -90,12 +115,16 @@ async function updateOAuthClientConsent(
       input.privacyPolicyVersion ?? null,
       input.tosVersion ?? null,
       nextConsentVersion,
+      input.consentGeneration,
       input.now,
       input.tenantId,
       input.userId,
       input.clientId,
+      ...currentGenerationParams(input),
     ]
   );
+  // No row: withdrawn meanwhile (the withdrawal deletes the consent and moves the generation on).
+  if (result.rowsAffected === 0) throw new Error(OAUTH_CLIENT_CONSENT_GENERATION_CHANGED);
 
   return {
     id: existing.id,
@@ -121,11 +150,14 @@ export async function upsertOAuthClientConsent(
 
   if (!existing) {
     try {
-      await adapter.execute(
+      const result = await adapter.execute(
         `INSERT INTO oauth_client_consents (
            id, user_id, client_id, scope, selected_scopes, granted_at, expires_at,
-           privacy_policy_version, tos_version, consent_version, created_at, updated_at, tenant_id
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           privacy_policy_version, tos_version, consent_version, created_at, updated_at, tenant_id,
+           consent_generation
+         )
+         SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+          WHERE ${CURRENT_GENERATION_CONDITION}`,
         [
           input.consentId,
           input.userId,
@@ -140,8 +172,11 @@ export async function upsertOAuthClientConsent(
           input.now,
           input.now,
           input.tenantId,
+          input.consentGeneration,
+          ...currentGenerationParams(input),
         ]
       );
+      if (result.rowsAffected === 0) throw new Error(OAUTH_CLIENT_CONSENT_GENERATION_CHANGED);
 
       return {
         id: input.consentId,
