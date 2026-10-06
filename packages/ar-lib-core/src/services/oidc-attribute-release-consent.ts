@@ -6,7 +6,9 @@ import type { ClientMetadata } from '../types/oidc';
 import type { Env } from '../types/env';
 import { AttributeReleaseConsentRepository } from '../repositories/identity/attribute-release-consent';
 import { evaluateReleaseConsentGate } from './identity-release-consent';
+import { ensureDatabaseAdapter, type DatabaseAdapter } from '../db';
 import { resolveAuthCorePersistenceAdapterFromEnv } from './auth-core-persistence-context';
+import { resolveAccountDataContext } from './runtime-data-context';
 
 export const OIDC_ATTRIBUTE_RELEASE_CONSENT_MODES = new Set<AttributeReleaseConsentMode>([
   'once',
@@ -116,7 +118,7 @@ export async function enforceOIDCAttributeReleaseConsent(input: {
     policy.mode === 'until_attributes_change'
       ? await grantFromExistingOAuthClientConsent({
           repository,
-          adapter,
+          env: input.env,
           tenantId: input.tenantId,
           subjectId: input.subjectId,
           clientId: input.clientMetadata.client_id,
@@ -179,9 +181,34 @@ export async function enforceOIDCAttributeReleaseConsent(input: {
   };
 }
 
+/**
+ * OAuth client consents are stored with the user in its account database (see /authorize and the
+ * consent screen), not in the tenant metadata database. A subject without an account route has
+ * no OAuth consent.
+ */
+async function resolveOAuthClientConsentAdapter(
+  env: Env,
+  tenantId: string,
+  subjectId: string
+): Promise<DatabaseAdapter | null> {
+  try {
+    const account = await resolveAccountDataContext(env, { tenantId, accountId: subjectId });
+    return ensureDatabaseAdapter(account.coreDb, 'oidc-attribute-release-consent-account');
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      (error.message === 'account_data_route_not_found' ||
+        error.message === 'account_data_account_id_invalid')
+    ) {
+      return null;
+    }
+    throw error;
+  }
+}
+
 async function grantFromExistingOAuthClientConsent(input: {
   repository: AttributeReleaseConsentRepository;
-  adapter: Awaited<ReturnType<typeof resolveAuthCorePersistenceAdapterFromEnv>>;
+  env: Env;
   tenantId: string;
   subjectId: string;
   clientId: string;
@@ -189,7 +216,13 @@ async function grantFromExistingOAuthClientConsent(input: {
   consentMode: AttributeReleaseConsentMode;
   requireRecentGrant?: boolean;
 }) {
-  const row = await input.adapter.queryOne<{
+  const consentAdapter = await resolveOAuthClientConsentAdapter(
+    input.env,
+    input.tenantId,
+    input.subjectId
+  );
+  if (!consentAdapter) return null;
+  const row = await consentAdapter.queryOne<{
     id: string;
     granted_at: number;
     expires_at: number | null;

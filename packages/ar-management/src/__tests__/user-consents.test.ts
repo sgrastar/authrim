@@ -14,14 +14,22 @@ const {
   mockGetSessionStoreBySessionId,
   mockGetTenantIdFromContext,
   mockCreateAuthContextFromHono,
+  mockCreateAccountAuthContextFromHono,
+  mockResolveAccountDataContextFromHono,
   mockInvalidateConsentCache,
   mockRevokeToken,
   mockPublishEvent,
   mockCoreAdapter,
+  mockTenantMetadataAdapter,
   mockLogger,
   mockGetLogger,
 } = vi.hoisted(() => {
+  // Consents live in the user's account database; the tenant metadata database holds clients.
   const coreAdapter = {
+    query: vi.fn(),
+    execute: vi.fn(),
+  };
+  const tenantMetadataAdapter = {
     query: vi.fn(),
     execute: vi.fn(),
   };
@@ -37,12 +45,17 @@ const {
     mockGetSessionStoreBySessionId: vi.fn(),
     mockGetTenantIdFromContext: vi.fn().mockReturnValue('default'),
     mockCreateAuthContextFromHono: vi.fn().mockReturnValue({
+      coreAdapter: tenantMetadataAdapter,
+    }),
+    mockCreateAccountAuthContextFromHono: vi.fn().mockReturnValue({
       coreAdapter,
     }),
+    mockResolveAccountDataContextFromHono: vi.fn(),
     mockInvalidateConsentCache: vi.fn(),
     mockRevokeToken: vi.fn(),
     mockPublishEvent: vi.fn().mockResolvedValue(undefined),
     mockCoreAdapter: coreAdapter,
+    mockTenantMetadataAdapter: tenantMetadataAdapter,
     mockLogger: logger,
     mockGetLogger: vi.fn().mockReturnValue(logger),
   };
@@ -57,6 +70,8 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     getSessionStoreBySessionId: mockGetSessionStoreBySessionId,
     getTenantIdFromContext: mockGetTenantIdFromContext,
     createAuthContextFromHono: mockCreateAuthContextFromHono,
+    createAccountAuthContextFromHono: mockCreateAccountAuthContextFromHono,
+    resolveAccountDataContextFromHono: mockResolveAccountDataContextFromHono,
     invalidateConsentCache: mockInvalidateConsentCache,
     revokeToken: mockRevokeToken,
     publishEvent: mockPublishEvent,
@@ -122,6 +137,12 @@ describe('User Consents API', () => {
     // Reset adapter mocks
     mockCoreAdapter.query.mockReset();
     mockCoreAdapter.execute.mockReset();
+    mockTenantMetadataAdapter.query.mockReset().mockResolvedValue([]);
+    mockTenantMetadataAdapter.execute.mockReset();
+    mockResolveAccountDataContextFromHono.mockReset().mockResolvedValue({
+      tenantId: 'default',
+      accountId: 'user-123',
+    });
     // Reset auth mocks
     mockIntrospectTokenFromContext.mockReset();
     mockGetSessionStoreBySessionId.mockReset();
@@ -231,6 +252,11 @@ describe('User Consents API', () => {
           privacy_policy_version: 'v1.0.0',
           tos_version: 'v1.5.0',
           consent_version: 2,
+        },
+      ]);
+      mockTenantMetadataAdapter.query.mockResolvedValue([
+        {
+          client_id: 'client-abc',
           client_name: 'Test Client',
           logo_uri: 'https://example.com/logo.png',
         },
@@ -274,8 +300,6 @@ describe('User Consents API', () => {
           privacy_policy_version: null,
           tos_version: null,
           consent_version: null,
-          client_name: null,
-          logo_uri: null,
         },
       ]);
 
@@ -289,6 +313,61 @@ describe('User Consents API', () => {
       expect(body.consents[0].policyVersions).toBeUndefined();
       expect(body.consents[0].selectedScopes).toBeUndefined();
       expect(body.consents[0].expiresAt).toBe(1800000000000);
+    });
+
+    it('reads consents from the account database and client names from tenant metadata', async () => {
+      mockCoreAdapter.query.mockResolvedValue([
+        {
+          id: 'consent-routed',
+          client_id: 'client-routed',
+          scope: 'openid',
+          selected_scopes: null,
+          granted_at: 1700000000000,
+          expires_at: null,
+          privacy_policy_version: null,
+          tos_version: null,
+          consent_version: 1,
+        },
+      ]);
+      mockTenantMetadataAdapter.query.mockResolvedValue([
+        { client_id: 'client-routed', client_name: 'Routed Client', logo_uri: null },
+      ]);
+
+      const response = await userConsentsListHandler(
+        createMockContext({ headers: { Authorization: 'Bearer token' } })
+      );
+      const body = (await response.json()) as { consents: Array<Record<string, unknown>> };
+
+      expect(response.status).toBe(200);
+      expect(mockResolveAccountDataContextFromHono).toHaveBeenCalledWith(
+        expect.anything(),
+        'user-123'
+      );
+      expect(body.consents).toEqual([
+        expect.objectContaining({ clientId: 'client-routed', clientName: 'Routed Client' }),
+      ]);
+      expect(mockCoreAdapter.query).toHaveBeenCalledWith(
+        expect.stringContaining('FROM oauth_client_consents'),
+        ['default', 'user-123']
+      );
+      expect(mockTenantMetadataAdapter.query).not.toHaveBeenCalledWith(
+        expect.stringContaining('oauth_client_consents'),
+        expect.anything()
+      );
+    });
+
+    it('returns no consents for a user without an account route', async () => {
+      mockResolveAccountDataContextFromHono.mockRejectedValue(
+        new Error('account_data_route_not_found')
+      );
+
+      const response = await userConsentsListHandler(
+        createMockContext({ headers: { Authorization: 'Bearer token' } })
+      );
+
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ consents: [], total: 0 });
+      expect(mockCoreAdapter.query).not.toHaveBeenCalled();
     });
   });
 
@@ -319,6 +398,14 @@ describe('User Consents API', () => {
       const body = (await response.json()) as { success: boolean; revokedAt: number };
       expect(body.success).toBe(true);
       expect(body.revokedAt).toBeDefined();
+
+      // The consent and its history are written in the user's account database only.
+      expect(mockResolveAccountDataContextFromHono).toHaveBeenCalledWith(
+        expect.anything(),
+        'user-123'
+      );
+      expect(mockTenantMetadataAdapter.query).not.toHaveBeenCalled();
+      expect(mockTenantMetadataAdapter.execute).not.toHaveBeenCalled();
 
       // Verify DELETE was called
       expect(mockCoreAdapter.execute).toHaveBeenCalledWith(
@@ -367,6 +454,23 @@ describe('User Consents API', () => {
 
       const body = (await response.json()) as { error: string };
       expect(body.error).toBe('not_found');
+    });
+
+    it('returns 404 for a user without an account route', async () => {
+      mockResolveAccountDataContextFromHono.mockRejectedValue(
+        new Error('account_data_route_not_found')
+      );
+
+      const response = await userConsentRevokeHandler(
+        createMockContext({
+          method: 'DELETE',
+          headers: { Authorization: 'Bearer token' },
+          params: { clientId: 'client-abc' },
+        })
+      );
+
+      expect(response.status).toBe(404);
+      expect(mockCoreAdapter.execute).not.toHaveBeenCalled();
     });
 
     it('should return 400 if clientId is missing', async () => {

@@ -1,21 +1,12 @@
 import type { Context } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
-import { createAuthContextFromHono, getTenantIdFromContext } from '@authrim/ar-lib-core';
+import {
+  createAccountAuthContextFromHono,
+  createAuthContextFromHono,
+  getTenantIdFromContext,
+  listOAuthClientConsentsWithClients,
+} from '@authrim/ar-lib-core';
 import { requireAccountSession } from './account-page';
-
-type OAuthClientConsentRow = {
-  id: string;
-  client_id: string;
-  scope: string;
-  selected_scopes: string | null;
-  granted_at: number;
-  expires_at: number | null;
-  privacy_policy_version: string | null;
-  tos_version: string | null;
-  consent_version: number | null;
-  client_name: string | null;
-  logo_uri: string | null;
-};
 
 type StatementConsentRow = {
   id: string;
@@ -245,16 +236,14 @@ export async function listAccountConsentsHandler(c: Context<{ Bindings: Env }>):
         ORDER BY cr.updated_at DESC`,
       [preferredLanguage, tenantId, accountSession.userId]
     ),
-    authCtx.coreAdapter.query<OAuthClientConsentRow>(
-      `SELECT c.id, c.client_id, c.scope, c.selected_scopes, c.granted_at, c.expires_at,
-              c.privacy_policy_version, c.tos_version, c.consent_version,
-              oc.client_name, oc.logo_uri
-         FROM oauth_client_consents c
-         LEFT JOIN oauth_clients oc ON c.tenant_id = oc.tenant_id AND c.client_id = oc.client_id
-        WHERE c.tenant_id = ? AND c.user_id = ?
-        ORDER BY c.granted_at DESC`,
-      [tenantId, accountSession.userId]
-    ),
+    // OAuth client consents are stored with the user in its account database (resolved by
+    // requireAccountSession); client records are tenant metadata.
+    listOAuthClientConsentsWithClients({
+      accountCore: createAccountAuthContextFromHono(c, tenantId).coreAdapter,
+      tenantMetadata: authCtx.coreAdapter,
+      tenantId,
+      userId: accountSession.userId,
+    }),
   ]);
 
   const statementConsents: AccountConsentRecord[] = statementRows.map((row) => ({
