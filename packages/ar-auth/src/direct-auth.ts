@@ -572,6 +572,12 @@ export function reauthProvenMethodFromAmr(
   return undefined;
 }
 
+/**
+ * auth_time has whole seconds: a sign-in in the same second as the challenge may read up to a
+ * second earlier than the challenge's millisecond time.
+ */
+const FRESH_SIGN_IN_CLOCK_SKEW_MS = 1000;
+
 function positiveSafeInteger(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isSafeInteger(value) && value > 0 ? value : undefined;
 }
@@ -685,6 +691,24 @@ export async function consumeAuthorizationChallengeContinuation(
   const metadata = challengeData.metadata || {};
   // A re-authentication is answered only by a proof made after it was asked for.
   const reauthIssuedAt = metadata.reauth_issued_at;
+  // So is a sign-in for a client whose SSO is off: a session made earlier (the browser's existing
+  // sign-in) must not answer it. A proof of unknown time falls back to its auth_time.
+  const freshSignInAfter = metadata.fresh_sign_in_after;
+  if (
+    type === 'login' &&
+    typeof freshSignInAfter === 'number' &&
+    (provenAtMs ?? authTime * 1000) < freshSignInAfter - FRESH_SIGN_IN_CLOCK_SKEW_MS
+  ) {
+    return {
+      error: new Response(
+        JSON.stringify({
+          error: 'login_required',
+          error_description: 'Sign in again to continue to this application',
+        }),
+        { status: 403, headers: { 'Content-Type': 'application/json' } }
+      ),
+    };
+  }
   // A re-authentication needs a proof the server dated after the request; a proof of unknown
   // time (a session or artifact that did not record one) cannot show that.
   if (
@@ -860,8 +884,15 @@ export async function readAuthorizationChallengeReauthIssuedAt(
     type?: string;
     metadata?: Record<string, unknown>;
   } | null;
-  if (challenge?.tenantId !== tenantId || challenge.type !== 'reauth') return null;
-  const issuedAt = challenge.metadata?.reauth_issued_at;
+  if (challenge?.tenantId !== tenantId) return null;
+  // A re-authentication, or a sign-in for a client whose SSO is off: either is answered only by a
+  // proof made after the challenge.
+  const issuedAt =
+    challenge.type === 'reauth'
+      ? challenge.metadata?.reauth_issued_at
+      : challenge.type === 'login'
+        ? challenge.metadata?.fresh_sign_in_after
+        : undefined;
   return typeof issuedAt === 'number' ? issuedAt : null;
 }
 

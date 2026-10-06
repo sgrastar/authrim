@@ -42,6 +42,7 @@ import {
   getChallengeStoreByChallengeId,
   generateRegionAwareJti,
   createAuthContextFromHono,
+  createAccountAuthContextFromHono,
   createPIIContextFromHono,
   getTenantMetadataContextFromHono,
   resolveAccountDataContextFromHono,
@@ -3327,9 +3328,24 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
 
     // prompt=login or max_age re-authentication requires a new auth_time (user just re-authenticated)
     if (prompt?.includes('login') || max_age !== undefined) {
-      authTime = confirmedReauthAuthTime ?? Math.floor(Date.now() / 1000);
+      // The time of the authentication that answered the challenge, as the confirmation carries it
+      // (the sign-in just made, or the session's own time when a session answered). "Now" would
+      // date an authentication that did not happen.
+      const confirmedAuthTime = _auth_time ? parseInt(_auth_time, 10) : NaN;
+      authTime =
+        confirmedReauthAuthTime ??
+        (Number.isSafeInteger(confirmedAuthTime) && confirmedAuthTime > 0
+          ? confirmedAuthTime
+          : Math.floor(Date.now() / 1000));
       log.debug('Re-authentication confirmed, setting new authTime', {
         action: 'reauth',
+        authTime,
+      });
+    } else if (confirmedReauthAuthTime !== undefined) {
+      // Back from the consent screen: the authentication's time travelled with the consent.
+      authTime = confirmedReauthAuthTime;
+      log.debug('Restoring authTime carried through consent', {
+        action: 'auth_time_restore',
         authTime,
       });
     } else if (_auth_time) {
@@ -4004,6 +4020,9 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       challenge: challengeId,
       ttl: 600, // 10 minutes
       metadata: {
+        // SSO off: the browser's session never answers this client's sign-in, so only an
+        // authentication made after this challenge completes it (no silent reuse through the UI).
+        ...(!ssoEnabled ? { fresh_sign_in_after: Date.now() } : {}),
         response_type,
         client_id,
         redirect_uri,
@@ -4129,7 +4148,10 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   if (_consent_confirmed !== 'true') {
     // Get client metadata for logging (request-level cached)
     const clientMetadata = await getClientCached(c, c.env, validClientId);
+    // Trust and sign-in confirmation policies are the tenant's; a user's consents live with the
+    // user's account (where the consent screen records them), not in the tenant metadata database.
     const authCtx = createAuthContextFromHono(c, tenantId);
+    const accountAuthCtx = createAccountAuthContextFromHono(c, tenantId);
 
     // Client Trust Policy is the sole authority for first-party and consent bypass decisions.
     let consentRequired = true; // Default: require consent (security-first)
@@ -4222,7 +4244,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       const existingConsent = await timeAuthRequestDiagnosticOperation(
         c,
         'auth_authorize_consent_lookup',
-        () => getCachedConsent(c.env, sub, validClientId, tenantId, authCtx.coreAdapter)
+        () => getCachedConsent(c.env, sub, validClientId, tenantId, accountAuthCtx.coreAdapter)
       );
 
       if (!existingConsent) {
@@ -4233,7 +4255,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         const now = Date.now();
 
         await timeAuthRequestDiagnosticOperation(c, 'auth_authorize_consent_grant', () =>
-          upsertOAuthClientConsent(authCtx.coreAdapter, {
+          upsertOAuthClientConsent(accountAuthCtx.coreAdapter, {
             consentId,
             tenantId,
             userId: sub,
@@ -4266,7 +4288,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
           sub,
           validClientId,
           tenantId,
-          authCtx.coreAdapter
+          accountAuthCtx.coreAdapter
         );
 
         if (!existingConsent) {
