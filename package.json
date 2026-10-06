@@ -211,7 +211,11 @@
       "nanoid@<3.3.18": "3.3.18",
       "nanoid@>=4.0.0 <5.1.16": "5.1.16",
       "esbuild": "0.28.1",
-      "degit": "2.8.6"
+      "degit": "2.8.6",
+      "proxy-addr@<2.0.8": "2.0.8",
+      "source-map-js@<1.2.2": "1.2.2",
+      "compression@<1.8.2": "1.8.2",
+      "postcss-selector-parser@<7.1.6": "7.1.6"
     },
     "patchedDependencies": {
       "extract-zip@2.0.1": "patches/extract-zip@2.0.1.patch"
