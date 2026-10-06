@@ -9,6 +9,7 @@ import { getCanonicalAccountStatus, transitionAccountLifecycle } from './account
 import { getRefreshTokenRotatorStubByJti } from '@authrim/ar-lib-core/services/refresh-token-family-store';
 import {
   invalidateConsentCache,
+  listOAuthClientConsentsWithClients,
   revokeToken,
   getSessionStoreForNewSession,
   getChallengeStoreByChallengeId,
@@ -108,13 +109,31 @@ function emptyAuditLogListResponse(page: number, limit: number) {
   };
 }
 
+/**
+ * Resolve the user's account databases for this request. Returns false when the user has no
+ * account route (an unknown user); the tenant metadata database does not hold users.
+ */
+async function resolveAdminTargetAccount(
+  c: Context<{ Bindings: Env }>,
+  userId: string
+): Promise<boolean> {
+  try {
+    await resolveAccountDataContextFromHono(c, userId);
+    return true;
+  } catch (error) {
+    if (error instanceof Error && error.message === 'account_data_route_not_found') return false;
+    throw error;
+  }
+}
+
 async function findCanonicalRuntimeUser(
   c: Context<{ Bindings: Env }>,
   tenantId: string,
   userId: string,
   options?: { includeInactive?: boolean }
 ) {
-  const authCtx = createAuthContextFromHono(c, tenantId);
+  if (!(await resolveAdminTargetAccount(c, userId))) return null;
+  const authCtx = createAccountAuthContextFromHono(c, tenantId);
   const piiCtx = createPIIContextFromHono(c, tenantId);
   return new CanonicalRuntimeUserStore({
     coreAdapter: authCtx.coreAdapter,
@@ -2432,8 +2451,8 @@ export async function adminUserConsentsListHandler(c: Context<{ Bindings: Env }>
     }
 
     const tenantId = getTenantIdFromContext(c);
-    const authCtx = createAuthContextFromHono(c, tenantId);
 
+    // findCanonicalRuntimeUser resolves the user's account databases for this request.
     const runtimeUser = await findCanonicalRuntimeUser(c, tenantId, userId, {
       includeInactive: true,
     });
@@ -2447,29 +2466,14 @@ export async function adminUserConsentsListHandler(c: Context<{ Bindings: Env }>
       );
     }
 
-    // Query consents with client info
-    const consentsResult = await authCtx.coreAdapter.query<{
-      id: string;
-      client_id: string;
-      scope: string;
-      selected_scopes: string | null;
-      granted_at: number;
-      expires_at: number | null;
-      privacy_policy_version: string | null;
-      tos_version: string | null;
-      consent_version: number | null;
-      client_name: string | null;
-      logo_uri: string | null;
-    }>(
-      `SELECT c.id, c.client_id, c.scope, c.selected_scopes, c.granted_at, c.expires_at,
-              c.privacy_policy_version, c.tos_version, c.consent_version,
-              oc.client_name, oc.logo_uri
-       FROM oauth_client_consents c
-       LEFT JOIN oauth_clients oc ON c.tenant_id = oc.tenant_id AND c.client_id = oc.client_id
-       WHERE c.user_id = ? AND c.tenant_id = ?
-       ORDER BY c.granted_at DESC`,
-      [userId, tenantId]
-    );
+    // Consents are stored with the user in its account database; client records are tenant
+    // metadata.
+    const consentsResult = await listOAuthClientConsentsWithClients({
+      accountCore: createAccountAuthContextFromHono(c, tenantId).coreAdapter,
+      tenantMetadata: getCoreAdapter(c, tenantId),
+      tenantId,
+      userId,
+    });
 
     const consents = consentsResult.map((row) => ({
       id: row.id,
@@ -2527,7 +2531,17 @@ export async function adminUserConsentRevokeHandler(c: Context<{ Bindings: Env }
     }
 
     const tenantId = getTenantIdFromContext(c);
-    const authCtx = createAuthContextFromHono(c, tenantId);
+    // Consents and their history are stored with the user in its account database.
+    if (!(await resolveAdminTargetAccount(c, userId))) {
+      return c.json(
+        {
+          error: 'not_found',
+          error_description: 'Consent not found',
+        },
+        404
+      );
+    }
+    const authCtx = createAccountAuthContextFromHono(c, tenantId);
 
     // Check if consent exists
     const existingConsent = await authCtx.coreAdapter.query<{

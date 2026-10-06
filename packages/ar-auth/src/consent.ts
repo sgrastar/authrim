@@ -496,8 +496,11 @@ async function handleJsonConsentGet(
     | undefined;
 
   if (versioningEnabled) {
-    // Get current policy versions
-    const currentVersions = await getCurrentPolicyVersions(authCtx.coreAdapter, tenantId);
+    // Policy versions are tenant metadata; the user's existing consent (read below) is account data.
+    const currentVersions = await getCurrentPolicyVersions(
+      createAuthContextFromHono(c, tenantId).coreAdapter,
+      tenantId
+    );
 
     // Check if re-consent is needed due to policy changes
     const reconsentCheck = await checkRequiresReconsent(

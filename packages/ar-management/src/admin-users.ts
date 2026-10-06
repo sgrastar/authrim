@@ -140,6 +140,21 @@ function createCanonicalRuntimeUserProjectionRepository(
   );
 }
 
+/**
+ * An unknown user has no Lookup route, so resolving its account databases fails before any query;
+ * answer that as the not-found the handler would give for a missing projection.
+ */
+function accountRouteNotFoundResponse(c: Context<{ Bindings: Env }>, error: unknown) {
+  if (!(error instanceof Error) || error.message !== 'account_data_route_not_found') return null;
+  return c.json(
+    {
+      error: 'not_found',
+      error_description: 'The requested resource was not found',
+    },
+    404
+  );
+}
+
 function userTypeFromAccountType(accountType: string): string {
   if (accountType === 'admin') {
     return 'admin';
@@ -1077,7 +1092,10 @@ export async function adminUserTotpResetHandler(c: Context<{ Bindings: Env }>) {
   try {
     const userId = c.req.param('id')!;
     const tenantId = getTenantIdFromContext(c);
-    const authCtx = createAuthContextFromHono(c, tenantId);
+    // The user and its TOTP credentials live in the account's databases; the tenant metadata
+    // database does not hold them once accounts are routed.
+    await resolveAccountDataContextFromHono(c, userId);
+    const authCtx = createAccountAuthContextFromHono(c, tenantId);
     const projectionRepository = createCanonicalRuntimeUserProjectionRepository(
       c,
       authCtx.coreAdapter,
@@ -1111,6 +1129,8 @@ export async function adminUserTotpResetHandler(c: Context<{ Bindings: Env }>) {
 
     return c.json({ ok: true, deleted });
   } catch (error) {
+    const notFoundResponse = accountRouteNotFoundResponse(c, error);
+    if (notFoundResponse) return notFoundResponse;
     logSanitizedError('Admin user TOTP reset error', error);
     const writeFenceResponse = createTenantPlacementWriteFenceResponse(c, error);
     if (writeFenceResponse) return writeFenceResponse;
@@ -1523,7 +1543,6 @@ export async function adminUserUpdateHandler(c: Context<{ Bindings: Env }>) {
     const changedFields = Object.keys(body)
       .filter((key) => body[key] !== undefined)
       .sort();
-    const authCtx = createAuthContextFromHono(c, tenantId);
     const accountCore = ensureDatabaseAdapter(customClaimSources.nonPiiDb, 'admin-update-core');
     const accountPii = ensureDatabaseAdapter(customClaimSources.piiDb, 'admin-update-pii');
     const projectionRepository = new CanonicalRuntimeUserProjectionRepository(
@@ -1671,7 +1690,7 @@ export async function adminUserUpdateHandler(c: Context<{ Bindings: Env }>) {
       includeInactive: true,
     });
     const updatedUser = updatedProjection
-      ? await formatCanonicalAdminUser(authCtx.coreAdapter, updatedProjection)
+      ? await formatCanonicalAdminUser(accountCore, updatedProjection)
       : null;
 
     const log = getLogger(c).module('ADMIN-USER');
@@ -1700,6 +1719,8 @@ export async function adminUserUpdateHandler(c: Context<{ Bindings: Env }>) {
       user: updatedUser,
     });
   } catch (error) {
+    const notFoundResponse = accountRouteNotFoundResponse(c, error);
+    if (notFoundResponse) return notFoundResponse;
     logSanitizedError('Admin user update error', error);
     const writeFenceResponse = createTenantPlacementWriteFenceResponse(c, error);
     if (writeFenceResponse) return writeFenceResponse;
@@ -2057,6 +2078,8 @@ export async function adminUserRetryPiiHandler(c: Context<{ Bindings: Env }>) {
       pii_status: 'active',
     });
   } catch (error) {
+    const notFoundResponse = accountRouteNotFoundResponse(c, error);
+    if (notFoundResponse) return notFoundResponse;
     logSanitizedError('Admin user retry PII error', error);
     const writeFenceResponse = createTenantPlacementWriteFenceResponse(c, error);
     if (writeFenceResponse) return writeFenceResponse;
@@ -2079,15 +2102,21 @@ export async function adminUserDeletePiiHandler(c: Context<{ Bindings: Env }>) {
   try {
     const userId = c.req.param('id')!;
     const tenantId = getTenantIdFromContext(c);
-    const authCtx = createAuthContextFromHono(c, tenantId);
-    const projectionRepository = createCanonicalRuntimeUserProjectionRepository(
-      c,
-      authCtx.coreAdapter,
-      tenantId
-    );
-    if (!projectionRepository) {
-      return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
+    // The user, its legal holds, its tombstone and its PII all live in the account's databases,
+    // as for retry-PII; the tenant metadata database does not hold them once accounts are routed.
+    const accountSources = await resolveCustomClaimRuntimeSourcesFromEnv(c.env, tenantId, {
+      accountId: userId,
+    });
+    if (!accountSources.nonPiiDb || !accountSources.piiDb) {
+      throw new Error('admin_user_account_sources_required');
     }
+    const accountCore = ensureDatabaseAdapter(accountSources.nonPiiDb, 'admin-delete-pii-core');
+    const accountPii = ensureDatabaseAdapter(accountSources.piiDb, 'admin-delete-pii-pii');
+    const projectionRepository = new CanonicalRuntimeUserProjectionRepository(
+      accountCore,
+      tenantId,
+      new CanonicalSensitiveValueResolver(accountPii)
+    );
     const projection = await projectionRepository.findByLegacyUserId(userId, {
       includeInactive: true,
     });
@@ -2102,7 +2131,7 @@ export async function adminUserDeletePiiHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
-    const legalHold = await findActiveAccountLegalHold(authCtx.coreAdapter, tenantId, userId);
+    const legalHold = await findActiveAccountLegalHold(accountCore, tenantId, userId);
     if (legalHold) {
       return c.json(
         {
@@ -2123,12 +2152,8 @@ export async function adminUserDeletePiiHandler(c: Context<{ Bindings: Env }>) {
 
     const deletionReason = body.reason ?? 'user_request';
     const retentionDays = body.retention_days ?? 90;
-    const piiAdapter = resolveAdminPiiAdapter(c, tenantId);
-    if (!piiAdapter) {
-      return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
-    }
 
-    await new TombstoneRepository(piiAdapter).createTombstone(
+    await new TombstoneRepository(accountPii).createTombstone(
       {
         id: userId,
         tenant_id: tenantId,
@@ -2142,10 +2167,15 @@ export async function adminUserDeletePiiHandler(c: Context<{ Bindings: Env }>) {
           user_active: true,
         },
       },
-      piiAdapter
+      accountPii
     );
 
-    await createCanonicalRuntimeUserWriter(c, authCtx.coreAdapter, tenantId).syncFromRuntimeUser({
+    await createCanonicalRuntimeUserWriter(
+      c,
+      accountCore,
+      tenantId,
+      accountPii
+    ).syncFromRuntimeUser({
       userId,
       tenantId,
       active: Boolean(projection.active),
@@ -2195,6 +2225,8 @@ export async function adminUserDeletePiiHandler(c: Context<{ Bindings: Env }>) {
       retention_days: retentionDays,
     });
   } catch (error) {
+    const notFoundResponse = accountRouteNotFoundResponse(c, error);
+    if (notFoundResponse) return notFoundResponse;
     logSanitizedError('Admin user delete PII error', error);
     const writeFenceResponse = createTenantPlacementWriteFenceResponse(c, error);
     if (writeFenceResponse) return writeFenceResponse;

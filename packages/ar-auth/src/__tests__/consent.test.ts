@@ -431,6 +431,82 @@ describe('Consent Handlers', () => {
       );
     });
 
+    it('reads policy versions from tenant metadata and the existing consent from the account', async () => {
+      const challengeStore = createMockChallengeStore({
+        id: 'consent-challenge-versioning',
+        type: 'consent',
+        userId: 'user-123',
+        metadata: {
+          client_id: 'test-client',
+          scope: 'openid profile',
+          redirect_uri: 'https://example.com/callback',
+          state: 'test-state',
+        },
+      });
+      // Each database answers only the queries it owns.
+      const sqlAwareDB = (answer: (sql: string, op: 'first' | 'all') => unknown) =>
+        ({
+          prepare: vi.fn((sql: string) => {
+            const statement = {
+              bind: vi.fn(() => statement),
+              first: vi.fn(async () => answer(sql, 'first') ?? null),
+              all: vi.fn(async () => ({ results: (answer(sql, 'all') as unknown[]) ?? [] })),
+              run: vi.fn(async () => ({ success: true })),
+            };
+            return statement;
+          }),
+          batch: vi.fn().mockResolvedValue([]),
+        }) as unknown as D1Database;
+      const metadataDB = sqlAwareDB((sql, op) => {
+        if (op === 'first' && sql.includes('oauth_clients')) {
+          return { client_id: 'test-client', client_name: 'Test Application', is_trusted: 0 };
+        }
+        if (op === 'all' && sql.includes('FROM consent_policy_versions')) {
+          return [
+            {
+              policy_type: 'privacy_policy',
+              version: 'v2',
+              policy_uri: 'https://example.com/privacy',
+              effective_at: 1,
+            },
+          ];
+        }
+        return undefined;
+      });
+      const accountDB = sqlAwareDB((sql, op) => {
+        if (op === 'all' && sql.includes('FROM oauth_client_consents')) {
+          return [{ privacy_policy_version: 'v1', tos_version: null, consent_version: 1 }];
+        }
+        return undefined;
+      });
+      const c = createMockContext({
+        query: { challenge_id: 'consent-challenge-versioning' },
+        headers: { accept: 'application/json' },
+        challengeStore,
+        db: metadataDB,
+        env: { CONSENT_VERSIONING_ENABLED: 'true' },
+      });
+      c.set('accountDataContext', {
+        ...c.get('accountDataContext'),
+        coreDb: accountDB,
+        piiDb: accountDB,
+      });
+
+      await consentGetHandler(c);
+
+      expect(c.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          versioning: {
+            requiresReconsent: true,
+            changedPolicies: ['privacy_policy'],
+            currentVersions: {
+              privacyPolicy: { version: 'v2', policyUri: 'https://example.com/privacy' },
+            },
+          },
+        })
+      );
+    });
+
     it('should return 400 for non-existent client', async () => {
       const challengeStore = createMockChallengeStore({
         id: 'consent-challenge-123',
