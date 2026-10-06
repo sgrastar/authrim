@@ -25,14 +25,18 @@ const {
   mockGetLogger,
 } = vi.hoisted(() => {
   // Consents live in the user's account database; the tenant metadata database holds clients.
-  const coreAdapter = {
+  const adapterShape = () => ({
     query: vi.fn(),
+    queryOne: vi.fn(),
     execute: vi.fn(),
-  };
-  const tenantMetadataAdapter = {
-    query: vi.fn(),
-    execute: vi.fn(),
-  };
+    transaction: vi.fn(),
+    batch: vi.fn(),
+    isHealthy: vi.fn(),
+    getType: vi.fn(() => 'mock'),
+    close: vi.fn(),
+  });
+  const coreAdapter = adapterShape();
+  const tenantMetadataAdapter = adapterShape();
   const logger = {
     debug: vi.fn(),
     info: vi.fn(),
@@ -86,6 +90,132 @@ vi.mock('hono/cookie', () => ({
 
 import { userConsentsListHandler, userConsentRevokeHandler } from '../user-consents';
 import { getCookie } from 'hono/cookie';
+import { DatabaseSync } from './test-sqlite';
+
+type SqlValue = string | number | null;
+
+/** An executable database holding the consent and refresh-token family index tables. */
+function createConsentDatabase() {
+  const db = new DatabaseSync(':memory:');
+  db.exec(`
+    CREATE TABLE oauth_client_consents (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      client_id TEXT NOT NULL,
+      scope TEXT NOT NULL,
+      granted_at INTEGER NOT NULL,
+      UNIQUE (tenant_id, user_id, client_id)
+    );
+    CREATE TABLE consent_history (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      client_id TEXT NOT NULL,
+      action TEXT NOT NULL,
+      scopes_before TEXT,
+      scopes_after TEXT,
+      created_at INTEGER NOT NULL
+    );
+    CREATE TABLE oauth_client_consent_revocations (
+      tenant_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      client_id TEXT NOT NULL,
+      generation INTEGER NOT NULL DEFAULT 0,
+      revoked_at INTEGER NOT NULL,
+      PRIMARY KEY (tenant_id, user_id, client_id)
+    );
+    CREATE TABLE user_token_families (
+      jti TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      client_id TEXT NOT NULL,
+      generation INTEGER NOT NULL,
+      expires_at INTEGER NOT NULL,
+      is_revoked INTEGER DEFAULT 0
+    );
+  `);
+  const values = (params: unknown[] = []) => params as SqlValue[];
+  const adapter = {
+    query: vi.fn(async (sql: string, params?: unknown[]) => db.prepare(sql).all(...values(params))),
+    queryOne: vi.fn(
+      async (sql: string, params?: unknown[]) => db.prepare(sql).get(...values(params)) ?? null
+    ),
+    execute: vi.fn(async (sql: string, params?: unknown[]) => ({
+      success: true,
+      rowsAffected: Number(db.prepare(sql).run(...values(params)).changes),
+    })),
+    transaction: vi.fn(),
+    // All or nothing, as a D1 batch.
+    batch: vi.fn(async (statements: Array<{ sql: string; params?: unknown[] }>) => {
+      db.exec('BEGIN');
+      try {
+        const results = statements.map((statement) => ({
+          success: true,
+          rowsAffected: Number(db.prepare(statement.sql).run(...values(statement.params)).changes),
+        }));
+        db.exec('COMMIT');
+        return results;
+      } catch (error) {
+        db.exec('ROLLBACK');
+        throw error;
+      }
+    }),
+    isHealthy: vi.fn(),
+    getType: vi.fn(() => 'sqlite'),
+    close: vi.fn(),
+  };
+  const rows = (sql: string) => db.prepare(sql).all();
+  return {
+    db,
+    adapter,
+    consents: () => rows('SELECT client_id FROM oauth_client_consents ORDER BY client_id'),
+    history: () => rows('SELECT client_id, action FROM consent_history'),
+    revokedFamilies: () =>
+      rows('SELECT jti FROM user_token_families WHERE is_revoked = 1 ORDER BY jti'),
+    withdrawals: () =>
+      rows('SELECT client_id, revoked_at FROM oauth_client_consent_revocations') as Array<{
+        client_id: string;
+        revoked_at: number;
+      }>,
+    generation: () =>
+      (
+        db.prepare('SELECT generation FROM oauth_client_consent_revocations').get() as
+          | { generation: number }
+          | undefined
+      )?.generation ?? 0,
+    seedConsent(clientId: string) {
+      db.prepare(
+        `INSERT INTO oauth_client_consents (id, tenant_id, user_id, client_id, scope, granted_at)
+         VALUES (?, 'default', 'user-123', ?, 'openid offline_access', 1700000000000)`
+      ).run(`consent-${clientId}`, clientId);
+    },
+    seedFamily(jti: string, clientId: string) {
+      db.prepare(
+        `INSERT INTO user_token_families (jti, tenant_id, user_id, client_id, generation, expires_at)
+         VALUES (?, 'default', 'user-123', ?, 1, ?)`
+      ).run(jti, clientId, Date.now() + 3_600_000);
+    },
+  };
+}
+
+/** RefreshTokenRotator namespace recording which instances revoked which user's family. */
+function createRotatorNamespace(revokeFamilyRpc = vi.fn().mockResolvedValue(undefined)) {
+  const revokedInstances: string[] = [];
+  return {
+    revokeFamilyRpc,
+    revokedInstances,
+    namespace: {
+      idFromName: vi.fn((name: string) => name),
+      get: vi.fn((name: string) => ({
+        revokeFamilyRpc: async (userId: string, reason?: string) => {
+          await revokeFamilyRpc(userId, reason);
+          revokedInstances.push(name);
+        },
+      })),
+    },
+  };
+}
 
 /**
  * Helper to create mock context
@@ -139,6 +269,12 @@ describe('User Consents API', () => {
     mockCoreAdapter.execute.mockReset();
     mockTenantMetadataAdapter.query.mockReset().mockResolvedValue([]);
     mockTenantMetadataAdapter.execute.mockReset();
+    mockCreateAuthContextFromHono
+      .mockReset()
+      .mockReturnValue({ coreAdapter: mockTenantMetadataAdapter });
+    mockCreateAccountAuthContextFromHono
+      .mockReset()
+      .mockReturnValue({ coreAdapter: mockCoreAdapter });
     mockResolveAccountDataContextFromHono.mockReset().mockResolvedValue({
       tenantId: 'default',
       accountId: 'user-123',
@@ -380,11 +516,10 @@ describe('User Consents API', () => {
     });
 
     it('should revoke consent successfully', async () => {
-      // Mock finding existing consent
-      mockCoreAdapter.query.mockResolvedValue([
-        { id: 'consent-1', scope: 'openid profile', granted_at: 1700000000000 },
-      ]);
-      mockCoreAdapter.execute.mockResolvedValue(undefined);
+      // The user has the consent and no refresh-token families.
+      const account = createConsentDatabase();
+      account.seedConsent('client-abc');
+      mockCreateAccountAuthContextFromHono.mockReturnValueOnce({ coreAdapter: account.adapter });
 
       const c = createMockContext({
         method: 'DELETE',
@@ -406,18 +541,11 @@ describe('User Consents API', () => {
       );
       expect(mockTenantMetadataAdapter.query).not.toHaveBeenCalled();
       expect(mockTenantMetadataAdapter.execute).not.toHaveBeenCalled();
-
-      // Verify DELETE was called
-      expect(mockCoreAdapter.execute).toHaveBeenCalledWith(
-        expect.stringContaining('DELETE FROM oauth_client_consents'),
-        expect.arrayContaining(['user-123', 'client-abc', 'default'])
-      );
-
-      // Verify history was recorded (revoked is in SQL string, not params)
-      expect(mockCoreAdapter.execute).toHaveBeenCalledWith(
-        expect.stringContaining('INSERT INTO consent_history'),
-        expect.arrayContaining(['user-123', 'client-abc'])
-      );
+      expect(account.consents()).toEqual([]);
+      expect(account.history()).toEqual([{ client_id: 'client-abc', action: 'revoked' }]);
+      expect(account.withdrawals()).toEqual([
+        { client_id: 'client-abc', revoked_at: body.revokedAt },
+      ]);
 
       // Verify cache invalidation
       expect(mockInvalidateConsentCache).toHaveBeenCalledWith(
@@ -438,6 +566,29 @@ describe('User Consents API', () => {
           }),
         })
       );
+    });
+
+    it('changes nothing and fails when the withdrawal cannot be recorded', async () => {
+      const account = createConsentDatabase();
+      account.seedConsent('client-abc');
+      account.seedFamily('g1:wnam:3:rt_abc1', 'client-abc');
+      account.db.exec('DROP TABLE oauth_client_consent_revocations');
+      mockCreateAccountAuthContextFromHono.mockReturnValueOnce({ coreAdapter: account.adapter });
+      const rotator = createRotatorNamespace();
+
+      const response = await userConsentRevokeHandler(
+        createMockContext({
+          method: 'DELETE',
+          headers: { Authorization: 'Bearer token' },
+          params: { clientId: 'client-abc' },
+          env: { REFRESH_TOKEN_ROTATOR: rotator.namespace as never },
+        })
+      );
+
+      expect(response.status).toBe(500);
+      expect(rotator.revokeFamilyRpc).not.toHaveBeenCalled();
+      expect(account.consents()).toEqual([{ client_id: 'client-abc' }]);
+      expect(account.revokedFamilies()).toEqual([]);
     });
 
     it('should return 404 if consent not found', async () => {
@@ -487,27 +638,94 @@ describe('User Consents API', () => {
       expect(body.error).toBe('invalid_request');
     });
 
-    it('should handle revoke_tokens option from body', async () => {
-      mockCoreAdapter.query.mockResolvedValue([
-        { id: 'consent-1', scope: 'openid', granted_at: 1700000000000 },
-      ]);
-      mockCoreAdapter.execute.mockResolvedValue(undefined);
+    it("revokes the client's refresh-token families in the account database, then the consent", async () => {
+      const account = createConsentDatabase();
+      const metadata = createConsentDatabase();
+      account.seedConsent('client-abc');
+      account.seedConsent('client-other');
+      account.seedFamily('g1:wnam:3:rt_abc1', 'client-abc');
+      account.seedFamily('g1:wnam:5:rt_abc2', 'client-abc');
+      account.seedFamily('g1:wnam:3:rt_other', 'client-other');
+      mockCreateAccountAuthContextFromHono.mockReturnValueOnce({ coreAdapter: account.adapter });
+      mockCreateAuthContextFromHono.mockReturnValue({ coreAdapter: metadata.adapter });
+      // The withdrawal is recorded, and the consent still there, while the families are revoked.
+      let withdrawnDuringRevocation: number | undefined;
+      let generationDuringRevocation: number | undefined;
+      const rotator = createRotatorNamespace(
+        vi.fn(async () => {
+          expect(account.consents()).toContainEqual({ client_id: 'client-abc' });
+          withdrawnDuringRevocation = account.withdrawals()[0]?.revoked_at;
+          generationDuringRevocation = account.generation();
+        })
+      );
 
-      const c = createMockContext({
-        method: 'DELETE',
-        headers: {
-          Authorization: 'Bearer token',
-          'Content-Type': 'application/json',
-        },
-        params: { clientId: 'client-abc' },
-        body: { revoke_tokens: false },
-      });
+      const response = await userConsentRevokeHandler(
+        createMockContext({
+          method: 'DELETE',
+          headers: { Authorization: 'Bearer token', 'Content-Type': 'application/json' },
+          params: { clientId: 'client-abc' },
+          // Withdrawing the grant ends its refresh tokens whatever the caller asks.
+          body: { revoke_tokens: false },
+          env: { REFRESH_TOKEN_ROTATOR: rotator.namespace as never },
+        })
+      );
 
-      const response = await userConsentRevokeHandler(c);
       expect(response.status).toBe(200);
-
-      // Token revocation should NOT be called when revoke_tokens=false
+      expect(await response.json()).toMatchObject({ success: true, refreshTokensRevoked: 2 });
+      expect(rotator.revokeFamilyRpc).toHaveBeenCalledTimes(2);
+      expect(rotator.revokeFamilyRpc).toHaveBeenCalledWith('user-123', 'consent_revoked');
+      expect(rotator.revokedInstances.sort()).toEqual([
+        'tenant:default:refresh-rotator:client-abc:v1:shard-3',
+        'tenant:default:refresh-rotator:client-abc:v1:shard-5',
+      ]);
+      expect(account.revokedFamilies()).toEqual([
+        { jti: 'g1:wnam:3:rt_abc1' },
+        { jti: 'g1:wnam:5:rt_abc2' },
+      ]);
+      expect(account.consents()).toEqual([{ client_id: 'client-other' }]);
+      expect(account.history()).toEqual([{ client_id: 'client-abc', action: 'revoked' }]);
+      // Recorded first, then moved on to when the consent was deleted.
+      expect(withdrawnDuringRevocation).toEqual(expect.any(Number));
+      const [withdrawal] = account.withdrawals();
+      expect(withdrawal.client_id).toBe('client-abc');
+      expect(withdrawal.revoked_at).toBeGreaterThanOrEqual(withdrawnDuringRevocation!);
+      // The generation moved on before the families were revoked and again with the deletion.
+      expect(generationDuringRevocation).toBe(1);
+      expect(account.generation()).toBe(2);
+      expect(metadata.adapter.query).not.toHaveBeenCalled();
+      expect(metadata.adapter.execute).not.toHaveBeenCalled();
+      // No unread consent_revoked marker is written any more.
       expect(mockRevokeToken).not.toHaveBeenCalled();
+    });
+
+    it('keeps the consent and fails when a refresh-token family cannot be revoked', async () => {
+      const account = createConsentDatabase();
+      account.seedConsent('client-abc');
+      account.seedFamily('g1:wnam:3:rt_abc1', 'client-abc');
+      mockCreateAccountAuthContextFromHono.mockReturnValueOnce({ coreAdapter: account.adapter });
+      const rotator = createRotatorNamespace(
+        vi.fn().mockRejectedValue(new Error('rotator unavailable'))
+      );
+
+      const response = await userConsentRevokeHandler(
+        createMockContext({
+          method: 'DELETE',
+          headers: { Authorization: 'Bearer token' },
+          params: { clientId: 'client-abc' },
+          env: { REFRESH_TOKEN_ROTATOR: rotator.namespace as never },
+        })
+      );
+
+      expect(response.status).toBe(500);
+      expect(account.consents()).toEqual([{ client_id: 'client-abc' }]);
+      expect(account.history()).toEqual([]);
+      expect(account.revokedFamilies()).toEqual([]);
+      // The recorded withdrawal already refuses the family that survived; a retry completes it.
+      expect(account.withdrawals()).toEqual([
+        { client_id: 'client-abc', revoked_at: expect.any(Number) },
+      ]);
+      expect(mockInvalidateConsentCache).not.toHaveBeenCalled();
+      expect(mockPublishEvent).not.toHaveBeenCalled();
     });
 
     it('should require authentication', async () => {

@@ -51,6 +51,10 @@ vi.mock('@authrim/ar-lib-core', async () => {
     getClientIP: vi.fn().mockReturnValue('127.0.0.1'),
     // Mock auth check
     isMockAuthEnabled: vi.fn().mockResolvedValue(true),
+    // Mock-mode approvers have no account data, so no consent withdrawals.
+    resolveAccountDataContextFromHono: vi
+      .fn()
+      .mockRejectedValue(new Error('account_data_route_not_found')),
   };
 });
 

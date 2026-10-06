@@ -1,3 +1,4 @@
+import type { DatabaseSource } from '../db';
 import type { Env } from '../types/env';
 import {
   buildRefreshTokenRotatorInstanceName,
@@ -14,6 +15,10 @@ import type {
   RotateTokenResponseV2,
   TokenFamilyV2,
 } from '../durable-objects/RefreshTokenRotator';
+import {
+  listRefreshTokenFamiliesByUser,
+  markRefreshTokenFamiliesRevoked,
+} from './refresh-token-family-index';
 
 export interface RefreshTokenRotatorRpcStub {
   createFamilyRpc(request: CreateFamilyRequestV3): Promise<{
@@ -25,6 +30,7 @@ export interface RefreshTokenRotatorRpcStub {
   rotateRpc(request: RotateTokenRequestV2): Promise<RotateTokenResponseV2>;
   revokeByJtiRpc(jti: string, reason?: string): Promise<boolean>;
   revokeFamilyRpc(userId: string, reason?: string): Promise<void>;
+  revokeFamilyIfFirstJtiRpc(userId: string, firstJti: string, reason?: string): Promise<boolean>;
   getFamilyRpc(userId: string): Promise<TokenFamilyV2 | null>;
   fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response>;
 }
@@ -46,6 +52,8 @@ export interface CreateRefreshTokenFamilyInput {
   resourceAudience?: string | string[];
   /** How the user authenticated for the grant beginning the family (RefreshTokenAuthContext). */
   authContext?: RefreshTokenAuthContext;
+  /** The user's consent withdrawal generation for the client the grant was given under. */
+  consentGeneration?: number;
 }
 
 export interface CreateRefreshTokenFamilyResult {
@@ -136,6 +144,7 @@ export async function createRefreshTokenFamily(
     tenantId: input.tenantId,
     ...(input.resourceAudience && { resourceAudience: input.resourceAudience }),
     ...(input.authContext && { authContext: input.authContext }),
+    ...(input.consentGeneration !== undefined && { consentGeneration: input.consentGeneration }),
     generation: shardConfig.currentGeneration,
     shardIndex,
   });
@@ -151,4 +160,52 @@ export async function createRefreshTokenFamily(
       jti,
     },
   };
+}
+
+/**
+ * Revoke a user's refresh-token families, optionally only those of one client, then mark them
+ * revoked in the family index. `db` must hold the index rows: ar-token writes them to the user's
+ * account database, so pass the account adapter, not the tenant metadata one.
+ *
+ * Every family the index has not marked revoked is revoked, whatever its indexed expiry: a
+ * rotation records a later expiry in the background, so an indexed expiry may lag the family's.
+ * A rotator instance (client, generation, shard) holds at most one family per user, and it is
+ * revoked by user, not by the indexed JWT ID (the family's first one, gone once it has rotated):
+ * one revocation per distinct instance. Only the listed rows are marked revoked, so a family
+ * issued meanwhile stays findable. A failure throws before the index is touched, so a retry can
+ * complete the revocation.
+ */
+export async function revokeUserRefreshTokenFamilies(
+  env: Env,
+  db: DatabaseSource,
+  input: {
+    tenantId: string;
+    userId: string;
+    clientId?: string | null;
+    reason: string;
+  }
+): Promise<{ familyCount: number; instanceCount: number }> {
+  const families = await listRefreshTokenFamiliesByUser(db, {
+    tenantId: input.tenantId,
+    userId: input.userId,
+    clientId: input.clientId,
+    unrevokedOnly: true,
+  });
+  const revokedInstances = new Set<string>();
+  for (const family of families) {
+    const { stub, resolution } = getRefreshTokenRotatorStubByJti(
+      env,
+      family.client_id,
+      family.jti,
+      input.tenantId
+    );
+    if (revokedInstances.has(resolution.instanceName)) continue;
+    await stub.revokeFamilyRpc(input.userId, input.reason);
+    revokedInstances.add(resolution.instanceName);
+  }
+  await markRefreshTokenFamiliesRevoked(db, {
+    tenantId: input.tenantId,
+    jtis: families.map((family) => family.jti),
+  });
+  return { familyCount: families.length, instanceCount: revokedInstances.size };
 }

@@ -704,6 +704,7 @@ describe('KV Utilities', () => {
         scope: 'openid profile',
         granted_at: 1234,
         expires_at: null,
+        consent_generation: 2,
       });
       (env as unknown as { DB?: D1Database }).DB = undefined;
 
@@ -713,6 +714,8 @@ describe('KV Utilities', () => {
         scope: 'openid profile',
         granted_at: 1234,
         expires_at: null,
+        // The consent withdrawal generation it was given under.
+        consent_generation: 2,
       });
       expect(coreAdapter.queryOne).toHaveBeenCalledWith(
         expect.stringContaining('FROM oauth_client_consents'),
@@ -725,6 +728,7 @@ describe('KV Utilities', () => {
         scope: 'openid email',
         granted_at: 5678,
         expires_at: 9999,
+        consent_generation: 1,
       });
       const consentCacheKV = new MockKVNamespace();
       (env as unknown as { DB?: D1Database }).DB = undefined;
@@ -737,10 +741,39 @@ describe('KV Utilities', () => {
         scope: 'openid email',
         granted_at: 5678,
         expires_at: 9999,
+        consent_generation: 1,
       });
       expect(await consentCacheKV.get('tenant:tenant-b:consent:user-2:client-2')).toBe(
         JSON.stringify(consent)
       );
+    });
+
+    it('replaces a stale cached consent with the database one when asked to refresh', async () => {
+      const coreAdapter = createMockAdapter({
+        scope: 'openid',
+        granted_at: 2000,
+        expires_at: null,
+        consent_generation: 3,
+      });
+      const consentCacheKV = new MockKVNamespace();
+      const key = 'tenant:tenant-b:consent:user-2:client-2';
+      await consentCacheKV.put(
+        key,
+        JSON.stringify({
+          scope: 'openid',
+          granted_at: 1000,
+          expires_at: null,
+          consent_generation: 1,
+        })
+      );
+      (env as unknown as Env).CONSENT_CACHE = consentCacheKV as unknown as KVNamespace;
+
+      const consent = await getCachedConsent(env, 'user-2', 'client-2', 'tenant-b', coreAdapter, {
+        refresh: true,
+      });
+
+      expect(consent).toMatchObject({ granted_at: 2000, consent_generation: 3 });
+      expect(await consentCacheKV.get(key)).toBe(JSON.stringify(consent));
     });
 
     it('does not negative-cache a missing consent', async () => {

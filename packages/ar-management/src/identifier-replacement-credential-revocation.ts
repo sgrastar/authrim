@@ -1,11 +1,9 @@
 import type { DatabaseAdapter, Env } from '@authrim/ar-lib-core';
 import {
-  getRefreshTokenRotatorStubByJti,
   getSessionRevocationStore,
   getSessionStoreBySessionId,
   isShardedSessionId,
-  listRefreshTokenFamiliesByUser,
-  revokeRefreshTokenFamiliesByUser,
+  revokeUserRefreshTokenFamilies,
 } from '@authrim/ar-lib-core';
 
 const MAX_SESSION_ROWS = 1_000;
@@ -17,27 +15,10 @@ export async function revokeIdentifierReplacementCredentials(input: {
   accountId: string;
   initiatingSessionRef: string | null;
 }): Promise<void> {
-  const families = await listRefreshTokenFamiliesByUser(input.core, {
+  await revokeUserRefreshTokenFamilies(input.env, input.core, {
     tenantId: input.tenantId,
     userId: input.accountId,
-    activeOnly: true,
-    nowMs: Date.now(),
-  });
-  const revokedInstances = new Set<string>();
-  for (const family of families) {
-    const resolution = getRefreshTokenRotatorStubByJti(
-      input.env,
-      family.client_id,
-      family.jti,
-      input.tenantId
-    );
-    if (revokedInstances.has(resolution.resolution.instanceName)) continue;
-    await resolution.stub.revokeFamilyRpc(input.accountId, 'identifier_replaced');
-    revokedInstances.add(resolution.resolution.instanceName);
-  }
-  await revokeRefreshTokenFamiliesByUser(input.core, {
-    tenantId: input.tenantId,
-    userId: input.accountId,
+    reason: 'identifier_replaced',
   });
 
   const sessions = (

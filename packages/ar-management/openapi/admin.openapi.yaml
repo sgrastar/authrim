@@ -23945,8 +23945,10 @@ paths:
       operationId: deleteApiAdminUsersByUserIdConsentsByClientId
       summary: Revoke user OAuth consent
       description: >-
-        Revokes a user consent for one OAuth client, records consent history, and invalidates
-        consent cache.
+        Records the withdrawal, revokes the user's refresh tokens for one OAuth client, then
+        revokes the consent, records consent history, and invalidates consent cache. From the
+        withdrawal on, the token endpoint refuses refresh tokens and grants issued before it. If
+        any step fails the request fails and the consent is kept, so a retry completes it.
       responses:
         '200':
           $ref: '#/components/responses/UserConsentRevoke'

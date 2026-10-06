@@ -225,12 +225,13 @@ export class DeviceCodeStore {
 
       // Approve device code (user approved the request)
       if (path === '/approve' && request.method === 'POST') {
-        const { user_code, user_id, sub } = (await request.json()) as {
+        const { user_code, user_id, sub, consent_generation } = (await request.json()) as {
           user_code: string;
           user_id: string;
           sub: string;
+          consent_generation?: number;
         };
-        await this.approveDeviceCode(user_code, user_id, sub);
+        await this.approveDeviceCode(user_code, user_id, sub, consent_generation);
         return new Response(JSON.stringify({ success: true }), {
           headers: { 'Content-Type': 'application/json' },
         });
@@ -413,7 +414,18 @@ export class DeviceCodeStore {
   /**
    * Approve device code (user approved the authorization request)
    */
-  private async approveDeviceCode(userCode: string, userId: string, sub: string): Promise<void> {
+  private async approveDeviceCode(
+    userCode: string,
+    userId: string,
+    sub: string,
+    consentGeneration?: number
+  ): Promise<void> {
+    if (
+      consentGeneration !== undefined &&
+      (!Number.isSafeInteger(consentGeneration) || consentGeneration < 0)
+    ) {
+      throw new Error('Invalid consent generation');
+    }
     const metadata = await this.getByUserCode(userCode);
 
     if (!metadata) {
@@ -432,6 +444,9 @@ export class DeviceCodeStore {
     metadata.status = 'approved';
     metadata.user_id = userId;
     metadata.sub = sub;
+    if (consentGeneration !== undefined) {
+      metadata.consent_generation = consentGeneration;
+    }
 
     // Update in memory
     this.deviceCodes.set(metadata.device_code, metadata);

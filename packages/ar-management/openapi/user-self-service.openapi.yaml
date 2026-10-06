@@ -1163,8 +1163,11 @@ paths:
       operationId: deleteApiUserConsentsByClientId
       summary: Revoke the current user's consent for a client.
       description:
-        Deletes the authenticated user's consent for the requested client, records consent
-        history, optionally revokes related tokens, and publishes a consent revoked event.
+        Records the withdrawal, revokes the authenticated user's refresh tokens for the requested
+        client, then deletes the consent, records consent history, and publishes a consent
+        revoked event. From the withdrawal on, the token endpoint refuses refresh tokens and
+        grants (authorization codes, device and CIBA requests) issued before it. If any step
+        fails the request fails and the consent is kept, so a retry completes it.
       responses:
         '200':
           $ref: '#/components/responses/ConsentRevoke'

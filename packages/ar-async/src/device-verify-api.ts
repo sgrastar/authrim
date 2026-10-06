@@ -19,6 +19,11 @@ import {
 } from '@authrim/ar-lib-core';
 import { resolveAsyncTenantId } from './tenant';
 import { getAuthenticatedAsyncUser } from './authenticated-session';
+import {
+  CONSENT_WITHDRAWN_DESCRIPTION,
+  readApprovalConsentWithdrawal,
+  requestPredatesConsentWithdrawal,
+} from './consent-withdrawal';
 
 /**
  * POST /api/device/verify
@@ -245,6 +250,38 @@ export async function deviceVerifyApiHandler(c: Context<{ Bindings: Env }>) {
       const finalUserId = authenticatedUser?.userId || userId || 'user_' + Date.now();
       const finalSub = authenticatedUser?.sub || sub || finalUserId;
 
+      // A code requested before the user withdrew the client's consent cannot be approved: the
+      // device has to start again. The approval records the consent generation it is given under,
+      // so a withdrawal completing afterwards refuses it at the token endpoint.
+      let consentWithdrawal;
+      try {
+        consentWithdrawal = await readApprovalConsentWithdrawal(c, {
+          tenantId,
+          userId: finalSub,
+          clientId: metadata.client_id,
+        });
+      } catch (error) {
+        log.error('Failed to read consent withdrawals for a device approval', {}, error as Error);
+        return c.json(
+          {
+            success: false,
+            error: 'temporarily_unavailable',
+            error_description: 'Consent state is unavailable. Try again.',
+          },
+          503
+        );
+      }
+      if (requestPredatesConsentWithdrawal(metadata.created_at, consentWithdrawal)) {
+        return c.json(
+          {
+            success: false,
+            error: 'consent_withdrawn',
+            error_description: CONSENT_WITHDRAWN_DESCRIPTION,
+          },
+          400
+        );
+      }
+
       const approveResponse = await deviceCodeStore.fetch(
         new Request('https://internal/approve', {
           method: 'POST',
@@ -253,6 +290,7 @@ export async function deviceVerifyApiHandler(c: Context<{ Bindings: Env }>) {
             user_code: userCode,
             user_id: finalUserId,
             sub: finalSub,
+            consent_generation: consentWithdrawal.generation,
           }),
         })
       );

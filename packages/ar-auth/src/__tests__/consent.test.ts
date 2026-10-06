@@ -58,7 +58,10 @@ function createMockDB(options: {
     bind: vi.fn().mockReturnThis(),
     first: vi.fn().mockResolvedValue(options.firstResult ?? null),
     all: vi.fn().mockResolvedValue({ results: options.allResults ?? [] }),
-    run: vi.fn().mockResolvedValue(options.runResult ?? { success: true }),
+    // D1 reports the rows a write changed.
+    run: vi
+      .fn()
+      .mockResolvedValue({ meta: { changes: 1 }, ...(options.runResult ?? { success: true }) }),
   };
 
   return {
@@ -922,6 +925,126 @@ describe('Consent Handlers', () => {
       expect(c.redirect).not.toHaveBeenCalled();
     });
 
+    describe('consent withdrawal generation', () => {
+      function approvalChallenge() {
+        return createMockChallengeStore({
+          id: 'consent-challenge-gen',
+          type: 'consent',
+          userId: 'user-123',
+          metadata: {
+            response_type: 'code',
+            client_id: 'test-client',
+            redirect_uri: 'https://example.com/callback',
+            scope: 'openid profile',
+            state: 'test-state',
+          },
+        });
+      }
+
+      /** An account database whose consent withdrawal read fails while `readFails()` says so. */
+      function accountDb(options: { readFails?: () => boolean; consentWrites?: number } = {}) {
+        const mockDB = createMockDB({ runResult: { success: true } });
+        const statement = (mockDB as unknown as { _mockStatement: Record<string, unknown> })
+          ._mockStatement;
+        vi.mocked(mockDB.prepare).mockImplementation((sql: string) => {
+          if (sql.includes('SELECT generation, revoked_at FROM oauth_client_consent_revocations')) {
+            return {
+              ...statement,
+              bind: vi.fn().mockReturnThis(),
+              first: vi.fn(async () => {
+                if (options.readFails?.()) throw new Error('D1_ERROR: no such table');
+                return { generation: 4, revoked_at: 1 };
+              }),
+            } as never;
+          }
+          if (
+            sql.includes('INSERT INTO oauth_client_consents') &&
+            options.consentWrites !== undefined
+          ) {
+            return {
+              ...statement,
+              bind: vi.fn().mockReturnThis(),
+              run: vi.fn(async () => ({
+                success: true,
+                meta: { changes: options.consentWrites },
+              })),
+            } as never;
+          }
+          return statement as never;
+        });
+        return mockDB;
+      }
+
+      it('keeps the consent screen usable when the generation cannot be read', async () => {
+        const challengeStore = approvalChallenge();
+        let fail = true;
+        const db = accountDb({ readFails: () => fail });
+        const approve = () =>
+          consentPostHandler(
+            createMockContext({
+              method: 'POST',
+              body: { challenge_id: 'consent-challenge-gen', approved: true },
+              headers: { 'content-type': 'application/json' },
+              challengeStore,
+              db,
+            })
+          );
+
+        const failed = await approve();
+        expect(failed.status).toBe(503);
+        expect(challengeStore._challenges.has('consent-challenge-gen')).toBe(true);
+
+        fail = false;
+        const retried = await approve();
+        expect(retried.status).toBe(200);
+        expect(challengeStore._challenges.has('consent-challenge-gen')).toBe(false);
+      });
+
+      it('records the approval under the generation read for it', async () => {
+        const challengeStore = approvalChallenge();
+        const c = createMockContext({
+          method: 'POST',
+          body: { challenge_id: 'consent-challenge-gen', approved: true },
+          headers: { 'content-type': 'application/json' },
+          challengeStore,
+          db: accountDb(),
+        });
+
+        await consentPostHandler(c);
+
+        const jsonBody = c.json.mock.calls[0][0] as { redirect_url: string };
+        const confirmation = new URL(jsonBody.redirect_url, 'https://example.com').searchParams.get(
+          '_consent_confirmation_challenge'
+        );
+        expect(challengeStore._challenges.get(confirmation!)).toMatchObject({
+          metadata: { consent_generation: 4 },
+        });
+      });
+
+      it('records nothing and asks to approve again when a withdrawal raced the approval', async () => {
+        const challengeStore = approvalChallenge();
+        const c = createMockContext({
+          method: 'POST',
+          body: { challenge_id: 'consent-challenge-gen', approved: true },
+          headers: { 'content-type': 'application/json' },
+          challengeStore,
+          // The generation moved on before the conditional write: it writes no row.
+          db: accountDb({ consentWrites: 0 }),
+        });
+
+        const response = await consentPostHandler(c);
+
+        expect(response.status).toBe(409);
+        await expect(response.json()).resolves.toMatchObject({ error: 'consent_withdrawn' });
+        expect(
+          [...challengeStore._challenges.values()].some(
+            (challenge: { metadata?: { purpose?: string } }) =>
+              challenge.metadata?.purpose === 'authorize_consent_confirmation'
+          )
+        ).toBe(false);
+      });
+    });
+
     it('should save consent and redirect on approval', async () => {
       const challengeStore = createMockChallengeStore({
         id: 'consent-challenge-123',
@@ -1010,6 +1133,8 @@ describe('Consent Handlers', () => {
         metadata: {
           purpose: 'authorize_consent_confirmation',
           confirmed_reauth: confirmedReauth,
+          // The consent withdrawal generation the approval was given under (none withdrawn).
+          consent_generation: 0,
         },
       });
     });

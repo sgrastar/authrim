@@ -4333,9 +4333,11 @@ export async function directLogoutHandler(c: Context<{ Bindings: Env }>) {
       if (revoke_tokens && c.env.REFRESH_TOKEN_ROTATOR) {
         try {
           if (session?.userId) {
-            // Query all active token families for this user from D1
+            // ar-token indexes the user's families in its account database, not tenant metadata.
+            await resolveAccountDataContextFromHono(c, session.userId);
+            const accountCore = createAccountAuthContextFromHono(c, tenantId).coreAdapter;
             // Find all active token families for this user
-            const families = await listRefreshTokenFamiliesByUser(authCtx.coreAdapter, {
+            const families = await listRefreshTokenFamiliesByUser(accountCore, {
               tenantId,
               userId: session.userId,
               activeOnly: true,
@@ -4375,7 +4377,7 @@ export async function directLogoutHandler(c: Context<{ Bindings: Env }>) {
                 action: 'revoke_refresh_tokens_partial',
               });
             } else {
-              await expireRefreshTokenFamiliesByUser(authCtx.coreAdapter, {
+              await expireRefreshTokenFamiliesByUser(accountCore, {
                 tenantId,
                 userId: session.userId,
               });

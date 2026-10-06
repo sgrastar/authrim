@@ -131,7 +131,8 @@ function createMockDB() {
         }
         return { results: [] };
       }),
-      run: vi.fn().mockResolvedValue({ success: true }),
+      // D1 reports the rows a write changed.
+      run: vi.fn().mockResolvedValue({ success: true, meta: { changes: 1 } }),
     };
     return statement;
   });
@@ -1992,6 +1993,214 @@ describe('Authorization Handler', () => {
       expect(redirectUrl.searchParams.get('code')).toBeTruthy();
     });
 
+    describe('after the user withdrew a consent for the client', () => {
+      /** An account database answering the given consent and consent withdrawal rows. */
+      function useAccountDatabase(rows: {
+        consent?: Record<string, unknown>;
+        withdrawal?: Record<string, unknown>;
+      }) {
+        const accountDb = createMockDB();
+        const prepare = vi.mocked(accountDb.prepare);
+        const basePrepare = prepare.getMockImplementation()!;
+        const reads: string[] = [];
+        prepare.mockImplementation((sql: string) => {
+          const statement = basePrepare(sql);
+          const row = sql.includes('FROM oauth_client_consents')
+            ? rows.consent
+            : sql.includes('FROM oauth_client_consent_revocations')
+              ? rows.withdrawal
+              : undefined;
+          if (sql.includes('FROM oauth_client_consent')) reads.push(sql);
+          if (row) {
+            vi.mocked(statement.first).mockResolvedValue(row as never);
+            vi.mocked(statement.all).mockResolvedValue({ results: [row] } as never);
+          }
+          return statement;
+        });
+        mockResolveAccountDataContextFromHono.mockImplementationOnce(async (c, userId) => {
+          const context = {
+            tenantId: 'default',
+            accountId: userId,
+            legacyUserId: userId,
+            coreDb: accountDb,
+            piiDb: accountDb,
+            coreBindingRef: 'DB_ACCOUNT',
+            piiBindingRef: 'DB_ACCOUNT',
+            coreResidencyPartition: 'default',
+            piiResidencyPartition: 'default',
+            accountRouteGeneration: 1,
+            userCacheScope: { tenantId: 'default', accountRouteGeneration: 1 },
+            piiCacheMode: 'disabled',
+          };
+          c.set('accountDataContext', context);
+          return context;
+        });
+        return reads;
+      }
+
+      function authorizeWithoutPrompt(state: string) {
+        return app.request(
+          `/authorize?response_type=code&client_id=test-client&redirect_uri=https://example.com/callback&scope=openid&state=${state}&prompt=none`,
+          {
+            method: 'GET',
+            headers: { Cookie: `authrim_session=${encodeURIComponent(TEST_SESSION_ID)}` },
+          },
+          env
+        );
+      }
+
+      it('records in the code the generation read before the consent was checked', async () => {
+        await configureClientSettings(env, { 'client.sso_enabled': true });
+        seedSession(env);
+        const grantedAt = Date.now() - 1000;
+        const reads = useAccountDatabase({
+          consent: {
+            scope: 'openid',
+            granted_at: grantedAt,
+            expires_at: null,
+            consent_generation: 3,
+          },
+          withdrawal: { generation: 3, revoked_at: grantedAt - 1000 },
+        });
+
+        const response = await authorizeWithoutPrompt('reconsented');
+
+        expect(response.status).toBe(302);
+        expect(new URL(response.headers.get('Location')!).searchParams.get('code')).toBeTruthy();
+        expect(getAuthCodeStore(env).storeCodeRpc).toHaveBeenCalledWith(
+          expect.objectContaining({ consentGeneration: 3 })
+        );
+        expect(reads[0]).toContain('FROM oauth_client_consent_revocations');
+        expect(reads).toContainEqual(expect.stringContaining('FROM oauth_client_consents'));
+      });
+
+      it('does not issue a code for a consent confirmed before a withdrawal completed', async () => {
+        // Approved on the consent screen under generation 0; withdrawn before the user got back.
+        await configureClientSettings(env, { 'client.sso_enabled': true });
+        seedSession(env);
+        getChallengeMap(env).set('confirm_withdrawn_consent', {
+          id: 'confirm_withdrawn_consent',
+          tenantId: 'default',
+          type: 'consent',
+          userId: 'test-user',
+          challenge: 'confirm_withdrawn_consent',
+          metadata: {
+            purpose: 'authorize_consent_confirmation',
+            consent_generation: 0,
+            sessionId: TEST_SESSION_ID,
+            browserBinding: 'consent-browser-binding',
+          },
+        });
+        useAccountDatabase({ withdrawal: { generation: 2, revoked_at: Date.now() - 100 } });
+
+        const response = await app.request(
+          '/authorize?response_type=code&client_id=test-client&redirect_uri=https://example.com/callback&scope=openid&state=withdrawn-confirmation&prompt=none&_consent_confirmation_challenge=confirm_withdrawn_consent',
+          {
+            method: 'GET',
+            headers: {
+              Cookie:
+                `authrim_session=${encodeURIComponent(TEST_SESSION_ID)}; ` +
+                'authrim_consent_confirmation=consent-browser-binding',
+            },
+          },
+          env
+        );
+
+        expect(response.status).toBe(302);
+        const redirectUrl = new URL(response.headers.get('Location')!);
+        expect(redirectUrl.searchParams.get('code')).toBeNull();
+        expect(redirectUrl.searchParams.get('error')).toBe('consent_required');
+        expect(getAuthCodeStore(env).storeCodeRpc).not.toHaveBeenCalled();
+      });
+
+      it('uses the consent given again after the withdrawal over a stale cached one', async () => {
+        await configureClientSettings(env, { 'client.sso_enabled': true });
+        seedSession(env);
+        const revokedAt = Date.now() - 5_000;
+        const put = vi.fn(async () => undefined);
+        (env as unknown as { CONSENT_CACHE: unknown }).CONSENT_CACHE = {
+          // Cached before the withdrawal (or written by a read that raced it).
+          get: vi.fn(async () =>
+            JSON.stringify({ scope: 'openid', granted_at: revokedAt - 10_000, expires_at: null })
+          ),
+          put,
+          delete: vi.fn(async () => undefined),
+        };
+        const reconsent = {
+          scope: 'openid',
+          granted_at: revokedAt + 1_000,
+          expires_at: null,
+          consent_generation: 2,
+        };
+        useAccountDatabase({
+          consent: reconsent,
+          withdrawal: { generation: 2, revoked_at: revokedAt },
+        });
+
+        const response = await authorizeWithoutPrompt('reconsented-stale-cache');
+
+        expect(response.status).toBe(302);
+        const redirectUrl = new URL(response.headers.get('Location')!);
+        expect(redirectUrl.searchParams.get('error')).toBeNull();
+        expect(redirectUrl.searchParams.get('code')).toBeTruthy();
+        expect(getAuthCodeStore(env).storeCodeRpc).toHaveBeenCalledWith(
+          expect.objectContaining({ consentGeneration: 2 })
+        );
+        // The cache now holds the consent given again.
+        expect(put).toHaveBeenCalledWith(
+          expect.any(String),
+          JSON.stringify(reconsent),
+          expect.anything()
+        );
+      });
+
+      it('treats a consent recorded under an earlier generation as absent', async () => {
+        // An approval read generation 1 and its write landed after a withdrawal moved it to 2.
+        await configureClientSettings(env, { 'client.sso_enabled': true });
+        seedSession(env);
+        useAccountDatabase({
+          consent: {
+            scope: 'openid',
+            granted_at: Date.now() - 1_000,
+            expires_at: null,
+            consent_generation: 1,
+          },
+          withdrawal: { generation: 2, revoked_at: Date.now() - 2_000 },
+        });
+
+        const response = await authorizeWithoutPrompt('raced-approval');
+
+        expect(response.status).toBe(302);
+        expect(new URL(response.headers.get('Location')!).searchParams.get('error')).toBe(
+          'consent_required'
+        );
+        expect(getAuthCodeStore(env).storeCodeRpc).not.toHaveBeenCalled();
+      });
+
+      it('does not use a consent cached from before the withdrawal', async () => {
+        await configureClientSettings(env, { 'client.sso_enabled': true });
+        seedSession(env);
+        const grantedAt = Date.now() - 10_000;
+        const cache = new Map<string, string>();
+        (env as unknown as { CONSENT_CACHE: unknown }).CONSENT_CACHE = {
+          get: vi.fn(async () =>
+            JSON.stringify({ scope: 'openid', granted_at: grantedAt, expires_at: null })
+          ),
+          put: vi.fn(async (key: string, value: string) => void cache.set(key, value)),
+          delete: vi.fn(async () => undefined),
+        };
+        useAccountDatabase({ withdrawal: { generation: 1, revoked_at: grantedAt + 1000 } });
+
+        const response = await authorizeWithoutPrompt('stale-cache');
+
+        expect(response.status).toBe(302);
+        expect(new URL(response.headers.get('Location')!).searchParams.get('error')).toBe(
+          'consent_required'
+        );
+        expect(getAuthCodeStore(env).storeCodeRpc).not.toHaveBeenCalled();
+      });
+    });
+
     it('issues an authorization code for an existing SSO session when consent is not required', async () => {
       await configureClientSettings(env, {
         'client.sso_enabled': true,
@@ -2677,6 +2886,7 @@ describe('Authorization Handler', () => {
         challenge: 'confirm_consent',
         metadata: {
           purpose: 'authorize_consent_confirmation',
+          consent_generation: 0,
           sessionId: TEST_SESSION_ID,
           browserBinding: 'consent-browser-binding',
         },
@@ -2733,6 +2943,7 @@ describe('Authorization Handler', () => {
           challenge: 'confirm_consent_after_reauth',
           metadata: {
             purpose: 'authorize_consent_confirmation',
+            consent_generation: 0,
             sessionId: TEST_SESSION_ID,
             browserBinding: 'consent-browser-binding',
             confirmed_reauth: { auth_time: 1_700_000_200 },
@@ -2775,6 +2986,7 @@ describe('Authorization Handler', () => {
         challenge: 'confirm_consent_without_reauth',
         metadata: {
           purpose: 'authorize_consent_confirmation',
+          consent_generation: 0,
           sessionId: TEST_SESSION_ID,
           browserBinding: 'consent-browser-binding',
         },
@@ -2807,6 +3019,7 @@ describe('Authorization Handler', () => {
         challenge: 'unbound_confirm_consent',
         metadata: {
           purpose: 'authorize_consent_confirmation',
+          consent_generation: 0,
           sessionId: TEST_SESSION_ID,
           browserBinding: 'consent-browser-binding',
         },
@@ -2832,6 +3045,7 @@ describe('Authorization Handler', () => {
         challenge: 'wrong_binding_confirm_consent',
         metadata: {
           purpose: 'authorize_consent_confirmation',
+          consent_generation: 0,
           sessionId: TEST_SESSION_ID,
           browserBinding: 'consent-browser-binding',
         },
@@ -4260,6 +4474,7 @@ describe('Authorization Handler', () => {
         challenge: 'aal-consent',
         metadata: {
           purpose: 'authorize_consent_confirmation',
+          consent_generation: 0,
           sessionId: TEST_SESSION_ID,
           browserBinding: 'aal-consent-browser',
         },

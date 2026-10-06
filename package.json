@@ -201,7 +201,7 @@
       "jose": "6.2.9",
       "@hono/node-server": "2.0.10",
       "fast-uri": "3.1.8",
-      "sharp": "0.35.4",
+      "sharp": "0.35.5",
       "tar": "^7.5.21",
       "devalue": "^5.9.1",
       "minimatch@<3.1.4": "3.1.4",
@@ -215,7 +215,9 @@
       "proxy-addr@<2.0.8": "2.0.8",
       "source-map-js@<1.2.2": "1.2.2",
       "compression@<1.8.2": "1.8.2",
-      "postcss-selector-parser@<7.1.6": "7.1.6"
+      "postcss-selector-parser@<7.1.6": "7.1.6",
+      "shell-quote@>=1.8.4 <1.11.0": "1.11.0",
+      "@modelcontextprotocol/client@>=2.0.0 <2.2.0": "2.2.0"
     },
     "patchedDependencies": {
       "extract-zip@2.0.1": "patches/extract-zip@2.0.1.patch"

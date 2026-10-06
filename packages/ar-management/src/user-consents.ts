@@ -18,7 +18,6 @@ import {
   invalidateConsentCache,
   listOAuthClientConsentsWithClients,
   resolveAccountDataContextFromHono,
-  revokeToken,
   publishEvent,
   CONSENT_EVENTS,
   introspectTokenFromContext,
@@ -27,6 +26,7 @@ import {
   getLogger,
 } from '@authrim/ar-lib-core';
 import { getCookie } from 'hono/cookie';
+import { withdrawOAuthClientConsent } from './oauth-client-consent-withdrawal';
 
 /**
  * Get user ID from request context
@@ -165,7 +165,8 @@ export async function userConsentsListHandler(c: Context<{ Bindings: Env }>) {
  * Revoke consent for a specific client
  * DELETE /api/user/consents/:clientId
  *
- * Revokes consent and optionally invalidates related tokens.
+ * Revokes consent and the client's refresh tokens for the user: withdrawing the grant ends the
+ * tokens issued under it.
  */
 export async function userConsentRevokeHandler(c: Context<{ Bindings: Env }>) {
   try {
@@ -189,25 +190,6 @@ export async function userConsentRevokeHandler(c: Context<{ Bindings: Env }>) {
         },
         400
       );
-    }
-
-    // Parse request body for options
-    let revokeTokens = true; // Default: revoke tokens
-    let reason: 'user_request' | 'admin_action' | 'policy_violation' = 'user_request';
-
-    const contentType = c.req.header('Content-Type') || '';
-    if (contentType.includes('application/json')) {
-      try {
-        const body = await c.req.json<{
-          revoke_tokens?: boolean;
-          reason?: string;
-        }>();
-        if (body.revoke_tokens !== undefined) {
-          revokeTokens = body.revoke_tokens;
-        }
-      } catch {
-        // Ignore JSON parse errors
-      }
     }
 
     const tenantId = getTenantIdFromContext(c);
@@ -246,45 +228,17 @@ export async function userConsentRevokeHandler(c: Context<{ Bindings: Env }>) {
 
     const consent = existingConsent[0];
     const previousScopes = consent.scope.split(' ');
-    const now = Date.now();
 
-    // Delete consent
-    await authCtx.coreAdapter.execute(
-      'DELETE FROM oauth_client_consents WHERE tenant_id = ? AND user_id = ? AND client_id = ?',
-      [tenantId, userId, clientId]
-    );
-
-    // Record in consent history
-    const historyId = crypto.randomUUID();
-    await authCtx.coreAdapter.execute(
-      `INSERT INTO consent_history (id, tenant_id, user_id, client_id, action, scopes_before, scopes_after, created_at)
-       VALUES (?, ?, ?, ?, 'revoked', ?, NULL, ?)`,
-      [historyId, tenantId, userId, clientId, JSON.stringify(previousScopes), now]
+    // Ends the tokens issued under the consent, then deletes it; a failure leaves the consent in
+    // place so that a retry can complete the withdrawal.
+    const { revokedAt: now, refreshTokenFamilies: familyCount } = await withdrawOAuthClientConsent(
+      c.env,
+      authCtx.coreAdapter,
+      { tenantId, userId, clientId, previousScopes }
     );
 
     // Invalidate consent cache
     await invalidateConsentCache(c.env, userId, tenantId, clientId);
-
-    // Revoke related tokens if requested
-    let accessTokensRevoked = 0;
-    let refreshTokensRevoked = 0;
-
-    if (revokeTokens) {
-      // Note: In a full implementation, this would query and revoke tokens
-      // For now, we add the user+client combo to a revocation list
-      // The actual token invalidation happens during token verification
-      try {
-        // Add to revocation list (tokens will be rejected on next use)
-        const revocationKey = `consent_revoked:${userId}:${clientId}`;
-        const revocationTTL = 86400 * 90; // 90 days (typical refresh token lifetime)
-        await revokeToken(c.env, revocationKey, revocationTTL, undefined, tenantId);
-        // Estimate - actual count would require querying token stores
-        refreshTokensRevoked = 1;
-      } catch (error) {
-        const log = getLogger(c).module('USER-CONSENTS');
-        log.warn('Token revocation warning', { error: (error as Error).message });
-      }
-    }
 
     // Publish consent.revoked event
     const log = getLogger(c).module('USER-CONSENTS');
@@ -296,7 +250,7 @@ export async function userConsentRevokeHandler(c: Context<{ Bindings: Env }>) {
         clientId,
         scopes: previousScopes,
         previousScopes,
-        revocationReason: reason,
+        revocationReason: 'user_request',
         initiatedBy: 'user',
       } satisfies ExtendedConsentEventData,
     }).catch((err) => {
@@ -305,8 +259,8 @@ export async function userConsentRevokeHandler(c: Context<{ Bindings: Env }>) {
 
     const result: ConsentRevokeResult = {
       success: true,
-      accessTokensRevoked,
-      refreshTokensRevoked,
+      accessTokensRevoked: 0,
+      refreshTokensRevoked: familyCount,
       revokedAt: now,
     };
 

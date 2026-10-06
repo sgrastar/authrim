@@ -2955,6 +2955,135 @@ describe('Client Authentication Tests', () => {
       expect(body.fallback_display_name).toBeUndefined();
     });
 
+    describe('after the user withdrew the client consent', () => {
+      const withdrawnAt = 2_000_000;
+      let core: ReturnType<typeof mocks.mockD1Adapter>;
+
+      beforeEach(() => {
+        // The account database records when the user withdrew this client's consent.
+        core = mocks.mockD1Adapter();
+        core.queryOne.mockImplementation(async (sql: string, params: unknown[]) =>
+          sql.includes('FROM oauth_client_consent_revocations') && params[2] === 'native-client-001'
+            ? { generation: 1, revoked_at: withdrawnAt }
+            : null
+        );
+      });
+
+      afterEach(() => {
+        core.queryOne.mockReset().mockResolvedValue(null);
+      });
+
+      function useDeviceSecretIssuedAt(createdAt: number) {
+        mocks.mockDeviceSecretRepository.validateAndUse.mockResolvedValue({
+          ok: true,
+          entity: {
+            id: 'ds-001',
+            user_id: 'user-001',
+            session_id: 'sid-001',
+            device_platform: 'ios',
+            created_at: createdAt,
+            last_used_at: createdAt,
+            use_count: 0,
+          },
+        });
+      }
+
+      it('refuses a device secret issued before the withdrawal', async () => {
+        const client = setupNativeSSOValidationTest();
+        useDeviceSecretIssuedAt(withdrawnAt - 1);
+
+        const response = await tokenHandler(createNativeSSOTokenExchangeContext(client.client_id));
+        const body = await parseJsonResponse<{
+          error?: string;
+          access_token?: string;
+          error_details?: { code?: string };
+        }>(response);
+
+        expect(response.status).toBe(400);
+        expect(body.error).toBe('invalid_grant');
+        expect(body.error_details?.code).toBe('device_secret_inactive');
+        expect(body.access_token).toBeUndefined();
+        expect(core.queryOne).toHaveBeenCalledWith(
+          expect.stringContaining('FROM oauth_client_consent_revocations'),
+          ['default', 'user-001', 'native-client-001']
+        );
+      });
+
+      it('reads the withdrawals before using the device secret, so a failed read can be retried', async () => {
+        const client = setupNativeSSOValidationTest();
+        useDeviceSecretIssuedAt(withdrawnAt + 1);
+        core.queryOne.mockRejectedValueOnce(new Error('account database unavailable'));
+
+        const failed = await tokenHandler(createNativeSSOTokenExchangeContext(client.client_id));
+
+        expect(failed.status).toBe(503);
+        expect(mocks.mockDeviceSecretRepository.validateAndUse).not.toHaveBeenCalled();
+
+        const retried = await tokenHandler(createNativeSSOTokenExchangeContext(client.client_id));
+
+        expect(retried.status).toBe(200);
+        expect(mocks.mockDeviceSecretRepository.validateAndUse).toHaveBeenCalledTimes(1);
+      });
+
+      it('refuses without offering a retry when the new family cannot be confirmed', async () => {
+        const client = setupNativeSSOValidationTest();
+        useDeviceSecretIssuedAt(withdrawnAt + 1);
+        // The read before the exchange succeeds; the one confirming the new family fails, after
+        // the device secret use and the ID token were consumed.
+        let withdrawalReads = 0;
+        core.queryOne.mockImplementation(async (sql: string) => {
+          if (!sql.includes('FROM oauth_client_consent_revocations')) return null;
+          withdrawalReads += 1;
+          if (withdrawalReads > 1) throw new Error('account database unavailable');
+          return { generation: 1, revoked_at: withdrawnAt };
+        });
+        const createFamilyRpc = vi.fn(async (request: { jti: string; scope: string }) => ({
+          version: 1,
+          newJti: request.jti,
+          expiresIn: 3600,
+          allowedScope: request.scope,
+        }));
+        const revokeFamilyIfFirstJtiRpc = vi.fn(async () => true);
+        const c = createNativeSSOTokenExchangeContext(client.client_id);
+        c.env = {
+          ...c.env,
+          REFRESH_TOKEN_ROTATOR: {
+            idFromName: vi.fn((name: string) => name),
+            get: vi.fn(() => ({ createFamilyRpc, revokeFamilyIfFirstJtiRpc })),
+          } as unknown as Env['REFRESH_TOKEN_ROTATOR'],
+        };
+
+        const response = await tokenHandler(c);
+        const body = await parseJsonResponse<{
+          error?: string;
+          access_token?: string;
+          error_details?: { retryable?: boolean; user_action?: string };
+        }>(response);
+
+        expect(response.status).toBe(400);
+        expect(body.error).toBe('invalid_grant');
+        expect(body.access_token).toBeUndefined();
+        expect(body.error_details?.retryable).toBe(false);
+        expect(createFamilyRpc).toHaveBeenCalledTimes(1);
+        // Exactly the family just created, by the JWT ID it was issued with.
+        const familyJti = (createFamilyRpc.mock.calls[0][0] as { jti: string }).jti;
+        expect(revokeFamilyIfFirstJtiRpc).toHaveBeenCalledWith(
+          'user-001',
+          familyJti,
+          'consent_revoked'
+        );
+      });
+
+      it('accepts a device secret issued after the withdrawal', async () => {
+        const client = setupNativeSSOValidationTest();
+        useDeviceSecretIssuedAt(withdrawnAt + 1);
+
+        const response = await tokenHandler(createNativeSSOTokenExchangeContext(client.client_id));
+
+        expect(response.status).toBe(200);
+      });
+    });
+
     it('should reject native public client Native SSO when channel is missing', async () => {
       const client = setupNativeSSOPublicClientTest();
       mocks.mockExtractDPoPProof.mockReturnValue('dpop-proof');

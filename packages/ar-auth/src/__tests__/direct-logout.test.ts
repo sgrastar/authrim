@@ -9,6 +9,9 @@ const {
   getRefreshTokenRotatorStubByJti,
   revokeFamilyRpc,
   createAuditLog,
+  tenantMetadataCore,
+  accountCore,
+  resolveAccountDataContextFromHono,
 } = vi.hoisted(() => {
   const rotatorStub = {
     revokeFamilyRpc: vi.fn(),
@@ -29,6 +32,14 @@ const {
     })),
     revokeFamilyRpc: rotatorStub.revokeFamilyRpc,
     createAuditLog: vi.fn(),
+    // ar-token indexes refresh-token families in the user's account database.
+    tenantMetadataCore: { database: 'tenant-metadata' },
+    accountCore: { database: 'account' },
+    resolveAccountDataContextFromHono: vi.fn(async (_c: unknown, userId: string) => ({
+      tenantId: 'tenant_test',
+      accountId: `account:${userId}`,
+      legacyUserId: userId,
+    })),
   };
 });
 
@@ -40,13 +51,9 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     getSessionStoreBySessionId: vi.fn(() => ({ stub: sessionStore })),
     isShardedSessionId: vi.fn(() => true),
     getTenantIdFromContext: vi.fn(() => 'tenant_test'),
-    createAuthContextFromHono: vi.fn(() => ({ coreAdapter: {} })),
-    createAccountAuthContextFromHono: vi.fn(() => ({ coreAdapter: {} })),
-    resolveAccountDataContextFromHono: vi.fn(async (_c, userId: string) => ({
-      tenantId: 'tenant_test',
-      accountId: `account:${userId}`,
-      legacyUserId: userId,
-    })),
+    createAuthContextFromHono: vi.fn(() => ({ coreAdapter: tenantMetadataCore })),
+    createAccountAuthContextFromHono: vi.fn(() => ({ coreAdapter: accountCore })),
+    resolveAccountDataContextFromHono,
     isNativeSSOEnabled: vi.fn(async () => true),
     revokeDeviceSecretsForLogoutScope,
     listRefreshTokenFamiliesByUser,
@@ -177,15 +184,13 @@ describe('Direct Auth logout scope', () => {
       success: true,
       message: 'Logged out successfully',
     });
-    expect(listRefreshTokenFamiliesByUser).toHaveBeenCalledWith(
-      {},
-      {
-        tenantId: 'tenant_test',
-        userId: 'user_123',
-        activeOnly: true,
-        nowMs: expect.any(Number),
-      }
-    );
+    expect(resolveAccountDataContextFromHono).toHaveBeenCalledWith(expect.anything(), 'user_123');
+    expect(listRefreshTokenFamiliesByUser).toHaveBeenCalledWith(accountCore, {
+      tenantId: 'tenant_test',
+      userId: 'user_123',
+      activeOnly: true,
+      nowMs: expect.any(Number),
+    });
     expect(getRefreshTokenRotatorStubByJti).toHaveBeenNthCalledWith(
       1,
       expect.objectContaining({
@@ -208,13 +213,10 @@ describe('Direct Auth logout scope', () => {
     expect(revokeFamilyRpc).toHaveBeenCalledTimes(2);
     expect(revokeFamilyRpc).toHaveBeenNthCalledWith(1, 'user_123', 'direct_auth_revoke_tokens');
     expect(revokeFamilyRpc).toHaveBeenNthCalledWith(2, 'user_123', 'direct_auth_revoke_tokens');
-    expect(expireRefreshTokenFamiliesByUser).toHaveBeenCalledWith(
-      {},
-      {
-        tenantId: 'tenant_test',
-        userId: 'user_123',
-      }
-    );
+    expect(expireRefreshTokenFamiliesByUser).toHaveBeenCalledWith(accountCore, {
+      tenantId: 'tenant_test',
+      userId: 'user_123',
+    });
   });
 
   it('keeps the index when a rotator could not revoke, so a retry can find the family', async () => {

@@ -88,6 +88,8 @@ export async function listRefreshTokenFamiliesByUser(
     userId: string;
     clientId?: string | null;
     activeOnly?: boolean;
+    /** Not marked revoked, whatever the indexed expiry (a rotation may have moved it on unseen). */
+    unrevokedOnly?: boolean;
     nowMs?: number;
   }
 ): Promise<Array<Pick<RefreshTokenFamilyIndexRow, 'jti' | 'client_id' | 'generation'>>> {
@@ -104,6 +106,8 @@ export async function listRefreshTokenFamiliesByUser(
     conditions.push('is_revoked = 0');
     conditions.push('expires_at > ?');
     params.push(input.nowMs ?? Date.now());
+  } else if (input.unrevokedOnly) {
+    conditions.push('is_revoked = 0');
   }
 
   return adapter.query<Pick<RefreshTokenFamilyIndexRow, 'jti' | 'client_id' | 'generation'>>(
@@ -157,6 +161,32 @@ export async function revokeRefreshTokenFamiliesByUser(
 
   const result = await adapter.execute(sql, params);
   return result.rowsAffected;
+}
+
+/** Statement parameters stay well under D1's per-statement bound parameter limit. */
+const MARK_REVOKED_CHUNK_SIZE = 90;
+
+/** Mark exactly these families revoked: a family issued since they were listed stays findable. */
+export async function markRefreshTokenFamiliesRevoked(
+  db: DatabaseSource,
+  input: {
+    tenantId: string;
+    jtis: readonly string[];
+  }
+): Promise<number> {
+  const adapter = getAdapter(db);
+  let rowsAffected = 0;
+  for (let start = 0; start < input.jtis.length; start += MARK_REVOKED_CHUNK_SIZE) {
+    const chunk = input.jtis.slice(start, start + MARK_REVOKED_CHUNK_SIZE);
+    const result = await adapter.execute(
+      `UPDATE user_token_families
+       SET is_revoked = 1
+       WHERE tenant_id = ? AND jti IN (${chunk.map(() => '?').join(', ')})`,
+      [input.tenantId, ...chunk]
+    );
+    rowsAffected += result.rowsAffected;
+  }
+  return rowsAffected;
 }
 
 export async function getRefreshTokenFamilyGenerationStats(
