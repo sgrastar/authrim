@@ -425,10 +425,6 @@ pattern = \"$DOMAIN_ONLY/par*\"
 zone_name = \"$ZONE_NAME\"
 
 [[routes]]
-pattern = \"$DOMAIN_ONLY/flow/*\"
-zone_name = \"$ZONE_NAME\"
-
-[[routes]]
 pattern = \"$DOMAIN_ONLY/api/auth/*\"
 zone_name = \"$ZONE_NAME\"
 

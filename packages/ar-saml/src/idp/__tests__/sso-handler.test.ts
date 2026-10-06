@@ -4,7 +4,6 @@ import { BINDING_URIS, SAML_NAMESPACES } from '../../common/constants';
 
 const mocks = vi.hoisted(() => ({
   sp: null as Record<string, unknown> | null,
-  builtin: false,
   ui: undefined as { baseUrl: string; paths?: { login?: string } } | undefined,
   loginPolicy: 'ui_base_url' as 'ui_base_url' | 'tenant_host',
   storeFetch: vi.fn(async (_url?: string) => new Response('{}', { status: 200 })),
@@ -38,7 +37,6 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     buildSAMLRequestStoreInstanceName: vi.fn(
       (tenant: string, role: string, entity: string) => `${tenant}:${role}:${entity}`
     ),
-    shouldUseBuiltinForms: vi.fn(async () => mocks.builtin),
     getSessionStoreBySessionId: vi.fn(() => ({
       stub: {
         fetch: vi.fn(async () => {
@@ -282,7 +280,6 @@ describe('IdP SSO handler policy boundaries', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.sp = sp();
-    mocks.builtin = false;
     mocks.ui = undefined;
     mocks.loginPolicy = 'ui_base_url';
     mocks.storeFetch.mockResolvedValue(new Response('{}', { status: 200 }));
@@ -359,12 +356,12 @@ describe('IdP SSO handler policy boundaries', () => {
     expect(mocks.storeFetch).not.toHaveBeenCalled();
   });
 
-  it('stores the request before builtin login and preserves force-authn intent', async () => {
-    mocks.builtin = true;
+  it('stores the request before the UI login and preserves force-authn intent', async () => {
+    mocks.ui = { baseUrl: 'https://ui.example.test' };
     const response = await post(authnRequest({ forceAuthn: true }), 'relay-state');
     expect(response.status).toBe(302);
     const location = response.headers.get('location') ?? '';
-    expect(location).toContain('/flow/login');
+    expect(location).toContain('https://ui.example.test/login');
     expect(location).toContain('force_authn=true');
     expect(mocks.storeFetch).toHaveBeenCalledWith(
       'https://saml-request-store/store',
@@ -395,7 +392,7 @@ describe('IdP SSO handler policy boundaries', () => {
   );
 
   it('fails closed if request state cannot be stored', async () => {
-    mocks.builtin = true;
+    mocks.ui = { baseUrl: 'https://ui.example.test' };
     mocks.storeFetch.mockRejectedValue(new Error('state unavailable'));
     const response = await post(authnRequest());
     expect(response.status).toBe(400);
@@ -419,10 +416,10 @@ describe('IdP SSO handler policy boundaries', () => {
     mocks.shardedSession = sharded;
     mocks.sessionThrows = throws;
     mocks.sessionResponse = response;
-    mocks.builtin = true;
+    mocks.ui = { baseUrl: 'https://ui.example.test' };
     const result = await post(authnRequest());
     expect(result.status).toBe(302);
-    expect(result.headers.get('location')).toContain('/flow/login');
+    expect(result.headers.get('location')).toContain('https://ui.example.test/login');
   });
 
   it('fails authentication when the session user no longer exists', async () => {
@@ -435,7 +432,7 @@ describe('IdP SSO handler policy boundaries', () => {
   it('forces an authenticated session through interactive reauthentication', async () => {
     authenticateSession();
     mocks.user = { id: 'user-a', email: 'user@example.test' };
-    mocks.builtin = true;
+    mocks.ui = { baseUrl: 'https://ui.example.test' };
     const response = await post(authnRequest({ forceAuthn: true }));
     expect(response.status).toBe(302);
     expect(response.headers.get('location')).toContain('force_authn=true');

@@ -3,11 +3,7 @@ import type { Context } from 'hono';
 import type { Env } from '../../../packages/ar-lib-core/src/types/env';
 import type { Logger } from '../../../packages/ar-lib-core/src/utils/logger';
 import { tokenHandler } from '../../../packages/ar-token/src/token';
-import {
-  authorizeHandler,
-  authorizeLoginHandler,
-  authorizeConfirmHandler,
-} from '../../../packages/ar-auth/src/authorize';
+import { authorizeHandler } from '../../../packages/ar-auth/src/authorize';
 import type { CallLedger } from './call-ledger';
 import { TEST_ISSUER, TEST_TENANT, TEST_ACCOUNT, type SecurityMatrixEnvKit } from './env';
 
@@ -98,10 +94,6 @@ export function createMatrixAuthorizeApp(
   app.use('*', seedMatrixContext(kit, options));
   app.get('/authorize', authorizeHandler);
   app.post('/authorize', authorizeHandler);
-  app.get('/flow/login', authorizeLoginHandler);
-  app.post('/flow/login', authorizeLoginHandler);
-  app.get('/flow/confirm', authorizeConfirmHandler);
-  app.post('/flow/confirm', authorizeConfirmHandler);
   return app;
 }
 

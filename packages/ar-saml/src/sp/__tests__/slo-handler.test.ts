@@ -4,7 +4,6 @@ import { SAML_NAMESPACES, STATUS_CODES } from '../../common/constants';
 
 const mocks = vi.hoisted(() => ({
   idp: null as Record<string, unknown> | null,
-  builtin: true,
   ui: undefined as { baseUrl: string } | undefined,
   activeUser: null as { id: string } | null,
   userNameId: null as string | null,
@@ -35,7 +34,6 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     isShardedSessionId: vi.fn((id: string) => id.startsWith('sess_')),
     getUIConfig: vi.fn(async () => mocks.ui),
     buildUIUrl: vi.fn((config: { baseUrl: string }) => `${config.baseUrl}/logout-complete`),
-    shouldUseBuiltinForms: vi.fn(async () => mocks.builtin),
     usesNakedDomainIssuer: vi.fn(() => false),
     buildIssuerUrl: vi.fn(() => 'https://tenant.example.test'),
     createAuthContextFromHono: vi.fn(() => ({ coreAdapter: {} })),
@@ -182,8 +180,7 @@ describe('SP SLO handler policy boundaries', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.idp = idp();
-    mocks.builtin = true;
-    mocks.ui = undefined;
+    mocks.ui = { baseUrl: 'https://ui.example.test' };
     mocks.activeUser = null;
     mocks.userNameId = null;
     mocks.sessionDelete = new Response(null, { status: 204 });
@@ -320,13 +317,7 @@ describe('SP SLO handler policy boundaries', () => {
     expect(mocks.consumeOutbound).not.toHaveBeenCalled();
   });
 
-  it('uses builtin, external, and configuration-error logout completion destinations', async () => {
-    expect((await post('SAMLResponse', responseXml())).headers.get('location')).toBe(
-      'https://tenant.example.test/logout-complete'
-    );
-
-    mocks.builtin = false;
-    mocks.ui = { baseUrl: 'https://ui.example.test' };
+  it('uses external and configuration-error logout completion destinations', async () => {
     expect((await post('SAMLResponse', responseXml())).headers.get('location')).toBe(
       'https://ui.example.test/logout-complete'
     );

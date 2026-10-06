@@ -2126,7 +2126,6 @@ export function generateRoutes(
     case 'ar-auth':
       routes.push(
         { pattern: `${domain}/authorize*`, zone_name: zoneName },
-        { pattern: `${domain}/flow/*`, zone_name: zoneName },
         { pattern: `${domain}/api/flow/*`, zone_name: zoneName },
         { pattern: `${domain}/par`, zone_name: zoneName },
         { pattern: `${domain}/session/check`, zone_name: zoneName },

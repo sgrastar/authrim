@@ -664,7 +664,7 @@ place('settings/compliance', 'Audit and data residency', {
 place(
 	'settings/runtime',
 	'Conformance testing',
-	{ advanced: ['feature.conformance_enabled', 'feature.conformance_use_builtin_forms'] },
+	{ advanced: ['feature.conformance_enabled'] },
 	{
 		'feature.conformance_enabled':
 			'OpenID certification runs only; should it be a platform-only switch?'

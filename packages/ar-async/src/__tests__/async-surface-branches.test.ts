@@ -5,24 +5,11 @@ import { cibaTestPageHandler } from '../ciba-test-page';
 import { resolveAsyncTenantId } from '../tenant';
 
 describe('async tenant and test surface boundaries', () => {
-  it('hides the CIBA test page when test and conformance modes are disabled', async () => {
-    const app = new Hono<{ Bindings: Env }>();
-    app.use('*', async (c, next) => {
-      (c as unknown as { set: (key: string, value: string) => void }).set('tenantId', 'tenant-a');
-      await next();
-    });
-    app.get('/api/ciba/test', cibaTestPageHandler);
-
-    const response = await app.request('https://tenant-a.example.com/api/ciba/test', {}, {
-      BASE_DOMAIN: 'example.com',
-    } as Env);
-    expect(response.status).toBe(404);
-  });
-
   it.each([
-    ['test endpoints', { ENABLE_TEST_ENDPOINTS: 'true' }],
-    ['conformance mode', { ENABLE_CONFORMANCE_MODE: 'true' }],
-  ])('renders the CIBA test page using the trusted context tenant in %s', async (_name, flags) => {
+    ['test endpoints are disabled', {}],
+    // Conformance mode does not open test-only pages
+    ['only conformance mode is enabled', { ENABLE_CONFORMANCE_MODE: 'true' }],
+  ])('hides the CIBA test page when %s', async (_name, flags) => {
     const app = new Hono<{ Bindings: Env }>();
     app.use('*', async (c, next) => {
       (c as unknown as { set: (key: string, value: string) => void }).set('tenantId', 'tenant-a');
@@ -33,6 +20,21 @@ describe('async tenant and test surface boundaries', () => {
     const response = await app.request('https://tenant-a.example.com/api/ciba/test', {}, {
       BASE_DOMAIN: 'example.com',
       ...flags,
+    } as Env);
+    expect(response.status).toBe(404);
+  });
+
+  it('renders the CIBA test page using the trusted context tenant when test endpoints are enabled', async () => {
+    const app = new Hono<{ Bindings: Env }>();
+    app.use('*', async (c, next) => {
+      (c as unknown as { set: (key: string, value: string) => void }).set('tenantId', 'tenant-a');
+      await next();
+    });
+    app.get('/api/ciba/test', cibaTestPageHandler);
+
+    const response = await app.request('https://tenant-a.example.com/api/ciba/test', {}, {
+      BASE_DOMAIN: 'example.com',
+      ENABLE_TEST_ENDPOINTS: 'true',
     } as Env);
     expect(response.status).toBe(200);
     expect(response.headers.get('Content-Type')).toContain('text/html');

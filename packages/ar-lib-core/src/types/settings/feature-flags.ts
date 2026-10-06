@@ -35,7 +35,6 @@ export interface FeatureFlagsSettings {
 
   // Conformance Testing
   'feature.conformance_enabled': boolean;
-  'feature.conformance_use_builtin_forms': boolean;
 
   // UI Contract / Flow Engine
   'feature.enable_flow_engine': boolean;
@@ -209,18 +208,7 @@ export const FEATURE_FLAGS_SETTINGS_META: Record<keyof FeatureFlagsSettings, Set
     envEmpty: 'false',
     label: 'Conformance Mode',
     description:
-      'Enable OIDC conformance testing mode for OpenID Foundation certification. When enabled: (1) Uses built-in HTML forms instead of external UI for Login/Consent pages, (2) Required for passing OpenID conformance tests, (3) UI_URL configuration is ignored, (4) Should be disabled in production environments.',
-    visibility: 'admin',
-  },
-  'feature.conformance_use_builtin_forms': {
-    key: 'feature.conformance_use_builtin_forms',
-    // Conformance mode applies to the whole deployment; tenants cannot set it.
-    scopes: ['platform'],
-    type: 'boolean',
-    default: true,
-    label: 'Use Built-in Forms',
-    description:
-      'Use built-in HTML login/consent forms when conformance mode is enabled. This is required for OIDC conformance testing. When disabled: external UI must handle all authentication flows (not recommended for certification testing).',
+      'Enable conformance-test-only behaviour for OpenID Foundation certification runs (for example, certification-suite clients registered without a scope get the standard scopes). Sign-in still goes through the Login UI. Must be disabled in production environments.',
     visibility: 'admin',
   },
 
@@ -315,7 +303,6 @@ export const FEATURE_FLAGS_DEFAULTS: FeatureFlagsSettings = {
 
   // Conformance Testing
   'feature.conformance_enabled': false,
-  'feature.conformance_use_builtin_forms': true,
 
   // UI Contract / Flow Engine
   'feature.enable_flow_engine': false,

@@ -235,19 +235,15 @@ describe('Router Worker', () => {
         expect(mockEnv.OP_AUTH.fetch).toHaveBeenCalledTimes(1);
       });
 
-      it('should route /flow/confirm to OP_AUTH', async () => {
-        const req = new Request('https://example.com/flow/confirm');
-        await app.fetch(req, mockEnv);
+      it.each(['/flow/login', '/flow/confirm'])(
+        'should not route the removed %s form to OP_AUTH',
+        async (path) => {
+          await app.fetch(new Request(`https://example.com${path}`), mockEnv);
+          await app.fetch(new Request(`https://example.com${path}`, { method: 'POST' }), mockEnv);
 
-        expect(mockEnv.OP_AUTH.fetch).toHaveBeenCalledTimes(1);
-      });
-
-      it('should route /flow/login to OP_AUTH', async () => {
-        const req = new Request('https://example.com/flow/login');
-        await app.fetch(req, mockEnv);
-
-        expect(mockEnv.OP_AUTH.fetch).toHaveBeenCalledTimes(1);
-      });
+          expect(mockEnv.OP_AUTH.fetch).not.toHaveBeenCalled();
+        }
+      );
 
       it('should route POST /par to OP_AUTH', async () => {
         const req = new Request('https://example.com/par', { method: 'POST' });
@@ -970,11 +966,12 @@ describe('Router Worker', () => {
       }
     );
 
-    it('should NOT apply CSP to /flow/* paths', async () => {
-      const req = new Request('https://example.com/flow/confirm');
+    it('should apply CSP to /logout-error (ar-auth no longer serves inline HTML there)', async () => {
+      const req = new Request('https://example.com/logout-error?error=invalid_client');
       const res = await app.fetch(req, mockEnv);
 
-      expect(res.headers.get('Content-Security-Policy')).toBeNull();
+      expect(mockEnv.OP_AUTH.fetch).toHaveBeenCalledTimes(1);
+      expect(res.headers.get('Content-Security-Policy')).toContain("default-src 'self'");
     });
 
     it('should NOT apply CSP to /session/check (iframe embedding)', async () => {

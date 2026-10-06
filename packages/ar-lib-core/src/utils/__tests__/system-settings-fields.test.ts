@@ -299,13 +299,12 @@ describe('systemSettingsFieldValues', () => {
 describe('getConformanceConfig with Settings API values', () => {
   it('lets the platform value set through the Settings API win', async () => {
     const store = kv({
-      system_settings: { conformance: { enabled: true, useBuiltinForms: true } },
+      system_settings: { conformance: { enabled: true } },
       'settings:platform:feature-flags': { 'feature.conformance_enabled': false },
     });
 
     await expect(getConformanceConfig({ SETTINGS: store })).resolves.toEqual({
       enabled: false,
-      useBuiltinForms: true,
     });
   });
   it('ignores conformance values stored for a tenant, which only the platform can set', async () => {
@@ -319,14 +318,14 @@ describe('getConformanceConfig with Settings API values', () => {
     ).resolves.toMatchObject({ 'feature.conformance_enabled': false });
   });
 
-  it('turns built-in forms on when the Settings API enables the mode while env has it off', async () => {
+  it('turns the mode on when the Settings API enables it while env has it off', async () => {
     const store = kv({
       'settings:platform:feature-flags': { 'feature.conformance_enabled': true },
     });
 
     await expect(
       getConformanceConfig({ SETTINGS: store, ENABLE_CONFORMANCE_MODE: 'false' })
-    ).resolves.toEqual({ enabled: true, useBuiltinForms: true });
+    ).resolves.toEqual({ enabled: true });
   });
 });
 
@@ -334,7 +333,6 @@ describe('the fallback shown for a section present without the field', () => {
   it('uses the default runtime applies', () => {
     expect(systemSettingsFieldValues({ conformance: {} }, 'feature-flags')).toEqual({
       'feature.conformance_enabled': false,
-      'feature.conformance_use_builtin_forms': true,
     });
     expect(systemSettingsFieldValues({}, 'feature-flags')).toEqual({});
   });

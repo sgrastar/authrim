@@ -344,7 +344,7 @@ describe('Consent Handlers', () => {
       );
     });
 
-    it('drops unsafe client metadata URLs from the HTML consent fallback', async () => {
+    it('returns JSON consent data even when the request asks for HTML', async () => {
       const challengeStore = createMockChallengeStore({
         id: 'unsafe-consent-challenge',
         type: 'consent',
@@ -375,14 +375,12 @@ describe('Consent Handlers', () => {
       });
 
       const response = await consentGetHandler(c);
-      const html = await response.text();
 
       expect(response.status).toBe(200);
-      expect(html).toContain('&lt;img src=x onerror=alert(1)&gt;');
-      expect(html).not.toContain('javascript:alert');
-      expect(html).not.toContain('data:text/html');
-      expect(html).not.toContain('<img src="javascript:');
-      expect(html).not.toContain('href="javascript:');
+      expect(c.html).not.toHaveBeenCalled();
+      await expect(response.json()).resolves.toMatchObject({
+        challenge_id: 'unsafe-consent-challenge',
+      });
     });
 
     it('should return client and scope information', async () => {
@@ -572,123 +570,6 @@ describe('Consent Handlers', () => {
       await consentGetHandler(c);
 
       expect(c.json).toHaveBeenCalledWith(expect.objectContaining({ error: 'access_denied' }), 401);
-    });
-
-    it('renders required, optional, and implicit consent items with safe HTML controls', async () => {
-      vi.mocked(getConsentItemsForScreen).mockResolvedValue([
-        {
-          statement_id: 'implicit-statement',
-          slug: 'implicit',
-          category: 'privacy_policy',
-          legal_basis: 'contract',
-          title: '<Implicit>',
-          description: 'Always applied',
-          document_url: 'https://example.com/implicit',
-          version: '1',
-          version_id: 'version-1',
-          is_required: true,
-          enforcement: 'block',
-          needs_version_upgrade: false,
-          show_deletion_link: false,
-          checkbox_mode: 'none',
-          checkbox_default_checked: true,
-          withdrawal_allowed: false,
-          display_order: 1,
-        },
-        {
-          statement_id: 'required-statement',
-          slug: 'required',
-          category: 'terms_of_service',
-          legal_basis: 'consent',
-          title: 'Required terms',
-          description: '',
-          version: '1',
-          version_id: 'version-2',
-          is_required: true,
-          enforcement: 'block',
-          needs_version_upgrade: false,
-          show_deletion_link: false,
-          checkbox_mode: 'required',
-          checkbox_default_checked: true,
-          withdrawal_allowed: true,
-          display_order: 2,
-        },
-        {
-          statement_id: 'optional-statement',
-          slug: 'optional',
-          category: 'marketing',
-          legal_basis: 'consent',
-          title: 'Optional updates',
-          description: 'Product updates',
-          document_url: 'javascript:alert(document.domain)',
-          version: '1',
-          version_id: 'version-3',
-          is_required: false,
-          enforcement: 'allow_continue',
-          needs_version_upgrade: false,
-          show_deletion_link: false,
-          checkbox_mode: 'optional',
-          checkbox_default_checked: false,
-          withdrawal_allowed: true,
-          display_order: 3,
-        },
-      ]);
-      const challengeStore = createMockChallengeStore({
-        id: 'html-items-challenge',
-        type: 'consent',
-        userId: 'user-123',
-        metadata: { client_id: 'test-client', scope: 'openid custom_scope' },
-      });
-      const c = createMockContext({
-        query: { challenge_id: 'html-items-challenge' },
-        headers: { accept: 'text/html' },
-        challengeStore,
-        db: createMockDB({
-          firstResult: {
-            client_id: 'test-client',
-            client_name: null,
-            logo_uri: 'https://example.com/logo.png',
-            policy_uri: 'https://example.com/privacy',
-            tos_uri: 'https://example.com/terms',
-            is_trusted: 0,
-          },
-        }),
-      });
-
-      const response = await consentGetHandler(c);
-      const html = await response.text();
-
-      expect(html).toContain('&lt;Implicit&gt;');
-      expect(html).toContain('name="consent_item_decision:implicit-statement" value="granted"');
-      expect(html).toContain(
-        'name="consent_item_decision:required-statement" value="granted" checked'
-      );
-      expect(html).toContain('name="consent_item_decision:optional-statement" value="granted"');
-      expect(html).toContain('Privacy Policy');
-      expect(html).toContain('Terms of Service');
-      expect(html).toContain('href="https://example.com/implicit"');
-      expect(html).not.toContain('javascript:');
-      expect(html).toContain('custom_scope');
-    });
-
-    it('falls back to the base HTML screen when optional consent-item loading fails', async () => {
-      vi.mocked(getConsentItemsForScreen).mockRejectedValueOnce(new Error('optional unavailable'));
-      const challengeStore = createMockChallengeStore({
-        id: 'fallback-challenge',
-        type: 'consent',
-        userId: 'user-123',
-        metadata: { client_id: 'test-client', scope: 'openid' },
-      });
-      const c = createMockContext({
-        query: { challenge_id: 'fallback-challenge' },
-        headers: { accept: 'text/html' },
-        challengeStore,
-        db: createMockDB({ firstResult: { client_id: 'test-client', is_trusted: 0 } }),
-      });
-
-      const response = await consentGetHandler(c);
-      expect(response.status).toBe(200);
-      expect(await response.text()).not.toContain('Additional consent is required');
     });
   });
 
@@ -1229,7 +1110,7 @@ describe('Consent Handlers', () => {
       );
     });
 
-    it('should accept checked form consent item decisions for required items', async () => {
+    it('accepts consent item decisions for required items', async () => {
       vi.mocked(getConsentItemsForScreen).mockResolvedValue([
         {
           statement_id: 'stmt-required',
@@ -1269,10 +1150,10 @@ describe('Consent Handlers', () => {
         method: 'POST',
         body: {
           challenge_id: 'consent-challenge-form-required',
-          approved: 'true',
-          'consent_item_decision:stmt-required': ['denied', 'granted'],
+          approved: true,
+          consent_item_decisions: { 'stmt-required': 'granted' },
         },
-        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        headers: { 'content-type': 'application/json' },
         challengeStore,
         db: mockDB,
       });
@@ -1294,13 +1175,13 @@ describe('Consent Handlers', () => {
           },
         }
       );
-      expect(c.redirect).toHaveBeenCalledWith(
-        expect.stringContaining('_consent_confirmation_challenge='),
-        302
-      );
+      expect(c.json).toHaveBeenCalledWith({
+        redirect_url: expect.stringContaining('_consent_confirmation_challenge='),
+      });
+      expect(c.redirect).not.toHaveBeenCalled();
     });
 
-    it('should handle form-encoded requests', async () => {
+    it('rejects form-encoded requests without consuming the challenge', async () => {
       const challengeStore = createMockChallengeStore({
         id: 'consent-challenge-123',
         type: 'consent',
@@ -1320,10 +1201,15 @@ describe('Consent Handlers', () => {
         challengeStore,
       });
 
-      await consentPostHandler(c);
+      const response = await consentPostHandler(c);
 
-      // For form requests, should redirect
-      expect(c.redirect).toHaveBeenCalledWith(expect.stringContaining('error=access_denied'), 302);
+      expect(response.status).toBe(400);
+      expect(c.json).toHaveBeenCalledWith(
+        expect.objectContaining({ error: 'invalid_request' }),
+        400
+      );
+      expect(c.redirect).not.toHaveBeenCalled();
+      expect(challengeStore._challenges.has('consent-challenge-123')).toBe(true);
     });
 
     it('should consume challenge after processing', async () => {

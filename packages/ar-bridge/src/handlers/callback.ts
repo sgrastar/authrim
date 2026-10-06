@@ -15,7 +15,6 @@ import {
   readAccountSession,
   getUIConfig,
   buildIssuerUrl,
-  shouldUseBuiltinForms,
   getDefaultTenantId,
   getTenantIdFromContext,
   createDiagnosticLoggerFromContext,

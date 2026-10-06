@@ -8,7 +8,7 @@ import {
   exportPKCS8,
   generateKeyPair,
 } from 'jose';
-import { authorizeConfirmHandler, authorizeHandler, authorizeLoginHandler } from '../authorize';
+import { authorizeHandler } from '../authorize';
 import { buildPolicyConstrainedRegionShardConfig } from '@authrim/ar-lib-core';
 import type { Env } from '@authrim/ar-lib-core/types/env';
 import { systemSettingsPlatformDocuments } from '@authrim/ar-lib-core/utils/system-settings-fields';
@@ -391,7 +391,7 @@ function createMockEnv(): Env {
     NONCE_EXPIRY: '300',
     REFRESH_TOKEN_EXPIRY: '2592000',
     HTTPS_REDIRECT_ONLY: 'false',
-    ENABLE_CONFORMANCE_MODE: 'true', // Enable conformance mode for testing (uses built-in forms)
+    UI_URL: 'https://login.example.com', // Login UI that login, re-authentication and consent go to
     STATE_STORE: new MockKVNamespace() as unknown as KVNamespace,
     NONCE_STORE: new MockKVNamespace() as unknown as KVNamespace,
     CLIENTS_CACHE: new MockKVNamespace() as unknown as KVNamespace,
@@ -463,10 +463,6 @@ describe('Authorization Handler', () => {
     });
     app.get('/authorize', authorizeHandler);
     app.post('/authorize', authorizeHandler);
-    app.get('/flow/login', authorizeLoginHandler);
-    app.post('/flow/login', authorizeLoginHandler);
-    app.get('/flow/confirm', authorizeConfirmHandler);
-    app.post('/flow/confirm', authorizeConfirmHandler);
     env = createMockEnv();
   });
 
@@ -482,7 +478,7 @@ describe('Authorization Handler', () => {
       const location = response.headers.get('Location');
       expect(location).toBeTruthy();
       // Should redirect to login page with challenge_id
-      expect(location).toContain('/flow/login');
+      expect(location).toContain('https://login.example.com/login');
       expect(location).toContain('challenge_id=');
     });
 
@@ -495,7 +491,7 @@ describe('Authorization Handler', () => {
 
       expect(response.status).toBe(302);
       const location = response.headers.get('Location');
-      expect(location).toContain('/flow/login');
+      expect(location).toContain('https://login.example.com/login');
       expect(location).not.toContain('code=');
     });
 
@@ -509,7 +505,7 @@ describe('Authorization Handler', () => {
       expect(response.status).toBe(302);
       const location = response.headers.get('Location');
       // Login redirect preserves authorization parameters in challenge
-      expect(location).toContain('/flow/login');
+      expect(location).toContain('https://login.example.com/login');
     });
 
     it('should accept http://localhost redirect_uri for a web app when security.https_redirect_only is off', async () => {
@@ -522,7 +518,7 @@ describe('Authorization Handler', () => {
       // Should redirect to login (localhost is allowed)
       expect(response.status).toBe(302);
       const location = response.headers.get('Location');
-      expect(location).toContain('/flow/login');
+      expect(location).toContain('https://login.example.com/login');
     });
 
     it('refuses a web app’s http loopback redirect_uri while security.https_redirect_only is on', async () => {
@@ -557,7 +553,7 @@ describe('Authorization Handler', () => {
       );
 
       expect(response.status).toBe(302);
-      expect(response.headers.get('Location')).toContain('/flow/login');
+      expect(response.headers.get('Location')).toContain('https://login.example.com/login');
     });
 
     it('requires an encrypted request object when the tenant does (security.require_encrypted_request_object)', async () => {
@@ -601,7 +597,7 @@ describe('Authorization Handler', () => {
     });
 
     it('should redirect with temporarily_unavailable when login UI is not configured', async () => {
-      env.ENABLE_CONFORMANCE_MODE = 'false';
+      delete (env as { UI_URL?: string }).UI_URL;
 
       const response = await app.request(
         '/authorize?response_type=code&client_id=test-client&redirect_uri=https://example.com/callback&scope=openid&state=test-state',
@@ -621,7 +617,7 @@ describe('Authorization Handler', () => {
     });
 
     it('should preserve client-specific login_ui_url when global UI_URL is not configured', async () => {
-      env.ENABLE_CONFORMANCE_MODE = 'false';
+      delete (env as { UI_URL?: string }).UI_URL;
       mockGetClient.mockResolvedValue({
         client_id: 'test-client',
         client_secret: 'test-secret',
@@ -649,7 +645,6 @@ describe('Authorization Handler', () => {
     securityRegressionIt(
       '[security regression] never sends an authenticated consent challenge to a client-controlled UI',
       async () => {
-        env.ENABLE_CONFORMANCE_MODE = 'false';
         env.UI_URL = 'https://tenant-login.example.com';
         env.LOGIN_UI_EXECUTION_HOST_MODE = 'dedicated';
         await configureClientSettings(env, { 'client.sso_enabled': true });
@@ -682,8 +677,7 @@ describe('Authorization Handler', () => {
       }
     );
 
-    it('does not enable built-in login from a certification redirect URI alone', async () => {
-      env.ENABLE_CONFORMANCE_MODE = 'false';
+    it('sends a certification-suite redirect URI to the normal Login UI', async () => {
       env.UI_URL = 'https://login.example.com';
       env.LOGIN_UI_EXECUTION_HOST_MODE = 'dedicated';
       const certificationRedirectUri =
@@ -717,7 +711,6 @@ describe('Authorization Handler', () => {
     });
 
     it('should keep authorization UI redirects on the tenant issuer host in multi-tenant mode', async () => {
-      env.ENABLE_CONFORMANCE_MODE = 'false';
       env.UI_URL = 'https://login.example.com';
       env.BASE_DOMAIN = 'test.authrim.com';
 
@@ -745,7 +738,6 @@ describe('Authorization Handler', () => {
     });
 
     it('should use UI_URL for separate Login UI redirects in single-tenant mode', async () => {
-      env.ENABLE_CONFORMANCE_MODE = 'false';
       env.UI_URL = 'https://login.example.com';
       env.LOGIN_UI_EXECUTION_HOST_MODE = 'dedicated';
 
@@ -765,7 +757,6 @@ describe('Authorization Handler', () => {
     });
 
     it('should use the issuer for issuer-hosted single-tenant Login UI redirects', async () => {
-      env.ENABLE_CONFORMANCE_MODE = 'false';
       env.UI_URL = 'https://login.example.com';
       env.LOGIN_UI_EXECUTION_HOST_MODE = 'issuer';
 
@@ -784,7 +775,6 @@ describe('Authorization Handler', () => {
     });
 
     it("should use the tenant's own Login UI before the issuer-hosted one", async () => {
-      env.ENABLE_CONFORMANCE_MODE = 'false';
       env.UI_URL = 'https://login.example.com';
       env.LOGIN_UI_EXECUTION_HOST_MODE = 'issuer';
       env.ALLOWED_ORIGINS = 'https://tenant-login.example.org';
@@ -808,7 +798,7 @@ describe('Authorization Handler', () => {
     });
 
     it('should use form_post for temporarily_unavailable when response_mode=form_post', async () => {
-      env.ENABLE_CONFORMANCE_MODE = 'false';
+      delete (env as { UI_URL?: string }).UI_URL;
 
       const response = await app.request(
         '/authorize?response_type=code&response_mode=form_post&client_id=test-client&redirect_uri=https://example.com/callback&scope=openid&state=test-state',
@@ -852,7 +842,7 @@ describe('Authorization Handler', () => {
 
       expect(response.status).toBe(302);
       const location = response.headers.get('Location');
-      expect(location).toContain('/flow/login');
+      expect(location).toContain('https://login.example.com/login');
 
       const challengeId = new URL(location!, 'https://test.example.com').searchParams.get(
         'challenge_id'
@@ -1131,7 +1121,7 @@ describe('Authorization Handler', () => {
 
       expect(response.status).toBe(302);
       const redirect = new URL(response.headers.get('location')!, 'https://test.example.com');
-      expect(redirect.pathname).toBe('/flow/confirm');
+      expect(redirect.origin + redirect.pathname).toBe('https://login.example.com/reauth');
       const challenge = getChallengeMap(env).get(redirect.searchParams.get('challenge_id')!) as {
         metadata?: Record<string, unknown>;
       };
@@ -1275,10 +1265,10 @@ describe('Authorization Handler', () => {
       expect(first.status).toBe(302);
       expect(second.status).toBe(302);
       expect(new URL(first.headers.get('location')!, 'https://test.example.com').pathname).toBe(
-        '/flow/login'
+        '/login'
       );
       expect(new URL(second.headers.get('location')!, 'https://test.example.com').pathname).toBe(
-        '/flow/login'
+        '/login'
       );
       expect(parStore._getRequestRpc).toHaveBeenCalledTimes(2);
       expect(parStore._consumeRequestRpc).not.toHaveBeenCalled();
@@ -1594,7 +1584,7 @@ describe('Authorization Handler', () => {
         env
       );
       expect(response.status).toBe(302);
-      expect(response.headers.get('location')).toContain('/flow/login');
+      expect(response.headers.get('location')).toContain('https://login.example.com/login');
     });
   });
 
@@ -1610,7 +1600,7 @@ describe('Authorization Handler', () => {
       // Valid PKCE should proceed to login
       expect(response.status).toBe(302);
       const location = response.headers.get('Location');
-      expect(location).toContain('/flow/login');
+      expect(location).toContain('https://login.example.com/login');
     });
 
     it('should redirect with error when code_challenge is provided without code_challenge_method', async () => {
@@ -1728,22 +1718,7 @@ describe('Authorization Handler', () => {
   });
 
   describe('Parameter Validation - Direct Errors', () => {
-    it('should return 400 when response_type is missing', async () => {
-      const response = await app.request(
-        '/authorize?client_id=test-client&redirect_uri=https://example.com/callback&scope=openid',
-        { method: 'GET' },
-        env
-      );
-
-      expect(response.status).toBe(400);
-      const body = (await response.json()) as ErrorResponse;
-      // RFC 6749: missing required parameter should return invalid_request
-      expect(body.error).toBe('invalid_request');
-      expect(body.error_description).toContain('response_type');
-    });
-
     it('should return a local 400 error page when response_type is missing and external UI is configured', async () => {
-      env.ENABLE_CONFORMANCE_MODE = 'false';
       await putSystemSettings(env.SETTINGS as unknown as MockKVNamespace, {
         ui: {
           baseUrl: 'https://login.example.com',
@@ -1764,21 +1739,7 @@ describe('Authorization Handler', () => {
       expect(body).toContain('response_type is required');
     });
 
-    it('should return 400 when response_type is unsupported', async () => {
-      const response = await app.request(
-        '/authorize?response_type=token&client_id=test-client&redirect_uri=https://example.com/callback&scope=openid',
-        { method: 'GET' },
-        env
-      );
-
-      expect(response.status).toBe(400);
-      const body = (await response.json()) as ErrorResponse;
-      expect(body.error).toBe('unsupported_response_type');
-      expect(body.error_description).toContain('response_type');
-    });
-
     it('should return a local 400 error page when response_type is unsupported and external UI is configured', async () => {
-      env.ENABLE_CONFORMANCE_MODE = 'false';
       await putSystemSettings(env.SETTINGS as unknown as MockKVNamespace, {
         ui: {
           baseUrl: 'https://login.example.com',
@@ -1800,7 +1761,6 @@ describe('Authorization Handler', () => {
     });
 
     it('escapes attacker-controlled values in local authorization error pages', async () => {
-      env.ENABLE_CONFORMANCE_MODE = 'false';
       await putSystemSettings(env.SETTINGS as unknown as MockKVNamespace, {
         ui: {
           baseUrl: 'https://login.example.com',
@@ -1855,8 +1815,6 @@ describe('Authorization Handler', () => {
     });
 
     it('should return a local HTML error page before redirect_uri is validated', async () => {
-      env.ENABLE_CONFORMANCE_MODE = 'false';
-
       const response = await app.request(
         '/authorize?client_id=test-client&redirect_uri=https://example.com/callback&scope=openid',
         { method: 'GET' },
@@ -1948,7 +1906,6 @@ describe('Authorization Handler', () => {
     it.each([true, false])(
       'routes prompt=login with an existing session through reauth when SSO enabled=%s',
       async (ssoEnabled) => {
-        env.ENABLE_CONFORMANCE_MODE = 'false';
         env.UI_URL = 'https://login.example.com';
         await configureClientSettings(env, {
           'client.sso_enabled': ssoEnabled,
@@ -2592,7 +2549,6 @@ describe('Authorization Handler', () => {
     });
 
     it('records a confirmed re-authentication in the consent challenge it sends the user to', async () => {
-      env.ENABLE_CONFORMANCE_MODE = 'false';
       env.UI_URL = 'https://login.example.com';
       seedSession(env);
       getChallengeMap(env).set('confirm_reauth_before_consent', {
@@ -2808,7 +2764,6 @@ describe('Authorization Handler', () => {
     );
 
     it('still asks for re-authentication after consent that carries no completed one', async () => {
-      env.ENABLE_CONFORMANCE_MODE = 'false';
       env.UI_URL = 'https://login.example.com';
       configureClientTrustPolicy(env);
       seedSession(env);
@@ -2899,8 +2854,9 @@ describe('Authorization Handler', () => {
       expect(getChallengeMap(env).has('wrong_binding_confirm_consent')).toBe(true);
     });
 
-    it('allows prompt=none for logged-in OIDC certification clients in conformance mode', async () => {
+    it('allows prompt=none for a logged-in certification-suite client when SSO is enabled', async () => {
       env.ENABLE_CONFORMANCE_MODE = 'true';
+      await configureClientSettings(env, { 'client.sso_enabled': true });
       const certificationRedirectUri =
         'https://www.certification.openid.net/test/a/authrim/callback';
       mockGetClient.mockResolvedValue({
@@ -2946,8 +2902,43 @@ describe('Authorization Handler', () => {
       );
     });
 
-    it('rejects prompt=none with max_age=0 even in the same second as authentication', async () => {
+    it('does not turn SSO on for a certification-suite redirect URI in conformance mode', async () => {
       env.ENABLE_CONFORMANCE_MODE = 'true';
+      const certificationRedirectUri =
+        'https://www.certification.openid.net/test/a/authrim/callback';
+      mockGetClient.mockResolvedValue({
+        client_id: 'test-client',
+        client_secret: 'test-secret',
+        redirect_uris: [certificationRedirectUri],
+        grant_types: ['authorization_code'],
+        response_types: ['code'],
+        scope: 'openid profile email',
+        token_endpoint_auth_method: 'client_secret_basic',
+      });
+      configureClientTrustPolicy(env);
+      seedSession(env);
+
+      const response = await app.request(
+        `/authorize?response_type=code&client_id=test-client&redirect_uri=${encodeURIComponent(
+          certificationRedirectUri
+        )}&scope=openid&state=prompt-none-state&prompt=none`,
+        {
+          method: 'GET',
+          headers: { Cookie: `authrim_session=${encodeURIComponent(TEST_SESSION_ID)}` },
+        },
+        env
+      );
+
+      expect(response.status).toBe(302);
+      const redirectUrl = new URL(response.headers.get('Location')!);
+      expect(redirectUrl.origin + redirectUrl.pathname).toBe(certificationRedirectUri);
+      expect(redirectUrl.searchParams.get('error')).toBe('login_required');
+      expect(redirectUrl.searchParams.get('code')).toBeNull();
+      expect(getAuthCodeStore(env).storeCodeRpc).not.toHaveBeenCalled();
+    });
+
+    it('rejects prompt=none with max_age=0 even in the same second as authentication', async () => {
+      await configureClientSettings(env, { 'client.sso_enabled': true });
       const certificationRedirectUri =
         'https://www.certification.openid.net/test/a/authrim/callback';
       mockGetClient.mockResolvedValue({
@@ -3148,7 +3139,7 @@ describe('Authorization Handler', () => {
 
       expect(response.status).toBe(302);
       const location = response.headers.get('Location');
-      expect(location).toContain('/auth/consent');
+      expect(location).toContain('https://login.example.com/consent');
       const consentUrl = new URL(location!, 'https://test.example.com');
       expect(consentUrl.searchParams.get('ui_locales')).toBe('de en');
       const challengeId = consentUrl.searchParams.get('challenge_id');
@@ -3198,7 +3189,7 @@ describe('Authorization Handler', () => {
 
       expect(response.status).toBe(302);
       const location = response.headers.get('Location');
-      expect(location).toContain('/auth/consent');
+      expect(location).toContain('https://login.example.com/consent');
       const challengeId = new URL(location!, 'https://test.example.com').searchParams.get(
         'challenge_id'
       );
@@ -3255,348 +3246,8 @@ describe('Authorization Handler', () => {
       expect(redirectUrl.searchParams.get('state')).toBe('dpop-required');
     });
 
-    it('renders the built-in login form with client display metadata from the login challenge', async () => {
-      env.ENABLE_TEST_ENDPOINTS = 'true';
-      getChallengeMap(env).set('login_challenge', {
-        id: 'login_challenge',
-        type: 'login',
-        metadata: {
-          client_name: 'Example RP',
-          logo_uri: 'https://example.com/logo.png',
-          policy_uri: 'https://example.com/privacy',
-          tos_uri: 'https://example.com/terms',
-        },
-      });
-
-      const response = await app.request(
-        '/flow/login?challenge_id=login_challenge',
-        { method: 'GET' },
-        env
-      );
-      const html = await response.text();
-
-      expect(response.status).toBe(200);
-      expect(html).toContain('Signing in to <strong>Example RP</strong>');
-      expect(html).toContain('https://example.com/logo.png');
-      expect(html).toContain('https://example.com/privacy');
-      expect(html).toContain('https://example.com/terms');
-      expect(html).toContain('name="challenge_id" value="login_challenge"');
-    });
-
-    it('drops unsafe client display metadata URLs from the built-in login form', async () => {
-      env.ENABLE_TEST_ENDPOINTS = 'true';
-      getChallengeMap(env).set('unsafe_login_challenge', {
-        id: 'unsafe_login_challenge',
-        type: 'login',
-        metadata: {
-          client_name: '<img src=x onerror=alert(1)>',
-          logo_uri: 'javascript:alert(1)',
-          policy_uri: 'javascript:alert(1)',
-          tos_uri: 'data:text/html,<script>alert(1)</script>',
-        },
-      });
-
-      const response = await app.request(
-        '/flow/login?challenge_id=unsafe_login_challenge',
-        { method: 'GET' },
-        env
-      );
-      const html = await response.text();
-
-      expect(response.status).toBe(200);
-      expect(html).toContain('&lt;img src=x onerror=alert(1)&gt;');
-      expect(html).not.toContain('javascript:alert');
-      expect(html).not.toContain('data:text/html');
-      expect(html).not.toContain('<img src="javascript:');
-      expect(html).not.toContain('href="javascript:');
-    });
-
-    securityRegressionIt.each(['/flow/login'])(
-      '[security regression][AO-15] escapes attacker-controlled challenge_id in the %s form',
-      async (path) => {
-        env.ENABLE_TEST_ENDPOINTS = 'true';
-        const payload = '"><script data-authrim-xss>globalThis.__authrimXss=1</script>';
-        getChallengeMap(env).set(payload, {
-          id: payload,
-          tenantId: 'default',
-          type: 'login',
-          metadata: {},
-        });
-        const response = await app.request(
-          `${path}?challenge_id=${encodeURIComponent(payload)}`,
-          { method: 'GET' },
-          env
-        );
-        const html = await response.text();
-
-        expect(response.status).toBe(200);
-        expect(html).not.toContain(payload);
-        expect(html).toContain(
-          '&quot;&gt;&lt;script data-authrim-xss&gt;globalThis.__authrimXss=1&lt;/script&gt;'
-        );
-      }
-    );
-
-    it('processes built-in login by creating a session and restoring the authorization request', async () => {
-      env.ENABLE_TEST_ENDPOINTS = 'true';
-      getChallengeMap(env).set('login_challenge', {
-        id: 'login_challenge',
-        type: 'login',
-        userId: 'anonymous',
-        metadata: {
-          response_type: 'code',
-          client_id: 'test-client',
-          redirect_uri: 'https://example.com/callback',
-          scope: 'openid profile',
-          state: 'login-state',
-          nonce: 'login-nonce',
-          code_challenge: 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM',
-          code_challenge_method: 'S256',
-          acr_values: 'urn:authrim:acr:mfa',
-        },
-      });
-
-      const response = await app.request(
-        '/flow/login',
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/x-www-form-urlencoded',
-          },
-          body: new URLSearchParams({
-            challenge_id: 'login_challenge',
-            username: 'login-user@example.com',
-            password: 'ignored-by-stub',
-          }),
-        },
-        env
-      );
-
-      expect(response.status).toBe(302);
-      expect(response.headers.get('Set-Cookie')).toContain('authrim_session=');
-      const location = response.headers.get('Location')!;
-      expect(location).toContain('/authorize?');
-      const redirect = new URL(location, 'https://test.example.com');
-      expect([...redirect.searchParams.keys()]).toEqual(['_confirmation_challenge']);
-      const confirmationChallenge = redirect.searchParams.get('_confirmation_challenge');
-      expect(confirmationChallenge).toMatch(
-        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-      );
-      expect(getChallengeMap(env).get(confirmationChallenge!)).toEqual(
-        expect.objectContaining({
-          type: 'reauth',
-          userId: expect.any(String),
-          metadata: expect.objectContaining({
-            purpose: 'authorize_confirmation',
-            authTime: expect.any(Number),
-            sessionId: expect.stringMatching(/^g\d+:/),
-            browserBinding: expect.any(String),
-            authorization_request: expect.objectContaining({
-              response_type: 'code',
-              client_id: 'test-client',
-              state: 'login-state',
-              nonce: 'login-nonce',
-              code_challenge_method: 'S256',
-            }),
-          }),
-        })
-      );
-      expect(getChallengeMap(env).has('login_challenge')).toBe(false);
-    });
-
-    securityRegressionIt(
-      '[security regression] disables the credential-free login adapter without consuming challenges in production',
-      async () => {
-        env.ENABLE_CONFORMANCE_MODE = 'false';
-        env.ENABLE_TEST_ENDPOINTS = 'false';
-        getChallengeMap(env).set('production-login-challenge', {
-          id: 'production-login-challenge',
-          tenantId: 'default',
-          type: 'login',
-          userId: 'anonymous',
-          metadata: {
-            response_type: 'code',
-            client_id: 'test-client',
-            redirect_uri: 'https://example.com/callback',
-            scope: 'openid',
-          },
-        });
-
-        const getResponse = await app.request(
-          '/flow/login?challenge_id=production-login-challenge',
-          { method: 'GET' },
-          env
-        );
-        expect(getResponse.status).toBe(403);
-        expect(await getResponse.text()).not.toContain('<form');
-        expect(getChallengeMap(env).has('production-login-challenge')).toBe(true);
-
-        const postResponse = await app.request(
-          '/flow/login',
-          {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-            body: new URLSearchParams({
-              challenge_id: 'production-login-challenge',
-              username: 'attacker@example.com',
-              password: 'accepted-by-old-stub',
-            }),
-          },
-          env
-        );
-        expect(postResponse.status).toBe(403);
-        expect(getChallengeMap(env).has('production-login-challenge')).toBe(true);
-      }
-    );
-
-    it('rejects certification stub login when conformance mode is disabled', async () => {
-      env.ENABLE_CONFORMANCE_MODE = 'false';
-      env.ENABLE_TEST_ENDPOINTS = 'false';
-      getChallengeMap(env).set('certification_login_challenge', {
-        id: 'certification_login_challenge',
-        type: 'login',
-        userId: 'anonymous',
-        metadata: {
-          response_type: 'code',
-          client_id: 'test-client',
-          redirect_uri: 'https://www.certification.openid.net/test/a/authrim/callback',
-          scope: 'openid',
-        },
-      });
-
-      const response = await app.request(
-        '/flow/login',
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/x-www-form-urlencoded',
-          },
-          body: new URLSearchParams({
-            challenge_id: 'certification_login_challenge',
-            username: 'attacker@example.com',
-            password: 'accepted-by-old-stub',
-          }),
-        },
-        env
-      );
-
-      expect(response.status).toBe(403);
-      await expect(response.json()).resolves.toMatchObject({
-        error: 'access_denied',
-      });
-      expect(getChallengeMap(env).has('certification_login_challenge')).toBe(true);
-    });
-
-    it('renders and processes built-in reauthentication confirmation', async () => {
-      env.ENABLE_TEST_ENDPOINTS = 'true';
-      getChallengeMap(env).set('reauth_challenge', {
-        id: 'reauth_challenge',
-        type: 'reauth',
-        userId: 'test-user',
-        metadata: {
-          response_type: 'code',
-          client_id: 'test-client',
-          redirect_uri: 'https://example.com/callback',
-          scope: 'openid',
-          state: 'reauth-state',
-          prompt: 'login',
-          authTime: 1700000000,
-          sessionUserId: 'test-user',
-        },
-      });
-
-      const getResponse = await app.request(
-        '/flow/confirm?challenge_id=reauth_challenge',
-        { method: 'GET' },
-        env
-      );
-      expect(getResponse.status).toBe(200);
-      await expect(getResponse.text()).resolves.toContain('Re-authentication Required');
-
-      const postResponse = await app.request(
-        '/flow/confirm',
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/x-www-form-urlencoded',
-          },
-          body: new URLSearchParams({
-            challenge_id: 'reauth_challenge',
-          }),
-        },
-        env
-      );
-
-      expect(postResponse.status).toBe(302);
-      const redirect = new URL(postResponse.headers.get('Location')!, 'https://test.example.com');
-      expect(redirect.pathname).toBe('/authorize');
-      expect([...redirect.searchParams.keys()]).toEqual(['_confirmation_challenge']);
-      const confirmationChallenge = redirect.searchParams.get('_confirmation_challenge');
-      expect(confirmationChallenge).toMatch(
-        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-      );
-      expect(getChallengeMap(env).get(confirmationChallenge!)).toEqual(
-        expect.objectContaining({
-          type: 'reauth',
-          userId: 'test-user',
-          metadata: expect.objectContaining({
-            purpose: 'authorize_confirmation',
-            authTime: 1700000000,
-            sessionUserId: 'test-user',
-            authorization_request: expect.objectContaining({
-              response_type: 'code',
-              client_id: 'test-client',
-              state: 'reauth-state',
-              prompt: 'login',
-            }),
-          }),
-        })
-      );
-      expect(getChallengeMap(env).has('reauth_challenge')).toBe(false);
-    });
-
-    securityRegressionIt(
-      '[security regression] rejects the credential-free reauthentication adapter outside explicit test mode',
-      async () => {
-        env.ENABLE_TEST_ENDPOINTS = 'false';
-        env.ENABLE_CONFORMANCE_MODE = 'false';
-        getChallengeMap(env).set('production-reauth-challenge', {
-          id: 'production-reauth-challenge',
-          tenantId: 'default',
-          type: 'reauth',
-          userId: 'test-user',
-          metadata: {
-            response_type: 'code',
-            client_id: 'test-client',
-            redirect_uri: 'https://example.com/callback',
-            scope: 'openid',
-            sessionUserId: 'test-user',
-          },
-        });
-
-        const response = await app.request(
-          '/flow/confirm',
-          {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-            body: new URLSearchParams({
-              challenge_id: 'production-reauth-challenge',
-              username: 'anything',
-              password: 'anything',
-            }),
-          },
-          env
-        );
-
-        expect(response.status).toBe(403);
-        expect(getChallengeMap(env).has('production-reauth-challenge')).toBe(true);
-        expect(getChallengeMap(env).size).toBe(1);
-      }
-    );
-
     it('should not reuse cached UI settings across different SETTINGS bindings', async () => {
       const envWithUi = createMockEnv();
-      envWithUi.ENABLE_CONFORMANCE_MODE = 'false';
       envWithUi.ALLOWED_ORIGINS = 'https://login.example.com';
       await (envWithUi.SETTINGS as unknown as MockKVNamespace).put(
         'settings:platform:tenant',
@@ -3613,7 +3264,7 @@ describe('Authorization Handler', () => {
       expect(firstResponse.headers.get('Location')).toContain('https://login.example.com/login');
 
       const envWithoutUi = createMockEnv();
-      envWithoutUi.ENABLE_CONFORMANCE_MODE = 'false';
+      delete (envWithoutUi as { UI_URL?: string }).UI_URL;
 
       const secondResponse = await app.request(
         '/authorize?response_type=code&client_id=test-client&redirect_uri=https://example.com/callback&scope=openid&state=test-state',
@@ -3631,7 +3282,7 @@ describe('Authorization Handler', () => {
     });
 
     it('should clean up consent challenge when consent UI is not configured', async () => {
-      env.ENABLE_CONFORMANCE_MODE = 'false';
+      delete (env as { UI_URL?: string }).UI_URL;
       await (env.SETTINGS as unknown as MockKVNamespace).put(
         'settings:client:test-client:client',
         JSON.stringify({
@@ -3660,9 +3311,8 @@ describe('Authorization Handler', () => {
       expect(getChallengeMap(env).size).toBe(0);
     });
 
-    it('routes OIDC certification clients to built-in consent in conformance mode', async () => {
+    it('routes certification-suite clients to the Login UI consent page in conformance mode', async () => {
       env.ENABLE_CONFORMANCE_MODE = 'true';
-      env.UI_URL = 'https://login.example.com';
       const certificationRedirectUri =
         'https://www.certification.openid.net/test/a/authrim/callback';
       mockGetClient.mockResolvedValue({
@@ -3695,8 +3345,8 @@ describe('Authorization Handler', () => {
       expect(response.status).toBe(302);
       const location = response.headers.get('Location');
       expect(location).toBeTruthy();
-      const redirectUrl = new URL(location!, 'https://test.example.com');
-      expect(redirectUrl.pathname).toBe('/auth/consent');
+      const redirectUrl = new URL(location!);
+      expect(redirectUrl.origin + redirectUrl.pathname).toBe('https://login.example.com/consent');
       const challengeId = redirectUrl.searchParams.get('challenge_id');
       expect(challengeId).toBeTruthy();
       expect(getChallengeMap(env).get(challengeId!)).toMatchObject({
@@ -3721,7 +3371,7 @@ describe('Authorization Handler', () => {
       expect(response.status).toBe(302);
       const location = response.headers.get('Location');
       // Valid request should redirect to login
-      expect(location).toContain('/flow/login');
+      expect(location).toContain('https://login.example.com/login');
     });
 
     it('should reject invalid client_id format', async () => {
@@ -3751,23 +3401,7 @@ describe('Authorization Handler', () => {
       expect(redirectUrl.searchParams.get('error_description')).toContain('state');
     });
 
-    it('should reject request with unregistered client', async () => {
-      mockGetClient.mockResolvedValue(null);
-
-      const response = await app.request(
-        '/authorize?response_type=code&client_id=unknown-client&redirect_uri=https://example.com/callback&scope=openid',
-        { method: 'GET' },
-        env
-      );
-
-      expect(response.status).toBe(400);
-      const body = (await response.json()) as ErrorResponse;
-      expect(body.error).toBe('invalid_request');
-      expect(body.error_description).toBe('client_id is invalid');
-    });
-
     it('should return a local 400 error page for an unknown client when external UI is configured', async () => {
-      env.ENABLE_CONFORMANCE_MODE = 'false';
       mockGetClient.mockResolvedValue(null);
       await putSystemSettings(env.SETTINGS as unknown as MockKVNamespace, {
         ui: {
@@ -3914,7 +3548,7 @@ describe('Authorization Handler', () => {
           env
         );
         expect(accepted.status).toBe(302);
-        expect(accepted.headers.get('Location')).toContain('/flow/login');
+        expect(accepted.headers.get('Location')).toContain('https://login.example.com/login');
       }
     );
 
@@ -4119,7 +3753,7 @@ describe('Authorization Handler', () => {
 
       expect(response.status).toBe(302);
       const location = response.headers.get('Location');
-      expect(location).toContain('/auth/consent');
+      expect(location).toContain('https://login.example.com/consent');
       const challengeId = new URL(location!, 'https://test.example.com').searchParams.get(
         'challenge_id'
       );
@@ -4209,7 +3843,7 @@ describe('Authorization Handler', () => {
       expect(response.status).toBe(302);
       const location = response.headers.get('Location');
       expect(location).toBeTruthy();
-      expect(location).toContain('/flow/login');
+      expect(location).toContain('https://login.example.com/login');
     });
   });
 
@@ -4251,7 +3885,6 @@ describe('Authorization Handler', () => {
     }
 
     beforeEach(async () => {
-      env.ENABLE_CONFORMANCE_MODE = 'false';
       env.UI_URL = 'https://login.example.com';
       await configureClientSettings(env, { 'client.sso_enabled': true });
       configureClientTrustPolicy(env);
@@ -4739,43 +4372,6 @@ describe('Authorization Handler', () => {
       expect(new URL(response.headers.get('Location')!).searchParams.get('error')).toBe(
         'unmet_authentication_requirements'
       );
-    });
-
-    it('keeps the step-up through the built-in re-authentication confirmation', async () => {
-      env.ENABLE_TEST_ENDPOINTS = 'true';
-      const stepUp = { prior_session_id: TEST_SESSION_ID, required_aal: 'AAL2', issued_at: 1 };
-      getChallengeMap(env).set('builtin-step-up', {
-        id: 'builtin-step-up',
-        type: 'reauth',
-        userId: 'test-user',
-        metadata: {
-          response_type: 'code',
-          client_id: 'test-client',
-          redirect_uri: 'https://example.com/callback',
-          scope: 'openid',
-          state: 'aal-state',
-          sessionUserId: 'test-user',
-          assurance_step_up: stepUp,
-        },
-      });
-
-      const response = await app.request(
-        '/flow/confirm',
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-          body: new URLSearchParams({ challenge_id: 'builtin-step-up' }),
-        },
-        env
-      );
-
-      const confirmation = new URL(
-        response.headers.get('Location')!,
-        'https://test.example.com'
-      ).searchParams.get('_confirmation_challenge');
-      expect(getChallengeMap(env).get(confirmation!)).toMatchObject({
-        metadata: expect.objectContaining({ assurance_step_up: stepUp }),
-      });
     });
 
     it('does not let a combined session pass for the authentication of a later step-up', async () => {

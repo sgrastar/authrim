@@ -889,10 +889,10 @@ app.use('*', async (c, next) => {
 // Skip for /session/check to allow iframe embedding (OIDC Session Management)
 // Skip for /logout to allow frontchannel logout iframes (OIDC Front-Channel Logout 1.0)
 app.use('*', async (c, next) => {
-  // Skip secure headers for /authorize and /flow endpoints (handled by op-auth worker with nonce-based CSP)
+  // Skip secure headers for /authorize (handled by op-auth worker with nonce-based CSP)
   // Skip for /session/check endpoint (OIDC Session Management iframe needs custom headers)
   // Skip for /logout endpoint (OIDC Front-Channel Logout needs to embed iframes)
-  // Skip for /logged-out and /logout-error (ar-auth returns inline-styled HTML pages)
+  // Skip for /logged-out (a Login UI page when the Login UI path proxy is enabled)
   // Skip for /admin-init-setup (needs unpkg.com CDN for WebAuthn library)
   // Skip for /api/ciba/test (development test page with inline scripts/styles)
   // Skip for UI proxy paths (SvelteKit uses inline styles/scripts and CDN fonts)
@@ -901,13 +901,11 @@ app.use('*', async (c, next) => {
     path === '/authorize' ||
     path.startsWith('/authorize/') ||
     path === '/oauth/admin-agent/authorize' ||
-    path.startsWith('/flow/') ||
     path === '/session/check' ||
     path === '/logout' ||
     path.endsWith('/frontchannel-logout') ||
     path === '/logged-out' ||
     path === '/logout-complete' ||
-    path === '/logout-error' ||
     path.startsWith('/admin-init-setup') ||
     path === '/api/ciba/test' ||
     path.startsWith('/saml/') ||
@@ -1237,8 +1235,6 @@ app.all('/mcp', async (c) => {
 /**
  * Authorization endpoints - Route to OP_AUTH worker
  * - /authorize (GET/POST)
- * - /flow/login (GET/POST) - Login flow
- * - /flow/confirm (GET/POST) - Re-authentication confirmation
  * - /par (POST) - Pushed Authorization Request
  */
 app.all('/authorize/*', async (c) => {
@@ -1252,12 +1248,6 @@ app.get('/authorize', async (c) => {
 });
 
 app.post('/authorize', async (c) => {
-  const request = createServiceBindingRequest(c.req.raw);
-  return c.env.OP_AUTH.fetch(request);
-});
-
-// Login/Confirm flow endpoints
-app.all('/flow/*', async (c) => {
   const request = createServiceBindingRequest(c.req.raw);
   return c.env.OP_AUTH.fetch(request);
 });

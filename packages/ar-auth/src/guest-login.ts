@@ -425,7 +425,7 @@ export async function guestLoginHandler(c: Context<{ Bindings: Env }>) {
       clientId,
       isNewUser,
     });
-    // The login challenge is consumed by the existing /flow/login continuation, preserving OIDC validation.
+    // The login challenge is consumed by the Login UI's normal authorization continuation, preserving OIDC validation.
     return c.json({ success: true });
   } catch (error) {
     log.error('Guest login failed', {}, error as Error);

@@ -3,6 +3,7 @@ import {
   createSecurityMatrixEnv,
   seedClientRow,
   seedRegionShardConfig,
+  TEST_UI_URL,
   type SecurityMatrixEnvKit,
 } from '../fixtures/env';
 import { CallLedger, LedgerExecutionContext } from '../fixtures/call-ledger';
@@ -41,8 +42,7 @@ describe('authorize-matrix protocol suite', () => {
     const ledger = new CallLedger();
     kit = await createSecurityMatrixEnv(ledger);
     seedRegionShardConfig(kit);
-    // Use builtin forms so validation errors return JSON from the AS directly.
-    (kit.env as unknown as Record<string, unknown>).ENABLE_CONFORMANCE_MODE = 'true';
+    (kit.env as unknown as Record<string, unknown>).UI_URL = TEST_UI_URL;
     seedClientRow(kit, {
       client_id: CLIENT_PUBLIC,
       client_secret_hash: undefined,
@@ -83,8 +83,10 @@ describe('authorize-matrix protocol suite', () => {
       scope: 'openid',
     });
     expect(response.status).toBe(400);
-    const body = (await response.json()) as { error?: string };
-    expect(body.error).toBe('unsupported_response_type');
+    expect(response.headers.get('location')).toBeNull();
+    const body = await response.text();
+    expect(body).toContain('Invalid Authorization Request');
+    expect(body).toContain('unsupported_response_type');
   });
 
   it('rejects an unknown client without redirecting to an unvalidated URI', async () => {
@@ -99,8 +101,10 @@ describe('authorize-matrix protocol suite', () => {
     expect(response.status).toBe(400);
     const location = response.headers.get('location');
     expect(location).toBeNull();
-    const body = (await response.json()) as { error?: string };
-    expect(body.error).toBe('invalid_request');
+    const body = await response.text();
+    expect(body).toContain('Invalid Client');
+    expect(body).toContain('invalid_request');
+    expect(body).not.toContain('https://attacker.example/callback');
   });
 
   it('rejects a malformed redirect_uri before any redirect', async () => {

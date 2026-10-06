@@ -2,11 +2,10 @@
  * OAuth Consent Screen Handler
  * Handles OAuth2/OIDC consent screen display and approval/denial
  *
- * Flow:
- * 1. GET /auth/consent?challenge_id=xxx - Show consent screen
- *    - Accept: application/json -> Returns JSON with RBAC data
- *    - Accept: text/html -> Returns HTML page (fallback)
- * 2. POST /auth/consent with { challenge_id, approved, ... } - Process consent
+ * JSON API used by the Login UI, which renders the consent screen:
+ * 1. GET /auth/consent?challenge_id=xxx - Returns consent screen data (JSON, with RBAC data)
+ * 2. POST /auth/consent with JSON { challenge_id, approved, ... } - Process consent and
+ *    return { redirect_url }
  *
  * Phase 2-B: Consent Screen Enhancement
  * - Organization info display
@@ -101,14 +100,6 @@ const SCOPE_DESCRIPTIONS: Record<string, { title: string; description: string }>
     description: 'Maintain access when you are offline',
   },
 };
-
-/**
- * Check if the request accepts JSON
- */
-function acceptsJson(c: Context): boolean {
-  const accept = c.req.header('Accept') || '';
-  return accept.includes('application/json');
-}
 
 type SessionBoundConsentChallenge = {
   userId: string;
@@ -239,10 +230,8 @@ function collectRequestedClaimNames(claims: unknown): string[] {
 }
 
 /**
- * Get consent screen data and show consent UI
+ * Get consent screen data for the Login UI
  * GET /auth/consent?challenge_id=xxx
- *
- * Returns JSON if Accept: application/json, otherwise HTML
  */
 export async function consentGetHandler(c: Context<{ Bindings: Env }>) {
   const log = getLogger(c).module('CONSENT');
@@ -349,38 +338,13 @@ export async function consentGetHandler(c: Context<{ Bindings: Env }>) {
     // Parse scopes
     const scopeDetails = parseScopesToInfo(scope);
 
-    // If JSON is accepted, return full consent screen data with RBAC info
-    if (acceptsJson(c)) {
-      return handleJsonConsentGet(c, {
-        challenge_id,
-        userId,
-        clientRow,
-        scopeDetails,
-        metadata,
-      });
-    }
-
-    let consentItems: ConsentScreenItem[] = [];
-    try {
-      consentItems = await loadConsentScreenItems(c, {
-        tenantId,
-        clientId: clientRow.client_id,
-        userId,
-        metadata,
-        language: 'en',
-        defaultLanguage: 'en',
-      });
-    } catch {
-      consentItems = [];
-    }
-
-    // Otherwise, return HTML (legacy fallback)
-    return renderHtmlConsent(c, {
+    // Return full consent screen data with RBAC info
+    return handleJsonConsentGet(c, {
       challenge_id,
+      userId,
       clientRow,
       scopeDetails,
-      client_id,
-      consentItems,
+      metadata,
     });
   } catch (error) {
     log.error('Consent get error', { action: 'get_consent' }, error as Error);
@@ -616,30 +580,6 @@ async function handleJsonConsentGet(
   return c.json(responseData);
 }
 
-/**
- * Escape HTML special characters to prevent XSS
- */
-function escapeHtml(unsafe: string): string {
-  return unsafe
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#039;');
-}
-
-function safeHttpsDisplayUrl(value: string | null | undefined): string | null {
-  if (!value) {
-    return null;
-  }
-  try {
-    const url = new URL(value);
-    return url.protocol === 'https:' ? url.toString() : null;
-  } catch {
-    return null;
-  }
-}
-
 async function loadConsentScreenItems(
   c: Context<{ Bindings: Env }>,
   params: {
@@ -670,304 +610,44 @@ async function loadConsentScreenItems(
   );
 }
 
-function parseConsentItemDecisionsFromForm(
-  body: Record<string, string | File | Array<string | File>>
-): Record<string, 'granted' | 'denied'> | undefined {
-  const decisions: Record<string, 'granted' | 'denied'> = {};
-  const prefix = 'consent_item_decision:';
-  for (const [key, value] of Object.entries(body)) {
-    if (!key.startsWith(prefix)) continue;
-    const rawValue = Array.isArray(value)
-      ? value.filter((item) => typeof item === 'string').at(-1)
-      : value;
-    if (rawValue !== 'granted' && rawValue !== 'denied') continue;
-    decisions[key.slice(prefix.length)] = rawValue;
-  }
-  return Object.keys(decisions).length > 0 ? decisions : undefined;
-}
-
-/**
- * Render HTML consent page (legacy fallback)
- * OIDC Dynamic OP conformance: displays logo_uri, policy_uri, tos_uri
- */
-function renderHtmlConsent(
-  c: Context<{ Bindings: Env }>,
-  params: {
-    challenge_id: string;
-    clientRow: {
-      client_id: string;
-      client_name: string | null;
-      logo_uri: string | null;
-      policy_uri: string | null;
-      tos_uri: string | null;
-    };
-    scopeDetails: ConsentScopeInfo[];
-    client_id: string;
-    consentItems?: ConsentScreenItem[];
-  }
-): Response {
-  const { challenge_id, clientRow, scopeDetails, client_id, consentItems = [] } = params;
-  const safeLogoUri = safeHttpsDisplayUrl(clientRow.logo_uri);
-  const safePolicyUri = safeHttpsDisplayUrl(clientRow.policy_uri);
-  const safeTosUri = safeHttpsDisplayUrl(clientRow.tos_uri);
-  const consentItemsHtml =
-    consentItems.length > 0
-      ? `<p>Additional consent is required:</p>
-    <ul class="scopes">
-      ${consentItems
-        .map((item) => {
-          const safeDocumentUrl = safeHttpsDisplayUrl(item.document_url);
-          const hiddenInput =
-            item.checkbox_mode === 'none'
-              ? `<input form="approve-consent-form" type="hidden" name="consent_item_decision:${escapeHtml(item.statement_id)}" value="granted">`
-              : `<input form="approve-consent-form" type="hidden" name="consent_item_decision:${escapeHtml(item.statement_id)}" value="denied">`;
-          const checkbox =
-            item.checkbox_mode === 'none'
-              ? ''
-              : `<label class="consent-checkbox">
-                   <input form="approve-consent-form" type="checkbox" name="consent_item_decision:${escapeHtml(item.statement_id)}" value="granted" ${
-                     item.checkbox_default_checked ? 'checked' : ''
-                   } ${item.is_required && item.enforcement === 'block' ? 'required' : ''}>
-                   <span>${item.is_required ? 'Required' : 'Optional'}</span>
-                 </label>`;
-          return `
-        <li class="scope-item">
-          ${hiddenInput}
-          <div class="scope-title">${escapeHtml(item.title)}</div>
-          <div class="scope-desc">${escapeHtml(item.description || item.slug)}</div>
-          ${safeDocumentUrl ? `<div class="scope-desc"><a href="${escapeHtml(safeDocumentUrl)}" target="_blank" rel="noopener noreferrer">Read document</a></div>` : ''}
-          ${checkbox}
-        </li>
-      `;
-        })
-        .join('')}
-    </ul>`
-      : '';
-
-  // Build client info section with logo (OIDC Dynamic OP conformance)
-  const clientInfoHtml = safeLogoUri
-    ? `<div class="client-logo-container">
-        <img src="${escapeHtml(safeLogoUri)}" alt="${escapeHtml(clientRow.client_name || 'Client')} logo" class="client-logo" onerror="this.style.display='none'">
-      </div>`
-    : '';
-
-  // Build links section for policy and ToS
-  const linksHtml =
-    safePolicyUri || safeTosUri
-      ? `<div class="client-links">
-        ${safePolicyUri ? `<a href="${escapeHtml(safePolicyUri)}" target="_blank" rel="noopener noreferrer">Privacy Policy</a>` : ''}
-        ${safeTosUri ? `<a href="${escapeHtml(safeTosUri)}" target="_blank" rel="noopener noreferrer">Terms of Service</a>` : ''}
-      </div>`
-      : '';
-
-  return c.html(`<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Consent Required</title>
-  <style>
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-      display: flex;
-      justify-content: center;
-      align-items: center;
-      min-height: 100vh;
-      margin: 0;
-      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-    }
-    .container {
-      background: white;
-      padding: 2rem;
-      border-radius: 8px;
-      box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-      max-width: 500px;
-      width: 100%;
-    }
-    .client-logo-container {
-      text-align: center;
-      margin-bottom: 1rem;
-    }
-    .client-logo {
-      max-width: 120px;
-      max-height: 80px;
-      object-fit: contain;
-    }
-    h1 {
-      margin: 0 0 0.5rem 0;
-      font-size: 1.5rem;
-      color: #333;
-    }
-    .client-name {
-      margin: 0 0 1rem 0;
-      color: #667eea;
-      font-weight: 600;
-    }
-    .client-links {
-      margin-bottom: 1.5rem;
-      font-size: 0.8rem;
-    }
-    .client-links a {
-      color: #667eea;
-      text-decoration: none;
-      margin-right: 1rem;
-    }
-    .client-links a:hover {
-      text-decoration: underline;
-    }
-    p {
-      margin: 0 0 1.5rem 0;
-      color: #666;
-      line-height: 1.5;
-    }
-    .scopes {
-      list-style: none;
-      padding: 0;
-      margin: 0 0 1.5rem 0;
-    }
-    .scope-item {
-      padding: 0.75rem;
-      margin-bottom: 0.5rem;
-      background: #f5f5f5;
-      border-radius: 4px;
-    }
-    .scope-title {
-      font-weight: 600;
-      color: #333;
-    }
-    .scope-desc {
-      font-size: 0.875rem;
-      color: #666;
-      margin-top: 0.25rem;
-    }
-    .consent-checkbox {
-      display: flex;
-      align-items: center;
-      gap: 0.5rem;
-      margin-top: 0.75rem;
-      color: #333;
-      font-size: 0.875rem;
-    }
-    .button-group {
-      display: flex;
-      gap: 1rem;
-    }
-    button {
-      flex: 1;
-      padding: 0.75rem;
-      border: none;
-      border-radius: 4px;
-      font-size: 1rem;
-      cursor: pointer;
-      transition: background 0.2s;
-    }
-    .approve {
-      background: #667eea;
-      color: white;
-    }
-    .approve:hover {
-      background: #5568d3;
-    }
-    .deny {
-      background: #e0e0e0;
-      color: #333;
-    }
-    .deny:hover {
-      background: #d0d0d0;
-    }
-  </style>
-</head>
-<body>
-  <div class="container">
-    ${clientInfoHtml}
-    <h1>Consent Required</h1>
-    <p class="client-name">${escapeHtml(clientRow.client_name || client_id)}</p>
-    ${linksHtml}
-    <p>This application is requesting access to:</p>
-    <ul class="scopes">
-      ${scopeDetails
-        .map(
-          (s) => `
-        <li class="scope-item">
-          <div class="scope-title">${escapeHtml(s.title)}</div>
-          <div class="scope-desc">${escapeHtml(s.description)}</div>
-        </li>
-      `
-        )
-        .join('')}
-    </ul>
-    ${consentItemsHtml}
-    <div class="button-group">
-      <form method="POST" action="/auth/consent" style="flex: 1;">
-        <input type="hidden" name="challenge_id" value="${escapeHtml(challenge_id)}">
-        <input type="hidden" name="approved" value="false">
-        <button type="submit" class="deny">Deny</button>
-      </form>
-      <form id="approve-consent-form" method="POST" action="/auth/consent" style="flex: 1;">
-        <input type="hidden" name="challenge_id" value="${escapeHtml(challenge_id)}">
-        <input type="hidden" name="approved" value="true">
-        <button type="submit" class="approve">Approve</button>
-      </form>
-    </div>
-  </div>
-</body>
-</html>`);
-}
-
 /**
  * Handle consent approval/denial
  * POST /auth/consent
  *
- * Supports both form data and JSON body:
- * - Form: challenge_id, approved, selected_org_id (optional)
- * - JSON: { challenge_id, approved, selected_org_id, acting_as_user_id, selected_scopes }
+ * JSON body only: { challenge_id, approved, selected_org_id, acting_as_user_id, selected_scopes,
+ * acknowledged_policy_versions, consent_item_decisions }. Responds with { redirect_url }.
  */
 export async function consentPostHandler(c: Context<{ Bindings: Env }>) {
   const log = getLogger(c).module('CONSENT');
 
   try {
-    // Determine content type and parse body
     const contentType = c.req.header('Content-Type') || '';
-    let challenge_id: string | undefined;
-    let approved: boolean;
-    let selected_org_id: string | undefined;
-    let acting_as_user_id: string | undefined;
-
-    let selected_scopes: string[] | undefined;
-    let acknowledged_policy_versions:
-      | { privacy_policy?: string; terms_of_service?: string }
-      | undefined;
-    let consent_item_decisions: Record<string, 'granted' | 'denied'> | undefined;
-
-    if (contentType.includes('application/json')) {
-      // Parse JSON body
-      const jsonBody = await c.req.json<{
-        challenge_id?: string;
-        approved?: boolean;
-        selected_org_id?: string;
-        acting_as_user_id?: string;
-        selected_scopes?: string[];
-        acknowledged_policy_versions?: { privacy_policy?: string; terms_of_service?: string };
-        consent_item_decisions?: Record<string, 'granted' | 'denied'>;
-      }>();
-      challenge_id = jsonBody.challenge_id;
-      approved = jsonBody.approved === true;
-      selected_org_id = jsonBody.selected_org_id;
-      acting_as_user_id = jsonBody.acting_as_user_id;
-      selected_scopes = jsonBody.selected_scopes;
-      acknowledged_policy_versions = jsonBody.acknowledged_policy_versions;
-      consent_item_decisions = jsonBody.consent_item_decisions;
-    } else {
-      // Parse form data
-      const body = await c.req.parseBody();
-      challenge_id = typeof body.challenge_id === 'string' ? body.challenge_id : undefined;
-      approved = body.approved === 'true';
-      selected_org_id = typeof body.selected_org_id === 'string' ? body.selected_org_id : undefined;
-      acting_as_user_id =
-        typeof body.acting_as_user_id === 'string' ? body.acting_as_user_id : undefined;
-      consent_item_decisions = parseConsentItemDecisionsFromForm(body);
-      // Form data doesn't support selected_scopes (use JSON for granular consent)
+    if (!contentType.includes('application/json')) {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: 'Content-Type must be application/json',
+        },
+        400
+      );
     }
+
+    const jsonBody = await c.req.json<{
+      challenge_id?: string;
+      approved?: boolean;
+      selected_org_id?: string;
+      acting_as_user_id?: string;
+      selected_scopes?: string[];
+      acknowledged_policy_versions?: { privacy_policy?: string; terms_of_service?: string };
+      consent_item_decisions?: Record<string, 'granted' | 'denied'>;
+    }>();
+    const challenge_id = jsonBody.challenge_id;
+    const approved = jsonBody.approved === true;
+    const selected_org_id = jsonBody.selected_org_id;
+    const acting_as_user_id = jsonBody.acting_as_user_id;
+    const selected_scopes = jsonBody.selected_scopes;
+    const acknowledged_policy_versions = jsonBody.acknowledged_policy_versions;
+    const consent_item_decisions = jsonBody.consent_item_decisions;
 
     if (!challenge_id) {
       return c.json(
@@ -1029,7 +709,7 @@ export async function consentPostHandler(c: Context<{ Bindings: Env }>) {
     const metadata = consumedChallengeData.metadata || {};
     const userId = consumedChallengeData.userId;
 
-    // If denied, redirect with error
+    // If denied, return the error redirect for the Login UI to follow
     // User cancellation uses cancel_uri (Authrim Extension) if available
     if (!approved) {
       const tenantId = getTenantIdFromContext(c);
@@ -1103,11 +783,9 @@ export async function consentPostHandler(c: Context<{ Bindings: Env }>) {
             isUserCancellation: true,
           }
         );
-        if (contentType.includes('application/json')) {
-          const location = response.headers.get('Location');
-          if (location) {
-            return c.json({ redirect_url: location });
-          }
+        const location = response.headers.get('Location');
+        if (location) {
+          return c.json({ redirect_url: location });
         }
         return response;
       }
@@ -1122,11 +800,8 @@ export async function consentPostHandler(c: Context<{ Bindings: Env }>) {
         redirectUrl.searchParams.set('state', metadata.state as string);
       }
 
-      // For JSON requests, return redirect URL instead of redirecting
-      if (contentType.includes('application/json')) {
-        return c.json({ redirect_url: redirectUrl.toString() });
-      }
-      return c.redirect(redirectUrl.toString(), 302);
+      // The Login UI navigates to the returned URL
+      return c.json({ redirect_url: redirectUrl.toString() });
     }
 
     // Save consent via Adapter (database-agnostic)
@@ -1438,9 +1113,7 @@ export async function consentPostHandler(c: Context<{ Bindings: Env }>) {
       '_consent_confirmation_challenge'
     );
 
-    const response = contentType.includes('application/json')
-      ? c.json({ redirect_url: redirectUrl })
-      : c.redirect(redirectUrl, 302);
+    const response = c.json({ redirect_url: redirectUrl });
     response.headers.append(
       'Set-Cookie',
       `${CONSENT_CONFIRMATION_COOKIE_NAME}=${encodeURIComponent(

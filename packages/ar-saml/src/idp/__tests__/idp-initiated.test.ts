@@ -8,7 +8,6 @@ const mocks = vi.hoisted(() => ({
   sessionResponse: new Response(null, { status: 404 }),
   sessionThrows: false,
   user: null as Record<string, unknown> | null,
-  builtin: false,
   uiConfig: undefined as { baseUrl: string; paths?: { login?: string } } | undefined,
   loginPolicy: 'ui_base_url' as 'ui_base_url' | 'tenant_host',
   nakedDomain: false,
@@ -61,7 +60,6 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
         return url.toString();
       }
     ),
-    shouldUseBuiltinForms: vi.fn(async () => mocks.builtin),
     usesNakedDomainIssuer: vi.fn(() => mocks.nakedDomain),
     resolveAuthCorePersistenceAdapterFromEnv: vi.fn(async () => ({
       execute: mocks.coreExecute,
@@ -178,7 +176,6 @@ describe('IdP-initiated SSO', () => {
     mocks.sessionResponse = new Response(null, { status: 404 });
     mocks.sessionThrows = false;
     mocks.user = null;
-    mocks.builtin = false;
     mocks.uiConfig = undefined;
     mocks.loginPolicy = 'ui_base_url';
     mocks.nakedDomain = false;
@@ -209,18 +206,18 @@ describe('IdP-initiated SSO', () => {
     expect(response.status).toBe(404);
   });
 
-  it('redirects unauthenticated users to builtin login when enabled', async () => {
-    mocks.builtin = true;
+  it('redirects unauthenticated users to the UI login', async () => {
+    mocks.uiConfig = { baseUrl: 'https://ui.example.test' };
     const response = await handleIdPInitiated(
       context('https://sp.example.test', consentTransactionId)
     );
     expect(response.status).toBe(302);
-    expect(response.headers.get('location')).toContain('/flow/login');
+    expect(response.headers.get('location')).toContain('https://ui.example.test/login');
     expect(response.headers.get('location')).toContain('return_to=');
   });
 
   it('preserves RelayState through the interactive login redirect', async () => {
-    mocks.builtin = true;
+    mocks.uiConfig = { baseUrl: 'https://ui.example.test' };
     const relayState = 'https://sp.example.test/home';
     const response = await handleIdPInitiated(
       context('https://sp.example.test', consentTransactionId, relayState)
@@ -281,9 +278,9 @@ describe('IdP-initiated SSO', () => {
     mocks.sharded = sharded;
     mocks.sessionThrows = throws;
     mocks.sessionResponse = response;
-    mocks.builtin = true;
+    mocks.uiConfig = { baseUrl: 'https://ui.example.test' };
     const result = await handleIdPInitiated(context('https://sp.example.test'));
-    expect(result.headers.get('location')).toContain('/flow/login');
+    expect(result.headers.get('location')).toContain('https://ui.example.test/login');
   });
 
   it('routes an authenticated IdP-initiated request through generic destination consent', async () => {
@@ -292,13 +289,13 @@ describe('IdP-initiated SSO', () => {
       status: 200,
       headers: { 'Content-Type': 'application/json' },
     });
-    mocks.builtin = true;
+    mocks.uiConfig = { baseUrl: 'https://ui.example.test' };
 
     const response = await handleIdPInitiated(context('https://sp.example.test'));
     const location = response.headers.get('location') ?? '';
 
     expect(response.status).toBe(302);
-    expect(location).toContain('/flow/login');
+    expect(location).toContain('https://ui.example.test/login');
     expect(location).toContain('saml_request_id=');
     expect(location).toContain('saml_sp_entity_id=https%3A%2F%2Fsp.example.test');
     expect(location).toContain('consent_tx%3D');
