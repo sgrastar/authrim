@@ -6,12 +6,18 @@ const {
   mockGetSessionStoreBySessionId,
   mockGetTenantIdFromContext,
   mockCreateAuthContextFromHono,
+  mockCreateAccountAuthContextFromHono,
   mockCoreAdapter,
+  mockAccountCoreAdapter,
 } = vi.hoisted(() => {
   const sessionStore = {
     getSessionRpc: vi.fn(),
   };
+  // Tenant metadata (statements, clients) and the user's account database (OAuth consents).
   const coreAdapter = {
+    query: vi.fn(),
+  };
+  const accountCoreAdapter = {
     query: vi.fn(),
   };
   return {
@@ -19,7 +25,11 @@ const {
     mockGetSessionStoreBySessionId: vi.fn().mockReturnValue({ stub: sessionStore }),
     mockGetTenantIdFromContext: vi.fn().mockReturnValue('default'),
     mockCreateAuthContextFromHono: vi.fn().mockReturnValue({ coreAdapter }),
+    mockCreateAccountAuthContextFromHono: vi.fn().mockReturnValue({
+      coreAdapter: accountCoreAdapter,
+    }),
     mockCoreAdapter: coreAdapter,
+    mockAccountCoreAdapter: accountCoreAdapter,
   };
 });
 
@@ -30,6 +40,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     getSessionStoreBySessionId: mockGetSessionStoreBySessionId,
     getTenantIdFromContext: mockGetTenantIdFromContext,
     createAuthContextFromHono: mockCreateAuthContextFromHono,
+    createAccountAuthContextFromHono: mockCreateAccountAuthContextFromHono,
     isShardedSessionId: vi.fn((sessionId: string) => sessionId.startsWith('g1:')),
     getLogger: () => ({
       module: () => ({
@@ -126,19 +137,24 @@ describe('Account Page consents API', () => {
       ])
       .mockResolvedValueOnce([
         {
-          id: 'consent-1',
           client_id: 'client-abc',
-          scope: 'openid profile email',
-          selected_scopes: JSON.stringify(['openid', 'profile']),
-          granted_at: 1_777_200_000,
-          expires_at: null,
-          privacy_policy_version: 'privacy-v1',
-          tos_version: 'tos-v1',
-          consent_version: 2,
           client_name: 'Example App',
           logo_uri: 'https://example.test/logo.png',
         },
       ]);
+    mockAccountCoreAdapter.query.mockReset().mockResolvedValueOnce([
+      {
+        id: 'consent-1',
+        client_id: 'client-abc',
+        scope: 'openid profile email',
+        selected_scopes: JSON.stringify(['openid', 'profile']),
+        granted_at: 1_777_200_000,
+        expires_at: null,
+        privacy_policy_version: 'privacy-v1',
+        tos_version: 'tos-v1',
+        consent_version: 2,
+      },
+    ]);
   });
 
   afterEach(() => {
@@ -169,9 +185,18 @@ describe('Account Page consents API', () => {
       'default',
       'user-001',
     ]);
-    expect(mockCoreAdapter.query).toHaveBeenCalledWith(
-      expect.stringContaining('FROM oauth_client_consents c'),
+    // OAuth consents come from the user's account database; their clients from tenant metadata.
+    expect(mockAccountCoreAdapter.query).toHaveBeenCalledWith(
+      expect.stringContaining('FROM oauth_client_consents'),
       ['default', 'user-001']
+    );
+    expect(mockCoreAdapter.query).not.toHaveBeenCalledWith(
+      expect.stringContaining('oauth_client_consents'),
+      expect.anything()
+    );
+    expect(mockCoreAdapter.query).toHaveBeenCalledWith(
+      expect.stringContaining('FROM oauth_clients'),
+      ['default', 'client-abc']
     );
     expect(body).toEqual({
       consents: [
@@ -320,21 +345,20 @@ describe('Account Page consents API', () => {
           description: null,
         },
       ])
-      .mockResolvedValueOnce([
-        {
-          id: 'oauth-minimal',
-          client_id: 'client-1',
-          scope: 'openid  email ',
-          selected_scopes: '{bad json',
-          granted_at: 40,
-          expires_at: null,
-          privacy_policy_version: null,
-          tos_version: null,
-          consent_version: null,
-          client_name: null,
-          logo_uri: null,
-        },
-      ]);
+      .mockResolvedValueOnce([]);
+    mockAccountCoreAdapter.query.mockReset().mockResolvedValueOnce([
+      {
+        id: 'oauth-minimal',
+        client_id: 'client-1',
+        scope: 'openid  email ',
+        selected_scopes: '{bad json',
+        granted_at: 40,
+        expires_at: null,
+        privacy_policy_version: null,
+        tos_version: null,
+        consent_version: null,
+      },
+    ]);
 
     const response = await listAccountConsentsHandler(
       createMockContext('authrim_session=g1%3Aapac%3A3%3Asession_current', 'ja-JP, en;q=0.8')
@@ -369,21 +393,20 @@ describe('Account Page consents API', () => {
     mockCoreAdapter.query
       .mockResolvedValueOnce([])
       .mockResolvedValueOnce([])
-      .mockResolvedValueOnce([
-        {
-          id: 'oauth-1',
-          client_id: 'client-1',
-          scope: 'openid',
-          selected_scopes: selectedScopes,
-          granted_at: 1,
-          expires_at: null,
-          privacy_policy_version: null,
-          tos_version: null,
-          consent_version: null,
-          client_name: null,
-          logo_uri: null,
-        },
-      ]);
+      .mockResolvedValueOnce([]);
+    mockAccountCoreAdapter.query.mockReset().mockResolvedValueOnce([
+      {
+        id: 'oauth-1',
+        client_id: 'client-1',
+        scope: 'openid',
+        selected_scopes: selectedScopes,
+        granted_at: 1,
+        expires_at: null,
+        privacy_policy_version: null,
+        tos_version: null,
+        consent_version: null,
+      },
+    ]);
 
     const response = await listAccountConsentsHandler(
       createMockContext('authrim_session=g1%3Aapac%3A3%3Asession_current')

@@ -162,3 +162,67 @@ export async function upsertOAuthClientConsent(
 
   return updateOAuthClientConsent(adapter, input, existing);
 }
+
+export interface OAuthClientConsentListRow {
+  id: string;
+  client_id: string;
+  scope: string;
+  selected_scopes: string | null;
+  granted_at: number;
+  expires_at: number | null;
+  privacy_policy_version: string | null;
+  tos_version: string | null;
+  consent_version: number | null;
+  client_name: string | null;
+  logo_uri: string | null;
+}
+
+// D1 accepts at most 100 bound parameters per statement; one is the tenant ID.
+const CLIENT_LOOKUP_CHUNK_SIZE = 90;
+
+/**
+ * List a user's OAuth client consents, newest first, with each client's display name and logo.
+ *
+ * Consents are stored with the user in its account database, while client records are tenant
+ * metadata, so the two are read from their own databases and joined here.
+ */
+export async function listOAuthClientConsentsWithClients(input: {
+  accountCore: DatabaseAdapter;
+  tenantMetadata: DatabaseAdapter;
+  tenantId: string;
+  userId: string;
+}): Promise<OAuthClientConsentListRow[]> {
+  const consents = await input.accountCore.query<
+    Omit<OAuthClientConsentListRow, 'client_name' | 'logo_uri'>
+  >(
+    `SELECT id, client_id, scope, selected_scopes, granted_at, expires_at,
+            privacy_policy_version, tos_version, consent_version
+       FROM oauth_client_consents
+      WHERE tenant_id = ? AND user_id = ?
+      ORDER BY granted_at DESC`,
+    [input.tenantId, input.userId]
+  );
+  const clientIds = [...new Set(consents.map((row) => row.client_id))];
+  const clients = new Map<string, { client_name: string | null; logo_uri: string | null }>();
+  for (let offset = 0; offset < clientIds.length; offset += CLIENT_LOOKUP_CHUNK_SIZE) {
+    const chunk = clientIds.slice(offset, offset + CLIENT_LOOKUP_CHUNK_SIZE);
+    const rows = await input.tenantMetadata.query<{
+      client_id: string;
+      client_name: string | null;
+      logo_uri: string | null;
+    }>(
+      `SELECT client_id, client_name, logo_uri
+         FROM oauth_clients
+        WHERE tenant_id = ? AND client_id IN (${chunk.map(() => '?').join(', ')})`,
+      [input.tenantId, ...chunk]
+    );
+    for (const row of rows) {
+      clients.set(row.client_id, { client_name: row.client_name, logo_uri: row.logo_uri });
+    }
+  }
+  return consents.map((row) => ({
+    ...row,
+    client_name: clients.get(row.client_id)?.client_name ?? null,
+    logo_uri: clients.get(row.client_id)?.logo_uri ?? null,
+  }));
+}

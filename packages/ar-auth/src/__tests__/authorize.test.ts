@@ -4296,6 +4296,85 @@ describe('Authorization Handler', () => {
       );
     });
 
+    it('answers an acr of another vocabulary with its own acr while no table maps it', async () => {
+      seedSessionData(TEST_SESSION_ID, { amr: ['passkey'] });
+      await setAssurance({ 'assurance.enabled': true });
+
+      await request(
+        authorizeUrl(`&acr_values=${encodeURIComponent('urn:mace:incommon:iap:silver')}`)
+      );
+
+      expect(getAuthCodeStore(env).storeCodeRpc).toHaveBeenLastCalledWith(
+        expect.objectContaining({ acr: 'urn:authrim:aal:2', aal: 'AAL2' })
+      );
+    });
+
+    it('returns an outbound-mapped acr asked for once the session meets its AAL', async () => {
+      const silver = 'urn:mace:incommon:iap:silver';
+      seedSessionData(TEST_SESSION_ID, { amr: ['passkey'] });
+      await setAssurance({
+        'assurance.enabled': true,
+        'assurance.outbound_acr_mappings': JSON.stringify({ [silver]: 'AAL2' }),
+      });
+
+      await request(authorizeUrl(`&acr_values=${encodeURIComponent(silver)}`));
+
+      expect(getAuthCodeStore(env).storeCodeRpc).toHaveBeenLastCalledWith(
+        expect.objectContaining({ acr: silver, aal: 'AAL2' })
+      );
+    });
+
+    it('steps up for an outbound-mapped acr like for its own value at that AAL', async () => {
+      const silver = 'urn:mace:incommon:iap:silver';
+      seedSessionData(TEST_SESSION_ID, { amr: ['pwd'] });
+      await setAssurance({
+        'assurance.enabled': true,
+        'assurance.outbound_acr_mappings': JSON.stringify({ [silver]: 'AAL2' }),
+      });
+
+      const response = await request(authorizeUrl(`&acr_values=${encodeURIComponent(silver)}`));
+
+      const location = new URL(response.headers.get('Location')!);
+      expect(location.pathname).toBe('/reauth');
+      expect(location.searchParams.get('required_aal')).toBe('AAL2');
+      expect(getAuthCodeStore(env).storeCodeRpc).not.toHaveBeenCalled();
+    });
+
+    it('refuses an essential acr of another vocabulary while no table maps it', async () => {
+      const claims = encodeURIComponent(
+        JSON.stringify({
+          id_token: { acr: { essential: true, values: ['urn:mace:incommon:iap:silver'] } },
+        })
+      );
+      seedSessionData(TEST_SESSION_ID, { amr: ['passkey'] });
+      await setAssurance({ 'assurance.enabled': true });
+
+      const response = await request(authorizeUrl(`&claims=${claims}`));
+
+      expect(new URL(response.headers.get('Location')!).searchParams.get('error')).toBe(
+        'unmet_authentication_requirements'
+      );
+    });
+
+    it('answers an essential outbound-mapped acr with that value', async () => {
+      const silver = 'urn:mace:incommon:iap:silver';
+      const claims = encodeURIComponent(
+        JSON.stringify({ id_token: { acr: { essential: true, values: [silver] } } })
+      );
+      seedSessionData(TEST_SESSION_ID, { amr: ['passkey'] });
+      await setAssurance({
+        'assurance.enabled': true,
+        'assurance.include_in_id_token': false,
+        'assurance.outbound_acr_mappings': JSON.stringify({ [silver]: 'AAL2' }),
+      });
+
+      await request(authorizeUrl(`&claims=${claims}`));
+
+      expect(getAuthCodeStore(env).storeCodeRpc).toHaveBeenLastCalledWith(
+        expect.objectContaining({ acr: silver })
+      );
+    });
+
     it("does not exempt a request from the default for another user's guest session", async () => {
       // The confirmation names test-user; the cookie carries someone else's guest session.
       seedSessionData(STEP_UP_SESSION_ID, { amr: ['anon'], is_guest_session: true }, 'guest-user');

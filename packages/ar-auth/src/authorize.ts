@@ -18,6 +18,7 @@ import {
   meetsAAL,
   mergeStepUpEvidence,
   parseScopeAALRequirements,
+  parseOutboundAcrMappings,
   parseUpstreamAcrMappings,
   requiredAAL,
   selectAcr,
@@ -3694,6 +3695,10 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         ? [acrClaim.value]
         : null;
     const acrValueList = acr_values ? acr_values.split(' ').filter(Boolean) : [];
+    // The other vocabularies' acr values Authrim issues: asked for, they count as their AAL.
+    const outboundAcrMappings = parseOutboundAcrMappings(
+      assuranceSettings['assurance.outbound_acr_mappings']
+    );
     const interactive = !prompt?.split(' ').includes('none');
     const required = requiredAAL({
       defaultAAL: (assuranceSettings['assurance.default_aal'] as AAL) ?? 'AAL1',
@@ -3703,6 +3708,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       ),
       essentialAcr: acrClaim?.essential === true ? { values: essentialValues } : null,
       acrValues: acrValueList,
+      outboundAcrMappings,
       interactive,
       // A guest exemption only from the session of the user being authorized.
       guest: ownSession && isAnonymousSession,
@@ -3747,7 +3753,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       assuranceSettings['assurance.include_in_id_token'] === true ||
       (required.essential && required.essentialAcrs)
     ) {
-      assuranceAcr = selectAcr(actualAal, required, acrValueList);
+      assuranceAcr = selectAcr(actualAal, required, acrValueList, outboundAcrMappings);
     }
   }
 

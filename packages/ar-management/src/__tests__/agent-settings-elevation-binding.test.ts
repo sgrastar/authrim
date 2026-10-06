@@ -13,6 +13,7 @@ describe('Agent settings elevation argument binding', () => {
       defaultAAL: 'AAL2',
       scopeAALRequirements: { 'payments:write': 'AAL3' },
       upstreamAcrMappings: { 'urn:mace:incommon:iap:silver': 'AAL2' },
+      outboundAcrMappings: { 'urn:mace:incommon:iap:bronze': 'AAL1' },
     };
     const reconstructed = buildAgentElevatedSettingsToolInput('assurance', {
       ifMatch: 'version-1',
@@ -22,6 +23,9 @@ describe('Agent settings elevation argument binding', () => {
         'assurance.scope_aal_requirements': canonicalizeJson({ 'payments:write': 'AAL3' }),
         'assurance.upstream_acr_mappings': canonicalizeJson({
           'urn:mace:incommon:iap:silver': 'AAL2',
+        }),
+        'assurance.outbound_acr_mappings': canonicalizeJson({
+          'urn:mace:incommon:iap:bronze': 'AAL1',
         }),
       },
     });

@@ -2345,6 +2345,27 @@ describe('Settings API v2', () => {
         expect(res.status).toBe(200);
       });
 
+      it("accepts the outbound acr table only as other vocabularies' acr values to an AAL", async () => {
+        const { app, mockEnv } = createTestApp({ kv: createMockKV() });
+        const url = '/api/admin/tenants/tenant_123/settings/assurance';
+        for (const set of [
+          { 'assurance.outbound_acr_mappings': 'not json' },
+          { 'assurance.outbound_acr_mappings': '["urn:mace:incommon:iap:silver"]' },
+          { 'assurance.outbound_acr_mappings': '{"urn:mace:incommon:iap:silver":"AAL4"}' },
+          { 'assurance.outbound_acr_mappings': '{"urn:authrim:aal:2":"AAL2"}' },
+          { 'assurance.outbound_acr_mappings': '{"silver gold":"AAL2"}' },
+        ]) {
+          const res = await patchAt(app, mockEnv, url, set);
+          expect(res.status, JSON.stringify(set)).toBe(400);
+          expect((await res.json()) as ApiResponse).toMatchObject({ error: 'validation_failed' });
+        }
+        const res = await patchAt(app, mockEnv, url, {
+          'assurance.outbound_acr_mappings':
+            '{"urn:mace:incommon:iap:silver":"AAL2","urn:mace:incommon:iap:bronze":"AAL1"}',
+        });
+        expect(res.status).toBe(200);
+      });
+
       it('accepts the identity assurance settings only in the shapes runtime reads', async () => {
         const { app, mockEnv } = createTestApp({ kv: createMockKV() });
         const url = '/api/admin/tenants/tenant_123/settings/assurance';

@@ -12,9 +12,12 @@
 import { Context } from 'hono';
 import type { Env, UserConsentRecord, ConsentRevokeResult } from '@authrim/ar-lib-core';
 import {
+  createAccountAuthContextFromHono,
   createAuthContextFromHono,
   getTenantIdFromContext,
   invalidateConsentCache,
+  listOAuthClientConsentsWithClients,
+  resolveAccountDataContextFromHono,
   revokeToken,
   publishEvent,
   CONSENT_EVENTS,
@@ -73,6 +76,23 @@ async function getUserIdFromContext(c: Context<{ Bindings: Env }>): Promise<stri
 }
 
 /**
+ * Resolve the user's account databases, where its consents are stored. Returns false when the
+ * user has no account route, i.e. it has no consents.
+ */
+async function resolveConsentOwnerAccount(
+  c: Context<{ Bindings: Env }>,
+  userId: string
+): Promise<boolean> {
+  try {
+    await resolveAccountDataContextFromHono(c, userId);
+    return true;
+  } catch (error) {
+    if (error instanceof Error && error.message === 'account_data_route_not_found') return false;
+    throw error;
+  }
+}
+
+/**
  * List user's consents
  * GET /api/user/consents
  *
@@ -92,31 +112,18 @@ export async function userConsentsListHandler(c: Context<{ Bindings: Env }>) {
     }
 
     const tenantId = getTenantIdFromContext(c);
-    const authCtx = createAuthContextFromHono(c, tenantId);
+    if (!(await resolveConsentOwnerAccount(c, userId))) {
+      return c.json({ consents: [], total: 0 });
+    }
 
-    // Query consents with client info
-    const consentsResult = await authCtx.coreAdapter.query<{
-      id: string;
-      client_id: string;
-      scope: string;
-      selected_scopes: string | null;
-      granted_at: number;
-      expires_at: number | null;
-      privacy_policy_version: string | null;
-      tos_version: string | null;
-      consent_version: number | null;
-      client_name: string | null;
-      logo_uri: string | null;
-    }>(
-      `SELECT c.id, c.client_id, c.scope, c.selected_scopes, c.granted_at, c.expires_at,
-              c.privacy_policy_version, c.tos_version, c.consent_version,
-              oc.client_name, oc.logo_uri
-       FROM oauth_client_consents c
-       LEFT JOIN oauth_clients oc ON c.tenant_id = oc.tenant_id AND c.client_id = oc.client_id
-       WHERE c.user_id = ? AND c.tenant_id = ?
-       ORDER BY c.granted_at DESC`,
-      [userId, tenantId]
-    );
+    // Consents are stored with the user in its account database; client records are tenant
+    // metadata.
+    const consentsResult = await listOAuthClientConsentsWithClients({
+      accountCore: createAccountAuthContextFromHono(c, tenantId).coreAdapter,
+      tenantMetadata: createAuthContextFromHono(c, tenantId).coreAdapter,
+      tenantId,
+      userId,
+    });
 
     const consents: UserConsentRecord[] = consentsResult.map((row) => ({
       id: row.id,
@@ -204,7 +211,17 @@ export async function userConsentRevokeHandler(c: Context<{ Bindings: Env }>) {
     }
 
     const tenantId = getTenantIdFromContext(c);
-    const authCtx = createAuthContextFromHono(c, tenantId);
+    // Consents and their history are stored with the user in its account database.
+    if (!(await resolveConsentOwnerAccount(c, userId))) {
+      return c.json(
+        {
+          error: 'not_found',
+          error_description: 'Consent not found',
+        },
+        404
+      );
+    }
+    const authCtx = createAccountAuthContextFromHono(c, tenantId);
 
     // Check if consent exists
     const existingConsent = await authCtx.coreAdapter.query<{

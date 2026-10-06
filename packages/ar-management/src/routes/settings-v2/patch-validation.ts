@@ -8,6 +8,7 @@ import {
   ialAssuranceValuesProblem,
   ialMapProblem,
   idaProfileProblem,
+  outboundAcrMappingsProblem,
   samlAuthnContextAALProblem,
   ALL_CATEGORY_META,
   AUTHORIZATION_SIGNING_ALGORITHMS,
@@ -221,7 +222,8 @@ export function validateDiscoveryPatch(body: SettingsPatchRequest): string | nul
  */
 /**
  * Assurance: the JSON-text settings are each checked the way runtime reads them, so runtime never
- * meets a value it would read differently: scope and upstream maps of names to AAL1..AAL3, a scope
+ * meets a value it would read differently: scope and upstream maps of names to AAL1..AAL3, the
+ * outbound map (acr values of other vocabularies, none of Authrim's own, to AAL1..AAL3), a scope
  * map to IAL1..IAL3, assurance values per IAL (absolute URIs), AuthnContextClassRefs to an AAL, and
  * the Identity Assurance profile.
  */
@@ -229,6 +231,7 @@ export function validateAssurancePatch(body: SettingsPatchRequest): string | nul
   const checks: Array<[string, (parsed: unknown) => string | null]> = [
     ['assurance.scope_aal_requirements', aalMapProblem],
     ['assurance.upstream_acr_mappings', aalMapProblem],
+    ['assurance.outbound_acr_mappings', outboundAcrMappingsProblem],
     ['assurance.scope_ial_requirements', ialMapProblem],
     ['assurance.ial_assurance_values', ialAssuranceValuesProblem],
     ['assurance.saml_authn_context_aal', samlAuthnContextAALProblem],

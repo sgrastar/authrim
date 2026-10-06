@@ -531,6 +531,8 @@ import {
   adminClientRegenerateSecretHandler,
   adminSessionGetHandler,
   adminTestEmailCodeHandler,
+  adminUserConsentsListHandler,
+  adminUserConsentRevokeHandler,
 } from '../admin';
 
 // Helper to create mock D1Database
@@ -842,6 +844,90 @@ function createMockContext(options: {
   return c;
 }
 
+/**
+ * Separate tenant metadata and account databases: the metadata database records every statement
+ * and holds nothing about users, so a lookup routed to it finds nothing.
+ */
+function createRoutedAccountDatabases(userId: string) {
+  const metadataSqls: string[] = [];
+  const metadataDb = createSqlAwareMockDB(async (sql, params, op) => {
+    metadataSqls.push(sql);
+    if (op === 'all' && sql.includes('FROM oauth_clients')) {
+      return (params.slice(1) as string[]).map((clientId) => ({
+        client_id: clientId,
+        client_name: `Client ${clientId}`,
+        logo_uri: null,
+      }));
+    }
+    return op === 'run' ? { success: true } : undefined;
+  });
+  const metadataPiiDb = createSqlAwareMockDB(async (sql, _params, op) => {
+    metadataSqls.push(sql);
+    return op === 'run' ? { success: true } : undefined;
+  });
+  const accountCoreSqls: string[] = [];
+  const accountCoreResults: {
+    first: Array<[string, unknown]>;
+    all: Array<[string, unknown[]]>;
+  } = { first: [], all: [] };
+  const accountCoreDb = createSqlAwareMockDB(async (sql, _params, op) => {
+    accountCoreSqls.push(sql);
+    if (op === 'first') {
+      if (sql.includes('FROM identity_accounts WHERE legacy_user_id = ?')) {
+        return {
+          id: `account:${userId}`,
+          tenant_id: 'default',
+          legacy_user_id: userId,
+          primary_subject_id: `subject:${userId}`,
+          account_type: 'user',
+          lifecycle_state: 'active',
+          created_at: Date.now(),
+          updated_at: Date.now(),
+        };
+      }
+      return accountCoreResults.first.find(([fragment]) => sql.includes(fragment))?.[1];
+    }
+    if (op === 'all') {
+      return accountCoreResults.all.find(([fragment]) => sql.includes(fragment))?.[1] ?? [];
+    }
+    return { success: true, meta: { changes: 1 } };
+  });
+  const accountPiiSqls: string[] = [];
+  const accountPiiDb = createSqlAwareMockDB(async (sql, _params, op) => {
+    accountPiiSqls.push(sql);
+    return op === 'run' ? { success: true } : undefined;
+  });
+  const attachAccount = (c: { set(key: string, value: unknown): void }) =>
+    c.set('accountDataContext', {
+      tenantId: 'default',
+      accountId: userId,
+      legacyUserId: userId,
+      coreDb: accountCoreDb,
+      piiDb: accountPiiDb,
+      userCacheScope: { kind: 'tenant', tenantId: 'default' },
+      piiCacheMode: 'encrypted_short_ttl',
+    });
+  // Audit logging legitimately writes to the metadata/admin databases; user rows must not.
+  const metadataUserSqls = () =>
+    metadataSqls.filter((sql) =>
+      /identity_accounts|legal_holds|users_pii_tombstone|identity_sensitive_values|guest_account_lifecycle|oauth_client_consents|consent_history/.test(
+        sql
+      )
+    );
+  return {
+    metadataDb,
+    metadataPiiDb,
+    metadataSqls,
+    metadataUserSqls,
+    accountCoreDb,
+    accountCoreSqls,
+    accountCoreResults,
+    accountPiiDb,
+    accountPiiSqls,
+    attachAccount,
+  };
+}
+
 function createMockR2Bucket(
   entries: Array<{
     key: string;
@@ -920,6 +1006,8 @@ describe('Admin API Handlers', () => {
     resolveOtpAccountCoreDataContextByIdentifier.mockReset();
     resolveAccountDataContextByIdentifier.mockReset();
     resolveAccountDataContext.mockReset();
+    // Drop any unconsumed per-test source routing before installing the default.
+    resolveCustomClaimRuntimeSources.mockReset();
     resolveCustomClaimRuntimeSources.mockImplementation(async (env: Partial<Env>) => ({
       storageProfile: {
         id: env.DEFAULT_AUDIT_PROFILE_ID ?? 'builtin:audit:standard',
@@ -3162,6 +3250,161 @@ describe('Admin API Handlers', () => {
     });
   });
 
+  describe('adminUserDeletePiiHandler (routed account)', () => {
+    function routeAccountSources(dbs: ReturnType<typeof createRoutedAccountDatabases>) {
+      resolveCustomClaimRuntimeSources.mockImplementationOnce(async (env: Partial<Env>) => ({
+        schemaDb: env.DB,
+        nonPiiDb: dbs.accountCoreDb,
+        piiDb: dbs.accountPiiDb,
+      }));
+    }
+
+    it('finds the user, writes the tombstone and erases PII in the account databases', async () => {
+      const userId = 'user-routed-delete-pii';
+      const dbs = createRoutedAccountDatabases(userId);
+      routeAccountSources(dbs);
+      const c = createMockContext({
+        method: 'DELETE',
+        params: { id: userId },
+        db: dbs.metadataDb,
+        dbPII: dbs.metadataPiiDb,
+      });
+
+      await adminUserDeletePiiHandler(c);
+
+      expect(c.json).toHaveBeenCalledWith(
+        expect.objectContaining({ success: true, user_id: userId, pii_status: 'deleted' })
+      );
+      expect(resolveCustomClaimRuntimeSources).toHaveBeenCalledWith(c.env, 'default', {
+        accountId: userId,
+      });
+      expect(dbs.accountCoreSqls).toContainEqual(expect.stringContaining('FROM legal_holds hold'));
+      expect(dbs.accountPiiSqls).toContainEqual(
+        expect.stringContaining('INSERT INTO users_pii_tombstone')
+      );
+      expect(dbs.metadataUserSqls()).toEqual([]);
+      expect(canonicalRuntimeUsers.get(userId)).toMatchObject({ email: null });
+    });
+
+    it('honours a legal hold recorded in the account database', async () => {
+      const userId = 'user-routed-held-pii';
+      const dbs = createRoutedAccountDatabases(userId);
+      dbs.accountCoreResults.first.push([
+        'FROM legal_holds hold',
+        { hold_id: 'legal-hold:routed', reason_code: 'regulatory_review' },
+      ]);
+      routeAccountSources(dbs);
+      const c = createMockContext({
+        method: 'DELETE',
+        params: { id: userId },
+        db: dbs.metadataDb,
+        dbPII: dbs.metadataPiiDb,
+      });
+
+      await adminUserDeletePiiHandler(c);
+
+      expect(c.json).toHaveBeenCalledWith(
+        expect.objectContaining({ error: 'legal_hold_active', hold_id: 'legal-hold:routed' }),
+        409
+      );
+      expect(dbs.accountPiiSqls).toEqual([]);
+    });
+
+    it('answers 404 for a user without an account route', async () => {
+      resolveCustomClaimRuntimeSources.mockRejectedValueOnce(
+        new Error('account_data_route_not_found')
+      );
+      const c = createMockContext({ method: 'DELETE', params: { id: 'user-unrouted' } });
+
+      await adminUserDeletePiiHandler(c);
+
+      expect(c.json).toHaveBeenCalledWith(expect.objectContaining({ error: 'not_found' }), 404);
+    });
+  });
+
+  describe('admin user consents (routed account)', () => {
+    it('lists consents from the account database with client names from tenant metadata', async () => {
+      const userId = 'user-routed-consents';
+      const dbs = createRoutedAccountDatabases(userId);
+      dbs.accountCoreResults.all.push([
+        'FROM oauth_client_consents',
+        [
+          {
+            id: 'consent-1',
+            client_id: 'client-a',
+            scope: 'openid profile',
+            selected_scopes: null,
+            granted_at: 1_700_000_000_000,
+            expires_at: null,
+            privacy_policy_version: null,
+            tos_version: null,
+            consent_version: 1,
+          },
+        ],
+      ]);
+      resolveAccountDataContext.mockImplementation(async (c: any) => dbs.attachAccount(c));
+      const c = createMockContext({
+        params: { userId },
+        db: dbs.metadataDb,
+        dbPII: dbs.metadataPiiDb,
+      });
+
+      const response = await adminUserConsentsListHandler(c);
+      const body = (await response.json()) as { consents: Array<Record<string, unknown>> };
+
+      expect(response.status).toBe(200);
+      expect(resolveAccountDataContext).toHaveBeenCalledWith(c, userId);
+      expect(body.consents).toEqual([
+        expect.objectContaining({
+          clientId: 'client-a',
+          clientName: 'Client client-a',
+          scopes: ['openid', 'profile'],
+        }),
+      ]);
+      expect(dbs.metadataSqls).toContainEqual(expect.stringContaining('FROM oauth_clients'));
+      expect(dbs.metadataUserSqls()).toEqual([]);
+    });
+
+    it('revokes the consent and records history in the account database', async () => {
+      const userId = 'user-routed-revoke';
+      const dbs = createRoutedAccountDatabases(userId);
+      dbs.accountCoreResults.all.push([
+        'FROM oauth_client_consents',
+        [{ id: 'consent-1', scope: 'openid profile' }],
+      ]);
+      resolveAccountDataContext.mockImplementation(async (c: any) => dbs.attachAccount(c));
+      const c = createMockContext({
+        method: 'DELETE',
+        params: { userId, clientId: 'client-a' },
+        db: dbs.metadataDb,
+        dbPII: dbs.metadataPiiDb,
+      });
+
+      const response = await adminUserConsentRevokeHandler(c);
+
+      expect(response.status).toBe(200);
+      expect(dbs.accountCoreSqls).toContainEqual(
+        expect.stringContaining('DELETE FROM oauth_client_consents')
+      );
+      expect(dbs.accountCoreSqls).toContainEqual(
+        expect.stringContaining('INSERT INTO consent_history')
+      );
+      expect(dbs.metadataUserSqls()).toEqual([]);
+    });
+
+    it('answers 404 when the user has no account route', async () => {
+      resolveAccountDataContext.mockRejectedValue(new Error('account_data_route_not_found'));
+      const listContext = createMockContext({ params: { userId: 'user-unrouted' } });
+      const revokeContext = createMockContext({
+        method: 'DELETE',
+        params: { userId: 'user-unrouted', clientId: 'client-a' },
+      });
+
+      expect((await adminUserConsentsListHandler(listContext)).status).toBe(404);
+      expect((await adminUserConsentRevokeHandler(revokeContext)).status).toBe(404);
+    });
+  });
+
   describe('adminUserUpdateHandler', () => {
     it('should persist custom field updates', async () => {
       const userId = 'user-custom-update';
@@ -3224,6 +3467,43 @@ describe('Admin API Handlers', () => {
           }),
         })
       );
+    });
+
+    it('reports the guest lifecycle recorded in the account database', async () => {
+      const userId = 'guest-routed-update';
+      canonicalRuntimeUsers.set(userId, {
+        id: userId,
+        tenant_id: 'default',
+        account_type: 'user',
+        registration_state: 'registered',
+        active: 1,
+      });
+      const dbs = createRoutedAccountDatabases(userId);
+      dbs.accountCoreResults.first.push([
+        'FROM guest_account_lifecycle',
+        { tenant_id: 'default', user_id: userId, phase: 'active' },
+      ]);
+      resolveCustomClaimRuntimeSources.mockImplementationOnce(async (env: Partial<Env>) => ({
+        schemaDb: env.DB,
+        nonPiiDb: dbs.accountCoreDb,
+        piiDb: dbs.accountPiiDb,
+      }));
+      const c = createMockContext({
+        method: 'PUT',
+        params: { id: userId },
+        body: { name: 'Routed Guest' },
+        db: dbs.metadataDb,
+        dbPII: dbs.metadataPiiDb,
+      });
+
+      await adminUserUpdateHandler(c);
+
+      expect(c.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          user: expect.objectContaining({ id: userId, registration_state: 'guest' }),
+        })
+      );
+      expect(dbs.metadataUserSqls()).toEqual([]);
     });
 
     it('preserves guest registration when saving the public end_user classification', async () => {

@@ -164,6 +164,7 @@ place(
 			'assurance.default_ial',
 			'assurance.scope_aal_requirements',
 			'assurance.upstream_acr_mappings',
+			'assurance.outbound_acr_mappings',
 			'assurance.scope_ial_requirements',
 			'assurance.ial_assurance_values',
 			'assurance.saml_authn_context_aal',

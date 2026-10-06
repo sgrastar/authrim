@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { DatabaseAdapter } from '../../db/adapter';
 import { D1OperationError } from '../../utils/d1-retry';
-import { upsertOAuthClientConsent } from '../consent-store';
+import { listOAuthClientConsentsWithClients, upsertOAuthClientConsent } from '../consent-store';
 
 function createConsentAdapter(
   seed?: {
@@ -229,5 +229,70 @@ describe('upsertOAuthClientConsent', () => {
     expect(result.id).toBe('consent-concurrent');
     expect(result.consentVersion).toBe(2);
     expect(adapter.rows).toHaveLength(1);
+  });
+});
+
+describe('listOAuthClientConsentsWithClients', () => {
+  function queryOnlyAdapter(
+    query: (sql: string, params: unknown[]) => unknown[]
+  ): DatabaseAdapter & { calls: Array<{ sql: string; params: unknown[] }> } {
+    const calls: Array<{ sql: string; params: unknown[] }> = [];
+    return {
+      calls,
+      async query(sql: string, params: unknown[] = []) {
+        calls.push({ sql, params });
+        return query(sql, params);
+      },
+    } as unknown as DatabaseAdapter & { calls: Array<{ sql: string; params: unknown[] }> };
+  }
+
+  it('reads consents from the account database and clients from tenant metadata in chunks', async () => {
+    const consentRows = Array.from({ length: 95 }, (_, index) => ({
+      id: `consent-${index}`,
+      client_id: `client-${index}`,
+      scope: 'openid',
+      selected_scopes: null,
+      granted_at: 1_000 - index,
+      expires_at: null,
+      privacy_policy_version: null,
+      tos_version: null,
+      consent_version: 1,
+    }));
+    const accountCore = queryOnlyAdapter((sql) =>
+      sql.includes('FROM oauth_client_consents') ? consentRows : []
+    );
+    const tenantMetadata = queryOnlyAdapter((sql, params) =>
+      sql.includes('FROM oauth_clients')
+        ? (params.slice(1) as string[])
+            .filter((clientId) => clientId !== 'client-94')
+            .map((clientId) => ({
+              client_id: clientId,
+              client_name: `Name ${clientId}`,
+              logo_uri: null,
+            }))
+        : []
+    );
+
+    const rows = await listOAuthClientConsentsWithClients({
+      accountCore,
+      tenantMetadata,
+      tenantId: 'tenant-a',
+      userId: 'user-1',
+    });
+
+    expect(accountCore.calls).toEqual([
+      {
+        sql: expect.stringContaining('FROM oauth_client_consents'),
+        params: ['tenant-a', 'user-1'],
+      },
+    ]);
+    expect(tenantMetadata.calls).toHaveLength(2);
+    expect(tenantMetadata.calls.every((call) => call.params.length <= 91)).toBe(true);
+    expect(tenantMetadata.calls.some((call) => call.sql.includes('oauth_client_consents'))).toBe(
+      false
+    );
+    expect(rows).toHaveLength(95);
+    expect(rows[0]).toMatchObject({ id: 'consent-0', client_name: 'Name client-0' });
+    expect(rows[94]).toMatchObject({ id: 'consent-94', client_name: null, logo_uri: null });
   });
 });
