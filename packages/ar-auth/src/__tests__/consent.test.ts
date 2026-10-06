@@ -1018,6 +1018,45 @@ describe('Consent Handlers', () => {
       expect(response.headers.get('Set-Cookie')).toContain('HttpOnly');
     });
 
+    it('hands a re-authentication completed before consent back to /authorize', async () => {
+      const confirmedReauth = { auth_time: 1_700_000_200, reauth_issued_at: 1_700_000_190_000 };
+      const challengeStore = createMockChallengeStore({
+        id: 'consent-challenge-after-reauth',
+        type: 'consent',
+        userId: 'user-123',
+        metadata: {
+          response_type: 'code',
+          client_id: 'test-client',
+          redirect_uri: 'https://example.com/callback',
+          scope: 'openid profile',
+          state: 'test-state',
+          prompt: 'login',
+          confirmed_reauth: confirmedReauth,
+        },
+      });
+      const c = createMockContext({
+        method: 'POST',
+        body: { challenge_id: 'consent-challenge-after-reauth', approved: true },
+        headers: { 'content-type': 'application/json' },
+        challengeStore,
+        db: createMockDB({ runResult: { success: true } }),
+      });
+
+      await consentPostHandler(c);
+
+      const jsonBody = c.json.mock.calls[0][0] as { redirect_url: string };
+      const confirmationChallenge = new URL(
+        jsonBody.redirect_url,
+        'https://example.com'
+      ).searchParams.get('_consent_confirmation_challenge');
+      expect(challengeStore._challenges.get(confirmationChallenge!)).toMatchObject({
+        metadata: {
+          purpose: 'authorize_consent_confirmation',
+          confirmed_reauth: confirmedReauth,
+        },
+      });
+    });
+
     it.each([
       ['submitted acting_as_user_id', {}, { acting_as_user_id: 'victim-user' }],
       ['challenge acting_as metadata', { acting_as: 'victim-user' }, {}],

@@ -43,6 +43,7 @@ import {
   getChallengeStoreByChallengeId,
   generateRegionAwareJti,
   createAuthContextFromHono,
+  createAccountAuthContextFromHono,
   createPIIContextFromHono,
   getTenantMetadataContextFromHono,
   resolveAccountDataContextFromHono,
@@ -175,6 +176,48 @@ function collectRequestedClaimNames(
   return Array.from(
     new Set([...Object.keys(request.userinfo ?? {}), ...Object.keys(request.id_token ?? {})])
   );
+}
+
+/**
+ * A re-authentication completed before the consent screen, as the consent challenge carries it
+ * back: its auth_time (seconds), when it was asked for, and the step-up it completed.
+ */
+interface ConfirmedReauthentication {
+  authTime: number;
+  reauthIssuedAt?: number;
+  assuranceStepUp?: { priorSessionId?: string; issuedAt: number };
+}
+
+function readConfirmedReauthentication(value: unknown): ConfirmedReauthentication | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const record = value as Record<string, unknown>;
+  const authTime = record.auth_time;
+  if (typeof authTime !== 'number' || !Number.isSafeInteger(authTime) || authTime <= 0) {
+    return undefined;
+  }
+  const reauthIssuedAt =
+    typeof record.reauth_issued_at === 'number' && Number.isSafeInteger(record.reauth_issued_at)
+      ? record.reauth_issued_at
+      : undefined;
+  const stepUp = record.assurance_step_up as
+    | { prior_session_id?: unknown; issued_at?: unknown }
+    | null
+    | undefined;
+  const assuranceStepUp =
+    stepUp &&
+    typeof stepUp === 'object' &&
+    typeof stepUp.issued_at === 'number' &&
+    Number.isSafeInteger(stepUp.issued_at)
+      ? {
+          priorSessionId:
+            typeof stepUp.prior_session_id === 'string' &&
+            isShardedSessionId(stepUp.prior_session_id)
+              ? stepUp.prior_session_id
+              : undefined,
+          issuedAt: stepUp.issued_at,
+        }
+      : undefined;
+  return { authTime, reauthIssuedAt, assuranceStepUp };
 }
 
 function getClientAllowedScopes(clientMetadata: {
@@ -768,6 +811,9 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   // The confirmation of a re-authentication: when it was asked for (milliseconds). Only a session
   // proven after it is that re-authentication's result.
   let confirmedReauthIssuedAt: number | undefined;
+  // The auth_time of a re-authentication completed before consent: the consent screen ran after it,
+  // so the time it was confirmed (now) would make the authentication look newer than it is.
+  let confirmedReauthAuthTime: number | undefined;
   let _confirmation_challenge: string | undefined;
   let _consent_confirmation_challenge: string | undefined;
   let confirmedConsentUserId: string | undefined;
@@ -1062,6 +1108,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         sessionId?: string;
         browserBinding?: string;
         authorization_request?: unknown;
+        confirmed_reauth?: unknown;
       };
     };
 
@@ -1180,6 +1227,18 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
 
     _consent_confirmed = 'true';
     confirmedConsentUserId = confirmationData.userId;
+    // A re-authentication (prompt=login, max_age, step-up) completed before the consent screen
+    // stays completed: the restored request still carries prompt=login / max_age, and asking
+    // again would send the user back and forth between the two screens.
+    const confirmedReauth = readConfirmedReauthentication(
+      confirmationData.metadata.confirmed_reauth
+    );
+    if (confirmedReauth) {
+      _confirmed = 'true';
+      confirmedReauthAuthTime = confirmedReauth.authTime;
+      confirmedReauthIssuedAt = confirmedReauth.reauthIssuedAt;
+      confirmedAssuranceStepUp = confirmedReauth.assuranceStepUp;
+    }
     if (confirmationData.metadata.authorization_request !== undefined) {
       const parsed = parseAuthorizationRequestContinuation(
         confirmationData.metadata.authorization_request
@@ -3147,6 +3206,24 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   // Process authentication-related parameters (OIDC Core 3.1.2.1)
   let sessionUserId: string | undefined;
   let authTime: number | undefined;
+  // What a consent challenge carries back about a re-authentication completed in this request.
+  const describeConfirmedReauthentication = (): Record<string, unknown> | undefined =>
+    _confirmed === 'true' && authTime !== undefined
+      ? {
+          auth_time: authTime,
+          ...(confirmedReauthIssuedAt !== undefined
+            ? { reauth_issued_at: confirmedReauthIssuedAt }
+            : {}),
+          ...(confirmedAssuranceStepUp
+            ? {
+                assurance_step_up: {
+                  prior_session_id: confirmedAssuranceStepUp.priorSessionId,
+                  issued_at: confirmedAssuranceStepUp.issuedAt,
+                },
+              }
+            : {}),
+        }
+      : undefined;
   let sessionAcr: string | undefined;
   let sessionAmr: string[] | undefined;
   // The session's own data (assurance evidence included), and whose session it is.
@@ -3252,9 +3329,24 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
 
     // prompt=login or max_age re-authentication requires a new auth_time (user just re-authenticated)
     if (prompt?.includes('login') || max_age !== undefined) {
-      authTime = Math.floor(Date.now() / 1000);
+      // The time of the authentication that answered the challenge, as the confirmation carries it
+      // (the sign-in just made, or the session's own time when a session answered). "Now" would
+      // date an authentication that did not happen.
+      const confirmedAuthTime = _auth_time ? parseInt(_auth_time, 10) : NaN;
+      authTime =
+        confirmedReauthAuthTime ??
+        (Number.isSafeInteger(confirmedAuthTime) && confirmedAuthTime > 0
+          ? confirmedAuthTime
+          : Math.floor(Date.now() / 1000));
       log.debug('Re-authentication confirmed, setting new authTime', {
         action: 'reauth',
+        authTime,
+      });
+    } else if (confirmedReauthAuthTime !== undefined) {
+      // Back from the consent screen: the authentication's time travelled with the consent.
+      authTime = confirmedReauthAuthTime;
+      log.debug('Restoring authTime carried through consent', {
+        action: 'auth_time_restore',
         authTime,
       });
     } else if (_auth_time) {
@@ -3934,6 +4026,9 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       challenge: challengeId,
       ttl: 600, // 10 minutes
       metadata: {
+        // SSO off: the browser's session never answers this client's sign-in, so only an
+        // authentication made after this challenge completes it (no silent reuse through the UI).
+        ...(!ssoEnabled ? { fresh_sign_in_after: Date.now() } : {}),
         response_type,
         client_id,
         redirect_uri,
@@ -4059,7 +4154,10 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   if (_consent_confirmed !== 'true') {
     // Get client metadata for logging (request-level cached)
     const clientMetadata = await getClientCached(c, c.env, validClientId);
+    // Trust and sign-in confirmation policies are the tenant's; a user's consents live with the
+    // user's account (where the consent screen records them), not in the tenant metadata database.
     const authCtx = createAuthContextFromHono(c, tenantId);
+    const accountAuthCtx = createAccountAuthContextFromHono(c, tenantId);
 
     // Client Trust Policy is the sole authority for first-party and consent bypass decisions.
     let consentRequired = true; // Default: require consent (security-first)
@@ -4152,7 +4250,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       const existingConsent = await timeAuthRequestDiagnosticOperation(
         c,
         'auth_authorize_consent_lookup',
-        () => getCachedConsent(c.env, sub, validClientId, tenantId, authCtx.coreAdapter)
+        () => getCachedConsent(c.env, sub, validClientId, tenantId, accountAuthCtx.coreAdapter)
       );
 
       if (!existingConsent) {
@@ -4163,7 +4261,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         const now = Date.now();
 
         await timeAuthRequestDiagnosticOperation(c, 'auth_authorize_consent_grant', () =>
-          upsertOAuthClientConsent(authCtx.coreAdapter, {
+          upsertOAuthClientConsent(accountAuthCtx.coreAdapter, {
             consentId,
             tenantId,
             userId: sub,
@@ -4196,7 +4294,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
           sub,
           validClientId,
           tenantId,
-          authCtx.coreAdapter
+          accountAuthCtx.coreAdapter
         );
 
         if (!existingConsent) {
@@ -4337,6 +4435,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
             // Custom Redirect URIs (Authrim Extension)
             error_uri: validatedErrorUri,
             cancel_uri: validatedCancelUri,
+            confirmed_reauth: describeConfirmedReauthentication(),
           },
         });
 
@@ -4497,6 +4596,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
                 // Consent management metadata
                 consent_items_required: unsatisfied,
                 consent_items_enforcement: enforcement,
+                confirmed_reauth: describeConfirmedReauthentication(),
               },
             });
 

@@ -25,7 +25,6 @@ import {
   generateSecureRandomString,
   validateExternalUrl,
   createAuthContextFromHono,
-  createPIIContextFromHono,
   createErrorResponse,
   createCompatibilityErrorResponse,
   AR_ERROR_CODES,
@@ -47,12 +46,12 @@ import {
   CLIENT_CATEGORY_META,
   // Write-Through cache for client metadata
   putClient,
-  CanonicalRuntimeUserStore,
   SUPPORTED_JWE_ALG,
   SUPPORTED_JWE_ENC,
   CLIENT_ASSERTION_SIGNING_ALGS,
   FAPI2_MESSAGE_SIGNING_ALGS,
   resolveProtocolSettings,
+  isConformanceMode,
 } from '@authrim/ar-lib-core';
 import {
   idTokenSigningAlgorithmRefusal,
@@ -86,13 +85,11 @@ type ClientRegistrationResponseWithPkce = ClientRegistrationResponse & {
   default_resource?: string;
 };
 
-const CONFORMANCE_TEST_USER_ID = 'user-oidc-conformance-test';
-
-export function buildConformanceTestUserId(tenantId: string, defaultTenantId = 'default'): string {
-  return tenantId === defaultTenantId
-    ? CONFORMANCE_TEST_USER_ID
-    : `${CONFORMANCE_TEST_USER_ID}-${tenantId}`;
-}
+/**
+ * The scope a certification-suite client gets in conformance mode when it registers without one:
+ * the Suite asks for every standard scope (OIDC Core 5.4) and for offline_access.
+ */
+const CONFORMANCE_CLIENT_DEFAULT_SCOPE = 'openid profile email address phone offline_access';
 
 function getContextTenantId(c: Context<{ Bindings: Env }>): string | null {
   try {
@@ -1998,6 +1995,14 @@ export async function registerHandler(c: Context<{ Bindings: Env }>): Promise<Re
       }
     });
 
+    // The OpenID certification suite registers its clients without `scope`, then asks for every
+    // standard scope. Only in conformance mode (feature.conformance_enabled) does such a client get
+    // them implicitly; otherwise a client can ask only for what it registers (or the default
+    // openid/profile/email), so nothing is granted behind the operator's back.
+    if (isCertificationTest && !request.scope && (await isConformanceMode(c.env))) {
+      response.scope = CONFORMANCE_CLIENT_DEFAULT_SCOPE;
+    }
+
     // Hash client secret for secure storage
     const clientSecretHash = await hashClientSecret(clientSecret);
 
@@ -2105,75 +2110,6 @@ export async function registerHandler(c: Context<{ Bindings: Env }>): Promise<Re
 
     // Log client registration for debugging/auditing
     log.info('Client registered', { action: 'register', clientId });
-
-    const requiresInteractiveConformanceUser =
-      !request.grant_types?.length ||
-      request.grant_types.some((grant) => grant !== 'client_credentials');
-
-    if (isCertificationTest && requiresInteractiveConformanceUser) {
-      log.info('OIDC Conformance Test detected, creating test user', { action: 'register' });
-
-      const testUserId = buildConformanceTestUserId(
-        tenantId,
-        c.env.DEFAULT_TENANT_ID?.trim() || 'default'
-      );
-      const testAddress = {
-        formatted: '1234 Main St, Anytown, ST 12345, USA',
-        street_address: '1234 Main St',
-        locality: 'Anytown',
-        region: 'ST',
-        postal_code: '12345',
-        country: 'USA',
-      };
-
-      const piiCtx = createPIIContextFromHono(c, tenantId);
-      await new CanonicalRuntimeUserStore({
-        coreAdapter: authCtx.coreAdapter,
-        piiAdapter: piiCtx.defaultPiiAdapter,
-        tenantId,
-      }).syncUser({
-        userId: testUserId,
-        email: 'test@example.com',
-        name: 'John Doe',
-        active: true,
-        emailVerified: true,
-        phoneNumberVerified: true,
-        userType: 'end_user',
-        sourceRef: 'oidc-conformance-registration',
-        piiFields: {
-          given_name: true,
-          family_name: true,
-          nickname: true,
-          preferred_username: true,
-          picture: true,
-          website: true,
-          gender: true,
-          birthdate: true,
-          zoneinfo: true,
-          locale: true,
-          phone_number: true,
-        },
-        sensitiveValues: {
-          given_name: 'John',
-          family_name: 'Doe',
-          nickname: 'Johnny',
-          preferred_username: 'test',
-          picture: 'https://example.com/avatar.jpg',
-          website: 'https://example.com',
-          gender: 'male',
-          birthdate: '1990-01-01',
-          zoneinfo: 'America/New_York',
-          locale: 'en-US',
-          phone_number: '+1-555-0100',
-        },
-        addressJson: JSON.stringify(testAddress),
-      });
-
-      log.info('Conformance test user created or verified', {
-        action: 'register',
-        userId: testUserId,
-      });
-    }
 
     return c.json(response, 201, {
       'Cache-Control': 'no-store',

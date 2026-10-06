@@ -179,7 +179,9 @@ async function createConsentConfirmationChallenge(
   tenantId: string,
   userId: string,
   sessionId: string,
-  authorizationRequest: Record<string, unknown>
+  authorizationRequest: Record<string, unknown>,
+  /** A re-authentication /authorize completed before sending the user here; it hands it back. */
+  confirmedReauth?: unknown
 ): Promise<{ id: string; browserBinding: string }> {
   const confirmationId = crypto.randomUUID();
   const browserBinding = generateSecureRandomString(32);
@@ -196,6 +198,7 @@ async function createConsentConfirmationChallenge(
       sessionId,
       browserBinding,
       authorization_request: authorizationRequest,
+      ...(confirmedReauth !== undefined ? { confirmed_reauth: confirmedReauth } : {}),
     },
   });
   return { id: confirmationId, browserBinding };
@@ -1425,7 +1428,8 @@ export async function consentPostHandler(c: Context<{ Bindings: Env }>) {
       tenantId,
       userId,
       consentSessionId,
-      authorizationRequest
+      authorizationRequest,
+      authorizationMetadata.confirmed_reauth
     );
     const redirectUrl = buildAuthorizeContinuationUrl(
       authorizationMetadata,
