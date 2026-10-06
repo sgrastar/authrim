@@ -388,9 +388,15 @@ place('applications/defaults', 'Discovery document', {
 	]
 });
 
-place('applications/all', 'App: tokens and sign-in', {
-	primary: ['client.sso_enabled']
-});
+place(
+	'applications/all',
+	'App: tokens and sign-in',
+	{ primary: ['client.sso_enabled'] },
+	{
+		'client.sso_enabled':
+			'Unset on most apps (DCR apps always): show the effective value and that it comes from oauth.sso_enabled, with a link. See Pages › Settings UX backlog.'
+	}
+);
 place('applications/all', 'App: scopes and audience', {
 	advanced: ['client.default_audience', 'client.default_resource']
 });
