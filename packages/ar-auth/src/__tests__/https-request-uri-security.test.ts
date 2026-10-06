@@ -920,7 +920,8 @@ describe('HTTPS Request URI Security', () => {
           { method: 'GET' },
           {
             ...mockEnv,
-            ENABLE_CONFORMANCE_MODE: 'true',
+            // A configured Login UI, so a wrongly accepted request would show a login challenge.
+            UI_URL: 'https://login.example.com',
           }
         );
 

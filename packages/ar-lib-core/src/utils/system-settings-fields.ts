@@ -593,15 +593,6 @@ export const SYSTEM_SETTINGS_FIELDS: readonly SystemSettingsField[] = [
     // As the login code read it: `?? default`, then tested for truth.
     fromDocument: (value: unknown) => (value === null ? false : Boolean(value)),
   },
-  {
-    category: 'feature-flags',
-    key: 'feature.conformance_use_builtin_forms',
-    path: ['conformance', 'useBuiltinForms'],
-    sectionDefault: true,
-    // A null section failed the login code's read, which then turned both off.
-    sectionNull: false,
-    fromDocument: (value: unknown) => (value === null ? true : Boolean(value)),
-  },
 ];
 
 /** The top-level keys of the document a field is read from. */

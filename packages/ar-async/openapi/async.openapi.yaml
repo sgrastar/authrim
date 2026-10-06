@@ -181,10 +181,10 @@ paths:
     get:
       tags:
         - CIBA
-      summary: Render the built-in CIBA test console.
+      summary: Render the CIBA test console.
       description: >-
-        Available only when test endpoints or built-in conformance forms are explicitly enabled.
-        Returns 404 in normal production mode.
+        Available only when ENABLE_TEST_ENDPOINTS is `true`. Returns 404 otherwise, including in
+        normal production mode.
       responses:
         '200':
           description: HTML CIBA test console.
@@ -193,7 +193,7 @@ paths:
               schema:
                 type: string
         '404':
-          description: Test endpoints and built-in conformance forms are disabled.
+          description: Test endpoints are disabled.
 components:
   securitySchemes:
     sessionCookie:

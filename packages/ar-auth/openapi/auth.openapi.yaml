@@ -338,56 +338,6 @@ paths:
           $ref: '#/components/responses/Error'
         '410':
           $ref: '#/components/responses/Error'
-  /flow/login:
-    get:
-      tags:
-        - OAuth
-      summary: Render the test or OIDC-conformance login adapter when enabled.
-      responses:
-        '200':
-          $ref: '#/components/responses/Any'
-        '400':
-          $ref: '#/components/responses/Error'
-        '403':
-          $ref: '#/components/responses/Error'
-    post:
-      tags:
-        - OAuth
-      summary: Submit the test or OIDC-conformance login adapter when enabled.
-      requestBody:
-        $ref: '#/components/requestBodies/FormOrJson'
-      responses:
-        '200':
-          $ref: '#/components/responses/Any'
-        '400':
-          $ref: '#/components/responses/Error'
-        '403':
-          $ref: '#/components/responses/Error'
-  /flow/confirm:
-    get:
-      tags:
-        - OAuth
-      summary: Render the test or OIDC-conformance reauthentication adapter when enabled.
-      responses:
-        '200':
-          $ref: '#/components/responses/Any'
-        '400':
-          $ref: '#/components/responses/Error'
-        '403':
-          $ref: '#/components/responses/Error'
-    post:
-      tags:
-        - OAuth
-      summary: Submit the test or OIDC-conformance reauthentication adapter when enabled.
-      requestBody:
-        $ref: '#/components/requestBodies/FormOrJson'
-      responses:
-        '200':
-          $ref: '#/components/responses/Any'
-        '400':
-          $ref: '#/components/responses/Error'
-        '403':
-          $ref: '#/components/responses/Error'
   /api/auth/passkeys/register/options:
     post:
       tags:
@@ -800,37 +750,44 @@ paths:
       tags:
         - Consent
       summary: Submit a consent decision.
-      description: Acting-as requests require the feature to be enabled and a current delegated relationship.
+      description: >-
+        Accepts a JSON body only and returns the authorization continuation as `redirect_url`.
+        Acting-as requests require the feature to be enabled and a current delegated relationship.
       requestBody:
-        $ref: '#/components/requestBodies/FormOrJson'
+        $ref: '#/components/requestBodies/JsonObject'
       responses:
         '200':
-          $ref: '#/components/responses/Any'
+          $ref: '#/components/responses/Ok'
+        '400':
+          $ref: '#/components/responses/Error'
         '403':
           $ref: '#/components/responses/Error'
   /auth/consent:
     get:
       tags:
         - Consent
-      summary: Render built-in consent page when enabled.
+      summary: Return consent screen data for the Login UI (JSON consent API).
       description: Managed browser challenges require the authenticated session bound at authorization time.
       responses:
         '200':
-          $ref: '#/components/responses/Any'
+          $ref: '#/components/responses/ConsentGet'
         '401':
           $ref: '#/components/responses/Error'
     post:
       tags:
         - Consent
-      summary: Submit built-in consent page decision when enabled.
+      summary: Submit the Login UI's consent decision (JSON consent API).
       description: >-
+        Accepts a JSON body only and returns the authorization continuation as `redirect_url`.
         Managed browser challenges require the authenticated session bound at authorization time.
         Acting-as requests require the feature to be enabled and a current delegated relationship.
       requestBody:
-        $ref: '#/components/requestBodies/FormOrJson'
+        $ref: '#/components/requestBodies/JsonObject'
       responses:
         '200':
-          $ref: '#/components/responses/Any'
+          $ref: '#/components/responses/Ok'
+        '400':
+          $ref: '#/components/responses/Error'
         '401':
           $ref: '#/components/responses/Error'
         '403':

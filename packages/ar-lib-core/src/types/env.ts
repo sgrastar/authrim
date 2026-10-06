@@ -499,7 +499,7 @@ export interface Env {
   ENABLE_STATE_REQUIRED?: string; // "true" to require state parameter (CSRF protection)
   ENABLE_USERINFO_REQUIRE_OPENID_SCOPE?: string; // "false" to allow UserInfo without openid scope (OAuth 2.0 compatibility)
   ENABLE_OPEN_REGISTRATION?: string; // "true" to allow registration without Initial Access Token
-  ENABLE_CONFORMANCE_MODE?: string; // "true" to enable built-in forms instead of external UI
+  ENABLE_CONFORMANCE_MODE?: string; // "true" to enable conformance-test-only behaviour (never in production)
   OAUTH_SSO_ENABLED?: string; // "true" to enable SSO (session sharing) at tenant level (default: "false")
   CLIENT_SSO_ENABLED?: string; // "true" to enable SSO (session sharing) at client level (default: "false")
   ENABLE_IFRAME_OIDC_AUTH?: string; // "true" to allow iframe-based OIDC auth after tenant/client origin opt-in

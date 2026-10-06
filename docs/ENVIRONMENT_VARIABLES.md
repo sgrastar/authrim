@@ -99,7 +99,7 @@ ENABLE_CLIENT_CREDENTIALS
 
 | Variable                        | Type    | Default | Description                                                 |
 | ------------------------------- | ------- | ------- | ----------------------------------------------------------- |
-| `ENABLE_CONFORMANCE_MODE`       | boolean | `false` | Enable built-in login/consent forms for conformance testing |
+| `ENABLE_CONFORMANCE_MODE`       | boolean | `false` | Enable conformance-test-only behaviour (not for production) |
 | `ENABLE_HTTP_REDIRECT`          | boolean | `false` | Allow HTTP redirect URIs (insecure, for development only)   |
 | `ENABLE_OPEN_REGISTRATION`      | boolean | `false` | Allow public client registration without IAT                |
 | `ENABLE_REFRESH_TOKEN_ROTATION` | boolean | `false` | Enable refresh token rotation on use                        |

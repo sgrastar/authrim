@@ -1,23 +1,21 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DeviceCodeMetadata, Env } from '@authrim/ar-lib-core';
 
-const { mockIsMockAuthEnabled, mockShouldUseBuiltinForms, mockGetUIConfig, mockLogger } =
-  vi.hoisted(() => {
-    const logger = {
-      module: vi.fn().mockReturnThis(),
-      debug: vi.fn(),
-      info: vi.fn(),
-      warn: vi.fn(),
-      error: vi.fn(),
-    };
+const { mockIsMockAuthEnabled, mockGetUIConfig, mockLogger } = vi.hoisted(() => {
+  const logger = {
+    module: vi.fn().mockReturnThis(),
+    debug: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+  };
 
-    return {
-      mockIsMockAuthEnabled: vi.fn(),
-      mockShouldUseBuiltinForms: vi.fn(),
-      mockGetUIConfig: vi.fn(),
-      mockLogger: logger,
-    };
-  });
+  return {
+    mockIsMockAuthEnabled: vi.fn(),
+    mockGetUIConfig: vi.fn(),
+    mockLogger: logger,
+  };
+});
 
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@authrim/ar-lib-core')>();
@@ -25,7 +23,6 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     ...actual,
     getLogger: vi.fn(() => mockLogger),
     isMockAuthEnabled: mockIsMockAuthEnabled,
-    shouldUseBuiltinForms: mockShouldUseBuiltinForms,
     getUIConfig: mockGetUIConfig,
   };
 });
@@ -109,7 +106,6 @@ describe('Device verification browser handler', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockIsMockAuthEnabled.mockResolvedValue(false);
-    mockShouldUseBuiltinForms.mockResolvedValue(false);
     mockGetUIConfig.mockResolvedValue(null);
   });
 

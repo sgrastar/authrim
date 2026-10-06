@@ -20,10 +20,8 @@ import {
   AR_ERROR_CODES,
   getUIConfig,
   buildUIUrl,
-  shouldUseBuiltinForms,
   createConfigurationError,
   usesNakedDomainIssuer,
-  buildIssuerUrl,
   getLogger,
   createLogger,
   createAuthContextFromHono,
@@ -1093,7 +1091,6 @@ function appendQueryString(destination: string, query: string): string {
 
 /**
  * Build logout complete URL based on UI config
- * Supports conformance mode (built-in redirect) and external UI
  */
 type LogoutCompleteResult =
   | { type: 'redirect'; url: string }
@@ -1106,17 +1103,7 @@ async function buildLogoutCompleteUrl(
 ): Promise<LogoutCompleteResult> {
   const tenantId = resolveSAMLTenantIdFromContext(c);
 
-  // Conformance mode: use built-in path
-  if (await shouldUseBuiltinForms(env)) {
-    const issuerUrl = buildIssuerUrl(env, tenantId);
-    const url = new URL('/logout-complete', issuerUrl);
-    if (relayState) {
-      url.searchParams.set('relay_state', relayState);
-    }
-    return { type: 'redirect', url: url.toString() };
-  }
-
-  // Normal mode: use UI config
+  // Use UI config
   const uiConfig = await getUIConfig(env, tenantId);
   if (!uiConfig?.baseUrl) {
     return { type: 'error', response: c.json(createConfigurationError(), 500) };

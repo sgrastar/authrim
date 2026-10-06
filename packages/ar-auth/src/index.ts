@@ -16,7 +16,6 @@ import {
   // UI Configuration
   getUIConfig,
   buildUIUrl,
-  shouldUseBuiltinForms,
   createConfigurationError,
   // Plugin Context (Phase 9 - Plugin Architecture)
   // CSRF Protection
@@ -31,7 +30,7 @@ import {
 import { getRequestIssuer } from './issuer';
 
 // Import handlers
-import { authorizeHandler, authorizeConfirmHandler, authorizeLoginHandler } from './authorize';
+import { authorizeHandler } from './authorize';
 import { parHandler } from './par';
 import { adminAgentAuthorizeHandler, adminAgentParHandler } from './admin-agent-oauth';
 import {
@@ -105,15 +104,6 @@ import {
   loginRuntimeInteractionSubmitHandler,
 } from './login-runtime-flow';
 import { AUTH_REQUEST_DIAGNOSTIC_CONTEXT_KEY } from './request-diagnostics';
-
-function escapeHtml(value: string): string {
-  return value
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
-}
 
 // Create Hono app with Cloudflare Workers types
 const app = new Hono<{ Bindings: Env }>();
@@ -544,10 +534,9 @@ app.use('/api/auth/directory-connectors/heartbeat/*', async (c, next) => {
 // Validates Origin/Referer on state-changing requests (POST/PUT/PATCH/DELETE)
 // Skips Bearer token requests (server-to-server calls are not vulnerable to CSRF)
 //
-// Note: /authorize and /flow/* are NOT CSRF-protected here because:
+// Note: /authorize is NOT CSRF-protected here because:
 // - /authorize POST can receive form_post responses from RPs (cross-origin HTML form auto-submit)
 // - /authorize has its own CSRF protection via the state parameter (RFC 6749 §10.12)
-// - /flow/* endpoints handle login form submissions from the Login UI
 //
 // Note: /par, /logout/backchannel are server-to-server endpoints (use client auth, not cookies)
 app.use(
@@ -580,14 +569,6 @@ app.get('/api/auth/health', (c) => {
 // OIDC Core 3.1.2.1: MUST support both GET and POST methods
 app.get('/authorize', authorizeHandler);
 app.post('/authorize', authorizeHandler);
-
-// Authorization confirmation endpoint (for max_age re-authentication)
-app.get('/flow/confirm', authorizeConfirmHandler);
-app.post('/flow/confirm', authorizeConfirmHandler);
-
-// Authorization login endpoint (for session-less authentication)
-app.get('/flow/login', authorizeLoginHandler);
-app.post('/flow/login', authorizeLoginHandler);
 
 // PAR (Pushed Authorization Request) endpoint - RFC 9126
 app.post('/par', parHandler);
@@ -664,8 +645,7 @@ app.post('/api/auth/guest/login', guestLoginHandler);
 app.get('/api/auth/consents', consentGetHandler);
 app.post('/api/auth/consents', consentPostHandler);
 
-// OAuth Consent endpoints (Builtin Forms - for OIDC conformance testing)
-// These routes are used when shouldUseBuiltinForms() returns true
+// OAuth Consent endpoints (JSON consent API, proxied by the Login UI)
 app.get('/auth/consent', consentGetHandler);
 app.post('/auth/consent', consentPostHandler);
 
@@ -688,70 +668,9 @@ app.post('/logout', frontChannelLogoutHandler);
 app.post('/logout/backchannel', backChannelLogoutHandler);
 
 // Logged out page - displayed after successful logout when no valid post_logout_redirect_uri
-// Conformance mode: show built-in HTML
 // UI configured: redirect to external UI's logged-out page
-// Neither: return configuration error
+// Not configured: return configuration error
 app.get('/logged-out', async (c) => {
-  // Check conformance mode and UI configuration
-  if (await shouldUseBuiltinForms(c.env)) {
-    // Conformance mode: show built-in HTML
-    const html = `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Logged Out - Authrim</title>
-  <style>
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-      display: flex;
-      justify-content: center;
-      align-items: center;
-      min-height: 100vh;
-      margin: 0;
-      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-    }
-    .container {
-      background: white;
-      padding: 2rem 3rem;
-      border-radius: 12px;
-      box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
-      text-align: center;
-      max-width: 400px;
-    }
-    .icon {
-      font-size: 4rem;
-      margin-bottom: 1rem;
-    }
-    h1 {
-      color: #333;
-      margin-bottom: 0.5rem;
-      font-size: 1.5rem;
-    }
-    p {
-      color: #666;
-      margin-bottom: 1.5rem;
-    }
-    .footer {
-      margin-top: 2rem;
-      color: #999;
-      font-size: 0.85rem;
-    }
-  </style>
-</head>
-<body>
-  <div class="container">
-    <div class="icon">✓</div>
-    <h1>You have been logged out</h1>
-    <p>Your session has been successfully terminated.</p>
-    <p>You may close this window or navigate to your application.</p>
-    <div class="footer">Powered by Authrim</div>
-  </div>
-</body>
-</html>`;
-    return c.html(html);
-  }
-
   // Check UI configuration
   const uiConfig = await getUIConfig(c.env, getTenantIdFromContext(c));
   if (uiConfig?.baseUrl) {
@@ -759,7 +678,7 @@ app.get('/logged-out', async (c) => {
     return c.redirect(url, 302);
   }
 
-  // No UI configured and conformance mode disabled
+  // No UI configured
   return c.json(createConfigurationError(), 500);
 });
 
@@ -876,112 +795,10 @@ app.route('/', adminInvitationEnrollmentApp);
 // Per OIDC RP-Initiated Logout spec, OP SHOULD display an error page when:
 // - post_logout_redirect_uri is not registered
 // - id_token_hint is invalid or missing (when required)
-// Conformance mode: show built-in HTML
 // UI configured: redirect to external UI's logout-error page
-// Neither: return configuration error
+// Not configured: return configuration error
 app.get('/logout-error', async (c) => {
   const error = c.req.query('error') || 'unknown_error';
-
-  // Error messages for different validation failures
-  const errorMessages: Record<string, { title: string; description: string }> = {
-    unregistered_post_logout_redirect_uri: {
-      title: 'Invalid Redirect URI',
-      description:
-        'The post_logout_redirect_uri provided is not registered for this client. The logout request cannot be completed with the specified redirect URI.',
-    },
-    invalid_id_token_hint: {
-      title: 'Invalid ID Token',
-      description:
-        'The id_token_hint provided is invalid or has been tampered with. Please ensure you are using a valid ID token issued by this authorization server.',
-    },
-    id_token_hint_required: {
-      title: 'ID Token Required',
-      description:
-        'An id_token_hint is required when specifying a post_logout_redirect_uri. Please include a valid ID token in your logout request.',
-    },
-    invalid_client: {
-      title: 'Invalid Client',
-      description:
-        'The client specified in the ID token could not be found. The logout request cannot be processed.',
-    },
-    unknown_error: {
-      title: 'Logout Error',
-      description:
-        'An error occurred while processing your logout request. Your session may have been terminated, but we could not redirect you to the requested location.',
-    },
-  };
-
-  const errorInfo = errorMessages[error] || errorMessages['unknown_error'];
-
-  // Check conformance mode
-  if (await shouldUseBuiltinForms(c.env)) {
-    // Conformance mode: show built-in HTML
-    const html = `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Logout Error - Authrim</title>
-  <style>
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-      display: flex;
-      justify-content: center;
-      align-items: center;
-      min-height: 100vh;
-      margin: 0;
-      background: linear-gradient(135deg, #e74c3c 0%, #c0392b 100%);
-    }
-    .container {
-      background: white;
-      padding: 2rem 3rem;
-      border-radius: 12px;
-      box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
-      text-align: center;
-      max-width: 500px;
-    }
-    .icon {
-      font-size: 4rem;
-      margin-bottom: 1rem;
-    }
-    h1 {
-      color: #c0392b;
-      margin-bottom: 0.5rem;
-      font-size: 1.5rem;
-    }
-    p {
-      color: #666;
-      margin-bottom: 1rem;
-      line-height: 1.6;
-    }
-    .error-code {
-      background: #f8f9fa;
-      padding: 0.5rem 1rem;
-      border-radius: 4px;
-      font-family: monospace;
-      color: #666;
-      font-size: 0.9rem;
-      margin-top: 1rem;
-    }
-    .footer {
-      margin-top: 2rem;
-      color: #999;
-      font-size: 0.85rem;
-    }
-  </style>
-</head>
-<body>
-  <div class="container">
-    <div class="icon">⚠</div>
-    <h1>${escapeHtml(errorInfo.title)}</h1>
-    <p>${escapeHtml(errorInfo.description)}</p>
-    <div class="error-code">Error: ${escapeHtml(error)}</div>
-    <div class="footer">Powered by Authrim</div>
-  </div>
-</body>
-</html>`;
-    return c.html(html);
-  }
 
   // Check UI configuration
   const uiConfig = await getUIConfig(c.env, getTenantIdFromContext(c));
@@ -990,7 +807,7 @@ app.get('/logout-error', async (c) => {
     return c.redirect(url, 302);
   }
 
-  // No UI configured and conformance mode disabled
+  // No UI configured
   return c.json(createConfigurationError(), 500);
 });
 

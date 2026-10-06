@@ -429,7 +429,6 @@ function createEnv(): SecurityTestEnv {
   return {
     ISSUER_URL: ISSUER,
     UI_URL: ISSUER,
-    ENABLE_CONFORMANCE_MODE: 'false',
     ACCESS_TOKEN_EXPIRY: '3600',
     REFRESH_TOKEN_EXPIRY: '86400',
     AUTHRIM_CONFIG: authrimConfig as unknown as KVNamespace,

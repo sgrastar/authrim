@@ -1,10 +1,9 @@
 /**
- * Device Verification Handler (Minimal - for OIDC Conformance Test)
+ * Device Verification Handler (Minimal)
  * RFC 8628: Device User Authorization
  *
- * IMPORTANT: This is a minimal HTML form for OIDC conformance testing only.
- * For production use, configure UI_URL and redirect users to the external UI.
- * or use the headless JSON API at POST /api/device/verify
+ * IMPORTANT: This is a minimal HTML form. A submitted code is handed to the external UI
+ * (UI_URL) for authentication, or use the headless JSON API at POST /api/device/verify.
  */
 
 import type { Context } from 'hono';
@@ -14,7 +13,6 @@ import {
   validateUserCodeFormat,
   isMockAuthEnabled,
   getUIConfig,
-  shouldUseBuiltinForms,
   createConfigurationError,
   createErrorResponse,
   AR_ERROR_CODES,
@@ -26,7 +24,7 @@ import { resolveAsyncTenantId } from './tenant';
 
 /**
  * GET /device
- * Minimal device verification form (Conformance test only)
+ * Minimal device verification form
  *
  * Note: In production, configure UI_URL and users will be redirected to external UI.
  */
@@ -41,17 +39,16 @@ export async function deviceVerifyHandler(c: Context<{ Bindings: Env }>) {
 }
 
 /**
- * Show minimal device verification form (Conformance test only)
+ * Show minimal device verification form
  */
 async function showMinimalVerificationForm(c: Context<{ Bindings: Env }>) {
   const userCodeParam = c.req.query('user_code');
   const error = c.req.query('error');
   const success = c.req.query('success');
 
-  // Note: For production, users are redirected to external UI in handleVerificationSubmission()
-  // This built-in form is only used when CONFORMANCE_MODE=true
+  // Note: users are redirected to the external UI in handleVerificationSubmission()
 
-  // Minimal HTML for conformance testing
+  // Minimal HTML
   const page = html`
     <!DOCTYPE html>
     <html lang="en">
@@ -146,14 +143,6 @@ async function handleVerificationSubmission(c: Context<{ Bindings: Env }>) {
 
     if (!mockAuthEnabled) {
       // Production mode: Redirect to proper authentication flow
-      // Check conformance mode first
-      if (await shouldUseBuiltinForms(c.env)) {
-        // Conformance mode: Show error (mock auth disabled, no real auth in conformance mode)
-        return c.redirect(
-          '/device?error=Authentication required. Enable mock auth for conformance testing.'
-        );
-      }
-
       // Check UI configuration
       const uiConfig = await getUIConfig(c.env, tenantId);
       if (uiConfig?.baseUrl) {
@@ -167,7 +156,7 @@ async function handleVerificationSubmission(c: Context<{ Bindings: Env }>) {
         return c.redirect(loginUrl.toString());
       }
 
-      // No UI configured and conformance mode disabled - return configuration error
+      // No UI configured - return configuration error
       return c.json(createConfigurationError(), 500);
     }
 

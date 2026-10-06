@@ -367,7 +367,6 @@ const REVIEWED_FIELDS: readonly [string, TenantSettingValueType, TenantSettingHa
     feature.enable_check_api
     feature.introspection_cache_enabled
     feature.conformance_enabled
-    feature.conformance_use_builtin_forms
     feature.enable_flow_engine
   `,
     ],

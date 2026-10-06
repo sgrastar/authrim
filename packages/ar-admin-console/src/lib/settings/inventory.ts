@@ -389,9 +389,15 @@ place('applications/defaults', 'Discovery document', {
 	]
 });
 
-place('applications/all', 'App: tokens and sign-in', {
-	primary: ['client.sso_enabled']
-});
+place(
+	'applications/all',
+	'App: tokens and sign-in',
+	{ primary: ['client.sso_enabled'] },
+	{
+		'client.sso_enabled':
+			'Unset on most apps (DCR apps always): show the effective value and that it comes from oauth.sso_enabled, with a link. See Pages › Settings UX backlog.'
+	}
+);
 place('applications/all', 'App: scopes and audience', {
 	advanced: ['client.default_audience', 'client.default_resource']
 });
@@ -665,7 +671,7 @@ place('settings/compliance', 'Audit and data residency', {
 place(
 	'settings/runtime',
 	'Conformance testing',
-	{ advanced: ['feature.conformance_enabled', 'feature.conformance_use_builtin_forms'] },
+	{ advanced: ['feature.conformance_enabled'] },
 	{
 		'feature.conformance_enabled':
 			'OpenID certification runs only; should it be a platform-only switch?'

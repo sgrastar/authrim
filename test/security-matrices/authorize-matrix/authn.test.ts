@@ -5,6 +5,7 @@ import {
   createSecurityMatrixEnv,
   seedRegionShardConfig,
   TEST_ISSUER,
+  TEST_UI_URL,
   TEST_USER,
   type SecurityMatrixEnvKit,
 } from '../fixtures/env';
@@ -189,8 +190,9 @@ export function observationFromDecision(
       break;
     case 'challenge':
       observation.status = 302;
-      observation.locationOriginPath = `${TEST_ISSUER}${outcome.path}`;
-      observation.locationQueryKeys = ['challenge_id'];
+      observation.locationOriginPath = `${TEST_UI_URL}${outcome.path}`;
+      // tenant_hint and tenant_host are UI branding hints, never trusted by the server.
+      observation.locationQueryKeys = ['challenge_id', 'tenant_hint', 'tenant_host'];
       observation.hasChallengeId = true;
       observation.challengeType = outcome.challengeType;
       observation.challengeUserId = outcome.challengeType === 'login' ? 'anonymous' : TEST_USER;
@@ -634,7 +636,7 @@ async function createFreshKitApp(): Promise<{
 }> {
   const freshKit = await createSecurityMatrixEnv(new CallLedger());
   seedRegionShardConfig(freshKit);
-  (freshKit.env as unknown as Record<string, unknown>).ENABLE_CONFORMANCE_MODE = 'true';
+  (freshKit.env as unknown as Record<string, unknown>).UI_URL = TEST_UI_URL;
   return { kit: freshKit, app: createMatrixAuthorizeApp(freshKit) };
 }
 
@@ -647,7 +649,7 @@ describe('authorize-matrix authn protocol suite', () => {
     const ledger = new CallLedger();
     kit = await createSecurityMatrixEnv(ledger);
     seedRegionShardConfig(kit);
-    (kit.env as unknown as Record<string, unknown>).ENABLE_CONFORMANCE_MODE = 'true';
+    (kit.env as unknown as Record<string, unknown>).UI_URL = TEST_UI_URL;
     app = createMatrixAuthorizeApp(kit);
   });
 

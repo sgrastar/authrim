@@ -15,7 +15,6 @@ import {
   AR_ERROR_CODES,
   getUIConfig,
   buildUIUrl,
-  shouldUseBuiltinForms,
   createConfigurationError,
   usesNakedDomainIssuer,
   getLogger,
@@ -185,13 +184,6 @@ async function redirectToIdPInitiatedConsentFlow(
     saml_request_id: input.consentTransactionId,
     saml_sp_entity_id: input.spEntityId,
   };
-
-  if (await shouldUseBuiltinForms(c.env)) {
-    const loginUrl = new URL('/flow/login', input.issuerUrl);
-    for (const [key, value] of Object.entries(loginParameters))
-      loginUrl.searchParams.set(key, value);
-    return c.redirect(loginUrl.toString());
-  }
 
   const uiConfig = await getUIConfig(c.env, input.tenantId);
   if (!uiConfig?.baseUrl) return c.json(createConfigurationError(), 500);

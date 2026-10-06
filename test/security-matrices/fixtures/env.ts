@@ -18,6 +18,8 @@ import { MemoryDurableObjectNamespace } from './do-namespace';
 import { installFrozenNow, frozenNowMs } from './deterministic-clock';
 
 export const TEST_ISSUER = 'https://authrim.example';
+/** Login UI that login, re-authentication and consent challenges redirect to. */
+export const TEST_UI_URL = 'https://login.authrim.example';
 export const TEST_TENANT = 'default';
 export const TEST_USER = 'user-001';
 export const TEST_ACCOUNT = 'account:user-001';

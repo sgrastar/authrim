@@ -32,8 +32,6 @@ import {
   getShardCount,
   buildDOInstanceName,
   getSessionStoreBySessionId,
-  getSessionStoreForNewSession,
-  getSessionClientMetadata,
   deriveOidcSid,
   isShardedSessionId,
   parseShardedSessionId,
@@ -55,7 +53,6 @@ import {
   // UI Configuration
   getTenantUIConfig,
   buildUIUrl,
-  shouldUseBuiltinForms,
   DEFAULT_UI_PATHS,
   type UIConfig,
   // Custom Redirect URIs (Authrim Extension)
@@ -112,14 +109,11 @@ import { isSigningJWK } from '@authrim/ar-lib-core';
 import { safeFetch, safeFetchJson } from '@authrim/ar-lib-core';
 import { validateAuthorizationDetails } from '@authrim/ar-lib-core';
 import {
-  buildAuthorizeContinuationUrl,
   CONSENT_CONFIRMATION_COOKIE_NAME,
-  createAuthorizationRequestContinuation,
   parseAuthorizationRequestContinuation,
   type AuthorizationRequestContinuation,
   type AuthorizationRequestSource,
 } from './authorization-continuation';
-import { provisionEmailAccount } from './account-provisioning';
 import {
   generateSecureRandomString,
   parseToken,
@@ -153,7 +147,6 @@ import { type FAL } from '@authrim/ar-lib-core';
 import { getRequestIssuer } from './issuer';
 import type { FAPI2MessageSigningConfig } from './fapi-message-signing';
 import { timeAuthRequestDiagnosticOperation } from './request-diagnostics';
-import { resolveSessionTtl } from './session-ttl';
 
 const DEFAULT_HANDOFF_ARTIFACT_TTL_SECONDS = 60;
 const MIN_HANDOFF_ARTIFACT_TTL_SECONDS = 30;
@@ -247,20 +240,6 @@ function isClientPublic(clientMetadata: {
     clientMetadata.token_endpoint_auth_method === 'none' ||
     (!clientMetadata.client_secret_hash && !clientMetadata.client_secret)
   );
-}
-
-function isOidcCertificationRedirectUri(value: unknown): boolean {
-  if (typeof value !== 'string') {
-    return false;
-  }
-
-  try {
-    const parsed = new URL(value);
-    const host = parsed.hostname.toLowerCase();
-    return host === 'certification.openid.net' || host.endsWith('.certification.openid.net');
-  } catch {
-    return false;
-  }
 }
 
 function responseTypeIssuesAuthorizationCode(responseType: string | undefined): boolean {
@@ -401,15 +380,14 @@ const moduleLogger = createLogger().module('AUTHORIZE');
  */
 type UIRedirectResult =
   | { type: 'redirect'; url: string }
-  | { type: 'builtin'; fallbackPath: string }
   | { type: 'config_error'; reason: 'ui_not_configured' };
 
 /**
- * Determine UI redirect target based on conformance mode and configuration.
+ * Determine the UI redirect target from the client's, tenant's or global UI configuration.
  *
  * Priority:
- * 1. Conformance mode enabled → use builtin forms
- * 2. UI configured → redirect to external UI
+ * 1. Client login UI URL → redirect there
+ * 2. Tenant or global UI configured → redirect to that UI
  * 3. Neither → signal configuration error
  *
  * @param env - Environment bindings
@@ -434,28 +412,9 @@ async function getUIRedirectTarget(
   queryParams?: Record<string, string>,
   tenantId?: string,
   clientLoginUiUrl?: string | null,
-  issuerUiBaseUrl?: string | null,
-  forceBuiltinForms = false
+  issuerUiBaseUrl?: string | null
 ): Promise<UIRedirectResult> {
-  // Check conformance mode first. Certification clients may opt into the same
-  // local forms without enabling global conformance mode for the tenant.
-  if (forceBuiltinForms || (await shouldUseBuiltinForms(env))) {
-    // Builtin forms - determine fallback path
-    const fallbackPaths: Record<string, string> = {
-      login: '/flow/login',
-      consent: '/auth/consent',
-      reauth: '/flow/confirm',
-      error: '/error',
-      device: '/device',
-      deviceAuthorize: '/device/authorize',
-      logoutComplete: '/logout-complete',
-      loggedOut: '/logged-out',
-      register: '/signup',
-    };
-    return { type: 'builtin', fallbackPath: fallbackPaths[path] || '/error' };
-  }
-
-  // Check client-specific login UI URL (priority 2)
+  // Check client-specific login UI URL (priority 1)
   if (clientLoginUiUrl) {
     const clientConfig: UIConfig = {
       baseUrl: clientLoginUiUrl,
@@ -465,7 +424,7 @@ async function getUIRedirectTarget(
     return { type: 'redirect', url };
   }
 
-  // Check the tenant's, else the global, UI configuration (priority 3). A UI base URL the
+  // Check the tenant's, else the global, UI configuration (priority 2). A UI base URL the
   // tenant set is its explicit choice, so it goes before the issuer-hosted Login UI.
   const { config: uiConfig, tenantBaseUrl } = await getTenantUIConfig(env, tenantId);
   if (!uiConfig?.baseUrl) {
@@ -539,13 +498,6 @@ function getChallengeUiQueryParams(
     challenge_id: challengeId,
     ...(normalizedUiLocales ? { ui_locales: normalizedUiLocales } : {}),
   };
-}
-
-function buildBuiltinUiRedirectUrl(
-  fallbackPath: string,
-  queryParams: Record<string, string>
-): string {
-  return `${fallbackPath}?${new URLSearchParams(queryParams).toString()}`;
 }
 
 function createLocalUiUnavailableResponse(
@@ -711,53 +663,6 @@ async function cleanupFailedUIChallenge(
       error as Error
     );
   }
-}
-
-async function createAuthorizeConfirmationChallenge(
-  c: Context<{ Bindings: Env }>,
-  tenantId: string,
-  userId: string,
-  metadata: {
-    authTime?: number;
-    sessionUserId?: string;
-    sessionId?: string;
-    authorizationRequest: AuthorizationRequestContinuation;
-    /** An assurance step-up the confirmed re-authentication completes. */
-    assuranceStepUp?: unknown;
-    /** When the re-authentication was asked for. */
-    reauthIssuedAt?: unknown;
-  }
-): Promise<string> {
-  const confirmationId = crypto.randomUUID();
-  const browserBinding = generateSecureRandomString(32);
-  const confirmationStore = await getChallengeStoreByChallengeId(c.env, confirmationId, tenantId);
-  await confirmationStore.storeChallengeRpc({
-    id: confirmationId,
-    tenantId,
-    type: 'reauth',
-    userId,
-    challenge: confirmationId,
-    ttl: 60,
-    metadata: {
-      purpose: 'authorize_confirmation',
-      authTime: metadata.authTime,
-      sessionUserId: metadata.sessionUserId ?? userId,
-      sessionId: metadata.sessionId,
-      browserBinding,
-      authorization_request: metadata.authorizationRequest,
-      ...(metadata.assuranceStepUp !== undefined
-        ? { assurance_step_up: metadata.assuranceStepUp }
-        : {}),
-      ...(metadata.reauthIssuedAt !== undefined
-        ? { reauth_issued_at: metadata.reauthIssuedAt }
-        : {}),
-    },
-  });
-  c.res.headers.append(
-    'Set-Cookie',
-    `${AUTHORIZE_CONFIRMATION_COOKIE_NAME}=${encodeURIComponent(browserBinding)}; Path=/authorize; HttpOnly; SameSite=${getSessionCookieSameSite(c.env)}; Secure; Max-Age=120`
-  );
-  return confirmationId;
 }
 
 /**
@@ -2314,15 +2219,6 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   if (!response_type) {
     // response_type is missing - use invalid_request per RFC 6749
     // This is a pre-redirect validation error, so respond from the AS directly.
-    if (await shouldUseBuiltinForms(c.env)) {
-      return c.json(
-        {
-          error: 'invalid_request',
-          error_description: 'response_type is required',
-        },
-        400
-      );
-    }
     return createLocalAuthorizationErrorResponse(c, 'invalid_request', 'response_type is required');
   }
 
@@ -2330,15 +2226,6 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   if (!responseTypeValidation.valid) {
     // response_type is present but unsupported - use unsupported_response_type
     // This is a pre-redirect validation error, so respond from the AS directly.
-    if (await shouldUseBuiltinForms(c.env)) {
-      return c.json(
-        {
-          error: 'unsupported_response_type',
-          error_description: responseTypeValidation.error,
-        },
-        400
-      );
-    }
     return createLocalAuthorizationErrorResponse(
       c,
       'unsupported_response_type',
@@ -2381,15 +2268,6 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
     getClientCached(c, c.env, validClientId)
   );
   if (!clientMetadata) {
-    if (await shouldUseBuiltinForms(c.env)) {
-      return c.json(
-        {
-          error: 'invalid_request',
-          error_description: 'client_id is invalid',
-        },
-        400
-      );
-    }
     return createLocalAuthorizationErrorResponse(
       c,
       'invalid_request',
@@ -2397,13 +2275,6 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       'Invalid Client'
     );
   }
-  // Certification behavior must be scoped to both an explicitly enabled
-  // conformance environment and the redirect URI used by this request. A client
-  // merely registering a certification URI must not turn its other flows into
-  // credential-accepting test flows.
-  const useCertificationBuiltinForms =
-    (await shouldUseBuiltinForms(c.env)) && isOidcCertificationRedirectUri(redirect_uri);
-
   // Profile-based response_type validation (Human Auth / AI Ephemeral Auth two-layer model)
   // AI Ephemeral profile restricts implicit/hybrid flows to 'code' only for MCP User Delegation
   const requestTenantId = getTenantIdFromContext(c);
@@ -3420,14 +3291,6 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
     ssoEnabled = false;
   }
 
-  if (useCertificationBuiltinForms && !ssoEnabled) {
-    log.info('OIDC certification client using local SSO for conformance flow', {
-      action: 'certification_sso_enabled',
-      clientId: validClientId,
-    });
-    ssoEnabled = true;
-  }
-
   // id_token_hint (OIDC Core 3.1.2.1, 3.1.2.2): an ID token this server issued, naming the
   // End-User the client expects. It is never a sign-in: without a session it stands in for
   // nothing (an ID token reaches every app it was issued to, so any holder could replay it with
@@ -3979,10 +3842,8 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
     });
 
     // Redirect to UI re-authentication screen
-    // Conformance mode: use builtin forms
-    // Client-specific UI: use client's login_ui_url
-    // Global UI configured: redirect to external UI
-    // Neither: return configuration error
+    // UI configured: redirect to external UI
+    // Not configured: return configuration error
     const reauthUiQueryParams = getChallengeUiQueryParams(challengeId, ui_locales);
     if (assuranceStepUp) reauthUiQueryParams.required_aal = assuranceStepUp.requiredAal;
     const reauthTarget = await getUIRedirectTarget(
@@ -3991,20 +3852,13 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       getTenantAwareUiQueryParams(c, reauthUiQueryParams),
       tenantId,
       undefined,
-      getRequestIssuer(c),
-      useCertificationBuiltinForms
+      getRequestIssuer(c)
     );
-    if (reauthTarget.type === 'redirect') {
-      return c.redirect(reauthTarget.url, 302);
-    } else if (reauthTarget.type === 'config_error') {
+    if (reauthTarget.type === 'config_error') {
       await cleanupFailedUIChallenge(challengeStore, challengeId, 'reauth');
       return sendError('temporarily_unavailable', 'Login UI is not configured');
     }
-    // Builtin forms: redirect to local confirm endpoint
-    return c.redirect(
-      buildBuiltinUiRedirectUrl(reauthTarget.fallbackPath, reauthUiQueryParams),
-      302
-    );
+    return c.redirect(reauthTarget.url, 302);
   }
 
   // If no session exists and prompt is not 'none', redirect to login screen
@@ -4080,7 +3934,6 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
     });
 
     // Redirect to UI login screen
-    // Conformance mode: use builtin forms
     // Client-specific UI: use client's login_ui_url
     // Global UI configured: redirect to external UI
     // Neither: return configuration error
@@ -4091,17 +3944,13 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       getTenantAwareUiQueryParams(c, loginUiQueryParams),
       tenantId,
       clientMetadata?.login_ui_url,
-      getRequestIssuer(c),
-      useCertificationBuiltinForms
+      getRequestIssuer(c)
     );
-    if (loginTarget.type === 'redirect') {
-      return c.redirect(loginTarget.url, 302);
-    } else if (loginTarget.type === 'config_error') {
+    if (loginTarget.type === 'config_error') {
       await cleanupFailedUIChallenge(challengeStore, challengeId, 'login');
       return sendError('temporarily_unavailable', 'Login UI is not configured');
     }
-    // Builtin forms: redirect to local login endpoint
-    return c.redirect(buildBuiltinUiRedirectUrl(loginTarget.fallbackPath, loginUiQueryParams), 302);
+    return c.redirect(loginTarget.url, 302);
   }
 
   // Determine user identifier (sub)
@@ -4440,10 +4289,8 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         });
 
         // Redirect to UI consent screen
-        // Conformance mode: use builtin forms
-        // Client-specific UI: use client's login_ui_url
-        // Global UI configured: redirect to external UI
-        // Neither: return configuration error
+        // UI configured: redirect to external UI
+        // Not configured: return configuration error
         const consentUiQueryParams = getChallengeUiQueryParams(challengeId, ui_locales);
         const consentTarget = await getUIRedirectTarget(
           c.env,
@@ -4451,20 +4298,13 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
           getTenantAwareUiQueryParams(c, consentUiQueryParams),
           tenantId,
           undefined,
-          getRequestIssuer(c),
-          useCertificationBuiltinForms
+          getRequestIssuer(c)
         );
-        if (consentTarget.type === 'redirect') {
-          return c.redirect(consentTarget.url, 302);
-        } else if (consentTarget.type === 'config_error') {
+        if (consentTarget.type === 'config_error') {
           await cleanupFailedUIChallenge(challengeStore, challengeId, 'consent');
           return sendError('temporarily_unavailable', 'Login UI is not configured');
         }
-        // Builtin forms: redirect to local consent endpoint
-        return c.redirect(
-          buildBuiltinUiRedirectUrl(consentTarget.fallbackPath, consentUiQueryParams),
-          302
-        );
+        return c.redirect(consentTarget.url, 302);
       }
     } // End of Third-Party Client consent check
   }
@@ -4608,19 +4448,13 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
               getTenantAwareUiQueryParams(c, consentUiQueryParams),
               tenantId,
               undefined,
-              getRequestIssuer(c),
-              useCertificationBuiltinForms
+              getRequestIssuer(c)
             );
-            if (consentTarget.type === 'redirect') {
-              return c.redirect(consentTarget.url, 302);
-            } else if (consentTarget.type === 'config_error') {
+            if (consentTarget.type === 'config_error') {
               await cleanupFailedUIChallenge(challengeStore, challengeId, 'consent');
               return sendError('temporarily_unavailable', 'Login UI is not configured');
             }
-            return c.redirect(
-              buildBuiltinUiRedirectUrl(consentTarget.fallbackPath, consentUiQueryParams),
-              302
-            );
+            return c.redirect(consentTarget.url, 302);
           }
         }
       }
@@ -5808,693 +5642,4 @@ function escapeHtml(unsafe: string): string {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#039;');
-}
-
-function safeHttpsDisplayUrl(value: string | undefined): string | null {
-  if (!value) {
-    return null;
-  }
-  try {
-    const url = new URL(value);
-    return url.protocol === 'https:' ? url.toString() : null;
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Handle login screen (TEST/STUB ONLY)
- * GET/POST /flow/login
- *
- * ⚠️ PII/Non-PII SEPARATION NOTE:
- * This is a STUB implementation for OIDC Conformance Testing.
- * It creates test users with PII data, which requires PIIContext.
- *
- * In production:
- * - Real login flows use /api/auth/passkeys, /api/auth/email-codes, etc.
- * - Users are created through proper signup flows
- * - This endpoint is only used for OIDC certification tests
- *
- * Non-certification test clients require ENABLE_TEST_ENDPOINTS=true
- */
-export async function authorizeLoginHandler(c: Context<{ Bindings: Env }>) {
-  const log = getLogger(c).module('AUTHORIZE');
-  const testEndpointsEnabled = c.env.ENABLE_TEST_ENDPOINTS === 'true';
-  const builtinFormsEnabled = await shouldUseBuiltinForms(c.env);
-  if (!testEndpointsEnabled && !builtinFormsEnabled) {
-    log.warn('Built-in login adapter request rejected outside test or conformance mode', {
-      action: 'login_stub_denied',
-    });
-    return c.json(
-      {
-        error: 'access_denied',
-        error_description: 'Built-in login is unavailable',
-      },
-      403
-    );
-  }
-
-  // Parse challenge_id and username from request
-  let challenge_id: string | undefined;
-  let loginUsername: string | undefined;
-
-  if (c.req.method === 'POST') {
-    try {
-      const body = await c.req.parseBody();
-      challenge_id = typeof body.challenge_id === 'string' ? body.challenge_id : undefined;
-      loginUsername = typeof body.username === 'string' ? body.username : undefined;
-    } catch {
-      return c.json(
-        {
-          error: 'invalid_request',
-          error_description: 'Failed to parse request body',
-        },
-        400
-      );
-    }
-  } else {
-    challenge_id = c.req.query('challenge_id');
-  }
-
-  if (!challenge_id) {
-    return c.json(
-      {
-        error: 'invalid_request',
-        error_description: 'Missing challenge_id parameter',
-      },
-      400
-    );
-  }
-
-  const tenantId = getTenantIdFromContext(c);
-  const challengeStore = await getChallengeStoreByChallengeId(c.env, challenge_id, tenantId);
-  let previewChallenge: {
-    tenantId?: string;
-    type?: string;
-    metadata?: {
-      redirect_uri?: string;
-      logo_uri?: string;
-      client_name?: string;
-      policy_uri?: string;
-      tos_uri?: string;
-      [key: string]: unknown;
-    };
-  } | null;
-  try {
-    previewChallenge = (await challengeStore.getChallengeRpc(
-      challenge_id
-    )) as typeof previewChallenge;
-  } catch {
-    previewChallenge = null;
-  }
-  if (
-    !previewChallenge ||
-    previewChallenge.type !== 'login' ||
-    (previewChallenge.tenantId !== undefined && previewChallenge.tenantId !== tenantId)
-  ) {
-    return c.json(
-      {
-        error: 'invalid_request',
-        error_description: 'Invalid or expired challenge',
-      },
-      400
-    );
-  }
-
-  const isCertificationTest =
-    builtinFormsEnabled && isOidcCertificationRedirectUri(previewChallenge.metadata?.redirect_uri);
-  if (!testEndpointsEnabled && !isCertificationTest) {
-    log.warn('Built-in login adapter rejected for a non-certification client', {
-      action: 'login_stub_denied',
-    });
-    return c.json(
-      {
-        error: 'access_denied',
-        error_description: 'Built-in login is unavailable for this client',
-      },
-      403
-    );
-  }
-
-  // GET request: Show login form (stub implementation with username/password fields)
-  if (c.req.method === 'GET') {
-    // Fetch challenge data to display client logo and info (OIDC Dynamic OP conformance)
-    const logoUri = previewChallenge.metadata?.logo_uri;
-    const clientName = previewChallenge.metadata?.client_name;
-    const policyUri = previewChallenge.metadata?.policy_uri;
-    const tosUri = previewChallenge.metadata?.tos_uri;
-
-    const safeLogoUri = safeHttpsDisplayUrl(logoUri);
-    const safePolicyUri = safeHttpsDisplayUrl(policyUri);
-    const safeTosUri = safeHttpsDisplayUrl(tosUri);
-
-    // Build client info section HTML
-    const clientInfoHtml =
-      safeLogoUri || clientName
-        ? `
-    <div class="client-info">
-      ${safeLogoUri ? `<img src="${escapeHtml(safeLogoUri)}" alt="${escapeHtml(clientName || 'Client')} logo" class="client-logo" onerror="this.style.display='none'">` : ''}
-      ${clientName ? `<p class="client-name">Signing in to <strong>${escapeHtml(clientName)}</strong></p>` : ''}
-      ${
-        safePolicyUri || safeTosUri
-          ? `<div class="client-links">
-        ${safePolicyUri ? `<a href="${escapeHtml(safePolicyUri)}" target="_blank" rel="noopener noreferrer">Privacy Policy</a>` : ''}
-        ${safeTosUri ? `<a href="${escapeHtml(safeTosUri)}" target="_blank" rel="noopener noreferrer">Terms of Service</a>` : ''}
-      </div>`
-          : ''
-      }
-    </div>`
-        : '';
-
-    return c.html(`<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Login Required</title>
-  <style>
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-      display: flex;
-      justify-content: center;
-      align-items: center;
-      min-height: 100vh;
-      margin: 0;
-      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-    }
-    .container {
-      background: white;
-      padding: 2rem;
-      border-radius: 8px;
-      box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-      max-width: 400px;
-      width: 100%;
-    }
-    .client-info {
-      text-align: center;
-      margin-bottom: 1.5rem;
-      padding-bottom: 1.5rem;
-      border-bottom: 1px solid #eee;
-    }
-    .client-logo {
-      max-width: 120px;
-      max-height: 80px;
-      object-fit: contain;
-      margin-bottom: 0.5rem;
-    }
-    .client-name {
-      margin: 0.5rem 0;
-      color: #666;
-      font-size: 0.9rem;
-    }
-    .client-links {
-      margin-top: 0.5rem;
-      font-size: 0.8rem;
-    }
-    .client-links a {
-      color: #667eea;
-      text-decoration: none;
-      margin: 0 0.5rem;
-    }
-    .client-links a:hover {
-      text-decoration: underline;
-    }
-    h1 {
-      margin: 0 0 1rem 0;
-      font-size: 1.5rem;
-      color: #333;
-    }
-    p {
-      margin: 0 0 1.5rem 0;
-      color: #666;
-      line-height: 1.5;
-    }
-    form {
-      display: flex;
-      flex-direction: column;
-      gap: 1rem;
-    }
-    input {
-      padding: 0.75rem;
-      border: 1px solid #ddd;
-      border-radius: 4px;
-      font-size: 1rem;
-    }
-    button {
-      padding: 0.75rem;
-      background: #667eea;
-      color: white;
-      border: none;
-      border-radius: 4px;
-      font-size: 1rem;
-      cursor: pointer;
-      transition: background 0.2s;
-    }
-    button:hover {
-      background: #5568d3;
-    }
-  </style>
-</head>
-<body>
-  <div class="container">
-    ${clientInfoHtml}
-    <h1>Login Required</h1>
-    <p>Please enter your credentials to continue.</p>
-    <form method="POST" action="/flow/login">
-      <input type="hidden" name="challenge_id" value="${escapeHtml(challenge_id)}">
-      <input type="text" name="username" placeholder="Username" required>
-      <input type="password" name="password" placeholder="Password" required>
-      <button type="submit">Login</button>
-    </form>
-  </div>
-</body>
-</html>`);
-  }
-
-  // POST request: Process login (stub - accepts any credentials) (RPC)
-  let challengeData: {
-    userId: string;
-    metadata?: {
-      response_type?: string;
-      client_id?: string;
-      redirect_uri?: string;
-      scope?: string;
-      state?: string;
-      nonce?: string;
-      code_challenge?: string;
-      code_challenge_method?: string;
-      claims?: string;
-      response_mode?: string;
-      [key: string]: unknown;
-    };
-  };
-
-  try {
-    challengeData = await challengeStore.consumeChallengeRpc({
-      id: challenge_id,
-      tenantId: getTenantIdFromContext(c),
-      type: 'login',
-      challenge: challenge_id,
-    });
-  } catch {
-    return c.json(
-      {
-        error: 'invalid_request',
-        error_description: 'Invalid or expired challenge',
-      },
-      400
-    );
-  }
-
-  const metadata = challengeData.metadata || {};
-
-  // Create a new user and session (stub - in production, verify credentials first).
-  // Even test-only users must enter through the Control Plane provisioning boundary so a
-  // fresh installation never falls back to writing account rows into tenant metadata D1.
-  let candidateUserId: string;
-  let userEmail: string;
-  let runtimeUser: Parameters<typeof provisionEmailAccount>[1]['runtimeUser'];
-  if (isCertificationTest) {
-    candidateUserId = 'user-oidc-conformance-test';
-    userEmail = 'test@example.com';
-    log.info('Using OIDC Conformance Test user', { action: 'login_test_user' });
-    runtimeUser = {
-      active: true,
-      emailVerified: true,
-      userType: 'end_user',
-      displayName: 'John Doe',
-      sourceRef: 'auth:test_stub',
-      piiFields: {
-        email: true,
-        given_name: true,
-        family_name: true,
-        nickname: true,
-        preferred_username: true,
-        picture: true,
-        website: true,
-        gender: true,
-        birthdate: true,
-        zoneinfo: true,
-        locale: true,
-        phone_number: true,
-      },
-      sensitiveValues: {
-        email: userEmail,
-        given_name: 'John',
-        family_name: 'Doe',
-        nickname: 'Johnny',
-        preferred_username: 'test',
-        picture: 'https://example.com/avatar.jpg',
-        website: 'https://example.com',
-        gender: 'male',
-        birthdate: '1990-01-01',
-        zoneinfo: 'America/New_York',
-        locale: 'en-US',
-        phone_number: '+1-555-0100',
-      },
-      phoneNumberVerified: true,
-      addressJson: JSON.stringify({
-        formatted: '1234 Main St, Anytown, ST 12345, USA',
-        street_address: '1234 Main St',
-        locality: 'Anytown',
-        region: 'ST',
-        postal_code: '12345',
-        country: 'USA',
-      }),
-    };
-  } else {
-    // Normal client: create new random user
-    // ⚠️ PII/Non-PII SEPARATION NOTE:
-    // This is a STUB implementation for testing purposes only.
-    // Requires ENABLE_TEST_ENDPOINTS=true for non-certification test clients.
-    //
-    // In production, users should be created through proper flows:
-    // - /api/auth/passkey (WebAuthn registration)
-    // - /api/auth/email-code (Passwordless OTP)
-    // - External IdP (SAML/OIDC federation)
-    log.info('Creating stub user (ENABLE_TEST_ENDPOINTS=true)', {
-      action: 'login_stub_user_create',
-    });
-    candidateUserId = 'user-' + crypto.randomUUID();
-    userEmail = loginUsername || `${candidateUserId}@example.com`;
-    runtimeUser = {
-      active: true,
-      emailVerified: false,
-      userType: 'end_user',
-      sourceRef: 'auth:test_stub',
-      piiFields: { email: true },
-      sensitiveValues: { email: userEmail },
-    };
-  }
-
-  const provisioned = await provisionEmailAccount(c, {
-    tenantId,
-    candidateUserId,
-    flow: 'test_stub',
-    email: userEmail,
-    runtimeUser,
-  });
-  if (provisioned.status === 'pending') return provisioned.response;
-  const userId = provisioned.userId;
-  await resolveAccountDataContextFromHono(c, provisioned.accountId);
-
-  // Calculate auth_time BEFORE creating session to ensure consistency
-  // This value will be used for both the session and the redirect parameter
-  const loginAuthTime = Math.floor(Date.now() / 1000);
-
-  // Profile-based session management (Human Auth / AI Ephemeral Auth two-layer model)
-  // For AI Ephemeral profile (uses_do_for_state=false), skip session creation.
-  // AI agents typically don't maintain browser sessions - they use tokens directly.
-  const sessionTenantProfile = await loadTenantProfileCached(
-    c,
-    c.env.AUTHRIM_CONFIG,
-    c.env,
-    tenantId
-  );
-  let browserSessionId: string | undefined;
-
-  if (sessionTenantProfile.uses_do_for_state) {
-    // Human profile: Create session using sharded SessionStore
-    const { stub: sessionStore, sessionId: newSessionId } = await getSessionStoreForNewSession(
-      c.env,
-      tenantId
-    );
-
-    try {
-      const sessionTtl = await resolveSessionTtl(c.env, tenantId, 'default');
-      await sessionStore.createSessionRpc(
-        newSessionId, // Required: Sharded session ID
-        userId,
-        sessionTtl.seconds,
-        {
-          ...getSessionClientMetadata(c.req.raw),
-          clientId: metadata.client_id as string,
-          authTime: loginAuthTime, // Store auth_time for OIDC conformance (prompt=none consistency)
-        },
-        tenantId
-      );
-
-      // Set session cookie with the pre-generated sharded session ID (HttpOnly for security)
-      // SameSite is determined dynamically based on origin configuration
-      const sessionSameSiteValue = getSessionCookieSameSite(c.env);
-      c.header(
-        'Set-Cookie',
-        `authrim_session=${newSessionId}; Path=/; HttpOnly; SameSite=${sessionSameSiteValue}; Secure; Max-Age=${sessionTtl.seconds}`
-      );
-
-      // Generate and set browser state cookie for OIDC Session Management
-      // This cookie is NOT HttpOnly so check_session_iframe can read it via JavaScript
-      const browserState = await generateBrowserState(newSessionId);
-      const browserStateSameSiteValue = getBrowserStateCookieSameSite(c.env);
-      c.res.headers.append(
-        'Set-Cookie',
-        `${BROWSER_STATE_COOKIE_NAME}=${browserState}; Path=/; SameSite=${browserStateSameSiteValue}; Secure; Max-Age=${sessionTtl.seconds}`
-      );
-      browserSessionId = newSessionId;
-    } catch (error) {
-      log.error('Failed to create session', { action: 'session_create' }, error as Error);
-      // Continue even if session creation fails - user can re-login
-    }
-  } else {
-    // AI Ephemeral profile: Skip session creation (stateless approach)
-    // AI agents will use the authorization code to obtain tokens directly
-    log.info('AI Ephemeral profile - skipping session creation (stateless mode)', {
-      action: 'session_skip_ai',
-    });
-  }
-
-  const confirmationId = await createAuthorizeConfirmationChallenge(c, tenantId, userId, {
-    authTime: loginAuthTime,
-    sessionUserId: userId,
-    sessionId: browserSessionId,
-    authorizationRequest: createAuthorizationRequestContinuation(metadata),
-  });
-  log.debug('Setting auth_time for authorization redirect', {
-    action: 'auth_time_set',
-    authTime: loginAuthTime,
-  });
-
-  const redirectUrl = buildAuthorizeContinuationUrl(
-    metadata,
-    confirmationId,
-    new URL(c.req.url).origin
-  );
-  return c.redirect(redirectUrl, 302);
-}
-
-/**
- * Handle re-authentication confirmation
- * POST /flow/confirm
- */
-export async function authorizeConfirmHandler(c: Context<{ Bindings: Env }>) {
-  const log = getLogger(c).module('AUTHORIZE');
-  // Parse challenge_id from request
-  let challenge_id: string | undefined;
-
-  if (c.req.method === 'POST') {
-    try {
-      const body = await c.req.parseBody();
-      challenge_id = typeof body.challenge_id === 'string' ? body.challenge_id : undefined;
-    } catch {
-      return c.json(
-        {
-          error: 'invalid_request',
-          error_description: 'Failed to parse request body',
-        },
-        400
-      );
-    }
-  } else {
-    challenge_id = c.req.query('challenge_id');
-  }
-
-  if (!challenge_id) {
-    return c.json(
-      {
-        error: 'invalid_request',
-        error_description: 'Missing challenge_id parameter',
-      },
-      400
-    );
-  }
-
-  // This credential-looking form is a local test/conformance adapter only. Production
-  // reauthentication is completed by passkey, OTP, directory, or external-IdP handlers.
-  const tenantId = getTenantIdFromContext(c);
-  const challengeStore = await getChallengeStoreByChallengeId(c.env, challenge_id, tenantId);
-  const previewChallenge = (await challengeStore.getChallengeRpc(challenge_id)) as {
-    tenantId?: string;
-    type?: string;
-    metadata?: { redirect_uri?: unknown };
-  } | null;
-  if (
-    !previewChallenge ||
-    previewChallenge.type !== 'reauth' ||
-    (previewChallenge.tenantId !== undefined && previewChallenge.tenantId !== tenantId)
-  ) {
-    return c.json(
-      {
-        error: 'invalid_request',
-        error_description: 'Invalid or expired challenge',
-      },
-      400
-    );
-  }
-  const isCertificationAdapter =
-    (await shouldUseBuiltinForms(c.env)) &&
-    isOidcCertificationRedirectUri(previewChallenge.metadata?.redirect_uri);
-  if (c.env.ENABLE_TEST_ENDPOINTS !== 'true' && !isCertificationAdapter) {
-    return c.json(
-      {
-        error: 'access_denied',
-        error_description: 'Built-in reauthentication is unavailable for this client',
-      },
-      403
-    );
-  }
-
-  // GET request: Show re-authentication confirmation form with username/password
-  if (c.req.method === 'GET') {
-    return c.html(`<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Re-authentication Required</title>
-  <style>
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-      display: flex;
-      justify-content: center;
-      align-items: center;
-      min-height: 100vh;
-      margin: 0;
-      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-    }
-    .container {
-      background: white;
-      padding: 2rem;
-      border-radius: 8px;
-      box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-      max-width: 400px;
-      width: 100%;
-    }
-    h1 {
-      margin: 0 0 1rem 0;
-      font-size: 1.5rem;
-      color: #333;
-    }
-    p {
-      margin: 0 0 1.5rem 0;
-      color: #666;
-      line-height: 1.5;
-    }
-    form {
-      display: flex;
-      flex-direction: column;
-      gap: 1rem;
-    }
-    input {
-      padding: 0.75rem;
-      border: 1px solid #ddd;
-      border-radius: 4px;
-      font-size: 1rem;
-    }
-    button {
-      width: 100%;
-      padding: 0.75rem;
-      background: #667eea;
-      color: white;
-      border: none;
-      border-radius: 4px;
-      font-size: 1rem;
-      cursor: pointer;
-      transition: background 0.2s;
-    }
-    button:hover {
-      background: #5568d3;
-    }
-  </style>
-</head>
-<body>
-  <div class="container">
-    <h1>Re-authentication Required</h1>
-    <p>For security reasons, please re-enter your credentials.</p>
-    <form method="POST" action="/flow/confirm">
-      <input type="hidden" name="challenge_id" value="${escapeHtml(challenge_id)}">
-      <input type="text" name="username" placeholder="Username" required>
-      <input type="password" name="password" placeholder="Password" required>
-      <button type="submit">Confirm</button>
-    </form>
-  </div>
-</body>
-</html>`);
-  }
-
-  // POST request: Process confirmation and redirect to /authorize (RPC)
-  // Use challengeId-based sharding - must match the shard used during challenge creation
-  let challengeData: {
-    userId: string;
-    metadata?: {
-      response_type?: string;
-      client_id?: string;
-      redirect_uri?: string;
-      scope?: string;
-      state?: string;
-      nonce?: string;
-      code_challenge?: string;
-      code_challenge_method?: string;
-      claims?: string;
-      response_mode?: string;
-      sessionUserId?: string;
-      [key: string]: unknown;
-    };
-  };
-
-  try {
-    challengeData = await challengeStore.consumeChallengeRpc({
-      id: challenge_id,
-      tenantId: getTenantIdFromContext(c),
-      type: 'reauth',
-      challenge: challenge_id,
-    });
-  } catch {
-    return c.json(
-      {
-        error: 'invalid_request',
-        error_description: 'Invalid or expired challenge',
-      },
-      400
-    );
-  }
-
-  const metadata = challengeData.metadata || {};
-
-  const confirmationId = await createAuthorizeConfirmationChallenge(
-    c,
-    getTenantIdFromContext(c),
-    challengeData.userId,
-    {
-      authTime: typeof metadata.authTime === 'number' ? metadata.authTime : undefined,
-      sessionUserId:
-        typeof metadata.sessionUserId === 'string' ? metadata.sessionUserId : challengeData.userId,
-      sessionId: typeof metadata.session_id === 'string' ? metadata.session_id : undefined,
-      authorizationRequest: createAuthorizationRequestContinuation(metadata),
-      assuranceStepUp: metadata.assurance_step_up,
-      reauthIssuedAt: metadata.reauth_issued_at,
-    }
-  );
-  if (metadata.authTime) {
-    log.debug('Passing auth_time to confirmation redirect', {
-      action: 'confirm_auth_time',
-      authTime: metadata.authTime,
-    });
-  }
-
-  const redirectUrl = buildAuthorizeContinuationUrl(
-    metadata,
-    confirmationId,
-    new URL(c.req.url).origin
-  );
-  return c.redirect(redirectUrl, 302);
 }

@@ -27,7 +27,6 @@ import {
   getTenantSettingsDocument,
   buildIssuerUrl,
   buildSAMLRequestStoreInstanceName,
-  shouldUseBuiltinForms,
   createConfigurationError,
   getLogger,
   getLocalization,
@@ -339,22 +338,9 @@ export async function handleIdPSSO(c: Context<{ Bindings: Env }>): Promise<Respo
       await storeAuthnRequest(env, tenantId, authnRequest, relayState);
 
       // Redirect to login page with return URL
-      // Conformance mode: use builtin forms
       // UI configured: redirect to external UI
-      // Neither: return configuration error
+      // Not configured: return configuration error
       const uiConfig = await getUIConfig(env, tenantId);
-
-      if (await shouldUseBuiltinForms(env)) {
-        // Conformance mode: redirect to builtin login
-        const loginUrl = new URL('/flow/login', buildIssuerUrl(env, tenantId));
-        loginUrl.searchParams.set('saml_request_id', authnRequest.id);
-        loginUrl.searchParams.set('saml_sp_entity_id', authnRequest.issuer);
-        loginUrl.searchParams.set('return_to', 'saml_sso');
-        if (authnInteraction.forceReauthentication) {
-          loginUrl.searchParams.set('force_authn', 'true');
-        }
-        return c.redirect(loginUrl.toString());
-      }
 
       if (uiConfig?.baseUrl) {
         const loginPath = uiConfig.paths?.login || '/login';
@@ -374,7 +360,7 @@ export async function handleIdPSSO(c: Context<{ Bindings: Env }>): Promise<Respo
         return c.redirect(loginUrl.toString());
       }
 
-      // No UI configured and conformance mode disabled
+      // No UI configured
       return c.json(createConfigurationError(), 500);
     }
 

@@ -20,9 +20,7 @@ import {
   AR_ERROR_CODES,
   getUIConfig,
   buildUIUrl,
-  shouldUseBuiltinForms,
   createConfigurationError,
-  buildIssuerUrl,
   usesNakedDomainIssuer,
   getLogger,
   createLogger,
@@ -764,7 +762,6 @@ export async function initiateSPLogout(
 
 /**
  * Build logout complete URL based on UI config (for SP)
- * Supports conformance mode (built-in redirect) and external UI
  */
 type LogoutCompleteResultSP =
   | { type: 'redirect'; url: string }
@@ -776,13 +773,7 @@ async function buildLogoutCompleteUrlForSP(
 ): Promise<LogoutCompleteResultSP> {
   const tenantId = resolveSAMLTenantIdFromContext(c);
 
-  // Conformance mode: use built-in path
-  if (await shouldUseBuiltinForms(env)) {
-    const issuerUrl = buildIssuerUrl(env, tenantId);
-    return { type: 'redirect', url: `${issuerUrl}/logout-complete` };
-  }
-
-  // Normal mode: use UI config
+  // Use UI config
   const uiConfig = await getUIConfig(env, tenantId);
   if (!uiConfig?.baseUrl) {
     return { type: 'error', response: c.json(createConfigurationError(), 500) };

@@ -1490,6 +1490,7 @@ crons = ["*/15 * * * *"]
 
     expect(patterns).toContain('conformance.authrim.com/api/admin/setup-token/*');
     expect(patterns).toContain('conformance.authrim.com/api/admin/auth/*');
+    expect(patterns).not.toContain('conformance.authrim.com/flow/*');
   });
 
   it('does not assign broad admin API routes to ar-management', () => {

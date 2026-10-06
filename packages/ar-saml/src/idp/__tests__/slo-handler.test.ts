@@ -4,7 +4,6 @@ import { NAMEID_FORMATS, SAML_NAMESPACES, STATUS_CODES } from '../../common/cons
 
 const mocks = vi.hoisted(() => ({
   sp: null as Record<string, unknown> | null,
-  builtin: true,
   ui: undefined as { baseUrl: string } | undefined,
   sessionDelete: new Response(null, { status: 204 }),
   sessionThrows: false,
@@ -40,7 +39,6 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     isShardedSessionId: vi.fn((id: string) => id.startsWith('sess_')),
     getUIConfig: vi.fn(async () => mocks.ui),
     buildUIUrl: vi.fn((config: { baseUrl: string }) => `${config.baseUrl}/logout-complete`),
-    shouldUseBuiltinForms: vi.fn(async () => mocks.builtin),
     usesNakedDomainIssuer: vi.fn(() => false),
     buildIssuerUrl: vi.fn(() => 'https://tenant.example.test'),
     createAuthContextFromHono: vi.fn(() => ({ coreAdapter: {} })),
@@ -235,8 +233,7 @@ describe('IdP SLO handler policy boundaries', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.sp = sp();
-    mocks.builtin = true;
-    mocks.ui = undefined;
+    mocks.ui = { baseUrl: 'https://ui.example.test' };
     mocks.sessionDelete = new Response(null, { status: 204 });
     mocks.sessionThrows = false;
     mocks.resolvedSessionId = null;
@@ -379,14 +376,12 @@ describe('IdP SLO handler policy boundaries', () => {
   );
 
   it('returns configuration error when no logout-complete UI exists', async () => {
-    mocks.builtin = false;
     mocks.ui = undefined;
     const response = await post('SAMLResponse', responseXml());
     expect(response.status).toBe(500);
   });
 
   it('uses configured UI for the logout-complete redirect', async () => {
-    mocks.builtin = false;
     mocks.ui = { baseUrl: 'https://ui.example.test' };
     const response = await post('SAMLResponse', responseXml());
     expect(response.status).toBe(302);

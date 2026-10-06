@@ -5,6 +5,7 @@ import {
   createSecurityMatrixEnv,
   seedRegionShardConfig,
   TEST_ISSUER,
+  TEST_UI_URL,
   TEST_USER,
   type SecurityMatrixEnvKit,
 } from '../fixtures/env';
@@ -152,6 +153,7 @@ function observationFromDecision(
       observation.status = outcome.status;
       observation.bodyKind = 'html-error';
       observation.htmlMarker = outcome.htmlContains;
+      observation.error = outcome.error ?? null;
       break;
     case 'error-redirect':
       observation.error = outcome.error;
@@ -183,8 +185,9 @@ function observationFromDecision(
     case 'challenge':
       observation.status = 302;
       observation.bodyKind = 'redirect';
-      observation.target = `${TEST_ISSUER}/flow/login`;
-      observation.keys = ['challenge_id'];
+      observation.target = `${TEST_UI_URL}/login`;
+      // tenant_hint and tenant_host are UI branding hints, never trusted by the server.
+      observation.keys = ['challenge_id', 'tenant_hint', 'tenant_host'];
       observation.challengeType = outcome.challengeType;
       break;
     case 'code-success':
@@ -786,7 +789,8 @@ async function runProtoRow(
       bodyKind = 'other';
     }
   } else if (contentType?.includes('text/html')) {
-    if (bodyText.includes('name="')) {
+    // A form_post response carries a <form>; an error page may still have <meta name="...">.
+    if (/<form\b/i.test(bodyText)) {
       bodyKind = 'html-form';
       const inputNames: string[] = [];
       const inputPattern = /name="([^"]+)"\s+value="([^"]*)"/gu;
@@ -814,6 +818,11 @@ async function runProtoRow(
       if (bodyText.includes('Invalid Redirect URI')) htmlMarker = 'Invalid Redirect URI';
       else if (bodyText.includes('Unregistered Redirect URI'))
         htmlMarker = 'Unregistered Redirect URI';
+      else if (bodyText.includes('Invalid Authorization Request')) {
+        htmlMarker = 'Invalid Authorization Request';
+        // The local error page names the OAuth error code (createLocalAuthorizationErrorResponse).
+        error = bodyText.match(/<strong>Error:<\/strong>\s*([A-Za-z0-9_]+)/)?.[1] ?? null;
+      }
     }
   }
 
@@ -981,7 +990,7 @@ describe('authorize-matrix protocol suite (Matrix B)', () => {
     const ledger = new CallLedger();
     kit = await createSecurityMatrixEnv(ledger);
     seedRegionShardConfig(kit, MATRIX_TENANT);
-    (kit.env as unknown as Record<string, unknown>).ENABLE_CONFORMANCE_MODE = 'true';
+    (kit.env as unknown as Record<string, unknown>).UI_URL = TEST_UI_URL;
     app = createMatrixAuthorizeApp(kit, { tenantId: MATRIX_TENANT });
     const keys = await getFixedSigningKeySet();
     fixedKeys = { privatePem: keys.privatePem, kid: keys.kid, publicJwk: keys.publicJwk };
@@ -1535,7 +1544,7 @@ async function createFreshKitApp(): Promise<{
 }> {
   const freshKit = await createSecurityMatrixEnv(new CallLedger());
   seedRegionShardConfig(freshKit, MATRIX_TENANT);
-  (freshKit.env as unknown as Record<string, unknown>).ENABLE_CONFORMANCE_MODE = 'true';
+  (freshKit.env as unknown as Record<string, unknown>).UI_URL = TEST_UI_URL;
   return { kit: freshKit, app: createMatrixAuthorizeApp(freshKit, { tenantId: MATRIX_TENANT }) };
 }
 
