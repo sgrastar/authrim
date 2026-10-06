@@ -139,6 +139,9 @@ export interface AssuranceLevelsSettings {
   /** The AAL an external or SAML IdP's acr is taken for (JSON) */
   'assurance.upstream_acr_mappings': string;
 
+  /** The acr values of other vocabularies Authrim may return when asked, with their AAL (JSON) */
+  'assurance.outbound_acr_mappings': string;
+
   /** Include assurance levels in ID token */
   'assurance.include_in_id_token': boolean;
 
@@ -213,6 +216,14 @@ export const ASSURANCE_LEVELS_SETTINGS_META: Record<keyof AssuranceLevelsSetting
     description:
       'JSON mapping of the acr (or SAML AuthnContextClassRef) an external IdP returns to the AAL it is taken for (e.g., {"urn:mace:incommon:iap:silver": "AAL2"}); unmapped logins count as AAL1',
   },
+  'assurance.outbound_acr_mappings': {
+    key: 'assurance.outbound_acr_mappings',
+    type: 'string',
+    default: '{}',
+    label: 'Outbound ACR Mappings',
+    description:
+      'JSON mapping of acr values from another vocabulary that Authrim may return to a client, to the AAL each requires (e.g., {"urn:mace:incommon:iap:silver": "AAL2", "urn:mace:incommon:iap:bronze": "AAL1"}). A client asking for one in acr_values (or as an essential acr) is stepped up to that AAL like for urn:authrim:aal:N and gets the value back once it is met; values not listed are never returned. The opposite direction of Upstream ACR Mappings',
+  },
   'assurance.scope_ial_requirements': {
     key: 'assurance.scope_ial_requirements',
     // Saved and validated, not applied yet: runtime use lands with the identity assurance work.
@@ -259,7 +270,7 @@ export const ASSURANCE_LEVELS_SETTINGS_META: Record<keyof AssuranceLevelsSetting
     default: true,
     label: 'Include in ID Token',
     description:
-      'Give ID tokens an acr of the form urn:authrim:aal:N: the most preferred requested value the authentication meets, otherwise the acr of the AAL reached (none at AAL0); an essential acr request always gets one of its values',
+      'Give ID tokens an acr of the form urn:authrim:aal:N: the most preferred requested value the authentication meets (Outbound ACR Mappings included), otherwise the acr of the AAL reached (none at AAL0); an essential acr request always gets one of its values',
   },
   'assurance.include_in_access_token': {
     key: 'assurance.include_in_access_token',
@@ -310,6 +321,7 @@ export const ASSURANCE_LEVELS_DEFAULTS: AssuranceLevelsSettings = {
   'assurance.default_ial': 'IAL1',
   'assurance.scope_aal_requirements': '{}',
   'assurance.upstream_acr_mappings': '{}',
+  'assurance.outbound_acr_mappings': '{}',
   'assurance.scope_ial_requirements': '{}',
   'assurance.ial_assurance_values': '{}',
   'assurance.saml_authn_context_aal': '{}',
