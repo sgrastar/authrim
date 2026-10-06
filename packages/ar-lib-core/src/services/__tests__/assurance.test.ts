@@ -11,6 +11,8 @@ import {
   isAssuranceLevel,
   meetsAAL,
   mergeStepUpEvidence,
+  outboundAcrMappingsProblem,
+  parseOutboundAcrMappings,
   parseScopeAALRequirements,
   parseUpstreamAcrMappings,
   requiredAAL,
@@ -258,6 +260,104 @@ describe('selectAcr', () => {
     });
     expect(selectAcr('AAL2', named)).toBe('urn:authrim:aal:2');
     expect(selectAcr('AAL1', named)).toBeNull();
+  });
+});
+
+describe('outbound acr mappings', () => {
+  const SILVER = 'urn:mace:incommon:iap:silver';
+  const BRONZE = 'urn:mace:incommon:iap:bronze';
+  const outbound = parseOutboundAcrMappings(JSON.stringify({ [SILVER]: 'AAL2', [BRONZE]: 'AAL1' }));
+  const base: AssuranceRequest = {
+    defaultAAL: 'AAL1',
+    scopes: ['openid'],
+    scopeRequirements: {},
+    acrValues: [],
+    interactive: true,
+    outboundAcrMappings: outbound,
+  };
+  const essential = (values: string[] | null) => ({ essential: true, essentialAcrs: values });
+
+  it('returns the first mapped value the authentication meets, in the order asked', () => {
+    expect(selectAcr('AAL2', undefined, [SILVER, BRONZE], outbound)).toBe(SILVER);
+    expect(selectAcr('AAL2', undefined, [BRONZE, SILVER], outbound)).toBe(BRONZE);
+  });
+
+  it('skips a mapped value whose AAL is not met', () => {
+    expect(selectAcr('AAL1', undefined, [SILVER, BRONZE], outbound)).toBe(BRONZE);
+    expect(selectAcr('AAL1', undefined, [SILVER], outbound)).toBe('urn:authrim:aal:1');
+  });
+
+  it('never returns a value the table does not map, nor one not asked for', () => {
+    expect(selectAcr('AAL3', undefined, ['urn:mace:incommon:iap:gold'], outbound)).toBe(
+      'urn:authrim:aal:3'
+    );
+    expect(selectAcr('AAL2', undefined, [SILVER])).toBe('urn:authrim:aal:2');
+    expect(selectAcr('AAL2', undefined, [], outbound)).toBe('urn:authrim:aal:2');
+  });
+
+  it('takes an own value listed before a mapped one by order, and the other way round', () => {
+    expect(selectAcr('AAL2', undefined, ['urn:authrim:aal:2', SILVER], outbound)).toBe(
+      'urn:authrim:aal:2'
+    );
+    expect(selectAcr('AAL2', undefined, [SILVER, 'urn:authrim:aal:2'], outbound)).toBe(SILVER);
+  });
+
+  it('answers an essential request with a mapped value, or nothing when none is met', () => {
+    const named = requiredAAL({ ...base, essentialAcr: { values: [SILVER, 'x'] } });
+    expect(named).toMatchObject({
+      mandatory: 'AAL2',
+      essentialAcrs: [SILVER],
+      unsatisfiable: false,
+    });
+    expect(selectAcr('AAL2', named, [], outbound)).toBe(SILVER);
+    expect(selectAcr('AAL1', named, [], outbound)).toBeNull();
+    expect(selectAcr('AAL3', essential([BRONZE, SILVER]), [], outbound)).toBe(BRONZE);
+  });
+
+  it('counts a mapped value towards the required level like an own value', () => {
+    expect(requiredAAL({ ...base, acrValues: [SILVER] })).toMatchObject({ target: 'AAL2' });
+    expect(requiredAAL({ ...base, acrValues: [SILVER] })).toEqual(
+      requiredAAL({ ...base, acrValues: ['urn:authrim:aal:2'] })
+    );
+    expect(
+      requiredAAL({ ...base, essentialAcr: { values: [SILVER, 'urn:authrim:aal:3'] } })
+    ).toMatchObject({ mandatory: 'AAL2', essentialAcrs: [SILVER, 'urn:authrim:aal:3'] });
+    // Unmapped, or without the table: as before.
+    expect(
+      requiredAAL({ ...base, acrValues: [SILVER], outboundAcrMappings: undefined })
+    ).toMatchObject({ target: 'AAL0' });
+    expect(
+      requiredAAL({ ...base, essentialAcr: { values: ['urn:mace:incommon:iap:gold'] } })
+    ).toMatchObject({ essentialAcrs: [], unsatisfiable: true });
+  });
+
+  it("reads only valid entries, never one of Authrim's own values", () => {
+    expect(
+      parseOutboundAcrMappings(
+        JSON.stringify({
+          [SILVER]: 'AAL2',
+          'urn:authrim:aal:3': 'AAL1',
+          'URN:Authrim:aal:3': 'AAL1',
+          'two words': 'AAL1',
+          toString: 'AAL9',
+        })
+      )
+    ).toEqual({ [SILVER]: 'AAL2' });
+    expect(parseOutboundAcrMappings('not json')).toEqual({});
+    expect(parseOutboundAcrMappings('[]')).toEqual({});
+    // A prototype name is only ever a name.
+    expect(selectAcr('AAL3', undefined, ['toString'], {})).toBe('urn:authrim:aal:3');
+  });
+
+  it('names the problem with a table the Settings API would refuse', () => {
+    expect(outboundAcrMappingsProblem({ [SILVER]: 'AAL2' })).toBeNull();
+    expect(outboundAcrMappingsProblem({})).toBeNull();
+    expect(outboundAcrMappingsProblem([])).not.toBeNull();
+    expect(outboundAcrMappingsProblem({ [SILVER]: 'high' })).not.toBeNull();
+    expect(outboundAcrMappingsProblem({ ' silver': 'AAL2' })).not.toBeNull();
+    expect(outboundAcrMappingsProblem({ 'urn:authrim:aal:2': 'AAL2' })).not.toBeNull();
+    expect(outboundAcrMappingsProblem({ 'a b': 'AAL2' })).not.toBeNull();
+    expect(outboundAcrMappingsProblem({ ['x'.repeat(513)]: 'AAL2' })).not.toBeNull();
   });
 });
 

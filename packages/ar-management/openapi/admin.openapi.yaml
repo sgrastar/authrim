@@ -1133,7 +1133,8 @@ paths:
                 assurance_level: { type: string, enum: [IAL1, IAL2, IAL3] }
                 evidence_type:
                   type: string
-                  enum: [admin_attestation, document_check, in_person_check, remote_supervised_check]
+                  enum:
+                    [admin_attestation, document_check, in_person_check, remote_supervised_check]
                 verified_at:
                   type: string
                   format: date-time
@@ -2050,7 +2051,11 @@ paths:
         For the assurance category, assurance.scope_aal_requirements (scope to AAL) and
         assurance.upstream_acr_mappings (an external or SAML IdP's acr to the AAL it is taken for)
         are strings holding a JSON object whose names are non-empty and unpadded and whose values
-        are AAL1, AAL2 or AAL3 (400 validation_failed otherwise). Likewise
+        are AAL1, AAL2 or AAL3 (400 validation_failed otherwise).
+        assurance.outbound_acr_mappings (an acr of another vocabulary Authrim may return when a
+        client asks for it, to the AAL it requires) follows the same rules, and its names must
+        also be at most 512 characters, contain no whitespace and not be Authrim's own
+        urn:authrim: values. Likewise
         assurance.scope_ial_requirements maps scopes to IAL1, IAL2 or IAL3;
         assurance.ial_assurance_values maps IAL1, IAL2 or IAL3 to a non-empty list of at most 16
         unique absolute URIs; assurance.saml_authn_context_aal maps absolute

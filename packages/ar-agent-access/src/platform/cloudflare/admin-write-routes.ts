@@ -89,6 +89,11 @@ export const CLOUDFLARE_ADMIN_WRITE_ROUTES: Readonly<Record<string, ManagementOp
           'assurance.upstream_acr_mappings',
           (value) => canonicalizeJson(value),
         ],
+        [
+          'outboundAcrMappings',
+          'assurance.outbound_acr_mappings',
+          (value) => canonicalizeJson(value),
+        ],
         ['includeInIdToken', 'assurance.include_in_id_token'],
         ['includeInAccessToken', 'assurance.include_in_access_token'],
         ['fal2RequiresDPoP', 'assurance.fal2_requires_dpop'],

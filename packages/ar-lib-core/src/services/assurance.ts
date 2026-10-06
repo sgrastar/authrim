@@ -200,6 +200,19 @@ export function parseUpstreamAcrMappings(value: unknown): Record<string, AAL> {
 }
 
 /**
+ * `assurance.outbound_acr_mappings`, as saved: an acr from another vocabulary (InCommon, GakuNin,
+ * eIDAS) that Authrim may return when a client asks for it, to the AAL it requires. Names the
+ * Settings API refuses (see outboundAcrMappingsProblem) are left out.
+ */
+export function parseOutboundAcrMappings(value: unknown): Record<string, AAL> {
+  const map = parseAALMap(value);
+  for (const name of Object.keys(map)) {
+    if (outboundAcrNameProblem(name)) delete map[name];
+  }
+  return map;
+}
+
+/**
  * A saved map of names to AAL1..AAL3. The Settings API refuses anything else; a value that is not
  * such a map still reads as no requirement rather than throwing at runtime.
  */
@@ -238,6 +251,30 @@ export function aalMapProblem(value: unknown): string | null {
       return `${name} must map to AAL1, AAL2 or AAL3`;
     }
   }
+  return null;
+}
+
+/** Why a saved outbound acr map is not valid (null when it is). */
+export function outboundAcrMappingsProblem(value: unknown): string | null {
+  const problem = aalMapProblem(value);
+  if (problem) return problem;
+  for (const name of Object.keys(value as Record<string, unknown>)) {
+    const nameProblem = outboundAcrNameProblem(name);
+    if (nameProblem) return `${name} ${nameProblem}`;
+  }
+  return null;
+}
+
+const MAX_ACR_LENGTH = 512;
+
+/**
+ * Why a name cannot be an outbound acr: acr_values are space-separated, so one with a space could
+ * never be asked for, and Authrim's own values (urn:authrim:, any case) are built in.
+ */
+function outboundAcrNameProblem(name: string): string | null {
+  if (name.length > MAX_ACR_LENGTH) return `is longer than ${MAX_ACR_LENGTH} characters`;
+  if (/\s/.test(name)) return 'contains whitespace';
+  if (name.toLowerCase().startsWith('urn:authrim:')) return "is one of Authrim's own acr values";
   return null;
 }
 
@@ -283,6 +320,11 @@ export interface AssuranceRequest {
   essentialAcr?: { values: readonly string[] | null } | null;
   /** The voluntary `acr_values`. */
   acrValues: readonly string[];
+  /**
+   * `assurance.outbound_acr_mappings`: the other acr values Authrim issues, each counted at its
+   * AAL wherever one of Authrim's own values would be.
+   */
+  outboundAcrMappings?: Readonly<Record<string, AAL>>;
   /** Whether the user can be shown UI (not `prompt=none`). */
   interactive: boolean;
   /** A guest login: the default does not apply (guests are AAL0 by design). */
@@ -297,8 +339,9 @@ export interface RequiredAssurance {
   /** Whether the acr claim was requested as essential. */
   essential: boolean;
   /**
-   * Authrim's own values of an essential acr request that names values: the acr issued must be
-   * one of them (see selectAcr). Null when no values are named (any acr Authrim issues will do).
+   * The values of an essential acr request that Authrim issues (its own and the outbound-mapped
+   * ones): the acr issued must be one of them (see selectAcr). Null when no values are named (any
+   * acr Authrim issues will do).
    */
   essentialAcrs: string[] | null;
   /** An essential acr request names values, none of which Authrim issues: it cannot be met. */
@@ -310,7 +353,8 @@ export interface RequiredAssurance {
  * has always passed, so only a higher default is required; never for a guest), the requirements
  * of the requested scopes, and the lowest of the essential acr values Authrim issues (any of them
  * satisfies the request). The target adds the most preferred voluntary acr_value Authrim issues
- * (acr_values are in order of preference), for an interactive request only.
+ * (acr_values are in order of preference), for an interactive request only. The values Authrim
+ * issues are its own and those `assurance.outbound_acr_mappings` maps, at the AAL mapped.
  */
 export function requiredAAL(request: AssuranceRequest): RequiredAssurance {
   let mandatory: AssuranceLevel =
@@ -325,15 +369,20 @@ export function requiredAAL(request: AssuranceRequest): RequiredAssurance {
   let essentialAcrs: string[] | null = null;
   let unsatisfiable = false;
   if (request.essentialAcr?.values) {
-    essentialAcrs = request.essentialAcr.values.filter((acr) => acrToAAL(acr) !== null);
-    const lowest = lowestOwnAAL(essentialAcrs);
+    const outbound = request.outboundAcrMappings;
+    essentialAcrs = request.essentialAcr.values.filter(
+      (acr) => issuedAcrAAL(acr, outbound) !== null
+    );
+    const lowest = lowestIssuedAAL(essentialAcrs, outbound);
     if (lowest) mandatory = maxAAL(mandatory, lowest);
     else unsatisfiable = true;
   }
 
   let target = mandatory;
   if (request.interactive) {
-    const preferred = request.acrValues.map(acrToAAL).find((level) => level !== null);
+    const preferred = request.acrValues
+      .map((acr) => issuedAcrAAL(acr, request.outboundAcrMappings))
+      .find((level) => level !== null);
     if (preferred) target = maxAAL(target, preferred);
   }
   return { mandatory, target, essential, essentialAcrs, unsatisfiable };
@@ -348,6 +397,8 @@ export function requiredAAL(request: AssuranceRequest): RequiredAssurance {
  *   which OIDC lets the request go without);
  * - otherwise the first voluntary acr_value Authrim issues and the authentication meets, else
  *   Authrim's value for the level (null for AAL0, which an essential request never accepts).
+ * The values Authrim issues are its own and those of `outboundAcrMappings` (at the AAL mapped);
+ * an outbound value is only ever returned to a request that named it.
  */
 export function selectAcr(
   actual: AssuranceLevel,
@@ -355,29 +406,49 @@ export function selectAcr(
     essential: false,
     essentialAcrs: null,
   },
-  acrValues: readonly string[] = []
+  acrValues: readonly string[] = [],
+  outboundAcrMappings?: Readonly<Record<string, AAL>>
 ): string | null {
   if (required.essential) {
     // Values named: one of them or nothing. None named: any acr will do, so the level's own.
-    return required.essentialAcrs ? firstMet(actual, required.essentialAcrs) : aalToAcr(actual);
+    return required.essentialAcrs
+      ? firstMet(actual, required.essentialAcrs, outboundAcrMappings)
+      : aalToAcr(actual);
   }
-  return firstMet(actual, acrValues) ?? aalToAcr(actual);
+  return firstMet(actual, acrValues, outboundAcrMappings) ?? aalToAcr(actual);
 }
 
-/** The first of Authrim's own acr values in a list that a level meets. */
-function firstMet(actual: AssuranceLevel, acrs: readonly string[]): string | null {
+/**
+ * The AAL an acr Authrim issues requires: one of its own values, or one the outbound map names
+ * (null for any other acr).
+ */
+function issuedAcrAAL(acr: string, outbound?: Readonly<Record<string, AAL>>): AAL | null {
+  const own = acrToAAL(acr);
+  if (own) return own;
+  return outbound && Object.hasOwn(outbound, acr) ? outbound[acr] : null;
+}
+
+/** The first acr Authrim issues in a list that a level meets. */
+function firstMet(
+  actual: AssuranceLevel,
+  acrs: readonly string[],
+  outbound?: Readonly<Record<string, AAL>>
+): string | null {
   for (const acr of acrs) {
-    const level = acrToAAL(acr);
+    const level = issuedAcrAAL(acr, outbound);
     if (level && meetsAAL(actual, level)) return acr;
   }
   return null;
 }
 
-/** The lowest level among Authrim's own acr values in a list (others are ignored). */
-function lowestOwnAAL(acrs: readonly string[]): AAL | null {
+/** The lowest level among the acr values Authrim issues in a list (others are ignored). */
+function lowestIssuedAAL(
+  acrs: readonly string[],
+  outbound?: Readonly<Record<string, AAL>>
+): AAL | null {
   let lowest: AAL | null = null;
   for (const acr of acrs) {
-    const level = acrToAAL(acr);
+    const level = issuedAcrAAL(acr, outbound);
     if (level && (!lowest || ORDER[level] < ORDER[lowest])) lowest = level;
   }
   return lowest;

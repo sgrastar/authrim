@@ -501,6 +501,7 @@ const REVIEWED_FIELDS: readonly [string, TenantSettingValueType, TenantSettingHa
       `
     assurance.scope_aal_requirements
     assurance.upstream_acr_mappings
+    assurance.outbound_acr_mappings
     assurance.scope_ial_requirements
     assurance.ial_assurance_values
     assurance.saml_authn_context_aal

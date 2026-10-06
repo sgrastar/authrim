@@ -142,7 +142,7 @@ export const ADMIN_WRITE_TOOL_DEFINITIONS: readonly AgentToolDefinition[] =
       name: 'update_assurance_settings',
       title: 'Update authentication assurance settings',
       description:
-        'Update AAL, FAL, IAL, upstream acr mapping, token-claim, DPoP, and PAR assurance policy through the fixed owner API. Requires operation-bound human approval.',
+        'Update AAL, FAL, IAL, upstream and outbound acr mapping, token-claim, DPoP, and PAR assurance policy through the fixed owner API. Requires operation-bound human approval.',
       contractVersion: '1',
       requiredPermissions: [ADMIN_PERMISSIONS.SETTINGS_ASSURANCE_UPDATE],
       requiredScope: 'agent:write',
@@ -163,6 +163,12 @@ export const ADMIN_WRITE_TOOL_DEFINITIONS: readonly AgentToolDefinition[] =
               additionalProperties: { type: 'string', enum: ['AAL1', 'AAL2', 'AAL3'] },
             },
             upstreamAcrMappings: {
+              type: 'object',
+              maxProperties: 100,
+              propertyNames: { type: 'string', minLength: 1, maxLength: 200 },
+              additionalProperties: { type: 'string', enum: ['AAL1', 'AAL2', 'AAL3'] },
+            },
+            outboundAcrMappings: {
               type: 'object',
               maxProperties: 100,
               propertyNames: { type: 'string', minLength: 1, maxLength: 200 },
