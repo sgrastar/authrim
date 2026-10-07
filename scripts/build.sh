@@ -126,7 +126,7 @@ load_config() {
 
     if [[ ! -f "${config_files[0]}" ]]; then
       log_error "No configuration files found"
-      log_info "First run: ./scripts/setup-config.sh to create a configuration file"
+      log_info "First run: pnpm setup init (npx @authrim/setup init) to create a configuration file"
       exit 1
     fi
 

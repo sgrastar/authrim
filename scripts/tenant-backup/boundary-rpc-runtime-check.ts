@@ -7,9 +7,9 @@ import { build } from 'esbuild';
 import { splitMigrationSql } from '../../packages/ar-lib-core/src/services/control-plane/migration-sql.js';
 
 const require = createRequire(import.meta.url);
-const { Miniflare } = createRequire(require.resolve('wrangler/package.json'))(
-  'miniflare'
-) as typeof import('miniflare');
+const { Miniflare, convertV4MiniflareOptions } = createRequire(
+  require.resolve('wrangler/package.json')
+)('miniflare') as typeof import('miniflare');
 const root = fileURLToPath(new URL('../../', import.meta.url));
 const driver = `
 import {createTenantBackupBoundaryRpcClient} from './packages/ar-lib-core/src/services/tenant-portability/boundary-rpc-client';
@@ -106,31 +106,33 @@ const driverScript = driverBundle.outputFiles?.[0]?.text;
 assert(controlScript);
 assert(driverScript);
 const props = { caller: 'ar-management', audience: 'authrim-control-v1', environmentId: 'env-a' };
-const runtime = new Miniflare({
-  host: '127.0.0.1',
-  workers: [
-    {
-      name: 'driver',
-      modules: true,
-      script: driverScript,
-      compatibilityDate: '2026-07-08',
-      d1Databases: { CLOCK_DB: 'boundary-clock-test' },
-      serviceBindings: {
-        CONTROL: { name: 'control', props },
-        BAD: { name: 'control', props: { ...props, caller: 'ar-plugin-runner' } },
-        OTHER: { name: 'control', props: { ...props, environmentId: 'env-b' } },
+const runtime = new Miniflare(
+  convertV4MiniflareOptions({
+    host: '127.0.0.1',
+    workers: [
+      {
+        name: 'driver',
+        modules: true,
+        script: driverScript,
+        compatibilityDate: '2026-07-08',
+        d1Databases: { CLOCK_DB: 'boundary-clock-test' },
+        serviceBindings: {
+          CONTROL: { name: 'control', props },
+          BAD: { name: 'control', props: { ...props, caller: 'ar-plugin-runner' } },
+          OTHER: { name: 'control', props: { ...props, environmentId: 'env-b' } },
+        },
       },
-    },
-    {
-      name: 'control',
-      modules: true,
-      script: controlScript,
-      compatibilityDate: '2026-07-08',
-      compatibilityFlags: ['nodejs_compat'],
-      d1Databases: { CONTROL_DB: 'boundary-clock-test' },
-    },
-  ],
-});
+      {
+        name: 'control',
+        modules: true,
+        script: controlScript,
+        compatibilityDate: '2026-07-08',
+        compatibilityFlags: ['nodejs_compat'],
+        d1Databases: { CONTROL_DB: 'boundary-clock-test' },
+      },
+    ],
+  })
+);
 try {
   const database = await runtime.getD1Database('CONTROL_DB', 'control');
   for (const file of [

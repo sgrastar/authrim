@@ -10,20 +10,22 @@ import { renderPortableMigrationSql } from '../../packages/ar-lib-core/src/migra
 import { splitMigrationSql } from '../../packages/ar-lib-core/src/services/control-plane/migration-sql.js';
 
 const require = createRequire(import.meta.url);
-const { Miniflare } = createRequire(require.resolve('wrangler/package.json'))(
-  'miniflare'
-) as typeof import('miniflare');
+const { Miniflare, convertV4MiniflareOptions } = createRequire(
+  require.resolve('wrangler/package.json')
+)('miniflare') as typeof import('miniflare');
 const root = fileURLToPath(new URL('../../', import.meta.url));
 const output = process.argv[2];
 if (!output) throw new Error('An existing evidence directory is required');
 const inventory = inventorySchemas(root, true);
-const runtime = new Miniflare({
-  modules: true,
-  script: 'export default {};',
-  host: '127.0.0.1',
-  compatibilityDate: '2026-07-08',
-  d1Databases: ['REGRESSIONS', ...inventory.inspectedStreams.map((_, index) => `CHECK_${index}`)],
-});
+const runtime = new Miniflare(
+  convertV4MiniflareOptions({
+    modules: true,
+    script: 'export default {};',
+    host: '127.0.0.1',
+    compatibilityDate: '2026-07-08',
+    d1Databases: ['REGRESSIONS', ...inventory.inspectedStreams.map((_, index) => `CHECK_${index}`)],
+  })
+);
 const results = [];
 try {
   await verifyD1Regressions(await runtime.getD1Database('REGRESSIONS'));
