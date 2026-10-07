@@ -162,6 +162,7 @@ app.use(
   rateLimitMiddleware({
     ...RateLimitProfiles.moderate,
     endpoints: ['/api/external/*'],
+    endpointClass: 'bridge_external',
   })
 );
 

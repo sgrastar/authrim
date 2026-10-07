@@ -1329,14 +1329,6 @@ app.use('/api/health', async (c, next) => {
     endpoints: ['/api/health'],
   })(c, next);
 });
-app.use('/health/*', async (c, next) => {
-  const profile = await getRateLimitProfileAsync(c.env, 'lenient');
-  return rateLimitMiddleware({
-    ...profile,
-    endpoints: ['/health/*'],
-  })(c, next);
-});
-
 app.get('/api/health', (c) => {
   return c.json({
     status: 'ok',
@@ -1426,9 +1418,11 @@ app.delete(
 );
 
 // Public Client Configuration endpoint (no authentication required)
+// Read-only SDK bootstrap, so it uses the shared public-read bucket (600 per minute: many users
+// behind one school or office address) and does not spend the RFC 7592 / token endpoint bucket.
 app.get(
   '/clients/:client_id/config',
-  rateLimitMiddleware(RateLimitProfiles.moderate),
+  rateLimitMiddleware({ ...RateLimitProfiles.publicRead, endpointClass: 'publicRead' }),
   clientPublicConfigHandler
 );
 
@@ -1453,17 +1447,18 @@ app.use('/api/account/*', async (c, next) => {
   return rateLimitMiddleware({
     ...profile,
     endpoints: ['/api/account/*'],
+    endpointClass: 'mgmt_account',
   })(c, next);
 });
 app.get('/api/account/guest-upgrade', getAccountGuestUpgradeHandler);
 app.post(
   '/api/account/guest-upgrade/start',
-  rateLimitMiddleware(RateLimitProfiles.strict),
+  rateLimitMiddleware({ ...RateLimitProfiles.strict, endpointClass: 'mgmt_account_guest_upgrade' }),
   startAccountGuestUpgradeHandler
 );
 app.post(
   '/api/account/guest-upgrade/complete',
-  rateLimitMiddleware(RateLimitProfiles.strict),
+  rateLimitMiddleware({ ...RateLimitProfiles.strict, endpointClass: 'mgmt_account_guest_upgrade' }),
   completeAccountGuestUpgradeHandler
 );
 app.get('/api/account/profile', getAccountProfileHandler);
@@ -1623,6 +1618,7 @@ app.use('/api/admin/clients/:id/regenerate-secret', async (c, next) => {
   return rateLimitMiddleware({
     ...profile,
     endpoints: ['/api/admin/clients/:id/regenerate-secret'],
+    endpointClass: 'mgmt_admin_client_regenerate_secret',
   })(c, next);
 });
 // Idempotency support for regenerate-secret (prevents duplicate credential regeneration)
@@ -1654,6 +1650,7 @@ app.use('/api/admin/users/:id/suspend', async (c, next) => {
   return rateLimitMiddleware({
     ...profile,
     endpoints: ['/api/admin/users/:id/suspend'],
+    endpointClass: 'mgmt_admin_user_suspend',
   })(c, next);
 });
 app.use('/api/admin/users/:id/lock', async (c, next) => {
@@ -1661,6 +1658,7 @@ app.use('/api/admin/users/:id/lock', async (c, next) => {
   return rateLimitMiddleware({
     ...profile,
     endpoints: ['/api/admin/users/:id/lock'],
+    endpointClass: 'mgmt_admin_user_lock',
   })(c, next);
 });
 // RBAC: Require tenant_admin or higher for suspend/lock operations
@@ -1684,6 +1682,7 @@ app.use('/api/admin/users/:id/activate', async (c, next) => {
   return rateLimitMiddleware({
     ...profile,
     endpoints: ['/api/admin/users/:id/activate'],
+    endpointClass: 'mgmt_admin_user_activate',
   })(c, next);
 });
 app.use(
@@ -2818,6 +2817,7 @@ app.use('/api/admin/webhooks', async (c, next) => {
   return rateLimitMiddleware({
     ...profile,
     endpoints: ['/api/admin/webhooks'],
+    endpointClass: 'mgmt_admin_webhooks',
   })(c, next);
 });
 app.use('/api/admin/webhooks/*', async (c, next) => {
@@ -2825,6 +2825,7 @@ app.use('/api/admin/webhooks/*', async (c, next) => {
   return rateLimitMiddleware({
     ...profile,
     endpoints: ['/api/admin/webhooks/*'],
+    endpointClass: 'mgmt_admin_webhooks',
   })(c, next);
 });
 
@@ -3286,6 +3287,7 @@ app.use('/api/admin/settings/logging', async (c, next) => {
   return rateLimitMiddleware({
     ...profile,
     endpoints: ['/api/admin/settings/logging'],
+    endpointClass: 'mgmt_admin_logging',
   })(c, next);
 });
 app.use('/api/admin/settings/logging/*', async (c, next) => {
@@ -3293,6 +3295,7 @@ app.use('/api/admin/settings/logging/*', async (c, next) => {
   return rateLimitMiddleware({
     ...profile,
     endpoints: ['/api/admin/settings/logging/*'],
+    endpointClass: 'mgmt_admin_logging',
   })(c, next);
 });
 
@@ -3321,6 +3324,7 @@ app.use('/api/admin/tenants/:tenantId/audit/*', async (c, next) => {
   return rateLimitMiddleware({
     ...profile,
     endpoints: ['/api/admin/tenants/:tenantId/audit/*'],
+    endpointClass: 'mgmt_admin_audit',
   })(c, next);
 });
 
@@ -3352,6 +3356,7 @@ app.use('/api/admin/settings/audit-storage', async (c, next) => {
   return rateLimitMiddleware({
     ...profile,
     endpoints: ['/api/admin/settings/audit-storage'],
+    endpointClass: 'mgmt_admin_audit_storage',
   })(c, next);
 });
 app.use('/api/admin/settings/audit-storage/*', async (c, next) => {
@@ -3359,6 +3364,7 @@ app.use('/api/admin/settings/audit-storage/*', async (c, next) => {
   return rateLimitMiddleware({
     ...profile,
     endpoints: ['/api/admin/settings/audit-storage/*'],
+    endpointClass: 'mgmt_admin_audit_storage',
   })(c, next);
 });
 
@@ -3406,6 +3412,7 @@ app.use('/api/admin/jobs', async (c, next) => {
   return rateLimitMiddleware({
     ...profile,
     endpoints: ['/api/admin/jobs'],
+    endpointClass: 'mgmt_admin_jobs',
   })(c, next);
 });
 app.use('/api/admin/jobs/*', async (c, next) => {
@@ -3413,6 +3420,7 @@ app.use('/api/admin/jobs/*', async (c, next) => {
   return rateLimitMiddleware({
     ...profile,
     endpoints: ['/api/admin/jobs/*'],
+    endpointClass: 'mgmt_admin_jobs',
   })(c, next);
 });
 
@@ -3455,6 +3463,7 @@ app.use('/api/admin/stats/*', async (c, next) => {
   return rateLimitMiddleware({
     ...profile,
     endpoints: ['/api/admin/stats/*'],
+    endpointClass: 'mgmt_admin_stats',
   })(c, next);
 });
 
@@ -3490,6 +3499,7 @@ app.use('/api/admin/security/*', async (c, next) => {
   return rateLimitMiddleware({
     ...profile,
     endpoints: ['/api/admin/security/*'],
+    endpointClass: 'mgmt_admin_security',
   })(c, next);
 });
 
@@ -3576,6 +3586,7 @@ app.use('/api/user/consents', async (c, next) => {
   return rateLimitMiddleware({
     ...profile,
     endpoints: ['/api/user/consents'],
+    endpointClass: 'mgmt_user_consents',
   })(c, next);
 });
 app.use('/api/user/consents/*', async (c, next) => {
@@ -3583,6 +3594,7 @@ app.use('/api/user/consents/*', async (c, next) => {
   return rateLimitMiddleware({
     ...profile,
     endpoints: ['/api/user/consents/*'],
+    endpointClass: 'mgmt_user_consents',
   })(c, next);
 });
 
@@ -3604,6 +3616,7 @@ app.use('/api/user/data-export', async (c, next) => {
   return rateLimitMiddleware({
     ...profile,
     endpoints: ['/api/user/data-export'],
+    endpointClass: 'mgmt_user_data_export',
   })(c, next);
 });
 app.use('/api/user/data-export/*', async (c, next) => {
@@ -3611,6 +3624,7 @@ app.use('/api/user/data-export/*', async (c, next) => {
   return rateLimitMiddleware({
     ...profile,
     endpoints: ['/api/user/data-export/*'],
+    endpointClass: 'mgmt_user_data_export',
   })(c, next);
 });
 
@@ -3742,12 +3756,14 @@ app.post(
 // Rate limited with moderate profile for standard operations, stricter for bulk
 app.use('/scim/v2/*', async (c, next) => {
   // Use stricter rate limiting for bulk operations
-  const path = new URL(c.req.url).pathname;
-  const profileName = path.endsWith('/Bulk') ? 'strict' : 'moderate';
-  const profile = await getRateLimitProfileAsync(c.env, profileName);
+  // c.req.path is the decoded path Hono routes on, so /scim/v2/%42ulk is classified as Bulk too.
+  const isBulk = c.req.path === '/scim/v2/Bulk';
+  const profile = await getRateLimitProfileAsync(c.env, isBulk ? 'strict' : 'moderate');
+  // Separate counters: ordinary SCIM traffic must not use up the (much smaller) Bulk budget.
   return rateLimitMiddleware({
     ...profile,
     endpoints: ['/scim/v2/*'],
+    endpointClass: isBulk ? 'mgmt_scim_bulk' : 'mgmt_scim',
   })(c, next);
 });
 

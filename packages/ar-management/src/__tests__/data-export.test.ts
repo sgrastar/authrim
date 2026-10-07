@@ -293,6 +293,48 @@ describe('Data Export API', () => {
       expect(response.status).toBe(401);
     });
 
+    it('should authenticate a cookie session through the authrim_session cookie', async () => {
+      const sessionId = 'g1:apac:0:session_0123456789abcdefghijkl';
+      const getSessionRpc = vi.fn().mockResolvedValue({
+        id: sessionId,
+        userId: 'user-456',
+        tenantId: 'default',
+        expiresAt: Date.now() + 60_000,
+      });
+      mockGetSessionStoreBySessionId.mockReturnValue({ stub: { getSessionRpc } });
+      mockConfigManager.getConsentDataExportEnabled.mockResolvedValue(false);
+
+      const c = createMockContext({ method: 'POST', cookies: { authrim_session: sessionId } });
+      const response = await dataExportRequestHandler(c);
+
+      // Past authentication: the next gate (feature flag) answers instead of 401.
+      expect(response.status).toBe(403);
+      expect(getSessionRpc).toHaveBeenCalledWith(sessionId);
+      expect(mockResolveAccountDataContextFromHono).toHaveBeenCalledWith(c, 'user-456');
+    });
+
+    it('should not accept the legacy sid cookie or a session of another tenant', async () => {
+      const sessionId = 'g1:apac:0:session_0123456789abcdefghijkl';
+      const getSessionRpc = vi.fn().mockResolvedValue({
+        id: sessionId,
+        userId: 'user-456',
+        tenantId: 'other',
+        expiresAt: Date.now() + 60_000,
+      });
+      mockGetSessionStoreBySessionId.mockReturnValue({ stub: { getSessionRpc } });
+
+      const legacy = await dataExportRequestHandler(
+        createMockContext({ method: 'POST', cookies: { sid: sessionId } })
+      );
+      expect(legacy.status).toBe(401);
+      expect(getSessionRpc).not.toHaveBeenCalled();
+
+      const foreignTenant = await dataExportRequestHandler(
+        createMockContext({ method: 'POST', cookies: { authrim_session: sessionId } })
+      );
+      expect(foreignTenant.status).toBe(401);
+    });
+
     it('should reject bearer tokens without data export scope', async () => {
       mockIntrospectTokenFromContext.mockResolvedValue({
         valid: true,

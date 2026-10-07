@@ -249,6 +249,32 @@ describe('worker capability manifests', () => {
     );
   });
 
+  it('requires the atomic rate limiter for every Worker whose routes are rate limited', async () => {
+    const components = [
+      'ar-auth',
+      'ar-token',
+      'ar-userinfo',
+      'ar-management',
+      'ar-bridge',
+      'ar-vc',
+      'ar-agent-access',
+    ] as const;
+    const manifests = await loadWorkerCapabilityManifests({
+      baseDir: ROOT_DIR,
+      components: [...components],
+    });
+
+    for (const compiled of manifests) {
+      expect(compiled.manifest.bindings, compiled.component).toContainEqual(
+        expect.objectContaining({
+          name: 'RATE_LIMITER',
+          kind: 'durable_object_namespace',
+          required: true,
+        })
+      );
+    }
+  });
+
   it('declares encrypted sensitive-detail storage for Bridge token refresh evidence', async () => {
     const [bridge] = await loadWorkerCapabilityManifests({
       baseDir: ROOT_DIR,

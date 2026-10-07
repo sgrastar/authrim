@@ -1347,8 +1347,10 @@ components:
     userSessionCookie:
       type: apiKey
       in: cookie
-      name: sid
-      description: End-user browser session cookie.
+      name: authrim_session
+      description:
+        End-user browser session cookie (the login session of the tenant). The legacy `sid` cookie
+        is no longer read.
     accountSessionCookie:
       type: apiKey
       in: cookie
