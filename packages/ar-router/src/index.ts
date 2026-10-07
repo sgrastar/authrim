@@ -170,6 +170,7 @@ const LOGIN_UI_INTERNAL_HEADERS = [
   'X-Authrim-Original-Host',
   'X-Authrim-Forwarded-Host',
   'X-Authrim-Browser-Origin',
+  'X-Authrim-Shared-Login-Host',
 ] as const;
 
 function sanitizePublicRouterRequest(request: Request): Request {
@@ -778,7 +779,8 @@ async function proxyToUiWorker(
   request: Request,
   baseUrl: string,
   path: string,
-  serviceBinding?: Fetcher
+  serviceBinding?: Fetcher,
+  sharedLoginHost = false
 ): Promise<Response> {
   if (!/^\/(?!\/)[a-zA-Z0-9._~!$&'()*+,;=:@%/-]*$/u.test(path)) {
     return Response.json(
@@ -797,6 +799,8 @@ async function proxyToUiWorker(
 
   const headers = new Headers(request.headers);
   headers.set('X-Authrim-Original-Host', new URL(request.url).host);
+  headers.delete('X-Authrim-Shared-Login-Host');
+  if (sharedLoginHost) headers.set('X-Authrim-Shared-Login-Host', 'true');
   const targetOrigin = targetUrl.origin;
 
   // Rewrite Origin/Referer so SvelteKit CSRF check passes
@@ -878,7 +882,13 @@ app.use('*', async (c, next) => {
     requestHost === loginUiHost &&
     !isLoginUiBackendProxyRequest(c.req.raw)
   ) {
-    return proxyToUiWorker(c.req.raw, c.env.AR_LOGIN_UI_URL, c.req.path, c.env.LOGIN_UI_WORKER);
+    return proxyToUiWorker(
+      c.req.raw,
+      c.env.AR_LOGIN_UI_URL,
+      c.req.path,
+      c.env.LOGIN_UI_WORKER,
+      true
+    );
   }
 
   return next();

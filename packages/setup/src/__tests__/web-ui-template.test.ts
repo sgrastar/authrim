@@ -95,6 +95,67 @@ it('uses theme colors for visited deletion notice links and keyboard focus', () 
 });
 
 describe('getHtmlTemplate', () => {
+  it.each(['unregistered', 'unknown', 'registered', 'request_failed'])(
+    'shows administrator status and permits registration only when confirmed absent: %s',
+    async (state) => {
+      const html = getHtmlTemplate('session-token', false, 'en', en, SUPPORTED_LOCALES);
+      const source = html.slice(
+        html.indexOf('    async function checkAndShowAdminSetup('),
+        html.indexOf('    // Helper to render resource list')
+      );
+      const element = () => {
+        const classes = new Set<string>();
+        return {
+          className: 'hidden',
+          textContent: '',
+          disabled: false,
+          classList: {
+            add: (name: string) => classes.add(name),
+            remove: (name: string) => classes.delete(name),
+          },
+          setAttribute: () => undefined,
+          removeAttribute: () => undefined,
+        };
+      };
+      const heading = element();
+      const description = element();
+      const section = {
+        ...element(),
+        querySelector: (name: string) => (name === 'p' ? description : heading),
+      };
+      const button = element();
+      const result = element();
+      const context = vm.createContext({
+        selectedEnvForDetail: { env: 'test' },
+        document: {
+          getElementById: (id: string) =>
+            id === 'admin-setup-section'
+              ? section
+              : id === 'btn-start-admin-setup'
+                ? button
+                : result,
+        },
+        t: (key: string) => key,
+        console: { error: () => undefined },
+        api: async () => {
+          if (state === 'request_failed') throw new Error('Network unavailable');
+          return {
+            success: true,
+            statusKnown: state !== 'unknown',
+            adminSetupCompleted: state === 'registered',
+          };
+        },
+      });
+      vm.runInContext(source, context);
+      await vm.runInContext("checkAndShowAdminSetup('namespace', 'test')", context);
+      expect(section.className).not.toContain('hidden');
+      expect(button.disabled).toBe(state !== 'unregistered');
+      if (state === 'unknown' || state === 'request_failed') {
+        expect(description.textContent).toBe('web.envDetail.adminStatusUnavailable');
+      }
+    }
+  );
+
   it('retranslates visible prerequisite errors and preserves diagnostic details', () => {
     const html = getHtmlTemplate('session-token', false, 'en', en, SUPPORTED_LOCALES);
     const source = html.slice(

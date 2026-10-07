@@ -6000,6 +6000,8 @@ paths:
         - Admin Agent Access
       operationId: listMyAdminAgentConsents
       summary: List Agent delegation and OAuth client consent records for the current Admin.
+      description: >-
+        Uses the authenticated Admin identity without requiring a selected tenant runtime snapshot.
       security:
         - adminBearer: []
         - adminSessionCookie: []
@@ -6057,6 +6059,7 @@ paths:
         Delegation withdrawal suspends the Grant. OAuth client withdrawal leaves the Grant active
         and revokes only that client consent and token families. Both paths synchronously commit an
         outbox record and audit evidence.
+        Uses the authenticated Admin identity without requiring a selected tenant runtime snapshot.
       security:
         - adminBearer: []
         - adminSessionCookie: []
@@ -29099,8 +29102,8 @@ paths:
       operationId: getApiAdminMePasskeys
       summary: List Passkeys.
       description: >-
-        List Passkeys in the Admin Passkeys area. Use this operation to retrieve passkey data
-        without mutating tenant state.
+        List Passkeys owned by the authenticated Admin. A selected tenant runtime snapshot is
+        not required.
       x-authrim-route-coverage: inferred-from-source
       responses:
         '200':
@@ -29117,8 +29120,8 @@ paths:
       operationId: deleteApiAdminMePasskeysById
       summary: Delete Passkey.
       description: >-
-        Delete Passkey in the Admin Passkeys area. The operation changes tenant state and should be
-        protected by the documented admin authorization and audit controls.
+        Delete a Passkey owned by the authenticated Admin. A selected tenant runtime snapshot is
+        not required; ownership and admin authorization are still enforced.
       x-authrim-route-coverage: inferred-from-source
       responses:
         '200':
@@ -29140,8 +29143,8 @@ paths:
       operationId: patchApiAdminMePasskeysById
       summary: Update Passkey.
       description: >-
-        Update Passkey in the Admin Passkeys area. The request body is JSON unless the detailed
-        schema for this operation states otherwise.
+        Update a Passkey owned by the authenticated Admin. A selected tenant runtime snapshot is
+        not required; ownership and admin authorization are still enforced.
       x-authrim-route-coverage: inferred-from-source
       responses:
         '200':
@@ -29166,8 +29169,8 @@ paths:
       operationId: postApiAdminMePasskeysComplete
       summary: Complete Passkey.
       description: >-
-        Complete Passkey in the Admin Passkeys area. The request body is JSON unless the detailed
-        schema for this operation states otherwise.
+        Complete Passkey registration for the authenticated Admin. A selected tenant runtime
+        snapshot is not required. The registration challenge and browser origin are verified.
       x-authrim-route-coverage: inferred-from-source
       responses:
         '201':
@@ -29188,6 +29191,7 @@ paths:
       description: >-
         Generate WebAuthn registration options and store a short-lived challenge for the current
         admin user.
+        A selected tenant runtime snapshot is not required.
       x-authrim-route-coverage: inferred-from-source
       responses:
         '200':

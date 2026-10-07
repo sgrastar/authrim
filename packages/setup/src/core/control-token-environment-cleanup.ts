@@ -8,7 +8,7 @@ import {
   type CloudflareTokenPolicy,
   type CloudflareTokenRecord,
 } from './cloudflare-control-token-bootstrap.js';
-import { getAccountId, getCloudflareApiToken } from './cloudflare.js';
+import { getAccountId, getCloudflareApiToken, queryD1Rows } from './cloudflare.js';
 import {
   readControlProvisioningAuthority,
   type ControlProvisioningAuthorityState,
@@ -80,6 +80,7 @@ export interface ControlTokenCleanupConclusion {
 
 interface CleanupDependencies {
   readAuthority?: typeof readControlProvisioningAuthority;
+  queryAuthoritySchema?: typeof queryD1Rows;
   loadPending?: typeof loadPendingControlBootstrap;
   resolveAccountId?: () => Promise<string | null>;
   resolveApiToken?: () => Promise<string | null>;
@@ -673,6 +674,7 @@ async function readAuthorityForCleanup(input: {
   controlDatabaseName: string;
   environment: string;
   readAuthority: typeof readControlProvisioningAuthority;
+  queryAuthoritySchema: typeof queryD1Rows;
 }): Promise<ControlProvisioningAuthorityState | null> {
   try {
     return await input.readAuthority({
@@ -680,6 +682,21 @@ async function readAuthorityForCleanup(input: {
       environmentId: input.environment,
     });
   } catch (error) {
+    // An interrupted initial setup may have created Control D1 without its schema.
+    // Confirm absence on the same immutable database ID; never infer it from an
+    // authentication, transport, or malformed-authority error.
+    const message = error instanceof Error ? error.message : String(error);
+    if (/no such table:\s*control_environments\b/iu.test(message)) {
+      try {
+        const tables = await input.queryAuthoritySchema(
+          input.controlDatabaseName,
+          "SELECT name FROM sqlite_master WHERE name = 'control_environments' LIMIT 1"
+        );
+        if (tables.length === 0) return null;
+      } catch {
+        // Retain the original failure and stop deletion if schema verification fails.
+      }
+    }
     throw new Error('control_token_cleanup_authority_unavailable_manual_recovery_required', {
       cause: error,
     });
@@ -904,6 +921,7 @@ export async function cleanupSetupManagedControlTokens(input: {
         controlDatabaseName: controlDatabaseIdentifier,
         environment: input.environment,
         readAuthority: input.dependencies?.readAuthority ?? readControlProvisioningAuthority,
+        queryAuthoritySchema: input.dependencies?.queryAuthoritySchema ?? queryD1Rows,
       })
     : undefined;
   if (pendingArtifact) {

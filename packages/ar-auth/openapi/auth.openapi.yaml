@@ -1688,7 +1688,8 @@ paths:
       summary: Render the initial admin setup page.
       description:
         Returns the browser setup HTML page when a valid setup token is supplied, or an HTML
-        error/completed page when setup is unavailable.
+        error/completed page when setup is unavailable. This platform-level setup page is available
+        before tenant provisioning completes.
       responses:
         '200':
           $ref: '#/components/responses/Any'
@@ -1707,7 +1708,8 @@ paths:
       summary: Complete router-side initial setup.
       description:
         Validates the temporary setup session, permanently disables router-side setup, cleans
-        up setup CSRF state, and returns Admin UI passkey setup handoff details.
+        up setup CSRF state, and returns Admin UI passkey setup handoff details. Tenant provisioning
+        is not a prerequisite; setup session and origin checks still apply.
       responses:
         '200':
           $ref: '#/components/responses/SetupComplete'
@@ -1728,7 +1730,7 @@ paths:
       description:
         Validates the one-time setup token and CSRF token, creates the initial administrator,
         assigns the system admin role, and returns a temporary setup session plus Admin UI setup
-        token.
+        token. This platform-level operation does not require tenant provisioning to complete.
       responses:
         '200':
           $ref: '#/components/responses/SetupInitialize'
@@ -1748,7 +1750,7 @@ paths:
       summary: Read initial setup status.
       description:
         Returns whether the system has an administrator, whether setup is disabled, and whether
-        a setup token is currently present.
+        a setup token is currently present. Available before tenant provisioning completes.
       responses:
         '200':
           $ref: '#/components/responses/SetupStatus'

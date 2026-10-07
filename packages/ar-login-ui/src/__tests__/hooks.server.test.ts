@@ -659,6 +659,49 @@ describe('Login UI proxy hooks', () => {
 		).toBe('second.test.authrim.com');
 	});
 
+	it('keeps the router-selected tenant host despite a stale shared-login cookie', async () => {
+		const { getForwardedHost } = await import('../hooks.server');
+		const { LOGIN_TENANT_HOST_COOKIE } = await import('$lib/discovery-session');
+		const event = {
+			request: new Request('https://login.example.com/login', {
+				headers: { 'x-authrim-original-host': 'first.test.authrim.com' }
+			}),
+			url: new URL('https://login.example.com/login'),
+			cookies: {
+				get: (name: string) =>
+					name === LOGIN_TENANT_HOST_COOKIE ? 'second.test.authrim.com' : undefined
+			}
+		};
+
+		expect(
+			getForwardedHost(event as never, {
+				PUBLIC_API_BASE_URL: 'https://first.test.authrim.com'
+			})
+		).toBe('first.test.authrim.com');
+	});
+
+	it('preserves tenant selection on a shared login host proxied to an internal Worker host', async () => {
+		const { getForwardedHost } = await import('../hooks.server');
+		const { LOGIN_TENANT_HOST_COOKIE } = await import('$lib/discovery-session');
+		const event = {
+			request: new Request(
+				'https://login-worker.example.workers.dev/api/auth/authentication-methods',
+				{
+					headers: {
+						'x-authrim-original-host': 'login.example.com',
+						'x-authrim-shared-login-host': 'true'
+					}
+				}
+			),
+			url: new URL('https://login-worker.example.workers.dev/api/auth/authentication-methods'),
+			cookies: {
+				get: (name: string) =>
+					name === LOGIN_TENANT_HOST_COOKIE ? 'second.test.authrim.com' : undefined
+			}
+		};
+		expect(getForwardedHost(event as never)).toBe('second.test.authrim.com');
+	});
+
 	it('targets the forwarded tenant host when using the router service binding', async () => {
 		const { resolveHumanVerificationProviderForRequest } = await import('../hooks.server');
 		const fetch = vi.fn(async (_input: Request | string, _init?: RequestInit) =>

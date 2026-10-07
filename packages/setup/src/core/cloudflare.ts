@@ -6992,24 +6992,12 @@ export async function checkAdminSetupStatus(
   kvNamespaceId: string
 ): Promise<{ completed: boolean; error?: string }> {
   try {
-    const { stdout } = await wrangler([
-      'kv',
-      'key',
-      'get',
-      'setup:completed',
-      '--namespace-id',
-      kvNamespaceId,
-      '--remote',
-    ]);
-
-    return { completed: stdout.trim() === 'true' };
+    // An absent key produces a generic HTTP 404 in current Wrangler versions.
+    // List exact keys first so a missing namespace or auth failure stays unknown.
+    const value = await getOptionalKVKeyByNamespaceId(kvNamespaceId, 'setup:completed');
+    return { completed: value?.trim() === 'true' };
   } catch (error) {
-    // Key not found or other error - assume not completed
     const message = error instanceof Error ? error.message : String(error);
-    // "key not found" is expected when setup hasn't been completed
-    if (message.includes('key') && message.includes('not found')) {
-      return { completed: false };
-    }
     return { completed: false, error: message };
   }
 }

@@ -1575,7 +1575,9 @@ describe('Router Worker', () => {
         LOGIN_UI_WORKER: loginUiWorker,
       };
 
-      const req = new Request('https://first.example.com/login?client_id=test');
+      const req = new Request('https://first.example.com/login?client_id=test', {
+        headers: { 'X-Authrim-Shared-Login-Host': 'true' },
+      });
       const res = await app.fetch(req, envWithLoginUi);
 
       expect(res.status).toBe(200);
@@ -1588,6 +1590,7 @@ describe('Router Worker', () => {
       expect(new URL(proxiedRequest.url).pathname).toBe('/login');
       expect(new URL(proxiedRequest.url).search).toBe('?client_id=test');
       expect(proxiedRequest.headers.get('X-Authrim-Original-Host')).toBe('first.example.com');
+      expect(proxiedRequest.headers.get('X-Authrim-Shared-Login-Host')).toBeNull();
     });
 
     it('should serve canonical Login UI paths without replacing the API response at the Router root', async () => {
@@ -1644,6 +1647,7 @@ describe('Router Worker', () => {
       const proxiedRequest = loginUiWorker.fetch.mock.calls[0][0];
       expect(new URL(proxiedRequest.url).pathname).toBe('/api/auth/authentication-methods');
       expect(proxiedRequest.headers.get('X-Authrim-Original-Host')).toBe('login.example.com');
+      expect(proxiedRequest.headers.get('X-Authrim-Shared-Login-Host')).toBe('true');
     });
 
     it.each(['/logged-out', '/logout-complete'])(
