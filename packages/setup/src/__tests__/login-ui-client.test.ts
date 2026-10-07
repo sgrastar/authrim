@@ -42,6 +42,35 @@ describe('ensureLoginUiClient', () => {
     }
   });
 
+  it('sends a different Idempotency-Key for a retry that names a new salt', async () => {
+    const keys: string[] = [];
+    fetchMock.mockImplementation(async (_url, init) => {
+      const headers = new Headers(init?.headers);
+      if (init?.method === 'POST') {
+        keys.push(headers.get('Idempotency-Key') ?? '');
+        return jsonResponse({ client: { client_id: 'client-123' } });
+      }
+      return jsonResponse({ clients: [], pagination: { total: 0 } });
+    });
+    const request = {
+      apiBaseUrl: 'http://localhost:8787',
+      loginUiUrl: 'http://localhost:8787',
+      keysDir: tempDir,
+      adminBearerToken,
+      retryDelayMs: 1,
+      maxRetries: 1,
+    };
+
+    await ensureLoginUiClient(request);
+    await ensureLoginUiClient(request);
+    await ensureLoginUiClient({ ...request, idempotencyKeySalt: 'retry-1' });
+
+    // The server replays a stored failure for a repeated key; a salt makes a new request.
+    expect(keys[0]).toBe(keys[1]);
+    expect(keys[2]).not.toBe(keys[0]);
+    for (const key of keys) expect(key).toMatch(/^setup-login-ui-[a-f0-9]{32}$/u);
+  });
+
   it('retries when the router is not yet reachable on workers.dev', async () => {
     const progress: string[] = [];
 

@@ -48,6 +48,21 @@ function environment(current: NotificationProviderOrder | null = null) {
 }
 
 describe('notification provider projection', () => {
+  it('never installs the local-only log notifier on behalf of an administrator', async () => {
+    const { env, configureNotificationInstallation, replacePluginCredentials } = environment();
+
+    // An administrator can name any provider in an order, but only the built-in providers are
+    // installed by this path. `notifier-log` is installed solely by `authrim-setup local`.
+    await projectTenantNotificationProviderOrder(env, {
+      tenantId: 'tenant-a',
+      channel: 'email',
+      providerIds: ['notifier-log'],
+    });
+
+    expect(configureNotificationInstallation).not.toHaveBeenCalled();
+    expect(replacePluginCredentials).not.toHaveBeenCalled();
+  });
+
   it('derives the same installation identity for every projection owner', async () => {
     const { env } = environment();
     await expect(

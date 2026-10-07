@@ -5,16 +5,18 @@ import {
   sqlitePackedRowExpression,
 } from '../../packages/ar-lib-core/src/services/tenant-portability/sqlite-packed-row.js';
 const require = createRequire(import.meta.url);
-const { Miniflare } = createRequire(require.resolve('wrangler/package.json'))(
-  'miniflare'
-) as typeof import('miniflare');
-const runtime = new Miniflare({
-  modules: true,
-  script: 'export default {};',
-  compatibilityDate: '2026-07-08',
-  host: '127.0.0.1',
-  d1Databases: ['FIXTURE'],
-});
+const { Miniflare, convertV4MiniflareOptions } = createRequire(
+  require.resolve('wrangler/package.json')
+)('miniflare') as typeof import('miniflare');
+const runtime = new Miniflare(
+  convertV4MiniflareOptions({
+    modules: true,
+    script: 'export default {};',
+    compatibilityDate: '2026-07-08',
+    host: '127.0.0.1',
+    d1Databases: ['FIXTURE'],
+  })
+);
 try {
   const db = await runtime.getD1Database('FIXTURE');
   await db.prepare('CREATE TABLE source(id TEXT NOT NULL PRIMARY KEY,value TEXT)').run();

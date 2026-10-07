@@ -128,10 +128,10 @@ The Web UI serves static font files from the local setup server and does not loa
 Only one Admin UI is deployed per environment. When the Admin UI component is enabled, choose
 which package fills it:
 
-| Choice                    | `components.adminUiVariant` | Package                      |
-| ------------------------- | --------------------------- | ---------------------------- |
-| Current Admin UI          | `legacy` (default)          | `packages/ar-admin-ui`       |
-| Admin console (preview)   | `console`                   | `packages/ar-admin-console`  |
+| Choice                  | `components.adminUiVariant` | Package                     |
+| ----------------------- | --------------------------- | --------------------------- |
+| Current Admin UI        | `legacy` (default)          | `packages/ar-admin-ui`      |
+| Admin console (preview) | `console`                   | `packages/ar-admin-console` |
 
 Both deploy into the same Worker (`{env}-ar-admin-ui`) with the same URL, API origin settings,
 router binding and Admin UI BFF machine credentials. Because the Admin UI host does not change,
@@ -506,6 +506,29 @@ Show or validate local configuration.
 npx @authrim/setup config --env prod --show
 npx @authrim/setup config --config .authrim/prod/config.json --validate
 ```
+
+### `local`
+
+Run a complete Authrim environment on your machine, with no Cloudflare account. Workers run under
+one `wrangler dev` session (Miniflare D1, KV and Durable Objects), the issuer is
+`http://localhost:8787`, and email codes and other notifications are written to the Worker log.
+It must be run from a source checkout, on macOS, Linux or WSL (native Windows is refused).
+
+```bash
+pnpm setup:local init     # keys, Wrangler configs, local databases and seed data
+pnpm setup:local up       # start Workers and the Login/Admin UIs (also: pnpm dev)
+pnpm setup:local reset    # delete and rebuild
+```
+
+`pnpm setup:local ...` builds the workspace packages the CLI imports first (`pnpm setup:bootstrap`,
+cached by Turbo), so it works right after `pnpm install`. The API is on port 8787, the Login UI on
+5173 and the Admin UI on 5174 (`init --port/--login-ui-port/--admin-ui-port`). Per-environment
+files are `packages/*/wrangler.local.<env>.toml` and `.dev.vars.<env>`, and `init`, `up` and
+`reset` hold a per-environment lock (`.authrim-local/<env>.lock/`).
+
+State lives in `.authrim-local/<env>/`, apart from Cloudflare environments in `.authrim/`. See the
+[Development Guide](../../docs/getting-started/development.md) for what differs from a deployed
+environment (Control runs without Cloudflare credentials, no backups, no queues or R2).
 
 ### Other Maintenance Commands
 

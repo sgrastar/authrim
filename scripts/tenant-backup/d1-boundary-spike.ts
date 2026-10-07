@@ -34,9 +34,9 @@ const controlDdl = `
   CREATE TABLE IF NOT EXISTS published(id TEXT PRIMARY KEY NOT NULL, canonical_value TEXT NOT NULL);
 `;
 const require = createRequire(import.meta.url);
-const { Miniflare } = createRequire(require.resolve('wrangler/package.json'))(
-  'miniflare'
-) as typeof import('miniflare');
+const { Miniflare, convertV4MiniflareOptions } = createRequire(
+  require.resolve('wrangler/package.json')
+)('miniflare') as typeof import('miniflare');
 const script = `
 import { DurableObject } from 'cloudflare:workers';
 export class Boundary extends DurableObject {
@@ -122,18 +122,19 @@ export default { async fetch(request,env) {
 `;
 const persistence = mkdtempSync(join(tmpdir(), 'authrim-backup-boundary-'));
 const makeRuntime = () =>
-  new Miniflare({
-    modules: true,
-    script,
-    host: '127.0.0.1',
-    compatibilityDate: '2026-07-08',
-    d1Databases: ['CORE', 'PII'],
-    kvNamespaces: ['KV_PROJECTION'],
-    durableObjects: { BOUNDARY: { className: 'Boundary', useSQLite: true } },
-    d1Persist: join(persistence, 'd1'),
-    durableObjectsPersist: join(persistence, 'do'),
-    kvPersist: join(persistence, 'kv'),
-  });
+  new Miniflare(
+    convertV4MiniflareOptions({
+      modules: true,
+      script,
+      host: '127.0.0.1',
+      compatibilityDate: '2026-07-08',
+      d1Databases: ['CORE', 'PII'],
+      kvNamespaces: ['KV_PROJECTION'],
+      durableObjects: { BOUNDARY: { className: 'Boundary', useSQLite: true } },
+      // Miniflare 5 keeps one persistence root; plugins store under d1/, do/ and kv/ inside it.
+      resourcePersistencePath: persistence,
+    })
+  );
 let runtime = makeRuntime();
 try {
   let core = await runtime.getD1Database('CORE');

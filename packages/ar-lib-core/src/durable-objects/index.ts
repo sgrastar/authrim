@@ -92,7 +92,6 @@ export type {
   CreateRuntimeStateParams,
   OAuthFlowParams as FlowOAuthParams,
 } from './FlowStateStore';
-export { DEFAULT_FLOW_TTL_MS, MAX_PROCESSED_REQUEST_IDS } from './FlowStateStore';
 
 /**
  * Default export for ES Module compatibility

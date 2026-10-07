@@ -31,6 +31,7 @@ import {
 } from './cli/commands/signing-key-rotate.js';
 import { rotateLookupHmacKeyCommand } from './cli/commands/lookup-hmac-rotate.js';
 import { controlProvisionCommand } from './cli/commands/control-provision.js';
+import { registerLocalCommands } from './cli/commands/local.js';
 import { recoverInitialD1Command } from './cli/commands/recover-initial-d1.js';
 import { recoverAbsentQueueCommand } from './cli/commands/recover-absent-queue.js';
 import {
@@ -1039,6 +1040,8 @@ program
   .option('--d1', 'Show only D1 database information')
   .option('--workers', 'Show only Worker information')
   .action(infoCommand);
+
+registerLocalCommands(program);
 
 function normalizePnpmScriptArgv(argv: string[]): string[] {
   const [, , commandName, firstCommandArg] = argv;

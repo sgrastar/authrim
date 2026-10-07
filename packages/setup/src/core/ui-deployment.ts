@@ -38,6 +38,8 @@ export interface ResolveUiDeploymentOptions {
   config: AuthrimConfig;
   apiBaseUrl?: string;
   loginUiClientId?: string;
+  /** Local development only: UI and API on different localhost ports are one browser site. */
+  allowLocalhostSameSite?: boolean;
 }
 
 export interface UiDeploymentSettings {
@@ -212,6 +214,7 @@ export function resolveUiDeploymentSettings(
   const sameOrigin = apiOrigin.origin === uiOrigin.origin;
   const siteClassification = classifyUiApiSite(apiBaseUrl, uiUrl, {
     baseDomain: configuredBaseDomain,
+    allowLocalhostSameSite: options.allowLocalhostSameSite,
   });
 
   const adminUiApiMode: AdminUiApiMode | undefined =

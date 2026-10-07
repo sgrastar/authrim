@@ -214,8 +214,8 @@ the release updater may backfill blank history checksums only from a checksum-ve
 manifest. The evidence includes both bundle files and their `supersedes` entries; draft manifests
 cannot authorize this compatibility conversion.
 
-Repository maintenance helpers (`scripts/apply-migrations.sh`, `scripts/setup-admin-db.sh`, and the
-legacy build resource setup) delegate to the same manifest-aware runner. Directly looping over SQL
+Repository maintenance helpers (`scripts/apply-migrations.sh` and the legacy build resource setup)
+delegate to the same manifest-aware runner. Directly looping over SQL
 files is unsupported because it cannot safely recognize consolidated release bundles. For
 `scripts/setup-d1.sh`, core, PII, and Admin roles are applied separately; use `--role=core`,
 `--role=pii`, or `--role=admin` when invoking `scripts/apply-migrations.sh` directly.

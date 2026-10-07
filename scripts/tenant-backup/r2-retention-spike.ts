@@ -53,9 +53,9 @@ const claimSql = `UPDATE fixture_objects SET state='deleting'
       AND json_extract(prior.row_json,'$.object_id[1]')=fixture_objects.object_id)
   RETURNING object_key`;
 const require = createRequire(import.meta.url);
-const { Miniflare } = createRequire(require.resolve('wrangler/package.json'))(
-  'miniflare'
-) as typeof import('miniflare');
+const { Miniflare, convertV4MiniflareOptions } = createRequire(
+  require.resolve('wrangler/package.json')
+)('miniflare') as typeof import('miniflare');
 const { buildSync } = createRequire(require.resolve('wrangler/package.json'))(
   'esbuild'
 ) as typeof import('esbuild');
@@ -91,14 +91,16 @@ const cryptoWorker = buildSync({
   format: 'esm',
   platform: 'neutral',
 });
-const runtime = new Miniflare({
-  modules: true,
-  script: cryptoWorker.outputFiles[0].text,
-  host: '127.0.0.1',
-  compatibilityDate: '2026-07-08',
-  d1Databases: ['REFERENCE_DB'],
-  r2Buckets: ['ASSETS'],
-});
+const runtime = new Miniflare(
+  convertV4MiniflareOptions({
+    modules: true,
+    script: cryptoWorker.outputFiles[0].text,
+    host: '127.0.0.1',
+    compatibilityDate: '2026-07-08',
+    d1Databases: ['REFERENCE_DB'],
+    r2Buckets: ['ASSETS'],
+  })
+);
 const sha256 = (body: string | Uint8Array) => createHash('sha256').update(body).digest('hex');
 try {
   const db = await runtime.getD1Database('REFERENCE_DB');

@@ -5,6 +5,11 @@ import {
   type InProcessPluginHookHandler,
   type InProcessPluginRegistry,
 } from './backend-router';
+import {
+  LOCAL_LOG_NOTIFIER_PLUGIN_ID,
+  isLocalLogNotifierEnabled,
+  localLogNotifierHandler,
+} from './local-log-notifier';
 
 const RESEND_PLUGIN_ID = 'notifier-resend';
 const CLOUDFLARE_PLUGIN_ID = 'notifier-cloudflare';
@@ -123,10 +128,13 @@ function cloudflareHandler(env: PluginRunnerEnv): InProcessPluginHookHandler {
 }
 
 export function createBuiltinNotifierRegistry(env: PluginRunnerEnv): InProcessPluginRegistry {
-  return new StaticInProcessPluginRegistry(
-    new Map([
-      [`${RESEND_PLUGIN_ID}:notifier.send`, resendHandler(env)],
-      [`${CLOUDFLARE_PLUGIN_ID}:notifier.send`, cloudflareHandler(env)],
-    ])
-  );
+  const handlers = new Map<string, InProcessPluginHookHandler>([
+    [`${RESEND_PLUGIN_ID}:notifier.send`, resendHandler(env)],
+    [`${CLOUDFLARE_PLUGIN_ID}:notifier.send`, cloudflareHandler(env)],
+  ]);
+  // Absent unless the deployment is a local development session.
+  if (isLocalLogNotifierEnabled(env)) {
+    handlers.set(`${LOCAL_LOG_NOTIFIER_PLUGIN_ID}:notifier.send`, localLogNotifierHandler());
+  }
+  return new StaticInProcessPluginRegistry(handlers);
 }

@@ -9,12 +9,13 @@ import { completeTenantBackupUpload } from '../../packages/ar-lib-core/src/servi
 import { cleanupExpiredTenantBackupUpload } from '../../packages/ar-lib-core/src/services/tenant-portability/cleanup-upload';
 import { splitMigrationSql } from '../../packages/ar-lib-core/src/services/control-plane/migration-sql';
 const require = createRequire(import.meta.url);
-const { Miniflare } = createRequire(require.resolve('wrangler/package.json'))(
-  'miniflare'
-) as typeof import('miniflare');
-const runtime = new Miniflare({
-  modules: true,
-  script: `export default {async fetch(_request,env){
+const { Miniflare, convertV4MiniflareOptions } = createRequire(
+  require.resolve('wrangler/package.json')
+)('miniflare') as typeof import('miniflare');
+const runtime = new Miniflare(
+  convertV4MiniflareOptions({
+    modules: true,
+    script: `export default {async fetch(_request,env){
     const object=await env.INPUTS.get('tenant-backup-inputs/local-tenant/local-upload');
     if(!object?.body)return new Response('missing',{status:404});
     const digestStream=new crypto.DigestStream('SHA-256');
@@ -22,10 +23,11 @@ const runtime = new Miniflare({
     const digest=Array.from(new Uint8Array(await digestStream.digest),byte=>byte.toString(16).padStart(2,'0')).join('');
     return Response.json({digest,size:object.size});
   }}`,
-  compatibilityDate: '2026-07-08',
-  d1Databases: ['DB'],
-  r2Buckets: ['INPUTS'],
-});
+    compatibilityDate: '2026-07-08',
+    d1Databases: ['DB'],
+    r2Buckets: ['INPUTS'],
+  })
+);
 try {
   const database = await runtime.getD1Database('DB');
   const bucket = await runtime.getR2Bucket('INPUTS');
