@@ -8,6 +8,7 @@ vi.mock('execa', () => ({
 }));
 
 import {
+  checkAdminSetupStatus,
   getOptionalKVKeyByNamespaceId,
   listKVNamespaces,
   parseKVKeyListOutput,
@@ -15,6 +16,26 @@ import {
 } from '../core/cloudflare.js';
 
 describe('Cloudflare KV namespace listing', () => {
+  it('recognizes an absent completion key without issuing a key GET that returns 404', async () => {
+    execaMock.mockResolvedValueOnce({ exitCode: 0, stdout: '[]', stderr: '' });
+    await expect(checkAdminSetupStatus('config-id')).resolves.toEqual({ completed: false });
+    expect(execaMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('recognizes a registered administrator from the exact completion key', async () => {
+    execaMock
+      .mockResolvedValueOnce({ exitCode: 0, stdout: '[{"name":"setup:completed"}]', stderr: '' })
+      .mockResolvedValueOnce({ exitCode: 0, stdout: 'true\n', stderr: '' });
+    await expect(checkAdminSetupStatus('config-id')).resolves.toEqual({ completed: true });
+  });
+
+  it('keeps namespace and authorization failures distinct from an absent completion key', async () => {
+    execaMock.mockRejectedValueOnce(new Error('namespace not found (404)'));
+    const status = await checkAdminSetupStatus('config-id');
+    expect(status.completed).toBe(false);
+    expect(status.error).toContain('404');
+  });
+
   const originalAccountId = process.env.CLOUDFLARE_ACCOUNT_ID;
   const originalApiToken = process.env.CLOUDFLARE_API_TOKEN;
 

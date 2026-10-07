@@ -2282,6 +2282,7 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.envDetail.deploymentIncomplete': 'Deployment incomplete',
           'web.envDetail.deploymentStatusUnknown': 'Status not verified',
           'web.envDetail.adminAccount': 'Admin Account',
+          'web.envDetail.adminStatusUnavailable': 'Could not confirm administrator registration. Refresh the environment details to retry. Registration remains disabled until the status is confirmed.',
           'web.envDetail.workerUpdateHint': 'Compare deployed and local builds',
           'web.envDetail.serviceSiteFallback': 'Service Site Binding',
           'web.envDetail.serviceSiteFallbackHint': 'Bind ar-router to your service Worker',
@@ -2423,6 +2424,7 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.envDetail.deploymentIncomplete': 'デプロイ未完了',
           'web.envDetail.deploymentStatusUnknown': '状態未確認',
           'web.envDetail.adminAccount': '管理者アカウント',
+          'web.envDetail.adminStatusUnavailable': '管理者の登録状態を確認できませんでした。環境詳細を開き直して再確認してください。状態を確認できるまで登録操作はできません。',
           'web.envDetail.workerUpdateHint': 'デプロイ済みバージョンとローカルのビルドを比較',
           'web.envDetail.serviceSiteFallback': 'Service Site Binding',
           'web.envDetail.serviceSiteFallbackHint': 'ar-routerにサービス用Workerをbinding',
@@ -2932,6 +2934,7 @@ ${SETUP_WEB_UI_STYLE}</style>
       const envManagementSupplementalRows = {
         'web.envDetail.capacityTab': ['D1 容量', 'D1 容量', 'Capacidad D1', 'Capacidade D1', 'Capacité D1', 'D1-Kapazität', 'D1 용량', 'Емкость D1', 'Kapasitas D1'],
         'web.envDetail.capacityTitle': ['控制平面容量', '控制平面容量', 'Capacidad del plano de control', 'Capacidade do plano de controle', 'Capacité du plan de contrôle', 'Kapazität der Steuerungsebene', '컨트롤 플레인 용량', 'Емкость плоскости управления', 'Kapasitas control plane'],
+        'web.envDetail.adminStatusUnavailable': ['无法确认管理员注册状态。请重新打开环境详情重试。确认前无法注册。', '無法確認管理員註冊狀態。請重新開啟環境詳情重試。確認前無法註冊。', 'No se pudo confirmar el registro del administrador. Vuelve a abrir los detalles del entorno para reintentar. El registro requiere confirmar el estado.', 'Não foi possível confirmar o cadastro do administrador. Reabra os detalhes do ambiente para tentar novamente. O cadastro exige a confirmação do estado.', 'Impossible de confirmer l’inscription de l’administrateur. Rouvrez les détails de l’environnement pour réessayer. L’inscription nécessite la confirmation de l’état.', 'Die Administratorregistrierung konnte nicht bestätigt werden. Öffnen Sie die Umgebungsdetails erneut. Die Registrierung bleibt bis zur Bestätigung gesperrt.', '관리자 등록 상태를 확인할 수 없습니다. 환경 상세를 다시 열어 확인하세요. 확인 전에는 등록할 수 없습니다.', 'Не удалось проверить регистрацию администратора. Откройте сведения о среде повторно. Регистрация недоступна до проверки статуса.', 'Status pendaftaran administrator tidak dapat dikonfirmasi. Buka kembali detail lingkungan untuk mencoba lagi. Pendaftaran memerlukan konfirmasi status.'],
         'web.envDetail.capacityHint': ['由服务器管理的放置方案', '由伺服器管理的配置方案', 'Plan de ubicación administrado por el servidor', 'Plano de alocação gerenciado pelo servidor', 'Plan de placement géré par le serveur', 'Serververwalteter Platzierungsplan', '서버 관리 배치 계획', 'Управляемый сервером план размещения', 'Rencana penempatan yang dikelola server'],
         'web.envDetail.capacityScope': ['范围', '範圍', 'Ámbito', 'Escopo', 'Portée', 'Bereich', '범위', 'Область', 'Cakupan'],
         'web.envDetail.capacityShared': ['共享池', '共用集區', 'Grupo compartido', 'Pool compartilhado', 'Pool partagé', 'Gemeinsamer Pool', '공유 풀', 'Общий пул', 'Pool bersama'],
@@ -12243,10 +12246,17 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       }
 
       try {
-        const response = await api('/admin/status/' + encodeURIComponent(configKv.id));
+        const response = await api('/admin/status/' + encodeURIComponent(configKv.id) + '?env=' + encodeURIComponent(env.env));
         if (generation !== envCardRenderGeneration) return;
         if (!response.success || !adminValue) {
           adminRow?.remove();
+          return;
+        }
+
+        if (response.statusKnown === false) {
+          adminValue.textContent = t('web.status.unknown');
+          adminValue.classList.remove('ok');
+          adminValue.classList.add('warn');
           return;
         }
 
@@ -14456,12 +14466,32 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
 
     // Check admin setup status and show section if needed
     async function checkAndShowAdminSetup(kvNamespaceId, envName) {
+      const showUnavailable = () => {
+        const section = document.getElementById('admin-setup-section');
+        section.className = 'alert';
+        const heading = section.querySelector('.a-head');
+        const description = section.querySelector('p');
+        if (heading) {
+          heading.setAttribute('data-i18n', 'web.status.unknown');
+          heading.textContent = t('web.status.unknown');
+        }
+        if (description) {
+          description.classList.remove('hidden');
+          description.setAttribute('data-i18n', 'web.envDetail.adminStatusUnavailable');
+          description.textContent = t('web.envDetail.adminStatusUnavailable');
+        }
+        document.getElementById('admin-setup-result')?.classList.add('hidden');
+        const button = document.getElementById('btn-start-admin-setup');
+        button.disabled = true;
+        button.classList.add('hidden');
+      };
       try {
         const response = await api(
           '/admin/status/' + encodeURIComponent(kvNamespaceId) +
           '?env=' + encodeURIComponent(envName)
         );
-        if (!response.success) return;
+        if (selectedEnvForDetail?.env !== envName) return;
+        if (!response.success) { showUnavailable(); return; }
 
         const section = document.getElementById('admin-setup-section');
         const heading = section.querySelector('.a-head');
@@ -14471,7 +14501,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         if (response.statusKnown === false) {
           // Do not turn a transient Cloudflare/namespace status failure into a false
           // "not configured" instruction that invites another setup-token operation.
-          section.classList.add('hidden');
+          showUnavailable();
           return;
         }
 
@@ -14513,6 +14543,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
           button.textContent = t('web.envDetail.startPasskey');
         }
       } catch (error) {
+        if (selectedEnvForDetail?.env === envName) showUnavailable();
         console.error('Failed to check admin status:', error);
       }
     }
