@@ -65,9 +65,8 @@ import {
   nonAccountPrincipalKind,
   SUBJECT_PRINCIPAL_CLAIM,
   SUBJECT_REFERENCE_CLAIM,
-  isSubjectReferenceAvailable,
-  sealSubjectReference,
   openSubjectReference,
+  resolvePresentedTokenAccount,
   readAccountAuthenticationState,
   updateRefreshTokenFamilyIndexExpiry,
   // Request-level caching (P0 KV Cache Optimization)
@@ -85,14 +84,17 @@ import {
   parseClaimsRequest,
   evaluateClaimsForTarget,
   buildStandardUserClaims,
+  standardUserAttributeNames,
   canonicalProjectionToOIDCClaimsUser,
   hasSAORulesForTarget,
   canIssueTokenWithPIIStatus,
   resolveOIDCPIIRequirement,
-  applyOIDCIdentityMapping,
-  OIDCIdentityMappingRuntimeError,
-  enforceOIDCAttributeReleaseConsent,
-  OIDCAttributeReleaseConsentRequiredError,
+  mapIDTokenClaims,
+  enforceIDTokenAttributeRelease,
+  idTokenGrantClaims,
+  type IDTokenGrant,
+  type IDTokenReleaseContext,
+  type IDTokenReleaseFailure,
   FAPI2_MESSAGE_SIGNING_ALGS,
   validateClientCertificateBinding,
   setBoundedMapEntry,
@@ -322,7 +324,8 @@ async function loadOIDCClaimsUser(
   c: Context<{ Bindings: Env }>,
   tenantId: string,
   userId: string,
-  piiCtx: ReturnType<typeof createPIIContextFromHono>
+  piiCtx: ReturnType<typeof createPIIContextFromHono>,
+  claimNames?: readonly string[]
 ): Promise<
   Awaited<ReturnType<typeof getCachedUser>> | ReturnType<typeof canonicalProjectionToOIDCClaimsUser>
 > {
@@ -331,7 +334,10 @@ async function loadOIDCClaimsUser(
     tenantId,
     new CanonicalSensitiveValueResolver(piiCtx.defaultPiiAdapter)
   );
-  const projection = await canonicalProjectionRepository.findByLegacyUserId(userId);
+  const projection = await canonicalProjectionRepository.findByLegacyUserId(
+    userId,
+    claimNames ? { claimNames } : undefined
+  );
   return projection ? canonicalProjectionToOIDCClaimsUser(projection) : null;
 }
 
@@ -899,6 +905,46 @@ function familyConsentGenerationError(
     : oauthError(c, 'invalid_grant', CONSENT_WITHDRAWN_DESCRIPTION, 400);
 }
 
+/** The ID token release steps (identity mapping, claim release consent) as this endpoint runs them. */
+function idTokenReleaseContext(
+  c: Context<{ Bindings: Env }>,
+  tenantId: string,
+  clientId: string,
+  clientMetadata: ClientMetadata
+): IDTokenReleaseContext {
+  return {
+    env: c.env,
+    adapter: createAuthContextFromHono(c, tenantId).coreAdapter,
+    tenantId,
+    clientId,
+    clientMetadata,
+    // The user's attributes an identity mapping reads, the same whatever this grant's scope or
+    // claims request puts in the ID token.
+    loadUserAttributes: async (userId, names) => {
+      const claimNames = standardUserAttributeNames(names);
+      if (claimNames.length === 0) return null;
+      const user = await loadOIDCClaimsUser(
+        c,
+        tenantId,
+        userId,
+        createPIIContextFromHono(c, tenantId),
+        claimNames
+      );
+      if (!user) return null;
+      const claims = buildStandardUserClaims(user);
+      return Object.fromEntries(claimNames.map((name) => [name, claims[name]]));
+    },
+    log: getLogger(c).module('TOKEN'),
+  };
+}
+
+function idTokenReleaseFailureResponse(
+  c: Context<{ Bindings: Env }>,
+  failure: IDTokenReleaseFailure
+): Response {
+  return oauthError(c, failure.error, failure.description, failure.status);
+}
+
 async function applyOIDCIdentityMappingToIDTokenClaims(
   c: Context<{ Bindings: Env }>,
   tenantId: string,
@@ -907,99 +953,32 @@ async function applyOIDCIdentityMappingToIDTokenClaims(
   claims: Record<string, unknown>,
   grantedScopes?: string[]
 ): Promise<{ ok: true; claims: Record<string, unknown> } | { ok: false; response: Response }> {
-  try {
-    const authCtx = createAuthContextFromHono(c, tenantId);
-    const mapped = await applyOIDCIdentityMapping({
-      adapter: authCtx.coreAdapter,
-      env: c.env,
-      tenantId,
-      clientId,
-      sectorIdentifier: clientMetadata.sector_identifier_uri,
-      selector: clientMetadata.identity_mapping,
-      destinationSurface: 'id_token',
-      grantedScopes,
-      claims,
-    });
-    return { ok: true, claims: mapped.claims };
-  } catch (error) {
-    getLogger(c)
-      .module('TOKEN')
-      .error('Failed to apply OIDC identity mapping for ID token', { clientId }, error as Error);
-    if (error instanceof OIDCIdentityMappingRuntimeError) {
-      return {
-        ok: false,
-        response: oauthError(
-          c,
-          'invalid_client',
-          'Client identity mapping configuration is invalid',
-          400
-        ),
-      };
-    }
-    return {
-      ok: false,
-      response: oauthError(c, 'server_error', 'Failed to apply identity mapping', 500),
-    };
-  }
+  const mapped = await mapIDTokenClaims(
+    idTokenReleaseContext(c, tenantId, clientId, clientMetadata),
+    claims,
+    grantedScopes
+  );
+  return mapped.ok
+    ? { ok: true, claims: mapped.claims }
+    : { ok: false, response: idTokenReleaseFailureResponse(c, mapped.failure) };
 }
 
+/** The ID token's claim release consent is the user's (`userId`), whatever sub the token carries. */
 async function enforceOIDCAttributeReleaseConsentForIDTokenClaims(
   c: Context<{ Bindings: Env }>,
   tenantId: string,
   clientMetadata: ClientMetadata,
+  userId: string,
   claims: Record<string, unknown>
 ): Promise<{ ok: true } | { ok: false; response: Response }> {
-  const subjectId = typeof claims.sub === 'string' ? claims.sub : '';
-  if (!subjectId) {
-    return { ok: true };
-  }
-
-  try {
-    await enforceOIDCAttributeReleaseConsent({
-      env: c.env,
-      tenantId,
-      subjectId,
-      clientMetadata,
-      claims,
-      target: 'id_token',
-    });
-    return { ok: true };
-  } catch (error) {
-    getLogger(c)
-      .module('TOKEN')
-      .warn('OIDC ID token claim release consent required', {
-        clientId: clientMetadata.client_id,
-        reasonCodes:
-          error instanceof OIDCAttributeReleaseConsentRequiredError ? error.reasonCodes : [],
-      });
-    if (error instanceof OIDCAttributeReleaseConsentRequiredError) {
-      return {
-        ok: false,
-        response: oauthError(
-          c,
-          'consent_required',
-          describeOIDCClaimReleaseConsentRequired(error),
-          400
-        ),
-      };
-    }
-    return {
-      ok: false,
-      response: oauthError(c, 'server_error', 'Failed to evaluate claim release consent', 500),
-    };
-  }
-}
-
-function describeOIDCClaimReleaseConsentRequired(
-  error: OIDCAttributeReleaseConsentRequiredError
-): string {
-  if (error.reasonCodes.includes('release.attribute_consent.attribute_set_changed')) {
-    return 'User consent is required because the ID token claim set has changed';
-  }
-  if (error.reasonCodes.includes('release.attribute_consent.every_time')) {
-    return 'User consent is required for this ID token claim release';
-  }
-  return 'User consent is required before releasing ID token claims';
+  const released = await enforceIDTokenAttributeRelease(
+    idTokenReleaseContext(c, tenantId, clientMetadata.client_id, clientMetadata),
+    userId,
+    claims
+  );
+  return released.ok
+    ? { ok: true }
+    : { ok: false, response: idTokenReleaseFailureResponse(c, released.failure) };
 }
 
 type DPoPValidationResult = Awaited<ReturnType<typeof validateDPoPProof>>;
@@ -1625,43 +1604,6 @@ async function getSigningKeyFromKeyManager(
   });
 
   return { privateKey, kid: keyData.kid };
-}
-
-/** The user × client grant an ID token is issued under. */
-interface IDTokenGrant {
-  /** The user's id (the ID token's sub may be a pairwise or persistent identifier for it). */
-  userId: string;
-  /** The consent generation the grant was checked against. */
-  consentGeneration: number;
-}
-
-/**
- * The grant claims an ID token carries, so a Token Exchange of it is held to its consent like the
- * access tokens of the grant: the consent generation, and, when its sub is not the user's id, the
- * sealed reference to the user's account. Without the key to seal one, the reference is left out
- * and an exchange of the ID token is refused.
- */
-async function idTokenGrantClaims(
-  env: Env,
-  tenantId: string,
-  clientId: string,
-  claims: Omit<IDTokenClaims, 'iat' | 'exp'>,
-  grant: IDTokenGrant
-): Promise<Record<string, unknown>> {
-  const consentClaims = accessTokenConsentClaims({
-    generation: grant.consentGeneration,
-    consentClientId: clientId,
-    tokenClientId: clientId,
-  });
-  if (claims.sub === grant.userId || !isSubjectReferenceAvailable(env)) return consentClaims;
-  return {
-    ...consentClaims,
-    [SUBJECT_REFERENCE_CLAIM]: await sealSubjectReference(
-      env,
-      { tenantId, clientId },
-      grant.userId
-    ),
-  };
 }
 
 async function createClientIDToken(
@@ -3246,6 +3188,7 @@ async function handleAuthorizationCodeGrant(
         c,
         tenantId,
         clientMetadata as ClientMetadata,
+        authCodeData.sub,
         idTokenClaims
       )
   );
@@ -4374,6 +4317,7 @@ async function handleRefreshTokenGrant(
         c,
         tenantId,
         clientMetadata as ClientMetadata,
+        refreshTokenData.sub,
         idTokenClaims
       );
       if (!idTokenConsent.ok) {
@@ -5311,6 +5255,7 @@ async function handleDeviceCodeGrant(
     c,
     getTenantIdFromContext(c),
     clientMetadata as ClientMetadata,
+    metadata.sub!,
     idTokenClaims
   );
   if (!idTokenConsent.ok) {
@@ -6058,6 +6003,7 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
     c,
     getTenantIdFromContext(c),
     clientMetadata as ClientMetadata,
+    metadata.sub!,
     idTokenClaims
   );
   if (!idTokenConsent.ok) {
@@ -7942,34 +7888,6 @@ async function handleNativeSSOTokenExchange(
       { retryable: true, severity: 'warning' }
     );
   }
-  const deviceInstallationRepo = new DeviceInstallationRepository(authCtx.coreAdapter, tenantId);
-  const deviceSecretValidation = await deviceSecretRepo.validateAndUse(deviceSecret, {
-    maxUseCount: nativeSSOConfig.maxUseCountPerSecret,
-    tenantId,
-  });
-  if (!deviceSecretValidation.ok) {
-    const errorMessages: Record<string, string> = {
-      not_found: 'Device secret not found or invalid',
-      expired: 'Device secret has expired',
-      revoked: 'Device secret has been revoked',
-      mismatch: 'Device secret validation failed',
-      limit_exceeded: 'Device secret use count exceeded - please re-authenticate',
-    };
-    return exchangeInvalidGrant(
-      errorMessages[deviceSecretValidation.reason] || 'Invalid device secret',
-      'device_secret_inactive'
-    );
-  }
-
-  const validatedDeviceSecret = deviceSecretValidation.entity;
-  const deviceSecretUserId = validatedDeviceSecret.user_id;
-  if (
-    deviceSecretRouteHint &&
-    deviceSecretRouteHint.accountId !== `account:${deviceSecretUserId}`
-  ) {
-    return exchangeInvalidGrant('Device secret validation failed', 'device_secret_binding_failed');
-  }
-
   // 5. Parse and validate ID Token
   let idTokenPayload: Record<string, unknown>;
   let idTokenHeader;
@@ -8038,12 +7956,40 @@ async function handleNativeSSOTokenExchange(
     );
   }
 
+  // The user the ID token was issued for. Its sub is the user's id unless the app's identity
+  // mapping issued another (pairwise or persistent): then the sealed account reference it carries
+  // (opened for the client whose consent it was granted under, as a Token Exchange of it does)
+  // names the user. An unopenable reference is refused; a missing key is retryable.
+  const presentedAccount = await resolvePresentedTokenAccount(c.env, tenantId, idTokenPayload);
+  if (!presentedAccount.ok) {
+    if (presentedAccount.reason === 'unavailable') {
+      log.error('Failed to open the ID token account reference', { action: 'NativeSSO' });
+      return exchangeError(
+        'temporarily_unavailable',
+        'Account data is unavailable',
+        'native_sso_server_error',
+        503,
+        'retry',
+        { retryable: true, severity: 'warning' }
+      );
+    }
+    return exchangeInvalidGrant(
+      typeof idTokenPayload.sub === 'string' && idTokenPayload.sub.length > 0
+        ? 'ID token subject reference is invalid'
+        : 'ID token subject is missing',
+      typeof idTokenPayload.sub === 'string' && idTokenPayload.sub.length > 0
+        ? 'device_secret_binding_failed'
+        : 'id_token_malformed'
+    );
+  }
+  const idTokenUserId = presentedAccount.userId;
+
   // 5b. ID Token jti replay attack prevention
-  // Store used jti in KV to prevent replay attacks
+  // The jti is looked up here and recorded once the device secret's use is consumed below, so an
+  // exchange refused before that leaves both the ID token and the secret's use count untouched.
   const idTokenJti = idTokenPayload.jti as string | undefined;
   if (idTokenJti && c.env.AUTHRIM_CONFIG) {
-    const jtiKey = `native-sso:jti:${idTokenJti}`;
-    const existingJti = await c.env.AUTHRIM_CONFIG.get(jtiKey);
+    const existingJti = await c.env.AUTHRIM_CONFIG.get(`native-sso:jti:${idTokenJti}`);
 
     if (existingJti) {
       log.warn('ID Token replay detected', {
@@ -8052,29 +7998,61 @@ async function handleNativeSSOTokenExchange(
       });
       return exchangeInvalidGrant('ID token has already been used', 'id_token_replayed');
     }
-
-    // Store jti with expiration = remaining ID token lifetime + 60s buffer
-    // This prevents replay but doesn't waste storage after token expires
-    const ttlSeconds = idTokenExp ? Math.max(60, idTokenExp - now + 60) : 3600;
-    await c.env.AUTHRIM_CONFIG.put(jtiKey, '1', { expirationTtl: ttlSeconds });
   }
 
-  // 6. Verify user_id matches between ID Token and device_secret
-  const idTokenSub = idTokenPayload.sub as string;
-  if (typeof idTokenSub !== 'string' || idTokenSub.length === 0) {
-    return exchangeInvalidGrant('ID token subject is missing', 'id_token_malformed');
-  }
-
-  if (idTokenSub !== deviceSecretUserId) {
+  // 6. Verify user_id matches between ID Token and device_secret. The owner is the account the
+  // secret routes to; the secret itself is validated, and its use consumed, only after the ID
+  // token's signature, ds_hash binding, account reference and owner have all been confirmed.
+  if (idTokenUserId !== deviceSecretOwnerId) {
     log.warn('User mismatch', {
-      idTokenSubPrefix: idTokenSub.substring(0, 8),
-      deviceSecretUserPrefix: deviceSecretUserId.substring(0, 8),
+      idTokenUserPrefix: idTokenUserId.substring(0, 8),
+      deviceSecretUserPrefix: deviceSecretOwnerId.substring(0, 8),
       action: 'NativeSSO',
     });
     return exchangeInvalidGrant(
       'ID token subject does not match device secret owner',
       'device_secret_binding_failed'
     );
+  }
+
+  // 6b. Validate the device secret and consume one of its uses.
+  const deviceInstallationRepo = new DeviceInstallationRepository(authCtx.coreAdapter, tenantId);
+  const deviceSecretValidation = await deviceSecretRepo.validateAndUse(deviceSecret, {
+    maxUseCount: nativeSSOConfig.maxUseCountPerSecret,
+    tenantId,
+  });
+  if (!deviceSecretValidation.ok) {
+    const errorMessages: Record<string, string> = {
+      not_found: 'Device secret not found or invalid',
+      expired: 'Device secret has expired',
+      revoked: 'Device secret has been revoked',
+      mismatch: 'Device secret validation failed',
+      limit_exceeded: 'Device secret use count exceeded - please re-authenticate',
+    };
+    return exchangeInvalidGrant(
+      errorMessages[deviceSecretValidation.reason] || 'Invalid device secret',
+      'device_secret_inactive'
+    );
+  }
+
+  const validatedDeviceSecret = deviceSecretValidation.entity;
+  const deviceSecretUserId = validatedDeviceSecret.user_id;
+  if (
+    deviceSecretRouteHint &&
+    deviceSecretRouteHint.accountId !== `account:${deviceSecretUserId}`
+  ) {
+    return exchangeInvalidGrant('Device secret validation failed', 'device_secret_binding_failed');
+  }
+  if (deviceSecretUserId !== idTokenUserId) {
+    return exchangeInvalidGrant('Device secret validation failed', 'device_secret_binding_failed');
+  }
+  if (idTokenJti && c.env.AUTHRIM_CONFIG) {
+    // Store jti with expiration = remaining ID token lifetime + 60s buffer
+    // This prevents replay but doesn't waste storage after token expires
+    const ttlSeconds = idTokenExp ? Math.max(60, idTokenExp - now + 60) : 3600;
+    await c.env.AUTHRIM_CONFIG.put(`native-sso:jti:${idTokenJti}`, '1', {
+      expirationTtl: ttlSeconds,
+    });
   }
 
   // A device secret issued before the user withdrew this client's consent, or the consent of the
@@ -8239,7 +8217,7 @@ async function handleNativeSSOTokenExchange(
   // Build access token claims
   const accessTokenClaims: Record<string, unknown> = {
     iss: getRequestIssuer(c),
-    sub: idTokenSub,
+    sub: idTokenUserId,
     aud: accessTokenAudience,
     scope: grantedScope,
     client_id: clientId,
@@ -8304,7 +8282,7 @@ async function handleNativeSSOTokenExchange(
   const acr = idTokenPayload.acr as string | undefined;
   const newIdTokenClaims: Record<string, unknown> = {
     iss: getRequestIssuer(c),
-    sub: idTokenSub,
+    sub: idTokenUserId,
     aud: clientId,
     at_hash: newAtHash,
   };
@@ -8321,70 +8299,37 @@ async function handleNativeSSOTokenExchange(
     newIdTokenClaims.sid = validatedDeviceSecret.session_id;
   }
 
-  try {
-    const mapped = await applyOIDCIdentityMapping({
-      adapter: authCtx.coreAdapter,
-      env: c.env,
-      tenantId,
-      clientId,
-      sectorIdentifier: clientMetadata.sector_identifier_uri,
-      selector: clientMetadata.identity_mapping,
-      destinationSurface: 'id_token',
-      grantedScopes,
-      claims: newIdTokenClaims,
-    });
-    if (mapped.claims !== newIdTokenClaims) {
-      Object.keys(newIdTokenClaims).forEach((key) => {
-        delete newIdTokenClaims[key];
-      });
-      Object.assign(newIdTokenClaims, mapped.claims);
-    }
-  } catch (error) {
-    log.error(
-      'Failed to apply OIDC identity mapping for Native SSO ID token',
-      {
-        action: 'NativeSSO',
-        clientId,
-      },
-      error as Error
-    );
+  // The same release steps as every other ID token: the identity mapping (over the user's
+  // attributes, not only this exchange's claims) and the claim release consent, which is the
+  // user's (idTokenUserId is the device secret owner's id here).
+  const releaseContext = idTokenReleaseContext(c, tenantId, clientId, clientMetadata);
+  const mapped = await mapIDTokenClaims(releaseContext, newIdTokenClaims, grantedScopes);
+  if (!mapped.ok) {
     return exchangeError(
-      error instanceof OIDCIdentityMappingRuntimeError ? 'invalid_client' : 'server_error',
-      error instanceof OIDCIdentityMappingRuntimeError
-        ? 'Client identity mapping configuration is invalid'
-        : 'Failed to apply identity mapping',
+      mapped.failure.error,
+      mapped.failure.description,
       'native_sso_server_error',
-      error instanceof OIDCIdentityMappingRuntimeError ? 400 : 500,
+      mapped.failure.status,
       'retry',
-      { retryable: !(error instanceof OIDCIdentityMappingRuntimeError) }
+      { retryable: mapped.failure.kind !== 'invalid_mapping' }
     );
   }
+  Object.keys(newIdTokenClaims).forEach((key) => {
+    delete newIdTokenClaims[key];
+  });
+  Object.assign(newIdTokenClaims, mapped.claims);
 
-  try {
-    await enforceOIDCAttributeReleaseConsent({
-      env: c.env,
-      tenantId,
-      subjectId: idTokenSub,
-      clientMetadata,
-      claims: newIdTokenClaims,
-      target: 'id_token',
-    });
-  } catch (error) {
-    log.warn('OIDC Native SSO ID token claim release consent required', {
-      action: 'NativeSSO',
-      clientId,
-      reasonCodes:
-        error instanceof OIDCAttributeReleaseConsentRequiredError ? error.reasonCodes : [],
-    });
+  const released = await enforceIDTokenAttributeRelease(
+    releaseContext,
+    idTokenUserId,
+    newIdTokenClaims
+  );
+  if (!released.ok) {
     return exchangeError(
-      error instanceof OIDCAttributeReleaseConsentRequiredError
-        ? 'consent_required'
-        : 'server_error',
-      error instanceof OIDCAttributeReleaseConsentRequiredError
-        ? 'User consent is required before releasing ID token claims'
-        : 'Failed to evaluate claim release consent',
+      released.failure.error,
+      released.failure.description,
       'native_sso_server_error',
-      error instanceof OIDCAttributeReleaseConsentRequiredError ? 400 : 500,
+      released.failure.status,
       'retry',
       { retryable: false }
     );
@@ -8424,7 +8369,7 @@ async function handleNativeSSOTokenExchange(
     if (tenantProfile.allows_refresh_token !== false) {
       const refreshTokenClaims = {
         iss: getRequestIssuer(c),
-        sub: idTokenSub,
+        sub: idTokenUserId,
         aud: clientId,
         scope: grantedScope,
         client_id: clientId,
@@ -8437,7 +8382,7 @@ async function handleNativeSSOTokenExchange(
 
       if (c.env.REFRESH_TOKEN_ROTATOR) {
         familyResult = await createRefreshTokenFamily(c.env, {
-          userId: idTokenSub,
+          userId: idTokenUserId,
           clientId,
           scope: grantedScope,
           ttl: refreshTokenExpiresIn,
@@ -8454,7 +8399,7 @@ async function handleNativeSSOTokenExchange(
         rtv = familyResult.family.version;
         const familyConsent = await confirmFamilyConsentGeneration(c, authCtx.coreAdapter, {
           tenantId,
-          userId: idTokenSub,
+          userId: idTokenUserId,
           clientId,
           generation: nativeSSOConsentWithdrawal.generation,
           familyJti: familyResult.jti,
@@ -8482,7 +8427,7 @@ async function handleNativeSSOTokenExchange(
             authCtx.coreAdapter,
             tenantId,
             refreshTokenJti,
-            idTokenSub,
+            idTokenUserId,
             clientId,
             familyResult.resolution.generation,
             refreshTokenExpiresIn
@@ -8509,7 +8454,7 @@ async function handleNativeSSOTokenExchange(
           {
             jti: refreshTokenJti,
             client_id: clientId,
-            sub: idTokenSub,
+            sub: idTokenUserId,
             scope: grantedScope,
             resource_aud: accessTokenAudience,
             iat: now,
@@ -8544,8 +8489,8 @@ async function handleNativeSSOTokenExchange(
   // 10. Audit log
   log.info('NativeSSO Token Exchange Success', {
     clientId,
-    subjectUserId: idTokenSub,
-    userIdPrefix: idTokenSub.substring(0, 8),
+    subjectUserId: idTokenUserId,
+    userIdPrefix: idTokenUserId.substring(0, 8),
     sessionIdPrefix: validatedDeviceSecret.session_id?.substring(0, 8),
     deviceSecretIdPrefix: validatedDeviceSecret.id.substring(0, 8),
     deviceSecretUseCount: validatedDeviceSecret.use_count + 1,
@@ -8581,7 +8526,7 @@ async function handleNativeSSOTokenExchange(
         data: {
           jti: accessTokenJti,
           clientId,
-          userId: idTokenSub,
+          userId: idTokenUserId,
           scopes: grantedScope.split(' '),
           expiresAt: nowEpoch + expiresIn,
           grantType: 'urn:ietf:params:oauth:grant-type:token-exchange', // Native SSO uses token-exchange
@@ -8595,7 +8540,7 @@ async function handleNativeSSOTokenExchange(
         tenantId,
         data: {
           clientId,
-          userId: idTokenSub,
+          userId: idTokenUserId,
           grantType: 'urn:ietf:params:oauth:grant-type:token-exchange',
         } satisfies TokenEventData,
       }).catch((err: unknown) => {
@@ -8609,7 +8554,7 @@ async function handleNativeSSOTokenExchange(
               data: {
                 jti: refreshTokenJti,
                 clientId,
-                userId: idTokenSub,
+                userId: idTokenUserId,
                 scopes: grantedScope.split(' '),
                 grantType: 'urn:ietf:params:oauth:grant-type:token-exchange',
               } satisfies TokenEventData,

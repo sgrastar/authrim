@@ -1,5 +1,5 @@
 import { executeRuntimeMapping } from '@authrim/ar-lib-field-mapping/runtime';
-import type { SourceValueEnvelope } from '@authrim/ar-lib-field-mapping/contract';
+import type { FieldRef, SourceValueEnvelope } from '@authrim/ar-lib-field-mapping/contract';
 import type { DatabaseAdapter } from '../db/adapter';
 import type { Env } from '../types/env';
 import type { OIDCIdentityMappingFieldMappingSelector } from '../types/oidc';
@@ -37,7 +37,23 @@ export interface ApplyOIDCIdentityMappingInput {
   selector?: OIDCIdentityMappingFieldMappingSelector | null;
   destinationSurface?: 'id_token' | 'userinfo';
   grantedScopes?: string[];
+  /**
+   * What the token or response carries: the claims the mapping starts from and the output keeps.
+   * The mapping reads these as sources too, but they depend on the scopes and the request, so a
+   * mapping that reads only them would derive another sub for the same user from one request to
+   * the next. `sourceAttributes` is the stable source.
+   */
   claims: Record<string, unknown>;
+  /**
+   * The user's attributes (standard claims) the mapping reads from, whatever `claims` carries, so
+   * the same user is mapped the same way on every path. Used only for the attributes the mapping
+   * reads that `claims` lacks, and only those are taken from it: nothing else is read or released.
+   * A function is called, with those attribute names, only when there are any, so a mapping that
+   * reads no attribute (or only claims already present) loads nothing. Null: the user has none.
+   */
+  sourceAttributes?:
+    | Record<string, unknown>
+    | ((names: string[]) => Promise<Record<string, unknown> | null>);
 }
 
 export interface ApplyOIDCIdentityMappingResult {
@@ -199,20 +215,29 @@ async function loadMappedCustomClaimSources(
   input: ApplyOIDCIdentityMappingInput,
   binding: RuntimeIdentityMappingBinding
 ): Promise<Record<string, unknown>> {
-  const claims = withCanonicalProfileAliases(input.claims);
+  let claims = withCanonicalProfileAliases(input.claims);
+  const referencedKeys = Array.from(new Set(mappingSourceRefs(binding).map((ref) => ref.path)));
+  const missingKeys = () =>
+    referencedKeys.filter((path) => !Object.prototype.hasOwnProperty.call(claims, path));
+
+  // The user's own attributes first: the same ones whatever this request's claims carry.
+  if (input.sourceAttributes && missingKeys().length > 0) {
+    const attributes = withCanonicalProfileAliases(
+      (typeof input.sourceAttributes === 'function'
+        ? await input.sourceAttributes(missingKeys())
+        : input.sourceAttributes) ?? {}
+    );
+    for (const key of missingKeys()) {
+      if (attributes[key] != null) claims = { ...claims, [key]: attributes[key] };
+    }
+  }
+
   if (!input.env) return claims;
   const subjectId = typeof input.claims.sub === 'string' ? input.claims.sub : '';
   if (!subjectId) return claims;
 
-  const referencedKeys = Array.from(
-    new Set(
-      binding.edges
-        .filter((edge) => edge.sourceRef.side === 'source')
-        .map((edge) => edge.sourceRef.path)
-        .filter((path) => path && !Object.prototype.hasOwnProperty.call(claims, path))
-    )
-  );
-  if (referencedKeys.length === 0) return claims;
+  const customKeys = missingKeys();
+  if (customKeys.length === 0) return claims;
 
   const featureConfig = await loadFeatureConfig(input.env as Env, input.tenantId);
   if (!featureConfig.enabled) return claims;
@@ -226,7 +251,7 @@ async function loadMappedCustomClaimSources(
     cache: input.env.AUTHRIM_CONFIG || null,
     featureConfig,
   });
-  const custom = await resolver.resolveFieldValues(input.tenantId, subjectId, referencedKeys);
+  const custom = await resolver.resolveFieldValues(input.tenantId, subjectId, customKeys);
   return { ...claims, ...custom.claims };
 }
 
@@ -450,6 +475,29 @@ function isAudienceMode(value: string | null): value is PersistentIdentifierAudi
   return value === 'runtime' || value === 'saml_sp_entity_id' || value === 'oidc_sector_identifier';
 }
 
+/**
+ * Every source field a mapping reads, from the one place that decides it: the sources of its
+ * edges (which its transforms read through the edges they take) and the source fields its
+ * validation rules check. The attributes to load for a mapping, and the values it is handed,
+ * both come from this list, so a field a mapping reads cannot be left unloaded or unpassed.
+ */
+export function mappingSourceRefs(
+  binding: Pick<RuntimeIdentityMappingBinding, 'edges' | 'validationRules'>
+): FieldRef[] {
+  const refs: FieldRef[] = [];
+  const seen = new Set<string>();
+  const add = (ref: FieldRef) => {
+    if (ref.side !== 'source' || !ref.path) return;
+    const key = `${ref.namespace}:${ref.path}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    refs.push(ref);
+  };
+  for (const edge of binding.edges) add(edge.sourceRef);
+  for (const rule of binding.validationRules ?? []) add(rule.targetRef);
+  return refs;
+}
+
 function toOIDCSourceValues(
   claims: Record<string, unknown>,
   binding: RuntimeIdentityMappingBinding
@@ -462,12 +510,11 @@ function toOIDCSourceValues(
   const seen = new Set(
     values.map((value) => `${value.sourceRef.namespace}:${value.sourceRef.path}`)
   );
-  for (const edge of binding.edges) {
-    if (edge.sourceRef.side !== 'source') continue;
-    if (!Object.prototype.hasOwnProperty.call(claims, edge.sourceRef.path)) continue;
-    const key = `${edge.sourceRef.namespace}:${edge.sourceRef.path}`;
+  for (const ref of mappingSourceRefs(binding)) {
+    if (!Object.prototype.hasOwnProperty.call(claims, ref.path)) continue;
+    const key = `${ref.namespace}:${ref.path}`;
     if (seen.has(key)) continue;
-    values.push({ value: claims[edge.sourceRef.path], sourceRef: edge.sourceRef });
+    values.push({ value: claims[ref.path], sourceRef: ref });
     seen.add(key);
   }
   return values;

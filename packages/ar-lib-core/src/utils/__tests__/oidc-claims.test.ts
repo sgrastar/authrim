@@ -3,6 +3,7 @@ import {
   evaluateClaimsForTarget,
   parseClaimsRequest,
   PREDEFINED_TRANSFORMED_CLAIMS,
+  standardUserAttributeNames,
 } from '../oidc-claims';
 
 describe('OIDC claims parameter and ASC utilities', () => {
@@ -337,5 +338,22 @@ describe('OIDC claims parameter and ASC utilities', () => {
       expect(result.ok).toBe(true);
       if (result.ok) expect(result.claims['::age_over_18']).toBeUndefined();
     }
+  });
+});
+
+describe('standardUserAttributeNames', () => {
+  it('keeps the standard user claims and resolves the neutral aliases to their claims', () => {
+    expect(
+      standardUserAttributeNames(['preferred_username', 'display_name', 'picture_url', 'email'])
+    ).toEqual(['preferred_username', 'name', 'picture', 'email']);
+  });
+
+  it('leaves custom attributes out, so a mapping that reads only those needs no profile lookup', () => {
+    expect(standardUserAttributeNames(['employee_id', 'department'])).toEqual([]);
+    expect(standardUserAttributeNames(['employee_id', 'phone_number'])).toEqual(['phone_number']);
+  });
+
+  it('names a claim once', () => {
+    expect(standardUserAttributeNames(['name', 'display_name'])).toEqual(['name']);
   });
 });

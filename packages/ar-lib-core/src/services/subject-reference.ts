@@ -10,7 +10,10 @@
 
 import type { Env } from '../types/env';
 import { isNonAccountSubject } from '../utils/id';
-import { ACCESS_TOKEN_CONSENT_GENERATION_CLAIM } from './oauth-client-consent-revocation';
+import {
+  ACCESS_TOKEN_CONSENT_GENERATION_CLAIM,
+  accessTokenConsentGrant,
+} from './oauth-client-consent-revocation';
 
 export const SUBJECT_REFERENCE_CLAIM = 'authrim_subject_ref';
 
@@ -139,6 +142,37 @@ export function tokenRecordsUserGrant(payload: Record<string, unknown>): boolean
     payload[SUBJECT_REFERENCE_CLAIM] !== undefined ||
     payload[ACCESS_TOKEN_CONSENT_GENERATION_CLAIM] !== undefined
   );
+}
+
+export type PresentedTokenAccount =
+  | { ok: true; userId: string }
+  | { ok: false; reason: 'invalid' | 'unavailable' };
+
+/**
+ * The user a token this server signed (an ID token, say) was issued for: the account its sealed
+ * reference opens (for the client whose consent the token was granted under) when its sub is a
+ * pairwise or persistent identifier for it, else the sub. 'invalid': no sub, a reference that
+ * does not open for this tenant and client. 'unavailable': the key to open one is not available
+ * (retryable).
+ */
+export async function resolvePresentedTokenAccount(
+  env: SubjectReferenceEnv,
+  tenantId: string,
+  payload: Record<string, unknown>
+): Promise<PresentedTokenAccount> {
+  const sub = payload.sub;
+  if (typeof sub !== 'string' || sub.length === 0) return { ok: false, reason: 'invalid' };
+  const reference = payload[SUBJECT_REFERENCE_CLAIM];
+  if (reference === undefined) return { ok: true, userId: sub };
+  const { clientId } = accessTokenConsentGrant(payload);
+  if (typeof reference !== 'string' || !clientId) return { ok: false, reason: 'invalid' };
+  let opened: string | null;
+  try {
+    opened = await openSubjectReference(env, { tenantId, clientId }, reference);
+  } catch {
+    return { ok: false, reason: 'unavailable' };
+  }
+  return opened ? { ok: true, userId: opened } : { ok: false, reason: 'invalid' };
 }
 
 /**

@@ -41,6 +41,7 @@ import {
   isOAuthClientConsentGenerationChanged,
   findOAuthClientConsentRevocation,
   accessTokenConsentClaims,
+  releaseIDTokenClaims,
   type OAuthClientConsentRevocationState,
   getChallengeStoreByChallengeId,
   generateRegionAwareJti,
@@ -84,6 +85,7 @@ import {
   parseClaimsRequest,
   evaluateClaimsForTarget,
   buildStandardUserClaims,
+  standardUserAttributeNames,
   canonicalProjectionToOIDCClaimsUser,
   hasSAORulesForTarget,
   normalizeAttributeReleaseConsentPolicy,
@@ -254,7 +256,8 @@ async function loadOIDCClaimsUser(
   c: Context<{ Bindings: Env }>,
   tenantId: string,
   userId: string,
-  piiCtx: ReturnType<typeof createPIIContextFromHono>
+  piiCtx: ReturnType<typeof createPIIContextFromHono>,
+  claimNames?: readonly string[]
 ): Promise<
   Awaited<ReturnType<typeof getCachedUser>> | ReturnType<typeof canonicalProjectionToOIDCClaimsUser>
 > {
@@ -263,8 +266,37 @@ async function loadOIDCClaimsUser(
     tenantId,
     new CanonicalSensitiveValueResolver(piiCtx.defaultPiiAdapter)
   );
-  const projection = await canonicalProjectionRepository.findByLegacyUserId(userId);
+  const projection = await canonicalProjectionRepository.findByLegacyUserId(
+    userId,
+    claimNames ? { claimNames } : undefined
+  );
   return projection ? canonicalProjectionToOIDCClaimsUser(projection) : null;
+}
+
+/**
+ * The user's standard attributes an identity mapping reads (`names`, custom attributes among them,
+ * which the mapping's custom claim resolver reads instead), whichever response the sub is derived
+ * for. Only the profile and contact values behind those claims are looked up; none when the
+ * mapping reads no standard attribute. Null when there is none.
+ */
+async function loadUserAttributesForMapping(
+  c: Context<{ Bindings: Env }>,
+  tenantId: string,
+  userId: string,
+  names: readonly string[]
+): Promise<Record<string, unknown> | null> {
+  const claimNames = standardUserAttributeNames(names);
+  if (claimNames.length === 0) return null;
+  const user = await loadOIDCClaimsUser(
+    c,
+    tenantId,
+    userId,
+    createPIIContextFromHono(c, tenantId),
+    claimNames
+  );
+  if (!user) return null;
+  const claims = buildStandardUserClaims(user);
+  return Object.fromEntries(claimNames.map((name) => [name, claims[name]]));
 }
 
 function clampHandoffArtifactTtlSeconds(value: number): number {
@@ -5007,16 +5039,37 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         idTokenClaims = requestedClaims.claims;
       }
 
-      // The consent generation this request was checked against, so a Token Exchange of the ID
-      // token is held to the consent as its access token is.
-      idTokenClaims = {
-        ...idTokenClaims,
-        ...accessTokenConsentClaims({
-          generation: consentWithdrawal.generation,
-          consentClientId: validClientId,
-          tokenClientId: validClientId,
-        }),
-      };
+      // The ID token as the token endpoint issues it: the app's identity mapping (its sub and
+      // claims), its claim release consent, and the grant claims (the consent generation this
+      // request was checked against, so a Token Exchange of the ID token is held to the consent
+      // as its access token is, and the sealed account reference when the sub is not the user's
+      // id). The access token above keeps the user's id as its sub, as the token endpoint's does.
+      const released = await releaseIDTokenClaims(
+        {
+          env: c.env,
+          adapter: createAuthContextFromHono(c, tenantId).coreAdapter,
+          tenantId,
+          clientId: validClientId,
+          clientMetadata,
+          loadUserAttributes: (userId, names) =>
+            loadUserAttributesForMapping(c, tenantId, userId, names),
+          log,
+        },
+        {
+          claims: idTokenClaims,
+          grantedScopes: scopes.filter(Boolean),
+          grant: { userId: sub, consentGeneration: consentWithdrawal.generation },
+        }
+      );
+      if (!released.ok) {
+        // A mapping the app's configuration makes unusable is the server's to fix: the
+        // authorization endpoint has no invalid_client.
+        return sendError(
+          released.failure.error === 'invalid_client' ? 'server_error' : released.failure.error,
+          released.failure.description
+        );
+      }
+      idTokenClaims = released.claims;
       idToken = await createIDToken(
         idTokenClaims as Parameters<typeof createIDToken>[0],
         privateKey,
@@ -5205,11 +5258,8 @@ async function idTokenHintNamesUser(
 ): Promise<boolean> {
   if (hintSubject === userId) return true;
   try {
-    // The user's claims, as an ID token is built from them: a mapping may derive sub from one.
-    // Without them the sub is derived from the id alone (a mismatch at worst, never a match).
-    const user = await resolveAccountDataContextFromHono(c, userId)
-      .then(() => loadOIDCClaimsUser(c, tenantId, userId, createPIIContextFromHono(c, tenantId)))
-      .catch(() => null);
+    // A mapping may derive sub from the user's attributes, which are read only if it does. Without
+    // them the sub is derived from the id alone (a mismatch at worst, never a match).
     const subject = await deriveOIDCSubject({
       adapter: createAuthContextFromHono(c, tenantId).coreAdapter,
       env: c.env,
@@ -5219,7 +5269,11 @@ async function idTokenHintNamesUser(
       selector: clientMetadata.identity_mapping,
       destinationSurface: 'id_token',
       grantedScopes: scope?.split(' ').filter(Boolean),
-      claims: { ...(user ? buildStandardUserClaims(user) : {}), sub: userId },
+      claims: { sub: userId },
+      sourceAttributes: (names) =>
+        resolveAccountDataContextFromHono(c, userId)
+          .then(() => loadUserAttributesForMapping(c, tenantId, userId, names))
+          .catch(() => null),
     });
     return subject === hintSubject;
   } catch (error) {

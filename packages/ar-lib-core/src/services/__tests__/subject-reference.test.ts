@@ -4,6 +4,7 @@ import {
   openSubjectReference,
   sealSubjectReference,
   nonAccountPrincipalKind,
+  resolvePresentedTokenAccount,
   tokenNamesAccountSubject,
   tokenRecordsUserGrant,
 } from '../subject-reference';
@@ -200,5 +201,71 @@ describe('subject principal of an exchanged token', () => {
         authrim_subject_principal: 'unknown',
       })
     ).toBeNull();
+  });
+});
+
+describe('resolvePresentedTokenAccount', () => {
+  const idToken = { sub: 'alice', aud: 'app', authrim_consent_generation: 2 };
+
+  it('is the sub when the token carries no reference', async () => {
+    await expect(
+      resolvePresentedTokenAccount(env, 'tenant-a', { ...idToken, sub: 'user-1' })
+    ).resolves.toEqual({ ok: true, userId: 'user-1' });
+  });
+
+  it('is the account the reference opens, for the client the token was granted under', async () => {
+    const reference = await sealSubjectReference(env, binding, 'user-1');
+
+    await expect(
+      resolvePresentedTokenAccount(env, 'tenant-a', {
+        ...idToken,
+        authrim_subject_ref: reference,
+      })
+    ).resolves.toEqual({ ok: true, userId: 'user-1' });
+    // An exchanged token names the consented client in its own claim.
+    await expect(
+      resolvePresentedTokenAccount(env, 'tenant-a', {
+        ...idToken,
+        aud: 'another-app',
+        authrim_consent_client_id: 'app',
+        authrim_subject_ref: reference,
+      })
+    ).resolves.toEqual({ ok: true, userId: 'user-1' });
+  });
+
+  it('is invalid for a reference of another client, tenant or key, or one that is not a string', async () => {
+    const reference = await sealSubjectReference(env, binding, 'user-1');
+
+    for (const [tenant, payload, key] of [
+      ['tenant-a', { ...idToken, aud: 'other', authrim_subject_ref: reference }, env],
+      ['tenant-b', { ...idToken, authrim_subject_ref: reference }, env],
+      [
+        'tenant-a',
+        { ...idToken, authrim_subject_ref: reference },
+        { OBJECT_ENCRYPTION_ROOT_KEY: '01'.repeat(32) },
+      ],
+      ['tenant-a', { ...idToken, authrim_subject_ref: 42 }, env],
+      ['tenant-a', { ...idToken, authrim_subject_ref: 'user-1' }, env],
+    ] as const) {
+      await expect(resolvePresentedTokenAccount(key, tenant, payload)).resolves.toEqual({
+        ok: false,
+        reason: 'invalid',
+      });
+    }
+  });
+
+  it('is unavailable without the key to open a reference', async () => {
+    const reference = await sealSubjectReference(env, binding, 'user-1');
+
+    await expect(
+      resolvePresentedTokenAccount({}, 'tenant-a', { ...idToken, authrim_subject_ref: reference })
+    ).resolves.toEqual({ ok: false, reason: 'unavailable' });
+  });
+
+  it('is invalid without a sub', async () => {
+    await expect(resolvePresentedTokenAccount(env, 'tenant-a', { aud: 'app' })).resolves.toEqual({
+      ok: false,
+      reason: 'invalid',
+    });
   });
 });
