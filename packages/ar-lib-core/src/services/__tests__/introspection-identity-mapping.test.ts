@@ -5,6 +5,21 @@ const mocks = vi.hoisted(() => ({
   resolveBinding: vi.fn(),
   loadDescriptor: vi.fn(),
   filterProfile: vi.fn(),
+  loadFeatureConfig: vi.fn(),
+  resolveSources: vi.fn(),
+  resolveFieldValues: vi.fn(),
+}));
+
+vi.mock('../custom-claims/resolver', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../custom-claims/resolver')>()),
+  loadFeatureConfig: mocks.loadFeatureConfig,
+  createCustomClaimSchemaResolverFromSources: () => ({
+    resolveFieldValues: mocks.resolveFieldValues,
+  }),
+}));
+
+vi.mock('../custom-claims/runtime-sources', () => ({
+  resolveCustomClaimRuntimeSourcesFromEnv: mocks.resolveSources,
 }));
 
 vi.mock('@authrim/ar-lib-field-mapping/runtime', () => ({
@@ -276,5 +291,62 @@ describe('applyIntrospectionIdentityMapping', () => {
         claims: { active: true, sub: 'user_1' },
       })
     );
+  });
+});
+
+describe('custom attributes for a pairwise subject', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.loadDescriptor.mockResolvedValue({
+      profileId: 'profile_rs',
+      profileVersionId: 'profile_version_1',
+      destinationType: 'resource_server',
+      fields: [],
+    });
+    mocks.filterProfile.mockImplementation(async ({ claims }) => claims);
+    mocks.resolveBinding.mockResolvedValue({
+      fieldMappingSetId: 'mapping_set_1',
+      fieldMappingVersionId: 'mapping_version_1',
+      fieldMappingSet: { id: 'mapping_set_1' },
+      catalog: { id: 'catalog_1', entries: [] },
+      edges: [
+        {
+          sourceRef: { side: 'source', namespace: 'authrim.profile', path: 'employee_id' },
+          targetRef: { side: 'destination', namespace: 'introspection.claim', path: 'employee' },
+        },
+      ],
+      transforms: [],
+      validationRules: [],
+      destinationNamespace: 'introspection.claim',
+      destinationProfileId: 'profile_rs',
+      destinationProfileIds: ['profile_rs'],
+    });
+    mocks.executeRuntimeMapping.mockReturnValue({ status: 'success', values: [] });
+    mocks.loadFeatureConfig.mockResolvedValue({ enabled: true, introspectionEnabled: true });
+    mocks.resolveSources.mockResolvedValue({ schemaDb: {}, nonPiiDb: {}, piiDb: {} });
+    mocks.resolveFieldValues.mockResolvedValue({ claims: { employee_id: 'E-1' } });
+  });
+
+  // A pairwise sub may equal another user's id: the attributes are read for the token's account.
+  it('reads the attributes of the account the token is for, not of the public sub', async () => {
+    await applyIntrospectionIdentityMapping({
+      ...input,
+      claims: { active: true, sub: 'user_2' },
+      subjectAccountId: 'user_1',
+    });
+
+    expect(mocks.resolveSources).toHaveBeenCalledWith({}, 'tenant_a', { accountId: 'user_1' });
+    expect(mocks.resolveFieldValues).toHaveBeenCalledWith('tenant_a', 'user_1', ['employee_id']);
+  });
+
+  it('reads no account attributes for a subject that is not an account', async () => {
+    await applyIntrospectionIdentityMapping({
+      ...input,
+      claims: { active: true, sub: 'client:payments' },
+      subjectAccountId: null,
+    });
+
+    expect(mocks.resolveSources).not.toHaveBeenCalled();
+    expect(mocks.resolveFieldValues).not.toHaveBeenCalled();
   });
 });

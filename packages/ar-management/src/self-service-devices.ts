@@ -4,6 +4,7 @@ import type { Env, DeviceInstallation, DeviceSecret, Session } from '@authrim/ar
 import {
   DeviceInstallationRepository,
   DeviceSecretRepository,
+  createAccountAuthContextFromHono,
   createAuthContextFromHono,
   createPhase1ErrorDetails,
   getDeviceSecretInstallationId,
@@ -12,6 +13,7 @@ import {
   getTenantIdFromContext,
   introspectTokenFromContext,
   isShardedSessionId,
+  resolveAccountDataContextFromHono,
 } from '@authrim/ar-lib-core';
 import { recordAccountOperation } from './account-operation-log';
 
@@ -439,6 +441,45 @@ function normalizeLimit(raw: string | undefined): number {
   return Math.min(parsed, MAX_LIMIT);
 }
 
+/** Account route errors meaning the user has no active account to route to. */
+const NO_ACTIVE_ACCOUNT_ROUTE_ERRORS = new Set([
+  'account_data_route_not_found',
+  'account_data_account_id_invalid',
+  'lookup_destination_revalidation_failed',
+]);
+
+/**
+ * The repositories over the user's account database, where Native SSO stores the user's device
+ * secrets and installations (the tenant metadata database holds none). A Response when the
+ * account cannot be routed to.
+ */
+async function accountDeviceRepositories(
+  c: Context<{ Bindings: Env }>,
+  tenantId: string,
+  userId: string
+): Promise<
+  { repo: DeviceSecretRepository; installationRepo: DeviceInstallationRepository } | Response
+> {
+  try {
+    await resolveAccountDataContextFromHono(c, userId);
+  } catch (error) {
+    const code = error instanceof Error ? error.message : '';
+    setNoStore(c);
+    if (NO_ACTIVE_ACCOUNT_ROUTE_ERRORS.has(code)) {
+      return c.json({ error: 'unauthorized', error_description: 'Account is not active' }, 401);
+    }
+    getLogger(c)
+      .module('SELF-SERVICE-DEVICES')
+      .warn('Device account route resolution failed', { error: code || 'unknown' });
+    return c.json({ error: 'server_error', error_description: 'Account data is unavailable' }, 503);
+  }
+  const coreAdapter = createAccountAuthContextFromHono(c, tenantId).coreAdapter;
+  return {
+    repo: new DeviceSecretRepository(coreAdapter, tenantId),
+    installationRepo: new DeviceInstallationRepository(coreAdapter, tenantId),
+  };
+}
+
 async function findOwnedDevice(
   repo: DeviceSecretRepository,
   userId: string,
@@ -495,8 +536,9 @@ export async function listMyDevicesHandler(c: Context<{ Bindings: Env }>): Promi
 
   const limit = normalizeLimit(c.req.query('limit'));
   const authCtx = createAuthContextFromHono(c, tenantId);
-  const repo = new DeviceSecretRepository(authCtx.coreAdapter, tenantId);
-  const installationRepo = new DeviceInstallationRepository(authCtx.coreAdapter, tenantId);
+  const repositories = await accountDeviceRepositories(c, tenantId, access.sub);
+  if (repositories instanceof Response) return repositories;
+  const { repo, installationRepo } = repositories;
   const legacySecrets = await repo.findByUserId(access.sub, tenantId, true);
   const migratedInstallations = await Promise.all(
     legacySecrets.map((device) => installationRepo.ensureForDeviceSecret(device))
@@ -591,8 +633,9 @@ export async function updateMyDeviceHandler(c: Context<{ Bindings: Env }>): Prom
     return c.json({ error: 'not_found', error_description: 'Device was not found' }, 404);
   }
   const authCtx = createAuthContextFromHono(c, tenantId);
-  const repo = new DeviceSecretRepository(authCtx.coreAdapter, tenantId);
-  const installationRepo = new DeviceInstallationRepository(authCtx.coreAdapter, tenantId);
+  const repositories = await accountDeviceRepositories(c, tenantId, access.sub);
+  if (repositories instanceof Response) return repositories;
+  const { repo, installationRepo } = repositories;
   const existingInstallation = await findOwnedInstallation(
     installationRepo,
     access.sub,
@@ -663,8 +706,9 @@ export async function deleteMyDeviceHandler(c: Context<{ Bindings: Env }>): Prom
     return c.json({ error: 'not_found', error_description: 'Device was not found' }, 404);
   }
   const authCtx = createAuthContextFromHono(c, tenantId);
-  const repo = new DeviceSecretRepository(authCtx.coreAdapter, tenantId);
-  const installationRepo = new DeviceInstallationRepository(authCtx.coreAdapter, tenantId);
+  const repositories = await accountDeviceRepositories(c, tenantId, access.sub);
+  if (repositories instanceof Response) return repositories;
+  const { repo, installationRepo } = repositories;
   const existingInstallation = await findOwnedInstallation(
     installationRepo,
     access.sub,

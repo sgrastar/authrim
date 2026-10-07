@@ -11,6 +11,8 @@ const {
   mockGetTenantIdFromContext,
   mockCreateAuthContextFromHono,
   mockRecordAccountOperation,
+  mockAccountCoreAdapter,
+  mockResolveAccountDataContextFromHono,
 } = vi.hoisted(() => {
   const repo = {
     findByUserId: vi.fn(),
@@ -48,6 +50,9 @@ const {
       },
     }),
     mockRecordAccountOperation: vi.fn(),
+    /** The user's account database, distinct from the tenant metadata database ({}). */
+    mockAccountCoreAdapter: { database: 'account' },
+    mockResolveAccountDataContextFromHono: vi.fn(),
   };
 });
 
@@ -72,9 +77,13 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
       device.installation_id ?? device.id,
     getTenantIdFromContext: mockGetTenantIdFromContext,
     createAuthContextFromHono: mockCreateAuthContextFromHono,
+    // The user's account database, where its devices are stored.
+    resolveAccountDataContextFromHono: mockResolveAccountDataContextFromHono,
+    createAccountAuthContextFromHono: () => ({ coreAdapter: mockAccountCoreAdapter }),
     getLogger: () => ({
       module: () => ({
         error: vi.fn(),
+        warn: vi.fn(),
       }),
     }),
   };
@@ -214,6 +223,7 @@ const targetInstallation = {
 describe('/me/devices handlers', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockResolveAccountDataContextFromHono.mockResolvedValue({});
     mockIntrospectTokenFromContext.mockResolvedValue({
       valid: true,
       claims: accessClaims,
@@ -408,6 +418,32 @@ describe('/me/devices handlers', () => {
     expect(response.status).toBe(400);
     expect(body.error).toBe('invalid_request');
     expect(body.error_details?.code).toBe('invalid_cursor');
+  });
+
+  it("reads the user's devices from its account database", async () => {
+    mockRepo.findByUserId.mockResolvedValue([]);
+    const response = await listMyDevicesHandler(createMockContext());
+
+    expect(response.status).toBe(200);
+    expect(mockResolveAccountDataContextFromHono).toHaveBeenCalledWith(
+      expect.anything(),
+      'user-001'
+    );
+    const { DeviceSecretRepository, DeviceInstallationRepository } =
+      await import('@authrim/ar-lib-core');
+    expect(vi.mocked(DeviceSecretRepository).mock.calls[0]?.[0]).toBe(mockAccountCoreAdapter);
+    expect(vi.mocked(DeviceInstallationRepository).mock.calls[0]?.[0]).toBe(mockAccountCoreAdapter);
+  });
+
+  it.each([
+    ['no active account', 'lookup_destination_revalidation_failed', 401],
+    ['an unavailable account route', 'account_data_runtime_registry_unavailable', 503],
+  ])('refuses device access for %s', async (_label, code, status) => {
+    mockResolveAccountDataContextFromHono.mockRejectedValue(new Error(code));
+    const response = await deleteMyDeviceHandler(createMockContext({ params: { id: 'inst-1' } }));
+
+    expect(response.status).toBe(status);
+    expect(mockRepo.revoke).not.toHaveBeenCalled();
   });
 
   it('caps list limit at 100', async () => {

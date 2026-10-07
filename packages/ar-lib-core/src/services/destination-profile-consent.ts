@@ -98,10 +98,42 @@ export const INTROSPECTION_PROTOCOL_ENVELOPE_CLAIMS = new Set([
  * mapping output. OIDC `sub` is intentionally absent because pairwise and persistent subject
  * mapping is a supported feature. Introspection `sub` has the same identifier-mapping exception.
  */
+/**
+ * Claims recording the grant a token was issued under (its consent generation and client, the
+ * external issuer of its subject, the sealed reference to its account). Authrim reads them back
+ * from tokens it signed, so only the authorization server writes them: no identity mapping
+ * output, custom claim or Destination Profile field may carry these names.
+ */
+export const AUTHORIZATION_SERVER_GRANT_CLAIMS = new Set([
+  'authrim_consent_generation',
+  'authrim_consent_client_id',
+  'authrim_subject_issuer',
+  'authrim_subject_ref',
+  'authrim_subject_principal',
+  // An ID-JAG exchange's record of the IdP that issued its subject token.
+  'original_issuer',
+]);
+
+/**
+ * Claims by which Authrim tells a client or admin principal's token (client credentials, an admin
+ * machine, an admin agent delegation) from a user's: written by the authorization server only, so
+ * no identity mapping output may make an ID token look like one.
+ */
+export const AUTHORIZATION_SERVER_PRINCIPAL_CLAIMS = new Set([
+  'token_use',
+  'client_id',
+  'actor_type',
+  'actor_id',
+  'actor_mode',
+  'grant_id',
+]);
+
 export function isProtectedIdentityMappingDestinationClaim(
   namespace: string,
   path: string
 ): boolean {
+  if (AUTHORIZATION_SERVER_GRANT_CLAIMS.has(path)) return true;
+  if (AUTHORIZATION_SERVER_PRINCIPAL_CLAIMS.has(path)) return true;
   if (namespace === 'introspection.claim') {
     return path !== 'sub' && INTROSPECTION_PROTOCOL_ENVELOPE_CLAIMS.has(path);
   }

@@ -38,6 +38,30 @@ describe('destination profile field consent', () => {
     }
   });
 
+  it('lets no identity mapping write the claims recording a token grant', () => {
+    for (const namespace of ['oidc.claim', 'introspection.claim', 'custom']) {
+      for (const claim of [
+        'authrim_consent_generation',
+        'authrim_consent_client_id',
+        'authrim_subject_issuer',
+        'authrim_subject_ref',
+        'original_issuer',
+        'authrim_subject_principal',
+        'token_use',
+        'client_id',
+        'actor_type',
+        'actor_id',
+        'actor_mode',
+        'grant_id',
+      ]) {
+        expect(
+          isProtectedIdentityMappingDestinationClaim(namespace, claim),
+          `${namespace}:${claim}`
+        ).toBe(true);
+      }
+    }
+  });
+
   it('keeps standard OIDC claims but drops unprofiled Authrim and custom extensions', () => {
     expect(
       filterOidcClaimsWithoutDestinationProfile({

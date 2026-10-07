@@ -35,7 +35,12 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   return {
     ...actual,
     DeviceSecretRepository: Repository,
-    createAuthContextFromHono: () => ({ coreAdapter: {} }),
+    // One routed account database for the user, and one core database for the tenant.
+    resolveAccountDataContext: async () => ({ coreDb: {} }),
+    resolveTenantAssignedDatabaseSourcesFromRegistry: async () => [
+      { source: {}, bindingRef: 'DB' },
+    ],
+    ensureDatabaseAdapter: (source: unknown) => source,
     createAuditLogFromContext: mocks.audit,
     getTenantIdFromContext: (c: { get: (key: string) => unknown }) => c.get('tenantId'),
     getLogger: () => ({
@@ -210,7 +215,11 @@ describe('device secret admin security behavior', () => {
       body: JSON.stringify({ reason: '  compromised\nheader: injected\u0000  ' }),
     });
     expect(response.status).toBe(200);
-    expect(mocks.revoke).toHaveBeenCalledWith('device-a', 'compromisedheader: injected');
+    expect(mocks.revoke).toHaveBeenCalledWith(
+      'device-a',
+      'compromisedheader: injected',
+      'tenant-a'
+    );
     expect(mocks.audit).toHaveBeenCalledWith(
       expect.anything(),
       'device_secret.revoke',
@@ -223,7 +232,7 @@ describe('device secret admin security behavior', () => {
   it('uses a safe default reason for an empty optional body', async () => {
     const response = await app().request('/device-secrets/device-a', { method: 'DELETE' });
     expect(response.status).toBe(200);
-    expect(mocks.revoke).toHaveBeenCalledWith('device-a', 'admin_revocation');
+    expect(mocks.revoke).toHaveBeenCalledWith('device-a', 'admin_revocation', 'tenant-a');
   });
 
   it('does not audit a revocation that failed to persist', async () => {

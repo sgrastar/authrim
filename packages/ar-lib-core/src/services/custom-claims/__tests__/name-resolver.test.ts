@@ -42,6 +42,15 @@ describe('ClaimNameResolver', () => {
       expect(resolver.isStandardClaimCollision('iat')).toBe(true);
     });
 
+    it('detects the claims recording a token grant', () => {
+      expect(resolver.isStandardClaimCollision('authrim_consent_generation')).toBe(true);
+      expect(resolver.isStandardClaimCollision('authrim_consent_client_id')).toBe(true);
+      expect(resolver.isStandardClaimCollision('authrim_subject_issuer')).toBe(true);
+      expect(resolver.isStandardClaimCollision('authrim_subject_ref')).toBe(true);
+      expect(resolver.isStandardClaimCollision('original_issuer')).toBe(true);
+      expect(resolver.isStandardClaimCollision('authrim_subject_principal')).toBe(true);
+    });
+
     it('detects OIDC standard claims', () => {
       expect(resolver.isStandardClaimCollision('email')).toBe(true);
       expect(resolver.isStandardClaimCollision('name')).toBe(true);

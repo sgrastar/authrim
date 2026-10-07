@@ -21,16 +21,31 @@ import {
   parseBasicAuth,
   getKeyByKid,
   verifyClientSecretHash,
-  DeviceSecretRepository,
   applyIntrospectionIdentityMapping,
   filterIntrospectionProtocolEnvelopeClaims,
   requireDedicatedAdminDatabaseAdapter,
   createPhase1ErrorDetails,
   getDeviceSecretInstallationId,
   resolveEffectiveSettings,
+  resolveAccountDataContextFromHono,
+  createAccountAuthContextFromHono,
+  findOAuthClientConsentRevocation,
+  isOAuthClientConsentGrantWithdrawn,
+  predatesOAuthClientConsentRevocation,
+  readAccountAuthenticationState,
+  tokenNamesAccountSubject,
+  tokenRecordsUserGrant,
+  accessTokenConsentGrant,
+  isAccessTokenConsentWithdrawn,
+  externalSubjectIssuer,
+  SUBJECT_REFERENCE_CLAIM,
+  openSubjectReference,
+  type DatabaseAdapter,
+  type OAuthClientConsentRevocationState,
 } from '@authrim/ar-lib-core';
 import { importJWK, decodeProtectedHeader, type CryptoKey } from 'jose';
 import { getRequestAwareIssuerUrl } from './request-issuer';
+import { findRoutedDeviceSecret } from './device-secret-account';
 import {
   evaluateDeviceSecretIntrospectionPolicy,
   type DeviceSecretPolicyErrorCode,
@@ -168,6 +183,222 @@ function resolveIntrospectableTokenUse(
   // excludes ID tokens and other protocol JWTs while allowing existing access/refresh tokens to
   // remain usable until their normal expiry.
   return tokenTypeHint === 'refresh_token' ? 'refresh' : 'access';
+}
+
+/** Account route errors meaning the tenant has no account with that ID. */
+const NO_ACCOUNT_ROUTE_ERRORS = new Set([
+  'account_data_route_not_found',
+  'account_data_account_id_invalid',
+]);
+
+/**
+ * The account route resolver revalidates only active accounts at their destination: a suspended,
+ * locked or deleting account fails there.
+ */
+const INACTIVE_ACCOUNT_ROUTE_ERROR = 'lookup_destination_revalidation_failed';
+
+/**
+ * 'active_without_account': an externally asserted subject that was never one of the tenant's
+ * accounts (it has no account data to read).
+ */
+type IntrospectedAccountState = 'active' | 'active_without_account' | 'inactive' | 'unavailable';
+
+/**
+ * For a subject with no account route: whether it was ever one of the tenant's accounts. A deleted
+ * (or deleting) account keeps its terminal state in its authentication-state Durable Object after
+ * its lookup entry is gone; a subject that was never an account has no state there. A subject that
+ * cannot name an account at all was never one.
+ */
+async function readFormerAccountState(
+  c: Context<{ Bindings: Env }>,
+  tenantId: string,
+  userId: string
+): Promise<'never_account' | 'former_account' | 'unavailable'> {
+  try {
+    const state = await readAccountAuthenticationState(c.env, tenantId, userId);
+    return state.lifecycle === null ? 'never_account' : 'former_account';
+  } catch (error) {
+    if (error instanceof Error && error.message === 'session_revocation_identity_invalid') {
+      return 'never_account';
+    }
+    getLogger(c)
+      .module('INTROSPECT')
+      .error('Failed to read the authentication state of a routeless subject', {}, error as Error);
+    return 'unavailable';
+  }
+}
+
+/**
+ * Whether the user a token was issued to may still use it: read from the user's account databases
+ * (the tenant metadata database holds no users). The account must be active, and the user must not
+ * have withdrawn the consent the token was granted under (`isWithdrawn`, given the user × client
+ * withdrawal state from one keyed read).
+ *
+ * Fails closed: a token whose account is gone, or not active, is inactive; an account that cannot
+ * be resolved or read is 'unavailable', never active.
+ */
+async function readIntrospectedAccountState(
+  c: Context<{ Bindings: Env }>,
+  input: {
+    tenantId: string;
+    userId: string;
+    /** The client whose consent the token was granted under. */
+    clientId: string;
+    /**
+     * Whether the subject may be external (asserted by an external issuer): a subject that was
+     * never one of the tenant's accounts is then accepted. A deleted account still is not.
+     */
+    allowsExternalSubject(): boolean;
+    isWithdrawn(state: OAuthClientConsentRevocationState): boolean;
+    /** The account's core database when the caller has already routed to it. */
+    coreAdapter?: DatabaseAdapter;
+  }
+): Promise<IntrospectedAccountState> {
+  const log = getLogger(c).module('INTROSPECT');
+  let coreAdapter: DatabaseAdapter;
+  if (input.coreAdapter) {
+    coreAdapter = input.coreAdapter;
+  } else {
+    try {
+      await resolveAccountDataContextFromHono(c, input.userId);
+      coreAdapter = createAccountAuthContextFromHono(c, input.tenantId).coreAdapter;
+    } catch (error) {
+      const code = error instanceof Error ? error.message : '';
+      if (NO_ACCOUNT_ROUTE_ERRORS.has(code)) {
+        if (!input.allowsExternalSubject()) return 'inactive';
+        if (code === 'account_data_account_id_invalid') return 'active_without_account';
+        // The lookup entry of a deleted account is removed with it: a subject that was an
+        // account stays inactive.
+        const former = await readFormerAccountState(c, input.tenantId, input.userId);
+        return former === 'never_account'
+          ? 'active_without_account'
+          : former === 'former_account'
+            ? 'inactive'
+            : 'unavailable';
+      }
+      if (code === INACTIVE_ACCOUNT_ROUTE_ERROR) return 'inactive';
+      log.warn('Introspected token account route resolution failed', {
+        action: 'introspect',
+        error: code || 'account_data_route_unavailable',
+      });
+      return 'unavailable';
+    }
+  }
+
+  try {
+    const [account, withdrawal] = await Promise.all([
+      coreAdapter.queryOne<{
+        account_lifecycle_state: string;
+        directory_publication_state: string;
+        subject_lifecycle_state: string | null;
+        metadata_json: string | null;
+      }>(
+        `SELECT account.lifecycle_state AS account_lifecycle_state,
+                account.directory_publication_state AS directory_publication_state,
+                subject.lifecycle_state AS subject_lifecycle_state,
+                account.metadata_json AS metadata_json
+           FROM identity_accounts account
+           LEFT JOIN identity_subjects subject
+             ON subject.id = account.primary_subject_id
+            AND subject.tenant_id = account.tenant_id
+          WHERE account.tenant_id = ? AND account.legacy_user_id = ?
+          LIMIT 1`,
+        [input.tenantId, input.userId]
+      ),
+      findOAuthClientConsentRevocation(coreAdapter, {
+        tenantId: input.tenantId,
+        userId: input.userId,
+        clientId: input.clientId,
+      }),
+    ]);
+    if (!account) return 'inactive';
+    // RFC 7009: tokens of suspended or locked users are inactive. The lifecycle state is
+    // authoritative; the legacy metadata status is only an additional refusal.
+    const status = legacyAccountStatus(account.metadata_json);
+    if (
+      account.account_lifecycle_state !== 'active' ||
+      account.directory_publication_state !== 'active' ||
+      account.subject_lifecycle_state !== 'active' ||
+      status === 'suspended' ||
+      status === 'locked'
+    ) {
+      return 'inactive';
+    }
+    return input.isWithdrawn(withdrawal) ? 'inactive' : 'active';
+  } catch (error) {
+    log.error(
+      'Failed to read the introspected token account state',
+      { action: 'introspect' },
+      error as Error
+    );
+    return 'unavailable';
+  }
+}
+
+function legacyAccountStatus(metadataJson: string | null): string | null {
+  if (!metadataJson) return null;
+  try {
+    const metadata = JSON.parse(metadataJson) as { status?: unknown } | null;
+    return typeof metadata?.status === 'string' ? metadata.status : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The user id a token's sealed subject reference stands for: none when it carries no reference,
+ * invalid when the reference does not open for the token's consent client, unavailable when it
+ * cannot be opened.
+ */
+type SubjectAccountReference =
+  | { kind: 'none' }
+  | { kind: 'resolved'; userId: string }
+  | { kind: 'invalid' }
+  | { kind: 'unavailable' };
+
+async function subjectAccountReference(
+  c: Context<{ Bindings: Env }>,
+  tenantId: string,
+  tokenPayload: Record<string, unknown>,
+  consentClientId: string
+): Promise<SubjectAccountReference> {
+  const reference = tokenPayload[SUBJECT_REFERENCE_CLAIM];
+  if (typeof reference !== 'string') return { kind: 'none' };
+  try {
+    const userId = await openSubjectReference(
+      c.env,
+      { tenantId, clientId: consentClientId },
+      reference
+    );
+    return userId === null ? { kind: 'invalid' } : { kind: 'resolved', userId };
+  } catch (error) {
+    getLogger(c)
+      .module('INTROSPECT')
+      .error('Failed to open the subject reference of an introspected token', {}, error as Error);
+    return { kind: 'unavailable' };
+  }
+}
+
+/**
+ * Whether a token's subject is not a user account at all: a client or admin principal, or the
+ * target of a downstream elevation grant that is not a user (an artifact or a resource). Decided
+ * from what the authorization server signed: a token recording a user's grant names an account,
+ * whatever its public sub (chosen by identity mapping) looks like.
+ */
+function namesNonAccountSubject(tokenPayload: Record<string, unknown>): boolean {
+  if (!tokenNamesAccountSubject(tokenPayload)) return true;
+  if (tokenRecordsUserGrant(tokenPayload)) return false;
+  const elevation = tokenPayload.authrim_elevation;
+  return (
+    typeof elevation === 'object' &&
+    elevation !== null &&
+    (elevation as { target_subject_type?: unknown }).target_subject_type !== 'user'
+  );
+}
+
+/** The answer when the token's account cannot be read: refuse rather than answer active=true. */
+function accountStateUnavailableResponse(c: Context<{ Bindings: Env }>): Response {
+  return c.json({ error: 'server_error', error_description: 'Account state is unavailable' }, 503);
 }
 
 /**
@@ -318,8 +549,17 @@ export async function introspectHandler(c: Context<{ Bindings: Env }>) {
     }
 
     const tenantId = getTenantIdFromContext(c);
-    const deviceSecretRepo = new DeviceSecretRepository(authCtx.coreAdapter, tenantId);
-    const deviceSecret = await deviceSecretRepo.findByRawSecret(token, tenantId);
+    // Read from its owner's account database, which its route hint names.
+    let routedDeviceSecret: Awaited<ReturnType<typeof findRoutedDeviceSecret>>;
+    try {
+      routedDeviceSecret = await findRoutedDeviceSecret(c.env, tenantId, token);
+    } catch (error) {
+      getLogger(c)
+        .module('INTROSPECT')
+        .error('Failed to read the introspected device secret', {}, error as Error);
+      return accountStateUnavailableResponse(c);
+    }
+    const deviceSecret = routedDeviceSecret?.deviceSecret ?? null;
     const nowMs = Date.now();
 
     if (
@@ -344,6 +584,20 @@ export async function introspectHandler(c: Context<{ Bindings: Env }>) {
     }
 
     const targetClientId = deviceSecret.client_id ?? client_id;
+    // The owner must still be active, and a secret issued at or before a withdrawal of its
+    // client's consent ends with it (as Native SSO refuses it).
+    const ownerState = await readIntrospectedAccountState(c, {
+      tenantId,
+      userId: deviceSecret.user_id,
+      clientId: targetClientId,
+      coreAdapter: routedDeviceSecret!.coreAdapter,
+      allowsExternalSubject: () => false,
+      isWithdrawn: (state) =>
+        predatesOAuthClientConsentRevocation(deviceSecret.created_at, state.revokedAt),
+    });
+    if (ownerState === 'unavailable') return accountStateUnavailableResponse(c);
+    if (ownerState === 'inactive') return c.json<IntrospectionResponse>({ active: false });
+
     const targetClient =
       targetClientId === client_id
         ? clientRecord
@@ -566,6 +820,7 @@ export async function introspectHandler(c: Context<{ Bindings: Env }>) {
   // token_use, RFC 7662's advisory token_type_hint selects the compatible lookup path after the
   // complete OAuth token shape has been validated above.
 
+  let refreshFamily: { consentGeneration?: number; createdAt?: number } | null = null;
   if (introspectedTokenUse === 'refresh') {
     // Refresh tokens are active only while their authoritative family entry exists. token_type_hint
     // is advisory; a signed token_use claim takes precedence when present.
@@ -575,6 +830,10 @@ export async function introspectHandler(c: Context<{ Bindings: Env }>) {
         active: false,
       });
     }
+    refreshFamily = {
+      consentGeneration: refreshTokenData.family_consent_generation,
+      createdAt: refreshTokenData.family_created_at,
+    };
   } else {
     const revoked = await isTokenRevoked(c.env, jti, tenantId);
     if (revoked) {
@@ -585,35 +844,60 @@ export async function introspectHandler(c: Context<{ Bindings: Env }>) {
   }
   // ========== Token Revocation/Existence Check END ==========
 
-  // ========== User Status Check (suspended/locked users) ==========
-  // RFC 7009: Tokens for suspended/locked users should be inactive
-  // This ensures access tokens are immediately invalidated when a user is suspended
-  if (sub) {
-    try {
-      const user = await authCtx.coreAdapter.queryOne<{
-        lifecycle_state: string;
-        metadata_json: string | null;
-      }>(
-        'SELECT lifecycle_state, metadata_json FROM identity_accounts WHERE legacy_user_id = ? AND tenant_id = ?',
-        [sub, tenantId]
-      );
-      // Return inactive if user is suspended or locked
-      const metadata = user?.metadata_json ? JSON.parse(user.metadata_json) : {};
-      const status = typeof metadata.status === 'string' ? metadata.status : null;
-      if (
-        user &&
-        (user.lifecycle_state !== 'active' || status === 'suspended' || status === 'locked')
-      ) {
-        return c.json<IntrospectionResponse>({
-          active: false,
-        });
-      }
-    } catch {
-      // Non-blocking: If status check fails, continue with token validation
-      // This ensures introspection doesn't fail if DB is temporarily unavailable
-    }
+  // ========== Account State and Consent Check ==========
+  // The user's account (in its account databases) must be active, so tokens end as soon as the
+  // user is suspended, locked or deleted. A withdrawal of the consent a token was granted under
+  // ends it, as the grants that issue tokens refuse it: a refresh family, or an access token, that
+  // recorded an earlier consent generation; one recorded before generations was issued at or
+  // before the withdrawal (an access token's iat is in whole seconds, so one issued within the
+  // second of the withdrawal counts as issued before it). An access token from a Token Exchange
+  // records the consent of its subject token, whose client may differ from its own.
+  // A downstream elevation token is granted by an approval, not a consent; a client or admin
+  // principal, or an elevation target that is not a user, has no account.
+  const accessConsent = accessTokenConsentGrant(tokenPayload);
+  const consentClientId = (!refreshFamily && accessConsent.clientId) || tokenClientId!;
+  const elevationToken =
+    typeof tokenPayload.authrim_elevation === 'object' && tokenPayload.authrim_elevation !== null;
+  // The account a pairwise or persistent sub stands for, from the sealed reference the token
+  // carries (bound to the client whose consent it was granted under).
+  const subjectReference = await subjectAccountReference(
+    c,
+    tenantId,
+    tokenPayload,
+    consentClientId
+  );
+  if (subjectReference.kind === 'unavailable') return accountStateUnavailableResponse(c);
+  if (subjectReference.kind === 'invalid') {
+    return c.json<IntrospectionResponse>({
+      active: false,
+    });
   }
-  // ========== User Status Check END ==========
+  const nonAccountSubject = namesNonAccountSubject(tokenPayload);
+  // The account the token is for: the one a sealed reference names, else the sub.
+  const accountUserId = subjectReference.kind === 'resolved' ? subjectReference.userId : sub;
+  const accountState = nonAccountSubject
+    ? 'active'
+    : await readIntrospectedAccountState(c, {
+        tenantId,
+        userId: accountUserId,
+        clientId: consentClientId,
+        allowsExternalSubject: () =>
+          introspectedTokenUse === 'access' && externalSubjectIssuer(tokenPayload) !== undefined,
+        isWithdrawn: (state) =>
+          refreshFamily
+            ? isOAuthClientConsentGrantWithdrawn(state, {
+                generation: refreshFamily.consentGeneration,
+                issuedAt: refreshFamily.createdAt,
+              })
+            : !elevationToken && isAccessTokenConsentWithdrawn(state, tokenPayload),
+      });
+  if (accountState === 'unavailable') return accountStateUnavailableResponse(c);
+  if (accountState === 'inactive') {
+    return c.json<IntrospectionResponse>({
+      active: false,
+    });
+  }
+  // ========== Account State and Consent Check END ==========
 
   // Token is active, return introspection response
   // P1: Determine token_type based on cnf claim presence (RFC 9449)
@@ -674,6 +958,11 @@ export async function introspectHandler(c: Context<{ Bindings: Env }>) {
         resourceServerId: client_id,
         grantedScopes: scope ? scope.split(' ').filter(Boolean) : [],
         claims: { ...tokenPayload, ...response },
+        // Custom attributes are read for the account the token is for, never by the public sub
+        // (a pairwise identifier may equal another user's id); a subject without an account (a
+        // client or admin principal, an external subject) has none.
+        subjectAccountId:
+          nonAccountSubject || accountState === 'active_without_account' ? null : accountUserId,
       });
     } catch (error) {
       log.error(

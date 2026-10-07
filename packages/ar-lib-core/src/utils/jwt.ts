@@ -30,6 +30,10 @@ export interface AccessTokenClaims extends JWTPayload {
   claims?: string; // Requested claims (JSON string, per OIDC Core 5.5)
   claims_request_protected?: boolean; // Whether claims came from PAR or signed JAR
   cnf?: { jkt: string }; // DPoP confirmation (RFC 9449 Section 6)
+  authrim_consent_generation?: number; // Consent generation the user × client grant recorded
+  authrim_consent_client_id?: string; // Client consented to, when not client_id (Token Exchange)
+  authrim_subject_issuer?: string; // External issuer that asserted sub (JWT bearer, ID-JAG)
+  authrim_subject_principal?: string; // Client or admin principal a Token Exchange's subject named
 }
 
 /**

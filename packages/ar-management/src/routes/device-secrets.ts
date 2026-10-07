@@ -13,11 +13,14 @@
 import type { Context } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
 import {
-  DeviceSecretRepository,
+  findDeviceSecretById,
+  tenantDeviceSecretRepositories,
+  userDeviceSecretRepositories,
+} from '../device-secret-account';
+import {
   createErrorResponse,
   AR_ERROR_CODES,
   getLogger,
-  createAuthContextFromHono,
   createAuditLogFromContext,
   getTenantIdFromContext,
 } from '@authrim/ar-lib-core';
@@ -105,12 +108,6 @@ interface DeviceSecretAdminResponse {
   revoke_reason?: string;
 }
 
-function getDeviceSecretRepository(c: Context<{ Bindings: Env }>): DeviceSecretRepository {
-  const tenantId = getTenantIdFromContext(c);
-  const authCtx = createAuthContextFromHono(c, tenantId);
-  return new DeviceSecretRepository(authCtx.coreAdapter, tenantId);
-}
-
 /**
  * Transform device secret entity to admin response
  * Excludes sensitive fields (secret_hash)
@@ -174,10 +171,12 @@ export async function listUserDeviceSecrets(c: Context<{ Bindings: Env }>): Prom
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
 
-    const repo = getDeviceSecretRepository(c);
-
-    // Get all device secrets for user
-    const allSecrets = await repo.findByUserId(userId);
+    // Device secrets live with the user's account data (the account databases).
+    const tenantId = getTenantIdFromContext(c);
+    const repos = await userDeviceSecretRepositories(c.env, tenantId, userId);
+    const allSecrets = (
+      await Promise.all(repos.map((repo) => repo.findByUserId(userId, tenantId)))
+    ).flat();
 
     // Filter based on include_revoked
     const filteredSecrets = includeRevoked
@@ -231,15 +230,14 @@ export async function getDeviceSecret(c: Context<{ Bindings: Env }>): Promise<Re
   }
 
   try {
-    const repo = getDeviceSecretRepository(c);
+    // Only its ID is known: look in every core database of the tenant.
+    const found = await findDeviceSecretById(c.env, getTenantIdFromContext(c), id);
 
-    const secret = await repo.findById(id);
-
-    if (!secret) {
+    if (!found) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
 
-    return c.json(toAdminResponse(secret));
+    return c.json(toAdminResponse(found.deviceSecret));
   } catch (error) {
     log.error('Error getting device secret', {}, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
@@ -271,19 +269,19 @@ export async function revokeDeviceSecret(c: Context<{ Bindings: Env }>): Promise
     }
     const reason = parsedReason.reason;
 
-    const repo = getDeviceSecretRepository(c);
-
-    // Check if secret exists
-    const existing = await repo.findById(id);
-    if (!existing) {
+    // Only its ID is known: look in every core database of the tenant, and revoke it where it is.
+    const tenantId = getTenantIdFromContext(c);
+    const found = await findDeviceSecretById(c.env, tenantId, id);
+    if (!found) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
+    const existing = found.deviceSecret;
 
     if (existing.revoked_at) {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
 
-    const success = await repo.revoke(id, reason);
+    const success = await found.repository.revoke(id, reason, tenantId);
 
     if (!success) {
       return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
@@ -334,9 +332,11 @@ export async function revokeAllUserDeviceSecrets(c: Context<{ Bindings: Env }>):
     }
     const reason = parsedReason.reason;
 
-    const repo = getDeviceSecretRepository(c);
-
-    const revokedCount = await repo.revokeByUserId(userId, getTenantIdFromContext(c), reason);
+    const tenantId = getTenantIdFromContext(c);
+    const repos = await userDeviceSecretRepositories(c.env, tenantId, userId);
+    const revokedCount = (
+      await Promise.all(repos.map((repo) => repo.revokeByUserId(userId, tenantId, reason)))
+    ).reduce((total, count) => total + count, 0);
 
     await createAuditLogFromContext(c, 'device_secret.revoke_all', 'user', userId, {
       revoked_count: revokedCount,
@@ -369,9 +369,12 @@ export async function cleanupExpiredDeviceSecrets(
 ): Promise<Response> {
   const log = getLogger(c).module('DeviceSecretsAPI');
   try {
-    const repo = getDeviceSecretRepository(c);
-
-    const cleanedCount = await repo.cleanupExpired();
+    // Expired secrets are in every core database of the tenant.
+    const repos = await tenantDeviceSecretRepositories(c.env, getTenantIdFromContext(c));
+    const cleanedCount = (await Promise.all(repos.map((repo) => repo.cleanupExpired()))).reduce(
+      (total, count) => total + count,
+      0
+    );
 
     await createAuditLogFromContext(c, 'device_secret.cleanup', 'device_secret', 'expired', {
       cleaned_count: cleanedCount,

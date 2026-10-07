@@ -175,3 +175,14 @@ export async function generateUserIdFromSettings(
   const format = await getUserIdFormatFromSettings(stores, tenantId, env);
   return generateUserId(format);
 }
+
+/**
+ * Subject namespaces of tokens that no user account backs: clients (client credentials, token
+ * exchange), admin machine principals and admin delegations.
+ */
+export const NON_ACCOUNT_SUBJECT_PREFIXES = ['client:', 'machine:', 'admin_user:'] as const;
+
+/** Whether a token subject names a client or an admin principal rather than a user account. */
+export function isNonAccountSubject(subject: string): boolean {
+  return NON_ACCOUNT_SUBJECT_PREFIXES.some((prefix) => subject.startsWith(prefix));
+}

@@ -9,6 +9,7 @@ import {
 } from './custom-claims/resolver';
 import { resolveCustomClaimRuntimeSourcesFromEnv } from './custom-claims/runtime-sources';
 import { requireDedicatedAdminDatabaseAdapter } from './admin-database-adapter';
+import { isNonAccountSubject } from '../utils/id';
 import {
   filterOidcClaimsByDestinationConsent,
   filterOidcClaimsWithoutDestinationProfile,
@@ -160,6 +161,7 @@ export async function applyOIDCIdentityMapping(
         subject = value.value;
       }
     }
+    assertMappedSubjectNotReserved(input, binding, subject);
     return { claims: { sub: subject }, binding };
   }
 
@@ -185,6 +187,7 @@ export async function applyOIDCIdentityMapping(
     }
     mappedClaims[value.sourceRef.path] = value.value;
   }
+  assertMappedSubjectNotReserved(input, binding, mappedClaims.sub);
 
   return {
     claims: await applyOIDCDestinationFieldConsent(input, mappedClaims, binding),
@@ -468,6 +471,26 @@ function toOIDCSourceValues(
     seen.add(key);
   }
   return values;
+}
+
+/**
+ * A mapped sub must not take a client or admin principal namespace (client:, machine:,
+ * admin_user:), which only those issuance paths use: a token with such a sub would be taken for a
+ * non-account subject.
+ */
+function assertMappedSubjectNotReserved(
+  input: ApplyOIDCIdentityMappingInput,
+  binding: RuntimeIdentityMappingBinding,
+  subject: unknown
+): void {
+  if (subject === input.claims.sub || typeof subject !== 'string') return;
+  if (!isNonAccountSubject(subject)) return;
+  throw new OIDCIdentityMappingRuntimeError('OIDC identity mapping produced a reserved subject', {
+    code: 'policy.identity_mapping_reserved_subject',
+    fieldMappingSetId: binding.fieldMappingSetId,
+    fieldMappingVersionId: binding.fieldMappingVersionId,
+    clientId: input.clientId,
+  });
 }
 
 export class OIDCIdentityMappingRuntimeError extends Error {
