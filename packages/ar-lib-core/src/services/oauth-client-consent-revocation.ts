@@ -102,3 +102,91 @@ export function isOAuthClientConsentGrantWithdrawn(
   if (typeof grant.generation === 'number') return grant.generation !== state.generation;
   return predatesOAuthClientConsentRevocation(grant.issuedAt, state.revokedAt);
 }
+
+/**
+ * The signed access-token claim recording the consent generation the token was granted under, so
+ * a withdrawal ends the access tokens of the withdrawn consent (introspection compares it with the
+ * current generation), including one minted while the withdrawal was being recorded.
+ */
+export const ACCESS_TOKEN_CONSENT_GENERATION_CLAIM = 'authrim_consent_generation';
+
+/**
+ * The signed access-token claim naming the client whose consent the token was granted under, when
+ * that is not the token's own client_id (a Token Exchange carries the subject token's consent).
+ */
+export const ACCESS_TOKEN_CONSENT_CLIENT_CLAIM = 'authrim_consent_client_id';
+
+/**
+ * The consent claims a token (access or ID token) for a user × client grant carries. Every grant
+ * claim is set, the ones that do not apply to undefined (left out when signed), so no value of
+ * these names from custom or mapped claims survives: they come only from the grant.
+ */
+export function accessTokenConsentClaims(input: {
+  generation: number;
+  /** The client the user consented to. */
+  consentClientId: string;
+  /** The token's client_id (an ID token's audience). */
+  tokenClientId: string;
+}): Record<string, unknown> {
+  return {
+    [ACCESS_TOKEN_CONSENT_GENERATION_CLAIM]: input.generation,
+    [ACCESS_TOKEN_CONSENT_CLIENT_CLAIM]:
+      input.consentClientId !== input.tokenClientId ? input.consentClientId : undefined,
+    authrim_subject_issuer: undefined,
+    authrim_subject_ref: undefined,
+    authrim_subject_principal: undefined,
+    original_issuer: undefined,
+  };
+}
+
+/**
+ * The consent an access token (or another Authrim-signed user token) was granted under: the
+ * client the user consented to, the generation it recorded (none on a token issued before
+ * generations were recorded) and its issue time (ms).
+ */
+export function accessTokenConsentGrant(payload: Record<string, unknown>): {
+  clientId: string | undefined;
+  generation: number | undefined;
+  issuedAt: number | undefined;
+} {
+  const consentClient = payload[ACCESS_TOKEN_CONSENT_CLIENT_CLAIM];
+  const generation = payload[ACCESS_TOKEN_CONSENT_GENERATION_CLAIM];
+  const aud = payload.aud;
+  const clientId =
+    typeof consentClient === 'string' && consentClient
+      ? consentClient
+      : typeof payload.client_id === 'string' && payload.client_id
+        ? payload.client_id
+        : typeof payload.azp === 'string' && payload.azp
+          ? payload.azp
+          : typeof aud === 'string' && aud
+            ? aud
+            : undefined;
+  return {
+    clientId,
+    generation:
+      typeof generation === 'number' && Number.isSafeInteger(generation) && generation >= 0
+        ? generation
+        : undefined,
+    issuedAt:
+      typeof payload.iat === 'number' && Number.isFinite(payload.iat)
+        ? payload.iat * 1000
+        : undefined,
+  };
+}
+
+/**
+ * Whether an access token's consent was withdrawn: it recorded a generation the withdrawals have
+ * moved past, or, one that recorded none, was issued (iat, whole seconds) at or before the last
+ * withdrawal.
+ */
+export function isAccessTokenConsentWithdrawn(
+  state: OAuthClientConsentRevocationState,
+  payload: Record<string, unknown>
+): boolean {
+  const grant = accessTokenConsentGrant(payload);
+  return isOAuthClientConsentGrantWithdrawn(state, {
+    generation: grant.generation,
+    issuedAt: grant.issuedAt,
+  });
+}

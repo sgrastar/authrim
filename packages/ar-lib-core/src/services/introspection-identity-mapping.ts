@@ -27,6 +27,12 @@ export interface ApplyIntrospectionIdentityMappingInput {
   resourceServerId: string;
   grantedScopes: string[];
   claims: Record<string, unknown>;
+  /**
+   * The account whose custom attributes the mapping may read, when the token's public sub is not
+   * the account id (a pairwise or persistent identifier); null when the subject is not an account.
+   * Omitted: the sub.
+   */
+  subjectAccountId?: string | null;
 }
 
 export async function applyIntrospectionIdentityMapping(
@@ -133,7 +139,12 @@ async function loadMappedIntrospectionSources(
   binding: RuntimeIdentityMappingBinding
 ): Promise<Record<string, unknown>> {
   const claims = { ...input.claims };
-  const subjectId = typeof input.claims.sub === 'string' ? input.claims.sub : '';
+  const subjectId =
+    input.subjectAccountId !== undefined
+      ? (input.subjectAccountId ?? '')
+      : typeof input.claims.sub === 'string'
+        ? input.claims.sub
+        : '';
   if (!subjectId) return claims;
 
   const referencedKeys = Array.from(

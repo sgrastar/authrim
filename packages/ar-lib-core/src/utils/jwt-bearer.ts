@@ -371,3 +371,23 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((item) => typeof item === 'string');
 }
+
+/**
+ * The signed access-token claim naming the external issuer that asserted the token's subject (an
+ * RFC 7523 JWT bearer assertion issuer, or the IdP of an ID-JAG subject token). Its subject need not
+ * be one of the tenant's accounts; a Token Exchange of the token carries it on.
+ */
+export const ACCESS_TOKEN_SUBJECT_ISSUER_CLAIM = 'authrim_subject_issuer';
+
+/**
+ * The external issuer that asserted an Authrim-signed token's subject, if any: the subject-issuer
+ * claim, which only the authorization server writes (on a JWT bearer grant's tokens, an ID-JAG
+ * exchange's, and a Token Exchange carrying either on). Other claims are not evidence: an ID-JAG
+ * token's original_issuer, or a client_id naming a trusted issuer, could come from identity mapping
+ * or a custom claim on another token, so a token issued before the subject-issuer claim is treated
+ * as naming an account.
+ */
+export function externalSubjectIssuer(payload: Record<string, unknown>): string | undefined {
+  const claimed = payload[ACCESS_TOKEN_SUBJECT_ISSUER_CLAIM];
+  return typeof claimed === 'string' && claimed ? claimed : undefined;
+}

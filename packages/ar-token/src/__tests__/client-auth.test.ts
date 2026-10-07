@@ -148,6 +148,7 @@ const mocks = vi.hoisted(() => {
     // Native SSO
     mockDeviceSecretRepository: {
       validateAndUse: vi.fn().mockResolvedValue({ ok: false, reason: 'not_found' }),
+      findByRawSecret: vi.fn().mockResolvedValue(null),
       createSecret: vi.fn().mockResolvedValue({ ok: false, reason: 'limit_exceeded' }),
       findByUserId: vi.fn().mockResolvedValue([]),
       revoke: vi.fn().mockResolvedValue(false),
@@ -3071,6 +3072,51 @@ describe('Client Authentication Tests', () => {
           'user-001',
           familyJti,
           'consent_revoked'
+        );
+      });
+
+      it('refuses a secret whose issuing client consent was withdrawn, when another client presents it', async () => {
+        const client = setupNativeSSOValidationTest();
+        // Issued to another app of the trust group, whose consent the user withdrew afterwards;
+        // this client's own consent was withdrawn before the secret was issued.
+        const issued = {
+          id: 'ds-001',
+          user_id: 'user-001',
+          client_id: 'origin-client',
+          session_id: 'sid-001',
+          device_platform: 'ios',
+          created_at: withdrawnAt + 1,
+          last_used_at: withdrawnAt + 1,
+          use_count: 0,
+        };
+        mocks.mockDeviceSecretRepository.findByRawSecret.mockResolvedValue(issued);
+        mocks.mockDeviceSecretRepository.validateAndUse.mockResolvedValue({
+          ok: true,
+          entity: issued,
+        });
+        core.queryOne.mockImplementation(async (sql: string, params: unknown[]) => {
+          if (!sql.includes('FROM oauth_client_consent_revocations')) return null;
+          if (params[2] === 'native-client-001') return { generation: 1, revoked_at: withdrawnAt };
+          if (params[2] === 'origin-client') {
+            return { generation: 1, revoked_at: withdrawnAt + 10 };
+          }
+          return null;
+        });
+
+        const response = await tokenHandler(createNativeSSOTokenExchangeContext(client.client_id));
+        const body = await parseJsonResponse<{
+          error?: string;
+          access_token?: string;
+          error_details?: { code?: string };
+        }>(response);
+
+        expect(response.status).toBe(400);
+        expect(body.error).toBe('invalid_grant');
+        expect(body.error_details?.code).toBe('device_secret_inactive');
+        expect(body.access_token).toBeUndefined();
+        expect(core.queryOne).toHaveBeenCalledWith(
+          expect.stringContaining('FROM oauth_client_consent_revocations'),
+          ['default', 'user-001', 'origin-client']
         );
       });
 

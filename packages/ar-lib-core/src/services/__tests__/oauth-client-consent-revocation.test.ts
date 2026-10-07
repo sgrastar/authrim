@@ -4,7 +4,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DatabaseAdapter } from '../../db/adapter';
 import { renderPortableMigrationSql } from '../../migrations/sql-portability';
 import {
+  accessTokenConsentClaims,
+  accessTokenConsentGrant,
   findOAuthClientConsentRevocation,
+  isAccessTokenConsentWithdrawn,
   isOAuthClientConsentGrantWithdrawn,
   oauthClientConsentRevocationStatement,
   predatesOAuthClientConsentRevocation,
@@ -110,5 +113,60 @@ describe('OAuth client consent revocation', () => {
     expect(predatesOAuthClientConsentRevocation(Number.NaN, 1_000)).toBe(true);
     // A re-consent after the withdrawal issues new grants.
     expect(predatesOAuthClientConsentRevocation(1_001, 1_000)).toBe(false);
+  });
+});
+
+describe('access token consent claims', () => {
+  it('records the generation, and the consented client only when it is not the token client', () => {
+    expect(
+      accessTokenConsentClaims({ generation: 3, consentClientId: 'app', tokenClientId: 'app' })
+    ).toEqual({ authrim_consent_generation: 3 });
+    expect(
+      accessTokenConsentClaims({ generation: 3, consentClientId: 'app', tokenClientId: 'rs' })
+    ).toEqual({ authrim_consent_generation: 3, authrim_consent_client_id: 'app' });
+  });
+
+  it('leaves no custom or mapped value of the grant claims', () => {
+    const claims = {
+      authrim_consent_client_id: 'spoofed',
+      authrim_subject_issuer: 'https://spoofed.example',
+      authrim_subject_ref: 'spoofed',
+      original_issuer: 'https://spoofed.example',
+      authrim_subject_principal: 'client',
+      ...accessTokenConsentClaims({ generation: 1, consentClientId: 'app', tokenClientId: 'app' }),
+    };
+    const signed = JSON.parse(JSON.stringify(claims)) as Record<string, unknown>;
+    expect(signed).toEqual({ authrim_consent_generation: 1 });
+  });
+
+  it('reads the consent of a token: its consented client, generation and issue time', () => {
+    expect(
+      accessTokenConsentGrant({
+        client_id: 'rs',
+        authrim_consent_client_id: 'app',
+        authrim_consent_generation: 2,
+        iat: 10,
+      })
+    ).toEqual({ clientId: 'app', generation: 2, issuedAt: 10_000 });
+    // An ID token names its client by azp or a single audience.
+    expect(accessTokenConsentGrant({ aud: 'app', iat: 10 }).clientId).toBe('app');
+    expect(accessTokenConsentGrant({ azp: 'app', aud: ['app', 'x'] }).clientId).toBe('app');
+    expect(accessTokenConsentGrant({ authrim_consent_generation: -1 }).generation).toBeUndefined();
+  });
+
+  it('compares a recorded generation, else the issue time, with the withdrawals', () => {
+    const state = { generation: 2, revokedAt: 10_500 };
+    expect(isAccessTokenConsentWithdrawn(state, { authrim_consent_generation: 1, iat: 99 })).toBe(
+      true
+    );
+    // A token of the current generation stands, even one issued within the withdrawal's second.
+    expect(isAccessTokenConsentWithdrawn(state, { authrim_consent_generation: 2, iat: 10 })).toBe(
+      false
+    );
+    expect(isAccessTokenConsentWithdrawn(state, { iat: 10 })).toBe(true);
+    expect(isAccessTokenConsentWithdrawn(state, { iat: 11 })).toBe(false);
+    expect(isAccessTokenConsentWithdrawn({ generation: 0, revokedAt: null }, { iat: 10 })).toBe(
+      false
+    );
   });
 });

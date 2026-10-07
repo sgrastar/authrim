@@ -5,7 +5,12 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import { generateKeyPair, exportJWK, SignJWT } from 'jose';
 import type { JWK } from 'jose';
-import { validateJWTBearerAssertion, parseTrustedIssuers, type TrustedIssuer } from '../jwt-bearer';
+import {
+  validateJWTBearerAssertion,
+  parseTrustedIssuers,
+  externalSubjectIssuer,
+  type TrustedIssuer,
+} from '../jwt-bearer';
 
 describe('JWT Bearer Flow Utilities', () => {
   let publicKey: JWK;
@@ -343,5 +348,21 @@ describe('JWT Bearer Flow Utilities', () => {
       expect(issuer?.allowed_resources).toEqual(['svc://service-api', 'svc://admin-api']);
       expect(issuer?.allowed_scopes).toEqual(['api:read']);
     });
+  });
+});
+
+describe('externalSubjectIssuer', () => {
+  it('names the issuer the authorization server recorded for the subject', () => {
+    expect(externalSubjectIssuer({ authrim_subject_issuer: 'https://idp.example' })).toBe(
+      'https://idp.example'
+    );
+  });
+
+  it('takes no other claim for evidence', () => {
+    // An ID-JAG original_issuer or a client_id naming a trusted issuer could come from a custom
+    // claim or identity mapping on another token.
+    expect(externalSubjectIssuer({ original_issuer: 'https://idp.example' })).toBeUndefined();
+    expect(externalSubjectIssuer({ client_id: 'https://issuer.example.com' })).toBeUndefined();
+    expect(externalSubjectIssuer({ client_id: 'app' })).toBeUndefined();
   });
 });

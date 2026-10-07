@@ -25,6 +25,9 @@ const {
   mockGetKeyByKid,
   mockDeviceSecretRepository,
   mockApplyIntrospectionIdentityMapping,
+  mockResolveAccountDataContextFromHono,
+  mockAccountAdapter,
+  mockResolveDeviceSecretRouteHint,
 } = vi.hoisted(() => {
   const clientRepo = {
     findByClientId: vi.fn(),
@@ -62,6 +65,20 @@ const {
     mockApplyIntrospectionIdentityMapping: vi.fn(
       async (input: { claims: Record<string, unknown> }) => input.claims
     ),
+    // The token user's account route and account database (an active account that never
+    // withdrew a consent unless a test says otherwise).
+    mockResolveAccountDataContextFromHono: vi.fn(),
+    mockAccountAdapter: {
+      query: vi.fn(),
+      queryOne: vi.fn(),
+      execute: vi.fn(),
+      transaction: vi.fn(),
+      batch: vi.fn(),
+      isHealthy: vi.fn(),
+      getType: vi.fn(),
+      close: vi.fn(),
+    },
+    mockResolveDeviceSecretRouteHint: vi.fn(),
   };
 });
 
@@ -108,6 +125,9 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
       return mockDeviceSecretRepository;
     }),
     applyIntrospectionIdentityMapping: mockApplyIntrospectionIdentityMapping,
+    resolveAccountDataContextFromHono: mockResolveAccountDataContextFromHono,
+    createAccountAuthContextFromHono: () => ({ coreAdapter: mockAccountAdapter }),
+    resolveDeviceSecretRouteHint: mockResolveDeviceSecretRouteHint,
     buildIssuerUrl: (env: Partial<Env>, tenantId?: string) => {
       if (env.BASE_DOMAIN) {
         const resolvedTenantId = tenantId || env.DEFAULT_TENANT_ID || 'default';
@@ -121,6 +141,16 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     },
   };
 });
+
+// Device secrets are read from their owner's account database (here, the mock repository).
+vi.mock('../device-secret-account', () => ({
+  findRoutedDeviceSecret: async (_env: unknown, tenantId: string, secret: string) => {
+    const deviceSecret = await mockDeviceSecretRepository.findByRawSecret(secret, tenantId);
+    return deviceSecret
+      ? { deviceSecret, repository: mockDeviceSecretRepository, coreAdapter: mockAccountAdapter }
+      : null;
+  },
+}));
 
 // Mock jose
 vi.mock('jose', () => ({
@@ -208,6 +238,18 @@ describe('Token Introspection Endpoint', () => {
       coreAdapter: {},
     });
     vi.mocked(importJWK).mockResolvedValue({} as any);
+    mockResolveAccountDataContextFromHono.mockResolvedValue({});
+    mockAccountAdapter.queryOne.mockImplementation(async (sql: string) =>
+      sql.includes('FROM identity_accounts')
+        ? {
+            account_lifecycle_state: 'active',
+            directory_publication_state: 'active',
+            subject_lifecycle_state: 'active',
+            metadata_json: null,
+          }
+        : null
+    );
+    mockResolveDeviceSecretRouteHint.mockResolvedValue({ accountId: 'account:user-123' });
     // Default: cache disabled for most tests to test without cache
     introspectionCache.mockResolvedValue({
       enabled: false,

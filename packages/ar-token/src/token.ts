@@ -56,6 +56,19 @@ import {
   isOAuthClientConsentGrantWithdrawn,
   predatesOAuthClientConsentRevocation,
   type OAuthClientConsentRevocationState,
+  accessTokenConsentClaims,
+  accessTokenConsentGrant,
+  isAccessTokenConsentWithdrawn,
+  ACCESS_TOKEN_SUBJECT_ISSUER_CLAIM,
+  externalSubjectIssuer,
+  tokenNamesAccountSubject,
+  nonAccountPrincipalKind,
+  SUBJECT_PRINCIPAL_CLAIM,
+  SUBJECT_REFERENCE_CLAIM,
+  isSubjectReferenceAvailable,
+  sealSubjectReference,
+  openSubjectReference,
+  readAccountAuthenticationState,
   updateRefreshTokenFamilyIndexExpiry,
   // Request-level caching (P0 KV Cache Optimization)
   getClientCached,
@@ -1614,13 +1627,55 @@ async function getSigningKeyFromKeyManager(
   return { privateKey, kid: keyData.kid };
 }
 
+/** The user × client grant an ID token is issued under. */
+interface IDTokenGrant {
+  /** The user's id (the ID token's sub may be a pairwise or persistent identifier for it). */
+  userId: string;
+  /** The consent generation the grant was checked against. */
+  consentGeneration: number;
+}
+
+/**
+ * The grant claims an ID token carries, so a Token Exchange of it is held to its consent like the
+ * access tokens of the grant: the consent generation, and, when its sub is not the user's id, the
+ * sealed reference to the user's account. Without the key to seal one, the reference is left out
+ * and an exchange of the ID token is refused.
+ */
+async function idTokenGrantClaims(
+  env: Env,
+  tenantId: string,
+  clientId: string,
+  claims: Omit<IDTokenClaims, 'iat' | 'exp'>,
+  grant: IDTokenGrant
+): Promise<Record<string, unknown>> {
+  const consentClaims = accessTokenConsentClaims({
+    generation: grant.consentGeneration,
+    consentClientId: clientId,
+    tokenClientId: clientId,
+  });
+  if (claims.sub === grant.userId || !isSubjectReferenceAvailable(env)) return consentClaims;
+  return {
+    ...consentClaims,
+    [SUBJECT_REFERENCE_CLAIM]: await sealSubjectReference(
+      env,
+      { tenantId, clientId },
+      grant.userId
+    ),
+  };
+}
+
 async function createClientIDToken(
   env: Env,
   tenantId: string,
   clientMetadata: ClientMetadata,
   claims: Omit<IDTokenClaims, 'iat' | 'exp'>,
-  expiresIn: number
+  expiresIn: number,
+  grant: IDTokenGrant
 ): Promise<string> {
+  claims = {
+    ...claims,
+    ...(await idTokenGrantClaims(env, tenantId, clientMetadata.client_id, claims, grant)),
+  };
   const algorithm = resolveIDTokenSigningAlgorithm(
     clientMetadata,
     await resolveIDTokenSigningPolicy(env, tenantId)
@@ -1640,8 +1695,13 @@ async function createClientSDJWTIDToken(
   clientMetadata: ClientMetadata,
   claims: Omit<IDTokenClaims, 'iat' | 'exp'>,
   expiresIn: number,
-  selectiveClaims: string[]
+  selectiveClaims: string[],
+  grant: IDTokenGrant
 ): Promise<string> {
+  claims = {
+    ...claims,
+    ...(await idTokenGrantClaims(env, tenantId, clientMetadata.client_id, claims, grant)),
+  };
   const algorithm = resolveIDTokenSigningAlgorithm(
     clientMetadata,
     await resolveIDTokenSigningPolicy(env, tenantId)
@@ -2849,6 +2909,13 @@ async function handleAuthorizationCodeGrant(
     scope: authCodeData.scope,
     client_id: client_id,
     token_use: 'access',
+    // The consent generation the code was granted under (checked current above), so a withdrawal
+    // ends this token too.
+    ...accessTokenConsentClaims({
+      generation: authCodeData.consent_generation ?? consentWithdrawal.generation,
+      consentClientId: client_id,
+      tokenClientId: client_id,
+    }),
   };
 
   // Phase 2 Policy Embedding: Add evaluated permissions
@@ -3206,7 +3273,11 @@ async function handleAuthorizationCodeGrant(
         clientMetadata as ClientMetadata,
         idTokenClaims as Omit<IDTokenClaims, 'iat' | 'exp'>,
         await lifetimes.idToken(),
-        selectiveClaims
+        selectiveClaims,
+        {
+          userId: authCodeData.sub,
+          consentGeneration: authCodeData.consent_generation ?? consentWithdrawal.generation,
+        }
       );
       log.debug('Created SD-JWT ID Token', { clientId: client_id, action: 'SD-JWT' });
     } else {
@@ -3219,7 +3290,11 @@ async function handleAuthorizationCodeGrant(
           tenantId,
           clientMetadata as ClientMetadata,
           idTokenClaims as Omit<IDTokenClaims, 'iat' | 'exp'>,
-          idTokenExpiresIn
+          idTokenExpiresIn,
+          {
+            userId: authCodeData.sub,
+            consentGeneration: authCodeData.consent_generation ?? consentWithdrawal.generation,
+          }
         )
       );
     }
@@ -3993,18 +4068,17 @@ async function handleRefreshTokenGrant(
   // generation, or, one recorded before generations, was created before the withdrawal. It is only
   // refused: revoking the user's family here could end one issued since in the same rotator.
   let familyConsentWithdrawn: boolean;
+  let familyConsentState: OAuthClientConsentRevocationState;
   try {
-    familyConsentWithdrawn = isOAuthClientConsentGrantWithdrawn(
-      await readConsentWithdrawal(authCtx.coreAdapter, {
-        tenantId,
-        userId: refreshTokenData.sub,
-        clientId: client_id,
-      }),
-      {
-        generation: refreshTokenData.family_consent_generation,
-        issuedAt: refreshTokenData.family_created_at,
-      }
-    );
+    familyConsentState = await readConsentWithdrawal(authCtx.coreAdapter, {
+      tenantId,
+      userId: refreshTokenData.sub,
+      clientId: client_id,
+    });
+    familyConsentWithdrawn = isOAuthClientConsentGrantWithdrawn(familyConsentState, {
+      generation: refreshTokenData.family_consent_generation,
+      issuedAt: refreshTokenData.family_created_at,
+    });
   } catch (error) {
     log.error('Failed to read the consent withdrawal for token refresh', {}, error as Error);
     return oauthError(c, 'temporarily_unavailable', 'Consent state is unavailable', 503);
@@ -4197,6 +4271,14 @@ async function handleRefreshTokenGrant(
       client_id: client_id,
       // Phase 2 RBAC: Add RBAC claims to access token
       ...accessTokenRBACClaims,
+      // The consent generation the family was granted under (checked current above). A
+      // withdrawal recorded while this token is minted moves the generation past it, so the token
+      // ends with the withdrawal even though the check above passed.
+      ...accessTokenConsentClaims({
+        generation: refreshTokenData.family_consent_generation ?? familyConsentState.generation,
+        consentClientId: client_id,
+        tokenClientId: client_id,
+      }),
     };
 
     // Phase 2 Policy Embedding: Add evaluated permissions
@@ -4315,7 +4397,12 @@ async function handleRefreshTokenGrant(
           clientMetadata as ClientMetadata,
           idTokenClaims as Omit<IDTokenClaims, 'iat' | 'exp'>,
           await lifetimes.idToken(),
-          selectiveClaims
+          selectiveClaims,
+          {
+            userId: refreshTokenData.sub,
+            consentGeneration:
+              refreshTokenData.family_consent_generation ?? familyConsentState.generation,
+          }
         );
       } else {
         idToken = await createClientIDToken(
@@ -4323,7 +4410,12 @@ async function handleRefreshTokenGrant(
           tenantId,
           clientMetadata as ClientMetadata,
           idTokenClaims as Omit<IDTokenClaims, 'iat' | 'exp'>,
-          await lifetimes.idToken()
+          await lifetimes.idToken(),
+          {
+            userId: refreshTokenData.sub,
+            consentGeneration:
+              refreshTokenData.family_consent_generation ?? familyConsentState.generation,
+          }
         );
       }
     } catch (error) {
@@ -4755,6 +4847,8 @@ async function handleJWTBearerGrant(
     aud: audienceResolution.audience,
     scope: grantedScope,
     client_id: claims.iss, // Issuer acts as client_id for service accounts
+    // The assertion issuer vouches for the subject, which need not be one of the tenant's accounts.
+    [ACCESS_TOKEN_SUBJECT_ISSUER_CLAIM]: claims.iss,
   };
 
   let accessToken: string;
@@ -5230,7 +5324,11 @@ async function handleDeviceCodeGrant(
       getTenantIdFromContext(c),
       clientMetadata as ClientMetadata,
       idTokenClaims as Omit<IDTokenClaims, 'iat' | 'exp'>,
-      await lifetimes.idToken()
+      await lifetimes.idToken(),
+      {
+        userId: metadata.sub!,
+        consentGeneration: metadata.consent_generation ?? deviceConsentWithdrawal.generation,
+      }
     );
   } catch (error) {
     log.error('Failed to create ID token', {}, error as Error);
@@ -5262,6 +5360,12 @@ async function handleDeviceCodeGrant(
     // Phase 2 RBAC: Add RBAC claims to access token
     ...accessTokenRBACClaims,
     ...(dpopJkt ? { cnf: { jkt: dpopJkt } } : {}),
+    // The consent generation the device approval was granted under (checked current above).
+    ...accessTokenConsentClaims({
+      generation: metadata.consent_generation ?? deviceConsentWithdrawal.generation,
+      consentClientId: client_id,
+      tokenClientId: client_id,
+    }),
   };
 
   // Phase 2 Policy Embedding: Add evaluated permissions
@@ -5896,6 +6000,12 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
         : {}),
     // Phase 2 RBAC: Add RBAC claims to access token
     ...accessTokenRBACClaims,
+    // The consent generation the CIBA approval was granted under (checked current above).
+    ...accessTokenConsentClaims({
+      generation: metadata.consent_generation ?? cibaConsentWithdrawal.generation,
+      consentClientId: client_id,
+      tokenClientId: metadata.client_id,
+    }),
   };
 
   // Phase 2 Policy Embedding: Add evaluated permissions
@@ -5959,7 +6069,11 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
     getTenantIdFromContext(c),
     clientMetadata as ClientMetadata,
     idTokenClaims as Omit<IDTokenClaims, 'iat' | 'exp'>,
-    await lifetimes.idToken()
+    await lifetimes.idToken(),
+    {
+      userId: metadata.sub!,
+      consentGeneration: metadata.consent_generation ?? cibaConsentWithdrawal.generation,
+    }
   );
 
   // Encrypt ID token if required
@@ -6922,6 +7036,123 @@ async function handleTokenExchangeGrant(
     );
   }
 
+  // A subject asserted by an external issuer (an ID-JAG subject token, or an Authrim token issued
+  // for one) need not be one of the tenant's accounts; the exchanged token carries the issuer on.
+  const subjectExternalIssuer = isIdJagTokenRequest
+    ? originalIssuer
+    : externalSubjectIssuer(subjectTokenPayload);
+  // An Authrim-signed user token (access or ID token) ends with a withdrawal of the consent it was
+  // granted under, as the grants that issue it do: it recorded an earlier generation, or, one
+  // recorded before generations, was issued at or before the withdrawal. The exchanged token
+  // records the same consent (its client and generation), so the withdrawal ends it too. An
+  // external IdP's ID-JAG token and an approval's elevation grant carry no consent.
+  let subjectGrantClaims: Record<string, unknown> = {};
+  // A client or admin principal's subject token (as its issuance path signed): the exchanged token
+  // keeps its sub under another client_id, so it records which principal the sub names.
+  const subjectPrincipalKind = isIdJagTokenRequest
+    ? null
+    : nonAccountPrincipalKind(subjectTokenPayload);
+  const subjectUserId =
+    typeof subjectTokenPayload.sub === 'string' ? subjectTokenPayload.sub : undefined;
+  const subjectConsent = accessTokenConsentGrant(subjectTokenPayload);
+  if (
+    !isIdJagTokenRequest &&
+    !elevationGrantContext &&
+    subjectUserId &&
+    // A user's grant (a consent generation or sealed account reference) names an account whatever
+    // its public sub looks like; otherwise a client or admin principal sub names none.
+    tokenNamesAccountSubject(subjectTokenPayload) &&
+    subjectConsent.clientId
+  ) {
+    // The account: the sealed reference when the sub is a pairwise or persistent identifier for
+    // it, else the sub.
+    const subjectReference = subjectTokenPayload[SUBJECT_REFERENCE_CLAIM];
+    let accountUserId = subjectUserId;
+    if (typeof subjectReference === 'string') {
+      let opened: string | null;
+      try {
+        opened = await openSubjectReference(
+          c.env,
+          { tenantId, clientId: subjectConsent.clientId },
+          subjectReference
+        );
+      } catch (error) {
+        log.error('Failed to open the subject token account reference', {}, error as Error);
+        return oauthError(c, 'temporarily_unavailable', 'Account data is unavailable', 503);
+      }
+      if (!opened) {
+        return oauthError(c, 'invalid_grant', 'Subject token is invalid or revoked', 400);
+      }
+      accountUserId = opened;
+    }
+    let subjectHasAccount = true;
+    try {
+      await resolveAccountDataContextFromHono(c, accountUserId);
+    } catch (error) {
+      const code = error instanceof Error ? error.message : 'account_data_route_unavailable';
+      log.warn('Token exchange subject account route resolution failed', { error: code });
+      const noAccount =
+        code === 'account_data_route_not_found' || code === 'account_data_account_id_invalid';
+      if (noAccount && subjectExternalIssuer && typeof subjectReference !== 'string') {
+        // An externally asserted subject that is not one of the tenant's accounts. One that was
+        // (deleted: its lookup entry is gone, its authentication state stays) is still refused.
+        let lifecycle: string | null = null;
+        if (code === 'account_data_route_not_found') {
+          try {
+            lifecycle = (await readAccountAuthenticationState(c.env, tenantId, accountUserId))
+              .lifecycle;
+          } catch (stateError) {
+            if (
+              !(stateError instanceof Error) ||
+              stateError.message !== 'session_revocation_identity_invalid'
+            ) {
+              log.error(
+                'Failed to read the authentication state of a token exchange subject',
+                {},
+                stateError as Error
+              );
+              return oauthError(c, 'temporarily_unavailable', 'Account data is unavailable', 503);
+            }
+          }
+        }
+        if (lifecycle !== null) {
+          return oauthError(c, 'invalid_grant', 'Subject token is invalid or revoked', 400);
+        }
+        subjectHasAccount = false;
+      } else if (noAccount || code === 'lookup_destination_revalidation_failed') {
+        return oauthError(c, 'invalid_grant', 'Subject token is invalid or revoked', 400);
+      } else {
+        return oauthError(c, 'temporarily_unavailable', 'Account data is unavailable', 503);
+      }
+    }
+    if (subjectHasAccount) {
+      let subjectConsentState: OAuthClientConsentRevocationState;
+      try {
+        subjectConsentState = await readConsentWithdrawal(
+          createAccountAuthContextFromHono(c, tenantId).coreAdapter,
+          { tenantId, userId: accountUserId, clientId: subjectConsent.clientId }
+        );
+      } catch (error) {
+        log.error('Failed to read the consent withdrawal for token exchange', {}, error as Error);
+        return oauthError(c, 'temporarily_unavailable', 'Consent state is unavailable', 503);
+      }
+      if (isAccessTokenConsentWithdrawn(subjectConsentState, subjectTokenPayload)) {
+        return oauthError(c, 'invalid_grant', 'Subject token is invalid or revoked', 400);
+      }
+      subjectGrantClaims = {
+        ...accessTokenConsentClaims({
+          generation: subjectConsent.generation ?? subjectConsentState.generation,
+          consentClientId: subjectConsent.clientId,
+          tokenClientId: client_id!,
+        }),
+        // Bound to the consented client, which the exchanged token records.
+        ...(typeof subjectReference === 'string' && {
+          [SUBJECT_REFERENCE_CLAIM]: subjectReference,
+        }),
+      };
+    }
+  }
+
   // 7. Scope handling (RFC 8693 §2.1)
   // Options: inherit from subject_token, explicitly request subset, or let client.allowed_scopes limit
   const subjectScope = subjectTokenPayload.scope as string | undefined;
@@ -7269,6 +7500,9 @@ async function handleTokenExchangeGrant(
     aud: audClaim,
     scope: grantedScope,
     client_id: client_id,
+    ...subjectGrantClaims,
+    ...(subjectExternalIssuer && { [ACCESS_TOKEN_SUBJECT_ISSUER_CLAIM]: subjectExternalIssuer }),
+    ...(subjectPrincipalKind && { [SUBJECT_PRINCIPAL_CLAIM]: subjectPrincipalKind }),
     // Add act claim for delegation
     ...(actClaim ? { act: actClaim } : {}),
     ...(elevationGrantContext && {
@@ -7667,15 +7901,36 @@ async function handleNativeSSOTokenExchange(
   // and the ID token are consumed, so a failed read leaves the exchange retryable. The owner is
   // the account the secret routes to; validation below confirms the secret belongs to it.
   const deviceSecretAccountId = deviceSecretRouteHint!.accountId;
+  const deviceSecretOwnerId = deviceSecretAccountId.startsWith('account:')
+    ? deviceSecretAccountId.slice('account:'.length)
+    : deviceSecretAccountId;
+  const deviceSecretRepo = new DeviceSecretRepository(authCtx.coreAdapter, tenantId);
   let nativeSSOConsentWithdrawal: OAuthClientConsentRevocationState;
+  // The withdrawals of the consent of the client the secret was issued to, when another client
+  // (of its trust group) presents it: a withdrawal of that consent ends the secret, as it ends the
+  // secret's introspection. Its tokens already issued to this client are not affected.
+  let issuingClientConsent: { clientId: string; state: OAuthClientConsentRevocationState } | null =
+    null;
   try {
-    nativeSSOConsentWithdrawal = await readConsentWithdrawal(authCtx.coreAdapter, {
-      tenantId,
-      userId: deviceSecretAccountId.startsWith('account:')
-        ? deviceSecretAccountId.slice('account:'.length)
-        : deviceSecretAccountId,
-      clientId,
-    });
+    const [withdrawal, presentedSecret] = await Promise.all([
+      readConsentWithdrawal(authCtx.coreAdapter, {
+        tenantId,
+        userId: deviceSecretOwnerId,
+        clientId,
+      }),
+      deviceSecretRepo.findByRawSecret(deviceSecret, tenantId),
+    ]);
+    nativeSSOConsentWithdrawal = withdrawal;
+    if (presentedSecret?.client_id && presentedSecret.client_id !== clientId) {
+      issuingClientConsent = {
+        clientId: presentedSecret.client_id,
+        state: await readConsentWithdrawal(authCtx.coreAdapter, {
+          tenantId,
+          userId: deviceSecretOwnerId,
+          clientId: presentedSecret.client_id,
+        }),
+      };
+    }
   } catch (error) {
     log.error('Failed to read the consent withdrawal for Native SSO', {}, error as Error);
     return exchangeError(
@@ -7687,7 +7942,6 @@ async function handleNativeSSOTokenExchange(
       { retryable: true, severity: 'warning' }
     );
   }
-  const deviceSecretRepo = new DeviceSecretRepository(authCtx.coreAdapter, tenantId);
   const deviceInstallationRepo = new DeviceInstallationRepository(authCtx.coreAdapter, tenantId);
   const deviceSecretValidation = await deviceSecretRepo.validateAndUse(deviceSecret, {
     maxUseCount: nativeSSOConfig.maxUseCountPerSecret,
@@ -7823,12 +8077,27 @@ async function handleNativeSSOTokenExchange(
     );
   }
 
-  // A device secret issued before the user withdrew this client's consent ends with it.
+  // A device secret issued before the user withdrew this client's consent, or the consent of the
+  // client it was issued to, ends with it.
+  const issuingClientId = validatedDeviceSecret.client_id;
+  if (
+    issuingClientId &&
+    issuingClientId !== clientId &&
+    issuingClientConsent?.clientId !== issuingClientId
+  ) {
+    // The secret validated is not the one whose issuing client's consent was read.
+    return exchangeInvalidGrant('Device secret validation failed', 'device_secret_binding_failed');
+  }
   if (
     predatesOAuthClientConsentRevocation(
       validatedDeviceSecret.created_at,
       nativeSSOConsentWithdrawal.revokedAt
-    )
+    ) ||
+    (issuingClientConsent !== null &&
+      predatesOAuthClientConsentRevocation(
+        validatedDeviceSecret.created_at,
+        issuingClientConsent.state.revokedAt
+      ))
   ) {
     return exchangeInvalidGrant(
       'The device secret predates the withdrawal of consent for this client',
@@ -7980,6 +8249,12 @@ async function handleNativeSSOTokenExchange(
     authrim_installation_id: issuedInstallationId,
     // Add DPoP confirmation
     cnf: { jkt: dpopJkt },
+    // The consent generation the exchange was checked against above.
+    ...accessTokenConsentClaims({
+      generation: nativeSSOConsentWithdrawal.generation,
+      consentClientId: clientId,
+      tokenClientId: clientId,
+    }),
   };
 
   let accessToken: string;
@@ -8122,7 +8397,8 @@ async function handleNativeSSOTokenExchange(
       tenantId,
       clientMetadata,
       newIdTokenClaims as Omit<IDTokenClaims, 'iat' | 'exp'>,
-      await lifetimes.idToken()
+      await lifetimes.idToken(),
+      { userId: deviceSecretUserId, consentGeneration: nativeSSOConsentWithdrawal.generation }
     );
   } catch (error) {
     log.error('Failed to create ID token', { action: 'NativeSSO' }, error as Error);
