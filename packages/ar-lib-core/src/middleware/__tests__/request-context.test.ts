@@ -69,6 +69,15 @@ function buildApp(env: TestEnv, requireTenant = true) {
     const tenantId = getTenantIdFromContext(c);
     return c.json({ tenantId });
   });
+  app.all('/api/admin-init-setup/*', (c) => {
+    return c.json({ tenantId: getTenantIdFromContext(c) });
+  });
+  app.all('/api/admin/me/passkeys/*', (c) => {
+    return c.json({ tenantId: getTenantIdFromContext(c) });
+  });
+  app.get('/api/admin/me/passkeys', (c) => {
+    return c.json({ tenantId: getTenantIdFromContext(c) });
+  });
   app.get('/api/auth/discovery', (c) => {
     const tenantId = getTenantIdFromContext(c);
     return c.json({ tenantId });
@@ -858,6 +867,14 @@ describe('requestContextMiddleware – tenant existence check', () => {
     });
 
     it.each([
+      ['GET', '/admin-init-setup'],
+      ['GET', '/api/admin-init-setup/status'],
+      ['POST', '/api/admin-init-setup/initialize'],
+      ['POST', '/api/admin-init-setup/complete'],
+      ['GET', '/api/admin/me/passkeys'],
+      ['POST', '/api/admin/me/passkeys/options'],
+      ['POST', '/api/admin/me/passkeys/complete'],
+      ['DELETE', '/api/admin/me/passkeys/credential-id'],
       ['GET', '/api/admin/tenants/provisioning-tenant/provisioning'],
       ['POST', '/api/admin/tenants/provisioning-tenant/provisioning/retry'],
       ['POST', '/api/admin/tenants/provisioning-tenant/provisioning/cleanup'],
@@ -882,6 +899,7 @@ describe('requestContextMiddleware – tenant existence check', () => {
       expect(res.status).toBe(200);
       await expect(res.json()).resolves.toEqual({ tenantId: 'default' });
       expect(db.prepare).not.toHaveBeenCalled();
+      expect(runtimeMocks.resolveTenantMetadata).not.toHaveBeenCalled();
     });
 
     it('allows platform admin requests without X-Tenant-Id', async () => {

@@ -10,6 +10,9 @@ const SETTINGS_PLATFORM_PATH = /^\/api\/admin\/settings\/cache-mode(?:\/info)?\/
 const RUNTIME_PROFILE_PLATFORM_PATH = /^\/api\/admin\/runtime-profiles(?:\/.*)?\/?$/;
 const ADMIN_PLATFORM_AUTH_PATH =
   /^\/api\/admin\/(?:auth\/.*|setup-token\/.*|sessions\/me|me\/session|logout)\/?$/;
+const INITIAL_ADMIN_SETUP_PATH =
+  /^(?:\/admin-init-setup|\/api\/admin-init-setup\/(?:status|initialize|complete))\/?$/;
+const ADMIN_SELF_SERVICE_PATH = /^\/api\/admin\/me\/(?:passkeys|agent-consents)(?:\/[^/]+)?\/?$/;
 const ADMIN_AGENT_LOGIN_HANDOFF_APPROVAL_PATH =
   /^\/api\/admin\/agent-login-handoffs\/alh_[A-Za-z0-9_-]{32}\/approve\/?$/;
 const TENANT_ID_PATTERN = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/;
@@ -49,6 +52,17 @@ export function classifyTenantRequestPath(path?: string | null): TenantRequestCl
   }
 
   if (ADMIN_PLATFORM_AUTH_PATH.test(normalizedPath)) {
+    return 'platform_admin';
+  }
+
+  // Initial administrators live in the dedicated Admin database. Their one-time
+  // setup token and origin checks must run before a tenant runtime exists.
+  if (INITIAL_ADMIN_SETUP_PATH.test(normalizedPath)) {
+    return 'platform_admin';
+  }
+
+  // These handlers derive ownership from the authenticated Admin identity in DB_ADMIN.
+  if (ADMIN_SELF_SERVICE_PATH.test(normalizedPath)) {
     return 'platform_admin';
   }
 
