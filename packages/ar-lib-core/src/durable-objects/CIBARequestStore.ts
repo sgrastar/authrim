@@ -166,6 +166,9 @@ export class CIBARequestStore {
 
   private tenantId: string | null = null;
 
+  /** Tail of the queue that runs the state changes of one request one at a time. */
+  private transitions: Promise<unknown> = Promise.resolve();
+
   constructor(state: DurableObjectState, env: Env) {
     this.state = state;
     this.env = env;
@@ -263,33 +266,70 @@ export class CIBARequestStore {
   /**
    * Save CIBA request to Durable Storage
    */
-  private async saveRequest(authReqId: string, metadata: CIBARequestV2): Promise<void> {
+  private async saveRequest(
+    authReqId: string,
+    metadata: CIBARequestV2,
+    base: CIBARequestV2
+  ): Promise<void> {
+    // Checked in the same turn as the write: a request deleted meanwhile must not come back.
+    this.assertStillCached(authReqId, base);
     const key = this.buildRequestKey(authReqId);
     await this.state.storage.put(key, metadata);
   }
 
   /**
-   * Save a request that is no longer pending and drop its pending-address index entry. Both are
-   * issued without an await between them, so Durable Objects commit them as one atomic write.
+   * The request a change started from must still be the cached one: a delete (cleanup, expiry, or
+   * /delete) removes it from the cache first. Without this a change that was reading the request
+   * would write it back after the delete.
    */
-  private async saveDecidedRequest(authReqId: string, metadata: CIBARequestV2): Promise<void> {
-    // The key is computed first; the two writes then go out with no await between them.
-    const indexKey = await this.indexKeyOf(metadata);
-    const writes: Promise<unknown>[] = [
-      this.state.storage.put(this.buildRequestKey(authReqId), metadata),
-    ];
-    if (indexKey) {
-      writes.push(this.state.storage.delete(indexKey));
+  private assertStillCached(authReqId: string, base: CIBARequestV2): void {
+    if (this.cibaRequests.get(authReqId) !== base) {
+      throw new Error('CIBA request not found');
     }
-    await Promise.all(writes);
+  }
+
+  /** Cache the saved copy, unless the request was deleted while it was being saved. */
+  private cacheSaved(authReqId: string, base: CIBARequestV2, saved: CIBARequestV2): void {
+    if (this.cibaRequests.get(authReqId) === base) {
+      this.cibaRequests.set(authReqId, saved);
+    }
   }
 
   /**
-   * Save user code mapping to Durable Storage
+   * Run a state change after the earlier ones finished. A change reads the request, saves an
+   * updated copy, and only then puts it in the cache; that gap must not interleave with another
+   * change of the same request (two approvals, or a token issued twice). This does not depend on
+   * the Durable Object input gate staying closed across every await.
    */
-  private async saveUserMapping(userCode: string, authReqId: string): Promise<void> {
-    const key = this.buildUserKey(userCode);
-    await this.state.storage.put(key, authReqId);
+  private serializeTransition<T>(operation: () => Promise<T>): Promise<T> {
+    const run = this.transitions.then(operation);
+    this.transitions = run.catch(() => undefined);
+    return run;
+  }
+
+  /**
+   * Save a request that is no longer pending and drop its pending-address index entry, in one
+   * transaction: if the request cannot be saved, the index entry stays and the request is still
+   * listed as pending.
+   */
+  private async saveDecidedRequest(
+    authReqId: string,
+    metadata: CIBARequestV2,
+    base: CIBARequestV2
+  ): Promise<void> {
+    // The key is computed first. The still-cached check and the transaction then start with no
+    // await between them. The transaction is what makes the two writes atomic: issuing them side
+    // by side is not enough, because a write that Durable Storage rejects before applying it (a
+    // value over the size limit) would leave the other one applied, and the index entry gone while
+    // the request is still pending.
+    const indexKey = await this.indexKeyOf(metadata);
+    this.assertStillCached(authReqId, base);
+    await this.state.storage.transaction(async (txn) => {
+      await txn.put(this.buildRequestKey(authReqId), metadata);
+      if (indexKey) {
+        await txn.delete(indexKey);
+      }
+    });
   }
 
   /**
@@ -560,14 +600,9 @@ export class CIBARequestStore {
       token_issued: metadata.token_issued ?? false,
     };
 
-    // Store in memory
-    this.cibaRequests.set(metadata.auth_req_id, v2Metadata);
-    if (metadata.user_code) {
-      this.userCodeToAuthReqId.set(metadata.user_code, metadata.auth_req_id);
-    }
-
-    // V2: Persist to Durable Storage (primary), with its pending-address index entry in the
-    // same write.
+    // V2: Persist to Durable Storage (primary), with its pending-address index entry and the
+    // user code mapping in the same write. The cache follows once it is saved: a request that
+    // could not be stored must not be readable.
     const indexKey =
       v2Metadata.status === 'pending' && !isCIBARequestExpired(v2Metadata)
         ? await this.indexKeyOf(v2Metadata)
@@ -575,9 +610,13 @@ export class CIBARequestStore {
     await this.state.storage.put({
       [this.buildRequestKey(metadata.auth_req_id)]: v2Metadata,
       ...(indexKey ? { [indexKey]: metadata.auth_req_id } : {}),
+      ...(metadata.user_code
+        ? { [this.buildUserKey(metadata.user_code)]: metadata.auth_req_id }
+        : {}),
     });
+    this.cibaRequests.set(metadata.auth_req_id, v2Metadata);
     if (metadata.user_code) {
-      await this.saveUserMapping(metadata.user_code, metadata.auth_req_id);
+      this.userCodeToAuthReqId.set(metadata.user_code, metadata.auth_req_id);
     }
 
     this.logEvent({
@@ -616,7 +655,7 @@ export class CIBARequestStore {
     if (metadata) {
       // Check if expired
       if (isCIBARequestExpired(metadata)) {
-        await this.deleteCIBARequest(authReqId);
+        await this.removeRequest(authReqId);
         return null;
       }
       return metadata;
@@ -630,7 +669,7 @@ export class CIBARequestStore {
     if (storedMetadata) {
       // Check if expired
       if (isCIBARequestExpired(storedMetadata)) {
-        await this.deleteCIBARequest(authReqId);
+        await this.removeRequest(authReqId);
         return null;
       }
 
@@ -773,7 +812,20 @@ export class CIBARequestStore {
   /**
    * Approve CIBA request (user approved the authorization request)
    */
-  private async approveCIBARequest(
+  private approveCIBARequest(
+    authReqId: string,
+    userId: string,
+    sub: string,
+    nonce?: string,
+    authenticatedAcr?: string,
+    consentGeneration?: number
+  ): Promise<void> {
+    return this.serializeTransition(() =>
+      this.applyApproval(authReqId, userId, sub, nonce, authenticatedAcr, consentGeneration)
+    );
+  }
+
+  private async applyApproval(
     authReqId: string,
     userId: string,
     sub: string,
@@ -801,25 +853,23 @@ export class CIBARequestStore {
       throw new Error(`CIBA request already ${metadata.status}`);
     }
 
-    // Update status to approved
-    metadata.status = 'approved';
-    metadata.user_id = userId;
-    metadata.sub = sub;
-    if (nonce) {
-      metadata.nonce = nonce;
-    }
-    if (authenticatedAcr) {
-      metadata.authenticated_acr = authenticatedAcr;
-    }
-    if (consentGeneration !== undefined) {
-      metadata.consent_generation = consentGeneration;
-    }
+    // Change a copy. The cached request stays as it is until the copy is saved: a failed save
+    // must leave the request pending for readers and for a retry.
+    const approved: CIBARequestV2 = {
+      ...metadata,
+      status: 'approved',
+      user_id: userId,
+      sub,
+      ...(nonce ? { nonce } : {}),
+      ...(authenticatedAcr ? { authenticated_acr: authenticatedAcr } : {}),
+      ...(consentGeneration !== undefined ? { consent_generation: consentGeneration } : {}),
+    };
 
-    // Update in memory
-    this.cibaRequests.set(authReqId, metadata);
+    // V2: Save to Durable Storage, leaving the pending-address index in the same write
+    await this.saveDecidedRequest(authReqId, approved, metadata);
 
-    // V2: Update in Durable Storage, leaving the pending-address index in the same write
-    await this.saveDecidedRequest(authReqId, metadata);
+    // Saved: now the cache may say so
+    this.cacheSaved(authReqId, metadata, approved);
 
     this.logEvent({
       action: 'ciba_request_approved',
@@ -835,7 +885,11 @@ export class CIBARequestStore {
   /**
    * Deny CIBA request (user denied the authorization request)
    */
-  private async denyCIBARequest(authReqId: string): Promise<void> {
+  private denyCIBARequest(authReqId: string): Promise<void> {
+    return this.serializeTransition(() => this.applyDenial(authReqId));
+  }
+
+  private async applyDenial(authReqId: string): Promise<void> {
     const metadata = await this.getByAuthReqId(authReqId);
 
     if (!metadata) {
@@ -846,14 +900,12 @@ export class CIBARequestStore {
       throw new Error(`CIBA request already ${metadata.status}`);
     }
 
-    // Update status to denied
-    metadata.status = 'denied';
+    // Change a copy; the cache follows only once it is saved (see applyApproval).
+    const denied: CIBARequestV2 = { ...metadata, status: 'denied' };
 
-    // Update in memory
-    this.cibaRequests.set(authReqId, metadata);
-
-    // V2: Update in Durable Storage, leaving the pending-address index in the same write
-    await this.saveDecidedRequest(authReqId, metadata);
+    // V2: Save to Durable Storage, leaving the pending-address index in the same write
+    await this.saveDecidedRequest(authReqId, denied, metadata);
+    this.cacheSaved(authReqId, metadata, denied);
 
     this.logEvent({
       action: 'ciba_request_denied',
@@ -867,28 +919,37 @@ export class CIBARequestStore {
   /**
    * Update last poll time (for rate limiting)
    */
-  private async updatePollTime(authReqId: string): Promise<void> {
+  private updatePollTime(authReqId: string): Promise<void> {
+    return this.serializeTransition(() => this.applyPollTime(authReqId));
+  }
+
+  private async applyPollTime(authReqId: string): Promise<void> {
     const metadata = await this.getByAuthReqId(authReqId);
 
     if (!metadata) {
       throw new Error('CIBA request not found');
     }
 
-    // Update poll tracking
-    metadata.last_poll_at = Date.now();
-    metadata.poll_count = (metadata.poll_count || 0) + 1;
-
-    // Update in memory
-    this.cibaRequests.set(authReqId, metadata);
+    // Update poll tracking on a copy; the cache follows only once it is saved
+    const polled: CIBARequestV2 = {
+      ...metadata,
+      last_poll_at: Date.now(),
+      poll_count: (metadata.poll_count || 0) + 1,
+    };
 
     // V2: Update in Durable Storage
-    await this.saveRequest(authReqId, metadata);
+    await this.saveRequest(authReqId, polled, metadata);
+    this.cacheSaved(authReqId, metadata, polled);
   }
 
   /**
    * Mark tokens as issued (one-time use enforcement)
    */
-  private async markTokenIssued(authReqId: string): Promise<void> {
+  private markTokenIssued(authReqId: string): Promise<void> {
+    return this.serializeTransition(() => this.applyTokenIssued(authReqId));
+  }
+
+  private async applyTokenIssued(authReqId: string): Promise<void> {
     const metadata = await this.getByAuthReqId(authReqId);
 
     if (!metadata) {
@@ -903,15 +964,16 @@ export class CIBARequestStore {
       throw new Error('CIBA request not approved');
     }
 
-    // Mark as issued
-    metadata.token_issued = true;
-    metadata.token_issued_at = Date.now();
-
-    // Update in memory
-    this.cibaRequests.set(authReqId, metadata);
+    // Mark as issued on a copy; the cache follows only once it is saved
+    const issued: CIBARequestV2 = {
+      ...metadata,
+      token_issued: true,
+      token_issued_at: Date.now(),
+    };
 
     // V2: Update in Durable Storage
-    await this.saveRequest(authReqId, metadata);
+    await this.saveRequest(authReqId, issued, metadata);
+    this.cacheSaved(authReqId, metadata, issued);
 
     this.logEvent({
       action: 'ciba_token_issued',
@@ -927,7 +989,15 @@ export class CIBARequestStore {
   /**
    * Delete CIBA request (consumed or expired)
    */
-  private async deleteCIBARequest(authReqId: string): Promise<void> {
+  private deleteCIBARequest(authReqId: string): Promise<void> {
+    return this.serializeTransition(() => this.removeRequest(authReqId));
+  }
+
+  /**
+   * The delete itself. A read that finds an expired request calls this directly, because the
+   * read may already run inside a state change, which holds the queue.
+   */
+  private async removeRequest(authReqId: string): Promise<void> {
     const metadata =
       this.cibaRequests.get(authReqId) ??
       (await this.state.storage.get<CIBARequestV2>(this.buildRequestKey(authReqId)));

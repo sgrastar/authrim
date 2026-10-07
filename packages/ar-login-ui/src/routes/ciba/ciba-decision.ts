@@ -44,7 +44,11 @@ export async function decideCibaRequest(
 			message: decision === 'approve' ? LL.ciba_approvedSuccess() : LL.ciba_rejectedSuccess()
 		};
 	}
-	if (classifyApprovalFailure(error) === 'unknown') {
+	// A 503 is "the store could not answer": the decision may have been saved before it failed, so
+	// it is checked like a decision whose answer never arrived (the request leaves the list only
+	// when it is no longer waiting).
+	const failure = classifyApprovalFailure(error);
+	if (failure === 'unknown' || failure === 'retry') {
 		return recheckCibaDecision(api, authReqId, LL);
 	}
 	return {
@@ -54,12 +58,13 @@ export async function decideCibaRequest(
 			error,
 			decision === 'approve' ? LL.ciba_errorApproveFailed() : LL.ciba_errorDenyFailed()
 		),
-		dropRequest: classifyApprovalFailure(error) === 'request_gone'
+		dropRequest: failure === 'request_gone'
 	};
 }
 
 /**
- * After a decision without an answer (network error, timeout) it may or may not have been saved.
+ * After a decision without an answer (network error, timeout, or a 503 from the store) it may or
+ * may not have been saved.
  * The request itself says whether it is still waiting (the pending list is capped, so a request
  * missing from it proves nothing). Still pending says nothing either: the original request may
  * still be in flight. So the outcome stays unknown; a request no longer waiting (decided, expired,

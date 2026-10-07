@@ -6,7 +6,7 @@
  */
 
 import type { Context } from 'hono';
-import type { Env, CIBARequestMetadata } from '@authrim/ar-lib-core';
+import type { Env } from '@authrim/ar-lib-core';
 import {
   createErrorResponse,
   AR_ERROR_CODES,
@@ -19,6 +19,7 @@ import {
   isMockAuthEnabled,
 } from '@authrim/ar-lib-core';
 import { resolveAsyncTenantId } from './tenant';
+import { cibaStoreUnavailable, readCibaRequest } from './ciba-store';
 import {
   cibaRequestMatchesAuthenticatedUser,
   getAuthenticatedAsyncUser,
@@ -81,31 +82,17 @@ export async function cibaDetailsHandler(c: Context<{ Bindings: Env }>) {
           c.env.CIBA_REQUEST_STORE.idFromName(buildDOInstanceName('ciba', tenantId))
         );
 
-    const getResponse = await cibaRequestStore.fetch(
-      new Request('https://internal/get-by-auth-req-id', {
-        method: 'POST',
-        headers: internalHeaders,
-        body: JSON.stringify({ auth_req_id: authReqId }),
-      })
-    );
-
-    if (!getResponse.ok) {
+    const read = await readCibaRequest(cibaRequestStore, internalHeaders, authReqId);
+    if (read.kind === 'unavailable') {
       // The store could not answer: not "no such request". A caller re-checking a decision must
       // keep the request (and say the outcome is unknown) rather than drop it.
-      return c.json(
-        {
-          error: 'temporarily_unavailable',
-          error_description: 'The request cannot be read right now. Try again.',
-        },
-        503
-      );
+      if (read.error) log.error('CIBA request store unavailable', {}, read.error as Error);
+      return cibaStoreUnavailable(c, 'The request cannot be read right now. Try again.');
     }
-
-    const metadata: CIBARequestMetadata | null = await getResponse.json();
-
-    if (!metadata) {
+    if (read.kind === 'missing') {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
+    const metadata = read.metadata;
 
     if (authenticatedUser && !cibaRequestMatchesAuthenticatedUser(metadata, authenticatedUser)) {
       return createErrorResponse(c, AR_ERROR_CODES.POLICY_INSUFFICIENT_PERMISSIONS);

@@ -174,7 +174,8 @@ paths:
             type: string
       description: >-
         One request of the signed-in user. 404 when it does not exist (or expired and was
-        removed); 503 temporarily_unavailable when the store cannot be read right now.
+        removed); 503 temporarily_unavailable when the store cannot be read right now (it
+        answered with an error, failed, or returned an unreadable body).
       responses:
         '200':
           $ref: '#/components/responses/CibaDetails'
@@ -194,7 +195,11 @@ paths:
       description: >-
         A request made before the user last withdrew the client's consent cannot be approved: 400
         consent_withdrawn, and the client has to start again. Consent state that cannot be read
-        returns 503 temporarily_unavailable and leaves the request pending.
+        returns 503 temporarily_unavailable and leaves the request pending. 404 only when the
+        request does not exist (or expired and was removed). 503 temporarily_unavailable also when
+        the request store cannot answer or does not confirm the approval; the approval may or may
+        not have been saved, so check the request (GET /api/ciba/requests/{auth_req_id}) before
+        retrying. A request already decided is 400.
       security:
         - sessionCookie: []
         - sessionHeader: []
@@ -205,17 +210,24 @@ paths:
           $ref: '#/components/responses/CibaDecision'
         '400':
           $ref: '#/components/responses/Error'
-        '503':
-          $ref: '#/components/responses/Error'
         '401':
           $ref: '#/components/responses/CibaAuthenticationRequired'
         '403':
           $ref: '#/components/responses/CibaInsufficientPermissions'
+        '404':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
   /api/ciba/deny:
     post:
       tags:
         - CIBA
       summary: Deny a CIBA request.
+      description: >-
+        404 only when the request does not exist (or expired and was removed). 503
+        temporarily_unavailable when the request store cannot answer or does not confirm the
+        denial; the denial may or may not have been saved, so check the request (GET
+        /api/ciba/requests/{auth_req_id}) before retrying. A request already decided is 400.
       security:
         - sessionCookie: []
         - sessionHeader: []
@@ -224,10 +236,16 @@ paths:
       responses:
         '200':
           $ref: '#/components/responses/CibaDecision'
+        '400':
+          $ref: '#/components/responses/Error'
         '401':
           $ref: '#/components/responses/CibaAuthenticationRequired'
         '403':
           $ref: '#/components/responses/CibaInsufficientPermissions'
+        '404':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
   /api/ciba/conformance-action:
     post:
       tags:
