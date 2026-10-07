@@ -13,6 +13,7 @@ import {
   lookupHmacRotationTargetComponents,
   type LookupHmacRotation,
   type PendingLookupHmacRotation,
+  lookupHmacVerificationTargetCount,
 } from '../cli/commands/lookup-hmac-rotate.js';
 
 const sourceSecret = 'source-secret';
@@ -106,6 +107,7 @@ describe('Lookup HMAC rotation command state', () => {
       'ar-token',
       'ar-userinfo',
       'ar-management',
+      'ar-async',
       'ar-saml',
       'ar-bridge',
       'ar-vc',
@@ -230,27 +232,28 @@ describe('Lookup HMAC rotation command state', () => {
     ).toThrow('lookup_hmac_rotation_control_state_mismatch');
   });
 
-  it('strictly validates rotation and exact five-target verification responses', () => {
+  it('strictly validates rotation and exact all-target verification responses', () => {
+    const targets = lookupHmacVerificationTargetCount();
     expect(parseLookupHmacRotation(rotation())).toEqual(rotation());
     expect(
       parseLookupHmacVerificationStatus(
         {
           phase: 'distribution',
-          expected: 5,
-          succeeded: 5,
+          expected: targets,
+          succeeded: targets,
           failed: 0,
           pending: [],
           complete: true,
         },
         'distribution'
       )
-    ).toEqual({ expected: 5, succeeded: 5, failed: 0, complete: true });
+    ).toEqual({ expected: targets, succeeded: targets, failed: 0, complete: true });
     expect(() =>
       parseLookupHmacVerificationStatus(
         {
           phase: 'generation',
-          expected: 5,
-          succeeded: 5,
+          expected: targets,
+          succeeded: targets,
           failed: 0,
           pending: [],
           complete: true,
@@ -262,13 +265,46 @@ describe('Lookup HMAC rotation command state', () => {
       parseLookupHmacVerificationStatus(
         {
           phase: 'distribution',
-          expected: 5,
-          succeeded: 4,
+          expected: targets,
+          succeeded: targets - 1,
           failed: 0,
           pending: [],
           complete: true,
         },
         'distribution'
+      )
+    ).toThrow('lookup_hmac_verification_status_invalid');
+  });
+
+  it('expects as many verification targets as Control verifies (one per Lookup HMAC holder)', async () => {
+    const verifier = await readFile(
+      new URL('../../../ar-control/src/lookup-hmac-candidate-verifier.ts', import.meta.url),
+      'utf8'
+    );
+    const bindings = verifier
+      .split('export const LOOKUP_HMAC_VERIFICATION_BINDINGS = {')[1]
+      .split('} as const')[0];
+    const controlTargets = [...bindings.matchAll(/'(ar-[a-z-]+)'\s*:/g)].length;
+
+    expect(lookupHmacVerificationTargetCount()).toBe(controlTargets);
+    // A complete status from Control for all of them is accepted; a stale fixed count is not.
+    expect(
+      parseLookupHmacVerificationStatus(
+        {
+          phase: 'generation',
+          expected: controlTargets,
+          succeeded: controlTargets,
+          failed: 0,
+          pending: [],
+          complete: true,
+        },
+        'generation'
+      )
+    ).toMatchObject({ complete: true });
+    expect(() =>
+      parseLookupHmacVerificationStatus(
+        { phase: 'generation', expected: 5, succeeded: 5, failed: 0, pending: [], complete: true },
+        'generation'
       )
     ).toThrow('lookup_hmac_verification_status_invalid');
   });

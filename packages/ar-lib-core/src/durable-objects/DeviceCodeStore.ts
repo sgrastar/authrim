@@ -76,6 +76,9 @@ export class DeviceCodeStore {
 
   private tenantId: string | null = null;
 
+  /** Tail of the queue that runs the state changes one at a time. */
+  private transitions: Promise<unknown> = Promise.resolve();
+
   constructor(state: DurableObjectState, env: Env) {
     this.state = state;
     this.env = env;
@@ -161,7 +164,13 @@ export class DeviceCodeStore {
   /**
    * Save device code to Durable Storage
    */
-  private async saveDeviceCode(deviceCode: string, metadata: DeviceCodeV2): Promise<void> {
+  private async saveDeviceCode(
+    deviceCode: string,
+    metadata: DeviceCodeV2,
+    base?: DeviceCodeV2
+  ): Promise<void> {
+    // Checked in the same turn as the write: a code deleted meanwhile must not come back.
+    if (base) this.assertStillCached(deviceCode, base);
     const key = this.buildDeviceKey(deviceCode);
     await this.state.storage.put(key, metadata);
   }
@@ -172,6 +181,36 @@ export class DeviceCodeStore {
   private async saveUserMapping(userCode: string, deviceCode: string): Promise<void> {
     const key = this.buildUserKey(userCode);
     await this.state.storage.put(key, deviceCode);
+  }
+
+  /**
+   * The code a change started from must still be the cached one: a delete (cleanup, expiry, or
+   * /delete) removes it from the cache first. Without this a change that was reading the code
+   * would write it back after the delete.
+   */
+  private assertStillCached(deviceCode: string, base: DeviceCodeV2): void {
+    if (this.deviceCodes.get(deviceCode) !== base) {
+      throw new Error('Device code not found');
+    }
+  }
+
+  /** Cache the saved copy, unless the code was deleted while it was being saved. */
+  private cacheSaved(deviceCode: string, base: DeviceCodeV2, saved: DeviceCodeV2): void {
+    if (this.deviceCodes.get(deviceCode) === base) {
+      this.deviceCodes.set(deviceCode, saved);
+    }
+  }
+
+  /**
+   * Run a state change after the earlier ones finished. A change reads the code, saves an updated
+   * copy, and only then puts it in the cache; that gap must not interleave with another change
+   * (two approvals, or a token issued twice). This does not depend on the Durable Object input
+   * gate staying closed across every await.
+   */
+  private serializeTransition<T>(operation: () => Promise<T>): Promise<T> {
+    const run = this.transitions.then(operation);
+    this.transitions = run.catch(() => undefined);
+    return run;
   }
 
   /**
@@ -331,13 +370,12 @@ export class DeviceCodeStore {
       token_issued: false,
     };
 
-    // Store in memory
-    this.deviceCodes.set(metadata.device_code, v2Metadata);
-    this.userCodeToDeviceCode.set(metadata.user_code, metadata.device_code);
-
-    // V2: Persist to Durable Storage (primary)
+    // V2: Persist to Durable Storage (primary). The cache follows once both writes are saved: a
+    // code that could not be stored must not be readable.
     await this.saveDeviceCode(metadata.device_code, v2Metadata);
     await this.saveUserMapping(metadata.user_code, metadata.device_code);
+    this.deviceCodes.set(metadata.device_code, v2Metadata);
+    this.userCodeToDeviceCode.set(metadata.user_code, metadata.device_code);
 
     this.logEvent({
       action: 'device_code_created',
@@ -365,7 +403,7 @@ export class DeviceCodeStore {
     if (metadata) {
       // Check if expired
       if (isDeviceCodeExpired(metadata)) {
-        await this.deleteDeviceCode(deviceCode);
+        await this.removeDeviceCode(deviceCode);
         return null;
       }
       return metadata;
@@ -379,7 +417,7 @@ export class DeviceCodeStore {
     if (storedMetadata) {
       // Check if expired
       if (isDeviceCodeExpired(storedMetadata)) {
-        await this.deleteDeviceCode(deviceCode);
+        await this.removeDeviceCode(deviceCode);
         return null;
       }
 
@@ -414,7 +452,18 @@ export class DeviceCodeStore {
   /**
    * Approve device code (user approved the authorization request)
    */
-  private async approveDeviceCode(
+  private approveDeviceCode(
+    userCode: string,
+    userId: string,
+    sub: string,
+    consentGeneration?: number
+  ): Promise<void> {
+    return this.serializeTransition(() =>
+      this.applyApproval(userCode, userId, sub, consentGeneration)
+    );
+  }
+
+  private async applyApproval(
     userCode: string,
     userId: string,
     sub: string,
@@ -440,19 +489,19 @@ export class DeviceCodeStore {
       throw new Error(`Device code already ${metadata.status}`);
     }
 
-    // Update status to approved
-    metadata.status = 'approved';
-    metadata.user_id = userId;
-    metadata.sub = sub;
-    if (consentGeneration !== undefined) {
-      metadata.consent_generation = consentGeneration;
-    }
+    // Change a copy. The cached code stays as it is until the copy is saved: a failed save must
+    // leave the code pending for readers and for a retry.
+    const approved: DeviceCodeV2 = {
+      ...metadata,
+      status: 'approved',
+      user_id: userId,
+      sub,
+      ...(consentGeneration !== undefined ? { consent_generation: consentGeneration } : {}),
+    };
 
-    // Update in memory
-    this.deviceCodes.set(metadata.device_code, metadata);
-
-    // V2: Update in Durable Storage
-    await this.saveDeviceCode(metadata.device_code, metadata);
+    // V2: Save to Durable Storage, then the cache
+    await this.saveDeviceCode(metadata.device_code, approved, metadata);
+    this.cacheSaved(metadata.device_code, metadata, approved);
 
     this.logEvent({
       action: 'device_code_approved',
@@ -468,7 +517,11 @@ export class DeviceCodeStore {
   /**
    * Deny device code (user denied the authorization request)
    */
-  private async denyDeviceCode(userCode: string): Promise<void> {
+  private denyDeviceCode(userCode: string): Promise<void> {
+    return this.serializeTransition(() => this.applyDenial(userCode));
+  }
+
+  private async applyDenial(userCode: string): Promise<void> {
     const metadata = await this.getByUserCode(userCode);
 
     if (!metadata) {
@@ -479,14 +532,12 @@ export class DeviceCodeStore {
       throw new Error(`Device code already ${metadata.status}`);
     }
 
-    // Update status to denied
-    metadata.status = 'denied';
+    // Change a copy; the cache follows only once it is saved (see applyApproval).
+    const denied: DeviceCodeV2 = { ...metadata, status: 'denied' };
 
-    // Update in memory
-    this.deviceCodes.set(metadata.device_code, metadata);
-
-    // V2: Update in Durable Storage
-    await this.saveDeviceCode(metadata.device_code, metadata);
+    // V2: Save to Durable Storage, then the cache
+    await this.saveDeviceCode(metadata.device_code, denied, metadata);
+    this.cacheSaved(metadata.device_code, metadata, denied);
 
     this.logEvent({
       action: 'device_code_denied',
@@ -500,28 +551,37 @@ export class DeviceCodeStore {
   /**
    * Update last poll time (for rate limiting)
    */
-  private async updatePollTime(deviceCode: string): Promise<void> {
+  private updatePollTime(deviceCode: string): Promise<void> {
+    return this.serializeTransition(() => this.applyPollTime(deviceCode));
+  }
+
+  private async applyPollTime(deviceCode: string): Promise<void> {
     const metadata = await this.getByDeviceCode(deviceCode);
 
     if (!metadata) {
       throw new Error('Device code not found');
     }
 
-    // Update poll tracking
-    metadata.last_poll_at = Date.now();
-    metadata.poll_count = (metadata.poll_count || 0) + 1;
+    // Update poll tracking on a copy; the cache follows only once it is saved
+    const polled: DeviceCodeV2 = {
+      ...metadata,
+      last_poll_at: Date.now(),
+      poll_count: (metadata.poll_count || 0) + 1,
+    };
 
-    // Update in memory
-    this.deviceCodes.set(deviceCode, metadata);
-
-    // V2: Update in Durable Storage
-    await this.saveDeviceCode(deviceCode, metadata);
+    // V2: Save to Durable Storage, then the cache
+    await this.saveDeviceCode(deviceCode, polled, metadata);
+    this.cacheSaved(deviceCode, metadata, polled);
   }
 
   /**
    * Mark token as issued (one-time use enforcement) - V2
    */
-  private async markTokenIssued(deviceCode: string): Promise<void> {
+  private markTokenIssued(deviceCode: string): Promise<void> {
+    return this.serializeTransition(() => this.applyTokenIssued(deviceCode));
+  }
+
+  private async applyTokenIssued(deviceCode: string): Promise<void> {
     const metadata = await this.getByDeviceCode(deviceCode);
 
     if (!metadata) {
@@ -536,15 +596,16 @@ export class DeviceCodeStore {
       throw new Error('Device code not approved');
     }
 
-    // Mark as issued
-    metadata.token_issued = true;
-    metadata.token_issued_at = Date.now();
+    // Mark as issued on a copy; the cache follows only once it is saved
+    const issued: DeviceCodeV2 = {
+      ...metadata,
+      token_issued: true,
+      token_issued_at: Date.now(),
+    };
 
-    // Update in memory
-    this.deviceCodes.set(deviceCode, metadata);
-
-    // V2: Update in Durable Storage
-    await this.saveDeviceCode(deviceCode, metadata);
+    // V2: Save to Durable Storage, then the cache
+    await this.saveDeviceCode(deviceCode, issued, metadata);
+    this.cacheSaved(deviceCode, metadata, issued);
 
     this.logEvent({
       action: 'device_code_consumed',
@@ -559,7 +620,15 @@ export class DeviceCodeStore {
   /**
    * Delete device code (consumed or expired)
    */
-  private async deleteDeviceCode(deviceCode: string): Promise<void> {
+  private deleteDeviceCode(deviceCode: string): Promise<void> {
+    return this.serializeTransition(() => this.removeDeviceCode(deviceCode));
+  }
+
+  /**
+   * The delete itself. A read that finds an expired code calls this directly, because the read
+   * may already run inside a state change, which holds the queue.
+   */
+  private async removeDeviceCode(deviceCode: string): Promise<void> {
     const metadata = this.deviceCodes.get(deviceCode);
     const userCode = metadata?.user_code;
 

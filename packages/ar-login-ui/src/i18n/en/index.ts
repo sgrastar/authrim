@@ -421,6 +421,13 @@ const en = {
 	device_errorApproveFailed: 'Failed to approve device',
 	device_errorDenyFailed: 'Could not deny the device request',
 	device_errorInvalidRedirect: 'Invalid redirect URL received from server',
+	device_errorConsentWithdrawn:
+		"This request was made before you withdrew this app's access. Start again on the device to get a new code.",
+	device_errorTryAgain:
+		"Your decision couldn't be saved right now, and nothing has changed. Try again in a moment.",
+	device_errorTooManyAttempts: 'Too many attempts. Wait a while, then try again.',
+	device_errorOutcomeUnknown:
+		"We couldn't confirm whether your decision was saved. Check the device, or enter the code again.",
 
 	ciba_title: 'Authentication request',
 	ciba_subtitle: 'An application is requesting your approval',
@@ -441,6 +448,16 @@ const en = {
 	ciba_errorGeneric: 'An error occurred',
 	ciba_errorApproveFailed: 'Failed to approve request',
 	ciba_errorDenyFailed: 'Failed to deny request',
+	ciba_errorConsentWithdrawn:
+		"This request was made before you withdrew this app's access. Start again from the app.",
+	ciba_errorRequestGone: 'This request has expired or has already been answered.',
+	ciba_errorTryAgain:
+		"Your decision couldn't be saved right now, and nothing has changed. Try again in a moment.",
+	ciba_errorTooManyAttempts: 'Too many attempts. Wait a while, then try again.',
+	ciba_errorOutcomeUnknown:
+		"We couldn't confirm whether your answer was saved. Refresh to see the requests still waiting.",
+	ciba_errorNoLongerWaiting:
+		"We couldn't confirm your answer, but this request is no longer waiting.",
 
 	reauth_title: 'Verify your identity',
 	reauth_subtitle: 'For security, please re-authenticate to continue',

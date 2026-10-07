@@ -1183,11 +1183,14 @@ export function decideCibaStore(row: Row): CibaDecision {
       return { ...base, status: 200, state: 'pending', storageWrites: 1, alarmSet: true };
     case 'approve':
       if (state === 'pending') {
+        // Deciding a request also deletes its pending-address index entry (the approval page's
+        // per-user list), issued with the request write so Durable Objects commit them together.
         return {
           ...base,
           status: 200,
           state: 'approved',
           storageWrites: 1,
+          storageDeletes: 1,
           storedNonce: nonceValue,
           storedAcr: acrValue,
         };
@@ -1211,7 +1214,8 @@ export function decideCibaStore(row: Row): CibaDecision {
       };
     case 'deny':
       if (state === 'pending') {
-        return { ...base, status: 200, state: 'denied', storageWrites: 1 };
+        // As for approval: the request write plus the deletion of its pending-address index entry.
+        return { ...base, status: 200, state: 'denied', storageWrites: 1, storageDeletes: 1 };
       }
       return { ...base, status: 500, error: 'server_error', state };
     case 'mark-issued':

@@ -127,6 +127,11 @@ describe('CIBA Utilities', () => {
       expect(result.valid).toBe(true);
     });
 
+    it('should reject a login_hint that is not well-formed Unicode', () => {
+      const result = validateCIBARequest({ scope: 'openid', login_hint: 'user\ud800@example.com' });
+      expect(result).toMatchObject({ valid: false, error: 'invalid_request' });
+    });
+
     it('should require scope', () => {
       const result = validateCIBARequest({
         scope: '',

@@ -147,73 +147,25 @@ Generate `wrangler.toml` files for local development environment.
 
 - Requires `setup-keys.sh` to have been run first (for KEY_ID)
 
-### setup-remote-wrangler.sh
+### Remote environments: `@authrim/setup`
 
-Generate `wrangler.toml` files for remote Cloudflare Workers deployment.
-
-Supports two deployment modes with automatic routing configuration:
-
-**Usage:**
+The former `setup-remote-wrangler.sh` generator is retired. Remote environments are created,
+deployed, and updated with `@authrim/setup`, which provisions the Cloudflare resources and writes
+each package's `wrangler.toml` (`[env.<name>]` sections). Public API traffic enters through the
+Router Worker, as do the UIs when they share the API host. A UI on its own host (`sameAsApi: false`)
+is served by its UI Worker; its API calls still reach the Router, through the Login UI Worker's
+proxy, directly from the browser for a same-site Admin UI, or through the Admin UI Worker's BFF for
+a cross-site one (see `docs/getting-started/deployment.md`, Deployment Modes):
 
 ```bash
-# Interactive mode (prompts for deployment mode)
-./scripts/setup-remote-wrangler.sh
-
-# Specify mode via CLI
-./scripts/setup-remote-wrangler.sh --mode=test|production
-./scripts/setup-remote-wrangler.sh --issuer-url=https://...
+npx @authrim/setup                         # Web UI (recommended)
+npx @authrim/setup init --cli --env prod   # CLI: create an environment
+npx @authrim/setup deploy --env prod --yes # deploy its Workers
+npx @authrim/setup update --env prod --all --yes # later releases
 ```
 
-**Deployment Modes:**
-
-#### 1) Test Environment (workers.dev + Router Worker)
-
-- Uses Router Worker with Service Bindings
-- Unified endpoint: `https://authrim.{subdomain}.workers.dev`
-- All backend workers hidden (workers_dev=false)
-- Only Router Worker is public (workers_dev=true)
-- Automatically generates `packages/router/wrangler.toml`
-
-**When to use:**
-
-- Development and testing
-- Quick setup without custom domain
-- OpenID Connect compliant
-
-#### 2) Production Environment (Custom Domain + Cloudflare Routes)
-
-- Direct routing via Cloudflare Routes
-- Custom domain endpoint: `https://id.yourdomain.com`
-- Optimal performance (no extra router hop)
-- All workers use workers_dev=false
-- Automatically adds Cloudflare Routes to each worker
-- Removes router configuration (not needed)
-
-**When to use:**
-
-- Production deployments
-- Custom domain with Cloudflare DNS
-- Optimal performance required
-
-**What it does:**
-
-- Interactive deployment mode selection
-- workers.dev subdomain detection/input (for test mode)
-- ISSUER_URL configuration
-- UI_BASE_URL configuration (optional, for Device Flow)
-- Updates all worker wrangler.toml files
-- Configures Router Worker or Cloudflare Routes based on mode
-- Sets workers_dev appropriately for each worker
-
-**Configuration Examples:**
-
-- Test: `https://authrim.sgrastar.workers.dev` (Router Worker)
-- Production: `https://id.yourdomain.com` (Cloudflare Routes)
-
-**Requirements:**
-
-- Requires `setup-keys.sh` to have been run first (for KEY_ID)
-- For production mode: Cloudflare-managed domain required
+From a repository checkout, `pnpm run setup`, `pnpm run setup:init`, and `pnpm run setup:deploy`
+run the same tool. See [packages/setup/README.md](../packages/setup/README.md).
 
 ### setup-resend.sh
 
@@ -707,34 +659,18 @@ pnpm run dev
 #### Remote Environment Deployment
 
 ```bash
-# 1. Generate keys
-./scripts/setup-keys.sh
+# Create the environment: keys, Cloudflare resources, and wrangler configuration
+npx @authrim/setup init --cli --env prod
 
-# 2. Generate wrangler.toml for remote
-./scripts/setup-remote-wrangler.sh          # Prompts for ISSUER_URL (your remote endpoint)
+# Deploy its Workers (API and enabled UI Workers)
+npx @authrim/setup deploy --env prod --yes
 
-# 3. Create cloud resources
-./scripts/setup-kv.sh --env=prod            # Create KV namespaces + initialize settings
-./scripts/setup-d1.sh remote                # Create D1 database
-./scripts/setup-durable-objects.sh          # Deploy Durable Objects
-
-# 4. Upload secrets
-./scripts/setup-secrets.sh                  # Upload JWT keys to Cloudflare
-
-# 5. Deploy API workers
-pnpm run deploy:retry
-
-# 6. Deploy UI to Cloudflare Pages (with optional CORS configuration)
-./scripts/deploy-remote-ui.sh               # Deploy Login/Admin Pages
-                                            # Prompts for domain config (custom or pages.dev)
-                                            # Offers to configure CORS automatically
-
-# 7. (Optional) Configure email
-./scripts/setup-resend.sh --env=remote      # Configure Resend for email notifications
-
-# OR manually configure CORS if skipped in step 6
-./scripts/setup-remote-cors.sh              # Configure CORS for allowed origins
+# (Optional) Configure email
+./scripts/setup-resend.sh --env=remote
 ```
+
+After the first deployment, open the setup URL that `@authrim/setup` prints to create the first
+`system_admin` with a Passkey.
 
 **Note:** Settings start at the Settings API defaults. To apply a certification profile, use `./scripts/switch-certification-profile.sh`.
 
@@ -902,21 +838,11 @@ pnpm run dev
 ### Remote Environment Deployment
 
 ```
-setup-keys.sh --setup-url=https://... --kv-namespace-id=xxx
+npx @authrim/setup init --cli --env <env>
     ↓
-setup-remote-wrangler.sh
+npx @authrim/setup deploy --env <env>
     ↓
-setup-kv.sh --env=prod
-    ↓
-setup-d1.sh / setup-durable-objects.sh
-    ↓
-setup-secrets.sh
-    ↓
-pnpm run deploy:retry (API Workers)
-    ↓
-Open setup URL in browser → Create initial admin with Passkey
-    ↓
-deploy-remote-ui.sh (UI + optional CORS)
+Open the setup URL → create the initial admin with a Passkey
     ↓
 setup-resend.sh --env=remote (optional)
 ```

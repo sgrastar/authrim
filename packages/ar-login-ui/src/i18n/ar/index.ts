@@ -389,6 +389,11 @@ const ar = createTranslation({
 	device_errorApproveFailed: 'تعذّرت الموافقة على الجهاز',
 	device_errorDenyFailed: 'تعذّر رفض طلب الجهاز',
 	device_errorInvalidRedirect: 'استُلم رابط إعادة توجيه غير صالح من الخادم',
+	device_errorConsentWithdrawn:
+		'أُنشئ هذا الطلب قبل أن تسحب صلاحية الوصول من هذا التطبيق. ابدأ من جديد على الجهاز للحصول على رمز جديد.',
+	device_errorTryAgain: 'تعذّر حفظ قرارك الآن ولم يتغيّر شيء. حاول مرة أخرى بعد قليل.',
+	device_errorTooManyAttempts: 'محاولات كثيرة جدًا. انتظر قليلًا ثم حاول مرة أخرى.',
+	device_errorOutcomeUnknown: 'تعذّر التأكد من حفظ قرارك. تحقّق من الجهاز، أو أدخل الرمز مرة أخرى.',
 	ciba_title: 'طلب مصادقة',
 	ciba_subtitle: 'يطلب أحد التطبيقات موافقتك',
 	ciba_noPendingRequests: 'لا توجد طلبات مصادقة معلّقة',
@@ -408,6 +413,14 @@ const ar = createTranslation({
 	ciba_errorGeneric: 'حدث خطأ',
 	ciba_errorApproveFailed: 'تعذّرت الموافقة على الطلب',
 	ciba_errorDenyFailed: 'تعذّر رفض الطلب',
+	ciba_errorConsentWithdrawn:
+		'أُنشئ هذا الطلب قبل أن تسحب صلاحية الوصول من هذا التطبيق. ابدأ من جديد من التطبيق.',
+	ciba_errorRequestGone: 'انتهت صلاحية هذا الطلب أو تم الرد عليه بالفعل.',
+	ciba_errorTryAgain: 'تعذّر حفظ قرارك الآن ولم يتغيّر شيء. حاول مرة أخرى بعد قليل.',
+	ciba_errorTooManyAttempts: 'محاولات كثيرة جدًا. انتظر قليلًا ثم حاول مرة أخرى.',
+	ciba_errorOutcomeUnknown:
+		'تعذّر التأكد من حفظ ردّك. حدّث الصفحة لرؤية الطلبات التي لا تزال في الانتظار.',
+	ciba_errorNoLongerWaiting: 'تعذّر التأكد من ردّك، لكن هذا الطلب لم يعد في الانتظار.',
 	reauth_title: 'التحقق من هويتك',
 	reauth_subtitle: 'لدواعٍ أمنية، أعد المصادقة للمتابعة',
 	reauth_verifyWithPasskey: 'التحقق باستخدام مفتاح مرور',

@@ -412,6 +412,13 @@ const it = createTranslation({
 	device_errorApproveFailed: 'Impossibile approvare il dispositivo',
 	device_errorDenyFailed: 'Impossibile negare la richiesta del dispositivo',
 	device_errorInvalidRedirect: 'Il server ha restituito un URL di reindirizzamento non valido',
+	device_errorConsentWithdrawn:
+		'Questa richiesta è stata fatta prima che revocassi l’accesso di questa app. Ricomincia dal dispositivo per ottenere un nuovo codice.',
+	device_errorTryAgain:
+		'Non è stato possibile salvare la tua decisione in questo momento e non è cambiato nulla. Riprova tra poco.',
+	device_errorTooManyAttempts: 'Troppi tentativi. Attendi un po’ e poi riprova.',
+	device_errorOutcomeUnknown:
+		'Non è stato possibile confermare se la tua decisione è stata salvata. Controlla il dispositivo o inserisci di nuovo il codice.',
 	ciba_title: 'Richiesta di autenticazione',
 	ciba_subtitle: 'Un’applicazione richiede la tua approvazione',
 	ciba_noPendingRequests: 'Nessuna richiesta di autenticazione in sospeso',
@@ -431,6 +438,16 @@ const it = createTranslation({
 	ciba_errorGeneric: 'Si è verificato un errore',
 	ciba_errorApproveFailed: 'Impossibile approvare la richiesta',
 	ciba_errorDenyFailed: 'Impossibile rifiutare la richiesta',
+	ciba_errorConsentWithdrawn:
+		'Questa richiesta è stata fatta prima che revocassi l’accesso di questa app. Ricomincia dall’app.',
+	ciba_errorRequestGone: 'Questa richiesta è scaduta o ha già ricevuto una risposta.',
+	ciba_errorTryAgain:
+		'Non è stato possibile salvare la tua decisione in questo momento e non è cambiato nulla. Riprova tra poco.',
+	ciba_errorTooManyAttempts: 'Troppi tentativi. Attendi un po’ e poi riprova.',
+	ciba_errorOutcomeUnknown:
+		'Non è stato possibile confermare se la tua risposta è stata salvata. Aggiorna per vedere le richieste ancora in attesa.',
+	ciba_errorNoLongerWaiting:
+		'Non è stato possibile confermare la tua risposta, ma questa richiesta non è più in attesa.',
 	reauth_title: 'Verifica la tua identità',
 	reauth_subtitle: 'Per motivi di sicurezza, autenticati di nuovo per continuare',
 	reauth_verifyWithPasskey: 'Verifica con una passkey',

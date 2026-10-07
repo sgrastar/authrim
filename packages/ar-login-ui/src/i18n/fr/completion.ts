@@ -105,6 +105,13 @@ const completion = {
 	device_errorApproveFailed: 'Impossible d’approuver l’appareil',
 	device_errorDenyFailed: 'Impossible de refuser la demande de l’appareil',
 	device_errorInvalidRedirect: 'URL de redirection non valide reçue du serveur',
+	device_errorConsentWithdrawn:
+		'Cette demande a été faite avant que vous ne retiriez l’accès de cette application. Recommencez sur l’appareil pour obtenir un nouveau code.',
+	device_errorTryAgain:
+		'Votre décision n’a pas pu être enregistrée pour le moment et rien n’a été modifié. Réessayez dans un instant.',
+	device_errorTooManyAttempts: 'Trop de tentatives. Patientez un moment, puis réessayez.',
+	device_errorOutcomeUnknown:
+		'Nous n’avons pas pu confirmer l’enregistrement de votre décision. Vérifiez l’appareil ou saisissez à nouveau le code.',
 	ciba_title: 'Demande d’authentification',
 	ciba_subtitle: 'Une application demande votre approbation',
 	ciba_noPendingRequests: 'Aucune demande d’authentification en attente',
@@ -125,6 +132,16 @@ const completion = {
 	ciba_errorGeneric: 'Une erreur s’est produite',
 	ciba_errorApproveFailed: 'Impossible d’approuver la demande',
 	ciba_errorDenyFailed: 'Impossible de rejeter la demande',
+	ciba_errorConsentWithdrawn:
+		'Cette demande a été faite avant que vous ne retiriez l’accès de cette application. Recommencez depuis l’application.',
+	ciba_errorRequestGone: 'Cette demande a expiré ou a déjà reçu une réponse.',
+	ciba_errorTryAgain:
+		'Votre décision n’a pas pu être enregistrée pour le moment et rien n’a été modifié. Réessayez dans un instant.',
+	ciba_errorTooManyAttempts: 'Trop de tentatives. Patientez un moment, puis réessayez.',
+	ciba_errorOutcomeUnknown:
+		'Nous n’avons pas pu confirmer l’enregistrement de votre réponse. Actualisez pour voir les demandes encore en attente.',
+	ciba_errorNoLongerWaiting:
+		'Nous n’avons pas pu confirmer votre réponse, mais cette demande n’est plus en attente.',
 	reauth_title: 'Vérifiez votre identité',
 	reauth_subtitle: 'Pour votre sécurité, authentifiez-vous à nouveau pour continuer',
 	reauth_verifyWithPasskey: 'Vérifier avec une Passkey',

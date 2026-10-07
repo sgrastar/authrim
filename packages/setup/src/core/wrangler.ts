@@ -393,7 +393,15 @@ const COMPONENT_DO_BINDINGS: Record<WorkerComponent, string[]> = {
   ],
   'ar-agent-access': ['KEY_MANAGER', 'RATE_LIMITER', 'DPOP_JTI_STORE'],
   'ar-router': [],
-  'ar-async': ['DEVICE_CODE_STORE', 'CIBA_REQUEST_STORE', 'DPOP_JTI_STORE'],
+  // SESSION_STORE: the device and CIBA approval APIs act for the signed-in browser session.
+  // USER_CODE_RATE_LIMITER: per-IP limit on guessing device user codes (fails closed if absent).
+  'ar-async': [
+    'DEVICE_CODE_STORE',
+    'CIBA_REQUEST_STORE',
+    'DPOP_JTI_STORE',
+    'SESSION_STORE',
+    'USER_CODE_RATE_LIMITER',
+  ],
   'ar-policy': ['PERMISSION_CHANGE_HUB'],
   'ar-saml': [
     'KEY_MANAGER',
@@ -1617,6 +1625,10 @@ function generateDOMigrations(): WranglerConfig['migrations'] {
     {
       tag: 'v12',
       new_sqlite_classes: ['SessionRevocationStore'],
+    },
+    {
+      tag: 'v13',
+      new_sqlite_classes: ['UserCodeRateLimiter'],
     },
   ];
 }

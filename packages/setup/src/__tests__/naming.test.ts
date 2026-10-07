@@ -196,7 +196,7 @@ describe('getBuiltinD1BindingsForComponent', () => {
     expect(getBuiltinD1BindingsForComponent('ar-discovery')).toEqual([]);
     expect(getBuiltinD1BindingsForComponent('ar-policy')).toEqual([]);
     expect(getBuiltinD1BindingsForComponent('ar-agent-access')).toEqual(['DB_ADMIN']);
-    expect(getBuiltinD1BindingsForComponent('ar-async')).toEqual([]);
+    expect(getBuiltinD1BindingsForComponent('ar-async')).toEqual(['LOOKUP_DB']);
     expect(getBuiltinD1BindingsForComponent('ar-saml')).toEqual([
       'DB',
       'DB_PII',

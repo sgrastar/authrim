@@ -730,10 +730,18 @@ program
           const secrets = keysDirectory
             ? await loadDeploySecretsFromKeys(keysDirectory.path, [workerComponent])
             : {};
+          const { resolveDeployLookupHmacState } =
+            await import('./core/control-generated-state.js');
+          const { lookupHmacDeployOptions } = await import('./core/deploy.js');
           const deployOptions = {
             env,
             rootDir: resolve(baseDir),
             deploymentStrategy: 'auto' as const,
+            ...lookupHmacDeployOptions(
+              upgradeLock
+                ? await resolveDeployLookupHmacState({ lock: upgradeLock, environmentId: env })
+                : undefined
+            ),
             existingComponents: WORKER_COMPONENTS.filter(
               (component) => upgradeLock?.workers?.[component] !== undefined
             ),

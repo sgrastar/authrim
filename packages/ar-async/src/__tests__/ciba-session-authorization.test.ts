@@ -43,7 +43,8 @@ import { cibaDetailsHandler } from '../ciba-details';
 import { cibaPendingHandler } from '../ciba-pending';
 
 function metadata(overrides: Partial<CIBARequestMetadata> = {}): CIBARequestMetadata {
-  const now = Math.floor(Date.now() / 1000);
+  // The store keeps CIBA timestamps in epoch milliseconds.
+  const now = Date.now();
   return {
     auth_req_id: 'legacy-request-id',
     client_id: 'client-1',
@@ -51,7 +52,7 @@ function metadata(overrides: Partial<CIBARequestMetadata> = {}): CIBARequestMeta
     login_hint: 'user@example.com',
     status: 'pending',
     created_at: now,
-    expires_at: now + 300,
+    expires_at: now + 300_000,
     interval: 5,
     delivery_mode: 'poll',
     poll_count: 0,
@@ -92,7 +93,10 @@ describe('CIBA session authorization', () => {
     });
     mocks.storeFetch.mockImplementation(async (request: Request) => {
       const path = new URL(request.url).pathname;
-      if (path === '/get-by-login-hint' || path === '/get-by-auth-req-id') {
+      if (path === '/list-pending-for-user') {
+        return Response.json({ requests: [metadata()] });
+      }
+      if (path === '/get-by-auth-req-id') {
         return Response.json(metadata());
       }
       if (path === '/deny') {
@@ -130,10 +134,53 @@ describe('CIBA session authorization', () => {
     const response = await createApp().request('http://localhost/pending', {}, createEnv());
     expect(response.status).toBe(200);
     const lookup = mocks.storeFetch.mock.calls[0][0] as Request;
-    await expect(lookup.json()).resolves.toEqual({ login_hint: 'user@example.com' });
+    expect(new URL(lookup.url).pathname).toBe('/list-pending-for-user');
+    await expect(lookup.json()).resolves.toEqual({
+      subject_ids: ['user-1', 'subject-1'],
+      login_hints: ['sub:subject-1', 'subject-1', 'user-1', 'user@example.com'],
+    });
     await expect(response.json()).resolves.toMatchObject({
       requests: [{ auth_req_id: 'legacy-request-id', client_name: 'Example Client' }],
     });
+  });
+
+  it('answers 503 rather than an incomplete list when the store index is not ready', async () => {
+    mocks.authenticatedUser.mockResolvedValue({
+      userId: 'user-1',
+      sub: 'subject-1',
+      email: 'user@example.com',
+    });
+    mocks.storeFetch.mockResolvedValue(
+      Response.json({ error: 'temporarily_unavailable' }, { status: 503 })
+    );
+
+    const response = await createApp().request('http://localhost/pending', {}, createEnv());
+
+    expect(response.status).toBe(503);
+    await expect(response.json()).resolves.toMatchObject({ error: 'temporarily_unavailable' });
+  });
+
+  it('lists only the requests the signed-in user could approve', async () => {
+    mocks.authenticatedUser.mockResolvedValue({
+      userId: 'user-1',
+      sub: 'subject-1',
+      email: 'user@example.com',
+    });
+    mocks.storeFetch.mockResolvedValue(
+      Response.json({
+        requests: [
+          metadata({ auth_req_id: 'mine' }),
+          metadata({ auth_req_id: 'someone-elses', login_hint: 'victim@example.com' }),
+          metadata({ auth_req_id: 'other-subject', resolved_subject_id: 'subject-2' }),
+          metadata({ auth_req_id: 'decided', status: 'approved' }),
+        ],
+      })
+    );
+
+    const response = await createApp().request('http://localhost/pending', {}, createEnv());
+
+    const body = (await response.json()) as { requests: Array<{ auth_req_id: string }> };
+    expect(body.requests.map((request) => request.auth_req_id)).toEqual(['mine']);
   });
 
   it.each([['/pending?login_hint=victim@example.com'], ['/pending?user_id=victim-user']])(
@@ -259,6 +306,9 @@ describe('CIBA session authorization', () => {
     );
     expect(response.status).toBe(200);
     const lookup = mocks.storeFetch.mock.calls[0][0] as Request;
-    await expect(lookup.json()).resolves.toEqual({ login_hint: 'sub:dev-user' });
+    await expect(lookup.json()).resolves.toEqual({
+      subject_ids: ['dev-user'],
+      login_hints: ['sub:dev-user'],
+    });
   });
 });

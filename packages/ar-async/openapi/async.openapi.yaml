@@ -57,13 +57,59 @@ paths:
       description: >-
         A code requested before the user last withdrew the client's consent cannot be approved:
         400 consent_withdrawn, and the device has to start again. Consent state that cannot be
-        read returns 503 temporarily_unavailable and leaves the code pending.
+        read returns 503 temporarily_unavailable and leaves the code pending. The per-IP user code
+        rate limit fails closed: without a working rate limiter, or when the device code store
+        cannot answer, the code is not read and the response is 503 temporarily_unavailable.
+      security:
+        - sessionCookie: []
+        - sessionHeader: []
       requestBody:
         $ref: '#/components/requestBodies/DeviceVerify'
       responses:
         '200':
           $ref: '#/components/responses/DeviceVerify'
         '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '429':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
+  /api/devices/lookup:
+    post:
+      tags:
+        - Device Authorization
+      summary: Show which application a pending user code belongs to.
+      description: >-
+        Lets the signed-in user see the application and the scopes a user code asks for before
+        deciding it with /api/devices/verify. It decides nothing. It needs the same session as the
+        decision, and a code that does not exist counts against the same per-IP user code rate
+        limit (429 slow_down once blocked). A code that is no longer pending returns 400
+        invalid_code with its state in code_status (approved, denied or expired) and
+        decided_by_self, true only when the signed-in user is the one who approved it (a denial
+        records no user), so a browser that lost the answer to its approval can tell whether it
+        was saved; who else decided a code is never disclosed. An unknown or expired code returns
+        404 invalid_code. Without a working rate
+        limiter, or when the device code store cannot answer, it returns 503
+        temporarily_unavailable.
+      security:
+        - sessionCookie: []
+        - sessionHeader: []
+      requestBody:
+        $ref: '#/components/requestBodies/DeviceLookup'
+      responses:
+        '200':
+          $ref: '#/components/responses/DeviceLookup'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '429':
           $ref: '#/components/responses/Error'
         '503':
           $ref: '#/components/responses/Error'
@@ -91,6 +137,15 @@ paths:
       tags:
         - CIBA
       summary: List pending CIBA requests for the current user/session.
+      description: >-
+        The pending, unexpired requests addressed to the signed-in user, across clients: by the
+        subject resolved from a signed hint or, failing that, by its login_hint. At most 50 are
+        returned, oldest first among those found; a user with more sees the rest as earlier ones
+        are decided or expire. The user is taken from the session, never from parameters; a
+        login_hint or user_id naming someone else is refused with 403. When the store cannot
+        produce a complete list right now (its address index is being brought up to date), the
+        response is 503 temporarily_unavailable rather than a partial list: retry. created_at
+        and expires_at are epoch milliseconds.
       security:
         - sessionCookie: []
         - sessionHeader: []
@@ -101,6 +156,8 @@ paths:
           $ref: '#/components/responses/CibaAuthenticationRequired'
         '403':
           $ref: '#/components/responses/CibaInsufficientPermissions'
+        '503':
+          $ref: '#/components/responses/Error'
   /api/ciba/requests/{auth_req_id}:
     get:
       tags:
@@ -115,6 +172,10 @@ paths:
           required: true
           schema:
             type: string
+      description: >-
+        One request of the signed-in user. 404 when it does not exist (or expired and was
+        removed); 503 temporarily_unavailable when the store cannot be read right now (it
+        answered with an error, failed, or returned an unreadable body).
       responses:
         '200':
           $ref: '#/components/responses/CibaDetails'
@@ -122,6 +183,10 @@ paths:
           $ref: '#/components/responses/CibaAuthenticationRequired'
         '403':
           $ref: '#/components/responses/CibaInsufficientPermissions'
+        '404':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
   /api/ciba/approve:
     post:
       tags:
@@ -130,7 +195,11 @@ paths:
       description: >-
         A request made before the user last withdrew the client's consent cannot be approved: 400
         consent_withdrawn, and the client has to start again. Consent state that cannot be read
-        returns 503 temporarily_unavailable and leaves the request pending.
+        returns 503 temporarily_unavailable and leaves the request pending. 404 only when the
+        request does not exist (or expired and was removed). 503 temporarily_unavailable also when
+        the request store cannot answer or does not confirm the approval; the approval may or may
+        not have been saved, so check the request (GET /api/ciba/requests/{auth_req_id}) before
+        retrying. A request already decided is 400.
       security:
         - sessionCookie: []
         - sessionHeader: []
@@ -141,17 +210,24 @@ paths:
           $ref: '#/components/responses/CibaDecision'
         '400':
           $ref: '#/components/responses/Error'
-        '503':
-          $ref: '#/components/responses/Error'
         '401':
           $ref: '#/components/responses/CibaAuthenticationRequired'
         '403':
           $ref: '#/components/responses/CibaInsufficientPermissions'
+        '404':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
   /api/ciba/deny:
     post:
       tags:
         - CIBA
       summary: Deny a CIBA request.
+      description: >-
+        404 only when the request does not exist (or expired and was removed). 503
+        temporarily_unavailable when the request store cannot answer or does not confirm the
+        denial; the denial may or may not have been saved, so check the request (GET
+        /api/ciba/requests/{auth_req_id}) before retrying. A request already decided is 400.
       security:
         - sessionCookie: []
         - sessionHeader: []
@@ -160,10 +236,16 @@ paths:
       responses:
         '200':
           $ref: '#/components/responses/CibaDecision'
+        '400':
+          $ref: '#/components/responses/Error'
         '401':
           $ref: '#/components/responses/CibaAuthenticationRequired'
         '403':
           $ref: '#/components/responses/CibaInsufficientPermissions'
+        '404':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
   /api/ciba/conformance-action:
     post:
       tags:
@@ -257,6 +339,14 @@ components:
           example:
             user_code: WDJB-MJHT
             approve: true
+    DeviceLookup:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/DeviceLookupRequest'
+          example:
+            user_code: WDJB-MJHT
     CibaAuthorization:
       required: false
       content:
@@ -322,6 +412,21 @@ components:
           example:
             success: true
             message: Device authorized successfully
+    DeviceLookup:
+      description: Successful JSON response.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/DeviceLookupResponse'
+          example:
+            client_id: client_123
+            client_name: Acme TV
+            client_uri: https://tv.example.com
+            logo_uri: https://tv.example.com/logo.png
+            scopes:
+              - openid
+              - profile
+            expires_at: 1770000600000
     CibaAuthorization:
       description: Successful JSON response.
       content:
@@ -485,6 +590,47 @@ components:
           example: Invalid or expired user code
       required:
         - success
+    DeviceLookupRequest:
+      type: object
+      properties:
+        user_code:
+          type: string
+          example: WDJB-MJHT
+      required:
+        - user_code
+    DeviceLookupResponse:
+      type: object
+      properties:
+        client_id:
+          type: string
+          example: client_123
+        client_name:
+          type: string
+          example: Acme TV
+        client_uri:
+          type: string
+          format: uri
+          example: https://tv.example.com
+        logo_uri:
+          type: string
+          format: uri
+          example: https://tv.example.com/logo.png
+        scopes:
+          type: array
+          items:
+            type: string
+          example:
+            - openid
+            - profile
+        expires_at:
+          type: integer
+          description: Epoch milliseconds.
+          example: 1770000600000
+      required:
+        - client_id
+        - client_name
+        - scopes
+        - expires_at
     CibaAuthorizationRequest:
       type: object
       properties:
@@ -568,9 +714,11 @@ components:
           example: '123456'
         created_at:
           type: integer
+          description: Epoch milliseconds.
           example: 1770000000000
         expires_at:
           type: integer
+          description: Epoch milliseconds.
           example: 1770000300000
         status:
           type: string
@@ -613,12 +761,15 @@ components:
           example: '123456'
         created_at:
           type: integer
+          description: Epoch milliseconds.
           example: 1770000000000
         expires_at:
           type: integer
+          description: Epoch milliseconds.
           example: 1770000300000
         time_remaining:
           type: integer
+          description: Seconds until expires_at.
           example: 240
         status:
           type: string

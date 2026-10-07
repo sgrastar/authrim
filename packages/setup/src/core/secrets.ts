@@ -172,6 +172,8 @@ export const SECRET_UPLOAD_PLAN: Record<WorkerComponent, readonly SecretName[]> 
   'ar-async': [
     'OBJECT_ENCRYPTION_ROOT_KEY',
     'TENANT_RUNTIME_REGISTRY_VERIFYING_PUBLIC_JWKS',
+    'LOOKUP_HMAC_KEY_SLOT_A',
+    'LOOKUP_HMAC_KEY_SLOT_B',
     'CONTROL_SMOKE_VERIFYING_PUBLIC_JWKS',
   ],
   'ar-policy': [

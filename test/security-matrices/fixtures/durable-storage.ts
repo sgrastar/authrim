@@ -118,7 +118,13 @@ export class MemoryDurableObjectStorage {
         this.store.set(key, value);
         this.ledger?.record('do.fetch', `${this.label}:put:${key}`);
       },
-      delete: async (key: string) => this.store.delete(key),
+      // Recorded like a delete outside a transaction: a state owner that moves its writes into a
+      // transaction (CIBARequestStore saves a decision and drops its index entry in one) must
+      // show the same storage operations in the matrix ledger.
+      delete: async (key: string) => {
+        this.ledger?.record('do.fetch', `${this.label}:delete:${key}`);
+        return this.store.delete(key);
+      },
     });
   }
 

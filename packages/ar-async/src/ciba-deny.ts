@@ -6,7 +6,7 @@
  */
 
 import type { Context } from 'hono';
-import type { Env, CIBARequestMetadata } from '@authrim/ar-lib-core';
+import type { Env } from '@authrim/ar-lib-core';
 import {
   createErrorResponse,
   AR_ERROR_CODES,
@@ -17,6 +17,7 @@ import {
   isMockAuthEnabled,
 } from '@authrim/ar-lib-core';
 import { resolveAsyncTenantId } from './tenant';
+import { cibaStoreUnavailable, readCibaRequest, sendCibaDecision } from './ciba-store';
 import {
   cibaRequestMatchesAuthenticatedUser,
   getAuthenticatedAsyncUser,
@@ -78,23 +79,15 @@ export async function cibaDenyHandler(c: Context<{ Bindings: Env }>) {
         );
 
     // First, verify the request exists and is pending
-    const getResponse = await cibaRequestStore.fetch(
-      new Request('https://internal/get-by-auth-req-id', {
-        method: 'POST',
-        headers: internalHeaders,
-        body: JSON.stringify({ auth_req_id: authReqId }),
-      })
-    );
-
-    if (!getResponse.ok) {
+    const read = await readCibaRequest(cibaRequestStore, internalHeaders, authReqId);
+    if (read.kind === 'unavailable') {
+      if (read.error) log.error('CIBA request store unavailable', {}, read.error as Error);
+      return cibaStoreUnavailable(c, 'The request cannot be read right now. Try again.');
+    }
+    if (read.kind === 'missing') {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
-
-    const metadata: CIBARequestMetadata | null = await getResponse.json();
-
-    if (!metadata) {
-      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
-    }
+    const metadata = read.metadata;
 
     // Check if request is still pending
     if (metadata.status !== 'pending') {
@@ -106,19 +99,14 @@ export async function cibaDenyHandler(c: Context<{ Bindings: Env }>) {
     }
 
     // Deny the request
-    const denyResponse = await cibaRequestStore.fetch(
-      new Request('https://internal/deny', {
-        method: 'POST',
-        headers: internalHeaders,
-        body: JSON.stringify({
-          auth_req_id: authReqId,
-          reason: reason || 'User rejected',
-        }),
-      })
-    );
-
-    if (!denyResponse.ok) {
-      return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
+    const denied = await sendCibaDecision(cibaRequestStore, internalHeaders, 'deny', {
+      auth_req_id: authReqId,
+      reason: reason || 'User rejected',
+    });
+    if (!denied.ok) {
+      // The store did not confirm the denial; it may or may not have been saved.
+      if (denied.error) log.error('CIBA request store failed to deny', {}, denied.error as Error);
+      return cibaStoreUnavailable(c, 'The denial could not be confirmed. Check the request.');
     }
 
     return c.json(

@@ -31,6 +31,8 @@ import {
   UI_WORKER_COMPONENTS,
   resolveMissingUiWorkerBindingTargets,
   resolveExistingWorkerComponents,
+  assertRequiredWorkerSecrets,
+  lookupHmacDeployOptions,
   buildApiPackages,
   loadDeploySecretsFromKeys,
   type DeployOptions,
@@ -2030,6 +2032,7 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
         ])
       ),
       secrets: deploymentSecrets,
+      ...lookupHmacDeployOptions(workingLock.controlKeyState?.lookupHmac),
       deploymentLease: {
         controlDatabaseId: deploymentControlDatabase.id,
         environmentId: env,
@@ -2050,6 +2053,9 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
         deployOptions,
         CORE_WORKER_COMPONENTS
       );
+      // A required secret must be distributed now or already be bound to the Worker. Checked for
+      // every Worker in the update before the first one deploys (deployAll checks each group too).
+      await assertRequiredWorkerSecrets(deployOptions, componentsToUpdate);
     }
 
     if (componentsToUpdate.includes('ar-router') && existsSync(envPaths.config)) {

@@ -100,6 +100,13 @@ const completion = {
 	device_errorApproveFailed: 'Gagal menyetujui perangkat',
 	device_errorDenyFailed: 'Gagal menolak permintaan perangkat',
 	device_errorInvalidRedirect: 'URL pengalihan tidak valid diterima dari server',
+	device_errorConsentWithdrawn:
+		'Permintaan ini dibuat sebelum Anda mencabut akses aplikasi ini. Mulai lagi di perangkat untuk mendapatkan kode baru.',
+	device_errorTryAgain:
+		'Keputusan Anda tidak dapat disimpan saat ini dan tidak ada yang berubah. Coba lagi sebentar lagi.',
+	device_errorTooManyAttempts: 'Terlalu banyak percobaan. Tunggu sebentar, lalu coba lagi.',
+	device_errorOutcomeUnknown:
+		'Kami tidak dapat memastikan apakah keputusan Anda tersimpan. Periksa perangkat, atau masukkan kode lagi.',
 	ciba_title: 'Permintaan autentikasi',
 	ciba_subtitle: 'Aplikasi meminta persetujuan Anda',
 	ciba_noPendingRequests: 'Tidak ada permintaan autentikasi tertunda',
@@ -119,6 +126,16 @@ const completion = {
 	ciba_errorGeneric: 'Terjadi kesalahan',
 	ciba_errorApproveFailed: 'Gagal menyetujui permintaan',
 	ciba_errorDenyFailed: 'Gagal menolak permintaan',
+	ciba_errorConsentWithdrawn:
+		'Permintaan ini dibuat sebelum Anda mencabut akses aplikasi ini. Mulai lagi dari aplikasi.',
+	ciba_errorRequestGone: 'Permintaan ini sudah kedaluwarsa atau sudah dijawab.',
+	ciba_errorTryAgain:
+		'Keputusan Anda tidak dapat disimpan saat ini dan tidak ada yang berubah. Coba lagi sebentar lagi.',
+	ciba_errorTooManyAttempts: 'Terlalu banyak percobaan. Tunggu sebentar, lalu coba lagi.',
+	ciba_errorOutcomeUnknown:
+		'Kami tidak dapat memastikan apakah jawaban Anda tersimpan. Muat ulang untuk melihat permintaan yang masih menunggu.',
+	ciba_errorNoLongerWaiting:
+		'Kami tidak dapat memastikan jawaban Anda, tetapi permintaan ini sudah tidak menunggu.',
 	reauth_title: 'Verifikasi identitas Anda',
 	reauth_subtitle: 'Demi keamanan, autentikasi ulang untuk melanjutkan',
 	reauth_verifyWithPasskey: 'Verifikasi dengan Passkey',

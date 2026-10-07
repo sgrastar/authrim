@@ -326,7 +326,7 @@ for pkg_dir in packages/*/; do
                 fi
             done
         else
-            echo "  ⚠️  Warning: $toml_file not found. Run setup-remote-wrangler.sh first."
+            echo "  ⚠️  Warning: $toml_file not found. This script only updates the retired wrangler.{env}.toml layout; environments created with 'npx @authrim/setup init' get their D1 databases and bindings from setup."
         fi
     fi
 done

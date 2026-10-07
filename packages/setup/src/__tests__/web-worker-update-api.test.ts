@@ -94,6 +94,10 @@ const commitReadyControlTokenGenerationRedeployMock = vi.hoisted(() => vi.fn());
 const initializeControlKeyStateMock = vi.hoisted(() => vi.fn());
 const reconcileLocalControlKeyFilesMock = vi.hoisted(() => vi.fn());
 const loadControlGeneratedKeyStateMock = vi.hoisted(() => vi.fn());
+// Control's current Lookup HMAC state as the Web deploy paths read it fresh before deploying.
+const resolveDeployLookupHmacStateMock = vi.hoisted(() =>
+  vi.fn(async () => ({ activeSlot: 'B' as const, activeFingerprint: 'b'.repeat(64) }))
+);
 const loadControlStagedSigningKeysMock = vi.hoisted(() => vi.fn());
 const projectControlGeneratedKeyStateMock = vi.hoisted(() => vi.fn());
 const listPendingControlOperatorOperationsMock = vi.hoisted(() => vi.fn());
@@ -289,6 +293,7 @@ vi.mock('../core/control-generated-state.js', () => ({
   loadControlGeneratedKeyState: loadControlGeneratedKeyStateMock,
   loadControlStagedSigningKeys: loadControlStagedSigningKeysMock,
   projectControlGeneratedKeyState: projectControlGeneratedKeyStateMock,
+  resolveDeployLookupHmacState: resolveDeployLookupHmacStateMock,
 }));
 
 vi.mock('../core/notification-provider-bootstrap.js', () => ({
@@ -5261,8 +5266,49 @@ describe('setup web worker update API', () => {
           FLOW_RUNTIME_HMAC_SECRET: 'flow-runtime-secret',
           PLUGIN_ENCRYPTION_KEY: 'plugin-encryption-key',
         }),
+        // Control's current Lookup HMAC state, read fresh, not the local lock's copy.
+        lookupHmacSlots: ['B'],
+        lookupHmacFingerprints: { B: 'b'.repeat(64) },
       }),
       ['ar-auth']
+    );
+    expect(resolveDeployLookupHmacStateMock).toHaveBeenCalledWith(
+      expect.objectContaining({ environmentId: env })
+    );
+  });
+
+  it('does not read the remote Control database for a dry-run component deploy', async () => {
+    const env = 'test';
+    await writeEnvironment(env);
+    await saveKeysToDirectory(generateAllSecrets('test-key'), { keysBaseDir: tempDir!, env });
+    deployAllMock.mockResolvedValue({
+      totalComponents: 1,
+      successCount: 1,
+      failedCount: 0,
+      results: [
+        {
+          success: true,
+          component: 'ar-auth',
+          workerName: 'test-ar-auth',
+          version: '0.2.0',
+          deployedAt: '2026-06-18T00:00:00.000Z',
+        },
+      ],
+    });
+    resolveDeployLookupHmacStateMock.mockClear();
+
+    const response = await createApiRoutes().request('/deploy/component/ar-auth', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Session-Token': generateSessionToken() },
+      body: JSON.stringify({ env, skipBuild: true, dryRun: true }),
+    });
+
+    expect(response.status).toBe(200);
+    // A dry run deploys nothing: it plans with the lock's key state, not a fresh remote read.
+    expect(resolveDeployLookupHmacStateMock).not.toHaveBeenCalled();
+    expect(deployAllMock).toHaveBeenCalledWith(
+      expect.objectContaining({ dryRun: true }),
+      expect.arrayContaining(['ar-auth'])
     );
   });
 

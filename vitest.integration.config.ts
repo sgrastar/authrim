@@ -10,6 +10,8 @@ export default defineConfig({
     setupFiles: ['./test/setup.ts'],
     include: [
       'test/integration/fapi-2-0.test.ts',
+      'test/integration/login-ui-approval-routes-contract.test.ts',
+      'test/integration/async-approval-account-session.test.ts',
       'test/integration/oidc-session-management.test.ts',
       'test/integration/saml-enterprise-academic-profiles.test.ts',
       'test/integration/saml-federation-contract.test.ts',

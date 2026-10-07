@@ -8,7 +8,6 @@
 import type { Context } from 'hono';
 import type { Env, CIBARequestMetadata } from '@authrim/ar-lib-core';
 import {
-  parseLoginHint,
   createErrorResponse,
   AR_ERROR_CODES,
   getLogger,
@@ -20,12 +19,13 @@ import {
 import { resolveAsyncTenantId } from './tenant';
 import {
   cibaLoginHintMatchesAuthenticatedUser,
+  cibaRequestMatchesAuthenticatedUser,
   getAuthenticatedAsyncUser,
 } from './authenticated-session';
 
 /**
  * GET /api/ciba/pending
- * List pending CIBA requests for a user
+ * List the pending CIBA requests addressed to the signed-in user
  *
  * Query parameters:
  *   - login_hint: email, phone, sub, or username (optional)
@@ -42,8 +42,8 @@ import {
  *         "scope": "openid profile email",
  *         "binding_message": "Sign in to Banking App",
  *         "user_code": "ABCD-1234",
- *         "created_at": 1234567890,
- *         "expires_at": 1234568190,
+ *         "created_at": 1770000000000,   // epoch milliseconds
+ *         "expires_at": 1770000300000,   // epoch milliseconds
  *         "status": "pending"
  *       }
  *     ]
@@ -78,75 +78,90 @@ export async function cibaPendingHandler(c: Context<{ Bindings: Env }>) {
       return createErrorResponse(c, AR_ERROR_CODES.POLICY_INSUFFICIENT_PERMISSIONS);
     }
 
-    const effectiveLoginHint =
-      loginHint ??
-      (authenticatedUser?.email ? authenticatedUser.email : undefined) ??
-      (authenticatedUser ? `sub:${authenticatedUser.sub}` : undefined) ??
-      (userId ? `sub:${userId}` : undefined);
-    if (!effectiveLoginHint) {
+    // The requests are found by the identifiers of the signed-in user, never by request
+    // parameters, so nobody can list requests addressed to someone else. (Only a deployment with
+    // mock authentication, never production, falls back to the query parameters.)
+    const subjectIds = authenticatedUser
+      ? [authenticatedUser.userId, authenticatedUser.sub]
+      : userId
+        ? [userId]
+        : [];
+    const loginHints = authenticatedUser
+      ? [
+          `sub:${authenticatedUser.sub}`,
+          authenticatedUser.sub,
+          authenticatedUser.userId,
+          ...(authenticatedUser.email ? [authenticatedUser.email] : []),
+        ]
+      : [...(loginHint ? [loginHint] : []), ...(userId ? [`sub:${userId}`] : [])];
+    if (subjectIds.length === 0 && loginHints.length === 0) {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
         variables: { field: 'login_hint or user_id' },
       });
     }
 
-    // Get CIBA request metadata from CIBARequestStore
     const cibaRequestStoreId = c.env.CIBA_REQUEST_STORE.idFromName(
       buildDOInstanceName('ciba', tenantId)
     );
     const cibaRequestStore = c.env.CIBA_REQUEST_STORE.get(cibaRequestStoreId);
 
-    const getResponse = await cibaRequestStore.fetch(
-      new Request('https://internal/get-by-login-hint', {
+    const listResponse = await cibaRequestStore.fetch(
+      new Request('https://internal/list-pending-for-user', {
         method: 'POST',
         headers: internalHeaders,
-        body: JSON.stringify({ login_hint: effectiveLoginHint }),
+        body: JSON.stringify({
+          subject_ids: [...new Set(subjectIds)],
+          login_hints: [...new Set(loginHints)],
+        }),
       })
     );
 
-    if (!getResponse.ok) {
+    if (listResponse.status === 503) {
+      // The store could not bring its index up to date: say "try again", never a partial list.
+      return c.json(
+        {
+          error: 'temporarily_unavailable',
+          error_description: 'Pending requests are temporarily unavailable. Try again.',
+        },
+        503
+      );
+    }
+    if (!listResponse.ok) {
       return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
     }
 
-    const metadata: CIBARequestMetadata | null = await getResponse.json();
-
-    // If no pending requests found, return empty array
-    if (!metadata) {
-      return c.json({
-        requests: [],
-      });
-    }
-
-    // Filter only pending requests (the DO should already do this, but double-check)
-    if (metadata.status !== 'pending') {
-      return c.json({
-        requests: [],
-      });
-    }
-
-    // Enrich with client metadata from KV cache (with D1 fallback)
-    const client = await getClient(
-      c.env,
-      tenantId,
-      metadata.client_id,
-      createAuthContextFromHono(c, tenantId).coreAdapter
+    const { requests: stored } = (await listResponse.json()) as {
+      requests?: CIBARequestMetadata[];
+    };
+    // The same ownership rule the approval applies, so the list never shows a request the user
+    // could not approve.
+    const pending = (stored ?? []).filter(
+      (metadata) =>
+        metadata.status === 'pending' &&
+        (!authenticatedUser || cibaRequestMatchesAuthenticatedUser(metadata, authenticatedUser))
     );
 
-    const request = {
-      auth_req_id: metadata.auth_req_id,
-      client_id: metadata.client_id,
-      client_name: client?.client_name || metadata.client_id,
-      client_logo_uri: client?.logo_uri || null,
-      scope: metadata.scope,
-      binding_message: metadata.binding_message || null,
-      user_code: metadata.user_code || null,
-      created_at: metadata.created_at,
-      expires_at: metadata.expires_at,
-      status: metadata.status,
-    };
+    const coreAdapter = createAuthContextFromHono(c, tenantId).coreAdapter;
+    const requests = await Promise.all(
+      pending.map(async (metadata) => {
+        // Enrich with client metadata from KV cache (with D1 fallback)
+        const client = await getClient(c.env, tenantId, metadata.client_id, coreAdapter);
+        return {
+          auth_req_id: metadata.auth_req_id,
+          client_id: metadata.client_id,
+          client_name: client?.client_name || metadata.client_id,
+          client_logo_uri: client?.logo_uri || null,
+          scope: metadata.scope,
+          binding_message: metadata.binding_message || null,
+          user_code: metadata.user_code || null,
+          created_at: metadata.created_at,
+          expires_at: metadata.expires_at,
+          status: metadata.status,
+        };
+      })
+    );
 
-    return c.json({
-      requests: [request],
-    });
+    return c.json({ requests });
   } catch (error) {
     log.error('CIBA pending requests API error', {}, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
