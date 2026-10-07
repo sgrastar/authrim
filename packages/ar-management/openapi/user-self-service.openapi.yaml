@@ -66,7 +66,8 @@ paths:
       tags: [Account Page]
       operationId: startAccountGuestUpgrade
       summary: Start email or passkey registration for the current guest.
-      description: Requires an authenticated browser guest session and CSRF protection. Tenant, method and originating-client registration permissions must allow the method. Method prerequisites are rechecked before acquiring a hold; unavailable methods return 403 without consuming it. Starting a valid attempt acquires the guest's one-time deletion hold; retries never renew it. Proof expires independently: an emailed code after the tenant's email code lifetime (credentials.email_code_ttl, five minutes by default), a passkey registration after ten minutes. Disabling guest login does not disable registration.
+      description: >-
+        Requires an authenticated browser guest session and CSRF protection. Tenant, method and originating-client registration permissions must allow the method. Method prerequisites are rechecked before acquiring a hold; unavailable methods return 403 without consuming it. Starting a valid attempt acquires the guest's one-time deletion hold; retries never renew it. Proof expires independently: an emailed code after the tenant's email code lifetime (credentials.email_code_ttl, five minutes by default), a passkey registration after ten minutes. Disabling guest login does not disable registration.
       security:
         - accountSessionCookie: []
       requestBody:
