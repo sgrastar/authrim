@@ -906,12 +906,22 @@ export function getForwardedHost(
 		return urlTenantHost;
 	}
 
+	const originalHost = getOriginalRequestHost(event);
+	// A tenant page proxied through Router already has an explicit target host.
+	// A cookie from the shared Login UI must not switch it to another tenant.
+	if (
+		originalHost &&
+		originalHost !== event.url.host &&
+		event.request.headers.get('x-authrim-shared-login-host') !== 'true'
+	) {
+		return originalHost;
+	}
+
 	const loginTenantHost = getLoginTenantRequestHost(event);
 	if (loginTenantHost) {
 		return loginTenantHost;
 	}
 
-	const originalHost = getOriginalRequestHost(event);
 	if (originalHost) {
 		return originalHost;
 	}
