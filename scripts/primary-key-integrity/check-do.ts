@@ -4,7 +4,9 @@ import { writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 const require = createRequire(import.meta.url);
 const wranglerRequire = createRequire(require.resolve('wrangler/package.json'));
-const { Miniflare } = wranglerRequire('miniflare') as typeof import('miniflare');
+const { Miniflare, convertV4MiniflareOptions } = wranglerRequire(
+  'miniflare'
+) as typeof import('miniflare');
 const { buildSync } = wranglerRequire('esbuild') as typeof import('esbuild');
 const output = process.argv[2];
 if (!output) throw new Error('Evidence directory required');
@@ -59,13 +61,15 @@ const bundled = buildSync({
   platform: 'neutral',
   external: ['cloudflare:workers'],
 });
-const runtime = new Miniflare({
-  modules: true,
-  script: bundled.outputFiles[0].text,
-  host: '127.0.0.1',
-  compatibilityDate: '2026-07-08',
-  durableObjects: { CHECK: { className: 'Check', useSQLite: true } },
-});
+const runtime = new Miniflare(
+  convertV4MiniflareOptions({
+    modules: true,
+    script: bundled.outputFiles[0].text,
+    host: '127.0.0.1',
+    compatibilityDate: '2026-07-08',
+    durableObjects: { CHECK: { className: 'Check', useSQLite: true } },
+  })
+);
 const results = [];
 try {
   const namespace = await runtime.getDurableObjectNamespace('CHECK');

@@ -810,15 +810,11 @@ This file tracks the progress of translating the project to English.
 | 664 | scripts/generate-initial-access-token.sh | Untranslated | - | - | - | |
 | 665 | scripts/generate-tenant-migration.ts | Untranslated | - | - | - | |
 | 666 | scripts/performance-test.sh | Untranslated | - | - | - | |
-| 667 | scripts/setup-config.sh | Untranslated | - | - | - | |
 | 668 | scripts/setup-d1.sh | Untranslated | - | - | - | |
 | 669 | scripts/setup-default-settings.sh | Untranslated | - | - | - | |
-| 670 | scripts/setup-durable-objects.sh | Untranslated | - | - | - | |
 | 671 | scripts/setup-github.sh | Untranslated | - | - | - | |
 | 672 | scripts/setup-keys.sh | Untranslated | - | - | - | |
 | 673 | scripts/setup-kv.sh | Untranslated | - | - | - | |
-| 674 | scripts/setup-local-vars.sh | Untranslated | - | - | - | |
-| 675 | scripts/setup-local-wrangler.sh | Untranslated | - | - | - | |
 | 676 | scripts/setup-remote-cors.sh | Untranslated | - | - | - | |
 | 678 | scripts/setup-resend.sh | Untranslated | - | - | - | |
 | 679 | scripts/setup-secrets.sh | Untranslated | - | - | - | |

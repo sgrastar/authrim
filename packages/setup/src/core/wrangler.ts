@@ -125,6 +125,59 @@ export interface GenerateWranglerConfigOptions {
   includeAuthAccountProvisioner?: boolean;
   /** Initial-deploy escape hatch for the Bridge -> Management -> Bridge bootstrap cycle. */
   includeExternalIdpAccountProvisioner?: boolean;
+  /**
+   * Generate for `wrangler dev` on a developer machine instead of a Cloudflare deployment.
+   * The managed-deploy build guard, placement and cron triggers are dropped, and Service Bindings
+   * to Workers that will not run locally (the UI Workers, `excludedComponents`) are
+   * removed so the remaining Workers still start.
+   */
+  local?: LocalWranglerOptions;
+}
+
+/** Local development runs UIs and the API on different localhost ports, which browsers treat as one site. */
+export interface GenerateEnvVarsOptions {
+  allowLocalhostSameSite?: boolean;
+}
+
+export interface LocalWranglerOptions {
+  /** Components that are not started in this local session. */
+  excludedComponents?: readonly WorkerComponent[];
+}
+
+/**
+ * Enables the plugin runner's local-only `notifier-log` provider (see
+ * ar-plugin-runner/src/local-log-notifier.ts). Only the local development shape sets it.
+ */
+export const LOCAL_LOG_NOTIFIER_ENV = 'AUTHRIM_LOCAL_NOTIFICATION_LOG';
+
+function applyLocalDevelopmentShape(
+  wranglerConfig: WranglerConfig,
+  env: string,
+  component: WorkerComponent,
+  options: LocalWranglerOptions
+): void {
+  delete wranglerConfig.build;
+  delete wranglerConfig.placement;
+  delete wranglerConfig.triggers;
+  // The issuer is http://localhost, so the built-in Login UI client registers http loopback
+  // redirect URIs; a web app may only do that when this tenant policy is explicitly off.
+  wranglerConfig.vars['HTTPS_REDIRECT_ONLY'] = 'false';
+  if (component === 'ar-plugin-runner') wranglerConfig.vars[LOCAL_LOG_NOTIFIER_ENV] = 'true';
+  // The Login UI is served from its own localhost port. Over plain http `SameSite=None` is
+  // rejected (it needs `Secure`), and localhost ports are one site, so Lax is both enough and valid.
+  if (wranglerConfig.vars['COOKIE_SAME_SITE']) wranglerConfig.vars['COOKIE_SAME_SITE'] = 'Lax';
+  const excludedWorkerNames = new Set<string>(
+    (options.excludedComponents ?? []).map((component) => getWorkerName(env, component))
+  );
+  excludedWorkerNames.add(`${env}-ar-login-ui`);
+  excludedWorkerNames.add(`${env}-ar-admin-ui`);
+  if (wranglerConfig.services) {
+    const services = wranglerConfig.services.filter(
+      (service) => !excludedWorkerNames.has(service.service)
+    );
+    if (services.length > 0) wranglerConfig.services = services;
+    else delete wranglerConfig.services;
+  }
 }
 
 const LOGGING_DELIVERY_QUEUE_DEFINITIONS = [
@@ -538,10 +591,12 @@ function addOriginWithSubdomain(
 function getAdminUiApiMode(
   apiUrl: string,
   adminUiUrl: string,
-  baseDomain?: string
+  baseDomain?: string,
+  allowLocalhostSameSite?: boolean
 ): 'same-origin' | 'same-site-cross-origin' | 'cross-site-proxy' {
   const classification: UiApiSiteClassification = classifyUiApiSite(apiUrl, adminUiUrl, {
     baseDomain,
+    allowLocalhostSameSite,
   });
   return classification === 'cross-site' ? 'cross-site-proxy' : classification;
 }
@@ -560,7 +615,11 @@ function getAdminUiApiMode(
  * Workers.dev URLs are normalized to the correct format:
  *   {name}.{subdomain}.workers.dev
  */
-export function deriveAllowedOrigins(config: AuthrimConfig, workersSubdomain?: string): string[] {
+export function deriveAllowedOrigins(
+  config: AuthrimConfig,
+  workersSubdomain?: string,
+  options: GenerateEnvVarsOptions = {}
+): string[] {
   const origins = new Set<string>();
 
   // API origin (the issuer URL / router)
@@ -591,6 +650,7 @@ export function deriveAllowedOrigins(config: AuthrimConfig, workersSubdomain?: s
     const normalizedAdminUiUrl = normalizeWorkersDevUrl(adminUiUrl, workersSubdomain);
     const adminUiSiteClassification = classifyUiApiSite(normalizedApiUrl, normalizedAdminUiUrl, {
       baseDomain: config.tenant?.multiTenant === true ? config.tenant.baseDomain : undefined,
+      allowLocalhostSameSite: options.allowLocalhostSameSite,
     });
 
     if (adminUiSiteClassification !== 'cross-site') {
@@ -645,7 +705,12 @@ export function generateWranglerConfig(
         ? false
         : !config.urls?.api?.custom,
     build: { command: MANAGED_WORKER_DEPLOY_BUILD_COMMAND },
-    vars: generateEnvVars(component, config, workersSubdomain),
+    vars: generateEnvVars(
+      component,
+      config,
+      workersSubdomain,
+      options.local ? { allowLocalhostSameSite: true } : {}
+    ),
   };
   if (resourceIds.controlKeyState && component === 'ar-control') {
     wranglerConfig.vars['RUNTIME_REGISTRY_SIGNING_ACTIVE_SLOT'] =
@@ -1178,6 +1243,10 @@ export function generateWranglerConfig(
   // special-case routing (e.g. /api/auth/authentication-methods, /api/admin/setup-token/*)
   // is bypassed by Cloudflare route precedence.
 
+  if (options.local) {
+    applyLocalDevelopmentShape(wranglerConfig, env, component, options.local);
+  }
+
   return wranglerConfig;
 }
 
@@ -1191,7 +1260,8 @@ export function generateWranglerConfig(
 export function generateEnvVars(
   component: WorkerComponent,
   config: AuthrimConfig,
-  workersSubdomain?: string
+  workersSubdomain?: string,
+  envOptions: GenerateEnvVarsOptions = {}
 ): Record<string, string> {
   const vars: Record<string, string> = {};
   const multiTenantBaseDomain =
@@ -1406,7 +1476,12 @@ export function generateEnvVars(
 
     if (hasAdminUiOrigins) {
       vars['ADMIN_UI_URL'] = adminUiUrl;
-      vars['ADMIN_UI_API_MODE'] = getAdminUiApiMode(apiUrlForUi, adminUiUrl, multiTenantBaseDomain);
+      vars['ADMIN_UI_API_MODE'] = getAdminUiApiMode(
+        apiUrlForUi,
+        adminUiUrl,
+        multiTenantBaseDomain,
+        envOptions.allowLocalhostSameSite
+      );
     }
     vars['ADMIN_COOKIE_SAME_SITE'] = 'Lax';
   }
@@ -1415,7 +1490,12 @@ export function generateEnvVars(
   if (component === 'ar-management') {
     if (hasAdminUiOrigins) {
       vars['ADMIN_UI_URL'] = adminUiUrl;
-      vars['ADMIN_UI_API_MODE'] = getAdminUiApiMode(apiUrlForUi, adminUiUrl, multiTenantBaseDomain);
+      vars['ADMIN_UI_API_MODE'] = getAdminUiApiMode(
+        apiUrlForUi,
+        adminUiUrl,
+        multiTenantBaseDomain,
+        envOptions.allowLocalhostSameSite
+      );
     }
     vars['ADMIN_COOKIE_SAME_SITE'] = 'Lax';
     vars['SAML_ENABLED'] = 'true';
@@ -1558,7 +1638,7 @@ export function generateEnvVars(
   // This is the setup-side web_origin_registry -> ALLOWED_ORIGINS materialization boundary.
   // Workers.dev URLs are normalized to correct format: {name}.{subdomain}.workers.dev
   if (['ar-auth', 'ar-management', 'ar-agent-access', 'ar-router', 'ar-saml'].includes(component)) {
-    const allowedOrigins = deriveAllowedOrigins(config, workersSubdomain);
+    const allowedOrigins = deriveAllowedOrigins(config, workersSubdomain, envOptions);
     if (allowedOrigins.length > 0) {
       vars['ALLOWED_ORIGINS'] = allowedOrigins.join(',');
     }

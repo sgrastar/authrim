@@ -9,16 +9,18 @@ import {
 } from '../../packages/ar-lib-core/src/services/tenant-portability/sqlite-snapshot.js';
 
 const require = createRequire(import.meta.url);
-const { Miniflare } = createRequire(require.resolve('wrangler/package.json'))(
-  'miniflare'
-) as typeof import('miniflare');
-const runtime = new Miniflare({
-  modules: true,
-  script: 'export default {};',
-  compatibilityDate: '2026-07-08',
-  host: '127.0.0.1',
-  d1Databases: ['COST_FIXTURE'],
-});
+const { Miniflare, convertV4MiniflareOptions } = createRequire(
+  require.resolve('wrangler/package.json')
+)('miniflare') as typeof import('miniflare');
+const runtime = new Miniflare(
+  convertV4MiniflareOptions({
+    modules: true,
+    script: 'export default {};',
+    compatibilityDate: '2026-07-08',
+    host: '127.0.0.1',
+    d1Databases: ['COST_FIXTURE'],
+  })
+);
 const schema = {
   table: 'records',
   tenantColumn: 'tenant_id',
