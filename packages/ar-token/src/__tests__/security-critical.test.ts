@@ -13,7 +13,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { Hono } from 'hono';
 import { exportPKCS8, generateKeyPair } from 'jose';
-import type { DatabaseAdapter } from '@authrim/ar-lib-core';
+import {
+  OIDCAttributeReleaseConsentRequiredError,
+  openSubjectReference,
+  type DatabaseAdapter,
+} from '@authrim/ar-lib-core';
 import {
   createMockEnv,
   createMockContext,
@@ -201,6 +205,62 @@ const mocks = vi.hoisted(() => ({
   // Refresh token family index
   mockUpdateFamilyIndexExpiry: vi.fn().mockResolvedValue(undefined),
 }));
+
+// The shared ID token release steps run inside ar-lib-core, so identity mapping and the claim
+// release consent are mocked at their own modules. Both run the real implementation until a test
+// replaces them (see "ID token claim release consent under identity mapping").
+const identityRelease = vi.hoisted(() => ({
+  apply: vi.fn<(input: unknown) => unknown>(),
+  enforce: vi.fn<(input: unknown) => unknown>(),
+  actualApply: undefined as undefined | ((input: unknown) => unknown),
+  actualEnforce: undefined as undefined | ((input: unknown) => unknown),
+}));
+vi.mock('@authrim/ar-lib-core/services/oidc-identity-mapping', async () => {
+  const actual = await vi.importActual<Record<string, unknown>>(
+    '@authrim/ar-lib-core/services/oidc-identity-mapping'
+  );
+  identityRelease.actualApply = actual.applyOIDCIdentityMapping as (input: unknown) => unknown;
+  identityRelease.apply.mockImplementation(identityRelease.actualApply);
+  return { ...actual, applyOIDCIdentityMapping: identityRelease.apply };
+});
+vi.mock('@authrim/ar-lib-core/services/oidc-attribute-release-consent', async () => {
+  const actual = await vi.importActual<Record<string, unknown>>(
+    '@authrim/ar-lib-core/services/oidc-attribute-release-consent'
+  );
+  identityRelease.actualEnforce = actual.enforceOIDCAttributeReleaseConsent as (
+    input: unknown
+  ) => unknown;
+  identityRelease.enforce.mockImplementation(identityRelease.actualEnforce);
+  return { ...actual, enforceOIDCAttributeReleaseConsent: identityRelease.enforce };
+});
+
+// The database boundary of a real identity mapping (the app's binding, and the Destination Profile
+// consent filter). Unset, each is the real implementation; the mapping itself runs for real.
+const mappingFixture = vi.hoisted(() => ({ binding: null as unknown }));
+vi.mock('@authrim/ar-lib-core/services/identity-mapping-runtime-resolver', async () => {
+  const actual = await vi.importActual<Record<string, unknown>>(
+    '@authrim/ar-lib-core/services/identity-mapping-runtime-resolver'
+  );
+  return {
+    ...actual,
+    resolveRuntimeIdentityMappingBinding: (...args: unknown[]) =>
+      mappingFixture.binding
+        ? Promise.resolve(mappingFixture.binding)
+        : (actual.resolveRuntimeIdentityMappingBinding as (...a: unknown[]) => unknown)(...args),
+  };
+});
+vi.mock('@authrim/ar-lib-core/services/destination-profile-consent', async () => {
+  const actual = await vi.importActual<Record<string, unknown>>(
+    '@authrim/ar-lib-core/services/destination-profile-consent'
+  );
+  return {
+    ...actual,
+    filterOidcClaimsByDestinationConsent: (input: { claims: Record<string, unknown> }) =>
+      mappingFixture.binding
+        ? Promise.resolve(input.claims)
+        : (actual.filterOidcClaimsByDestinationConsent as (i: unknown) => unknown)(input),
+  };
+});
 
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@authrim/ar-lib-core')>();
@@ -1060,6 +1120,396 @@ describe('Security-Critical Tests', () => {
         refreshTokenPayload.scope,
         expect.any(Object)
       );
+    });
+  });
+
+  // ==========================================================================
+  // ID token claim release consent under identity mapping
+  // ==========================================================================
+
+  describe('ID token claim release consent under identity mapping', () => {
+    const USER_ID = 'user-mapped-001';
+    const ROOT_KEY = 'ef'.repeat(32);
+
+    /**
+     * What the app's identity mapping issues for the user, and a claim release consent store that
+     * knows users only by their id, as the real consent records do (they are the user's, not the
+     * ID token sub's).
+     */
+    const MAPPED_SUBS = {
+      pairwise: 'pairwise-sub-for-client',
+      persistent: 'persistent-id-for-client',
+    } as const;
+    let consentedUsers: Set<string>;
+    let releaseChecks: Array<{ subjectId: string; claims: Record<string, unknown> }>;
+
+    function mapSubTo(sub: string) {
+      identityRelease.apply.mockImplementation((input) => {
+        const { claims } = input as { claims: Record<string, unknown> };
+        return Promise.resolve({ claims: { ...claims, sub }, binding: null });
+      });
+    }
+
+    beforeEach(() => {
+      consentedUsers = new Set([USER_ID]);
+      releaseChecks = [];
+      identityRelease.enforce.mockImplementation((input) => {
+        const { subjectId, claims } = input as {
+          subjectId: string;
+          claims: Record<string, unknown>;
+        };
+        releaseChecks.push({ subjectId, claims });
+        if (!consentedUsers.has(subjectId)) {
+          return Promise.reject(
+            new OIDCAttributeReleaseConsentRequiredError({
+              claimSetHash: 'sha256:claims',
+              reasonCodes: ['release.attribute_consent.not_granted'],
+              consentMode: 'once',
+              claimNames: ['sub'],
+            })
+          );
+        }
+        return Promise.resolve({ action: 'release', claimSetHash: null, reasonCodes: [] });
+      });
+      (mockEnv as unknown as Record<string, unknown>).OBJECT_ENCRYPTION_ROOT_KEY = ROOT_KEY;
+    });
+
+    afterEach(() => {
+      identityRelease.apply.mockImplementation(identityRelease.actualApply!);
+      identityRelease.enforce.mockImplementation(identityRelease.actualEnforce!);
+    });
+
+    function consentRequiringClient() {
+      const client = createConfidentialClient({ require_pkce: false });
+      mocks.mockGetClientCached.mockResolvedValue({
+        ...client,
+        attribute_release_consent: { enabled: true, mode: 'once' },
+      });
+      return client;
+    }
+
+    async function exchangeCodeForUser(scope = 'openid profile') {
+      const client = consentRequiringClient();
+      const authCodeData = createAuthCodeData({ userId: USER_ID, scope });
+      mockEnv.AUTH_CODE_STORE.get = vi.fn().mockReturnValue({
+        consumeCodeRpc: vi.fn().mockResolvedValue(authCodeData),
+        registerIssuedTokensRpc: vi.fn().mockResolvedValue(undefined),
+      });
+      return tokenHandler(
+        createMockContext({
+          method: 'POST',
+          body: {
+            grant_type: 'authorization_code',
+            code: 'valid-auth-code',
+            redirect_uri: authCodeData.redirectUri,
+            client_id: client.client_id,
+            client_secret: 'valid-secret',
+          },
+          env: mockEnv,
+        })
+      );
+    }
+
+    async function refreshForUser(scope = 'openid profile') {
+      const client = consentRequiringClient();
+      const refreshTokenPayload = createRefreshTokenPayload({
+        client_id: client.client_id,
+        sub: USER_ID,
+        scope,
+      });
+      mocks.mockParseToken.mockReturnValue(refreshTokenPayload);
+      mocks.mockGetRefreshToken.mockResolvedValue({
+        sub: USER_ID,
+        scope: refreshTokenPayload.scope,
+        client_id: refreshTokenPayload.client_id,
+      });
+      mocks.mockParseRefreshTokenJti.mockReturnValue({
+        generation: 1,
+        shardIndex: 0,
+        randomPart: 'abc',
+      });
+      mockEnv.REFRESH_TOKEN_ROTATOR.get = vi.fn().mockReturnValue({
+        rotateRpc: vi.fn().mockResolvedValue({ newJti: 'rt-new-jti-002', newVersion: 2 }),
+      });
+      return tokenHandler(
+        createMockContext({
+          method: 'POST',
+          body: {
+            grant_type: 'refresh_token',
+            refresh_token: createTestRefreshTokenJWT({ client_id: client.client_id }),
+            client_id: client.client_id,
+            client_secret: 'valid-secret',
+          },
+          env: mockEnv,
+        })
+      );
+    }
+
+    const flows = [
+      ['authorization_code', exchangeCodeForUser],
+      ['refresh_token', refreshForUser],
+    ] as const;
+
+    describe.each(Object.entries(MAPPED_SUBS))('with a %s sub', (_kind, mappedSub) => {
+      describe.each(flows)('on the %s grant', (_grant, exchange) => {
+        it("finds the user's consent and issues the ID token with the mapped sub", async () => {
+          mapSubTo(mappedSub);
+
+          const response = await exchange();
+
+          expect(response.status).toBe(200);
+          // The consent is looked up by the user, not by the sub the ID token carries.
+          expect(releaseChecks).toHaveLength(1);
+          expect(releaseChecks[0].subjectId).toBe(USER_ID);
+          expect(releaseChecks[0].claims.sub).toBe(mappedSub);
+          const idClaims = mocks.mockCreateIDToken.mock.calls.at(-1)?.[0] as Record<
+            string,
+            unknown
+          >;
+          expect(idClaims.sub).toBe(mappedSub);
+          await expect(
+            openSubjectReference(
+              mockEnv as unknown as { OBJECT_ENCRYPTION_ROOT_KEY: string },
+              { tenantId: 'default', clientId: 'confidential-client-001' },
+              idClaims.authrim_subject_ref as string
+            )
+          ).resolves.toBe(USER_ID);
+          // The access token names the user.
+          expect(mocks.mockCreateAccessToken.mock.calls.at(-1)?.[0]).toMatchObject({
+            sub: USER_ID,
+          });
+        });
+
+        it('asks for consent, and issues nothing, when the user has not consented', async () => {
+          mapSubTo(mappedSub);
+          consentedUsers.clear();
+
+          const response = await exchange();
+
+          expect(response.status).toBe(400);
+          expect((await parseJsonResponse<{ error: string }>(response)).error).toBe(
+            'consent_required'
+          );
+          expect(releaseChecks[0].subjectId).toBe(USER_ID);
+          expect(mocks.mockCreateIDToken).not.toHaveBeenCalled();
+        });
+
+        it('is not satisfied by a consent recorded under the mapped sub', async () => {
+          mapSubTo(mappedSub);
+          consentedUsers = new Set([mappedSub]);
+
+          const response = await exchange();
+
+          expect(response.status).toBe(400);
+          expect((await parseJsonResponse<{ error: string }>(response)).error).toBe(
+            'consent_required'
+          );
+        });
+      });
+    });
+
+    describe("with an identity mapping that derives sub from the user's preferred_username", () => {
+      const field = (id: string, path: string) => ({
+        id,
+        namespace: 'oidc.claim',
+        path,
+        valueType: 'string',
+        cardinality: 'single',
+        classification: 'pii',
+        targetType: 'destination-only',
+      });
+
+      beforeEach(() => {
+        mocks.mockFindCanonicalRuntimeUserProjection.mockImplementation(async (userId: string) => ({
+          id: userId,
+          tenant_id: 'default',
+          subject_id: `subject-${userId}`,
+          account_id: `account-${userId}`,
+          account_type: 'end_user',
+          lifecycle_state: 'active',
+          email: 'alice@example.com',
+          email_verified: 1,
+          name: 'Alice Example',
+          given_name: 'Alice',
+          family_name: 'Example',
+          middle_name: null,
+          nickname: null,
+          preferred_username: 'alice',
+          profile: null,
+          picture: null,
+          website: null,
+          gender: null,
+          birthdate: null,
+          zoneinfo: null,
+          locale: null,
+          phone_number: '+8100000000',
+          phone_number_verified: 0,
+          address_json: null,
+          password_hash: null,
+          external_id: null,
+          last_login_at: null,
+          active: 1,
+          custom_attributes_json: null,
+          created_at: '2026-01-01T00:00:00.000Z',
+          updated_at: '2026-01-01T00:00:00.000Z',
+        }));
+        mappingFixture.binding = {
+          id: 'binding-1',
+          tenantId: 'default',
+          fieldMappingSetId: 'set-1',
+          fieldMappingVersionId: 'version-1',
+          mappingSnapshotHash: 'hash-1',
+          catalog: {
+            identity: {
+              id: 'test.catalog',
+              version: '1',
+              contentHash: 'test-catalog',
+              compatibilityRange: '^0.2.0',
+            },
+            entries: [
+              field('field.oidc.preferred_username', 'preferred_username'),
+              field('field.oidc.sub', 'sub'),
+            ],
+          },
+          edges: [
+            {
+              id: 'edge-preferred-username-to-sub',
+              sourceRef: {
+                side: 'source',
+                namespace: 'oidc.claim',
+                path: 'preferred_username',
+                catalogEntryId: 'field.oidc.preferred_username',
+              },
+              targetRef: {
+                side: 'destination',
+                namespace: 'oidc.claim',
+                path: 'sub',
+                catalogEntryId: 'field.oidc.sub',
+              },
+            },
+          ],
+          transforms: [],
+          validationRules: [],
+          fieldMappingSet: {},
+          activationScope: {},
+          destinationNamespace: 'oidc.claim',
+          destinationProfileId: 'profile-1',
+          destinationProfileIds: ['profile-1'],
+        };
+      });
+
+      afterEach(() => {
+        mappingFixture.binding = null;
+      });
+
+      describe.each(flows)('on the %s grant', (_grant, exchange) => {
+        it.each(['openid', 'openid profile'])(
+          'issues the sub the mapping derives whatever the scope (%s), and releases no more',
+          async (scope) => {
+            const response = await exchange(scope);
+
+            expect(response.status).toBe(200);
+            const idClaims = mocks.mockCreateIDToken.mock.calls.at(-1)?.[0] as Record<
+              string,
+              unknown
+            >;
+            expect(idClaims.sub).toBe('alice');
+            // Only the attribute the mapping reads is looked up for it.
+            expect(mocks.mockFindCanonicalRuntimeUserProjection.mock.calls).toEqual([
+              [USER_ID, { claimNames: ['preferred_username'] }],
+            ]);
+            // The mapping reads preferred_username without releasing it or anything else.
+            expect(idClaims).not.toHaveProperty('preferred_username');
+            expect(idClaims).not.toHaveProperty('email');
+            expect(idClaims).not.toHaveProperty('phone_number');
+            expect(mocks.mockCreateAccessToken.mock.calls.at(-1)?.[0]).toMatchObject({
+              sub: USER_ID,
+            });
+            await expect(
+              openSubjectReference(
+                mockEnv as unknown as { OBJECT_ENCRYPTION_ROOT_KEY: string },
+                { tenantId: 'default', clientId: 'confidential-client-001' },
+                idClaims.authrim_subject_ref as string
+              )
+            ).resolves.toBe(USER_ID);
+          }
+        );
+
+        describe.each(flows)(
+          'on the %s grant with a mapping that has no edge, only a rule that the attribute must be present',
+          (_grant, exchange) => {
+            beforeEach(() => {
+              const binding = mappingFixture.binding as {
+                edges: unknown[];
+                validationRules: unknown[];
+              };
+              binding.edges = [];
+              binding.validationRules = [
+                {
+                  id: 'rule-username-required',
+                  kind: 'required',
+                  targetRef: {
+                    side: 'source',
+                    namespace: 'oidc.claim',
+                    path: 'preferred_username',
+                  },
+                  defaultSeverity: 'critical',
+                },
+              ];
+            });
+
+            it.each(['openid', 'openid profile'])(
+              'validates against the user attribute whatever the scope (%s)',
+              async (scope) => {
+                const response = await exchange(scope);
+
+                expect(response.status).toBe(200);
+                expect(mocks.mockFindCanonicalRuntimeUserProjection.mock.calls).toEqual([
+                  [USER_ID, { claimNames: ['preferred_username'] }],
+                ]);
+                const idClaims = mocks.mockCreateIDToken.mock.calls.at(-1)?.[0] as Record<
+                  string,
+                  unknown
+                >;
+                expect(idClaims.sub).toBe(USER_ID);
+                expect(idClaims).not.toHaveProperty('preferred_username');
+              }
+            );
+          }
+        );
+
+        describe.each(flows)(
+          'on the %s grant with a mapping that reads only a custom attribute',
+          (_grant, exchange) => {
+            it('looks up no profile or contact value for it', async () => {
+              const binding = mappingFixture.binding as {
+                catalog: { entries: Array<{ id: string; path: string }> };
+                edges: Array<{ sourceRef: { path: string } }>;
+              };
+              binding.catalog.entries[0] = { ...binding.catalog.entries[0], path: 'employee_id' };
+              binding.edges[0].sourceRef.path = 'employee_id';
+
+              const response = await exchange('openid');
+
+              // The custom claim resolver is the source of such an attribute (the feature is off
+              // here, so there is none): the user's profile and contacts are not read for it.
+              expect(response.status).toBe(200);
+              expect(mocks.mockFindCanonicalRuntimeUserProjection).not.toHaveBeenCalled();
+              expect(mocks.mockCreateIDToken.mock.calls.at(-1)?.[0]).toMatchObject({
+                sub: USER_ID,
+              });
+            });
+          }
+        );
+      });
+    });
+
+    it('still checks the consent by the user id when the app has no identity mapping', async () => {
+      const response = await exchangeCodeForUser();
+
+      expect(response.status).toBe(200);
+      expect(releaseChecks[0].subjectId).toBe(USER_ID);
+      expect(mocks.mockCreateIDToken.mock.calls.at(-1)?.[0]).toMatchObject({ sub: USER_ID });
     });
   });
 

@@ -1138,6 +1138,22 @@ describe('UserInfo Endpoint', () => {
       );
     });
 
+    it("gives the mapping the user's attributes, so it derives the ID token's sub whatever scope was released", async () => {
+      const c = prepareClientBoundRequest();
+      mockApplyOIDCIdentityMapping.mockResolvedValue({ claims: { sub: 'alice' } });
+
+      await userinfoHandler(c);
+
+      const input = mockApplyOIDCIdentityMapping.mock.calls.at(-1)?.[0] as {
+        claims: Record<string, unknown>;
+        sourceAttributes: Record<string, unknown>;
+      };
+      expect(input.sourceAttributes).toEqual(expect.objectContaining({ sub: 'user-123' }));
+      expect(input.sourceAttributes).toHaveProperty('email');
+      // What is released is still only what the scopes and consent allow.
+      expect(input.claims).not.toBe(input.sourceAttributes);
+    });
+
     it.each([
       [
         new OIDCIdentityMappingRuntimeError('invalid mapping', {

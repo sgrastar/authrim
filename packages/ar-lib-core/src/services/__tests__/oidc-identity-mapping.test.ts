@@ -42,6 +42,7 @@ vi.mock('../destination-profile-consent', async (importOriginal) => ({
 import {
   applyOIDCIdentityMapping,
   deriveOIDCSubject,
+  mappingSourceRefs,
   OIDCIdentityMappingRuntimeError,
 } from '../oidc-identity-mapping';
 
@@ -370,6 +371,251 @@ describe('applyOIDCIdentityMapping fail-closed behavior', () => {
         }),
       })
     );
+  });
+});
+
+describe('applyOIDCIdentityMapping source attributes', () => {
+  const sourceEdge = (path: string) => ({
+    id: `edge-${path}`,
+    sourceRef: { side: 'source', namespace: 'oidc.claim', path },
+    targetRef: { side: 'destination', namespace: 'oidc.claim', path: 'sub' },
+  });
+  const sourceValuesOfLastRun = () =>
+    (
+      executeMapping.mock.calls.at(-1)?.[0] as {
+        sourceValues: Array<{ sourceRef: { path: string }; value: unknown }>;
+      }
+    ).sourceValues;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    resolveBinding.mockResolvedValue({ ...binding, edges: [sourceEdge('preferred_username')] });
+    executeMapping.mockReturnValue({ status: 'success', values: [] });
+    loadDescriptor.mockResolvedValue({ destinationType: 'oidc', fields: [] });
+  });
+
+  it("reads an attribute the mapping uses from the user's attributes when the claims lack it", async () => {
+    const sourceAttributes = vi.fn(async () => ({
+      preferred_username: 'alice',
+      email: 'alice@example.com',
+      phone_number: '+8100000000',
+    }));
+
+    await applyOIDCIdentityMapping({
+      adapter,
+      tenantId: 'tenant-a',
+      clientId: 'client-a',
+      claims: { sub: 'user-1', nonce: 'n' },
+      sourceAttributes,
+    });
+
+    expect(sourceAttributes).toHaveBeenCalledTimes(1);
+    expect(sourceAttributes).toHaveBeenCalledWith(['preferred_username']);
+    const sources = sourceValuesOfLastRun();
+    expect(sources).toContainEqual(
+      expect.objectContaining({
+        sourceRef: expect.objectContaining({ path: 'preferred_username' }),
+        value: 'alice',
+      })
+    );
+    // Only what the mapping reads is taken: nothing else of the user's is a source.
+    expect(sources.map((source) => source.sourceRef.path).sort()).toEqual([
+      'nonce',
+      'preferred_username',
+      'sub',
+    ]);
+  });
+
+  it('derives the same mapping input whether or not the claims carry the attribute', async () => {
+    const attributes = { preferred_username: 'alice' };
+
+    await applyOIDCIdentityMapping({
+      adapter,
+      tenantId: 'tenant-a',
+      clientId: 'client-a',
+      claims: { sub: 'user-1', preferred_username: 'alice' },
+      sourceAttributes: attributes,
+    });
+    const withClaim = sourceValuesOfLastRun().find(
+      (source) => source.sourceRef.path === 'preferred_username'
+    );
+    await applyOIDCIdentityMapping({
+      adapter,
+      tenantId: 'tenant-a',
+      clientId: 'client-a',
+      claims: { sub: 'user-1' },
+      sourceAttributes: attributes,
+    });
+    const withoutClaim = sourceValuesOfLastRun().find(
+      (source) => source.sourceRef.path === 'preferred_username'
+    );
+
+    expect(withClaim?.value).toBe('alice');
+    expect(withoutClaim?.value).toBe('alice');
+  });
+
+  it('loads nothing when the claims already carry what the mapping reads', async () => {
+    const sourceAttributes = vi.fn(async () => ({ preferred_username: 'other' }));
+
+    await applyOIDCIdentityMapping({
+      adapter,
+      tenantId: 'tenant-a',
+      clientId: 'client-a',
+      claims: { sub: 'user-1', preferred_username: 'alice' },
+      sourceAttributes,
+    });
+
+    expect(sourceAttributes).not.toHaveBeenCalled();
+    expect(sourceValuesOfLastRun()).toContainEqual(
+      expect.objectContaining({
+        sourceRef: expect.objectContaining({ path: 'preferred_username' }),
+        value: 'alice',
+      })
+    );
+  });
+
+  it('loads nothing when the mapping reads no source attribute, or there is no mapping', async () => {
+    const sourceAttributes = vi.fn(async () => ({ preferred_username: 'alice' }));
+    resolveBinding.mockResolvedValue({ ...binding, edges: [] });
+
+    await applyOIDCIdentityMapping({
+      adapter,
+      tenantId: 'tenant-a',
+      clientId: 'client-a',
+      claims: { sub: 'user-1' },
+      sourceAttributes,
+    });
+    resolveBinding.mockResolvedValue(null);
+    await applyOIDCIdentityMapping({
+      adapter,
+      tenantId: 'tenant-a',
+      clientId: 'client-a',
+      claims: { sub: 'user-1' },
+      sourceAttributes,
+    });
+
+    expect(sourceAttributes).not.toHaveBeenCalled();
+  });
+
+  it('never copies a source attribute into the output unless the mapping maps it', async () => {
+    const result = await applyOIDCIdentityMapping({
+      adapter,
+      tenantId: 'tenant-a',
+      clientId: 'client-a',
+      claims: { sub: 'user-1' },
+      sourceAttributes: { preferred_username: 'alice', email: 'alice@example.com' },
+    });
+
+    expect(result.claims).toEqual({ sub: 'user-1' });
+  });
+
+  it('derives the subject from the attributes for deriveOIDCSubject too', async () => {
+    executeMapping.mockImplementation(
+      (input: { sourceValues: Array<{ sourceRef: { path: string }; value: unknown }> }) => ({
+        status: 'success',
+        values: input.sourceValues
+          .filter((source) => source.sourceRef.path === 'preferred_username')
+          .map((source) => ({
+            sourceRef: { side: 'destination', namespace: 'oidc.claim', path: 'sub' },
+            value: source.value,
+          })),
+      })
+    );
+
+    await expect(
+      deriveOIDCSubject({
+        adapter,
+        tenantId: 'tenant-a',
+        clientId: 'client-a',
+        claims: { sub: 'user-1' },
+        sourceAttributes: async () => ({ preferred_username: 'alice' }),
+      })
+    ).resolves.toBe('alice');
+  });
+});
+
+describe('mapping source references', () => {
+  const sourceRef = (path: string, namespace = 'oidc.claim') => ({
+    side: 'source' as const,
+    namespace,
+    path,
+  });
+  const requiredRule = (id: string, targetRef: ReturnType<typeof sourceRef> | object) => ({
+    id,
+    kind: 'required' as const,
+    targetRef: targetRef as never,
+    defaultSeverity: 'critical' as const,
+  });
+
+  it('lists the sources of the edges and the source fields the validation rules check, once each', () => {
+    const refs = mappingSourceRefs({
+      edges: [
+        {
+          id: 'e1',
+          sourceRef: sourceRef('email'),
+          targetRef: { side: 'destination', namespace: 'oidc.claim', path: 'email' },
+        },
+      ] as never,
+      validationRules: [
+        requiredRule('r1', sourceRef('preferred_username')),
+        requiredRule('r2', sourceRef('email')),
+        requiredRule('r3', { side: 'destination', namespace: 'oidc.claim', path: 'sub' }),
+      ],
+    });
+
+    expect(refs.map((ref) => `${ref.namespace}:${ref.path}`)).toEqual([
+      'oidc.claim:email',
+      'oidc.claim:preferred_username',
+    ]);
+  });
+});
+
+describe('applyOIDCIdentityMapping validation-rule sources', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    resolveBinding.mockResolvedValue({
+      ...binding,
+      edges: [],
+      validationRules: [
+        {
+          id: 'rule-username-required',
+          kind: 'required',
+          targetRef: { side: 'source', namespace: 'oidc.claim', path: 'preferred_username' },
+          defaultSeverity: 'critical',
+        },
+      ],
+    });
+    executeMapping.mockReturnValue({ status: 'success', values: [] });
+    loadDescriptor.mockResolvedValue({ destinationType: 'oidc', fields: [] });
+  });
+
+  it('loads an attribute only a validation rule reads, and hands it to the mapping', async () => {
+    const sourceAttributes = vi.fn(async () => ({
+      preferred_username: 'alice',
+      email: 'alice@example.com',
+    }));
+
+    await applyOIDCIdentityMapping({
+      adapter,
+      tenantId: 'tenant-a',
+      clientId: 'client-a',
+      claims: { sub: 'user-1' },
+      sourceAttributes,
+    });
+
+    expect(sourceAttributes).toHaveBeenCalledWith(['preferred_username']);
+    const sources = (
+      executeMapping.mock.calls.at(-1)?.[0] as {
+        sourceValues: Array<{ sourceRef: { path: string }; value: unknown }>;
+      }
+    ).sourceValues;
+    expect(sources).toContainEqual(
+      expect.objectContaining({
+        sourceRef: expect.objectContaining({ path: 'preferred_username' }),
+        value: 'alice',
+      })
+    );
+    expect(sources.map((source) => source.sourceRef.path)).not.toContain('email');
   });
 });
 

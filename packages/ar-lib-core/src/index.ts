@@ -174,6 +174,7 @@ export * from './services/directory-connector-fleet';
 export * from './services/oidc-identity-mapping';
 export * from './services/introspection-identity-mapping';
 export * from './services/oidc-attribute-release-consent';
+export * from './services/oidc-id-token-release';
 export * from './services/persistent-identifiers';
 export * from './utils/ui-config';
 export * from './utils/conformance-config';

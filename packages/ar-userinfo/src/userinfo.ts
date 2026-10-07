@@ -303,6 +303,9 @@ export async function userinfoHandler(c: Context<{ Bindings: Env }>) {
         destinationSurface: 'userinfo',
         grantedScopes: scopes,
         claims: userClaims,
+        // The mapping reads the user's attributes, not only what these scopes release, so it
+        // derives the same sub as the ID token does.
+        sourceAttributes: userData,
       });
       if (mapped.claims !== userClaims) {
         Object.keys(userClaims).forEach((key) => {

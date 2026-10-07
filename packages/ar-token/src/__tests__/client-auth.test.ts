@@ -10,7 +10,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import type { Env } from '@authrim/ar-lib-core';
+import { sealSubjectReference, type Env } from '@authrim/ar-lib-core';
 import { AuthorizationCodeStore } from '@authrim/ar-lib-core/durable-objects/AuthorizationCodeStore';
 import {
   createMockEnv,
@@ -2929,6 +2929,138 @@ describe('Client Authentication Tests', () => {
         expect.any(String),
         expect.objectContaining({ algorithms: ['ES256'] })
       );
+    });
+
+    describe("with an ID token whose sub is an identity mapping's pairwise or persistent identifier", () => {
+      const ROOT_KEY = 'ab'.repeat(32);
+
+      async function referenceFor(userId: string, clientId = 'native-client-001') {
+        return sealSubjectReference(
+          { OBJECT_ENCRYPTION_ROOT_KEY: ROOT_KEY },
+          { tenantId: 'default', clientId },
+          userId
+        );
+      }
+
+      function useRootKey(key: string | undefined) {
+        (mockEnv as unknown as Record<string, unknown>).OBJECT_ENCRYPTION_ROOT_KEY = key;
+      }
+
+      it('exchanges it for the user the sealed reference names, and issues tokens for that user', async () => {
+        const client = setupNativeSSOValidationTest({
+          sub: 'alice',
+          authrim_subject_ref: await referenceFor('user-001'),
+        });
+        useRootKey(ROOT_KEY);
+
+        const response = await tokenHandler(createNativeSSOTokenExchangeContext(client.client_id));
+
+        expect(response.status).toBe(200);
+        // The access token and the new ID token's claims start from the user, not the public sub.
+        expect(mocks.mockCreateAccessToken.mock.calls.at(-1)?.[0]).toMatchObject({
+          sub: 'user-001',
+        });
+        expect(mocks.mockCreateIDToken.mock.calls.at(-1)?.[0]).toMatchObject({ sub: 'user-001' });
+      });
+
+      it('refuses it when the reference names a user other than the device secret owner', async () => {
+        const client = setupNativeSSOValidationTest({
+          sub: 'alice',
+          authrim_subject_ref: await referenceFor('someone-else'),
+        });
+        useRootKey(ROOT_KEY);
+
+        const response = await tokenHandler(createNativeSSOTokenExchangeContext(client.client_id));
+        const body = await parseJsonResponse<Record<string, unknown>>(response);
+
+        expect(response.status).toBe(400);
+        expect(body.error).toBe('invalid_grant');
+        expect(mocks.mockCreateAccessToken).not.toHaveBeenCalled();
+        // Refused before the device secret's use is consumed.
+        expect(mocks.mockDeviceSecretRepository.validateAndUse).not.toHaveBeenCalled();
+      });
+
+      it('refuses it when the reference was sealed for another client', async () => {
+        const client = setupNativeSSOValidationTest({
+          sub: 'alice',
+          authrim_subject_ref: await referenceFor('user-001', 'another-client'),
+        });
+        useRootKey(ROOT_KEY);
+
+        const response = await tokenHandler(createNativeSSOTokenExchangeContext(client.client_id));
+        const body = await parseJsonResponse<Record<string, unknown>>(response);
+
+        expect(response.status).toBe(400);
+        expect(body.error).toBe('invalid_grant');
+        expect(mocks.mockCreateAccessToken).not.toHaveBeenCalled();
+        // Refused before the device secret's use is consumed.
+        expect(mocks.mockDeviceSecretRepository.validateAndUse).not.toHaveBeenCalled();
+      });
+
+      it('refuses it when it carries no reference, as a sub that is not the owner', async () => {
+        const client = setupNativeSSOValidationTest({ sub: 'alice' });
+        useRootKey(ROOT_KEY);
+
+        const response = await tokenHandler(createNativeSSOTokenExchangeContext(client.client_id));
+        const body = await parseJsonResponse<Record<string, unknown>>(response);
+
+        expect(response.status).toBe(400);
+        expect(body.error).toBe('invalid_grant');
+        expect(mocks.mockCreateAccessToken).not.toHaveBeenCalled();
+        // Refused before the device secret's use is consumed.
+        expect(mocks.mockDeviceSecretRepository.validateAndUse).not.toHaveBeenCalled();
+      });
+
+      it('is retryable (503) without consuming a use of the device secret while the key is unavailable', async () => {
+        const client = setupNativeSSOValidationTest({
+          sub: 'alice',
+          authrim_subject_ref: await referenceFor('user-001'),
+        });
+        useRootKey(undefined);
+
+        const response = await tokenHandler(createNativeSSOTokenExchangeContext(client.client_id));
+        const body = await parseJsonResponse<Record<string, unknown>>(response);
+
+        expect(response.status).toBe(503);
+        expect(body.error).toBe('temporarily_unavailable');
+        expect(mocks.mockCreateAccessToken).not.toHaveBeenCalled();
+        expect(mocks.mockDeviceSecretRepository.validateAndUse).not.toHaveBeenCalled();
+      });
+
+      it('succeeds on a retry once the key is back, consuming the secret only then', async () => {
+        const client = setupNativeSSOValidationTest({
+          sub: 'alice',
+          authrim_subject_ref: await referenceFor('user-001'),
+          jti: 'id-token-jti-1',
+        });
+        useRootKey(undefined);
+        const first = await tokenHandler(createNativeSSOTokenExchangeContext(client.client_id));
+        expect(first.status).toBe(503);
+        expect(mocks.mockDeviceSecretRepository.validateAndUse).not.toHaveBeenCalled();
+        // The ID token was not marked used by the failed attempt.
+        expect(await mockEnv.AUTHRIM_CONFIG.get('native-sso:jti:id-token-jti-1')).toBeNull();
+
+        useRootKey(ROOT_KEY);
+        const retry = await tokenHandler(createNativeSSOTokenExchangeContext(client.client_id));
+
+        expect(retry.status).toBe(200);
+        expect(mocks.mockDeviceSecretRepository.validateAndUse).toHaveBeenCalledTimes(1);
+        expect(mocks.mockCreateAccessToken.mock.calls.at(-1)?.[0]).toMatchObject({
+          sub: 'user-001',
+        });
+      });
+
+      it('still exchanges an ID token whose sub is the user, with no reference', async () => {
+        const client = setupNativeSSOValidationTest({ sub: 'user-001' });
+        useRootKey(undefined);
+
+        const response = await tokenHandler(createNativeSSOTokenExchangeContext(client.client_id));
+
+        expect(response.status).toBe(200);
+        expect(mocks.mockCreateAccessToken.mock.calls.at(-1)?.[0]).toMatchObject({
+          sub: 'user-001',
+        });
+      });
     });
 
     it('should return resolved app display name and omit fallback for user-named devices', async () => {

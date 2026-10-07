@@ -497,6 +497,50 @@ export function buildStandardUserClaims(user: {
   };
 }
 
+/** The standard user claims buildStandardUserClaims produces from a user's own attributes. */
+const STANDARD_USER_ATTRIBUTE_CLAIMS: ReadonlySet<string> = new Set([
+  'name',
+  'family_name',
+  'given_name',
+  'middle_name',
+  'nickname',
+  'preferred_username',
+  'profile',
+  'picture',
+  'website',
+  'gender',
+  'birthdate',
+  'zoneinfo',
+  'locale',
+  'updated_at',
+  'email',
+  'email_verified',
+  'phone_number',
+  'phone_number_verified',
+  'address',
+]);
+
+/** The neutral names an identity mapping reads for two standard claims. */
+const NEUTRAL_USER_ATTRIBUTE_ALIASES: Readonly<Record<string, string>> = {
+  display_name: 'name',
+  picture_url: 'picture',
+};
+
+/**
+ * Of the attribute names an identity mapping reads, the standard user claims they stand for (a
+ * neutral alias resolves to its claim). Custom attributes are not among them: they are not the
+ * user's standard attributes and are read by the custom claim resolver, so a mapping that reads
+ * only those needs none of the user's profile or contact values.
+ */
+export function standardUserAttributeNames(names: readonly string[]): string[] {
+  const standard = new Set<string>();
+  for (const name of names) {
+    const claim = NEUTRAL_USER_ATTRIBUTE_ALIASES[name] ?? name;
+    if (STANDARD_USER_ATTRIBUTE_CLAIMS.has(claim)) standard.add(claim);
+  }
+  return [...standard];
+}
+
 export function hasSAORulesForTarget(
   claimsRequest: ParsedClaimsRequest | undefined,
   target: ClaimsTarget

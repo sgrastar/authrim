@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { Hono } from 'hono';
 import {
   SignJWT,
@@ -9,7 +9,13 @@ import {
   generateKeyPair,
 } from 'jose';
 import { authorizeHandler } from '../authorize';
-import { buildPolicyConstrainedRegionShardConfig } from '@authrim/ar-lib-core';
+import { createHash } from 'node:crypto';
+import {
+  buildPolicyConstrainedRegionShardConfig,
+  OIDCAttributeReleaseConsentRequiredError,
+  OIDCIdentityMappingRuntimeError,
+  openSubjectReference,
+} from '@authrim/ar-lib-core';
 import type { Env } from '@authrim/ar-lib-core/types/env';
 import { systemSettingsPlatformDocuments } from '@authrim/ar-lib-core/utils/system-settings-fields';
 
@@ -77,7 +83,74 @@ vi.mock('@authrim/ar-lib-core', async () => {
       .mockImplementation((_c, env, clientId) => mockGetClient(env, clientId)),
     resolveAccountDataContextFromHono: mockResolveAccountDataContextFromHono,
     deriveOIDCSubject: mockDeriveOIDCSubject,
+    CanonicalRuntimeUserProjectionRepository: class {
+      async findByLegacyUserId(...args: unknown[]) {
+        mappingFixture.userLookups.push(args);
+        return mappingFixture.userRow;
+      }
+    },
   };
+});
+
+// The database boundary of a real identity mapping: the binding the app's mapping resolves to, the
+// user's canonical record, and the Destination Profile consent filter. Unset, each is the real
+// implementation; the mapping itself always runs for real.
+const mappingFixture = vi.hoisted(() => ({
+  binding: null as unknown,
+  userRow: null as Record<string, unknown> | null,
+  userLookups: [] as unknown[][],
+}));
+vi.mock('@authrim/ar-lib-core/services/identity-mapping-runtime-resolver', async () => {
+  const actual = await vi.importActual<Record<string, unknown>>(
+    '@authrim/ar-lib-core/services/identity-mapping-runtime-resolver'
+  );
+  return {
+    ...actual,
+    resolveRuntimeIdentityMappingBinding: (...args: unknown[]) =>
+      mappingFixture.binding
+        ? Promise.resolve(mappingFixture.binding)
+        : (actual.resolveRuntimeIdentityMappingBinding as (...a: unknown[]) => unknown)(...args),
+  };
+});
+vi.mock('@authrim/ar-lib-core/services/destination-profile-consent', async () => {
+  const actual = await vi.importActual<Record<string, unknown>>(
+    '@authrim/ar-lib-core/services/destination-profile-consent'
+  );
+  return {
+    ...actual,
+    filterOidcClaimsByDestinationConsent: (input: { claims: Record<string, unknown> }) =>
+      mappingFixture.binding
+        ? Promise.resolve(input.claims)
+        : (actual.filterOidcClaimsByDestinationConsent as (i: unknown) => unknown)(input),
+  };
+});
+
+// The shared ID token release steps (identity mapping, claim release consent) run inside
+// ar-lib-core, so they are mocked at their own modules; both run the real implementation unless a
+// test replaces them for one call.
+const mockApplyOIDCIdentityMapping = vi.hoisted(() =>
+  vi.fn<(input: { claims: Record<string, unknown> }) => unknown>()
+);
+const mockEnforceOIDCAttributeReleaseConsent = vi.hoisted(() =>
+  vi.fn<(input: Record<string, unknown>) => unknown>()
+);
+vi.mock('@authrim/ar-lib-core/services/oidc-identity-mapping', async () => {
+  const actual = await vi.importActual<Record<string, unknown>>(
+    '@authrim/ar-lib-core/services/oidc-identity-mapping'
+  );
+  mockApplyOIDCIdentityMapping.mockImplementation(
+    actual.applyOIDCIdentityMapping as (...args: unknown[]) => unknown
+  );
+  return { ...actual, applyOIDCIdentityMapping: mockApplyOIDCIdentityMapping };
+});
+vi.mock('@authrim/ar-lib-core/services/oidc-attribute-release-consent', async () => {
+  const actual = await vi.importActual<Record<string, unknown>>(
+    '@authrim/ar-lib-core/services/oidc-attribute-release-consent'
+  );
+  mockEnforceOIDCAttributeReleaseConsent.mockImplementation(
+    actual.enforceOIDCAttributeReleaseConsent as (...args: unknown[]) => unknown
+  );
+  return { ...actual, enforceOIDCAttributeReleaseConsent: mockEnforceOIDCAttributeReleaseConsent };
 });
 
 /**
@@ -2653,6 +2726,450 @@ describe('Authorization Handler', () => {
           })
         ).resolves.toBe('PS256');
       });
+    });
+
+    describe("applies the app's identity mapping to implicit and hybrid ID tokens as the token endpoint does", () => {
+      const ROOT_KEY = 'ab'.repeat(32);
+      const PAIRWISE_SUB = 'pairwise-for-test-client';
+
+      /** The left half of the SHA-256 of a value, as at_hash and c_hash carry it. */
+      const halfHash = (value: string) =>
+        Buffer.from(createHash('sha256').update(value).digest().subarray(0, 16)).toString(
+          'base64url'
+        );
+
+      async function authorizeFor(
+        responseType: string,
+        options: {
+          rootKey?: boolean;
+          scope?: string;
+          mapping?: (input: { claims: Record<string, unknown> }) => unknown;
+        } = {}
+      ) {
+        mockGetClient.mockResolvedValue({
+          client_id: 'test-client',
+          redirect_uris: ['https://example.com/callback'],
+          grant_types: ['implicit', 'authorization_code'],
+          response_types: ['id_token', 'id_token token', 'code id_token', 'code id_token token'],
+          scope: 'openid profile',
+          token_endpoint_auth_method: 'none',
+        });
+        await configureClientSettings(env, { 'client.sso_enabled': true });
+        configureClientTrustPolicy(env);
+        seedSession(env, 'mapped-user');
+        if (options.rootKey !== false) {
+          (env as unknown as Record<string, unknown>).OBJECT_ENCRYPTION_ROOT_KEY = ROOT_KEY;
+        }
+        const keyPair = await generateKeyPair('RS256', { extractable: true });
+        const privatePEM = await exportPKCS8(keyPair.privateKey);
+        env.KEY_MANAGER = {
+          idFromName: vi.fn().mockReturnValue({ toString: () => 'default-v3' }),
+          get: vi.fn().mockReturnValue({
+            getActiveOIDCSigningKeyWithPrivateRpc: vi.fn().mockResolvedValue({
+              kid: 'mapped-signing-key',
+              privatePEM,
+            }),
+          }),
+        } as unknown as Env['KEY_MANAGER'];
+        if (options.mapping) {
+          mockApplyOIDCIdentityMapping.mockImplementationOnce(async (input) => ({
+            claims: await options.mapping!(input),
+            binding: null,
+          }));
+        }
+        const response = await app.request(
+          `/authorize?response_type=${encodeURIComponent(responseType)}&client_id=test-client&redirect_uri=https://example.com/callback&scope=${encodeURIComponent(options.scope ?? 'openid profile')}&state=mapped&nonce=mapped-nonce&code_challenge=${'M'.repeat(43)}&code_challenge_method=S256`,
+          {
+            method: 'GET',
+            headers: { Cookie: `authrim_session=${encodeURIComponent(TEST_SESSION_ID)}` },
+          },
+          env
+        );
+        expect(response.status).toBe(302);
+        return new URLSearchParams(new URL(response.headers.get('Location')!).hash.slice(1));
+      }
+
+      const pairwise = (input: { claims: Record<string, unknown> }) => ({
+        ...input.claims,
+        sub: PAIRWISE_SUB,
+        department: 'research',
+      });
+
+      it('issues the sub the mapping derives, and the sealed account reference, in an ID token', async () => {
+        const fragment = await authorizeFor('id_token token', { mapping: pairwise });
+
+        const idToken = decodeJwt(fragment.get('id_token')!);
+        const accessToken = decodeJwt(fragment.get('access_token')!);
+        expect(idToken.sub).toBe(PAIRWISE_SUB);
+        expect(idToken.department).toBe('research');
+        // The access token names the user, as the token endpoint's does for a code grant.
+        expect(accessToken.sub).toBe('mapped-user');
+        expect(accessToken).not.toHaveProperty('authrim_subject_ref');
+        // The ID token's grant claims: the consent generation, and the account its sub stands for.
+        expect(idToken.authrim_consent_generation).toBe(accessToken.authrim_consent_generation);
+        await expect(
+          openSubjectReference(
+            env as unknown as { OBJECT_ENCRYPTION_ROOT_KEY: string },
+            { tenantId: 'default', clientId: 'test-client' },
+            idToken.authrim_subject_ref as string
+          )
+        ).resolves.toBe('mapped-user');
+      });
+
+      it('hands the mapping the ID token claims, for the destination surface and granted scopes', async () => {
+        await authorizeFor('id_token', { mapping: (input) => input.claims });
+
+        expect(mockApplyOIDCIdentityMapping).toHaveBeenCalledTimes(1);
+        expect(mockApplyOIDCIdentityMapping).toHaveBeenCalledWith(
+          expect.objectContaining({
+            tenantId: 'default',
+            clientId: 'test-client',
+            destinationSurface: 'id_token',
+            grantedScopes: ['openid', 'profile'],
+            claims: expect.objectContaining({
+              iss: 'https://test.example.com',
+              sub: 'mapped-user',
+              aud: 'test-client',
+              nonce: 'mapped-nonce',
+            }),
+          })
+        );
+      });
+
+      it('keeps the protocol claims, at_hash and c_hash computed from the tokens returned', async () => {
+        const fragment = await authorizeFor('code id_token token', { mapping: pairwise });
+
+        const idToken = decodeJwt(fragment.get('id_token')!);
+        expect(idToken.sub).toBe(PAIRWISE_SUB);
+        expect(idToken.nonce).toBe('mapped-nonce');
+        expect(idToken.aud).toBe('test-client');
+        expect(idToken.iss).toBe('https://test.example.com');
+        expect(typeof idToken.auth_time).toBe('number');
+        expect(idToken.at_hash).toBe(halfHash(fragment.get('access_token')!));
+        expect(idToken.c_hash).toBe(halfHash(fragment.get('code')!));
+        // The code is the user's: the token endpoint derives the same sub for it.
+        expect(getAuthCodeStore(env).storeCodeRpc).toHaveBeenCalledWith(
+          expect.objectContaining({ userId: 'mapped-user' })
+        );
+      });
+
+      it('issues no account reference, and still the mapped sub, without the key to seal one', async () => {
+        const fragment = await authorizeFor('code id_token', { rootKey: false, mapping: pairwise });
+
+        const idToken = decodeJwt(fragment.get('id_token')!);
+        expect(idToken.sub).toBe(PAIRWISE_SUB);
+        expect(idToken).not.toHaveProperty('authrim_subject_ref');
+      });
+
+      it.each([
+        ['an invalid mapping configuration', 'policy.missing_identity_mapping_binding'],
+        ['a mapped sub in a reserved namespace', 'policy.identity_mapping_reserved_subject'],
+      ])('refuses to issue an ID token for %s', async (_name, code) => {
+        const fragment = await authorizeFor('id_token token', {
+          mapping: () => {
+            throw new OIDCIdentityMappingRuntimeError('mapping failed', { code });
+          },
+        });
+
+        expect(fragment.get('error')).toBe('server_error');
+        expect(fragment.get('state')).toBe('mapped');
+        expect(fragment.get('id_token')).toBeNull();
+        expect(fragment.get('access_token')).toBeNull();
+      });
+
+      it('answers server_error when the mapping fails unexpectedly', async () => {
+        const fragment = await authorizeFor('id_token', {
+          mapping: () => {
+            throw new Error('database unavailable');
+          },
+        });
+
+        expect(fragment.get('error')).toBe('server_error');
+        expect(fragment.get('id_token')).toBeNull();
+      });
+
+      it("holds the ID token's claims to the app's claim release consent, by the user's id", async () => {
+        mockEnforceOIDCAttributeReleaseConsent.mockImplementationOnce(async () => {
+          throw new OIDCAttributeReleaseConsentRequiredError({
+            claimSetHash: 'sha256:changed',
+            reasonCodes: ['release.attribute_consent.attribute_set_changed'],
+            consentMode: 'until_attributes_change',
+            claimNames: ['department'],
+          });
+        });
+
+        const fragment = await authorizeFor('id_token token', { mapping: pairwise });
+
+        expect(fragment.get('error')).toBe('consent_required');
+        expect(fragment.get('id_token')).toBeNull();
+        expect(mockEnforceOIDCAttributeReleaseConsent).toHaveBeenCalledWith(
+          expect.objectContaining({
+            subjectId: 'mapped-user',
+            target: 'id_token',
+            claims: expect.objectContaining({ sub: PAIRWISE_SUB, department: 'research' }),
+          })
+        );
+      });
+
+      describe("with an identity mapping that derives sub from the user's preferred_username", () => {
+        const field = (id: string, path: string) => ({
+          id,
+          namespace: 'oidc.claim',
+          path,
+          valueType: 'string',
+          cardinality: 'single',
+          classification: 'pii',
+          targetType: 'destination-only',
+        });
+
+        beforeEach(() => {
+          mappingFixture.userLookups = [];
+          mappingFixture.userRow = {
+            id: 'mapped-user',
+            tenant_id: 'default',
+            subject_id: 'subject-mapped-user',
+            account_id: 'account-mapped-user',
+            account_type: 'end_user',
+            lifecycle_state: 'active',
+            email: 'alice@example.com',
+            email_verified: 1,
+            name: 'Alice Example',
+            given_name: 'Alice',
+            family_name: 'Example',
+            middle_name: null,
+            nickname: null,
+            preferred_username: 'alice',
+            profile: null,
+            picture: null,
+            website: null,
+            gender: null,
+            birthdate: null,
+            zoneinfo: null,
+            locale: null,
+            phone_number: '+8100000000',
+            phone_number_verified: 0,
+            address_json: null,
+            password_hash: null,
+            external_id: null,
+            last_login_at: null,
+            active: 1,
+            custom_attributes_json: null,
+            created_at: '2026-01-01T00:00:00.000Z',
+            updated_at: '2026-01-01T00:00:00.000Z',
+          };
+          mappingFixture.binding = {
+            id: 'binding-1',
+            tenantId: 'default',
+            fieldMappingSetId: 'set-1',
+            fieldMappingVersionId: 'version-1',
+            mappingSnapshotHash: 'hash-1',
+            catalog: {
+              identity: {
+                id: 'test.catalog',
+                version: '1',
+                contentHash: 'test-catalog',
+                compatibilityRange: '^0.2.0',
+              },
+              entries: [
+                field('field.oidc.preferred_username', 'preferred_username'),
+                field('field.oidc.sub', 'sub'),
+              ],
+            },
+            edges: [
+              {
+                id: 'edge-preferred-username-to-sub',
+                sourceRef: {
+                  side: 'source',
+                  namespace: 'oidc.claim',
+                  path: 'preferred_username',
+                  catalogEntryId: 'field.oidc.preferred_username',
+                },
+                targetRef: {
+                  side: 'destination',
+                  namespace: 'oidc.claim',
+                  path: 'sub',
+                  catalogEntryId: 'field.oidc.sub',
+                },
+              },
+            ],
+            transforms: [],
+            validationRules: [],
+            fieldMappingSet: {},
+            activationScope: {},
+            destinationNamespace: 'oidc.claim',
+            destinationProfileId: 'profile-1',
+            destinationProfileIds: ['profile-1'],
+          };
+        });
+
+        afterEach(() => {
+          mappingFixture.binding = null;
+          mappingFixture.userRow = null;
+          mappingFixture.userLookups = [];
+        });
+
+        /** Make the mapping read another attribute for sub (a custom one, say). */
+        function readSourceAttribute(path: string) {
+          const binding = mappingFixture.binding as {
+            catalog: { entries: Array<{ id: string; path: string }> };
+            edges: Array<{ sourceRef: { path: string; catalogEntryId: string } }>;
+          };
+          binding.catalog.entries[0] = { ...binding.catalog.entries[0], path };
+          binding.edges[0].sourceRef.path = path;
+        }
+
+        it.each([
+          ['id_token', 'openid profile'],
+          ['id_token token', 'openid profile'],
+          ['code id_token', 'openid profile'],
+          ['code id_token token', 'openid profile'],
+          ['id_token', 'openid'],
+          ['id_token token', 'openid'],
+          ['code id_token', 'openid'],
+          ['code id_token token', 'openid'],
+        ])(
+          'issues the same sub for response_type=%s with scope %s',
+          async (responseType, scope) => {
+            const fragment = await authorizeFor(responseType, { scope });
+
+            const idToken = decodeJwt(fragment.get('id_token')!);
+            expect(idToken.sub).toBe('alice');
+            // Only the attribute the mapping reads is looked up for it, and not at all when the
+            // ID token's claims already carry it. (An ID token with no access token or code
+            // also reads the user in full to evaluate its own claims, as it always has.)
+            const named = ['mapped-user', { claimNames: ['preferred_username'] }];
+            const own = ['mapped-user', undefined];
+            const lookups = mappingFixture.userLookups;
+            if (responseType === 'id_token' && scope === 'openid profile') {
+              expect(lookups).toEqual([own]);
+            } else if (responseType === 'id_token') {
+              expect(lookups).toEqual([own, named]);
+            } else {
+              expect(lookups).toEqual([named]);
+            }
+            // The mapping reads preferred_username without releasing it or anything else.
+            if (scope === 'openid' || responseType !== 'id_token') {
+              expect(idToken).not.toHaveProperty('preferred_username');
+            }
+            expect(idToken).not.toHaveProperty('phone_number');
+            expect(idToken).not.toHaveProperty('email');
+            // The user's id stays the access token's sub, and the ID token's sealed account.
+            if (fragment.get('access_token')) {
+              expect(decodeJwt(fragment.get('access_token')!).sub).toBe('mapped-user');
+            }
+            await expect(
+              openSubjectReference(
+                env as unknown as { OBJECT_ENCRYPTION_ROOT_KEY: string },
+                { tenantId: 'default', clientId: 'test-client' },
+                idToken.authrim_subject_ref as string
+              )
+            ).resolves.toBe('mapped-user');
+          }
+        );
+
+        it.each(['code id_token', 'id_token token'])(
+          'looks up no profile or contact value when the mapping reads only a custom attribute (%s)',
+          async (responseType) => {
+            readSourceAttribute('employee_id');
+
+            const fragment = await authorizeFor(responseType, { scope: 'openid' });
+
+            // The custom claim resolver is the source of such an attribute (here the feature is
+            // off, so there is none): the user's profile and contacts are not read for it.
+            expect(mappingFixture.userLookups).toEqual([]);
+            expect(decodeJwt(fragment.get('id_token')!).sub).toBe('mapped-user');
+          }
+        );
+
+        describe('with a mapping that has no edge, only a rule that the attribute must be present', () => {
+          beforeEach(() => {
+            const binding = mappingFixture.binding as {
+              edges: unknown[];
+              validationRules: unknown[];
+            };
+            binding.edges = [];
+            binding.validationRules = [
+              {
+                id: 'rule-username-required',
+                kind: 'required',
+                targetRef: { side: 'source', namespace: 'oidc.claim', path: 'preferred_username' },
+                defaultSeverity: 'critical',
+              },
+            ];
+          });
+
+          it.each([
+            ['id_token', 'openid profile'],
+            ['id_token token', 'openid profile'],
+            ['code id_token', 'openid profile'],
+            ['code id_token token', 'openid profile'],
+            ['id_token', 'openid'],
+            ['id_token token', 'openid'],
+            ['code id_token', 'openid'],
+            ['code id_token token', 'openid'],
+          ])(
+            'validates the same way whatever the response carries (%s, scope %s)',
+            async (responseType, scope) => {
+              const fragment = await authorizeFor(responseType, { scope });
+
+              expect(fragment.get('error')).toBeNull();
+              const idToken = decodeJwt(fragment.get('id_token')!);
+              expect(idToken.sub).toBe('mapped-user');
+              if (responseType !== 'id_token' || scope === 'openid') {
+                expect(idToken).not.toHaveProperty('preferred_username');
+              }
+            }
+          );
+
+          it('fails for every response when the user has no such attribute', async () => {
+            mappingFixture.userRow = { ...mappingFixture.userRow, preferred_username: null };
+
+            for (const responseType of ['id_token token', 'code id_token']) {
+              const fragment = await authorizeFor(responseType, { scope: 'openid' });
+              expect(fragment.get('error')).toBe('server_error');
+              expect(fragment.get('id_token')).toBeNull();
+            }
+          });
+        });
+
+        it("binds the code to the user's id while the ID token carries the mapped sub", async () => {
+          const fragment = await authorizeFor('code id_token', { scope: 'openid' });
+
+          expect(decodeJwt(fragment.get('id_token')!).sub).toBe('alice');
+          expect(getAuthCodeStore(env).storeCodeRpc).toHaveBeenCalledWith(
+            expect.objectContaining({ userId: 'mapped-user' })
+          );
+        });
+      });
+
+      it.each(['id_token', 'id_token token', 'code id_token', 'code id_token token'])(
+        'leaves the ID token as it was when the app has no identity mapping (%s)',
+        async (responseType) => {
+          const fragment = await authorizeFor(responseType);
+
+          const types = responseType.split(' ');
+          const idToken = decodeJwt(fragment.get('id_token')!);
+          expect(idToken.sub).toBe('mapped-user');
+          expect(Object.keys(idToken).sort()).toEqual(
+            [
+              'iss',
+              'sub',
+              'aud',
+              'iat',
+              'exp',
+              'auth_time',
+              'nonce',
+              'authrim_consent_generation',
+              'sid',
+              ...(types.includes('token') ? ['at_hash'] : []),
+              ...(types.includes('code') ? ['c_hash'] : []),
+            ].sort()
+          );
+          if (types.includes('token')) {
+            expect(decodeJwt(fragment.get('access_token')!).sub).toBe('mapped-user');
+          }
+        }
+      );
     });
 
     securityRegressionIt(
