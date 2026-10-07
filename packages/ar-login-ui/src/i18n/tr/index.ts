@@ -407,6 +407,13 @@ const translation = {
 	device_errorApproveFailed: 'Cihaz onaylanamadı',
 	device_errorDenyFailed: 'Cihaz isteği reddedilemedi.',
 	device_errorInvalidRedirect: "Sunucudan geçersiz yönlendirme URL'si alındı",
+	device_errorConsentWithdrawn:
+		'Bu istek, bu uygulamanın erişimini geri almadan önce oluşturuldu. Yeni bir kod almak için cihazda baştan başla.',
+	device_errorTryAgain:
+		'Kararın şu anda kaydedilemedi ve hiçbir şey değişmedi. Birazdan tekrar dene.',
+	device_errorTooManyAttempts: 'Çok fazla deneme yapıldı. Bir süre bekleyip tekrar dene.',
+	device_errorOutcomeUnknown:
+		'Kararının kaydedilip kaydedilmediği doğrulanamadı. Cihazı kontrol et veya kodu yeniden gir.',
 	ciba_title: 'Doğrulama talebi',
 	ciba_subtitle: 'Bir başvuru onayınızı istiyor.',
 	ciba_noPendingRequests: 'Bekleyen kimlik doğrulama talepleri yok',
@@ -426,6 +433,15 @@ const translation = {
 	ciba_errorGeneric: 'Bir hata oluştu.',
 	ciba_errorApproveFailed: 'Başvuru onaylanamadı',
 	ciba_errorDenyFailed: 'İstek reddedilemedi.',
+	ciba_errorConsentWithdrawn:
+		'Bu istek, bu uygulamanın erişimini geri almadan önce oluşturuldu. Uygulamadan baştan başla.',
+	ciba_errorRequestGone: 'Bu isteğin süresi doldu veya zaten yanıtlandı.',
+	ciba_errorTryAgain:
+		'Kararın şu anda kaydedilemedi ve hiçbir şey değişmedi. Birazdan tekrar dene.',
+	ciba_errorTooManyAttempts: 'Çok fazla deneme yapıldı. Bir süre bekleyip tekrar dene.',
+	ciba_errorOutcomeUnknown:
+		'Yanıtının kaydedilip kaydedilmediği doğrulanamadı. Hâlâ bekleyen istekleri görmek için yenile.',
+	ciba_errorNoLongerWaiting: 'Yanıtın doğrulanamadı, ancak bu istek artık beklemiyor.',
 	reauth_title: 'Kimliğinizi doğrulayın',
 	reauth_subtitle: 'Güvenliğiniz için devam etmeden önce kimliğinizi yeniden doğrulayın.',
 	reauth_verifyWithPasskey: 'Passkey ile doğrulama',

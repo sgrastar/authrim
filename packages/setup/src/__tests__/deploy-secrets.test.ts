@@ -76,6 +76,13 @@ describe('SECRET_UPLOAD_PLAN', () => {
     expect(getSecretNamesForWorker('ar-management')).toContain('TENANT_BACKUP_WRAPPING_KEY');
   });
 
+  it('gives Async the lookup HMAC keys its session account resolution reads', () => {
+    expect(getSecretNamesForWorker('ar-async')).toEqual(
+      expect.arrayContaining(['LOOKUP_HMAC_KEY_SLOT_A', 'LOOKUP_HMAC_KEY_SLOT_B'])
+    );
+    expect(getRequiredDataRolesForComponent('ar-async')).toContain('lookup');
+  });
+
   it('keeps persistent Cloudflare tokens exclusive to the Control Worker', () => {
     expect(getSecretNamesForWorker('ar-control')).toEqual([
       'RUNTIME_REGISTRY_SIGNING_JWK_SLOT_A',

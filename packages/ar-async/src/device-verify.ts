@@ -3,7 +3,7 @@
  * RFC 8628: Device User Authorization
  *
  * IMPORTANT: This is a minimal HTML form. A submitted code is handed to the external UI
- * (UI_URL) for authentication, or use the headless JSON API at POST /api/device/verify.
+ * (UI_URL) for authentication, or use the headless JSON API at POST /api/devices/verify.
  */
 
 import type { Context } from 'hono';

@@ -986,7 +986,7 @@ async function validateDeployWranglers(
 
     const content = await readFile(deployPath, 'utf-8');
     const parsed = parseWranglerToml(content, env);
-    if (component !== 'ar-router' && component !== 'ar-async') {
+    if (component !== 'ar-router') {
       for (const binding of requiredBuiltinD1Bindings(component)) {
         if (!parsed.d1[binding]) {
           pushDetail(

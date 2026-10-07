@@ -407,6 +407,13 @@ const translation = {
 	device_errorApproveFailed: 'Haijaidhinishwa kifaa',
 	device_errorDenyFailed: 'Haikuweza kukataa ombi la kifaa',
 	device_errorInvalidRedirect: 'URL isiyofaa ya kuelekeza upya iliyopokelewa kutoka kwa seva',
+	device_errorConsentWithdrawn:
+		'Ombi hili lilifanywa kabla hujaondoa ruhusa ya programu hii. Anza upya kwenye kifaa ili kupata nambari mpya.',
+	device_errorTryAgain:
+		'Uamuzi wako haukuweza kuhifadhiwa sasa na hakuna kilichobadilika. Jaribu tena baada ya muda mfupi.',
+	device_errorTooManyAttempts: 'Majaribio mengi mno. Subiri kwa muda, kisha ujaribu tena.',
+	device_errorOutcomeUnknown:
+		'Hatukuweza kuthibitisha kama uamuzi wako umehifadhiwa. Angalia kifaa, au weka nambari tena.',
 	ciba_title: 'Ombi la uthibitisho',
 	ciba_subtitle: 'Programu inaomba idhini yako',
 	ciba_noPendingRequests: 'Hakuna maombi ya uthibitisho yanayotarajiwa',
@@ -426,6 +433,15 @@ const translation = {
 	ciba_errorGeneric: 'Hitilafu ilitokea',
 	ciba_errorApproveFailed: 'Ombi halikuweza kuidhinishwa',
 	ciba_errorDenyFailed: 'Kushindwa kukataa ombi',
+	ciba_errorConsentWithdrawn:
+		'Ombi hili lilifanywa kabla hujaondoa ruhusa ya programu hii. Anza upya kutoka kwenye programu.',
+	ciba_errorRequestGone: 'Muda wa ombi hili umekwisha au tayari limejibiwa.',
+	ciba_errorTryAgain:
+		'Uamuzi wako haukuweza kuhifadhiwa sasa na hakuna kilichobadilika. Jaribu tena baada ya muda mfupi.',
+	ciba_errorTooManyAttempts: 'Majaribio mengi mno. Subiri kwa muda, kisha ujaribu tena.',
+	ciba_errorOutcomeUnknown:
+		'Hatukuweza kuthibitisha kama jibu lako limehifadhiwa. Onyesha upya ili kuona maombi yanayosubiri bado.',
+	ciba_errorNoLongerWaiting: 'Hatukuweza kuthibitisha jibu lako, lakini ombi hili halisubiri tena.',
 	reauth_title: 'Thibitisha utambulisho wako',
 	reauth_subtitle: 'Kwa usalama, tafadhali thibitisha utambulisho wako tena ili kuendelea',
 	reauth_verifyWithPasskey: 'Thibitisha kwa Passkey',

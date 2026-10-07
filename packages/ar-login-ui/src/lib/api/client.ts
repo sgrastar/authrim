@@ -7,6 +7,7 @@ import { browser } from '$app/environment';
 import { getAuthConfig } from '$lib/auth';
 import { getDiagnosticSessionId as getLoggerSessionId } from '$lib/stores/diagnostic';
 import { authrimFetch } from '$lib/authrim/fetch';
+import { APPROVAL_ENDPOINTS, approvalEndpointPath } from './approval-endpoints';
 import {
 	LOGIN_UI_LEGACY_SESSION_STORAGE_KEYS,
 	LOGIN_UI_SESSION_STORAGE_KEYS
@@ -1708,35 +1709,23 @@ export const adminAuditLogAPI = {
 /**
  * Device Flow API
  * RFC 8628: OAuth 2.0 Device Authorization Grant
+ *
+ * Both calls need the signed-in user's session cookie; ar-async binds the decision to that user.
  */
 export const deviceFlowAPI = {
 	/**
-	 * Verify device code with user approval
+	 * Show which application a user code belongs to and what it asks for. Decides nothing.
 	 */
-	async verifyDeviceCode(userCode: string, approve: boolean = true) {
+	async lookup(userCode: string) {
 		return apiFetch<{
-			success: boolean;
-			message?: string;
-		}>('/api/devices/verify', {
-			method: 'POST',
-			body: JSON.stringify({
-				user_code: userCode,
-				approve
-			})
-		});
-	},
-
-	/**
-	 * Verify a device code and get device info
-	 */
-	async verify(userCode: string) {
-		return apiFetch<{
+			client_id: string;
 			client_name: string;
 			client_uri?: string;
 			logo_uri?: string;
 			scopes: string[];
-		}>('/api/devices/verify-code', {
-			method: 'POST',
+			expires_at: number;
+		}>(APPROVAL_ENDPOINTS.deviceLookup.path, {
+			method: APPROVAL_ENDPOINTS.deviceLookup.method,
 			body: JSON.stringify({ user_code: userCode }),
 			credentials: 'include'
 		});
@@ -1748,9 +1737,9 @@ export const deviceFlowAPI = {
 	async approve(userCode: string) {
 		return apiFetch<{
 			success: boolean;
-			redirect_url?: string;
-		}>('/api/devices/approve', {
-			method: 'POST',
+			message?: string;
+		}>(APPROVAL_ENDPOINTS.deviceDecide.path, {
+			method: APPROVAL_ENDPOINTS.deviceDecide.method,
 			body: JSON.stringify({ user_code: userCode, approve: true }),
 			credentials: 'include'
 		});
@@ -1762,89 +1751,85 @@ export const deviceFlowAPI = {
 	async deny(userCode: string) {
 		return apiFetch<{
 			success: boolean;
-		}>('/api/devices/approve', {
-			method: 'POST',
+			message?: string;
+		}>(APPROVAL_ENDPOINTS.deviceDecide.path, {
+			method: APPROVAL_ENDPOINTS.deviceDecide.method,
 			body: JSON.stringify({ user_code: userCode, approve: false }),
 			credentials: 'include'
 		});
 	}
 };
 
+/** A pending CIBA request of the signed-in user, as GET /api/ciba/pending lists it. */
+export interface CibaPendingRequest {
+	auth_req_id: string;
+	client_id: string;
+	client_name: string;
+	client_logo_uri: string | null;
+	scope: string;
+	binding_message: string | null;
+	user_code: string | null;
+	/** Epoch seconds (the API sends epoch milliseconds; getPending converts). */
+	created_at: number;
+	/** Epoch seconds (the API sends epoch milliseconds; getPending converts). */
+	expires_at: number;
+	status: string;
+}
+
+/** GET /api/ciba/pending as ar-async sends it: timestamps in epoch milliseconds. */
+type CibaPendingRequestWire = Omit<CibaPendingRequest, 'created_at' | 'expires_at'> & {
+	created_at: number;
+	expires_at: number;
+};
+
+/** Whole seconds, rounding the expiry down so a request never looks open after it closed. */
+function epochMillisecondsToSeconds(value: number): number {
+	return Math.floor(value / 1000);
+}
+
 /**
  * CIBA API
  * Client Initiated Backchannel Authentication
+ *
+ * Every call needs the signed-in user's session cookie; ar-async only shows and decides requests
+ * addressed to that user.
  */
 export const cibaAPI = {
 	/**
 	 * Get a specific CIBA request by ID
 	 */
 	async getData(requestId: string) {
-		const apiBaseUrl = import.meta.env.VITE_OP_API_URL || API_BASE_URL;
-		try {
-			const response = await fetch(`${apiBaseUrl}/api/ciba/requests/${requestId}`, {
-				method: 'GET',
-				headers: buildDiagnosticHeaders({ Accept: 'application/json' }),
-				credentials: 'include'
-			});
-			if (!response.ok) {
-				const errorData = await response.json().catch(() => ({}));
-				return {
-					error: {
-						error: errorData.error || 'ciba_error',
-						error_description: errorData.error_description || 'Failed to load CIBA request'
-					}
-				};
-			}
-			const data = await response.json();
-			return { data };
-		} catch {
-			return {
-				error: {
-					error: 'network_error',
-					error_description: 'Network error occurred'
-				}
-			};
-		}
+		return apiFetch<Record<string, unknown>>(
+			approvalEndpointPath(APPROVAL_ENDPOINTS.cibaDetails, { auth_req_id: requestId }),
+			{ method: APPROVAL_ENDPOINTS.cibaDetails.method, credentials: 'include' }
+		);
 	},
 
 	/**
 	 * Get pending CIBA requests for current user
 	 */
-	async getPending() {
-		const apiBaseUrl = import.meta.env.VITE_OP_API_URL || API_BASE_URL;
-		try {
-			const response = await fetch(`${apiBaseUrl}/api/ciba/requests/pending`, {
-				method: 'GET',
-				headers: buildDiagnosticHeaders({ Accept: 'application/json' }),
-				credentials: 'include'
-			});
-			if (!response.ok) {
-				const errorData = await response.json().catch(() => ({}));
-				return {
-					error: {
-						error: errorData.error || 'ciba_error',
-						error_description: errorData.error_description || 'Failed to load pending requests'
-					}
-				};
-			}
-			const data = await response.json();
-			return { data: data.requests || data };
-		} catch {
-			return {
-				error: {
-					error: 'network_error',
-					error_description: 'Network error occurred'
-				}
-			};
-		}
+	async getPending(): Promise<{ data?: CibaPendingRequest[]; error?: APIError }> {
+		const { data, error } = await apiFetch<{ requests?: CibaPendingRequestWire[] }>(
+			APPROVAL_ENDPOINTS.cibaPending.path,
+			{ method: APPROVAL_ENDPOINTS.cibaPending.method, credentials: 'include' }
+		);
+		if (error) return { error };
+		return {
+			data: (data?.requests ?? []).map((request) => ({
+				...request,
+				created_at: epochMillisecondsToSeconds(request.created_at),
+				expires_at: epochMillisecondsToSeconds(request.expires_at)
+			}))
+		};
 	},
 
 	/**
 	 * Approve a CIBA request
 	 */
 	async approve(requestId: string) {
-		return apiFetch<{ success: boolean }>(`/api/ciba/requests/${requestId}/approve`, {
-			method: 'POST',
+		return apiFetch<{ success: boolean; message?: string }>(APPROVAL_ENDPOINTS.cibaApprove.path, {
+			method: APPROVAL_ENDPOINTS.cibaApprove.method,
+			body: JSON.stringify({ auth_req_id: requestId }),
 			credentials: 'include'
 		});
 	},
@@ -1853,8 +1838,9 @@ export const cibaAPI = {
 	 * Reject a CIBA request
 	 */
 	async reject(requestId: string) {
-		return apiFetch<{ success: boolean }>(`/api/ciba/requests/${requestId}/reject`, {
-			method: 'POST',
+		return apiFetch<{ success: boolean; message?: string }>(APPROVAL_ENDPOINTS.cibaDeny.path, {
+			method: APPROVAL_ENDPOINTS.cibaDeny.method,
+			body: JSON.stringify({ auth_req_id: requestId }),
 			credentials: 'include'
 		});
 	}

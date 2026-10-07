@@ -60,16 +60,31 @@ Authrim supports environment-specific deployments with naming conventions:
 
 ### Deployment Modes
 
-#### Test Mode (workers.dev + Router Worker)
+Every environment that `@authrim/setup` creates serves its public API endpoints through the Router
+Worker (`ar-router`), which reaches the other API Workers over Service Bindings. The Router applies
+the shared request checks (Origin/CSRF, security headers, bearer-token transport) before any API
+Worker sees a request, so the API Workers have no public routes of their own.
 
-- Uses Router Worker with Service Bindings
-- Single endpoint: `https://authrim.{subdomain}.workers.dev`
+The Login UI and Admin UI are served through the Router when they share the API host. A UI on its
+own host (`urls.loginUi.sameAsApi` / `urls.adminUi.sameAsApi` set to `false` with a custom domain)
+is served by its UI Worker on that host, and its API calls still reach the Router:
+
+- **Login UI:** the browser calls `/api/*` on the Login UI host; the Login UI Worker forwards them
+  to the Router over its Service Binding.
+- **Admin UI, same site as the API** (for example `admin.example.com` with the API on
+  `auth.example.com`): the browser calls the API host directly, with credentialed CORS and the
+  Router's Origin/CSRF checks.
+- **Admin UI, different site:** the Admin UI Worker acts as a BFF and forwards `/api/*` to the
+  Router over its Service Binding; the browser never calls the API host.
+
+#### workers.dev
+
+- Single endpoint: `https://{env}-ar-router.{subdomain}.workers.dev`
 - Best for: Development, testing, demos
 
-#### Production Mode (Custom Domain + Routes)
+#### Custom Domain
 
-- Direct routing via Cloudflare Routes
-- Optimal performance (no router hop)
+- The Router owns the custom domain (a Custom Domain binding or a zone route)
 - Best for: Production deployments
 
 ---
@@ -97,24 +112,25 @@ This handles all the steps below automatically:
 
 See [@authrim/setup documentation](../../packages/setup/README.md) for details.
 
-### Manual Deployment
+### CLI Deployment
 
-For experienced users who prefer manual control:
+The same flow from the command line. Creating an environment is interactive (`init --cli` asks for
+the URLs and options); deploying and updating an existing environment can then run unattended with
+`--yes`:
 
 ```bash
-# 1. Setup infrastructure
-./scripts/setup-keys.sh                           # Generate RSA keys
-./scripts/setup-remote-wrangler.sh --env=prod     # Generate wrangler configs
-./scripts/setup-kv.sh --env=prod                  # Create KV namespaces
-./scripts/setup-d1.sh --env=prod                  # Create D1 database
-./scripts/setup-secrets.sh --env=prod             # Upload secrets
+# 1. Create the environment (keys, Cloudflare resources, wrangler configuration) — interactive
+npx @authrim/setup init --cli --env prod
 
-# 2. Deploy API workers
-pnpm run deploy -- --env=prod
+# 2. Deploy (or redeploy) its Workers
+npx @authrim/setup deploy --env prod --yes
 
-# 3. Deploy UI (optional)
-pnpm run deploy:ui -- --env=prod
+# 3. Later releases: migrate and redeploy as one operation
+npx @authrim/setup update --env prod --all --yes
 ```
+
+From a repository checkout, `pnpm run setup:init` and `pnpm run setup:deploy` run the same
+commands. See the [@authrim/setup documentation](../../packages/setup/README.md) for all options.
 
 ---
 
@@ -135,16 +151,19 @@ Creates:
 ### 2. Generate Wrangler Configuration
 
 ```bash
-./scripts/setup-remote-wrangler.sh --env=prod --domain=https://auth.example.com
+npx @authrim/setup init --cli --env prod
 ```
 
-Interactive prompts:
+Setup asks for the issuer URL (workers.dev or a custom domain) and the UI settings, provisions the
+Cloudflare resources, and writes each package's `wrangler.toml` with an `[env.prod]` section. Do not
+edit the generated files. To change an environment, edit it in the Web UI (`npx @authrim/setup`) or
+reload its configuration in the CLI with
+`npx @authrim/setup init --cli --config .authrim/prod/config.json`, then deploy again.
+(`npx @authrim/setup config --env prod --show` only displays or `--validate`s the configuration.)
 
-1. **Deployment Mode**: Test (workers.dev) or Production (custom domain)
-2. **ISSUER_URL**: Your OP's public URL
-3. **UI_BASE_URL**: Optional, for Device Flow consent pages
-
-Creates `wrangler.{env}.toml` files for all packages.
+> Steps 3–5 are part of `npx @authrim/setup init` above. The `setup-kv.sh`, `setup-d1.sh`, and
+> `setup-secrets.sh` scripts below only maintain the retired `wrangler.{env}.toml` layout and are not
+> needed for an environment created by `@authrim/setup`.
 
 ### 3. Create KV Namespaces
 
@@ -270,25 +289,25 @@ curl "$ISSUER_URL/api/internal/version-manager/status" \
 
 ## Custom Domain Setup
 
-### Using Cloudflare Routes (Recommended)
+### Router Custom Domain (Recommended)
 
-The `setup-remote-wrangler.sh` script automatically configures routes when using production mode:
+When the environment's API URL is a custom domain, `@authrim/setup` attaches it to the Router
+Worker only, either as a Custom Domain binding or as a zone route (plus the tenant wildcard in
+multi-tenant mode):
 
 ```toml
-# packages/ar-discovery/wrangler.prod.toml
-[[routes]]
-pattern = "auth.example.com/.well-known/*"
-zone_name = "example.com"
+# packages/ar-router/wrangler.toml (generated)
+[[env.prod.routes]]
+pattern = "auth.example.com"
+custom_domain = true
 ```
 
-Routes configured automatically:
-| Pattern | Worker |
-|---------|--------|
-| `/.well-known/*` | ar-discovery |
-| `/authorize`, `/as/*` | ar-auth |
-| `/token` | ar-token |
-| `/userinfo` | ar-userinfo |
-| `/register`, `/introspect`, `/revoke` | ar-management |
+Every API path — discovery, `/authorize`, `/token`, `/userinfo`, and the Device Flow and CIBA
+approval APIs — enters through the Router, which forwards it to the owning Worker over a Service
+Binding after its Origin/CSRF and header checks; so do the UI pages when the UI shares the API host.
+A UI on its own host (`sameAsApi: false`) gets its own Custom Domain on the UI Worker; how its API
+calls reach the Router is described under [Deployment Modes](#deployment-modes). Do not add routes
+that send an API path straight to an API Worker: that request would skip the Router's checks.
 
 ### DNS Configuration
 
@@ -353,20 +372,16 @@ script_name = "prod-ar-lib-core"
 
 ### Deploy Multiple Environments
 
-```bash
-# Development
-./scripts/setup-remote-wrangler.sh --env=dev --domain=https://dev-auth.example.com
-./scripts/setup-kv.sh --env=dev
-./scripts/setup-d1.sh --env=dev
-./scripts/setup-secrets.sh --env=dev
-pnpm run deploy -- --env=dev
+Each environment has its own configuration under `.authrim/{env}/`:
 
-# Production
-./scripts/setup-remote-wrangler.sh --env=prod --domain=https://auth.example.com
-./scripts/setup-kv.sh --env=prod
-./scripts/setup-d1.sh --env=prod
-./scripts/setup-secrets.sh --env=prod
-pnpm run deploy -- --env=prod
+```bash
+# Development (for example https://dev-auth.example.com)
+npx @authrim/setup init --cli --env dev
+npx @authrim/setup deploy --env dev --yes
+
+# Production (for example https://auth.example.com)
+npx @authrim/setup init --cli --env prod
+npx @authrim/setup deploy --env prod --yes
 ```
 
 ### Clean Up Environment

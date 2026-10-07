@@ -820,7 +820,6 @@ This file tracks the progress of translating the project to English.
 | 674 | scripts/setup-local-vars.sh | Untranslated | - | - | - | |
 | 675 | scripts/setup-local-wrangler.sh | Untranslated | - | - | - | |
 | 676 | scripts/setup-remote-cors.sh | Untranslated | - | - | - | |
-| 677 | scripts/setup-remote-wrangler.sh | Untranslated | - | - | - | |
 | 678 | scripts/setup-resend.sh | Untranslated | - | - | - | |
 | 679 | scripts/setup-secrets.sh | Untranslated | - | - | - | |
 | 680 | scripts/switch-certification-profile.sh | Untranslated | - | - | - | |

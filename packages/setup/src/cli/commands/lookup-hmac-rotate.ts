@@ -31,7 +31,6 @@ import { deployCommand, getDeployKeysDirHint } from './deploy.js';
 
 const SAFE_ID = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$/u;
 const HEX_DIGEST = /^[a-f0-9]{64}$/u;
-const LOOKUP_HMAC_TARGET_COUNT = 5;
 const WAIT_TIMEOUT_MS = 5 * 60 * 1000;
 const POLL_INTERVAL_MS = 5_000;
 const VERIFICATION_STATUS_KEYS = new Set([
@@ -48,6 +47,15 @@ export function lookupHmacRotationTargetComponents(): WorkerComponent[] {
     const secrets = SECRET_UPLOAD_PLAN[component] as readonly string[];
     return secrets.includes('LOOKUP_HMAC_KEY_SLOT_A') || secrets.includes('LOOKUP_HMAC_KEY_SLOT_B');
   });
+}
+
+/**
+ * How many Workers Control verifies a Lookup HMAC candidate on: one per Worker that holds a Lookup
+ * HMAC slot. Control's LOOKUP_HMAC_VERIFICATION_BINDINGS lists the same Workers; the
+ * lookup-consumer contract test keeps the two in step.
+ */
+export function lookupHmacVerificationTargetCount(): number {
+  return lookupHmacRotationTargetComponents().length;
 }
 
 export interface LookupHmacRotateOptions {
@@ -523,6 +531,7 @@ export function parseLookupHmacVerificationStatus(
   }
   const status = value as Record<string, unknown>;
   const keys = Object.keys(status);
+  const LOOKUP_HMAC_TARGET_COUNT = lookupHmacVerificationTargetCount();
   if (
     keys.length !== VERIFICATION_STATUS_KEYS.size ||
     keys.some((key) => !VERIFICATION_STATUS_KEYS.has(key)) ||
@@ -600,7 +609,7 @@ export async function rotateLookupHmacKeyCommand(options: LookupHmacRotateOption
   const context = await loadEnvironment(options);
   console.log(chalk.bold('\nAuthrim Lookup HMAC key rotation\n'));
   console.log(`Environment: ${chalk.cyan(context.env)}`);
-  console.log(`Verification targets: ${chalk.cyan(LOOKUP_HMAC_TARGET_COUNT)}`);
+  console.log(`Verification targets: ${chalk.cyan(lookupHmacVerificationTargetCount())}`);
   if (options.dryRun) {
     console.log(
       chalk.yellow('Dry run only. No key, Control state, secret, or Worker was changed.')

@@ -312,7 +312,7 @@ if [ "$MISSING_CONFIG" = true ]; then
     echo "❌ Deployment aborted: Missing wrangler.toml configuration files"
     echo ""
     echo "Please run the setup script first:"
-    echo "  ./scripts/setup-remote-wrangler.sh --env=$DEPLOY_ENV --domain=<your-domain>"
+    echo "  npx @authrim/setup init --cli --env $DEPLOY_ENV   (from this repository: pnpm run setup init --cli --env $DEPLOY_ENV)"
     echo ""
     exit 1
 fi
@@ -322,7 +322,7 @@ if [ "$MISSING_ENV_SECTION" = true ]; then
     echo "❌ Deployment aborted: Missing [env.${DEPLOY_ENV}] sections in wrangler.toml"
     echo ""
     echo "Please run the setup script to generate the environment configuration:"
-    echo "  ./scripts/setup-remote-wrangler.sh --env=$DEPLOY_ENV --domain=<your-domain>"
+    echo "  npx @authrim/setup init --cli --env $DEPLOY_ENV   (from this repository: pnpm run setup init --cli --env $DEPLOY_ENV)"
     echo ""
     exit 1
 fi

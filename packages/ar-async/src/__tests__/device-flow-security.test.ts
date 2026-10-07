@@ -64,6 +64,13 @@ describe('Device Flow Security', () => {
             .mockResolvedValue(new Response(JSON.stringify({ success: true }), { status: 200 })),
         }),
       } as any,
+      // The user code APIs refuse to read codes without a working rate limiter.
+      USER_CODE_RATE_LIMITER: {
+        idFromName: vi.fn().mockReturnValue('rate-limiter-id'),
+        get: vi.fn().mockReturnValue({
+          fetch: vi.fn(async () => Response.json({ blocked: false })),
+        }),
+      } as any,
     };
   });
 
@@ -232,9 +239,8 @@ describe('Device Flow Security', () => {
       };
 
       const mockDeviceCodeStore = {
-        fetch: vi.fn().mockResolvedValue(
-          new Response(JSON.stringify({ error: 'not_found' }), { status: 404 }) // Invalid user code
-        ),
+        // The store answers an unknown user code with a JSON null
+        fetch: vi.fn().mockResolvedValue(new Response(JSON.stringify(null), { status: 200 })),
       };
 
       const mockEnvWithRateLimiter = {

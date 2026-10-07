@@ -480,6 +480,29 @@ export function projectControlGeneratedD1Bindings(
   };
 }
 
+/**
+ * Control's current Lookup HMAC key state, read fresh for a deploy (which slots the Workers that
+ * resolve accounts must hold, and their fingerprints). Undefined only before Control exists (an
+ * initial deployment, when no key state is published yet); once Control exists, a missing state
+ * is an error rather than "either slot".
+ */
+export async function resolveDeployLookupHmacState(input: {
+  lock: AuthrimLock;
+  environmentId: string;
+  query?: typeof queryD1Rows;
+}): Promise<ControlKeyState['lookupHmac'] | undefined> {
+  if (!input.lock.workers?.['ar-control']) return undefined;
+  const controlDatabaseId = input.lock.d1.CONTROL_DB?.id;
+  if (!controlDatabaseId) throw new Error('control_database_id_required');
+  const keyState = await loadControlGeneratedKeyState({
+    controlDatabaseName: controlDatabaseId,
+    environmentId: input.environmentId,
+    query: input.query,
+  });
+  if (!keyState) throw new Error('control_generated_key_state_missing');
+  return keyState.lookupHmac;
+}
+
 export async function refreshLockFromControlGeneratedState(input: {
   lock: AuthrimLock;
   environmentId: string;

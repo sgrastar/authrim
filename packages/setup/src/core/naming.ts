@@ -77,6 +77,7 @@ export const DURABLE_OBJECTS = [
   { name: 'PERMISSION_CHANGE_HUB', className: 'PermissionChangeHub' },
   { name: 'FLOW_STATE_STORE', className: 'FlowStateStore' },
   { name: 'DEVICE_SECRET_ROUTE_STORE', className: 'DeviceSecretRouteStore' },
+  { name: 'USER_CODE_RATE_LIMITER', className: 'UserCodeRateLimiter' },
 ] as const;
 
 export type DurableObjectBinding = (typeof DURABLE_OBJECTS)[number];
@@ -136,7 +137,9 @@ export const WORKER_REQUIRED_DATA_ROLES: Record<
   'ar-management': ['tenant_core/default', 'tenant_core/users', 'tenant_pii', 'lookup'],
   'ar-agent-access': ['tenant_core/default', 'tenant_core/users'],
   'ar-router': [],
-  'ar-async': ['tenant_core/default', 'tenant_core/users', 'tenant_pii'],
+  // lookup: the device and CIBA approval APIs resolve the session's account through the lookup
+  // directory before reading the user and its consent withdrawals.
+  'ar-async': ['tenant_core/default', 'tenant_core/users', 'tenant_pii', 'lookup'],
   'ar-policy': ['tenant_core/default', 'tenant_core/users'],
   'ar-saml': ['tenant_core/default', 'tenant_core/users', 'tenant_pii', 'lookup'],
   'ar-bridge': ['tenant_core/default', 'tenant_core/users', 'tenant_pii', 'lookup'],
@@ -176,7 +179,7 @@ export function getBuiltinD1BindingsForComponent(
   if (component === 'ar-policy') return [];
   if (component === 'ar-saml') return ['DB', 'DB_PII', 'DB_ADMIN', 'LOOKUP_DB'];
   if (component === 'ar-vc') return ['DB_ADMIN', 'LOOKUP_DB'];
-  if (component === 'ar-async') return [];
+  if (component === 'ar-async') return ['LOOKUP_DB'];
   return [];
 }
 

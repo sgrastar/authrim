@@ -2930,6 +2930,65 @@ describe('reconcileWorkerCronTriggers', () => {
 });
 
 describe('deployAll', () => {
+  it.each([
+    [
+      'an existing Worker that holds neither the key nor receives it',
+      ['ar-async'],
+      {},
+      ['A'],
+      [],
+      'required_worker_secrets_missing:ar-async.LOOKUP_HMAC_KEY_SLOT_A',
+    ],
+    [
+      'a new Worker that does not receive the key',
+      [],
+      {},
+      ['A'],
+      [],
+      'required_worker_secrets_missing:ar-async.LOOKUP_HMAC_KEY_SLOT_A',
+    ],
+    [
+      "an existing Worker while Control's key state is unknown, whatever it holds",
+      ['ar-async'],
+      {},
+      undefined,
+      ['LOOKUP_HMAC_KEY_SLOT_A', 'LOOKUP_HMAC_KEY_SLOT_B'],
+      'required_worker_secrets_missing:ar-async.lookup_hmac_slots_unknown',
+    ],
+    [
+      'a blank key value, even with a working key on the Worker',
+      ['ar-async'],
+      { LOOKUP_HMAC_KEY_SLOT_A: '   ' },
+      ['A'],
+      ['LOOKUP_HMAC_KEY_SLOT_A'],
+      'deploy_secret_value_blank:LOOKUP_HMAC_KEY_SLOT_A',
+    ],
+  ] as const)(
+    'refuses %s before any Worker command starts',
+    async (_label, existing, secrets, slots, onWorker, error) => {
+      const rootDir = createTempRoot();
+      createWorkerPackage(rootDir, 'ar-async', '1.0.0');
+      const listWorkerSecretNames = vi.fn(async () => new Set<string>(onWorker));
+
+      await expect(
+        deployAll(
+          {
+            env: 'test',
+            rootDir,
+            deploymentStrategy: 'direct',
+            existingComponents: [...existing],
+            secrets: { ...secrets },
+            ...(slots ? { lookupHmacSlots: [...slots] } : {}),
+            listWorkerSecretNames,
+            readAvailableDiskBytes: async () => 100 * 1024 * 1024 * 1024,
+          },
+          ['ar-async']
+        )
+      ).rejects.toThrow(error);
+      expect(vi.mocked(execa)).not.toHaveBeenCalled();
+    }
+  );
+
   it('rejects insufficient disk capacity before any Worker command starts', async () => {
     const rootDir = createTempRoot();
     createWorkerPackage(rootDir, 'ar-bridge', '1.0.0');
@@ -3543,6 +3602,8 @@ describe('deployAll', () => {
           RUNTIME_REGISTRY_SIGNING_JWK_SLOT_A: '{"kty":"OKP"}',
           TENANT_RUNTIME_REGISTRY_SIGNING_KEY_ID: 'registry-key',
           SMOKE_RPC_SIGNING_JWK_SLOT_A: '{"kty":"OKP"}',
+          // Every Worker deploys here, so the Lookup HMAC key its consumers require is distributed.
+          LOOKUP_HMAC_KEY_SLOT_A: 'lookup-key-a',
         },
       },
       selected
@@ -3743,6 +3804,8 @@ describe('deployAll', () => {
           RUNTIME_REGISTRY_SIGNING_JWK_SLOT_A: '{"kty":"OKP"}',
           TENANT_RUNTIME_REGISTRY_SIGNING_KEY_ID: 'registry-key',
           SMOKE_RPC_SIGNING_JWK_SLOT_A: '{"kty":"OKP"}',
+          // Every Worker deploys here, so the Lookup HMAC key its consumers require is distributed.
+          LOOKUP_HMAC_KEY_SLOT_A: 'lookup-key-a',
         },
       },
       selected

@@ -104,6 +104,13 @@ const completion = {
 	device_errorApproveFailed: 'No se pudo aprobar el dispositivo',
 	device_errorDenyFailed: 'No se pudo rechazar la solicitud del dispositivo',
 	device_errorInvalidRedirect: 'El servidor devolvió una URL de redirección no válida',
+	device_errorConsentWithdrawn:
+		'Esta solicitud se hizo antes de que retiraras el acceso de esta aplicación. Vuelve a empezar en el dispositivo para obtener un código nuevo.',
+	device_errorTryAgain:
+		'No se pudo guardar tu decisión en este momento y no se ha cambiado nada. Inténtalo de nuevo en unos instantes.',
+	device_errorTooManyAttempts: 'Demasiados intentos. Espera un rato y vuelve a intentarlo.',
+	device_errorOutcomeUnknown:
+		'No pudimos confirmar si se guardó tu decisión. Revisa el dispositivo o vuelve a introducir el código.',
 	ciba_title: 'Solicitud de autenticación',
 	ciba_subtitle: 'Una aplicación solicita tu aprobación',
 	ciba_noPendingRequests: 'No hay solicitudes de autenticación pendientes',
@@ -123,6 +130,16 @@ const completion = {
 	ciba_errorGeneric: 'Se produjo un error',
 	ciba_errorApproveFailed: 'No se pudo aprobar la solicitud',
 	ciba_errorDenyFailed: 'No se pudo rechazar la solicitud',
+	ciba_errorConsentWithdrawn:
+		'Esta solicitud se hizo antes de que retiraras el acceso de esta aplicación. Vuelve a empezar desde la aplicación.',
+	ciba_errorRequestGone: 'Esta solicitud ha caducado o ya se ha respondido.',
+	ciba_errorTryAgain:
+		'No se pudo guardar tu decisión en este momento y no se ha cambiado nada. Inténtalo de nuevo en unos instantes.',
+	ciba_errorTooManyAttempts: 'Demasiados intentos. Espera un rato y vuelve a intentarlo.',
+	ciba_errorOutcomeUnknown:
+		'No pudimos confirmar si se guardó tu respuesta. Actualiza para ver las solicitudes que siguen pendientes.',
+	ciba_errorNoLongerWaiting:
+		'No pudimos confirmar tu respuesta, pero esta solicitud ya no está pendiente.',
 	reauth_title: 'Verifica tu identidad',
 	reauth_subtitle: 'Por seguridad, vuelve a autenticarte para continuar',
 	reauth_verifyWithPasskey: 'Verificar con Passkey',

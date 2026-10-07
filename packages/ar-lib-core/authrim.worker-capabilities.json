@@ -50,6 +50,11 @@
       "kind": "durable_object_namespace",
       "required": true
     },
+    {
+      "name": "USER_CODE_RATE_LIMITER",
+      "kind": "durable_object_namespace",
+      "required": true
+    },
     { "name": "CONTROL_SMOKE_VERSION", "kind": "version_metadata", "required": true }
   ],
   "secrets": [
