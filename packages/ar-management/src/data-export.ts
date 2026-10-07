@@ -49,7 +49,7 @@ import {
   loadCatalogObjectArtifact,
   loadCatalogObjectRepresentation,
 } from '@authrim/ar-lib-core/services/object-artifact-store';
-import { getCookie } from 'hono/cookie';
+import { requireAccountSession } from './account-page';
 import { materializeEncryptedObjectArtifact } from './object-artifact-materialization';
 
 // Default export sections
@@ -350,31 +350,18 @@ async function getUserIdFromContext(c: Context<{ Bindings: Env }>): Promise<stri
     return null;
   }
 
-  // 2. Try session-based authentication
-  const sid = getCookie(c, 'sid');
-  if (sid) {
-    try {
-      const { stub: sessionStore } = getSessionStoreBySessionId(
-        c.env,
-        sid,
-        getTenantIdFromContext(c)
-      );
-      const response = await sessionStore.fetch(
-        new Request(`https://do/session/${sid}`, { method: 'GET' })
-      );
-      if (response.ok) {
-        const session = await response.json();
-        if (session && typeof session === 'object' && 'userId' in session) {
-          return (session as { userId: string }).userId;
-        }
-      }
-    } catch (error) {
-      const log = getLogger(c).module('DATA-EXPORT');
-      log.error('Session validation error', {}, error as Error);
+  // 2. Session cookie. The same validation as the other self-service APIs (/api/account/*): the
+  //    `authrim_session` cookie, a live session of this tenant, and the user's account data route.
+  //    The legacy `sid` cookie is not accepted: current logins never issue it and it was read
+  //    without the tenant and liveness checks.
+  const accountSession = await requireAccountSession(c);
+  if (accountSession instanceof Response) {
+    if (accountSession.status >= 500) {
+      throw new Error('account_session_validation_failed');
     }
+    return null;
   }
-
-  return null;
+  return accountSession.userId;
 }
 
 /**

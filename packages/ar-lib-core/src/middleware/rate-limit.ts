@@ -711,6 +711,43 @@ async function checkRateLimitKV(
 }
 
 /**
+ * Whether a request path falls under one `endpoints` entry.
+ *
+ * - A plain entry is a string prefix of the path (`/token` also covers `/token/x`).
+ * - `:name` matches exactly one non-empty path segment (`/api/users/:id/lock`).
+ * - A trailing `/*` matches the child routes below the base (`/api/items/*` covers
+ *   `/api/items/a/download`, not `/api/items` itself and not `/api/items-other`). Pair it with the
+ *   plain base entry to cover both without counting a request twice.
+ *
+ * Entries containing `*` or `:` used to be compared as literal text, which silently disabled the
+ * limiter on every route they were meant to cover.
+ */
+export function matchesRateLimitEndpoint(path: string, endpoint: string): boolean {
+  if (!endpoint.includes('*') && !endpoint.includes(':')) {
+    return path.startsWith(endpoint);
+  }
+
+  const patternSegments = endpoint.split('/');
+  const pathSegments = path.split('/');
+  for (let index = 0; index < patternSegments.length; index++) {
+    const pattern = patternSegments[index];
+    const segment = pathSegments[index];
+    if (pattern === '*') {
+      // The wildcard stands for one or more remaining segments.
+      return index === patternSegments.length - 1 && segment !== undefined && segment !== '';
+    }
+    if (segment === undefined) return false;
+    if (pattern.startsWith(':')) {
+      if (segment === '') return false;
+      continue;
+    }
+    const isLast = index === patternSegments.length - 1;
+    if (isLast ? !segment.startsWith(pattern) : segment !== pattern) return false;
+  }
+  return true;
+}
+
+/**
  * Rate limiting middleware factory
  *
  * @param config - Rate limit configuration
@@ -718,14 +755,18 @@ async function checkRateLimitKV(
  */
 export function rateLimitMiddleware(config: RateLimitConfig) {
   return async (c: Context<{ Bindings: Env }>, next: Next) => {
-    const path = new URL(c.req.url).pathname;
+    // The path Hono routes on (percent-decoded). The raw URL pathname would let an encoded request
+    // such as /api/%75ser/consents reach the same handler while escaping the endpoints filter.
+    const path = c.req.path;
     const timingEnabled = isRateLimitTimingEnabled(c.env, path, c.req.raw);
     const timingSpans: DiagnosticTimingSpan[] | null = timingEnabled ? [] : null;
     const timingStartedAtMs = Date.now();
 
     // If endpoints filter is specified, only apply to those endpoints
     if (config.endpoints && config.endpoints.length > 0) {
-      const shouldApply = config.endpoints.some((endpoint) => path.startsWith(endpoint));
+      const shouldApply = config.endpoints.some((endpoint) =>
+        matchesRateLimitEndpoint(path, endpoint)
+      );
 
       if (!shouldApply) {
         await next();

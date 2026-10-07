@@ -711,6 +711,89 @@ describe('Rate Limiting Middleware', () => {
       }
     });
 
+    async function hit(path: string, method = 'GET') {
+      return app.request(path, { method, headers: { 'CF-Connecting-IP': '192.168.1.1' } }, mockEnv);
+    }
+
+    it('treats a trailing /* as the child routes of the base path', async () => {
+      app.use(
+        '/api/items/*',
+        rateLimitMiddleware({ maxRequests: 1, windowSeconds: 60, endpoints: ['/api/items/*'] })
+      );
+      app.all('/api/items/:id/download', (c) => c.json({ ok: true }));
+      app.all('/api/items-other/:id', (c) => c.json({ ok: true }));
+
+      expect((await hit('/api/items/a/download')).status).toBe(200);
+      expect((await hit('/api/items/a/download')).status).toBe(429);
+      // A sibling that merely shares the string prefix is not a child route.
+      for (let i = 0; i < 3; i++) {
+        expect((await hit('/api/items-other/a')).status).toBe(200);
+      }
+    });
+
+    it('does not count the base path twice when a base entry and a /* entry are both mounted', async () => {
+      app.use(
+        '/api/items',
+        rateLimitMiddleware({ maxRequests: 2, windowSeconds: 60, endpoints: ['/api/items'] })
+      );
+      app.use(
+        '/api/items/*',
+        rateLimitMiddleware({ maxRequests: 2, windowSeconds: 60, endpoints: ['/api/items/*'] })
+      );
+      app.get('/api/items', (c) => c.json({ ok: true }));
+
+      expect((await hit('/api/items')).status).toBe(200);
+      expect((await hit('/api/items')).status).toBe(200);
+      expect((await hit('/api/items')).status).toBe(429);
+    });
+
+    it.each([
+      ['/api/user/consents/*', 'DELETE', '/api/user/consents/client-123'],
+      ['/api/user/data-export/*', 'GET', '/api/user/data-export/export-1/download'],
+      ['/api/admin/tenants/:tenantId/audit/*', 'GET', '/api/admin/tenants/t1/audit/events'],
+    ])('limits child routes registered as %s (%s %s)', async (endpoint, method, path) => {
+      app.use(
+        '*',
+        rateLimitMiddleware({ maxRequests: 1, windowSeconds: 60, endpoints: [endpoint] })
+      );
+      app.all('*', (c) => c.json({ ok: true }));
+
+      expect((await hit(path, method)).status).toBe(200);
+      expect((await hit(path, method)).status).toBe(429);
+    });
+
+    it('spends the same budget for a percent-encoded spelling of a limited path', async () => {
+      app.use(
+        '*',
+        rateLimitMiddleware({
+          maxRequests: 2,
+          windowSeconds: 60,
+          endpoints: ['/api/user/consents/*'],
+        })
+      );
+      app.all('/api/user/consents/:id', (c) => c.json({ ok: true }));
+
+      // Hono routes all three spellings to the same handler.
+      expect((await hit('/api/user/consents/client-1', 'DELETE')).status).toBe(200);
+      expect((await hit('/api/%75ser/consents/client-1', 'DELETE')).status).toBe(200);
+      expect((await hit('/api/user/%63onsents/client-1', 'DELETE')).status).toBe(429);
+    });
+
+    it('matches :param segments against any single path segment', async () => {
+      app.use(
+        '/api/users/:id/lock',
+        rateLimitMiddleware({
+          maxRequests: 1,
+          windowSeconds: 60,
+          endpoints: ['/api/users/:id/lock'],
+        })
+      );
+      app.post('/api/users/:id/lock', (c) => c.json({ ok: true }));
+
+      expect((await hit('/api/users/u1/lock', 'POST')).status).toBe(200);
+      expect((await hit('/api/users/u1/lock', 'POST')).status).toBe(429);
+    });
+
     it('should apply to all endpoints when endpoints filter not specified', async () => {
       app.use(
         '*',

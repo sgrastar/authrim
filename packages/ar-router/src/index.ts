@@ -154,6 +154,7 @@ const BEARER_TOKEN_CANONICAL_PATHS = [
   '/api/internal',
   '/api/v1/auth/direct',
   '/api/sessions',
+  '/api/user',
   '/api/protected',
   '/mcp',
   '/vci',
@@ -1460,12 +1461,21 @@ app.get('/session/check', async (c) => {
 
 /**
  * Logout endpoints - Route to OP_AUTH worker
- * - /logout - Front-channel logout
+ * - /logout (GET/POST) - RP-Initiated Logout: confirmation page (GET) and confirmed logout (POST)
  * - /logout/backchannel - Back-channel logout (RFC 8725)
  * - /logged-out - Post-logout landing page (success)
  * - /logout-error - Post-logout landing page (validation error)
  */
 app.get('/logout', async (c) => {
+  const request = createServiceBindingRequest(c.req.raw);
+  return c.env.OP_AUTH.fetch(request);
+});
+
+// The confirmation form rendered by GET /logout submits with POST /logout (confirmation token +
+// SameSite=Strict cookie), and OIDC RP-Initiated Logout 1.0 also lets an RP start logout with a
+// form POST. Unlike the back-channel endpoint this is browser-facing, so it stays behind the
+// router CSRF Origin/Referer check above.
+app.post('/logout', async (c) => {
   const request = createServiceBindingRequest(c.req.raw);
   return c.env.OP_AUTH.fetch(request);
 });
@@ -1576,6 +1586,32 @@ app.delete('/clients/:client_id', async (c) => {
   const request = createServiceBindingRequest(c.req.raw);
   return c.env.OP_MANAGEMENT.fetch(request);
 });
+
+// Public client configuration for SDK initialization (no authentication; OpenAPI `security: []`).
+// Read-only, so only GET is forwarded. The management Worker applies its own rate limit.
+app.get('/clients/:client_id/config', async (c) => {
+  const request = createServiceBindingRequest(c.req.raw);
+  return c.env.OP_MANAGEMENT.fetch(request);
+});
+
+/**
+ * User self-service API (OP_MANAGEMENT): consent list/revocation and data export (GDPR Art. 7, 20).
+ * Authenticated by Bearer token or session cookie inside the handlers. The router CSRF check
+ * applies to cookie-authenticated requests (Bearer requests are skipped there, as everywhere).
+ * - /api/user/consents, /api/user/consents/:clientId
+ * - /api/user/data-export, /api/user/data-export/:id[/download], /api/user/data-export/artifacts/*
+ */
+for (const userSelfServicePath of [
+  '/api/user/consents',
+  '/api/user/consents/*',
+  '/api/user/data-export',
+  '/api/user/data-export/*',
+]) {
+  app.all(userSelfServicePath, async (c) => {
+    const request = createServiceBindingRequest(c.req.raw);
+    return c.env.OP_MANAGEMENT.fetch(request);
+  });
+}
 
 app.post('/introspect', async (c) => {
   const request = createServiceBindingRequest(c.req.raw);

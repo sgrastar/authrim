@@ -415,6 +415,56 @@ describe('Router Worker', () => {
         expect(mockEnv.OP_AUTH.fetch).toHaveBeenCalledTimes(1);
       });
 
+      it('should route the same-origin logout confirmation POST /logout to OP_AUTH', async () => {
+        const req = new Request('https://example.com/logout', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+            Origin: 'https://example.com',
+            Cookie: 'authrim_logout_confirmation=token-1',
+          },
+          body: new URLSearchParams({ confirmation_token: 'token-1' }),
+        });
+        const res = await app.fetch(req, { ...mockEnv, ISSUER_URL: 'https://example.com' });
+
+        expect(res.status).toBe(200);
+        expect(mockEnv.OP_AUTH.fetch).toHaveBeenCalledTimes(1);
+        const forwarded = mockEnv.OP_AUTH.fetch.mock.calls[0][0] as Request;
+        expect(forwarded.method).toBe('POST');
+        expect(new URL(forwarded.url).pathname).toBe('/logout');
+        const forwardedBody = new URLSearchParams(await forwarded.text());
+        expect(forwardedBody.get('confirmation_token')).toBe('token-1');
+        expect(forwarded.headers.get('Cookie')).toContain('authrim_logout_confirmation=token-1');
+      });
+
+      it('should not let a cross-origin POST /logout reach OP_AUTH (router CSRF check stays on)', async () => {
+        const req = new Request('https://example.com/logout', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+            Origin: 'https://evil.example',
+          },
+          body: new URLSearchParams({ confirmation_token: 'token-1' }),
+        });
+        const res = await app.fetch(req, { ...mockEnv, ISSUER_URL: 'https://example.com' });
+
+        expect(res.status).toBe(403);
+        expect(((await res.json()) as { error: string }).error).toBe('csrf_validation_failed');
+        expect(mockEnv.OP_AUTH.fetch).not.toHaveBeenCalled();
+      });
+
+      it('should not let a POST /logout without Origin or Referer reach OP_AUTH', async () => {
+        const req = new Request('https://example.com/logout', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({ confirmation_token: 'token-1' }),
+        });
+        const res = await app.fetch(req, { ...mockEnv, ISSUER_URL: 'https://example.com' });
+
+        expect(res.status).toBe(403);
+        expect(mockEnv.OP_AUTH.fetch).not.toHaveBeenCalled();
+      });
+
       it('should route POST /logout/backchannel to OP_AUTH', async () => {
         const req = new Request('https://example.com/logout/backchannel', { method: 'POST' });
         await app.fetch(req, mockEnv);
@@ -670,6 +720,108 @@ describe('Router Worker', () => {
 
         expect(res.status).toBe(200);
         expect(mockEnv.OP_MANAGEMENT.fetch).toHaveBeenCalledTimes(1);
+      });
+
+      it('should route the public client configuration GET /clients/:client_id/config to OP_MANAGEMENT', async () => {
+        const res = await app.fetch(
+          new Request('https://example.com/clients/client-123/config', {
+            headers: { Origin: 'https://spa.example.test' },
+          }),
+          mockEnv
+        );
+
+        expect(res.status).toBe(200);
+        expect(mockEnv.OP_MANAGEMENT.fetch).toHaveBeenCalledTimes(1);
+        const forwarded = mockEnv.OP_MANAGEMENT.fetch.mock.calls[0][0] as Request;
+        expect(new URL(forwarded.url).pathname).toBe('/clients/client-123/config');
+      });
+
+      it('should not route non-GET methods on /clients/:client_id/config', async () => {
+        const res = await app.fetch(
+          new Request('https://example.com/clients/client-123/config', {
+            method: 'DELETE',
+            headers: { Authorization: 'Bearer reg-token' },
+          }),
+          mockEnv
+        );
+
+        expect(res.status).toBe(404);
+        expect(mockEnv.OP_MANAGEMENT.fetch).not.toHaveBeenCalled();
+      });
+
+      it.each([
+        ['GET', '/api/user/consents'],
+        ['DELETE', '/api/user/consents/client-123'],
+        ['POST', '/api/user/data-export'],
+        ['GET', '/api/user/data-export/export-1'],
+        ['GET', '/api/user/data-export/export-1/download'],
+        ['GET', '/api/user/data-export/artifacts/artifact-1'],
+        ['GET', '/api/user/data-export/artifacts/artifact-1/chunks/0'],
+        ['GET', '/api/user/data-export/artifacts/artifact-1/download'],
+      ])('should route user self-service %s %s to OP_MANAGEMENT', async (method, path) => {
+        const res = await app.fetch(
+          new Request(`https://example.com${path}`, {
+            method,
+            headers: { Origin: 'https://example.com', Cookie: 'authrim_session=session-1' },
+          }),
+          { ...mockEnv, ISSUER_URL: 'https://example.com' }
+        );
+
+        expect(res.status).toBe(200);
+        expect(mockEnv.OP_MANAGEMENT.fetch).toHaveBeenCalledTimes(1);
+        const forwarded = mockEnv.OP_MANAGEMENT.fetch.mock.calls[0][0] as Request;
+        expect(forwarded.method).toBe(method);
+        expect(new URL(forwarded.url).pathname).toBe(path);
+        expect(forwarded.headers.get('Cookie')).toContain('authrim_session=session-1');
+      });
+
+      it.each([
+        ['DELETE', '/api/user/consents/client-123'],
+        ['POST', '/api/user/data-export'],
+      ])('should keep router CSRF in front of cookie-authenticated %s %s', async (method, path) => {
+        const res = await app.fetch(
+          new Request(`https://example.com${path}`, {
+            method,
+            headers: { Origin: 'https://evil.example', Cookie: 'authrim_session=session-1' },
+          }),
+          { ...mockEnv, ISSUER_URL: 'https://example.com' }
+        );
+
+        expect(res.status).toBe(403);
+        expect(mockEnv.OP_MANAGEMENT.fetch).not.toHaveBeenCalled();
+      });
+
+      it('should let Bearer-authenticated user self-service calls skip browser CSRF', async () => {
+        const res = await app.fetch(
+          new Request('https://example.com/api/user/consents/client-123', {
+            method: 'DELETE',
+            headers: { Authorization: 'Bearer user-token' },
+          }),
+          mockEnv
+        );
+
+        expect(res.status).toBe(200);
+        expect(mockEnv.OP_MANAGEMENT.fetch).toHaveBeenCalledTimes(1);
+      });
+
+      it('should classify a percent-encoded spelling of a Bearer-only path the same way', async () => {
+        const res = await app.fetch(
+          new Request('https://example.com/api/%75ser/consents?access_token=leaked-token'),
+          mockEnv
+        );
+
+        expect(res.status).toBe(400);
+        expect(mockEnv.OP_MANAGEMENT.fetch).not.toHaveBeenCalled();
+      });
+
+      it('should reject query access_token on user self-service endpoints', async () => {
+        const res = await app.fetch(
+          new Request('https://example.com/api/user/consents?access_token=leaked-token'),
+          mockEnv
+        );
+
+        expect(res.status).toBe(400);
+        expect(mockEnv.OP_MANAGEMENT.fetch).not.toHaveBeenCalled();
       });
 
       it('should route /api/auth/discovery/grant/verify to OP_MANAGEMENT', async () => {
