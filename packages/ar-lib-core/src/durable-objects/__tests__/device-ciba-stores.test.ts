@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { setImmediate } from 'node:timers/promises';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DurableObjectState } from '@cloudflare/workers-types';
 import type { CIBARequestMetadata, DeviceCodeMetadata } from '../../types/oidc';
@@ -17,6 +18,14 @@ const runtimeEnv = {} as never;
 class MemoryStorage {
   readonly values = new Map<string, unknown>();
   readonly alarms: number[] = [];
+  /** How many of the next writes (put) fail, as when Durable Storage is unavailable. */
+  failPuts = 0;
+  /**
+   * While set, a write is applied at once but its promise waits for this one. Durable Storage
+   * applies writes in the order they are issued, whatever the caller does with the promise.
+   */
+  holdPuts: Promise<void> | null = null;
+  putCount = 0;
 
   private static assertBatch(count: number): void {
     if (count > 128) throw new RangeError(`Durable Storage batch of ${count} keys exceeds 128`);
@@ -51,20 +60,45 @@ class MemoryStorage {
   }
 
   async put(key: string | Record<string, unknown>, value?: unknown): Promise<void> {
+    if (this.failPuts > 0) {
+      this.failPuts -= 1;
+      throw new Error('Durable Storage unavailable');
+    }
+    this.putCount += 1;
     if (typeof key === 'string') {
       this.values.set(key, structuredClone(value));
-      return;
+    } else {
+      MemoryStorage.assertBatch(Object.keys(key).length);
+      for (const [entryKey, entryValue] of Object.entries(key)) {
+        this.values.set(entryKey, structuredClone(entryValue));
+      }
     }
-    MemoryStorage.assertBatch(Object.keys(key).length);
-    for (const [entryKey, entryValue] of Object.entries(key)) {
-      this.values.set(entryKey, structuredClone(entryValue));
-    }
+    if (this.holdPuts) await this.holdPuts;
   }
 
   async delete(keys: string | string[]): Promise<boolean | number> {
     if (!Array.isArray(keys)) return this.values.delete(keys);
     MemoryStorage.assertBatch(keys.length);
     return keys.filter((key) => this.values.delete(key)).length;
+  }
+
+  /** Durable Storage's explicit transaction: a throw in the callback undoes every write in it. */
+  async transaction<T>(
+    callback: (txn: Pick<MemoryStorage, 'get' | 'put' | 'delete' | 'list'>) => Promise<T>
+  ): Promise<T> {
+    const before = new Map(this.values);
+    try {
+      return await callback({
+        get: this.get.bind(this),
+        put: this.put.bind(this),
+        delete: this.delete.bind(this),
+        list: this.list.bind(this),
+      });
+    } catch (error) {
+      this.values.clear();
+      for (const [key, value] of before) this.values.set(key, value);
+      throw error;
+    }
   }
 
   async setAlarm(timestamp: number): Promise<void> {
@@ -683,5 +717,299 @@ describe('CIBARequestStore pending list for one user', () => {
     expect(stored.status).toBe(200);
     expect(storage.values.has('r:broken')).toBe(true);
     expect(indexKeys(storage)).toEqual([]);
+  });
+});
+
+describe('a state change whose save fails leaves the request as it was', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-01-01T00:00:00Z'));
+    audit.create.mockClear();
+  });
+
+  afterEach(() => {
+    vi.clearAllTimers();
+    vi.useRealTimers();
+  });
+
+  async function cibaStore() {
+    const harness = state();
+    const store = new CIBARequestStore(harness.state, runtimeEnv);
+    await harness.initialized;
+    await store.fetch(request('/store', ciba()));
+    const read = async () =>
+      (await json(
+        await store.fetch(request('/get-by-auth-req-id', { auth_req_id: 'request-1' }))
+      )) as { status: string; token_issued: boolean; poll_count: number };
+    const approve = () =>
+      store.fetch(
+        request('/approve', { auth_req_id: 'request-1', user_id: 'user-1', sub: 'subject-1' })
+      );
+    return { harness, store, read, approve };
+  }
+
+  /** The pending-address index entries (ps: by subject, ph: by login hint). */
+  const pendingIndex = (storage: MemoryStorage) =>
+    [...storage.values.keys()].filter((key) => key.startsWith('ps:') || key.startsWith('ph:'));
+
+  async function listedFor(store: CIBARequestStore): Promise<string[]> {
+    const listed = (await json(
+      await store.fetch(request('/list-pending-for-user', { login_hints: ['user@example.com'] }))
+    )) as { requests: Array<{ auth_req_id: string }> };
+    return listed.requests.map((entry) => entry.auth_req_id);
+  }
+
+  it('CIBA: a failed approval is still pending for readers and can be retried', async () => {
+    const { harness, store, read, approve } = await cibaStore();
+    const indexBefore = pendingIndex(harness.storage);
+    expect(indexBefore).toHaveLength(1);
+    harness.storage.failPuts = 1;
+
+    expect((await approve()).status).toBe(500);
+
+    expect(await read()).toMatchObject({ status: 'pending' });
+    expect(
+      await json(await store.fetch(request('/get-by-user-code', { user_code: 'CIBA-123' })))
+    ).toMatchObject({ status: 'pending' });
+    expect(harness.storage.values.get('r:request-1')).toMatchObject({ status: 'pending' });
+    expect(pendingIndex(harness.storage)).toEqual(indexBefore);
+    expect(await listedFor(store)).toEqual(['request-1']);
+
+    expect((await approve()).status).toBe(200);
+    expect(await read()).toMatchObject({ status: 'approved' });
+    expect(harness.storage.values.get('r:request-1')).toMatchObject({ status: 'approved' });
+    expect(pendingIndex(harness.storage)).toEqual([]);
+    expect(await listedFor(store)).toEqual([]);
+  });
+
+  it('CIBA: a request that cannot be saved keeps its index entry, so it is still listed', async () => {
+    const { harness, store } = await cibaStore();
+    expect(pendingIndex(harness.storage)).toHaveLength(1);
+    // Durable Storage rejects the request value (a nonce over its size limit) before applying
+    // the write; the index delete is not allowed to go through alone.
+    const put = harness.storage.put.bind(harness.storage);
+    harness.storage.put = async (key, value) => {
+      if (typeof key === 'string' && key === 'r:request-1' && (value as { nonce?: string }).nonce) {
+        throw new RangeError('Value too large');
+      }
+      return put(key, value);
+    };
+
+    const answer = await store.fetch(
+      request('/approve', {
+        auth_req_id: 'request-1',
+        user_id: 'user-1',
+        sub: 'subject-1',
+        nonce: 'n'.repeat(200_000),
+      })
+    );
+
+    expect(answer.status).toBe(500);
+    expect(pendingIndex(harness.storage)).toHaveLength(1);
+    expect(await listedFor(store)).toEqual(['request-1']);
+    expect(harness.storage.values.get('r:request-1')).toMatchObject({ status: 'pending' });
+  });
+
+  it('CIBA: a failed denial is still pending and can be retried', async () => {
+    const { harness, store, read } = await cibaStore();
+    expect(pendingIndex(harness.storage)).toHaveLength(1);
+    harness.storage.failPuts = 1;
+    const deny = () => store.fetch(request('/deny', { auth_req_id: 'request-1' }));
+
+    expect((await deny()).status).toBe(500);
+    expect(await read()).toMatchObject({ status: 'pending' });
+    expect(pendingIndex(harness.storage)).toHaveLength(1);
+    expect(await listedFor(store)).toEqual(['request-1']);
+
+    expect((await deny()).status).toBe(200);
+    expect(await read()).toMatchObject({ status: 'denied' });
+  });
+
+  it('CIBA: a failed token mark does not use up the one-time issue, and a failed poll does not count', async () => {
+    const { harness, store, read, approve } = await cibaStore();
+    await approve();
+    harness.storage.failPuts = 1;
+    expect((await store.fetch(request('/update-poll', { auth_req_id: 'request-1' }))).status).toBe(
+      500
+    );
+    expect(await read()).toMatchObject({ poll_count: 0 });
+
+    harness.storage.failPuts = 1;
+    const issue = () => store.fetch(request('/mark-token-issued', { auth_req_id: 'request-1' }));
+    expect((await issue()).status).toBe(500);
+    expect(await read()).toMatchObject({ token_issued: false });
+
+    expect((await issue()).status).toBe(200);
+    expect((await issue()).status).toBe(500);
+  });
+
+  it('CIBA: two approvals at once decide the request once', async () => {
+    const { read, approve } = await cibaStore();
+
+    const answers = await Promise.all([approve(), approve()]);
+
+    expect(answers.map((answer) => answer.status).sort()).toEqual([200, 500]);
+    expect(await read()).toMatchObject({ status: 'approved' });
+  });
+
+  it('CIBA: a request that could not be stored cannot be read', async () => {
+    const harness = state();
+    const store = new CIBARequestStore(harness.state, runtimeEnv);
+    await harness.initialized;
+    harness.storage.failPuts = 1;
+
+    expect((await store.fetch(request('/store', ciba()))).status).toBe(500);
+
+    expect(
+      await json(await store.fetch(request('/get-by-auth-req-id', { auth_req_id: 'request-1' })))
+    ).toBeNull();
+    expect(
+      await json(await store.fetch(request('/get-by-user-code', { user_code: 'CIBA-123' })))
+    ).toBeNull();
+  });
+
+  async function deviceStore() {
+    const harness = state();
+    const store = new DeviceCodeStore(harness.state, runtimeEnv);
+    await harness.initialized;
+    await store.fetch(request('/store', device()));
+    const read = async () =>
+      (await json(
+        await store.fetch(request('/get-by-device-code', { device_code: 'device-1' }))
+      )) as { status: string; token_issued: boolean; poll_count: number };
+    const approve = () =>
+      store.fetch(request('/approve', { user_code: 'ABCD-EFGH', user_id: 'u', sub: 's' }));
+    return { harness, store, read, approve };
+  }
+
+  it('device code: a failed approval is still pending and can be retried', async () => {
+    const { harness, store, read, approve } = await deviceStore();
+    harness.storage.failPuts = 1;
+
+    expect((await approve()).status).toBe(500);
+    expect(await read()).toMatchObject({ status: 'pending' });
+    expect(
+      await json(await store.fetch(request('/get-by-user-code', { user_code: 'ABCD-EFGH' })))
+    ).toMatchObject({ status: 'pending' });
+
+    expect((await approve()).status).toBe(200);
+    expect(await read()).toMatchObject({ status: 'approved' });
+  });
+
+  it('device code: a failed denial is still pending and can be retried', async () => {
+    const { harness, store, read } = await deviceStore();
+    harness.storage.failPuts = 1;
+    const deny = () => store.fetch(request('/deny', { user_code: 'ABCD-EFGH' }));
+
+    expect((await deny()).status).toBe(500);
+    expect(await read()).toMatchObject({ status: 'pending' });
+
+    expect((await deny()).status).toBe(200);
+    expect(await read()).toMatchObject({ status: 'denied' });
+  });
+
+  it('device code: a failed token mark does not use up the one-time issue', async () => {
+    const { harness, store, read, approve } = await deviceStore();
+    await approve();
+    harness.storage.failPuts = 1;
+    const issue = () => store.fetch(request('/mark-token-issued', { device_code: 'device-1' }));
+
+    expect((await issue()).status).toBe(500);
+    expect(await read()).toMatchObject({ token_issued: false });
+
+    expect((await issue()).status).toBe(200);
+    expect((await issue()).status).toBe(500);
+  });
+
+  it('device code: two approvals at once decide the code once', async () => {
+    const { read, approve } = await deviceStore();
+
+    const answers = await Promise.all([approve(), approve()]);
+
+    expect(answers.map((answer) => answer.status).sort()).toEqual([200, 500]);
+    expect(await read()).toMatchObject({ status: 'approved' });
+  });
+
+  it('device code: a code that could not be stored cannot be read', async () => {
+    const harness = state();
+    const store = new DeviceCodeStore(harness.state, runtimeEnv);
+    await harness.initialized;
+    harness.storage.failPuts = 1;
+
+    expect((await store.fetch(request('/store', device()))).status).toBe(500);
+
+    expect(
+      await json(await store.fetch(request('/get-by-device-code', { device_code: 'device-1' })))
+    ).toBeNull();
+  });
+
+  /** Let the stores run until `condition` holds (real event-loop turns: digests are async I/O). */
+  async function until(condition: () => boolean): Promise<void> {
+    for (let turn = 0; turn < 1000 && !condition(); turn += 1) await setImmediate();
+    expect(condition()).toBe(true);
+  }
+
+  it('CIBA: a delete during a change that is saving does not bring the request back', async () => {
+    const { harness, store, read, approve } = await cibaStore();
+    let release!: () => void;
+    harness.storage.holdPuts = new Promise<void>((resolve) => (release = resolve));
+    const putsBefore = harness.storage.putCount;
+
+    const approval = approve();
+    await until(() => harness.storage.putCount > putsBefore);
+    const deletion = store.fetch(request('/delete', { auth_req_id: 'request-1' }));
+    // The delete reaches the store while the change's write is still pending.
+    await setImmediate();
+    release();
+    await Promise.all([approval, deletion]);
+
+    expect(
+      await json(await store.fetch(request('/get-by-auth-req-id', { auth_req_id: 'request-1' })))
+    ).toBeNull();
+    expect(harness.storage.values.has('r:request-1')).toBe(false);
+    expect(harness.storage.values.has('u:CIBA-123')).toBe(false);
+    void read;
+  });
+
+  it('CIBA: a change that finds the request deleted before it writes does not write it back', async () => {
+    const { harness, store, approve } = await cibaStore();
+    const digest = crypto.subtle.digest.bind(crypto.subtle);
+    // While the approval prepares its write, a read finds the request expired and removes it.
+    vi.spyOn(crypto.subtle, 'digest').mockImplementationOnce(async (...args) => {
+      vi.setSystemTime(Date.now() + 301_000);
+      await store.fetch(request('/get-by-auth-req-id', { auth_req_id: 'request-1' }));
+      return digest(...args);
+    });
+
+    const answer = await approve();
+
+    expect(answer.status).toBe(500);
+    expect(harness.storage.values.has('r:request-1')).toBe(false);
+    expect(
+      await json(await store.fetch(request('/get-by-auth-req-id', { auth_req_id: 'request-1' })))
+    ).toBeNull();
+    vi.restoreAllMocks();
+  });
+
+  it('device code: a delete during a change that is saving does not bring the code back', async () => {
+    const { harness, store, read, approve } = await deviceStore();
+    let release!: () => void;
+    harness.storage.holdPuts = new Promise<void>((resolve) => (release = resolve));
+    const putsBefore = harness.storage.putCount;
+
+    const approval = approve();
+    await until(() => harness.storage.putCount > putsBefore);
+    const deletion = store.fetch(request('/delete', { device_code: 'device-1' }));
+    // The delete reaches the store while the change's write is still pending.
+    await setImmediate();
+    release();
+    await Promise.all([approval, deletion]);
+
+    expect(
+      await json(await store.fetch(request('/get-by-device-code', { device_code: 'device-1' })))
+    ).toBeNull();
+    expect(harness.storage.values.has('d:device-1')).toBe(false);
+    expect(harness.storage.values.has('u:ABCD-EFGH')).toBe(false);
+    void read;
   });
 });

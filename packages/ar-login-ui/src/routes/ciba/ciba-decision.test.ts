@@ -48,18 +48,44 @@ describe('CIBA page outcomes', () => {
 		});
 	});
 
-	it('keeps the request to try again when the consent state is unavailable', async () => {
-		const outcome = await decideCibaRequest(
-			api({ error: { error: 'temporarily_unavailable' } }),
-			'auth-req-1',
-			'approve',
-			get(LL)
-		);
+	describe.each(['approve', 'reject'] as const)('a 503 from the store (%s)', (decision) => {
+		const unavailable = { error: { error: 'temporarily_unavailable' } };
 
-		expect(outcome).toEqual({
-			status: 'error',
-			message: get(LL).ciba_errorTryAgain(),
-			dropRequest: false
+		it('checks the request first and keeps it listed while it is still pending', async () => {
+			const client = api(unavailable, { data: { status: 'pending' } });
+
+			const outcome = await decideCibaRequest(client, 'auth-req-1', decision, get(LL));
+
+			expect(client.getData).toHaveBeenCalledWith('auth-req-1');
+			expect(outcome).toEqual({
+				status: 'error',
+				message: get(LL).ciba_errorOutcomeUnknown(),
+				dropRequest: false
+			});
+		});
+
+		it('drops the request when the check shows it was decided, without claiming it was saved', async () => {
+			const client = api(unavailable, { data: { status: 'approved' } });
+
+			const outcome = await decideCibaRequest(client, 'auth-req-1', decision, get(LL));
+
+			expect(outcome).toEqual({
+				status: 'error',
+				message: get(LL).ciba_errorNoLongerWaiting(),
+				dropRequest: true
+			});
+		});
+
+		it('keeps the request when the check cannot read it either (503)', async () => {
+			const client = api(unavailable, unavailable);
+
+			const outcome = await decideCibaRequest(client, 'auth-req-1', decision, get(LL));
+
+			expect(outcome).toEqual({
+				status: 'error',
+				message: get(LL).ciba_errorOutcomeUnknown(),
+				dropRequest: false
+			});
 		});
 	});
 

@@ -102,10 +102,8 @@ describe('CIBA Integration', () => {
         if (pathname === '/get-by-auth-req-id') {
           const body = (await request.json()) as { auth_req_id: string };
           const metadata = storedCIBARequests.get(body.auth_req_id);
-          if (metadata) {
-            return new Response(JSON.stringify(metadata), { status: 200 });
-          }
-          return new Response(JSON.stringify({ error: 'not_found' }), { status: 404 });
+          // Like the real store: a request that does not exist is 200 with JSON null.
+          return new Response(JSON.stringify(metadata ?? null), { status: 200 });
         }
 
         if (pathname === '/approve') {

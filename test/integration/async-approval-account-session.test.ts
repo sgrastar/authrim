@@ -320,8 +320,19 @@ function memoryStorage() {
   const batch = (count: number) => {
     if (count > 128) throw new RangeError('Durable Storage batch exceeds 128 keys');
   };
-  return {
+  const storage = {
     data,
+    /** Durable Storage's explicit transaction: a throw in the callback undoes its writes. */
+    transaction: async <T>(callback: (txn: typeof storage) => Promise<T>): Promise<T> => {
+      const before = new Map(data);
+      try {
+        return await callback(storage);
+      } catch (error) {
+        data.clear();
+        for (const [key, value] of before) data.set(key, value);
+        throw error;
+      }
+    },
     get: async (key: string | string[]) => {
       if (!Array.isArray(key)) return data.get(key);
       batch(key.length);
@@ -352,6 +363,7 @@ function memoryStorage() {
     setAlarm: async () => {},
     getAlarm: async () => null,
   };
+  return storage;
 }
 
 /** The real CIBARequestStore Durable Object over the shared in-memory Durable Storage. */

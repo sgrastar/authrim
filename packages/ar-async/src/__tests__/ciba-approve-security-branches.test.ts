@@ -150,13 +150,16 @@ describe('CIBA approval security branches', () => {
     expect(mocks.storeFetch).not.toHaveBeenCalled();
   });
 
-  it.each([
-    ['store miss', Response.json({ error: 'missing' }, { status: 404 })],
-    ['null metadata', Response.json(null)],
-  ])('does not disclose whether a %s exists', async (_label, result) => {
-    mocks.storeFetch.mockResolvedValue(result);
+  it('does not disclose whether a request exists: a missing one is 404', async () => {
+    mocks.storeFetch.mockResolvedValue(Response.json(null));
     const response = await request({ auth_req_id: 'legacy-request-id' });
     expect(response.status).toBe(404);
+  });
+
+  it('does not take a store error for a missing request', async () => {
+    mocks.storeFetch.mockResolvedValue(Response.json({ error: 'missing' }, { status: 404 }));
+    const response = await request({ auth_req_id: 'legacy-request-id' });
+    expect(response.status).toBe(503);
   });
 
   it('rejects a request which is no longer pending', async () => {
@@ -290,7 +293,7 @@ describe('CIBA approval security branches', () => {
     expect(body.nonce).toBeNull();
   });
 
-  it('fails closed when the state transition is rejected', async () => {
+  it('fails closed with 503 (outcome unconfirmed) when the state transition is rejected', async () => {
     mocks.storeFetch.mockImplementation(async (input: Request) => {
       if (new URL(input.url).pathname === '/get-by-auth-req-id') {
         return Response.json(pending());
@@ -298,7 +301,7 @@ describe('CIBA approval security branches', () => {
       return Response.json({ error: 'conflict' }, { status: 409 });
     });
     const response = await request({ auth_req_id: 'legacy-request-id' });
-    expect(response.status).toBe(500);
+    expect(response.status).toBe(503);
   });
 
   it.each([false, true])('continues after ping notification failure=%s', async (fails) => {
