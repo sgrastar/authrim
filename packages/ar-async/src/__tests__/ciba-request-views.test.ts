@@ -32,7 +32,8 @@ import { cibaDetailsHandler } from '../ciba-details';
 import { cibaPendingHandler } from '../ciba-pending';
 
 function createCibaMetadata(overrides: Partial<CIBARequestMetadata> = {}): CIBARequestMetadata {
-  const now = Math.floor(Date.now() / 1000);
+  // The store keeps CIBA timestamps in epoch milliseconds.
+  const now = Date.now();
   return {
     auth_req_id: 'auth-req-123',
     client_id: 'client-123',
@@ -40,8 +41,8 @@ function createCibaMetadata(overrides: Partial<CIBARequestMetadata> = {}): CIBAR
     binding_message: 'Confirm sign-in',
     user_code: 'ABCD-1234',
     login_hint: 'user@example.com',
-    created_at: now - 10,
-    expires_at: now + 290,
+    created_at: now - 10_000,
+    expires_at: now + 290_000,
     status: 'pending',
     expires_in: 300,
     interval: 5,
@@ -107,8 +108,8 @@ describe('CIBA request view APIs', () => {
     it('returns enriched request details with bounded time remaining', async () => {
       vi.setSystemTime(new Date('2026-05-20T00:00:00.000Z'));
       const metadata = createCibaMetadata({
-        created_at: Math.floor(Date.now() / 1000) - 20,
-        expires_at: Math.floor(Date.now() / 1000) + 180,
+        created_at: Date.now() - 20_000,
+        expires_at: Date.now() + 180_000,
       });
       const store = createStore(async (request) => {
         expect(new URL(request.url).pathname).toBe('/get-by-auth-req-id');
@@ -141,10 +142,21 @@ describe('CIBA request view APIs', () => {
       expect(mockGetClient).toHaveBeenCalledWith(expect.anything(), 'tenant-1', 'client-123', {});
     });
 
+    it.each([
+      ['answers an error status', () => new Response('unavailable', { status: 500 })],
+      ['is unavailable', () => new Response('unavailable', { status: 503 })],
+    ])('reports a store that %s as temporarily unavailable, not as absent', async (_l, answer) => {
+      const ctx = createContext({ env: createEnv(createStore(answer)), authReqId: 'request-1' });
+
+      const response = await cibaDetailsHandler(ctx);
+
+      expect(response.status).toBe(503);
+      await expect(response.json()).resolves.toMatchObject({ error: 'temporarily_unavailable' });
+    });
+
     it('returns not_found when the stored CIBA request is absent', async () => {
-      const store = createStore(
-        () => new Response(JSON.stringify({ error: 'not_found' }), { status: 404 })
-      );
+      // The store answers an unknown (or expired, now deleted) request with a JSON null.
+      const store = createStore(() => new Response(JSON.stringify(null), { status: 200 }));
       const ctx = createContext({
         env: createEnv(store),
         authReqId: 'missing-request',
@@ -178,9 +190,12 @@ describe('CIBA request view APIs', () => {
     it('lists pending requests for login_hint and enriches client display fields', async () => {
       const metadata = createCibaMetadata();
       const store = createStore(async (request) => {
-        expect(new URL(request.url).pathname).toBe('/get-by-login-hint');
-        await expect(request.json()).resolves.toEqual({ login_hint: 'user@example.com' });
-        return new Response(JSON.stringify(metadata), { status: 200 });
+        expect(new URL(request.url).pathname).toBe('/list-pending-for-user');
+        await expect(request.json()).resolves.toEqual({
+          subject_ids: [],
+          login_hints: ['user@example.com'],
+        });
+        return new Response(JSON.stringify({ requests: [metadata] }), { status: 200 });
       });
       const ctx = createContext({
         env: createEnv(store),
@@ -209,8 +224,11 @@ describe('CIBA request view APIs', () => {
 
     it('uses user_id as a sub login hint only when login_hint is absent', async () => {
       const store = createStore(async (request) => {
-        await expect(request.json()).resolves.toEqual({ login_hint: 'sub:user-123' });
-        return new Response(JSON.stringify(null), { status: 200 });
+        await expect(request.json()).resolves.toEqual({
+          subject_ids: ['user-123'],
+          login_hints: ['sub:user-123'],
+        });
+        return new Response(JSON.stringify({ requests: [] }), { status: 200 });
       });
       const ctx = createContext({
         env: createEnv(store),
@@ -230,7 +248,9 @@ describe('CIBA request view APIs', () => {
     it('returns an empty list for non-pending request metadata', async () => {
       const store = createStore(
         () =>
-          new Response(JSON.stringify(createCibaMetadata({ status: 'approved' })), { status: 200 })
+          new Response(JSON.stringify({ requests: [createCibaMetadata({ status: 'approved' })] }), {
+            status: 200,
+          })
       );
       const ctx = createContext({
         env: createEnv(store),

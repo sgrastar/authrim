@@ -408,6 +408,13 @@ const translation = {
 	device_errorApproveFailed: 'Nie udało się zatwierdzić urządzenia',
 	device_errorDenyFailed: 'Nie udało się odmówić żądania urządzenia',
 	device_errorInvalidRedirect: 'Nieprawidłowy adres URL przekierowania otrzymany z serwera',
+	device_errorConsentWithdrawn:
+		'To żądanie zostało utworzone, zanim cofnięto dostęp tej aplikacji. Zacznij od nowa na urządzeniu, aby otrzymać nowy kod.',
+	device_errorTryAgain:
+		'Nie udało się teraz zapisać Twojej decyzji i nic nie zostało zmienione. Spróbuj ponownie za chwilę.',
+	device_errorTooManyAttempts: 'Zbyt wiele prób. Odczekaj chwilę i spróbuj ponownie.',
+	device_errorOutcomeUnknown:
+		'Nie udało się potwierdzić, czy Twoja decyzja została zapisana. Sprawdź urządzenie lub wpisz kod ponownie.',
 	ciba_title: 'Żądanie uwierzytelnienia',
 	ciba_subtitle: 'Aplikacja prosi o Twoją zgodę.',
 	ciba_noPendingRequests: 'Brak oczekujących żądań uwierzytelnienia',
@@ -427,6 +434,16 @@ const translation = {
 	ciba_errorGeneric: 'Wystąpił błąd',
 	ciba_errorApproveFailed: 'Nie udało się zatwierdzić żądania',
 	ciba_errorDenyFailed: 'Nie udało się odrzucić wniosku',
+	ciba_errorConsentWithdrawn:
+		'To żądanie zostało utworzone, zanim cofnięto dostęp tej aplikacji. Zacznij od nowa w aplikacji.',
+	ciba_errorRequestGone: 'To żądanie wygasło lub zostało już rozpatrzone.',
+	ciba_errorTryAgain:
+		'Nie udało się teraz zapisać Twojej decyzji i nic nie zostało zmienione. Spróbuj ponownie za chwilę.',
+	ciba_errorTooManyAttempts: 'Zbyt wiele prób. Odczekaj chwilę i spróbuj ponownie.',
+	ciba_errorOutcomeUnknown:
+		'Nie udało się potwierdzić, czy Twoja odpowiedź została zapisana. Odśwież, aby zobaczyć oczekujące żądania.',
+	ciba_errorNoLongerWaiting:
+		'Nie udało się potwierdzić Twojej odpowiedzi, ale to żądanie już nie oczekuje.',
 	reauth_title: 'Sprawdź swoją tożsamość',
 	reauth_subtitle: 'Dla bezpieczeństwa, proszę ponownie uwierzytelnić, aby kontynuować.',
 	reauth_verifyWithPasskey: 'Sprawdź przy użyciu Passkey',

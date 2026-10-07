@@ -102,6 +102,13 @@ const completion = {
 	device_errorApproveFailed: 'Não foi possível aprovar o dispositivo',
 	device_errorDenyFailed: 'Não foi possível recusar a solicitação do dispositivo',
 	device_errorInvalidRedirect: 'O servidor retornou uma URL de redirecionamento inválida',
+	device_errorConsentWithdrawn:
+		'Esta solicitação foi feita antes de você revogar o acesso deste aplicativo. Recomece no dispositivo para obter um novo código.',
+	device_errorTryAgain:
+		'Não foi possível salvar sua decisão agora e nada foi alterado. Tente novamente em instantes.',
+	device_errorTooManyAttempts: 'Muitas tentativas. Aguarde um pouco e tente novamente.',
+	device_errorOutcomeUnknown:
+		'Não foi possível confirmar se sua decisão foi salva. Verifique o dispositivo ou digite o código novamente.',
 	ciba_title: 'Solicitação de autenticação',
 	ciba_subtitle: 'Um aplicativo está solicitando sua aprovação',
 	ciba_noPendingRequests: 'Nenhuma solicitação de autenticação pendente',
@@ -121,6 +128,16 @@ const completion = {
 	ciba_errorGeneric: 'Ocorreu um erro',
 	ciba_errorApproveFailed: 'Não foi possível aprovar a solicitação',
 	ciba_errorDenyFailed: 'Não foi possível rejeitar a solicitação',
+	ciba_errorConsentWithdrawn:
+		'Esta solicitação foi feita antes de você revogar o acesso deste aplicativo. Recomece pelo aplicativo.',
+	ciba_errorRequestGone: 'Esta solicitação expirou ou já foi respondida.',
+	ciba_errorTryAgain:
+		'Não foi possível salvar sua decisão agora e nada foi alterado. Tente novamente em instantes.',
+	ciba_errorTooManyAttempts: 'Muitas tentativas. Aguarde um pouco e tente novamente.',
+	ciba_errorOutcomeUnknown:
+		'Não foi possível confirmar se sua resposta foi salva. Atualize para ver as solicitações ainda pendentes.',
+	ciba_errorNoLongerWaiting:
+		'Não foi possível confirmar sua resposta, mas esta solicitação não está mais pendente.',
 	reauth_title: 'Verifique sua identidade',
 	reauth_subtitle: 'Por segurança, autentique-se novamente para continuar',
 	reauth_verifyWithPasskey: 'Verificar com Passkey',

@@ -4,6 +4,8 @@
 	import AuthPageShell from '$lib/components/AuthPageShell.svelte';
 	import CibaView, { type CibaRequest } from '$lib/views/CibaView.svelte';
 	import { cibaAPI } from '$lib/api/client';
+	import { cibaApprovalErrorMessage } from '$lib/api/approval-errors';
+	import { decideCibaRequest } from './ciba-decision';
 	import { messageForCaughtError } from '$lib/errors/display-error';
 	import { onMount } from 'svelte';
 
@@ -32,9 +34,21 @@
 		try {
 			const { data, error: apiError } = await cibaAPI.getPending();
 			if (apiError) {
-				error = $LL.ciba_errorLoadPending();
+				error = cibaApprovalErrorMessage($LL, apiError, $LL.ciba_errorLoadPending());
 			} else {
-				pendingRequests = (data as CibaRequest[]) || [];
+				pendingRequests = (data ?? []).map(
+					(request): CibaRequest => ({
+						auth_req_id: request.auth_req_id,
+						client_id: request.client_id,
+						client_name: request.client_name,
+						client_logo_uri: request.client_logo_uri,
+						scope: request.scope,
+						binding_message: request.binding_message ?? undefined,
+						user_code: request.user_code ?? undefined,
+						created_at: request.created_at,
+						expires_at: request.expires_at
+					})
+				);
 			}
 		} catch (err) {
 			error = messageForCaughtError(err, $LL.ciba_errorGeneric());
@@ -51,20 +65,21 @@
 			return;
 		}
 		processingId = authReqId;
+		error = '';
 		try {
-			const { error: apiError } =
-				decision === 'approve' ? await cibaAPI.approve(authReqId) : await cibaAPI.reject(authReqId);
-
-			if (apiError) {
-				error = decision === 'approve' ? $LL.ciba_errorApproveFailed() : $LL.ciba_errorDenyFailed();
-			} else {
-				successMessage =
-					decision === 'approve' ? $LL.ciba_approvedSuccess() : $LL.ciba_rejectedSuccess();
+			const outcome = await decideCibaRequest(cibaAPI, authReqId, decision, $LL);
+			if (outcome.status === 'decided') {
+				successMessage = outcome.message;
 				pendingRequests = pendingRequests.filter((r) => r.auth_req_id !== authReqId);
 
 				setTimeout(() => {
 					successMessage = '';
 				}, 3000);
+			} else {
+				error = outcome.message;
+				if (outcome.dropRequest) {
+					pendingRequests = pendingRequests.filter((r) => r.auth_req_id !== authReqId);
+				}
 			}
 		} catch (err) {
 			error = messageForCaughtError(err, $LL.ciba_errorGeneric());

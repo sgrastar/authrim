@@ -373,6 +373,36 @@ describe('generateRoutes', () => {
       ])
     );
     expect(authConfig.migrations?.[0]?.new_sqlite_classes).toContain('DirectoryConnectorRelay');
+    // ar-async reads the browser session for device and CIBA approvals and rate-limits device user
+    // code guesses with the UserCodeRateLimiter Durable Object, which ar-lib-core defines.
+    const asyncConfig = generateWranglerConfig('ar-async', config, resourceIds);
+    expect(asyncConfig.durable_objects?.bindings).toEqual(
+      expect.arrayContaining([
+        {
+          name: 'SESSION_STORE',
+          class_name: 'SessionStore',
+          script_name: 'emailtest-ar-lib-core',
+        },
+        {
+          name: 'USER_CODE_RATE_LIMITER',
+          class_name: 'UserCodeRateLimiter',
+          script_name: 'emailtest-ar-lib-core',
+        },
+      ])
+    );
+    expect(libCoreConfig.durable_objects?.bindings).toContainEqual({
+      name: 'USER_CODE_RATE_LIMITER',
+      class_name: 'UserCodeRateLimiter',
+    });
+    expect(libCoreConfig.migrations?.at(-1)).toEqual({
+      tag: 'v13',
+      new_sqlite_classes: ['UserCodeRateLimiter'],
+    });
+    expect(
+      libCoreConfig.migrations
+        ?.flatMap((migration) => migration.new_sqlite_classes ?? [])
+        .filter((className) => className === 'UserCodeRateLimiter')
+    ).toHaveLength(1);
     expect(vcConfig.durable_objects?.bindings).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ name: 'RATE_LIMITER', script_name: 'emailtest-ar-lib-core' }),
@@ -1148,11 +1178,15 @@ describe('generateRoutes', () => {
     expect(agentAccessConfig.d1_databases).not.toEqual(
       expect.arrayContaining([expect.objectContaining({ binding: 'TEST_TDB_PII_EXAMPLE_PII' })])
     );
+    // The device and CIBA approval APIs resolve the session's account through the lookup
+    // directory: ar-async needs the lookup databases as well as the account databases.
     expect(asyncConfig.d1_databases).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ binding: 'TEST_TDB_DEFAULT_EXAMPLE_CORE' }),
         expect.objectContaining({ binding: 'TEST_TDB_USERS_EXAMPLE_CORE' }),
         expect.objectContaining({ binding: 'TEST_TDB_PII_EXAMPLE_PII' }),
+        expect.objectContaining({ binding: 'LOOKUP_DB' }),
+        expect.objectContaining({ binding: 'TEST_TDB_LOOKUP_EXTRA_LOOKUP' }),
       ])
     );
     expect(asyncConfig.d1_databases).not.toEqual(

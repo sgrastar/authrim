@@ -6,6 +6,7 @@
  */
 
 import { execa, type ExecaError } from 'execa';
+import { createHash } from 'node:crypto';
 import { join, resolve } from 'node:path';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { chmod, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
@@ -41,8 +42,10 @@ import {
   getSecretNamesForWorker,
   getSecretTargetWorkers,
   SECRET_KEY_FILES,
+  type SecretName,
 } from './secrets.js';
 import type { AdminUiBffWorkerSecrets } from './admin-machine-access.js';
+import { lookupHmacKeyFingerprint } from './control-key-state.js';
 import {
   SetupWorkerDeploymentLeaseCoordinator,
   type SetupWorkerDeploymentLease,
@@ -285,6 +288,18 @@ export interface DeployOptions {
   expectedWorkerVersionIds?: Readonly<Record<string, string | undefined>>;
   /** Secret values keyed by Wrangler secret name. Only each Worker's allow-list is written. */
   secrets?: Readonly<Record<string, string>>;
+  /**
+   * The Lookup HMAC slots the runtime resolves with (Control's active slot and, during a rotation,
+   * its previous slot), from the environment lock. Unknown: either slot satisfies a Worker.
+   */
+  lookupHmacSlots?: readonly LookupHmacSlot[];
+  /**
+   * Control's fingerprint of each Lookup HMAC slot in use: a distributed key value must match it,
+   * so a stale or malformed local key file can never replace the Worker's working key.
+   */
+  lookupHmacFingerprints?: Partial<Record<LookupHmacSlot, string>>;
+  /** Test/embedding hook: the secret names bound to a deployed Worker. */
+  listWorkerSecretNames?: (component: WorkerComponent) => Promise<Set<string>>;
   /** Whether ar-control must receive scoped Cloudflare provisioning tokens. */
   automaticProvisioning?: boolean;
   /**
@@ -484,6 +499,213 @@ function parseWranglerSecretNames(stdout: unknown): Set<string> {
           : undefined
       )
       .filter((name): name is string => typeof name === 'string' && name.length > 0)
+  );
+}
+
+export type LookupHmacSlot = 'A' | 'B';
+
+const LOOKUP_HMAC_SECRET_NAME = /^LOOKUP_HMAC_KEY_SLOT_[AB]$/u;
+
+/**
+ * Secrets a Worker cannot serve its requests without, beyond the first-deploy baseline, by kind.
+ * `lookup_hmac`: the Lookup HMAC key slots the runtime resolves account routes with (see
+ * requiredWorkerSecretNames).
+ */
+export const REQUIRED_WORKER_SECRET_KINDS: Readonly<
+  Partial<Record<WorkerComponent, readonly 'lookup_hmac'[]>>
+> = {
+  // Device and CIBA approvals resolve the browser session's account through the lookup directory.
+  'ar-async': ['lookup_hmac'],
+};
+
+/**
+ * The secret names a Worker requires. With the Control-published Lookup HMAC state known, those
+ * are its active slot and, during a rotation, its previous slot. Without it (only before Control
+ * exists, for a Worker deployed for the first time) either slot will do: the returned
+ * alternatives are checked as "at least one".
+ */
+export function requiredWorkerSecretNames(
+  component: WorkerComponent,
+  lookupHmacSlots: readonly LookupHmacSlot[] | undefined
+): { all: SecretName[]; anyOf: SecretName[][] } {
+  const all: SecretName[] = [];
+  const anyOf: SecretName[][] = [];
+  for (const kind of REQUIRED_WORKER_SECRET_KINDS[component] ?? []) {
+    if (kind === 'lookup_hmac') {
+      if (lookupHmacSlots && lookupHmacSlots.length > 0) {
+        all.push(...lookupHmacSlots.map((slot) => `LOOKUP_HMAC_KEY_SLOT_${slot}` as SecretName));
+      } else {
+        anyOf.push(['LOOKUP_HMAC_KEY_SLOT_A', 'LOOKUP_HMAC_KEY_SLOT_B']);
+      }
+    }
+  }
+  return { all, anyOf };
+}
+
+export interface LookupHmacKeyStateSummary {
+  activeSlot: LookupHmacSlot;
+  activeFingerprint: string;
+  previousSlot?: LookupHmacSlot;
+  previousFingerprint?: string;
+}
+
+/** The Lookup HMAC slots in use per Control's published key state (active, then previous). */
+export function lookupHmacSlotsFromKeyState(
+  state: { activeSlot: LookupHmacSlot; previousSlot?: LookupHmacSlot } | undefined
+): LookupHmacSlot[] | undefined {
+  if (!state) return undefined;
+  return state.previousSlot ? [state.activeSlot, state.previousSlot] : [state.activeSlot];
+}
+
+/** Deploy options for Control's Lookup HMAC key state: the slots in use and their fingerprints. */
+export function lookupHmacDeployOptions(
+  state: LookupHmacKeyStateSummary | undefined
+): Pick<DeployOptions, 'lookupHmacSlots' | 'lookupHmacFingerprints'> {
+  if (!state) return {};
+  return {
+    lookupHmacSlots: lookupHmacSlotsFromKeyState(state),
+    lookupHmacFingerprints: {
+      [state.activeSlot]: state.activeFingerprint,
+      ...(state.previousSlot && state.previousFingerprint
+        ? { [state.previousSlot]: state.previousFingerprint }
+        : {}),
+    },
+  };
+}
+
+export interface MissingRequiredWorkerSecret {
+  component: WorkerComponent;
+  /** One name, or alternatives joined with `|` when any one of them would do. */
+  secret: string;
+}
+
+/** The secret names bound to a deployed Worker (`wrangler secret list`). */
+export async function listDeployedWorkerSecretNames(
+  options: DeployOptions,
+  component: WorkerComponent
+): Promise<Set<string>> {
+  const throttle = makeThrottle(options);
+  const listed = await runWithAdaptiveRetry(
+    `Listing secrets for ${getWorkerName(options.env, component)}`,
+    options,
+    throttle,
+    () =>
+      execa(
+        'pnpm',
+        [
+          'exec',
+          'wrangler',
+          'secret',
+          'list',
+          '--format',
+          'json',
+          ...getConfigArgs(options),
+          '--env',
+          options.env,
+        ],
+        {
+          cwd: join(options.rootDir, 'packages', component),
+          reject: true,
+          cancelSignal: options.signal,
+          env: { WRANGLER_LOG: 'log' },
+        }
+      )
+  );
+  return parseWranglerSecretNames(listed.stdout);
+}
+
+/**
+ * The required secrets that would be absent once these Workers deploy: neither distributed by
+ * this deploy (an empty `secrets`, as with --skip-secrets, distributes nothing) nor already bound
+ * to the deployed Worker. A Worker that does not exist yet can only receive them now.
+ */
+export async function findMissingRequiredWorkerSecrets(
+  options: Pick<DeployOptions, 'secrets' | 'existingComponents' | 'lookupHmacSlots'>,
+  components: readonly WorkerComponent[],
+  listSecretNames: (component: WorkerComponent) => Promise<Set<string>>
+): Promise<MissingRequiredWorkerSecret[]> {
+  const existing = new Set(options.existingComponents ?? []);
+  const distributed = (name: string) => Boolean(options.secrets?.[name]?.trim());
+  const missing: MissingRequiredWorkerSecret[] = [];
+  for (const component of components) {
+    const required = requiredWorkerSecretNames(component, options.lookupHmacSlots);
+    if (required.anyOf.length > 0 && existing.has(component)) {
+      // An existing environment has Control's key state: deploying without it would accept a
+      // slot the runtime does not use. Only an initial deployment may go by "either slot".
+      missing.push({ component, secret: 'lookup_hmac_slots_unknown' });
+      continue;
+    }
+    const all = required.all.filter((name) => !distributed(name));
+    const anyOf = required.anyOf.filter((names) => !names.some(distributed));
+    if (all.length === 0 && anyOf.length === 0) continue;
+    const bound = existing.has(component) ? await listSecretNames(component) : new Set<string>();
+    for (const name of all) {
+      if (!bound.has(name)) missing.push({ component, secret: name });
+    }
+    for (const names of anyOf) {
+      if (!names.some((name) => bound.has(name))) {
+        missing.push({ component, secret: names.join('|') });
+      }
+    }
+  }
+  return missing;
+}
+
+/** Refuse a deploy that would activate a Worker without a secret it requires. */
+/**
+ * Refuse distributed secret values that would break a Worker: a blank value, or a Lookup HMAC key
+ * whose fingerprint differs from the one Control published for that slot.
+ */
+export function assertDistributedSecretValues(
+  options: Pick<DeployOptions, 'secrets' | 'lookupHmacFingerprints'>,
+  components: readonly WorkerComponent[]
+): void {
+  const names = new Set(components.flatMap((component) => getSecretNamesForWorker(component)));
+  for (const name of names) {
+    const value = options.secrets?.[name];
+    if (value === undefined) continue;
+    if (!value.trim()) {
+      throw new Error(`deploy_secret_value_blank:${name}`);
+    }
+    const slot = /^LOOKUP_HMAC_KEY_SLOT_([AB])$/u.exec(name)?.[1] as LookupHmacSlot | undefined;
+    const expected = slot ? options.lookupHmacFingerprints?.[slot] : undefined;
+    if (expected) {
+      try {
+        lookupHmacKeyFingerprint(value); // a well-formed key (this check ignores outer whitespace)
+      } catch {
+        throw new Error(`deploy_secret_value_invalid:${name}`);
+      }
+      // The runtime hashes the secret exactly as the Worker holds it, so the value distributed
+      // is what must match Control's fingerprint: hash it byte for byte, not trimmed.
+      if (createHash('sha256').update(value).digest('hex') !== expected) {
+        throw new Error(`deploy_secret_value_mismatch:${name}`);
+      }
+    }
+  }
+}
+
+export async function assertRequiredWorkerSecrets(
+  options: DeployOptions,
+  components: readonly WorkerComponent[]
+): Promise<void> {
+  assertDistributedSecretValues(options, components);
+  const list =
+    options.listWorkerSecretNames ??
+    ((component: WorkerComponent) => listDeployedWorkerSecretNames(options, component));
+  const missing = await findMissingRequiredWorkerSecrets(options, components, list);
+  if (missing.length === 0) return;
+  for (const { component, secret } of missing) {
+    options.onProgress?.(
+      `  ✗ ${getWorkerName(options.env, component)} requires ${secret}, which this deploy does not distribute and the Worker does not hold`
+    );
+  }
+  options.onProgress?.(
+    "  Provide the environment's keys directory (or bind the secrets with wrangler) and deploy again. Nothing was deployed."
+  );
+  throw new Error(
+    `required_worker_secrets_missing:${missing
+      .map(({ component, secret }) => `${component}.${secret}`)
+      .join(',')}`
   );
 }
 
@@ -1228,7 +1450,8 @@ function getSecretsForWorker(
   }
   return Object.fromEntries(
     getSecretNamesForWorker(component)
-      .filter((name) => secrets[name] !== undefined)
+      // A blank value is never sent: it would replace a working secret with nothing.
+      .filter((name) => secrets[name] !== undefined && secrets[name].trim() !== '')
       .map((name) => [name, secrets[name]])
   );
 }
@@ -2956,6 +3179,9 @@ export async function deployAll(
       throw new Error(`control_plane_baseline_secrets_missing:${missingControlSecrets.join(',')}`);
     }
   }
+  if (!options.dryRun && components.length > 0) {
+    await assertRequiredWorkerSecrets(options, components);
+  }
   const strategy = resolveDeploymentStrategy(options, components);
   const controlBootstrapConfig = initialControlBootstrapConfig(options, components, strategy);
   if (
@@ -3609,7 +3835,15 @@ export async function loadDeploySecretsFromKeys(
     }
     const filePath = keysDir ? join(keysDir, fileName) : undefined;
     if (filePath && existsSync(filePath)) {
-      secrets[secretName] = await readFile(filePath, 'utf-8');
+      const value = await readFile(filePath, 'utf-8');
+      if (!value.trim()) {
+        // An explicit but blank key file is a mistake, never "leave the Worker's secret as is".
+        throw new Error(`deploy_secret_file_blank:${fileName}`);
+      }
+      // A Lookup HMAC key file may end in a newline (editors and `echo` add one). Control's
+      // fingerprint covers the key without surrounding whitespace, and the runtime hashes the
+      // secret exactly as delivered, so the trimmed key is what must be distributed.
+      secrets[secretName] = LOOKUP_HMAC_SECRET_NAME.test(secretName) ? value.trim() : value;
     }
   }
   return secrets;

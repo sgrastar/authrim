@@ -187,6 +187,7 @@ import {
   loadControlGeneratedKeyState,
   loadControlStagedSigningKeys,
   projectControlGeneratedKeyState,
+  resolveDeployLookupHmacState,
 } from '../core/control-generated-state.js';
 import {
   advanceInitialBootstrapWorkerBindingsAsOperator,
@@ -229,6 +230,7 @@ import {
   deployUiWorkerComponent,
   deployWorker,
   loadDeploySecretsFromKeys,
+  lookupHmacDeployOptions,
   UI_WORKER_COMPONENTS,
   updateLockWithDeployments,
   type DeployOptions,
@@ -5276,6 +5278,11 @@ export function createApiRoutes(): Hono {
           deploymentStrategy: 'auto',
           existingComponents,
           secrets: deploymentSecrets,
+          // The initial deployment initialized Control's key state above and projected it into the
+          // lock, so the slots are known here too.
+          ...lookupHmacDeployOptions(
+            (await loadLockFileAuto(rootDir, env)).lock?.controlKeyState?.lookupHmac
+          ),
           automaticProvisioning: automaticProvisioning && !bootstrapToken,
           cleanupLegacyStaticSecrets: true,
           deployConfigLockProof: deployConfigLock?.proof,
@@ -8900,6 +8907,9 @@ export function createApiRoutes(): Hono {
             ])
           ),
           secrets: deploymentSecrets,
+          ...lookupHmacDeployOptions(
+            await resolveDeployLookupHmacState({ lock: lock!, environmentId: env })
+          ),
           cleanupLegacyStaticSecrets: true,
           deployConfigLockProof: deployConfigLock.proof,
           onProgress: addProgress,
@@ -9777,6 +9787,15 @@ export function createApiRoutes(): Hono {
               ])
             ),
             secrets: deploymentSecrets,
+            // A real deploy reads Control's current state; a dry run deploys nothing and must not
+            // touch the remote database, so it plans with the lock's copy.
+            ...lookupHmacDeployOptions(
+              !componentLock
+                ? undefined
+                : dryRun
+                  ? componentLock.controlKeyState?.lookupHmac
+                  : await resolveDeployLookupHmacState({ lock: componentLock, environmentId: env })
+            ),
             cleanupLegacyStaticSecrets: true,
             deployConfigLockProof: deployConfigLock?.proof,
             onProgress: addProgress,

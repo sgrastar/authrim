@@ -426,6 +426,13 @@ const ja = {
 	device_errorApproveFailed: 'デバイスの承認に失敗しました',
 	device_errorDenyFailed: 'デバイスの承認を拒否できませんでした',
 	device_errorInvalidRedirect: 'サーバーから無効なリダイレクトURLを受け取りました',
+	device_errorConsentWithdrawn:
+		'このリクエストは、このアプリへのアクセスを取り消す前に作成されたものです。デバイスで最初からやり直し、新しいコードを取得してください。',
+	device_errorTryAgain:
+		'今は決定を保存できませんでした。何も変更されていません。しばらくしてからもう一度お試しください。',
+	device_errorTooManyAttempts: '試行回数が多すぎます。しばらく待ってからもう一度お試しください。',
+	device_errorOutcomeUnknown:
+		'決定が保存されたかどうかを確認できませんでした。デバイスを確認するか、もう一度コードを入力してください。',
 
 	ciba_title: '認証リクエスト',
 	ciba_subtitle: 'アプリケーションが承認を求めています',
@@ -446,6 +453,16 @@ const ja = {
 	ciba_errorGeneric: 'エラーが発生しました',
 	ciba_errorApproveFailed: 'リクエストの承認に失敗しました',
 	ciba_errorDenyFailed: 'リクエストの拒否に失敗しました',
+	ciba_errorConsentWithdrawn:
+		'このリクエストは、このアプリへのアクセスを取り消す前に作成されたものです。アプリから最初からやり直してください。',
+	ciba_errorRequestGone: 'このリクエストは期限切れか、すでに応答済みです。',
+	ciba_errorTryAgain:
+		'今は決定を保存できませんでした。何も変更されていません。しばらくしてからもう一度お試しください。',
+	ciba_errorTooManyAttempts: '試行回数が多すぎます。しばらく待ってからもう一度お試しください。',
+	ciba_errorOutcomeUnknown:
+		'回答が保存されたかどうかを確認できませんでした。更新して、まだ待機中のリクエストを確認してください。',
+	ciba_errorNoLongerWaiting:
+		'回答を確認できませんでしたが、このリクエストはすでに待機中ではありません。',
 
 	reauth_title: '本人確認',
 	reauth_subtitle: 'セキュリティのため、再認証を行ってください',

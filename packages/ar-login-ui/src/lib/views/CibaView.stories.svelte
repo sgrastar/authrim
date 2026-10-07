@@ -105,6 +105,42 @@
 	{#snippet template(args)}{@render page(args)}{/snippet}
 </Story>
 
+<Story
+	name="Access withdrawn: start again"
+	args={{ requests: [request()], error: get(LL).ciba_errorConsentWithdrawn() }}
+	play={async ({ args, canvasElement }) => {
+		const canvas = within(canvasElement);
+		// The request predates a withdrawal: it cannot be approved, but it can still be denied.
+		await expect(canvas.getByRole('alert')).toHaveTextContent(args.error!);
+		await userEvent.click(canvas.getByRole('button', { name: get(LL).ciba_rejectButton() }));
+		await expect(args.onDeny).toHaveBeenCalledWith('req-1');
+	}}
+>
+	{#snippet template(args)}{@render page(args)}{/snippet}
+</Story>
+
+<Story
+	name="Not saved: try again"
+	args={{ requests: [request()], error: get(LL).ciba_errorTryAgain() }}
+>
+	{#snippet template(args)}{@render page(args)}{/snippet}
+</Story>
+
+<Story
+	name="Answer not confirmed"
+	args={{ requests: [request()], error: get(LL).ciba_errorOutcomeUnknown() }}
+>
+	{#snippet template(args)}{@render page(args)}{/snippet}
+</Story>
+
+<Story name="No longer waiting" args={{ error: get(LL).ciba_errorNoLongerWaiting() }}>
+	{#snippet template(args)}{@render page(args)}{/snippet}
+</Story>
+
+<Story name="Already answered" args={{ error: get(LL).ciba_errorRequestGone() }}>
+	{#snippet template(args)}{@render page(args)}{/snippet}
+</Story>
+
 <Story name="Approved" args={{ successMessage: 'Request approved' }}>
 	{#snippet template(args)}{@render page(args)}{/snippet}
 </Story>

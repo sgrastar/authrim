@@ -6,7 +6,7 @@
  */
 
 import type { Context } from 'hono';
-import type { Env, DeviceCodeMetadata } from '@authrim/ar-lib-core';
+import type { Env } from '@authrim/ar-lib-core';
 import {
   normalizeUserCode,
   validateUserCodeFormat,
@@ -14,7 +14,6 @@ import {
   createErrorResponse,
   AR_ERROR_CODES,
   getLogger,
-  buildDOKey,
   buildDOInstanceName,
 } from '@authrim/ar-lib-core';
 import { resolveAsyncTenantId } from './tenant';
@@ -24,13 +23,19 @@ import {
   readApprovalConsentWithdrawal,
   requestPredatesConsentWithdrawal,
 } from './consent-withdrawal';
+import {
+  USER_CODE_GUARD_UNAVAILABLE,
+  checkUserCodeRateLimit,
+  lookUpDeviceCodeByUserCode,
+  userCodeBlockedResponse,
+} from './user-code-guard';
 
 /**
- * POST /api/device/verify
+ * POST /api/devices/verify
  * Headless JSON API for device verification
  *
  * Request:
- *   POST /api/device/verify
+ *   POST /api/devices/verify
  *   Content-Type: application/json
  *
  *   {
@@ -67,38 +72,15 @@ export async function deviceVerifyApiHandler(c: Context<{ Bindings: Env }>) {
     'X-Authrim-Tenant-Id': tenantId,
   };
   try {
-    // Get client IP for rate limiting
-    const clientIp =
-      c.req.header('CF-Connecting-IP') || c.req.header('X-Forwarded-For') || 'unknown';
+    const mockAuthEnabled = await isMockAuthEnabled(c.env);
 
-    // Check rate limiting (if USER_CODE_RATE_LIMITER is available)
-    if (c.env.USER_CODE_RATE_LIMITER) {
-      const rateLimiterId = c.env.USER_CODE_RATE_LIMITER.idFromName(
-        buildDOKey('rate-limit', 'user-code', tenantId)
-      );
-      const rateLimiter = c.env.USER_CODE_RATE_LIMITER.get(rateLimiterId);
-
-      const checkResponse = await rateLimiter.fetch(
-        new Request('https://internal/check', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ ip: clientIp }),
-        })
-      );
-
-      if (checkResponse.ok) {
-        const result = (await checkResponse.json()) as { blocked: boolean; retry_after?: number };
-        if (result.blocked) {
-          return c.json(
-            {
-              success: false,
-              error: 'slow_down',
-              error_description: `Too many failed attempts. Please try again in ${result.retry_after || 3600} seconds.`,
-            },
-            429
-          );
-        }
-      }
+    // Per-IP user code rate limiting. Fails closed: see user-code-guard.ts.
+    const rateLimit = await checkUserCodeRateLimit(c, tenantId, { mockAuthEnabled });
+    if (rateLimit.status === 'unavailable') {
+      return c.json(USER_CODE_GUARD_UNAVAILABLE, 503);
+    }
+    if (rateLimit.status === 'blocked') {
+      return userCodeBlockedResponse(c, rateLimit.retryAfter);
     }
 
     // Parse JSON request body
@@ -134,40 +116,16 @@ export async function deviceVerifyApiHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
-    // Get device code metadata from DeviceCodeStore
-    const deviceCodeStoreId = c.env.DEVICE_CODE_STORE.idFromName(
-      buildDOInstanceName('device', tenantId)
-    );
-    const deviceCodeStore = c.env.DEVICE_CODE_STORE.get(deviceCodeStoreId);
-
-    const getResponse = await deviceCodeStore.fetch(
-      new Request('https://internal/get-by-user-code', {
-        method: 'POST',
-        headers: internalHeaders,
-        body: JSON.stringify({ user_code: userCode }),
-      })
-    );
-
-    if (!getResponse.ok) {
-      // Record failed attempt for rate limiting
-      if (c.env.USER_CODE_RATE_LIMITER) {
-        const rateLimiterId = c.env.USER_CODE_RATE_LIMITER.idFromName(
-          buildDOKey('rate-limit', 'user-code', tenantId)
-        );
-        const rateLimiter = c.env.USER_CODE_RATE_LIMITER.get(rateLimiterId);
-        await rateLimiter
-          .fetch(
-            new Request('https://internal/record-failure', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ ip: clientIp }),
-            })
-          )
-          .catch(() => {
-            /* Ignore rate limiter errors */
-          });
+    // Get device code metadata from DeviceCodeStore. A store that cannot answer is not "no such
+    // code": it neither reports invalid_code nor counts a failure.
+    const lookup = await lookUpDeviceCodeByUserCode(c, tenantId, userCode);
+    if (lookup.status === 'unavailable') {
+      return c.json(USER_CODE_GUARD_UNAVAILABLE, 503);
+    }
+    if (lookup.status === 'absent') {
+      if (!(await rateLimit.recordFailure())) {
+        return c.json(USER_CODE_GUARD_UNAVAILABLE, 503);
       }
-
       return c.json(
         {
           success: false,
@@ -177,38 +135,10 @@ export async function deviceVerifyApiHandler(c: Context<{ Bindings: Env }>) {
         404
       );
     }
-
-    const metadata: DeviceCodeMetadata | null = await getResponse.json();
-
-    if (!metadata) {
-      // Record failed attempt for rate limiting
-      if (c.env.USER_CODE_RATE_LIMITER) {
-        const rateLimiterId = c.env.USER_CODE_RATE_LIMITER.idFromName(
-          buildDOKey('rate-limit', 'user-code', tenantId)
-        );
-        const rateLimiter = c.env.USER_CODE_RATE_LIMITER.get(rateLimiterId);
-        await rateLimiter
-          .fetch(
-            new Request('https://internal/record-failure', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ ip: clientIp }),
-            })
-          )
-          .catch(() => {
-            /* Ignore rate limiter errors */
-          });
-      }
-
-      return c.json(
-        {
-          success: false,
-          error: 'invalid_code',
-          error_description: 'Invalid or expired user code',
-        },
-        404
-      );
-    }
+    const { metadata } = lookup;
+    const deviceCodeStore = c.env.DEVICE_CODE_STORE.get(
+      c.env.DEVICE_CODE_STORE.idFromName(buildDOInstanceName('device', tenantId))
+    );
 
     // Check if code is still pending
     if (metadata.status !== 'pending') {
@@ -223,7 +153,6 @@ export async function deviceVerifyApiHandler(c: Context<{ Bindings: Env }>) {
     }
 
     const authenticatedUser = await getAuthenticatedAsyncUser(c, tenantId);
-    const mockAuthEnabled = await isMockAuthEnabled(c.env);
     if (!authenticatedUser && !mockAuthEnabled) {
       return c.json(
         {
@@ -308,23 +237,7 @@ export async function deviceVerifyApiHandler(c: Context<{ Bindings: Env }>) {
       }
 
       // Reset rate limiting on successful verification
-      if (c.env.USER_CODE_RATE_LIMITER) {
-        const rateLimiterId = c.env.USER_CODE_RATE_LIMITER.idFromName(
-          buildDOKey('rate-limit', 'user-code', tenantId)
-        );
-        const rateLimiter = c.env.USER_CODE_RATE_LIMITER.get(rateLimiterId);
-        await rateLimiter
-          .fetch(
-            new Request('https://internal/reset', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ ip: clientIp }),
-            })
-          )
-          .catch(() => {
-            /* Ignore rate limiter errors */
-          });
-      }
+      await rateLimit.reset();
 
       return c.json(
         {

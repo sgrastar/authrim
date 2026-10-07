@@ -69,7 +69,7 @@ function pendingMetadata(overrides: Partial<DeviceCodeMetadata> = {}): DeviceCod
   };
 }
 
-function createEnv(withLimiter = false): Env {
+function createEnv(withLimiter = true): Env {
   return {
     DEVICE_CODE_STORE: {
       idFromName: vi.fn().mockReturnValue('device-store'),
@@ -158,26 +158,85 @@ describe('device verification API branch security', () => {
     await expect(check.json()).resolves.toEqual({ ip: '203.0.113.7' });
   });
 
-  it('continues when the rate limiter check is unavailable', async () => {
-    mocks.limiterFetch.mockResolvedValue(new Response('unavailable', { status: 503 }));
-    const response = await request({ user_code: 'WDJB-MJHT' }, createEnv(true));
+  it.each([
+    ['answers an error status', () => new Response('unavailable', { status: 503 })],
+    ['answers an unexpected body', () => Response.json({})],
+    [
+      'throws',
+      () => {
+        throw new Error('limiter unavailable');
+      },
+    ],
+  ])('refuses to read codes when the rate limiter check %s', async (_label, limiterResponse) => {
+    mocks.limiterFetch.mockImplementation(async () => limiterResponse());
+    const response = await request({ user_code: 'WDJB-MJHT' });
+    expect(response.status).toBe(503);
+    await expect(response.json()).resolves.toMatchObject({ error: 'temporarily_unavailable' });
+    expect(mocks.storeFetch).not.toHaveBeenCalled();
+  });
+
+  it('refuses to read codes without a rate limiter binding', async () => {
+    const response = await request({ user_code: 'WDJB-MJHT' }, createEnv(false));
+    expect(response.status).toBe(503);
+    await expect(response.json()).resolves.toMatchObject({ error: 'temporarily_unavailable' });
+    expect(mocks.storeFetch).not.toHaveBeenCalled();
+  });
+
+  it('runs without a rate limiter binding only where mock authentication is enabled', async () => {
+    mocks.isMockAuthEnabled.mockResolvedValue(true);
+    const response = await request({ user_code: 'WDJB-MJHT' }, createEnv(false));
     expect(response.status).toBe(200);
   });
 
-  it.each([
-    ['store miss', Response.json({ error: 'missing' }, { status: 404 })],
-    ['empty store response', Response.json(null)],
-  ])('returns a generic invalid-code response for a %s', async (_label, storeResponse) => {
-    mocks.storeFetch.mockResolvedValue(storeResponse);
-    mocks.limiterFetch.mockImplementation(async (input: Request) => {
-      if (new URL(input.url).pathname === '/check') return Response.json({ blocked: false });
-      throw new Error('limiter unavailable');
-    });
-    const response = await request({ user_code: 'WDJB-MJHT' }, createEnv(true));
+  it('counts a confirmed unknown code against the rate limit', async () => {
+    mocks.storeFetch.mockResolvedValue(Response.json(null));
+    const response = await request({ user_code: 'WDJB-MJHT' });
     expect(response.status).toBe(404);
     await expect(response.json()).resolves.toMatchObject({ error: 'invalid_code' });
-    expect(mocks.limiterFetch).toHaveBeenCalledTimes(2);
+    expect(
+      mocks.limiterFetch.mock.calls.map(([input]) => new URL((input as Request).url).pathname)
+    ).toEqual(['/check', '/record-failure']);
   });
+
+  it.each([
+    ['answers an error status', () => new Response('unavailable', { status: 503 })],
+    [
+      'throws',
+      () => {
+        throw new Error('record failed');
+      },
+    ],
+  ])('refuses to answer when the rate limiter cannot count a failure (%s)', async (_l, failure) => {
+    mocks.storeFetch.mockResolvedValue(Response.json(null));
+    mocks.limiterFetch.mockImplementation(async (input: Request) => {
+      if (new URL(input.url).pathname === '/check') return Response.json({ blocked: false });
+      return failure();
+    });
+    const response = await request({ user_code: 'WDJB-MJHT' });
+    expect(response.status).toBe(503);
+    await expect(response.json()).resolves.toMatchObject({ error: 'temporarily_unavailable' });
+  });
+
+  it.each([
+    ['answers an error status', () => Response.json({ error: 'internal' }, { status: 500 })],
+    [
+      'throws',
+      () => {
+        throw new Error('store unavailable');
+      },
+    ],
+  ])(
+    'does not report a code as unknown, nor count a failure, when the store %s',
+    async (_label, storeResponse) => {
+      mocks.storeFetch.mockImplementation(async () => storeResponse());
+      const response = await request({ user_code: 'WDJB-MJHT' });
+      expect(response.status).toBe(503);
+      await expect(response.json()).resolves.toMatchObject({ error: 'temporarily_unavailable' });
+      expect(
+        mocks.limiterFetch.mock.calls.map(([input]) => new URL((input as Request).url).pathname)
+      ).toEqual(['/check']);
+    }
+  );
 
   it('rejects a code which has already transitioned state', async () => {
     mocks.storeFetch.mockResolvedValue(Response.json(pendingMetadata({ status: 'approved' })));

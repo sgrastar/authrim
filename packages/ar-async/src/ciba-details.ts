@@ -40,8 +40,8 @@ import {
  *     "scope": "openid profile email",
  *     "binding_message": "Sign in to Banking App",
  *     "user_code": "ABCD-1234",
- *     "created_at": 1234567890,
- *     "expires_at": 1234568190,
+ *     "created_at": 1770000000000,   // epoch milliseconds
+ *     "expires_at": 1770000300000,   // epoch milliseconds
  *     "time_remaining": 290,
  *     "status": "pending"
  *   }
@@ -90,7 +90,15 @@ export async function cibaDetailsHandler(c: Context<{ Bindings: Env }>) {
     );
 
     if (!getResponse.ok) {
-      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
+      // The store could not answer: not "no such request". A caller re-checking a decision must
+      // keep the request (and say the outcome is unknown) rather than drop it.
+      return c.json(
+        {
+          error: 'temporarily_unavailable',
+          error_description: 'The request cannot be read right now. Try again.',
+        },
+        503
+      );
     }
 
     const metadata: CIBARequestMetadata | null = await getResponse.json();
@@ -111,9 +119,8 @@ export async function cibaDetailsHandler(c: Context<{ Bindings: Env }>) {
       createAuthContextFromHono(c, tenantId).coreAdapter
     );
 
-    // Calculate time remaining
-    const now = Math.floor(Date.now() / 1000);
-    const timeRemaining = Math.max(0, metadata.expires_at - now);
+    // Seconds left; the store keeps created_at/expires_at in epoch milliseconds.
+    const timeRemaining = Math.max(0, Math.floor((metadata.expires_at - Date.now()) / 1000));
 
     return c.json({
       auth_req_id: metadata.auth_req_id,

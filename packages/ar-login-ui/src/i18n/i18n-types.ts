@@ -1546,6 +1546,22 @@ type RootTranslation = {
 	 */
 	device_errorInvalidRedirect: string
 	/**
+	 * T​h​i​s​ ​r​e​q​u​e​s​t​ ​w​a​s​ ​m​a​d​e​ ​b​e​f​o​r​e​ ​y​o​u​ ​w​i​t​h​d​r​e​w​ ​t​h​i​s​ ​a​p​p​'​s​ ​a​c​c​e​s​s​.​ ​S​t​a​r​t​ ​a​g​a​i​n​ ​o​n​ ​t​h​e​ ​d​e​v​i​c​e​ ​t​o​ ​g​e​t​ ​a​ ​n​e​w​ ​c​o​d​e​.
+	 */
+	device_errorConsentWithdrawn: string
+	/**
+	 * Y​o​u​r​ ​d​e​c​i​s​i​o​n​ ​c​o​u​l​d​n​'​t​ ​b​e​ ​s​a​v​e​d​ ​r​i​g​h​t​ ​n​o​w​,​ ​a​n​d​ ​n​o​t​h​i​n​g​ ​h​a​s​ ​c​h​a​n​g​e​d​.​ ​T​r​y​ ​a​g​a​i​n​ ​i​n​ ​a​ ​m​o​m​e​n​t​.
+	 */
+	device_errorTryAgain: string
+	/**
+	 * T​o​o​ ​m​a​n​y​ ​a​t​t​e​m​p​t​s​.​ ​W​a​i​t​ ​a​ ​w​h​i​l​e​,​ ​t​h​e​n​ ​t​r​y​ ​a​g​a​i​n​.
+	 */
+	device_errorTooManyAttempts: string
+	/**
+	 * W​e​ ​c​o​u​l​d​n​'​t​ ​c​o​n​f​i​r​m​ ​w​h​e​t​h​e​r​ ​y​o​u​r​ ​d​e​c​i​s​i​o​n​ ​w​a​s​ ​s​a​v​e​d​.​ ​C​h​e​c​k​ ​t​h​e​ ​d​e​v​i​c​e​,​ ​o​r​ ​e​n​t​e​r​ ​t​h​e​ ​c​o​d​e​ ​a​g​a​i​n​.
+	 */
+	device_errorOutcomeUnknown: string
+	/**
 	 * A​u​t​h​e​n​t​i​c​a​t​i​o​n​ ​r​e​q​u​e​s​t
 	 */
 	ciba_title: string
@@ -1621,6 +1637,30 @@ type RootTranslation = {
 	 * F​a​i​l​e​d​ ​t​o​ ​d​e​n​y​ ​r​e​q​u​e​s​t
 	 */
 	ciba_errorDenyFailed: string
+	/**
+	 * T​h​i​s​ ​r​e​q​u​e​s​t​ ​w​a​s​ ​m​a​d​e​ ​b​e​f​o​r​e​ ​y​o​u​ ​w​i​t​h​d​r​e​w​ ​t​h​i​s​ ​a​p​p​'​s​ ​a​c​c​e​s​s​.​ ​S​t​a​r​t​ ​a​g​a​i​n​ ​f​r​o​m​ ​t​h​e​ ​a​p​p​.
+	 */
+	ciba_errorConsentWithdrawn: string
+	/**
+	 * T​h​i​s​ ​r​e​q​u​e​s​t​ ​h​a​s​ ​e​x​p​i​r​e​d​ ​o​r​ ​h​a​s​ ​a​l​r​e​a​d​y​ ​b​e​e​n​ ​a​n​s​w​e​r​e​d​.
+	 */
+	ciba_errorRequestGone: string
+	/**
+	 * Y​o​u​r​ ​d​e​c​i​s​i​o​n​ ​c​o​u​l​d​n​'​t​ ​b​e​ ​s​a​v​e​d​ ​r​i​g​h​t​ ​n​o​w​,​ ​a​n​d​ ​n​o​t​h​i​n​g​ ​h​a​s​ ​c​h​a​n​g​e​d​.​ ​T​r​y​ ​a​g​a​i​n​ ​i​n​ ​a​ ​m​o​m​e​n​t​.
+	 */
+	ciba_errorTryAgain: string
+	/**
+	 * T​o​o​ ​m​a​n​y​ ​a​t​t​e​m​p​t​s​.​ ​W​a​i​t​ ​a​ ​w​h​i​l​e​,​ ​t​h​e​n​ ​t​r​y​ ​a​g​a​i​n​.
+	 */
+	ciba_errorTooManyAttempts: string
+	/**
+	 * W​e​ ​c​o​u​l​d​n​'​t​ ​c​o​n​f​i​r​m​ ​w​h​e​t​h​e​r​ ​y​o​u​r​ ​a​n​s​w​e​r​ ​w​a​s​ ​s​a​v​e​d​.​ ​R​e​f​r​e​s​h​ ​t​o​ ​s​e​e​ ​t​h​e​ ​r​e​q​u​e​s​t​s​ ​s​t​i​l​l​ ​w​a​i​t​i​n​g​.
+	 */
+	ciba_errorOutcomeUnknown: string
+	/**
+	 * W​e​ ​c​o​u​l​d​n​'​t​ ​c​o​n​f​i​r​m​ ​y​o​u​r​ ​a​n​s​w​e​r​,​ ​b​u​t​ ​t​h​i​s​ ​r​e​q​u​e​s​t​ ​i​s​ ​n​o​ ​l​o​n​g​e​r​ ​w​a​i​t​i​n​g​.
+	 */
+	ciba_errorNoLongerWaiting: string
 	/**
 	 * V​e​r​i​f​y​ ​y​o​u​r​ ​i​d​e​n​t​i​t​y
 	 */
@@ -3258,6 +3298,22 @@ export type TranslationFunctions = {
 	 */
 	device_errorInvalidRedirect: () => LocalizedString
 	/**
+	 * This request was made before you withdrew this app's access. Start again on the device to get a new code.
+	 */
+	device_errorConsentWithdrawn: () => LocalizedString
+	/**
+	 * Your decision couldn't be saved right now, and nothing has changed. Try again in a moment.
+	 */
+	device_errorTryAgain: () => LocalizedString
+	/**
+	 * Too many attempts. Wait a while, then try again.
+	 */
+	device_errorTooManyAttempts: () => LocalizedString
+	/**
+	 * We couldn't confirm whether your decision was saved. Check the device, or enter the code again.
+	 */
+	device_errorOutcomeUnknown: () => LocalizedString
+	/**
 	 * Authentication request
 	 */
 	ciba_title: () => LocalizedString
@@ -3333,6 +3389,30 @@ export type TranslationFunctions = {
 	 * Failed to deny request
 	 */
 	ciba_errorDenyFailed: () => LocalizedString
+	/**
+	 * This request was made before you withdrew this app's access. Start again from the app.
+	 */
+	ciba_errorConsentWithdrawn: () => LocalizedString
+	/**
+	 * This request has expired or has already been answered.
+	 */
+	ciba_errorRequestGone: () => LocalizedString
+	/**
+	 * Your decision couldn't be saved right now, and nothing has changed. Try again in a moment.
+	 */
+	ciba_errorTryAgain: () => LocalizedString
+	/**
+	 * Too many attempts. Wait a while, then try again.
+	 */
+	ciba_errorTooManyAttempts: () => LocalizedString
+	/**
+	 * We couldn't confirm whether your answer was saved. Refresh to see the requests still waiting.
+	 */
+	ciba_errorOutcomeUnknown: () => LocalizedString
+	/**
+	 * We couldn't confirm your answer, but this request is no longer waiting.
+	 */
+	ciba_errorNoLongerWaiting: () => LocalizedString
 	/**
 	 * Verify your identity
 	 */

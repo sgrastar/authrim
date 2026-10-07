@@ -98,6 +98,13 @@ const completion = {
 	device_errorApproveFailed: '기기를 승인하지 못했습니다',
 	device_errorDenyFailed: '기기 승인 요청을 거부하지 못했습니다',
 	device_errorInvalidRedirect: '서버에서 잘못된 리디렉션 URL을 받았습니다',
+	device_errorConsentWithdrawn:
+		'이 요청은 이 앱의 액세스 권한을 철회하기 전에 생성되었습니다. 기기에서 다시 시작하여 새 코드를 받으세요.',
+	device_errorTryAgain:
+		'지금은 결정을 저장할 수 없으며 변경된 내용은 없습니다. 잠시 후 다시 시도하세요.',
+	device_errorTooManyAttempts: '시도 횟수가 너무 많습니다. 잠시 기다린 후 다시 시도하세요.',
+	device_errorOutcomeUnknown:
+		'결정이 저장되었는지 확인할 수 없습니다. 기기를 확인하거나 코드를 다시 입력하세요.',
 	ciba_title: '인증 요청',
 	ciba_subtitle: '애플리케이션에서 승인을 요청합니다',
 	ciba_noPendingRequests: '대기 중인 인증 요청이 없습니다',
@@ -117,6 +124,15 @@ const completion = {
 	ciba_errorGeneric: '오류가 발생했습니다',
 	ciba_errorApproveFailed: '요청을 승인하지 못했습니다',
 	ciba_errorDenyFailed: '요청을 거부하지 못했습니다',
+	ciba_errorConsentWithdrawn:
+		'이 요청은 이 앱의 액세스 권한을 철회하기 전에 생성되었습니다. 앱에서 다시 시작하세요.',
+	ciba_errorRequestGone: '이 요청은 만료되었거나 이미 응답되었습니다.',
+	ciba_errorTryAgain:
+		'지금은 결정을 저장할 수 없으며 변경된 내용은 없습니다. 잠시 후 다시 시도하세요.',
+	ciba_errorTooManyAttempts: '시도 횟수가 너무 많습니다. 잠시 기다린 후 다시 시도하세요.',
+	ciba_errorOutcomeUnknown:
+		'응답이 저장되었는지 확인할 수 없습니다. 새로 고쳐 대기 중인 요청을 확인하세요.',
+	ciba_errorNoLongerWaiting: '응답을 확인할 수 없지만 이 요청은 더 이상 대기 중이 아닙니다.',
 	reauth_title: '본인 확인',
 	reauth_subtitle: '보안을 위해 계속하려면 다시 인증하세요',
 	reauth_verifyWithPasskey: 'Passkey로 확인',

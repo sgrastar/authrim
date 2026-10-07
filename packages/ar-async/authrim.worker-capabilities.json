@@ -2,8 +2,10 @@
   "schemaVersion": 1,
   "packageName": "@authrim/ar-async",
   "worker": "ar-async",
-  "requiredDataRoles": ["tenant_core/default", "tenant_core/users", "tenant_pii"],
+  "lookupBlindIndex": true,
+  "requiredDataRoles": ["tenant_core/default", "tenant_core/users", "tenant_pii", "lookup"],
   "bindings": [
+    { "name": "LOOKUP_DB", "kind": "d1", "required": true, "dataRole": "lookup" },
     { "name": "INITIAL_ACCESS_TOKENS", "kind": "kv_namespace", "required": true },
     {
       "name": "SETTINGS",
@@ -16,6 +18,12 @@
     { "name": "DEVICE_CODE_STORE", "kind": "durable_object_namespace", "required": true },
     { "name": "CIBA_REQUEST_STORE", "kind": "durable_object_namespace", "required": true },
     { "name": "DPOP_JTI_STORE", "kind": "durable_object_namespace", "required": true },
+    { "name": "SESSION_STORE", "kind": "durable_object_namespace", "required": true },
+    {
+      "name": "USER_CODE_RATE_LIMITER",
+      "kind": "durable_object_namespace",
+      "required": true
+    },
     {
       "name": "KEY_MANAGER_PUBLIC",
       "kind": "service",
@@ -45,6 +53,16 @@
       "name": "TENANT_RUNTIME_REGISTRY_VERIFYING_PUBLIC_JWKS",
       "capability": "runtime_registry.verify",
       "required": true
+    },
+    {
+      "name": "LOOKUP_HMAC_KEY_SLOT_A",
+      "capability": "lookup_blind_index",
+      "required": true
+    },
+    {
+      "name": "LOOKUP_HMAC_KEY_SLOT_B",
+      "capability": "lookup_blind_index",
+      "required": false
     },
     {
       "name": "CONTROL_SMOKE_VERIFYING_PUBLIC_JWKS",

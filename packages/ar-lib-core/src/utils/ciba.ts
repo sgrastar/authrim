@@ -658,6 +658,15 @@ export async function validateCIBALoginHintToken(
  * @param params - Request parameters
  * @returns Validation result
  */
+function isWellFormedUnicode(value: string): boolean {
+  try {
+    encodeURIComponent(value);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function validateCIBARequest(params: {
   scope?: string;
   login_hint?: string;
@@ -676,6 +685,16 @@ export function validateCIBARequest(params: {
       error: 'invalid_request',
       error_description:
         'Exactly one of login_hint, login_hint_token, or id_token_hint is required',
+    };
+  }
+
+  // A login_hint addresses the request to its user (the approval page lists requests by it), so
+  // it must be well-formed Unicode: a lone surrogate cannot be matched or indexed.
+  if (params.login_hint && !isWellFormedUnicode(params.login_hint)) {
+    return {
+      valid: false,
+      error: 'invalid_request',
+      error_description: 'login_hint must be well-formed Unicode',
     };
   }
 

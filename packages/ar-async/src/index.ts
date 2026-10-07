@@ -15,6 +15,7 @@ import { requestContextMiddleware, diagnosticLoggingMiddleware } from '@authrim/
 import { deviceAuthorizationHandler } from './device-authorization';
 import { deviceVerifyHandler } from './device-verify';
 import { deviceVerifyApiHandler } from './device-verify-api';
+import { deviceLookupApiHandler } from './device-lookup-api';
 import { cibaAuthorizationHandler } from './ciba-authorization';
 import { cibaPendingHandler } from './ciba-pending';
 import { cibaDetailsHandler } from './ciba-details';
@@ -88,6 +89,14 @@ app.post('/device', deviceVerifyHandler);
  * Used by SvelteKit UI and custom WebSDK implementations
  */
 app.post('/api/devices/verify', deviceVerifyApiHandler);
+
+/**
+ * POST /api/devices/lookup
+ * Headless JSON API that shows the signed-in user which application a user code belongs to
+ *
+ * Used by the Login UI before the user approves or denies the code at /api/devices/verify
+ */
+app.post('/api/devices/lookup', deviceLookupApiHandler);
 
 /**
  * POST /bc-authorize

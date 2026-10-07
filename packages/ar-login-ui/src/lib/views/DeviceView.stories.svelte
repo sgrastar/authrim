@@ -1,5 +1,7 @@
 <script module lang="ts">
 	import { defineMeta } from '@storybook/addon-svelte-csf';
+	import { get } from 'svelte/store';
+	import { LL } from '$i18n/i18n-svelte';
 	import { expect, fn, userEvent, within } from 'storybook/test';
 	import AuthPageShell from '$lib/components/AuthPageShell.svelte';
 	import LoginUIFrame from '$lib/storybook/LoginUIFrame.svelte';
@@ -81,6 +83,63 @@
 		deviceInfo: info,
 		success: 'The device is approved. You can return to it.'
 	}}
+>
+	{#snippet template(args)}{@render page(args)}{/snippet}
+</Story>
+
+<Story
+	name="Access withdrawn: start again"
+	args={{ error: get(LL).device_errorConsentWithdrawn() }}
+	play={async ({ canvasElement, args }) => {
+		const canvas = within(canvasElement);
+		// Approval was refused because the code predates a withdrawal: back at code entry, empty.
+		await expect(canvas.getByRole('alert')).toHaveTextContent(args.error!);
+		await expect(canvas.getByRole('textbox')).toHaveValue('');
+	}}
+>
+	{#snippet template(args)}{@render page(args)}{/snippet}
+</Story>
+
+<Story
+	name="Not saved: try again"
+	args={{
+		step: 'verified',
+		userCode: 'ABCD-1234',
+		deviceInfo: info,
+		error: get(LL).device_errorTryAgain()
+	}}
+	play={async ({ canvasElement, args }) => {
+		const canvas = within(canvasElement);
+		// Nothing changed on the server, so the same code can be approved again.
+		await expect(canvas.getByRole('alert')).toHaveTextContent(args.error!);
+		await userEvent.click(canvas.getByRole('button', { name: get(LL).device_approveButton() }));
+		await expect(args.onApprove).toHaveBeenCalledOnce();
+	}}
+>
+	{#snippet template(args)}{@render page(args)}{/snippet}
+</Story>
+
+<Story
+	name="Outcome not confirmed"
+	args={{
+		step: 'verified',
+		userCode: 'ABCD-1234',
+		deviceInfo: info,
+		error: get(LL).device_errorOutcomeUnknown()
+	}}
+	play={async ({ canvasElement, args }) => {
+		const canvas = within(canvasElement);
+		// The answer to the decision was lost and the re-check failed too: no success is claimed.
+		await expect(canvas.getByRole('alert')).toHaveTextContent(args.error!);
+		await expect(canvas.queryByText(get(LL).device_success())).toBeNull();
+	}}
+>
+	{#snippet template(args)}{@render page(args)}{/snippet}
+</Story>
+
+<Story
+	name="Too many attempts"
+	args={{ userCode: 'ABCD-1234', error: get(LL).device_errorTooManyAttempts() }}
 >
 	{#snippet template(args)}{@render page(args)}{/snippet}
 </Story>

@@ -410,6 +410,13 @@ const vi = createTranslation({
 	device_errorApproveFailed: 'Không thể chấp thuận thiết bị',
 	device_errorDenyFailed: 'Không thể từ chối yêu cầu của thiết bị',
 	device_errorInvalidRedirect: 'Máy chủ trả về URL chuyển hướng không hợp lệ',
+	device_errorConsentWithdrawn:
+		'Yêu cầu này được tạo trước khi bạn thu hồi quyền truy cập của ứng dụng này. Hãy bắt đầu lại trên thiết bị để nhận mã mới.',
+	device_errorTryAgain:
+		'Hiện không thể lưu quyết định của bạn và chưa có gì thay đổi. Hãy thử lại sau giây lát.',
+	device_errorTooManyAttempts: 'Quá nhiều lần thử. Hãy đợi một lúc rồi thử lại.',
+	device_errorOutcomeUnknown:
+		'Không thể xác nhận quyết định của bạn đã được lưu hay chưa. Hãy kiểm tra thiết bị hoặc nhập lại mã.',
 	ciba_title: 'Yêu cầu xác thực',
 	ciba_subtitle: 'Một ứng dụng đang yêu cầu bạn chấp thuận',
 	ciba_noPendingRequests: 'Không có yêu cầu xác thực nào đang chờ',
@@ -429,6 +436,16 @@ const vi = createTranslation({
 	ciba_errorGeneric: 'Đã xảy ra lỗi',
 	ciba_errorApproveFailed: 'Không thể chấp thuận yêu cầu',
 	ciba_errorDenyFailed: 'Không thể từ chối yêu cầu',
+	ciba_errorConsentWithdrawn:
+		'Yêu cầu này được tạo trước khi bạn thu hồi quyền truy cập của ứng dụng này. Hãy bắt đầu lại từ ứng dụng.',
+	ciba_errorRequestGone: 'Yêu cầu này đã hết hạn hoặc đã được phản hồi.',
+	ciba_errorTryAgain:
+		'Hiện không thể lưu quyết định của bạn và chưa có gì thay đổi. Hãy thử lại sau giây lát.',
+	ciba_errorTooManyAttempts: 'Quá nhiều lần thử. Hãy đợi một lúc rồi thử lại.',
+	ciba_errorOutcomeUnknown:
+		'Không thể xác nhận câu trả lời của bạn đã được lưu hay chưa. Hãy làm mới để xem các yêu cầu vẫn đang chờ.',
+	ciba_errorNoLongerWaiting:
+		'Không thể xác nhận câu trả lời của bạn, nhưng yêu cầu này không còn chờ nữa.',
 	reauth_title: 'Xác minh danh tính',
 	reauth_subtitle: 'Để bảo mật, hãy xác thực lại trước khi tiếp tục',
 	reauth_verifyWithPasskey: 'Xác minh bằng khoá truy cập',

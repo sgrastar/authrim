@@ -150,7 +150,7 @@ const BEARER_TOKEN_CANONICAL_PATHS = [
   '/api/admin',
   '/api/auth',
   '/api/ciba',
-  '/api/device',
+  '/api/devices',
   '/api/internal',
   '/api/v1/auth/direct',
   '/api/sessions',
@@ -1492,7 +1492,7 @@ app.get('/logout-error', async (c) => {
  * Device Flow endpoints - Route to OP_ASYNC worker
  * - /device_authorization (POST) - RFC 8628: Device Authorization Grant
  * - /device (GET/POST) - User verification page (minimal HTML for OIDC conformance)
- * - /api/device/* - Headless JSON APIs for SvelteKit UI and WebSDK
+ * - /api/devices/* - Headless JSON APIs for the Login UI and WebSDK (lookup, verify)
  */
 app.post('/device_authorization', async (c) => {
   if (!c.env.OP_ASYNC) {
@@ -1518,7 +1518,7 @@ app.post('/device', async (c) => {
   return c.env.OP_ASYNC.fetch(request);
 });
 
-app.all('/api/device/*', async (c) => {
+app.all('/api/devices/*', async (c) => {
   if (!c.env.OP_ASYNC) {
     return notFoundResponse();
   }

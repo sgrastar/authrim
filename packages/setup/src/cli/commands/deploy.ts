@@ -56,6 +56,7 @@ import {
   updateLockWithDeployments,
   buildApiPackages,
   loadDeploySecretsFromKeys,
+  lookupHmacDeployOptions,
   UI_WORKER_COMPONENTS,
   hasBlockingDeploymentFailures,
   type DeployOptions,
@@ -2962,6 +2963,7 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
         ])
       ),
       secrets: deploymentSecrets,
+      ...lookupHmacDeployOptions(currentLock.controlKeyState?.lookupHmac),
       automaticProvisioning: automaticProvisioning && pendingControlTokenBootstrap === null,
       cloudflareAccountId: config.cloudflare?.accountId,
       varsByComponent: testEndpointVarsByComponent,

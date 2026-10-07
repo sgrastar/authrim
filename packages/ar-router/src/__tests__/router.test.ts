@@ -494,11 +494,57 @@ describe('Router Worker', () => {
         expect(mockEnv.OP_ASYNC.fetch).toHaveBeenCalledTimes(1);
       });
 
-      it('should route /api/device/* to OP_ASYNC', async () => {
-        const req = new Request('https://example.com/api/device/verify');
-        await app.fetch(req, mockEnv);
+      it.each(['/api/devices/verify', '/api/devices/lookup'])(
+        'should forward the Login UI device decision %s to OP_ASYNC with its session',
+        async (path) => {
+          const req = new Request(`https://example.com${path}`, {
+            method: 'POST',
+            headers: {
+              Origin: 'https://example.com',
+              Cookie: 'authrim_session=session-1',
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ user_code: 'WDJB-MJHT' }),
+          });
+          const res = await app.fetch(req, { ...mockEnv, ISSUER_URL: 'https://example.com' });
 
-        expect(mockEnv.OP_ASYNC.fetch).toHaveBeenCalledTimes(1);
+          expect(res.status).toBe(200);
+          expect(mockEnv.OP_ASYNC.fetch).toHaveBeenCalledTimes(1);
+          const forwarded = mockEnv.OP_ASYNC.fetch.mock.calls[0][0] as Request;
+          expect(forwarded.method).toBe('POST');
+          expect(new URL(forwarded.url).pathname).toBe(path);
+          expect(forwarded.headers.get('Cookie')).toBe('authrim_session=session-1');
+          await expect(forwarded.json()).resolves.toEqual({ user_code: 'WDJB-MJHT' });
+        }
+      );
+
+      it.each(['/api/devices/verify', '/api/devices/lookup'])(
+        'should keep the device decision %s behind router CSRF protection',
+        async (path) => {
+          const req = new Request(`https://example.com${path}`, {
+            method: 'POST',
+            headers: { Origin: 'https://evil.example', 'Content-Type': 'application/json' },
+            body: JSON.stringify({ user_code: 'WDJB-MJHT' }),
+          });
+          const res = await app.fetch(req, { ...mockEnv, ISSUER_URL: 'https://example.com' });
+          const body = (await res.json()) as { error: string };
+
+          expect(res.status).toBe(403);
+          expect(body.error).toBe('csrf_validation_failed');
+          expect(mockEnv.OP_ASYNC.fetch).not.toHaveBeenCalled();
+        }
+      );
+
+      it('should refuse a query-string bearer token on the device decision API', async () => {
+        const req = new Request('https://example.com/api/devices/verify?access_token=leaked', {
+          method: 'POST',
+          headers: { Origin: 'https://example.com', 'Content-Type': 'application/json' },
+          body: JSON.stringify({ user_code: 'WDJB-MJHT' }),
+        });
+        const res = await app.fetch(req, { ...mockEnv, ISSUER_URL: 'https://example.com' });
+
+        expect(res.status).toBe(400);
+        expect(mockEnv.OP_ASYNC.fetch).not.toHaveBeenCalled();
       });
 
       it('should route POST /bc-authorize to OP_ASYNC', async () => {
@@ -513,6 +559,31 @@ describe('Router Worker', () => {
         await app.fetch(req, mockEnv);
 
         expect(mockEnv.OP_ASYNC.fetch).toHaveBeenCalledTimes(1);
+      });
+
+      it.each([
+        ['GET', '/api/ciba/pending'],
+        ['GET', '/api/ciba/requests/auth-req-1'],
+        ['POST', '/api/ciba/approve'],
+        ['POST', '/api/ciba/deny'],
+      ])('should forward the Login UI CIBA call %s %s to OP_ASYNC', async (method, path) => {
+        const req = new Request(`https://example.com${path}`, {
+          method,
+          headers: {
+            Origin: 'https://example.com',
+            Cookie: 'authrim_session=session-1',
+            ...(method === 'POST' ? { 'Content-Type': 'application/json' } : {}),
+          },
+          ...(method === 'POST' ? { body: JSON.stringify({ auth_req_id: 'auth-req-1' }) } : {}),
+        });
+        const res = await app.fetch(req, { ...mockEnv, ISSUER_URL: 'https://example.com' });
+
+        expect(res.status).toBe(200);
+        expect(mockEnv.OP_ASYNC.fetch).toHaveBeenCalledTimes(1);
+        const forwarded = mockEnv.OP_ASYNC.fetch.mock.calls[0][0] as Request;
+        expect(forwarded.method).toBe(method);
+        expect(new URL(forwarded.url).pathname).toBe(path);
+        expect(forwarded.headers.get('Cookie')).toBe('authrim_session=session-1');
       });
 
       it('should return 404 when OP_ASYNC is not bound', async () => {
