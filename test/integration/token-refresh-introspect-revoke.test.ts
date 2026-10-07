@@ -19,6 +19,46 @@ interface TokenResponseBody {
   scope: string;
 }
 
+/**
+ * The user's account database: the fixture database, answering introspection's account state read
+ * with the user as an active account.
+ */
+function withActiveAccount(db: Env['DB']): Env['DB'] {
+  const activeAccount = {
+    account_lifecycle_state: 'active',
+    directory_publication_state: 'active',
+    subject_lifecycle_state: 'active',
+    metadata_json: null,
+  };
+  const accountDb: Env['DB'] = new Proxy(db, {
+    get(target, property) {
+      if (property === 'withSession') return () => accountDb;
+      if (property === 'prepare') {
+        return (sql: string) => {
+          if (!sql.includes('account.metadata_json AS metadata_json')) return target.prepare(sql);
+          let params: unknown[] = [];
+          const statement = {
+            bind: (...bound: unknown[]) => {
+              params = bound;
+              return statement;
+            },
+            first: async () => (params.includes(USER_ID) ? activeAccount : null),
+            all: async () => ({
+              results: params.includes(USER_ID) ? [activeAccount] : [],
+              success: true,
+            }),
+            run: async () => ({ success: true }),
+          };
+          return statement;
+        };
+      }
+      const value = Reflect.get(target, property);
+      return typeof value === 'function' ? value.bind(target) : value;
+    },
+  });
+  return accountDb;
+}
+
 describe('refresh, introspection, and revocation lifecycle', () => {
   let app: Hono<{ Bindings: Env }>;
   let env: Env;
@@ -36,7 +76,7 @@ describe('refresh, introspection, and revocation lifecycle', () => {
         {
           tenantId: 'default',
           accountId: `account:${USER_ID}`,
-          coreDb: c.env.DB,
+          coreDb: withActiveAccount(c.env.DB),
           piiDb: c.env.DB,
         } as never
       );

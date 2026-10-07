@@ -380,6 +380,31 @@ describe('deriveOIDCSubject', () => {
     loadDescriptor.mockResolvedValue(null);
   });
 
+  it('refuses a mapped sub in a client or admin principal namespace', async () => {
+    executeMapping.mockReturnValue({
+      status: 'success',
+      values: [
+        {
+          sourceRef: { side: 'destination', namespace: 'oidc.claim', path: 'sub' },
+          value: 'client:alice',
+        },
+      ],
+    });
+    const mappingInput = {
+      adapter,
+      tenantId: 'tenant-a',
+      clientId: 'client-a',
+      claims: { sub: 'user-1' },
+    };
+
+    await expect(applyOIDCIdentityMapping(mappingInput)).rejects.toMatchObject({
+      details: { code: 'policy.identity_mapping_reserved_subject' },
+    });
+    await expect(deriveOIDCSubject(mappingInput)).rejects.toBeInstanceOf(
+      OIDCIdentityMappingRuntimeError
+    );
+  });
+
   it('takes the mapped sub even when other fields fail validation, without release consent', async () => {
     executeMapping.mockReturnValue({
       status: 'failed',

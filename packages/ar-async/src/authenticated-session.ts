@@ -3,10 +3,11 @@ import type { Context } from 'hono';
 import type { Env, Session } from '@authrim/ar-lib-core';
 import {
   CanonicalRuntimeUserStore,
-  createAuthContextFromHono,
+  createAccountAuthContextFromHono,
   createPIIContextFromHono,
   getSessionStoreBySessionId,
   isShardedSessionId,
+  resolveAccountDataContextFromHono,
 } from '@authrim/ar-lib-core';
 
 export interface AuthenticatedAsyncUser {
@@ -50,7 +51,10 @@ export async function getAuthenticatedAsyncUser(
       return null;
     }
 
-    const authCtx = createAuthContextFromHono(c, tenantId);
+    // The user lives in its account databases, not the tenant metadata database. A user whose
+    // account cannot be resolved (gone, not active, or unavailable) is not authenticated.
+    await resolveAccountDataContextFromHono(c, session.userId);
+    const authCtx = createAccountAuthContextFromHono(c, tenantId);
     const piiCtx = createPIIContextFromHono(c, tenantId);
     const runtimeUsers = new CanonicalRuntimeUserStore({
       coreAdapter: authCtx.coreAdapter,

@@ -176,6 +176,13 @@ export const RESERVED_CLAIMS = [
   'sid',
   'token_use',
   'authrim_account_lifecycle',
+  // The grant a token was issued under: written by the authorization server only.
+  'authrim_consent_generation',
+  'authrim_consent_client_id',
+  'authrim_subject_issuer',
+  'authrim_subject_ref',
+  'authrim_subject_principal',
+  'original_issuer',
 ] as const;
 
 export type ReservedClaim = (typeof RESERVED_CLAIMS)[number];

@@ -10,6 +10,8 @@ import {
 import {
   isProtectedIdentityMappingDestinationClaim,
   OIDC_PROTOCOL_ENVELOPE_CLAIMS,
+  AUTHORIZATION_SERVER_GRANT_CLAIMS,
+  AUTHORIZATION_SERVER_PRINCIPAL_CLAIMS,
 } from '@authrim/ar-lib-core/services/destination-profile-consent';
 import type {
   LifecycleSignalType,
@@ -1338,7 +1340,11 @@ const DIRECTORY_FACTS_SCHEMA = {
     groupsPolicy: 'opt_in',
   },
 } satisfies Record<string, unknown>;
-const OIDC_RESERVED_NON_PROFILE_CLAIMS = OIDC_PROTOCOL_ENVELOPE_CLAIMS;
+const OIDC_RESERVED_NON_PROFILE_CLAIMS = new Set([
+  ...OIDC_PROTOCOL_ENVELOPE_CLAIMS,
+  ...AUTHORIZATION_SERVER_GRANT_CLAIMS,
+  ...AUTHORIZATION_SERVER_PRINCIPAL_CLAIMS,
+]);
 const OIDC_STANDARD_CLAIMS = new Set([
   'sub',
   'name',

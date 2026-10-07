@@ -40,6 +40,7 @@ import {
   upsertOAuthClientConsent,
   isOAuthClientConsentGenerationChanged,
   findOAuthClientConsentRevocation,
+  accessTokenConsentClaims,
   type OAuthClientConsentRevocationState,
   getChallengeStoreByChallengeId,
   generateRegionAwareJti,
@@ -4874,6 +4875,13 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
           client_id: validClientId,
           claims,
           ...(claims ? { claims_request_protected: claimsRequestIntegrityProtected === true } : {}),
+          // The consent generation this request was checked against, so a withdrawal ends the
+          // token too.
+          ...accessTokenConsentClaims({
+            generation: consentWithdrawal.generation,
+            consentClientId: validClientId,
+            tokenClientId: validClientId,
+          }),
           // Assurance (include_in_access_token): how the user authenticated, as RFC 9068 has it.
           ...(assuranceEnabled && assuranceSettings['assurance.include_in_access_token'] === true
             ? {
@@ -4999,6 +5007,16 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         idTokenClaims = requestedClaims.claims;
       }
 
+      // The consent generation this request was checked against, so a Token Exchange of the ID
+      // token is held to the consent as its access token is.
+      idTokenClaims = {
+        ...idTokenClaims,
+        ...accessTokenConsentClaims({
+          generation: consentWithdrawal.generation,
+          consentClientId: validClientId,
+          tokenClientId: validClientId,
+        }),
+      };
       idToken = await createIDToken(
         idTokenClaims as Parameters<typeof createIDToken>[0],
         privateKey,

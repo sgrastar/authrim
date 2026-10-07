@@ -44,6 +44,9 @@ const mocks = vi.hoisted(() => ({
   mockRequireDedicatedAdminDatabaseAdapter: vi.fn().mockReturnValue({}),
   mockResolveElevationGrantSubjectToken: vi.fn(),
   mockVerifyExternalIdJagSubjectToken: vi.fn(),
+  mockResolveAccountDataContextFromHono: vi.fn(),
+  mockReadAccountAuthenticationState: vi.fn(),
+  mockFindOAuthClientConsentRevocation: vi.fn(),
 }));
 
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
@@ -75,6 +78,11 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     validateDPoPProof: mocks.mockValidateDPoPProof,
     requireDedicatedAdminDatabaseAdapter: mocks.mockRequireDedicatedAdminDatabaseAdapter,
     resolveElevationGrantSubjectToken: mocks.mockResolveElevationGrantSubjectToken,
+    // The subject user's account database and its consent withdrawals.
+    resolveAccountDataContextFromHono: mocks.mockResolveAccountDataContextFromHono,
+    createAccountAuthContextFromHono: () => ({ coreAdapter: {} }),
+    findOAuthClientConsentRevocation: mocks.mockFindOAuthClientConsentRevocation,
+    readAccountAuthenticationState: mocks.mockReadAccountAuthenticationState,
   };
 });
 
@@ -103,6 +111,11 @@ describe('downstream elevation grant token exchange', () => {
         : settingsFromSystemSettings(env, systemSettings, category)
     );
     mocks.mockVerifyExternalIdJagSubjectToken.mockReset();
+    mocks.mockResolveAccountDataContextFromHono.mockReset().mockResolvedValue({});
+    mocks.mockReadAccountAuthenticationState.mockReset().mockResolvedValue({ lifecycle: null });
+    mocks.mockFindOAuthClientConsentRevocation
+      .mockReset()
+      .mockResolvedValue({ generation: 0, revokedAt: null });
     mocks.mockVerifyToken.mockReset().mockResolvedValue({});
     mocks.mockIsTokenRevoked.mockReset().mockResolvedValue(false);
     mocks.mockCreateAccessToken.mockReset().mockResolvedValue({
@@ -1056,6 +1069,427 @@ describe('downstream elevation grant token exchange', () => {
         expect.any(Number),
         'region-jti-1'
       );
+    });
+
+    describe('consent of a user subject token', () => {
+      const revokedAt = Date.now() - 60_000;
+
+      function userSubjectToken(overrides: Record<string, unknown> = {}) {
+        return {
+          sub: 'user-1',
+          aud: 'service-client-1',
+          client_id: 'app-client',
+          scope: 'openid',
+          iat: Math.floor(Date.now() / 1000) - 10,
+          ...overrides,
+        };
+      }
+
+      it('refuses a subject token of a consent generation the user has withdrawn', async () => {
+        const env = await createVerificationEnv();
+        mocks.mockFindOAuthClientConsentRevocation.mockResolvedValue({ generation: 2, revokedAt });
+        mocks.mockParseToken.mockReturnValue(userSubjectToken({ authrim_consent_generation: 1 }));
+
+        await expectOAuthError(
+          request({}, env),
+          400,
+          'invalid_grant',
+          'Subject token is invalid or revoked'
+        );
+        expect(mocks.mockFindOAuthClientConsentRevocation).toHaveBeenCalledWith(expect.anything(), {
+          tenantId: 'tenant-a',
+          userId: 'user-1',
+          clientId: 'app-client',
+        });
+        expect(mocks.mockCreateAccessToken).not.toHaveBeenCalled();
+      });
+
+      it('refuses a subject token without a generation issued before the withdrawal', async () => {
+        const env = await createVerificationEnv();
+        mocks.mockFindOAuthClientConsentRevocation.mockResolvedValue({ generation: 1, revokedAt });
+        mocks.mockParseToken.mockReturnValue(
+          userSubjectToken({ iat: Math.floor(revokedAt / 1000) - 5 })
+        );
+
+        await expectOAuthError(
+          request({}, env),
+          400,
+          'invalid_grant',
+          'Subject token is invalid or revoked'
+        );
+        expect(mocks.mockCreateAccessToken).not.toHaveBeenCalled();
+      });
+
+      it('carries the subject token consent into the exchanged token', async () => {
+        const env = await createVerificationEnv();
+        mocks.mockFindOAuthClientConsentRevocation.mockResolvedValue({ generation: 2, revokedAt });
+        mocks.mockParseToken.mockReturnValue(userSubjectToken({ authrim_consent_generation: 2 }));
+
+        const response = await request({}, env);
+        expect(response.status).toBe(200);
+        expect(mocks.mockCreateAccessToken).toHaveBeenCalledWith(
+          expect.objectContaining({
+            sub: 'user-1',
+            client_id: 'service-client-1',
+            authrim_consent_generation: 2,
+            authrim_consent_client_id: 'app-client',
+          }),
+          expect.anything(),
+          expect.any(String),
+          expect.any(Number),
+          'region-jti-1'
+        );
+      });
+
+      it('fails closed (503) when the withdrawal state cannot be read', async () => {
+        const env = await createVerificationEnv();
+        mocks.mockFindOAuthClientConsentRevocation.mockRejectedValue(new Error('d1 down'));
+        mocks.mockParseToken.mockReturnValue(userSubjectToken({ authrim_consent_generation: 0 }));
+
+        await expectOAuthError(
+          request({}, env),
+          503,
+          'temporarily_unavailable',
+          'Consent state is unavailable'
+        );
+        expect(mocks.mockCreateAccessToken).not.toHaveBeenCalled();
+      });
+
+      it('refuses a subject token whose user has no active account', async () => {
+        const env = await createVerificationEnv();
+        mocks.mockResolveAccountDataContextFromHono.mockRejectedValue(
+          new Error('lookup_destination_revalidation_failed')
+        );
+        mocks.mockParseToken.mockReturnValue(userSubjectToken({ authrim_consent_generation: 0 }));
+
+        await expectOAuthError(
+          request({}, env),
+          400,
+          'invalid_grant',
+          'Subject token is invalid or revoked'
+        );
+      });
+
+      it('carries an external subject issuer on for a subject that was never an account', async () => {
+        const env = await createVerificationEnv();
+        mocks.mockResolveAccountDataContextFromHono.mockRejectedValue(
+          new Error('account_data_route_not_found')
+        );
+        mocks.mockParseToken.mockReturnValue(
+          userSubjectToken({
+            sub: 'service-7',
+            client_id: 'https://issuer.example.com',
+            authrim_subject_issuer: 'https://issuer.example.com',
+          })
+        );
+
+        const response = await request({}, env);
+        expect(response.status).toBe(200);
+        expect(mocks.mockReadAccountAuthenticationState).toHaveBeenCalledWith(
+          expect.anything(),
+          'tenant-a',
+          'service-7'
+        );
+        expect(mocks.mockCreateAccessToken).toHaveBeenCalledWith(
+          expect.objectContaining({
+            sub: 'service-7',
+            authrim_subject_issuer: 'https://issuer.example.com',
+          }),
+          expect.anything(),
+          expect.any(String),
+          expect.any(Number),
+          'region-jti-1'
+        );
+        const claims = mocks.mockCreateAccessToken.mock.calls[0]?.[0] as Record<string, unknown>;
+        expect(claims.authrim_consent_generation).toBeUndefined();
+      });
+
+      it('refuses an externally asserted subject that was a deleted account', async () => {
+        const env = await createVerificationEnv();
+        mocks.mockResolveAccountDataContextFromHono.mockRejectedValue(
+          new Error('account_data_route_not_found')
+        );
+        mocks.mockReadAccountAuthenticationState.mockResolvedValue({ lifecycle: 'deleted' });
+        mocks.mockParseToken.mockReturnValue(
+          userSubjectToken({ authrim_subject_issuer: 'https://issuer.example.com' })
+        );
+
+        await expectOAuthError(
+          request({}, env),
+          400,
+          'invalid_grant',
+          'Subject token is invalid or revoked'
+        );
+        expect(mocks.mockCreateAccessToken).not.toHaveBeenCalled();
+      });
+
+      it('holds an externally asserted subject that is an account to its consent', async () => {
+        const env = await createVerificationEnv();
+        mocks.mockFindOAuthClientConsentRevocation.mockResolvedValue({ generation: 2, revokedAt });
+        mocks.mockParseToken.mockReturnValue(
+          userSubjectToken({
+            authrim_subject_issuer: 'https://issuer.example.com',
+            authrim_consent_generation: 1,
+          })
+        );
+
+        await expectOAuthError(
+          request({}, env),
+          400,
+          'invalid_grant',
+          'Subject token is invalid or revoked'
+        );
+        expect(mocks.mockResolveAccountDataContextFromHono).toHaveBeenCalledWith(
+          expect.anything(),
+          'user-1'
+        );
+        expect(mocks.mockCreateAccessToken).not.toHaveBeenCalled();
+      });
+
+      it('holds a user grant to its consent even when its public sub looks like a client', async () => {
+        const env = await createVerificationEnv();
+        mocks.mockFindOAuthClientConsentRevocation.mockResolvedValue({ generation: 2, revokedAt });
+        mocks.mockParseToken.mockReturnValue(
+          userSubjectToken({ sub: 'client:alice', authrim_consent_generation: 1 })
+        );
+
+        await expectOAuthError(
+          request({}, env),
+          400,
+          'invalid_grant',
+          'Subject token is invalid or revoked'
+        );
+        expect(mocks.mockCreateAccessToken).not.toHaveBeenCalled();
+      });
+
+      it('refuses a legacy ID token whose mapped sub only looks like a client', async () => {
+        const env = await createVerificationEnv();
+        // Issued before mapped principal subs were refused: no consent generation, no reference,
+        // no token_use. Its owner cannot be found, so it is refused.
+        mocks.mockResolveAccountDataContextFromHono.mockRejectedValue(
+          new Error('account_data_route_not_found')
+        );
+        mocks.mockParseToken.mockReturnValue({
+          sub: 'client:alice',
+          aud: 'service-client-1',
+          scope: 'openid',
+          iat: Math.floor(Date.now() / 1000) - 10,
+        });
+
+        await expectOAuthError(
+          // Presented under any subject_token_type: what it is comes from its signed claims.
+          request({}, env),
+          400,
+          'invalid_grant',
+          'Subject token is invalid or revoked'
+        );
+        expect(mocks.mockResolveAccountDataContextFromHono).toHaveBeenCalledWith(
+          expect.anything(),
+          'client:alice'
+        );
+        expect(mocks.mockCreateAccessToken).not.toHaveBeenCalled();
+      });
+
+      it('exchanges a client credentials token, recording its principal on the new token', async () => {
+        const env = await createVerificationEnv();
+        mocks.mockParseToken.mockReturnValue({
+          sub: 'client:app-client',
+          aud: 'service-client-1',
+          client_id: 'app-client',
+          scope: 'openid',
+          token_use: 'access',
+          jti: 'cc-jti-1',
+          iat: Math.floor(Date.now() / 1000) - 10,
+        });
+
+        const response = await request({}, env);
+        expect(response.status).toBe(200);
+        expect(mocks.mockResolveAccountDataContextFromHono).not.toHaveBeenCalled();
+        expect(mocks.mockCreateAccessToken).toHaveBeenCalledWith(
+          expect.objectContaining({
+            sub: 'client:app-client',
+            client_id: 'service-client-1',
+            authrim_subject_principal: 'client',
+          }),
+          expect.anything(),
+          expect.any(String),
+          expect.any(Number),
+          'region-jti-1'
+        );
+      });
+
+      it('carries the recorded principal on through another exchange', async () => {
+        const env = await createVerificationEnv();
+        // A token from an earlier exchange: sub of the client, client_id of the exchanger.
+        mocks.mockParseToken.mockReturnValue({
+          sub: 'client:app-client',
+          aud: 'service-client-1',
+          client_id: 'first-exchanger',
+          scope: 'openid',
+          token_use: 'access',
+          jti: 'exchanged-jti-1',
+          authrim_subject_principal: 'client',
+          iat: Math.floor(Date.now() / 1000) - 10,
+        });
+
+        const response = await request({}, env);
+        expect(response.status).toBe(200);
+        expect(mocks.mockResolveAccountDataContextFromHono).not.toHaveBeenCalled();
+        expect(mocks.mockCreateAccessToken).toHaveBeenCalledWith(
+          expect.objectContaining({
+            sub: 'client:app-client',
+            authrim_subject_principal: 'client',
+          }),
+          expect.anything(),
+          expect.any(String),
+          expect.any(Number),
+          'region-jti-1'
+        );
+      });
+
+      it('refuses a legacy ID token mapped to look like a client credentials token', async () => {
+        const env = await createVerificationEnv();
+        mocks.mockResolveAccountDataContextFromHono.mockRejectedValue(
+          new Error('account_data_route_not_found')
+        );
+        // A mapping could once emit sub, client_id and token_use on an ID token, but never jti.
+        mocks.mockParseToken.mockReturnValue({
+          sub: 'client:alice',
+          aud: 'service-client-1',
+          client_id: 'alice',
+          token_use: 'access',
+          scope: 'openid',
+          iat: Math.floor(Date.now() / 1000) - 10,
+        });
+
+        await expectOAuthError(
+          request({}, env),
+          400,
+          'invalid_grant',
+          'Subject token is invalid or revoked'
+        );
+        expect(mocks.mockCreateAccessToken).not.toHaveBeenCalled();
+      });
+
+      it('does not take a recorded principal on an ID token', async () => {
+        const env = await createVerificationEnv();
+        mocks.mockResolveAccountDataContextFromHono.mockRejectedValue(
+          new Error('account_data_route_not_found')
+        );
+        // No token_use: an ID token, whose mapping or custom claims might have added the claim.
+        mocks.mockParseToken.mockReturnValue({
+          sub: 'client:alice',
+          aud: 'service-client-1',
+          scope: 'openid',
+          authrim_subject_principal: 'client',
+          iat: Math.floor(Date.now() / 1000) - 10,
+        });
+
+        await expectOAuthError(
+          request({}, env),
+          400,
+          'invalid_grant',
+          'Subject token is invalid or revoked'
+        );
+        expect(mocks.mockCreateAccessToken).not.toHaveBeenCalled();
+      });
+
+      it('does not take an original_issuer claim for evidence of an external subject', async () => {
+        const env = await createVerificationEnv();
+        // An ID token whose identity mapping emitted original_issuer, for a subject with no
+        // account route: not an external subject, so refused.
+        mocks.mockResolveAccountDataContextFromHono.mockRejectedValue(
+          new Error('account_data_route_not_found')
+        );
+        mocks.mockParseToken.mockReturnValue(
+          userSubjectToken({ sub: 'pairwise-legacy', original_issuer: 'https://idp.example.com' })
+        );
+
+        await expectOAuthError(
+          request({}, env),
+          400,
+          'invalid_grant',
+          'Subject token is invalid or revoked'
+        );
+        expect(mocks.mockCreateAccessToken).not.toHaveBeenCalled();
+      });
+
+      it('finds the account of a pairwise ID token through its sealed subject reference', async () => {
+        const actual =
+          await vi.importActual<typeof import('@authrim/ar-lib-core')>('@authrim/ar-lib-core');
+        const rootKey = 'ab'.repeat(32);
+        const reference = await actual.sealSubjectReference(
+          { OBJECT_ENCRYPTION_ROOT_KEY: rootKey },
+          { tenantId: 'tenant-a', clientId: 'app-client' },
+          'user-1'
+        );
+        const env = { ...(await createVerificationEnv()), OBJECT_ENCRYPTION_ROOT_KEY: rootKey };
+        // Only the account the reference seals has a route; the pairwise sub has none.
+        mocks.mockResolveAccountDataContextFromHono.mockImplementation(
+          async (_c: unknown, accountId: string) => {
+            if (accountId !== 'user-1') throw new Error('account_data_route_not_found');
+            return {};
+          }
+        );
+        mocks.mockFindOAuthClientConsentRevocation.mockResolvedValue({ generation: 2, revokedAt });
+        mocks.mockParseToken.mockReturnValue({
+          sub: 'pairwise-subject-abc',
+          aud: 'service-client-1',
+          azp: 'app-client',
+          scope: 'openid',
+          iat: Math.floor(Date.now() / 1000) - 10,
+          authrim_consent_generation: 2,
+          authrim_subject_ref: reference,
+        });
+
+        const response = await request({}, env);
+        expect(response.status).toBe(200);
+        expect(mocks.mockFindOAuthClientConsentRevocation).toHaveBeenCalledWith(expect.anything(), {
+          tenantId: 'tenant-a',
+          userId: 'user-1',
+          clientId: 'app-client',
+        });
+        expect(mocks.mockCreateAccessToken).toHaveBeenCalledWith(
+          expect.objectContaining({
+            sub: 'pairwise-subject-abc',
+            authrim_consent_generation: 2,
+            authrim_consent_client_id: 'app-client',
+            authrim_subject_ref: reference,
+          }),
+          expect.anything(),
+          expect.any(String),
+          expect.any(Number),
+          'region-jti-1'
+        );
+      });
+
+      it('refuses a subject reference sealed for another client', async () => {
+        const actual =
+          await vi.importActual<typeof import('@authrim/ar-lib-core')>('@authrim/ar-lib-core');
+        const rootKey = 'ab'.repeat(32);
+        const reference = await actual.sealSubjectReference(
+          { OBJECT_ENCRYPTION_ROOT_KEY: rootKey },
+          { tenantId: 'tenant-a', clientId: 'other-client' },
+          'user-1'
+        );
+        const env = { ...(await createVerificationEnv()), OBJECT_ENCRYPTION_ROOT_KEY: rootKey };
+        mocks.mockParseToken.mockReturnValue({
+          sub: 'pairwise-subject-abc',
+          aud: 'service-client-1',
+          azp: 'app-client',
+          scope: 'openid',
+          iat: Math.floor(Date.now() / 1000) - 10,
+          authrim_consent_generation: 0,
+          authrim_subject_ref: reference,
+        });
+
+        await expectOAuthError(
+          request({}, env),
+          400,
+          'invalid_grant',
+          'Subject token is invalid or revoked'
+        );
+      });
     });
   });
 

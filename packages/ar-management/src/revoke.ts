@@ -24,10 +24,10 @@ import {
   // Shared utilities
   parseBasicAuth,
   getKeyByKid,
-  DeviceSecretRepository,
   createPhase1ErrorDetails,
 } from '@authrim/ar-lib-core';
 import { importJWK, decodeProtectedHeader, type CryptoKey } from 'jose';
+import { findRoutedDeviceSecret } from './device-secret-account';
 import { getRequestAwareIssuerUrl } from './request-issuer';
 import {
   evaluateDeviceSecretRevokePolicy,
@@ -210,8 +210,21 @@ export async function revokeHandler(c: Context<{ Bindings: Env }>) {
 
   if (token_type_hint === 'device_secret') {
     const tenantId = getTenantIdFromContext(c);
-    const deviceSecretRepo = new DeviceSecretRepository(authCtx.coreAdapter, tenantId);
-    const deviceSecret = await deviceSecretRepo.findByRawSecret(token, tenantId);
+    // The secret lives in its owner's account database, which its route hint names.
+    let routedDeviceSecret: Awaited<ReturnType<typeof findRoutedDeviceSecret>>;
+    try {
+      // Revoked even while its owner is not active, so a reactivation does not revive it.
+      routedDeviceSecret = await findRoutedDeviceSecret(c.env, tenantId, token, {
+        includeInactiveOwner: true,
+      });
+    } catch (error) {
+      log.error('Failed to read the device secret to revoke', { action: 'revoke' }, error as Error);
+      return c.json(
+        { error: 'temporarily_unavailable', error_description: 'Device secret is unavailable' },
+        503
+      );
+    }
+    const deviceSecret = routedDeviceSecret?.deviceSecret ?? null;
     const nowMs = Date.now();
 
     if (
@@ -250,7 +263,7 @@ export async function revokeHandler(c: Context<{ Bindings: Env }>) {
 
     const revokeReason =
       deviceSecretPolicy.callerClass === 'native_public_client' ? 'logout' : 'token_revocation';
-    await deviceSecretRepo.revoke(deviceSecret.id, revokeReason, tenantId);
+    await routedDeviceSecret!.repository.revoke(deviceSecret.id, revokeReason, tenantId);
 
     log.info('Device secret revoke requested', {
       action: 'revoke',
@@ -623,8 +636,35 @@ export async function batchRevokeHandler(c: Context<{ Bindings: Env }>) {
       try {
         if (item.token_type_hint === 'device_secret') {
           const tenantId = getTenantIdFromContext(c);
-          const deviceSecretRepo = new DeviceSecretRepository(authCtx.coreAdapter, tenantId);
-          await deviceSecretRepo.revokeByRawSecret(item.token, 'batch_token_revocation', tenantId);
+          // Revoked in its owner's account database, which its route hint names.
+          const routed = await findRoutedDeviceSecret(c.env, tenantId, item.token, {
+            includeInactiveOwner: true,
+          });
+          if (routed) {
+            // The caller may revoke only what the single /revoke lets it revoke (its own secrets,
+            // or its trust group's when allowlisted); another client's secret is left as it is.
+            const policy = evaluateDeviceSecretRevokePolicy(clientMetadata, {
+              clientId: routed.deviceSecret.client_id,
+              trustGroupId: routed.deviceSecret.trust_group_id,
+            });
+            if (!policy.allowed) {
+              getLogger(c)
+                .module('REVOKE')
+                .warn('Batch device secret revoke denied by caller policy', {
+                  action: 'batch_revoke',
+                  type: 'device_secret',
+                  clientId: client_id,
+                  callerClass: policy.callerClass,
+                  code: policy.code,
+                });
+              return { token_hint: tokenHint, status: 'invalid' };
+            }
+            await routed.repository.revoke(
+              routed.deviceSecret.id,
+              'batch_token_revocation',
+              tenantId
+            );
+          }
           return { token_hint: tokenHint, status: 'revoked' };
         }
 

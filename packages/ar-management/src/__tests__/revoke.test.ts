@@ -104,6 +104,14 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
 });
 
 // Mock jose
+// Device secrets are found in their owner's account database (here, the mock repository).
+vi.mock('../device-secret-account', () => ({
+  findRoutedDeviceSecret: async (_env: unknown, tenantId: string, secret: string) => {
+    const deviceSecret = await mockDeviceSecretRepository.findByRawSecret(secret, tenantId);
+    return deviceSecret ? { deviceSecret, repository: mockDeviceSecretRepository } : null;
+  },
+}));
+
 vi.mock('jose', () => ({
   importJWK: vi.fn(),
   decodeProtectedHeader: vi.fn(),

@@ -183,6 +183,13 @@ function refresh(app: Hono<{ Bindings: Env }>, kit: SecurityMatrixEnvKit, refres
   });
 }
 
+/** The claims of an issued JWT (access or refresh token). */
+function jwtClaims(token: unknown): Record<string, unknown> {
+  return JSON.parse(
+    Buffer.from(String(token).split('.')[1], 'base64url').toString('utf8')
+  ) as Record<string, unknown>;
+}
+
 function rpcCalls(kit: SecurityMatrixEnvKit, method: string): number {
   return kit.ledger
     .all()
@@ -273,10 +280,42 @@ describe('token grants after a consent withdrawal', () => {
     expect(issued.status, JSON.stringify(issued.body)).toBe(200);
     expect(issued.body.refresh_token).toEqual(expect.any(String));
     expect(rpcCalls(kit, 'createFamilyRpc')).toBe(1);
+    // The access and ID tokens record the generation they were granted under.
+    expect(jwtClaims(issued.body.access_token).authrim_consent_generation).toBe(2);
+    expect(jwtClaims(issued.body.id_token).authrim_consent_generation).toBe(2);
 
     installFrozenNow(T0 + 1_000);
     const refreshed = await refresh(app, kit, String(issued.body.refresh_token));
     expect(refreshed.status, JSON.stringify(refreshed.body)).toBe(200);
+    expect(jwtClaims(refreshed.body.access_token).authrim_consent_generation).toBe(2);
+    if (refreshed.body.id_token) {
+      expect(jwtClaims(refreshed.body.id_token).authrim_consent_generation).toBe(2);
+    }
+  });
+
+  it('records the family generation in a refreshed access token minted while consent is withdrawn', async () => {
+    withdrawals.set(CLIENT, { generation: 2, revokedAt: T0 - 1_000 });
+    await storeCode(kit, codeValue('refresh-race'), 2);
+    const issued = await exchangeCode(app, kit, codeValue('refresh-race'));
+    expect(issued.status, JSON.stringify(issued.body)).toBe(200);
+
+    // The refresh reads generation 2 and passes; the withdrawal completes before the access token
+    // is minted. The token still records generation 2, which the withdrawal has moved past, so
+    // introspection answers it inactive (and the family is refused at its next use).
+    installFrozenNow(T0 + 1_000);
+    withdrawals.afterReads(CLIENT, 1, { generation: 3, revokedAt: T0 + 1_000 });
+    const refreshed = await refresh(app, kit, String(issued.body.refresh_token));
+    expect(refreshed.status, JSON.stringify(refreshed.body)).toBe(200);
+    expect(jwtClaims(refreshed.body.access_token).authrim_consent_generation).toBe(2);
+
+    installFrozenNow(T0 + 2_000);
+    const again = await refresh(
+      app,
+      kit,
+      String(refreshed.body.refresh_token ?? issued.body.refresh_token)
+    );
+    expect(again.status).toBe(400);
+    expect(again.body.error).toBe('invalid_grant');
   });
 
   it('revokes exactly the family created while the consent was withdrawn, and refuses the grant', async () => {
@@ -527,6 +566,9 @@ describe('device and CIBA grants after a consent withdrawal', () => {
     const result = await runDeviceTokenOp(kit, ledger, deviceSuccess);
 
     expect(result.status, result.bodyText).toBe(200);
+    const body = JSON.parse(result.bodyText) as { access_token: string; id_token: string };
+    expect(jwtClaims(body.access_token).authrim_consent_generation).toBe(1);
+    expect(jwtClaims(body.id_token).authrim_consent_generation).toBe(1);
   });
 
   it('keeps a device code for the next poll when the withdrawals cannot be read', async () => {
@@ -589,6 +631,9 @@ describe('device and CIBA grants after a consent withdrawal', () => {
     const result = await runCibaTokenOp(kit, ledger, cibaSuccess);
 
     expect(result.status, result.bodyText).toBe(200);
+    const body = JSON.parse(result.bodyText) as { access_token: string; id_token: string };
+    expect(jwtClaims(body.access_token).authrim_consent_generation).toBe(1);
+    expect(jwtClaims(body.id_token).authrim_consent_generation).toBe(1);
   });
 
   it('refuses a reserved CIBA request without a retry when its new family cannot be confirmed', async () => {
