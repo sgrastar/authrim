@@ -6,7 +6,11 @@ import {
 } from './migration-history-contract.js';
 import type { CloudflareD1QueryResult } from './cloudflare-control-api-client.js';
 import { splitMigrationSql } from './migration-sql.js';
-import { MigrationReleaseArtifactReader, type MigrationReleasePin } from './release-artifact.js';
+import {
+  isFreshInstallBaselinePath,
+  MigrationReleaseArtifactReader,
+  type MigrationReleasePin,
+} from './release-artifact.js';
 
 export interface MigrationD1Query {
   sql: string;
@@ -183,6 +187,48 @@ function upsertSentinelQuery(input: {
   };
 }
 
+/**
+ * A same-version draft append only extends a database that already runs the draft. Every recorded
+ * row must be one of the draft's files with the draft's checksum, the rows must form an unbroken
+ * prefix of the draft's order, and that prefix must reach the first file this release executes
+ * (so the fresh-install baseline can never be applied to an existing database).
+ */
+function assertDraftAppendHistoryPrefix(
+  base: ReadonlyArray<{ path: string; checksum: string }>,
+  executable: ReadonlyArray<{ path: string }>,
+  history: ReadonlyMap<string, { checksum: string }>
+): void {
+  const indexByPath = new Map(base.map((file, index) => [file.path, index]));
+  for (const [filename, applied] of history) {
+    const index = indexByPath.get(filename);
+    if (index === undefined) throw new Error('migration_history_unexpected_file');
+    if (base[index]!.checksum !== applied.checksum) {
+      throw new Error('migration_history_checksum_mismatch');
+    }
+  }
+  // An empty history is a database that never ran the draft, not one that can be extended.
+  if (history.size === 0) throw new Error('migration_history_prefix_missing');
+  // Judged by name, not by count: every baseline of the stream must be recorded (its checksum was
+  // verified above), and none may be among the files this release would execute.
+  if (executable.some((file) => isFreshInstallBaselinePath(file.path))) {
+    throw new Error('migration_release_draft_append_baseline_forbidden');
+  }
+  if (base.some((file) => isFreshInstallBaselinePath(file.path) && !history.has(file.path))) {
+    throw new Error('migration_history_prefix_missing');
+  }
+  let prefixLength = 0;
+  while (prefixLength < base.length && history.has(base[prefixLength]!.path)) prefixLength += 1;
+  for (const filename of history.keys()) {
+    if (indexByPath.get(filename)! >= prefixLength) throw new Error('migration_history_prefix_gap');
+  }
+  const firstExecutable = Math.min(
+    ...executable.map((file) => indexByPath.get(file.path) ?? Number.POSITIVE_INFINITY)
+  );
+  if (!Number.isFinite(firstExecutable) || prefixLength < firstExecutable) {
+    throw new Error('migration_history_prefix_missing');
+  }
+}
+
 export class ApiMigrationEngine {
   constructor(
     private readonly artifactReader: MigrationReleaseArtifactReader,
@@ -219,6 +265,10 @@ export class ApiMigrationEngine {
       if (expected.checksum !== applied.checksum) {
         throw new Error('migration_history_checksum_mismatch');
       }
+    }
+
+    if (release.draftAppendBase) {
+      assertDraftAppendHistoryPrefix(release.draftAppendBase, release.files, history);
     }
 
     const adoptFromSupersededHistory = new Set<string>();

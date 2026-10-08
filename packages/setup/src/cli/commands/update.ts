@@ -115,6 +115,12 @@ import {
   type ReleaseMigrationManifest,
 } from '../../core/release-migrations.js';
 import {
+  assertControlSnapshotMatchesLock,
+  recordControlMigratedEvidence,
+  verifyDraftAppendDatabaseEvidence,
+} from '../../core/release-draft-append-evidence.js';
+import { resolveSameVersionDraftAppend } from '../../core/release-draft-append.js';
+import {
   applyReleaseSchemaUpdatePlan,
   buildReleaseSchemaUpdatePlan,
   getControlManagedReleaseStreamIds,
@@ -397,6 +403,7 @@ async function awaitControlManagedReleaseRollout(input: {
       controlManifestDigest: input.artifact.manifestDigest,
       controlCompletedTargets: created.completedTargets,
       controlTotalTargets: created.totalTargets,
+      controlManagedStreamIds: input.managedStreamIds,
     });
     await saveLockFile(workingLock, input.lockPath);
     const ready = await waitForReleaseRolloutAwaitingSetup({
@@ -1220,22 +1227,88 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
       currentManifest = readReleaseMigrationManifest(currentManifestPath);
     }
   }
+  let sameVersionDraftAppend: ReturnType<typeof resolveSameVersionDraftAppend>;
+  try {
+    sameVersionDraftAppend = resolveSameVersionDraftAppend({
+      migrationsRoot,
+      manifest: targetManifestResult.manifest,
+      manifestChecksum,
+      manifestIsDraft: targetManifestResult.draft,
+      lock: workingLock,
+      targets: physicalTargets,
+      // A dry run may ask the remote questions but must not fetch from it.
+      allowFetch: options.dryRun !== true,
+    });
+  } catch (error) {
+    spinner.fail('The development draft cannot be appended to the installed release');
+    console.error(chalk.red(error instanceof Error ? error.message : String(error)));
+    process.exit(1);
+  }
+  if (sameVersionDraftAppend) {
+    console.log(
+      chalk.yellow(
+        `  Appending ${sameVersionDraftAppend.appendedFileCount} unapplied migration(s) of the draft ` +
+          `to the installed ${productVersion} release (recorded files verified as an exact prefix).`
+      )
+    );
+  }
+  if (sameVersionDraftAppend) {
+    // The lock is only evidence about the databases; read each one back before anything changes.
+    // This runs even when nothing is left to append (a resume after the databases finished), since
+    // a database restored in between must not be accepted on the strength of the lock alone.
+    try {
+      await verifyDraftAppendDatabaseEvidence({
+        append: sameVersionDraftAppend,
+        targets: physicalTargets,
+        onProgress: (message) => {
+          spinner.text = message;
+        },
+      });
+    } catch (error) {
+      spinner.fail('The recorded migration history does not match the lock');
+      console.error(chalk.red(error instanceof Error ? error.message : String(error)));
+      process.exit(1);
+    }
+  }
+  if (sameVersionDraftAppend) {
+    // A release candidate file of the same version describes the draft, not what the databases
+    // already hold; the per-target lock evidence is the only record of what is applied.
+    currentManifest = undefined;
+  }
+  const availableReleaseManifests = listReleaseMigrationManifests(migrationsRoot).map(
+    (release) => release.manifest
+  );
   const migrationExecutionManifest = resolveReleaseMigrationExecutionManifest({
     targetManifest: targetManifestResult.manifest,
     installedProductVersion: workingLock.productVersion,
-    availableManifests: listReleaseMigrationManifests(migrationsRoot).map(
-      (release) => release.manifest
-    ),
+    availableManifests: availableReleaseManifests,
+    sameVersionDraftAppend,
   });
-  const migrationArtifactManifest = workingLock.productVersion
-    ? buildReleaseMigrationArtifactManifest({
-        targetManifest: targetManifestResult.manifest,
-        installedProductVersion: workingLock.productVersion,
-        availableManifests: listReleaseMigrationManifests(migrationsRoot).map(
-          (release) => release.manifest
-        ),
-      })
-    : targetManifestResult.manifest;
+  // A retry of an unfinished same-version append keeps the streams it first handed to Control, so
+  // the artifact (and therefore the Control operation) is rebuilt identically.
+  const priorRelease = workingLock.releaseUpdate;
+  const priorControlManagedStreamIds =
+    sameVersionDraftAppend &&
+    priorRelease?.targetVersion === productVersion &&
+    priorRelease.manifestChecksum === manifestChecksum &&
+    priorRelease.phase !== 'verified'
+      ? (priorRelease.controlManagedStreamIds ?? [])
+      : [];
+  // The Control artifact is only needed when the plan carries migrations or an unfinished handoff
+  // must be resumed. Building it for a no-op same-version update would need a self-referential
+  // upgrade path.
+  const needsMigrationArtifact =
+    migrationExecutionManifest.streams.some((stream) => stream.files.length > 0) ||
+    priorControlManagedStreamIds.length > 0;
+  const migrationArtifactManifest =
+    workingLock.productVersion && needsMigrationArtifact
+      ? buildReleaseMigrationArtifactManifest({
+          targetManifest: targetManifestResult.manifest,
+          installedProductVersion: workingLock.productVersion,
+          availableManifests: availableReleaseManifests,
+          sameVersionDraftAppend,
+        })
+      : targetManifestResult.manifest;
   const targetManifestCache = new Map<string, ReturnType<typeof readReleaseMigrationManifest>>();
   const currentManifestForTarget = (
     target: (typeof physicalTargets)[number]
@@ -1330,10 +1403,13 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
       )
     );
   }
-  const controlManagedStreamIds = getControlManagedReleaseStreamIds({
-    targetManifest: migrationExecutionManifest,
-    currentManifest,
-  });
+  const controlManagedStreamIds =
+    priorControlManagedStreamIds.length > 0
+      ? [...priorControlManagedStreamIds]
+      : getControlManagedReleaseStreamIds({
+          targetManifest: migrationExecutionManifest,
+          currentManifest,
+        });
   const componentsWithCoordinator = includeRequiredReleaseControlCoordinator(
     componentsToUpdate,
     controlManagedStreamIds,
@@ -1410,6 +1486,24 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
       )
     );
     process.exit(1);
+  }
+
+  if (sameVersionDraftAppend && controlManagedStreamIds.length > 0) {
+    // Control applies SQL to every database it snapshots; compare its set with the lock's first.
+    const controlDatabaseId = workingLock.d1.CONTROL_DB?.id;
+    try {
+      if (!controlDatabaseId) throw new Error('control_database_required_for_release_rollout');
+      await assertControlSnapshotMatchesLock({
+        controlDatabaseId,
+        environmentId: env,
+        targets: physicalTargets,
+        managedStreamIds: controlManagedStreamIds,
+      });
+    } catch (error) {
+      spinner.fail('Control would migrate a different set of databases than the lock records');
+      console.error(chalk.red(error instanceof Error ? error.message : String(error)));
+      process.exit(1);
+    }
   }
 
   // Confirm update
@@ -1530,6 +1624,16 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
       requiredR2BucketNames,
     });
 
+    if (sameVersionDraftAppend && controlManagedStreamIds.length > 0) {
+      // Re-check under the locks, immediately before anything is persisted or handed off.
+      await assertControlSnapshotMatchesLock({
+        controlDatabaseId: workingLock.d1.CONTROL_DB!.id,
+        environmentId: env,
+        targets: physicalTargets,
+        managedStreamIds: controlManagedStreamIds,
+      });
+    }
+
     workingLock = withReleaseUpdateState(workingLock, {
       targetVersion: productVersion,
       phase: 'planned',
@@ -1559,6 +1663,7 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
         migrationsRoot,
         concurrency: 2,
         backfillLegacyChecksums: !targetManifestResult.draft,
+        requiredAppliedFilesByTarget: sameVersionDraftAppend?.recordedFilesByTarget,
         onProgress: (message) => {
           migrationSpinner.text = message;
         },
@@ -1572,6 +1677,39 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
         throw new Error('release_setup_schema_update_failed');
       }
       migrationSpinner.succeed(label.replace(/\.\.\.$/u, ' complete'));
+    };
+    // Control applies the tenant-scoped databases of its managed streams. Their lock evidence is
+    // what a later same-version draft append is checked against, so it is recorded only from
+    // Control's own rollout record. A same-version append stops on any mismatch; a normal upgrade
+    // keeps its earlier behaviour (a warning, old evidence left in place) so a finished migration
+    // is not turned into a failure.
+    const recordControlManagedSchemaTargets = async (): Promise<void> => {
+      if (controlManagedStreamIds.length === 0) return;
+      const operationId = workingLock.releaseUpdate?.controlOperationId;
+      const controlDatabaseId = workingLock.d1.CONTROL_DB?.id;
+      if (!operationId || !controlDatabaseId) {
+        if (sameVersionDraftAppend)
+          throw new Error('control_rollout_operation_required_for_evidence');
+        return;
+      }
+      const recorded = await recordControlMigratedEvidence({
+        lock: workingLock,
+        controlDatabaseId,
+        environmentId: env,
+        operationId,
+        targets: physicalTargets,
+        managedStreamIds: controlManagedStreamIds,
+        productVersion,
+        manifestChecksum,
+        manifest: migrationExecutionManifest,
+        strict: sameVersionDraftAppend !== undefined,
+      });
+      for (const warning of recorded.warnings) {
+        console.log(chalk.yellow(`  Control migration evidence was not recorded: ${warning}`));
+      }
+      if (recorded.recordedTargetIds.length === 0) return;
+      workingLock = recorded.lock;
+      await saveLockFile(workingLock, lockPath);
     };
     const baseAppliedTargetIds = [
       ...new Set([
@@ -1613,7 +1751,7 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
 
     const controlDatabase = workingLock.d1.CONTROL_DB;
     let migrationReleaseArtifact: MigrationReleaseArtifactPlan | undefined;
-    if (hasReleaseSchemaDelta) {
+    if (hasReleaseSchemaDelta || priorControlManagedStreamIds.length > 0) {
       const migrationReleaseBucket = workingLock.r2?.MIGRATION_RELEASES;
       if (!controlDatabase) throw new Error('control_database_required_for_release_publication');
       if (!migrationReleaseBucket) {
@@ -1675,6 +1813,7 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
         controlManifestDigest: migrationReleaseArtifact.manifestDigest,
         controlCompletedTargets: handoff.completedTargets,
         controlTotalTargets: handoff.totalTargets,
+        controlManagedStreamIds,
       });
       await saveLockFile(workingLock, lockPath);
     }
@@ -1746,6 +1885,7 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
           );
           return;
         }
+        await recordControlManagedSchemaTargets();
       }
       const retainedWorkerVersion = options.databaseOnly
         ? workingLock.productVersion
@@ -2131,6 +2271,7 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
       });
       workingLock = observation.lock;
       controlRolloutReady = observation.ready;
+      if (observation.ready) await recordControlManagedSchemaTargets();
       return observation.ready;
     };
     let summary: DeploymentSummary;

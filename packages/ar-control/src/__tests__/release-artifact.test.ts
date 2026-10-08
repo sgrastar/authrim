@@ -348,6 +348,121 @@ describe('MigrationReleaseArtifactReader', () => {
     ).rejects.toThrow('migration_release_id_mismatch');
   });
 
+  describe('same-version draft append', () => {
+    const baselineSql = 'CREATE TABLE account (id TEXT PRIMARY KEY);';
+    const appendedSql = 'ALTER TABLE account ADD COLUMN revoked_at INTEGER;';
+    const coreStream = (files: Array<{ path: string; checksum: string }>) => ({
+      id: 'core-d1',
+      schemaFamily: 'core',
+      dialect: 'sqlite',
+      targetKind: 'cloudflare-d1',
+      logicalRoles: ['core', 'tenant_core'],
+      files,
+    });
+    const baseline = { path: '001_0_4_0_core_baseline.sql', checksum: digest(baselineSql) };
+    const appended = { path: '002_consent_revocations.sql', checksum: digest(appendedSql) };
+
+    function appendFixture(kind: string, fromProductVersion = '0.4.2', bareReleaseId = false) {
+      const encoded = `${JSON.stringify({
+        formatVersion: 2,
+        productVersion: '0.4.2',
+        streams: [coreStream([baseline, appended])],
+        upgradePaths: [{ fromProductVersion, kind, streams: [coreStream([appended])] }],
+        acceptedMigrationHistory: [coreStream([baseline, appended])],
+      })}\n`;
+      const manifestDigest = digest(encoded);
+      const releaseId = bareReleaseId ? '0.4.2' : `0.4.2-draft.${manifestDigest.slice(0, 12)}`;
+      const base = `releases/${releaseId}/${manifestDigest}/`;
+      const pin: MigrationReleasePin = {
+        environmentId: 'env-test',
+        streamId: 'core-d1',
+        releaseId,
+        manifestDigest,
+        manifestObjectKey: `${base}manifest.json`,
+        sourceProductVersion: '0.4.2',
+      };
+      const store = new MemoryArtifactStore(
+        new Map([
+          [pin.manifestObjectKey, encoded],
+          [`${base}streams/core-d1/${appended.path}`, appendedSql],
+          [`${base}streams/core-d1/${baseline.path}`, baselineSql],
+        ])
+      );
+      return { pin, store, base };
+    }
+
+    it('selects only the appended tail and never reads the fresh-install baseline', async () => {
+      const { pin, store, base } = appendFixture('draft_append');
+      const loaded = await new MigrationReleaseArtifactReader(store).load(pin);
+      expect(loaded.files.map((file) => file.path)).toEqual([appended.path]);
+      expect(loaded.draftAppendBase?.map((file) => file.path)).toEqual([
+        baseline.path,
+        appended.path,
+      ]);
+      expect(loaded.knownHistory.map((file) => file.path)).toEqual([baseline.path, appended.path]);
+      expect(store.reads).not.toContain(`${base}streams/${'core-d1'}/${baseline.path}`);
+    });
+
+    it('rejects a draft append that is not published under a draft release identity', async () => {
+      // The same bytes under the bare product version would look like a release.
+      const { pin, store } = appendFixture('draft_append', '0.4.2', true);
+      await expect(new MigrationReleaseArtifactReader(store).load(pin)).rejects.toThrow(
+        'migration_release_draft_append_requires_draft_release'
+      );
+    });
+
+    it('rejects a draft append that carries the fresh-install baseline', async () => {
+      const baselineAsTail = `${JSON.stringify({
+        formatVersion: 2,
+        productVersion: '0.4.2',
+        streams: [coreStream([baseline, appended])],
+        upgradePaths: [
+          {
+            fromProductVersion: '0.4.2',
+            kind: 'draft_append',
+            streams: [coreStream([baseline, appended])],
+          },
+        ],
+        acceptedMigrationHistory: [coreStream([baseline, appended])],
+      })}\n`;
+      const manifestDigest = digest(baselineAsTail);
+      const releaseId = `0.4.2-draft.${manifestDigest.slice(0, 12)}`;
+      const base = `releases/${releaseId}/${manifestDigest}/`;
+      const pin: MigrationReleasePin = {
+        environmentId: 'env-test',
+        streamId: 'core-d1',
+        releaseId,
+        manifestDigest,
+        manifestObjectKey: `${base}manifest.json`,
+        sourceProductVersion: '0.4.2',
+      };
+      const store = new MemoryArtifactStore(
+        new Map([
+          [pin.manifestObjectKey, baselineAsTail],
+          [`${base}streams/core-d1/${baseline.path}`, baselineSql],
+          [`${base}streams/core-d1/${appended.path}`, appendedSql],
+        ])
+      );
+      await expect(new MigrationReleaseArtifactReader(store).load(pin)).rejects.toThrow(
+        'migration_release_draft_append_baseline_forbidden'
+      );
+    });
+
+    it('rejects a same-version path that is not marked as a draft append', async () => {
+      const { pin, store } = appendFixture('delta');
+      await expect(new MigrationReleaseArtifactReader(store).load(pin)).rejects.toThrow(
+        'migration_release_upgrade_path_invalid'
+      );
+    });
+
+    it('rejects a draft append that starts below the manifest version', async () => {
+      const { pin, store } = appendFixture('draft_append', '0.4.1');
+      await expect(
+        new MigrationReleaseArtifactReader(store).load({ ...pin, sourceProductVersion: '0.4.1' })
+      ).rejects.toThrow('migration_release_upgrade_path_invalid');
+    });
+  });
+
   it('allows unrelated external-database streams but rejects selecting them for D1', async () => {
     const sql = 'CREATE TABLE account (id TEXT PRIMARY KEY);';
     const manifest = JSON.stringify({

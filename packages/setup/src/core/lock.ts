@@ -139,6 +139,8 @@ const ReleaseUpdateStateSchema = z.object({
     .optional(),
   controlCompletedTargets: z.number().int().nonnegative().optional(),
   controlTotalTargets: z.number().int().nonnegative().optional(),
+  /** Streams handed to Control; a retry keeps them so the artifact and operation stay the same. */
+  controlManagedStreamIds: z.array(z.string()).optional(),
   initialWorkerRedeployRequired: z.boolean().optional(),
 });
 

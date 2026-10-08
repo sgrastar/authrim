@@ -31,6 +31,7 @@ import {
   queryD1Rows,
   runD1Migrations,
   shouldRefreshD1OAuthCredential,
+  verifyD1AppliedMigrationFiles,
 } from '../core/cloudflare.js';
 import {
   DRAFT_RELEASE_MANIFEST_FILENAME,
@@ -579,6 +580,218 @@ describe('D1 migration history safety', () => {
     expect(executedSql).toContain(fixture.filename);
     expect(executedSql).toContain("CAST(strftime('%s', 'now') AS INTEGER) * 1000");
     expect(executedSql).not.toMatch(/applied_at[^\n]*\b\d{13}\b/u);
+  });
+
+  describe('same-version draft append tail', () => {
+    function createAppendFixture() {
+      const directory = mkdtempSync(join(tmpdir(), 'authrim-draft-append-'));
+      tempDirs.push(directory);
+      const baselinePath = join(directory, '001_0_4_0_core_baseline.sql');
+      const appendedPath = join(directory, '018_oauth_client_consent_revocations.sql');
+      writeFileSync(baselinePath, 'CREATE TABLE existing_schema (id TEXT PRIMARY KEY);');
+      writeFileSync(appendedPath, 'CREATE TABLE oauth_client_consent_revocations (id TEXT);');
+      return {
+        directory,
+        baseline: {
+          filename: '001_0_4_0_core_baseline.sql',
+          checksum: calculateD1MigrationChecksum(baselinePath),
+        },
+        appended: {
+          filename: '018_oauth_client_consent_revocations.sql',
+          checksum: calculateD1MigrationChecksum(appendedPath),
+        },
+      };
+    }
+
+    function mockHistory(
+      rows: Array<{ filename: string; checksum: string }>,
+      executed: string[] = []
+    ) {
+      execaMock.mockImplementation(async (_command: string, args: string[]) => {
+        if (args.join(' ').includes('SELECT filename, checksum, applied_at, execution_time_ms')) {
+          return {
+            exitCode: 0,
+            stdout: JSON.stringify([
+              {
+                results: rows.map((row) => ({ ...row, applied_at: 1, execution_time_ms: 1 })),
+              },
+            ]),
+            stderr: '',
+          };
+        }
+        const fileIndex = args.indexOf('--file');
+        if (fileIndex >= 0) {
+          const sql = readFileSync(args[fileIndex + 1], 'utf-8');
+          executed.push(sql);
+        }
+        return { exitCode: 0, stdout: '', stderr: '' };
+      });
+    }
+
+    it('applies only the unrecorded tail to a database that already holds the baseline', async () => {
+      const fixture = createAppendFixture();
+      const executed: string[] = [];
+      const rows = [fixture.baseline];
+      mockHistory(rows, executed);
+      const options = {
+        manifestFiles: [{ path: fixture.appended.filename, checksum: fixture.appended.checksum }],
+        releaseVersion: '0.4.2',
+      };
+
+      await expect(
+        runD1Migrations('test-db', fixture.directory, undefined, options)
+      ).resolves.toEqual({
+        success: true,
+        appliedCount: 1,
+        skippedCount: 0,
+      });
+      expect(executed).toHaveLength(1);
+      expect(executed[0]).toContain('oauth_client_consent_revocations');
+      expect(executed[0]).not.toContain('CREATE TABLE existing_schema');
+
+      expect(executed[0]).toContain('INSERT INTO authrim_migrations');
+      expect(executed[0]).toContain(fixture.appended.filename);
+
+      // A rerun after the commit is recorded does not execute the migration again.
+      rows.push(fixture.appended);
+      executed.length = 0;
+      await expect(
+        runD1Migrations('test-db', fixture.directory, undefined, options)
+      ).resolves.toEqual({
+        success: true,
+        appliedCount: 0,
+        skippedCount: 1,
+      });
+      expect(executed).toHaveLength(0);
+    });
+
+    describe('recorded prefix evidence', () => {
+      function threeFileFixture() {
+        const fixture = createAppendFixture();
+        const middlePath = join(fixture.directory, '002_middle.sql');
+        writeFileSync(middlePath, 'CREATE TABLE middle_table (id TEXT);');
+        const middle = {
+          filename: '002_middle.sql',
+          checksum: calculateD1MigrationChecksum(middlePath),
+        };
+        const asFile = (row: { filename: string; checksum: string }) => ({
+          path: row.filename,
+          checksum: row.checksum,
+        });
+        return {
+          ...fixture,
+          middle,
+          required: [asFile(fixture.baseline), asFile(middle)],
+          tail: [asFile(fixture.appended)],
+        };
+      }
+
+      it('applies the tail when every recorded prefix file is present and identical', async () => {
+        const fixture = threeFileFixture();
+        const executed: string[] = [];
+        mockHistory([fixture.baseline, fixture.middle], executed);
+        await expect(
+          runD1Migrations('test-db', fixture.directory, undefined, {
+            manifestFiles: fixture.tail,
+            requiredAppliedFiles: fixture.required,
+            releaseVersion: '0.4.2',
+          })
+        ).resolves.toEqual({ success: true, appliedCount: 1, skippedCount: 0 });
+        expect(executed).toHaveLength(1);
+        expect(executed[0]).toContain('oauth_client_consent_revocations');
+      });
+
+      it('stops before executing when a prefix file differs from the database', async () => {
+        const fixture = threeFileFixture();
+        const executed: string[] = [];
+        mockHistory([{ ...fixture.baseline, checksum: 'c'.repeat(64) }, fixture.middle], executed);
+        await expect(
+          runD1Migrations('test-db', fixture.directory, undefined, {
+            manifestFiles: fixture.tail,
+            requiredAppliedFiles: fixture.required,
+            releaseVersion: '0.4.2',
+          })
+        ).resolves.toMatchObject({
+          success: false,
+          error: expect.stringContaining('does not match the recorded evidence'),
+        });
+        expect(executed).toHaveLength(0);
+      });
+
+      it('stops before executing when a recorded prefix file is missing', async () => {
+        const fixture = threeFileFixture();
+        const executed: string[] = [];
+        mockHistory([fixture.baseline], executed);
+        await expect(
+          runD1Migrations('test-db', fixture.directory, undefined, {
+            manifestFiles: fixture.tail,
+            requiredAppliedFiles: fixture.required,
+            releaseVersion: '0.4.2',
+          })
+        ).resolves.toMatchObject({
+          success: false,
+          error: expect.stringContaining('002_middle.sql'),
+        });
+        expect(executed).toHaveLength(0);
+      });
+
+      it('reads history with SELECT only and never repairs a missing tracking table', async () => {
+        const fixture = threeFileFixture();
+        const commands: string[] = [];
+        execaMock.mockImplementation(async (_command: string, args: string[]) => {
+          const command = args.join(' ');
+          commands.push(command);
+          if (command.includes('SELECT filename, checksum')) {
+            return {
+              exitCode: 1,
+              stdout: '',
+              stderr: 'D1_ERROR: no such table: authrim_migrations',
+            };
+          }
+          return { exitCode: 0, stdout: '', stderr: '' };
+        });
+        await expect(
+          verifyD1AppliedMigrationFiles('test-db', fixture.required)
+        ).resolves.toMatchObject({ success: false });
+        expect(commands.some((command) => /CREATE TABLE|ALTER TABLE|--file/u.test(command))).toBe(
+          false
+        );
+      });
+
+      it('verifies a database that needs no change without executing anything', async () => {
+        const fixture = threeFileFixture();
+        const executed: string[] = [];
+        mockHistory([fixture.baseline, fixture.middle], executed);
+        await expect(verifyD1AppliedMigrationFiles('test-db', fixture.required)).resolves.toEqual({
+          success: true,
+        });
+        mockHistory([fixture.baseline, { ...fixture.middle, checksum: 'd'.repeat(64) }], executed);
+        await expect(
+          verifyD1AppliedMigrationFiles('test-db', fixture.required)
+        ).resolves.toMatchObject({ success: false });
+        expect(executed).toHaveLength(0);
+      });
+    });
+
+    it('refuses a database whose recorded tail differs from the draft', async () => {
+      const fixture = createAppendFixture();
+      const executed: string[] = [];
+      mockHistory(
+        [fixture.baseline, { filename: fixture.appended.filename, checksum: 'e'.repeat(64) }],
+        executed
+      );
+
+      await expect(
+        runD1Migrations('test-db', fixture.directory, undefined, {
+          manifestFiles: [{ path: fixture.appended.filename, checksum: fixture.appended.checksum }],
+          releaseVersion: '0.4.2',
+        })
+      ).resolves.toMatchObject({
+        success: false,
+        error: expect.stringContaining('Applied migration file checksum mismatch'),
+      });
+      expect(executed).toHaveLength(0);
+    });
   });
 
   it('backfills legacy blank checksums only when a published manifest authorizes it', async () => {

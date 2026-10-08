@@ -167,6 +167,7 @@ export function withReleaseUpdateState(
     controlManifestDigest?: string;
     controlCompletedTargets?: number;
     controlTotalTargets?: number;
+    controlManagedStreamIds?: readonly string[];
     initialWorkerRedeployRequired?: boolean;
   }
 ): AuthrimLock {
@@ -183,6 +184,8 @@ export function withReleaseUpdateState(
   const controlCompletedTargets =
     input.controlCompletedTargets ?? existing?.controlCompletedTargets;
   const controlTotalTargets = input.controlTotalTargets ?? existing?.controlTotalTargets;
+  const controlManagedStreamIds =
+    input.controlManagedStreamIds ?? existing?.controlManagedStreamIds;
   return {
     ...lock,
     ...(input.phase === 'verified' ? { productVersion: input.targetVersion } : {}),
@@ -201,6 +204,7 @@ export function withReleaseUpdateState(
       ...(controlManifestDigest ? { controlManifestDigest } : {}),
       ...(controlCompletedTargets !== undefined ? { controlCompletedTargets } : {}),
       ...(controlTotalTargets !== undefined ? { controlTotalTargets } : {}),
+      ...(controlManagedStreamIds ? { controlManagedStreamIds: [...controlManagedStreamIds] } : {}),
       ...(initialWorkerRedeployRequired ? { initialWorkerRedeployRequired: true } : {}),
     },
     updatedAt: now,
