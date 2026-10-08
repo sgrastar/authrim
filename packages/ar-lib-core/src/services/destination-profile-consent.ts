@@ -1,5 +1,6 @@
 import type { DatabaseAdapter } from '../db/adapter';
 import { STANDARD_CLAIMS } from '../constants';
+import { OIDC_STANDARD_CLAIM_SCOPE } from '../utils/oidc-claims';
 import {
   assertRuntimeIdentityMappingReleaseSafety,
   type RuntimeIdentityMappingBinding,
@@ -143,6 +144,46 @@ export function isProtectedIdentityMappingDestinationClaim(
   return OIDC_PROTOCOL_ENVELOPE_CLAIMS.has(path);
 }
 
+/**
+ * The scopes of which an OIDC Destination Profile field needs one to be released.
+ *
+ * The field's own `requiredScopes` when it lists any. When it lists none, a standard claim needs
+ * the scope that releases it under OIDC Core 5.4 (email, email_verified: `email`; name and the
+ * other profile claims: `profile`; phone_number and its verified flag: `phone`; address:
+ * `address`), so an identity mapping that fills such a field (it reads the user's attributes, not
+ * only the claims the scopes released) cannot release it to a request that did not ask for it.
+ * `sub`, the protocol claims and custom claims name no such scope: with none listed they are
+ * released whatever the scopes.
+ *
+ * To release a standard claim whatever the scopes, list `openid` as its scope: every OIDC request
+ * carries it, so the field is always released. An empty list is not that choice.
+ */
+export function resolveOidcFieldRequiredScopes(
+  field: Pick<DestinationProfileConsentField, 'key' | 'requiredScopes'>
+): string[] {
+  if (field.requiredScopes.length > 0) return field.requiredScopes;
+  if (field.key === 'sub' || OIDC_PROTOCOL_ENVELOPE_CLAIMS.has(field.key)) return [];
+  const implied = Object.prototype.hasOwnProperty.call(OIDC_STANDARD_CLAIM_SCOPE, field.key)
+    ? OIDC_STANDARD_CLAIM_SCOPE[field.key]
+    : undefined;
+  return implied ? [implied] : [];
+}
+
+/**
+ * Whether an OIDC Destination Profile field is in play for a request with these scopes: the one
+ * judgement both the release filter and the consent step make, so the fields a user is asked
+ * about (and must agree to) are the fields that can be released. `sub` always is; with no scopes
+ * to judge by (null) every field is; otherwise the field's resolved required scopes decide.
+ */
+export function isOidcFieldApplicableToScopes(
+  field: Pick<DestinationProfileConsentField, 'key' | 'requiredScopes'>,
+  grantedScopes: ReadonlySet<string> | null
+): boolean {
+  if (field.key === 'sub' || grantedScopes === null) return true;
+  const requiredScopes = resolveOidcFieldRequiredScopes(field);
+  return requiredScopes.length === 0 || requiredScopes.some((scope) => grantedScopes.has(scope));
+}
+
 export function filterOidcClaimsWithoutDestinationProfile(
   claims: Record<string, unknown>
 ): Record<string, unknown> {
@@ -252,11 +293,7 @@ export async function filterOidcClaimsByDestinationConsent(input: {
     if (input.surface && field.surfaces.length > 0 && !field.surfaces.includes(input.surface)) {
       return false;
     }
-    return (
-      grantedScopes === null ||
-      field.requiredScopes.length === 0 ||
-      field.requiredScopes.some((scope) => grantedScopes.has(scope))
-    );
+    return isOidcFieldApplicableToScopes(field, grantedScopes);
   });
   const profileFields = new Map(applicableFields.map((field) => [field.key, field]));
   const filtered = Object.fromEntries(

@@ -3,6 +3,7 @@ import type { Env, DatabaseAdapter, PreparedStatement } from '@authrim/ar-lib-co
 import {
   createAuthContextFromHono,
   getTenantIdFromContext,
+  OIDC_STANDARD_CLAIM_SCOPE,
   requireDedicatedAdminDatabaseAdapter,
   transitionAccountAuthenticationState,
   validateExternalUrl,
@@ -1367,30 +1368,14 @@ const OIDC_STANDARD_CLAIMS = new Set([
   'address',
   'updated_at',
 ]);
-const OIDC_STANDARD_SCOPE_ALLOWED_CLAIMS = new Map<string, string[]>([
-  [
-    'profile',
-    [
-      'name',
-      'given_name',
-      'family_name',
-      'middle_name',
-      'nickname',
-      'preferred_username',
-      'profile',
-      'picture',
-      'website',
-      'gender',
-      'birthdate',
-      'zoneinfo',
-      'locale',
-      'updated_at',
-    ],
-  ],
-  ['email', ['email', 'email_verified']],
-  ['phone', ['phone_number', 'phone_number_verified']],
-  ['address', ['address']],
-]);
+// scope -> the standard claims it releases (OIDC Core 5.4), from the table the release filter uses.
+const OIDC_STANDARD_SCOPE_ALLOWED_CLAIMS = new Map<string, string[]>();
+for (const [claimName, scope] of Object.entries(OIDC_STANDARD_CLAIM_SCOPE)) {
+  OIDC_STANDARD_SCOPE_ALLOWED_CLAIMS.set(scope, [
+    ...(OIDC_STANDARD_SCOPE_ALLOWED_CLAIMS.get(scope) ?? []),
+    claimName,
+  ]);
+}
 const FEDERATION_TRUST_LIFECYCLE_STATES = new Set(['draft', 'active', 'retired']);
 const FEDERATION_METADATA_VALIDATION_STATES = new Set(['pending', 'valid', 'invalid', 'warning']);
 const KEY_ACCESS_TYPES = new Set([
@@ -8209,7 +8194,15 @@ function validateOidcDestinationProfileSchema(
     ) {
       errors.push(`${claimName} must require at least one scope before releasing sensitive data`);
     }
-    if (isOverReleasedOidcClaim(claimName, requiredScopes, attributeGroupFields)) {
+    if (
+      claimName !== 'sub' &&
+      OIDC_STANDARD_CLAIMS.has(claimName) &&
+      requiredScopes.includes('openid')
+    ) {
+      // `openid` is on every OIDC request: the way to release a standard claim whatever the scopes.
+      overReleaseWarningCount += 1;
+      warnings.push(`${claimName} is released on every OIDC request (scope openid)`);
+    } else if (isOverReleasedOidcClaim(claimName, requiredScopes, attributeGroupFields)) {
       overReleaseWarningCount += 1;
       warnings.push(`${claimName} is not covered by its configured scopes`);
     }
@@ -8276,7 +8269,8 @@ function isOverReleasedOidcClaim(
   if (!OIDC_STANDARD_CLAIMS.has(claimName)) {
     return !requiredScopes.some((scope) => customScopeClaims.get(scope)?.includes(claimName));
   }
-  if (requiredScopes.length === 0) return true;
+  // No scope listed: the release filter then requires the standard claim's own scope.
+  if (requiredScopes.length === 0) return false;
   for (const scope of requiredScopes) {
     if (OIDC_STANDARD_SCOPE_ALLOWED_CLAIMS.get(scope)?.includes(claimName)) return false;
   }

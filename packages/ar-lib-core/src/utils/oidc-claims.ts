@@ -77,12 +77,18 @@ export const EMAIL_CLAIMS = ['email', 'email_verified'] as const;
 export const PHONE_CLAIMS = ['phone_number', 'phone_number_verified'] as const;
 export const ADDRESS_CLAIMS = ['address'] as const;
 
-const CLAIM_SCOPE: Record<string, string> = {
+/**
+ * The scope that releases each standard claim (OIDC Core 5.4). `sub` and the protocol claims are
+ * not scope-gated and so are absent. The Destination Profile release filter reads this too, to
+ * treat a standard claim whose profile field names no scope as requiring its own.
+ */
+export const OIDC_STANDARD_CLAIM_SCOPE: Readonly<Record<string, string>> = {
   ...Object.fromEntries(PROFILE_CLAIMS.map((claim) => [claim, 'profile'])),
   ...Object.fromEntries(EMAIL_CLAIMS.map((claim) => [claim, 'email'])),
   ...Object.fromEntries(PHONE_CLAIMS.map((claim) => [claim, 'phone'])),
   address: 'address',
 };
+const CLAIM_SCOPE = OIDC_STANDARD_CLAIM_SCOPE;
 
 const PREDEFINED_TRANSFORMED_BASE_CLAIM: Record<string, string> = {
   age_over_13: 'birthdate',

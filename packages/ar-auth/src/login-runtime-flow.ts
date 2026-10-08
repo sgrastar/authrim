@@ -25,8 +25,10 @@ import {
   getSessionStoreBySessionId,
   getTenantIdFromContext,
   hashIpAddress,
+  isOidcFieldApplicableToScopes,
   isShardedSessionId,
   loadDestinationProfileConsentDescriptor,
+  resolveOidcFieldRequiredScopes,
   resolveDestinationProfileConsentVersion,
   resolveRuntimeIdentityMappingBinding,
   requireDedicatedAdminDatabaseAdapter,
@@ -1739,7 +1741,10 @@ async function resolveRuntimeDestinationFieldConsent(
       nullable: field.nullable,
       classification: field.classification,
       surfaces: field.surfaces,
-      required_scopes: field.requiredScopes,
+      required_scopes:
+        descriptor.destinationType === 'oidc'
+          ? resolveOidcFieldRequiredScopes(field)
+          : field.requiredScopes,
     })),
   };
 }
@@ -1869,14 +1874,11 @@ function applicableDestinationConsentFields(
         nullable: fieldPolicies?.[field.key] === 'required' ? false : true,
       }));
   }
-  if (requestContext.requested_scope.length === 0) {
-    return descriptor.fields;
-  }
-  const scopes = new Set(requestContext.requested_scope);
-  return descriptor.fields.filter(
-    (field) =>
-      field.requiredScopes.length === 0 || field.requiredScopes.some((scope) => scopes.has(scope))
-  );
+  // The release filter's own judgement, so the fields asked about and required here are the
+  // fields that can be released: a standard claim that lists no scope needs its OIDC scope.
+  const scopes =
+    requestContext.requested_scope.length === 0 ? null : new Set(requestContext.requested_scope);
+  return descriptor.fields.filter((field) => isOidcFieldApplicableToScopes(field, scopes));
 }
 
 function readDestinationFieldReleasePolicies(
