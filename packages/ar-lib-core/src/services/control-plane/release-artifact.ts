@@ -113,10 +113,22 @@ const DEFAULT_ROLLOUT_POLICY: MigrationReleaseRolloutPolicy = {
   adminMutationMode: 'read_only',
 };
 
-const FRESH_INSTALL_BASELINE_PATH = /^\d+_(\d+)_(\d+)_(\d+)(?:_[0-9A-Za-z]+)*_.*_baseline\.sql$/u;
+/** `<sequence>_<major>_<minor>_<patch>_`, the start of a fresh-install baseline's file name. */
+const FRESH_INSTALL_BASELINE_PREFIX = /^\d+_\d+_\d+_\d+_/u;
+const FRESH_INSTALL_BASELINE_SUFFIX = '_baseline.sql';
+/** What `.` in the setup manifest's pattern does not match. */
+const LINE_TERMINATOR = /[\n\r\u2028\u2029]/u;
 
+/**
+ * Whether a migration file is a fresh-install baseline: `<seq>_<major>_<minor>_<patch>_<name>
+ * _baseline.sql` (the setup manifest's own pattern). Matched as a fixed prefix and suffix rather
+ * than one pattern with nested repetition, which backtracks polynomially on long crafted paths.
+ */
 export function isFreshInstallBaselinePath(path: string): boolean {
-  return FRESH_INSTALL_BASELINE_PATH.test(path);
+  const prefix = FRESH_INSTALL_BASELINE_PREFIX.exec(path);
+  if (!prefix) return false;
+  const rest = path.slice(prefix[0].length);
+  return rest.endsWith(FRESH_INSTALL_BASELINE_SUFFIX) && !LINE_TERMINATOR.test(rest);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
