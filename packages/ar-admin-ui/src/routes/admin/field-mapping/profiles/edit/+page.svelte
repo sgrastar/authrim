@@ -2876,6 +2876,9 @@
 							? $LL.admin_identity_mapping_profile_edit_resource_server_note()
 							: $LL.admin_identity_mapping_profile_edit_oidc_note()}
 					</p>
+					{#if destinationKind === 'oidc'}
+						<p class="profile-note">{$LL.admin_identity_mapping_scope_standard_default_note()}</p>
+					{/if}
 					<div class="table-toolbar">
 						<span></span>
 						<label class="checkbox-row advanced-toggle">

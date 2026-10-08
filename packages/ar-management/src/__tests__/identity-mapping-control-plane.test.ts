@@ -1002,6 +1002,66 @@ describe('IdentityMappingControlPlaneRepository destination profiles', () => {
     });
   });
 
+  describe('OIDC destination profile scopes on standard claims', () => {
+    const create = (claims: Array<Record<string, unknown>>) =>
+      new IdentityMappingControlPlaneRepository(
+        createAdapter({}),
+        () => 1000
+      ).createDestinationProfile('tenant_a', {
+        destinationType: 'oidc',
+        profileKey: 'standard_scopes',
+        displayName: 'Standard scopes',
+        schema: {
+          destinationType: 'oidc',
+          claims: [
+            {
+              claimName: 'sub',
+              required: true,
+              classification: 'internal',
+              surfaces: ['id_token', 'userinfo'],
+            },
+            ...claims,
+          ],
+        },
+      });
+
+    it('accepts openid as the scope that releases a standard claim on every request', async () => {
+      const created = await create([
+        {
+          claimName: 'email',
+          classification: 'pii',
+          surfaces: ['id_token', 'userinfo'],
+          requiredScopes: ['openid'],
+        },
+      ]);
+      expect(created.version.validationSummary).toMatchObject({
+        errorCount: 0,
+        warnings: ['email is released on every OIDC request (scope openid)'],
+      });
+    });
+
+    it('does not warn that a standard claim without a listed scope is unscoped', async () => {
+      const created = await create([
+        { claimName: 'locale', classification: 'internal', surfaces: ['userinfo'] },
+      ]);
+      expect(created.version.validationSummary).toMatchObject({ errorCount: 0, warnings: [] });
+    });
+
+    it('still warns when a standard claim lists a scope that does not release it', async () => {
+      const created = await create([
+        {
+          claimName: 'email',
+          classification: 'pii',
+          surfaces: ['userinfo'],
+          requiredScopes: ['profile'],
+        },
+      ]);
+      expect(created.version.validationSummary).toMatchObject({
+        warnings: ['email is not covered by its configured scopes'],
+      });
+    });
+  });
+
   it('rejects OIDC destination profiles without sub', async () => {
     const adapter = createAdapter({});
     const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);

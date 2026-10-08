@@ -1997,6 +1997,166 @@ describe('LoginUI runtime Flow handlers', () => {
     );
   });
 
+  it.each([
+    [['openid'], ['sub', 'department']],
+    [
+      ['openid', 'email'],
+      ['sub', 'email', 'department'],
+    ],
+    [
+      ['openid', 'profile', 'email'],
+      ['sub', 'email', 'name', 'department'],
+    ],
+  ])(
+    'asks only about the fields a request with scopes %j can release when the profile lists none',
+    async (requestedScope, expectedKeys) => {
+      mockStartQueries(consentRuntime);
+      mocks.coreAdapter.queryOne
+        .mockResolvedValueOnce({
+          identity_mapping: JSON.stringify({ destinationProfileId: 'destination_oidc_1' }),
+        })
+        .mockResolvedValueOnce({
+          id: 'policy_registration',
+          display_name: 'Authorization consent',
+          description: null,
+          is_active: 1,
+        });
+      mocks.coreAdapter.query.mockResolvedValueOnce([]);
+      mocks.adminAdapter.queryOne.mockResolvedValueOnce({
+        profile_id: 'destination_oidc_1',
+        destination_type: 'oidc',
+        version_id: 'destination_oidc_version_1',
+        schema_json: JSON.stringify({
+          claims: [
+            { claimName: 'sub', label: 'Subject', required: true },
+            // Required and not sensitive, so a profile may list no scope for it.
+            {
+              claimName: 'email',
+              label: 'Email',
+              required: true,
+              classification: 'internal',
+              requiredScopes: [],
+            },
+            { claimName: 'name', label: 'Name', required: false, classification: 'internal' },
+            { claimName: 'department', label: 'Department', required: false },
+          ],
+        }),
+      });
+
+      const response = await loginRuntimeInteractionStartHandler(
+        createContext({
+          env: { DB_ADMIN: mocks.adminAdapter as never },
+          body: { flow_kind: 'login', client_id: 'client_1', requested_scope: requestedScope },
+        })
+      );
+      const contract = (await readJson(response)).contract as FlowRuntimeContract;
+      const consent = contract.ui.steps[0]?.content?.destination_field_consent as {
+        fields: Array<{ key: string; required_scopes: string[] }>;
+      };
+
+      expect(consent.fields.map((field) => field.key)).toEqual(expectedKeys);
+      // The scope shown is the one the release filter will require.
+      expect(consent.fields.find((field) => field.key === 'email')?.required_scopes).toEqual(
+        expectedKeys.includes('email') ? ['email'] : undefined
+      );
+    }
+  );
+
+  it('does not demand consent to a field the request cannot release', async () => {
+    const profile = {
+      profile_id: 'destination_oidc_1',
+      destination_type: 'oidc',
+      version_id: 'destination_oidc_version_1',
+      schema_json: JSON.stringify({
+        claims: [
+          { claimName: 'sub', label: 'Subject', required: true },
+          // Required, but a standard claim with no listed scope: only an email scope releases it.
+          {
+            claimName: 'email',
+            label: 'Email',
+            required: true,
+            classification: 'internal',
+            requiredScopes: [],
+          },
+        ],
+      }),
+    };
+    const policy = {
+      id: 'policy_registration',
+      display_name: 'Authorization consent',
+      description: null,
+      is_active: 1,
+    };
+    mockStartQueries(consentRuntime);
+    mocks.coreAdapter.queryOne
+      .mockResolvedValueOnce({
+        identity_mapping: JSON.stringify({ destinationProfileId: 'destination_oidc_1' }),
+      })
+      .mockResolvedValueOnce(policy);
+    mocks.coreAdapter.query.mockResolvedValueOnce([]);
+    mocks.adminAdapter.queryOne.mockResolvedValueOnce(profile);
+    const startResponse = await loginRuntimeInteractionStartHandler(
+      createContext({
+        env: { DB_ADMIN: mocks.adminAdapter as never },
+        body: { flow_kind: 'login', client_id: 'client_1', requested_scope: ['openid'] },
+      })
+    );
+    const startData = await readJson(startResponse);
+
+    resetAdapter();
+    mockSubmitQueries({
+      expiresAt: Number((startData.interaction as Record<string, unknown>).expires_at),
+      contractHash: String(startData.contract_hash),
+      signature: String(startData.signature),
+      currentNodeId: 'consent',
+      currentStepId: 'consent:step',
+      stepState: 'waiting_input',
+      runtimeSnapshot: consentRuntime,
+      clientId: 'client_1',
+      context: {
+        protocol: 'oidc',
+        target_type: 'oidc_client',
+        target_id: 'client_1',
+        client_id: 'client_1',
+        requested_scope: ['openid'],
+      },
+    });
+    mocks.coreAdapter.queryOne
+      .mockResolvedValueOnce({
+        identity_mapping: JSON.stringify({ destinationProfileId: 'destination_oidc_1' }),
+      })
+      .mockResolvedValueOnce(policy)
+      .mockResolvedValueOnce(policy);
+    mocks.coreAdapter.query.mockResolvedValueOnce([]).mockResolvedValueOnce([]);
+    mocks.adminAdapter.queryOne.mockResolvedValueOnce(profile);
+    mocks.sessionStore.getSessionRpc.mockResolvedValueOnce({
+      userId: 'user_1',
+      expiresAt: Date.now() + 60_000,
+      createdAt: 1_700_000_000_000,
+      data: { authTime: 1_700_000_123 },
+    });
+
+    const submitResponse = await loginRuntimeInteractionSubmitHandler(
+      createContext({
+        env: { DB_ADMIN: mocks.adminAdapter as never },
+        params: { interaction_id: 'interaction_1' },
+        headers: { Cookie: 'authrim_session=sess_runtime_1', 'User-Agent': 'Vitest' },
+        body: {
+          step_id: 'consent:step',
+          node_id: 'consent',
+          selected_handle: 'accepted',
+          contract_hash: startData.contract_hash,
+          signature: startData.signature,
+          // The email field is not shown to this request, so it is not asked for.
+          input: { destination_field_decisions: { sub: true } },
+        },
+      })
+    );
+
+    expect(submitResponse.status).toBe(200);
+    expect(await readJson(submitResponse)).not.toMatchObject({ error: 'consent_required' });
+  });
+
   it('hydrates OIDC consent from the Mapping Set active Destination Profile', async () => {
     mockStartQueries(consentRuntime);
     mocks.coreAdapter.queryOne

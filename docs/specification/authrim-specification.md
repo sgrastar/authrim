@@ -289,6 +289,15 @@ Defaults:
 | Claims returned                     | Filtered by granted scopes and claims policy. |
 | Encrypted/signed response           | Controlled by client metadata.                |
 
+Destination Profile scopes (ID Token and UserInfo):
+
+An OIDC Destination Profile field names the scopes that release it in `requiredScopes`. The field is released when the request carries at least one of them. When `requiredScopes` is empty:
+
+- a standard claim needs the scope OIDC Core 5.4 assigns it: `email` for `email` and `email_verified`; `profile` for `name`, `family_name`, `given_name`, `middle_name`, `nickname`, `preferred_username`, `profile`, `picture`, `website`, `gender`, `birthdate`, `zoneinfo`, `locale` and `updated_at`; `phone` for `phone_number` and `phone_number_verified`; `address` for `address`.
+- `sub`, protocol claims and custom claims need no scope.
+
+This holds however the value was produced, so an identity mapping that fills `email` from the user's attributes still cannot release it to a request without the `email` scope. To release a standard claim whatever the scopes, list `openid` in its `requiredScopes`: every OpenID Connect request carries it. A field classified `pii` or `regulated` must list at least one scope: the Admin API and the Admin UI reject such a field with an empty `requiredScopes`, and the runtime refuses to release a sensitive mapping into one, so the default above applies to the other classifications and to older profiles. Resource Server (introspection) profiles are not affected: their scopes are the access token's scopes, which have no OIDC Core 5.4 meaning.
+
 ### 5.5 Introspection Endpoint
 
 ```yaml

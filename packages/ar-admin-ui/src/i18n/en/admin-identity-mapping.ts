@@ -329,6 +329,8 @@ const adminIdentityMapping = {
 	admin_identity_mapping_profile_edit_destination_method_aria: 'Destination create method',
 	admin_identity_mapping_profile_edit_create_from_existing: 'Create from existing',
 	admin_identity_mapping_profile_edit_create_from_template: 'Create from template',
+	admin_identity_mapping_scope_standard_default_note:
+		'Leave Scopes empty and a standard claim uses its own scope: email and email_verified need email, name and the other profile claims need profile, phone_number and phone_number_verified need phone, address needs address. sub and custom claims are released without a scope. To release a standard claim on every request, select openid. A claim classified as pii or regulated always needs at least one scope listed: it cannot be saved with Scopes empty.',
 	admin_identity_mapping_scope_select_placeholder: 'Select scopes',
 	admin_identity_mapping_scope_create_inline: 'New scope...',
 	admin_identity_mapping_scope_create: 'Create scope',

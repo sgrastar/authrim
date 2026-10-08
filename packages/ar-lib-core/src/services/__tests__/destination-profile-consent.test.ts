@@ -6,9 +6,11 @@ import {
   filterOidcClaimsByDestinationConsent,
   filterOidcClaimsWithoutDestinationProfile,
   filterSamlAttributesByDestinationConsent,
+  isOidcFieldApplicableToScopes,
   isProtectedIdentityMappingDestinationClaim,
   loadDestinationProfileConsentDescriptor,
   OIDC_PROTOCOL_ENVELOPE_CLAIMS,
+  resolveOidcFieldRequiredScopes,
 } from '../destination-profile-consent';
 
 function adapter(input: { queryOne?: ReturnType<typeof vi.fn> }): DatabaseAdapter {
@@ -328,6 +330,219 @@ describe('destination profile field consent', () => {
         claims: { sub: 'user_1' },
       })
     ).resolves.toEqual({ sub: 'user_1' });
+  });
+
+  describe('standard claims whose profile field lists no scope', () => {
+    const release = (
+      claims: unknown[],
+      grantedScopes: string[] | undefined,
+      released: Record<string, unknown>
+    ) =>
+      filterOidcClaimsByDestinationConsent({
+        // The user has agreed to release every field, so the scopes alone decide.
+        coreAdapter: adapter({
+          queryOne: vi.fn().mockResolvedValue({
+            released_claims_json: JSON.stringify(
+              claims.map((claim) => (claim as { claimName: string }).claimName)
+            ),
+            released_attributes_json: null,
+          }),
+        }),
+        adminAdapter: adapter({
+          queryOne: vi.fn().mockResolvedValue({
+            profile_id: 'profile_oidc',
+            destination_type: 'oidc',
+            version_id: 'version_1',
+            schema_json: JSON.stringify({ claims }),
+          }),
+        }),
+        tenantId: 'tenant_a',
+        subjectId: 'user_1',
+        clientId: 'client_1',
+        profileId: 'profile_oidc',
+        grantedScopes,
+        claims: { sub: 'user_1', ...released },
+      });
+
+    it('maps each standard claim to its OIDC Core 5.4 scope and leaves the rest unscoped', () => {
+      const scopeOf = (key: string) => resolveOidcFieldRequiredScopes({ key, requiredScopes: [] });
+      for (const key of ['email', 'email_verified']) expect(scopeOf(key)).toEqual(['email']);
+      for (const key of [
+        'name',
+        'family_name',
+        'given_name',
+        'middle_name',
+        'nickname',
+        'preferred_username',
+        'profile',
+        'picture',
+        'website',
+        'gender',
+        'birthdate',
+        'zoneinfo',
+        'locale',
+        'updated_at',
+      ]) {
+        expect(scopeOf(key), key).toEqual(['profile']);
+      }
+      for (const key of ['phone_number', 'phone_number_verified']) {
+        expect(scopeOf(key), key).toEqual(['phone']);
+      }
+      expect(scopeOf('address')).toEqual(['address']);
+      for (const key of ['sub', 'iss', 'acr', 'nonce', 'department', 'constructor', '__proto__']) {
+        expect(scopeOf(key), key).toEqual([]);
+      }
+      // A listed scope is never replaced.
+      expect(resolveOidcFieldRequiredScopes({ key: 'email', requiredScopes: ['openid'] })).toEqual([
+        'openid',
+      ]);
+    });
+
+    const fields = [
+      { claimName: 'sub', required: true },
+      { claimName: 'email' },
+      { claimName: 'email_verified' },
+      { claimName: 'name' },
+      { claimName: 'phone_number' },
+      { claimName: 'address' },
+      { claimName: 'department' },
+    ];
+    const released = {
+      email: 'a@example.com',
+      email_verified: true,
+      name: 'A',
+      phone_number: '+81',
+      address: { country: 'JP' },
+      department: 'Finance',
+    };
+
+    it('does not release them to a request without their scope', async () => {
+      await expect(release(fields, ['openid'], released)).resolves.toEqual({
+        sub: 'user_1',
+        department: 'Finance',
+      });
+    });
+
+    it('releases them to a request with their scope, and only theirs', async () => {
+      await expect(release(fields, ['openid', 'email'], released)).resolves.toEqual({
+        sub: 'user_1',
+        email: 'a@example.com',
+        email_verified: true,
+        department: 'Finance',
+      });
+      await expect(release(fields, ['openid', 'profile', 'address'], released)).resolves.toEqual({
+        sub: 'user_1',
+        name: 'A',
+        address: { country: 'JP' },
+        department: 'Finance',
+      });
+    });
+
+    it('releases them whatever the scopes when the field lists openid', async () => {
+      const explicit = [
+        { claimName: 'sub', required: true },
+        { claimName: 'email', requiredScopes: ['openid'] },
+        { claimName: 'name', requiredScopes: ['profile'] },
+      ];
+      await expect(release(explicit, ['openid'], released)).resolves.toEqual({
+        sub: 'user_1',
+        email: 'a@example.com',
+      });
+    });
+
+    it('keeps a field that lists another scope on that scope', async () => {
+      const listed = [
+        { claimName: 'sub', required: true },
+        { claimName: 'email', requiredScopes: ['directory'] },
+      ];
+      await expect(release(listed, ['openid', 'email'], released)).resolves.toEqual({
+        sub: 'user_1',
+      });
+      await expect(release(listed, ['openid', 'directory'], released)).resolves.toEqual({
+        sub: 'user_1',
+        email: 'a@example.com',
+      });
+    });
+
+    it('does not make a required field demand a scope the request lacks', async () => {
+      const required = [
+        { claimName: 'sub', required: true },
+        { claimName: 'email', required: true },
+      ];
+      await expect(release(required, ['openid'], {})).resolves.toEqual({ sub: 'user_1' });
+      await expect(release(required, ['openid', 'email'], {})).rejects.toMatchObject({
+        code: 'required_field_missing',
+        field: 'email',
+      });
+    });
+
+    it('judges which fields are in play the way the consent step does', async () => {
+      const profile = [
+        { claimName: 'sub', required: true },
+        { claimName: 'email' },
+        { claimName: 'name' },
+        { claimName: 'phone_number', requiredScopes: ['openid'] },
+        { claimName: 'address', requiredScopes: ['directory'] },
+        { claimName: 'department' },
+      ];
+      const everything = {
+        email: 'a@example.com',
+        name: 'A',
+        phone_number: '+81',
+        address: { country: 'JP' },
+        department: 'Finance',
+      };
+      for (const scopes of [
+        ['openid'],
+        ['openid', 'email'],
+        ['openid', 'profile', 'phone'],
+        ['openid', 'directory'],
+        ['openid', 'email', 'profile', 'phone', 'address', 'directory'],
+      ]) {
+        const granted = new Set(scopes);
+        const askedAbout = profile
+          .filter((field) =>
+            isOidcFieldApplicableToScopes(
+              { key: field.claimName, requiredScopes: field.requiredScopes ?? [] },
+              granted
+            )
+          )
+          .map((field) => field.claimName);
+        const released = Object.keys(await release(profile, scopes, everything));
+        expect(released.sort(), scopes.join(' ')).toEqual(
+          askedAbout.filter((key) => key === 'sub' || key in everything).sort()
+        );
+      }
+      // With no scope to judge by (a request that names none), every field is in play.
+      expect(isOidcFieldApplicableToScopes({ key: 'email', requiredScopes: [] }, null)).toBe(true);
+    });
+
+    it('applies the same scopes on the userinfo surface', async () => {
+      const result = await filterOidcClaimsByDestinationConsent({
+        coreAdapter: adapter({ queryOne: vi.fn().mockResolvedValue(null) }),
+        adminAdapter: adapter({
+          queryOne: vi.fn().mockResolvedValue({
+            profile_id: 'profile_oidc',
+            destination_type: 'oidc',
+            version_id: 'version_1',
+            schema_json: JSON.stringify({
+              claims: [
+                { claimName: 'sub', required: true },
+                { claimName: 'email', surfaces: ['userinfo'] },
+              ],
+            }),
+          }),
+        }),
+        tenantId: 'tenant_a',
+        subjectId: 'user_1',
+        clientId: 'client_1',
+        profileId: 'profile_oidc',
+        surface: 'userinfo',
+        grantedScopes: ['openid'],
+        claims: { sub: 'user_1', email: 'a@example.com' },
+      });
+      expect(result).toEqual({ sub: 'user_1' });
+    });
   });
 
   it('rejects OIDC claims that violate configured type and allowed-value constraints', async () => {

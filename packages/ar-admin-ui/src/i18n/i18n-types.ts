@@ -27006,6 +27006,10 @@ type RootTranslation = {
 	 */
 	admin_identity_mapping_profile_edit_create_from_template: string
 	/**
+	 * L​e​a​v​e​ ​S​c​o​p​e​s​ ​e​m​p​t​y​ ​a​n​d​ ​a​ ​s​t​a​n​d​a​r​d​ ​c​l​a​i​m​ ​u​s​e​s​ ​i​t​s​ ​o​w​n​ ​s​c​o​p​e​:​ ​e​m​a​i​l​ ​a​n​d​ ​e​m​a​i​l​_​v​e​r​i​f​i​e​d​ ​n​e​e​d​ ​e​m​a​i​l​,​ ​n​a​m​e​ ​a​n​d​ ​t​h​e​ ​o​t​h​e​r​ ​p​r​o​f​i​l​e​ ​c​l​a​i​m​s​ ​n​e​e​d​ ​p​r​o​f​i​l​e​,​ ​p​h​o​n​e​_​n​u​m​b​e​r​ ​a​n​d​ ​p​h​o​n​e​_​n​u​m​b​e​r​_​v​e​r​i​f​i​e​d​ ​n​e​e​d​ ​p​h​o​n​e​,​ ​a​d​d​r​e​s​s​ ​n​e​e​d​s​ ​a​d​d​r​e​s​s​.​ ​s​u​b​ ​a​n​d​ ​c​u​s​t​o​m​ ​c​l​a​i​m​s​ ​a​r​e​ ​r​e​l​e​a​s​e​d​ ​w​i​t​h​o​u​t​ ​a​ ​s​c​o​p​e​.​ ​T​o​ ​r​e​l​e​a​s​e​ ​a​ ​s​t​a​n​d​a​r​d​ ​c​l​a​i​m​ ​o​n​ ​e​v​e​r​y​ ​r​e​q​u​e​s​t​,​ ​s​e​l​e​c​t​ ​o​p​e​n​i​d​.
+	 */
+	admin_identity_mapping_scope_standard_default_note: string
+	/**
 	 * S​e​l​e​c​t​ ​s​c​o​p​e​s
 	 */
 	admin_identity_mapping_scope_select_placeholder: string
@@ -60680,6 +60684,10 @@ Remove this role from {email}?
 	 * Create from template
 	 */
 	admin_identity_mapping_profile_edit_create_from_template: () => LocalizedString
+	/**
+	 * Leave Scopes empty and a standard claim uses its own scope: email and email_verified need email, name and the other profile claims need profile, phone_number and phone_number_verified need phone, address needs address. sub and custom claims are released without a scope. To release a standard claim on every request, select openid.
+	 */
+	admin_identity_mapping_scope_standard_default_note: () => LocalizedString
 	/**
 	 * Select scopes
 	 */
