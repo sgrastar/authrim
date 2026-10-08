@@ -151,11 +151,6 @@ const trueOnly = {
   fromDocument: (value: unknown) => value === true,
 };
 
-/** A positive number of seconds (else runtime's env or default applies). */
-const positiveNumber = {
-  fromDocument: (value: unknown) => (typeof value === 'number' && value > 0 ? value : undefined),
-};
-
 /**
  * A parameter limit runtime took within 1..100 (else its own default). Runtime compared counts
  * with it (`count > limit`), so a fraction limits as its whole part does.
@@ -560,18 +555,6 @@ export const SYSTEM_SETTINGS_FIELDS: readonly SystemSettingsField[] = [
     toDocument: (value: unknown) => (value === '' ? null : value),
     fromDocument: (value: unknown) =>
       typeof value === 'string' ? value : value === null ? '' : undefined,
-  },
-  {
-    category: 'tokens',
-    key: 'tokens.introspection_cache_ttl',
-    path: ['oidc', 'introspectionCache', 'ttlSeconds'],
-    ...positiveNumber,
-  },
-  {
-    category: 'feature-flags',
-    key: 'feature.introspection_cache_enabled',
-    path: ['oidc', 'introspectionCache', 'enabled'],
-    ...trueOnly,
   },
   {
     category: 'tokens',
