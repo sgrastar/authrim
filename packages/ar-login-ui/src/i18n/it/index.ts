@@ -441,6 +441,7 @@ const it = createTranslation({
 	ciba_errorConsentWithdrawn:
 		'Questa richiesta è stata fatta prima che revocassi l’accesso di questa app. Ricomincia dall’app.',
 	ciba_errorRequestGone: 'Questa richiesta è scaduta o ha già ricevuto una risposta.',
+	error_authorizationRequestExpired: 'La richiesta di accesso è scaduta. Ricomincia dall’app.',
 	ciba_errorTryAgain:
 		'Non è stato possibile salvare la tua decisione in questo momento e non è cambiato nulla. Riprova tra poco.',
 	ciba_errorTooManyAttempts: 'Troppi tentativi. Attendi un po’ e poi riprova.',

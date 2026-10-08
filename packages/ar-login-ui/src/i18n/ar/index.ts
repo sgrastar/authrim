@@ -416,6 +416,7 @@ const ar = createTranslation({
 	ciba_errorConsentWithdrawn:
 		'أُنشئ هذا الطلب قبل أن تسحب صلاحية الوصول من هذا التطبيق. ابدأ من جديد من التطبيق.',
 	ciba_errorRequestGone: 'انتهت صلاحية هذا الطلب أو تم الرد عليه بالفعل.',
+	error_authorizationRequestExpired: 'انتهت صلاحية طلب تسجيل الدخول. ابدأ من جديد من التطبيق.',
 	ciba_errorTryAgain: 'تعذّر حفظ قرارك الآن ولم يتغيّر شيء. حاول مرة أخرى بعد قليل.',
 	ciba_errorTooManyAttempts: 'محاولات كثيرة جدًا. انتظر قليلًا ثم حاول مرة أخرى.',
 	ciba_errorOutcomeUnknown:

@@ -51,7 +51,7 @@ const mocks = vi.hoisted(() => {
     resolveRuntimeIdentityMappingBinding: vi.fn(),
     idQueue,
     consumeAuthorizationChallengeContinuation: vi.fn(),
-    readAuthorizationChallengeReauthIssuedAt: vi.fn(),
+    readAuthorizationChallengeFreshness: vi.fn(),
     getFeatureFlag: vi.fn(),
     info: vi.fn(),
     warn: vi.fn(),
@@ -93,7 +93,8 @@ vi.mock('../direct-auth', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../direct-auth')>();
   return {
     consumeAuthorizationChallengeContinuation: mocks.consumeAuthorizationChallengeContinuation,
-    readAuthorizationChallengeReauthIssuedAt: mocks.readAuthorizationChallengeReauthIssuedAt,
+    readAuthorizationChallengeFreshness: mocks.readAuthorizationChallengeFreshness,
+    isProofOlderThanChallengeRequirement: actual.isProofOlderThanChallengeRequirement,
     reauthProofFromRecord: actual.reauthProofFromRecord,
   };
 });
@@ -756,8 +757,12 @@ async function readJson(response: Response): Promise<Record<string, unknown>> {
     : {};
 }
 
+/** The statements run inside the interaction's transactions since the last reset. */
+const txExecuteCalls: Array<[string, unknown[] | undefined]> = [];
+
 function resetAdapter() {
   vi.clearAllMocks();
+  txExecuteCalls.length = 0;
   mocks.coreAdapter.query.mockReset();
   mocks.coreAdapter.queryOne.mockReset();
   mocks.coreAdapter.execute.mockReset();
@@ -774,8 +779,8 @@ function resetAdapter() {
   mocks.challengeStore.storeChallengeRpc.mockReset();
   mocks.runtimeUsers.findById.mockReset();
   mocks.consumeAuthorizationChallengeContinuation.mockReset();
-  mocks.readAuthorizationChallengeReauthIssuedAt.mockReset();
-  mocks.readAuthorizationChallengeReauthIssuedAt.mockResolvedValue(null);
+  mocks.readAuthorizationChallengeFreshness.mockReset();
+  mocks.readAuthorizationChallengeFreshness.mockResolvedValue(null);
   clearLoginRuntimeFlowVersionCacheForTests();
   mocks.idQueue.splice(
     0,
@@ -791,7 +796,10 @@ function resetAdapter() {
   mocks.coreAdapter.transaction.mockImplementation(
     async (fn: (tx: DatabaseAdapter) => Promise<unknown>) => {
       const tx = {
-        execute: vi.fn(async () => ({ success: true, rowsAffected: 1 })),
+        execute: vi.fn(async (sql: string, params?: unknown[]) => {
+          txExecuteCalls.push([sql, params]);
+          return { success: true, rowsAffected: 1 };
+        }),
       } as unknown as DatabaseAdapter;
       return fn(tx);
     }
@@ -840,6 +848,7 @@ function mockSubmitQueries(input: {
   context?: Record<string, unknown>;
   clientId?: string | null;
   samlSpId?: string | null;
+  userId?: string | null;
 }) {
   const currentNodeId = input.currentNodeId ?? 'entry';
   const currentStepId = input.currentStepId ?? 'entry:step';
@@ -848,6 +857,7 @@ function mockSubmitQueries(input: {
       id: 'interaction_1',
       flow_id: 'flow_login',
       flow_version_id: 'fv_1',
+      user_id: input.userId ?? null,
       client_id: input.clientId ?? null,
       saml_sp_id: input.samlSpId ?? null,
       state: input.state ?? 'active',
@@ -1020,8 +1030,8 @@ describe('LoginUI runtime Flow handlers', () => {
     const data = await readJson(response);
 
     expect(response.status).toBe(400);
-    expect(data.error).toBe('invalid_authorization_challenge');
-    expect(data.error_code).toBe('AR_FLOW_AUTH_CHALLENGE_INVALID');
+    expect(data.error).toBe('authorization_request_expired');
+    expect(data.error_code).toBe('AR_FLOW_AUTH_REQUEST_EXPIRED');
     expect(mocks.coreAdapter.queryOne).not.toHaveBeenCalled();
     expect(mocks.coreAdapter.transaction).not.toHaveBeenCalled();
   });
@@ -1336,7 +1346,7 @@ describe('LoginUI runtime Flow handlers', () => {
       runtimeSnapshot: explicitEmailVerificationRuntime,
       editorSnapshot: explicitEmailVerificationEditor,
     });
-    mocks.sessionStore.getSessionRpc.mockResolvedValueOnce({
+    mocks.sessionStore.getSessionRpc.mockResolvedValue({
       id: 'sess_runtime_1',
       userId: 'user_1',
       createdAt: Date.now(),
@@ -2171,9 +2181,17 @@ describe('LoginUI runtime Flow handlers', () => {
         editorSnapshot: branchingEditor,
       });
 
+      mocks.sessionStore.getSessionRpc.mockResolvedValue({
+        userId: 'user_1',
+        expiresAt: startedAt + 60_000,
+        createdAt: startedAt - 1000,
+        data: { authTime: Math.floor(startedAt / 1000) },
+      });
+
       const response = await loginRuntimeInteractionSubmitHandler(
         createContext({
           params: { interaction_id: 'interaction_1' },
+          headers: { Cookie: 'authrim_session=sess_runtime_1' },
           body: {
             step_id: 'auth:step',
             node_id: 'auth',
@@ -2214,12 +2232,21 @@ describe('LoginUI runtime Flow handlers', () => {
         target_type: 'oidc_client',
         target_id: 'client_1',
         client_id: 'client_1',
+        started_at_ms: Date.now() - 1000,
       },
+    });
+
+    mocks.sessionStore.getSessionRpc.mockResolvedValue({
+      userId: 'user_1',
+      expiresAt: Date.now() + 60_000,
+      createdAt: Date.now(),
+      data: { authTime: 1_700_000_123 },
     });
 
     const response = await loginRuntimeInteractionSubmitHandler(
       createContext({
         params: { interaction_id: 'interaction_1' },
+        headers: { Cookie: 'authrim_session=sess_runtime_1' },
         body: {
           step_id: 'auth:step',
           node_id: 'auth',
@@ -2334,7 +2361,7 @@ describe('LoginUI runtime Flow handlers', () => {
       runtimeSnapshot: sessionCheckRuntime,
       editorSnapshot: sessionCheckEditor,
     });
-    mocks.sessionStore.getSessionRpc.mockResolvedValueOnce({
+    mocks.sessionStore.getSessionRpc.mockResolvedValue({
       userId: 'user_1',
       expiresAt: Date.now() + 60_000,
       createdAt: 1_700_000_000_000,
@@ -2392,9 +2419,11 @@ describe('LoginUI runtime Flow handlers', () => {
         context: { authorization_challenge_id: 'reauth_challenge_1' },
       });
       if (reauthIssuedAt instanceof Error) {
-        mocks.readAuthorizationChallengeReauthIssuedAt.mockRejectedValue(reauthIssuedAt);
+        mocks.readAuthorizationChallengeFreshness.mockRejectedValue(reauthIssuedAt);
       } else {
-        mocks.readAuthorizationChallengeReauthIssuedAt.mockResolvedValue(reauthIssuedAt);
+        mocks.readAuthorizationChallengeFreshness.mockResolvedValue(
+          reauthIssuedAt === null ? null : { kind: 'reauth', issuedAt: reauthIssuedAt }
+        );
       }
       mocks.consumeAuthorizationChallengeContinuation.mockResolvedValue({
         redirectUrl: 'https://rp.example.com/callback?code=abc',
@@ -2427,13 +2456,16 @@ describe('LoginUI runtime Flow handlers', () => {
       );
       const data = await readJson(response);
 
-      expect(response.status).toBe(200);
-      expect(mocks.readAuthorizationChallengeReauthIssuedAt).toHaveBeenCalledWith(
+      // A request that cannot be read is asked for again, not decided on.
+      expect(response.status).toBe(reauthIssuedAt instanceof Error ? 503 : 200);
+      expect(mocks.readAuthorizationChallengeFreshness).toHaveBeenCalledWith(
         expect.anything(),
         expect.any(String),
         'reauth_challenge_1'
       );
-      if (nextStepId) {
+      if (reauthIssuedAt instanceof Error) {
+        expect(data.error).toBe('temporarily_unavailable');
+      } else if (nextStepId) {
         expect(data.completed).toBe(false);
         expect(data.step).toMatchObject({ id: nextStepId });
       } else {
@@ -2463,7 +2495,7 @@ describe('LoginUI runtime Flow handlers', () => {
         client_id: 'client_1',
       },
     });
-    mocks.sessionStore.getSessionRpc.mockResolvedValueOnce({
+    mocks.sessionStore.getSessionRpc.mockResolvedValue({
       userId: 'user_1',
       expiresAt: Date.now() + 60_000,
       createdAt: 1_700_000_000_000,
@@ -2651,6 +2683,62 @@ describe('LoginUI runtime Flow handlers', () => {
         'accepted',
       ])
     );
+  });
+
+  it("does not record consent for another user's session once the interaction is bound to a user", async () => {
+    const { data: startData } = await startInteraction(
+      { flow_kind: 'registration', client_id: 'client_1', requested_scope: 'openid profile' },
+      consentRuntime
+    );
+    resetAdapter();
+    mockSubmitQueries({
+      expiresAt: Number((startData.interaction as Record<string, unknown>).expires_at),
+      contractHash: String(startData.contract_hash),
+      signature: String(startData.signature),
+      currentNodeId: 'consent',
+      currentStepId: 'consent:step',
+      stepState: 'waiting_input',
+      runtimeSnapshot: consentRuntime,
+      clientId: 'client_1',
+      userId: 'user_1',
+      context: {
+        protocol: 'oidc',
+        target_type: 'oidc_client',
+        target_id: 'client_1',
+        client_id: 'client_1',
+        requested_scope: ['openid', 'profile'],
+      },
+    });
+    // A session another tab made for someone else.
+    mocks.sessionStore.getSessionRpc.mockResolvedValue({
+      userId: 'user_2',
+      expiresAt: Date.now() + 60_000,
+      createdAt: 1_700_000_000_000,
+      data: { authTime: 1_700_000_123 },
+    });
+
+    const response = await loginRuntimeInteractionSubmitHandler(
+      createContext({
+        params: { interaction_id: 'interaction_1' },
+        headers: { Cookie: 'authrim_session=sess_runtime_1', 'User-Agent': 'Vitest' },
+        body: {
+          step_id: 'consent:step',
+          node_id: 'consent',
+          contract_hash: startData.contract_hash,
+          signature: startData.signature,
+          input: { consent_item_decisions: { statement_terms: 'granted' } },
+        },
+      })
+    );
+    const data = await readJson(response);
+
+    expect(response.status).toBe(403);
+    expect(data.error).toBe('access_denied');
+    expect(mocks.coreAdapter.execute).not.toHaveBeenCalledWith(
+      expect.stringContaining('INSERT INTO consent_records'),
+      expect.anything()
+    );
+    expect(mocks.coreAdapter.transaction).not.toHaveBeenCalled();
   });
 
   it('records selected User Decision radio values for SAML attribute release consent', async () => {
@@ -3108,9 +3196,17 @@ describe('LoginUI runtime Flow handlers', () => {
       editorSnapshot: null,
     });
 
+    mocks.sessionStore.getSessionRpc.mockResolvedValue({
+      userId: 'user_1',
+      expiresAt: Date.now() + 60_000,
+      createdAt: 1_700_000_000_000,
+      data: { authTime: 1_700_000_123 },
+    });
+
     const response = await loginRuntimeInteractionSubmitHandler(
       createContext({
         params: { interaction_id: 'interaction_1' },
+        headers: { Cookie: 'authrim_session=sess_runtime_1' },
         body: {
           step_id: 'complete:step',
           node_id: 'complete',
@@ -3249,6 +3345,7 @@ describe('LoginUI runtime Flow handlers', () => {
       stepState: 'waiting_input',
       runtimeSnapshot: oidcCompletionRuntime,
       editorSnapshot: null,
+      userId: 'user_1',
       context: {
         target_type: 'oidc_client',
         target_id: 'client_1',
@@ -3260,19 +3357,12 @@ describe('LoginUI runtime Flow handlers', () => {
     mocks.coreAdapter.query.mockResolvedValueOnce([
       { step_id: 'complete:step', selected_handle: 'completed' },
     ]);
-    mocks.sessionStore.getSessionRpc
-      .mockResolvedValueOnce({
-        userId: 'user_1',
-        expiresAt: Date.now() + 60_000,
-        createdAt: 1_700_000_000_000,
-        data: { authTime: 1_700_000_123 },
-      })
-      .mockResolvedValueOnce({
-        userId: 'user_2',
-        expiresAt: Date.now() + 60_000,
-        createdAt: 1_700_000_000_000,
-        data: { authTime: 1_700_000_123 },
-      });
+    mocks.sessionStore.getSessionRpc.mockResolvedValueOnce({
+      userId: 'user_2',
+      expiresAt: Date.now() + 60_000,
+      createdAt: 1_700_000_000_000,
+      data: { authTime: 1_700_000_123 },
+    });
 
     const response = await loginRuntimeInteractionSubmitHandler(
       createContext({
@@ -3364,6 +3454,981 @@ describe('LoginUI runtime Flow handlers', () => {
         protocol: 'oidc',
         authorization_challenge_id: 'login_challenge_1',
       },
+    });
+  });
+
+  describe('a completion waits for someone who is signed in', () => {
+    const session = {
+      userId: 'user_1',
+      expiresAt: Date.now() + 60_000,
+      createdAt: 1_700_000_000_000,
+      data: { amr: ['email_code'], authTime: 1_700_000_300, proven_at: 1_700_000_300_000 },
+    };
+    const consentSelectorRuntime: FlowRuntimeContract = {
+      flow_kind: 'login',
+      ui: {
+        steps: [
+          {
+            id: 'auth:step',
+            source_node_id: 'auth',
+            component: 'authentication_method_selector',
+            render: true,
+            config: { consent_policy_ref: 'policy_login' },
+          },
+          oidcAuthCompletionRuntime.ui.steps[1],
+        ],
+      },
+    };
+
+    async function submitStep(options: {
+      runtime: FlowRuntimeContract;
+      editor?: Record<string, unknown> | null;
+      flowKind?: string;
+      currentStep: { node: string; step: string };
+      handle: string;
+      withSession?: boolean;
+      body?: Record<string, unknown>;
+      context?: Record<string, unknown>;
+      userId?: string;
+      authorizationChallengeId?: string;
+      /** Mocks for what the step reads, set after the interaction's own rows are mocked. */
+      beforeSubmit?: () => void;
+      sessionCreatedAt?: number;
+      startedAtMs?: number;
+    }) {
+      // A step may be submitted more than once in a test; each starts from a clean state.
+      resetAdapter();
+      const { data: startData } = await startInteraction(
+        {
+          flow_kind: options.flowKind ?? 'login',
+          client_id: 'client_1',
+          requested_scope: 'openid profile',
+          ...(options.authorizationChallengeId
+            ? { authorization_challenge_id: options.authorizationChallengeId }
+            : {}),
+        },
+        options.runtime,
+        options.editor ?? null
+      );
+      resetAdapter();
+      mockSubmitQueries({
+        expiresAt: Number((startData.interaction as Record<string, unknown>).expires_at),
+        contractHash: String(startData.contract_hash),
+        signature: String(startData.signature),
+        currentNodeId: options.currentStep.node,
+        currentStepId: options.currentStep.step,
+        stepState: 'waiting_input',
+        runtimeSnapshot: options.runtime,
+        editorSnapshot: options.editor ?? null,
+        clientId: 'client_1',
+        userId: options.userId,
+        context: {
+          target_type: 'oidc_client',
+          target_id: 'client_1',
+          client_id: 'client_1',
+          started_at_ms: options.startedAtMs ?? Date.now() - 1000,
+          ...(options.authorizationChallengeId
+            ? { authorization_challenge_id: options.authorizationChallengeId }
+            : {}),
+          ...options.context,
+        },
+      });
+      options.beforeSubmit?.();
+      mocks.sessionStore.getSessionRpc.mockResolvedValue(
+        options.withSession
+          ? { ...session, createdAt: options.sessionCreatedAt ?? session.createdAt }
+          : null
+      );
+      if (!mocks.consumeAuthorizationChallengeContinuation.getMockImplementation()) {
+        mocks.consumeAuthorizationChallengeContinuation.mockResolvedValue({
+          type: 'login',
+          redirectUrl: 'https://first.test.authrim.com/authorize?_confirmation_challenge=confirm_1',
+        });
+      }
+      const response = await loginRuntimeInteractionSubmitHandler(
+        createContext({
+          params: { interaction_id: 'interaction_1' },
+          headers: options.withSession ? { Cookie: 'authrim_session=sess_runtime_1' } : {},
+          url: 'https://first.test.authrim.com/api/v1/login/interactions/interaction_1/submit',
+          body: {
+            step_id: options.currentStep.step,
+            node_id: options.currentStep.node,
+            selected_handle: options.handle,
+            contract_hash: startData.contract_hash,
+            signature: startData.signature,
+            ...options.body,
+          },
+        })
+      );
+      return { response, data: await readJson(response) };
+    }
+
+    function interactionUserWasSet() {
+      return mocks.coreAdapter.execute.mock.calls.some(
+        ([sql]) => typeof sql === 'string' && sql.includes('SET user_id = COALESCE(user_id')
+      );
+    }
+
+    /** What the interaction's transaction ran, as [sql, params]. */
+    const transactionStatements = () => txExecuteCalls;
+
+    const expectNothingWritten = () => {
+      expect(mocks.coreAdapter.transaction).not.toHaveBeenCalled();
+      expect(mocks.consumeAuthorizationChallengeContinuation).not.toHaveBeenCalled();
+      expect(
+        mocks.coreAdapter.execute.mock.calls.filter(([sql]) =>
+          String(sql).includes('user_id IS NULL')
+        )
+      ).toEqual([]);
+    };
+
+    const auditEventTypes = () =>
+      mocks.coreAdapter.execute.mock.calls
+        .filter(([sql]) => typeof sql === 'string' && sql.includes('INSERT INTO flow_audit_events'))
+        .map(([, params]) => (params as unknown[])[10]);
+
+    it.each([
+      [
+        'a login Flow',
+        'login',
+        oidcAuthCompletionRuntime,
+        null,
+        { node: 'auth', step: 'auth:step' },
+        'mail_otp',
+      ],
+      [
+        'a registration Flow (the account action is skipped)',
+        'registration',
+        implicitAccountActionRuntime,
+        implicitAccountActionEditor,
+        { node: 'auth', step: 'auth:step' },
+        'passkey',
+      ],
+    ])(
+      'keeps %s at its completion after a method is chosen before anyone is signed in',
+      async (_label, flowKind, runtime, editor, currentStep, handle) => {
+        const { response, data } = await submitStep({
+          runtime,
+          editor,
+          flowKind,
+          currentStep,
+          handle,
+        });
+
+        expect(response.status).toBe(200);
+        expect(data.completed).toBe(false);
+        expect(data.interaction).toMatchObject({
+          state: 'active',
+          current_step_id: 'complete:step',
+        });
+        expect(data.step).toMatchObject({ id: 'complete:step', component: 'completion' });
+        expect(data.output).toBeNull();
+        expect(mocks.consumeAuthorizationChallengeContinuation).not.toHaveBeenCalled();
+        // The interaction is not recorded as complete before anyone has signed in.
+        expect(auditEventTypes()).toEqual(
+          expect.arrayContaining(['flow.auth_method.selected', 'flow.node.entered'])
+        );
+        expect(auditEventTypes()).not.toContain('flow.interaction.completed');
+        expect(auditEventTypes()).not.toContain('flow.output.completed');
+      }
+    );
+
+    it('answers a completion submitted with no session with a sign-in request and records nothing', async () => {
+      const { response, data } = await submitStep({
+        runtime: oidcAuthCompletionRuntime,
+        currentStep: { node: 'complete', step: 'complete:step' },
+        handle: 'completed',
+        withSession: false,
+      });
+
+      expect(response.status).toBe(401);
+      expect(data).toMatchObject({
+        error: 'authentication_required',
+        category: 'reauthentication_required',
+        action: 'reauthenticate',
+      });
+      expect(mocks.coreAdapter.transaction).not.toHaveBeenCalled();
+      expect(mocks.consumeAuthorizationChallengeContinuation).not.toHaveBeenCalled();
+      expect(auditEventTypes()).toEqual([]);
+    });
+
+    it('does not complete a Flow for the protocol-less /login either', async () => {
+      const { response } = await submitStep({
+        runtime: oidcAuthCompletionRuntime,
+        currentStep: { node: 'complete', step: 'complete:step' },
+        handle: 'completed',
+        context: { protocol: 'direct', target_type: 'tenant', target_id: null, client_id: null },
+      });
+
+      expect(response.status).toBe(401);
+    });
+
+    it('completes with the continuation once the sign-in has given a session', async () => {
+      const { response, data } = await submitStep({
+        runtime: oidcAuthCompletionRuntime,
+        currentStep: { node: 'complete', step: 'complete:step' },
+        handle: 'completed',
+        withSession: true,
+        authorizationChallengeId: 'login_challenge_1',
+      });
+
+      expect(response.status).toBe(200);
+      expect(data.completed).toBe(true);
+      expect(data.output).toMatchObject({
+        action: 'continue_protocol',
+        redirect_url: 'https://first.test.authrim.com/authorize?_confirmation_challenge=confirm_1',
+      });
+      expect(auditEventTypes()).toContain('flow.interaction.completed');
+    });
+
+    it('completes a /login without an authorization request for a signed-in browser', async () => {
+      const { response, data } = await submitStep({
+        runtime: oidcAuthCompletionRuntime,
+        currentStep: { node: 'complete', step: 'complete:step' },
+        handle: 'completed',
+        withSession: true,
+        context: { protocol: 'direct', target_type: 'tenant', target_id: null, client_id: null },
+      });
+
+      expect(response.status).toBe(200);
+      expect(data.completed).toBe(true);
+      expect(data.output).toMatchObject({ action: 'complete' });
+    });
+
+    it('does not let a session from before a registration began answer it', async () => {
+      // The browser holds a session from long ago (another account's, or the same one's): a new
+      // registration is not completed by it.
+      const { response, data } = await submitStep({
+        runtime: implicitAccountActionRuntime,
+        editor: implicitAccountActionEditor,
+        flowKind: 'registration',
+        currentStep: { node: 'auth', step: 'auth:step' },
+        handle: 'passkey',
+        withSession: true,
+      });
+
+      expect(response.status).toBe(200);
+      expect(data.completed).toBe(false);
+      expect(data.step).toMatchObject({ component: 'completion' });
+      expect(mocks.consumeAuthorizationChallengeContinuation).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['within the second the registration began, but before it', 1_700_000_000_100, false],
+      ['at the moment it began', 1_700_000_000_900, true],
+      ['after it began', 1_700_000_000_950, true],
+    ])('judges a session made %s to the millisecond', async (_label, createdAt, answers) => {
+      const { data } = await submitStep({
+        runtime: implicitAccountActionRuntime,
+        editor: implicitAccountActionEditor,
+        flowKind: 'registration',
+        currentStep: { node: 'auth', step: 'auth:step' },
+        handle: 'passkey',
+        withSession: true,
+        startedAtMs: 1_700_000_000_900,
+        sessionCreatedAt: createdAt,
+      });
+
+      expect(data.completed).toBe(answers);
+    });
+
+    it('lets a session made since the registration began answer it', async () => {
+      const { response, data } = await submitStep({
+        runtime: implicitAccountActionRuntime,
+        editor: implicitAccountActionEditor,
+        flowKind: 'registration',
+        currentStep: { node: 'auth', step: 'auth:step' },
+        handle: 'passkey',
+        withSession: true,
+        sessionCreatedAt: Date.now() + 1000,
+      });
+
+      expect(response.status).toBe(200);
+      expect(data.completed).toBe(true);
+    });
+
+    it('answers a challenge that is gone and left no confirmation with an expired request, not a sign-in request', async () => {
+      const { response, data } = await submitStep({
+        runtime: oidcAuthCompletionRuntime,
+        currentStep: { node: 'complete', step: 'complete:step' },
+        handle: 'completed',
+        withSession: true,
+        authorizationChallengeId: 'login_challenge_1',
+        beforeSubmit: () =>
+          mocks.readAuthorizationChallengeFreshness.mockResolvedValue({
+            kind: 'login',
+            issuedAt: Infinity,
+            gone: true,
+          }),
+      });
+
+      expect(response.status).toBe(400);
+      expect(data).toMatchObject({
+        error: 'authorization_request_expired',
+        action: 'restart_interaction',
+      });
+      expectNothingWritten();
+    });
+
+    it('lets no session answer a challenge that was continued for another user, and writes nothing', async () => {
+      const { response, data } = await submitStep({
+        runtime: oidcAuthCompletionRuntime,
+        currentStep: { node: 'complete', step: 'complete:step' },
+        handle: 'completed',
+        withSession: true,
+        authorizationChallengeId: 'login_challenge_1',
+        beforeSubmit: () =>
+          mocks.readAuthorizationChallengeFreshness.mockResolvedValue({
+            kind: 'login',
+            issuedAt: 0,
+            confirmedFor: 'user_2',
+          }),
+      });
+
+      expect(response.status).toBe(401);
+      expect(data.error).toBe('authentication_required');
+      expectNothingWritten();
+    });
+
+    it('ends a session check on a challenge that is gone, instead of signing in', async () => {
+      const { data: startData } = await startInteraction(
+        { flow_kind: 'login' },
+        sessionCheckRuntime
+      );
+      resetAdapter();
+      mockSubmitQueries({
+        expiresAt: Number((startData.interaction as Record<string, unknown>).expires_at),
+        contractHash: String(startData.contract_hash),
+        signature: String(startData.signature),
+        currentNodeId: 'session-check',
+        currentStepId: 'session-check:step',
+        stepState: 'pending',
+        runtimeSnapshot: sessionCheckRuntime,
+        editorSnapshot: sessionCheckEditor,
+        context: { authorization_challenge_id: 'login_challenge_1' },
+      });
+      mocks.readAuthorizationChallengeFreshness.mockResolvedValue({
+        kind: 'login',
+        issuedAt: Infinity,
+        gone: true,
+      });
+      mocks.sessionStore.getSessionRpc.mockResolvedValue({
+        userId: 'user_1',
+        expiresAt: Date.now() + 60_000,
+        createdAt: 1_700_000_000_000,
+        data: { authTime: 1_700_000_123 },
+      });
+
+      const response = await loginRuntimeInteractionSubmitHandler(
+        createContext({
+          params: { interaction_id: 'interaction_1' },
+          headers: { Cookie: 'authrim_session=sess_runtime_1' },
+          body: {
+            step_id: 'session-check:step',
+            node_id: 'session-check',
+            contract_hash: startData.contract_hash,
+            signature: startData.signature,
+          },
+        })
+      );
+      const data = await readJson(response);
+
+      expect(data.error).toBe('authorization_request_expired');
+      expect(data.step ?? null).toBeNull();
+    });
+
+    it("does not let another user's session answer a re-authentication, whatever is held", async () => {
+      const { response, data } = await submitStep({
+        runtime: oidcAuthCompletionRuntime,
+        currentStep: { node: 'complete', step: 'complete:step' },
+        handle: 'completed',
+        withSession: true,
+        authorizationChallengeId: 'reauth_challenge_1',
+        beforeSubmit: () =>
+          mocks.readAuthorizationChallengeFreshness.mockResolvedValue({
+            kind: 'reauth',
+            issuedAt: 1_700_000_000_000,
+            subjectUserId: 'user_2',
+          }),
+      });
+
+      expect(response.status).toBe(401);
+      expect(data.error).toBe('authentication_required');
+      expect(mocks.coreAdapter.transaction).not.toHaveBeenCalled();
+      expect(mocks.consumeAuthorizationChallengeContinuation).not.toHaveBeenCalled();
+      expect(auditEventTypes()).toEqual([]);
+    });
+
+    it('does not complete the interaction when the authorization request cannot be continued', async () => {
+      const { response, data } = await submitStep({
+        runtime: oidcAuthCompletionRuntime,
+        currentStep: { node: 'complete', step: 'complete:step' },
+        handle: 'completed',
+        withSession: true,
+        authorizationChallengeId: 'login_challenge_1',
+        beforeSubmit: () =>
+          mocks.consumeAuthorizationChallengeContinuation.mockResolvedValue({
+            error: new Response(JSON.stringify({ error: 'temporarily_unavailable' }), {
+              status: 503,
+              headers: { 'Content-Type': 'application/json' },
+            }),
+          }),
+      });
+
+      expect(response.status).toBe(503);
+      expect(data.error).toBe('temporarily_unavailable');
+      // Nothing is saved as complete or audited as a success: the browser can submit again.
+      expect(mocks.coreAdapter.transaction).not.toHaveBeenCalled();
+      expect(auditEventTypes()).toEqual([]);
+    });
+
+    describe('consent given at the method selection', () => {
+      const policyRow = {
+        id: 'policy_login',
+        display_name: 'Login consent',
+        description: null,
+        is_active: 1,
+      };
+      const itemRow = {
+        statement_id: 'statement_terms',
+        requirement: 'required',
+        version_mode: 'latest',
+        version_id: null,
+        checkbox_mode: 'required',
+        checkbox_default_checked: 0,
+        binding_type: 'subject',
+        binding_value: null,
+        evidence_profile: null,
+        language_fallback: null,
+        display_order: 0,
+        slug: 'terms_of_service',
+        category: 'terms_of_service',
+        conditional_rules_json: null,
+      };
+
+      /**
+       * What the consent tables hold, for whatever the step reads after the interaction's own rows
+       * (those come first, from the queue mockSubmitQueries fills). `queryOne` and `query` may
+       * answer other statements first.
+       */
+      function withPolicy(
+        extra: {
+          queryOne?: (sql: string) => unknown;
+          query?: (sql: string) => unknown[] | undefined;
+        } = {}
+      ) {
+        mocks.coreAdapter.queryOne.mockImplementation(async (sql: string) => {
+          const answered = extra.queryOne?.(sql);
+          if (answered !== undefined) return answered;
+          if (sql.includes('FROM consent_policies')) return policyRow;
+          if (sql.includes('FROM consent_statement_versions')) {
+            return { id: 'version_terms_current', version: '20260701' };
+          }
+          return null;
+        });
+        mocks.coreAdapter.query.mockImplementation(async (sql: string) => {
+          const answered = extra.query?.(sql);
+          if (answered !== undefined) return answered;
+          if (sql.includes('FROM consent_policy_items')) return [itemRow];
+          if (sql.includes('FROM consent_statement_localizations')) {
+            return [
+              {
+                language: 'en',
+                title: 'Terms',
+                description: '',
+                document_url: 'https://example.com/tos',
+                inline_content: null,
+              },
+            ];
+          }
+          return [];
+        });
+      }
+
+      const consentRecords = () =>
+        mocks.coreAdapter.execute.mock.calls.filter(
+          ([sql]) => typeof sql === 'string' && sql.includes('INSERT INTO consent_records')
+        );
+
+      const given = { input: { consent_item_decisions: { statement_terms: 'granted' } } };
+
+      it('refuses a selection that leaves a required consent ungiven, with nobody signed in', async () => {
+        const { response, data } = await submitStep({
+          runtime: consentSelectorRuntime,
+          currentStep: { node: 'auth', step: 'auth:step' },
+          handle: 'mail_otp',
+          beforeSubmit: withPolicy,
+        });
+
+        expect(response.status).toBe(400);
+        expect(data.error).toBe('consent_required');
+        expect(mocks.coreAdapter.transaction).not.toHaveBeenCalled();
+      });
+
+      it('keeps what was given until someone is signed in, recording nothing for anyone yet', async () => {
+        const { response, data } = await submitStep({
+          runtime: consentSelectorRuntime,
+          currentStep: { node: 'auth', step: 'auth:step' },
+          handle: 'mail_otp',
+          body: given,
+          beforeSubmit: withPolicy,
+        });
+
+        expect(response.status).toBe(200);
+        expect(data.step).toMatchObject({ component: 'completion' });
+        expect(consentRecords()).toEqual([]);
+        expect(interactionUserWasSet()).toBe(false);
+        // The step is stored with the consent that was given.
+        const stepUpdates = transactionStatements().filter(([sql]) =>
+          String(sql).includes('UPDATE flow_interaction_steps')
+        );
+        expect(JSON.stringify(stepUpdates)).toContain('held_consent');
+        expect(JSON.stringify(stepUpdates)).toContain('statement_terms');
+      });
+
+      /** The consent a selection kept, as the step's stored state. */
+      async function keptBySelection() {
+        await submitStep({
+          runtime: consentSelectorRuntime,
+          currentStep: { node: 'auth', step: 'auth:step' },
+          handle: 'mail_otp',
+          body: given,
+          beforeSubmit: withPolicy,
+        });
+        const update = transactionStatements().find(([sql]) =>
+          String(sql).includes('UPDATE flow_interaction_steps')
+        );
+        return String((update?.[1] as unknown[])[1]);
+      }
+
+      function readsKept(stateJson: string, extra: { queryOne?: (sql: string) => unknown } = {}) {
+        withPolicy({
+          ...extra,
+          query: (sql) =>
+            sql.includes('held_consent')
+              ? [{ id: 'step_1', step_id: 'auth:step', state_json: stateJson }]
+              : undefined,
+        });
+      }
+
+      it('records it for the user who signs in, when the completion is submitted', async () => {
+        const stateJson = await keptBySelection();
+        const { response, data } = await submitStep({
+          runtime: consentSelectorRuntime,
+          currentStep: { node: 'complete', step: 'complete:step' },
+          handle: 'completed',
+          withSession: true,
+          authorizationChallengeId: 'login_challenge_1',
+          beforeSubmit: () => readsKept(stateJson),
+        });
+
+        expect(response.status, JSON.stringify(data)).toBe(200);
+        expect(data.completed).toBe(true);
+        expect(consentRecords()).toHaveLength(1);
+        expect(consentRecords()[0][1]).toEqual(expect.arrayContaining(['tenant_test', 'user_1']));
+        // The record has a fixed identifier, so a retry or a concurrent attempt cannot add another.
+        expect(consentRecords()[0][0]).toContain('ON CONFLICT(id) DO UPDATE');
+        expect(String((consentRecords()[0][1] as unknown[])[0])).toMatch(/^consent_[0-9a-f]{64}$/);
+        // Each is recorded once.
+        expect(
+          mocks.coreAdapter.execute.mock.calls.filter(
+            ([sql, params]) =>
+              String(sql).includes('UPDATE flow_interaction_steps') &&
+              JSON.stringify(params).includes('held_consent_recorded')
+          )
+        ).toHaveLength(1);
+      });
+
+      it('records it in the version it was given for, and asks again when that version changed', async () => {
+        const stateJson = await keptBySelection();
+        expect(stateJson).toContain('20260701');
+
+        const { response, data } = await submitStep({
+          runtime: consentSelectorRuntime,
+          currentStep: { node: 'complete', step: 'complete:step' },
+          handle: 'completed',
+          withSession: true,
+          authorizationChallengeId: 'login_challenge_1',
+          beforeSubmit: () =>
+            // The statement has a newer version by now.
+            readsKept(stateJson, {
+              queryOne: (sql) =>
+                sql.includes('FROM consent_statement_versions')
+                  ? { id: 'version_terms_next', version: '20260901' }
+                  : undefined,
+            }),
+        });
+
+        expect(response.status).toBe(400);
+        expect(data.error).toBe('consent_changed');
+        expect(consentRecords()).toEqual([]);
+        expect(mocks.consumeAuthorizationChallengeContinuation).not.toHaveBeenCalled();
+        // The interaction goes back to the step that took the consent, nothing held, and is not
+        // completed.
+        const statements = transactionStatements().map(([sql]) => String(sql));
+        expect(statements.some((sql) => sql.includes("state = 'waiting_input'"))).toBe(true);
+        expect(statements.some((sql) => sql.includes("state = 'completed'"))).toBe(false);
+      });
+
+      it('judges the conditions again when what was held is already recorded', async () => {
+        const stateJson = await keptBySelection();
+        const { response, data } = await submitStep({
+          runtime: consentSelectorRuntime,
+          currentStep: { node: 'complete', step: 'complete:step' },
+          handle: 'completed',
+          withSession: true,
+          authorizationChallengeId: 'login_challenge_1',
+          beforeSubmit: () =>
+            // Recorded, and the statement has a newer version since.
+            readsKept(JSON.stringify({ ...JSON.parse(stateJson), held_consent_recorded: true }), {
+              queryOne: (sql) =>
+                sql.includes('FROM consent_statement_versions')
+                  ? { id: 'version_terms_next', version: '20260901' }
+                  : undefined,
+            }),
+        });
+
+        expect(response.status).toBe(400);
+        expect(data.error).toBe('consent_changed');
+        expect(mocks.consumeAuthorizationChallengeContinuation).not.toHaveBeenCalled();
+      });
+
+      it('is not recorded for a user when another has already been given the interaction', async () => {
+        const stateJson = await keptBySelection();
+        const { response, data } = await submitStep({
+          runtime: consentSelectorRuntime,
+          currentStep: { node: 'complete', step: 'complete:step' },
+          handle: 'completed',
+          withSession: true,
+          beforeSubmit: () => {
+            // Another session claimed the interaction first.
+            readsKept(stateJson, {
+              queryOne: (sql) =>
+                sql.includes('SELECT user_id FROM flow_interactions')
+                  ? { user_id: 'user_2' }
+                  : undefined,
+            });
+            mocks.coreAdapter.execute.mockImplementation(async (sql: string) => ({
+              success: true,
+              rowsAffected: String(sql).includes('user_id IS NULL') ? 0 : 1,
+            }));
+          },
+        });
+
+        expect(response.status, JSON.stringify(data)).toBe(403);
+        expect(consentRecords()).toEqual([]);
+        expect(mocks.coreAdapter.transaction).not.toHaveBeenCalled();
+      });
+
+      it('still asks whom the interaction is about when what was held is already recorded', async () => {
+        const stateJson = await keptBySelection();
+        const { response } = await submitStep({
+          runtime: consentSelectorRuntime,
+          currentStep: { node: 'complete', step: 'complete:step' },
+          handle: 'completed',
+          withSession: true,
+          authorizationChallengeId: 'login_challenge_1',
+          beforeSubmit: () => {
+            // Another session was given the interaction and recorded the consent; this one read the
+            // interaction before that, and finds the consent already recorded.
+            readsKept(JSON.stringify({ ...JSON.parse(stateJson), held_consent_recorded: true }), {
+              queryOne: (sql) =>
+                sql.includes('SELECT user_id FROM flow_interactions')
+                  ? { user_id: 'user_2' }
+                  : undefined,
+            });
+            mocks.coreAdapter.execute.mockImplementation(async (sql: string) => ({
+              success: true,
+              rowsAffected: String(sql).includes('user_id IS NULL') ? 0 : 1,
+            }));
+          },
+        });
+
+        expect(response.status).toBe(403);
+        expect(mocks.consumeAuthorizationChallengeContinuation).not.toHaveBeenCalled();
+        expect(mocks.coreAdapter.transaction).not.toHaveBeenCalled();
+      });
+
+      it('is recorded when the Flow ends at a step after the completion was reached', async () => {
+        // A screen follows the selection; the completion is reached from the screen's own submit.
+        const screenRuntime: FlowRuntimeContract = {
+          flow_kind: 'login',
+          ui: {
+            steps: [
+              consentSelectorRuntime.ui.steps[0],
+              { id: 'screen:step', source_node_id: 'screen', component: 'screen', render: true },
+              consentSelectorRuntime.ui.steps[1],
+            ],
+          },
+        };
+        const stateJson = await keptBySelection();
+        const { response, data } = await submitStep({
+          runtime: screenRuntime,
+          currentStep: { node: 'screen', step: 'screen:step' },
+          handle: 'submitted',
+          withSession: true,
+          authorizationChallengeId: 'login_challenge_1',
+          beforeSubmit: () => readsKept(stateJson),
+        });
+
+        expect(response.status).toBe(200);
+        expect(data.completed).toBe(true);
+        expect(consentRecords()).toHaveLength(1);
+        // Recorded before the continuation, so the continuation is not the first of the two to run.
+        expect(mocks.consumeAuthorizationChallengeContinuation).toHaveBeenCalledTimes(1);
+      });
+
+      it('does not record it again once recorded', async () => {
+        const stateJson = await keptBySelection();
+        const { response } = await submitStep({
+          runtime: consentSelectorRuntime,
+          currentStep: { node: 'complete', step: 'complete:step' },
+          handle: 'completed',
+          withSession: true,
+          beforeSubmit: () =>
+            readsKept(JSON.stringify({ ...JSON.parse(stateJson), held_consent_recorded: true })),
+        });
+
+        expect(response.status).toBe(200);
+        expect(consentRecords()).toEqual([]);
+      });
+    });
+
+    it('keeps a spent challenge as it is when only a selection is made', async () => {
+      const { response } = await submitStep({
+        runtime: oidcAuthCompletionRuntime,
+        currentStep: { node: 'auth', step: 'auth:step' },
+        handle: 'mail_otp',
+        authorizationChallengeId: 'login_challenge_1',
+      });
+
+      expect(response.status).toBe(200);
+      expect(mocks.consumeAuthorizationChallengeContinuation).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('a session the authorization challenge would refuse as proof', () => {
+    // A sign-in for a client whose SSO is off (login) and a re-authentication (reauth) are
+    // answered only by a proof made after the challenge. The browser's older session is then not
+    // used at all, so the user can sign in by a method of their own instead of being stopped.
+    const challengeIssuedAt = 1_700_000_200_000;
+    const staleSession = {
+      userId: 'user_1',
+      expiresAt: Date.now() + 60_000,
+      createdAt: 1_700_000_000_000,
+      data: { amr: ['passkey'], authTime: 1_700_000_123, proven_at: 1_700_000_123_000 },
+    };
+    const freshSession = {
+      ...staleSession,
+      data: { amr: ['passkey'], authTime: 1_700_000_300, proven_at: 1_700_000_300_000 },
+    };
+
+    async function submitMailOtpSelection(freshness: unknown, session: unknown, readError?: Error) {
+      const { data: startData } = await startInteraction(
+        {
+          flow_kind: 'login',
+          client_id: 'client_1',
+          requested_scope: 'openid profile',
+          authorization_challenge_id: 'login_challenge_1',
+        },
+        oidcAuthCompletionRuntime
+      );
+      resetAdapter();
+      mockSubmitQueries({
+        expiresAt: Number((startData.interaction as Record<string, unknown>).expires_at),
+        contractHash: String(startData.contract_hash),
+        signature: String(startData.signature),
+        currentNodeId: 'auth',
+        currentStepId: 'auth:step',
+        stepState: 'waiting_input',
+        runtimeSnapshot: oidcAuthCompletionRuntime,
+        editorSnapshot: null,
+        context: {
+          target_type: 'oidc_client',
+          target_id: 'client_1',
+          client_id: 'client_1',
+          authorization_challenge_id: 'login_challenge_1',
+        },
+      });
+      if (readError) {
+        mocks.readAuthorizationChallengeFreshness.mockRejectedValue(readError);
+      } else {
+        mocks.readAuthorizationChallengeFreshness.mockResolvedValue(freshness);
+      }
+      mocks.sessionStore.getSessionRpc.mockResolvedValue(session);
+      mocks.consumeAuthorizationChallengeContinuation.mockResolvedValue({
+        type: 'login',
+        redirectUrl: 'https://first.test.authrim.com/authorize?_confirmation_challenge=confirm_1',
+      });
+
+      const response = await loginRuntimeInteractionSubmitHandler(
+        createContext({
+          params: { interaction_id: 'interaction_1' },
+          headers: { Cookie: 'authrim_session=sess_runtime_1' },
+          url: 'https://first.test.authrim.com/api/v1/login/interactions/interaction_1/submit',
+          body: {
+            step_id: 'auth:step',
+            node_id: 'auth',
+            selected_handle: 'mail_otp',
+            contract_hash: startData.contract_hash,
+            signature: startData.signature,
+          },
+        })
+      );
+      return { response, data: await readJson(response) };
+    }
+
+    function interactionUserWasSet() {
+      return mocks.coreAdapter.execute.mock.calls.some(
+        ([sql]) => typeof sql === 'string' && sql.includes('SET user_id = COALESCE(user_id')
+      );
+    }
+
+    it.each([
+      ['a sign-in for a client whose SSO is off', 'login'],
+      ['a re-authentication', 'reauth'],
+    ] as const)(
+      'selects a sign-in method without using an older session for %s',
+      async (_label, kind) => {
+        const { response, data } = await submitMailOtpSelection(
+          { kind, issuedAt: challengeIssuedAt },
+          staleSession
+        );
+
+        expect(response.status).toBe(200);
+        expect(mocks.consumeAuthorizationChallengeContinuation).not.toHaveBeenCalled();
+        expect(interactionUserWasSet()).toBe(false);
+        // Not complete: the completion waits for the sign-in the selected method will give.
+        expect(data.completed).toBe(false);
+        expect(data.step).toMatchObject({ id: 'complete:step', component: 'completion' });
+        expect(data.output).toBeNull();
+      }
+    );
+
+    it('does not attribute consent given at the selector to an older session the challenge refuses', async () => {
+      const consentSelectorRuntime: FlowRuntimeContract = {
+        flow_kind: 'login',
+        ui: {
+          steps: [
+            {
+              id: 'auth:step',
+              source_node_id: 'auth',
+              component: 'authentication_method_selector',
+              render: true,
+              config: { consent_policy_ref: 'policy_login' },
+            },
+            oidcAuthCompletionRuntime.ui.steps[1],
+          ],
+        },
+      };
+      const { data: startData } = await startInteraction(
+        {
+          flow_kind: 'login',
+          client_id: 'client_1',
+          requested_scope: 'openid profile',
+          authorization_challenge_id: 'login_challenge_1',
+        },
+        consentSelectorRuntime
+      );
+      resetAdapter();
+      mockSubmitQueries({
+        expiresAt: Number((startData.interaction as Record<string, unknown>).expires_at),
+        contractHash: String(startData.contract_hash),
+        signature: String(startData.signature),
+        currentNodeId: 'auth',
+        currentStepId: 'auth:step',
+        stepState: 'waiting_input',
+        runtimeSnapshot: consentSelectorRuntime,
+        editorSnapshot: null,
+        context: {
+          target_type: 'oidc_client',
+          target_id: 'client_1',
+          client_id: 'client_1',
+          authorization_challenge_id: 'login_challenge_1',
+        },
+      });
+      // The consent policy exists and has no item to record: only the user it is attributed to
+      // is in question.
+      const readRows = mocks.coreAdapter.queryOne.getMockImplementation();
+      mocks.coreAdapter.queryOne.mockImplementation(async (sql: string, ...rest: unknown[]) =>
+        sql.includes('FROM consent_policies')
+          ? { id: 'policy_login', display_name: 'Login consent', description: null, is_active: 1 }
+          : readRows?.(sql, ...rest)
+      );
+      mocks.readAuthorizationChallengeFreshness.mockResolvedValue({
+        kind: 'login',
+        issuedAt: challengeIssuedAt,
+      });
+      mocks.sessionStore.getSessionRpc.mockResolvedValue(staleSession);
+
+      const response = await loginRuntimeInteractionSubmitHandler(
+        createContext({
+          params: { interaction_id: 'interaction_1' },
+          headers: { Cookie: 'authrim_session=sess_runtime_1' },
+          url: 'https://first.test.authrim.com/api/v1/login/interactions/interaction_1/submit',
+          body: {
+            step_id: 'auth:step',
+            node_id: 'auth',
+            selected_handle: 'mail_otp',
+            contract_hash: startData.contract_hash,
+            signature: startData.signature,
+          },
+        })
+      );
+
+      expect(response.status).toBe(200);
+      expect(interactionUserWasSet()).toBe(false);
+      expect(mocks.consumeAuthorizationChallengeContinuation).not.toHaveBeenCalled();
+    });
+
+    it('asks to try again, recording nothing, when the challenge cannot be read', async () => {
+      // Neither "no session" (the user would be sent on unauthenticated) nor "this session" (it
+      // could not be judged): the interaction stays open for the browser to submit again.
+      const { response, data } = await submitMailOtpSelection(
+        null,
+        freshSession,
+        new Error('challenge store unavailable')
+      );
+
+      expect(response.status).toBe(503);
+      expect(data).toMatchObject({ error: 'temporarily_unavailable', action: 'retry_step' });
+      expect(mocks.consumeAuthorizationChallengeContinuation).not.toHaveBeenCalled();
+      expect(mocks.coreAdapter.transaction).not.toHaveBeenCalled();
+    });
+
+    it('does not use a re-authentication session that records no method', async () => {
+      const { response } = await submitMailOtpSelection(
+        { kind: 'reauth', issuedAt: challengeIssuedAt },
+        { ...freshSession, data: { authTime: 1_700_000_300, proven_at: 1_700_000_300_000 } }
+      );
+
+      expect(response.status).toBe(200);
+      expect(mocks.consumeAuthorizationChallengeContinuation).not.toHaveBeenCalled();
+    });
+
+    it.each(['login', 'reauth'] as const)(
+      'still continues with a session proven after the %s challenge',
+      async (kind) => {
+        const { response, data } = await submitMailOtpSelection(
+          { kind, issuedAt: challengeIssuedAt },
+          freshSession
+        );
+
+        expect(response.status).toBe(200);
+        expect(mocks.consumeAuthorizationChallengeContinuation).toHaveBeenCalledTimes(1);
+        expect(data.output).toMatchObject({
+          redirect_url:
+            'https://first.test.authrim.com/authorize?_confirmation_challenge=confirm_1',
+        });
+      }
+    );
+
+    it('continues with any session when the challenge asks for no newer proof', async () => {
+      const { response, data } = await submitMailOtpSelection(null, staleSession);
+
+      expect(response.status).toBe(200);
+      expect(mocks.consumeAuthorizationChallengeContinuation).toHaveBeenCalledTimes(1);
+      expect(data.output).toHaveProperty('redirect_url');
     });
   });
 

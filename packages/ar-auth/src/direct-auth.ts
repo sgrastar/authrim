@@ -615,6 +615,161 @@ export function reauthProofFromRecord(
   return provenAtMs === undefined ? { method } : { method, provenAtMs };
 }
 
+/**
+ * What an authorization challenge demands of the proof that answers it: made after `issuedAt`
+ * (milliseconds). A re-authentication ('reauth') needs a proof the server dated; a sign-in for a
+ * client whose SSO is off ('login') accepts an undated proof by its auth_time.
+ */
+export interface AuthorizationChallengeFreshness {
+  kind: 'login' | 'reauth';
+  issuedAt: number;
+  /** The user a re-authentication was asked of: only a proof by that user answers it. */
+  subjectUserId?: string;
+  /**
+   * Set when the challenge was used (or is gone) and this is what its confirmation says: the user
+   * it was continued for, who alone may be given the result again.
+   */
+  confirmedFor?: string;
+  /**
+   * The challenge is gone and left no confirmation: nothing answers it (`issuedAt` is then never
+   * reached, so that no proof is old enough to count as new).
+   */
+  gone?: true;
+}
+
+/**
+ * Whether a proof is too old to answer the challenge. This is the one rule both the continuation
+ * and the Login UI runtime (which must not offer a session the continuation would refuse) apply.
+ */
+export function isProofOlderThanChallengeRequirement(
+  freshness: AuthorizationChallengeFreshness,
+  authTime: number,
+  provenAtMs?: number
+): boolean {
+  if (freshness.kind === 'reauth') {
+    // A proof of unknown time (a session or artifact that did not record one) cannot show it.
+    return provenAtMs === undefined || provenAtMs < freshness.issuedAt;
+  }
+  return (provenAtMs ?? authTime * 1000) < freshness.issuedAt - FRESH_SIGN_IN_CLOCK_SKEW_MS;
+}
+
+async function authorizationConfirmationId(tenantId: string, challengeId: string): Promise<string> {
+  const digest = await crypto.subtle.digest(
+    'SHA-256',
+    new TextEncoder().encode(JSON.stringify(['authorize_confirmation', tenantId, challengeId]))
+  );
+  const hex = Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join(
+    ''
+  );
+  // Shaped like the random identifiers it replaces.
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`;
+}
+
+/**
+ * The confirmation an authorization challenge left when it was continued, if it is still there to
+ * be used: who it was made for, the binding that goes with the browser, and what the challenge
+ * asked of the proof. Read from the confirmation alone.
+ */
+async function loadAuthorizationConfirmation(
+  env: Env,
+  tenantId: string,
+  challengeId: string
+): Promise<{
+  id: string;
+  type: AuthorizationChallengeType;
+  userId: string;
+  issuer: string;
+  browserBinding: string;
+  metadata: Record<string, unknown>;
+} | null> {
+  // A store that cannot be read throws: that is not a confirmation that is not there.
+  const confirmationId = await authorizationConfirmationId(tenantId, challengeId);
+  const store = await getChallengeStoreByChallengeId(env, confirmationId, tenantId);
+  const confirmation = (await store.getChallengeRpc(confirmationId)) as {
+    tenantId?: string;
+    userId?: string;
+    consumed?: boolean;
+    metadata?: Record<string, unknown>;
+  } | null;
+  const metadata = confirmation?.metadata;
+  const binding = metadata?.browserBinding;
+  const type = metadata?.continuation_type;
+  const issuer = metadata?.continuation_issuer;
+  if (
+    !confirmation ||
+    !metadata ||
+    confirmation.tenantId !== tenantId ||
+    confirmation.consumed === true ||
+    typeof confirmation.userId !== 'string' ||
+    metadata.purpose !== 'authorize_confirmation' ||
+    metadata.source_challenge_id !== challengeId ||
+    typeof binding !== 'string' ||
+    (type !== 'login' && type !== 'reauth') ||
+    typeof issuer !== 'string'
+  ) {
+    return null;
+  }
+  return {
+    id: confirmationId,
+    type,
+    userId: confirmation.userId,
+    issuer,
+    browserBinding: binding,
+    metadata,
+  };
+}
+
+/** What the challenge asked of the proof, in the form of the challenge it came from. */
+function readConfirmationRequirement(
+  metadata: Record<string, unknown>
+): AuthorizationChallengeData {
+  const requirement = (metadata.continuation_requirement ?? {}) as Record<string, unknown>;
+  return {
+    userId:
+      typeof requirement.session_user_id === 'string' ? requirement.session_user_id : 'anonymous',
+    metadata: {
+      ...(typeof requirement.fresh_sign_in_after === 'number'
+        ? { fresh_sign_in_after: requirement.fresh_sign_in_after }
+        : {}),
+      ...(typeof requirement.reauth_issued_at === 'number'
+        ? { reauth_issued_at: requirement.reauth_issued_at }
+        : {}),
+      ...(typeof requirement.session_user_id === 'string'
+        ? { sessionUserId: requirement.session_user_id }
+        : {}),
+    },
+  };
+}
+
+/**
+ * The continuation an authorization challenge already gave, if its confirmation is still there to
+ * be used and was made for this user: the redirect and the binding that goes with the browser.
+ */
+async function readAuthorizationContinuation(
+  env: Env,
+  tenantId: string,
+  challengeId: string,
+  authenticatedUserId: string
+): Promise<{
+  type: AuthorizationChallengeType;
+  redirectUrl: string;
+  browserBinding: string;
+  requirement: AuthorizationChallengeData;
+} | null> {
+  const confirmation = await loadAuthorizationConfirmation(env, tenantId, challengeId);
+  if (!confirmation || confirmation.userId !== authenticatedUserId) return null;
+  return {
+    type: confirmation.type,
+    browserBinding: confirmation.browserBinding,
+    redirectUrl: buildAuthorizeContinuationUrl(
+      { issuer: confirmation.issuer },
+      confirmation.id,
+      confirmation.issuer
+    ),
+    requirement: readConfirmationRequirement(confirmation.metadata),
+  };
+}
+
 export async function consumeAuthorizationChallengeContinuation(
   c: Context<{ Bindings: Env }>,
   tenantId: string,
@@ -632,120 +787,172 @@ export async function consumeAuthorizationChallengeContinuation(
 ): Promise<AuthorizationChallengeContinuation | { error: Response }> {
   const env = c.env;
   const challengeStore = await getChallengeStoreByChallengeId(env, challengeId, tenantId);
+
+  const refuse = (status: number, error: string, description: string) => ({
+    error: new Response(JSON.stringify({ error, error_description: description }), {
+      status,
+      headers: { 'Content-Type': 'application/json' },
+    }),
+  });
+
+  /**
+   * Whether this proof may answer the challenge: the re-authentication method, the proof's age
+   * (a re-authentication, or a sign-in for a client whose SSO is off, is answered only by a proof
+   * made after it was asked for; a proof of unknown time falls back to its auth_time or, for a
+   * re-authentication, cannot show it) and the user a re-authentication was issued for.
+   */
+  const refusalFor = async (
+    kind: AuthorizationChallengeType,
+    challengeData: AuthorizationChallengeData
+  ): Promise<{ error: Response } | null> => {
+    if (
+      kind === 'reauth' &&
+      (!provenMethod ||
+        (provenMethod !== 'directory_password' &&
+          provenMethod !== 'other' &&
+          !(await isAuthenticationMethodUsageAvailable(env, tenantId, provenMethod, 'reauth', {
+            strict: true,
+          }).catch(() => false))))
+    ) {
+      return refuse(403, 'access_denied', 'This method cannot be used to re-authenticate');
+    }
+    const challengeMetadata = challengeData.metadata || {};
+    const freshSignInAfter = challengeMetadata.fresh_sign_in_after;
+    if (
+      kind === 'login' &&
+      typeof freshSignInAfter === 'number' &&
+      isProofOlderThanChallengeRequirement(
+        { kind: 'login', issuedAt: freshSignInAfter },
+        authTime,
+        provenAtMs
+      )
+    ) {
+      return refuse(403, 'login_required', 'Sign in again to continue to this application');
+    }
+    const reauthIssuedAt = challengeMetadata.reauth_issued_at;
+    if (
+      kind === 'reauth' &&
+      typeof reauthIssuedAt === 'number' &&
+      isProofOlderThanChallengeRequirement(
+        { kind: 'reauth', issuedAt: reauthIssuedAt },
+        authTime,
+        provenAtMs
+      )
+    ) {
+      return refuse(403, 'login_required', 'Authenticate again to complete the re-authentication');
+    }
+    const expectedUser =
+      kind === 'reauth'
+        ? metadataString(challengeMetadata, 'sessionUserId') || challengeData.userId
+        : undefined;
+    if (expectedUser && expectedUser !== authenticatedUserId) {
+      return refuse(
+        403,
+        'access_denied',
+        'Authenticated user does not match the re-authentication challenge'
+      );
+    }
+    return null;
+  };
+
+  // Judge the proof before the challenge is used up: a refused proof (an artifact older than the
+  // challenge, another user's session) must leave the challenge for the proof that answers it. A
+  // challenge's metadata never changes once stored, so what was read here is what is consumed;
+  // the consumed record is judged again all the same.
+  let preKind: AuthorizationChallengeType | undefined;
+  let stored:
+    | (AuthorizationChallengeData & { tenantId?: string; type?: string })
+    | null
+    | undefined;
+  try {
+    stored = (await challengeStore.getChallengeRpc(challengeId)) as typeof stored;
+  } catch {
+    // Not "no such challenge": consuming now could use it up for a proof that is then refused
+    // (an older artifact), so the caller tries again once the store answers.
+    return refuse(503, 'temporarily_unavailable', 'The authorization request could not be checked');
+  }
+  if (
+    stored &&
+    stored.tenantId === tenantId &&
+    (stored.type === 'login' || stored.type === 'reauth')
+  ) {
+    preKind = stored.type;
+    const refusal = await refusalFor(preKind, stored);
+    if (refusal) return refusal;
+  }
+
+  // A challenge already continued (or gone since) is continued again only to give the same result
+  // back: the earlier attempt may have ended, after the continuation was made, before its caller
+  // learned of it. What the confirmation says of itself is enough: it was made for one user, from
+  // this challenge, and expires shortly; the challenge need not still be there.
+  if (stored === null || (stored as { consumed?: boolean } | undefined)?.consumed === true) {
+    let repeated: Awaited<ReturnType<typeof readAuthorizationContinuation>>;
+    try {
+      repeated = await readAuthorizationContinuation(
+        env,
+        tenantId,
+        challengeId,
+        authenticatedUserId
+      );
+    } catch {
+      return refuse(
+        503,
+        'temporarily_unavailable',
+        'The authorization request could not be checked'
+      );
+    }
+    if (repeated) {
+      // The same terms as the first time, whatever has become of the challenge.
+      const repeatedRefusal = await refusalFor(repeated.type, repeated.requirement);
+      if (repeatedRefusal) return repeatedRefusal;
+      c.header(
+        'Set-Cookie',
+        `authrim_authorize_confirmation=${encodeURIComponent(repeated.browserBinding)}; Path=/authorize; HttpOnly; SameSite=${getSessionCookieSameSite(env)}; Secure; Max-Age=120`,
+        { append: true }
+      );
+      return { type: repeated.type, redirectUrl: repeated.redirectUrl };
+    }
+    return refuse(400, 'invalid_request', 'Authorization challenge is invalid or expired');
+  }
+
   let challengeData: AuthorizationChallengeData;
   let type: AuthorizationChallengeType;
-
+  const kinds: AuthorizationChallengeType[] =
+    preKind === 'reauth' ? ['reauth', 'login'] : ['login', 'reauth'];
   try {
     challengeData = (await challengeStore.consumeChallengeRpc({
       id: challengeId,
       tenantId,
-      type: 'login',
+      type: kinds[0],
       challenge: challengeId,
     })) as AuthorizationChallengeData;
-    type = 'login';
+    type = kinds[0];
   } catch {
     try {
       challengeData = (await challengeStore.consumeChallengeRpc({
         id: challengeId,
         tenantId,
-        type: 'reauth',
+        type: kinds[1],
         challenge: challengeId,
       })) as AuthorizationChallengeData;
-      type = 'reauth';
+      type = kinds[1];
     } catch {
-      return {
-        error: new Response(
-          JSON.stringify({
-            error: 'invalid_request',
-            error_description: 'Authorization challenge is invalid or expired',
-          }),
-          {
-            status: 400,
-            headers: { 'Content-Type': 'application/json' },
-          }
-        ),
-      };
+      return refuse(400, 'invalid_request', 'Authorization challenge is invalid or expired');
     }
   }
 
-  if (
-    type === 'reauth' &&
-    (!provenMethod ||
-      (provenMethod !== 'directory_password' &&
-        provenMethod !== 'other' &&
-        !(await isAuthenticationMethodUsageAvailable(env, tenantId, provenMethod, 'reauth', {
-          strict: true,
-        }).catch(() => false))))
-  ) {
-    return {
-      error: new Response(
-        JSON.stringify({
-          error: 'access_denied',
-          error_description: 'This method cannot be used to re-authenticate',
-        }),
-        { status: 403, headers: { 'Content-Type': 'application/json' } }
-      ),
-    };
-  }
+  const consumedRefusal = await refusalFor(type, challengeData);
+  if (consumedRefusal) return consumedRefusal;
 
   const metadata = challengeData.metadata || {};
-  // A re-authentication is answered only by a proof made after it was asked for.
-  const reauthIssuedAt = metadata.reauth_issued_at;
-  // So is a sign-in for a client whose SSO is off: a session made earlier (the browser's existing
-  // sign-in) must not answer it. A proof of unknown time falls back to its auth_time.
-  const freshSignInAfter = metadata.fresh_sign_in_after;
-  if (
-    type === 'login' &&
-    typeof freshSignInAfter === 'number' &&
-    (provenAtMs ?? authTime * 1000) < freshSignInAfter - FRESH_SIGN_IN_CLOCK_SKEW_MS
-  ) {
-    return {
-      error: new Response(
-        JSON.stringify({
-          error: 'login_required',
-          error_description: 'Sign in again to continue to this application',
-        }),
-        { status: 403, headers: { 'Content-Type': 'application/json' } }
-      ),
-    };
-  }
-  // A re-authentication needs a proof the server dated after the request; a proof of unknown
-  // time (a session or artifact that did not record one) cannot show that.
-  if (
-    type === 'reauth' &&
-    typeof reauthIssuedAt === 'number' &&
-    (provenAtMs === undefined || provenAtMs < reauthIssuedAt)
-  ) {
-    return {
-      error: new Response(
-        JSON.stringify({
-          error: 'login_required',
-          error_description: 'Authenticate again to complete the re-authentication',
-        }),
-        { status: 403, headers: { 'Content-Type': 'application/json' } }
-      ),
-    };
-  }
   const expectedUserId =
     type === 'reauth'
       ? metadataString(metadata, 'sessionUserId') || challengeData.userId
       : undefined;
-  if (expectedUserId && expectedUserId !== authenticatedUserId) {
-    return {
-      error: new Response(
-        JSON.stringify({
-          error: 'access_denied',
-          error_description: 'Authenticated user does not match the re-authentication challenge',
-        }),
-        {
-          status: 403,
-          headers: { 'Content-Type': 'application/json' },
-        }
-      ),
-    };
-  }
 
-  const confirmationId = crypto.randomUUID();
+  // The same authorization request has the same confirmation, so that a continuation made once can
+  // be read back (readAuthorizationContinuation) by an attempt that did not learn of it.
+  const confirmationId = await authorizationConfirmationId(tenantId, challengeId);
   const browserBinding = generateSecureRandomString(32);
   const confirmationStore = await getChallengeStoreByChallengeId(env, confirmationId, tenantId);
   await confirmationStore.storeChallengeRpc({
@@ -757,6 +964,22 @@ export async function consumeAuthorizationChallengeContinuation(
     ttl: 60,
     metadata: {
       purpose: 'authorize_confirmation',
+      source_challenge_id: challengeId,
+      // What a repeat of this continuation needs to give the same answer (see
+      // readAuthorizationContinuation).
+      continuation_type: type,
+      continuation_issuer: metadataString(metadata, 'issuer') || fallbackIssuer,
+      // What the proof had to be, so that giving the continuation again asks the same of whoever
+      // asks, whether or not the challenge is still there.
+      continuation_requirement: {
+        ...(typeof metadata.fresh_sign_in_after === 'number'
+          ? { fresh_sign_in_after: metadata.fresh_sign_in_after }
+          : {}),
+        ...(typeof metadata.reauth_issued_at === 'number'
+          ? { reauth_issued_at: metadata.reauth_issued_at }
+          : {}),
+        ...(expectedUserId ? { session_user_id: expectedUserId } : {}),
+      },
       authTime,
       sessionUserId: expectedUserId || authenticatedUserId,
       browserBinding,
@@ -869,31 +1092,63 @@ async function readAuthorizationChallengeReauthUser(
 }
 
 /**
- * When a re-authentication challenge was issued (ms), or null for no challenge or another kind.
+ * What the challenge demands of the proof that answers it (a re-authentication, or a sign-in for a
+ * client whose SSO is off), or null for no challenge, another tenant's, or neither kind.
  * Throws when the challenge cannot be read, so the caller can choose a safe path.
  */
-export async function readAuthorizationChallengeReauthIssuedAt(
+export async function readAuthorizationChallengeFreshness(
   env: Env,
   tenantId: string,
   challengeId: string | undefined | null
-): Promise<number | null> {
+): Promise<AuthorizationChallengeFreshness | null> {
   if (!challengeId) return null;
   const challengeStore = await getChallengeStoreByChallengeId(env, challengeId, tenantId);
   const challenge = (await challengeStore.getChallengeRpc(challengeId)) as {
     tenantId?: string;
     type?: string;
+    userId?: string;
+    consumed?: boolean;
     metadata?: Record<string, unknown>;
   } | null;
-  if (challenge?.tenantId !== tenantId) return null;
-  // A re-authentication, or a sign-in for a client whose SSO is off: either is answered only by a
-  // proof made after the challenge.
+  if (!challenge || challenge.tenantId !== tenantId || challenge.consumed === true) {
+    // Used, or cleared away since: what it asked is what its confirmation (if it left one) says.
+    const confirmation = await loadAuthorizationConfirmation(env, tenantId, challengeId);
+    if (!confirmation) {
+      return { kind: 'login', issuedAt: Number.POSITIVE_INFINITY, gone: true };
+    }
+    const requirement = readConfirmationRequirement(confirmation.metadata);
+    const kind = confirmation.type;
+    const issuedAt =
+      kind === 'reauth'
+        ? requirement.metadata?.reauth_issued_at
+        : requirement.metadata?.fresh_sign_in_after;
+    return {
+      kind,
+      // A sign-in that asked for nothing newer asked for nothing.
+      issuedAt: typeof issuedAt === 'number' ? issuedAt : 0,
+      confirmedFor: confirmation.userId,
+      ...(requirement.userId !== 'anonymous' ? { subjectUserId: requirement.userId } : {}),
+    };
+  }
+  const kind = challenge.type === 'reauth' ? 'reauth' : challenge.type === 'login' ? 'login' : null;
+  if (!kind) return null;
   const issuedAt =
-    challenge.type === 'reauth'
+    kind === 'reauth'
       ? challenge.metadata?.reauth_issued_at
-      : challenge.type === 'login'
-        ? challenge.metadata?.fresh_sign_in_after
-        : undefined;
-  return typeof issuedAt === 'number' ? issuedAt : null;
+      : challenge.metadata?.fresh_sign_in_after;
+  if (typeof issuedAt !== 'number') return null;
+  const sessionUserId = challenge.metadata?.sessionUserId;
+  const subject =
+    kind === 'reauth'
+      ? typeof sessionUserId === 'string' && sessionUserId
+        ? sessionUserId
+        : challenge.userId
+      : undefined;
+  return {
+    kind,
+    issuedAt,
+    ...(subject && subject !== 'anonymous' ? { subjectUserId: subject } : {}),
+  };
 }
 
 /** How long an email-code send left provisioning its account may be resumed. */

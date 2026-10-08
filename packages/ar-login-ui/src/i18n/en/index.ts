@@ -451,6 +451,7 @@ const en = {
 	ciba_errorConsentWithdrawn:
 		"This request was made before you withdrew this app's access. Start again from the app.",
 	ciba_errorRequestGone: 'This request has expired or has already been answered.',
+	error_authorizationRequestExpired: 'The sign-in request has expired. Start again from the app.',
 	ciba_errorTryAgain:
 		"Your decision couldn't be saved right now, and nothing has changed. Try again in a moment.",
 	ciba_errorTooManyAttempts: 'Too many attempts. Wait a while, then try again.',

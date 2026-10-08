@@ -129,6 +129,8 @@ const completion = {
 	ciba_errorConsentWithdrawn:
 		'Permintaan ini dibuat sebelum Anda mencabut akses aplikasi ini. Mulai lagi dari aplikasi.',
 	ciba_errorRequestGone: 'Permintaan ini sudah kedaluwarsa atau sudah dijawab.',
+	error_authorizationRequestExpired:
+		'Permintaan masuk sudah kedaluwarsa. Mulai lagi dari aplikasi.',
 	ciba_errorTryAgain:
 		'Keputusan Anda tidak dapat disimpan saat ini dan tidak ada yang berubah. Coba lagi sebentar lagi.',
 	ciba_errorTooManyAttempts: 'Terlalu banyak percobaan. Tunggu sebentar, lalu coba lagi.',

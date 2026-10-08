@@ -456,6 +456,8 @@ const ja = {
 	ciba_errorConsentWithdrawn:
 		'このリクエストは、このアプリへのアクセスを取り消す前に作成されたものです。アプリから最初からやり直してください。',
 	ciba_errorRequestGone: 'このリクエストは期限切れか、すでに応答済みです。',
+	error_authorizationRequestExpired:
+		'ログインの要求の期限が切れました。アプリからもう一度始めてください。',
 	ciba_errorTryAgain:
 		'今は決定を保存できませんでした。何も変更されていません。しばらくしてからもう一度お試しください。',
 	ciba_errorTooManyAttempts: '試行回数が多すぎます。しばらく待ってからもう一度お試しください。',

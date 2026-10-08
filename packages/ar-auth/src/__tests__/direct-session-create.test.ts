@@ -6,6 +6,8 @@ const lifecycleRow = vi.hoisted(() => vi.fn());
 const challengeStore = {
   consumeChallengeRpc: vi.fn(),
   storeChallengeRpc: vi.fn(),
+  // Nothing is known about a challenge before it is consumed in these cases.
+  getChallengeRpc: vi.fn(async () => undefined),
 };
 
 const sessionStore = {
