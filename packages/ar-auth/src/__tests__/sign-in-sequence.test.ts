@@ -380,6 +380,8 @@ async function storeAuthorizationChallenge(options: {
   kind: 'login' | 'reauth';
   freshAfter?: number;
   clientId?: string;
+  /** The issuer authorize recorded (the continuation is an address on it). */
+  issuer?: string;
 }): Promise<string> {
   const id = `authz_${crypto.randomUUID()}`;
   await (world.challenges as ChallengeStore).storeChallengeRpc({
@@ -391,6 +393,7 @@ async function storeAuthorizationChallenge(options: {
     ttl: 600,
     metadata: {
       client_id: options.clientId ?? CLIENT_ID,
+      ...(options.issuer ? { issuer: options.issuer } : {}),
       redirect_uri: 'https://rp.example.com/callback',
       scope: 'openid profile',
       state: 'state_1',
@@ -1891,6 +1894,31 @@ describe('sign-in sequences through the real handlers', () => {
 
       expect(other.continuation).toBeUndefined();
       expect(other.final?.status).not.toBe(200);
+    });
+  });
+
+  describe('the address the browser is sent to when the Flow ends', () => {
+    // What the Login UI does with it is judged by the UI (completion-redirect.test.ts, with the
+    // same address): this pins what the server gives, in a local development setup, where the
+    // issuer is plain http on a port of its own, apart from the UI.
+    it("is the issuer's authorize address with the confirmation, as the UI is tested to accept", async () => {
+      const challengeId = await storeAuthorizationChallenge({
+        kind: 'login',
+        freshAfter: Date.now(),
+        issuer: 'http://localhost:8787',
+      });
+      const browser = browserWith(existingSession(60_000));
+
+      const result = await signInByEmailCode(browser, { challengeId });
+
+      // The session finish (continuation deferred) gives the tenant's usual destination: the page
+      // has to go on with the one the Flow's completion gives, or it never returns to the application.
+      expect(result.finish?.json.redirect_url).not.toMatch(/_confirmation_challenge/);
+      expect(result.final?.json.output).toMatchObject({
+        redirect_url: expect.stringMatching(
+          /^http:\/\/localhost:8787\/authorize\?_confirmation_challenge=[0-9a-f-]{36}$/
+        ),
+      });
     });
   });
 

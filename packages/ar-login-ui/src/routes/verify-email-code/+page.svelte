@@ -28,6 +28,7 @@
 		peekFlowRuntimeState,
 		persistFlowRuntimeState
 	} from '$lib/authrim/flow-runtime-state';
+	import { completionRedirect } from '$lib/authrim/completion-redirect';
 
 	const { brandingStore } = useLoginUIStores();
 
@@ -341,13 +342,7 @@
 			};
 			if (submittedFlow.completed || flow.interaction.state === 'completed') {
 				consumeFlowRuntimeState(flow.interaction.id);
-				if (
-					submittedFlow.output?.redirect_url &&
-					isValidRedirectUrl(submittedFlow.output.redirect_url)
-				) {
-					return submittedFlow.output.redirect_url;
-				}
-				return postAuthRedirect;
+				return completionRedirect(submittedFlow.output, postAuthRedirect);
 			}
 		}
 
