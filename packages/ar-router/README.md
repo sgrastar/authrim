@@ -2,7 +2,7 @@
 project: Authrim
 lang: en
 date: 2025-12-27
-description: "The Router Worker provides a unified entry point for all Authrim OpenID Connect endpoints when using workers.dev deployment."
+description: 'The Router Worker provides a unified entry point for all Authrim OpenID Connect endpoints when using workers.dev deployment.'
 type: reference
 tags:
   - authrim
@@ -12,6 +12,7 @@ tags:
   - cloudflare-workers
   - routing
 ---
+
 # Authrim Router Worker
 
 The Router Worker provides a unified entry point for all Authrim OpenID Connect endpoints when using workers.dev deployment.
@@ -97,13 +98,14 @@ pnpm run deploy
 
 ## Development
 
-```bash
-# Generate wrangler.toml with Service Bindings
-./scripts/setup-dev.sh
+Local development runs the router together with every other Worker in one `wrangler dev` session
+(Service Bindings need them to share a session):
 
-# Start router in development mode
-cd packages/router
-pnpm run dev
+```bash
+pnpm setup:local init   # once
+pnpm dev                # router on http://localhost:8787; Login UI :5173, Admin UI :5174
 ```
 
-The router runs on port 8786 by default.
+See the [Development Guide](../../docs/getting-started/development.md).
+
+The router serves the issuer origin on port 8787 by default.

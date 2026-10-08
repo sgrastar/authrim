@@ -23,6 +23,7 @@ docs/api/scalar.html
 .env.local
 .env.*.local
 .dev.vars
+.dev.vars.*
 
 # Editor directories and files
 .vscode/
@@ -67,6 +68,8 @@ worker/
 # NEVER commit these — use the setup tool to export them as GitHub Secrets.
 # See docs/ci-cd-deployment.md for details.
 .authrim/
+# Local development environment (pnpm run setup local init)
+.authrim-local/
 
 # Logs
 logs/

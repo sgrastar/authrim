@@ -12,7 +12,7 @@
     "build:admin-console": "turbo run build --filter=@authrim/ar-admin-console",
     "storybook:admin-console": "pnpm --filter @authrim/ar-admin-console storybook",
     "build:login-ui": "turbo run build --filter=@authrim/ar-login-ui",
-    "dev": "turbo run dev --parallel",
+    "dev": "pnpm run setup:bootstrap && tsx packages/setup/src/index.ts local up",
     "deploy": "./scripts/deploy-with-retry.sh --api-only",
     "deploy:with-router": "./scripts/deploy-with-retry.sh --api-only",
     "deploy:retry": "./scripts/deploy-with-retry.sh --api-only",
@@ -92,6 +92,9 @@
     "release:migrations:typecheck": "tsc --noEmit -p scripts/release-migrations-tsconfig.json",
     "migrate:info": "echo '\n📋 Migration Commands:\n\n  migrate:create <name>  - Create a new migration file\n\nFresh installs and existing environments are applied by the manifest-aware @authrim/setup runner.\nFor repository D1 maintenance, use scripts/apply-migrations.sh with --env and --role; do not loop over SQL files directly.\n'",
     "setup": "tsx packages/setup/src/index.ts",
+    "setup:bootstrap": "turbo run build --filter=@authrim/setup^... --output-logs=errors-only",
+    "setup:local": "pnpm run setup:bootstrap && tsx packages/setup/src/index.ts local",
+    "setup:local-smoke": "pnpm run setup:bootstrap && tsx test/local/smoke-local.ts",
     "setup:init": "tsx packages/setup/src/index.ts init",
     "setup:manage": "tsx packages/setup/src/index.ts manage",
     "setup:deploy": "tsx packages/setup/src/index.ts deploy",
@@ -160,7 +163,7 @@
     "turbo": "^2.9.17",
     "typescript": "^5.9.3",
     "vitest": "^4.1.11",
-    "wrangler": "^4.110.0",
+    "wrangler": "^4.148.0",
     "yaml": "2.9.1"
   },
   "optionalDependencies": {

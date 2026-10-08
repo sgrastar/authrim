@@ -13,6 +13,8 @@ export default defineConfig({
       'test/integration/login-ui-approval-routes-contract.test.ts',
       'test/integration/async-approval-account-session.test.ts',
       'test/integration/oidc-session-management.test.ts',
+      'test/integration/router-logout-confirmation.test.ts',
+      'test/integration/router-user-self-service.test.ts',
       'test/integration/saml-enterprise-academic-profiles.test.ts',
       'test/integration/saml-federation-contract.test.ts',
       'test/integration/scim-provisioning-lifecycle.test.ts',

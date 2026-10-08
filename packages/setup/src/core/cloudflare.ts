@@ -1019,6 +1019,23 @@ async function wrangler(
 }
 
 /**
+ * Local-only execution target for D1/KV helpers.
+ *
+ * When supplied, the helper talks to the Miniflare state under `persistTo` (the same directory a
+ * `wrangler dev --persist-to` session reads) instead of the Cloudflare account. `configPath` is a
+ * Wrangler config that declares every database and namespace the caller addresses by name.
+ */
+export interface LocalWranglerTarget {
+  configPath: string;
+  persistTo: string;
+  cwd?: string;
+}
+
+function localTargetArgs(target: LocalWranglerTarget): string[] {
+  return ['--local', '--persist-to', target.persistTo, '-c', target.configPath];
+}
+
+/**
  * Check if wrangler is installed
  */
 export async function isWranglerInstalled(): Promise<boolean> {
@@ -3956,7 +3973,11 @@ export async function putKVKeyByNamespaceId(
   namespaceId: string,
   key: string,
   value: string,
-  options: { expirationTtl?: number; onProgress?: (message: string) => void } = {}
+  options: {
+    expirationTtl?: number;
+    onProgress?: (message: string) => void;
+    target?: LocalWranglerTarget;
+  } = {}
 ): Promise<void> {
   await withPrivateTemporaryTextFile(value, async (valuePath) => {
     const oauthRefresh: WranglerOAuthRefreshState = { attempted: false };
@@ -3969,10 +3990,14 @@ export async function putKVKeyByNamespaceId(
       valuePath,
       '--namespace-id',
       namespaceId,
-      '--remote',
+      ...(options.target ? localTargetArgs(options.target) : ['--remote']),
     ];
     if (options.expirationTtl !== undefined) {
       args.push('--ttl', String(options.expirationTtl));
+    }
+    if (options.target) {
+      await wrangler(args, { timeout: 60000, cwd: options.target.cwd });
+      return;
     }
     for (let attempt = 1; attempt <= D1_MIGRATION_AUTH_MAX_ATTEMPTS; attempt++) {
       try {
@@ -3997,11 +4022,24 @@ export async function putKVKeyByNamespaceId(
   });
 }
 
-export async function getKVKeyByNamespaceId(namespaceId: string, key: string): Promise<string> {
+export async function getKVKeyByNamespaceId(
+  namespaceId: string,
+  key: string,
+  target?: LocalWranglerTarget
+): Promise<string> {
   const { stdout } = await wrangler(
-    ['kv', 'key', 'get', key, '--namespace-id', namespaceId, '--remote'],
+    [
+      'kv',
+      'key',
+      'get',
+      key,
+      '--namespace-id',
+      namespaceId,
+      ...(target ? localTargetArgs(target) : ['--remote']),
+    ],
     {
       timeout: 60000,
+      cwd: target?.cwd,
     }
   );
   return stdout;
@@ -4037,18 +4075,28 @@ export function parseKVKeyListOutput(stdout: string): KVKeyListRow[] {
 
 export async function getOptionalKVKeyByNamespaceId(
   namespaceId: string,
-  key: string
+  key: string,
+  target?: LocalWranglerTarget
 ): Promise<string | null> {
   const { stdout } = await wrangler(
-    ['kv', 'key', 'list', '--namespace-id', namespaceId, '--prefix', key, '--remote'],
-    { timeout: 60000 }
+    [
+      'kv',
+      'key',
+      'list',
+      '--namespace-id',
+      namespaceId,
+      '--prefix',
+      key,
+      ...(target ? localTargetArgs(target) : ['--remote']),
+    ],
+    { timeout: 60000, cwd: target?.cwd }
   );
   const exactMatches = parseKVKeyListOutput(stdout).filter((row) => row.name === key);
   if (exactMatches.length === 0) return null;
   if (exactMatches.length !== 1) {
     throw new Error('Cloudflare KV returned duplicate exact keys');
   }
-  return getKVKeyByNamespaceId(namespaceId, key);
+  return getKVKeyByNamespaceId(namespaceId, key, target);
 }
 
 /**
@@ -4202,6 +4250,7 @@ export async function executeD1Migration(
   options: {
     transactionSuffixSql?: string;
     verifyCommitted?: () => Promise<boolean>;
+    target?: LocalWranglerTarget;
   } = {}
 ): Promise<{ success: boolean; error?: string }> {
   try {
@@ -4211,6 +4260,20 @@ export async function executeD1Migration(
     const transactionSql = options.transactionSuffixSql
       ? `${renderedSql.trimEnd()}\n\n${options.transactionSuffixSql}\n`
       : renderedSql;
+    if (options.target) {
+      const target = options.target;
+      return await withPrivateTemporaryTextFile(transactionSql, async (tempSqlPath) => {
+        try {
+          await wrangler(
+            ['d1', 'execute', dbName, ...localTargetArgs(target), '--file', tempSqlPath, '--yes'],
+            { timeout: D1_MIGRATION_EXECUTE_TIMEOUT_MS, cwd: target.cwd }
+          );
+          return { success: true };
+        } catch (error) {
+          return { success: false, error: error instanceof Error ? error.message : String(error) };
+        }
+      });
+    }
     return await withPrivateTemporaryTextFile(
       transactionSql,
       async (tempSqlPath) => {
@@ -4413,18 +4476,29 @@ export async function executeD1Batch(
 export async function executeD1Command(
   dbName: string,
   sql: string,
-  options: { json?: boolean; timeout?: number; onProgress?: (message: string) => void } = {}
+  options: {
+    json?: boolean;
+    timeout?: number;
+    onProgress?: (message: string) => void;
+    target?: LocalWranglerTarget;
+  } = {}
 ): Promise<D1ExecuteCommandResult> {
   const args = [
     'd1',
     'execute',
     dbName,
-    '--remote',
+    ...(options.target ? localTargetArgs(options.target) : ['--remote']),
     '--yes',
     '--command',
     sql,
     ...(options.json ? ['--json'] : []),
   ];
+  if (options.target) {
+    return wrangler(args, {
+      timeout: options.timeout ?? D1_MIGRATION_EXECUTE_TIMEOUT_MS,
+      cwd: options.target.cwd,
+    });
+  }
   const oauthRefresh: WranglerOAuthRefreshState = { attempted: false };
   for (let attempt = 1; attempt <= D1_MIGRATION_AUTH_MAX_ATTEMPTS; attempt++) {
     try {
@@ -4522,8 +4596,13 @@ function parseD1RowsFromWranglerResult<T extends Record<string, unknown>>(
 
 export async function queryD1Rows<T extends Record<string, unknown>>(
   dbName: string,
-  sql: string
+  sql: string,
+  options: { target?: LocalWranglerTarget } = {}
 ): Promise<T[]> {
+  if (options.target) {
+    const result = await executeD1Command(dbName, sql, { json: true, target: options.target });
+    return parseD1RowsFromWranglerResult<T>(result);
+  }
   let wranglerError: unknown;
   try {
     const result = await executeD1Command(dbName, sql, { json: true });
@@ -4772,7 +4851,7 @@ async function backfillLegacyMigrationChecksums(
   return backfills.length;
 }
 
-function buildRecordMigrationWithChecksumSql(input: {
+export function buildRecordMigrationWithChecksumSql(input: {
   filename: string;
   checksum: string;
   appliedAt?: number;
@@ -5664,7 +5743,7 @@ export async function ensureInitialTenantInD1(
   env: string,
   config: AuthrimConfig,
   onProgress?: (message: string) => void,
-  options: { databaseIdentifier?: string } = {}
+  options: { databaseIdentifier?: string; target?: LocalWranglerTarget } = {}
 ): Promise<InitialTenantBootstrapResult> {
   const dbName = options.databaseIdentifier?.trim() || getD1DatabaseName(env, 'core-db');
   const tenantId = config.tenant?.name?.trim() || 'default';
@@ -5672,7 +5751,10 @@ export async function ensureInitialTenantInD1(
 
   try {
     onProgress?.(`🔧 Ensuring initial tenant exists in ${dbName} (${tenantId})...`);
-    const { stdout, stderr } = await executeD1Command(dbName, sql, { onProgress });
+    const { stdout, stderr } = await executeD1Command(dbName, sql, {
+      onProgress,
+      target: options.target,
+    });
     const combined = (stdout + '\n' + stderr).toLowerCase();
     if (combined.includes('[error]') || combined.includes('✘ [error]')) {
       const errorDetail = stderr || stdout;
@@ -5695,7 +5777,7 @@ export async function ensureInitialAdminRolesInD1(
   env: string,
   config: AuthrimConfig,
   onProgress?: (message: string) => void,
-  options: { databaseIdentifier?: string } = {}
+  options: { databaseIdentifier?: string; target?: LocalWranglerTarget } = {}
 ): Promise<InitialAdminRolesBootstrapResult> {
   const dbName = options.databaseIdentifier?.trim() || getD1DatabaseName(env, 'admin-db');
   const tenantId = config.tenant?.name?.trim() || 'default';
@@ -5703,7 +5785,10 @@ export async function ensureInitialAdminRolesInD1(
 
   try {
     onProgress?.(`🔧 Ensuring admin roles exist in ${dbName} (${tenantId})...`);
-    const { stdout, stderr } = await executeD1Command(dbName, sql, { onProgress });
+    const { stdout, stderr } = await executeD1Command(dbName, sql, {
+      onProgress,
+      target: options.target,
+    });
     const combined = (stdout + '\n' + stderr).toLowerCase();
     if (combined.includes('[error]') || combined.includes('✘ [error]')) {
       const errorDetail = stderr || stdout;
@@ -5727,7 +5812,7 @@ export async function ensureSetupMachineAccessInD1(
   config: AuthrimConfig,
   keysDir: string,
   onProgress?: (message: string) => void,
-  options: { databaseIdentifier?: string } = {}
+  options: { databaseIdentifier?: string; target?: LocalWranglerTarget } = {}
 ): Promise<SetupMachineAccessBootstrapResult> {
   const dbName = options.databaseIdentifier?.trim() || getD1DatabaseName(env, 'admin-db');
 
@@ -5737,7 +5822,10 @@ export async function ensureSetupMachineAccessInD1(
     const sql = buildSetupMachineAccessBootstrapSql(config, publicJwk);
 
     onProgress?.(`🔧 Ensuring setup machine access exists in ${dbName}...`);
-    const { stdout, stderr } = await executeD1Command(dbName, sql, { onProgress });
+    const { stdout, stderr } = await executeD1Command(dbName, sql, {
+      onProgress,
+      target: options.target,
+    });
     const combined = (stdout + '\n' + stderr).toLowerCase();
     if (combined.includes('[error]') || combined.includes('✘ [error]')) {
       const errorDetail = stderr || stdout;
@@ -5764,7 +5852,7 @@ export async function cleanupSetupMachineAccessInD1(
   env: string,
   keysDir: string,
   onProgress?: (message: string) => void,
-  options: { databaseIdentifier?: string } = {}
+  options: { databaseIdentifier?: string; target?: LocalWranglerTarget } = {}
 ): Promise<SetupMachineAccessBootstrapResult> {
   const dbName = options.databaseIdentifier?.trim() || getD1DatabaseName(env, 'admin-db');
   let remoteError: string | undefined;
@@ -5774,7 +5862,10 @@ export async function cleanupSetupMachineAccessInD1(
       const sql = buildSetupMachineAccessCleanupSql();
 
       onProgress?.(`🧹 Removing setup machine access from ${dbName}...`);
-      const { stdout, stderr } = await executeD1Command(dbName, sql, { onProgress });
+      const { stdout, stderr } = await executeD1Command(dbName, sql, {
+        onProgress,
+        target: options.target,
+      });
       const combined = (stdout + '\n' + stderr).toLowerCase();
       if (combined.includes('[error]') || combined.includes('✘ [error]')) {
         remoteError = stderr || stdout;
@@ -5815,7 +5906,7 @@ export async function ensureAdminUiBffMachineAccessInD1(
   config: AuthrimConfig,
   keysDir: string,
   onProgress?: (message: string) => void,
-  options: { databaseIdentifier?: string } = {}
+  options: { databaseIdentifier?: string; target?: LocalWranglerTarget } = {}
 ): Promise<SetupMachineAccessBootstrapResult> {
   const dbName = options.databaseIdentifier?.trim() || getD1DatabaseName(env, 'admin-db');
 
@@ -5824,7 +5915,10 @@ export async function ensureAdminUiBffMachineAccessInD1(
     const sql = buildAdminUiBffMachineAccessBootstrapSql(config, publicJwk);
 
     onProgress?.(`🔧 Ensuring Admin UI BFF machine access exists in ${dbName}...`);
-    const { stdout, stderr } = await executeD1Command(dbName, sql, { onProgress });
+    const { stdout, stderr } = await executeD1Command(dbName, sql, {
+      onProgress,
+      target: options.target,
+    });
     const combined = (stdout + '\n' + stderr).toLowerCase();
     if (combined.includes('[error]') || combined.includes('✘ [error]')) {
       const errorDetail = stderr || stdout;
@@ -6373,14 +6467,17 @@ export async function seedDefaultCanonicalCatalog(
   env: string,
   config: AuthrimConfig,
   onProgress?: (message: string) => void,
-  options: { databaseIdentifier?: string } = {}
+  options: { databaseIdentifier?: string; target?: LocalWranglerTarget } = {}
 ): Promise<DefaultCanonicalCatalogSeedResult> {
   const dbName = options.databaseIdentifier?.trim() || getD1DatabaseName(env, 'admin-db');
   const sql = buildDefaultCanonicalCatalogSeedSql(config);
 
   try {
     onProgress?.(`🔧 Seeding default canonical field catalog into ${dbName}...`);
-    const { stdout, stderr } = await executeD1Command(dbName, sql, { onProgress });
+    const { stdout, stderr } = await executeD1Command(dbName, sql, {
+      onProgress,
+      target: options.target,
+    });
 
     const combined = (stdout + '\n' + stderr).toLowerCase();
     if (combined.includes('[error]') || combined.includes('✘ [error]')) {
@@ -6404,7 +6501,7 @@ export async function seedRuntimeProfiles(
   env: string,
   config: AuthrimConfig,
   onProgress?: (message: string) => void,
-  options: { databaseIdentifier?: string } = {}
+  options: { databaseIdentifier?: string; target?: LocalWranglerTarget } = {}
 ): Promise<RuntimeProfileSeedResult> {
   const seeded = collectSeededRuntimeProfiles(config);
   if (seeded.length === 0) {
@@ -6426,7 +6523,10 @@ export async function seedRuntimeProfiles(
       }
 
       onProgress?.(`🔧 Seeding ${seeded.length} runtime profile(s) into ${dbName}...`);
-      const { stdout, stderr } = await executeD1Command(dbName, sql, { onProgress });
+      const { stdout, stderr } = await executeD1Command(dbName, sql, {
+        onProgress,
+        target: options.target,
+      });
 
       const combined = (stdout + '\n' + stderr).toLowerCase();
       if (combined.includes('[error]') || combined.includes('✘ [error]')) {
@@ -6446,17 +6546,31 @@ export async function seedRuntimeProfiles(
       let written = false;
       for (let attempt = 1; attempt <= D1_MIGRATION_AUTH_MAX_ATTEMPTS; attempt++) {
         try {
-          await wrangler([
-            'kv',
-            'key',
-            'put',
-            key,
-            JSON.stringify(profile.payload),
-            '--env',
-            env,
-            '--binding',
-            'AUTHRIM_CONFIG',
-          ]);
+          await wrangler(
+            options.target
+              ? [
+                  'kv',
+                  'key',
+                  'put',
+                  key,
+                  JSON.stringify(profile.payload),
+                  '--binding',
+                  'AUTHRIM_CONFIG',
+                  ...localTargetArgs(options.target),
+                ]
+              : [
+                  'kv',
+                  'key',
+                  'put',
+                  key,
+                  JSON.stringify(profile.payload),
+                  '--env',
+                  env,
+                  '--binding',
+                  'AUTHRIM_CONFIG',
+                ],
+            { cwd: options.target?.cwd }
+          );
           written = true;
           break;
         } catch (error) {

@@ -94,6 +94,9 @@ import { DatabaseSync } from './test-sqlite';
 
 type SqlValue = string | number | null;
 
+// A sharded session id (generation:region:shard:session_...) as the login issues them.
+const SESSION_ID = 'g1:apac:0:session_0123456789abcdefghijkl';
+
 /** An executable database holding the consent and refresh-token family index tables. */
 function createConsentDatabase() {
   const db = new DatabaseSync(':memory:');
@@ -250,6 +253,7 @@ function createMockContext(options: {
       if (key === 'logger') return mockLogger;
       return undefined;
     },
+    header: vi.fn(),
     json: vi.fn((body, status = 200) => {
       const response = new Response(JSON.stringify(body), { status });
       return response;
@@ -305,22 +309,57 @@ describe('User Consents API', () => {
       expect(mockIntrospectTokenFromContext).toHaveBeenCalled();
     });
 
-    it('should authenticate with session cookie', async () => {
+    it('should authenticate with the authrim_session cookie', async () => {
       const mockSessionStore = {
-        fetch: vi
-          .fn()
-          .mockResolvedValue(new Response(JSON.stringify({ userId: 'user-456' }), { status: 200 })),
+        getSessionRpc: vi.fn().mockResolvedValue({
+          id: SESSION_ID,
+          userId: 'user-456',
+          tenantId: 'default',
+          expiresAt: Date.now() + 60_000,
+        }),
       };
       mockGetSessionStoreBySessionId.mockReturnValue({ stub: mockSessionStore });
       mockCoreAdapter.query.mockResolvedValue([]);
 
       const c = createMockContext({
-        cookies: { sid: 'session-id-123' },
+        cookies: { authrim_session: SESSION_ID },
       });
 
       const response = await userConsentsListHandler(c);
       expect(response.status).toBe(200);
-      expect(mockGetSessionStoreBySessionId).toHaveBeenCalled();
+      expect(mockSessionStore.getSessionRpc).toHaveBeenCalledWith(SESSION_ID);
+      expect(mockResolveAccountDataContextFromHono).toHaveBeenCalledWith(c, 'user-456');
+    });
+
+    it.each([
+      ['an expired session', { userId: 'user-456', tenantId: 'default', expiresAt: 1 }],
+      [
+        'a session of another tenant',
+        { userId: 'user-456', tenantId: 'other', expiresAt: Date.now() + 60_000 },
+      ],
+      ['an unknown session', null],
+    ])('should reject %s', async (_label, stored) => {
+      mockGetSessionStoreBySessionId.mockReturnValue({
+        stub: { getSessionRpc: vi.fn().mockResolvedValue(stored) },
+      });
+
+      const response = await userConsentsListHandler(
+        createMockContext({ cookies: { authrim_session: SESSION_ID } })
+      );
+
+      expect(response.status).toBe(401);
+    });
+
+    it('should not accept the legacy sid cookie', async () => {
+      const getSessionRpc = vi.fn();
+      mockGetSessionStoreBySessionId.mockReturnValue({ stub: { getSessionRpc } });
+
+      const response = await userConsentsListHandler(
+        createMockContext({ cookies: { sid: SESSION_ID } })
+      );
+
+      expect(response.status).toBe(401);
+      expect(getSessionRpc).not.toHaveBeenCalled();
     });
 
     it('should reject request without authentication', async () => {

@@ -91,62 +91,6 @@ When deploying for the first time, the script generates a one-time setup token f
 - After the first admin is created, the setup feature is permanently disabled
 - The script checks for `setup:completed` flag and refuses to generate a new token if setup is already done
 
-### setup-local-vars.sh
-
-Generate `.dev.vars` file for local development environment variables.
-
-**Usage:**
-
-```bash
-./scripts/setup-local-vars.sh
-```
-
-**What it does:**
-
-- Loads RSA keys from `.keys/` directory
-- Creates `.dev.vars` file with JWT keys
-- Optionally configures Resend API for email (magic links)
-- Sets local development configuration
-
-**Requirements:**
-
-- Requires `setup-keys.sh` to have been run first
-
-**Environment Variables:**
-
-- `PRIVATE_KEY_PEM` - JWT signing key
-- `PUBLIC_JWK_JSON` - JWT verification key
-- `KEY_ID` - JWT key identifier
-- `RESEND_API_KEY` (optional) - Resend email service API key
-- `EMAIL_FROM` (optional) - Sender email address for Cloudflare Email Service or Resend
-- `EMAIL_FROM_NAME` (optional) - Sender display name for Cloudflare bootstrap/local development
-
-### setup-local-wrangler.sh
-
-Generate `wrangler.toml` files for local development environment.
-
-**Usage:**
-
-```bash
-./scripts/setup-local-wrangler.sh
-```
-
-**What it does:**
-
-- Generates `wrangler.toml` for all worker packages
-- Sets ISSUER_URL to `http://localhost:8787` for local development
-- Configures Durable Objects bindings
-- Sets KV namespace placeholders (to be filled by setup-kv.sh)
-- Sets D1 database placeholders (to be filled by setup-d1.sh)
-
-**ISSUER_URL:**
-
-- Local: `http://localhost:8787`
-
-**Requirements:**
-
-- Requires `setup-keys.sh` to have been run first (for KEY_ID)
-
 ### Remote environments: `@authrim/setup`
 
 The former `setup-remote-wrangler.sh` generator is retired. Remote environments are created,
@@ -174,25 +118,19 @@ Configure Resend email service for sending magic link emails.
 **Usage:**
 
 ```bash
-./scripts/setup-resend.sh [--env=local|remote]
+./scripts/setup-resend.sh [--env=dev|staging|prod]
 ```
 
 **What it does:**
 
 - Prompts for Resend API key (optional)
 - Configures email sender address
-- For local: adds configuration to `.dev.vars`
-- For remote: uploads as Cloudflare Secrets
+- Uploads the key and sender as Cloudflare Secrets for a deployed environment
 
-**Environments:**
+**Environments:** deployed environments only (`--env=dev|staging|prod`). Local development
+(`pnpm setup:local`) does not send email: it writes one-time codes and magic links to the Worker log.
 
-- `local` - Stores in `.dev.vars` (for local development)
-- `remote` - Uploads to Cloudflare Secrets (for remote workers)
-
-**Optional:** This script is optional. Without Resend:
-
-- Magic links return URLs instead of sending emails
-- Useful for development and testing
+**Optional:** This script is optional.
 
 ### setup-kv.sh
 
@@ -269,27 +207,6 @@ Create and configure D1 databases for Authrim.
 - Creates D1 database (default: `authrim-users-db`, customizable)
 - Updates wrangler.toml files with D1 bindings
 - Optionally runs database migrations
-
-### setup-durable-objects.sh
-
-Deploy Durable Objects for session and state management.
-
-**Usage:**
-
-```bash
-# Deploy Durable Objects
-./scripts/setup-durable-objects.sh
-
-# Show information about DOs
-./scripts/setup-durable-objects.sh --info
-```
-
-**Durable Objects deployed:**
-
-- `SessionStore` - User session management with hot/cold storage
-- `AuthorizationCodeStore` - OAuth authorization code management
-- `RefreshTokenRotator` - Atomic refresh token rotation
-- `KeyManager` - Cryptographic key management
 
 ### setup-secrets.sh
 
@@ -635,26 +552,19 @@ Create GitHub issues for Phase 1 implementation tasks.
 
 ### Common Workflows
 
-#### Starting Fresh (Local Development)
+#### Local Development
+
+Local development no longer uses shell scripts: the setup CLI generates keys, Wrangler configs and
+seeded local databases, and runs every Worker under one `wrangler dev` session. No Cloudflare
+account is needed.
 
 ```bash
-# 1. Delete all local resources (if they exist)
-./scripts/delete-all.sh local
-
-# 2. Set up fresh local environment
-./scripts/setup-keys.sh                     # 1. Generate RSA keys
-./scripts/setup-local-vars.sh               # 2. Create .dev.vars with environment variables
-./scripts/setup-local-wrangler.sh           # 3. Generate wrangler.toml for local development
-./scripts/setup-kv.sh --env=dev             # 4. Create KV namespaces + initialize settings
-./scripts/setup-d1.sh                       # 5. Create D1 database
-./scripts/setup-durable-objects.sh          # 6. Deploy Durable Objects
-./scripts/setup-resend.sh --env=local       # 7. (Optional) Configure Resend for email
-
-# 3. Start local development
-pnpm run dev
+pnpm setup:local init      # keys, configs, local D1/KV, seed data
+pnpm dev                   # = pnpm setup:local up
+pnpm setup:local reset     # start over
 ```
 
-**Note:** Settings start at the Settings API defaults; see [Initial settings](#initial-settings).
+See [Development Guide](../docs/getting-started/development.md).
 
 #### Remote Environment Deployment
 
@@ -820,19 +730,9 @@ For issues or questions:
 ### Local Development Environment
 
 ```
-setup-keys.sh
+pnpm setup:local init
     ↓
-setup-local-vars.sh
-    ↓
-setup-local-wrangler.sh
-    ↓
-setup-kv.sh --env=dev
-    ↓
-setup-d1.sh / setup-durable-objects.sh
-    ↓
-setup-resend.sh --env=local (optional)
-    ↓
-pnpm run dev
+pnpm dev   (pnpm setup:local up)
 ```
 
 ### Remote Environment Deployment

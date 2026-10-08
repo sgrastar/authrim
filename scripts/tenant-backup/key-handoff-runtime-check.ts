@@ -8,7 +8,9 @@ import {
 
 const require = createRequire(import.meta.url);
 const runtimeRequire = createRequire(require.resolve('wrangler/package.json'));
-const { Miniflare } = runtimeRequire('miniflare') as typeof import('miniflare');
+const { Miniflare, convertV4MiniflareOptions } = runtimeRequire(
+  'miniflare'
+) as typeof import('miniflare');
 const { buildSync } = runtimeRequire('esbuild') as typeof import('esbuild');
 const context = {
   tenantId: 'tenant-a',
@@ -50,12 +52,14 @@ const script = buildSync({
   target: 'es2022',
   write: false,
 });
-const runtime = new Miniflare({
-  modules: true,
-  script: script.outputFiles[0].text,
-  compatibilityDate: '2026-07-08',
-  host: '127.0.0.1',
-});
+const runtime = new Miniflare(
+  convertV4MiniflareOptions({
+    modules: true,
+    script: script.outputFiles[0].text,
+    compatibilityDate: '2026-07-08',
+    host: '127.0.0.1',
+  })
+);
 try {
   const published = await runtime.dispatchFetch('https://fixture.example/');
   assert.equal(published.status, 200);

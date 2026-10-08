@@ -370,6 +370,13 @@ describe('generateRoutes', () => {
           class_name: 'SessionRevocationStore',
           script_name: 'emailtest-ar-lib-core',
         }),
+        // /api/external/* is rate limited; without this binding the limiter would fall back to a
+        // STATE_STORE KV that the Bridge Worker does not have and every request would answer 503.
+        {
+          name: 'RATE_LIMITER',
+          class_name: 'RateLimiterCounter',
+          script_name: 'emailtest-ar-lib-core',
+        },
       ])
     );
     expect(authConfig.migrations?.[0]?.new_sqlite_classes).toContain('DirectoryConnectorRelay');

@@ -13,16 +13,18 @@ import {
 // Use the exact Miniflare shipped with the workspace's pinned Wrangler dependency.
 // This is a local-only feasibility check; it never reads Wrangler deployment config.
 const require = createRequire(import.meta.url);
-const { Miniflare } = createRequire(require.resolve('wrangler/package.json'))(
-  'miniflare'
-) as typeof import('miniflare');
-const runtime = new Miniflare({
-  modules: true,
-  script: 'export default {};',
-  compatibilityDate: '2026-07-08',
-  host: '127.0.0.1',
-  d1Databases: ['BACKUP_TEST_DB', 'RESTORE_TEST_DB'],
-});
+const { Miniflare, convertV4MiniflareOptions } = createRequire(
+  require.resolve('wrangler/package.json')
+)('miniflare') as typeof import('miniflare');
+const runtime = new Miniflare(
+  convertV4MiniflareOptions({
+    modules: true,
+    script: 'export default {};',
+    compatibilityDate: '2026-07-08',
+    host: '127.0.0.1',
+    d1Databases: ['BACKUP_TEST_DB', 'RESTORE_TEST_DB'],
+  })
+);
 
 async function decodePackedRow(value: unknown, columns: readonly string[]): Promise<string> {
   const bytes =

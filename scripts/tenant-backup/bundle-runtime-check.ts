@@ -4,7 +4,9 @@ import { fileURLToPath } from 'node:url';
 
 const require = createRequire(import.meta.url);
 const wranglerRequire = createRequire(require.resolve('wrangler/package.json'));
-const { Miniflare } = wranglerRequire('miniflare') as typeof import('miniflare');
+const { Miniflare, convertV4MiniflareOptions } = wranglerRequire(
+  'miniflare'
+) as typeof import('miniflare');
 const { buildSync } = wranglerRequire('esbuild') as typeof import('esbuild');
 const bundled = buildSync({
   stdin: {
@@ -55,12 +57,14 @@ const bundled = buildSync({
   target: 'es2022',
   write: false,
 });
-const runtime = new Miniflare({
-  modules: true,
-  script: bundled.outputFiles[0].text,
-  compatibilityDate: '2026-07-08',
-  host: '127.0.0.1',
-});
+const runtime = new Miniflare(
+  convertV4MiniflareOptions({
+    modules: true,
+    script: bundled.outputFiles[0].text,
+    compatibilityDate: '2026-07-08',
+    host: '127.0.0.1',
+  })
+);
 try {
   const response = await runtime.dispatchFetch('https://fixture.example/');
   assert.equal(response.status, 200);

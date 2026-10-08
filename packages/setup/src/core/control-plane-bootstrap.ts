@@ -45,6 +45,7 @@ import {
   getOptionalKVKeyByNamespaceId,
   putKVKeyByNamespaceId,
   queryD1Rows,
+  type LocalWranglerTarget,
   runD1Migrations,
   getProvisioningResourceAdoptionPolicy,
 } from './cloudflare.js';
@@ -68,6 +69,20 @@ import {
   type TenantDatabaseRegistryResourceInput,
 } from './tenant-database.js';
 import { withPrivateTemporaryTextFile } from './private-temporary-file.js';
+
+/**
+ * Trailing arguments for the D1/KV helpers: none for Cloudflare, so those calls are exactly what
+ * they always were, and the local target for `authrim-setup local`.
+ */
+function d1TargetArgs(
+  target: LocalWranglerTarget | undefined
+): [] | [{ target: LocalWranglerTarget }] {
+  return target ? [{ target }] : [];
+}
+
+function kvTargetArgs(target: LocalWranglerTarget | undefined): [] | [LocalWranglerTarget] {
+  return target ? [target] : [];
+}
 
 const RUNTIME_REGISTRY_SNAPSHOT_TTL_SECONDS = 30 * 60;
 const RUNTIME_REGISTRY_GENERATION_TTL_SECONDS = 7 * 24 * 60 * 60;
@@ -130,7 +145,7 @@ export interface InitialControlPlaneResourcePlan {
   migrationFiles: Array<{ path: string; checksum: string }>;
 }
 
-function initialTenantShardDefinitions(env: string) {
+export function initialTenantShardDefinitions(env: string) {
   return [
     {
       role: 'tenant_core/default' as const,
@@ -157,7 +172,7 @@ function bootstrapDigest(value: string): string {
   return createHash('sha256').update(value).digest('hex');
 }
 
-function bootstrapDatabaseName(env: string, nameRole: string): string {
+export function bootstrapDatabaseName(env: string, nameRole: string): string {
   const normalizedEnv = env
     .toLowerCase()
     .replace(/[^a-z0-9-]+/gu, '-')
@@ -519,10 +534,14 @@ export async function ensureInitialTenantRegionShardConfig(input: {
   query?: typeof queryD1Rows;
   getOptionalKv?: typeof getOptionalKVKeyByNamespaceId;
   putKv?: typeof putKVKeyByNamespaceId;
+  /** Local development target; omitted for Cloudflare. */
+  target?: LocalWranglerTarget;
 }): Promise<{ created: boolean; config: RegionShardConfigV2 }> {
   const tenantIdSql = sqlString(input.tenantId);
   const environmentIdSql = sqlString(input.environmentId);
-  const rows = await (input.query ?? queryD1Rows)<InitialTenantRegionPolicyRow>(
+  const query: typeof queryD1Rows =
+    input.query ?? ((database, sql) => queryD1Rows(database, sql, { target: input.target }));
+  const rows = await query<InitialTenantRegionPolicyRow>(
     input.controlDatabaseName,
     `SELECT allocation.residency_policy_id, allocation.residency_partition,
             policy.policy_generation, policy.updated_at AS policy_updated_at,
@@ -595,10 +614,10 @@ export async function ensureInitialTenantRegionShardConfig(input: {
     updatedBy: 'setup:control-residency-policy',
   });
   const key = buildRegionShardConfigKvKey(input.tenantId);
-  const existingText = await (input.getOptionalKv ?? getOptionalKVKeyByNamespaceId)(
-    input.configNamespaceId,
-    key
-  );
+  const existingText = await (
+    input.getOptionalKv ??
+    ((namespaceId, kvKey) => getOptionalKVKeyByNamespaceId(namespaceId, kvKey, input.target))
+  )(input.configNamespaceId, key);
   if (existingText !== null) {
     let existing: RegionShardConfigV2;
     try {
@@ -612,11 +631,11 @@ export async function ensureInitialTenantRegionShardConfig(input: {
     }
     return { created: false, config: existing };
   }
-  await (input.putKv ?? putKVKeyByNamespaceId)(
-    input.configNamespaceId,
-    key,
-    JSON.stringify(expected)
-  );
+  await (
+    input.putKv ??
+    ((namespaceId, kvKey, value, options) =>
+      putKVKeyByNamespaceId(namespaceId, kvKey, value, { ...options, target: input.target }))
+  )(input.configNamespaceId, key, JSON.stringify(expected));
   return { created: true, config: expected };
 }
 
@@ -876,10 +895,14 @@ function buildRuntimeSnapshot(input: {
   placementPolicy: 'shared_pool' | 'tenant_exclusive';
   resources: InitialControlPlaneBootstrapResource[];
   now?: Date;
+  ttlSeconds?: number;
 }): RuntimeSnapshot {
   const now = input.now ?? new Date();
   const publishedAt = now.toISOString();
-  const expiresAt = addSeconds(now, RUNTIME_REGISTRY_SNAPSHOT_TTL_SECONDS).toISOString();
+  const expiresAt = addSeconds(
+    now,
+    input.ttlSeconds ?? RUNTIME_REGISTRY_SNAPSHOT_TTL_SECONDS
+  ).toISOString();
   const runtimeGeneration = 1;
   const stores: RuntimeSnapshotStore[] = input.resources.map((resource) => {
     const control = controlSnapshotMetadata(resource);
@@ -952,11 +975,16 @@ async function executeAdminSql(input: {
   adminDatabaseId: string;
   tenantId: string;
   sql: string;
+  target?: LocalWranglerTarget;
 }): Promise<void> {
   await withPrivateTemporaryTextFile(
     input.sql,
     async (sqlPath) => {
-      const result = await executeD1Migration(input.adminDatabaseId, sqlPath);
+      const result = input.target
+        ? await executeD1Migration(input.adminDatabaseId, sqlPath, undefined, {
+            target: input.target,
+          })
+        : await executeD1Migration(input.adminDatabaseId, sqlPath);
       if (!result.success) {
         throw new Error(result.error ?? 'Failed to write initial tenant database registry rows');
       }
@@ -1047,6 +1075,7 @@ async function readExpectedRuntimeRegistryPublication(input: {
   expectedGeneration: RuntimeGenerationPointer;
   verification?: RuntimeRegistryVerificationOptions;
   onProgress?: (message: string) => void;
+  target?: LocalWranglerTarget;
 }): Promise<{ snapshot: RuntimeSnapshot; generation: RuntimeGenerationPointer }> {
   const retryDelaysMs =
     input.verification?.retryDelaysMs ?? INITIAL_RUNTIME_REGISTRY_VERIFY_RETRY_DELAYS_MS;
@@ -1066,12 +1095,14 @@ async function readExpectedRuntimeRegistryPublication(input: {
     try {
       const snapshotText = await getKVKeyByNamespaceId(
         input.runtimeRegistryNamespaceId,
-        buildSnapshotKey(input.tenantId)
+        buildSnapshotKey(input.tenantId),
+        ...kvTargetArgs(input.target)
       );
       const snapshot = parseRuntimeSnapshotObservation(snapshotText);
       const generationText = await getKVKeyByNamespaceId(
         input.runtimeRegistryNamespaceId,
-        buildGenerationKey(input.tenantId)
+        buildGenerationKey(input.tenantId),
+        ...kvTargetArgs(input.target)
       );
       const generation = parseRuntimeGenerationObservation(generationText);
       lastObservationWasReadError = false;
@@ -1116,6 +1147,7 @@ async function verifyInitialControlPlaneBootstrap(input: {
   expectedAliases: InitialTenantAliasBootstrap;
   verification?: RuntimeRegistryVerificationOptions;
   onProgress?: (message: string) => void;
+  target?: LocalWranglerTarget;
 }): Promise<void> {
   const tenantIdSql = sqlString(input.tenantId);
   const [pointerRow] = await queryD1Rows<CountRow>(
@@ -1125,7 +1157,8 @@ async function verifyInitialControlPlaneBootstrap(input: {
       WHERE tenant_id = ${tenantIdSql}
         AND ((role = 'tenant_core' AND shard_group IN ('default', 'users'))
           OR (role = 'tenant_pii' AND shard_group = 'default'))
-        AND status = 'active';`
+        AND status = 'active';`,
+    ...d1TargetArgs(input.target)
   );
   if (countValue(pointerRow) !== 3) {
     throw new Error('initial_control_plane_active_pointer_verification_failed');
@@ -1136,7 +1169,8 @@ async function verifyInitialControlPlaneBootstrap(input: {
     `SELECT COUNT(*) AS count
       FROM tenants
       WHERE id = ${tenantIdSql}
-        AND lifecycle_state = 'active';`
+        AND lifecycle_state = 'active';`,
+    ...d1TargetArgs(input.target)
   );
   if (countValue(tenantRow) !== 1) {
     throw new Error('initial_control_plane_core_tenant_verification_failed');
@@ -1159,7 +1193,8 @@ async function verifyInitialControlPlaneBootstrap(input: {
         AND tenant_lifecycle_state = 'active'
         AND runtime_route_status = 'active'
         AND lifecycle_state = 'active'
-        AND (${aliasPredicates});`
+        AND (${aliasPredicates});`,
+    ...d1TargetArgs(input.target)
   );
   if (countValue(aliasRow) !== input.expectedAliases.indexes.length) {
     throw new Error('initial_control_plane_tenant_alias_verification_failed');
@@ -1172,6 +1207,7 @@ async function verifyInitialControlPlaneBootstrap(input: {
     expectedGeneration: input.expectedGeneration,
     verification: input.verification,
     onProgress: input.onProgress,
+    target: input.target,
   });
   const expectedStores = new Map(
     input.resources.map((resource) => [`${resource.role}:${resource.shardGroup}`, resource])
@@ -1332,6 +1368,34 @@ async function persistInitialControlPlaneLockCheckpoint(input: {
   };
   await saveLockFile(checkpointed, current.path);
   replaceLockContents(input.lock, checkpointed);
+}
+
+/** Register the physical tenant shard identity inside the shard itself (runtime cross-checks it). */
+export function buildControlPlaneShardMetadataSql(
+  plan: Pick<
+    InitialControlPlaneResourcePlan,
+    'binding' | 'role' | 'releaseId' | 'manifestDigest' | 'migrationFiles'
+  >,
+  lastFilename: string,
+  now: number = Math.floor(Date.now() / 1000)
+): string {
+  return `INSERT INTO authrim_control_plane_shard_metadata (
+           singleton_id, binding_ref, data_role, residency_partition, migration_generation,
+           release_id, manifest_digest, expected_file_count, last_filename, updated_at
+         ) VALUES (
+           1, ${sqlString(plan.binding)}, ${sqlString(plan.role)}, 'default', 1,
+           ${sqlString(plan.releaseId)}, ${sqlString(plan.manifestDigest)},
+           ${plan.migrationFiles.length}, ${sqlString(lastFilename)}, ${now}
+         ) ON CONFLICT(singleton_id) DO UPDATE SET
+           binding_ref = excluded.binding_ref,
+           data_role = excluded.data_role,
+           residency_partition = excluded.residency_partition,
+           migration_generation = excluded.migration_generation,
+           release_id = excluded.release_id,
+           manifest_digest = excluded.manifest_digest,
+           expected_file_count = excluded.expected_file_count,
+           last_filename = excluded.last_filename,
+           updated_at = excluded.updated_at;`;
 }
 
 export async function ensureInitialControlPlaneResources(input: {
@@ -1587,23 +1651,7 @@ export async function ensureInitialControlPlaneResources(input: {
       if (!lastFilename) throw new Error('initial_control_plane_migration_files_empty');
       await executeD1Command(
         plan.databaseId,
-        `INSERT INTO authrim_control_plane_shard_metadata (
-           singleton_id, binding_ref, data_role, residency_partition, migration_generation,
-           release_id, manifest_digest, expected_file_count, last_filename, updated_at
-         ) VALUES (
-           1, ${sqlString(plan.binding)}, ${sqlString(plan.role)}, 'default', 1,
-           ${sqlString(plan.releaseId)}, ${sqlString(plan.manifestDigest)},
-           ${plan.migrationFiles.length}, ${sqlString(lastFilename)}, ${Math.floor(Date.now() / 1000)}
-         ) ON CONFLICT(singleton_id) DO UPDATE SET
-           binding_ref = excluded.binding_ref,
-           data_role = excluded.data_role,
-           residency_partition = excluded.residency_partition,
-           migration_generation = excluded.migration_generation,
-           release_id = excluded.release_id,
-           manifest_digest = excluded.manifest_digest,
-           expected_file_count = excluded.expected_file_count,
-           last_filename = excluded.last_filename,
-           updated_at = excluded.updated_at;`
+        buildControlPlaneShardMetadataSql(plan, lastFilename)
       );
     }
 
@@ -1631,8 +1679,13 @@ export async function publishInitialControlPlaneRuntimeSnapshot(input: {
   onProgress?: (message: string) => void;
   /** Deterministic verification hooks for tests; production callers must omit this. */
   runtimeRegistryVerification?: RuntimeRegistryVerificationOptions;
+  /** Local development target; Cloudflare is used when omitted. */
+  target?: LocalWranglerTarget;
+  /** Local development has no Control cron to refresh the snapshot, so it requests a longer life. */
+  snapshotTtlSeconds?: number;
 }): Promise<ControlPlaneBootstrapResult> {
   const tenantId = tenantIdForConfig(input.config);
+  const snapshotTtlSeconds = input.snapshotTtlSeconds ?? RUNTIME_REGISTRY_SNAPSHOT_TTL_SECONDS;
   const adminDatabaseId = input.lock.d1.DB_ADMIN?.id;
   const controlDatabaseId = input.lock.d1.CONTROL_DB?.id;
   const lookupDatabaseId = input.lock.d1.LOOKUP_DB?.id;
@@ -1660,6 +1713,7 @@ export async function publishInitialControlPlaneRuntimeSnapshot(input: {
       tenantId,
       controlDatabaseName: controlDatabaseId,
       configNamespaceId,
+      target: input.target,
     });
     const migrationsRoot = await findMigrationsRoot(input.rootDir, input.onProgress, {
       strictRoot: true,
@@ -1709,7 +1763,8 @@ export async function publishInitialControlPlaneRuntimeSnapshot(input: {
     );
     await executeD1Command(
       defaultCoreResource.databaseId,
-      buildInitialTenantBootstrapSql(input.config)
+      buildInitialTenantBootstrapSql(input.config),
+      ...d1TargetArgs(input.target)
     );
     const registryResources = signTenantDatabaseRegistryResources({
       tenantId,
@@ -1728,6 +1783,7 @@ export async function publishInitialControlPlaneRuntimeSnapshot(input: {
       adminDatabaseId,
       tenantId,
       sql: registrySql,
+      target: input.target,
     });
 
     const signedAt = new Date().toISOString();
@@ -1737,6 +1793,7 @@ export async function publishInitialControlPlaneRuntimeSnapshot(input: {
         placementPolicy: input.config.tenant.placementPolicy,
         resources,
         now: new Date(signedAt),
+        ttlSeconds: snapshotTtlSeconds,
       }),
       input.keysDir,
       signedAt,
@@ -1761,13 +1818,13 @@ export async function publishInitialControlPlaneRuntimeSnapshot(input: {
       runtimeRegistryNamespaceId,
       buildSnapshotKey(tenantId),
       JSON.stringify(snapshot),
-      { expirationTtl: RUNTIME_REGISTRY_SNAPSHOT_TTL_SECONDS }
+      { expirationTtl: snapshotTtlSeconds, target: input.target }
     );
     await putKVKeyByNamespaceId(
       runtimeRegistryNamespaceId,
       buildGenerationKey(tenantId),
       JSON.stringify(generation),
-      { expirationTtl: RUNTIME_REGISTRY_GENERATION_TTL_SECONDS }
+      { expirationTtl: RUNTIME_REGISTRY_GENERATION_TTL_SECONDS, target: input.target }
     );
 
     const defaultStore = snapshot.stores.find(
@@ -1781,7 +1838,7 @@ export async function publishInitialControlPlaneRuntimeSnapshot(input: {
       defaultStore,
     });
     input.onProgress?.(`🔧 Ensuring initial tenant discovery aliases (${tenantId})...`);
-    await executeD1Command(lookupDatabaseId, aliases.sql);
+    await executeD1Command(lookupDatabaseId, aliases.sql, ...d1TargetArgs(input.target));
 
     input.onProgress?.(`🔎 Verifying initial Control Plane bootstrap (${tenantId})...`);
     await verifyInitialControlPlaneBootstrap({
@@ -1796,6 +1853,7 @@ export async function publishInitialControlPlaneRuntimeSnapshot(input: {
       expectedAliases: aliases,
       verification: input.runtimeRegistryVerification,
       onProgress: input.onProgress,
+      target: input.target,
     });
 
     input.onProgress?.(`  ✅ Initial Control Plane runtime snapshot published: ${tenantId}`);
