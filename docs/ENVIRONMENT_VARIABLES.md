@@ -27,12 +27,12 @@ Authrim follows consistent naming conventions for environment variables to impro
 
 ### Time-Related Variables
 
-| Category          | Pattern            | Unit         | Example                                         |
-| ----------------- | ------------------ | ------------ | ----------------------------------------------- |
-| Token/Auth Expiry | `*_EXPIRY`         | Seconds      | `ACCESS_TOKEN_EXPIRY`, `AUTH_CODE_EXPIRY`       |
-| Cache TTL         | `*_CACHE_TTL`      | Seconds      | `INTROSPECTION_CACHE_TTL`, `SETTINGS_CACHE_TTL` |
-| Timeouts          | `*_TIMEOUT_MS`     | Milliseconds | `HTTPS_REQUEST_URI_TIMEOUT_MS`                  |
-| Windows           | `*_WINDOW_SECONDS` | Seconds      | `LOCKOUT_WINDOW_SECONDS`                        |
+| Category          | Pattern            | Unit         | Example                                   |
+| ----------------- | ------------------ | ------------ | ----------------------------------------- |
+| Token/Auth Expiry | `*_EXPIRY`         | Seconds      | `ACCESS_TOKEN_EXPIRY`, `AUTH_CODE_EXPIRY` |
+| Cache TTL         | `*_CACHE_TTL`      | Seconds      | `SETTINGS_CACHE_TTL`                      |
+| Timeouts          | `*_TIMEOUT_MS`     | Milliseconds | `HTTPS_REQUEST_URI_TIMEOUT_MS`            |
+| Windows           | `*_WINDOW_SECONDS` | Seconds      | `LOCKOUT_WINDOW_SECONDS`                  |
 
 **Rationale:**
 
@@ -137,12 +137,10 @@ these paths.
 
 ### Introspection Settings
 
-| Variable                                 | Type    | Default | Description                           |
-| ---------------------------------------- | ------- | ------- | ------------------------------------- |
-| `ENABLE_INTROSPECTION_CACHE`             | boolean | `false` | Enable introspection response caching |
-| `INTROSPECTION_CACHE_TTL`                | number  | `60`    | Cache TTL in seconds                  |
-| `ENABLE_INTROSPECTION_STRICT_VALIDATION` | boolean | `false` | Enable strict token validation        |
-| `INTROSPECTION_EXPECTED_AUDIENCE`        | string  | -       | Expected audience for introspection   |
+| Variable                                 | Type    | Default | Description                         |
+| ---------------------------------------- | ------- | ------- | ----------------------------------- |
+| `ENABLE_INTROSPECTION_STRICT_VALIDATION` | boolean | `false` | Enable strict token validation      |
+| `INTROSPECTION_EXPECTED_AUDIENCE`        | string  | -       | Expected audience for introspection |
 
 ### NIST Assurance Levels
 
@@ -248,8 +246,6 @@ The following environment variable names have been deprecated:
 | `SCIM_AUTH_RATE_LIMIT_DISABLED`   | `ENABLE_SCIM_AUTH_RATE_LIMIT` (logic inverted) |
 | `IDENTITY_STITCHING_ENABLED`      | `ENABLE_IDENTITY_STITCHING`                    |
 | `NIST_ASSURANCE_LEVELS_ENABLED`   | `ENABLE_NIST_ASSURANCE_LEVELS`                 |
-| `INTROSPECTION_CACHE_ENABLED`     | `ENABLE_INTROSPECTION_CACHE`                   |
-| `INTROSPECTION_CACHE_TTL_SECONDS` | `INTROSPECTION_CACHE_TTL`                      |
 | `INTROSPECTION_STRICT_VALIDATION` | `ENABLE_INTROSPECTION_STRICT_VALIDATION`       |
 | `LOG_HASH_USER_ID`                | `ENABLE_LOG_HASH_USER_ID`                      |
 | `CHECK_API_WEBSOCKET_ENABLED`     | `ENABLE_CHECK_API_WEBSOCKET`                   |

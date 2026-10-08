@@ -586,8 +586,6 @@ export interface Env {
   // Token Introspection
   ENABLE_INTROSPECTION_STRICT_VALIDATION?: string; // "true" to enable strict audience/client_id validation
   INTROSPECTION_EXPECTED_AUDIENCE?: string; // Expected audience value (null = use ISSUER_URL)
-  ENABLE_INTROSPECTION_CACHE?: string; // "true" or "false" (default: "true")
-  INTROSPECTION_CACHE_TTL?: string; // Cache TTL in seconds (default: 60)
 
   // Multi-tenant Configuration
   // Multi-tenant mode is always enabled when BASE_DOMAIN is set.

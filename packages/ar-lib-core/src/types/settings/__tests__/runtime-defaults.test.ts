@@ -4,8 +4,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import { SESSION_DEFAULTS } from '../session';
-import { TOKENS_CATEGORY_META, TOKENS_DEFAULTS } from '../tokens';
-import { createSettingsManager } from '../../../utils/settings-manager';
+import { TOKENS_DEFAULTS } from '../tokens';
 import { EXTERNAL_IDP_DEFAULTS } from '../external-idp';
 import { TENANT_DEFAULTS } from '../tenant';
 import { RATE_LIMIT_DEFAULTS, RATE_LIMIT_PROFILE_SETTING_NAMES } from '../rate-limit';
@@ -112,20 +111,5 @@ describe('settings that replace older stores default to runtime behaviour', () =
     expect(SECURITY_DEFAULTS['security.request_object_signing_algs']).toBe(
       FAPI2_MESSAGE_SIGNING_ALGS.join(',')
     );
-  });
-});
-
-describe('settings that replace older APIs take the values those APIs took', () => {
-  it.each([
-    [1, true],
-    [600, true],
-    [3600, true],
-    [0, false],
-    [3601, false],
-    [1.5, false],
-  ])('introspection cache TTL (1..3600 seconds, as before): %s', (ttl, valid) => {
-    const manager = createSettingsManager({ env: {} });
-    manager.registerCategory(TOKENS_CATEGORY_META);
-    expect(manager.validate('tokens', { 'tokens.introspection_cache_ttl': ttl }).valid).toBe(valid);
   });
 });

@@ -339,6 +339,8 @@ describe('admin tenant clone', () => {
             'tokens.access_token_signing_key_id': 'source-access-key',
             'tokens.id_token_signing_key_id': 'source-id-key',
             'tokens.userinfo_signing_key_id': 'source-userinfo-key',
+            // The retired introspection cache: a source that still holds it does not carry it over.
+            'tokens.introspection_cache_ttl': 120,
           }),
           false,
           context
@@ -348,6 +350,20 @@ describe('admin tenant clone', () => {
       // Signing key ids are no longer settings: the source's are dropped, not carried over.
       'tokens.access_token_ttl': 300,
     });
+
+    expect(
+      JSON.parse(
+        sanitizeCopiedSettingsValue(
+          'feature-flags',
+          JSON.stringify({
+            'feature.enable_abac': true,
+            'feature.introspection_cache_enabled': true,
+          }),
+          false,
+          context
+        )!
+      )
+    ).toEqual({ 'feature.enable_abac': true });
 
     expect(
       JSON.parse(

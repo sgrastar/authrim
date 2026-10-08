@@ -320,8 +320,7 @@ place('applications/defaults', 'Token introspection', {
 		'tokens.introspection_strict_validation',
 		'tokens.introspection_extended_claims',
 		'tokens.introspection_expected_audience'
-	],
-	search: ['tokens.introspection_cache_ttl', 'feature.introspection_cache_enabled']
+	]
 });
 place('applications/defaults', 'Error responses', {
 	advanced: ['oauth.error_response_format', 'oauth.error_id_mode', 'oauth.error_locale']

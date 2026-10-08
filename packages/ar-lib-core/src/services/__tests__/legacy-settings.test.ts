@@ -229,7 +229,8 @@ describe('the older stores, read for the import', () => {
               idJag: { enabled: false, allowedIssuers: ['https://idp.example.com/t,a'] },
             },
             introspectionValidation: { expectedAudience: null },
-            introspectionCache: { ttlSeconds: 0, enabled: 'yes' },
+            // The retired introspection cache: left in an older document, never imported.
+            introspectionCache: { ttlSeconds: 60, enabled: true },
           },
         }),
       }),
@@ -243,15 +244,14 @@ describe('the older stores, read for the import', () => {
       // An issuer is kept whole, commas included.
       'tokens.id_jag_allowed_issuers': ['https://idp.example.com/t,a'],
       'tokens.introspection_expected_audience': '',
-      // A TTL runtime ignored is left out.
     });
     // Out of the range runtime took: its default applied (5.5 counted as 5).
     await expect(readLegacyStore(env, 'SETTINGS system_settings (limits)')).resolves.toEqual({
       'limits.token_exchange_max_audience_params': 5,
     });
-    // A saved false never disabled ID-JAG over ENABLE_ID_JAG.
+    // The retired introspection cache left in the document is not imported.
     await expect(readLegacyStore(env, 'SETTINGS system_settings (feature-flags)')).resolves.toEqual(
-      { 'feature.introspection_cache_enabled': false }
+      {}
     );
   });
 });

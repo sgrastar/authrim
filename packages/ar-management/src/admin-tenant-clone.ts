@@ -355,6 +355,13 @@ export function sanitizeCopiedSettingsValue(
     delete record['tokens.access_token_signing_key_id'];
     delete record['tokens.id_token_signing_key_id'];
     delete record['tokens.userinfo_signing_key_id'];
+    // The introspection response cache is gone: the value saved for it is dropped.
+    delete record['tokens.introspection_cache_ttl'];
+  }
+
+  if (category === 'feature-flags') {
+    // The introspection response cache is gone: the flag saved for it is dropped.
+    delete record['feature.introspection_cache_enabled'];
   }
 
   if (category === 'saml') {

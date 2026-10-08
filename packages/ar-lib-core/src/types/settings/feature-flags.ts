@@ -30,9 +30,6 @@ export interface FeatureFlagsSettings {
 
   'feature.enable_check_api': boolean;
 
-  // Cache Features
-  'feature.introspection_cache_enabled': boolean;
-
   // Conformance Testing
   'feature.conformance_enabled': boolean;
 
@@ -185,18 +182,6 @@ export const FEATURE_FLAGS_SETTINGS_META: Record<keyof FeatureFlagsSettings, Set
     visibility: 'admin',
   },
 
-  // Cache Features
-  'feature.introspection_cache_enabled': {
-    key: 'feature.introspection_cache_enabled',
-    type: 'boolean',
-    default: true,
-    envKey: 'ENABLE_INTROSPECTION_CACHE',
-    envBoolean: 'exactly-true',
-    label: 'Introspection Cache Enabled',
-    description: 'Enable caching of token introspection results',
-    visibility: 'admin',
-  },
-
   // Conformance Testing
   'feature.conformance_enabled': {
     key: 'feature.conformance_enabled',
@@ -297,9 +282,6 @@ export const FEATURE_FLAGS_DEFAULTS: FeatureFlagsSettings = {
   'feature.enable_custom_claim_schemas_introspection': false,
 
   'feature.enable_check_api': false,
-
-  // Cache Features
-  'feature.introspection_cache_enabled': true,
 
   // Conformance Testing
   'feature.conformance_enabled': false,

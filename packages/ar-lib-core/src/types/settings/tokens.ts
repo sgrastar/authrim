@@ -18,7 +18,6 @@ export interface TokensSettings {
   'tokens.exchange_impersonation_enabled': boolean;
 
   // Token Introspection
-  'tokens.introspection_cache_ttl': number;
   'tokens.introspection_strict_validation': boolean;
   'tokens.introspection_extended_claims': boolean;
 
@@ -73,21 +72,6 @@ export const TOKENS_SETTINGS_META: Record<keyof TokensSettings, SettingMeta> = {
     visibility: 'admin',
     dependsOn: [{ key: 'tokens.exchange_enabled', value: true }],
     status: 'in_development',
-  },
-  'tokens.introspection_cache_ttl': {
-    key: 'tokens.introspection_cache_ttl',
-    type: 'duration',
-    integer: true,
-    default: 60,
-    envKey: 'INTROSPECTION_CACHE_TTL',
-    envNumber: 'positive',
-    label: 'Introspection Cache TTL',
-    description: 'Token introspection result cache lifetime in seconds',
-    min: 1,
-    // As the former introspection-cache API allowed; revocation is checked before the cache.
-    max: 3600,
-    unit: 'seconds',
-    visibility: 'admin',
   },
   'tokens.introspection_strict_validation': {
     key: 'tokens.introspection_strict_validation',
@@ -211,7 +195,6 @@ export const TOKENS_DEFAULTS: TokensSettings = {
   'tokens.exchange_enabled': false,
   'tokens.exchange_delegation_enabled': false,
   'tokens.exchange_impersonation_enabled': false,
-  'tokens.introspection_cache_ttl': 60,
   'tokens.introspection_strict_validation': false,
   'tokens.introspection_extended_claims': false,
   'tokens.rbac_id_token_claims': 'roles,user_type,org_id,plan,org_type',

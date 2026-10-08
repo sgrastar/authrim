@@ -258,14 +258,6 @@ const REVIEWED_FIELDS: readonly [string, TenantSettingValueType, TenantSettingHa
     ],
     [
       'tokens',
-      'duration',
-      'value',
-      `
-    tokens.introspection_cache_ttl
-  `,
-    ],
-    [
-      'tokens',
       'string',
       'value',
       `
@@ -365,7 +357,6 @@ const REVIEWED_FIELDS: readonly [string, TenantSettingValueType, TenantSettingHa
     feature.enable_custom_claim_schemas
     feature.enable_custom_claim_schemas_introspection
     feature.enable_check_api
-    feature.introspection_cache_enabled
     feature.conformance_enabled
     feature.enable_flow_engine
   `,

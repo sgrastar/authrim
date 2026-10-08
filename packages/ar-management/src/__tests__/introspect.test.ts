@@ -83,30 +83,10 @@ const {
 });
 
 // Mock the shared module - use importOriginal for error functions
-const introspectionCache = vi.hoisted(() =>
-  vi.fn<() => Promise<{ enabled: boolean; ttlSeconds: number }>>()
-);
-
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@authrim/ar-lib-core')>();
   return {
     ...actual,
-    // The introspection response cache as the test sets it; other settings as resolved.
-    resolveEffectiveSettings: async (
-      ...args: Parameters<typeof actual.resolveEffectiveSettings>
-    ) => {
-      const [, category] = args;
-      const values = await actual.resolveEffectiveSettings(...args);
-      if (category === 'feature-flags') {
-        const cache = await introspectionCache();
-        return { ...values, 'feature.introspection_cache_enabled': cache.enabled };
-      }
-      if (category === 'tokens') {
-        const cache = await introspectionCache();
-        return { ...values, 'tokens.introspection_cache_ttl': cache.ttlSeconds };
-      }
-      return values;
-    },
     validateClientId: mockValidateClientId,
     timingSafeEqual: mockTimingSafeEqual,
     verifyClientSecretHash: mockVerifyClientSecretHash,
@@ -250,11 +230,6 @@ describe('Token Introspection Endpoint', () => {
         : null
     );
     mockResolveDeviceSecretRouteHint.mockResolvedValue({ accountId: 'account:user-123' });
-    // Default: cache disabled for most tests to test without cache
-    introspectionCache.mockResolvedValue({
-      enabled: false,
-      ttlSeconds: 60,
-    });
   });
 
   afterEach(() => {
@@ -1646,28 +1621,21 @@ describe('Token Introspection Endpoint', () => {
     });
   });
 
-  describe('Response Caching', () => {
-    it('should ignore cached responses until the submitted token is fully validated', async () => {
-      const cachedResponse = {
-        active: true,
-        scope: 'openid profile',
-        client_id: 'client-123',
-        token_type: 'Bearer',
-        exp: Math.floor(Date.now() / 1000) + 3600,
-        iat: Math.floor(Date.now() / 1000),
-        sub: 'user-123',
-        aud: 'https://op.example.com',
-        iss: 'https://op.example.com',
-        jti: 'token-jti-123',
+  describe('No response caching', () => {
+    function kvSpy() {
+      return {
+        get: vi.fn().mockResolvedValue(null),
+        put: vi.fn().mockResolvedValue(undefined),
+        delete: vi.fn().mockResolvedValue(undefined),
+        list: vi.fn().mockResolvedValue({ keys: [], list_complete: true }),
       };
+    }
 
-      introspectionCache.mockResolvedValue({
-        enabled: true,
-        ttlSeconds: 60,
-      });
-
-      const mockKvGet = vi.fn().mockResolvedValue(cachedResponse);
-      const c = createMockContext({
+    function introspectionRequest(
+      kv: ReturnType<typeof kvSpy>,
+      extraBody: Record<string, string> = {}
+    ) {
+      return createMockContext({
         headers: {
           'Content-Type': 'application/x-www-form-urlencoded',
         },
@@ -1675,673 +1643,87 @@ describe('Token Introspection Endpoint', () => {
           token: 'valid.jwt.token',
           client_id: 'client-123',
           client_secret: 'client-secret',
+          ...extraBody,
         },
         env: {
-          AUTHRIM_CONFIG: {
-            get: mockKvGet,
-            put: vi.fn(),
-            delete: vi.fn(),
-          } as unknown as KVNamespace,
+          AUTHRIM_CONFIG: kv as unknown as KVNamespace,
         },
       });
+    }
 
+    beforeEach(() => {
       vi.mocked(validateClientId).mockReturnValue({ valid: true });
-      vi.mocked(parseToken).mockReturnValue(sampleTokenPayload);
-      vi.mocked(verifyToken).mockResolvedValue(sampleTokenPayload);
-      vi.mocked(isTokenRevoked).mockResolvedValue(false);
-
       mockClientRepository.findByClientId.mockResolvedValue({
         client_id: 'client-123',
         client_secret_hash: 'hash_client-secret',
       });
+    });
+
+    it('does not write an active response to KV, and does not read one back', async () => {
+      const kv = kvSpy();
+      const c = introspectionRequest(kv);
+      vi.mocked(parseToken).mockReturnValue(sampleTokenPayload);
+      vi.mocked(verifyToken).mockResolvedValue(sampleTokenPayload);
+      vi.mocked(isTokenRevoked).mockResolvedValue(false);
 
       await introspectHandler(c);
 
-      // Cached responses are not trusted before signature and revocation validation.
-      expect(mockKvGet).not.toHaveBeenCalled();
+      expect(c.json).toHaveBeenCalledWith(expect.objectContaining({ active: true }));
+      // Every answer is built from the token and the current stores, never from a saved response.
       expect(verifyToken).toHaveBeenCalled();
       expect(isTokenRevoked).toHaveBeenCalled();
-      expect(c.json).toHaveBeenCalledWith(expect.objectContaining({ active: true }));
+      expect(kv.put).not.toHaveBeenCalled();
+      expect(kv.delete).not.toHaveBeenCalled();
+      expect(
+        kv.get.mock.calls.filter(([key]) => String(key).startsWith('introspect_cache:'))
+      ).toEqual([]);
     });
 
-    it('should return active=false and delete cache when cached token is revoked', async () => {
-      const cachedResponse = {
-        active: true,
-        jti: 'token-jti-123',
-        exp: Math.floor(Date.now() / 1000) + 3600,
-      };
-
-      introspectionCache.mockResolvedValue({
-        enabled: true,
-        ttlSeconds: 60,
-      });
-
-      const mockKvDelete = vi.fn().mockResolvedValue(undefined);
-      const c = createMockContext({
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded',
-        },
-        body: {
-          token: 'valid.jwt.token',
-          client_id: 'client-123',
-          client_secret: 'client-secret',
-        },
-        env: {
-          AUTHRIM_CONFIG: {
-            get: vi.fn().mockResolvedValue(cachedResponse),
-            put: vi.fn(),
-            delete: mockKvDelete,
-          } as unknown as KVNamespace,
-        },
-      });
-
-      vi.mocked(validateClientId).mockReturnValue({ valid: true });
+    it('does not write an inactive response to KV', async () => {
+      const kv = kvSpy();
+      const c = introspectionRequest(kv);
       vi.mocked(parseToken).mockReturnValue(sampleTokenPayload);
       vi.mocked(verifyToken).mockResolvedValue(sampleTokenPayload);
-      vi.mocked(isTokenRevoked).mockResolvedValue(true); // Token is revoked
-
-      mockClientRepository.findByClientId.mockResolvedValue({
-        client_id: 'client-123',
-        client_secret_hash: 'hash_client-secret',
-      });
+      vi.mocked(isTokenRevoked).mockResolvedValue(true);
 
       await introspectHandler(c);
 
-      // Cached state is ignored; revocation is checked against the live token.
-      expect(mockKvDelete).not.toHaveBeenCalled();
-      // Should return inactive
       expect(c.json).toHaveBeenCalledWith({ active: false });
+      expect(kv.put).not.toHaveBeenCalled();
     });
 
-    it('should return active=false and delete cache when cached token is expired', async () => {
-      const cachedResponse = {
-        active: true,
-        jti: 'token-jti-123',
-        exp: Math.floor(Date.now() / 1000) - 100, // Already expired
-      };
-
-      introspectionCache.mockResolvedValue({
-        enabled: true,
-        ttlSeconds: 60,
-      });
-
-      const mockKvDelete = vi.fn().mockResolvedValue(undefined);
-      const c = createMockContext({
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded',
-        },
-        body: {
-          token: 'valid.jwt.token',
-          client_id: 'client-123',
-          client_secret: 'client-secret',
-        },
-        env: {
-          AUTHRIM_CONFIG: {
-            get: vi.fn().mockResolvedValue(cachedResponse),
-            put: vi.fn(),
-            delete: mockKvDelete,
-          } as unknown as KVNamespace,
-        },
-      });
-
-      vi.mocked(validateClientId).mockReturnValue({ valid: true });
-      const expiredTokenPayload = {
-        ...sampleTokenPayload,
-        exp: Math.floor(Date.now() / 1000) - 100,
-      };
-      vi.mocked(parseToken).mockReturnValue(expiredTokenPayload);
-      vi.mocked(verifyToken).mockResolvedValue(expiredTokenPayload);
-
-      mockClientRepository.findByClientId.mockResolvedValue({
-        client_id: 'client-123',
-        client_secret_hash: 'hash_client-secret',
-      });
-
-      await introspectHandler(c);
-
-      // Cached state is ignored; expiry is checked against the live token.
-      expect(mockKvDelete).not.toHaveBeenCalled();
-      // Should return inactive
-      expect(c.json).toHaveBeenCalledWith({ active: false });
-    });
-
-    it('should store active=true response in cache', async () => {
-      introspectionCache.mockResolvedValue({
-        enabled: true,
-        ttlSeconds: 60,
-      });
-
-      const mockKvPut = vi.fn().mockResolvedValue(undefined);
-      const c = createMockContext({
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded',
-        },
-        body: {
-          token: 'valid.jwt.token',
-          client_id: 'client-123',
-          client_secret: 'client-secret',
-        },
-        env: {
-          AUTHRIM_CONFIG: {
-            get: vi.fn().mockResolvedValue(null), // Cache miss
-            put: mockKvPut,
-            delete: vi.fn(),
-          } as unknown as KVNamespace,
-        },
-      });
-
-      vi.mocked(validateClientId).mockReturnValue({ valid: true });
+    it('answers inactive for a revoked token however recently it was active', async () => {
+      const kv = kvSpy();
       vi.mocked(parseToken).mockReturnValue(sampleTokenPayload);
       vi.mocked(verifyToken).mockResolvedValue(sampleTokenPayload);
+
       vi.mocked(isTokenRevoked).mockResolvedValue(false);
+      const active = introspectionRequest(kv);
+      await introspectHandler(active);
+      expect(active.json).toHaveBeenCalledWith(expect.objectContaining({ active: true }));
 
-      mockClientRepository.findByClientId.mockResolvedValue({
-        client_id: 'client-123',
-        client_secret_hash: 'hash_client-secret',
-      });
-
-      await introspectHandler(c);
-
-      // Should store in cache with TTL
-      expect(mockKvPut).toHaveBeenCalledWith(
-        expect.stringContaining('introspect_cache:'),
-        expect.stringContaining('"active":true'),
-        expect.objectContaining({ expirationTtl: 60 })
-      );
+      vi.mocked(isTokenRevoked).mockResolvedValue(true);
+      const revoked = introspectionRequest(kv);
+      await introspectHandler(revoked);
+      expect(revoked.json).toHaveBeenCalledWith({ active: false });
     });
 
-    it('should NOT cache when cache is disabled', async () => {
-      introspectionCache.mockResolvedValue({
-        enabled: false,
-        ttlSeconds: 60,
-      });
-
-      const mockKvGet = vi.fn();
-      const mockKvPut = vi.fn();
-      const c = createMockContext({
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded',
-        },
-        body: {
-          token: 'valid.jwt.token',
-          client_id: 'client-123',
-          client_secret: 'client-secret',
-        },
-        env: {
-          AUTHRIM_CONFIG: {
-            get: mockKvGet,
-            put: mockKvPut,
-            delete: vi.fn(),
-          } as unknown as KVNamespace,
-        },
-      });
-
-      vi.mocked(validateClientId).mockReturnValue({ valid: true });
-      vi.mocked(parseToken).mockReturnValue(sampleTokenPayload);
-      vi.mocked(verifyToken).mockResolvedValue(sampleTokenPayload);
-      vi.mocked(isTokenRevoked).mockResolvedValue(false);
-
-      mockClientRepository.findByClientId.mockResolvedValue({
-        client_id: 'client-123',
-        client_secret_hash: 'hash_client-secret',
-      });
-
-      await introspectHandler(c);
-
-      // Should NOT read from or write to cache
-      expect(mockKvGet).not.toHaveBeenCalled();
-      expect(mockKvPut).not.toHaveBeenCalled();
-    });
-
-    it('should handle cache read errors gracefully', async () => {
-      introspectionCache.mockResolvedValue({
-        enabled: true,
-        ttlSeconds: 60,
-      });
-
-      const c = createMockContext({
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded',
-        },
-        body: {
-          token: 'valid.jwt.token',
-          client_id: 'client-123',
-          client_secret: 'client-secret',
-        },
-        env: {
-          AUTHRIM_CONFIG: {
-            get: vi.fn().mockRejectedValue(new Error('KV error')),
-            put: vi.fn().mockResolvedValue(undefined),
-            delete: vi.fn().mockResolvedValue(undefined),
-          } as unknown as KVNamespace,
-        },
-      });
-
-      vi.mocked(validateClientId).mockReturnValue({ valid: true });
-      vi.mocked(parseToken).mockReturnValue(sampleTokenPayload);
-      vi.mocked(verifyToken).mockResolvedValue(sampleTokenPayload);
-      vi.mocked(isTokenRevoked).mockResolvedValue(false);
-
-      mockClientRepository.findByClientId.mockResolvedValue({
-        client_id: 'client-123',
-        client_secret_hash: 'hash_client-secret',
-      });
-
-      await introspectHandler(c);
-
-      // Should fall back to full validation and still return active=true
-      expect(verifyToken).toHaveBeenCalled();
-      expect(c.json).toHaveBeenCalledWith(
-        expect.objectContaining({
-          active: true,
-        })
-      );
-    });
-
-    it('should skip cache when JTI is missing', async () => {
-      introspectionCache.mockResolvedValue({
-        enabled: true,
-        ttlSeconds: 60,
-      });
-
-      const tokenWithoutJti = { ...sampleTokenPayload, jti: undefined };
-      const mockKvGet = vi.fn();
-
-      const c = createMockContext({
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded',
-        },
-        body: {
-          token: 'valid.jwt.token',
-          client_id: 'client-123',
-          client_secret: 'client-secret',
-        },
-        env: {
-          AUTHRIM_CONFIG: {
-            get: mockKvGet,
-            put: vi.fn(),
-            delete: vi.fn(),
-          } as unknown as KVNamespace,
-        },
-      });
-
-      vi.mocked(validateClientId).mockReturnValue({ valid: true });
-      vi.mocked(parseToken).mockReturnValue(tokenWithoutJti);
-      vi.mocked(verifyToken).mockResolvedValue(tokenWithoutJti);
-      vi.mocked(isTokenRevoked).mockResolvedValue(false);
-
-      mockClientRepository.findByClientId.mockResolvedValue({
-        client_id: 'client-123',
-        client_secret_hash: 'hash_client-secret',
-      });
-
-      await introspectHandler(c);
-
-      // Should not check cache when JTI is missing
-      expect(mockKvGet).not.toHaveBeenCalled();
-    });
-
-    it('should skip cache when AUTHRIM_CONFIG is undefined', async () => {
-      introspectionCache.mockResolvedValue({
-        enabled: true,
-        ttlSeconds: 60,
-      });
-
-      const c = createMockContext({
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded',
-        },
-        body: {
-          token: 'valid.jwt.token',
-          client_id: 'client-123',
-          client_secret: 'client-secret',
-        },
-        env: {
-          AUTHRIM_CONFIG: undefined, // KV not configured
-        },
-      });
-
-      vi.mocked(validateClientId).mockReturnValue({ valid: true });
-      vi.mocked(parseToken).mockReturnValue(sampleTokenPayload);
-      vi.mocked(verifyToken).mockResolvedValue(sampleTokenPayload);
-      vi.mocked(isTokenRevoked).mockResolvedValue(false);
-
-      mockClientRepository.findByClientId.mockResolvedValue({
-        client_id: 'client-123',
-        client_secret_hash: 'hash_client-secret',
-      });
-
-      await introspectHandler(c);
-
-      // Should still return valid response (full validation path)
-      expect(verifyToken).toHaveBeenCalled();
-      expect(c.json).toHaveBeenCalledWith(
-        expect.objectContaining({
-          active: true,
-        })
-      );
-    });
-
-    it('should validate refresh_token hints without trusting cached responses', async () => {
-      const cachedResponse = {
-        active: true,
-        scope: 'openid offline_access',
-        client_id: 'client-123',
-        token_type: 'Bearer',
-        exp: Math.floor(Date.now() / 1000) + 3600,
-        iat: Math.floor(Date.now() / 1000),
-        sub: 'user-123',
-        aud: 'https://op.example.com',
-        iss: 'https://op.example.com',
-        jti: 'token-jti-123',
-      };
-
-      introspectionCache.mockResolvedValue({
-        enabled: true,
-        ttlSeconds: 60,
-      });
-
-      const mockKvGet = vi.fn().mockResolvedValue(cachedResponse);
-      const c = createMockContext({
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded',
-        },
-        body: {
-          token: 'refresh.token.value',
-          token_type_hint: 'refresh_token',
-          client_id: 'client-123',
-          client_secret: 'client-secret',
-        },
-        env: {
-          AUTHRIM_CONFIG: {
-            get: mockKvGet,
-            put: vi.fn(),
-            delete: vi.fn(),
-          } as unknown as KVNamespace,
-        },
-      });
-
-      vi.mocked(validateClientId).mockReturnValue({ valid: true });
-      vi.mocked(parseToken).mockReturnValue(sampleTokenPayload);
-      vi.mocked(verifyToken).mockResolvedValue(sampleTokenPayload);
-      vi.mocked(getRefreshToken).mockResolvedValue({
-        familyId: 'family-123',
-        tokenId: 'token-jti-123',
-      } as any);
-
-      mockClientRepository.findByClientId.mockResolvedValue({
-        client_id: 'client-123',
-        client_secret_hash: 'hash_client-secret',
-      });
-
-      await introspectHandler(c);
-
-      expect(mockKvGet).not.toHaveBeenCalled();
-      expect(verifyToken).toHaveBeenCalled();
-      // Should call getRefreshToken instead of isTokenRevoked for refresh_token hint
-      expect(getRefreshToken).toHaveBeenCalledWith(
-        c.env,
-        'user-123',
-        1,
-        'client-123',
-        'token-jti-123',
-        'tenant1'
-      );
-      expect(isTokenRevoked).not.toHaveBeenCalled();
-      expect(c.json).toHaveBeenCalledWith(expect.objectContaining({ active: true }));
-    });
-
-    it('should return active=false when refresh_token not found on cache hit', async () => {
-      const cachedResponse = {
-        active: true,
-        jti: 'token-jti-123',
-        exp: Math.floor(Date.now() / 1000) + 3600,
-        sub: 'user-123',
-        client_id: 'client-123',
-      };
-
-      introspectionCache.mockResolvedValue({
-        enabled: true,
-        ttlSeconds: 60,
-      });
-
-      const mockKvDelete = vi.fn().mockResolvedValue(undefined);
-      const c = createMockContext({
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded',
-        },
-        body: {
-          token: 'refresh.token.value',
-          token_type_hint: 'refresh_token',
-          client_id: 'client-123',
-          client_secret: 'client-secret',
-        },
-        env: {
-          AUTHRIM_CONFIG: {
-            get: vi.fn().mockResolvedValue(cachedResponse),
-            put: vi.fn(),
-            delete: mockKvDelete,
-          } as unknown as KVNamespace,
-        },
-      });
-
-      vi.mocked(validateClientId).mockReturnValue({ valid: true });
-      vi.mocked(parseToken).mockReturnValue(sampleTokenPayload);
-      vi.mocked(verifyToken).mockResolvedValue(sampleTokenPayload);
-      vi.mocked(getRefreshToken).mockResolvedValue(null); // Refresh token not found
-
-      mockClientRepository.findByClientId.mockResolvedValue({
-        client_id: 'client-123',
-        client_secret_hash: 'hash_client-secret',
-      });
-
-      await introspectHandler(c);
-
-      // Should call getRefreshToken for refresh_token hint
-      expect(getRefreshToken).toHaveBeenCalled();
-      // Cached state is ignored; no cache entry is consumed or deleted.
-      expect(mockKvDelete).not.toHaveBeenCalled();
-      // Should return inactive
-      expect(c.json).toHaveBeenCalledWith({ active: false });
-    });
-
-    it('should use SHA-256 hash format for cache key', async () => {
-      introspectionCache.mockResolvedValue({
-        enabled: true,
-        ttlSeconds: 60,
-      });
-
-      const mockKvPut = vi.fn().mockResolvedValue(undefined);
-      const c = createMockContext({
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded',
-        },
-        body: {
-          token: 'valid.jwt.token',
-          client_id: 'client-123',
-          client_secret: 'client-secret',
-        },
-        env: {
-          AUTHRIM_CONFIG: {
-            get: vi.fn().mockResolvedValue(null), // Cache miss
-            put: mockKvPut,
-            delete: vi.fn(),
-          } as unknown as KVNamespace,
-        },
-      });
-
-      vi.mocked(validateClientId).mockReturnValue({ valid: true });
-      vi.mocked(parseToken).mockReturnValue(sampleTokenPayload);
-      vi.mocked(verifyToken).mockResolvedValue(sampleTokenPayload);
-      vi.mocked(isTokenRevoked).mockResolvedValue(false);
-
-      mockClientRepository.findByClientId.mockResolvedValue({
-        client_id: 'client-123',
-        client_secret_hash: 'hash_client-secret',
-      });
-
-      await introspectHandler(c);
-
-      // Verify cache key format: introspect_cache:{sha256_hex}
-      // SHA-256 produces 64 hex characters
-      const putCall = mockKvPut.mock.calls[0];
-      const cacheKey = putCall[0] as string;
-
-      expect(cacheKey).toMatch(/^introspect_cache:[a-f0-9]{64}$/);
-    });
-
-    it('rejects a refresh token without sub before storage or cache lookup', async () => {
-      // Token payload without sub
+    it('rejects a refresh token without sub before storage lookup', async () => {
       const tokenWithoutSub = { ...sampleTokenPayload, sub: undefined };
-      const cachedResponse = {
-        active: true,
-        scope: 'openid offline_access',
-        client_id: 'client-123',
-        token_type: 'Bearer',
-        exp: Math.floor(Date.now() / 1000) + 3600,
-        iat: Math.floor(Date.now() / 1000),
-        aud: 'https://op.example.com',
-        iss: 'https://op.example.com',
-        jti: 'token-jti-123',
-      };
-
-      introspectionCache.mockResolvedValue({
-        enabled: true,
-        ttlSeconds: 60,
+      const kv = kvSpy();
+      const c = introspectionRequest(kv, {
+        token: 'refresh.token.value',
+        token_type_hint: 'refresh_token',
       });
-
-      const mockKvGet = vi.fn().mockResolvedValue(cachedResponse);
-      const c = createMockContext({
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded',
-        },
-        body: {
-          token: 'refresh.token.value',
-          token_type_hint: 'refresh_token',
-          client_id: 'client-123',
-          client_secret: 'client-secret',
-        },
-        env: {
-          AUTHRIM_CONFIG: {
-            get: mockKvGet,
-            put: vi.fn(),
-            delete: vi.fn(),
-          } as unknown as KVNamespace,
-        },
-      });
-
-      vi.mocked(validateClientId).mockReturnValue({ valid: true });
       vi.mocked(parseToken).mockReturnValue(tokenWithoutSub);
       vi.mocked(verifyToken).mockResolvedValue(tokenWithoutSub);
-
-      mockClientRepository.findByClientId.mockResolvedValue({
-        client_id: 'client-123',
-        client_secret_hash: 'hash_client-secret',
-      });
 
       await introspectHandler(c);
 
       expect(getRefreshToken).not.toHaveBeenCalled();
       expect(isTokenRevoked).not.toHaveBeenCalled();
-      expect(mockKvGet).not.toHaveBeenCalled();
       expect(verifyToken).toHaveBeenCalled();
       expect(c.json).toHaveBeenCalledWith({ active: false });
-    });
-
-    it('should NOT cache active=false response', async () => {
-      introspectionCache.mockResolvedValue({
-        enabled: true,
-        ttlSeconds: 60,
-      });
-
-      const mockKvPut = vi.fn().mockResolvedValue(undefined);
-      const c = createMockContext({
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded',
-        },
-        body: {
-          token: 'revoked.jwt.token',
-          client_id: 'client-123',
-          client_secret: 'client-secret',
-        },
-        env: {
-          AUTHRIM_CONFIG: {
-            get: vi.fn().mockResolvedValue(null), // Cache miss
-            put: mockKvPut,
-            delete: vi.fn(),
-          } as unknown as KVNamespace,
-        },
-      });
-
-      vi.mocked(validateClientId).mockReturnValue({ valid: true });
-      vi.mocked(parseToken).mockReturnValue(sampleTokenPayload);
-      vi.mocked(verifyToken).mockResolvedValue(sampleTokenPayload);
-      vi.mocked(isTokenRevoked).mockResolvedValue(true); // Token is revoked
-
-      mockClientRepository.findByClientId.mockResolvedValue({
-        client_id: 'client-123',
-        client_secret_hash: 'hash_client-secret',
-      });
-
-      await introspectHandler(c);
-
-      // Should return active=false
-      expect(c.json).toHaveBeenCalledWith({ active: false });
-      // Should NOT write to cache for inactive tokens
-      expect(mockKvPut).not.toHaveBeenCalled();
-    });
-
-    it('should proceed to full validation when cache contains active=false', async () => {
-      // Edge case: cache somehow contains active=false (should not happen, but defensive)
-      const invalidCachedResponse = { active: false };
-
-      introspectionCache.mockResolvedValue({
-        enabled: true,
-        ttlSeconds: 60,
-      });
-
-      const mockKvGet = vi.fn().mockResolvedValue(invalidCachedResponse);
-      const mockKvPut = vi.fn().mockResolvedValue(undefined);
-      const c = createMockContext({
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded',
-        },
-        body: {
-          token: 'valid.jwt.token',
-          client_id: 'client-123',
-          client_secret: 'client-secret',
-        },
-        env: {
-          AUTHRIM_CONFIG: {
-            get: mockKvGet,
-            put: mockKvPut,
-            delete: vi.fn(),
-          } as unknown as KVNamespace,
-        },
-      });
-
-      vi.mocked(validateClientId).mockReturnValue({ valid: true });
-      vi.mocked(parseToken).mockReturnValue(sampleTokenPayload);
-      vi.mocked(verifyToken).mockResolvedValue(sampleTokenPayload);
-      vi.mocked(isTokenRevoked).mockResolvedValue(false);
-
-      mockClientRepository.findByClientId.mockResolvedValue({
-        client_id: 'client-123',
-        client_secret_hash: 'hash_client-secret',
-      });
-
-      await introspectHandler(c);
-
-      // Should proceed to full validation (verifyToken called)
-      expect(verifyToken).toHaveBeenCalled();
-      // Should return active=true after full validation
-      expect(c.json).toHaveBeenCalledWith(
-        expect.objectContaining({
-          active: true,
-        })
-      );
-      // Should update cache with valid response
-      expect(mockKvPut).toHaveBeenCalled();
     });
   });
 });
