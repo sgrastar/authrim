@@ -2,6 +2,7 @@ import {
   decideControlProvisioningFailure,
   type ApplyMigrationReleaseInput,
   type ApplyMigrationReleaseResult,
+  type MigrationReleasePin,
 } from '@authrim/ar-lib-core/control-plane';
 import type { D1Result } from '@cloudflare/workers-types';
 
@@ -11,15 +12,38 @@ const PENDING_PROVIDER_RETRY_SECONDS = 30;
 const PENDING_PROVIDER_BUDGET_SECONDS = 2 * 60 * 60;
 const DEFAULT_CONCURRENCY = 4;
 const DEFAULT_MAX_TARGETS_PER_RUN = 16;
+const ARTIFACT_FORMAT_BLOCK_CODE = 'migration_artifact_manifest_invalid';
+const ARTIFACT_FORMAT_RESUME_REASON = 'artifact_format_supported_after_control_update';
+const MAX_ARTIFACT_FORMAT_RESUMES_PER_RUN = 2;
 
 interface ReleaseMigrationEngine {
   apply(input: ApplyMigrationReleaseInput): Promise<ApplyMigrationReleaseResult>;
+}
+
+/**
+ * Reads and validates a release artifact exactly as the migration engine does (the
+ * MigrationReleaseArtifactReader satisfies this). It only reads; it never touches a database.
+ */
+interface ReleaseArtifactProbe {
+  load(pin: MigrationReleasePin): Promise<unknown>;
 }
 
 interface ReconcilerOptions {
   concurrency?: number;
   maxTargetsPerRun?: number;
   executorAvailable?: boolean;
+  artifactProbe?: ReleaseArtifactProbe;
+}
+
+interface ArtifactFormatBlockedTarget extends Record<string, unknown> {
+  environment_id: string;
+  operation_id: string;
+  target_id: string;
+  stream_id: string;
+  release_id: string;
+  manifest_digest: string;
+  manifest_r2_object_key: string;
+  source_version: string | null;
 }
 
 interface SnapshotCandidate extends Record<string, unknown> {
@@ -73,6 +97,7 @@ export class ReleaseMigrationRolloutReconciler {
   private readonly concurrency: number;
   private readonly maxTargetsPerRun: number;
   private readonly executorAvailable: boolean;
+  private readonly artifactProbe: ReleaseArtifactProbe | null;
 
   constructor(
     private readonly db: D1Database,
@@ -87,6 +112,7 @@ export class ReleaseMigrationRolloutReconciler {
       128
     );
     this.executorAvailable = options.executorAvailable ?? engine !== null;
+    this.artifactProbe = options.artifactProbe ?? null;
     if (this.executorAvailable && !this.engine) {
       throw new Error('release_migration_rollout_engine_required');
     }
@@ -98,6 +124,7 @@ export class ReleaseMigrationRolloutReconciler {
     await this.refreshPendingProviders(now);
     await this.resumeProviderBlockedRollouts(now);
     if (this.executorAvailable) await this.resumeExecutorBlockedRollouts(now);
+    if (this.executorAvailable) await this.resumeArtifactFormatBlockedRollouts(now);
 
     let snapshots = 0;
     const candidates = await this.db
@@ -737,6 +764,179 @@ export class ReleaseMigrationRolloutReconciler {
               WHERE operation_id = ? AND handoff_state = 'blocked'`
           )
           .bind(now, operation.operation_id),
+      ]);
+    }
+  }
+
+  /**
+   * A rollout blocked by `migration_artifact_manifest_invalid` was most likely read by a Control
+   * older than the release it was handed (the release can introduce a manifest format that only
+   * its own Control understands). The artifact is content-addressed, so if this Control now reads
+   * and validates the very same objects, the earlier failure was the Control version and the
+   * rollout resumes without an operator (who may not be able to sign in until the update ends).
+   * A rollout the artifact still fails for is left untouched: the probe only reads. Because that
+   * leaves no write to move a candidate out of the way, the bounded selection is random so a few
+   * permanently unreadable rollouts cannot starve the others.
+   *
+   * The snapshot step cannot produce this block: it is pure SQL over Control's own tables and
+   * never reads the artifact, so only target execution (via advanceOperation) can set it.
+   */
+  private async resumeArtifactFormatBlockedRollouts(now: number): Promise<void> {
+    const probe = this.artifactProbe;
+    if (!probe) return;
+    const operations = await this.db
+      .prepare(
+        `SELECT rollout.operation_id
+           FROM control_release_migration_rollouts rollout
+           JOIN control_operations operation ON operation.operation_id = rollout.operation_id
+          WHERE rollout.handoff_state = 'blocked' AND operation.status = 'blocked'
+            AND operation.last_error_code = ?
+            AND EXISTS (
+              SELECT 1 FROM control_release_migration_targets target
+               WHERE target.operation_id = rollout.operation_id AND target.state = 'blocked'
+                 AND target.last_error_code = ?
+            )
+            AND NOT EXISTS (
+              SELECT 1 FROM control_release_migration_targets target
+               WHERE target.operation_id = rollout.operation_id AND target.state = 'blocked'
+                 AND COALESCE(target.last_error_code, '') <> ?
+            )
+          ORDER BY random()
+          LIMIT ?`
+      )
+      .bind(
+        ARTIFACT_FORMAT_BLOCK_CODE,
+        ARTIFACT_FORMAT_BLOCK_CODE,
+        ARTIFACT_FORMAT_BLOCK_CODE,
+        MAX_ARTIFACT_FORMAT_RESUMES_PER_RUN
+      )
+      .all<{ operation_id: string }>();
+    for (const operation of operations.results) {
+      const targets = await this.db
+        .prepare(
+          `SELECT rollout.environment_id, target.operation_id, target.target_id, target.stream_id,
+                  target.release_id, target.manifest_digest, rollout.manifest_r2_object_key,
+                  rollout.source_version
+             FROM control_release_migration_targets target
+             JOIN control_release_migration_rollouts rollout
+               ON rollout.operation_id = target.operation_id
+            WHERE target.operation_id = ? AND target.state = 'blocked'
+              AND target.last_error_code = ?
+            ORDER BY target.target_id`
+        )
+        .bind(operation.operation_id, ARTIFACT_FORMAT_BLOCK_CODE)
+        .all<ArtifactFormatBlockedTarget>();
+      if (targets.results.length === 0) continue;
+      const probed = new Set<string>();
+      let supported = true;
+      for (const target of targets.results) {
+        const pinKey = `${target.stream_id}:${target.release_id}:${target.manifest_digest}`;
+        if (probed.has(pinKey)) continue;
+        probed.add(pinKey);
+        try {
+          await probe.load({
+            environmentId: target.environment_id,
+            streamId: target.stream_id,
+            releaseId: target.release_id,
+            manifestDigest: target.manifest_digest,
+            manifestObjectKey: target.manifest_r2_object_key,
+            ...(target.source_version ? { sourceProductVersion: target.source_version } : {}),
+          });
+        } catch {
+          supported = false;
+          break;
+        }
+      }
+      if (!supported) continue;
+
+      // Every statement is guarded by the same still-blocked-by-format condition, so concurrent
+      // cron runs (or an operator retry in between) resume the rollout at most once.
+      const stillBlocked = `EXISTS (
+        SELECT 1 FROM control_release_migration_rollouts rollout
+          JOIN control_operations operation ON operation.operation_id = rollout.operation_id
+         WHERE rollout.operation_id = ? AND rollout.handoff_state = 'blocked'
+           AND operation.status = 'blocked' AND operation.last_error_code = ?
+      ) AND NOT EXISTS (
+        SELECT 1 FROM control_release_migration_targets other
+         WHERE other.operation_id = ? AND other.state = 'blocked'
+           AND COALESCE(other.last_error_code, '') <> ?
+      )`;
+      const guard = [
+        operation.operation_id,
+        ARTIFACT_FORMAT_BLOCK_CODE,
+        operation.operation_id,
+        ARTIFACT_FORMAT_BLOCK_CODE,
+      ] as const;
+      await this.db.batch([
+        this.db
+          .prepare(
+            `INSERT OR IGNORE INTO control_audit_events (
+               event_id, environment_id, operation_id, event_type, actor_type,
+               resource_kind, resource_id, outcome, redacted_payload_json, created_at
+             ) SELECT ?, rollout.environment_id, rollout.operation_id,
+                      'control.release_migration.rollout_resumed', 'reconciler',
+                      'release_migration_rollout', rollout.operation_id, 'succeeded', ?, ?
+                 FROM control_release_migration_rollouts rollout
+                WHERE rollout.operation_id = ? AND ${stillBlocked}`
+          )
+          .bind(
+            `audit:${operation.operation_id}:artifact-format-resume:${now}`,
+            JSON.stringify({
+              reason_code: ARTIFACT_FORMAT_RESUME_REASON,
+              previous_error_code: ARTIFACT_FORMAT_BLOCK_CODE,
+              target_ids: targets.results.map((target) => target.target_id),
+            }),
+            now,
+            operation.operation_id,
+            ...guard
+          ),
+        // The retry budget restarts, as for an operator retry; the earlier failed attempt was not
+        // the database's fault and must not shorten it.
+        this.db
+          .prepare(
+            `UPDATE control_release_migration_targets
+                SET state = 'queued', retry_budget_started_at = ?, next_attempt_at = NULL,
+                    last_error_code = NULL, lease_owner = NULL, lease_expires_at = NULL,
+                    updated_at = ?
+              WHERE operation_id = ? AND state = 'blocked' AND last_error_code = ?
+                AND ${stillBlocked}`
+          )
+          .bind(now, now, operation.operation_id, ARTIFACT_FORMAT_BLOCK_CODE, ...guard),
+        this.db
+          .prepare(
+            `UPDATE control_operation_steps
+                SET status = 'running', attempt_count = attempt_count + 1,
+                    last_error_code = NULL, completed_at = NULL, updated_at = ?
+              WHERE operation_id = ? AND step_key = 'apply_managed_migrations'
+                AND status = 'blocked' AND last_error_code = ?
+                AND ${stillBlocked}`
+          )
+          .bind(now, operation.operation_id, ARTIFACT_FORMAT_BLOCK_CODE, ...guard),
+        this.db
+          .prepare(
+            `UPDATE control_operations
+                SET status = 'running', last_error_code = NULL, next_attempt_at = NULL,
+                    completed_at = NULL, lock_owner = NULL, lock_expires_at = NULL,
+                    updated_at = ?
+              WHERE operation_id = ? AND status = 'blocked' AND last_error_code = ?
+                AND ${stillBlocked}`
+          )
+          .bind(now, operation.operation_id, ARTIFACT_FORMAT_BLOCK_CODE, ...guard),
+        this.db
+          .prepare(
+            `UPDATE control_release_migration_rollouts
+                SET handoff_state = 'database_rollout', updated_at = ?
+              WHERE operation_id = ? AND handoff_state = 'blocked'
+                AND EXISTS (
+                  SELECT 1 FROM control_operations operation
+                   WHERE operation.operation_id = control_release_migration_rollouts.operation_id
+                     AND operation.status = 'running' AND operation.last_error_code IS NULL
+                ) AND NOT EXISTS (
+                  SELECT 1 FROM control_release_migration_targets other
+                   WHERE other.operation_id = ? AND other.state = 'blocked'
+                )`
+          )
+          .bind(now, operation.operation_id, operation.operation_id),
       ]);
     }
   }

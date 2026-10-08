@@ -2792,11 +2792,12 @@ export default class ControlWorker extends WorkerEntrypoint<ControlEnv, ControlR
       }
     }
     const apiClients = createControlApiClients(this.env);
+    const releaseArtifactReader = new MigrationReleaseArtifactReader(
+      new R2ReleaseArtifactStore(this.env.MIGRATION_RELEASES)
+    );
     const releaseMigrationEngine = d1Token
       ? new ApiMigrationEngine(
-          new MigrationReleaseArtifactReader(
-            new R2ReleaseArtifactStore(this.env.MIGRATION_RELEASES)
-          ),
+          releaseArtifactReader,
           cloudflareMigrationExecutor(apiClients.d1),
           () => Date.now()
         )
@@ -2808,7 +2809,7 @@ export default class ControlWorker extends WorkerEntrypoint<ControlEnv, ControlR
           this.env.CONTROL_DB,
           releaseMigrationEngine,
           () => Math.floor(Date.now() / 1000),
-          { executorAvailable: Boolean(d1Token) }
+          { executorAvailable: Boolean(d1Token), artifactProbe: releaseArtifactReader }
         ).reconcile()
       )
     );
