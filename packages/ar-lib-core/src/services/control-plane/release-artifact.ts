@@ -47,6 +47,12 @@ export interface LoadedMigrationRelease {
   rollout: MigrationReleaseRolloutPolicy;
   files: MigrationArtifactFile[];
   knownHistory: ManifestFile[];
+  /**
+   * Only for a same-version draft append: the ordered, complete file list of the pinned stream
+   * (fresh-install baseline first). A database must hold an unbroken, checksum-identical prefix of
+   * it that reaches the first executable file; the engine never starts such a database from empty.
+   */
+  draftAppendBase?: ManifestFile[];
 }
 
 export interface MigrationReleaseRolloutPolicy {
@@ -95,7 +101,7 @@ interface MigrationManifest {
   streams: ManifestStream[];
   upgradePaths?: Array<{
     fromProductVersion: string;
-    kind: 'delta' | 'bridge';
+    kind: 'delta' | 'bridge' | 'draft_append';
     streams: ManifestStream[];
   }>;
   acceptedMigrationHistory?: ManifestStream[];
@@ -106,6 +112,24 @@ const DEFAULT_ROLLOUT_POLICY: MigrationReleaseRolloutPolicy = {
   workerActivation: 'after_required_databases',
   adminMutationMode: 'read_only',
 };
+
+/** `<sequence>_<major>_<minor>_<patch>_`, the start of a fresh-install baseline's file name. */
+const FRESH_INSTALL_BASELINE_PREFIX = /^\d+_\d+_\d+_\d+_/u;
+const FRESH_INSTALL_BASELINE_SUFFIX = '_baseline.sql';
+/** What `.` in the setup manifest's pattern does not match. */
+const LINE_TERMINATOR = /[\n\r\u2028\u2029]/u;
+
+/**
+ * Whether a migration file is a fresh-install baseline: `<seq>_<major>_<minor>_<patch>_<name>
+ * _baseline.sql` (the setup manifest's own pattern). Matched as a fixed prefix and suffix rather
+ * than one pattern with nested repetition, which backtracks polynomially on long crafted paths.
+ */
+export function isFreshInstallBaselinePath(path: string): boolean {
+  const prefix = FRESH_INSTALL_BASELINE_PREFIX.exec(path);
+  if (!prefix) return false;
+  const rest = path.slice(prefix[0].length);
+  return rest.endsWith(FRESH_INSTALL_BASELINE_SUFFIX) && !LINE_TERMINATOR.test(rest);
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object' && !Array.isArray(value);
@@ -266,13 +290,13 @@ function parseManifest(bytes: Uint8Array): MigrationManifest {
         !isRecord(path) ||
         typeof path.fromProductVersion !== 'string' ||
         !PRODUCT_VERSION_PATTERN.test(path.fromProductVersion) ||
-        !['delta', 'bridge'].includes(String(path.kind))
+        !['delta', 'bridge', 'draft_append'].includes(String(path.kind))
       ) {
         throw new Error('migration_artifact_manifest_invalid');
       }
       return {
         fromProductVersion: path.fromProductVersion,
-        kind: path.kind as 'delta' | 'bridge',
+        kind: path.kind as 'delta' | 'bridge' | 'draft_append',
         streams: parseManifestStreams(path.streams),
       };
     });
@@ -403,10 +427,23 @@ export class MigrationReleaseArtifactReader {
     if (manifest.productVersion !== pin.releaseId && expectedDraftReleaseId !== pin.releaseId) {
       throw new Error('migration_release_id_mismatch');
     }
-    const selectedStreams = pin.sourceProductVersion
+    const selectedPath = pin.sourceProductVersion
       ? manifest.upgradePaths?.find((path) => path.fromProductVersion === pin.sourceProductVersion)
-          ?.streams
-      : manifest.streams;
+      : undefined;
+    if (pin.sourceProductVersion && selectedPath) {
+      // A draft append (the unapplied tail of an unpublished draft at the version an environment
+      // already runs) must start at the manifest's own version and may only come from a draft
+      // artifact; every other path must start below the version it targets.
+      const isDraftAppend = selectedPath.kind === 'draft_append';
+      const startsAtOwnVersion = selectedPath.fromProductVersion === manifest.productVersion;
+      if (isDraftAppend !== startsAtOwnVersion) {
+        throw new Error('migration_release_upgrade_path_invalid');
+      }
+      if (isDraftAppend && pin.releaseId !== expectedDraftReleaseId) {
+        throw new Error('migration_release_draft_append_requires_draft_release');
+      }
+    }
+    const selectedStreams = pin.sourceProductVersion ? selectedPath?.streams : manifest.streams;
     if (!selectedStreams) throw new Error('migration_release_upgrade_path_missing');
     const stream = selectedStreams.find((candidate) => candidate.id === pin.streamId);
     if (!stream) throw new Error('migration_release_stream_missing');
@@ -456,12 +493,29 @@ export class MigrationReleaseArtifactReader {
       }
       knownHistoryByPath.set(file.path, file);
     }
+    let draftAppendBase: ManifestFile[] | undefined;
+    if (selectedPath?.kind === 'draft_append') {
+      // A draft append only extends a database that already runs the draft; the fresh-install
+      // baseline must never be executable through it.
+      if (files.some((file) => isFreshInstallBaselinePath(file.path))) {
+        throw new Error('migration_release_draft_append_baseline_forbidden');
+      }
+      draftAppendBase = manifest.streams.find((candidate) => candidate.id === pin.streamId)?.files;
+      if (!draftAppendBase) throw new Error('migration_release_draft_append_base_missing');
+      const baseByPath = new Map(draftAppendBase.map((file) => [file.path, file]));
+      for (const file of files) {
+        if (baseByPath.get(file.path)?.checksum !== file.checksum) {
+          throw new Error('migration_release_draft_append_base_mismatch');
+        }
+      }
+    }
     return {
       pin: { ...pin },
       productVersion: manifest.productVersion,
       rollout: manifest.rollout,
       files,
       knownHistory: [...knownHistoryByPath.values()],
+      ...(draftAppendBase ? { draftAppendBase } : {}),
     };
   }
 }

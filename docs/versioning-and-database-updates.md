@@ -144,6 +144,57 @@ pnpm run setup update --env test --allow-draft-manifest --all --yes
 
 This command updates the required databases before publishing Workers.
 
+#### Adding SQL to the product version the test environment already runs
+
+While a product version is unpublished, SQL files can keep being added to it, and a test environment
+that already runs that version can be brought forward with the same two commands (preview, then
+apply). The update applies only the files that were added after the environment was last updated:
+
+- It requires `--allow-draft-manifest`. Without it the update never touches a draft, and a published
+  manifest at the installed version never runs anything again.
+- It requires the version to be unpublished. Setup asks the remote directly (`git ls-remote`) for
+  the hash of `main` and for the version tag, so a stale local `origin/main` cannot hide a release.
+  The update is refused when the tag is reachable from that `main`, when the repository is shallow
+  and a tag exists, or when the remote cannot be read. A dry run only reads from the remote; it does
+  not fetch, and it stops (rather than guessing) if the tag's commits are not available locally.
+  The real run fetches only the objects it needs, without moving any branch or tag and without
+  writing `FETCH_HEAD` (Git 2.29 or newer; an older Git makes the check stop). Reads never fetch
+  lazily from a partial clone's promisor remote; a partial clone needs Git 2.45 or newer.
+- It requires applied-file evidence in the environment lock. For every database, the files recorded
+  as applied must be an identical prefix of the draft's file list for that database's stream, and the
+  set of databases must be unchanged. A changed, removed, or reordered SQL file, a missing or legacy
+  record, or a changed set of databases stops the update. Add a new correction SQL file, or recreate
+  the disposable environment, instead.
+- A draft whose only change is outside the SQL files (for example the rollout policy) is also
+  refused: there is nothing to apply, so the new checksum is not recorded as verified.
+- The record for each database must include every fresh-install baseline file of its stream (and at
+  least one file of any non-empty stream); an empty record is refused.
+- Before anything is changed, Setup reads back every database (including the ones the append leaves
+  alone and the tenant databases Control migrates) and requires each file the lock records to be in
+  `authrim_migrations` with the identical checksum. This runs on every attempt, including a resume
+  with nothing left to append, so a database restored in between is caught. The read uses SELECT
+  only, so a dry run never creates or alters a tracking table; a missing table or column is a
+  failure. Any difference stops the update. The files that
+  are run are only the unrecorded tail; the recorded prefix is verified, never re-run, so the
+  fresh-install baseline is never applied to an existing database.
+- Databases managed by Control are applied by Control from a content-addressed draft artifact. The
+  artifact is built only from the draft (every non-baseline file), so a retry rebuilds the identical
+  artifact and resumes the same Control operation. Control requires each database to hold an unbroken,
+  checksum-identical prefix of the draft that reaches the first file it executes, and applies the
+  rest. Before the handoff, Setup reads the databases Control would snapshot and compares them with
+  the lock; a database Control has that the lock does not know, one the lock expects that Control
+  lacks, or one whose provider ID is unresolved stops the update before anything is handed off.
+  Setup records the tenant databases as migrated only after Control's own rollout record shows
+  every expected database as succeeded. A normal (different-version) upgrade records them the same
+  way, so the next append has current evidence; there a mismatch only warns and leaves the old
+  evidence.
+- Workers are updated after the required databases finish, and the new manifest checksum is recorded
+  in the lock only after the whole update is verified. If the update stops part-way, run the same
+  command again; it resumes from what each database has recorded.
+
+`deploy` still refuses a draft whose checksum was not verified by a completed update
+(`unverified_draft_release_manifest`); this is intentional and unchanged.
+
 ### 4.4 Check the test environment
 
 ```sh
@@ -579,6 +630,9 @@ pnpm run setup init --env test
 
 If the current product version has already been published, change the root and every package to the
 next product version before adding SQL. New SQL cannot be added to a published version.
+
+To bring a test environment that already runs the unpublished product version forward to the new SQL,
+see "Adding SQL to the product version the test environment already runs" in section 4.3.
 
 ## 16. Main files
 

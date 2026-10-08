@@ -4718,7 +4718,14 @@ async function getAppliedMigrationRows(
   onProgress?: (message: string) => void
 ): Promise<AppliedMigrationRow[]> {
   await ensureMigrationsTable(dbName, onProgress);
+  return readAppliedMigrationRows(dbName);
+}
 
+/**
+ * Read the migration history with SELECT only. Unlike getAppliedMigrationRows it never creates or
+ * alters the tracking table, so a missing table or column is reported as the failure it is.
+ */
+async function readAppliedMigrationRows(dbName: string): Promise<AppliedMigrationRow[]> {
   let apiError: unknown;
   try {
     const apiRows = await queryD1RowsViaApi<AppliedMigrationRow>(
@@ -4899,6 +4906,62 @@ export interface RunD1MigrationOptions extends ListD1MigrationOptions {
   releaseVersion?: string;
   /** Backfill pre-checksum history only when files came from a published release manifest. */
   backfillLegacyChecksums?: boolean;
+  /**
+   * Files the caller's evidence says this database already holds. They are never executed: each
+   * must be recorded in `authrim_migrations` with the identical checksum, otherwise the run stops
+   * before any migration is applied. This is how an appended tail is applied without ever
+   * re-running (or silently skipping) the prefix it extends.
+   */
+  requiredAppliedFiles?: ReadonlyArray<{ path: string; checksum: string }>;
+}
+
+/** Return the required files that are missing from, or differ in, the recorded history. */
+export function findUnsatisfiedRequiredMigrationFiles(
+  migrations: ReadonlyArray<D1MigrationFileState>,
+  required: ReadonlyArray<{ path: string; checksum: string }>
+): string[] {
+  const byFilename = new Map(migrations.map((migration) => [migration.filename, migration]));
+  return required
+    .filter((file) => {
+      const state = byFilename.get(file.path);
+      return state?.status !== 'applied' || state.appliedChecksum !== file.checksum;
+    })
+    .map((file) => file.path);
+}
+
+/**
+ * Verify, without changing anything, that a database records every given migration with the
+ * expected checksum. Only SELECTs are issued, so it is safe in a dry run and before any lock is
+ * taken; a database without the tracking table (or its columns) fails instead of being repaired.
+ */
+export async function verifyD1AppliedMigrationFiles(
+  dbName: string,
+  files: ReadonlyArray<{ path: string; checksum: string }>
+): Promise<{ success: boolean; error?: string }> {
+  let rows: AppliedMigrationRow[];
+  try {
+    rows = await readAppliedMigrationRows(dbName);
+  } catch (error) {
+    return {
+      success: false,
+      error: `Could not read migration history for ${dbName}: ${describeInventoryError(
+        error,
+        'unknown error'
+      )}`,
+    };
+  }
+  const checksumByFilename = new Map(rows.map((row) => [row.filename, row.checksum ?? null]));
+  const unsatisfied = files
+    .filter((file) => checksumByFilename.get(file.path) !== file.checksum)
+    .map((file) => file.path);
+  return unsatisfied.length === 0
+    ? { success: true }
+    : {
+        success: false,
+        error:
+          'Applied migration history does not match the recorded evidence: ' +
+          formatMigrationFileSummary(unsatisfied),
+      };
 }
 
 export function listD1MigrationSqlFiles(
@@ -5189,9 +5252,34 @@ export async function runD1Migrations(
   const discoveredManifest = options.manifestFiles
     ? null
     : discoverReleaseMigrationStream(migrationsDir);
-  const manifestFiles = options.manifestFiles ?? discoveredManifest?.stream.files;
+  const executionFiles = options.manifestFiles ?? discoveredManifest?.stream.files;
   const releaseVersion = options.releaseVersion ?? discoveredManifest?.manifest.productVersion;
   const allSqlFiles = listD1MigrationSqlFiles(migrationsDir, options);
+  const executionFileSet = executionFiles
+    ? new Set(executionFiles.map((file) => file.path))
+    : undefined;
+  // Required (already applied) files are checked against the local SQL and the history like any
+  // manifest file, but only `executionFiles` are ever executed.
+  const requiredFiles = options.requiredAppliedFiles ?? [];
+  const manifestFiles: NonNullable<ListD1MigrationOptions['manifestFiles']> | undefined =
+    executionFiles
+      ? [
+          ...new Map(
+            [...requiredFiles, ...executionFiles].map((file) => [file.path, file] as const)
+          ).values(),
+        ]
+      : executionFiles;
+  for (const required of requiredFiles) {
+    const execution = executionFiles?.find((file) => file.path === required.path);
+    if (execution && execution.checksum !== required.checksum) {
+      return {
+        success: false,
+        appliedCount: 0,
+        skippedCount: 0,
+        error: `Required applied migration disagrees with the release manifest: ${required.path}`,
+      };
+    }
+  }
   const manifestFileSet = manifestFiles
     ? new Set(manifestFiles.map((file) => file.path))
     : undefined;
@@ -5206,7 +5294,7 @@ export async function runD1Migrations(
       };
     }
   }
-  const selectedFiles = options.onlyFiles ?? manifestFileSet;
+  const selectedFiles = options.onlyFiles ?? executionFileSet;
   const sqlFiles = selectedFiles
     ? allSqlFiles.filter((file) => selectedFiles.has(file))
     : allSqlFiles;
@@ -5257,7 +5345,7 @@ export async function runD1Migrations(
     }
   }
 
-  if (sqlFiles.length === 0) {
+  if (sqlFiles.length === 0 && requiredFiles.length === 0) {
     onProgress?.(`  No migration files found in ${migrationsDir}`);
     return { success: true, appliedCount: 0, skippedCount: 0 };
   }
@@ -5283,6 +5371,21 @@ export async function runD1Migrations(
       error:
         `${status.error ?? `Could not read migration history for ${dbName}`}. ` +
         'Refusing to run migrations without a trustworthy applied-migration history.',
+    };
+  }
+  const unsatisfiedRequired = findUnsatisfiedRequiredMigrationFiles(
+    status.migrations,
+    requiredFiles
+  );
+  if (unsatisfiedRequired.length > 0) {
+    return {
+      success: false,
+      appliedCount: 0,
+      skippedCount: status.counts.applied,
+      error:
+        'Applied migration history does not match the recorded evidence; refusing to apply ' +
+        'further migrations: ' +
+        formatMigrationFileSummary(unsatisfiedRequired),
     };
   }
   const changedFiles = getBlockingChangedMigrationFiles(status.migrations, selectedFiles);

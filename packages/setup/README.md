@@ -476,6 +476,12 @@ Useful options:
 | `--skip-build`            | Skip package builds.                                                                   |
 | `-y, --yes`               | Accept the displayed release plan without an interactive prompt.                       |
 
+With `--allow-draft-manifest`, an environment that already runs an unpublished product version can
+also receive SQL files appended to that version's draft. Only the files each database has not
+recorded are applied, and only when the lock proves the recorded files are an identical prefix of the
+draft and the version tag is not reachable from remote `main`. See
+[`docs/versioning-and-database-updates.md`](../../docs/versioning-and-database-updates.md), section 4.3.
+
 ### `delete`
 
 Delete an environment and its Cloudflare resources.

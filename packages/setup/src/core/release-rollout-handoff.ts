@@ -646,3 +646,128 @@ export function completeReleaseRolloutHandoff(
 ): Promise<ReleaseRolloutHandoffStatus> {
   return transitionReleaseRollout({ ...input, transition: 'complete' });
 }
+
+export interface ReleaseRolloutTargetRow {
+  streamId: string;
+  databaseId: string | null;
+  state: string;
+}
+
+/** The Control rollout's own record of which databases it migrated (and their outcome). */
+export async function listReleaseRolloutTargets(input: {
+  controlDatabaseId: string;
+  environmentId: string;
+  operationId: string;
+  executeBatch?: D1BatchExecutor;
+}): Promise<ReleaseRolloutTargetRow[]> {
+  if (!SAFE_ENVIRONMENT_ID.test(input.environmentId)) {
+    throw new Error('release_rollout_environment_invalid');
+  }
+  if (!/^op_release_rollout_[a-f0-9]{32}$/u.test(input.operationId)) {
+    throw new Error('release_rollout_operation_id_invalid');
+  }
+  const results = await (input.executeBatch ?? executeD1Batch)(input.controlDatabaseId, [
+    {
+      sql: `SELECT stream_id, provider_database_id, state
+              FROM control_release_migration_targets
+             WHERE operation_id = ? AND environment_id = ?
+          ORDER BY stream_id, target_id`,
+      params: [input.operationId, input.environmentId],
+    },
+  ]);
+  return resultRows(results[0]).map((row) => {
+    if (
+      typeof row.stream_id !== 'string' ||
+      (row.provider_database_id !== null && typeof row.provider_database_id !== 'string') ||
+      typeof row.state !== 'string'
+    ) {
+      throw new Error('release_rollout_target_row_invalid');
+    }
+    return { streamId: row.stream_id, databaseId: row.provider_database_id, state: row.state };
+  });
+}
+
+/**
+ * Check that Control actually migrated every database Setup expects it to own. The expected set is
+ * fixed from the lock before the handoff; a database that Control dropped from its snapshot (for
+ * example a failed shard) or did not finish must stop Setup from recording it as migrated.
+ * Databases Control migrated beyond the expected set are reported but are not an error.
+ */
+export function verifyControlRolloutCoversTargets(input: {
+  expected: ReadonlyArray<{ databaseId: string; streamId: string }>;
+  rows: readonly ReleaseRolloutTargetRow[];
+}): { missing: string[]; unexpected: string[] } {
+  const key = (databaseId: string, streamId: string): string => `${databaseId}:${streamId}`;
+  const succeeded = new Set(
+    input.rows
+      .filter((row) => row.state === 'succeeded' && row.databaseId)
+      .map((row) => key(row.databaseId!, row.streamId))
+  );
+  const expected = new Set(input.expected.map((item) => key(item.databaseId, item.streamId)));
+  return {
+    missing: [...expected].filter((item) => !succeeded.has(item)).sort(),
+    unexpected: [...succeeded].filter((item) => !expected.has(item)).sort(),
+  };
+}
+
+export interface ControlSnapshotPreviewRow {
+  streamId: string;
+  databaseId: string | null;
+}
+
+/**
+ * Read-only preview of the databases Control will snapshot for a release rollout. It mirrors the
+ * reconciler's snapshot selection (tenant and lookup shards in an active status with a present D1)
+ * so Setup can compare Control's set with the lock's before any handoff exists.
+ */
+export async function listControlSnapshotPreview(input: {
+  controlDatabaseId: string;
+  environmentId: string;
+  executeBatch?: D1BatchExecutor;
+}): Promise<ControlSnapshotPreviewRow[]> {
+  if (!SAFE_ENVIRONMENT_ID.test(input.environmentId)) {
+    throw new Error('release_rollout_environment_invalid');
+  }
+  const results = await (input.executeBatch ?? executeD1Batch)(input.controlDatabaseId, [
+    {
+      sql: `SELECT CASE WHEN shard.data_role = 'tenant_pii' THEN 'pii-d1' ELSE 'core-d1' END
+                      AS stream_id,
+                    observed.provider_resource_id AS provider_database_id
+               FROM control_tenant_shards shard
+               JOIN control_desired_resources desired
+                 ON desired.desired_resource_id = shard.d1_desired_resource_id
+                AND desired.environment_id = shard.environment_id
+                AND desired.desired_state = 'present'
+          LEFT JOIN control_observed_resources observed
+                 ON observed.observed_resource_id = desired.observed_resource_id
+                AND observed.environment_id = desired.environment_id
+                AND observed.resource_kind = 'd1' AND observed.observed_state = 'present'
+              WHERE shard.environment_id = ?
+                AND shard.status IN ('requested', 'provisioning', 'ready', 'active', 'degraded')
+          UNION ALL
+             SELECT 'lookup-d1' AS stream_id,
+                    observed.provider_resource_id AS provider_database_id
+               FROM control_lookup_physical_shards shard
+               JOIN control_desired_resources desired
+                 ON desired.desired_resource_id = shard.d1_desired_resource_id
+                AND desired.environment_id = shard.environment_id
+                AND desired.desired_state = 'present'
+          LEFT JOIN control_observed_resources observed
+                 ON observed.observed_resource_id = desired.observed_resource_id
+                AND observed.environment_id = desired.environment_id
+                AND observed.resource_kind = 'd1' AND observed.observed_state = 'present'
+              WHERE shard.environment_id = ?
+                AND shard.status IN ('requested', 'provisioning', 'ready', 'active', 'draining')`,
+      params: [input.environmentId, input.environmentId],
+    },
+  ]);
+  return resultRows(results[0]).map((row) => {
+    if (
+      typeof row.stream_id !== 'string' ||
+      (row.provider_database_id !== null && typeof row.provider_database_id !== 'string')
+    ) {
+      throw new Error('release_rollout_snapshot_row_invalid');
+    }
+    return { streamId: row.stream_id, databaseId: row.provider_database_id };
+  });
+}
