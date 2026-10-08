@@ -42,7 +42,10 @@
 		type FlowRuntimeStep
 	} from '$lib/api/flow-runtime';
 	import {
+		clearExternalFlowRuntimeHandoff,
 		consumeFlowRuntimeState,
+		peekFlowRuntimeState,
+		recordExternalFlowRuntimeHandoff,
 		persistFlowRuntimeState
 	} from '$lib/authrim/flow-runtime-state';
 	import {
@@ -62,6 +65,7 @@
 	import { applyAuthenticationMethodsToLoginUI } from '$lib/stores/login-ui-configuration';
 	import { installPageResumeHandler } from '$lib/browser/page-resume';
 	import { buildAuthSwitchHref } from '$lib/authrim/auth-switch-url';
+	import { consentInputKey, destinationInputKey } from '$lib/authrim/runtime-consent-key';
 	import { LOGIN_UI_SESSION_STORAGE_KEYS, setLoginUiSessionItem } from '$lib/authrim/storage-keys';
 	import { resolveTurnstileLanguage as resolveConfiguredTurnstileLanguage } from '$lib/turnstile-options';
 	import { onDestroy, onMount } from 'svelte';
@@ -268,10 +272,7 @@
 
 	$effect(() => {
 		const policy = getRuntimeConsentPolicy(runtimeFlowStep);
-		const key =
-			runtimeFlowStep?.id && policy
-				? `${runtimeFlowStep.id}:${policy.items.map((item) => item.statement_id).join(',')}`
-				: '';
+		const key = runtimeFlowStep?.id && policy ? consentInputKey(runtimeFlowStep.id, policy) : '';
 		if (key === runtimeConsentDecisionKey) return;
 		runtimeConsentDecisionKey = key;
 		runtimeConsentDecisions = policy
@@ -288,11 +289,7 @@
 	$effect(() => {
 		const consent = getRuntimeDestinationFieldConsent(runtimeFlowStep);
 		const key =
-			runtimeFlowStep?.id && consent
-				? `${runtimeFlowStep.id}:${consent.profile_version_id}:${consent.fields
-						.map((field) => field.key)
-						.join(',')}`
-				: '';
+			runtimeFlowStep?.id && consent ? destinationInputKey(runtimeFlowStep.id, consent) : '';
 		if (key === runtimeDestinationFieldDecisionKey) return;
 		runtimeDestinationFieldDecisionKey = key;
 		runtimeDestinationFieldDecisions = consent
@@ -776,6 +773,7 @@
 		return (
 			Boolean(authorizationChallengeId) &&
 			(apiError.error === 'invalid_authorization_challenge' ||
+				apiError.error === 'authorization_request_expired' ||
 				apiError.error === 'authorization_challenge_mismatch' ||
 				apiError.error === 'interaction_expired' ||
 				apiError.error_description?.toLowerCase().includes('authorization challenge') === true)
@@ -807,7 +805,7 @@
 		runtimeAuthorizationChallengeBlocked = false;
 		try {
 			if (runtimeInteractionId) {
-				const storedRuntime = consumeFlowRuntimeState(runtimeInteractionId);
+				const storedRuntime = peekFlowRuntimeState(runtimeInteractionId);
 				if (!storedRuntime) {
 					failRuntimeStart($LL.error_invalid_request());
 					return;
@@ -901,7 +899,11 @@
 		persistFlowRuntimeState(data, { postAuthRedirect: pendingPostAuthRedirect });
 	}
 
-	async function submitRuntimeStep(selectedHandle?: string, input?: unknown): Promise<boolean> {
+	async function submitRuntimeStep(
+		selectedHandle?: string,
+		input?: unknown,
+		options: { awaitingSignIn?: boolean } = {}
+	): Promise<boolean> {
 		const flow = runtimeFlow;
 		const step = runtimeFlowStep ?? getRuntimeCurrentStep(flow);
 		if (!flow || !step || flow.interaction.state === 'completed') {
@@ -917,6 +919,30 @@
 			input
 		});
 		if (apiError) {
+			if (apiError.error === 'consent_changed') {
+				// The terms changed after they were accepted: the interaction is back at the step that
+				// asks for them. This same interaction is resumed here, with the id and signature
+				// held in memory (a new one, which a signed-in browser would pass through without
+				// the terms, is never started), which draws that step with the terms as they are now.
+				const { data: resumed, error: resumeError } = await flowRuntimeAPI.start({
+					resume_interaction_id: flow.interaction.id,
+					contract_hash: flow.contract_hash,
+					signature: flow.signature
+				});
+				if (resumed) {
+					runtimeFlow = resumed;
+					runtimeFlowStep = getRuntimeCurrentStep(resumed);
+					persistFlowRuntimeState(resumed, { postAuthRedirect: pendingPostAuthRedirect });
+				} else {
+					runtimeFlowError = getApiErrorMessage(resumeError ?? apiError);
+				}
+				return false;
+			}
+			if (apiError.error === 'authorization_request_expired') {
+				// Nothing more can be done on this page: it ends here, with what happened.
+				failRuntimeStart(getApiErrorMessage(apiError), { blockAuthorizationChallenge: true });
+				return false;
+			}
 			runtimeFlowError = getApiErrorMessage(apiError);
 			return false;
 		}
@@ -937,7 +963,9 @@
 			runtimeFlowError = $LL.error_invalid_request();
 			return false;
 		}
-		await advanceRuntimePastNonRenderedSteps();
+		// A method chosen before its sign-in (an emailed code, an external provider) leaves the
+		// completion waiting: it is submitted once the sign-in has given a session.
+		await advanceRuntimePastNonRenderedSteps({ stopAtCompletion: options.awaitingSignIn === true });
 		await refreshEmailVerificationProtocolChallenge();
 		return true;
 	}
@@ -959,9 +987,10 @@
 		return null;
 	}
 
-	async function advanceRuntimePastNonRenderedSteps() {
+	async function advanceRuntimePastNonRenderedSteps(options: { stopAtCompletion?: boolean } = {}) {
 		let guard = 0;
 		while (runtimeFlow && runtimeFlowStep && guard < 10) {
+			if (options.stopAtCompletion && runtimeFlowStep.component === 'completion') return;
 			const autoSubmitHandle = getRuntimeAutoSubmitHandle(runtimeFlowStep);
 			if (autoSubmitHandle === null) return;
 			guard += 1;
@@ -1044,6 +1073,16 @@
 		);
 	}
 
+	/** Whether the Flow has a step, other than this one, that asks for the code. */
+	function runtimeFlowHasCodeInputStep(
+		flow: FlowRuntimeStartResponse,
+		current: FlowRuntimeStep | null
+	): boolean {
+		return flow.contract.ui.steps.some(
+			(step) => step.id !== current?.id && runtimeStepHasCodeInputWidget(step)
+		);
+	}
+
 	function getRuntimeCodeInputSuccessHandle(step: FlowRuntimeStep | null): string {
 		if (step?.component === 'email_verification') return 'verified';
 		if (step?.component === 'screen') return 'submitted';
@@ -1066,6 +1105,7 @@
 			invalidScope: () => $LL.error_invalid_scope(),
 			serverError: () => $LL.error_server_error(),
 			temporarilyUnavailable: () => $LL.error_temporarily_unavailable(),
+			requestExpired: () => $LL.error_authorizationRequestExpired(),
 			loginRequired: () => $LL.error_login_required(),
 			emailCodeInvalid: () => $LL.emailCode_errorInvalid()
 		});
@@ -1410,13 +1450,27 @@
 				params.set('return_to', 'saml_sso');
 			}
 			if (runtimeFlow && !options.skipRuntimeStep) {
-				const ok = await submitRuntimeStep('mail_otp');
+				const ok = await submitRuntimeStep(
+					'mail_otp',
+					getRuntimeStepSubmitInputForAuthenticatedAction(),
+					{ awaitingSignIn: true }
+				);
 				if (!ok) return;
 				if (runtimeStepHasCodeInputWidget(runtimeFlowStep)) {
 					return;
 				}
 				const flowAfterSelection = runtimeFlow;
-				if (!flowAfterSelection || !persistFlowRuntimeState(flowAfterSelection)) {
+				if (!flowAfterSelection) {
+					runtimeFlowError = $LL.error_invalid_request();
+					return;
+				}
+				if (flowAfterSelection.interaction.state === 'completed') {
+					// A session the authorization request accepts already existed, so the Flow is
+					// complete and there is no code to verify.
+					window.location.href = await buildCompletedAuthRedirect();
+					return;
+				}
+				if (!persistFlowRuntimeState(flowAfterSelection)) {
 					runtimeFlowError = $LL.error_invalid_request();
 					return;
 				}
@@ -1488,7 +1542,9 @@
 		totpChallengeId = '';
 		totpCodeRequested = false;
 		stopMailOtpResendTimer();
-		if (runtimeFlow && runtimeFlowStep) {
+		// Only a step of its own for the code has a way back to submit; a code asked for on the
+		// method selection itself is just put away.
+		if (runtimeFlow && runtimeFlowStep && !isRuntimeAuthStep(runtimeFlowStep)) {
 			const ok = await submitRuntimeStep(getRuntimeCodeInputBackHandle(runtimeFlowStep));
 			if (!ok) return;
 			await refreshEmailVerificationProtocolChallenge(true);
@@ -1515,8 +1571,16 @@
 			totpChallengeId = data.challenge_id;
 			totpCode = '';
 			totpCodeRequested = true;
-			if (runtimeFlow) {
-				const ok = await submitRuntimeStep('totp');
+			// A Flow with a step of its own for the code is taken there now (the consent given on
+			// the selection goes with the choice). Without one, the code is entered where the method
+			// was chosen and the selection is submitted once the code has signed the user in, as for
+			// a passkey.
+			if (runtimeFlow && runtimeFlowHasCodeInputStep(runtimeFlow, runtimeFlowStep)) {
+				const ok = await submitRuntimeStep(
+					'totp',
+					getRuntimeStepSubmitInputForAuthenticatedAction(),
+					{ awaitingSignIn: true }
+				);
 				if (!ok) return;
 				if (!runtimeStepHasCodeInputWidget(runtimeFlowStep)) {
 					runtimeFlowError = $LL.error_invalid_request();
@@ -1562,7 +1626,9 @@
 			await auth.refreshFromSession();
 			const redirectUrl = data.redirect_url;
 			const continueRedirect = await continueAfterRuntimeStep(
-				runtimeStepHasCodeInputWidget(runtimeFlowStep)
+				// A code entered on the method selection itself is submitted as that method, whether
+				// or not the selection's screen also has a code input of its own.
+				!isRuntimeAuthStep(runtimeFlowStep) && runtimeStepHasCodeInputWidget(runtimeFlowStep)
 					? getRuntimeCodeInputSuccessHandle(runtimeFlowStep)
 					: 'totp',
 				redirectUrl,
@@ -1790,18 +1856,34 @@
 					accountReturnRedirect
 				);
 			}
+			// Whatever an earlier, abandoned external sign-in left must not be resumed by this one.
+			clearExternalFlowRuntimeHandoff();
 			let runtimeResumeUrl: string | null = null;
 			if (runtimeFlow) {
-				const ok = await submitRuntimeStep(providerId);
+				const ok = await submitRuntimeStep(
+					providerId,
+					getRuntimeStepSubmitInputForAuthenticatedAction(),
+					{ awaitingSignIn: true }
+				);
 				if (!ok) return;
 				const flowAfterSelection = runtimeFlow;
+				if (!flowAfterSelection) {
+					runtimeFlowError = $LL.error_invalid_request();
+					return;
+				}
+				if (flowAfterSelection.interaction.state === 'completed') {
+					// A session the authorization request accepts already existed: the Flow is
+					// complete, and the browser does not need the provider.
+					window.location.href = await buildCompletedAuthRedirect();
+					return;
+				}
 				const postAuthRedirect =
 					provider.startMode === 'saml_sp'
 						? accountReturnRedirect || (await buildPostAuthRedirect())
 						: null;
 				if (
-					!flowAfterSelection ||
-					!persistFlowRuntimeState(flowAfterSelection, { postAuthRedirect })
+					!persistFlowRuntimeState(flowAfterSelection, { postAuthRedirect }) ||
+					!recordExternalFlowRuntimeHandoff(flowAfterSelection, 'login')
 				) {
 					runtimeFlowError = $LL.error_invalid_request();
 					return;
@@ -1809,11 +1891,6 @@
 				runtimeResumeUrl = `/login?runtime_interaction_id=${encodeURIComponent(
 					flowAfterSelection.interaction.id
 				)}`;
-				setLoginUiSessionItem(
-					LOGIN_UI_SESSION_STORAGE_KEYS.externalFlowRuntimeInteractionId,
-					flowAfterSelection.interaction.id
-				);
-				setLoginUiSessionItem(LOGIN_UI_SESSION_STORAGE_KEYS.externalFlowRuntimeKind, 'login');
 			}
 			const redirectUri =
 				provider.startMode === 'saml_sp' && runtimeResumeUrl

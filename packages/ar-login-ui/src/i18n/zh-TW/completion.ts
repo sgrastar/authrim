@@ -122,6 +122,7 @@ const completion = {
 	ciba_errorConsentWithdrawn:
 		'此要求是在您撤銷該應用程式的存取權之前發出的。請從應用程式重新開始。',
 	ciba_errorRequestGone: '此要求已過期或已回覆。',
+	error_authorizationRequestExpired: '登入要求已過期。請從應用程式重新開始。',
 	ciba_errorTryAgain: '目前無法儲存您的決定，且未進行任何變更。請稍後再試。',
 	ciba_errorTooManyAttempts: '嘗試次數過多。請稍候片刻再試。',
 	ciba_errorOutcomeUnknown: '無法確認您的回覆是否已儲存。請重新整理以查看仍在等待的要求。',

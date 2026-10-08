@@ -3606,31 +3606,392 @@ describe('Direct Auth primary passkey and email-code flows', () => {
     expect('error' in result).toBe(refused);
   });
 
+  describe('judging a proof before the authorization challenge is used up', () => {
+    async function continueWith(
+      stored: Record<string, unknown>,
+      proof: { userId: string; authTime: number; provenAtMs?: number; method?: string }
+    ) {
+      mocks.challengeStore.getChallengeRpc.mockResolvedValueOnce({
+        tenantId: 'tenant_test',
+        userId: 'anonymous',
+        ...stored,
+      });
+      mocks.challengeStore.consumeChallengeRpc.mockResolvedValueOnce({
+        userId: 'anonymous',
+        metadata: stored.metadata,
+      });
+      const { consumeAuthorizationChallengeContinuation } = await import('../direct-auth');
+      const context = createContext({});
+      (context as unknown as { header: unknown }).header = vi.fn();
+      return consumeAuthorizationChallengeContinuation(
+        context as never,
+        'tenant_test',
+        'challenge_1',
+        proof.userId,
+        proof.authTime,
+        'https://op.example.com',
+        (proof.method ?? 'totp') as never,
+        proof.provenAtMs
+      );
+    }
+
+    it.each([
+      [
+        'an artifact proven before an SSO-off sign-in was asked for',
+        { type: 'login', metadata: { fresh_sign_in_after: 1_000_000 } },
+        { userId: 'user_1', authTime: 900, provenAtMs: 900_000 },
+      ],
+      [
+        'an artifact proven before a re-authentication was asked for',
+        { type: 'reauth', metadata: { reauth_issued_at: 1_000_000 } },
+        { userId: 'user_1', authTime: 900, provenAtMs: 900_000, method: 'directory_password' },
+      ],
+      [
+        'another user for a re-authentication',
+        { type: 'reauth', userId: 'user_1', metadata: { reauth_issued_at: 1_000_000 } },
+        { userId: 'user_2', authTime: 1_001, provenAtMs: 1_001_000, method: 'directory_password' },
+      ],
+      [
+        'a re-authentication by a method that cannot take one',
+        { type: 'reauth', metadata: { reauth_issued_at: 1_000_000 } },
+        { userId: 'user_1', authTime: 1_001, provenAtMs: 1_001_000, method: undefined },
+      ],
+    ])(
+      'refuses %s and leaves the challenge for the proof that answers',
+      async (_l, stored, proof) => {
+        const result = await continueWith(stored, proof);
+
+        expect('error' in result).toBe(true);
+        expect(mocks.challengeStore.consumeChallengeRpc).not.toHaveBeenCalled();
+      }
+    );
+
+    it('consumes the challenge once for a proof that answers it', async () => {
+      const result = await continueWith(
+        { type: 'login', metadata: { fresh_sign_in_after: 1_000_000 } },
+        { userId: 'user_1', authTime: 1_001, provenAtMs: 1_001_000 }
+      );
+
+      expect('error' in result).toBe(false);
+      expect(mocks.challengeStore.consumeChallengeRpc).toHaveBeenCalledTimes(1);
+      expect(mocks.challengeStore.consumeChallengeRpc).toHaveBeenCalledWith(
+        expect.objectContaining({ type: 'login', id: 'challenge_1' })
+      );
+    });
+
+    it('asks to try again, leaving the challenge, when it cannot be read beforehand', async () => {
+      // An older artifact would be refused once the challenge is read; consuming blind would use
+      // the challenge up for it.
+      mocks.challengeStore.getChallengeRpc.mockRejectedValueOnce(new Error('store unavailable'));
+      mocks.challengeStore.consumeChallengeRpc.mockResolvedValueOnce({
+        userId: 'anonymous',
+        metadata: { fresh_sign_in_after: 1_000_000 },
+      });
+      const { consumeAuthorizationChallengeContinuation } = await import('../direct-auth');
+      const context = createContext({});
+      (context as unknown as { header: unknown }).header = vi.fn();
+
+      const result = await consumeAuthorizationChallengeContinuation(
+        context as never,
+        'tenant_test',
+        'challenge_1',
+        'user_1',
+        900,
+        'https://op.example.com',
+        'totp',
+        900_000
+      );
+
+      expect('error' in result && result.error.status).toBe(503);
+      expect(mocks.challengeStore.consumeChallengeRpc).not.toHaveBeenCalled();
+    });
+
+    describe('a challenge that was continued already', () => {
+      const stored = {
+        tenantId: 'tenant_test',
+        type: 'login',
+        userId: 'anonymous',
+        consumed: true,
+        metadata: { fresh_sign_in_after: 1_000_000, client_id: 'client_1' },
+      };
+      const confirmation = (extra: Record<string, unknown> = {}) => ({
+        tenantId: 'tenant_test',
+        userId: 'user_1',
+        consumed: false,
+        metadata: {
+          purpose: 'authorize_confirmation',
+          source_challenge_id: 'challenge_1',
+          browserBinding: 'binding_1',
+          continuation_type: 'login',
+          continuation_issuer: 'https://op.example.com',
+        },
+        ...extra,
+      });
+
+      async function again(userId: string, confirmationRecord: unknown) {
+        mocks.challengeStore.getChallengeRpc
+          .mockResolvedValueOnce(stored)
+          .mockResolvedValueOnce(confirmationRecord);
+        const { consumeAuthorizationChallengeContinuation } = await import('../direct-auth');
+        const context = createContext({});
+        const header = vi.fn();
+        (context as unknown as { header: unknown }).header = header;
+        const result = await consumeAuthorizationChallengeContinuation(
+          context as never,
+          'tenant_test',
+          'challenge_1',
+          userId,
+          1_001,
+          'https://op.example.com',
+          'totp',
+          1_001_000
+        );
+        return { result, header };
+      }
+
+      it('gives the same confirmation back to the user it was made for, and uses nothing up', async () => {
+        const { result, header } = await again('user_1', confirmation());
+
+        expect('error' in result).toBe(false);
+        expect(mocks.challengeStore.consumeChallengeRpc).not.toHaveBeenCalled();
+        expect(mocks.challengeStore.storeChallengeRpc).not.toHaveBeenCalled();
+        expect(header).toHaveBeenCalledWith(
+          'Set-Cookie',
+          expect.stringContaining('authrim_authorize_confirmation=binding_1'),
+          { append: true }
+        );
+        // The confirmation of an authorization request does not change from one attempt to the next.
+        const first = 'redirectUrl' in result ? result.redirectUrl : '';
+        const { result: second } = await again('user_1', confirmation());
+        expect('redirectUrl' in second && second.redirectUrl).toBe(first);
+      });
+
+      it.each([
+        ['an artifact older than the sign-in that was asked for', 900, 900_000, true],
+        ['a proof made after it', 1_001, 1_001_000, false],
+      ])(
+        'judges %s by the terms of the challenge when the challenge is gone',
+        async (_l, authTime, provenAtMs, refused) => {
+          mocks.challengeStore.getChallengeRpc.mockResolvedValueOnce(null).mockResolvedValueOnce(
+            confirmation({
+              metadata: {
+                purpose: 'authorize_confirmation',
+                source_challenge_id: 'challenge_1',
+                browserBinding: 'binding_1',
+                continuation_type: 'login',
+                continuation_issuer: 'https://op.example.com',
+                continuation_requirement: { fresh_sign_in_after: 1_000_000 },
+              },
+            })
+          );
+          const { consumeAuthorizationChallengeContinuation } = await import('../direct-auth');
+          const context = createContext({});
+          const header = vi.fn();
+          (context as unknown as { header: unknown }).header = header;
+
+          const result = await consumeAuthorizationChallengeContinuation(
+            context as never,
+            'tenant_test',
+            'challenge_1',
+            'user_1',
+            authTime,
+            'https://op.example.com',
+            'totp',
+            provenAtMs
+          );
+
+          expect('error' in result).toBe(refused);
+          // No binding goes to a proof the challenge would have refused.
+          expect(header).toHaveBeenCalledTimes(refused ? 0 : 1);
+        }
+      );
+
+      it('asks to try again, instead of taking it for gone, when the confirmation cannot be read', async () => {
+        mocks.challengeStore.getChallengeRpc
+          .mockResolvedValueOnce(stored)
+          .mockRejectedValueOnce(new Error('store unavailable'));
+        const { consumeAuthorizationChallengeContinuation } = await import('../direct-auth');
+        const context = createContext({});
+        (context as unknown as { header: unknown }).header = vi.fn();
+
+        const result = await consumeAuthorizationChallengeContinuation(
+          context as never,
+          'tenant_test',
+          'challenge_1',
+          'user_1',
+          1_001,
+          'https://op.example.com',
+          'totp',
+          1_001_000
+        );
+
+        expect('error' in result && result.error.status).toBe(503);
+      });
+
+      it.each([
+        ['another user', 'user_2', confirmation()],
+        ['a confirmation already used', 'user_1', confirmation({ consumed: true })],
+        ['no confirmation', 'user_1', null],
+      ])('does not give it to %s', async (_label, userId, record) => {
+        const { result } = await again(userId, record);
+
+        expect('error' in result && result.error.status).toBe(400);
+      });
+    });
+
+    it('still refuses a consumed record that does not hold up', async () => {
+      // Unreadable beforehand (here: absent), the consumed record is judged all the same.
+      mocks.challengeStore.getChallengeRpc.mockResolvedValueOnce(null);
+      mocks.challengeStore.consumeChallengeRpc.mockResolvedValueOnce({
+        userId: 'anonymous',
+        metadata: { fresh_sign_in_after: 1_000_000 },
+      });
+      const { consumeAuthorizationChallengeContinuation } = await import('../direct-auth');
+      const context = createContext({});
+      (context as unknown as { header: unknown }).header = vi.fn();
+
+      const result = await consumeAuthorizationChallengeContinuation(
+        context as never,
+        'tenant_test',
+        'challenge_1',
+        'user_1',
+        900,
+        'https://op.example.com',
+        'totp',
+        900_000
+      );
+
+      expect('error' in result).toBe(true);
+    });
+  });
+
   it.each([
     [
       'a re-authentication',
       { type: 'reauth', metadata: { reauth_issued_at: 1_000_000 } },
-      1_000_000,
+      { kind: 'reauth', issuedAt: 1_000_000 },
     ],
     [
       'an SSO-off sign-in',
       { type: 'login', metadata: { fresh_sign_in_after: 2_000_000 } },
-      2_000_000,
+      { kind: 'login', issuedAt: 2_000_000 },
     ],
     ['an ordinary sign-in', { type: 'login', metadata: {} }, null],
-    // Only a re-authentication carries reauth_issued_at; a sign-in does not borrow it.
-    ['a sign-in naming a reauth time', { type: 'login', metadata: { reauth_issued_at: 1 } }, null],
-  ])('tells the session check when %s needs a newer proof', async (_label, challenge, expected) => {
-    mocks.challengeStore.getChallengeRpc.mockResolvedValueOnce({
-      tenantId: 'tenant_test',
-      ...challenge,
-    });
-    const { readAuthorizationChallengeReauthIssuedAt } = await import('../direct-auth');
+  ])(
+    'tells the Login UI runtime what %s demands of a proof',
+    async (_label, challenge, expected) => {
+      mocks.challengeStore.getChallengeRpc.mockResolvedValueOnce({
+        tenantId: 'tenant_test',
+        ...challenge,
+      });
+      const { readAuthorizationChallengeFreshness } = await import('../direct-auth');
 
-    await expect(
-      readAuthorizationChallengeReauthIssuedAt({} as never, 'tenant_test', 'challenge')
-    ).resolves.toBe(expected);
+      await expect(
+        readAuthorizationChallengeFreshness({} as never, 'tenant_test', 'challenge')
+      ).resolves.toEqual(expected);
+    }
+  );
+
+  describe('a challenge that was continued, or is gone', () => {
+    const confirmation = {
+      tenantId: 'tenant_test',
+      userId: 'user_1',
+      consumed: false,
+      metadata: {
+        purpose: 'authorize_confirmation',
+        source_challenge_id: 'c',
+        browserBinding: 'binding_1',
+        continuation_type: 'reauth',
+        continuation_issuer: 'https://op.example.com',
+        continuation_requirement: { reauth_issued_at: 5_000, session_user_id: 'user_1' },
+      },
+    };
+
+    it('asks what its confirmation says: the user it was continued for and when it was asked', async () => {
+      mocks.challengeStore.getChallengeRpc
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce(confirmation);
+      const { readAuthorizationChallengeFreshness } = await import('../direct-auth');
+
+      await expect(
+        readAuthorizationChallengeFreshness({} as never, 'tenant_test', 'c')
+      ).resolves.toEqual({
+        kind: 'reauth',
+        issuedAt: 5_000,
+        confirmedFor: 'user_1',
+        subjectUserId: 'user_1',
+      });
+    });
+
+    it('is read the same when it was used but is still there', async () => {
+      mocks.challengeStore.getChallengeRpc
+        .mockResolvedValueOnce({
+          tenantId: 'tenant_test',
+          type: 'reauth',
+          consumed: true,
+          metadata: {},
+        })
+        .mockResolvedValueOnce(confirmation);
+      const { readAuthorizationChallengeFreshness } = await import('../direct-auth');
+
+      const freshness = await readAuthorizationChallengeFreshness({} as never, 'tenant_test', 'c');
+
+      expect(freshness).toMatchObject({ confirmedFor: 'user_1', issuedAt: 5_000 });
+    });
+
+    it('is not taken for gone when the confirmation cannot be read', async () => {
+      mocks.challengeStore.getChallengeRpc
+        .mockResolvedValueOnce(null)
+        .mockRejectedValueOnce(new Error('store unavailable'));
+      const { readAuthorizationChallengeFreshness } = await import('../direct-auth');
+
+      await expect(
+        readAuthorizationChallengeFreshness({} as never, 'tenant_test', 'c')
+      ).rejects.toThrow('store unavailable');
+    });
+
+    it('answers no proof at all when it is gone and left no confirmation', async () => {
+      mocks.challengeStore.getChallengeRpc.mockResolvedValueOnce(null).mockResolvedValueOnce(null);
+      const { readAuthorizationChallengeFreshness, isProofOlderThanChallengeRequirement } =
+        await import('../direct-auth');
+
+      const freshness = await readAuthorizationChallengeFreshness({} as never, 'tenant_test', 'c');
+
+      expect(freshness).toMatchObject({ gone: true });
+      expect(
+        isProofOlderThanChallengeRequirement(freshness!, 9_999_999_999, 9_999_999_999_000)
+      ).toBe(true);
+    });
   });
+
+  it.each([
+    [
+      'the session user the challenge names',
+      { userId: 'anonymous', metadata: { sessionUserId: 'user_a' } },
+      'user_a',
+    ],
+    [
+      'the challenge user when no session user is named',
+      { userId: 'user_b', metadata: {} },
+      'user_b',
+    ],
+    ['no one for an anonymous challenge', { userId: 'anonymous', metadata: {} }, undefined],
+  ])(
+    'tells the Login UI runtime whom a re-authentication was asked of: %s',
+    async (_l, extra, subject) => {
+      mocks.challengeStore.getChallengeRpc.mockResolvedValueOnce({
+        tenantId: 'tenant_test',
+        type: 'reauth',
+        ...extra,
+        metadata: { reauth_issued_at: 1_000_000, ...extra.metadata },
+      });
+      const { readAuthorizationChallengeFreshness } = await import('../direct-auth');
+
+      const freshness = await readAuthorizationChallengeFreshness({} as never, 'tenant_test', 'c');
+
+      expect(freshness?.subjectUserId).toBe(subject);
+    }
+  );
 
   it('reads a re-authentication proof with the time of the method it takes', async () => {
     const { reauthProofFromRecord } = await import('../direct-auth');

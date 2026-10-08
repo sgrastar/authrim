@@ -31,6 +31,26 @@ describe('messageForApiError', () => {
 		expect(
 			messageForApiError({ error: 'login_required', error_description: 'raw login' }, messages)
 		).toBe('login required');
+		// The authorization request is gone: said as that, with its own message when there is one.
+		expect(
+			messageForApiError(
+				{ error: 'authorization_request_expired', error_description: 'raw' },
+				{ ...messages, requestExpired: () => 'request expired' }
+			)
+		).toBe('request expired');
+		expect(
+			messageForApiError(
+				{ error: 'authorization_request_expired', error_description: 'raw' },
+				messages
+			)
+		).toBe('invalid request');
+		// A Flow completion submitted before anyone has signed in.
+		expect(
+			messageForApiError(
+				{ error: 'authentication_required', error_description: 'raw sign in' },
+				messages
+			)
+		).toBe('login required');
 	});
 
 	it('maps standard OAuth errors without exposing their descriptions', () => {

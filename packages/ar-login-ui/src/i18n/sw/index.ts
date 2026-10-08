@@ -436,6 +436,8 @@ const translation = {
 	ciba_errorConsentWithdrawn:
 		'Ombi hili lilifanywa kabla hujaondoa ruhusa ya programu hii. Anza upya kutoka kwenye programu.',
 	ciba_errorRequestGone: 'Muda wa ombi hili umekwisha au tayari limejibiwa.',
+	error_authorizationRequestExpired:
+		'Ombi la kuingia limeisha muda wake. Anza tena kutoka kwenye programu.',
 	ciba_errorTryAgain:
 		'Uamuzi wako haukuweza kuhifadhiwa sasa na hakuna kilichobadilika. Jaribu tena baada ya muda mfupi.',
 	ciba_errorTooManyAttempts: 'Majaribio mengi mno. Subiri kwa muda, kisha ujaribu tena.',

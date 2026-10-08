@@ -405,6 +405,7 @@ const translation = {
 	ciba_errorDenyFailed: 'ጥያቄውን ውድቅ ማድረግ አልቻለም',
 	ciba_errorConsentWithdrawn: 'ይህ ጥያቄ የተፈጠረው የዚህን መተግበሪያ መዳረሻ ከመሰረዝዎ በፊት ነው። ከመተግበሪያው እንደገና ይጀምሩ።',
 	ciba_errorRequestGone: 'ይህ ጥያቄ ጊዜው አልፎበታል ወይም አስቀድሞ ምላሽ ተሰጥቶታል።',
+	error_authorizationRequestExpired: 'የመግቢያ ጥያቄው ጊዜው አልፎበታል። ከመተግበሪያው እንደገና ይጀምሩ።',
 	ciba_errorTryAgain: 'ውሳኔዎ አሁን ሊቀመጥ አልቻለም፤ ምንም አልተለወጠም። ትንሽ ቆይተው እንደገና ይሞክሩ።',
 	ciba_errorTooManyAttempts: 'በጣም ብዙ ሙከራዎች። ትንሽ ቆይተው እንደገና ይሞክሩ።',
 	ciba_errorOutcomeUnknown: 'ምላሽዎ መቀመጡን ማረጋገጥ አልተቻለም። አሁንም በመጠባበቅ ላይ ያሉ ጥያቄዎችን ለማየት ያድሱ።',

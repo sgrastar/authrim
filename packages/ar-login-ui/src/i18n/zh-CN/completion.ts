@@ -121,6 +121,7 @@ const completion = {
 	ciba_errorDenyFailed: '无法拒绝请求',
 	ciba_errorConsentWithdrawn: '此请求是在您撤销该应用的访问权限之前发起的。请从应用重新开始。',
 	ciba_errorRequestGone: '此请求已过期或已被处理。',
+	error_authorizationRequestExpired: '登录请求已过期。请从应用重新开始。',
 	ciba_errorTryAgain: '目前无法保存您的决定，且未作任何更改。请稍后重试。',
 	ciba_errorTooManyAttempts: '尝试次数过多。请稍等片刻后重试。',
 	ciba_errorOutcomeUnknown: '无法确认您的回答是否已保存。请刷新以查看仍在等待的请求。',

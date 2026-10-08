@@ -131,6 +131,8 @@ const completion = {
 	ciba_errorConsentWithdrawn:
 		'Esta solicitação foi feita antes de você revogar o acesso deste aplicativo. Recomece pelo aplicativo.',
 	ciba_errorRequestGone: 'Esta solicitação expirou ou já foi respondida.',
+	error_authorizationRequestExpired:
+		'A solicitação de login expirou. Comece novamente pelo aplicativo.',
 	ciba_errorTryAgain:
 		'Não foi possível salvar sua decisão agora e nada foi alterado. Tente novamente em instantes.',
 	ciba_errorTooManyAttempts: 'Muitas tentativas. Aguarde um pouco e tente novamente.',

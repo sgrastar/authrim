@@ -3,7 +3,11 @@ import {
 	type FlowRuntimeStartResponse,
 	type StoredFlowRuntimeState
 } from '@authrim/core';
-import { LOGIN_UI_SESSION_STORAGE_KEYS } from './storage-keys';
+import {
+	LOGIN_UI_SESSION_STORAGE_KEYS,
+	removeLoginUiSessionItems,
+	setLoginUiSessionItem
+} from './storage-keys';
 
 export type { StoredFlowRuntimeState };
 
@@ -46,6 +50,22 @@ export function updateFlowRuntimePostAuthRedirect(
 	});
 }
 
+/**
+ * The stored state of an interaction, left in place. The page that resumes an interaction reads it
+ * this way and removes it (consumeFlowRuntimeState) only once the interaction is complete or has
+ * been handed on with its state stored again, so that a resume that fails for a moment can be tried
+ * again.
+ */
+export function peekFlowRuntimeState(interactionId: string): StoredFlowRuntimeState | null {
+	try {
+		return readStoredFlowRuntimeState(
+			sessionStorage.getItem(getFlowRuntimeStateKey(interactionId))
+		);
+	} catch {
+		return null;
+	}
+}
+
 export function consumeFlowRuntimeState(interactionId: string): StoredFlowRuntimeState | null {
 	const key = getFlowRuntimeStateKey(interactionId);
 	try {
@@ -54,5 +74,43 @@ export function consumeFlowRuntimeState(interactionId: string): StoredFlowRuntim
 		return state;
 	} catch {
 		return null;
+	}
+}
+
+/**
+ * Forgets which interaction the external provider's return was to resume. Every external sign-in
+ * starts by clearing it: the callback reads it, and one left by an earlier, abandoned attempt
+ * (another Flow, another client) must not be picked up by this one.
+ */
+export function clearExternalFlowRuntimeHandoff(): void {
+	try {
+		removeLoginUiSessionItems([
+			LOGIN_UI_SESSION_STORAGE_KEYS.externalFlowRuntimeInteractionId,
+			LOGIN_UI_SESSION_STORAGE_KEYS.externalFlowRuntimeKind
+		]);
+	} catch {
+		// Non-fatal: the callback then has nothing to resume.
+	}
+}
+
+/**
+ * Records the interaction the callback resumes after the external sign-in, replacing whatever an
+ * earlier attempt left. Returns false if it could not be stored.
+ */
+export function recordExternalFlowRuntimeHandoff(
+	flow: { interaction: { id: string; state: string } } | null,
+	kind: 'login' | 'registration'
+): boolean {
+	clearExternalFlowRuntimeHandoff();
+	if (!flow) return true;
+	try {
+		setLoginUiSessionItem(
+			LOGIN_UI_SESSION_STORAGE_KEYS.externalFlowRuntimeInteractionId,
+			flow.interaction.id
+		);
+		setLoginUiSessionItem(LOGIN_UI_SESSION_STORAGE_KEYS.externalFlowRuntimeKind, kind);
+		return true;
+	} catch {
+		return false;
 	}
 }

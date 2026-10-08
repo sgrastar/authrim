@@ -25,6 +25,7 @@
 	} from '$lib/authrim/storage-keys';
 	import {
 		consumeFlowRuntimeState,
+		peekFlowRuntimeState,
 		persistFlowRuntimeState
 	} from '$lib/authrim/flow-runtime-state';
 
@@ -59,6 +60,7 @@
 			invalidScope: () => $LL.error_invalid_scope(),
 			serverError: () => $LL.error_server_error(),
 			temporarilyUnavailable: () => $LL.error_temporarily_unavailable(),
+			requestExpired: () => $LL.error_authorizationRequestExpired(),
 			loginRequired: () => $LL.error_login_required(),
 			emailCodeInvalid: () => $LL.emailCode_errorInvalid()
 		});
@@ -187,7 +189,20 @@
 			// Restore authenticated state from the HttpOnly managed session cookie.
 			await auth.refreshFromSession();
 
-			const postVerifyRedirect = await resolveRuntimePostEmailRedirect(verifyData?.redirect_url);
+			let postVerifyRedirect: string;
+			try {
+				postVerifyRedirect = await resolveRuntimePostEmailRedirect(verifyData?.redirect_url);
+			} catch (resumeError) {
+				// The code is spent and the session exists, but the Flow could not be finished just
+				// now. Its stored state is still there: the sign-in page resumes it, and tries again
+				// to submit the completion, with the session.
+				if (!runtimeInteractionId || !peekFlowRuntimeState(runtimeInteractionId)) {
+					throw resumeError;
+				}
+				postVerifyRedirect = `${getRuntimeResumePath()}?runtime_interaction_id=${encodeURIComponent(
+					runtimeInteractionId
+				)}`;
+			}
 
 			// Redirect after delay. OAuth/OIDC challenges resume /authorize via the server-provided URL.
 			setTimeout(() => {
@@ -250,7 +265,9 @@
 			return postAuthRedirect;
 		}
 
-		const storedRuntime = consumeFlowRuntimeState(runtimeInteractionId);
+		// Left in place until the interaction is complete (or handed on): a resume that fails for a
+		// moment is tried again from it.
+		const storedRuntime = peekFlowRuntimeState(runtimeInteractionId);
 		if (!storedRuntime) {
 			throw loginUiDisplayError($LL.error_invalid_request());
 		}
@@ -261,6 +278,12 @@
 			signature: storedRuntime.signature
 		});
 		if (resumeError || !resumedFlow) {
+			throw loginUiDisplayError($LL.error_invalid_request());
+		}
+
+		// The resume signed the contract again as it is now, and the server keeps that one: it is
+		// what the next resume, and the submits below, have to present, so it is stored first.
+		if (!persistFlowRuntimeState(resumedFlow, { postAuthRedirect })) {
 			throw loginUiDisplayError($LL.error_invalid_request());
 		}
 
@@ -278,7 +301,13 @@
 				throw loginUiDisplayError($LL.error_invalid_request());
 			}
 
-			if (step.render !== false && step.component !== 'email_verification') {
+			// The completion waits for this sign-in (the method was chosen before the code was
+			// sent): the session exists now, so it is submitted here rather than at another page.
+			if (
+				step.render !== false &&
+				step.component !== 'email_verification' &&
+				step.component !== 'completion'
+			) {
 				if (!persistFlowRuntimeState(flow, { postAuthRedirect })) {
 					throw loginUiDisplayError($LL.error_invalid_request());
 				}
@@ -292,7 +321,12 @@
 				{
 					step_id: step.id,
 					node_id: step.source_node_id,
-					selected_handle: step.component === 'email_verification' ? 'verified' : undefined,
+					selected_handle:
+						step.component === 'email_verification'
+							? 'verified'
+							: step.component === 'completion'
+								? 'completed'
+								: undefined,
 					contract_hash: flow.contract_hash,
 					signature: flow.signature
 				}

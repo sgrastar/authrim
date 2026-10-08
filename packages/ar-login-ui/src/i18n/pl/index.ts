@@ -437,6 +437,7 @@ const translation = {
 	ciba_errorConsentWithdrawn:
 		'To żądanie zostało utworzone, zanim cofnięto dostęp tej aplikacji. Zacznij od nowa w aplikacji.',
 	ciba_errorRequestGone: 'To żądanie wygasło lub zostało już rozpatrzone.',
+	error_authorizationRequestExpired: 'Żądanie logowania wygasło. Zacznij ponownie w aplikacji.',
 	ciba_errorTryAgain:
 		'Nie udało się teraz zapisać Twojej decyzji i nic nie zostało zmienione. Spróbuj ponownie za chwilę.',
 	ciba_errorTooManyAttempts: 'Zbyt wiele prób. Odczekaj chwilę i spróbuj ponownie.',

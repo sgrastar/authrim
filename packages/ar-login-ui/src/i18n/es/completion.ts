@@ -133,6 +133,8 @@ const completion = {
 	ciba_errorConsentWithdrawn:
 		'Esta solicitud se hizo antes de que retiraras el acceso de esta aplicación. Vuelve a empezar desde la aplicación.',
 	ciba_errorRequestGone: 'Esta solicitud ha caducado o ya se ha respondido.',
+	error_authorizationRequestExpired:
+		'La solicitud de inicio de sesión ha caducado. Vuelva a empezar desde la aplicación.',
 	ciba_errorTryAgain:
 		'No se pudo guardar tu decisión en este momento y no se ha cambiado nada. Inténtalo de nuevo en unos instantes.',
 	ciba_errorTooManyAttempts: 'Demasiados intentos. Espera un rato y vuelve a intentarlo.',

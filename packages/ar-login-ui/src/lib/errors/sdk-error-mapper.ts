@@ -11,6 +11,8 @@ export interface LoginUiErrorMessages {
 	temporarilyUnavailable(): string;
 	loginRequired(): string;
 	emailCodeInvalid(): string;
+	/** The authorization request is gone: what to tell the user is that it has expired. */
+	requestExpired?(): string;
 }
 
 const EMAIL_CODE_ERRORS = new Set(['email_code_invalid', 'email_code_expired']);
@@ -58,7 +60,10 @@ export function messageForApiError(
 			return messages.serverError();
 		case 'temporarily_unavailable':
 			return messages.temporarilyUnavailable();
+		case 'authorization_request_expired':
+			return (messages.requestExpired ?? messages.invalidRequest)();
 		case 'login_required':
+		case 'authentication_required':
 			return messages.loginRequired();
 		default:
 			return messages.unknown();

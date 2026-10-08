@@ -134,6 +134,8 @@ const completion = {
 	ciba_errorConsentWithdrawn:
 		'Diese Anfrage wurde gestellt, bevor Sie den Zugriff dieser App widerrufen haben. Beginnen Sie in der App erneut.',
 	ciba_errorRequestGone: 'Diese Anfrage ist abgelaufen oder wurde bereits beantwortet.',
+	error_authorizationRequestExpired:
+		'Die Anmeldeanfrage ist abgelaufen. Starten Sie erneut in der App.',
 	ciba_errorTryAgain:
 		'Ihre Entscheidung konnte gerade nicht gespeichert werden; es wurde nichts geändert. Versuchen Sie es gleich noch einmal.',
 	ciba_errorTooManyAttempts:

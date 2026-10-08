@@ -39,9 +39,13 @@
 		type FlowRuntimeStep
 	} from '$lib/api/flow-runtime';
 	import {
+		clearExternalFlowRuntimeHandoff,
 		consumeFlowRuntimeState,
+		peekFlowRuntimeState,
+		recordExternalFlowRuntimeHandoff,
 		persistFlowRuntimeState
 	} from '$lib/authrim/flow-runtime-state';
+	import { consentInputKey, destinationInputKey } from '$lib/authrim/runtime-consent-key';
 	import {
 		isRuntimeAuthStep,
 		runtimeAllowsAuthenticationHandle as runtimeStepAllowsAuthenticationHandle,
@@ -105,6 +109,13 @@
 	let totpLoading = $state(false);
 	let totpCode = $state('');
 	let totpQrDataUrl = $state('');
+	/**
+	 * Set once the authenticator app is activated: the account and the session exist then, and the
+	 * backup codes are shown only once. If the sign-up Flow cannot be finished just then (the terms
+	 * changed and are asked again, a moment's failure), activating again would fail, so what is
+	 * left to do is submit the Flow's selection again, with this kept.
+	 */
+	let totpActivated = $state<{ backupCodes: string[]; redirectUrl: string } | null>(null);
 	let totpSignup = $state<{
 		challengeId: string;
 		secret: string;
@@ -169,10 +180,7 @@
 
 	$effect(() => {
 		const policy = getRuntimeConsentPolicy(runtimeFlowStep);
-		const key =
-			runtimeFlowStep?.id && policy
-				? `${runtimeFlowStep.id}:${policy.items.map((item) => item.statement_id).join(',')}`
-				: '';
+		const key = runtimeFlowStep?.id && policy ? consentInputKey(runtimeFlowStep.id, policy) : '';
 		if (key === runtimeConsentDecisionKey) return;
 		runtimeConsentDecisionKey = key;
 		runtimeConsentDecisions = policy
@@ -189,11 +197,7 @@
 	$effect(() => {
 		const consent = getRuntimeDestinationFieldConsent(runtimeFlowStep);
 		const key =
-			runtimeFlowStep?.id && consent
-				? `${runtimeFlowStep.id}:${consent.profile_version_id}:${consent.fields
-						.map((field) => field.key)
-						.join(',')}`
-				: '';
+			runtimeFlowStep?.id && consent ? destinationInputKey(runtimeFlowStep.id, consent) : '';
 		if (key === runtimeDestinationFieldDecisionKey) return;
 		runtimeDestinationFieldDecisionKey = key;
 		runtimeDestinationFieldDecisions = consent
@@ -429,6 +433,7 @@
 			invalidScope: () => $LL.error_invalid_scope(),
 			serverError: () => $LL.error_server_error(),
 			temporarilyUnavailable: () => $LL.error_temporarily_unavailable(),
+			requestExpired: () => $LL.error_authorizationRequestExpired(),
 			loginRequired: () => $LL.error_login_required(),
 			emailCodeInvalid: () => $LL.emailCode_errorInvalid()
 		});
@@ -704,7 +709,7 @@
 		runtimeFlowBlocked = false;
 		try {
 			if (runtimeInteractionId) {
-				const storedRuntime = consumeFlowRuntimeState(runtimeInteractionId);
+				const storedRuntime = peekFlowRuntimeState(runtimeInteractionId);
 				if (!storedRuntime) {
 					failRuntimeStart($LL.error_invalid_request());
 					return;
@@ -788,7 +793,11 @@
 		persistFlowRuntimeState(data, { postAuthRedirect: pendingPostAuthRedirect });
 	}
 
-	async function submitRuntimeStep(selectedHandle?: string, input?: unknown): Promise<boolean> {
+	async function submitRuntimeStep(
+		selectedHandle?: string,
+		input?: unknown,
+		options: { awaitingSignIn?: boolean } = {}
+	): Promise<boolean> {
 		const flow = runtimeFlow;
 		const step = runtimeFlowStep ?? getRuntimeCurrentStep(flow);
 		if (!flow || !step || flow.interaction.state === 'completed') {
@@ -804,6 +813,25 @@
 			input
 		});
 		if (apiError) {
+			if (apiError.error === 'consent_changed') {
+				// The terms changed after they were accepted: the interaction is back at the step that
+				// asks for them. This same interaction is resumed here, with the id and signature
+				// held in memory (a new one, which a signed-in browser would pass through without
+				// the terms, is never started), which draws that step with the terms as they are now.
+				const { data: resumed, error: resumeError } = await flowRuntimeAPI.start({
+					resume_interaction_id: flow.interaction.id,
+					contract_hash: flow.contract_hash,
+					signature: flow.signature
+				});
+				if (resumed) {
+					runtimeFlow = resumed;
+					runtimeFlowStep = getRuntimeCurrentStep(resumed);
+					persistFlowRuntimeState(resumed, { postAuthRedirect: pendingPostAuthRedirect });
+				} else {
+					runtimeFlowError = getApiErrorMessage(resumeError ?? apiError);
+				}
+				return false;
+			}
 			runtimeFlowError = getApiErrorMessage(apiError);
 			return false;
 		}
@@ -824,7 +852,9 @@
 			runtimeFlowError = $LL.error_invalid_request();
 			return false;
 		}
-		await advanceRuntimePastNonRenderedSteps();
+		// A method chosen before its sign-in (an emailed code, an external provider) leaves the
+		// completion waiting: it is submitted once the sign-in has given a session.
+		await advanceRuntimePastNonRenderedSteps({ stopAtCompletion: options.awaitingSignIn === true });
 		await refreshEmailVerificationProtocolChallenge();
 		return true;
 	}
@@ -854,9 +884,10 @@
 		return null;
 	}
 
-	async function advanceRuntimePastNonRenderedSteps() {
+	async function advanceRuntimePastNonRenderedSteps(options: { stopAtCompletion?: boolean } = {}) {
 		let guard = 0;
 		while (runtimeFlow && runtimeFlowStep && guard < 10) {
+			if (options.stopAtCompletion && runtimeFlowStep.component === 'completion') return;
 			const autoSubmitHandle = getRuntimeAutoSubmitHandle(runtimeFlowStep);
 			if (autoSubmitHandle === null) return;
 			guard += 1;
@@ -1445,10 +1476,24 @@
 				verifyQs += `&challenge_id=${encodeURIComponent(authorizationChallengeId)}`;
 			}
 			if (runtimeFlow) {
-				const ok = await submitRuntimeStep('mail_otp');
+				const ok = await submitRuntimeStep(
+					'mail_otp',
+					getRuntimeStepSubmitInputForAuthenticatedAction(),
+					{ awaitingSignIn: true }
+				);
 				if (!ok) return;
 				const flowAfterSelection = runtimeFlow;
-				if (!flowAfterSelection || !persistFlowRuntimeState(flowAfterSelection)) {
+				if (!flowAfterSelection) {
+					runtimeFlowError = $LL.error_invalid_request();
+					return;
+				}
+				if (flowAfterSelection.interaction.state === 'completed') {
+					// A session the authorization request accepts already existed, so the Flow is
+					// complete and there is no code to verify.
+					window.location.href = pendingPostAuthRedirect || '/';
+					return;
+				}
+				if (!persistFlowRuntimeState(flowAfterSelection)) {
 					runtimeFlowError = $LL.error_invalid_request();
 					return;
 				}
@@ -1494,6 +1539,7 @@
 				throw loginUiDisplayError(apiError ? getApiErrorMessage(apiError) : $LL.error_unknown());
 			}
 			markHumanVerificationTokenSubmitted(cfTurnstileResponse);
+			totpActivated = null;
 			totpSignup = {
 				challengeId: data.challenge_id,
 				secret: data.secret,
@@ -1520,21 +1566,27 @@
 
 		totpLoading = true;
 		try {
-			const { data, error: apiError } = await totpAPI.activateSignup({
-				challengeId: totpSignup.challengeId,
-				code,
-				deferAuthorizationContinuation: Boolean(
-					runtimeFlow && runtimeFlow.interaction.state !== 'completed'
-				)
-			});
-			if (apiError || !data?.success) {
-				throw loginUiDisplayError(
-					apiError ? getApiErrorMessage(apiError) : $LL.login_totpCodeInvalid()
-				);
-			}
+			if (!totpActivated) {
+				const { data, error: apiError } = await totpAPI.activateSignup({
+					challengeId: totpSignup.challengeId,
+					code,
+					deferAuthorizationContinuation: Boolean(
+						runtimeFlow && runtimeFlow.interaction.state !== 'completed'
+					)
+				});
+				if (apiError || !data?.success) {
+					throw loginUiDisplayError(
+						apiError ? getApiErrorMessage(apiError) : $LL.login_totpCodeInvalid()
+					);
+				}
 
-			await auth.refreshFromSession();
-			const redirectUrl = getCompletedSignupRedirect(data.redirect_url);
+				await auth.refreshFromSession();
+				totpActivated = {
+					backupCodes: data.backup_codes ?? [],
+					redirectUrl: getCompletedSignupRedirect(data.redirect_url)
+				};
+			}
+			const { backupCodes, redirectUrl } = totpActivated;
 			if (runtimeFlow) {
 				const ok = await submitRuntimeStep(
 					'totp',
@@ -1548,7 +1600,7 @@
 			}
 			totpSignup = {
 				...totpSignup,
-				backupCodes: data.backup_codes ?? [],
+				backupCodes,
 				redirectUrl
 			};
 			totpCode = '';
@@ -1570,16 +1622,32 @@
 		if (turnstileRequired && !cfTurnstileResponse) return;
 		externalIdpLoading = providerId;
 		try {
+			// Whatever an earlier, abandoned external sign-in left must not be resumed by this one.
+			clearExternalFlowRuntimeHandoff();
 			let runtimeResumeUrl: string | null = null;
 			if (runtimeFlow) {
-				const ok = await submitRuntimeStep(providerId);
+				const ok = await submitRuntimeStep(
+					providerId,
+					getRuntimeStepSubmitInputForAuthenticatedAction(),
+					{ awaitingSignIn: true }
+				);
 				if (!ok) return;
 				const flowAfterSelection = runtimeFlow;
+				if (!flowAfterSelection) {
+					runtimeFlowError = $LL.error_invalid_request();
+					return;
+				}
+				if (flowAfterSelection.interaction.state === 'completed') {
+					// A session the authorization request accepts already existed: the Flow is
+					// complete, and the browser does not need the provider.
+					window.location.href = pendingPostAuthRedirect || '/';
+					return;
+				}
 				if (
-					!flowAfterSelection ||
 					!persistFlowRuntimeState(flowAfterSelection, {
 						postAuthRedirect: provider.startMode === 'saml_sp' ? '/' : null
-					})
+					}) ||
+					!recordExternalFlowRuntimeHandoff(flowAfterSelection, 'registration')
 				) {
 					runtimeFlowError = $LL.error_invalid_request();
 					return;
@@ -1587,14 +1655,6 @@
 				runtimeResumeUrl = `/signup?runtime_interaction_id=${encodeURIComponent(
 					flowAfterSelection.interaction.id
 				)}`;
-				setLoginUiSessionItem(
-					LOGIN_UI_SESSION_STORAGE_KEYS.externalFlowRuntimeInteractionId,
-					flowAfterSelection.interaction.id
-				);
-				setLoginUiSessionItem(
-					LOGIN_UI_SESSION_STORAGE_KEYS.externalFlowRuntimeKind,
-					'registration'
-				);
 			}
 			const redirectUri =
 				provider.startMode === 'saml_sp' && runtimeResumeUrl
@@ -1805,6 +1865,7 @@
 		onTotpActivate={handleTotpSignupActivate}
 		onTotpCancel={() => {
 			totpSignup = null;
+			totpActivated = null;
 			totpCode = '';
 		}}
 		onTotpDone={continueAfterTotpBackupCodes}

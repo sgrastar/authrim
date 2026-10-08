@@ -9,6 +9,7 @@
 	import SanitizedHtml from '$lib/components/SanitizedHtml.svelte';
 	import TurnstileWidget from '$lib/components/TurnstileWidget.svelte';
 	import { sanitizeRuntimeConsentHtml } from '$lib/consent/runtime-consent-html';
+	import { withRequestedTotpCodeInput } from '$lib/authrim/runtime-code-input';
 	import { localizeRuntimeScreen } from '$lib/i18n/runtime-screen-localization';
 
 	type RuntimeField = {
@@ -253,7 +254,21 @@
 	});
 	const localizedScreen = $derived(localizeRuntimeScreen(screen, activeLocale));
 	const normalizedScreen = $derived(normalizeScreen(localizedScreen));
-	const renderedFields = $derived(normalizedScreen?.fields ?? []);
+	const renderedFields = $derived(
+		withRequestedTotpCodeInput(
+			normalizedScreen?.fields ?? [],
+			fieldValues,
+			{
+				field: 'code.totp',
+				label: '',
+				required: false,
+				block_id: 'code.totp',
+				block_type: 'code_input_widget',
+				code_input_mode: 'totp'
+			},
+			shouldRenderField
+		)
+	);
 	const primaryHeadingField = $derived(
 		renderedFields.find((field) => field.block_type === 'heading') ?? null
 	);

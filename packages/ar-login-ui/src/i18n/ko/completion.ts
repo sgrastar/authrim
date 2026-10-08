@@ -127,6 +127,7 @@ const completion = {
 	ciba_errorConsentWithdrawn:
 		'이 요청은 이 앱의 액세스 권한을 철회하기 전에 생성되었습니다. 앱에서 다시 시작하세요.',
 	ciba_errorRequestGone: '이 요청은 만료되었거나 이미 응답되었습니다.',
+	error_authorizationRequestExpired: '로그인 요청이 만료되었습니다. 앱에서 다시 시작해 주세요.',
 	ciba_errorTryAgain:
 		'지금은 결정을 저장할 수 없으며 변경된 내용은 없습니다. 잠시 후 다시 시도하세요.',
 	ciba_errorTooManyAttempts: '시도 횟수가 너무 많습니다. 잠시 기다린 후 다시 시도하세요.',

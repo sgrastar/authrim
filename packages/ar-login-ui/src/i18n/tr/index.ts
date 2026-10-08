@@ -436,6 +436,8 @@ const translation = {
 	ciba_errorConsentWithdrawn:
 		'Bu istek, bu uygulamanın erişimini geri almadan önce oluşturuldu. Uygulamadan baştan başla.',
 	ciba_errorRequestGone: 'Bu isteğin süresi doldu veya zaten yanıtlandı.',
+	error_authorizationRequestExpired:
+		'Oturum açma isteğinin süresi doldu. Uygulamadan yeniden başlayın.',
 	ciba_errorTryAgain:
 		'Kararın şu anda kaydedilemedi ve hiçbir şey değişmedi. Birazdan tekrar dene.',
 	ciba_errorTooManyAttempts: 'Çok fazla deneme yapıldı. Bir süre bekleyip tekrar dene.',

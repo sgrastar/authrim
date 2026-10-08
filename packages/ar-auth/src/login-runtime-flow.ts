@@ -1,7 +1,13 @@
 import type { Context } from 'hono';
 import {
+  consentPresentationKey,
+  consentStepKey,
+  destinationPresentationKey,
+} from '@authrim/ar-lib-core/utils/consent-presentation-key';
+import {
   consumeAuthorizationChallengeContinuation,
-  readAuthorizationChallengeReauthIssuedAt,
+  isProofOlderThanChallengeRequirement,
+  readAuthorizationChallengeFreshness,
   reauthProofFromRecord,
 } from './direct-auth';
 import {
@@ -145,6 +151,12 @@ interface FlowRequestContext {
   return_to: string | null;
   requested_scope: string[];
   locale: string | null;
+  /**
+   * Changes when the contract served for the interaction has to be prepared anew (the terms it asks
+   * consent to changed): part of the key a prepared contract is kept under, so that no Worker
+   * serves the interaction from a contract prepared before.
+   */
+  contract_revision?: string | null;
 }
 
 interface CachedFlowVersion {
@@ -563,7 +575,7 @@ function jsonError(
 
 function runtimeError(
   c: AuthContext,
-  status: 400 | 401 | 403 | 404 | 409 | 500,
+  status: 400 | 401 | 403 | 404 | 409 | 500 | 503,
   error: string,
   errorDescription: string,
   errorCode: string,
@@ -984,6 +996,7 @@ function getPreparedRuntimeContractCacheKey(
     requestContext.return_to,
     requestContext.locale,
     requestContext.requested_scope,
+    requestContext.contract_revision ?? null,
   ]);
 }
 
@@ -2035,12 +2048,17 @@ async function validateRuntimeAuthorizationChallengeBinding(
     challenge = null;
   }
 
-  if (
-    !challenge ||
-    challenge.tenantId !== tenantId ||
-    challenge.consumed ||
-    (challenge.type !== 'login' && challenge.type !== 'reauth')
-  ) {
+  // Gone or used: the request has expired, which is what the user is told (not that it is invalid).
+  if (!challenge || challenge.tenantId !== tenantId || challenge.consumed) {
+    return jsonError(
+      c,
+      400,
+      authorizationRequestExpired().error,
+      authorizationRequestExpired().message ?? '',
+      'AR_FLOW_AUTH_REQUEST_EXPIRED'
+    );
+  }
+  if (challenge.type !== 'login' && challenge.type !== 'reauth') {
     return jsonError(
       c,
       400,
@@ -2101,6 +2119,7 @@ function getRequestContextFromInteraction(interaction: FlowInteractionRow): Flow
     return_to: readOptionalString(raw.return_to, 128),
     requested_scope: parseStringList(raw.requested_scope),
     locale: readOptionalString(raw.locale, 64),
+    contract_revision: readOptionalString(raw.contract_revision, 64),
   };
 }
 
@@ -2115,6 +2134,21 @@ function getFirstStep(runtime: FlowRuntimeContract): FlowRuntimeStep | null {
 function bytesToBase64Url(bytes: ArrayBuffer): string {
   const binary = String.fromCharCode(...new Uint8Array(bytes));
   return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+}
+
+/**
+ * An identifier made from what a record is about, so the same record has the same identifier
+ * however often it is written (the table's primary key then keeps it from being written twice).
+ */
+async function deterministicRecordId(
+  kind: string,
+  ...parts: Array<string | null>
+): Promise<string> {
+  const digest = await crypto.subtle.digest(
+    'SHA-256',
+    new TextEncoder().encode(JSON.stringify([kind, ...parts]))
+  );
+  return `${kind}_${Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('')}`;
 }
 
 async function sha256Base64Url(value: string): Promise<string> {
@@ -2546,33 +2580,43 @@ async function resolveConditionSelectedHandle(input: {
 async function resolveSessionCheckSelectedHandle(
   c: AuthContext,
   tenantId: string,
-  requestContext: FlowRequestContext
-): Promise<{ selectedHandle: 'continue' | 'authenticate'; userId: string | null }> {
-  const session = await getCurrentSession(c, tenantId);
+  requestContext: FlowRequestContext,
+  options: { createdAfterMs?: number } = {}
+): Promise<{
+  selectedHandle: 'continue' | 'authenticate' | null;
+  userId: string | null;
+  terminalError?: FlowRuntimeTerminalError;
+  /** The request could not be read: no branch is chosen, the browser asks again. */
+  unavailable?: true;
+}> {
+  // Only a session the request accepts (see resolveSessionForChallenge) can continue; anything
+  // else signs in. A request that cannot be read decides nothing (the browser asks again), and one
+  // that is gone cannot be answered by signing in: that ends the interaction, as it says.
+  const usable = await resolveSessionForChallenge(
+    c,
+    tenantId,
+    requestContext.authorization_challenge_id,
+    { ...options, judgeChallengeWithoutSession: true }
+  );
+  if (usable.unavailable) {
+    return { selectedHandle: null, userId: null, unavailable: true };
+  }
+  if (usable.expired) {
+    return { selectedHandle: null, userId: null, terminalError: authorizationRequestExpired() };
+  }
+  const session = usable.session;
   if (!session?.userId) {
     return { selectedHandle: 'authenticate', userId: null };
   }
-  // A re-authentication, and a sign-in for a client whose SSO is off, need a proof made after the
-  // challenge, so an older session signs in again; so does any session when the request cannot be
-  // read (signing in again is always safe).
-  let reauthIssuedAt: number | null;
-  try {
-    reauthIssuedAt = await readAuthorizationChallengeReauthIssuedAt(
-      c.env,
-      tenantId,
-      requestContext.authorization_challenge_id
-    );
-  } catch {
-    return { selectedHandle: 'authenticate', userId: null };
-  }
-  if (reauthIssuedAt !== null) {
-    // So does a session that cannot prove a re-authentication at all, or not when it did.
-    const proof = getSessionReauthProof(session);
-    const stale =
-      !proof.method || proof.provenAtMs === undefined || proof.provenAtMs < reauthIssuedAt;
-    if (stale) return { selectedHandle: 'authenticate', userId: null };
-  }
   return { selectedHandle: 'continue', userId: session.userId };
+}
+
+/** The authorization request is gone: no sign-in can answer it, it has to be started again. */
+function authorizationRequestExpired(): FlowRuntimeTerminalError {
+  return {
+    error: 'authorization_request_expired',
+    message: 'The authorization request has expired; start again from the application',
+  };
 }
 
 function getStepStateForRuntimeStep(step: FlowRuntimeStep): 'pending' | 'waiting_input' {
@@ -2639,6 +2683,7 @@ async function resolveAutoAdvanceForStep(input: {
   userId?: string | null;
   terminalError?: FlowRuntimeTerminalError;
   errorCode?: string;
+  unavailable?: true;
 } | null> {
   if (input.step.component === 'condition') {
     return resolveConditionSelectedHandle({
@@ -2654,7 +2699,8 @@ async function resolveAutoAdvanceForStep(input: {
     return resolveSessionCheckSelectedHandle(
       input.c,
       input.tenantId,
-      getRequestContextFromInteraction(input.interaction)
+      getRequestContextFromInteraction(input.interaction),
+      sessionOptionsForRuntime(input.runtime, input.interaction)
     );
   }
 
@@ -2750,6 +2796,111 @@ function getRequestOrigin(c: AuthContext): string {
   return requestOrigin;
 }
 
+/**
+ * What a session must be to answer this Flow besides the authorization request's own terms: for a
+ * registration, one made since the interaction began (a registration is not answered by a session
+ * that was already there).
+ */
+/**
+ * When the interaction began, in milliseconds. An interaction made before the start was kept to the
+ * millisecond is taken to have begun at the end of its second, so a session made within that
+ * second does not count as made after it.
+ */
+function interactionStartedAtMs(interaction: FlowInteractionRow): number {
+  const stored = parseJsonObject(interaction.context_json).started_at_ms;
+  return typeof stored === 'number' && Number.isFinite(stored)
+    ? stored
+    : (interaction.expires_at - FLOW_RUNTIME_INTERACTION_TTL_SECONDS + 1) * 1000;
+}
+
+function sessionOptionsForRuntime(
+  runtime: FlowRuntimeContract,
+  interaction: FlowInteractionRow
+): { createdAfterMs?: number } {
+  return runtime.flow_kind === 'registration'
+    ? { createdAfterMs: interactionStartedAtMs(interaction) }
+    : {};
+}
+
+/**
+ * The browser's session as proof for the authorization challenge: the session, none, or a failure
+ * to tell. A challenge that asks for a proof made after it (a sign-in for a client whose SSO is
+ * off, or a re-authentication) is not answered by an older session: that session is "none", as if
+ * the browser had no sign-in, and the user signs in with a method of their own. A challenge that
+ * cannot be read is "unavailable", which is neither: the caller asks the browser to try again
+ * instead of completing the interaction without (or with) a session it could not judge.
+ */
+type SessionForChallenge =
+  | { unavailable: false; expired?: false; session: Session | null }
+  | { unavailable: false; expired: true; session: null }
+  | { unavailable: true };
+
+async function resolveSessionForChallenge(
+  c: AuthContext,
+  tenantId: string,
+  authorizationChallengeId: string | undefined | null,
+  options: {
+    createdAfterMs?: number;
+    /**
+     * Judge the authorization request (is it gone) even with no session to judge: a request that
+     * is gone is found out at once, not when the user has signed in to no purpose.
+     */
+    judgeChallengeWithoutSession?: boolean;
+  } = {}
+): Promise<SessionForChallenge> {
+  const current = await getCurrentSession(c, tenantId);
+  // A registration is answered only by a sign-in made since it began: a session from before
+  // (another account's, or the same one's) is no proof of this registration.
+  const session =
+    current?.userId &&
+    (options.createdAfterMs === undefined || current.createdAt >= options.createdAfterMs)
+      ? current
+      : null;
+  if (!authorizationChallengeId || (!session && !options.judgeChallengeWithoutSession)) {
+    return { unavailable: false, session };
+  }
+  let freshness: Awaited<ReturnType<typeof readAuthorizationChallengeFreshness>>;
+  try {
+    freshness = await readAuthorizationChallengeFreshness(
+      c.env,
+      tenantId,
+      authorizationChallengeId
+    );
+  } catch {
+    return { unavailable: true };
+  }
+  if (!freshness) return { unavailable: false, session };
+  // A challenge that is gone and left no confirmation is answered by no one; one that was
+  // continued is answered again only for the user it was continued for. This is judged here, before
+  // anything is recorded for the session's user.
+  if (freshness.gone) return { unavailable: false, expired: true, session: null };
+  if (!session) return { unavailable: false, session: null };
+  if (freshness.confirmedFor && session.userId !== freshness.confirmedFor) {
+    return { unavailable: false, session: null };
+  }
+  // A re-authentication is answered by the user it was asked of, with the method that proved the
+  // session, after it was asked for. Any other session is no one's here.
+  if (
+    freshness.kind === 'reauth' &&
+    freshness.subjectUserId &&
+    session.userId !== freshness.subjectUserId
+  ) {
+    return { unavailable: false, session: null };
+  }
+  const proof = getSessionReauthProof(session);
+  if (freshness.kind === 'reauth' && !proof.method) return { unavailable: false, session: null };
+  return {
+    unavailable: false,
+    session: isProofOlderThanChallengeRequirement(
+      freshness,
+      getSessionAuthTime(session),
+      proof.provenAtMs
+    )
+      ? null
+      : session,
+  };
+}
+
 /** What the session proves for a re-authentication: the server-recorded method and proof time. */
 function getSessionReauthProof(session: Session) {
   return reauthProofFromRecord(
@@ -2773,6 +2924,8 @@ async function resolveCompletedProtocolRedirect(input: {
   runtime: FlowRuntimeContract;
   requestContext: FlowRequestContext;
   resolvedUserId: string | null;
+  /** The session the challenge accepts as proof, if any (see resolveSessionForChallenge). */
+  session: Session | null;
 }): Promise<{ redirectUrl?: string; response?: Response }> {
   if (
     input.requestContext.protocol !== 'oidc' ||
@@ -2781,7 +2934,10 @@ async function resolveCompletedProtocolRedirect(input: {
     return {};
   }
 
-  const session = await getCurrentSession(input.c, input.tenantId);
+  // Only a session the challenge accepts is used: an older one (SSO off, re-authentication) is
+  // treated as none, so no continuation is attempted that would consume the challenge only to
+  // refuse it. The user signs in with a method of their own and that proof answers the challenge.
+  const session = input.session;
   const userId = input.resolvedUserId ?? session?.userId ?? null;
   if (!session || !userId) {
     return {};
@@ -2828,6 +2984,20 @@ function eventTypeForCompletedStep(step: FlowRuntimeStep): string {
   }
   if (step.component === 'completion') return 'flow.output.completed';
   return 'flow.node.completed';
+}
+
+/**
+ * Consent given at a method selection before sign-in, kept in the step's state until someone has
+ * signed in to record it for: the decisions that were validated and the statements (with their
+ * versions) they were given for, not the raw input, so that it is those versions that are recorded.
+ */
+interface HeldRuntimeConsent {
+  policy: RuntimeConsentPolicyContent;
+  decisions: Record<string, RuntimeConsentItemDecision>;
+  destination?: {
+    consent: RuntimeDestinationFieldConsentContent;
+    selected_fields: string[];
+  };
 }
 
 interface RuntimeAuditEventInput {
@@ -2926,11 +3096,6 @@ function getSessionIdFromRequest(c: AuthContext): string | null {
   if (cookieSession) return decodeURIComponent(cookieSession.slice('authrim_session='.length));
   const authHeader = getRequestHeader(c, 'Authorization');
   return authHeader?.startsWith('Bearer ') ? authHeader.substring(7) : null;
-}
-
-async function getCurrentSessionUserId(c: AuthContext, tenantId: string): Promise<string | null> {
-  const session = await getCurrentSession(c, tenantId);
-  return session?.userId || null;
 }
 
 async function getCurrentSession(c: AuthContext, tenantId: string): Promise<Session | null> {
@@ -3178,7 +3343,7 @@ async function hasActiveAcceptedConsentRecord(input: {
         AND decision IN ('accepted', 'always', 'selected')
         AND status = 'active'
         AND (expires_at IS NULL OR expires_at > ?)
-      ORDER BY created_at DESC
+      ORDER BY created_at DESC, id DESC
       LIMIT 1`,
     [
       input.tenantId,
@@ -3228,7 +3393,7 @@ async function hasActiveDestinationFieldConsentRecord(input: {
         AND decision = 'selected'
         AND status = 'active'
         AND (expires_at IS NULL OR expires_at > ?)
-      ORDER BY created_at DESC
+      ORDER BY created_at DESC, id DESC
       LIMIT 1`,
     [
       input.tenantId,
@@ -3312,6 +3477,8 @@ async function resolveNextDisplayStep(input: {
   terminalStep: FlowRuntimeStep | null;
   terminalError?: FlowRuntimeTerminalError;
   errorCode?: string;
+  /** A request that decides the branch could not be read: nothing is decided. */
+  unavailable?: true;
   userId: string | null;
   autoAdvancedSteps: RuntimeAutoAdvancedStep[];
 }> {
@@ -3348,6 +3515,9 @@ async function resolveNextDisplayStep(input: {
       step,
     });
     if (autoAdvance) {
+      if (autoAdvance.unavailable) {
+        return { step: null, terminalStep: null, unavailable: true, userId, autoAdvancedSteps };
+      }
       if (autoAdvance.terminalError) {
         return {
           step: null,
@@ -3571,7 +3741,8 @@ function createInitialAutoAdvanceAuditEvents(input: {
   return events;
 }
 
-async function insertFlowConsentRecords(input: {
+/** Exported for the tests of how records are written. */
+export async function insertFlowConsentRecords(input: {
   db: DatabaseAdapter;
   tenantId: string;
   interaction: FlowInteractionRow;
@@ -3598,6 +3769,8 @@ async function insertFlowConsentRecords(input: {
     const bindingType = normalizeConsentRecordBindingType(item.binding_type, input.requestContext);
     const resourceType = consentRecordResourceType(item, input.requestContext);
     await input.db.execute(
+      // One record per interaction, step, statement and version: a retry of the same decision
+      // changes nothing, and a retry with another decision replaces it (the last one stands).
       `INSERT INTO consent_records (
         id, tenant_id, subject_user_id, actor_user_id, protocol, consent_kind,
         client_id, saml_sp_id, recipient_type, recipient_id, binding_type, binding_key,
@@ -3605,9 +3778,22 @@ async function insertFlowConsentRecords(input: {
         flow_id, flow_version_id, flow_node_id, decision, selected_value, selected_options_json,
         released_scopes_json, released_claims_json, released_attributes_json, status, expires_at,
         revoked_at, evidence_json, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        decision = excluded.decision,
+        selected_value = excluded.selected_value,
+        selected_options_json = excluded.selected_options_json,
+        released_scopes_json = excluded.released_scopes_json,
+        evidence_json = excluded.evidence_json,
+        updated_at = excluded.updated_at`,
       [
-        generateId(),
+        await deterministicRecordId(
+          'consent',
+          input.interaction.id,
+          input.step.id,
+          item.statement_id,
+          item.version
+        ),
         input.tenantId,
         input.userId,
         input.userId,
@@ -3663,7 +3849,8 @@ async function insertFlowConsentRecords(input: {
   }
 }
 
-async function insertDestinationFieldConsentRecord(input: {
+/** Exported for the tests of how records are written. */
+export async function insertDestinationFieldConsentRecord(input: {
   db: DatabaseAdapter;
   tenantId: string;
   interaction: FlowInteractionRow;
@@ -3673,6 +3860,12 @@ async function insertDestinationFieldConsentRecord(input: {
   userId: string;
   consent: RuntimeDestinationFieldConsentContent;
   selectedFields: string[];
+  /**
+   * The consent version that applies as this is written (read just before, not the one this
+   * record is in): the record in that version is the one that stands. A record in another version
+   * (a request delayed past a change of the terms) is written but does not displace it.
+   */
+  currentConsentVersion?: string;
   ipHash?: string;
   userAgent?: string;
 }): Promise<void> {
@@ -3691,27 +3884,20 @@ async function insertDestinationFieldConsentRecord(input: {
   const releasedAttributes =
     input.consent.destination_type === 'saml' ? JSON.stringify(input.selectedFields) : null;
 
-  await input.db.execute(
-    `UPDATE consent_records
-        SET status = 'superseded', updated_at = ?
-      WHERE tenant_id = ?
-        AND subject_user_id = ?
-        AND protocol = ?
-        AND recipient_type = ?
-        AND ((recipient_id = ?) OR (recipient_id IS NULL AND ? IS NULL))
-        AND binding_type = 'destination_field_mapping_set'
-        AND binding_key = ?
-        AND status = 'active'`,
-    [
-      now,
-      input.tenantId,
-      input.userId,
-      input.requestContext.protocol,
-      recipientType,
-      destinationRecipientId,
-      destinationRecipientId,
-      input.consent.profile_id,
-    ]
+  // One record per interaction, step, profile and consent version: a retry updates it (the last
+  // selection stands). Afterwards every active record of the binding but one is retired, in one
+  // statement, the record just written included. The one that stands is the one in the consent
+  // version that applies (read just before, not the version this record is in), and then the latest
+  // by (created_at, id): a record written late in an older version does not displace one in the
+  // version that applies, and a retry of an older record does not retire a newer one. A reader asks
+  // for the version that applies, and then takes the same order.
+  const recordId = await deterministicRecordId(
+    'consent_destination',
+    input.interaction.id,
+    input.step.id,
+    input.consent.profile_id,
+    input.consent.profile_version_id,
+    input.consent.consent_version
   );
   await input.db.execute(
     `INSERT INTO consent_records (
@@ -3721,9 +3907,16 @@ async function insertDestinationFieldConsentRecord(input: {
       flow_id, flow_version_id, flow_node_id, decision, selected_value, selected_options_json,
       released_scopes_json, released_claims_json, released_attributes_json, status, expires_at,
       revoked_at, evidence_json, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET
+      selected_options_json = excluded.selected_options_json,
+      released_scopes_json = excluded.released_scopes_json,
+      released_claims_json = excluded.released_claims_json,
+      released_attributes_json = excluded.released_attributes_json,
+      evidence_json = excluded.evidence_json,
+      updated_at = excluded.updated_at`,
     [
-      generateId(),
+      recordId,
       input.tenantId,
       input.userId,
       input.userId,
@@ -3769,6 +3962,40 @@ async function insertDestinationFieldConsentRecord(input: {
       now,
     ]
   );
+  const bindingMatch = `tenant_id = ?
+        AND subject_user_id = ?
+        AND protocol = ?
+        AND recipient_type = ?
+        AND ((recipient_id = ?) OR (recipient_id IS NULL AND ? IS NULL))
+        AND binding_type = 'destination_field_mapping_set'
+        AND binding_key = ?
+        AND status = 'active'`;
+  const bindingParams = [
+    input.tenantId,
+    input.userId,
+    input.requestContext.protocol,
+    recipientType,
+    destinationRecipientId,
+    destinationRecipientId,
+    input.consent.profile_id,
+  ];
+  await input.db.execute(
+    `UPDATE consent_records
+        SET status = 'superseded', updated_at = ?
+      WHERE ${bindingMatch}
+        AND id <> (
+          SELECT id FROM consent_records
+           WHERE ${bindingMatch}
+           ORDER BY CASE WHEN statement_version = ? THEN 0 ELSE 1 END, created_at DESC, id DESC
+           LIMIT 1
+        )`,
+    [
+      now,
+      ...bindingParams,
+      ...bindingParams,
+      input.currentConsentVersion ?? input.consent.consent_version,
+    ]
+  );
 }
 
 async function persistRuntimeConsentStep(input: {
@@ -3778,7 +4005,15 @@ async function persistRuntimeConsentStep(input: {
   interaction: FlowInteractionRow;
   step: FlowRuntimeStep;
   submitInput: unknown;
-}): Promise<{ ok: boolean; response?: Response; userId?: string | null }> {
+  /** The session the challenge accepts as proof, if any (see resolveSessionForChallenge). */
+  session: Session | null;
+}): Promise<{
+  ok: boolean;
+  response?: Response;
+  userId?: string | null;
+  /** Consent given before anyone is signed in, validated, to be recorded once someone is. */
+  held?: HeldRuntimeConsent;
+}> {
   const requestContext = getRequestContextFromInteraction(input.interaction);
   const destinationFieldConsent = readRuntimeDestinationFieldConsent(input.step);
   const config = parseJsonRecord(input.step.config);
@@ -3797,6 +4032,19 @@ async function persistRuntimeConsentStep(input: {
         'contact_administrator',
         input.interaction.id
       ),
+    };
+  }
+
+  // Consent is recorded for the user the interaction is already about: another user's session
+  // (made in another tab after the interaction was bound) does not take it over.
+  if (
+    input.interaction.user_id &&
+    input.session?.userId &&
+    input.interaction.user_id !== input.session.userId
+  ) {
+    return {
+      ok: false,
+      response: sessionUserMismatch(input.c, input.interaction.id),
     };
   }
 
@@ -3822,27 +4070,44 @@ async function persistRuntimeConsentStep(input: {
     };
   }
 
-  const userId = await getCurrentSessionUserId(input.c, input.tenantId);
-  if (!userId) {
-    if (
-      input.step.component === 'authentication_method_selector' ||
-      input.step.component === 'registration_method_selector'
-    ) {
-      return { ok: true };
-    }
+  // What is accepted is what was shown: if the terms are not those the contract of this
+  // interaction was prepared with (changed since, or the contract came from a cache that is behind),
+  // nothing is accepted, and the browser is asked to resume with a contract prepared anew.
+  const presented = parseJsonRecord(
+    parseJsonObject(input.interaction.context_json).consent_presented
+  )[input.step.id];
+  if (
+    typeof presented === 'string' &&
+    presented !== consentStepKey(policy, destinationFieldConsent)
+  ) {
     return {
       ok: false,
-      response: runtimeError(
-        input.c,
-        401,
-        'authentication_required',
-        'Consent can only be recorded after authentication',
-        'AR_FLOW_CONSENT_AUTH_REQUIRED',
-        'reauthentication_required',
-        'reauthenticate',
-        input.interaction.id
-      ),
+      response: await consentChangedResponse(input.c, input.db, input.tenantId, input.interaction),
     };
+  }
+
+  // An older session the challenge refuses is no one: consent before authentication is not
+  // attributed to its user.
+  const userId = input.session?.userId || null;
+  if (!userId) {
+    if (
+      input.step.component !== 'authentication_method_selector' &&
+      input.step.component !== 'registration_method_selector'
+    ) {
+      return {
+        ok: false,
+        response: runtimeError(
+          input.c,
+          401,
+          'authentication_required',
+          'Consent can only be recorded after authentication',
+          'AR_FLOW_CONSENT_AUTH_REQUIRED',
+          'reauthentication_required',
+          'reauthenticate',
+          input.interaction.id
+        ),
+      };
+    }
   }
 
   const submitted = readConsentDecisionMap(input.submitInput);
@@ -3895,6 +4160,115 @@ async function persistRuntimeConsentStep(input: {
     };
   }
 
+  // What was validated, and for which statements and versions: this is what gets recorded.
+  const given: HeldRuntimeConsent = {
+    policy,
+    decisions,
+    ...(destinationFieldConsent
+      ? {
+          destination: {
+            consent: destinationFieldConsent,
+            selected_fields: destinationFieldConsent.fields
+              .filter((field) => field.required || submittedDestinationFields[field.key] === true)
+              .map((field) => field.key),
+          },
+        }
+      : {}),
+  };
+
+  if (!userId) {
+    // The method is chosen before the user has signed in (an emailed code, an external provider):
+    // what was given is valid, and kept with the step until a session exists to record it for.
+    return { ok: true, held: given };
+  }
+
+  const recorded = await recordRuntimeConsent({
+    c: input.c,
+    db: input.db,
+    tenantId: input.tenantId,
+    interaction: input.interaction,
+    step: input.step,
+    requestContext,
+    consent: given,
+    userId,
+  });
+  return recorded.ok ? { ok: true, userId } : recorded;
+}
+
+/** The authorization request could not be read just now: nothing was decided or saved. */
+function authorizationRequestUnavailable(c: AuthContext, interactionId: string) {
+  return runtimeError(
+    c,
+    503,
+    'temporarily_unavailable',
+    'The authorization request could not be checked; try again',
+    'AR_FLOW_CHALLENGE_UNAVAILABLE',
+    'recoverable',
+    'retry_step',
+    interactionId
+  );
+}
+
+function sessionUserMismatch(c: AuthContext, interactionId: string) {
+  return runtimeError(
+    c,
+    403,
+    'access_denied',
+    'The signed-in session does not belong to this interaction',
+    'AR_FLOW_SESSION_USER_MISMATCH',
+    'security_error',
+    'restart_interaction',
+    interactionId
+  );
+}
+
+/**
+ * Makes `userId` the user the interaction is about, if it is about no one yet. Returns whether it
+ * is about that user now. The update takes an interaction that has no user only, so two sessions
+ * racing to be recorded for it cannot both succeed.
+ */
+async function claimInteractionUser(
+  db: DatabaseAdapter,
+  tenantId: string,
+  interaction: FlowInteractionRow,
+  userId: string
+): Promise<boolean> {
+  if (interaction.user_id) return interaction.user_id === userId;
+  const claimed = await db.execute(
+    `UPDATE flow_interactions
+        SET user_id = ?, updated_at = ?
+      WHERE tenant_id = ? AND id = ? AND user_id IS NULL`,
+    [userId, nowSeconds(), tenantId, interaction.id]
+  );
+  if ((claimed.rowsAffected ?? 0) > 0) return true;
+  const current = await db.queryOne<{ user_id: string | null }>(
+    'SELECT user_id FROM flow_interactions WHERE tenant_id = ? AND id = ?',
+    [tenantId, interaction.id]
+  );
+  return current?.user_id === userId;
+}
+
+/**
+ * Records consent for `userId`: the interaction is first claimed for that user (another user's
+ * consent is never recorded on it), and each record has a fixed identifier, so a retried or a
+ * concurrent attempt cannot record it twice.
+ */
+async function recordRuntimeConsent(input: {
+  c: AuthContext;
+  db: DatabaseAdapter;
+  tenantId: string;
+  interaction: FlowInteractionRow;
+  step: FlowRuntimeStep;
+  requestContext: FlowRequestContext;
+  consent: HeldRuntimeConsent;
+  userId: string;
+}): Promise<{ ok: true } | { ok: false; response: Response }> {
+  if (!(await claimInteractionUser(input.db, input.tenantId, input.interaction, input.userId))) {
+    return {
+      ok: false,
+      response: sessionUserMismatch(input.c, input.interaction.id),
+    };
+  }
   const ipAddress =
     getRequestHeader(input.c, 'CF-Connecting-IP') ||
     getRequestHeader(input.c, 'X-Forwarded-For') ||
@@ -3902,45 +4276,210 @@ async function persistRuntimeConsentStep(input: {
   const ipHash = ipAddress
     ? await hashIpAddress(ipAddress, input.tenantId, input.c.env.KV ?? null)
     : undefined;
+  const userAgent = getRequestHeader(input.c, 'User-Agent');
   await insertFlowConsentRecords({
     db: input.db,
     tenantId: input.tenantId,
     interaction: input.interaction,
     step: input.step,
-    policy,
-    requestContext,
-    userId,
-    decisions,
+    policy: input.consent.policy,
+    requestContext: input.requestContext,
+    userId: input.userId,
+    decisions: input.consent.decisions,
     ipHash,
-    userAgent: getRequestHeader(input.c, 'User-Agent'),
+    userAgent,
   });
-  if (destinationFieldConsent) {
-    const selectedFields = destinationFieldConsent.fields
-      .filter((field) => field.required || submittedDestinationFields[field.key] === true)
-      .map((field) => field.key);
+  if (input.consent.destination) {
+    // The version that applies now: this record may be in an older one.
+    const applicable = await resolveRuntimeDestinationFieldConsent(
+      input.c,
+      input.db,
+      input.tenantId,
+      input.requestContext
+    );
     await insertDestinationFieldConsentRecord({
       db: input.db,
       tenantId: input.tenantId,
       interaction: input.interaction,
       step: input.step,
-      policyId: policy.id,
-      requestContext,
-      userId,
-      consent: destinationFieldConsent,
-      selectedFields,
+      policyId: input.consent.policy.id,
+      requestContext: input.requestContext,
+      userId: input.userId,
+      consent: input.consent.destination.consent,
+      selectedFields: input.consent.destination.selected_fields,
+      currentConsentVersion:
+        applicable?.profile_id === input.consent.destination.consent.profile_id
+          ? applicable.consent_version
+          : undefined,
       ipHash,
-      userAgent: getRequestHeader(input.c, 'User-Agent'),
+      userAgent,
     });
   }
+  return { ok: true };
+}
 
-  await input.db.execute(
-    `UPDATE flow_interactions
-       SET user_id = COALESCE(user_id, ?), updated_at = ?
-     WHERE tenant_id = ? AND id = ?`,
-    [userId, nowSeconds(), input.tenantId, input.interaction.id]
+/**
+ * What the consent steps of a contract ask, by step: the statements, their versions and terms, the
+ * destination fields. Kept with the interaction as what its browser was shown.
+ */
+function consentPresentedKeys(contract: FlowRuntimeContract): Record<string, string> {
+  const keys: Record<string, string> = {};
+  for (const step of contract.ui.steps) {
+    const policy = readRuntimeConsentPolicyContent(step);
+    const destination = readRuntimeDestinationFieldConsent(step);
+    if (!policy && !destination) continue;
+    keys[step.id] = consentStepKey(policy, destination);
+  }
+  return keys;
+}
+
+/**
+ * The answer when the terms have changed since they were shown: the interaction is asked to be
+ * resumed with a contract prepared anew (a new revision keeps every Worker from serving one
+ * prepared before).
+ */
+async function consentChangedResponse(
+  c: AuthContext,
+  db: DatabaseAdapter,
+  tenantId: string,
+  interaction: FlowInteractionRow
+) {
+  await db.execute(
+    `UPDATE flow_interactions SET context_json = ?, updated_at = ? WHERE tenant_id = ? AND id = ?`,
+    [
+      JSON.stringify({
+        ...parseJsonObject(interaction.context_json),
+        contract_revision: crypto.randomUUID(),
+      }),
+      nowSeconds(),
+      tenantId,
+      interaction.id,
+    ]
   );
+  return runtimeError(
+    c,
+    400,
+    'consent_changed',
+    'The terms changed after they were shown; they are asked for again',
+    'AR_FLOW_CONSENT_VERSION_CHANGED',
+    'recoverable',
+    'retry_step',
+    interaction.id
+  );
+}
 
-  return { ok: true, userId };
+/**
+ * Records the consent given at method selections before anyone was signed in, for the user who now
+ * is (the session the authorization request accepts), in the versions it was given for. If a
+ * statement has a newer version by now, or the policy's statements changed, nothing is recorded
+ * and the consent is asked for again. Each record is made once (see recordRuntimeConsent).
+ */
+async function recordHeldRuntimeConsent(input: {
+  c: AuthContext;
+  db: DatabaseAdapter;
+  tenantId: string;
+  interaction: FlowInteractionRow;
+  runtime: FlowRuntimeContract;
+  requestContext: FlowRequestContext;
+  session: Session;
+}): Promise<{ response?: Response }> {
+  const rows = await input.db.query<{ id: string; step_id: string; state_json: string | null }>(
+    `SELECT id, step_id, state_json
+       FROM flow_interaction_steps
+      WHERE tenant_id = ? AND interaction_id = ? AND state = 'completed'
+        AND state_json LIKE '%"held_consent"%'`,
+    [input.tenantId, input.interaction.id]
+  );
+  for (const row of rows ?? []) {
+    const state = parseJsonRecord(row.state_json);
+    const held = state.held_consent as HeldRuntimeConsent | undefined;
+    const step = input.runtime.ui.steps.find((candidate) => candidate.id === row.step_id);
+    if (!held?.policy || !held.decisions || !step) continue;
+
+    const current = await resolveRuntimeConsentPolicyContent(
+      input.db,
+      input.tenantId,
+      held.policy.id,
+      input.requestContext
+    );
+    const currentDestination = readRuntimeDestinationFieldConsent(step);
+    // What was accepted must still be what is asked: the same statements in the same versions and
+    // terms (required or not, how they are agreed to), and, judged by what is asked now, nothing
+    // required that was not given.
+    if (
+      !current ||
+      consentPresentationKey(current) !== consentPresentationKey(held.policy) ||
+      current.items.some((item) => {
+        const decision = held.decisions[item.statement_id];
+        return (
+          !decision ||
+          !consentItemInputSatisfied(item, decision) ||
+          // A choice that is no longer offered is not one that can be recorded.
+          (decision.selectedValue !== null &&
+            !consentOptionValueSet(item).has(decision.selectedValue))
+        );
+      }) ||
+      (held.destination &&
+        (!currentDestination ||
+          destinationPresentationKey(currentDestination) !==
+            destinationPresentationKey(held.destination.consent) ||
+          currentDestination.fields.some(
+            (field) => field.required && !held.destination?.selected_fields.includes(field.key)
+          )))
+    ) {
+      // The consent is asked for again: the interaction goes back to the step that took it (the
+      // signed-in browser resumes there), with nothing held.
+      await input.db.transaction(async (tx) => {
+        await tx.execute(
+          `UPDATE flow_interaction_steps
+              SET state = 'waiting_input', selected_handle = NULL, state_json = NULL, updated_at = ?
+            WHERE tenant_id = ? AND id = ?`,
+          [nowSeconds(), input.tenantId, row.id]
+        );
+        await tx.execute(
+          `UPDATE flow_interactions
+              SET state = 'active', current_node_id = ?, current_step_id = ?, updated_at = ?,
+                  completed_at = NULL
+            WHERE tenant_id = ? AND id = ?`,
+          [step.source_node_id, step.id, nowSeconds(), input.tenantId, input.interaction.id]
+        );
+      });
+      return {
+        response: await consentChangedResponse(
+          input.c,
+          input.db,
+          input.tenantId,
+          input.interaction
+        ),
+      };
+    }
+
+    // What was recorded is not recorded again, but the conditions above are judged every time.
+    if (state.held_consent_recorded === true) continue;
+
+    const recorded = await recordRuntimeConsent({
+      c: input.c,
+      db: input.db,
+      tenantId: input.tenantId,
+      interaction: input.interaction,
+      step,
+      requestContext: input.requestContext,
+      consent: held,
+      userId: input.session.userId,
+    });
+    if (!recorded.ok) return { response: recorded.response };
+    await input.db.execute(
+      `UPDATE flow_interaction_steps SET state_json = ?, updated_at = ?
+        WHERE tenant_id = ? AND id = ?`,
+      [
+        JSON.stringify({ ...state, held_consent_recorded: true }),
+        nowSeconds(),
+        input.tenantId,
+        row.id,
+      ]
+    );
+  }
+  return {};
 }
 
 export async function cleanupExpiredFlowInteractions(
@@ -4047,12 +4586,40 @@ async function resumeInteraction(
   }
 
   const storedRequestContext = getRequestContextFromInteraction(interaction);
+  // An authorization request that is gone is found out when the interaction is picked up again, not
+  // when the user has signed in to no purpose. (One that was continued and left its confirmation is
+  // not gone: its result can still be had.)
+  if (storedRequestContext.authorization_challenge_id) {
+    let freshness: Awaited<ReturnType<typeof readAuthorizationChallengeFreshness>>;
+    try {
+      freshness = await readAuthorizationChallengeFreshness(
+        c.env,
+        tenantId,
+        storedRequestContext.authorization_challenge_id
+      );
+    } catch {
+      return authorizationRequestUnavailable(c, interaction.id);
+    }
+    if (freshness?.gone) {
+      return runtimeError(
+        c,
+        400,
+        authorizationRequestExpired().error,
+        authorizationRequestExpired().message ?? '',
+        'AR_FLOW_AUTH_REQUEST_EXPIRED',
+        'restart_required',
+        'restart_interaction',
+        interaction.id
+      );
+    }
+  }
   const requestContext = requestedLocale
     ? { ...storedRequestContext, locale: requestedLocale }
     : storedRequestContext;
-  const nextContextJson = requestedLocale
-    ? JSON.stringify({ ...parseJsonObject(interaction.context_json), locale: requestedLocale })
-    : interaction.context_json;
+  const nextContextBase = {
+    ...parseJsonObject(interaction.context_json),
+    ...(requestedLocale ? { locale: requestedLocale } : {}),
+  };
   const assignment: FlowAssignmentRow = {
     flow_id: interaction.flow_id,
     flow_kind: runtime.flow_kind,
@@ -4083,7 +4650,15 @@ async function resumeInteraction(
     `UPDATE flow_interactions
 			 SET context_json = ?, contract_hash = ?, signature = ?, updated_at = ?
 		 WHERE tenant_id = ? AND id = ?`,
-    [nextContextJson, contractHash, signature, now, tenantId, interaction.id]
+    [
+      // What this contract asks consent to is what the browser is shown from now on.
+      JSON.stringify({ ...nextContextBase, consent_presented: consentPresentedKeys(contract) }),
+      contractHash,
+      signature,
+      now,
+      tenantId,
+      interaction.id,
+    ]
   );
 
   return c.json({
@@ -4263,6 +4838,13 @@ export async function loginRuntimeInteractionStartHandler(c: AuthContext) {
   const auditEventId = generateId();
   const now = nowSeconds();
   const expiresAt = now + FLOW_RUNTIME_INTERACTION_TTL_SECONDS;
+  // The start to the millisecond (created_at has seconds only): a registration is answered only by
+  // a sign-in made after it.
+  const storedContextJson = JSON.stringify({
+    ...requestContext,
+    started_at_ms: Date.now(),
+    consent_presented: consentPresentedKeys(runtime),
+  });
   const signature = await timeRuntimeStartSpan(timing, 'sign_contract', () =>
     signContract({
       interactionId,
@@ -4289,7 +4871,7 @@ export async function loginRuntimeInteractionStartHandler(c: AuthContext) {
           target.samlSpId,
           firstStep.source_node_id,
           firstStep.id,
-          JSON.stringify(requestContext),
+          storedContextJson,
           contractHash,
           signature,
           expiresAt,
@@ -4326,7 +4908,7 @@ export async function loginRuntimeInteractionStartHandler(c: AuthContext) {
     state: 'active',
     current_node_id: firstStep.source_node_id,
     current_step_id: firstStep.id,
-    context_json: JSON.stringify(requestContext),
+    context_json: storedContextJson,
     contract_hash: contractHash,
     signature,
     expires_at: expiresAt,
@@ -4370,6 +4952,9 @@ export async function loginRuntimeInteractionStartHandler(c: AuthContext) {
       completeTerminalStep: false,
     })
   );
+  if (initialDisplayResolution.unavailable) {
+    return authorizationRequestUnavailable(c, interactionId);
+  }
   if (initialDisplayResolution.terminalError) {
     await insertAuditEvent(db, tenantId, startedInteraction, {
       eventType: 'flow.interaction.failed',
@@ -4934,7 +5519,10 @@ export async function loginRuntimeInteractionSubmitHandler(c: AuthContext) {
   const stepState = await db.queryOne<FlowInteractionStepRow>(
     `SELECT id, interaction_id, node_id, step_id, state, selected_handle, state_json
      FROM flow_interaction_steps
-     WHERE tenant_id = ? AND interaction_id = ? AND node_id = ? AND step_id = ?`,
+     WHERE tenant_id = ? AND interaction_id = ? AND node_id = ? AND step_id = ?
+     ORDER BY CASE WHEN state IN ('pending', 'waiting_input', 'processing') THEN 0 ELSE 1 END,
+              created_at DESC
+     LIMIT 1`,
     [tenantId, interactionId, interaction.current_node_id, interaction.current_step_id]
   );
   if (!stepState || stepState.state === 'completed' || stepState.state === 'failed') {
@@ -5017,6 +5605,7 @@ export async function loginRuntimeInteractionSubmitHandler(c: AuthContext) {
     userId?: string | null;
     terminalError?: { error: string; message?: string };
     errorCode?: string;
+    unavailable?: true;
   };
   if (current.step.component === 'condition') {
     branchResolution = await resolveConditionSelectedHandle({
@@ -5027,11 +5616,19 @@ export async function loginRuntimeInteractionSubmitHandler(c: AuthContext) {
       step: current.step,
     });
   } else if (current.step.component === 'session_check') {
-    branchResolution = await resolveSessionCheckSelectedHandle(c, tenantId, requestContext);
+    branchResolution = await resolveSessionCheckSelectedHandle(
+      c,
+      tenantId,
+      requestContext,
+      sessionOptionsForRuntime(runtime, interaction)
+    );
   } else {
     branchResolution = { selectedHandle };
   }
 
+  if (branchResolution.unavailable) {
+    return authorizationRequestUnavailable(c, interactionId);
+  }
   if (branchResolution.terminalError) {
     await insertAuditEvent(db, tenantId, interaction, {
       eventType: 'flow.interaction.failed',
@@ -5123,6 +5720,50 @@ export async function loginRuntimeInteractionSubmitHandler(c: AuthContext) {
     );
   }
 
+  const sessionForChallenge = await resolveSessionForChallenge(
+    c,
+    tenantId,
+    requestContext.authorization_challenge_id,
+    { ...sessionOptionsForRuntime(runtime, interaction), judgeChallengeWithoutSession: true }
+  );
+  if (sessionForChallenge.unavailable) {
+    // Nothing is recorded yet: the browser may submit this step again.
+    return authorizationRequestUnavailable(c, interactionId);
+  }
+  if (sessionForChallenge.expired) {
+    // Signing in again does not answer a request that is gone, so this is not a request to sign in.
+    return runtimeError(
+      c,
+      400,
+      authorizationRequestExpired().error,
+      authorizationRequestExpired().message ?? '',
+      'AR_FLOW_AUTH_REQUEST_EXPIRED',
+      'restart_required',
+      'restart_interaction',
+      interactionId
+    );
+  }
+  const challengeSession = sessionForChallenge.session;
+
+  // A login or registration is complete only for someone signed in (with a session the
+  // authorization request accepts). Until then the interaction waits at its completion step: the
+  // method is chosen first (an emailed code, an external provider) and the proof comes later, so
+  // the completion is submitted again, by the browser, once it exists.
+  const completionNeedsSession =
+    (runtime.flow_kind === 'login' || runtime.flow_kind === 'registration') && !challengeSession;
+  if (current.step.component === 'completion' && completionNeedsSession) {
+    return runtimeError(
+      c,
+      401,
+      'authentication_required',
+      'Sign in to continue',
+      'AR_FLOW_COMPLETION_AUTH_REQUIRED',
+      'reauthentication_required',
+      'reauthenticate',
+      interactionId
+    );
+  }
+
   const consentResult = await persistRuntimeConsentStep({
     c,
     db,
@@ -5130,6 +5771,7 @@ export async function loginRuntimeInteractionSubmitHandler(c: AuthContext) {
     interaction,
     step: current.step,
     submitInput: body.input,
+    session: challengeSession,
   });
   if (!consentResult.ok) {
     return (
@@ -5155,14 +5797,13 @@ export async function loginRuntimeInteractionSubmitHandler(c: AuthContext) {
       nextResolution.step?.component === 'consent_policy' ||
       nextResolution.step?.component === 'completion')
   ) {
-    resolvedUserId = await getCurrentSessionUserId(c, tenantId);
-    if (resolvedUserId) {
-      await db.execute(
-        `UPDATE flow_interactions
-           SET user_id = COALESCE(user_id, ?), updated_at = ?
-         WHERE tenant_id = ? AND id = ?`,
-        [resolvedUserId, now, tenantId, interactionId]
-      );
+    // Not a session the challenge would refuse: that one is not this sign-in.
+    resolvedUserId = challengeSession?.userId ?? null;
+    if (
+      resolvedUserId &&
+      !(await claimInteractionUser(db, tenantId, interaction, resolvedUserId))
+    ) {
+      return sessionUserMismatch(c, interactionId);
     }
   }
 
@@ -5184,7 +5825,12 @@ export async function loginRuntimeInteractionSubmitHandler(c: AuthContext) {
           requestContext,
           userId: resolvedUserId ?? null,
           initialStep: nextResolution.step,
+          // Without a session the completion is not reached: it waits as the current step.
+          ...(completionNeedsSession ? { completeTerminalStep: false } : {}),
         });
+  if (visibleStepResolution.unavailable) {
+    return authorizationRequestUnavailable(c, interactionId);
+  }
   if (visibleStepResolution.terminalError) {
     await insertAuditEvent(db, tenantId, interaction, {
       eventType: 'flow.interaction.failed',
@@ -5226,13 +5872,12 @@ export async function loginRuntimeInteractionSubmitHandler(c: AuthContext) {
     );
   }
   resolvedUserId = visibleStepResolution.userId ?? resolvedUserId;
-  if (visibleStepResolution.userId && visibleStepResolution.userId !== interaction.user_id) {
-    await db.execute(
-      `UPDATE flow_interactions
-         SET user_id = COALESCE(user_id, ?), updated_at = ?
-       WHERE tenant_id = ? AND id = ?`,
-      [visibleStepResolution.userId, now, tenantId, interactionId]
-    );
+  if (
+    visibleStepResolution.userId &&
+    visibleStepResolution.userId !== interaction.user_id &&
+    !(await claimInteractionUser(db, tenantId, interaction, visibleStepResolution.userId))
+  ) {
+    return sessionUserMismatch(c, interactionId);
   }
 
   const nextStep = visibleStepResolution.step;
@@ -5241,6 +5886,46 @@ export async function loginRuntimeInteractionSubmitHandler(c: AuthContext) {
   const completed = nextStep === null;
   const nextState = completed ? 'completed' : 'active';
   const completedAt = completed ? now : null;
+
+  // Whatever way the Flow reaches its end (the completion submitted, or a step before it with a
+  // session already there), the same happens before anything is saved as complete: the consent
+  // held from the method selection is recorded, and the authorization request is continued. If
+  // either fails the interaction stays open, nothing is audited as a success, and the browser can
+  // submit again.
+  let completedProtocolRedirect: { redirectUrl?: string; response?: Response } = {};
+  if (completed) {
+    if (challengeSession) {
+      // Whatever was recorded before, the interaction ends for the user whose session ends it, and
+      // for that user alone: the claim is made (and the user checked) here, every time.
+      if (!(await claimInteractionUser(db, tenantId, interaction, challengeSession.userId))) {
+        return sessionUserMismatch(c, interactionId);
+      }
+      resolvedUserId = challengeSession.userId;
+      const heldConsent = await recordHeldRuntimeConsent({
+        c,
+        db,
+        tenantId,
+        interaction,
+        runtime,
+        requestContext,
+        session: challengeSession,
+      });
+      if (heldConsent.response) return heldConsent.response;
+    }
+    completedProtocolRedirect = await resolveCompletedProtocolRedirect({
+      c,
+      db,
+      tenantId,
+      interaction,
+      runtime,
+      requestContext,
+      resolvedUserId,
+      session: challengeSession,
+    });
+    if (completedProtocolRedirect.response) {
+      return completedProtocolRedirect.response;
+    }
+  }
 
   await db.transaction(async (tx) => {
     await tx.execute(
@@ -5253,6 +5938,7 @@ export async function loginRuntimeInteractionSubmitHandler(c: AuthContext) {
           selected_handle: effectiveSelectedHandle,
           submitted_handle: selectedHandle,
           completed_at: now,
+          ...(consentResult.held ? { held_consent: consentResult.held } : {}),
         }),
         now,
         tenantId,
@@ -5294,15 +5980,20 @@ export async function loginRuntimeInteractionSubmitHandler(c: AuthContext) {
     }
   });
 
-  await insertAuditEvent(db, tenantId, interaction, {
-    eventType: eventTypeForCompletedStep(current.step),
-    result: 'success',
-    nodeId: current.step.source_node_id,
-    branchHandleId: effectiveSelectedHandle,
-    userId: resolvedUserId,
-  });
+  // The audit of a step that is saved is written without being waited for, and its failure is
+  // logged, not answered: the step is saved and, if it was the last, so is the continuation, which
+  // only this response can hand to the browser.
+  const completionAudit: RuntimeAuditEventInput[] = [
+    {
+      eventType: eventTypeForCompletedStep(current.step),
+      result: 'success',
+      nodeId: current.step.source_node_id,
+      branchHandleId: effectiveSelectedHandle,
+      userId: resolvedUserId,
+    },
+  ];
   if (nextStep) {
-    await insertAuditEvent(db, tenantId, interaction, {
+    completionAudit.push({
       eventType: 'flow.node.entered',
       result: 'success',
       nodeId: nextStep.source_node_id,
@@ -5310,7 +6001,7 @@ export async function loginRuntimeInteractionSubmitHandler(c: AuthContext) {
     });
   } else {
     if (current.step.component !== 'completion') {
-      await insertAuditEvent(db, tenantId, interaction, {
+      completionAudit.push({
         eventType: 'flow.output.completed',
         result: 'success',
         nodeId: outputStep.source_node_id,
@@ -5318,7 +6009,7 @@ export async function loginRuntimeInteractionSubmitHandler(c: AuthContext) {
         userId: resolvedUserId,
       });
     }
-    await insertAuditEvent(db, tenantId, interaction, {
+    completionAudit.push({
       eventType: 'flow.interaction.completed',
       result: 'success',
       nodeId: current.step.source_node_id,
@@ -5326,21 +6017,14 @@ export async function loginRuntimeInteractionSubmitHandler(c: AuthContext) {
       userId: resolvedUserId,
     });
   }
-
-  const completedProtocolRedirect = completed
-    ? await resolveCompletedProtocolRedirect({
-        c,
-        db,
-        tenantId,
-        interaction,
-        runtime,
-        requestContext,
-        resolvedUserId,
-      })
-    : {};
-  if (completedProtocolRedirect.response) {
-    return completedProtocolRedirect.response;
-  }
+  await scheduleRuntimeAuditEvents(
+    c,
+    db,
+    tenantId,
+    interaction,
+    completionAudit,
+    'submit_completion'
+  );
 
   getLogger(c)
     .module('LOGIN-RUNTIME-FLOW')

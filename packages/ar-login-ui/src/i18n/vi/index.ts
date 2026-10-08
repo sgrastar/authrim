@@ -439,6 +439,7 @@ const vi = createTranslation({
 	ciba_errorConsentWithdrawn:
 		'Yêu cầu này được tạo trước khi bạn thu hồi quyền truy cập của ứng dụng này. Hãy bắt đầu lại từ ứng dụng.',
 	ciba_errorRequestGone: 'Yêu cầu này đã hết hạn hoặc đã được phản hồi.',
+	error_authorizationRequestExpired: 'Yêu cầu đăng nhập đã hết hạn. Hãy bắt đầu lại từ ứng dụng.',
 	ciba_errorTryAgain:
 		'Hiện không thể lưu quyết định của bạn và chưa có gì thay đổi. Hãy thử lại sau giây lát.',
 	ciba_errorTooManyAttempts: 'Quá nhiều lần thử. Hãy đợi một lúc rồi thử lại.',

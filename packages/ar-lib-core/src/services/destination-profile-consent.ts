@@ -530,7 +530,7 @@ async function loadSelectedDestinationFields(input: {
         AND decision IN ('accepted', 'selected', 'once', 'always')
         AND status = 'active'
         AND (expires_at IS NULL OR expires_at > ?)
-      ORDER BY created_at DESC
+      ORDER BY created_at DESC, id DESC
       LIMIT 1`,
     [
       input.tenantId,

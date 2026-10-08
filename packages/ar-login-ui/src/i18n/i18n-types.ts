@@ -1646,6 +1646,10 @@ type RootTranslation = {
 	 */
 	ciba_errorRequestGone: string
 	/**
+	 * T​h​e​ ​s​i​g​n​-​i​n​ ​r​e​q​u​e​s​t​ ​h​a​s​ ​e​x​p​i​r​e​d​.​ ​S​t​a​r​t​ ​a​g​a​i​n​ ​f​r​o​m​ ​t​h​e​ ​a​p​p​.
+	 */
+	error_authorizationRequestExpired: string
+	/**
 	 * Y​o​u​r​ ​d​e​c​i​s​i​o​n​ ​c​o​u​l​d​n​'​t​ ​b​e​ ​s​a​v​e​d​ ​r​i​g​h​t​ ​n​o​w​,​ ​a​n​d​ ​n​o​t​h​i​n​g​ ​h​a​s​ ​c​h​a​n​g​e​d​.​ ​T​r​y​ ​a​g​a​i​n​ ​i​n​ ​a​ ​m​o​m​e​n​t​.
 	 */
 	ciba_errorTryAgain: string
@@ -3397,6 +3401,10 @@ export type TranslationFunctions = {
 	 * This request has expired or has already been answered.
 	 */
 	ciba_errorRequestGone: () => LocalizedString
+	/**
+	 * The sign-in request has expired. Start again from the app.
+	 */
+	error_authorizationRequestExpired: () => LocalizedString
 	/**
 	 * Your decision couldn't be saved right now, and nothing has changed. Try again in a moment.
 	 */

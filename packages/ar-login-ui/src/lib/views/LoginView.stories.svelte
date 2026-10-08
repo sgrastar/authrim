@@ -7,10 +7,12 @@
 	import AuthPageShell from '$lib/components/AuthPageShell.svelte';
 	import LoginUIFrame from '$lib/storybook/LoginUIFrame.svelte';
 	import {
+		blocks,
 		consentPolicy,
 		defaultLoginScreen,
 		destinationFieldConsent,
 		externalProviders as sampleProviders,
+		screenOf,
 		type SampleScreen
 	} from '$lib/storybook/fixtures';
 	import type {
@@ -210,6 +212,111 @@
 <Story
 	name="Authenticator code requested"
 	args={{ methods: { totp: true, any: true }, totpCodeRequested: true }}
+>
+	{#snippet template(args)}{@render page(args)}{/snippet}
+</Story>
+
+<Story
+	name="Runtime screen, authenticator code requested"
+	args={{
+		legacyHeading: false,
+		legacyMethods: false,
+		runtimeStep: screenStep(defaultLoginScreen),
+		// The default Flow has no step of its own for the code: it is entered on the selection's screen.
+		runtime: runtime({ fieldValues: { totp_code_requested: 'true' } })
+	}}
+	play={async ({ args, canvasElement }) => {
+		const canvas = within(canvasElement);
+		// The code input is on the screen, and verifying it is reported for the authenticator app.
+		await expect(canvasElement.querySelector('.runtime-code-input-widget')).not.toBeNull();
+		await userEvent.click(canvas.getByRole('button', { name: get(LL).login_totpVerify() }));
+		await expect(args.onRuntimeAuthAction).toHaveBeenCalledWith('totp', 'verify_code');
+	}}
+>
+	{#snippet template(args)}{@render page(args)}{/snippet}
+</Story>
+
+<Story
+	name="Runtime screen, authenticator code requested beside an emailed-code input"
+	args={{
+		legacyHeading: false,
+		legacyMethods: false,
+		// A selection whose only code input is fixed to the emailed code.
+		runtimeStep: screenStep(
+			screenOf(
+				[blocks.heading('Sign in'), blocks.totp(), blocks.codeInput('mail_otp')],
+				{ canvas_layout: 'narrow' },
+				'login'
+			)
+		),
+		runtime: runtime({ fieldValues: { totp_code_requested: 'true' } })
+	}}
+	play={async ({ args, canvasElement }) => {
+		const canvas = within(canvasElement);
+		// The authenticator code has an input of its own, and verifying it goes to the authenticator app.
+		await userEvent.click(canvas.getByRole('button', { name: get(LL).login_totpVerify() }));
+		await expect(args.onRuntimeAuthAction).toHaveBeenCalledWith('totp', 'verify_code');
+	}}
+>
+	{#snippet template(args)}{@render page(args)}{/snippet}
+</Story>
+
+<Story
+	name="Runtime screen, authenticator code requested, screen ends in a row that is not shown"
+	args={{
+		legacyHeading: false,
+		legacyMethods: false,
+		// The screen's own code input is in a trailing row that is not shown; the one that is added
+		// for the authenticator app must be in a part of the screen that is.
+		runtimeStep: screenStep(
+			screenOf(
+				[
+					blocks.heading('Sign in'),
+					blocks.totp(),
+					blocks.when(blocks.row(1, 'hidden-row'), 'hidden'),
+					blocks.codeInput('auto')
+				],
+				{ canvas_layout: 'narrow' },
+				'login'
+			)
+		),
+		runtime: runtime({ fieldValues: { totp_code_requested: 'true' } })
+	}}
+	play={async ({ args, canvasElement }) => {
+		const canvas = within(canvasElement);
+		await userEvent.click(canvas.getByRole('button', { name: get(LL).login_totpVerify() }));
+		await expect(args.onRuntimeAuthAction).toHaveBeenCalledWith('totp', 'verify_code');
+	}}
+>
+	{#snippet template(args)}{@render page(args)}{/snippet}
+</Story>
+
+<Story
+	name="Runtime screen, authenticator code requested, screen's own input depends on a method that is off"
+	args={{
+		legacyHeading: false,
+		legacyMethods: false,
+		runtimeStep: screenStep(
+			screenOf(
+				[
+					blocks.heading('Sign in'),
+					blocks.totp(),
+					blocks.when(blocks.codeInput('auto'), { feature: 'external_idp' })
+				],
+				{ canvas_layout: 'narrow' },
+				'login'
+			)
+		),
+		runtime: runtime({
+			fieldValues: { totp_code_requested: 'true' },
+			methodAvailability: { passkey: true, mail_otp: true, totp: true, external_idp: false }
+		})
+	}}
+	play={async ({ args, canvasElement }) => {
+		const canvas = within(canvasElement);
+		await userEvent.click(canvas.getByRole('button', { name: get(LL).login_totpVerify() }));
+		await expect(args.onRuntimeAuthAction).toHaveBeenCalledWith('totp', 'verify_code');
+	}}
 >
 	{#snippet template(args)}{@render page(args)}{/snippet}
 </Story>
