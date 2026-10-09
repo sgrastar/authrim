@@ -264,7 +264,23 @@ export async function filterOidcClaimsByDestinationConsent(input: {
   clientId: string;
   profileId: string;
   surface?: 'id_token' | 'userinfo';
+  /**
+   * Surfaces whose fields are released on `surface` as well. For a response whose ID token is the
+   * only place the claims can go (response_type=id_token has no access token to call UserInfo
+   * with), the fields listed for `userinfo` are released in it.
+   */
+  alsoSurfaces?: ReadonlyArray<'id_token' | 'userinfo'>;
   grantedScopes?: string[];
+  /**
+   * Claims the caller has already authorized for this request, with the value it authorized (OIDC
+   * Core 5.4 scope, claims parameter, client policy). The OIDC scope that releases a standard
+   * claim (email for email, profile for name, ...) was judged there, so for these claims it counts
+   * as granted. Any other scope the field lists (a scope of the profile's own, say) still has to
+   * be granted, and so does every other rule of the profile (the field is listed, its surface, the
+   * user's selection). A claim the mapping adds, or whose value the mapping replaced, is not among
+   * them: the caller authorized another value, so it is held to the scopes.
+   */
+  authorizedClaims?: ReadonlySet<string>;
   claims: Record<string, unknown>;
 }): Promise<Record<string, unknown>> {
   const descriptor = await loadDestinationProfileConsentDescriptor(
@@ -290,10 +306,24 @@ export async function filterOidcClaimsByDestinationConsent(input: {
     // `sub` is an OIDC protocol invariant. Legacy profiles may still carry narrower
     // surface or scope metadata, but runtime release must never make it conditional.
     if (field.key === 'sub') return true;
-    if (input.surface && field.surfaces.length > 0 && !field.surfaces.includes(input.surface)) {
+    if (
+      input.surface &&
+      field.surfaces.length > 0 &&
+      ![input.surface, ...(input.alsoSurfaces ?? [])].some((surface) =>
+        field.surfaces.includes(surface)
+      )
+    ) {
       return false;
     }
-    return isOidcFieldApplicableToScopes(field, grantedScopes);
+    const authorizedScope = input.authorizedClaims?.has(field.key)
+      ? OIDC_STANDARD_CLAIM_SCOPE[field.key]
+      : undefined;
+    return isOidcFieldApplicableToScopes(
+      field,
+      authorizedScope && grantedScopes
+        ? new Set([...grantedScopes, authorizedScope])
+        : grantedScopes
+    );
   });
   const profileFields = new Map(applicableFields.map((field) => [field.key, field]));
   const filtered = Object.fromEntries(

@@ -103,6 +103,24 @@ describe('ID token release', () => {
       ]);
     });
 
+    it('tells the mapping which claims the endpoint authorized and that the ID token is the only carrier', async () => {
+      const { ctx } = context();
+      mockApplyOIDCIdentityMapping.mockResolvedValue({ claims: baseClaims, binding: null });
+
+      await mapIDTokenClaims(ctx, baseClaims, ['openid'], {
+        authorizedByRequest: true,
+        userInfoClaims: true,
+      });
+
+      expect(mockApplyOIDCIdentityMapping).toHaveBeenCalledWith(
+        expect.objectContaining({
+          destinationSurface: 'id_token',
+          claimsAuthorizedByRequest: true,
+          userInfoClaimsInIdToken: true,
+        })
+      );
+    });
+
     it('reports a mapping the configuration makes unusable as invalid_client', async () => {
       const { ctx, log } = context();
       mockApplyOIDCIdentityMapping.mockRejectedValue(

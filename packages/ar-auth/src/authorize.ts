@@ -5059,6 +5059,10 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
           claims: idTokenClaims,
           grantedScopes: scopes.filter(Boolean),
           grant: { userId: sub, consentGeneration: consentWithdrawal.generation },
+          // The scope and claims-parameter claims above were authorized for this request already
+          // (evaluateClaimsForTarget), and with no access token the ID token is the only place
+          // the app can get them: the profile's UserInfo-only fields are released in it.
+          carries: { authorizedByRequest: true, userInfoClaims: isIdTokenOnly },
         }
       );
       if (!released.ok) {

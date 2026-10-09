@@ -73,13 +73,33 @@ export interface IDTokenReleaseContext {
 }
 
 /**
+ * What the endpoint has already decided about the claims it hands over, when it assembles the
+ * ID token's claims itself. The token endpoint's ID token carries only the protocol claims (the
+ * scope claims are UserInfo's) and leaves this unset.
+ */
+export interface IDTokenClaimsCarried {
+  /**
+   * The standard claims in `claims` were authorized against the request (scopes, claims
+   * parameter, client policy), so the app's Destination Profile does not ask them for their scope
+   * again.
+   */
+  authorizedByRequest?: boolean;
+  /**
+   * The ID token is the only carrier of the claims (response_type=id_token): the claims the
+   * profile lists for UserInfo are released in it.
+   */
+  userInfoClaims?: boolean;
+}
+
+/**
  * Apply the app's identity mapping to an ID token's claims (its sub is the user's id). The mapping
  * reads the user's attributes, not only the claims this ID token happens to carry.
  */
 export async function mapIDTokenClaims(
   ctx: IDTokenReleaseContext,
   claims: Record<string, unknown>,
-  grantedScopes?: string[]
+  grantedScopes?: string[],
+  carries?: IDTokenClaimsCarried
 ): Promise<IDTokenReleaseResult> {
   const { clientId } = ctx;
   const userId = typeof claims.sub === 'string' ? claims.sub : '';
@@ -93,6 +113,8 @@ export async function mapIDTokenClaims(
       selector: ctx.clientMetadata.identity_mapping,
       destinationSurface: 'id_token',
       grantedScopes,
+      ...(carries?.authorizedByRequest ? { claimsAuthorizedByRequest: true } : {}),
+      ...(carries?.userInfoClaims ? { userInfoClaimsInIdToken: true } : {}),
       claims,
       ...(userId ? { sourceAttributes: (names) => ctx.loadUserAttributes(userId, names) } : {}),
     });
@@ -224,9 +246,14 @@ export async function idTokenGrantClaims(
  */
 export async function releaseIDTokenClaims(
   ctx: IDTokenReleaseContext,
-  input: { claims: Record<string, unknown>; grantedScopes?: string[]; grant: IDTokenGrant }
+  input: {
+    claims: Record<string, unknown>;
+    grantedScopes?: string[];
+    grant: IDTokenGrant;
+    carries?: IDTokenClaimsCarried;
+  }
 ): Promise<IDTokenReleaseResult> {
-  const mapped = await mapIDTokenClaims(ctx, input.claims, input.grantedScopes);
+  const mapped = await mapIDTokenClaims(ctx, input.claims, input.grantedScopes, input.carries);
   if (!mapped.ok) return mapped;
   const released = await enforceIDTokenAttributeRelease(ctx, input.grant.userId, mapped.claims);
   if (!released.ok) return released;
