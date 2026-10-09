@@ -77,6 +77,13 @@ import {
 } from '../../core/paths.js';
 import { saveMasterWranglerConfigs, syncWranglerConfigs } from '../../core/wrangler-sync.js';
 import { buildWorkerDeploymentResourceIds } from '../../core/deployment-resource-ids.js';
+import { refreshWorkerDeploymentArtifacts } from '../../core/worker-deployment-artifacts.js';
+import {
+  createControlCoordinatorDeployer,
+  isControlRecordedInLock,
+  runControlRolloutHandoffSequence,
+  shouldDeployControlBeforeRolloutHandoff,
+} from '../../core/release-control-first.js';
 import {
   compileControlWorkerInventoryFromArtifacts,
   registerControlWorkerInventory,
@@ -1506,6 +1513,14 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
     }
   }
 
+  // A resumed update whose handoff row already exists keeps the earlier order (see helper docs).
+  const deployControlFirst = shouldDeployControlBeforeRolloutHandoff({
+    componentsToUpdate,
+    controlManagedStreamIds,
+    handoffAlreadyCreated: Boolean(resumableRelease?.controlOperationId),
+    controlAlreadyDeployed: isControlRecordedInLock(workingLock),
+  });
+
   // Confirm update
   if (!options.yes) {
     const confirmed = await confirm({
@@ -1541,6 +1556,13 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
     for (const target of schemaPlan.automaticTargets) {
       console.log(
         `  • schema ${target.target.binding ?? target.target.id}: ${target.target.streamId}`
+      );
+    }
+    if (deployControlFirst) {
+      console.log(
+        chalk.gray(
+          '\n  Order: Control schema → deploy ar-control → publish migration release → hand off managed databases to Control → remaining schemas → other Workers.'
+        )
       );
     }
     console.log(chalk.gray('\nNo changes made.'));
@@ -1751,7 +1773,257 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
 
     const controlDatabase = workingLock.d1.CONTROL_DB;
     let migrationReleaseArtifact: MigrationReleaseArtifactPlan | undefined;
-    if (hasReleaseSchemaDelta || priorControlManagedStreamIds.length > 0) {
+
+    const deploymentGroups = splitReleaseDeploymentForControlCoordinator(componentsToUpdate);
+    // Worker deployment state shared by the early ar-control deployment and the regular
+    // deployment below. Ownership, the token checkpoint and the build are created on first use
+    // and reused, so ar-control is never prepared, built or deployed twice. Deploy options are
+    // not shared: each stage builds its own from the lock and keys as they are at that point.
+    let workerOwnershipState: Awaited<ReturnType<typeof prepareManagedWorkerScriptOwnership>>;
+    const ensureWorkerOwnership = async (): Promise<typeof workerOwnershipState> => {
+      if (workerOwnershipState) return workerOwnershipState;
+      const prepared = await prepareManagedWorkerScriptOwnership({
+        lock: workingLock,
+        lockPath,
+        // Ownership checkpoints are written during later deployments, after workingLock has been
+        // replaced several times; they must land on (and save) the lock as it is then.
+        currentLock: () => workingLock,
+        targets: [
+          ...componentsToUpdate.map((component) => ({
+            component,
+            workerName: getWorkerName(env, component),
+          })),
+          ...uiComponentsToUpdate.map((component) => ({
+            component,
+            workerName: `${env}-${component}`,
+          })),
+        ],
+      });
+      if (prepared.changed) {
+        workingLock = prepared.lock;
+        await saveLockFile(workingLock, lockPath);
+      }
+      workerOwnershipState = prepared;
+      return prepared;
+    };
+    let controlTokenGenerationCheckpointState:
+      | { value: Awaited<ReturnType<typeof checkpointReadyControlTokenGenerationForRedeploy>> }
+      | undefined;
+    const ensureControlTokenGenerationCheckpoint = async () => {
+      controlTokenGenerationCheckpointState ??= {
+        value:
+          !options.dryRun && componentsToUpdate.includes('ar-control')
+            ? await checkpointReadyControlTokenGenerationForRedeploy({
+                environmentId: env,
+                rootDir: baseDir,
+                config,
+                lock: workingLock,
+              })
+            : null,
+      };
+      return controlTokenGenerationCheckpointState.value;
+    };
+    let packagesBuilt = false;
+    const buildPackagesOnce = async (): Promise<void> => {
+      if (options.skipBuild || packagesBuilt) return;
+      const buildSpinner = ora('Building packages...').start();
+
+      const buildResult = await buildApiPackages({
+        rootDir: resolve(baseDir),
+        onProgress: (msg) => {
+          buildSpinner.text = msg;
+        },
+      });
+
+      if (!buildResult.success) {
+        buildSpinner.fail('Build failed');
+        console.error(chalk.red(`\nError: ${buildResult.error}`));
+        throw new Error(`worker_build_failed:${buildResult.error ?? 'unknown'}`);
+      }
+
+      packagesBuilt = true;
+      buildSpinner.succeed('Build complete');
+    };
+    // Builds deploy options for `components` from the lock and generated configs as they are now.
+    const buildDeployOptions = async (
+      components: readonly WorkerComponent[],
+      existingLookupComponents: readonly WorkerComponent[]
+    ): Promise<DeployOptions> => {
+      const workerOwnership = await ensureWorkerOwnership();
+      const keysDirectory = findKeysDirectory({
+        env,
+        sourceDir: baseDir,
+        keysBaseDir: process.cwd(),
+      });
+      if (keysDirectory) {
+        await ensureSupplementalKeyFiles(keysDirectory.path);
+      }
+      const deploymentSecrets = await loadDeploySecretsFromKeys(keysDirectory?.path, [
+        ...components,
+      ]);
+      const deploymentControlDatabase = workingLock.d1.CONTROL_DB;
+      if (!deploymentControlDatabase) {
+        throw new Error('control_database_required_for_worker_deployment_lease');
+      }
+
+      const deployOptions: DeployOptions = {
+        env,
+        rootDir: resolve(baseDir),
+        maxRetries: 3,
+        retryDelayMs: 1000,
+        concurrency: 2,
+        deploymentStrategy: 'auto',
+        existingComponents: CORE_WORKER_COMPONENTS.filter(
+          (component) => workingLock.workers?.[component] !== undefined
+        ),
+        expectedWorkerVersionIds: Object.fromEntries(
+          Object.entries(workingLock.workers ?? {}).map(([component, worker]) => [
+            component,
+            worker.cloudflareVersionId,
+          ])
+        ),
+        secrets: deploymentSecrets,
+        ...lookupHmacDeployOptions(workingLock.controlKeyState?.lookupHmac),
+        deploymentLease: {
+          controlDatabaseId: deploymentControlDatabase.id,
+          environmentId: env,
+          actorId: 'setup:update',
+          accountId: config.cloudflare?.accountId,
+          required: true,
+        },
+        cleanupLegacyStaticSecrets: true,
+        deployConfigLockProof: deployConfigLock!.proof,
+        workerScriptOwnership: workerOwnership.guard,
+        onProgress: (msg) => console.log(chalk.gray(`  ${msg}`)),
+        onError: (component, error) => {
+          console.error(chalk.red(`  ❌ Error in ${component}: ${error.message}`));
+        },
+      };
+      if (!options.dryRun) {
+        // Only `existingLookupComponents` are looked up remotely; Workers outside that set keep the
+        // lock-recorded state the options started from, so smoke-binding bootstrap and strategy
+        // decisions still see the real environment without querying unsynced Worker configs.
+        const lookedUp = await resolveExistingWorkerComponents(deployOptions, [
+          ...existingLookupComponents,
+        ]);
+        deployOptions.existingComponents = [
+          ...new Set([
+            ...lookedUp,
+            ...(deployOptions.existingComponents ?? []).filter(
+              (component) => !existingLookupComponents.includes(component)
+            ),
+          ]),
+        ];
+        // A required secret must be distributed now or already be bound to the Worker. Checked for
+        // every Worker in `components` before the first one deploys (deployAll checks each group too).
+        await assertRequiredWorkerSecrets(deployOptions, [...components]);
+      }
+      return deployOptions;
+    };
+    // ar-control is deployed (once) ahead of every other Worker. When the handoff needs a new
+    // Control, this runs before the handoff row exists; otherwise at the regular point below.
+    const controlCoordinatorDeployment = createControlCoordinatorDeployer<
+      DeployOptions,
+      DeploymentSummary
+    >({
+      deploy: async (deployOptions) => {
+        const controlTokenGenerationCheckpoint = await ensureControlTokenGenerationCheckpoint();
+        console.log(
+          chalk.gray(
+            '  Deploying ar-control first so in-flight provisioning can safely converge...'
+          )
+        );
+        const coordinatorSummary = await deployAll(deployOptions, deploymentGroups.coordinator);
+        if (coordinatorSummary.failedCount > 0) return coordinatorSummary;
+        const controlDeployment = coordinatorSummary.results.find(
+          (result) => result.component === 'ar-control' && result.success
+        );
+        if (!controlDeployment?.cloudflareVersionId) {
+          throw new Error('control_worker_redeploy_version_missing');
+        }
+        const controlGenerationVisibility = await waitForWorkerDeploymentsReady({
+          targets: [
+            {
+              workerName: controlDeployment.workerName,
+              deployedAt: controlDeployment.deployedAt,
+              expectedVersionId: controlDeployment.cloudflareVersionId,
+            },
+          ],
+        });
+        if (!controlGenerationVisibility.ready) {
+          throw new Error(
+            `control_worker_redeploy_generation_not_visible:${controlGenerationVisibility.error ?? 'unknown'}`
+          );
+        }
+        await commitReadyControlTokenGenerationRedeploy({
+          environmentId: env,
+          checkpoint: controlTokenGenerationCheckpoint,
+          deployedVersionId: controlDeployment?.cloudflareVersionId,
+        });
+        workingLock = updateLockWithDeploymentsAndVersions(
+          workingLock,
+          coordinatorSummary.results,
+          localVersions
+        );
+        return coordinatorSummary;
+      },
+    });
+    // The Control that reads the migration release artifact must understand its format, and the
+    // release is only readable by a Control built from the same source as its manifest. A deployed
+    // Control from the previous release cannot parse a manifest format introduced by this one and
+    // would terminally block every managed target. So the new ar-control is deployed after the
+    // Control schema (its only database) is applied and before the release is activated and the
+    // rollout row is created. Only ar-control's own configuration is refreshed here; the other
+    // Workers and setup-owned schemas follow the regular path after the handoff.
+    const deployControlBeforeHandoff = async (): Promise<DeploymentSummary> => {
+      const controlSpinner = ora('Preparing ar-control for the migration handoff...').start();
+      try {
+        const refreshed = await refreshWorkerDeploymentArtifacts({
+          baseDir,
+          env,
+          config,
+          lock: workingLock,
+          lockPath,
+          components: ['ar-control'],
+          registeredBy: 'setup:update',
+          onProgress: (message) => {
+            controlSpinner.text = message;
+          },
+        });
+        workingLock = refreshed.lock;
+        controlSpinner.succeed('ar-control configuration refreshed');
+      } catch (error) {
+        controlSpinner.fail('ar-control configuration refresh failed');
+        console.error(chalk.red(`  ${error instanceof Error ? error.message : String(error)}`));
+        throw error instanceof Error
+          ? error
+          : new Error('control_coordinator_refresh_failed', { cause: error });
+      }
+      await ensureWorkerOwnership();
+      await ensureControlTokenGenerationCheckpoint();
+      await buildPackagesOnce();
+      // Only ar-control is deployed here, so its secrets and existing-script lookups are scoped to
+      // it; the other Workers' configuration has not been refreshed yet.
+      const coordinatorSummary = await controlCoordinatorDeployment.deployEarly(() =>
+        buildDeployOptions(['ar-control'], ['ar-control'])
+      );
+      if (coordinatorSummary.failedCount > 0) {
+        const failures = coordinatorSummary.results
+          .filter((result) => !result.success)
+          .map((result) => `${result.component}: ${result.error ?? 'unknown error'}`);
+        console.error(
+          chalk.red(
+            `\nar-control could not be deployed. No migration release was activated and no Control handoff was created; run this update again to resume.\n  ${failures.join('\n  ')}`
+          )
+        );
+        throw new Error(`control_coordinator_deploy_before_handoff_failed:${failures.join(',')}`);
+      }
+      await saveLockFile(workingLock, lockPath);
+      return coordinatorSummary;
+    };
+
+    const publishRelease = async (): Promise<MigrationReleaseArtifactPlan | undefined> => {
+      if (!hasReleaseSchemaDelta && priorControlManagedStreamIds.length === 0) return undefined;
       const migrationReleaseBucket = workingLock.r2?.MIGRATION_RELEASES;
       if (!controlDatabase) throw new Error('control_database_required_for_release_publication');
       if (!migrationReleaseBucket) {
@@ -1779,18 +2051,20 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
             releasePublicationSpinner.text = message;
           },
         });
-        migrationReleaseArtifact = publication.artifact;
         releasePublicationSpinner.succeed(
           `Migration release ${publication.artifact.releaseId} published (${publication.artifact.streamIds.length} D1 streams)`
         );
+        return publication.artifact;
       } catch (error) {
         releasePublicationSpinner.fail('Migration release publication failed');
         throw error;
       }
-    }
-
-    if (controlManagedStreamIds.length > 0) {
-      if (!controlDatabase || !migrationReleaseArtifact) {
+    };
+    const createInitialHandoff = async (
+      published: MigrationReleaseArtifactPlan | undefined
+    ): Promise<void> => {
+      if (controlManagedStreamIds.length === 0) return;
+      if (!controlDatabase || !published) {
         throw new Error('release_rollout_handoff_prerequisite_missing');
       }
       const handoff = await createReleaseRolloutHandoff({
@@ -1798,7 +2072,7 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
         environmentId: env,
         sourceVersion: resumableRelease?.previousProductVersion ?? workingLock.productVersion,
         targetVersion: productVersion,
-        artifact: migrationReleaseArtifact,
+        artifact: published,
         manifest: targetManifestResult.manifest,
         managedStreamIds: controlManagedStreamIds,
         actorId: 'setup:update',
@@ -1810,13 +2084,22 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
         appliedTargets: appliedTargetIds,
         manualTargets: [...acknowledgedManualTargets],
         controlOperationId: handoff.operationId,
-        controlManifestDigest: migrationReleaseArtifact.manifestDigest,
+        controlManifestDigest: published.manifestDigest,
         controlCompletedTargets: handoff.completedTargets,
         controlTotalTargets: handoff.totalTargets,
         controlManagedStreamIds,
       });
       await saveLockFile(workingLock, lockPath);
-    }
+    };
+    // Deploying ar-control first (when required) is skipped in the sequence for database-only
+    // updates, runs without managed streams, and resumed updates that already own a handoff row.
+    const sequence = await runControlRolloutHandoffSequence({
+      deployControlFirst,
+      deployControl: deployControlBeforeHandoff,
+      publishRelease,
+      createHandoff: createInitialHandoff,
+    });
+    migrationReleaseArtifact = sequence.published;
 
     await applySetupTargets(remainingSetupTargets, 'Updating setup-owned database schemas...');
     appliedTargetIds = [
@@ -1840,24 +2123,7 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
     });
     await saveLockFile(workingLock, lockPath);
 
-    const workerOwnership = await prepareManagedWorkerScriptOwnership({
-      lock: workingLock,
-      lockPath,
-      targets: [
-        ...componentsToUpdate.map((component) => ({
-          component,
-          workerName: getWorkerName(env, component),
-        })),
-        ...uiComponentsToUpdate.map((component) => ({
-          component,
-          workerName: `${env}-${component}`,
-        })),
-      ],
-    });
-    if (workerOwnership.changed) {
-      workingLock = workerOwnership.lock;
-      await saveLockFile(workingLock, lockPath);
-    }
+    const workerOwnership = await ensureWorkerOwnership();
 
     if (componentsToUpdate.length === 0) {
       if (controlManagedStreamIds.length > 0) {
@@ -2105,98 +2371,16 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
     }
     wranglerSpinner.succeed(`Refreshed ${syncResult.synced.length} wrangler config(s)`);
 
-    const controlTokenGenerationCheckpoint =
-      !options.dryRun && componentsToUpdate.includes('ar-control')
-        ? await checkpointReadyControlTokenGenerationForRedeploy({
-            environmentId: env,
-            rootDir: baseDir,
-            config,
-            lock: workingLock,
-          })
-        : null;
+    await ensureControlTokenGenerationCheckpoint();
 
-    // Build packages (unless skipped)
-    if (!options.skipBuild) {
-      const buildSpinner = ora('Building packages...').start();
-
-      const buildResult = await buildApiPackages({
-        rootDir: resolve(baseDir),
-        onProgress: (msg) => {
-          buildSpinner.text = msg;
-        },
-      });
-
-      if (!buildResult.success) {
-        buildSpinner.fail('Build failed');
-        console.error(chalk.red(`\nError: ${buildResult.error}`));
-        throw new Error(`worker_build_failed:${buildResult.error ?? 'unknown'}`);
-      }
-
-      buildSpinner.succeed('Build complete');
-    }
+    // Build packages (unless skipped, or already built for the early ar-control deployment)
+    await buildPackagesOnce();
 
     // Deploy workers
     console.log(chalk.bold('\n🚀 Deploying workers...\n'));
-
-    const keysDirectory = findKeysDirectory({
-      env,
-      sourceDir: baseDir,
-      keysBaseDir: process.cwd(),
-    });
-    if (keysDirectory) {
-      await ensureSupplementalKeyFiles(keysDirectory.path);
-    }
-    const deploymentSecrets = await loadDeploySecretsFromKeys(
-      keysDirectory?.path,
-      componentsToUpdate
-    );
-    const deploymentControlDatabase = workingLock.d1.CONTROL_DB;
-    if (!deploymentControlDatabase) {
-      throw new Error('control_database_required_for_worker_deployment_lease');
-    }
-
-    const deployOptions: DeployOptions = {
-      env,
-      rootDir: resolve(baseDir),
-      maxRetries: 3,
-      retryDelayMs: 1000,
-      concurrency: 2,
-      deploymentStrategy: 'auto',
-      existingComponents: CORE_WORKER_COMPONENTS.filter(
-        (component) => workingLock.workers?.[component] !== undefined
-      ),
-      expectedWorkerVersionIds: Object.fromEntries(
-        Object.entries(workingLock.workers ?? {}).map(([component, worker]) => [
-          component,
-          worker.cloudflareVersionId,
-        ])
-      ),
-      secrets: deploymentSecrets,
-      ...lookupHmacDeployOptions(workingLock.controlKeyState?.lookupHmac),
-      deploymentLease: {
-        controlDatabaseId: deploymentControlDatabase.id,
-        environmentId: env,
-        actorId: 'setup:update',
-        accountId: config.cloudflare?.accountId,
-        required: true,
-      },
-      cleanupLegacyStaticSecrets: true,
-      deployConfigLockProof: deployConfigLock!.proof,
-      workerScriptOwnership: workerOwnership.guard,
-      onProgress: (msg) => console.log(chalk.gray(`  ${msg}`)),
-      onError: (component, error) => {
-        console.error(chalk.red(`  ❌ Error in ${component}: ${error.message}`));
-      },
-    };
-    if (!options.dryRun) {
-      deployOptions.existingComponents = await resolveExistingWorkerComponents(
-        deployOptions,
-        CORE_WORKER_COMPONENTS
-      );
-      // A required secret must be distributed now or already be bound to the Worker. Checked for
-      // every Worker in the update before the first one deploys (deployAll checks each group too).
-      await assertRequiredWorkerSecrets(deployOptions, componentsToUpdate);
-    }
+    // Fresh options for the whole update, built after the full config sync and build. They record
+    // the ar-control version deployed earlier (if any) as the current one.
+    const deployOptions = await buildDeployOptions(componentsToUpdate, CORE_WORKER_COMPONENTS);
 
     if (componentsToUpdate.includes('ar-router') && existsSync(envPaths.config)) {
       const missingUiBindingTargets = await resolveMissingUiWorkerBindingTargets(deployOptions, {
@@ -2218,7 +2402,6 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
       }
     }
 
-    const deploymentGroups = splitReleaseDeploymentForControlCoordinator(componentsToUpdate);
     let controlRolloutReady = false;
     const ensureControlRolloutReady = async (): Promise<boolean> => {
       if (controlRolloutReady || controlManagedStreamIds.length === 0) return true;
@@ -2276,43 +2459,11 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
     };
     let summary: DeploymentSummary;
     if (!options.dryRun && deploymentGroups.coordinator.length > 0) {
-      console.log(
-        chalk.gray('  Deploying ar-control first so in-flight provisioning can safely converge...')
-      );
-      const coordinatorSummary = await deployAll(deployOptions, deploymentGroups.coordinator);
+      // No-op when ar-control was already deployed ahead of the migration handoff.
+      const coordinatorSummary = await controlCoordinatorDeployment.deployRegular(deployOptions);
       if (coordinatorSummary.failedCount > 0) {
         summary = coordinatorSummary;
       } else {
-        const controlDeployment = coordinatorSummary.results.find(
-          (result) => result.component === 'ar-control' && result.success
-        );
-        if (!controlDeployment?.cloudflareVersionId) {
-          throw new Error('control_worker_redeploy_version_missing');
-        }
-        const controlGenerationVisibility = await waitForWorkerDeploymentsReady({
-          targets: [
-            {
-              workerName: controlDeployment.workerName,
-              deployedAt: controlDeployment.deployedAt,
-              expectedVersionId: controlDeployment.cloudflareVersionId,
-            },
-          ],
-        });
-        if (!controlGenerationVisibility.ready) {
-          throw new Error(
-            `control_worker_redeploy_generation_not_visible:${controlGenerationVisibility.error ?? 'unknown'}`
-          );
-        }
-        await commitReadyControlTokenGenerationRedeploy({
-          environmentId: env,
-          checkpoint: controlTokenGenerationCheckpoint,
-          deployedVersionId: controlDeployment?.cloudflareVersionId,
-        });
-        workingLock = updateLockWithDeploymentsAndVersions(
-          workingLock,
-          coordinatorSummary.results,
-          localVersions
-        );
         if (!(await ensureControlRolloutReady())) {
           console.log(
             chalk.cyan(

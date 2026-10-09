@@ -599,4 +599,314 @@ describe('ReleaseMigrationRolloutReconciler', () => {
       phase: 'blocked',
     });
   });
+  describe('rollouts blocked because an older Control could not parse the manifest format', () => {
+    const FORMAT_CODE = 'migration_artifact_manifest_invalid';
+
+    function okEngine(applied: string[] = []) {
+      return {
+        async apply(input: ApplyMigrationReleaseInput) {
+          applied.push(input.databaseId);
+          return {
+            streamId: input.pin.streamId,
+            releaseId: input.pin.releaseId,
+            manifestDigest: input.pin.manifestDigest,
+            totalFiles: 1,
+            appliedFiles: 1,
+            skippedFiles: 0,
+            responseLossRecoveries: 0,
+            lastFilename: '001.sql',
+          };
+        },
+      };
+    }
+
+    // What the previous Control did: every target hit the unparseable manifest and blocked.
+    async function blockByOldControl(): Promise<void> {
+      const old = new ReleaseMigrationRolloutReconciler(
+        d1(database),
+        {
+          async apply() {
+            throw new Error(FORMAT_CODE);
+          },
+        },
+        () => currentTime,
+        { maxTargetsPerRun: 10 }
+      );
+      await expect(old.reconcile()).resolves.toMatchObject({ snapshots: 1, blocked: 3 });
+      expect(
+        database
+          .prepare(
+            `SELECT handoff_state, (SELECT status FROM control_operations WHERE operation_id = ?)
+                    AS operation_status,
+                    (SELECT last_error_code FROM control_operations WHERE operation_id = ?)
+                    AS operation_error
+               FROM control_release_migration_rollouts WHERE operation_id = ?`
+          )
+          .get(OPERATION_ID, OPERATION_ID, OPERATION_ID)
+      ).toEqual({
+        handoff_state: 'blocked',
+        operation_status: 'blocked',
+        operation_error: FORMAT_CODE,
+      });
+    }
+
+    function rolloutRows(): unknown {
+      return {
+        rollout: database
+          .prepare(`SELECT * FROM control_release_migration_rollouts WHERE operation_id = ?`)
+          .get(OPERATION_ID),
+        operation: database
+          .prepare(`SELECT * FROM control_operations WHERE operation_id = ?`)
+          .get(OPERATION_ID),
+        steps: database
+          .prepare(`SELECT * FROM control_operation_steps WHERE operation_id = ? ORDER BY step_key`)
+          .all(OPERATION_ID),
+        targets: database
+          .prepare(
+            `SELECT * FROM control_release_migration_targets WHERE operation_id = ? ORDER BY target_id`
+          )
+          .all(OPERATION_ID),
+      };
+    }
+
+    function resumeAudits(): number {
+      return Number(
+        (
+          database
+            .prepare(
+              `SELECT COUNT(*) AS count FROM control_audit_events
+                WHERE event_type = 'control.release_migration.rollout_resumed'`
+            )
+            .get() as { count: number }
+        ).count
+      );
+    }
+
+    it('resumes and executes once this Control can read the same artifact', async () => {
+      await blockByOldControl();
+      currentTime += 30;
+      const applied: string[] = [];
+      const probed: Array<{ streamId: string; manifestObjectKey: string; source?: string }> = [];
+      const current = new ReleaseMigrationRolloutReconciler(
+        d1(database),
+        okEngine(applied),
+        () => currentTime,
+        {
+          maxTargetsPerRun: 10,
+          artifactProbe: {
+            async load(pin) {
+              probed.push({
+                streamId: pin.streamId,
+                manifestObjectKey: pin.manifestObjectKey,
+                source: pin.sourceProductVersion,
+              });
+              return {};
+            },
+          },
+        }
+      );
+
+      await expect(current.reconcile()).resolves.toMatchObject({ succeeded: 3, blocked: 0 });
+
+      expect(applied.sort()).toEqual(['db-core', 'db-lookup', 'db-pii']);
+      expect(probed.map((entry) => entry.streamId).sort()).toEqual([
+        'core-d1',
+        'lookup-d1',
+        'pii-d1',
+      ]);
+      expect(probed.every((entry) => entry.manifestObjectKey === OBJECT_KEY)).toBe(true);
+      expect(probed.every((entry) => entry.source === '0.4.0')).toBe(true);
+      expect(
+        database
+          .prepare(
+            `SELECT handoff_state FROM control_release_migration_rollouts WHERE operation_id = ?`
+          )
+          .get(OPERATION_ID)
+      ).toEqual({ handoff_state: 'awaiting_setup' });
+      expect(
+        database
+          .prepare(
+            `SELECT status, last_error_code FROM control_operation_steps
+              WHERE operation_id = ? AND step_key = 'apply_managed_migrations'`
+          )
+          .get(OPERATION_ID)
+      ).toEqual({ status: 'succeeded', last_error_code: null });
+      expect(
+        database
+          .prepare(
+            `SELECT DISTINCT retry_budget_started_at AS started FROM control_release_migration_targets
+              WHERE operation_id = ?`
+          )
+          .all(OPERATION_ID)
+      ).toEqual([{ started: 130 }]);
+      expect(
+        database
+          .prepare(
+            `SELECT actor_type, outcome, redacted_payload_json FROM control_audit_events
+              WHERE event_type = 'control.release_migration.rollout_resumed'`
+          )
+          .all()
+      ).toEqual([
+        {
+          actor_type: 'reconciler',
+          outcome: 'succeeded',
+          redacted_payload_json: JSON.stringify({
+            reason_code: 'artifact_format_supported_after_control_update',
+            previous_error_code: FORMAT_CODE,
+            target_ids: ['lookup:shard-lookup', 'tenant:shard-core', 'tenant:shard-pii'],
+          }),
+        },
+      ]);
+
+      // Idempotent: a later cron run neither re-probes nor records another resume.
+      currentTime += 60;
+      await current.reconcile();
+      expect(probed).toHaveLength(3);
+      expect(resumeAudits()).toBe(1);
+    });
+
+    it('leaves the rollout untouched while the artifact still cannot be read', async () => {
+      await blockByOldControl();
+      const before = rolloutRows();
+      currentTime += 30;
+      const applied: string[] = [];
+      const current = new ReleaseMigrationRolloutReconciler(
+        d1(database),
+        okEngine(applied),
+        () => currentTime,
+        {
+          artifactProbe: {
+            async load() {
+              throw new Error(FORMAT_CODE);
+            },
+          },
+        }
+      );
+
+      await expect(current.reconcile()).resolves.toMatchObject({ attempted: 0 });
+      await expect(current.reconcile()).resolves.toMatchObject({ attempted: 0 });
+
+      expect(applied).toEqual([]);
+      expect(rolloutRows()).toEqual(before);
+      expect(resumeAudits()).toBe(0);
+    });
+
+    it('does not resume when a target is blocked for another reason', async () => {
+      await blockByOldControl();
+      database.exec(`
+        UPDATE control_release_migration_targets
+           SET last_error_code = 'migration_history_checksum_mismatch'
+         WHERE operation_id = '${OPERATION_ID}' AND target_id = 'tenant:shard-pii';
+      `);
+      const before = rolloutRows();
+      currentTime += 30;
+      let probes = 0;
+      const current = new ReleaseMigrationRolloutReconciler(
+        d1(database),
+        okEngine(),
+        () => currentTime,
+        {
+          artifactProbe: {
+            async load() {
+              probes += 1;
+              return {};
+            },
+          },
+        }
+      );
+
+      await expect(current.reconcile()).resolves.toMatchObject({ attempted: 0 });
+
+      expect(probes).toBe(0);
+      expect(rolloutRows()).toEqual(before);
+      expect(resumeAudits()).toBe(0);
+    });
+
+    it('does not let permanently unreadable rollouts starve a later one', async () => {
+      await blockByOldControl();
+      // Two older rollouts (other environments) whose artifacts will never be readable.
+      database.exec('PRAGMA foreign_keys = OFF');
+      for (const id of ['x1', 'x2']) {
+        const digest = (id === 'x1' ? '1' : '2').repeat(64);
+        database.exec(`
+          INSERT INTO control_operations (
+            operation_id, environment_id, operation_kind, idempotency_key, status,
+            last_error_code, requested_by_type, attempt_count, created_at, updated_at
+          ) VALUES ('op-${id}', 'env-${id}', 'release_migration_rollout', 'key-${id}', 'blocked',
+                    '${FORMAT_CODE}', 'setup', 1, 1, 1);
+          INSERT INTO control_release_migration_rollouts (
+            operation_id, environment_id, source_version, target_version, release_id,
+            manifest_digest, manifest_r2_object_key, database_execution, worker_activation,
+            admin_mutation_mode, handoff_state, active_environment_key, created_at, updated_at
+          ) VALUES ('op-${id}', 'env-${id}', '0.4.0', '${id}', '${id}', '${digest}',
+                    'releases/${id}/${digest}/manifest.json', 'setup_then_control',
+                    'after_required_databases', 'read_only', 'blocked', 'env-${id}', 1, 1);
+          INSERT INTO control_release_migration_targets (
+            operation_id, environment_id, target_id, target_kind, shard_id, desired_resource_id,
+            provider_database_id, binding_ref, stream_id, release_id, manifest_digest, state,
+            attempt_count, retry_budget_started_at, last_error_code, created_at, updated_at
+          ) VALUES ('op-${id}', 'env-${id}', 'tenant:${id}', 'tenant_shard', '${id}', 'res-${id}',
+                    'db-${id}', 'BIND_${id}', 'core-d1', '${id}', '${digest}', 'blocked', 1, 1,
+                    '${FORMAT_CODE}', 1, 1);
+        `);
+      }
+      const probe = {
+        async load(pin: { releaseId: string }) {
+          if (pin.releaseId.startsWith('x')) throw new Error(FORMAT_CODE);
+          return {};
+        },
+      };
+      const current = new ReleaseMigrationRolloutReconciler(
+        d1(database),
+        okEngine(),
+        () => currentTime,
+        { maxTargetsPerRun: 10, artifactProbe: probe }
+      );
+
+      // Only two candidates are examined per run, so the readable one is reached within a few
+      // runs (it is missed by a run only one time in three).
+      for (let run = 0; run < 40 && resumeAudits() === 0; run += 1) {
+        currentTime += 30;
+        await current.reconcile();
+      }
+
+      expect(resumeAudits()).toBe(1);
+      expect(
+        database
+          .prepare(
+            `SELECT handoff_state FROM control_release_migration_rollouts WHERE operation_id = ?`
+          )
+          .get(OPERATION_ID)
+      ).toEqual({ handoff_state: 'awaiting_setup' });
+      expect(
+        database
+          .prepare(
+            `SELECT handoff_state FROM control_release_migration_rollouts WHERE operation_id = 'op-x1'`
+          )
+          .get()
+      ).toEqual({ handoff_state: 'blocked' });
+    });
+
+    it('does not resume without an artifact probe or without a Control migration executor', async () => {
+      await blockByOldControl();
+      const before = rolloutRows();
+      currentTime += 30;
+      const probe = {
+        async load() {
+          return {};
+        },
+      };
+
+      await new ReleaseMigrationRolloutReconciler(d1(database), okEngine(), () => currentTime)
+        .reconcile()
+        .catch(() => undefined);
+      await new ReleaseMigrationRolloutReconciler(d1(database), null, () => currentTime, {
+        executorAvailable: false,
+        artifactProbe: probe,
+      }).reconcile();
+
+      expect(rolloutRows()).toEqual(before);
+      expect(resumeAudits()).toBe(0);
+    });
+  });
 });

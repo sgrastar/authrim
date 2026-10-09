@@ -302,6 +302,78 @@ describe('Worker script immutable ownership', () => {
     }
   });
 
+  it("records a checkpoint on the caller's current lock, not on the lock captured at prepare time", async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'authrim-worker-ownership-current-'));
+    const lockPath = join(directory, 'lock.json');
+    const lockA = lockWithWorker();
+    await saveLockFile(lockA, lockPath);
+    try {
+      let current: AuthrimLock = lockA;
+      const prepared = await prepareManagedWorkerScriptOwnership({
+        lock: lockA,
+        lockPath,
+        currentLock: () => current,
+        targets: [{ component: 'ar-token', workerName: 'test-ar-token' }],
+        dependencies: { list: async () => [] },
+      });
+      // The caller moves on: later lock updates return new objects with newer state.
+      current = {
+        ...prepared.lock,
+        releaseUpdate: {
+          targetVersion: '0.5.0',
+          phase: 'control_handoff',
+          manifestChecksum: 'a'.repeat(64),
+          controlOperationId: 'op_release_rollout_current',
+        },
+      } as AuthrimLock;
+
+      await prepared.guard.checkpointCommittedVersion('test-ar-token', VERSION_B);
+
+      const durable = JSON.parse(await readFile(lockPath, 'utf-8')) as AuthrimLock;
+      expect(durable.releaseUpdate).toMatchObject({
+        phase: 'control_handoff',
+        controlOperationId: 'op_release_rollout_current',
+      });
+      expect(durable.workerScriptOwnership?.['ar-token']).toMatchObject({
+        pendingCloudflareVersionId: VERSION_B,
+        state: 'pending_tag',
+      });
+      // The checkpoint is applied to the live object the caller keeps working with.
+      expect(current.workerScriptOwnership?.['ar-token']).toMatchObject({
+        pendingCloudflareVersionId: VERSION_B,
+      });
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps checkpointing the returned lock when no current-lock accessor is given', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'authrim-worker-ownership-default-'));
+    const lockPath = join(directory, 'lock.json');
+    const lock = lockWithWorker();
+    await saveLockFile(lock, lockPath);
+    try {
+      const prepared = await prepareManagedWorkerScriptOwnership({
+        lock,
+        lockPath,
+        targets: [{ component: 'ar-token', workerName: 'test-ar-token' }],
+        dependencies: { list: async () => [] },
+      });
+
+      await prepared.guard.checkpointCommittedVersion('test-ar-token', VERSION_B);
+
+      expect(prepared.lock.workerScriptOwnership?.['ar-token']).toMatchObject({
+        pendingCloudflareVersionId: VERSION_B,
+      });
+      const durable = JSON.parse(await readFile(lockPath, 'utf-8')) as AuthrimLock;
+      expect(durable.workerScriptOwnership?.['ar-token']).toMatchObject({
+        pendingCloudflareVersionId: VERSION_B,
+      });
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it('never treats a different post-mutation tag as propagation lag', async () => {
     const list = vi
       .fn()

@@ -248,8 +248,10 @@ describe('secrets a Worker cannot serve without', () => {
     );
 
     const update = await readFile(new URL('../cli/commands/update.ts', import.meta.url), 'utf-8');
+    // Built per stage (ar-control alone ahead of the handoff, then the whole update), always
+    // before the deployAll that uses the options.
     const check = update.indexOf(
-      'await assertRequiredWorkerSecrets(deployOptions, componentsToUpdate)'
+      'await assertRequiredWorkerSecrets(deployOptions, [...components])'
     );
     expect(check).toBeGreaterThan(0);
     expect(check).toBeLessThan(update.indexOf('await deployAll('));
