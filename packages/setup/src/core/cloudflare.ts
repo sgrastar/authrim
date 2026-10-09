@@ -3544,6 +3544,105 @@ export async function listWorkerCronTriggers(input: {
   throw new Error('cloudflare_worker_cron_oauth_refresh_retry_exhausted');
 }
 
+/** Durable Object migration state of a deployed Worker script. */
+export type WorkerMigrationState =
+  | { exists: false }
+  | {
+      exists: true;
+      /** Tag of the last migration Cloudflare applied; absent if none was ever applied. */
+      migrationTag?: string;
+    };
+
+/** Cloudflare error codes Wrangler treats as "script does not exist" (10007, 10090, 10092). */
+const WORKER_SCRIPT_NOT_FOUND_ERROR_CODES: ReadonlySet<number> = new Set([10007, 10090, 10092]);
+
+export function normalizeWorkerMigrationStateResponse(payload: unknown): WorkerMigrationState {
+  const result =
+    payload && typeof payload === 'object' && !Array.isArray(payload)
+      ? (payload as { result?: unknown }).result
+      : undefined;
+  const environment =
+    result && typeof result === 'object' && !Array.isArray(result)
+      ? (result as { default_environment?: unknown }).default_environment
+      : undefined;
+  const script =
+    environment && typeof environment === 'object' && !Array.isArray(environment)
+      ? (environment as { script?: unknown }).script
+      : undefined;
+  if (!script || typeof script !== 'object' || Array.isArray(script)) {
+    throw new Error('cloudflare_worker_migration_response_invalid');
+  }
+  const tag = (script as { migration_tag?: unknown }).migration_tag;
+  if (tag === undefined || tag === null || tag === '') return { exists: true };
+  if (typeof tag !== 'string') throw new Error('cloudflare_worker_migration_response_invalid');
+  return { exists: true, migrationTag: tag };
+}
+
+/**
+ * Read the Durable Object migration tag Cloudflare holds for a deployed Worker script. This is the
+ * same read Wrangler performs before it computes the migrations to upload (deploy-helpers
+ * `getMigrationsToUpload`): GET /accounts/{id}/workers/services/{name} and
+ * `result.default_environment.script.migration_tag`. A missing script is reported as
+ * `{ exists: false }` rather than an error.
+ */
+export async function readWorkerMigrationState(input: {
+  workerName: string;
+  accountId?: string;
+}): Promise<WorkerMigrationState> {
+  if (!input.workerName || input.workerName.trim() !== input.workerName) {
+    throw new Error('cloudflare_worker_name_invalid');
+  }
+  let credentials = await resolveCloudflareInventoryCredentials(input.accountId);
+  if (!credentials) throw new Error('cloudflare_worker_migration_credentials_unavailable');
+
+  const url =
+    `https://api.cloudflare.com/client/v4/accounts/${credentials.accountId}/workers/services/` +
+    encodeURIComponent(input.workerName);
+  for (let authAttempt = 1; authAttempt <= 2; authAttempt++) {
+    const { response, data } = await requestCloudflareApiJson<{
+      success?: boolean;
+      result?: unknown;
+      errors?: CloudflareApiMessage[];
+    }>(
+      url,
+      { headers: { Authorization: `Bearer ${credentials.token}` } },
+      { label: `Cloudflare Worker migration tag lookup for ${input.workerName}`, retryMode: 'read' }
+    );
+    const errorCodes = (data.errors ?? []).flatMap((error) =>
+      typeof error.code === 'number' ? [error.code] : []
+    );
+    if (
+      shouldRefreshCloudflareOAuthCredential({
+        status: response.status,
+        errorCodes,
+        source: credentials.source,
+        attempt: authAttempt,
+      })
+    ) {
+      const refreshed = await refreshPinnedCloudflareOAuthToken(credentials.accountId);
+      if (refreshed) {
+        credentials = refreshed;
+        continue;
+      }
+    }
+    if (
+      !response.ok &&
+      (response.status === 404 ||
+        errorCodes.some((code) => WORKER_SCRIPT_NOT_FOUND_ERROR_CODES.has(code)))
+    ) {
+      return { exists: false };
+    }
+    if (!response.ok || data.success === false) {
+      const detail = formatCloudflareApiMessages(data);
+      throw new Error(
+        `Cloudflare Worker migration tag lookup failed (${response.status})${detail ? `: ${detail}` : ''}`
+      );
+    }
+    return normalizeWorkerMigrationStateResponse(data);
+  }
+  throw new Error('cloudflare_worker_migration_oauth_refresh_retry_exhausted');
+}
+
 async function listCloudflarePaginatedResourcesViaApi<T>(input: {
   path: string;
   label: string;

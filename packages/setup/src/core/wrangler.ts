@@ -2403,6 +2403,35 @@ export function parseWranglerToml(
   return result;
 }
 
+/**
+ * Extract the ordered Durable Object migration tags (`[[migrations]]` tables) from a generated
+ * wrangler.toml. Like parseWranglerToml this accepts only the layout Setup generates: top-level
+ * `[[migrations]]` tables whose `tag` is a basic string on its own line. Array items and other
+ * keys of the table are skipped; any following table header ends the current migration.
+ */
+export function parseWranglerMigrationTags(content: string): string[] {
+  const tags: string[] = [];
+  let inMigration = false;
+  for (const rawLine of content.split(/\r?\n/u)) {
+    const line = rawLine.trim();
+    if (line.length === 0 || line.startsWith('#')) continue;
+    if (line.startsWith('[')) {
+      inMigration = line.split('#', 1)[0].trim() === '[[migrations]]';
+      continue;
+    }
+    if (!inMigration) continue;
+    const match = /^tag\s*=\s*("(?:[^"\\]|\\.)*")\s*(?:#.*)?$/u.exec(line);
+    if (!match) continue;
+    try {
+      const tag: unknown = JSON.parse(match[1]);
+      if (typeof tag === 'string' && tag.length > 0) tags.push(tag);
+    } catch {
+      throw new Error('wrangler_migration_tag_invalid');
+    }
+  }
+  return tags;
+}
+
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
