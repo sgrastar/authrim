@@ -34,7 +34,11 @@ import {
   type UiEnvConfig,
 } from './ui-env.js';
 import { DISABLED_API_BACKEND_URL, type UiSourcePackage } from './ui-deployment.js';
-import { generateUiWorkersWranglerConfig, parseWranglerToml } from './wrangler.js';
+import {
+  generateUiWorkersWranglerConfig,
+  parseWranglerMigrationTags,
+  parseWranglerToml,
+} from './wrangler.js';
 import { getPackageVersion } from './version.js';
 import {
   EPHEMERAL_ENV_SECRET_NAMES,
@@ -49,6 +53,7 @@ import { lookupHmacKeyFingerprint } from './control-key-state.js';
 import {
   SetupWorkerDeploymentLeaseCoordinator,
   type SetupWorkerDeploymentLease,
+  type WorkerDeploymentLeaseReleaseResult,
 } from './worker-deployment-lease.js';
 import {
   createManagedWorkerDeployTicket,
@@ -67,7 +72,11 @@ import {
   MINIMUM_WORKER_DEPLOY_FREE_BYTES,
   type ReadAvailableDiskBytes,
 } from './local-deployment-capacity.js';
-import { listWorkerCronTriggers } from './cloudflare.js';
+import {
+  listWorkerCronTriggers,
+  readWorkerMigrationState,
+  type WorkerMigrationState,
+} from './cloudflare.js';
 
 export {
   DEFAULT_SECRET_TARGET_WORKERS,
@@ -347,6 +356,11 @@ export interface DeployOptions {
   cloudflareAccountId?: string;
   /** Test/embedding hook for deterministic provider-side Cron Trigger readback. */
   readWorkerCronTriggers?: (workerName: string, accountId?: string) => Promise<string[]>;
+  /** Test/embedding hook for the deployed Worker's Durable Object migration tag. */
+  readWorkerMigrationState?: (
+    workerName: string,
+    accountId?: string
+  ) => Promise<WorkerMigrationState>;
 }
 
 export interface DeployResult {
@@ -2261,6 +2275,83 @@ function resolvePlannedComponents(
   return DEPLOYMENT_PRIORITY.filter((component) => requested.has(component));
 }
 
+/**
+ * Relationship between the migration tags in a Worker's wrangler config and the migration tag
+ * Cloudflare currently holds for the deployed script.
+ * - none: the config has no Durable Object migrations
+ * - pending: the deployed tag is missing or not the config's last tag, so `wrangler deploy` would
+ *   apply migrations (this mirrors Wrangler's own getMigrationsToUpload decision)
+ * - current: the deployed tag already is the config's last tag
+ * - absent: the script does not exist remotely (the first-deploy path owns this case)
+ * - unknown: the remote tag could not be determined
+ */
+export type DurableObjectMigrationStatus = 'none' | 'pending' | 'current' | 'absent' | 'unknown';
+
+export function classifyDurableObjectMigrations(
+  configTags: readonly string[],
+  remote: WorkerMigrationState | undefined
+): DurableObjectMigrationStatus {
+  if (configTags.length === 0) return 'none';
+  if (!remote) return 'unknown';
+  if (!remote.exists) return 'absent';
+  // No recorded tag, or a tag the config no longer lists, makes Wrangler apply every migration.
+  return remote.migrationTag !== undefined &&
+    configTags[configTags.length - 1] === remote.migrationTag
+    ? 'current'
+    : 'pending';
+}
+
+/**
+ * Find direct-deployment Workers whose Durable Object migrations have not been applied yet.
+ * An unreadable remote tag is reported as `unknown` and is NOT treated as pending: the old order
+ * (every upload first, no remote mutation until all of them succeeded) is kept, and a missing
+ * class then still fails loudly at upload time without having changed anything. Deploying early
+ * on a guess would give up the "no mutation before every upload succeeded" property for releases
+ * that need no migration at all.
+ */
+async function findComponentsWithPendingMigrations(
+  components: readonly WorkerComponent[],
+  contexts: ReadonlyMap<WorkerComponent, WorkerDeploymentContext>,
+  options: DeployOptions,
+  throttle: DeploymentThrottle
+): Promise<WorkerComponent[]> {
+  const candidates = components.filter(
+    (component) => contexts.get(component)?.requiresDirectDeployment === true
+  );
+  const accountId = options.cloudflareAccountId ?? options.deploymentLease?.accountId;
+  const readState =
+    options.readWorkerMigrationState ??
+    ((workerName: string, hintedAccountId?: string) =>
+      readWorkerMigrationState({
+        workerName,
+        ...(hintedAccountId ? { accountId: hintedAccountId } : {}),
+      }));
+  const statuses = await runBoundedPool(
+    candidates,
+    throttle,
+    async (component): Promise<DurableObjectMigrationStatus> => {
+      const context = contexts.get(component)!;
+      try {
+        const configTags = parseWranglerMigrationTags(
+          await readFile(resolve(context.packageDir, options.configFile ?? 'wrangler.toml'), 'utf8')
+        );
+        if (configTags.length === 0) return 'none';
+        return classifyDurableObjectMigrations(
+          configTags,
+          await readState(context.workerName, accountId)
+        );
+      } catch (error) {
+        options.onProgress?.(
+          `Could not read the deployed Durable Object migration tag of ${context.workerName} ` +
+            `(${sanitizeDeploymentErrorMessage(getErrorText(error))}); keeping the default deployment order.`
+        );
+        return 'unknown';
+      }
+    }
+  );
+  return candidates.filter((component) => statuses.get(component) === 'pending');
+}
+
 function resolveDeploymentStrategy(
   options: DeployOptions,
   components: readonly WorkerComponent[]
@@ -2345,20 +2436,59 @@ async function runBoundedPool<T>(
   return results;
 }
 
+/**
+ * Renew and verify the deployment lease of Workers that were direct-deployed before the staged
+ * uploads. Returns a failed copy of the early result (the deployment itself is live, so
+ * trafficCommitted stays true) for every Worker whose lease could not be verified.
+ */
+async function verifyEarlyDeploymentLeases(
+  components: readonly WorkerComponent[],
+  earlyResults: ReadonlyMap<WorkerComponent, DeployResult>,
+  options: DeployOptions
+): Promise<Map<WorkerComponent, DeployResult>> {
+  const failures = new Map<WorkerComponent, DeployResult>();
+  const session = options.deploymentLeaseSession;
+  if (!session) return failures;
+  for (const component of components) {
+    const held = session.leases.get(component);
+    if (!held) continue;
+    try {
+      held.lease = await session.coordinator.renew(held.lease);
+      await session.coordinator.assertCurrent(held.lease);
+    } catch (error) {
+      failures.set(component, {
+        ...earlyResults.get(component)!,
+        success: false,
+        trafficCommitted: true,
+        error: `Deployment lease for ${held.context.workerName} could not be verified after its Durable Object migration deployment; no version was promoted: ${sanitizeDeploymentErrorMessage(getErrorText(error))}`,
+      });
+    }
+  }
+  return failures;
+}
+
 async function runDependencyScheduler(
   components: readonly WorkerComponent[],
   options: DeployOptions,
   throttle: DeploymentThrottle,
   task: (component: WorkerComponent) => Promise<DeployResult>,
-  schedulerOptions: { stopOnFailure?: boolean } = {}
+  schedulerOptions: {
+    stopOnFailure?: boolean;
+    /**
+     * Results that are already final (e.g. a Worker direct-deployed before the staged uploads).
+     * They are never scheduled again and are kept in the returned map even if the scheduler
+     * halts, while dependants still see them as completed for dependency gating.
+     */
+    initialResults?: ReadonlyMap<WorkerComponent, DeployResult>;
+  } = {}
 ): Promise<Map<WorkerComponent, DeployResult>> {
   const selected = new Set(components);
-  const pending = new Set(components);
+  const results = new Map<WorkerComponent, DeployResult>(schedulerOptions.initialResults);
+  const pending = new Set(components.filter((component) => !results.has(component)));
   const active = new Map<
     WorkerComponent,
     Promise<{ component: WorkerComponent; result: DeployResult }>
   >();
-  const results = new Map<WorkerComponent, DeployResult>();
   let halted = false;
   let haltReason = 'Skipped because another staged promotion failed';
 
@@ -2601,7 +2731,7 @@ export interface WorkerDeploymentLeaseCoordinator {
     lease: SetupWorkerDeploymentLease,
     previousDeploymentId?: string
   ): Promise<SetupWorkerDeploymentLease>;
-  release(lease: SetupWorkerDeploymentLease): Promise<void>;
+  release(lease: SetupWorkerDeploymentLease): Promise<WorkerDeploymentLeaseReleaseResult | void>;
   complete(success: boolean, errorCode?: string): Promise<void>;
 }
 
@@ -2784,15 +2914,30 @@ async function createWorkerDeploymentLeaseSession(
   }
 }
 
+/**
+ * Release every held lease and complete the session.
+ *
+ * A lease already taken over by another operation (expired, then acquired elsewhere) is a failed
+ * release for every caller by default: the session is completed as failed and this throws, so a
+ * caller that only needs "did it work" cannot mistake a lost lease for success. Only `deployAll`
+ * opts in with `reportTakeover`: it must still return the results of Workers that are already
+ * live, so the taken-over components are returned (session completed as
+ * `deployment_lease_lost`) and the caller folds them into its summary.
+ */
 async function closeWorkerDeploymentLeaseSession(
   session: WorkerDeploymentLeaseSession | undefined,
-  success: boolean
-): Promise<void> {
-  if (!session) return;
+  success: boolean,
+  closeOptions: { reportTakeover?: boolean } = {}
+): Promise<WorkerComponent[]> {
+  if (!session) return [];
   let releaseFailed = false;
-  for (const held of [...session.leases.values()].reverse()) {
+  const takenOver: WorkerComponent[] = [];
+  for (const [component, held] of [...session.leases.entries()].reverse()) {
     try {
-      await session.coordinator.release(held.lease);
+      if ((await session.coordinator.release(held.lease)) === 'taken_over') {
+        if (closeOptions.reportTakeover) takenOver.push(component);
+        else releaseFailed = true;
+      }
     } catch {
       releaseFailed = true;
     }
@@ -2803,7 +2948,14 @@ async function closeWorkerDeploymentLeaseSession(
       .catch(() => undefined);
     throw new Error('worker_deployment_lease_release_failed');
   }
+  if (takenOver.length > 0) {
+    // Our hold already expired and another operation owns the lease, so there is nothing left
+    // to release. Record the failure but do not throw (reportTakeover callers only).
+    await session.coordinator.complete(false, 'deployment_lease_lost').catch(() => undefined);
+    return takenOver;
+  }
   await session.coordinator.complete(success, success ? undefined : 'worker_deployment_failed');
+  return takenOver;
 }
 
 async function authorizeWorkerMutation(
@@ -3236,11 +3388,16 @@ export async function deployAll(
     (await createWorkerDeploymentLeaseSession(options, components, contexts, throttle));
   const ownsLeaseSession = leaseSession !== undefined && existingLeaseSession === undefined;
   if (leaseSession) options.deploymentLeaseSession = leaseSession;
-  let deploymentSucceeded = false;
+  let leaseSessionClosed = false;
 
   try {
     let resultMap: Map<WorkerComponent, DeployResult>;
     if (options.dryRun) {
+      const dryRunEarlyDirect = new Set(
+        strategy === 'staged' && validationFailures.size === 0
+          ? await findComponentsWithPendingMigrations(components, contexts, options, throttle)
+          : []
+      );
       resultMap = await runDependencyScheduler(components, options, throttle, async (component) => {
         const failure = validationFailures.get(component);
         if (failure) {
@@ -3248,9 +3405,15 @@ export async function deployAll(
         }
         const context = contexts.get(component)!;
         const effectiveStrategy = context.requiresDirectDeployment ? 'direct' : strategy;
-        options.onProgress?.(
-          `  [DRY RUN] Would ${effectiveStrategy === 'staged' ? 'upload and promote' : 'deploy'} ${component}`
-        );
+        if (dryRunEarlyDirect.has(component)) {
+          options.onProgress?.(
+            `  [DRY RUN] Would deploy ${component} directly BEFORE uploading other Worker versions because it has pending Durable Object migrations`
+          );
+        } else {
+          options.onProgress?.(
+            `  [DRY RUN] Would ${effectiveStrategy === 'staged' ? 'upload and promote' : 'deploy'} ${component}`
+          );
+        }
         if (component === 'ar-management' && authBootstrapConfig) {
           options.onProgress?.(
             '  [DRY RUN] Would redeploy ar-auth with ACCOUNT_PROVISIONER after ar-management'
@@ -3276,11 +3439,47 @@ export async function deployAll(
           !validationFailures.has(component) &&
           contexts.get(component)?.requiresDirectDeployment === false
       );
-      const prepared = await runBoundedPool(versionedComponents, throttle, (component) =>
-        uploadWorkerVersion(contexts.get(component)!, options, throttle)
+      // A direct-deployment Worker with pending Durable Object migrations must be deployed BEFORE
+      // the versioned uploads. Dependants (e.g. ar-async binding a class of ar-lib-core through
+      // script_name) cannot upload a version that binds a class the target script does not
+      // implement yet (Cloudflare error 10061), and only the migration in `wrangler deploy` can
+      // create it. Workers without pending migrations keep the later scheduler step, so a release
+      // that needs no migration still mutates nothing until every upload has succeeded.
+      // Rollback: like every direct deployment, this one is not rolled back if a later upload or
+      // promotion fails. Adding a Durable Object class is additive, so the previous versions of
+      // the other Workers keep running against the already migrated script; a failure is reported
+      // per component and an update run resumes from the (now current) migration tag.
+      const earlyDirectComponents =
+        validationFailures.size === 0
+          ? await findComponentsWithPendingMigrations(components, contexts, options, throttle)
+          : [];
+      const earlyResults = new Map<WorkerComponent, DeployResult>();
+      if (earlyDirectComponents.length > 0) {
+        options.onProgress?.(
+          `Pending Durable Object migrations in ${earlyDirectComponents.join(', ')}; ` +
+            'deploying them directly before uploading Worker versions that may bind the new classes.'
+        );
+        const earlyScheduled = await runDependencyScheduler(
+          earlyDirectComponents,
+          options,
+          throttle,
+          (component) => deployWorkerDirect(contexts.get(component)!, options, throttle),
+          { stopOnFailure: true }
+        );
+        for (const [component, result] of earlyScheduled) earlyResults.set(component, result);
+      }
+      const earlyFailures = earlyDirectComponents.filter(
+        (component) => earlyResults.get(component)?.success !== true
       );
+      const prepared =
+        earlyFailures.length > 0
+          ? new Map<WorkerComponent, DeployResult>()
+          : await runBoundedPool(versionedComponents, throttle, (component) =>
+              uploadWorkerVersion(contexts.get(component)!, options, throttle)
+            );
       const uploadFailed =
         validationFailures.size > 0 ||
+        earlyFailures.length > 0 ||
         versionedComponents.some((component) => prepared.get(component)?.success !== true);
       if (uploadFailed) {
         resultMap = new Map(
@@ -3290,7 +3489,22 @@ export async function deployAll(
               options.onError?.(component, new Error(validationFailure.error));
               return [component, validationFailure];
             }
+            const earlyResult = earlyResults.get(component);
+            if (earlyResult) {
+              // Already reported (onError) by the scheduler when it failed.
+              return [component, earlyResult];
+            }
             const result = prepared.get(component);
+            if (earlyFailures.length > 0 && !result) {
+              const aborted = makeSkippedResult(
+                component,
+                options,
+                `Not started because the Durable Object migration deployment of ${earlyFailures.join(', ')} failed`,
+                contexts.get(component)
+              );
+              options.onError?.(component, new Error(aborted.error));
+              return [component, aborted];
+            }
             if (!result || result.success) {
               const aborted = makeSkippedResult(
                 component,
@@ -3331,7 +3545,19 @@ export async function deployAll(
           (component) => commitPreflight.get(component)?.failure !== undefined
         );
 
-        if (preflightFailed) {
+        // The early direct deployment happened before the (possibly long) uploads and preflight.
+        // The old order renewed and verified its lease right before promotion; do the same here so
+        // a lease lost in the meantime stops every promotion instead of promoting dependants
+        // against a Worker another actor may have changed.
+        const earlyLeaseFailures = preflightFailed
+          ? new Map<WorkerComponent, DeployResult>()
+          : await verifyEarlyDeploymentLeases(earlyDirectComponents, earlyResults, options);
+        for (const [component, failure] of earlyLeaseFailures) {
+          earlyResults.set(component, failure);
+          options.onError?.(component, new Error(failure.error));
+        }
+
+        if (preflightFailed || earlyLeaseFailures.size > 0) {
           resultMap = new Map(
             components.map((component) => {
               const failure = commitPreflight.get(component)?.failure;
@@ -3339,10 +3565,14 @@ export async function deployAll(
                 options.onError?.(component, new Error(failure.error));
                 return [component, failure];
               }
+              const earlyResult = earlyResults.get(component);
+              if (earlyResult) return [component, earlyResult];
               const aborted = makeSkippedResult(
                 component,
                 options,
-                'Deployment was not started because staged trigger validation or baseline capture failed',
+                preflightFailed
+                  ? 'Deployment was not started because staged trigger validation or baseline capture failed'
+                  : `Version was uploaded but not promoted because the deployment lease of ${[...earlyLeaseFailures.keys()].join(', ')} could not be verified`,
                 contexts.get(component)
               );
               options.onError?.(component, new Error(aborted.error));
@@ -3381,7 +3611,9 @@ export async function deployAll(
                 throttle
               );
             },
-            { stopOnFailure: true }
+            // The early direct deployment is already final: seed it so it is neither deployed nor
+            // reported as skipped again, while dependants still see it as completed.
+            { stopOnFailure: true, initialResults: earlyResults }
           );
 
           const trafficFailure = components.find(
@@ -3728,6 +3960,26 @@ export async function deployAll(
         }
       }
     }
+    if (ownsLeaseSession) {
+      // Close before the summary is built: a takeover first noticed while releasing means the
+      // leased Workers were not protected for the whole deployment, and the summary must say so.
+      // The close happens exactly once; the finally below only covers the error path.
+      leaseSessionClosed = true;
+      options.deploymentLeaseSession = undefined;
+      const takenOver = await closeWorkerDeploymentLeaseSession(
+        leaseSession,
+        allResults.every((result) => result.success),
+        { reportTakeover: true }
+      );
+      for (const component of takenOver) {
+        const result = allResults.find((candidate) => candidate.component === component);
+        if (!result?.success) continue;
+        result.success = false;
+        result.trafficCommitted = true;
+        result.error =
+          'Worker deployed, but its deployment lease was taken over by another operation before release; verify the live deployment before relying on this result';
+      }
+    }
     const completedAt = new Date().toISOString();
     const successCount = allResults.filter((result) => result.success).length;
     const failedCount = allResults.length - successCount;
@@ -3749,12 +4001,11 @@ export async function deployAll(
     for (const result of allResults.filter((candidate) => !candidate.success)) {
       options.onProgress?.(`  • ${result.component}: ${result.error}`);
     }
-    deploymentSucceeded = failedCount === 0;
     return summary;
   } finally {
-    if (ownsLeaseSession) {
+    if (ownsLeaseSession && !leaseSessionClosed) {
       options.deploymentLeaseSession = undefined;
-      await closeWorkerDeploymentLeaseSession(leaseSession, deploymentSucceeded);
+      await closeWorkerDeploymentLeaseSession(leaseSession, false, { reportTakeover: true });
     }
   }
 }
