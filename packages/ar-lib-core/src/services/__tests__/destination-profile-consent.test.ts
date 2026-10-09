@@ -543,6 +543,115 @@ describe('destination profile field consent', () => {
       });
       expect(result).toEqual({ sub: 'user_1' });
     });
+
+    describe('when the ID token is all the response gives the app, and the caller has authorized claims', () => {
+      const profile = [
+        { claimName: 'sub', required: true, surfaces: ['id_token', 'userinfo'] },
+        { claimName: 'email', surfaces: ['userinfo'], requiredScopes: ['email'] },
+        { claimName: 'name', surfaces: ['userinfo'], requiredScopes: ['profile'] },
+        { claimName: 'nickname', surfaces: ['id_token'], requiredScopes: ['profile'] },
+        { claimName: 'phone_number', surfaces: ['userinfo'], requiredScopes: ['phone'] },
+        { claimName: 'locale', surfaces: ['userinfo'], requiredScopes: ['directory'] },
+        { claimName: 'zoneinfo', surfaces: ['userinfo'], requiredScopes: ['profile', 'directory'] },
+      ];
+      const claims = {
+        sub: 'user_1',
+        email: 'a@example.com',
+        name: 'A',
+        nickname: 'a',
+        phone_number: '+81',
+        locale: 'ja',
+        zoneinfo: 'Asia/Tokyo',
+      };
+      const idToken = (extra: {
+        grantedScopes: string[];
+        alsoSurfaces?: Array<'id_token' | 'userinfo'>;
+        authorizedClaims?: Set<string>;
+      }) =>
+        filterOidcClaimsByDestinationConsent({
+          // The user has agreed to release every field, so the surface and scopes alone decide.
+          coreAdapter: adapter({
+            queryOne: vi.fn().mockResolvedValue({
+              released_claims_json: JSON.stringify(profile.map((field) => field.claimName)),
+              released_attributes_json: null,
+            }),
+          }),
+          adminAdapter: adapter({
+            queryOne: vi.fn().mockResolvedValue({
+              profile_id: 'profile_oidc',
+              destination_type: 'oidc',
+              version_id: 'version_1',
+              schema_json: JSON.stringify({ claims: profile }),
+            }),
+          }),
+          tenantId: 'tenant_a',
+          subjectId: 'user_1',
+          clientId: 'client_1',
+          profileId: 'profile_oidc',
+          surface: 'id_token',
+          claims,
+          ...extra,
+        });
+
+      it('leaves the fields listed for UserInfo out of an ID token by default', async () => {
+        await expect(idToken({ grantedScopes: ['openid', 'email', 'profile'] })).resolves.toEqual({
+          sub: 'user_1',
+          nickname: 'a',
+        });
+      });
+
+      it('releases the UserInfo fields of the scopes granted in an ID token that stands in for UserInfo', async () => {
+        await expect(
+          idToken({ grantedScopes: ['openid', 'email'], alsoSurfaces: ['userinfo'] })
+        ).resolves.toEqual({ sub: 'user_1', email: 'a@example.com' });
+      });
+
+      it('releases a claim the caller authorized without asking the field for its scope again', async () => {
+        await expect(
+          idToken({
+            grantedScopes: ['openid'],
+            alsoSurfaces: ['userinfo'],
+            authorizedClaims: new Set(['name']),
+          })
+        ).resolves.toEqual({ sub: 'user_1', name: 'A' });
+      });
+
+      it('still holds an authorized claim to the surfaces its field is listed for', async () => {
+        await expect(
+          idToken({ grantedScopes: ['openid'], authorizedClaims: new Set(['name', 'email']) })
+        ).resolves.toEqual({ sub: 'user_1' });
+      });
+
+      it("still requires a scope of the profile's own for a claim the caller authorized", async () => {
+        const released = await idToken({
+          grantedScopes: ['openid', 'email'],
+          alsoSurfaces: ['userinfo'],
+          authorizedClaims: new Set(['email', 'locale', 'zoneinfo']),
+        });
+        expect(released).toMatchObject({ email: 'a@example.com' });
+        // locale lists only 'directory'; the OIDC scope (profile) is not what it asks for.
+        expect(released).not.toHaveProperty('locale');
+        // zoneinfo lists profile among others: the OIDC scope the caller judged is enough.
+        expect(released).toHaveProperty('zoneinfo');
+        await expect(
+          idToken({
+            grantedScopes: ['openid', 'email', 'directory'],
+            alsoSurfaces: ['userinfo'],
+            authorizedClaims: new Set(['locale']),
+          })
+        ).resolves.toHaveProperty('locale', 'ja');
+      });
+
+      it('still holds a claim nobody authorized to the scopes', async () => {
+        await expect(
+          idToken({
+            grantedScopes: ['openid'],
+            alsoSurfaces: ['userinfo'],
+            authorizedClaims: new Set(['name']),
+          })
+        ).resolves.not.toHaveProperty('phone_number');
+      });
+    });
   });
 
   it('rejects OIDC claims that violate configured type and allowed-value constraints', async () => {

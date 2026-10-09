@@ -38,6 +38,23 @@ export interface ApplyOIDCIdentityMappingInput {
   destinationSurface?: 'id_token' | 'userinfo';
   grantedScopes?: string[];
   /**
+   * Set when the caller has already authorized the standard claims `claims` carries against the
+   * request (their scope, the claims parameter, the client's claims policy), as the authorization
+   * endpoint does for the ID token it issues. For those claims the Destination Profile counts
+   * the OIDC scope that releases the claim (email for email, ...) as granted, so a claim the
+   * claims parameter requested is not dropped for lacking it. A scope of the profile's own is
+   * still required; claims the mapping adds or whose value it replaced are held to the scopes;
+   * every other profile rule still applies.
+   */
+  claimsAuthorizedByRequest?: boolean;
+  /**
+   * Set when the ID token is all the response gives the app (response_type=id_token carries no
+   * access token to call UserInfo with), so the claims the profile lists for UserInfo are
+   * released in it too, as OIDC Core 5.4 requires for the scope claims. Only for the id_token
+   * surface.
+   */
+  userInfoClaimsInIdToken?: boolean;
+  /**
    * What the token or response carries: the claims the mapping starts from and the output keeps.
    * The mapping reads these as sources too, but they depend on the scopes and the request, so a
    * mapping that reads only them would derive another sub for the same user from one request to
@@ -294,9 +311,57 @@ async function applyOIDCDestinationFieldConsent(
     clientId: input.clientId,
     profileId,
     surface: input.destinationSurface,
+    ...(input.userInfoClaimsInIdToken && input.destinationSurface === 'id_token'
+      ? { alsoSurfaces: ['userinfo' as const] }
+      : {}),
     grantedScopes: input.grantedScopes,
+    ...(input.claimsAuthorizedByRequest
+      ? { authorizedClaims: unchangedClaimNames(input.claims, claims) }
+      : {}),
     claims,
   });
+}
+
+/**
+ * The claims the caller handed in that the mapping left with the value it was given. Only these
+ * are the ones the caller authorized; a claim the mapping replaced is the mapping's own output.
+ */
+function unchangedClaimNames(
+  authorized: Record<string, unknown>,
+  mapped: Record<string, unknown>
+): Set<string> {
+  const names = new Set<string>();
+  for (const [name, value] of Object.entries(authorized)) {
+    if (!Object.prototype.hasOwnProperty.call(mapped, name)) continue;
+    if (claimValuesEqual(mapped[name], value)) names.add(name);
+  }
+  return names;
+}
+
+/** Equal as JSON values are: arrays in order, object members in any order (address, say). */
+function claimValuesEqual(left: unknown, right: unknown): boolean {
+  if (Object.is(left, right)) return true;
+  if (Array.isArray(left) || Array.isArray(right)) {
+    return (
+      Array.isArray(left) &&
+      Array.isArray(right) &&
+      left.length === right.length &&
+      left.every((item, index) => claimValuesEqual(item, right[index]))
+    );
+  }
+  if (left && right && typeof left === 'object' && typeof right === 'object') {
+    const leftEntries = Object.entries(left as Record<string, unknown>);
+    const rightRecord = right as Record<string, unknown>;
+    return (
+      leftEntries.length === Object.keys(rightRecord).length &&
+      leftEntries.every(
+        ([key, item]) =>
+          Object.prototype.hasOwnProperty.call(rightRecord, key) &&
+          claimValuesEqual(item, rightRecord[key])
+      )
+    );
+  }
+  return false;
 }
 
 interface OIDCPersistentIdentifierProfileRow {

@@ -562,7 +562,8 @@ function matchesClaimRequest(value: unknown, request: OIDCIndividualClaimRequest
   return true;
 }
 
-function canReleaseClaim(
+/** Whether the client's claims policy lets `claimName` be released to a request with these scopes. */
+export function canReleaseClaim(
   claimName: string,
   scopes: Set<string>,
   clientPolicy: OIDCClaimsClientPolicy

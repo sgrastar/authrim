@@ -97,6 +97,10 @@ vi.mock('@authrim/ar-lib-core', async () => {
 // implementation; the mapping itself always runs for real.
 const mappingFixture = vi.hoisted(() => ({
   binding: null as unknown,
+  // A Destination Profile (its schema's claims) the real release filter is run against.
+  profile: null as { claims: Array<Record<string, unknown>> } | null,
+  // Whether the user has already agreed to release the profile's fields (the stored selection).
+  profileConsent: 'all' as 'all' | 'none',
   userRow: null as Record<string, unknown> | null,
   userLookups: [] as unknown[][],
 }));
@@ -118,10 +122,34 @@ vi.mock('@authrim/ar-lib-core/services/destination-profile-consent', async () =>
   );
   return {
     ...actual,
-    filterOidcClaimsByDestinationConsent: (input: { claims: Record<string, unknown> }) =>
-      mappingFixture.binding
-        ? Promise.resolve(input.claims)
-        : (actual.filterOidcClaimsByDestinationConsent as (i: unknown) => unknown)(input),
+    filterOidcClaimsByDestinationConsent: (input: { claims: Record<string, unknown> }) => {
+      const filter = actual.filterOidcClaimsByDestinationConsent as (i: unknown) => unknown;
+      if (mappingFixture.profile) {
+        // The real filter, over the profile, with the user's stored selection (all fields, or none).
+        const claims = mappingFixture.profile.claims;
+        const database = {
+          queryOne: async (sql: string) =>
+            sql.includes('destination_profiles')
+              ? {
+                  profile_id: 'profile-1',
+                  destination_type: 'oidc',
+                  version_id: 'version-1',
+                  schema_json: JSON.stringify({ claims }),
+                }
+              : mappingFixture.profileConsent === 'none'
+                ? null
+                : {
+                    id: 'consent-1',
+                    released_claims_json: JSON.stringify(claims.map((claim) => claim.claimName)),
+                    released_attributes_json: null,
+                    evidence_json: '{}',
+                    created_at: 1,
+                  },
+        };
+        return filter({ ...input, coreAdapter: database, adminAdapter: database });
+      }
+      return mappingFixture.binding ? Promise.resolve(input.claims) : filter(input);
+    },
   };
 });
 
@@ -2743,6 +2771,8 @@ describe('Authorization Handler', () => {
         options: {
           rootKey?: boolean;
           scope?: string;
+          claims?: Record<string, unknown>;
+          client?: Record<string, unknown>;
           mapping?: (input: { claims: Record<string, unknown> }) => unknown;
         } = {}
       ) {
@@ -2751,8 +2781,9 @@ describe('Authorization Handler', () => {
           redirect_uris: ['https://example.com/callback'],
           grant_types: ['implicit', 'authorization_code'],
           response_types: ['id_token', 'id_token token', 'code id_token', 'code id_token token'],
-          scope: 'openid profile',
+          scope: 'openid profile email phone address',
           token_endpoint_auth_method: 'none',
+          ...options.client,
         });
         await configureClientSettings(env, { 'client.sso_enabled': true });
         configureClientTrustPolicy(env);
@@ -2778,7 +2809,7 @@ describe('Authorization Handler', () => {
           }));
         }
         const response = await app.request(
-          `/authorize?response_type=${encodeURIComponent(responseType)}&client_id=test-client&redirect_uri=https://example.com/callback&scope=${encodeURIComponent(options.scope ?? 'openid profile')}&state=mapped&nonce=mapped-nonce&code_challenge=${'M'.repeat(43)}&code_challenge_method=S256`,
+          `/authorize?response_type=${encodeURIComponent(responseType)}&client_id=test-client&redirect_uri=https://example.com/callback&scope=${encodeURIComponent(options.scope ?? 'openid profile')}&state=mapped&nonce=mapped-nonce&code_challenge=${'M'.repeat(43)}&code_challenge_method=S256${options.claims ? `&claims=${encodeURIComponent(JSON.stringify(options.claims))}` : ''}`,
           {
             method: 'GET',
             headers: { Cookie: `authrim_session=${encodeURIComponent(TEST_SESSION_ID)}` },
@@ -2788,6 +2819,40 @@ describe('Authorization Handler', () => {
         expect(response.status).toBe(302);
         return new URLSearchParams(new URL(response.headers.get('Location')!).hash.slice(1));
       }
+
+      const mappedUserRow = (): Record<string, unknown> => ({
+        id: 'mapped-user',
+        tenant_id: 'default',
+        subject_id: 'subject-mapped-user',
+        account_id: 'account-mapped-user',
+        account_type: 'end_user',
+        lifecycle_state: 'active',
+        email: 'alice@example.com',
+        email_verified: 1,
+        name: 'Alice Example',
+        given_name: 'Alice',
+        family_name: 'Example',
+        middle_name: null,
+        nickname: null,
+        preferred_username: 'alice',
+        profile: null,
+        picture: null,
+        website: null,
+        gender: null,
+        birthdate: null,
+        zoneinfo: null,
+        locale: null,
+        phone_number: '+8100000000',
+        phone_number_verified: 0,
+        address_json: null,
+        password_hash: null,
+        external_id: null,
+        last_login_at: null,
+        active: 1,
+        custom_attributes_json: null,
+        created_at: '2026-01-01T00:00:00.000Z',
+        updated_at: '2026-01-01T00:00:00.000Z',
+      });
 
       const pairwise = (input: { claims: Record<string, unknown> }) => ({
         ...input.claims,
@@ -2924,39 +2989,7 @@ describe('Authorization Handler', () => {
 
         beforeEach(() => {
           mappingFixture.userLookups = [];
-          mappingFixture.userRow = {
-            id: 'mapped-user',
-            tenant_id: 'default',
-            subject_id: 'subject-mapped-user',
-            account_id: 'account-mapped-user',
-            account_type: 'end_user',
-            lifecycle_state: 'active',
-            email: 'alice@example.com',
-            email_verified: 1,
-            name: 'Alice Example',
-            given_name: 'Alice',
-            family_name: 'Example',
-            middle_name: null,
-            nickname: null,
-            preferred_username: 'alice',
-            profile: null,
-            picture: null,
-            website: null,
-            gender: null,
-            birthdate: null,
-            zoneinfo: null,
-            locale: null,
-            phone_number: '+8100000000',
-            phone_number_verified: 0,
-            address_json: null,
-            password_hash: null,
-            external_id: null,
-            last_login_at: null,
-            active: 1,
-            custom_attributes_json: null,
-            created_at: '2026-01-01T00:00:00.000Z',
-            updated_at: '2026-01-01T00:00:00.000Z',
-          };
+          mappingFixture.userRow = mappedUserRow();
           mappingFixture.binding = {
             id: 'binding-1',
             tenantId: 'default',
@@ -3139,6 +3172,182 @@ describe('Authorization Handler', () => {
           expect(getAuthCodeStore(env).storeCodeRpc).toHaveBeenCalledWith(
             expect.objectContaining({ userId: 'mapped-user' })
           );
+        });
+      });
+
+      describe('with a tenant-wide mapping whose Destination Profile lists the standard claims for UserInfo only', () => {
+        // The shape of the admin console's "Standard OIDC claims" template: each standard claim
+        // names the OIDC Core 5.4 scope that releases it, and the userinfo surface only.
+        const standardProfile = () => ({
+          claims: [
+            { claimName: 'sub', required: true, surfaces: ['id_token', 'userinfo'] },
+            ...[
+              ['name', 'profile'],
+              ['email', 'email'],
+              ['email_verified', 'email'],
+              ['phone_number', 'phone'],
+              ['phone_number_verified', 'phone'],
+            ].map(([claimName, scope]) => ({
+              claimName,
+              surfaces: ['userinfo'],
+              requiredScopes: [scope],
+            })),
+          ],
+        });
+        // The app has no identity mapping of its own (identity_mapping is null); the tenant's
+        // active, tenant-scope activation applies to it, and its Destination Profile is the one
+        // above. It maps nothing: it only decides what each surface may carry.
+        const policy = { identity_mapping: null };
+
+        beforeEach(() => {
+          mappingFixture.userRow = mappedUserRow();
+          mappingFixture.profile = standardProfile();
+          mappingFixture.binding = {
+            id: 'binding-tenant',
+            tenantId: 'default',
+            fieldMappingSetId: 'set-tenant',
+            fieldMappingVersionId: 'version-tenant',
+            mappingSnapshotHash: 'hash-tenant',
+            catalog: { identity: { id: 'c', version: '1', contentHash: 'c' }, entries: [] },
+            edges: [],
+            transforms: [],
+            validationRules: [],
+            fieldMappingSet: {},
+            activationScope: { tenantId: 'default' },
+            destinationNamespace: 'oidc.claim',
+            destinationProfileId: 'profile-1',
+            destinationProfileIds: ['profile-1'],
+          };
+        });
+
+        afterEach(() => {
+          mappingFixture.userRow = null;
+          mappingFixture.binding = null;
+          mappingFixture.profile = null;
+          mappingFixture.profileConsent = 'all';
+          mappingFixture.userLookups = [];
+        });
+
+        it.each([
+          ['openid email', { email: 'alice@example.com', email_verified: true }],
+          ['openid phone', { phone_number: '+8100000000', phone_number_verified: false }],
+          ['openid profile', { name: 'Alice Example' }],
+        ])(
+          'carries the claims of the scope in an ID token with no access token or code (%s)',
+          async (scope, expected) => {
+            const fragment = await authorizeFor('id_token', { scope, client: policy });
+
+            const idToken = decodeJwt(fragment.get('id_token')!);
+            expect(idToken).toMatchObject(expected);
+            // Only the scopes asked for: the other scope claims stay out.
+            for (const claim of ['name', 'email', 'phone_number'].filter((c) => !(c in expected))) {
+              expect(idToken).not.toHaveProperty(claim);
+            }
+          }
+        );
+
+        it('carries the claims the claims parameter requests for the ID token without their scope', async () => {
+          const fragment = await authorizeFor('id_token', {
+            scope: 'openid',
+            claims: { id_token: { name: { essential: true } } },
+            client: { ...policy, allow_claims_without_scope: true },
+          });
+
+          const idToken = decodeJwt(fragment.get('id_token')!);
+          expect(idToken.name).toBe('Alice Example');
+          expect(idToken).not.toHaveProperty('email');
+        });
+
+        it('does not carry a claim without its scope when the claims parameter is not allowed to', async () => {
+          const fragment = await authorizeFor('id_token', {
+            scope: 'openid',
+            claims: { id_token: { name: { essential: true } } },
+            client: policy,
+          });
+
+          expect(decodeJwt(fragment.get('id_token')!)).not.toHaveProperty('name');
+        });
+
+        it.each(['id_token token', 'code id_token', 'code id_token token'])(
+          'leaves the scope claims to UserInfo when the response carries an access token or code (%s)',
+          async (responseType) => {
+            const fragment = await authorizeFor(responseType, {
+              scope: 'openid email',
+              client: policy,
+            });
+
+            const idToken = decodeJwt(fragment.get('id_token')!);
+            expect(idToken.sub).toBe('mapped-user');
+            expect(idToken).not.toHaveProperty('email');
+            expect(idToken).not.toHaveProperty('email_verified');
+          }
+        );
+
+        it('holds a scope of the profile’s own to the granted scopes, however the claim was authorized', async () => {
+          mappingFixture.profile = {
+            claims: [
+              { claimName: 'sub', required: true, surfaces: ['id_token', 'userinfo'] },
+              { claimName: 'email', surfaces: ['id_token'], requiredScopes: ['directory'] },
+            ],
+          };
+
+          // Implicit: the email scope releases email to the ID token, but the profile asks for
+          // 'directory' too.
+          const implicit = await authorizeFor('id_token', {
+            scope: 'openid email',
+            client: policy,
+          });
+          expect(decodeJwt(implicit.get('id_token')!)).not.toHaveProperty('email');
+
+          // Hybrid: the claims parameter authorizes email for the ID token, the same applies.
+          const hybrid = await authorizeFor('code id_token', {
+            scope: 'openid email',
+            claims: { id_token: { email: null } },
+            client: policy,
+          });
+          expect(decodeJwt(hybrid.get('id_token')!)).not.toHaveProperty('email');
+
+          // Granted, both carry it.
+          const granted = await authorizeFor('id_token', {
+            scope: 'openid email directory',
+            client: { ...policy, scope: 'openid email directory' },
+          });
+          expect(decodeJwt(granted.get('id_token')!).email).toBe('alice@example.com');
+        });
+
+        describe('before the user has agreed to release any field', () => {
+          beforeEach(() => {
+            mappingFixture.profileConsent = 'none';
+          });
+
+          it('releases only the fields the profile requires', async () => {
+            mappingFixture.profile = {
+              claims: [
+                { claimName: 'sub', required: true, surfaces: ['id_token', 'userinfo'] },
+                { claimName: 'email', required: true, requiredScopes: ['email'] },
+                { claimName: 'phone_number', requiredScopes: ['phone'] },
+              ],
+            };
+
+            const fragment = await authorizeFor('id_token', {
+              scope: 'openid email phone',
+              client: policy,
+            });
+
+            const idToken = decodeJwt(fragment.get('id_token')!);
+            expect(idToken.email).toBe('alice@example.com');
+            // An optional field waits for the user's selection (the consent step stores it).
+            expect(idToken).not.toHaveProperty('phone_number');
+          });
+        });
+
+        it('does not carry the claims of a scope that was not granted', async () => {
+          const fragment = await authorizeFor('id_token', { scope: 'openid', client: policy });
+
+          const idToken = decodeJwt(fragment.get('id_token')!);
+          for (const claim of ['name', 'email', 'phone_number']) {
+            expect(idToken).not.toHaveProperty(claim);
+          }
         });
       });
 

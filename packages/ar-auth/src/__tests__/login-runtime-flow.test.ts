@@ -6,6 +6,7 @@ import {
   clearLoginRuntimeFlowVersionCacheForTests,
   loginRuntimeEmailVerificationChallengeHandler,
   loginRuntimeInteractionStartHandler,
+  insertDestinationFieldConsentRecord,
   loginRuntimeInteractionSubmitHandler,
 } from '../login-runtime-flow';
 
@@ -2213,6 +2214,199 @@ describe('LoginUI runtime Flow handlers', () => {
     });
   });
 
+  it("hydrates OIDC consent from the tenant's active activation when the app has no Mapping Set", async () => {
+    mockStartQueries(consentRuntime);
+    mocks.coreAdapter.queryOne
+      .mockResolvedValueOnce({ identity_mapping: null })
+      .mockResolvedValueOnce({
+        id: 'policy_registration',
+        display_name: 'Authorization consent',
+        description: null,
+        is_active: 1,
+      });
+    mocks.coreAdapter.query.mockResolvedValueOnce([]);
+    mocks.resolveRuntimeIdentityMappingBinding.mockResolvedValueOnce({
+      destinationProfileId: 'tenant_destination_profile',
+      destinationProfileIds: ['tenant_destination_profile'],
+    });
+    mocks.adminAdapter.queryOne.mockResolvedValueOnce({
+      profile_id: 'tenant_destination_profile',
+      destination_type: 'oidc',
+      version_id: 'tenant_destination_profile_v1',
+      schema_json: JSON.stringify({
+        claims: [
+          { claimName: 'sub', label: 'Subject', required: true },
+          { claimName: 'email', label: 'Email', required: false, requiredScopes: ['email'] },
+        ],
+      }),
+    });
+
+    const response = await loginRuntimeInteractionStartHandler(
+      createContext({
+        env: { DB_ADMIN: mocks.adminAdapter as never },
+        body: { flow_kind: 'login', client_id: 'client_1', requested_scope: ['openid', 'email'] },
+      })
+    );
+    const data = await readJson(response);
+    const contract = data.contract as FlowRuntimeContract;
+
+    expect(response.status).toBe(200);
+    // The same lookup the release makes: no Mapping Set named, the tenant's activation applies.
+    const lookup = mocks.resolveRuntimeIdentityMappingBinding.mock.calls[0][1] as Record<
+      string,
+      unknown
+    >;
+    expect(lookup).toMatchObject({ protocol: 'oidc', role: 'op', clientId: 'client_1' });
+    expect(lookup.fieldMappingSetId).toBeUndefined();
+    expect(contract.ui.steps[0]?.content?.destination_field_consent).toMatchObject({
+      profile_id: 'tenant_destination_profile',
+      fields: [
+        expect.objectContaining({ key: 'sub', required: true }),
+        expect.objectContaining({ key: 'email', required: false }),
+      ],
+    });
+  });
+
+  describe('a claim the authorization request names in its claims parameter, without its scope', () => {
+    const profileRow = {
+      profile_id: 'destination_oidc_1',
+      destination_type: 'oidc',
+      version_id: 'destination_oidc_version_1',
+      schema_json: JSON.stringify({
+        claims: [
+          { claimName: 'sub', label: 'Subject', required: true },
+          { claimName: 'name', label: 'Name', required: false, requiredScopes: ['profile'] },
+          { claimName: 'email', label: 'Email', required: false, requiredScopes: ['email'] },
+          { claimName: 'locale', label: 'Locale', required: false, requiredScopes: ['directory'] },
+        ],
+      }),
+    };
+
+    // As the real Login UI starts it: the body names the client and the authorization challenge,
+    // not the scope or the claims; those are the authorization request's own.
+    async function start(
+      client: Record<string, unknown>,
+      claims: unknown,
+      options: { scope?: string; rawClaims?: string } = {}
+    ): Promise<{ keys: string[]; context: Record<string, unknown> | null }> {
+      mocks.challengeStore.getChallengeRpc.mockResolvedValueOnce({
+        id: 'login_challenge_1',
+        tenantId: 'tenant_test',
+        type: 'login',
+        userId: 'anonymous',
+        challenge: 'login_challenge_1',
+        metadata: {
+          client_id: 'client_1',
+          scope: options.scope ?? 'openid',
+          claims: options.rawClaims ?? JSON.stringify(claims),
+        },
+        createdAt: Date.now(),
+        expiresAt: Date.now() + 600_000,
+        consumed: false,
+      });
+      mockStartQueries(consentRuntime);
+      mocks.coreAdapter.queryOne
+        .mockResolvedValueOnce({
+          identity_mapping: JSON.stringify({ destinationProfileId: 'destination_oidc_1' }),
+          ...client,
+        })
+        .mockResolvedValueOnce({
+          id: 'policy_registration',
+          display_name: 'Authorization consent',
+          description: null,
+          is_active: 1,
+        });
+      mocks.coreAdapter.query.mockResolvedValueOnce([]);
+      mocks.adminAdapter.queryOne.mockResolvedValueOnce(profileRow);
+      const response = await loginRuntimeInteractionStartHandler(
+        createContext({
+          env: { DB_ADMIN: mocks.adminAdapter as never },
+          body: {
+            flow_kind: 'login',
+            client_id: 'client_1',
+            authorization_challenge_id: 'login_challenge_1',
+          },
+        })
+      );
+      const data = await readJson(response);
+      const contract = data.contract as FlowRuntimeContract;
+      const keys = (
+        contract.ui.steps[0]?.content?.destination_field_consent as {
+          fields: Array<{ key: string }>;
+        }
+      ).fields.map((field) => field.key);
+      const stored = txExecuteCalls
+        .filter(([sql]) => String(sql).includes('INSERT INTO flow_interactions'))
+        .flatMap(([, params]) => params ?? [])
+        .find(
+          (param): param is string =>
+            typeof param === 'string' && param.includes('"requested_scope"')
+        );
+      const context: Record<string, unknown> | null = stored
+        ? (JSON.parse(stored) as Record<string, unknown>)
+        : null;
+      return { keys, context };
+    }
+
+    it('is asked about when the client lets claims through without their scope', async () => {
+      const { keys } = await start(
+        { allow_claims_without_scope: 1 },
+        { id_token: { name: { essential: true } }, userinfo: { email: null } }
+      );
+      expect(keys).toEqual(['sub', 'name', 'email']);
+    });
+
+    it('is not asked about when the client requires the scope', async () => {
+      const { keys } = await start(
+        { allow_claims_without_scope: 0 },
+        { id_token: { name: { essential: true } } }
+      );
+      expect(keys).toEqual(['sub']);
+    });
+
+    it("takes the request's scope from the authorization request, not from the Login UI", async () => {
+      // scope=openid: the email field (scope email) is not released, so it is not asked about.
+      const { keys, context } = await start(
+        { allow_claims_without_scope: 1 },
+        {},
+        { scope: 'openid' }
+      );
+      expect(keys).toEqual(['sub']);
+      expect(context).toMatchObject({ requested_scope: ['openid'] });
+    });
+
+    it('asks about the fields of the scopes the authorization request carries', async () => {
+      const { keys, context } = await start({}, {}, { scope: 'openid email profile' });
+      expect(keys).toEqual(['sub', 'name', 'email']);
+      expect(context).toMatchObject({ requested_scope: ['openid', 'email', 'profile'] });
+    });
+
+    it('keeps every claim of a large claims parameter, for the resumed interaction too', async () => {
+      const unknownClaims = Object.fromEntries(
+        Array.from({ length: 600 }, (_, index) => [`claim_${index}`, null])
+      );
+      const rawClaims = JSON.stringify({
+        id_token: { ...unknownClaims, name: { essential: true } },
+      });
+      expect(rawClaims.length).toBeGreaterThan(8192);
+
+      const { keys, context } = await start({ allow_claims_without_scope: 1 }, null, {
+        rawClaims,
+      });
+
+      expect(keys).toEqual(['sub', 'name']);
+      expect(context).toMatchObject({ requested_claims: ['name'] });
+    });
+
+    it('is not asked about when the profile wants a scope of its own that was not requested', async () => {
+      const { keys } = await start(
+        { allow_claims_without_scope: 1 },
+        { id_token: { locale: null } }
+      );
+      expect(keys).toEqual(['sub']);
+    });
+  });
+
   it('hydrates SAML destination consent from the per-SP release policy', async () => {
     mockStartQueries(consentRuntime);
     mocks.coreAdapter.queryOne.mockResolvedValueOnce({
@@ -3301,6 +3495,227 @@ describe('LoginUI runtime Flow handlers', () => {
           consent_mode: 'every_time',
         },
       },
+    });
+  });
+
+  async function submitWithExistingDestinationConsent(
+    existing: Record<string, unknown>,
+    request: {
+      scope?: string[];
+      claims?: string[];
+      profileClaims?: Array<Record<string, unknown>>;
+    } = {}
+  ) {
+    const requestedScope = request.scope ?? ['openid'];
+    const { data: startData } = await startInteraction(
+      {
+        flow_kind: 'login',
+        client_id: 'client_1',
+        requested_scope: requestedScope.join(' '),
+      },
+      acceptedConsentRuntime
+    );
+    resetAdapter();
+    mockSubmitQueries({
+      expiresAt: Number((startData.interaction as Record<string, unknown>).expires_at),
+      contractHash: String(startData.contract_hash),
+      signature: String(startData.signature),
+      currentNodeId: 'auth',
+      currentStepId: 'auth:step',
+      stepState: 'waiting_input',
+      runtimeSnapshot: acceptedConsentRuntime,
+      editorSnapshot: acceptedConsentEditor,
+      clientId: 'client_1',
+      context: {
+        protocol: 'oidc',
+        target_type: 'oidc_client',
+        target_id: 'client_1',
+        client_id: 'client_1',
+        requested_scope: requestedScope,
+        requested_claims: request.claims ?? ['name'],
+      },
+    });
+    mocks.coreAdapter.queryOne
+      .mockResolvedValueOnce({
+        identity_mapping: JSON.stringify({ destinationProfileId: 'destination_oidc_1' }),
+        allow_claims_without_scope: 1,
+      })
+      .mockResolvedValueOnce({
+        id: 'policy_registration',
+        display_name: 'Registration consent policy',
+        description: null,
+        is_active: 1,
+      })
+      .mockResolvedValueOnce({ id: 'version_terms_current', version: '20260701' })
+      .mockResolvedValueOnce({ id: 'existing_policy_consent_record' })
+      .mockResolvedValueOnce({
+        id: 'existing_destination_consent_record',
+        released_scopes_json: JSON.stringify(requestedScope),
+        ...existing,
+      });
+    mocks.coreAdapter.query
+      .mockResolvedValueOnce([
+        {
+          statement_id: 'statement_terms',
+          requirement: 'required',
+          version_mode: 'latest',
+          version_id: null,
+          checkbox_mode: 'required',
+          checkbox_default_checked: 0,
+          binding_type: 'subject',
+          binding_value: null,
+          evidence_profile: null,
+          language_fallback: null,
+          display_order: 0,
+          slug: 'terms_of_service',
+          category: 'terms_of_service',
+        },
+      ])
+      .mockResolvedValueOnce([
+        {
+          language: 'en',
+          title: 'Terms of Service',
+          description: '',
+          document_url: 'https://example.com/tos',
+          inline_content: 'I agree to %link1%.',
+        },
+      ]);
+    mocks.adminAdapter.queryOne.mockResolvedValueOnce({
+      profile_id: 'destination_oidc_1',
+      destination_type: 'oidc',
+      version_id: 'destination_oidc_version_1',
+      schema_json: JSON.stringify({
+        claims: request.profileClaims ?? [
+          { claimName: 'sub', label: 'Subject', required: true, requiredScopes: ['openid'] },
+          { claimName: 'name', label: 'Name', required: false, requiredScopes: ['profile'] },
+        ],
+      }),
+    });
+    mocks.sessionStore.getSessionRpc.mockResolvedValueOnce({
+      userId: 'user_1',
+      expiresAt: Date.now() + 60_000,
+      createdAt: 1_700_000_000_000,
+      data: { authTime: 1_700_000_123 },
+    });
+
+    const response = await loginRuntimeInteractionSubmitHandler(
+      createContext({
+        env: { DB_ADMIN: mocks.adminAdapter as never },
+        params: { interaction_id: 'interaction_1' },
+        headers: { Cookie: 'authrim_session=sess_runtime_1' },
+        body: {
+          step_id: 'auth:step',
+          node_id: 'auth',
+          selected_handle: 'passkey',
+          contract_hash: startData.contract_hash,
+          signature: startData.signature,
+        },
+      })
+    );
+    const data = await readJson(response);
+
+    expect(response.status).toBe(200);
+    return data;
+  }
+
+  describe('an existing Destination Profile consent', () => {
+    const shown = (data: Record<string, unknown>) =>
+      JSON.stringify(data).includes('"destination_field_consent"');
+
+    it.each([
+      ['presented only sub (the claims parameter now asks for name)', ['sub']],
+      ['was recorded before the presented fields were kept', undefined],
+    ])('is asked again when it %s', async (_name, presented) => {
+      const data = await submitWithExistingDestinationConsent({
+        evidence_json: JSON.stringify(presented ? { presented_field_keys: presented } : {}),
+      });
+      expect(data.completed).toBe(false);
+      expect(data.step).toMatchObject({
+        content: { destination_field_consent: { profile_id: 'destination_oidc_1' } },
+      });
+    });
+
+    it('is reused when it presented every field asked about now, even one declined', async () => {
+      const data = await submitWithExistingDestinationConsent({
+        evidence_json: JSON.stringify({ presented_field_keys: ['sub', 'name'] }),
+      });
+      expect(shown(data)).toBe(false);
+    });
+
+    it('is reused after it is stored for a profile of 101 fields and a scope of 129 characters', async () => {
+      const longScope = `directory_${'x'.repeat(119)}`;
+      expect(longScope).toHaveLength(129);
+      const customFields = Array.from({ length: 101 }, (_, index) => ({
+        claimName: `custom_${index}`,
+        label: `Custom ${index}`,
+        required: false,
+        requiredScopes: [longScope],
+      }));
+      const profileClaims = [
+        { claimName: 'sub', label: 'Subject', required: true, requiredScopes: ['openid'] },
+        ...customFields,
+      ];
+      const scope = ['openid', longScope];
+
+      // The record as it is written for that request...
+      const written: unknown[][] = [];
+      await insertDestinationFieldConsentRecord({
+        db: {
+          execute: vi.fn(async (_sql: string, params?: unknown[]) => {
+            written.push(params ?? []);
+            return { success: true, rowsAffected: 1 };
+          }),
+        } as unknown as DatabaseAdapter,
+        tenantId: 'tenant_test',
+        interaction: {
+          id: 'interaction_0',
+          flow_id: 'flow_1',
+          flow_version_id: 'version_1',
+          client_id: 'client_1',
+          saml_sp_id: null,
+        } as never,
+        step: { id: 'consent:step', source_node_id: 'consent' } as never,
+        policyId: 'policy_1',
+        requestContext: {
+          protocol: 'oidc',
+          target_type: 'oidc_client',
+          target_id: 'client_1',
+          client_id: 'client_1',
+          requested_scope: scope,
+        } as never,
+        userId: 'user_1',
+        consent: {
+          profile_id: 'destination_oidc_1',
+          profile_version_id: 'destination_oidc_version_1',
+          consent_version: 'destination_oidc_version_1',
+          destination_type: 'oidc',
+          consent_mode: null,
+          fields: profileClaims.map((field) => ({ key: field.claimName })),
+        } as never,
+        selectedFields: ['sub'],
+      });
+      const params = written.find((entry) => entry.includes('selected')) ?? [];
+      const at = params.indexOf('selected');
+      const stored = { released_scopes_json: params[at + 3], evidence_json: params[at + 9] };
+      expect(JSON.parse(stored.released_scopes_json as string)).toEqual(scope);
+
+      // ...is the consent the next request reuses.
+      const data = await submitWithExistingDestinationConsent(stored, {
+        scope,
+        claims: [],
+        profileClaims,
+      });
+      expect(shown(data)).toBe(false);
+    });
+
+    it('is asked again when what it stored is not a list of strings', async () => {
+      const data = await submitWithExistingDestinationConsent({
+        released_scopes_json: JSON.stringify({ not: 'a list' }),
+        evidence_json: JSON.stringify({ presented_field_keys: ['sub', 'name'] }),
+      });
+      expect(data.step).toMatchObject({
+        content: { destination_field_consent: { profile_id: 'destination_oidc_1' } },
+      });
     });
   });
 

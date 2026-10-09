@@ -26,6 +26,10 @@ import {
   getTenantIdFromContext,
   hashIpAddress,
   isOidcFieldApplicableToScopes,
+  canReleaseClaim,
+  parseClaimsRequest,
+  OIDC_STANDARD_CLAIM_SCOPE,
+  type OIDCClaimsClientPolicy,
   isShardedSessionId,
   loadDestinationProfileConsentDescriptor,
   resolveOidcFieldRequiredScopes,
@@ -152,6 +156,13 @@ interface FlowRequestContext {
   saml_sp_entity_id: string | null;
   return_to: string | null;
   requested_scope: string[];
+  /**
+   * The claims the authorization request names in its claims parameter (for the ID token or
+   * UserInfo), read from the authorization request itself and never from the caller: a field the
+   * request asks for this way is one the consent step has to ask about, even without its scope,
+   * when the client's claims policy lets the claim through.
+   */
+  requested_claims?: string[];
   locale: string | null;
   /**
    * Changes when the contract served for the interaction has to be prepared anew (the terms it asks
@@ -356,6 +367,21 @@ function readOptionalString(value: unknown, maxLength = 256): string | null {
   return readString(value, maxLength);
 }
 
+/**
+ * The scope of an authorization request as a list, whole: the request was accepted as it is, so
+ * no scope is cut off here (unlike lists a caller supplies, which parseStringList bounds).
+ */
+function parseScopeList(value: unknown): string[] {
+  const rawValues = Array.isArray(value)
+    ? value
+    : typeof value === 'string'
+      ? value.split(/\s+/)
+      : [];
+  return Array.from(
+    new Set(rawValues.filter((item): item is string => typeof item === 'string' && item !== ''))
+  );
+}
+
 function parseStringList(value: unknown, maxItems = 100, maxItemLength = 128): string[] {
   const rawValues = Array.isArray(value)
     ? value
@@ -403,14 +429,23 @@ function parseJsonObjectArray(value: string | null): FlowRuntimeJsonObject[] {
   }
 }
 
-function parseStoredStringArray(value: unknown): string[] {
-  if (Array.isArray(value)) return parseStringList(value);
-  if (typeof value !== 'string' || !value) return [];
-  try {
-    return parseStringList(JSON.parse(value) as unknown);
-  } catch {
-    return [];
+/**
+ * A string array read back from a stored record (scopes, field keys), whole: it was accepted when
+ * it was written, so nothing is cut off. Absent is an empty list; anything that is not a list of
+ * strings is null, which the caller treats as not covering anything (the consent is asked again).
+ */
+function parseStoredStringArray(value: unknown): string[] | null {
+  if (value === undefined || value === null || value === '') return [];
+  let parsed: unknown = value;
+  if (typeof value === 'string') {
+    try {
+      parsed = JSON.parse(value) as unknown;
+    } catch {
+      return null;
+    }
   }
+  if (!Array.isArray(parsed)) return null;
+  return parsed.every((item): item is string => typeof item === 'string') ? parsed : null;
 }
 
 function parseRuntimeJsonObject(value: string | null): FlowRuntimeJsonObject {
@@ -998,6 +1033,7 @@ function getPreparedRuntimeContractCacheKey(
     requestContext.return_to,
     requestContext.locale,
     requestContext.requested_scope,
+    requestContext.requested_claims ?? [],
     requestContext.contract_revision ?? null,
   ]);
 }
@@ -1722,7 +1758,8 @@ async function resolveRuntimeDestinationFieldConsent(
   const fields = applicableDestinationConsentFields(
     descriptor,
     requestContext,
-    selector.fieldPolicies
+    selector.fieldPolicies,
+    selector.claimsPolicy
   );
   if (fields.length === 0) return null;
   return {
@@ -1758,18 +1795,30 @@ async function resolveRuntimeDestinationProfileSelector(
   profileId: string;
   fieldPolicies?: DestinationFieldReleasePolicies;
   consentMode?: 'once' | 'every_time' | 'until_attributes_change';
+  /** The client's policy for claims requested through the claims parameter. */
+  claimsPolicy?: OIDCClaimsClientPolicy;
 } | null> {
   if (requestContext.protocol === 'oidc' && requestContext.client_id) {
     const row = await db.queryOne<{
       identity_mapping: string | null;
       attribute_release_consent: string | null;
+      allow_claims_without_scope?: number | boolean | null;
+      claims_parameter_policy?: string | null;
     }>(
-      `SELECT identity_mapping, attribute_release_consent
+      `SELECT identity_mapping, attribute_release_consent, allow_claims_without_scope,
+              claims_parameter_policy
          FROM oauth_clients
         WHERE tenant_id = ? AND client_id = ?`,
       [tenantId, requestContext.client_id]
     );
     const selector = parseJsonRecord(row?.identity_mapping);
+    const claimsPolicy: OIDCClaimsClientPolicy = {
+      allow_claims_without_scope:
+        row?.allow_claims_without_scope === 1 || row?.allow_claims_without_scope === true,
+      claims_parameter_policy: parseJsonRecord(
+        row?.claims_parameter_policy
+      ) as OIDCClaimsClientPolicy['claims_parameter_policy'],
+    };
     const fieldMappingSetId = readString(selector.fieldMappingSetId, 200);
     if (fieldMappingSetId) {
       const binding = await resolveRuntimeIdentityMappingBinding(adminDb, {
@@ -1787,6 +1836,34 @@ async function resolveRuntimeDestinationProfileSelector(
       return {
         profileId: binding.destinationProfileId,
         consentMode: readAttributeReleaseConsentMode(row?.attribute_release_consent),
+        claimsPolicy,
+      };
+    }
+    // An app with no Mapping Set of its own is bound by the tenant's active activation, which the
+    // release looks up in the same way (applyOIDCIdentityMapping), so the fields the user is asked
+    // about are the fields that release is held to. Unusable here (none, several Destination
+    // Profiles, unreadable) it is left to the release, which answers for it.
+    let tenantBinding: Awaited<ReturnType<typeof resolveRuntimeIdentityMappingBinding>> = null;
+    try {
+      tenantBinding = await resolveRuntimeIdentityMappingBinding(adminDb, {
+        tenantId,
+        protocol: 'oidc',
+        role: 'op',
+        partnerEntityId: requestContext.client_id,
+        clientId: requestContext.client_id,
+      });
+    } catch {
+      tenantBinding = null;
+    }
+    if (
+      tenantBinding &&
+      tenantBinding.destinationProfileIds.length === 1 &&
+      tenantBinding.destinationProfileId
+    ) {
+      return {
+        profileId: tenantBinding.destinationProfileId,
+        consentMode: readAttributeReleaseConsentMode(row?.attribute_release_consent),
+        claimsPolicy,
       };
     }
     const legacyProfileId = readString(selector.destinationProfileId, 200);
@@ -1794,6 +1871,7 @@ async function resolveRuntimeDestinationProfileSelector(
       ? {
           profileId: legacyProfileId,
           consentMode: readAttributeReleaseConsentMode(row?.attribute_release_consent),
+          claimsPolicy,
         }
       : null;
   }
@@ -1863,7 +1941,8 @@ function readAttributeReleaseConsentMode(
 function applicableDestinationConsentFields(
   descriptor: DestinationProfileConsentDescriptor,
   requestContext: FlowRequestContext,
-  fieldPolicies?: DestinationFieldReleasePolicies
+  fieldPolicies?: DestinationFieldReleasePolicies,
+  claimsPolicy?: OIDCClaimsClientPolicy
 ) {
   if (descriptor.destinationType === 'saml') {
     return descriptor.fields
@@ -1878,7 +1957,23 @@ function applicableDestinationConsentFields(
   // fields that can be released: a standard claim that lists no scope needs its OIDC scope.
   const scopes =
     requestContext.requested_scope.length === 0 ? null : new Set(requestContext.requested_scope);
-  return descriptor.fields.filter((field) => isOidcFieldApplicableToScopes(field, scopes));
+  // A claim the request names in its claims parameter and the client's policy lets through
+  // without its scope is released as the scope claims are (the OIDC scope it would need counts as
+  // granted, a scope of the profile's own does not), so its field is asked about too.
+  const requestedClaims = new Set(
+    (requestContext.requested_claims ?? []).filter((name) =>
+      canReleaseClaim(name, scopes ?? new Set<string>(), claimsPolicy ?? {})
+    )
+  );
+  return descriptor.fields.filter((field) => {
+    const standardScope = requestedClaims.has(field.key)
+      ? OIDC_STANDARD_CLAIM_SCOPE[field.key]
+      : undefined;
+    return isOidcFieldApplicableToScopes(
+      field,
+      scopes && standardScope ? new Set([...scopes, standardScope]) : scopes
+    );
+  });
 }
 
 function readDestinationFieldReleasePolicies(
@@ -2081,6 +2176,25 @@ async function validateRuntimeAuthorizationChallengeBinding(
     );
   }
 
+  // What the authorization request itself asks for, read from the request and never from the
+  // caller: its scope (the Login UI does not send one, and an unknown scope would make every
+  // field of the profile look asked for) and the claims its claims parameter names. Of those
+  // claims only the standard ones can change what is asked about (a custom claim has no OIDC scope
+  // to be released without), so only they are kept: a short, fixed set, nothing cut off.
+  const challengeScope = parseScopeList(challenge.metadata?.scope);
+  if (challengeScope.length > 0) requestContext.requested_scope = challengeScope;
+  const claims = challenge.metadata?.claims;
+  const claimsRequest = parseClaimsRequest(typeof claims === 'string' ? claims : undefined);
+  requestContext.requested_claims = claimsRequest.request
+    ? Array.from(
+        new Set(
+          [
+            ...Object.keys(claimsRequest.request.id_token ?? {}),
+            ...Object.keys(claimsRequest.request.userinfo ?? {}),
+          ].filter((name) => Object.prototype.hasOwnProperty.call(OIDC_STANDARD_CLAIM_SCOPE, name))
+        )
+      )
+    : [];
   return null;
 }
 
@@ -2119,7 +2233,8 @@ function getRequestContextFromInteraction(interaction: FlowInteractionRow): Flow
       readOptionalString(raw.saml_sp_id, 512) ??
       interaction.saml_sp_id,
     return_to: readOptionalString(raw.return_to, 128),
-    requested_scope: parseStringList(raw.requested_scope),
+    requested_scope: parseScopeList(raw.requested_scope),
+    requested_claims: parseStringList(raw.requested_claims),
     locale: readOptionalString(raw.locale, 64),
     contract_revision: readOptionalString(raw.contract_revision, 64),
   };
@@ -2447,7 +2562,7 @@ async function buildConditionEvaluationContext(
     client_id: interaction.client_id ?? undefined,
     saml_sp_id: interaction.saml_sp_id ?? undefined,
     flow_kind: runtime.flow_kind,
-    requested_scope: parseStringList(requestContext.requested_scope),
+    requested_scope: parseScopeList(requestContext.requested_scope),
     authentication_method: authenticationMethod,
     user: interaction.user_id
       ? await getFlowConditionUserContext(db, tenantId, interaction.user_id)
@@ -3380,8 +3495,12 @@ async function hasActiveDestinationFieldConsentRecord(input: {
     input.consent.destination_type === 'saml'
       ? (input.requestContext.saml_sp_entity_id ?? recipientId)
       : recipientId;
-  const row = await input.db.queryOne<{ id: string; released_scopes_json: unknown }>(
-    `SELECT id, released_scopes_json
+  const row = await input.db.queryOne<{
+    id: string;
+    released_scopes_json: unknown;
+    evidence_json?: unknown;
+  }>(
+    `SELECT id, released_scopes_json, evidence_json
        FROM consent_records
       WHERE tenant_id = ?
         AND subject_user_id = ?
@@ -3412,8 +3531,26 @@ async function hasActiveDestinationFieldConsentRecord(input: {
   );
   if (!row) return false;
   if (input.consent.destination_type !== 'oidc') return true;
-  const releasedScopes = new Set(parseStoredStringArray(row.released_scopes_json));
-  return input.requestContext.requested_scope.every((scope) => releasedScopes.has(scope));
+  const storedScopes = parseStoredStringArray(row.released_scopes_json);
+  if (!storedScopes) return false;
+  const releasedScopes = new Set(storedScopes);
+  if (!input.requestContext.requested_scope.every((scope) => releasedScopes.has(scope))) {
+    return false;
+  }
+  // The consent covers the fields asked about now only if it was asked about them: a field a
+  // claims parameter newly asks for (the scope unchanged) is asked about before it can be selected.
+  // A record from before the fields were kept stands for the fields its scopes made applicable.
+  const presented = parseStoredStringArray(parseJsonRecord(row.evidence_json).presented_field_keys);
+  if (!presented) return false;
+  const covered = new Set(presented);
+  return input.consent.fields.every(
+    (field) =>
+      covered.has(field.key) ||
+      (presented.length === 0 &&
+        (field.key === 'sub' ||
+          field.required_scopes.length === 0 ||
+          field.required_scopes.some((scope) => releasedScopes.has(scope))))
+  );
 }
 
 async function removeAcceptedConsentItems(input: {
@@ -3956,6 +4093,9 @@ export async function insertDestinationFieldConsentRecord(input: {
         destination_profile_id: input.consent.profile_id,
         destination_profile_version_id: input.consent.profile_version_id,
         selected_field_keys: input.selectedFields,
+        // What the user was asked about, so a later request that asks about more is told apart
+        // from one for which a field was declined.
+        presented_field_keys: input.consent.fields.map((field) => field.key),
         saml_request_id: input.requestContext.saml_request_id,
         user_agent: input.userAgent,
         ip_address_hash: input.ipHash,
