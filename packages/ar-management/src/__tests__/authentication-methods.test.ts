@@ -1029,6 +1029,144 @@ describe('Authentication Methods API', () => {
       );
     });
 
+    describe('the tenant SAML switch', () => {
+      const samlRows = () =>
+        mockResolveAuthCorePersistenceAdapterFromEnv.mockResolvedValue({
+          query: vi.fn(async () => [{ id: 'saml-idp-1', name: 'Campus SAML', config_json: '{}' }]),
+        });
+      const federationKV = (federation: Record<string, unknown>) =>
+        createMockKV({ 'settings:tenant:default:federation': JSON.stringify(federation) });
+      const providersOf = async (settingsKV?: KVNamespace) => {
+        const { app, mockEnv } = createTestApp({ settingsKV });
+        const res = await app.request(
+          '/api/auth/authentication-methods',
+          { method: 'GET' },
+          mockEnv
+        );
+        const body = await res.json<{
+          methods?: { external?: { providers?: Array<{ id: string }> } };
+        }>();
+        return {
+          res,
+          body,
+          providers: body.methods?.external?.providers ?? [],
+        };
+      };
+
+      it('lists SAML providers while SAML is on, set or by default', async () => {
+        samlRows();
+        expect((await providersOf()).providers.map((p) => p.id)).toContain('saml:saml-idp-1');
+        expect(
+          (await providersOf(federationKV({ 'federation.saml_enabled': true }))).providers.map(
+            (p) => p.id
+          )
+        ).toContain('saml:saml-idp-1');
+      });
+
+      it('lists no SAML provider (name, id or icon) while SAML is off', async () => {
+        samlRows();
+        const { body, providers } = await providersOf(
+          federationKV({ 'federation.saml_enabled': false })
+        );
+        expect(providers.map((p) => p.id)).not.toContain('saml:saml-idp-1');
+        expect(JSON.stringify(body)).not.toContain('Campus SAML');
+      });
+
+      it('lists no SAML provider configured as an external login either while SAML is off', async () => {
+        samlRows();
+        const settings = {
+          'federation.saml_enabled': false,
+        };
+        const kv = createMockKV({
+          'settings:tenant:default:federation': JSON.stringify(settings),
+          'settings:tenant:default:authentication-methods': JSON.stringify({
+            'authentication-methods.external_providers': [
+              {
+                id: 'configured-saml',
+                name: 'Configured SAML',
+                type: 'saml',
+                startMode: 'saml_sp',
+                startUrl: '/saml/sp/login?idp=configured',
+                enabled: true,
+              },
+              {
+                id: 'wallet-vp',
+                name: 'Wallet',
+                type: 'vc',
+                startMode: 'url',
+                startUrl: '/vp/login',
+                enabled: true,
+              },
+            ],
+          }),
+        });
+        const { providers } = await providersOf(kv);
+        expect(providers.map((p) => p.id)).toEqual(['wallet-vp']);
+      });
+
+      it('follows a change of the switch made on the same KV without waiting for the settings cache', async () => {
+        samlRows();
+        const kv = createMockKV();
+        const first = await providersOf(kv);
+        expect(first.providers.map((p) => p.id)).toContain('saml:saml-idp-1');
+
+        // The admin turns SAML off (the Settings API writes this document).
+        await kv.put(
+          'settings:tenant:default:federation',
+          JSON.stringify({ 'federation.saml_enabled': false })
+        );
+        expect((await providersOf(kv)).providers.map((p) => p.id)).not.toContain('saml:saml-idp-1');
+
+        await kv.put(
+          'settings:tenant:default:federation',
+          JSON.stringify({ 'federation.saml_enabled': true })
+        );
+        expect((await providersOf(kv)).providers.map((p) => p.id)).toContain('saml:saml-idp-1');
+      });
+
+      it('answers a degraded response with no-store for the browser, the CDN and the router', async () => {
+        samlRows();
+        const base = createMockKV();
+        const kv = {
+          ...base,
+          get: vi.fn(async (key: string) => {
+            if (key === 'settings:tenant:default:federation') throw new Error('KV unavailable');
+            return base.get(key);
+          }),
+        } as unknown as KVNamespace;
+        const { res } = await providersOf(kv);
+        expect(res.status).toBe(200);
+        expect(res.headers.get('Cache-Control')).toBe('no-store');
+        expect(res.headers.get('Cloudflare-CDN-Cache-Control')).toBe('no-store');
+        expect(res.headers.get('Cache-Tag')).toBeNull();
+        expect(res.headers.get('X-Authrim-Authentication-Methods-Client-TTL')).toBe('0');
+      });
+
+      it('still answers a complete response with the normal cache headers', async () => {
+        samlRows();
+        const { res } = await providersOf();
+        expect(res.headers.get('Cache-Control')).toMatch(/^public, max-age=\d+$/);
+      });
+
+      it('lists no SAML provider, and does not cache that answer, when the switch cannot be read', async () => {
+        samlRows();
+        const edgeCache = createMockEdgeCache();
+        (globalThis as unknown as { caches: unknown }).caches = { default: edgeCache };
+        const base = createMockKV();
+        const kv = {
+          ...base,
+          get: vi.fn(async (key: string) => {
+            if (key === 'settings:tenant:default:federation') throw new Error('KV unavailable');
+            return base.get(key);
+          }),
+        } as unknown as KVNamespace;
+        const { res, providers } = await providersOf(kv);
+        expect(res.status).toBe(200);
+        expect(providers.map((p) => p.id)).not.toContain('saml:saml-idp-1');
+        expect(edgeCache.put).not.toHaveBeenCalled();
+      });
+    });
+
     it('should normalize legacy URL providers to managed OAuth redirect mode', async () => {
       const settingsKV = createMockKV({
         'settings:tenant:default:authentication-methods': JSON.stringify({

@@ -26,6 +26,7 @@ import {
   createLogger,
   createAuthContextFromHono,
   recordHybridUserSessionRevocationEpoch,
+  resolveSamlRequestTtlSeconds,
 } from '@authrim/ar-lib-core';
 import {
   parseLogoutResponseXml,
@@ -271,7 +272,11 @@ async function processLogoutRequest(
   }
 
   // Validate LogoutRequest
-  validateLogoutRequest(logoutRequest, issuerUrl);
+  validateLogoutRequest(
+    logoutRequest,
+    issuerUrl,
+    await resolveSamlRequestTtlSeconds(env, resolveSAMLTenantIdFromContext(c))
+  );
 
   // Terminate session by NameID
   await terminateSessionByNameId(c, env, logoutRequest.nameId, logoutRequest.sessionIndex);
@@ -482,7 +487,11 @@ async function processLogoutResponse(
 /**
  * Validate LogoutRequest from IdP
  */
-function validateLogoutRequest(logoutRequest: ParsedLogoutRequest, issuerUrl: string): void {
+function validateLogoutRequest(
+  logoutRequest: ParsedLogoutRequest,
+  issuerUrl: string,
+  requestTtlSeconds: number
+): void {
   // Check request is not expired
   const issueInstantMs = Date.parse(logoutRequest.issueInstant);
   if (!Number.isFinite(issueInstantMs)) {
@@ -490,7 +499,7 @@ function validateLogoutRequest(logoutRequest: ParsedLogoutRequest, issuerUrl: st
   }
   const nowMs = Date.now();
   const skewMs = DEFAULTS.CLOCK_SKEW_SECONDS * 1000;
-  const maxAge = DEFAULTS.REQUEST_VALIDITY_SECONDS * 1000;
+  const maxAge = requestTtlSeconds * 1000;
 
   if (issueInstantMs > nowMs + skewMs) {
     throw new SAMLLogoutMessageValidationError();
@@ -708,7 +717,7 @@ export async function initiateSPLogout(
     spEntityId: idpConfig.entityId,
     requestId,
     relayState: returnUrl,
-    ttlSeconds: DEFAULTS.REQUEST_VALIDITY_SECONDS,
+    ttlSeconds: await resolveSamlRequestTtlSeconds(env, resolvedTenantId),
   });
 
   // Build LogoutRequest

@@ -9,7 +9,9 @@
  * token exchange, introspection, conformance, UI routing), the IdP profile update on sign-in, and
  * the password lockout threshold, email code lifetime and email send limit, refresh token
  * rotation, the advertised ACR values, the tenant's ID token signing algorithm, the token exchange
- * ceilings, extended introspection claims, the SCIM token lifetime and the identity assurance level recorded for accounts the organisation creates; and less the settings that left the catalog (duplicates, copies of the app
+ * ceilings, extended introspection claims, the SCIM token lifetime, the SAML switch, assertion
+ * and request lifetimes and provider defaults, and the identity assurance level recorded for
+ * accounts the organisation creates; and less the settings that left the catalog (duplicates, copies of the app
  * registration, and values too fine or fixed at deployment). Update this list when a setting starts to apply or leaves the catalog.
  *
  * Shown in the settings map (Storybook: Pages › Settings map).
@@ -35,7 +37,7 @@ function reason(why: NotApplied, keys: readonly string[]): [string, NotApplied][
 }
 
 export const NOT_APPLIED: ReadonlyMap<string, NotApplied> = new Map([
-	// to-build (18)
+	// to-build (12)
 	...reason('to-build', [
 		'diagnostic-logging.filter_pii',
 		'diagnostic-logging.filter_tokens',
@@ -43,12 +45,6 @@ export const NOT_APPLIED: ReadonlyMap<string, NotApplied> = new Map([
 		'dr-backup.storage_destination_id',
 		'federation.saml_artifact_resolution_timeout',
 		'federation.saml_artifact_ttl',
-		'federation.saml_assertion_ttl',
-		'federation.saml_enabled',
-		'federation.saml_nameid_format',
-		'federation.saml_request_ttl',
-		'federation.saml_slo_binding',
-		'federation.saml_sso_binding',
 		'plugin.auto_update_check',
 		'plugin.enabled',
 		'plugin.execution_timeout_ms',

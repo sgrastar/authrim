@@ -17,6 +17,7 @@ import {
   getLogger,
   readAuthorizationChallengeKind,
   readExternalProviderReauthPolicy,
+  resolveSamlRequestTtlSeconds,
   verifyHumanVerificationWithRunner,
 } from '@authrim/ar-lib-core';
 import * as pako from 'pako';
@@ -154,6 +155,7 @@ export async function handleSPLogin(c: Context<{ Bindings: Env }>): Promise<Resp
     });
 
     // Store request in SAMLRequestStore for later validation
+    const requestTtlSeconds = await resolveSamlRequestTtlSeconds(env, tenantId);
     const requestId = authnRequestXml.match(/ID="([^"]+)"/)?.[1] || '';
     if (!requestId) {
       throw new Error('Generated SAML AuthnRequest is missing ID');
@@ -165,6 +167,7 @@ export async function handleSPLogin(c: Context<{ Bindings: Env }>): Promise<Resp
       spEntityId,
       outboundIdpConfig.entityId,
       returnUrl,
+      requestTtlSeconds,
       reauthentication ? { spReauthentication: reauthentication } : undefined
     );
 
@@ -176,7 +179,10 @@ export async function handleSPLogin(c: Context<{ Bindings: Env }>): Promise<Resp
     const response = outboundIdpConfig.allowedBindings.includes('redirect')
       ? await redirectToIdP(c, env, outboundIdpConfig, authnRequestXml, relayState)
       : postToIdP(outboundIdpConfig, authnRequestXml, relayState);
-    response.headers.append('Set-Cookie', buildSAMLRequestBindingCookie(requestId));
+    response.headers.append(
+      'Set-Cookie',
+      buildSAMLRequestBindingCookie(requestId, requestTtlSeconds)
+    );
     return response;
   } catch (error) {
     log.error('SP Login Error', {}, error as Error);
@@ -272,6 +278,7 @@ async function storeAuthnRequest(
   spEntityId: string,
   idpEntityId: string,
   returnUrl: string,
+  requestTtlSeconds: number,
   context?: SAMLRequestContext
 ): Promise<void> {
   const samlRequestStoreId = env.SAML_REQUEST_STORE.idFromName(
@@ -290,7 +297,7 @@ async function storeAuthnRequest(
       type: 'authn_request',
       relayState: returnUrl,
       ...(context ? { context } : {}),
-      expiresAt: Date.now() + 300 * 1000, // 5 minutes
+      expiresAt: Date.now() + requestTtlSeconds * 1000,
     }),
   });
 }

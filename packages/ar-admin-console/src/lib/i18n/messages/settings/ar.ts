@@ -150,6 +150,45 @@ export const arSettings: Record<keyof typeof jaSettings, string> = {
 	'set.k.federation.scim_token_max_expiry': 'أطول مدة صلاحية لرمز SCIM',
 	'set.k.federation.scim_token_max_expiry.desc':
 		'لا يمكن إنشاء رمز SCIM بمدة أطول من ذلك (سنة واحدة كحد أقصى). لا تتغير الرموز الصادرة سابقًا.',
+	'set.page.enterprise': 'الدخول الموحد للمؤسسات (SAML)',
+	'set.page.enterprise.desc':
+		'يحدد ما إذا كان هذا المستأجر يستجيب لـ SAML أصلًا، ومدة صلاحية تأكيدات SAML وطلباته، وما تبدأ به مزودات SAML الجديدة. تسجيل المزودات (IdP وSP) ما زال يتم حاليًا من صفحة SAML في واجهة الإدارة السابقة.',
+	'set.section.samlService': 'خدمة SAML',
+	'set.section.samlService.desc':
+		'عند الإيقاف يرفض هذا المستأجر كل طلبات SAML ولا ينشر بيانات SAML الوصفية. تبقى المزودات المسجلة محفوظة.',
+	'set.k.federation.saml_enabled': 'استخدام SAML',
+	'set.k.federation.saml_enabled.desc':
+		'أثناء الإيقاف تُرجع نقاط نهاية SAML لـ IdP وSP والبيانات الوصفية الرمز 403 (يستمر عمل فحص الصحة وواجهة الإدارة). عند إعادة التشغيل تعمل المزودات المسجلة كما كانت. قد يستغرق تطبيق التغيير نحو دقيقة.',
+	'set.section.samlLifetimes': 'مدد الصلاحية',
+	'set.section.samlLifetimes.desc': 'مدة بقاء تأكيدات SAML وطلباته صالحة.',
+	'set.section.samlLifetimes.advanced': 'مدة صلاحية الطلب',
+	'set.k.federation.saml_assertion_ttl': 'مدة صلاحية التأكيد',
+	'set.k.federation.saml_assertion_ttl.desc':
+		'مدة صلاحية تأكيد SAML الذي تصدره Authrim (من 60 إلى 600 ثانية). مزود الخدمة الذي له مدة خاصة يحتفظ بها. يسري التغيير على التأكيدات الصادرة بعده.',
+	'set.k.federation.saml_request_ttl': 'مدة صلاحية الطلب',
+	'set.k.federation.saml_request_ttl.desc':
+		'مدة بقاء طلب تسجيل الدخول أو الخروج في SAML صالحًا (من 60 إلى 600 ثانية): أقدم طلب تقبله Authrim، ومدة الاحتفاظ بالطلبات المرسلة لمطابقتها مع ردودها. يسري التغيير على مدة حفظ الطلبات التي تُقدَّم بعده. ويُتحقق من عمر الطلب أيضًا بالقيمة الحالية عند استئناف تسجيل دخول جارٍ، لذا قد يؤدي تقصير القيمة إلى رفض عمليات تسجيل دخول بدأت بالفعل.',
+	'set.section.samlProviderDefaults': 'القيم الافتراضية للمزودات الجديدة',
+	'set.section.samlProviderDefaults.desc':
+		'ما يحصل عليه مزود SAML عند إضافته أو استيراد بياناته الوصفية إذا لم يُحدَّد غير ذلك. لا تتغير المزودات الحالية.',
+	'set.section.samlProviderDefaults.advanced': 'الارتباطات (Bindings)',
+	'set.k.federation.saml_nameid_format': 'صيغة NameID',
+	'set.k.federation.saml_nameid_format.desc':
+		'صيغة NameID التي يحصل عليها المزود إذا لم تذكر بياناته الوصفية أي صيغة. المزود ذو الملف الشخصي الذي يحدد صيغته (مثل strict) يحتفظ بها. تمنح persistent كل خدمة معرّفًا خاصًا بها، مما يحمي خصوصية الأشخاص.',
+	'set.k.federation.saml_nameid_format.emailAddress': 'عنوان البريد الإلكتروني',
+	'set.k.federation.saml_nameid_format.persistent': 'معرّف دائم',
+	'set.k.federation.saml_nameid_format.transient': 'معرّف مؤقت',
+	'set.k.federation.saml_nameid_format.unspecified': 'غير محدد',
+	'set.k.federation.saml_sso_binding': 'ارتباط تسجيل الدخول',
+	'set.k.federation.saml_sso_binding.desc':
+		'الارتباط الذي يُسجَّل به الدخول عبر مزود هوية خارجي جديد عندما تعرض بياناته الوصفية الاثنين أو لا تذكر أيًا منهما. يرسل HTTP-Redirect طلبًا موقّعًا، بينما يرسل HTTP-POST طلبًا غير موقّع.',
+	'set.k.federation.saml_sso_binding.HTTP-POST': 'HTTP-POST',
+	'set.k.federation.saml_sso_binding.HTTP-Redirect': 'HTTP-Redirect',
+	'set.k.federation.saml_slo_binding': 'ارتباط تسجيل الخروج',
+	'set.k.federation.saml_slo_binding.desc':
+		'الارتباط الافتراضي لطلبات تسجيل الخروج، ويُستخدم عندما تعرض البيانات الوصفية الاثنين أو لا تذكر أيًا منهما. المزود ذو الملف الشخصي الذي يحدد ارتباطه (الملف legacy) يحتفظ به.',
+	'set.k.federation.saml_slo_binding.HTTP-POST': 'HTTP-POST',
+	'set.k.federation.saml_slo_binding.HTTP-Redirect': 'HTTP-Redirect',
 	'set.k.oauth.id_token_signing_alg.RS256': 'RS256',
 	'set.k.oauth.id_token_signing_alg.ES256': 'ES256',
 	'set.k.oauth.id_token_signing_alg.PS256': 'PS256',
@@ -204,6 +243,12 @@ export const arSettings: Record<keyof typeof jaSettings, string> = {
 	'settings.notice.exchangeCeilings.title': 'ستُرفض عملية تبادل الرموز لبعض التطبيقات',
 	'settings.notice.exchangeCeilings.body':
 		'تبادل الرموز مفعّل لكن التفويض غير مسموح، لذا تُرفض التطبيقات في وضع التفويض (الافتراضي للتطبيقات الجديدة). فعّل «السماح بالتفويض» لتتمكن من استخدامه.',
+	'settings.notice.samlDisabled.title': 'ستتوقف التطبيقات ومزودات الهوية الخارجية التي تستخدم SAML',
+	'settings.notice.samlDisabled.body':
+		'عند إيقاف SAML تفشل التطبيقات التي تسجّل الدخول عبر SAML (مزودات الخدمة) وتسجيل الدخول عبر مزودات هوية SAML الخارجية. تبقى المزودات المسجلة محفوظة، وإعادة التشغيل تعيدها.',
+	'settings.notice.samlPostBinding.title': 'يرسل HTTP-POST طلب تسجيل الدخول بلا توقيع',
+	'settings.notice.samlPostBinding.body':
+		'طلب تسجيل الدخول المرسل إلى مزود هوية جديد عبر HTTP-POST لا يحمل توقيعًا. الافتراضي هو HTTP-Redirect الذي يمكن توقيعه. اختر POST فقط إذا كان مزود الهوية لا يقبل غيره.',
 	'settings.value.on': 'مفعّل',
 	'settings.value.off': 'متوقف',
 	'settings.value.empty': '(لا شيء)',

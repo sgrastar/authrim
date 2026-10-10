@@ -242,6 +242,8 @@ export const TENANT_AREAS: readonly NavArea[] = [
 				id: 'enterprise',
 				label: 'nav.auth.enterprise',
 				icon: 'building',
+				platform: 'tenant',
+				requires: { settings: ['federation'] },
 				legacyRoutes: ['/admin/saml', '/admin/saml/[id]', '/admin/saml/local']
 			},
 			{

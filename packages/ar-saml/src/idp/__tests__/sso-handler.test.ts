@@ -25,6 +25,7 @@ const mocks = vi.hoisted(() => ({
   targetedIdOptions: null as Record<string, unknown> | null,
   buildResponse: vi.fn(() => '<saml-success-response/>'),
   buildErrorResponse: vi.fn(() => '<saml-error-response/>'),
+  federationSettings: null as Record<string, unknown> | null,
 }));
 
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
@@ -231,6 +232,13 @@ function app() {
 
 function environment() {
   return {
+    SETTINGS: {
+      get: vi.fn(async (key: string) =>
+        key === 'settings:tenant:tenant-a:federation' && mocks.federationSettings
+          ? JSON.stringify(mocks.federationSettings)
+          : null
+      ),
+    },
     SAML_REQUEST_STORE: {
       idFromName: vi.fn((name: string) => ({ name })),
       get: vi.fn(() => ({ fetch: mocks.storeFetch })),
@@ -297,6 +305,7 @@ describe('IdP SSO handler policy boundaries', () => {
     mocks.pairwiseSecretForRef = 'referenced-secret';
     mocks.persistentProfileRows = [];
     mocks.targetedIdOptions = null;
+    mocks.federationSettings = null;
   });
 
   it('rejects missing and malformed POST messages without details', async () => {
@@ -717,6 +726,7 @@ describe('IdP attribute-release consent callback', () => {
     mocks.sessionId = undefined;
     mocks.shardedSession = true;
     mocks.sessionResponse = new Response(null, { status: 404 });
+    mocks.federationSettings = null;
     mocks.storeFetch.mockImplementation(async (url?: string) =>
       url?.includes('/consume/')
         ? new Response(JSON.stringify(storedConsentRequest()), {
@@ -818,5 +828,110 @@ describe('IdP attribute-release consent callback', () => {
     authenticateSession();
     mocks.storeFetch.mockRejectedValue(new Error('state unavailable'));
     expect((await postConsent(validConsentFields())).status).toBe(400);
+  });
+
+  describe('challenge age against the tenant request lifetime', () => {
+    function storeChallengeCreatedMinutesAgo(minutes: number) {
+      mocks.storeFetch.mockImplementation(async (url?: string) =>
+        url?.includes('/consume/')
+          ? new Response(
+              JSON.stringify(storedConsentRequest({ createdAt: Date.now() - minutes * 60_000 })),
+              { status: 200, headers: { 'Content-Type': 'application/json' } }
+            )
+          : new Response('{}', { status: 200 })
+      );
+    }
+
+    it('accepts a challenge older than five minutes when the tenant allows ten', async () => {
+      authenticateSession();
+      mocks.federationSettings = { 'federation.saml_request_ttl': 600 };
+      storeChallengeCreatedMinutesAgo(8);
+      expect((await postConsent(validConsentFields())).status).toBe(302);
+    });
+
+    it('rejects a challenge older than the tenant request lifetime', async () => {
+      authenticateSession();
+      mocks.federationSettings = { 'federation.saml_request_ttl': 60 };
+      storeChallengeCreatedMinutesAgo(2);
+      expect((await postConsent(validConsentFields())).status).toBe(400);
+    });
+  });
+});
+
+describe('IdP SSO lifetimes from the tenant settings', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.sp = sp();
+    mocks.ui = { baseUrl: 'https://ui.example.test' };
+    mocks.loginPolicy = 'ui_base_url';
+    mocks.storeFetch.mockResolvedValue(new Response('{}', { status: 200 }));
+    mocks.sessionId = undefined;
+    mocks.user = null;
+    mocks.federationSettings = null;
+  });
+
+  const minutesAgo = (minutes: number) => new Date(Date.now() - minutes * 60_000).toISOString();
+
+  async function storedLifetimeSeconds(): Promise<number> {
+    const init = (mocks.storeFetch.mock.calls.at(-1) as unknown as [string, { body: string }])[1];
+    const stored = JSON.parse(init.body) as { expiresAt: number };
+    return Math.round((stored.expiresAt - Date.now()) / 1000);
+  }
+
+  async function assertionLifetimeSeconds(): Promise<number> {
+    const input = (mocks.buildResponse.mock.calls.at(-1) as unknown as [Record<string, string>])[0];
+    return (Date.parse(input.notOnOrAfter) - Date.parse(input.issueInstant)) / 1000;
+  }
+
+  it('keeps the request for five minutes where the tenant sets nothing', async () => {
+    expect((await post(authnRequest())).status).toBe(302);
+    expect(await storedLifetimeSeconds()).toBe(300);
+  });
+
+  it('keeps the request for the tenant request lifetime', async () => {
+    mocks.federationSettings = { 'federation.saml_request_ttl': 120 };
+    expect((await post(authnRequest())).status).toBe(302);
+    expect(await storedLifetimeSeconds()).toBe(120);
+  });
+
+  it('accepts a request as old as the tenant request lifetime allows', async () => {
+    mocks.federationSettings = { 'federation.saml_request_ttl': 600 };
+    expect((await post(authnRequest({ issueInstant: minutesAgo(8) }))).status).toBe(302);
+  });
+
+  it('rejects a request older than the tenant request lifetime', async () => {
+    mocks.federationSettings = { 'federation.saml_request_ttl': 60 };
+    expect((await post(authnRequest({ issueInstant: minutesAgo(3) }))).status).toBe(400);
+    expect(mocks.storeFetch).not.toHaveBeenCalled();
+  });
+
+  it('uses the default request lifetime for a value out of range', async () => {
+    mocks.federationSettings = { 'federation.saml_request_ttl': 86_400 };
+    expect((await post(authnRequest({ issueInstant: minutesAgo(8) }))).status).toBe(400);
+  });
+
+  describe('assertion lifetime', () => {
+    beforeEach(() => {
+      authenticateSession();
+      mocks.user = { id: 'user-a', email: 'user@example.test' };
+    });
+
+    it('is five minutes where nothing is set', async () => {
+      expect((await post(authnRequest())).status).toBe(200);
+      expect(await assertionLifetimeSeconds()).toBe(300);
+    });
+
+    it("is the tenant's when the service provider has none", async () => {
+      mocks.federationSettings = { 'federation.saml_assertion_ttl': 120 };
+      expect((await post(authnRequest())).status).toBe(200);
+      expect(await assertionLifetimeSeconds()).toBe(120);
+    });
+
+    it("is the service provider's own when it has one", async () => {
+      mocks.federationSettings = { 'federation.saml_assertion_ttl': 120 };
+      mocks.sp = sp({ assertionValiditySeconds: 90 });
+      expect((await post(authnRequest())).status).toBe(200);
+      expect(await assertionLifetimeSeconds()).toBe(90);
+    });
   });
 });

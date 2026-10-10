@@ -11,6 +11,11 @@ export interface SAMLSPProfileDefaults {
   acceptedAuthnRequestSignatureAlgorithms: string[];
   acceptedAuthnRequestDigestAlgorithms: string[];
   nameIdFormat?: SAMLSPConfig['nameIdFormat'];
+  /**
+   * The logout request binding this profile prefers when the metadata offers both. A profile
+   * that names none leaves the choice to the tenant default (`federation.saml_slo_binding`).
+   */
+  sloBinding?: 'post' | 'redirect';
 }
 
 export const SAML_SP_PROFILE_DEFAULTS: Record<SAMLSPProfile, SAMLSPProfileDefaults> = {
@@ -56,6 +61,7 @@ export const SAML_SP_PROFILE_DEFAULTS: Record<SAMLSPProfile, SAMLSPProfileDefaul
     acceptedAuthnRequestSignatureAlgorithms: [SIGNATURE_ALGORITHMS.RSA_SHA256],
     acceptedAuthnRequestDigestAlgorithms: [DIGEST_ALGORITHMS.SHA256],
     nameIdFormat: NAMEID_FORMATS.EMAIL,
+    sloBinding: 'post',
   },
 };
 

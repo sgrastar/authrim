@@ -33,6 +33,7 @@ export * from './services/account-login-methods';
 export * from './services/authorization-challenge-kind';
 export * from './services/sign-in-limits';
 export * from './services/scim-token-expiry';
+export * from './services/saml-settings';
 export * from './services/token-exchange-ceilings';
 export * from './services/id-token-signing';
 export * from './services/app-security-requirements';

@@ -80,10 +80,21 @@ function context(
     id?: string;
     permissions?: string[] | null;
     tenantId?: string;
+    federation?: Record<string, unknown>;
   } = {}
 ) {
   return {
-    env: {},
+    env: options.federation
+      ? {
+          SETTINGS: {
+            get: vi.fn(async (key: string) =>
+              key === `settings:tenant:${options.tenantId ?? 'tenant-a'}:federation`
+                ? JSON.stringify(options.federation)
+                : null
+            ),
+          },
+        }
+      : {},
     req: {
       json: vi.fn(async () => options.body),
       param: vi.fn((name: string) => (name === 'id' ? options.id : undefined)),
@@ -110,6 +121,13 @@ function context(
         })
     ),
   } as never;
+}
+
+/** The config_json of the provider row the last create wrote. */
+function persistedConfig(): Record<string, unknown> {
+  const calls = (mocks.adapter as unknown as { execute: { mock: { calls: unknown[][] } } }).execute
+    .mock.calls;
+  return JSON.parse(String((calls[0]?.[1] as unknown[])[4])) as Record<string, unknown>;
 }
 
 function providerRow(overrides: Record<string, unknown> = {}) {
@@ -328,6 +346,263 @@ describe('SAML provider CRUD boundaries', () => {
         signResponses: true,
       });
     }
+  });
+
+  describe('tenant defaults for what a new provider leaves open', () => {
+    const idpWithoutChoices = {
+      entityId: 'https://idp.example.test',
+      ssoUrl: 'https://idp.example.test/sso',
+      certificate: 'not-a-certificate',
+      identityMapping: { fieldMappingSetId: 'saml-idp' },
+    };
+    const spWithLogout = {
+      entityId: 'https://sp.example.test',
+      acsUrl: 'https://sp.example.test/acs',
+      sloUrl: 'https://sp.example.test/slo',
+      identityMapping: {
+        fieldMappingSetId: 'saml-sp',
+        destinationFieldPolicies: {
+          mail: 'optional',
+          displayName: 'optional',
+          eduPersonAffiliation: 'optional',
+        },
+      },
+    };
+
+    async function persisted(
+      providerType: 'saml_idp' | 'saml_sp',
+      config: Record<string, unknown>,
+      federation?: Record<string, unknown>
+    ) {
+      const response = await handleCreateProvider(
+        context({ body: { name: 'Provider', providerType, config }, federation })
+      );
+      expect(response.status).toBe(201);
+      return persistedConfig();
+    }
+
+    it("gives an identity provider the tenant's NameID format and sign-in binding", async () => {
+      expect(
+        await persisted('saml_idp', idpWithoutChoices, {
+          'federation.saml_nameid_format': 'persistent',
+          'federation.saml_sso_binding': 'HTTP-POST',
+        })
+      ).toMatchObject({
+        nameIdFormat: 'urn:oasis:names:tc:SAML:2.0:nameid-format:persistent',
+        allowedBindings: ['post'],
+      });
+    });
+
+    it('gives a service provider the tenant NameID format and logout binding', async () => {
+      expect(
+        await persisted('saml_sp', spWithLogout, {
+          'federation.saml_nameid_format': 'transient',
+          'federation.saml_slo_binding': 'HTTP-POST',
+        })
+      ).toMatchObject({
+        nameIdFormat: 'urn:oasis:names:tc:SAML:2.0:nameid-format:transient',
+        sloBinding: 'post',
+      });
+    });
+
+    it('gives the behaviour providers always had where the tenant sets nothing', async () => {
+      expect(await persisted('saml_idp', idpWithoutChoices)).toMatchObject({
+        nameIdFormat: 'urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress',
+        allowedBindings: ['redirect'],
+      });
+      mocks.adapter?.execute.mockClear();
+      expect(await persisted('saml_sp', spWithLogout)).toMatchObject({
+        nameIdFormat: 'urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress',
+        sloBinding: 'redirect',
+      });
+    });
+
+    it('keeps what the request names', async () => {
+      expect(
+        await persisted(
+          'saml_idp',
+          {
+            ...idpWithoutChoices,
+            nameIdFormat: 'urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress',
+            allowedBindings: ['redirect'],
+          },
+          {
+            'federation.saml_nameid_format': 'persistent',
+            'federation.saml_sso_binding': 'HTTP-POST',
+          }
+        )
+      ).toMatchObject({
+        nameIdFormat: 'urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress',
+        allowedBindings: ['redirect'],
+      });
+    });
+
+    it('applies the tenant defaults to what imported metadata leaves open', async () => {
+      const response = await handleCreateProvider(
+        context({
+          body: {
+            name: 'Provider',
+            providerType: 'saml_sp',
+            metadataXml: validSpMetadata(),
+            config: { identityMapping: spWithLogout.identityMapping },
+          },
+          federation: { 'federation.saml_nameid_format': 'persistent' },
+        })
+      );
+      expect(response.status).toBe(201);
+      expect(persistedConfig()).toMatchObject({
+        nameIdFormat: 'urn:oasis:names:tc:SAML:2.0:nameid-format:persistent',
+      });
+    });
+
+    describe('metadata and an allowedBindings list that disagree', () => {
+      const idpXml = (offers: Array<'post' | 'redirect'>) => `<?xml version="1.0"?>
+      <md:EntityDescriptor xmlns:md="urn:oasis:names:tc:SAML:2.0:metadata"
+        xmlns:ds="http://www.w3.org/2000/09/xmldsig#" entityID="https://idp.example.test">
+        <md:IDPSSODescriptor protocolSupportEnumeration="urn:oasis:names:tc:SAML:2.0:protocol">
+          <md:KeyDescriptor use="signing"><ds:KeyInfo><ds:X509Data><ds:X509Certificate>CERT</ds:X509Certificate></ds:X509Data></ds:KeyInfo></md:KeyDescriptor>
+          ${offers
+            .map(
+              (kind) =>
+                `<md:SingleSignOnService Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-${kind === 'post' ? 'POST' : 'Redirect'}" Location="https://idp.example.test/sso/${kind}" />`
+            )
+            .join('')}
+        </md:IDPSSODescriptor>
+      </md:EntityDescriptor>`;
+      const create = (offers: Array<'post' | 'redirect'>, allowedBindings: string[]) =>
+        handleCreateProvider(
+          context({
+            body: {
+              name: 'IdP',
+              providerType: 'saml_idp',
+              metadataXml: idpXml(offers),
+              config: { identityMapping: { fieldMappingSetId: 'saml-idp' }, allowedBindings },
+              enabled: false,
+            },
+          })
+        );
+
+      it('takes an empty list as unspecified, so POST-only metadata is still signed in by POST', async () => {
+        const response = await create(['post'], []);
+        expect(response.status).toBe(201);
+        expect(persistedConfig()).toMatchObject({
+          ssoUrl: 'https://idp.example.test/sso/post',
+          allowedBindings: ['post'],
+        });
+      });
+
+      it('narrows the list to what the metadata offers, with the matching URL', async () => {
+        const response = await create(['post'], ['post', 'redirect']);
+        expect(response.status).toBe(201);
+        expect(persistedConfig()).toMatchObject({
+          ssoUrl: 'https://idp.example.test/sso/post',
+          allowedBindings: ['post'],
+        });
+      });
+
+      it('refuses a list none of which the metadata offers', async () => {
+        const response = await create(['post'], ['redirect']);
+        expect(response.status).toBe(400);
+        expect(mocks.adapter?.execute).not.toHaveBeenCalled();
+      });
+    });
+
+    describe('metadata and a requested logout binding that disagree', () => {
+      const spXml = (binding: 'POST' | 'Redirect') => `<?xml version="1.0"?>
+      <md:EntityDescriptor xmlns:md="urn:oasis:names:tc:SAML:2.0:metadata" entityID="https://sp.example.test">
+        <md:SPSSODescriptor protocolSupportEnumeration="urn:oasis:names:tc:SAML:2.0:protocol">
+          <md:AssertionConsumerService Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST" Location="https://sp.example.test/acs" index="0" isDefault="true" />
+          <md:SingleLogoutService Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-${binding}" Location="https://sp.example.test/slo" />
+        </md:SPSSODescriptor>
+      </md:EntityDescriptor>`;
+      const create = (metadataBinding: 'POST' | 'Redirect', sloBinding: string) =>
+        handleCreateProvider(
+          context({
+            body: {
+              name: 'SP',
+              providerType: 'saml_sp',
+              metadataXml: spXml(metadataBinding),
+              config: { sloBinding, identityMapping: spWithLogout.identityMapping },
+            },
+          })
+        );
+
+      it('accepts the binding the metadata offers', async () => {
+        expect((await create('POST', 'post')).status).toBe(201);
+        expect(persistedConfig()).toMatchObject({ sloBinding: 'post' });
+      });
+
+      it('refuses a binding the metadata does not offer, which would have no matching URL', async () => {
+        expect((await create('Redirect', 'post')).status).toBe(400);
+        expect(mocks.adapter?.execute).not.toHaveBeenCalled();
+      });
+    });
+
+    describe('metadata with the binding the request names', () => {
+      const bothBindings = `<?xml version="1.0"?>
+      <md:EntityDescriptor xmlns:md="urn:oasis:names:tc:SAML:2.0:metadata"
+        xmlns:ds="http://www.w3.org/2000/09/xmldsig#" entityID="https://idp.example.test">
+        <md:IDPSSODescriptor protocolSupportEnumeration="urn:oasis:names:tc:SAML:2.0:protocol">
+          <md:KeyDescriptor use="signing"><ds:KeyInfo><ds:X509Data><ds:X509Certificate>CERT</ds:X509Certificate></ds:X509Data></ds:KeyInfo></md:KeyDescriptor>
+          <md:SingleSignOnService Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST" Location="https://idp.example.test/sso/post" />
+          <md:SingleSignOnService Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect" Location="https://idp.example.test/sso/redirect" />
+        </md:IDPSSODescriptor>
+      </md:EntityDescriptor>`;
+
+      async function created(allowedBindings: string[] | undefined, ssoBinding: string) {
+        const response = await handleCreateProvider(
+          context({
+            body: {
+              name: 'IdP',
+              providerType: 'saml_idp',
+              metadataXml: bothBindings,
+              config: {
+                identityMapping: { fieldMappingSetId: 'saml-idp' },
+                ...(allowedBindings ? { allowedBindings } : {}),
+              },
+              enabled: false,
+            },
+            federation: { 'federation.saml_sso_binding': ssoBinding },
+          })
+        );
+        expect(response.status).toBe(201);
+        return persistedConfig();
+      }
+
+      it.each([
+        [['redirect'], 'HTTP-POST', 'https://idp.example.test/sso/redirect'],
+        [['post'], 'HTTP-Redirect', 'https://idp.example.test/sso/post'],
+        [['post', 'redirect'], 'HTTP-POST', 'https://idp.example.test/sso/redirect'],
+        [undefined, 'HTTP-POST', 'https://idp.example.test/sso/post'],
+        [undefined, 'HTTP-Redirect', 'https://idp.example.test/sso/redirect'],
+      ])(
+        'with allowedBindings %j and tenant default %s uses %s',
+        async (bindings, tenantDefault, url) => {
+          const config = await created(bindings, tenantDefault);
+          expect(config.ssoUrl).toBe(url);
+          // The sign-in then goes through the binding that URL belongs to.
+          const allowed = config.allowedBindings as string[];
+          expect(allowed.includes('redirect') ? 'redirect' : 'post').toBe(
+            url.endsWith('/redirect') ? 'redirect' : 'post'
+          );
+        }
+      );
+    });
+
+    it('applies the tenant defaults when metadata is imported into a provider', async () => {
+      mocks.adapter?.queryOne.mockResolvedValue(providerRow());
+      const response = await handleImportMetadata(
+        context({
+          id: 'provider-a',
+          body: { metadataXml: validSpMetadata() },
+          federation: { 'federation.saml_nameid_format': 'unspecified' },
+        })
+      );
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({
+        config: { nameIdFormat: 'urn:oasis:names:tc:SAML:1.1:nameid-format:unspecified' },
+      });
+    });
   });
 
   it('rejects an explicitly unsigned SP configuration', async () => {

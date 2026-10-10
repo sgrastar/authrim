@@ -850,7 +850,7 @@ describe('SAML Integration', () => {
     }
     const inResponseTo = atob(samlResponse).match(/\bInResponseTo="(_[0-9a-f]{32})"/)?.[1];
     const browserBindingCookie = inResponseTo
-      ? buildSAMLRequestBindingCookie(inResponseTo)
+      ? buildSAMLRequestBindingCookie(inResponseTo, 300)
       : undefined;
 
     // Create minimal Hono-like context with all required properties

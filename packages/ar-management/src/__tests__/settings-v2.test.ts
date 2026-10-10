@@ -691,6 +691,35 @@ describe('Settings API v2', () => {
         ).resolves.toEqual(expect.any(String));
       });
 
+      it('bumps the authentication methods cache revision when the SAML switch changes', async () => {
+        const mockKV = createMockKV();
+        const { app, mockEnv } = createTestApp({ kv: mockKV });
+        const getRes = await app.request(
+          '/api/admin/tenants/tenant_123/settings/federation',
+          { method: 'GET' },
+          mockEnv
+        );
+        const current = await getRes.json<SettingsGetResult>();
+
+        const res = await app.request(
+          '/api/admin/tenants/tenant_123/settings/federation',
+          {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              ifMatch: current.version,
+              set: { 'federation.saml_enabled': false },
+            }),
+          },
+          mockEnv
+        );
+
+        expect(res.status).toBe(200);
+        await expect(
+          mockKV.get('cache:authentication-methods:v1:revision:tenant:tenant_123')
+        ).resolves.toEqual(expect.any(String));
+      });
+
       it('automatically schedules inherited human-verification projection after enabling it', async () => {
         const mockKV = createMockKV();
         const { app, mockEnv } = createTestApp({ kv: mockKV });
