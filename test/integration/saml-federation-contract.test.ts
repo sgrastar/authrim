@@ -146,12 +146,13 @@ describe('SAML federation boundary contract', () => {
 
   it('binds the browser round trip to the exact AuthnRequest ID', () => {
     expect.hasAssertions();
-    const cookie = buildSAMLRequestBindingCookie(REQUEST_ID);
+    const cookie = buildSAMLRequestBindingCookie(REQUEST_ID, 240);
     const otherRequestId = '_ffffffffffffffffffffffffffffffff';
 
     expect(cookie).toContain('HttpOnly');
     expect(cookie).toContain('Secure');
     expect(cookie).toContain('SameSite=None');
+    expect(cookie).toContain('Max-Age=240');
     expect(hasSAMLRequestBrowserBinding(cookie, REQUEST_ID)).toBe(true);
     expect(hasSAMLRequestBrowserBinding(cookie, otherRequestId)).toBe(false);
     expect(hasSAMLRequestBrowserBinding(cookie, `${REQUEST_ID}suffix`)).toBe(false);

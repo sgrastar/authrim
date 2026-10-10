@@ -72,4 +72,22 @@ describe('notices about the consequences of a choice', () => {
 			expect(sectionNotices(exchange, values(set))).toEqual([]);
 		}
 	});
+
+	it('tells that SAML apps and SAML sign-in stop working while SAML is off', () => {
+		const saml = section('federation.saml_enabled');
+		expect(sectionNotices(saml, values({ 'federation.saml_enabled': false }))).toEqual([
+			{ id: 'samlDisabled', tone: 'info' }
+		]);
+		expect(sectionNotices(saml, values({ 'federation.saml_enabled': true }))).toEqual([]);
+	});
+
+	it('tells that POST sign-in requests are unsigned when a new provider is given POST', () => {
+		const binding = section('federation.saml_sso_binding', 'federation.saml_slo_binding');
+		expect(sectionNotices(binding, values({ 'federation.saml_sso_binding': 'HTTP-POST' }))).toEqual(
+			[{ id: 'samlPostBinding', tone: 'info' }]
+		);
+		expect(
+			sectionNotices(binding, values({ 'federation.saml_sso_binding': 'HTTP-Redirect' }))
+		).toEqual([]);
+	});
 });

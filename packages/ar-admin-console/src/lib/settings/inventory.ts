@@ -44,7 +44,11 @@ export const DRAFT_PAGES: readonly DraftPage[] = [
 		note: 'A built page: these are its settings not yet applied (still read from the older logout settings).'
 	},
 	{ id: 'authentication/social', scope: 'tenant' },
-	{ id: 'authentication/enterprise', scope: 'tenant' },
+	{
+		id: 'authentication/enterprise',
+		scope: 'tenant',
+		note: 'A built page: these are its settings not placed on it yet (the Artifact binding is not built).'
+	},
 	{ id: 'authentication/directory', scope: 'tenant' },
 	{ id: 'authentication/federation-trust', scope: 'tenant' },
 	{ id: 'authentication/protection', scope: 'tenant' },
@@ -201,19 +205,8 @@ place('authentication/social', 'Creating users on first sign-in', {
 });
 
 place('authentication/enterprise', 'SAML', {
-	primary: ['federation.saml_enabled'],
-	advanced: [
-		'federation.saml_nameid_format',
-		'federation.saml_sso_binding',
-		'federation.saml_slo_binding',
-		'tenant.saml_attribute_release_failure_message_mode'
-	],
-	search: [
-		'federation.saml_assertion_ttl',
-		'federation.saml_request_ttl',
-		'federation.saml_artifact_ttl',
-		'federation.saml_artifact_resolution_timeout'
-	]
+	advanced: ['tenant.saml_attribute_release_failure_message_mode'],
+	search: ['federation.saml_artifact_ttl', 'federation.saml_artifact_resolution_timeout']
 });
 
 place('authentication/directory', 'Directory password', {

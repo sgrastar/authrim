@@ -97,6 +97,8 @@ const AUTHENTICATION_METHODS_TENANT_CACHE_CATEGORIES = new Set<CategoryName>([
   'account-lifecycle',
   'login-ui',
   'self-service',
+  // federation.saml_enabled decides whether SAML sign-in is offered.
+  'federation',
 ]);
 const AUTHENTICATION_METHODS_CLIENT_CACHE_CATEGORIES = new Set<CategoryName>(['login-ui']);
 const DEFAULT_HUMAN_VERIFICATION_PROVIDER = 'human-verification-cloudflare-turnstile';

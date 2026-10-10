@@ -2067,6 +2067,39 @@ describe('Router Worker', () => {
       expect(cache.put).not.toHaveBeenCalled();
     });
 
+    it('should not store authentication methods responses marked no-store', async () => {
+      const cache = createMockCache();
+      (globalThis as { caches?: unknown }).caches = { default: cache };
+      const envWithCache = {
+        ...mockEnv,
+        BASE_DOMAIN: 'example.com',
+        SETTINGS: createMockKV(),
+      };
+      mockEnv.OP_MANAGEMENT.fetch.mockResolvedValue(
+        new Response(JSON.stringify({ methods: {} }), {
+          status: 200,
+          headers: {
+            'Content-Type': 'application/json',
+            'Cache-Control': 'no-store',
+            'Cloudflare-CDN-Cache-Control': 'no-store',
+          },
+        })
+      );
+
+      const first = await app.fetch(
+        new Request('https://first.example.com/api/auth/authentication-methods'),
+        envWithCache
+      );
+      await app.fetch(
+        new Request('https://first.example.com/api/auth/authentication-methods'),
+        envWithCache
+      );
+
+      expect(first.headers.get('X-Authrim-Router-Authentication-Methods-Cache')).toBe('bypass');
+      expect(mockEnv.OP_MANAGEMENT.fetch).toHaveBeenCalledTimes(2);
+      expect(cache.put).not.toHaveBeenCalled();
+    });
+
     it('should not store authentication methods responses that set cookies', async () => {
       const cache = createMockCache();
       (globalThis as { caches?: unknown }).caches = { default: cache };

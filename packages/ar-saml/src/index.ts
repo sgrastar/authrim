@@ -20,6 +20,9 @@
  * - POST /saml/sp/acs       - Assertion Consumer Service
  * - POST /saml/sp/slo       - Single Logout
  *
+ * The IdP and SP endpoints (and the metadata) answer 403 while the tenant has SAML turned off
+ * (federation.saml_enabled); /saml/health and the admin API below are not affected.
+ *
  * Admin Endpoints:
  * - GET    /api/admin/saml-providers     - List SAML providers
  * - POST   /api/admin/saml-providers     - Create SAML provider
@@ -86,6 +89,7 @@ import {
   handleRetireSigningBackup,
 } from './admin/providers';
 import { handleScheduled } from './scheduled';
+import { samlEnabledMiddleware } from './common/saml-enabled';
 import {
   GAKUNIN_SHIBBOLETH_SAML2_IDP_SLO_POST_PATH,
   GAKUNIN_SHIBBOLETH_SAML2_IDP_SLO_REDIRECT_PATH,
@@ -115,6 +119,11 @@ app.use(
   })
 );
 app.use('*', pluginContextMiddleware());
+
+// The tenant's SAML switch (federation.saml_enabled). It decides on the request path, so it covers
+// every protocol endpoint below, the Shibboleth aliases and anything added later under /saml/;
+// the health check and the admin API stay available.
+app.use('*', samlEnabledMiddleware());
 
 // Health check
 app.get('/saml/health', (c) => {

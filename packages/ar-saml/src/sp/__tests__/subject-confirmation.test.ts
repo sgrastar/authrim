@@ -574,7 +574,7 @@ describe('SubjectConfirmation Validation - SAML 2.0 Core Section 2.4.1', () => {
       } as unknown as Env['SAML_REQUEST_STORE'];
       const samlResponse = createSAMLResponseWithSubjectConfirmation({ inResponseTo: requestId });
 
-      const res = await callACS(samlResponse, buildSAMLRequestBindingCookie(requestId));
+      const res = await callACS(samlResponse, buildSAMLRequestBindingCookie(requestId, 300));
 
       expect(res.status).toBe(302);
       expect(res.headers.get('Set-Cookie')).toContain(`__Host-authrim_saml_request_${requestId}=;`);
@@ -602,7 +602,7 @@ describe('SubjectConfirmation Validation - SAML 2.0 Core Section 2.4.1', () => {
         inResponseTo: requestId,
       });
 
-      const res = await callACS(samlResponse, buildSAMLRequestBindingCookie(requestId));
+      const res = await callACS(samlResponse, buildSAMLRequestBindingCookie(requestId, 300));
 
       // Strict mode: InResponseTo validation failure should return error
       expect(res.status).toBe(400);
@@ -626,7 +626,7 @@ describe('SubjectConfirmation Validation - SAML 2.0 Core Section 2.4.1', () => {
         inResponseTo: requestId,
       });
 
-      const res = await callACS(samlResponse, buildSAMLRequestBindingCookie(requestId));
+      const res = await callACS(samlResponse, buildSAMLRequestBindingCookie(requestId, 300));
 
       expect(res.status).toBe(400);
     });

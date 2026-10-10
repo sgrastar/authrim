@@ -22,6 +22,7 @@ import {
   requireAdminDatabaseAdapter,
   resolveRuntimeIdentityMappingBinding,
   filterSamlAttributesByDestinationConsentWithStatus,
+  resolveSamlAssertionTtlSeconds,
 } from '@authrim/ar-lib-core';
 import { getSAMLInteractiveLoginUrlPolicy } from '../common/entity-id';
 import { base64Encode, generateSAMLId } from '../common/xml-utils';
@@ -311,6 +312,12 @@ async function generateIdPInitiatedResponse(
     providerPolicy: spConfig.signingKeyPolicy,
   });
 
+  // The service provider's own assertion lifetime, else the tenant's.
+  const assertionTtlSeconds = await resolveSamlAssertionTtlSeconds(
+    env,
+    tenantId,
+    spConfig.assertionValiditySeconds
+  );
   const nameIdFormat = spConfig.nameIdFormat || NAMEID_FORMATS.EMAIL;
   const nameIdValue = await resolveSAMLNameIDValue(userInfo, nameIdFormat, {
     tenantId,
@@ -319,7 +326,7 @@ async function generateIdPInitiatedResponse(
     persistentRegistry: resolveSAMLPersistentNameIDRegistryStore(env),
     allowCreate: true,
     transientStore: resolveSAMLTransientNameIDStore(env),
-    transientTtlSeconds: spConfig.assertionValiditySeconds || DEFAULTS.ASSERTION_VALIDITY_SECONDS,
+    transientTtlSeconds: assertionTtlSeconds,
     sessionId: authSession.sessionId,
   });
 
@@ -382,8 +389,7 @@ async function generateIdPInitiatedResponse(
     destinationFieldConsentConfirmed,
   });
   const timing = buildSAMLAssertionTiming({
-    assertionValiditySeconds:
-      spConfig.assertionValiditySeconds || DEFAULTS.ASSERTION_VALIDITY_SECONDS,
+    assertionValiditySeconds: assertionTtlSeconds,
   });
 
   // Build SAML Response (no InResponseTo for IdP-initiated)

@@ -154,6 +154,45 @@ export const jaSettings = {
 	'set.k.federation.scim_token_max_expiry': 'SCIM トークンの有効期限の上限',
 	'set.k.federation.scim_token_max_expiry.desc':
 		'これより長い有効期限の SCIM トークンは作れません（最長 1 年）。発行済みのトークンは変わりません。',
+	'set.page.enterprise': '企業 SSO（SAML）',
+	'set.page.enterprise.desc':
+		'このテナントが SAML に応じるかどうかと、SAML の有効期間、新しい SAML プロバイダーの既定を決めます。プロバイダー（IdP・SP）の登録は、当面は従来の管理画面の SAML ページで行います。',
+	'set.section.samlService': 'SAML の利用',
+	'set.section.samlService.desc':
+		'オフにすると、このテナントは SAML の要求とメタデータの公開をすべて断ります。登録済みのプロバイダーは消えません。',
+	'set.k.federation.saml_enabled': 'SAML を使う',
+	'set.k.federation.saml_enabled.desc':
+		'オフの間、SAML の IdP・SP のエンドポイントとメタデータは 403 を返します（ヘルスチェックと管理 API は使えます）。オンに戻せば、登録済みのプロバイダーがそのまま使えます。反映まで 1 分ほどかかることがあります。',
+	'set.section.samlLifetimes': '有効期間',
+	'set.section.samlLifetimes.desc': 'SAML のアサーションとリクエストが有効な時間です。',
+	'set.section.samlLifetimes.advanced': 'リクエストの有効期間',
+	'set.k.federation.saml_assertion_ttl': 'アサーションの有効期間',
+	'set.k.federation.saml_assertion_ttl.desc':
+		'Authrim が発行する SAML アサーションが有効な時間です（60〜600 秒）。サービスプロバイダー側に固有の有効期間があるときは、そちらを優先します。変更後に発行するアサーションから反映されます。',
+	'set.k.federation.saml_request_ttl': 'リクエストの有効期間',
+	'set.k.federation.saml_request_ttl.desc':
+		'ログイン・ログアウトの SAML リクエストが有効な時間です（60〜600 秒）。受け付けるリクエストの古さの上限と、送ったリクエストを応答と突き合わせるために保持する時間に使います。新しく出すリクエストの保持時間は変更後から反映されます。受け付けるリクエストの古さは、進行中のログインの再開時にも現在の値で確認するので、短くすると、すでに始まっているログインが断られることがあります。',
+	'set.section.samlProviderDefaults': '新しいプロバイダーの既定',
+	'set.section.samlProviderDefaults.desc':
+		'SAML プロバイダーを追加するときや、メタデータを取り込むときに、ほかに指定がなければ使う値です。既存のプロバイダーは変わりません。',
+	'set.section.samlProviderDefaults.advanced': 'バインディング',
+	'set.k.federation.saml_nameid_format': 'NameID の形式',
+	'set.k.federation.saml_nameid_format.desc':
+		'メタデータにも指定がないときの NameID の形式です。プロバイダーのプロファイル（strict など）が形式を決めているときは、そちらを優先します。persistent はサービスごとに別の識別子になるので、利用者のプライバシーを守れます。',
+	'set.k.federation.saml_nameid_format.emailAddress': 'メールアドレス',
+	'set.k.federation.saml_nameid_format.persistent': '永続的な識別子（persistent）',
+	'set.k.federation.saml_nameid_format.transient': '一時的な識別子（transient）',
+	'set.k.federation.saml_nameid_format.unspecified': '指定なし（unspecified）',
+	'set.k.federation.saml_sso_binding': 'ログインのバインディング',
+	'set.k.federation.saml_sso_binding.desc':
+		'外部の ID プロバイダーを追加するとき、メタデータが両方のバインディングを示している場合や、指定がない場合に使うバインディングです。HTTP-Redirect は署名付きのリクエストを送り、HTTP-POST は署名なしで送ります。',
+	'set.k.federation.saml_sso_binding.HTTP-POST': 'HTTP-POST',
+	'set.k.federation.saml_sso_binding.HTTP-Redirect': 'HTTP-Redirect',
+	'set.k.federation.saml_slo_binding': 'ログアウトのバインディング',
+	'set.k.federation.saml_slo_binding.desc':
+		'ログアウト要求のバインディングの既定です。メタデータが両方を示している場合や、指定がない場合に使います。legacy プロファイルのように、プロファイルが決めているときはそちらを優先します。',
+	'set.k.federation.saml_slo_binding.HTTP-POST': 'HTTP-POST',
+	'set.k.federation.saml_slo_binding.HTTP-Redirect': 'HTTP-Redirect',
 	'set.k.oauth.id_token_signing_alg.RS256': 'RS256',
 	'set.k.oauth.id_token_signing_alg.ES256': 'ES256',
 	'set.k.oauth.id_token_signing_alg.PS256': 'PS256',
@@ -209,6 +248,12 @@ export const jaSettings = {
 	'settings.notice.exchangeCeilings.title': 'トークン交換を断られるアプリがあります',
 	'settings.notice.exchangeCeilings.body':
 		'トークン交換は使えますが、委任を認めていないので、委任モード（新しいアプリの既定）のアプリは断られます。それらのアプリで使うには「委任を認める」をオンにしてください。',
+	'settings.notice.samlDisabled.title': 'SAML を使うアプリや外部 IdP が動かなくなります',
+	'settings.notice.samlDisabled.body':
+		'SAML をオフにすると、SAML でサインインするアプリ（サービスプロバイダー）と、外部の SAML IdP を使ったサインインは、エラーになります。登録済みのプロバイダーは残るので、オンに戻せばそのまま使えます。',
+	'settings.notice.samlPostBinding.title': 'HTTP-POST ではログイン要求に署名が付きません',
+	'settings.notice.samlPostBinding.body':
+		'新しい ID プロバイダーへのログイン要求を HTTP-POST で送ると、リクエストに署名は付きません。署名付きで送れる HTTP-Redirect が既定です。IdP が POST しか受け付けないときだけ選んでください。',
 	'settings.value.on': 'オン',
 	'settings.value.off': 'オフ',
 	'settings.value.empty': '（なし）',

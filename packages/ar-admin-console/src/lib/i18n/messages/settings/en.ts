@@ -153,6 +153,45 @@ export const enSettings: Record<keyof typeof jaSettings, string> = {
 	'set.k.federation.scim_token_max_expiry': 'Longest SCIM token lifetime',
 	'set.k.federation.scim_token_max_expiry.desc':
 		'A SCIM token cannot be created with a longer lifetime (one year at most). Tokens already issued are not changed.',
+	'set.page.enterprise': 'Enterprise SSO (SAML)',
+	'set.page.enterprise.desc':
+		'Decides whether this tenant answers SAML at all, how long SAML assertions and requests stay valid, and what new SAML providers start with. Registering providers (IdPs and SPs) is still done on the SAML page of the previous admin screens.',
+	'set.section.samlService': 'SAML service',
+	'set.section.samlService.desc':
+		'When off, this tenant refuses every SAML request and does not publish its SAML metadata. Registered providers are kept.',
+	'set.k.federation.saml_enabled': 'Use SAML',
+	'set.k.federation.saml_enabled.desc':
+		'While off, the SAML IdP and SP endpoints and the metadata answer 403 (the health check and the admin API keep working). Turn it back on and the registered providers work as before. A change can take about a minute to apply.',
+	'set.section.samlLifetimes': 'Lifetimes',
+	'set.section.samlLifetimes.desc': 'How long SAML assertions and requests stay valid.',
+	'set.section.samlLifetimes.advanced': 'Request lifetime',
+	'set.k.federation.saml_assertion_ttl': 'Assertion lifetime',
+	'set.k.federation.saml_assertion_ttl.desc':
+		'How long a SAML assertion issued by Authrim is valid (60 to 600 seconds). A service provider with a lifetime of its own keeps it. A change applies to assertions issued after it.',
+	'set.k.federation.saml_request_ttl': 'Request lifetime',
+	'set.k.federation.saml_request_ttl.desc':
+		'How long a SAML sign-in or logout request stays valid (60 to 600 seconds): the oldest request Authrim accepts, and how long the requests it sends are kept to be matched with their responses. A change applies to the lifetime of requests made after it. The age of a request is also checked against the current value when a sign-in in progress resumes, so shortening it can reject sign-ins that have already started.',
+	'set.section.samlProviderDefaults': 'Defaults for new providers',
+	'set.section.samlProviderDefaults.desc':
+		'What a SAML provider gets when it is added or its metadata is imported and nothing else says. Existing providers are not changed.',
+	'set.section.samlProviderDefaults.advanced': 'Bindings',
+	'set.k.federation.saml_nameid_format': 'NameID format',
+	'set.k.federation.saml_nameid_format.desc':
+		'The NameID format a provider gets when its metadata names none. A provider profile that sets its own format (such as strict) keeps it. Persistent gives each service its own identifier, which protects people’s privacy.',
+	'set.k.federation.saml_nameid_format.emailAddress': 'Email address',
+	'set.k.federation.saml_nameid_format.persistent': 'Persistent identifier',
+	'set.k.federation.saml_nameid_format.transient': 'Transient identifier',
+	'set.k.federation.saml_nameid_format.unspecified': 'Unspecified',
+	'set.k.federation.saml_sso_binding': 'Sign-in binding',
+	'set.k.federation.saml_sso_binding.desc':
+		'The binding a new external identity provider is signed in through when its metadata offers both, or names none. HTTP-Redirect sends a signed request; HTTP-POST sends it unsigned.',
+	'set.k.federation.saml_sso_binding.HTTP-POST': 'HTTP-POST',
+	'set.k.federation.saml_sso_binding.HTTP-Redirect': 'HTTP-Redirect',
+	'set.k.federation.saml_slo_binding': 'Logout binding',
+	'set.k.federation.saml_slo_binding.desc':
+		'The default binding of logout requests, used when the metadata offers both or names none. A provider profile that sets its own (the legacy profile) keeps it.',
+	'set.k.federation.saml_slo_binding.HTTP-POST': 'HTTP-POST',
+	'set.k.federation.saml_slo_binding.HTTP-Redirect': 'HTTP-Redirect',
 	'set.k.oauth.id_token_signing_alg.RS256': 'RS256',
 	'set.k.oauth.id_token_signing_alg.ES256': 'ES256',
 	'set.k.oauth.id_token_signing_alg.PS256': 'PS256',
@@ -209,6 +248,12 @@ export const enSettings: Record<keyof typeof jaSettings, string> = {
 	'settings.notice.exchangeCeilings.title': 'Some apps will be refused token exchange',
 	'settings.notice.exchangeCeilings.body':
 		'Token exchange is on, but delegation is not allowed, so apps in delegation mode (the default for new apps) are refused. Turn on “Allow delegation” to let them use it.',
+	'settings.notice.samlDisabled.title': 'Apps and external IdPs that use SAML will stop working',
+	'settings.notice.samlDisabled.body':
+		'With SAML off, apps that sign in over SAML (service providers) and sign-in through external SAML identity providers fail. Registered providers are kept, so turning it back on restores them.',
+	'settings.notice.samlPostBinding.title': 'HTTP-POST sends the sign-in request unsigned',
+	'settings.notice.samlPostBinding.body':
+		'A sign-in request sent to a new identity provider over HTTP-POST carries no signature. HTTP-Redirect, which can be signed, is the default. Choose POST only if the identity provider accepts nothing else.',
 	'settings.value.on': 'On',
 	'settings.value.off': 'Off',
 	'settings.value.empty': '(none)',

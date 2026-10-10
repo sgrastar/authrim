@@ -17,6 +17,7 @@ const mocks = vi.hoisted(() => ({
   consumeOutbound: vi.fn(),
   revoke: vi.fn(async () => undefined),
   verify: vi.fn(),
+  federation: null as Record<string, unknown> | null,
 }));
 
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
@@ -132,7 +133,18 @@ function app() {
 }
 
 function environment(withState = true) {
-  return withState ? { STATE_STORE: {} } : {};
+  return withState
+    ? {
+        STATE_STORE: {},
+        SETTINGS: {
+          get: vi.fn(async (key: string) =>
+            key === 'settings:tenant:tenant-a:federation' && mocks.federation
+              ? JSON.stringify(mocks.federation)
+              : null
+          ),
+        },
+      }
+    : {};
 }
 
 function requestXml(
@@ -189,6 +201,7 @@ describe('SP SLO handler policy boundaries', () => {
     mocks.signaturePolicyError = null;
     mocks.outbound = { requestId: '_outbound', relayState: undefined };
     mocks.outboundThrows = false;
+    mocks.federation = null;
   });
 
   it('requires a SAML message for POST and GET bindings', async () => {
@@ -228,6 +241,24 @@ describe('SP SLO handler policy boundaries', () => {
     await expectValidationError(
       await post('SAMLRequest', requestXml({ issueInstant, destination }))
     );
+  });
+
+  describe('request age against the tenant request lifetime', () => {
+    const minutesAgo = (minutes: number) => new Date(Date.now() - minutes * 60_000).toISOString();
+
+    it('accepts a LogoutRequest as old as the tenant request lifetime allows', async () => {
+      mocks.federation = { 'federation.saml_request_ttl': 600 };
+      expect((await post('SAMLRequest', requestXml({ issueInstant: minutesAgo(8) }))).status).toBe(
+        200
+      );
+    });
+
+    it('rejects a LogoutRequest older than the tenant request lifetime', async () => {
+      mocks.federation = { 'federation.saml_request_ttl': 60 };
+      await expectValidationError(
+        await post('SAMLRequest', requestXml({ issueInstant: minutesAgo(3) }))
+      );
+    });
   });
 
   it('rejects an invalid or expired LogoutRequest NotOnOrAfter', async () => {
@@ -383,6 +414,25 @@ describe('SP-initiated SLO', () => {
       expect(mocks.storeOutbound).toHaveBeenCalled();
     }
   );
+
+  it.each([
+    ['five minutes where the tenant sets nothing', null, 300],
+    ['the tenant request lifetime', { 'federation.saml_request_ttl': 120 }, 120],
+  ])('keeps the outbound request for %s', async (_label, federation, seconds) => {
+    mocks.federation = federation;
+    await initiateSPLogout(
+      environment() as never,
+      'user-a',
+      idp() as never,
+      undefined,
+      undefined,
+      'tenant-a'
+    );
+    expect(mocks.storeOutbound).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ ttlSeconds: seconds })
+    );
+  });
 
   it('continues with an unsigned request when signing material is unavailable', async () => {
     mocks.signingError = true;

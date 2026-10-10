@@ -33,12 +33,12 @@ export const FEDERATION_SETTINGS_META: Record<keyof FederationSettings, SettingM
   'federation.saml_enabled': {
     key: 'federation.saml_enabled',
     type: 'boolean',
-    default: false,
+    default: true,
     envKey: 'ENABLE_SAML',
     label: 'SAML Enabled',
-    description: 'Enable SAML 2.0 federation',
+    description:
+      'Whether this tenant answers SAML 2.0 requests: the IdP and SP endpoints and the metadata. Off refuses them all; registered providers are kept. The health check and the SAML admin API stay available.',
     visibility: 'public',
-    status: 'in_development',
   },
   'federation.saml_assertion_ttl': {
     key: 'federation.saml_assertion_ttl',
@@ -46,12 +46,14 @@ export const FEDERATION_SETTINGS_META: Record<keyof FederationSettings, SettingM
     default: 300,
     envKey: 'SAML_ASSERTION_TTL',
     label: 'SAML Assertion TTL',
-    description: 'SAML assertion lifetime in seconds',
+    description:
+      'How long a SAML assertion issued by Authrim is valid (NotOnOrAfter), in seconds. A service provider with its own assertion lifetime keeps it. Applies to assertions issued after the change.',
     min: 60,
     max: 600,
     unit: 'seconds',
+    integer: true,
+    envNumber: 'strict-in-range',
     visibility: 'admin',
-    status: 'in_development',
   },
   'federation.saml_request_ttl': {
     key: 'federation.saml_request_ttl',
@@ -59,12 +61,14 @@ export const FEDERATION_SETTINGS_META: Record<keyof FederationSettings, SettingM
     default: 300,
     envKey: 'SAML_REQUEST_TTL',
     label: 'SAML Request TTL',
-    description: 'SAML authentication request lifetime in seconds',
+    description:
+      'How long a SAML request (sign-in and logout) stays valid, in seconds: the age Authrim accepts of an incoming request, and how long the requests it sends are kept to match their responses. A change applies to the lifetime of requests made after it; the age of a request is also checked against the current value when a sign-in in progress resumes, so shortening it can reject sign-ins that have already started.',
     min: 60,
     max: 600,
     unit: 'seconds',
+    integer: true,
+    envNumber: 'strict-in-range',
     visibility: 'admin',
-    status: 'in_development',
   },
   'federation.saml_artifact_ttl': {
     key: 'federation.saml_artifact_ttl',
@@ -76,6 +80,8 @@ export const FEDERATION_SETTINGS_META: Record<keyof FederationSettings, SettingM
     min: 30,
     max: 300,
     unit: 'seconds',
+    integer: true,
+    envNumber: 'strict-in-range',
     visibility: 'admin',
     status: 'in_development',
   },
@@ -89,30 +95,32 @@ export const FEDERATION_SETTINGS_META: Record<keyof FederationSettings, SettingM
     min: 1000,
     max: 30000,
     unit: 'ms',
+    integer: true,
+    envNumber: 'strict-in-range',
     visibility: 'admin',
     status: 'in_development',
   },
   'federation.saml_sso_binding': {
     key: 'federation.saml_sso_binding',
     type: 'enum',
-    default: 'HTTP-POST',
+    default: 'HTTP-Redirect',
     envKey: 'SAML_SSO_BINDING',
     label: 'SAML SSO Binding',
-    description: 'SAML Single Sign-On request binding (HTTP-POST recommended)',
+    description:
+      'The sign-in request binding a new identity provider gets when its metadata offers both or its settings name none. HTTP-Redirect carries a signed request; HTTP-POST carries an unsigned one. Existing providers are not changed.',
     enum: ['HTTP-POST', 'HTTP-Redirect'],
     visibility: 'admin',
-    status: 'in_development',
   },
   'federation.saml_slo_binding': {
     key: 'federation.saml_slo_binding',
     type: 'enum',
-    default: 'HTTP-POST',
+    default: 'HTTP-Redirect',
     envKey: 'SAML_SLO_BINDING',
     label: 'SAML SLO Binding',
-    description: 'SAML Single Logout request binding',
+    description:
+      'The logout request binding a new provider gets when its metadata offers both or its settings name none. A provider profile with its own logout binding (legacy: HTTP-POST) keeps it. Existing providers are not changed.',
     enum: ['HTTP-POST', 'HTTP-Redirect'],
     visibility: 'admin',
-    status: 'in_development',
   },
   'federation.saml_nameid_format': {
     key: 'federation.saml_nameid_format',
@@ -120,10 +128,10 @@ export const FEDERATION_SETTINGS_META: Record<keyof FederationSettings, SettingM
     default: 'emailAddress',
     envKey: 'SAML_NAMEID_FORMAT',
     label: 'SAML NameID Format',
-    description: 'SAML NameID format (persistent provides privacy protection)',
+    description:
+      'The NameID format a new provider gets when its metadata names none (persistent gives each service its own identifier and protects privacy). A provider profile with its own NameID format keeps it. Existing providers are not changed.',
     enum: ['emailAddress', 'persistent', 'transient', 'unspecified'],
     visibility: 'admin',
-    status: 'in_development',
   },
 
   'federation.scim_token_max_expiry': {
@@ -138,6 +146,7 @@ export const FEDERATION_SETTINGS_META: Record<keyof FederationSettings, SettingM
     max: 31536000,
     unit: 'seconds',
     integer: true,
+    envNumber: 'strict-in-range',
     visibility: 'admin',
   },
   'federation.scim_token_default_expiry': {
@@ -152,6 +161,7 @@ export const FEDERATION_SETTINGS_META: Record<keyof FederationSettings, SettingM
     max: 31536000,
     unit: 'seconds',
     integer: true,
+    envNumber: 'strict-in-range',
     visibility: 'admin',
   },
 };
@@ -171,13 +181,13 @@ export const FEDERATION_CATEGORY_META: CategoryMeta = {
  */
 export const FEDERATION_DEFAULTS: FederationSettings = {
   // SAML
-  'federation.saml_enabled': false,
+  'federation.saml_enabled': true,
   'federation.saml_assertion_ttl': 300,
   'federation.saml_request_ttl': 300,
   'federation.saml_artifact_ttl': 120,
   'federation.saml_artifact_resolution_timeout': 5000,
-  'federation.saml_sso_binding': 'HTTP-POST',
-  'federation.saml_slo_binding': 'HTTP-POST',
+  'federation.saml_sso_binding': 'HTTP-Redirect',
+  'federation.saml_slo_binding': 'HTTP-Redirect',
   'federation.saml_nameid_format': 'emailAddress',
   'federation.scim_token_max_expiry': 31536000,
   'federation.scim_token_default_expiry': 31536000,

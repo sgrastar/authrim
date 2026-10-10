@@ -192,6 +192,64 @@ describe('SP login tenant signing boundary', () => {
   });
 });
 
+describe('SP login request lifetime', () => {
+  let storeBodies: Array<Record<string, unknown>>;
+  let mockEnv: Partial<Env>;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    storeBodies = [];
+    mockGetIdPConfig.mockResolvedValue({
+      entityId: 'https://idp.example.com',
+      ssoUrl: 'https://idp.example.com/sso',
+      certificate: 'mock-certificate',
+      nameIdFormat: 'urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress',
+      attributeMapping: {},
+      allowedBindings: ['post'],
+    });
+    mockEnv = {
+      ISSUER_URL: 'https://auth.example.com',
+      SAML_REQUEST_STORE: {
+        idFromName: vi.fn((name: string) => name),
+        get: vi.fn(() => ({
+          fetch: vi.fn(async (_url: string, init: { body: string }) => {
+            storeBodies.push(JSON.parse(init.body) as Record<string, unknown>);
+            return new Response('OK', { status: 200 });
+          }),
+        })),
+      } as unknown as Env['SAML_REQUEST_STORE'],
+    };
+  });
+
+  function withRequestTtl(ttl: unknown): void {
+    (mockEnv as { SETTINGS: unknown }).SETTINGS = {
+      get: vi.fn(async (key: string) =>
+        key === 'settings:tenant:tenant-a:federation'
+          ? JSON.stringify({ 'federation.saml_request_ttl': ttl })
+          : null
+      ),
+    };
+  }
+
+  it.each([
+    ['five minutes where the tenant sets nothing', undefined, 300],
+    ['the tenant request lifetime', 120, 120],
+    ['five minutes for a lifetime out of range', 86_400, 300],
+  ])('keeps the request and its browser cookie for %s', async (_label, ttl, seconds) => {
+    if (ttl !== undefined) withRequestTtl(ttl);
+    const before = Date.now();
+    const { context } = createLoginContext(mockEnv, 'tenant-a');
+
+    const res = await handleSPLogin(context);
+
+    expect(res.status).toBe(200);
+    const expiresAt = storeBodies[0]?.expiresAt as number;
+    expect(expiresAt - before).toBeGreaterThanOrEqual(seconds * 1000);
+    expect(expiresAt - Date.now()).toBeLessThanOrEqual(seconds * 1000);
+    expect(res.headers.get('Set-Cookie')).toContain(`Max-Age=${seconds}`);
+  });
+});
+
 describe('SP login answering a re-authentication', () => {
   let storeBodies: Array<Record<string, unknown>>;
   let mockEnv: Partial<Env>;
