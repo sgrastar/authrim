@@ -8,6 +8,7 @@ import {
   listControlSnapshotPreview,
   listReleaseRolloutTargets,
   verifyControlRolloutCoversTargets,
+  type ReleaseRolloutExpectedTarget,
 } from './release-rollout-handoff.js';
 
 type FileEvidence = { path: string; checksum: string };
@@ -81,6 +82,9 @@ function lockD1Keys(targets: readonly ReleaseMigrationPhysicalTarget[]): Set<str
  * applies SQL to whatever it snapshots, so a database the lock does not know (no recorded evidence),
  * one the lock expects but Control lacks, or one whose provider ID is not resolved yet must stop
  * the update here; a check after the fact could not undo an application.
+ *
+ * It returns the verified set. The handoff hands that set to Control, which fails closed if its own
+ * (later) snapshot contains anything else, such as a tenant database provisioned after this check.
  */
 export async function assertControlSnapshotMatchesLock(input: {
   controlDatabaseId: string;
@@ -88,7 +92,7 @@ export async function assertControlSnapshotMatchesLock(input: {
   targets: readonly ReleaseMigrationPhysicalTarget[];
   managedStreamIds: readonly string[];
   preview?: typeof listControlSnapshotPreview;
-}): Promise<void> {
+}): Promise<ReleaseRolloutExpectedTarget[]> {
   const rows = (
     await (input.preview ?? listControlSnapshotPreview)({
       controlDatabaseId: input.controlDatabaseId,
@@ -119,6 +123,7 @@ export async function assertControlSnapshotMatchesLock(input: {
         `unresolved=[${unresolved.sort().join(',')}]`
     );
   }
+  return rows.map((row) => ({ streamId: row.streamId, databaseId: row.databaseId! }));
 }
 
 /**

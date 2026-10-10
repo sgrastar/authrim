@@ -710,11 +710,12 @@ describe('same-version draft append identity, evidence and Control coverage', ()
           preview: async () => rows,
         });
       const ok = { streamId: 'core-d1', databaseId: tenantCore.databaseId };
-      await expect(preview([ok])).resolves.toBeUndefined();
+      // The verified set is what the handoff binds Control's later snapshot to.
+      await expect(preview([ok])).resolves.toEqual([ok]);
       // Other streams are not part of this handoff.
       await expect(
         preview([ok, { streamId: 'pii-d1', databaseId: 'ignored-for-this-handoff' }])
-      ).resolves.toBeUndefined();
+      ).resolves.toEqual([ok]);
       await expect(preview([ok, { streamId: 'core-d1', databaseId: 'stranger' }])).rejects.toThrow(
         'unknown_to_lock=[stranger:core-d1]'
       );

@@ -353,6 +353,10 @@
             {
               "path": "011_tenant_backup_boundary_deadline.sql",
               "checksum": "2b82c9d0b812e106349601d8869bad12ed1cfacd511b977eb93448b18050f827"
+            },
+            {
+              "path": "012_release_rollout_expected_targets.sql",
+              "checksum": "4d96952be03bd80f2cbc7d3a2fe37f7b418bf4dfee066059f8e28548f2b8f750"
             }
           ]
         },
@@ -846,6 +850,10 @@
         {
           "path": "011_tenant_backup_boundary_deadline.sql",
           "checksum": "2b82c9d0b812e106349601d8869bad12ed1cfacd511b977eb93448b18050f827"
+        },
+        {
+          "path": "012_release_rollout_expected_targets.sql",
+          "checksum": "4d96952be03bd80f2cbc7d3a2fe37f7b418bf4dfee066059f8e28548f2b8f750"
         }
       ]
     },

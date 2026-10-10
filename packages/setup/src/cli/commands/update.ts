@@ -139,6 +139,7 @@ import {
   createReleaseRolloutHandoff,
   getActiveReleaseRolloutHandoffStatus,
   getReleaseRolloutHandoffStatus,
+  type ReleaseRolloutExpectedTarget,
   type ReleaseRolloutHandoffStatus,
   waitForReleaseRolloutAwaitingSetup,
 } from '../../core/release-rollout-handoff.js';
@@ -387,6 +388,8 @@ async function awaitControlManagedReleaseRollout(input: {
   manifest: ReleaseMigrationManifest;
   artifact: MigrationReleaseArtifactPlan;
   managedStreamIds: readonly string[];
+  /** The verified target set of a same-version draft append; unset for every other rollout. */
+  expectedTargets?: readonly ReleaseRolloutExpectedTarget[];
   lock: AuthrimLock;
   lockPath: string;
 }): Promise<{ lock: AuthrimLock; ready: boolean }> {
@@ -400,6 +403,7 @@ async function awaitControlManagedReleaseRollout(input: {
       artifact: input.artifact,
       manifest: input.manifest,
       managedStreamIds: input.managedStreamIds,
+      expectedTargets: input.expectedTargets,
       actorId: 'setup:update',
     });
     let workingLock = withReleaseUpdateState(input.lock, {
@@ -1646,9 +1650,13 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
       requiredR2BucketNames,
     });
 
+    // The set Setup verified for a same-version draft append. It travels with the handoff so Control,
+    // which snapshots its own targets later, fails closed on any database outside it (for example a
+    // tenant database provisioned after this check). Every other rollout carries none.
+    let controlExpectedTargets: ReleaseRolloutExpectedTarget[] | undefined;
     if (sameVersionDraftAppend && controlManagedStreamIds.length > 0) {
       // Re-check under the locks, immediately before anything is persisted or handed off.
-      await assertControlSnapshotMatchesLock({
+      controlExpectedTargets = await assertControlSnapshotMatchesLock({
         controlDatabaseId: workingLock.d1.CONTROL_DB!.id,
         environmentId: env,
         targets: physicalTargets,
@@ -2075,6 +2083,12 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
         artifact: published,
         manifest: targetManifestResult.manifest,
         managedStreamIds: controlManagedStreamIds,
+        expectedTargets: controlExpectedTargets,
+        // This is the first handoff call of this run and `controlExpectedTargets` was just
+        // re-verified against the lock, so it alone may re-arm a rollout Control blocked on a
+        // target set mismatch in an earlier run. The later call in awaitControlManagedReleaseRollout
+        // never does: a block found within this run needs a new run to recompute the set.
+        rearmBlockedTargetSetMismatch: true,
         actorId: 'setup:update',
       });
       workingLock = withReleaseUpdateState(workingLock, {
@@ -2139,6 +2153,7 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
           manifest: targetManifestResult.manifest,
           artifact: migrationReleaseArtifact,
           managedStreamIds: controlManagedStreamIds,
+          expectedTargets: controlExpectedTargets,
           lock: workingLock,
           lockPath,
         });
@@ -2449,6 +2464,7 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
         manifest: targetManifestResult.manifest,
         artifact: migrationReleaseArtifact,
         managedStreamIds: controlManagedStreamIds,
+        expectedTargets: controlExpectedTargets,
         lock: workingLock,
         lockPath,
       });

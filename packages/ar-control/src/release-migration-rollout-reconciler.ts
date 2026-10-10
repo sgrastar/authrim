@@ -15,6 +15,58 @@ const DEFAULT_MAX_TARGETS_PER_RUN = 16;
 const ARTIFACT_FORMAT_BLOCK_CODE = 'migration_artifact_manifest_invalid';
 const ARTIFACT_FORMAT_RESUME_REASON = 'artifact_format_supported_after_control_update';
 const MAX_ARTIFACT_FORMAT_RESUMES_PER_RUN = 2;
+/**
+ * Stable block code for a snapshot that differs from the target set Setup verified. It is not one
+ * of the codes any resume path or the operator retry accepts: only a fresh Setup run that
+ * recomputes and re-verifies the set can re-arm the rollout.
+ */
+export const RELEASE_TARGET_SET_MISMATCH_CODE = 'release_target_set_mismatch';
+const MAX_MISMATCH_AUDIT_ENTRIES = 50;
+// Positions of the statements in snapshotOperation's batch whose row counts decide its outcome.
+const SNAPSHOT_BLOCK_ROLLOUT_STATEMENT = 3;
+const SNAPSHOT_START_ROLLOUT_STATEMENT = 7;
+
+/**
+ * SQL predicate (three operation-id binds) that is true when the rollout carries an expected
+ * target set and the snapshot rows differ from it in either direction. A snapshot row whose
+ * provider database is not resolved yet never matches, so a database still being provisioned is a
+ * difference as well. Identity is the stream plus the provider database, which is what Setup
+ * verified against the lock evidence.
+ */
+const TARGET_SET_MISMATCH_SQL = `(
+  EXISTS (
+    SELECT 1 FROM control_release_migration_rollouts bound
+     WHERE bound.operation_id = ? AND bound.expected_targets_json IS NOT NULL
+  ) AND (
+    EXISTS (
+      SELECT 1 FROM control_release_migration_targets actual
+       WHERE actual.operation_id = ?
+         AND NOT EXISTS (
+           SELECT 1
+             FROM control_release_migration_rollouts bound,
+                  json_each(bound.expected_targets_json) expected
+            WHERE bound.operation_id = actual.operation_id
+              AND json_extract(expected.value, '$.streamId') = actual.stream_id
+              AND json_extract(expected.value, '$.databaseId') = actual.provider_database_id
+         )
+    ) OR EXISTS (
+      SELECT 1
+        FROM control_release_migration_rollouts bound,
+             json_each(bound.expected_targets_json) expected
+       WHERE bound.operation_id = ?
+         AND NOT EXISTS (
+           SELECT 1 FROM control_release_migration_targets actual
+            WHERE actual.operation_id = bound.operation_id
+              AND actual.stream_id = json_extract(expected.value, '$.streamId')
+              AND actual.provider_database_id = json_extract(expected.value, '$.databaseId')
+         )
+    )
+  )
+)`;
+
+function targetSetMismatch(operationId: string): { sql: string; binds: [string, string, string] } {
+  return { sql: TARGET_SET_MISMATCH_SQL, binds: [operationId, operationId, operationId] };
+}
 
 interface ReleaseMigrationEngine {
   apply(input: ApplyMigrationReleaseInput): Promise<ApplyMigrationReleaseResult>;
@@ -127,6 +179,7 @@ export class ReleaseMigrationRolloutReconciler {
     if (this.executorAvailable) await this.resumeArtifactFormatBlockedRollouts(now);
 
     let snapshots = 0;
+    let snapshotBlocked = 0;
     const candidates = await this.db
       .prepare(
         `SELECT rollout.operation_id, rollout.environment_id
@@ -144,7 +197,9 @@ export class ReleaseMigrationRolloutReconciler {
       .bind(now)
       .all<SnapshotCandidate>();
     for (const candidate of candidates.results) {
-      if (await this.snapshotOperation(candidate, now)) snapshots += 1;
+      const outcome = await this.snapshotOperation(candidate, now);
+      if (outcome === 'snapshotted') snapshots += 1;
+      else if (outcome === 'blocked') snapshotBlocked += 1;
     }
 
     if (!this.executorAvailable) {
@@ -199,12 +254,15 @@ export class ReleaseMigrationRolloutReconciler {
       attempted: succeeded + retried + blocked,
       succeeded,
       retried,
-      blocked,
+      blocked: blocked + snapshotBlocked,
       awaitingSetup,
     };
   }
 
-  private async snapshotOperation(candidate: SnapshotCandidate, now: number): Promise<boolean> {
+  private async snapshotOperation(
+    candidate: SnapshotCandidate,
+    now: number
+  ): Promise<'snapshotted' | 'blocked' | 'skipped'> {
     const leaseOwner = `release-snapshot:${crypto.randomUUID()}`;
     const claim = await this.db
       .prepare(
@@ -234,7 +292,7 @@ export class ReleaseMigrationRolloutReconciler {
         now
       )
       .run();
-    if (changes(claim) !== 1) return false;
+    if (changes(claim) !== 1) return 'skipped';
     const lease = await this.db
       .prepare(
         `SELECT fencing_token FROM control_operations
@@ -242,13 +300,14 @@ export class ReleaseMigrationRolloutReconciler {
       )
       .bind(candidate.operation_id, candidate.environment_id, leaseOwner)
       .first<{ fencing_token: number }>();
-    if (!lease) return false;
+    if (!lease) return 'skipped';
+    const mismatch = targetSetMismatch(candidate.operation_id);
     const guarded = `EXISTS (
       SELECT 1 FROM control_operations operation
        WHERE operation.operation_id = ? AND operation.environment_id = ?
          AND operation.lock_owner = ? AND operation.fencing_token = ?
     )`;
-    await this.db.batch([
+    const results = await this.db.batch([
       this.db
         .prepare(
           `INSERT OR IGNORE INTO control_release_migration_targets (
@@ -344,6 +403,149 @@ export class ReleaseMigrationRolloutReconciler {
           leaseOwner,
           lease.fencing_token
         ),
+      // Fail closed when the rollout carries the target set Setup verified and the snapshot
+      // differs from it (for example a tenant database provisioned after that verification, which
+      // has no migration evidence). Nothing is executed: the rollout and its operation are blocked,
+      // the snapshot rows are discarded, and the existing statements below no longer match because
+      // the operation lock is released here. Every statement re-evaluates the same predicate in
+      // the same transaction as the snapshot inserts, so a database that appears concurrently
+      // cannot slip in between a check and the transition.
+      this.db
+        .prepare(
+          `INSERT OR IGNORE INTO control_audit_events (
+             event_id, environment_id, operation_id, event_type, actor_type,
+             resource_kind, resource_id, outcome, redacted_payload_json, created_at
+           ) SELECT ?, rollout.environment_id, rollout.operation_id,
+                    'control.release_migration.target_set_mismatch', 'reconciler',
+                    'release_migration_rollout', rollout.operation_id, 'blocked',
+                    json_object(
+                      'reason_code', ?,
+                      'expected_count', json_array_length(rollout.expected_targets_json),
+                      'snapshot_count', (
+                        SELECT COUNT(*) FROM control_release_migration_targets all_targets
+                         WHERE all_targets.operation_id = rollout.operation_id),
+                      'unexpected_targets', json((
+                        SELECT json_group_array(json_object(
+                                 'target_id', unexpected.target_id,
+                                 'stream_id', unexpected.stream_id,
+                                 'database_id', unexpected.provider_database_id))
+                          FROM (
+                            SELECT actual.target_id, actual.stream_id, actual.provider_database_id
+                              FROM control_release_migration_targets actual
+                             WHERE actual.operation_id = rollout.operation_id
+                               AND NOT EXISTS (
+                                 SELECT 1 FROM json_each(rollout.expected_targets_json) expected
+                                  WHERE json_extract(expected.value, '$.streamId') = actual.stream_id
+                                    AND json_extract(expected.value, '$.databaseId') =
+                                        actual.provider_database_id)
+                             ORDER BY actual.target_id LIMIT ${MAX_MISMATCH_AUDIT_ENTRIES}
+                          ) unexpected)),
+                      'missing_targets', json((
+                        SELECT json_group_array(json_object(
+                                 'stream_id', json_extract(missing.value, '$.streamId'),
+                                 'database_id', json_extract(missing.value, '$.databaseId')))
+                          FROM (
+                            SELECT expected.value AS value
+                              FROM json_each(rollout.expected_targets_json) expected
+                             WHERE NOT EXISTS (
+                               SELECT 1 FROM control_release_migration_targets actual
+                                WHERE actual.operation_id = rollout.operation_id
+                                  AND actual.stream_id = json_extract(expected.value, '$.streamId')
+                                  AND actual.provider_database_id =
+                                      json_extract(expected.value, '$.databaseId'))
+                             ORDER BY json_extract(expected.value, '$.databaseId')
+                             LIMIT ${MAX_MISMATCH_AUDIT_ENTRIES}
+                          ) missing))
+                    ), ?
+               FROM control_release_migration_rollouts rollout
+              WHERE rollout.operation_id = ? AND rollout.environment_id = ?
+                AND rollout.handoff_state = 'requested' AND ${guarded}
+                AND ${mismatch.sql}`
+        )
+        .bind(
+          `audit:${candidate.operation_id}:target-set-mismatch:${lease.fencing_token}`,
+          RELEASE_TARGET_SET_MISMATCH_CODE,
+          now,
+          candidate.operation_id,
+          candidate.environment_id,
+          candidate.operation_id,
+          candidate.environment_id,
+          leaseOwner,
+          lease.fencing_token,
+          ...mismatch.binds
+        ),
+      this.db
+        .prepare(
+          `UPDATE control_release_migration_rollouts
+              SET handoff_state = 'blocked', updated_at = ?
+            WHERE operation_id = ? AND environment_id = ? AND handoff_state = 'requested'
+              AND ${guarded} AND ${mismatch.sql}`
+        )
+        .bind(
+          now,
+          candidate.operation_id,
+          candidate.environment_id,
+          candidate.operation_id,
+          candidate.environment_id,
+          leaseOwner,
+          lease.fencing_token,
+          ...mismatch.binds
+        ),
+      this.db
+        .prepare(
+          `UPDATE control_operation_steps
+              SET status = 'blocked', last_error_code = ?, progress_current = 0,
+                  progress_total = 0, updated_at = ?
+            WHERE operation_id = ? AND step_key = 'apply_managed_migrations'
+              AND status IN ('queued', 'blocked') AND ${guarded} AND ${mismatch.sql}`
+        )
+        .bind(
+          RELEASE_TARGET_SET_MISMATCH_CODE,
+          now,
+          candidate.operation_id,
+          candidate.operation_id,
+          candidate.environment_id,
+          leaseOwner,
+          lease.fencing_token,
+          ...mismatch.binds
+        ),
+      this.db
+        .prepare(
+          `UPDATE control_operations
+              SET status = 'blocked', last_error_code = ?, lock_owner = NULL,
+                  lock_expires_at = NULL, updated_at = ?
+            WHERE operation_id = ? AND environment_id = ? AND status = 'running'
+              AND lock_owner = ? AND fencing_token = ? AND ${mismatch.sql}`
+        )
+        .bind(
+          RELEASE_TARGET_SET_MISMATCH_CODE,
+          now,
+          candidate.operation_id,
+          candidate.environment_id,
+          leaseOwner,
+          lease.fencing_token,
+          ...mismatch.binds
+        ),
+      this.db
+        .prepare(
+          `DELETE FROM control_release_migration_targets
+            WHERE operation_id = ?
+              AND EXISTS (
+                SELECT 1
+                  FROM control_operations operation
+                  JOIN control_release_migration_rollouts rollout
+                    ON rollout.operation_id = operation.operation_id
+                 WHERE operation.operation_id = ? AND operation.status = 'blocked'
+                   AND operation.last_error_code = ? AND operation.lock_owner IS NULL
+                   AND operation.fencing_token = ? AND rollout.handoff_state = 'blocked'
+              )`
+        )
+        .bind(
+          candidate.operation_id,
+          candidate.operation_id,
+          RELEASE_TARGET_SET_MISMATCH_CODE,
+          lease.fencing_token
+        ),
       this.db
         .prepare(
           `UPDATE control_release_migration_rollouts
@@ -365,12 +567,12 @@ export class ReleaseMigrationRolloutReconciler {
         .prepare(
           `UPDATE control_operation_steps
               SET status = 'running', attempt_count = attempt_count + 1,
-                  progress_current = 0,
+                  progress_current = 0, last_error_code = NULL,
                   progress_total = (SELECT COUNT(*) FROM control_release_migration_targets
                     WHERE operation_id = ?),
                   started_at = COALESCE(started_at, ?), updated_at = ?
             WHERE operation_id = ? AND step_key = 'apply_managed_migrations'
-              AND status = 'queued' AND ${guarded}`
+              AND status IN ('queued', 'blocked') AND ${guarded}`
         )
         .bind(
           candidate.operation_id,
@@ -402,9 +604,15 @@ export class ReleaseMigrationRolloutReconciler {
              resource_kind, resource_id, outcome, redacted_payload_json, created_at
            ) SELECT ?, ?, ?, 'control.release_migration.targets_snapshotted', 'reconciler',
                     'release_migration_rollout', ?, 'succeeded',
-                    json_object('target_count', COUNT(*)), ?
-               FROM control_release_migration_targets
-              WHERE operation_id = ?`
+                    json_object('target_count', counted.target_count), ?
+               FROM (
+                 SELECT COUNT(*) AS target_count FROM control_release_migration_targets
+                  WHERE operation_id = ?
+               ) counted
+              WHERE EXISTS (
+                  SELECT 1 FROM control_release_migration_rollouts rollout
+                   WHERE rollout.operation_id = ? AND rollout.handoff_state = 'database_rollout'
+                )`
         )
         .bind(
           `audit:${candidate.operation_id}:targets-snapshotted`,
@@ -412,11 +620,18 @@ export class ReleaseMigrationRolloutReconciler {
           candidate.operation_id,
           candidate.operation_id,
           now,
+          candidate.operation_id,
           candidate.operation_id
         ),
     ]);
+    // The outcome comes from this batch's own results, never from a later read: Setup may re-arm
+    // the rollout right after the block commits, and a re-read would then see 'requested', treat
+    // the zero targets as complete and advance the operation. The statement positions are those of
+    // the batch above: [3] blocks the rollout on a mismatch, [7] starts the database rollout.
+    if (changes(results[SNAPSHOT_BLOCK_ROLLOUT_STATEMENT]) === 1) return 'blocked';
+    if (changes(results[SNAPSHOT_START_ROLLOUT_STATEMENT]) !== 1) return 'skipped';
     await this.advanceOperation(candidate.operation_id, now);
-    return true;
+    return 'snapshotted';
   }
 
   private async claimTarget(candidate: TargetCandidate): Promise<ClaimedTarget | null> {
