@@ -571,6 +571,10 @@ export class MockDatabaseAdapter implements DatabaseAdapter {
       if (token === '?') {
         updateData[field] = params[paramIndex];
         paramIndex++;
+      } else if (/^CASE WHEN \w+ >= \? THEN \w+ \+ 1 ELSE \? END$/i.test(token)) {
+        // The forward-only timestamp (SUBJECT_UPDATED_AT_FORWARD_SQL): this adapter keeps the value.
+        updateData[field] = params[paramIndex];
+        paramIndex += 2;
       } else if (/^NULL$/i.test(token)) {
         updateData[field] = null;
       } else if (/^[0-9]+$/.test(token)) {

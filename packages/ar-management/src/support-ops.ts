@@ -10,6 +10,7 @@ import type {
 import {
   ADMIN_PERMISSIONS,
   ApprovalRequestApprovalRepository,
+  SUBJECT_UPDATED_AT_FORWARD_SQL,
   ApprovalRequestRepository,
   buildSupportOpsRiskSummary,
   canonicalizeApprovalScope,
@@ -1838,7 +1839,7 @@ supportOpsRouter.post('/actions/:actionId/execute', async (c) => {
       },
       {
         sql: `UPDATE identity_subjects
-                 SET lifecycle_state = 'suspended', updated_at = ?
+                 SET lifecycle_state = 'suspended', ${SUBJECT_UPDATED_AT_FORWARD_SQL}
                WHERE tenant_id = ?
                  AND id IN (
                    SELECT primary_subject_id
@@ -1852,7 +1853,7 @@ supportOpsRouter.post('/actions/:actionId/execute', async (c) => {
                       AND ${lifecycleVersion} = ?
                       AND json_extract(metadata_json, '$.lifecycle_operation_id') = ? || legacy_user_id
                  )`,
-        params: [now, tenantId, tenantId, tenantId, action.cohort_id, now, operationPrefix],
+        params: [now, now, tenantId, tenantId, tenantId, action.cohort_id, now, operationPrefix],
       },
     ]);
     const succeededCount = updateResult.rowsAffected ?? 0;

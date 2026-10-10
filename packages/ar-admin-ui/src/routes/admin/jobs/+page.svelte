@@ -934,7 +934,8 @@
 			<code>family_name</code>, <code>nickname</code>, <code>preferred_username</code>,
 			<code>picture</code>, <code>email_verified</code>, <code>phone_number</code>,
 			<code>phone_number_verified</code>, <code>user_type</code>, <code>status</code>,
-			<code>lifecycle_state</code>, {$LL.admin_jobs_custom_claim_keys_suffix()}
+			<code>lifecycle_state</code>, <code>ial</code>, <code>ial_verified_at</code>,
+			{$LL.admin_jobs_custom_claim_keys_suffix()}
 		</p>
 	</div>
 

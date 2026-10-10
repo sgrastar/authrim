@@ -16,6 +16,7 @@ import type {
   ScimPatchValue,
 } from '../types/scim';
 import { SCIM_SCHEMAS } from '../types/scim';
+import { parseScimAssuranceExtension } from './scim-assurance';
 
 /**
  * SCIM Enterprise User Extension attributes
@@ -89,7 +90,18 @@ function resolvePatchKey(target: PatchableRecord, requestedKey: string): string 
   return Object.keys(target).find((key) => key.toLowerCase() === normalized) ?? requestedKey;
 }
 
+/**
+ * A path into an extension names the extension's schema URN, then the attribute
+ * (`urn:ietf:params:scim:schemas:extension:enterprise:2.0:User:department`, RFC 7644 3.10). The
+ * URN has dots in its version, which are not path separators.
+ */
+const EXTENSION_PATH = /^(urn:[^\s[\]]*?:\d+\.\d+:[A-Za-z][A-Za-z0-9]*)(?::(.+))?$/;
+
 function splitPatchPath(path: string): string[] {
+  const extension = EXTENSION_PATH.exec(path);
+  if (extension) {
+    return [extension[1], ...(extension[2] ? splitPatchPath(extension[2]) : [])];
+  }
   const parts: string[] = [];
   let current = '';
   let bracketDepth = 0;
@@ -695,6 +707,8 @@ export function validateScimUser(user: Partial<ScimUser>): { valid: boolean; err
       ['value', '$ref', 'displayName']
     );
   }
+
+  errors.push(...parseScimAssuranceExtension(rawUser[SCIM_SCHEMAS.ASSURANCE_USER]).errors);
 
   return {
     valid: errors.length === 0,

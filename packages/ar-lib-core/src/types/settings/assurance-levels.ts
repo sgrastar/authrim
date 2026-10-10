@@ -190,14 +190,12 @@ export const ASSURANCE_LEVELS_SETTINGS_META: Record<keyof AssuranceLevelsSetting
   },
   'assurance.default_ial': {
     key: 'assurance.default_ial',
-    // Saved and validated, not applied yet: runtime use lands with the identity assurance work.
-    status: 'in_development',
     type: 'enum',
     default: 'IAL1',
     envKey: 'DEFAULT_IAL',
     label: 'Default IAL',
     description:
-      'The IAL recorded, as tenant-policy evidence, for accounts the organisation creates (by an administrator, SCIM or a CSV import) when IAL2 or IAL3. Self-registration, guests and sign-in from another IdP are never given it (not applied yet)',
+      'The IAL recorded, as tenant-policy evidence, for accounts the organisation creates (by an administrator, SCIM or a CSV import) when IAL2 or IAL3, unless the SCIM client or CSV row gives the IAL itself. Self-registration, guests and sign-in from another IdP are never given it. Applies whether or not assurance levels are enabled, and to accounts created after the change',
     enum: ['IAL1', 'IAL2', 'IAL3'],
   },
   'assurance.scope_aal_requirements': {

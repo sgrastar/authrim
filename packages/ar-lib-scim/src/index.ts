@@ -14,6 +14,7 @@ export * from './types/scim';
 // Utils
 export * from './utils/scim-filter';
 export * from './utils/scim-mapper';
+export * from './utils/scim-assurance';
 export * from './utils/scim-audit';
 
 // Middleware
