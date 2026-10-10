@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
@@ -7,6 +7,7 @@ import type { D1BatchExecutionResult, D1BatchStatement } from '../core/cloudflar
 import type { MigrationReleaseArtifactPlan } from '../core/migration-release-publication.js';
 import type { ReleaseMigrationManifest } from '../core/release-migrations.js';
 import {
+  RELEASE_TARGET_SET_MISMATCH_CODE,
   beginReleaseRolloutVerification,
   buildReleaseRolloutHandoffPlan,
   completeReleaseRolloutHandoff,
@@ -24,6 +25,15 @@ const REPO_ROOT = fileURLToPath(new URL('../../../../', import.meta.url));
 const DIGEST = 'a'.repeat(64);
 const RELEASE_ID = '0.5.0';
 const OBJECT_KEY = `releases/${RELEASE_ID}/${DIGEST}/manifest.json`;
+
+function applyControlMigrations(target: DatabaseSync): void {
+  const directory = resolve(REPO_ROOT, 'migrations/control/d1');
+  for (const file of readdirSync(directory)
+    .filter((name) => name.endsWith('.sql'))
+    .sort()) {
+    target.exec(readFileSync(resolve(directory, file), 'utf8'));
+  }
+}
 
 function values(params: readonly unknown[] | undefined): SqliteValue[] {
   return (params ?? []).map((value) => {
@@ -115,12 +125,7 @@ describe('release rollout handoff', () => {
   beforeEach(() => {
     database = new DatabaseSync(':memory:');
     database.exec('PRAGMA foreign_keys = ON');
-    database.exec(
-      readFileSync(
-        resolve(REPO_ROOT, 'migrations/control/d1/001_0_4_0_control_baseline.sql'),
-        'utf8'
-      )
-    );
+    applyControlMigrations(database);
     database.exec(`
       INSERT INTO control_environments (
         environment_id, environment_name, issuer, lifecycle_state, created_at, updated_at
@@ -480,6 +485,303 @@ describe('release rollout handoff', () => {
         timeoutMs: 10,
       })
     ).rejects.toThrow('release_rollout_blocked:migration_history_checksum_mismatch');
+  });
+
+  describe('expected target set', () => {
+    const SET = [
+      { streamId: 'pii-d1', databaseId: 'db-pii' },
+      { streamId: 'core-d1', databaseId: 'db-core' },
+      { streamId: 'core-d1', databaseId: 'db-core' },
+    ];
+    const CANONICAL = JSON.stringify([
+      { streamId: 'core-d1', databaseId: 'db-core' },
+      { streamId: 'pii-d1', databaseId: 'db-pii' },
+    ]);
+
+    function create(
+      expectedTargets?: readonly { streamId: string; databaseId: string }[] | null,
+      now = 10,
+      rearmBlockedTargetSetMismatch = false
+    ) {
+      const { manifest, artifact } = fixture();
+      return createReleaseRolloutHandoff({
+        controlDatabaseId: '01234567-89ab-cdef',
+        environmentId: 'env-test',
+        sourceVersion: '0.4.0',
+        targetVersion: RELEASE_ID,
+        artifact,
+        manifest,
+        managedStreamIds: ['core-d1', 'pii-d1'],
+        expectedTargets,
+        rearmBlockedTargetSetMismatch,
+        actorId: 'setup:update',
+        now,
+        executeBatch,
+      });
+    }
+
+    function stored(): { expected_targets_json: string | null } {
+      return database
+        .prepare(`SELECT expected_targets_json FROM control_release_migration_rollouts`)
+        .get() as { expected_targets_json: string | null };
+    }
+
+    it('binds nothing unless a set is supplied', async () => {
+      const { manifest, artifact } = fixture();
+      const base = {
+        environmentId: 'env-test',
+        targetVersion: RELEASE_ID,
+        artifact,
+        manifest,
+        managedStreamIds: ['core-d1', 'pii-d1'],
+        actorId: 'setup:update',
+        now: 10,
+      };
+      const without = buildReleaseRolloutHandoffPlan(base);
+      expect(without.expectedTargetsJson).toBeNull();
+      // No re-arm statements either: the plan is the one every other rollout has always had.
+      expect(
+        buildReleaseRolloutHandoffPlan({ ...base, expectedTargets: [] }).statements.length
+      ).toBe(without.statements.length);
+      expect(
+        buildReleaseRolloutHandoffPlan({
+          ...base,
+          expectedTargets: [],
+          rearmBlockedTargetSetMismatch: true,
+        }).statements.length
+      ).toBe(without.statements.length + 3);
+
+      await create();
+      expect(stored()).toEqual({ expected_targets_json: null });
+    });
+
+    it('persists the verified set in canonical form and verifies it on every re-create', async () => {
+      await create(SET);
+      expect(stored()).toEqual({ expected_targets_json: CANONICAL });
+
+      await expect(create([...SET].reverse(), 11)).resolves.toMatchObject({ phase: 'requested' });
+      expect(stored()).toEqual({ expected_targets_json: CANONICAL });
+    });
+
+    it('can bind an empty set (no managed tenant databases yet)', async () => {
+      await create([]);
+      expect(stored()).toEqual({ expected_targets_json: '[]' });
+    });
+
+    it('rejects a re-create whose set differs from the stored one', async () => {
+      await create(SET);
+
+      await expect(create([{ streamId: 'core-d1', databaseId: 'db-core' }], 11)).rejects.toThrow(
+        'release_rollout_expected_targets_mismatch'
+      );
+      await expect(
+        create([...SET, { streamId: 'core-d1', databaseId: 'db-late' }], 11)
+      ).rejects.toThrow('release_rollout_expected_targets_mismatch');
+      await expect(create(null, 11)).rejects.toThrow('release_rollout_expected_targets_mismatch');
+      expect(stored()).toEqual({ expected_targets_json: CANONICAL });
+    });
+
+    it('rejects a set supplied for a rollout that was created without one', async () => {
+      await create();
+
+      await expect(create(SET, 11)).rejects.toThrow('release_rollout_expected_targets_mismatch');
+      expect(stored()).toEqual({ expected_targets_json: null });
+    });
+
+    it('rejects sets that name an unmanaged stream or an unsafe database id', async () => {
+      await expect(create([{ streamId: 'lookup-d1', databaseId: 'db-x' }])).rejects.toThrow(
+        'release_rollout_expected_targets_invalid'
+      );
+      await expect(create([{ streamId: 'core-d1', databaseId: "db'; --" }])).rejects.toThrow(
+        'release_rollout_expected_targets_invalid'
+      );
+      expect(
+        database.prepare(`SELECT COUNT(*) AS count FROM control_release_migration_rollouts`).get()
+      ).toEqual({ count: 0 });
+    });
+
+    describe('re-arm after Control blocked the rollout on a target set mismatch', () => {
+      async function blockedByMismatch(code = RELEASE_TARGET_SET_MISMATCH_CODE) {
+        const created = await create(SET);
+        database.exec(`
+          UPDATE control_operations
+             SET status = 'running', lock_owner = 'release-snapshot:x', lock_expires_at = 99,
+                 attempt_count = 1, updated_at = 11
+           WHERE operation_id = '${created.operationId}';
+          UPDATE control_operation_steps
+             SET status = 'blocked', last_error_code = '${code}', progress_current = 0,
+                 progress_total = 0, updated_at = 11
+           WHERE operation_id = '${created.operationId}' AND step_key = 'apply_managed_migrations';
+          UPDATE control_operations
+             SET status = 'blocked', last_error_code = '${code}', lock_owner = NULL,
+                 lock_expires_at = NULL, updated_at = 11
+           WHERE operation_id = '${created.operationId}';
+          UPDATE control_release_migration_rollouts
+             SET handoff_state = 'blocked', updated_at = 11
+           WHERE operation_id = '${created.operationId}';
+        `);
+        return created.operationId;
+      }
+
+      function snapshot(operationId: string) {
+        return database
+          .prepare(
+            `SELECT rollout.handoff_state, rollout.expected_targets_json,
+                    operation.status AS operation_status,
+                    operation.last_error_code, operation.lock_owner, operation.lock_expires_at,
+                    (SELECT status FROM control_operation_steps
+                      WHERE operation_id = rollout.operation_id
+                        AND step_key = 'apply_managed_migrations') AS step_status
+               FROM control_release_migration_rollouts rollout
+               JOIN control_operations operation ON operation.operation_id = rollout.operation_id
+              WHERE rollout.operation_id = ?`
+          )
+          .get(operationId);
+      }
+
+      it('replaces the set and hands the rollout back to Control for a new snapshot', async () => {
+        const operationId = await blockedByMismatch();
+        const recomputed = [...SET, { streamId: 'core-d1', databaseId: 'db-late' }];
+
+        await expect(create(recomputed, 20, true)).resolves.toMatchObject({
+          operationId,
+          phase: 'requested',
+          lastErrorCode: null,
+        });
+
+        expect(snapshot(operationId)).toEqual({
+          handoff_state: 'requested',
+          expected_targets_json: JSON.stringify([
+            { streamId: 'core-d1', databaseId: 'db-core' },
+            { streamId: 'core-d1', databaseId: 'db-late' },
+            { streamId: 'pii-d1', databaseId: 'db-pii' },
+          ]),
+          operation_status: 'running',
+          last_error_code: null,
+          lock_owner: 'setup:target-set-rearm',
+          lock_expires_at: 1,
+          step_status: 'blocked',
+        });
+        expect(
+          database
+            .prepare(
+              `SELECT actor_type, outcome, redacted_payload_json FROM control_audit_events
+                WHERE operation_id = ?
+                  AND event_type = 'control.release_migration.target_set_rearmed'`
+            )
+            .all(operationId)
+        ).toEqual([
+          {
+            actor_type: 'setup',
+            outcome: 'succeeded',
+            redacted_payload_json: JSON.stringify({
+              previous_error_code: RELEASE_TARGET_SET_MISMATCH_CODE,
+              expected_target_count: 3,
+            }),
+          },
+        ]);
+      });
+
+      it('does not re-arm without a recomputed set', async () => {
+        const operationId = await blockedByMismatch();
+        const before = snapshot(operationId);
+
+        await expect(create(null, 20, true)).rejects.toThrow(
+          'release_rollout_expected_targets_mismatch'
+        );
+
+        expect(snapshot(operationId)).toEqual(before);
+      });
+
+      it('does not touch a rollout blocked for any other reason', async () => {
+        const operationId = await blockedByMismatch('migration_history_checksum_mismatch');
+        const before = snapshot(operationId);
+
+        await expect(
+          create([{ streamId: 'core-d1', databaseId: 'db-new' }], 20, true)
+        ).rejects.toThrow('release_rollout_expected_targets_mismatch');
+
+        expect(snapshot(operationId)).toEqual(before);
+        expect(
+          database
+            .prepare(
+              `SELECT COUNT(*) AS count FROM control_audit_events
+                WHERE event_type = 'control.release_migration.target_set_rearmed'`
+            )
+            .get()
+        ).toEqual({ count: 0 });
+      });
+
+      it('never re-arms from a plain idempotent create, even with the stored set', async () => {
+        const operationId = await blockedByMismatch();
+        const before = snapshot(operationId);
+
+        // The second handoff call of a run (and any call without the explicit fresh-run flag).
+        await expect(create(SET, 20)).resolves.toMatchObject({ operationId, phase: 'blocked' });
+        await expect(create([...SET].reverse(), 21, false)).resolves.toMatchObject({
+          phase: 'blocked',
+        });
+
+        expect(snapshot(operationId)).toEqual(before);
+        expect(
+          database
+            .prepare(
+              `SELECT COUNT(*) AS count FROM control_audit_events
+                WHERE event_type = 'control.release_migration.target_set_rearmed'`
+            )
+            .get()
+        ).toEqual({ count: 0 });
+      });
+
+      it('keeps a block that Control raises after the first call of the same run', async () => {
+        const operationId = await blockedByMismatch();
+        // First call of a fresh run: re-verified set, explicit re-arm.
+        await create(SET, 20, true);
+        expect(snapshot(operationId)).toMatchObject({ handoff_state: 'requested' });
+        // Control snapshots again and blocks once more within the same run.
+        database.exec(`
+          UPDATE control_operations
+             SET status = 'running', lock_owner = 'release-snapshot:y', lock_expires_at = 99,
+                 attempt_count = 2, updated_at = 21
+           WHERE operation_id = '${operationId}';
+          UPDATE control_operations
+             SET status = 'blocked', last_error_code = '${RELEASE_TARGET_SET_MISMATCH_CODE}',
+                 lock_owner = NULL, lock_expires_at = NULL, updated_at = 22
+           WHERE operation_id = '${operationId}';
+          UPDATE control_release_migration_rollouts
+             SET handoff_state = 'blocked', updated_at = 22
+           WHERE operation_id = '${operationId}';
+        `);
+        const blocked = snapshot(operationId);
+
+        // The second call of the run reuses the earlier set and must not clear the block.
+        await expect(create(SET, 23)).resolves.toMatchObject({ phase: 'blocked' });
+
+        expect(snapshot(operationId)).toEqual(blocked);
+        await expect(
+          waitForReleaseRolloutAwaitingSetup({
+            controlDatabaseId: '01234567-89ab-cdef',
+            environmentId: 'env-test',
+            operationId,
+            executeBatch,
+            sleep: async () => undefined,
+            timeoutMs: 10,
+          })
+        ).rejects.toThrow('release_rollout_blocked:release_target_set_mismatch');
+        // A new run that recomputed the set may re-arm it again.
+        await create(SET, 30, true);
+        expect(snapshot(operationId)).toMatchObject({ handoff_state: 'requested' });
+      });
+
+      it('leaves a running rollout and its set alone when the same set is supplied again', async () => {
+        const created = await create(SET);
+        const before = snapshot(created.operationId);
+
+        await create([...SET].reverse(), 20, true);
+
+        expect(snapshot(created.operationId)).toEqual(before);
+      });
+    });
   });
 
   describe('blocked rollouts that Control resumes by itself', () => {

@@ -54,7 +54,68 @@ interface ReleaseRolloutHandoffRow extends Record<string, unknown> {
 export interface ReleaseRolloutHandoffPlan {
   operationId: string;
   streamIds: string[];
+  /** Canonical JSON of the bound target set, or null when the rollout carries none. */
+  expectedTargetsJson: string | null;
   statements: D1BatchStatement[];
+}
+
+/** One database Setup verified before the handoff, as Control identifies a snapshot target. */
+export interface ReleaseRolloutExpectedTarget {
+  streamId: string;
+  databaseId: string;
+}
+
+/** Stable code Control uses when its snapshot differs from the bound expected target set. */
+export const RELEASE_TARGET_SET_MISMATCH_CODE = 'release_target_set_mismatch';
+
+const SAFE_DATABASE_ID = /^[0-9A-Za-z][0-9A-Za-z._:-]{0,127}$/u;
+
+/**
+ * Canonical JSON of the target set Control must find in its snapshot, or null when none is bound.
+ * The form is sorted and duplicate-free so the same set always yields the same string and a
+ * re-created handoff can be compared byte for byte. `streamIds` restricts the streams a target
+ * may name; omit it to normalize a value read back from Control.
+ */
+export function canonicalizeExpectedTargets(
+  targets: readonly ReleaseRolloutExpectedTarget[] | null | undefined,
+  streamIds?: readonly string[]
+): string | null {
+  if (targets === null || targets === undefined) return null;
+  const unique = new Map<string, ReleaseRolloutExpectedTarget>();
+  for (const target of targets) {
+    if (
+      !target ||
+      typeof target.streamId !== 'string' ||
+      typeof target.databaseId !== 'string' ||
+      !SAFE_STREAM_ID.test(target.streamId) ||
+      (streamIds !== undefined && !streamIds.includes(target.streamId)) ||
+      !SAFE_DATABASE_ID.test(target.databaseId)
+    ) {
+      throw new Error('release_rollout_expected_targets_invalid');
+    }
+    unique.set(`${target.streamId}\0${target.databaseId}`, {
+      streamId: target.streamId,
+      databaseId: target.databaseId,
+    });
+  }
+  return JSON.stringify(
+    [...unique.entries()]
+      .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
+      .map(([, target]) => ({ streamId: target.streamId, databaseId: target.databaseId }))
+  );
+}
+
+function canonicalStoredExpectedTargets(value: unknown): string | null {
+  if (value === null || value === undefined) return null;
+  if (typeof value !== 'string') throw new Error('release_rollout_expected_targets_invalid');
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    throw new Error('release_rollout_expected_targets_invalid');
+  }
+  if (!Array.isArray(parsed)) throw new Error('release_rollout_expected_targets_invalid');
+  return canonicalizeExpectedTargets(parsed as ReleaseRolloutExpectedTarget[]);
 }
 
 function digest(value: string): string {
@@ -165,6 +226,19 @@ export function buildReleaseRolloutHandoffPlan(input: {
   artifact: MigrationReleaseArtifactPlan;
   manifest: ReleaseMigrationManifest;
   managedStreamIds: readonly string[];
+  /**
+   * The databases Setup verified before the handoff. Supplied only for a same-version draft append,
+   * whose Control snapshot must equal this set; every other rollout leaves it unset (no binding).
+   */
+  expectedTargets?: readonly ReleaseRolloutExpectedTarget[] | null;
+  /**
+   * Allow this call to re-arm a rollout that Control blocked with release_target_set_mismatch.
+   * Only the first handoff call of a Setup run that has just recomputed and re-verified
+   * `expectedTargets` against the lock may set it. Any later call of the same run (and every
+   * plain idempotent re-create) must leave a block in place: it would otherwise reuse a set that
+   * was verified before Control found the difference.
+   */
+  rearmBlockedTargetSetMismatch?: boolean;
   actorId: string;
   now?: number;
 }): ReleaseRolloutHandoffPlan {
@@ -200,6 +274,7 @@ export function buildReleaseRolloutHandoffPlan(input: {
   ) {
     throw new Error('release_rollout_managed_streams_invalid');
   }
+  const expectedTargetsJson = canonicalizeExpectedTargets(input.expectedTargets, streamIds);
   const now = input.now ?? Math.floor(Date.now() / 1000);
   if (!Number.isSafeInteger(now) || now < 1) throw new Error('release_rollout_time_invalid');
   const operationId = `op_release_rollout_${digest(
@@ -227,8 +302,9 @@ export function buildReleaseRolloutHandoffPlan(input: {
       sql: `INSERT INTO control_release_migration_rollouts (
         operation_id, environment_id, source_version, target_version, release_id,
         manifest_digest, manifest_r2_object_key, database_execution, worker_activation,
-        admin_mutation_mode, handoff_state, active_environment_key, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'requested', ?, ?, ?)
+        admin_mutation_mode, handoff_state, active_environment_key, created_at, updated_at,
+        expected_targets_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'requested', ?, ?, ?, ?)
       ON CONFLICT(operation_id) DO NOTHING`,
       params: [
         operationId,
@@ -244,6 +320,7 @@ export function buildReleaseRolloutHandoffPlan(input: {
         input.environmentId,
         now,
         now,
+        expectedTargetsJson,
       ],
     },
     ...[
@@ -278,6 +355,80 @@ export function buildReleaseRolloutHandoffPlan(input: {
         input.artifact.manifestObjectKey,
       ],
     });
+  }
+  if (expectedTargetsJson !== null && input.rearmBlockedTargetSetMismatch === true) {
+    // Control blocked this very rollout because its snapshot differed from the set Setup had
+    // verified (release_target_set_mismatch). Only a fresh Setup run that recomputed and
+    // re-verified the set may continue: it replaces the bound set and returns the rollout to
+    // 'requested' so Control takes a new snapshot. Control never does this on its own, and an
+    // operator target retry cannot, so a stale set is never reused. The operation is handed back
+    // with an already expired lease so the next reconciler pass claims it; the blocked step is
+    // restarted by that snapshot.
+    const blockedByMismatch = `EXISTS (
+      SELECT 1 FROM control_operations operation
+       WHERE operation.operation_id = ? AND operation.environment_id = ?
+         AND operation.status = 'blocked' AND operation.last_error_code = ?
+    )`;
+    const blockedByMismatchParams = [
+      operationId,
+      input.environmentId,
+      RELEASE_TARGET_SET_MISMATCH_CODE,
+    ];
+    statements.push(
+      {
+        sql: `INSERT OR IGNORE INTO control_audit_events (
+          event_id, environment_id, operation_id, event_type, actor_type, actor_id,
+          resource_kind, resource_id, outcome, redacted_payload_json, created_at
+        ) SELECT 'audit:' || rollout.operation_id || ':target-set-rearm:' || operation.attempt_count,
+                 rollout.environment_id, rollout.operation_id,
+                 'control.release_migration.target_set_rearmed', 'setup', ?,
+                 'release_migration_rollout', rollout.operation_id, 'succeeded', ?, ?
+            FROM control_release_migration_rollouts rollout
+            JOIN control_operations operation
+              ON operation.operation_id = rollout.operation_id
+             AND operation.environment_id = rollout.environment_id
+           WHERE rollout.operation_id = ? AND rollout.environment_id = ?
+             AND rollout.handoff_state = 'blocked' AND ${blockedByMismatch}`,
+        params: [
+          input.actorId,
+          JSON.stringify({
+            previous_error_code: RELEASE_TARGET_SET_MISMATCH_CODE,
+            expected_target_count: (JSON.parse(expectedTargetsJson) as unknown[]).length,
+          }),
+          now,
+          operationId,
+          input.environmentId,
+          ...blockedByMismatchParams,
+        ],
+      },
+      {
+        sql: `UPDATE control_release_migration_rollouts
+                 SET expected_targets_json = ?, handoff_state = 'requested',
+                     target_snapshot_at = NULL, updated_at = ?
+               WHERE operation_id = ? AND environment_id = ? AND handoff_state = 'blocked'
+                 AND ${blockedByMismatch}`,
+        params: [
+          expectedTargetsJson,
+          now,
+          operationId,
+          input.environmentId,
+          ...blockedByMismatchParams,
+        ],
+      },
+      {
+        sql: `UPDATE control_operations
+                 SET status = 'running', last_error_code = NULL, next_attempt_at = NULL,
+                     lock_owner = 'setup:target-set-rearm', lock_expires_at = 1, updated_at = ?
+               WHERE operation_id = ? AND environment_id = ? AND status = 'blocked'
+                 AND last_error_code = ?
+                 AND EXISTS (
+                   SELECT 1 FROM control_release_migration_rollouts rollout
+                    WHERE rollout.operation_id = control_operations.operation_id
+                      AND rollout.handoff_state = 'requested'
+                 )`,
+        params: [now, operationId, input.environmentId, RELEASE_TARGET_SET_MISMATCH_CODE],
+      }
+    );
   }
   statements.push({
     sql: `UPDATE control_operations
@@ -344,15 +495,17 @@ export function buildReleaseRolloutHandoffPlan(input: {
   statements.push({
     sql: `SELECT rollout.operation_id, rollout.target_version, rollout.release_id,
                  rollout.manifest_digest, rollout.manifest_r2_object_key,
+                 rollout.expected_targets_json,
                  COUNT(pin.stream_id) AS pin_count
             FROM control_release_migration_rollouts rollout
        LEFT JOIN control_operation_release_pins pin ON pin.operation_id = rollout.operation_id
            WHERE rollout.operation_id = ? AND rollout.environment_id = ?
         GROUP BY rollout.operation_id, rollout.target_version, rollout.release_id,
-                 rollout.manifest_digest, rollout.manifest_r2_object_key`,
+                 rollout.manifest_digest, rollout.manifest_r2_object_key,
+                 rollout.expected_targets_json`,
     params: [operationId, input.environmentId],
   });
-  return { operationId, streamIds, statements };
+  return { operationId, streamIds, expectedTargetsJson, statements };
 }
 
 export async function createReleaseRolloutHandoff(input: {
@@ -363,6 +516,8 @@ export async function createReleaseRolloutHandoff(input: {
   artifact: MigrationReleaseArtifactPlan;
   manifest: ReleaseMigrationManifest;
   managedStreamIds: readonly string[];
+  expectedTargets?: readonly ReleaseRolloutExpectedTarget[] | null;
+  rearmBlockedTargetSetMismatch?: boolean;
   actorId: string;
   now?: number;
   executeBatch?: D1BatchExecutor;
@@ -384,6 +539,12 @@ export async function createReleaseRolloutHandoff(input: {
     row.pin_count !== plan.streamIds.length
   ) {
     throw new Error('release_rollout_handoff_verification_failed');
+  }
+  // An existing handoff (same operation) keeps the target set it was created with. A different
+  // set, or the presence or absence of one, means the earlier handoff was prepared for another
+  // verification and must not be reused as if it matched this one.
+  if (canonicalStoredExpectedTargets(row.expected_targets_json) !== plan.expectedTargetsJson) {
+    throw new Error('release_rollout_expected_targets_mismatch');
   }
   return getReleaseRolloutHandoffStatus({
     controlDatabaseId: input.controlDatabaseId,
