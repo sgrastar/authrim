@@ -15,6 +15,9 @@ import {
   getActiveReleaseRolloutHandoffStatus,
   getReleaseRolloutHandoffStatus,
   waitForReleaseRolloutAwaitingSetup,
+  formatReleaseRolloutProgress,
+  CONTROL_RESUME_GRACE_MS,
+  type ReleaseRolloutWaitContext,
 } from '../core/release-rollout-handoff.js';
 
 type SqliteValue = string | number | bigint | null | Uint8Array;
@@ -778,6 +781,317 @@ describe('release rollout handoff', () => {
 
         expect(snapshot(created.operationId)).toEqual(before);
       });
+    });
+  });
+
+  describe('blocked rollouts that Control resumes by itself', () => {
+    const DATABASE_ID = '01234567-89ab-cdef';
+
+    async function createRollout(): Promise<string> {
+      const { manifest, artifact } = fixture();
+      const created = await createReleaseRolloutHandoff({
+        controlDatabaseId: DATABASE_ID,
+        environmentId: 'env-test',
+        targetVersion: RELEASE_ID,
+        artifact,
+        manifest,
+        managedStreamIds: ['core-d1'],
+        actorId: 'setup:update',
+        now: 10,
+        executeBatch,
+      });
+      return created.operationId;
+    }
+
+    function block(operationId: string, code: string): void {
+      database.exec(`
+        UPDATE control_operations
+           SET status = 'blocked', last_error_code = '${code}', updated_at = 11
+         WHERE operation_id = '${operationId}';
+        UPDATE control_release_migration_rollouts
+           SET handoff_state = 'blocked', updated_at = 11
+         WHERE operation_id = '${operationId}';
+      `);
+    }
+
+    function setPhase(operationId: string, phase: string): void {
+      database.exec(`
+        UPDATE control_operations
+           SET status = 'running', last_error_code = NULL, updated_at = 12
+         WHERE operation_id = '${operationId}';
+        UPDATE control_release_migration_rollouts
+           SET handoff_state = '${phase}', updated_at = 12
+         WHERE operation_id = '${operationId}';
+      `);
+    }
+
+    function harness(startAt = 1_000) {
+      let currentTime = startAt;
+      const sleeps: number[] = [];
+      return {
+        now: () => currentTime,
+        sleeps,
+        clock: () => currentTime,
+        sleep: async (milliseconds: number) => {
+          sleeps.push(milliseconds);
+          currentTime += milliseconds;
+        },
+      };
+    }
+
+    it.each([
+      'migration_artifact_manifest_invalid',
+      'release_target_provider_database_unavailable',
+      'release_migration_executor_unavailable',
+    ])('keeps waiting while %s is blocked and returns once Control resumes it', async (code) => {
+      const operationId = await createRollout();
+      block(operationId, code);
+      const time = harness();
+      const resumeAt = time.now() + 70_000;
+      const contexts: Array<ReleaseRolloutWaitContext | undefined> = [];
+
+      const status = await waitForReleaseRolloutAwaitingSetup({
+        controlDatabaseId: DATABASE_ID,
+        environmentId: 'env-test',
+        operationId,
+        executeBatch,
+        timeoutMs: 30_000,
+        pollIntervalMs: 5_000,
+        clock: time.clock,
+        sleep: async (milliseconds) => {
+          await time.sleep(milliseconds);
+          // Control's cron resumes the rollout, which then reaches awaiting_setup.
+          if (time.now() >= resumeAt) setPhase(operationId, 'awaiting_setup');
+        },
+        onProgress: (_status, context) => contexts.push(context),
+      });
+
+      expect(status.phase).toBe('awaiting_setup');
+      const waiting = contexts.filter((context) => context?.awaitingControlResume);
+      expect(waiting.length).toBeGreaterThan(5);
+      expect(waiting[0]?.awaitingControlResume).toMatchObject({
+        errorCode: code,
+        graceMs: CONTROL_RESUME_GRACE_MS,
+      });
+    });
+
+    it('gives the resumed migration a fresh observation window after the grace wait', async () => {
+      const operationId = await createRollout();
+      block(operationId, 'migration_artifact_manifest_invalid');
+      const time = harness();
+      const resumeAt = time.now() + 90_000;
+
+      const status = await waitForReleaseRolloutAwaitingSetup({
+        controlDatabaseId: DATABASE_ID,
+        environmentId: 'env-test',
+        operationId,
+        executeBatch,
+        timeoutMs: 30_000,
+        pollIntervalMs: 5_000,
+        clock: time.clock,
+        sleep: async (milliseconds) => {
+          await time.sleep(milliseconds);
+          // Resumed into database_rollout, which keeps running past the original 30s budget.
+          if (time.now() >= resumeAt) setPhase(operationId, 'database_rollout');
+        },
+      });
+
+      // Not an error: the caller reports "continues safely in Control" for a non-final phase.
+      expect(status.phase).toBe('database_rollout');
+      expect(time.now() - resumeAt).toBeGreaterThanOrEqual(30_000);
+      expect(time.now() - resumeAt).toBeLessThan(40_000);
+    });
+
+    it('fails with the original code and a hint when Control never resumes the rollout', async () => {
+      const operationId = await createRollout();
+      block(operationId, 'migration_artifact_manifest_invalid');
+      const time = harness();
+
+      const failure = waitForReleaseRolloutAwaitingSetup({
+        controlDatabaseId: DATABASE_ID,
+        environmentId: 'env-test',
+        operationId,
+        executeBatch,
+        timeoutMs: 30_000,
+        pollIntervalMs: 5_000,
+        clock: time.clock,
+        sleep: time.sleep,
+      });
+      await expect(failure).rejects.toThrow(
+        'release_rollout_blocked:migration_artifact_manifest_invalid'
+      );
+      await expect(failure).rejects.toThrow(/Control did not resume the rollout within 180s/u);
+      expect(time.now() - 1_000).toBe(CONTROL_RESUME_GRACE_MS);
+    });
+
+    it('honours a custom grace period', async () => {
+      const operationId = await createRollout();
+      block(operationId, 'release_migration_executor_unavailable');
+      const time = harness();
+      await expect(
+        waitForReleaseRolloutAwaitingSetup({
+          controlDatabaseId: DATABASE_ID,
+          environmentId: 'env-test',
+          operationId,
+          executeBatch,
+          controlResumeGraceMs: 12_000,
+          pollIntervalMs: 5_000,
+          clock: time.clock,
+          sleep: time.sleep,
+        })
+      ).rejects.toThrow('release_rollout_blocked:release_migration_executor_unavailable');
+      expect(time.now() - 1_000).toBe(12_000);
+    });
+
+    it.each([
+      'migration_history_checksum_mismatch',
+      'operator_action_required',
+      'release_migration_target_blocked',
+    ])('fails immediately without waiting for %s', async (code) => {
+      const operationId = await createRollout();
+      block(operationId, code);
+      const time = harness();
+      await expect(
+        waitForReleaseRolloutAwaitingSetup({
+          controlDatabaseId: DATABASE_ID,
+          environmentId: 'env-test',
+          operationId,
+          executeBatch,
+          clock: time.clock,
+          sleep: time.sleep,
+        })
+      ).rejects.toThrow(new RegExp(`^release_rollout_blocked:${code}$`, 'u'));
+      expect(time.sleeps).toEqual([]);
+    });
+
+    it('fails immediately when the blocked rollout has no error code', async () => {
+      const operationId = await createRollout();
+      block(operationId, 'x');
+      database.exec(
+        `UPDATE control_operations SET last_error_code = NULL WHERE operation_id = '${operationId}'`
+      );
+      const time = harness();
+      await expect(
+        waitForReleaseRolloutAwaitingSetup({
+          controlDatabaseId: DATABASE_ID,
+          environmentId: 'env-test',
+          operationId,
+          executeBatch,
+          clock: time.clock,
+          sleep: time.sleep,
+        })
+      ).rejects.toThrow(/^release_rollout_blocked:unknown$/u);
+      expect(time.sleeps).toEqual([]);
+    });
+
+    it('fails immediately when the rollout changes to a code that needs an operator', async () => {
+      const operationId = await createRollout();
+      block(operationId, 'migration_artifact_manifest_invalid');
+      const time = harness();
+      await expect(
+        waitForReleaseRolloutAwaitingSetup({
+          controlDatabaseId: DATABASE_ID,
+          environmentId: 'env-test',
+          operationId,
+          executeBatch,
+          clock: time.clock,
+          sleep: async (milliseconds) => {
+            await time.sleep(milliseconds);
+            if (time.sleeps.length === 3) block(operationId, 'migration_history_checksum_mismatch');
+          },
+        })
+      ).rejects.toThrow(/^release_rollout_blocked:migration_history_checksum_mismatch$/u);
+      expect(time.sleeps).toHaveLength(3);
+    });
+
+    it('restarts the grace period when the rollout leaves blocked and comes back', async () => {
+      const operationId = await createRollout();
+      block(operationId, 'migration_artifact_manifest_invalid');
+      const time = harness();
+      const start = time.now();
+      let unblockedAt = 0;
+      let reblockedAt = 0;
+
+      await expect(
+        waitForReleaseRolloutAwaitingSetup({
+          controlDatabaseId: DATABASE_ID,
+          environmentId: 'env-test',
+          operationId,
+          executeBatch,
+          timeoutMs: 600_000,
+          pollIntervalMs: 5_000,
+          clock: time.clock,
+          sleep: async (milliseconds) => {
+            await time.sleep(milliseconds);
+            const elapsed = time.now() - start;
+            if (elapsed === 150_000 && !unblockedAt) {
+              // Resumed with 30s of the first grace left, then blocked again right away.
+              unblockedAt = time.now();
+              setPhase(operationId, 'database_rollout');
+            } else if (unblockedAt && !reblockedAt) {
+              reblockedAt = time.now();
+              block(operationId, 'migration_artifact_manifest_invalid');
+            }
+          },
+        })
+      ).rejects.toThrow('release_rollout_blocked:migration_artifact_manifest_invalid');
+
+      expect(unblockedAt).toBeGreaterThan(0);
+      expect(reblockedAt).toBeGreaterThan(unblockedAt);
+      // The second block got its own full grace period (the first would have ended at +180s).
+      expect(time.now() - reblockedAt).toBeGreaterThanOrEqual(CONTROL_RESUME_GRACE_MS);
+      expect(time.now() - start).toBeGreaterThan(CONTROL_RESUME_GRACE_MS);
+    });
+
+    it('rejects an invalid grace period', async () => {
+      const operationId = await createRollout();
+      await expect(
+        waitForReleaseRolloutAwaitingSetup({
+          controlDatabaseId: DATABASE_ID,
+          environmentId: 'env-test',
+          operationId,
+          executeBatch,
+          controlResumeGraceMs: -1,
+        })
+      ).rejects.toThrow('release_rollout_control_resume_grace_invalid');
+    });
+
+    it('names the blocking code in the progress message while waiting for Control', async () => {
+      const operationId = await createRollout();
+      block(operationId, 'migration_artifact_manifest_invalid');
+      const time = harness();
+      const messages: string[] = [];
+      await expect(
+        waitForReleaseRolloutAwaitingSetup({
+          controlDatabaseId: DATABASE_ID,
+          environmentId: 'env-test',
+          operationId,
+          executeBatch,
+          controlResumeGraceMs: 10_000,
+          pollIntervalMs: 5_000,
+          clock: time.clock,
+          sleep: time.sleep,
+          onProgress: (status, context) =>
+            messages.push(formatReleaseRolloutProgress(status, context)),
+        })
+      ).rejects.toThrow('release_rollout_blocked');
+      expect(messages[0]).toBe(
+        'Control database rollout is blocked (migration_artifact_manifest_invalid); waiting for Control to resume it (0s/10s)'
+      );
+      expect(messages[1]).toContain('(5s/10s)');
+    });
+
+    it('formats the normal progress message', async () => {
+      const operationId = await createRollout();
+      const status = await getReleaseRolloutHandoffStatus({
+        controlDatabaseId: DATABASE_ID,
+        environmentId: 'env-test',
+        operationId,
+        executeBatch,
+      });
+      expect(formatReleaseRolloutProgress(status)).toBe(
+        'Control database rollout: 0/0 (requested)'
+      );
     });
   });
 });

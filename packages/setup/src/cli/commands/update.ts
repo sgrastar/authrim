@@ -141,6 +141,7 @@ import {
   getReleaseRolloutHandoffStatus,
   type ReleaseRolloutExpectedTarget,
   type ReleaseRolloutHandoffStatus,
+  formatReleaseRolloutProgress,
   waitForReleaseRolloutAwaitingSetup,
 } from '../../core/release-rollout-handoff.js';
 import {
@@ -422,8 +423,8 @@ async function awaitControlManagedReleaseRollout(input: {
       environmentId: input.environmentId,
       operationId: created.operationId,
       timeoutMs: RELEASE_ROLLOUT_OBSERVATION_MS,
-      onProgress: (status) => {
-        spinner.text = `Control database rollout: ${status.completedTargets}/${status.totalTargets} (${status.phase})`;
+      onProgress: (status, context) => {
+        spinner.text = formatReleaseRolloutProgress(status, context);
       },
     });
     if (
