@@ -459,32 +459,118 @@ export async function getActiveReleaseRolloutHandoffStatus(input: {
   return parseStatus(rows[0]);
 }
 
+/**
+ * Blocked codes that Control's reconciler clears by itself on a later cron tick (see
+ * `resumeArtifactFormatBlockedRollouts`, `resumeProviderBlockedRollouts` and
+ * `resumeExecutorBlockedRollouts` in ar-control's release-migration-rollout-reconciler).
+ * Setup waits a bounded grace period for these instead of failing on the first read, because the
+ * block is often a leftover from the Control version that was running before this update
+ * deployed the new one. Every other code needs an operator and still fails immediately.
+ */
+export const CONTROL_AUTO_RESUMED_BLOCK_CODES: readonly string[] = [
+  // Resumed once a newer Control can read and validate the same content-addressed artifact.
+  'migration_artifact_manifest_invalid',
+  // Resumed once the target D1 database shows up in Control's observed resources.
+  'release_target_provider_database_unavailable',
+  // Resumed once a Control with a migration executor runs the cron.
+  'release_migration_executor_unavailable',
+];
+
+/** Control's reconciler runs every minute; 3 minutes covers at least 2-3 ticks after a deploy. */
+export const CONTROL_RESUME_GRACE_MS = 3 * 60 * 1000;
+
+export interface ReleaseRolloutWaitContext {
+  /** Set while setup waits for Control to resume a blocked rollout by itself. */
+  awaitingControlResume?: {
+    errorCode: string;
+    elapsedMs: number;
+    graceMs: number;
+  };
+}
+
+export function formatReleaseRolloutProgress(
+  status: ReleaseRolloutHandoffStatus,
+  context?: ReleaseRolloutWaitContext
+): string {
+  const waiting = context?.awaitingControlResume;
+  if (waiting) {
+    const elapsed = Math.floor(waiting.elapsedMs / 1000);
+    const grace = Math.floor(waiting.graceMs / 1000);
+    return `Control database rollout is blocked (${waiting.errorCode}); waiting for Control to resume it (${elapsed}s/${grace}s)`;
+  }
+  return `Control database rollout: ${status.completedTargets}/${status.totalTargets} (${status.phase})`;
+}
+
 export async function waitForReleaseRolloutAwaitingSetup(input: {
   controlDatabaseId: string;
   environmentId: string;
   operationId: string;
   timeoutMs?: number;
+  /** Grace period for a rollout blocked by a code Control resumes by itself. */
+  controlResumeGraceMs?: number;
   pollIntervalMs?: number;
   executeBatch?: D1BatchExecutor;
   sleep?: (milliseconds: number) => Promise<void>;
   clock?: () => number;
-  onProgress?: (status: ReleaseRolloutHandoffStatus) => void;
+  onProgress?: (status: ReleaseRolloutHandoffStatus, context?: ReleaseRolloutWaitContext) => void;
 }): Promise<ReleaseRolloutHandoffStatus> {
   const timeoutMs = input.timeoutMs ?? 30 * 60 * 1000;
   const pollIntervalMs = input.pollIntervalMs ?? 5_000;
+  const controlResumeGraceMs = input.controlResumeGraceMs ?? CONTROL_RESUME_GRACE_MS;
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1) {
     throw new Error('release_rollout_wait_timeout_invalid');
   }
   if (!Number.isSafeInteger(pollIntervalMs) || pollIntervalMs < 1) {
     throw new Error('release_rollout_poll_interval_invalid');
   }
+  if (!Number.isSafeInteger(controlResumeGraceMs) || controlResumeGraceMs < 0) {
+    throw new Error('release_rollout_control_resume_grace_invalid');
+  }
   const sleep =
     input.sleep ??
     ((milliseconds: number) => new Promise((resolve) => setTimeout(resolve, milliseconds)));
   const clock = input.clock ?? Date.now;
-  const deadline = clock() + timeoutMs;
+  let deadline = clock() + timeoutMs;
+  // Grace is counted from the first blocked observation and reset whenever the rollout leaves
+  // the blocked state (or comes back with a different code).
+  let blockedSince: number | null = null;
+  let blockedCode: string | null = null;
   while (true) {
     const status = await getReleaseRolloutHandoffStatus(input);
+    if (status.phase !== 'blocked') {
+      if (blockedSince !== null) {
+        // Control resumed the rollout; give the resumed migration a full observation window
+        // rather than whatever was left of the one the blocked wait consumed.
+        deadline = Math.max(deadline, clock() + timeoutMs);
+      }
+      blockedSince = null;
+      blockedCode = null;
+    }
+    if (status.phase === 'blocked') {
+      const code = status.lastErrorCode ?? 'unknown';
+      if (!CONTROL_AUTO_RESUMED_BLOCK_CODES.includes(code)) {
+        input.onProgress?.(status);
+        throw new Error(`release_rollout_blocked:${code}`);
+      }
+      if (blockedSince === null || blockedCode !== code) {
+        blockedSince = clock();
+        blockedCode = code;
+      }
+      const elapsedMs = clock() - blockedSince;
+      if (elapsedMs >= controlResumeGraceMs) {
+        input.onProgress?.(status);
+        throw new Error(
+          `release_rollout_blocked:${code} (Control did not resume the rollout within ` +
+            `${Math.round(controlResumeGraceMs / 1000)}s; check that the ar-control Worker is ` +
+            'deployed at the target version and its cron trigger is running, then run this update again)'
+        );
+      }
+      input.onProgress?.(status, {
+        awaitingControlResume: { errorCode: code, elapsedMs, graceMs: controlResumeGraceMs },
+      });
+      await sleep(Math.min(pollIntervalMs, Math.max(1, controlResumeGraceMs - elapsedMs)));
+      continue;
+    }
     input.onProgress?.(status);
     if (
       status.phase === 'awaiting_setup' ||
@@ -492,9 +578,6 @@ export async function waitForReleaseRolloutAwaitingSetup(input: {
       status.phase === 'completed'
     ) {
       return status;
-    }
-    if (status.phase === 'blocked') {
-      throw new Error(`release_rollout_blocked:${status.lastErrorCode ?? 'unknown'}`);
     }
     if (clock() >= deadline) return status;
     await sleep(Math.min(pollIntervalMs, Math.max(1, deadline - clock())));
