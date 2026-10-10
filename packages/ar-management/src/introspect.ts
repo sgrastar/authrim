@@ -51,14 +51,26 @@ import {
   type DeviceSecretPolicyErrorCode,
 } from './device-secret-policy';
 
+interface IntrospectionValidationSettings {
+  strictValidation: boolean;
+  expectedAudience: string | null;
+  /**
+   * The tenant's master switch for extended claims (`tokens.introspection_extended_claims`):
+   * off, the Resource Server's profile and identity mapping are not used and the response holds
+   * the protocol envelope only.
+   */
+  extendedClaims: boolean;
+}
+
 /**
- * Strict introspection and the audience it expects, as the Settings API resolves them for the
- * tenant (an empty audience: the issuer). Throws when they cannot be read.
+ * Strict introspection, the audience it expects (an empty audience: the issuer) and whether
+ * extended claims are on, as the Settings API resolves them for the tenant. Throws when they
+ * cannot be read.
  */
 async function introspectionValidationSettings(
   env: Env,
   tenantId: string
-): Promise<{ strictValidation: boolean; expectedAudience: string | null }> {
+): Promise<IntrospectionValidationSettings> {
   const tokens = await resolveEffectiveSettings(env, 'tokens', {
     tenantId,
   });
@@ -66,6 +78,7 @@ async function introspectionValidationSettings(
   return {
     strictValidation: tokens['tokens.introspection_strict_validation'] === true,
     expectedAudience: typeof audience === 'string' && audience !== '' ? audience : null,
+    extendedClaims: tokens['tokens.introspection_extended_claims'] === true,
   };
 }
 
@@ -699,7 +712,7 @@ export async function introspectHandler(c: Context<{ Bindings: Env }>) {
   // ========== Strict Validation Mode (KV-controlled) ==========
   // RFC 7662 does not require aud/client_id validation, but strictValidation
   // enables additional security checks for Token Introspection Control Plane Test
-  let validationSettings: { strictValidation: boolean; expectedAudience: string | null };
+  let validationSettings: IntrospectionValidationSettings;
   try {
     validationSettings = await introspectionValidationSettings(c.env, getTenantIdFromContext(c));
   } catch {
@@ -872,19 +885,22 @@ export async function introspectHandler(c: Context<{ Bindings: Env }>) {
   // A Resource Server profile is the only authority for introspection extension claims.
   // The token payload may contain claims released to its original audience; only claims
   // explicitly allowed for the authenticated caller survive this separate boundary.
+  // Where the tenant has not turned extended claims on, no profile or mapping is used at all.
   let introspectionProfileAdapter: ReturnType<typeof requireDedicatedAdminDatabaseAdapter> | null =
     null;
-  try {
-    introspectionProfileAdapter = requireDedicatedAdminDatabaseAdapter(
-      c.env,
-      'introspection-destination-profile'
-    );
-  } catch (error) {
-    log.error(
-      'Failed to apply Resource Server destination profile; returning protocol claims only',
-      { action: 'introspection_destination_profile', resourceServerId: client_id },
-      error as Error
-    );
+  if (validationSettings.extendedClaims) {
+    try {
+      introspectionProfileAdapter = requireDedicatedAdminDatabaseAdapter(
+        c.env,
+        'introspection-destination-profile'
+      );
+    } catch (error) {
+      log.error(
+        'Failed to apply Resource Server destination profile; returning protocol claims only',
+        { action: 'introspection_destination_profile', resourceServerId: client_id },
+        error as Error
+      );
+    }
   }
   if (introspectionProfileAdapter) {
     try {

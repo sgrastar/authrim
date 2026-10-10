@@ -124,10 +124,37 @@ export const deSettings: Record<keyof typeof jaSettings, string> = {
 		'Apps können ein Token gegen ein anderes austauschen (RFC 8693).',
 	'set.k.tokens.exchange_delegation_enabled': 'Delegation zulassen',
 	'set.k.tokens.exchange_delegation_enabled.desc':
-		'Eine App kann im Namen einer Person ein Token für einen anderen Dienst erhalten.',
+		'Eine App kann im Namen einer Person ein Token für einen anderen Dienst erhalten. Solange dies aus ist, wird Apps im Delegationsmodus (Standard) der Token-Austausch verweigert. Der Delegationsmodus der einzelnen App kann es weiter einschränken.',
 	'set.k.tokens.exchange_impersonation_enabled': 'Identitätsübernahme zulassen',
 	'set.k.tokens.exchange_impersonation_enabled.desc':
-		'Eine App kann ein Token erhalten, das als die Person selbst handelt.',
+		'Eine App kann ein Token erhalten, das als die Person selbst handelt. Solange dies aus ist, wird Apps im Modus Identitätsübernahme der Token-Austausch verweigert. Es hat große Sicherheitsauswirkungen: nur bei Bedarf einschalten.',
+	'set.page.protection': 'Angriffsschutz',
+	'set.page.protection.desc': 'Schützt E-Mails zu Anmeldung und Registrierung vor Missbrauch.',
+	'set.section.emailSending': 'Sendelimit für E-Mails',
+	'set.section.emailSending.desc':
+		'Begrenzt, wie oft E-Mails wie Anmeldecodes hintereinander an denselben Empfänger gesendet werden können, damit sie nicht für Spam missbraucht werden.',
+	'set.k.rate_limit.email_max_requests': 'Erlaubte Sendungen pro Zeitraum',
+	'set.k.rate_limit.email_max_requests.desc':
+		'Wie viele Codes für Anmeldung, Registrierung, erneute Authentifizierung und Verzeichnismigration an dieselbe E-Mail-Adresse (oder denselben Benutzer) gesendet werden können. Codes für die Kontosuche haben ein eigenes Limit.',
+	'set.k.rate_limit.email_window': 'Zeitraum, in dem gezählt wird',
+	'set.k.rate_limit.email_window.desc':
+		'Der Zeitraum, in dem die Zahl oben gezählt wird (5 bis 60 Minuten). Danach darf wieder gesendet werden.',
+	'set.section.introspection': 'Token-Introspektion',
+	'set.section.introspection.desc':
+		'Die Antwort, die ein Resource Server erhält, wenn er fragt, ob ein Token gültig ist.',
+	'set.k.tokens.introspection_extended_claims': 'Zusätzliche Claims je Resource Server zurückgeben',
+	'set.k.tokens.introspection_extended_claims.desc':
+		'Aus: Die Antwort enthält nur die Basis-Claims (active, scope, client_id, sub, exp usw.); Profil und Identity-Mapping des Resource Servers werden nicht verwendet. Ein: Die Claims, die sein Profil erlaubt, werden ergänzt.',
+	'set.section.scim': 'SCIM-Provisionierung',
+	'set.section.scim.desc':
+		'Die Token, mit denen externe Systeme Benutzer über SCIM synchronisieren.',
+	'set.section.scim.advanced': 'Die längste erlaubte Gültigkeit',
+	'set.k.federation.scim_token_default_expiry': 'Standardgültigkeit von SCIM-Token',
+	'set.k.federation.scim_token_default_expiry.desc':
+		'Wie lange ein SCIM-Token gilt, wenn es ohne Gültigkeitsdauer erstellt wird. Nie länger als das Maximum. Bereits ausgestellte Token ändern sich nicht.',
+	'set.k.federation.scim_token_max_expiry': 'Längste Gültigkeit von SCIM-Token',
+	'set.k.federation.scim_token_max_expiry.desc':
+		'Ein SCIM-Token kann nicht mit längerer Gültigkeit erstellt werden (höchstens ein Jahr). Bereits ausgestellte Token ändern sich nicht.',
 	'set.k.oauth.id_token_signing_alg.RS256': 'RS256',
 	'set.k.oauth.id_token_signing_alg.ES256': 'ES256',
 	'set.k.oauth.id_token_signing_alg.PS256': 'PS256',
@@ -183,6 +210,9 @@ export const deSettings: Record<keyof typeof jaSettings, string> = {
 	'settings.notice.fapi.title': 'FAPI-2.0-Anforderungen gelten',
 	'settings.notice.fapi.body':
 		'Anfragen, die FAPI 2.0 nicht erlaubt, etwa Autorisierungsanfragen ohne PAR, werden abgelehnt, daher funktionieren Apps ohne FAPI-Unterstützung möglicherweise nicht mehr. Discovery funktioniert weiterhin wie spezifiziert.',
+	'settings.notice.exchangeCeilings.title': 'Einigen Apps wird der Token-Austausch verweigert',
+	'settings.notice.exchangeCeilings.body':
+		'Der Token-Austausch ist ein, Delegation ist aber nicht erlaubt; daher wird Apps im Delegationsmodus (Standard für neue Apps) der Austausch verweigert. Schalten Sie „Delegation zulassen“ ein, damit sie ihn nutzen können.',
 	'settings.value.on': 'Ein',
 	'settings.value.off': 'Aus',
 	'settings.value.empty': '(keine)',

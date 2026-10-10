@@ -45,6 +45,7 @@ import {
   type SessionEventData,
   resolveAuthMaxFailedAttempts,
   resolveEmailCodeTtlSeconds,
+  resolveEmailSendLimit,
 } from '@authrim/ar-lib-core';
 import {
   DirectoryPasswordClient,
@@ -1098,13 +1099,15 @@ export async function directoryMigrationEmailCodeSendHandler(c: Context<{ Bindin
       return createErrorResponse(c, AR_ERROR_CODES.AUTH_SESSION_EXPIRED);
     }
 
+    // The tenant's email send limit (rate_limit.email_max_requests per rate_limit.email_window).
+    const emailSendLimit = await resolveEmailSendLimit(c.env, tenantId);
     const rateLimiterId = c.env.RATE_LIMITER.idFromName(
       buildDOKey('rate-limit', 'directory-migration-email-code', tenantId)
     );
     const rateLimiter = c.env.RATE_LIMITER.get(rateLimiterId);
     const rateLimitResult = await rateLimiter.incrementRpc(`transaction:${transaction.id}`, {
-      windowSeconds: 15 * 60,
-      maxRequests: 3,
+      windowSeconds: emailSendLimit.windowSeconds,
+      maxRequests: emailSendLimit.maxRequests,
     });
     if (!rateLimitResult.allowed) {
       return createErrorResponse(c, AR_ERROR_CODES.RATE_LIMIT_EXCEEDED, {
@@ -1495,6 +1498,8 @@ async function createDirectoryUnavailableRecoveryResponse(
   });
   if (!campaign) return null;
 
+  // Opening a recovery leads to an emailed code, so the tenant's email send limit counts it.
+  const emailSendLimit = await resolveEmailSendLimit(c.env, input.tenantId);
   const recoveryRateLimiterId = c.env.RATE_LIMITER.idFromName(
     buildDOKey('rate-limit', 'directory-unavailable-recovery', input.tenantId)
   );
@@ -1502,8 +1507,8 @@ async function createDirectoryUnavailableRecoveryResponse(
   const recoveryRateLimitResult = await recoveryRateLimiter.incrementRpc(
     `user:${input.connector.wordwardenConnectorId}:${runtimeUser.id}`,
     {
-      windowSeconds: 15 * 60,
-      maxRequests: 3,
+      windowSeconds: emailSendLimit.windowSeconds,
+      maxRequests: emailSendLimit.maxRequests,
     }
   );
   if (!recoveryRateLimitResult.allowed) {

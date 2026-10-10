@@ -232,12 +232,52 @@ export const APP_DEFAULTS: SettingsPageDef = {
 				{ key: 'tokens.exchange_delegation_enabled', depth: 'advanced' },
 				{ key: 'tokens.exchange_impersonation_enabled', depth: 'advanced' }
 			]
+		},
+		{
+			id: 'introspection',
+			title: 'set.section.introspection',
+			description: 'set.section.introspection.desc',
+			settings: [{ key: 'tokens.introspection_extended_claims', depth: 'primary' }]
+		},
+		{
+			id: 'scim',
+			title: 'set.section.scim',
+			description: 'set.section.scim.desc',
+			advanced: 'set.section.scim.advanced',
+			settings: [
+				{ key: 'federation.scim_token_default_expiry', depth: 'primary' },
+				{ key: 'federation.scim_token_max_expiry', depth: 'advanced' }
+			]
+		}
+	]
+};
+
+/**
+ * Authentication → Attack protection: what keeps sign-in and sign-up from being abused. More of
+ * the draft in `inventory.ts` (failed sign-ins, bot protection, API rate limits) moves here as it
+ * is built.
+ */
+export const PROTECTION: SettingsPageDef = {
+	id: 'protection',
+	nav: 'authentication/protection',
+	title: 'set.page.protection',
+	description: 'set.page.protection.desc',
+	sections: [
+		{
+			id: 'email-sending',
+			title: 'set.section.emailSending',
+			description: 'set.section.emailSending.desc',
+			settings: [
+				{ key: 'rate_limit.email_max_requests', depth: 'primary' },
+				{ key: 'rate_limit.email_window', depth: 'primary' }
+			]
 		}
 	]
 };
 
 export const SETTINGS_PAGES: readonly SettingsPageDef[] = [
 	STAYING_SIGNED_IN,
+	PROTECTION,
 	SIGNING_KEYS,
 	APP_DEFAULTS
 ];

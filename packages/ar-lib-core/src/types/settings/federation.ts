@@ -132,25 +132,27 @@ export const FEDERATION_SETTINGS_META: Record<keyof FederationSettings, SettingM
     default: 31536000,
     envKey: 'SCIM_TOKEN_MAX_EXPIRY',
     label: 'SCIM Token Max Expiry',
-    description: 'Maximum SCIM token lifetime in seconds (1 year)',
+    description:
+      'The longest lifetime a new SCIM token can be given, in seconds (default and highest: 1 year). Tokens already issued keep their lifetime.',
     min: 86400,
     max: 31536000,
     unit: 'seconds',
+    integer: true,
     visibility: 'admin',
-    status: 'in_development',
   },
   'federation.scim_token_default_expiry': {
     key: 'federation.scim_token_default_expiry',
     type: 'duration',
-    default: 7776000,
+    default: 31536000,
     envKey: 'SCIM_TOKEN_DEFAULT_EXPIRY',
     label: 'SCIM Token Default Expiry',
-    description: 'Default SCIM token lifetime in seconds (90 days)',
-    min: 3600,
+    description:
+      'The lifetime of a new SCIM token when the request names none, in seconds (default: 1 year, as before this setting applied). Never longer than the maximum. Tokens already issued keep their lifetime.',
+    min: 86400,
     max: 31536000,
     unit: 'seconds',
+    integer: true,
     visibility: 'admin',
-    status: 'in_development',
   },
 };
 
@@ -178,5 +180,5 @@ export const FEDERATION_DEFAULTS: FederationSettings = {
   'federation.saml_slo_binding': 'HTTP-POST',
   'federation.saml_nameid_format': 'emailAddress',
   'federation.scim_token_max_expiry': 31536000,
-  'federation.scim_token_default_expiry': 7776000,
+  'federation.scim_token_default_expiry': 31536000,
 };

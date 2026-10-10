@@ -648,6 +648,11 @@ describe('Account Page passkey management API', () => {
           },
           // The tenant's email code lifetime applies to re-authentication codes too.
           'settings:tenant:default:credentials': { 'credentials.email_code_ttl': 120 },
+          // ... and so does the tenant's email send limit.
+          'settings:tenant:default:rate-limit': {
+            'rate_limit.email_max_requests': 6,
+            'rate_limit.email_window': 1800,
+          },
         },
       })
     );
@@ -656,6 +661,10 @@ describe('Account Page passkey management API', () => {
     expect(response.status).toBe(200);
     expect(body.masked_email).toBe('u***r@example.com');
     expect(body.expires_in).toBe(120);
+    expect(mockRateLimiter.incrementRpc).toHaveBeenCalledWith('send:user-001', {
+      windowSeconds: 1800,
+      maxRequests: 6,
+    });
     expect(mockChallengeStore.storeChallengeRpc).toHaveBeenCalledWith(
       expect.objectContaining({
         id: expect.stringMatching(/^account_email_reauth:/),

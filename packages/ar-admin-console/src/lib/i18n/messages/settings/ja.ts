@@ -124,10 +124,36 @@ export const jaSettings = {
 		'アプリが持っているトークンを、別のトークンに交換できるようにします（RFC 8693）。',
 	'set.k.tokens.exchange_delegation_enabled': '委任を認める',
 	'set.k.tokens.exchange_delegation_enabled.desc':
-		'アプリが利用者に代わって、別のサービス向けのトークンを受け取れるようにします。',
+		'アプリが利用者に代わって、別のサービス向けのトークンを受け取れるようにします。オフの間は、委任モード（既定）のアプリがトークン交換を断られます。アプリごとの委任モードで、さらに絞れます。',
 	'set.k.tokens.exchange_impersonation_enabled': 'なりすましを認める',
 	'set.k.tokens.exchange_impersonation_enabled.desc':
-		'アプリが、利用者そのものとして振る舞うトークンを受け取れるようにします。',
+		'アプリが、利用者そのものとして振る舞うトークンを受け取れるようにします。なりすましモードのアプリは、オフの間トークン交換を断られます。安全上の影響が大きいので、必要なときだけオンにしてください。',
+	'set.page.protection': '攻撃対策',
+	'set.page.protection.desc': 'ログインや登録のメールが悪用されるのを防ぐ設定です。',
+	'set.section.emailSending': 'メール送信の回数制限',
+	'set.section.emailSending.desc':
+		'ログインコードなどのメールを、同じ宛先へ続けて送れる回数を制限します。迷惑メールの送信に使われるのを防ぎます。',
+	'set.k.rate_limit.email_max_requests': '期間内に送れる回数',
+	'set.k.rate_limit.email_max_requests.desc':
+		'同じメールアドレス（またはユーザー）へ、ログイン・登録・再認証・ディレクトリ移行のコードを送れる回数です。アカウント探索のコードには別の上限があります。',
+	'set.k.rate_limit.email_window': '回数を数える期間',
+	'set.k.rate_limit.email_window.desc':
+		'上の回数を数える期間です（5 分から 60 分）。この期間が過ぎると、また送れます。',
+	'set.section.introspection': 'トークンのイントロスペクション',
+	'set.section.introspection.desc':
+		'Resource Server がトークンの有効性を問い合わせたときの答えです。',
+	'set.k.tokens.introspection_extended_claims': 'Resource Server ごとの追加クレームを返す',
+	'set.k.tokens.introspection_extended_claims.desc':
+		'オフ: 答えには基本のクレーム（active、scope、client_id、sub、exp など）だけを入れ、Resource Server のプロファイルとアイデンティティマッピングは使いません。オン: Resource Server のプロファイルが許したクレームも加えます。',
+	'set.section.scim': 'SCIM プロビジョニング',
+	'set.section.scim.desc': 'SCIM で外部のシステムがユーザーを同期するためのトークンです。',
+	'set.section.scim.advanced': '有効期限の上限',
+	'set.k.federation.scim_token_default_expiry': 'SCIM トークンの既定の有効期限',
+	'set.k.federation.scim_token_default_expiry.desc':
+		'有効期限を指定せずに SCIM トークンを作ったときの有効期間です。上限より長くはなりません。発行済みのトークンは変わりません。',
+	'set.k.federation.scim_token_max_expiry': 'SCIM トークンの有効期限の上限',
+	'set.k.federation.scim_token_max_expiry.desc':
+		'これより長い有効期限の SCIM トークンは作れません（最長 1 年）。発行済みのトークンは変わりません。',
 	'set.k.oauth.id_token_signing_alg.RS256': 'RS256',
 	'set.k.oauth.id_token_signing_alg.ES256': 'ES256',
 	'set.k.oauth.id_token_signing_alg.PS256': 'PS256',
@@ -180,6 +206,9 @@ export const jaSettings = {
 	'settings.notice.fapi.title': 'FAPI 2.0 の要件が適用されます',
 	'settings.notice.fapi.body':
 		'PAR を使わない認可要求など、FAPI 2.0 が認めない要求は受け付けなくなります。FAPI に対応していないアプリは動かない場合があります。Discovery は引き続き仕様どおり使えます。',
+	'settings.notice.exchangeCeilings.title': 'トークン交換を断られるアプリがあります',
+	'settings.notice.exchangeCeilings.body':
+		'トークン交換は使えますが、委任を認めていないので、委任モード（新しいアプリの既定）のアプリは断られます。それらのアプリで使うには「委任を認める」をオンにしてください。',
 	'settings.value.on': 'オン',
 	'settings.value.off': 'オフ',
 	'settings.value.empty': '（なし）',

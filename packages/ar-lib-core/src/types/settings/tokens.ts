@@ -55,9 +55,8 @@ export const TOKENS_SETTINGS_META: Record<keyof TokensSettings, SettingMeta> = {
     envKey: 'ENABLE_TOKEN_EXCHANGE_DELEGATION',
     label: 'Delegation Enabled',
     description:
-      "Allow delegation use case in token exchange. In development: each app's delegation_mode decides it; this setting is not read yet.",
+      "Tenant ceiling for token exchange by delegation (the app acts for the user, with an act claim). An app whose delegation_mode is delegation (the default) is refused with unauthorized_client unless this is on; the app's own delegation_mode can narrow it further but not widen it.",
     visibility: 'admin',
-    status: 'in_development',
     dependsOn: [{ key: 'tokens.exchange_enabled', value: true }],
   },
   'tokens.exchange_impersonation_enabled': {
@@ -68,10 +67,10 @@ export const TOKENS_SETTINGS_META: Record<keyof TokensSettings, SettingMeta> = {
     default: false,
     envKey: 'ENABLE_TOKEN_EXCHANGE_IMPERSONATION',
     label: 'Impersonation Enabled',
-    description: 'Allow impersonation use case in token exchange (security sensitive)',
+    description:
+      'Tenant ceiling for token exchange by impersonation (the token acts as the user, with no act claim; security sensitive). An app whose delegation_mode is impersonation is refused with unauthorized_client unless this is on.',
     visibility: 'admin',
     dependsOn: [{ key: 'tokens.exchange_enabled', value: true }],
-    status: 'in_development',
   },
   'tokens.introspection_strict_validation': {
     key: 'tokens.introspection_strict_validation',
@@ -91,9 +90,9 @@ export const TOKENS_SETTINGS_META: Record<keyof TokensSettings, SettingMeta> = {
     default: false,
     envKey: 'INTROSPECTION_EXTENDED_CLAIMS',
     label: 'Extended Introspection Claims',
-    description: 'Include extended claims in introspection response',
+    description:
+      "Master switch for extended claims in introspection responses. Off: the Resource Server's destination profile and identity mapping are not used, and the response holds only the protocol claims (active, scope, client_id, sub, exp and the like). On: the Resource Server's own profile decides which more claims it receives.",
     visibility: 'admin',
-    status: 'in_development',
   },
 
   // RBAC Claims Embedding

@@ -7,8 +7,9 @@
  * just-in-time provisioning, policy flags and embedding limits, token lifetimes, FAPI and the
  * other protocol settings (PAR, request objects, response types, DPoP nonces, discovery claims),
  * token exchange, introspection, conformance, UI routing), the IdP profile update on sign-in, and
- * the password lockout threshold, email code lifetime, refresh token rotation, the advertised
- * ACR values and the tenant's ID token signing algorithm; and less the settings that left the catalog (duplicates, copies of the app
+ * the password lockout threshold, email code lifetime and email send limit, refresh token
+ * rotation, the advertised ACR values, the tenant's ID token signing algorithm, the token exchange
+ * ceilings, extended introspection claims and the SCIM token lifetime; and less the settings that left the catalog (duplicates, copies of the app
  * registration, and values too fine or fixed at deployment). Update this list when a setting starts to apply or leaves the catalog.
  *
  * Shown in the settings map (Storybook: Pages › Settings map).
@@ -34,7 +35,7 @@ function reason(why: NotApplied, keys: readonly string[]): [string, NotApplied][
 }
 
 export const NOT_APPLIED: ReadonlyMap<string, NotApplied> = new Map([
-	// to-build (25)
+	// to-build (18)
 	...reason('to-build', [
 		'diagnostic-logging.filter_pii',
 		'diagnostic-logging.filter_tokens',
@@ -48,19 +49,12 @@ export const NOT_APPLIED: ReadonlyMap<string, NotApplied> = new Map([
 		'federation.saml_request_ttl',
 		'federation.saml_slo_binding',
 		'federation.saml_sso_binding',
-		'federation.scim_token_default_expiry',
-		'federation.scim_token_max_expiry',
 		'plugin.auto_update_check',
 		'plugin.enabled',
 		'plugin.execution_timeout_ms',
 		'plugin.memory_limit_mb',
 		'plugin.notifier_console_enabled',
-		'rate_limit.email_max_requests',
-		'rate_limit.email_window',
-		'tenant.ui_register_path',
-		'tokens.exchange_delegation_enabled',
-		'tokens.exchange_impersonation_enabled',
-		'tokens.introspection_extended_claims'
+		'tenant.ui_register_path'
 	]),
 	// to-wire (35)
 	...reason('to-wire', [

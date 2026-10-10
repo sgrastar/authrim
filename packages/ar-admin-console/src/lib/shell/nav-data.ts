@@ -265,6 +265,8 @@ export const TENANT_AREAS: readonly NavArea[] = [
 				id: 'protection',
 				label: 'nav.auth.protection',
 				icon: 'lock',
+				platform: 'tenant',
+				requires: { settings: ['rate-limit'] },
 				legacyRoutes: ['/admin/security']
 			},
 			{

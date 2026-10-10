@@ -16,6 +16,11 @@ import {
 } from './generated-settings-v2.js';
 
 const ENABLED_KEY = 'tokens.exchange_enabled';
+/**
+ * The tenant's ceiling on delegation. The generated checks use a delegating service client
+ * (delegation_mode delegation), which the tenant's Token Exchange refuses while this is off.
+ */
+const DELEGATION_KEY = 'tokens.exchange_delegation_enabled';
 const SUBJECT_TYPES_KEY = 'tokens.exchange_allowed_subject_token_types';
 
 export interface GeneratedTokenExchangeEnableResult {
@@ -87,7 +92,8 @@ function isStorableList(snapshot: TenantSettingsSnapshot): boolean {
 
 /**
  * Make sure the tenant accepts access-token Token Exchange for a generated check
- * (`tokens.exchange_enabled`, and `access_token` among the subject token types), and give the
+ * (`tokens.exchange_enabled`, `tokens.exchange_delegation_enabled`, and `access_token` among the
+ * subject token types), and give the
  * way to put the tenant's settings back afterwards.
  */
 export async function ensureGeneratedTokenExchangeEnabled(input: {
@@ -133,7 +139,11 @@ export async function ensureGeneratedTokenExchangeEnabled(input: {
   };
 
   const { types, unstorable } = subjectTokenTypes(snapshot);
-  if (snapshot.values[ENABLED_KEY] === true && types.includes('access_token')) {
+  if (
+    snapshot.values[ENABLED_KEY] === true &&
+    snapshot.values[DELEGATION_KEY] === true &&
+    types.includes('access_token')
+  ) {
     addPass(check, 'Token Exchange is already enabled for access_token');
     return {
       check: finalizeCheck(check, 'Token Exchange already enabled'),
@@ -144,6 +154,7 @@ export async function ensureGeneratedTokenExchangeEnabled(input: {
 
   const set: Record<string, unknown> = {};
   if (snapshot.values[ENABLED_KEY] !== true) set[ENABLED_KEY] = true;
+  if (snapshot.values[DELEGATION_KEY] !== true) set[DELEGATION_KEY] = true;
   if (!types.includes('access_token')) {
     // Saving the list without them would stop runtime accepting them while the check runs.
     if (unstorable.length > 0) {

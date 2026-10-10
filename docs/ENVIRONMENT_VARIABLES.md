@@ -97,20 +97,22 @@ ENABLE_CLIENT_CREDENTIALS
 
 ### Feature Flags
 
-| Variable                        | Type    | Default | Description                                                 |
-| ------------------------------- | ------- | ------- | ----------------------------------------------------------- |
-| `ENABLE_CONFORMANCE_MODE`       | boolean | `false` | Enable conformance-test-only behaviour (not for production) |
-| `ENABLE_HTTP_REDIRECT`          | boolean | `false` | Allow HTTP redirect URIs (insecure, for development only)   |
-| `ENABLE_OPEN_REGISTRATION`      | boolean | `false` | Allow public client registration without IAT                |
-| `ENABLE_REFRESH_TOKEN_ROTATION` | boolean | `false` | Enable refresh token rotation on use                        |
-| `ENABLE_TOKEN_EXCHANGE`         | boolean | `false` | Enable RFC 8693 Token Exchange                              |
-| `ENABLE_CLIENT_CREDENTIALS`     | boolean | `false` | Enable RFC 6749 Client Credentials grant                    |
-| `ENABLE_RATE_LIMIT`             | boolean | `true`  | Enable rate limiting                                        |
-| `ENABLE_HTTPS_REQUEST_URI`      | boolean | `false` | Enable HTTPS request_uri support (JAR)                      |
-| `ENABLE_RAR`                    | boolean | `false` | Enable RFC 9396 Rich Authorization Requests                 |
-| `ENABLE_AI_SCOPES`              | boolean | `false` | Enable AI Ephemeral Auth scopes                             |
-| `ENABLE_NATIVE_SSO`             | boolean | `false` | Enable OIDC Native SSO 1.0                                  |
-| `ENABLE_ID_JAG`                 | boolean | `false` | Enable ID-JAG identity assertion grant                      |
+| Variable                              | Type    | Default | Description                                                                                        |
+| ------------------------------------- | ------- | ------- | -------------------------------------------------------------------------------------------------- |
+| `ENABLE_CONFORMANCE_MODE`             | boolean | `false` | Enable conformance-test-only behaviour (not for production)                                        |
+| `ENABLE_HTTP_REDIRECT`                | boolean | `false` | Allow HTTP redirect URIs (insecure, for development only)                                          |
+| `ENABLE_OPEN_REGISTRATION`            | boolean | `false` | Allow public client registration without IAT                                                       |
+| `ENABLE_REFRESH_TOKEN_ROTATION`       | boolean | `false` | Enable refresh token rotation on use                                                               |
+| `ENABLE_TOKEN_EXCHANGE`               | boolean | `false` | Enable RFC 8693 Token Exchange                                                                     |
+| `ENABLE_TOKEN_EXCHANGE_DELEGATION`    | boolean | `false` | Tenant ceiling: apps with `delegation_mode` delegation may exchange tokens                         |
+| `ENABLE_TOKEN_EXCHANGE_IMPERSONATION` | boolean | `false` | Tenant ceiling: apps with `delegation_mode` impersonation may exchange tokens (security sensitive) |
+| `ENABLE_CLIENT_CREDENTIALS`           | boolean | `false` | Enable RFC 6749 Client Credentials grant                                                           |
+| `ENABLE_RATE_LIMIT`                   | boolean | `true`  | Enable rate limiting                                                                               |
+| `ENABLE_HTTPS_REQUEST_URI`            | boolean | `false` | Enable HTTPS request_uri support (JAR)                                                             |
+| `ENABLE_RAR`                          | boolean | `false` | Enable RFC 9396 Rich Authorization Requests                                                        |
+| `ENABLE_AI_SCOPES`                    | boolean | `false` | Enable AI Ephemeral Auth scopes                                                                    |
+| `ENABLE_NATIVE_SSO`                   | boolean | `false` | Enable OIDC Native SSO 1.0                                                                         |
+| `ENABLE_ID_JAG`                       | boolean | `false` | Enable ID-JAG identity assertion grant                                                             |
 
 ### Security Configuration
 

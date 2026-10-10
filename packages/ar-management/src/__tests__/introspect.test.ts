@@ -191,6 +191,9 @@ function createMockContext(options: {
   return c;
 }
 
+/** The tenant's master switch for extended claims (tokens.introspection_extended_claims), by env. */
+const EXTENDED_CLAIMS_ON = { INTROSPECTION_EXTENDED_CLAIMS: 'true' } as unknown as Partial<Env>;
+
 // Sample token payload for testing
 const sampleTokenPayload = {
   jti: 'token-jti-123',
@@ -906,6 +909,8 @@ describe('Token Introspection Endpoint', () => {
         },
         env: {
           DB_ADMIN: {} as D1Database,
+          // The elevation details reach the Resource Server through its profile.
+          ...EXTENDED_CLAIMS_ON,
         },
       });
 
@@ -977,6 +982,50 @@ describe('Token Introspection Endpoint', () => {
           }),
         })
       );
+    });
+
+    describe('Resource Server profile (tokens.introspection_extended_claims)', () => {
+      async function introspectWithProfileAdapter(env: Partial<Env> = {}) {
+        const c = createMockContext({
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: {
+            token: 'valid.jwt.token',
+            client_id: 'client-123',
+            client_secret: 'client-secret',
+          },
+          env: { DB_ADMIN: {} as D1Database, ...env },
+        });
+        vi.mocked(validateClientId).mockReturnValue({ valid: true });
+        vi.mocked(parseToken).mockReturnValue({
+          ...sampleTokenPayload,
+          email: 'user@example.com',
+          authrim_elevation: { grant_id: 'egr_public_1' },
+        });
+        vi.mocked(verifyToken).mockResolvedValue(sampleTokenPayload);
+        vi.mocked(isTokenRevoked).mockResolvedValue(false);
+        mockClientRepository.findByClientId.mockResolvedValue({
+          client_id: 'client-123',
+          client_secret_hash: 'hash_client-secret',
+        });
+        await introspectHandler(c);
+        return c;
+      }
+
+      it('answers with the protocol envelope only, never loading the profile, unless the tenant turns extended claims on', async () => {
+        const c = await introspectWithProfileAdapter();
+
+        expect(mockApplyIntrospectionIdentityMapping).not.toHaveBeenCalled();
+        const body = c.json.mock.calls[0][0] as Record<string, unknown>;
+        expect(body).toMatchObject({ active: true, sub: 'user-123', client_id: 'client-123' });
+        expect(body).not.toHaveProperty('authrim_elevation');
+        expect(body).not.toHaveProperty('email');
+      });
+
+      it('applies the Resource Server profile and mapping when the tenant turns extended claims on', async () => {
+        await introspectWithProfileAdapter(EXTENDED_CLAIMS_ON);
+
+        expect(mockApplyIntrospectionIdentityMapping).toHaveBeenCalledTimes(1);
+      });
     });
 
     it('should return active=false for invalid token format', async () => {

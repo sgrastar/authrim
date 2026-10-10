@@ -120,10 +120,36 @@ export const arSettings: Record<keyof typeof jaSettings, string> = {
 	'set.k.tokens.exchange_enabled.desc': 'يمكن للتطبيقات استبدال رمز تحمله برمز آخر (RFC 8693).',
 	'set.k.tokens.exchange_delegation_enabled': 'السماح بالتفويض',
 	'set.k.tokens.exchange_delegation_enabled.desc':
-		'يمكن للتطبيق الحصول على رمز لخدمة أخرى نيابةً عن شخص.',
+		'يمكن للتطبيق الحصول على رمز لخدمة أخرى نيابةً عن شخص. ما دام هذا الخيار متوقفًا، تُرفض عملية تبادل الرموز للتطبيقات في وضع التفويض (الافتراضي). ويمكن لوضع التفويض الخاص بكل تطبيق تقييده أكثر.',
 	'set.k.tokens.exchange_impersonation_enabled': 'السماح بانتحال الهوية',
 	'set.k.tokens.exchange_impersonation_enabled.desc':
-		'يمكن للتطبيق الحصول على رمز يتصرف بصفته الشخص نفسه.',
+		'يمكن للتطبيق الحصول على رمز يتصرف بصفته الشخص نفسه. ما دام هذا الخيار متوقفًا، تُرفض عملية تبادل الرموز للتطبيقات في وضع انتحال الهوية. له أثر أمني كبير، فلا تفعّله إلا عند الحاجة.',
+	'set.page.protection': 'الحماية من الهجمات',
+	'set.page.protection.desc':
+		'تمنع إساءة استخدام رسائل البريد الإلكتروني الخاصة بتسجيل الدخول والتسجيل.',
+	'set.section.emailSending': 'حد إرسال البريد الإلكتروني',
+	'set.section.emailSending.desc':
+		'يحدّ من عدد مرات إرسال رسائل مثل رموز تسجيل الدخول إلى المستلم نفسه تباعًا، حتى لا تُستخدم في إرسال رسائل مزعجة.',
+	'set.k.rate_limit.email_max_requests': 'عدد مرات الإرسال المسموح في الفترة',
+	'set.k.rate_limit.email_max_requests.desc':
+		'عدد رموز تسجيل الدخول والتسجيل وإعادة المصادقة وترحيل الدليل التي يمكن إرسالها إلى عنوان البريد الإلكتروني نفسه (أو المستخدم نفسه). لرموز اكتشاف الحساب حدّ مستقل.',
+	'set.k.rate_limit.email_window': 'الفترة التي يُحتسب فيها الإرسال',
+	'set.k.rate_limit.email_window.desc':
+		'الفترة التي يُحتسب فيها العدد أعلاه (من 5 إلى 60 دقيقة). بعد انقضائها يُسمح بالإرسال من جديد.',
+	'set.section.introspection': 'فحص الرموز (Introspection)',
+	'set.section.introspection.desc': 'الإجابة التي يتلقاها خادم الموارد عندما يسأل عن صلاحية رمز.',
+	'set.k.tokens.introspection_extended_claims': 'إرجاع المطالبات الإضافية لكل خادم موارد',
+	'set.k.tokens.introspection_extended_claims.desc':
+		'متوقف: تحتوي الإجابة على المطالبات الأساسية فقط (active وscope وclient_id وsub وexp وما شابه) ولا يُستخدم ملف تعريف خادم الموارد ولا تعيين الهوية. مفعّل: تُضاف المطالبات التي يسمح بها ملف تعريفه.',
+	'set.section.scim': 'توفير SCIM',
+	'set.section.scim.desc': 'الرموز التي تستخدمها الأنظمة الخارجية لمزامنة المستخدمين عبر SCIM.',
+	'set.section.scim.advanced': 'أطول مدة صلاحية مسموحة',
+	'set.k.federation.scim_token_default_expiry': 'مدة صلاحية رمز SCIM الافتراضية',
+	'set.k.federation.scim_token_default_expiry.desc':
+		'مدة صلاحية رمز SCIM عند إنشائه دون تحديد مدة. لا تتجاوز الحد الأقصى أبدًا. لا تتغير الرموز الصادرة سابقًا.',
+	'set.k.federation.scim_token_max_expiry': 'أطول مدة صلاحية لرمز SCIM',
+	'set.k.federation.scim_token_max_expiry.desc':
+		'لا يمكن إنشاء رمز SCIM بمدة أطول من ذلك (سنة واحدة كحد أقصى). لا تتغير الرموز الصادرة سابقًا.',
 	'set.k.oauth.id_token_signing_alg.RS256': 'RS256',
 	'set.k.oauth.id_token_signing_alg.ES256': 'ES256',
 	'set.k.oauth.id_token_signing_alg.PS256': 'PS256',
@@ -175,6 +201,9 @@ export const arSettings: Record<keyof typeof jaSettings, string> = {
 	'settings.notice.fapi.title': 'تنطبق متطلبات FAPI 2.0',
 	'settings.notice.fapi.body':
 		'تُرفض الطلبات التي لا يسمح بها FAPI 2.0، مثل طلبات التفويض بدون PAR، لذا قد تتوقف التطبيقات التي لا تدعم FAPI عن العمل. يظل الاكتشاف يعمل وفق المواصفة.',
+	'settings.notice.exchangeCeilings.title': 'ستُرفض عملية تبادل الرموز لبعض التطبيقات',
+	'settings.notice.exchangeCeilings.body':
+		'تبادل الرموز مفعّل لكن التفويض غير مسموح، لذا تُرفض التطبيقات في وضع التفويض (الافتراضي للتطبيقات الجديدة). فعّل «السماح بالتفويض» لتتمكن من استخدامه.',
 	'settings.value.on': 'مفعّل',
 	'settings.value.off': 'متوقف',
 	'settings.value.empty': '(لا شيء)',

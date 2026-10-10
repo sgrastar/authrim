@@ -2068,6 +2068,44 @@ describe('Direct Auth primary passkey and email-code flows', () => {
     );
   });
 
+  it.each([
+    [
+      "the tenant's email send limit",
+      { 'rate_limit.email_max_requests': 6, 'rate_limit.email_window': 1800 },
+      { windowSeconds: 1800, maxRequests: 6 },
+    ],
+    [
+      'the default limit for a value out of range',
+      { 'rate_limit.email_max_requests': 50, 'rate_limit.email_window': 10 },
+      { windowSeconds: 900, maxRequests: 3 },
+    ],
+  ])('counts email code sends against %s', async (_label, saved, expected) => {
+    const { directEmailCodeSendHandler } = await import('../direct-auth');
+    mocks.rateLimiter.incrementRpc.mockResolvedValueOnce({ allowed: false, retryAfter: 60 });
+
+    const response = await directEmailCodeSendHandler(
+      enableEmailOtp(
+        createContext(
+          {
+            client_id: 'web-client',
+            email: 'new@example.com',
+            code_challenge: 'email-pkce-challenge',
+            code_challenge_method: 'S256',
+            channel: 'browser',
+          },
+          webHeaders()
+        ),
+        { 'settings:tenant:tenant_test:rate-limit': JSON.stringify(saved) }
+      ) as never
+    );
+
+    expect(response.status).toBe(429);
+    expect(mocks.rateLimiter.incrementRpc).toHaveBeenCalledWith(
+      'direct_email_code:new@example.com',
+      expected
+    );
+  });
+
   it('sends an email code for a new user and stores a hashed one-time challenge', async () => {
     const { directEmailCodeSendHandler } = await import('../direct-auth');
 

@@ -31,6 +31,7 @@ import {
   withLoginMethodRemovalLock,
   CREDENTIALS_SETTINGS_META,
   resolveEmailCodeTtlSeconds,
+  resolveEmailSendLimit,
 } from '@authrim/ar-lib-core';
 import { resolveAaguidAuthenticator } from '@authrim/ar-lib-core/webauthn/aaguid-metadata';
 import { requireAccountSession, type AccountSession } from './account-page';
@@ -771,12 +772,14 @@ export async function sendAccountEmailCodeReauthHandler(
     );
   }
 
+  // The tenant's email send limit (rate_limit.email_max_requests per rate_limit.email_window).
+  const emailSendLimit = await resolveEmailSendLimit(c.env, tenantId);
   const rateLimiter = c.env.RATE_LIMITER.get(
     c.env.RATE_LIMITER.idFromName(buildDOKey('rate-limit', 'account-email-reauth', tenantId))
   );
   const rateLimitResult = await rateLimiter.incrementRpc(`send:${accountSession.userId}`, {
-    windowSeconds: 15 * 60,
-    maxRequests: 3,
+    windowSeconds: emailSendLimit.windowSeconds,
+    maxRequests: emailSendLimit.maxRequests,
   });
   if (!rateLimitResult.allowed) {
     return c.json(

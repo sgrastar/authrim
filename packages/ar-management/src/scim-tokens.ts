@@ -13,16 +13,18 @@ import {
   createAuditLogFromContext,
   getLogger,
   getTenantIdFromContext,
+  resolveScimTokenExpiryDays,
+  type ScimTokenExpiryDays,
 } from '@authrim/ar-lib-core';
 
 /**
- * Validation constraints for SCIM token creation
+ * Validation constraints for SCIM token creation. The lifetime's default and maximum are the
+ * tenant's (federation.scim_token_default_expiry and federation.scim_token_max_expiry, one year
+ * at most).
  */
 const SCIM_TOKEN_VALIDATION = {
-  // Token expiry: minimum 1 day, maximum 10 years (3650 days)
+  // Token expiry: minimum 1 day
   EXPIRES_IN_DAYS_MIN: 1,
-  EXPIRES_IN_DAYS_MAX: 3650,
-  EXPIRES_IN_DAYS_DEFAULT: 365,
   // Description: maximum 256 characters
   DESCRIPTION_MAX_LENGTH: 256,
   DESCRIPTION_DEFAULT: 'SCIM provisioning token',
@@ -31,7 +33,10 @@ const SCIM_TOKEN_VALIDATION = {
 /**
  * Validates and sanitizes SCIM token creation input
  */
-function validateScimTokenInput(body: { description?: unknown; expiresInDays?: unknown }): {
+function validateScimTokenInput(
+  body: { description?: unknown; expiresInDays?: unknown },
+  expiry: ScimTokenExpiryDays
+): {
   valid: boolean;
   errors: string[];
   sanitized: { description: string; expiresInDays: number };
@@ -39,26 +44,24 @@ function validateScimTokenInput(body: { description?: unknown; expiresInDays?: u
   const errors: string[] = [];
 
   // Validate expiresInDays
-  let expiresInDays = SCIM_TOKEN_VALIDATION.EXPIRES_IN_DAYS_DEFAULT;
+  let expiresInDays = expiry.defaultDays;
 
   if (body.expiresInDays !== undefined && body.expiresInDays !== null) {
-    const expiry = body.expiresInDays;
+    const requested = body.expiresInDays;
 
     // Check if it's a valid number
-    if (typeof expiry !== 'number' || !Number.isFinite(expiry)) {
+    if (typeof requested !== 'number' || !Number.isFinite(requested)) {
       errors.push('expiresInDays must be a valid number');
-    } else if (!Number.isInteger(expiry)) {
+    } else if (!Number.isInteger(requested)) {
       errors.push('expiresInDays must be an integer');
-    } else if (expiry < SCIM_TOKEN_VALIDATION.EXPIRES_IN_DAYS_MIN) {
+    } else if (requested < SCIM_TOKEN_VALIDATION.EXPIRES_IN_DAYS_MIN) {
       errors.push(
         `expiresInDays must be at least ${SCIM_TOKEN_VALIDATION.EXPIRES_IN_DAYS_MIN} day(s)`
       );
-    } else if (expiry > SCIM_TOKEN_VALIDATION.EXPIRES_IN_DAYS_MAX) {
-      errors.push(
-        `expiresInDays must not exceed ${SCIM_TOKEN_VALIDATION.EXPIRES_IN_DAYS_MAX} days (10 years)`
-      );
+    } else if (requested > expiry.maxDays) {
+      errors.push(`expiresInDays must not exceed ${expiry.maxDays} days`);
     } else {
-      expiresInDays = expiry;
+      expiresInDays = requested;
     }
   }
 
@@ -128,15 +131,20 @@ export async function adminScimTokenCreateHandler(c: Context<{ Bindings: Env }>)
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
 
+    const tenantId = getTenantIdFromContext(c);
+
+    // The tenant's default and maximum lifetime. Unreadable settings issue nothing (the catch
+    // below answers 500): a maximum that an outage lifted would allow a long-lived credential.
+    const expiry = await resolveScimTokenExpiryDays(c.env, tenantId);
+
     // Validate and sanitize input
-    const validation = validateScimTokenInput(body);
+    const validation = validateScimTokenInput(body, expiry);
 
     if (!validation.valid) {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
 
     const { description, expiresInDays } = validation.sanitized;
-    const tenantId = getTenantIdFromContext(c);
 
     const { token, tokenHash } = await generateScimToken(c.env, {
       tenantId,
