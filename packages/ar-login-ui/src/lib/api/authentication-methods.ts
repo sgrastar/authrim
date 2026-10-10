@@ -293,9 +293,13 @@ export async function fetchAuthenticationMethodsForClient(
 
 			const result = data as AuthenticationMethodsResponse;
 
-			cachedResponse = result;
-			const expiry = Date.now() + (result.meta.cacheTTL || 180) * 1000;
-			cachedResponses.set(cacheKey, { response: result, expiry });
+			// A TTL of 0 is the server saying not to keep this answer (it is incomplete): neither the
+			// TTL cache nor the fallback for a failed request may hold it.
+			if (result.meta.cacheTTL !== 0) {
+				cachedResponse = result;
+				const expiry = Date.now() + (result.meta.cacheTTL ?? 180) * 1000;
+				cachedResponses.set(cacheKey, { response: result, expiry });
+			}
 
 			return { data: result };
 		} catch {

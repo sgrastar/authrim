@@ -275,9 +275,52 @@ export const PROTECTION: SettingsPageDef = {
 	]
 };
 
+/**
+ * Authentication → Enterprise SSO (SAML): whether the tenant answers SAML at all, how long what
+ * it issues and accepts stays valid, and the defaults a new SAML provider starts from. The
+ * Artifact binding settings (`federation.saml_artifact_*`) stay in the draft until that binding
+ * exists. Registering providers is still done in the previous Admin UI.
+ */
+export const ENTERPRISE_SAML: SettingsPageDef = {
+	id: 'enterprise',
+	nav: 'authentication/enterprise',
+	title: 'set.page.enterprise',
+	description: 'set.page.enterprise.desc',
+	sections: [
+		{
+			id: 'saml-service',
+			title: 'set.section.samlService',
+			description: 'set.section.samlService.desc',
+			settings: [{ key: 'federation.saml_enabled', depth: 'primary' }]
+		},
+		{
+			id: 'saml-lifetimes',
+			title: 'set.section.samlLifetimes',
+			description: 'set.section.samlLifetimes.desc',
+			advanced: 'set.section.samlLifetimes.advanced',
+			settings: [
+				{ key: 'federation.saml_assertion_ttl', depth: 'primary' },
+				{ key: 'federation.saml_request_ttl', depth: 'advanced' }
+			]
+		},
+		{
+			id: 'saml-provider-defaults',
+			title: 'set.section.samlProviderDefaults',
+			description: 'set.section.samlProviderDefaults.desc',
+			advanced: 'set.section.samlProviderDefaults.advanced',
+			settings: [
+				{ key: 'federation.saml_nameid_format', depth: 'primary' },
+				{ key: 'federation.saml_sso_binding', depth: 'advanced' },
+				{ key: 'federation.saml_slo_binding', depth: 'advanced' }
+			]
+		}
+	]
+};
+
 export const SETTINGS_PAGES: readonly SettingsPageDef[] = [
 	STAYING_SIGNED_IN,
 	PROTECTION,
+	ENTERPRISE_SAML,
 	SIGNING_KEYS,
 	APP_DEFAULTS
 ];

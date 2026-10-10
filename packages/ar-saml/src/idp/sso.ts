@@ -34,6 +34,8 @@ import {
   requireAdminDatabaseAdapter,
   resolveRuntimeIdentityMappingBinding,
   filterSamlAttributesByDestinationConsentWithStatus,
+  resolveSamlAssertionTtlSeconds,
+  resolveSamlRequestTtlSeconds,
 } from '@authrim/ar-lib-core';
 import {
   parseSAMLXml,
@@ -138,6 +140,7 @@ export async function handleIdPSSO(c: Context<{ Bindings: Env }>): Promise<Respo
   const log = getLogger(c).module('SAML-IDP');
   const tenantId = resolveSAMLTenantIdFromContext(c);
   const { issuerUrl, idpEntityId } = await getSAMLLocalEntityIds(env, tenantId);
+  const requestTtlSeconds = await resolveSamlRequestTtlSeconds(env, tenantId);
 
   try {
     // Parse AuthnRequest based on binding
@@ -155,7 +158,7 @@ export async function handleIdPSSO(c: Context<{ Bindings: Env }>): Promise<Respo
     const { relayState } = parsedInput;
 
     // Validate AuthnRequest
-    await validateAuthnRequest(authnRequest, issuerUrl);
+    await validateAuthnRequest(authnRequest, issuerUrl, requestTtlSeconds);
 
     // Get SP configuration
     const spConfig = await getSPConfig(env, tenantId, authnRequest.issuer);
@@ -193,7 +196,7 @@ export async function handleIdPSSO(c: Context<{ Bindings: Env }>): Promise<Respo
             );
           }
           authnRequest = authenticatedRequest;
-          await validateAuthnRequest(authnRequest, issuerUrl);
+          await validateAuthnRequest(authnRequest, issuerUrl, requestTtlSeconds);
         }
       }
       validateSAMLResponseProtocolBinding(authnRequest);
@@ -574,6 +577,7 @@ export async function handleIdPAttributeReleaseConsent(
   const log = getLogger(c).module('SAML-IDP');
   const tenantId = resolveSAMLTenantIdFromContext(c);
   const { issuerUrl, idpEntityId } = await getSAMLLocalEntityIds(env, tenantId);
+  const requestTtlSeconds = await resolveSamlRequestTtlSeconds(env, tenantId);
 
   try {
     const authSession = await checkUserAuthentication(c, env);
@@ -620,7 +624,7 @@ export async function handleIdPAttributeReleaseConsent(
       challenge.destinationType !== 'saml_sp' ||
       challenge.destinationId !== spEntityId ||
       challenge.attributeSetHash !== attributeSetHash ||
-      Date.now() - challenge.createdAt > DEFAULTS.REQUEST_VALIDITY_SECONDS * 1000
+      Date.now() - challenge.createdAt > requestTtlSeconds * 1000
     ) {
       return createErrorResponse(
         c,
@@ -1143,7 +1147,8 @@ export function parseAuthnRequestXml(xml: string): SAMLAuthnRequest {
  */
 async function validateAuthnRequest(
   authnRequest: SAMLAuthnRequest,
-  issuerUrl: string
+  issuerUrl: string,
+  requestTtlSeconds: number
 ): Promise<void> {
   // Check request is not expired (allow clock skew)
   const issueInstantMs = Date.parse(authnRequest.issueInstant);
@@ -1152,7 +1157,7 @@ async function validateAuthnRequest(
   }
   const nowMs = Date.now();
   const skewMs = DEFAULTS.CLOCK_SKEW_SECONDS * 1000;
-  const maxAge = DEFAULTS.REQUEST_VALIDITY_SECONDS * 1000;
+  const maxAge = requestTtlSeconds * 1000;
 
   if (issueInstantMs > nowMs + skewMs) {
     throw new Error('AuthnRequest IssueInstant is in the future');
@@ -1242,6 +1247,7 @@ async function storeAuthnRequest(
   relayState?: string,
   context?: SAMLRequestContext
 ): Promise<void> {
+  const requestTtlSeconds = await resolveSamlRequestTtlSeconds(env, tenantId);
   const samlRequestStoreId = env.SAML_REQUEST_STORE.idFromName(
     buildSAMLRequestStoreInstanceName(tenantId, 'idp', authnRequest.issuer)
   );
@@ -1261,7 +1267,7 @@ async function storeAuthnRequest(
       relayState,
       context,
       used: false,
-      expiresAt: Date.now() + DEFAULTS.REQUEST_VALIDITY_SECONDS * 1000,
+      expiresAt: Date.now() + requestTtlSeconds * 1000,
     }),
   });
 }
@@ -1298,6 +1304,12 @@ async function generateSAMLResponse(
     providerPolicy: spConfig.signingKeyPolicy,
   });
 
+  // The service provider's own assertion lifetime, else the tenant's.
+  const assertionTtlSeconds = await resolveSamlAssertionTtlSeconds(
+    env,
+    tenantId,
+    spConfig.assertionValiditySeconds
+  );
   const nameIdFormat = resolveSAMLNameIDFormat(authnRequest, spConfig);
   const pairwiseSecret = await resolveSAMLPairwiseSecret(env, tenantId);
   const persistentRegistry = resolveSAMLPersistentNameIDRegistryStore(env);
@@ -1308,7 +1320,7 @@ async function generateSAMLResponse(
     persistentRegistry,
     allowCreate: authnRequest.nameIdPolicy?.allowCreate ?? true,
     transientStore: resolveSAMLTransientNameIDStore(env),
-    transientTtlSeconds: spConfig.assertionValiditySeconds || DEFAULTS.ASSERTION_VALIDITY_SECONDS,
+    transientTtlSeconds: assertionTtlSeconds,
     sessionId: authSession.sessionId,
   });
 
@@ -1406,8 +1418,7 @@ async function generateSAMLResponse(
     },
   });
   const timing = buildSAMLAssertionTiming({
-    assertionValiditySeconds:
-      spConfig.assertionValiditySeconds || DEFAULTS.ASSERTION_VALIDITY_SECONDS,
+    assertionValiditySeconds: assertionTtlSeconds,
   });
 
   // Build SAML Response

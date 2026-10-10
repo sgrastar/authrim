@@ -31,6 +31,7 @@ import {
   loadClientContractCached,
   profileForTotpPreset,
   readAuthenticationMethodsCacheRevision,
+  resolveSamlEnabled,
   resolveAuthCorePersistenceAdapterFromEnv,
   SELF_SERVICE_DEFAULTS,
   VALIDATION_LIMITS,
@@ -826,7 +827,19 @@ function buildAuthenticationMethodsHeaders(input: {
   cacheTTL: number;
   edgeCacheTTL: number;
   cacheStatus: AuthenticationMethodsCacheStatus;
+  /** Made without part of the answer (the SAML switch could not be read): kept nowhere. */
+  degraded?: boolean;
 }): Headers {
+  if (input.degraded) {
+    // no-store is what the router and the CDN honour; no Cache-Tag, so nothing is tagged to keep.
+    return new Headers({
+      'Content-Type': 'application/json',
+      'Cache-Control': 'no-store',
+      'Cloudflare-CDN-Cache-Control': 'no-store',
+      'X-Authrim-Authentication-Methods-Cache': input.cacheStatus,
+      'X-Authrim-Authentication-Methods-Client-TTL': '0',
+    });
+  }
   const headers = new Headers({
     'Content-Type': 'application/json',
     'Cache-Control': `public, max-age=${input.cacheTTL}`,
@@ -845,11 +858,18 @@ function buildAuthenticationMethodsJsonResponse(
   body: AuthenticationMethodsResponse,
   cacheTTL: number,
   edgeCacheTTL: number,
-  cacheStatus: AuthenticationMethodsCacheStatus
+  cacheStatus: AuthenticationMethodsCacheStatus,
+  degraded = false
 ): Response {
   return new Response(JSON.stringify(body), {
     status: 200,
-    headers: buildAuthenticationMethodsHeaders({ tenantId, cacheTTL, edgeCacheTTL, cacheStatus }),
+    headers: buildAuthenticationMethodsHeaders({
+      tenantId,
+      cacheTTL,
+      edgeCacheTTL,
+      cacheStatus,
+      degraded,
+    }),
   });
 }
 
@@ -1561,6 +1581,34 @@ async function fetchExternalLoginProviders(
   } catch {
     return [];
   }
+}
+
+/**
+ * Whether the tenant answers SAML (`federation.saml_enabled`). While it does not, the SAML
+ * endpoints refuse every request, so no SAML sign-in is offered. When the switch cannot be read
+ * none is offered either (the endpoints refuse then too), and `unreadable` keeps the caller from
+ * caching that answer.
+ */
+async function readSAMLLoginAvailability(
+  env: Env,
+  tenantId: string
+): Promise<{ enabled: boolean; unreadable: boolean }> {
+  try {
+    // Read fresh: this answer is kept for a long time under the current revision, so it must not
+    // come from the settings cache of this isolate, which can still hold the value from before a change.
+    return { enabled: await resolveSamlEnabled(env, tenantId, { fresh: true }), unreadable: false };
+  } catch {
+    return { enabled: false, unreadable: true };
+  }
+}
+
+/** Providers that start a SAML sign-in, however they were registered. */
+function isSAMLLoginProvider(provider: ExternalLoginProvider): boolean {
+  return (
+    provider.type === 'saml' ||
+    provider.startMode === 'saml_sp' ||
+    (provider.startUrl ?? '').toLowerCase().startsWith('/saml/')
+  );
 }
 
 async function fetchSAMLLoginProviders(
@@ -2357,12 +2405,14 @@ export async function getAuthenticationMethodsHandler(c: Context<{ Bindings: Env
       'settings_read',
       () => readAuthenticationMethodKVSettings(env, tenantId)
     );
+    const samlAvailabilityPromise = readSAMLLoginAvailability(env, tenantId);
     const bridgeProvidersPromise = shouldFetchExternalLoginProviders(authenticationMethodSettings)
       ? fetchExternalLoginProviders(env, tenantId, c.req.raw)
       : Promise.resolve([]);
 
     // Fetch data in parallel
     const [
+      samlAvailability,
       bridgeProviders,
       samlProviders,
       configuredProviders,
@@ -2371,16 +2421,26 @@ export async function getAuthenticationMethodsHandler(c: Context<{ Bindings: Env
       externalProviderUsage,
     ] = await measureAuthenticationMethodsTiming(timing, 'fanout', () =>
       Promise.all([
+        samlAvailabilityPromise,
         bridgeProvidersPromise,
-        fetchSAMLLoginProviders(env, tenantId),
+        samlAvailabilityPromise.then(({ enabled }) =>
+          enabled ? fetchSAMLLoginProviders(env, tenantId) : []
+        ),
         fetchConfiguredExternalLoginProviders(env, tenantId),
         resolveDirectoryPasswordMethod(env, tenantId),
         resolveHumanVerificationMethod(env, tenantId),
         resolveExternalProviderUsage(env, tenantId),
       ])
     );
+    const mergedProviders = mergeExternalLoginProviders([
+      bridgeProviders,
+      samlProviders,
+      configuredProviders,
+    ]);
     const externalProviders = applyExternalProviderUsage(
-      mergeExternalLoginProviders([bridgeProviders, samlProviders, configuredProviders]),
+      samlAvailability.enabled
+        ? mergedProviders
+        : mergedProviders.filter((provider) => !isSAMLLoginProvider(provider)),
       externalProviderUsage
     );
 
@@ -2513,7 +2573,7 @@ export async function getAuthenticationMethodsHandler(c: Context<{ Bindings: Env
       methods,
       ui,
       meta: {
-        cacheTTL,
+        cacheTTL: samlAvailability.unreadable ? 0 : cacheTTL,
         revision: new Date().toISOString(),
       },
     };
@@ -2521,11 +2581,13 @@ export async function getAuthenticationMethodsHandler(c: Context<{ Bindings: Env
     const httpResponse = buildAuthenticationMethodsJsonResponse(
       tenantId,
       response,
-      cacheTTL,
+      samlAvailability.unreadable ? 0 : cacheTTL,
       edgeCacheTTL,
-      edgeCacheRequest ? 'miss' : 'bypass'
+      edgeCacheRequest ? 'miss' : 'bypass',
+      samlAvailability.unreadable
     );
-    if (edgeCache && edgeCacheRequest && edgeCacheTTL > 0) {
+    // An answer made without the SAML switch is not kept: it would hide SAML until the cache expires.
+    if (edgeCache && edgeCacheRequest && edgeCacheTTL > 0 && !samlAvailability.unreadable) {
       await measureAuthenticationMethodsTiming(timing, 'cache_put', () =>
         putAuthenticationMethodsEdgeCache(
           c,

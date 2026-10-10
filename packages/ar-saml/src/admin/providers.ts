@@ -37,6 +37,7 @@ import type {
   SAMLCertificateValidationSummary,
   SAMLJitEmailLinkingPolicy,
   NameIDFormat,
+  SamlProvisioningDefaults,
 } from '@authrim/ar-lib-core';
 import {
   ADMIN_PERMISSIONS,
@@ -58,6 +59,7 @@ import {
   hasAdminPermission,
   bumpAuthenticationMethodsCacheRevision,
   readRequestJsonWithLimit,
+  resolveSamlProvisioningDefaults,
 } from '@authrim/ar-lib-core';
 import {
   parseXml,
@@ -75,7 +77,8 @@ import {
 } from '../idp/attribute-presets';
 import { normalizeAttributeReleaseConsentPolicy } from '../idp/attribute-release-consent';
 import { SAMLMetadataValidationError } from './errors';
-import { applySAMLSPProfileDefaults } from './profile-defaults';
+import { applySAMLSPProfileDefaults, SAML_SP_PROFILE_DEFAULTS } from './profile-defaults';
+import { fillSAMLProviderProvisioningDefaults } from './provisioning-defaults';
 import {
   analyzeSAMLMetadata,
   buildSAMLMetadataRefreshStatus,
@@ -1389,7 +1392,8 @@ export async function handlePreviewMetadata(c: AdminSAMLContext): Promise<Respon
         providerType,
         resolvedMetadata.metadataXml,
         body.samlProfile,
-        body.attributePresetId
+        body.attributePresetId,
+        await resolveSamlProvisioningDefaults(c.env, resolveSAMLTenantIdFromContext(c))
       );
     } catch (error) {
       throw toSAMLMetadataValidationError(error);
@@ -1631,8 +1635,14 @@ export async function handleCreateProvider(c: AdminSAMLContext): Promise<Respons
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
 
+    // What the metadata, the request and the profile leave open comes from the tenant's defaults.
+    const provisioningDefaults = await resolveSamlProvisioningDefaults(
+      c.env,
+      resolveSAMLTenantIdFromContext(c)
+    );
     let metadataDerivedConfig: SAMLIdPConfig | SAMLSPConfig | undefined;
     let metadataDerivedFields: SAMLMetadataConfigFields | undefined;
+    let requestedConfig = body.config;
 
     if (hasMetadataInput) {
       const resolvedMetadata = await resolveMetadataImportInput(c, body, {
@@ -1648,12 +1658,19 @@ export async function handleCreateProvider(c: AdminSAMLContext): Promise<Respons
       }
 
       try {
+        requestedConfig = reconcileRequestedBindings(
+          body.providerType,
+          requestedConfig,
+          resolvedMetadata.metadataXml
+        );
         metadataDerivedConfig = buildConfigFromMetadata(
           body.providerType,
           resolvedMetadata.metadataXml,
           body.samlProfile,
-          body.attributePresetId
+          body.attributePresetId,
+          defaultsForRequestedBindings(body.providerType, requestedConfig, provisioningDefaults)
         );
+        assertRequestedSloBindingMatches(body.providerType, requestedConfig, metadataDerivedConfig);
       } catch (error) {
         throw new SAMLMetadataValidationError(
           error instanceof Error ? error.message : 'Invalid SAML metadata'
@@ -1674,11 +1691,15 @@ export async function handleCreateProvider(c: AdminSAMLContext): Promise<Respons
       };
     }
 
-    const config = {
-      ...(metadataDerivedConfig ?? {}),
-      ...(body.config ?? {}),
-      ...(metadataDerivedFields ?? {}),
-    } as SAMLIdPConfig | SAMLSPConfig;
+    const config = fillSAMLProviderProvisioningDefaults(
+      body.providerType,
+      {
+        ...(metadataDerivedConfig ?? {}),
+        ...(requestedConfig ?? {}),
+        ...(metadataDerivedFields ?? {}),
+      } as SAMLIdPConfig | SAMLSPConfig,
+      provisioningDefaults
+    );
     if (!hasMetadataInput && config.metadataRefreshPolicy) {
       config.metadataRefreshPolicy = {
         mode: config.metadataRefreshPolicy.mode,
@@ -2167,7 +2188,8 @@ export async function handleImportMetadata(c: AdminSAMLContext): Promise<Respons
         existing.provider_type,
         resolvedMetadata.metadataXml,
         body.samlProfile,
-        body.attributePresetId
+        body.attributePresetId,
+        await resolveSamlProvisioningDefaults(c.env, tenantId)
       );
     } catch (error) {
       throw new SAMLMetadataValidationError(
@@ -2511,7 +2533,13 @@ export async function handleRefreshMetadata(c: AdminSAMLContext): Promise<Respon
       existing.provider_type === 'saml_sp'
         ? (existingConfig as SAMLSPConfig).samlProfile
         : undefined;
-    const refreshedConfig = buildConfigFromMetadata(existing.provider_type, metadataXml, profile);
+    const refreshedConfig = buildConfigFromMetadata(
+      existing.provider_type,
+      metadataXml,
+      profile,
+      undefined,
+      defaultsOfRegisteredProvider(existing.provider_type, existingConfig, metadataXml)
+    );
     const restoreMetadataSuspension =
       existingConfig.metadataRefreshPolicy?.suspendedByMetadataSync === true;
     const mergedConfig = await withProviderCertificateValidation({
@@ -3069,17 +3097,175 @@ async function updateProviderSigningPolicy(
   }
 }
 
+/**
+ * `defaults` are the NameID format and bindings for what the metadata leaves open. A provider
+ * being added or having metadata imported by an administrator gets the tenant's (see
+ * `defaultsForRequestedBindings`); a registered provider being refreshed keeps its own (see
+ * `defaultsOfRegisteredProvider`); one resolved at sign-in from federation metadata gets none.
+ */
 function buildConfigFromMetadata(
   providerType: string,
   metadataXml: string,
   profile?: SAMLSPProfile,
-  _attributePresetId?: SAMLAttributePresetId
+  _attributePresetId?: SAMLAttributePresetId,
+  defaults?: SamlProvisioningDefaults
 ): SAMLIdPConfig | SAMLSPConfig {
   if (providerType === 'saml_idp') {
-    return parseIdPMetadata(metadataXml);
+    return parseIdPMetadata(metadataXml, defaults);
   }
 
-  return applySAMLSPProfileDefaults(parseSPMetadata(metadataXml, profile), profile);
+  return applySAMLSPProfileDefaults(parseSPMetadata(metadataXml, profile, defaults), profile);
+}
+
+/**
+ * The tenant's defaults, adjusted to what the request already names: the binding the request
+ * lists in `allowedBindings` (identity providers) or `sloBinding` (service providers) decides
+ * which metadata endpoint is taken, so the URL and the binding the sign-in uses agree.
+ */
+function defaultsForRequestedBindings(
+  providerType: string,
+  requested: Partial<SAMLIdPConfig & SAMLSPConfig> | undefined,
+  tenantDefaults: SamlProvisioningDefaults
+): SamlProvisioningDefaults {
+  if (providerType === 'saml_idp' && Array.isArray(requested?.allowedBindings)) {
+    const bindings = requested.allowedBindings;
+    // Sign-in goes by Redirect whenever it is allowed (sp/login.ts), so that is the one to match.
+    if (bindings.includes('redirect')) return { ...tenantDefaults, ssoBinding: 'redirect' };
+    if (bindings.includes('post')) return { ...tenantDefaults, ssoBinding: 'post' };
+  }
+  if (
+    providerType === 'saml_sp' &&
+    (requested?.sloBinding === 'post' || requested?.sloBinding === 'redirect')
+  ) {
+    return { ...tenantDefaults, sloBinding: requested.sloBinding };
+  }
+  return tenantDefaults;
+}
+
+/**
+ * With metadata, the request's `allowedBindings` is read against what the metadata offers, so an
+ * identity provider never ends up with a binding that has no matching endpoint:
+ * - an empty list is unspecified (the metadata decides);
+ * - a list is narrowed to the bindings the metadata offers, and refused when none is offered.
+ * An explicit `ssoUrl` is the request's own choice and is left alone.
+ */
+function reconcileRequestedBindings<T extends Partial<SAMLIdPConfig & SAMLSPConfig> | undefined>(
+  providerType: string,
+  requested: T,
+  metadataXml: string
+): T {
+  if (providerType !== 'saml_idp' || !requested || !Array.isArray(requested.allowedBindings)) {
+    return requested;
+  }
+  const { allowedBindings, ...rest } = requested;
+  if (allowedBindings.length === 0) return rest as T;
+  if (requested.ssoUrl) return requested;
+  const offered = parseIdPMetadata(metadataXml).allowedBindings;
+  const usable = allowedBindings.filter((binding) => offered.includes(binding));
+  if (usable.length === 0) {
+    throw new SAMLMetadataValidationError(
+      'allowedBindings lists no binding that the metadata offers for single sign-on.'
+    );
+  }
+  return { ...requested, allowedBindings: usable };
+}
+
+/** A requested logout binding must be the one of the logout endpoint taken from the metadata. */
+function assertRequestedSloBindingMatches(
+  providerType: string,
+  requested: Partial<SAMLSPConfig> | undefined,
+  derived: SAMLIdPConfig | SAMLSPConfig
+): void {
+  if (providerType !== 'saml_sp' || !requested?.sloBinding || requested.sloUrl) return;
+  const { sloUrl, sloBinding } = derived as SAMLSPConfig;
+  if (sloUrl && sloBinding !== requested.sloBinding) {
+    throw new SAMLMetadataValidationError(
+      'sloBinding is not a logout binding that the metadata offers.'
+    );
+  }
+}
+
+/**
+ * Which logout binding a registered identity provider's `sloUrl` was taken from, read from the
+ * metadata it was registered from. This only recovers an earlier choice, so the metadata is read
+ * as it stands: no validity or signature checks (it may have expired since), and only the
+ * SingleLogoutService endpoints. Undefined when the URL is not there, or is offered under both
+ * bindings (the choice cannot be told).
+ */
+function registeredSloBinding(
+  metadataXml: string | undefined,
+  sloUrl: string
+): 'post' | 'redirect' | undefined {
+  if (!metadataXml) return undefined;
+  try {
+    const bindings = new Set<'post' | 'redirect'>();
+    for (const idp of findElements(parseXml(metadataXml), SAML_NAMESPACES.MD, 'IDPSSODescriptor')) {
+      for (const slo of findElements(idp, SAML_NAMESPACES.MD, 'SingleLogoutService')) {
+        if (getAttribute(slo, 'Location') !== sloUrl) continue;
+        const binding = getAttribute(slo, 'Binding');
+        if (binding === BINDING_URIS.HTTP_POST) bindings.add('post');
+        if (binding === BINDING_URIS.HTTP_REDIRECT) bindings.add('redirect');
+      }
+    }
+    return bindings.size === 1 ? [...bindings][0] : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * What a registered provider already has, as the defaults for refreshing it from its metadata:
+ * the NameID format and bindings stay unless the metadata now names a format or offers only one
+ * binding. Without this a refresh would fall back to the built-in defaults and undo what the
+ * tenant defaults gave the provider when it was registered.
+ */
+function defaultsOfRegisteredProvider(
+  providerType: string,
+  existing: SAMLIdPConfig | SAMLSPConfig,
+  metadataXml: string
+): SamlProvisioningDefaults {
+  const defaults: SamlProvisioningDefaults = {
+    ssoBinding: 'redirect',
+    sloBinding: 'redirect',
+    nameIdFormat: existing.nameIdFormat || NAMEID_FORMATS.EMAIL,
+  };
+  if (providerType === 'saml_sp') {
+    const { sloBinding } = existing as SAMLSPConfig;
+    return sloBinding === 'post' || sloBinding === 'redirect'
+      ? { ...defaults, sloBinding }
+      : defaults;
+  }
+
+  const { allowedBindings, sloUrl } = existing as SAMLIdPConfig;
+  const ssoBinding = Array.isArray(allowedBindings)
+    ? allowedBindings.includes('redirect')
+      ? 'redirect'
+      : allowedBindings.includes('post')
+        ? 'post'
+        : defaults.ssoBinding
+    : defaults.ssoBinding;
+  // An identity provider does not record its logout binding: read it from which endpoint of the
+  // metadata it was registered from (kept with it) it uses. The new metadata may have moved the
+  // endpoints, so that comes last.
+  let sloBinding = defaults.sloBinding;
+  const registered = sloUrl
+    ? registeredSloBinding((existing as SAMLIdPConfig).metadataXml, sloUrl)
+    : undefined;
+  if (registered) {
+    sloBinding = registered;
+  } else if (sloUrl) {
+    // No usable stored metadata: see which endpoint of the new metadata the URL still is.
+    try {
+      const sloUrlFor = (binding: 'post' | 'redirect') =>
+        parseIdPMetadata(metadataXml, { ...defaults, ssoBinding, sloBinding: binding }).sloUrl;
+      const postUrl = sloUrlFor('post');
+      const redirectUrl = sloUrlFor('redirect');
+      if (sloUrl === postUrl && sloUrl !== redirectUrl) sloBinding = 'post';
+    } catch {
+      // The new metadata is validated by the caller; nothing more to infer here.
+    }
+  }
+  return { ...defaults, ssoBinding, sloBinding };
 }
 
 export interface SAMLProviderMetadataRefreshResult {
@@ -3146,7 +3332,13 @@ export async function refreshSAMLProviderConfigFromMetadata(input: {
     input.providerType === 'saml_sp'
       ? (input.existingConfig as SAMLSPConfig).samlProfile
       : undefined;
-  const refreshedConfig = buildConfigFromMetadata(input.providerType, input.metadataXml, profile);
+  const refreshedConfig = buildConfigFromMetadata(
+    input.providerType,
+    input.metadataXml,
+    profile,
+    undefined,
+    defaultsOfRegisteredProvider(input.providerType, input.existingConfig, input.metadataXml)
+  );
   const config = await withProviderCertificateValidation({
     ...input.existingConfig,
     ...refreshedConfig,
@@ -3736,6 +3928,7 @@ async function processAggregateBatchCreate(
       );
       if (!previewTrustStillCurrent) throw new Error('Aggregate preview trust context changed');
     }
+    const provisioningDefaults = await resolveSamlProvisioningDefaults(env, input.tenantId);
     const coreAdapter = await resolveAuthCorePersistenceAdapterFromEnv(env, 'core', {
       tenantId: input.tenantId,
     });
@@ -3782,7 +3975,8 @@ async function processAggregateBatchCreate(
           providerType,
           metadataXml,
           input.samlProfile,
-          input.attributePresetId
+          input.attributePresetId,
+          provisioningDefaults
         );
         const configWithMapping = {
           ...metadataConfig,
@@ -3968,7 +4162,7 @@ function buildProviderNameFromEntity(
 /**
  * Parse IdP metadata XML
  */
-export function parseIdPMetadata(xml: string): SAMLIdPConfig {
+export function parseIdPMetadata(xml: string, defaults?: SamlProvisioningDefaults): SAMLIdPConfig {
   const doc = parseXml(xml);
 
   // Find IDPSSODescriptor
@@ -3994,8 +4188,9 @@ export function parseIdPMetadata(xml: string): SAMLIdPConfig {
     throw new Error('Invalid metadata: missing IDPSSODescriptor');
   }
 
-  // Get SSO URL. SP-initiated login signs AuthnRequest with HTTP-Redirect,
-  // so prefer the Redirect endpoint when metadata publishes both bindings.
+  // Get SSO URL. SP-initiated login signs AuthnRequest with HTTP-Redirect, so the Redirect
+  // endpoint is preferred when metadata publishes both bindings, unless the tenant's default
+  // (federation.saml_sso_binding) asks for POST.
   const ssoServices = findElements(idpDescriptor, SAML_NAMESPACES.MD, 'SingleSignOnService');
   let postSsoUrl = '';
   let redirectSsoUrl = '';
@@ -4014,25 +4209,35 @@ export function parseIdPMetadata(xml: string): SAMLIdPConfig {
     }
   }
 
-  const ssoUrl = redirectSsoUrl || postSsoUrl;
+  const preferPostSso = defaults?.ssoBinding === 'post' && postSsoUrl !== '';
+  const ssoUrl = preferPostSso ? postSsoUrl : redirectSsoUrl || postSsoUrl;
   if (!ssoUrl) {
     throw new Error('Invalid metadata: no supported SSO binding found');
   }
+  if (preferPostSso && allowedBindings.includes('redirect')) {
+    // Sign-in is sent by POST; leaving Redirect in would send it to the POST endpoint.
+    allowedBindings.splice(0, allowedBindings.length, 'post');
+  }
 
-  // Get SLO URL (optional)
+  // Get SLO URL (optional). Redirect is preferred unless the tenant's default
+  // (federation.saml_slo_binding) asks for POST.
   const sloServices = findElements(idpDescriptor, SAML_NAMESPACES.MD, 'SingleLogoutService');
-  let sloUrl: string | undefined;
+  let redirectSloUrl: string | undefined;
+  let postSloUrl: string | undefined;
 
   for (const slo of sloServices) {
     const binding = getAttribute(slo, 'Binding');
     if (binding === BINDING_URIS.HTTP_REDIRECT) {
-      sloUrl = getAttribute(slo, 'Location') || undefined;
-      break;
+      redirectSloUrl = redirectSloUrl || getAttribute(slo, 'Location') || undefined;
     }
     if (binding === BINDING_URIS.HTTP_POST) {
-      sloUrl = sloUrl || getAttribute(slo, 'Location') || undefined;
+      postSloUrl = postSloUrl || getAttribute(slo, 'Location') || undefined;
     }
   }
+  const sloUrl =
+    defaults?.sloBinding === 'post'
+      ? (postSloUrl ?? redirectSloUrl)
+      : (redirectSloUrl ?? postSloUrl);
 
   // Get certificate
   const keyDescriptors = findElements(idpDescriptor, SAML_NAMESPACES.MD, 'KeyDescriptor');
@@ -4058,10 +4263,11 @@ export function parseIdPMetadata(xml: string): SAMLIdPConfig {
 
   // Get NameID formats
   const nameIdFormats = findElements(idpDescriptor, SAML_NAMESPACES.MD, 'NameIDFormat');
+  const fallbackNameIdFormat = defaults?.nameIdFormat ?? NAMEID_FORMATS.EMAIL;
   const nameIdFormat =
     nameIdFormats.length > 0
-      ? (getTextContent(nameIdFormats[0]) as SAMLIdPConfig['nameIdFormat']) || NAMEID_FORMATS.EMAIL
-      : NAMEID_FORMATS.EMAIL;
+      ? (getTextContent(nameIdFormats[0]) as SAMLIdPConfig['nameIdFormat']) || fallbackNameIdFormat
+      : fallbackNameIdFormat;
 
   return {
     entityId,
@@ -4079,7 +4285,11 @@ export function parseIdPMetadata(xml: string): SAMLIdPConfig {
 /**
  * Parse SP metadata XML
  */
-export function parseSPMetadata(xml: string, profile?: SAMLSPProfile): SAMLSPConfig {
+export function parseSPMetadata(
+  xml: string,
+  profile?: SAMLSPProfile,
+  defaults?: SamlProvisioningDefaults
+): SAMLSPConfig {
   const doc = parseXml(xml);
 
   // Find SPSSODescriptor
@@ -4159,7 +4369,7 @@ export function parseSPMetadata(xml: string, profile?: SAMLSPProfile): SAMLSPCon
 
   // Get SLO URL (optional)
   const sloServices = findElements(spDescriptor, SAML_NAMESPACES.MD, 'SingleLogoutService');
-  const selectedSloService = selectSPMetadataSLOService(sloServices, profile);
+  const selectedSloService = selectSPMetadataSLOService(sloServices, profile, defaults?.sloBinding);
 
   // Get signing/encryption certificates (optional for SP)
   const certificates: string[] = [];
@@ -4191,7 +4401,7 @@ export function parseSPMetadata(xml: string, profile?: SAMLSPProfile): SAMLSPCon
 
   // Get NameID formats
   const metadataNameIdFormats = parseMetadataNameIDFormats(spDescriptor);
-  const nameIdFormat = metadataNameIdFormats[0] ?? NAMEID_FORMATS.EMAIL;
+  const nameIdFormat = metadataNameIdFormats[0] ?? defaults?.nameIdFormat ?? NAMEID_FORMATS.EMAIL;
   const metadataRequestedAttributes = parseSPMetadataRequestedAttributes(spDescriptor);
   const metadataAttributeReleasePolicySuggestion = buildAttributeReleasePolicySuggestion(
     metadataRequestedAttributes
@@ -4380,7 +4590,8 @@ function deduplicateAcsServices(
 
 function selectSPMetadataSLOService(
   sloServices: Element[],
-  profile: SAMLSPProfile | undefined
+  profile: SAMLSPProfile | undefined,
+  tenantSloBinding: 'post' | 'redirect' | undefined
 ):
   | {
       binding: Extract<SAMLSPConfig['allowedBindings'][number], 'post' | 'redirect'>;
@@ -4414,8 +4625,13 @@ function selectSPMetadataSLOService(
       metadataBinding: service.binding,
     }));
 
+  // The profile's own preference first (legacy: POST), then the tenant's default, then Redirect.
+  const preferredBindingKind =
+    (profile ? SAML_SP_PROFILE_DEFAULTS[profile]?.sloBinding : undefined) ??
+    tenantSloBinding ??
+    'redirect';
   const preferredBinding =
-    profile === 'legacy' ? BINDING_URIS.HTTP_POST : BINDING_URIS.HTTP_REDIRECT;
+    preferredBindingKind === 'post' ? BINDING_URIS.HTTP_POST : BINDING_URIS.HTTP_REDIRECT;
   const fallbackBinding =
     preferredBinding === BINDING_URIS.HTTP_POST
       ? BINDING_URIS.HTTP_REDIRECT

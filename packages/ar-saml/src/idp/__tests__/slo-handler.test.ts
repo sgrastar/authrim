@@ -22,6 +22,8 @@ const mocks = vi.hoisted(() => ({
   storeOutbound: vi.fn(async () => undefined),
   markSent: vi.fn(async () => undefined),
   markCompleted: vi.fn(async () => undefined),
+  federation: null as Record<string, unknown> | null,
+  createFanout: vi.fn(),
 }));
 
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
@@ -119,14 +121,18 @@ vi.mock('../slo-state', async (importOriginal) => {
           sessionIndex?: string;
           relayState?: string;
           targets: string[];
+          ttlSeconds?: number;
         }
-      ) => ({
-        transactionId: input.transactionId ?? 'transaction-id',
-        userId: input.userId,
-        sessionIndex: input.sessionIndex,
-        relayState: input.relayState,
-        targets: input.targets.map((spEntityId) => ({ spEntityId, status: 'pending' })),
-      })
+      ) => (
+        mocks.createFanout(input),
+        {
+          transactionId: input.transactionId ?? 'transaction-id',
+          userId: input.userId,
+          sessionIndex: input.sessionIndex,
+          relayState: input.relayState,
+          targets: input.targets.map((spEntityId) => ({ spEntityId, status: 'pending' })),
+        }
+      )
     ),
     getSAMLIdPLogoutFanoutTransaction: vi.fn(async () => null),
     markSAMLIdPLogoutFanoutTargetSent: mocks.markSent,
@@ -166,7 +172,16 @@ function app() {
 }
 
 function environment() {
-  return { STATE_STORE: {} };
+  return {
+    STATE_STORE: {},
+    SETTINGS: {
+      get: vi.fn(async (key: string) =>
+        key === 'settings:tenant:tenant-a:federation' && mocks.federation
+          ? JSON.stringify(mocks.federation)
+          : null
+      ),
+    },
+  };
 }
 
 function requestXml(
@@ -243,6 +258,7 @@ describe('IdP SLO handler policy boundaries', () => {
       spEntityId: 'https://sp.example.test/entity',
     };
     mocks.outboundThrows = false;
+    mocks.federation = null;
     mocks.userNameId = null;
     mocks.userInfo = null;
     mocks.signingError = false;
@@ -278,6 +294,30 @@ describe('IdP SLO handler policy boundaries', () => {
       requestXml({ issueInstant: issue, notOnOrAfter: expiry, destination })
     );
     await expectValidationError(response);
+  });
+
+  describe('request age against the tenant request lifetime', () => {
+    const minutesAgo = (minutes: number) => new Date(Date.now() - minutes * 60_000).toISOString();
+
+    it('accepts a LogoutRequest as old as the tenant request lifetime allows', async () => {
+      mocks.federation = { 'federation.saml_request_ttl': 600 };
+      const response = await post('SAMLRequest', requestXml({ issueInstant: minutesAgo(8) }));
+      expect(response.status).toBe(200);
+      expect(await response.text()).toContain('SAMLResponse');
+    });
+
+    it('rejects a LogoutRequest older than the tenant request lifetime', async () => {
+      mocks.federation = { 'federation.saml_request_ttl': 60 };
+      await expectValidationError(
+        await post('SAMLRequest', requestXml({ issueInstant: minutesAgo(3) }))
+      );
+    });
+
+    it('rejects a LogoutRequest older than five minutes where the tenant sets nothing', async () => {
+      await expectValidationError(
+        await post('SAMLRequest', requestXml({ issueInstant: minutesAgo(8) }))
+      );
+    });
   });
 
   it('handles unknown SP without redirecting to an untrusted endpoint', async () => {
@@ -469,6 +509,38 @@ describe('IdP SLO handler policy boundaries', () => {
       { tenantId: 'tenant-a' }
     );
     expect(response.status).toBe(200);
+  });
+
+  it.each([
+    ['five minutes where the tenant sets nothing', null, 300],
+    ['the tenant request lifetime', { 'federation.saml_request_ttl': 120 }, 120],
+  ])('keeps an outbound LogoutRequest for %s', async (_label, federation, seconds) => {
+    mocks.federation = federation;
+    mocks.userNameId = 'user@example.test';
+    await initiateIdPLogout(environment() as never, 'user-a', sp() as never, undefined, 'tenant-a');
+    expect(mocks.storeOutbound).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ ttlSeconds: seconds })
+    );
+  });
+
+  it('keeps a multi-SP logout transaction for the tenant request lifetime', async () => {
+    mocks.federation = { 'federation.saml_request_ttl': 180 };
+    mocks.userNameId = 'user@example.test';
+    await initiateIdPMultiSPLogoutBindingResponse(
+      environment() as never,
+      'user-a',
+      [sp() as never],
+      {
+        tenantId: 'tenant-a',
+        binding: 'post',
+      }
+    );
+    expect(mocks.createFanout).toHaveBeenCalledWith(expect.objectContaining({ ttlSeconds: 180 }));
+    expect(mocks.storeOutbound).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ ttlSeconds: 180 })
+    );
   });
 
   it('deduplicates multi-SP targets and starts a fanout transaction', async () => {

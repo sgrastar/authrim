@@ -339,6 +339,51 @@ describe('IdP-initiated SSO', () => {
     expect(mocks.applySigning).toHaveBeenCalled();
   });
 
+  describe('assertion lifetime', () => {
+    async function lifetimeSeconds(
+      sp: Record<string, unknown>,
+      federation: Record<string, unknown> | null
+    ): Promise<number> {
+      mocks.cookieSessionId = 'session-id';
+      mocks.sessionResponse = new Response(JSON.stringify({ userId: 'user-a' }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+      mocks.user = { id: 'user-a', email: 'user@example.test' };
+      mocks.sp = baseSp({ identityMapping: { catalog: { entries: [] } }, ...sp });
+      const ctx = context('https://sp.example.test', consentTransactionId);
+      (ctx as unknown as { env: Record<string, unknown> }).env.SETTINGS = {
+        get: vi.fn(async (key: string) =>
+          key === 'settings:tenant:tenant-a:federation' && federation
+            ? JSON.stringify(federation)
+            : null
+        ),
+      };
+      expect((await handleIdPInitiated(ctx)).status).toBe(200);
+      const input = (
+        mocks.buildResponse.mock.calls.at(-1) as unknown as [Record<string, string>]
+      )[0];
+      return (Date.parse(input.notOnOrAfter) - Date.parse(input.issueInstant)) / 1000;
+    }
+
+    it('is five minutes where nothing is set', async () => {
+      expect(await lifetimeSeconds({}, null)).toBe(300);
+    });
+
+    it("is the tenant's when the service provider has none", async () => {
+      expect(await lifetimeSeconds({}, { 'federation.saml_assertion_ttl': 120 })).toBe(120);
+    });
+
+    it("is the service provider's own when it has one", async () => {
+      expect(
+        await lifetimeSeconds(
+          { assertionValiditySeconds: 90 },
+          { 'federation.saml_assertion_ttl': 120 }
+        )
+      ).toBe(90);
+    });
+  });
+
   it('includes RelayState in the response sent to the service provider', async () => {
     mocks.cookieSessionId = 'session-id';
     mocks.sessionResponse = new Response(JSON.stringify({ userId: 'user-a' }), {

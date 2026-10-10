@@ -183,6 +183,21 @@ configured in Admin UI. The deployment environment controls authentication-abuse
 
 See [SCIM Inbound Provisioning](./scim-inbound-provisioning.md) for tenant and Mapping Set setup.
 
+### SAML Configuration
+
+Each tenant can override these in the Admin Console (Authentication → Enterprise SSO) or the Settings API; the variables are the deployment-time defaults.
+
+| Variable             | Type    | Default         | Description                                                                                                                       |
+| -------------------- | ------- | --------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `ENABLE_SAML`        | boolean | `true`          | Answer SAML 2.0 requests (IdP and SP endpoints, metadata). When `false` they return 403; `/saml/health` and the admin API stay up |
+| `SAML_ASSERTION_TTL` | number  | `300`           | Assertion lifetime in seconds (60-600). A service provider with its own `assertionValiditySeconds` keeps it                       |
+| `SAML_REQUEST_TTL`   | number  | `300`           | SAML request lifetime in seconds (60-600): accepted request age, stored request lifetime and request cookie `Max-Age`             |
+| `SAML_SSO_BINDING`   | string  | `HTTP-Redirect` | Sign-in binding a new identity provider gets when its metadata offers both or none (`HTTP-Redirect`, `HTTP-POST`)                 |
+| `SAML_SLO_BINDING`   | string  | `HTTP-Redirect` | Logout binding a new provider gets when its metadata offers both or none; a profile with its own binding (`legacy`) keeps it      |
+| `SAML_NAMEID_FORMAT` | string  | `emailAddress`  | NameID format a new provider gets when its metadata names none (`emailAddress`, `persistent`, `transient`, `unspecified`)         |
+
+The Artifact binding settings (`SAML_ARTIFACT_TTL`, `SAML_ARTIFACT_RESOLUTION_TIMEOUT`) are stored but not used: the Artifact binding is not implemented.
+
 ### Logging Configuration
 
 | Variable                  | Type    | Default | Description                                  |

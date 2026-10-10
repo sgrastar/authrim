@@ -155,6 +155,45 @@ export const deSettings: Record<keyof typeof jaSettings, string> = {
 	'set.k.federation.scim_token_max_expiry': 'Längste Gültigkeit von SCIM-Token',
 	'set.k.federation.scim_token_max_expiry.desc':
 		'Ein SCIM-Token kann nicht mit längerer Gültigkeit erstellt werden (höchstens ein Jahr). Bereits ausgestellte Token ändern sich nicht.',
+	'set.page.enterprise': 'Unternehmens-SSO (SAML)',
+	'set.page.enterprise.desc':
+		'Legt fest, ob dieser Mandant überhaupt auf SAML antwortet, wie lange SAML-Assertions und -Anfragen gültig bleiben und womit neue SAML-Anbieter beginnen. Anbieter (IdPs und SPs) werden vorerst noch auf der SAML-Seite der bisherigen Verwaltungsoberfläche registriert.',
+	'set.section.samlService': 'SAML-Dienst',
+	'set.section.samlService.desc':
+		'Wenn ausgeschaltet, weist dieser Mandant jede SAML-Anfrage ab und veröffentlicht seine SAML-Metadaten nicht. Registrierte Anbieter bleiben erhalten.',
+	'set.k.federation.saml_enabled': 'SAML verwenden',
+	'set.k.federation.saml_enabled.desc':
+		'Solange ausgeschaltet, antworten die SAML-IdP- und -SP-Endpunkte und die Metadaten mit 403 (Health-Check und Verwaltungs-API funktionieren weiter). Nach dem Einschalten funktionieren die registrierten Anbieter wie zuvor. Eine Änderung kann etwa eine Minute brauchen, bis sie wirkt.',
+	'set.section.samlLifetimes': 'Gültigkeitsdauern',
+	'set.section.samlLifetimes.desc': 'Wie lange SAML-Assertions und -Anfragen gültig bleiben.',
+	'set.section.samlLifetimes.advanced': 'Gültigkeit der Anfragen',
+	'set.k.federation.saml_assertion_ttl': 'Gültigkeit der Assertion',
+	'set.k.federation.saml_assertion_ttl.desc':
+		'Wie lange eine von Authrim ausgestellte SAML-Assertion gültig ist (60 bis 600 Sekunden). Ein Service Provider mit eigener Gültigkeitsdauer behält sie. Eine Änderung gilt für Assertions, die danach ausgestellt werden.',
+	'set.k.federation.saml_request_ttl': 'Gültigkeit der Anfragen',
+	'set.k.federation.saml_request_ttl.desc':
+		'Wie lange eine SAML-Anmelde- oder -Abmeldeanfrage gültig bleibt (60 bis 600 Sekunden): die älteste Anfrage, die Authrim annimmt, und wie lange gesendete Anfragen aufbewahrt werden, um sie den Antworten zuzuordnen. Eine Änderung gilt für die Aufbewahrung von Anfragen, die danach gestellt werden. Das Alter einer Anfrage wird auch beim Fortsetzen einer laufenden Anmeldung gegen den aktuellen Wert geprüft; ein kürzerer Wert kann daher bereits begonnene Anmeldungen abweisen.',
+	'set.section.samlProviderDefaults': 'Standards für neue Anbieter',
+	'set.section.samlProviderDefaults.desc':
+		'Was ein SAML-Anbieter erhält, wenn er hinzugefügt oder seine Metadaten importiert werden und nichts anderes vorgibt. Bestehende Anbieter ändern sich nicht.',
+	'set.section.samlProviderDefaults.advanced': 'Bindings',
+	'set.k.federation.saml_nameid_format': 'NameID-Format',
+	'set.k.federation.saml_nameid_format.desc':
+		'Das NameID-Format, das ein Anbieter erhält, wenn seine Metadaten keines nennen. Ein Anbieterprofil mit eigenem Format (etwa strict) behält es. Persistent gibt jedem Dienst eine eigene Kennung und schützt so die Privatsphäre.',
+	'set.k.federation.saml_nameid_format.emailAddress': 'E-Mail-Adresse',
+	'set.k.federation.saml_nameid_format.persistent': 'Dauerhafte Kennung',
+	'set.k.federation.saml_nameid_format.transient': 'Flüchtige Kennung',
+	'set.k.federation.saml_nameid_format.unspecified': 'Nicht festgelegt',
+	'set.k.federation.saml_sso_binding': 'Binding der Anmeldung',
+	'set.k.federation.saml_sso_binding.desc':
+		'Das Binding, über das ein neuer externer Identitätsanbieter angemeldet wird, wenn seine Metadaten beide anbieten oder keines nennen. HTTP-Redirect sendet eine signierte Anfrage, HTTP-POST eine unsignierte.',
+	'set.k.federation.saml_sso_binding.HTTP-POST': 'HTTP-POST',
+	'set.k.federation.saml_sso_binding.HTTP-Redirect': 'HTTP-Redirect',
+	'set.k.federation.saml_slo_binding': 'Binding der Abmeldung',
+	'set.k.federation.saml_slo_binding.desc':
+		'Das Standard-Binding für Abmeldeanfragen, verwendet, wenn die Metadaten beide anbieten oder keines nennen. Ein Anbieterprofil mit eigenem Binding (das Profil legacy) behält es.',
+	'set.k.federation.saml_slo_binding.HTTP-POST': 'HTTP-POST',
+	'set.k.federation.saml_slo_binding.HTTP-Redirect': 'HTTP-Redirect',
 	'set.k.oauth.id_token_signing_alg.RS256': 'RS256',
 	'set.k.oauth.id_token_signing_alg.ES256': 'ES256',
 	'set.k.oauth.id_token_signing_alg.PS256': 'PS256',
@@ -213,6 +252,13 @@ export const deSettings: Record<keyof typeof jaSettings, string> = {
 	'settings.notice.exchangeCeilings.title': 'Einigen Apps wird der Token-Austausch verweigert',
 	'settings.notice.exchangeCeilings.body':
 		'Der Token-Austausch ist ein, Delegation ist aber nicht erlaubt; daher wird Apps im Delegationsmodus (Standard für neue Apps) der Austausch verweigert. Schalten Sie „Delegation zulassen“ ein, damit sie ihn nutzen können.',
+	'settings.notice.samlDisabled.title':
+		'Apps und externe IdPs, die SAML nutzen, funktionieren nicht mehr',
+	'settings.notice.samlDisabled.body':
+		'Bei ausgeschaltetem SAML schlagen die Anmeldung von Apps über SAML (Service Provider) und die Anmeldung über externe SAML-Identitätsanbieter fehl. Registrierte Anbieter bleiben erhalten; nach dem Einschalten funktionieren sie wieder.',
+	'settings.notice.samlPostBinding.title': 'HTTP-POST sendet die Anmeldeanfrage unsigniert',
+	'settings.notice.samlPostBinding.body':
+		'Eine Anmeldeanfrage an einen neuen Identitätsanbieter über HTTP-POST trägt keine Signatur. Standard ist HTTP-Redirect, das signiert werden kann. Wählen Sie POST nur, wenn der Identitätsanbieter nichts anderes akzeptiert.',
 	'settings.value.on': 'Ein',
 	'settings.value.off': 'Aus',
 	'settings.value.empty': '(keine)',

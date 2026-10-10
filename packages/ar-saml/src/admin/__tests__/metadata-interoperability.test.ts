@@ -595,8 +595,10 @@ function createPreviewContext(body: unknown) {
       json: async () => body,
       header: () => undefined,
     },
-    get: (key: string) =>
-      key === 'adminAuth' ? { permissions: ['admin:saml_providers:create'] } : undefined,
+    get: (key: string) => {
+      if (key === 'tenantId') return 'tenant-a';
+      return key === 'adminAuth' ? { permissions: ['admin:saml_providers:create'] } : undefined;
+    },
     json: (value: unknown, status?: number) =>
       new Response(JSON.stringify(value), {
         status: status ?? 200,

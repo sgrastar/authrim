@@ -8,7 +8,12 @@
 import type { SettingsPageDef } from './placement';
 import { fieldOf, type Values } from './settings-model';
 
-export type SettingNoticeId = 'idTokenAlgorithm' | 'fapi' | 'exchangeCeilings';
+export type SettingNoticeId =
+	| 'idTokenAlgorithm'
+	| 'fapi'
+	| 'exchangeCeilings'
+	| 'samlDisabled'
+	| 'samlPostBinding';
 
 export interface SettingNotice {
 	id: SettingNoticeId;
@@ -51,6 +56,23 @@ const NOTICE_RULES: readonly NoticeRule[] = [
 		applies: (value) =>
 			value('tokens.exchange_enabled') === true &&
 			value('tokens.exchange_delegation_enabled') === false
+	},
+	{
+		// SAML off: the SAML endpoints and metadata refuse every request, so apps that sign in
+		// through Authrim over SAML, and sign-in through external SAML identity providers, stop
+		// working. The registered providers are kept.
+		id: 'samlDisabled',
+		tone: 'info',
+		keys: ['federation.saml_enabled'],
+		applies: (value) => value('federation.saml_enabled') === false
+	},
+	{
+		// A new identity provider that is signed in through HTTP-POST gets an unsigned request;
+		// HTTP-Redirect carries a signed one.
+		id: 'samlPostBinding',
+		tone: 'info',
+		keys: ['federation.saml_sso_binding'],
+		applies: (value) => value('federation.saml_sso_binding') === 'HTTP-POST'
 	}
 ];
 
