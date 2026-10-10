@@ -222,6 +222,8 @@ describe('downstream elevation grant token exchange', () => {
           body: body as Record<string, string>,
           env: {
             ENABLE_TOKEN_EXCHANGE: 'true',
+            ENABLE_TOKEN_EXCHANGE_DELEGATION: 'true',
+            ENABLE_TOKEN_EXCHANGE_IMPERSONATION: 'true',
             ...envOverrides,
           },
         })
@@ -435,6 +437,163 @@ describe('downstream elevation grant token exchange', () => {
         'unauthorized_client',
         'Token Exchange is disabled for this client'
       );
+    });
+
+    describe("the tenant's delegation and impersonation ceilings", () => {
+      const clientWithMode = (delegationMode: string) => ({
+        client_id: 'service-client-1',
+        tenant_id: 'tenant-a',
+        client_secret_hash: 'hashed-secret',
+        token_exchange_allowed: true,
+        token_endpoint_auth_method: 'client_secret_post',
+        delegation_mode: delegationMode,
+        allowed_scopes: ['openid'],
+        allowed_token_exchange_resources: ['https://service.example.com'],
+        allowed_subject_token_clients: [],
+      });
+
+      it('refuses a delegating client while the tenant has not allowed delegation', async () => {
+        mocks.mockGetClientCached.mockResolvedValueOnce(clientWithMode('delegation'));
+        await expectOAuthError(
+          request({}, { ENABLE_TOKEN_EXCHANGE_DELEGATION: 'false' }),
+          403,
+          'unauthorized_client',
+          'Delegation is not enabled for this tenant (tokens.exchange_delegation_enabled)'
+        );
+        expect(mocks.mockCreateAccessToken).not.toHaveBeenCalled();
+      });
+
+      it('treats a client with no delegation_mode as delegating', async () => {
+        const client: Record<string, unknown> = clientWithMode('delegation');
+        delete client.delegation_mode;
+        mocks.mockGetClientCached.mockResolvedValueOnce(client);
+        await expectOAuthError(
+          request({}, { ENABLE_TOKEN_EXCHANGE_DELEGATION: 'false' }),
+          403,
+          'unauthorized_client',
+          'Delegation is not enabled for this tenant (tokens.exchange_delegation_enabled)'
+        );
+      });
+
+      it('refuses an impersonating client while the tenant has not allowed impersonation', async () => {
+        mocks.mockGetClientCached.mockResolvedValueOnce(clientWithMode('impersonation'));
+        await expectOAuthError(
+          request({}, { ENABLE_TOKEN_EXCHANGE_IMPERSONATION: 'false' }),
+          403,
+          'unauthorized_client',
+          'Impersonation is not enabled for this tenant (tokens.exchange_impersonation_enabled)'
+        );
+        expect(mocks.mockCreateAccessToken).not.toHaveBeenCalled();
+      });
+
+      it('keeps a client with delegation_mode none disabled whatever the tenant allows', async () => {
+        mocks.mockGetClientCached.mockResolvedValueOnce(clientWithMode('none'));
+        await expectOAuthError(
+          request(
+            {},
+            {
+              ENABLE_TOKEN_EXCHANGE_DELEGATION: 'true',
+              ENABLE_TOKEN_EXCHANGE_IMPERSONATION: 'true',
+            }
+          ),
+          403,
+          'unauthorized_client',
+          'Token Exchange is disabled for this client'
+        );
+      });
+
+      it.each([
+        ['delegation', 'ENABLE_TOKEN_EXCHANGE_DELEGATION'],
+        ['impersonation', 'ENABLE_TOKEN_EXCHANGE_IMPERSONATION'],
+      ])('exchanges for a %s client once the tenant allows it', async (mode, envKey) => {
+        const env = await createVerificationEnv();
+        mocks.mockGetClientCached.mockResolvedValue(clientWithMode(mode));
+        mocks.mockParseToken.mockReturnValue({
+          sub: 'user-1',
+          aud: 'service-client-1',
+          scope: 'openid',
+        });
+
+        const response = await request(
+          {},
+          {
+            ...env,
+            ENABLE_TOKEN_EXCHANGE_DELEGATION: 'false',
+            ENABLE_TOKEN_EXCHANGE_IMPERSONATION: 'false',
+            [envKey]: 'true',
+          }
+        );
+
+        expect(response.status).toBe(200);
+        expect(mocks.mockCreateAccessToken).toHaveBeenCalledWith(
+          mode === 'delegation'
+            ? expect.objectContaining({
+                act: expect.objectContaining({ client_id: 'service-client-1' }),
+              })
+            : expect.not.objectContaining({ act: expect.anything() }),
+          expect.anything(),
+          expect.any(String),
+          expect.any(Number),
+          'region-jti-1'
+        );
+      });
+
+      it('does not hold Native SSO to the ceilings: it is neither delegation nor impersonation', async () => {
+        mocks.mockGetClientCached.mockResolvedValueOnce(clientWithMode('delegation'));
+        mocks.mockResolveEffectiveSettings.mockImplementation(
+          async (env: unknown, category: string) => ({
+            ...(await settingsFromSystemSettings(env, systemSettings, category)),
+            ...(category === 'tokens'
+              ? {
+                  'tokens.exchange_enabled': true,
+                  'tokens.exchange_allowed_subject_token_types': 'access_token,id_token',
+                  'tokens.exchange_delegation_enabled': false,
+                  'tokens.exchange_impersonation_enabled': false,
+                }
+              : {}),
+          })
+        );
+
+        const response = await request({
+          subject_token_type: 'urn:ietf:params:oauth:token-type:id_token',
+          actor_token: 'device-secret',
+          actor_token_type: 'urn:openid:params:token-type:device-secret',
+        });
+        const body = await parseJsonResponse<{ error: string; error_description?: string }>(
+          response
+        );
+
+        expect(body.error_description ?? '').not.toContain('is not enabled for this tenant');
+        // It got as far as the Native SSO checks of the device secret.
+        expect(body.error_description ?? '').not.toContain('Allowed types');
+      });
+
+      it('reads the ceilings from the tenant settings', async () => {
+        mocks.mockGetClientCached.mockResolvedValueOnce(clientWithMode('delegation'));
+        mocks.mockResolveEffectiveSettings.mockImplementation(
+          async (env: unknown, category: string) => ({
+            ...(await settingsFromSystemSettings(env, systemSettings, category)),
+            ...(category === 'tokens'
+              ? {
+                  'tokens.exchange_enabled': true,
+                  'tokens.exchange_delegation_enabled': false,
+                  'tokens.exchange_impersonation_enabled': true,
+                }
+              : {}),
+          })
+        );
+        await expectOAuthError(
+          request(),
+          403,
+          'unauthorized_client',
+          'Delegation is not enabled for this tenant (tokens.exchange_delegation_enabled)'
+        );
+        expect(mocks.mockResolveEffectiveSettings).toHaveBeenCalledWith(
+          expect.anything(),
+          'tokens',
+          { tenantId: expect.any(String) }
+        );
+      });
     });
 
     it('rejects unsupported requested token types before parsing the subject token', async () => {
@@ -1520,6 +1679,8 @@ describe('downstream elevation grant token exchange', () => {
           },
         }),
         ENABLE_TOKEN_EXCHANGE: 'true',
+        ENABLE_TOKEN_EXCHANGE_DELEGATION: 'true',
+        ENABLE_TOKEN_EXCHANGE_IMPERSONATION: 'true',
         PUBLIC_JWK_JSON: JSON.stringify(keySet.publicJWK),
       },
     });
@@ -1593,6 +1754,8 @@ describe('downstream elevation grant token exchange', () => {
           },
         }),
         ENABLE_TOKEN_EXCHANGE: 'true',
+        ENABLE_TOKEN_EXCHANGE_DELEGATION: 'true',
+        ENABLE_TOKEN_EXCHANGE_IMPERSONATION: 'true',
         PUBLIC_JWK_JSON: JSON.stringify(keySet.publicJWK),
       },
     });
@@ -1672,6 +1835,8 @@ describe('downstream elevation grant token exchange', () => {
           },
         }),
         ENABLE_TOKEN_EXCHANGE: 'true',
+        ENABLE_TOKEN_EXCHANGE_DELEGATION: 'true',
+        ENABLE_TOKEN_EXCHANGE_IMPERSONATION: 'true',
         PUBLIC_JWK_JSON: JSON.stringify(keySet.publicJWK),
       },
     });
@@ -1708,6 +1873,8 @@ describe('downstream elevation grant token exchange', () => {
       },
       env: {
         ENABLE_TOKEN_EXCHANGE: 'true',
+        ENABLE_TOKEN_EXCHANGE_DELEGATION: 'true',
+        ENABLE_TOKEN_EXCHANGE_IMPERSONATION: 'true',
         TOKEN_EXCHANGE_MAX_RESOURCE_PARAMS: '1',
       },
     });
@@ -1745,6 +1912,8 @@ describe('downstream elevation grant token exchange', () => {
       },
       env: {
         ENABLE_TOKEN_EXCHANGE: 'true',
+        ENABLE_TOKEN_EXCHANGE_DELEGATION: 'true',
+        ENABLE_TOKEN_EXCHANGE_IMPERSONATION: 'true',
         TOKEN_EXCHANGE_MAX_AUDIENCE_PARAMS: '10',
       },
     });
@@ -1779,6 +1948,8 @@ describe('downstream elevation grant token exchange', () => {
       },
       env: {
         ENABLE_TOKEN_EXCHANGE: 'true',
+        ENABLE_TOKEN_EXCHANGE_DELEGATION: 'true',
+        ENABLE_TOKEN_EXCHANGE_IMPERSONATION: 'true',
         TOKEN_EXCHANGE_ALLOWED_TYPES: 'jwt',
       },
     });
@@ -1806,6 +1977,8 @@ describe('downstream elevation grant token exchange', () => {
       },
       env: {
         ENABLE_TOKEN_EXCHANGE: 'true',
+        ENABLE_TOKEN_EXCHANGE_DELEGATION: 'true',
+        ENABLE_TOKEN_EXCHANGE_IMPERSONATION: 'true',
         TOKEN_EXCHANGE_ALLOWED_TYPES: 'refresh_token',
       },
     });

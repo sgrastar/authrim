@@ -1143,8 +1143,14 @@ describe('directory password login handler', () => {
     const response = await directoryMigrationEmailCodeSendHandler(
       createContext(
         { transaction_id: 'damt_email_1', transaction_token: 'migration-email-token' },
-        // The tenant's email code lifetime applies to migration codes too.
-        { 'settings:tenant:tenant-a:credentials': { 'credentials.email_code_ttl': 600 } }
+        // The tenant's email code lifetime and send limit apply to migration codes too.
+        {
+          'settings:tenant:tenant-a:credentials': { 'credentials.email_code_ttl': 600 },
+          'settings:tenant:tenant-a:rate-limit': {
+            'rate_limit.email_max_requests': 6,
+            'rate_limit.email_window': 1800,
+          },
+        }
       ) as never
     );
     const body = (await response.json()) as Record<string, unknown>;
@@ -1157,8 +1163,8 @@ describe('directory password login handler', () => {
       expires_in: 600,
     });
     expect(mocks.rateLimiter.incrementRpc).toHaveBeenCalledWith('transaction:damt_email_1', {
-      windowSeconds: 15 * 60,
-      maxRequests: 3,
+      windowSeconds: 1800,
+      maxRequests: 6,
     });
     expect(mocks.challengeStore.storeChallengeRpc).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -1957,7 +1963,16 @@ describe('directory password login handler', () => {
     const handler = createDirectoryPasswordLoginHandler(fetcher);
 
     const response = await handler(
-      createContext({ username: 'alice@example.com', password: 'correct' }) as never
+      createContext(
+        { username: 'alice@example.com', password: 'correct' },
+        // The tenant's email send limit applies to opening a recovery by email too.
+        {
+          'settings:tenant:tenant-a:rate-limit': {
+            'rate_limit.email_max_requests': 6,
+            'rate_limit.email_window': 1800,
+          },
+        }
+      ) as never
     );
     const body = (await response.json()) as {
       ok: false;
@@ -1990,8 +2005,8 @@ describe('directory password login handler', () => {
     expect(mocks.rateLimiter.incrementRpc).toHaveBeenCalledWith(
       'user:wwcon_8K4M2Q9F7D3H6P1X:user_existing',
       {
-        windowSeconds: 15 * 60,
-        maxRequests: 3,
+        windowSeconds: 1800,
+        maxRequests: 6,
       }
     );
     expect(mocks.coreAdapter.execute).toHaveBeenCalledWith(

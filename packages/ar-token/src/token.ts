@@ -120,6 +120,7 @@ import {
   isNativeSSOEnabled,
   getNativeSSOConfig,
   DEVICE_SECRET_TOKEN_TYPE,
+  tokenExchangeCeilingRefusal,
 } from '@authrim/ar-lib-core';
 import {
   createIDToken,
@@ -6688,8 +6689,16 @@ async function handleTokenExchangeGrant(
     return oauthError(c, 'unauthorized_client', 'Client is not authorized for Token Exchange', 403);
   }
 
-  // Check delegation_mode
+  // Check delegation_mode. The tenant's ceiling comes first: an app's delegation_mode cannot
+  // grant what the tenant has not allowed. (Native SSO swaps an ID token and a device secret,
+  // issues no act claim and is not delegation or impersonation, so the ceilings do not apply.)
   const delegationMode = typedClient.delegation_mode || 'delegation';
+  if (!isNativeSSORequest) {
+    const ceilingRefusal = tokenExchangeCeilingRefusal(delegationMode, tokens);
+    if (ceilingRefusal) {
+      return oauthError(c, 'unauthorized_client', ceilingRefusal.message, 403);
+    }
+  }
   if (delegationMode === 'none') {
     return oauthError(c, 'unauthorized_client', 'Token Exchange is disabled for this client', 403);
   }

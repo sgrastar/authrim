@@ -33,6 +33,7 @@ import {
   type AttributeReleaseConsentPolicy,
   type ClaimReleasePolicy,
   buildContractKey,
+  resolveTokenExchangeCeilingRefusal,
 } from '@authrim/ar-lib-core';
 import {
   parseClientStringArray,
@@ -837,6 +838,35 @@ function webOriginRegistryFromAllowedOrigins(
  * Create a new OAuth client.
  * POST /admin/clients
  */
+/**
+ * What the tenant's token exchange ceilings (tokens.exchange_delegation_enabled and
+ * tokens.exchange_impersonation_enabled) mean for a client saved with token exchange on: its
+ * delegation_mode cannot be used until the tenant allows it, and token exchange refuses it
+ * meanwhile. This is a warning, not a validation error: clients and tenant settings are set in
+ * any order (setup, tenant import), and the ceiling itself is enforced when tokens are exchanged.
+ */
+async function tokenExchangeCeilingWarnings(
+  c: Context<{ Bindings: Env }>,
+  tenantId: string,
+  client: { token_exchange_allowed?: unknown; delegation_mode?: unknown }
+): Promise<{ code: string; setting: string; message: string }[]> {
+  if (client.token_exchange_allowed !== true && client.token_exchange_allowed !== 1) return [];
+  const mode =
+    typeof client.delegation_mode === 'string' && client.delegation_mode
+      ? client.delegation_mode
+      : 'delegation';
+  const refusal = await resolveTokenExchangeCeilingRefusal(c.env, tenantId, mode);
+  return refusal
+    ? [
+        {
+          code: 'token_exchange_not_allowed_by_tenant',
+          setting: refusal.setting,
+          message: refusal.message,
+        },
+      ]
+    : [];
+}
+
 export async function adminClientCreateHandler(c: Context<{ Bindings: Env }>) {
   try {
     const body = await c.req.json<{
@@ -1632,6 +1662,8 @@ export async function adminClientCreateHandler(c: Context<{ Bindings: Env }>) {
       client_name: client.client_name,
     });
 
+    const tokenExchangeWarnings = await tokenExchangeCeilingWarnings(c, tenantId, client);
+
     return c.json(
       {
         client: {
@@ -1706,6 +1738,7 @@ export async function adminClientCreateHandler(c: Context<{ Bindings: Env }>) {
           created_at: client.created_at,
           updated_at: client.updated_at,
         },
+        ...(tokenExchangeWarnings.length > 0 && { warnings: tokenExchangeWarnings }),
       },
       201
     );
@@ -2729,10 +2762,17 @@ export async function adminClientUpdateHandler(c: Context<{ Bindings: Env }>) {
       client_name: updatedClient?.client_name,
     });
 
+    // Only an update that touches token exchange is told what the tenant's ceilings mean for it.
+    const tokenExchangeWarnings =
+      updatedClient && (token_exchange_allowed !== undefined || delegation_mode !== undefined)
+        ? await tokenExchangeCeilingWarnings(c, tenantId, updatedClient)
+        : [];
+
     if (updatedClient) {
       const { client_secret_hash: _excluded, ...clientWithoutHash } = updatedClient;
       return c.json({
         success: true,
+        ...(tokenExchangeWarnings.length > 0 && { warnings: tokenExchangeWarnings }),
         client: {
           ...clientWithoutHash,
           redirect_uris: parseClientStringArray(updatedClient.redirect_uris, []),

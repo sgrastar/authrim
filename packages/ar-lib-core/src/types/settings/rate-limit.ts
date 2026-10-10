@@ -94,11 +94,12 @@ export const RATE_LIMIT_SETTINGS_META: Record<keyof RateLimitSettings, SettingMe
     default: 3,
     envKey: 'EMAIL_RATE_LIMIT_MAX_REQUESTS',
     label: 'Email Max Requests',
-    description: 'Maximum email sends per window (spam protection)',
+    description:
+      'Emailed codes (sign-in, sign-up, re-authentication, directory migration) one address or user can be sent per window (spam protection). Codes for account discovery have their own limit.',
     min: 1,
     max: 10,
+    integer: true,
     visibility: 'admin',
-    status: 'in_development',
   },
   'rate_limit.email_window': {
     key: 'rate_limit.email_window',
@@ -110,8 +111,8 @@ export const RATE_LIMIT_SETTINGS_META: Record<keyof RateLimitSettings, SettingMe
     min: 300,
     max: 3600,
     unit: 'seconds',
+    integer: true,
     visibility: 'admin',
-    status: 'in_development',
   },
   'rate_limit.auth_max_failed_attempts': {
     key: 'rate_limit.auth_max_failed_attempts',

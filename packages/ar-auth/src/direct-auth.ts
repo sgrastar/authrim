@@ -95,6 +95,7 @@ import {
   type DatabaseAdapter,
   CREDENTIALS_SETTINGS_META,
   resolveEmailCodeTtlSeconds,
+  resolveEmailSendLimit,
 } from '@authrim/ar-lib-core';
 import {
   applyInvitationAssignments,
@@ -3137,15 +3138,17 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
       presentationAssurance = assurance.settings;
     }
 
-    // Rate limiting
+    // Rate limiting: the tenant's email send limit (rate_limit.email_max_requests per
+    // rate_limit.email_window; 3 per 15 minutes by default)
+    const emailSendLimit = await resolveEmailSendLimit(c.env, tenantId);
     const rateLimiterId = c.env.RATE_LIMITER.idFromName(
       buildDOKey('rate-limit', 'email-code', tenantId)
     );
     const rateLimiter = c.env.RATE_LIMITER.get(rateLimiterId);
 
     const rateLimitResult = await rateLimiter.incrementRpc(`direct_email_code:${normalizedEmail}`, {
-      windowSeconds: 15 * 60,
-      maxRequests: 3,
+      windowSeconds: emailSendLimit.windowSeconds,
+      maxRequests: emailSendLimit.maxRequests,
     });
 
     if (!rateLimitResult.allowed) {

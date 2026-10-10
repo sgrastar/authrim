@@ -313,6 +313,36 @@ describe('email code handlers through HTTP', () => {
       expect(mocks.generateCode).not.toHaveBeenCalled();
     });
 
+    it.each([
+      [
+        'the tenant setting',
+        { 'rate_limit.email_max_requests': 6, 'rate_limit.email_window': 1800 },
+        6,
+        1800,
+      ],
+      ['its default for a value out of range', { 'rate_limit.email_max_requests': 50 }, 3, 900],
+    ])('limits sends by %s', async (_label, saved, maxRequests, windowSeconds) => {
+      mocks.incrementRpc.mockResolvedValueOnce({ allowed: false, retryAfter: 120 });
+
+      const response = await post(
+        '/send',
+        { email: 'user@example.com' },
+        {
+          SETTINGS: {
+            get: vi.fn(async (key: string) =>
+              key === 'settings:tenant:tenant-1:rate-limit' ? JSON.stringify(saved) : null
+            ),
+          },
+        }
+      );
+
+      expect(response.status).toBe(429);
+      expect(mocks.incrementRpc).toHaveBeenCalledWith('email_code:user@example.com', {
+        windowSeconds,
+        maxRequests,
+      });
+    });
+
     it('rejects missing registration fields before creating a new user', async () => {
       mocks.findByEmail.mockResolvedValueOnce(null);
       mocks.validateRegistration.mockResolvedValueOnce({

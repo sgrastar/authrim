@@ -4947,6 +4947,80 @@ describe('Admin API Handlers', () => {
       );
     });
 
+    describe('token exchange ceilings of the tenant', () => {
+      const create = async (
+        body: Record<string, unknown>,
+        envOverrides: Record<string, string> = {}
+      ) => {
+        const c = createMockContext({
+          method: 'POST',
+          body: {
+            client_name: 'Service Client',
+            redirect_uris: ['https://example.com/callback'],
+            grant_types: ['authorization_code'],
+            response_types: ['code'],
+            ...body,
+          },
+          db: createMockDB({ firstResult: null, runResult: { success: true } }),
+          envOverrides: envOverrides as Partial<Env>,
+        });
+        await adminClientCreateHandler(c);
+        return c;
+      };
+
+      it('warns, and still creates the client, when the tenant has not allowed its delegation', async () => {
+        const c = await create({ token_exchange_allowed: true, delegation_mode: 'delegation' });
+
+        expect(c.json).toHaveBeenCalledWith(
+          expect.objectContaining({
+            client: expect.objectContaining({ delegation_mode: 'delegation' }),
+            warnings: [
+              {
+                code: 'token_exchange_not_allowed_by_tenant',
+                setting: 'tokens.exchange_delegation_enabled',
+                message:
+                  'Delegation is not enabled for this tenant (tokens.exchange_delegation_enabled)',
+              },
+            ],
+          }),
+          201
+        );
+      });
+
+      it('warns about impersonation by its own setting', async () => {
+        const c = await create(
+          { token_exchange_allowed: true, delegation_mode: 'impersonation' },
+          { ENABLE_TOKEN_EXCHANGE_DELEGATION: 'true' }
+        );
+
+        expect(c.json).toHaveBeenCalledWith(
+          expect.objectContaining({
+            warnings: [
+              expect.objectContaining({ setting: 'tokens.exchange_impersonation_enabled' }),
+            ],
+          }),
+          201
+        );
+      });
+
+      it('does not warn when the tenant allows the mode, or the client does not exchange tokens', async () => {
+        const allowed = await create(
+          { token_exchange_allowed: true, delegation_mode: 'delegation' },
+          { ENABLE_TOKEN_EXCHANGE_DELEGATION: 'true' }
+        );
+        expect(allowed.json).toHaveBeenCalledWith(
+          expect.not.objectContaining({ warnings: expect.anything() }),
+          201
+        );
+
+        const noExchange = await create({ delegation_mode: 'impersonation' });
+        expect(noExchange.json).toHaveBeenCalledWith(
+          expect.not.objectContaining({ warnings: expect.anything() }),
+          201
+        );
+      });
+    });
+
     it('should create OIDC claims and ASC client settings', async () => {
       const mockDB = createMockDB({
         firstResult: null,
@@ -5690,6 +5764,67 @@ describe('Admin API Handlers', () => {
           }),
         })
       );
+    });
+
+    describe('token exchange ceilings of the tenant', () => {
+      const update = async (
+        body: Record<string, unknown>,
+        saved: { token_exchange_allowed: number; delegation_mode: string }
+      ) => {
+        const clientId = 'client-ceiling-update';
+        const row = {
+          client_id: clientId,
+          client_name: 'Existing Client',
+          redirect_uris: '["https://example.com/callback"]',
+          grant_types: '["authorization_code"]',
+          response_types: '["code"]',
+        };
+        const mockDB = createMockDB({ runResult: { success: true, meta: { changes: 1 } } });
+        let queryCount = 0;
+        (mockDB as any)._mockStatement.first.mockImplementation(() => {
+          queryCount++;
+          return Promise.resolve(queryCount === 1 ? row : { ...row, ...saved });
+        });
+        const c = createMockContext({
+          method: 'PUT',
+          params: { id: clientId },
+          body,
+          db: mockDB,
+        });
+        await adminClientUpdateHandler(c);
+        return c;
+      };
+
+      it('warns when the update makes a client exchange tokens in a mode the tenant has not allowed', async () => {
+        const c = await update(
+          { token_exchange_allowed: true, delegation_mode: 'impersonation' },
+          { token_exchange_allowed: 1, delegation_mode: 'impersonation' }
+        );
+
+        expect(c.json).toHaveBeenCalledWith(
+          expect.objectContaining({
+            success: true,
+            client: expect.objectContaining({ delegation_mode: 'impersonation' }),
+            warnings: [
+              expect.objectContaining({
+                code: 'token_exchange_not_allowed_by_tenant',
+                setting: 'tokens.exchange_impersonation_enabled',
+              }),
+            ],
+          })
+        );
+      });
+
+      it('says nothing about an update that leaves token exchange alone', async () => {
+        const c = await update(
+          { client_name: 'Renamed' },
+          { token_exchange_allowed: 1, delegation_mode: 'impersonation' }
+        );
+
+        expect(c.json).toHaveBeenCalledWith(
+          expect.not.objectContaining({ warnings: expect.anything() })
+        );
+      });
     });
 
     it('should update Phase 1 client policy metadata', async () => {

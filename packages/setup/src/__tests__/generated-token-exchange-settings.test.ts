@@ -18,6 +18,7 @@ const input = {
 };
 const url = 'https://issuer.test/api/admin/tenants/tenant-a/settings/tokens';
 const ENABLED = 'tokens.exchange_enabled';
+const DELEGATION = 'tokens.exchange_delegation_enabled';
 const TYPES = 'tokens.exchange_allowed_subject_token_types';
 
 function settings(
@@ -30,16 +31,16 @@ function settings(
     status: 200,
     payload: {
       version,
-      values: { [ENABLED]: false, [TYPES]: 'jwt', ...values },
-      sources: { [ENABLED]: 'default', [TYPES]: 'default', ...sources },
+      values: { [ENABLED]: false, [DELEGATION]: false, [TYPES]: 'jwt', ...values },
+      sources: { [ENABLED]: 'default', [DELEGATION]: 'default', [TYPES]: 'default', ...sources },
     },
   };
 }
 const saved = { ok: true, status: 200, payload: { applied: [], rejected: {} } };
 /** The settings while the temporary change is in place. */
 const changed = settings(
-  { [ENABLED]: true, [TYPES]: 'jwt,access_token' },
-  { [ENABLED]: 'kv', [TYPES]: 'kv' },
+  { [ENABLED]: true, [DELEGATION]: true, [TYPES]: 'jwt,access_token' },
+  { [ENABLED]: 'kv', [DELEGATION]: 'kv', [TYPES]: 'kv' },
   'v2'
 );
 
@@ -56,7 +57,9 @@ describe('ensureGeneratedTokenExchangeEnabled', () => {
   });
 
   it('leaves already-compatible settings unchanged', async () => {
-    fetchJson.mockResolvedValue(settings({ [ENABLED]: true, [TYPES]: 'access_token' }));
+    fetchJson.mockResolvedValue(
+      settings({ [ENABLED]: true, [DELEGATION]: true, [TYPES]: 'access_token' })
+    );
 
     const result = await ensureGeneratedTokenExchangeEnabled(input);
 
@@ -78,7 +81,7 @@ describe('ensureGeneratedTokenExchangeEnabled', () => {
     expect(fetchJson.mock.calls[1][2].method).toBe('PATCH');
     expect(JSON.parse(fetchJson.mock.calls[1][2].body)).toEqual({
       ifMatch: 'v1',
-      set: { [ENABLED]: true, [TYPES]: 'jwt,access_token' },
+      set: { [ENABLED]: true, [DELEGATION]: true, [TYPES]: 'jwt,access_token' },
     });
 
     const restored = await result.restore();
@@ -86,7 +89,7 @@ describe('ensureGeneratedTokenExchangeEnabled', () => {
     expect(JSON.parse(fetchJson.mock.calls[3][2].body)).toEqual({
       ifMatch: 'v2',
       set: {},
-      clear: [ENABLED, TYPES],
+      clear: [ENABLED, DELEGATION, TYPES],
     });
   });
 
@@ -102,7 +105,7 @@ describe('ensureGeneratedTokenExchangeEnabled', () => {
     expect(JSON.parse(fetchJson.mock.calls[3][2].body)).toEqual({
       ifMatch: 'v2',
       set: { [ENABLED]: false },
-      clear: [TYPES],
+      clear: [DELEGATION, TYPES],
     });
   });
 
@@ -137,7 +140,9 @@ describe('ensureGeneratedTokenExchangeEnabled', () => {
     const result = await ensureGeneratedTokenExchangeEnabled(input);
     expect(result.check.status).toBe('fail');
     await expect(result.restore()).resolves.toMatchObject({ status: 'pass' });
-    expect(JSON.parse(fetchJson.mock.calls[3][2].body)).toMatchObject({ clear: [ENABLED, TYPES] });
+    expect(JSON.parse(fetchJson.mock.calls[3][2].body)).toMatchObject({
+      clear: [ENABLED, DELEGATION, TYPES],
+    });
   });
 
   it('leaves a key someone changed meanwhile as it is', async () => {
@@ -166,7 +171,10 @@ describe('ensureGeneratedTokenExchangeEnabled', () => {
   it('reads the URNs runtime takes as the names a tenant setting holds', async () => {
     const urn = 'urn:ietf:params:oauth:token-type:';
     fetchJson.mockResolvedValueOnce(
-      settings({ [ENABLED]: true, [TYPES]: `${urn}access_token` }, { [TYPES]: 'env' })
+      settings(
+        { [ENABLED]: true, [DELEGATION]: true, [TYPES]: `${urn}access_token` },
+        { [TYPES]: 'env' }
+      )
     );
     expect((await ensureGeneratedTokenExchangeEnabled(input)).changed).toBe(false);
 
@@ -182,6 +190,7 @@ describe('ensureGeneratedTokenExchangeEnabled', () => {
     expect(result.changed).toBe(true);
     expect(JSON.parse(fetchJson.mock.calls[2][2].body).set).toEqual({
       [ENABLED]: true,
+      [DELEGATION]: true,
       [TYPES]: 'jwt,access_token',
     });
   });
@@ -203,15 +212,19 @@ describe('ensureGeneratedTokenExchangeEnabled', () => {
     fetchJson
       .mockResolvedValueOnce(
         settings(
-          { [TYPES]: 'urn:ietf:params:oauth:token-type:access_token' },
-          { [ENABLED]: 'kv', [TYPES]: 'kv' }
+          { [DELEGATION]: true, [TYPES]: 'urn:ietf:params:oauth:token-type:access_token' },
+          { [ENABLED]: 'kv', [DELEGATION]: 'kv', [TYPES]: 'kv' }
         )
       )
       .mockResolvedValueOnce(saved)
       .mockResolvedValueOnce(
         settings(
-          { [ENABLED]: true, [TYPES]: 'urn:ietf:params:oauth:token-type:access_token' },
-          { [ENABLED]: 'kv', [TYPES]: 'kv' },
+          {
+            [ENABLED]: true,
+            [DELEGATION]: true,
+            [TYPES]: 'urn:ietf:params:oauth:token-type:access_token',
+          },
+          { [ENABLED]: 'kv', [DELEGATION]: 'kv', [TYPES]: 'kv' },
           'v2'
         )
       )
@@ -224,6 +237,20 @@ describe('ensureGeneratedTokenExchangeEnabled', () => {
       ifMatch: 'v2',
       set: { [ENABLED]: false },
       clear: [],
+    });
+  });
+
+  it('also lets the tenant delegate, which the delegating service client of the checks needs', async () => {
+    fetchJson
+      .mockResolvedValueOnce(settings({ [ENABLED]: true, [TYPES]: 'access_token' }))
+      .mockResolvedValueOnce(saved);
+
+    const result = await enable();
+
+    expect(result.changed).toBe(true);
+    expect(JSON.parse(fetchJson.mock.calls[1][2].body)).toEqual({
+      ifMatch: 'v1',
+      set: { [DELEGATION]: true },
     });
   });
 

@@ -233,9 +233,6 @@ place('authentication/protection', 'Bot protection', {
 		'authentication-methods.human_verification.provider'
 	]
 });
-place('authentication/protection', 'Email sending limit', {
-	advanced: ['rate_limit.email_max_requests', 'rate_limit.email_window']
-});
 place('authentication/protection', 'API rate limits', {
 	advanced: [
 		'rate_limit.strict',
@@ -316,11 +313,7 @@ place('applications/defaults', 'Browser apps', {
 	advanced: ['tenant.browser_public_client_mode']
 });
 place('applications/defaults', 'Token introspection', {
-	advanced: [
-		'tokens.introspection_strict_validation',
-		'tokens.introspection_extended_claims',
-		'tokens.introspection_expected_audience'
-	]
+	advanced: ['tokens.introspection_strict_validation', 'tokens.introspection_expected_audience']
 });
 place('applications/defaults', 'Error responses', {
 	advanced: ['oauth.error_response_format', 'oauth.error_id_mode', 'oauth.error_locale']
@@ -368,17 +361,6 @@ place('applications/defaults', 'Dynamic client registration', {
 		'dcr.allow_duplicate_software_id'
 	]
 });
-place(
-	'applications/defaults',
-	'SCIM provisioning',
-	{
-		advanced: ['federation.scim_token_default_expiry', 'federation.scim_token_max_expiry']
-	},
-	{
-		'federation.scim_token_default_expiry':
-			'SCIM connections are service flows; the tenant-wide SCIM limits sit with the app defaults.'
-	}
-);
 place('applications/defaults', 'Discovery document', {
 	search: [
 		'discovery.claims_supported',

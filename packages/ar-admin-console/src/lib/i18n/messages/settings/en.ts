@@ -123,10 +123,36 @@ export const enSettings: Record<keyof typeof jaSettings, string> = {
 		'Apps can exchange a token they hold for another (RFC 8693).',
 	'set.k.tokens.exchange_delegation_enabled': 'Allow delegation',
 	'set.k.tokens.exchange_delegation_enabled.desc':
-		'An app can obtain a token for another service on a person’s behalf.',
+		'An app can obtain a token for another service on a person’s behalf. While this is off, apps in delegation mode (the default) are refused token exchange. Each app’s own delegation mode can narrow it further.',
 	'set.k.tokens.exchange_impersonation_enabled': 'Allow impersonation',
 	'set.k.tokens.exchange_impersonation_enabled.desc':
-		'An app can obtain a token that acts as the person themselves.',
+		'An app can obtain a token that acts as the person themselves. While this is off, apps in impersonation mode are refused token exchange. It has a large security impact: turn it on only where needed.',
+	'set.page.protection': 'Attack protection',
+	'set.page.protection.desc': 'Keeps sign-in and sign-up emails from being abused.',
+	'set.section.emailSending': 'Email sending limit',
+	'set.section.emailSending.desc':
+		'Limits how many times emails such as sign-in codes can be sent to the same recipient in a row, so they cannot be used to send spam.',
+	'set.k.rate_limit.email_max_requests': 'Sends allowed per period',
+	'set.k.rate_limit.email_max_requests.desc':
+		'How many sign-in, sign-up, re-authentication and directory migration codes can be sent to the same email address (or user). Codes for account discovery have their own limit.',
+	'set.k.rate_limit.email_window': 'Period the sends are counted in',
+	'set.k.rate_limit.email_window.desc':
+		'The period the number above is counted in (5 to 60 minutes). Once it passes, sending is allowed again.',
+	'set.section.introspection': 'Token introspection',
+	'set.section.introspection.desc':
+		'The answer a Resource Server gets when it asks whether a token is valid.',
+	'set.k.tokens.introspection_extended_claims': 'Return each Resource Server’s extra claims',
+	'set.k.tokens.introspection_extended_claims.desc':
+		'Off: the answer holds only the basic claims (active, scope, client_id, sub, exp and the like), and a Resource Server’s profile and identity mapping are not used. On: the claims its profile allows are added.',
+	'set.section.scim': 'SCIM provisioning',
+	'set.section.scim.desc': 'The tokens external systems use to sync users over SCIM.',
+	'set.section.scim.advanced': 'The longest lifetime allowed',
+	'set.k.federation.scim_token_default_expiry': 'Default SCIM token lifetime',
+	'set.k.federation.scim_token_default_expiry.desc':
+		'How long a SCIM token lasts when it is created without a lifetime. Never longer than the maximum. Tokens already issued are not changed.',
+	'set.k.federation.scim_token_max_expiry': 'Longest SCIM token lifetime',
+	'set.k.federation.scim_token_max_expiry.desc':
+		'A SCIM token cannot be created with a longer lifetime (one year at most). Tokens already issued are not changed.',
 	'set.k.oauth.id_token_signing_alg.RS256': 'RS256',
 	'set.k.oauth.id_token_signing_alg.ES256': 'ES256',
 	'set.k.oauth.id_token_signing_alg.PS256': 'PS256',
@@ -180,6 +206,9 @@ export const enSettings: Record<keyof typeof jaSettings, string> = {
 	'settings.notice.fapi.title': 'FAPI 2.0 requirements apply',
 	'settings.notice.fapi.body':
 		'Requests FAPI 2.0 does not allow, such as authorization requests without PAR, are refused, so apps that do not support FAPI may stop working. Discovery keeps working as the specification describes.',
+	'settings.notice.exchangeCeilings.title': 'Some apps will be refused token exchange',
+	'settings.notice.exchangeCeilings.body':
+		'Token exchange is on, but delegation is not allowed, so apps in delegation mode (the default for new apps) are refused. Turn on “Allow delegation” to let them use it.',
 	'settings.value.on': 'On',
 	'settings.value.off': 'Off',
 	'settings.value.empty': '(none)',

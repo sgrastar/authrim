@@ -236,15 +236,8 @@ export const ADMIN_WRITE_TOOL_DEFINITIONS: readonly AgentToolDefinition[] =
           {
             resource_version: RESOURCE_VERSION,
             enabled: { type: 'boolean' },
-            delegationEnabled: {
-              type: 'boolean',
-              description:
-                "In development: saved but not applied yet (each app's delegation_mode decides delegation).",
-            },
-            impersonationEnabled: {
-              type: 'boolean',
-              description: 'In development: saved but not applied yet.',
-            },
+            delegationEnabled: { type: 'boolean' },
+            impersonationEnabled: { type: 'boolean' },
           },
           ['resource_version']
         ),

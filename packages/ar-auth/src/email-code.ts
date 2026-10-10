@@ -57,6 +57,7 @@ import {
   type CanonicalOtpLoginUser,
   type OtpAccountCoreDataContext,
   resolveEmailCodeTtlSeconds,
+  resolveEmailSendLimit,
 } from '@authrim/ar-lib-core';
 import { getRequestIssuer } from './issuer';
 import { getEmailCodeHtml, getEmailCodeText } from './utils/email/templates';
@@ -168,15 +169,17 @@ export async function emailCodeSendHandler(c: Context<{ Bindings: Env }>) {
 
       const tenantId = getTenantIdFromContext(c);
 
-      // Rate limiting check: 3 requests per 15 minutes per email via RPC
+      // Rate limiting check per email via RPC: the tenant's email send limit
+      // (rate_limit.email_max_requests per rate_limit.email_window; 3 per 15 minutes by default)
+      const emailSendLimit = await resolveEmailSendLimit(c.env, tenantId);
       const rateLimiterId = c.env.RATE_LIMITER.idFromName(
         buildDOKey('rate-limit', 'email-code', tenantId)
       );
       const rateLimiter = c.env.RATE_LIMITER.get(rateLimiterId);
 
       const rateLimitResult = await rateLimiter.incrementRpc(`email_code:${email.toLowerCase()}`, {
-        windowSeconds: 15 * 60, // 15 minutes
-        maxRequests: 3,
+        windowSeconds: emailSendLimit.windowSeconds,
+        maxRequests: emailSendLimit.maxRequests,
       });
 
       if (!rateLimitResult.allowed) {

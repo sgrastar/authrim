@@ -15,7 +15,7 @@
 			docs: {
 				description: {
 					component:
-						'Applications → App defaults: what every app of the tenant must meet — PKCE, HTTPS redirect URIs, DPoP-bound tokens, signed or encrypted request objects (a floor an app can raise but not lower) — with FAPI and token exchange. Delegation and impersonation are still in development: shown, but not editable.'
+						'Applications → App defaults: what every app of the tenant must meet — PKCE, HTTPS redirect URIs, DPoP-bound tokens, signed or encrypted request objects (a floor an app can raise but not lower) — with FAPI, token exchange (the tenant’s delegation and impersonation ceilings, both off unless set), token introspection and the SCIM token lifetime.'
 				}
 			}
 		}
@@ -36,7 +36,10 @@
 		const canvas = within(canvasElement);
 		await canvas.findAllByText(t('set.k.security.pkce_required'));
 		await canvas.findAllByText(t('set.k.security.https_redirect_only'));
+		await canvas.findAllByText(t('set.k.tokens.introspection_extended_claims'));
+		await canvas.findAllByText(t('set.k.federation.scim_token_default_expiry'));
 		expect(canvas.queryByText(t('settings.notice.fapi.title'))).toBeNull();
+		expect(canvas.queryByText(t('settings.notice.exchangeCeilings.title'))).toBeNull();
 	}}
 >
 	{#snippet template()}
@@ -58,6 +61,37 @@
 				'security.dpop_bound_access_tokens': true,
 				'security.require_encrypted_request_object': true,
 				'security.fapi_enabled': true
+			})}
+			tenantId={TENANT}
+		/>
+	{/snippet}
+</Story>
+
+<Story
+	name="Token exchange on, delegation not allowed"
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await canvas.findByText(t('settings.notice.exchangeCeilings.title'));
+	}}
+>
+	{#snippet template()}
+		<AppDefaults client={settings({ 'tokens.exchange_enabled': true })} tenantId={TENANT} />
+	{/snippet}
+</Story>
+
+<Story
+	name="Token exchange on, delegation allowed"
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await canvas.findAllByText(t('set.k.tokens.exchange_delegation_enabled'));
+		expect(canvas.queryByText(t('settings.notice.exchangeCeilings.title'))).toBeNull();
+	}}
+>
+	{#snippet template()}
+		<AppDefaults
+			client={settings({
+				'tokens.exchange_enabled': true,
+				'tokens.exchange_delegation_enabled': true
 			})}
 			tenantId={TENANT}
 		/>

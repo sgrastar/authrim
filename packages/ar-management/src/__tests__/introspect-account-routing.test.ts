@@ -26,7 +26,8 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@authrim/ar-lib-core')>();
   return {
     ...actual,
-    resolveEffectiveSettings: async () => ({}),
+    // The tenant has turned extended claims on: the Resource Server's mapping applies.
+    resolveEffectiveSettings: async () => ({ 'tokens.introspection_extended_claims': true }),
     getTenantIdFromContext: () => 'tenant-a',
     verifyClientSecretHash: async (secret: string, hash: string) => hash === `hash_${secret}`,
     getKeyByKid: async () => ({ kty: 'RSA', kid: 'key-1', n: 'n', e: 'AQAB' }),

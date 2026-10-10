@@ -46396,6 +46396,29 @@ components:
               oneOf:
                 - type: integer
                 - type: string
+    AdminClientWarnings:
+      type: array
+      description: >-
+        Returned by create and update when a saved client cannot work as asked until a tenant
+        setting changes. The client is saved either way. Today: a client with
+        token_exchange_allowed whose delegation_mode the tenant has not allowed
+        (tokens.exchange_delegation_enabled, tokens.exchange_impersonation_enabled), which token
+        exchange refuses with unauthorized_client.
+      items:
+        type: object
+        required:
+          - code
+          - setting
+          - message
+        properties:
+          code:
+            type: string
+            enum: [token_exchange_not_allowed_by_tenant]
+          setting:
+            type: string
+            description: The tenant setting to turn on.
+          message:
+            type: string
     AdminClientResponse:
       type: object
       required:
@@ -46403,6 +46426,8 @@ components:
       properties:
         client:
           $ref: '#/components/schemas/AdminClient'
+        warnings:
+          $ref: '#/components/schemas/AdminClientWarnings'
     AdminClientMutationResponse:
       type: object
       required:
@@ -46412,6 +46437,8 @@ components:
           type: boolean
         client:
           $ref: '#/components/schemas/AdminClient'
+        warnings:
+          $ref: '#/components/schemas/AdminClientWarnings'
     AdminClientListResponse:
       type: object
       required:
@@ -61814,7 +61841,12 @@ components:
         expiresInDays:
           type: integer
           minimum: 1
-          maximum: 3650
+          maximum: 365
+          description: >-
+            Days until the token expires. Omitted: the tenant's default
+            (federation.scim_token_default_expiry, 365 days unless changed). The effective
+            maximum is the tenant's federation.scim_token_max_expiry converted to whole days
+            (rounded down), at most 365; a larger value is rejected.
       example:
         description: SCIM provisioning token
         expiresInDays: 90

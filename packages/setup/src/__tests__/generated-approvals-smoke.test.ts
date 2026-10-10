@@ -60,10 +60,12 @@ describe('generated approvals smoke', () => {
             version: 'v1',
             values: {
               'tokens.exchange_enabled': true,
+              'tokens.exchange_delegation_enabled': true,
               'tokens.exchange_allowed_subject_token_types': 'access_token',
             },
             sources: {
               'tokens.exchange_enabled': 'kv',
+              'tokens.exchange_delegation_enabled': 'kv',
               'tokens.exchange_allowed_subject_token_types': 'default',
             },
           }),
@@ -328,10 +330,12 @@ describe('generated approvals smoke', () => {
             version: 'v1',
             values: {
               'tokens.exchange_enabled': true,
+              'tokens.exchange_delegation_enabled': true,
               'tokens.exchange_allowed_subject_token_types': 'access_token',
             },
             sources: {
               'tokens.exchange_enabled': 'kv',
+              'tokens.exchange_delegation_enabled': 'kv',
               'tokens.exchange_allowed_subject_token_types': 'default',
             },
           }),

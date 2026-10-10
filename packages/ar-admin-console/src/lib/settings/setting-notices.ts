@@ -8,7 +8,7 @@
 import type { SettingsPageDef } from './placement';
 import { fieldOf, type Values } from './settings-model';
 
-export type SettingNoticeId = 'idTokenAlgorithm' | 'fapi';
+export type SettingNoticeId = 'idTokenAlgorithm' | 'fapi' | 'exchangeCeilings';
 
 export interface SettingNotice {
 	id: SettingNoticeId;
@@ -41,6 +41,16 @@ const NOTICE_RULES: readonly NoticeRule[] = [
 		tone: 'info',
 		keys: ['security.fapi_enabled'],
 		applies: (value) => value('security.fapi_enabled') === true
+	},
+	{
+		// Token exchange is on, but the tenant's delegation ceiling is off: an app's
+		// delegation_mode defaults to delegation, so those apps are refused (unauthorized_client).
+		id: 'exchangeCeilings',
+		tone: 'info',
+		keys: ['tokens.exchange_enabled', 'tokens.exchange_delegation_enabled'],
+		applies: (value) =>
+			value('tokens.exchange_enabled') === true &&
+			value('tokens.exchange_delegation_enabled') === false
 	}
 ];
 

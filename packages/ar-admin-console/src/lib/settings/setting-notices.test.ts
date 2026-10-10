@@ -48,4 +48,28 @@ describe('notices about the consequences of a choice', () => {
 			sectionNotices(section('security.fapi_enabled'), values({ 'security.fapi_enabled': false }))
 		).toEqual([]);
 	});
+
+	it('tells that apps in delegation mode are refused while token exchange is on and delegation is not', () => {
+		const exchange = section(
+			'tokens.exchange_enabled',
+			'tokens.exchange_delegation_enabled',
+			'tokens.exchange_impersonation_enabled'
+		);
+		expect(
+			sectionNotices(
+				exchange,
+				values({ 'tokens.exchange_enabled': true, 'tokens.exchange_delegation_enabled': false })
+			)
+		).toEqual([{ id: 'exchangeCeilings', tone: 'info' }]);
+	});
+
+	it('says nothing about the delegation ceiling while token exchange is off, or delegation is allowed', () => {
+		const exchange = section('tokens.exchange_enabled', 'tokens.exchange_delegation_enabled');
+		for (const set of [
+			{ 'tokens.exchange_enabled': false, 'tokens.exchange_delegation_enabled': false },
+			{ 'tokens.exchange_enabled': true, 'tokens.exchange_delegation_enabled': true }
+		]) {
+			expect(sectionNotices(exchange, values(set))).toEqual([]);
+		}
+	});
 });
