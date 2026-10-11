@@ -186,7 +186,7 @@ describe('getBuiltinD1BindingsForComponent', () => {
       'LOOKUP_DB',
     ]);
     expect(getBuiltinD1BindingsForComponent('ar-token')).toEqual(['DB_ADMIN', 'LOOKUP_DB']);
-    expect(getBuiltinD1BindingsForComponent('ar-userinfo')).toEqual(['LOOKUP_DB']);
+    expect(getBuiltinD1BindingsForComponent('ar-userinfo')).toEqual(['DB_ADMIN', 'LOOKUP_DB']);
     expect(getBuiltinD1BindingsForComponent('ar-bridge')).toEqual([
       'DB',
       'DB_PII',

@@ -6,7 +6,11 @@
 			client_name: string;
 			logo_uri?: string;
 		};
-		user: {
+		/**
+		 * Not in the login challenge's answer, which names no one. When a source does give it, the
+		 * address is shown and need not be typed.
+		 */
+		user?: {
 			id: string;
 			email: string;
 			name?: string;
@@ -41,6 +45,8 @@
 		authActionLoading?: boolean;
 		totpCodeRequested?: boolean;
 		totpCode?: string;
+		/** The address to send the code to, typed when the challenge does not name it. */
+		email?: string;
 		/** Whether the human-verification widget shows under the given action. */
 		showTurnstileFor?: (target: string) => boolean;
 		turnstileSiteKey?: string | null;
@@ -52,6 +58,7 @@
 		turnstileToken?: string;
 		onPasskey?: () => void;
 		onEmailCode?: () => void;
+		onEmailKeyPress?: (event: KeyboardEvent) => void;
 		onTotpStart?: () => void;
 		onTotpVerify?: () => void;
 		onTotpKeyPress?: (event: KeyboardEvent) => void;
@@ -71,6 +78,7 @@
 		authActionLoading = false,
 		totpCodeRequested = false,
 		totpCode = $bindable(''),
+		email = $bindable(''),
 		showTurnstileFor = () => false,
 		turnstileSiteKey = null,
 		humanVerificationProvider = 'turnstile',
@@ -81,6 +89,7 @@
 		turnstileToken = $bindable(''),
 		onPasskey,
 		onEmailCode,
+		onEmailKeyPress,
 		onTotpStart,
 		onTotpVerify,
 		onTotpKeyPress,
@@ -127,7 +136,7 @@
 						<p class="auth-info-box__value">
 							{challengeData.client.client_name}
 						</p>
-						{#if challengeData.user}
+						{#if challengeData.user?.email}
 							<p class="auth-info-box__label" style="margin: 0;">
 								{challengeData.user.email}
 							</p>
@@ -181,6 +190,20 @@
 
 		<!-- Email Code Button -->
 		{#if emailCodeEnabled}
+			{#if !challengeData?.user?.email}
+				<Input
+					label={$LL.common_email()}
+					type="email"
+					name="email"
+					placeholder={$LL.common_emailPlaceholder()}
+					bind:value={email}
+					onkeypress={onEmailKeyPress}
+					autocomplete="email"
+					disabled={authActionLoading}
+					required
+					class="mb-3"
+				/>
+			{/if}
 			<Button
 				variant="secondary"
 				class="w-full"

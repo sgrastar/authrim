@@ -108,6 +108,13 @@ async function getSigningKeyFromKeyManager(
   return { privateKey, kid: keyData.kid };
 }
 
+// The identity mapping, its activations and the Destination Profile are control-plane data in the
+// Admin database (DB_ADMIN). Without that binding the mapping is looked up in the tenant database,
+// where it is not, and the claims are answered unmapped (another sub and more claims than the ID
+// token carries). The shared mapping service keeps that single-database fallback for an app with
+// no mapping selected, as it does for the token endpoint, so say so once instead of silently.
+let warnedAdminDatabaseMissing = false;
+
 /**
  * UserInfo Endpoint Handler
  * https://openid.net/specs/openid-connect-core-1_0.html#UserInfo
@@ -330,6 +337,12 @@ export async function userinfoHandler(c: Context<{ Bindings: Env }>) {
   const userClaims: Record<string, unknown> = claimEvaluation.claims;
 
   if (client_id && clientMetadata) {
+    if (!c.env.DB_ADMIN && !warnedAdminDatabaseMissing) {
+      warnedAdminDatabaseMissing = true;
+      log.warn(
+        'DB_ADMIN is not bound: UserInfo cannot read the identity mapping, so its claims may differ from the ID token'
+      );
+    }
     try {
       const authCtx = createAuthContextFromHono(c, tenantId);
       const mapped = await applyOIDCIdentityMapping({

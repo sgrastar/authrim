@@ -170,7 +170,9 @@ export function getBuiltinD1BindingsForComponent(
   if (component === 'ar-management') return ['DB', 'DB_PII', 'DB_ADMIN', 'LOOKUP_DB'];
   if (component === 'ar-auth') return ['DB', 'DB_PII', 'DB_ADMIN', 'LOOKUP_DB'];
   if (component === 'ar-token') return ['DB_ADMIN', 'LOOKUP_DB'];
-  if (component === 'ar-userinfo') return ['LOOKUP_DB'];
+  // DB_ADMIN: UserInfo applies the app's identity mapping and Destination Profile (control-plane
+  // data in the Admin database) so its claims match the ID token's.
+  if (component === 'ar-userinfo') return ['DB_ADMIN', 'LOOKUP_DB'];
   if (component === 'ar-bridge') return ['DB', 'DB_PII', 'DB_ADMIN', 'LOOKUP_DB'];
   if (component === 'ar-agent-access') return ['DB_ADMIN'];
   // Policy resolves tenant/account adapters from the request-scoped Runtime

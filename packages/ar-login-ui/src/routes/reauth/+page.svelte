@@ -13,6 +13,7 @@
 	import { startAuthentication } from '@simplewebauthn/browser';
 	import { startTotpReauth, verifyTotpReauth } from './reauth-totp';
 	import { resolveReauthMethods } from './reauth-methods';
+	import { readReauthEmail } from './reauth-email';
 	import {
 		signalUnknownCredential,
 		shouldSignalUnknownCredentialAfterLoginFailure
@@ -237,10 +238,15 @@
 	async function handleEmailCodeReauth() {
 		if (emailCodeLoading) return;
 		error = '';
-		if (!email) {
-			error = $LL.login_errorEmailRequired();
+		const typed = readReauthEmail(email);
+		if (!typed.ok) {
+			error =
+				typed.reason === 'required'
+					? $LL.login_errorEmailRequired()
+					: $LL.login_errorEmailInvalid();
 			return;
 		}
+		const address = typed.email;
 
 		emailCodeLoading = true;
 
@@ -248,19 +254,25 @@
 			const cfTurnstileResponse = getTurnstileToken('email-code');
 			if (turnstileRequired && !cfTurnstileResponse) return;
 			const { error: apiError } = await emailCodeAPI.send({
-				email,
+				email: address,
 				human_verification_response: cfTurnstileResponse,
 				authorizationChallengeId: challengeId || undefined
 			});
 			if (apiError) {
 				throw loginUiDisplayError($LL.error_server_error());
 			}
-			window.location.href = `/verify-email-code?email=${encodeURIComponent(email)}&challenge_id=${encodeURIComponent(challengeId)}`;
+			window.location.href = `/verify-email-code?email=${encodeURIComponent(address)}&challenge_id=${encodeURIComponent(challengeId)}`;
 		} catch (err) {
 			error = messageForCaughtError(err, $LL.error_unknown());
 		} finally {
 			emailCodeLoading = false;
 		}
+	}
+
+	function handleEmailKeyPress(event: KeyboardEvent) {
+		if (event.key !== 'Enter') return;
+		event.preventDefault();
+		void handleEmailCodeReauth();
 	}
 
 	async function handleTotpStart() {
@@ -338,6 +350,7 @@
 		{authActionLoading}
 		{totpCodeRequested}
 		bind:totpCode
+		bind:email
 		{showTurnstileFor}
 		{turnstileSiteKey}
 		{humanVerificationProvider}
@@ -348,6 +361,7 @@
 		bind:turnstileToken
 		onPasskey={handlePasskeyReauth}
 		onEmailCode={handleEmailCodeReauth}
+		onEmailKeyPress={handleEmailKeyPress}
 		onTotpStart={handleTotpStart}
 		onTotpVerify={handleTotpVerify}
 		onTotpKeyPress={handleTotpKeyPress}

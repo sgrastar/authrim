@@ -249,6 +249,17 @@ describe('worker capability manifests', () => {
     );
   });
 
+  it('declares the Admin database UserInfo reads the identity mapping and Destination Profile from', async () => {
+    const [userinfo] = await loadWorkerCapabilityManifests({
+      baseDir: ROOT_DIR,
+      components: ['ar-userinfo'],
+    });
+
+    expect(userinfo?.manifest.bindings).toContainEqual(
+      expect.objectContaining({ name: 'DB_ADMIN', kind: 'd1', required: true })
+    );
+  });
+
   it('requires the atomic rate limiter for every Worker whose routes are rate limited', async () => {
     const components = [
       'ar-auth',

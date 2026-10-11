@@ -51,6 +51,16 @@
 	{#snippet template(args)}{@render page(args)}{/snippet}
 </Story>
 
+<Story
+	name="Email code, address typed"
+	args={{
+		challengeData: { client: challenge.client },
+		emailCodeEnabled: true
+	}}
+>
+	{#snippet template(args)}{@render page(args)}{/snippet}
+</Story>
+
 <Story name="Passkey only" args={{ challengeData: challenge, showPasskey: true }}>
 	{#snippet template(args)}{@render page(args)}{/snippet}
 </Story>
