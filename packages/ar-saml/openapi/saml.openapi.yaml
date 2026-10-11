@@ -1199,6 +1199,50 @@ components:
             - IAL2
             - IAL3
             - null
+        minimumAal:
+          description: >-
+            For a service provider (saml_sp): the lowest authentication assurance level (NIST SP
+            800-63B AAL) a sign-in may have for it. A sign-in below it is sent to authenticate again
+            once (a step-up: the login page is given force_authn and required_aal, and the factors of
+            the session stepped up from are combined with the new sign-in's); if the person comes back
+            still below it, the SP-initiated request is answered with Responder/NoAuthnContext (to the
+            ACS URL, signed as other error responses are, with the RelayState), never sent again. A
+            passive request (IsPassive) is answered with Responder/NoPassive and is not sent. An
+            IdP-initiated sign-in below it gets the error page (it has no request to step up). The
+            answer does not say what level the sign-in reached or the SP requires. Applies whether or
+            not tenant-wide assurance (assurance.enabled) is on; the AAL a request's
+            RequestedAuthnContext asks for (assurance.saml_authn_context_aal) is added to it while
+            assurance is on, and the higher applies. On create, absent or null sets none; on update,
+            absent leaves it, null removes it and an empty string is refused. Any value other than
+            AAL1, AAL2, AAL3 or null is refused with 400. A saml_idp provider refuses it. The bundled
+            login flow does not yet read force_authn and required_aal, so it does not present an
+            additional authentication for the step-up: today a request passes only when the session
+            already meets the minimum (or the person happens to sign in with a method that reaches
+            it); otherwise the SP-initiated request is answered with Responder/NoAuthnContext (or
+            Responder/AuthnFailed when a ForceAuthn sign-in did not happen, or when the person comes
+            back from the login page with no session).
+          type:
+            - string
+            - 'null'
+          enum:
+            - AAL1
+            - AAL2
+            - AAL3
+            - null
+        authnContextClassRefMode:
+          description: >-
+            For a service provider (saml_sp): how the AuthnContextClassRef of an assertion is chosen.
+            legacy_static (the default when absent) is the SP's defaultAuthnContextClassRef or the
+            IdP's own; session is the class reference of the session's authentication; assurance is
+            the class reference that assurance.saml_authn_context_aal maps to the AAL the sign-in
+            reached (the strongest the sign-in meets, among those the request's Comparison accepts),
+            falling back to the static choice when that table has none that fits or the request names
+            references it does not list. Any other value is refused with 400.
+          type: string
+          enum:
+            - legacy_static
+            - session
+            - assurance
         metadataNameIdFormats:
           type: array
           items:

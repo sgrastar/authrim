@@ -134,6 +134,8 @@ export type SAMLAttributeReleaseConfirmationValueDisplay =
 export type SAMLDestinationFieldReleaseMode = 'required' | 'optional' | 'hidden';
 
 export type SAMLMinimumIal = 'IAL1' | 'IAL2' | 'IAL3';
+export type SAMLMinimumAal = 'AAL1' | 'AAL2' | 'AAL3';
+export type SAMLAuthnContextClassRefMode = 'legacy_static' | 'session' | 'assurance';
 
 export interface SAMLProviderConfig {
 	description?: string;
@@ -161,7 +163,7 @@ export interface SAMLProviderConfig {
 	allowSyntheticEmailFallback?: boolean;
 	/** Profile fields a login updates; null/absent follows the tenant, [] updates none. */
 	profileUpdateFields?: string[] | null;
-	authnContextClassRefMode?: 'legacy_static' | 'session';
+	authnContextClassRefMode?: SAMLAuthnContextClassRefMode;
 	defaultAuthnContextClassRef?: string;
 	passkeyAuthnContextClassRef?: string;
 	acsUrl?: string;
@@ -202,6 +204,8 @@ export interface SAMLProviderConfig {
 	signResponses?: boolean;
 	/** The lowest identity assurance level a person may have to sign in to this SP; null removes it. */
 	minimumIal?: SAMLMinimumIal | null;
+	/** The lowest authentication assurance level a sign-in may have for this SP; null removes it. */
+	minimumAal?: SAMLMinimumAal | null;
 	allowedBindings?: string[];
 	aggregateImport?: {
 		aggregateSourceUrl?: string;

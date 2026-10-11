@@ -122,7 +122,7 @@
 	let allowedAuthnContextClassRefs = $state(
 		'urn:oasis:names:tc:SAML:2.0:ac:classes:PasswordProtectedTransport'
 	);
-	let authnContextClassRefMode = $state<'legacy_static' | 'session'>('legacy_static');
+	let authnContextClassRefMode = $state<'legacy_static' | 'session' | 'assurance'>('legacy_static');
 	let defaultAuthnContextClassRef = $state(
 		'urn:oasis:names:tc:SAML:2.0:ac:classes:PasswordProtectedTransport'
 	);

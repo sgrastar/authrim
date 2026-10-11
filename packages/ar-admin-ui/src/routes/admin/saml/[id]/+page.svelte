@@ -9,6 +9,8 @@
 		type SAMLAttributeReleaseConfirmationValueDisplay,
 		type SAMLDestinationFieldReleaseMode,
 		type SAMLJitEmailLinkingPolicy,
+		type SAMLAuthnContextClassRefMode,
+		type SAMLMinimumAal,
 		type SAMLMinimumIal,
 		type SAMLProvider,
 		type SAMLProviderConfig,
@@ -107,6 +109,7 @@
 	let samlProfile = $state('baseline');
 	let authnRequestSignaturePolicy = $state<'required' | 'optional' | 'disabled'>('optional');
 	let minimumIal = $state<SAMLMinimumIal | ''>('');
+	let minimumAal = $state<SAMLMinimumAal | ''>('');
 	let logoutRequestSignaturePolicy = $state<'required' | 'optional' | 'disabled'>('required');
 	let authnContextPolicyMode = $state<'observe' | 'require_any'>('observe');
 	let jitEmailLinkingPolicy = $state<SAMLJitEmailLinkingPolicy>('email_linking');
@@ -115,7 +118,7 @@
 	let allowedAuthnContextClassRefs = $state(
 		'urn:oasis:names:tc:SAML:2.0:ac:classes:PasswordProtectedTransport'
 	);
-	let authnContextClassRefMode = $state<'legacy_static' | 'session'>('legacy_static');
+	let authnContextClassRefMode = $state<SAMLAuthnContextClassRefMode>('legacy_static');
 	let defaultAuthnContextClassRef = $state(
 		'urn:oasis:names:tc:SAML:2.0:ac:classes:PasswordProtectedTransport'
 	);
@@ -211,6 +214,7 @@
 		samlProfile = data.config.samlProfile || 'baseline';
 		authnRequestSignaturePolicy = data.config.authnRequestSignaturePolicy || 'optional';
 		minimumIal = data.config.minimumIal ?? '';
+		minimumAal = data.config.minimumAal ?? '';
 		logoutRequestSignaturePolicy = data.config.logoutRequestSignaturePolicy || 'required';
 		authnContextPolicyMode = data.config.authnContextPolicy?.mode || 'observe';
 		jitEmailLinkingPolicy = data.config.jitEmailLinkingPolicy || 'email_linking';
@@ -557,6 +561,7 @@
 			signResponses,
 			samlProfile,
 			minimumIal: minimumIal || null,
+			minimumAal: minimumAal || null,
 			authnRequestSignaturePolicy,
 			logoutRequestSignaturePolicy,
 			authnContextClassRefMode,
@@ -1428,6 +1433,21 @@
 						</div>
 
 						<div class="admin-field">
+							<label for="minimumAal" class="admin-field__label">
+								{$LL.admin_saml_detail_minimum_aal()}
+							</label>
+							<select id="minimumAal" bind:value={minimumAal} class="admin-select">
+								<option value="">{$LL.admin_saml_detail_minimum_aal_none()}</option>
+								{#if minimumAal === 'AAL1'}
+									<option value="AAL1">AAL1</option>
+								{/if}
+								<option value="AAL2">AAL2</option>
+								<option value="AAL3">AAL3</option>
+							</select>
+							<p class="field-hint">{$LL.admin_saml_detail_minimum_aal_hint()}</p>
+						</div>
+
+						<div class="admin-field">
 							<span class="admin-field__label">
 								{$LL.admin_saml_detail_authn_request_signature()}
 							</span>
@@ -1500,6 +1520,10 @@
 								<label class="radio-card">
 									<input type="radio" bind:group={authnContextClassRefMode} value="legacy_static" />
 									<span>{$LL.admin_saml_detail_legacy_static()}</span>
+								</label>
+								<label class="radio-card">
+									<input type="radio" bind:group={authnContextClassRefMode} value="assurance" />
+									<span>{$LL.admin_saml_detail_assurance_level()}</span>
 								</label>
 							</div>
 							<p class="field-hint">

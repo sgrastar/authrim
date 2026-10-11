@@ -13,21 +13,12 @@
 
 import type { Context } from 'hono';
 import type { AttributeReleaseConsentMode, Env } from '@authrim/ar-lib-core';
-import type {
-  SAMLAuthnRequest,
-  SAMLRequestContext,
-  SAMLRequestData,
-  SAMLSPConfig,
-} from '@authrim/ar-lib-core';
+import type { SAMLAuthnRequest, SAMLRequestContext, SAMLSPConfig } from '@authrim/ar-lib-core';
 import {
   AttributeReleaseConsentRepository,
   getSessionStoreBySessionId,
   isShardedSessionId,
-  getUIConfig,
   getTenantSettingsDocument,
-  buildIssuerUrl,
-  buildSAMLRequestStoreInstanceName,
-  createConfigurationError,
   getLogger,
   getLocalization,
   resolveAuthCorePersistenceAdapterFromEnv,
@@ -69,11 +60,17 @@ import {
   validateSAMLAuthnRequestSignature,
   type SAMLRedirectSignatureInput,
 } from './authn-request-signature';
+import { parseRequestedAuthnContext, SAMLAuthnContextPolicyError } from './authn-context';
+import { chooseSAMLAuthnContextClassRef, type SAMLClassRefGuard } from './authn-context-assurance';
+import { readSAMLAssuranceStepUp, sessionProvenAt } from './authn-assurance';
+import { gateSAMLAuthnAssurance } from './sso-authn-assurance-gate';
 import {
-  parseRequestedAuthnContext,
-  resolveSAMLAuthnContextClassRef,
-  SAMLAuthnContextPolicyError,
-} from './authn-context';
+  carrySAMLRequestContext,
+  readSAMLReauthentication,
+  consumeStoredAuthnRequest,
+  redirectToSAMLLogin,
+  storeAuthnRequest,
+} from './sso-stored-request';
 import { resolveSAMLAuthnInteraction } from './authn-request-policy';
 import {
   InvalidSAMLResponseDestinationError,
@@ -81,7 +78,6 @@ import {
   UnsupportedSAMLResponseBindingError,
   validateSAMLResponseProtocolBinding,
 } from './response-destination';
-import { getSAMLInteractiveLoginUrlPolicy } from '../common/entity-id';
 import { applySAMLResponseSigningPolicy, assertSAMLResponseSigningPolicy } from './signing';
 import { applySAMLAssertionEncryptionPolicy } from './encryption';
 import {
@@ -120,6 +116,10 @@ interface AuthenticatedSAMLSession {
   sessionId: string;
   acr?: string;
   amr?: string[];
+  /** The session's data: what it records of the authentication (assurance evidence included). */
+  data?: Record<string, unknown>;
+  /** When the session last recorded a proof of authentication (milliseconds). */
+  provenAt?: number;
 }
 
 interface ParsedAuthnRequestInput {
@@ -299,7 +299,13 @@ export async function handleIdPSSO(c: Context<{ Bindings: Env }>): Promise<Respo
 
     // Check user authentication
     const authenticatedSession = await checkUserAuthentication(c, env);
-    const authnInteraction = resolveSAMLAuthnInteraction(authnRequest, authenticatedSession);
+    const authnInteraction = resolveSAMLAuthnInteraction(authnRequest, authenticatedSession, {
+      reauthentication: readSAMLReauthentication(parsedInput.requestContext),
+      returnedFromSignIn: Boolean(
+        readSAMLReauthentication(parsedInput.requestContext) ||
+        readSAMLAssuranceStepUp(parsedInput.requestContext)
+      ),
+    });
 
     if (authnInteraction.action === 'protocol_error') {
       log.warn('SAML AuthnRequest interaction policy failed', {
@@ -337,35 +343,22 @@ export async function handleIdPSSO(c: Context<{ Bindings: Env }>): Promise<Respo
     }
 
     if (authnInteraction.action === 'interactive_login') {
-      // User not authenticated - redirect to login
-      // Store AuthnRequest in SAMLRequestStore for later retrieval
-      await storeAuthnRequest(env, tenantId, authnRequest, relayState);
-
-      // Redirect to login page with return URL
-      // UI configured: redirect to external UI
-      // Not configured: return configuration error
-      const uiConfig = await getUIConfig(env, tenantId);
-
-      if (uiConfig?.baseUrl) {
-        const loginPath = uiConfig.paths?.login || '/login';
-        const loginUrlPolicy = await getSAMLInteractiveLoginUrlPolicy(env, tenantId);
-        const loginBaseUrl =
-          loginUrlPolicy === 'tenant_host' ? buildIssuerUrl(env, tenantId) : uiConfig.baseUrl;
-        const loginUrl = new URL(loginPath, loginBaseUrl);
-        loginUrl.searchParams.set('saml_request_id', authnRequest.id);
-        loginUrl.searchParams.set('saml_sp_entity_id', authnRequest.issuer);
-        loginUrl.searchParams.set('return_to', 'saml_sso');
-        if (authnInteraction.forceReauthentication) {
-          loginUrl.searchParams.set('force_authn', 'true');
-        }
-        if (loginUrlPolicy === 'ui_base_url' && tenantId) {
-          loginUrl.searchParams.set('tenant_hint', tenantId);
-        }
-        return c.redirect(loginUrl.toString());
-      }
-
-      // No UI configured
-      return c.json(createConfigurationError(), 500);
+      // User not authenticated, or asked to sign in again (ForceAuthn): the request is stored for
+      // when they come back, with the time they were sent when it is a new sign-in they are sent
+      // for, so that the sign-in they return from is recognised and they are not sent again.
+      return await redirectToSAMLLogin(c, {
+        env,
+        tenantId,
+        authnRequest,
+        relayState,
+        forceReauthentication: authnInteraction.forceReauthentication,
+        context: {
+          ...carrySAMLRequestContext(parsedInput.requestContext),
+          ...(authnInteraction.forceReauthentication
+            ? { reauthentication: { issuedAt: Date.now() } }
+            : {}),
+        },
+      });
     }
 
     // The SP's minimum identity assurance level. No sign-in or consent step can raise a person's
@@ -433,6 +426,41 @@ export async function handleIdPSSO(c: Context<{ Bindings: Env }>): Promise<Respo
       );
     }
 
+    // The AAL the sign-in must have (the SP's minimum, and what the request's AuthnContext asks
+    // for). Judged after the IAL: no sign-in can raise a person's IAL, so one who is refused for
+    // it is not sent to authenticate again for nothing; and before the user data and attribute
+    // release are touched.
+    const assuranceGate = await gateSAMLAuthnAssurance(c, {
+      env,
+      tenantId,
+      authnRequest,
+      spConfig,
+      session: authnInteraction.session,
+      relayState,
+      requestContext: parsedInput.requestContext,
+      log,
+      refuse: async (answer) =>
+        sendSAMLResponse(
+          c,
+          resolveSAMLResponseDestination(authnRequest, spConfig),
+          await generateSAMLProtocolErrorResponse(
+            issuerUrl,
+            idpEntityId,
+            env,
+            authnRequest,
+            spConfig,
+            tenantId,
+            STATUS_CODES.RESPONDER,
+            answer.secondLevelStatusCode,
+            answer.statusMessage,
+            answer.failureKind
+          ),
+          relayState
+        ),
+    });
+    if ('response' in assuranceGate) return assuranceGate.response;
+    const authnAssurance = assuranceGate.check;
+
     // Get user information
     const userInfo = await getUserInfo(env, tenantId, authnInteraction.session.userId);
     if (!userInfo) {
@@ -453,7 +481,8 @@ export async function handleIdPSSO(c: Context<{ Bindings: Env }>): Promise<Respo
         authnInteraction.session,
         parsedInput.requestContext,
         log,
-        c
+        c,
+        authnAssurance.outcome === 'met' ? authnAssurance : undefined
       );
     } catch (error) {
       if (error instanceof MissingRequiredSAMLAttributeError) {
@@ -540,6 +569,14 @@ export async function handleIdPSSO(c: Context<{ Bindings: Env }>): Promise<Respo
 
         const challengeId = crypto.randomUUID();
         await storeAuthnRequest(env, tenantId, authnRequest, relayState, {
+          ...carrySAMLRequestContext({
+            ...parsedInput.requestContext,
+            // The step-up, with the session it was verified against: the request comes back
+            // through this screen with that session holding the combined evidence.
+            ...(authnAssurance.outcome === 'met' && authnAssurance.assuranceStepUp
+              ? { assuranceStepUp: authnAssurance.assuranceStepUp }
+              : {}),
+          }),
           attributeReleaseConsentChallenge: {
             challengeId,
             subjectId: authnInteraction.session.userId,
@@ -755,6 +792,7 @@ export async function handleIdPAttributeReleaseConsent(
     }
 
     await storeAuthnRequest(env, tenantId, authnRequest, storedRequest.relayState, {
+      ...carrySAMLRequestContext(storedRequest.context),
       attributeReleaseConsentConfirmed: {
         subjectId: authSession.userId,
         destinationType: 'saml_sp',
@@ -1071,38 +1109,6 @@ async function parseStoredAuthnRequest(
   };
 }
 
-async function consumeStoredAuthnRequest(
-  env: Env,
-  tenantId: string,
-  requestId: string,
-  spEntityId: string
-): Promise<SAMLRequestData> {
-  const samlRequestStoreId = env.SAML_REQUEST_STORE.idFromName(
-    buildSAMLRequestStoreInstanceName(tenantId, 'idp', spEntityId)
-  );
-  const samlRequestStore = env.SAML_REQUEST_STORE.get(samlRequestStoreId);
-  const response = await samlRequestStore.fetch(
-    `https://saml-request-store/consume/${encodeURIComponent(requestId)}`,
-    { method: 'POST' }
-  );
-
-  if (!response.ok) {
-    throw new Error('Stored SAML request not found or already used');
-  }
-
-  const storedRequest = (await response.json()) as SAMLRequestData;
-  if (
-    storedRequest.type !== 'authn_request' ||
-    storedRequest.issuer !== spEntityId ||
-    storedRequest.requestId !== requestId ||
-    !storedRequest.data
-  ) {
-    throw new Error('Stored SAML request is invalid');
-  }
-
-  return storedRequest;
-}
-
 /**
  * Parse HTTP-POST binding parameters
  */
@@ -1287,56 +1293,27 @@ async function checkUserAuthentication(
 
     const session = (await response.json()) as {
       userId?: string;
-      data?: { acr?: unknown; amr?: unknown };
+      data?: Record<string, unknown>;
     };
+    const data =
+      session.data && typeof session.data === 'object' && !Array.isArray(session.data)
+        ? session.data
+        : undefined;
     return session.userId
       ? {
           userId: session.userId,
           sessionId,
-          acr: typeof session.data?.acr === 'string' ? session.data.acr : undefined,
-          amr: Array.isArray(session.data?.amr)
-            ? session.data.amr.filter((value): value is string => typeof value === 'string')
+          acr: typeof data?.acr === 'string' ? data.acr : undefined,
+          amr: Array.isArray(data?.amr)
+            ? data.amr.filter((value): value is string => typeof value === 'string')
             : undefined,
+          data,
+          provenAt: sessionProvenAt(data),
         }
       : null;
   } catch {
     return null;
   }
-}
-
-/**
- * Store AuthnRequest for later retrieval after login
- */
-async function storeAuthnRequest(
-  env: Env,
-  tenantId: string,
-  authnRequest: SAMLAuthnRequest,
-  relayState?: string,
-  context?: SAMLRequestContext
-): Promise<void> {
-  const requestTtlSeconds = await resolveSamlRequestTtlSeconds(env, tenantId);
-  const samlRequestStoreId = env.SAML_REQUEST_STORE.idFromName(
-    buildSAMLRequestStoreInstanceName(tenantId, 'idp', authnRequest.issuer)
-  );
-  const samlRequestStore = env.SAML_REQUEST_STORE.get(samlRequestStoreId);
-
-  await samlRequestStore.fetch('https://saml-request-store/store', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      requestId: authnRequest.id,
-      issuer: authnRequest.issuer,
-      destination: authnRequest.destination,
-      acsUrl: authnRequest.assertionConsumerServiceURL,
-      binding: 'post', // Default response binding
-      type: 'authn_request',
-      data: authnRequest,
-      relayState,
-      context,
-      used: false,
-      expiresAt: Date.now() + requestTtlSeconds * 1000,
-    }),
-  });
 }
 
 /**
@@ -1367,7 +1344,9 @@ async function generateSAMLResponse(
     debug(message: string, context?: Record<string, unknown>): void;
     error(message: string, context?: Record<string, unknown>, error?: Error): void;
   },
-  requestScope?: object
+  requestScope?: object,
+  /** The class reference chosen for the AAL reached, and what the one issued is checked against. */
+  assurance?: { classRef?: string; guard: SAMLClassRefGuard }
 ): Promise<string> {
   const { privateKeyPem, certificate } = await getSAMLIdPSigningMaterial(env, {
     tenantId,
@@ -1503,13 +1482,17 @@ async function generateSAMLResponse(
     });
   }
 
-  const authnContextClassRef = resolveSAMLAuthnContextClassRef(authnRequest, {
-    spConfig,
-    session: {
-      acr: authSession.acr,
-      amr: authSession.amr,
+  const authnContextClassRef = chooseSAMLAuthnContextClassRef(
+    authnRequest,
+    {
+      spConfig,
+      session: {
+        acr: authSession.acr,
+        amr: authSession.amr,
+      },
     },
-  });
+    assurance
+  );
   const timing = buildSAMLAssertionTiming({
     assertionValiditySeconds: assertionTtlSeconds,
   });

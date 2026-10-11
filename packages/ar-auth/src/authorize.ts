@@ -14,16 +14,14 @@ import {
   resolveEffectiveSettings,
   falRequiresDpop,
   falRequiresSignedPushedRequest,
-  computeAAL,
+  evaluateSessionAssurance,
   meetsAAL,
-  mergeStepUpEvidence,
   parseScopeAALRequirements,
   parseOutboundAcrMappings,
   parseUpstreamAcrMappings,
   requiredAAL,
   selectAcr,
   aalToAcr,
-  sessionAssuranceEvidence,
   type AAL,
   type AssuranceLevel,
   getAuthCodeShardIndex,
@@ -3601,136 +3599,34 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
     const upstreamAcrMappings = parseUpstreamAcrMappings(
       assuranceSettings['assurance.upstream_acr_mappings']
     );
-    // Only the evidence of the session of the user being authorized counts (a confirmation names the
-    // user; the cookie may carry someone else's session).
-    const ownSession = sessionDataUserId === sessionUserId;
-    const provenAt = typeof sessionData?.proven_at === 'number' ? sessionData.proven_at : undefined;
-    // After a re-authentication, only a session proven after it was asked for is its result: an
-    // older session of the user (switched in by cookie) counts for nothing. An external IdP login
-    // records no proof time (its IdP's times are in that IdP's clock), so it never counts here.
-    const reauthResult =
-      confirmedReauthIssuedAt === undefined ||
-      (provenAt !== undefined && provenAt >= confirmedReauthIssuedAt);
-    const evidenceSession = ownSession && reauthResult;
-    let evidence = sessionAssuranceEvidence(
-      evidenceSession ? sessionData : undefined,
-      upstreamAcrMappings
-    );
-    if (!evidenceSession) {
+    // What the session proves, combined with the session stepped up from when this request comes
+    // back from a step-up (the session being the user's own, and the re-authentication its result).
+    const sessionAssurance = await evaluateSessionAssurance({
+      sessionId,
+      sessionData,
+      sessionDataUserId,
+      sessionUserId,
+      upstreamAcrMappings,
+      reauthIssuedAt: confirmedReauthIssuedAt,
+      stepUp: _confirmed === 'true' ? confirmedAssuranceStepUp : undefined,
+      getSessionStore: (id) => getSessionStoreBySessionId(c.env, id, tenantId).stub,
+      onUnrecorded: () =>
+        log.warn('The step-up could not be recorded in the session', {
+          action: 'assurance_step_up_record',
+        }),
+    });
+    if (sessionAssurance.sessionEnded) {
+      // The session ended meanwhile: nothing it proved may be used.
+      return sendError('login_required', 'The session ended during the step-up');
+    }
+    const { ownSession, evidence } = sessionAssurance;
+    if (!sessionAssurance.evidenceSession) {
       // What that session proved is not this authentication's: the code reports none of it.
       sessionAmr = undefined;
       sessionAcr = undefined;
     }
-    // A completed step-up: the factors the earlier session had proven, with the one just completed,
-    // provided the earlier session is still that user's live session and the current one records
-    // that its authentication was proven after the step-up began (proven_at, milliseconds; a
-    // session without it is never combined).
-    if (
-      _confirmed === 'true' &&
-      confirmedAssuranceStepUp &&
-      sessionId &&
-      ownSession &&
-      provenAt !== undefined &&
-      provenAt >= confirmedAssuranceStepUp.issuedAt
-    ) {
-      const priorSessionId = confirmedAssuranceStepUp.priorSessionId;
-      if (priorSessionId && priorSessionId !== sessionId) {
-        const prior = (await getSessionStoreBySessionId(
-          c.env,
-          priorSessionId,
-          tenantId
-        ).stub.getSessionRpc(priorSessionId)) as Session | null;
-        if (prior && prior.userId === sessionUserId && prior.expiresAt > Date.now()) {
-          evidence = mergeStepUpEvidence(
-            sessionAssuranceEvidence(
-              prior.data as Record<string, unknown> | undefined,
-              upstreamAcrMappings
-            ),
-            evidence
-          );
-          // The combined evidence is as old as its oldest proof (0: unknown, never fresh), so it
-          // cannot pass for a later step-up's own authentication.
-          const combinedProvenAt =
-            typeof prior.data?.proven_at === 'number'
-              ? Math.min(prior.data.proven_at, provenAt)
-              : 0;
-          const store = getSessionStoreBySessionId(c.env, sessionId, tenantId).stub;
-          // Written only over the evidence this request read: another step-up of the same session
-          // may have combined its own factors meanwhile, and those are kept rather than replaced.
-          let read = sessionData;
-          let stored = evidence;
-          let storedProvenAt = combinedProvenAt;
-          let written = false;
-          // The step-up's own login, just proven, stays what a later re-authentication can take,
-          // paired with its own time, while the combined evidence counts from its oldest proof.
-          const ownUnverified = Array.isArray(sessionData?.unverified_amr)
-            ? sessionData.unverified_amr
-            : [];
-          const ownProvenAmr = (Array.isArray(sessionData?.amr) ? sessionData.amr : []).filter(
-            (method) => !ownUnverified.includes(method)
-          );
-          let ownReauthProof =
-            typeof sessionData?.reauth_proven_at === 'number' ||
-            ownProvenAmr.length === 0 ||
-            provenAt === undefined
-              ? {}
-              : { reauth_proven_amr: ownProvenAmr, reauth_proven_at: provenAt };
-          for (let attempt = 0; attempt < 3 && !written; attempt++) {
-            const updates = {
-              amr: [...stored.amr],
-              unverified_amr: [...(stored.unverifiedMethods ?? [])],
-              ...(stored.upstreamAcr ? { upstream_acr: stored.upstreamAcr } : {}),
-              proven_at: storedProvenAt,
-              ...ownReauthProof,
-            };
-            const updated = (await store.updateSessionDataRpc(sessionId, updates, {
-              ifDataMatches: {
-                amr: read?.amr,
-                unverified_amr: read?.unverified_amr,
-                upstream_acr: read?.upstream_acr,
-                proven_at: read?.proven_at,
-                // Writing its own pair, a re-authentication completed meanwhile (a newer pair) must
-                // fail the write rather than be replaced; without one, the newer pair is merged over.
-                ...('reauth_proven_at' in ownReauthProof
-                  ? {
-                      reauth_proven_amr: read?.reauth_proven_amr,
-                      reauth_proven_at: read?.reauth_proven_at,
-                    }
-                  : {}),
-              } as Partial<SessionData>,
-            })) as Session | null;
-            if (!updated) {
-              // The session ended meanwhile: nothing it proved may be used.
-              return sendError('login_required', 'The session ended during the step-up');
-            }
-            const latest = updated.data as Record<string, unknown> | undefined;
-            written = Object.entries(updates).every(
-              ([field, value]) => JSON.stringify(latest?.[field]) === JSON.stringify(value)
-            );
-            if (!written) {
-              read = latest;
-              if (typeof latest?.reauth_proven_at === 'number') ownReauthProof = {};
-              stored = mergeStepUpEvidence(
-                sessionAssuranceEvidence(latest, upstreamAcrMappings),
-                evidence
-              );
-              storedProvenAt = Math.min(
-                typeof latest?.proven_at === 'number' ? latest.proven_at : 0,
-                combinedProvenAt
-              );
-            }
-          }
-          if (!written) {
-            // This request's own evidence stands; the session keeps what was written last.
-            log.warn('The step-up could not be recorded in the session', {
-              action: 'assurance_step_up_record',
-            });
-          }
-          sessionAmr = [...evidence.amr];
-        }
-      }
-    }
-    const actualAal = computeAAL(evidence);
+    if (sessionAssurance.combinedAmr) sessionAmr = sessionAssurance.combinedAmr;
+    const actualAal = sessionAssurance.aal;
     const acrClaim = parsedClaimsRequest.request?.id_token?.acr as
       | { essential?: unknown; value?: unknown; values?: unknown }
       | null

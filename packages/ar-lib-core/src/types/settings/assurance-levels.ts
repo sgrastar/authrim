@@ -267,13 +267,11 @@ export const ASSURANCE_LEVELS_SETTINGS_META: Record<keyof AssuranceLevelsSetting
   },
   'assurance.saml_authn_context_aal': {
     key: 'assurance.saml_authn_context_aal',
-    // Saved and validated, not applied yet: runtime use lands with the identity assurance work.
-    status: 'in_development',
     type: 'string',
     default: '{}',
     label: 'SAML AuthnContext AAL',
     description:
-      'JSON mapping of SAML AuthnContextClassRef values to the AAL each stands for, e.g. {"https://www.gakunin.jp/profile/AAL2": "AAL2"}. An SP requesting one is answered only from a session at that AAL, after re-authentication if needed. Applies while assurance levels are enabled (not applied yet)',
+      'JSON mapping of SAML AuthnContextClassRef values to the AAL each stands for, e.g. {"https://www.gakunin.jp/profile/AAL2": "AAL2"}. A class reference a service provider requests (RequestedAuthnContext) is taken as the lowest AAL the sign-in may have, read with its Comparison (exact and minimum: that AAL; better: above it; maximum: no step-up). A session below it authenticates again (a step-up, when the request is not passive), and if the new sign-in falls short too the SP is answered with NoAuthnContext. A service provider whose AuthnContextClassRef mode is Assurance gets in the assertion the class reference of the AAL reached. A class reference not listed is handled as before. A service provider\'s own minimum AAL applies whether or not assurance levels are enabled. The bundled login flow does not yet read the step-up\'s force_authn and required_aal, so it does not present an additional authentication for it: today such a request is answered only when the session already meets the required AAL (or the person happens to sign in with a method that reaches it), otherwise the SP gets NoAuthnContext (AuthnFailed when a ForceAuthn sign-in did not happen, or when the person comes back from the login page with no session). Applies while assurance levels are enabled; empty maps nothing',
   },
   'assurance.ida_profile': {
     key: 'assurance.ida_profile',

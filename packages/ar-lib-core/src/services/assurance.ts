@@ -40,6 +40,21 @@ export function isAssuranceLevel(value: unknown): value is AssuranceLevel {
   return typeof value === 'string' && Object.hasOwn(ORDER, value);
 }
 
+/** Whether a value is AAL1, AAL2 or AAL3 (not AAL0, which is no level to require). */
+export function isAAL(value: unknown): value is AAL {
+  return value === 'AAL1' || value === 'AAL2' || value === 'AAL3';
+}
+
+/**
+ * The minimum AAL an SP (or other registration) is saved with: none when unset; a stored value
+ * that is not an AAL counts as the highest, never as none, so a damaged value cannot lower a
+ * requirement.
+ */
+export function readMinimumAAL(value: unknown): AAL | undefined {
+  if (value === null || value === undefined) return undefined;
+  return isAAL(value) ? value : 'AAL3';
+}
+
 /** The higher of two levels. */
 export function maxAAL(a: AssuranceLevel, b: AssuranceLevel): AssuranceLevel {
   return ORDER[a] >= ORDER[b] ? a : b;
