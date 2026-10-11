@@ -4,6 +4,7 @@ import {
   createAuthContextFromHono,
   getTenantIdFromContext,
   OIDC_STANDARD_CLAIM_SCOPE,
+  EDUPERSON_ASSURANCE_CLAIM,
   requireDedicatedAdminDatabaseAdapter,
   transitionAccountAuthenticationState,
   validateExternalUrl,
@@ -1270,6 +1271,7 @@ const OIDC_STANDARD_SCOPES = new Set([
   'phone',
   'address',
   'offline_access',
+  EDUPERSON_ASSURANCE_CLAIM,
 ]);
 const DIRECTORY_FACTS_EXTERNAL_SCHEMA_ID = 'builtin_directory_facts';
 const DIRECTORY_FACTS_SCHEMA = {
@@ -8266,7 +8268,12 @@ function isOverReleasedOidcClaim(
   customScopeClaims: Map<string, string[]>
 ): boolean {
   if (claimName === 'sub') return false;
-  if (!OIDC_STANDARD_CLAIMS.has(claimName)) {
+  // A claim with a scope of its own in the release filter's table (eduperson_assurance) is judged
+  // like a standard claim; any other non-standard claim is released by an attribute group's scope.
+  if (
+    !OIDC_STANDARD_CLAIMS.has(claimName) &&
+    !Object.hasOwn(OIDC_STANDARD_CLAIM_SCOPE, claimName)
+  ) {
     return !requiredScopes.some((scope) => customScopeClaims.get(scope)?.includes(claimName));
   }
   // No scope listed: the release filter then requires the standard claim's own scope.
@@ -8764,12 +8771,17 @@ function assertFieldMappingRuleSafe(rule: FieldMappingVersionRuleInput, path: st
   rule.edges?.forEach((edge, index) => {
     assertNonEmptyRecord(edge.sourceRef, `${path}.edges[${index}].sourceRef`);
     assertNonEmptyRecord(edge.targetRef, `${path}.edges[${index}].targetRef`);
-    const targetNamespace = readStringValue(edge.targetRef.namespace);
-    const targetPath = readStringValue(edge.targetRef.path);
+    // The runtime reads a reference's claim name from path, else fieldKey, else nodeId (and a
+    // missing namespace as 'unknown'): every spelling is checked, so none registers a reserved
+    // claim that the runtime would then have to refuse.
+    const targetNamespace = readStringValue(edge.targetRef.namespace) ?? 'unknown';
+    const targetNames = [
+      edge.targetRef.path,
+      edge.targetRef.fieldKey,
+      edge.targetRef.nodeId,
+    ].flatMap((name) => readStringValue(name) ?? []);
     if (
-      targetNamespace &&
-      targetPath &&
-      isProtectedIdentityMappingDestinationClaim(targetNamespace, targetPath)
+      targetNames.some((name) => isProtectedIdentityMappingDestinationClaim(targetNamespace, name))
     ) {
       throw badRequest(
         `${path}.edges[${index}].targetRef targets a claim reserved by the protocol envelope`

@@ -30,6 +30,18 @@ export interface ParsedClaimsRequest {
   _asc?: ClaimsRequestASC;
 }
 
+/**
+ * The claim OpenID Connect for Identity Assurance verified claims are returned as. Not issued yet;
+ * the name is reserved so no identity mapping or token claim rule can write it.
+ */
+export const VERIFIED_CLAIMS_CLAIM = 'verified_claims';
+
+/**
+ * The claim (and scope) that carries the assurance values of a person's IAL, as REFEDS and the
+ * research and education federations name it.
+ */
+export const EDUPERSON_ASSURANCE_CLAIM = 'eduperson_assurance';
+
 export interface OIDCClaimsClientPolicy {
   allow_claims_without_scope?: boolean;
   claims_parameter_policy?: Record<string, ClaimReleasePolicy>;
@@ -78,15 +90,17 @@ export const PHONE_CLAIMS = ['phone_number', 'phone_number_verified'] as const;
 export const ADDRESS_CLAIMS = ['address'] as const;
 
 /**
- * The scope that releases each standard claim (OIDC Core 5.4). `sub` and the protocol claims are
- * not scope-gated and so are absent. The Destination Profile release filter reads this too, to
- * treat a standard claim whose profile field names no scope as requiring its own.
+ * The scope that releases each standard claim (OIDC Core 5.4), and the scope that releases
+ * `eduperson_assurance`. `sub` and the protocol claims are not scope-gated and so are absent. The
+ * Destination Profile release filter reads this too, to treat a claim whose profile field names no
+ * scope as requiring its own.
  */
 export const OIDC_STANDARD_CLAIM_SCOPE: Readonly<Record<string, string>> = {
   ...Object.fromEntries(PROFILE_CLAIMS.map((claim) => [claim, 'profile'])),
   ...Object.fromEntries(EMAIL_CLAIMS.map((claim) => [claim, 'email'])),
   ...Object.fromEntries(PHONE_CLAIMS.map((claim) => [claim, 'phone'])),
   address: 'address',
+  [EDUPERSON_ASSURANCE_CLAIM]: EDUPERSON_ASSURANCE_CLAIM,
 };
 const CLAIM_SCOPE = OIDC_STANDARD_CLAIM_SCOPE;
 

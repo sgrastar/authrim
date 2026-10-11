@@ -859,6 +859,134 @@ describe('Discovery Handler', () => {
       expect(metadata.acr_values_supported).toEqual(expected);
     });
 
+    describe('identity assurance claims', () => {
+      const VALUES = JSON.stringify({ IAL2: ['https://example.org/assurance/IAL2'] });
+      // An identity assurance profile is saved but verified_claims are not issued yet.
+      const PROFILE = JSON.stringify({
+        trust_framework: 'nist_800_63A',
+        assurance_levels: { IAL2: 'ial2' },
+        claims: ['given_name', 'family_name'],
+      });
+
+      async function discover(
+        assurance: Record<string, unknown> | undefined,
+        env = createMockEnv(),
+        options: { documents?: Record<string, unknown> } = {}
+      ) {
+        env.SETTINGS = {
+          get: async (key: string) => {
+            if (key === 'settings:tenant:default:assurance' && assurance) {
+              return JSON.stringify(assurance);
+            }
+            const document = options.documents?.[key];
+            return document ? JSON.stringify(document) : null;
+          },
+        } as unknown as KVNamespace;
+        const response = await app.request(
+          '/.well-known/openid-configuration',
+          { method: 'GET' },
+          env
+        );
+        return (await response.json()) as OIDCProviderMetadata & Record<string, unknown>;
+      }
+
+      it('changes nothing for a tenant that has not configured them', async () => {
+        const baseline = await discover(undefined);
+        clearDiscoveryMetadataCache();
+        for (const assurance of [
+          { 'assurance.enabled': true },
+          { 'assurance.enabled': true, 'assurance.ial_assurance_values': '{}' },
+          // Configured, but assurance is off.
+          {
+            'assurance.ial_assurance_values': VALUES,
+            'assurance.ida_profile': PROFILE,
+          },
+          {
+            'assurance.enabled': false,
+            'assurance.ial_assurance_values': VALUES,
+            'assurance.ida_profile': PROFILE,
+          },
+          // Not values runtime would use.
+          { 'assurance.enabled': true, 'assurance.ial_assurance_values': 'not json' },
+          // A saved identity assurance profile does not advertise anything: verified_claims are
+          // not issued yet.
+          { 'assurance.enabled': true, 'assurance.ida_profile': PROFILE },
+        ]) {
+          // (Enabling assurance advertises its AAL acr values; nothing else changes.)
+          const withoutAcr = (m: Record<string, unknown>) =>
+            Object.fromEntries(Object.entries(m).filter(([k]) => k !== 'acr_values_supported'));
+          expect(withoutAcr(await discover(assurance))).toEqual(withoutAcr(baseline));
+          clearDiscoveryMetadataCache();
+        }
+        expect(baseline.scopes_supported).not.toContain('eduperson_assurance');
+        expect(baseline.claims_supported).not.toContain('eduperson_assurance');
+        expect(baseline.claims_supported).not.toContain('verified_claims');
+        for (const member of [
+          'trust_frameworks_supported',
+          'claims_in_verified_claims_supported',
+        ]) {
+          expect(baseline).not.toHaveProperty(member);
+        }
+      });
+
+      it('advertises the eduperson_assurance scope and claim once assurance values are set', async () => {
+        const baseline = await discover(undefined);
+        clearDiscoveryMetadataCache();
+        const metadata = await discover({
+          'assurance.enabled': true,
+          'assurance.ial_assurance_values': VALUES,
+        });
+
+        expect(metadata.scopes_supported).toEqual([
+          ...baseline.scopes_supported,
+          'eduperson_assurance',
+        ]);
+        expect(metadata.claims_supported).toEqual([
+          ...baseline.claims_supported,
+          'eduperson_assurance',
+        ]);
+      });
+
+      it('does not repeat a claim a tenant already lists in claims_supported', async () => {
+        const metadata = await discover(
+          { 'assurance.enabled': true, 'assurance.ial_assurance_values': VALUES },
+          createMockEnv(),
+          {
+            documents: {
+              'settings:tenant:default:discovery': {
+                'discovery.claims_supported': 'sub,eduperson_assurance',
+              },
+            },
+          }
+        );
+
+        expect(metadata.claims_supported.filter((c) => c === 'eduperson_assurance')).toHaveLength(
+          1
+        );
+      });
+
+      it('serves the right metadata after the settings change, whatever was cached', async () => {
+        const env = {
+          ...createMockEnv(),
+          AUTHRIM_CONFIG: createMockKV({ get: async () => null }),
+        } as Env;
+        const configured = {
+          'assurance.enabled': true,
+          'assurance.ial_assurance_values': VALUES,
+          'assurance.ida_profile': PROFILE,
+        };
+
+        expect((await discover(configured, env)).scopes_supported).toContain('eduperson_assurance');
+        // The same process answers the next request: the metadata is not the cached one.
+        const off = await discover({ ...configured, 'assurance.enabled': false }, env);
+        expect(off.scopes_supported).not.toContain('eduperson_assurance');
+        const none = await discover({ ...configured, 'assurance.ial_assurance_values': '{}' }, env);
+        expect(none.scopes_supported).not.toContain('eduperson_assurance');
+        expect(none.claims_supported).not.toContain('eduperson_assurance');
+        expect((await discover(configured, env)).scopes_supported).toContain('eduperson_assurance');
+      });
+    });
+
     it('keeps the cache key short, however long the acr list', async () => {
       const env = {
         ...createMockEnv(),

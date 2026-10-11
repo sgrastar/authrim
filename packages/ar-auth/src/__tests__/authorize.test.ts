@@ -2976,6 +2976,268 @@ describe('Authorization Handler', () => {
         );
       });
 
+      describe('with identity assurance claims', () => {
+        const IAL1_URI = 'https://example.org/assurance/IAL1';
+        const IAL2_URI = 'https://example.org/assurance/IAL2';
+        const ASSURANCE = {
+          'assurance.enabled': true,
+          'assurance.ial_assurance_values': JSON.stringify({ IAL1: [IAL1_URI], IAL2: [IAL2_URI] }),
+        };
+        const client = { scope: 'openid profile eduperson_assurance', identity_mapping: null };
+
+        const evidenceRow = (level: string, overrides: Record<string, unknown> = {}) => ({
+          id: `ev-${level}`,
+          assurance_framework: 'nist_800_63',
+          assurance_level: level,
+          verified_at: Date.now() - 86_400_000,
+          expires_at: null,
+          revoked_at: null,
+          ...overrides,
+        });
+
+        /** The user's account database answers the evidence read with `rows` (or fails it). */
+        function useEvidence(rows: Array<Record<string, unknown>> | 'fail') {
+          const accountDb = createMockDB();
+          const prepare = vi.mocked(accountDb.prepare);
+          const basePrepare = prepare.getMockImplementation()!;
+          const reads: string[] = [];
+          prepare.mockImplementation((sql: string) => {
+            const statement = basePrepare(sql);
+            if (sql.includes('assurance_evidence')) {
+              reads.push(sql);
+              if (rows === 'fail') {
+                vi.mocked(statement.all).mockRejectedValue(new Error('account database is down'));
+              } else {
+                vi.mocked(statement.all).mockResolvedValue({ results: rows } as never);
+              }
+            }
+            return statement;
+          });
+          mockResolveAccountDataContextFromHono.mockImplementation(async (c, userId) => {
+            const context = {
+              tenantId: 'default',
+              accountId: userId,
+              legacyUserId: userId,
+              coreDb: accountDb,
+              piiDb: accountDb,
+              coreBindingRef: 'DB_ACCOUNT',
+              piiBindingRef: 'DB_ACCOUNT',
+              coreResidencyPartition: 'default',
+              piiResidencyPartition: 'default',
+              accountRouteGeneration: 1,
+              userCacheScope: { tenantId: 'default', accountRouteGeneration: 1 },
+              piiCacheMode: 'disabled',
+            };
+            c.set('accountDataContext', context);
+            return context;
+          });
+          return reads;
+        }
+
+        async function setAssurance(values: Record<string, unknown>) {
+          await (env.SETTINGS as unknown as MockKVNamespace).put(
+            'settings:tenant:default:assurance',
+            JSON.stringify(values)
+          );
+        }
+
+        beforeEach(async () => {
+          mappingFixture.userRow = mappedUserRow();
+          await setAssurance(ASSURANCE);
+        });
+
+        afterEach(() => {
+          mappingFixture.userRow = null;
+          mappingFixture.binding = null;
+          mappingFixture.profile = null;
+          mappingFixture.profileConsent = 'all';
+          mappingFixture.userLookups = [];
+          mockResolveAccountDataContextFromHono.mockImplementation(async (c, userId) => {
+            const context = {
+              tenantId: 'default',
+              accountId: userId,
+              legacyUserId: userId,
+              coreDb: c.env.DB,
+              piiDb: c.env.DB,
+              coreBindingRef: 'DB',
+              piiBindingRef: 'DB',
+              coreResidencyPartition: 'default',
+              piiResidencyPartition: 'default',
+              accountRouteGeneration: 1,
+              userCacheScope: { tenantId: 'default', accountRouteGeneration: 1 },
+              piiCacheMode: 'disabled',
+            };
+            c.set('accountDataContext', context);
+            return context;
+          });
+        });
+
+        it('carries eduperson_assurance in an ID token that is all the app gets, by scope', async () => {
+          const reads = useEvidence([evidenceRow('IAL2')]);
+
+          const fragment = await authorizeFor('id_token', {
+            scope: 'openid eduperson_assurance',
+            client,
+          });
+
+          expect(decodeJwt(fragment.get('id_token')!).eduperson_assurance).toEqual([
+            IAL1_URI,
+            IAL2_URI,
+          ]);
+          expect(reads).toHaveLength(1);
+        });
+
+        it('carries nothing, and reads no evidence, for a scope alone when UserInfo is available', async () => {
+          const reads = useEvidence([evidenceRow('IAL2')]);
+
+          const fragment = await authorizeFor('id_token token', {
+            scope: 'openid eduperson_assurance',
+            client,
+          });
+
+          expect(decodeJwt(fragment.get('id_token')!)).not.toHaveProperty('eduperson_assurance');
+          expect(reads).toEqual([]);
+        });
+
+        it('carries eduperson_assurance for a claims parameter request the scope backs', async () => {
+          const reads = useEvidence([evidenceRow('IAL2')]);
+
+          const fragment = await authorizeFor('id_token token', {
+            scope: 'openid eduperson_assurance',
+            claims: { id_token: { eduperson_assurance: null } },
+            client,
+          });
+
+          expect(decodeJwt(fragment.get('id_token')!).eduperson_assurance).toEqual([
+            IAL1_URI,
+            IAL2_URI,
+          ]);
+          expect(reads).toHaveLength(1);
+        });
+
+        it('stops carrying evidence that was revoked', async () => {
+          useEvidence([evidenceRow('IAL2', { revoked_at: Date.now() - 10 })]);
+
+          const fragment = await authorizeFor('id_token', {
+            scope: 'openid eduperson_assurance',
+            client,
+          });
+
+          expect(decodeJwt(fragment.get('id_token')!).eduperson_assurance).toEqual([IAL1_URI]);
+        });
+
+        it('reads no evidence while assurance is off or nothing is configured', async () => {
+          const reads = useEvidence([evidenceRow('IAL2')]);
+          for (const values of [
+            { ...ASSURANCE, 'assurance.enabled': false },
+            { 'assurance.enabled': true },
+          ]) {
+            await setAssurance(values);
+            const fragment = await authorizeFor('id_token', {
+              scope: 'openid eduperson_assurance',
+              client,
+            });
+            expect(decodeJwt(fragment.get('id_token')!)).not.toHaveProperty('eduperson_assurance');
+          }
+          expect(reads).toEqual([]);
+        });
+
+        it('issues the ID token without the claim when the evidence cannot be read', async () => {
+          useEvidence('fail');
+
+          const fragment = await authorizeFor('id_token', {
+            scope: 'openid eduperson_assurance',
+            client,
+          });
+
+          expect(fragment.get('error')).toBeNull();
+          expect(decodeJwt(fragment.get('id_token')!)).not.toHaveProperty('eduperson_assurance');
+        });
+
+        it('reads the evidence once when the client minimum IAL and the claim both apply', async () => {
+          const reads = useEvidence([evidenceRow('IAL2')]);
+
+          const fragment = await authorizeFor('id_token', {
+            scope: 'openid eduperson_assurance',
+            client: { ...client, minimum_ial: 'IAL2' },
+          });
+
+          expect(decodeJwt(fragment.get('id_token')!).eduperson_assurance).toEqual([
+            IAL1_URI,
+            IAL2_URI,
+          ]);
+          expect(reads).toHaveLength(1);
+        });
+
+        describe("under the app's Destination Profile", () => {
+          const bind = (claims: Array<Record<string, unknown>>) => {
+            mappingFixture.profile = { claims };
+            mappingFixture.binding = {
+              id: 'binding-tenant',
+              tenantId: 'default',
+              fieldMappingSetId: 'set-tenant',
+              fieldMappingVersionId: 'version-tenant',
+              mappingSnapshotHash: 'hash-tenant',
+              catalog: { identity: { id: 'c', version: '1', contentHash: 'c' }, entries: [] },
+              edges: [],
+              transforms: [],
+              validationRules: [],
+              fieldMappingSet: {},
+              activationScope: { tenantId: 'default' },
+              destinationNamespace: 'oidc.claim',
+              destinationProfileId: 'profile-1',
+              destinationProfileIds: ['profile-1'],
+            };
+          };
+
+          it('releases them only when the profile lists the field', async () => {
+            useEvidence([evidenceRow('IAL2')]);
+            bind([{ claimName: 'sub', required: true }]);
+            const unlisted = await authorizeFor('id_token', {
+              scope: 'openid eduperson_assurance',
+              client,
+            });
+            expect(decodeJwt(unlisted.get('id_token')!)).not.toHaveProperty('eduperson_assurance');
+
+            useEvidence([evidenceRow('IAL2')]);
+            bind([{ claimName: 'sub', required: true }, { claimName: 'eduperson_assurance' }]);
+            const listed = await authorizeFor('id_token', {
+              scope: 'openid eduperson_assurance',
+              client,
+            });
+            expect(decodeJwt(listed.get('id_token')!).eduperson_assurance).toEqual([
+              IAL1_URI,
+              IAL2_URI,
+            ]);
+          });
+
+          it('holds a claims parameter request to the scope unless the client policy lets it through', async () => {
+            useEvidence([evidenceRow('IAL2')]);
+            bind([{ claimName: 'sub', required: true }, { claimName: 'eduperson_assurance' }]);
+            const claims = { id_token: { eduperson_assurance: null } };
+
+            const held = await authorizeFor('id_token token', {
+              scope: 'openid profile',
+              claims,
+              client,
+            });
+            expect(decodeJwt(held.get('id_token')!)).not.toHaveProperty('eduperson_assurance');
+
+            const allowed = await authorizeFor('id_token token', {
+              scope: 'openid profile',
+              claims,
+              client: { ...client, allow_claims_without_scope: true },
+            });
+            // The profile's field then counts the scope that releases it as granted, as it does
+            // for a standard claim the claims parameter requested.
+            expect(decodeJwt(allowed.get('id_token')!).eduperson_assurance).toEqual([
+              IAL1_URI,
+              IAL2_URI,
+            ]);
+          });
+        });
+      });
+
       describe("with an identity mapping that derives sub from the user's preferred_username", () => {
         const field = (id: string, path: string) => ({
           id,

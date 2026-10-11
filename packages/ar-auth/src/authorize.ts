@@ -42,6 +42,7 @@ import {
   findOAuthClientConsentRevocation,
   accessTokenConsentClaims,
   releaseIDTokenClaims,
+  resolveAssuranceClaims,
   type OAuthClientConsentRevocationState,
   getChallengeStoreByChallengeId,
   generateRegionAwareJti,
@@ -5049,11 +5050,34 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
           ...(sessionAmr?.length ? { amr: sessionAmr } : {}),
         };
 
+        // eduperson_assurance comes from the person's evidence, read now and only when this ID
+        // token's request asks for it and the tenant has values to release. A failed read
+        // releases nothing (and is logged).
+        const assuranceClaims = await resolveAssuranceClaims({
+          target: 'id_token',
+          tenantId,
+          userId: sub,
+          scopes,
+          claimsRequest: parsedClaimsRequest.request,
+          clientPolicy: clientMetadata,
+          includeScopeClaims: isIdTokenOnly,
+          requestScope: c,
+          loadSettings: async () => assuranceSettings,
+          getAdapter: () => piiCtx.coreAdapter,
+          onError: (message, error) =>
+            log.error(message, { clientId: validClientId }, error as Error),
+        });
+
         const requestedClaims = evaluateClaimsForTarget({
           target: 'id_token',
           claimsRequest: parsedClaimsRequest.request,
           initialClaims: idTokenClaims,
-          availableClaims: userData,
+          availableClaims: {
+            ...userData,
+            ...(assuranceClaims.eduperson_assurance
+              ? { eduperson_assurance: assuranceClaims.eduperson_assurance }
+              : {}),
+          },
           grantedScopes: scopes,
           clientPolicy: clientMetadata,
           includeScopeClaims: isIdTokenOnly,

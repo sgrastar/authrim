@@ -246,6 +246,9 @@ const RESERVED_CLAIM_NAMES = new Set([
   'address_country',
   // CSV import columns that carry identity assurance (evidence, not attributes)
   ...ASSURANCE_IMPORT_COLUMNS,
+  // Claims computed from a person's evidence when a token or response is made
+  'eduperson_assurance',
+  'verified_claims',
 ]);
 
 /** Valid field types */

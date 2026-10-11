@@ -389,6 +389,15 @@ components:
           additionalProperties: true
         updated_at:
           type: integer
+        eduperson_assurance:
+          type: array
+          description: >-
+            The assurance values (URIs) of the person's IAL, every IAL up to theirs, read from their
+            evidence when the response is made. Returned for the eduperson_assurance scope (or a
+            claims parameter request the scope backs) while tenant assurance is enabled and
+            assurance.ial_assurance_values is set; never returned when the evidence cannot be read.
+          items:
+            type: string
     CustomerProfile:
       type: object
       required:

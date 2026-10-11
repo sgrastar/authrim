@@ -411,6 +411,38 @@ export async function resolveUserEffectiveIAL(
   return computeEffectiveIAL(evidence, now);
 }
 
+const requestReads = new WeakMap<object, Map<string, Promise<EffectiveIAL>>>();
+
+/**
+ * {@link resolveUserEffectiveIAL}, shared within one request: a person's evidence is read once
+ * for everything in `requestScope` (the request's Hono context) that needs it, such as an IAL
+ * requirement and the assurance claim of the same response. Nothing outlives the request, so a
+ * revocation is seen by the next one. A failed read is not kept. Without a scope, every call reads.
+ */
+export function resolveUserEffectiveIALOnce(
+  requestScope: object | undefined,
+  adapter: DatabaseAdapter,
+  tenantId: string,
+  userId: string,
+  now: number = Date.now()
+): Promise<EffectiveIAL> {
+  if (!requestScope) return resolveUserEffectiveIAL(adapter, tenantId, userId, now);
+  let reads = requestReads.get(requestScope);
+  if (!reads) {
+    reads = new Map();
+    requestReads.set(requestScope, reads);
+  }
+  const key = JSON.stringify([tenantId, userId]);
+  const existing = reads.get(key);
+  if (existing) return existing;
+  const read = resolveUserEffectiveIAL(adapter, tenantId, userId, now);
+  reads.set(key, read);
+  read.catch(() => {
+    if (reads.get(key) === read) reads.delete(key);
+  });
+  return read;
+}
+
 function isAbsoluteUri(value: string): boolean {
   if (value.length > 512 || value !== value.trim()) return false;
   // An absolute URI: a scheme, then something after it (an https URL or a urn).

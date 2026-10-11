@@ -259,13 +259,11 @@ export const ASSURANCE_LEVELS_SETTINGS_META: Record<keyof AssuranceLevelsSetting
   },
   'assurance.ial_assurance_values': {
     key: 'assurance.ial_assurance_values',
-    // Saved and validated, not applied yet: runtime use lands with the identity assurance work.
-    status: 'in_development',
     type: 'string',
     default: '{}',
     label: 'IAL Assurance Values',
     description:
-      'JSON mapping of each IAL to the assurance values (URIs) released for it, e.g. {"IAL2": ["https://www.gakunin.jp/profile/IAL2"]}. A person gets the values of every IAL up to theirs, as the SAML attribute eduPersonAssurance (through attribute mapping) and the OIDC claim eduperson_assurance. Applies while assurance levels are enabled (not applied yet)',
+      'JSON mapping of each IAL to the assurance values (URIs) released for it, e.g. {"IAL1": ["https://www.gakunin.jp/profile/IAL1"], "IAL2": ["https://www.gakunin.jp/profile/IAL2"]}. A person gets the values of every IAL up to theirs, read from their evidence at the time (so revoked or expired evidence stops them with the next response). OIDC: the claim eduperson_assurance, released in UserInfo and ID tokens like a scope claim (the eduperson_assurance scope, or a claims parameter request); an app with a Destination Profile also needs the field listed in it; advertised in discovery. SAML: the attribute eduPersonAssurance is not released from it yet. Applies while assurance levels are enabled; empty releases nothing',
   },
   'assurance.saml_authn_context_aal': {
     key: 'assurance.saml_authn_context_aal',

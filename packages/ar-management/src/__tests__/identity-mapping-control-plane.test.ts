@@ -1047,6 +1047,21 @@ describe('IdentityMappingControlPlaneRepository destination profiles', () => {
       expect(created.version.validationSummary).toMatchObject({ errorCount: 0, warnings: [] });
     });
 
+    it('judges eduperson_assurance by the eduperson_assurance scope that releases it', async () => {
+      const claim = { claimName: 'eduperson_assurance', classification: 'internal' };
+      const surfaces = ['id_token', 'userinfo'];
+      for (const requiredScopes of [undefined, ['eduperson_assurance']]) {
+        const created = await create([
+          { ...claim, surfaces, ...(requiredScopes && { requiredScopes }) },
+        ]);
+        expect(created.version.validationSummary).toMatchObject({ errorCount: 0, warnings: [] });
+      }
+      const other = await create([{ ...claim, surfaces, requiredScopes: ['profile'] }]);
+      expect(other.version.validationSummary).toMatchObject({
+        warnings: ['eduperson_assurance is not covered by its configured scopes'],
+      });
+    });
+
     it('still warns when a standard claim lists a scope that does not release it', async () => {
       const created = await create([
         {
@@ -2374,6 +2389,66 @@ describe('IdentityMappingControlPlaneRepository policy activation', () => {
       code: 'invalid_request',
     });
     expect(adapter.executes).toHaveLength(0);
+  });
+
+  describe('mapping edges that target a claim only the evidence may state', () => {
+    const register = (targetRef: Record<string, unknown>) => {
+      const adapter = createAdapter({
+        queryOneRows: [
+          {
+            id: 'policy_1',
+            tenant_id: 'tenant_a',
+            field_mapping_key: 'default',
+            display_name: 'Default field mapping set',
+            description: null,
+            lifecycle_state: 'draft',
+          },
+        ],
+      });
+      const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+      return {
+        adapter,
+        result: repository.createFieldMappingVersion('tenant_a', 'policy_1', {
+          versionLabel: 'v1',
+          rules: [
+            {
+              ruleKey: 'assurance',
+              ruleKind: 'mapping',
+              action: 'allow',
+              edges: [
+                {
+                  sourceRef: { side: 'source', namespace: 'user', path: 'department' },
+                  targetRef,
+                },
+              ],
+            },
+          ],
+        }),
+      };
+    };
+
+    it.each(['eduperson_assurance', 'verified_claims'])(
+      'rejects %s however the reference spells it (path, fieldKey or nodeId)',
+      async (claim) => {
+        for (const spelling of ['path', 'fieldKey', 'nodeId']) {
+          const { adapter, result } = register({
+            side: 'destination',
+            namespace: 'oidc.claim',
+            [spelling]: claim,
+          });
+          await expect(result, `${spelling}:${claim}`).rejects.toMatchObject({
+            status: 400,
+            code: 'invalid_request',
+          });
+          expect(adapter.executes).toHaveLength(0);
+        }
+      }
+    );
+
+    it('rejects it when the reference gives no namespace, which the runtime reads as unknown', async () => {
+      const { result } = register({ side: 'destination', fieldKey: 'eduperson_assurance' });
+      await expect(result).rejects.toMatchObject({ status: 400, code: 'invalid_request' });
+    });
   });
 
   it('returns a conflict for duplicate field mapping version labels', async () => {

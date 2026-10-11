@@ -112,6 +112,20 @@ describe('token claim rules settings API', () => {
         { ...validInput, actions: [{ claim_name: 'sub', source: 'static', value: 'x' }] },
         'Cannot override reserved claim: sub',
       ],
+      [
+        {
+          ...validInput,
+          actions: [{ claim_name: 'eduperson_assurance', source: 'static', value: 'urn:x:IAL2' }],
+        },
+        'Cannot override reserved claim: eduperson_assurance',
+      ],
+      [
+        {
+          ...validInput,
+          actions: [{ claim_name: 'verified_claims', source: 'static', value: 'x' }],
+        },
+        'Cannot override reserved claim: verified_claims',
+      ],
     ])('rejects unsafe or incomplete claim rule %#', async (body, error) => {
       const response = await createTokenClaimRule(context({ body }));
       expect(response.status).toBe(400);
@@ -276,6 +290,8 @@ describe('token claim rules settings API', () => {
     it.each([
       [[{ source: 'static', value: 'x' }], 'claim_name'],
       [[{ claim_name: 'iss', source: 'static', value: 'x' }], 'reserved claim'],
+      [[{ claim_name: 'eduperson_assurance', source: 'static', value: 'x' }], 'reserved claim'],
+      [[{ claim_name: 'verified_claims', source: 'static', value: 'x' }], 'reserved claim'],
     ])('revalidates replacement actions before update %#', async (actions, error) => {
       mocks.adapter.queryOne.mockResolvedValueOnce(row());
       const response = await updateTokenClaimRule(context({ body: { actions } }));

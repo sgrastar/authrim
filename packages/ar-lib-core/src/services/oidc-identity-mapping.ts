@@ -48,6 +48,13 @@ export interface ApplyOIDCIdentityMappingInput {
    */
   claimsAuthorizedByRequest?: boolean;
   /**
+   * The same, for only the claims named here (the caller authorized just these against the
+   * request, such as eduperson_assurance, which the authorization server computed after the
+   * scopes and the client's claims policy allowed it). Every other claim is held to the scopes as
+   * before. Ignored when `claimsAuthorizedByRequest` is set, which covers them all.
+   */
+  authorizedClaimNames?: readonly string[];
+  /**
    * Set when the ID token is all the response gives the app (response_type=id_token carries no
    * access token to call UserInfo with), so the claims the profile lists for UserInfo are
    * released in it too, as OIDC Core 5.4 requires for the scope claims. Only for the id_token
@@ -290,6 +297,7 @@ async function applyOIDCDestinationFieldConsent(
 ): Promise<Record<string, unknown>> {
   const profileId = binding?.destinationProfileId ?? input.selector?.destinationProfileId;
   const subjectId = typeof input.claims.sub === 'string' ? input.claims.sub : '';
+  const authorizedClaimNames = input.authorizedClaimNames ?? [];
   if (!profileId) return filterOidcClaimsWithoutDestinationProfile(claims);
   if (!subjectId) {
     throw new OIDCIdentityMappingRuntimeError(
@@ -317,7 +325,15 @@ async function applyOIDCDestinationFieldConsent(
     grantedScopes: input.grantedScopes,
     ...(input.claimsAuthorizedByRequest
       ? { authorizedClaims: unchangedClaimNames(input.claims, claims) }
-      : {}),
+      : authorizedClaimNames.length > 0
+        ? {
+            authorizedClaims: new Set(
+              [...unchangedClaimNames(input.claims, claims)].filter((name) =>
+                authorizedClaimNames.includes(name)
+              )
+            ),
+          }
+        : {}),
     claims,
   });
 }

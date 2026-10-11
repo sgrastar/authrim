@@ -2898,6 +2898,162 @@ describe('Security-Critical Tests', () => {
       expect((await parseJsonResponse<{ error: string }>(response)).error).toBe(error);
     });
 
+    describe('identity assurance claims in the ID token', () => {
+      const IAL1_URI = 'https://example.org/assurance/IAL1';
+      const IAL2_URI = 'https://example.org/assurance/IAL2';
+      const ASSURANCE = {
+        'assurance.enabled': true,
+        'assurance.ial_assurance_values': JSON.stringify({ IAL1: [IAL1_URI], IAL2: [IAL2_URI] }),
+      };
+
+      async function exchange(options: {
+        claims?: unknown;
+        scope?: string;
+        client?: Record<string, unknown>;
+        rows?: Array<Record<string, unknown>> | 'fail';
+      }) {
+        const evidence = useEvidenceD1(mockEnv.TDB_TEST_CORE, options.rows ?? []);
+        const client = createFAPIClient({
+          token_endpoint_auth_method: 'client_secret_post',
+          client_secret_hash: 'test-secret-hash',
+          dpop_bound_access_tokens: false,
+          allowed_scopes: ['openid', 'profile', 'eduperson_assurance'],
+          ...options.client,
+        });
+        const authCodeData = createAuthCodeData({
+          scope: options.scope ?? 'openid profile eduperson_assurance',
+          amr: ['passkey'],
+          ...(options.claims ? { claims: JSON.stringify(options.claims) } : {}),
+        } as Partial<TestAuthCodeData>);
+        mocks.mockGetClientCached.mockResolvedValue(client);
+        mocks.mockExtractDPoPProof.mockReturnValue('valid-dpop-proof');
+        mocks.mockValidateDPoPProof.mockResolvedValue({ valid: true, jkt: 'dpop-jkt' });
+        mockEnv.AUTH_CODE_STORE.get = vi.fn().mockReturnValue({
+          consumeCodeRpc: vi.fn().mockResolvedValue(authCodeData),
+          registerIssuedTokensRpc: vi.fn().mockResolvedValue(true),
+        });
+        const response = await tokenHandler(
+          createMockContext({
+            method: 'POST',
+            headers: { DPoP: 'valid-dpop-proof' },
+            body: {
+              grant_type: 'authorization_code',
+              code: 'valid-auth-code',
+              redirect_uri: authCodeData.redirectUri,
+              client_id: client.client_id,
+              client_secret: 'valid-secret',
+            },
+            env: mockEnv,
+          })
+        );
+        const idToken = mocks.mockCreateIDToken.mock.calls.at(-1)?.[0] as
+          | Record<string, unknown>
+          | undefined;
+        return { response, evidence, idToken };
+      }
+
+      const askFor = { id_token: { eduperson_assurance: null } };
+
+      it('carries the values of every IAL up to the person’s for a claims request', async () => {
+        setAssurance(ASSURANCE);
+
+        const { response, idToken, evidence } = await exchange({
+          claims: askFor,
+          rows: [evidenceRow('IAL2')],
+        });
+
+        expect(response.status).toBe(200);
+        expect(idToken?.eduperson_assurance).toEqual([IAL1_URI, IAL2_URI]);
+        expect(evidence.reads).toHaveLength(1);
+      });
+
+      it('carries none for a person whose evidence was revoked', async () => {
+        setAssurance(ASSURANCE);
+
+        const { idToken } = await exchange({
+          claims: askFor,
+          rows: [evidenceRow('IAL2', { revoked_at: Date.now() - 10 })],
+        });
+
+        expect(idToken?.eduperson_assurance).toEqual([IAL1_URI]);
+      });
+
+      it('reads no evidence, and changes nothing, for the scope alone or an unconfigured tenant', async () => {
+        setAssurance(ASSURANCE);
+        const scopeOnly = await exchange({ rows: [evidenceRow('IAL2')] });
+        expect(scopeOnly.response.status).toBe(200);
+        expect(scopeOnly.idToken).not.toHaveProperty('eduperson_assurance');
+        expect(scopeOnly.evidence.reads).toEqual([]);
+
+        setAssurance({ 'assurance.enabled': true });
+        const unconfigured = await exchange({ claims: askFor, rows: [evidenceRow('IAL2')] });
+        expect(unconfigured.idToken).not.toHaveProperty('eduperson_assurance');
+        expect(unconfigured.evidence.reads).toEqual([]);
+
+        setAssurance({ ...ASSURANCE, 'assurance.enabled': false });
+        const off = await exchange({ claims: askFor, rows: [evidenceRow('IAL2')] });
+        expect(off.idToken).not.toHaveProperty('eduperson_assurance');
+        expect(off.evidence.reads).toEqual([]);
+      });
+
+      it('does not carry it for a claims request the scope does not back', async () => {
+        setAssurance(ASSURANCE);
+
+        const { idToken, evidence } = await exchange({
+          claims: askFor,
+          scope: 'openid profile',
+          rows: [evidenceRow('IAL2')],
+        });
+
+        expect(idToken).not.toHaveProperty('eduperson_assurance');
+        expect(evidence.reads).toEqual([]);
+      });
+
+      it('issues the ID token without the claim, and logs, when the evidence cannot be read', async () => {
+        setAssurance(ASSURANCE);
+
+        const { response, idToken } = await exchange({ claims: askFor, rows: 'fail' });
+
+        expect(response.status).toBe(200);
+        expect(idToken).not.toHaveProperty('eduperson_assurance');
+        expect(mocks.mockGetLogger().module().error).toHaveBeenCalledWith(
+          expect.stringContaining('identity assurance'),
+          expect.anything(),
+          expect.any(Error)
+        );
+      });
+
+      it('tells the identity mapping the request allowed eduperson_assurance, and no other claim', async () => {
+        setAssurance(ASSURANCE);
+        identityRelease.apply.mockClear();
+
+        await exchange({ claims: askFor, rows: [evidenceRow('IAL2')] });
+        const mapped = identityRelease.apply.mock.calls.at(-1)?.[0] as Record<string, unknown>;
+        expect(mapped.authorizedClaimNames).toEqual(['eduperson_assurance']);
+        expect(mapped.claimsAuthorizedByRequest).toBeUndefined();
+
+        // Nothing allowed, nothing said.
+        identityRelease.apply.mockClear();
+        await exchange({ claims: askFor, scope: 'openid profile', rows: [evidenceRow('IAL2')] });
+        const other = identityRelease.apply.mock.calls.at(-1)?.[0] as Record<string, unknown>;
+        expect(other.authorizedClaimNames).toBeUndefined();
+      });
+
+      it('reads the evidence once when a client minimum IAL and the claim both apply', async () => {
+        setAssurance(ASSURANCE);
+
+        const { response, evidence, idToken } = await exchange({
+          claims: askFor,
+          client: { minimum_ial: 'IAL2' },
+          rows: [evidenceRow('IAL2')],
+        });
+
+        expect(response.status).toBe(200);
+        expect(idToken?.eduperson_assurance).toEqual([IAL1_URI, IAL2_URI]);
+        expect(evidence.reads).toHaveLength(1);
+      });
+    });
+
     describe('identity assurance (IAL)', () => {
       const MAP = JSON.stringify({ payroll: 'IAL2', records: 'IAL3' });
 

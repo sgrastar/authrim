@@ -15,7 +15,7 @@ import {
   meetsIAL,
   parseScopeIALRequirements,
   requiredIAL,
-  resolveUserEffectiveIAL,
+  resolveUserEffectiveIALOnce,
 } from './identity-assurance';
 
 /** The scopes of a request: a space-separated string (as OAuth carries them) or a list. */
@@ -70,6 +70,8 @@ export async function evaluateUserIAL(input: {
   tenantId: string;
   userId: string | null;
   getAdapter: () => DatabaseAdapter | Promise<DatabaseAdapter>;
+  /** The request (its Hono context), so evidence read here is shared with the rest of it. */
+  requestScope?: object;
   now?: number;
 }): Promise<IALEvaluation> {
   const { required } = input;
@@ -77,7 +79,8 @@ export async function evaluateUserIAL(input: {
   if (input.userId === null) return { outcome: 'insufficient', required, actual: 'IAL1' };
   try {
     const adapter = await input.getAdapter();
-    const effective = await resolveUserEffectiveIAL(
+    const effective = await resolveUserEffectiveIALOnce(
+      input.requestScope,
       adapter,
       input.tenantId,
       input.userId,

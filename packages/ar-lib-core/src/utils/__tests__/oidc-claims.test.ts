@@ -357,3 +357,47 @@ describe('standardUserAttributeNames', () => {
     expect(standardUserAttributeNames(['name', 'display_name'])).toEqual(['name']);
   });
 });
+
+describe('eduperson_assurance in the claims parameter', () => {
+  it('still refuses a list for any other claim', () => {
+    for (const claim of ['email', 'eduperson_assurance', 'verified_claims', 'groups']) {
+      const result = parseClaimsRequest(JSON.stringify({ userinfo: { [claim]: [{}] } }));
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error).toBe('invalid_request');
+    }
+  });
+
+  it('releases eduperson_assurance to the eduperson_assurance scope, like a standard claim', () => {
+    const values = ['https://example.org/assurance/IAL2'];
+    const withScope = evaluateClaimsForTarget({
+      target: 'userinfo',
+      availableClaims: { eduperson_assurance: values },
+      grantedScopes: ['openid', 'eduperson_assurance'],
+    });
+    expect(withScope.ok && withScope.claims.eduperson_assurance).toEqual(values);
+
+    const without = evaluateClaimsForTarget({
+      target: 'userinfo',
+      availableClaims: { eduperson_assurance: values },
+      grantedScopes: ['openid', 'profile'],
+    });
+    expect(without.ok && without.claims.eduperson_assurance).toBeUndefined();
+  });
+
+  it('holds a claims-parameter request for eduperson_assurance to the scope, unless the client policy lets it through', () => {
+    const parsed = parseClaimsRequest(JSON.stringify({ id_token: { eduperson_assurance: null } }));
+    const base = {
+      target: 'id_token' as const,
+      claimsRequest: parsed.request,
+      availableClaims: { eduperson_assurance: ['urn:x'] },
+      grantedScopes: ['openid'],
+    };
+    const denied = evaluateClaimsForTarget(base);
+    expect(denied.ok && denied.claims.eduperson_assurance).toBeUndefined();
+    const allowed = evaluateClaimsForTarget({
+      ...base,
+      clientPolicy: { claims_parameter_policy: { eduperson_assurance: 'claims_allowed' } },
+    });
+    expect(allowed.ok && allowed.claims.eduperson_assurance).toEqual(['urn:x']);
+  });
+});

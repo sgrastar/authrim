@@ -22,6 +22,7 @@ import {
   getKeyByKid,
   verifyClientSecretHash,
   applyIntrospectionIdentityMapping,
+  AUTHORIZATION_SERVER_ASSURANCE_CLAIMS,
   filterIntrospectionProtocolEnvelopeClaims,
   requireDedicatedAdminDatabaseAdapter,
   createPhase1ErrorDetails,
@@ -929,6 +930,10 @@ export async function introspectHandler(c: Context<{ Bindings: Env }>) {
   } else {
     response = filterIntrospectionProtocolEnvelopeClaims(response);
   }
+  // The assurance claims are released in ID tokens and UserInfo from the person's evidence at
+  // that time. An access token (or a mapping) never states them, so introspection never repeats
+  // them, whatever an older token carries.
+  for (const claim of AUTHORIZATION_SERVER_ASSURANCE_CLAIMS) delete response[claim];
 
   // Publish introspection event (non-blocking)
   // Only for active tokens - inactive responses don't need events

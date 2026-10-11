@@ -602,7 +602,7 @@ describe('Custom Claims Admin API', () => {
       expect(body.error_code).toBe('AR130002');
     });
 
-    it.each(['ial', 'ial_verified_at'])(
+    it.each(['ial', 'ial_verified_at', 'eduperson_assurance', 'verified_claims'])(
       'should reject creation of %s, a CSV import column that carries identity assurance',
       async (fieldKey) => {
         const c = createMockContext({

@@ -57,6 +57,9 @@ export async function checkAuthorizeIdentityAssurance(
       await resolveAccountDataContextFromHono(c, input.userId);
       return createAccountAuthContextFromHono(c, input.tenantId).coreAdapter;
     },
+    // An implicit or hybrid ID token of this same request reads the evidence for
+    // eduperson_assurance: once.
+    requestScope: c,
   });
   switch (result.outcome) {
     case 'not_required':

@@ -37,6 +37,8 @@ import {
   FAPI2_MESSAGE_SIGNING_ALGS,
   CLIENT_ASSERTION_SIGNING_ALGS,
   setBoundedMapEntry,
+  EDUPERSON_ASSURANCE_CLAIM,
+  parseIALAssuranceValues,
 } from '@authrim/ar-lib-core';
 import type { JWK } from 'jose';
 import {
@@ -106,6 +108,9 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
   // The acr values advertised: discovery.acr_values_supported, and with assurance enabled the
   // values Authrim issues for each AAL (urn:authrim:aal:1..3).
   let acrValuesSupported: string[] = [];
+  // The eduperson_assurance scope and claim, advertised only while the tenant has assurance
+  // enabled and assurance values set to release.
+  let eduPersonAssuranceSupported = false;
   // The ID token algorithms: every published one while apps choose their own, else only the
   // tenant's (oauth.id_token_signing_alg).
   let idTokenSigningAlgorithms: OIDCSigningAlgorithm[] = publishedSigningAlgorithms;
@@ -139,6 +144,11 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
         ...(assurance['assurance.enabled'] === true ? AAL_ACR_VALUES : []),
       ]),
     ];
+    if (assurance['assurance.enabled'] === true) {
+      eduPersonAssuranceSupported =
+        Object.keys(parseIALAssuranceValues(assurance['assurance.ial_assurance_values'])).length >
+        0;
+    }
     tokenExchangeEnabled = tokens['tokens.exchange_enabled'] === true;
     // ID-JAG is a Token Exchange token type: advertised only with Token Exchange.
     idJagEnabled = tokenExchangeEnabled && flags['feature.enable_id_jag'] === true;
@@ -215,8 +225,9 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
   // stale metadata for a different environment or component set.
   const logoutHash = `bc=${logoutConfig.backchannel.enabled}:fc=${logoutConfig.frontchannel.enabled}:sm=${logoutConfig.session_management.enabled}:sm_iframe=${logoutConfig.session_management.check_session_iframe_enabled}`;
   const profileHash = `profile=${tenantProfile.type}`;
+  const assuranceClaimsHash = `ea=${eduPersonAssuranceSupported}`;
   const signingAlgorithmsHash = `oidc_algs=${publishedSigningAlgorithms.join(',')}:id_token_algs=${idTokenSigningAlgorithms.join(',')}`;
-  const settingsHash = `${currentSettingsJson}:acr=${acrValuesSupported.join(',')}:issuer=${issuer}:async=${asyncEnabled}:te=${tokenExchangeEnabled}:cc=${clientCredentialsEnabled}:ns=${nativeSSOEnabled}:rar=${rarEnabled}:ai=${aiScopesEnabled}:idjag=${idJagEnabled}:fe=${flowEngineEnabled}:${profileHash}:${logoutHash}:${signingAlgorithmsHash}`;
+  const settingsHash = `${currentSettingsJson}:acr=${acrValuesSupported.join(',')}:issuer=${issuer}:async=${asyncEnabled}:te=${tokenExchangeEnabled}:cc=${clientCredentialsEnabled}:ns=${nativeSSOEnabled}:rar=${rarEnabled}:ai=${aiScopesEnabled}:idjag=${idJagEnabled}:fe=${flowEngineEnabled}:${profileHash}:${logoutHash}:${signingAlgorithmsHash}:${assuranceClaimsHash}`;
   // A digest of everything the metadata depends on: a fixed-length key, however long the settings
   // (a KV key is at most 512 bytes).
   const settingsDigest = Array.from(
@@ -354,6 +365,8 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
       'offline_access',
       // Include AI scopes when enabled
       ...(aiScopesEnabled ? ['ai:read', 'ai:write', 'ai:execute', 'ai:admin'] : []),
+      // REFEDS assurance values of the person's IAL (assurance enabled and values configured)
+      ...(eduPersonAssuranceSupported ? [EDUPERSON_ASSURANCE_CLAIM] : []),
     ],
     // RFC 9396: RAR authorization_details_types_supported (when enabled)
     ...(rarEnabled
@@ -509,6 +522,13 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
         }
       : {}),
   };
+
+  // The claim the assurance values make Authrim return, added to whichever list is advertised.
+  if (eduPersonAssuranceSupported) {
+    metadata.claims_supported = [
+      ...new Set([...metadata.claims_supported, EDUPERSON_ASSURANCE_CLAIM]),
+    ];
+  }
 
   // Update in-memory cache (with size limit to prevent memory issues)
   setBoundedMapEntry(metadataCache, cacheKey, metadata, MAX_METADATA_CACHE_ENTRIES);

@@ -1,6 +1,10 @@
 import type { DatabaseAdapter } from '../db/adapter';
 import { STANDARD_CLAIMS } from '../constants';
-import { OIDC_STANDARD_CLAIM_SCOPE } from '../utils/oidc-claims';
+import {
+  EDUPERSON_ASSURANCE_CLAIM,
+  OIDC_STANDARD_CLAIM_SCOPE,
+  VERIFIED_CLAIMS_CLAIM,
+} from '../utils/oidc-claims';
 import {
   assertRuntimeIdentityMappingReleaseSafety,
   type RuntimeIdentityMappingBinding,
@@ -129,12 +133,27 @@ export const AUTHORIZATION_SERVER_PRINCIPAL_CLAIMS = new Set([
   'grant_id',
 ]);
 
+/**
+ * The claims about a person's identity assurance (the assurance values of their IAL, and the
+ * verified claims proofing will back). The authorization server computes them from the person's
+ * evidence at the time they are released, in an ID token or UserInfo response, and nowhere else:
+ * no identity mapping output (in any namespace, introspection included), token claim rule or
+ * introspection response may carry these names, since a mapping that copied a user-editable
+ * attribute into one would let a person state their own assurance. A Destination Profile may list
+ * them as ID token and UserInfo fields, to decide which apps they are released to.
+ */
+export const AUTHORIZATION_SERVER_ASSURANCE_CLAIMS = new Set([
+  EDUPERSON_ASSURANCE_CLAIM,
+  VERIFIED_CLAIMS_CLAIM,
+]);
+
 export function isProtectedIdentityMappingDestinationClaim(
   namespace: string,
   path: string
 ): boolean {
   if (AUTHORIZATION_SERVER_GRANT_CLAIMS.has(path)) return true;
   if (AUTHORIZATION_SERVER_PRINCIPAL_CLAIMS.has(path)) return true;
+  if (AUTHORIZATION_SERVER_ASSURANCE_CLAIMS.has(path)) return true;
   if (namespace === 'introspection.claim') {
     return path !== 'sub' && INTROSPECTION_PROTOCOL_ENVELOPE_CLAIMS.has(path);
   }
@@ -192,6 +211,9 @@ export function filterOidcClaimsWithoutDestinationProfile(
       ([key]) =>
         OIDC_PROTOCOL_ENVELOPE_CLAIMS.has(key) ||
         OIDC_STANDARD_CLAIMS.has(key) ||
+        // Computed from the person's evidence by the authorization server, after the request's
+        // scopes and claims parameter allowed it (never from a mapping: see above).
+        key === EDUPERSON_ASSURANCE_CLAIM ||
         key.startsWith('::')
     )
   );
@@ -394,6 +416,7 @@ export async function filterIntrospectionClaimsByResourceServerProfile(input: {
   const grantedScopes = new Set(input.grantedScopes);
   const allowed = new Map(
     fields
+      .filter((field) => !AUTHORIZATION_SERVER_ASSURANCE_CLAIMS.has(field.key))
       .filter(
         (field) =>
           field.key === 'active' ||
