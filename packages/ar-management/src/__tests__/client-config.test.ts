@@ -210,6 +210,43 @@ describe('client-config update handler', () => {
     expect(mocked.getClientCached).toHaveBeenCalledTimes(3);
   });
 
+  it('neither changes nor returns the identity assurance minimum an administrator set', async () => {
+    const adapter = createMockAdapter();
+    mocked.createAuthContextFromHono.mockReturnValue({ coreAdapter: adapter });
+    const stored = {
+      client_id: 'client-123',
+      client_name: 'Smoke Client',
+      redirect_uris: ['https://example.com/callback'],
+      grant_types: ['authorization_code'],
+      response_types: ['code'],
+      registration_access_token_hash: 'token-hash',
+      minimum_ial: 'IAL3',
+    };
+    mocked.getClientCached.mockResolvedValue(stored);
+
+    const res = await clientConfigUpdateHandler(
+      createMockContext({
+        body: {
+          client_id: 'client-123',
+          redirect_uris: ['https://example.com/callback'],
+          grant_types: ['authorization_code'],
+          response_types: ['code'],
+          // A registration management request cannot lower, or set, the minimum.
+          minimum_ial: 'IAL1',
+        },
+      })
+    );
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).not.toHaveProperty('minimum_ial');
+    const [sql, params] = (adapter.execute as ReturnType<typeof vi.fn>).mock.calls[0] as [
+      string,
+      unknown[],
+    ];
+    expect(sql).not.toContain('minimum_ial');
+    expect(params).not.toContain('IAL1');
+  });
+
   it("answers with the algorithm the app's ID tokens are signed with", async () => {
     const adapter = createMockAdapter();
     mocked.createAuthContextFromHono.mockReturnValue({ coreAdapter: adapter });

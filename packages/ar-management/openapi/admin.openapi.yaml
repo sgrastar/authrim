@@ -46241,6 +46241,24 @@ components:
           additionalProperties: true
         require_pkce:
           type: boolean
+        minimum_ial:
+          type:
+            - string
+            - 'null'
+          enum:
+            - IAL1
+            - IAL2
+            - IAL3
+            - null
+          description: >-
+            The lowest identity assurance level (NIST SP 800-63A) a person must have been proofed
+            at to be authorized by, or issued tokens for, this client. Absent on update: unchanged. Null:
+            removes it (the client sets no minimum of its own). An empty string is refused with 400
+            invalid_request, never read as null. A person below it is refused (authorization_code,
+            refresh_token and the other user grants: access_denied at authorize, invalid_grant at
+            the token endpoint; device and CIBA: access_denied). It applies whether or not
+            tenant-wide assurance is on. Set here only; dynamic client registration does not
+            accept it.
         application_type:
           type: string
           enum:

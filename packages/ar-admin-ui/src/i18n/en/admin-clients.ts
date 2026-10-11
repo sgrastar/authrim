@@ -86,6 +86,10 @@ const adminClients = {
 		'WebSDK and SPA token clients should use strict DPoP. Cookie fallback does not exchange OAuth codes in browser JavaScript.',
 	admin_client_detail_browser_refresh_hint:
 		'Public browser clients only receive refresh tokens when this is DPoP-bound.',
+	admin_client_detail_minimum_ial: 'Minimum identity assurance level',
+	admin_client_detail_minimum_ial_none: 'No minimum',
+	admin_client_detail_minimum_ial_hint:
+		'A person whose identity has not been proofed to this level (NIST SP 800-63A IAL) is refused by this client, whether or not assurance is on for the tenant.',
 	admin_client_detail_pkce_required: 'PKCE Required',
 	admin_client_detail_pkce_required_desc: 'Require PKCE for authorization requests',
 	admin_client_detail_par_required: 'PAR Required',

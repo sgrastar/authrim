@@ -14,6 +14,7 @@ import type { ClientMetadata, RefreshTokenData } from '../types/oidc';
 import { ensureDatabaseAdapter, type DatabaseSource } from '../db';
 import { buildKVKey, buildDOInstanceName } from './tenant-context';
 import { resolveEffectiveSettings } from '../services/effective-settings';
+import { readClientMinimumIAL } from '../services/identity-assurance';
 import { getRevocationStoreByJti } from './token-revocation-sharding';
 import type { DatabaseAdapter, PIIStatus } from '../db/adapter';
 import { createLogger } from './logger';
@@ -1038,6 +1039,8 @@ export async function getClient(
     allowed_redirect_origins: string | null;
     // PKCE settings
     require_pkce: number | null;
+    // Identity assurance (NIST SP 800-63A)
+    minimum_ial?: string | number | null;
     // Multi-tenant support
     tenant_id: string;
     application_type: string | null;
@@ -1213,6 +1216,9 @@ export async function getClient(
     allowed_redirect_origins: normalizeOptionalStringArray(result.allowed_redirect_origins),
     // PKCE settings
     require_pkce: result.require_pkce === 1,
+    // Identity assurance: no value is no minimum; a value runtime does not know is the highest
+    // level (a minimum is never dropped by being unreadable).
+    minimum_ial: readClientMinimumIAL(result.minimum_ial),
     // Multi-tenant support
     tenant_id: result.tenant_id || tenantId,
     created_at: result.created_at,

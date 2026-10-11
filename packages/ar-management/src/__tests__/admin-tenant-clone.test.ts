@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 
 const mocks = vi.hoisted(() => ({
   source: { query: vi.fn(), queryOne: vi.fn(), execute: vi.fn() },
@@ -271,8 +271,18 @@ describe('admin tenant clone', () => {
             column
           )
       );
+    // Columns added after the baseline.
+    const addedColumns = readdirSync(new URL('core/d1/', migrationsUrl))
+      .filter((file) => file.endsWith('.sql'))
+      .flatMap((file) =>
+        [
+          ...readFileSync(new URL(`core/d1/${file}`, migrationsUrl), 'utf8').matchAll(
+            /ALTER TABLE oauth_clients ADD COLUMN ([a-z_][a-z0-9_]*)/giu
+          ),
+        ].map((match) => match[1]!.toLowerCase())
+      );
     expect(new Set([...OAUTH_CLIENT_CLONE_COLUMNS, ...OAUTH_CLIENT_NON_CLONE_COLUMNS])).toEqual(
-      new Set(schemaColumns)
+      new Set([...schemaColumns, ...addedColumns])
     );
     expect(
       OAUTH_CLIENT_CLONE_COLUMNS.filter((column) => OAUTH_CLIENT_NON_CLONE_COLUMNS.has(column))

@@ -251,13 +251,11 @@ export const ASSURANCE_LEVELS_SETTINGS_META: Record<keyof AssuranceLevelsSetting
   },
   'assurance.scope_ial_requirements': {
     key: 'assurance.scope_ial_requirements',
-    // Saved and validated, not applied yet: runtime use lands with the identity assurance work.
-    status: 'in_development',
     type: 'string',
     default: '{}',
     label: 'Scope IAL Requirements',
     description:
-      'JSON mapping of scopes to the IAL they require (e.g., {"payroll": "IAL2"}); a request for such a scope by someone below it is refused (access_denied), since no sign-in can raise an IAL. Applies while assurance levels are enabled (not applied yet)',
+      'JSON mapping of scopes to the IAL they require (e.g., {"payroll": "IAL2"}); a request for such a scope by someone below it is refused (access_denied at authorization, invalid_grant at the token endpoint, access_denied for device and CIBA), since no sign-in can raise an IAL. It applies to the scopes requested at authorization and to the scopes of every token a user grant issues (including refresh and token exchange), so evidence revoked later stops them. Applies while assurance levels are enabled; a client\'s own minimum IAL applies whether or not they are',
   },
   'assurance.ial_assurance_values': {
     key: 'assurance.ial_assurance_values',

@@ -204,6 +204,16 @@ export function requiredIAL(input: {
   return required === 'IAL1' ? null : required;
 }
 
+/**
+ * A client's stored minimum IAL, as runtime reads it: undefined when none is set, the level when it
+ * is one, and the highest level for anything else. A minimum that cannot be read is never taken
+ * for no minimum.
+ */
+export function readClientMinimumIAL(value: unknown): IAL | undefined {
+  if (value === null || value === undefined) return undefined;
+  return isIAL(value) ? value : 'IAL3';
+}
+
 /** `assurance.scope_ial_requirements`, as saved (a scope to the IAL it needs). */
 export function parseScopeIALRequirements(value: unknown): Record<string, IAL> {
   // A map without a prototype, so a scope such as __proto__ or toString is only ever a name.

@@ -72,6 +72,20 @@ paths:
         assurance enabled, the refreshed ID token carries the original auth_time, acr and amr
         (OIDC Core 12.2), and the refreshed access token the claims described above. Assurance settings
         that cannot be read return 503 temporarily_unavailable.
+        Identity assurance (IAL): a client's minimum_ial applies whether or not assurance is on, and
+        the scope-to-IAL map (assurance.scope_ial_requirements) while it is on. Every grant that
+        issues tokens for a user checks the IAL the user's evidence supports now (read each time,
+        never cached) against the highest requirement: authorization code (including Direct Auth),
+        refresh token (against the whole scope of its family, however much a refresh asks for),
+        token exchange (against the scope the new token carries; a subject with no account in the
+        tenant counts as IAL1) and Native SSO refuse with invalid_grant; device code and CIBA with
+        access_denied. The JWT bearer grant, whose subject an external issuer vouches for and so
+        has no evidence here, is refused with invalid_grant for a scope the map holds to a level.
+        When nothing is required, no evidence is read. Evidence that cannot be read returns 503
+        temporarily_unavailable (an authorization code or Native SSO exchange, whose credential is
+        spent by then, returns invalid_grant asking the client to start again). Access tokens
+        already issued stay valid until they expire (UserInfo and introspection are not affected);
+        revoking evidence stops new tokens, refreshes and exchanges from the next request.
       requestBody:
         required: true
         content:

@@ -1869,6 +1869,34 @@ describe('Dynamic Client Registration Handler', () => {
     });
   });
 
+  describe('identity assurance is set by an administrator, never at registration', () => {
+    it('does not store or return a minimum_ial sent in the registration request', async () => {
+      const res = await app.request(
+        '/register',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            redirect_uris: ['https://example.com/callback'],
+            minimum_ial: 'IAL3',
+          }),
+        },
+        mockEnv
+      );
+
+      expect(res.status).toBe(201);
+      const json = (await res.json()) as Record<string, unknown>;
+      expect(json).not.toHaveProperty('minimum_ial');
+      const db = mockEnv.DB as unknown as ReturnType<typeof createMockDB>;
+      const insertSql = vi
+        .mocked(db.prepare)
+        .mock.calls.map(([sql]) => String(sql))
+        .find((sql) => sql.includes('INSERT INTO oauth_clients'));
+      expect(insertSql).not.toContain('minimum_ial');
+      expect(getLastBindArgs(mockEnv)).not.toContain('IAL3');
+    });
+  });
+
   describe('Validation - response_types', () => {
     it('should accept valid response_types', async () => {
       const requestBody = {

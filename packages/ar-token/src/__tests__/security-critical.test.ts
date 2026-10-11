@@ -49,6 +49,7 @@ import {
   OAuthErrors,
   type TestAuthCodeData,
 } from './helpers/fixtures';
+import { evidenceRow, useEvidenceD1 } from './helpers/identity-assurance';
 
 function createConfidentialClient(
   overrides?: Parameters<typeof createConfidentialClientFixture>[0]
@@ -2895,6 +2896,242 @@ describe('Security-Critical Tests', () => {
 
       expect(response.status).toBe(400);
       expect((await parseJsonResponse<{ error: string }>(response)).error).toBe(error);
+    });
+
+    describe('identity assurance (IAL)', () => {
+      const MAP = JSON.stringify({ payroll: 'IAL2', records: 'IAL3' });
+
+      async function exchangeIalCode(options: {
+        scope?: string;
+        client?: Record<string, unknown>;
+        rows?: Array<Record<string, unknown>> | 'fail';
+      }) {
+        const evidence = useEvidenceD1(mockEnv.TDB_TEST_CORE, options.rows ?? []);
+        const client = createFAPIClient({
+          token_endpoint_auth_method: 'client_secret_post',
+          client_secret_hash: 'test-secret-hash',
+          dpop_bound_access_tokens: false,
+          allowed_scopes: ['openid', 'profile', 'payroll', 'records'],
+          ...options.client,
+        });
+        const authCodeData = createAuthCodeData({
+          scope: options.scope ?? 'openid profile',
+          amr: ['passkey'],
+        });
+        mocks.mockGetClientCached.mockResolvedValue(client);
+        mocks.mockExtractDPoPProof.mockReturnValue('valid-dpop-proof');
+        mocks.mockValidateDPoPProof.mockResolvedValue({ valid: true, jkt: 'dpop-jkt' });
+        const consumeCodeRpc = vi.fn().mockResolvedValue(authCodeData);
+        mockEnv.AUTH_CODE_STORE.get = vi.fn().mockReturnValue({
+          consumeCodeRpc,
+          registerIssuedTokensRpc: vi.fn().mockResolvedValue(true),
+        });
+        const response = await tokenHandler(
+          createMockContext({
+            method: 'POST',
+            headers: { DPoP: 'valid-dpop-proof' },
+            body: {
+              grant_type: 'authorization_code',
+              code: 'valid-auth-code',
+              redirect_uri: authCodeData.redirectUri,
+              client_id: client.client_id,
+              client_secret: 'valid-secret',
+            },
+            env: mockEnv,
+          })
+        );
+        return { response, evidence };
+      }
+
+      it('changes nothing, and reads no evidence, when nothing is configured', async () => {
+        const { response, evidence } = await exchangeIalCode({});
+
+        expect(response.status).toBe(200);
+        expect(evidence.reads).toEqual([]);
+      });
+
+      it('reads no evidence for a scope the map does not name, or while assurance is off', async () => {
+        setAssurance({ 'assurance.enabled': true, 'assurance.scope_ial_requirements': MAP });
+        const named = await exchangeIalCode({ scope: 'openid profile' });
+        expect(named.response.status).toBe(200);
+        expect(named.evidence.reads).toEqual([]);
+
+        setAssurance({ 'assurance.scope_ial_requirements': MAP });
+        const off = await exchangeIalCode({ scope: 'openid payroll' });
+        expect(off.response.status).toBe(200);
+        expect(off.evidence.reads).toEqual([]);
+      });
+
+      it('refuses with invalid_grant a person below the client minimum, assurance off', async () => {
+        const { response, evidence } = await exchangeIalCode({ client: { minimum_ial: 'IAL2' } });
+
+        expect(response.status).toBe(400);
+        expect((await parseJsonResponse<{ error: string }>(response)).error).toBe('invalid_grant');
+        expect(mocks.mockCreateAccessToken).not.toHaveBeenCalled();
+        expect(evidence.reads).toHaveLength(1);
+      });
+
+      it('issues tokens to a person at the client minimum', async () => {
+        const { response } = await exchangeIalCode({
+          client: { minimum_ial: 'IAL2' },
+          rows: [evidenceRow('IAL2')],
+        });
+
+        expect(response.status).toBe(200);
+        expect(mocks.mockCreateAccessToken).toHaveBeenCalled();
+      });
+
+      it('does not count revoked, expired or unverified evidence', async () => {
+        const { response } = await exchangeIalCode({
+          client: { minimum_ial: 'IAL2' },
+          rows: [
+            evidenceRow('IAL2', { id: 'a', revoked_at: Date.now() - 10 }),
+            evidenceRow('IAL2', { id: 'b', expires_at: Date.now() - 10 }),
+            evidenceRow('IAL2', { id: 'c', verified_at: null }),
+          ],
+        });
+
+        expect(response.status).toBe(400);
+        expect(mocks.mockCreateAccessToken).not.toHaveBeenCalled();
+      });
+
+      it('applies the scope map to the scopes the code was granted, while assurance is on', async () => {
+        setAssurance({ 'assurance.enabled': true, 'assurance.scope_ial_requirements': MAP });
+
+        const { response } = await exchangeIalCode({ scope: 'openid payroll' });
+
+        expect(response.status).toBe(400);
+        expect((await parseJsonResponse<{ error: string }>(response)).error).toBe('invalid_grant');
+        expect(mocks.mockCreateAccessToken).not.toHaveBeenCalled();
+      });
+
+      it('takes the higher of the client minimum and the scope map', async () => {
+        setAssurance({ 'assurance.enabled': true, 'assurance.scope_ial_requirements': MAP });
+
+        const { response } = await exchangeIalCode({
+          scope: 'openid payroll',
+          client: { minimum_ial: 'IAL3' },
+          rows: [evidenceRow('IAL2')],
+        });
+
+        expect(response.status).toBe(400);
+      });
+
+      it('does not issue tokens when the evidence cannot be read, never reading IAL1', async () => {
+        const { response } = await exchangeIalCode({
+          client: { minimum_ial: 'IAL2' },
+          rows: 'fail',
+        });
+
+        // The code is spent already, so the client starts again rather than retries.
+        expect(response.status).toBe(400);
+        expect(
+          await parseJsonResponse<{ error: string; error_description: string }>(response)
+        ).toMatchObject({
+          error: 'invalid_grant',
+          error_description: expect.stringContaining('start the authorization again'),
+        });
+        expect(mocks.mockCreateAccessToken).not.toHaveBeenCalled();
+      });
+
+      describe('refresh_token', () => {
+        async function refreshIal(options: {
+          familyScope?: string;
+          requestScope?: string;
+          client?: Record<string, unknown>;
+          rows?: Array<Record<string, unknown>> | 'fail';
+        }) {
+          const evidence = useEvidenceD1(mockEnv.TDB_TEST_CORE, options.rows ?? []);
+          const client = createConfidentialClient({ ...options.client });
+          const payload = createRefreshTokenPayload({
+            client_id: client.client_id,
+            sub: 'user-001',
+            scope: options.familyScope ?? 'openid profile offline_access',
+          });
+          mocks.mockGetClientCached.mockResolvedValue(client);
+          mocks.mockParseToken.mockReturnValue(payload);
+          mocks.mockGetRefreshToken.mockResolvedValue({
+            sub: payload.sub,
+            scope: payload.scope,
+            client_id: payload.client_id,
+          });
+          mocks.mockParseRefreshTokenJti.mockReturnValue({
+            generation: 1,
+            shardIndex: 0,
+            randomPart: 'abc',
+          });
+          const rotateRpc = vi.fn().mockResolvedValue({ newJti: 'rt-new-jti-002', newVersion: 2 });
+          mockEnv.REFRESH_TOKEN_ROTATOR.get = vi.fn().mockReturnValue({ rotateRpc });
+          const response = await tokenHandler(
+            createMockContext({
+              method: 'POST',
+              body: {
+                grant_type: 'refresh_token',
+                refresh_token: createTestRefreshTokenJWT({
+                  client_id: client.client_id,
+                  sub: 'user-001',
+                }),
+                client_id: client.client_id,
+                client_secret: 'valid-secret',
+                ...(options.requestScope ? { scope: options.requestScope } : {}),
+              },
+              env: mockEnv,
+            })
+          );
+          return { response, evidence, rotateRpc };
+        }
+
+        it('changes nothing, and reads no evidence, when nothing is configured', async () => {
+          const { response, evidence } = await refreshIal({});
+
+          expect(response.status).toBe(200);
+          expect(evidence.reads).toEqual([]);
+        });
+
+        it('stops when the evidence the grant rested on is revoked', async () => {
+          const client = { minimum_ial: 'IAL2' };
+          const active = await refreshIal({ client, rows: [evidenceRow('IAL2')] });
+          expect(active.response.status).toBe(200);
+
+          vi.clearAllMocks();
+          const revoked = await refreshIal({
+            client,
+            rows: [evidenceRow('IAL2', { revoked_at: Date.now() - 10 })],
+          });
+
+          expect(revoked.response.status).toBe(400);
+          expect((await parseJsonResponse<{ error: string }>(revoked.response)).error).toBe(
+            'invalid_grant'
+          );
+          expect(revoked.rotateRpc).not.toHaveBeenCalled();
+          expect(mocks.mockCreateAccessToken).not.toHaveBeenCalled();
+        });
+
+        it('judges a narrowed refresh by the family’s whole scope', async () => {
+          setAssurance({ 'assurance.enabled': true, 'assurance.scope_ial_requirements': MAP });
+
+          const { response, rotateRpc } = await refreshIal({
+            familyScope: 'openid payroll offline_access',
+            requestScope: 'openid',
+          });
+
+          expect(response.status).toBe(400);
+          expect(rotateRpc).not.toHaveBeenCalled();
+        });
+
+        it('answers 503 and keeps the token when the evidence cannot be read', async () => {
+          const { response, rotateRpc } = await refreshIal({
+            client: { minimum_ial: 'IAL2' },
+            rows: 'fail',
+          });
+
+          expect(response.status).toBe(503);
+          expect((await parseJsonResponse<{ error: string }>(response)).error).toBe(
+            'temporarily_unavailable'
+          );
+          expect(rotateRpc).not.toHaveBeenCalled();
+        });
+      });
     });
   });
 

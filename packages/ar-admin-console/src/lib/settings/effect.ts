@@ -10,8 +10,8 @@
  * the password lockout threshold, email code lifetime and email send limit, refresh token
  * rotation, the advertised ACR values, the tenant's ID token signing algorithm, the token exchange
  * ceilings, extended introspection claims, the SCIM token lifetime, the SAML switch, assertion
- * and request lifetimes and provider defaults, and the identity assurance level recorded for
- * accounts the organisation creates; and less the settings that left the catalog (duplicates, copies of the app
+ * and request lifetimes and provider defaults, the identity assurance level recorded for accounts
+ * the organisation creates, and the scope-to-IAL requirements; and less the settings that left the catalog (duplicates, copies of the app
  * registration, and values too fine or fixed at deployment). Update this list when a setting starts to apply or leaves the catalog.
  *
  * Shown in the settings map (Storybook: Pages › Settings map).
@@ -52,12 +52,11 @@ export const NOT_APPLIED: ReadonlyMap<string, NotApplied> = new Map([
 		'plugin.notifier_console_enabled',
 		'tenant.ui_register_path'
 	]),
-	// to-wire (34)
+	// to-wire (33)
 	...reason('to-wire', [
 		'assurance.ial_assurance_values',
 		'assurance.ida_profile',
 		'assurance.saml_authn_context_aal',
-		'assurance.scope_ial_requirements',
 		'ciba.auth_request_ttl',
 		'ciba.binding_message_required',
 		'ciba.expires_in',

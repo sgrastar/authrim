@@ -152,6 +152,7 @@ export const OAUTH_CLIENT_CLONE_COLUMNS = [
   'software_version',
   'requestable_scopes',
   'require_pkce',
+  'minimum_ial',
   'application_type',
   'trust_group',
   'trust_group_id',

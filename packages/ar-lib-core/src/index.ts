@@ -25,6 +25,7 @@ export * from './services/legacy-settings-import';
 export * from './services/effective-settings';
 export * from './services/assurance';
 export * from './services/identity-assurance';
+export * from './services/identity-assurance-enforcement';
 export * from './services/organisation-assurance';
 export * from './services/profile-update-on-login';
 export * from './services/logout-settings';
