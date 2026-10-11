@@ -19,6 +19,7 @@ import {
   transitionAccountAuthenticationState,
   readAccountAuthenticationState,
   getTenantSettingsDocument,
+  SUBJECT_UPDATED_AT_FORWARD_SQL,
 } from '@authrim/ar-lib-core';
 import {
   initializeFromAccount,
@@ -1764,7 +1765,7 @@ async function processBulkUserUpdateJob(
         ],
       },
       {
-        sql: `UPDATE identity_subjects SET lifecycle_state = ?, updated_at = ?
+        sql: `UPDATE identity_subjects SET lifecycle_state = ?, ${SUBJECT_UPDATED_AT_FORWARD_SQL}
                WHERE tenant_id = ?
                  AND lifecycle_state NOT IN ('deleting', 'deleted')
                  AND id IN (
@@ -1775,6 +1776,7 @@ async function processBulkUserUpdateJob(
                  )`,
         params: [
           target.state,
+          nowMs,
           nowMs,
           job.tenant_id,
           job.tenant_id,

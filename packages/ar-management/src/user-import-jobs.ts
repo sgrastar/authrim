@@ -22,14 +22,26 @@ import {
   syncUserLifecycleState,
   transitionAccountAuthenticationState,
   validateCustomClaimWrite,
+  DefaultIALUnavailableError,
+  InitialAssuranceRecordError,
+  resolveTenantPolicyInitialAssurance,
+  type InitialAssuranceEvidence,
 } from '@authrim/ar-lib-core';
 import { loadCatalogObjectJson } from '@authrim/ar-lib-core/services/object-artifact-store';
 import {
   ADMIN_USER_CREATE_RESERVED_FIELDS,
+  ASSURANCE_IMPORT_COLUMNS,
   extractCustomClaimInput,
   VALID_USER_LIFECYCLE_STATES,
 } from './admin-shared';
 import { materializeEncryptedObjectArtifact } from './object-artifact-materialization';
+import {
+  applyImportedAssurance,
+  importedAssuranceEvidence,
+  assertAssuranceColumnsFree,
+  parseImportedAssurance,
+  type ImportedAssurance,
+} from './user-import-assurance';
 
 export const USER_IMPORT_MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
 export const USER_IMPORT_BATCH_SIZE = 100;
@@ -119,6 +131,8 @@ const IMPORT_RESERVED_FIELDS = new Set<string>([
   ...ADMIN_USER_CREATE_RESERVED_FIELDS,
   'status',
   'lifecycle_state',
+  // The identity assurance columns: evidence, never custom attributes.
+  ...ASSURANCE_IMPORT_COLUMNS,
 ]);
 
 interface JobProgressState {
@@ -135,6 +149,8 @@ interface JobProgressState {
 export interface ImportJobFailure {
   row?: number;
   error_code: string;
+  /** The row may succeed if imported again (nothing is wrong with it). */
+  retryable?: boolean;
   field?: string;
   message?: string;
   email?: string;
@@ -230,11 +246,16 @@ interface ImportedUserRowResult {
 interface UserImportJobRuntime {
   tenantId: string;
   jobId: string;
+  /** When the job was created (epoch ms): see UserImportRuntime. */
+  importedAt?: number;
   env: Env;
   metadata: DatabaseAdapter;
 }
 interface UserImportRuntime {
   tenantId: string;
+  jobId: string;
+  /** When the job was created: the time an asserted IAL counts from when its row gives none. */
+  importedAt?: number;
   env: Env;
   coreAdapter: DatabaseAdapter;
   piiAdapter: DatabaseAdapter;
@@ -621,6 +642,14 @@ function parseOptionalBoolean(
 }
 
 export function normalizeImportRecord(record: Record<string, string>): ImportedUserRowInput {
+  return normalizeImportRow(record).input;
+}
+
+/** A CSV row as the user it describes and the identity assurance it asserts (null: none). */
+export function normalizeImportRow(
+  record: Record<string, string>,
+  now: number = Date.now()
+): { input: ImportedUserRowInput; assurance: ImportedAssurance | null } {
   if (Object.keys(record).some((key) => key.trim().toLowerCase() === 'registration_state')) {
     throw new Error('registration_state is read-only');
   }
@@ -696,19 +725,22 @@ export function normalizeImportRecord(record: Record<string, string>): ImportedU
     result[key] = parseImportCellValue(rawValue);
   }
 
-  return result;
+  return { input: result, assurance: parseImportedAssurance(record, now) };
 }
 
 async function createUserImportRuntime(
   env: Env,
   tenantId: string,
-  jobId: string
+  jobId: string,
+  createdAt?: number
 ): Promise<UserImportJobRuntime> {
   const sources = await resolveCustomClaimRuntimeSourcesFromEnv(env, tenantId);
   return {
     env,
     tenantId,
     jobId,
+    // Seconds or milliseconds, as admin_jobs holds them.
+    importedAt: createdAt ? (createdAt < 1e12 ? createdAt * 1000 : createdAt) : undefined,
     metadata: ensureDatabaseAdapter(sources.schemaDb, 'csv-metadata'),
   };
 }
@@ -735,8 +767,10 @@ function importedAccountAuthenticationLifecycle(
 async function createImportedUser(
   runtime: UserImportJobRuntime,
   input: ImportedUserRowInput,
+  assurance: ImportedAssurance | null,
   validateOnly: boolean,
-  rowNumber: number
+  rowNumber: number,
+  resuming = false
 ): Promise<ImportedUserRowResult> {
   const validation = await validateCustomClaimWrite({
     db: runtime.metadata,
@@ -749,6 +783,22 @@ async function createImportedUser(
   });
   if (!validation.ok) throw new Error(validation.error ?? 'Invalid custom claim input');
   if (validateOnly) return { outcome: 'validated', message: `Validated create for ${input.email}` };
+  // What the row asserts, else the tenant's default IAL for accounts the organisation creates,
+  // recorded as evidence with the account. Not knowing the default, the row fails (to import
+  // again) rather than create the account without the evidence.
+  let initialAssurance: InitialAssuranceEvidence | null;
+  try {
+    initialAssurance = assurance
+      ? importedAssuranceEvidence(assurance, runtime.jobId, runtime.importedAt)
+      : await resolveTenantPolicyInitialAssurance(runtime.env, runtime.tenantId);
+  } catch (error) {
+    // An unfinished creation of this row (its operation exists) is resumed once the default can
+    // be read; a row not begun simply fails.
+    if (resuming && error instanceof DefaultIALUnavailableError) {
+      throw new ImportAssuranceStepError(error, 'create');
+    }
+    throw error;
+  }
   const operationId = await importRowOperationId(runtime, rowNumber);
   const result = await executeDurableInitialAccountDirectoryWrite(
     runtime.env,
@@ -808,6 +858,7 @@ async function createImportedUser(
                     : {}),
                 },
               },
+              initialAssurance,
             });
             await persistCustomClaimWrite({
               db: context.tenantCoreUsers,
@@ -841,7 +892,14 @@ async function createImportedUser(
         );
       },
     }
-  );
+  ).catch((error: unknown) => {
+    // The account is written; only its evidence is not. Writing the same creation again (the
+    // operation is found by the row) records it once.
+    if (error instanceof InitialAssuranceRecordError) {
+      throw new ImportAssuranceStepError(error, 'create');
+    }
+    throw error;
+  });
   return {
     outcome: result.delivery.status === 201 ? 'created' : 'pending',
     userId: result.operation.userId,
@@ -874,7 +932,9 @@ async function updateImportedUser(
   runtime: UserImportRuntime,
   userId: string,
   input: ImportedUserRowInput,
-  validateOnly: boolean
+  assurance: ImportedAssurance | null,
+  validateOnly: boolean,
+  rowNumber: number
 ): Promise<ImportedUserRowResult> {
   const existingUser = await runtime.runtimeUsers.findById(userId, { includeInactive: true });
   if (!existingUser) {
@@ -1001,6 +1061,22 @@ async function updateImportedUser(
         });
       }
 
+      // Only once the user is written: a row that fails changes no evidence. A row with an IAL
+      // replaces what earlier imports asserted; one without keeps it. If this step fails the
+      // row fails to be imported again (the user write and the evidence are both safe to repeat).
+      try {
+        await applyImportedAssurance(
+          runtime.coreAdapter,
+          runtime.tenantId,
+          userId,
+          runtime.jobId,
+          runtime.importedAt ?? Date.now(),
+          assurance
+        );
+      } catch (error) {
+        throw new ImportAssuranceStepError(error);
+      }
+
       await invalidateUserCache(runtime.env, runtime.tenantId, userId);
 
       return {
@@ -1018,7 +1094,9 @@ export async function processImportedRow(
   rowNumber: number,
   options: UserImportJobOptions
 ): Promise<ImportedUserRowResult> {
-  const input = normalizeImportRecord(record);
+  const { input, assurance } = normalizeImportRow(record);
+  // The ial columns are read as assurance only where no custom attribute has the name.
+  await assertAssuranceColumnsFree(runtime.metadata, runtime.tenantId, record);
   // Resume this pinned job/row before duplicate handling: our own successful create is not a duplicate.
   const operation = options.validate_only
     ? null
@@ -1027,7 +1105,7 @@ export async function processImportedRow(
         actorId: `csv-import:${runtime.jobId}`,
         operationId: await importRowOperationId(runtime, rowNumber),
       });
-  if (operation) return createImportedUser(runtime, input, false, rowNumber);
+  if (operation) return createImportedUser(runtime, input, assurance, false, rowNumber, true);
   const matches = await new CrossShardAccountExactSearchService(runtime.env).find({
     tenantId: runtime.tenantId,
     identifier: input.email,
@@ -1054,6 +1132,8 @@ export async function processImportedRow(
       {
         env: runtime.env,
         tenantId: runtime.tenantId,
+        jobId: runtime.jobId,
+        importedAt: runtime.importedAt,
         coreAdapter,
         piiAdapter,
         runtimeUsers: new CanonicalRuntimeUserStore({
@@ -1069,10 +1149,12 @@ export async function processImportedRow(
       },
       existing.legacyUserId,
       input,
-      options.validate_only
+      assurance,
+      options.validate_only,
+      rowNumber
     );
   }
-  return createImportedUser(runtime, input, options.validate_only, rowNumber);
+  return createImportedUser(runtime, input, assurance, options.validate_only, rowNumber);
 }
 
 function parseJobOptions(config: string | null): UserImportJobOptions {
@@ -1314,11 +1396,80 @@ function pushFailure(artifact: ImportJobArtifact, failure: ImportJobFailure): vo
   }
 }
 
-function createFailureEntry(
+/**
+ * The user of a row was written but the evidence of its IAL could not be: the row fails, and
+ * importing it again completes it (nothing is taken for "no evidence").
+ */
+export class ImportAssuranceStepError extends Error {
+  /**
+   * 'update': the user of an existing account was written, its evidence was not.
+   * 'create': the new account was written (its creation is unfinished), its evidence was not.
+   */
+  readonly phase: 'create' | 'update';
+
+  constructor(cause: unknown, phase: 'create' | 'update' = 'update') {
+    super('import_assurance_step_failed');
+    this.name = 'ImportAssuranceStepError';
+    this.cause = cause;
+    this.phase = phase;
+  }
+}
+
+/** How many times a job tries a row whose new account is written but whose evidence is not. */
+export const IMPORT_INITIAL_ASSURANCE_MAX_ATTEMPTS = 5;
+
+/**
+ * What the job does with a row that threw. A row whose new account was written but whose evidence
+ * could not be recorded is tried again by the job (it is not counted as processed): the creation
+ * is unfinished, and the next run finds its operation by the row and completes it, recording the
+ * evidence once. After `IMPORT_INITIAL_ASSURANCE_MAX_ATTEMPTS` attempts it fails like any row.
+ */
+export function importRowErrorDisposition(
+  error: unknown,
+  previousAttempts: number
+): 'retry' | 'fail' {
+  return error instanceof ImportAssuranceStepError &&
+    error.phase === 'create' &&
+    previousAttempts + 1 < IMPORT_INITIAL_ASSURANCE_MAX_ATTEMPTS
+    ? 'retry'
+    : 'fail';
+}
+
+export function createFailureEntry(
   rowNumber: number,
   record: Record<string, string>,
   error: unknown
 ): ImportJobFailure {
+  if (error instanceof DefaultIALUnavailableError) {
+    // Nothing is wrong with the row: the tenant's default IAL could not be read, so the account
+    // was not created. Importing the row again creates it.
+    return {
+      row: rowNumber,
+      email: record.email?.trim() || undefined,
+      error_code: 'default_ial_unavailable',
+      retryable: true,
+      message: 'The default identity assurance level could not be read; import this row again',
+    };
+  }
+  if (error instanceof ImportAssuranceStepError) {
+    return error.phase === 'create'
+      ? {
+          row: rowNumber,
+          email: record.email?.trim() || undefined,
+          error_code: 'assurance_initial_failed',
+          retryable: true,
+          message:
+            'The account was written but its identity assurance could not be recorded after several attempts; its creation is unfinished',
+        }
+      : {
+          row: rowNumber,
+          email: record.email?.trim() || undefined,
+          error_code: 'assurance_update_failed',
+          retryable: true,
+          message:
+            'The user was updated but the identity assurance could not be recorded; import this row again',
+        };
+  }
   const message = error instanceof Error ? error.message : String(error);
   return {
     row: rowNumber,
@@ -1362,7 +1513,7 @@ async function processUserImportJob(
   const resultKey = job.result_r2_key ?? buildUserImportResultKey(job.tenant_id, job.id);
   const parsed = parseUserImportCsv(csvText, { skip_header: options.skip_header });
   const progress = parseProgress(job.progress);
-  const runtime = await createUserImportRuntime(env, job.tenant_id, job.id);
+  const runtime = await createUserImportRuntime(env, job.tenant_id, job.id, job.created_at);
   const artifact = await loadImportArtifact(
     env,
     coreAdapter,
@@ -1442,6 +1593,26 @@ async function processUserImportJob(
         });
       }
     } catch (error) {
+      const previousAttempts = artifact.logs.filter(
+        (entry) => entry.code === 'assurance_initial_failed' && entry.row === rowNumber
+      ).length;
+      if (importRowErrorDisposition(error, previousAttempts) === 'retry') {
+        // The account is written, its evidence is not: the row is not counted, and the next run
+        // of the job resumes the creation (the operation is found by the row).
+        pushLog(artifact, {
+          level: 'warn',
+          code: 'assurance_initial_failed',
+          row: rowNumber,
+          email: record.email?.trim() || undefined,
+          message: 'The identity assurance of a new account could not be recorded; trying again',
+        });
+        logger.error(
+          'User import row awaiting its identity assurance',
+          { job_id: job.id, tenant_id: job.tenant_id, row: rowNumber, email: currentEmail },
+          error as Error
+        );
+        break;
+      }
       processed += 1;
       failed += 1;
       const failure = createFailureEntry(rowNumber, record, error);

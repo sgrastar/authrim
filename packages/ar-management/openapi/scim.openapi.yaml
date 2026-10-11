@@ -145,6 +145,17 @@ paths:
         Location when directory publication continues asynchronously. userName is unique within the
         tenant using case-insensitive comparison; externalId is not unique. Capacity provisioning
         and runtime binding propagation return retryable 503 responses.
+
+
+        The identity assurance of the new account is what the request's assurance extension
+        (`urn:authrim:params:scim:schemas:extension:assurance:1.0:User`) asserts, recorded as SCIM
+        evidence of the authenticating token. Without the extension, the tenant's default IAL
+        (`assurance.default_ial`) is recorded as tenant-policy evidence when it is IAL2 or IAL3;
+        when it cannot be read the account is not created (retryable 503).
+
+        The extension's `ial` may not be above the tenant's ceiling for SCIM
+        (`assurance.scim_max_ial`, IAL1 until raised): a higher level is refused with 400
+        invalidValue and the user is not created. The ceiling does not apply to the default IAL.
       security:
         - scimBearer: []
   /scim/v2/Operations/{id}:
@@ -169,9 +180,13 @@ paths:
       tags:
         - SCIM Users
       summary: Get a SCIM user.
-      description: Deactivated users remain readable. Deleted users return 404.
+      description: >-
+        Deactivated users remain readable. Deleted users return 404. The assurance extension is
+        returned only when named in `attributes`: it is the claim the authenticating token holds
+        for the user.
       parameters:
         - $ref: '#/components/parameters/Id'
+        - $ref: '#/components/parameters/Attributes'
       responses:
         '200':
           $ref: '#/components/responses/ScimJson'
@@ -203,6 +218,23 @@ paths:
         Changes to userName or the mapped primary email use the durable identifier replacement
         workflow. Identifier reservation conflicts return 409; retryable directory convergence
         failures return 503.
+
+
+        The assurance extension replaces the claim of the authenticating token for the user (its `ial`
+        within the tenant's ceiling for SCIM, `assurance.scim_max_ial`: above it the request is
+        refused with 400 invalidValue before anything is written, and 503 when the ceiling cannot be
+        read); a
+        replacement without it withdraws that token's claim (evidence of other sources, such as
+        another token, an administrator or the tenant default, is untouched). An extension that is
+        not valid, or names a date or time that does not exist, is refused with 400 invalidValue.
+        Evidence changes only after the user was written: a request refused or failed before that
+        (409, 412) changes none, and if the evidence step fails afterwards the response is 500 and
+        the same request is sent again. Evidence is identified by its content (token, `ial`,
+        `verifiedAt`, `expiresAt`), also when it is made at creation: identical content never
+        re-activates a revoked claim, whoever revoked it (an administrator, or this client by
+        sending the user without the extension); a new verification (another `verifiedAt`, `ial` or
+        `expiresAt`) is new evidence. The user's version (ETag) moves with any change of its
+        evidence.
       security:
         - scimBearer: []
     patch:
@@ -229,6 +261,14 @@ paths:
         Changes to userName or the mapped primary email use the durable identifier replacement
         workflow. Identifier reservation conflicts return 409; retryable directory convergence
         failures return 503.
+
+
+        Paths into an extension name its schema URN, then the attribute, for example
+        `urn:authrim:params:scim:schemas:extension:assurance:1.0:User:ial`. A patch of the assurance
+        extension applies to the claim the authenticating token holds; one that leaves it alone
+        keeps it, and removing the extension (or leaving it without a required attribute) withdraws
+        it or is refused (400 invalidValue). A patch that does not change the extension writes no
+        evidence.
       security:
         - scimBearer: []
     delete:
@@ -396,6 +436,16 @@ components:
         Stable replay-protection key for one user creation request. Omit to use Authrim's
         deterministic SCIM request key; send a new explicit value to intentionally recreate an
         otherwise identical resource after deletion.
+    Attributes:
+      name: attributes
+      in: query
+      required: false
+      schema:
+        type: string
+      description: >-
+        Comma-separated attribute names to return. The assurance extension
+        (`urn:authrim:params:scim:schemas:extension:assurance:1.0:User`, or one of its attributes)
+        is returned only when named here.
     Filter:
       name: filter
       in: query
@@ -715,8 +765,40 @@ components:
           readOnly: true
           items:
             $ref: '#/components/schemas/ScimGroupMember'
+        urn:authrim:params:scim:schemas:extension:assurance:1.0:User:
+          $ref: '#/components/schemas/ScimAssuranceExtension'
         meta:
           $ref: '#/components/schemas/ScimMeta'
+    ScimAssuranceExtension:
+      type: object
+      additionalProperties: false
+      required:
+        - ial
+        - verifiedAt
+      description: >-
+        The identity assurance level the provisioning client asserts for the user (NIST SP 800-63A).
+        Each token replaces its own claim. An absent or null extension is no claim.
+      properties:
+        ial:
+          type: string
+          enum:
+            - IAL1
+            - IAL2
+            - IAL3
+          description: >-
+            Not above the highest level the tenant accepts from SCIM (`assurance.scim_max_ial`,
+            IAL1 until the tenant raises it); a higher level is refused with 400 invalidValue and
+            nothing is written.
+        verifiedAt:
+          type: string
+          format: date-time
+          description: When the identity was proofed. Required, with a time zone; not in the future.
+        expiresAt:
+          type: string
+          format: date-time
+          description: >-
+            When the claim lapses, after verifiedAt. A time already past is accepted (the claim then
+            counts for nothing), so a user whose claim lapsed can still be updated.
     ScimGroup:
       type: object
       additionalProperties: true

@@ -246,6 +246,7 @@ export const APP_DEFAULTS: SettingsPageDef = {
 			advanced: 'set.section.scim.advanced',
 			settings: [
 				{ key: 'federation.scim_token_default_expiry', depth: 'primary' },
+				{ key: 'assurance.scim_max_ial', depth: 'primary' },
 				{ key: 'federation.scim_token_max_expiry', depth: 'advanced' }
 			]
 		}

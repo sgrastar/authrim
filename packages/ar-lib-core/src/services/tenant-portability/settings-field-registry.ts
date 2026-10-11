@@ -486,6 +486,14 @@ const REVIEWED_FIELDS: readonly [string, TenantSettingValueType, TenantSettingHa
     ],
     [
       'assurance',
+      'number',
+      'value',
+      `
+    assurance.scim_max_ial
+  `,
+    ],
+    [
+      'assurance',
       'string',
       'structured',
       `

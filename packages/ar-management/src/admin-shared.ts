@@ -27,6 +27,12 @@ export interface ImageTypeInfo {
   extension: string;
 }
 
+/**
+ * The CSV user import columns that carry identity assurance. They are evidence, never custom
+ * attributes, so no custom attribute may be created or renamed to one of these names.
+ */
+export const ASSURANCE_IMPORT_COLUMNS: readonly string[] = ['ial', 'ial_verified_at'];
+
 export const ADMIN_USER_CREATE_RESERVED_FIELDS = new Set([
   'email',
   'name',

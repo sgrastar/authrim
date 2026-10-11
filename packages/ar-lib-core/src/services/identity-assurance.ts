@@ -74,6 +74,87 @@ function time(value: number | string | null | undefined): number | null {
   return Number.isFinite(ms) ? ms : null;
 }
 
+/** What an account is given when it is created: a level proofed at `verifiedAt` by a source. */
+export interface InitialAssuranceEvidence {
+  level: IAL;
+  evidenceType: string;
+  issuerRef: string;
+  verifiedAt: number;
+  expiresAt?: number | null;
+  /**
+   * Names the evidence by its content (see {@link assuranceEvidenceId}) instead of by its source:
+   * the tenant and the subject, then these parts. A claim a client asserts (SCIM, CSV) is named
+   * the same whether it is made when the account is created or later, so identical content
+   * never becomes a second piece of evidence, and never re-activates a revoked one.
+   */
+  contentId?: { kind: string; parts: ReadonlyArray<string | number | null> };
+}
+
+/**
+ * The id of the evidence an account is created with. It is fixed by the tenant, the subject and the
+ * source, so a retried creation records it once. (Evidence ids are the table's key alone, hence the
+ * tenant is part of the hash.)
+ */
+export async function initialAssuranceEvidenceId(
+  tenantId: string,
+  subjectId: string,
+  source: { evidenceType: string; issuerRef: string }
+): Promise<string> {
+  const digest = await crypto.subtle.digest(
+    'SHA-256',
+    new TextEncoder().encode(
+      [tenantId, subjectId, source.evidenceType, source.issuerRef].join('\u0000')
+    )
+  );
+  const hex = Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join(
+    ''
+  );
+  return `assurance-evidence:initial:${hex}`;
+}
+
+/**
+ * The id of evidence named by what it is: a kind (`scim`, `import`) and the parts that make it
+ * that evidence (the tenant, the subject, who asserted it, the claim). The same parts give the
+ * same id, so recording it again is recognised, including after it was revoked: identical
+ * content never becomes a second piece of evidence. (Evidence ids are the table's key alone, so
+ * the tenant belongs among the parts.)
+ */
+export async function assuranceEvidenceId(
+  kind: string,
+  parts: ReadonlyArray<string | number | null>
+): Promise<string> {
+  const digest = await crypto.subtle.digest(
+    'SHA-256',
+    new TextEncoder().encode(JSON.stringify([kind, ...parts]))
+  );
+  const hex = Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join(
+    ''
+  );
+  return `assurance-evidence:${kind}:${hex}`;
+}
+
+/**
+ * The evidence an account is created with could not be recorded after the account was written.
+ * The creation is unfinished (it is resumed by running the same creation again, which records
+ * the evidence once), so the caller must not treat it as an ordinary failure.
+ */
+export class InitialAssuranceRecordError extends Error {
+  constructor(cause?: unknown) {
+    super('initial_assurance_record_failed');
+    this.name = 'InitialAssuranceRecordError';
+    if (cause !== undefined) this.cause = cause;
+  }
+}
+
+/**
+ * The assignment every write of `identity_subjects.updated_at` uses (with its value twice among
+ * the parameters): the column only moves forward, and strictly so, even when the writer read its
+ * clock before another writer (such as a change of evidence) moved it. The SCIM resource version
+ * is made of it, so a delayed write cannot make an old ETag valid again.
+ */
+export const SUBJECT_UPDATED_AT_FORWARD_SQL =
+  'updated_at = CASE WHEN updated_at >= ? THEN updated_at + 1 ELSE ? END';
+
 /** A person's IAL, with the evidence it rests on (none for IAL1 without evidence). */
 export interface EffectiveIAL {
   level: IAL;

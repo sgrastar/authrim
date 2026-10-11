@@ -6,6 +6,7 @@ import {
   findCanonicalAccountAuthenticationState,
   initializeAccountAuthenticationFromAccount,
   readAccountAuthenticationState,
+  SUBJECT_UPDATED_AT_FORWARD_SQL,
   transitionAccountAuthenticationState,
   type AccountAuthenticationLifecycle,
   type DatabaseAdapter,
@@ -133,7 +134,7 @@ export async function updateCanonicalAccountStatus(
     ...(account.primary_subject_id
       ? [
           {
-            sql: `UPDATE identity_subjects SET lifecycle_state = ?, updated_at = ?
+            sql: `UPDATE identity_subjects SET lifecycle_state = ?, ${SUBJECT_UPDATED_AT_FORWARD_SQL}
                    WHERE id = ? AND tenant_id = ?
                      AND ${notDeleted}
                      AND EXISTS (
@@ -145,6 +146,7 @@ export async function updateCanonicalAccountStatus(
                      )`,
             params: [
               lifecycleState,
+              versionMs,
               versionMs,
               account.primary_subject_id,
               tenantId,
