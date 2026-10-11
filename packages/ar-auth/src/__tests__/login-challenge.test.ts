@@ -118,6 +118,30 @@ describe('login challenge metadata contract', () => {
     });
   });
 
+  it('tells nothing of the signed-in person in the challenge of a re-authentication', async () => {
+    challengeStore.getChallengeRpc.mockResolvedValue({
+      id: 'challenge_123',
+      type: 'reauth',
+      userId: 'user_secret_id',
+      metadata: {
+        client_id: 'rp_web',
+        redirect_uri: 'https://app.example.com/callback',
+        sessionUserId: 'user_secret_id',
+        email: 'person@example.com',
+        login_hint: undefined,
+      },
+    });
+    const { loginChallengeGetHandler } = await import('../login-challenge');
+
+    const response = await loginChallengeGetHandler(createContext() as never);
+    const text = await response.text();
+
+    expect(response.status).toBe(200);
+    expect(JSON.parse(text)).not.toHaveProperty('user');
+    expect(text).not.toContain('user_secret_id');
+    expect(text).not.toContain('person@example.com');
+  });
+
   it('maps token sessions to DPoP handoff when explicit metadata is absent', async () => {
     challengeStore.getChallengeRpc.mockResolvedValue({
       id: 'challenge_123',

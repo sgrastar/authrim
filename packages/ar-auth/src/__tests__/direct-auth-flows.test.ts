@@ -2388,6 +2388,46 @@ describe('Direct Auth primary passkey and email-code flows', () => {
     });
   });
 
+  it.each([
+    ['the challenge of a SAML request', 'user_existing', 1],
+    ['the challenge of a SAML request of someone else', 'user_other', 0],
+  ])('starts the email code of %s only for the user it names', async (_name, userId, sent) => {
+    mocks.userPII.findByTenantAndEmail.mockResolvedValue({
+      id: 'user_existing',
+      email: 'same@example.com',
+      name: 'Existing User',
+    });
+    mocks.challengeStore.getChallengeRpc.mockResolvedValue({
+      id: 'reauth_challenge',
+      tenantId: 'tenant_test',
+      type: 'reauth',
+      userId,
+      challenge: 'reauth_challenge',
+      metadata: {
+        protocol: 'saml',
+        saml_request_id: '_request-1',
+        saml_sp_entity_id: 'https://sp.example.test/entity',
+        tenant_id: 'tenant_test',
+        sessionUserId: userId,
+        reauth_issued_at: 1_000,
+      },
+    });
+    const { directEmailCodeSendHandler } = await import('../direct-auth');
+
+    const response = await directEmailCodeSendHandler(
+      enableEmailOtp(
+        createContext(
+          emailSendBody({ authorization_challenge_id: 'reauth_challenge' }),
+          webHeaders()
+        )
+      ) as never
+    );
+
+    // Answered the same either way; a code is stored (and sent) only for the user named.
+    expect(response.status).toBe(200);
+    expect(storedEmailCodes()).toHaveLength(sent);
+  });
+
   it('answers but sends nothing for a re-authentication challenge naming someone else', async () => {
     mocks.userPII.findByTenantAndEmail.mockResolvedValue({
       id: 'user_existing',

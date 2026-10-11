@@ -31,6 +31,22 @@ describe('Worker placement generation', () => {
       expect.objectContaining({ binding: 'ACCOUNT_PROVISIONER' })
     );
   });
+  it('binds the Admin database to UserInfo for the identity mapping and Destination Profile', () => {
+    const config = createDefaultConfig('test');
+    config.components.adminUi = false;
+    const generated = generateWranglerConfig('ar-userinfo', config, {
+      d1: {
+        DB_ADMIN: { id: 'admin-db-id', name: 'test-authrim-admin-db' },
+        LOOKUP_DB: { id: 'lookup-db-id', name: 'test-authrim-lookup-db' },
+      },
+      kv: {},
+    });
+    expect(generated.d1_databases).toContainEqual({
+      binding: 'DB_ADMIN',
+      database_name: 'test-authrim-admin-db',
+      database_id: 'admin-db-id',
+    });
+  });
   it('protects generated deployment config with the setup-managed build guard', () => {
     const config = createDefaultConfig('test');
     config.components.adminUi = false;
