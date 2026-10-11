@@ -712,3 +712,144 @@ describe('IdP-initiated SSO and identity assurance', () => {
     });
   });
 });
+
+describe('IdP-initiated SSO and the SP minimum AAL', () => {
+  const AAL2_REF = 'https://example.org/profile/AAL2';
+  const sessionWith = (data: Record<string, unknown>) => {
+    mocks.cookieSessionId = 'session-id';
+    mocks.sessionResponse = new Response(JSON.stringify({ userId: 'user-a', data }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+  const auditedFailureKind = () =>
+    (JSON.parse(mocks.audit.mock.calls[0]?.[1].metadata ?? '{}') as { failure_kind?: string })
+      .failure_kind;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.sp = baseSp({ minimumAal: 'AAL2', identityMapping: { catalog: { entries: [] } } });
+    mocks.spList = [];
+    mocks.sharded = true;
+    mocks.sessionThrows = false;
+    mocks.user = { id: 'user-a', email: 'user@example.test' };
+    mocks.uiConfig = { baseUrl: 'https://ui.example.test' };
+    mocks.loginPolicy = 'ui_base_url';
+    mocks.nakedDomain = false;
+    mocks.runtimeBinding = null;
+    mocks.assuranceSettings = {};
+  });
+
+  it('shows the error page and builds no assertion for a session below it', async () => {
+    sessionWith({ amr: ['pwd'], proven_at: 1 });
+    const response = await handleIdPInitiated(
+      context('https://sp.example.test', consentTransactionId, 'relay')
+    );
+    expect(response.status).toBe(403);
+    const body = await response.text();
+    expect(body).not.toContain('SAMLResponse');
+    expect(body).not.toMatch(/AAL|assurance/i);
+    expect(mocks.buildResponse).not.toHaveBeenCalled();
+    expect(mocks.resolveNameId).not.toHaveBeenCalled();
+    expect(mocks.audit).toHaveBeenCalledOnce();
+    expect(auditedFailureKind()).toBe('authn_assurance_insufficient');
+  });
+
+  it('answers a session that reaches it', async () => {
+    sessionWith({ amr: ['pwd', 'totp'], proven_at: 1 });
+    const response = await handleIdPInitiated(
+      context('https://sp.example.test', consentTransactionId)
+    );
+    expect(response.status).toBe(200);
+    expect(await response.text()).toContain('SAMLResponse');
+    expect(mocks.buildResponse).toHaveBeenCalledOnce();
+  });
+
+  it('applies while assurance levels are off, as the SP setting does everywhere', async () => {
+    mocks.assuranceSettings = { 'assurance.enabled': false };
+    sessionWith({ amr: ['pwd'], proven_at: 1 });
+    const response = await handleIdPInitiated(
+      context('https://sp.example.test', consentTransactionId)
+    );
+    expect(response.status).toBe(403);
+  });
+
+  it('does not judge a session before the consent flow, which asks the person to sign in anyway', async () => {
+    sessionWith({ amr: ['pwd'], proven_at: 1 });
+    const response = await handleIdPInitiated(context('https://sp.example.test'));
+    expect(response.status).toBe(302);
+    expect(response.headers.get('location')).toContain('https://ui.example.test/login');
+  });
+
+  it('does not take an unreadable minimum for none', async () => {
+    mocks.sp = baseSp({ minimumAal: 'bogus', identityMapping: { catalog: { entries: [] } } });
+    sessionWith({ amr: ['pwd', 'totp'], proven_at: 1 });
+    const response = await handleIdPInitiated(
+      context('https://sp.example.test', consentTransactionId)
+    );
+    expect(response.status).toBe(403);
+    expect(mocks.buildResponse).not.toHaveBeenCalled();
+  });
+
+  it('refuses with a server error, not as a session below the minimum, when the settings cannot be read', async () => {
+    const lib = await import('@authrim/ar-lib-core');
+    vi.mocked(lib.resolveEffectiveSettings).mockRejectedValueOnce(new Error('settings down'));
+    sessionWith({ amr: ['pwd', 'totp'], proven_at: 1 });
+    const response = await handleIdPInitiated(
+      context('https://sp.example.test', consentTransactionId)
+    );
+    expect(response.status).toBe(500);
+    expect(mocks.buildResponse).not.toHaveBeenCalled();
+    expect(auditedFailureKind()).toBe('authn_assurance_unavailable');
+  });
+
+  it('reads nothing and changes nothing for an SP without a minimum', async () => {
+    const lib = await import('@authrim/ar-lib-core');
+    vi.mocked(lib.resolveEffectiveSettings).mockClear();
+    mocks.sp = baseSp({ identityMapping: { catalog: { entries: [] } } });
+    sessionWith({ amr: ['pwd'], proven_at: 1 });
+    const response = await handleIdPInitiated(
+      context('https://sp.example.test', consentTransactionId)
+    );
+    expect(response.status).toBe(200);
+    expect(lib.resolveEffectiveSettings).not.toHaveBeenCalled();
+    expect(mocks.audit).not.toHaveBeenCalled();
+  });
+
+  it('puts the class reference of the AAL reached in the assertion for an SP in assurance mode', async () => {
+    mocks.sp = baseSp({
+      authnContextClassRefMode: 'assurance',
+      identityMapping: { catalog: { entries: [] } },
+    });
+    mocks.assuranceSettings = {
+      'assurance.enabled': true,
+      'assurance.saml_authn_context_aal': JSON.stringify({ [AAL2_REF]: 'AAL2' }),
+    };
+    sessionWith({ amr: ['pwd', 'totp'], proven_at: 1 });
+    await handleIdPInitiated(context('https://sp.example.test', consentTransactionId));
+    expect(
+      (mocks.buildResponse.mock.calls.at(-1) as unknown as [{ authnContextClassRef: string }])[0]
+        .authnContextClassRef
+    ).toBe(AAL2_REF);
+  });
+  it('does not issue the static reference of a higher AAL than the sign-in reached', async () => {
+    const AAL3_REF = 'https://example.org/profile/AAL3';
+    mocks.sp = baseSp({
+      minimumAal: 'AAL1',
+      authnContextClassRefMode: 'legacy_static',
+      defaultAuthnContextClassRef: AAL3_REF,
+      identityMapping: { catalog: { entries: [] } },
+    });
+    mocks.assuranceSettings = {
+      'assurance.enabled': true,
+      'assurance.saml_authn_context_aal': JSON.stringify({ [AAL3_REF]: 'AAL3' }),
+    };
+    sessionWith({ amr: ['pwd'], proven_at: 1 });
+    const response = await handleIdPInitiated(
+      context('https://sp.example.test', consentTransactionId)
+    );
+    expect(response.status).toBe(403);
+    expect(mocks.buildResponse).not.toHaveBeenCalled();
+    expect(auditedFailureKind()).toBe('authn_assurance_insufficient');
+  });
+});

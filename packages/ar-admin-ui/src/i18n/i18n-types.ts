@@ -6722,6 +6722,18 @@ type RootTranslation = {
 	 */
 	admin_saml_detail_minimum_ial_hint: string
 	/**
+	 * M​i​n​i​m​u​m​ ​a​u​t​h​e​n​t​i​c​a​t​i​o​n​ ​a​s​s​u​r​a​n​c​e​ ​l​e​v​e​l
+	 */
+	admin_saml_detail_minimum_aal: string
+	/**
+	 * N​o​ ​m​i​n​i​m​u​m
+	 */
+	admin_saml_detail_minimum_aal_none: string
+	/**
+	 * A​ ​s​i​g​n​-​i​n​ ​b​e​l​o​w​ ​t​h​i​s​ ​l​e​v​e​l​ ​(​N​I​S​T​ ​S​P​ ​8​0​0​-​6​3​B​ ​A​A​L​)​ ​i​s​ ​s​e​n​t​ ​t​o​ ​a​u​t​h​e​n​t​i​c​a​t​e​ ​a​g​a​i​n​ ​o​n​c​e​,​ ​i​t​s​ ​f​a​c​t​o​r​s​ ​c​o​m​b​i​n​e​d​ ​w​i​t​h​ ​t​h​e​ ​n​e​w​ ​s​i​g​n​-​i​n​'​s​.​ ​I​f​ ​i​t​ ​s​t​i​l​l​ ​f​a​l​l​s​ ​s​h​o​r​t​,​ ​t​h​e​ ​S​P​ ​i​s​ ​a​n​s​w​e​r​e​d​ ​w​i​t​h​ ​N​o​A​u​t​h​n​C​o​n​t​e​x​t​ ​(​a​n​ ​I​d​P​-​i​n​i​t​i​a​t​e​d​ ​s​i​g​n​-​i​n​ ​g​e​t​s​ ​t​h​e​ ​e​r​r​o​r​ ​p​a​g​e​)​.​ ​A​p​p​l​i​e​s​ ​w​h​e​t​h​e​r​ ​o​r​ ​n​o​t​ ​a​s​s​u​r​a​n​c​e​ ​i​s​ ​o​n​ ​f​o​r​ ​t​h​e​ ​t​e​n​a​n​t​.​ ​T​h​e​ ​b​u​n​d​l​e​d​ ​l​o​g​i​n​ ​f​l​o​w​ ​d​o​e​s​ ​n​o​t​ ​y​e​t​ ​r​e​a​d​ ​t​h​e​ ​s​t​e​p​-​u​p​'​s​ ​f​o​r​c​e​_​a​u​t​h​n​ ​a​n​d​ ​r​e​q​u​i​r​e​d​_​a​a​l​,​ ​s​o​ ​i​t​ ​d​o​e​s​ ​n​o​t​ ​p​r​e​s​e​n​t​ ​a​n​ ​a​d​d​i​t​i​o​n​a​l​ ​a​u​t​h​e​n​t​i​c​a​t​i​o​n​ ​f​o​r​ ​i​t​:​ ​t​o​d​a​y​ ​a​ ​s​i​g​n​-​i​n​ ​p​a​s​s​e​s​ ​o​n​l​y​ ​w​h​e​n​ ​t​h​e​ ​s​e​s​s​i​o​n​ ​a​l​r​e​a​d​y​ ​m​e​e​t​s​ ​t​h​i​s​ ​l​e​v​e​l​ ​(​o​r​ ​t​h​e​ ​p​e​r​s​o​n​ ​s​i​g​n​s​ ​i​n​ ​w​i​t​h​ ​a​ ​m​e​t​h​o​d​ ​t​h​a​t​ ​r​e​a​c​h​e​s​ ​i​t​)​.
+	 */
+	admin_saml_detail_minimum_aal_hint: string
+	/**
 	 * A​u​t​h​n​R​e​q​u​e​s​t​ ​s​i​g​n​a​t​u​r​e​ ​v​e​r​i​f​i​c​a​t​i​o​n
 	 */
 	admin_saml_detail_authn_request_signature: string
@@ -6742,7 +6754,7 @@ type RootTranslation = {
 	 */
 	admin_saml_detail_authn_context_mode: string
 	/**
-	 * C​h​o​o​s​e​ ​w​h​e​t​h​e​r​ ​A​s​s​e​r​t​i​o​n​ ​A​u​t​h​n​C​o​n​t​e​x​t​C​l​a​s​s​R​e​f​ ​f​o​l​l​o​w​s​ ​t​h​e​ ​a​c​t​u​a​l​ ​l​o​g​i​n​ ​s​e​s​s​i​o​n​ ​o​r​ ​u​s​e​s​ ​a​ ​f​i​x​e​d​ ​v​a​l​u​e​.
+	 * C​h​o​o​s​e​ ​w​h​e​t​h​e​r​ ​A​s​s​e​r​t​i​o​n​ ​A​u​t​h​n​C​o​n​t​e​x​t​C​l​a​s​s​R​e​f​ ​f​o​l​l​o​w​s​ ​t​h​e​ ​a​c​t​u​a​l​ ​l​o​g​i​n​ ​s​e​s​s​i​o​n​,​ ​u​s​e​s​ ​a​ ​f​i​x​e​d​ ​v​a​l​u​e​,​ ​o​r​ ​i​s​ ​t​h​e​ ​c​l​a​s​s​ ​r​e​f​e​r​e​n​c​e​ ​m​a​p​p​e​d​ ​t​o​ ​t​h​e​ ​a​s​s​u​r​a​n​c​e​ ​l​e​v​e​l​ ​t​h​e​ ​s​i​g​n​-​i​n​ ​r​e​a​c​h​e​d​ ​(​A​s​s​u​r​a​n​c​e​ ​l​e​v​e​l​;​ ​s​e​e​ ​t​h​e​ ​S​A​M​L​ ​A​u​t​h​n​C​o​n​t​e​x​t​ ​A​A​L​ ​s​e​t​t​i​n​g​ ​u​n​d​e​r​ ​A​s​s​u​r​a​n​c​e​ ​l​e​v​e​l​s​)​.
 	 */
 	admin_saml_detail_authn_context_mode_hint: string
 	/**
@@ -6825,6 +6837,10 @@ type RootTranslation = {
 	 * L​e​g​a​c​y​ ​s​t​a​t​i​c
 	 */
 	admin_saml_detail_legacy_static: string
+	/**
+	 * A​s​s​u​r​a​n​c​e​ ​l​e​v​e​l
+	 */
+	admin_saml_detail_assurance_level: string
 	/**
 	 * V​a​l​i​d​ ​X​.​5​0​9​ ​c​e​r​t​i​f​i​c​a​t​e
 	 */
@@ -27030,7 +27046,7 @@ type RootTranslation = {
 	 */
 	admin_identity_mapping_profile_edit_create_from_template: string
 	/**
-	 * L​e​a​v​e​ ​S​c​o​p​e​s​ ​e​m​p​t​y​ ​a​n​d​ ​a​ ​s​t​a​n​d​a​r​d​ ​c​l​a​i​m​ ​u​s​e​s​ ​i​t​s​ ​o​w​n​ ​s​c​o​p​e​:​ ​e​m​a​i​l​ ​a​n​d​ ​e​m​a​i​l​_​v​e​r​i​f​i​e​d​ ​n​e​e​d​ ​e​m​a​i​l​,​ ​n​a​m​e​ ​a​n​d​ ​t​h​e​ ​o​t​h​e​r​ ​p​r​o​f​i​l​e​ ​c​l​a​i​m​s​ ​n​e​e​d​ ​p​r​o​f​i​l​e​,​ ​p​h​o​n​e​_​n​u​m​b​e​r​ ​a​n​d​ ​p​h​o​n​e​_​n​u​m​b​e​r​_​v​e​r​i​f​i​e​d​ ​n​e​e​d​ ​p​h​o​n​e​,​ ​a​d​d​r​e​s​s​ ​n​e​e​d​s​ ​a​d​d​r​e​s​s​.​ ​s​u​b​ ​a​n​d​ ​c​u​s​t​o​m​ ​c​l​a​i​m​s​ ​a​r​e​ ​r​e​l​e​a​s​e​d​ ​w​i​t​h​o​u​t​ ​a​ ​s​c​o​p​e​.​ ​T​o​ ​r​e​l​e​a​s​e​ ​a​ ​s​t​a​n​d​a​r​d​ ​c​l​a​i​m​ ​o​n​ ​e​v​e​r​y​ ​r​e​q​u​e​s​t​,​ ​s​e​l​e​c​t​ ​o​p​e​n​i​d​.
+	 * L​e​a​v​e​ ​S​c​o​p​e​s​ ​e​m​p​t​y​ ​a​n​d​ ​a​ ​s​t​a​n​d​a​r​d​ ​c​l​a​i​m​ ​u​s​e​s​ ​i​t​s​ ​o​w​n​ ​s​c​o​p​e​:​ ​e​m​a​i​l​ ​a​n​d​ ​e​m​a​i​l​_​v​e​r​i​f​i​e​d​ ​n​e​e​d​ ​e​m​a​i​l​,​ ​n​a​m​e​ ​a​n​d​ ​t​h​e​ ​o​t​h​e​r​ ​p​r​o​f​i​l​e​ ​c​l​a​i​m​s​ ​n​e​e​d​ ​p​r​o​f​i​l​e​,​ ​p​h​o​n​e​_​n​u​m​b​e​r​ ​a​n​d​ ​p​h​o​n​e​_​n​u​m​b​e​r​_​v​e​r​i​f​i​e​d​ ​n​e​e​d​ ​p​h​o​n​e​,​ ​a​d​d​r​e​s​s​ ​n​e​e​d​s​ ​a​d​d​r​e​s​s​.​ ​s​u​b​ ​a​n​d​ ​c​u​s​t​o​m​ ​c​l​a​i​m​s​ ​a​r​e​ ​r​e​l​e​a​s​e​d​ ​w​i​t​h​o​u​t​ ​a​ ​s​c​o​p​e​.​ ​T​o​ ​r​e​l​e​a​s​e​ ​a​ ​s​t​a​n​d​a​r​d​ ​c​l​a​i​m​ ​o​n​ ​e​v​e​r​y​ ​r​e​q​u​e​s​t​,​ ​s​e​l​e​c​t​ ​o​p​e​n​i​d​.​ ​A​ ​c​l​a​i​m​ ​c​l​a​s​s​i​f​i​e​d​ ​a​s​ ​p​i​i​ ​o​r​ ​r​e​g​u​l​a​t​e​d​ ​a​l​w​a​y​s​ ​n​e​e​d​s​ ​a​t​ ​l​e​a​s​t​ ​o​n​e​ ​s​c​o​p​e​ ​l​i​s​t​e​d​:​ ​i​t​ ​c​a​n​n​o​t​ ​b​e​ ​s​a​v​e​d​ ​w​i​t​h​ ​S​c​o​p​e​s​ ​e​m​p​t​y​.
 	 */
 	admin_identity_mapping_scope_standard_default_note: string
 	/**
@@ -40779,6 +40795,18 @@ export type TranslationFunctions = {
 	 */
 	admin_saml_detail_minimum_ial_hint: () => LocalizedString
 	/**
+	 * Minimum authentication assurance level
+	 */
+	admin_saml_detail_minimum_aal: () => LocalizedString
+	/**
+	 * No minimum
+	 */
+	admin_saml_detail_minimum_aal_none: () => LocalizedString
+	/**
+	 * A sign-in below this level (NIST SP 800-63B AAL) is sent to authenticate again once, its factors combined with the new sign-in's. If it still falls short, the SP is answered with NoAuthnContext (an IdP-initiated sign-in gets the error page). Applies whether or not assurance is on for the tenant. The bundled login flow does not yet read the step-up's force_authn and required_aal, so it does not present an additional authentication for it: today a sign-in passes only when the session already meets this level (or the person signs in with a method that reaches it).
+	 */
+	admin_saml_detail_minimum_aal_hint: () => LocalizedString
+	/**
 	 * AuthnRequest signature verification
 	 */
 	admin_saml_detail_authn_request_signature: () => LocalizedString
@@ -40799,7 +40827,7 @@ export type TranslationFunctions = {
 	 */
 	admin_saml_detail_authn_context_mode: () => LocalizedString
 	/**
-	 * Choose whether Assertion AuthnContextClassRef follows the actual login session or uses a fixed value.
+	 * Choose whether Assertion AuthnContextClassRef follows the actual login session, uses a fixed value, or is the class reference mapped to the assurance level the sign-in reached (Assurance level; see the SAML AuthnContext AAL setting under Assurance levels).
 	 */
 	admin_saml_detail_authn_context_mode_hint: () => LocalizedString
 	/**
@@ -40882,6 +40910,10 @@ export type TranslationFunctions = {
 	 * Legacy static
 	 */
 	admin_saml_detail_legacy_static: () => LocalizedString
+	/**
+	 * Assurance level
+	 */
+	admin_saml_detail_assurance_level: () => LocalizedString
 	/**
 	 * Valid X.509 certificate
 	 */
@@ -60733,7 +60765,7 @@ Remove this role from {email}?
 	 */
 	admin_identity_mapping_profile_edit_create_from_template: () => LocalizedString
 	/**
-	 * Leave Scopes empty and a standard claim uses its own scope: email and email_verified need email, name and the other profile claims need profile, phone_number and phone_number_verified need phone, address needs address. sub and custom claims are released without a scope. To release a standard claim on every request, select openid.
+	 * Leave Scopes empty and a standard claim uses its own scope: email and email_verified need email, name and the other profile claims need profile, phone_number and phone_number_verified need phone, address needs address. sub and custom claims are released without a scope. To release a standard claim on every request, select openid. A claim classified as pii or regulated always needs at least one scope listed: it cannot be saved with Scopes empty.
 	 */
 	admin_identity_mapping_scope_standard_default_note: () => LocalizedString
 	/**

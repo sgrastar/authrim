@@ -6,7 +6,7 @@
  */
 
 import type { AttributeReleaseConsentPolicy } from '../services/identity-release-consent';
-import type { IAL } from './settings/assurance-levels';
+import type { AAL, IAL } from './settings/assurance-levels';
 
 /**
  * SAML Binding types
@@ -399,7 +399,12 @@ export interface SAMLErrorResponseOverride {
 export type SAMLAuthnRequestSignaturePolicy = 'required' | 'optional' | 'disabled';
 export type SAMLAuthnRequestLegacyAlgorithmPolicy = 'disabled' | 'explicit_opt_in';
 export type SAMLJitEmailLinkingPolicy = 'email_linking' | 'jit_create_only' | 'disabled';
-export type SAMLAuthnContextClassRefMode = 'legacy_static' | 'session';
+/**
+ * How the AuthnContextClassRef of an assertion is chosen: the SP's static one (`legacy_static`),
+ * the session's own (`session`), or the one that stands for the AAL the sign-in proved, from
+ * `assurance.saml_authn_context_aal` (`assurance`).
+ */
+export type SAMLAuthnContextClassRefMode = 'legacy_static' | 'session' | 'assurance';
 export type SAMLAttributeReleaseFailureUserMessageMode = 'generic' | 'detailed';
 export type SAMLLogoutResponseBinding = 'auto' | 'post' | 'redirect';
 export type SAMLSPProfile = 'baseline' | 'strict' | 'academic_publisher' | 'legacy';
@@ -657,6 +662,14 @@ export interface SAMLSPConfig {
    * assurance (`assurance.enabled`) is on. Unset means no minimum.
    */
   minimumIal?: IAL;
+  /**
+   * The lowest authentication assurance level (AAL) a sign-in may have for this SP. A sign-in
+   * below it is sent to authenticate again (a step-up); if that falls short too, the SP is
+   * answered with Responder/NoAuthnContext. An IdP-initiated sign-in below it gets the error page.
+   * Applies whether or not tenant-wide assurance (`assurance.enabled`) is on. Unset means no
+   * minimum.
+   */
+  minimumAal?: AAL;
   /** SP metadata XML (cached) */
   metadataXml?: string;
   /** SP metadata source URL */
@@ -842,6 +855,27 @@ export interface SAMLRequestData {
 
 export interface SAMLRequestContext {
   /**
+   * The IdP sent the person to sign in again because the request has ForceAuthn: when (milliseconds).
+   * A session counts as that sign-in only when it was proven at or after this time, so the request
+   * is sent to sign in once, never in a loop.
+   */
+  reauthentication?: { issuedAt: number };
+  /**
+   * The IdP sent the person to authenticate again to reach the AAL the request needs (a step-up):
+   * when (milliseconds), the session they stepped up from (its factors are combined with the new
+   * sign-in's), and the AAL aimed for. Once it is there the person is not sent again: a sign-in
+   * that still falls short is answered with Responder/NoAuthnContext.
+   * `completed` records the session whose AAL was verified against this step-up, so a request that
+   * returns through the attribute release consent screen is not judged again on a session that
+   * already holds the combined evidence.
+   */
+  assuranceStepUp?: {
+    issuedAt: number;
+    priorSessionId?: string;
+    requiredAal: AAL;
+    completed?: { sessionId: string; aal: AAL };
+  };
+  /**
    * Authrim (as SP) asked the IdP for a new login (ForceAuthn) to answer a re-authentication:
    * the challenge, when it asked (milliseconds, Authrim's clock), and the keys of the IdP's
    * re-authentication setting.
@@ -985,10 +1019,13 @@ export interface SAMLProviderUpdateRequest {
   expectedUpdatedAt: string;
   /** Provider name for display */
   name?: string;
-  /** Configuration. `minimumIal: null` removes an SP's minimum. */
+  /** Configuration. `minimumIal: null` and `minimumAal: null` remove an SP's minimum. */
   config?:
     | Partial<SAMLIdPConfig>
-    | (Partial<Omit<SAMLSPConfig, 'minimumIal'>> & { minimumIal?: IAL | null });
+    | (Partial<Omit<SAMLSPConfig, 'minimumIal' | 'minimumAal'>> & {
+        minimumIal?: IAL | null;
+        minimumAal?: AAL | null;
+      });
   /** Enable/disable */
   enabled?: boolean;
 }

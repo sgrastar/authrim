@@ -49,7 +49,8 @@ import {
 import { buildSAMLAssertionTiming } from './assertion-timing';
 import { extractAuthrimSessionIdFromCookieHeader } from '../common/session-cookie';
 import { buildSAMLPostBindingResponse } from '../common/post-binding-form';
-import { resolveSAMLAuthnContextClassRef } from './authn-context';
+import { SAMLAuthnContextPolicyError } from './authn-context';
+import { chooseSAMLAuthnContextClassRef, type SAMLClassRefGuard } from './authn-context-assurance';
 import { getSAMLLocalEntityIds } from '../common/entity-id';
 import { assertSAMLRelayStateSize, SAMLRelayStateTooLargeError } from '../common/relay-state';
 import {
@@ -57,6 +58,7 @@ import {
   SAMLAttributeReleaseConsentRequiredError,
 } from './attribute-release-consent';
 import { checkSAMLIdentityAssurance, withSAMLAssuranceAttributes } from './identity-assurance';
+import { checkSAMLAuthnAssurance } from './authn-assurance';
 import { scheduleSAMLPolicyFailureAudit } from './audit';
 
 interface AuthenticatedSAMLSession {
@@ -64,6 +66,8 @@ interface AuthenticatedSAMLSession {
   sessionId: string;
   acr?: string;
   amr?: string[];
+  /** The session's data: what it records of the authentication (assurance evidence included). */
+  data?: Record<string, unknown>;
 }
 
 /**
@@ -123,6 +127,53 @@ export async function handleIdPInitiated(c: Context<{ Bindings: Env }>): Promise
       });
     }
 
+    // The SP's minimum authentication assurance level. An IdP-initiated sign-in has no AuthnRequest
+    // to store a step-up in, nor to answer with NoAuthnContext, so a session below the minimum gets
+    // the error page and no assertion is built. Judged here, where the assertion would be built,
+    // not before the consent flow, which sends the person to sign in again anyway.
+    const authnAssurance = await checkSAMLAuthnAssurance({
+      env,
+      tenantId,
+      authnRequest: {},
+      spConfig,
+      session: authenticatedSession,
+      onUnrecorded: () => undefined,
+    });
+    if (authnAssurance.outcome !== 'not_required' && authnAssurance.outcome !== 'met') {
+      const unavailable = authnAssurance.outcome === 'unavailable';
+      if (unavailable) {
+        log.error(
+          'Failed to read assurance settings',
+          { tenantId, spEntityId: spConfig.entityId },
+          authnAssurance.error instanceof Error
+            ? authnAssurance.error
+            : new Error(String(authnAssurance.error))
+        );
+      } else {
+        log.info('SAML sign-in refused: authentication assurance level not met', {
+          tenantId,
+          spEntityId: spConfig.entityId,
+        });
+      }
+      scheduleSAMLPolicyFailureAudit(c, {
+        tenantId,
+        spEntityId: spConfig.entityId,
+        authnRequestId: consentTransactionId,
+        failureKind: unavailable ? 'authn_assurance_unavailable' : 'authn_assurance_insufficient',
+        policyDetails: unavailable
+          ? {}
+          : {
+              required_aal: authnAssurance.requiredAal,
+              ...(authnAssurance.actual ? { actual_aal: authnAssurance.actual } : {}),
+            },
+      });
+      // The page says neither the level the sign-in reached nor the one the SP requires.
+      return createErrorResponse(
+        c,
+        unavailable ? AR_ERROR_CODES.INTERNAL_ERROR : AR_ERROR_CODES.POLICY_INSUFFICIENT_PERMISSIONS
+      );
+    }
+
     // Get user information
     const userInfo = await getUserInfo(env, tenantId, authenticatedSession.userId);
     if (!userInfo) {
@@ -142,9 +193,25 @@ export async function handleIdPInitiated(c: Context<{ Bindings: Env }>): Promise
         authenticatedSession,
         consentTransactionId,
         c,
-        log
+        log,
+        authnAssurance.outcome === 'met' ? authnAssurance : undefined
       );
     } catch (error) {
+      if (error instanceof SAMLAuthnContextPolicyError) {
+        // The AuthnContext to issue is above what the sign-in reached: no assertion.
+        log.info('SAML sign-in refused: authentication context above the level reached', {
+          tenantId,
+          spEntityId: spConfig.entityId,
+        });
+        scheduleSAMLPolicyFailureAudit(c, {
+          tenantId,
+          spEntityId: spConfig.entityId,
+          authnRequestId: consentTransactionId,
+          failureKind: 'authn_assurance_insufficient',
+          policyDetails: { reason: 'no_class_ref' },
+        });
+        return createErrorResponse(c, AR_ERROR_CODES.POLICY_INSUFFICIENT_PERMISSIONS);
+      }
       if (!(error instanceof SAMLAttributeReleaseConsentRequiredError)) throw error;
       if (consentRetry) {
         return c.json(createConfigurationError(), 500);
@@ -344,16 +411,21 @@ async function checkUserAuthentication(
 
     const session = (await response.json()) as {
       userId?: string;
-      data?: { acr?: unknown; amr?: unknown };
+      data?: Record<string, unknown>;
     };
+    const data =
+      session.data && typeof session.data === 'object' && !Array.isArray(session.data)
+        ? session.data
+        : undefined;
     return session.userId
       ? {
           userId: session.userId,
           sessionId,
-          acr: typeof session.data?.acr === 'string' ? session.data.acr : undefined,
-          amr: Array.isArray(session.data?.amr)
-            ? session.data.amr.filter((value): value is string => typeof value === 'string')
+          acr: typeof data?.acr === 'string' ? data.acr : undefined,
+          amr: Array.isArray(data?.amr)
+            ? data.amr.filter((value): value is string => typeof value === 'string')
             : undefined,
+          data,
         }
       : null;
   } catch {
@@ -385,7 +457,9 @@ async function generateIdPInitiatedResponse(
   authSession: AuthenticatedSAMLSession,
   consentTransactionId: string,
   requestScope: object,
-  log: { error(message: string, context?: Record<string, unknown>, error?: Error): void }
+  log: { error(message: string, context?: Record<string, unknown>, error?: Error): void },
+  /** The class reference chosen for the AAL reached, and what the one issued is checked against. */
+  assurance?: { classRef?: string; guard: SAMLClassRefGuard }
 ): Promise<string> {
   const { privateKeyPem, certificate } = await getSAMLIdPSigningMaterial(env, {
     tenantId,
@@ -517,7 +591,7 @@ async function generateIdPInitiatedResponse(
     }),
     notBefore: timing.notBefore,
     notOnOrAfter: timing.notOnOrAfter,
-    authnContextClassRef: resolveSAMLAuthnContextClassRef(
+    authnContextClassRef: chooseSAMLAuthnContextClassRef(
       {
         id: responseId,
         issueInstant: timing.issueInstant,
@@ -526,7 +600,8 @@ async function generateIdPInitiatedResponse(
       {
         spConfig,
         session: authSession,
-      }
+      },
+      assurance
     ),
     attributes,
   });
