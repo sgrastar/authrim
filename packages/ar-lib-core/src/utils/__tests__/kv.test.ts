@@ -291,6 +291,45 @@ describe('KV Utilities', () => {
       });
     });
 
+    describe('minimum_ial', () => {
+      const clientRow = (minimum_ial: unknown) => ({
+        client_id: 'assurance-client',
+        client_name: 'Assurance Client',
+        redirect_uris: JSON.stringify(['http://localhost:3000/callback']),
+        grant_types: JSON.stringify(['authorization_code']),
+        response_types: JSON.stringify(['code']),
+        scope: 'openid',
+        token_endpoint_auth_method: 'client_secret_basic',
+        tenant_id: 'default',
+        minimum_ial,
+        created_at: 1,
+        updated_at: 1,
+      });
+      const read = async (minimum_ial: unknown) => {
+        (env.DB.prepare as ReturnType<typeof vi.fn>).mockReturnValue({
+          bind: vi.fn().mockReturnThis(),
+          first: vi.fn().mockResolvedValue(clientRow(minimum_ial)),
+        });
+        return getClient(env, 'default', 'assurance-client', env.DB);
+      };
+
+      it('reads the client minimum IAL', async () => {
+        expect((await read('IAL2'))?.minimum_ial).toBe('IAL2');
+        expect((await read('IAL3'))?.minimum_ial).toBe('IAL3');
+      });
+
+      it('has no minimum when none is set', async () => {
+        expect((await read(null))?.minimum_ial).toBeUndefined();
+        expect((await read(undefined))?.minimum_ial).toBeUndefined();
+      });
+
+      it('reads a value that is not an IAL as the highest level, never as no minimum', async () => {
+        expect((await read('IAL9'))?.minimum_ial).toBe('IAL3');
+        expect((await read(2))?.minimum_ial).toBe('IAL3');
+        expect((await read(''))?.minimum_ial).toBe('IAL3');
+      });
+    });
+
     it('should ignore stale client metadata cache when client caching is disabled', async () => {
       const clientId = 'cached-client';
       const cachedData = {

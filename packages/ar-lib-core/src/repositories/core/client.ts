@@ -19,6 +19,7 @@
 
 import type { DatabaseAdapter } from '../../db/adapter';
 import type { AttributeReleaseConsentPolicy } from '../../services/identity-release-consent';
+import type { IAL } from '../../types/settings/assurance-levels';
 import {
   type PaginationOptions,
   type PaginationResult,
@@ -185,6 +186,10 @@ export interface OAuthClient {
   /** Whether PKCE is required for authorization requests */
   require_pkce: boolean;
 
+  // Identity assurance (NIST SP 800-63A)
+  /** The lowest IAL a person needs to be authorized by or issued tokens for this client (null: none) */
+  minimum_ial?: IAL | null;
+
   // OIDC Dynamic Client Registration
   initiate_login_uri: string | null;
   login_ui_url: string | null;
@@ -280,6 +285,8 @@ export interface CreateClientInput {
   requestable_scopes?: string[] | null;
   // PKCE (RFC 7636)
   require_pkce?: boolean;
+  // Identity assurance: set by the Admin API only, never by client registration
+  minimum_ial?: IAL | null;
   // OIDC Dynamic Client Registration
   initiate_login_uri?: string | null;
   login_ui_url?: string | null;
@@ -369,6 +376,8 @@ export interface UpdateClientInput {
   requestable_scopes?: string[] | null;
   // PKCE (RFC 7636)
   require_pkce?: boolean;
+  // Identity assurance: set by the Admin API only, never by client registration
+  minimum_ial?: IAL | null;
   // OIDC Dynamic Client Registration
   initiate_login_uri?: string | null;
   login_ui_url?: string | null;
@@ -547,6 +556,7 @@ export class ClientRepository {
         : null,
       // PKCE (RFC 7636)
       require_pkce: input.require_pkce ?? false,
+      minimum_ial: input.minimum_ial ?? null,
       // OIDC Dynamic Client Registration
       initiate_login_uri: input.initiate_login_uri ?? null,
       login_ui_url: input.login_ui_url ?? null,
@@ -584,10 +594,10 @@ export class ClientRepository {
         frontchannel_logout_uri, frontchannel_logout_session_required,
         allowed_redirect_origins,
         software_id, software_version, requestable_scopes,
-        require_pkce,
+        require_pkce, minimum_ial,
         initiate_login_uri, login_ui_url,
         created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         client.client_id,
         client.client_secret_hash,
@@ -669,6 +679,7 @@ export class ClientRepository {
         client.software_version,
         client.requestable_scopes,
         client.require_pkce ? 1 : 0,
+        client.minimum_ial ?? null,
         client.initiate_login_uri,
         client.login_ui_url,
         client.created_at,
@@ -1036,6 +1047,10 @@ export class ClientRepository {
     if (input.require_pkce !== undefined) {
       updates.push('require_pkce = ?');
       params.push(input.require_pkce ? 1 : 0);
+    }
+    if (input.minimum_ial !== undefined) {
+      updates.push('minimum_ial = ?');
+      params.push(input.minimum_ial ?? null);
     }
     // OIDC Dynamic Client Registration
     if (input.initiate_login_uri !== undefined) {

@@ -4787,6 +4787,458 @@ describe('Authorization Handler', () => {
     });
   });
 
+  describe('identity assurance (IAL enforcement)', () => {
+    const NOW = Date.now();
+    const authorizeUrl = (extra = '', scope = 'openid') =>
+      `/authorize?response_type=code&client_id=test-client&redirect_uri=https://example.com/callback&scope=${encodeURIComponent(scope)}&state=ial-state&code_challenge=${'a'.repeat(43)}&code_challenge_method=S256${extra}`;
+
+    const ev = (level: string, overrides: Record<string, unknown> = {}) => ({
+      id: `ev-${level}`,
+      assurance_framework: 'nist_800_63',
+      assurance_level: level,
+      verified_at: NOW - 1000,
+      expires_at: null,
+      revoked_at: null,
+      ...overrides,
+    });
+
+    /**
+     * An account database answering the evidence read with the given rows (or failing it), and the
+     * reads it saw.
+     */
+    function useEvidence(rows: Array<Record<string, unknown>> | 'fail') {
+      const accountDb = createMockDB();
+      const prepare = vi.mocked(accountDb.prepare);
+      const basePrepare = prepare.getMockImplementation()!;
+      const reads: string[] = [];
+      prepare.mockImplementation((sql: string) => {
+        const statement = basePrepare(sql);
+        if (sql.includes('assurance_evidence')) {
+          reads.push(sql);
+          if (rows === 'fail') {
+            vi.mocked(statement.all).mockRejectedValue(new Error('account database is down'));
+          } else {
+            vi.mocked(statement.all).mockResolvedValue({ results: rows } as never);
+          }
+        }
+        return statement;
+      });
+      mockResolveAccountDataContextFromHono.mockImplementation(async (c, userId) => {
+        const context = {
+          tenantId: 'default',
+          accountId: userId,
+          legacyUserId: userId,
+          coreDb: accountDb,
+          piiDb: accountDb,
+          coreBindingRef: 'DB_ACCOUNT',
+          piiBindingRef: 'DB_ACCOUNT',
+          coreResidencyPartition: 'default',
+          piiResidencyPartition: 'default',
+          accountRouteGeneration: 1,
+          userCacheScope: { tenantId: 'default', accountRouteGeneration: 1 },
+          piiCacheMode: 'disabled',
+        };
+        c.set('accountDataContext', context);
+        return context;
+      });
+      return reads;
+    }
+
+    function clientWithMinimum(minimum_ial: string | undefined) {
+      mockGetClient.mockResolvedValue({
+        client_id: 'test-client',
+        client_secret: 'test-secret',
+        redirect_uris: ['https://example.com/callback'],
+        grant_types: ['authorization_code'],
+        response_types: ['code'],
+        scope: 'openid profile email payroll',
+        token_endpoint_auth_method: 'client_secret_basic',
+        ...(minimum_ial ? { minimum_ial } : {}),
+      });
+    }
+
+    async function setAssurance(values: Record<string, unknown>) {
+      await (env.SETTINGS as unknown as MockKVNamespace).put(
+        'settings:tenant:default:assurance',
+        JSON.stringify(values)
+      );
+    }
+
+    function request(url: string) {
+      return app.request(
+        url,
+        {
+          method: 'GET',
+          headers: { Cookie: `authrim_session=${encodeURIComponent(TEST_SESSION_ID)}` },
+        },
+        env
+      );
+    }
+
+    const outcome = (response: Response) => new URL(response.headers.get('Location')!);
+
+    beforeEach(async () => {
+      env.UI_URL = 'https://login.example.com';
+      await configureClientSettings(env, { 'client.sso_enabled': true });
+      configureClientTrustPolicy(env);
+      seedSession(env);
+      clientWithMinimum(undefined);
+    });
+
+    afterEach(() => {
+      mockResolveAccountDataContextFromHono.mockImplementation(async (c, userId) => {
+        const context = {
+          tenantId: 'default',
+          accountId: userId,
+          legacyUserId: userId,
+          coreDb: c.env.DB,
+          piiDb: c.env.DB,
+          coreBindingRef: 'DB',
+          piiBindingRef: 'DB',
+          coreResidencyPartition: 'default',
+          piiResidencyPartition: 'default',
+          accountRouteGeneration: 1,
+          userCacheScope: { tenantId: 'default', accountRouteGeneration: 1 },
+          piiCacheMode: 'disabled',
+        };
+        c.set('accountDataContext', context);
+        return context;
+      });
+    });
+
+    it('changes nothing, and reads no evidence, when nothing is configured', async () => {
+      const reads = useEvidence([]);
+
+      const response = await request(authorizeUrl());
+
+      expect(outcome(response).searchParams.get('code')).toBeTruthy();
+      expect(reads).toEqual([]);
+    });
+
+    it('reads no evidence for a scope the map does not name', async () => {
+      const reads = useEvidence([]);
+      await setAssurance({
+        'assurance.enabled': true,
+        'assurance.scope_ial_requirements': '{"payroll":"IAL2"}',
+      });
+
+      const response = await request(authorizeUrl('', 'openid profile'));
+
+      expect(outcome(response).searchParams.get('code')).toBeTruthy();
+      expect(reads).toEqual([]);
+    });
+
+    it('ignores the scope map, and reads no evidence, while assurance is off', async () => {
+      const reads = useEvidence([]);
+      await setAssurance({
+        'assurance.enabled': false,
+        'assurance.scope_ial_requirements': '{"payroll":"IAL2"}',
+      });
+
+      const response = await request(authorizeUrl('', 'openid payroll'));
+
+      expect(outcome(response).searchParams.get('code')).toBeTruthy();
+      expect(reads).toEqual([]);
+    });
+
+    it('refuses a person below the client minimum, with assurance off', async () => {
+      clientWithMinimum('IAL2');
+      useEvidence([]);
+
+      const response = await request(authorizeUrl());
+
+      const location = outcome(response);
+      expect(location.origin + location.pathname).toBe('https://example.com/callback');
+      expect(location.searchParams.get('error')).toBe('access_denied');
+      expect(location.searchParams.get('state')).toBe('ial-state');
+      expect(location.searchParams.get('code')).toBeNull();
+      expect(getAuthCodeStore(env).storeCodeRpc).not.toHaveBeenCalled();
+    });
+
+    it('refuses with access_denied for prompt=none too, not login_required', async () => {
+      clientWithMinimum('IAL2');
+      useEvidence([ev('IAL1')]);
+
+      const response = await request(authorizeUrl('&prompt=none'));
+
+      expect(outcome(response).searchParams.get('error')).toBe('access_denied');
+      expect(getAuthCodeStore(env).storeCodeRpc).not.toHaveBeenCalled();
+    });
+
+    it('issues a code to a person at or above the client minimum, reading the evidence once', async () => {
+      clientWithMinimum('IAL2');
+      const reads = useEvidence([ev('IAL2')]);
+
+      const response = await request(authorizeUrl());
+
+      expect(outcome(response).searchParams.get('code')).toBeTruthy();
+      expect(reads).toHaveLength(1);
+    });
+
+    it('does not count evidence that is revoked, expired or not yet verified', async () => {
+      clientWithMinimum('IAL2');
+      useEvidence([
+        ev('IAL2', { id: 'a', revoked_at: NOW - 10 }),
+        ev('IAL2', { id: 'b', expires_at: NOW - 10 }),
+        ev('IAL2', { id: 'c', verified_at: NOW + 60_000 }),
+      ]);
+
+      const response = await request(authorizeUrl());
+
+      expect(outcome(response).searchParams.get('error')).toBe('access_denied');
+    });
+
+    it('applies the scope map for the requested scopes while assurance is on', async () => {
+      useEvidence([]);
+      await setAssurance({
+        'assurance.enabled': true,
+        'assurance.scope_ial_requirements': '{"payroll":"IAL2"}',
+      });
+
+      const response = await request(authorizeUrl('', 'openid payroll'));
+
+      expect(outcome(response).searchParams.get('error')).toBe('access_denied');
+      expect(getAuthCodeStore(env).storeCodeRpc).not.toHaveBeenCalled();
+    });
+
+    it('takes the higher of the scope map and the client minimum', async () => {
+      clientWithMinimum('IAL3');
+      useEvidence([ev('IAL2')]);
+      await setAssurance({
+        'assurance.enabled': true,
+        'assurance.scope_ial_requirements': '{"payroll":"IAL2"}',
+      });
+
+      const response = await request(authorizeUrl('', 'openid payroll'));
+
+      expect(outcome(response).searchParams.get('error')).toBe('access_denied');
+    });
+
+    it('answers temporarily_unavailable when the evidence cannot be read, never IAL1', async () => {
+      clientWithMinimum('IAL2');
+      useEvidence('fail');
+
+      const response = await request(authorizeUrl());
+
+      // At the authorization endpoint temporarily_unavailable is an OAuth error code returned to the
+      // client by redirect (like the account data failure in the same handler), not an HTTP 503.
+      expect(response.status).toBe(302);
+      const location = outcome(response);
+      expect(location.origin + location.pathname).toBe('https://example.com/callback');
+      expect(location.searchParams.get('error')).toBe('temporarily_unavailable');
+      expect(location.searchParams.get('state')).toBe('ial-state');
+      expect(location.searchParams.get('code')).toBeNull();
+      expect(getAuthCodeStore(env).storeCodeRpc).not.toHaveBeenCalled();
+    });
+
+    it('returns that error in the form_post shape too, with no code', async () => {
+      clientWithMinimum('IAL2');
+      useEvidence('fail');
+
+      const response = await request(authorizeUrl('&response_mode=form_post'));
+
+      expect(response.status).toBe(200);
+      const html = await response.text();
+      expect(html).toContain('temporarily_unavailable');
+      expect(html).not.toContain('name="code"');
+      expect(getAuthCodeStore(env).storeCodeRpc).not.toHaveBeenCalled();
+    });
+
+    it('refuses before a step-up or re-authentication that could not help', async () => {
+      clientWithMinimum('IAL2');
+      useEvidence([]);
+      await setAssurance({ 'assurance.enabled': true, 'assurance.default_aal': 'AAL2' });
+
+      const response = await request(authorizeUrl());
+
+      expect(outcome(response).searchParams.get('error')).toBe('access_denied');
+      expect(outcome(response).pathname).not.toBe('/reauth');
+    });
+
+    it.each([
+      ['prompt=login', '&prompt=login'],
+      ['an exceeded max_age', '&max_age=0'],
+    ])(
+      'sends the user to re-authenticate for %s first, judging IAL on the user who comes back',
+      async (_label, query) => {
+        clientWithMinimum('IAL2');
+        const reads = useEvidence([]);
+
+        const response = await request(authorizeUrl(query));
+
+        // The session's user may not be the one who re-authenticates, so the old session is not
+        // judged: the request goes to re-authenticate, with no evidence read and no code.
+        expect(outcome(response).pathname).toBe('/reauth');
+        expect(reads).toEqual([]);
+        expect(getAuthCodeStore(env).storeCodeRpc).not.toHaveBeenCalled();
+      }
+    );
+
+    describe.each([
+      ['prompt=login', '&prompt=login'],
+      ['an exceeded max_age', '&max_age=0'],
+    ])('after the re-authentication for %s returns', (_label, query) => {
+      async function returnFromReauth() {
+        getChallengeMap(env).set('ial_reauth_return', {
+          id: 'ial_reauth_return',
+          tenantId: 'default',
+          type: 'reauth',
+          userId: 'test-user',
+          challenge: 'ial_reauth_return',
+          metadata: {
+            purpose: 'authorize_confirmation',
+            authTime: 1_700_000_100,
+            sessionUserId: 'test-user',
+            browserBinding: 'ial-reauth-browser',
+          },
+        });
+        return app.request(
+          `/authorize?response_type=code&client_id=test-client&redirect_uri=https://example.com/callback&scope=openid&state=ial-reauth${query}&_confirmation_challenge=ial_reauth_return`,
+          {
+            method: 'GET',
+            headers: { Cookie: 'authrim_authorize_confirmation=ial-reauth-browser' },
+          },
+          env
+        );
+      }
+
+      it('refuses a user below the client minimum with access_denied', async () => {
+        clientWithMinimum('IAL2');
+        const reads = useEvidence([ev('IAL1')]);
+
+        const response = await returnFromReauth();
+
+        expect(outcome(response).searchParams.get('error')).toBe('access_denied');
+        expect(outcome(response).searchParams.get('state')).toBe('ial-reauth');
+        expect(reads).toHaveLength(1);
+        expect(getAuthCodeStore(env).storeCodeRpc).not.toHaveBeenCalled();
+      });
+
+      it('issues a code to a user at the client minimum', async () => {
+        clientWithMinimum('IAL2');
+        useEvidence([ev('IAL2')]);
+
+        const response = await returnFromReauth();
+
+        expect(outcome(response).searchParams.get('code')).toBeTruthy();
+        expect(outcome(response).searchParams.get('error')).toBeNull();
+      });
+    });
+
+    it('judges the user who comes back from a login or re-authentication', async () => {
+      clientWithMinimum('IAL2');
+      const reads = useEvidence([]);
+      getChallengeMap(env).set('ial_login_confirmation', {
+        id: 'ial_login_confirmation',
+        tenantId: 'default',
+        type: 'reauth',
+        userId: 'test-user',
+        challenge: 'ial_login_confirmation',
+        metadata: {
+          purpose: 'authorize_confirmation',
+          browserBinding: 'ial-login-browser',
+          authTime: 1_700_000_100,
+          sessionUserId: 'test-user',
+          authorization_request: {
+            source: 'frontchannel',
+            authorization_server: 'default',
+            integrity_protected: false,
+            issuer: 'https://test.example.com',
+            response_type: 'code',
+            client_id: 'test-client',
+            redirect_uri: 'https://example.com/callback',
+            scope: 'openid',
+            state: 'ial-login',
+            code_challenge: 'a'.repeat(43),
+            code_challenge_method: 'S256',
+          },
+        },
+      });
+
+      const response = await app.request(
+        '/authorize?_confirmation_challenge=ial_login_confirmation',
+        { method: 'GET', headers: { Cookie: 'authrim_authorize_confirmation=ial-login-browser' } },
+        env
+      );
+
+      expect(outcome(response).searchParams.get('error')).toBe('access_denied');
+      expect(outcome(response).searchParams.get('state')).toBe('ial-login');
+      expect(reads).toHaveLength(1);
+      expect(getAuthCodeStore(env).storeCodeRpc).not.toHaveBeenCalled();
+    });
+
+    it('applies the scope map to the scopes of a pushed authorization request', async () => {
+      useEvidence([]);
+      await setAssurance({
+        'assurance.enabled': true,
+        'assurance.scope_ial_requirements': '{"payroll":"IAL2"}',
+      });
+      const requestUri = 'urn:ietf:params:oauth:request_uri:par_ial_scope';
+      env.PAR_REQUEST_STORE = createMockPARRequestStore({
+        client_id: 'test-client',
+        response_type: 'code',
+        redirect_uri: 'https://example.com/callback',
+        scope: 'openid payroll',
+        state: 'par-ial',
+        code_challenge: 'a'.repeat(43),
+        code_challenge_method: 'S256',
+      }) as unknown as Env['PAR_REQUEST_STORE'];
+
+      const response = await request(
+        `/authorize?client_id=test-client&request_uri=${encodeURIComponent(requestUri)}`
+      );
+
+      expect(outcome(response).searchParams.get('error')).toBe('access_denied');
+      expect(getAuthCodeStore(env).storeCodeRpc).not.toHaveBeenCalled();
+    });
+
+    it('applies the scope map to the scopes of a signed request object', async () => {
+      useEvidence([]);
+      await setAssurance({
+        'assurance.enabled': true,
+        'assurance.scope_ial_requirements': '{"payroll":"IAL2"}',
+      });
+      const keyPair = await generateKeyPair('RS256', { extractable: true });
+      const publicJwk = {
+        ...(await exportJWK(keyPair.publicKey)),
+        kid: 'ial-jar-key',
+        alg: 'RS256',
+        use: 'sig',
+      };
+      mockGetClient.mockResolvedValue({
+        client_id: 'test-client',
+        client_secret_hash: 'confidential-client-secret-hash',
+        redirect_uris: ['https://example.com/callback'],
+        grant_types: ['authorization_code'],
+        response_types: ['code'],
+        scope: 'openid payroll',
+        token_endpoint_auth_method: 'private_key_jwt',
+        jwks: { keys: [publicJwk] },
+      });
+      const requestObject = await new SignJWT({
+        client_id: 'test-client',
+        response_type: 'code',
+        redirect_uri: 'https://example.com/callback',
+        // The query string asks for less than the signed object does.
+        scope: 'openid payroll',
+        state: 'jar-ial',
+      })
+        .setProtectedHeader({ alg: 'RS256', kid: publicJwk.kid })
+        .setIssuer('test-client')
+        .setAudience('https://test.example.com')
+        .setIssuedAt()
+        .setExpirationTime('5m')
+        .sign(keyPair.privateKey);
+
+      const response = await request(
+        `/authorize?client_id=test-client&scope=openid&request=${encodeURIComponent(requestObject)}`
+      );
+
+      expect(outcome(response).searchParams.get('error')).toBe('access_denied');
+      expect(getAuthCodeStore(env).storeCodeRpc).not.toHaveBeenCalled();
+    });
+  });
+
   describe('assurance (AAL enforcement)', () => {
     const STEP_UP_SESSION_ID = 'g1:apac:3:session_step-up';
     // When the step-up began (milliseconds), and the session its authentication made, after it.

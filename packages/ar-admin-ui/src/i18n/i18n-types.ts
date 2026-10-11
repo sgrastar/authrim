@@ -2528,6 +2528,18 @@ type RootTranslation = {
 	 */
 	admin_client_detail_browser_refresh_hint: string
 	/**
+	 * M​i​n​i​m​u​m​ ​i​d​e​n​t​i​t​y​ ​a​s​s​u​r​a​n​c​e​ ​l​e​v​e​l
+	 */
+	admin_client_detail_minimum_ial: string
+	/**
+	 * N​o​ ​m​i​n​i​m​u​m
+	 */
+	admin_client_detail_minimum_ial_none: string
+	/**
+	 * A​ ​p​e​r​s​o​n​ ​w​h​o​s​e​ ​i​d​e​n​t​i​t​y​ ​h​a​s​ ​n​o​t​ ​b​e​e​n​ ​p​r​o​o​f​e​d​ ​t​o​ ​t​h​i​s​ ​l​e​v​e​l​ ​(​N​I​S​T​ ​S​P​ ​8​0​0​-​6​3​A​ ​I​A​L​)​ ​i​s​ ​r​e​f​u​s​e​d​ ​b​y​ ​t​h​i​s​ ​c​l​i​e​n​t​,​ ​w​h​e​t​h​e​r​ ​o​r​ ​n​o​t​ ​a​s​s​u​r​a​n​c​e​ ​i​s​ ​o​n​ ​f​o​r​ ​t​h​e​ ​t​e​n​a​n​t​.
+	 */
+	admin_client_detail_minimum_ial_hint: string
+	/**
 	 * P​K​C​E​ ​R​e​q​u​i​r​e​d
 	 */
 	admin_client_detail_pkce_required: string
@@ -36594,6 +36606,18 @@ export type TranslationFunctions = {
 	 * Public browser clients only receive refresh tokens when this is DPoP-bound.
 	 */
 	admin_client_detail_browser_refresh_hint: () => LocalizedString
+	/**
+	 * Minimum identity assurance level
+	 */
+	admin_client_detail_minimum_ial: () => LocalizedString
+	/**
+	 * No minimum
+	 */
+	admin_client_detail_minimum_ial_none: () => LocalizedString
+	/**
+	 * A person whose identity has not been proofed to this level (NIST SP 800-63A IAL) is refused by this client, whether or not assurance is on for the tenant.
+	 */
+	admin_client_detail_minimum_ial_hint: () => LocalizedString
 	/**
 	 * PKCE Required
 	 */

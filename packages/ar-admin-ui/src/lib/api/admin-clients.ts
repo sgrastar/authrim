@@ -28,6 +28,9 @@ export interface ClientIdentityMappingFieldMappingSetSelector {
 	destinationProfileId?: string;
 }
 
+/** The identity assurance level (NIST SP 800-63A) a client requires of a person at least. */
+export type ClientMinimumIAL = 'IAL1' | 'IAL2' | 'IAL3';
+
 export interface Client {
 	client_id: string;
 	client_name: string;
@@ -60,6 +63,7 @@ export interface Client {
 	id_token_signed_response_alg?: string;
 	userinfo_signed_response_alg?: string;
 	require_pkce?: boolean;
+	minimum_ial?: ClientMinimumIAL | null;
 	token_exchange_allowed?: boolean;
 	allowed_subject_token_clients?: string[];
 	allowed_token_exchange_resources?: string[];
@@ -123,6 +127,7 @@ export interface CreateClientInput {
 	browser_refresh_token_policy?: 'disabled' | 'dpop_bound' | null;
 	scope?: string;
 	require_pkce?: boolean;
+	minimum_ial?: ClientMinimumIAL | null;
 	allow_claims_without_scope?: boolean;
 	claims_parameter_policy?: ClaimsParameterPolicy | null;
 	identity_mapping?: ClientIdentityMappingFieldMappingSetSelector | null;
@@ -158,6 +163,7 @@ export interface UpdateClientInput {
 	scope?: string;
 	login_ui_url?: string | null;
 	require_pkce?: boolean;
+	minimum_ial?: ClientMinimumIAL | null;
 	allow_claims_without_scope?: boolean;
 	claims_parameter_policy?: ClaimsParameterPolicy | null;
 	identity_mapping?: ClientIdentityMappingFieldMappingSetSelector | null;

@@ -477,6 +477,7 @@
 				(b.browser_refresh_token_policy ?? 'disabled') &&
 			(a.scope ?? '') === (b.scope ?? '') &&
 			Boolean(a.require_pkce) === Boolean(b.require_pkce) &&
+			(a.minimum_ial ?? '') === (b.minimum_ial ?? '') &&
 			Boolean(a.allow_claims_without_scope) === Boolean(b.allow_claims_without_scope) &&
 			(a.identity_mapping?.fieldMappingSetId ?? '') ===
 				(b.identity_mapping?.fieldMappingSetId ?? '') &&
@@ -922,6 +923,7 @@
 			browser_refresh_token_policy: client.browser_refresh_token_policy ?? 'disabled',
 			scope: client.scope,
 			require_pkce: client.require_pkce ?? false,
+			minimum_ial: client.minimum_ial ?? null,
 			allow_claims_without_scope: client.allow_claims_without_scope ?? false,
 			asc_enabled: client.asc_enabled ?? true,
 			asc_protected_request_required: client.asc_protected_request_required ?? true,
@@ -1657,6 +1659,33 @@
 							{/if}
 							<p class="form-hint">
 								{$LL.admin_client_detail_browser_refresh_hint()}
+							</p>
+						</div>
+
+						<!-- Minimum identity assurance level -->
+						<div class="form-group">
+							<!-- svelte-ignore a11y_label_has_associated_control -->
+							<label class="form-label">{$LL.admin_client_detail_minimum_ial()}</label>
+							{#if isEditing}
+								<select
+									class="form-select"
+									value={editForm.minimum_ial ?? ''}
+									onchange={(e) => {
+										const value = e.currentTarget.value as '' | 'IAL1' | 'IAL2' | 'IAL3';
+										editForm.minimum_ial = value || null;
+									}}
+								>
+									<option value="">{$LL.admin_client_detail_minimum_ial_none()}</option>
+									<option value="IAL2">IAL2</option>
+									<option value="IAL3">IAL3</option>
+								</select>
+							{:else}
+								<p class="display-text">
+									{client.minimum_ial || $LL.admin_client_detail_minimum_ial_none()}
+								</p>
+							{/if}
+							<p class="form-hint">
+								{$LL.admin_client_detail_minimum_ial_hint()}
 							</p>
 						</div>
 

@@ -148,6 +148,7 @@ import {
   getBrowserStateCookieSameSite,
 } from '@authrim/ar-lib-core';
 import { SignJWT, importJWK, importPKCS8, type CryptoKey } from 'jose';
+import { checkAuthorizeIdentityAssurance } from './identity-assurance-gate';
 // NIST SP 800-63-4 Assurance Levels
 import { type FAL } from '@authrim/ar-lib-core';
 import { getRequestIssuer } from './issuer';
@@ -3799,6 +3800,31 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
     ) {
       assuranceAcr = selectAcr(actualAal, required, acrValueList, outboundAcrMappings);
     }
+  }
+
+  // ============================================================
+  // Identity assurance (NIST SP 800-63A): the IAL this authorization requires
+  // ============================================================
+  // The client's minimum IAL applies whenever it is set; the scope-to-IAL map only while assurance
+  // is on. Authenticating again or stepping up cannot raise a person's IAL, so a person below it
+  // is refused here, before any step-up, re-authentication or consent, and for prompt=none too
+  // (access_denied, not login_required). A re-authentication being asked for (prompt=login, an
+  // exceeded max_age) is not judged here, as the AAL above is not: the request is judged when it
+  // comes back (with _confirmed), on the user who completed the re-authentication, so that the
+  // judgement does not depend on what this branch assumes about who that will be. A read that fails is
+  // answered with temporarily_unavailable as an OAuth error code, by redirect to the client (like
+  // the account data failure below), not as an HTTP 503 page that would break the client's flow.
+  if (sessionUserId && !(forceReauthentication && _confirmed !== 'true')) {
+    const ialRefusal = await checkAuthorizeIdentityAssurance(c, {
+      tenantId,
+      userId: sessionUserId,
+      scope,
+      clientMetadata,
+      assuranceSettings,
+      clientId: validClientId,
+      log,
+    });
+    if (ialRefusal) return sendError(ialRefusal.error, ialRefusal.description);
   }
 
   // prompt=login and an expired max_age both require proof of a new authentication ceremony.

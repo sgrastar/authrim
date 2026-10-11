@@ -87,6 +87,10 @@
             {
               "path": "018_oauth_client_consent_revocations.sql",
               "checksum": "d636cc6fc3913b19096c8fb2273ea7b48e9607fb1ad9e8e06d0f698a36028c87"
+            },
+            {
+              "path": "019_oauth_client_minimum_ial.sql",
+              "checksum": "c064b78adf6ecf563f244d6b6f579d83cddf10288996bc33c2fad75a5398856b"
             }
           ]
         },
@@ -572,6 +576,10 @@
         {
           "path": "018_oauth_client_consent_revocations.sql",
           "checksum": "d636cc6fc3913b19096c8fb2273ea7b48e9607fb1ad9e8e06d0f698a36028c87"
+        },
+        {
+          "path": "019_oauth_client_minimum_ial.sql",
+          "checksum": "c064b78adf6ecf563f244d6b6f579d83cddf10288996bc33c2fad75a5398856b"
         }
       ]
     },

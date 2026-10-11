@@ -55,6 +55,17 @@ paths:
         invalid_request; FAL2 and above with fal2_requires_dpop refuse response types that return
         an access token (token, code token, id_token token) with unsupported_response_type.
         Assurance settings that cannot be read stop the request with temporarily_unavailable.
+        A client's minimum_ial applies whether or not assurance is on, and the scope-to-IAL map
+        (assurance.scope_ial_requirements) for the requested scopes while it is on. A signed-in
+        user whose identity assurance level (read from their evidence each time) is below the
+        higher of the two is refused with access_denied, also for prompt=none, before any
+        step-up, re-authentication or consent, since none of those can raise an IAL. When
+        nothing is required no evidence is read; evidence that cannot be read stops the request
+        with temporarily_unavailable. Like access_denied, it is an OAuth error code returned to
+        the client's redirect_uri (query, fragment or form_post), not an HTTP 503. A request that
+        asks for prompt=login or an exceeded max_age is re-authenticated first, and the user who
+        returns is judged then. Access tokens already issued stay valid until they expire;
+        revoking evidence stops new authorizations, refreshes and exchanges.
         An id_token_hint must be an ID token this server issued (signature and issuer; it may
         have expired), else invalid_request; it never stands in for a session. When the signed-in
         End-User is not the one it names (its sub, or the sub the app's identity mapping issues),

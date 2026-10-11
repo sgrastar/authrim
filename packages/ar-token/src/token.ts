@@ -53,6 +53,9 @@ import {
   falRequiresSignedPushedRequest,
   recordRefreshTokenFamilyIndex,
   findOAuthClientConsentRevocation,
+  evaluateUserIAL,
+  resolveRequiredIAL,
+  type IAL,
   isOAuthClientConsentGrantWithdrawn,
   predatesOAuthClientConsentRevocation,
   type OAuthClientConsentRevocationState,
@@ -769,6 +772,84 @@ async function tokenAssurance(
     return { error: oauthError(c, 'invalid_request', 'A DPoP proof is required (FAL2)', 400) };
   }
   return { settings };
+}
+
+/**
+ * Identity assurance (IAL) for a grant that issues tokens for a person: the client's minimum IAL
+ * (whenever it is set) and, while tenant-wide assurance is on, the scope-to-IAL map for the scopes
+ * the tokens carry. A person below it is refused, and no step the client can take raises an IAL.
+ * With nothing required the person's evidence is not read. The IAL is read from the evidence each
+ * time (no cache), so evidence revoked since the grant was made ends it at the next request. A
+ * read that fails is never taken for IAL1: `onUnavailable` 'retry' answers 503 for a credential
+ * still unspent; 'restart' (the credential is spent, so a retry cannot succeed) tells the client
+ * to start again, as the consent withdrawal read does.
+ * Must run after the user's account data has been resolved (resolveTrustedSubjectAccountRoute).
+ */
+async function enforceTokenIdentityAssurance(
+  c: Context<{ Bindings: Env }>,
+  input: {
+    tenantId: string;
+    /** The user (null: a subject with no account in the tenant, which has no evidence: IAL1). */
+    userId: string | null;
+    /** The scope the tokens carry (the code's, the refresh token family's, the one granted). */
+    scope: string | undefined;
+    clientMetadata: { minimum_ial?: IAL } | null | undefined;
+    /** The `assurance` settings tokenAssurance returned for this request. */
+    assuranceSettings: Record<string, unknown>;
+    clientId: string;
+    /** How a person below the requirement is refused. */
+    refusal: { error: 'invalid_grant' | 'access_denied'; status: 400 | 403 };
+    onUnavailable: 'retry' | 'restart';
+  }
+): Promise<Response | null> {
+  const result = await evaluateUserIAL({
+    required: resolveRequiredIAL({
+      assuranceSettings: input.assuranceSettings,
+      scope: input.scope,
+      clientMinimumIAL: input.clientMetadata?.minimum_ial,
+    }),
+    tenantId: input.tenantId,
+    userId: input.userId,
+    getAdapter: () => createAccountAuthContextFromHono(c, input.tenantId).coreAdapter,
+  });
+  const log = getLogger(c).module('TOKEN');
+  switch (result.outcome) {
+    case 'not_required':
+    case 'met':
+      return null;
+    case 'insufficient':
+      log.info('Token request refused: identity assurance level not met', {
+        action: 'identity_assurance_refused',
+        clientId: input.clientId,
+        required: result.required,
+        actual: result.actual,
+      });
+      return oauthError(
+        c,
+        input.refusal.error,
+        'The identity assurance level required for this request has not been met',
+        input.refusal.status
+      );
+    case 'unavailable':
+      log.error(
+        'Failed to read identity assurance evidence',
+        { action: 'identity_assurance_read', clientId: input.clientId },
+        result.error instanceof Error ? result.error : new Error(String(result.error))
+      );
+      return input.onUnavailable === 'retry'
+        ? oauthError(
+            c,
+            'temporarily_unavailable',
+            'Identity assurance is temporarily unavailable',
+            503
+          )
+        : oauthError(
+            c,
+            'invalid_grant',
+            'The authorization grant could not be confirmed; start the authorization again',
+            400
+          );
+  }
 }
 
 function oauthError(
@@ -2627,6 +2708,20 @@ async function handleAuthorizationCodeGrant(
   ) {
     return oauthError(c, 'invalid_grant', CONSENT_WITHDRAWN_DESCRIPTION, 400);
   }
+  // Identity assurance: the client's minimum IAL, and the scope map for the scopes the code was
+  // granted (while assurance is on). The code is spent already, so a read that fails sends the
+  // client back to start again. Direct Auth finishes here too.
+  const authCodeIalError = await enforceTokenIdentityAssurance(c, {
+    tenantId,
+    userId: authCodeData.sub,
+    scope: authCodeData.scope,
+    clientMetadata: clientMetadata as { minimum_ial?: IAL },
+    assuranceSettings: assurance.settings,
+    clientId: client_id,
+    refusal: { error: 'invalid_grant', status: 400 },
+    onUnavailable: 'restart',
+  });
+  if (authCodeIalError) return authCodeIalError;
   if (subjectAccountResult.status === 'fulfilled') {
     subjectAccount = subjectAccountResult.value;
     if (!subjectAccount && tokenPIIRequirement.requiresPII) {
@@ -4031,6 +4126,21 @@ async function handleRefreshTokenGrant(
     return oauthError(c, 'invalid_grant', 'Refresh token is invalid or expired', 400);
   }
 
+  // Identity assurance: a family continues the grant it began with, so it needs what that grant
+  // needed (its whole scope, however much of it this refresh asks for), and ends when the evidence
+  // does. Read before the family is rotated, so a failed read leaves the token for a retry.
+  const refreshIalError = await enforceTokenIdentityAssurance(c, {
+    tenantId,
+    userId: refreshTokenData.sub,
+    scope: refreshTokenData.scope,
+    clientMetadata: typedClient,
+    assuranceSettings: assurance.settings,
+    clientId: client_id,
+    refusal: { error: 'invalid_grant', status: 400 },
+    onUnavailable: 'retry',
+  });
+  if (refreshIalError) return refreshIalError;
+
   // Phase 2 RBAC: Fetch fresh RBAC claims for token refresh
   // User's roles/organization may have changed since the original token was issued
   let accessTokenRBACClaims: Awaited<ReturnType<typeof getAccessTokenRBACClaims>> = {};
@@ -4735,6 +4845,22 @@ async function handleJWTBearerGrant(
     }
   }
 
+  // Identity assurance: the subject is vouched for by an external issuer and need not be an account
+  // here, so there is no evidence of its IAL (IAL1). A scope the tenant's scope-to-IAL map holds to
+  // a higher level (while assurance is on) is therefore not issued through this grant. There is no
+  // client record, so no client minimum applies.
+  const jwtBearerIalError = await enforceTokenIdentityAssurance(c, {
+    tenantId: getTenantIdFromContext(c),
+    userId: null,
+    scope: grantedScope,
+    clientMetadata: null,
+    assuranceSettings: assurance.settings,
+    clientId: claims.iss,
+    refusal: { error: 'invalid_grant', status: 400 },
+    onUnavailable: 'retry',
+  });
+  if (jwtBearerIalError) return jwtBearerIalError;
+
   const audienceResolution = resolveAccessTokenAudience(
     c,
     {
@@ -5138,6 +5264,21 @@ async function handleDeviceCodeGrant(
   ) {
     return oauthError(c, 'invalid_grant', CONSENT_WITHDRAWN_DESCRIPTION, 400);
   }
+
+  // Identity assurance: the approving user must meet the client's minimum IAL and the scope map for
+  // the requested scopes, as of now (evidence revoked since the approval ends it). Read before the
+  // code is reserved, so a failed read leaves it for the next poll.
+  const deviceIalError = await enforceTokenIdentityAssurance(c, {
+    tenantId,
+    userId: metadata.sub,
+    scope: metadata.scope,
+    clientMetadata: clientMetadata as { minimum_ial?: IAL },
+    assuranceSettings: assurance.settings,
+    clientId: client_id,
+    refusal: { error: 'access_denied', status: 403 },
+    onUnavailable: 'retry',
+  });
+  if (deviceIalError) return deviceIalError;
 
   // Atomically reserve the approved device code before issuing tokens. This closes
   // the get-then-delete race where concurrent polls could both observe approved.
@@ -5822,6 +5963,21 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
   ) {
     return oauthError(c, 'invalid_grant', CONSENT_WITHDRAWN_DESCRIPTION, 400);
   }
+
+  // Identity assurance: the user must meet the client's minimum IAL and the scope map for the
+  // requested scopes, as of now. Read before the request is reserved, so a failed read leaves it
+  // for the next poll.
+  const cibaIalError = await enforceTokenIdentityAssurance(c, {
+    tenantId,
+    userId: metadata.sub,
+    scope: metadata.scope,
+    clientMetadata: clientMetadata as { minimum_ial?: IAL },
+    assuranceSettings: assurance.settings,
+    clientId: client_id,
+    refusal: { error: 'access_denied', status: 400 },
+    onUnavailable: 'retry',
+  });
+  if (cibaIalError) return cibaIalError;
 
   // Mark tokens as issued (one-time use enforcement)
   const markIssuedResponse = await cibaRequestStore.fetch(
@@ -7002,6 +7158,9 @@ async function handleTokenExchangeGrant(
   // records the same consent (its client and generation), so the withdrawal ends it too. An
   // external IdP's ID-JAG token and an approval's elevation grant carry no consent.
   let subjectGrantClaims: Record<string, unknown> = {};
+  // The tenant account a user subject token names (null: it names none, such as an external
+  // issuer's subject or a client or admin principal), for the identity assurance check below.
+  let subjectAccountUserId: string | null = null;
   // A client or admin principal's subject token (as its issuance path signed): the exchanged token
   // keeps its sub under another client_id, so it records which principal the sub names.
   const subjectPrincipalKind = isIdJagTokenRequest
@@ -7081,6 +7240,7 @@ async function handleTokenExchangeGrant(
       }
     }
     if (subjectHasAccount) {
+      subjectAccountUserId = accountUserId;
       let subjectConsentState: OAuthClientConsentRevocationState;
       try {
         subjectConsentState = await readConsentWithdrawal(
@@ -7145,6 +7305,27 @@ async function handleTokenExchangeGrant(
   }
 
   const grantedScope = grantedScopes.join(' ');
+
+  // Identity assurance: exchanging a user's token is issuing tokens for that user, so the user
+  // must meet the requesting client's minimum IAL and the scope map for the scopes the new token
+  // carries, as of now. A subject an external issuer vouches for has no account here, so no
+  // evidence: IAL1. A subject that names no person (a client or admin principal, an approval's
+  // elevation grant) is not held to a person's IAL.
+  const exchangeIalSubject: string | null | undefined =
+    subjectAccountUserId !== null ? subjectAccountUserId : subjectExternalIssuer ? null : undefined;
+  if (exchangeIalSubject !== undefined) {
+    const exchangeIalError = await enforceTokenIdentityAssurance(c, {
+      tenantId,
+      userId: exchangeIalSubject,
+      scope: grantedScope,
+      clientMetadata: typedClient,
+      assuranceSettings: assurance.settings,
+      clientId: client_id,
+      refusal: { error: 'invalid_grant', status: 400 },
+      onUnavailable: 'retry',
+    });
+    if (exchangeIalError) return exchangeIalError;
+  }
 
   // Detect scope changes for security audit
   const scopeDowngraded = subjectScopes.length > 0 && grantedScopes.length < subjectScopes.length;
@@ -8189,6 +8370,21 @@ async function handleNativeSSOTokenExchange(
   }
 
   const grantedScope = grantedScopes.join(' ');
+
+  // Identity assurance: the user must meet the client's minimum IAL and the scope map for the
+  // scopes granted, as of now. The ID token and a use of the device secret are spent by now, so a
+  // read that fails sends the client back to authenticate again.
+  const nativeSSOIalError = await enforceTokenIdentityAssurance(c, {
+    tenantId,
+    userId: idTokenUserId,
+    scope: grantedScope,
+    clientMetadata,
+    assuranceSettings: assurance.settings,
+    clientId,
+    refusal: { error: 'invalid_grant', status: 400 },
+    onUnavailable: 'restart',
+  });
+  if (nativeSSOIalError) return nativeSSOIalError;
 
   const audienceResolution = resolveAccessTokenAudience(c, clientMetadata, {
     resource: requestedResources,

@@ -6,6 +6,7 @@ import type { OrganizationType, PlanType, UserType } from './rbac';
 import type { AuthorizationDetails } from './rar';
 import type { JWKS } from './jwk';
 import type { AttributeReleaseConsentPolicy } from '../services/identity-release-consent';
+import type { IAL } from './settings/assurance-levels';
 
 /**
  * OpenID Provider Metadata (Discovery Document)
@@ -638,6 +639,16 @@ export interface ClientMetadata extends ClientRegistrationResponse {
    * When true, authorization requests must include code_challenge.
    */
   require_pkce?: boolean;
+
+  // ==========================================================================
+  // Identity assurance (NIST SP 800-63A)
+  // ==========================================================================
+  /**
+   * The lowest IAL a person needs to be authorized by, or issued tokens for, this client. Set by an
+   * administrator only (never in client registration). Applies whether or not tenant-wide
+   * assurance is on. Absent: the client sets no minimum.
+   */
+  minimum_ial?: IAL;
 }
 
 /**

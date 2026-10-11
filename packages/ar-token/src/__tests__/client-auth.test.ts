@@ -31,6 +31,7 @@ import {
   createClientCredentialsGrantRequest,
   type TestClientMetadata,
 } from './helpers/fixtures';
+import { evidenceRow, useEvidenceAdapter } from './helpers/identity-assurance';
 
 const securityRegressionIt =
   process.env.AUTHRIM_SECURITY_REGRESSION_SUITE === 'true' ? it : it.skip;
@@ -324,6 +325,19 @@ function setSystemSettings(value: Record<string, unknown> | null): void {
   systemSettings = value;
   mocks.mockGetProtocolSettingsCached.mockResolvedValue(value);
 }
+
+/** Assurance settings the token endpoint reads, over the settings the test already describes. */
+function setAssuranceSettings(values: Record<string, unknown>): void {
+  const base = mocks.mockResolveEffectiveSettings.getMockImplementation()!;
+  mocks.mockResolveEffectiveSettings.mockImplementation(
+    async (env: unknown, category: string, ...rest: unknown[]) =>
+      category === 'assurance'
+        ? values
+        : (base as (...args: unknown[]) => unknown)(env, category, ...rest)
+  );
+}
+
+const IAL_SCOPE_MAP = JSON.stringify({ payment: 'IAL2', records: 'IAL3' });
 
 const DIRECT_AUTH_GRANT_TYPE = 'urn:authrim:params:oauth:grant-type:direct-auth-finish';
 const DIRECT_AUTH_REDIRECT_URI = 'https://authrim.local/direct-auth/callback';
@@ -1658,6 +1672,86 @@ describe('Client Authentication Tests', () => {
       expect(paths).toContain('/mark-token-issued');
       expect(paths).not.toContain('/delete');
     });
+
+    describe('identity assurance (IAL)', () => {
+      const approved = (client: TestClientMetadata, scope = 'openid profile') =>
+        baseCIBAMetadata(client, { status: 'approved', sub: 'user-123', scope });
+      const reservedRequests = (fetch: ReturnType<typeof vi.fn>) =>
+        fetch.mock.calls.filter(
+          ([request]) => new URL((request as Request).url).pathname === '/mark-token-issued'
+        );
+
+      it('changes nothing, and reads no evidence, when nothing is configured', async () => {
+        const evidence = useEvidenceAdapter(mocks.mockD1Adapter(), []);
+        const client = createCIBAClient({ client_secret_hash: CIBA_CLIENT_SECRET_HASH });
+        configureCIBARequest(client, approved(client));
+
+        const { response } = await requestCIBAToken(client);
+
+        expect(response.status).toBe(200);
+        expect(evidence.reads).toEqual([]);
+      });
+
+      it('refuses with access_denied a user below the client minimum, before the request is reserved', async () => {
+        const evidence = useEvidenceAdapter(mocks.mockD1Adapter(), []);
+        const client = createCIBAClient({
+          client_secret_hash: CIBA_CLIENT_SECRET_HASH,
+          minimum_ial: 'IAL2',
+        });
+        const fetch = configureCIBARequest(client, approved(client));
+
+        const { response, body } = await requestCIBAToken(client);
+
+        expect(response.status).toBe(400);
+        expect(body).toMatchObject({ error: 'access_denied' });
+        expect(evidence.reads).toHaveLength(1);
+        expect(reservedRequests(fetch)).toHaveLength(0);
+        expect(mocks.mockCreateAccessToken).not.toHaveBeenCalled();
+      });
+
+      it('issues tokens to a user at the client minimum', async () => {
+        useEvidenceAdapter(mocks.mockD1Adapter(), [evidenceRow('IAL2')]);
+        const client = createCIBAClient({
+          client_secret_hash: CIBA_CLIENT_SECRET_HASH,
+          minimum_ial: 'IAL2',
+        });
+        configureCIBARequest(client, approved(client));
+
+        const { response } = await requestCIBAToken(client);
+
+        expect(response.status).toBe(200);
+      });
+
+      it('applies the scope map to the requested scopes while assurance is on', async () => {
+        setAssuranceSettings({
+          'assurance.enabled': true,
+          'assurance.scope_ial_requirements': IAL_SCOPE_MAP,
+        });
+        useEvidenceAdapter(mocks.mockD1Adapter(), [evidenceRow('IAL1')]);
+        const client = createCIBAClient({ client_secret_hash: CIBA_CLIENT_SECRET_HASH });
+        configureCIBARequest(client, approved(client, 'openid payment'));
+
+        const { response, body } = await requestCIBAToken(client);
+
+        expect(response.status).toBe(400);
+        expect(body).toMatchObject({ error: 'access_denied' });
+      });
+
+      it('answers 503 and leaves the request unreserved when the evidence cannot be read', async () => {
+        useEvidenceAdapter(mocks.mockD1Adapter(), 'fail');
+        const client = createCIBAClient({
+          client_secret_hash: CIBA_CLIENT_SECRET_HASH,
+          minimum_ial: 'IAL2',
+        });
+        const fetch = configureCIBARequest(client, approved(client));
+
+        const { response, body } = await requestCIBAToken(client);
+
+        expect(response.status).toBe(503);
+        expect(body).toMatchObject({ error: 'temporarily_unavailable' });
+        expect(reservedRequests(fetch)).toHaveLength(0);
+      });
+    });
   });
 
   describe('Device code grant state transitions', () => {
@@ -1996,6 +2090,100 @@ describe('Client Authentication Tests', () => {
       expect(response.status).toBe(200);
       expect((body as { expires_in: number }).expires_in).toBe(900);
     });
+
+    describe('identity assurance (IAL)', () => {
+      const publicClient = (overrides: Record<string, unknown> = {}) =>
+        createPublicClient({
+          client_id: clientId,
+          default_resource: 'https://api.example.com',
+          ...overrides,
+        });
+      const reserved = (fetch: ReturnType<typeof vi.fn>) =>
+        fetch.mock.calls.filter(
+          ([request]) => new URL((request as Request).url).pathname === '/mark-token-issued'
+        );
+
+      it('changes nothing, and reads no evidence, when nothing is configured', async () => {
+        const evidence = useEvidenceAdapter(mocks.mockD1Adapter(), []);
+        configureDeviceCode(baseDeviceMetadata({ status: 'approved', sub: 'user-123' }));
+        mocks.mockGetClientCached.mockResolvedValue(publicClient());
+
+        const { response } = await requestDeviceToken();
+
+        expect(response.status).toBe(200);
+        expect(evidence.reads).toEqual([]);
+      });
+
+      it('refuses with access_denied a user below the client minimum, before the code is reserved', async () => {
+        const evidence = useEvidenceAdapter(mocks.mockD1Adapter(), []);
+        const fetch = configureDeviceCode(
+          baseDeviceMetadata({ status: 'approved', sub: 'user-123' })
+        );
+        mocks.mockGetClientCached.mockResolvedValue(publicClient({ minimum_ial: 'IAL2' }));
+
+        const { response, body } = await requestDeviceToken();
+
+        expect(response.status).toBe(403);
+        expect(body).toMatchObject({ error: 'access_denied' });
+        expect(evidence.reads).toHaveLength(1);
+        expect(reserved(fetch)).toHaveLength(0);
+        expect(mocks.mockCreateAccessToken).not.toHaveBeenCalled();
+      });
+
+      it('stops an approval whose evidence has been revoked since', async () => {
+        useEvidenceAdapter(mocks.mockD1Adapter(), [
+          evidenceRow('IAL2', { revoked_at: Date.now() - 10 }),
+        ]);
+        configureDeviceCode(baseDeviceMetadata({ status: 'approved', sub: 'user-123' }));
+        mocks.mockGetClientCached.mockResolvedValue(publicClient({ minimum_ial: 'IAL2' }));
+
+        const { response, body } = await requestDeviceToken();
+
+        expect(response.status).toBe(403);
+        expect(body).toMatchObject({ error: 'access_denied' });
+      });
+
+      it('issues tokens to a user at the client minimum', async () => {
+        useEvidenceAdapter(mocks.mockD1Adapter(), [evidenceRow('IAL3')]);
+        configureDeviceCode(baseDeviceMetadata({ status: 'approved', sub: 'user-123' }));
+        mocks.mockGetClientCached.mockResolvedValue(publicClient({ minimum_ial: 'IAL2' }));
+
+        const { response } = await requestDeviceToken();
+
+        expect(response.status).toBe(200);
+      });
+
+      it('applies the scope map to the requested scopes while assurance is on', async () => {
+        setAssuranceSettings({
+          'assurance.enabled': true,
+          'assurance.scope_ial_requirements': IAL_SCOPE_MAP,
+        });
+        useEvidenceAdapter(mocks.mockD1Adapter(), []);
+        configureDeviceCode(
+          baseDeviceMetadata({ status: 'approved', sub: 'user-123', scope: 'openid payment' })
+        );
+        mocks.mockGetClientCached.mockResolvedValue(publicClient());
+
+        const { response, body } = await requestDeviceToken();
+
+        expect(response.status).toBe(403);
+        expect(body).toMatchObject({ error: 'access_denied' });
+      });
+
+      it('answers 503 and leaves the code unreserved when the evidence cannot be read', async () => {
+        useEvidenceAdapter(mocks.mockD1Adapter(), 'fail');
+        const fetch = configureDeviceCode(
+          baseDeviceMetadata({ status: 'approved', sub: 'user-123' })
+        );
+        mocks.mockGetClientCached.mockResolvedValue(publicClient({ minimum_ial: 'IAL2' }));
+
+        const { response, body } = await requestDeviceToken();
+
+        expect(response.status).toBe(503);
+        expect(body).toMatchObject({ error: 'temporarily_unavailable' });
+        expect(reserved(fetch)).toHaveLength(0);
+      });
+    });
   });
 
   // ==========================================================================
@@ -2003,6 +2191,70 @@ describe('Client Authentication Tests', () => {
   // ==========================================================================
 
   describe('Direct Auth custom grant', () => {
+    describe('identity assurance (IAL)', () => {
+      async function finishDirectAuth(
+        clientOverrides: Partial<TestClientMetadata>,
+        rows: Array<Record<string, unknown>> | 'fail'
+      ) {
+        const evidence = useEvidenceAdapter(mocks.mockD1Adapter(), rows);
+        const client = createPublicClient(clientOverrides);
+        const codeVerifier = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~';
+        const authCodeData = createAuthCodeData({
+          redirectUri: DIRECT_AUTH_REDIRECT_URI,
+          sid: undefined,
+        });
+        mocks.mockGetClientCached.mockResolvedValue(client);
+        mocks.mockGetChallengeStoreByChallengeId.mockResolvedValue({
+          consumeChallengeRpc: vi.fn().mockResolvedValue({
+            challenge: await createPkceChallenge(codeVerifier),
+            userId: authCodeData.userId,
+            metadata: { client_id: client.client_id, channel: 'browser', transaction_id: 'txn-1' },
+          }),
+        });
+        mocks.mockExtractDPoPProof.mockReturnValue('dpop-proof');
+        mocks.mockValidateDPoPProof.mockResolvedValue({ valid: true, jkt: 'browser-jkt' });
+        mockEnv.AUTH_CODE_STORE.get = vi.fn().mockReturnValue({
+          consumeCodeRpc: vi.fn().mockResolvedValue(authCodeData),
+          registerIssuedTokensRpc: vi.fn().mockResolvedValue(true),
+        });
+        const response = await tokenHandler(
+          createMockContext({
+            headers: { DPoP: 'dpop-proof' },
+            body: {
+              grant_type: DIRECT_AUTH_GRANT_TYPE,
+              direct_auth_artifact: 'direct-artifact-001',
+              client_id: client.client_id,
+              code_verifier: codeVerifier,
+              channel: 'browser',
+            },
+            env: mockEnv,
+          })
+        );
+        return { response, evidence };
+      }
+
+      it('reads no evidence when nothing is configured', async () => {
+        const { response, evidence } = await finishDirectAuth({}, []);
+
+        expect(response.status).toBe(200);
+        expect(evidence.reads).toEqual([]);
+      });
+
+      it('refuses a user below the client minimum', async () => {
+        const { response } = await finishDirectAuth({ minimum_ial: 'IAL2' }, []);
+
+        expect(response.status).toBe(400);
+        expect((await parseJsonResponse<{ error: string }>(response)).error).toBe('invalid_grant');
+        expect(mocks.mockCreateAccessToken).not.toHaveBeenCalled();
+      });
+
+      it('issues tokens to a user at the client minimum', async () => {
+        const { response } = await finishDirectAuth({ minimum_ial: 'IAL2' }, [evidenceRow('IAL2')]);
+
+        expect(response.status).toBe(200);
+      });
+    });
+
     it('should redeem a bound Direct Auth artifact via the canonical token endpoint', async () => {
       const client = createPublicClient();
       const codeVerifier = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~';
@@ -3259,6 +3511,74 @@ describe('Client Authentication Tests', () => {
         const response = await tokenHandler(createNativeSSOTokenExchangeContext(client.client_id));
 
         expect(response.status).toBe(200);
+      });
+    });
+
+    describe('identity assurance (IAL)', () => {
+      const exchange = (clientId: string) =>
+        tokenHandler(createNativeSSOTokenExchangeContext(clientId));
+
+      it('changes nothing, and reads no evidence, when nothing is configured', async () => {
+        const evidence = useEvidenceAdapter(mocks.mockD1Adapter(), []);
+        const client = setupNativeSSOValidationTest();
+
+        const response = await exchange(client.client_id);
+
+        expect(response.status).toBe(200);
+        expect(evidence.reads).toEqual([]);
+      });
+
+      it('refuses with invalid_grant a user below the client minimum', async () => {
+        const evidence = useEvidenceAdapter(mocks.mockD1Adapter(), []);
+        const client = setupNativeSSOValidationTest({}, { minimum_ial: 'IAL2' });
+
+        const response = await exchange(client.client_id);
+        const body = await parseJsonResponse<{ error?: string; access_token?: string }>(response);
+
+        expect(response.status).toBe(400);
+        expect(body.error).toBe('invalid_grant');
+        expect(body.access_token).toBeUndefined();
+        expect(evidence.reads).toHaveLength(1);
+        expect(mocks.mockCreateAccessToken).not.toHaveBeenCalled();
+      });
+
+      it('issues tokens to a user at the client minimum', async () => {
+        useEvidenceAdapter(mocks.mockD1Adapter(), [evidenceRow('IAL2')]);
+        const client = setupNativeSSOValidationTest({}, { minimum_ial: 'IAL2' });
+
+        const response = await exchange(client.client_id);
+
+        expect(response.status).toBe(200);
+      });
+
+      it('applies the scope map to the scopes granted while assurance is on', async () => {
+        setAssuranceSettings({
+          'assurance.enabled': true,
+          'assurance.scope_ial_requirements': JSON.stringify({ profile: 'IAL2' }),
+        });
+        useEvidenceAdapter(mocks.mockD1Adapter(), []);
+        const client = setupNativeSSOValidationTest();
+
+        const response = await exchange(client.client_id);
+
+        expect(response.status).toBe(400);
+        expect((await parseJsonResponse<{ error?: string }>(response)).error).toBe('invalid_grant');
+      });
+
+      it('does not issue tokens when the evidence cannot be read, never reading IAL1', async () => {
+        useEvidenceAdapter(mocks.mockD1Adapter(), 'fail');
+        const client = setupNativeSSOValidationTest({}, { minimum_ial: 'IAL2' });
+
+        const response = await exchange(client.client_id);
+        const body = await parseJsonResponse<{ error?: string; error_description?: string }>(
+          response
+        );
+
+        // The ID token and a use of the device secret are spent: the client authenticates again.
+        expect(response.status).toBe(400);
+        expect(body.error).toBe('invalid_grant');
+        expect(body.error_description).toContain('start the authorization again');
+        expect(mocks.mockCreateAccessToken).not.toHaveBeenCalled();
       });
     });
 
@@ -5762,6 +6082,35 @@ describe('Client Authentication Tests', () => {
       expect(tenantWide.response.status).toBe(400);
       expect(tenantWide.body).toMatchObject({ error: 'invalid_request' });
       expect(mocks.mockCreateAccessToken).not.toHaveBeenCalled();
+    });
+
+    describe('identity assurance (IAL)', () => {
+      it('issues a scope the map holds to a level when assurance is off, reading no evidence', async () => {
+        const evidence = useEvidenceAdapter(mocks.mockD1Adapter(), []);
+        setAssuranceSettings({
+          'assurance.scope_ial_requirements': JSON.stringify({ openid: 'IAL2' }),
+        });
+
+        const { response } = await requestJWTBearer({ scope: 'openid' });
+
+        expect(response.status).toBe(200);
+        expect(evidence.reads).toEqual([]);
+      });
+
+      it('does not issue a scope the map holds to a level: the subject has no evidence here', async () => {
+        const evidence = useEvidenceAdapter(mocks.mockD1Adapter(), [evidenceRow('IAL3')]);
+        setAssuranceSettings({
+          'assurance.enabled': true,
+          'assurance.scope_ial_requirements': JSON.stringify({ openid: 'IAL2' }),
+        });
+
+        const { response, body } = await requestJWTBearer({ scope: 'openid' });
+
+        expect(response.status).toBe(400);
+        expect(body).toMatchObject({ error: 'invalid_grant' });
+        expect(evidence.reads).toEqual([]);
+        expect(mocks.mockCreateAccessToken).not.toHaveBeenCalled();
+      });
     });
 
     it('requires an assertion and at least one configured trusted issuer', async () => {

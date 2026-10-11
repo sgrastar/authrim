@@ -34,6 +34,8 @@ import {
   type ClaimReleasePolicy,
   buildContractKey,
   resolveTokenExchangeCeilingRefusal,
+  IAL_LEVELS,
+  type IAL,
 } from '@authrim/ar-lib-core';
 import {
   parseClientStringArray,
@@ -85,6 +87,8 @@ const VALID_BROWSER_REFRESH_TOKEN_POLICIES = new Set<AdminBrowserRefreshTokenPol
   'disabled',
   'dpop_bound',
 ]);
+// The IALs of NIST SP 800-63A; the service's own list, so the API accepts what runtime enforces.
+const VALID_MINIMUM_IALS = new Set<IAL>(IAL_LEVELS);
 const VALID_CLIENT_CHANNELS = new Set<AdminClientChannel>(['browser', 'native', 'server']);
 const VALID_CLAIM_RELEASE_POLICIES = new Set<ClaimReleasePolicy>([
   'scope_required',
@@ -265,6 +269,22 @@ function validateOptionalEnumField<T extends string>(
     };
   }
   return { ok: true, value: value as T };
+}
+
+/**
+ * minimum_ial: absent leaves it, null removes it, IAL1 to IAL3 sets it. An empty string is refused
+ * rather than read as null, so a stray empty value can never remove a client's minimum.
+ */
+function validateMinimumIal(
+  value: unknown
+): { ok: true; value: IAL | null | undefined } | { ok: false; error: string } {
+  if (value === '') {
+    return {
+      ok: false,
+      error: `minimum_ial must be one of ${IAL_LEVELS.join(', ')}, or null to remove it`,
+    };
+  }
+  return validateOptionalEnumField(value, 'minimum_ial', VALID_MINIMUM_IALS);
 }
 
 function validateOptionalBooleanField(
@@ -900,6 +920,7 @@ export async function adminClientCreateHandler(c: Context<{ Bindings: Env }>) {
       allowed_redirect_origins?: string[];
       web_origin_registry?: WebOriginRegistryWritePayload | null;
       require_pkce?: boolean;
+      minimum_ial?: string | null;
       application_type?: string;
       // Admin/API "application_group" maps to the internal trust_group security boundary.
       trust_group?: string | null;
@@ -1021,6 +1042,17 @@ export async function adminClientCreateHandler(c: Context<{ Bindings: Env }>) {
         {
           error: 'invalid_request',
           error_description: requirePkceValidation.error,
+        },
+        400
+      );
+    }
+
+    const minimumIalValidation = validateMinimumIal(body.minimum_ial);
+    if (!minimumIalValidation.ok) {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: minimumIalValidation.error,
         },
         400
       );
@@ -1511,6 +1543,7 @@ export async function adminClientCreateHandler(c: Context<{ Bindings: Env }>) {
       default_resource: defaultResourceValidation.value,
       allowed_redirect_origins: validatedAllowedOrigins,
       require_pkce: requirePkceValidation.value ?? false,
+      minimum_ial: minimumIalValidation.value ?? null,
     });
 
     let webOriginRegistry: WebOriginRegistryDocument = { origins: [] };
@@ -1735,6 +1768,7 @@ export async function adminClientCreateHandler(c: Context<{ Bindings: Env }>) {
           default_resource: client.default_resource,
           web_origin_registry: webOriginRegistry,
           require_pkce: client.require_pkce,
+          minimum_ial: client.minimum_ial ?? null,
           created_at: client.created_at,
           updated_at: client.updated_at,
         },
@@ -1963,6 +1997,7 @@ export async function adminClientUpdateHandler(c: Context<{ Bindings: Env }>) {
       allowed_redirect_origins,
       web_origin_registry,
       require_pkce,
+      minimum_ial,
       initiate_login_uri,
       login_ui_url,
       application_type,
@@ -2171,6 +2206,17 @@ export async function adminClientUpdateHandler(c: Context<{ Bindings: Env }>) {
         {
           error: 'invalid_request',
           error_description: requirePkceValidation.error,
+        },
+        400
+      );
+    }
+
+    const minimumIalValidation = validateMinimumIal(minimum_ial);
+    if (!minimumIalValidation.ok) {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: minimumIalValidation.error,
         },
         400
       );
@@ -2601,6 +2647,7 @@ export async function adminClientUpdateHandler(c: Context<{ Bindings: Env }>) {
       asc_allowed_transformed_claims,
       allowed_redirect_origins,
       require_pkce,
+      minimum_ial,
       initiate_login_uri,
       login_ui_url,
       application_type,
@@ -2668,6 +2715,7 @@ export async function adminClientUpdateHandler(c: Context<{ Bindings: Env }>) {
             asc_allowed_transformed_claims: ascAllowedTransformedClaimsValidation.value,
             allowed_redirect_origins: validatedAllowedOrigins,
             require_pkce: requirePkceValidation.value,
+            minimum_ial: minimumIalValidation.value,
             initiate_login_uri,
             login_ui_url,
             application_type: applicationTypeValidation.value,
@@ -2755,11 +2803,18 @@ export async function adminClientUpdateHandler(c: Context<{ Bindings: Env }>) {
       );
     });
 
+    // A change of the identity assurance a client requires is recorded with the new value.
+    const minimumIalChange =
+      minimumIalValidation.value !== undefined
+        ? { minimum_ial: updatedClient?.minimum_ial ?? null }
+        : {};
     await createAuditLogFromContext(c, 'client.updated', 'client', clientId, {
       client_name: updatedClient?.client_name,
+      ...minimumIalChange,
     });
     scheduleAdminAuditLog(c, 'client.updated', clientId, 'success', {
       client_name: updatedClient?.client_name,
+      ...minimumIalChange,
     });
 
     // Only an update that touches token exchange is told what the tenant's ceilings mean for it.

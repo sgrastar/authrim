@@ -84,6 +84,10 @@ const adminClients = {
 		'WebSDKとSPA token clientsではstrict DPoPを使うべきです。Cookie fallbackはbrowser JavaScript内でOAuth codeを交換しません。',
 	admin_client_detail_browser_refresh_hint:
 		'Public browser clientsは、DPoP-boundの場合のみrefresh tokenを受け取ります。',
+	admin_client_detail_minimum_ial: '本人確認の最低保証レベル（IAL）',
+	admin_client_detail_minimum_ial_none: '指定なし',
+	admin_client_detail_minimum_ial_hint:
+		'本人確認がこのレベル（NIST SP 800-63A の IAL）に達していない人は、このclientで拒否されます。テナントのassuranceがoffでも適用されます。',
 	admin_client_detail_pkce_required: 'PKCE Required',
 	admin_client_detail_pkce_required_desc: 'authorization requestでPKCEを必須にします',
 	admin_client_detail_par_required: 'PAR Required',

@@ -47,6 +47,8 @@ const mocks = vi.hoisted(() => ({
   mockResolveAccountDataContextFromHono: vi.fn(),
   mockReadAccountAuthenticationState: vi.fn(),
   mockFindOAuthClientConsentRevocation: vi.fn(),
+  // The user's account database: the identity assurance evidence read goes through it.
+  accountAdapter: { query: vi.fn() },
 }));
 
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
@@ -80,7 +82,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     resolveElevationGrantSubjectToken: mocks.mockResolveElevationGrantSubjectToken,
     // The subject user's account database and its consent withdrawals.
     resolveAccountDataContextFromHono: mocks.mockResolveAccountDataContextFromHono,
-    createAccountAuthContextFromHono: () => ({ coreAdapter: {} }),
+    createAccountAuthContextFromHono: () => ({ coreAdapter: mocks.accountAdapter }),
     findOAuthClientConsentRevocation: mocks.mockFindOAuthClientConsentRevocation,
     readAccountAuthenticationState: mocks.mockReadAccountAuthenticationState,
   };
@@ -92,6 +94,7 @@ vi.mock('../external-id-jag-verifier', () => ({
 
 import { tokenHandler } from '../token';
 import { settingsFromSystemSettings } from './helpers/effective-settings';
+import { evidenceRow } from './helpers/identity-assurance';
 
 /** The older system settings the test describes, as both the document and the Settings API. */
 let systemSettings: Record<string, unknown> | null = null;
@@ -111,6 +114,7 @@ describe('downstream elevation grant token exchange', () => {
         : settingsFromSystemSettings(env, systemSettings, category)
     );
     mocks.mockVerifyExternalIdJagSubjectToken.mockReset();
+    mocks.accountAdapter.query.mockReset().mockResolvedValue([]);
     mocks.mockResolveAccountDataContextFromHono.mockReset().mockResolvedValue({});
     mocks.mockReadAccountAuthenticationState.mockReset().mockResolvedValue({ lifecycle: null });
     mocks.mockFindOAuthClientConsentRevocation
@@ -1312,6 +1316,131 @@ describe('downstream elevation grant token exchange', () => {
           'Consent state is unavailable'
         );
         expect(mocks.mockCreateAccessToken).not.toHaveBeenCalled();
+      });
+
+      describe('identity assurance (IAL)', () => {
+        const MAP = JSON.stringify({ profile_export: 'IAL2' });
+
+        function useClient(overrides: Record<string, unknown> = {}) {
+          mocks.mockGetClientCached.mockResolvedValue({
+            client_id: 'service-client-1',
+            tenant_id: 'tenant-a',
+            client_secret_hash: 'hashed-secret',
+            token_exchange_allowed: true,
+            token_endpoint_auth_method: 'client_secret_post',
+            delegation_mode: 'delegation',
+            allowed_scopes: ['openid', 'profile_export'],
+            allowed_token_exchange_resources: ['https://service.example.com'],
+            allowed_subject_token_clients: [],
+            ...overrides,
+          });
+        }
+        function useAssurance(values: Record<string, unknown>) {
+          const base = mocks.mockResolveEffectiveSettings.getMockImplementation()!;
+          mocks.mockResolveEffectiveSettings.mockImplementation(
+            async (env: unknown, category: string) =>
+              category === 'assurance' ? values : base(env, category)
+          );
+        }
+        const evidenceReads = () => mocks.accountAdapter.query.mock.calls.length;
+
+        it('changes nothing, and reads no evidence, when nothing is configured', async () => {
+          const env = await createVerificationEnv();
+          mocks.mockParseToken.mockReturnValue(userSubjectToken({ authrim_consent_generation: 0 }));
+
+          const response = await request({}, env);
+
+          expect(response.status).toBe(200);
+          expect(evidenceReads()).toBe(0);
+        });
+
+        it('refuses the exchange of a user token for a client whose minimum the user does not meet', async () => {
+          const env = await createVerificationEnv();
+          useClient({ minimum_ial: 'IAL2' });
+          mocks.mockParseToken.mockReturnValue(userSubjectToken({ authrim_consent_generation: 0 }));
+
+          await expectOAuthError(
+            request({}, env),
+            400,
+            'invalid_grant',
+            'The identity assurance level required for this request has not been met'
+          );
+          expect(evidenceReads()).toBe(1);
+          expect(mocks.mockCreateAccessToken).not.toHaveBeenCalled();
+        });
+
+        it('exchanges the token of a user at the client minimum', async () => {
+          const env = await createVerificationEnv();
+          useClient({ minimum_ial: 'IAL2' });
+          mocks.accountAdapter.query.mockResolvedValue([evidenceRow('IAL2')]);
+          mocks.mockParseToken.mockReturnValue(userSubjectToken({ authrim_consent_generation: 0 }));
+
+          const response = await request({}, env);
+
+          expect(response.status).toBe(200);
+          expect(mocks.mockCreateAccessToken).toHaveBeenCalled();
+        });
+
+        it('judges the scopes the new token carries, not those of the subject token', async () => {
+          const env = await createVerificationEnv();
+          useAssurance({ 'assurance.enabled': true, 'assurance.scope_ial_requirements': MAP });
+          mocks.mockParseToken.mockReturnValue(
+            userSubjectToken({ authrim_consent_generation: 0, scope: 'openid profile_export' })
+          );
+
+          // Asking for the whole scope needs IAL2; narrowing it to openid does not.
+          await expectOAuthError(
+            request({}, env),
+            400,
+            'invalid_grant',
+            'The identity assurance level required for this request has not been met'
+          );
+          expect(mocks.mockCreateAccessToken).not.toHaveBeenCalled();
+          mocks.accountAdapter.query.mockClear();
+
+          const narrowed = await request({ scope: 'openid' }, env);
+
+          expect(narrowed.status).toBe(200);
+          expect(evidenceReads()).toBe(0);
+        });
+
+        it('fails closed (503) when the evidence cannot be read', async () => {
+          const env = await createVerificationEnv();
+          useClient({ minimum_ial: 'IAL2' });
+          mocks.accountAdapter.query.mockRejectedValue(new Error('account database is down'));
+          mocks.mockParseToken.mockReturnValue(userSubjectToken({ authrim_consent_generation: 0 }));
+
+          await expectOAuthError(
+            request({}, env),
+            503,
+            'temporarily_unavailable',
+            'Identity assurance is temporarily unavailable'
+          );
+          expect(mocks.mockCreateAccessToken).not.toHaveBeenCalled();
+        });
+
+        it('holds a subject an external issuer vouches for to the minimum: it has no evidence', async () => {
+          const env = await createVerificationEnv();
+          useClient({ minimum_ial: 'IAL2' });
+          mocks.mockResolveAccountDataContextFromHono.mockRejectedValue(
+            new Error('account_data_route_not_found')
+          );
+          mocks.mockParseToken.mockReturnValue(
+            userSubjectToken({
+              authrim_consent_generation: 0,
+              authrim_subject_issuer: 'https://idp.example.com',
+            })
+          );
+
+          await expectOAuthError(
+            request({}, env),
+            400,
+            'invalid_grant',
+            'The identity assurance level required for this request has not been met'
+          );
+          expect(evidenceReads()).toBe(0);
+          expect(mocks.mockCreateAccessToken).not.toHaveBeenCalled();
+        });
       });
 
       it('refuses a subject token whose user has no active account', async () => {

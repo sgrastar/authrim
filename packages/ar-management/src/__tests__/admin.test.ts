@@ -5141,6 +5141,185 @@ describe('Admin API Handlers', () => {
       );
     });
 
+    describe('per-client minimum IAL', () => {
+      const insertParams = (mockDB: ReturnType<typeof createMockDB>) => {
+        const index = (mockDB.prepare as ReturnType<typeof vi.fn>).mock.calls.findIndex(
+          ([sql]) => typeof sql === 'string' && sql.includes('INSERT INTO oauth_clients')
+        );
+        return index < 0
+          ? null
+          : (mockDB._mockStatement.bind as ReturnType<typeof vi.fn>).mock.calls.find((call) =>
+              call.includes('Assurance Client')
+            );
+      };
+
+      it('records the minimum on create and returns it', async () => {
+        const mockDB = createMockDB({ firstResult: null, runResult: { success: true } });
+        const c = createMockContext({
+          method: 'POST',
+          body: {
+            client_name: 'Assurance Client',
+            redirect_uris: ['https://example.com/callback'],
+            minimum_ial: 'IAL2',
+          },
+          db: mockDB,
+        });
+
+        await adminClientCreateHandler(c);
+
+        expect(c.json).toHaveBeenCalledWith(
+          expect.objectContaining({
+            client: expect.objectContaining({ minimum_ial: 'IAL2' }),
+          }),
+          201
+        );
+        expect(insertParams(mockDB)).toContain('IAL2');
+      });
+
+      it('has no minimum unless one is given', async () => {
+        const mockDB = createMockDB({ firstResult: null, runResult: { success: true } });
+        const c = createMockContext({
+          method: 'POST',
+          body: {
+            client_name: 'Assurance Client',
+            redirect_uris: ['https://example.com/callback'],
+          },
+          db: mockDB,
+        });
+
+        await adminClientCreateHandler(c);
+
+        expect(c.json).toHaveBeenCalledWith(
+          expect.objectContaining({ client: expect.objectContaining({ minimum_ial: null }) }),
+          201
+        );
+      });
+
+      it.each(['', 'IAL9', 'ial2', 'AAL2', 2, true, ['IAL2']])(
+        'refuses %j as a minimum on create',
+        async (minimum_ial) => {
+          const mockDB = createMockDB({ firstResult: null, runResult: { success: true } });
+          const c = createMockContext({
+            method: 'POST',
+            body: {
+              client_name: 'Assurance Client',
+              redirect_uris: ['https://example.com/callback'],
+              minimum_ial,
+            },
+            db: mockDB,
+          });
+
+          await adminClientCreateHandler(c);
+
+          expect(c.json).toHaveBeenCalledWith(
+            expect.objectContaining({
+              error: 'invalid_request',
+              error_description: expect.stringContaining('minimum_ial'),
+            }),
+            400
+          );
+          expect(mockDB.prepare).not.toHaveBeenCalledWith(
+            expect.stringContaining('INSERT INTO oauth_clients')
+          );
+        }
+      );
+
+      const updateSql = (mockDB: ReturnType<typeof createMockDB>) =>
+        (mockDB.prepare as ReturnType<typeof vi.fn>).mock.calls
+          .map(([sql]) => sql as string)
+          .find((sql) => sql.startsWith('UPDATE oauth_clients SET'));
+
+      it('sets, and clears, the minimum on update', async () => {
+        for (const [given, stored] of [
+          ['IAL3', 'IAL3'],
+          [null, null],
+        ] as const) {
+          const mockDB = createMockDB({
+            firstResult: {
+              client_id: 'assurance-client',
+              client_name: 'Existing Client',
+              redirect_uris: '["https://example.com/callback"]',
+              grant_types: '["authorization_code"]',
+              response_types: '["code"]',
+              minimum_ial: given === null ? 'IAL2' : null,
+            },
+            runResult: { success: true },
+          });
+          const c = createMockContext({
+            method: 'PUT',
+            params: { id: 'assurance-client' },
+            body: { minimum_ial: given },
+            db: mockDB,
+          });
+
+          await adminClientUpdateHandler(c);
+
+          expect(updateSql(mockDB)).toContain('minimum_ial = ?');
+          const boundWithMinimum = (
+            mockDB._mockStatement.bind as ReturnType<typeof vi.fn>
+          ).mock.calls.find((call) => call.includes('assurance-client') && call.includes(stored));
+          expect(boundWithMinimum).toBeDefined();
+        }
+      });
+
+      it('leaves the minimum alone when an update does not mention it', async () => {
+        const mockDB = createMockDB({
+          firstResult: {
+            client_id: 'assurance-client',
+            client_name: 'Existing Client',
+            redirect_uris: '["https://example.com/callback"]',
+            grant_types: '["authorization_code"]',
+            response_types: '["code"]',
+            minimum_ial: 'IAL2',
+          },
+          runResult: { success: true },
+        });
+        const c = createMockContext({
+          method: 'PUT',
+          params: { id: 'assurance-client' },
+          body: { client_name: 'Renamed' },
+          db: mockDB,
+        });
+
+        await adminClientUpdateHandler(c);
+
+        expect(updateSql(mockDB)).not.toContain('minimum_ial');
+      });
+
+      it.each(['', 'IAL4'])(
+        'refuses %j as a minimum on update, leaving the stored one',
+        async (minimum_ial) => {
+          const mockDB = createMockDB({
+            firstResult: {
+              client_id: 'assurance-client',
+              client_name: 'Existing Client',
+              redirect_uris: '["https://example.com/callback"]',
+              grant_types: '["authorization_code"]',
+              response_types: '["code"]',
+            },
+            runResult: { success: true },
+          });
+          const c = createMockContext({
+            method: 'PUT',
+            params: { id: 'assurance-client' },
+            body: { minimum_ial },
+            db: mockDB,
+          });
+
+          await adminClientUpdateHandler(c);
+
+          expect(c.json).toHaveBeenCalledWith(
+            expect.objectContaining({
+              error: 'invalid_request',
+              error_description: expect.stringContaining('minimum_ial'),
+            }),
+            400
+          );
+          expect(updateSql(mockDB)).toBeUndefined();
+        }
+      );
+    });
+
     it('should reject legacy browser public client mode on create', async () => {
       const mockDB = createMockDB({
         firstResult: null,
