@@ -60,6 +60,7 @@ import {
   bumpAuthenticationMethodsCacheRevision,
   readRequestJsonWithLimit,
   resolveSamlProvisioningDefaults,
+  isIAL,
 } from '@authrim/ar-lib-core';
 import {
   parseXml,
@@ -248,6 +249,10 @@ function normalizeSAMLIdPJitLinkingPolicyConfig(
   config: SAMLIdPConfig,
   options: { requireIdentityMapping?: boolean } = {}
 ): SAMLIdPConfig | ResponseValidationError {
+  // A minimum IAL gates sign-in to a service provider; nothing would apply it to an IdP.
+  const { minimumIal, ...idpConfig } = config as SAMLIdPConfig & { minimumIal?: unknown };
+  if (minimumIal !== undefined && minimumIal !== null) return { field: 'minimumIal' };
+  config = idpConfig;
   const policy = config.jitEmailLinkingPolicy ?? 'email_linking';
   if (!SAML_JIT_EMAIL_LINKING_POLICIES.has(policy)) {
     return { field: 'jitEmailLinkingPolicy' };
@@ -274,7 +279,29 @@ function normalizeSAMLIdPJitLinkingPolicyConfig(
   };
 }
 
+/**
+ * `minimumIal`: absent leaves it, null removes it, IAL1 to IAL3 sets it. Anything else is refused
+ * (an empty string too), so a stray value can never turn the minimum off.
+ */
+function normalizeSAMLMinimumIal(value: unknown): { ial: SAMLSPConfig['minimumIal'] } | null {
+  if (value === undefined || value === null) return { ial: undefined };
+  return isIAL(value) ? { ial: value } : null;
+}
+
 function normalizeSAMLSPConfig(
+  config: SAMLSPConfig,
+  options: { requireIdentityMapping?: boolean } = {}
+): SAMLSPConfig | ResponseValidationError {
+  const minimumIal = normalizeSAMLMinimumIal(config.minimumIal);
+  if (!minimumIal) return { field: 'minimumIal' };
+  const normalized = normalizeSAMLSPConfigFields(config, options);
+  if (isResponseValidationError(normalized)) return normalized;
+  const result = { ...normalized };
+  delete result.minimumIal;
+  return minimumIal.ial ? { ...result, minimumIal: minimumIal.ial } : result;
+}
+
+function normalizeSAMLSPConfigFields(
   config: SAMLSPConfig,
   options: { requireIdentityMapping?: boolean } = {}
 ): SAMLSPConfig | ResponseValidationError {
@@ -1798,6 +1825,10 @@ export async function handleCreateProvider(c: AdminSAMLContext): Promise<Respons
             ? true
             : undefined,
         mapping_configuration_pending: !normalizedConfig.identityMapping?.fieldMappingSetId,
+        minimum_ial:
+          body.providerType === 'saml_sp'
+            ? (normalizedConfig as SAMLSPConfig).minimumIal
+            : undefined,
       },
     });
     await invalidateAuthenticationMethodsCacheForSAML(c.env, tenantId, 'saml.provider.created', c);
@@ -2016,6 +2047,9 @@ export async function handleUpdateProvider(c: AdminSAMLContext): Promise<Respons
     const nextEnabled =
       requestedEnabled && newConfigWithValidation.certificateValidation?.allExpired !== true;
     const now = Math.max(Date.now(), existing.updated_at + 1);
+    const minimumIalChanged =
+      existing.provider_type === 'saml_sp' &&
+      (existingConfig as SAMLSPConfig).minimumIal !== (newConfig as SAMLSPConfig).minimumIal;
 
     const update = await coreAdapter.execute(
       `UPDATE identity_providers
@@ -2045,6 +2079,13 @@ export async function handleUpdateProvider(c: AdminSAMLContext): Promise<Respons
         enabled_changed: nextEnabled !== (existing.enabled === 1),
         config_updated: !!body.config,
         disabled_due_to_expired_certificate: requestedEnabled && !nextEnabled ? true : undefined,
+        ...(minimumIalChanged
+          ? {
+              minimum_ial_changed: true,
+              previous_minimum_ial: (existingConfig as SAMLSPConfig).minimumIal ?? null,
+              next_minimum_ial: (newConfig as SAMLSPConfig).minimumIal ?? null,
+            }
+          : {}),
       },
     });
     await invalidateAuthenticationMethodsCacheForSAML(c.env, tenantId, 'saml.provider.updated', c);

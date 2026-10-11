@@ -6710,6 +6710,18 @@ type RootTranslation = {
 	 */
 	admin_saml_detail_identity_mapping_policy_link: string
 	/**
+	 * M​i​n​i​m​u​m​ ​i​d​e​n​t​i​t​y​ ​a​s​s​u​r​a​n​c​e​ ​l​e​v​e​l
+	 */
+	admin_saml_detail_minimum_ial: string
+	/**
+	 * N​o​ ​m​i​n​i​m​u​m
+	 */
+	admin_saml_detail_minimum_ial_none: string
+	/**
+	 * A​ ​p​e​r​s​o​n​ ​w​h​o​s​e​ ​i​d​e​n​t​i​t​y​ ​h​a​s​ ​n​o​t​ ​b​e​e​n​ ​p​r​o​o​f​e​d​ ​t​o​ ​t​h​i​s​ ​l​e​v​e​l​ ​(​N​I​S​T​ ​S​P​ ​8​0​0​-​6​3​A​ ​I​A​L​)​ ​g​e​t​s​ ​n​o​ ​a​s​s​e​r​t​i​o​n​ ​f​o​r​ ​t​h​i​s​ ​S​P​:​ ​i​t​ ​i​s​ ​a​n​s​w​e​r​e​d​ ​w​i​t​h​ ​a​ ​R​e​q​u​e​s​t​D​e​n​i​e​d​ ​s​t​a​t​u​s​,​ ​o​r​ ​t​h​e​ ​e​r​r​o​r​ ​p​a​g​e​ ​f​o​r​ ​a​n​ ​I​d​P​-​i​n​i​t​i​a​t​e​d​ ​s​i​g​n​-​i​n​.​ ​A​p​p​l​i​e​s​ ​w​h​e​t​h​e​r​ ​o​r​ ​n​o​t​ ​a​s​s​u​r​a​n​c​e​ ​i​s​ ​o​n​ ​f​o​r​ ​t​h​e​ ​t​e​n​a​n​t​.
+	 */
+	admin_saml_detail_minimum_ial_hint: string
+	/**
 	 * A​u​t​h​n​R​e​q​u​e​s​t​ ​s​i​g​n​a​t​u​r​e​ ​v​e​r​i​f​i​c​a​t​i​o​n
 	 */
 	admin_saml_detail_authn_request_signature: string
@@ -40754,6 +40766,18 @@ export type TranslationFunctions = {
 	 * Manage Field Mapping Sets
 	 */
 	admin_saml_detail_identity_mapping_policy_link: () => LocalizedString
+	/**
+	 * Minimum identity assurance level
+	 */
+	admin_saml_detail_minimum_ial: () => LocalizedString
+	/**
+	 * No minimum
+	 */
+	admin_saml_detail_minimum_ial_none: () => LocalizedString
+	/**
+	 * A person whose identity has not been proofed to this level (NIST SP 800-63A IAL) gets no assertion for this SP: it is answered with a RequestDenied status, or the error page for an IdP-initiated sign-in. Applies whether or not assurance is on for the tenant.
+	 */
+	admin_saml_detail_minimum_ial_hint: () => LocalizedString
 	/**
 	 * AuthnRequest signature verification
 	 */

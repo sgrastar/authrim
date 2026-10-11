@@ -324,4 +324,63 @@ describe('field mapping auto-map candidates', () => {
 		expect(pairs).not.toContainEqual(['src-phone', 'target-phone']);
 		expect(pairs).not.toContainEqual(['src-mobile', 'target-phone']);
 	});
+
+	it('connects the assurance sources to the eduPersonAssurance attribute and the IAL, and nothing else', () => {
+		const candidates = suggestAutoMapConnections({
+			fromNodes: [
+				nodeWithFieldRef('db-values', 'Assurance Values (eduPersonAssurance)', 'target', 'String', {
+					namespace: 'authrim.profile',
+					path: 'edu_person_assurance',
+					catalogEntryId: 'system.identity.edu_person_assurance'
+				}),
+				nodeWithFieldRef('db-ial', 'Identity Assurance Level (IAL)', 'target', 'String', {
+					namespace: 'authrim.profile',
+					path: 'assurance_ial',
+					catalogEntryId: 'system.identity.assurance_ial'
+				}),
+				node('db-email', 'Email', 'target', 'String'),
+				node('db-uuid', 'UUID', 'target', 'String'),
+				node('db-linked', 'Linked Identity', 'target', 'String')
+			],
+			toNodes: [
+				nodeWithFieldRef(
+					'saml-assurance',
+					'urn:oid:1.3.6.1.4.1.5923.1.1.1.11',
+					'destination',
+					'String',
+					{
+						namespace: 'saml.attribute',
+						path: 'urn:oid:1.3.6.1.4.1.5923.1.1.1.11'
+					}
+				),
+				nodeWithFieldRef('saml-ial', 'assuranceLevel', 'destination', 'String', {
+					namespace: 'saml.attribute',
+					path: 'urn:example:ial'
+				}),
+				node('saml-mail', 'mail', 'destination', 'String'),
+				nodeWithFieldRef('saml-eppn', 'eduPersonPrincipalName', 'destination', 'String', {
+					namespace: 'saml.attribute',
+					path: 'urn:oid:1.3.6.1.4.1.5923.1.1.1.6'
+				})
+			],
+			existingEdges: []
+		});
+		const pairs = candidates.map((candidate) => [candidate.fromId, candidate.toId]);
+
+		expect(pairs).toEqual(
+			expect.arrayContaining([
+				['db-values', 'saml-assurance'],
+				['db-ial', 'saml-ial']
+			])
+		);
+		// Nothing else is drawn to the assurance sources, and they are drawn to nothing else.
+		expect(pairs.filter(([from]) => from === 'db-values')).toEqual([
+			['db-values', 'saml-assurance']
+		]);
+		expect(pairs.filter(([, to]) => to === 'saml-assurance')).toEqual([
+			['db-values', 'saml-assurance']
+		]);
+		expect(pairs.filter(([from]) => from === 'db-ial')).toEqual([['db-ial', 'saml-ial']]);
+		expect(pairs).toContainEqual(['db-linked', 'saml-eppn']);
+	});
 });

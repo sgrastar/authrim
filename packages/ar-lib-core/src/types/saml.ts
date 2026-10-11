@@ -6,6 +6,7 @@
  */
 
 import type { AttributeReleaseConsentPolicy } from '../services/identity-release-consent';
+import type { IAL } from './settings/assurance-levels';
 
 /**
  * SAML Binding types
@@ -649,6 +650,13 @@ export interface SAMLSPConfig {
   allowedBindings: SAMLBinding[];
   /** Assertion validity duration in seconds (default: 300 = 5 minutes) */
   assertionValiditySeconds?: number;
+  /**
+   * The lowest identity assurance level (IAL) a person may have to sign in to this SP. A person
+   * below it gets no assertion: an SP-initiated request is answered with a Responder/RequestDenied
+   * status, an IdP-initiated one with the error page. Applies whether or not tenant-wide
+   * assurance (`assurance.enabled`) is on. Unset means no minimum.
+   */
+  minimumIal?: IAL;
   /** SP metadata XML (cached) */
   metadataXml?: string;
   /** SP metadata source URL */
@@ -977,8 +985,10 @@ export interface SAMLProviderUpdateRequest {
   expectedUpdatedAt: string;
   /** Provider name for display */
   name?: string;
-  /** Configuration */
-  config?: Partial<SAMLIdPConfig | SAMLSPConfig>;
+  /** Configuration. `minimumIal: null` removes an SP's minimum. */
+  config?:
+    | Partial<SAMLIdPConfig>
+    | (Partial<Omit<SAMLSPConfig, 'minimumIal'>> & { minimumIal?: IAL | null });
   /** Enable/disable */
   enabled?: boolean;
 }

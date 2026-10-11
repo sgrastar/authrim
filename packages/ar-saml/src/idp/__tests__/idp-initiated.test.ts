@@ -1,4 +1,5 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createEvidenceDb, type EvidenceDb } from './helpers/evidence-db';
 
 const mocks = vi.hoisted(() => ({
   sp: null as Record<string, unknown> | null,
@@ -15,7 +16,9 @@ const mocks = vi.hoisted(() => ({
   buildResponse: vi.fn(() => '<saml-response/>'),
   applySigning: vi.fn(async () => '<signed-response/>'),
   resolveNameId: vi.fn(async () => 'name-id'),
-  buildAttributes: vi.fn(() => [{ name: 'mail', values: ['user@example.test'] }]),
+  buildAttributes: vi.fn((_subject?: unknown, _config?: unknown) => [
+    { name: 'mail', values: ['user@example.test'] },
+  ]),
   filterDestination: vi.fn(
     async (input: {
       attributes: unknown[];
@@ -31,6 +34,14 @@ const mocks = vi.hoisted(() => ({
   ),
   coreExecute: vi.fn(async () => ({ rowsAffected: 1 })),
   enforceConsent: vi.fn(async () => undefined),
+  audit: vi.fn(async (_env: unknown, _entry: { metadata?: string }) => undefined),
+  assuranceSettings: {} as Record<string, unknown>,
+  evidenceAdapter: null as unknown,
+  coreAdapterError: null as Error | null,
+  getCoreAdapter: vi.fn(async () => {
+    if (mocks.coreAdapterError) throw mocks.coreAdapterError;
+    return mocks.evidenceAdapter;
+  }),
 }));
 
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
@@ -68,6 +79,8 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     resolveRuntimeIdentityMappingBinding: vi.fn(async () => mocks.runtimeBinding),
     filterSamlAttributesByDestinationConsentWithStatus: mocks.filterDestination,
     getLogger: () => ({ module: () => ({ error: vi.fn(), warn: vi.fn(), info: vi.fn() }) }),
+    createAuditLog: mocks.audit,
+    resolveEffectiveSettings: vi.fn(async () => mocks.assuranceSettings),
   };
 });
 
@@ -82,6 +95,7 @@ vi.mock('../../common/session-cookie', () => ({
 
 vi.mock('../../common/user-store', () => ({
   getSamlUserInfoById: vi.fn(async () => mocks.user),
+  getSamlUserCoreAdapter: mocks.getCoreAdapter,
 }));
 
 vi.mock('../../common/idp-signing', () => ({
@@ -478,5 +492,223 @@ describe('IdP-initiated SSO', () => {
       context('https://sp.example.test', consentTransactionId)
     );
     expect(response.status).toBe(500);
+  });
+});
+
+describe('IdP-initiated SSO and identity assurance', () => {
+  const IAL1_URI = 'https://example.org/assurance/IAL1';
+  const IAL2_URI = 'https://example.org/assurance/IAL2';
+  const EDU_PERSON_ASSURANCE = 'urn:oid:1.3.6.1.4.1.5923.1.1.1.11';
+  let evidence: EvidenceDb;
+
+  beforeAll(async () => {
+    evidence = await createEvidenceDb('user-a');
+  });
+
+  const sessionFor = (userId = 'user-a') => {
+    mocks.cookieSessionId = 'session-id';
+    mocks.sessionResponse = new Response(JSON.stringify({ userId, data: {} }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+  const auditedFailureKind = () =>
+    (JSON.parse(mocks.audit.mock.calls[0]?.[1].metadata ?? '{}') as { failure_kind?: string })
+      .failure_kind;
+  const eduMapping = () => ({
+    catalog: { entries: [] },
+    edges: [
+      {
+        id: 'edge.edu',
+        sourceRef: {
+          side: 'source',
+          namespace: 'authrim.profile',
+          path: 'edu_person_assurance',
+          catalogEntryId: 'system.identity.edu_person_assurance',
+        },
+        targetRef: {
+          side: 'destination',
+          namespace: 'saml.attribute',
+          path: EDU_PERSON_ASSURANCE,
+          catalogEntryId: 'field.saml.eduPersonAssurance',
+        },
+      },
+    ],
+  });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    evidence.clearEvidence();
+    evidence.resetReads();
+    mocks.evidenceAdapter = evidence.adapter;
+    mocks.coreAdapterError = null;
+    mocks.sp = baseSp({ minimumIal: 'IAL2', identityMapping: { catalog: { entries: [] } } });
+    mocks.spList = [];
+    mocks.cookieSessionId = undefined;
+    mocks.sharded = true;
+    mocks.sessionThrows = false;
+    mocks.user = { id: 'user-a', email: 'user@example.test' };
+    mocks.uiConfig = { baseUrl: 'https://ui.example.test' };
+    mocks.loginPolicy = 'ui_base_url';
+    mocks.nakedDomain = false;
+    mocks.runtimeBinding = null;
+    mocks.assuranceSettings = {};
+    sessionFor();
+  });
+
+  describe('the SP minimum IAL', () => {
+    it('shows the error page and builds no assertion for a person below it', async () => {
+      evidence.addEvidence('ev-1', 'IAL1');
+      const response = await handleIdPInitiated(
+        context('https://sp.example.test', consentTransactionId, 'relay')
+      );
+
+      expect(response.status).toBe(403);
+      const body = await response.text();
+      expect(body).not.toContain('SAMLResponse');
+      expect(body).not.toMatch(/IAL|assurance/i);
+      expect(mocks.buildResponse).not.toHaveBeenCalled();
+      expect(mocks.applySigning).not.toHaveBeenCalled();
+      expect(mocks.resolveNameId).not.toHaveBeenCalled();
+      expect(mocks.filterDestination).not.toHaveBeenCalled();
+      expect(mocks.enforceConsent).not.toHaveBeenCalled();
+      expect(mocks.audit).toHaveBeenCalledOnce();
+      expect(auditedFailureKind()).toBe('identity_assurance_insufficient');
+    });
+
+    it('judges a signed-in person before sending them through the consent flow', async () => {
+      evidence.addEvidence('ev-1', 'IAL1');
+      const response = await handleIdPInitiated(context('https://sp.example.test'));
+      expect(response.status).toBe(403);
+      expect(response.headers.get('location')).toBeNull();
+    });
+
+    it('lets a person at the minimum on to the consent flow and then to the assertion', async () => {
+      evidence.addEvidence('ev-1', 'IAL2');
+      const toConsent = await handleIdPInitiated(context('https://sp.example.test'));
+      expect(toConsent.status).toBe(302);
+      expect(toConsent.headers.get('location')).toContain('https://ui.example.test/login');
+
+      const response = await handleIdPInitiated(
+        context('https://sp.example.test', consentTransactionId)
+      );
+      expect(response.status).toBe(200);
+      expect(await response.text()).toContain('SAMLResponse');
+      expect(mocks.buildResponse).toHaveBeenCalledOnce();
+    });
+
+    it('stops a person whose evidence was revoked after they passed the first check', async () => {
+      evidence.addEvidence('ev-1', 'IAL2');
+      expect(
+        (await handleIdPInitiated(context('https://sp.example.test'))).headers.get('location')
+      ).toContain('https://ui.example.test/login');
+      evidence.db
+        .prepare('UPDATE assurance_evidence SET revoked_at = ? WHERE id = ?')
+        .run(Date.now() - 1, 'ev-1');
+      const response = await handleIdPInitiated(
+        context('https://sp.example.test', consentTransactionId)
+      );
+      expect(response.status).toBe(403);
+      expect(mocks.buildResponse).not.toHaveBeenCalled();
+    });
+
+    it('does not take an unreadable minimum for none', async () => {
+      mocks.sp = baseSp({ minimumIal: 'bogus', identityMapping: { catalog: { entries: [] } } });
+      evidence.addEvidence('ev-1', 'IAL2');
+      const response = await handleIdPInitiated(
+        context('https://sp.example.test', consentTransactionId)
+      );
+      expect(response.status).toBe(403);
+      expect(mocks.buildResponse).not.toHaveBeenCalled();
+    });
+
+    it('refuses with a server error, not as a person below the minimum, when the evidence cannot be read', async () => {
+      evidence.addEvidence('ev-1', 'IAL3');
+      mocks.coreAdapterError = new Error('account_data_route_not_found');
+      const response = await handleIdPInitiated(
+        context('https://sp.example.test', consentTransactionId)
+      );
+      expect(response.status).toBe(500);
+      expect(mocks.buildResponse).not.toHaveBeenCalled();
+      expect(auditedFailureKind()).toBe('identity_assurance_unavailable');
+    });
+
+    it('sends a person who is not signed in to sign in, judging no one', async () => {
+      mocks.cookieSessionId = undefined;
+      const response = await handleIdPInitiated(
+        context('https://sp.example.test', consentTransactionId)
+      );
+      expect(response.status).toBe(302);
+      expect(evidence.evidenceReads()).toBe(0);
+      expect(mocks.getCoreAdapter).not.toHaveBeenCalled();
+    });
+
+    it('reads no evidence and changes nothing for an SP without a minimum', async () => {
+      mocks.sp = baseSp({ identityMapping: { catalog: { entries: [] } } });
+      evidence.addEvidence('ev-1', 'IAL1');
+      const response = await handleIdPInitiated(
+        context('https://sp.example.test', consentTransactionId)
+      );
+      expect(response.status).toBe(200);
+      expect(mocks.buildResponse).toHaveBeenCalledOnce();
+      expect(evidence.evidenceReads()).toBe(0);
+      expect(mocks.getCoreAdapter).not.toHaveBeenCalled();
+      expect(mocks.audit).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('the assurance attributes', () => {
+    beforeEach(() => {
+      mocks.sp = baseSp({ identityMapping: eduMapping() });
+      mocks.assuranceSettings = {
+        'assurance.enabled': true,
+        'assurance.ial_assurance_values': JSON.stringify({
+          IAL1: [IAL1_URI],
+          IAL2: [IAL2_URI, IAL1_URI],
+        }),
+      };
+    });
+    const subjectGivenToAttributeRelease = () =>
+      mocks.buildAttributes.mock.calls.at(-1)?.[0] as Record<string, unknown>;
+
+    it('hands the values of the person’s IAL to the attribute release', async () => {
+      evidence.addEvidence('ev-1', 'IAL2');
+      await handleIdPInitiated(context('https://sp.example.test', consentTransactionId));
+      expect(mocks.buildResponse).toHaveBeenCalledOnce();
+      expect(subjectGivenToAttributeRelease().edu_person_assurance).toEqual([IAL1_URI, IAL2_URI]);
+      expect(evidence.evidenceReads()).toBe(1);
+    });
+
+    it('gives the attribute release the tenant, so a tenant-bound mapping binding matches', async () => {
+      evidence.addEvidence('ev-1', 'IAL2');
+      await handleIdPInitiated(context('https://sp.example.test', consentTransactionId));
+      const releaseConfig = mocks.buildAttributes.mock.calls.at(-1)?.[1] as { tenantId?: string };
+      expect(releaseConfig.tenantId).toEqual(expect.any(String));
+      expect(releaseConfig.tenantId).not.toBe('');
+    });
+
+    it('reads the evidence once for the minimum and the attribute together', async () => {
+      mocks.sp = baseSp({ identityMapping: eduMapping(), minimumIal: 'IAL2' });
+      evidence.addEvidence('ev-1', 'IAL2');
+      await handleIdPInitiated(context('https://sp.example.test', consentTransactionId));
+      expect(subjectGivenToAttributeRelease().edu_person_assurance).toEqual([IAL1_URI, IAL2_URI]);
+      expect(evidence.evidenceReads()).toBe(1);
+    });
+
+    it('reads nothing while assurance levels are off', async () => {
+      mocks.assuranceSettings = { 'assurance.enabled': false };
+      evidence.addEvidence('ev-1', 'IAL2');
+      await handleIdPInitiated(context('https://sp.example.test', consentTransactionId));
+      expect(mocks.buildResponse).toHaveBeenCalledOnce();
+      expect(subjectGivenToAttributeRelease()).not.toHaveProperty('edu_person_assurance');
+      expect(evidence.evidenceReads()).toBe(0);
+    });
+
+    it('releases no attribute, and still issues the assertion, when the evidence cannot be read', async () => {
+      mocks.coreAdapterError = new Error('account_data_route_not_found');
+      await handleIdPInitiated(context('https://sp.example.test', consentTransactionId));
+      expect(mocks.buildResponse).toHaveBeenCalledOnce();
+      expect(subjectGivenToAttributeRelease()).not.toHaveProperty('edu_person_assurance');
+    });
   });
 });

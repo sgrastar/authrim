@@ -764,6 +764,29 @@ export const AUTO_MAP_FIELD_CANDIDATES: AutoMapFieldCandidate[] = [
 		]
 	},
 	{
+		key: 'edu_person_assurance',
+		label: 'Assurance Values (eduPersonAssurance)',
+		aliases: [
+			'eduPersonAssurance',
+			'edupersonassurance',
+			'eduperson_assurance',
+			'assurance values',
+			'urn:oid:1.3.6.1.4.1.5923.1.1.1.11',
+			'urn:mace:dir:attribute-def:eduPersonAssurance'
+		]
+	},
+	{
+		key: 'assurance_ial',
+		label: 'Identity Assurance Level (IAL)',
+		aliases: [
+			'identity assurance level',
+			'assurance level',
+			'assuranceLevel',
+			'assurance_ial',
+			'ial'
+		]
+	},
+	{
 		key: 'linked_identity',
 		label: 'Linked Identity',
 		aliases: [

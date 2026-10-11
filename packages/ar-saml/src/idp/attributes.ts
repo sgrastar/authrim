@@ -30,6 +30,13 @@ export interface SAMLAttributeSubject {
   attributes?: Record<string, unknown>;
   customClaims?: Record<string, unknown>;
   customFields?: Record<string, unknown>;
+  /**
+   * The person's effective IAL ("IAL2"), read from their assurance evidence. Set only by
+   * resolveSAMLAssuranceAttributes, never from user data, and only when a mapping releases it.
+   */
+  assurance_ial?: string;
+  /** The assurance values (eduPersonAssurance URIs) of the person's IAL. Set like assurance_ial. */
+  edu_person_assurance?: string[];
 }
 
 export interface SAMLAttributeReleaseConfig {
@@ -293,6 +300,52 @@ export function resolveSAMLIdentityMappingFieldMappingBinding(
   ]);
 }
 
+/** The subject keys the identity assurance sources of a mapping read (system.identity.*). */
+export const SAML_ASSURANCE_SUBJECT_KEYS = {
+  ial: 'assurance_ial',
+  eduPersonAssurance: 'edu_person_assurance',
+} as const;
+
+export interface SAMLAssuranceSourceNeeds {
+  ial: boolean;
+  eduPersonAssurance: boolean;
+}
+
+/**
+ * Which identity assurance sources the mapping that will release attributes reads, so the
+ * person's evidence is read only when an attribute built from it can be released: a source that
+ * no edge reads, or whose destination field the SP's release policy hides, is not read. Never
+ * throws: a mapping that cannot be resolved needs nothing here (the release itself fails on it).
+ */
+export function findSAMLAssuranceSourceNeeds(
+  config: SAMLIdentityMappingReleaseConfig | undefined,
+  context: SAMLIdentityMappingRuntimeContext
+): SAMLAssuranceSourceNeeds {
+  const needs: SAMLAssuranceSourceNeeds = { ial: false, eduPersonAssurance: false };
+  if (!config || !hasSAMLIdentityMappingRuntimeConfig(config)) return needs;
+  let binding: SAMLIdentityMappingFieldMappingBinding;
+  try {
+    binding = resolveSAMLIdentityMappingFieldMappingBinding(config, context);
+  } catch {
+    return needs;
+  }
+  for (const edge of binding.edges) {
+    const sourcePath = mappingSourceSubjectPath(edge.sourceRef);
+    const key =
+      sourcePath === SAML_ASSURANCE_SUBJECT_KEYS.ial
+        ? 'ial'
+        : sourcePath === SAML_ASSURANCE_SUBJECT_KEYS.eduPersonAssurance
+          ? 'eduPersonAssurance'
+          : null;
+    if (!key || needs[key]) continue;
+    const attributeName = findMappedAttributeDescriptor(edge.targetRef, binding)?.name;
+    const hidden =
+      binding.destinationFieldPolicies?.[attributeName ?? edge.targetRef.path] === 'hidden';
+    if (!hidden) needs[key] = true;
+  }
+  return needs;
+}
+
 function isCompleteSAMLIdentityMappingBinding(
   config: SAMLIdentityMappingReleaseConfig
 ): config is SAMLIdentityMappingFieldMappingBinding {
@@ -529,32 +582,34 @@ function dedupeMissingAttributes(
   return deduped;
 }
 
-function readMappingSourceValue(subject: SAMLAttributeSubject, fieldRef: FieldRef): unknown {
+/** Where a mapping source reads from the subject: the path readSubjectValue is given. */
+function mappingSourceSubjectPath(fieldRef: FieldRef): string {
   switch (fieldRef.namespace) {
     case 'authrim.profile':
     case 'authrim.claim':
     case 'oidc.claim':
-      return readSubjectValue(subject, fieldRef.path);
+      return fieldRef.path;
     case 'authrim.claims':
     case 'claims':
-      return readSubjectValue(subject, `claims.${fieldRef.path}`);
+      return `claims.${fieldRef.path}`;
     case 'authrim.custom_claims':
     case 'custom_claims':
-      return readSubjectValue(subject, `customClaims.${fieldRef.path}`);
+      return `customClaims.${fieldRef.path}`;
     case 'authrim.custom_fields':
     case 'custom_fields':
-      return readSubjectValue(subject, `customFields.${fieldRef.path}`);
+      return `customFields.${fieldRef.path}`;
     case 'authrim.attributes':
     case 'attributes':
-      return readSubjectValue(subject, `attributes.${fieldRef.path}`);
+      return `attributes.${fieldRef.path}`;
     case 'authrim.system':
-      if (fieldRef.path === 'uid') {
-        return subject.id;
-      }
-      return readSubjectValue(subject, fieldRef.path);
+      return fieldRef.path === 'uid' ? 'id' : fieldRef.path;
     default:
-      return readSubjectValue(subject, fieldRef.path);
+      return fieldRef.path;
   }
+}
+
+function readMappingSourceValue(subject: SAMLAttributeSubject, fieldRef: FieldRef): unknown {
+  return readSubjectValue(subject, mappingSourceSubjectPath(fieldRef));
 }
 
 function fieldRefKey(fieldRef: FieldRef): string {

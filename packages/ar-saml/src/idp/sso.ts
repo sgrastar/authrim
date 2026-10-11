@@ -107,6 +107,7 @@ import {
   SAMLAttributeReleaseConsentRequiredError,
 } from './attribute-release-consent';
 import { scheduleSAMLPolicyFailureAudit } from './audit';
+import { checkSAMLIdentityAssurance, withSAMLAssuranceAttributes } from './identity-assurance';
 import { buildSAMLAssertionTiming } from './assertion-timing';
 import { buildSAMLPostBindingResponse } from '../common/post-binding-form';
 import { getSAMLLocalEntityIds } from '../common/entity-id';
@@ -367,6 +368,71 @@ export async function handleIdPSSO(c: Context<{ Bindings: Env }>): Promise<Respo
       return c.json(createConfigurationError(), 500);
     }
 
+    // The SP's minimum identity assurance level. No sign-in or consent step can raise a person's
+    // IAL, so this is judged before the user data, the NameID, the attribute release and its
+    // consent are touched, and only for a session that is going to be answered (one that a
+    // ForceAuthn request sends to sign in again is judged when the request comes back).
+    const identityAssurance = await checkSAMLIdentityAssurance(c, {
+      env,
+      tenantId,
+      userId: authnInteraction.session.userId,
+      spConfig,
+    });
+    if (identityAssurance.outcome !== 'allowed') {
+      const unavailable = identityAssurance.outcome === 'unavailable';
+      if (unavailable) {
+        log.error(
+          'Failed to read identity assurance evidence',
+          { tenantId, spEntityId: spConfig.entityId, authnRequestId: authnRequest.id },
+          identityAssurance.error instanceof Error
+            ? identityAssurance.error
+            : new Error(String(identityAssurance.error))
+        );
+      } else {
+        log.info('SAML sign-in refused: identity assurance level not met', {
+          tenantId,
+          spEntityId: spConfig.entityId,
+          authnRequestId: authnRequest.id,
+        });
+      }
+      scheduleSAMLPolicyFailureAudit(c, {
+        tenantId,
+        spEntityId: spConfig.entityId,
+        authnRequestId: authnRequest.id,
+        failureKind: unavailable
+          ? 'identity_assurance_unavailable'
+          : 'identity_assurance_insufficient',
+        policyDetails: {
+          required_ial: identityAssurance.required,
+          ...(identityAssurance.outcome === 'insufficient'
+            ? { actual_ial: identityAssurance.actual }
+            : {}),
+        },
+      });
+
+      // The answer says neither the level the person holds nor the one the SP requires.
+      const responseXml = await generateSAMLProtocolErrorResponse(
+        issuerUrl,
+        idpEntityId,
+        env,
+        authnRequest,
+        spConfig,
+        tenantId,
+        STATUS_CODES.RESPONDER,
+        unavailable ? undefined : STATUS_CODES.REQUEST_DENIED,
+        unavailable
+          ? 'The request could not be processed right now'
+          : 'SAML request was rejected by IdP policy',
+        unavailable ? 'identity_assurance_unavailable' : 'identity_assurance_insufficient'
+      );
+      return sendSAMLResponse(
+        c,
+        resolveSAMLResponseDestination(authnRequest, spConfig),
+        responseXml,
+        relayState
+      );
+    }
+
     // Get user information
     const userInfo = await getUserInfo(env, tenantId, authnInteraction.session.userId);
     if (!userInfo) {
@@ -386,7 +452,8 @@ export async function handleIdPSSO(c: Context<{ Bindings: Env }>): Promise<Respo
         tenantId,
         authnInteraction.session,
         parsedInput.requestContext,
-        log
+        log,
+        c
       );
     } catch (error) {
       if (error instanceof MissingRequiredSAMLAttributeError) {
@@ -1296,7 +1363,11 @@ async function generateSAMLResponse(
   tenantId: string,
   authSession: AuthenticatedSAMLSession,
   requestContext?: SAMLRequestContext,
-  log?: { debug(message: string, context?: Record<string, unknown>): void }
+  log?: {
+    debug(message: string, context?: Record<string, unknown>): void;
+    error(message: string, context?: Record<string, unknown>, error?: Error): void;
+  },
+  requestScope?: object
 ): Promise<string> {
   const { privateKeyPem, certificate } = await getSAMLIdPSigningMaterial(env, {
     tenantId,
@@ -1342,7 +1413,29 @@ async function generateSAMLResponse(
     persistentRegistry,
     identityMapping,
   });
-  const attributeRelease = buildSAMLAttributesForSPWithDiagnostics(userInfo, {
+  // The assurance values a mapping releases come from the person's evidence, read only when
+  // one is released.
+  const releaseSubject = await withSAMLAssuranceAttributes(userInfo, {
+    requestScope: requestScope ?? {},
+    env,
+    tenantId,
+    userId: authSession.userId,
+    identityMapping,
+    mappingContext: {
+      role: 'idp',
+      tenantId,
+      localEntityId: idpEntityId,
+      partnerEntityId: spConfig.entityId,
+      runtimeContext: identityMappingRuntimeContext,
+    },
+    onError: (message, error) =>
+      log?.error(
+        message,
+        { tenantId, spEntityId: spConfig.entityId, authnRequestId: authnRequest.id },
+        error instanceof Error ? error : new Error(String(error))
+      ),
+  });
+  const attributeRelease = buildSAMLAttributesForSPWithDiagnostics(releaseSubject, {
     ...spConfig,
     tenantId,
     localEntityId: idpEntityId,
