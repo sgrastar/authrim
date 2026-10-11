@@ -177,8 +177,42 @@ How a claim is kept:
   tenant-policy evidence when it is IAL2 or IAL3. When that setting cannot be read, the user is not
   created and the request returns a retryable 503.
 
-Anyone holding a SCIM token can assert any IAL for the users it provisions; issue tokens only to
-systems that are trusted to proof identities.
+### Ceiling on what SCIM may assert (`assurance.scim_max_ial`)
+
+The tenant setting `assurance.scim_max_ial` (a whole number from 1 to 3, deployment default
+`SCIM_MAX_IAL`) is the highest IAL a SCIM token may assert through the extension. **It is 1 until
+the tenant raises it**, so a SCIM source can assert IAL2 or IAL3 only after an administrator allows
+it.
+
+- It applies to every place the extension's `ial` is accepted: POST, PUT, PATCH and Bulk (each
+  operation on its own). A claim above the ceiling is refused with `400 invalidValue`, naming the
+  extension and the ceiling, **before anything is written**: the user is not created or updated and
+  no evidence changes.
+- It applies whether or not assurance levels (`assurance.enabled`) are on, like the other
+  per-source rules: the extension itself is accepted regardless, so its limit is too.
+- It limits SCIM-asserted evidence only. It does not limit evidence an administrator records, the
+  default IAL for accounts the organisation creates (`assurance.default_ial`), or a CSV import
+  (an administrator's action).
+- Lowering it does not revoke evidence already recorded above it. A user whose token-held claim is
+  above the lowered ceiling can still be updated: a PATCH that leaves the claim alone, and a PUT
+  that sends the same claim, are not new assertions. A claim sent anew above the ceiling (a
+  different level or verification) is refused.
+- A request that asserts no claim does not read the setting, and neither does a PATCH that leaves
+  the claim as it was. When the tenant setting cannot be read (or holds something that is not 1
+  to 3), a request that asserts a claim fails with a retryable `503` and writes nothing; "no
+  ceiling" is never assumed. An invalid deployment value in `SCIM_MAX_IAL` (not a whole number
+  from 1 to 3) is ignored and the default (IAL1) applies: it can only leave the ceiling at its
+  most restrictive value, never raise it.
+- A creation retried with the same `Idempotency-Key` after the ceiling was lowered is rejected
+  (`400`) when its claim is above the new ceiling, before the earlier creation is looked up. The
+  client should not retry the creation, and what it does depends on how the first request ended:
+  after a `201`, `GET` the user (it exists with the claim recorded then); after a `202`, follow
+  the Operations URL that was returned (the user is not readable until publication completes);
+  after a `500` or `503`, do not assume the account exists, and check the state of the
+  operation instead.
+
+The default is the constant `DEFAULT_SCIM_MAX_IAL` in
+`packages/ar-lib-core/src/types/settings/assurance-levels.ts`.
 
 ## Current boundaries
 

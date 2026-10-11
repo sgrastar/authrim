@@ -152,6 +152,10 @@ paths:
         evidence of the authenticating token. Without the extension, the tenant's default IAL
         (`assurance.default_ial`) is recorded as tenant-policy evidence when it is IAL2 or IAL3;
         when it cannot be read the account is not created (retryable 503).
+
+        The extension's `ial` may not be above the tenant's ceiling for SCIM
+        (`assurance.scim_max_ial`, IAL1 until raised): a higher level is refused with 400
+        invalidValue and the user is not created. The ceiling does not apply to the default IAL.
       security:
         - scimBearer: []
   /scim/v2/Operations/{id}:
@@ -216,7 +220,10 @@ paths:
         failures return 503.
 
 
-        The assurance extension replaces the claim of the authenticating token for the user; a
+        The assurance extension replaces the claim of the authenticating token for the user (its `ial`
+        within the tenant's ceiling for SCIM, `assurance.scim_max_ial`: above it the request is
+        refused with 400 invalidValue before anything is written, and 503 when the ceiling cannot be
+        read); a
         replacement without it withdraws that token's claim (evidence of other sources, such as
         another token, an administrator or the tenant default, is untouched). An extension that is
         not valid, or names a date or time that does not exist, is refused with 400 invalidValue.
@@ -778,6 +785,10 @@ components:
             - IAL1
             - IAL2
             - IAL3
+          description: >-
+            Not above the highest level the tenant accepts from SCIM (`assurance.scim_max_ial`,
+            IAL1 until the tenant raises it); a higher level is refused with 400 invalidValue and
+            nothing is written.
         verifiedAt:
           type: string
           format: date-time

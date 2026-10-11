@@ -293,6 +293,25 @@ describe('CSV account publication and grouping input boundary', () => {
       expect(state.write.mock.calls[0][0].runtimeUser.sensitiveValues).not.toHaveProperty('ial');
     });
 
+    it('is not held to the ceiling on what SCIM may assert (a CSV import is an administrator’s action)', async () => {
+      await processImportedRow(
+        withSettings({
+          'settings:tenant:tenant-a:assurance': JSON.stringify({
+            'assurance.scim_max_ial': 1,
+            'assurance.default_ial': 'IAL3',
+          }),
+        }),
+        { email: 'person@example.com', ial: 'IAL3' },
+        2,
+        options
+      );
+
+      expect(state.write.mock.calls[0][0].initialAssurance).toMatchObject({
+        level: 'IAL3',
+        evidenceType: 'import',
+      });
+    });
+
     it('refuses a row whose IAL is not valid, creating nothing', async () => {
       for (const validate_only of [false, true]) {
         await expect(

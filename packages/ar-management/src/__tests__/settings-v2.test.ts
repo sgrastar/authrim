@@ -2436,6 +2436,20 @@ describe('Settings API v2', () => {
         ).not.toBe(400);
       });
 
+      it('accepts the SCIM IAL ceiling only as a whole number from 1 to 3', async () => {
+        const { app, mockEnv } = createTestApp({ kv: createMockKV() });
+        const url = '/api/admin/tenants/tenant_123/settings/assurance';
+        for (const value of [0, 4, -1, 1.5, '2', 'IAL2', null, true]) {
+          const res = await patchAt(app, mockEnv, url, { 'assurance.scim_max_ial': value });
+          expect(res.status, JSON.stringify(value)).toBe(400);
+          expect((await res.json()) as ApiResponse).toMatchObject({ error: 'validation_failed' });
+        }
+        for (const value of [1, 2, 3]) {
+          const res = await patchAt(app, mockEnv, url, { 'assurance.scim_max_ial': value });
+          expect(res.status, String(value)).toBe(200);
+        }
+      });
+
       it('accepts advertised claims only as empty or comma-separated names', async () => {
         const { app, mockEnv } = createTestApp({ kv: createMockKV() });
         for (const url of [

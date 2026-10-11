@@ -3,7 +3,7 @@ import { resolve } from 'node:path';
 // @ts-expect-error node:sqlite is available in the required runtime but this package omits Node types.
 import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Env } from '@authrim/ar-lib-core/types/env';
 import { CanonicalIdentityRepository, type DatabaseAdapter } from '@authrim/ar-lib-core';
 import { describeScimTestHarness } from './scim-test-harness';
@@ -116,13 +116,28 @@ function settingsKv(values: Record<string, string>, options: { failReads?: boole
   } as unknown as KVNamespace;
 }
 
-const defaultIal = (level: string) => ({
-  'settings:tenant:default:assurance': JSON.stringify({ 'assurance.default_ial': level }),
+/**
+ * The tenant's assurance settings. The ceiling on what SCIM may assert is IAL3 unless a test
+ * says otherwise (`ceiling: null` leaves it unset, so its default, IAL1, applies).
+ */
+const assuranceSettings = (
+  values: { default_ial?: string; ceiling?: unknown } = {}
+): Record<string, string> => ({
+  'settings:tenant:default:assurance': JSON.stringify({
+    ...(values.ceiling === null ? {} : { 'assurance.scim_max_ial': values.ceiling ?? 3 }),
+    ...(values.default_ial ? { 'assurance.default_ial': values.default_ial } : {}),
+  }),
 });
+const defaultIal = (level: string) => assuranceSettings({ default_ial: level });
 
 describeScimTestHarness('SCIM assurance', (harness) => {
   const fetchScim = (path: string, options?: RequestInit) =>
     harness.app.fetch(harness.createRequest(path, options), harness.env as Env);
+
+  // The ceiling on what SCIM may assert is raised for these tests, apart from those about it.
+  beforeEach(() => {
+    harness.env.SETTINGS = settingsKv(assuranceSettings());
+  });
 
   function userBody(overrides: Record<string, unknown> = {}) {
     return {
@@ -798,6 +813,259 @@ describeScimTestHarness('SCIM assurance', (harness) => {
         expect(body.Operations.map((operation) => operation.status)).toEqual(['500', '200']);
         expect(store.active('user-001')).toEqual([]);
         expect(store.active('user-002')).toMatchObject([{ ial: 'IAL3' }]);
+      });
+    });
+
+    describe('the ceiling on what SCIM may assert (assurance.scim_max_ial)', () => {
+      const setCeiling = (ceiling: unknown) => {
+        harness.env.SETTINGS = settingsKv(assuranceSettings({ ceiling }));
+      };
+      const withIal = (ial: string, verifiedAt = VERIFIED, userName = 'johndoe') =>
+        claimBody(verifiedAt, ial, userName);
+      const detailOf = async (response: Response) =>
+        (await response.json()) as { detail: string; scimType: string; status: string };
+
+      it('is IAL1 when nothing is set: IAL1 is accepted, IAL2 and IAL3 are not', async () => {
+        const store = open();
+        setCeiling(null);
+
+        const accepted = await put(withIal('IAL1'));
+        expect(accepted.status).toBe(200);
+        expect(store.active('user-001')).toMatchObject([{ ial: 'IAL1' }]);
+
+        for (const ial of ['IAL2', 'IAL3']) {
+          const refused = await put(withIal(ial, VERIFIED, 'renamed-john'));
+          expect(refused.status, ial).toBe(400);
+          expect(await detailOf(refused)).toMatchObject({ scimType: 'invalidValue' });
+        }
+        // Nothing of the refused requests was written: not the user, not the evidence.
+        expect(harness.users.get('user-001')?.preferred_username).toBe('johndoe');
+        expect(store.active('user-001')).toMatchObject([{ ial: 'IAL1' }]);
+        expect(store.count()).toBe(1);
+      });
+
+      it('names the ceiling in the error and nothing else of the tenant', async () => {
+        open();
+        setCeiling(1);
+
+        const refused = await detailOf(await put(withIal('IAL3')));
+
+        expect(refused.detail).toContain(URN);
+        expect(refused.detail).toContain('IAL1');
+        expect(refused.detail).not.toMatch(/default_ial|scope|tenant_policy|settings/i);
+      });
+
+      it('accepts up to the ceiling, and more once the tenant raises it', async () => {
+        const store = open();
+        setCeiling(2);
+        expect((await put(withIal('IAL2'))).status).toBe(200);
+        expect(store.active('user-001')).toMatchObject([{ ial: 'IAL2' }]);
+        expect((await put(withIal('IAL3', '2026-09-02T00:00:00Z'))).status).toBe(400);
+
+        setCeiling(3);
+        expect((await put(withIal('IAL3', '2026-09-02T00:00:00Z'))).status).toBe(200);
+        expect(store.active('user-001')).toMatchObject([{ ial: 'IAL3' }]);
+      });
+
+      it('refuses a create above the ceiling before the user is created', async () => {
+        setCeiling(1);
+        const body = userBody({
+          schemas: [USER_SCHEMA, URN],
+          [URN]: { ial: 'IAL2', verifiedAt: VERIFIED },
+        });
+
+        const response = await create(body);
+
+        expect(response.status).toBe(400);
+        expect(harness.accountCreation.calls).toHaveLength(0);
+        expect(harness.accountCreation.written).toHaveLength(0);
+        // At the ceiling, the same create is accepted.
+        const ok = await create({
+          ...body,
+          userName: 'other-user',
+          emails: [{ value: 'other@example.com', primary: true }],
+          [URN]: { ial: 'IAL1', verifiedAt: VERIFIED },
+        });
+        expect(ok.status).toBe(201);
+        expect(harness.accountCreation.written[0]?.initialAssurance).toMatchObject({
+          level: 'IAL1',
+          evidenceType: 'scim',
+        });
+      });
+
+      it('refuses a patch that raises the claim above the ceiling, changing nothing', async () => {
+        const store = open();
+        setCeiling(1);
+        await put(withIal('IAL1'));
+        harness.identifierReplacement.calls = [];
+
+        const refused = await patch([
+          { op: 'replace', path: 'userName', value: 'patched-name' },
+          { op: 'replace', path: `${URN}:ial`, value: 'IAL3' },
+        ]);
+
+        expect(refused.status).toBe(400);
+        expect(harness.users.get('user-001')?.preferred_username).toBe('johndoe');
+        expect(harness.identifierReplacement.calls).toEqual([]);
+        expect(store.active('user-001')).toMatchObject([{ ial: 'IAL1' }]);
+        expect(store.count()).toBe(1);
+      });
+
+      it('refuses, per operation, what a Bulk request asserts above the ceiling', async () => {
+        const store = open();
+        setCeiling(1);
+
+        const response = await bulk([
+          { method: 'PUT', path: '/Users/user-001', data: withIal('IAL3', VERIFIED, 'bulk-john') },
+          { method: 'PUT', path: '/Users/user-002', data: withIal('IAL1', VERIFIED, 'bulk-jane') },
+          {
+            method: 'PATCH',
+            path: '/Users/user-002',
+            data: {
+              schemas: [PATCH_SCHEMA],
+              Operations: [
+                { op: 'replace', path: 'userName', value: 'patched-jane' },
+                { op: 'replace', path: `${URN}:ial`, value: 'IAL2' },
+              ],
+            },
+          },
+          {
+            method: 'POST',
+            path: '/Users',
+            bulkId: 'new',
+            data: userBody({
+              userName: 'bulk-new',
+              emails: [{ value: 'bulk-new@example.com', primary: true }],
+              schemas: [USER_SCHEMA, URN],
+              [URN]: { ial: 'IAL2', verifiedAt: VERIFIED },
+            }),
+          },
+        ]);
+
+        const body = (await response.json()) as {
+          Operations: Array<{ status: string; response?: { scimType?: string } }>;
+        };
+        expect(body.Operations.map((operation) => operation.status)).toEqual([
+          '400',
+          '200',
+          '400',
+          '400',
+        ]);
+        expect(body.Operations[0]?.response?.scimType).toBe('invalidValue');
+        expect(harness.users.get('user-001')?.preferred_username).toBe('johndoe');
+        expect(harness.users.get('user-002')?.preferred_username).toBe('bulk-jane');
+        expect(store.active('user-001')).toEqual([]);
+        expect(store.active('user-002')).toMatchObject([{ ial: 'IAL1' }]);
+        expect(harness.accountCreation.calls).toHaveLength(0);
+      });
+
+      it('does not revoke what was recorded above a ceiling lowered later, and keeps the user updatable', async () => {
+        const store = open();
+        setCeiling(3);
+        await put(withIal('IAL3'));
+        setCeiling(1);
+
+        // Still in force.
+        expect(store.active('user-001')).toMatchObject([{ ial: 'IAL3' }]);
+        // A patch that leaves the claim alone, and a replacement that sends the same claim, work.
+        expect((await patch([{ op: 'replace', path: 'displayName', value: 'John' }])).status).toBe(
+          200
+        );
+        expect((await put(withIal('IAL3', VERIFIED, 'johndoe'))).status).toBe(200);
+        expect(store.active('user-001')).toMatchObject([{ ial: 'IAL3' }]);
+        // A new assertion above the ceiling is refused, and one without the claim withdraws it.
+        expect((await put(withIal('IAL3', '2026-09-05T00:00:00Z'))).status).toBe(400);
+        expect(store.active('user-001')).toMatchObject([{ ial: 'IAL3', verifiedAt: VERIFIED_MS }]);
+        expect((await put(plainBody())).status).toBe(200);
+        expect(store.active('user-001')).toEqual([]);
+      });
+
+      it('fails closed, writing nothing, when the ceiling cannot be read', async () => {
+        const store = open();
+        harness.env.SETTINGS = settingsKv({}, { failReads: true });
+
+        const response = await put(withIal('IAL1', VERIFIED, 'renamed-john'));
+
+        expect(response.status).toBe(503);
+        expect(response.headers.get('Retry-After')).not.toBeNull();
+        expect(harness.users.get('user-001')?.preferred_username).toBe('johndoe');
+        expect(store.count()).toBe(0);
+        const created = await create(
+          userBody({
+            schemas: [USER_SCHEMA, URN],
+            [URN]: { ial: 'IAL1', verifiedAt: VERIFIED },
+          })
+        );
+        expect(created.status).toBe(503);
+        expect(harness.accountCreation.calls).toHaveLength(0);
+      });
+
+      it.each([0, 4, 1.5, '2'])('fails closed on a stored ceiling of %s', async (stored) => {
+        open();
+        setCeiling(stored);
+
+        const response = await put(withIal('IAL1'));
+
+        expect(response.status).toBe(503);
+      });
+
+      it('is not consulted for a request without the claim', async () => {
+        open();
+        harness.env.SETTINGS = settingsKv({}, { failReads: true });
+
+        expect((await put(plainBody())).status).toBe(200);
+      });
+
+      it('does not read the ceiling for a patch that leaves the claim alone, even for a user who holds one', async () => {
+        const store = open();
+        await put(withIal('IAL2'));
+        const readsBefore = store.count();
+        harness.env.SETTINGS = settingsKv({}, { failReads: true });
+
+        const single = await patch([{ op: 'replace', path: 'displayName', value: 'John' }]);
+        const inBulk = await bulk([
+          {
+            method: 'PATCH',
+            path: '/Users/user-001',
+            data: {
+              schemas: [PATCH_SCHEMA],
+              Operations: [{ op: 'replace', path: 'displayName', value: 'Johnny' }],
+            },
+          },
+        ]);
+
+        expect(single.status).toBe(200);
+        expect(
+          ((await inBulk.json()) as { Operations: Array<{ status: string }> }).Operations[0]?.status
+        ).toBe('200');
+        const keysRead = vi
+          .mocked(harness.env.SETTINGS!.get)
+          .mock.calls.map((call) => String(call[0]));
+        expect(keysRead.filter((key) => key.includes(':assurance'))).toEqual([]);
+        expect(store.count()).toBe(readsBefore);
+        expect(store.active('user-001')).toMatchObject([{ ial: 'IAL2' }]);
+      });
+
+      it('does not limit the default IAL for accounts the organisation creates, nor evidence an administrator records', async () => {
+        const store = open();
+        harness.env.SETTINGS = settingsKv(assuranceSettings({ ceiling: 1, default_ial: 'IAL3' }));
+
+        // A create without the extension gets the tenant's default (IAL3), above the ceiling.
+        expect((await create()).status).toBe(201);
+        expect(harness.accountCreation.written[0]?.initialAssurance).toMatchObject({
+          level: 'IAL3',
+          evidenceType: 'tenant_policy',
+        });
+        // An administrator records IAL3 evidence.
+        await store.repository.createAssuranceEvidence({
+          subject_id: 'subject:user-001',
+          evidence_type: 'admin_attestation',
+          issuer_ref: 'admin:a',
+          assurance_framework: 'nist_800_63',
+          assurance_level: 'IAL3',
+          verified_at: 1,
+        });
+        expect(store.active('user-001')).toHaveLength(1);
       });
     });
 

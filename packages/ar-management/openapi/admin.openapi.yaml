@@ -14407,7 +14407,8 @@ paths:
         sources is never touched. A claim is the level with its verification time (`ial_verified_at`,
         or the time the job was created when the row gives none), so the same level without a date
         in a later import is a new verification, while the same job processed again records nothing
-        new. `ial_verified_at` without `ial`, an unknown `ial`, a time in the future and a date
+        new. A CSV import is an administrator's action: it is not held to the ceiling on what SCIM
+        tokens may assert (`assurance.scim_max_ial`). `ial_verified_at` without `ial`, an unknown `ial`, a time in the future and a date
         that does not exist (February 30, month 13) fail the row. The columns are read as assurance
         only where the tenant has no custom attribute named `ial` or `ial_verified_at` (such names
         cannot be given to a custom attribute, nor an inactive one with such a name made active):

@@ -50,6 +50,7 @@ import {
   ensureDatabaseAdapter,
   transitionAccountAuthenticationState,
   DefaultIALUnavailableError,
+  ScimMaxIALUnavailableError,
   resolveTenantPolicyInitialAssurance,
 } from '@authrim/ar-lib-core';
 import { logScimAudit } from '@authrim/ar-lib-scim';
@@ -88,6 +89,8 @@ import {
   claimOf,
   readScimAssurance,
   sameClaim,
+  assertScimClaimWithinCeiling,
+  ScimIalCeilingError,
   scimAssuranceResource,
   scimClaimInitialAssurance,
   scimTokenRef,
@@ -1204,6 +1207,26 @@ function scimError(
   return c.json(error, status);
 }
 
+/** What a SCIM client is told of a claim above the ceiling: the extension and the ceiling only. */
+function scimCeilingDetail(error: ScimIalCeilingError): string {
+  return `${SCIM_ASSURANCE_SCHEMA}.ial must not be above ${error.ceiling}, the highest level accepted from SCIM`;
+}
+
+const SCIM_CEILING_UNAVAILABLE_DETAIL =
+  'The identity assurance ceiling for SCIM is unavailable; retry shortly';
+
+/** The response for a claim refused by the ceiling (400), or one that could not be checked (503). */
+function scimCeilingError(c: ScimContext, error: unknown): Response | null {
+  if (error instanceof ScimIalCeilingError) {
+    return scimError(c, 400, scimCeilingDetail(error), 'invalidValue');
+  }
+  if (error instanceof ScimMaxIALUnavailableError) {
+    c.header('Retry-After', '5');
+    return scimError(c, 503, SCIM_CEILING_UNAVAILABLE_DETAIL);
+  }
+  return null;
+}
+
 function scimMappingError(c: ScimContext, error: unknown): Response | null {
   if (!(error instanceof ScimIdentityMappingError)) return null;
   const status = error.code === 'mapping_required_output_missing' ? 400 : 503;
@@ -1615,7 +1638,11 @@ function scimAssuranceSchema(baseUrl: string) {
     description:
       'The identity assurance level (NIST SP 800-63A IAL) the provisioning client asserts for the user, and when the identity was proofed. Each client replaces its own claim; a replacement without it withdraws the claim.',
     attributes: [
-      attribute('ial', 'IAL1, IAL2 or IAL3', true),
+      attribute(
+        'ial',
+        'IAL1, IAL2 or IAL3, not above the highest level the tenant accepts from SCIM (IAL1 until raised)',
+        true
+      ),
       attribute(
         'verifiedAt',
         'When the identity was proofed (a date-time with a time zone)',
@@ -2558,6 +2585,9 @@ app.post('/Users', async (c) => {
     if (!internalUser.email_verified) internalUser.email_verified = 0;
     if (internalUser.active === undefined) internalUser.active = 1;
 
+    // A level above the tenant's ceiling for SCIM is refused before anything is created.
+    await assertScimClaimWithinCeiling(c.env, tenantId, claimOf(scimUser), async () => null);
+
     const result = await executeScimAccountCreation(
       c,
       tenantId,
@@ -2611,6 +2641,8 @@ app.post('/Users', async (c) => {
 
     return c.json(responseUser, 201);
   } catch (error) {
+    const ceilingResponse = scimCeilingError(c, error);
+    if (ceilingResponse) return ceilingResponse;
     const mappingResponse = scimMappingError(c, error);
     if (mappingResponse) return mappingResponse;
     const lookupInputResponse = scimLookupInputError(c, error);
@@ -2731,6 +2763,10 @@ app.put('/Users/:id', async (c) => {
         toCustomClaimErrorExtensions(customFieldValidation)
       );
     }
+    // A level above the tenant's ceiling for SCIM is refused before anything is written.
+    await assertScimClaimWithinCeiling(c.env, tenantId, claimOf(scimUser), () =>
+      readScimAssurance(coreAdapter, tenantId, userId, scimTokenRef(c))
+    );
     internalUser.updated_at = new Date().toISOString();
 
     await withGroupInputWrite(coreAdapter, tenantId, userId, 'scim:user-update', async () => {
@@ -2776,6 +2812,8 @@ app.put('/Users/:id', async (c) => {
 
     return c.json(responseUser);
   } catch (error) {
+    const ceilingResponse = scimCeilingError(c, error);
+    if (ceilingResponse) return ceilingResponse;
     const mappingResponse = scimMappingError(c, error);
     if (mappingResponse) return mappingResponse;
     const lookupInputResponse = scimLookupInputError(c, error);
@@ -2877,6 +2915,12 @@ app.patch('/Users/:id', async (c) => {
         toCustomClaimErrorExtensions(customFieldValidation)
       );
     }
+    // A level above the tenant's ceiling for SCIM is refused before anything is written. Only a
+    // claim the patch changed is an assertion: a patch that leaves it as it was does not read
+    // the setting (and is not held up by it).
+    if (!sameClaim(heldClaim, claimOf(scimUser))) {
+      await assertScimClaimWithinCeiling(c.env, tenantId, claimOf(scimUser), async () => heldClaim);
+    }
     internalUser.updated_at = new Date().toISOString();
 
     await withGroupInputWrite(coreAdapter, tenantId, userId, 'scim:user-update', async () => {
@@ -2923,6 +2967,8 @@ app.patch('/Users/:id', async (c) => {
 
     return c.json(responseUser);
   } catch (error) {
+    const ceilingResponse = scimCeilingError(c, error);
+    if (ceilingResponse) return ceilingResponse;
     const mappingResponse = scimMappingError(c, error);
     if (mappingResponse) return mappingResponse;
     const lookupInputResponse = scimLookupInputError(c, error);
@@ -3962,6 +4008,21 @@ async function processOperation(
       { action: 'bulk_operation', method, path },
       error as Error
     );
+    if (error instanceof ScimIalCeilingError || error instanceof ScimMaxIALUnavailableError) {
+      const refused = error instanceof ScimIalCeilingError;
+      const status = refused ? '400' : '503';
+      return {
+        method,
+        bulkId,
+        status,
+        response: {
+          schemas: [SCIM_SCHEMAS.ERROR],
+          status,
+          detail: refused ? scimCeilingDetail(error) : SCIM_CEILING_UNAVAILABLE_DETAIL,
+          ...(refused ? { scimType: 'invalidValue' } : {}),
+        },
+      };
+    }
     const mappingError = error instanceof ScimIdentityMappingError ? error : null;
     const lookupInputError =
       error instanceof Error && error.message === 'lookup_email_invalid' ? error : null;
@@ -4074,6 +4135,9 @@ async function processUserOperation(
       internalUser.updated_at = now;
       if (!internalUser.email_verified) internalUser.email_verified = 0;
       if (internalUser.active === undefined) internalUser.active = 1;
+
+      // A level above the tenant's ceiling for SCIM is refused before anything is created.
+      await assertScimClaimWithinCeiling(c.env, tenantId, claimOf(scimUser), async () => null);
 
       let result: DurableInitialAccountDirectoryWriteResult;
       try {
@@ -4337,6 +4401,10 @@ async function processUserOperation(
           },
         };
       }
+      // A level above the tenant's ceiling for SCIM is refused before anything is written.
+      await assertScimClaimWithinCeiling(c.env, tenantId, claimOf(scimUser), () =>
+        readScimAssurance(coreAdapter, tenantId, resourceId as string, scimTokenRef(c))
+      );
       internalUser.updated_at = new Date().toISOString();
 
       await withGroupInputWrite(
@@ -4522,6 +4590,17 @@ async function processUserOperation(
             ...toCustomClaimErrorExtensions(customFieldValidation),
           },
         };
+      }
+      // A level above the tenant's ceiling for SCIM is refused before anything is written. Only a
+      // claim the patch changed is an assertion: a patch that leaves it as it was does not read
+      // the setting (and is not held up by it).
+      if (!sameClaim(heldClaim, claimOf(scimUser))) {
+        await assertScimClaimWithinCeiling(
+          c.env,
+          tenantId,
+          claimOf(scimUser),
+          async () => heldClaim
+        );
       }
       internalUser.updated_at = new Date().toISOString();
 

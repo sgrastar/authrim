@@ -15,7 +15,10 @@ import {
   IAL_FRAMEWORK,
   assuranceEvidenceId,
   isIAL,
+  resolveScimMaxIAL,
+  scimClaimWithinMaxIAL,
   type AssuranceEvidenceRow,
+  type IAL,
   type DatabaseAdapter,
   type Env,
   type InitialAssuranceEvidence,
@@ -166,4 +169,39 @@ export async function applyScimAssurance(
     expires_at: claim.expiresAt,
   });
   return 'recorded';
+}
+
+/**
+ * The claim asserts a level above the ceiling the tenant allows SCIM tokens
+ * (`assurance.scim_max_ial`). Nothing is written for the request.
+ */
+export class ScimIalCeilingError extends Error {
+  constructor(readonly ceiling: IAL) {
+    super('scim_ial_above_ceiling');
+    this.name = 'ScimIalCeilingError';
+  }
+}
+
+/**
+ * Checks, before anything is written, that a claim a request asserts is within the tenant's
+ * ceiling for SCIM (`assurance.scim_max_ial`, IAL1 until raised; whether or not assurance levels
+ * are enabled). A request without a claim does not read the setting. Resending the claim the
+ * token already holds is not a new assertion, so a ceiling lowered later does not block updating
+ * a user whose earlier claim is above it (and does not revoke that claim). The setting being
+ * unreadable throws `ScimMaxIALUnavailableError`: "no ceiling" is never assumed.
+ *
+ * `held` reads what the token holds for the user (nothing for a user being created); it is
+ * called only for a claim above the ceiling.
+ */
+export async function assertScimClaimWithinCeiling(
+  env: Env,
+  tenantId: string,
+  claim: ScimAssuranceClaim | null,
+  held: () => Promise<ScimAssuranceClaim | null>
+): Promise<void> {
+  if (!claim) return;
+  const ceiling = await resolveScimMaxIAL(env, tenantId);
+  if (scimClaimWithinMaxIAL(claim.ial, ceiling)) return;
+  if (sameClaim(await held(), claim)) return;
+  throw new ScimIalCeilingError(ceiling);
 }

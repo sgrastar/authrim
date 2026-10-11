@@ -10,6 +10,8 @@ import {
   idaProfileProblem,
   outboundAcrMappingsProblem,
   samlAuthnContextAALProblem,
+  SCIM_MAX_IAL_MAX,
+  SCIM_MAX_IAL_MIN,
   ALL_CATEGORY_META,
   AUTHORIZATION_SIGNING_ALGORITHMS,
   REQUEST_OBJECT_SIGNING_ALGORITHMS,
@@ -228,6 +230,17 @@ export function validateDiscoveryPatch(body: SettingsPatchRequest): string | nul
  * the Identity Assurance profile.
  */
 export function validateAssurancePatch(body: SettingsPatchRequest): string | null {
+  // The highest IAL a SCIM token may assert: a whole number over the IALs of the service.
+  const ceiling = body.set?.['assurance.scim_max_ial'];
+  if (
+    ceiling !== undefined &&
+    (typeof ceiling !== 'number' ||
+      !Number.isInteger(ceiling) ||
+      ceiling < SCIM_MAX_IAL_MIN ||
+      ceiling > SCIM_MAX_IAL_MAX)
+  ) {
+    return `assurance.scim_max_ial must be a whole number from ${SCIM_MAX_IAL_MIN} to ${SCIM_MAX_IAL_MAX}`;
+  }
   const checks: Array<[string, (parsed: unknown) => string | null]> = [
     ['assurance.scope_aal_requirements', aalMapProblem],
     ['assurance.upstream_acr_mappings', aalMapProblem],

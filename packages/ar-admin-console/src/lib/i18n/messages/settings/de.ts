@@ -155,6 +155,9 @@ export const deSettings: Record<keyof typeof jaSettings, string> = {
 	'set.k.federation.scim_token_max_expiry': 'Längste Gültigkeit von SCIM-Token',
 	'set.k.federation.scim_token_max_expiry.desc':
 		'Ein SCIM-Token kann nicht mit längerer Gültigkeit erstellt werden (höchstens ein Jahr). Bereits ausgestellte Token ändern sich nicht.',
+	'set.k.assurance.scim_max_ial': 'Höchste Identitätsvertrauensstufe (IAL), die SCIM angeben darf',
+	'set.k.assurance.scim_max_ial.desc':
+		'Wie hoch ein externes System über SCIM die Identitätsvertrauensstufe einer Person angeben darf: 1 ist IAL1 (keine Identitätsprüfung), 2 ist IAL2, 3 ist IAL3. Eine Anfrage mit höherer Stufe wird abgelehnt und ändert nichts. Der Wert beginnt bei 1; SCIM kann IAL2 oder IAL3 erst angeben, wenn Sie ihn erhöhen. Bereits erfasste Stufen werden beim Senken nicht entfernt. Nicht begrenzt sind die Angaben von Administratoren, die Stufe für von der Organisation angelegte Konten und CSV-Importe.',
 	'set.page.enterprise': 'Unternehmens-SSO (SAML)',
 	'set.page.enterprise.desc':
 		'Legt fest, ob dieser Mandant überhaupt auf SAML antwortet, wie lange SAML-Assertions und -Anfragen gültig bleiben und womit neue SAML-Anbieter beginnen. Anbieter (IdPs und SPs) werden vorerst noch auf der SAML-Seite der bisherigen Verwaltungsoberfläche registriert.',

@@ -10,7 +10,8 @@
 
 import type { IAL } from '../types/settings/assurance-levels';
 import { resolveEffectiveSettings, type EffectiveSettingsEnv } from './effective-settings';
-import { isIAL, type InitialAssuranceEvidence } from './identity-assurance';
+import { isIAL, maxIAL, type InitialAssuranceEvidence } from './identity-assurance';
+import { SCIM_MAX_IAL_MAX, SCIM_MAX_IAL_MIN } from '../types/settings/assurance-levels';
 
 /** The evidence type, and issuer, of the tenant's default for accounts the organisation creates. */
 export const TENANT_POLICY_EVIDENCE_TYPE = 'tenant_policy';
@@ -62,4 +63,49 @@ export async function resolveTenantPolicyInitialAssurance(
     issuerRef: TENANT_POLICY_ISSUER_REF,
     verifiedAt: now,
   };
+}
+
+/**
+ * `assurance.scim_max_ial` could not be read, or holds something that is not a level (1 to 3). A
+ * SCIM claim is then neither accepted nor refused as above the ceiling: the request fails, as
+ * "no ceiling" is never assumed.
+ */
+export class ScimMaxIALUnavailableError extends Error {
+  constructor(cause?: unknown) {
+    super('scim_max_ial_unavailable');
+    this.name = 'ScimMaxIALUnavailableError';
+    if (cause !== undefined) this.cause = cause;
+  }
+}
+
+/**
+ * The highest IAL a SCIM token may assert through the assurance extension (the tenant's
+ * `assurance.scim_max_ial`; IAL1 until it is raised). It limits SCIM-asserted evidence only: not
+ * what an administrator records, the default IAL for accounts the organisation creates, or a CSV
+ * import. It applies whether or not assurance levels are enabled. Throws
+ * {@link ScimMaxIALUnavailableError} when it cannot be read.
+ */
+export async function resolveScimMaxIAL(env: EffectiveSettingsEnv, tenantId: string): Promise<IAL> {
+  let value: unknown;
+  try {
+    value = (await resolveEffectiveSettings(env, 'assurance', { tenantId }))[
+      'assurance.scim_max_ial'
+    ];
+  } catch (error) {
+    throw new ScimMaxIALUnavailableError(error);
+  }
+  if (
+    typeof value !== 'number' ||
+    !Number.isInteger(value) ||
+    value < SCIM_MAX_IAL_MIN ||
+    value > SCIM_MAX_IAL_MAX
+  ) {
+    throw new ScimMaxIALUnavailableError();
+  }
+  return `IAL${value}` as IAL;
+}
+
+/** Whether a SCIM claim of `claimed` is within the ceiling `max`. */
+export function scimClaimWithinMaxIAL(claimed: IAL, max: IAL): boolean {
+  return maxIAL(claimed, max) === max;
 }
