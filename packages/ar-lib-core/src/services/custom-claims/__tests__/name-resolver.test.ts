@@ -51,6 +51,11 @@ describe('ClaimNameResolver', () => {
       expect(resolver.isStandardClaimCollision('authrim_subject_principal')).toBe(true);
     });
 
+    it('detects the identity assurance claims, which only the evidence may state', () => {
+      expect(resolver.isStandardClaimCollision('eduperson_assurance')).toBe(true);
+      expect(resolver.isStandardClaimCollision('verified_claims')).toBe(true);
+    });
+
     it('detects OIDC standard claims', () => {
       expect(resolver.isStandardClaimCollision('email')).toBe(true);
       expect(resolver.isStandardClaimCollision('name')).toBe(true);

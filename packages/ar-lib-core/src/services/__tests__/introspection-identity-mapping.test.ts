@@ -260,6 +260,48 @@ describe('applyIntrospectionIdentityMapping', () => {
     );
   });
 
+  it('does not let a mapping state a person’s identity assurance, in any namespace', async () => {
+    for (const namespace of ['introspection.claim', 'custom']) {
+      mocks.filterProfile.mockClear();
+      mocks.resolveBinding.mockResolvedValue({
+        fieldMappingSetId: 'mapping_set_1',
+        fieldMappingVersionId: 'mapping_version_1',
+        fieldMappingSet: { id: 'mapping_set_1' },
+        catalog: { id: 'catalog_1', entries: [] },
+        edges: [],
+        transforms: [],
+        validationRules: [],
+        destinationNamespace: namespace,
+        destinationProfileId: 'profile_rs',
+        destinationProfileIds: ['profile_rs'],
+      });
+      mocks.executeRuntimeMapping.mockReturnValue({
+        status: 'success',
+        values: [
+          {
+            value: ['https://example.org/assurance/IAL3'],
+            sourceRef: { side: 'destination', namespace, path: 'eduperson_assurance' },
+          },
+          {
+            value: { claims: { given_name: 'Forged' } },
+            sourceRef: { side: 'destination', namespace, path: 'verified_claims' },
+          },
+          {
+            value: 'Engineering',
+            sourceRef: { side: 'destination', namespace, path: 'department' },
+          },
+        ],
+      });
+
+      await applyIntrospectionIdentityMapping(input);
+
+      const released = mocks.filterProfile.mock.calls[0][0].claims;
+      expect(released).toMatchObject({ department: 'Engineering' });
+      expect(released).not.toHaveProperty('eduperson_assurance');
+      expect(released).not.toHaveProperty('verified_claims');
+    }
+  });
+
   it('rejects mappings that reference more than one Destination Profile', async () => {
     mocks.resolveBinding.mockResolvedValue({
       fieldMappingSetId: 'mapping_set_1',

@@ -618,6 +618,12 @@ describe('Token Claim Evaluator Service', () => {
           { type: 'add_claim', claim_name: 'authrim_subject_ref', claim_value: 'sr1.x.y' },
           { type: 'add_claim', claim_name: 'original_issuer', claim_value: 'https://idp' },
           { type: 'add_claim', claim_name: 'authrim_subject_principal', claim_value: 'client' },
+          {
+            type: 'add_claim',
+            claim_name: 'eduperson_assurance',
+            claim_value: ['https://example.org/assurance/IAL3'],
+          },
+          { type: 'add_claim', claim_name: 'verified_claims', claim_value: { claims: {} } },
           { type: 'add_claim', claim_name: 'valid_claim', claim_value: 'allowed' },
         ]),
         priority: 100,
@@ -630,7 +636,7 @@ describe('Token Claim Evaluator Service', () => {
 
       const result = await evaluator.evaluate(baseContext, 'access');
 
-      // Reserved claims should be skipped
+      // Reserved claims should be skipped (a rule saved before they were reserved included)
       expect(result.claims_to_add).toEqual({ valid_claim: 'allowed' });
       expect(result.claims_to_add).not.toHaveProperty('sub');
       expect(result.claims_to_add).not.toHaveProperty('iss');

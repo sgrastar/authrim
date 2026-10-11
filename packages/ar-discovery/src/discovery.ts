@@ -38,10 +38,7 @@ import {
   CLIENT_ASSERTION_SIGNING_ALGS,
   setBoundedMapEntry,
   EDUPERSON_ASSURANCE_CLAIM,
-  VERIFIED_CLAIMS_CLAIM,
   parseIALAssuranceValues,
-  parseIDAProfile,
-  type IDAProfile,
 } from '@authrim/ar-lib-core';
 import type { JWK } from 'jose';
 import {
@@ -111,11 +108,9 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
   // The acr values advertised: discovery.acr_values_supported, and with assurance enabled the
   // values Authrim issues for each AAL (urn:authrim:aal:1..3).
   let acrValuesSupported: string[] = [];
-  // Identity assurance claims, advertised only while the tenant has assurance enabled and
-  // something configured to release: the eduperson_assurance scope and claim (assurance values
-  // are set), and verified_claims (an identity assurance profile is set).
+  // The eduperson_assurance scope and claim, advertised only while the tenant has assurance
+  // enabled and assurance values set to release.
   let eduPersonAssuranceSupported = false;
-  let verifiedClaimsProfile: IDAProfile | null = null;
   // The ID token algorithms: every published one while apps choose their own, else only the
   // tenant's (oauth.id_token_signing_alg).
   let idTokenSigningAlgorithms: OIDCSigningAlgorithm[] = publishedSigningAlgorithms;
@@ -153,7 +148,6 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
       eduPersonAssuranceSupported =
         Object.keys(parseIALAssuranceValues(assurance['assurance.ial_assurance_values'])).length >
         0;
-      verifiedClaimsProfile = parseIDAProfile(assurance['assurance.ida_profile']);
     }
     tokenExchangeEnabled = tokens['tokens.exchange_enabled'] === true;
     // ID-JAG is a Token Exchange token type: advertised only with Token Exchange.
@@ -231,11 +225,7 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
   // stale metadata for a different environment or component set.
   const logoutHash = `bc=${logoutConfig.backchannel.enabled}:fc=${logoutConfig.frontchannel.enabled}:sm=${logoutConfig.session_management.enabled}:sm_iframe=${logoutConfig.session_management.check_session_iframe_enabled}`;
   const profileHash = `profile=${tenantProfile.type}`;
-  const assuranceClaimsHash = `ea=${eduPersonAssuranceSupported}:ida=${
-    verifiedClaimsProfile
-      ? JSON.stringify([verifiedClaimsProfile.trustFramework, verifiedClaimsProfile.claims])
-      : ''
-  }`;
+  const assuranceClaimsHash = `ea=${eduPersonAssuranceSupported}`;
   const signingAlgorithmsHash = `oidc_algs=${publishedSigningAlgorithms.join(',')}:id_token_algs=${idTokenSigningAlgorithms.join(',')}`;
   const settingsHash = `${currentSettingsJson}:acr=${acrValuesSupported.join(',')}:issuer=${issuer}:async=${asyncEnabled}:te=${tokenExchangeEnabled}:cc=${clientCredentialsEnabled}:ns=${nativeSSOEnabled}:rar=${rarEnabled}:ai=${aiScopesEnabled}:idjag=${idJagEnabled}:fe=${flowEngineEnabled}:${profileHash}:${logoutHash}:${signingAlgorithmsHash}:${assuranceClaimsHash}`;
   // A digest of everything the metadata depends on: a fixed-length key, however long the settings
@@ -531,25 +521,12 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
           flow_engine_supported: true,
         }
       : {}),
-    // OpenID Connect for Identity Assurance 1.0 (8): the trust framework and the claims
-    // verified_claims can carry, while the tenant has an identity assurance profile. No evidence
-    // types are advertised: Authrim does not describe the evidence behind a person's IAL.
-    ...(verifiedClaimsProfile
-      ? {
-          trust_frameworks_supported: [verifiedClaimsProfile.trustFramework],
-          claims_in_verified_claims_supported: [...verifiedClaimsProfile.claims],
-        }
-      : {}),
   };
 
-  // The claims the assurance settings make Authrim return, added to whichever list is advertised.
-  const assuranceClaimsSupported = [
-    ...(eduPersonAssuranceSupported ? [EDUPERSON_ASSURANCE_CLAIM] : []),
-    ...(verifiedClaimsProfile ? [VERIFIED_CLAIMS_CLAIM] : []),
-  ];
-  if (assuranceClaimsSupported.length > 0) {
+  // The claim the assurance values make Authrim return, added to whichever list is advertised.
+  if (eduPersonAssuranceSupported) {
     metadata.claims_supported = [
-      ...new Set([...metadata.claims_supported, ...assuranceClaimsSupported]),
+      ...new Set([...metadata.claims_supported, EDUPERSON_ASSURANCE_CLAIM]),
     ];
   }
 

@@ -5050,9 +5050,9 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
           ...(sessionAmr?.length ? { amr: sessionAmr } : {}),
         };
 
-        // eduperson_assurance and verified_claims come from the person's evidence, read now and
-        // only when this ID token's request asks for one and the tenant has something to release.
-        // A failed read releases neither (and is logged).
+        // eduperson_assurance comes from the person's evidence, read now and only when this ID
+        // token's request asks for it and the tenant has values to release. A failed read
+        // releases nothing (and is logged).
         const assuranceClaims = await resolveAssuranceClaims({
           target: 'id_token',
           tenantId,
@@ -5061,7 +5061,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
           claimsRequest: parsedClaimsRequest.request,
           clientPolicy: clientMetadata,
           includeScopeClaims: isIdTokenOnly,
-          claimValues: userData,
+          requestScope: c,
           loadSettings: async () => assuranceSettings,
           getAdapter: () => piiCtx.coreAdapter,
           onError: (message, error) =>
@@ -5087,9 +5087,6 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
           return sendError(requestedClaims.error, requestedClaims.error_description);
         }
         idTokenClaims = requestedClaims.claims;
-        if (assuranceClaims.verified_claims) {
-          idTokenClaims.verified_claims = assuranceClaims.verified_claims;
-        }
       }
 
       // The ID token as the token endpoint issues it: the app's identity mapping (its sub and

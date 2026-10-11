@@ -52,6 +52,9 @@ const STANDARD_CLAIM_NAMES = new Set([
   'authrim_subject_ref',
   'authrim_subject_principal',
   'original_issuer',
+  // A person's identity assurance: computed from their evidence, never a custom attribute.
+  'eduperson_assurance',
+  'verified_claims',
   // How Authrim tells a client or admin principal's token from a user's.
   'token_use',
   'client_id',

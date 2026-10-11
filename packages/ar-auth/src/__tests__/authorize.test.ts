@@ -2982,11 +2982,6 @@ describe('Authorization Handler', () => {
         const ASSURANCE = {
           'assurance.enabled': true,
           'assurance.ial_assurance_values': JSON.stringify({ IAL1: [IAL1_URI], IAL2: [IAL2_URI] }),
-          'assurance.ida_profile': JSON.stringify({
-            trust_framework: 'nist_800_63A',
-            assurance_levels: { IAL2: 'ial2' },
-            claims: ['given_name', 'family_name'],
-          }),
         };
         const client = { scope: 'openid profile eduperson_assurance', identity_mapping: null };
 
@@ -3159,50 +3154,19 @@ describe('Authorization Handler', () => {
           expect(decodeJwt(fragment.get('id_token')!)).not.toHaveProperty('eduperson_assurance');
         });
 
-        it('carries verified_claims for a claims parameter request, for a person with evidence', async () => {
-          useEvidence([evidenceRow('IAL2')]);
-          const claims = {
-            id_token: {
-              verified_claims: [
-                {
-                  verification: {
-                    trust_framework: { value: 'nist_800_63A' },
-                    assurance_level: null,
-                  },
-                  claims: { given_name: null, family_name: null, email: null },
-                },
-              ],
-            },
-          };
+        it('reads the evidence once when the client minimum IAL and the claim both apply', async () => {
+          const reads = useEvidence([evidenceRow('IAL2')]);
 
-          const fragment = await authorizeFor('id_token token', {
-            scope: 'openid profile',
-            claims,
-            client,
+          const fragment = await authorizeFor('id_token', {
+            scope: 'openid eduperson_assurance',
+            client: { ...client, minimum_ial: 'IAL2' },
           });
 
-          expect(decodeJwt(fragment.get('id_token')!).verified_claims).toEqual([
-            {
-              verification: { trust_framework: 'nist_800_63A', assurance_level: 'ial2' },
-              claims: { given_name: 'Alice', family_name: 'Example' },
-            },
+          expect(decodeJwt(fragment.get('id_token')!).eduperson_assurance).toEqual([
+            IAL1_URI,
+            IAL2_URI,
           ]);
-        });
-
-        it('carries no verified_claims for a person without evidence', async () => {
-          useEvidence([]);
-
-          const fragment = await authorizeFor('id_token token', {
-            scope: 'openid profile',
-            claims: {
-              id_token: {
-                verified_claims: { verification: {}, claims: { given_name: null } },
-              },
-            },
-            client,
-          });
-
-          expect(decodeJwt(fragment.get('id_token')!)).not.toHaveProperty('verified_claims');
+          expect(reads).toHaveLength(1);
         });
 
         describe("under the app's Destination Profile", () => {

@@ -398,41 +398,6 @@ components:
             assurance.ial_assurance_values is set; never returned when the evidence cannot be read.
           items:
             type: string
-        verified_claims:
-          description: >-
-            OpenID Connect for Identity Assurance verified_claims, returned only for a claims
-            parameter request (userinfo.verified_claims, an object or a list) while tenant
-            assurance is enabled and assurance.ida_profile is set, and only for a person at IAL2 or
-            above. A request is answered with an object, a list with a list; a request whose
-            verification constraints are not met is left out. Only claims the profile lists and
-            the granted scopes allow are returned.
-          oneOf:
-            - $ref: '#/components/schemas/VerifiedClaims'
-            - type: array
-              items:
-                $ref: '#/components/schemas/VerifiedClaims'
-    VerifiedClaims:
-      type: object
-      required:
-        - verification
-        - claims
-      properties:
-        verification:
-          type: object
-          required:
-            - trust_framework
-          properties:
-            trust_framework:
-              type: string
-            assurance_level:
-              type: string
-              description: Returned only when requested and the profile names a level for the IAL.
-            time:
-              type: string
-              description: When the person's identity was verified (ISO 8601, UTC). Returned only when requested.
-        claims:
-          type: object
-          additionalProperties: true
     CustomerProfile:
       type: object
       required:

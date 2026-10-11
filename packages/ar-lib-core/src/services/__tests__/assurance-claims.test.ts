@@ -4,11 +4,12 @@ import type { DatabaseAdapter } from '../../db/adapter';
 import { sqliteAdapter } from '../../repositories/__tests__/sqlite-core-schema';
 import { parseClaimsRequest } from '../../utils/oidc-claims';
 import {
-  requestedAssuranceClaims,
+  requestsEduPersonAssurance,
   resolveAssuranceClaims,
   type AssuranceClaimsInput,
 } from '../assurance-claims';
 import { IAL_FRAMEWORK } from '../identity-assurance';
+import { evaluateUserIAL } from '../identity-assurance-enforcement';
 
 const NOW = 1_800_000_000_000;
 const IAL1_URI = 'https://example.org/assurance/IAL1';
@@ -22,14 +23,7 @@ const SETTINGS = {
     IAL2: [IAL2_URI, IAL1_URI],
     IAL3: [IAL3_URI],
   }),
-  'assurance.ida_profile': JSON.stringify({
-    trust_framework: 'nist_800_63A',
-    assurance_levels: { IAL2: 'ial2', IAL3: 'ial3' },
-    claims: ['given_name', 'family_name'],
-  }),
 };
-
-const claimValues = { given_name: 'Taro', family_name: 'Yamada', email: 'taro@example.com' };
 
 describe('identity assurance claims', () => {
   let db: DatabaseSync;
@@ -74,7 +68,6 @@ describe('identity assurance claims', () => {
       userId: 'user-1',
       scopes: ['openid', 'profile', 'eduperson_assurance'],
       includeScopeClaims: true,
-      claimValues,
       loadSettings,
       getAdapter,
       onError,
@@ -192,7 +185,7 @@ describe('identity assurance claims', () => {
       ).toEqual({});
       expect(
         await resolve({
-          claimsRequest: claimsParameter({ userinfo: { email: null, verified_claims: null } }),
+          claimsRequest: claimsParameter({ userinfo: { email: null } }),
           scopes: ['openid', 'email'],
         })
       ).toEqual({});
@@ -208,21 +201,13 @@ describe('identity assurance claims', () => {
       untouched();
     });
 
-    it('does not read evidence when no value or profile is configured', async () => {
+    it('does not read evidence when no assurance values are configured', async () => {
       settings = { 'assurance.enabled': true };
-      const claimsRequest = claimsParameter({
-        userinfo: { verified_claims: { verification: { trust_framework: null }, claims: {} } },
-      });
-      expect(await resolve({ claimsRequest })).toEqual({});
-      settings = {
-        'assurance.enabled': true,
-        'assurance.ial_assurance_values': '{}',
-        'assurance.ida_profile': '{}',
-      };
-      expect(await resolve({ claimsRequest })).toEqual({});
+      expect(await resolve()).toEqual({});
+      settings['assurance.ial_assurance_values'] = '{}';
+      expect(await resolve()).toEqual({});
       settings['assurance.ial_assurance_values'] = 'not json';
-      settings['assurance.ida_profile'] = '{"claims":["ssn"]}';
-      expect(await resolve({ claimsRequest })).toEqual({});
+      expect(await resolve()).toEqual({});
       untouched();
     });
 
@@ -234,28 +219,14 @@ describe('identity assurance claims', () => {
       ).toEqual({});
       untouched();
     });
-
-    it('does not ask for the evidence of a claim whose settings are missing', async () => {
-      // eduperson_assurance is configured but verified_claims is not requested: the profile is not read.
-      settings['assurance.ida_profile'] = '{}';
-      addEvidence('ev-1', 'IAL2');
-      expect((await resolve()).eduperson_assurance).toHaveLength(2);
-      expect(evidenceReads()).toBe(1);
-    });
   });
 
   describe('when the read fails', () => {
-    it('releases neither claim and reports it, rather than taking the person for IAL1', async () => {
+    it('releases nothing and reports it, rather than taking the person for IAL1', async () => {
       addEvidence('ev-1', 'IAL2');
       const failure = new Error('database is down');
       vi.spyOn(adapter, 'query').mockRejectedValue(failure);
-      expect(
-        await resolve({
-          claimsRequest: claimsParameter({
-            userinfo: { verified_claims: { verification: {}, claims: { given_name: null } } },
-          }),
-        })
-      ).toEqual({});
+      expect(await resolve()).toEqual({});
       expect(onError).toHaveBeenCalledWith(expect.any(String), failure);
     });
 
@@ -283,127 +254,74 @@ describe('identity assurance claims', () => {
     });
   });
 
-  describe('verified_claims', () => {
-    const verifiedClaimsRequest = (request: unknown = undefined) =>
-      claimsParameter({
-        userinfo: {
-          verified_claims: request ?? {
-            verification: { trust_framework: { value: 'nist_800_63A' }, assurance_level: null },
-            claims: { given_name: null, family_name: null, email: null },
-          },
-        },
+  describe('with an IAL requirement of the same request', () => {
+    const requirement = (requestScope: object | undefined) =>
+      evaluateUserIAL({
+        required: 'IAL2',
+        tenantId: 'tenant-a',
+        userId: 'user-1',
+        getAdapter,
+        requestScope,
+        now: NOW,
       });
 
-    it('releases the requested claims the profile lists to a person at IAL2', async () => {
+    it('reads the evidence once for the requirement and the claim', async () => {
       addEvidence('ev-1', 'IAL2');
-      expect(
-        (await resolve({ claimsRequest: verifiedClaimsRequest(), scopes: ['openid', 'profile'] }))
-          .verified_claims
-      ).toEqual({
-        verification: { trust_framework: 'nist_800_63A', assurance_level: 'ial2' },
-        claims: { given_name: 'Taro', family_name: 'Yamada' },
-      });
-    });
-
-    it('releases nothing at IAL1, and not to a request that does not name the claims parameter', async () => {
-      expect(
-        (await resolve({ claimsRequest: verifiedClaimsRequest(), scopes: ['openid', 'profile'] }))
-          .verified_claims
-      ).toBeUndefined();
-      addEvidence('ev-1', 'IAL2');
-      // Scopes alone never release verified_claims.
-      expect(
-        (await resolve({ scopes: ['openid', 'profile', 'verified_claims'] })).verified_claims
-      ).toBeUndefined();
-    });
-
-    it('releases only the claims the scopes allow', async () => {
-      addEvidence('ev-1', 'IAL2');
-      expect(
-        (await resolve({ claimsRequest: verifiedClaimsRequest(), scopes: ['openid'] }))
-          .verified_claims
-      ).toBeUndefined();
-    });
-
-    it('answers a list with a list, and stops with the evidence', async () => {
-      addEvidence('ev-1', 'IAL2');
-      const claimsRequest = verifiedClaimsRequest([
-        { verification: { trust_framework: { value: 'eidas' } }, claims: { given_name: null } },
-        { verification: { trust_framework: null }, claims: { family_name: null } },
-      ]);
-      const input = { claimsRequest, scopes: ['openid', 'profile'] };
-      expect((await resolve(input)).verified_claims).toEqual([
-        { verification: { trust_framework: 'nist_800_63A' }, claims: { family_name: 'Yamada' } },
-      ]);
-      db.prepare(`UPDATE assurance_evidence SET revoked_at = ? WHERE id = 'ev-1'`).run(NOW);
-      expect((await resolve(input)).verified_claims).toBeUndefined();
-    });
-
-    it('releases the IAL3 level of IAL3 evidence and holds max_age to its verification time', async () => {
-      addEvidence('ev-1', 'IAL3', { verified_at: NOW - 100_000 });
-      const request = (maxAge: number) =>
-        verifiedClaimsRequest({
-          verification: { trust_framework: null, assurance_level: null, time: { max_age: maxAge } },
-          claims: { given_name: null },
-        });
-      const input = { scopes: ['openid', 'profile'] };
-      expect(
-        (await resolve({ ...input, claimsRequest: request(100) })).verified_claims
-      ).toMatchObject({ verification: { assurance_level: 'ial3' } });
-      expect(
-        (await resolve({ ...input, claimsRequest: request(99) })).verified_claims
-      ).toBeUndefined();
-    });
-
-    it('reads the evidence once when both claims are released', async () => {
-      addEvidence('ev-1', 'IAL2');
-      const result = await resolve({
-        claimsRequest: verifiedClaimsRequest(),
-        scopes: ['openid', 'profile', 'eduperson_assurance'],
-      });
-      expect(result.eduperson_assurance).toEqual([IAL1_URI, IAL2_URI]);
-      expect(result.verified_claims).toBeDefined();
+      const requestScope = {};
+      expect(await requirement(requestScope)).toMatchObject({ outcome: 'met' });
+      expect((await resolve({ requestScope })).eduperson_assurance).toEqual([IAL1_URI, IAL2_URI]);
       expect(evidenceReads()).toBe(1);
     });
 
-    it('is not released when the client policy forbids it', async () => {
+    it('reads again for another request, so a revocation is seen at once', async () => {
       addEvidence('ev-1', 'IAL2');
-      expect(
-        await resolve({
-          claimsRequest: verifiedClaimsRequest(),
-          scopes: ['openid', 'profile'],
-          clientPolicy: { claims_parameter_policy: { verified_claims: 'forbidden' } },
-        })
-      ).toEqual({});
-      expect(evidenceReads()).toBe(0);
+      expect(await requirement({})).toMatchObject({ outcome: 'met' });
+      db.prepare(`UPDATE assurance_evidence SET revoked_at = ? WHERE id = 'ev-1'`).run(NOW);
+      expect((await resolve({ requestScope: {} })).eduperson_assurance).toEqual([IAL1_URI]);
+      expect(evidenceReads()).toBe(2);
+      // Without a request scope nothing is shared.
+      await requirement(undefined);
+      await resolve();
+      expect(evidenceReads()).toBe(4);
     });
 
-    it('answers an id_token request from the id_token section only', async () => {
+    it('does not share the evidence of another person or tenant', async () => {
       addEvidence('ev-1', 'IAL2');
-      expect(
-        (
-          await resolve({
-            target: 'id_token',
-            claimsRequest: verifiedClaimsRequest(),
-            scopes: ['openid', 'profile'],
-            includeScopeClaims: false,
-          })
-        ).verified_claims
-      ).toBeUndefined();
+      const requestScope = {};
+      await requirement(requestScope);
+      expect((await resolve({ requestScope, userId: 'user-2' })).eduperson_assurance).toEqual([
+        IAL1_URI,
+      ]);
+      expect((await resolve({ requestScope, tenantId: 'tenant-b' })).eduperson_assurance).toEqual([
+        IAL1_URI,
+      ]);
+      expect(evidenceReads()).toBe(3);
+    });
+
+    it('does not keep a failed read', async () => {
+      addEvidence('ev-1', 'IAL2');
+      const requestScope = {};
+      const query = adapter.query;
+      adapter.query = (async () => {
+        throw new Error('database is down');
+      }) as typeof adapter.query;
+      expect(await requirement(requestScope)).toMatchObject({ outcome: 'unavailable' });
+      adapter.query = query;
+      expect((await resolve({ requestScope })).eduperson_assurance).toEqual([IAL1_URI, IAL2_URI]);
     });
   });
 });
 
-describe('requestedAssuranceClaims', () => {
+describe('requestsEduPersonAssurance', () => {
   it('does not take Object property names for requests', () => {
     expect(
-      requestedAssuranceClaims({
+      requestsEduPersonAssurance({
         target: 'userinfo',
         scopes: ['openid'],
         includeScopeClaims: true,
         claimsRequest: parseClaimsRequest('{"userinfo":{"constructor":null,"__proto__":null}}')
           .request,
       })
-    ).toEqual({ eduPersonAssurance: false, verifiedClaims: false });
+    ).toBe(false);
   });
 });

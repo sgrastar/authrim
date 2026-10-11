@@ -1,5 +1,5 @@
 /**
- * UserInfo: eduperson_assurance and verified_claims (identity assurance).
+ * UserInfo: eduperson_assurance (identity assurance).
  *
  * The evidence the claims come from is read when UserInfo answers, never cached, and only when
  * the request asks for a claim and the tenant has something to release.
@@ -44,11 +44,6 @@ const IAL2_URI = 'https://example.org/assurance/IAL2';
 const ASSURANCE_SETTINGS = {
   'assurance.enabled': true,
   'assurance.ial_assurance_values': JSON.stringify({ IAL1: [IAL1_URI], IAL2: [IAL2_URI] }),
-  'assurance.ida_profile': JSON.stringify({
-    trust_framework: 'nist_800_63A',
-    assurance_levels: { IAL2: 'ial2' },
-    claims: ['given_name', 'family_name'],
-  }),
 };
 
 function evidenceRow(level: string, overrides: Record<string, unknown> = {}) {
@@ -223,12 +218,53 @@ describe('UserInfo identity assurance claims', () => {
     });
   });
 
+  describe('for an access token whose client no longer exists', () => {
+    it('does not release it, by scope or by claims parameter, and reads no evidence', async () => {
+      evidence = [evidenceRow('IAL2')];
+      mockGetClientCached.mockResolvedValue(null);
+
+      const byScope = await userinfo({ scope: 'openid eduperson_assurance' });
+      expect(byScope.status).toBe(200);
+      expect(byScope.body).toEqual({ sub: 'user-123' });
+      expect(byScope.logger.warn).toHaveBeenCalled();
+
+      const byClaims = await userinfo({
+        scope: 'openid eduperson_assurance',
+        claims: { userinfo: { eduperson_assurance: null } },
+      });
+      expect(byClaims.body).not.toHaveProperty('eduperson_assurance');
+      expect(evidenceReads).toBe(0);
+    });
+
+    it('says so in the log for a claims parameter request that has no assurance scope', async () => {
+      evidence = [evidenceRow('IAL2')];
+      mockGetClientCached.mockResolvedValue(null);
+
+      const { body, status, logger } = await userinfo({
+        scope: 'openid',
+        claims: { userinfo: { eduperson_assurance: null } },
+      });
+
+      expect(status).toBe(200);
+      expect(body).not.toHaveProperty('eduperson_assurance');
+      expect(logger.warn).toHaveBeenCalled();
+      expect(evidenceReads).toBe(0);
+    });
+
+    it('still answers the request that asks for nothing about assurance', async () => {
+      mockGetClientCached.mockResolvedValue(null);
+      const { body, status, logger } = await userinfo({ scope: 'openid profile' });
+      expect(status).toBe(200);
+      expect(body.given_name).toBe('Test');
+      expect(logger.warn).not.toHaveBeenCalled();
+    });
+  });
+
   describe('when nothing is to be released it reads no evidence', () => {
     it('for a request that asks for neither claim', async () => {
       evidence = [evidenceRow('IAL2')];
       const { body } = await userinfo({ scope: 'openid profile email' });
       expect(body).not.toHaveProperty('eduperson_assurance');
-      expect(body).not.toHaveProperty('verified_claims');
       expect(evidenceReads).toBe(0);
       expect(assuranceSettingReads).toBe(0);
     });
@@ -248,82 +284,6 @@ describe('UserInfo identity assurance claims', () => {
     });
   });
 
-  describe('verified_claims', () => {
-    const request = {
-      verification: { trust_framework: { value: 'nist_800_63A' }, assurance_level: null },
-      claims: { given_name: null, family_name: null, email: null },
-    };
-
-    it('releases the requested claims the profile lists to a person at IAL2', async () => {
-      evidence = [evidenceRow('IAL2')];
-      const { body } = await userinfo({
-        scope: 'openid profile email',
-        claims: { userinfo: { verified_claims: request } },
-      });
-      expect(body.verified_claims).toEqual({
-        verification: { trust_framework: 'nist_800_63A', assurance_level: 'ial2' },
-        claims: { given_name: 'Test', family_name: 'User' },
-      });
-      expect(body).not.toHaveProperty('eduperson_assurance');
-    });
-
-    it('answers the list form with a list', async () => {
-      evidence = [evidenceRow('IAL2')];
-      const { body } = await userinfo({
-        scope: 'openid profile',
-        claims: {
-          userinfo: {
-            verified_claims: [
-              { ...request, verification: { trust_framework: { value: 'eidas' } } },
-              request,
-            ],
-          },
-        },
-      });
-      expect(body.verified_claims).toEqual([
-        {
-          verification: { trust_framework: 'nist_800_63A', assurance_level: 'ial2' },
-          claims: { given_name: 'Test', family_name: 'User' },
-        },
-      ]);
-    });
-
-    it('releases nothing at IAL1, after revocation, or to a scope alone', async () => {
-      const claims = { userinfo: { verified_claims: request } };
-      expect((await userinfo({ scope: 'openid profile', claims })).body).not.toHaveProperty(
-        'verified_claims'
-      );
-      evidence = [evidenceRow('IAL2', { revoked_at: NOW })];
-      expect((await userinfo({ scope: 'openid profile', claims })).body).not.toHaveProperty(
-        'verified_claims'
-      );
-      evidence = [evidenceRow('IAL2')];
-      expect((await userinfo({ scope: 'openid profile verified_claims' })).body).not.toHaveProperty(
-        'verified_claims'
-      );
-    });
-
-    it('releases nothing when the evidence cannot be read', async () => {
-      evidence = 'fail';
-      const { body } = await userinfo({
-        scope: 'openid profile',
-        claims: { userinfo: { verified_claims: request } },
-      });
-      expect(body).not.toHaveProperty('verified_claims');
-    });
-
-    it('reads the evidence once when both claims are released', async () => {
-      evidence = [evidenceRow('IAL2')];
-      const { body } = await userinfo({
-        scope: 'openid profile eduperson_assurance',
-        claims: { userinfo: { verified_claims: request } },
-      });
-      expect(body.eduperson_assurance).toEqual([IAL1_URI, IAL2_URI]);
-      expect(body.verified_claims).toBeDefined();
-      expect(evidenceReads).toBe(1);
-    });
-  });
-
   describe('through the identity mapping', () => {
     it('hands the claims to the mapping with the others, so a Destination Profile holds them', async () => {
       evidence = [evidenceRow('IAL2')];
@@ -334,22 +294,17 @@ describe('UserInfo identity assurance claims', () => {
           // An app whose profile does not list the claims does not get them.
           const rest = { ...input.claims };
           delete rest.eduperson_assurance;
-          delete rest.verified_claims;
           return { claims: rest };
         }
       );
       const { body } = await userinfo({
         scope: 'openid profile eduperson_assurance',
         claims: {
-          userinfo: {
-            verified_claims: { verification: {}, claims: { given_name: null } },
-          },
+          userinfo: {},
         },
       });
       expect(handedToMapping.eduperson_assurance).toEqual([IAL1_URI, IAL2_URI]);
-      expect(handedToMapping.verified_claims).toBeDefined();
       expect(body).not.toHaveProperty('eduperson_assurance');
-      expect(body).not.toHaveProperty('verified_claims');
     });
 
     it('holds them to the attribute release consent', async () => {

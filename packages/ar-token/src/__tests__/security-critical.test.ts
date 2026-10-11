@@ -2904,16 +2904,12 @@ describe('Security-Critical Tests', () => {
       const ASSURANCE = {
         'assurance.enabled': true,
         'assurance.ial_assurance_values': JSON.stringify({ IAL1: [IAL1_URI], IAL2: [IAL2_URI] }),
-        'assurance.ida_profile': JSON.stringify({
-          trust_framework: 'nist_800_63A',
-          assurance_levels: { IAL2: 'ial2' },
-          claims: ['given_name', 'family_name'],
-        }),
       };
 
       async function exchange(options: {
         claims?: unknown;
         scope?: string;
+        client?: Record<string, unknown>;
         rows?: Array<Record<string, unknown>> | 'fail';
       }) {
         const evidence = useEvidenceD1(mockEnv.TDB_TEST_CORE, options.rows ?? []);
@@ -2922,6 +2918,7 @@ describe('Security-Critical Tests', () => {
           client_secret_hash: 'test-secret-hash',
           dpop_bound_access_tokens: false,
           allowed_scopes: ['openid', 'profile', 'eduperson_assurance'],
+          ...options.client,
         });
         const authCodeData = createAuthCodeData({
           scope: options.scope ?? 'openid profile eduperson_assurance',
@@ -3026,25 +3023,34 @@ describe('Security-Critical Tests', () => {
         );
       });
 
-      it('carries verified_claims for a claims request, only for a person with evidence', async () => {
+      it('tells the identity mapping the request allowed eduperson_assurance, and no other claim', async () => {
         setAssurance(ASSURANCE);
-        const claims = {
-          id_token: {
-            verified_claims: {
-              verification: { trust_framework: { value: 'nist_800_63A' }, assurance_level: null },
-              claims: { given_name: null, family_name: null, email: null },
-            },
-          },
-        };
+        identityRelease.apply.mockClear();
 
-        const proofed = await exchange({ claims, rows: [evidenceRow('IAL2')] });
-        expect(proofed.idToken?.verified_claims).toEqual({
-          verification: { trust_framework: 'nist_800_63A', assurance_level: 'ial2' },
-          claims: { given_name: 'Test', family_name: 'User' },
+        await exchange({ claims: askFor, rows: [evidenceRow('IAL2')] });
+        const mapped = identityRelease.apply.mock.calls.at(-1)?.[0] as Record<string, unknown>;
+        expect(mapped.authorizedClaimNames).toEqual(['eduperson_assurance']);
+        expect(mapped.claimsAuthorizedByRequest).toBeUndefined();
+
+        // Nothing allowed, nothing said.
+        identityRelease.apply.mockClear();
+        await exchange({ claims: askFor, scope: 'openid profile', rows: [evidenceRow('IAL2')] });
+        const other = identityRelease.apply.mock.calls.at(-1)?.[0] as Record<string, unknown>;
+        expect(other.authorizedClaimNames).toBeUndefined();
+      });
+
+      it('reads the evidence once when a client minimum IAL and the claim both apply', async () => {
+        setAssurance(ASSURANCE);
+
+        const { response, evidence, idToken } = await exchange({
+          claims: askFor,
+          client: { minimum_ial: 'IAL2' },
+          rows: [evidenceRow('IAL2')],
         });
 
-        const unproofed = await exchange({ claims });
-        expect(unproofed.idToken).not.toHaveProperty('verified_claims');
+        expect(response.status).toBe(200);
+        expect(idToken?.eduperson_assurance).toEqual([IAL1_URI, IAL2_URI]);
+        expect(evidence.reads).toHaveLength(1);
       });
     });
 

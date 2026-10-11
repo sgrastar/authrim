@@ -85,13 +85,10 @@ describe('destination profile field consent', () => {
   });
 
   describe('the identity assurance claims', () => {
-    const assurance = {
-      eduperson_assurance: ['https://example.org/assurance/IAL2'],
-      verified_claims: { verification: { trust_framework: 'nist_800_63A' }, claims: {} },
-    };
+    const assurance = { eduperson_assurance: ['https://example.org/assurance/IAL2'] };
 
-    it('lets no identity mapping write them, in any OIDC namespace', () => {
-      for (const namespace of ['oidc.claim', 'custom', 'tenant.ns']) {
+    it('lets no identity mapping write them, in any namespace (introspection included)', () => {
+      for (const namespace of ['oidc.claim', 'custom', 'tenant.ns', 'introspection.claim']) {
         for (const claim of ['eduperson_assurance', 'verified_claims']) {
           expect(
             isProtectedIdentityMappingDestinationClaim(namespace, claim),
@@ -99,15 +96,16 @@ describe('destination profile field consent', () => {
           ).toBe(true);
         }
       }
-      // An introspection mapping is not about a person's ID token or UserInfo.
-      expect(
-        isProtectedIdentityMappingDestinationClaim('introspection.claim', 'verified_claims')
-      ).toBe(false);
     });
 
-    it('releases them where the app has no Destination Profile', () => {
+    it('releases eduperson_assurance where the app has no Destination Profile, and never verified_claims', () => {
       expect(
-        filterOidcClaimsWithoutDestinationProfile({ sub: 'user_1', ...assurance, groups: ['x'] })
+        filterOidcClaimsWithoutDestinationProfile({
+          sub: 'user_1',
+          ...assurance,
+          verified_claims: { claims: {} },
+          groups: ['x'],
+        })
       ).toEqual({ sub: 'user_1', ...assurance });
     });
 
@@ -147,22 +145,48 @@ describe('destination profile field consent', () => {
     });
 
     it('needs the eduperson_assurance scope for a listed eduperson_assurance field that names none', async () => {
-      const claims = [
-        { claimName: 'sub', required: true },
-        { claimName: 'eduperson_assurance' },
-        { claimName: 'verified_claims' },
-      ];
+      const claims = [{ claimName: 'sub', required: true }, { claimName: 'eduperson_assurance' }];
       expect(
         resolveOidcFieldRequiredScopes({ key: 'eduperson_assurance', requiredScopes: [] })
       ).toEqual(['eduperson_assurance']);
-      await expect(release(claims, ['openid'])).resolves.toEqual({
-        sub: 'user_1',
-        verified_claims: assurance.verified_claims,
-      });
+      await expect(release(claims, ['openid'])).resolves.toEqual({ sub: 'user_1' });
       await expect(release(claims, ['openid', 'eduperson_assurance'])).resolves.toEqual({
         sub: 'user_1',
         ...assurance,
       });
+    });
+
+    it('never releases them in an introspection response, even for a Resource Server profile that lists them', async () => {
+      const adminAdapter = adapter({
+        queryOne: vi.fn().mockResolvedValue({
+          profile_id: 'profile_rs',
+          destination_type: 'resource_server',
+          version_id: 'version_1',
+          schema_json: JSON.stringify({
+            claims: [
+              { claimName: 'active', required: true },
+              { claimName: 'eduperson_assurance', required: true },
+              { claimName: 'verified_claims' },
+              { claimName: 'roles' },
+            ],
+          }),
+        }),
+      });
+      await expect(
+        filterIntrospectionClaimsByResourceServerProfile({
+          adminAdapter,
+          tenantId: 'tenant_a',
+          resourceServerId: 'payments-api',
+          grantedScopes: [],
+          claims: {
+            active: true,
+            sub: 'user_1',
+            roles: ['approver'],
+            eduperson_assurance: ['https://example.org/assurance/IAL3'],
+            verified_claims: { claims: {} },
+          },
+        })
+      ).resolves.toEqual({ active: true, sub: 'user_1', roles: ['approver'] });
     });
   });
 

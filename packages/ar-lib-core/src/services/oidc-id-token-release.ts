@@ -85,6 +85,11 @@ export interface IDTokenClaimsCarried {
    */
   authorizedByRequest?: boolean;
   /**
+   * Of the standard-or-scoped claims in `claims`, only these were authorized against the request
+   * (when `authorizedByRequest` is not set, which covers all of them).
+   */
+  authorizedClaimNames?: readonly string[];
+  /**
    * The ID token is the only carrier of the claims (response_type=id_token): the claims the
    * profile lists for UserInfo are released in it.
    */
@@ -114,6 +119,9 @@ export async function mapIDTokenClaims(
       destinationSurface: 'id_token',
       grantedScopes,
       ...(carries?.authorizedByRequest ? { claimsAuthorizedByRequest: true } : {}),
+      ...(carries?.authorizedClaimNames
+        ? { authorizedClaimNames: carries.authorizedClaimNames }
+        : {}),
       ...(carries?.userInfoClaims ? { userInfoClaimsInIdToken: true } : {}),
       claims,
       ...(userId ? { sourceAttributes: (names) => ctx.loadUserAttributes(userId, names) } : {}),

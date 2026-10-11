@@ -32,6 +32,7 @@ import {
   resolveAccountDataContextFromHono,
   resolveIDTokenSigningPolicy,
   resolveAssuranceClaims,
+  asksForEduPersonAssurance,
 } from '@authrim/ar-lib-core';
 import {
   resolveUserInfoSigningAlgorithm,
@@ -269,22 +270,35 @@ export async function userinfoHandler(c: Context<{ Bindings: Env }>) {
   const client_id = tokenClaims.client_id as string;
   const clientMetadata = client_id ? await getClientCached(c, c.env, client_id) : null;
 
-  // The assurance claims (eduperson_assurance, verified_claims) come from the person's evidence,
-  // read now and only when the request asks for one of them and the tenant has something to
-  // release. A failed read releases neither (and is logged).
-  const assuranceClaims = await resolveAssuranceClaims({
-    target: 'userinfo',
-    tenantId,
-    userId: sub,
+  // eduperson_assurance comes from the person's evidence, read now and only when the request asks
+  // for it and the tenant has values to release. A failed read releases nothing (and is logged).
+  // Without the client's metadata (the client was deleted, and an access token it was issued is
+  // still valid) the client's claims policy, identity mapping, Destination Profile and attribute
+  // release consent cannot be applied, and those are what decide who may be told a person's
+  // assurance. So it is not released then: the rest of UserInfo is answered as before.
+  const assuranceRequest = {
+    target: 'userinfo' as const,
     scopes,
     claimsRequest,
-    clientPolicy: clientMetadata,
     includeScopeClaims: true,
-    claimValues: userData,
-    loadSettings: () => resolveEffectiveSettings(c.env, 'assurance', { tenantId }),
-    getAdapter: () => piiCtx.coreAdapter,
-    onError: (message, error) => log.error(message, { client_id }, error as Error),
-  });
+  };
+  if (!clientMetadata && asksForEduPersonAssurance(assuranceRequest)) {
+    log.warn('eduperson_assurance not released: the client of the access token is unknown', {
+      client_id,
+    });
+  }
+  const assuranceClaims = clientMetadata
+    ? await resolveAssuranceClaims({
+        ...assuranceRequest,
+        tenantId,
+        userId: sub,
+        clientPolicy: clientMetadata,
+        requestScope: c,
+        loadSettings: () => resolveEffectiveSettings(c.env, 'assurance', { tenantId }),
+        getAdapter: () => piiCtx.coreAdapter,
+        onError: (message, error) => log.error(message, { client_id }, error as Error),
+      })
+    : {};
 
   const claimEvaluation = evaluateClaimsForTarget({
     target: 'userinfo',
@@ -311,10 +325,9 @@ export async function userinfoHandler(c: Context<{ Bindings: Env }>) {
     );
   }
 
-  const userClaims: Record<string, unknown> = claimEvaluation.claims;
   // Released with the other claims, so the app's identity mapping, Destination Profile and
   // attribute release consent hold it to the same rules.
-  if (assuranceClaims.verified_claims) userClaims.verified_claims = assuranceClaims.verified_claims;
+  const userClaims: Record<string, unknown> = claimEvaluation.claims;
 
   if (client_id && clientMetadata) {
     try {
@@ -329,6 +342,12 @@ export async function userinfoHandler(c: Context<{ Bindings: Env }>) {
         destinationSurface: 'userinfo',
         grantedScopes: scopes,
         claims: userClaims,
+        // The request (its scope, or a claims parameter the client's policy lets through) allowed
+        // eduperson_assurance already, as authorize judges it for an ID token: a Destination
+        // Profile field that names no scope does not ask for it again.
+        ...(assuranceClaims.eduperson_assurance
+          ? { authorizedClaimNames: ['eduperson_assurance'] }
+          : {}),
         // The mapping reads the user's attributes, not only what these scopes release, so it
         // derives the same sub as the ID token does.
         sourceAttributes: userData,

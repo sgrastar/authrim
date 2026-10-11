@@ -8771,12 +8771,17 @@ function assertFieldMappingRuleSafe(rule: FieldMappingVersionRuleInput, path: st
   rule.edges?.forEach((edge, index) => {
     assertNonEmptyRecord(edge.sourceRef, `${path}.edges[${index}].sourceRef`);
     assertNonEmptyRecord(edge.targetRef, `${path}.edges[${index}].targetRef`);
-    const targetNamespace = readStringValue(edge.targetRef.namespace);
-    const targetPath = readStringValue(edge.targetRef.path);
+    // The runtime reads a reference's claim name from path, else fieldKey, else nodeId (and a
+    // missing namespace as 'unknown'): every spelling is checked, so none registers a reserved
+    // claim that the runtime would then have to refuse.
+    const targetNamespace = readStringValue(edge.targetRef.namespace) ?? 'unknown';
+    const targetNames = [
+      edge.targetRef.path,
+      edge.targetRef.fieldKey,
+      edge.targetRef.nodeId,
+    ].flatMap((name) => readStringValue(name) ?? []);
     if (
-      targetNamespace &&
-      targetPath &&
-      isProtectedIdentityMappingDestinationClaim(targetNamespace, targetPath)
+      targetNames.some((name) => isProtectedIdentityMappingDestinationClaim(targetNamespace, name))
     ) {
       throw badRequest(
         `${path}.edges[${index}].targetRef targets a claim reserved by the protocol envelope`

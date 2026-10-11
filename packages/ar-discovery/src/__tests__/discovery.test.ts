@@ -861,6 +861,7 @@ describe('Discovery Handler', () => {
 
     describe('identity assurance claims', () => {
       const VALUES = JSON.stringify({ IAL2: ['https://example.org/assurance/IAL2'] });
+      // An identity assurance profile is saved but verified_claims are not issued yet.
       const PROFILE = JSON.stringify({
         trust_framework: 'nist_800_63A',
         assurance_levels: { IAL2: 'ial2' },
@@ -895,7 +896,6 @@ describe('Discovery Handler', () => {
         for (const assurance of [
           { 'assurance.enabled': true },
           { 'assurance.enabled': true, 'assurance.ial_assurance_values': '{}' },
-          { 'assurance.enabled': true, 'assurance.ida_profile': '{}' },
           // Configured, but assurance is off.
           {
             'assurance.ial_assurance_values': VALUES,
@@ -906,9 +906,11 @@ describe('Discovery Handler', () => {
             'assurance.ial_assurance_values': VALUES,
             'assurance.ida_profile': PROFILE,
           },
-          // Not values or a profile runtime would use.
+          // Not values runtime would use.
           { 'assurance.enabled': true, 'assurance.ial_assurance_values': 'not json' },
-          { 'assurance.enabled': true, 'assurance.ida_profile': '{"claims":["ssn"]}' },
+          // A saved identity assurance profile does not advertise anything: verified_claims are
+          // not issued yet.
+          { 'assurance.enabled': true, 'assurance.ida_profile': PROFILE },
         ]) {
           // (Enabling assurance advertises its AAL acr values; nothing else changes.)
           const withoutAcr = (m: Record<string, unknown>) =>
@@ -919,8 +921,12 @@ describe('Discovery Handler', () => {
         expect(baseline.scopes_supported).not.toContain('eduperson_assurance');
         expect(baseline.claims_supported).not.toContain('eduperson_assurance');
         expect(baseline.claims_supported).not.toContain('verified_claims');
-        expect(baseline).not.toHaveProperty('trust_frameworks_supported');
-        expect(baseline).not.toHaveProperty('claims_in_verified_claims_supported');
+        for (const member of [
+          'trust_frameworks_supported',
+          'claims_in_verified_claims_supported',
+        ]) {
+          expect(baseline).not.toHaveProperty(member);
+        }
       });
 
       it('advertises the eduperson_assurance scope and claim once assurance values are set', async () => {
@@ -939,32 +945,6 @@ describe('Discovery Handler', () => {
           ...baseline.claims_supported,
           'eduperson_assurance',
         ]);
-        expect(metadata).not.toHaveProperty('trust_frameworks_supported');
-      });
-
-      it('advertises verified_claims support once an identity assurance profile is set, without evidence', async () => {
-        const baseline = await discover(undefined);
-        clearDiscoveryMetadataCache();
-        const metadata = await discover({
-          'assurance.enabled': true,
-          'assurance.ida_profile': PROFILE,
-        });
-
-        expect(metadata.trust_frameworks_supported).toEqual(['nist_800_63A']);
-        expect(metadata.claims_in_verified_claims_supported).toEqual(['given_name', 'family_name']);
-        expect(metadata.claims_supported).toEqual([
-          ...baseline.claims_supported,
-          'verified_claims',
-        ]);
-        expect(metadata.scopes_supported).toEqual(baseline.scopes_supported);
-        for (const member of [
-          'evidence_supported',
-          'documents_supported',
-          'electronic_records_supported',
-          'assurance_levels_supported',
-        ]) {
-          expect(metadata).not.toHaveProperty(member);
-        }
       });
 
       it('does not repeat a claim a tenant already lists in claims_supported', async () => {
@@ -1000,20 +980,9 @@ describe('Discovery Handler', () => {
         // The same process answers the next request: the metadata is not the cached one.
         const off = await discover({ ...configured, 'assurance.enabled': false }, env);
         expect(off.scopes_supported).not.toContain('eduperson_assurance');
-        expect(off).not.toHaveProperty('trust_frameworks_supported');
-        const other = await discover(
-          { ...configured, 'assurance.ida_profile': PROFILE.replace('nist_800_63A', 'jp_aml') },
-          env
-        );
-        expect(other.trust_frameworks_supported).toEqual(['jp_aml']);
-        const fewer = await discover(
-          {
-            ...configured,
-            'assurance.ida_profile': PROFILE.replace('"family_name"', '"birthdate"'),
-          },
-          env
-        );
-        expect(fewer.claims_in_verified_claims_supported).toEqual(['given_name', 'birthdate']);
+        const none = await discover({ ...configured, 'assurance.ial_assurance_values': '{}' }, env);
+        expect(none.scopes_supported).not.toContain('eduperson_assurance');
+        expect(none.claims_supported).not.toContain('eduperson_assurance');
         expect((await discover(configured, env)).scopes_supported).toContain('eduperson_assurance');
       });
     });

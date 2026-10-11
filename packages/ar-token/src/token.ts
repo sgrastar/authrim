@@ -99,6 +99,7 @@ import {
   type IDTokenGrant,
   type IDTokenReleaseContext,
   type IDTokenReleaseFailure,
+  type IDTokenClaimsCarried,
   FAPI2_MESSAGE_SIGNING_ALGS,
   validateClientCertificateBinding,
   setBoundedMapEntry,
@@ -812,6 +813,8 @@ async function enforceTokenIdentityAssurance(
     tenantId: input.tenantId,
     userId: input.userId,
     getAdapter: () => createAccountAuthContextFromHono(c, input.tenantId).coreAdapter,
+    // The ID token of this same request reads the evidence for eduperson_assurance: once.
+    requestScope: c,
   });
   const log = getLogger(c).module('TOKEN');
   switch (result.outcome) {
@@ -1034,12 +1037,14 @@ async function applyOIDCIdentityMappingToIDTokenClaims(
   clientId: string,
   clientMetadata: ClientMetadata,
   claims: Record<string, unknown>,
-  grantedScopes?: string[]
+  grantedScopes?: string[],
+  carries?: IDTokenClaimsCarried
 ): Promise<{ ok: true; claims: Record<string, unknown> } | { ok: false; response: Response }> {
   const mapped = await mapIDTokenClaims(
     idTokenReleaseContext(c, tenantId, clientId, clientMetadata),
     claims,
-    grantedScopes
+    grantedScopes,
+    carries
   );
   return mapped.ok
     ? { ok: true, claims: mapped.claims }
@@ -3219,6 +3224,8 @@ async function handleAuthorizationCodeGrant(
     ...idTokenRBACClaims,
   };
 
+  // Whether the request allowed eduperson_assurance into this ID token (see below).
+  let idTokenAssuranceReleased = false;
   const shouldEvaluateIdTokenClaims =
     parsedClaimsRequest.request &&
     (Object.keys(parsedClaimsRequest.request.id_token).length > 0 ||
@@ -3236,9 +3243,9 @@ async function handleAuthorizationCodeGrant(
         ...(authCodeData.amr?.length ? { amr: authCodeData.amr } : {}),
       };
       const grantedIdTokenScopes = (authCodeData.scope || '').split(' ').filter(Boolean);
-      // eduperson_assurance and verified_claims come from the person's evidence, read now and only
-      // when this ID token's claims request asks for one and the tenant has something to release.
-      // A failed read releases neither (and is logged).
+      // eduperson_assurance comes from the person's evidence, read now and only when this ID
+      // token's claims request asks for it and the tenant has values to release. A failed read
+      // releases nothing (and is logged).
       const assuranceClaims = await resolveAssuranceClaims({
         target: 'id_token',
         tenantId,
@@ -3247,7 +3254,7 @@ async function handleAuthorizationCodeGrant(
         claimsRequest: parsedClaimsRequest.request,
         clientPolicy: clientMetadata,
         includeScopeClaims: false,
-        claimValues: availableClaims,
+        requestScope: c,
         loadSettings: async () => assuranceSettings,
         getAdapter: () => piiCtx.coreAdapter,
         onError: (message, error) => log.error(message, { clientId: client_id }, error as Error),
@@ -3276,9 +3283,7 @@ async function handleAuthorizationCodeGrant(
         );
       }
       idTokenClaims = requestedIdTokenClaims.claims;
-      if (assuranceClaims.verified_claims) {
-        idTokenClaims.verified_claims = assuranceClaims.verified_claims;
-      }
+      idTokenAssuranceReleased = Boolean(assuranceClaims.eduperson_assurance);
     } catch (claimsError) {
       log.error('Failed to evaluate requested ID token claims', {}, claimsError as Error);
       return oauthError(c, 'server_error', 'Failed to evaluate requested ID token claims', 500);
@@ -3295,7 +3300,11 @@ async function handleAuthorizationCodeGrant(
         client_id,
         clientMetadata as ClientMetadata,
         idTokenClaims,
-        splitScope(authCodeData.scope)
+        splitScope(authCodeData.scope),
+        // The claims request and the client's policy allowed eduperson_assurance already (as
+        // authorize judges it for an ID token): a Destination Profile field naming no scope does
+        // not ask for it again. Every other claim is held to the scopes as before.
+        idTokenAssuranceReleased ? { authorizedClaimNames: ['eduperson_assurance'] } : undefined
       )
   );
   if (!mappedIdTokenClaims.ok) {

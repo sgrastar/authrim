@@ -358,58 +358,12 @@ describe('standardUserAttributeNames', () => {
   });
 });
 
-describe('verified_claims and eduperson_assurance in the claims parameter', () => {
-  const request = {
-    verification: { trust_framework: { value: 'nist_800_63A' } },
-    claims: { given_name: null },
-  };
-
-  it('accepts a verified_claims request as an object or as a list (IDA 5.6)', () => {
-    for (const target of ['userinfo', 'id_token'] as const) {
-      const single = parseClaimsRequest(JSON.stringify({ [target]: { verified_claims: request } }));
-      expect(single.ok).toBe(true);
-      expect(single.request?.[target].verified_claims).toEqual(request);
-
-      const list = parseClaimsRequest(
-        JSON.stringify({ [target]: { verified_claims: [request, request] } })
-      );
-      expect(list.ok).toBe(true);
-      expect(list.request?.[target].verified_claims).toEqual([request, request]);
-    }
-  });
-
-  it('refuses a verified_claims list holding anything but objects, or too many', () => {
-    for (const verified of [[request, 'x'], [null], [[request]], Array(11).fill(request)]) {
-      const result = parseClaimsRequest(
-        JSON.stringify({ userinfo: { verified_claims: verified } })
-      );
-      expect(result.ok).toBe(false);
-      if (!result.ok) expect(result.error).toBe('invalid_request');
-    }
-  });
-
+describe('eduperson_assurance in the claims parameter', () => {
   it('still refuses a list for any other claim', () => {
-    for (const claim of ['email', 'eduperson_assurance', 'groups']) {
+    for (const claim of ['email', 'eduperson_assurance', 'verified_claims', 'groups']) {
       const result = parseClaimsRequest(JSON.stringify({ userinfo: { [claim]: [{}] } }));
       expect(result.ok).toBe(false);
       if (!result.ok) expect(result.error).toBe('invalid_request');
-    }
-  });
-
-  it('never releases verified_claims through the generic claims evaluation', () => {
-    const parsed = parseClaimsRequest(
-      JSON.stringify({ userinfo: { verified_claims: [request], email: null } })
-    );
-    const result = evaluateClaimsForTarget({
-      target: 'userinfo',
-      claimsRequest: parsed.request,
-      availableClaims: { email: 'a@example.com', verified_claims: { not: 'from evidence' } },
-      grantedScopes: ['openid', 'email'],
-    });
-    expect(result.ok).toBe(true);
-    if (result.ok) {
-      expect(result.claims.email).toBe('a@example.com');
-      expect(result.claims.verified_claims).toBeUndefined();
     }
   });
 
