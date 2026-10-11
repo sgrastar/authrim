@@ -217,6 +217,15 @@ vi.mock('../account-authoritative-write', () => ({
   }),
 }));
 
+vi.mock('../scim-assurance', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../scim-assurance')>();
+  return {
+    ...actual,
+    readScimAssurance: vi.fn(async () => null),
+    applyScimAssurance: vi.fn(async () => 'unchanged'),
+  };
+});
+
 vi.mock('../account-directory-producer', () => ({
   executeDurableInitialAccountDirectoryWrite: vi.fn(
     async (env: any, input: any, dependencies: any) => {
@@ -355,6 +364,7 @@ vi.mock('@authrim/ar-lib-scim', async (importOriginal) => {
           401
         );
       }
+      c.set('scimTokenRef', `ref-${token}`);
       await next();
     }),
   };

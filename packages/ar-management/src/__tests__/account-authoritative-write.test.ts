@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const state = vi.hoisted(() => ({
-  existing: null as { id: string } | null,
+  existing: null as { id: string; primary_subject_id?: string | null } | null,
+  recordInitialAssurance: vi.fn(),
   reflectedPayload: null as string | null,
   createFromRuntimeUser: vi.fn(),
   syncFromRuntimeUser: vi.fn(),
@@ -12,6 +13,12 @@ vi.mock('@authrim/ar-lib-core', () => ({
   CanonicalIdentityRepository: class {
     async findAccountByLegacyUserId() {
       return state.existing;
+    }
+    recordInitialAssurance = state.recordInitialAssurance;
+  },
+  InitialAssuranceRecordError: class extends Error {
+    constructor(readonly cause?: unknown) {
+      super('initial_assurance_record_failed');
     }
   },
   CanonicalRuntimeUserWriter: class {
@@ -82,7 +89,10 @@ describe('writeCanonicalAccountAuthoritative', () => {
   beforeEach(() => {
     state.existing = null;
     state.reflectedPayload = null;
-    state.createFromRuntimeUser.mockReset().mockResolvedValue({ created: true });
+    state.recordInitialAssurance.mockReset().mockResolvedValue({});
+    state.createFromRuntimeUser
+      .mockReset()
+      .mockResolvedValue({ created: true, graph: { subject: { id: 'subject:user-a' } } });
     state.syncFromRuntimeUser.mockReset().mockResolvedValue({ created: false });
   });
 
@@ -143,5 +153,96 @@ describe('writeCanonicalAccountAuthoritative', () => {
 
     expect(state.createFromRuntimeUser).not.toHaveBeenCalled();
     expect(state.syncFromRuntimeUser).not.toHaveBeenCalled();
+  });
+
+  describe('initial assurance', () => {
+    const initialAssurance = {
+      level: 'IAL2' as const,
+      evidenceType: 'tenant_policy',
+      issuerRef: 'tenant_policy',
+      verifiedAt: 1_000,
+    };
+
+    it('records the evidence for the new account once it is written', async () => {
+      const order: string[] = [];
+      state.createFromRuntimeUser.mockImplementation(async () => {
+        order.push('create');
+        return { created: true, graph: { subject: { id: 'subject:user-a' } } };
+      });
+      state.recordInitialAssurance.mockImplementation(async () => {
+        order.push('evidence');
+        return {};
+      });
+
+      await writeCanonicalAccountAuthoritative({
+        publication,
+        tenantCoreUsers: adapter(),
+        tenantPii: adapter(),
+        runtimeUser,
+        initialAssurance,
+      });
+
+      expect(order).toEqual(['create', 'evidence']);
+      expect(state.recordInitialAssurance).toHaveBeenCalledWith('subject:user-a', initialAssurance);
+    });
+
+    it('records it on a resumed write too, for the account found', async () => {
+      state.existing = { id: publication.accountId, primary_subject_id: 'subject:user-a' };
+      state.reflectedPayload = JSON.stringify(publication);
+
+      await writeCanonicalAccountAuthoritative({
+        publication,
+        tenantCoreUsers: adapter(),
+        tenantPii: adapter(),
+        runtimeUser,
+        initialAssurance,
+      });
+
+      expect(state.createFromRuntimeUser).not.toHaveBeenCalled();
+      expect(state.recordInitialAssurance).toHaveBeenCalledWith('subject:user-a', initialAssurance);
+    });
+
+    it('records nothing without it', async () => {
+      await writeCanonicalAccountAuthoritative({
+        publication,
+        tenantCoreUsers: adapter(),
+        tenantPii: adapter(),
+        runtimeUser,
+      });
+
+      expect(state.recordInitialAssurance).not.toHaveBeenCalled();
+    });
+
+    it('fails the write when the evidence cannot be recorded, so the retry records it', async () => {
+      state.recordInitialAssurance.mockRejectedValue(new Error('d1 down'));
+
+      await expect(
+        writeCanonicalAccountAuthoritative({
+          publication,
+          tenantCoreUsers: adapter(),
+          tenantPii: adapter(),
+          runtimeUser,
+          initialAssurance,
+        })
+      ).rejects.toMatchObject({
+        message: 'initial_assurance_record_failed',
+        cause: expect.objectContaining({ message: 'd1 down' }),
+      });
+    });
+
+    it('fails closed when the account has no subject to hold the evidence', async () => {
+      state.existing = { id: publication.accountId, primary_subject_id: null };
+      state.reflectedPayload = JSON.stringify(publication);
+
+      await expect(
+        writeCanonicalAccountAuthoritative({
+          publication,
+          tenantCoreUsers: adapter(),
+          tenantPii: adapter(),
+          runtimeUser,
+          initialAssurance,
+        })
+      ).rejects.toThrow('account_creation_authoritative_subject_missing');
+    });
   });
 });

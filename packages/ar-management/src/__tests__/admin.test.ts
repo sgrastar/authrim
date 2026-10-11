@@ -30,6 +30,7 @@ const {
   eraseAccountPii,
   produceNotificationDelivery,
   resolveCustomClaimRuntimeSources,
+  writeCanonicalAccountAuthoritative,
 } = vi.hoisted(() => ({
   mockPostgresAdapterFactory: vi.fn(),
   canonicalRuntimeUsers: new Map<string, any>(),
@@ -64,7 +65,10 @@ const {
   eraseAccountPii: vi.fn(),
   produceNotificationDelivery: vi.fn(),
   resolveCustomClaimRuntimeSources: vi.fn(),
+  writeCanonicalAccountAuthoritative: vi.fn(async (_input?: any) => ({ userId: 'user-written' })),
 }));
+
+vi.mock('../account-authoritative-write', () => ({ writeCanonicalAccountAuthoritative }));
 
 vi.mock('../account-directory-producer', () => ({
   executeDurableInitialAccountDirectoryWrite: executeDurableAccountCreation,
@@ -2866,6 +2870,93 @@ describe('Admin API Handlers', () => {
         expect.objectContaining({ user: expect.anything() }),
         201
       );
+    });
+
+    describe('identity assurance of a new account', () => {
+      const createWith = async (
+        settings: Record<string, string>,
+        options: { failSettingsRead?: boolean } = {}
+      ) => {
+        const mockDB = createMockDB({
+          runResult: { success: true },
+          firstResult: {
+            id: 'account:ial-user',
+            legacy_user_id: 'ial-user',
+            tenant_id: 'default',
+            lifecycle_state: 'active',
+            email_verified: 0,
+            phone_number_verified: 0,
+            account_type: 'end_user',
+            created_at: Date.now(),
+            updated_at: Date.now(),
+          },
+        });
+        (mockDB as any)._mockStatement.all.mockResolvedValueOnce({ results: [] });
+        const kv = createMockKVNamespace(settings);
+        if (options.failSettingsRead) kv.get.mockRejectedValue(new Error('kv down'));
+        const c = createMockContext({
+          method: 'POST',
+          headers: { 'Idempotency-Key': 'admin-create-ial-user' },
+          body: { email: 'ial-user@example.com' },
+          db: mockDB,
+          envOverrides: { SETTINGS: kv as unknown as KVNamespace },
+        });
+        await adminUserCreateHandler(c);
+        return c;
+      };
+      const written = async () => {
+        const dependencies = (executeDurableAccountCreation.mock.calls.at(-1) as unknown[])[2] as {
+          writeAuthoritative(context: unknown): Promise<void>;
+        };
+        // What follows the authoritative write needs a real database; only the write is looked at.
+        await dependencies
+          .writeAuthoritative({
+            publication: { accountId: 'account:ial-user', tenantId: 'default' },
+            tenantCoreUsers: {},
+            tenantPii: {},
+            residencyPartition: 'default',
+          })
+          .catch(() => undefined);
+        return writeCanonicalAccountAuthoritative.mock.calls.at(-1)?.[0];
+      };
+
+      it('records the tenant default IAL as tenant-policy evidence for an administrator-created account', async () => {
+        writeCanonicalAccountAuthoritative.mockClear();
+        const c = await createWith({
+          'settings:tenant:default:assurance': JSON.stringify({ 'assurance.default_ial': 'IAL2' }),
+        });
+
+        expect(c.json).toHaveBeenCalledWith(
+          expect.objectContaining({ user: expect.anything() }),
+          201
+        );
+        expect(await written()).toMatchObject({
+          initialAssurance: {
+            level: 'IAL2',
+            evidenceType: 'tenant_policy',
+            issuerRef: 'tenant_policy',
+            verifiedAt: expect.any(Number),
+          },
+        });
+      });
+
+      it('records nothing at the default IAL1', async () => {
+        writeCanonicalAccountAuthoritative.mockClear();
+        await createWith({});
+
+        expect((await written()).initialAssurance ?? null).toBeNull();
+      });
+
+      it('refuses to create the account when the default IAL cannot be read', async () => {
+        executeDurableAccountCreation.mockClear();
+        const c = await createWith({}, { failSettingsRead: true });
+
+        expect(c.json).toHaveBeenCalledWith(
+          expect.objectContaining({ error: 'temporarily_unavailable' }),
+          503
+        );
+        expect(executeDurableAccountCreation).not.toHaveBeenCalled();
+      });
     });
 
     it('should create a canonical runtime user when runtime cutover is enabled', async () => {

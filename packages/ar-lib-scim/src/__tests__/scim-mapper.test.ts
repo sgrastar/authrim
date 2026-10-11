@@ -259,6 +259,47 @@ describe('SCIM Mapper', () => {
     });
   });
 
+  describe('applyPatchOperations extension paths', () => {
+    const ENTERPRISE = 'urn:ietf:params:scim:schemas:extension:enterprise:2.0:User';
+
+    it('keeps the dots of the schema version out of the path separators', () => {
+      const result = applyPatchOperations({ [ENTERPRISE]: { department: 'A' } } as object, [
+        { op: 'replace', path: `${ENTERPRISE}:department`, value: 'B' },
+      ]) as Record<string, Record<string, unknown>>;
+
+      expect(result[ENTERPRISE].department).toBe('B');
+      expect(Object.keys(result)).toEqual([ENTERPRISE]);
+    });
+
+    it('splits a nested attribute after the schema name at its dots', () => {
+      const result = applyPatchOperations({} as object, [
+        { op: 'add', path: `${ENTERPRISE}:manager.value`, value: 'u1' },
+      ]) as Record<string, Record<string, Record<string, unknown>>>;
+
+      expect(result[ENTERPRISE].manager.value).toBe('u1');
+    });
+
+    it('does not treat a path with whitespace, brackets or a line break in the URN as an extension', () => {
+      for (const path of [
+        `urn:a b:1.0:User:x`,
+        `urn:a[1]:1.0:User:x`,
+        `urn:a:1.0:User:x\ny`,
+        `urn:a:1.0:User:`,
+      ]) {
+        const result = applyPatchOperations({} as object, [{ op: 'add', path, value: 'v' }]);
+        expect(Object.keys(result)).not.toContain('urn:a:1.0:User');
+      }
+    });
+
+    it('answers a crafted long path in linear time', () => {
+      const crafted = 'urn::0.0:A:' + ':0.0:A:!'.repeat(20000);
+      const started = Date.now();
+      applyPatchOperations({} as object, [{ op: 'add', path: crafted, value: 'v' }]);
+
+      expect(Date.now() - started).toBeLessThan(1000);
+    });
+  });
+
   describe('applyPatchOperations', () => {
     it('should apply add operation', () => {
       const resource = { name: 'John' };

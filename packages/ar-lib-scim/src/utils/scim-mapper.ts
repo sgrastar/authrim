@@ -16,6 +16,7 @@ import type {
   ScimPatchValue,
 } from '../types/scim';
 import { SCIM_SCHEMAS } from '../types/scim';
+import { parseScimAssuranceExtension } from './scim-assurance';
 
 /**
  * SCIM Enterprise User Extension attributes
@@ -89,7 +90,56 @@ function resolvePatchKey(target: PatchableRecord, requestedKey: string): string 
   return Object.keys(target).find((key) => key.toLowerCase() === normalized) ?? requestedKey;
 }
 
+/**
+ * A path into an extension names the extension's schema URN, then the attribute
+ * (`urn:ietf:params:scim:schemas:extension:enterprise:2.0:User:department`, RFC 7644 3.10). The
+ * URN has dots in its version, which are not path separators.
+ *
+ * The URN is `urn:` and anything without whitespace or brackets, up to the first `:<major>.<minor>:`
+ * that is followed by a schema name and then the end of the path or `:` and the rest. It is found
+ * with a single left-to-right scan: a pattern with a lazy prefix followed by this tail would
+ * backtrack in polynomial time on a long crafted path.
+ */
+function matchExtensionPath(path: string): { urn: string; rest: string | null } | null {
+  if (!path.startsWith('urn:')) return null;
+  const isDigit = (code: number) => code >= 48 && code <= 57;
+  const isLetter = (code: number) => (code >= 65 && code <= 90) || (code >= 97 && code <= 122);
+
+  for (let colon = 4; colon < path.length; colon += 1) {
+    // The URN prefix cannot contain whitespace or brackets; once it does, no later colon can match.
+    if (colon > 4 && /[\s[\]]/.test(path[colon - 1])) return null;
+    if (path.charCodeAt(colon) !== 58 /* : */) continue;
+
+    let i = colon + 1;
+    const majorStart = i;
+    while (i < path.length && isDigit(path.charCodeAt(i))) i += 1;
+    if (i === majorStart || path.charCodeAt(i) !== 46 /* . */) continue;
+    i += 1;
+    const minorStart = i;
+    while (i < path.length && isDigit(path.charCodeAt(i))) i += 1;
+    if (i === minorStart || path.charCodeAt(i) !== 58 /* : */) continue;
+    i += 1;
+    if (i >= path.length || !isLetter(path.charCodeAt(i))) continue;
+    i += 1;
+    while (i < path.length && (isLetter(path.charCodeAt(i)) || isDigit(path.charCodeAt(i)))) {
+      i += 1;
+    }
+
+    if (i === path.length) return { urn: path, rest: null };
+    if (path.charCodeAt(i) !== 58 /* : */) continue;
+    const rest = path.slice(i + 1);
+    // `(.+)$` without the `s` flag: at least one character and no line terminator.
+    if (rest.length === 0 || /[\n\r\u2028\u2029]/.test(rest)) continue;
+    return { urn: path.slice(0, i), rest };
+  }
+  return null;
+}
+
 function splitPatchPath(path: string): string[] {
+  const extension = matchExtensionPath(path);
+  if (extension) {
+    return [extension.urn, ...(extension.rest ? splitPatchPath(extension.rest) : [])];
+  }
   const parts: string[] = [];
   let current = '';
   let bracketDepth = 0;
@@ -695,6 +745,8 @@ export function validateScimUser(user: Partial<ScimUser>): { valid: boolean; err
       ['value', '$ref', 'displayName']
     );
   }
+
+  errors.push(...parseScimAssuranceExtension(rawUser[SCIM_SCHEMAS.ASSURANCE_USER]).errors);
 
   return {
     valid: errors.length === 0,

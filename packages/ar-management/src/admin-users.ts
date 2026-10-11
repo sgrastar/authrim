@@ -36,7 +36,10 @@ import {
   resolveCustomClaimRuntimeSourcesFromHono,
   resolveAccountDataContextFromHono,
   transitionAccountAuthenticationState,
+  DefaultIALUnavailableError,
+  resolveTenantPolicyInitialAssurance,
   type CanonicalRuntimeUserProjection,
+  type InitialAssuranceEvidence,
 } from '@authrim/ar-lib-core';
 import { resolveAaguidAuthenticator } from '@authrim/ar-lib-core/webauthn/aaguid-metadata';
 import {
@@ -1269,6 +1272,27 @@ export async function adminUserCreateHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
+    // The tenant's default IAL for accounts the organisation creates (recorded as evidence with
+    // the account). Not knowing it, the account is not created: it would lack the evidence.
+    let initialAssurance: InitialAssuranceEvidence | null;
+    try {
+      initialAssurance = await resolveTenantPolicyInitialAssurance(c.env, tenantId);
+    } catch (error) {
+      if (!(error instanceof DefaultIALUnavailableError)) throw error;
+      logSanitizedError(
+        'Default IAL could not be read for an administrator-created account',
+        error
+      );
+      c.header('Retry-After', '5');
+      return c.json(
+        {
+          error: 'temporarily_unavailable',
+          error_description: 'The default identity assurance level is unavailable; try again',
+        },
+        503
+      );
+    }
+
     const candidateUserId = await generateUserIdFromSettings(c.env, tenantId, c.env);
     const requestHash = await hashAccountCreationRequest({
       ...body,
@@ -1313,6 +1337,7 @@ export async function adminUserCreateHandler(c: Context<{ Bindings: Env }>) {
                 picture: picture ?? null,
               },
             },
+            initialAssurance,
           });
           await persistCustomClaimWrite({
             db: context.tenantCoreUsers,
@@ -1373,6 +1398,7 @@ export async function adminUserCreateHandler(c: Context<{ Bindings: Env }>) {
 
     await createAuditLogFromContext(c, 'user.created', 'user', result.operation.userId, {
       user_type,
+      ...(initialAssurance ? { initial_ial: initialAssurance.level } : {}),
     });
     scheduleAdminAuditLog(c, 'user.created', result.operation.userId, 'success', {
       user_type,

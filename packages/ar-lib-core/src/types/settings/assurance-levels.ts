@@ -106,6 +106,17 @@ export const DEFAULT_ACR_MAPPINGS: ACRAssuranceMapping[] = [
 ];
 
 /**
+ * The highest IAL (as a number: 1 is IAL1, 3 is IAL3) a SCIM token may assert for a user through
+ * the assurance extension, when the tenant has not set `assurance.scim_max_ial`. The secure
+ * default: a SCIM source asserts IAL2 or IAL3 only once the tenant raises the ceiling. This is
+ * the one place the default is named.
+ */
+export const DEFAULT_SCIM_MAX_IAL = 1;
+/** The range of `assurance.scim_max_ial`: the IALs of the identity assurance service. */
+export const SCIM_MAX_IAL_MIN = 1;
+export const SCIM_MAX_IAL_MAX = 3;
+
+/**
  * Assurance Levels Settings Interface
  */
 export interface AssuranceLevelsSettings {
@@ -120,6 +131,9 @@ export interface AssuranceLevelsSettings {
 
   /** The IAL recorded for accounts the organisation creates (admin, SCIM, CSV) */
   'assurance.default_ial': IAL;
+
+  /** The highest IAL (1 to 3) a SCIM token may assert through the assurance extension */
+  'assurance.scim_max_ial': number;
 
   /** Require minimum IAL for specific scopes (JSON) */
   'assurance.scope_ial_requirements': string;
@@ -190,15 +204,26 @@ export const ASSURANCE_LEVELS_SETTINGS_META: Record<keyof AssuranceLevelsSetting
   },
   'assurance.default_ial': {
     key: 'assurance.default_ial',
-    // Saved and validated, not applied yet: runtime use lands with the identity assurance work.
-    status: 'in_development',
     type: 'enum',
     default: 'IAL1',
     envKey: 'DEFAULT_IAL',
     label: 'Default IAL',
     description:
-      'The IAL recorded, as tenant-policy evidence, for accounts the organisation creates (by an administrator, SCIM or a CSV import) when IAL2 or IAL3. Self-registration, guests and sign-in from another IdP are never given it (not applied yet)',
+      'The IAL recorded, as tenant-policy evidence, for accounts the organisation creates (by an administrator, SCIM or a CSV import) when IAL2 or IAL3, unless the SCIM client or CSV row gives the IAL itself. Self-registration, guests and sign-in from another IdP are never given it. Applies whether or not assurance levels are enabled, and to accounts created after the change',
     enum: ['IAL1', 'IAL2', 'IAL3'],
+  },
+  'assurance.scim_max_ial': {
+    key: 'assurance.scim_max_ial',
+    type: 'number',
+    default: DEFAULT_SCIM_MAX_IAL,
+    envKey: 'SCIM_MAX_IAL',
+    label: 'SCIM Maximum IAL',
+    description:
+      'The highest IAL a SCIM token may assert for a user through the assurance extension (1 is IAL1, 2 is IAL2, 3 is IAL3). A SCIM request asserting a higher level is refused (400) and writes nothing, also for the user fields it carries. At the default 1 a SCIM source can assert only IAL1. Evidence recorded earlier is not revoked when the ceiling is lowered. Applies whether or not assurance levels are enabled. It does not limit evidence an administrator records, the default IAL for accounts the organisation creates, or a CSV import',
+    min: SCIM_MAX_IAL_MIN,
+    max: SCIM_MAX_IAL_MAX,
+    integer: true,
+    envNumber: 'strict-in-range',
   },
   'assurance.scope_aal_requirements': {
     key: 'assurance.scope_aal_requirements',
@@ -317,6 +342,7 @@ export const ASSURANCE_LEVELS_DEFAULTS: AssuranceLevelsSettings = {
   'assurance.default_aal': 'AAL1',
   'assurance.default_fal': 'FAL1',
   'assurance.default_ial': 'IAL1',
+  'assurance.scim_max_ial': DEFAULT_SCIM_MAX_IAL,
   'assurance.scope_aal_requirements': '{}',
   'assurance.upstream_acr_mappings': '{}',
   'assurance.outbound_acr_mappings': '{}',

@@ -61,7 +61,24 @@ const accountCreationState = vi.hoisted(() => ({
   capacityUnavailable: false,
   bindingUnavailable: false,
   calls: [] as Array<Record<string, unknown>>,
+  /** What each authoritative account write was asked to record as the account's initial assurance. */
+  written: [] as Array<{ userId: string; initialAssurance: unknown }>,
   reservedSubjects: new Set<string>(),
+}));
+
+const assuranceState = vi.hoisted(() => ({
+  /** What each SCIM token asserts for each user, by `userId\0tokenRef`. */
+  claims: new Map<string, unknown>(),
+  applied: [] as Array<{ userId: string; tokenRef: string; claim: unknown }>,
+  failRead: false,
+  failApply: false,
+  /**
+   * A real evidence store (a sqlite database holding the users' accounts): the evidence is then
+   * the real repository's, and a person's version moves with it as the projection computes it.
+   */
+  store: null as null | {
+    queryOne(sql: string, params?: unknown[]): Promise<any>;
+  },
 }));
 
 const accountOperationState = vi.hoisted(() => ({
@@ -81,6 +98,8 @@ const crossShardListState = vi.hoisted(() => ({
 const identifierReplacementState = vi.hoisted(() => ({
   calls: [] as Array<Record<string, unknown>>,
   error: null as Error | null,
+  /** Runs while the identifiers are replaced, in the middle of the request (a concurrent change). */
+  during: null as null | (() => Promise<void> | void),
 }));
 
 const customClaimRoutingState = vi.hoisted(() => ({
@@ -233,6 +252,7 @@ vi.mock('../scim-identifier-replacement', () => ({
   syncScimIdentifierReplacements: vi.fn(async (input: Record<string, unknown>) => {
     identifierReplacementState.calls.push(input);
     if (identifierReplacementState.error) throw identifierReplacementState.error;
+    await identifierReplacementState.during?.();
   }),
 }));
 
@@ -250,16 +270,64 @@ vi.mock('../account-creation-operation', async (importOriginal) => {
 });
 
 vi.mock('../account-authoritative-write', () => ({
-  writeCanonicalAccountAuthoritative: vi.fn(async ({ publication, runtimeUser }: any) => {
-    const userId = publication.accountId.slice('account:'.length);
-    canonicalRuntimeState.apply({
-      ...runtimeUser,
-      userId,
-      tenantId: publication.tenantId,
-    });
-    return { userId };
-  }),
+  writeCanonicalAccountAuthoritative: vi.fn(
+    async ({ publication, runtimeUser, initialAssurance }: any) => {
+      const userId = publication.accountId.slice('account:'.length);
+      accountCreationState.written.push({ userId, initialAssurance: initialAssurance ?? null });
+      canonicalRuntimeState.apply({
+        ...runtimeUser,
+        userId,
+        tenantId: publication.tenantId,
+      });
+      return { userId };
+    }
+  ),
 }));
+
+vi.mock('../scim-assurance', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../scim-assurance')>();
+  return {
+    ...actual,
+    readScimAssurance: vi.fn(
+      async (_adapter: unknown, tenantId: string, userId: string, tokenRef: string) => {
+        if (assuranceState.failRead) throw new Error('assurance read failed');
+        if (assuranceState.store) {
+          return actual.readScimAssurance(
+            assuranceState.store as never,
+            tenantId,
+            userId,
+            tokenRef
+          );
+        }
+        return assuranceState.claims.get(`${userId}\0${tokenRef}`) ?? null;
+      }
+    ),
+    applyScimAssurance: vi.fn(
+      async (
+        _adapter: unknown,
+        tenantId: string,
+        userId: string,
+        tokenRef: string,
+        claim: unknown
+      ) => {
+        if (assuranceState.failApply) throw new Error('assurance write failed');
+        assuranceState.applied.push({ userId, tokenRef, claim });
+        if (assuranceState.store) {
+          return actual.applyScimAssurance(
+            assuranceState.store as never,
+            tenantId,
+            userId,
+            tokenRef,
+            claim as never
+          );
+        }
+        if (claim) assuranceState.claims.set(`${userId}\0${tokenRef}`, claim);
+        else assuranceState.claims.delete(`${userId}\0${tokenRef}`);
+        return claim ? 'recorded' : 'revoked';
+      }
+    ),
+  };
+});
 
 vi.mock('../account-directory-producer', () => ({
   executeDurableInitialAccountDirectoryWrite: vi.fn(
@@ -397,6 +465,8 @@ vi.mock('@authrim/ar-lib-scim', async (importOriginal) => {
           401
         );
       }
+      // The SCIM authentication middleware names the token that authenticated the request.
+      c.set('scimTokenRef', `ref-${token}`);
       await next();
     }),
   };
@@ -577,7 +647,20 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
         if (!user || (!options?.includeInactive && user.active === 0)) {
           return null;
         }
-        return toProjection(user);
+        const projection = toProjection(user);
+        if (assuranceState.store) {
+          // As the real projection: the later of the account's and the subject's updated_at.
+          const subject = await assuranceState.store.queryOne(
+            'SELECT updated_at FROM identity_subjects WHERE id = ?',
+            [`subject:${user.id}`]
+          );
+          if (subject) {
+            projection.updated_at = new Date(
+              Math.max(Date.parse(String(projection.updated_at)), Number(subject.updated_at))
+            ).toISOString();
+          }
+        }
+        return projection;
       }
 
       async findByAccountId(accountId: string, options?: { includeInactive?: boolean }) {
@@ -607,7 +690,14 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
       }
     },
     CanonicalSensitiveValueResolver: class {},
-    CanonicalIdentityRepository: class {},
+    // The real repository where the evidence is in a real store; nothing otherwise.
+    CanonicalIdentityRepository: class {
+      constructor(adapter: never, tenantId: string) {
+        return assuranceState.store
+          ? new actual.CanonicalIdentityRepository(adapter, tenantId)
+          : ({} as never);
+      }
+    },
   };
 });
 
@@ -623,6 +713,7 @@ export interface ScimTestHarness {
     { lifecycle: string; lifecycleVersionMs: number | null }
   >;
   readonly accountCreation: typeof accountCreationState;
+  readonly assurance: typeof assuranceState;
   readonly accountOperation: typeof accountOperationState;
   readonly accountRouting: typeof accountRoutingState;
   readonly crossShardList: typeof crossShardListState;
@@ -690,7 +781,13 @@ export function describeScimTestHarness(
       accountCreationState.capacityUnavailable = false;
       accountCreationState.bindingUnavailable = false;
       accountCreationState.calls = [];
+      accountCreationState.written = [];
       accountCreationState.reservedSubjects.clear();
+      assuranceState.claims.clear();
+      assuranceState.applied = [];
+      assuranceState.failRead = false;
+      assuranceState.failApply = false;
+      assuranceState.store = null;
       accountOperationState.operation = null;
       accountOperationState.error = null;
       accountRoutingState.error = null;
@@ -698,6 +795,7 @@ export function describeScimTestHarness(
       crossShardListState.calls = 0;
       identifierReplacementState.calls = [];
       identifierReplacementState.error = null;
+      identifierReplacementState.during = null;
       customClaimRoutingState.rejectAccountLookup = false;
       Object.assign(scimSettingsState, {
         enabled: true,
@@ -1275,6 +1373,7 @@ export function describeScimTestHarness(
         return sessionRevocationStates;
       },
       accountCreation: accountCreationState,
+      assurance: assuranceState,
       accountOperation: accountOperationState,
       accountRouting: accountRoutingState,
       crossShardList: crossShardListState,

@@ -796,8 +796,9 @@ paths:
         '503':
           description: >-
             Account capacity is being provisioned or the private Control binding is temporarily
-            unavailable during rollout, or a newly deployed runtime database binding is still
-            propagating. Retry the same idempotent request.
+            unavailable during rollout, a newly deployed runtime database binding is still
+            propagating, or the tenant's default identity assurance level
+            (`assurance.default_ial`) cannot be read. Retry the same idempotent request.
           headers:
             Retry-After:
               description: Minimum suggested delay before retrying, in seconds.
@@ -817,6 +818,10 @@ paths:
         binding is temporarily unavailable during rollout, or while a newly deployed runtime
         database binding is propagating, the endpoint returns 503 with Retry-After; clients must
         retry the same request and Idempotency-Key after that delay.
+
+        When the tenant's default IAL (`assurance.default_ial`) is IAL2 or IAL3, the account is
+        created with it recorded as tenant-policy evidence; at IAL1 nothing is recorded. When the
+        setting cannot be read the account is not created (503).
       security:
         - adminBearer: []
         - adminSessionCookie: []
@@ -14392,6 +14397,34 @@ paths:
         remains uncounted in processed/succeeded totals and resumes with the same job/row identity;
         progress logs expose directory_pending. Existing users are updated on their verified account
         storage route. A replay of this job's own account creation precedes duplicate-email handling.
+
+        Optional columns `ial` (IAL1, IAL2 or IAL3) and `ial_verified_at` (a date, or a date-time
+        with a time zone; the time of the import when omitted) assert the identity assurance of
+        the person. A new account is created with it as `import` evidence of the job, in place of
+        the tenant's default IAL (`assurance.default_ial`, recorded as tenant-policy evidence when
+        a row gives none). For an existing account (`on_duplicate=update`), a row with an `ial`
+        replaces what earlier imports asserted, and a row without one keeps it; evidence of other
+        sources is never touched. A claim is the level with its verification time (`ial_verified_at`,
+        or the time the job was created when the row gives none), so the same level without a date
+        in a later import is a new verification, while the same job processed again records nothing
+        new. A CSV import is an administrator's action: it is not held to the ceiling on what SCIM
+        tokens may assert (`assurance.scim_max_ial`). `ial_verified_at` without `ial`, an unknown `ial`, a time in the future and a date
+        that does not exist (February 30, month 13) fail the row. The columns are read as assurance
+        only where the tenant has no custom attribute named `ial` or `ial_verified_at` (such names
+        cannot be given to a custom attribute, nor an inactive one with such a name made active):
+        while it has, a row with the column fails (also when only validated; checked for each such
+        row) until the attribute is renamed or the column removed. Import evidence is identified by
+        its content (person, `ial`, `ial_verified_at`; the time of the job when the row gives
+        none), from any job: identical content never re-activates evidence that was revoked,
+        whoever revoked it, so a row processed again after a failure records nothing new.
+        Evidence of an existing account is written only after its row was updated, so a row that
+        fails changes none; a row whose evidence step failed after the update is reported as
+        `assurance_update_failed` (`retryable`) and is imported again. When the tenant default cannot be
+        read, a row without `ial` fails with `default_ial_unavailable` (`retryable`) and creates
+        nothing; import it again. When a new account was written but its evidence could not be
+        recorded, the row is not counted: the job tries it again (up to five times), which finds the
+        row's creation operation and completes it, recording the evidence once; after that the row
+        fails as `assurance_initial_failed` (`retryable`) and its creation stays unfinished.
       responses:
         '202':
           $ref: '#/components/responses/AdminJobUserImportAccepted'

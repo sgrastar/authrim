@@ -49,6 +49,9 @@ import {
   resolveCustomClaimRuntimeSourcesFromEnv,
   ensureDatabaseAdapter,
   transitionAccountAuthenticationState,
+  DefaultIALUnavailableError,
+  ScimMaxIALUnavailableError,
+  resolveTenantPolicyInitialAssurance,
 } from '@authrim/ar-lib-core';
 import { logScimAudit } from '@authrim/ar-lib-scim';
 import { canonicalProjectionToScimInternalUser } from './identity-canonical-runtime';
@@ -81,6 +84,19 @@ import { applyScimInboundIdentityMapping, ScimIdentityMappingError } from './sci
 import { getScimInboundSettings } from './scim-settings';
 import { syncScimIdentifierReplacements } from './scim-identifier-replacement';
 import { findActiveAccountLegalHold } from './account-legal-hold-guard';
+import {
+  applyScimAssurance,
+  claimOf,
+  readScimAssurance,
+  sameClaim,
+  assertScimClaimWithinCeiling,
+  ScimIalCeilingError,
+  scimAssuranceResource,
+  scimClaimInitialAssurance,
+  scimTokenRef,
+  SCIM_ASSURANCE_SCHEMA,
+} from './scim-assurance';
+import type { ScimAssuranceClaim } from '@authrim/ar-lib-scim';
 
 interface ScimUserReadOptions {
   canonicalProjectionRepository?: CanonicalRuntimeUserProjectionRepository | null;
@@ -524,6 +540,9 @@ async function persistScimCustomClaimWrite(
   });
 }
 
+const DEFAULT_IAL_UNAVAILABLE_DETAIL =
+  'The default identity assurance level is unavailable; retry shortly';
+
 const SCIM_ACCOUNT_CREATION_OPERATION_SCHEMA =
   'urn:authrim:params:scim:api:messages:2.0:AccountCreationOperation';
 
@@ -567,7 +586,8 @@ async function executeScimAccountCreation(
   scimUser: Partial<ScimUser>,
   internalUser: Partial<InternalUser>,
   customFieldValidation: ValidScimCustomClaimWrite,
-  source: ScimAccountCreationSource
+  source: ScimAccountCreationSource,
+  assurance: ScimAssuranceClaim | null
 ): Promise<DurableInitialAccountDirectoryWriteResult> {
   const requestHash = await hashAccountCreationRequest({ source, user: scimUser });
   const explicitKey = source.kind === 'single' ? explicitScimIdempotencyKey(c) : null;
@@ -580,6 +600,12 @@ async function executeScimAccountCreation(
   );
   const userName =
     typeof scimUser.userName === 'string' ? normalizedScimUserName(scimUser.userName) : '';
+  // What the token asserts for the user, else the tenant's default IAL for accounts the
+  // organisation creates, recorded as evidence with the account. Not knowing the default, the
+  // account is not created: it would lack the evidence.
+  const initialAssurance = assurance
+    ? scimClaimInitialAssurance(assurance, scimTokenRef(c))
+    : await resolveTenantPolicyInitialAssurance(c.env, tenantId);
 
   return executeDurableInitialAccountDirectoryWrite(
     c.env,
@@ -603,6 +629,7 @@ async function executeScimAccountCreation(
           tenantCoreUsers: context.tenantCoreUsers,
           tenantPii: context.tenantPii,
           runtimeUser: canonicalScimRuntimeUser(internalUser),
+          initialAssurance,
         });
         await persistCustomClaimWrite({
           db: context.tenantCoreUsers,
@@ -1180,6 +1207,26 @@ function scimError(
   return c.json(error, status);
 }
 
+/** What a SCIM client is told of a claim above the ceiling: the extension and the ceiling only. */
+function scimCeilingDetail(error: ScimIalCeilingError): string {
+  return `${SCIM_ASSURANCE_SCHEMA}.ial must not be above ${error.ceiling}, the highest level accepted from SCIM`;
+}
+
+const SCIM_CEILING_UNAVAILABLE_DETAIL =
+  'The identity assurance ceiling for SCIM is unavailable; retry shortly';
+
+/** The response for a claim refused by the ceiling (400), or one that could not be checked (503). */
+function scimCeilingError(c: ScimContext, error: unknown): Response | null {
+  if (error instanceof ScimIalCeilingError) {
+    return scimError(c, 400, scimCeilingDetail(error), 'invalidValue');
+  }
+  if (error instanceof ScimMaxIALUnavailableError) {
+    c.header('Retry-After', '5');
+    return scimError(c, 503, SCIM_CEILING_UNAVAILABLE_DETAIL);
+  }
+  return null;
+}
+
 function scimMappingError(c: ScimContext, error: unknown): Response | null {
   if (!(error instanceof ScimIdentityMappingError)) return null;
   const status = error.code === 'mapping_required_output_missing' ? 400 : 503;
@@ -1449,10 +1496,13 @@ function projectScimResource<T extends object>(
   return projected as T;
 }
 
+/** An attribute of an extension: the extension's schema URN, then the attribute path (RFC 7644 3.10). */
+const EXTENSION_ATTRIBUTE_PATH = /^(urn:[^\s[\]]*?:\d+\.\d+:[A-Za-z][A-Za-z0-9]*)(?::(.+))?$/;
+
 function scimPathParts(path: string): string[] {
-  const enterprisePrefix = `${SCIM_SCHEMAS.ENTERPRISE_USER}:`;
-  if (path.startsWith(enterprisePrefix)) {
-    return [SCIM_SCHEMAS.ENTERPRISE_USER, ...path.slice(enterprisePrefix.length).split('.')];
+  const extension = EXTENSION_ATTRIBUTE_PATH.exec(path);
+  if (extension) {
+    return [extension[1], ...(extension[2] ?? '').split('.').filter(Boolean)];
   }
   return path.split('.').filter(Boolean);
 }
@@ -1490,6 +1540,14 @@ function deleteScimPath(resource: Record<string, unknown>, path: string): void {
     cursor = next as Record<string, unknown>;
   }
   delete cursor[parts.at(-1)!];
+}
+
+function asksForScimAssurance(attributes: string[] | undefined): boolean {
+  const schema = SCIM_ASSURANCE_SCHEMA.toLowerCase();
+  return (attributes ?? []).some((attribute) => {
+    const name = attribute.toLowerCase();
+    return name === schema || name.startsWith(`${schema}:`);
+  });
 }
 
 function invalidProjectionParameters(params: ScimQueryParams): boolean {
@@ -1550,6 +1608,61 @@ app.get('/ServiceProviderConfig', async (c) => {
   return c.json(config);
 });
 
+/** The extensions of the User resource (all optional). */
+const USER_SCHEMA_EXTENSIONS = [
+  { schema: SCIM_SCHEMAS.ENTERPRISE_USER, required: false },
+  { schema: SCIM_ASSURANCE_SCHEMA, required: false },
+];
+
+/**
+ * The assurance extension's schema (Authrim's own, see scim-assurance). Its attributes are
+ * returned only when asked for, as what a client holds is its own claim.
+ */
+function scimAssuranceSchema(baseUrl: string) {
+  const attribute = (name: string, description: string, required: boolean, type = 'string') => ({
+    name,
+    type,
+    multiValued: false,
+    description,
+    required,
+    caseExact: false,
+    mutability: 'readWrite',
+    returned: 'request',
+    uniqueness: 'none',
+    ...(name === 'ial' ? { canonicalValues: ['IAL1', 'IAL2', 'IAL3'] } : {}),
+  });
+  return {
+    schemas: [SCIM_SCHEMAS.SCHEMA],
+    id: SCIM_ASSURANCE_SCHEMA,
+    name: 'AssuranceUser',
+    description:
+      'The identity assurance level (NIST SP 800-63A IAL) the provisioning client asserts for the user, and when the identity was proofed. Each client replaces its own claim; a replacement without it withdraws the claim.',
+    attributes: [
+      attribute(
+        'ial',
+        'IAL1, IAL2 or IAL3, not above the highest level the tenant accepts from SCIM (IAL1 until raised)',
+        true
+      ),
+      attribute(
+        'verifiedAt',
+        'When the identity was proofed (a date-time with a time zone)',
+        true,
+        'dateTime'
+      ),
+      attribute(
+        'expiresAt',
+        'When the claim lapses, if it does (a date-time with a time zone)',
+        false,
+        'dateTime'
+      ),
+    ],
+    meta: {
+      location: `${baseUrl}/scim/v2/Schemas/${encodeURIComponent(SCIM_ASSURANCE_SCHEMA)}`,
+      resourceType: 'Schema',
+    },
+  };
+}
+
 /**
  * GET /scim/v2/ResourceTypes - Resource Type definitions
  * RFC 7644 Section 4 - REQUIRED endpoint
@@ -1568,12 +1681,7 @@ app.get('/ResourceTypes', (c) => {
         endpoint: '/Users',
         description: 'User Account',
         schema: SCIM_SCHEMAS.USER,
-        schemaExtensions: [
-          {
-            schema: SCIM_SCHEMAS.ENTERPRISE_USER,
-            required: false,
-          },
-        ],
+        schemaExtensions: USER_SCHEMA_EXTENSIONS,
         meta: {
           location: `${baseUrl}/scim/v2/ResourceTypes/User`,
           resourceType: 'ResourceType',
@@ -1612,12 +1720,7 @@ app.get('/ResourceTypes/:name', (c) => {
       endpoint: '/Users',
       description: 'User Account',
       schema: SCIM_SCHEMAS.USER,
-      schemaExtensions: [
-        {
-          schema: SCIM_SCHEMAS.ENTERPRISE_USER,
-          required: false,
-        },
-      ],
+      schemaExtensions: USER_SCHEMA_EXTENSIONS,
       meta: {
         location: `${baseUrl}/scim/v2/ResourceTypes/User`,
         resourceType: 'ResourceType',
@@ -1650,10 +1753,10 @@ app.get('/ResourceTypes/:name', (c) => {
 app.get('/Schemas', (c) => {
   const baseUrl = getBaseUrl(c);
 
-  // Supported SCIM Core and Enterprise User schema definitions.
+  // Supported SCIM Core, Enterprise User and assurance extension schema definitions.
   const schemas = {
     schemas: [SCIM_SCHEMAS.LIST_RESPONSE],
-    totalResults: 3,
+    totalResults: 4,
     Resources: [
       {
         schemas: [SCIM_SCHEMAS.SCHEMA],
@@ -1918,6 +2021,7 @@ app.get('/Schemas', (c) => {
           resourceType: 'Schema',
         },
       },
+      scimAssuranceSchema(baseUrl),
     ],
   };
 
@@ -2204,6 +2308,10 @@ app.get('/Schemas/:id', (c) => {
     });
   }
 
+  if (schemaId === SCIM_ASSURANCE_SCHEMA) {
+    return c.json(scimAssuranceSchema(baseUrl));
+  }
+
   return scimError(c, 404, 'The requested resource was not found');
 });
 
@@ -2370,6 +2478,17 @@ app.get('/Users/:id', async (c) => {
     );
     const scimUser = userToScim(user, { baseUrl, includeGroups: true, groups });
 
+    // The assurance extension is returned only when asked for (`returned: request`): what the
+    // token that is asking holds, so a client can read it back before it replaces the user.
+    if (asksForScimAssurance(params.attributes)) {
+      const held = await readScimAssurance(coreAdapter, tenantId, userId, scimTokenRef(c));
+      if (held) {
+        scimUser.schemas = [...scimUser.schemas, SCIM_ASSURANCE_SCHEMA];
+        (scimUser as unknown as Record<string, unknown>)[SCIM_ASSURANCE_SCHEMA] =
+          scimAssuranceResource(held);
+      }
+    }
+
     // Set ETag header
     c.header('ETag', scimUser.meta.version || '');
 
@@ -2466,13 +2585,17 @@ app.post('/Users', async (c) => {
     if (!internalUser.email_verified) internalUser.email_verified = 0;
     if (internalUser.active === undefined) internalUser.active = 1;
 
+    // A level above the tenant's ceiling for SCIM is refused before anything is created.
+    await assertScimClaimWithinCeiling(c.env, tenantId, claimOf(scimUser), async () => null);
+
     const result = await executeScimAccountCreation(
       c,
       tenantId,
       scimUser,
       internalUser,
       customFieldValidation,
-      { kind: 'single' }
+      { kind: 'single' },
+      claimOf(scimUser)
     );
     if (result.delivery.status === 202) {
       c.header(
@@ -2518,6 +2641,8 @@ app.post('/Users', async (c) => {
 
     return c.json(responseUser, 201);
   } catch (error) {
+    const ceilingResponse = scimCeilingError(c, error);
+    if (ceilingResponse) return ceilingResponse;
     const mappingResponse = scimMappingError(c, error);
     if (mappingResponse) return mappingResponse;
     const lookupInputResponse = scimLookupInputError(c, error);
@@ -2540,6 +2665,10 @@ app.post('/Users', async (c) => {
       if (error.message === 'control_account_allocation_capacity_unavailable') {
         return scimError(c, 503, 'Account storage capacity is temporarily unavailable');
       }
+    }
+    if (error instanceof DefaultIALUnavailableError) {
+      c.header('Retry-After', '5');
+      return scimError(c, 503, DEFAULT_IAL_UNAVAILABLE_DETAIL);
     }
     if (isAccountDirectoryWriteBindingUnavailable(error)) {
       c.header('Retry-After', '1');
@@ -2634,6 +2763,10 @@ app.put('/Users/:id', async (c) => {
         toCustomClaimErrorExtensions(customFieldValidation)
       );
     }
+    // A level above the tenant's ceiling for SCIM is refused before anything is written.
+    await assertScimClaimWithinCeiling(c.env, tenantId, claimOf(scimUser), () =>
+      readScimAssurance(coreAdapter, tenantId, userId, scimTokenRef(c))
+    );
     internalUser.updated_at = new Date().toISOString();
 
     await withGroupInputWrite(coreAdapter, tenantId, userId, 'scim:user-update', async () => {
@@ -2648,6 +2781,11 @@ app.put('/Users/:id', async (c) => {
         internalUser
       );
     });
+    // Only once the user is written: a replacement that fails (a userName already taken, say)
+    // changes no evidence. A replacement states the whole resource, so leaving the extension out
+    // withdraws the token's claim. If this step fails the client sends the replacement again
+    // (the user write and the evidence are both safe to repeat); it is never taken for "no claim".
+    await applyScimAssurance(coreAdapter, tenantId, userId, scimTokenRef(c), claimOf(scimUser));
 
     // Invalidate user cache (cache invalidation hook)
     await invalidateUserCache(c.env, tenantId, userId);
@@ -2674,6 +2812,8 @@ app.put('/Users/:id', async (c) => {
 
     return c.json(responseUser);
   } catch (error) {
+    const ceilingResponse = scimCeilingError(c, error);
+    if (ceilingResponse) return ceilingResponse;
     const mappingResponse = scimMappingError(c, error);
     if (mappingResponse) return mappingResponse;
     const lookupInputResponse = scimLookupInputError(c, error);
@@ -2735,6 +2875,14 @@ app.patch('/Users/:id', async (c) => {
 
     // Convert to SCIM format
     let scimUser = userToScim(existingUser, { baseUrl, includeGroups: false });
+    // The claim the token holds is part of the resource the patch applies to, so a patch of one
+    // attribute of it keeps the rest, and one that leaves it alone keeps it whole.
+    const tokenRef = scimTokenRef(c);
+    const heldClaim = await readScimAssurance(coreAdapter, tenantId, userId, tokenRef);
+    if (heldClaim) {
+      (scimUser as unknown as Record<string, unknown>)[SCIM_ASSURANCE_SCHEMA] =
+        scimAssuranceResource(heldClaim);
+    }
 
     // Apply patch operations (generic function preserves ScimUser type)
     scimUser = applyPatchOperations(scimUser, patchOp.Operations);
@@ -2767,6 +2915,12 @@ app.patch('/Users/:id', async (c) => {
         toCustomClaimErrorExtensions(customFieldValidation)
       );
     }
+    // A level above the tenant's ceiling for SCIM is refused before anything is written. Only a
+    // claim the patch changed is an assertion: a patch that leaves it as it was does not read
+    // the setting (and is not held up by it).
+    if (!sameClaim(heldClaim, claimOf(scimUser))) {
+      await assertScimClaimWithinCeiling(c.env, tenantId, claimOf(scimUser), async () => heldClaim);
+    }
     internalUser.updated_at = new Date().toISOString();
 
     await withGroupInputWrite(coreAdapter, tenantId, userId, 'scim:user-update', async () => {
@@ -2781,6 +2935,12 @@ app.patch('/Users/:id', async (c) => {
         internalUser
       );
     });
+    // Only once the user is written (see the replacement above), and only when the patch changed
+    // the claim: one that leaves it alone does not read-modify-write evidence, so it cannot undo a
+    // change (another request's, or an administrator's revocation) made since it read the claim.
+    if (!sameClaim(heldClaim, claimOf(scimUser))) {
+      await applyScimAssurance(coreAdapter, tenantId, userId, tokenRef, claimOf(scimUser));
+    }
 
     // Invalidate user cache (cache invalidation hook)
     await invalidateUserCache(c.env, tenantId, userId);
@@ -2807,6 +2967,8 @@ app.patch('/Users/:id', async (c) => {
 
     return c.json(responseUser);
   } catch (error) {
+    const ceilingResponse = scimCeilingError(c, error);
+    if (ceilingResponse) return ceilingResponse;
     const mappingResponse = scimMappingError(c, error);
     if (mappingResponse) return mappingResponse;
     const lookupInputResponse = scimLookupInputError(c, error);
@@ -3846,6 +4008,21 @@ async function processOperation(
       { action: 'bulk_operation', method, path },
       error as Error
     );
+    if (error instanceof ScimIalCeilingError || error instanceof ScimMaxIALUnavailableError) {
+      const refused = error instanceof ScimIalCeilingError;
+      const status = refused ? '400' : '503';
+      return {
+        method,
+        bulkId,
+        status,
+        response: {
+          schemas: [SCIM_SCHEMAS.ERROR],
+          status,
+          detail: refused ? scimCeilingDetail(error) : SCIM_CEILING_UNAVAILABLE_DETAIL,
+          ...(refused ? { scimType: 'invalidValue' } : {}),
+        },
+      };
+    }
     const mappingError = error instanceof ScimIdentityMappingError ? error : null;
     const lookupInputError =
       error instanceof Error && error.message === 'lookup_email_invalid' ? error : null;
@@ -3959,6 +4136,9 @@ async function processUserOperation(
       if (!internalUser.email_verified) internalUser.email_verified = 0;
       if (internalUser.active === undefined) internalUser.active = 1;
 
+      // A level above the tenant's ceiling for SCIM is refused before anything is created.
+      await assertScimClaimWithinCeiling(c.env, tenantId, claimOf(scimUser), async () => null);
+
       let result: DurableInitialAccountDirectoryWriteResult;
       try {
         result = await executeScimAccountCreation(
@@ -3967,7 +4147,8 @@ async function processUserOperation(
           scimUser,
           internalUser,
           customFieldValidation,
-          { kind: 'bulk', bulkId: bulkId! }
+          { kind: 'bulk', bulkId: bulkId! },
+          claimOf(scimUser)
         );
       } catch (error) {
         if (
@@ -3999,6 +4180,18 @@ async function processUserOperation(
               schemas: [SCIM_SCHEMAS.ERROR],
               status: '503',
               detail: 'Account storage capacity is temporarily unavailable',
+            },
+          };
+        }
+        if (error instanceof DefaultIALUnavailableError) {
+          return {
+            method: 'POST',
+            bulkId,
+            status: '503',
+            response: {
+              schemas: [SCIM_SCHEMAS.ERROR],
+              status: '503',
+              detail: DEFAULT_IAL_UNAVAILABLE_DETAIL,
             },
           };
         }
@@ -4208,6 +4401,10 @@ async function processUserOperation(
           },
         };
       }
+      // A level above the tenant's ceiling for SCIM is refused before anything is written.
+      await assertScimClaimWithinCeiling(c.env, tenantId, claimOf(scimUser), () =>
+        readScimAssurance(coreAdapter, tenantId, resourceId as string, scimTokenRef(c))
+      );
       internalUser.updated_at = new Date().toISOString();
 
       await withGroupInputWrite(
@@ -4240,6 +4437,14 @@ async function processUserOperation(
             internalUser
           );
         }
+      );
+      // Only once this operation's user is written (a failed one changes no evidence).
+      await applyScimAssurance(
+        coreAdapter,
+        tenantId,
+        resourceId as string,
+        scimTokenRef(c),
+        claimOf(scimUser)
       );
 
       await invalidateUserCache(c.env, tenantId, resourceId!);
@@ -4334,6 +4539,17 @@ async function processUserOperation(
         };
       }
       let scimUser = userToScim(existingUser, { baseUrl, includeGroups: false });
+      const bulkTokenRef = scimTokenRef(c);
+      const heldClaim = await readScimAssurance(
+        coreAdapter,
+        tenantId,
+        resourceId as string,
+        bulkTokenRef
+      );
+      if (heldClaim) {
+        (scimUser as unknown as Record<string, unknown>)[SCIM_ASSURANCE_SCHEMA] =
+          scimAssuranceResource(heldClaim);
+      }
       scimUser = applyPatchOperations(scimUser, patchOp.Operations);
 
       const validation = validateScimUser(scimUser);
@@ -4375,6 +4591,17 @@ async function processUserOperation(
           },
         };
       }
+      // A level above the tenant's ceiling for SCIM is refused before anything is written. Only a
+      // claim the patch changed is an assertion: a patch that leaves it as it was does not read
+      // the setting (and is not held up by it).
+      if (!sameClaim(heldClaim, claimOf(scimUser))) {
+        await assertScimClaimWithinCeiling(
+          c.env,
+          tenantId,
+          claimOf(scimUser),
+          async () => heldClaim
+        );
+      }
       internalUser.updated_at = new Date().toISOString();
 
       await withGroupInputWrite(
@@ -4408,6 +4635,17 @@ async function processUserOperation(
           );
         }
       );
+      // Only once this operation's user is written (a failed one changes no evidence), and only
+      // when the patch changed the claim (see the single patch).
+      if (!sameClaim(heldClaim, claimOf(scimUser))) {
+        await applyScimAssurance(
+          coreAdapter,
+          tenantId,
+          resourceId as string,
+          bulkTokenRef,
+          claimOf(scimUser)
+        );
+      }
 
       await invalidateUserCache(c.env, tenantId, resourceId!);
 

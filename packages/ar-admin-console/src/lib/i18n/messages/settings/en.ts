@@ -153,6 +153,9 @@ export const enSettings: Record<keyof typeof jaSettings, string> = {
 	'set.k.federation.scim_token_max_expiry': 'Longest SCIM token lifetime',
 	'set.k.federation.scim_token_max_expiry.desc':
 		'A SCIM token cannot be created with a longer lifetime (one year at most). Tokens already issued are not changed.',
+	'set.k.assurance.scim_max_ial': 'Highest identity assurance level (IAL) SCIM may assert',
+	'set.k.assurance.scim_max_ial.desc':
+		'How high an identity assurance level an external system can state for a user over SCIM: 1 is IAL1 (no proofing), 2 is IAL2, 3 is IAL3. A request asserting a higher level is refused and changes nothing. It starts at 1, so SCIM cannot assert IAL2 or IAL3 until you raise it. Levels already recorded are not removed when you lower it. It does not limit what administrators record, the level given to accounts created by the organisation, or CSV imports.',
 	'set.page.enterprise': 'Enterprise SSO (SAML)',
 	'set.page.enterprise.desc':
 		'Decides whether this tenant answers SAML at all, how long SAML assertions and requests stay valid, and what new SAML providers start with. Registering providers (IdPs and SPs) is still done on the SAML page of the previous admin screens.',
