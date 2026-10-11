@@ -20,6 +20,7 @@ vi.mock('@authrim/ar-lib-core', async () => {
 
 import {
   findActiveSamlUserByEmail,
+  getSamlUserCoreAdapter,
   getSamlUserInfoById,
   getSamlUserNameIdById,
 } from '../user-store';
@@ -500,6 +501,27 @@ describe('SAML user-store helpers', () => {
     expect(coreAdapter.queryOne).not.toHaveBeenCalledWith(
       expect.stringContaining('FROM users_core'),
       expect.anything()
+    );
+  });
+
+  it('gives the canonical store of the account, which is where its assurance evidence lives', async () => {
+    const coreDb = createMockAdapter();
+    mocked.resolveAccountDataContext.mockResolvedValue({
+      coreDb,
+      piiDb: createMockAdapter(),
+    });
+
+    await expect(getSamlUserCoreAdapter({} as Env, 'tenant-a', 'user-1')).resolves.toBe(coreDb);
+    expect(mocked.resolveAccountDataContext).toHaveBeenCalledWith(
+      {},
+      { tenantId: 'tenant-a', accountId: 'user-1' }
+    );
+  });
+
+  it('does not hide a store that cannot be resolved: the caller must not take it for no evidence', async () => {
+    mocked.resolveAccountDataContext.mockRejectedValue(new Error('account_data_route_not_found'));
+    await expect(getSamlUserCoreAdapter({} as Env, 'tenant-a', 'user-1')).rejects.toThrow(
+      'account_data_route_not_found'
     );
   });
 });

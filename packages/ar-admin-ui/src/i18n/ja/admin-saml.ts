@@ -368,6 +368,10 @@ const adminSaml = {
 	admin_saml_detail_identity_mapping_policy_hint:
 		'Inbound/Outbound SAML属性変換に使うactiveなField Mapping Setを選択します。',
 	admin_saml_detail_identity_mapping_policy_link: 'Field Mapping Set設定を開く',
+	admin_saml_detail_minimum_ial: '本人確認の最低保証レベル（IAL）',
+	admin_saml_detail_minimum_ial_none: '指定なし',
+	admin_saml_detail_minimum_ial_hint:
+		'本人確認がこのレベル（NIST SP 800-63A の IAL）に達していない人には、このSPへのアサーションを発行しません。SP起点のSSOにはRequestDeniedを返し、IdP起点のSSOではエラーページを表示します。テナントのassuranceがoffでも適用されます。',
 	admin_saml_detail_authn_request_signature: 'AuthnRequest署名検証',
 	admin_saml_detail_authn_request_signature_hint:
 		'SPから届くAuthnRequestの署名を必須にするかを制御します。通常はOptionalまたはRequiredを使い、Disabledは明示的な例外時だけ使ってください。',

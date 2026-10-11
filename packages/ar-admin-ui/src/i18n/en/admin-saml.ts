@@ -370,6 +370,10 @@ const adminSaml = {
 	admin_saml_detail_identity_mapping_policy_hint:
 		'Selects the active Field Mapping Set used for inbound and outbound SAML attribute mapping.',
 	admin_saml_detail_identity_mapping_policy_link: 'Manage Field Mapping Sets',
+	admin_saml_detail_minimum_ial: 'Minimum identity assurance level',
+	admin_saml_detail_minimum_ial_none: 'No minimum',
+	admin_saml_detail_minimum_ial_hint:
+		'A person whose identity has not been proofed to this level (NIST SP 800-63A IAL) gets no assertion for this SP: it is answered with a RequestDenied status, or the error page for an IdP-initiated sign-in. Applies whether or not assurance is on for the tenant.',
 	admin_saml_detail_authn_request_signature: 'AuthnRequest signature verification',
 	admin_saml_detail_authn_request_signature_hint:
 		'Controls whether AuthnRequests from this SP must be signed. Use Optional or Required for normal SPs; use Disabled only for an explicit exception.',

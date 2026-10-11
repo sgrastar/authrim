@@ -11,8 +11,8 @@
  * rotation, the advertised ACR values, the tenant's ID token signing algorithm, the token exchange
  * ceilings, extended introspection claims, the SCIM token lifetime, the SAML switch, assertion
  * and request lifetimes and provider defaults, the identity assurance level recorded for accounts
- * the organisation creates, the scope-to-IAL requirements, and the OIDC use of the IAL assurance
- * values (eduperson_assurance); and less the settings that left the catalog (duplicates, copies of the app
+ * the organisation creates, the scope-to-IAL requirements, and the use of the IAL assurance
+ * values in OIDC (eduperson_assurance) and SAML (eduPersonAssurance); and less the settings that left the catalog (duplicates, copies of the app
  * registration, and values too fine or fixed at deployment). Update this list when a setting starts to apply or leaves the catalog.
  *
  * Shown in the settings map (Storybook: Pages › Settings map).

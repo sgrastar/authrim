@@ -255,7 +255,7 @@ export const ASSURANCE_LEVELS_SETTINGS_META: Record<keyof AssuranceLevelsSetting
     default: '{}',
     label: 'Scope IAL Requirements',
     description:
-      'JSON mapping of scopes to the IAL they require (e.g., {"payroll": "IAL2"}); a request for such a scope by someone below it is refused (access_denied at authorization, invalid_grant at the token endpoint, access_denied for device and CIBA), since no sign-in can raise an IAL. It applies to the scopes requested at authorization and to the scopes of every token a user grant issues (including refresh and token exchange), so evidence revoked later stops them. Applies while assurance levels are enabled; a client\'s own minimum IAL applies whether or not they are',
+      'JSON mapping of scopes to the IAL they require (e.g., {"payroll": "IAL2"}); a request for such a scope by someone below it is refused (access_denied at authorization, invalid_grant at the token endpoint, access_denied for device and CIBA), since no sign-in can raise an IAL. It applies to the scopes requested at authorization and to the scopes of every token a user grant issues (including refresh and token exchange), so evidence revoked later stops them. Applies while assurance levels are enabled; a client\'s own minimum IAL applies whether or not they are. It matches OAuth scopes, so it does not apply to SAML: a SAML service provider has its own minimum IAL',
   },
   'assurance.ial_assurance_values': {
     key: 'assurance.ial_assurance_values',
@@ -263,7 +263,7 @@ export const ASSURANCE_LEVELS_SETTINGS_META: Record<keyof AssuranceLevelsSetting
     default: '{}',
     label: 'IAL Assurance Values',
     description:
-      'JSON mapping of each IAL to the assurance values (URIs) released for it, e.g. {"IAL1": ["https://www.gakunin.jp/profile/IAL1"], "IAL2": ["https://www.gakunin.jp/profile/IAL2"]}. A person gets the values of every IAL up to theirs, read from their evidence at the time (so revoked or expired evidence stops them with the next response). OIDC: the claim eduperson_assurance, released in UserInfo and ID tokens like a scope claim (the eduperson_assurance scope, or a claims parameter request); an app with a Destination Profile also needs the field listed in it; advertised in discovery. SAML: the attribute eduPersonAssurance is not released from it yet. Applies while assurance levels are enabled; empty releases nothing',
+      'JSON mapping of each IAL to the assurance values (URIs) released for it, e.g. {"IAL1": ["https://www.gakunin.jp/profile/IAL1"], "IAL2": ["https://www.gakunin.jp/profile/IAL2"]}. A person gets the values of every IAL up to theirs, read from their evidence at the time (so revoked or expired evidence stops them with the next response). OIDC: the claim eduperson_assurance, released in UserInfo and ID tokens like a scope claim (the eduperson_assurance scope, or a claims parameter request); an app with a Destination Profile also needs the field listed in it; advertised in discovery. SAML: the attribute eduPersonAssurance (and the IAL itself) is released to a service provider whose field mapping set maps the system sources Assurance Values (eduPersonAssurance) and Identity Assurance Level (IAL) to it, with the same rules. Applies while assurance levels are enabled; empty releases nothing',
   },
   'assurance.saml_authn_context_aal': {
     key: 'assurance.saml_authn_context_aal',

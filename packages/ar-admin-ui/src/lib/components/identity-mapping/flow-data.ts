@@ -94,8 +94,41 @@ const systemIdentityFields = [
 		examples: ['2026-03-20T14:45:00Z'],
 		note: 'Account update timestamp.',
 		uiFieldOrder: 60
+	},
+	{
+		id: 'system.identity.assurance_ial',
+		path: 'assurance_ial',
+		label: 'Identity Assurance Level (IAL)',
+		valueType: 'string',
+		allowedValues: ['IAL1', 'IAL2', 'IAL3'],
+		examples: ['IAL2'],
+		note: 'The identity assurance level (NIST SP 800-63A) the person holds, read from their identity proofing evidence when the assertion is issued. Released only while Assurance Levels is enabled; never written by a mapping.',
+		uiFieldOrder: 70,
+		derived: true
+	},
+	{
+		id: 'system.identity.edu_person_assurance',
+		path: 'edu_person_assurance',
+		label: 'Assurance Values (eduPersonAssurance)',
+		valueType: 'string',
+		cardinality: 'multi',
+		examples: ['https://www.gakunin.jp/profile/IAL1', 'https://www.gakunin.jp/profile/IAL2'],
+		note: 'The assurance values (URIs) of every IAL up to the one the person holds, as set in the IAL Assurance Values setting; read from their evidence when the assertion is issued. Released only while Assurance Levels is enabled and values are configured; never written by a mapping.',
+		uiFieldOrder: 80,
+		derived: true
 	}
 ] as const;
+
+type SystemIdentityField = (typeof systemIdentityFields)[number];
+
+/**
+ * Whether a system identity field is computed when an assertion is issued (the identity assurance
+ * values) instead of stored: it can be released to a destination, but no inbound mapping may
+ * target it.
+ */
+function isDerivedSystemIdentityField(field: SystemIdentityField): boolean {
+	return 'derived' in field && field.derived === true;
+}
 
 export function buildIdentityMappingFlowSamples(input: IdentityMappingFlowInput): MappingSample[] {
 	const { sourceProfiles, destinationProfiles } = profilesForInput(input);
@@ -134,7 +167,11 @@ export function buildIdentityMappingSourceSamples(
 	// imported schema catalogs describe reusable shapes; treating them as profiles creates phantom
 	// lanes and can make an inbound SCIM requirement appear in unrelated editors.
 	const sourceProfiles = input.sourceProfiles.map(sourceProfileToProfile);
-	const canonicalTargets = buildIdentityTargets(input.identitySchemas ?? []);
+	// Derived values (the assurance level and its values) are computed from evidence when an
+	// assertion is issued: nothing inbound may be mapped onto them.
+	const canonicalTargets = buildIdentityTargets(input.identitySchemas ?? [], {
+		includeDerived: false
+	});
 	return sourceProfiles.map((sourceProfile) =>
 		buildSample(sourceProfile, [], canonicalTargets, input.policies.length)
 	);
@@ -345,35 +382,42 @@ function externalSchemaToProfile(schema: IdentityMappingExternalSchemaSummary): 
 	};
 }
 
-function buildIdentityTargets(identitySchemas: CustomClaimSchema[]): MappingNode[] {
+function buildIdentityTargets(
+	identitySchemas: CustomClaimSchema[],
+	options: { includeDerived?: boolean } = {}
+): MappingNode[] {
 	const schemaTargets = buildCustomClaimTargets(identitySchemas);
 	if (schemaTargets.length === 0) return [];
-	return [...buildSystemIdentityTargets(), ...schemaTargets];
+	return [...buildSystemIdentityTargets(options.includeDerived !== false), ...schemaTargets];
 }
 
-function buildSystemIdentityTargets(): MappingNode[] {
-	return systemIdentityFields.map((field) =>
-		canonicalTargetNode({
-			id: field.id,
-			stableFieldId: field.id,
-			path: field.path,
-			label: field.label,
-			valueType: field.valueType,
-			cardinality: 'single',
-			classification: 'internal',
-			storageTarget: 'System identity',
-			uiGroupKey: 'system',
-			uiGroupLabel: 'System',
-			uiGroupOrder: -100,
-			uiFieldOrder: field.uiFieldOrder,
-			examples: Array.from(field.examples),
-			note: field.note,
-			allowedValues: 'allowedValues' in field ? Array.from(field.allowedValues) : undefined,
-			valueMultiplicity: 'single',
-			nullable: false,
-			required: false
-		})
-	);
+function buildSystemIdentityTargets(includeDerived: boolean): MappingNode[] {
+	return systemIdentityFields
+		.filter((field) => includeDerived || !isDerivedSystemIdentityField(field))
+		.map(systemIdentityTargetNode);
+}
+
+function systemIdentityTargetNode(field: SystemIdentityField): MappingNode {
+	return canonicalTargetNode({
+		id: field.id,
+		stableFieldId: field.id,
+		path: field.path,
+		label: field.label,
+		valueType: field.valueType,
+		cardinality: 'cardinality' in field ? field.cardinality : 'single',
+		classification: 'internal',
+		storageTarget: 'System identity',
+		uiGroupKey: 'system',
+		uiGroupLabel: 'System',
+		uiGroupOrder: -100,
+		uiFieldOrder: field.uiFieldOrder,
+		examples: Array.from(field.examples),
+		note: field.note,
+		allowedValues: 'allowedValues' in field ? Array.from(field.allowedValues) : undefined,
+		valueMultiplicity: 'cardinality' in field ? field.cardinality : 'single',
+		nullable: false,
+		required: false
+	});
 }
 
 function buildCustomClaimTargets(schemas: CustomClaimSchema[]): MappingNode[] {

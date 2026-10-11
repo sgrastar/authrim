@@ -9,6 +9,7 @@
 		type SAMLAttributeReleaseConfirmationValueDisplay,
 		type SAMLDestinationFieldReleaseMode,
 		type SAMLJitEmailLinkingPolicy,
+		type SAMLMinimumIal,
 		type SAMLProvider,
 		type SAMLProviderConfig,
 		type SAMLTrustCertificatePreview
@@ -105,6 +106,7 @@
 	let signResponses = $state(true);
 	let samlProfile = $state('baseline');
 	let authnRequestSignaturePolicy = $state<'required' | 'optional' | 'disabled'>('optional');
+	let minimumIal = $state<SAMLMinimumIal | ''>('');
 	let logoutRequestSignaturePolicy = $state<'required' | 'optional' | 'disabled'>('required');
 	let authnContextPolicyMode = $state<'observe' | 'require_any'>('observe');
 	let jitEmailLinkingPolicy = $state<SAMLJitEmailLinkingPolicy>('email_linking');
@@ -208,6 +210,7 @@
 		signResponses = data.config.signResponses ?? true;
 		samlProfile = data.config.samlProfile || 'baseline';
 		authnRequestSignaturePolicy = data.config.authnRequestSignaturePolicy || 'optional';
+		minimumIal = data.config.minimumIal ?? '';
 		logoutRequestSignaturePolicy = data.config.logoutRequestSignaturePolicy || 'required';
 		authnContextPolicyMode = data.config.authnContextPolicy?.mode || 'observe';
 		jitEmailLinkingPolicy = data.config.jitEmailLinkingPolicy || 'email_linking';
@@ -553,6 +556,7 @@
 			signAssertions,
 			signResponses,
 			samlProfile,
+			minimumIal: minimumIal || null,
 			authnRequestSignaturePolicy,
 			logoutRequestSignaturePolicy,
 			authnContextClassRefMode,
@@ -1406,6 +1410,21 @@
 									</div>
 								</div>
 							{/if}
+						</div>
+
+						<div class="admin-field">
+							<label for="minimumIal" class="admin-field__label">
+								{$LL.admin_saml_detail_minimum_ial()}
+							</label>
+							<select id="minimumIal" bind:value={minimumIal} class="admin-select">
+								<option value="">{$LL.admin_saml_detail_minimum_ial_none()}</option>
+								{#if minimumIal === 'IAL1'}
+									<option value="IAL1">IAL1</option>
+								{/if}
+								<option value="IAL2">IAL2</option>
+								<option value="IAL3">IAL3</option>
+							</select>
+							<p class="field-hint">{$LL.admin_saml_detail_minimum_ial_hint()}</p>
 						</div>
 
 						<div class="admin-field">

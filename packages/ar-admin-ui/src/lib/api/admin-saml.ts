@@ -133,6 +133,8 @@ export type SAMLAttributeReleaseConfirmationValueDisplay =
 	| 'full_values';
 export type SAMLDestinationFieldReleaseMode = 'required' | 'optional' | 'hidden';
 
+export type SAMLMinimumIal = 'IAL1' | 'IAL2' | 'IAL3';
+
 export interface SAMLProviderConfig {
 	description?: string;
 	providerName?: string;
@@ -198,6 +200,8 @@ export interface SAMLProviderConfig {
 	attributePresetVersion?: string;
 	signAssertions?: boolean;
 	signResponses?: boolean;
+	/** The lowest identity assurance level a person may have to sign in to this SP; null removes it. */
+	minimumIal?: SAMLMinimumIal | null;
 	allowedBindings?: string[];
 	aggregateImport?: {
 		aggregateSourceUrl?: string;

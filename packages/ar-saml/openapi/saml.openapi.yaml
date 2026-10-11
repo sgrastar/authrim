@@ -1175,6 +1175,30 @@ components:
           $ref: '#/components/schemas/SAMLMetadataRefreshPolicy'
         nameIdFormat:
           type: string
+        minimumIal:
+          description: >-
+            For a service provider (saml_sp): the lowest identity assurance level (NIST SP 800-63A
+            IAL) a person may have to sign in to it. A person below it gets no assertion: an
+            SP-initiated request is answered with a Responder/RequestDenied status (to the ACS URL,
+            signed as other error responses are, with the RelayState), an IdP-initiated sign-in with
+            the error page. If the person's evidence cannot be read, the answer is a Responder status
+            without a second-level code (SP-initiated) or a server error (IdP-initiated), never an
+            assertion. The answer does not say what level the person holds or the SP requires. Applies
+            whether or not tenant-wide assurance (assurance.enabled) is on, and does not use the
+            scope-to-IAL requirements, which are OAuth scopes. On create, absent or null sets none; on
+            update, absent leaves it, null removes it and an empty string is refused. Any value other
+            than IAL1, IAL2, IAL3 or null is refused with 400. A saml_idp provider refuses it. The
+            identity assurance values (eduPersonAssurance) and the IAL itself are released to an SP
+            through its Field Mapping Set (the system sources assurance_ial and edu_person_assurance),
+            not through this setting.
+          type:
+            - string
+            - 'null'
+          enum:
+            - IAL1
+            - IAL2
+            - IAL3
+            - null
         metadataNameIdFormats:
           type: array
           items:

@@ -56,6 +56,8 @@ import {
   enforceSAMLAttributeReleaseConsent,
   SAMLAttributeReleaseConsentRequiredError,
 } from './attribute-release-consent';
+import { checkSAMLIdentityAssurance, withSAMLAssuranceAttributes } from './identity-assurance';
+import { scheduleSAMLPolicyFailureAudit } from './audit';
 
 interface AuthenticatedSAMLSession {
   userId: string;
@@ -96,6 +98,21 @@ export async function handleIdPInitiated(c: Context<{ Bindings: Env }>): Promise
     const consentTransactionId = readConsentTransactionId(c.req.query('consent_tx'));
     const consentRetry = c.req.query('consent_retry') === '1';
 
+    // The SP's minimum identity assurance level. No sign-in or consent step can raise a person's
+    // IAL, so a session that is already there is judged before it is sent through the consent
+    // flow, and again (it is the same check on the same session) before the assertion is built.
+    // Without a session the person is not yet known: they are judged when they come back.
+    if (authenticatedSession) {
+      const refused = await refuseBelowMinimumIdentityAssurance(c, {
+        tenantId,
+        spConfig,
+        userId: authenticatedSession.userId,
+        requestId: consentTransactionId ?? 'idp_initiated',
+        log,
+      });
+      if (refused) return refused;
+    }
+
     if (!authenticatedSession || !consentTransactionId) {
       return redirectToIdPInitiatedConsentFlow(c, {
         issuerUrl,
@@ -123,7 +140,9 @@ export async function handleIdPInitiated(c: Context<{ Bindings: Env }>): Promise
         userInfo,
         tenantId,
         authenticatedSession,
-        consentTransactionId
+        consentTransactionId,
+        c,
+        log
       );
     } catch (error) {
       if (!(error instanceof SAMLAttributeReleaseConsentRequiredError)) throw error;
@@ -152,6 +171,66 @@ export async function handleIdPInitiated(c: Context<{ Bindings: Env }>): Promise
     log.error('IdP-Initiated SSO Error', {}, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
+}
+
+/**
+ * The error response for a person who may not sign in to the SP on identity assurance, or null.
+ * An IdP-initiated request has no AuthnRequest to answer, so the person gets the error page and no
+ * assertion is built. A read of the evidence that fails is reported as an error, never as IAL1.
+ */
+async function refuseBelowMinimumIdentityAssurance(
+  c: Context<{ Bindings: Env }>,
+  input: {
+    tenantId: string;
+    spConfig: SAMLSPConfig;
+    userId: string;
+    requestId: string;
+    log: {
+      info(message: string, context?: Record<string, unknown>): void;
+      error(message: string, context?: Record<string, unknown>, error?: Error): void;
+    };
+  }
+): Promise<Response | null> {
+  const check = await checkSAMLIdentityAssurance(c, {
+    env: c.env,
+    tenantId: input.tenantId,
+    userId: input.userId,
+    spConfig: input.spConfig,
+  });
+  if (check.outcome === 'allowed') return null;
+
+  const logContext = { tenantId: input.tenantId, spEntityId: input.spConfig.entityId };
+  if (check.outcome === 'unavailable') {
+    input.log.error(
+      'Failed to read identity assurance evidence',
+      logContext,
+      check.error instanceof Error ? check.error : new Error(String(check.error))
+    );
+  } else {
+    input.log.info('SAML sign-in refused: identity assurance level not met', {
+      ...logContext,
+    });
+  }
+  scheduleSAMLPolicyFailureAudit(c, {
+    tenantId: input.tenantId,
+    spEntityId: input.spConfig.entityId,
+    authnRequestId: input.requestId,
+    failureKind:
+      check.outcome === 'unavailable'
+        ? 'identity_assurance_unavailable'
+        : 'identity_assurance_insufficient',
+    policyDetails: {
+      required_ial: check.required,
+      ...(check.outcome === 'insufficient' ? { actual_ial: check.actual } : {}),
+    },
+  });
+  // The page says neither the level the person holds nor the one the SP requires.
+  return createErrorResponse(
+    c,
+    check.outcome === 'unavailable'
+      ? AR_ERROR_CODES.INTERNAL_ERROR
+      : AR_ERROR_CODES.POLICY_INSUFFICIENT_PERMISSIONS
+  );
 }
 
 function readConsentTransactionId(value: string | undefined): string | null {
@@ -304,7 +383,9 @@ async function generateIdPInitiatedResponse(
   userInfo: SAMLUserInfo,
   tenantId: string,
   authSession: AuthenticatedSAMLSession,
-  consentTransactionId: string
+  consentTransactionId: string,
+  requestScope: object,
+  log: { error(message: string, context?: Record<string, unknown>, error?: Error): void }
 ): Promise<string> {
   const { privateKeyPem, certificate } = await getSAMLIdPSigningMaterial(env, {
     tenantId,
@@ -337,8 +418,30 @@ async function generateIdPInitiatedResponse(
     idpEntityId,
     spConfig
   );
-  let attributes = buildSAMLAttributesForSP(userInfo, {
+  // The assurance values a mapping releases come from the person's evidence, read only when
+  // one is released.
+  const releaseSubject = await withSAMLAssuranceAttributes(userInfo, {
+    requestScope,
+    env,
+    tenantId,
+    userId: authSession.userId,
+    identityMapping,
+    mappingContext: {
+      role: 'idp',
+      tenantId,
+      localEntityId: idpEntityId,
+      partnerEntityId: spConfig.entityId,
+    },
+    onError: (message, error) =>
+      log.error(
+        message,
+        { tenantId, spEntityId: spConfig.entityId },
+        error instanceof Error ? error : new Error(String(error))
+      ),
+  });
+  let attributes = buildSAMLAttributesForSP(releaseSubject, {
     ...spConfig,
+    tenantId,
     localEntityId: idpEntityId,
     identityMapping,
   });
