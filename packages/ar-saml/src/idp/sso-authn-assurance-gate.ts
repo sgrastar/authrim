@@ -72,13 +72,16 @@ export async function gateSAMLAuthnAssurance(
     case 'met':
       return { check };
 
-    case 'step_up':
+    case 'step_up': {
+      const stepUpIssuedAt = Date.now();
       audit('authn_assurance_insufficient', {
         required_aal: check.requiredAal,
         actual_aal: check.actual,
         step_up: true,
       });
-      // A new sign-in, combined with this session's factors when the person comes back.
+      // A new sign-in, combined with this session's factors when the person comes back. The
+      // person is signed in: they are given a challenge to prove themselves again, at the time
+      // the stored request records for the step-up.
       return {
         response: await redirectToSAMLLogin(c, {
           env,
@@ -87,16 +90,18 @@ export async function gateSAMLAuthnAssurance(
           relayState: input.relayState,
           forceReauthentication: true,
           requiredAal: check.requiredAal,
+          signInAgain: { subjectUserId: input.session.userId, issuedAt: stepUpIssuedAt },
           context: {
             ...carrySAMLRequestContext(input.requestContext),
             assuranceStepUp: {
-              issuedAt: Date.now(),
+              issuedAt: stepUpIssuedAt,
               priorSessionId: check.priorSessionId,
               requiredAal: check.requiredAal,
             },
           },
         }),
       };
+    }
 
     case 'unavailable':
       log.error(

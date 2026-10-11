@@ -1009,6 +1009,28 @@ describe('Login UI proxy hooks', () => {
 		expect(target).toEqual({ challengeId: 'challenge-dcr', valid: true, clientId });
 	});
 
+	it.each([
+		['the challenge of a SAML request, which names no client', { protocol: 'saml' }, true],
+		// A response with neither a client nor the SAML marker is not a usable challenge.
+		['a response that names no client and is not a SAML challenge', {}, false]
+	])('reads %s', async (_name, body, valid) => {
+		const { fetchLoginChallengeThemeTargetForPageRequest } = await import('../hooks.server');
+		const fetch = vi.fn(async () => Response.json(body));
+		const event = {
+			request: new Request('https://login.example.com/login?challenge_id=challenge-saml'),
+			url: new URL('https://login.example.com/login?challenge_id=challenge-saml'),
+			cookies: { get: () => undefined },
+			getClientAddress: () => '192.0.2.10'
+		};
+
+		const target = await fetchLoginChallengeThemeTargetForPageRequest(event as never, {
+			PUBLIC_API_BASE_URL: 'https://first.test.authrim.com',
+			AR_ROUTER: { fetch }
+		});
+
+		expect(target).toEqual({ challengeId: 'challenge-saml', valid, clientId: null });
+	});
+
 	it('rejects challenge client identifiers above the shared 256-character limit', async () => {
 		const { fetchLoginChallengeThemeTargetForPageRequest } = await import('../hooks.server');
 		const fetch = vi.fn(async () =>

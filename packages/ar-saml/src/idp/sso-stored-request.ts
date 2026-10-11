@@ -6,6 +6,10 @@
  * the sign-in it asked for: that a new sign-in was asked for (ForceAuthn) and when, and the
  * step-up to a higher AAL and when. A session counts as that sign-in only when it was proven after
  * the person was sent, so a person who comes back is answered, not sent again.
+ *
+ * A person who is signed in and sent to prove themselves again is given a `reauth` challenge
+ * (see ar-lib-core's saml-authorization-challenge.ts), so that the Login UI does not complete the
+ * sign-in with the session they already have.
  */
 
 import type { Context } from 'hono';
@@ -20,6 +24,7 @@ import {
   buildIssuerUrl,
   buildSAMLRequestStoreInstanceName,
   createConfigurationError,
+  createSAMLReauthChallenge,
   getUIConfig,
   resolveSamlRequestTtlSeconds,
 } from '@authrim/ar-lib-core';
@@ -86,9 +91,12 @@ export async function storeAuthnRequest(
   tenantId: string,
   authnRequest: SAMLAuthnRequest,
   relayState?: string,
-  context?: SAMLRequestContext
+  context?: SAMLRequestContext,
+  /** The request's lifetime (seconds), when the caller has read it already. */
+  knownRequestTtlSeconds?: number
 ): Promise<void> {
-  const requestTtlSeconds = await resolveSamlRequestTtlSeconds(env, tenantId);
+  const requestTtlSeconds =
+    knownRequestTtlSeconds ?? (await resolveSamlRequestTtlSeconds(env, tenantId));
   const samlRequestStoreId = env.SAML_REQUEST_STORE.idFromName(
     buildSAMLRequestStoreInstanceName(tenantId, 'idp', authnRequest.issuer)
   );
@@ -118,6 +126,14 @@ export async function storeAuthnRequest(
  * request's id. A new sign-in asked for (`forceReauthentication`) is marked with `force_authn`;
  * the AAL a step-up aims for with `required_aal`.
  *
+ * A person who is already signed in (`signInAgain`: who, and when they are sent, which is the
+ * time the stored request's context records too) is given a `reauth` challenge bound to this
+ * request, SP and tenant; its id goes on the URL as `challenge_id`, and the person is sent to the
+ * re-authentication screen instead of the sign-in page. Without one the Login UI would complete
+ * the sign-in with the session the person already has.
+ * When the challenge cannot be stored the person is not sent (the error is thrown): an
+ * authentication that cannot be asked for is not skipped.
+ *
  * UI configured: redirect to the external UI. Not configured: a configuration error.
  */
 export async function redirectToSAMLLogin(
@@ -129,18 +145,47 @@ export async function redirectToSAMLLogin(
     relayState?: string;
     forceReauthentication: boolean;
     requiredAal?: AAL;
+    signInAgain?: { subjectUserId: string; issuedAt: number };
     context?: SAMLRequestContext;
   }
 ): Promise<Response> {
   const { env, tenantId, authnRequest } = input;
-  await storeAuthnRequest(env, tenantId, authnRequest, input.relayState, input.context);
+  const requestTtlSeconds = await resolveSamlRequestTtlSeconds(env, tenantId);
+  await storeAuthnRequest(
+    env,
+    tenantId,
+    authnRequest,
+    input.relayState,
+    input.context,
+    requestTtlSeconds
+  );
 
   const uiConfig = await getUIConfig(env, tenantId);
   if (uiConfig?.baseUrl) {
-    const loginPath = uiConfig.paths?.login || '/login';
+    // Only a sign-in that is asked for again can have a challenge to answer.
+    const challengeId =
+      input.forceReauthentication && input.signInAgain
+        ? await createSAMLReauthChallenge(env, {
+            tenantId,
+            requestId: authnRequest.id,
+            spEntityId: authnRequest.issuer,
+            subjectUserId: input.signInAgain.subjectUserId,
+            issuedAt: input.signInAgain.issuedAt,
+            issuer: buildIssuerUrl(env, tenantId),
+            ttlSeconds: requestTtlSeconds,
+          })
+        : undefined;
+
     const loginUrlPolicy = await getSAMLInteractiveLoginUrlPolicy(env, tenantId);
     const loginBaseUrl =
       loginUrlPolicy === 'tenant_host' ? buildIssuerUrl(env, tenantId) : uiConfig.baseUrl;
+    // A person who is signed in and has to prove themselves again goes to the re-authentication
+    // screen, as for an OIDC prompt=login: it offers the methods the tenant allows for
+    // re-authentication (which are not the ones allowed for sign-in) and asks for human
+    // verification as a re-authentication does. Anyone else goes to the sign-in page.
+    const loginPath = challengeId
+      ? uiConfig.paths?.reauth || '/reauth'
+      : uiConfig.paths?.login || '/login';
     const loginUrl = new URL(loginPath, loginBaseUrl);
     loginUrl.searchParams.set('saml_request_id', authnRequest.id);
     loginUrl.searchParams.set('saml_sp_entity_id', authnRequest.issuer);
@@ -150,6 +195,9 @@ export async function redirectToSAMLLogin(
     }
     if (input.requiredAal) {
       loginUrl.searchParams.set('required_aal', input.requiredAal);
+    }
+    if (challengeId) {
+      loginUrl.searchParams.set('challenge_id', challengeId);
     }
     if (loginUrlPolicy === 'ui_base_url' && tenantId) {
       loginUrl.searchParams.set('tenant_hint', tenantId);

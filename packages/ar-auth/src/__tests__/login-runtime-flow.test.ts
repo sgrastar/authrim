@@ -5089,3 +5089,261 @@ describe('LoginUI runtime Flow handlers', () => {
     );
   });
 });
+
+describe('the re-authentication challenge of a SAML request', () => {
+  const SP = 'https://sp.example.test/entity';
+  const ISSUED_AT = 1_700_000_123_000;
+
+  beforeEach(() => {
+    resetAdapter();
+  });
+
+  const samlChallenge = (
+    change: { metadata?: Record<string, unknown>; [key: string]: unknown } = {}
+  ) => ({
+    id: 'saml_challenge_1',
+    tenantId: 'tenant_test',
+    type: 'reauth',
+    userId: 'user_1',
+    challenge: 'saml_challenge_1',
+    createdAt: Date.now(),
+    expiresAt: Date.now() + 300_000,
+    consumed: false,
+    ...change,
+    metadata: {
+      protocol: 'saml',
+      saml_request_id: '_request-1',
+      saml_sp_entity_id: SP,
+      tenant_id: 'tenant_test',
+      sessionUserId: 'user_1',
+      reauth_issued_at: ISSUED_AT,
+      ...change.metadata,
+    },
+  });
+
+  /** What the Login UI sends for a SAML request that comes with a challenge. */
+  const samlStartBody = (change: Record<string, unknown> = {}) => ({
+    flow_kind: 'login',
+    target_type: 'saml_sp',
+    target_id: SP,
+    saml_sp_id: SP,
+    saml_sp_entity_id: SP,
+    saml_request_id: '_request-1',
+    return_to: 'saml_sso',
+    authorization_challenge_id: 'saml_challenge_1',
+    ...change,
+  });
+
+  async function startWith(body: Record<string, unknown>, challenge: unknown) {
+    mocks.challengeStore.getChallengeRpc.mockResolvedValueOnce(challenge);
+    mockStartQueries();
+    const response = await loginRuntimeInteractionStartHandler(createContext({ body }));
+    return { response, data: await readJson(response) };
+  }
+
+  describe('starting a Flow with it', () => {
+    it('is accepted for the request, SP and tenant it was issued for', async () => {
+      const { response, data } = await startWith(samlStartBody(), samlChallenge());
+
+      expect(response.status).toBe(200);
+      expect(data.interaction).toMatchObject({ current_step_id: 'auth:step' });
+    });
+
+    it.each([
+      ['another AuthnRequest', samlStartBody({ saml_request_id: '_request-2' }), samlChallenge()],
+      [
+        'another SP',
+        samlStartBody({
+          target_id: 'https://other.example.test/entity',
+          saml_sp_id: 'https://other.example.test/entity',
+          saml_sp_entity_id: 'https://other.example.test/entity',
+        }),
+        samlChallenge(),
+      ],
+      [
+        'a Flow assigned to another SP than the one it is bound to',
+        samlStartBody({ target_id: 'https://other.example.test/entity' }),
+        samlChallenge(),
+      ],
+      [
+        'another tenant than its own binding says',
+        samlStartBody(),
+        samlChallenge({ metadata: { tenant_id: 'tenant_other' } }),
+      ],
+      [
+        'a target that also names an OIDC client',
+        samlStartBody({ client_id: 'client_1' }),
+        samlChallenge(),
+      ],
+      [
+        'a challenge that is not a re-authentication',
+        samlStartBody(),
+        samlChallenge({ type: 'login' }),
+      ],
+      [
+        'the challenge of an OIDC authorization request',
+        samlStartBody(),
+        samlChallenge({ metadata: { protocol: undefined, client_id: 'client_1' } }),
+      ],
+    ])('is refused for %s', async (_name, body, challenge) => {
+      const { response, data } = await startWith(body, challenge);
+
+      expect(response.status).toBe(403);
+      expect(data.error).toBe('authorization_challenge_mismatch');
+      expect(mocks.coreAdapter.queryOne).not.toHaveBeenCalled();
+      expect(mocks.coreAdapter.transaction).not.toHaveBeenCalled();
+    });
+
+    it('is not accepted for an OIDC client', async () => {
+      const { response, data } = await startWith(
+        {
+          flow_kind: 'login',
+          client_id: 'client_1',
+          authorization_challenge_id: 'saml_challenge_1',
+        },
+        samlChallenge({ metadata: { client_id: 'client_1' } })
+      );
+
+      expect(response.status).toBe(403);
+      expect(data.error).toBe('authorization_challenge_mismatch');
+      expect(mocks.coreAdapter.transaction).not.toHaveBeenCalled();
+    });
+
+    it('is not accepted for a Flow that is for no client or SP', async () => {
+      const { response, data } = await startWith(
+        { flow_kind: 'login', authorization_challenge_id: 'saml_challenge_1' },
+        samlChallenge()
+      );
+
+      expect(response.status).toBe(400);
+      expect(data.error).toBe('invalid_authorization_challenge');
+    });
+
+    it('is refused once it is gone', async () => {
+      const { response, data } = await startWith(samlStartBody(), null);
+
+      expect(response.status).toBe(400);
+      expect(data.error).toBe('authorization_request_expired');
+    });
+  });
+
+  describe('the session check of a Flow started with it', () => {
+    const samlContext = {
+      protocol: 'saml',
+      target_type: 'saml_sp',
+      target_id: SP,
+      client_id: null,
+      saml_sp_id: SP,
+      saml_sp_entity_id: SP,
+      saml_request_id: '_request-1',
+      authorization_challenge_id: 'saml_challenge_1',
+      return_to: 'saml_sso',
+    };
+
+    /** Submit the session check with the browser's session; the challenge is read as stored. */
+    async function sessionCheck(session: { userId?: string; data: Record<string, unknown> }) {
+      const { data: startData } = await startWith(samlStartBody(), samlChallenge());
+      resetAdapter();
+      const actual = await vi.importActual<typeof import('../direct-auth')>('../direct-auth');
+      // The rule that judges the session is the real one, reading the challenge as stored.
+      mocks.readAuthorizationChallengeFreshness.mockImplementation(
+        actual.readAuthorizationChallengeFreshness
+      );
+      mocks.challengeStore.getChallengeRpc.mockResolvedValue(samlChallenge());
+      mocks.consumeAuthorizationChallengeContinuation.mockResolvedValue({
+        type: 'reauth',
+        redirectUrl: '/saml/idp/sso?saml_request_id=_request-1',
+      });
+      mockSubmitQueries({
+        expiresAt: Number((startData.interaction as Record<string, unknown>).expires_at),
+        contractHash: String(startData.contract_hash),
+        signature: String(startData.signature),
+        currentNodeId: 'session-check',
+        currentStepId: 'session-check:step',
+        stepState: 'pending',
+        runtimeSnapshot: sessionCheckRuntime,
+        editorSnapshot: sessionCheckEditor,
+        samlSpId: SP,
+        context: samlContext,
+      });
+      mocks.sessionStore.getSessionRpc.mockResolvedValue({
+        userId: session.userId ?? 'user_1',
+        expiresAt: Date.now() + 60_000,
+        createdAt: 1_700_000_000_000,
+        data: { authTime: 1_700_000_123, ...session.data },
+      });
+      const response = await loginRuntimeInteractionSubmitHandler(
+        createContext({
+          params: { interaction_id: 'interaction_1' },
+          headers: { Cookie: 'authrim_session=sess_runtime_1' },
+          body: {
+            step_id: 'session-check:step',
+            node_id: 'session-check',
+            contract_hash: startData.contract_hash,
+            signature: startData.signature,
+          },
+        })
+      );
+      return { response, data: await readJson(response) };
+    }
+
+    it.each([
+      ['proven before the person was sent', { amr: ['passkey'], proven_at: ISSUED_AT - 1 }],
+      ['of unknown proof time', { amr: ['passkey'] }],
+      ['whose method is not known', { proven_at: ISSUED_AT + 10 }],
+    ])('does not complete with a session %s: the person signs in', async (_name, data) => {
+      const { response, data: body } = await sessionCheck({ data });
+
+      expect(response.status).toBe(200);
+      expect(body.completed).toBe(false);
+      expect(body.step).toMatchObject({ id: 'auth:step' });
+      expect(mocks.consumeAuthorizationChallengeContinuation).not.toHaveBeenCalled();
+    });
+
+    it('does not complete with the session of another person, however new', async () => {
+      const { response, data } = await sessionCheck({
+        userId: 'user_2',
+        data: { amr: ['passkey'], proven_at: ISSUED_AT + 10 },
+      });
+
+      expect(response.status).toBe(200);
+      expect(data.completed).toBe(false);
+      expect(data.step).toMatchObject({ id: 'auth:step' });
+      expect(mocks.consumeAuthorizationChallengeContinuation).not.toHaveBeenCalled();
+    });
+
+    it("completes with the person's session proven after they were sent, and judges that proof against the challenge", async () => {
+      const { response, data } = await sessionCheck({
+        data: { amr: ['passkey'], proven_at: ISSUED_AT + 10 },
+      });
+
+      expect(response.status).toBe(200);
+      expect(data.completed).toBe(true);
+      expect(mocks.consumeAuthorizationChallengeContinuation).toHaveBeenCalledWith(
+        expect.anything(),
+        'tenant_test',
+        'saml_challenge_1',
+        'user_1',
+        expect.any(Number),
+        expect.any(String),
+        'passkey',
+        ISSUED_AT + 10
+      );
+      // The person goes back to the request, as for any SAML sign-in.
+      expect(JSON.stringify(data)).toContain('/saml/idp/sso?saml_request_id=_request-1');
+    });
+
+    it('completes with a session whose sign-in re-proved it in place', async () => {
+      const { data } = await sessionCheck({
+        data: {
+          amr: ['pwd', 'totp'],
+          proven_at: ISSUED_AT - 3_600_000,
+          reauth_proven_amr: ['totp'],
+          reauth_proven_at: ISSUED_AT + 5,
+        },
+      });
+
+      expect(data.completed).toBe(true);
+    });
+  });
+});

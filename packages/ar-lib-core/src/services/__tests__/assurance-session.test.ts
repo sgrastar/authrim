@@ -240,4 +240,105 @@ describe('evaluateSessionAssurance', () => {
       expect(onUnrecorded).toHaveBeenCalledTimes(1);
     });
   });
+  describe('a step-up completed by re-authenticating the same session', () => {
+    // The password was proven an hour ago; the TOTP was just proven in the same session and
+    // recorded beside it (reauth_proven_amr / reauth_proven_at), with the password's old proven_at.
+    const reauthenticated = (overrides: Record<string, unknown> = {}): FakeSession => ({
+      userId: 'user-1',
+      expiresAt: NOW + 60_000,
+      data: {
+        amr: ['pwd'],
+        proven_at: NOW - 3_600_000,
+        reauth_proven_amr: ['totp'],
+        reauth_proven_at: NOW - 500,
+        ...overrides,
+      },
+    });
+
+    it.each([
+      ['named as the session it stepped up from', 'new'],
+      ['without a session named', undefined],
+    ])(
+      'combines the old password with the TOTP just proven (%s)',
+      async (_name, priorSessionId) => {
+        const sessions = { new: reauthenticated() };
+        const { input, writes } = stepUpInput(sessions, {
+          stepUp: { issuedAt: NOW - 1_000, priorSessionId },
+        });
+
+        const result = await evaluateSessionAssurance(input);
+
+        expect(result).toMatchObject({
+          aal: 'AAL2',
+          evidenceSession: true,
+          combinedAmr: ['pwd', 'totp'],
+        });
+        // The password is not dated again: the combination is still as old as its oldest proof, and
+        // the pair stays, so a later step-up finds the old password old.
+        expect(sessions.new.data).toMatchObject({
+          amr: ['pwd', 'totp'],
+          proven_at: NOW - 3_600_000,
+          reauth_proven_amr: ['totp'],
+          reauth_proven_at: NOW - 500,
+        });
+        expect(writes).toHaveLength(1);
+      }
+    );
+
+    it('also combines a session that holds an earlier step-up and comes back through another screen', async () => {
+      // Its own factors, combined by the step-up, with the step-up's session no longer needed.
+      const sessions = {
+        new: reauthenticated({ amr: ['pwd', 'totp'] }),
+        prior: structuredClone(PRIOR),
+      };
+      const { input } = stepUpInput(sessions);
+      const result = await evaluateSessionAssurance(input);
+      expect(result).toMatchObject({ aal: 'AAL2', evidenceSession: true });
+    });
+
+    it('does not count a re-authentication made before the step-up began', async () => {
+      const sessions = { new: reauthenticated({ reauth_proven_at: NOW - 2_000 }) };
+      const { input, writes } = stepUpInput(sessions);
+      const result = await evaluateSessionAssurance(input);
+      expect(result).toMatchObject({ aal: 'AAL0', evidenceSession: false });
+      expect(result).not.toHaveProperty('combinedAmr');
+      expect(writes).toEqual([]);
+    });
+
+    it('does not let the combination pass for the next step-up, which asks for a newer proof', async () => {
+      const sessions = { new: reauthenticated() };
+      const first = stepUpInput(sessions);
+      await evaluateSessionAssurance(first.input);
+      expect(sessions.new.data.amr).toEqual(['pwd', 'totp']);
+
+      // A later request asks again, after that TOTP: nothing in the session is new enough.
+      const later = stepUpInput(sessions, {
+        sessionData: sessions.new.data,
+        reauthIssuedAt: NOW,
+        stepUp: { issuedAt: NOW, priorSessionId: 'new' },
+      });
+      const result = await evaluateSessionAssurance(later.input);
+      expect(result).toMatchObject({ aal: 'AAL0', evidenceSession: false });
+      expect(later.writes).toEqual([]);
+    });
+
+    it("does not count the pair of another user's session", async () => {
+      const sessions = { new: reauthenticated() };
+      const { input, writes } = stepUpInput(sessions, { sessionDataUserId: 'user-2' });
+      const result = await evaluateSessionAssurance(input);
+      expect(result).toMatchObject({ aal: 'AAL0', ownSession: false });
+      expect(writes).toEqual([]);
+    });
+
+    it.each([
+      ['no methods', { reauth_proven_amr: [] }],
+      ['no time', { reauth_proven_at: undefined }],
+    ])('counts a pair with %s for nothing', async (_name, change) => {
+      const sessions = { new: reauthenticated(change) };
+      const { input, writes } = stepUpInput(sessions);
+      const result = await evaluateSessionAssurance(input);
+      expect(result).toMatchObject({ aal: 'AAL0' });
+      expect(writes).toEqual([]);
+    });
+  });
 });

@@ -1,6 +1,7 @@
 <script module lang="ts">
 	export interface ChallengeData {
-		client: {
+		/** Absent for the challenge of a SAML request, which names no client. */
+		client?: {
 			client_id: string;
 			client_name: string;
 			logo_uri?: string;
@@ -112,7 +113,7 @@
 		</p>
 
 		<!-- Challenge Info -->
-		{#if challengeData}
+		{#if challengeData?.client}
 			<div class="auth-info-box mb-6">
 				<div class="flex items-center gap-3">
 					{#if challengeData.client.logo_uri && isValidImageUrl(challengeData.client.logo_uri)}

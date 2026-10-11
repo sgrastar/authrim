@@ -977,7 +977,9 @@ paths:
       summary: Read login challenge metadata.
       description:
         Returns client display metadata, OIDC prompt metadata, session mode, handoff methods,
-        and web-origin policy for a login or re-auth challenge.
+        and web-origin policy for a login or re-auth challenge. The re-authentication challenge of
+        a SAML request (issued by the SAML IdP SSO endpoint for a ForceAuthn request or a step-up)
+        names no client; it is served with protocol saml and only for the tenant it belongs to.
       responses:
         '200':
           $ref: '#/components/responses/LoginChallenge'
@@ -5661,7 +5663,6 @@ components:
       type: object
       required:
         - challenge_id
-        - client
         - session_mode
         - handoff_methods
         - web_origin_registry
@@ -5669,6 +5670,14 @@ components:
         challenge_id:
           type: string
           example: chal_123
+        protocol:
+          type: string
+          enum:
+            - saml
+          description:
+            Present (as saml) when the challenge is the re-authentication of a SAML request. Such a
+            response has no client, scope, login_hint or oidc, and its web_origin_registry has no
+            origins. Otherwise the challenge is an OIDC authorization request and client is present.
         client:
           type: object
           required:

@@ -2255,6 +2255,54 @@ describe('Client Authentication Tests', () => {
       });
     });
 
+    it('refuses an artifact made for the browser session alone (a SAML re-authentication)', async () => {
+      const client = createPublicClient();
+      const codeVerifier = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~';
+      const authCodeData = createAuthCodeData({
+        redirectUri: DIRECT_AUTH_REDIRECT_URI,
+        sid: undefined,
+      });
+      const consumeCodeRpcMock = vi.fn().mockResolvedValue(authCodeData);
+      mocks.mockGetClientCached.mockResolvedValue(client);
+      mocks.mockGetChallengeStoreByChallengeId.mockResolvedValue({
+        consumeChallengeRpc: vi.fn().mockResolvedValue({
+          challenge: await createPkceChallenge(codeVerifier),
+          userId: authCodeData.userId,
+          metadata: {
+            client_id: client.client_id,
+            channel: 'browser',
+            transaction_id: 'txn-saml',
+            browser_session_only: true,
+          },
+        }),
+      });
+      mocks.mockExtractDPoPProof.mockReturnValue('dpop-proof');
+      mocks.mockValidateDPoPProof.mockResolvedValue({ valid: true, jkt: 'browser-jkt' });
+      mockEnv.AUTH_CODE_STORE.get = vi.fn().mockReturnValue({
+        consumeCodeRpc: consumeCodeRpcMock,
+        registerIssuedTokensRpc: vi.fn().mockResolvedValue(true),
+      });
+
+      const response = await tokenHandler(
+        createMockContext({
+          headers: { DPoP: 'dpop-proof' },
+          body: {
+            grant_type: DIRECT_AUTH_GRANT_TYPE,
+            direct_auth_artifact: 'direct-artifact-saml',
+            client_id: client.client_id,
+            code_verifier: codeVerifier,
+            channel: 'browser',
+          },
+          env: mockEnv,
+        })
+      );
+
+      expect(response.status).toBe(400);
+      expect((await parseJsonResponse<{ error: string }>(response)).error).toBe('invalid_grant');
+      expect(consumeCodeRpcMock).not.toHaveBeenCalled();
+      expect(mocks.mockCreateAccessToken).not.toHaveBeenCalled();
+    });
+
     it('should redeem a bound Direct Auth artifact via the canonical token endpoint', async () => {
       const client = createPublicClient();
       const codeVerifier = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~';
