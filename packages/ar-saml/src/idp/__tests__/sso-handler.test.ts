@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   ui: undefined as { baseUrl: string; paths?: { login?: string } } | undefined,
   loginPolicy: 'ui_base_url' as 'ui_base_url' | 'tenant_host',
   storeFetch: vi.fn(async (_url?: string) => new Response('{}', { status: 200 })),
+  storeChallenge: vi.fn(async (_request?: unknown) => ({ success: true })),
   audit: vi.fn(),
   sessionId: undefined as string | undefined,
   shardedSession: true,
@@ -264,6 +265,10 @@ function environment() {
       idFromName: vi.fn((name: string) => ({ name })),
       get: vi.fn(() => ({ fetch: mocks.storeFetch })),
     },
+    CHALLENGE_STORE: {
+      idFromName: vi.fn((name: string) => ({ name })),
+      get: vi.fn(() => ({ storeChallengeRpc: mocks.storeChallenge })),
+    },
   };
 }
 
@@ -399,6 +404,9 @@ describe('IdP SSO handler policy boundaries', () => {
       'https://saml-request-store/store',
       expect.objectContaining({ method: 'POST' })
     );
+    // Nobody is signed in: they have to sign in anyway, so there is no challenge to answer.
+    expect(mocks.storeChallenge).not.toHaveBeenCalled();
+    expect(new URL(location).searchParams.has('challenge_id')).toBe(false);
   });
 
   it('fails safely after storing when interactive UI is not configured', async () => {
@@ -467,7 +475,12 @@ describe('IdP SSO handler policy boundaries', () => {
     mocks.ui = { baseUrl: 'https://ui.example.test' };
     const response = await post(authnRequest({ forceAuthn: true }));
     expect(response.status).toBe(302);
-    expect(response.headers.get('location')).toContain('force_authn=true');
+    const location = new URL(response.headers.get('location') ?? '');
+    expect(location.searchParams.get('force_authn')).toBe('true');
+    // The Login UI is given a challenge for the person who is signed in.
+    expect(mocks.storeChallenge).toHaveBeenCalledOnce();
+    const stored = mocks.storeChallenge.mock.calls[0]?.[0] as { id: string };
+    expect(location.searchParams.get('challenge_id')).toBe(stored.id);
   });
 
   it('issues a SAML response for an authenticated user and preserves RelayState', async () => {

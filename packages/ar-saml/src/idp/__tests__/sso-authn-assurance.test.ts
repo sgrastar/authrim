@@ -12,6 +12,15 @@ import { Hono } from 'hono';
 import { SAML_NAMESPACES, STATUS_CODES } from '../../common/constants';
 import { createEvidenceDb, type EvidenceDb } from './helpers/evidence-db';
 
+interface StoredChallenge {
+  id: string;
+  tenantId: string;
+  type: string;
+  userId: string;
+  ttl: number;
+  metadata: Record<string, unknown>;
+}
+
 interface FakeSession {
   userId: string;
   expiresAt: number;
@@ -25,6 +34,9 @@ const mocks = vi.hoisted(() => ({
   sessions: new Map<string, unknown>(),
   sessionWrites: [] as Array<{ id: string; updates: Record<string, unknown> }>,
   requests: new Map<string, unknown>(),
+  /** The authorization challenges stored for the Login UI (ChallengeStore), by id. */
+  challenges: new Map<string, StoredChallenge>(),
+  challengeError: null as Error | null,
   user: { id: 'user-a', email: 'user@example.test' } as Record<string, unknown> | null,
   assuranceSettings: null as Record<string, unknown> | null,
   settingsReads: 0,
@@ -250,6 +262,16 @@ function environment() {
         return null;
       }),
     },
+    CHALLENGE_STORE: {
+      idFromName: vi.fn((name: string) => ({ name })),
+      get: vi.fn(() => ({
+        storeChallengeRpc: async (request: StoredChallenge) => {
+          if (mocks.challengeError) throw mocks.challengeError;
+          mocks.challenges.set(request.id, request);
+          return { success: true };
+        },
+      })),
+    },
     SAML_REQUEST_STORE: {
       idFromName: vi.fn((name: string) => ({ name })),
       get: vi.fn(() => ({
@@ -389,6 +411,8 @@ describe('SAML IdP SSO and authentication assurance', () => {
     mocks.sessions.clear();
     mocks.sessionWrites.length = 0;
     mocks.requests.clear();
+    mocks.challenges.clear();
+    mocks.challengeError = null;
     mocks.user = { id: 'user-a', email: 'user@example.test' };
     mocks.assuranceSettings = null;
     mocks.settingsReads = 0;
@@ -450,7 +474,8 @@ describe('SAML IdP SSO and authentication assurance', () => {
       const response = await post(authnRequestXml(), 's-1');
       expect(response.status).toBe(302);
       const location = new URL(response.headers.get('location') ?? '');
-      expect(location.origin + location.pathname).toBe('https://ui.example.test/login');
+      // A signed-in person proves themselves again on the re-authentication screen.
+      expect(location.origin + location.pathname).toBe('https://ui.example.test/reauth');
       expect(location.searchParams.get('force_authn')).toBe('true');
       expect(location.searchParams.get('required_aal')).toBe('AAL2');
       expect(location.searchParams.get('saml_request_id')).toBe('_request');
@@ -991,6 +1016,191 @@ describe('SAML IdP SSO and authentication assurance', () => {
       // The step-up adds the TOTP: AAL2, and ForceAuthn is still met by the newest session.
       setSession('s-3', { amr: ['totp'], proven_at: stepUpIssuedAt + 10 });
       const answered = await resume('s-3');
+      expect(answered.status).toBe(200);
+      expect(mocks.buildResponse).toHaveBeenCalledOnce();
+    });
+  });
+  describe('the challenge the Login UI is given when the person is already signed in', () => {
+    const challengeOf = (location: string) => {
+      const id = new URL(location).searchParams.get('challenge_id');
+      return id ? mocks.challenges.get(id) : undefined;
+    };
+
+    it('gives a step-up a reauth challenge bound to the request, the SP, the tenant and the person', async () => {
+      mocks.sp = sp({ minimumAal: 'AAL2' });
+      setSession('s-1', { amr: ['pwd'], proven_at: LONG_AGO });
+      const response = await post(authnRequestXml(), 's-1');
+      const location = response.headers.get('location') ?? '';
+
+      const challenge = challengeOf(location);
+      expect(challenge).toMatchObject({
+        tenantId: 'tenant-a',
+        type: 'reauth',
+        userId: 'user-a',
+        metadata: {
+          protocol: 'saml',
+          saml_request_id: '_request',
+          saml_sp_entity_id: SP_ENTITY,
+          tenant_id: 'tenant-a',
+          sessionUserId: 'user-a',
+        },
+      });
+      // The same instant as the step-up the stored request records, so that what the Login UI
+      // accepts as the new sign-in is what the SSO endpoint counts.
+      expect(challenge?.metadata.reauth_issued_at).toBe(stepUpOf().issuedAt);
+      // It lasts as long as the stored request, and keeps the rest of the URL as it was.
+      const stored = mocks.requests.get('_request') as { expiresAt: number };
+      expect(challenge!.ttl * 1000).toBeGreaterThan(stored.expiresAt - Date.now() - 5_000);
+      expect(challenge!.ttl * 1000).toBeLessThanOrEqual(stored.expiresAt - Date.now() + 5_000);
+      const params = new URL(location).searchParams;
+      expect(params.get('saml_request_id')).toBe('_request');
+      expect(params.get('saml_sp_entity_id')).toBe(SP_ENTITY);
+      expect(params.get('return_to')).toBe('saml_sso');
+      expect(params.get('force_authn')).toBe('true');
+      expect(params.get('required_aal')).toBe('AAL2');
+      // No level is kept in the challenge.
+      expect(JSON.stringify(challenge)).not.toMatch(/AAL|IAL/);
+    });
+
+    it('sends the person to the configured re-authentication path, and a person with no challenge to the sign-in page', async () => {
+      mocks.ui = {
+        baseUrl: 'https://ui.example.test',
+        paths: { login: '/sign-in', reauth: '/prove' },
+      } as never;
+      mocks.sp = sp({ minimumAal: 'AAL2' });
+      setSession('s-1', { amr: ['pwd'], proven_at: LONG_AGO });
+      const reauth = await post(authnRequestXml(), 's-1');
+      expect(new URL(reauth.headers.get('location') ?? '').pathname).toBe('/prove');
+
+      mocks.requests.clear();
+      const signIn = await post(authnRequestXml());
+      expect(new URL(signIn.headers.get('location') ?? '').pathname).toBe('/sign-in');
+    });
+
+    it('gives a ForceAuthn request of a signed-in person a reauth challenge for them', async () => {
+      setSession('s-1', { amr: ['pwd'], proven_at: LONG_AGO }, 'user-b');
+      const response = await post(authnRequestXml({ forceAuthn: true }), 's-1');
+      const challenge = challengeOf(response.headers.get('location') ?? '');
+      expect(challenge).toMatchObject({
+        type: 'reauth',
+        userId: 'user-b',
+        metadata: { protocol: 'saml', sessionUserId: 'user-b', saml_request_id: '_request' },
+      });
+      expect(challenge?.metadata.reauth_issued_at).toBe(reauthOf().issuedAt);
+    });
+
+    it('gives a second challenge, later than the first, to the step-up that follows a ForceAuthn sign-in', async () => {
+      mocks.sp = sp({ minimumAal: 'AAL2' });
+      setSession('s-1', { amr: ['pwd'], proven_at: LONG_AGO });
+      const first = await post(authnRequestXml({ forceAuthn: true }), 's-1');
+      const firstChallenge = challengeOf(first.headers.get('location') ?? '');
+      setSession('s-2', { amr: ['pwd'], proven_at: reauthOf().issuedAt + 10 });
+      const second = await resume('s-2');
+      const secondChallenge = challengeOf(second.headers.get('location') ?? '');
+
+      expect(secondChallenge?.id).not.toBe(firstChallenge?.id);
+      expect(secondChallenge?.metadata.reauth_issued_at).toBe(stepUpOf().issuedAt);
+      expect(secondChallenge?.metadata.reauth_issued_at as number).toBeGreaterThanOrEqual(
+        firstChallenge?.metadata.reauth_issued_at as number
+      );
+    });
+
+    it.each([
+      ['a ForceAuthn request with no session', { forceAuthn: true }],
+      ['an ordinary request with no session', {}],
+    ])('gives %s no challenge: the person has to sign in anyway', async (_name, options) => {
+      const response = await post(authnRequestXml(options));
+      expect(response.status).toBe(302);
+      expect(new URL(response.headers.get('location') ?? '').searchParams.has('challenge_id')).toBe(
+        false
+      );
+      expect(mocks.challenges.size).toBe(0);
+    });
+
+    it('does not send the person when the challenge cannot be stored: the sign-in is not skipped', async () => {
+      mocks.sp = sp({ minimumAal: 'AAL2' });
+      mocks.challengeError = new Error('ChallengeStore unavailable');
+      setSession('s-1', { amr: ['pwd'], proven_at: LONG_AGO });
+      const response = await post(authnRequestXml(), 's-1');
+      expect(response.headers.get('location')).toBeNull();
+      expect(response.status).toBeGreaterThanOrEqual(400);
+      expect(mocks.buildResponse).not.toHaveBeenCalled();
+    });
+
+    it('answers when the person comes back from the Login UI with the session the sign-in updated', async () => {
+      // The Login UI re-proved the same session: it records the new proof beside the first.
+      setSession('s-1', { amr: ['pwd'], proven_at: LONG_AGO });
+      await post(authnRequestXml({ forceAuthn: true }), 's-1');
+      const challenge = [...mocks.challenges.values()][0];
+      const issuedAt = challenge?.metadata.reauth_issued_at as number;
+      setSession('s-1', {
+        amr: ['pwd', 'totp'],
+        proven_at: LONG_AGO,
+        reauth_proven_amr: ['totp'],
+        reauth_proven_at: issuedAt + 25,
+      });
+
+      const answered = await resume('s-1');
+      expect(answered.status).toBe(200);
+      expect(mocks.buildResponse).toHaveBeenCalledOnce();
+      expect(mocks.requests.size).toBe(0);
+    });
+
+    it('answers an AAL2 step-up completed by re-proving the same session, and keeps the password old', async () => {
+      mocks.sp = sp({ minimumAal: 'AAL2' });
+      setSession('s-1', { amr: ['pwd'], proven_at: LONG_AGO });
+      const sent = await post(authnRequestXml(), 's-1');
+      const challenge = challengeOf(sent.headers.get('location') ?? '');
+      const issuedAt = challenge?.metadata.reauth_issued_at as number;
+      // The sign-in proved a TOTP in the session itself, beside the password's old proof.
+      setSession('s-1', {
+        amr: ['pwd'],
+        proven_at: LONG_AGO,
+        reauth_proven_amr: ['totp'],
+        reauth_proven_at: issuedAt + 25,
+      });
+
+      const answered = await resume('s-1');
+
+      expect(answered.status).toBe(200);
+      expect(mocks.buildResponse).toHaveBeenCalledOnce();
+      // The combination is recorded, but the password is not dated again.
+      expect(sessionData('s-1')).toMatchObject({
+        amr: ['pwd', 'totp'],
+        proven_at: LONG_AGO,
+        reauth_proven_at: issuedAt + 25,
+      });
+    });
+
+    it('does not take a re-proof made before the step-up began for the step-up', async () => {
+      mocks.sp = sp({ minimumAal: 'AAL2' });
+      setSession('s-1', { amr: ['pwd'], proven_at: LONG_AGO });
+      const sent = await post(authnRequestXml(), 's-1');
+      const issuedAt = challengeOf(sent.headers.get('location') ?? '')?.metadata
+        .reauth_issued_at as number;
+      setSession('s-1', {
+        amr: ['pwd', 'totp'],
+        proven_at: LONG_AGO,
+        reauth_proven_amr: ['totp'],
+        reauth_proven_at: issuedAt - 1,
+      });
+
+      await resume('s-1');
+
+      expect(mocks.buildResponse).not.toHaveBeenCalled();
+      expect(lastError()).toMatchObject({ secondLevelStatusCode: STATUS_CODES.NO_AUTHN_CONTEXT });
+    });
+
+    it('answers a step-up that comes back from the Login UI with the combined evidence', async () => {
+      mocks.sp = sp({ minimumAal: 'AAL2' });
+      setSession('s-1', { amr: ['pwd'], proven_at: LONG_AGO });
+      const sent = await post(authnRequestXml(), 's-1');
+      const challenge = challengeOf(sent.headers.get('location') ?? '');
+      setSession('s-2', {
+        amr: ['totp'],
+        proven_at: (challenge?.metadata.reauth_issued_at as number) + 10,
+      });
+      const answered = await resume('s-2');
       expect(answered.status).toBe(200);
       expect(mocks.buildResponse).toHaveBeenCalledOnce();
     });

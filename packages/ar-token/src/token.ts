@@ -1920,6 +1920,17 @@ async function handleDirectAuthFinishGrant(
     return oauthError(c, 'invalid_grant', 'Direct Auth artifact channel binding mismatch', 400);
   }
 
+  // An artifact made for the browser session alone (the re-authentication challenge of a SAML
+  // request) is never exchanged for tokens.
+  if (metadata.browser_session_only === true) {
+    return oauthError(
+      c,
+      'invalid_grant',
+      'Direct Auth artifact cannot be exchanged for tokens',
+      400
+    );
+  }
+
   const allowedProviders = new Set<string>();
   for (const key of ['provider_id', 'provider_slug', 'provider']) {
     const value = metadata[key];

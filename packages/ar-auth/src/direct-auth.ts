@@ -138,6 +138,10 @@ import {
   type HumanVerificationAction,
 } from './human-verification';
 import { resolveSessionTtl } from './session-ttl';
+import {
+  continueSAMLChallenge,
+  isBrowserSessionOnlyChallenge,
+} from './saml-authorization-challenge';
 import { verifyEmailVerificationProtocol } from './email-verification-protocol';
 import {
   buildAuthorizeContinuationUrl,
@@ -880,6 +884,14 @@ export async function consumeAuthorizationChallengeContinuation(
     preKind = stored.type;
     const refusal = await refusalFor(preKind, stored);
     if (refusal) return refusal;
+    // The challenge of a SAML request is judged as above but continued by the SSO endpoint, not
+    // /authorize, and is not used up (see saml-authorization-challenge.ts).
+    const samlContinuation = continueSAMLChallenge(stored, tenantId);
+    if (samlContinuation) {
+      return samlContinuation.kind === 'continue'
+        ? { type: samlContinuation.type, redirectUrl: samlContinuation.redirectUrl }
+        : refuse(400, 'invalid_request', 'Authorization challenge is invalid or expired');
+    }
   }
 
   // A challenge already continued (or gone since) is continued again only to give the same result
@@ -1466,34 +1478,45 @@ async function generateAuthCode(
     typeof configuredTtl === 'number' && Number.isSafeInteger(configuredTtl) && configuredTtl > 0
       ? configuredTtl
       : AUTH_CODE_TTL;
-  await authCodeStore.storeCodeRpc({
-    code: authCode,
-    tenantId,
-    clientId,
-    ttlSeconds: expiresIn,
-    maxCodesPerUser: typeof maxCodesPerUser === 'number' ? maxCodesPerUser : undefined,
-    redirectUri: DIRECT_AUTH_GRANT_REDIRECT_URI,
-    userId,
-    scope,
-    codeChallenge,
-    codeChallengeMethod: 'S256',
-    authTime:
-      typeof metadata?.auth_time === 'number' ? metadata.auth_time : Math.floor(Date.now() / 1000),
-    // With assurance on and in ID tokens, the acr of the AAL reached (none for AAL0), as authorize
-    // gives; otherwise the fixed one Direct Auth has always given.
-    ...(aal && assuranceSettings['assurance.include_in_id_token'] === true
-      ? assuranceAcr
-        ? { acr: assuranceAcr }
-        : {}
-      : { acr: 'urn:mace:incommon:iap:bronze' }),
-    ...(aal
-      ? {
-          aal,
-          ...(method ? { amr: [method], assuranceAmr: [method] } : {}),
-          ...(assuranceAcr ? { assuranceAcr } : {}),
-        }
-      : {}),
-  });
+  // The challenge of a SAML request finishes the browser session only: no code for /token is made.
+  const challengeIdOfArtifact =
+    typeof metadata?.authorization_challenge_id === 'string' && metadata.authorization_challenge_id
+      ? metadata.authorization_challenge_id
+      : undefined;
+  const browserSessionOnly = challengeIdOfArtifact
+    ? await isBrowserSessionOnlyChallenge(env, tenantId, challengeIdOfArtifact)
+    : false;
+  if (!browserSessionOnly)
+    await authCodeStore.storeCodeRpc({
+      code: authCode,
+      tenantId,
+      clientId,
+      ttlSeconds: expiresIn,
+      maxCodesPerUser: typeof maxCodesPerUser === 'number' ? maxCodesPerUser : undefined,
+      redirectUri: DIRECT_AUTH_GRANT_REDIRECT_URI,
+      userId,
+      scope,
+      codeChallenge,
+      codeChallengeMethod: 'S256',
+      authTime:
+        typeof metadata?.auth_time === 'number'
+          ? metadata.auth_time
+          : Math.floor(Date.now() / 1000),
+      // With assurance on and in ID tokens, the acr of the AAL reached (none for AAL0), as authorize
+      // gives; otherwise the fixed one Direct Auth has always given.
+      ...(aal && assuranceSettings['assurance.include_in_id_token'] === true
+        ? assuranceAcr
+          ? { acr: assuranceAcr }
+          : {}
+        : { acr: 'urn:mace:incommon:iap:bronze' }),
+      ...(aal
+        ? {
+            aal,
+            ...(method ? { amr: [method], assuranceAmr: [method] } : {}),
+            ...(assuranceAcr ? { assuranceAcr } : {}),
+          }
+        : {}),
+    });
 
   const challengeStore = await getChallengeStoreByChallengeId(env, authCode, tenantId);
 
@@ -1507,6 +1530,9 @@ async function generateAuthCode(
     metadata: {
       ...metadata,
       created_at: Date.now(),
+      // Set here, from the challenge as stored, never from the request: /token refuses the
+      // artifact, which only the browser session finish redeems.
+      ...(browserSessionOnly ? { browser_session_only: true } : {}),
     },
   });
 
@@ -3906,9 +3932,29 @@ export async function directSessionCreateHandler(c: Context<{ Bindings: Env }>) 
       typeof metadata.authorization_challenge_id === 'string'
         ? metadata.authorization_challenge_id
         : undefined;
+    // An artifact made for the browser session alone (the challenge of a SAML request) continues
+    // only at the challenge it was made for: another one named here (an OIDC login's, say) would
+    // turn a re-authentication into an ordinary sign-in. Whether that challenge is still there
+    // makes no difference to this; the session can still be made with the continuation deferred.
+    const browserSessionOnly = metadata.browser_session_only === true;
+    if (
+      browserSessionOnly &&
+      authorization_challenge_id &&
+      authorization_challenge_id !== artifactAuthorizationChallengeId
+    ) {
+      return c.json(
+        {
+          error: 'invalid_grant',
+          error_description: 'Direct Auth artifact authorization challenge binding mismatch',
+        },
+        400
+      );
+    }
     const effectiveAuthorizationChallengeId = defer_authorization_continuation
       ? undefined
-      : authorization_challenge_id || artifactAuthorizationChallengeId;
+      : browserSessionOnly
+        ? artifactAuthorizationChallengeId
+        : authorization_challenge_id || artifactAuthorizationChallengeId;
 
     let authorizationContinuation: AuthorizationChallengeContinuation | undefined;
     if (effectiveAuthorizationChallengeId) {

@@ -12,6 +12,7 @@
 	import { resolveTurnstileLanguage as resolveConfiguredTurnstileLanguage } from '$lib/turnstile-options';
 	import { startAuthentication } from '@simplewebauthn/browser';
 	import { startTotpReauth, verifyTotpReauth } from './reauth-totp';
+	import { resolveReauthMethods } from './reauth-methods';
 	import {
 		signalUnknownCredential,
 		shouldSignalUnknownCredentialAfterLoginFailure
@@ -129,11 +130,11 @@
 		try {
 			const { data } = await fetchAuthenticationMethods();
 			if (data) {
-				passkeyEnabled = data.methods.passkey.reauthEnabled ?? data.methods.passkey.enabled;
-				emailCodeEnabled = data.methods.emailCode.reauthEnabled ?? data.methods.emailCode.enabled;
-				totpEnabled = data.methods.totp.reauthEnabled ?? data.methods.totp.enabled;
-				const humanVerificationRequired =
-					data.methods.humanVerification.enabled && data.methods.humanVerification.reauthEnabled;
+				const reauthMethods = resolveReauthMethods(data.methods);
+				passkeyEnabled = reauthMethods.passkey;
+				emailCodeEnabled = reauthMethods.emailCode;
+				totpEnabled = reauthMethods.totp;
+				const humanVerificationRequired = reauthMethods.humanVerification;
 				humanVerificationProvider =
 					data.methods.humanVerification.provider === 'hcaptcha' ||
 					data.methods.humanVerification.provider === 'recaptcha' ||

@@ -10,6 +10,7 @@ import {
   readAuthorizationChallengeFreshness,
   reauthProofFromRecord,
 } from './direct-auth';
+import { checkSAMLChallengeForFlow } from './saml-authorization-challenge';
 import {
   getTenantSettingsDocument,
   readSettingsFlag,
@@ -53,6 +54,7 @@ import {
   type DestinationProfileConsentDescriptor,
   type DestinationFieldReleasePolicies,
   type Session,
+  isSAMLAuthorizationChallenge,
 } from '@authrim/ar-lib-core';
 
 type AuthContext = Context<{ Bindings: Env }>;
@@ -2127,12 +2129,14 @@ async function validateRuntimeAuthorizationChallengeBinding(
   const challengeId = requestContext.authorization_challenge_id;
   if (!challengeId) return null;
 
-  if (requestContext.protocol !== 'oidc' || !target.clientId) {
+  // A SAML SP target takes the challenge of a SAML request; any other target must be an OIDC client.
+  const samlTarget = requestContext.protocol === 'saml';
+  if (!samlTarget && (requestContext.protocol !== 'oidc' || !target.clientId)) {
     return jsonError(
       c,
       400,
       'invalid_authorization_challenge',
-      'Authorization challenge can only be used with an OIDC client Flow target',
+      'Authorization challenge can only be used with an OIDC client or SAML SP Flow target',
       'AR_FLOW_AUTH_CHALLENGE_INVALID'
     );
   }
@@ -2162,6 +2166,40 @@ async function validateRuntimeAuthorizationChallengeBinding(
       'invalid_authorization_challenge',
       'Authorization challenge is invalid or expired',
       'AR_FLOW_AUTH_CHALLENGE_INVALID'
+    );
+  }
+
+  if (samlTarget) {
+    // The binding is the challenge's own: the SAML request, SP and tenant it was issued for.
+    const samlCheck = checkSAMLChallengeForFlow(challenge, {
+      tenantId,
+      targetType: target.targetType,
+      targetId: target.targetId,
+      samlSpId: target.samlSpId,
+      clientId: target.clientId,
+      samlRequestId: requestContext.saml_request_id,
+      samlSpEntityId: requestContext.saml_sp_entity_id,
+    });
+    if (!samlCheck.ok) {
+      return jsonError(
+        c,
+        403,
+        'authorization_challenge_mismatch',
+        'Authorization challenge does not match the requested SAML request',
+        'AR_FLOW_AUTH_CHALLENGE_MISMATCH'
+      );
+    }
+    // A SAML request asks for no scope or claims.
+    return null;
+  }
+  if (isSAMLAuthorizationChallenge(challenge.metadata)) {
+    // A SAML request's challenge is not an OIDC authorization request.
+    return jsonError(
+      c,
+      403,
+      'authorization_challenge_mismatch',
+      'Authorization challenge does not match the requested client',
+      'AR_FLOW_AUTH_CHALLENGE_MISMATCH'
     );
   }
 
@@ -3045,7 +3083,7 @@ async function resolveCompletedProtocolRedirect(input: {
   session: Session | null;
 }): Promise<{ redirectUrl?: string; response?: Response }> {
   if (
-    input.requestContext.protocol !== 'oidc' ||
+    (input.requestContext.protocol !== 'oidc' && input.requestContext.protocol !== 'saml') ||
     !input.requestContext.authorization_challenge_id
   ) {
     return {};

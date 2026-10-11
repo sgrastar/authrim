@@ -89,6 +89,27 @@ export type SessionAssuranceEvaluation =
       combinedAmr?: string[];
     };
 
+/** Whether the session was proven (as a whole) at or after the step-up began. */
+function reauthResultOfStepUp(provenAt: number | undefined, stepUp: { issuedAt: number }): boolean {
+  return provenAt !== undefined && provenAt >= stepUp.issuedAt;
+}
+
+/**
+ * The method(s) a session's latest re-authentication proved and when (milliseconds), as the
+ * server recorded them (`reauth_proven_amr`, `reauth_proven_at`), or undefined when it has none.
+ */
+function sessionReauthPair(
+  data: Record<string, unknown> | undefined
+): { amr: string[]; at: number } | undefined {
+  const at = data?.reauth_proven_at;
+  const amr = data?.reauth_proven_amr;
+  if (typeof at !== 'number' || !Number.isSafeInteger(at) || at <= 0 || !Array.isArray(amr)) {
+    return undefined;
+  }
+  const methods = amr.filter((method): method is string => typeof method === 'string');
+  return methods.length > 0 ? { amr: methods, at } : undefined;
+}
+
 export async function evaluateSessionAssurance(
   input: EvaluateSessionAssuranceInput
 ): Promise<SessionAssuranceEvaluation> {
@@ -113,6 +134,75 @@ export async function evaluateSessionAssurance(
   // that its authentication was proven after the step-up began (proven_at, milliseconds; a
   // session without it is never combined).
   const stepUp = input.stepUp;
+
+  /**
+   * Records the combined evidence in the session, written only over what this call read: another
+   * step-up of the same session may have combined its own factors meanwhile, and those are kept
+   * rather than replaced. Returns false when the session ended meanwhile.
+   */
+  const recordCombination = async (
+    combined: AuthenticationEvidence,
+    combinedProvenAt: number,
+    initialReauthProof: Record<string, unknown>
+  ): Promise<boolean> => {
+    const store = input.getSessionStore(sessionId as string);
+    let read = sessionData;
+    let stored = combined;
+    let storedProvenAt = combinedProvenAt;
+    let written = false;
+    let ownReauthProof = initialReauthProof;
+    for (let attempt = 0; attempt < 3 && !written; attempt++) {
+      const updates = {
+        amr: [...stored.amr],
+        unverified_amr: [...(stored.unverifiedMethods ?? [])],
+        ...(stored.upstreamAcr ? { upstream_acr: stored.upstreamAcr } : {}),
+        proven_at: storedProvenAt,
+        ...ownReauthProof,
+      };
+      const updated = (await store.updateSessionDataRpc(sessionId as string, updates, {
+        ifDataMatches: {
+          amr: read?.amr,
+          unverified_amr: read?.unverified_amr,
+          upstream_acr: read?.upstream_acr,
+          proven_at: read?.proven_at,
+          // Writing its own pair, a re-authentication completed meanwhile (a newer pair) must
+          // fail the write rather than be replaced; without one, the newer pair is merged over.
+          ...('reauth_proven_at' in ownReauthProof
+            ? {
+                reauth_proven_amr: read?.reauth_proven_amr,
+                reauth_proven_at: read?.reauth_proven_at,
+              }
+            : {}),
+        } as Partial<SessionData>,
+      })) as Session | null;
+      if (!updated) {
+        // The session ended meanwhile: nothing it proved may be used.
+        return false;
+      }
+      const latest = updated.data as Record<string, unknown> | undefined;
+      written = Object.entries(updates).every(
+        ([field, value]) => JSON.stringify(latest?.[field]) === JSON.stringify(value)
+      );
+      if (!written) {
+        read = latest;
+        if (typeof latest?.reauth_proven_at === 'number') ownReauthProof = {};
+        stored = mergeStepUpEvidence(
+          sessionAssuranceEvidence(latest, upstreamAcrMappings),
+          combined
+        );
+        storedProvenAt = Math.min(
+          typeof latest?.proven_at === 'number' ? latest.proven_at : 0,
+          combinedProvenAt
+        );
+      }
+    }
+    if (!written) {
+      // This request's own evidence stands; the session keeps what was written last.
+      input.onUnrecorded?.();
+    }
+    return true;
+  };
+
   if (stepUp && sessionId && ownSession && provenAt !== undefined && provenAt >= stepUp.issuedAt) {
     const priorSessionId = stepUp.priorSessionId;
     if (priorSessionId && priorSessionId !== sessionId) {
@@ -132,13 +222,6 @@ export async function evaluateSessionAssurance(
         // cannot pass for a later step-up's own authentication.
         const combinedProvenAt =
           typeof prior.data?.proven_at === 'number' ? Math.min(prior.data.proven_at, provenAt) : 0;
-        const store = input.getSessionStore(sessionId);
-        // Written only over the evidence this request read: another step-up of the same session
-        // may have combined its own factors meanwhile, and those are kept rather than replaced.
-        let read = sessionData;
-        let stored = evidence;
-        let storedProvenAt = combinedProvenAt;
-        let written = false;
         // The step-up's own login, just proven, stays what a later re-authentication can take,
         // paired with its own time, while the combined evidence counts from its oldest proof.
         const ownUnverified = Array.isArray(sessionData?.unverified_amr)
@@ -147,69 +230,50 @@ export async function evaluateSessionAssurance(
         const ownProvenAmr = (Array.isArray(sessionData?.amr) ? sessionData.amr : []).filter(
           (method) => !ownUnverified.includes(method)
         );
-        let ownReauthProof =
+        const ownReauthProof =
           typeof sessionData?.reauth_proven_at === 'number' ||
           ownProvenAmr.length === 0 ||
           provenAt === undefined
             ? {}
             : { reauth_proven_amr: ownProvenAmr, reauth_proven_at: provenAt };
-        for (let attempt = 0; attempt < 3 && !written; attempt++) {
-          const updates = {
-            amr: [...stored.amr],
-            unverified_amr: [...(stored.unverifiedMethods ?? [])],
-            ...(stored.upstreamAcr ? { upstream_acr: stored.upstreamAcr } : {}),
-            proven_at: storedProvenAt,
-            ...ownReauthProof,
-          };
-          const updated = (await store.updateSessionDataRpc(sessionId, updates, {
-            ifDataMatches: {
-              amr: read?.amr,
-              unverified_amr: read?.unverified_amr,
-              upstream_acr: read?.upstream_acr,
-              proven_at: read?.proven_at,
-              // Writing its own pair, a re-authentication completed meanwhile (a newer pair) must
-              // fail the write rather than be replaced; without one, the newer pair is merged over.
-              ...('reauth_proven_at' in ownReauthProof
-                ? {
-                    reauth_proven_amr: read?.reauth_proven_amr,
-                    reauth_proven_at: read?.reauth_proven_at,
-                  }
-                : {}),
-            } as Partial<SessionData>,
-          })) as Session | null;
-          if (!updated) {
-            // The session ended meanwhile: nothing it proved may be used.
-            return { sessionEnded: true };
-          }
-          const latest = updated.data as Record<string, unknown> | undefined;
-          written = Object.entries(updates).every(
-            ([field, value]) => JSON.stringify(latest?.[field]) === JSON.stringify(value)
-          );
-          if (!written) {
-            read = latest;
-            if (typeof latest?.reauth_proven_at === 'number') ownReauthProof = {};
-            stored = mergeStepUpEvidence(
-              sessionAssuranceEvidence(latest, upstreamAcrMappings),
-              evidence
-            );
-            storedProvenAt = Math.min(
-              typeof latest?.proven_at === 'number' ? latest.proven_at : 0,
-              combinedProvenAt
-            );
-          }
-        }
-        if (!written) {
-          // This request's own evidence stands; the session keeps what was written last.
-          input.onUnrecorded?.();
+        if (!(await recordCombination(evidence, combinedProvenAt, ownReauthProof))) {
+          return { sessionEnded: true };
         }
         combinedAmr = [...evidence.amr];
       }
+    }
+  } else if (stepUp && sessionId && ownSession && !reauthResultOfStepUp(provenAt, stepUp)) {
+    // The step-up was completed in the session the user stepped up from: it records the method
+    // just proven (and when) beside its older proof, in `reauth_proven_amr` and `reauth_proven_at`
+    // (a re-authentication in the session). That pair is the new factor, as fresh as its time; the
+    // rest of the session's evidence stays what it was, as old as its `proven_at`, and is combined
+    // with the pair. The older factors are not dated again: a later step-up still finds them old.
+    // The same holds for a session that holds an earlier step-up's combination (its factors with
+    // that pair) and comes back through a later screen (consent): the earlier session is not read.
+    const pair = sessionReauthPair(sessionData);
+    if (pair && pair.at >= stepUp.issuedAt) {
+      const fresh: AuthenticationEvidence = {
+        amr: pair.amr,
+        unverifiedMethods: [],
+        upstreamAcr: null,
+        upstreamAcrMappings,
+      };
+      evidence = mergeStepUpEvidence(
+        sessionAssuranceEvidence(sessionData, upstreamAcrMappings),
+        fresh
+      );
+      // Still as old as the session's own oldest proof; the pair it has stays as it is.
+      if (!(await recordCombination(evidence, provenAt ?? 0, {}))) {
+        return { sessionEnded: true };
+      }
+      combinedAmr = [...evidence.amr];
     }
   }
 
   return {
     ownSession,
-    evidenceSession,
+    // A step-up completed by the session's own re-authentication counts as the session's evidence.
+    evidenceSession: evidenceSession || (ownSession && combinedAmr !== undefined),
     provenAt,
     evidence,
     aal: computeAAL(evidence),

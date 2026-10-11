@@ -791,6 +791,99 @@ describe('managed Direct Auth browser session finish', () => {
     );
   });
 
+  describe('an artifact made for the browser session alone (the challenge of a SAML request)', () => {
+    const verifier = 'verifier-for-a-browser-session-only-artifact';
+    const markedArtifact = async () => ({
+      challenge: await s256Challenge(verifier),
+      userId: 'user_123',
+      metadata: {
+        client_id: 'login-ui',
+        channel: 'browser',
+        method: 'passkey',
+        proven_at: Date.now(),
+        authorization_challenge_id: 'saml_challenge_1',
+        browser_session_only: true,
+      },
+    });
+    const finish = async (extra: Record<string, unknown> = {}) => {
+      const { directSessionCreateHandler } = await import('../direct-auth');
+      return directSessionCreateHandler(
+        createContext({
+          direct_auth_artifact: 'artifact_123',
+          client_id: 'login-ui',
+          code_verifier: verifier,
+          channel: 'browser',
+          ...extra,
+        }) as never
+      );
+    };
+
+    it('does not continue at another challenge named by the request, and makes no session', async () => {
+      // An OIDC login challenge fetched before the sign-in, named in place of the SAML one.
+      challengeStore.consumeChallengeRpc.mockResolvedValueOnce(await markedArtifact());
+
+      const response = await finish({ authorization_challenge_id: 'oidc_login_challenge' });
+
+      expect(response.status).toBe(400);
+      expect(sessionStore.createSessionRpc).not.toHaveBeenCalled();
+      expect(challengeStore.consumeChallengeRpc).toHaveBeenCalledTimes(1);
+      expect(challengeStore.storeChallengeRpc).not.toHaveBeenCalled();
+    });
+
+    it('does not continue at another challenge even when its own is gone', async () => {
+      challengeStore.consumeChallengeRpc
+        .mockResolvedValueOnce(await markedArtifact())
+        .mockRejectedValue(new Error('gone'));
+
+      const response = await finish();
+
+      expect(response.status).toBe(400);
+      expect(sessionStore.createSessionRpc).not.toHaveBeenCalled();
+      expect(challengeStore.consumeChallengeRpc).not.toHaveBeenCalledWith(
+        expect.objectContaining({ id: 'oidc_login_challenge' })
+      );
+    });
+
+    it('still makes the session, with the continuation deferred, whichever challenge the request names', async () => {
+      challengeStore.consumeChallengeRpc.mockResolvedValueOnce(await markedArtifact());
+
+      const response = await finish({
+        defer_authorization_continuation: true,
+        authorization_challenge_id: 'saml_challenge_1',
+      });
+      const body = (await response.json()) as Record<string, unknown>;
+
+      expect(response.status).toBe(200);
+      expect(body).not.toHaveProperty('authorization');
+      expect(sessionStore.createSessionRpc).toHaveBeenCalledOnce();
+      expect(challengeStore.consumeChallengeRpc).toHaveBeenCalledTimes(1);
+    });
+
+    it('continues at the SSO endpoint for its own challenge', async () => {
+      challengeStore.consumeChallengeRpc.mockResolvedValueOnce(await markedArtifact());
+      challengeStore.getChallengeRpc.mockResolvedValueOnce({
+        tenantId: 'tenant_test',
+        type: 'reauth',
+        userId: 'user_123',
+        metadata: {
+          protocol: 'saml',
+          saml_request_id: '_request-1',
+          saml_sp_entity_id: 'https://sp.example.test/entity',
+          tenant_id: 'tenant_test',
+          sessionUserId: 'user_123',
+          reauth_issued_at: 1_000,
+        },
+      } as never);
+
+      const response = await finish({ authorization_challenge_id: 'saml_challenge_1' });
+      const body = (await response.json()) as Record<string, unknown>;
+
+      expect(response.status).toBe(200);
+      expect(body.redirect_url).toEqual(expect.stringContaining('/saml/idp/sso?'));
+      expect(challengeStore.consumeChallengeRpc).toHaveBeenCalledTimes(1);
+    });
+  });
+
   it('rejects non-browser channels for managed browser session finish', async () => {
     const { directSessionCreateHandler } = await import('../direct-auth');
 

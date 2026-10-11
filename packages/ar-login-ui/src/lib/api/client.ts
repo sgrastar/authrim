@@ -1620,7 +1620,9 @@ interface LoginChallengeWebOrigin {
  */
 interface LoginChallengeData {
 	challenge_id: string;
-	client: LoginChallengeClientInfo;
+	/** `saml` for the challenge of a SAML request (a re-authentication), which names no client. */
+	protocol?: 'saml';
+	client?: LoginChallengeClientInfo;
 	scope?: string;
 	login_hint?: string;
 	oidc?: {

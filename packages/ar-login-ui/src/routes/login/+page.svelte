@@ -664,8 +664,9 @@
 		try {
 			const { data, error: apiError } = await loginChallengeAPI.getData(challengeId);
 			if (data) {
-				clientInfo = data.client;
-				await applyClientLoginUIOverride(data.client.client_id);
+				// The challenge of a SAML request names no client.
+				clientInfo = data.client ?? null;
+				if (data.client) await applyClientLoginUIOverride(data.client.client_id);
 				if (data.login_hint) {
 					email = data.login_hint;
 					totpIdentifier = data.login_hint;

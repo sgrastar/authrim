@@ -346,16 +346,22 @@ export async function handleIdPSSO(c: Context<{ Bindings: Env }>): Promise<Respo
       // User not authenticated, or asked to sign in again (ForceAuthn): the request is stored for
       // when they come back, with the time they were sent when it is a new sign-in they are sent
       // for, so that the sign-in they return from is recognised and they are not sent again.
+      const sentAt = Date.now();
       return await redirectToSAMLLogin(c, {
         env,
         tenantId,
         authnRequest,
         relayState,
         forceReauthentication: authnInteraction.forceReauthentication,
+        // A person who is signed in is sent to prove themselves again (a challenge for the Login
+        // UI); one who is not has to sign in anyway.
+        ...(authnInteraction.forceReauthentication && authenticatedSession
+          ? { signInAgain: { subjectUserId: authenticatedSession.userId, issuedAt: sentAt } }
+          : {}),
         context: {
           ...carrySAMLRequestContext(parsedInput.requestContext),
           ...(authnInteraction.forceReauthentication
-            ? { reauthentication: { issuedAt: Date.now() } }
+            ? { reauthentication: { issuedAt: sentAt } }
             : {}),
         },
       });

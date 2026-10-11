@@ -233,4 +233,66 @@ describe('login challenge metadata contract', () => {
     expect(getWebOriginRegistry).not.toHaveBeenCalled();
     expect(isIframeOidcAuthEnabled).not.toHaveBeenCalled();
   });
+  describe('the challenge of a SAML request', () => {
+    const samlChallenge = (overrides: Record<string, unknown> = {}) => ({
+      id: 'challenge_123',
+      tenantId: 'default',
+      type: 'reauth',
+      userId: 'user_1',
+      metadata: {
+        protocol: 'saml',
+        saml_request_id: '_request-1',
+        saml_sp_entity_id: 'https://sp.example.test/entity',
+        tenant_id: 'default',
+        issuer: 'https://tenant.example.test',
+        sessionUserId: 'user_1',
+        reauth_issued_at: 1_700_000_000_000,
+      },
+      ...overrides,
+    });
+
+    it('names no client and says nothing of the request or the person', async () => {
+      challengeStore.getChallengeRpc.mockResolvedValue(samlChallenge());
+      const { loginChallengeGetHandler } = await import('../login-challenge');
+
+      const response = await loginChallengeGetHandler(createContext() as never);
+      const body = (await response.json()) as Record<string, unknown>;
+
+      expect(response.status).toBe(200);
+      expect(body).toEqual({
+        challenge_id: 'challenge_123',
+        protocol: 'saml',
+        session_mode: 'managed_browser_session',
+        handoff_methods: ['cookie_session_finalize'],
+        web_origin_registry: { origins: [] },
+      });
+    });
+
+    it.each([
+      ['of another tenant', { tenantId: 'other' }],
+      ['that is not a re-authentication', { type: 'login' }],
+      [
+        'with a tenant in its metadata that is not the request tenant',
+        {
+          metadata: {
+            protocol: 'saml',
+            saml_request_id: 'r',
+            saml_sp_entity_id: 's',
+            tenant_id: 'other',
+          },
+        },
+      ],
+      [
+        'without the request it is bound to',
+        { metadata: { protocol: 'saml', saml_sp_entity_id: 's', tenant_id: 'default' } },
+      ],
+    ])('refuses a SAML challenge %s', async (_name, change) => {
+      challengeStore.getChallengeRpc.mockResolvedValue(samlChallenge(change));
+      const { loginChallengeGetHandler } = await import('../login-challenge');
+
+      const response = await loginChallengeGetHandler(createContext() as never);
+
+      expect(response.status).toBe(400);
+    });
+  });
 });

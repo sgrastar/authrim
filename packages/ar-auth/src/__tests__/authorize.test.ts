@@ -1290,6 +1290,36 @@ describe('Authorization Handler', () => {
       });
     });
 
+    it('does not take the challenge of a SAML request for an authorization confirmation, nor use it up', async () => {
+      configureClientTrustPolicy(env);
+      getChallengeMap(env).set('saml-reauth-challenge', {
+        id: 'saml-reauth-challenge',
+        tenantId: 'default',
+        type: 'reauth',
+        userId: 'test-user',
+        challenge: 'saml-reauth-challenge',
+        metadata: {
+          protocol: 'saml',
+          saml_request_id: '_request-1',
+          saml_sp_entity_id: 'https://sp.example.test/entity',
+          tenant_id: 'default',
+          sessionUserId: 'test-user',
+          reauth_issued_at: 1_700_000_100_000,
+        },
+      });
+
+      const response = await app.request(
+        '/authorize?_confirmation_challenge=saml-reauth-challenge',
+        { method: 'GET', headers: { Cookie: 'authrim_authorize_confirmation=anything' } },
+        env
+      );
+
+      expect(response.status).toBe(400);
+      expect(getAuthCodeStore(env).storeCodeRpc).not.toHaveBeenCalled();
+      // It stays for the SAML request it belongs to.
+      expect(getChallengeMap(env).has('saml-reauth-challenge')).toBe(true);
+    });
+
     it('does not let a confirmation URL move an authenticated authorization across browsers', async () => {
       configureClientTrustPolicy(env);
       seedSession(env, 'test-user');

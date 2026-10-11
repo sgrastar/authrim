@@ -823,6 +823,65 @@ describe('Direct Auth primary passkey and email-code flows', () => {
     expect(mocks.challengeStore.storeChallengeRpc).not.toHaveBeenCalled();
   });
 
+  describe.each([
+    ['allowed for re-authentication only', false, true, 200],
+    ['allowed for sign-in only', true, false, 403],
+  ])(
+    'passkey login start for the challenge of a SAML request, %s',
+    (_name, login, reauth, status) => {
+      it(`answers ${status}`, async () => {
+        mocks.challengeStore.getChallengeRpc.mockResolvedValue({
+          tenantId: 'tenant_test',
+          type: 'reauth',
+          userId: 'user_existing',
+          metadata: {
+            protocol: 'saml',
+            saml_request_id: '_request-1',
+            saml_sp_entity_id: 'https://sp.example.test/entity',
+            tenant_id: 'tenant_test',
+            sessionUserId: 'user_existing',
+            reauth_issued_at: 1_000,
+          },
+        });
+        const { directPasskeyLoginStartHandler } = await import('../direct-auth');
+        const context = createContext(
+          {
+            client_id: 'web-client',
+            code_challenge: 'pkce-challenge',
+            code_challenge_method: 'S256',
+            channel: 'browser',
+            authorization_challenge_id: 'saml_challenge_1',
+          },
+          webHeaders()
+        );
+        context.env.SETTINGS = createMockKV({
+          'settings:tenant:tenant_test:authentication-methods': JSON.stringify({
+            'authentication-methods.passkey.login_enabled': login,
+            'authentication-methods.passkey.reauth_enabled': reauth,
+          }),
+        }) as never;
+
+        const response = await directPasskeyLoginStartHandler(context as never);
+
+        expect(response.status).toBe(status);
+        if (status === 200) {
+          expect(mocks.challengeStore.storeChallengeRpc).toHaveBeenCalledWith(
+            expect.objectContaining({
+              type: 'direct_passkey_login',
+              metadata: expect.objectContaining({
+                usage: 'reauth',
+                reauth_user_id: 'user_existing',
+                authorization_challenge_id: 'saml_challenge_1',
+              }),
+            })
+          );
+        } else {
+          expect(mocks.challengeStore.storeChallengeRpc).not.toHaveBeenCalled();
+        }
+      });
+    }
+  );
+
   it('ignores email during passkey login start and uses discoverable credentials', async () => {
     mocks.userPII.findByTenantAndEmail.mockResolvedValue({
       id: 'user_existing',
@@ -1030,6 +1089,126 @@ describe('Direct Auth primary passkey and email-code flows', () => {
         }),
       })
     );
+  });
+
+  describe('the authorization challenge a passkey login answers', () => {
+    const samlChallenge = {
+      tenantId: 'tenant_test',
+      type: 'reauth',
+      userId: 'user_existing',
+      metadata: {
+        protocol: 'saml',
+        saml_request_id: '_request-1',
+        saml_sp_entity_id: 'https://sp.example.test/entity',
+        tenant_id: 'tenant_test',
+        sessionUserId: 'user_existing',
+        reauth_issued_at: 1_000,
+      },
+    };
+    const oidcChallenge = {
+      tenantId: 'tenant_test',
+      type: 'login',
+      userId: 'anonymous',
+      metadata: { client_id: 'web-client' },
+    };
+
+    async function finishWith(challenge: unknown) {
+      const codeVerifier = 'passkey-login-code-verifier';
+      mocks.challengeStore.consumeChallengeRpc.mockResolvedValue({
+        challenge: 'passkey-login-challenge',
+        metadata: {
+          code_challenge: await s256Challenge(codeVerifier),
+          client_id: 'web-client',
+          channel: 'browser',
+          scope: 'openid profile',
+          transaction_id: 'transaction_1',
+          origin: 'https://app.example.com',
+          rpID: 'app.example.com',
+          authorization_challenge_id: 'challenge_under_test',
+        },
+      });
+      mocks.challengeStore.getChallengeRpc.mockResolvedValue(challenge);
+      const { directPasskeyLoginFinishHandler } = await import('../direct-auth');
+      const response = await directPasskeyLoginFinishHandler(
+        createContext({
+          challenge_id: 'challenge_1',
+          credential: {
+            id: 'credential-id',
+            rawId: 'credential-id',
+            response: {},
+            type: 'public-key',
+          },
+          code_verifier: codeVerifier,
+          channel: 'browser',
+        }) as never
+      );
+      return response;
+    }
+
+    const artifactMetadata = () =>
+      (
+        mocks.challengeStore.storeChallengeRpc.mock.calls.find(
+          (call) => (call[0] as { type?: string }).type === 'direct_auth_code'
+        )?.[0] as { metadata: Record<string, unknown> } | undefined
+      )?.metadata;
+
+    it.each([
+      ['the challenge of a SAML request', samlChallenge],
+      ['a challenge that is gone', null],
+    ])(
+      'makes no code for /token for %s, and marks the artifact for the session alone',
+      async (_n, challenge) => {
+        const response = await finishWith(challenge);
+
+        expect(response.status).toBe(200);
+        expect(((await response.json()) as Record<string, unknown>).direct_auth_artifact).toEqual(
+          expect.any(String)
+        );
+        expect(mocks.authCodeStore.storeCodeRpc).not.toHaveBeenCalled();
+        expect(artifactMetadata()).toMatchObject({ browser_session_only: true });
+      }
+    );
+
+    it('still makes the code for the challenge of an OIDC authorization request', async () => {
+      const response = await finishWith(oidcChallenge);
+
+      expect(response.status).toBe(200);
+      expect(mocks.authCodeStore.storeCodeRpc).toHaveBeenCalled();
+      expect(artifactMetadata()).not.toHaveProperty('browser_session_only');
+    });
+
+    it('issues nothing when the challenge cannot be read', async () => {
+      mocks.challengeStore.getChallengeRpc.mockRejectedValue(new Error('store unavailable'));
+      const codeVerifier = 'passkey-login-code-verifier';
+      mocks.challengeStore.consumeChallengeRpc.mockResolvedValue({
+        challenge: 'passkey-login-challenge',
+        metadata: {
+          code_challenge: await s256Challenge(codeVerifier),
+          client_id: 'web-client',
+          channel: 'browser',
+          authorization_challenge_id: 'challenge_under_test',
+          origin: 'https://app.example.com',
+          rpID: 'app.example.com',
+        },
+      });
+      const { directPasskeyLoginFinishHandler } = await import('../direct-auth');
+      const response = await directPasskeyLoginFinishHandler(
+        createContext({
+          challenge_id: 'challenge_1',
+          credential: {
+            id: 'credential-id',
+            rawId: 'credential-id',
+            response: {},
+            type: 'public-key',
+          },
+          code_verifier: codeVerifier,
+          channel: 'browser',
+        }) as never
+      );
+
+      expect(response.status).toBeGreaterThanOrEqual(500);
+      expect(mocks.authCodeStore.storeCodeRpc).not.toHaveBeenCalled();
+    });
   });
 
   it('gives the code, its challenge and the response the configured code lifetime', async () => {
@@ -3703,6 +3882,88 @@ describe('Direct Auth primary passkey and email-code flows', () => {
         expect(mocks.challengeStore.consumeChallengeRpc).not.toHaveBeenCalled();
       }
     );
+
+    describe('the challenge of a SAML request', () => {
+      const samlStored = (extra: Record<string, unknown> = {}) => ({
+        type: 'reauth',
+        userId: 'user_1',
+        metadata: {
+          protocol: 'saml',
+          saml_request_id: '_request-1',
+          saml_sp_entity_id: 'https://sp.example.test/entity',
+          tenant_id: 'tenant_test',
+          sessionUserId: 'user_1',
+          reauth_issued_at: 1_000_000,
+          ...extra,
+        },
+      });
+
+      it.each([
+        [
+          'a proof made before the person was sent',
+          { userId: 'user_1', authTime: 900, provenAtMs: 900_000, method: 'directory_password' },
+        ],
+        [
+          'a proof of unknown time',
+          {
+            userId: 'user_1',
+            authTime: 1_001,
+            provenAtMs: undefined,
+            method: 'directory_password',
+          },
+        ],
+        [
+          'another user than the one signed in',
+          {
+            userId: 'user_2',
+            authTime: 1_001,
+            provenAtMs: 1_001_000,
+            method: 'directory_password',
+          },
+        ],
+        [
+          'a method that cannot take a re-authentication',
+          { userId: 'user_1', authTime: 1_001, provenAtMs: 1_001_000, method: undefined },
+        ],
+      ])('refuses %s, as for an OIDC re-authentication', async (_l, proof) => {
+        const result = await continueWith(samlStored(), proof);
+
+        expect('error' in result).toBe(true);
+        expect(mocks.challengeStore.consumeChallengeRpc).not.toHaveBeenCalled();
+      });
+
+      it('continues at the SSO endpoint without using the challenge up or making an OIDC confirmation', async () => {
+        const result = await continueWith(samlStored(), {
+          userId: 'user_1',
+          authTime: 1_001,
+          provenAtMs: 1_001_000,
+          method: 'directory_password',
+        });
+
+        expect(result).toEqual({
+          type: 'reauth',
+          redirectUrl: expect.stringMatching(
+            /^\/saml\/idp\/sso\?saml_request_id=_request-1&saml_sp_entity_id=.*&return_to=saml_sso$/
+          ),
+        });
+        // Used up by nothing here (the SSO endpoint uses up the stored request), and no
+        // /authorize continuation exists for it to be replayed at.
+        expect(mocks.challengeStore.consumeChallengeRpc).not.toHaveBeenCalled();
+        expect(mocks.challengeStore.storeChallengeRpc).not.toHaveBeenCalled();
+      });
+
+      it('refuses one that has lost a part of its binding', async () => {
+        const result = await continueWith(samlStored({ saml_sp_entity_id: undefined }), {
+          userId: 'user_1',
+          authTime: 1_001,
+          provenAtMs: 1_001_000,
+          method: 'directory_password',
+        });
+
+        expect('error' in result && result.error.status).toBe(400);
+        expect(mocks.challengeStore.consumeChallengeRpc).not.toHaveBeenCalled();
+      });
+    });
 
     it('consumes the challenge once for a proof that answers it', async () => {
       const result = await continueWith(

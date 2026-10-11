@@ -476,7 +476,14 @@ export async function fetchLoginChallengeThemeTargetForPageRequest(
 		if (!response.ok) {
 			return { challengeId, valid: false, clientId: null };
 		}
-		const data = (await response.json()) as { client?: { client_id?: unknown } };
+		const data = (await response.json()) as {
+			protocol?: unknown;
+			client?: { client_id?: unknown };
+		};
+		// The challenge of a SAML request is valid and names no client: the default methods apply.
+		if (data.protocol === 'saml' && data.client === undefined) {
+			return { challengeId, valid: true, clientId: null };
+		}
 		const clientId = typeof data.client?.client_id === 'string' ? data.client.client_id.trim() : '';
 		if (!CLIENT_ID_PATTERN.test(clientId)) {
 			return { challengeId, valid: false, clientId: null };

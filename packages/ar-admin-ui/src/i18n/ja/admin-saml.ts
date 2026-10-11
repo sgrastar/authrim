@@ -375,7 +375,7 @@ const adminSaml = {
 	admin_saml_detail_minimum_aal: '認証の最低保証レベル（AAL）',
 	admin_saml_detail_minimum_aal_none: '指定なし',
 	admin_saml_detail_minimum_aal_hint:
-		'このレベル（NIST SP 800-63B の AAL）に達していないサインインは、一度だけ再認証に送られ、その要素は新しいサインインの要素と合わせて判定されます。それでも足りなければ、SPにはNoAuthnContextを返します（IdP起点のSSOではエラーページを表示します）。テナントのassuranceがoffでも適用されます。現在、同梱のログインフローはステップアップのforce_authnとrequired_aalをまだ読まず、追加の認証を出せないため、セッションがすでにこのレベルを満たしている場合（またはこのレベルに届く方法でサインインした場合）にだけ通ります。',
+		'このレベル（NIST SP 800-63B の AAL）に達していないサインインは、一度だけ再認証に送られ、その要素は新しいサインインの要素と合わせて判定されます。それでも足りなければ、SPにはNoAuthnContextを返します（IdP起点のSSOではエラーページを表示します）。テナントのassuranceがoffでも適用されます。同梱のログインUIは、再認証ページで、同じユーザーとして、テナントが再認証に許可しているパスキー・メールコード・TOTP（サインインの設定ではなく再認証の設定で決まります）でもう一度認証するよう求めます。ステップアップの開始より前に証明されたセッションは数えません。',
 	admin_saml_detail_authn_request_signature: 'AuthnRequest署名検証',
 	admin_saml_detail_authn_request_signature_hint:
 		'SPから届くAuthnRequestの署名を必須にするかを制御します。通常はOptionalまたはRequiredを使い、Disabledは明示的な例外時だけ使ってください。',

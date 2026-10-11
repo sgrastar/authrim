@@ -1203,8 +1203,9 @@ components:
           description: >-
             For a service provider (saml_sp): the lowest authentication assurance level (NIST SP
             800-63B AAL) a sign-in may have for it. A sign-in below it is sent to authenticate again
-            once (a step-up: the login page is given force_authn and required_aal, and the factors of
-            the session stepped up from are combined with the new sign-in's); if the person comes back
+            once (a step-up: the person is sent to the re-authentication page, which is given
+            force_authn, required_aal and a challenge_id, and
+            the factors of the session stepped up from are combined with the new sign-in's); if the person comes back
             still below it, the SP-initiated request is answered with Responder/NoAuthnContext (to the
             ACS URL, signed as other error responses are, with the RelayState), never sent again. A
             passive request (IsPassive) is answered with Responder/NoPassive and is not sent. An
@@ -1215,12 +1216,17 @@ components:
             assurance is on, and the higher applies. On create, absent or null sets none; on update,
             absent leaves it, null removes it and an empty string is refused. Any value other than
             AAL1, AAL2, AAL3 or null is refused with 400. A saml_idp provider refuses it. The bundled
-            login flow does not yet read force_authn and required_aal, so it does not present an
-            additional authentication for the step-up: today a request passes only when the session
-            already meets the minimum (or the person happens to sign in with a method that reaches
-            it); otherwise the SP-initiated request is answered with Responder/NoAuthnContext (or
+            login UI carries the step-up out: the challenge_id given to the re-authentication page
+            (/reauth, as for an OIDC prompt=login) is a re-authentication for the person who is
+            signed in, bound to the AuthnRequest, the SP and the tenant, so the request is not
+            completed with the session the person already has; they authenticate again as the same
+            user with a method the tenant allows for re-authentication (passkey, email code or TOTP
+            whose authentication-methods re-authentication setting is on, whatever their sign-in
+            setting), and a session proven before the step-up began is never counted. A factor
+            proven in the same session beside its older one counts as the new factor and is combined
+            with the older, which stays old. A custom login UI has to do the same. The SP-initiated request is answered with
             Responder/AuthnFailed when a ForceAuthn sign-in did not happen, or when the person comes
-            back from the login page with no session).
+            back from the re-authentication page with no session.
           type:
             - string
             - 'null'

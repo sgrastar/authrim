@@ -377,7 +377,7 @@ const adminSaml = {
 	admin_saml_detail_minimum_aal: 'Minimum authentication assurance level',
 	admin_saml_detail_minimum_aal_none: 'No minimum',
 	admin_saml_detail_minimum_aal_hint:
-		"A sign-in below this level (NIST SP 800-63B AAL) is sent to authenticate again once, its factors combined with the new sign-in's. If it still falls short, the SP is answered with NoAuthnContext (an IdP-initiated sign-in gets the error page). Applies whether or not assurance is on for the tenant. The bundled login flow does not yet read the step-up's force_authn and required_aal, so it does not present an additional authentication for it: today a sign-in passes only when the session already meets this level (or the person signs in with a method that reaches it).",
+		"A sign-in below this level (NIST SP 800-63B AAL) is sent to authenticate again once, its factors combined with the new sign-in's. If it still falls short, the SP is answered with NoAuthnContext (an IdP-initiated sign-in gets the error page). Applies whether or not assurance is on for the tenant. The bundled login UI asks the person to authenticate again, on its re-authentication page, as the same user with a passkey, email code or TOTP the tenant allows for re-authentication (their re-authentication setting, not their sign-in setting); a session proven before the step-up began is never counted.",
 	admin_saml_detail_authn_request_signature: 'AuthnRequest signature verification',
 	admin_saml_detail_authn_request_signature_hint:
 		'Controls whether AuthnRequests from this SP must be signed. Use Optional or Required for normal SPs; use Disabled only for an explicit exception.',
