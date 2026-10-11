@@ -101,6 +101,10 @@ const SCOPE_DESCRIPTIONS: Record<string, { title: string; description: string }>
     title: 'Offline Access',
     description: 'Maintain access when you are offline',
   },
+  eduperson_assurance: {
+    title: 'Identity Assurance',
+    description: 'Share the assurance level of your verified identity',
+  },
 };
 
 type SessionBoundConsentChallenge = {

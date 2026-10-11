@@ -259,13 +259,11 @@ export const ASSURANCE_LEVELS_SETTINGS_META: Record<keyof AssuranceLevelsSetting
   },
   'assurance.ial_assurance_values': {
     key: 'assurance.ial_assurance_values',
-    // Saved and validated, not applied yet: runtime use lands with the identity assurance work.
-    status: 'in_development',
     type: 'string',
     default: '{}',
     label: 'IAL Assurance Values',
     description:
-      'JSON mapping of each IAL to the assurance values (URIs) released for it, e.g. {"IAL2": ["https://www.gakunin.jp/profile/IAL2"]}. A person gets the values of every IAL up to theirs, as the SAML attribute eduPersonAssurance (through attribute mapping) and the OIDC claim eduperson_assurance. Applies while assurance levels are enabled (not applied yet)',
+      'JSON mapping of each IAL to the assurance values (URIs) released for it, e.g. {"IAL1": ["https://www.gakunin.jp/profile/IAL1"], "IAL2": ["https://www.gakunin.jp/profile/IAL2"]}. A person gets the values of every IAL up to theirs, read from their evidence at the time (so revoked or expired evidence stops them with the next response). OIDC: the claim eduperson_assurance, released in UserInfo and ID tokens like a scope claim (the eduperson_assurance scope, or a claims parameter request); an app with a Destination Profile also needs the field listed in it; advertised in discovery. SAML: the attribute eduPersonAssurance is not released from it yet. Applies while assurance levels are enabled; empty releases nothing',
   },
   'assurance.saml_authn_context_aal': {
     key: 'assurance.saml_authn_context_aal',
@@ -279,13 +277,11 @@ export const ASSURANCE_LEVELS_SETTINGS_META: Record<keyof AssuranceLevelsSetting
   },
   'assurance.ida_profile': {
     key: 'assurance.ida_profile',
-    // Saved and validated, not applied yet: runtime use lands with the identity assurance work.
-    status: 'in_development',
     type: 'string',
     default: '{}',
     label: 'Identity Assurance Profile',
     description:
-      'JSON describing the OpenID Connect for Identity Assurance verified_claims released to a client that requests them: {"trust_framework": "…", "assurance_levels": {"IAL2": "…"}, "claims": ["given_name", "family_name", "birthdate"]}. Empty releases no verified_claims. Released only for people at IAL2 or above, and only claims the request and its scopes allow. Applies while assurance levels are enabled (not applied yet)',
+      'JSON describing the OpenID Connect for Identity Assurance verified_claims released to an app that requests them in the claims parameter (never by scope): {"trust_framework": "nist_800_63A", "assurance_levels": {"IAL2": "ial2", "IAL3": "ial3"}, "claims": ["given_name", "family_name", "birthdate"]}. The specification leaves the values to the deployment (its examples use nist_800_63A with ial2); a request for another trust_framework or assurance_level gets nothing. assurance_levels names the assurance_level given for each IAL (a level left out is not given). Released only for people at IAL2 or above, read from their evidence at the time; only claims listed here, requested by the app and allowed by its scopes and claims policy, as the values the person holds now (they are not frozen at proofing). Requests that filter on evidence are not met, and evidence is not described. Empty releases no verified_claims. Applies while assurance levels are enabled; advertised in discovery',
   },
   'assurance.include_in_id_token': {
     key: 'assurance.include_in_id_token',

@@ -42,6 +42,7 @@ import {
   findOAuthClientConsentRevocation,
   accessTokenConsentClaims,
   releaseIDTokenClaims,
+  resolveAssuranceClaims,
   type OAuthClientConsentRevocationState,
   getChallengeStoreByChallengeId,
   generateRegionAwareJti,
@@ -5049,11 +5050,34 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
           ...(sessionAmr?.length ? { amr: sessionAmr } : {}),
         };
 
+        // eduperson_assurance and verified_claims come from the person's evidence, read now and
+        // only when this ID token's request asks for one and the tenant has something to release.
+        // A failed read releases neither (and is logged).
+        const assuranceClaims = await resolveAssuranceClaims({
+          target: 'id_token',
+          tenantId,
+          userId: sub,
+          scopes,
+          claimsRequest: parsedClaimsRequest.request,
+          clientPolicy: clientMetadata,
+          includeScopeClaims: isIdTokenOnly,
+          claimValues: userData,
+          loadSettings: async () => assuranceSettings,
+          getAdapter: () => piiCtx.coreAdapter,
+          onError: (message, error) =>
+            log.error(message, { clientId: validClientId }, error as Error),
+        });
+
         const requestedClaims = evaluateClaimsForTarget({
           target: 'id_token',
           claimsRequest: parsedClaimsRequest.request,
           initialClaims: idTokenClaims,
-          availableClaims: userData,
+          availableClaims: {
+            ...userData,
+            ...(assuranceClaims.eduperson_assurance
+              ? { eduperson_assurance: assuranceClaims.eduperson_assurance }
+              : {}),
+          },
           grantedScopes: scopes,
           clientPolicy: clientMetadata,
           includeScopeClaims: isIdTokenOnly,
@@ -5063,6 +5087,9 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
           return sendError(requestedClaims.error, requestedClaims.error_description);
         }
         idTokenClaims = requestedClaims.claims;
+        if (assuranceClaims.verified_claims) {
+          idTokenClaims.verified_claims = assuranceClaims.verified_claims;
+        }
       }
 
       // The ID token as the token endpoint issues it: the app's identity mapping (its sub and

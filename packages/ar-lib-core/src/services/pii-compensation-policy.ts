@@ -4,6 +4,7 @@ import {
   EMAIL_CLAIMS,
   PHONE_CLAIMS,
   PROFILE_CLAIMS,
+  VERIFIED_CLAIMS_CLAIM,
   type ClaimsTarget,
   type ParsedClaimsRequest,
 } from '../utils/oidc-claims';
@@ -19,6 +20,8 @@ const STANDARD_PII_CLAIMS = new Set<string>([
   ...EMAIL_CLAIMS.filter((claim) => claim !== 'email_verified'),
   ...PHONE_CLAIMS.filter((claim) => claim !== 'phone_number_verified'),
   ...ADDRESS_CLAIMS,
+  // The claims inside it are the person's names, birthdate and contact details.
+  VERIFIED_CLAIMS_CLAIM,
 ]);
 const PREDEFINED_PII_TRANSFORMED_CLAIMS = new Set([
   '::age_over_13',

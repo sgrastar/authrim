@@ -96,6 +96,9 @@ export interface OIDCProviderMetadata {
   native_sso_supported?: boolean;
   // RFC 9396: Rich Authorization Requests (RAR)
   authorization_details_types_supported?: string[];
+  // OpenID Connect for Identity Assurance 1.0 (8)
+  trust_frameworks_supported?: string[];
+  claims_in_verified_claims_supported?: string[];
 }
 
 /**

@@ -24,11 +24,29 @@ export interface ClaimsRequestASC {
   transformed_claims?: Record<string, unknown>;
 }
 
+/**
+ * What one claim is requested as: null, an individual claim request, or (only for `verified_claims`,
+ * OpenID Connect for Identity Assurance 5.6) a list of requests that are each answered on their own.
+ */
+export type ClaimRequestEntry = OIDCIndividualClaimRequest | OIDCIndividualClaimRequest[] | null;
+
 export interface ParsedClaimsRequest {
-  userinfo: Record<string, OIDCIndividualClaimRequest | null>;
-  id_token: Record<string, OIDCIndividualClaimRequest | null>;
+  userinfo: Record<string, ClaimRequestEntry>;
+  id_token: Record<string, ClaimRequestEntry>;
   _asc?: ClaimsRequestASC;
 }
+
+/** The claim the OpenID Connect for Identity Assurance verified claims are requested and returned as. */
+export const VERIFIED_CLAIMS_CLAIM = 'verified_claims';
+
+/**
+ * The claim (and scope) that carries the assurance values of a person's IAL, as REFEDS and the
+ * research and education federations name it.
+ */
+export const EDUPERSON_ASSURANCE_CLAIM = 'eduperson_assurance';
+
+/** The most requests one `verified_claims` list may hold. */
+export const MAX_VERIFIED_CLAIMS_REQUESTS = 10;
 
 export interface OIDCClaimsClientPolicy {
   allow_claims_without_scope?: boolean;
@@ -78,15 +96,18 @@ export const PHONE_CLAIMS = ['phone_number', 'phone_number_verified'] as const;
 export const ADDRESS_CLAIMS = ['address'] as const;
 
 /**
- * The scope that releases each standard claim (OIDC Core 5.4). `sub` and the protocol claims are
- * not scope-gated and so are absent. The Destination Profile release filter reads this too, to
- * treat a standard claim whose profile field names no scope as requiring its own.
+ * The scope that releases each standard claim (OIDC Core 5.4), and the scope that releases
+ * `eduperson_assurance`. `sub` and the protocol claims are not scope-gated and so are absent, and
+ * so is `verified_claims`, which only a claims parameter request releases. The Destination Profile
+ * release filter reads this too, to treat a claim whose profile field names no scope as requiring
+ * its own.
  */
 export const OIDC_STANDARD_CLAIM_SCOPE: Readonly<Record<string, string>> = {
   ...Object.fromEntries(PROFILE_CLAIMS.map((claim) => [claim, 'profile'])),
   ...Object.fromEntries(EMAIL_CLAIMS.map((claim) => [claim, 'email'])),
   ...Object.fromEntries(PHONE_CLAIMS.map((claim) => [claim, 'phone'])),
   address: 'address',
+  [EDUPERSON_ASSURANCE_CLAIM]: EDUPERSON_ASSURANCE_CLAIM,
 };
 const CLAIM_SCOPE = OIDC_STANDARD_CLAIM_SCOPE;
 
@@ -165,7 +186,7 @@ function validateClaimSection(
   value: unknown,
   name: ClaimsTarget
 ):
-  | { ok: true; section: Record<string, OIDCIndividualClaimRequest | null> }
+  | { ok: true; section: Record<string, ClaimRequestEntry> }
   | { ok: false; error: string; error_description: string } {
   if (value === undefined) {
     return { ok: true, section: {} };
@@ -178,10 +199,32 @@ function validateClaimSection(
     };
   }
 
-  const section: Record<string, OIDCIndividualClaimRequest | null> = {};
+  const section: Record<string, ClaimRequestEntry> = {};
   for (const [claim, request] of Object.entries(value)) {
     if (request === null) {
       section[claim] = null;
+      continue;
+    }
+    if (claim === VERIFIED_CLAIMS_CLAIM && Array.isArray(request)) {
+      if (request.length > MAX_VERIFIED_CLAIMS_REQUESTS) {
+        return {
+          ok: false,
+          error: 'invalid_request',
+          error_description: `claims.${name}.${claim} must have at most ${MAX_VERIFIED_CLAIMS_REQUESTS} requests`,
+        };
+      }
+      const requests: OIDCIndividualClaimRequest[] = [];
+      for (let i = 0; i < request.length; i += 1) {
+        if (!isPlainObject(request[i])) {
+          return {
+            ok: false,
+            error: 'invalid_request',
+            error_description: `claims.${name}.${claim}[${i}] must be an object`,
+          };
+        }
+        requests.push(request[i] as OIDCIndividualClaimRequest);
+      }
+      section[claim] = requests;
       continue;
     }
     if (!isPlainObject(request)) {
@@ -404,6 +447,8 @@ export function evaluateClaimsForTarget(options: EvaluateClaimsOptions): ClaimsE
   const ignoreValueRestrictions = saoApplies;
 
   for (const [claimName, claimRequest] of Object.entries(requestedClaims)) {
+    // verified_claims is built from the person's evidence and answered by its own rules.
+    if (claimName === VERIFIED_CLAIMS_CLAIM) continue;
     const transformed = ascApplies
       ? resolvePredefinedTransformedClaim(claimName, options.availableClaims, clientPolicy)
       : { exists: false as const };
@@ -414,7 +459,12 @@ export function evaluateClaimsForTarget(options: EvaluateClaimsOptions): ClaimsE
       continue;
     }
 
-    if (!ignoreValueRestrictions && claimRequest && !matchesClaimRequest(value, claimRequest)) {
+    if (
+      !ignoreValueRestrictions &&
+      claimRequest &&
+      !Array.isArray(claimRequest) &&
+      !matchesClaimRequest(value, claimRequest)
+    ) {
       if (claimName === 'sub') {
         return {
           ok: false,
@@ -422,7 +472,7 @@ export function evaluateClaimsForTarget(options: EvaluateClaimsOptions): ClaimsE
           error_description: 'Requested sub claim value does not match authenticated subject',
         };
       }
-      if (claimName === 'acr' && claimRequest.essential === true) {
+      if (claimName === 'acr' && !Array.isArray(claimRequest) && claimRequest.essential === true) {
         return {
           ok: false,
           error: 'login_required',

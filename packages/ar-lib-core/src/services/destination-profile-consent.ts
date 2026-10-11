@@ -1,6 +1,10 @@
 import type { DatabaseAdapter } from '../db/adapter';
 import { STANDARD_CLAIMS } from '../constants';
-import { OIDC_STANDARD_CLAIM_SCOPE } from '../utils/oidc-claims';
+import {
+  EDUPERSON_ASSURANCE_CLAIM,
+  OIDC_STANDARD_CLAIM_SCOPE,
+  VERIFIED_CLAIMS_CLAIM,
+} from '../utils/oidc-claims';
 import {
   assertRuntimeIdentityMappingReleaseSafety,
   type RuntimeIdentityMappingBinding,
@@ -129,12 +133,27 @@ export const AUTHORIZATION_SERVER_PRINCIPAL_CLAIMS = new Set([
   'grant_id',
 ]);
 
+/**
+ * The claims about a person's identity assurance (the assurance values of their IAL, and the
+ * verified claims proofing backs). They are computed from the person's evidence at the time they
+ * are released and nowhere else, so no identity mapping output may carry these names: a mapping
+ * that copied a user-editable attribute into one would let a person state their own assurance.
+ * A Destination Profile may list them as fields, to decide which apps they are released to.
+ */
+export const AUTHORIZATION_SERVER_ASSURANCE_CLAIMS = new Set([
+  EDUPERSON_ASSURANCE_CLAIM,
+  VERIFIED_CLAIMS_CLAIM,
+]);
+
 export function isProtectedIdentityMappingDestinationClaim(
   namespace: string,
   path: string
 ): boolean {
   if (AUTHORIZATION_SERVER_GRANT_CLAIMS.has(path)) return true;
   if (AUTHORIZATION_SERVER_PRINCIPAL_CLAIMS.has(path)) return true;
+  if (namespace !== 'introspection.claim' && AUTHORIZATION_SERVER_ASSURANCE_CLAIMS.has(path)) {
+    return true;
+  }
   if (namespace === 'introspection.claim') {
     return path !== 'sub' && INTROSPECTION_PROTOCOL_ENVELOPE_CLAIMS.has(path);
   }
@@ -192,6 +211,9 @@ export function filterOidcClaimsWithoutDestinationProfile(
       ([key]) =>
         OIDC_PROTOCOL_ENVELOPE_CLAIMS.has(key) ||
         OIDC_STANDARD_CLAIMS.has(key) ||
+        // Computed from the person's evidence by the authorization server, after the request's
+        // scopes and claims parameter allowed them (never from a mapping: see above).
+        AUTHORIZATION_SERVER_ASSURANCE_CLAIMS.has(key) ||
         key.startsWith('::')
     )
   );

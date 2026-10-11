@@ -1047,6 +1047,21 @@ describe('IdentityMappingControlPlaneRepository destination profiles', () => {
       expect(created.version.validationSummary).toMatchObject({ errorCount: 0, warnings: [] });
     });
 
+    it('judges eduperson_assurance by the eduperson_assurance scope that releases it', async () => {
+      const claim = { claimName: 'eduperson_assurance', classification: 'internal' };
+      const surfaces = ['id_token', 'userinfo'];
+      for (const requiredScopes of [undefined, ['eduperson_assurance']]) {
+        const created = await create([
+          { ...claim, surfaces, ...(requiredScopes && { requiredScopes }) },
+        ]);
+        expect(created.version.validationSummary).toMatchObject({ errorCount: 0, warnings: [] });
+      }
+      const other = await create([{ ...claim, surfaces, requiredScopes: ['profile'] }]);
+      expect(other.version.validationSummary).toMatchObject({
+        warnings: ['eduperson_assurance is not covered by its configured scopes'],
+      });
+    });
+
     it('still warns when a standard claim lists a scope that does not release it', async () => {
       const created = await create([
         {

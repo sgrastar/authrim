@@ -4,6 +4,7 @@ import {
   createAuthContextFromHono,
   getTenantIdFromContext,
   OIDC_STANDARD_CLAIM_SCOPE,
+  EDUPERSON_ASSURANCE_CLAIM,
   requireDedicatedAdminDatabaseAdapter,
   transitionAccountAuthenticationState,
   validateExternalUrl,
@@ -1270,6 +1271,7 @@ const OIDC_STANDARD_SCOPES = new Set([
   'phone',
   'address',
   'offline_access',
+  EDUPERSON_ASSURANCE_CLAIM,
 ]);
 const DIRECTORY_FACTS_EXTERNAL_SCHEMA_ID = 'builtin_directory_facts';
 const DIRECTORY_FACTS_SCHEMA = {
@@ -8266,7 +8268,12 @@ function isOverReleasedOidcClaim(
   customScopeClaims: Map<string, string[]>
 ): boolean {
   if (claimName === 'sub') return false;
-  if (!OIDC_STANDARD_CLAIMS.has(claimName)) {
+  // A claim with a scope of its own in the release filter's table (eduperson_assurance) is judged
+  // like a standard claim; any other non-standard claim is released by an attribute group's scope.
+  if (
+    !OIDC_STANDARD_CLAIMS.has(claimName) &&
+    !Object.hasOwn(OIDC_STANDARD_CLAIM_SCOPE, claimName)
+  ) {
     return !requiredScopes.some((scope) => customScopeClaims.get(scope)?.includes(claimName));
   }
   // No scope listed: the release filter then requires the standard claim's own scope.

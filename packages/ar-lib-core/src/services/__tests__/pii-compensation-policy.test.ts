@@ -73,4 +73,16 @@ describe('pii compensation policy', () => {
       ],
     });
   });
+
+  it("counts a verified_claims request (its claims are the person's PII), not eduperson_assurance", () => {
+    expect(
+      resolveOIDCPIIRequirement({
+        scopes: 'openid eduperson_assurance',
+        claimsRequest: {
+          id_token: { eduperson_assurance: null },
+          userinfo: { verified_claims: [{ claims: { given_name: null } }] },
+        },
+      })
+    ).toEqual({ requiresPII: true, reasons: ['claims.userinfo:verified_claims'] });
+  });
 });

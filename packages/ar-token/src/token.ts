@@ -55,6 +55,7 @@ import {
   findOAuthClientConsentRevocation,
   evaluateUserIAL,
   resolveRequiredIAL,
+  resolveAssuranceClaims,
   type IAL,
   isOAuthClientConsentGrantWithdrawn,
   predatesOAuthClientConsentRevocation,
@@ -2152,6 +2153,7 @@ async function handleAuthorizationCodeGrant(
     readAssuranceSettings
   );
   if ('error' in assurance) return assurance.error;
+  const assuranceSettings = assurance.settings;
 
   // Validate DPoP proof early to get jkt for authorization code binding verification
   let dpopJkt: string | undefined;
@@ -3233,12 +3235,34 @@ async function handleAuthorizationCodeGrant(
         ...(authCodeData.acr ? { acr: authCodeData.acr } : {}),
         ...(authCodeData.amr?.length ? { amr: authCodeData.amr } : {}),
       };
+      const grantedIdTokenScopes = (authCodeData.scope || '').split(' ').filter(Boolean);
+      // eduperson_assurance and verified_claims come from the person's evidence, read now and only
+      // when this ID token's claims request asks for one and the tenant has something to release.
+      // A failed read releases neither (and is logged).
+      const assuranceClaims = await resolveAssuranceClaims({
+        target: 'id_token',
+        tenantId,
+        userId: authCodeData.sub,
+        scopes: grantedIdTokenScopes,
+        claimsRequest: parsedClaimsRequest.request,
+        clientPolicy: clientMetadata,
+        includeScopeClaims: false,
+        claimValues: availableClaims,
+        loadSettings: async () => assuranceSettings,
+        getAdapter: () => piiCtx.coreAdapter,
+        onError: (message, error) => log.error(message, { clientId: client_id }, error as Error),
+      });
       const requestedIdTokenClaims = evaluateClaimsForTarget({
         target: 'id_token',
         claimsRequest: parsedClaimsRequest.request,
         initialClaims: idTokenClaims,
-        availableClaims,
-        grantedScopes: (authCodeData.scope || '').split(' ').filter(Boolean),
+        availableClaims: {
+          ...availableClaims,
+          ...(assuranceClaims.eduperson_assurance
+            ? { eduperson_assurance: assuranceClaims.eduperson_assurance }
+            : {}),
+        },
+        grantedScopes: grantedIdTokenScopes,
         clientPolicy: clientMetadata,
         includeScopeClaims: false,
         requestIntegrityProtected: authCodeData.claimsRequestProtected === true,
@@ -3252,6 +3276,9 @@ async function handleAuthorizationCodeGrant(
         );
       }
       idTokenClaims = requestedIdTokenClaims.claims;
+      if (assuranceClaims.verified_claims) {
+        idTokenClaims.verified_claims = assuranceClaims.verified_claims;
+      }
     } catch (claimsError) {
       log.error('Failed to evaluate requested ID token claims', {}, claimsError as Error);
       return oauthError(c, 'server_error', 'Failed to evaluate requested ID token claims', 500);

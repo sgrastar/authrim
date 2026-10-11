@@ -31,6 +31,7 @@ import {
   setBoundedMapEntry,
   resolveAccountDataContextFromHono,
   resolveIDTokenSigningPolicy,
+  resolveAssuranceClaims,
 } from '@authrim/ar-lib-core';
 import {
   resolveUserInfoSigningAlgorithm,
@@ -268,11 +269,33 @@ export async function userinfoHandler(c: Context<{ Bindings: Env }>) {
   const client_id = tokenClaims.client_id as string;
   const clientMetadata = client_id ? await getClientCached(c, c.env, client_id) : null;
 
+  // The assurance claims (eduperson_assurance, verified_claims) come from the person's evidence,
+  // read now and only when the request asks for one of them and the tenant has something to
+  // release. A failed read releases neither (and is logged).
+  const assuranceClaims = await resolveAssuranceClaims({
+    target: 'userinfo',
+    tenantId,
+    userId: sub,
+    scopes,
+    claimsRequest,
+    clientPolicy: clientMetadata,
+    includeScopeClaims: true,
+    claimValues: userData,
+    loadSettings: () => resolveEffectiveSettings(c.env, 'assurance', { tenantId }),
+    getAdapter: () => piiCtx.coreAdapter,
+    onError: (message, error) => log.error(message, { client_id }, error as Error),
+  });
+
   const claimEvaluation = evaluateClaimsForTarget({
     target: 'userinfo',
     claimsRequest,
     initialClaims: { sub },
-    availableClaims: userData,
+    availableClaims: {
+      ...userData,
+      ...(assuranceClaims.eduperson_assurance
+        ? { eduperson_assurance: assuranceClaims.eduperson_assurance }
+        : {}),
+    },
     grantedScopes: scopes,
     clientPolicy: clientMetadata,
     includeScopeClaims: true,
@@ -289,6 +312,9 @@ export async function userinfoHandler(c: Context<{ Bindings: Env }>) {
   }
 
   const userClaims: Record<string, unknown> = claimEvaluation.claims;
+  // Released with the other claims, so the app's identity mapping, Destination Profile and
+  // attribute release consent hold it to the same rules.
+  if (assuranceClaims.verified_claims) userClaims.verified_claims = assuranceClaims.verified_claims;
 
   if (client_id && clientMetadata) {
     try {

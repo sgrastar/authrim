@@ -45,7 +45,11 @@ paths:
       description: >-
         acr_values_supported lists the tenant's discovery.acr_values_supported and, with tenant
         assurance enabled, the acr values Authrim issues for each AAL (urn:authrim:aal:1 to
-        urn:authrim:aal:3). Settings that cannot be read return 503 temporarily_unavailable.
+        urn:authrim:aal:3). With tenant assurance enabled, assurance.ial_assurance_values adds the
+        eduperson_assurance scope and claim, and assurance.ida_profile adds the verified_claims
+        claim, trust_frameworks_supported and claims_in_verified_claims_supported
+        (evidence_supported is never advertised). Settings that cannot be read return 503
+        temporarily_unavailable.
       responses:
         '200':
           $ref: '#/components/responses/OidcProviderMetadata'
@@ -327,6 +331,20 @@ components:
             type: string
         claims_supported:
           type: array
+          items:
+            type: string
+        trust_frameworks_supported:
+          type: array
+          description: >-
+            OpenID Connect for Identity Assurance trust frameworks. Present only while the tenant
+            has assurance enabled and an identity assurance profile (assurance.ida_profile).
+          items:
+            type: string
+        claims_in_verified_claims_supported:
+          type: array
+          description: >-
+            The claims verified_claims can carry (the profile's claims). Present with
+            trust_frameworks_supported.
           items:
             type: string
         id_token_signing_alg_values_supported:

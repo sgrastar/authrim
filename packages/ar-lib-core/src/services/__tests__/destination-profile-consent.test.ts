@@ -84,6 +84,88 @@ describe('destination profile field consent', () => {
     });
   });
 
+  describe('the identity assurance claims', () => {
+    const assurance = {
+      eduperson_assurance: ['https://example.org/assurance/IAL2'],
+      verified_claims: { verification: { trust_framework: 'nist_800_63A' }, claims: {} },
+    };
+
+    it('lets no identity mapping write them, in any OIDC namespace', () => {
+      for (const namespace of ['oidc.claim', 'custom', 'tenant.ns']) {
+        for (const claim of ['eduperson_assurance', 'verified_claims']) {
+          expect(
+            isProtectedIdentityMappingDestinationClaim(namespace, claim),
+            `${namespace}:${claim}`
+          ).toBe(true);
+        }
+      }
+      // An introspection mapping is not about a person's ID token or UserInfo.
+      expect(
+        isProtectedIdentityMappingDestinationClaim('introspection.claim', 'verified_claims')
+      ).toBe(false);
+    });
+
+    it('releases them where the app has no Destination Profile', () => {
+      expect(
+        filterOidcClaimsWithoutDestinationProfile({ sub: 'user_1', ...assurance, groups: ['x'] })
+      ).toEqual({ sub: 'user_1', ...assurance });
+    });
+
+    const profile = (claims: unknown[]) =>
+      adapter({
+        queryOne: vi.fn().mockResolvedValue({
+          profile_id: 'profile_oidc',
+          destination_type: 'oidc',
+          version_id: 'version_1',
+          schema_json: JSON.stringify({ claims }),
+        }),
+      });
+    const release = (claims: unknown[], grantedScopes: string[]) =>
+      filterOidcClaimsByDestinationConsent({
+        // The user has agreed to release every field, so the profile and the scopes decide.
+        coreAdapter: adapter({
+          queryOne: vi.fn().mockResolvedValue({
+            released_claims_json: JSON.stringify(
+              claims.map((claim) => (claim as { claimName: string }).claimName)
+            ),
+            released_attributes_json: null,
+          }),
+        }),
+        adminAdapter: profile(claims),
+        tenantId: 'tenant_a',
+        subjectId: 'user_1',
+        clientId: 'client_1',
+        profileId: 'profile_oidc',
+        grantedScopes,
+        claims: { sub: 'user_1', ...assurance },
+      });
+
+    it('holds them to the Destination Profile: dropped unless the profile lists them', async () => {
+      await expect(
+        release([{ claimName: 'sub', required: true }], ['openid', 'eduperson_assurance'])
+      ).resolves.toEqual({ sub: 'user_1' });
+    });
+
+    it('needs the eduperson_assurance scope for a listed eduperson_assurance field that names none', async () => {
+      const claims = [
+        { claimName: 'sub', required: true },
+        { claimName: 'eduperson_assurance' },
+        { claimName: 'verified_claims' },
+      ];
+      expect(
+        resolveOidcFieldRequiredScopes({ key: 'eduperson_assurance', requiredScopes: [] })
+      ).toEqual(['eduperson_assurance']);
+      await expect(release(claims, ['openid'])).resolves.toEqual({
+        sub: 'user_1',
+        verified_claims: assurance.verified_claims,
+      });
+      await expect(release(claims, ['openid', 'eduperson_assurance'])).resolves.toEqual({
+        sub: 'user_1',
+        ...assurance,
+      });
+    });
+  });
+
   it('fails closed for introspection extensions when the Resource Server has no active profile', async () => {
     const adminAdapter = adapter({ queryOne: vi.fn().mockResolvedValue(null) });
     const claims = await filterIntrospectionClaimsByResourceServerProfile({
