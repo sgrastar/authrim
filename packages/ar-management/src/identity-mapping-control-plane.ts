@@ -2,10 +2,14 @@ import type { Context } from 'hono';
 import type { Env, DatabaseAdapter, PreparedStatement } from '@authrim/ar-lib-core';
 import {
   createAuthContextFromHono,
+  findConflictingSourceIds,
   getTenantIdFromContext,
+  isOutputGraphTarget,
   OIDC_STANDARD_CLAIM_SCOPE,
   EDUPERSON_ASSURANCE_CLAIM,
   requireDedicatedAdminDatabaseAdapter,
+  resolveSourceClassification,
+  sensitiveClassificationRank,
   transitionAccountAuthenticationState,
   validateExternalUrl,
 } from '@authrim/ar-lib-core';
@@ -6767,7 +6771,12 @@ export class IdentityMappingControlPlaneRepository {
         targetRef: parseJsonObject(row.target_ref_json, {}),
       }))
       .filter(({ targetRef }) =>
-        isDestinationProfileMappingReference(readStringValue(targetRef.profileId))
+        // The edges that release to a destination (the cut the SAML IdP runs); the rules that
+        // bring a source profile's fields into the canonical ones are not judged here.
+        isOutputGraphTarget({
+          namespace: readStringValue(targetRef.namespace) ?? undefined,
+          profileId: readStringValue(targetRef.profileId) ?? undefined,
+        })
       );
     if (releaseEdges.length === 0) return;
     if (!catalogVersionId) {
@@ -6775,24 +6784,65 @@ export class IdentityMappingControlPlaneRepository {
     }
 
     const sourceEntries = await this.loadCatalogEntriesForActivation(tenantId, catalogVersionId);
+    const classifyingEntries = sourceEntries.map((entry) => ({
+      ids: [entry.id, entry.stableFieldId],
+      namespace: entry.namespace,
+      path: entry.path,
+      classification: entry.classification,
+      targetType: entry.targetTaxonomy,
+    }));
+    // A source reference is judged by what it reads (see identity-mapping-source-reads): the
+    // sides must be what they are called, and one catalog entry id may not stand for two reads.
+    for (const { sourceRef, targetRef } of releaseEdges) {
+      const sourceSide = readStringValue(sourceRef.side) ?? 'source';
+      const targetSide = readStringValue(targetRef.side) ?? 'destination';
+      if (sourceSide !== 'source' || targetSide !== 'destination') {
+        throw badRequest(
+          `mapping edge references must be a source and a destination: ${readStringValue(targetRef.path) ?? 'unknown'}`
+        );
+      }
+    }
+    const conflictingSourceId = findConflictingSourceIds(
+      releaseEdges.map(({ sourceRef }) => toMappingSourceReference(sourceRef))
+    )[0];
+    if (conflictingSourceId) {
+      throw badRequest(
+        `mapping names one catalog entry for different sources: ${conflictingSourceId}`
+      );
+    }
     const profileCache = new Map<string, DestinationProfileRow | null>();
     for (const { sourceRef, targetRef } of releaseEdges) {
-      const sourceEntry = findCatalogEntryForMappingRef(sourceEntries, sourceRef);
+      const sourceClassification = resolveSourceClassification(
+        classifyingEntries,
+        toMappingSourceReference(sourceRef)
+      );
       const sourceNamespace = readStringValue(sourceRef.namespace);
-      if (!sourceEntry) {
-        if (isBuiltInSystemIdentityMappingReference(sourceRef)) {
-          // Runtime-owned identifiers are not custom claims and therefore are intentionally absent
-          // from the tenant's canonical custom-claim catalog.
-          continue;
-        }
+      if (sourceClassification === null) {
         if (sourceNamespace === 'authrim.profile') {
           throw badRequest(
             `mapping source field is missing from compiled catalog: ${readStringValue(sourceRef.path) ?? 'unknown'}`
           );
         }
+        // A SAML attribute is released only from a source whose classification is known.
+        const unknownSourceProfileRef = readStringValue(targetRef.profileId);
+        if (unknownSourceProfileRef) {
+          let unknownSourceProfile = profileCache.get(unknownSourceProfileRef);
+          if (unknownSourceProfile === undefined) {
+            unknownSourceProfile = await this.loadActiveDestinationProfileForActivation(
+              tenantId,
+              unknownSourceProfileRef
+            );
+            profileCache.set(unknownSourceProfileRef, unknownSourceProfile);
+          }
+          if (unknownSourceProfile?.destination_type === 'saml') {
+            throw badRequest(
+              `mapping source classification is unknown: ${readStringValue(sourceRef.path) ?? 'unknown'}`
+            );
+          }
+        }
         continue;
       }
-      const sourceSensitivity = sensitiveClassificationRank(sourceEntry.classification);
+      const sourceSensitivity = sensitiveClassificationRank(sourceClassification);
       if (sourceSensitivity === 0) continue;
 
       const profileRef = readStringValue(targetRef.profileId);
@@ -6819,7 +6869,7 @@ export class IdentityMappingControlPlaneRepository {
       const targetClassification = readStringValue(targetField.classification) ?? 'internal';
       if (sensitiveClassificationRank(targetClassification) < sourceSensitivity) {
         throw badRequest(
-          `sensitive mapping cannot lower classification from ${sourceEntry.classification} to ${targetClassification}: ${targetPath}`
+          `sensitive mapping cannot lower classification from ${sourceClassification} to ${targetClassification}: ${targetPath}`
         );
       }
       if (
@@ -8608,9 +8658,12 @@ function isDestinationProfileMappingReference(profileId: string | null): boolean
   );
 }
 
-function isBuiltInSystemIdentityMappingReference(ref: Record<string, unknown>): boolean {
-  const catalogEntryId = readStringValue(ref.catalogEntryId);
-  return Boolean(catalogEntryId?.startsWith('system.identity.'));
+function toMappingSourceReference(ref: Record<string, unknown>) {
+  return {
+    namespace: readStringValue(ref.namespace) ?? '',
+    path: readStringValue(ref.path) ?? '',
+    catalogEntryId: readStringValue(ref.catalogEntryId) ?? undefined,
+  };
 }
 
 function destinationProfileReferenceCandidates(profileId: string): string[] {
@@ -8622,29 +8675,6 @@ function normalizeDestinationProfileReference(profileId: string): string {
   return profileId.startsWith('destination-profile-')
     ? profileId.slice('destination-profile-'.length)
     : profileId;
-}
-
-function findCatalogEntryForMappingRef(
-  entries: FieldCatalogEntrySummary[],
-  ref: Record<string, unknown>
-): FieldCatalogEntrySummary | null {
-  const catalogEntryId = readStringValue(ref.catalogEntryId);
-  if (catalogEntryId) {
-    const exact = entries.find(
-      (entry) => entry.id === catalogEntryId || entry.stableFieldId === catalogEntryId
-    );
-    if (exact) return exact;
-  }
-  const namespace = readStringValue(ref.namespace);
-  const path = readStringValue(ref.path);
-  if (!namespace || !path) return null;
-  return (
-    entries.find(
-      (entry) =>
-        (entry.namespace === namespace && entry.path === path) ||
-        entry.aliases.some((alias) => alias.namespace === namespace && alias.path === path)
-    ) ?? null
-  );
 }
 
 function findDestinationProfileField(
@@ -8665,12 +8695,6 @@ function findDestinationProfileField(
     definitions.filter(isRecord).find((definition) => readStringValue(definition[key]) === path) ??
     null
   );
-}
-
-function sensitiveClassificationRank(classification: string): number {
-  if (classification === 'regulated') return 2;
-  if (classification === 'pii') return 1;
-  return 0;
 }
 
 function readStringValue(value: unknown): string | null {

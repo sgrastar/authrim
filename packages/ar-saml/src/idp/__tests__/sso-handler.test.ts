@@ -1241,7 +1241,7 @@ describe('assurance attributes in the SP-initiated assertion', () => {
         },
         targetRef: {
           side: 'destination',
-          namespace: 'saml.attribute',
+          namespace: 'saml', // the namespace the mocked binding releases into
           path: EDU_PERSON_ASSURANCE,
           catalogEntryId: 'field.saml.eduPersonAssurance',
         },

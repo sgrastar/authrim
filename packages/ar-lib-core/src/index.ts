@@ -174,6 +174,8 @@ export * from './utils/totp-backup-codes';
 
 // Runtime services
 export * from './services/identity-mapping-runtime-resolver';
+export * from './services/identity-mapping-source-reads';
+export * from './services/identity-mapping-output-graph';
 export * from './services/server-flow-execution';
 export * from './services/active-access-token-protected-resource';
 export * from './services/lookup-directory';

@@ -14,6 +14,11 @@ import type {
   SAMLAttributeValueType,
   SAMLComputedAttribute,
 } from '@authrim/ar-lib-core';
+import {
+  findConflictingSourceIds,
+  mappingSourceSubjectPath,
+  normalizeSubjectReadPath,
+} from '@authrim/ar-lib-core';
 
 export interface SAMLAttributeSubject {
   id: string;
@@ -149,11 +154,6 @@ export interface SAMLAttributeReleaseResult {
 }
 
 type AttributeValue = string | number | boolean;
-
-const SOURCE_ALIASES: Record<string, keyof SAMLAttributeSubject> = {
-  sub: 'id',
-  user_id: 'id',
-};
 
 /**
  * Build SAML attributes from the existing claim-to-SAML attribute mapping.
@@ -403,6 +403,18 @@ function buildIdentityMappingSourceValues(
   subject: SAMLAttributeSubject,
   edges: MappingRuleEdge[]
 ): SourceValueEnvelope[] {
+  // A value is matched to an edge by the catalog entry id the edge names, so one id may not stand
+  // for different reads: the value read for one would be released as the other's.
+  if (findConflictingSourceIds(edges.map((edge) => edge.sourceRef)).length > 0) {
+    throw new SAMLIdentityMappingRuntimeError([
+      {
+        category: 'policy',
+        code: 'policy.mapping_source_reference_conflict',
+        severity: 'critical',
+      },
+    ]);
+  }
+
   const seen = new Set<string>();
   const values: SourceValueEnvelope[] = [];
 
@@ -559,10 +571,12 @@ function findMappedAttributeDescriptor(
   config: SAMLIdentityMappingFieldMappingBinding
 ): SAMLIdentityMappingAttributeDescriptor | undefined {
   const descriptors = config.attributeDescriptors ?? {};
+  // Own keys only: a field may be named constructor or toString, and must not find Object's.
+  const own = (key: string) => (Object.hasOwn(descriptors, key) ? descriptors[key] : undefined);
   return (
-    (fieldRef.catalogEntryId ? descriptors[fieldRef.catalogEntryId] : undefined) ??
-    descriptors[fieldRef.path] ??
-    descriptors[`${fieldRef.namespace}:${fieldRef.path}`]
+    (fieldRef.catalogEntryId ? own(fieldRef.catalogEntryId) : undefined) ??
+    own(fieldRef.path) ??
+    own(`${fieldRef.namespace}:${fieldRef.path}`)
   );
 }
 
@@ -580,32 +594,6 @@ function dedupeMissingAttributes(
     deduped.push(attribute);
   }
   return deduped;
-}
-
-/** Where a mapping source reads from the subject: the path readSubjectValue is given. */
-function mappingSourceSubjectPath(fieldRef: FieldRef): string {
-  switch (fieldRef.namespace) {
-    case 'authrim.profile':
-    case 'authrim.claim':
-    case 'oidc.claim':
-      return fieldRef.path;
-    case 'authrim.claims':
-    case 'claims':
-      return `claims.${fieldRef.path}`;
-    case 'authrim.custom_claims':
-    case 'custom_claims':
-      return `customClaims.${fieldRef.path}`;
-    case 'authrim.custom_fields':
-    case 'custom_fields':
-      return `customFields.${fieldRef.path}`;
-    case 'authrim.attributes':
-    case 'attributes':
-      return `attributes.${fieldRef.path}`;
-    case 'authrim.system':
-      return fieldRef.path === 'uid' ? 'id' : fieldRef.path;
-    default:
-      return fieldRef.path;
-  }
 }
 
 function readMappingSourceValue(subject: SAMLAttributeSubject, fieldRef: FieldRef): unknown {
@@ -699,12 +687,18 @@ function readEduPersonScopedAffiliation(
   return affiliations.flatMap((affiliation) => scopes.map((scope) => `${affiliation}@${scope}`));
 }
 
+/**
+ * A value of the subject at a key path. The path is normalized first (normalizeSubjectReadPath,
+ * shared with the release safety check): this is the only place a path is read, so what is
+ * classified and what is read are the same place.
+ */
 function readSubjectValue(subject: SAMLAttributeSubject, sourceClaim: string): unknown {
-  const aliasedClaim = SOURCE_ALIASES[sourceClaim] ?? sourceClaim;
-  const path = aliasedClaim.split('.');
+  const path = normalizeSubjectReadPath(sourceClaim).split('.');
 
   if (path.length === 1) {
-    return subject[path[0] as keyof SAMLAttributeSubject];
+    return Object.hasOwn(subject, path[0])
+      ? subject[path[0] as keyof SAMLAttributeSubject]
+      : undefined;
   }
 
   const [root, ...rest] = path;
@@ -723,13 +717,11 @@ function readRootValue(subject: SAMLAttributeSubject, root: string): unknown {
     case 'attributes':
       return subject.attributes;
     case 'customClaims':
-    case 'custom_claims':
       return subject.customClaims;
     case 'customFields':
-    case 'custom_fields':
       return subject.customFields;
     default:
-      return subject[root as keyof SAMLAttributeSubject];
+      return Object.hasOwn(subject, root) ? subject[root as keyof SAMLAttributeSubject] : undefined;
   }
 }
 
@@ -740,7 +732,7 @@ function readNestedValue(record: Record<string, unknown>, path: string[]): unkno
     if (!isRecord(current)) {
       return undefined;
     }
-    current = current[segment];
+    current = Object.hasOwn(current, segment) ? current[segment] : undefined;
   }
 
   return current;
