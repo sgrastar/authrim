@@ -424,6 +424,7 @@
 							humanVerificationLoadingLabel={$LL.login_humanVerificationLoading()}
 							humanVerificationErrorLabel={$LL.login_humanVerificationLoadFailed()}
 							emailVerificationProtocolEnabled={emailVerification.enabled}
+							verifyCodeOnEnter
 							onFieldValueChange={onRuntimeFieldValueChange}
 							onAuthAction={onRuntimeAuthAction}
 							onExternalProviderAction={onExternalProvider}
