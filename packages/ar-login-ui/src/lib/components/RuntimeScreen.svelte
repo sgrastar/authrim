@@ -10,6 +10,11 @@
 	import TurnstileWidget from '$lib/components/TurnstileWidget.svelte';
 	import { sanitizeRuntimeConsentHtml } from '$lib/consent/runtime-consent-html';
 	import { withRequestedTotpCodeInput } from '$lib/authrim/runtime-code-input';
+	import {
+		authWidgetMethod as readAuthWidgetMethod,
+		isDisplayConditionMet,
+		shownEntryMethods
+	} from '$lib/runtime-screen-methods';
 	import { localizeRuntimeScreen } from '$lib/i18n/runtime-screen-localization';
 
 	type RuntimeField = {
@@ -103,6 +108,10 @@
 		emailVerificationProtocolEnabled?: boolean;
 		/** Enter in a code field verifies the code, as its verify button does. */
 		verifyCodeOnEnter?: boolean;
+		/** The email code and authenticator-app entries the screen really shows (read back). */
+		shownAuthMethods?: { emailCode: boolean; totp: boolean } | null;
+		/** Keys in the email fields; the page decides what Enter does there. */
+		onEmailKeydown?: (event: KeyboardEvent) => void;
 		onFieldValueChange?: (field: string, value: string | boolean) => void;
 		onAuthAction?: (method: AuthMethod, action?: AuthAction) => void;
 		onExternalProviderAction?: (providerId: string) => void;
@@ -138,12 +147,14 @@
 		humanVerificationTheme = 'auto',
 		humanVerificationLanguage = 'auto',
 		humanVerificationToken = $bindable(''),
+		shownAuthMethods = $bindable(null),
 		humanVerificationResetKey = 0,
 		humanVerificationVisible = false,
 		humanVerificationLoadingLabel = $LL.login_humanVerificationLoading(),
 		humanVerificationErrorLabel = $LL.login_humanVerificationLoadFailed(),
 		emailVerificationProtocolEnabled = false,
 		verifyCodeOnEnter = false,
+		onEmailKeydown,
 		onFieldValueChange,
 		onAuthAction,
 		onExternalProviderAction,
@@ -276,6 +287,19 @@
 		renderedFields.find((field) => field.block_type === 'heading') ?? null
 	);
 	const renderedSections = $derived(buildLayoutSections(renderedFields));
+	// What the sections really draw, for the page to decide what Enter in the email field does.
+	const shownEntries = $derived(
+		shownEntryMethods(
+			renderedSections.flatMap((section) => section.items),
+			authMethodAvailable
+		)
+	);
+	$effect(() => {
+		shownAuthMethods = shownEntries;
+		return () => {
+			shownAuthMethods = null;
+		};
+	});
 	const hasConsentWidget = $derived(
 		renderedFields.some((field) => field.block_type === 'consent_widget')
 	);
@@ -300,18 +324,7 @@
 	}
 
 	function authWidgetMethod(field: RuntimeField): AuthMethod {
-		const method = field.auth_method ?? 'passkey';
-		if (
-			method === 'mail_otp' ||
-			method === 'mail_otp_totp' ||
-			method === 'totp' ||
-			method === 'external_idp' ||
-			method === 'directory_password' ||
-			method === 'passkey'
-		) {
-			return method;
-		}
-		return 'passkey';
+		return readAuthWidgetMethod(field);
 	}
 
 	function authMethodAvailable(method: AuthMethod): boolean {
@@ -332,13 +345,7 @@
 	}
 
 	function shouldRenderField(field: RuntimeField): boolean {
-		const condition = field.display_condition;
-		if (!condition || condition.mode === 'always') return true;
-		if (condition.mode === 'hidden') return false;
-		if (condition.mode === 'feature_enabled') {
-			return condition.feature ? authMethodAvailable(condition.feature) : false;
-		}
-		return true;
+		return isDisplayConditionMet(field, authMethodAvailable);
 	}
 
 	function shouldRenderLayoutField(field: RuntimeField): boolean {
@@ -874,6 +881,23 @@
 				<div class="runtime-code-progress" aria-hidden="true">
 					<span style={mailOtpProgressStyle()}></span>
 				</div>
+			{/if}
+			<!-- The main action comes first, then the way back (the Tab order follows). -->
+			<button
+				class="runtime-auth-button"
+				type="button"
+				disabled={authButtonDisabled(method) || authMethodBusy(method)}
+				onclick={() => onAuthAction?.(method, 'verify_code')}
+			>
+				<span class="i-ph-check-circle"></span>
+				{method === 'mail_otp' ? $LL.emailCode_verifyButton() : $LL.login_totpVerify()}
+			</button>
+			{#if fieldErrors[method === 'mail_otp' ? 'mail_otp_code' : 'totp_code']}
+				<small class="runtime-screen-error"
+					>{fieldErrors[method === 'mail_otp' ? 'mail_otp_code' : 'totp_code']}</small
+				>
+			{/if}
+			{#if method === 'mail_otp'}
 				<div class="runtime-code-actions">
 					<button
 						class="runtime-auth-button secondary"
@@ -907,20 +931,6 @@
 					{$LL.common_backToLogin()}
 				</button>
 			{/if}
-			<button
-				class="runtime-auth-button"
-				type="button"
-				disabled={authButtonDisabled(method) || authMethodBusy(method)}
-				onclick={() => onAuthAction?.(method, 'verify_code')}
-			>
-				<span class="i-ph-check-circle"></span>
-				{method === 'mail_otp' ? $LL.emailCode_verifyButton() : $LL.login_totpVerify()}
-			</button>
-			{#if fieldErrors[method === 'mail_otp' ? 'mail_otp_code' : 'totp_code']}
-				<small class="runtime-screen-error"
-					>{fieldErrors[method === 'mail_otp' ? 'mail_otp_code' : 'totp_code']}</small
-				>
-			{/if}
 		</div>
 	{:else if blockType === 'guest_login_widget'}
 		{#if guestEnabled && authMethodMode === 'login'}
@@ -951,6 +961,7 @@
 							type="email"
 							name="email"
 							autocomplete="email"
+							onkeydown={onEmailKeydown}
 							oninput={(event) =>
 								onFieldValueChange?.('email', (event.currentTarget as HTMLInputElement).value)}
 						/>
@@ -1126,6 +1137,7 @@
 					type={isEmailIdentityField(field) ? 'email' : 'text'}
 					name={isEmailIdentityField(field) ? 'email' : undefined}
 					autocomplete={isEmailIdentityField(field) ? 'email' : undefined}
+					onkeydown={isEmailIdentityField(field) ? onEmailKeydown : undefined}
 					value={fieldStringValue(field)}
 					placeholder={field.placeholder || field.label}
 					oninput={(event) => setFieldValue(field, (event.currentTarget as HTMLInputElement).value)}
