@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { normalizePinCode, normalizePinCodeLength } from '$lib/utils/pin-code';
 	import { LL } from '$i18n/i18n-svelte';
+	import { handleCodeEnterKey } from '$lib/utils/code-enter-key';
 
 	type Props = {
 		value?: string;
@@ -10,6 +11,8 @@
 		label?: string;
 		digitLabel?: (position: number) => string;
 		onValueChange?: (value: string) => void;
+		/** Enter in the field. When set, the browser's implicit form submit is stopped. */
+		onEnter?: () => void;
 	};
 
 	let {
@@ -19,7 +22,8 @@
 		name,
 		label,
 		digitLabel,
-		onValueChange
+		onValueChange,
+		onEnter
 	}: Props = $props();
 
 	function rootStyle(count: number): string {
@@ -28,6 +32,10 @@
 
 	const digitCount = $derived(normalizePinCodeLength(length));
 	let inputValue = $derived(normalizePinCode(value, digitCount));
+
+	function handleKeydown(event: KeyboardEvent) {
+		if (onEnter) handleCodeEnterKey(event, onEnter);
+	}
 
 	function handleInput(event: Event) {
 		const target = event.currentTarget as HTMLInputElement;
@@ -59,6 +67,7 @@
 		spellcheck="false"
 		{disabled}
 		oninput={handleInput}
+		onkeydown={handleKeydown}
 	/>
 	<div class="pin-code-input__cells" aria-hidden="true">
 		{#each Array.from({ length: digitCount }, (_, index) => index) as index (index)}

@@ -58,6 +58,7 @@
 	import AuthSwitchLink from '$lib/components/AuthSwitchLink.svelte';
 	import RuntimeScreen from '$lib/components/RuntimeScreen.svelte';
 	import { LL } from '$i18n/i18n-svelte';
+	import { handleCodeEnterKey } from '$lib/utils/code-enter-key';
 	import type { RuntimeAuthMethod } from '$lib/authrim/runtime-auth-handles';
 	import type {
 		EmailVerificationView,
@@ -202,6 +203,13 @@
 	}: Props = $props();
 
 	const emailVerificationTokenAutocomplete = 'email-verification-token' as never;
+
+	// Enter in the activation code field activates, as the button does (same conditions).
+	function handleTotpActivateKeyPress(event: KeyboardEvent) {
+		handleCodeEnterKey(event, () => {
+			if (!loading.totp && /^\d{6}$|^\d{8}$/.test(totpCode.trim())) onTotpActivate?.();
+		});
+	}
 </script>
 
 <!-- Loading State -->
@@ -551,6 +559,7 @@
 								label={$LL.login_totpCodeLabel()}
 								placeholder={$LL.login_totpCodePlaceholder()}
 								bind:value={totpCode}
+								onkeypress={handleTotpActivateKeyPress}
 								autocomplete="one-time-code"
 								inputmode="numeric"
 								maxlength={8}

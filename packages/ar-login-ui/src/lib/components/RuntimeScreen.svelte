@@ -101,6 +101,8 @@
 		humanVerificationLoadingLabel?: string;
 		humanVerificationErrorLabel?: string;
 		emailVerificationProtocolEnabled?: boolean;
+		/** Enter in a code field verifies the code, as its verify button does. */
+		verifyCodeOnEnter?: boolean;
 		onFieldValueChange?: (field: string, value: string | boolean) => void;
 		onAuthAction?: (method: AuthMethod, action?: AuthAction) => void;
 		onExternalProviderAction?: (providerId: string) => void;
@@ -141,6 +143,7 @@
 		humanVerificationLoadingLabel = $LL.login_humanVerificationLoading(),
 		humanVerificationErrorLabel = $LL.login_humanVerificationLoadFailed(),
 		emailVerificationProtocolEnabled = false,
+		verifyCodeOnEnter = false,
 		onFieldValueChange,
 		onAuthAction,
 		onExternalProviderAction,
@@ -567,6 +570,11 @@
 		return disabled || !consentReady || !authMethodAvailable(method);
 	}
 
+	function verifyCodeFromKeyboard(method: AuthMethod) {
+		if (authButtonDisabled(method) || authMethodBusy(method)) return;
+		onAuthAction?.(method, 'verify_code');
+	}
+
 	function codeInputMethod(field: RuntimeField): 'mail_otp' | 'totp' {
 		const configured = field.code_input_mode ?? field.auth_method ?? 'auto';
 		if (configured === 'mail_otp' || configured === 'totp') return configured;
@@ -859,6 +867,7 @@
 					label={field.label || $LL.login_totpCodeLabel()}
 					digitLabel={(position) => $LL.emailCode_digitLabel({ position })}
 					onValueChange={(nextValue) => onFieldValueChange?.(codeInputFieldName(method), nextValue)}
+					onEnter={verifyCodeOnEnter ? () => verifyCodeFromKeyboard(method) : undefined}
 				/>
 			</div>
 			{#if method === 'mail_otp'}

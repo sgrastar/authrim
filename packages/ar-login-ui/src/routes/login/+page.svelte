@@ -21,6 +21,7 @@
 	import { accountAPI } from '$lib/api/account';
 	import { messageForApiError } from '$lib/errors/sdk-error-mapper';
 	import { loginUiDisplayError, messageForCaughtError } from '$lib/errors/display-error';
+	import { handleCodeEnterKey } from '$lib/utils/code-enter-key';
 	import {
 		isValidRedirectUrl,
 		isValidReturnUrl,
@@ -2066,13 +2067,13 @@
 	}
 
 	function handleTotpKeyPress(event: KeyboardEvent) {
-		if (event.key === 'Enter') {
+		handleCodeEnterKey(event, () => {
 			if (totpCodeRequested) {
 				handleTotpVerify();
 			} else {
 				handleTotpStart();
 			}
-		}
+		});
 	}
 
 	function handleRuntimeScreenFieldValueChange(field: string, value: string | boolean) {
