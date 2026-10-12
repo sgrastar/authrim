@@ -368,6 +368,8 @@ export const actions: Actions = {
 		const emailChallengeId = String(formData.get('email_challenge_id') || '').trim();
 		const emailCode = String(formData.get('email_code') || '').trim();
 		const { expectedTenantId, returnTo, loginHint } = readDiscoveryGrantContext(formData);
+		// The next form posts these again; this POST's own URL has no query to rebuild them from.
+		const carried = { expectedTenantId, returnTo };
 		const currentIsCommonDiscover = config.common_discover_url
 			? isSamePublicUrl(
 					event.url,
@@ -389,6 +391,7 @@ export const actions: Actions = {
 
 		if (!value) {
 			return fail(400, {
+				...carried,
 				errorCode: 'value_required' as const,
 				mode,
 				value
@@ -401,6 +404,7 @@ export const actions: Actions = {
 				effectiveConfig.config.selection_policy === 'manual_only')
 		) {
 			return fail(403, {
+				...carried,
 				mode: defaultManualMode(effectiveConfig.config),
 				value,
 				errorCode: 'manual_required' as const,
@@ -412,6 +416,7 @@ export const actions: Actions = {
 			if (mode === 'email' && !emailChallengeId) {
 				const started = await startDiscoveryEmailVerification(event.fetch, value, discoveryHeaders);
 				return {
+					...carried,
 					mode,
 					value,
 					loginHint: value,
@@ -423,6 +428,7 @@ export const actions: Actions = {
 
 			if (mode === 'email' && !/^\d{6}$/u.test(emailCode)) {
 				return fail(400, {
+					...carried,
 					mode,
 					value,
 					loginHint: value,
@@ -461,6 +467,7 @@ export const actions: Actions = {
 
 				if (effectiveConfig.config.selection_policy === 'always_select') {
 					return {
+						...carried,
 						mode,
 						value,
 						loginHint: mode === 'email' ? value : loginHint || '',
@@ -481,6 +488,7 @@ export const actions: Actions = {
 
 			if (result.result === 'multiple') {
 				return {
+					...carried,
 					mode,
 					value,
 					loginHint: mode === 'email' ? value : loginHint || '',
@@ -492,6 +500,7 @@ export const actions: Actions = {
 
 			if (result.result === 'manual_required') {
 				return {
+					...carried,
 					mode: defaultManualMode(effectiveConfig.config),
 					value,
 					errorCode: 'manual_required' as const,
@@ -501,6 +510,7 @@ export const actions: Actions = {
 			}
 
 			return fail(404, {
+				...carried,
 				mode,
 				value,
 				errorCode: result.code as DiscoveryErrorCode,
@@ -533,6 +543,7 @@ export const actions: Actions = {
 								? 503
 								: 500;
 			return fail(status, {
+				...carried,
 				mode,
 				value,
 				loginHint: mode === 'email' ? value : loginHint || '',

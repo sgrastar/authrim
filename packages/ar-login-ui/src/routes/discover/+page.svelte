@@ -1,5 +1,9 @@
 <script lang="ts">
-	import { getDefaultDiscoveryMode, getInteractiveDiscoveryMethods } from '$lib/discovery-ui';
+	import {
+		getDefaultDiscoveryMode,
+		getInteractiveDiscoveryMethods,
+		resolveDiscoveryHiddenFields
+	} from '$lib/discovery-ui';
 	import AuthPageShell from '$lib/components/AuthPageShell.svelte';
 	import DiscoverView, { type DiscoveryCandidate } from '$lib/views/DiscoverView.svelte';
 	import { useLoginUIStores } from '$lib/stores/login-ui-context';
@@ -45,6 +49,8 @@
 		mode?: string;
 		value?: string;
 		loginHint?: string;
+		expectedTenantId?: string | null;
+		returnTo?: string | null;
 		emailChallengeId?: string;
 		emailExpiresIn?: number;
 		errorCode?: string;
@@ -64,7 +70,6 @@
 	const rememberedCandidate = $derived(data.rememberedCandidate);
 	const submittedMode = $derived(form?.mode);
 	const submittedValue = $derived(form?.value || '');
-	const emailChallengeId = $derived(form?.emailChallengeId || '');
 	const showTenantChooser = $derived(
 		!(data.config.is_common_entry_host && data.config.config.mode === 'tenant_only')
 	);
@@ -73,7 +78,7 @@
 	let value = $derived(submittedValue);
 
 	const candidates = $derived(form?.candidates || []);
-	const loginHint = $derived(form?.loginHint || data.loginHint || '');
+	const hiddenFields = $derived(resolveDiscoveryHiddenFields(data, form));
 	const errorCode = $derived(form?.errorCode || data.inviteErrorCode || '');
 	const errorMessage = $derived(errorCode ? getErrorMessage(errorCode) : '');
 	const pageTitle = $derived(ui.page_title || $LL.discover_pageTitle());
@@ -157,13 +162,7 @@
 		{rememberedCandidate}
 		{candidates}
 		postSelections={data.config.is_common_entry_host}
-		hidden={{
-			inviteToken: data.inviteToken,
-			expectedTenantId: data.expectedTenantId,
-			returnTo: data.returnTo,
-			loginHint,
-			emailChallengeId
-		}}
+		hidden={hiddenFields}
 		bind:selectedMode
 		bind:value
 		submitting={discoverySubmitting}
