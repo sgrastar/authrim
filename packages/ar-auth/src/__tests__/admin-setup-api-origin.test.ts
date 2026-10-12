@@ -610,6 +610,10 @@ describe('admin setup API rejection matrix', () => {
     const body = (await response.json()) as Record<string, unknown>;
 
     expect(response.status).toBe(200);
+    // mfa_verified rests on the user-verified flag: the verification demands it.
+    expect(mocks.verifyAuthenticationResponse).toHaveBeenCalledWith(
+      expect.objectContaining({ requireUserVerification: true })
+    );
     expect(body).toMatchObject({
       verified: true,
       userId: 'admin-1',

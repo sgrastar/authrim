@@ -207,7 +207,7 @@ myPasskeysRouter.post('/options', async (c) => {
       attestationType: 'none',
       authenticatorSelection: {
         residentKey: 'preferred',
-        userVerification: 'preferred',
+        userVerification: 'required',
       },
       timeout: 60000,
       excludeCredentials,
@@ -298,7 +298,7 @@ myPasskeysRouter.post('/complete', async (c) => {
         expectedChallenge: storedChallenge.challenge,
         expectedOrigin: storedChallenge.origin,
         expectedRPID: storedChallenge.rpID,
-        requireUserVerification: false,
+        requireUserVerification: true,
       });
     } catch (error) {
       await c.env.AUTHRIM_CONFIG?.delete(`admin_passkey:challenge:${body.challenge_id}`);

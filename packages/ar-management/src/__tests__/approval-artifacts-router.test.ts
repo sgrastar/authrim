@@ -1035,6 +1035,9 @@ describe('approval artifacts router', () => {
         actor_subject_id: 'admin-2',
       })
     );
+    expect(mockWebAuthnFunctions.verifyAuthenticationResponse).toHaveBeenCalledWith(
+      expect.objectContaining({ requireUserVerification: true })
+    );
     expect(mockPasskeyRepo.findByCredentialId).toHaveBeenCalledWith('credential-1');
     expect(mockPasskeyRepo.updateCounter).toHaveBeenCalledWith('apk_1', 7);
     expect(mockEnv.AUTHRIM_CONFIG!.delete).toHaveBeenCalledWith(

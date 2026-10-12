@@ -568,6 +568,7 @@ export async function passkeyRegisterVerifyHandler(c: Context<{ Bindings: Env }>
         expectedChallenge: challengeData.challenge,
         expectedOrigin: origin,
         expectedRPID: rpID,
+        requireUserVerification: true,
       });
     } catch (error) {
       // PII Protection: Don't log full error
@@ -927,6 +928,8 @@ export async function passkeyLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
           publicKey: publicKey,
           counter: passkey.counter as number,
         },
+        // Explicit (the library default): a sign-in without the user-verified flag is refused.
+        requireUserVerification: true,
       });
     } catch (error) {
       // Publish auth.passkey.failed event (non-blocking)

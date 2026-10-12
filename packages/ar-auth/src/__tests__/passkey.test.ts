@@ -1001,6 +1001,9 @@ describe('Passkey Handlers', () => {
 
       await passkeyRegisterVerifyHandler(c);
 
+      expect(mockWebAuthnFunctions.verifyRegistrationResponse).toHaveBeenCalledWith(
+        expect.objectContaining({ requireUserVerification: true })
+      );
       // Should create passkey via Repository
       expect(mockPasskeyRepository.create).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -1263,6 +1266,10 @@ describe('Passkey Handlers', () => {
         expect.any(Number)
       );
       expect(mockPasskeyRepository.mirrorCounterAfterAuth).toHaveBeenCalledWith('passkey-1', 1);
+      // The user-verified flag is demanded of the assertion.
+      expect(mockWebAuthnFunctions.verifyAuthenticationResponse).toHaveBeenCalledWith(
+        expect.objectContaining({ requireUserVerification: true })
+      );
     });
 
     it.each([

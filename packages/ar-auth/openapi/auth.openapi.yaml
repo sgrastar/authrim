@@ -4846,6 +4846,7 @@ components:
           example: required
         user_verification:
           type: string
+          description: Accepted for compatibility and ignored. User verification is always required for passkey registration.
           enum:
             - required
             - preferred
@@ -5087,6 +5088,7 @@ components:
           example: required
         user_verification:
           type: string
+          description: Accepted for compatibility and ignored. User verification is always required for passkey registration.
           enum:
             - required
             - preferred
