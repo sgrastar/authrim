@@ -129,6 +129,8 @@
 		onDismissRuntimeFlowError?: () => void;
 		onRuntimeFieldValueChange?: (field: string, value: string | boolean) => void;
 		onRuntimeAuthAction?: (method: RuntimeAuthMethod, action?: RuntimeAuthAction) => void;
+		onRuntimeEmailKeydown?: (event: KeyboardEvent) => void;
+		runtimeShownAuthMethods?: { emailCode: boolean; totp: boolean } | null;
 		onConsentDecisionChange?: (statementId: string, checked: boolean) => void;
 		onDestinationFieldDecisionChange?: (fieldKey: string, checked: boolean) => void;
 		onConsentSelectedValueChange?: (statementId: string, value: string) => void;
@@ -200,6 +202,8 @@
 		onDismissRuntimeFlowError,
 		onRuntimeFieldValueChange,
 		onRuntimeAuthAction,
+		onRuntimeEmailKeydown,
+		runtimeShownAuthMethods = $bindable(null),
 		onConsentDecisionChange,
 		onDestinationFieldDecisionChange,
 		onConsentSelectedValueChange,
@@ -427,6 +431,8 @@
 							verifyCodeOnEnter
 							onFieldValueChange={onRuntimeFieldValueChange}
 							onAuthAction={onRuntimeAuthAction}
+							onEmailKeydown={onRuntimeEmailKeydown}
+							bind:shownAuthMethods={runtimeShownAuthMethods}
 							onExternalProviderAction={onExternalProvider}
 							{onConsentDecisionChange}
 							{onDestinationFieldDecisionChange}
@@ -693,9 +699,6 @@
 							{disabled}
 							required
 						/>
-						<Button variant="ghost" size="sm" {disabled} onclick={() => onTotpBack?.()}>
-							{$LL.common_backToLogin()}
-						</Button>
 					</div>
 				{/if}
 
@@ -709,6 +712,12 @@
 					<div class="i-ph-key h-5 w-5"></div>
 					{totpCodeRequested ? $LL.login_totpVerify() : $LL.login_totpContinue()}
 				</Button>
+				{#if totpCodeRequested}
+					<!-- After the verify button: the main action first, then the way back. -->
+					<Button variant="ghost" size="sm" class="mt-2" {disabled} onclick={() => onTotpBack?.()}>
+						{$LL.common_backToLogin()}
+					</Button>
+				{/if}
 			{/if}
 
 			<!-- External Login Section -->

@@ -396,6 +396,12 @@ paths:
       tags:
         - Email Codes
       summary: Send an email verification code.
+      description: >
+        Works only where the tenant allows email code for login
+        (`authentication-methods.email_otp.login_enabled`); otherwise nothing is sent or created and
+        the reply is the one a sent code gets. An address with no account is created only where
+        email code signup is allowed too. Signing up with an email code is the Direct Auth API's
+        (`/api/v1/auth/direct/email-code/*`).
       requestBody:
         $ref: '#/components/requestBodies/EmailCodeSend'
       responses:
@@ -408,6 +414,9 @@ paths:
       tags:
         - Email Codes
       summary: Verify an email code and create a session.
+      description: >
+        Works only where the tenant allows email code for login
+        (`authentication-methods.email_otp.login_enabled`); otherwise it is refused with 403.
       requestBody:
         $ref: '#/components/requestBodies/EmailCodeVerify'
       responses:
