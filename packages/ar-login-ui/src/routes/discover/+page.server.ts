@@ -159,22 +159,21 @@ function buildPublicUrl(url: URL, request: Request): URL {
 	return publicUrl;
 }
 
+/**
+ * Whether the request is for the given page. Only the origin and path count: the query differs
+ * between requests for the same page (a form posts to `/discover?/resolve`, the page may carry
+ * return_to, lang, ...), and a different host or path is never the same page.
+ */
 function isSamePublicUrl(sourceUrl: URL, request: Request, targetUrl: string): boolean {
 	const publicUrl = buildPublicUrl(sourceUrl, request);
 	const target = new URL(targetUrl);
-	publicUrl.hash = '';
-	target.hash = '';
-	if (publicUrl.toString() === target.toString()) {
+	if (publicUrl.origin === target.origin && publicUrl.pathname === target.pathname) {
 		return true;
 	}
 
 	const sourceLooksLikeUiWorker =
 		publicUrl.hostname.endsWith('.workers.dev') || publicUrl.hostname.endsWith('.pages.dev');
-	return (
-		sourceLooksLikeUiWorker &&
-		publicUrl.pathname === target.pathname &&
-		publicUrl.search === target.search
-	);
+	return sourceLooksLikeUiWorker && publicUrl.pathname === target.pathname;
 }
 
 function defaultManualMode(
