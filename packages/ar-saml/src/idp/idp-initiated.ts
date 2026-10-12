@@ -20,9 +20,9 @@ import {
   getLogger,
   resolveAuthCorePersistenceAdapterFromEnv,
   requireAdminDatabaseAdapter,
-  resolveRuntimeIdentityMappingBinding,
   filterSamlAttributesByDestinationConsentWithStatus,
   resolveSamlAssertionTtlSeconds,
+  RuntimeIdentityMappingReleaseSafetyError,
 } from '@authrim/ar-lib-core';
 import { getSAMLInteractiveLoginUrlPolicy } from '../common/entity-id';
 import { base64Encode, generateSAMLId } from '../common/xml-utils';
@@ -35,7 +35,6 @@ import { resolveSAMLTenantIdFromContext } from '../common/tenant';
 import {
   buildSAMLAttributesForSP,
   resolveSAMLIdentityMappingFieldMappingBinding,
-  type SAMLIdentityMappingReleaseConfig,
   SAMLIdentityMappingRuntimeError,
 } from './attributes';
 import { applySAMLResponseSigningPolicy } from './signing';
@@ -58,6 +57,7 @@ import {
   SAMLAttributeReleaseConsentRequiredError,
 } from './attribute-release-consent';
 import { checkSAMLIdentityAssurance, withSAMLAssuranceAttributes } from './identity-assurance';
+import { resolveSAMLRuntimeIdentityMapping } from './runtime-identity-mapping';
 import { checkSAMLAuthnAssurance } from './authn-assurance';
 import { scheduleSAMLPolicyFailureAudit } from './audit';
 
@@ -211,6 +211,38 @@ export async function handleIdPInitiated(c: Context<{ Bindings: Env }>): Promise
           policyDetails: { reason: 'no_class_ref' },
         });
         return createErrorResponse(c, AR_ERROR_CODES.POLICY_INSUFFICIENT_PERMISSIONS);
+      }
+      if (
+        error instanceof SAMLIdentityMappingRuntimeError ||
+        error instanceof RuntimeIdentityMappingReleaseSafetyError
+      ) {
+        // The mapping or the release safety check refused (see handleIdPSSO): the person gets the
+        // error page, the administrator the reason codes and the field name (no value).
+        const reasonCodes =
+          error instanceof RuntimeIdentityMappingReleaseSafetyError
+            ? [`policy.release_${error.reason}`]
+            : error.reasons.map((reason) => reason.code);
+        log.warn('SAML field mapping set failed', {
+          tenantId,
+          spEntityId: spConfig.entityId,
+          reasonCodes,
+          ...(error instanceof RuntimeIdentityMappingReleaseSafetyError
+            ? { field: error.field }
+            : {}),
+        });
+        scheduleSAMLPolicyFailureAudit(c, {
+          tenantId,
+          spEntityId: spConfig.entityId,
+          authnRequestId: consentTransactionId,
+          failureKind: 'identity_mapping_failed',
+          policyDetails: {
+            reason_codes: reasonCodes,
+            ...(error instanceof RuntimeIdentityMappingReleaseSafetyError
+              ? { field: error.field }
+              : {}),
+          },
+        });
+        return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
       }
       if (!(error instanceof SAMLAttributeReleaseConsentRequiredError)) throw error;
       if (consentRetry) {
@@ -647,66 +679,6 @@ async function consumeIdPInitiatedDestinationConsent(
         AND status = 'active'`,
     [Math.floor(Date.now() / 1000), consentRecordId, tenantId, subjectId]
   );
-}
-
-async function resolveSAMLRuntimeIdentityMapping(
-  env: Env,
-  tenantId: string,
-  idpEntityId: string,
-  spConfig: SAMLSPConfig
-): Promise<SAMLIdentityMappingReleaseConfig | undefined> {
-  const configured = spConfig.identityMapping as SAMLIdentityMappingReleaseConfig | undefined;
-  if (configured?.catalog || configured?.defaultBinding || configured?.bindings?.length) {
-    return configured;
-  }
-
-  const adapter = requireAdminDatabaseAdapter(env, 'saml-identity-mapping');
-  const binding = await resolveRuntimeIdentityMappingBinding(adapter, {
-    tenantId,
-    protocol: 'saml',
-    role: 'idp',
-    fieldMappingSetId: configured?.fieldMappingSetId,
-    localEntityId: idpEntityId,
-    partnerEntityId: spConfig.entityId,
-  });
-  if (!binding) {
-    throw new SAMLIdentityMappingRuntimeError([
-      {
-        category: 'policy',
-        code: 'policy.missing_identity_mapping_binding',
-        severity: 'critical',
-      },
-    ]);
-  }
-  if (binding.destinationProfileIds.length !== 1 || !binding.destinationProfileId) {
-    throw new SAMLIdentityMappingRuntimeError([
-      {
-        category: 'policy',
-        code: 'policy.invalid_destination_profile_binding',
-        severity: 'critical',
-      },
-    ]);
-  }
-
-  return {
-    id: binding.id,
-    role: 'idp',
-    tenantId: binding.tenantId,
-    localEntityId: idpEntityId,
-    partnerEntityId: spConfig.entityId,
-    catalog: binding.catalog,
-    edges: binding.edges,
-    transforms: binding.transforms,
-    validationRules: binding.validationRules,
-    fieldMappingSet: binding.fieldMappingSet,
-    destinationNamespace: configured?.destinationNamespace ?? binding.destinationNamespace,
-    attributeDescriptors: configured?.attributeDescriptors,
-    destinationFieldPolicies: configured?.destinationFieldPolicies,
-    fieldMappingSetId: binding.fieldMappingSetId,
-    fieldMappingVersionId: binding.fieldMappingVersionId,
-    sourceProfileId: configured?.sourceProfileId ?? binding.sourceProfileId,
-    destinationProfileId: binding.destinationProfileId ?? configured?.destinationProfileId,
-  };
 }
 
 /**

@@ -22,7 +22,7 @@ export {
   validateTransformRegistry,
   validateTransformStep,
 } from './core/transforms';
-export { validateMappingInput } from './core/validation';
+export { sameFieldRef, validateMappingInput } from './core/validation';
 export type {
   CsvSourceProfileColumn,
   CsvSourceProfileParserOptions,

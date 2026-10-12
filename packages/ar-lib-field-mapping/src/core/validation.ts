@@ -196,9 +196,14 @@ function isMissing(value: unknown): boolean {
   return value === undefined || value === null || value === '';
 }
 
-function sameFieldRef(
-  left: SourceValueEnvelope['sourceRef'],
-  right: SourceValueEnvelope['sourceRef']
+/**
+ * Whether two references are the same field, as a validation rule finds the value it is about:
+ * by catalog entry id when both name one, else by side, namespace and path. Exported so that
+ * whatever decides which rules apply to a set of edges decides it the same way.
+ */
+export function sameFieldRef(
+  left: Pick<SourceValueEnvelope['sourceRef'], 'catalogEntryId' | 'side' | 'namespace' | 'path'>,
+  right: Pick<SourceValueEnvelope['sourceRef'], 'catalogEntryId' | 'side' | 'namespace' | 'path'>
 ): boolean {
   if (left.catalogEntryId && right.catalogEntryId) {
     return left.catalogEntryId === right.catalogEntryId;

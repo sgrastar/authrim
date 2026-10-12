@@ -75,7 +75,8 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     resolveAuthCorePersistenceAdapterFromEnv: vi.fn(async () => ({
       execute: mocks.coreExecute,
     })),
-    requireAdminDatabaseAdapter: vi.fn(() => ({})),
+    // Reads the Destination Profile (to give the mapping its destination catalog entries): none here.
+    requireAdminDatabaseAdapter: vi.fn(() => ({ queryOne: vi.fn(async () => null) })),
     resolveRuntimeIdentityMappingBinding: vi.fn(async () => mocks.runtimeBinding),
     filterSamlAttributesByDestinationConsentWithStatus: mocks.filterDestination,
     getLogger: () => ({ module: () => ({ error: vi.fn(), warn: vi.fn(), info: vi.fn() }) }),

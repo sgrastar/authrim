@@ -12,6 +12,11 @@ import type {
   ValidationRuleKind,
 } from '@authrim/ar-lib-field-mapping/contract';
 import type { DatabaseAdapter } from '../db/adapter';
+import {
+  findConflictingSourceIds,
+  resolveSourceClassification,
+  sensitiveClassificationRank,
+} from './identity-mapping-source-reads';
 
 export type RuntimeIdentityMappingProtocol = 'saml' | 'oidc' | 'vc' | string;
 export type RuntimeIdentityMappingRole = 'idp' | 'sp' | 'op' | 'rp' | string;
@@ -30,6 +35,13 @@ export interface RuntimeIdentityMappingResolutionContext {
   credentialConfigurationId?: string;
   direction?: 'issuance' | 'verification' | string;
   destinationProfileId?: string;
+  /**
+   * Give a snapshot compiled against the tenant's canonical fields (a catalog version derived on
+   * the fly, with nothing stored under it) the stored default canonical catalog's entries, so the
+   * classification of its sources can be told. Off, such a catalog stays empty, as it always was
+   * for the callers that do not judge sources by it.
+   */
+  resolveCanonicalCatalog?: boolean;
 }
 
 export interface RuntimeIdentityMappingBinding {
@@ -56,41 +68,139 @@ export interface RuntimeDestinationReleaseField {
   requiredScopes: string[];
 }
 
+/** Why a mapping may not release a field (named in audit events and logs; never carries a value). */
+export type RuntimeIdentityMappingReleaseSafetyReason =
+  | 'classification_lowered'
+  | 'scope_required'
+  | 'source_classification_unknown'
+  | 'edge_reference_invalid'
+  | 'source_reference_conflict';
+
 export class RuntimeIdentityMappingReleaseSafetyError extends Error {
   constructor(
     message: string,
-    readonly field: string
+    readonly field: string,
+    readonly reason: RuntimeIdentityMappingReleaseSafetyReason = 'classification_lowered'
   ) {
     super(message);
     this.name = 'RuntimeIdentityMappingReleaseSafetyError';
   }
 }
 
+export interface RuntimeIdentityMappingReleaseSafetyOptions {
+  /**
+   * Refuse a field whose source classification cannot be told (a source the catalog does not
+   * describe and the runtime does not define), instead of letting it through unchecked.
+   */
+  requireKnownSources?: boolean;
+}
+
 export function assertRuntimeIdentityMappingReleaseSafety(
   binding: Pick<RuntimeIdentityMappingBinding, 'catalog' | 'edges'>,
   destinationFields: RuntimeDestinationReleaseField[],
-  requireSensitiveScopes: boolean
+  requireSensitiveScopes: boolean,
+  options: RuntimeIdentityMappingReleaseSafetyOptions = {}
 ): void {
   const destinationByKey = new Map(destinationFields.map((field) => [field.key, field]));
+  if (options.requireKnownSources) {
+    assertKnownSourcesReleaseSafety(binding, destinationByKey, requireSensitiveScopes);
+    return;
+  }
   for (const edge of binding.edges) {
     if (edge.sourceRef.side !== 'source' || edge.targetRef.side !== 'destination') continue;
-    const source = findCatalogEntry(binding.catalog, edge.sourceRef);
     const destination = destinationByKey.get(edge.targetRef.path);
+    const source = findCatalogEntry(binding.catalog, edge.sourceRef);
     if (!source || !destination) continue;
-    const sourceSensitivity = runtimeSensitiveClassificationRank(source.classification);
-    if (sourceSensitivity === 0) continue;
-    if (runtimeSensitiveClassificationRank(destination.classification) < sourceSensitivity) {
+    assertReleaseAllowed(
+      source.classification,
+      destination,
+      edge.targetRef.path,
+      requireSensitiveScopes
+    );
+  }
+}
+
+/**
+ * The strict check: every edge is judged by what it reads, whether or not its destination is a
+ * field of the profile (a value made for an edge can be matched to another edge, so an edge that
+ * is not itself released is not exempt).
+ * - An edge's sides must be what they are called: a source reference that says it is a
+ *   destination (or the reverse) is not skipped, it is refused.
+ * - The classification of a source is that of the place it reads (resolveSourceClassification);
+ *   when that cannot be told, or the entry id it names is another place's, the edge is refused.
+ * - One catalog entry id for two different reads is refused.
+ */
+function assertKnownSourcesReleaseSafety(
+  binding: Pick<RuntimeIdentityMappingBinding, 'catalog' | 'edges'>,
+  destinationByKey: Map<string, RuntimeDestinationReleaseField>,
+  requireSensitiveScopes: boolean
+): void {
+  for (const edge of binding.edges) {
+    if (edge.sourceRef.side !== 'source' || edge.targetRef.side !== 'destination') {
       throw new RuntimeIdentityMappingReleaseSafetyError(
-        `Identity mapping cannot lower sensitive classification for ${edge.targetRef.path}`,
-        edge.targetRef.path
+        `Identity mapping edge references are not a source and a destination for ${edge.targetRef.path}`,
+        edge.targetRef.path,
+        'edge_reference_invalid'
       );
     }
-    if (requireSensitiveScopes && destination.requiredScopes.length === 0) {
+  }
+  const [conflict] = findConflictingSourceIds(binding.edges.map((edge) => edge.sourceRef));
+  if (conflict) {
+    throw new RuntimeIdentityMappingReleaseSafetyError(
+      `Identity mapping names one catalog entry for different reads: ${conflict}`,
+      conflict,
+      'source_reference_conflict'
+    );
+  }
+  const entries = binding.catalog.entries.map((entry) => ({
+    ids: [entry.id],
+    namespace: entry.namespace,
+    path: entry.path,
+    classification: entry.classification,
+    targetType: entry.targetType,
+  }));
+  for (const edge of binding.edges) {
+    const classification = resolveSourceClassification(entries, edge.sourceRef);
+    if (classification === null) {
       throw new RuntimeIdentityMappingReleaseSafetyError(
-        `Sensitive destination field must require at least one scope: ${edge.targetRef.path}`,
-        edge.targetRef.path
+        `Identity mapping source classification is unknown for ${edge.targetRef.path}`,
+        edge.targetRef.path,
+        'source_classification_unknown'
       );
     }
+    const destination = destinationByKey.get(edge.targetRef.path);
+    if (destination) {
+      assertReleaseAllowed(
+        classification,
+        destination,
+        edge.targetRef.path,
+        requireSensitiveScopes
+      );
+    }
+  }
+}
+
+function assertReleaseAllowed(
+  sourceClassification: string,
+  destination: RuntimeDestinationReleaseField,
+  field: string,
+  requireSensitiveScopes: boolean
+): void {
+  const sourceSensitivity = sensitiveClassificationRank(sourceClassification);
+  if (sourceSensitivity === 0) return;
+  if (sensitiveClassificationRank(destination.classification) < sourceSensitivity) {
+    throw new RuntimeIdentityMappingReleaseSafetyError(
+      `Identity mapping cannot lower sensitive classification for ${field}`,
+      field,
+      'classification_lowered'
+    );
+  }
+  if (requireSensitiveScopes && destination.requiredScopes.length === 0) {
+    throw new RuntimeIdentityMappingReleaseSafetyError(
+      `Sensitive destination field must require at least one scope: ${field}`,
+      field,
+      'scope_required'
+    );
   }
 }
 
@@ -185,7 +295,12 @@ export async function resolveRuntimeIdentityMappingBinding(
 
   const [catalogEntries, edges, transforms, validationRules, fieldMappingRules] = await Promise.all(
     [
-      loadCatalogEntries(adapter, context.tenantId, selected.catalog_version_id),
+      loadCatalogEntries(
+        adapter,
+        context.tenantId,
+        selected.catalog_version_id,
+        context.resolveCanonicalCatalog === true
+      ),
       selectedEdges ?? loadEdges(adapter, context.tenantId, selected.field_mapping_version_id),
       loadTransforms(adapter, context.tenantId, selected.field_mapping_version_id),
       loadValidationRules(adapter, context.tenantId, selected.field_mapping_version_id),
@@ -402,18 +517,126 @@ function activationScore(
   return score;
 }
 
+/** The catalog id a snapshot of the tenant's canonical fields is compiled against (control plane). */
+const DEFAULT_CANONICAL_CATALOG_ID = 'system_default_canonical_catalog';
+const VIRTUAL_CANONICAL_CATALOG_VERSION = /^system_default_canonical_catalog_schema_v\d+$/;
+
+/** Whether a catalog version is the tenant-fields catalog the control plane derives on the fly. */
+export function isVirtualCanonicalCatalogVersion(catalogVersionId: string): boolean {
+  return VIRTUAL_CANONICAL_CATALOG_VERSION.test(catalogVersionId);
+}
+
 async function loadCatalogEntries(
   adapter: DatabaseAdapter,
   tenantId: string,
-  catalogVersionId: string
+  catalogVersionId: string,
+  resolveCanonicalCatalog: boolean
 ): Promise<CatalogEntryRow[]> {
-  return adapter.query<CatalogEntryRow>(
+  const rows = await adapter.query<CatalogEntryRow>(
     `SELECT *
        FROM field_catalog_entries
       WHERE tenant_id = ? AND catalog_version_id = ?
       ORDER BY namespace ASC, path ASC`,
     [tenantId, catalogVersionId]
   );
+  if (
+    rows.length > 0 ||
+    !resolveCanonicalCatalog ||
+    !isVirtualCanonicalCatalogVersion(catalogVersionId)
+  ) {
+    return rows;
+  }
+  // A snapshot compiled against the tenant's canonical fields names a version the control plane
+  // derives on the fly: nothing is stored under it. The fields it stands for are the stored
+  // default canonical catalog's (the tenant's own fields are added by the caller that can read
+  // them).
+  return adapter.query<CatalogEntryRow>(
+    `SELECT e.*
+       FROM field_catalog_entries e
+      WHERE e.tenant_id = ?
+        AND e.catalog_version_id = (
+          SELECT v.id
+            FROM field_catalog_versions v
+           WHERE v.tenant_id = ?
+             AND v.catalog_id = ?
+             AND v.lifecycle_state = 'active'
+           ORDER BY v.created_at DESC, v.id DESC
+           LIMIT 1
+        )
+      ORDER BY e.namespace ASC, e.path ASC`,
+    [tenantId, tenantId, DEFAULT_CANONICAL_CATALOG_ID]
+  );
+}
+
+interface CustomClaimSchemaRow {
+  id: string;
+  field_key: string;
+  active_field_key: string | null;
+  field_type: string | null;
+  cardinality: string | null;
+  is_pii: number | boolean | null;
+}
+
+/**
+ * The tenant's own fields as canonical catalog entries (what the control plane compiles a
+ * snapshot's virtual canonical catalog from): `field.canonical.<key>`, personal data when the
+ * field is marked PII. `adapter` is the core database, where the field schemas live.
+ */
+export async function loadCustomClaimSchemaCatalogEntries(
+  adapter: DatabaseAdapter,
+  tenantId: string
+): Promise<FieldCatalogBundle['entries']> {
+  const rows = await adapter.query<CustomClaimSchemaRow>(
+    `SELECT id, field_key, active_field_key, field_type, cardinality, is_pii
+       FROM custom_claim_schemas
+      WHERE tenant_id = ?
+        AND is_active = TRUE
+        AND operation_status = 'active'`,
+    [tenantId]
+  );
+  return rows.flatMap((row) => {
+    const key = (row.active_field_key ?? row.field_key)?.trim();
+    if (!key) return [];
+    return [
+      {
+        id: `field.canonical.${key}`,
+        namespace: 'authrim.canonical',
+        path: key,
+        valueType:
+          row.field_type === 'boolean' || row.field_type === 'number' || row.field_type === 'json'
+            ? row.field_type
+            : 'string',
+        cardinality: normalizeCardinality(row.cardinality ?? 'single'),
+        classification: row.is_pii === true || row.is_pii === 1 ? 'pii' : 'internal',
+        targetType: 'canonical' as const,
+      },
+    ];
+  });
+}
+
+/**
+ * `entries` plus the entries the tenant's own fields add: an entry already there keeps the more
+ * sensitive of the two classifications, so merging can only make a release stricter.
+ */
+export function mergeCanonicalCatalogEntries(
+  entries: FieldCatalogBundle['entries'],
+  additions: FieldCatalogBundle['entries']
+): FieldCatalogBundle['entries'] {
+  const merged = [...entries];
+  const indexById = new Map(merged.map((entry, index) => [entry.id, index]));
+  for (const addition of additions) {
+    const index = indexById.get(addition.id);
+    if (index === undefined) {
+      indexById.set(addition.id, merged.length);
+      merged.push(addition);
+    } else if (
+      sensitiveClassificationRank(addition.classification) >
+      sensitiveClassificationRank(merged[index].classification)
+    ) {
+      merged[index] = { ...merged[index], classification: addition.classification };
+    }
+  }
+  return merged;
 }
 
 async function loadEdges(
@@ -511,12 +734,6 @@ function findCatalogEntry(catalog: FieldCatalogBundle, ref: FieldRef) {
       (entry.namespace === ref.namespace && entry.path === ref.path) ||
       entry.aliases?.some((alias) => alias.namespace === ref.namespace && alias.path === ref.path)
   );
-}
-
-function runtimeSensitiveClassificationRank(classification: string): number {
-  if (['regulated', 'secret', 'credential', 'token'].includes(classification)) return 2;
-  if (classification === 'pii') return 1;
-  return 0;
 }
 
 function inferTransformOutputTargetRef(transform: TransformRow, edges: EdgeRow[]): FieldRef {

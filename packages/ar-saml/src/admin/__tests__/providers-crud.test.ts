@@ -694,6 +694,54 @@ describe('SAML provider CRUD boundaries', () => {
     expect(mocks.adapter!.execute).not.toHaveBeenCalled();
   });
 
+  describe('an attribute descriptor that renames an attribute', () => {
+    const create = (attributeDescriptors: Record<string, unknown>) => {
+      mocks.runtimeBinding = {
+        ...mocks.runtimeBinding,
+        edges: [
+          { targetRef: { side: 'destination', namespace: 'saml.attribute', path: 'mail' } },
+          { targetRef: { side: 'destination', namespace: 'saml.attribute', path: 'displayName' } },
+        ],
+        transforms: [],
+      };
+      return handleCreateProvider(
+        context({
+          body: {
+            name: 'Provider',
+            providerType: 'saml_sp',
+            config: {
+              entityId: 'https://sp.example.test',
+              acsUrl: 'https://sp.example.test/acs',
+              identityMapping: {
+                fieldMappingSetId: 'saml-sp',
+                attributeDescriptors,
+                destinationFieldPolicies: {
+                  mail: 'optional',
+                  displayName: 'optional',
+                  eduPersonAffiliation: 'optional',
+                },
+              },
+            },
+          },
+        })
+      );
+    };
+
+    it('is refused: the release policy and classification check are by profile field', async () => {
+      const response = await create({ mail: { name: 'displayName' } });
+      expect(response.status).toBe(400);
+      expect(mocks.adapter!.execute).not.toHaveBeenCalled();
+    });
+
+    it('may restate the name, and set the friendly name and format', async () => {
+      const response = await create({
+        mail: { name: 'mail', friendlyName: 'Email' },
+        displayName: { friendlyName: 'Name' },
+      });
+      expect(response.status).toBe(201);
+    });
+  });
+
   it('rejects an unsupported attribute release consent mode', async () => {
     const response = await handleCreateProvider(
       context({

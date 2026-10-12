@@ -535,7 +535,15 @@ export async function filterSamlAttributesByDestinationConsentWithStatus<
     );
   }
   if (input.releaseSafetyBinding) {
-    assertRuntimeIdentityMappingReleaseSafety(input.releaseSafetyBinding, descriptor.fields, false);
+    // A SAML field is released only from a source whose classification is known.
+    assertRuntimeIdentityMappingReleaseSafety(
+      input.releaseSafetyBinding,
+      descriptor.fields,
+      false,
+      {
+        requireKnownSources: true,
+      }
+    );
   }
 
   const profileFields = new Set(descriptor.fields.map((field) => field.key));

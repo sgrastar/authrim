@@ -2259,6 +2259,322 @@ describe('IdentityMappingControlPlaneRepository policy activation', () => {
     expect(adapter.executes).toHaveLength(0);
   });
 
+  function activationFixture(input: {
+    catalogVersionId: string;
+    sourceRef: Record<string, unknown>;
+    extraSourceRefs?: Record<string, unknown>[];
+    /** Also hold a rule that brings a source profile's field in (no destination profile). */
+    inputRules?: boolean;
+    destinationType: 'saml' | 'oidc';
+    claim: Record<string, unknown>;
+    storedCatalogRows?: Record<string, unknown>[];
+  }) {
+    const profileRow = {
+      id: 'profile_target',
+      tenant_id: 'tenant_a',
+      destination_type: input.destinationType,
+      lifecycle_state: 'active',
+      schema_json: JSON.stringify(
+        input.destinationType === 'saml'
+          ? { destinationType: 'saml', attributes: [input.claim] }
+          : { destinationType: 'oidc', claims: [input.claim] }
+      ),
+    };
+    const adapter = createAdapter({
+      queryOneRows: [
+        {
+          id: 'policy_version_1',
+          tenant_id: 'tenant_a',
+          field_mapping_set_id: 'policy_1',
+          version_label: 'v1',
+          lifecycle_state: 'published',
+          field_mapping_hash: 'field_mapping_hash_1',
+        },
+        {
+          id: 'snapshot_1',
+          tenant_id: 'tenant_a',
+          field_mapping_version_id: 'policy_version_1',
+          catalog_version_id: input.catalogVersionId,
+          snapshot_hash: 'snapshot_hash_1',
+          lifecycle_state: 'draft',
+        },
+      ],
+      queryRowSets: [
+        [
+          ...(input.inputRules
+            ? [
+                {
+                  source_ref_json: JSON.stringify({
+                    side: 'source',
+                    namespace: 'scim.attribute',
+                    path: 'userName',
+                    // Another field's id: not a conflict with the release edges, which it is not part of.
+                    catalogEntryId: 'field.canonical.vault',
+                  }),
+                  target_ref_json: JSON.stringify({
+                    side: 'destination',
+                    namespace: 'authrim.profile',
+                    path: 'preferred_username',
+                  }),
+                },
+              ]
+            : []),
+          ...[input.sourceRef, ...(input.extraSourceRefs ?? [])].map((sourceRef) => ({
+            source_ref_json: JSON.stringify({ side: 'source', ...sourceRef }),
+            target_ref_json: JSON.stringify({
+              side: 'destination',
+              namespace: input.destinationType === 'saml' ? 'saml.attribute' : 'oidc.claim',
+              path: 'target',
+              profileId: 'destination-profile-profile_target',
+            }),
+          })),
+        ],
+        ...(input.storedCatalogRows ? [input.storedCatalogRows] : []),
+        [profileRow],
+      ],
+    });
+    return new IdentityMappingControlPlaneRepository(
+      adapter,
+      () => 1000,
+      createAdapter({ queryRows: [] })
+    );
+  }
+  const activate = (repository: IdentityMappingControlPlaneRepository) =>
+    repository.activateFieldMappingVersion('tenant_a', 'policy_1', 'policy_version_1', {
+      snapshotId: 'snapshot_1',
+      activationScope: { kind: 'tenant', id: 'tenant_a' },
+    });
+  const storedRow = (classification: string) => ({
+    entry_id: 'entry_vault',
+    stable_field_id: 'field.canonical.vault',
+    namespace: 'authrim.canonical',
+    path: 'vault',
+    target_taxonomy: 'canonical',
+    value_type: 'string',
+    cardinality: 'single',
+    classification,
+  });
+  const vaultRef = {
+    namespace: 'authrim.profile',
+    path: 'vault',
+    catalogEntryId: 'field.canonical.vault',
+  };
+
+  it.each(['key_material', 'secret', 'credential', 'token'])(
+    'rejects activation when a %s source goes to a public destination',
+    async (classification) => {
+      const repository = activationFixture({
+        catalogVersionId: 'catalog_version_stored',
+        sourceRef: vaultRef,
+        destinationType: 'saml',
+        claim: { name: 'target', classification: 'public' },
+        storedCatalogRows: [storedRow(classification)],
+      });
+      await expect(activate(repository)).rejects.toMatchObject({
+        status: 400,
+        message: expect.stringContaining('cannot lower classification'),
+      });
+    }
+  );
+
+  it('activates a key_material source going to a key_material destination', async () => {
+    const repository = activationFixture({
+      catalogVersionId: 'catalog_version_stored',
+      sourceRef: vaultRef,
+      destinationType: 'saml',
+      claim: { name: 'target', classification: 'key_material' },
+      storedCatalogRows: [storedRow('key_material')],
+    });
+    await expect(activate(repository)).resolves.toMatchObject({ lifecycleState: 'active' });
+  });
+
+  it('rejects activation of a SAML attribute from a source whose classification is unknown', async () => {
+    const repository = activationFixture({
+      catalogVersionId: 'catalog_version_stored',
+      storedCatalogRows: [],
+      sourceRef: { namespace: 'authrim.claim', path: 'email' },
+      destinationType: 'saml',
+      claim: { name: 'target', classification: 'public' },
+    });
+    await expect(activate(repository)).rejects.toMatchObject({
+      status: 400,
+      message: expect.stringContaining('mapping source classification is unknown'),
+    });
+  });
+
+  it('rejects activation from a runtime-defined source that reads another path', async () => {
+    const repository = activationFixture({
+      catalogVersionId: 'catalog_version_stored',
+      storedCatalogRows: [],
+      sourceRef: {
+        namespace: 'authrim.profile',
+        path: 'email',
+        catalogEntryId: 'system.identity.edu_person_assurance',
+      },
+      destinationType: 'saml',
+      claim: { name: 'target', classification: 'public' },
+    });
+    await expect(activate(repository)).rejects.toMatchObject({ status: 400 });
+  });
+
+  it.each([
+    ['a source side that says destination', { ...vaultRef, side: 'destination' }],
+    ['a source side that says anything else', { ...vaultRef, side: 'both' }],
+  ])('rejects activation with %s, instead of skipping the edge', async (_name, sourceRef) => {
+    const repository = activationFixture({
+      catalogVersionId: 'catalog_version_stored',
+      sourceRef,
+      destinationType: 'saml',
+      claim: { name: 'target', classification: 'public' },
+      storedCatalogRows: [storedRow('key_material')],
+    });
+    await expect(activate(repository)).rejects.toMatchObject({
+      status: 400,
+      message: expect.stringContaining('must be a source and a destination'),
+    });
+  });
+
+  it('rejects activation when the catalog entry a source names describes another place', async () => {
+    const repository = activationFixture({
+      catalogVersionId: 'catalog_version_stored',
+      sourceRef: { ...vaultRef, path: 'something_else' },
+      destinationType: 'saml',
+      claim: { name: 'target', classification: 'public' },
+      storedCatalogRows: [storedRow('key_material')],
+    });
+    await expect(activate(repository)).rejects.toMatchObject({
+      status: 400,
+      message: expect.stringContaining('missing from compiled catalog'),
+    });
+  });
+
+  it('rejects activation when one catalog entry id stands for two sources', async () => {
+    const repository = activationFixture({
+      catalogVersionId: 'catalog_version_stored',
+      sourceRef: vaultRef,
+      extraSourceRefs: [{ ...vaultRef, path: 'other' }],
+      destinationType: 'saml',
+      claim: { name: 'target', classification: 'key_material' },
+      storedCatalogRows: [storedRow('key_material')],
+    });
+    await expect(activate(repository)).rejects.toMatchObject({
+      status: 400,
+      message: expect.stringContaining('different sources'),
+    });
+  });
+
+  it('judges a spelling of a place by the place: custom_claims.x under the profile is the secret customClaims.x', async () => {
+    const repository = activationFixture({
+      catalogVersionId: 'catalog_version_stored',
+      sourceRef: {
+        namespace: 'authrim.profile',
+        path: 'custom_claims.entitlement',
+        catalogEntryId: 'field.canonical.public_spelling',
+      },
+      destinationType: 'saml',
+      claim: { name: 'target', classification: 'public' },
+      storedCatalogRows: [
+        {
+          ...storedRow('public'),
+          entry_id: 'entry_public',
+          stable_field_id: 'field.canonical.public_spelling',
+          namespace: 'authrim.profile',
+          path: 'custom_claims.entitlement',
+        },
+        {
+          ...storedRow('secret'),
+          entry_id: 'entry_secret',
+          stable_field_id: 'field.canonical.secret',
+          namespace: 'authrim.custom_claims',
+          path: 'entitlement',
+        },
+      ],
+    });
+    await expect(activate(repository)).rejects.toMatchObject({
+      status: 400,
+      message: expect.stringContaining('cannot lower classification'),
+    });
+  });
+
+  it('does not judge the rules that bring a source profile in, only those that release to a destination', async () => {
+    const repository = activationFixture({
+      catalogVersionId: 'catalog_version_stored',
+      sourceRef: vaultRef,
+      destinationType: 'saml',
+      claim: { name: 'target', classification: 'key_material' },
+      storedCatalogRows: [storedRow('key_material')],
+      inputRules: true,
+    });
+    await expect(activate(repository)).resolves.toMatchObject({ lifecycleState: 'active' });
+  });
+
+  it('activates over a catalog that holds fields named like members of Object.prototype', async () => {
+    const oddRows = ['constructor', '__proto__', 'toString', 'hasOwnProperty'].map((path) => ({
+      ...storedRow('internal'),
+      entry_id: `entry_${path}`,
+      stable_field_id: `field.canonical.${path}`,
+      path,
+    }));
+    const repository = activationFixture({
+      catalogVersionId: 'catalog_version_stored',
+      sourceRef: vaultRef,
+      destinationType: 'saml',
+      claim: { name: 'target', classification: 'key_material' },
+      storedCatalogRows: [...oddRows, storedRow('key_material')],
+    });
+    await expect(activate(repository)).resolves.toMatchObject({ lifecycleState: 'active' });
+  });
+
+  it('reads such a field like any other: a constructor field marked secret may not go to a public one', async () => {
+    const repository = activationFixture({
+      catalogVersionId: 'catalog_version_stored',
+      sourceRef: {
+        namespace: 'authrim.profile',
+        path: 'constructor',
+        catalogEntryId: 'field.canonical.constructor',
+      },
+      destinationType: 'saml',
+      claim: { name: 'target', classification: 'public' },
+      storedCatalogRows: [
+        {
+          ...storedRow('secret'),
+          entry_id: 'entry_c',
+          stable_field_id: 'field.canonical.constructor',
+          path: 'constructor',
+        },
+      ],
+    });
+    await expect(activate(repository)).rejects.toMatchObject({
+      status: 400,
+      message: expect.stringContaining('cannot lower classification'),
+    });
+  });
+
+  it('classifies a source by the place it reads: a namespace other than the catalog entry’s is the same field', async () => {
+    const repository = activationFixture({
+      catalogVersionId: 'catalog_version_stored',
+      sourceRef: { namespace: 'authrim.claim', path: 'vault' },
+      destinationType: 'saml',
+      claim: { name: 'target', classification: 'public' },
+      storedCatalogRows: [storedRow('key_material')],
+    });
+    await expect(activate(repository)).rejects.toMatchObject({
+      status: 400,
+      message: expect.stringContaining('cannot lower classification'),
+    });
+  });
+
+  it('leaves a source of an unknown namespace to a non-SAML destination as it was', async () => {
+    const repository = activationFixture({
+      catalogVersionId: 'catalog_version_stored',
+      storedCatalogRows: [],
+      sourceRef: { namespace: 'authrim.claim', path: 'email' },
+      destinationType: 'oidc',
+      claim: { claimName: 'target', classification: 'public', requiredScopes: [] },
+    });
+    await expect(activate(repository)).resolves.toMatchObject({ lifecycleState: 'active' });
+  });
+
   it('deactivates an active field mapping set version', async () => {
     const adapter = createAdapter({});
     const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
