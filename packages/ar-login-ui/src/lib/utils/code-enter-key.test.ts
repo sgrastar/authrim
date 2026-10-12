@@ -16,18 +16,29 @@ describe('handleCodeEnterKey', () => {
 		expect(event.preventDefault).toHaveBeenCalledTimes(1);
 	});
 
+	it('ignores other keys without touching them', () => {
+		for (const overrides of [{ key: 'a' }, { key: 'Tab' }]) {
+			const event = key(overrides);
+			const submit = vi.fn();
+			expect(handleCodeEnterKey(event, submit)).toBe(false);
+			expect(submit).not.toHaveBeenCalled();
+			expect(event.preventDefault).not.toHaveBeenCalled();
+		}
+	});
+
 	it.each([
-		['another key', { key: 'a' }],
-		['Tab', { key: 'Tab' }],
 		['an Enter that confirms an IME conversion', { isComposing: true }],
 		['the IME process key code', { keyCode: 229 }]
-	])('does nothing for %s', (_name, overrides) => {
-		const event = key(overrides);
-		const submit = vi.fn();
-		expect(handleCodeEnterKey(event, submit)).toBe(false);
-		expect(submit).not.toHaveBeenCalled();
-		expect(event.preventDefault).not.toHaveBeenCalled();
-	});
+	])(
+		'does not submit the code for %s, but still keeps the form from reacting to it',
+		(_name, overrides) => {
+			const event = key(overrides);
+			const submit = vi.fn();
+			expect(handleCodeEnterKey(event, submit)).toBe(false);
+			expect(submit).not.toHaveBeenCalled();
+			expect(event.preventDefault).toHaveBeenCalledTimes(1);
+		}
+	);
 });
 
 const read = (path: string) => readFileSync(resolve(__dirname, path), 'utf8');

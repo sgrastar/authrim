@@ -74,6 +74,7 @@ import {
 } from './registration-field-utils';
 import { resolveSessionTtl } from './session-ttl';
 import { provisionTenantD1EmailAccount, usesTenantD1AccountStorage } from './account-provisioning';
+import { isAuthenticationMethodUsageEnabled } from './authentication-method-settings';
 import { timeAuthRequestDiagnosticOperation } from './request-diagnostics';
 
 const OTP_SESSION_COOKIE = 'authrim_otp_session';
@@ -137,6 +138,71 @@ async function constantTimeWrapper<T>(operation: () => Promise<T>): Promise<T> {
 }
 
 /**
+ * The public reply to a send: the one a sent code gets, with an OTP cookie. It is also the reply
+ * when nothing was sent (a method the tenant has switched off, an address that may not sign up, a
+ * failure while sending), so what comes back never tells whether the address has an account.
+ * Failures are for the logs, not for the caller.
+ */
+async function suppressedSendResponse(c: Context<{ Bindings: Env }>, tenantId: string) {
+  const otpSessionId = crypto.randomUUID();
+  setCookie(c, OTP_SESSION_COOKIE, otpSessionId, {
+    path: '/',
+    httpOnly: true,
+    secure: true,
+    sameSite: 'Lax',
+    maxAge: await resolveEmailCodeTtlSeconds(c.env, tenantId),
+  });
+  return c.json({
+    success: true,
+    message: 'Verification code sent to your email',
+    messageId: `email-code:${otpSessionId}`,
+  });
+}
+
+/**
+ * Records, in the audit log, a failure the caller is not told about (see suppressedSendResponse).
+ * Neither the address nor the code is written: the address only as its hash.
+ */
+async function auditHiddenSendFailure(
+  c: Context<{ Bindings: Env }>,
+  tenantId: string,
+  failure: { reason: string; email: string; userId?: string }
+): Promise<void> {
+  let resourceId = 'unknown';
+  try {
+    resourceId = await hashEmail(failure.email.toLowerCase());
+  } catch {
+    // The entry is still worth writing without the address hash.
+  }
+  const audit = createAuditLog(c.env, {
+    tenantId,
+    userId: failure.userId ?? 'anonymous',
+    action: 'auth.email_code.send_failed',
+    resource: 'email_code',
+    resourceId,
+    ipAddress:
+      c.req.header('CF-Connecting-IP') ||
+      c.req.header('X-Forwarded-For')?.split(',')[0] ||
+      'unknown',
+    userAgent: c.req.header('User-Agent') || 'unknown',
+    metadata: JSON.stringify({ method: 'email_code', reason: failure.reason }),
+    severity: 'warning',
+  }).catch((err) => {
+    getLogger(c)
+      .module('EMAIL-CODE')
+      .error('Failed to create audit log for a hidden email code failure', {
+        action: 'audit_log',
+        errorType: err instanceof Error ? err.name : 'Unknown',
+      });
+  });
+  try {
+    c.executionCtx.waitUntil(audit);
+  } catch {
+    await audit;
+  }
+}
+
+/**
  * Send Email Code (OTP)
  * POST /api/auth/email-code/send
  *
@@ -188,253 +254,320 @@ export async function emailCodeSendHandler(c: Context<{ Bindings: Env }>) {
         });
       }
 
-      // Check if user exists, if not create a new canonical runtime user.
-      let user: { id: string; email: string; name: string | null } | null = null;
-      const tenantD1 = usesTenantD1AccountStorage(c);
-      let runtimeUsers: CanonicalRuntimeUserStore | null = null;
-      const normalizedEmail = email.toLowerCase();
-      let routedUser: CanonicalOtpLoginUser | null = null;
-      let customFieldValues: Record<string, string> = {};
-
-      if (tenantD1) {
-        try {
-          const accountData = await resolveOtpAccountCoreDataContextByIdentifierFromHono(c, {
-            indexKind: 'email_exact',
-            identifier: normalizedEmail,
-            trustedEmail: normalizedEmail,
-          });
-          routedUser = accountData.user.active === 1 ? accountData.user : null;
-        } catch (error) {
-          if (!(error instanceof Error) || error.message !== 'account_data_route_not_found') {
-            throw error;
-          }
-        }
-      } else {
-        runtimeUsers = createCanonicalRuntimeUserStore(c, tenantId);
-      }
-
-      const existingUser = tenantD1 ? routedUser : await runtimeUsers?.findByEmail(normalizedEmail);
-      if (existingUser) {
-        user = {
-          id: existingUser.id,
-          email: existingUser.email ?? normalizedEmail,
-          name: existingUser.name || null,
-        };
-      }
-
-      if (!user) {
-        const customFieldValidation = await validateRegistrationFieldSubmissionFromEnv(
-          c.env,
-          tenantId,
-          {
-            ...(custom_fields ?? {}),
-            email: normalizedEmail,
-            'field.canonical.email': normalizedEmail,
-            ...(name ? { name, 'field.canonical.name': name } : {}),
-          }
-        );
-        if (!customFieldValidation.ok) {
-          return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_FORMAT, {
-            variables: { field: 'custom_fields', reason: customFieldValidation.error },
-            extensions: customFieldValidation.missingRequiredFields
-              ? {
-                  missing_required_fields: customFieldValidation.missingRequiredFields.map(
-                    (field) => ({
-                      field_key: field.fieldKey,
-                      label: field.label,
-                      field_type: field.fieldType,
-                    })
-                  ),
-                }
-              : undefined,
-          });
-        }
-        customFieldValues = customFieldValidation.values;
-        const canonicalProfileFields = buildCanonicalProfileRuntimeUserFields({
-          ...(custom_fields ?? {}),
-          ...customFieldValues,
+      // This endpoint signs a person in with an email code, so it works only where the tenant
+      // allows email code for login. Signing up with an email code is the Direct Auth API's job
+      // (/api/v1/auth/direct/email-code/*, which the Login UI uses); a tenant that allows only
+      // signup has nothing here. When it is off nothing happens (no account, no code, no mail).
+      if (!(await isAuthenticationMethodUsageEnabled(c.env, tenantId, 'email_otp', 'login'))) {
+        log.warn('Suppressing email-code send because email OTP login is disabled', {
+          action: 'email_code_send_suppressed',
         });
-
-        const userId = await generateUserIdFromSettings(c.env, tenantId, c.env);
-        const defaultName = name || null;
-        const preferredUsername = normalizedEmail.split('@')[0];
-        const runtimeUser = {
-          active: true as const,
-          emailVerified: false,
-          userType: 'end_user',
-          displayName: defaultName,
-          sourceRef: 'auth:email_code',
-          piiFields: {
-            ...canonicalProfileFields.piiFields,
-            email: true,
-            ...(defaultName ? { name: true } : {}),
-          },
-          sensitiveValues: {
-            ...canonicalProfileFields.sensitiveValues,
-            email: normalizedEmail,
-            ...(defaultName ? { name: defaultName } : {}),
-          },
-          customAttributesJson: JSON.stringify({
-            preferred_username: preferredUsername,
-          }),
-        };
-
-        try {
-          if (tenantD1) {
-            const provisioned = await provisionTenantD1EmailAccount(c, {
-              tenantId,
-              candidateUserId: userId,
-              flow: 'email_code',
-              email: normalizedEmail,
-              runtimeUser,
-            });
-            if (provisioned.status === 'pending') return provisioned.response;
-            user = {
-              id: provisioned.userId,
-              email: normalizedEmail,
-              name: defaultName,
-            };
-          } else {
-            await runtimeUsers!.syncUser({
-              userId,
-              email: normalizedEmail,
-              name: defaultName,
-              active: true,
-              emailVerified: false,
-              userType: 'end_user',
-              sourceRef: 'email_code',
-              piiFields: canonicalProfileFields.piiFields,
-              sensitiveValues: canonicalProfileFields.sensitiveValues,
-              customAttributesJson: runtimeUser.customAttributesJson,
-            });
-          }
-        } catch (piiError: unknown) {
-          const writeFenceResponse = createTenantPlacementWriteFenceResponse(c, piiError);
-          if (writeFenceResponse) return writeFenceResponse;
-          // PII Protection: Don't log full error (may contain PII)
-          log.error(
-            'Failed to create canonical runtime user',
-            { action: 'runtime_user_create' },
-            piiError instanceof Error ? piiError : undefined
-          );
-          return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
-        }
-
-        user ??= {
-          id: userId,
-          email: normalizedEmail,
-          name: defaultName || email.split('@')[0],
-        };
+        return suppressedSendResponse(c, tenantId);
       }
-
-      // Generate OTP session ID for session binding
-      const otpSessionId = crypto.randomUUID();
-      const issuedAt = Date.now();
-
-      // Generate 6-digit OTP code
-      const code = generateEmailCode();
 
       const hmacSecret = c.env.OTP_HMAC_SECRET;
       if (!hmacSecret) {
         log.error('OTP_HMAC_SECRET must be configured for email-code auth', {
           action: 'email_code_send',
         });
-        return createErrorResponse(c, AR_ERROR_CODES.CONFIG_MISSING_SECRET);
+        await auditHiddenSendFailure(c, tenantId, { reason: 'otp_secret_missing', email });
+        return suppressedSendResponse(c, tenantId);
       }
 
-      // Hash the code and get ChallengeStore in parallel (independent operations), with the
-      // tenant's email code lifetime (credentials.email_code_ttl).
-      const [codeHash, emailHash, challengeStore, emailCodeTtl] = await Promise.all([
-        hashEmailCode(code, email.toLowerCase(), otpSessionId, issuedAt, hmacSecret),
-        hashEmail(email.toLowerCase()),
-        getChallengeStoreByChallengeId(c.env, otpSessionId, getTenantIdFromContext(c)),
-        resolveEmailCodeTtlSeconds(c.env, getTenantIdFromContext(c)),
-      ]);
+      // From here on, what the caller sees must not depend on whether the address has an account:
+      // whatever fails (finding the account, routing, reading it, hashing, saving the code,
+      // creating an account, a write fence) is logged and audited and answered with the usual
+      // reply. A failed lookup is never taken for "no such account": it ends the request here, so
+      // nothing is created. (Known limit: the reply waits at least MIN_RESPONSE_TIME_MS plus
+      // jitter, so a lookup, save or send that runs past that still shows in the timing.)
+      try {
+        // Check if user exists, if not create a new canonical runtime user.
+        let user: { id: string; email: string; name: string | null } | null = null;
+        const tenantD1 = usesTenantD1AccountStorage(c);
+        let runtimeUsers: CanonicalRuntimeUserStore | null = null;
+        const normalizedEmail = email.toLowerCase();
+        let routedUser: CanonicalOtpLoginUser | null = null;
+        let customFieldValues: Record<string, string> = {};
 
-      await challengeStore.storeChallengeRpc({
-        id: `email_code:${otpSessionId}`,
-        tenantId: getTenantIdFromContext(c),
-        type: 'email_code',
-        userId: user.id as string,
-        challenge: codeHash, // Store hash, not plaintext
-        ttl: emailCodeTtl,
-        email: email.toLowerCase(),
-        metadata: {
-          email_hash: emailHash,
-          otp_session_id: otpSessionId,
-          issued_at: issuedAt,
-          purpose: 'login',
-          ...(Object.keys(customFieldValues).length > 0
-            ? { custom_fields: customFieldValues }
-            : {}),
-        },
-      });
+        if (tenantD1) {
+          try {
+            const accountData = await resolveOtpAccountCoreDataContextByIdentifierFromHono(c, {
+              indexKind: 'email_exact',
+              identifier: normalizedEmail,
+              trustedEmail: normalizedEmail,
+            });
+            routedUser = accountData.user.active === 1 ? accountData.user : null;
+          } catch (error) {
+            if (!(error instanceof Error) || error.message !== 'account_data_route_not_found') {
+              throw error;
+            }
+          }
+        } else {
+          runtimeUsers = createCanonicalRuntimeUserStore(c, tenantId);
+        }
 
-      // Set OTP session cookie
-      setCookie(c, OTP_SESSION_COOKIE, otpSessionId, {
-        path: '/',
-        httpOnly: true,
-        secure: true,
-        sameSite: 'Lax',
-        maxAge: emailCodeTtl,
-      });
+        const existingUser = tenantD1
+          ? routedUser
+          : await runtimeUsers?.findByEmail(normalizedEmail);
+        if (existingUser) {
+          user = {
+            id: existingUser.id,
+            email: existingUser.email ?? normalizedEmail,
+            name: existingUser.name || null,
+          };
+        }
 
-      const fromEmail = c.env.EMAIL_FROM || 'noreply@authrim.dev';
+        // An address with no account is signed up only where the tenant allows email code for
+        // signup; otherwise nothing is created or sent, and the reply is the usual one.
+        if (
+          !user &&
+          !(await isAuthenticationMethodUsageEnabled(c.env, tenantId, 'email_otp', 'signup'))
+        ) {
+          log.warn('Suppressing email-code send because email OTP signup is disabled', {
+            action: 'email_code_send_suppressed',
+          });
+          return suppressedSendResponse(c, tenantId);
+        }
 
-      // Authentication-Info header for OTP AutoFill (Safari/iOS)
-      // This enables domain-bound code verification for phishing protection
-      const authenticationInfoHeader = `<${getRequestIssuer(c)}>; otpauth=email`;
+        if (!user) {
+          const customFieldValidation = await validateRegistrationFieldSubmissionFromEnv(
+            c.env,
+            tenantId,
+            {
+              ...(custom_fields ?? {}),
+              email: normalizedEmail,
+              'field.canonical.email': normalizedEmail,
+              ...(name ? { name, 'field.canonical.name': name } : {}),
+            }
+          );
+          if (!customFieldValidation.ok) {
+            return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_FORMAT, {
+              variables: { field: 'custom_fields', reason: customFieldValidation.error },
+              extensions: customFieldValidation.missingRequiredFields
+                ? {
+                    missing_required_fields: customFieldValidation.missingRequiredFields.map(
+                      (field) => ({
+                        field_key: field.fieldKey,
+                        label: field.label,
+                        field_type: field.fieldType,
+                      })
+                    ),
+                  }
+                : undefined,
+            });
+          }
+          customFieldValues = customFieldValidation.values;
+          const canonicalProfileFields = buildCanonicalProfileRuntimeUserFields({
+            ...(custom_fields ?? {}),
+            ...customFieldValues,
+          });
 
-      const delivery = await produceNotificationDelivery(c.env, {
-        owner: { owner: 'tenant', tenantId: getTenantIdFromContext(c) },
-        intentId: `email-code:${otpSessionId}`,
-        outboxId: `notification:${otpSessionId}`,
-        notificationKind: 'auth.email-code',
-        accountId: user.id as string,
-        idempotencyKey: `email-code:${otpSessionId}`,
-        expiresAt: Math.floor(issuedAt / 1000) + emailCodeTtl,
-        payload: {
-          channel: 'email',
-          to: email,
-          from: fromEmail,
-          subject: 'Your Authrim verification code',
-          body: getEmailCodeHtml({
-            name: (user.name as string) || undefined,
-            email,
-            code,
-            expiresInMinutes: Math.ceil(emailCodeTtl / 60),
-            appName: 'Authrim',
-            logoUrl: undefined,
-          }),
-          metadata: {
-            // Plain text version for email clients that prefer it
-            textBody: getEmailCodeText({
-              name: (user.name as string) || undefined,
-              email,
-              code,
-              expiresInMinutes: Math.ceil(emailCodeTtl / 60),
-              appName: 'Authrim',
-            }),
-            // OTP AutoFill header for Safari/iOS
-            headers: {
-              'Authentication-Info': authenticationInfoHeader,
+          const userId = await generateUserIdFromSettings(c.env, tenantId, c.env);
+          const defaultName = name || null;
+          const preferredUsername = normalizedEmail.split('@')[0];
+          const runtimeUser = {
+            active: true as const,
+            emailVerified: false,
+            userType: 'end_user',
+            displayName: defaultName,
+            sourceRef: 'auth:email_code',
+            piiFields: {
+              ...canonicalProfileFields.piiFields,
+              email: true,
+              ...(defaultName ? { name: true } : {}),
             },
-          },
-        },
-      });
+            sensitiveValues: {
+              ...canonicalProfileFields.sensitiveValues,
+              email: normalizedEmail,
+              ...(defaultName ? { name: defaultName } : {}),
+            },
+            customAttributesJson: JSON.stringify({
+              preferred_username: preferredUsername,
+            }),
+          };
 
-      if (delivery.delivery === 'permanent_failure') {
+          try {
+            if (tenantD1) {
+              const provisioned = await provisionTenantD1EmailAccount(c, {
+                tenantId,
+                candidateUserId: userId,
+                flow: 'email_code',
+                email: normalizedEmail,
+                runtimeUser,
+              });
+              if (provisioned.status === 'pending') return provisioned.response;
+              user = {
+                id: provisioned.userId,
+                email: normalizedEmail,
+                name: defaultName,
+              };
+            } else {
+              await runtimeUsers!.syncUser({
+                userId,
+                email: normalizedEmail,
+                name: defaultName,
+                active: true,
+                emailVerified: false,
+                userType: 'end_user',
+                sourceRef: 'email_code',
+                piiFields: canonicalProfileFields.piiFields,
+                sensitiveValues: canonicalProfileFields.sensitiveValues,
+                customAttributesJson: runtimeUser.customAttributesJson,
+              });
+            }
+          } catch (piiError: unknown) {
+            // PII Protection: Don't log full error (may contain PII)
+            log.error(
+              'Failed to create canonical runtime user',
+              { action: 'runtime_user_create' },
+              piiError instanceof Error ? piiError : undefined
+            );
+            // The reply must not tell a new address from one that has an account.
+            await auditHiddenSendFailure(c, tenantId, { reason: 'account_create_failed', email });
+            return suppressedSendResponse(c, tenantId);
+          }
+
+          user ??= {
+            id: userId,
+            email: normalizedEmail,
+            name: defaultName || email.split('@')[0],
+          };
+        }
+
+        // The account the code is for (found or just created); fixed here for the closures below.
+        const account = user as { id: string; email: string; name: string | null };
+
+        // Generate OTP session ID for session binding
+        const otpSessionId = crypto.randomUUID();
+        const issuedAt = Date.now();
+
+        // Generate 6-digit OTP code
+        const code = generateEmailCode();
+
+        // Hash the code and get ChallengeStore in parallel (independent operations), with the
+        // tenant's email code lifetime (credentials.email_code_ttl).
+        const [codeHash, emailHash, challengeStore, emailCodeTtl] = await Promise.all([
+          hashEmailCode(code, email.toLowerCase(), otpSessionId, issuedAt, hmacSecret),
+          hashEmail(email.toLowerCase()),
+          getChallengeStoreByChallengeId(c.env, otpSessionId, getTenantIdFromContext(c)),
+          resolveEmailCodeTtlSeconds(c.env, getTenantIdFromContext(c)),
+        ]);
+
+        await challengeStore.storeChallengeRpc({
+          id: `email_code:${otpSessionId}`,
+          tenantId: getTenantIdFromContext(c),
+          type: 'email_code',
+          userId: account.id,
+          challenge: codeHash, // Store hash, not plaintext
+          ttl: emailCodeTtl,
+          email: email.toLowerCase(),
+          metadata: {
+            email_hash: emailHash,
+            otp_session_id: otpSessionId,
+            issued_at: issuedAt,
+            purpose: 'login',
+            ...(Object.keys(customFieldValues).length > 0
+              ? { custom_fields: customFieldValues }
+              : {}),
+          },
+        });
+
+        // Set OTP session cookie
+        setCookie(c, OTP_SESSION_COOKIE, otpSessionId, {
+          path: '/',
+          httpOnly: true,
+          secure: true,
+          sameSite: 'Lax',
+          maxAge: emailCodeTtl,
+        });
+
+        const fromEmail = c.env.EMAIL_FROM || 'noreply@authrim.dev';
+
+        // Authentication-Info header for OTP AutoFill (Safari/iOS)
+        // This enables domain-bound code verification for phishing protection
+        const authenticationInfoHeader = `<${getRequestIssuer(c)}>; otpauth=email`;
+
+        const sendCode = async () => {
+          const delivery = await produceNotificationDelivery(c.env, {
+            owner: { owner: 'tenant', tenantId: getTenantIdFromContext(c) },
+            intentId: `email-code:${otpSessionId}`,
+            outboxId: `notification:${otpSessionId}`,
+            notificationKind: 'auth.email-code',
+            accountId: account.id,
+            idempotencyKey: `email-code:${otpSessionId}`,
+            expiresAt: Math.floor(issuedAt / 1000) + emailCodeTtl,
+            payload: {
+              channel: 'email',
+              to: email,
+              from: fromEmail,
+              subject: 'Your Authrim verification code',
+              body: getEmailCodeHtml({
+                name: account.name || undefined,
+                email,
+                code,
+                expiresInMinutes: Math.ceil(emailCodeTtl / 60),
+                appName: 'Authrim',
+                logoUrl: undefined,
+              }),
+              metadata: {
+                // Plain text version for email clients that prefer it
+                textBody: getEmailCodeText({
+                  name: account.name || undefined,
+                  email,
+                  code,
+                  expiresInMinutes: Math.ceil(emailCodeTtl / 60),
+                  appName: 'Authrim',
+                }),
+                // OTP AutoFill header for Safari/iOS
+                headers: {
+                  'Authentication-Info': authenticationInfoHeader,
+                },
+              },
+            },
+          });
+          if (delivery.delivery === 'permanent_failure') {
+            throw new Error('notification_delivery_permanent_failure');
+          }
+        };
+
+        // The mail goes out after the reply, so how long it takes does not show in the reply's
+        // timing, and a failure cannot change what the caller is told (the code is taken back and
+        // the failure is logged, as the Direct Auth API does).
+        const deliver = sendCode().catch(async (error: unknown) => {
+          log.error('Failed to send email code', {
+            action: 'email_send',
+            errorType: error instanceof Error ? error.name : 'Unknown',
+          });
+          await auditHiddenSendFailure(c, tenantId, {
+            reason: 'delivery_failed',
+            email,
+            userId: account.id,
+          });
+          try {
+            await challengeStore.deleteChallengeRpc(`email_code:${otpSessionId}`);
+          } catch {
+            // The code expires on its own.
+          }
+        });
+        try {
+          c.executionCtx.waitUntil(deliver);
+        } catch {
+          await deliver;
+        }
+
+        return c.json({
+          success: true,
+          message: 'Verification code sent to your email',
+          messageId: `email-code:${otpSessionId}`,
+        });
+      } catch (error) {
         log.error('Failed to send email code', {
           action: 'email_send',
+          errorType: error instanceof Error ? error.name : 'Unknown',
         });
-        return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
+        await auditHiddenSendFailure(c, tenantId, { reason: 'send_failed', email });
+        return suppressedSendResponse(c, tenantId);
       }
-
-      return c.json({
-        success: true,
-        message: 'Verification code sent to your email',
-        messageId: delivery.reference.intentId,
-      });
     } catch (error) {
       const writeFenceResponse = createTenantPlacementWriteFenceResponse(c, error);
       if (writeFenceResponse) return writeFenceResponse;
@@ -554,6 +687,12 @@ export async function emailCodeVerifyHandler(c: Context<{ Bindings: Env }>) {
 
       // Parallel: verify the code hash and resolve the minimal OTP user projection.
       const tenantId = getTenantIdFromContext(c);
+      // Like the send, this works only where the tenant allows email code for login.
+      if (!(await isAuthenticationMethodUsageEnabled(c.env, tenantId, 'email_otp', 'login'))) {
+        return createErrorResponse(c, AR_ERROR_CODES.POLICY_INSUFFICIENT_PERMISSIONS, {
+          extensions: { authentication_method: 'email_otp', usage: 'login' },
+        });
+      }
       const tenantD1 = usesTenantD1AccountStorage(c);
       const hmacSecret = c.env.OTP_HMAC_SECRET;
       if (!hmacSecret) {

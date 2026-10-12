@@ -22,6 +22,7 @@
 	import { messageForApiError } from '$lib/errors/sdk-error-mapper';
 	import { loginUiDisplayError, messageForCaughtError } from '$lib/errors/display-error';
 	import { handleCodeEnterKey } from '$lib/utils/code-enter-key';
+	import { combineEntryMethods, handleEmailFieldEnterKey } from '$lib/login-email-enter';
 	import {
 		isValidRedirectUrl,
 		isValidReturnUrl,
@@ -168,6 +169,8 @@
 	let totpCode = $state('');
 	let totpChallengeId = $state('');
 	let totpCodeRequested = $state(false);
+	// What the runtime screen really shows (null while it is not on the page).
+	let runtimeShownAuthMethods = $state<{ emailCode: boolean; totp: boolean } | null>(null);
 	let directoryUsername = $state('');
 	let directoryPassword = $state('');
 	let error = $state('');
@@ -429,6 +432,17 @@
 	);
 	const blockLegacyAuthLayout = $derived(
 		useRuntimeAuthFormLayout || runtimeFlowBlocked || runtimeAuthFormMissing
+	);
+
+	// The email code and authenticator-app entries on screen, which decide what Enter in the email
+	// field does and whether the form may send an email code: the runtime screen's own reading of
+	// its blocks when it is shown, otherwise the legacy layout's methods.
+	const shownEntryMethods = $derived(
+		combineEntryMethods(
+			runtimeShownAuthMethods,
+			{ emailCode: showRuntimeEmailCode, totp: showRuntimeTotp },
+			!blockLegacyAuthLayout
+		)
 	);
 	const runtimeScreenFieldValues = $derived<Record<string, string>>({
 		email,
@@ -732,6 +746,8 @@
 
 	function handleEmailVerificationProtocolSubmit(event: SubmitEvent): void {
 		event.preventDefault();
+		// The form sends the email code, so it does so only where the page offers it.
+		if (!shownEntryMethods.emailCode) return;
 		const challenge = emailVerificationChallenge;
 		const form = event.currentTarget;
 		if (!(form instanceof HTMLFormElement) || !challenge?.challenge_id) {
@@ -2053,11 +2069,21 @@
 		return runtimeStepAllowsExternalProvider(runtimeFlowStep, provider);
 	}
 
+	// Enter in the email field follows the methods the page shows (see login-email-enter.ts).
+	function handleEmailFieldEnter(event: KeyboardEvent) {
+		return handleEmailFieldEnterKey(event, shownEntryMethods, {
+			startTotp: () => void handleTotpStart()
+		});
+	}
+
 	function handleKeyPress(event: KeyboardEvent) {
-		if (event.key === 'Enter') {
-			if (emailVerificationChallenge) return;
-			handleEmailCodeSend();
-		}
+		if (handleEmailFieldEnter(event) !== 'send_email_code') return;
+		if (emailVerificationChallenge) return;
+		handleEmailCodeSend();
+	}
+
+	function handleRuntimeEmailKeydown(event: KeyboardEvent) {
+		handleEmailFieldEnter(event);
 	}
 
 	function handleDirectoryKeyPress(event: KeyboardEvent) {
@@ -2268,6 +2294,8 @@
 		onDismissRuntimeFlowError={() => (runtimeFlowError = '')}
 		onRuntimeFieldValueChange={handleRuntimeScreenFieldValueChange}
 		onRuntimeAuthAction={handleRuntimeScreenAuthAction}
+		onRuntimeEmailKeydown={handleRuntimeEmailKeydown}
+		bind:runtimeShownAuthMethods
 		onConsentDecisionChange={setRuntimeConsentDecision}
 		onDestinationFieldDecisionChange={setRuntimeDestinationFieldDecision}
 		onConsentSelectedValueChange={setRuntimeConsentSelectedValue}

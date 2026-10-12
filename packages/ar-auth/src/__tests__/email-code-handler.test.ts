@@ -17,6 +17,7 @@ const mocks = vi.hoisted(() => ({
   hashEmail: vi.fn(),
   storeChallengeRpc: vi.fn(),
   consumeChallengeRpc: vi.fn(),
+  deleteChallengeRpc: vi.fn(),
   notifierSend: vi.fn(),
   getNotifier: vi.fn(),
   incrementRpc: vi.fn(),
@@ -88,6 +89,7 @@ vi.mock('@authrim/ar-lib-core', async () => {
     getChallengeStoreByChallengeId: vi.fn(async () => ({
       storeChallengeRpc: mocks.storeChallengeRpc,
       consumeChallengeRpc: mocks.consumeChallengeRpc,
+      deleteChallengeRpc: mocks.deleteChallengeRpc,
     })),
     getRequiredPluginContext: vi.fn(() => ({
       registry: { getNotifier: mocks.getNotifier },
@@ -144,9 +146,20 @@ vi.mock('../account-provisioning', async (importOriginal) => {
 
 import { emailCodeSendHandler, emailCodeVerifyHandler } from '../email-code';
 
+// The tenant's authentication-methods settings, as the KV namespace returns them.
+function methodSettings(values: Record<string, unknown>) {
+  return { get: vi.fn(async () => JSON.stringify(values)) };
+}
+
+const EMAIL_OTP_ENABLED = {
+  'authentication-methods.email_otp.login_enabled': true,
+  'authentication-methods.email_otp.signup_enabled': true,
+};
+
 function env(overrides: Record<string, unknown> = {}) {
   return {
     ISSUER_URL: 'https://auth.example.com',
+    SETTINGS: methodSettings(EMAIL_OTP_ENABLED),
     RATE_LIMITER: {
       idFromName: vi.fn((name: string) => name),
       get: vi.fn(() => ({ incrementRpc: mocks.incrementRpc })),
@@ -166,10 +179,14 @@ async function post(
   path: '/send' | '/verify',
   body: unknown,
   bindings: Record<string, unknown> = {},
-  cookie?: string
+  cookie?: string,
+  options: { awaitBackground?: boolean } = {}
 ) {
+  const background: Promise<unknown>[] = [];
   const executionCtx = {
-    waitUntil: vi.fn(),
+    waitUntil: vi.fn((promise: Promise<unknown>) => {
+      background.push(promise);
+    }),
     passThroughOnException: vi.fn(),
     props: {},
   };
@@ -189,7 +206,10 @@ async function post(
     executionCtx
   );
   await vi.runAllTimersAsync();
-  return responsePromise;
+  const response = await responsePromise;
+  // The mail goes out after the reply.
+  if (options.awaitBackground !== false) await Promise.allSettled(background);
+  return response;
 }
 
 const validChallenge = {
@@ -244,6 +264,7 @@ describe('email code handlers through HTTP', () => {
     mocks.hashCode.mockResolvedValue('hashed-code');
     mocks.hashEmail.mockResolvedValue('email-hash');
     mocks.storeChallengeRpc.mockResolvedValue(undefined);
+    mocks.deleteChallengeRpc.mockResolvedValue(undefined);
     mocks.consumeChallengeRpc.mockResolvedValue(validChallenge);
     mocks.verifyCode.mockResolvedValue(true);
     mocks.getNotifier.mockReturnValue({ send: mocks.notifierSend });
@@ -300,6 +321,361 @@ describe('email code handlers through HTTP', () => {
       }
     );
 
+    describe('when the tenant has switched email code off', () => {
+      const body = { email: 'user@example.com' };
+      const noEffects = () => {
+        expect(mocks.generateCode).not.toHaveBeenCalled();
+        expect(mocks.storeChallengeRpc).not.toHaveBeenCalled();
+        expect(mocks.notifierSend).not.toHaveBeenCalled();
+        expect(mocks.syncUser).not.toHaveBeenCalled();
+        expect(mocks.provisionTenantD1EmailAccount).not.toHaveBeenCalled();
+      };
+
+      it.each([
+        ['login_enabled is false', { 'authentication-methods.email_otp.login_enabled': false }],
+        ['the method was never configured', {}],
+        [
+          'only signup is allowed',
+          {
+            'authentication-methods.email_otp.login_enabled': false,
+            'authentication-methods.email_otp.signup_enabled': true,
+          },
+        ],
+      ])('sends no code to an existing user when %s', async (_name, settings) => {
+        const response = await post('/send', body, {
+          SETTINGS: methodSettings(settings),
+          OTP_HMAC_SECRET: 'private-secret',
+        });
+
+        // The same reply as a sent code, so it does not say whether the address has an account.
+        expect(response.status).toBe(200);
+        expect(await response.json()).toMatchObject({ success: true });
+        expect(response.headers.get('set-cookie')).toContain('authrim_otp_session=');
+        noEffects();
+      });
+
+      it('still counts the request against the send limit', async () => {
+        await post('/send', body, {
+          SETTINGS: methodSettings({}),
+          OTP_HMAC_SECRET: 'private-secret',
+        });
+        expect(mocks.incrementRpc).toHaveBeenCalledTimes(1);
+      });
+
+      it('creates no account for a new address when signup is not allowed', async () => {
+        mocks.findByEmail.mockResolvedValueOnce(null);
+
+        const response = await post(
+          '/send',
+          { email: 'new@example.com' },
+          {
+            SETTINGS: methodSettings({
+              'authentication-methods.email_otp.login_enabled': true,
+              'authentication-methods.email_otp.signup_enabled': false,
+            }),
+            OTP_HMAC_SECRET: 'private-secret',
+          }
+        );
+
+        expect(response.status).toBe(200);
+        noEffects();
+      });
+
+      it('replies to an existing and to a new address the same way', async () => {
+        const settings = { SETTINGS: methodSettings({}), OTP_HMAC_SECRET: 'private-secret' };
+        const existing = await post('/send', body, settings);
+        mocks.findByEmail.mockResolvedValueOnce(null);
+        const created = await post('/send', { email: 'new@example.com' }, settings);
+
+        expect(existing.status).toBe(created.status);
+        expect(Object.keys(await existing.json()).sort()).toEqual(
+          Object.keys(await created.json()).sort()
+        );
+      });
+    });
+
+    describe('the public reply does not tell an address with an account from one without', () => {
+      const secret = { OTP_HMAC_SECRET: 'private-secret' };
+      const mixed = {
+        'authentication-methods.email_otp.login_enabled': true,
+        'authentication-methods.email_otp.signup_enabled': false,
+      };
+      const both = EMAIL_OTP_ENABLED;
+
+      // What a caller can see: status, body fields, and the cookie's name and attributes.
+      async function publicShape(response: Response) {
+        const body = (await response.json()) as Record<string, unknown>;
+        return {
+          status: response.status,
+          body: Object.fromEntries(
+            Object.entries(body).map(([key, value]) => [
+              key,
+              typeof value === 'string' ? value.replace(/[0-9a-f-]{36}/g, '<id>') : value,
+            ])
+          ),
+          cookie: (response.headers.get('set-cookie') ?? '').replace(/=[0-9a-f-]{36}/, '=<id>'),
+        };
+      }
+
+      async function bothShapes(settings: Record<string, unknown>, extra = {}) {
+        const bindings = { SETTINGS: methodSettings(settings), ...secret, ...extra };
+        const existing = await publicShape(
+          await post('/send', { email: 'user@example.com' }, bindings)
+        );
+        mocks.findByEmail.mockResolvedValueOnce(null);
+        const created = await publicShape(
+          await post('/send', { email: 'new@example.com' }, bindings)
+        );
+        return { existing, created };
+      }
+
+      it('is the same when login is allowed and signup is not', async () => {
+        const { existing, created } = await bothShapes(mixed);
+        expect(created).toEqual(existing);
+        expect(existing.status).toBe(200);
+        // Only the existing address was sent a code.
+        expect(mocks.notifierSend).toHaveBeenCalledTimes(1);
+        expect(mocks.syncUser).not.toHaveBeenCalled();
+      });
+
+      it('is the same when sending fails', async () => {
+        mocks.notifierSend.mockResolvedValue({ success: false, error: 'provider rejected' });
+        const { existing, created } = await bothShapes(both);
+        expect(created).toEqual(existing);
+        expect(existing.status).toBe(200);
+        expect(existing.cookie).toContain('authrim_otp_session=<id>');
+        expect(mocks.error).toHaveBeenCalledWith(
+          'Failed to send email code',
+          expect.objectContaining({ action: 'email_send' })
+        );
+      });
+
+      it('is the same when the sending fails for one address and the other is not sent to', async () => {
+        mocks.notifierSend.mockResolvedValue({ success: false, error: 'provider rejected' });
+        const { existing, created } = await bothShapes(mixed);
+        expect(created).toEqual(existing);
+      });
+
+      it('is the same when the OTP secret is not configured', async () => {
+        mocks.findByEmail.mockResolvedValueOnce(null);
+        const settings = { SETTINGS: methodSettings(both) };
+        const existing = await publicShape(
+          await post('/send', { email: 'user@example.com' }, settings)
+        );
+        mocks.findByEmail.mockResolvedValueOnce(null);
+        const created = await publicShape(
+          await post('/send', { email: 'new@example.com' }, settings)
+        );
+        expect(created).toEqual(existing);
+        expect(existing.status).toBe(200);
+      });
+
+      it('is the same when the new account cannot be created', async () => {
+        mocks.syncUser.mockRejectedValue(new Error('database down'));
+        const { existing, created } = await bothShapes(both);
+        expect(created).toEqual(existing);
+      });
+
+      it('is the same when saving the code fails', async () => {
+        mocks.storeChallengeRpc.mockRejectedValue(new Error('challenge store unavailable'));
+        const { existing, created } = await bothShapes(both);
+        expect(created).toEqual(existing);
+        expect(existing.status).toBe(200);
+        expect(existing.cookie).toContain('authrim_otp_session=<id>');
+        expect(mocks.notifierSend).not.toHaveBeenCalled();
+      });
+
+      it('is the same when a tenant write fence stops the new account', async () => {
+        mocks.syncUser.mockRejectedValue(new Error('tenant_placement_migration_write_fenced'));
+        const { existing, created } = await bothShapes(both);
+        expect(created).toEqual(existing);
+        expect(existing.status).toBe(200);
+      });
+
+      describe('when finding the account fails', () => {
+        it('is the same in standard storage', async () => {
+          // The account is found but cannot be read; the unknown address is simply not found.
+          const bindings = { SETTINGS: methodSettings(both), ...secret };
+          mocks.findByEmail.mockRejectedValueOnce(new Error('core read failed'));
+          const existing = await publicShape(
+            await post('/send', { email: 'user@example.com' }, bindings)
+          );
+          mocks.findByEmail.mockResolvedValueOnce(null);
+          const unknown = await publicShape(
+            await post('/send', { email: 'new@example.com' }, bindings)
+          );
+          expect(unknown).toEqual(existing);
+          expect(existing.status).toBe(200);
+        });
+
+        it('is the same in tenant-D1 storage, and creates nothing', async () => {
+          const bindings = { SETTINGS: methodSettings(both), ...secret, __TENANT_D1: true };
+          mocks.resolveOtpAccountCoreDataContextByIdentifierFromHono.mockRejectedValueOnce(
+            new Error('core read failed')
+          );
+          const existing = await publicShape(
+            await post('/send', { email: 'user@example.com' }, bindings)
+          );
+          expect(mocks.provisionTenantD1EmailAccount).not.toHaveBeenCalled();
+
+          mocks.resolveOtpAccountCoreDataContextByIdentifierFromHono.mockRejectedValueOnce(
+            new Error('account_data_route_not_found')
+          );
+          const unknown = await publicShape(
+            await post('/send', { email: 'new@example.com' }, bindings)
+          );
+          expect(unknown).toEqual(existing);
+          expect(existing.status).toBe(200);
+        });
+
+        it('does not take a failed lookup for an unknown address: no account is created, nothing is sent', async () => {
+          mocks.findByEmail.mockRejectedValueOnce(new Error('lookup failed'));
+          const response = await post(
+            '/send',
+            { email: 'maybe-known@example.com' },
+            { SETTINGS: methodSettings(both), ...secret }
+          );
+          expect(response.status).toBe(200);
+          expect(mocks.syncUser).not.toHaveBeenCalled();
+          expect(mocks.storeChallengeRpc).not.toHaveBeenCalled();
+          expect(mocks.notifierSend).not.toHaveBeenCalled();
+
+          mocks.resolveOtpAccountCoreDataContextByIdentifierFromHono.mockRejectedValueOnce(
+            new Error('core read failed')
+          );
+          const d1 = await post(
+            '/send',
+            { email: 'maybe-known@example.com' },
+            { SETTINGS: methodSettings(both), ...secret, __TENANT_D1: true }
+          );
+          expect(d1.status).toBe(200);
+          expect(mocks.provisionTenantD1EmailAccount).not.toHaveBeenCalled();
+          expect(mocks.storeChallengeRpc).not.toHaveBeenCalled();
+        });
+
+        it('is audited, with a hash and no address', async () => {
+          mocks.findByEmail.mockRejectedValueOnce(new Error('core read failed'));
+          await post(
+            '/send',
+            { email: 'person@example.com' },
+            { SETTINGS: methodSettings(both), ...secret }
+          );
+          expect(mocks.createAuditLog).toHaveBeenCalledWith(
+            expect.anything(),
+            expect.objectContaining({
+              action: 'auth.email_code.send_failed',
+              resourceId: 'email-hash',
+            })
+          );
+          expect(JSON.stringify(mocks.createAuditLog.mock.calls)).not.toContain(
+            'person@example.com'
+          );
+        });
+      });
+
+      describe('what is kept for operators', () => {
+        const auditedReasons = () =>
+          mocks.createAuditLog.mock.calls.map(([, entry]) => ({
+            action: entry.action,
+            reason: JSON.parse(entry.metadata).reason,
+            serialized: JSON.stringify(entry),
+          }));
+
+        it.each([
+          [
+            'the OTP secret is not configured',
+            'otp_secret_missing',
+            () => {},
+            { SETTINGS: methodSettings(both) },
+          ],
+          [
+            'the new account cannot be created',
+            'account_create_failed',
+            () => {
+              mocks.findByEmail.mockResolvedValueOnce(null);
+              mocks.syncUser.mockRejectedValue(new Error('database down'));
+            },
+            { SETTINGS: methodSettings(both), ...secret },
+          ],
+          [
+            'the mail cannot be sent',
+            'delivery_failed',
+            () => mocks.notifierSend.mockResolvedValue({ success: false, error: 'rejected' }),
+            { SETTINGS: methodSettings(both), ...secret },
+          ],
+          [
+            'the code cannot be saved',
+            'send_failed',
+            () => mocks.storeChallengeRpc.mockRejectedValue(new Error('store down')),
+            { SETTINGS: methodSettings(both), ...secret },
+          ],
+        ])(
+          'writes an audit entry when %s, without the address or the code',
+          async (_n, reason, arrange, bindings) => {
+            arrange();
+            const response = await post('/send', { email: 'person@example.com' }, bindings);
+
+            expect(response.status).toBe(200);
+            const entries = auditedReasons();
+            expect(entries).toEqual([
+              expect.objectContaining({ action: 'auth.email_code.send_failed', reason }),
+            ]);
+            expect(entries[0].serialized).not.toContain('person@example.com');
+            expect(entries[0].serialized).not.toContain('123456');
+            expect(mocks.createAuditLog).toHaveBeenCalledWith(
+              expect.anything(),
+              expect.objectContaining({ tenantId: 'tenant-1', resourceId: 'email-hash' })
+            );
+          }
+        );
+
+        it('writes nothing when the send worked', async () => {
+          await post(
+            '/send',
+            { email: 'user@example.com' },
+            { SETTINGS: methodSettings(both), ...secret }
+          );
+          expect(mocks.createAuditLog).not.toHaveBeenCalled();
+        });
+      });
+
+      it('is the same as the usual reply when login is not allowed', async () => {
+        const sent = await publicShape(
+          await post(
+            '/send',
+            { email: 'user@example.com' },
+            { SETTINGS: methodSettings(both), ...secret }
+          )
+        );
+        const suppressed = await publicShape(
+          await post(
+            '/send',
+            { email: 'user@example.com' },
+            { SETTINGS: methodSettings({}), ...secret }
+          )
+        );
+        expect(suppressed).toEqual(sent);
+      });
+
+      it('does not hold the reply back for a slow mail provider', async () => {
+        let release: (value: unknown) => void = () => {};
+        mocks.notifierSend.mockReturnValue(new Promise((resolve) => (release = resolve)));
+
+        const response = await post(
+          '/send',
+          { email: 'user@example.com' },
+          { SETTINGS: methodSettings(both), ...secret },
+          undefined,
+          { awaitBackground: false }
+        );
+
+        // The reply is out while the provider has not answered yet.
+        expect(response.status).toBe(200);
+        expect(mocks.notifierSend).toHaveBeenCalledTimes(1);
+        release({ success: true });
+      });
+    });
+
     it('rate limits on normalized email without issuing a challenge', async () => {
       mocks.incrementRpc.mockResolvedValueOnce({ allowed: false, retryAfter: 120 });
 
@@ -351,7 +727,11 @@ describe('email code handlers through HTTP', () => {
         missingRequiredFields: [{ fieldKey: 'department', label: 'Department', fieldType: 'text' }],
       });
 
-      const response = await post('/send', { email: 'new@example.com' });
+      const response = await post(
+        '/send',
+        { email: 'new@example.com' },
+        { OTP_HMAC_SECRET: 'private-secret' }
+      );
 
       expect(response.status).toBe(400);
       expect(mocks.syncUser).not.toHaveBeenCalled();
@@ -362,9 +742,15 @@ describe('email code handlers through HTTP', () => {
       mocks.findByEmail.mockResolvedValueOnce(null);
       mocks.syncUser.mockRejectedValueOnce(new Error('sensitive database detail'));
 
-      const response = await post('/send', { email: 'new@example.com', name: 'New User' });
+      const response = await post(
+        '/send',
+        { email: 'new@example.com', name: 'New User' },
+        { OTP_HMAC_SECRET: 'private-secret' }
+      );
 
-      expect(response.status).toBe(500);
+      // The reply is the usual one, so it does not tell a new address from an existing one.
+      expect(response.status).toBe(200);
+      expect(JSON.stringify(await response.json())).not.toContain('sensitive database detail');
       expect(mocks.error).toHaveBeenCalledWith(
         'Failed to create canonical runtime user',
         { action: 'runtime_user_create' },
@@ -373,12 +759,17 @@ describe('email code handlers through HTTP', () => {
       expect(mocks.storeChallengeRpc).not.toHaveBeenCalled();
     });
 
-    it('fails closed before challenge storage when OTP secret is absent', async () => {
+    it('fails closed before challenge storage when OTP secret is absent, with the usual reply', async () => {
       const response = await post('/send', { email: 'user@example.com' });
 
-      expect(response.status).toBe(500);
+      expect(response.status).toBe(200);
       expect(mocks.hashCode).not.toHaveBeenCalled();
       expect(mocks.storeChallengeRpc).not.toHaveBeenCalled();
+      expect(mocks.notifierSend).not.toHaveBeenCalled();
+      expect(mocks.error).toHaveBeenCalledWith(
+        'OTP_HMAC_SECRET must be configured for email-code auth',
+        { action: 'email_code_send' }
+      );
     });
 
     it("uses the tenant's email code lifetime for the code and its cookie", async () => {
@@ -392,7 +783,9 @@ describe('email code handlers through HTTP', () => {
             get: vi.fn(async (key: string) =>
               key === 'settings:tenant:tenant-1:credentials'
                 ? JSON.stringify({ 'credentials.email_code_ttl': 90 })
-                : null
+                : key === 'settings:tenant:tenant-1:authentication-methods'
+                  ? JSON.stringify(EMAIL_OTP_ENABLED)
+                  : null
             ),
           },
         }
@@ -539,7 +932,7 @@ describe('email code handlers through HTTP', () => {
       expect(mocks.findByEmail).not.toHaveBeenCalled();
     });
 
-    it('returns a generic error when no notifier is configured', async () => {
+    it('answers as usual when no notifier is configured', async () => {
       mocks.getNotifier.mockReturnValueOnce(null);
 
       const response = await post(
@@ -548,11 +941,19 @@ describe('email code handlers through HTTP', () => {
         { OTP_HMAC_SECRET: 'private-secret' }
       );
 
-      expect(response.status).toBe(500);
+      // Not told to the caller; kept for the logs, and the code is taken back.
+      expect(response.status).toBe(200);
       expect(await response.text()).not.toContain('123456');
+      expect(mocks.error).toHaveBeenCalledWith(
+        'Failed to send email code',
+        expect.objectContaining({ action: 'email_send' })
+      );
+      expect(mocks.deleteChallengeRpc).toHaveBeenCalledWith(
+        'email_code:00000000-0000-4000-8000-000000000000'
+      );
     });
 
-    it('returns a generic error when delivery fails', async () => {
+    it('answers as usual when delivery fails', async () => {
       mocks.notifierSend.mockResolvedValueOnce({ success: false, error: 'provider rejected' });
 
       const response = await post(
@@ -561,8 +962,13 @@ describe('email code handlers through HTTP', () => {
         { OTP_HMAC_SECRET: 'private-secret' }
       );
 
-      expect(response.status).toBe(500);
+      expect(response.status).toBe(200);
       expect(await response.text()).not.toContain('provider rejected');
+      expect(mocks.error).toHaveBeenCalledWith(
+        'Failed to send email code',
+        expect.objectContaining({ action: 'email_send' })
+      );
+      expect(mocks.deleteChallengeRpc).toHaveBeenCalled();
     });
   });
 
@@ -688,6 +1094,33 @@ describe('email code handlers through HTTP', () => {
         expect(mocks.createSessionRpc).not.toHaveBeenCalled();
       }
     );
+    describe('when the tenant has not allowed email code for login', () => {
+      // This endpoint is for signing in. Signing up with an email code is the Direct Auth API's
+      // (/api/v1/auth/direct/email-code/*), so allowing signup alone does not open this one.
+      it.each([
+        ['login_enabled is false', { 'authentication-methods.email_otp.login_enabled': false }],
+        ['the method was never configured', {}],
+        [
+          'only signup is allowed',
+          {
+            'authentication-methods.email_otp.login_enabled': false,
+            'authentication-methods.email_otp.signup_enabled': true,
+          },
+        ],
+      ])('creates no session when %s', async (_name, settings) => {
+        const response = await post(
+          '/verify',
+          { code: '123456', email: 'user@example.com' },
+          { SETTINGS: methodSettings(settings), OTP_HMAC_SECRET: 'private-secret' },
+          cookie
+        );
+
+        expect(response.status).toBe(403);
+        expect(mocks.createSessionRpc).not.toHaveBeenCalled();
+        expect(response.headers.get('set-cookie') ?? '').not.toContain('authrim_session=');
+      });
+    });
+
     it('creates a session, clears the OTP cookie, and records observable side effects', async () => {
       const response = await post(
         '/verify',
