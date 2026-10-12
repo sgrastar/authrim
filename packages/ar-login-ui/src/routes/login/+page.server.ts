@@ -32,12 +32,36 @@ function buildCommonDiscoverRedirect(
 	url: URL,
 	request: Request,
 	commonDiscoverUrl: string,
-	tenantId: string
+	tenantId: string,
+	hasProtocolLoginContext: boolean
 ): string {
 	const target = new URL(commonDiscoverUrl);
-	target.searchParams.set('expected_tenant_id', tenantId);
+	target.searchParams.set(
+		'expected_tenant_id',
+		hasProtocolLoginContext ? readExpectedTenantId(url, tenantId) : tenantId
+	);
 	target.searchParams.set('return_to', buildCurrentUrlWithoutGrant(url, request));
 	return target.toString();
+}
+
+const TENANT_HINT_PATTERN = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/;
+
+/**
+ * The tenant a protocol request (SAML SSO) belongs to. A request sent to the shared Login UI names
+ * it in tenant_hint; otherwise it is the tenant of this host. The value is only what discovery's
+ * result must match: a client can change it, which at worst drops the protocol context.
+ */
+function readExpectedTenantId(url: URL, hostTenantId: string): string {
+	const hint = url.searchParams.get('tenant_hint');
+	return hint && hint.length <= 63 && TENANT_HINT_PATTERN.test(hint) ? hint : hostTenantId;
+}
+
+function buildCommonEntryDiscoverRedirect(url: URL, request: Request, tenantId: string): string {
+	const params = new URLSearchParams({
+		expected_tenant_id: readExpectedTenantId(url, tenantId),
+		return_to: buildCurrentUrlWithoutGrant(url, request)
+	});
+	return `/discover?${params.toString()}`;
 }
 
 function consumeVerifiedGrantCookie(
@@ -160,14 +184,26 @@ export const load: PageServerLoad = async (event) => {
 					event.url,
 					event.request,
 					config.common_discover_url,
-					config.config.tenant_id
+					config.config.tenant_id,
+					hasProtocolLoginContext
 				)
 			);
 		}
 	}
 
 	if (!config.single_tenant_mode && config.is_common_entry_host) {
-		throw redirect(303, '/discover');
+		// A URL the discovery grant just sent back here (the same host can be the common entry).
+		if (consumeVerifiedGrantCookie(event, currentUrlWithoutGrant)) {
+			return {};
+		}
+
+		// A protocol request (SAML SSO) is carried to /discover so the grant can return to it.
+		throw redirect(
+			303,
+			hasProtocolLoginContext
+				? buildCommonEntryDiscoverRedirect(event.url, event.request, config.config.tenant_id)
+				: '/discover'
+		);
 	}
 
 	if (
@@ -187,7 +223,9 @@ export const load: PageServerLoad = async (event) => {
 				event.url,
 				event.request,
 				config.common_discover_url,
-				config.config.tenant_id
+				// This host's own tenant is the one that counts here: a tenant_hint does not replace it.
+				config.config.tenant_id,
+				false
 			)
 		);
 	}
