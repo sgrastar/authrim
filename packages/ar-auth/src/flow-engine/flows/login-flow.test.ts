@@ -46,4 +46,12 @@ describe('human-basic login flow definition', () => {
       'email_code',
     ]);
   });
+  it('asks the authenticator for user verification in the passkey capability', () => {
+    const authNode = HUMAN_BASIC_LOGIN_FLOW.nodes.find((node) => node.id === 'auth_method');
+    const passkey = authNode?.data.capabilities.find(
+      (capability) => capability.idSuffix === 'passkey'
+    );
+
+    expect(passkey?.hintsTemplate?.webauthn?.userVerification).toBe('required');
+  });
 });

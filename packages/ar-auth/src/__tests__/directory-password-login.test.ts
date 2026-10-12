@@ -1005,6 +1005,9 @@ describe('directory password login handler', () => {
     const body = (await response.json()) as Record<string, unknown>;
 
     expect(response.status).toBe(200);
+    expect(mocks.verifyRegistrationResponse).toHaveBeenCalledWith(
+      expect.objectContaining({ requireUserVerification: true })
+    );
     expect(body.ok).toBe(true);
     expect(body.session).toMatchObject({
       userId: 'user_generated',

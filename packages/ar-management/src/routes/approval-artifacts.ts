@@ -582,6 +582,7 @@ approvalArtifactsRouter.post('/:artifactId/passkey/verify', async (c) => {
         publicKey,
         counter: passkey.counter,
       },
+      requireUserVerification: true,
     });
 
     if (!verification.verified) {

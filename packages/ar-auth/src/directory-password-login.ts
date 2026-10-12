@@ -953,6 +953,7 @@ export async function directoryMigrationPasskeyVerifyHandler(c: Context<{ Bindin
         expectedChallenge: challengeData.challenge,
         expectedOrigin: challengeMetadata.origin,
         expectedRPID: challengeMetadata.rpID,
+        requireUserVerification: true,
       });
     } catch (error) {
       log.error('Directory migration passkey verification failed', {

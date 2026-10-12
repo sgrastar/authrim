@@ -1866,6 +1866,8 @@ export async function directPasskeyLoginFinishHandler(c: Context<{ Bindings: Env
           publicKey: publicKey,
           counter: passkey.counter as number,
         },
+        // Explicit (the library default): a sign-in without the user-verified flag is refused.
+        requireUserVerification: true,
       });
     } catch (error) {
       log.error('Authentication verification failed', {
@@ -2007,6 +2009,7 @@ export async function directPasskeySignupStartHandler(c: Context<{ Bindings: Env
       scope?: string;
       authenticator_type?: 'platform' | 'cross-platform' | 'any';
       resident_key?: 'required' | 'preferred' | 'discouraged';
+      /** Accepted for compatibility and ignored: user verification is always required. */
       user_verification?: 'required' | 'preferred' | 'discouraged';
       custom_fields?: Record<string, unknown>;
       authorization_challenge_id?: string;
@@ -2026,7 +2029,6 @@ export async function directPasskeySignupStartHandler(c: Context<{ Bindings: Env
       scope,
       authenticator_type = 'any',
       resident_key = 'required',
-      user_verification = 'required',
       custom_fields,
       authorization_challenge_id,
       human_verification_response,
@@ -2251,10 +2253,13 @@ export async function directPasskeySignupStartHandler(c: Context<{ Bindings: Env
     const authenticatorSelection: {
       authenticatorAttachment?: 'platform' | 'cross-platform';
       residentKey: 'required' | 'preferred' | 'discouraged';
-      userVerification: 'required' | 'preferred' | 'discouraged';
+      userVerification: 'required';
     } = {
       residentKey: resident_key,
-      userVerification: user_verification,
+      // Always required, whatever `user_verification` the request names (still accepted, ignored):
+      // the finish step refuses a registration without the user-verified flag, so an option that
+      // allowed one would start what it cannot complete.
+      userVerification: 'required',
     };
 
     if (authenticator_type !== 'any') {
@@ -2461,6 +2466,7 @@ export async function directPasskeySignupFinishHandler(c: Context<{ Bindings: En
         expectedChallenge: challengeData.challenge,
         expectedOrigin: origin,
         expectedRPID: rpID,
+        requireUserVerification: true,
       });
     } catch (error) {
       log.error('Registration verification failed', {
@@ -4110,15 +4116,11 @@ export async function directPasskeyRegisterStartHandler(c: Context<{ Bindings: E
       display_name?: string;
       authenticator_type?: 'platform' | 'cross-platform' | 'any';
       resident_key?: 'required' | 'preferred' | 'discouraged';
+      /** Accepted for compatibility and ignored: user verification is always required. */
       user_verification?: 'required' | 'preferred' | 'discouraged';
     }>();
 
-    const {
-      display_name,
-      authenticator_type = 'any',
-      resident_key = 'required',
-      user_verification = 'required',
-    } = body;
+    const { display_name, authenticator_type = 'any', resident_key = 'required' } = body;
 
     // Validate Origin header
     const originHeader = c.req.header('origin');
@@ -4167,10 +4169,13 @@ export async function directPasskeyRegisterStartHandler(c: Context<{ Bindings: E
     const authenticatorSelection: {
       authenticatorAttachment?: 'platform' | 'cross-platform';
       residentKey: 'required' | 'preferred' | 'discouraged';
-      userVerification: 'required' | 'preferred' | 'discouraged';
+      userVerification: 'required';
     } = {
       residentKey: resident_key,
-      userVerification: user_verification,
+      // Always required, whatever `user_verification` the request names (still accepted, ignored):
+      // the finish step refuses a registration without the user-verified flag, so an option that
+      // allowed one would start what it cannot complete.
+      userVerification: 'required',
     };
 
     if (authenticator_type !== 'any') {
@@ -4346,6 +4351,7 @@ export async function directPasskeyRegisterFinishHandler(c: Context<{ Bindings: 
         expectedChallenge: challengeData.challenge,
         expectedOrigin: origin,
         expectedRPID: rpID,
+        requireUserVerification: true,
       });
     } catch (error) {
       log.error('Registration verification failed', {

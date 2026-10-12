@@ -1322,6 +1322,56 @@ describe('Direct Auth primary passkey and email-code flows', () => {
     }
   );
 
+  it('demands the user-verified flag of a passkey login assertion', async () => {
+    const codeVerifier = 'passkey-login-code-verifier';
+    mocks.challengeStore.consumeChallengeRpc.mockResolvedValue({
+      challenge: 'passkey-login-challenge',
+      metadata: {
+        code_challenge: await s256Challenge(codeVerifier),
+        client_id: 'web-client',
+        channel: 'browser',
+        origin: 'https://app.example.com',
+        rpID: 'app.example.com',
+      },
+    });
+    const { directPasskeyLoginFinishHandler } = await import('../direct-auth');
+    const context = createContext({
+      challenge_id: 'challenge_1',
+      credential: { id: 'credential-id', rawId: 'credential-id', response: {}, type: 'public-key' },
+      code_verifier: codeVerifier,
+      channel: 'browser',
+    });
+
+    expect((await directPasskeyLoginFinishHandler(context as never)).status).toBe(200);
+
+    expect(mocks.verifyAuthenticationResponse).toHaveBeenCalledWith(
+      expect.objectContaining({ requireUserVerification: true })
+    );
+  });
+
+  it('asks for user verification when a passkey login starts, whatever the request says', async () => {
+    const { directPasskeyLoginStartHandler } = await import('../direct-auth');
+
+    const response = await directPasskeyLoginStartHandler(
+      createContext(
+        {
+          client_id: 'web-client',
+          code_challenge: 'challenge',
+          code_challenge_method: 'S256',
+          channel: 'browser',
+          user_verification: 'discouraged',
+        },
+        webHeaders(),
+        'https://app.example.com/api/v1/auth/direct/passkey/login/start'
+      ) as never
+    );
+
+    expect(response.status).toBe(200);
+    expect(mocks.generateAuthenticationOptions).toHaveBeenCalledWith(
+      expect.objectContaining({ userVerification: 'required' })
+    );
+  });
+
   it('spends no passkey login challenge while the assurance settings cannot be read', async () => {
     const { directPasskeyLoginFinishHandler } = await import('../direct-auth');
     const context = createContext({
@@ -1629,6 +1679,8 @@ describe('Direct Auth primary passkey and email-code flows', () => {
       expect.objectContaining({
         userName: 'user_new',
         userDisplayName: 'user_new',
+        // User verification is always required.
+        authenticatorSelection: expect.objectContaining({ userVerification: 'required' }),
       })
     );
   });
@@ -1901,6 +1953,9 @@ describe('Direct Auth primary passkey and email-code flows', () => {
     const body = (await response.json()) as Record<string, unknown>;
 
     expect(response.status).toBe(200);
+    expect(mocks.verifyRegistrationResponse).toHaveBeenCalledWith(
+      expect.objectContaining({ requireUserVerification: true })
+    );
     expect(body).toMatchObject({
       direct_auth_artifact: expect.any(String),
       expires_in: 60,
@@ -2028,6 +2083,8 @@ describe('Direct Auth primary passkey and email-code flows', () => {
         ],
         authenticatorSelection: expect.objectContaining({
           authenticatorAttachment: 'platform',
+          // User verification is always required.
+          userVerification: 'required',
         }),
       })
     );
@@ -2045,6 +2102,63 @@ describe('Direct Auth primary passkey and email-code flows', () => {
       })
     );
   });
+
+  it.each(['preferred', 'discouraged'])(
+    'requires user verification in passkey signup options whatever the request asks (%s)',
+    async (requested) => {
+      const { directPasskeySignupStartHandler } = await import('../direct-auth');
+
+      const response = await directPasskeySignupStartHandler(
+        createContext(
+          {
+            client_id: 'web-client',
+            email: 'new@example.com',
+            code_challenge: 'signup-pkce-challenge',
+            code_challenge_method: 'S256',
+            channel: 'browser',
+            user_verification: requested,
+            resident_key: 'preferred',
+          },
+          webHeaders()
+        ) as never
+      );
+
+      expect(response.status).toBe(200);
+      expect(mocks.generateRegistrationOptions).toHaveBeenCalledWith(
+        expect.objectContaining({
+          // The finish step refuses a registration without the user-verified flag.
+          authenticatorSelection: expect.objectContaining({
+            userVerification: 'required',
+            residentKey: 'preferred',
+          }),
+        })
+      );
+    }
+  );
+
+  it.each(['preferred', 'discouraged'])(
+    'requires user verification in passkey add options whatever the request asks (%s)',
+    async (requested) => {
+      const { directPasskeyRegisterStartHandler } = await import('../direct-auth');
+
+      const response = await directPasskeyRegisterStartHandler(
+        createContext(
+          { display_name: 'Work laptop', user_verification: requested, resident_key: 'preferred' },
+          { ...webHeaders(), authorization: 'Bearer 0_session_existing' }
+        ) as never
+      );
+
+      expect(response.status).toBe(200);
+      expect(mocks.generateRegistrationOptions).toHaveBeenCalledWith(
+        expect.objectContaining({
+          authenticatorSelection: expect.objectContaining({
+            userVerification: 'required',
+            residentKey: 'preferred',
+          }),
+        })
+      );
+    }
+  );
 
   it('uses the browser origin for authenticated passkey registration through the Login UI proxy', async () => {
     const { directPasskeyRegisterStartHandler } = await import('../direct-auth');
@@ -2112,6 +2226,9 @@ describe('Direct Auth primary passkey and email-code flows', () => {
     const body = (await response.json()) as Record<string, unknown>;
 
     expect(response.status).toBe(200);
+    expect(mocks.verifyRegistrationResponse).toHaveBeenCalledWith(
+      expect.objectContaining({ requireUserVerification: true })
+    );
     expect(body).toMatchObject({
       credential_id: expect.any(String),
       public_key: Buffer.from([6, 5, 4, 3]).toString('base64'),
