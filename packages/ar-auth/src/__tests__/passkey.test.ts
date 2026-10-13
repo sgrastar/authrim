@@ -1339,6 +1339,75 @@ describe('Passkey Handlers', () => {
       }
     });
 
+    it.each([
+      ['an empty string', '', 'user', 503],
+      ['an array', '[]', 'user', 503],
+      ['a number', '7', 'user', 503],
+      ['JSON null', 'null', 'user', 503],
+      ['nothing stored (null)', null, 'user', 200],
+      ['nothing stored (undefined)', undefined, 'user', 200],
+      ['an empty string, for an administrator', '', 'admin', 200],
+    ])('with settings stored as %s: %s', async (_label, stored, userType, status) => {
+      const challengeStore = createMockChallengeStore();
+      const sessionStore = createMockSessionStore();
+      challengeStore._challenges.set('passkey_auth:challenge-123', {
+        id: 'passkey_auth:challenge-123',
+        type: 'passkey_authentication',
+        challenge: 'mock-auth-challenge-base64',
+      });
+      mockPasskeyRepository.findByCredentialId.mockResolvedValue({
+        id: 'passkey-1',
+        user_id: 'user-123',
+        credential_id: 'mock-cred-id',
+        public_key: 'YmFzZTY0LXB1YmxpYy1rZXk=',
+        counter: 0,
+        transports: ['internal'],
+      });
+      mockUserCoreRepository.findById.mockResolvedValue({
+        id: 'user-123',
+        user_type: userType,
+        is_active: true,
+        email_verified: true,
+        created_at: Date.now(),
+        updated_at: Date.now(),
+        last_login_at: Date.now(),
+      });
+      mockUserPIIRepository.findById.mockResolvedValue({
+        id: 'user-123',
+        email: 'test@example.com',
+        name: 'Test User',
+      });
+      const context = createMockContext({
+        body: {
+          challengeId: 'challenge-123',
+          credential: {
+            id: 'mock-cred-id',
+            rawId: 'mock-raw-id',
+            type: 'public-key',
+            response: {
+              clientDataJSON: 'mock-client-data',
+              authenticatorData: 'mock-auth-data',
+              signature: 'mock-signature',
+            },
+          },
+        },
+        headers: { origin: 'https://example.com' },
+        challengeStore,
+        sessionStore,
+      });
+      context.env.SETTINGS = { get: vi.fn(async () => stored) };
+
+      const response = await passkeyLoginVerifyHandler(context);
+
+      expect(response.status).toBe(status);
+      if (status === 503) {
+        expect(mockAccountAuthStateStub.advancePasskeyCounterRpc).not.toHaveBeenCalled();
+        expect(mockSessionStoreStub.createSessionRpc).not.toHaveBeenCalled();
+      } else {
+        expect(mockSessionStoreStub.createSessionRpc).toHaveBeenCalled();
+      }
+    });
+
     it('rejects a consumed authentication challenge before credential lookup', async () => {
       mockChallengeStoreStub.consumeChallengeRpc.mockRejectedValueOnce(new Error('consumed'));
       const c = createMockContext({
@@ -1531,6 +1600,202 @@ describe('Passkey Handlers', () => {
       expect(response.status).toBe(500);
       expect(mockAccountAuthStateStub.advancePasskeyCounterRpc).toHaveBeenCalledOnce();
       expect(mockPasskeyRepository.mirrorCounterAfterAuth).not.toHaveBeenCalled();
+    });
+  });
+  describe('the legacy sign-up endpoints follow the tenant passkey sign-up switch', () => {
+    const registrationBody = {
+      userId: 'user-123',
+      credential: {
+        id: 'mock-cred-id',
+        rawId: 'mock-raw-id',
+        type: 'public-key',
+        response: { clientDataJSON: 'mock-client-data', attestationObject: 'mock-attestation' },
+      },
+    };
+
+    it.each([
+      ['the sign-up switch is off', { 'authentication-methods.passkey.signup_enabled': false }],
+      [
+        'the sign-up switch is the string "false"',
+        { 'authentication-methods.passkey.signup_enabled': 'false' },
+      ],
+      ['passkeys are off for the tenant', { 'authentication-methods.passkey.enabled': false }],
+    ])('options: creates no account and no challenge when %s', async (_label, settings) => {
+      const c = createMockContext({
+        body: { email: 'new-user@example.com' },
+        headers: { origin: 'https://example.com' },
+        authenticationMethods: settings,
+      });
+
+      const response = await passkeyRegisterOptionsHandler(c);
+
+      expect(response.status).toBe(403);
+      const body = (await response.json()) as { error: string };
+      expect(body.error).toBe('access_denied');
+      expect(mockWebAuthnFunctions.generateRegistrationOptions).not.toHaveBeenCalled();
+      expect(mockChallengeStoreStub.storeChallengeRpc).not.toHaveBeenCalled();
+    });
+
+    it('options: gives the same refusal whether or not the address already has an account', async () => {
+      const refusals: string[] = [];
+      for (const existing of [false, true]) {
+        mockUserPIIRepository.findByTenantAndEmail.mockResolvedValue(
+          existing ? { id: 'user-1', email: 'known@example.com' } : null
+        );
+        mockUserCoreRepository.findById.mockResolvedValue(
+          existing ? { id: 'user-1', is_active: true } : null
+        );
+        const c = createMockContext({
+          body: { email: 'known@example.com' },
+          headers: { origin: 'https://example.com' },
+          authenticationMethods: { 'authentication-methods.passkey.signup_enabled': false },
+        });
+        const response = await passkeyRegisterOptionsHandler(c);
+        refusals.push(`${response.status} ${await response.text()}`);
+      }
+      expect(refusals[0]).toBe(refusals[1]);
+      expect(refusals[0]).toMatch(/^403 /);
+    });
+
+    it('options: refuses when the settings cannot be read', async () => {
+      const c = createMockContext({
+        body: { email: 'new-user@example.com' },
+        headers: { origin: 'https://example.com' },
+      });
+      c.env.SETTINGS = { get: vi.fn(async () => '{not json') };
+
+      const response = await passkeyRegisterOptionsHandler(c);
+
+      expect(response.status).toBe(503);
+      expect(mockWebAuthnFunctions.generateRegistrationOptions).not.toHaveBeenCalled();
+      expect(mockChallengeStoreStub.storeChallengeRpc).not.toHaveBeenCalled();
+    });
+
+    it('options: refuses when the stored settings are an empty string', async () => {
+      const c = createMockContext({
+        body: { email: 'new-user@example.com' },
+        headers: { origin: 'https://example.com' },
+      });
+      c.env.SETTINGS = { get: vi.fn(async () => '') };
+
+      const response = await passkeyRegisterOptionsHandler(c);
+
+      expect(response.status).toBe(503);
+      expect(mockWebAuthnFunctions.generateRegistrationOptions).not.toHaveBeenCalled();
+    });
+
+    it('options: refuses when reading the settings fails', async () => {
+      const c = createMockContext({
+        body: { email: 'new-user@example.com' },
+        headers: { origin: 'https://example.com' },
+      });
+      c.env.SETTINGS = {
+        get: vi.fn(async () => {
+          throw new Error('KV unavailable');
+        }),
+      };
+
+      const response = await passkeyRegisterOptionsHandler(c);
+
+      expect(response.status).toBe(503);
+      expect(mockWebAuthnFunctions.generateRegistrationOptions).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['an explicit on', { 'authentication-methods.passkey.signup_enabled': true }],
+      ['only passkey login off', { 'authentication-methods.passkey.login_enabled': false }],
+      [
+        'other methods set and nothing for passkeys',
+        { 'authentication-methods.email_otp.signup_enabled': false },
+      ],
+    ])('options: still issues options with %s', async (_label, settings) => {
+      const c = createMockContext({
+        body: {},
+        headers: { origin: 'https://example.com' },
+        authenticationMethods: settings,
+      });
+
+      const response = await passkeyRegisterOptionsHandler(c);
+
+      expect(response.status).toBe(200);
+      expect(mockWebAuthnFunctions.generateRegistrationOptions).toHaveBeenCalled();
+    });
+
+    it('verify: opens no session and stores no passkey when sign-up was turned off after the options', async () => {
+      const c = createMockContext({
+        body: registrationBody,
+        headers: { origin: 'https://example.com' },
+        authenticationMethods: { 'authentication-methods.passkey.signup_enabled': false },
+      });
+
+      const response = await passkeyRegisterVerifyHandler(c);
+
+      expect(response.status).toBe(403);
+      expect(mockChallengeStoreStub.consumeChallengeRpc).not.toHaveBeenCalled();
+      expect(mockWebAuthnFunctions.verifyRegistrationResponse).not.toHaveBeenCalled();
+      expect(mockSessionStoreStub.createSessionRpc).not.toHaveBeenCalled();
+      expect(mockPasskeyRepository.create).not.toHaveBeenCalled();
+    });
+
+    it('verify: refuses when the settings cannot be read', async () => {
+      const c = createMockContext({
+        body: registrationBody,
+        headers: { origin: 'https://example.com' },
+      });
+      c.env.SETTINGS = { get: vi.fn(async () => '[1,2]') };
+
+      const response = await passkeyRegisterVerifyHandler(c);
+
+      expect(response.status).toBe(503);
+      expect(mockSessionStoreStub.createSessionRpc).not.toHaveBeenCalled();
+      expect(mockPasskeyRepository.create).not.toHaveBeenCalled();
+    });
+
+    it('verify: with the switch on (or nothing set) the registration goes on as before', async () => {
+      for (const authenticationMethods of [
+        undefined,
+        { 'authentication-methods.passkey.signup_enabled': true },
+      ]) {
+        mockChallengeStoreStub.consumeChallengeRpc.mockResolvedValueOnce({
+          challenge: 'mock-challenge-base64',
+          userId: 'user-123',
+        });
+        const c = createMockContext({
+          body: registrationBody,
+          headers: { origin: 'https://example.com' },
+          authenticationMethods,
+        });
+        mockUserCoreRepository.findById.mockResolvedValue({
+          id: 'user-123',
+          is_active: true,
+          email_verified: false,
+          created_at: Date.now(),
+          updated_at: Date.now(),
+          last_login_at: Date.now(),
+        });
+        mockUserPIIRepository.findById.mockResolvedValue({
+          id: 'user-123',
+          email: 'test@example.com',
+          name: 'Test User',
+        });
+
+        const response = await passkeyRegisterVerifyHandler(c);
+
+        expect(response.status).toBe(200);
+      }
+      expect(mockSessionStoreStub.createSessionRpc).toHaveBeenCalledTimes(2);
+    });
+
+    it('login options stay available whatever the switches say: the login switch is enforced at the verify, where an administrator is told apart', async () => {
+      const c = createMockContext({
+        body: {},
+        headers: { origin: 'https://example.com' },
+        authenticationMethods: { 'authentication-methods.passkey.login_enabled': false },
+      });
+
+      const response = await passkeyLoginOptionsHandler(c);
+
+      expect(response.status).toBe(200);
     });
   });
 });

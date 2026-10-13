@@ -52,6 +52,10 @@ import {
   validateRegistrationFieldSubmissionFromEnv,
 } from './registration-field-utils';
 import { resolveSessionTtl } from './session-ttl';
+import {
+  isAuthenticationMethodUsageEnabled,
+  type AuthenticationMethodUsage,
+} from './authentication-method-settings';
 import { timeAuthRequestDiagnosticOperation } from './request-diagnostics';
 import {
   publishTenantD1PasskeyRoute,
@@ -84,6 +88,37 @@ import type {
 
 // WebAuthn transport types (matches PasskeyRepository.AuthenticatorTransport)
 type AuthenticatorTransport = 'usb' | 'nfc' | 'ble' | 'internal' | 'hybrid';
+
+/**
+ * Whether the tenant lets passkeys be used for `usage` on these endpoints (null: yes). The answer
+ * does not depend on any account, so refusing says nothing about who exists. Settings that cannot
+ * be read refuse too: passkeys are on unless the tenant turned them off, and an unreadable switch
+ * must not read as "not turned off".
+ */
+async function rejectIfPasskeyUsageDisabled(
+  c: Context<{ Bindings: Env }>,
+  tenantId: string,
+  usage: AuthenticationMethodUsage
+): Promise<Response | null> {
+  let enabled: boolean;
+  try {
+    enabled = await isAuthenticationMethodUsageEnabled(c.env, tenantId, 'passkey', usage, {
+      strict: true,
+    });
+  } catch {
+    return c.json(
+      {
+        error: 'temporarily_unavailable',
+        error_description: 'Authentication settings are unavailable.',
+      },
+      503
+    );
+  }
+  if (enabled) return null;
+  return createErrorResponse(c, AR_ERROR_CODES.POLICY_INSUFFICIENT_PERMISSIONS, {
+    extensions: { authentication_method: 'passkey', usage },
+  });
+}
 
 function createCanonicalRuntimeUserStore(
   c: Context<{ Bindings: Env }>,
@@ -259,6 +294,16 @@ export async function passkeyRegisterOptionsHandler(c: Context<{ Bindings: Env }
     if (userId) {
       return createErrorResponse(c, AR_ERROR_CODES.AUTH_LOGIN_REQUIRED);
     }
+
+    // This endpoint only ever creates a new account (an address that has one is a conflict), so
+    // it is a sign-up: it works only where the tenant allows passkey sign-up. Decided before any
+    // account is looked up or created.
+    const signupDisabled = await rejectIfPasskeyUsageDisabled(
+      c,
+      getTenantIdFromContext(c),
+      'signup'
+    );
+    if (signupDisabled) return signupDisabled;
 
     const normalizedEmail =
       typeof email === 'string' && email.trim() ? email.trim().toLowerCase() : null;
@@ -516,6 +561,15 @@ export async function passkeyRegisterVerifyHandler(c: Context<{ Bindings: Env }>
         variables: { field: 'userId and credential' },
       });
     }
+
+    // Completing a sign-up opens a session: sign-up may have been turned off since the options
+    // were issued.
+    const signupDisabled = await rejectIfPasskeyUsageDisabled(
+      c,
+      getTenantIdFromContext(c),
+      'signup'
+    );
+    if (signupDisabled) return signupDisabled;
 
     // Consume challenge from ChallengeStore DO (atomic operation, RPC)
     // This prevents parallel replay attacks
