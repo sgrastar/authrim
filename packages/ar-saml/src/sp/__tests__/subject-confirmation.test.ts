@@ -48,6 +48,7 @@ function createTestConfigKv(): KVNamespace {
 // Mock modules
 const mockGetIdPConfigByEntityId = vi.fn();
 vi.mock('../../admin/providers', () => ({
+  getIdPUsageKeyByEntityId: async (): Promise<null> => null,
   getIdPConfigByEntityId: async (...args: unknown[]): Promise<unknown> => {
     const config = await mockGetIdPConfigByEntityId(...args);
     return config

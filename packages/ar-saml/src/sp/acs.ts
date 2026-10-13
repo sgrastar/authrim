@@ -39,6 +39,7 @@ import {
   createAuditLog,
   updateProfileOnLogin,
   readExternalProviderReauthPolicy,
+  readExternalProviderUsagePolicy,
   resolveSessionTtl,
 } from '@authrim/ar-lib-core';
 import { executeRuntimeMapping } from '@authrim/ar-lib-field-mapping/runtime';
@@ -61,7 +62,8 @@ import {
   hasSignature,
   type VerifiedXmlReference,
 } from '../common/signature';
-import { getIdPConfigByEntityId } from '../admin/providers';
+import { getIdPConfigByEntityId, getIdPUsageKeyByEntityId } from '../admin/providers';
+import { samlUsageUnavailableResponse } from './usage-gate';
 import { getSAMLLocalEntityIds } from '../common/entity-id';
 import { assertSAMLRelayStateSize, SAMLRelayStateTooLargeError } from '../common/relay-state';
 import {
@@ -157,6 +159,31 @@ export async function handleSPACS(c: Context<{ Bindings: Env }>): Promise<Respon
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
 
+    // The tenant's sign-in and sign-up switches for this IdP hold here, not only on the login
+    // screen: decided before the assertion is spent and before any account or session is made.
+    // A re-authentication has its own switch.
+    const reauthentication = validatedRequest?.context?.spReauthentication;
+    let usageKey: Awaited<ReturnType<typeof getIdPUsageKeyByEntityId>>;
+    let usagePolicy: { loginEnabled: boolean; signupEnabled: boolean };
+    try {
+      // Finding the IdP's record is part of reading its switches: failing is "unavailable" too.
+      usageKey = await getIdPUsageKeyByEntityId(env, tenantId, issuer);
+      usagePolicy = usageKey
+        ? await readExternalProviderUsagePolicy(env, tenantId, usageKey)
+        : { loginEnabled: true, signupEnabled: true };
+    } catch (error) {
+      log.warn(
+        'SAML IdP usage settings could not be read; refusing the sign-in',
+        {},
+        error as Error
+      );
+      return samlUsageUnavailableResponse(c);
+    }
+    if (!reauthentication && !usagePolicy.loginEnabled) {
+      log.warn('SAML sign-in refused: the tenant turned sign-in off for this IdP', { issuer });
+      return createErrorResponse(c, AR_ERROR_CODES.POLICY_FEATURE_DISABLED);
+    }
+
     const isFirstUse = await checkAndRecordBearerAssertionUse(
       env,
       tenantId,
@@ -182,12 +209,17 @@ export async function handleSPACS(c: Context<{ Bindings: Env }>): Promise<Respon
     const userInfo = await extractUserInfo(env, tenantId, spEntityId, assertion, idpConfig);
 
     // Resolve the federated identity before applying any future attribute mapping.
-    const identityResolution = await findOrCreateUser(env, userInfo, idpConfig, tenantId);
+    const identityResolution = await findOrCreateUser(
+      env,
+      userInfo,
+      idpConfig,
+      tenantId,
+      usagePolicy.signupEnabled
+    );
     const userId = identityResolution.userId;
 
     // A sign-in that answers a re-authentication needs the IdP to show a new login made after
     // Authrim asked for one (ForceAuthn): its AuthnInstant, within the usual clock skew.
-    const reauthentication = validatedRequest?.context?.spReauthentication;
     let reauthProvenAt: number | undefined;
     if (reauthentication) {
       const proven = await provenSPReauthentication(
@@ -286,7 +318,9 @@ export async function handleSPACS(c: Context<{ Bindings: Env }>): Promise<Respon
       tenantId,
       sessionId,
       userId,
-      returnUrl
+      returnUrl,
+      // Redeeming a sign-in's artifact checks the IdP's sign-in switch again.
+      reauthentication ? null : usageKey
     );
     if (handoffResponse) {
       if (inResponseTo) {
@@ -331,6 +365,13 @@ export async function handleSPACS(c: Context<{ Bindings: Env }>): Promise<Respon
             }
           : undefined,
       });
+    }
+
+    if (error instanceof SamlSignupDisabledError) {
+      log.warn('SAML sign-up refused: the tenant turned sign-up off for this IdP', {
+        issuer: auditProviderId,
+      });
+      return createErrorResponse(c, AR_ERROR_CODES.POLICY_FEATURE_DISABLED);
     }
 
     if (error instanceof SamlAttributeMappingError) {
@@ -419,7 +460,8 @@ async function createSessionHandoffResponse(
   tenantId: string,
   sessionId: string,
   userId: string,
-  returnUrl: string
+  returnUrl: string,
+  usageKey: { providerId: string; ids: string[] } | null
 ): Promise<Response | null> {
   const env = c.env;
   if (!shouldUseSessionHandoff(env, getRequestUrl(c), returnUrl)) {
@@ -443,6 +485,9 @@ async function createSessionHandoffResponse(
     };
     if (clientId) {
       metadata.client_id = clientId;
+    }
+    if (usageKey) {
+      metadata.external_provider_usage_key = usageKey;
     }
 
     await handoffStore.storeChallengeRpc({
@@ -1305,6 +1350,14 @@ class SamlProvisioningError extends Error {
   }
 }
 
+/** The tenant turned sign-up off for the IdP, so a first sign-in cannot create the account. */
+class SamlSignupDisabledError extends Error {
+  constructor() {
+    super('SAML sign-up is turned off for this IdP');
+    this.name = 'SamlSignupDisabledError';
+  }
+}
+
 class SamlAttributeMappingError extends Error {
   constructor(message: string) {
     super(message);
@@ -1491,7 +1544,8 @@ async function findOrCreateUser(
   env: Env,
   userInfo: UserInfo,
   idpConfig: SAMLIdPConfig,
-  tenantId: string
+  tenantId: string,
+  signupEnabled: boolean
 ): Promise<SAMLIdentityResolution> {
   const providerId = idpConfig.entityId;
   const providerUserKey = buildSAMLProviderUserKey(userInfo);
@@ -1526,6 +1580,8 @@ async function findOrCreateUser(
         'jit_disabled'
       );
     }
+    // Creating an account is a sign-up: decided before anything is written.
+    if (!signupEnabled) throw new SamlSignupDisabledError();
     return provisionSamlJitAccount(env, {
       tenantId,
       providerId,

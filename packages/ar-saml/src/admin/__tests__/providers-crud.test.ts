@@ -45,6 +45,7 @@ vi.mock('../metadata-polling', () => ({
 import {
   getIdPConfig,
   getIdPConfigByEntityId,
+  getIdPUsageKeyByEntityId,
   getSPConfig,
   handleCreateAttributePreset,
   handleCreateProvider,
@@ -1124,6 +1125,25 @@ describe('SAML provider CRUD boundaries', () => {
       entityId: 'target',
     });
     expect(await getIdPConfigByEntityId({} as never, 'tenant-a', 'missing')).toBeNull();
+  });
+
+  it("files an IdP's saved sign-in switches under its provider id, found by entity id", async () => {
+    mocks.adapter!.query.mockResolvedValue([
+      { id: 'idp-other', config_json: JSON.stringify({ entityId: 'other' }) },
+      { id: 'idp-1', config_json: JSON.stringify({ entityId: 'target' }) },
+    ]);
+    expect(await getIdPUsageKeyByEntityId({} as never, 'tenant-a', 'target')).toEqual({
+      providerId: 'idp-1',
+      ids: ['saml:idp-1', 'idp-1'],
+    });
+    // An IdP with no provider record of its own (federation metadata) has no switches saved.
+    expect(await getIdPUsageKeyByEntityId({} as never, 'tenant-a', 'missing')).toBeNull();
+    // An entity id two records claim is refused where the IdP is resolved; no key is guessed.
+    mocks.adapter!.query.mockResolvedValue([
+      { id: 'idp-1', config_json: JSON.stringify({ entityId: 'target' }) },
+      { id: 'idp-2', config_json: JSON.stringify({ entityId: 'target' }) },
+    ]);
+    expect(await getIdPUsageKeyByEntityId({} as never, 'tenant-a', 'target')).toBeNull();
   });
 
   it('resolves an opted-in aggregate SP and applies its Entity Category preset', async () => {

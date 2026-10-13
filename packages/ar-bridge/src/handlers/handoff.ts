@@ -37,6 +37,7 @@ import {
   createPhase1ErrorDetails,
   getSessionCookieSameSite,
   resolvePostLoginRedirectUrl,
+  readExternalProviderUsagePolicy,
 } from '@authrim/ar-lib-core';
 
 type HandoffInclude = {
@@ -142,6 +143,24 @@ function parseHandoffInclude(c: Context<{ Bindings: Env }>): HandoffInclude | Re
     'Unsupported include parameter. Use include=session,user.',
     400
   );
+}
+
+/** The provider keys a sign-in's artifact carries, null where it names none, 'invalid' if malformed. */
+function parseExternalProviderUsageKey(
+  value: unknown
+): { providerId: string; ids: string[] } | null | 'invalid' {
+  if (value === undefined) return null;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return 'invalid';
+  const { providerId, ids } = value as { providerId?: unknown; ids?: unknown };
+  if (
+    typeof providerId !== 'string' ||
+    providerId.length === 0 ||
+    !Array.isArray(ids) ||
+    !ids.every((id) => typeof id === 'string')
+  ) {
+    return 'invalid';
+  }
+  return { providerId, ids };
 }
 
 async function createHandoffSession(
@@ -287,6 +306,8 @@ async function createHandoffSession(
       aud: string;
       created_at: number;
       origin?: string;
+      /** The external provider that signed the user in, where the artifact comes from a sign-in. */
+      external_provider_usage_key?: unknown;
     };
   };
 
@@ -370,6 +391,36 @@ async function createHandoffSession(
       ip: clientIp,
     });
     return createErrorResponse(c, AR_ERROR_CODES.AUTH_INVALID_CODE);
+  }
+
+  // 5b. An artifact from an external provider's sign-in is honoured only while the tenant still
+  // lets that provider sign people in (it may have been turned off since the sign-in), before any
+  // session is made.
+  const usageKey = parseExternalProviderUsageKey(handoffData.metadata?.external_provider_usage_key);
+  if (usageKey === 'invalid') {
+    return createErrorResponse(c, AR_ERROR_CODES.AUTH_INVALID_CODE);
+  }
+  if (usageKey) {
+    let loginEnabled: boolean;
+    try {
+      loginEnabled = (await readExternalProviderUsagePolicy(c.env, tenantId, usageKey))
+        .loginEnabled;
+    } catch (error) {
+      log.error('External provider usage settings are unavailable', {}, error as Error);
+      c.header('Retry-After', '1');
+      return handoffOAuthError(
+        c,
+        'temporarily_unavailable',
+        'Provider settings are unavailable',
+        503
+      );
+    }
+    if (!loginEnabled) {
+      log.warn('External provider sign-in was turned off before the handoff was redeemed', {
+        client_id,
+      });
+      return handoffOAuthError(c, 'access_denied', 'This provider cannot be used to sign in', 403);
+    }
   }
 
   // 6. AS SSO session validation
