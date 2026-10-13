@@ -985,6 +985,159 @@ describe('Direct Auth primary passkey and email-code flows', () => {
     }
   );
 
+  it.each([
+    [
+      'sign-up turned off since its challenge was issued',
+      { 'authentication-methods.passkey.signup_enabled': false },
+      403,
+    ],
+    ['settings that cannot be understood', '{not json', 503],
+    ['settings stored as an empty string', '', 503],
+    [
+      'sign-up on while login is off',
+      {
+        'authentication-methods.passkey.login_enabled': false,
+        'authentication-methods.passkey.signup_enabled': true,
+      },
+      200,
+    ],
+  ])('finishes a passkey sign-up with %s', async (_label, settings, status) => {
+    const codeVerifier = 'passkey-signup-code-verifier';
+    mocks.challengeStore.getChallengeRpc.mockResolvedValue({ userId: 'user_new' });
+    mocks.challengeStore.consumeChallengeRpc.mockResolvedValue({
+      challenge: 'passkey-signup-challenge',
+      email: 'new@example.com',
+      metadata: {
+        code_challenge: await s256Challenge(codeVerifier),
+        client_id: 'web-client',
+        channel: 'browser',
+        scope: 'openid email',
+        origin: 'https://app.example.com',
+        rpID: 'app.example.com',
+      },
+    });
+    mocks.userCore.findById.mockResolvedValue({
+      id: 'user_new',
+      is_active: true,
+      created_at: Date.now(),
+    });
+    mocks.publishTenantD1PasskeyRoute.mockResolvedValue(201);
+    const { directPasskeySignupFinishHandler } = await import('../direct-auth');
+    const context = createContext({
+      challenge_id: 'signup_challenge',
+      credential: {
+        id: 'new-credential',
+        rawId: 'new-credential',
+        response: { transports: ['internal'] },
+        type: 'public-key',
+      },
+      code_verifier: codeVerifier,
+      channel: 'browser',
+    });
+    context.env.SETTINGS = createMockKV({
+      'settings:tenant:tenant_test:authentication-methods':
+        typeof settings === 'string' ? settings : JSON.stringify(settings),
+    }) as never;
+
+    const response = await directPasskeySignupFinishHandler(context as never);
+
+    expect(response.status).toBe(status);
+    if (status !== 200) {
+      // Refused before the challenge is touched: the sign-up the start began can still finish.
+      expect(mocks.challengeStore.consumeChallengeRpc).not.toHaveBeenCalled();
+      expect(mocks.verifyRegistrationResponse).not.toHaveBeenCalled();
+      expect(mocks.passkey.create).not.toHaveBeenCalled();
+      expect(mocks.authCodeStore.storeCodeRpc).not.toHaveBeenCalled();
+    } else {
+      expect(mocks.challengeStore.consumeChallengeRpc).toHaveBeenCalledTimes(1);
+      expect(mocks.passkey.create).toHaveBeenCalled();
+    }
+  });
+
+  it('lets a passkey sign-up finish on retry after the settings could not be read for a moment', async () => {
+    const codeVerifier = 'passkey-signup-code-verifier';
+    mocks.challengeStore.getChallengeRpc.mockResolvedValue({ userId: 'user_new' });
+    mocks.challengeStore.consumeChallengeRpc.mockResolvedValueOnce({
+      challenge: 'passkey-signup-challenge',
+      email: 'new@example.com',
+      metadata: {
+        code_challenge: await s256Challenge(codeVerifier),
+        client_id: 'web-client',
+        channel: 'browser',
+        scope: 'openid email',
+        origin: 'https://app.example.com',
+        rpID: 'app.example.com',
+      },
+    });
+    mocks.userCore.findById.mockResolvedValue({
+      id: 'user_new',
+      is_active: true,
+      created_at: Date.now(),
+    });
+    mocks.publishTenantD1PasskeyRoute.mockResolvedValue(201);
+    const { directPasskeySignupFinishHandler } = await import('../direct-auth');
+    const body = {
+      challenge_id: 'signup_challenge',
+      credential: {
+        id: 'new-credential',
+        rawId: 'new-credential',
+        response: { transports: ['internal'] },
+        type: 'public-key',
+      },
+      code_verifier: codeVerifier,
+      channel: 'browser',
+    };
+
+    const failing = createContext(body);
+    failing.env.SETTINGS = {
+      get: vi.fn(async (key: string) => {
+        if (key.endsWith(':authentication-methods')) throw new Error('KV unavailable');
+        return null;
+      }),
+    } as never;
+    const first = await directPasskeySignupFinishHandler(failing as never);
+    expect(first.status).toBe(503);
+    expect(mocks.challengeStore.consumeChallengeRpc).not.toHaveBeenCalled();
+
+    const recovered = createContext(body);
+    recovered.env.SETTINGS = createMockKV({}) as never;
+    const second = await directPasskeySignupFinishHandler(recovered as never);
+
+    expect(second.status).toBe(200);
+    expect(mocks.challengeStore.consumeChallengeRpc).toHaveBeenCalledTimes(1);
+    expect(mocks.passkey.create).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses a passkey login finish when the settings cannot be understood (passkeys are on by default)', async () => {
+    const codeVerifier = 'passkey-login-code-verifier';
+    mocks.challengeStore.consumeChallengeRpc.mockResolvedValue({
+      challenge: 'passkey-login-challenge',
+      metadata: {
+        code_challenge: await s256Challenge(codeVerifier),
+        client_id: 'web-client',
+        channel: 'browser',
+        origin: 'https://app.example.com',
+        rpID: 'app.example.com',
+        usage: 'login',
+      },
+    });
+    const { directPasskeyLoginFinishHandler } = await import('../direct-auth');
+    const context = createContext({
+      challenge_id: 'challenge_1',
+      credential: { id: 'credential-id', rawId: 'credential-id', response: {}, type: 'public-key' },
+      code_verifier: codeVerifier,
+      channel: 'browser',
+    });
+    context.env.SETTINGS = createMockKV({
+      'settings:tenant:tenant_test:authentication-methods': '[]',
+    }) as never;
+
+    const response = await directPasskeyLoginFinishHandler(context as never);
+
+    expect(response.status).toBe(503);
+    expect(mocks.authCodeStore.storeCodeRpc).not.toHaveBeenCalled();
+  });
+
   it("refuses a passkey re-authentication finished with another user's passkey", async () => {
     const codeVerifier = 'passkey-login-code-verifier';
     mocks.challengeStore.consumeChallengeRpc.mockResolvedValue({

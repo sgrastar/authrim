@@ -441,4 +441,52 @@ describe('isAuthenticationMethodUsageAvailable', () => {
       )
     ).resolves.toBe(false);
   });
+  describe('a stored document', () => {
+    const rawEnv = (raw: string | null | undefined) =>
+      ({ SETTINGS: { get: vi.fn(async () => raw) } }) as unknown as Env;
+
+    it.each([
+      ['null', null],
+      ['undefined', undefined],
+    ])('that is missing (%s) reads as the defaults, strict or not', async (_l, raw) => {
+      for (const strict of [false, true]) {
+        await expect(
+          isAuthenticationMethodUsageAvailable(rawEnv(raw), 't1', 'passkey', 'login', { strict })
+        ).resolves.toBe(true);
+        await expect(
+          isAuthenticationMethodUsageAvailable(rawEnv(raw), 't1', 'totp', 'login', { strict })
+        ).resolves.toBe(false);
+      }
+    });
+
+    it.each([
+      ['an empty string', ''],
+      ['blank', '  \n'],
+      ['not JSON', '{not json'],
+      ['an array', '[]'],
+      ['a number', '7'],
+      ['JSON null', 'null'],
+    ])('that is damaged (%s) is refused when strict', async (_l, raw) => {
+      await expect(
+        isAuthenticationMethodUsageAvailable(rawEnv(raw), 't1', 'passkey', 'login', {
+          strict: true,
+        })
+      ).rejects.toThrow();
+    });
+
+    it.each([
+      ['an empty string', ''],
+      ['not JSON', '{not json'],
+      ['an array', '[]'],
+      ['a number', '7'],
+      ['JSON null', 'null'],
+    ])('that is damaged (%s) still reads as the defaults when not strict', async (_l, raw) => {
+      await expect(
+        isAuthenticationMethodUsageAvailable(rawEnv(raw), 't1', 'passkey', 'login')
+      ).resolves.toBe(true);
+      await expect(
+        isAuthenticationMethodUsageAvailable(rawEnv(raw), 't1', 'totp', 'login')
+      ).resolves.toBe(false);
+    });
+  });
 });

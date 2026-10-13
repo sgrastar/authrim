@@ -256,7 +256,22 @@ async function rejectIfAuthenticationMethodDisabled(
   method: 'passkey' | 'email_otp',
   usage: AuthenticationMethodUsage
 ): Promise<Response | null> {
-  const enabled = await isAuthenticationMethodUsageEnabled(c.env, tenantId, method, usage);
+  let enabled: boolean;
+  try {
+    // Strict: a method on by default (passkey) must not stay on because the switch that would
+    // turn it off could not be read.
+    enabled = await isAuthenticationMethodUsageEnabled(c.env, tenantId, method, usage, {
+      strict: true,
+    });
+  } catch {
+    return c.json(
+      {
+        error: 'temporarily_unavailable',
+        error_description: 'Authentication settings are unavailable.',
+      },
+      503
+    );
+  }
   if (enabled) return null;
   return createErrorResponse(c, AR_ERROR_CODES.POLICY_INSUFFICIENT_PERMISSIONS, {
     extensions: {
@@ -2319,6 +2334,22 @@ export async function directPasskeySignupFinishHandler(c: Context<{ Bindings: En
     const tenantId = getTenantIdFromContext(c);
     const assurance = await readDirectAuthAssurance(c, tenantId);
     if ('error' in assurance) return assurance.error;
+
+    // Passkey sign-up may have been turned off since the challenge was issued. Decided before the
+    // challenge is consumed: a switch that is off, or settings that cannot be read for a moment,
+    // must not burn a challenge whose account the start already created (the retry would find the
+    // challenge gone, and a new start would conflict with that account). Turning the switch off
+    // between this check and the consume below is a race we accept: the Durable Object
+    // calls in between make it a short window (its length is not guaranteed), and the account and
+    // challenge came from a start made while sign-up was allowed.
+    failureStage = 'method_gate';
+    const methodDisabledError = await rejectIfAuthenticationMethodDisabled(
+      c,
+      tenantId,
+      'passkey',
+      'signup'
+    );
+    if (methodDisabledError) return methodDisabledError;
 
     // Look up userId from challenge_id mapping
     // We stored this mapping in signup/start using challenge_id-based sharding

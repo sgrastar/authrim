@@ -354,6 +354,11 @@ paths:
       tags:
         - Passkeys
       summary: Create WebAuthn registration options.
+      description: >
+        Creates a new account, so it works only where the tenant allows passkey sign-up
+        (`authentication-methods.passkey.signup_enabled`, on unless the tenant turned it off);
+        otherwise it is refused with 403 before any account is looked up or created, and with 503
+        when the tenant's settings cannot be read.
       requestBody:
         $ref: '#/components/requestBodies/PasskeyRegisterOptions'
       responses:
@@ -366,6 +371,10 @@ paths:
       tags:
         - Passkeys
       summary: Verify WebAuthn registration and create a session.
+      description: >
+        Works only where the tenant allows passkey sign-up
+        (`authentication-methods.passkey.signup_enabled`); otherwise it is refused with 403 (503
+        when the settings cannot be read) and no session is opened.
       requestBody:
         $ref: '#/components/requestBodies/PasskeyRegisterVerify'
       responses:
@@ -386,6 +395,11 @@ paths:
       tags:
         - Passkeys
       summary: Verify WebAuthn login and create a session.
+      description: >
+        A tenant's users sign in only where the tenant allows passkey login
+        (`authentication-methods.passkey.login_enabled`); otherwise 403 (503 when the settings
+        cannot be read). Administrators signing in to the console are not governed by it. The
+        options endpoint above is not gated: it issues a challenge only, and the verify decides.
       requestBody:
         $ref: '#/components/requestBodies/PasskeyLoginVerify'
       responses:
