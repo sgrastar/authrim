@@ -663,21 +663,40 @@ paths:
       tags:
         - DID
       summary: Create a DID authentication challenge.
+      description: >
+        DID login is off unless the tenant turns it on (`authentication-methods.did.login_enabled`,
+        default false). Where it is off the request is refused with 403 (503 when the tenant's
+        settings cannot be read) before the DID is resolved or a challenge is stored, whatever the
+        DID, so nothing about a DID or its link to an account is revealed.
       requestBody:
         $ref: '#/components/requestBodies/DIDChallenge'
       responses:
         '200':
           $ref: '#/components/responses/DIDChallenge'
+        '403':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
   /api/auth/dids/verify:
     post:
       tags:
         - DID
       summary: Verify a DID authentication proof and create a session.
+      description: >
+        Works only where the tenant allows DID login (`authentication-methods.did.login_enabled`,
+        default false); otherwise 403 (503 when the settings cannot be read), decided before the
+        challenge is consumed, the DID is resolved, an account is looked up or a session is opened.
+        Linking, listing and unlinking DIDs (`/api/auth/dids/register/*`, `/api/auth/dids`) manage
+        credentials and are not governed by it.
       requestBody:
         $ref: '#/components/requestBodies/DIDVerify'
       responses:
         '200':
           $ref: '#/components/responses/DIDVerify'
+        '403':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
   /api/auth/dids:
     get:
       tags:

@@ -439,6 +439,9 @@ const adminOther = {
 	admin_authentication_methods_totp: 'Authenticator App',
 	admin_authentication_methods_totp_description:
 		'Use TOTP authenticator apps for login, signup, re-authentication, and account linking.',
+	admin_authentication_methods_did: 'DID',
+	admin_authentication_methods_did_description:
+		'Let accounts with a linked DID (did:web, did:key) sign in by signing a challenge. Off unless turned on here.',
 	admin_authentication_methods_totp_preset: 'TOTP preset',
 	admin_authentication_methods_totp_preset_compatible: 'Compatible',
 	admin_authentication_methods_totp_preset_strong: 'Strong',

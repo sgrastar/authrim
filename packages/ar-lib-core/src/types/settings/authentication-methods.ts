@@ -25,6 +25,7 @@ export interface AuthenticationMethodsSettings {
   'authentication-methods.totp.signup_enabled': boolean;
   'authentication-methods.totp.reauth_enabled': boolean;
   'authentication-methods.totp.account_link_enabled': boolean;
+  'authentication-methods.did.login_enabled': boolean;
   'authentication-methods.totp.preset': string;
   'authentication-methods.totp.default_acr': string;
   'authentication-methods.totp.requirement_policy': string;
@@ -181,6 +182,15 @@ export const AUTHENTICATION_METHODS_SETTINGS_META: Record<
     description: 'Enable authenticator-app TOTP use for account linking flows',
     visibility: 'page',
   },
+  'authentication-methods.did.login_enabled': {
+    key: 'authentication-methods.did.login_enabled',
+    type: 'boolean',
+    default: false,
+    label: 'DID Login',
+    description:
+      'Allow accounts with a linked DID (did:web, did:key) to sign in by signing a challenge. Off unless the tenant turns it on',
+    visibility: 'page',
+  },
   'authentication-methods.totp.preset': {
     key: 'authentication-methods.totp.preset',
     type: 'string',
@@ -279,6 +289,7 @@ export const AUTHENTICATION_METHODS_DEFAULTS: AuthenticationMethodsSettings = {
   'authentication-methods.totp.signup_enabled': false,
   'authentication-methods.totp.reauth_enabled': false,
   'authentication-methods.totp.account_link_enabled': false,
+  'authentication-methods.did.login_enabled': false,
   'authentication-methods.totp.preset': 'compatible',
   'authentication-methods.totp.default_acr': 'urn:authrim:aal:2',
   'authentication-methods.totp.requirement_policy':

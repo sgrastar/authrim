@@ -140,6 +140,9 @@ place('authentication/methods', 'Sign-in methods', {
 	],
 	search: ['authentication-methods.cache_ttl']
 });
+place('authentication/methods', 'Decentralized identifiers (DID)', {
+	primary: ['authentication-methods.did.login_enabled']
+});
 place('authentication/methods', 'Guests', {
 	primary: ['authentication-methods.guest.login_enabled'],
 	advanced: [

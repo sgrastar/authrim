@@ -785,6 +785,65 @@ describe('Settings API v2', () => {
         ).resolves.toBeNull();
       });
 
+      it('keeps DID login off until a tenant turns it on, and saves the switch where sign-in reads it', async () => {
+        const mockKV = createMockKV();
+        const { app, mockEnv } = createTestApp({ kv: mockKV });
+        const url = '/api/admin/tenants/tenant_123/settings/authentication-methods';
+
+        const getRes = await app.request(url, { method: 'GET' }, mockEnv);
+        const current = (await getRes.json()) as SettingsGetResult;
+        expect(current.values['authentication-methods.did.login_enabled']).toBe(false);
+
+        const res = await app.request(
+          url,
+          {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              ifMatch: current.version,
+              set: { 'authentication-methods.did.login_enabled': true },
+            }),
+          },
+          mockEnv
+        );
+        expect(res.status).toBe(200);
+        const patched = (await res.json()) as SettingsPatchResult;
+        expect(patched.applied).toContain('authentication-methods.did.login_enabled');
+
+        // The document DID sign-in reads (ar-auth: authentication-method-settings).
+        const raw = await mockKV.get('settings:tenant:tenant_123:authentication-methods');
+        expect(JSON.parse(String(raw))).toMatchObject({
+          'authentication-methods.did.login_enabled': true,
+        });
+
+        const after = (await (
+          await app.request(url, { method: 'GET' }, mockEnv)
+        ).json()) as SettingsGetResult;
+        expect(after.values['authentication-methods.did.login_enabled']).toBe(true);
+      });
+
+      it('refuses a DID login switch that is not a boolean', async () => {
+        const { app, mockEnv } = createTestApp();
+        const url = '/api/admin/tenants/tenant_123/settings/authentication-methods';
+        const current = (await (
+          await app.request(url, { method: 'GET' }, mockEnv)
+        ).json()) as SettingsGetResult;
+
+        const res = await app.request(
+          url,
+          {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              ifMatch: current.version,
+              set: { 'authentication-methods.did.login_enabled': 'sometimes' },
+            }),
+          },
+          mockEnv
+        );
+        expect(res.status).toBe(400);
+      });
+
       it('accepts every newly supported Login UI locale', async () => {
         const mockKV = createMockKV();
         const { app, mockEnv } = createTestApp({ kv: mockKV });

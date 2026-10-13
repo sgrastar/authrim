@@ -31,6 +31,7 @@
 		totpSignupEnabled: false,
 		totpReauthEnabled: false,
 		totpAccountLinkEnabled: false,
+		didLoginEnabled: false,
 		totpPreset: 'compatible',
 		totpDefaultAcr: 'urn:authrim:aal:2'
 	};
@@ -393,6 +394,23 @@
 						disabled={!canEdit}
 						size="sm"
 					/>
+				</div>
+
+				<div class="method-title">
+					<strong>{$LL.admin_authentication_methods_did()}</strong>
+					<span>{$LL.admin_authentication_methods_did_description()}</span>
+				</div>
+				<div class="method-cell unavailable">
+					<span>{$LL.admin_authentication_methods_not_applicable()}</span>
+				</div>
+				<div class="method-cell">
+					<ToggleSwitch bind:checked={builtIn.didLoginEnabled} disabled={!canEdit} size="sm" />
+				</div>
+				<div class="method-cell unavailable">
+					<span>{$LL.admin_authentication_methods_not_applicable()}</span>
+				</div>
+				<div class="method-cell unavailable">
+					<span>{$LL.admin_authentication_methods_not_applicable()}</span>
 				</div>
 
 				<div class="method-title">

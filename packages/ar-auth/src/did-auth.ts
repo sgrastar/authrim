@@ -45,6 +45,7 @@ import {
 import { getRequestIssuer } from './issuer';
 import { jwtVerify, importJWK, decodeProtectedHeader } from 'jose';
 import { resolveSessionTtl } from './session-ttl';
+import { isDidLoginEnabled } from './authentication-method-settings';
 
 /**
  * Allowed JWT algorithms for DID authentication proofs.
@@ -52,6 +53,35 @@ import { resolveSessionTtl } from './session-ttl';
  * - EdDSA: For Ed25519 keys (did:key)
  */
 const ALLOWED_DID_AUTH_ALGORITHMS = ['ES256', 'ES384', 'ES512', 'EdDSA'];
+
+/**
+ * DID login is off unless the tenant turned it on (`authentication-methods.did.login_enabled`).
+ * Decided before anything else is done: a tenant that has it off never resolves a DID, stores or
+ * consumes a challenge, looks an account up or opens a session, and the answer does not depend on
+ * the DID or on whether it is linked. Settings that cannot be read refuse too (503): an unreadable
+ * switch must not read as "on".
+ */
+async function rejectIfDidLoginDisabled(
+  c: Context<{ Bindings: Env }>,
+  tenantId: string
+): Promise<Response | null> {
+  let enabled: boolean;
+  try {
+    enabled = await isDidLoginEnabled(c.env, tenantId, { strict: true });
+  } catch {
+    return c.json(
+      {
+        error: 'temporarily_unavailable',
+        error_description: 'Authentication settings are unavailable.',
+      },
+      503
+    );
+  }
+  if (enabled) return null;
+  return createErrorResponse(c, AR_ERROR_CODES.POLICY_INSUFFICIENT_PERMISSIONS, {
+    extensions: { authentication_method: 'did', usage: 'login' },
+  });
+}
 
 /**
  * POST /auth/did/challenge
@@ -63,6 +93,9 @@ export async function didAuthChallengeHandler(c: Context<{ Bindings: Env }>): Pr
   const log = getLogger(c).module('DID-AUTH');
 
   try {
+    const loginDisabled = await rejectIfDidLoginDisabled(c, getTenantIdFromContext(c));
+    if (loginDisabled) return loginDisabled;
+
     const body = await c.req.json<{ did: string }>();
     const { did } = body;
 
@@ -160,6 +193,11 @@ export async function didAuthVerifyHandler(c: Context<{ Bindings: Env }>): Promi
   const tenantId = getTenantIdFromContext(c);
 
   try {
+    // Before the challenge is consumed: a settings read that failed for a moment must not burn
+    // the challenge, and a tenant with DID login off opens no session.
+    const loginDisabled = await rejectIfDidLoginDisabled(c, tenantId);
+    if (loginDisabled) return loginDisabled;
+
     const body = await c.req.json<{
       challenge_id: string;
       proof: string; // JWS containing the signed challenge

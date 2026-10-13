@@ -85,6 +85,54 @@ describe('adminAuthenticationMethodsAPI', () => {
 		});
 	});
 
+	it('reads DID login as off unless the tenant turned it on, whatever the other methods say', async () => {
+		mockAdminSettingsAPI.getSettings.mockResolvedValue({
+			version: 'v1',
+			values: {
+				'authentication-methods.passkey.enabled': true,
+				'authentication-methods.totp.enabled': true,
+				'authentication-methods.email_otp.enabled': true
+			}
+		});
+		expect((await adminAuthenticationMethodsAPI.get('tenant-a')).builtIn.didLoginEnabled).toBe(
+			false
+		);
+
+		mockAdminSettingsAPI.getSettings.mockResolvedValue({
+			version: 'v1',
+			values: { 'authentication-methods.did.login_enabled': true }
+		});
+		expect((await adminAuthenticationMethodsAPI.get('tenant-a')).builtIn.didLoginEnabled).toBe(
+			true
+		);
+	});
+
+	it('shows a DID login value that is not a boolean true as off, and does not write it back as true', async () => {
+		for (const value of ['true', ' TRUE ', 'yes', 1, null]) {
+			const saved = {
+				version: 'v1',
+				values: { 'authentication-methods.did.login_enabled': value }
+			};
+			mockAdminSettingsAPI.getSettings.mockResolvedValue(saved);
+			const loaded = await adminAuthenticationMethodsAPI.get('tenant-a');
+			expect(loaded.builtIn.didLoginEnabled, String(value)).toBe(false);
+
+			// Saving another method on the screen sends what was shown: false, never a true.
+			mockAdminSettingsAPI.updateSettings.mockResolvedValue({ applied: [] });
+			await adminAuthenticationMethodsAPI.update(
+				{ category: 'authentication-methods', version: 'v1', values: saved.values, sources: {} },
+				{ ...loaded.builtIn, totpPreset: 'strong' },
+				loaded.directoryPassword,
+				loaded.humanVerification,
+				[],
+				[],
+				'tenant-a'
+			);
+			const sent = mockAdminSettingsAPI.updateSettings.mock.calls.at(-1)?.[1].set;
+			expect(sent['authentication-methods.did.login_enabled'], String(value)).toBe(false);
+		}
+	});
+
 	it('reads and keeps the per-provider re-authentication evidence setting', async () => {
 		mockAdminSettingsAPI.getSettings.mockResolvedValue({
 			version: 'v1',
@@ -220,6 +268,7 @@ describe('adminAuthenticationMethodsAPI', () => {
 			totpSignupEnabled: false,
 			totpReauthEnabled: true,
 			totpAccountLinkEnabled: true,
+			didLoginEnabled: true,
 			totpPreset: 'strong',
 			totpDefaultAcr: 'urn:authrim:aal:3'
 		};
@@ -260,6 +309,7 @@ describe('adminAuthenticationMethodsAPI', () => {
 					'authentication-methods.totp.signup_enabled': false,
 					'authentication-methods.totp.reauth_enabled': true,
 					'authentication-methods.totp.account_link_enabled': true,
+					'authentication-methods.did.login_enabled': true,
 					'authentication-methods.totp.preset': 'strong',
 					'authentication-methods.totp.default_acr': 'urn:authrim:aal:3'
 				})

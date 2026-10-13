@@ -673,6 +673,7 @@ const REVIEWED_FIELDS: readonly [string, TenantSettingValueType, TenantSettingHa
     authentication-methods.totp.signup_enabled
     authentication-methods.totp.reauth_enabled
     authentication-methods.totp.account_link_enabled
+    authentication-methods.did.login_enabled
     authentication-methods.human_verification.login_enabled
     authentication-methods.human_verification.signup_enabled
     authentication-methods.human_verification.reauth_enabled
