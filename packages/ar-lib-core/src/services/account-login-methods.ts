@@ -120,26 +120,25 @@ function strictBoolean(value: unknown, fallback: boolean): boolean {
 }
 
 /**
- * The re-authentication policy saved for an external provider in
- * `authentication-methods.external_provider_usage`. An entry naming a providerId applies only to
- * that provider (a slug can be renamed or reused); an older entry without one is matched by id.
- * A provider with no saved entry keeps the defaults the admin pages show. Read strictly: settings
- * that cannot be read or understood throw rather than allowing a re-authentication.
+ * The entry saved for one provider in `authentication-methods.external_provider_usage`, or null
+ * where there is none (nothing saved, or none for this provider). An entry naming a providerId
+ * applies only to that provider (a slug can be renamed or reused); an older entry without one is
+ * matched by id. Read strictly: settings that cannot be read or understood throw.
+ *
+ * `unsetWhenBlank`: an empty or null value counts as nothing saved (every screen that lists the
+ * providers reads it that way) instead of as a value not understood.
  */
-export async function readExternalProviderReauthPolicy(
+async function readExternalProviderUsageEntry(
   env: Pick<Env, 'SETTINGS'>,
   tenantId: string,
-  key: ExternalProviderUsageKey
-): Promise<ExternalProviderReauthPolicy> {
+  key: ExternalProviderUsageKey,
+  options: { unsetWhenBlank: boolean }
+): Promise<Record<string, unknown> | null> {
   if (!key.providerId) throw new Error('external_provider_key_invalid');
-  const defaults: ExternalProviderReauthPolicy = {
-    reauthEnabled: true,
-    acceptWithoutAuthTime: false,
-  };
   const raw = await env.SETTINGS?.get(
     `settings:tenant:${tenantId}:${AUTHENTICATION_METHODS_CATEGORY}`
   );
-  if (!raw) return defaults;
+  if (!raw) return null;
   const settings = JSON.parse(raw) as unknown;
   if (!settings || typeof settings !== 'object' || Array.isArray(settings)) {
     throw new Error('authentication_methods_settings_invalid');
@@ -147,7 +146,13 @@ export async function readExternalProviderReauthPolicy(
   const usageValue = (settings as Record<string, unknown>)[
     'authentication-methods.external_provider_usage'
   ];
-  if (usageValue === undefined) return defaults;
+  if (usageValue === undefined) return null;
+  if (
+    options.unsetWhenBlank &&
+    (usageValue === null || (typeof usageValue === 'string' && usageValue.trim() === ''))
+  ) {
+    return null;
+  }
   if (usageValue === null || usageValue === '') throw new Error('external_provider_usage_invalid');
   const usage = typeof usageValue === 'string' ? (JSON.parse(usageValue) as unknown) : usageValue;
   if (!Array.isArray(usage)) throw new Error('external_provider_usage_invalid');
@@ -155,14 +160,36 @@ export async function readExternalProviderReauthPolicy(
     (item): item is Record<string, unknown> =>
       Boolean(item) && typeof item === 'object' && !Array.isArray(item)
   );
-  const entry =
+  return (
     entries.find((item) => item.providerId === key.providerId) ??
     entries.find(
       (item) =>
         (item.providerId === undefined || item.providerId === null || item.providerId === '') &&
         typeof item.id === 'string' &&
         key.ids.includes(item.id)
-    );
+    ) ??
+    null
+  );
+}
+
+/**
+ * The re-authentication policy saved for an external provider in
+ * `authentication-methods.external_provider_usage`. A provider with no saved entry keeps the
+ * defaults the admin pages show. Read strictly: settings that cannot be read or understood throw
+ * rather than allowing a re-authentication.
+ */
+export async function readExternalProviderReauthPolicy(
+  env: Pick<Env, 'SETTINGS'>,
+  tenantId: string,
+  key: ExternalProviderUsageKey
+): Promise<ExternalProviderReauthPolicy> {
+  const defaults: ExternalProviderReauthPolicy = {
+    reauthEnabled: true,
+    acceptWithoutAuthTime: false,
+  };
+  const entry = await readExternalProviderUsageEntry(env, tenantId, key, {
+    unsetWhenBlank: false,
+  });
   if (!entry) return defaults;
   return {
     reauthEnabled: strictBoolean(entry.reauthEnabled, defaults.reauthEnabled),
@@ -170,6 +197,38 @@ export async function readExternalProviderReauthPolicy(
       entry.reauthAcceptWithoutAuthTime,
       defaults.acceptWithoutAuthTime
     ),
+  };
+}
+
+/** Whether the tenant lets one external provider sign people in and create their accounts. */
+export interface ExternalProviderUsagePolicy {
+  /** The provider's sign-in switch (on unless the tenant turned it off). */
+  loginEnabled: boolean;
+  /** The provider's sign-up switch: a first sign-in may create the account (on unless turned off). */
+  signupEnabled: boolean;
+}
+
+/**
+ * The sign-in and sign-up switches saved for an external provider in
+ * `authentication-methods.external_provider_usage`: the same entry, matched the same way, and the
+ * same defaults the login screen and the admin pages show (a provider with no saved entry, or an
+ * entry that leaves a switch out, is on). Only a switch saved as off turns the provider off. Read
+ * strictly: settings that cannot be read, or a switch that is neither a boolean nor the text
+ * "true"/"false" (accepted as the screens accept it), throw rather than guess; only a blank
+ * value is taken for nothing saved, as every screen that lists the providers does.
+ */
+export async function readExternalProviderUsagePolicy(
+  env: Pick<Env, 'SETTINGS'>,
+  tenantId: string,
+  key: ExternalProviderUsageKey
+): Promise<ExternalProviderUsagePolicy> {
+  const entry = await readExternalProviderUsageEntry(env, tenantId, key, {
+    unsetWhenBlank: true,
+  });
+  if (!entry) return { loginEnabled: true, signupEnabled: true };
+  return {
+    loginEnabled: strictBoolean(entry.loginEnabled, true),
+    signupEnabled: strictBoolean(entry.signupEnabled, true),
   };
 }
 

@@ -172,6 +172,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     // values, else the saved document (as the older reader maps it), else the defaults.
     JIT_PROVISIONING_SETTING_KEYS: actual.JIT_PROVISIONING_SETTING_KEYS,
     updateProfileOnLogin: actual.updateProfileOnLogin,
+    readExternalProviderUsagePolicy: actual.readExternalProviderUsagePolicy,
     resolveEffectiveSettings: vi.fn(
       async (
         env: { SETTINGS?: { get: (key: string) => Promise<string | null> } },
@@ -1191,6 +1192,174 @@ describe('Identity Stitching Service', () => {
         ).rejects.toThrow('external_idp_jit_plan_invalid');
         expect(mockPersistCustomClaimWrite).not.toHaveBeenCalled();
         expect(mockActivatePendingIdentity).not.toHaveBeenCalled();
+      });
+    });
+
+    describe('Sign-up switch (external_provider_usage)', () => {
+      const USAGE_KEY = 'settings:tenant:default:authentication-methods';
+      const usageEnv = (value: unknown) =>
+        createMockEnv({
+          SETTINGS: {
+            get: vi.fn(async (key: string) =>
+              key === USAGE_KEY
+                ? value === 'unreadable'
+                  ? '{'
+                  : JSON.stringify({
+                      'authentication-methods.external_provider_usage': JSON.stringify(value),
+                    })
+                : null
+            ),
+          },
+        });
+      const signupOff = [
+        {
+          id: 'provider-123',
+          providerId: 'provider-123',
+          loginEnabled: true,
+          signupEnabled: false,
+        },
+      ];
+
+      const expectNothingCreated = () => {
+        expect(mockProvisionExternalIdpAccount).not.toHaveBeenCalled();
+        expect(linkedIdentityStore.createLinkedIdentity).not.toHaveBeenCalled();
+        expect(mockPersistCustomClaimWrite).not.toHaveBeenCalled();
+        expect(mockSyncUserLifecycleState).not.toHaveBeenCalled();
+        expect(mockCreateRuleEvaluator).not.toHaveBeenCalled();
+      };
+
+      it('does not create an account when the tenant turned sign-up off for the provider', async () => {
+        const env = usageEnv(signupOff);
+
+        await expect(
+          handleIdentity(env as never, {
+            provider: mockProvider,
+            userInfo: mockUserInfo,
+            tokens: mockTokens,
+            tenantId: 'default',
+          })
+        ).rejects.toMatchObject({ code: 'external_signup_disabled' });
+
+        expectNothingCreated();
+      });
+
+      it('matches the saved switch by the provider slug for an older entry', async () => {
+        const env = usageEnv([{ id: 'google', signupEnabled: false }]);
+
+        await expect(
+          handleIdentity(env as never, {
+            provider: { ...mockProvider, slug: 'google' },
+            userInfo: mockUserInfo,
+            tokens: mockTokens,
+            tenantId: 'default',
+          })
+        ).rejects.toMatchObject({ code: 'external_signup_disabled' });
+
+        expectNothingCreated();
+      });
+
+      it('answers temporarily unavailable, creating nothing, when the switches cannot be read', async () => {
+        const env = usageEnv('unreadable');
+
+        await expect(
+          handleIdentity(env as never, {
+            provider: mockProvider,
+            userInfo: mockUserInfo,
+            tokens: mockTokens,
+            tenantId: 'default',
+          })
+        ).rejects.toMatchObject({ code: 'temporarily_unavailable' });
+
+        expectNothingCreated();
+      });
+
+      it.each([
+        ['no entry for the provider', []],
+        [
+          'an entry for another provider only',
+          [{ id: 'other', providerId: 'p', signupEnabled: false }],
+        ],
+        ['an entry that leaves sign-up out', [{ id: 'provider-123', providerId: 'provider-123' }]],
+        [
+          'sign-up on and sign-in off (sign-in is decided before, at the callback)',
+          [
+            {
+              id: 'provider-123',
+              providerId: 'provider-123',
+              loginEnabled: false,
+              signupEnabled: true,
+            },
+          ],
+        ],
+      ])('still creates the account with %s', async (_label, usage) => {
+        const env = usageEnv(usage);
+        vi.mocked(linkedIdentityStore.findLinkedIdentity).mockResolvedValueOnce(null);
+        mockPiiQueryOne.mockResolvedValueOnce(null);
+
+        const result = await handleIdentity(env as never, {
+          provider: mockProvider,
+          userInfo: mockUserInfo,
+          tokens: mockTokens,
+          tenantId: 'default',
+        });
+
+        expect(result.isNewUser).toBe(true);
+        expect(mockProvisionExternalIdpAccount).toHaveBeenCalledOnce();
+      });
+
+      it('does not stop an existing linked identity or an email match from signing in', async () => {
+        const env = usageEnv(signupOff);
+        mockResolveAccountContext.mockResolvedValue({
+          tenantId: 'default',
+          accountId: 'account:existing-user-789',
+          legacyUserId: 'existing-user-789',
+          coreDb: env.DB,
+          piiDb: env.DB_PII,
+        });
+        vi.mocked(linkedIdentityStore.findLinkedIdentity).mockResolvedValueOnce({
+          id: 'existing-linked-id',
+          userId: 'existing-user-789',
+          tenantId: 'default',
+          providerId: 'provider-123',
+          providerUserId: 'google-user-123',
+          emailVerified: true,
+          linkedAt: Date.now() - 86400000,
+          updatedAt: Date.now() - 86400000,
+        });
+
+        await expect(
+          handleIdentity(env as never, {
+            provider: mockProvider,
+            userInfo: mockUserInfo,
+            tokens: mockTokens,
+            tenantId: 'default',
+          })
+        ).resolves.toMatchObject({ userId: 'existing-user-789', isNewUser: false });
+      });
+
+      it('does not finish a provisioning an earlier sign-in left pending once sign-up is off', async () => {
+        const env = usageEnv(signupOff);
+        mockResolveAccountContext.mockResolvedValue({
+          tenantId: 'default',
+          accountId: 'account:user-a',
+          legacyUserId: 'user-a',
+          coreDb: env.DB,
+          piiDb: env.DB_PII,
+        });
+        vi.mocked(linkedIdentityStore.findLinkedIdentity).mockResolvedValue(null);
+
+        await expect(
+          handleIdentity(env as never, {
+            provider: mockProvider,
+            userInfo: mockUserInfo,
+            tokens: mockTokens,
+            tenantId: 'default',
+          })
+        ).rejects.toMatchObject({ code: 'external_signup_disabled' });
+
+        expect(mockFindPendingIdentity).not.toHaveBeenCalled();
+        expect(mockActivatePendingIdentity).not.toHaveBeenCalled();
+        expect(mockPersistCustomClaimWrite).not.toHaveBeenCalled();
       });
     });
 

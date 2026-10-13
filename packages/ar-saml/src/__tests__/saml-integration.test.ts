@@ -16,7 +16,7 @@
  *   - Signature verification
  */
 
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { Hono } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
 
@@ -84,7 +84,10 @@ const {
 
 // Mock modules
 const mockGetIdPConfigByEntityId = vi.fn();
+// The keys the IdP's saved sign-in/sign-up switches are filed under (none: no switches saved).
+const mockGetIdPUsageKeyByEntityId = vi.fn(async (..._args: unknown[]) => null as unknown);
 vi.mock('../admin/providers', () => ({
+  getIdPUsageKeyByEntityId: (...args: unknown[]) => mockGetIdPUsageKeyByEntityId(...args),
   getIdPConfigByEntityId: async (...args: any[]) => {
     const config = await mockGetIdPConfigByEntityId(...args);
     return config
@@ -2168,6 +2171,249 @@ describe('SAML Integration', () => {
         })
       );
       expect(mockSyncUserLifecycleState).toHaveBeenCalled();
+    });
+  });
+
+  describe("ACS and the tenant's per-IdP sign-in and sign-up switches", () => {
+    const IDP_ROW = { providerId: 'idp-row-1', ids: ['saml:idp-row-1', 'idp-row-1'] };
+    const resetUsageKey = () => mockGetIdPUsageKeyByEntityId.mockReset().mockResolvedValue(null);
+    beforeEach(resetUsageKey);
+    afterEach(resetUsageKey);
+    const nameIdFormat = 'urn:oasis:names:tc:SAML:2.0:nameid-format:persistent';
+    const settingsWith = (usage: unknown) => ({
+      get: vi.fn(async (key: string) => {
+        if (key !== 'settings:tenant:default:authentication-methods') return null;
+        if (usage === 'unreadable') return '{';
+        return JSON.stringify({
+          'authentication-methods.external_provider_usage': JSON.stringify(usage),
+        });
+      }),
+    });
+    const entry = (fields: Record<string, unknown>) => [
+      { id: 'saml:idp-row-1', providerId: 'idp-row-1', ...fields },
+    ];
+    const useSettings = (usage: unknown) => {
+      (mockEnv as unknown as { SETTINGS: unknown }).SETTINGS = settingsWith(usage);
+      mockGetIdPUsageKeyByEntityId.mockResolvedValue(IDP_ROW);
+    };
+    const newUser = () =>
+      callACSDirectly(
+        createMockSAMLResponse({
+          nameId: 'persistent-subject-gated',
+          nameIdFormat,
+          attributes: [{ name: 'email', value: 'gated@example.com' }],
+        }),
+        'https://ui.example.com/'
+      );
+    const expectNothingMade = () => {
+      expect(mockProvisionAuthAccount).not.toHaveBeenCalled();
+      expect(mockValidateCustomClaimWrite).not.toHaveBeenCalled();
+      expect(mockSyncUserLifecycleState).not.toHaveBeenCalled();
+      expect(mockSessionStoreFetch).not.toHaveBeenCalled();
+      expect(mockChallengeStore.size).toBe(0);
+    };
+
+    it('refuses a sign-in when the tenant turned the IdP off, before anything is made', async () => {
+      useSettings(entry({ loginEnabled: false }));
+
+      const res = await newUser();
+
+      expect(res.status).toBe(403);
+      expect(res.headers.get('Set-Cookie')).toBeNull();
+      expectNothingMade();
+    });
+
+    it('answers 503, making nothing, when the switches cannot be read', async () => {
+      useSettings('unreadable');
+
+      const res = await newUser();
+
+      expect(res.status).toBe(503);
+      expectNothingMade();
+    });
+
+    it('does not create an account when the tenant turned sign-up off, before anything is written', async () => {
+      useSettings(entry({ loginEnabled: true, signupEnabled: false }));
+
+      const res = await newUser();
+
+      expect(res.status).toBe(403);
+      expect(res.headers.get('Set-Cookie')).toBeNull();
+      expectNothingMade();
+    });
+
+    it('answers 503, spending and making nothing, when finding the IdP record fails', async () => {
+      useSettings(entry({ loginEnabled: true }));
+      mockGetIdPUsageKeyByEntityId.mockRejectedValue(new Error('database unavailable'));
+
+      const res = await newUser();
+
+      expect(res.status).toBe(503);
+      expect(res.headers.get('Set-Cookie')).toBeNull();
+      expectNothingMade();
+    });
+
+    it("still refuses sign-up in a re-authentication's response, whose sign-in switch is not asked", async () => {
+      useSettings(entry({ loginEnabled: false, reauthEnabled: true, signupEnabled: false }));
+      const requestId = `_${'e'.repeat(32)}`;
+      const requestedAt = Date.now() - 10_000;
+      mockEnv.SAML_REQUEST_STORE = {
+        idFromName: vi.fn((name: string) => name),
+        get: vi.fn(() => ({
+          fetch: vi.fn().mockResolvedValue(
+            Response.json({
+              requestId,
+              issuer: 'https://idp.example.com',
+              destination: 'https://idp.example.com/sso',
+              binding: 'post',
+              used: true,
+              type: 'authn_request',
+              createdAt: requestedAt,
+              expiresAt: requestedAt + 300_000,
+              context: {
+                spReauthentication: {
+                  authorizationChallengeId: 'reauth_1',
+                  requestedAt,
+                  providerId: IDP_ROW.providerId,
+                  providerIds: IDP_ROW.ids,
+                },
+              },
+            })
+          ),
+        })),
+      } as unknown as Env['SAML_REQUEST_STORE'];
+
+      const res = await callACSDirectly(
+        createMockSAMLResponse({
+          inResponseTo: requestId,
+          nameId: 'persistent-subject-reauth-new',
+          nameIdFormat,
+          attributes: [{ name: 'email', value: 'reauth-new@example.com' }],
+        }),
+        'https://ui.example.com/'
+      );
+
+      // Refused by the sign-up switch (the sign-in switch is off and was not what refused it).
+      expect(res.status).toBe(403);
+      expect(res.headers.get('Set-Cookie')).toBeNull();
+      expectNothingMade();
+    });
+
+    it('still signs in an existing linked identity while sign-up is off', async () => {
+      useSettings(entry({ signupEnabled: false }));
+      mockRuntimeUsersById.set('linked-user-001', {
+        id: 'linked-user-001',
+        email: 'linked@example.com',
+        active: true,
+        lifecycle_state: 'active',
+        email_verified: true,
+      });
+      mockResolveAccountDataContextByIdentifier.mockResolvedValueOnce({
+        coreDb: createMockAdapter({
+          queryOne: (sql) =>
+            sql.includes('SELECT id, email_verified FROM users_core WHERE id')
+              ? { id: 'linked-user-001', email_verified: 1 }
+              : null,
+        }),
+        piiDb: createMockAdapter({
+          queryOne: (sql) =>
+            sql.includes('WHERE tenant_id = ? AND provider_id = ? AND provider_user_id = ?')
+              ? { id: 'saml-link-001', user_id: 'linked-user-001' }
+              : null,
+        }),
+      });
+
+      const res = await callACSDirectly(
+        createMockSAMLResponse({ nameId: 'persistent-subject-123', nameIdFormat }),
+        'https://auth.example.com/dashboard'
+      );
+
+      expect(res.status).toBe(302);
+      expect(res.headers.get('Set-Cookie')).toContain('authrim_session=');
+      expect(mockProvisionAuthAccount).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['nothing saved for the tenant', undefined],
+      ['an IdP without a provider record of its own', 'no-key'],
+      ['no entry for the IdP', [{ id: 'saml:other', providerId: 'other', loginEnabled: false }]],
+      ['an entry that leaves the switches out', entry({ reauthEnabled: false })],
+      ['both on', entry({ loginEnabled: true, signupEnabled: true })],
+    ])('signs in and creates the account as before with %s', async (_label, usage) => {
+      if (usage === 'no-key') {
+        (mockEnv as unknown as { SETTINGS: unknown }).SETTINGS = settingsWith(
+          entry({ loginEnabled: false, signupEnabled: false })
+        );
+        mockGetIdPUsageKeyByEntityId.mockResolvedValue(null);
+      } else if (usage !== undefined) {
+        useSettings(usage);
+      }
+
+      const res = await newUser();
+
+      expect(res.status).toBe(302);
+      expect(mockProvisionAuthAccount).toHaveBeenCalledOnce();
+    });
+
+    it("names the IdP in a sign-in's handoff artifact, so redeeming it checks the switch again", async () => {
+      useSettings(entry({ loginEnabled: true }));
+
+      const res = await newUser();
+
+      const token = new URL(res.headers.get('Location')!).searchParams.get('handoff_token');
+      expect(mockChallengeStore.get(`handoff:${token}`).metadata).toEqual(
+        expect.objectContaining({
+          aud: 'saml_sp_cookie_handoff',
+          external_provider_usage_key: IDP_ROW,
+        })
+      );
+    });
+
+    it('leaves a re-authentication to its own switch, and names no IdP in its artifact', async () => {
+      useSettings(entry({ loginEnabled: false, reauthEnabled: true, signupEnabled: true }));
+      const requestId = `_${'d'.repeat(32)}`;
+      const requestedAt = Date.now() - 10_000;
+      mockEnv.SAML_REQUEST_STORE = {
+        idFromName: vi.fn((name: string) => name),
+        get: vi.fn(() => ({
+          fetch: vi.fn().mockResolvedValue(
+            Response.json({
+              requestId,
+              issuer: 'https://idp.example.com',
+              destination: 'https://idp.example.com/sso',
+              binding: 'post',
+              used: true,
+              type: 'authn_request',
+              createdAt: requestedAt,
+              expiresAt: requestedAt + 300_000,
+              context: {
+                spReauthentication: {
+                  authorizationChallengeId: 'reauth_1',
+                  requestedAt,
+                  providerId: IDP_ROW.providerId,
+                  providerIds: IDP_ROW.ids,
+                },
+              },
+            })
+          ),
+        })),
+      } as unknown as Env['SAML_REQUEST_STORE'];
+
+      const res = await callACSDirectly(
+        createMockSAMLResponse({
+          inResponseTo: requestId,
+          nameId: 'persistent-subject-reauth',
+          nameIdFormat,
+          attributes: [{ name: 'email', value: 'reauth@example.com' }],
+        }),
+        'https://ui.example.com/'
+      );
+
+      expect(res.status).toBe(302);
+      const token = new URL(res.headers.get('Location')!).searchParams.get('handoff_token');
+      expect(mockChallengeStore.get(`handoff:${token}`).metadata).not.toHaveProperty(
+        'external_provider_usage_key'
+      );
     });
   });
 

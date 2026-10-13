@@ -4896,6 +4896,31 @@ export async function getIdPConfigByEntityId(
   return resolveFederationRuntimeConfig(env, tenantId, entityId, 'saml_idp');
 }
 
+/**
+ * The keys a SAML IdP's saved sign-in/sign-up switches
+ * (`authentication-methods.external_provider_usage`) are filed under: its provider id and the id
+ * the login screen uses (`saml:<id>`). Null for an IdP that has no provider record of its own
+ * (one resolved from federation metadata), which has no switches saved.
+ */
+export async function getIdPUsageKeyByEntityId(
+  env: Env,
+  tenantId: string,
+  entityId: string
+): Promise<{ providerId: string; ids: string[] } | null> {
+  const coreAdapter = await resolveSAMLProvidersCoreAdapter(env, tenantId);
+  const rows = await coreAdapter.query<{ id: string; config_json: string }>(
+    `SELECT id, config_json FROM identity_providers
+     WHERE tenant_id = ? AND provider_type = 'saml_idp'`,
+    [tenantId]
+  );
+  const matches = rows.filter(
+    (row) => (JSON.parse(row.config_json) as SAMLIdPConfig).entityId === entityId
+  );
+  // An ambiguous entity id is refused where the IdP is resolved; no key is guessed here.
+  const match = matches.length === 1 ? matches[0] : undefined;
+  return match ? { providerId: match.id, ids: [`saml:${match.id}`, match.id] } : null;
+}
+
 interface FederationRuntimeEntityRow {
   trust_source_id: string;
   trust_context_snapshot_hash: string;

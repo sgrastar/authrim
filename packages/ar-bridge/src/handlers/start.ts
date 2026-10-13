@@ -31,6 +31,8 @@ import {
   verifyHumanVerificationWithRunner,
 } from '@authrim/ar-lib-core';
 import { getProviderByIdOrSlug } from '../services/provider-store';
+import { assertExternalProviderUsageAllowed } from '../services/external-usage-gate';
+import { ExternalIdPError, ExternalIdPErrorCode } from '../types';
 import { accountPageLinkResultUrl, consumeLinkIntent } from '../services/link-intent';
 import {
   ensureDynamicClientRegistration,
@@ -320,6 +322,36 @@ export async function handleExternalStart(c: Context<{ Bindings: Env }>): Promis
           {
             error: 'access_denied',
             error_description: 'This provider cannot be used to re-authenticate',
+          },
+          403
+        );
+      }
+    }
+
+    // 2. A sign-in (including a silent one) uses only a provider the tenant lets sign people in;
+    // the login screen merely hides the others. A link and a re-authentication have their own switches.
+    if (!link && !reauth) {
+      try {
+        await assertExternalProviderUsageAllowed(c.env, tenantIdResolved, provider, 'login');
+      } catch (error) {
+        if (!(error instanceof ExternalIdPError)) throw error;
+        if (error.code === ExternalIdPErrorCode.SETTINGS_UNAVAILABLE) {
+          log.warn('External provider usage settings are unavailable', {
+            providerId: provider.id,
+          });
+          return c.json(
+            {
+              error: 'temporarily_unavailable',
+              error_description: 'Provider settings are unavailable',
+            },
+            503,
+            { 'Retry-After': '1' }
+          );
+        }
+        return c.json(
+          {
+            error: 'access_denied',
+            error_description: 'This provider cannot be used to sign in',
           },
           403
         );

@@ -359,6 +359,113 @@ describe('SP login answering a re-authentication', () => {
   });
 });
 
+describe("SP login and the tenant's sign-in switch", () => {
+  let storeBodies: Array<Record<string, unknown>>;
+  let mockEnv: Partial<Env>;
+
+  const settingsWith = (usage: unknown) =>
+    ({
+      get: vi.fn(async (key: string) => {
+        if (key !== 'settings:tenant:tenant-a:authentication-methods') return null;
+        // (Not broken JSON: the human verification check reads the same document first.)
+        return JSON.stringify({
+          'authentication-methods.external_provider_usage':
+            usage === 'unreadable' ? '{"not":"a list"}' : JSON.stringify(usage),
+        });
+      }),
+    }) as unknown as Env['SETTINGS'];
+  const entry = (fields: Record<string, unknown>) => [
+    { id: 'saml:idp-1', providerId: 'idp-1', ...fields },
+  ];
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    storeBodies = [];
+    mockGetIdPConfig.mockResolvedValue({
+      entityId: 'https://idp.example.com',
+      ssoUrl: 'https://idp.example.com/sso',
+      certificate: 'mock-certificate',
+      nameIdFormat: 'urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress',
+      attributeMapping: {},
+      allowedBindings: ['post'],
+    });
+    mockChallengeKind.mockResolvedValue('reauth');
+    mockReauthPolicy.mockResolvedValue({ reauthEnabled: true, acceptWithoutAuthTime: false });
+    mockEnv = {
+      ISSUER_URL: 'https://auth.example.com',
+      SAML_REQUEST_STORE: {
+        idFromName: vi.fn((name: string) => name),
+        get: vi.fn(() => ({
+          fetch: vi.fn(async (_url: string, init: RequestInit) => {
+            storeBodies.push(JSON.parse(String(init.body)) as Record<string, unknown>);
+            return new Response('OK', { status: 200 });
+          }),
+        })),
+      } as unknown as Env['SAML_REQUEST_STORE'],
+    };
+  });
+
+  it('refuses a sign-in with an IdP the tenant turned off, storing no request', async () => {
+    mockEnv.SETTINGS = settingsWith(entry({ loginEnabled: false }));
+    const { context } = createLoginContext(mockEnv, 'tenant-a');
+
+    const res = await handleSPLogin(context);
+
+    expect(res.status).toBe(403);
+    expect(storeBodies).toHaveLength(0);
+  });
+
+  it('refuses a sign-in for a login challenge the same way', async () => {
+    mockChallengeKind.mockResolvedValue('login');
+    mockEnv.SETTINGS = settingsWith(entry({ loginEnabled: false }));
+    const { context } = createLoginContext(mockEnv, 'tenant-a', {
+      authorization_challenge_id: 'login_1',
+    });
+
+    const res = await handleSPLogin(context);
+
+    expect(res.status).toBe(403);
+    expect(storeBodies).toHaveLength(0);
+  });
+
+  it('answers 503, storing no request, when the switches cannot be read', async () => {
+    mockEnv.SETTINGS = settingsWith('unreadable');
+    const { context } = createLoginContext(mockEnv, 'tenant-a');
+
+    const res = await handleSPLogin(context);
+
+    expect(res.status).toBe(503);
+    expect(storeBodies).toHaveLength(0);
+  });
+
+  it.each([
+    ['nothing saved for the tenant', undefined],
+    ['no entry for the IdP', [{ id: 'saml:other', providerId: 'other', loginEnabled: false }]],
+    ['an entry that leaves the switch out', entry({ signupEnabled: false })],
+    ['an explicit on', entry({ loginEnabled: true })],
+  ])('starts the sign-in as before with %s', async (_label, usage) => {
+    if (usage !== undefined) mockEnv.SETTINGS = settingsWith(usage);
+    const { context } = createLoginContext(mockEnv, 'tenant-a');
+
+    const res = await handleSPLogin(context);
+
+    expect(res.status).toBe(200);
+    expect(storeBodies).toHaveLength(1);
+  });
+
+  it('leaves a re-authentication to its own switch', async () => {
+    mockEnv.SETTINGS = settingsWith(entry({ loginEnabled: false, reauthEnabled: true }));
+    const { context } = createLoginContext(mockEnv, 'tenant-a', {
+      authorization_challenge_id: 'reauth_1',
+    });
+
+    const res = await handleSPLogin(context);
+
+    expect(res.status).toBe(200);
+    expect(storeBodies).toHaveLength(1);
+  });
+});
+
 function createLoginContext(
   env: Partial<Env>,
   tenantId: string,

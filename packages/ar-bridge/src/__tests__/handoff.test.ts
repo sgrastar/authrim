@@ -14,6 +14,9 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('@authrim/ar-lib-core', async () => ({
   resolveEffectiveSettings: mocks.resolveEffectiveSettings,
+  readExternalProviderUsagePolicy: (
+    await vi.importActual<typeof import('@authrim/ar-lib-core')>('@authrim/ar-lib-core')
+  ).readExternalProviderUsagePolicy,
   falRequiresSignedPushedRequest: (
     await vi.importActual<typeof import('@authrim/ar-lib-core/services/assurance')>(
       '@authrim/ar-lib-core/services/assurance'
@@ -108,7 +111,10 @@ vi.mock('@authrim/ar-lib-core', async () => ({
 
 import { handleHandoffFinalize, handleHandoffVerify } from '../handlers/handoff';
 
-function createContext(url = 'https://issuer.example.com/handoff/verify') {
+function createContext(
+  url = 'https://issuer.example.com/handoff/verify',
+  settings: Record<string, unknown> = {}
+) {
   const headers = new Headers({
     Origin: 'https://rp.example.com',
     DPoP: 'dpop-proof',
@@ -120,7 +126,7 @@ function createContext(url = 'https://issuer.example.com/handoff/verify') {
     env: {
       ENVIRONMENT: 'production',
       DPOP_JTI_STORE: {},
-      SETTINGS: {},
+      SETTINGS: settings,
     },
     req: {
       method: 'POST',
@@ -292,6 +298,116 @@ describe('handleHandoffVerify', () => {
       }),
       'tenant-123'
     );
+  });
+
+  describe("the tenant's sign-in switch for the provider a sign-in's artifact names", () => {
+    const usageKey = { providerId: 'provider-a', ids: ['provider-a', 'corp'] };
+    const artifact = (extra: Record<string, unknown>) => ({
+      challenge: 'shard-session-123',
+      userId: 'user-123',
+      metadata: {
+        client_id: 'client-123',
+        state: 'state-123',
+        aud: 'handoff',
+        created_at: Date.now(),
+        ...extra,
+      },
+    });
+    const settingsWith = (usage: unknown) => ({
+      get: vi.fn(async (key: string) => {
+        if (key !== 'settings:tenant:tenant-123:authentication-methods') return null;
+        if (usage === 'unreadable') return '{';
+        return JSON.stringify({
+          'authentication-methods.external_provider_usage': JSON.stringify(usage),
+        });
+      }),
+    });
+    const entry = (fields: Record<string, unknown>) => [
+      { id: 'corp', providerId: 'provider-a', ...fields },
+    ];
+    const url = 'https://issuer.example.com/handoff/verify';
+
+    it('refuses the artifact, making no session, when the tenant turned the provider off since', async () => {
+      mocks.consumeChallengeRpc.mockResolvedValue(
+        artifact({ external_provider_usage_key: usageKey })
+      );
+
+      const response = await handleHandoffVerify(
+        createContext(url, settingsWith(entry({ loginEnabled: false })))
+      );
+
+      expect(response.status).toBe(403);
+      expect(((await response.json()) as { error: string }).error).toBe('access_denied');
+      expect(mocks.getSessionRpc).not.toHaveBeenCalled();
+      expect(mocks.createSessionRpc).not.toHaveBeenCalled();
+    });
+
+    it('refuses the cookie-only finalize the same way', async () => {
+      mocks.consumeChallengeRpc.mockResolvedValue(
+        artifact({ external_provider_usage_key: usageKey })
+      );
+
+      const response = await handleHandoffFinalize(
+        createContext(
+          url.replace('verify', 'finalize'),
+          settingsWith(entry({ loginEnabled: false }))
+        )
+      );
+
+      expect(response.status).toBe(403);
+      expect(response.headers.get('set-cookie')).toBeNull();
+      expect(mocks.createSessionRpc).not.toHaveBeenCalled();
+    });
+
+    it('answers 503, making no session, when the switches cannot be read', async () => {
+      mocks.consumeChallengeRpc.mockResolvedValue(
+        artifact({ external_provider_usage_key: usageKey })
+      );
+
+      const response = await handleHandoffVerify(createContext(url, settingsWith('unreadable')));
+
+      expect(response.status).toBe(503);
+      expect(response.headers.get('retry-after')).toBe('1');
+      expect(mocks.createSessionRpc).not.toHaveBeenCalled();
+    });
+
+    it('refuses an artifact whose provider keys are malformed', async () => {
+      mocks.consumeChallengeRpc.mockResolvedValue(
+        artifact({ external_provider_usage_key: { providerId: '', ids: 'corp' } })
+      );
+
+      const response = await handleHandoffVerify(createContext(url));
+
+      expect(response.status).toBe(400);
+      expect(mocks.createSessionRpc).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['nothing saved for the tenant', null],
+      ['an entry that leaves the switch out', entry({ signupEnabled: false })],
+      ['an explicit on', entry({ loginEnabled: true })],
+    ])('redeems the artifact as before with %s', async (_label, usage) => {
+      mocks.consumeChallengeRpc.mockResolvedValue(
+        artifact({ external_provider_usage_key: usageKey })
+      );
+
+      const response = await handleHandoffVerify(
+        createContext(url, usage === null ? { get: vi.fn(async () => null) } : settingsWith(usage))
+      );
+
+      expect(response.status).toBe(200);
+      expect(mocks.createSessionRpc).toHaveBeenCalledOnce();
+    });
+
+    it('does not check an artifact that names no provider (a re-authentication or a silent sign-in)', async () => {
+      mocks.consumeChallengeRpc.mockResolvedValue(artifact({}));
+
+      const response = await handleHandoffVerify(
+        createContext(url, settingsWith(entry({ loginEnabled: false })))
+      );
+
+      expect(response.status).toBe(200);
+    });
   });
 
   it('returns session and user extensions only for include=session,user', async () => {
