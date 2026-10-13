@@ -52,7 +52,8 @@ function authenticationMethodSettingKey(
 
 /**
  * Whether the tenant lets `method` be used for `usage`: the usage's own switch, else the method's
- * switch, else the method's default. Unreadable settings give the default.
+ * switch, else the method's default. Unreadable settings give the default, except when `strict`:
+ * then a damaged document (empty, blank, not JSON, not an object) throws.
  */
 export async function isAuthenticationMethodUsageAvailable(
   env: Pick<Env, 'SETTINGS'>,
@@ -66,13 +67,21 @@ export async function isAuthenticationMethodUsageAvailable(
     const raw = await env.SETTINGS?.get(
       `settings:tenant:${tenantId}:${AUTHENTICATION_METHODS_CATEGORY}`
     );
-    if (!raw) return methodDefault;
-    const settings = JSON.parse(raw) as Record<string, unknown>;
+    // Only a missing document means "nothing set". When strict, an empty, blank or otherwise
+    // damaged one (not JSON, or JSON that is not an object) is refused rather than read as the
+    // method's default; when not strict it still reads as the default.
+    if (options.strict ? raw === null || raw === undefined : !raw) return methodDefault;
+    const settings = JSON.parse(raw as string) as unknown;
+    if (!settings || typeof settings !== 'object' || Array.isArray(settings)) {
+      if (options.strict) throw new Error('authentication_methods_settings_invalid');
+      return methodDefault;
+    }
+    const values = settings as Record<string, unknown>;
     const legacyEnabled = normalizeBoolean(
-      settings[`authentication-methods.${method}.enabled`],
+      values[`authentication-methods.${method}.enabled`],
       methodDefault
     );
-    return normalizeBoolean(settings[authenticationMethodSettingKey(method, usage)], legacyEnabled);
+    return normalizeBoolean(values[authenticationMethodSettingKey(method, usage)], legacyEnabled);
   } catch (error) {
     // A decision that removes something (strict) must not rest on a default it fell back to.
     if (options.strict) throw error;

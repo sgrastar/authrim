@@ -30,16 +30,29 @@ export function normalizeBooleanSetting(value: unknown, fallback: boolean): bool
   return fallback;
 }
 
+/**
+ * `strict`: settings that cannot be understood (not JSON, not an object) throw instead of reading
+ * as "nothing set". For a decision that lets someone in, where a method on by default (passkey)
+ * must not stay on because the switch that would turn it off could not be read.
+ */
 export async function readAuthenticationMethodSettings(
   env: Env,
-  tenantId: string
+  tenantId: string,
+  options: { strict?: boolean } = {}
 ): Promise<AuthenticationMethodKVSettings> {
   const raw = await env.SETTINGS?.get(`settings:tenant:${tenantId}:authentication-methods`);
-  if (!raw) return {};
+  // Only a missing document means "nothing set". An empty or blank one is damaged: it goes
+  // through the parse below, which rejects it (strict) or reads it as nothing set (otherwise).
+  if (raw === null || raw === undefined) return {};
   try {
     const parsed = JSON.parse(raw);
-    return parsed && typeof parsed === 'object' ? (parsed as AuthenticationMethodKVSettings) : {};
-  } catch {
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      return parsed as AuthenticationMethodKVSettings;
+    }
+    if (options.strict) throw new Error('authentication_methods_settings_invalid');
+    return {};
+  } catch (error) {
+    if (options.strict) throw error;
     return {};
   }
 }
@@ -66,8 +79,9 @@ export async function isAuthenticationMethodUsageEnabled(
   env: Env,
   tenantId: string,
   method: 'passkey' | 'email_otp',
-  usage: AuthenticationMethodUsage
+  usage: AuthenticationMethodUsage,
+  options: { strict?: boolean } = {}
 ): Promise<boolean> {
-  const settings = await readAuthenticationMethodSettings(env, tenantId);
+  const settings = await readAuthenticationMethodSettings(env, tenantId, options);
   return methodUsageEnabled(settings, method, usage);
 }
