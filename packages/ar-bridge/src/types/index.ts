@@ -447,6 +447,25 @@ export const ExternalIdPErrorCode = {
    * The external account being linked already belongs to another Authrim account.
    */
   ACCOUNT_ALREADY_LINKED: 'account_already_linked',
+
+  /**
+   * The tenant turned sign-in off for this provider (external_provider_usage loginEnabled).
+   * Maps to OIDC error: access_denied
+   */
+  LOGIN_DISABLED: 'access_denied',
+
+  /**
+   * The tenant turned sign-up off for this provider (external_provider_usage signupEnabled), so a
+   * first sign-in cannot create the account.
+   */
+  SIGNUP_DISABLED: 'external_signup_disabled',
+
+  /**
+   * The tenant's provider usage settings could not be read, so neither sign-in nor sign-up is
+   * decided. Retrying may succeed.
+   * Maps to OIDC error: temporarily_unavailable
+   */
+  SETTINGS_UNAVAILABLE: 'temporarily_unavailable',
 } as const;
 
 export type ExternalIdPErrorCode = (typeof ExternalIdPErrorCode)[keyof typeof ExternalIdPErrorCode];

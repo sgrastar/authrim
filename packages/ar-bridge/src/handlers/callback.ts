@@ -47,6 +47,10 @@ import {
 } from '@authrim/ar-lib-core';
 import { consumeAuthState, getAuthStateCookieName, matchesAuthStateCookie } from '../utils/state';
 import { getProviderByIdOrSlug } from '../services/provider-store';
+import {
+  assertExternalProviderUsageAllowed,
+  externalProviderUsageKey,
+} from '../services/external-usage-gate';
 import { OIDCRPClient } from '../clients/oidc-client';
 import { Fapi2Client } from '../clients/fapi2-client';
 import { completeExternalIdpJIT, handleIdentity } from '../services/identity-stitching';
@@ -378,6 +382,11 @@ async function completeExternalAuthentication(
         state: authState.state,
         aud: 'handoff',
         created_at: Date.now(),
+        // A sign-in's artifact names its provider, so that redeeming it checks the tenant's
+        // sign-in switch again. A re-authentication has its own switch.
+        ...(input.reauthProvenAt === undefined && authState.reauthRequestedAt === undefined
+          ? { external_provider_usage_key: externalProviderUsageKey(provider) }
+          : {}),
       },
     });
     const redirectUrl = new URL(authState.redirectUri);
@@ -431,6 +440,16 @@ interface ExternalIdpProvisioningContinuation {
   upstreamIdToken?: string;
   upstreamAcr?: string;
   result: HandleIdentityPendingResult;
+}
+
+/** The tenant turned the provider's sign-in or sign-up off, or its switches cannot be read. */
+function isUsageGateError(error: unknown): error is ExternalIdPError {
+  return (
+    error instanceof ExternalIdPError &&
+    (error.code === ExternalIdPErrorCode.LOGIN_DISABLED ||
+      error.code === ExternalIdPErrorCode.SIGNUP_DISABLED ||
+      error.code === ExternalIdPErrorCode.SETTINGS_UNAVAILABLE)
+  );
 }
 
 function randomContinuationToken(): string {
@@ -686,6 +705,16 @@ export async function handleExternalProvisioningResume(
     ) {
       throw new Error('external_idp_provisioning_not_ready');
     }
+    const provider = await getProviderByIdOrSlug(c.env, loaded.continuation.providerId, tenantId);
+    if (!provider || provider.id !== expected.providerId) {
+      throw new Error('external_idp_provisioning_provider_mismatch');
+    }
+    // The tenant may have turned the provider's sign-in or sign-up off since the account was
+    // provisioned: decided before its identity is activated and a session is made.
+    if (loaded.continuation.authState.reauthRequestedAt === undefined) {
+      await assertExternalProviderUsageAllowed(c.env, tenantId, provider, 'login');
+    }
+    await assertExternalProviderUsageAllowed(c.env, tenantId, provider, 'signup');
     const completed = await completeExternalIdpJIT(c.env, {
       tenantId,
       userId: expected.userId,
@@ -702,8 +731,7 @@ export async function handleExternalProvisioningResume(
       throw new Error('external_idp_provisioning_consume_mismatch');
     }
     deleteCookie(c, continuationCookieName(loaded.digest), { path: '/' });
-    const provider = await getProviderByIdOrSlug(c.env, loaded.continuation.providerId, tenantId);
-    if (!provider || provider.id !== expected.providerId || !completed.linkedIdentityId) {
+    if (!completed.linkedIdentityId) {
       throw new Error('external_idp_provisioning_provider_mismatch');
     }
     return await completeExternalAuthentication(c, {
@@ -722,7 +750,10 @@ export async function handleExternalProvisioningResume(
         orgs_joined: completed.orgs_joined,
       },
     });
-  } catch {
+  } catch (error) {
+    if (isUsageGateError(error)) {
+      return redirectWithError(c, error.code, 'Authentication failed. Please try again.');
+    }
     return redirectWithError(
       c,
       ExternalIdPErrorCode.CALLBACK_FAILED,
@@ -840,6 +871,13 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
         userId: authState.userId,
         sessionId: authState.sessionId,
       };
+    }
+
+    // 2b. The tenant may have turned this provider's sign-in off since the sign-in started. Before
+    // the code is exchanged and before any account, session or artifact is made. A link and a
+    // re-authentication have their own switches.
+    if (!link && authState.reauthRequestedAt === undefined) {
+      await assertExternalProviderUsageAllowed(c.env, authState.tenantId, provider, 'login');
     }
 
     const flowId = authState.flowId;

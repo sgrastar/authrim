@@ -237,6 +237,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     // the saved document (as the older reader maps it), else the defaults.
     JIT_PROVISIONING_SETTING_KEYS: actual.JIT_PROVISIONING_SETTING_KEYS,
     updateProfileOnLogin: actual.updateProfileOnLogin,
+    readExternalProviderUsagePolicy: actual.readExternalProviderUsagePolicy,
     resolveEffectiveSettings: vi.fn(
       async (env: { SETTINGS?: { get: (key: string) => Promise<string | null> } }) => {
         const raw = await env.SETTINGS?.get('jit_provisioning_config');

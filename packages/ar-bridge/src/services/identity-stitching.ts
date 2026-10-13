@@ -57,6 +57,7 @@ import {
   findPendingLinkedIdentityProvisioning,
 } from './linked-identity-store';
 import { decrypt, encrypt, getEncryptionKey } from '../utils/crypto';
+import { assertExternalProviderUsageAllowed } from './external-usage-gate';
 
 /**
  * Get identity stitching configuration
@@ -361,6 +362,9 @@ export async function handleIdentity(
     };
   }
   if (tenantD1 && externalRoute) {
+    // The account was provisioned by an earlier sign-in that did not finish; finishing it (its
+    // roles, organizations and identity) is still a sign-up, so the tenant's switch holds.
+    await assertExternalProviderUsageAllowed(env, tenantId, provider, 'signup');
     const completed = await completeTenantD1ExternalIdpJIT(env, {
       tenantId,
       userId: externalRoute.legacyUserId,
@@ -494,6 +498,10 @@ export async function handleIdentity(
 
   // 4. No existing user - try JIT Provisioning
   if (provider.jitProvisioning) {
+    // Creating an account is a sign-up: only a provider the tenant lets sign people up does it,
+    // decided before anything is written. The login screen merely hides the others.
+    await assertExternalProviderUsageAllowed(env, tenantId, provider, 'signup');
+
     // Check if provider email is verified (if we require it)
     // SECURITY: Check both global setting AND per-provider setting
     const requireVerified = stitchingConfig.requireVerifiedEmail || provider.requireEmailVerified;

@@ -17,6 +17,7 @@ import {
   getLogger,
   readAuthorizationChallengeKind,
   readExternalProviderReauthPolicy,
+  readExternalProviderUsagePolicy,
   resolveSamlRequestTtlSeconds,
   verifyHumanVerificationWithRunner,
 } from '@authrim/ar-lib-core';
@@ -39,6 +40,7 @@ import {
 import { signRedirectBinding } from '../common/signature';
 import { getSAMLSigningMaterial, getSAMLSigningPolicy } from '../common/saml-signing-keys';
 import { getIdPConfig, listIdPConfigs } from '../admin/providers';
+import { samlUsageUnavailableResponse } from './usage-gate';
 import { buildSAMLPostBindingResponse } from '../common/post-binding-form';
 import { getSAMLLocalEntityIds } from '../common/entity-id';
 import { assertSAMLRelayStateSize } from '../common/relay-state';
@@ -147,6 +149,28 @@ export async function handleSPLogin(c: Context<{ Bindings: Env }>): Promise<Resp
           providerIds,
         };
       }
+    }
+
+    // A sign-in starts only with an IdP the tenant lets sign people in (the login screen merely
+    // hides the others). A re-authentication has its own switch, checked above.
+    if (!reauthentication) {
+      let loginEnabled: boolean;
+      try {
+        loginEnabled = (
+          await readExternalProviderUsagePolicy(env, tenantId, {
+            providerId: idpId,
+            ids: [`saml:${idpId}`, idpId],
+          })
+        ).loginEnabled;
+      } catch (error) {
+        log.warn(
+          'SAML IdP usage settings could not be read; refusing the sign-in',
+          {},
+          error as Error
+        );
+        return samlUsageUnavailableResponse(c);
+      }
+      if (!loginEnabled) return createErrorResponse(c, AR_ERROR_CODES.POLICY_FEATURE_DISABLED);
     }
 
     // Generate AuthnRequest
