@@ -441,6 +441,9 @@ const adminOther = {
 	admin_authentication_methods_totp: '認証アプリ',
 	admin_authentication_methods_totp_description:
 		'TOTP認証アプリをログイン・登録・再認証・アカウント連携で使います。',
+	admin_authentication_methods_did: 'DID',
+	admin_authentication_methods_did_description:
+		'DID（did:web、did:key）を紐付けたアカウントが、チャレンジへの署名でログインできるようにします。ここで有効にしたテナントだけで使えます。',
 	admin_authentication_methods_totp_preset: 'TOTP preset',
 	admin_authentication_methods_totp_preset_compatible: 'Compatible',
 	admin_authentication_methods_totp_preset_strong: 'Strong',

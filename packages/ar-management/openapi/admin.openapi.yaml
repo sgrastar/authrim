@@ -2002,6 +2002,8 @@ paths:
         Authentication-methods settings include authentication-methods.guest.login_enabled
         (default false), authentication-methods.passkey.guest_upgrade_enabled and
         authentication-methods.email_otp.guest_upgrade_enabled (both default true).
+        authentication-methods.did.login_enabled (default false) lets accounts with a linked DID
+        sign in with it; linking, listing and unlinking DIDs do not depend on it.
       security:
         - adminBearer: []
         - adminSessionCookie: []

@@ -18,6 +18,7 @@ export interface AuthenticationMethodKVSettings {
   'authentication-methods.email_otp.signup_enabled'?: boolean | string;
   'authentication-methods.email_otp.reauth_enabled'?: boolean | string;
   'authentication-methods.email_otp.account_link_enabled'?: boolean | string;
+  'authentication-methods.did.login_enabled'?: unknown;
 }
 
 export function normalizeBooleanSetting(value: unknown, fallback: boolean): boolean {
@@ -84,4 +85,21 @@ export async function isAuthenticationMethodUsageEnabled(
 ): Promise<boolean> {
   const settings = await readAuthenticationMethodSettings(env, tenantId, options);
   return methodUsageEnabled(settings, method, usage);
+}
+
+/**
+ * Whether the tenant lets accounts sign in with a DID. Off unless the tenant turned it on: only the
+ * boolean `true` is on. A missing value, a string ("true" included), a number or anything else
+ * reads as off; this key is new, so it carries none of the older switches' string leniency.
+ */
+export function didLoginEnabled(settings: AuthenticationMethodKVSettings): boolean {
+  return settings['authentication-methods.did.login_enabled'] === true;
+}
+
+export async function isDidLoginEnabled(
+  env: Env,
+  tenantId: string,
+  options: { strict?: boolean } = {}
+): Promise<boolean> {
+  return didLoginEnabled(await readAuthenticationMethodSettings(env, tenantId, options));
 }

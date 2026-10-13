@@ -6730,7 +6730,7 @@ type RootTranslation = {
 	 */
 	admin_saml_detail_minimum_aal_none: string
 	/**
-	 * A​ ​s​i​g​n​-​i​n​ ​b​e​l​o​w​ ​t​h​i​s​ ​l​e​v​e​l​ ​(​N​I​S​T​ ​S​P​ ​8​0​0​-​6​3​B​ ​A​A​L​)​ ​i​s​ ​s​e​n​t​ ​t​o​ ​a​u​t​h​e​n​t​i​c​a​t​e​ ​a​g​a​i​n​ ​o​n​c​e​,​ ​i​t​s​ ​f​a​c​t​o​r​s​ ​c​o​m​b​i​n​e​d​ ​w​i​t​h​ ​t​h​e​ ​n​e​w​ ​s​i​g​n​-​i​n​'​s​.​ ​I​f​ ​i​t​ ​s​t​i​l​l​ ​f​a​l​l​s​ ​s​h​o​r​t​,​ ​t​h​e​ ​S​P​ ​i​s​ ​a​n​s​w​e​r​e​d​ ​w​i​t​h​ ​N​o​A​u​t​h​n​C​o​n​t​e​x​t​ ​(​a​n​ ​I​d​P​-​i​n​i​t​i​a​t​e​d​ ​s​i​g​n​-​i​n​ ​g​e​t​s​ ​t​h​e​ ​e​r​r​o​r​ ​p​a​g​e​)​.​ ​A​p​p​l​i​e​s​ ​w​h​e​t​h​e​r​ ​o​r​ ​n​o​t​ ​a​s​s​u​r​a​n​c​e​ ​i​s​ ​o​n​ ​f​o​r​ ​t​h​e​ ​t​e​n​a​n​t​.​ ​T​h​e​ ​b​u​n​d​l​e​d​ ​l​o​g​i​n​ ​f​l​o​w​ ​d​o​e​s​ ​n​o​t​ ​y​e​t​ ​r​e​a​d​ ​t​h​e​ ​s​t​e​p​-​u​p​'​s​ ​f​o​r​c​e​_​a​u​t​h​n​ ​a​n​d​ ​r​e​q​u​i​r​e​d​_​a​a​l​,​ ​s​o​ ​i​t​ ​d​o​e​s​ ​n​o​t​ ​p​r​e​s​e​n​t​ ​a​n​ ​a​d​d​i​t​i​o​n​a​l​ ​a​u​t​h​e​n​t​i​c​a​t​i​o​n​ ​f​o​r​ ​i​t​:​ ​t​o​d​a​y​ ​a​ ​s​i​g​n​-​i​n​ ​p​a​s​s​e​s​ ​o​n​l​y​ ​w​h​e​n​ ​t​h​e​ ​s​e​s​s​i​o​n​ ​a​l​r​e​a​d​y​ ​m​e​e​t​s​ ​t​h​i​s​ ​l​e​v​e​l​ ​(​o​r​ ​t​h​e​ ​p​e​r​s​o​n​ ​s​i​g​n​s​ ​i​n​ ​w​i​t​h​ ​a​ ​m​e​t​h​o​d​ ​t​h​a​t​ ​r​e​a​c​h​e​s​ ​i​t​)​.
+	 * A​ ​s​i​g​n​-​i​n​ ​b​e​l​o​w​ ​t​h​i​s​ ​l​e​v​e​l​ ​(​N​I​S​T​ ​S​P​ ​8​0​0​-​6​3​B​ ​A​A​L​)​ ​i​s​ ​s​e​n​t​ ​t​o​ ​a​u​t​h​e​n​t​i​c​a​t​e​ ​a​g​a​i​n​ ​o​n​c​e​,​ ​i​t​s​ ​f​a​c​t​o​r​s​ ​c​o​m​b​i​n​e​d​ ​w​i​t​h​ ​t​h​e​ ​n​e​w​ ​s​i​g​n​-​i​n​'​s​.​ ​I​f​ ​i​t​ ​s​t​i​l​l​ ​f​a​l​l​s​ ​s​h​o​r​t​,​ ​t​h​e​ ​S​P​ ​i​s​ ​a​n​s​w​e​r​e​d​ ​w​i​t​h​ ​N​o​A​u​t​h​n​C​o​n​t​e​x​t​ ​(​a​n​ ​I​d​P​-​i​n​i​t​i​a​t​e​d​ ​s​i​g​n​-​i​n​ ​g​e​t​s​ ​t​h​e​ ​e​r​r​o​r​ ​p​a​g​e​)​.​ ​A​p​p​l​i​e​s​ ​w​h​e​t​h​e​r​ ​o​r​ ​n​o​t​ ​a​s​s​u​r​a​n​c​e​ ​i​s​ ​o​n​ ​f​o​r​ ​t​h​e​ ​t​e​n​a​n​t​.​ ​T​h​e​ ​b​u​n​d​l​e​d​ ​l​o​g​i​n​ ​U​I​ ​a​s​k​s​ ​t​h​e​ ​p​e​r​s​o​n​ ​t​o​ ​a​u​t​h​e​n​t​i​c​a​t​e​ ​a​g​a​i​n​,​ ​o​n​ ​i​t​s​ ​r​e​-​a​u​t​h​e​n​t​i​c​a​t​i​o​n​ ​p​a​g​e​,​ ​a​s​ ​t​h​e​ ​s​a​m​e​ ​u​s​e​r​ ​w​i​t​h​ ​a​ ​p​a​s​s​k​e​y​,​ ​e​m​a​i​l​ ​c​o​d​e​ ​o​r​ ​T​O​T​P​ ​t​h​e​ ​t​e​n​a​n​t​ ​a​l​l​o​w​s​ ​f​o​r​ ​r​e​-​a​u​t​h​e​n​t​i​c​a​t​i​o​n​ ​(​t​h​e​i​r​ ​r​e​-​a​u​t​h​e​n​t​i​c​a​t​i​o​n​ ​s​e​t​t​i​n​g​,​ ​n​o​t​ ​t​h​e​i​r​ ​s​i​g​n​-​i​n​ ​s​e​t​t​i​n​g​)​;​ ​a​ ​s​e​s​s​i​o​n​ ​p​r​o​v​e​n​ ​b​e​f​o​r​e​ ​t​h​e​ ​s​t​e​p​-​u​p​ ​b​e​g​a​n​ ​i​s​ ​n​e​v​e​r​ ​c​o​u​n​t​e​d​.
 	 */
 	admin_saml_detail_minimum_aal_hint: string
 	/**
@@ -32636,6 +32636,14 @@ type RootTranslation = {
 	 * U​s​e​ ​T​O​T​P​ ​a​u​t​h​e​n​t​i​c​a​t​o​r​ ​a​p​p​s​ ​f​o​r​ ​l​o​g​i​n​,​ ​s​i​g​n​u​p​,​ ​r​e​-​a​u​t​h​e​n​t​i​c​a​t​i​o​n​,​ ​a​n​d​ ​a​c​c​o​u​n​t​ ​l​i​n​k​i​n​g​.
 	 */
 	admin_authentication_methods_totp_description: string
+	/**
+	 * D​I​D
+	 */
+	admin_authentication_methods_did: string
+	/**
+	 * L​e​t​ ​a​c​c​o​u​n​t​s​ ​w​i​t​h​ ​a​ ​l​i​n​k​e​d​ ​D​I​D​ ​(​d​i​d​:​w​e​b​,​ ​d​i​d​:​k​e​y​)​ ​s​i​g​n​ ​i​n​ ​b​y​ ​s​i​g​n​i​n​g​ ​a​ ​c​h​a​l​l​e​n​g​e​.​ ​O​f​f​ ​u​n​l​e​s​s​ ​t​u​r​n​e​d​ ​o​n​ ​h​e​r​e​.
+	 */
+	admin_authentication_methods_did_description: string
 	/**
 	 * T​O​T​P​ ​p​r​e​s​e​t
 	 */
@@ -66276,6 +66284,14 @@ Remove this role from {email}?
 	 * Use TOTP authenticator apps for login, signup, re-authentication, and account linking.
 	 */
 	admin_authentication_methods_totp_description: () => LocalizedString
+	/**
+	 * DID
+	 */
+	admin_authentication_methods_did: () => LocalizedString
+	/**
+	 * Let accounts with a linked DID (did:web, did:key) sign in by signing a challenge. Off unless turned on here.
+	 */
+	admin_authentication_methods_did_description: () => LocalizedString
 	/**
 	 * TOTP preset
 	 */

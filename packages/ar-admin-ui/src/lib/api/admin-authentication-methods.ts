@@ -30,6 +30,7 @@ const TOTP_LOGIN_ENABLED_KEY = 'authentication-methods.totp.login_enabled';
 const TOTP_SIGNUP_ENABLED_KEY = 'authentication-methods.totp.signup_enabled';
 const TOTP_REAUTH_ENABLED_KEY = 'authentication-methods.totp.reauth_enabled';
 const TOTP_ACCOUNT_LINK_ENABLED_KEY = 'authentication-methods.totp.account_link_enabled';
+const DID_LOGIN_ENABLED_KEY = 'authentication-methods.did.login_enabled';
 const TOTP_PRESET_KEY = 'authentication-methods.totp.preset';
 const TOTP_DEFAULT_ACR_KEY = 'authentication-methods.totp.default_acr';
 const LEGACY_TOTP_ENABLED_KEY = 'authentication-methods.totp.enabled';
@@ -97,6 +98,7 @@ export interface AuthenticationMethodBuiltInSettings {
 	totpSignupEnabled: boolean;
 	totpReauthEnabled: boolean;
 	totpAccountLinkEnabled: boolean;
+	didLoginEnabled: boolean;
 	totpPreset: 'compatible' | 'strong';
 	totpDefaultAcr: string;
 }
@@ -459,6 +461,9 @@ export const adminAuthenticationMethodsAPI = {
 					settings.values[TOTP_ACCOUNT_LINK_ENABLED_KEY],
 					legacyTotpEnabled
 				),
+				// On only for the boolean true, as sign-in reads it: a string or anything else shows as off,
+				// so saving other methods never rewrites it into a true.
+				didLoginEnabled: settings.values[DID_LOGIN_ENABLED_KEY] === true,
 				totpPreset: settings.values[TOTP_PRESET_KEY] === 'strong' ? 'strong' : 'compatible',
 				totpDefaultAcr:
 					typeof settings.values[TOTP_DEFAULT_ACR_KEY] === 'string' &&
@@ -516,6 +521,7 @@ export const adminAuthenticationMethodsAPI = {
 						[TOTP_SIGNUP_ENABLED_KEY]: builtIn.totpSignupEnabled,
 						[TOTP_REAUTH_ENABLED_KEY]: builtIn.totpReauthEnabled,
 						[TOTP_ACCOUNT_LINK_ENABLED_KEY]: builtIn.totpAccountLinkEnabled,
+						[DID_LOGIN_ENABLED_KEY]: builtIn.didLoginEnabled,
 						[TOTP_PRESET_KEY]: builtIn.totpPreset,
 						[TOTP_DEFAULT_ACR_KEY]: builtIn.totpDefaultAcr || 'urn:authrim:aal:2',
 						[HUMAN_VERIFICATION_PROVIDER_KEY]:

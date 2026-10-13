@@ -28,6 +28,7 @@
 		totpSignupEnabled: false,
 		totpReauthEnabled: false,
 		totpAccountLinkEnabled: false,
+		didLoginEnabled: false,
 		totpPreset: 'compatible',
 		totpDefaultAcr: 'urn:authrim:aal:2'
 	};
