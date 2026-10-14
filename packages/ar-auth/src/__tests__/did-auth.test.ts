@@ -644,6 +644,115 @@ describe('DID Authentication', () => {
         expect(data.error).toBe('interaction_required');
         expect(data.error_description).toContain('linking');
       });
+
+      it('answers a DID without a lookup-directory route like a missing link row, not with a 500', async () => {
+        const body = { challenge_id: 'test', proof: 'header.payload.sig' };
+        mockLinkedIdentityRepo.findByProviderUser.mockResolvedValue(null);
+        const missingRow = await didAuthVerifyHandler(createMockContext({ body }));
+
+        mockResolveAccountDataContextByIdentifierFromHono.mockRejectedValue(
+          new Error('account_data_route_not_found')
+        );
+        mockLinkedIdentityRepo.findByProviderUser.mockClear();
+        mockPublishEvent.mockClear();
+        const noRoute = await didAuthVerifyHandler(createMockContext({ body }));
+
+        expect(noRoute.status).toBe(400);
+        expect(noRoute.status).toBe(missingRow.status);
+        expect(await noRoute.json()).toEqual(await missingRow.json());
+        expect(mockResolveAccountDataContextByIdentifierFromHono).toHaveBeenLastCalledWith(
+          expect.anything(),
+          {
+            indexKind: 'external_subject',
+            identifier: {
+              issuer: 'did',
+              subject: 'did:key:z6MkpTHR8VNsBxYAAWHut2Geadd9jSwuBV8xRoAnwWsdvktH',
+            },
+          }
+        );
+        expect(mockLinkedIdentityRepo.findByProviderUser).not.toHaveBeenCalled();
+        expect(mockPublishEvent).toHaveBeenCalledWith(
+          expect.anything(),
+          expect.objectContaining({
+            data: expect.objectContaining({ errorCode: 'identity_not_linked' }),
+          })
+        );
+        expect(mockSessionStoreStub.createSessionRpc).not.toHaveBeenCalled();
+      });
+
+      it.each([
+        ['1025 bytes', `did:web:${'a'.repeat(1025 - 'did:web:'.length)}`],
+        ['1028 bytes in 348 characters', `did:web:${'\u3042'.repeat(340)}`],
+        ['a control character', 'did:web:exa\u0007mple.com'],
+      ])(
+        'answers a DID of %s, which the lookup directory cannot index, as not linked (not 500)',
+        async (_label, bad) => {
+          const badKid = `${bad}#key-1`;
+          vi.mocked(decodeProtectedHeader).mockReturnValue({ alg: 'ES256', kid: badKid });
+          mockChallengeStoreStub.consumeChallengeRpc.mockResolvedValue({
+            challenge: 'test-challenge',
+            metadata: { did: bad, allowedVerificationMethods: [badKid], nonce: 'test-nonce' },
+          });
+          mockResolveDID.mockResolvedValue({
+            ...sampleDIDDocument,
+            verificationMethod: [{ ...sampleDIDDocument.verificationMethod[0], id: badKid }],
+          });
+          vi.mocked(jwtVerify).mockResolvedValue({
+            payload: { iss: bad, nonce: 'test-nonce', aud: 'https://issuer.example.com' },
+            protectedHeader: { alg: 'ES256' },
+          } as never);
+
+          const response = await didAuthVerifyHandler(
+            createMockContext({ body: { challenge_id: 'test', proof: 'header.payload.sig' } })
+          );
+
+          expect(response.status).toBe(400);
+          expect(((await response.json()) as ApiResponse).error).toBe('interaction_required');
+          expect(mockResolveAccountDataContextByIdentifierFromHono).not.toHaveBeenCalled();
+          expect(mockSessionStoreStub.createSessionRpc).not.toHaveBeenCalled();
+        }
+      );
+
+      it('answers lookup_external_subject_value_invalid from the index lookup as not linked', async () => {
+        mockResolveAccountDataContextByIdentifierFromHono.mockRejectedValue(
+          new Error('lookup_external_subject_value_invalid')
+        );
+
+        const response = await didAuthVerifyHandler(
+          createMockContext({ body: { challenge_id: 'test', proof: 'header.payload.sig' } })
+        );
+
+        expect(response.status).toBe(400);
+        expect(((await response.json()) as ApiResponse).error).toBe('interaction_required');
+      });
+
+      it('still answers 500 for other lookup failures', async () => {
+        mockResolveAccountDataContextByIdentifierFromHono.mockRejectedValue(
+          new Error('account_data_lookup_unavailable')
+        );
+
+        const response = await didAuthVerifyHandler(
+          createMockContext({ body: { challenge_id: 'test', proof: 'header.payload.sig' } })
+        );
+
+        expect(response.status).toBe(500);
+        expect(mockSessionStoreStub.createSessionRpc).not.toHaveBeenCalled();
+      });
+
+      it('still answers 500 when the link row belongs to another account than the route', async () => {
+        mockLinkedIdentityRepo.findByProviderUser.mockResolvedValue({
+          user_id: 'someone-else',
+          provider_id: 'did',
+          provider_user_id: 'did:key:z6MkpTHR8VNsBxYAAWHut2Geadd9jSwuBV8xRoAnwWsdvktH',
+        });
+
+        const response = await didAuthVerifyHandler(
+          createMockContext({ body: { challenge_id: 'test', proof: 'header.payload.sig' } })
+        );
+
+        expect(response.status).toBe(500);
+        expect(mockSessionStoreStub.createSessionRpc).not.toHaveBeenCalled();
+      });
     });
 
     describe('Session Creation', () => {

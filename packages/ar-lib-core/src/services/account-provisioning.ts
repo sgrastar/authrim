@@ -1,3 +1,4 @@
+import { normalizeLookupExternalSubject } from './lookup-directory/blind-index';
 import type {
   CanonicalRuntimeUserWriteInput,
   CanonicalSensitiveUserField,
@@ -108,6 +109,23 @@ export interface AuthDirectoryRoutePublicationInput {
 
 export type AuthDirectoryRoutePublicationResult = AuthPasskeyRoutePublicationResult;
 
+/**
+ * Publishes the lookup-directory route (external_subject index) of a DID the signed-in user linked
+ * to their own account, so that DID login can find the account again.
+ */
+export interface AuthDidRoutePublicationInput {
+  schemaVersion: 1;
+  operationId: string;
+  idempotencyKey: string;
+  tenantId: string;
+  accountId: string;
+  userId: string;
+  linkedIdentityId: string;
+  did: string;
+}
+
+export type AuthDidRoutePublicationResult = AuthPasskeyRoutePublicationResult;
+
 export interface ExternalIdpRoutePublicationInput {
   schemaVersion: 1;
   operationId: string;
@@ -201,6 +219,29 @@ export function directoryIdentityLookupSubject(input: {
   return { issuer: `urn:authrim:directory:${connectorId}`, subject: directorySubject };
 }
 
+/** Issuer under which DIDs are stored in linked_identities and in the lookup directory. */
+export const DID_LOOKUP_ISSUER = 'did';
+
+/**
+ * The lookup-directory subject of a DID. DID login resolves accounts through this same subject, so
+ * the link flow (publish) and the login flow (lookup) must both use it. The limits are those of the
+ * lookup directory itself (trimmed, non-empty, at most 1024 UTF-8 bytes, no control characters;
+ * `normalizeLookupExternalSubject` is the single source of truth), so a DID that passes here can
+ * always be indexed. A DID the index would store in a different form (surrounding whitespace) is
+ * refused too: the link row and the index must name the same string.
+ */
+export function didLookupSubject(did: string): { issuer: string; subject: string } {
+  if (typeof did !== 'string' || !did.startsWith('did:') || did !== did.trim()) {
+    throw new Error('did_route_subject_invalid');
+  }
+  try {
+    normalizeLookupExternalSubject({ issuer: DID_LOOKUP_ISSUER, subject: did });
+  } catch {
+    throw new Error('did_route_subject_invalid');
+  }
+  return { issuer: DID_LOOKUP_ISSUER, subject: did };
+}
+
 export interface AuthAccountProvisioningServiceBinding {
   provisionAuthAccount(input: AuthAccountProvisioningInput): Promise<AuthAccountProvisioningResult>;
   getAuthAccountProvisioningStatus(
@@ -212,6 +253,7 @@ export interface AuthAccountProvisioningServiceBinding {
   publishAuthDirectoryRoute(
     input: AuthDirectoryRoutePublicationInput
   ): Promise<AuthDirectoryRoutePublicationResult>;
+  publishAuthDidRoute(input: AuthDidRoutePublicationInput): Promise<AuthDidRoutePublicationResult>;
 }
 
 export interface ExternalIdpAccountProvisioningServiceBinding {

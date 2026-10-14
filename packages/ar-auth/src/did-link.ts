@@ -26,6 +26,9 @@ import {
   LinkedIdentityRepository,
   createPIIContextFromHono,
   createAuthContextFromHono,
+  resolveAccountDataContextFromHono,
+  didLookupSubject,
+  type AccountDataContext,
   validateAccountDirectoryPublication,
   type AccountDirectoryPublication,
   resolveDID,
@@ -37,6 +40,7 @@ import {
   getLogger,
 } from '@authrim/ar-lib-core';
 import { getRequestIssuer } from './issuer';
+import { rejectIfDidLoginDisabled } from './did-login-gate';
 import { jwtVerify, importJWK, decodeProtectedHeader } from 'jose';
 
 /**
@@ -49,6 +53,111 @@ const ALLOWED_DID_AUTH_ALGORITHMS = ['ES256', 'ES384', 'ES512', 'EdDSA'];
 async function sha256Hex(value: string): Promise<string> {
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value));
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+/**
+ * The signed-in user's account and the PII database that holds their linked_identities rows.
+ * The account is resolved first: with tenant-sharded databases the link row lives with the account
+ * (the same database the route publication verifies it on), not on a tenant-wide default.
+ */
+type LinkAdapter = ReturnType<typeof createPIIContextFromHono>['defaultPiiAdapter'];
+
+async function resolveLinkStore(
+  c: Context<{ Bindings: Env }>,
+  tenantId: string,
+  userId: string
+): Promise<{
+  account: AccountDataContext;
+  adapter: LinkAdapter;
+  repo: LinkedIdentityRepository;
+}> {
+  const account = await resolveAccountDataContextFromHono(c, userId);
+  if (account.legacyUserId !== userId) throw new Error('did_link_account_mismatch');
+  const adapter = createPIIContextFromHono(c, tenantId).defaultPiiAdapter;
+  return { account, adapter, repo: new LinkedIdentityRepository(adapter) };
+}
+
+/** A DID the lookup directory can index; DID login finds the account through that index. */
+function isLinkableDid(did: string): boolean {
+  try {
+    didLookupSubject(did);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+class DidRoutePublicationError extends Error {
+  constructor(
+    message: string,
+    readonly definitive: boolean
+  ) {
+    super(message);
+  }
+}
+
+/** The link could not be completed for now; the same request can be repeated. */
+function didRouteUnavailable(c: Context<{ Bindings: Env }>): Response {
+  return c.json(
+    {
+      error: 'temporarily_unavailable',
+      error_description: 'The DID could not be linked right now. Please try again.',
+    },
+    503
+  );
+}
+
+/**
+ * Publishes the lookup-directory route of a DID link, so DID login finds the account again. The
+ * operation id is derived from the link row, so a retry of the same link republishes the same
+ * operation (idempotent) while a new link of the same DID after an unlink is a new operation.
+ * Status 201 (published) and 202 (queued on the durable outbox) both mean the route will exist.
+ */
+async function publishDidRoute(
+  c: Context<{ Bindings: Env }>,
+  input: {
+    tenantId: string;
+    accountId: string;
+    userId: string;
+    linkedIdentityId: string;
+    did: string;
+  }
+): Promise<201 | 202> {
+  const provisioner = c.env.ACCOUNT_PROVISIONER;
+  if (!provisioner) throw new Error('account_provisioner_unavailable');
+  const digest = await sha256Hex(
+    [input.tenantId, input.accountId, input.userId, input.linkedIdentityId, input.did].join('\0')
+  );
+  const operationId = `did-route-${digest.slice(0, 32)}`;
+  let result;
+  try {
+    result = await provisioner.publishAuthDidRoute({
+      schemaVersion: 1,
+      operationId,
+      idempotencyKey: `auth-did-route:${digest}`,
+      tenantId: input.tenantId,
+      accountId: input.accountId,
+      userId: input.userId,
+      linkedIdentityId: input.linkedIdentityId,
+      did: input.did,
+    });
+  } catch (error) {
+    // The identifier is reserved by another account: nothing of ours was written, so retrying
+    // cannot succeed either.
+    throw new DidRoutePublicationError(
+      error instanceof Error ? error.message : 'did_route_publication_failed',
+      error instanceof Error && error.message === 'directory_identifier_reservation_conflict'
+    );
+  }
+  if (
+    !result ||
+    result.operationId !== operationId ||
+    result.accountId !== input.accountId ||
+    (result.status !== 201 && result.status !== 202)
+  ) {
+    throw new DidRoutePublicationError('did_route_publication_response_invalid', false);
+  }
+  return result.status;
 }
 
 /**
@@ -96,6 +205,10 @@ export async function didRegisterChallengeHandler(
   const log = getLogger(c).module('DID-LINK');
 
   try {
+    // A tenant that has DID login off collects no DID either: decided before anything else.
+    const loginDisabled = await rejectIfDidLoginDisabled(c, getTenantIdFromContext(c));
+    if (loginDisabled) return loginDisabled;
+
     // Verify user is authenticated
     const userId = await getAuthenticatedUserId(c);
     if (!userId) {
@@ -115,19 +228,16 @@ export async function didRegisterChallengeHandler(
     }
 
     // Validate DID format
-    if (!did.startsWith('did:')) {
+    if (typeof did !== 'string' || !isLinkableDid(did)) {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
 
-    // Check if DID is already linked to another account
-    const adapter = createPIIContextFromHono(c, tenantId).defaultPiiAdapter;
-    const linkedIdentityRepo = new LinkedIdentityRepository(adapter);
+    // Check if DID is already linked to another account. A link of the same user is allowed to be
+    // proven again: that is how a link whose route publication did not complete is retried.
+    const { repo: linkedIdentityRepo } = await resolveLinkStore(c, tenantId, userId);
     const existingLink = await linkedIdentityRepo.findByProviderUser(tenantId, 'did', did);
 
-    if (existingLink) {
-      if (existingLink.user_id === userId) {
-        return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
-      }
+    if (existingLink && existingLink.user_id !== userId) {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
 
@@ -209,6 +319,18 @@ export async function didRegisterVerifyHandler(c: Context<{ Bindings: Env }>): P
 
   try {
     const tenantId = getTenantIdFromContext(c);
+    // Before the challenge is consumed: a settings read that failed for a moment must not burn
+    // the challenge, and a tenant with DID login off links nothing.
+    const loginDisabled = await rejectIfDidLoginDisabled(c, tenantId);
+    if (loginDisabled) return loginDisabled;
+
+    // Without the provisioner the route cannot be published: refuse before the challenge is
+    // consumed or anything is written, rather than leave a link that cannot sign in.
+    if (!c.env.ACCOUNT_PROVISIONER) {
+      log.error('Account provisioner is not configured', { action: 'register_verify' });
+      return didRouteUnavailable(c);
+    }
+
     const body = await c.req.json<{
       challenge_id: string;
       proof: string;
@@ -247,12 +369,7 @@ export async function didRegisterVerifyHandler(c: Context<{ Bindings: Env }>): P
     }
     const did = didMatch[1];
 
-    // SECURITY: Early check if DID is already linked (before expensive operations)
-    // This prevents DoS via repeated verification attempts for already-linked DIDs
-    const adapter = createPIIContextFromHono(c, tenantId).defaultPiiAdapter;
-    const linkedIdentityRepo = new LinkedIdentityRepository(adapter);
-    const existingLinkEarly = await linkedIdentityRepo.findByProviderUser(tenantId, 'did', did);
-    if (existingLinkEarly) {
+    if (!isLinkableDid(did)) {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
 
@@ -267,6 +384,26 @@ export async function didRegisterVerifyHandler(c: Context<{ Bindings: Env }>): P
       });
     } catch {
       return createErrorResponse(c, AR_ERROR_CODES.AUTH_INVALID_CODE);
+    }
+
+    // The challenge names the user it was issued to; the link row lives with that user's account.
+    const linkUserId = challengeData.userId;
+    if (typeof linkUserId !== 'string' || linkUserId === '') {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
+    }
+    const {
+      account,
+      adapter,
+      repo: linkedIdentityRepo,
+    } = await resolveLinkStore(c, tenantId, linkUserId);
+
+    // SECURITY: Early check if DID is already linked (before the DID document is fetched and the
+    // signature verified). This prevents DoS via repeated verification attempts for linked DIDs.
+    // A link of the same user is let through: it is a retry whose route publication did not
+    // complete, and publishing the route is idempotent.
+    const existingLinkEarly = await linkedIdentityRepo.findByProviderUser(tenantId, 'did', did);
+    if (existingLinkEarly && existingLinkEarly.user_id !== linkUserId) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
 
     // Extract metadata
@@ -330,52 +467,96 @@ export async function didRegisterVerifyHandler(c: Context<{ Bindings: Env }>): P
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
 
-    // Create the link with race condition protection
-    // Note: adapter and linkedIdentityRepo were already created earlier for early check
+    // The link row (insert) comes first, then its route is published. A retry of the same link
+    // (same user) reuses the existing row and so republishes the same operation.
+    let linkedIdentityId: string;
+    let createdHere = false;
+    let alreadyLinked = false;
+    if (existingLinkEarly) {
+      linkedIdentityId = existingLinkEarly.id;
+      alreadyLinked = true;
+    } else {
+      // The database should have a UNIQUE constraint on (provider_id, provider_user_id)
+      try {
+        const created = await linkedIdentityRepo.createLinkedIdentity({
+          tenant_id: tenantId,
+          user_id: linkUserId,
+          provider_id: 'did',
+          provider_user_id: did,
+          raw_attributes: {
+            did,
+            verificationMethod: kid,
+            linkedAt: Date.now(),
+          },
+        });
+        linkedIdentityId = created.id;
+        createdHere = true;
+      } catch (error) {
+        // Check if error is due to duplicate key (race condition)
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        if (
+          !(
+            errorMessage.includes('UNIQUE') ||
+            errorMessage.includes('constraint') ||
+            errorMessage.includes('duplicate')
+          )
+        ) {
+          throw error;
+        }
+        // Race condition: another process linked this DID. If it was the same user the link is
+        // theirs (idempotent) and only the route is left to publish.
+        const existingLink = await linkedIdentityRepo.findByProviderUser(tenantId, 'did', did);
+        if (!existingLink || existingLink.user_id !== linkUserId) {
+          return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
+        }
+        linkedIdentityId = existingLink.id;
+        alreadyLinked = true;
+      }
+    }
 
-    // Attempt to create linked identity with proper error handling for race conditions
-    // The database should have a UNIQUE constraint on (provider_id, provider_user_id)
     try {
-      await linkedIdentityRepo.createLinkedIdentity({
-        tenant_id: tenantId,
-        user_id: challengeData.userId,
-        provider_id: 'did',
-        provider_user_id: did,
-        raw_attributes: {
-          did,
-          verificationMethod: kid,
-          linkedAt: Date.now(),
-        },
+      await publishDidRoute(c, {
+        tenantId,
+        accountId: account.accountId,
+        userId: linkUserId,
+        linkedIdentityId,
+        did,
       });
     } catch (error) {
-      // Check if error is due to duplicate key (race condition)
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      if (
-        errorMessage.includes('UNIQUE') ||
-        errorMessage.includes('constraint') ||
-        errorMessage.includes('duplicate')
-      ) {
-        // Race condition: another process linked this DID
-        // Check if it was linked to the same user (idempotent success)
-        const existingLink = await linkedIdentityRepo.findByProviderUser(tenantId, 'did', did);
-        if (existingLink && existingLink.user_id === challengeData.userId) {
-          // Same user, treat as success (idempotent)
-          return c.json({
-            success: true,
-            did,
-            message: 'DID is already linked to your account',
-          });
+      const definitive = error instanceof DidRoutePublicationError && error.definitive;
+      log.error(
+        'DID route publication failed',
+        { action: 'register_verify', definitive },
+        error as Error
+      );
+      if (definitive && createdHere) {
+        // The DID is already routed to another account and nothing of this link was published:
+        // drop the row so no link is left that can never sign in.
+        try {
+          await adapter.execute(
+            'DELETE FROM linked_identities WHERE id = ? AND tenant_id = ? AND user_id = ?',
+            [linkedIdentityId, tenantId, linkUserId]
+          );
+        } catch (cleanupError) {
+          log.error(
+            'DID link cleanup failed',
+            { action: 'register_verify' },
+            cleanupError as Error
+          );
         }
         return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
       }
-      // Re-throw other errors
-      throw error;
+      // Possibly transient: the row stays so that repeating the link (same user, same DID)
+      // publishes the same route operation again.
+      return didRouteUnavailable(c);
     }
 
     return c.json({
       success: true,
       did,
-      message: 'DID successfully linked to your account',
+      message: alreadyLinked
+        ? 'DID is already linked to your account'
+        : 'DID successfully linked to your account',
     });
   } catch (error) {
     log.error('DID register verify error', { action: 'register_verify' }, error as Error);
@@ -398,8 +579,7 @@ export async function didListHandler(c: Context<{ Bindings: Env }>): Promise<Res
     }
 
     const tenantId = getTenantIdFromContext(c);
-    const adapter = createPIIContextFromHono(c, tenantId).defaultPiiAdapter;
-    const linkedIdentityRepo = new LinkedIdentityRepository(adapter);
+    const { repo: linkedIdentityRepo } = await resolveLinkStore(c, tenantId, userId);
     const identities = await linkedIdentityRepo.findByUserId(tenantId, userId);
 
     // Filter to only DID links
@@ -452,9 +632,12 @@ export async function didUnlinkHandler(c: Context<{ Bindings: Env }>): Promise<R
     }
 
     const tenantId = getTenantIdFromContext(c);
-    const adapter = createPIIContextFromHono(c, tenantId).defaultPiiAdapter;
-    const linkedIdentityRepo = new LinkedIdentityRepository(adapter);
-    const accountId = `account:${userId}`;
+    const {
+      account,
+      adapter,
+      repo: linkedIdentityRepo,
+    } = await resolveLinkStore(c, tenantId, userId);
+    const accountId = account.accountId;
     const [issuerDigest, subjectDigest] = await Promise.all([sha256Hex('did'), sha256Hex(did)]);
     const operationId = `external-unlink:${(await sha256Hex(`${tenantId}\0${accountId}\0did\0${did}`)).slice(0, 32)}`;
 

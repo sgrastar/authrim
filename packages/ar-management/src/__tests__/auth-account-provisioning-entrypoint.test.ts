@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type {
   AuthAccountProvisioningInput,
+  AuthDidRoutePublicationInput,
   AuthPasskeyRoutePublicationInput,
   ExternalIdpRoutePublicationInput,
   Env,
@@ -99,6 +100,24 @@ function passkeyRouteInput(
     passkeyId: 'passkey-a',
     credentialId: 'credential_A-1',
     rpId: 'login.example.com',
+    ...overrides,
+  };
+}
+
+const DID = 'did:key:z6MkpTHR8VNsBxYAAWHut2Geadd9jSwuBV8xRoAnwWsdvktH';
+
+function didRouteInput(
+  overrides: Partial<AuthDidRoutePublicationInput> = {}
+): AuthDidRoutePublicationInput {
+  return {
+    schemaVersion: 1,
+    operationId: 'did-route-11111111111111111111111111111111',
+    idempotencyKey: `auth-did-route:${'d'.repeat(64)}`,
+    tenantId: 'tenant-a',
+    accountId: 'account:user-a',
+    userId: 'user-a',
+    linkedIdentityId: 'did-link-a',
+    did: DID,
     ...overrides,
   };
 }
@@ -1022,6 +1041,175 @@ describe('AuthAccountProvisioningEntrypoint', () => {
     await expect(worker().publishAuthPasskeyRoute(passkeyRouteInput())).rejects.toThrow(
       'auth_passkey_route_authority_not_found'
     );
+  });
+
+  describe('publishAuthDidRoute', () => {
+    function armLinkRow(overrides: Record<string, unknown> = {}) {
+      mocks.tenantQuery.mockResolvedValueOnce({
+        id: 'did-link-a',
+        user_id: 'user-a',
+        provider_id: 'did',
+        provider_user_id: DID,
+        provisioning_state: 'active',
+        ...overrides,
+      });
+    }
+
+    it('publishes the did subject once the link row is reflected on the account PII database', async () => {
+      const request = didRouteInput();
+      armLinkRow();
+      mocks.publishIdentifier.mockResolvedValueOnce({
+        status: 202,
+        operationId: request.operationId,
+        accountId: request.accountId,
+      });
+
+      await expect(worker().publishAuthDidRoute(request)).resolves.toEqual({
+        status: 202,
+        operationId: request.operationId,
+        accountId: request.accountId,
+      });
+      expect(mocks.tenantQuery).toHaveBeenCalledWith(
+        expect.stringContaining('FROM linked_identities'),
+        [request.linkedIdentityId, request.tenantId, request.userId],
+        { consistencyClass: 'primary_required' }
+      );
+      expect(mocks.publishIdentifier).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          operationId: request.operationId,
+          idempotencyKey: request.idempotencyKey,
+          tenantId: 'tenant-a',
+          accountId: 'account:user-a',
+          externalSubject: { issuer: 'did', subject: DID },
+        }),
+        expect.objectContaining({ tenantCoreUsers: expect.anything() })
+      );
+    });
+
+    it.each([
+      [
+        'ar-bridge',
+        { caller: 'ar-bridge', audience: 'authrim-external-idp-account-provisioning-v1' },
+      ],
+      [
+        'ar-saml (the DID route is ar-auth only)',
+        { caller: 'ar-saml', audience: 'authrim-saml-account-provisioning-v1' },
+      ],
+      [
+        'an unknown caller',
+        { caller: 'ar-other', audience: 'authrim-auth-account-provisioning-v1' },
+      ],
+      ['a wrong audience', { caller: 'ar-auth', audience: 'authrim-saml-account-provisioning-v1' }],
+      [
+        'another environment',
+        {
+          caller: 'ar-auth',
+          audience: 'authrim-auth-account-provisioning-v1',
+          environmentId: 'other',
+        },
+      ],
+    ])('rejects %s as a caller', async (_label, props) => {
+      await expect(
+        worker({ props: { environmentId: 'test', ...props } }).publishAuthDidRoute(didRouteInput())
+      ).rejects.toThrow('auth_account_provisioning_rpc_caller_unauthorized');
+      expect(mocks.resolveAccountDataContext).not.toHaveBeenCalled();
+      expect(mocks.publishIdentifier).not.toHaveBeenCalled();
+    });
+
+    it('accepts ar-auth with the auth audience as the caller', async () => {
+      const request = didRouteInput();
+      armLinkRow();
+      mocks.publishIdentifier.mockResolvedValueOnce({
+        status: 201,
+        operationId: request.operationId,
+        accountId: request.accountId,
+      });
+
+      await expect(
+        worker({
+          props: {
+            caller: 'ar-auth',
+            environmentId: 'test',
+            audience: 'authrim-auth-account-provisioning-v1',
+          },
+        }).publishAuthDidRoute(request)
+      ).resolves.toMatchObject({ status: 201 });
+    });
+
+    it.each([
+      ['an extra key', { extra: true }],
+      ['a missing key', { linkedIdentityId: undefined }],
+      ['a did that is not a did', { did: 'not-a-did' }],
+      ['an empty did', { did: '' }],
+      ['an over-long did', { did: `did:web:${'a'.repeat(2100)}` }],
+      ['a did over the index limit by one byte', { did: `did:web:${'a'.repeat(1017)}` }],
+      ['a multibyte did over the index limit', { did: `did:web:${'\u3042'.repeat(340)}` }],
+      ['a did with a control character', { did: 'did:web:exa\u0007mple.com' }],
+      ['a did with surrounding whitespace', { did: 'did:web:example.com ' }],
+      ['a non-string did', { did: 42 }],
+      ['an account that is not the user account', { accountId: 'account:other-user' }],
+      ['a bad idempotency key', { idempotencyKey: `auth-passkey-route:${'d'.repeat(64)}` }],
+      ['a bad operation id', { operationId: '../escape' }],
+      ['a bad linked identity id', { linkedIdentityId: 'a b' }],
+      ['another schema version', { schemaVersion: 2 }],
+    ])('rejects invalid input (%s) before any lookup', async (_label, overrides) => {
+      const request = { ...didRouteInput(), ...overrides } as Record<string, unknown>;
+      for (const key of Object.keys(request)) {
+        if (request[key] === undefined) delete request[key];
+      }
+
+      await expect(worker().publishAuthDidRoute(request)).rejects.toThrow(
+        'auth_did_route_input_invalid'
+      );
+      expect(mocks.resolveAccountDataContext).not.toHaveBeenCalled();
+      expect(mocks.publishIdentifier).not.toHaveBeenCalled();
+    });
+
+    it('rejects an account context that is not the requested account', async () => {
+      mocks.resolveAccountDataContext.mockResolvedValueOnce({
+        accountId: 'account:user-b',
+        legacyUserId: 'user-b',
+      });
+
+      await expect(worker().publishAuthDidRoute(didRouteInput())).rejects.toThrow(
+        'auth_did_route_account_mismatch'
+      );
+      expect(mocks.publishIdentifier).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['no link row', null],
+      ['a row of another user', { user_id: 'user-b' }],
+      ['a row of another provider', { provider_id: 'google' }],
+      ['a row of another did', { provider_user_id: 'did:web:other.example' }],
+      ['a pending row', { provisioning_state: 'pending' }],
+      ['a row with another id', { id: 'did-link-b' }],
+    ])('does not publish without the link row (%s)', async (_label, row) => {
+      if (row === null) mocks.tenantQuery.mockResolvedValueOnce(null);
+      else armLinkRow(row);
+
+      await expect(worker().publishAuthDidRoute(didRouteInput())).rejects.toThrow(
+        'auth_did_route_authority_not_found'
+      );
+      expect(mocks.publishIdentifier).not.toHaveBeenCalled();
+    });
+
+    it('passes directory conflicts through and hides unknown failures', async () => {
+      armLinkRow();
+      mocks.publishIdentifier.mockRejectedValueOnce(
+        new Error('directory_identifier_reservation_conflict')
+      );
+      await expect(worker().publishAuthDidRoute(didRouteInput())).rejects.toThrow(
+        'directory_identifier_reservation_conflict'
+      );
+
+      armLinkRow();
+      mocks.publishIdentifier.mockRejectedValueOnce(new Error('sensitive internal detail'));
+      await expect(worker().publishAuthDidRoute(didRouteInput())).rejects.toThrow(
+        'auth_did_route_internal_error'
+      );
+    });
   });
 
   it.each([
