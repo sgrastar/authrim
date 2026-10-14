@@ -685,7 +685,7 @@ describe('DID Authentication', () => {
         ['1028 bytes in 348 characters', `did:web:${'\u3042'.repeat(340)}`],
         ['a control character', 'did:web:exa\u0007mple.com'],
       ])(
-        'answers a DID of %s, which the lookup directory cannot index, as not linked (not 500)',
+        'refuses a DID of %s, which the lookup directory cannot index, as an invalid DID before the challenge is consumed (not 500)',
         async (_label, bad) => {
           const badKid = `${bad}#key-1`;
           vi.mocked(decodeProtectedHeader).mockReturnValue({ alg: 'ES256', kid: badKid });
@@ -707,7 +707,8 @@ describe('DID Authentication', () => {
           );
 
           expect(response.status).toBe(400);
-          expect(((await response.json()) as ApiResponse).error).toBe('interaction_required');
+          expect(((await response.json()) as ApiResponse).error).toBe('invalid_request');
+          expect(mockChallengeStoreStub.consumeChallengeRpc).not.toHaveBeenCalled();
           expect(mockResolveAccountDataContextByIdentifierFromHono).not.toHaveBeenCalled();
           expect(mockSessionStoreStub.createSessionRpc).not.toHaveBeenCalled();
         }

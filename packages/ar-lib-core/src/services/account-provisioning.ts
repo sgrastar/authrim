@@ -219,6 +219,9 @@ export function directoryIdentityLookupSubject(input: {
   return { issuer: `urn:authrim:directory:${connectorId}`, subject: directorySubject };
 }
 
+/** DID Core syntax: `did:` method (lowercase letters, digits) `:` method-specific id. */
+const DID_SYNTAX = /^did:[a-z0-9]+:[A-Za-z0-9._:%-]+$/u;
+
 /** Issuer under which DIDs are stored in linked_identities and in the lookup directory. */
 export const DID_LOOKUP_ISSUER = 'did';
 
@@ -231,7 +234,10 @@ export const DID_LOOKUP_ISSUER = 'did';
  * refused too: the link row and the index must name the same string.
  */
 export function didLookupSubject(did: string): { issuer: string; subject: string } {
-  if (typeof did !== 'string' || !did.startsWith('did:') || did !== did.trim()) {
+  // A DID, not a DID URL: DID Core syntax (method, then a method-specific id), so no path, query,
+  // fragment or whitespace. Otherwise `did:key:zK`, `did:key:zK/a` and `did:key:zK?x=1`, which
+  // resolve to the same key, would index as separate identifiers.
+  if (typeof did !== 'string' || !DID_SYNTAX.test(did)) {
     throw new Error('did_route_subject_invalid');
   }
   try {

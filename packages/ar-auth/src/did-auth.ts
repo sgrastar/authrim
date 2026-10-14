@@ -48,13 +48,13 @@ import { getRequestIssuer } from './issuer';
 import { jwtVerify, importJWK, decodeProtectedHeader } from 'jose';
 import { resolveSessionTtl } from './session-ttl';
 import { rejectIfDidLoginDisabled } from './did-login-gate';
-
-/**
- * Allowed JWT algorithms for DID authentication proofs.
- * - ES256/ES384/ES512: HAIP-compliant EC algorithms
- * - EdDSA: For Ed25519 keys (did:key)
- */
-const ALLOWED_DID_AUTH_ALGORITHMS = ['ES256', 'ES384', 'ES512', 'EdDSA'];
+import {
+  ALLOWED_DID_AUTH_ALGORITHMS,
+  collectAuthenticationMethods,
+  isLinkableDid,
+  readJsonObject,
+  resolveProofAlgorithm,
+} from './did-proof';
 
 /**
  * POST /auth/did/challenge
@@ -69,7 +69,8 @@ export async function didAuthChallengeHandler(c: Context<{ Bindings: Env }>): Pr
     const loginDisabled = await rejectIfDidLoginDisabled(c, getTenantIdFromContext(c));
     if (loginDisabled) return loginDisabled;
 
-    const body = await c.req.json<{ did: string }>();
+    const body = await readJsonObject(c);
+    if (!body) return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     const { did } = body;
 
     // SECURITY: Check for both null/undefined and empty/whitespace-only string
@@ -79,8 +80,8 @@ export async function didAuthChallengeHandler(c: Context<{ Bindings: Env }>): Pr
       });
     }
 
-    // Validate DID format
-    if (!did.startsWith('did:')) {
+    // Validate DID format: a string that is a DID (not a DID URL with path, query or fragment)
+    if (typeof did !== 'string' || !isLinkableDid(did)) {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
 
@@ -94,19 +95,7 @@ export async function didAuthChallengeHandler(c: Context<{ Bindings: Env }>): Pr
     }
 
     // Get all authentication verification methods
-    const authMethods = didDocument.authentication || [];
-    const verificationMethods: VerificationMethod[] = [];
-
-    for (const methodRef of authMethods) {
-      const methodId = typeof methodRef === 'string' ? methodRef : methodRef.id;
-      const method = didDocument.verificationMethod?.find((vm) => vm.id === methodId);
-      if (method) {
-        verificationMethods.push(method);
-      } else if (typeof methodRef === 'object') {
-        // Inline verification method
-        verificationMethods.push(methodRef);
-      }
-    }
+    const verificationMethods: VerificationMethod[] = collectAuthenticationMethods(didDocument);
 
     if (verificationMethods.length === 0) {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
@@ -171,12 +160,10 @@ export async function didAuthVerifyHandler(c: Context<{ Bindings: Env }>): Promi
     const loginDisabled = await rejectIfDidLoginDisabled(c, tenantId);
     if (loginDisabled) return loginDisabled;
 
-    const body = await c.req.json<{
-      challenge_id: string;
-      proof: string; // JWS containing the signed challenge
-    }>();
-
-    const { challenge_id, proof } = body;
+    const body = await readJsonObject(c);
+    if (!body) return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
+    // proof: the JWS containing the signed challenge
+    const { challenge_id, proof } = body as { challenge_id?: unknown; proof?: unknown };
 
     // SECURITY: Check for both null/undefined and empty/whitespace-only strings
     const isEmptyString = (val: unknown): boolean => typeof val === 'string' && val.trim() === '';
@@ -185,6 +172,10 @@ export async function didAuthVerifyHandler(c: Context<{ Bindings: Env }>): Promi
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
         variables: { field: 'challenge_id and proof' },
       });
+    }
+    // Both are strings: an array or number would be string-interpolated into the challenge id.
+    if (typeof challenge_id !== 'string' || typeof proof !== 'string') {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
 
     // Decode proof header to get kid (verification method ID)
@@ -202,12 +193,22 @@ export async function didAuthVerifyHandler(c: Context<{ Bindings: Env }>): Promi
       });
     }
 
+    // A kid that is not a string (`"kid": 123`) is as invalid as one that is not a DID URL.
+    if (typeof kid !== 'string') {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
+    }
+
     // Extract DID from kid (kid format: did:method:identifier#key-id)
     const didMatch = kid.match(/^(did:[^#]+)/);
     if (!didMatch) {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
     const did = didMatch[1];
+    // The kid names a key of a DID, never of a DID URL such as `did:key:zK/a`: refused before the
+    // challenge is consumed, like any other invalid DID.
+    if (!isLinkableDid(did)) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
+    }
 
     // Get challenge store and consume challenge
     const challengeStore = getChallengeStoreByDID(c.env, did, getTenantIdFromContext(c));
@@ -240,17 +241,44 @@ export async function didAuthVerifyHandler(c: Context<{ Bindings: Env }>): Promi
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
 
-    // Find verification method
-    const verificationMethod = didDocument.verificationMethod?.find((vm) => vm.id === kid);
+    // Find the verification method: it must be an authentication method of the document as it is
+    // now, not only of the document at the time the challenge was issued.
+    const verificationMethod = collectAuthenticationMethods(didDocument).find(
+      (vm) => vm.id === kid
+    );
     if (!verificationMethod || !verificationMethod.publicKeyJwk) {
       // SECURITY: Use generic message to prevent DID key enumeration
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
 
+    // A failed proof (signature, algorithm): the same answer and event however it fails.
+    const proofRejected = async (): Promise<Response> => {
+      // Publish DID authentication failure event (non-blocking)
+      publishEvent(c, {
+        type: AUTH_EVENTS.DID_FAILED,
+        tenantId,
+        data: {
+          method: 'did',
+          clientId: 'did-auth',
+          errorCode: 'signature_verification_failed',
+        } satisfies AuthEventData,
+      }).catch((err: unknown) => {
+        log.warn('Failed to publish auth.did.failed event', { action: 'event_publish' });
+      });
+
+      return createErrorResponse(c, AR_ERROR_CODES.AUTH_INVALID_CODE);
+    };
+
+    // The key is imported under the JWK's alg, or the proof's when the JWK has none (alg is
+    // optional in a JWK, and jose will not import a key without one). An algorithm outside the
+    // allow-list, or one the JWK and the proof disagree on, fails like a bad signature.
+    const algorithm = resolveProofAlgorithm(verificationMethod.publicKeyJwk, protectedHeader.alg);
+    if (!algorithm) return proofRejected();
+
     // Import public key
     let publicKey;
     try {
-      publicKey = await importJWK(verificationMethod.publicKeyJwk);
+      publicKey = await importJWK(verificationMethod.publicKeyJwk, algorithm);
     } catch {
       // SECURITY: Use generic message to prevent information leakage
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
@@ -272,20 +300,7 @@ export async function didAuthVerifyHandler(c: Context<{ Bindings: Env }>): Promi
       });
       payload = result.payload;
     } catch {
-      // Publish DID authentication failure event (non-blocking)
-      publishEvent(c, {
-        type: AUTH_EVENTS.DID_FAILED,
-        tenantId,
-        data: {
-          method: 'did',
-          clientId: 'did-auth',
-          errorCode: 'signature_verification_failed',
-        } satisfies AuthEventData,
-      }).catch((err: unknown) => {
-        log.warn('Failed to publish auth.did.failed event', { action: 'event_publish' });
-      });
-
-      return createErrorResponse(c, AR_ERROR_CODES.AUTH_INVALID_CODE);
+      return proofRejected();
     }
 
     // Verify required claims

@@ -47,6 +47,40 @@ describe('account provisioning routing subjects', () => {
     }
   });
 
+  it('accepts DIDs with a port or a path in did:web syntax', () => {
+    for (const did of [
+      'did:web:example.com%3A8443',
+      'did:web:example.com:users:alice',
+      'did:web:example.com%3A8443:users:alice',
+      'did:key:z6MkpTHR8VNsBxYAAWHut2Geadd9jSwuBV8xRoAnwWsdvktH',
+    ]) {
+      expect(didLookupSubject(did)).toEqual({ issuer: 'did', subject: did });
+    }
+  });
+
+  it('refuses DID URLs and non-DID strings, so one key cannot be indexed under several aliases', () => {
+    const key = 'did:key:z6MkpTHR8VNsBxYAAWHut2Geadd9jSwuBV8xRoAnwWsdvktH';
+    for (const invalid of [
+      `${key}/alias`,
+      `${key}?x=1`,
+      `${key}#${key.slice(8)}`,
+      `${key} `,
+      ` ${key}`,
+      `${key}\n`,
+      'did:web:example.com/path',
+      'did:WEB:example.com',
+      'did::example.com',
+      'did:web:',
+      'did:web',
+      `did:web:exa\u0007mple.com`,
+      'did:web:ex ample.com',
+    ]) {
+      expect(() => didLookupSubject(invalid), JSON.stringify(invalid)).toThrow(
+        'did_route_subject_invalid'
+      );
+    }
+  });
+
   it('enforces the lookup directory limits on DIDs (1024 UTF-8 bytes, no control characters)', () => {
     const atLimit = `did:web:${'a'.repeat(1024 - 'did:web:'.length)}`;
     expect(new TextEncoder().encode(atLimit).byteLength).toBe(1024);
