@@ -54,8 +54,16 @@ const mockPiiAdapter = vi.hoisted(() => ({
 const mockProvisioner = vi.hoisted(() => ({
   publishAuthDidRoute: vi.fn(),
 }));
+// The account's own core database, shaped like a DatabaseAdapter (ensureDatabaseAdapter keeps it).
 const mockCoreAdapter = vi.hoisted(() => ({
   queryOne: vi.fn(),
+  query: vi.fn(),
+  execute: vi.fn(),
+  transaction: vi.fn(),
+  batch: vi.fn(),
+  isHealthy: vi.fn(),
+  getType: vi.fn(),
+  close: vi.fn(),
 }));
 
 // Mock @authrim/ar-lib-core
@@ -72,9 +80,15 @@ vi.mock('@authrim/ar-lib-core', async () => {
       tenantId: 'default',
       accountId: `account:${userId}`,
       legacyUserId: userId,
+      // The account's own core database (not the tenant metadata one).
+      coreDb: mockCoreAdapter,
     })),
     createPIIContextFromHono: vi.fn(() => ({ defaultPiiAdapter: mockPiiAdapter })),
-    createAuthContextFromHono: vi.fn(() => ({ coreAdapter: mockCoreAdapter })),
+    // The tenant metadata core database holds no accounts: reading the account's creation record
+    // from it must fail (this is what made every unlink fail on the real environment).
+    createAuthContextFromHono: vi.fn(() => ({
+      coreAdapter: { queryOne: vi.fn(async () => null) },
+    })),
     validateAccountDirectoryPublication: vi.fn((value) => value),
     LinkedIdentityRepository: class {
       constructor() {}

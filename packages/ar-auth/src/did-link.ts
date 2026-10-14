@@ -25,7 +25,7 @@ import {
   getTenantIdFromContext,
   LinkedIdentityRepository,
   createPIIContextFromHono,
-  createAuthContextFromHono,
+  ensureDatabaseAdapter,
   resolveAccountDataContextFromHono,
   type AccountDataContext,
   validateAccountDirectoryPublication,
@@ -662,7 +662,10 @@ export async function didUnlinkHandler(c: Context<{ Bindings: Env }>): Promise<R
     if (existing?.state === 'blocked') throw new Error('identifier_unlink_operation_blocked');
 
     if (!existing) {
-      const routeRow = await createAuthContextFromHono(c, tenantId).coreAdapter.queryOne<{
+      // The account's own core database holds its creation record (identity_accounts and the
+      // routing outbox). The tenant metadata core database does not: reading it here made every
+      // unlink fail with identifier_directory_route_unavailable.
+      const routeRow = await ensureDatabaseAdapter(account.coreDb, 'did-unlink-core').queryOne<{
         payload_json: string;
       }>(
         `SELECT outbox.payload_json
