@@ -76,6 +76,16 @@ async function resolveLinkStore(
   return { account, adapter, repo: new LinkedIdentityRepository(adapter) };
 }
 
+interface UnlinkOperationRow {
+  operation_id: string;
+  tenant_id: string;
+  account_id: string;
+  user_id: string;
+  issuer_sha256: string;
+  subject_sha256: string;
+  state: string;
+}
+
 class DidRoutePublicationError extends Error {
   constructor(
     message: string,
@@ -550,6 +560,18 @@ export async function didRegisterVerifyHandler(c: Context<{ Bindings: Env }>): P
   }
 }
 
+/** The unlink cannot start for now; the same request can be repeated. */
+function unlinkStillFinishing(c: Context<{ Bindings: Env }>): Response {
+  return c.json(
+    {
+      error: 'temporarily_unavailable',
+      error_description:
+        'The DID could not be unlinked right now, the link changed or an earlier unlink is still finishing. Please try again.',
+    },
+    503
+  );
+}
+
 /**
  * GET /auth/did/list
  *
@@ -625,30 +647,41 @@ export async function didUnlinkHandler(c: Context<{ Bindings: Env }>): Promise<R
     } = await resolveLinkStore(c, tenantId, userId);
     const accountId = account.accountId;
     const [issuerDigest, subjectDigest] = await Promise.all([sha256Hex('did'), sha256Hex(did)]);
-    const operationId = `external-unlink:${(await sha256Hex(`${tenantId}\0${accountId}\0did\0${did}`)).slice(0, 32)}`;
 
-    // Find the link
     const link = await linkedIdentityRepo.findByProviderUser(tenantId, 'did', did);
-    const existing = await adapter.queryOne<{
-      tenant_id: string;
-      account_id: string;
-      user_id: string;
-      issuer_sha256: string;
-      subject_sha256: string;
-      state: string;
-    }>(
-      `SELECT tenant_id, account_id, user_id, issuer_sha256, subject_sha256, state
-         FROM external_identifier_unlink_operations WHERE operation_id = ?`,
-      [operationId]
+    if (link && link.user_id !== userId) {
+      return createErrorResponse(c, AR_ERROR_CODES.POLICY_INSUFFICIENT_PERMISSIONS);
+    }
+
+    // Which unlink operation answers this request. An operation belongs to ONE link: the same DID
+    // can be linked, unlinked and linked again, and every unlink of it is its own operation, so a
+    // completed one never stands in for the unlink of a link that exists now.
+    //  - While the link exists, the operation is new (its id names the link row). An earlier
+    //    operation of this DID that is still running cleans up the route of an EARLIER link; a
+    //    second one beside it is not started, the request is repeated once it has ended.
+    //  - Once the link row is gone, the request is a retry of the operation that removed it: that
+    //    operation is still running (or blocked), or it has completed.
+    const operationColumns = `operation_id, tenant_id, account_id, user_id, issuer_sha256,
+            subject_sha256, state`;
+    const operationsOfDid = `FROM external_identifier_unlink_operations
+        WHERE tenant_id = ? AND account_id = ? AND issuer_sha256 = ? AND subject_sha256 = ?`;
+    const operationParams = [tenantId, accountId, issuerDigest, subjectDigest];
+    // While the link exists, only an operation that is still running matters. Without the link
+    // the newest operation of this DID answers, whatever its state: an older blocked operation
+    // of an earlier link must not outrank a newer one. Operation ids are hashes and timestamps
+    // have a resolution of one second, so creation order is the table's rowid (the table is a
+    // rowid table, and the migration that rebuilt it kept the rowids): it grows with every insert.
+    const existing = await adapter.queryOne<UnlinkOperationRow>(
+      `SELECT ${operationColumns} ${operationsOfDid}
+          ${link ? "AND state IN ('pending', 'directory_pending')" : ''}
+        ORDER BY created_at DESC, rowid DESC LIMIT 1`,
+      operationParams
     );
+    if (link && existing) return unlinkStillFinishing(c);
     if (!link && !existing) {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
 
-    // Verify ownership
-    if (link && link.user_id !== userId) {
-      return createErrorResponse(c, AR_ERROR_CODES.POLICY_INSUFFICIENT_PERMISSIONS);
-    }
     if (
       existing &&
       (existing.tenant_id !== tenantId ||
@@ -661,7 +694,9 @@ export async function didUnlinkHandler(c: Context<{ Bindings: Env }>): Promise<R
     }
     if (existing?.state === 'blocked') throw new Error('identifier_unlink_operation_blocked');
 
-    if (!existing) {
+    let operationId = existing?.operation_id ?? '';
+    if (!existing && link) {
+      operationId = `external-unlink:${(await sha256Hex(`${tenantId}\0${accountId}\0did\0${did}\0${link.id}`)).slice(0, 32)}`;
       // The account's own core database holds its creation record (identity_accounts and the
       // routing outbox). The tenant metadata core database does not: reading it here made every
       // unlink fail with identifier_directory_route_unavailable.
@@ -688,13 +723,21 @@ export async function didUnlinkHandler(c: Context<{ Bindings: Env }>): Promise<R
         throw new Error('identifier_directory_route_mismatch');
       }
       const now = Math.floor(Date.now() / 1000);
+      // The operation is created only for the exact link row it names, in the same batch that
+      // deletes that row. If the link was replaced after it was read here (unlinked and linked
+      // again by someone else), neither statement matches and no operation is left behind.
       const results = await adapter.batch([
         {
           sql: `INSERT INTO external_identifier_unlink_operations (
              operation_id, tenant_id, account_id, user_id, issuer_json, subject_json,
              issuer_sha256, subject_sha256, route_projection_json, state,
              attempt_count, created_at, updated_at
-           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 0, ?, ?)`,
+           ) SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 0, ?, ?
+              WHERE EXISTS (
+                SELECT 1 FROM linked_identities
+                 WHERE id = ? AND tenant_id = ? AND user_id = ?
+                   AND provider_id = 'did' AND provider_user_id = ?
+              )`,
           params: [
             operationId,
             tenantId,
@@ -707,14 +750,22 @@ export async function didUnlinkHandler(c: Context<{ Bindings: Env }>): Promise<R
             JSON.stringify(route.routeProjection),
             now,
             now,
+            link.id,
+            tenantId,
+            userId,
+            did,
           ],
         },
         {
           sql: `DELETE FROM linked_identities
-            WHERE tenant_id = ? AND user_id = ? AND provider_id = 'did' AND provider_user_id = ?`,
-          params: [tenantId, userId, did],
+            WHERE id = ? AND tenant_id = ? AND user_id = ? AND provider_id = 'did'
+              AND provider_user_id = ?`,
+          params: [link.id, tenantId, userId, did],
         },
       ]);
+      if (results[0]?.rowsAffected === 0 && results[1]?.rowsAffected === 0) {
+        return unlinkStillFinishing(c);
+      }
       if (results[0]?.rowsAffected !== 1 || results[1]?.rowsAffected !== 1) {
         throw new Error('identifier_unlink_delete_conflict');
       }

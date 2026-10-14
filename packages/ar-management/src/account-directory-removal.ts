@@ -15,6 +15,7 @@ interface AccountStateRow {
 }
 
 interface RemovalOutboxRow {
+  created_at: number | string;
   payload_json: string;
   status: string;
   attempt_count: number | string;
@@ -25,6 +26,7 @@ interface RemovalOutboxRow {
 interface ReservationRow {
   account_id: string;
   reservation_state: string;
+  created_at: number | string;
 }
 
 export interface AccountDirectoryRemovalCoordinatorDependencies {
@@ -57,6 +59,12 @@ function indexParams(index: LookupBlindIndex): unknown[] {
     index.hmacKeyGeneration,
     index.digest,
   ];
+}
+
+function integer(value: number | string, code: string): number {
+  const parsed = typeof value === 'number' ? value : Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed < 0) throw new Error(code);
+  return parsed;
 }
 
 function expectedEventKind(scope: AccountDirectoryRemovalPublication['scope']): string {
@@ -105,7 +113,7 @@ export class AccountDirectoryRemovalCoordinator {
     const outboxId = accountDirectoryRemovalOutboxId(publication.operationId);
     const outbox = await first<RemovalOutboxRow>(
       tenant,
-      `SELECT payload_json, status, attempt_count, lease_owner, event_kind
+      `SELECT created_at, payload_json, status, attempt_count, lease_owner, event_kind
          FROM account_routing_outbox
         WHERE outbox_id = ? AND tenant_id = ? AND account_id = ?`,
       [outboxId, publication.tenantId, publication.accountId]
@@ -138,6 +146,15 @@ export class AccountDirectoryRemovalCoordinator {
     }
 
     const now = this.dependencies.now();
+    // The removal acts on what existed when it was prepared. The same removal can run twice at
+    // once (the routing-outbox processor and the unlink scheduler both execute it), so a slow run
+    // can reach the lookup after the identifier was added again. The identifier's reservation
+    // records when its current owner acquired it (a re-add re-acquires it, with a new created_at),
+    // so a reservation acquired after this removal was prepared belongs to a later add: this run
+    // leaves that reservation and the route behind it alone. Account removals are not fenced: an
+    // account id is never added again.
+    const preparedAt = integer(outbox.created_at, 'directory_removal_outbox_time_invalid');
+    const fence = publication.scope === 'identifier' ? preparedAt : Number.MAX_SAFE_INTEGER;
     const lookupByBucket = new Map<number, Promise<D1Database>>();
     const lookupForBucket = (virtualBucket: number): Promise<D1Database> => {
       let lookup = lookupByBucket.get(virtualBucket);
@@ -150,28 +167,40 @@ export class AccountDirectoryRemovalCoordinator {
 
     for (const index of publication.indexes) {
       const lookup = primary(await lookupForBucket(index.virtualBucket));
+      const reservationKey = [
+        index.virtualBucket,
+        publication.tenantId,
+        index.indexKind,
+        index.normalizationVersion,
+        index.hmacKeyGeneration,
+        index.digest,
+      ];
+      let newerAdd = false;
+      let foreignReservation = false;
       if (index.indexKind !== 'account_id') {
         const reservation = await first<ReservationRow>(
           lookup,
-          `SELECT account_id, reservation_state
+          `SELECT account_id, reservation_state, created_at
              FROM lookup_identifier_reservations
             WHERE virtual_bucket = ? AND tenant_id = ? AND index_kind = ?
               AND normalization_version = ? AND hmac_key_generation = ?
               AND identifier_blind_digest = ?`,
-          [
-            index.virtualBucket,
-            publication.tenantId,
-            index.indexKind,
-            index.normalizationVersion,
-            index.hmacKeyGeneration,
-            index.digest,
-          ]
+          reservationKey
         );
-        if (reservation && reservation.account_id !== publication.accountId) {
-          throw new Error('directory_removal_reservation_owner_conflict');
-        }
+        // A reservation of ANOTHER account is never touched: an earlier run of this removal
+        // released the identifier and the other account has acquired it since (or it was
+        // inconsistent from the start). Either way this account's own route row is still disabled
+        // below, and the remaining identifiers of the removal are not held up by it.
+        foreignReservation =
+          reservation !== null && reservation.account_id !== publication.accountId;
+        newerAdd =
+          reservation !== null &&
+          !foreignReservation &&
+          integer(reservation.created_at, 'directory_removal_time_invalid') > fence;
       }
 
+      // The route row is disabled unless the account's own reservation of the identifier is newer
+      // than the removal (a later add of the same account).
       await lookup
         .prepare(
           `UPDATE lookup_identifiers
@@ -179,9 +208,20 @@ export class AccountDirectoryRemovalCoordinator {
                   disabled_at = COALESCE(disabled_at, ?), updated_at = ?
             WHERE virtual_bucket = ? AND index_kind = ? AND normalization_version = ?
               AND hmac_key_generation = ? AND identifier_blind_digest = ?
-              AND tenant_id = ? AND account_id = ? AND lifecycle_state <> 'disabled'`
+              AND tenant_id = ? AND account_id = ? AND lifecycle_state <> 'disabled'
+              AND NOT EXISTS (
+                SELECT 1 FROM lookup_identifier_reservations reservation
+                 WHERE reservation.virtual_bucket = lookup_identifiers.virtual_bucket
+                   AND reservation.tenant_id = lookup_identifiers.tenant_id
+                   AND reservation.index_kind = lookup_identifiers.index_kind
+                   AND reservation.normalization_version = lookup_identifiers.normalization_version
+                   AND reservation.hmac_key_generation = lookup_identifiers.hmac_key_generation
+                   AND reservation.identifier_blind_digest = lookup_identifiers.identifier_blind_digest
+                   AND reservation.account_id = lookup_identifiers.account_id
+                   AND reservation.created_at > ?
+              )`
         )
-        .bind(now, now, ...indexParams(index), publication.tenantId, publication.accountId)
+        .bind(now, now, ...indexParams(index), publication.tenantId, publication.accountId, fence)
         .run();
       const active = await first<{ count: number | string }>(
         lookup,
@@ -191,11 +231,11 @@ export class AccountDirectoryRemovalCoordinator {
             AND tenant_id = ? AND account_id = ? AND lifecycle_state <> 'disabled'`,
         [...indexParams(index), publication.tenantId, publication.accountId]
       );
-      if (Number(active?.count ?? 0) !== 0) {
+      if (Number(active?.count ?? 0) !== 0 && !newerAdd) {
         throw new Error('directory_removal_lookup_reflection_failed');
       }
 
-      if (index.indexKind !== 'account_id') {
+      if (index.indexKind !== 'account_id' && !newerAdd && !foreignReservation) {
         await lookup
           .prepare(
             `UPDATE lookup_identifier_reservations
@@ -203,41 +243,27 @@ export class AccountDirectoryRemovalCoordinator {
                     released_at = COALESCE(released_at, ?), updated_at = ?
               WHERE virtual_bucket = ? AND tenant_id = ? AND index_kind = ?
                 AND normalization_version = ? AND hmac_key_generation = ?
-                AND identifier_blind_digest = ? AND account_id = ?
+                AND identifier_blind_digest = ? AND account_id = ? AND created_at <= ?
                 AND reservation_state IN ('reserved', 'committed', 'releasing', 'repair_required')`
           )
-          .bind(
-            now,
-            now,
-            index.virtualBucket,
-            publication.tenantId,
-            index.indexKind,
-            index.normalizationVersion,
-            index.hmacKeyGeneration,
-            index.digest,
-            publication.accountId
-          )
+          .bind(now, now, ...reservationKey, publication.accountId, fence)
           .run();
         const reservation = await first<ReservationRow>(
           lookup,
-          `SELECT account_id, reservation_state
+          `SELECT account_id, reservation_state, created_at
              FROM lookup_identifier_reservations
             WHERE virtual_bucket = ? AND tenant_id = ? AND index_kind = ?
               AND normalization_version = ? AND hmac_key_generation = ?
               AND identifier_blind_digest = ?`,
-          [
-            index.virtualBucket,
-            publication.tenantId,
-            index.indexKind,
-            index.normalizationVersion,
-            index.hmacKeyGeneration,
-            index.digest,
-          ]
+          reservationKey
         );
+        // A reservation acquired by a later add between the read above and the release is that
+        // add's, not this removal's, and one of another account is not ours to release.
         if (
           reservation &&
-          (reservation.account_id !== publication.accountId ||
-            reservation.reservation_state !== 'released')
+          reservation.account_id === publication.accountId &&
+          integer(reservation.created_at, 'directory_removal_time_invalid') <= fence &&
+          reservation.reservation_state !== 'released'
         ) {
           throw new Error('directory_removal_reservation_release_failed');
         }

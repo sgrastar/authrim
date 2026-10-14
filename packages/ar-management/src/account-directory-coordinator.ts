@@ -93,6 +93,25 @@ function publicationIdentity(value: AccountDirectoryPublication): string {
   });
 }
 
+/**
+ * The reservation of an identifier is the claim on it: a route is only written for an identifier
+ * while the reservation, read in the same statement, is this operation's. The reservation lease
+ * can end and another operation can take the identifier over at any moment, also between the
+ * checks above and the write.
+ */
+const OWNS_RESERVATION_SQL = `EXISTS (
+  SELECT 1 FROM lookup_identifier_reservations reservation
+   WHERE reservation.virtual_bucket = lookup_identifiers.virtual_bucket
+     AND reservation.tenant_id = lookup_identifiers.tenant_id
+     AND reservation.index_kind = lookup_identifiers.index_kind
+     AND reservation.normalization_version = lookup_identifiers.normalization_version
+     AND reservation.hmac_key_generation = lookup_identifiers.hmac_key_generation
+     AND reservation.identifier_blind_digest = lookup_identifiers.identifier_blind_digest
+     AND reservation.account_id = lookup_identifiers.account_id
+     AND reservation.operation_id = ?
+     AND reservation.reservation_state IN ('reserved', 'committed')
+)`;
+
 export class AccountDirectoryCoordinator {
   constructor(private readonly dependencies: AccountDirectoryCoordinatorDependencies) {}
 
@@ -260,6 +279,45 @@ export class AccountDirectoryCoordinator {
           now
         )
         .run();
+      if (index.indexKind !== 'account_id') {
+        // An identifier that was removed from this account earlier leaves its (disabled) route
+        // row behind, and the insert above leaves that row alone. The row is brought back to the
+        // state a fresh insert has, but only in the same statement that proves THIS operation
+        // owns the identifier's reservation, and only from a row the removal disabled: a row that
+        // is pending or active (a replay of this operation) is not touched, and neither is a row
+        // of another account (its key differs by account_id).
+        await lookup
+          .prepare(
+            `UPDATE lookup_identifiers
+                SET route_schema_version = ?, account_route_generation = ?,
+                    required_binding_route_generation = ?, residency_policy_id = ?,
+                    route_projection_json = ?, tenant_lifecycle_state = 'active',
+                    runtime_route_status = 'active', lifecycle_state = 'pending',
+                    disabled_at = NULL, updated_at = ?
+              WHERE virtual_bucket = ? AND index_kind = ? AND normalization_version = ?
+                AND hmac_key_generation = ? AND identifier_blind_digest = ?
+                AND tenant_id = ? AND account_id = ?
+                AND lifecycle_state = 'disabled' AND tenant_lifecycle_state = 'active'
+                AND ${OWNS_RESERVATION_SQL}`
+          )
+          .bind(
+            publication.routeProjection.schemaVersion,
+            publication.routeProjection.accountRouteGeneration,
+            Math.max(
+              ...publication.routeProjection.targets.map(
+                (target) => target.requiredBindingRouteGeneration
+              )
+            ),
+            publication.routeProjection.residencyPolicyId,
+            projection,
+            now,
+            ...indexParams(index),
+            publication.tenantId,
+            publication.accountId,
+            publication.operationId
+          )
+          .run();
+      }
       const reflected = await first<LookupRow>(
         lookup,
         `SELECT tenant_id, account_id, route_projection_json, lifecycle_state
@@ -342,6 +400,12 @@ export class AccountDirectoryCoordinator {
       if (publicationCounter?.present !== 1) {
         throw new Error('directory_publication_counter_missing');
       }
+      // The counter and the activation are written only while this operation owns the identifier,
+      // so an operation that lost its reservation leaves the route pending and the check below
+      // fails it.
+      const ownership =
+        index.indexKind === 'account_id' ? '' : `\n                AND ${OWNS_RESERVATION_SQL}`;
+      const ownershipParams = index.indexKind === 'account_id' ? [] : [publication.operationId];
       await lookup.batch([
         lookup
           .prepare(
@@ -354,7 +418,7 @@ export class AccountDirectoryCoordinator {
                    WHERE virtual_bucket = ? AND index_kind = ? AND normalization_version = ?
                      AND hmac_key_generation = ? AND identifier_blind_digest = ?
                      AND tenant_id = ? AND account_id = ? AND route_projection_json = ?
-                     AND lifecycle_state = 'pending'
+                     AND lifecycle_state = 'pending'${ownership}
                 )`
           )
           .bind(
@@ -363,7 +427,8 @@ export class AccountDirectoryCoordinator {
             ...indexParams(index),
             publication.tenantId,
             publication.accountId,
-            projection
+            projection,
+            ...ownershipParams
           ),
         lookup
           .prepare(
@@ -371,14 +436,15 @@ export class AccountDirectoryCoordinator {
               WHERE virtual_bucket = ? AND index_kind = ? AND normalization_version = ?
                 AND hmac_key_generation = ? AND identifier_blind_digest = ?
                 AND tenant_id = ? AND account_id = ? AND route_projection_json = ?
-                AND lifecycle_state IN ('pending', 'active')`
+                AND lifecycle_state IN ('pending', 'active')${ownership}`
           )
           .bind(
             now,
             ...indexParams(index),
             publication.tenantId,
             publication.accountId,
-            projection
+            projection,
+            ...ownershipParams
           ),
         ...(index.indexKind === 'account_id'
           ? []

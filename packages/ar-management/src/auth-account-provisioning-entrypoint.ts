@@ -32,6 +32,7 @@ import {
   type ExternalIdpRouteRemovalStatusInput,
   type ExternalIdpPiiSourceShard,
   type ExternalIdpPiiSourceShardListInput,
+  type DatabaseAdapter,
   type Env,
 } from '@authrim/ar-lib-core';
 import {
@@ -792,6 +793,31 @@ async function sha256Hex(value: string): Promise<string> {
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
 }
 
+/**
+ * An identifier that was unlinked is only free again once its unlink operation is completed. Until
+ * then the operation can still run its directory cleanup against the account's route, and a route
+ * published for the same identifier in the meantime would be torn down by it. The link is
+ * published again (the caller repeats the same request) after the cleanup ends.
+ */
+async function assertNoOpenExternalIdentifierUnlink(
+  tenantPii: DatabaseAdapter,
+  input: { tenantId: string; accountId: string; issuer: string; subject: string }
+): Promise<void> {
+  const [issuerDigest, subjectDigest] = await Promise.all([
+    sha256Hex(input.issuer),
+    sha256Hex(input.subject),
+  ]);
+  const open = await tenantPii.queryOne<{ operation_id: string }>(
+    `SELECT operation_id FROM external_identifier_unlink_operations
+      WHERE state IN ('pending', 'directory_pending')
+        AND tenant_id = ? AND account_id = ? AND issuer_sha256 = ? AND subject_sha256 = ?
+      LIMIT 1`,
+    [input.tenantId, input.accountId, issuerDigest, subjectDigest],
+    { consistencyClass: 'primary_required' }
+  );
+  if (open) throw new Error('account_identifier_addition_unlink_pending');
+}
+
 function internalDirectoryBinding(
   context: { exports?: Partial<ManagementInternalExports> },
   environmentId: string
@@ -1293,6 +1319,12 @@ export class AuthAccountProvisioningEntrypoint extends WorkerEntrypoint<
       ) {
         throw new Error('external_idp_route_authority_not_found');
       }
+      await assertNoOpenExternalIdentifierUnlink(tenantPii, {
+        tenantId: validated.tenantId,
+        accountId: validated.accountId,
+        issuer: validated.providerId,
+        subject: validated.providerUserId,
+      });
       const result = await publishAccountExternalSubjectAddition(
         this.env,
         {
@@ -1516,6 +1548,12 @@ export class AuthAccountProvisioningEntrypoint extends WorkerEntrypoint<
       ) {
         throw new Error('auth_did_route_authority_not_found');
       }
+      await assertNoOpenExternalIdentifierUnlink(tenantPii, {
+        tenantId: validated.tenantId,
+        accountId: validated.accountId,
+        issuer: didLookupSubject(validated.did).issuer,
+        subject: validated.did,
+      });
       const result = await publishAccountExternalSubjectAddition(
         this.env,
         {
