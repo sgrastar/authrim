@@ -344,24 +344,29 @@ describe('DID Link Management', () => {
         expect(mockChallengeStoreStub.storeChallengeRpc).toHaveBeenCalledTimes(1);
       });
 
-      it('should reject DID already linked to different user', async () => {
-        const c = createMockContext({
-          body: { did: 'did:key:z6MkpTHR8VNsBxYAAWHut2Geadd9jSwuBV8xRoAnwWsdvktH' },
-          cookies: { authrim_session: 'valid-session' },
-        });
+      it('issues the same challenge for a DID linked to a different user (no link probing)', async () => {
+        const did = 'did:key:z6MkpTHR8VNsBxYAAWHut2Geadd9jSwuBV8xRoAnwWsdvktH';
+        mockResolveDID.mockResolvedValue(sampleDIDDocument);
+        mockChallengeStoreStub.storeChallengeRpc.mockResolvedValue({ success: true });
+
+        mockLinkedIdentityRepo.findByProviderUser.mockResolvedValue(null);
+        const unlinked = await didRegisterChallengeHandler(
+          createMockContext({ body: { did }, cookies: { authrim_session: 'valid-session' } })
+        );
         mockLinkedIdentityRepo.findByProviderUser.mockResolvedValue({
           user_id: 'different-user', // Different user
           provider_id: 'did',
-          provider_user_id: 'did:key:z6MkpTHR8VNsBxYAAWHut2Geadd9jSwuBV8xRoAnwWsdvktH',
+          provider_user_id: did,
         });
+        const linkedElsewhere = await didRegisterChallengeHandler(
+          createMockContext({ body: { did }, cookies: { authrim_session: 'valid-session' } })
+        );
 
-        const response = await didRegisterChallengeHandler(c);
-
-        expect(response.status).toBe(400);
-        const data = (await response.json()) as ApiResponse;
-        expect(data.error).toBe('invalid_request');
-        // AR_ERROR_CODES returns generic validation message
-        expect(data.error_description).toContain('invalid');
+        expect(unlinked.status).toBe(200);
+        expect(linkedElsewhere.status).toBe(200);
+        const keys = async (r: Response) => Object.keys((await r.json()) as ApiResponse).sort();
+        expect(await keys(linkedElsewhere)).toEqual(await keys(unlinked));
+        expect(mockChallengeStoreStub.storeChallengeRpc).toHaveBeenCalledTimes(2);
       });
     });
 
@@ -450,33 +455,55 @@ describe('DID Link Management', () => {
       });
     });
 
-    describe('Early DID Link Check', () => {
-      it('should reject if DID is already linked before verification', async () => {
-        const c = createMockContext({
-          body: { challenge_id: 'test', proof: 'header.payload.sig' },
-        });
+    describe('DID already linked to another user (decided after the proof)', () => {
+      const did = 'did:key:z6MkpTHR8VNsBxYAAWHut2Geadd9jSwuBV8xRoAnwWsdvktH';
+      const linkedElsewhere = {
+        id: 'link-other',
+        user_id: 'other-user',
+        provider_id: 'did',
+        provider_user_id: did,
+      };
+
+      beforeEach(() => {
         vi.mocked(decodeProtectedHeader).mockReturnValue({ alg: 'ES256', kid: validKid });
         mockChallengeStoreStub.consumeChallengeRpc.mockResolvedValue({
           challenge: 'test-challenge',
           userId: 'user-123',
           metadata: { allowedVerificationMethods: [validKid], nonce: 'test-nonce' },
         });
-        mockLinkedIdentityRepo.findByProviderUser.mockResolvedValue({
-          id: 'link-other',
-          user_id: 'other-user',
-          provider_id: 'did',
-          provider_user_id: 'did:key:z6MkpTHR8VNsBxYAAWHut2Geadd9jSwuBV8xRoAnwWsdvktH',
-        });
+        mockResolveDID.mockResolvedValue(sampleDIDDocument);
+        vi.mocked(importJWK).mockResolvedValue({} as CryptoKey);
+      });
 
-        const response = await didRegisterVerifyHandler(c);
+      const verifyBody = { challenge_id: 'test', proof: 'header.payload.sig' };
+
+      it('refuses with the generic answer once the proof is valid, writing and publishing nothing', async () => {
+        vi.mocked(jwtVerify).mockResolvedValue({
+          payload: { iss: did, nonce: 'test-nonce', aud: 'https://issuer.example.com' },
+          protectedHeader: { alg: 'ES256' },
+        } as never);
+        mockLinkedIdentityRepo.findByProviderUser.mockResolvedValue(linkedElsewhere);
+
+        const response = await didRegisterVerifyHandler(createMockContext({ body: verifyBody }));
 
         expect(response.status).toBe(400);
-        const data = (await response.json()) as ApiResponse;
-        expect(data.error).toBe('invalid_request');
-        // Rejected before the DID document is fetched and nothing is written or published.
-        expect(mockResolveDID).not.toHaveBeenCalled();
+        expect(((await response.json()) as ApiResponse).error).toBe('invalid_request');
         expect(mockLinkedIdentityRepo.createLinkedIdentity).not.toHaveBeenCalled();
         expect(mockProvisioner.publishAuthDidRoute).not.toHaveBeenCalled();
+      });
+
+      it('answers a bad proof for a DID linked elsewhere exactly like a bad proof for an unlinked DID', async () => {
+        vi.mocked(jwtVerify).mockRejectedValue(new Error('signature verification failed'));
+
+        mockLinkedIdentityRepo.findByProviderUser.mockResolvedValue(linkedElsewhere);
+        const elsewhere = await didRegisterVerifyHandler(createMockContext({ body: verifyBody }));
+        mockLinkedIdentityRepo.findByProviderUser.mockResolvedValue(null);
+        const unlinked = await didRegisterVerifyHandler(createMockContext({ body: verifyBody }));
+
+        expect(elsewhere.status).toBe(unlinked.status);
+        const unlinkedBody = (await unlinked.json()) as ApiResponse;
+        expect(await elsewhere.json()).toEqual(unlinkedBody);
+        expect(unlinkedBody.error).toBe('interaction_required');
       });
     });
 
@@ -1104,6 +1131,7 @@ describe('DID Link Management', () => {
           verificationMethod: [
             { ...sampleDIDDocument.verificationMethod[0], id: `${atLimit}#key-1` },
           ],
+          authentication: [`${atLimit}#key-1`],
         });
         vi.mocked(jwtVerify).mockResolvedValue({
           payload: { iss: atLimit, nonce: 'test-nonce', aud: 'https://issuer.example.com' },

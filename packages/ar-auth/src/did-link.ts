@@ -27,7 +27,6 @@ import {
   createPIIContextFromHono,
   createAuthContextFromHono,
   resolveAccountDataContextFromHono,
-  didLookupSubject,
   type AccountDataContext,
   validateAccountDirectoryPublication,
   type AccountDirectoryPublication,
@@ -42,13 +41,13 @@ import {
 import { getRequestIssuer } from './issuer';
 import { rejectIfDidLoginDisabled } from './did-login-gate';
 import { jwtVerify, importJWK, decodeProtectedHeader } from 'jose';
-
-/**
- * Allowed JWT algorithms for DID registration proofs.
- * - ES256/ES384/ES512: HAIP-compliant EC algorithms
- * - EdDSA: For Ed25519 keys (did:key)
- */
-const ALLOWED_DID_AUTH_ALGORITHMS = ['ES256', 'ES384', 'ES512', 'EdDSA'];
+import {
+  ALLOWED_DID_AUTH_ALGORITHMS,
+  collectAuthenticationMethods,
+  isLinkableDid,
+  readJsonObject,
+  resolveProofAlgorithm,
+} from './did-proof';
 
 async function sha256Hex(value: string): Promise<string> {
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value));
@@ -75,16 +74,6 @@ async function resolveLinkStore(
   if (account.legacyUserId !== userId) throw new Error('did_link_account_mismatch');
   const adapter = createPIIContextFromHono(c, tenantId).defaultPiiAdapter;
   return { account, adapter, repo: new LinkedIdentityRepository(adapter) };
-}
-
-/** A DID the lookup directory can index; DID login finds the account through that index. */
-function isLinkableDid(did: string): boolean {
-  try {
-    didLookupSubject(did);
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 class DidRoutePublicationError extends Error {
@@ -215,9 +204,8 @@ export async function didRegisterChallengeHandler(
       return createErrorResponse(c, AR_ERROR_CODES.AUTH_LOGIN_REQUIRED);
     }
 
-    const tenantId = getTenantIdFromContext(c);
-
-    const body = await c.req.json<{ did: string }>();
+    const body = await readJsonObject(c);
+    if (!body) return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     const { did } = body;
 
     // SECURITY: Check for both null/undefined and empty/whitespace-only string
@@ -232,14 +220,9 @@ export async function didRegisterChallengeHandler(
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
 
-    // Check if DID is already linked to another account. A link of the same user is allowed to be
-    // proven again: that is how a link whose route publication did not complete is retried.
-    const { repo: linkedIdentityRepo } = await resolveLinkStore(c, tenantId, userId);
-    const existingLink = await linkedIdentityRepo.findByProviderUser(tenantId, 'did', did);
-
-    if (existingLink && existingLink.user_id !== userId) {
-      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
-    }
+    // Whether the DID is already linked to someone else is NOT decided here: a challenge for a
+    // resolvable DID looks the same whoever holds the DID, so an authenticated user cannot probe
+    // for links without owning the key. The duplicate is refused after the proof is verified.
 
     // Resolve DID document
     let didDocument: DIDDocument;
@@ -250,18 +233,7 @@ export async function didRegisterChallengeHandler(
     }
 
     // Get all authentication verification methods
-    const authMethods = didDocument.authentication || [];
-    const verificationMethods: VerificationMethod[] = [];
-
-    for (const methodRef of authMethods) {
-      const methodId = typeof methodRef === 'string' ? methodRef : methodRef.id;
-      const method = didDocument.verificationMethod?.find((vm) => vm.id === methodId);
-      if (method) {
-        verificationMethods.push(method);
-      } else if (typeof methodRef === 'object') {
-        verificationMethods.push(methodRef);
-      }
-    }
+    const verificationMethods: VerificationMethod[] = collectAuthenticationMethods(didDocument);
 
     if (verificationMethods.length === 0) {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
@@ -331,12 +303,9 @@ export async function didRegisterVerifyHandler(c: Context<{ Bindings: Env }>): P
       return didRouteUnavailable(c);
     }
 
-    const body = await c.req.json<{
-      challenge_id: string;
-      proof: string;
-    }>();
-
-    const { challenge_id, proof } = body;
+    const body = await readJsonObject(c);
+    if (!body) return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
+    const { challenge_id, proof } = body as { challenge_id?: unknown; proof?: unknown };
 
     // SECURITY: Check for both null/undefined and empty/whitespace-only strings
     const isEmptyString = (val: unknown): boolean => typeof val === 'string' && val.trim() === '';
@@ -345,6 +314,10 @@ export async function didRegisterVerifyHandler(c: Context<{ Bindings: Env }>): P
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
         variables: { field: 'challenge_id and proof' },
       });
+    }
+    // Both are strings: an array or number would be string-interpolated into the challenge id.
+    if (typeof challenge_id !== 'string' || typeof proof !== 'string') {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
 
     // Decode proof header to get kid
@@ -360,6 +333,11 @@ export async function didRegisterVerifyHandler(c: Context<{ Bindings: Env }>): P
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
         variables: { field: 'kid header' },
       });
+    }
+
+    // A kid that is not a string (`"kid": 123`) is as invalid as one that is not a DID URL.
+    if (typeof kid !== 'string') {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
 
     // Extract DID from kid
@@ -397,15 +375,6 @@ export async function didRegisterVerifyHandler(c: Context<{ Bindings: Env }>): P
       repo: linkedIdentityRepo,
     } = await resolveLinkStore(c, tenantId, linkUserId);
 
-    // SECURITY: Early check if DID is already linked (before the DID document is fetched and the
-    // signature verified). This prevents DoS via repeated verification attempts for linked DIDs.
-    // A link of the same user is let through: it is a retry whose route publication did not
-    // complete, and publishing the route is idempotent.
-    const existingLinkEarly = await linkedIdentityRepo.findByProviderUser(tenantId, 'did', did);
-    if (existingLinkEarly && existingLinkEarly.user_id !== linkUserId) {
-      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
-    }
-
     // Extract metadata
     const metadata = challengeData.metadata as
       | { allowedVerificationMethods?: string[]; nonce?: string; did?: string }
@@ -425,16 +394,24 @@ export async function didRegisterVerifyHandler(c: Context<{ Bindings: Env }>): P
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
 
-    // Find verification method
-    const verificationMethod = didDocument.verificationMethod?.find((vm) => vm.id === kid);
+    // Find the verification method: it must be an authentication method of the document as it is
+    // now, not only of the document at the time the challenge was issued.
+    const verificationMethod = collectAuthenticationMethods(didDocument).find(
+      (vm) => vm.id === kid
+    );
     if (!verificationMethod || !verificationMethod.publicKeyJwk) {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
 
+    // The key is imported under the JWK's alg, or the proof's when the JWK has none. An algorithm
+    // outside the allow-list, or one the JWK and the proof disagree on, fails like a bad signature.
+    const algorithm = resolveProofAlgorithm(verificationMethod.publicKeyJwk, protectedHeader.alg);
+    if (!algorithm) return createErrorResponse(c, AR_ERROR_CODES.AUTH_INVALID_CODE);
+
     // Import public key
     let publicKey;
     try {
-      publicKey = await importJWK(verificationMethod.publicKeyJwk);
+      publicKey = await importJWK(verificationMethod.publicKeyJwk, algorithm);
     } catch {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
@@ -469,6 +446,15 @@ export async function didRegisterVerifyHandler(c: Context<{ Bindings: Env }>): P
 
     // The link row (insert) comes first, then its route is published. A retry of the same link
     // (same user) reuses the existing row and so republishes the same operation.
+    // A DID linked to ANOTHER user is refused here, after the proof: only someone who owns the
+    // key can learn that it is linked elsewhere, and the answer is the generic one. A link of the
+    // same user is let through: it is a retry whose route publication did not complete, and
+    // publishing the route is idempotent.
+    const existingLinkEarly = await linkedIdentityRepo.findByProviderUser(tenantId, 'did', did);
+    if (existingLinkEarly && existingLinkEarly.user_id !== linkUserId) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
+    }
+
     let linkedIdentityId: string;
     let createdHere = false;
     let alreadyLinked = false;
