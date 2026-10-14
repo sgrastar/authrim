@@ -399,6 +399,75 @@ describe('IdP-initiated SSO', () => {
     });
   });
 
+  describe('AuthnInstant', () => {
+    const MINUTE = 60_000;
+    /** An instant as the assertion states it (whole seconds, UTC). */
+    const stated = (ms: number) => new Date(ms).toISOString().replace(/\.\d{3}Z$/, 'Z');
+
+    async function answeredWith(session: Record<string, unknown>) {
+      mocks.cookieSessionId = 'session-id';
+      mocks.sessionResponse = new Response(JSON.stringify({ userId: 'user-a', ...session }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+      mocks.user = { id: 'user-a', email: 'user@example.test' };
+      mocks.sp = baseSp({ identityMapping: { catalog: { entries: [] } } });
+      // Each answer is a new assertion: never the timing of an earlier request.
+      mocks.buildResponse.mockClear();
+      expect(
+        (await handleIdPInitiated(context('https://sp.example.test', consentTransactionId))).status
+      ).toBe(200);
+      expect(mocks.buildResponse).toHaveBeenCalledOnce();
+      return (
+        mocks.buildResponse.mock.calls.at(-1) as unknown as [
+          { authnInstant: string; issueInstant: string },
+        ]
+      )[0];
+    }
+
+    it('is the time of a fresh sign-in', async () => {
+      const provenAt = Date.now() - 4 * MINUTE;
+      const timing = await answeredWith({ data: { amr: ['pwd'], proven_at: provenAt } });
+      expect(timing.authnInstant).toBe(stated(provenAt));
+      expect(Date.parse(timing.authnInstant)).toBeLessThanOrEqual(Date.parse(timing.issueInstant));
+    });
+
+    it('stays the time of the sign-in when an old session is reused', async () => {
+      const provenAt = Date.now() - 5 * 3_600_000;
+      const timing = await answeredWith({ data: { amr: ['pwd'], proven_at: provenAt } });
+      expect(timing.authnInstant).toBe(stated(provenAt));
+      expect(timing.authnInstant).not.toBe(timing.issueInstant);
+    });
+
+    it('is the time of a re-authentication completed in the session after its sign-in', async () => {
+      const reauthAt = Date.now() - 2 * MINUTE;
+      const timing = await answeredWith({
+        data: {
+          amr: ['pwd', 'totp'],
+          proven_at: Date.now() - 5 * 3_600_000,
+          reauth_proven_amr: ['totp'],
+          reauth_proven_at: reauthAt,
+        },
+      });
+      expect(timing.authnInstant).toBe(stated(reauthAt));
+    });
+
+    it('falls back to the session login time, then its creation time, then the issue instant', async () => {
+      const authTime = Math.floor((Date.now() - 80 * MINUTE) / 1000);
+      expect((await answeredWith({ data: { amr: ['pwd'], authTime } })).authnInstant).toBe(
+        stated(authTime * 1000)
+      );
+
+      const createdAt = Date.now() - 30 * MINUTE;
+      expect(
+        (await answeredWith({ createdAt, data: { amr: ['external_idp'] } })).authnInstant
+      ).toBe(stated(createdAt));
+
+      const unknown = await answeredWith({ data: { amr: ['external_idp'] } });
+      expect(unknown.authnInstant).toBe(unknown.issueInstant);
+    });
+  });
+
   it('includes RelayState in the response sent to the service provider', async () => {
     mocks.cookieSessionId = 'session-id';
     mocks.sessionResponse = new Response(JSON.stringify({ userId: 'user-a' }), {

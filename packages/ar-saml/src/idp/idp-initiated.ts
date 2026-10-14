@@ -45,7 +45,7 @@ import {
   resolveSAMLPersistentNameIDRegistryStore,
   resolveSAMLTransientNameIDStore,
 } from './subject';
-import { buildSAMLAssertionTiming } from './assertion-timing';
+import { buildSAMLAssertionTiming, resolveSAMLAuthnInstant } from './assertion-timing';
 import { extractAuthrimSessionIdFromCookieHeader } from '../common/session-cookie';
 import { buildSAMLPostBindingResponse } from '../common/post-binding-form';
 import { SAMLAuthnContextPolicyError } from './authn-context';
@@ -68,6 +68,8 @@ interface AuthenticatedSAMLSession {
   amr?: string[];
   /** The session's data: what it records of the authentication (assurance evidence included). */
   data?: Record<string, unknown>;
+  /** When the session was created (milliseconds), the last resort for the time of the sign-in. */
+  createdAt?: number;
 }
 
 /**
@@ -443,6 +445,7 @@ async function checkUserAuthentication(
 
     const session = (await response.json()) as {
       userId?: string;
+      createdAt?: number;
       data?: Record<string, unknown>;
     };
     const data =
@@ -458,6 +461,7 @@ async function checkUserAuthentication(
             ? data.amr.filter((value): value is string => typeof value === 'string')
             : undefined,
           data,
+          createdAt: typeof session.createdAt === 'number' ? session.createdAt : undefined,
         }
       : null;
   } catch {
@@ -489,7 +493,10 @@ async function generateIdPInitiatedResponse(
   authSession: AuthenticatedSAMLSession,
   consentTransactionId: string,
   requestScope: object,
-  log: { error(message: string, context?: Record<string, unknown>, error?: Error): void },
+  log: {
+    debug?(message: string, context?: Record<string, unknown>): void;
+    error(message: string, context?: Record<string, unknown>, error?: Error): void;
+  },
   /** The class reference chosen for the AAL reached, and what the one issued is checked against. */
   assurance?: { classRef?: string; guard: SAMLClassRefGuard }
 ): Promise<string> {
@@ -597,7 +604,22 @@ async function generateIdPInitiatedResponse(
     attributes,
     destinationFieldConsentConfirmed,
   });
+  // AuthnInstant is when the person authenticated (a session reused for single sign-on keeps the
+  // time of its sign-in), not the instant the assertion is issued.
+  const issuedAt = new Date();
+  const authnInstant = resolveSAMLAuthnInstant(authSession.data, {
+    createdAt: authSession.createdAt,
+    nowMs: issuedAt.getTime(),
+  });
+  if (authnInstant.source === 'unknown') {
+    log.debug?.('SAML authentication time unknown, using the issue instant for AuthnInstant', {
+      tenantId,
+      spEntityId: spConfig.entityId,
+    });
+  }
   const timing = buildSAMLAssertionTiming({
+    now: issuedAt,
+    authenticatedAtMs: authnInstant.ms,
     assertionValiditySeconds: assertionTtlSeconds,
   });
 
