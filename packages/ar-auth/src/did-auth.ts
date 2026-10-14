@@ -25,7 +25,9 @@ import {
   LinkedIdentityRepository,
   createPIIContextFromHono,
   resolveAccountDataContextByIdentifierFromHono,
+  didLookupSubject,
   resolveDID,
+  type AccountDataContext,
   type DIDDocument,
   type VerificationMethod,
   type ConsumeChallengeResponse,
@@ -45,7 +47,7 @@ import {
 import { getRequestIssuer } from './issuer';
 import { jwtVerify, importJWK, decodeProtectedHeader } from 'jose';
 import { resolveSessionTtl } from './session-ttl';
-import { isDidLoginEnabled } from './authentication-method-settings';
+import { rejectIfDidLoginDisabled } from './did-login-gate';
 
 /**
  * Allowed JWT algorithms for DID authentication proofs.
@@ -53,35 +55,6 @@ import { isDidLoginEnabled } from './authentication-method-settings';
  * - EdDSA: For Ed25519 keys (did:key)
  */
 const ALLOWED_DID_AUTH_ALGORITHMS = ['ES256', 'ES384', 'ES512', 'EdDSA'];
-
-/**
- * DID login is off unless the tenant turned it on (`authentication-methods.did.login_enabled`).
- * Decided before anything else is done: a tenant that has it off never resolves a DID, stores or
- * consumes a challenge, looks an account up or opens a session, and the answer does not depend on
- * the DID or on whether it is linked. Settings that cannot be read refuse too (503): an unreadable
- * switch must not read as "on".
- */
-async function rejectIfDidLoginDisabled(
-  c: Context<{ Bindings: Env }>,
-  tenantId: string
-): Promise<Response | null> {
-  let enabled: boolean;
-  try {
-    enabled = await isDidLoginEnabled(c.env, tenantId, { strict: true });
-  } catch {
-    return c.json(
-      {
-        error: 'temporarily_unavailable',
-        error_description: 'Authentication settings are unavailable.',
-      },
-      503
-    );
-  }
-  if (enabled) return null;
-  return createErrorResponse(c, AR_ERROR_CODES.POLICY_INSUFFICIENT_PERMISSIONS, {
-    extensions: { authentication_method: 'did', usage: 'login' },
-  });
-}
 
 /**
  * POST /auth/did/challenge
@@ -326,13 +299,33 @@ export async function didAuthVerifyHandler(c: Context<{ Bindings: Env }>): Promi
     // The DID proof is verified here (milliseconds), before anything else is awaited.
     const provenAtMs = Date.now();
 
-    const account = await resolveAccountDataContextByIdentifierFromHono(c, {
-      indexKind: 'external_subject',
-      identifier: { issuer: 'did', subject: did },
-    });
-    const adapter = createPIIContextFromHono(c, tenantId).defaultPiiAdapter;
-    const linkedIdentityRepo = new LinkedIdentityRepository(adapter);
-    const linkedIdentity = await linkedIdentityRepo.findByProviderUser(tenantId, 'did', did);
+    // A DID nobody linked has no route in the lookup directory. That is the same answer as a route
+    // without a link row ("not linked"), not a server error: both go down the path below.
+    let account: AccountDataContext | null = null;
+    try {
+      account = await resolveAccountDataContextByIdentifierFromHono(c, {
+        indexKind: 'external_subject',
+        identifier: didLookupSubject(did),
+      });
+    } catch (routeError) {
+      // A DID the lookup directory cannot index (too long, control characters) cannot have been
+      // linked either.
+      if (
+        !(
+          routeError instanceof Error &&
+          (routeError.message === 'account_data_route_not_found' ||
+            routeError.message === 'did_route_subject_invalid' ||
+            routeError.message === 'lookup_external_subject_value_invalid')
+        )
+      ) {
+        throw routeError;
+      }
+    }
+    const linkedIdentity = account
+      ? await new LinkedIdentityRepository(
+          createPIIContextFromHono(c, tenantId).defaultPiiAdapter
+        ).findByProviderUser(tenantId, 'did', did)
+      : null;
 
     if (!linkedIdentity) {
       // Publish DID authentication failure event (non-blocking)
@@ -350,7 +343,7 @@ export async function didAuthVerifyHandler(c: Context<{ Bindings: Env }>): Promi
 
       return createErrorResponse(c, AR_ERROR_CODES.BRIDGE_LINK_REQUIRED);
     }
-    if (linkedIdentity.user_id !== account.legacyUserId) {
+    if (!account || linkedIdentity.user_id !== account.legacyUserId) {
       throw new Error('did_identity_account_route_mismatch');
     }
 

@@ -686,13 +686,17 @@ paths:
         Works only where the tenant allows DID login (`authentication-methods.did.login_enabled`,
         default false); otherwise 403 (503 when the settings cannot be read), decided before the
         challenge is consumed, the DID is resolved, an account is looked up or a session is opened.
-        Linking, listing and unlinking DIDs (`/api/auth/dids/register/*`, `/api/auth/dids`) manage
-        credentials and are not governed by it.
+        A DID that is not linked, or whose link has no lookup route, answers like an unlinked DID
+        (link required), not with a server error. Linking a DID (`/api/auth/dids/register/*`) is
+        governed by the same setting; listing and unlinking (`/api/auth/dids`) are not, so a user can
+        always remove a DID.
       requestBody:
         $ref: '#/components/requestBodies/DIDVerify'
       responses:
         '200':
           $ref: '#/components/responses/DIDVerify'
+        '400':
+          $ref: '#/components/responses/Error'
         '403':
           $ref: '#/components/responses/Error'
         '503':
@@ -975,7 +979,11 @@ paths:
       summary: Create a DID registration challenge for the current session.
       description:
         Creates a DID proof challenge for an authenticated browser session so the DID can be
-        linked to the current user.
+        linked to the current user. Refused with 403 when the tenant has DID login off
+        (`authentication-methods.did.login_enabled`, default false), and with 503 when that setting
+        cannot be read, before the DID is resolved or a challenge is stored. A DID already linked
+        to the same user may be proven again (to complete a link whose lookup route was not
+        published); a DID linked to another user is refused.
       responses:
         '200':
           $ref: '#/components/responses/DIDRegisterChallenge'
@@ -984,6 +992,8 @@ paths:
         '401':
           $ref: '#/components/responses/Error'
         '403':
+          $ref: '#/components/responses/Error'
+        '503':
           $ref: '#/components/responses/Error'
       requestBody:
         $ref: '#/components/requestBodies/DIDRegisterChallenge'
@@ -997,7 +1007,12 @@ paths:
       summary: Verify and link a DID registration proof.
       description:
         Verifies the DID proof for a prior registration challenge and links the DID to the
-        current authenticated session user.
+        current authenticated session user, then publishes the lookup route DID login uses to find
+        the account. Refused with 403 when the tenant has DID login off
+        (`authentication-methods.did.login_enabled`, default false), and with 503 when that setting
+        cannot be read, before the challenge is consumed. Answers 503 `temporarily_unavailable`
+        when the lookup route could not be published; repeat the link (new challenge and proof) to
+        complete it.
       responses:
         '200':
           $ref: '#/components/responses/DIDRegisterVerify'
@@ -1006,6 +1021,8 @@ paths:
         '401':
           $ref: '#/components/responses/Error'
         '403':
+          $ref: '#/components/responses/Error'
+        '503':
           $ref: '#/components/responses/Error'
       requestBody:
         $ref: '#/components/requestBodies/DIDRegisterVerify'

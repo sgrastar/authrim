@@ -4,6 +4,7 @@ import {
   guestResumeCredentialLookupSubject,
   GuestLifecycleRepository,
   directoryIdentityLookupSubject,
+  didLookupSubject,
   createLogger,
   ensureDatabaseAdapter,
   isCanonicalAccountIdForUser,
@@ -22,6 +23,8 @@ import {
   type AuthPasskeyRoutePublicationResult,
   type AuthDirectoryRoutePublicationInput,
   type AuthDirectoryRoutePublicationResult,
+  type AuthDidRoutePublicationInput,
+  type AuthDidRoutePublicationResult,
   type ExternalIdpRoutePublicationInput,
   type ExternalIdpRoutePublicationResult,
   type ExternalIdpRouteRemovalInput,
@@ -48,6 +51,7 @@ const SAFE_FIELD = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$/u;
 const IDEMPOTENCY_KEY = /^auth-account:[a-f0-9]{64}$/u;
 const PASSKEY_ROUTE_IDEMPOTENCY_KEY = /^auth-passkey-route:[a-f0-9]{64}$/u;
 const DIRECTORY_ROUTE_IDEMPOTENCY_KEY = /^auth-directory-route:[a-f0-9]{64}$/u;
+const DID_ROUTE_IDEMPOTENCY_KEY = /^auth-did-route:[a-f0-9]{64}$/u;
 const EXTERNAL_IDP_ROUTE_IDEMPOTENCY_KEY = /^auth-external-idp-route:[a-f0-9]{64}$/u;
 const EXTERNAL_IDP_ROUTE_REMOVAL_IDEMPOTENCY_KEY = /^auth-external-idp-route-remove:[a-f0-9]{64}$/u;
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/u;
@@ -158,6 +162,16 @@ const DIRECTORY_ROUTE_INPUT_KEYS = new Set([
   'connectorId',
   'directorySubject',
 ]);
+const DID_ROUTE_INPUT_KEYS = new Set([
+  'schemaVersion',
+  'operationId',
+  'idempotencyKey',
+  'tenantId',
+  'accountId',
+  'userId',
+  'linkedIdentityId',
+  'did',
+]);
 const EXTERNAL_IDP_ROUTE_INPUT_KEYS = new Set([
   'schemaVersion',
   'operationId',
@@ -232,13 +246,16 @@ function authorized(
     | AuthAccountProvisioningRpcProps
     | ExternalIdpAccountProvisioningRpcProps
     | SamlAccountProvisioningRpcProps,
-  env: Env
+  env: Env,
+  options: { authOnly?: boolean } = {}
 ): string {
   const environmentId = env.AUTHRIM_ENVIRONMENT_NAME;
   if (
     !(
       (props?.caller === 'ar-auth' && props.audience === 'authrim-auth-account-provisioning-v1') ||
-      (props?.caller === 'ar-saml' && props.audience === 'authrim-saml-account-provisioning-v1')
+      (!options.authOnly &&
+        props?.caller === 'ar-saml' &&
+        props.audience === 'authrim-saml-account-provisioning-v1')
     ) ||
     typeof environmentId !== 'string' ||
     !SAFE_ID.test(environmentId) ||
@@ -658,6 +675,34 @@ function validateDirectoryRouteInput(value: unknown): AuthDirectoryRoutePublicat
     directorySubject: value.directorySubject,
   });
   return value as unknown as AuthDirectoryRoutePublicationInput;
+}
+
+function validateDidRouteInput(value: unknown): AuthDidRoutePublicationInput {
+  boundedJson(value);
+  if (
+    !jsonObject(value) ||
+    Object.keys(value).length !== DID_ROUTE_INPUT_KEYS.size ||
+    Object.keys(value).some((key) => !DID_ROUTE_INPUT_KEYS.has(key)) ||
+    value.schemaVersion !== 1 ||
+    typeof value.operationId !== 'string' ||
+    !SAFE_ID.test(value.operationId) ||
+    typeof value.idempotencyKey !== 'string' ||
+    !DID_ROUTE_IDEMPOTENCY_KEY.test(value.idempotencyKey) ||
+    typeof value.tenantId !== 'string' ||
+    !SAFE_ID.test(value.tenantId) ||
+    !isCanonicalAccountIdForUser(value.accountId, value.userId) ||
+    typeof value.linkedIdentityId !== 'string' ||
+    !SAFE_ID.test(value.linkedIdentityId) ||
+    typeof value.did !== 'string'
+  ) {
+    throw new Error('auth_did_route_input_invalid');
+  }
+  try {
+    didLookupSubject(value.did);
+  } catch {
+    throw new Error('auth_did_route_input_invalid');
+  }
+  return value as unknown as AuthDidRoutePublicationInput;
 }
 
 function validateExternalIdpRouteInput(value: unknown): ExternalIdpRoutePublicationInput {
@@ -1431,6 +1476,80 @@ export class AuthAccountProvisioningEntrypoint extends WorkerEntrypoint<
         throw new Error(error.message);
       }
       throw new Error('auth_directory_route_internal_error');
+    }
+  }
+
+  async publishAuthDidRoute(input: unknown): Promise<AuthDidRoutePublicationResult> {
+    try {
+      const environmentId = authorized(this.ctx.props, this.env, { authOnly: true });
+      const validated = validateDidRouteInput(input);
+      const context = await resolveAccountDataContext(this.env, {
+        tenantId: validated.tenantId,
+        accountId: validated.accountId,
+      });
+      if (context.accountId !== validated.accountId || context.legacyUserId !== validated.userId) {
+        throw new Error('auth_did_route_account_mismatch');
+      }
+      const tenantCoreUsers = ensureDatabaseAdapter(context.coreDb, 'auth-did-route-tenant-core');
+      const tenantPii = ensureDatabaseAdapter(context.piiDb, 'auth-did-route-tenant-pii');
+      // The link row on the account's own PII database is the authority for the route.
+      const identity = await tenantPii.queryOne<{
+        id: string;
+        user_id: string;
+        provider_id: string;
+        provider_user_id: string;
+        provisioning_state: string;
+      }>(
+        `SELECT id, user_id, provider_id, provider_user_id, provisioning_state
+           FROM linked_identities
+          WHERE id = ? AND tenant_id = ? AND user_id = ?`,
+        [validated.linkedIdentityId, validated.tenantId, validated.userId],
+        { consistencyClass: 'primary_required' }
+      );
+      if (
+        !identity ||
+        identity.id !== validated.linkedIdentityId ||
+        identity.user_id !== validated.userId ||
+        identity.provider_id !== 'did' ||
+        identity.provider_user_id !== validated.did ||
+        identity.provisioning_state !== 'active'
+      ) {
+        throw new Error('auth_did_route_authority_not_found');
+      }
+      const result = await publishAccountExternalSubjectAddition(
+        this.env,
+        {
+          operationId: validated.operationId,
+          idempotencyKey: validated.idempotencyKey,
+          tenantId: validated.tenantId,
+          accountId: validated.accountId,
+          externalSubject: didLookupSubject(validated.did),
+          routeProjection: context.membership.routeProjection,
+        },
+        {
+          tenantCoreUsers,
+          directory: internalDirectoryBinding(
+            this.ctx as unknown as { exports?: Partial<ManagementInternalExports> },
+            environmentId
+          ),
+        }
+      );
+      return {
+        status: result.status,
+        operationId: result.operationId,
+        accountId: result.accountId,
+      };
+    } catch (error) {
+      rethrowBackupMutationUnavailable(error);
+      if (
+        error instanceof Error &&
+        /^(auth_account_provisioning_rpc_caller_unauthorized|auth_did_route_(input_invalid|account_mismatch|authority_not_found)|account_identifier_addition_[a-z0-9_]+|directory_[a-z0-9_]+)$/u.test(
+          error.message
+        )
+      ) {
+        throw new Error(error.message);
+      }
+      throw new Error('auth_did_route_internal_error');
     }
   }
 
