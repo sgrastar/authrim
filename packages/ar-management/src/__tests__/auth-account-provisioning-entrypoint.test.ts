@@ -222,6 +222,11 @@ function worker(
   );
 }
 
+async function sha256(value: string): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value));
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
 describe('AuthAccountProvisioningEntrypoint', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -723,6 +728,7 @@ describe('AuthAccountProvisioningEntrypoint', () => {
       provider_user_id: request.providerUserId,
       provisioning_state: 'active',
     });
+    mocks.tenantQuery.mockResolvedValueOnce(null);
     mocks.publishIdentifier.mockResolvedValueOnce({
       status: 202,
       operationId: request.operationId,
@@ -759,6 +765,35 @@ describe('AuthAccountProvisioningEntrypoint', () => {
       }),
       expect.objectContaining({ tenantCoreUsers: expect.anything() })
     );
+  });
+
+  it('does not publish an external subject while its unlink is still running', async () => {
+    const request = externalIdpRouteInput();
+    mocks.tenantQuery.mockResolvedValueOnce({
+      id: request.linkedIdentityId,
+      user_id: request.userId,
+      provider_id: request.providerId,
+      provider_user_id: request.providerUserId,
+      provisioning_state: 'active',
+    });
+    mocks.tenantQuery.mockResolvedValueOnce({ operation_id: 'external-idp-route-remove-a' });
+
+    await expect(
+      worker({
+        props: {
+          caller: 'ar-bridge',
+          environmentId: 'test',
+          audience: 'authrim-external-idp-account-provisioning-v1',
+        },
+      }).publishExternalIdpRoute(request)
+    ).rejects.toThrow('account_identifier_addition_unlink_pending');
+    expect(mocks.publishIdentifier).not.toHaveBeenCalled();
+    expect(mocks.tenantQuery.mock.calls[1][1]).toEqual([
+      request.tenantId,
+      request.accountId,
+      await sha256(request.providerId),
+      await sha256(request.providerUserId),
+    ]);
   });
 
   it('rejects cross-account and unreflected external subject publication', async () => {
@@ -1044,7 +1079,11 @@ describe('AuthAccountProvisioningEntrypoint', () => {
   });
 
   describe('publishAuthDidRoute', () => {
-    function armLinkRow(overrides: Record<string, unknown> = {}) {
+    function armLinkRow(
+      overrides: Record<string, unknown> = {},
+      openUnlink: unknown = null,
+      reachesUnlinkCheck = true
+    ) {
       mocks.tenantQuery.mockResolvedValueOnce({
         id: 'did-link-a',
         user_id: 'user-a',
@@ -1053,6 +1092,9 @@ describe('AuthAccountProvisioningEntrypoint', () => {
         provisioning_state: 'active',
         ...overrides,
       });
+      // The second read (only reached with a valid link row): an unlink of this DID that is still
+      // running, none by default.
+      if (reachesUnlinkCheck) mocks.tenantQuery.mockResolvedValueOnce(openUnlink);
     }
 
     it('publishes the did subject once the link row is reflected on the account PII database', async () => {
@@ -1190,12 +1232,31 @@ describe('AuthAccountProvisioningEntrypoint', () => {
       ['a row with another id', { id: 'did-link-b' }],
     ])('does not publish without the link row (%s)', async (_label, row) => {
       if (row === null) mocks.tenantQuery.mockResolvedValueOnce(null);
-      else armLinkRow(row);
+      else armLinkRow(row, null, false);
 
       await expect(worker().publishAuthDidRoute(didRouteInput())).rejects.toThrow(
         'auth_did_route_authority_not_found'
       );
       expect(mocks.publishIdentifier).not.toHaveBeenCalled();
+    });
+
+    it('does not publish while an unlink of the same DID is still running, and says so', async () => {
+      armLinkRow({}, { operation_id: 'external-unlink:aaaa' });
+
+      await expect(worker().publishAuthDidRoute(didRouteInput())).rejects.toThrow(
+        'account_identifier_addition_unlink_pending'
+      );
+      expect(mocks.publishIdentifier).not.toHaveBeenCalled();
+      const [sql, params, options] = mocks.tenantQuery.mock.calls[1];
+      expect(sql).toContain('external_identifier_unlink_operations');
+      expect(sql).toContain("state IN ('pending', 'directory_pending')");
+      expect(params).toEqual([
+        'tenant-a',
+        'account:user-a',
+        await sha256('did'),
+        await sha256(DID),
+      ]);
+      expect(options).toEqual({ consistencyClass: 'primary_required' });
     });
 
     it('passes directory conflicts through and hides unknown failures', async () => {

@@ -568,25 +568,37 @@ describe('DID Link Management', () => {
         });
         mockSessionStoreStub.getSessionRpc.mockResolvedValue({ userId: 'user-123' } as Session);
         mockLinkedIdentityRepo.findByProviderUser.mockResolvedValue(null);
-        mockPiiAdapter.queryOne.mockImplementation(async (_sql, params) => ({
-          tenant_id: 'default',
-          account_id: 'account:user-123',
-          user_id: 'user-123',
-          issuer_sha256: await (async () => {
-            const value = await crypto.subtle.digest('SHA-256', new TextEncoder().encode('did'));
-            return Array.from(new Uint8Array(value), (byte) =>
-              byte.toString(16).padStart(2, '0')
-            ).join('');
-          })(),
-          subject_sha256: await (async () => {
-            const value = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(did));
-            return Array.from(new Uint8Array(value), (byte) =>
-              byte.toString(16).padStart(2, '0')
-            ).join('');
-          })(),
-          state: 'completed',
-          operation_id: params?.[0],
-        }));
+        // The newest operation of the DID answers (it is the completed one); the lookup of a
+        // running unlink, which only applies while the link exists, is not made here.
+        mockPiiAdapter.queryOne.mockImplementation(async (sql: string, params) =>
+          sql.includes('state IN')
+            ? null
+            : {
+                tenant_id: 'default',
+                account_id: 'account:user-123',
+                user_id: 'user-123',
+                issuer_sha256: await (async () => {
+                  const value = await crypto.subtle.digest(
+                    'SHA-256',
+                    new TextEncoder().encode('did')
+                  );
+                  return Array.from(new Uint8Array(value), (byte) =>
+                    byte.toString(16).padStart(2, '0')
+                  ).join('');
+                })(),
+                subject_sha256: await (async () => {
+                  const value = await crypto.subtle.digest(
+                    'SHA-256',
+                    new TextEncoder().encode(did)
+                  );
+                  return Array.from(new Uint8Array(value), (byte) =>
+                    byte.toString(16).padStart(2, '0')
+                  ).join('');
+                })(),
+                state: 'completed',
+                operation_id: params?.[0],
+              }
+        );
 
         const response = await didUnlinkHandler(c);
 
@@ -871,6 +883,7 @@ describe('DID Link Management', () => {
           cookies: { authrim_session: 'valid-session' },
         });
         mockLinkedIdentityRepo.findByProviderUser.mockResolvedValue({
+          id: 'link-1',
           user_id: 'user-123',
           provider_id: 'did',
           provider_user_id: 'did:key:z6MkpTHR8VNsBxYAAWHut2Geadd9jSwuBV8xRoAnwWsdvktH',
@@ -894,6 +907,7 @@ describe('DID Link Management', () => {
           cookies: { authrim_session: 'valid-session' },
         });
         mockLinkedIdentityRepo.findByProviderUser.mockResolvedValue({
+          id: 'link-1',
           user_id: 'user-123',
           provider_id: 'did',
           provider_user_id: 'did:key:z6MkpTHR8VNsBxYAAWHut2Geadd9jSwuBV8xRoAnwWsdvktH',

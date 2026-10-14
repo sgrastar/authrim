@@ -6,6 +6,28 @@ import {
 
 const DEFAULT_RESERVATION_LEASE_SECONDS = 2 * 60 * 60;
 
+/*
+ * Known limitations
+ *
+ * A reservation carries no persisted per-link generation: it records the account, the operation
+ * that holds it and when it was acquired, nothing that names the link it belongs to. Three things
+ * follow.
+ *  (a) A removal prepared before an HMAC reindex created the new-generation reservation of the
+ *      same identifier can classify that reservation as a later add (its created_at is newer than
+ *      the removal), and leave it alone.
+ *  (b) A replay of an old add can re-acquire a released reservation once two removal cycles have
+ *      passed: only the operation that released the row is refused, not the operations that
+ *      held it before.
+ *  (c) A removal that is prepared, completed and followed by a re-add of the same identifier all
+ *      within one second, while a second, slow executor of that same removal is still running,
+ *      cannot be told apart from the original add by the created_at fence (it compares whole
+ *      seconds with <=): the stale run can disable the new route and release the new reservation.
+ * Mitigations in place: the pending-unlink guard of the account provisioning entrypoint (an
+ * identifier is not published again while an unlink of it is running) and the created_at fence of
+ * AccountDirectoryRemovalCoordinator (a removal only touches what existed when it was prepared)
+ * narrow these. Closing the gaps needs a persisted per-link generation, which is a schema change.
+ */
+
 interface ReservationRow {
   tenant_id: string;
   account_id: string;
@@ -45,13 +67,36 @@ export class InitialAccountIdentifierReservationService {
 
     for (const index of reservable) {
       const lookup = primary(await this.dependencies.lookupForBucket(index.virtualBucket));
+      // A reservation is the only claim on an identifier, and it is one row per identifier whoever
+      // held it before. A row that was released (the identifier was removed) or whose lease ran out
+      // is free again and is taken over in this single statement, except by the operation that
+      // released it: a released row of the same operation is an add that was finished and removed,
+      // and replaying it must not bring the identifier back. A live reservation, a committed
+      // one, and one being released or repaired are never taken over: the row stays as it is and
+      // the check below refuses the caller.
       await lookup
         .prepare(
-          `INSERT OR IGNORE INTO lookup_identifier_reservations (
+          `INSERT INTO lookup_identifier_reservations (
              virtual_bucket, tenant_id, index_kind, normalization_version,
              hmac_key_generation, identifier_blind_digest, account_id,
              reservation_state, operation_id, lease_expires_at, created_at, updated_at
-           ) VALUES (?, ?, ?, ?, ?, ?, ?, 'reserved', ?, ?, ?, ?)`
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, 'reserved', ?, ?, ?, ?)
+           ON CONFLICT (
+             virtual_bucket, tenant_id, index_kind, normalization_version,
+             hmac_key_generation, identifier_blind_digest
+           ) DO UPDATE SET
+             account_id = excluded.account_id,
+             reservation_state = 'reserved',
+             operation_id = excluded.operation_id,
+             lease_expires_at = excluded.lease_expires_at,
+             committed_at = NULL,
+             released_at = NULL,
+             created_at = excluded.created_at,
+             updated_at = excluded.updated_at
+           WHERE (lookup_identifier_reservations.reservation_state = 'released'
+                  AND lookup_identifier_reservations.operation_id <> excluded.operation_id)
+              OR (lookup_identifier_reservations.reservation_state = 'reserved'
+                  AND lookup_identifier_reservations.lease_expires_at <= excluded.created_at)`
         )
         .bind(
           index.virtualBucket,
