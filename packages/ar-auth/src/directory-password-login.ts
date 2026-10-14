@@ -75,6 +75,10 @@ import type {
   RegistrationResponseJSON,
   VerifiedRegistrationResponse,
 } from '@simplewebauthn/server';
+import {
+  isDirectoryEmailCodeOfferable,
+  rejectIfDirectoryEmailCodeDisabled,
+} from './directory-email-code-gate';
 import { getEmailCodeHtml, getEmailCodeText } from './utils/email/templates';
 import {
   generateEmailCode,
@@ -1070,6 +1074,11 @@ export async function directoryMigrationEmailCodeSendHandler(c: Context<{ Bindin
   const log = getLogger(c).module('DIRECTORY_MIGRATION_EMAIL_CODE');
   const tenantId = getTenantIdFromContext(c);
   try {
+    // A code that signs a person in works only where the tenant allows email code for login.
+    // Decided first: nothing is looked up, counted, sent or stored when it is off.
+    const disabled = await rejectIfDirectoryEmailCodeDisabled(c, tenantId);
+    if (disabled) return disabled;
+
     const body = await c.req.json<{
       transaction_id?: unknown;
       transaction_token?: unknown;
@@ -1240,6 +1249,10 @@ export async function directoryMigrationEmailCodeVerifyHandler(c: Context<{ Bind
   const log = getLogger(c).module('DIRECTORY_MIGRATION_EMAIL_CODE');
   const tenantId = getTenantIdFromContext(c);
   try {
+    // Like the send: decided before the transaction or the code is touched.
+    const disabled = await rejectIfDirectoryEmailCodeDisabled(c, tenantId);
+    if (disabled) return disabled;
+
     const body = await c.req.json<{
       transaction_id?: unknown;
       transaction_token?: unknown;
@@ -1478,6 +1491,11 @@ async function createDirectoryUnavailableRecoveryResponse(
   const email = normalizeLoginEmail(input.username);
   if (!email) return null;
 
+  // Recovery signs a person in with an emailed code, so it is offered only where the tenant allows
+  // email code for login. Decided before the user is looked up, so the answer does not depend on
+  // the account; no offer (null) leaves the usual "directory unavailable" answer.
+  if (!(await isDirectoryEmailCodeOfferable(c, input.tenantId))) return null;
+
   const authCtx = createAuthContextFromHono(c, input.tenantId);
   const runtimeUsers = createCanonicalRuntimeUserStore(c, input.tenantId);
   const runtimeUser = await runtimeUsers.findByEmail(email);
@@ -1643,6 +1661,10 @@ async function createEmailFallbackMigrationResponse(
     return { email_code_fallback_available: false };
   }
   if (fallbackMode !== 'admin_invitation_only' && !allowsMigrationEmailCodeFallback(fallbackMode)) {
+    return { email_code_fallback_available: false };
+  }
+  // The tenant's own switch for signing in with an emailed code, on top of the campaign's mode.
+  if (!(await isDirectoryEmailCodeOfferable(c, input.tenantId))) {
     return { email_code_fallback_available: false };
   }
 

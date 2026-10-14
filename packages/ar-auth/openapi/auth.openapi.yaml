@@ -541,6 +541,12 @@ paths:
       tags:
         - Directory Password
       summary: Send an email code for a directory password migration fallback or recovery transaction.
+      description: >-
+        Works only where the tenant allows email code for login
+        (`authentication-methods.email_otp.login_enabled`, off unless turned on). This is decided
+        first, before the transaction is looked up or anything is counted, sent or stored: 403
+        `access_denied` (`error_code` `AR050006`) when it is off, 503 `temporarily_unavailable`
+        when the tenant settings cannot be read.
       requestBody:
         $ref: '#/components/requestBodies/DirectoryMigrationEmailCodeSend'
       responses:
@@ -554,11 +560,19 @@ paths:
           $ref: '#/components/responses/Any'
         '429':
           $ref: '#/components/responses/Any'
+        '503':
+          $ref: '#/components/responses/Any'
   /api/auth/directory-password/migration/email-code/verify:
     post:
       tags:
         - Directory Password
       summary: Verify an email code for a directory password migration fallback or recovery transaction and create a session.
+      description: >-
+        Works only where the tenant allows email code for login
+        (`authentication-methods.email_otp.login_enabled`, off unless turned on). This is decided
+        first, before the transaction or the code is consumed and before any session is created:
+        403 `access_denied` (`error_code` `AR050006`) when it is off, 503 `temporarily_unavailable`
+        when the tenant settings cannot be read.
       requestBody:
         $ref: '#/components/requestBodies/DirectoryMigrationEmailCodeVerify'
       responses:
@@ -569,6 +583,8 @@ paths:
         '401':
           $ref: '#/components/responses/Any'
         '403':
+          $ref: '#/components/responses/Any'
+        '503':
           $ref: '#/components/responses/Any'
   /api/auth/directory-connectors/heartbeat/{tenantId}/{connectorId}:
     post:
@@ -4342,6 +4358,10 @@ components:
                 - disabled
             email_code_fallback_available:
               type: boolean
+              description: >-
+                False when the campaign does not offer the email code, or when the tenant has email
+                code for login off (`authentication-methods.email_otp.login_enabled`) or its
+                settings cannot be read.
             email_code_fallback:
               anyOf:
                 - $ref: '#/components/schemas/DirectoryPasswordEmailCodeTransaction'

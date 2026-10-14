@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   createDirectoryPasswordLoginHandler,
   directoryMigrationEmailCodeSendHandler,
@@ -171,6 +171,8 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   };
 });
 
+const AUTHENTICATION_METHODS_KEY = 'settings:tenant:tenant-a:authentication-methods';
+
 function createKV(values: Record<string, unknown>) {
   return {
     get: vi.fn(async (key: string) => {
@@ -230,6 +232,9 @@ function createContext(
   };
   const settingsKV = {
     'settings:tenant:tenant-a:directory-connectors': directoryConnectors(),
+    // The tenant lets accounts sign in with an emailed code (it is off unless turned on): the
+    // email-code paths below need it. The gate tests override or remove this.
+    [AUTHENTICATION_METHODS_KEY]: { 'authentication-methods.email_otp.login_enabled': true },
     ...settings,
   };
   const env = {
@@ -2046,7 +2051,13 @@ describe('directory password login handler', () => {
         updated_at: 1000,
       },
     ]);
-    mocks.rateLimiter.incrementRpc.mockResolvedValueOnce({ allowed: false, retryAfter: 60 });
+    // The first count is the Directory Password account limit (let through); the recovery limit,
+    // keyed for the linked user, is the one that refuses.
+    mocks.rateLimiter.incrementRpc.mockImplementation(async (key: string) =>
+      key === 'user:wwcon_8K4M2Q9F7D3H6P1X:user_existing'
+        ? { allowed: false, retryAfter: 60 }
+        : { allowed: true }
+    );
     const fetcher = vi.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {
       const body = JSON.parse(init?.body as string) as Record<string, unknown>;
       return Response.json(
@@ -2069,11 +2080,517 @@ describe('directory password login handler', () => {
     );
 
     expect(response.status).toBe(429);
+    // The connector was asked (and was unavailable), and the recovery limit itself was reached.
+    expect(fetcher).toHaveBeenCalledOnce();
+    expect(mocks.rateLimiter.incrementRpc).toHaveBeenCalledWith(
+      expect.stringMatching(/^account:[0-9a-f]{64}$/),
+      expect.anything()
+    );
+    expect(mocks.rateLimiter.incrementRpc).toHaveBeenCalledWith(
+      'user:wwcon_8K4M2Q9F7D3H6P1X:user_existing',
+      expect.anything()
+    );
     expect(mocks.coreAdapter.execute).not.toHaveBeenCalledWith(
       expect.stringContaining('INSERT INTO directory_auth_migration_transactions'),
       expect.anything()
     );
     expect(mocks.sessionStore.createSessionRpc).not.toHaveBeenCalled();
+  });
+
+  describe('tenant switch for signing in with an emailed code', () => {
+    // Refusals leave their queued lookups unread: drop them so no later test reads them.
+    function dropQueuedLookups() {
+      mocks.coreAdapter.queryOne.mockReset().mockResolvedValue({ user_id: 'user_generated' });
+      mocks.coreAdapter.query.mockReset().mockResolvedValue([]);
+      mocks.findByEmail.mockReset().mockResolvedValue(null);
+      mocks.challengeStore.consumeChallengeRpc.mockReset();
+    }
+    beforeEach(dropQueuedLookups);
+    afterEach(dropQueuedLookups);
+
+    // Off: set to false, never set (it is off unless turned on), or only the older `enabled`
+    // switch set to false.
+    const switchOffCases: Array<[string, Record<string, unknown>]> = [
+      [
+        'set to false',
+        {
+          [AUTHENTICATION_METHODS_KEY]: { 'authentication-methods.email_otp.login_enabled': false },
+        },
+      ],
+      ['never set', { [AUTHENTICATION_METHODS_KEY]: undefined }],
+      [
+        'off through the older enabled switch',
+        { [AUTHENTICATION_METHODS_KEY]: { 'authentication-methods.email_otp.enabled': false } },
+      ],
+    ];
+    // Documents that cannot be understood, and a store that cannot be read at all.
+    const unreadableEnvs: Array<[string, () => Record<string, unknown>]> = [
+      [
+        'a settings read that throws',
+        () => ({ SETTINGS: { get: vi.fn().mockRejectedValue(new Error('kv down')) } }),
+      ],
+      ['a blank document', () => ({ SETTINGS: rawAuthenticationMethodsKV('') })],
+      ['a document that is not JSON', () => ({ SETTINGS: rawAuthenticationMethodsKV('{oops') })],
+      ['a document that is not an object', () => ({ SETTINGS: rawAuthenticationMethodsKV('[]') })],
+    ];
+
+    // The login itself reads this document first (human verification), so for an offer the switch
+    // is unreadable only when a later read fails: the first read sees the switch on, the next
+    // throws or finds the document damaged.
+    function flakyAuthenticationMethodsKV(second: 'throw' | string) {
+      const base = createKV({
+        'settings:tenant:tenant-a:directory-connectors': directoryConnectors(
+          {},
+          { auto_provision: true }
+        ),
+      });
+      let reads = 0;
+      return {
+        get: vi.fn(async (key: string) => {
+          if (key !== AUTHENTICATION_METHODS_KEY) return base.get(key);
+          reads += 1;
+          if (reads === 1) {
+            return JSON.stringify({ 'authentication-methods.email_otp.login_enabled': true });
+          }
+          if (second === 'throw') throw new Error('kv down');
+          return second;
+        }),
+      };
+    }
+    const unreadableOfferEnvs: Array<[string, () => Record<string, unknown>]> = [
+      [
+        'a later settings read that throws',
+        () => ({ SETTINGS: flakyAuthenticationMethodsKV('throw') }),
+      ],
+      ['a later blank document', () => ({ SETTINGS: flakyAuthenticationMethodsKV('') })],
+      [
+        'a later document that is not JSON',
+        () => ({ SETTINGS: flakyAuthenticationMethodsKV('{oops') }),
+      ],
+      [
+        'a later document that is not an object',
+        () => ({ SETTINGS: flakyAuthenticationMethodsKV('[]') }),
+      ],
+    ];
+
+    // SETTINGS where the authentication-methods document reads as `raw` and the rest as usual.
+    function rawAuthenticationMethodsKV(raw: string | null) {
+      const base = createKV({
+        'settings:tenant:tenant-a:directory-connectors': directoryConnectors(),
+      });
+      return {
+        get: vi.fn(async (key: string) =>
+          key === AUTHENTICATION_METHODS_KEY ? raw : base.get(key)
+        ),
+      };
+    }
+
+    function transactionRow(scope: 'email_code_fallback' | 'recovery', tokenHash: string) {
+      return {
+        id: 'damt_email_1',
+        tenant_id: 'tenant-a',
+        campaign_id: 'damc_1',
+        user_id: 'user_generated',
+        connector_id: 'wwcon_8K4M2Q9F7D3H6P1X',
+        directory_subject: scope === 'recovery' ? null : 'uid=alice,ou=People,dc=example,dc=com',
+        token_hash: tokenHash,
+        scope,
+        state: 'active',
+        request_id: 'wwreq_1',
+        authorization_challenge_id: null,
+        created_at: 1000,
+        updated_at: 1000,
+        expires_at: Date.now() + 600_000,
+        completed_at: null,
+        blocked_reason: null,
+      };
+    }
+
+    function queueTransaction(scope: 'email_code_fallback' | 'recovery', tokenHash: string) {
+      if (scope === 'recovery') mocks.coreAdapter.queryOne.mockResolvedValueOnce(null);
+      mocks.coreAdapter.queryOne.mockResolvedValueOnce(transactionRow(scope, tokenHash));
+    }
+
+    // Nothing of the flow was started: no transaction looked up or consumed, no count, no code
+    // made, stored or mailed, no session.
+    // `context` is the request the handler was given: its body must never have been read either.
+    function expectNothingHappened(...contexts: Array<ReturnType<typeof createContext>>) {
+      for (const context of contexts) expect(context.req.json).not.toHaveBeenCalled();
+      expect(mocks.coreAdapter.queryOne).not.toHaveBeenCalled();
+      expect(mocks.coreAdapter.query).not.toHaveBeenCalled();
+      expect(mocks.coreAdapter.execute).not.toHaveBeenCalled();
+      expect(mocks.findById).not.toHaveBeenCalled();
+      expect(mocks.rateLimiter.incrementRpc).not.toHaveBeenCalled();
+      expect(mocks.getChallengeStoreByChallengeId).not.toHaveBeenCalled();
+      expect(mocks.challengeStore.storeChallengeRpc).not.toHaveBeenCalled();
+      expect(mocks.challengeStore.consumeChallengeRpc).not.toHaveBeenCalled();
+      expect(mocks.emailNotifier.send).not.toHaveBeenCalled();
+      expect(mocks.completeDirectoryAuthEmailCodeFallback).not.toHaveBeenCalled();
+      expect(mocks.getSessionStoreForNewSession).not.toHaveBeenCalled();
+      expect(mocks.sessionStore.createSessionRpc).not.toHaveBeenCalled();
+    }
+
+    async function expectPolicyRefusal(response: Response) {
+      expect(response.status).toBe(403);
+      expect(await response.json()).toMatchObject({
+        error: 'access_denied',
+        error_code: 'AR050006',
+        authentication_method: 'email_otp',
+        usage: 'login',
+      });
+      expect(response.headers.get('set-cookie')).toBeNull();
+    }
+
+    async function expectSettingsUnavailable(response: Response) {
+      expect(response.status).toBe(503);
+      expect(await response.json()).toEqual({
+        error: 'temporarily_unavailable',
+        error_description: 'Authentication settings are unavailable.',
+      });
+      expect(response.headers.get('set-cookie')).toBeNull();
+    }
+
+    const sendBody = { transaction_id: 'damt_email_1', transaction_token: 'migration-email-token' };
+    const verifyBody = {
+      ...sendBody,
+      challenge_id: 'email_challenge_1',
+      code: '123456',
+    };
+
+    describe.each(['email_code_fallback', 'recovery'] as const)('%s transaction', (scope) => {
+      it.each(switchOffCases)(
+        'refuses to send a code when email code login is %s',
+        async (_label, settings) => {
+          // A live transaction exists: the answer must not come from looking it up.
+          queueTransaction(
+            scope,
+            await testMigrationTokenHash('tenant-a', 'migration-email-token')
+          );
+
+          const context = createContext(sendBody, settings);
+          const response = await directoryMigrationEmailCodeSendHandler(context as never);
+
+          await expectPolicyRefusal(response);
+          expectNothingHappened(context);
+        }
+      );
+
+      it.each(switchOffCases)(
+        'refuses to verify a code and create a session when email code login is %s',
+        async (_label, settings) => {
+          queueTransaction(
+            scope,
+            await testMigrationTokenHash('tenant-a', 'migration-email-token')
+          );
+          mocks.challengeStore.consumeChallengeRpc.mockResolvedValueOnce({
+            challenge: 'unused',
+            userId: 'user_generated',
+            email: 'alice@example.com',
+            metadata: {},
+          });
+
+          const context = createContext(verifyBody, settings);
+          const response = await directoryMigrationEmailCodeVerifyHandler(context as never);
+
+          await expectPolicyRefusal(response);
+          expectNothingHappened(context);
+        }
+      );
+
+      it.each(unreadableEnvs)('answers 503 to a send with %s', async (_label, env) => {
+        queueTransaction(scope, await testMigrationTokenHash('tenant-a', 'migration-email-token'));
+
+        const context = createContext(sendBody, undefined, undefined, env());
+        const response = await directoryMigrationEmailCodeSendHandler(context as never);
+
+        await expectSettingsUnavailable(response);
+        expectNothingHappened(context);
+      });
+
+      it.each(unreadableEnvs)('answers 503 to a verify with %s', async (_label, env) => {
+        queueTransaction(scope, await testMigrationTokenHash('tenant-a', 'migration-email-token'));
+
+        const context = createContext(verifyBody, undefined, undefined, env());
+        const response = await directoryMigrationEmailCodeVerifyHandler(context as never);
+
+        await expectSettingsUnavailable(response);
+        expectNothingHappened(context);
+      });
+    });
+
+    it('gives the same refusal whether or not the transaction exists', async () => {
+      // No transaction at all (the lookup would otherwise answer "session expired").
+      mocks.coreAdapter.queryOne.mockResolvedValue(null);
+      const off = { [AUTHENTICATION_METHODS_KEY]: undefined };
+
+      const sendContext = createContext(sendBody, off);
+      const verifyContext = createContext(verifyBody, off);
+      // A body that cannot be parsed at all: a gate placed after the parse would answer 500.
+      const malformedContext = createContext({}, off);
+      malformedContext.req.json.mockRejectedValue(new SyntaxError('Unexpected token'));
+      const malformedVerifyContext = createContext({}, off);
+      malformedVerifyContext.req.json.mockRejectedValue(new SyntaxError('Unexpected token'));
+
+      const send = await directoryMigrationEmailCodeSendHandler(sendContext as never);
+      const verify = await directoryMigrationEmailCodeVerifyHandler(verifyContext as never);
+      const malformed = await directoryMigrationEmailCodeSendHandler(malformedContext as never);
+      const malformedVerify = await directoryMigrationEmailCodeVerifyHandler(
+        malformedVerifyContext as never
+      );
+
+      await expectPolicyRefusal(send);
+      await expectPolicyRefusal(verify);
+      await expectPolicyRefusal(malformed);
+      await expectPolicyRefusal(malformedVerify);
+      expectNothingHappened(sendContext, verifyContext, malformedContext, malformedVerifyContext);
+    });
+
+    it('sends a code when only the older enabled switch turned email code on', async () => {
+      queueTransaction(
+        'email_code_fallback',
+        await testMigrationTokenHash('tenant-a', 'migration-email-token')
+      );
+
+      const response = await directoryMigrationEmailCodeSendHandler(
+        createContext(sendBody, {
+          [AUTHENTICATION_METHODS_KEY]: { 'authentication-methods.email_otp.enabled': true },
+        }) as never
+      );
+
+      expect(response.status).toBe(200);
+      expect(mocks.emailNotifier.send).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not let the signup switch stand in for the login switch', async () => {
+      queueTransaction(
+        'email_code_fallback',
+        await testMigrationTokenHash('tenant-a', 'migration-email-token')
+      );
+
+      const response = await directoryMigrationEmailCodeSendHandler(
+        createContext(sendBody, {
+          [AUTHENTICATION_METHODS_KEY]: {
+            'authentication-methods.email_otp.signup_enabled': true,
+            'authentication-methods.email_otp.login_enabled': false,
+          },
+        }) as never
+      );
+
+      await expectPolicyRefusal(response);
+      expectNothingHappened();
+    });
+
+    describe('the migration offer after a directory password success', () => {
+      function passkeyRequiredFetcher() {
+        return vi.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {
+          const body = JSON.parse(init?.body as string) as Record<string, unknown>;
+          return Response.json({
+            request_id: body.request_id,
+            tenant_id: 'tenant-a',
+            connector_id: 'wwcon_8K4M2Q9F7D3H6P1X',
+            result: 'success',
+            subject: { directory_id: 'uid=alice,ou=People,dc=example,dc=com', username: 'alice' },
+            attributes: { mail: ['alice@example.com'], displayName: ['Alice Example'] },
+            directory_status: 'ok',
+          });
+        });
+      }
+
+      function queueCampaign(fallbackMode: string) {
+        mocks.coreAdapter.query.mockResolvedValueOnce([
+          {
+            id: 'damc_1',
+            tenant_id: 'tenant-a',
+            name: 'Require passkey',
+            description: null,
+            status: 'active',
+            mode: 'require_passkey_after_directory',
+            passkey_prompt_mode: 'campaign_only',
+            email_code_fallback_mode: fallbackMode,
+            grace_period_days: 0,
+            transaction_ttl_seconds: 600,
+            enforcement_start_mode: 'first_directory_login',
+            target_policy_json: JSON.stringify({ type: 'all' }),
+            is_template: 0,
+            created_by: 'admin-1',
+            created_at: 1000,
+            updated_at: 1000,
+          },
+        ]);
+        mocks.coreAdapter.queryOne
+          .mockResolvedValueOnce({ user_id: 'user_generated' })
+          .mockResolvedValueOnce(null);
+      }
+
+      function insertedScopes(): unknown[] {
+        return mocks.coreAdapter.execute.mock.calls
+          .filter(([sql]) =>
+            String(sql).includes('INSERT INTO directory_auth_migration_transactions')
+          )
+          .map(([, params]) =>
+            (params as unknown[]).find(
+              (p) => p === 'passkey_enrollment' || p === 'email_code_fallback'
+            )
+          );
+      }
+
+      async function login(settings?: Record<string, unknown>, env: Record<string, unknown> = {}) {
+        const response = await createDirectoryPasswordLoginHandler(passkeyRequiredFetcher())(
+          createContext(
+            { username: 'alice', password: 'correct' },
+            {
+              'settings:tenant:tenant-a:directory-connectors': directoryConnectors(
+                {},
+                { auto_provision: true }
+              ),
+              ...settings,
+            },
+            undefined,
+            env
+          ) as never
+        );
+        return { response, body: (await response.json()) as Record<string, unknown> };
+      }
+
+      it.each([
+        ...switchOffCases,
+        ...unreadableOfferEnvs.map(([label, env]) => [label, env] as const),
+      ])(
+        'offers no email code and creates no email-code transaction (%s)',
+        async (_label, settingsOrEnv) => {
+          queueCampaign('login_method');
+          // Switch cases carry settings; unreadable cases carry an env factory.
+          const { response, body } =
+            typeof settingsOrEnv === 'function'
+              ? await login(undefined, settingsOrEnv())
+              : await login(settingsOrEnv);
+          // The passkey path is untouched: a migration is still required and its transaction made.
+          expect(response.status).toBe(200);
+          expect(body.migration).toMatchObject({
+            required: true,
+            action: 'require_passkey',
+            email_code_fallback_mode: 'login_method',
+            email_code_fallback_available: false,
+            transaction_id: expect.any(String),
+            transaction_token: expect.any(String),
+          });
+          expect(body.migration).not.toHaveProperty('email_code_fallback');
+          expect(insertedScopes()).toEqual(['passkey_enrollment']);
+          expect(mocks.sessionStore.createSessionRpc).not.toHaveBeenCalled();
+        }
+      );
+
+      it('still offers the email code when the tenant switch is on', async () => {
+        queueCampaign('login_method');
+
+        const { body } = await login();
+
+        expect(body.migration).toMatchObject({
+          email_code_fallback_available: true,
+          email_code_fallback: { transaction_id: expect.any(String) },
+        });
+        expect(insertedScopes()).toEqual(['passkey_enrollment', 'email_code_fallback']);
+      });
+    });
+
+    describe('the directory-unavailable recovery offer', () => {
+      function queueRecovery() {
+        mocks.findByEmail.mockResolvedValue({
+          id: 'user_existing',
+          email: 'alice@example.com',
+          name: 'Alice Existing',
+          active: 1,
+        });
+        mocks.coreAdapter.queryOne.mockResolvedValueOnce({ id: 'dil_1' });
+        mocks.coreAdapter.query.mockResolvedValueOnce([
+          {
+            id: 'damc_recovery',
+            tenant_id: 'tenant-a',
+            name: 'Directory unavailable recovery',
+            description: null,
+            status: 'active',
+            mode: 'directory_login_allowed',
+            passkey_prompt_mode: 'none',
+            email_code_fallback_mode: 'directory_unavailable_recovery',
+            grace_period_days: 0,
+            transaction_ttl_seconds: 600,
+            enforcement_start_mode: 'first_directory_login',
+            target_policy_json: JSON.stringify({ type: 'all' }),
+            is_template: 0,
+            created_by: 'admin-1',
+            created_at: 1000,
+            updated_at: 1000,
+          },
+        ]);
+      }
+
+      function unavailableFetcher() {
+        return vi.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {
+          const body = JSON.parse(init?.body as string) as Record<string, unknown>;
+          return Response.json(
+            {
+              request_id: body.request_id,
+              tenant_id: 'tenant-a',
+              connector_id: 'wwcon_8K4M2Q9F7D3H6P1X',
+              error: { code: 'directory_unavailable', retryable: true },
+            },
+            { status: 503 }
+          );
+        });
+      }
+
+      async function login(settings?: Record<string, unknown>, env: Record<string, unknown> = {}) {
+        const response = await createDirectoryPasswordLoginHandler(unavailableFetcher())(
+          createContext(
+            { username: 'alice@example.com', password: 'correct' },
+            settings,
+            undefined,
+            env
+          ) as never
+        );
+        return { response, body: (await response.json()) as Record<string, unknown> };
+      }
+
+      it.each([
+        ...switchOffCases,
+        ...unreadableOfferEnvs.map(([label, env]) => [label, env] as const),
+      ])(
+        'offers no recovery and creates no recovery transaction (%s)',
+        async (_label, settingsOrEnv) => {
+          queueRecovery();
+
+          const { response, body } =
+            typeof settingsOrEnv === 'function'
+              ? await login(undefined, settingsOrEnv())
+              : await login(settingsOrEnv);
+
+          // The usual "directory unavailable" answer, not a recovery and not a different error.
+          expect(response.status).toBe(503);
+          expect(body).toEqual({ error: 'connector_unavailable', retryable: true });
+          expect(body).not.toHaveProperty('recovery');
+          // The account was not looked up, the email limit not counted, no transaction made.
+          expect(mocks.findByEmail).not.toHaveBeenCalled();
+          expect(mocks.rateLimiter.incrementRpc).not.toHaveBeenCalledWith(
+            'user:wwcon_8K4M2Q9F7D3H6P1X:user_existing',
+            expect.anything()
+          );
+          expect(mocks.coreAdapter.execute).not.toHaveBeenCalledWith(
+            expect.stringContaining('INSERT INTO directory_auth_migration_transactions'),
+            expect.anything()
+          );
+          expect(mocks.sessionStore.createSessionRpc).not.toHaveBeenCalled();
+        }
+      );
+
+      it('still offers recovery when the tenant switch is on', async () => {
+        queueRecovery();
+
+        const { response, body } = await login();
+
+        expect(response.status).toBe(200);
+        expect(body.recovery).toMatchObject({ required: true, reason: 'directory_unavailable' });
+      });
+    });
   });
 
   it('does not start directory unavailable recovery for non-email usernames', async () => {
