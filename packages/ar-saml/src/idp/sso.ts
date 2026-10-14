@@ -105,7 +105,7 @@ import {
 import { scheduleSAMLPolicyFailureAudit } from './audit';
 import { checkSAMLIdentityAssurance, withSAMLAssuranceAttributes } from './identity-assurance';
 import { resolveSAMLRuntimeIdentityMapping } from './runtime-identity-mapping';
-import { buildSAMLAssertionTiming } from './assertion-timing';
+import { buildSAMLAssertionTiming, resolveSAMLAuthnInstant } from './assertion-timing';
 import { buildSAMLPostBindingResponse } from '../common/post-binding-form';
 import { getSAMLLocalEntityIds } from '../common/entity-id';
 import { assertSAMLRelayStateSize } from '../common/relay-state';
@@ -121,6 +121,8 @@ interface AuthenticatedSAMLSession {
   data?: Record<string, unknown>;
   /** When the session last recorded a proof of authentication (milliseconds). */
   provenAt?: number;
+  /** When the session was created (milliseconds), the last resort for the time of the sign-in. */
+  createdAt?: number;
 }
 
 interface ParsedAuthnRequestInput {
@@ -1316,6 +1318,7 @@ async function checkUserAuthentication(
 
     const session = (await response.json()) as {
       userId?: string;
+      createdAt?: number;
       data?: Record<string, unknown>;
     };
     const data =
@@ -1332,6 +1335,7 @@ async function checkUserAuthentication(
             : undefined,
           data,
           provenAt: sessionProvenAt(data),
+          createdAt: typeof session.createdAt === 'number' ? session.createdAt : undefined,
         }
       : null;
   } catch {
@@ -1516,7 +1520,23 @@ async function generateSAMLResponse(
     },
     assurance
   );
+  // AuthnInstant is when the person authenticated (a session reused for single sign-on keeps the
+  // time of its sign-in), not the instant the assertion is issued.
+  const issuedAt = new Date();
+  const authnInstant = resolveSAMLAuthnInstant(authSession.data, {
+    createdAt: authSession.createdAt,
+    nowMs: issuedAt.getTime(),
+  });
+  if (authnInstant.source === 'unknown') {
+    log?.debug('SAML authentication time unknown, using the issue instant for AuthnInstant', {
+      tenantId,
+      spEntityId: spConfig.entityId,
+      authnRequestId: authnRequest.id,
+    });
+  }
   const timing = buildSAMLAssertionTiming({
+    now: issuedAt,
+    authenticatedAtMs: authnInstant.ms,
     assertionValiditySeconds: assertionTtlSeconds,
   });
 

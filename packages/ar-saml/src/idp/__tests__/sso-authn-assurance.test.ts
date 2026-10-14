@@ -24,6 +24,7 @@ interface StoredChallenge {
 interface FakeSession {
   userId: string;
   expiresAt: number;
+  createdAt?: number;
   data: Record<string, unknown>;
 }
 
@@ -227,10 +228,16 @@ function sp(overrides: Record<string, unknown> = {}) {
   };
 }
 
-function setSession(id: string, data: Record<string, unknown>, userId = 'user-a') {
+function setSession(
+  id: string,
+  data: Record<string, unknown>,
+  userId = 'user-a',
+  createdAt?: number
+) {
   (mocks.sessions as Map<string, FakeSession>).set(id, {
     userId,
     expiresAt: Date.now() + 3_600_000,
+    ...(createdAt !== undefined ? { createdAt } : {}),
     data,
   });
 }
@@ -387,6 +394,10 @@ const lastError = () =>
   mocks.buildErrorResponse.mock.calls.at(-1)?.[0] as
     | { statusCode: string; secondLevelStatusCode?: string; statusMessage?: string }
     | undefined;
+const lastTiming = () =>
+  mocks.buildResponse.mock.calls.at(-1)?.[0] as { authnInstant: string; issueInstant: string };
+/** An instant as the assertion states it (whole seconds, UTC). */
+const stated = (ms: number) => new Date(ms).toISOString().replace(/\.\d{3}Z$/, 'Z');
 const auditKinds = () =>
   mocks.audit.mock.calls.flatMap((call) => {
     const metadata = JSON.stringify(call);
@@ -1203,6 +1214,119 @@ describe('SAML IdP SSO and authentication assurance', () => {
       const answered = await resume('s-2');
       expect(answered.status).toBe(200);
       expect(mocks.buildResponse).toHaveBeenCalledOnce();
+    });
+  });
+  describe('AuthnInstant', () => {
+    const MINUTE = 60_000;
+
+    /** The person comes back `delayMs` later: the assertion is made then. */
+    async function resumeLater(sessionId: string, delayMs: number) {
+      vi.useFakeTimers({ toFake: ['Date'] });
+      vi.setSystemTime(Date.now() + delayMs);
+      try {
+        return await resume(sessionId);
+      } finally {
+        vi.useRealTimers();
+      }
+    }
+
+    it('is the time of a fresh sign-in, not later than the assertion it is in', async () => {
+      const provenAt = Date.now() - 5 * MINUTE;
+      setSession('s-1', { amr: ['pwd'], proven_at: provenAt });
+      expect((await post(authnRequestXml(), 's-1')).status).toBe(200);
+      expect(mocks.buildResponse).toHaveBeenCalledOnce();
+      expect(lastTiming().authnInstant).toBe(stated(provenAt));
+      expect(Date.parse(lastTiming().authnInstant)).toBeLessThanOrEqual(
+        Date.parse(lastTiming().issueInstant)
+      );
+    });
+
+    it('stays the time of the sign-in when an old session is reused for single sign-on', async () => {
+      const provenAt = Date.now() - 3 * 3_600_000;
+      setSession('s-1', {
+        amr: ['pwd'],
+        proven_at: provenAt,
+        authTime: Math.floor(provenAt / 1000),
+      });
+      expect((await post(authnRequestXml(), 's-1')).status).toBe(200);
+      expect(mocks.buildResponse).toHaveBeenCalledOnce();
+      expect(lastTiming().authnInstant).toBe(stated(provenAt));
+      expect(lastTiming().authnInstant).not.toBe(lastTiming().issueInstant);
+    });
+
+    it('is the re-authentication time of a session that was stepped up later', async () => {
+      const provenAt = Date.now() - 3 * 3_600_000;
+      const reauthAt = Date.now() - 2 * MINUTE;
+      setSession('s-1', {
+        amr: ['pwd', 'totp'],
+        proven_at: provenAt,
+        reauth_proven_amr: ['totp'],
+        reauth_proven_at: reauthAt,
+      });
+      expect((await post(authnRequestXml(), 's-1')).status).toBe(200);
+      expect(mocks.buildResponse).toHaveBeenCalledOnce();
+      expect(lastTiming().authnInstant).toBe(stated(reauthAt));
+    });
+
+    it('is the time of the step-up sign-in a person returns with (the combined session)', async () => {
+      mocks.sp = sp({ minimumAal: 'AAL2' });
+      setSession('s-1', { amr: ['pwd'], proven_at: LONG_AGO });
+      await post(authnRequestXml(), 's-1');
+      const stepUpAt = stepUpOf().issuedAt + 10;
+      setSession('s-2', { amr: ['totp'], proven_at: stepUpAt }, 'user-a', stepUpAt);
+      // The assertion is made a few minutes after the person signed in.
+      const response = await resumeLater('s-2', 3 * MINUTE);
+      expect(response.status).toBe(200);
+      expect(mocks.buildResponse).toHaveBeenCalledOnce();
+      expect(lastTiming().authnInstant).toBe(stated(stepUpAt));
+      expect(lastTiming().authnInstant).not.toBe(lastTiming().issueInstant);
+      expect(lastTiming().authnInstant).not.toBe(stated(LONG_AGO));
+    });
+
+    it('is the time of the sign-in a ForceAuthn request was sent to, not that of the old session', async () => {
+      setSession('s-1', { amr: ['pwd'], proven_at: LONG_AGO });
+      await post(authnRequestXml({ forceAuthn: true }), 's-1');
+      const sentAt = reauthOf().issuedAt;
+      const signedInAt = sentAt + 10;
+      setSession('s-2', { amr: ['pwd'], proven_at: signedInAt });
+      expect((await resumeLater('s-2', 3 * MINUTE)).status).toBe(200);
+      expect(mocks.buildResponse).toHaveBeenCalledOnce();
+      expect(lastTiming().authnInstant).toBe(stated(signedInAt));
+      // What the SP compares it with: not before the request it sent.
+      expect(Date.parse(lastTiming().authnInstant)).toBeGreaterThanOrEqual(
+        Math.floor(sentAt / 1000) * 1000
+      );
+      expect(lastTiming().authnInstant).not.toBe(lastTiming().issueInstant);
+      expect(lastTiming().authnInstant).not.toBe(stated(LONG_AGO));
+    });
+
+    /** A plain request answered from the session: one new assertion, whose timing is returned. */
+    async function answeredTiming(sessionId: string) {
+      mocks.buildResponse.mockClear();
+      expect((await post(authnRequestXml(), sessionId)).status).toBe(200);
+      expect(mocks.buildResponse).toHaveBeenCalledOnce();
+      return lastTiming();
+    }
+
+    it('falls back to the session login time, then the creation time of the session', async () => {
+      const authTime = Math.floor((Date.now() - 90 * MINUTE) / 1000);
+      setSession('s-1', { amr: ['pwd'], authTime });
+      expect((await answeredTiming('s-1')).authnInstant).toBe(stated(authTime * 1000));
+
+      const createdAt = Date.now() - 45 * MINUTE;
+      setSession('s-2', { amr: ['external_idp'] }, 'user-a', createdAt);
+      expect((await answeredTiming('s-2')).authnInstant).toBe(stated(createdAt));
+    });
+
+    it('is the issue instant when the session says nothing, and is never later than it', async () => {
+      setSession('s-1', { amr: ['external_idp'] });
+      const nothing = await answeredTiming('s-1');
+      expect(nothing.authnInstant).toBe(nothing.issueInstant);
+
+      // A time far ahead of this clock is not believed.
+      setSession('s-2', { amr: ['pwd'], proven_at: Date.now() + 3_600_000 });
+      const future = await answeredTiming('s-2');
+      expect(future.authnInstant).toBe(future.issueInstant);
     });
   });
 });
