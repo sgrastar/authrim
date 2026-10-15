@@ -12,7 +12,7 @@
  * ceilings, extended introspection claims, the SCIM token lifetime, the SAML switch, assertion
  * and request lifetimes and provider defaults, the identity assurance level recorded for accounts
  * the organisation creates, the scope-to-IAL requirements, and the use of the IAL assurance
- * values in OIDC (eduperson_assurance) and SAML (eduPersonAssurance), the SAML AuthnContextClassRef to AAL map; and less the settings that left the catalog (duplicates, copies of the app
+ * values in OIDC (eduperson_assurance) and SAML (eduPersonAssurance), the SAML AuthnContextClassRef to AAL map, the CIBA request lifetime and polling interval bounds and the binding message limits; and less the settings that left the catalog (duplicates, copies of the app
  * registration, and values too fine or fixed at deployment). Update this list when a setting starts to apply or leaves the catalog.
  *
  * Shown in the settings map (Storybook: Pages › Settings map).
@@ -53,23 +53,15 @@ export const NOT_APPLIED: ReadonlyMap<string, NotApplied> = new Map([
 		'plugin.notifier_console_enabled',
 		'tenant.ui_register_path'
 	]),
-	// to-wire (31)
+	// to-wire (23)
 	...reason('to-wire', [
 		'assurance.ida_profile',
 		'ciba.auth_request_ttl',
-		'ciba.binding_message_required',
-		'ciba.expires_in',
-		'ciba.max_binding_message_length',
-		'ciba.max_expires_in',
-		'ciba.max_interval',
 		'ciba.max_poll_count',
-		'ciba.min_expires_in',
-		'ciba.min_interval',
 		'ciba.notifier_default_timeout_ms',
 		'ciba.notifier_max_timeout_ms',
 		'ciba.notifier_retry_delay_base_ms',
 		'ciba.ping_notification_timeout_ms',
-		'ciba.poll_interval',
 		'ciba.push_notification_timeout_ms',
 		'ciba.slow_down_increment',
 		'ciba.user_code_enabled',

@@ -14,6 +14,13 @@ import {
   timingSafeEqual,
 } from '@authrim/ar-lib-core';
 
+/*
+ * This is the internal admin-approval flow (client_id `authrim-approval:*`), not the public
+ * /bc-authorize endpoint. Its lifetime comes from the approval request and its interval from
+ * CIBA_DEFAULT_INTERVAL_SECONDS. It is intentionally NOT governed by the tenant `ciba.*` settings
+ * (request lifetime and interval bounds, binding message limits): do not wire them in here.
+ */
+
 const APPROVAL_CIBA_STATE_PREFIX = 'approval_ciba:artifact:';
 
 interface ApprovalCibaStoredState {

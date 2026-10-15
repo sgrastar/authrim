@@ -2708,6 +2708,202 @@ describe('Settings API v2', () => {
     });
   });
 
+  describe('CIBA bounds on PATCH /tenants/:tenantId/settings/ciba', () => {
+    async function patcher(env: Record<string, string> = {}) {
+      const mockKV = createMockKV();
+      const { app, mockEnv } = createTestApp({ kv: mockKV, env });
+      const patch = async (body: Record<string, unknown>) => {
+        const getRes = await app.request(
+          '/api/admin/tenants/tenant_123/settings/ciba',
+          { method: 'GET' },
+          mockEnv
+        );
+        const current = (await getRes.json()) as SettingsGetResult;
+        return app.request(
+          '/api/admin/tenants/tenant_123/settings/ciba',
+          {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ifMatch: current.version, ...body }),
+          },
+          mockEnv
+        );
+      };
+      /** The effective values and where each comes from, read back through the API. */
+      const read = async () => {
+        const res = await app.request(
+          '/api/admin/tenants/tenant_123/settings/ciba',
+          { method: 'GET' },
+          mockEnv
+        );
+        return (await res.json()) as SettingsGetResult;
+      };
+      return Object.assign(patch, { read });
+    }
+
+    it.each([
+      [{ 'ciba.min_expires_in': 500, 'ciba.max_expires_in': 100 }, 'ciba.min_expires_in'],
+      [{ 'ciba.min_interval': 30, 'ciba.max_interval': 10 }, 'ciba.min_interval'],
+      [{ 'ciba.expires_in': 100, 'ciba.min_expires_in': 200 }, 'ciba.expires_in'],
+      [{ 'ciba.poll_interval': 30, 'ciba.max_interval': 10 }, 'ciba.poll_interval'],
+      [{ 'ciba.min_interval': 1 }, 'ciba.min_interval'],
+    ])('refuses %j', async (set, namedKey) => {
+      const patch = await patcher();
+      const res = await patch({ set });
+
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as ApiResponse;
+      expect(body.error).toBe('validation_failed');
+      expect(body.message as string).toContain(namedKey);
+    });
+
+    it('checks a value against the bounds already saved, not only against the PATCH', async () => {
+      const patch = await patcher();
+      expect((await patch({ set: { 'ciba.max_interval': 20 } })).status).toBe(200);
+
+      const res = await patch({ set: { 'ciba.min_interval': 30 } });
+      expect(res.status).toBe(400);
+      expect(((await res.json()) as ApiResponse).message as string).toContain('ciba.max_interval');
+
+      // the default poll interval of 5 is inside [2, 20]; one above the saved maximum is not
+      const poll = await patch({ set: { 'ciba.poll_interval': 25 } });
+      expect(poll.status).toBe(400);
+    });
+
+    it('accepts a consistent document, and a cleared key counts as its default', async () => {
+      const patch = await patcher();
+      const ok = await patch({
+        set: {
+          'ciba.min_expires_in': 90,
+          'ciba.max_expires_in': 300,
+          'ciba.expires_in': 200,
+          'ciba.min_interval': 3,
+          'ciba.max_interval': 90,
+          'ciba.poll_interval': 10,
+        },
+      });
+      expect(ok.status).toBe(200);
+
+      expect((await patch({ clear: ['ciba.max_expires_in', 'ciba.min_interval'] })).status).toBe(
+        200
+      );
+      // The cleared maximum counts as its default (600)
+      expect(
+        (await patch({ set: { 'ciba.min_expires_in': 150 }, clear: ['ciba.max_expires_in'] }))
+          .status
+      ).toBe(200);
+    });
+
+    describe('a cleared key takes what it inherits, here from the environment', () => {
+      it('accepts a clear that the environment value makes consistent', async () => {
+        const patch = await patcher({ CIBA_DEFAULT_INTERVAL: '30' });
+        expect(
+          (
+            await patch({
+              set: { 'ciba.min_interval': 20, 'ciba.max_interval': 60, 'ciba.poll_interval': 60 },
+            })
+          ).status
+        ).toBe(200);
+
+        // Cleared, the poll interval is 30 (inside [20, 60]); as the default 5 it would be below 20
+        const res = await patch({ clear: ['ciba.poll_interval'] });
+        expect(res.status).toBe(200);
+        const after = await patch.read();
+        expect(after.values['ciba.poll_interval']).toBe(30);
+        expect(after.sources['ciba.poll_interval']).toBe('env');
+      });
+
+      it('refuses a clear that the environment value makes inconsistent, and changes nothing', async () => {
+        const patch = await patcher({ CIBA_MAX_INTERVAL: '10' });
+        expect(
+          (await patch({ set: { 'ciba.poll_interval': 20, 'ciba.max_interval': 60 } })).status
+        ).toBe(200);
+
+        const res = await patch({ clear: ['ciba.max_interval'] });
+        expect(res.status).toBe(400);
+        const body = (await res.json()) as ApiResponse;
+        expect(body.message as string).toMatch(/poll_interval \(20\).*max_interval \(10\)/);
+        const after = await patch.read();
+        expect(after.values['ciba.max_interval']).toBe(60);
+        expect(after.sources['ciba.max_interval']).toBe('kv');
+        expect(after.values['ciba.poll_interval']).toBe(20);
+      });
+    });
+
+    describe('a PATCH with a key that would be refused alone saves nothing', () => {
+      it.each([
+        [{ set: { 'ciba.min_interval': 6, 'ciba.poll_interval': 6.5 } }, 'ciba.poll_interval'],
+        [{ set: { 'ciba.min_interval': 6, 'ciba.poll_interval': 'ten' } }, 'ciba.poll_interval'],
+        [{ set: { 'ciba.min_interval': 6, 'ciba.poll_interval': 500 } }, 'ciba.poll_interval'],
+        [
+          {
+            set: { 'ciba.min_interval': 6, 'ciba.poll_interval': 10 },
+            clear: ['ciba.poll_interval'],
+          },
+          'ciba.poll_interval',
+        ],
+        [
+          { set: { 'ciba.min_interval': 6, 'ciba.binding_message_required': 'yes' } },
+          'ciba.binding_message_required',
+        ],
+        [{ set: { 'ciba.min_interval': 6 }, disable: ['ciba.max_interval'] }, 'ciba.max_interval'],
+        [{ set: { 'ciba.min_interval': 6, 'ciba.unknown_key': 1 } }, 'ciba.unknown_key'],
+      ])('%j', async (body, namedKey) => {
+        const patch = await patcher();
+        const before = await patch.read();
+
+        const res = await patch(body);
+
+        expect(res.status).toBe(400);
+        expect(((await res.json()) as ApiResponse).message as string).toContain(namedKey);
+        const after = await patch.read();
+        expect(after.values).toEqual(before.values);
+        expect(after.sources['ciba.min_interval']).not.toBe('kv');
+        expect(after.version).toBe(before.version);
+      });
+
+      it('saves a fractional value of a setting that does not require a whole number', async () => {
+        const patch = await patcher();
+        const res = await patch({
+          set: { 'ciba.slow_down_increment': 2.5, 'ciba.min_interval': 3 },
+        });
+
+        expect(res.status).toBe(200);
+        const after = await patch.read();
+        expect(after.values['ciba.slow_down_increment']).toBe(2.5);
+        expect(after.sources['ciba.slow_down_increment']).toBe('kv');
+        expect(after.values['ciba.min_interval']).toBe(3);
+      });
+
+      it('refuses the whole patch for a fractional value of a whole-number setting, next to a fractional one that is allowed', async () => {
+        const patch = await patcher();
+        const before = await patch.read();
+
+        const res = await patch({
+          set: { 'ciba.slow_down_increment': 2.5, 'ciba.poll_interval': 6.5 },
+        });
+
+        expect(res.status).toBe(400);
+        expect(((await res.json()) as ApiResponse).message as string).toContain(
+          'ciba.poll_interval'
+        );
+        const after = await patch.read();
+        expect(after.values).toEqual(before.values);
+        expect(after.version).toBe(before.version);
+        expect(after.sources['ciba.slow_down_increment']).not.toBe('kv');
+      });
+
+      it('still saves a fully valid patch', async () => {
+        const patch = await patcher();
+        const res = await patch({ set: { 'ciba.min_interval': 6, 'ciba.poll_interval': 10 } });
+        expect(res.status).toBe(200);
+        const after = await patch.read();
+        expect(after.values['ciba.min_interval']).toBe(6);
+        expect(after.values['ciba.poll_interval']).toBe(10);
+      });
+    });
+  });
+
   describe('All Category Types', () => {
     // Tenant-level categories
     const tenantCategories = [

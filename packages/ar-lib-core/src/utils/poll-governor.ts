@@ -12,7 +12,8 @@
  * 3. The poll is recorded: `last_poll_at = now`, `poll_count + 1`. A too-fast poll counts too, and
  *    it restarts the interval clock, so a client that keeps polling too early stays "too fast".
  * 4. When the poll was too fast the interval is raised by `slowDownIncrement` (at least 5 seconds
- *    in both specs) for this and all later requests, up to `maxInterval`.
+ *    in both specs) for this and all later requests, up to `maxInterval` (a request can carry its
+ *    own, see {@link PollGovernedRecord.max_interval}).
  * 5. The token endpoint answers `slow_down` if `tooFast`, otherwise by the request status
  *    (`authorization_pending`, approved, denied, expired).
  *
@@ -38,6 +39,12 @@ export interface PollGovernedRecord {
   interval?: number;
   /** The interval the request started with; written the first time `slow_down` raises it. */
   base_interval?: number;
+  /**
+   * The highest interval `slow_down` can raise this request to, in seconds: the tenant's
+   * `ciba.max_interval` as it was when the request was made. Absent on requests stored before it
+   * was kept (and on device codes): {@link PollLimits.maxInterval} then applies.
+   */
+  max_interval?: number;
 }
 
 export interface PollLimits {
@@ -78,6 +85,11 @@ export const CIBA_POLL_LIMITS: PollLimits = {
 
 function positiveSeconds(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : null;
+}
+
+/** The highest interval (seconds) `slow_down` can raise a record to: its own, else the limit. */
+export function maxPollInterval(record: PollGovernedRecord, limits: PollLimits): number {
+  return positiveSeconds(record.max_interval) ?? limits.maxInterval;
 }
 
 /** The interval (seconds) a record is polled at now: the stored one, else the default. */
@@ -145,7 +157,7 @@ export function evaluatePoll<T extends PollGovernedRecord>(
     // Never lower an interval that is already above the cap.
     updates.interval = Math.min(
       interval + limits.slowDownIncrement,
-      Math.max(limits.maxInterval, interval)
+      Math.max(maxPollInterval(record, limits), interval)
     );
     updates.base_interval = positiveSeconds(record.base_interval) ?? interval;
   }

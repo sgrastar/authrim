@@ -124,7 +124,14 @@ paths:
         With tenant assurance enabled and a default FAL of FAL3 (with fal3_requires_par), which
         needs a pushed, signed authorization request, every request is refused with
         unauthorized_client. Assurance settings that cannot be read return 503
-        temporarily_unavailable.
+        temporarily_unavailable, and so do the tenant's CIBA settings (ciba.*). Those settings
+        set the request lifetime (expires_in is ciba.expires_in when requested_expiry is absent,
+        otherwise requested_expiry; either is kept between ciba.min_expires_in and
+        ciba.max_expires_in), the polling interval returned to poll-mode clients (ciba.poll_interval,
+        kept between ciba.min_interval and ciba.max_interval) and the binding_message limits.
+        A binding_message longer than ciba.max_binding_message_length (counted in UTF-16 code
+        units), or missing (or only whitespace) when ciba.binding_message_required is on, is refused with 400
+        invalid_binding_message.
       requestBody:
         $ref: '#/components/requestBodies/CibaAuthorization'
       responses:

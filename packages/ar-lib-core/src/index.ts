@@ -36,6 +36,7 @@ export * from './services/account-login-methods';
 export * from './services/authorization-challenge-kind';
 export * from './services/saml-authorization-challenge';
 export * from './services/sign-in-limits';
+export * from './services/ciba-config';
 export * from './services/scim-token-expiry';
 export * from './services/saml-settings';
 export * from './services/token-exchange-ceilings';
