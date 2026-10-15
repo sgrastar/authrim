@@ -383,6 +383,7 @@ components:
             enum: [RS256, ES256, PS256]
         backchannel_user_code_parameter_supported:
           type: boolean
+          description: The tenant's ciba.user_code_enabled (false by default).
         tls_client_certificate_bound_access_tokens:
           type: boolean
             - PS256

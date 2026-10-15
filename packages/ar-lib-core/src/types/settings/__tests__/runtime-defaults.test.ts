@@ -129,6 +129,40 @@ describe('settings that replace older stores default to runtime behaviour', () =
     expect(CIBA_DEFAULTS['ciba.binding_message_required']).toBe(false);
   });
 
+  it('CIBA polling, user code and ping settings', () => {
+    expect(CIBA_DEFAULTS['ciba.slow_down_increment']).toBe(CIBA_CONSTANTS.SLOW_DOWN_INCREMENT);
+    expect(CIBA_DEFAULTS['ciba.max_poll_count']).toBe(CIBA_CONSTANTS.MAX_POLL_COUNT);
+    // The OP never verifies a user code: the switch is off unless the tenant turns it on.
+    expect(CIBA_DEFAULTS['ciba.user_code_enabled']).toBe(false);
+    expect(CIBA_DEFAULTS['ciba.ping_notification_timeout_ms']).toBe(5000);
+  });
+
+  it('CIBA slow_down increment cannot be set below the 5 seconds CIBA Core requires', () => {
+    expect(CIBA_SETTINGS_META['ciba.slow_down_increment'].min).toBe(
+      CIBA_HARD_LIMITS.minSlowDownIncrement
+    );
+    expect(CIBA_SETTINGS_META['ciba.slow_down_increment'].max).toBe(
+      CIBA_HARD_LIMITS.maxSlowDownIncrement
+    );
+    expect(CIBA_SETTINGS_META['ciba.max_poll_count'].max).toBe(CIBA_HARD_LIMITS.maxPollCount);
+    expect(CIBA_SETTINGS_META['ciba.ping_notification_timeout_ms'].max).toBe(
+      CIBA_HARD_LIMITS.maxPingNotificationTimeoutMs
+    );
+  });
+
+  it('every CIBA setting the runtime reads is whole-number checked and read strictly from env', () => {
+    for (const key of [
+      'ciba.slow_down_increment',
+      'ciba.max_poll_count',
+      'ciba.ping_notification_timeout_ms',
+    ] as const) {
+      expect(CIBA_SETTINGS_META[key].integer, key).toBe(true);
+      expect(CIBA_SETTINGS_META[key].envNumber, key).toBe('strict-in-range');
+      expect(CIBA_SETTINGS_META[key].status, key).toBeUndefined();
+    }
+    expect(CIBA_SETTINGS_META['ciba.user_code_enabled'].status).toBeUndefined();
+  });
+
   it('CIBA settings stay inside the limits held in code', () => {
     expect(CIBA_SETTINGS_META['ciba.max_expires_in'].max).toBe(CIBA_HARD_LIMITS.maxExpiresIn);
     expect(CIBA_SETTINGS_META['ciba.max_interval'].max).toBe(CIBA_HARD_LIMITS.maxInterval);

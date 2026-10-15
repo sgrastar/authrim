@@ -341,12 +341,8 @@ place('applications/defaults', 'Backchannel sign-in (CIBA)', {
 		'ciba.min_interval',
 		'ciba.max_interval',
 		'ciba.max_binding_message_length',
-		'ciba.auth_request_ttl',
 		'ciba.ping_notification_timeout_ms',
-		'ciba.push_notification_timeout_ms',
-		'ciba.notifier_default_timeout_ms',
-		'ciba.notifier_max_timeout_ms',
-		'ciba.notifier_retry_delay_base_ms'
+		'ciba.push_notification_timeout_ms'
 	]
 });
 place('applications/defaults', 'Dynamic client registration', {

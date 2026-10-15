@@ -195,6 +195,22 @@ export async function cibaAuthorizationHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
+    // user_code is accepted only while the tenant allows it (ciba.user_code_enabled), and
+    // discovery advertises the same switch. Refusing it, rather than ignoring it, tells a client
+    // that sends one that no user code protects its request. (An empty value counts as absent,
+    // as in the generated-code line below.) The OP never verifies a user code either way.
+    if (
+      !cibaConfig.userCodeEnabled &&
+      parameters.user_code !== undefined &&
+      parameters.user_code !== null &&
+      parameters.user_code !== ''
+    ) {
+      return c.json(
+        { error: 'invalid_request', error_description: 'user_code is not supported' },
+        400
+      );
+    }
+
     const validation = validateCIBARequest(
       {
         scope,
@@ -334,6 +350,9 @@ export async function cibaAuthorizationHandler(c: Context<{ Bindings: Env }>) {
       interval,
       // slow_down can raise this request's interval no higher than the tenant's limit of now
       max_interval: cibaConfig.maxInterval,
+      // the poll governor reads these from the request, so a poll needs no settings read
+      slow_down_increment: cibaConfig.slowDownIncrement,
+      max_poll_count: cibaConfig.maxPollCount,
       token_issued: false,
       // Store resolved subject ID from JWT hint validation
       resolved_subject_id: resolvedSubjectId,

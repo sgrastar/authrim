@@ -365,6 +365,14 @@ export function sanitizeCopiedSettingsValue(
     delete record['feature.introspection_cache_enabled'];
   }
 
+  if (category === 'ciba') {
+    // These CIBA settings are gone (no CIBA behaviour was behind them): saved values are dropped.
+    delete record['ciba.auth_request_ttl'];
+    delete record['ciba.notifier_default_timeout_ms'];
+    delete record['ciba.notifier_max_timeout_ms'];
+    delete record['ciba.notifier_retry_delay_base_ms'];
+  }
+
   if (category === 'saml') {
     // SAML key references and published certificates are bound to the source KeyManager.
     record.signingKeyPolicies = {};

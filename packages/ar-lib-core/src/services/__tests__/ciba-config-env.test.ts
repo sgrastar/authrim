@@ -11,6 +11,9 @@ describe('CIBA settings from the environment', () => {
     ['CIBA_MIN_INTERVAL', 'minInterval', '3', 3, 2],
     ['CIBA_MAX_INTERVAL', 'maxInterval', '120', 120, 60],
     ['CIBA_MAX_BINDING_MESSAGE_LENGTH', 'maxBindingMessageLength', '200', 200, 140],
+    ['CIBA_SLOW_DOWN_INCREMENT', 'slowDownIncrement', '10', 10, 5],
+    ['CIBA_MAX_POLL_COUNT', 'maxPollCount', '200', 200, 120],
+    ['PING_NOTIFICATION_TIMEOUT_MS', 'pingNotificationTimeoutMs', '8000', 8000, 5000],
   ] as const)('%s is read whole and in range', async (name, field, good, expected, fallback) => {
     await expect(resolveCibaConfig({ [name]: good } as never, 't')).resolves.toMatchObject({
       [field]: expected,
@@ -29,6 +32,25 @@ describe('CIBA settings from the environment', () => {
       await expect(
         resolveCibaConfig({ CIBA_BINDING_MESSAGE_REQUIRED: other } as never, 't')
       ).resolves.toMatchObject({ bindingMessageRequired: false });
+    }
+  });
+
+  it('CIBA_SLOW_DOWN_INCREMENT below the 5 seconds CIBA Core requires keeps the default', async () => {
+    for (const low of ['1', '4']) {
+      await expect(
+        resolveCibaConfig({ CIBA_SLOW_DOWN_INCREMENT: low } as never, 't')
+      ).resolves.toMatchObject({ slowDownIncrement: 5 });
+    }
+  });
+
+  it('ENABLE_CIBA_USER_CODE turns user_code on only when it says true', async () => {
+    await expect(
+      resolveCibaConfig({ ENABLE_CIBA_USER_CODE: 'true' } as never, 't')
+    ).resolves.toMatchObject({ userCodeEnabled: true });
+    for (const other of ['false', 'no', '', 'maybe']) {
+      await expect(
+        resolveCibaConfig({ ENABLE_CIBA_USER_CODE: other } as never, 't')
+      ).resolves.toMatchObject({ userCodeEnabled: false });
     }
   });
 

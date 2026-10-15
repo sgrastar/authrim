@@ -167,12 +167,8 @@ const REVIEWED_FIELDS: readonly [string, TenantSettingValueType, TenantSettingHa
     ciba.max_expires_in
     ciba.min_interval
     ciba.max_interval
-    ciba.auth_request_ttl
     ciba.ping_notification_timeout_ms
     ciba.push_notification_timeout_ms
-    ciba.notifier_default_timeout_ms
-    ciba.notifier_max_timeout_ms
-    ciba.notifier_retry_delay_base_ms
   `,
     ],
     [

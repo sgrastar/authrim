@@ -30,14 +30,10 @@ export interface CIBASettings {
 
   // Feature Settings
   'ciba.user_code_enabled': boolean;
-  'ciba.auth_request_ttl': number;
 
   // Notification Timeout Settings
   'ciba.ping_notification_timeout_ms': number;
   'ciba.push_notification_timeout_ms': number;
-  'ciba.notifier_default_timeout_ms': number;
-  'ciba.notifier_max_timeout_ms': number;
-  'ciba.notifier_retry_delay_base_ms': number;
 }
 
 /**
@@ -80,11 +76,13 @@ export const CIBA_SETTINGS_META: Record<keyof CIBASettings, SettingMeta> = {
     default: 120,
     envKey: 'CIBA_MAX_POLL_COUNT',
     label: 'Max Poll Count',
-    description: 'Maximum number of polling attempts',
+    description:
+      'Polls a poll-mode client may make before its request is dropped (expired_token). A floor, not a fixed limit: the count a client needs when it waits the whole polling interval for the whole request lifetime, plus a margin, is allowed if that is higher, so a client that follows the interval is never cut off. Applies to requests made after the change.',
     min: 10,
     max: 500,
+    integer: true,
+    envNumber: 'strict-in-range',
     visibility: 'admin',
-    status: 'in_development',
   },
   'ciba.slow_down_increment': {
     key: 'ciba.slow_down_increment',
@@ -92,12 +90,14 @@ export const CIBA_SETTINGS_META: Record<keyof CIBASettings, SettingMeta> = {
     default: 5,
     envKey: 'CIBA_SLOW_DOWN_INCREMENT',
     label: 'Slow Down Increment',
-    description: 'Seconds to add to interval on slow_down error',
-    min: 1,
+    description:
+      'Seconds added to the polling interval each time a client polls too early (slow_down), up to the maximum poll interval. CIBA Core requires at least 5 seconds. Applies to requests made after the change.',
+    min: 5,
     max: 30,
     unit: 'seconds',
+    integer: true,
+    envNumber: 'strict-in-range',
     visibility: 'admin',
-    status: 'in_development',
   },
 
   // Expiry Limits
@@ -191,22 +191,9 @@ export const CIBA_SETTINGS_META: Record<keyof CIBASettings, SettingMeta> = {
     default: false,
     envKey: 'ENABLE_CIBA_USER_CODE',
     label: 'User Code Support',
-    description: 'Enable user_code parameter support',
+    description:
+      'Accept the user_code parameter on backchannel authentication requests and advertise backchannel_user_code_parameter_supported. Off by default: a request with a user_code is then refused (invalid_request). The code is shown to the person approving the request; Authrim does not verify it.',
     visibility: 'public',
-    status: 'in_development',
-  },
-  'ciba.auth_request_ttl': {
-    key: 'ciba.auth_request_ttl',
-    type: 'duration',
-    default: 300,
-    envKey: 'CIBA_AUTH_REQUEST_TTL',
-    label: 'Auth Request TTL',
-    description: 'auth_req_id cache lifetime in seconds',
-    min: 60,
-    max: 600,
-    unit: 'seconds',
-    visibility: 'admin',
-    status: 'in_development',
   },
 
   // Notification Timeout Settings
@@ -216,12 +203,14 @@ export const CIBA_SETTINGS_META: Record<keyof CIBASettings, SettingMeta> = {
     default: 5000,
     envKey: 'PING_NOTIFICATION_TIMEOUT_MS',
     label: 'Ping Notification Timeout',
-    description: 'Timeout for CIBA ping mode notifications in milliseconds',
+    description:
+      'How long to wait for a ping-mode client to answer the notification that its request was decided, in milliseconds. The notification is sent while the approving person waits for their approval to complete, so a long timeout holds that request open. A notification that fails is not retried: the client can still poll.',
     min: 1000,
     max: 30000,
     unit: 'ms',
+    integer: true,
+    envNumber: 'strict-in-range',
     visibility: 'admin',
-    status: 'in_development',
   },
   'ciba.push_notification_timeout_ms': {
     key: 'ciba.push_notification_timeout_ms',
@@ -232,45 +221,6 @@ export const CIBA_SETTINGS_META: Record<keyof CIBASettings, SettingMeta> = {
     description: 'Timeout for CIBA push mode notifications in milliseconds',
     min: 1000,
     max: 30000,
-    unit: 'ms',
-    visibility: 'admin',
-    status: 'in_development',
-  },
-  'ciba.notifier_default_timeout_ms': {
-    key: 'ciba.notifier_default_timeout_ms',
-    type: 'duration',
-    default: 10000,
-    envKey: 'NOTIFIER_DEFAULT_TIMEOUT_MS',
-    label: 'Notifier Default Timeout',
-    description: 'Default timeout for CIBA notifier in milliseconds',
-    min: 1000,
-    max: 60000,
-    unit: 'ms',
-    visibility: 'admin',
-    status: 'in_development',
-  },
-  'ciba.notifier_max_timeout_ms': {
-    key: 'ciba.notifier_max_timeout_ms',
-    type: 'duration',
-    default: 30000,
-    envKey: 'NOTIFIER_MAX_TIMEOUT_MS',
-    label: 'Notifier Max Timeout',
-    description: 'Maximum timeout for CIBA notifier in milliseconds',
-    min: 5000,
-    max: 120000,
-    unit: 'ms',
-    visibility: 'admin',
-    status: 'in_development',
-  },
-  'ciba.notifier_retry_delay_base_ms': {
-    key: 'ciba.notifier_retry_delay_base_ms',
-    type: 'duration',
-    default: 1000,
-    envKey: 'NOTIFIER_RETRY_DELAY_BASE_MS',
-    label: 'Notifier Retry Delay Base',
-    description: 'Base delay for CIBA notifier retries in milliseconds',
-    min: 100,
-    max: 10000,
     unit: 'ms',
     visibility: 'admin',
     status: 'in_development',
@@ -304,11 +254,7 @@ export const CIBA_DEFAULTS: CIBASettings = {
   'ciba.max_binding_message_length': 140,
   'ciba.binding_message_required': false,
   'ciba.user_code_enabled': false,
-  'ciba.auth_request_ttl': 300,
   // Notification Timeouts
   'ciba.ping_notification_timeout_ms': 5000,
   'ciba.push_notification_timeout_ms': 5000,
-  'ciba.notifier_default_timeout_ms': 10000,
-  'ciba.notifier_max_timeout_ms': 30000,
-  'ciba.notifier_retry_delay_base_ms': 1000,
 };

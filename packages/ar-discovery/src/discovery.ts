@@ -17,6 +17,7 @@ import {
   resolveLogoutConfig,
   getTenantIdFromContext,
   resolveEffectiveSettings,
+  resolveCibaConfig,
   resolveIDTokenSigningPolicy,
   AAL_ACR_VALUES,
   isNativeSSOEnabled,
@@ -114,9 +115,12 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
   // The ID token algorithms: every published one while apps choose their own, else only the
   // tenant's (oauth.id_token_signing_alg).
   let idTokenSigningAlgorithms: OIDCSigningAlgorithm[] = publishedSigningAlgorithms;
+  // backchannel_user_code_parameter_supported: the tenant's ciba.user_code_enabled, which is also
+  // what /bc-authorize enforces. Read only where CIBA is advertised at all.
+  let cibaUserCodeSupported = false;
 
   try {
-    const [tokens, flags, discoverySettings, assurance, idTokenSigning] = await Promise.all([
+    const [tokens, flags, discoverySettings, assurance, idTokenSigning, ciba] = await Promise.all([
       resolveEffectiveSettings(c.env, 'tokens', {
         tenantId,
       }),
@@ -126,7 +130,9 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
       resolveEffectiveSettings(c.env, 'discovery', { tenantId }),
       resolveEffectiveSettings(c.env, 'assurance', { tenantId }),
       resolveIDTokenSigningPolicy(c.env, tenantId),
+      asyncEnabled ? resolveCibaConfig(c.env, tenantId) : null,
     ]);
+    cibaUserCodeSupported = ciba?.userCodeEnabled === true;
     if (!idTokenSigning.appsMayChoose) {
       idTokenSigningAlgorithms = publishedSigningAlgorithms.filter(
         (algorithm) => algorithm === idTokenSigning.algorithm
@@ -227,7 +233,7 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
   const profileHash = `profile=${tenantProfile.type}`;
   const assuranceClaimsHash = `ea=${eduPersonAssuranceSupported}`;
   const signingAlgorithmsHash = `oidc_algs=${publishedSigningAlgorithms.join(',')}:id_token_algs=${idTokenSigningAlgorithms.join(',')}`;
-  const settingsHash = `${currentSettingsJson}:acr=${acrValuesSupported.join(',')}:issuer=${issuer}:async=${asyncEnabled}:te=${tokenExchangeEnabled}:cc=${clientCredentialsEnabled}:ns=${nativeSSOEnabled}:rar=${rarEnabled}:ai=${aiScopesEnabled}:idjag=${idJagEnabled}:fe=${flowEngineEnabled}:${profileHash}:${logoutHash}:${signingAlgorithmsHash}:${assuranceClaimsHash}`;
+  const settingsHash = `${currentSettingsJson}:acr=${acrValuesSupported.join(',')}:issuer=${issuer}:async=${asyncEnabled}:te=${tokenExchangeEnabled}:cc=${clientCredentialsEnabled}:ns=${nativeSSOEnabled}:rar=${rarEnabled}:ai=${aiScopesEnabled}:idjag=${idJagEnabled}:fe=${flowEngineEnabled}:${profileHash}:${logoutHash}:${signingAlgorithmsHash}:${assuranceClaimsHash}:cuc=${cibaUserCodeSupported}`;
   // A digest of everything the metadata depends on: a fixed-length key, however long the settings
   // (a KV key is at most 512 bytes).
   const settingsDigest = Array.from(
@@ -325,7 +331,7 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
             'ES256',
             'PS256',
           ],
-          backchannel_user_code_parameter_supported: true,
+          backchannel_user_code_parameter_supported: cibaUserCodeSupported,
           tls_client_certificate_bound_access_tokens: true,
         }
       : {}),

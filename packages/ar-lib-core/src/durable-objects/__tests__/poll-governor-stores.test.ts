@@ -575,6 +575,91 @@ describe('poll governor: CIBA request with the tenant maximum interval', () => {
   });
 });
 
+describe('poll governor: CIBA request with the tenant slow_down increment and poll count', () => {
+  it('stores both with the request and raises the interval by the increment', async () => {
+    const { store, storage } = await cibaDriver.create();
+    await cibaDriver.seed(store, { slow_down_increment: 15, max_poll_count: 200 });
+    expect(storage.values.get(cibaDriver.recordKey)).toMatchObject({
+      slow_down_increment: 15,
+      max_poll_count: 200,
+    });
+
+    await cibaDriver.poll(store);
+    advance(1_000);
+    const second = ok(await cibaDriver.poll(store));
+
+    expect(second.too_fast).toBe(true);
+    expect(second.metadata.interval).toBe(20);
+    expect(storage.values.get(cibaDriver.recordKey)).toMatchObject({
+      interval: 20,
+      base_interval: 5,
+    });
+  });
+
+  it('holds the increment to the maximum interval of the request', async () => {
+    const { store } = await cibaDriver.create();
+    await cibaDriver.seed(store, { slow_down_increment: 30, max_interval: 20 });
+    await cibaDriver.poll(store);
+    advance(1_000);
+
+    expect(ok(await cibaDriver.poll(store)).metadata.interval).toBe(20);
+  });
+
+  it('never raises the interval by less than 5 seconds, whatever the request holds', async () => {
+    const { store } = await cibaDriver.create();
+    await cibaDriver.seed(store, { slow_down_increment: 1 });
+    await cibaDriver.poll(store);
+    advance(1_000);
+
+    expect(ok(await cibaDriver.poll(store)).metadata.interval).toBe(10);
+  });
+
+  it('drops the request once a poll goes over a configured count that is above what the lifetime needs', async () => {
+    const { store, storage } = await cibaDriver.create();
+    // 600 s at 5 s needs 120 polls (cap 130); a configured 200 is higher
+    await cibaDriver.seed(store, { max_poll_count: 200, poll_count: 199 });
+
+    expect(ok(await cibaDriver.poll(store)).metadata.poll_count).toBe(200);
+    advance(5_000);
+    expect(await cibaDriver.poll(store)).toEqual({ result: 'poll_limit_exceeded' });
+    expect(storage.values.has(cibaDriver.recordKey)).toBe(false);
+  });
+
+  it('does not cut a client off at a configured count below what the lifetime needs', async () => {
+    const { store } = await cibaDriver.create();
+    await cibaDriver.seed(store, { max_poll_count: 10, poll_count: 50 });
+
+    expect(ok(await cibaDriver.poll(store)).metadata.poll_count).toBe(51);
+  });
+
+  it('ignores values the Settings API could not have saved, so a corrupt record keeps the cap', async () => {
+    const { store, storage } = await cibaDriver.create();
+    await cibaDriver.seed(store, {
+      max_poll_count: 1_000_000_000,
+      slow_down_increment: 2.5,
+      max_interval: 1e9,
+      poll_count: 129,
+    });
+
+    expect(ok(await cibaDriver.poll(store)).metadata.poll_count).toBe(130);
+    advance(1_000);
+    expect(await cibaDriver.poll(store)).toEqual({ result: 'poll_limit_exceeded' });
+    expect(storage.values.has(cibaDriver.recordKey)).toBe(false);
+  });
+
+  it('keeps the constants for a request stored without them', async () => {
+    const { store, storage } = await cibaDriver.create();
+    await cibaDriver.seed(store, { poll_count: 129 });
+    const stored = storage.values.get(cibaDriver.recordKey) as AnyRecord;
+    expect(stored).not.toHaveProperty('slow_down_increment');
+    expect(stored).not.toHaveProperty('max_poll_count');
+
+    expect(ok(await cibaDriver.poll(store)).metadata.poll_count).toBe(130);
+    advance(1_000);
+    expect(await cibaDriver.poll(store)).toEqual({ result: 'poll_limit_exceeded' });
+  });
+});
+
 describe('the deprecated /update-poll route', () => {
   it('still records a poll for a caller deployed before /poll existed', async () => {
     const device = await deviceDriver.create();

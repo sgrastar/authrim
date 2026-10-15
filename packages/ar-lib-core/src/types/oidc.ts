@@ -906,6 +906,8 @@ export interface CIBARequestMetadata {
   interval: number; // Minimum polling interval in seconds (raised by slow_down, CIBA Core section 11)
   base_interval?: number; // Interval the request started with; written when slow_down first raises it
   max_interval?: number; // Highest interval slow_down can raise this request to (ciba.max_interval when it was made)
+  slow_down_increment?: number; // Seconds one slow_down adds to the interval (ciba.slow_down_increment when it was made)
+  max_poll_count?: number; // Configured poll count, a floor (ciba.max_poll_count when it was made)
   user_id?: string; // Set when user approves the request
   sub?: string; // Subject (user identifier) - set when approved
   nonce?: string; // Nonce for ID token (optional)

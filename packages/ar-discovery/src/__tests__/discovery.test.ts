@@ -1124,6 +1124,117 @@ describe('Discovery Handler', () => {
     });
   });
 
+  describe('backchannel_user_code_parameter_supported (ciba.user_code_enabled)', () => {
+    const CIBA_KEY = 'settings:tenant:default:ciba';
+
+    function withCibaDocument(read: () => unknown, env: Env = createMockEnv()): Env {
+      env.SETTINGS = {
+        get: async (key: string) => {
+          if (key !== CIBA_KEY) return null;
+          const document = read();
+          return document === null ? null : JSON.stringify(document);
+        },
+      } as unknown as KVNamespace;
+      return env;
+    }
+
+    async function discover(env: Env) {
+      const response = await app.request('/.well-known/openid-configuration', {}, env);
+      return { response, metadata: (await response.json()) as OIDCProviderMetadata };
+    }
+
+    it('is false by default: the OP does not verify user codes', async () => {
+      const { metadata } = await discover(createMockEnv());
+
+      expect(metadata.backchannel_user_code_parameter_supported).toBe(false);
+      // The rest of the CIBA metadata is unchanged
+      expect(metadata.backchannel_authentication_endpoint).toBe(
+        'https://test.example.com/bc-authorize'
+      );
+      expect(metadata.backchannel_token_delivery_modes_supported).toEqual(['poll', 'ping', 'push']);
+    });
+
+    it('is true when the tenant turns the setting on', async () => {
+      const { metadata } = await discover(
+        withCibaDocument(() => ({ 'ciba.user_code_enabled': true }))
+      );
+
+      expect(metadata.backchannel_user_code_parameter_supported).toBe(true);
+    });
+
+    it('is false when the tenant saved it off, and for a value that is not a boolean', async () => {
+      for (const value of [false, 'true', 1, null]) {
+        clearDiscoveryMetadataCache();
+        const { metadata } = await discover(
+          withCibaDocument(() => ({ 'ciba.user_code_enabled': value }))
+        );
+        expect(metadata.backchannel_user_code_parameter_supported, String(value)).toBe(false);
+      }
+    });
+
+    it('follows ENABLE_CIBA_USER_CODE as the deployment default, and a saved value beats it', async () => {
+      const env = createMockEnv();
+      (env as Env & { ENABLE_CIBA_USER_CODE?: string }).ENABLE_CIBA_USER_CODE = 'true';
+      expect((await discover(env)).metadata.backchannel_user_code_parameter_supported).toBe(true);
+
+      clearDiscoveryMetadataCache();
+      const saved = withCibaDocument(() => ({ 'ciba.user_code_enabled': false }), env);
+      expect((await discover(saved)).metadata.backchannel_user_code_parameter_supported).toBe(
+        false
+      );
+    });
+
+    it('serves the new value after the setting changes, whatever was cached', async () => {
+      const cacheKeys: string[] = [];
+      const base = {
+        ...createMockEnv(),
+        AUTHRIM_CONFIG: createMockKV({
+          get: async () => null,
+          put: async (key) => {
+            cacheKeys.push(key);
+          },
+        }),
+      } as Env;
+
+      const off = await discover(withCibaDocument(() => null, base));
+      // The same process answers the next request: the metadata is not the cached one.
+      const on = await discover(
+        withCibaDocument(() => ({ 'ciba.user_code_enabled': true }), { ...base } as Env)
+      );
+      const offAgain = await discover(withCibaDocument(() => null, { ...base } as Env));
+
+      expect(off.metadata.backchannel_user_code_parameter_supported).toBe(false);
+      expect(on.metadata.backchannel_user_code_parameter_supported).toBe(true);
+      expect(offAgain.metadata.backchannel_user_code_parameter_supported).toBe(false);
+      // Each state has a cache key of its own
+      expect(new Set(cacheKeys.filter((key) => key.startsWith('v1:discovery:'))).size).toBe(2);
+    });
+
+    it('is unavailable while the CIBA settings cannot be read, like the other settings', async () => {
+      const { response } = await discover(
+        withCibaDocument(() => {
+          throw new Error('KV unavailable');
+        })
+      );
+
+      expect(response.status).toBe(503);
+    });
+
+    it('does not read the CIBA settings, or advertise the flag, when async is disabled', async () => {
+      const read = vi.fn(() => {
+        throw new Error('must not be read');
+      });
+      const env = withCibaDocument(read);
+      (env as Env & { ASYNC_ENABLED?: string }).ASYNC_ENABLED = 'false';
+
+      const { response, metadata } = await discover(env);
+
+      expect(response.status).toBe(200);
+      expect(read).not.toHaveBeenCalled();
+      expect(metadata.backchannel_user_code_parameter_supported).toBeUndefined();
+    });
+  });
+
   describe('Optional component metadata', () => {
     it('omits async endpoints and grant types when async is disabled', async () => {
       const env = createMockEnv();
