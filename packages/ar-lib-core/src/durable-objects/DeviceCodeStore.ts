@@ -16,12 +16,19 @@
  * - Durable Storage as primary (for atomic operations)
  * - In-memory cache for hot data (active device codes)
  * - Dual mapping: device_code → metadata, user_code → device_code
+ *
+ * User code keys: the mapping is keyed by the CANONICAL user code (upper case, separators removed;
+ * see normalizeUserCode), whatever shape the caller sends ("abcd-efgh", "ABCD EFGH", "ABCDEFGH").
+ * Before the user code format became configurable the mapping key was the hyphenated 4-4 form
+ * ("u:ABCD-EFGH"). Codes live at most 30 minutes, so for one release those keys are still read: a
+ * lookup tries the canonical key and then the legacy 4-4 key, a duplicate check looks at both, and
+ * a delete removes whichever key holds the code. New codes are only written under the canonical key.
  */
 
 import type { DurableObjectState } from '@cloudflare/workers-types';
 import type { Env } from '../types/env';
 import type { DeviceCodeMetadata } from '../types/oidc';
-import { isDeviceCodeExpired } from '../utils/device-flow';
+import { isDeviceCodeExpired, normalizeUserCode } from '../utils/device-flow';
 import { DEVICE_POLL_LIMITS, evaluatePoll, type PollRpcResult } from '../utils/poll-governor';
 import { createLogger, type Logger } from '../utils/logger';
 
@@ -47,7 +54,7 @@ export class UserCodeConflictError extends Error {
  */
 const STORAGE_PREFIX = {
   DEVICE: 'd:', // d:{device_code} → DeviceCodeV2
-  USER: 'u:', // u:{user_code} → device_code (mapping)
+  USER: 'u:', // u:{canonical user_code} → device_code (mapping); legacy: u:XXXX-XXXX
   META: 'm:', // m:initialized → boolean
 } as const;
 
@@ -125,8 +132,12 @@ export class DeviceCodeStore {
       });
 
       for (const [key, deviceCode] of userMappings) {
-        const userCode = key.substring(STORAGE_PREFIX.USER.length);
-        this.userCodeToDeviceCode.set(userCode, deviceCode);
+        const stored = key.substring(STORAGE_PREFIX.USER.length);
+        const userCode = normalizeUserCode(stored);
+        // A legacy key (u:XXXX-XXXX) never overrides the canonical key of the same code
+        if (stored === userCode || !this.userCodeToDeviceCode.has(userCode)) {
+          this.userCodeToDeviceCode.set(userCode, deviceCode);
+        }
       }
 
       this.log.info('Loaded device codes and user mappings', {
@@ -164,10 +175,45 @@ export class DeviceCodeStore {
   }
 
   /**
-   * Build storage key for user code mapping
+   * Build storage key for user code mapping (canonical form: see normalizeUserCode)
    */
   private buildUserKey(userCode: string): string {
-    return `${STORAGE_PREFIX.USER}${userCode}`;
+    return `${STORAGE_PREFIX.USER}${normalizeUserCode(userCode)}`;
+  }
+
+  /**
+   * The key a user code was mapped under before the format became configurable: the hyphenated
+   * 4-4 form. Only an 8 character code ever had one.
+   */
+  private buildLegacyUserKey(userCode: string): string | null {
+    const canonical = normalizeUserCode(userCode);
+    return canonical.length === 8
+      ? `${STORAGE_PREFIX.USER}${canonical.slice(0, 4)}-${canonical.slice(4)}`
+      : null;
+  }
+
+  /** The storage keys a user code can be mapped under: canonical first, then the legacy key. */
+  private userKeysOf(userCode: string): string[] {
+    const legacy = this.buildLegacyUserKey(userCode);
+    return legacy ? [this.buildUserKey(userCode), legacy] : [this.buildUserKey(userCode)];
+  }
+
+  /**
+   * Every device code a user code maps to: the cache, the canonical key and the legacy 4-4 key,
+   * without repeats. They can differ while the previous release's codes are still alive: a
+   * canonical mapping of an expired code next to a legacy mapping of a live one, or the other
+   * way round. Anything that decides who holds a user code has to look at all of them.
+   */
+  private async findDeviceCodesByUserCode(userCode: string): Promise<string[]> {
+    if (typeof userCode !== 'string') return [];
+    const holders = new Set<string>();
+    const cached = this.userCodeToDeviceCode.get(normalizeUserCode(userCode));
+    if (cached) holders.add(cached);
+    for (const key of this.userKeysOf(userCode)) {
+      const stored = await this.state.storage.get<string>(key);
+      if (stored) holders.add(stored);
+    }
+    return [...holders];
   }
 
   /**
@@ -223,12 +269,19 @@ export class DeviceCodeStore {
   }
 
   /**
-   * Delete device code from Durable Storage
+   * Delete device code from Durable Storage, with the user code mapping that points at it. The
+   * mapping is found under the canonical key and the legacy 4-4 key, and only a key that still
+   * holds this device code is removed: another code may have taken the user code over.
    */
   private async deleteDeviceCodeFromStorage(deviceCode: string, userCode?: string): Promise<void> {
     const keysToDelete = [this.buildDeviceKey(deviceCode)];
     if (userCode) {
-      keysToDelete.push(this.buildUserKey(userCode));
+      for (const key of new Set([
+        ...this.userKeysOf(userCode),
+        `${STORAGE_PREFIX.USER}${userCode}`,
+      ])) {
+        if ((await this.state.storage.get<string>(key)) === deviceCode) keysToDelete.push(key);
+      }
     }
     await this.state.storage.delete(keysToDelete);
   }
@@ -408,12 +461,10 @@ export class DeviceCodeStore {
       this.setTenantId(metadata.tenant_id);
     }
 
-    const holderCode =
-      this.userCodeToDeviceCode.get(metadata.user_code) ??
-      (await this.state.storage.get<string>(this.buildUserKey(metadata.user_code)));
-    if (holderCode && holderCode !== metadata.device_code) {
-      // A mapping left behind by an expired or deleted code does not count; the read drops it.
-      if (await this.getByDeviceCode(holderCode)) {
+    // Any live device code, under either key, that is not this one holds the user code. A mapping
+    // left behind by an expired or deleted code does not count; the read drops it.
+    for (const holderCode of await this.findDeviceCodesByUserCode(metadata.user_code)) {
+      if (holderCode !== metadata.device_code && (await this.getByDeviceCode(holderCode))) {
         throw new UserCodeConflictError();
       }
     }
@@ -429,7 +480,7 @@ export class DeviceCodeStore {
     await this.saveDeviceCode(metadata.device_code, v2Metadata);
     await this.saveUserMapping(metadata.user_code, metadata.device_code);
     this.deviceCodes.set(metadata.device_code, v2Metadata);
-    this.userCodeToDeviceCode.set(metadata.user_code, metadata.device_code);
+    this.userCodeToDeviceCode.set(normalizeUserCode(metadata.user_code), metadata.device_code);
 
     this.logEvent({
       action: 'device_code_created',
@@ -477,7 +528,7 @@ export class DeviceCodeStore {
 
       // Warm up cache
       this.deviceCodes.set(deviceCode, storedMetadata);
-      this.userCodeToDeviceCode.set(storedMetadata.user_code, deviceCode);
+      this.userCodeToDeviceCode.set(normalizeUserCode(storedMetadata.user_code), deviceCode);
       return storedMetadata;
     }
 
@@ -488,16 +539,11 @@ export class DeviceCodeStore {
    * Get device code metadata by user_code
    */
   private async getByUserCode(userCode: string): Promise<DeviceCodeV2 | null> {
-    // Check mapping first
-    let deviceCode = this.userCodeToDeviceCode.get(userCode);
-
-    if (!deviceCode) {
-      // Check Durable Storage
-      deviceCode = await this.state.storage.get<string>(this.buildUserKey(userCode));
-    }
-
-    if (deviceCode) {
-      return this.getByDeviceCode(deviceCode);
+    // The live holder, whichever key it is under (the cache, the canonical key, the legacy 4-4
+    // key): an expired holder under one key must not hide a live one under another.
+    for (const deviceCode of await this.findDeviceCodesByUserCode(userCode)) {
+      const metadata = await this.getByDeviceCode(deviceCode);
+      if (metadata) return metadata;
     }
 
     return null;
@@ -744,13 +790,16 @@ export class DeviceCodeStore {
    * may already run inside a state change, which holds the queue.
    */
   private async removeDeviceCode(deviceCode: string): Promise<void> {
-    const metadata = this.deviceCodes.get(deviceCode);
+    // A code found in storage but not (or no longer) cached still has its mapping to remove
+    const metadata =
+      this.deviceCodes.get(deviceCode) ??
+      (await this.state.storage.get<DeviceCodeV2>(this.buildDeviceKey(deviceCode)));
     const userCode = metadata?.user_code;
 
-    // Remove from in-memory storage
+    // Remove from in-memory storage (the mapping only when it is still this code's)
     this.deviceCodes.delete(deviceCode);
-    if (userCode) {
-      this.userCodeToDeviceCode.delete(userCode);
+    if (userCode && this.userCodeToDeviceCode.get(normalizeUserCode(userCode)) === deviceCode) {
+      this.userCodeToDeviceCode.delete(normalizeUserCode(userCode));
     }
 
     // V2: Delete from Durable Storage

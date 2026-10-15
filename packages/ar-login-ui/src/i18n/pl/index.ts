@@ -395,7 +395,7 @@ const translation = {
 	device_subtitle: 'Wprowadź kod pokazany na urządzeniu',
 	device_codeLabel: 'Kod weryfikacyjny',
 	device_codePlaceholder: 'XXXX-XXXX',
-	device_codeHint: 'Wprowadź kod 8 znaków z urządzenia (format: XXXX-XXXX)',
+	device_codeHint: 'Wprowadź kod wyświetlony na urządzeniu',
 	device_verifyButton: 'Sprawdź kod',
 	device_confirmTitle: 'Autoryzuj urządzenie',
 	device_requestedPermissions: 'Żądane uprawnienia',

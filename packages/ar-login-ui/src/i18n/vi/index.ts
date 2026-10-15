@@ -397,7 +397,7 @@ const vi = createTranslation({
 	device_subtitle: 'Nhập mã đang hiển thị trên thiết bị',
 	device_codeLabel: 'Mã xác minh',
 	device_codePlaceholder: 'XXXX-XXXX',
-	device_codeHint: 'Nhập mã gồm 8 ký tự trên thiết bị (định dạng: XXXX-XXXX)',
+	device_codeHint: 'Nhập mã đang hiển thị trên thiết bị',
 	device_verifyButton: 'Xác minh mã',
 	device_confirmTitle: 'Cấp quyền cho thiết bị',
 	device_requestedPermissions: 'Quyền được yêu cầu',

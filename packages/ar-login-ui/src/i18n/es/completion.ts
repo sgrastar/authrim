@@ -91,7 +91,7 @@ const completion = {
 	device_subtitle: 'Introduce el código que aparece en tu dispositivo',
 	device_codeLabel: 'Código de verificación',
 	device_codePlaceholder: 'XXXX-XXXX',
-	device_codeHint: 'Introduce el código de 8 caracteres de tu dispositivo (formato: XXXX-XXXX)',
+	device_codeHint: 'Introduce el código que se muestra en tu dispositivo',
 	device_verifyButton: 'Verificar código',
 	device_confirmTitle: 'Autorizar dispositivo',
 	device_requestedPermissions: 'Permisos solicitados',

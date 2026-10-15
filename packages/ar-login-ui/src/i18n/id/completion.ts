@@ -87,7 +87,7 @@ const completion = {
 	device_subtitle: 'Masukkan kode yang ditampilkan di perangkat Anda',
 	device_codeLabel: 'Kode verifikasi',
 	device_codePlaceholder: 'XXXX-XXXX',
-	device_codeHint: 'Masukkan kode 8 karakter dari perangkat Anda (format: XXXX-XXXX)',
+	device_codeHint: 'Masukkan kode yang ditampilkan di perangkat Anda',
 	device_verifyButton: 'Verifikasi kode',
 	device_confirmTitle: 'Otorisasi perangkat',
 	device_requestedPermissions: 'Izin yang diminta',

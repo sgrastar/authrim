@@ -7,7 +7,8 @@
 	import { useLoginUIStores } from '$lib/stores/login-ui-context';
 	import { LL } from '$i18n/i18n-svelte';
 	import { deviceFlowAPI } from '$lib/api/client';
-	import { createDeviceFlow, type DeviceFlowState } from './device-decision';
+	import { handleCodeEnterKey } from '$lib/utils/code-enter-key';
+	import { applyUserCodeInput, createDeviceFlow, type DeviceFlowState } from './device-decision';
 
 	const { brandingStore } = useLoginUIStores();
 
@@ -31,14 +32,12 @@
 	});
 
 	function handleCodeInput(event: Event) {
-		const target = event.target as HTMLInputElement;
-		target.value = flow.setUserCode(target.value);
+		applyUserCodeInput(event, flow);
 	}
 
-	function handleKeyPress(event: KeyboardEvent) {
-		if (event.key === 'Enter') {
-			void flow.verify();
-		}
+	// An Enter that confirms an IME conversion does not look the code up
+	function handleKeyDown(event: KeyboardEvent) {
+		handleCodeEnterKey(event, () => void flow.verify());
 	}
 </script>
 
@@ -56,7 +55,8 @@
 		loading={view.loading}
 		deviceInfo={view.deviceInfo}
 		onCodeInput={handleCodeInput}
-		onKeyPress={handleKeyPress}
+		onKeyDown={handleKeyDown}
+		onCompositionStart={() => flow.interrupt()}
 		onVerify={() => void flow.verify()}
 		onApprove={() => void flow.decide('approve')}
 		onDeny={() => void flow.decide('deny')}

@@ -99,7 +99,9 @@ describe('where settings live', () => {
 			'device_flow.min_interval',
 			'device_flow.max_interval',
 			'device_flow.slow_down_increment',
-			'device_flow.max_poll_count'
+			'device_flow.max_poll_count',
+			'device_flow.user_code_charset',
+			'device_flow.user_code_length'
 		];
 		for (const key of applied) {
 			expect(NOT_APPLIED.has(key), key).toBe(false);
@@ -107,10 +109,12 @@ describe('where settings live', () => {
 		}
 	});
 
-	it('keeps the device user code settings as to-wire: the code format is still fixed', () => {
+	it('leaves no device flow setting unapplied, and sets the user code format per tenant only', () => {
+		for (const key of Object.keys(ALL_CATEGORY_META['device-flow'].settings)) {
+			expect(NOT_APPLIED.has(key), key).toBe(false);
+		}
 		for (const key of ['device_flow.user_code_charset', 'device_flow.user_code_length']) {
-			expect(NOT_APPLIED.get(key), key).toBe('to-wire');
-			expect(ALL_CATEGORY_META['device-flow'].settings[key].status, key).toBe('in_development');
+			expect(ALL_CATEGORY_META['device-flow'].settings[key].scopes, key).toEqual(['tenant']);
 		}
 	});
 

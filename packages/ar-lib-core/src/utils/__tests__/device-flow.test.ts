@@ -9,6 +9,7 @@ import {
   generateUserCode,
   validateUserCodeFormat,
   normalizeUserCode,
+  formatUserCode,
   isDeviceCodeExpired,
   isDeviceFlowPollingTooFast,
   getVerificationUriComplete,
@@ -73,41 +74,81 @@ describe('Device Flow Utilities', () => {
   });
 
   describe('validateUserCodeFormat', () => {
-    it('should validate correct user code format', () => {
+    it('accepts a well-formed code in every length and shape the server issues', () => {
       expect(validateUserCodeFormat('WDJB-MJHT')).toBe(true);
       expect(validateUserCodeFormat('2345-6789')).toBe(true);
-      expect(validateUserCodeFormat('ABCD-EFGH')).toBe(true);
+      expect(validateUserCodeFormat('WDJBMJHT')).toBe(true);
+      expect(validateUserCodeFormat('ABCD')).toBe(true);
+      expect(validateUserCodeFormat('1234-5678-901')).toBe(true);
+      expect(validateUserCodeFormat('ABCD-EFGH-JKMN-PQRS')).toBe(true);
     });
 
-    it('should reject invalid user code formats', () => {
-      expect(validateUserCodeFormat('WDJBMJHT')).toBe(false); // Missing hyphen
-      expect(validateUserCodeFormat('WDJ-MJHT')).toBe(false); // Too short
-      expect(validateUserCodeFormat('WDJB-MJH')).toBe(false); // Too short
-      expect(validateUserCodeFormat('WDJB-MJHTA')).toBe(false); // Too long
-      expect(validateUserCodeFormat('0123-4567')).toBe(false); // Contains 0
-      expect(validateUserCodeFormat('O1IL-ABCD')).toBe(false); // Contains O, 1, I, L
-    });
-
-    it('should be case-insensitive', () => {
+    it('accepts any case, space and hyphen variant', () => {
       expect(validateUserCodeFormat('wdjb-mjht')).toBe(true);
       expect(validateUserCodeFormat('WdJb-MjHt')).toBe(true);
+      expect(validateUserCodeFormat('wdjb mjht')).toBe(true);
+      expect(validateUserCodeFormat(' WDJB\u2013MJHT ')).toBe(true);
+    });
+
+    it('does not judge the alphabet: the tenant setting may have changed since the code was issued', () => {
+      // 0, O, 1, I and L are not in BASE31, but a NUMERIC code has 0 and 1
+      expect(validateUserCodeFormat('0123-4567')).toBe(true);
+      expect(validateUserCodeFormat('O1IL-ABCD')).toBe(true);
+    });
+
+    it('rejects what cannot be a code', () => {
+      expect(validateUserCodeFormat('')).toBe(false);
+      expect(validateUserCodeFormat('WDJ')).toBe(false); // 3 characters
+      expect(validateUserCodeFormat('ABCD-EFGH-JKMN-PQRS-T')).toBe(false); // 17 characters
+      expect(validateUserCodeFormat('WDJB_MJHT')).toBe(false); // underscore is not a separator
+      expect(validateUserCodeFormat('WDJB.MJHT')).toBe(false);
+      expect(validateUserCodeFormat('WDJB-MJH\u00dc')).toBe(false); // not A-Z
+      expect(validateUserCodeFormat('WDJB-MJH%')).toBe(false);
+      expect(validateUserCodeFormat('<script>')).toBe(false);
     });
   });
 
   describe('normalizeUserCode', () => {
-    it('should normalize user code to uppercase with hyphen', () => {
-      expect(normalizeUserCode('wdjbmjht')).toBe('WDJB-MJHT');
-      expect(normalizeUserCode('wdjb-mjht')).toBe('WDJB-MJHT');
-      expect(normalizeUserCode('WdJbMjHt')).toBe('WDJB-MJHT');
+    it('is upper case with the separators removed', () => {
+      expect(normalizeUserCode('wdjbmjht')).toBe('WDJBMJHT');
+      expect(normalizeUserCode('wdjb-mjht')).toBe('WDJBMJHT');
+      expect(normalizeUserCode('WdJbMjHt')).toBe('WDJBMJHT');
+      expect(normalizeUserCode(' wdjb  mjht ')).toBe('WDJBMJHT');
     });
 
-    it('should remove extra hyphens', () => {
-      expect(normalizeUserCode('WD-JB-MJ-HT')).toBe('WDJB-MJHT');
-      expect(normalizeUserCode('W-D-J-B-M-J-H-T')).toBe('WDJB-MJHT');
+    it('removes any number of hyphens, of any kind', () => {
+      expect(normalizeUserCode('WD-JB-MJ-HT')).toBe('WDJBMJHT');
+      expect(normalizeUserCode('W-D-J-B-M-J-H-T')).toBe('WDJBMJHT');
+      for (const hyphen of ['\u2010', '\u2011', '\u2012', '\u2013', '\u2014', '\u2212', '\uFF0D']) {
+        expect(normalizeUserCode(`WDJB${hyphen}MJHT`), hyphen).toBe('WDJBMJHT');
+      }
     });
 
-    it('should handle codes without hyphens', () => {
-      expect(normalizeUserCode('WDJBMJHT')).toBe('WDJB-MJHT');
+    it('keeps the length of the code: it is not padded or grouped', () => {
+      expect(normalizeUserCode('1234-5678-901')).toBe('12345678901');
+      expect(normalizeUserCode('abcd')).toBe('ABCD');
+    });
+  });
+
+  describe('formatUserCode', () => {
+    it.each([
+      ['ABCD', 'ABCD'],
+      ['ABCDE', 'ABCD-E'],
+      ['ABCDEFGH', 'ABCD-EFGH'],
+      ['12345678901', '1234-5678-901'],
+      ['abcdefghjkmnpqrs', 'ABCD-EFGH-JKMN-PQRS'],
+      ['abcd efgh', 'ABCD-EFGH'],
+      ['AB-CDEF-GH', 'ABCD-EFGH'],
+    ])('%s -> %s', (typed, shown) => {
+      expect(formatUserCode(typed)).toBe(shown);
+    });
+
+    it('is the inverse of normalizeUserCode for every length', () => {
+      for (let length = 4; length <= 16; length++) {
+        const canonical = 'ABCDEFGHJKMNPQRS'.slice(0, length);
+        expect(normalizeUserCode(formatUserCode(canonical))).toBe(canonical);
+        expect(formatUserCode(formatUserCode(canonical))).toBe(formatUserCode(canonical));
+      }
     });
   });
 

@@ -398,8 +398,7 @@ const it = createTranslation({
 	device_subtitle: 'Inserisci il codice visualizzato sul dispositivo',
 	device_codeLabel: 'Codice di verifica',
 	device_codePlaceholder: 'XXXX-XXXX',
-	device_codeHint:
-		'Inserisci il codice di 8 caratteri visualizzato sul dispositivo (formato: XXXX-XXXX)',
+	device_codeHint: 'Inserisci il codice visualizzato sul dispositivo',
 	device_verifyButton: 'Verifica codice',
 	device_confirmTitle: 'Autorizza dispositivo',
 	device_requestedPermissions: 'Autorizzazioni richieste',

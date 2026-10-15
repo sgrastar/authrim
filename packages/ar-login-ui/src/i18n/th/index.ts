@@ -379,7 +379,7 @@ const th = createTranslation({
 	device_subtitle: 'กรอกรหัสที่แสดงบนอุปกรณ์ของคุณ',
 	device_codeLabel: 'รหัสยืนยัน',
 	device_codePlaceholder: 'XXXX-XXXX',
-	device_codeHint: 'กรอกรหัส 8 ตัวอักษรจากอุปกรณ์ของคุณ (รูปแบบ: XXXX-XXXX)',
+	device_codeHint: 'กรอกรหัสที่แสดงบนอุปกรณ์ของคุณ',
 	device_verifyButton: 'ยืนยันรหัส',
 	device_confirmTitle: 'อนุญาตอุปกรณ์',
 	device_requestedPermissions: 'สิทธิ์ที่ขอ',

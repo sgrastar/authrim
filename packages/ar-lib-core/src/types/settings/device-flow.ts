@@ -25,7 +25,7 @@ export interface DeviceFlowSettings {
   'device_flow.max_interval': number;
 
   // User Code Settings
-  'device_flow.user_code_charset': 'BASE20' | 'NUMERIC';
+  'device_flow.user_code_charset': 'BASE31' | 'BASE20' | 'NUMERIC';
   'device_flow.user_code_length': number;
 }
 
@@ -157,13 +157,14 @@ export const DEVICE_FLOW_SETTINGS_META: Record<keyof DeviceFlowSettings, Setting
   'device_flow.user_code_charset': {
     key: 'device_flow.user_code_charset',
     type: 'enum',
-    default: 'BASE20',
+    default: 'BASE31',
     envKey: 'DEVICE_FLOW_USER_CODE_CHARSET',
     label: 'User Code Charset',
-    description: 'Character set for user codes (BASE20: BCDFGHJKLMNPQRSTVWXZ, NUMERIC: 0-9)',
-    enum: ['BASE20', 'NUMERIC'],
+    description:
+      'Characters the user code is drawn from. BASE31 (default): 23456789ABCDEFGHJKMNPQRSTUVWXYZ, the letters and digits without 0, O, 1, I and L, 4.95 bits per character. BASE20: BCDFGHJKLMNPQRSTVWXZ, the consonants of the RFC 8628 example, 4.32 bits per character. NUMERIC: 0-9, 3.32 bits per character. A user code needs at least 34 bits of entropy, so the user code length must be at least 7 with BASE31, 8 with BASE20 and 11 with NUMERIC. A tenant setting; applies to codes issued after the change.',
+    enum: ['BASE31', 'BASE20', 'NUMERIC'],
+    scopes: ['tenant'],
     visibility: 'public',
-    status: 'in_development',
   },
   'device_flow.user_code_length': {
     key: 'device_flow.user_code_length',
@@ -171,11 +172,14 @@ export const DEVICE_FLOW_SETTINGS_META: Record<keyof DeviceFlowSettings, Setting
     default: 8,
     envKey: 'DEVICE_FLOW_USER_CODE_LENGTH',
     label: 'User Code Length',
-    description: 'Number of characters in user code',
+    description:
+      'Number of characters in the user code, shown in groups of 4 separated by a hyphen (8: ABCD-EFGH). At least 34 bits of entropy are required with the chosen charset: 7 characters with BASE31, 8 with BASE20, 11 with NUMERIC; a shorter code is refused when saved. A tenant setting; applies to codes issued after the change.',
     min: 4,
     max: 16,
+    integer: true,
+    envNumber: 'strict-in-range',
+    scopes: ['tenant'],
     visibility: 'public',
-    status: 'in_development',
   },
 };
 
@@ -201,6 +205,6 @@ export const DEVICE_FLOW_DEFAULTS: DeviceFlowSettings = {
   'device_flow.max_expires_in': 1800,
   'device_flow.min_interval': 5,
   'device_flow.max_interval': 60,
-  'device_flow.user_code_charset': 'BASE20',
+  'device_flow.user_code_charset': 'BASE31',
   'device_flow.user_code_length': 8,
 };

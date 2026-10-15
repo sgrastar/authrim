@@ -561,6 +561,13 @@ components:
           example: GmRhmhcxhwAzkoEqiMEg_DnyEysNkuNhszIySk9eS
         user_code:
           type: string
+          description: >-
+            The code the user types on the verification page, in groups of 4 characters separated
+            by a hyphen. Its alphabet and length come from the tenant's device_flow.user_code_charset
+            (BASE31, BASE20 or NUMERIC) and device_flow.user_code_length (4 to 16 characters, at
+            least 34 bits of entropy), so the format varies by tenant. A tenant with no setting
+            issues 8 characters of BASE31, for example WDJB-MJHT; 11 digits look like
+            1234-5678-901.
           example: WDJB-MJHT
         verification_uri:
           type: string
@@ -588,6 +595,12 @@ components:
       properties:
         user_code:
           type: string
+          description: >-
+            The user code as shown on the device. Any case is accepted, and the hyphens and spaces
+            between the groups are optional. Only the form is checked (4 to 16 letters and digits
+            once the separators are removed): the tenant's settings may have changed since the code
+            was issued, so whether the code exists is decided by the code store, and a code that
+            does not exist counts against the per-IP failed-attempt limit.
           example: WDJB-MJHT
         approve:
           type: boolean
@@ -623,6 +636,10 @@ components:
       properties:
         user_code:
           type: string
+          description: >-
+            The user code as shown on the device, in any case, with or without the hyphens and
+            spaces between the groups (4 to 16 letters and digits). Only the form is checked; see
+            DeviceVerifyRequest.
           example: WDJB-MJHT
       required:
         - user_code

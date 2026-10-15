@@ -323,7 +323,7 @@ describe('validateDeviceFlowPatch', () => {
       ],
       [
         { set: { 'device_flow.min_interval': 6, 'device_flow.user_code_charset': 'HEX' } },
-        /device_flow\.user_code_charset must be one of: BASE20, NUMERIC/,
+        /device_flow\.user_code_charset must be one of: BASE31, BASE20, NUMERIC/,
       ],
       [
         { set: { 'device_flow.min_interval': 6, 'device_flow.user_code_charset': 5 } },
@@ -425,5 +425,223 @@ describe('device flow checks outside the PATCH route state', () => {
     expect(validateCategoryPatchAt('device-flow', 'client', body, null)).toBeNull();
     // other categories are untouched
     expect(validateCategoryPatchAt('oauth', 'tenant', patch({}), null)).toBeNull();
+  });
+});
+
+describe('the user code charset and length', () => {
+  const charsetKey = 'device_flow.user_code_charset';
+  const lengthKey = 'device_flow.user_code_length';
+  /** The effective values of a tenant with nothing saved: BASE31 x 8. */
+  const base = { ...current, [charsetKey]: 'BASE31', [lengthKey]: 8 };
+
+  describe('are checked together on the pair the save leaves', () => {
+    // [charset, shortest allowed length]
+    const floors: Array<[string, number]> = [
+      ['BASE31', 7],
+      ['BASE20', 8],
+      ['NUMERIC', 11],
+    ];
+
+    describe.each(floors)('%s', (charset, shortest) => {
+      it.each(Array.from({ length: 13 }, (_, index) => index + 4))(
+        'both keys in one patch: length %i',
+        (length) => {
+          const problem = validateDeviceFlowPatch(
+            patch({ [charsetKey]: charset, [lengthKey]: length }),
+            { current: base }
+          );
+          if (length >= shortest) expect(problem).toBeNull();
+          else expect(problem).toContain(`at least ${shortest} characters with ${charset}`);
+        }
+      );
+    });
+
+    it('refuses NUMERIC with 10 digits, naming the minimum for the charset', () => {
+      expect(
+        validateDeviceFlowPatch(patch({ [charsetKey]: 'NUMERIC', [lengthKey]: 10 }), {
+          current: base,
+        })
+      ).toMatch(/user_code_length \(10\).*NUMERIC.*34 bits.*33\.2 bits.*at least 11 characters/);
+    });
+
+    it('also without any state (imports and profiles), when the patch holds both keys', () => {
+      expect(validateDeviceFlowPatch(patch({ [charsetKey]: 'NUMERIC', [lengthKey]: 10 }))).toMatch(
+        /at least 11 characters with NUMERIC/
+      );
+      expect(
+        validateDeviceFlowPatch(patch({ [charsetKey]: 'NUMERIC', [lengthKey]: 11 }))
+      ).toBeNull();
+    });
+
+    it('a charset alone is checked against the saved length', () => {
+      // the tenant has length 8 saved: NUMERIC needs 11
+      expect(
+        validateDeviceFlowPatch(patch({ [charsetKey]: 'NUMERIC' }), { current: base })
+      ).toMatch(/user_code_length \(8\).*at least 11 characters with NUMERIC/);
+      // a longer saved length makes it fine
+      expect(
+        validateDeviceFlowPatch(patch({ [charsetKey]: 'NUMERIC' }), {
+          current: { ...base, [lengthKey]: 12 },
+        })
+      ).toBeNull();
+      expect(
+        validateDeviceFlowPatch(patch({ [charsetKey]: 'BASE20' }), { current: base })
+      ).toBeNull();
+    });
+
+    it('a length alone is checked against the saved charset (the default when none is saved)', () => {
+      expect(validateDeviceFlowPatch(patch({ [lengthKey]: 4 }), { current: base })).toMatch(
+        /at least 7 characters with BASE31/
+      );
+      expect(validateDeviceFlowPatch(patch({ [lengthKey]: 7 }), { current: base })).toBeNull();
+      // a state with no value for the charset: the default charset counts
+      expect(validateDeviceFlowPatch(patch({ [lengthKey]: 6 }), { current })).toMatch(
+        /at least 7 characters with BASE31/
+      );
+      expect(
+        validateDeviceFlowPatch(patch({ [lengthKey]: 10 }), {
+          current: { ...base, [charsetKey]: 'NUMERIC', [lengthKey]: 12 },
+        })
+      ).toMatch(/at least 11 characters with NUMERIC/);
+    });
+
+    it('moving both keys at once is fine, one at a time is refused', () => {
+      const saved = { ...base, [charsetKey]: 'NUMERIC', [lengthKey]: 12 };
+      // BASE31 x 4 in one step
+      expect(
+        validateDeviceFlowPatch(patch({ [charsetKey]: 'BASE31', [lengthKey]: 7 }), {
+          current: saved,
+        })
+      ).toBeNull();
+      // the charset alone keeps length 12: fine for every charset
+      expect(
+        validateDeviceFlowPatch(patch({ [charsetKey]: 'BASE20' }), { current: saved })
+      ).toBeNull();
+      // the length alone falls under the NUMERIC floor
+      expect(validateDeviceFlowPatch(patch({ [lengthKey]: 10 }), { current: saved })).toMatch(
+        /at least 11 characters with NUMERIC/
+      );
+    });
+  });
+
+  describe('a cleared key counts as what it inherits', () => {
+    it('refuses a clear whose inherited value makes the pair too short', () => {
+      // NUMERIC x 12 saved; the length is cleared and the environment says 8
+      const saved = { ...base, [charsetKey]: 'NUMERIC', [lengthKey]: 12 };
+      const problem = validateDeviceFlowPatch(
+        { ifMatch: '', clear: [lengthKey] },
+        { current: saved, inherited: { [lengthKey]: 8 } }
+      );
+      expect(problem).toMatch(/user_code_length \(8\).*at least 11 characters with NUMERIC/);
+    });
+
+    it('refuses clearing the charset while a short length is saved and the default needs more', () => {
+      // BASE20 x 8 saved, the environment inherits NUMERIC: NUMERIC x 8 is below the floor
+      const saved = { ...base, [charsetKey]: 'BASE20', [lengthKey]: 8 };
+      expect(
+        validateDeviceFlowPatch(
+          { ifMatch: '', clear: [charsetKey] },
+          { current: saved, inherited: { [charsetKey]: 'NUMERIC' } }
+        )
+      ).toMatch(/NUMERIC/);
+    });
+
+    it('falls back to the defaults for what is inherited from nowhere', () => {
+      const saved = { ...base, [charsetKey]: 'NUMERIC', [lengthKey]: 12 };
+      // clearing both leaves BASE31 x 8
+      expect(
+        validateDeviceFlowPatch({ ifMatch: '', clear: [charsetKey, lengthKey] }, { current: saved })
+      ).toBeNull();
+      // clearing the length alone leaves NUMERIC x 8 (the default length)
+      expect(
+        validateDeviceFlowPatch({ ifMatch: '', clear: [lengthKey] }, { current: saved })
+      ).toMatch(/at least 11 characters with NUMERIC/);
+    });
+
+    it('a set value beats the inherited one', () => {
+      const saved = { ...base, [charsetKey]: 'NUMERIC', [lengthKey]: 12 };
+      expect(
+        validateDeviceFlowPatch(
+          { ifMatch: '', set: { [lengthKey]: 11 }, clear: [charsetKey] },
+          { current: saved, inherited: { [charsetKey]: 'NUMERIC' } }
+        )
+      ).toBeNull();
+    });
+  });
+
+  describe('the whole patch is refused, so a refusal saves nothing of it', () => {
+    it('a pair below the floor refuses the other keys of the patch too', () => {
+      expect(
+        validateDeviceFlowPatch(
+          patch({ [charsetKey]: 'NUMERIC', [lengthKey]: 10, 'device_flow.max_poll_count': 200 }),
+          { current: base }
+        )
+      ).toMatch(/user_code_length/);
+    });
+
+    it('a user code key the patch repeats or disables is refused', () => {
+      expect(
+        validateDeviceFlowPatch(
+          { ifMatch: '', set: { [lengthKey]: 12 }, clear: [lengthKey] },
+          { current: base }
+        )
+      ).toMatch(/more than one operation/);
+      expect(
+        validateDeviceFlowPatch({ ifMatch: '', disable: [charsetKey] }, { current: base })
+      ).toMatch(/cannot be disabled/);
+    });
+
+    it.each([
+      [{ [charsetKey]: 'HEX' }, /must be one of: BASE31, BASE20, NUMERIC/],
+      [{ [charsetKey]: 'base31' }, /must be one of/],
+      [{ [charsetKey]: 31 }, /must be one of/],
+      [{ [lengthKey]: 3 }, /between 4 and 16/],
+      [{ [lengthKey]: 17 }, /between 4 and 16/],
+      [{ [lengthKey]: 8.5 }, /must be a whole number/],
+      [{ [lengthKey]: '8' }, /must be a number/],
+    ])('value %j', (set, message) => {
+      expect(validateDeviceFlowPatch(patch(set), { current: base })).toMatch(message);
+    });
+  });
+
+  describe('for a client', () => {
+    it.each([charsetKey, lengthKey])('refuses %s: it is a tenant setting', (key) => {
+      const value = key === charsetKey ? 'BASE31' : 8;
+      expect(
+        validateDeviceFlowPatch(patch({ [key]: value }), { current: base, scope: 'client' })
+      ).toMatch(/is a tenant setting: a client cannot set it/);
+    });
+
+    it('refuses clearing them too, and accepts the tenant PATCH of the same body', () => {
+      expect(
+        validateDeviceFlowPatch(
+          { ifMatch: '', clear: [lengthKey] },
+          { current: base, scope: 'client' }
+        )
+      ).toMatch(/tenant setting/);
+      expect(
+        validateDeviceFlowPatch(patch({ [lengthKey]: 12 }), { current: base, scope: 'tenant' })
+      ).toBeNull();
+    });
+
+    it('does not block the other keys of a client', () => {
+      expect(
+        validateDeviceFlowPatch(patch({ 'device_flow.max_poll_count': 200 }), {
+          current: base,
+          scope: 'client',
+        })
+      ).toBeNull();
+    });
+  });
+
+  it('validateSettingValue (imports) keeps a pair the patch holds above the floor', () => {
+    const env = {} as never;
+    expect(validateSettingValue('device-flow', 'tenant', charsetKey, 'NUMERIC', env)).toBeNull();
+    expect(validateSettingValue('device-flow', 'tenant', charsetKey, 'HEX', env)).toMatch(
+      /must be one of/
+    );
+    expect(
+      validateCategoryPatch('device-flow', patch({ [charsetKey]: 'NUMERIC', [lengthKey]: 10 }))
+    ).toMatch(/at least 11/);
   });
 });

@@ -3250,7 +3250,7 @@ export type TranslationFunctions = {
 	 */
 	device_codePlaceholder: () => LocalizedString
 	/**
-	 * Enter the 8-character code from your device (format: XXXX-XXXX)
+	 * Enter the code shown on your device
 	 */
 	device_codeHint: () => LocalizedString
 	/**

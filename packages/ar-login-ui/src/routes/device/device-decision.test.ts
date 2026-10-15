@@ -2,6 +2,7 @@ import { get } from 'svelte/store';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { LL, setLocale } from '$i18n/i18n-svelte';
 import {
+	applyUserCodeInput,
 	createDeviceFlow,
 	decideDeviceCode,
 	lookUpDeviceCode,
@@ -368,6 +369,116 @@ describe('device page flow', () => {
 				success: '',
 				error: get(LL).device_errorOutcomeUnknown()
 			});
+		});
+	});
+});
+
+describe('device page flow with a code of any length the tenant issues', () => {
+	beforeEach(() => {
+		setLocale('en');
+	});
+
+	it.each([
+		['abcd', 'ABCD', 'ABCD'],
+		['abcdefg', 'ABCD-EFG', 'ABCDEFG'],
+		['1234-5678-901', '1234-5678-901', '12345678901'],
+		['1234 5678 9012', '1234-5678-9012', '123456789012'],
+		['abcd-efgh-jkmn-pqrs', 'ABCD-EFGH-JKMN-PQRS', 'ABCDEFGHJKMNPQRS']
+	])('looks %s up as %s and decides the code it looked up', async (typed, shown, sent) => {
+		const client = api();
+		const { flow } = flowWith(client);
+
+		flow.setUserCode(typed);
+		expect(flow.state.userCode).toBe(shown);
+		await flow.verify();
+		await flow.decide('approve');
+
+		expect(client.lookup).toHaveBeenCalledExactlyOnceWith(sent);
+		expect(client.approve).toHaveBeenCalledExactlyOnceWith(sent);
+	});
+
+	it.each(['', 'a', 'abc', '---', '日本語'])(
+		'does not look %j up: fewer than 4 characters',
+		async (typed) => {
+			const client = api();
+			const { flow } = flowWith(client);
+
+			flow.setUserCode(typed);
+			await flow.verify();
+
+			expect(client.lookup).not.toHaveBeenCalled();
+			expect(flow.state.error).toBe(get(LL).device_errorInvalidCode());
+		}
+	);
+
+	it('cuts a longer code at 16 characters, as the server never issues more', () => {
+		const { flow } = flowWith(api());
+
+		expect(flow.setUserCode('ABCDEFGHJKMNPQRSTUVWXYZ')).toBe('ABCD-EFGH-JKMN-PQRS');
+	});
+
+	it('shows the server error for a code that does not exist, whatever its length', async () => {
+		const { flow } = flowWith(
+			api({ lookup: vi.fn().mockResolvedValue({ error: { error: 'invalid_code' } }) })
+		);
+
+		flow.setUserCode('1234-5678-901');
+		await flow.verify();
+
+		expect(flow.state).toMatchObject({
+			step: 'input',
+			error: get(LL).device_errorInvalidOrExpiredCode()
+		});
+	});
+
+	describe('applyUserCodeInput (IME safe)', () => {
+		function inputEvent(input: HTMLInputElement, init: { isComposing?: boolean } = {}) {
+			return { target: input, isComposing: init.isComposing } as unknown as Event;
+		}
+
+		it('interrupts a lookup in flight when a composition replaces the code', async () => {
+			const first = deferred<LookupResult>();
+			const client = api({ lookup: vi.fn().mockImplementationOnce(() => first.promise) });
+			const { flow } = flowWith(client);
+			flow.setUserCode('AAAA-AAAA');
+			const pending = flow.verify();
+			expect(flow.state.verifying).toBe(true);
+
+			applyUserCodeInput(
+				inputEvent({ value: 'あ' } as HTMLInputElement, { isComposing: true }),
+				flow
+			);
+			first.resolve({ data: details('Code A App') });
+			await pending;
+
+			expect(flow.state).toMatchObject({ step: 'input', deviceInfo: null, verifying: false });
+			await flow.decide('approve');
+			expect(client.approve).not.toHaveBeenCalled();
+		});
+
+		it('formats what was typed into the input', () => {
+			const { flow } = flowWith(api());
+			const input = { value: 'abcdefghjkm' } as HTMLInputElement;
+
+			applyUserCodeInput(inputEvent(input), flow);
+
+			expect(input.value).toBe('ABCD-EFGH-JKM');
+			expect(flow.state.userCode).toBe('ABCD-EFGH-JKM');
+		});
+
+		it('leaves the text alone while an IME composition is open, and formats when it ends', () => {
+			const { flow } = flowWith(api());
+			const input = { value: 'あいう' } as HTMLInputElement;
+
+			applyUserCodeInput(inputEvent(input, { isComposing: true }), flow);
+			expect(input.value).toBe('あいう');
+			expect(flow.state.userCode).toBe('');
+
+			// the composition ends with full-width letters
+			input.value = 'ＡＢＣＤ１２３４';
+			applyUserCodeInput(inputEvent(input, { isComposing: false }), flow);
+			expect(input.value).toBe('ABCD-1234');
+			expect(flow.state.userCode).toBe('ABCD-1234');
 		});
 	});
 });

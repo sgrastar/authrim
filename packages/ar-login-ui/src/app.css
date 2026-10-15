@@ -2362,7 +2362,7 @@ tr.expired {
 	margin: 0;
 }
 
-/* --- Code input (for device flow XXXX-XXXX) --- */
+/* --- Code input (for the device flow user code, in groups of 4) --- */
 .auth-code-input {
 	width: 100%;
 	min-height: var(--auth-code-input-height, 0);

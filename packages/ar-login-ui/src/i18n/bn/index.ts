@@ -399,7 +399,7 @@ const translation = {
 	device_subtitle: 'আপনার ডিভাইসে প্রদর্শিত কোড লিখুন',
 	device_codeLabel: 'যাচাইকরণ কোড',
 	device_codePlaceholder: 'XXXX-XXXX',
-	device_codeHint: 'আপনার ডিভাইস থেকে 8-অক্ষর কোড লিখুন (ফরম্যাটঃ XXXX-XXXX)',
+	device_codeHint: 'আপনার ডিভাইসে দেখানো কোডটি লিখুন',
 	device_verifyButton: 'কোড যাচাই করুন',
 	device_confirmTitle: 'ডিভাইস অনুমোদন করুন',
 	device_requestedPermissions: 'অনুরোধ করা অনুমতি',

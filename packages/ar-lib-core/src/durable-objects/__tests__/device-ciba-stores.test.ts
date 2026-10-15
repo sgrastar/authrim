@@ -200,7 +200,7 @@ describe('DeviceCodeStore state transitions', () => {
     await harness.initialized;
 
     expect(await json(await store.fetch(request('/store', device())))).toEqual({ success: true });
-    expect(harness.storage.values.get('u:ABCD-EFGH')).toBe('device-1');
+    expect(harness.storage.values.get('u:ABCDEFGH')).toBe('device-1');
     expect(
       await json(await store.fetch(request('/get-by-device-code', { device_code: 'device-1' })))
     ).toMatchObject({
@@ -285,6 +285,7 @@ describe('DeviceCodeStore state transitions', () => {
     await store.fetch(request('/store', device()));
     await store.fetch(request('/delete', { device_code: 'device-1' }));
     expect(harness.storage.values.has('d:device-1')).toBe(false);
+    expect(harness.storage.values.has('u:ABCDEFGH')).toBe(false);
     expect(harness.storage.values.has('u:ABCD-EFGH')).toBe(false);
 
     await store.alarm();
@@ -1009,6 +1010,7 @@ describe('a state change whose save fails leaves the request as it was', () => {
       await json(await store.fetch(request('/get-by-device-code', { device_code: 'device-1' })))
     ).toBeNull();
     expect(harness.storage.values.has('d:device-1')).toBe(false);
+    expect(harness.storage.values.has('u:ABCDEFGH')).toBe(false);
     expect(harness.storage.values.has('u:ABCD-EFGH')).toBe(false);
     void read;
   });

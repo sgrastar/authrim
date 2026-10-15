@@ -89,7 +89,7 @@ const completion = {
 	device_subtitle: 'Введите код, показанный на устройстве',
 	device_codeLabel: 'Код подтверждения',
 	device_codePlaceholder: 'XXXX-XXXX',
-	device_codeHint: 'Введите восьмизначный код с устройства (формат: XXXX-XXXX)',
+	device_codeHint: 'Введите код, показанный на вашем устройстве',
 	device_verifyButton: 'Проверить код',
 	device_confirmTitle: 'Авторизация устройства',
 	device_requestedPermissions: 'Запрошенные разрешения',

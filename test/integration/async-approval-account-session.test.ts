@@ -296,7 +296,11 @@ function deviceStore() {
     async fetch(request: Request) {
       const route = new URL(request.url).pathname;
       const body = (await request.json()) as Record<string, unknown>;
-      const record = devices.get(String(body.user_code));
+      // The store maps the canonical user code (upper case, no separators)
+      const wanted = String(body.user_code).replace(/-/g, '').toUpperCase();
+      const record = [...devices.values()].find(
+        (device) => device.user_code.replace(/-/g, '').toUpperCase() === wanted
+      );
       if (route === '/get-by-user-code') return Response.json(record ?? null);
       if (!record) return Response.json({ error: 'not_found' }, { status: 404 });
       if (route === '/approve') {

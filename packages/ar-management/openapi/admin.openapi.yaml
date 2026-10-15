@@ -2083,6 +2083,14 @@ paths:
         then inherits (the platform, an environment variable, else the default). For example, with
         the default device_flow.min_interval of 5, device_flow.poll_interval 2 is refused with 400
         and nothing is saved; lower min_interval in the same request to save it.
+        The device flow user code settings are checked together on the pair the save leaves: the
+        code needs at least 34 bits of entropy, so device_flow.user_code_length must be at least 7
+        with device_flow.user_code_charset BASE31 (the default), 8 with BASE20 and 11 with NUMERIC.
+        For example NUMERIC with length 10 (33.2 bits) is refused with 400, with a message naming the
+        minimum for the charset, and so is length 4 on its own while the charset is BASE31; set
+        both in one request to change them together. A cleared key counts as what it inherits.
+        Runtime holds the same floor whatever is stored: a stored pair below it issues codes with
+        the default pair (BASE31, 8).
         The request must include the current settings version in ifMatch; stale writes return 409.
       security:
         - adminBearer: []
@@ -7436,6 +7444,9 @@ paths:
         variable, else the default). A client `min_*` or `max_*` that would widen the tenant's
         bounds is refused: a client can only narrow them. With the default `device_flow.min_interval`
         of 5, `device_flow.poll_interval` 2 is refused with 400.
+        `device_flow.user_code_charset` and `device_flow.user_code_length` are tenant settings (the
+        client is not known when a user types a code in): a client PATCH that names either is refused
+        with 400.
       responses:
         '200':
           $ref: '#/components/responses/SettingsV2Patch'
