@@ -23,6 +23,9 @@ import {
 import { resolveAsyncTenantId } from './tenant';
 import { fal3Refusal } from './assurance';
 
+/** Times a user code is drawn before the request gives up (each draw collides with a live code). */
+const USER_CODE_ATTEMPTS = 5;
+
 /**
  * POST /device_authorization
  * Device Authorization Endpoint
@@ -67,25 +70,13 @@ export async function deviceAuthorizationHandler(c: Context<{ Bindings: Env }>) 
       return createErrorResponse(c, AR_ERROR_CODES.CLIENT_NOT_ALLOWED_GRANT);
     }
 
-    // Generate device code and user code
+    // Generate device code (the user code is generated below, and again if it is taken)
     const deviceCode = generateDeviceCode();
-    const userCode = generateUserCode();
 
     // Create device code metadata
     const now = Date.now();
     const expiresIn = DEVICE_FLOW_CONSTANTS.DEFAULT_EXPIRES_IN;
-
-    const metadata: DeviceCodeMetadata = {
-      tenant_id: tenantId,
-      device_code: deviceCode,
-      user_code: userCode,
-      client_id,
-      scope,
-      status: 'pending',
-      created_at: now,
-      expires_at: now + expiresIn * 1000,
-      poll_count: 0,
-    };
+    const interval = DEVICE_FLOW_CONSTANTS.DEFAULT_INTERVAL;
 
     // Store in DeviceCodeStore Durable Object
     // NOTE: Currently using global DO. Future: implement region-sharding with
@@ -95,22 +86,63 @@ export async function deviceAuthorizationHandler(c: Context<{ Bindings: Env }>) 
     );
     const deviceCodeStore = c.env.DEVICE_CODE_STORE.get(deviceCodeStoreId);
 
-    const storeResponse = await deviceCodeStore.fetch(
-      new Request('https://internal/store', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Authrim-Tenant-Id': tenantId },
-        body: JSON.stringify(metadata),
-      })
-    );
+    // The store refuses a user code another live device code holds (409): draw another and try
+    // again. The retries are bounded; a tenant whose live codes crowd the code space gets a
+    // retryable 503 and nothing about the codes it holds.
+    let userCode = '';
+    let stored = false;
+    for (let attempt = 0; attempt < USER_CODE_ATTEMPTS && !stored; attempt++) {
+      userCode = generateUserCode();
+      const metadata: DeviceCodeMetadata = {
+        tenant_id: tenantId,
+        device_code: deviceCode,
+        user_code: userCode,
+        client_id,
+        scope,
+        status: 'pending',
+        created_at: now,
+        expires_at: now + expiresIn * 1000,
+        poll_count: 0,
+        // The polling interval is kept on the code: slow_down raises it for this code only
+        interval,
+      };
 
-    if (!storeResponse.ok) {
-      const error = await storeResponse.json();
-      log.error(
-        'DeviceCodeStore error',
-        { action: 'store_device_code' },
-        new Error(JSON.stringify(error))
+      const storeResponse = await deviceCodeStore.fetch(
+        new Request('https://internal/store', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-Authrim-Tenant-Id': tenantId },
+          body: JSON.stringify(metadata),
+        })
       );
-      return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
+
+      if (storeResponse.status === 409) {
+        continue;
+      }
+      if (!storeResponse.ok) {
+        const error = await storeResponse.json();
+        log.error(
+          'DeviceCodeStore error',
+          { action: 'store_device_code' },
+          new Error(JSON.stringify(error))
+        );
+        return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
+      }
+      stored = true;
+    }
+
+    if (!stored) {
+      log.error('No free user code found', {
+        action: 'store_device_code',
+        attempts: USER_CODE_ATTEMPTS,
+      });
+      return c.json(
+        {
+          error: 'temporarily_unavailable',
+          error_description: 'The device code could not be issued. Retry shortly.',
+        },
+        503,
+        { 'Retry-After': '1' }
+      );
     }
 
     // Build verification URIs
@@ -145,7 +177,7 @@ export async function deviceAuthorizationHandler(c: Context<{ Bindings: Env }>) 
         verification_uri: verificationUri,
         verification_uri_complete: verificationUriComplete,
         expires_in: expiresIn,
-        interval: DEVICE_FLOW_CONSTANTS.DEFAULT_INTERVAL,
+        interval,
       },
       200
     );

@@ -22,7 +22,9 @@ paths:
         With tenant assurance enabled and a default FAL of FAL3 (with fal3_requires_par), which
         needs a pushed, signed authorization request, every request is refused with
         unauthorized_client. Assurance settings that cannot be read return 503
-        temporarily_unavailable.
+        temporarily_unavailable. A user code another live device code already holds is not
+        reused: a new one is generated, up to 5 attempts. When no unique user code could be
+        stored, the response is 503 temporarily_unavailable with Retry-After: 1.
       requestBody:
         $ref: '#/components/requestBodies/DeviceAuthorization'
       responses:

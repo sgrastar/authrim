@@ -840,6 +840,10 @@ export interface DeviceCodeMetadata {
   expires_at: number;
   last_poll_at?: number; // Last time the device polled for the token
   poll_count?: number; // Number of times the device has polled
+  // Polling interval in seconds that applies now (RFC 8628 section 3.5: raised by slow_down).
+  // Absent on codes stored before the interval was kept per code: the default applies.
+  interval?: number;
+  base_interval?: number; // Interval the code started with; written when slow_down first raises it
   user_id?: string; // Set when user approves the device
   sub?: string; // Subject (user identifier) - set when approved
   consent_generation?: number; // The user's consent withdrawal generation at approval
@@ -899,7 +903,8 @@ export interface CIBARequestMetadata {
   expires_at: number;
   last_poll_at?: number; // Last time client polled for the token
   poll_count?: number; // Number of times client has polled
-  interval: number; // Minimum polling interval in seconds
+  interval: number; // Minimum polling interval in seconds (raised by slow_down, CIBA Core section 11)
+  base_interval?: number; // Interval the request started with; written when slow_down first raises it
   user_id?: string; // Set when user approves the request
   sub?: string; // Subject (user identifier) - set when approved
   nonce?: string; // Nonce for ID token (optional)

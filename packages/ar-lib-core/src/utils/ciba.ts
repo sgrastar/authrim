@@ -8,6 +8,7 @@ import type { CIBARequestMetadata } from '../types/oidc';
 import { jwtVerify, createLocalJWKSet, errors as joseErrors } from 'jose';
 import type { JWK, JWTVerifyResult, JWTPayload as JoseJWTPayload, JWTHeaderParameters } from 'jose';
 import { createLogger } from './logger';
+import { randomCharacters, type RandomBytesSource } from './unbiased-random';
 
 const log = createLogger().module('CIBA');
 
@@ -157,25 +158,14 @@ export function generateAuthReqId(): string {
  *
  * @returns User code string (format: XXXX-XXXX)
  */
-export function generateCIBAUserCode(): string {
+export function generateCIBAUserCode(source?: RandomBytesSource): string {
   const charset = '23456789ABCDEFGHJKMNPQRSTUVWXYZ';
   const codeLength = 8;
   const separatorPosition = 4;
 
-  let code = '';
-  const randomBytes = new Uint8Array(codeLength);
-  crypto.getRandomValues(randomBytes);
-
-  for (let i = 0; i < codeLength; i++) {
-    const index = randomBytes[i] % charset.length;
-    code += charset[index];
-
-    if (i === separatorPosition - 1 && i < codeLength - 1) {
-      code += '-';
-    }
-  }
-
-  return code;
+  // Rejection sampling: `byte % 31` alone would favour the first 8 characters of the set
+  const characters = randomCharacters(charset, codeLength, source);
+  return `${characters.slice(0, separatorPosition)}-${characters.slice(separatorPosition)}`;
 }
 
 /**

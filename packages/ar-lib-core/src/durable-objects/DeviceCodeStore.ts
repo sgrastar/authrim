@@ -22,6 +22,7 @@ import type { DurableObjectState } from '@cloudflare/workers-types';
 import type { Env } from '../types/env';
 import type { DeviceCodeMetadata } from '../types/oidc';
 import { isDeviceCodeExpired } from '../utils/device-flow';
+import { DEVICE_POLL_LIMITS, evaluatePoll, type PollRpcResult } from '../utils/poll-governor';
 import { createLogger, type Logger } from '../utils/logger';
 
 /**
@@ -31,6 +32,14 @@ export interface DeviceCodeV2 extends DeviceCodeMetadata {
   // V2 additions for tracking
   token_issued?: boolean; // One-time use enforcement
   token_issued_at?: number; // When tokens were issued
+}
+
+/** The user code is already held by another live device code. */
+export class UserCodeConflictError extends Error {
+  constructor() {
+    super('user_code_conflict');
+    this.name = 'UserCodeConflictError';
+  }
 }
 
 /**
@@ -238,7 +247,16 @@ export class DeviceCodeStore {
       // Store device code
       if (path === '/store' && request.method === 'POST') {
         const metadata: DeviceCodeMetadata = await request.json();
-        await this.storeDeviceCode(metadata);
+        try {
+          await this.storeDeviceCode(metadata);
+        } catch (error) {
+          if (!(error instanceof UserCodeConflictError)) throw error;
+          // Distinguishable from a failure: the caller generates another user code and retries.
+          return new Response(JSON.stringify({ error: 'user_code_conflict' }), {
+            status: 409,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
         return new Response(JSON.stringify({ success: true }), {
           headers: { 'Content-Type': 'application/json' },
         });
@@ -285,7 +303,25 @@ export class DeviceCodeStore {
         });
       }
 
-      // Update last poll time (for rate limiting)
+      // One poll of the token endpoint: evaluate against the previous poll, then record it.
+      if (path === '/poll' && request.method === 'POST') {
+        const { device_code, client_id } = (await request.json()) as {
+          device_code?: unknown;
+          client_id?: unknown;
+        };
+        const result =
+          typeof device_code === 'string' && typeof client_id === 'string'
+            ? await this.pollDeviceCode(device_code, client_id)
+            : ({ result: 'not_found' } satisfies PollRpcResult<DeviceCodeV2>);
+        return new Response(JSON.stringify(result), {
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
+      // Update last poll time (for rate limiting).
+      // Deprecated: records the poll without evaluating it, so a caller that reads the code
+      // afterwards sees its own write. The token endpoint uses /poll; this stays for callers
+      // deployed before it existed.
       if (path === '/update-poll' && request.method === 'POST') {
         const { device_code } = (await request.json()) as { device_code: string };
         await this.updatePollTime(device_code);
@@ -358,10 +394,28 @@ export class DeviceCodeStore {
 
   /**
    * Store a new device code
+   *
+   * Rejects a user code that another live device code already holds: the user code is the only
+   * key the approval side has, so a second code with the same value would take the first
+   * device's approval. The check and the write run as one state change.
    */
-  private async storeDeviceCode(metadata: DeviceCodeMetadata): Promise<void> {
+  private storeDeviceCode(metadata: DeviceCodeMetadata): Promise<void> {
+    return this.serializeTransition(() => this.applyStore(metadata));
+  }
+
+  private async applyStore(metadata: DeviceCodeMetadata): Promise<void> {
     if (metadata.tenant_id) {
       this.setTenantId(metadata.tenant_id);
+    }
+
+    const holderCode =
+      this.userCodeToDeviceCode.get(metadata.user_code) ??
+      (await this.state.storage.get<string>(this.buildUserKey(metadata.user_code)));
+    if (holderCode && holderCode !== metadata.device_code) {
+      // A mapping left behind by an expired or deleted code does not count; the read drops it.
+      if (await this.getByDeviceCode(holderCode)) {
+        throw new UserCodeConflictError();
+      }
     }
 
     const v2Metadata: DeviceCodeV2 = {
@@ -546,6 +600,67 @@ export class DeviceCodeStore {
       clientId: metadata.client_id,
       timestamp: Date.now(),
     });
+  }
+
+  /**
+   * One poll of the token endpoint, decided and recorded in one state change (see
+   * utils/poll-governor.ts for the sequence). It queues with approve, deny and mark-token-issued,
+   * so none of them can run between the check and the write.
+   *
+   * A poll by a client the code does not belong to changes nothing.
+   */
+  private pollDeviceCode(
+    deviceCode: string,
+    clientId: string
+  ): Promise<PollRpcResult<DeviceCodeV2>> {
+    return this.serializeTransition(() => this.applyPoll(deviceCode, clientId));
+  }
+
+  private async applyPoll(
+    deviceCode: string,
+    clientId: string
+  ): Promise<PollRpcResult<DeviceCodeV2>> {
+    // Removes an expired code, so a missing and an expired code look the same
+    const metadata = await this.getByDeviceCode(deviceCode);
+    if (!metadata) {
+      return { result: 'not_found' };
+    }
+    if (metadata.client_id !== clientId) {
+      return { result: 'client_mismatch' };
+    }
+
+    const evaluation = evaluatePoll(
+      metadata,
+      Date.now(),
+      DEVICE_POLL_LIMITS,
+      metadata.status === 'pending'
+    );
+    if (evaluation.limitExceeded) {
+      await this.removeDeviceCode(deviceCode);
+      this.logEvent({
+        action: 'device_code_expired',
+        deviceCode,
+        clientId: metadata.client_id,
+        metadata: { reason: 'poll_limit_exceeded', poll_count: metadata.poll_count },
+        timestamp: Date.now(),
+      });
+      return { result: 'poll_limit_exceeded' };
+    }
+
+    // V2: Save to Durable Storage, then the cache
+    await this.saveDeviceCode(deviceCode, evaluation.next, metadata);
+    this.cacheSaved(deviceCode, metadata, evaluation.next);
+
+    if (evaluation.tooFast) {
+      this.logEvent({
+        action: 'slow_down_triggered',
+        deviceCode,
+        clientId: metadata.client_id,
+        metadata: { interval: evaluation.next.interval },
+        timestamp: Date.now(),
+      });
+    }
+    return { result: 'ok', too_fast: evaluation.tooFast, metadata: evaluation.next };
   }
 
   /**
