@@ -31,8 +31,9 @@ import { isWithinSettingRange } from '../services/setting-range';
 
 /**
  * What a record may hold for the values it carries, the ranges the Settings API allows for the
- * setting the value was taken from (one definition: the CIBA settings metadata). A value outside
- * them (a hand-edited or corrupt record) is not used and the limit applies instead.
+ * setting the value was taken from. CIBA and the device flow allow the same ranges for these three
+ * (a test holds the two settings metadata to it), so the CIBA metadata is the one definition. A
+ * value outside them (a hand-edited or corrupt record) is not used and the limit applies instead.
  */
 const RECORD_RANGES = {
   maxInterval: CIBA_SETTINGS_META['ciba.max_interval'],
@@ -57,21 +58,23 @@ export interface PollGovernedRecord {
   base_interval?: number;
   /**
    * The highest interval `slow_down` can raise this request to, in seconds: the tenant's
-   * `ciba.max_interval` as it was when the request was made. Absent on requests stored before it
-   * was kept (and on device codes): {@link PollLimits.maxInterval} then applies.
+   * `ciba.max_interval` (`device_flow.max_interval` for a device code) as it was when the request
+   * was made. Absent on requests stored before it was kept: {@link PollLimits.maxInterval} then
+   * applies.
    */
   max_interval?: number;
   /**
    * What one `slow_down` adds to this request's interval, in seconds: the tenant's
-   * `ciba.slow_down_increment` as it was when the request was made. Absent on requests stored
-   * before it was kept (and on device codes): {@link PollLimits.slowDownIncrement} then applies.
-   * Never below {@link MIN_SLOW_DOWN_INCREMENT}.
+   * `ciba.slow_down_increment` (`device_flow.slow_down_increment` for a device code) as it was when
+   * the request was made. Absent on requests stored before it was kept:
+   * {@link PollLimits.slowDownIncrement} then applies. Never below {@link MIN_SLOW_DOWN_INCREMENT}.
    */
   slow_down_increment?: number;
   /**
-   * The configured poll count of this request: the tenant's `ciba.max_poll_count` as it was when
-   * the request was made. It is a floor, see {@link maxPollCountFor}. Absent on requests stored
-   * before it was kept (and on device codes): {@link PollLimits.maxPollCount} then applies.
+   * The configured poll count of this request: the tenant's `ciba.max_poll_count`
+   * (`device_flow.max_poll_count` for a device code) as it was when the request was made. It is a
+   * floor, see {@link maxPollCountFor}. Absent on requests stored before it was kept:
+   * {@link PollLimits.maxPollCount} then applies.
    */
   max_poll_count?: number;
 }
@@ -95,7 +98,16 @@ export interface PollLimits {
  */
 export const POLL_EARLY_TOLERANCE_MS = 250;
 
-/** The least `slow_down` increment in seconds: RFC 8628 section 3.5 and CIBA Core section 11. */
+/**
+ * The least `slow_down` increment in seconds: RFC 8628 section 3.5 and CIBA Core section 11.
+ *
+ * Interop: a standard client raises its OWN wait by exactly this much (5 s) after `slow_down`. An
+ * increment above 5 keeps the server's interval ahead of such a client until it catches up, so a
+ * client that ever polls early can be told `slow_down` repeatedly (with increment 30 and an
+ * interval of 5, one early poll leaves the server at 35 s and the client at 10 s). A client that
+ * obeys the interval is never told `slow_down`, so the default of 5 is unaffected. A tenant should
+ * keep 5 unless its clients follow the server's interval.
+ */
 export const MIN_SLOW_DOWN_INCREMENT = 5;
 
 /** Polls allowed on top of the number a client that follows the interval needs. */

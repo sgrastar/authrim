@@ -92,16 +92,21 @@ paths:
         seconds, up to 60 seconds, for this and every later poll of the request (the first
         interval is 5 seconds). A CIBA request carries the tenant's values from when it was made:
         ciba.slow_down_increment (at least 5 seconds) instead of 5, and ciba.max_interval
-        instead of 60. Only a pending device code or CIBA poll-mode request can answer
+        instead of 60; a device code carries the device_flow.slow_down_increment (at least 5
+        seconds), device_flow.max_interval and device_flow.poll_interval (its first interval) of
+        the tenant or client from when it was issued. A standard client raises its own wait by
+        exactly 5 seconds after slow_down, so with a larger increment (up to 30) the server's
+        interval stays ahead of it until it catches up and it can be told slow_down repeatedly;
+        clients that obey the interval are never told slow_down. Only a pending device code or CIBA poll-mode request can answer
         slow_down; ping and push CIBA requests never do. Every poll counts, and a request polled
         more often than the limit is dropped and answers expired_token, like an expired one. The
         limit of a CIBA request is the larger of the tenant's ciba.max_poll_count (as it was when
         the request was made) and ceil(lifetime / starting interval) + 10, so a client that
         follows the interval is never cut off: with a lifetime of 300 seconds, a starting
-        interval of 5 seconds and ciba.max_poll_count 10 the limit is 70. The 120-poll floor
-        (more for a longer lifetime: ceil(lifetime / starting interval) + 10 when that is higher)
-        applies to device codes and to CIBA requests made before ciba.max_poll_count was kept on
-        the request. A value on the stored request that the setting could not have (not a whole
+        interval of 5 seconds and ciba.max_poll_count 10 the limit is 70. A device code works
+        the same way with device_flow.max_poll_count. The 120-poll floor (more for a longer
+        lifetime: ceil(lifetime / starting interval) + 10 when that is higher) applies to device
+        codes issued, and CIBA requests made, before the poll count was kept on them. A value on the stored request that the setting could not have (not a whole
         number in its range) is ignored and the default applies.
         A poll with another client's device_code or auth_req_id answers invalid_grant and changes
         nothing. When the request store cannot record the poll, the response is 503

@@ -237,9 +237,12 @@ describe('a request that carries its own slow_down increment', () => {
     expect(evaluatePoll(legacy, NOW, CIBA_POLL_LIMITS, true).next.interval).toBe(10);
   });
 
-  it('leaves a device code on its constant: it has no such field', () => {
+  it('leaves a device code stored without it on the constant', () => {
     const device = record({ last_poll_at: NOW - 1_000, interval: 5 });
 
+    expect(slowDownIncrementFor(device, DEVICE_POLL_LIMITS)).toBe(
+      DEVICE_FLOW_CONSTANTS.SLOW_DOWN_INCREMENT
+    );
     expect(evaluatePoll(device, NOW, DEVICE_POLL_LIMITS, true).next.interval).toBe(10);
   });
 });
@@ -391,5 +394,242 @@ describe('values a record holds are held to the ranges of their settings', () =>
   it('honours a whole interval up to 300 seconds', () => {
     expect(currentPollInterval(record({ interval: 300 }), CIBA_POLL_LIMITS)).toBe(300);
     expect(currentPollInterval(record({ interval: 17 }), CIBA_POLL_LIMITS)).toBe(17);
+  });
+});
+
+describe('a device code that carries the tenant device flow limits', () => {
+  it('is raised by its own increment, no higher than its own maximum interval', () => {
+    const polled = record({
+      last_poll_at: NOW - 1_000,
+      interval: 5,
+      slow_down_increment: 12,
+      max_interval: 14,
+    });
+
+    const first = evaluatePoll(polled, NOW, DEVICE_POLL_LIMITS, true);
+    expect(first.next.interval).toBe(14);
+    expect(first.next.base_interval).toBe(5);
+    const again = evaluatePoll(
+      { ...first.next, last_poll_at: NOW },
+      NOW + 1_000,
+      DEVICE_POLL_LIMITS,
+      true
+    );
+    expect(again.next.interval).toBe(14);
+  });
+
+  it('can be raised above the constant maximum when its own maximum is higher', () => {
+    const polled = record({ last_poll_at: NOW - 1_000, interval: 60, max_interval: 120 });
+
+    expect(evaluatePoll(polled, NOW, DEVICE_POLL_LIMITS, true).next.interval).toBe(65);
+  });
+
+  it('is held to a lower maximum than the constant', () => {
+    const polled = record({ last_poll_at: NOW - 1_000, interval: 5, max_interval: 8 });
+
+    expect(maxPollInterval(polled, DEVICE_POLL_LIMITS)).toBe(8);
+    expect(evaluatePoll(polled, NOW, DEVICE_POLL_LIMITS, true).next.interval).toBe(8);
+  });
+
+  it('never raises the interval by less than the 5 seconds RFC 8628 requires', () => {
+    for (const slow_down_increment of [1, 4]) {
+      const low = record({ last_poll_at: NOW - 1_000, interval: 5, slow_down_increment });
+      expect(evaluatePoll(low, NOW, DEVICE_POLL_LIMITS, true).next.interval).toBe(10);
+    }
+  });
+
+  it('caps the polls at the larger of its configured count and what the lifetime needs', () => {
+    // 600 s at 5 s needs 120 polls (cap 130)
+    expect(maxPollCountFor(record({ max_poll_count: 10 }), DEVICE_POLL_LIMITS)).toBe(
+      120 + POLL_COUNT_MARGIN
+    );
+    expect(maxPollCountFor(record({ max_poll_count: 300 }), DEVICE_POLL_LIMITS)).toBe(300);
+    // a longer lifetime at the interval the code started with
+    expect(
+      maxPollCountFor(
+        record({
+          expires_at: NOW + 1_800_000,
+          max_poll_count: 120,
+          interval: 30,
+          base_interval: 5,
+        }),
+        DEVICE_POLL_LIMITS
+      )
+    ).toBe(360 + POLL_COUNT_MARGIN);
+    expect(
+      evaluatePoll(record({ max_poll_count: 300, poll_count: 300 }), NOW, DEVICE_POLL_LIMITS, true)
+        .limitExceeded
+    ).toBe(true);
+  });
+
+  it('ignores corrupt values and keeps the constants', () => {
+    const corrupt = record({
+      last_poll_at: NOW - 1_000,
+      interval: 5,
+      max_interval: 1e9,
+      slow_down_increment: 2.5,
+      max_poll_count: 1_000_000_000,
+    });
+
+    expect(maxPollInterval(corrupt, DEVICE_POLL_LIMITS)).toBe(DEVICE_FLOW_CONSTANTS.MAX_INTERVAL);
+    expect(configuredPollCount(corrupt, DEVICE_POLL_LIMITS)).toBe(
+      DEVICE_FLOW_CONSTANTS.MAX_POLL_COUNT
+    );
+    expect(evaluatePoll(corrupt, NOW, DEVICE_POLL_LIMITS, true).next.interval).toBe(10);
+  });
+
+  it('behaves as before for a code stored without any of the fields (a legacy code)', () => {
+    const legacy = record({ last_poll_at: NOW - 1_000 });
+    delete legacy.interval;
+
+    expect(currentPollInterval(legacy, DEVICE_POLL_LIMITS)).toBe(
+      DEVICE_FLOW_CONSTANTS.DEFAULT_INTERVAL
+    );
+    expect(maxPollCountFor(legacy, DEVICE_POLL_LIMITS)).toBe(120 + POLL_COUNT_MARGIN);
+    expect(evaluatePoll(legacy, NOW, DEVICE_POLL_LIMITS, true).next.interval).toBe(10);
+  });
+});
+
+/**
+ * A standard client (RFC 8628 section 3.5, CIBA Core section 11): it waits its own interval
+ * between polls and raises that wait by exactly 5 seconds after `slow_down`, whatever increment
+ * the server uses. This replays it against the governor with a fake clock.
+ */
+function simulateStandardClient(
+  limits: typeof DEVICE_POLL_LIMITS,
+  options: {
+    lifetimeSeconds: number;
+    slowDownIncrement?: number;
+    /** Seconds after the first poll at which the client polls early once, then keeps its schedule. */
+    earlyPollAfter?: number;
+  }
+) {
+  const lifetimeMs = options.lifetimeSeconds * 1000;
+  let stored: PollGovernedRecord = {
+    created_at: NOW,
+    expires_at: NOW + lifetimeMs,
+    interval: limits.defaultInterval,
+    ...(options.slowDownIncrement === undefined
+      ? {}
+      : { slow_down_increment: options.slowDownIncrement }),
+  };
+  let wait = limits.defaultInterval;
+  const slowDownTimes: number[] = [];
+  let polls = 0;
+  let cutOff = false;
+  let now = NOW;
+  let next = NOW; // the first poll is at the start
+  let early = options.earlyPollAfter !== undefined;
+
+  while (next < NOW + lifetimeMs) {
+    now = next;
+    const result = evaluatePoll(stored, now, limits, true);
+    polls++;
+    if (result.limitExceeded) {
+      cutOff = true;
+      break;
+    }
+    stored = result.next;
+    if (result.tooFast) {
+      slowDownTimes.push((now - NOW) / 1000);
+      wait += 5;
+    }
+    if (early) {
+      // One poll earlier than the wait, right after the first
+      early = false;
+      next = now + options.earlyPollAfter! * 1000;
+    } else {
+      next = now + wait * 1000;
+    }
+  }
+  return {
+    slowDownTimes,
+    polls,
+    cutOff,
+    clientWait: wait,
+    serverInterval: currentPollInterval(stored, limits),
+  };
+}
+
+describe.each([
+  ['device', DEVICE_POLL_LIMITS, 600],
+  ['CIBA', CIBA_POLL_LIMITS, 300],
+])('a standard client (+5 s per slow_down) against the %s governor', (_name, limits, lifetime) => {
+  it('never needs slow_down when it follows the interval, whatever the increment', () => {
+    for (const slowDownIncrement of [undefined, 5, 30]) {
+      const result = simulateStandardClient(limits, {
+        lifetimeSeconds: lifetime,
+        slowDownIncrement,
+      });
+      expect(result.slowDownTimes, String(slowDownIncrement)).toEqual([]);
+      expect(result.cutOff).toBe(false);
+    }
+  });
+
+  it('with the default increment of 5 is told slow_down once after an early poll, and converges', () => {
+    const result = simulateStandardClient(limits, { lifetimeSeconds: lifetime, earlyPollAfter: 1 });
+
+    // the early poll at 1 s; the client then waits 10 s as the server does
+    expect(result.slowDownTimes).toEqual([1]);
+    expect(result.clientWait).toBe(10);
+    expect(result.serverInterval).toBe(10);
+    expect(result.cutOff).toBe(false);
+    // 1 s early poll, then every 10 s to the end of the lifetime
+    expect(result.polls).toBe(2 + Math.ceil((lifetime - 11) / 10));
+  });
+
+  it('with an increment of 5 set explicitly behaves the same as the default', () => {
+    expect(
+      simulateStandardClient(limits, {
+        lifetimeSeconds: lifetime,
+        earlyPollAfter: 1,
+        slowDownIncrement: 5,
+      })
+    ).toEqual(simulateStandardClient(limits, { lifetimeSeconds: lifetime, earlyPollAfter: 1 }));
+  });
+
+  it('with an increment of 30 is told slow_down again and again until its wait reaches the server interval', () => {
+    const result = simulateStandardClient(limits, {
+      lifetimeSeconds: 3600,
+      earlyPollAfter: 1,
+      slowDownIncrement: 30,
+    });
+
+    // one early poll leaves the server at 35 s and the client at 10 s; the server then sits at
+    // its 60 s maximum while the client's wait grows 10, 15, ... 60 s: eleven slow_downs in all
+    expect(result.slowDownTimes).toHaveLength(11);
+    expect(result.slowDownTimes[0]).toBe(1);
+    expect(result.slowDownTimes.at(-1)).toBe(1 + (10 + 15 + 20 + 25 + 30 + 35 + 40 + 45 + 50 + 55));
+    expect(result.clientWait).toBe(60);
+    expect(result.serverInterval).toBe(60);
+    expect(result.cutOff).toBe(false);
+  });
+
+  it('with an increment of 30 may still be told slow_down when the lifetime ends', () => {
+    // 326 s pass before the client has caught up: a request that lives 300 s (the CIBA default) ends first
+    const result = simulateStandardClient(limits, {
+      lifetimeSeconds: 300,
+      earlyPollAfter: 1,
+      slowDownIncrement: 30,
+    });
+
+    // slow_down at 1, 11, 26, 46, 71, 101, 136, 176, 221 and 271 s; the next poll would be at 326 s
+    expect(result.slowDownTimes).toEqual([1, 11, 26, 46, 71, 101, 136, 176, 221, 271]);
+    expect(result.clientWait).toBe(55);
+    expect(result.serverInterval).toBe(60);
+  });
+
+  it('is not cut off by the poll cap, with the default count, however often it is slowed', () => {
+    for (const slowDownIncrement of [undefined, 30]) {
+      const result = simulateStandardClient(limits, {
+        lifetimeSeconds: lifetime,
+        earlyPollAfter: 1,
+        slowDownIncrement,
+      });
+      expect(result.cutOff, String(slowDownIncrement)).toBe(false);
+      expect(result.polls).toBeLessThan(
+        maxPollCountFor({ created_at: NOW, expires_at: NOW + lifetime * 1000, interval: 5 }, limits)
+      );
+    }
   });
 });

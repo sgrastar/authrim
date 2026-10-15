@@ -91,7 +91,7 @@ export const CIBA_SETTINGS_META: Record<keyof CIBASettings, SettingMeta> = {
     envKey: 'CIBA_SLOW_DOWN_INCREMENT',
     label: 'Slow Down Increment',
     description:
-      'Seconds added to the polling interval each time a client polls too early (slow_down), up to the maximum poll interval. CIBA Core requires at least 5 seconds. Applies to requests made after the change.',
+      "Seconds added to the polling interval each time a client polls too early (slow_down), up to the maximum poll interval. CIBA Core requires at least 5 seconds. Applies to requests made after the change. Standard clients raise their own wait by exactly 5 s after slow_down; a larger value keeps the server's interval ahead of them until they catch up, so they can be told slow_down repeatedly. Keep 5 unless your clients follow the server's interval.",
     min: 5,
     max: 30,
     unit: 'seconds',

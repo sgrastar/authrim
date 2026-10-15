@@ -77,7 +77,8 @@ import {
 } from '@authrim/ar-lib-core';
 import {
   validateCategoryPatch,
-  validateCibaPatch,
+  categoryPatchNeedsState,
+  validateCategoryPatchAt,
   validatePlatformUIPatch,
   validateTenantUIPaths,
 } from './patch-validation';
@@ -1592,21 +1593,20 @@ settingsV2.patch(
             }
           }
 
-          // CIBA bounds are checked on the document the save leaves: the tenant's current values
-          // stand in for the keys the PATCH does not hold, and a cleared key takes what it
-          // inherits (the platform, an environment variable or the default).
-          const cibaState =
-            category === 'ciba'
-              ? await manager.getAll(category, scope, {
-                  parents: settingsParentScopes(category, scope),
-                })
-              : null;
-          const categoryError = cibaState
-            ? validateCibaPatch(body, {
-                current: cibaState.values,
-                inherited: cibaState.inherited.values,
+          // CIBA and device flow bounds are checked on the document the save leaves: the tenant's
+          // current values stand in for the keys the PATCH does not hold, and a cleared key takes
+          // what it inherits (the platform, an environment variable or the default).
+          const patchState = categoryPatchNeedsState(category)
+            ? await manager.getAll(category, scope, {
+                parents: settingsParentScopes(category, scope),
               })
-            : validateCategoryPatch(category, body);
+            : null;
+          const categoryError = validateCategoryPatchAt(
+            category,
+            'tenant',
+            body,
+            patchState && { current: patchState.values, inherited: patchState.inherited.values }
+          );
           if (categoryError) {
             await recordSettingsAuditFailure(c, {
               category,
@@ -2116,7 +2116,19 @@ settingsV2.patch('/clients/:clientId/settings/:category', async (c) => {
           }
         }
 
-        const categoryError = validateCategoryPatch(category, body);
+        // The device flow bounds are checked on the document the save leaves, like the tenant's:
+        // what the client does not set is what it inherits from its tenant.
+        const patchState = categoryPatchNeedsState(category)
+          ? await manager.getAll(category, scope, {
+              parents: settingsParentScopes(category, scope),
+            })
+          : null;
+        const categoryError = validateCategoryPatchAt(
+          category,
+          'client',
+          body,
+          patchState && { current: patchState.values, inherited: patchState.inherited.values }
+        );
         if (categoryError) {
           await recordSettingsAuditFailure(c, {
             category,

@@ -279,6 +279,113 @@ describe('device flow polling through the token endpoint', () => {
     expect(record()).toBeUndefined();
   });
 
+  describe('with the tenant device flow limits kept on the code', () => {
+    it('raises the interval by the code increment, up to the code maximum interval', async () => {
+      await seed({ slow_down_increment: 12, max_interval: 25 });
+      await poll();
+
+      advanceFrozenClockByMs(1_000);
+      expect(await poll()).toMatchObject({ status: 400, error: 'slow_down' });
+      expect(record()).toMatchObject({ interval: 17, base_interval: 5 });
+
+      advanceFrozenClockByMs(1_000);
+      expect((await poll()).error).toBe('slow_down');
+      expect(record()).toMatchObject({ interval: 25 });
+
+      // however often the client polls early, the tenant maximum holds
+      for (let index = 0; index < 10; index++) {
+        advanceFrozenClockByMs(1_000);
+        await poll();
+      }
+      expect(record()).toMatchObject({ interval: 25 });
+    });
+
+    it('lets a tenant that allows a longer interval raise the code above the constant maximum', async () => {
+      await seed({ interval: 60, max_interval: 120 });
+      await poll();
+      advanceFrozenClockByMs(1_000);
+      await poll();
+
+      expect(record()).toMatchObject({ interval: 65 });
+    });
+
+    it('never raises it by less than 5 seconds, whatever the code holds', async () => {
+      await seed({ slow_down_increment: 1 });
+      await poll();
+      advanceFrozenClockByMs(1_000);
+      await poll();
+
+      expect(record()).toMatchObject({ interval: 10 });
+    });
+
+    it('answers pending once the interval the code was issued with has passed', async () => {
+      await seed({ interval: 10 });
+      expect((await poll()).error).toBe('authorization_pending');
+
+      advanceFrozenClockByMs(6_000); // past the default 5 s, inside the code interval of 10 s
+      expect((await poll()).error).toBe('slow_down');
+      expect(record()).toMatchObject({ interval: 15, base_interval: 10 });
+    });
+
+    it('cuts a client off at a configured count above what the lifetime needs', async () => {
+      // 600 s at 5 s needs 120 polls (cap 130); a configured 200 is the cap
+      await seed({ max_poll_count: 200 });
+
+      const answers: Array<string | null> = [];
+      for (let index = 0; index < 210; index++) {
+        answers.push((await poll()).error);
+        advanceFrozenClockByMs(1_000);
+      }
+
+      expect(answers.slice(1, 200).every((answer) => answer === 'slow_down')).toBe(true);
+      expect(answers.slice(200).every((answer) => answer === 'expired_token')).toBe(true);
+      expect(record()).toBeUndefined();
+    });
+
+    it('does not cut off a client that follows the interval, whatever count is configured', async () => {
+      // 600 s at 5 s needs 120 polls: the configured minimum of 10 is only a floor
+      await seed({ max_poll_count: 10 });
+      const start = frozenNowMs();
+
+      let polls = 0;
+      while (frozenNowMs() - start < 600_000) {
+        expect((await poll()).error, `poll ${polls + 1}`).toBe('authorization_pending');
+        polls++;
+        advanceFrozenClockByMs(5_000);
+      }
+
+      expect(polls).toBe(120);
+    });
+
+    it('does not cut off a client that follows a longer lifetime and a short interval', async () => {
+      // 1800 s at 5 s needs 360 polls; the default count of 120 must not end it
+      await seed({ max_poll_count: 120 }, 1_800_000);
+      const start = frozenNowMs();
+
+      let polls = 0;
+      while (frozenNowMs() - start < 1_800_000) {
+        expect((await poll()).error, `poll ${polls + 1}`).toBe('authorization_pending');
+        polls++;
+        advanceFrozenClockByMs(5_000);
+      }
+
+      expect(polls).toBe(360);
+    });
+
+    it('ignores values a settings save could not have made, so a corrupt code keeps the constants', async () => {
+      await seed({
+        slow_down_increment: 2.5,
+        max_interval: 1e9,
+        max_poll_count: 1_000_000_000,
+      });
+      await poll();
+      advanceFrozenClockByMs(1_000);
+      await poll();
+
+      expect(record()).toMatchObject({ interval: 10 });
+    });
+  });
+
   it('does not let another client change a code it does not own', async () => {
     await seed();
     await poll();

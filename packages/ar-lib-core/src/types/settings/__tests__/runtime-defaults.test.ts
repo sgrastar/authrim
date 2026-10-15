@@ -12,6 +12,9 @@ import { SECURITY_DEFAULTS } from '../security';
 import { CIBA_DEFAULTS, CIBA_SETTINGS_META } from '../ciba';
 import { CIBA_CONSTANTS } from '../../../utils/ciba';
 import { CIBA_HARD_LIMITS } from '../../../services/ciba-config';
+import { DEVICE_FLOW_DEFAULTS, DEVICE_FLOW_SETTINGS_META } from '../device-flow';
+import { DEVICE_FLOW_CONSTANTS } from '../../../utils/device-flow';
+import { DEVICE_FLOW_HARD_LIMITS } from '../../../services/device-flow-settings';
 import { DEFAULT_LOGOUT_CONFIG, DEFAULT_LOGOUT_WEBHOOK_CONFIG } from '../../logout';
 import { DEFAULT_ID_JAG_CONFIG } from '../../id-jag';
 import { DEFAULT_JIT_CONFIG } from '../../jit-config';
@@ -172,5 +175,116 @@ describe('settings that replace older stores default to runtime behaviour', () =
     expect(CIBA_SETTINGS_META['ciba.min_interval'].min).toBeLessThanOrEqual(
       CIBA_HARD_LIMITS.minInterval
     );
+  });
+  describe('device flow lifetime, polling and poll limit settings', () => {
+    const wired = [
+      'device_flow.expires_in',
+      'device_flow.min_expires_in',
+      'device_flow.max_expires_in',
+      'device_flow.poll_interval',
+      'device_flow.min_interval',
+      'device_flow.max_interval',
+      'device_flow.slow_down_increment',
+      'device_flow.max_poll_count',
+    ] as const;
+
+    it('default to what the endpoint always issued', () => {
+      expect(DEVICE_FLOW_DEFAULTS['device_flow.expires_in']).toBe(
+        DEVICE_FLOW_CONSTANTS.DEFAULT_EXPIRES_IN
+      );
+      expect(DEVICE_FLOW_DEFAULTS['device_flow.min_expires_in']).toBe(
+        DEVICE_FLOW_CONSTANTS.MIN_EXPIRES_IN
+      );
+      expect(DEVICE_FLOW_DEFAULTS['device_flow.max_expires_in']).toBe(
+        DEVICE_FLOW_CONSTANTS.MAX_EXPIRES_IN
+      );
+      expect(DEVICE_FLOW_DEFAULTS['device_flow.poll_interval']).toBe(
+        DEVICE_FLOW_CONSTANTS.DEFAULT_INTERVAL
+      );
+      expect(DEVICE_FLOW_DEFAULTS['device_flow.max_interval']).toBe(
+        DEVICE_FLOW_CONSTANTS.MAX_INTERVAL
+      );
+      expect(DEVICE_FLOW_DEFAULTS['device_flow.slow_down_increment']).toBe(
+        DEVICE_FLOW_CONSTANTS.SLOW_DOWN_INCREMENT
+      );
+      expect(DEVICE_FLOW_DEFAULTS['device_flow.max_poll_count']).toBe(
+        DEVICE_FLOW_CONSTANTS.MAX_POLL_COUNT
+      );
+    });
+
+    it('keep the default poll interval inside the default bounds', () => {
+      // The default minimum (5) is above the old unused constant MIN_INTERVAL (1), but it only
+      // clamps the poll interval, which is also 5 by default: nothing changes at the defaults.
+      expect(DEVICE_FLOW_DEFAULTS['device_flow.min_interval']).toBeLessThanOrEqual(
+        DEVICE_FLOW_DEFAULTS['device_flow.poll_interval']
+      );
+      expect(DEVICE_FLOW_DEFAULTS['device_flow.poll_interval']).toBeLessThanOrEqual(
+        DEVICE_FLOW_DEFAULTS['device_flow.max_interval']
+      );
+      expect(DEVICE_FLOW_DEFAULTS['device_flow.min_expires_in']).toBeLessThanOrEqual(
+        DEVICE_FLOW_DEFAULTS['device_flow.expires_in']
+      );
+      expect(DEVICE_FLOW_DEFAULTS['device_flow.expires_in']).toBeLessThanOrEqual(
+        DEVICE_FLOW_DEFAULTS['device_flow.max_expires_in']
+      );
+    });
+
+    it('stay inside the limits held in code', () => {
+      expect(DEVICE_FLOW_SETTINGS_META['device_flow.max_expires_in'].max).toBe(
+        DEVICE_FLOW_HARD_LIMITS.maxExpiresIn
+      );
+      expect(DEVICE_FLOW_SETTINGS_META['device_flow.max_interval'].max).toBe(
+        DEVICE_FLOW_HARD_LIMITS.maxInterval
+      );
+      expect(DEVICE_FLOW_SETTINGS_META['device_flow.min_interval'].min).toBe(
+        DEVICE_FLOW_HARD_LIMITS.minInterval
+      );
+      expect(DEVICE_FLOW_HARD_LIMITS.minInterval).toBe(DEVICE_FLOW_CONSTANTS.MIN_INTERVAL);
+      expect(DEVICE_FLOW_SETTINGS_META['device_flow.slow_down_increment'].min).toBe(
+        DEVICE_FLOW_HARD_LIMITS.minSlowDownIncrement
+      );
+      expect(DEVICE_FLOW_SETTINGS_META['device_flow.slow_down_increment'].max).toBe(
+        DEVICE_FLOW_HARD_LIMITS.maxSlowDownIncrement
+      );
+      expect(DEVICE_FLOW_SETTINGS_META['device_flow.max_poll_count'].max).toBe(
+        DEVICE_FLOW_HARD_LIMITS.maxPollCount
+      );
+    });
+
+    it('cannot be set below the 5 seconds RFC 8628 requires for slow_down', () => {
+      expect(DEVICE_FLOW_SETTINGS_META['device_flow.slow_down_increment'].min).toBe(5);
+    });
+
+    it('are whole-number checked, read strictly from env and applied', () => {
+      for (const key of wired) {
+        expect(DEVICE_FLOW_SETTINGS_META[key].integer, key).toBe(true);
+        expect(DEVICE_FLOW_SETTINGS_META[key].envNumber, key).toBe('strict-in-range');
+        expect(DEVICE_FLOW_SETTINGS_META[key].status, key).toBeUndefined();
+      }
+    });
+
+    it('leave the user code settings in development: the code format is still fixed', () => {
+      expect(DEVICE_FLOW_SETTINGS_META['device_flow.user_code_charset'].status).toBe(
+        'in_development'
+      );
+      expect(DEVICE_FLOW_SETTINGS_META['device_flow.user_code_length'].status).toBe(
+        'in_development'
+      );
+    });
+
+    it('allow the same ranges as CIBA for the values a poll record carries', () => {
+      // The poll governor validates a record's max_interval, slow_down_increment and
+      // max_poll_count against the CIBA metadata for both flows.
+      for (const name of ['max_interval', 'slow_down_increment', 'max_poll_count']) {
+        const device =
+          DEVICE_FLOW_SETTINGS_META[`device_flow.${name}` as keyof typeof DEVICE_FLOW_DEFAULTS];
+        const ciba = CIBA_SETTINGS_META[`ciba.${name}` as keyof typeof CIBA_DEFAULTS];
+        expect({ min: device.min, max: device.max, integer: device.integer }, name).toEqual({
+          min: ciba.min,
+          max: ciba.max,
+          integer: ciba.integer,
+        });
+      }
+    });
   });
 });

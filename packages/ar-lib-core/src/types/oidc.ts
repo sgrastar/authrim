@@ -844,6 +844,9 @@ export interface DeviceCodeMetadata {
   // Absent on codes stored before the interval was kept per code: the default applies.
   interval?: number;
   base_interval?: number; // Interval the code started with; written when slow_down first raises it
+  max_interval?: number; // Highest interval slow_down can raise this code to (device_flow.max_interval when it was issued)
+  slow_down_increment?: number; // Seconds one slow_down adds to the interval (device_flow.slow_down_increment when it was issued)
+  max_poll_count?: number; // Configured poll count, a floor (device_flow.max_poll_count when it was issued)
   user_id?: string; // Set when user approves the device
   sub?: string; // Subject (user identifier) - set when approved
   consent_generation?: number; // The user's consent withdrawal generation at approval

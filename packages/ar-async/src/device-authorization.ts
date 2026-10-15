@@ -10,7 +10,8 @@ import {
   generateDeviceCode,
   generateUserCode,
   getVerificationUriComplete,
-  DEVICE_FLOW_CONSTANTS,
+  resolveDeviceFlowPolicy,
+  type DeviceFlowPolicy,
   getClientCached,
   createErrorResponse,
   AR_ERROR_CODES,
@@ -70,13 +71,35 @@ export async function deviceAuthorizationHandler(c: Context<{ Bindings: Env }>) 
       return createErrorResponse(c, AR_ERROR_CODES.CLIENT_NOT_ALLOWED_GRANT);
     }
 
+    // The lifetime, polling interval and poll limits of the tenant and this client. Read only
+    // for a client that exists and may use the grant, so a request that names a stranger's
+    // client_id cannot probe the settings. Settings that cannot be read stop the request like the
+    // assurance settings above.
+    let policy: DeviceFlowPolicy;
+    try {
+      policy = await resolveDeviceFlowPolicy(c.env, tenantId, client_id);
+    } catch (error) {
+      log.error(
+        'Failed to load device flow settings',
+        { action: 'device_flow_settings' },
+        error as Error
+      );
+      return c.json(
+        {
+          error: 'temporarily_unavailable',
+          error_description: 'Device flow settings are temporarily unavailable',
+        },
+        503
+      );
+    }
+
     // Generate device code (the user code is generated below, and again if it is taken)
     const deviceCode = generateDeviceCode();
 
     // Create device code metadata
     const now = Date.now();
-    const expiresIn = DEVICE_FLOW_CONSTANTS.DEFAULT_EXPIRES_IN;
-    const interval = DEVICE_FLOW_CONSTANTS.DEFAULT_INTERVAL;
+    const expiresIn = policy.expiresIn;
+    const interval = policy.pollInterval;
 
     // Store in DeviceCodeStore Durable Object
     // NOTE: Currently using global DO. Future: implement region-sharding with
@@ -105,6 +128,11 @@ export async function deviceAuthorizationHandler(c: Context<{ Bindings: Env }>) 
         poll_count: 0,
         // The polling interval is kept on the code: slow_down raises it for this code only
         interval,
+        // slow_down can raise this code's interval no higher than the tenant's limit of now
+        max_interval: policy.maxInterval,
+        // the poll governor reads these from the code, so a poll needs no settings read
+        slow_down_increment: policy.slowDownIncrement,
+        max_poll_count: policy.maxPollCount,
       };
 
       const storeResponse = await deviceCodeStore.fetch(

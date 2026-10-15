@@ -2998,6 +2998,320 @@ describe('Settings API v2', () => {
     });
   });
 
+  describe('device flow bounds on PATCH /tenants/:tenantId/settings/device-flow', () => {
+    async function patcher(env: Record<string, string> = {}, stored: Record<string, string> = {}) {
+      const mockKV = createMockKV(stored);
+      const { app, mockEnv } = createTestApp({ kv: mockKV, env });
+      const url = '/api/admin/tenants/tenant_123/settings/device-flow';
+      const read = async () => {
+        const res = await app.request(url, { method: 'GET' }, mockEnv);
+        return (await res.json()) as SettingsGetResult;
+      };
+      const patch = async (body: Record<string, unknown>) => {
+        const current = await read();
+        return app.request(
+          url,
+          {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ifMatch: current.version, ...body }),
+          },
+          mockEnv
+        );
+      };
+      return Object.assign(patch, { read });
+    }
+
+    it.each([
+      [{ 'device_flow.min_expires_in': 900, 'device_flow.max_expires_in': 400 }, 'min_expires_in'],
+      [{ 'device_flow.min_interval': 30, 'device_flow.max_interval': 10 }, 'min_interval'],
+      [{ 'device_flow.expires_in': 400, 'device_flow.min_expires_in': 700 }, 'expires_in'],
+      [{ 'device_flow.poll_interval': 30, 'device_flow.max_interval': 10 }, 'poll_interval'],
+      [{ 'device_flow.poll_interval': 2 }, 'poll_interval'],
+    ])('refuses %j', async (set, namedKey) => {
+      const patch = await patcher();
+      const before = await patch.read();
+      const res = await patch({ set });
+
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as ApiResponse;
+      expect(body.error).toBe('validation_failed');
+      expect(body.message as string).toContain(namedKey);
+      const after = await patch.read();
+      expect(after.version).toBe(before.version);
+      expect(after.values).toEqual(before.values);
+    });
+
+    it('saves a consistent document and reads it back', async () => {
+      const patch = await patcher();
+      const res = await patch({
+        set: {
+          'device_flow.min_expires_in': 400,
+          'device_flow.max_expires_in': 1200,
+          'device_flow.expires_in': 900,
+          'device_flow.min_interval': 3,
+          'device_flow.max_interval': 90,
+          'device_flow.poll_interval': 10,
+          'device_flow.slow_down_increment': 10,
+          'device_flow.max_poll_count': 200,
+        },
+      });
+
+      expect(res.status).toBe(200);
+      const after = await patch.read();
+      expect(after.values).toMatchObject({
+        'device_flow.expires_in': 900,
+        'device_flow.poll_interval': 10,
+        'device_flow.slow_down_increment': 10,
+        'device_flow.max_poll_count': 200,
+      });
+      expect(after.sources['device_flow.expires_in']).toBe('kv');
+    });
+
+    it('checks a value against the bounds already saved, not only against the PATCH', async () => {
+      const patch = await patcher();
+      expect((await patch({ set: { 'device_flow.max_interval': 20 } })).status).toBe(200);
+
+      const res = await patch({ set: { 'device_flow.min_interval': 30 } });
+      expect(res.status).toBe(400);
+      expect(((await res.json()) as ApiResponse).message as string).toContain(
+        'device_flow.max_interval'
+      );
+      expect((await patch({ set: { 'device_flow.poll_interval': 25 } })).status).toBe(400);
+    });
+
+    it('takes a cleared key as what it inherits from the environment', async () => {
+      const patch = await patcher({ DEVICE_FLOW_MAX_INTERVAL: '10' });
+      expect(
+        (await patch({ set: { 'device_flow.poll_interval': 20, 'device_flow.max_interval': 60 } }))
+          .status
+      ).toBe(200);
+
+      const res = await patch({ clear: ['device_flow.max_interval'] });
+      expect(res.status).toBe(400);
+      expect(((await res.json()) as ApiResponse).message as string).toMatch(
+        /poll_interval \(20\).*max_interval \(10\)/
+      );
+      const after = await patch.read();
+      expect(after.values['device_flow.max_interval']).toBe(60);
+      expect(after.sources['device_flow.max_interval']).toBe('kv');
+    });
+
+    describe('a PATCH with a key that would be refused alone saves nothing', () => {
+      it.each([
+        [
+          { set: { 'device_flow.min_interval': 6, 'device_flow.poll_interval': 6.5 } },
+          'device_flow.poll_interval',
+        ],
+        [
+          { set: { 'device_flow.min_interval': 6, 'device_flow.slow_down_increment': 4 } },
+          'device_flow.slow_down_increment',
+        ],
+        [
+          { set: { 'device_flow.min_interval': 6, 'device_flow.max_poll_count': 9 } },
+          'device_flow.max_poll_count',
+        ],
+        [
+          { set: { 'device_flow.min_interval': 6, 'device_flow.expires_in': 'long' } },
+          'device_flow.expires_in',
+        ],
+        [
+          {
+            set: { 'device_flow.min_interval': 6, 'device_flow.poll_interval': 10 },
+            clear: ['device_flow.poll_interval'],
+          },
+          'device_flow.poll_interval',
+        ],
+        [
+          { set: { 'device_flow.min_interval': 6 }, disable: ['device_flow.max_interval'] },
+          'device_flow.max_interval',
+        ],
+        [
+          { set: { 'device_flow.min_interval': 6, 'device_flow.unknown_key': 1 } },
+          'device_flow.unknown_key',
+        ],
+      ])('%j', async (body, namedKey) => {
+        const patch = await patcher();
+        const before = await patch.read();
+
+        const res = await patch(body);
+
+        expect(res.status).toBe(400);
+        expect(((await res.json()) as ApiResponse).message as string).toContain(namedKey);
+        const after = await patch.read();
+        expect(after.values).toEqual(before.values);
+        expect(after.sources['device_flow.min_interval']).not.toBe('kv');
+        expect(after.version).toBe(before.version);
+      });
+    });
+  });
+
+  describe('device flow bounds on PATCH /clients/:clientId/settings/device-flow', () => {
+    const headers = { 'Content-Type': 'application/json', 'X-Tenant-Id': 'test-tenant' };
+    const tenantUrl = '/api/admin/tenants/test-tenant/settings/device-flow';
+    const clientUrl = '/api/admin/clients/client_abc/settings/device-flow';
+
+    function setup(env: Record<string, string> = {}) {
+      const mockKV = createMockKV({
+        'client:test-tenant:client_abc:metadata': JSON.stringify({ tenant_id: 'test-tenant' }),
+      });
+      const { app, mockEnv } = createTestApp({ kv: mockKV, tenantId: 'test-tenant', env });
+      const read = async (url: string) =>
+        (await (
+          await app.request(url, { method: 'GET', headers }, mockEnv)
+        ).json()) as SettingsGetResult;
+      const save = async (url: string, body: Record<string, unknown>) => {
+        const current = await read(url);
+        return app.request(
+          url,
+          {
+            method: 'PATCH',
+            headers,
+            body: JSON.stringify({ ifMatch: current.version, ...body }),
+          },
+          mockEnv
+        );
+      };
+      return {
+        tenant: (body: Record<string, unknown>) => save(tenantUrl, body),
+        client: (body: Record<string, unknown>) => save(clientUrl, body),
+        readClient: () => read(clientUrl),
+        readTenant: () => read(tenantUrl),
+      };
+    }
+
+    const tenantBounds = {
+      'device_flow.min_expires_in': 400,
+      'device_flow.max_expires_in': 900,
+      'device_flow.max_interval': 30,
+    };
+
+    it('saves a lifetime and an interval inside the tenant bounds and reads them back', async () => {
+      const api = setup();
+      expect((await api.tenant({ set: tenantBounds })).status).toBe(200);
+
+      const res = await api.client({
+        set: { 'device_flow.expires_in': 450, 'device_flow.poll_interval': 8 },
+      });
+
+      expect(res.status).toBe(200);
+      const after = await api.readClient();
+      expect(after.values).toMatchObject({
+        'device_flow.expires_in': 450,
+        'device_flow.poll_interval': 8,
+      });
+      expect(after.sources['device_flow.expires_in']).toBe('kv');
+      // the tenant's own document is untouched
+      expect((await api.readTenant()).values['device_flow.expires_in']).toBe(600);
+    });
+
+    it.each([
+      [{ 'device_flow.expires_in': 1500 }, 'device_flow.expires_in'],
+      [{ 'device_flow.expires_in': 350 }, 'device_flow.expires_in'],
+      [{ 'device_flow.poll_interval': 45 }, 'device_flow.poll_interval'],
+    ])('refuses %j against the tenant bounds and saves nothing', async (set, namedKey) => {
+      const api = setup();
+      await api.tenant({ set: tenantBounds });
+      const before = await api.readClient();
+
+      const res = await api.client({ set });
+
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as ApiResponse;
+      expect(body.error).toBe('validation_failed');
+      expect(body.message as string).toContain(namedKey);
+      const after = await api.readClient();
+      expect(after.version).toBe(before.version);
+      expect(after.values).toEqual(before.values);
+    });
+
+    it.each([
+      [{ 'device_flow.max_expires_in': 1200 }, 'device_flow.max_expires_in'],
+      [{ 'device_flow.min_expires_in': 300 }, 'device_flow.min_expires_in'],
+      [{ 'device_flow.max_interval': 60 }, 'device_flow.max_interval'],
+    ])('refuses %j: a client can only narrow the tenant bounds', async (set, namedKey) => {
+      const api = setup();
+      await api.tenant({ set: tenantBounds });
+      const before = await api.readClient();
+
+      const res = await api.client({ set });
+
+      expect(res.status).toBe(400);
+      expect(((await res.json()) as ApiResponse).message as string).toContain(namedKey);
+      expect((await api.readClient()).version).toBe(before.version);
+    });
+
+    it('accepts bounds that narrow the tenant bounds', async () => {
+      const api = setup();
+      await api.tenant({ set: tenantBounds });
+
+      const res = await api.client({
+        set: {
+          'device_flow.min_expires_in': 500,
+          'device_flow.max_expires_in': 600,
+          'device_flow.max_interval': 20,
+        },
+      });
+
+      expect(res.status).toBe(200);
+      expect((await api.readClient()).values['device_flow.max_expires_in']).toBe(600);
+    });
+
+    it('checks the relations of the PATCH itself', async () => {
+      const api = setup();
+      const res = await api.client({
+        set: { 'device_flow.min_interval': 20, 'device_flow.max_interval': 10 },
+      });
+
+      expect(res.status).toBe(400);
+      expect(((await res.json()) as ApiResponse).message as string).toContain(
+        'device_flow.min_interval'
+      );
+    });
+
+    it('refuses the whole patch when a key of it would be refused alone, and saves nothing', async () => {
+      const api = setup();
+      const before = await api.readClient();
+
+      const res = await api.client({
+        set: { 'device_flow.max_poll_count': 200, 'device_flow.slow_down_increment': 4 },
+      });
+
+      expect(res.status).toBe(400);
+      expect(((await res.json()) as ApiResponse).message as string).toContain(
+        'device_flow.slow_down_increment'
+      );
+      const after = await api.readClient();
+      expect(after.version).toBe(before.version);
+      expect(after.sources['device_flow.max_poll_count']).not.toBe('kv');
+    });
+
+    it('takes a cleared key as the tenant value', async () => {
+      const api = setup();
+      await api.tenant({ set: { 'device_flow.max_interval': 30 } });
+      expect(
+        (
+          await api.client({
+            set: { 'device_flow.max_interval': 20, 'device_flow.poll_interval': 25 },
+          })
+        ).status
+      ).toBe(400);
+      expect(
+        (
+          await api.client({
+            set: { 'device_flow.max_interval': 25, 'device_flow.poll_interval': 25 },
+          })
+        ).status
+      ).toBe(200);
+
+      // Cleared, the client's maximum is the tenant's 30, which still fits
+      expect((await api.client({ clear: ['device_flow.max_interval'] })).status).toBe(200);
+      const after = await api.readClient();
+      expect(after.values['device_flow.max_interval']).toBe(30);
+      expect(after.sources['device_flow.max_interval']).toBe('tenant');
+    });
+  });
+
   describe('All Category Types', () => {
     // Tenant-level categories
     const tenantCategories = [
