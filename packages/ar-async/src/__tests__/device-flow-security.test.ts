@@ -12,6 +12,7 @@ import { Hono } from 'hono';
 import { deviceAuthorizationHandler } from '../device-authorization';
 import { deviceVerifyApiHandler } from '../device-verify-api';
 import type { Env } from '@authrim/ar-lib-core';
+import { settledAnswer } from './real-user-code-limiter';
 
 // Mock getClient and logger at module level - must use vi.hoisted for proper hoisting
 const mockGetClient = vi.hoisted(() => vi.fn());
@@ -68,7 +69,12 @@ describe('Device Flow Security', () => {
       USER_CODE_RATE_LIMITER: {
         idFromName: vi.fn().mockReturnValue('rate-limiter-id'),
         get: vi.fn().mockReturnValue({
-          fetch: vi.fn(async () => Response.json({ blocked: false })),
+          fetch: vi.fn(async (request: Request) => {
+            const path = new URL(request.url).pathname;
+            return path === '/reserve'
+              ? Response.json({ blocked: false, reservation_id: 'r1' })
+              : settledAnswer(path);
+          }),
         }),
       } as any,
     };
@@ -228,11 +234,13 @@ describe('Device Flow Security', () => {
       const mockRateLimiter = {
         fetch: vi.fn().mockImplementation(async (request: Request) => {
           const url = new URL(request.url);
-          if (url.pathname === '/check') {
-            return new Response(JSON.stringify({ blocked: false }), { status: 200 });
+          if (url.pathname === '/reserve') {
+            return new Response(JSON.stringify({ blocked: false, reservation_id: 'r1' }), {
+              status: 200,
+            });
           } else if (url.pathname === '/record-failure') {
             recordFailureCalls.push(request);
-            return new Response(JSON.stringify({ success: true }), { status: 200 });
+            return settledAnswer(url.pathname);
           }
           return new Response('Not found', { status: 404 });
         }),
@@ -345,8 +353,8 @@ describe('Device Flow Security', () => {
           if (url.pathname === '/get-by-user-code') {
             const body = (await request.json()) as any;
             receivedUserCodes.push(body.user_code);
-            // Return success with normalized code (WDJBMJHT -> WDJB-MJHT)
-            if (body.user_code === 'WDJB-MJHT') {
+            // Return success with the canonical code (wdjbmjht -> WDJBMJHT)
+            if (body.user_code === 'WDJBMJHT') {
               return new Response(
                 JSON.stringify({
                   device_code: 'device-123',
@@ -377,7 +385,7 @@ describe('Device Flow Security', () => {
       const mockContext = {
         req: {
           json: vi.fn().mockResolvedValue({
-            // No hyphen, lowercase - should be normalized to WDJB-MJHT
+            // No hyphen, lowercase - should be normalized to WDJBMJHT
             user_code: 'wdjbmjht',
           }),
           header: vi.fn().mockReturnValue('192.168.1.1'),
@@ -390,9 +398,9 @@ describe('Device Flow Security', () => {
 
       await deviceVerifyApiHandler(mockContext);
 
-      // Verify the store was called with normalized code (uppercase with hyphen)
+      // Verify the store was called with the canonical code (upper case, no separators)
       expect(receivedUserCodes.length).toBeGreaterThan(0);
-      expect(receivedUserCodes[0]).toBe('WDJB-MJHT');
+      expect(receivedUserCodes[0]).toBe('WDJBMJHT');
     });
   });
 });

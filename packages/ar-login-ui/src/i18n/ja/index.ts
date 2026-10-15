@@ -413,7 +413,7 @@ const ja = {
 	device_subtitle: 'デバイスに表示されたコードを入力してください',
 	device_codeLabel: '認証コード',
 	device_codePlaceholder: 'XXXX-XXXX',
-	device_codeHint: 'デバイスに表示されている8文字のコードを入力してください（形式: XXXX-XXXX）',
+	device_codeHint: 'デバイスに表示されたコードを入力してください',
 	device_verifyButton: 'コードを確認',
 	device_confirmTitle: 'デバイスを承認',
 	device_requestedPermissions: 'リクエストされた権限',

@@ -15,6 +15,7 @@
 	import { Button, Card, Alert } from '$lib/components';
 	import { LL } from '$i18n/i18n-svelte';
 	import { isValidImageUrl, isValidLinkUrl } from '$lib/utils/url-validation';
+	import { isUserCodeComplete } from '$lib/utils/device-user-code';
 
 	type Props = {
 		step: 'input' | 'verified';
@@ -25,7 +26,9 @@
 		loading?: boolean;
 		deviceInfo?: DeviceInfo | null;
 		onCodeInput: (event: Event) => void;
-		onKeyPress: (event: KeyboardEvent) => void;
+		onKeyDown: (event: KeyboardEvent) => void;
+		/** An IME composition opened in the input: the code is being replaced. */
+		onCompositionStart?: () => void;
 		onVerify: () => void;
 		onApprove: () => void;
 		onDeny: () => void;
@@ -41,7 +44,8 @@
 		loading = false,
 		deviceInfo = null,
 		onCodeInput,
-		onKeyPress,
+		onKeyDown,
+		onCompositionStart,
 		onVerify,
 		onApprove,
 		onDeny,
@@ -85,11 +89,14 @@
 				type="text"
 				class="auth-code-input"
 				placeholder={$LL.device_codePlaceholder()}
-				maxlength="9"
+				maxlength="32"
 				value={userCode}
 				oninput={onCodeInput}
-				onkeypress={onKeyPress}
+				oncompositionstart={onCompositionStart}
+				oncompositionend={onCodeInput}
+				onkeydown={onKeyDown}
 				autocomplete="off"
+				autocapitalize="characters"
 				spellcheck="false"
 				aria-describedby="device-code-hint"
 			/>
@@ -102,7 +109,7 @@
 			variant="primary"
 			class="w-full"
 			loading={verifying}
-			disabled={userCode.replace(/-/g, '').length !== 8}
+			disabled={!isUserCodeComplete(userCode)}
 			onclick={onVerify}
 		>
 			{$LL.device_verifyButton()}

@@ -37,6 +37,7 @@ vi.mock('../authenticated-session', async () => {
 });
 
 import { deviceLookupApiHandler } from '../device-lookup-api';
+import { settledAnswer } from './real-user-code-limiter';
 
 function pendingMetadata(overrides: Partial<DeviceCodeMetadata> = {}): DeviceCodeMetadata {
   return {
@@ -114,8 +115,8 @@ describe('device code lookup API', () => {
     });
     mocks.limiterFetch.mockImplementation(async (input: Request) => {
       const path = new URL(input.url).pathname;
-      if (path === '/check') return Response.json({ blocked: false });
-      return Response.json({ success: true });
+      if (path === '/reserve') return Response.json({ blocked: false, reservation_id: 'r1' });
+      return settledAnswer(path);
     });
   });
 
@@ -133,7 +134,7 @@ describe('device code lookup API', () => {
     });
     const lookup = mocks.storeFetch.mock.calls[0][0] as Request;
     expect(lookup.headers.get('X-Authrim-Tenant-Id')).toBe('tenant-a');
-    await expect(lookup.json()).resolves.toEqual({ user_code: 'WDJB-MJHT' });
+    await expect(lookup.json()).resolves.toEqual({ user_code: 'WDJBMJHT' });
     expect(mocks.getClient).toHaveBeenCalledWith(expect.anything(), 'tenant-a', 'client-1', {});
   });
 
@@ -180,15 +181,66 @@ describe('device code lookup API', () => {
   it.each([
     [{}, 'invalid_request', 'user_code is required'],
     [{ user_code: 42 }, 'invalid_request', 'user_code is required'],
-    [{ user_code: 'invalid' }, 'invalid_code', 'Invalid user code format'],
+    [{ user_code: 'abc' }, 'invalid_code', 'Invalid user code format'],
+    [{ user_code: 'ABCD-EFGH-JKMN-PQRS-T' }, 'invalid_code', 'Invalid user code format'],
+    [{ user_code: 'WDJB_MJHT' }, 'invalid_code', 'Invalid user code format'],
+    [{ user_code: 'WDJB-MJH%' }, 'invalid_code', 'Invalid user code format'],
+    [{ user_code: '<b>WDJB</b>' }, 'invalid_code', 'Invalid user code format'],
+    [{ user_code: '----' }, 'invalid_code', 'Invalid user code format'],
   ])('rejects malformed input before store access', async (body, error, description) => {
     const response = await request(body);
 
     expect(response.status).toBe(400);
-    await expect(response.json()).resolves.toMatchObject({
+    const answer = await response.json();
+    expect(answer).toMatchObject({
       error,
       error_description: expect.stringContaining(description),
     });
+    // neutral wording: no fixed format is promised, the tenant's setting decides the length
+    expect(JSON.stringify(answer)).not.toContain('XXXX-XXXX');
+    expect(mocks.storeFetch).not.toHaveBeenCalled();
+    // a malformed code is no guess at a real one: it is refused before a guess is reserved
+    expect(mocks.limiterFetch).not.toHaveBeenCalled();
+  });
+
+  describe('accepts a well-formed code in the form the device showed it, or typed', () => {
+    it.each([
+      ['WDJB-MJHT', 'WDJBMJHT'],
+      ['wdjb-mjht', 'WDJBMJHT'],
+      ['wdjb mjht', 'WDJBMJHT'],
+      [' WDJB\u2013MJHT ', 'WDJBMJHT'],
+      ['ABCD', 'ABCD'],
+      ['abcd-efgh-jkm', 'ABCDEFGHJKM'],
+      ['1234-5678-901', '12345678901'],
+      ['ABCD-EFGH-JKMN-PQRS', 'ABCDEFGHJKMNPQRS'],
+      // digits a BASE31 tenant never issues: the alphabet is the store's business
+      ['0123-4567', '01234567'],
+    ])('%s', async (typed, canonical) => {
+      const response = await request({ user_code: typed });
+
+      expect(response.status).toBe(200);
+      const lookup = mocks.storeFetch.mock.calls[0][0] as Request;
+      await expect(lookup.json()).resolves.toEqual({ user_code: canonical });
+    });
+  });
+
+  it('leaves it to the store whether a code of another length exists, and counts a miss', async () => {
+    mocks.storeFetch.mockResolvedValue(Response.json(null));
+
+    const response = await request({ user_code: '1234-5678-901' });
+
+    expect(response.status).toBe(404);
+    expect(
+      mocks.limiterFetch.mock.calls.map(([input]) => new URL((input as Request).url).pathname)
+    ).toEqual(['/reserve', '/record-failure']);
+  });
+
+  it('keeps the per-IP block for a client that has used up its failures', async () => {
+    mocks.limiterFetch.mockResolvedValue(Response.json({ blocked: true, retry_after: 90 }));
+
+    const response = await request({ user_code: '1234-5678-901' });
+
+    expect(response.status).toBe(429);
     expect(mocks.storeFetch).not.toHaveBeenCalled();
   });
 
@@ -201,16 +253,105 @@ describe('device code lookup API', () => {
     await expect(response.json()).resolves.toMatchObject({ error: 'invalid_code' });
     const limiterCalls = mocks.limiterFetch.mock.calls.map(([input]) => input as Request);
     expect(limiterCalls.map((input) => new URL(input.url).pathname)).toEqual([
-      '/check',
+      '/reserve',
       '/record-failure',
     ]);
-    await expect(limiterCalls[1].json()).resolves.toEqual({ ip: '203.0.113.9' });
+    await expect(limiterCalls[1].json()).resolves.toEqual({
+      ip: '203.0.113.9',
+      reservation_id: 'r1',
+    });
+  });
+
+  it.each([
+    ['does not know /reserve (404)', () => new Response('Not found', { status: 404 })],
+    ['allows a guess without a reservation id', () => Response.json({ blocked: false })],
+    ['answers something unexpected', () => Response.json({ ok: true })],
+  ])('refuses to read codes when the limiter %s', async (_label, answer) => {
+    mocks.limiterFetch.mockImplementation(async () => answer());
+
+    const response = await request({ user_code: 'WDJB-MJHT' });
+
+    expect(response.status).toBe(503);
+    await expect(response.json()).resolves.toMatchObject({ error: 'temporarily_unavailable' });
+    expect(mocks.storeFetch).not.toHaveBeenCalled();
+    // no fallback to another route
+    expect(
+      mocks.limiterFetch.mock.calls.map(([input]) => new URL((input as Request).url).pathname)
+    ).toEqual(['/reserve']);
+  });
+
+  describe('reads the answer to a settle strictly: anything but the exact answer discloses nothing', () => {
+    const answers: Array<[string, Record<string, unknown>]> = [
+      ['no settled flag', { success: true }],
+      ['ignored (another address)', { success: true, ignored: true }],
+      ['no expired flag', { settled: true, outcome: 'OUTCOME' }],
+      ['expired as a string', { settled: true, expired: 'false', outcome: 'OUTCOME' }],
+      ['expired as a string (true)', { settled: true, expired: 'true', outcome: 'OUTCOME' }],
+      ['expired null', { settled: true, expired: null, outcome: 'OUTCOME' }],
+      ['settled as a string', { settled: 'true', expired: false, outcome: 'OUTCOME' }],
+      ['no outcome', { settled: true, expired: false }],
+      ['the outcome of the other call', { settled: true, expired: false, outcome: 'OTHER' }],
+    ];
+
+    it.each(answers)('a miss, with %s', async (_label, answer) => {
+      mocks.storeFetch.mockResolvedValue(Response.json(null));
+      mocks.limiterFetch.mockImplementation(async (input: Request) =>
+        new URL(input.url).pathname === '/reserve'
+          ? Response.json({ blocked: false, reservation_id: 'r1' })
+          : Response.json(
+              JSON.parse(
+                JSON.stringify(answer).replace('OUTCOME', 'failure').replace('OTHER', 'released')
+              )
+            )
+      );
+
+      const response = await request({ user_code: 'WDJB-MJHT' });
+
+      expect(response.status).toBe(503);
+      expect(await response.text()).not.toContain('invalid_code');
+      // an answer of the wrong shape is reported, unlike a lapse, which is an expected outcome
+      expect(mocks.logger.error).toHaveBeenCalledWith(
+        'User code rate limiter answered a settle with an unexpected body',
+        {}
+      );
+    });
+
+    it.each(answers)('a pending code, with %s', async (_label, answer) => {
+      mocks.limiterFetch.mockImplementation(async (input: Request) =>
+        new URL(input.url).pathname === '/reserve'
+          ? Response.json({ blocked: false, reservation_id: 'r1' })
+          : Response.json(
+              JSON.parse(
+                JSON.stringify(answer).replace('OUTCOME', 'released').replace('OTHER', 'failure')
+              )
+            )
+      );
+
+      const response = await request({ user_code: 'WDJB-MJHT' });
+
+      expect(response.status).toBe(503);
+      expect(await response.text()).not.toContain('client_id');
+    });
+
+    it('accepts exactly the answer for a live reservation, and treats expired:true as lapsed', async () => {
+      mocks.storeFetch.mockImplementation(async () => Response.json(null));
+      expect((await request({ user_code: 'WDJB-MJHT' })).status).toBe(404);
+
+      mocks.limiterFetch.mockImplementation(async (input: Request) =>
+        new URL(input.url).pathname === '/reserve'
+          ? Response.json({ blocked: false, reservation_id: 'r1' })
+          : Response.json({ settled: true, expired: true, outcome: 'failure' })
+      );
+      expect((await request({ user_code: 'WDJB-MJHT' })).status).toBe(503);
+      expect(mocks.logger.error).not.toHaveBeenCalled();
+    });
   });
 
   it('refuses to answer when the rate limiter cannot count a failure', async () => {
     mocks.storeFetch.mockResolvedValue(Response.json(null));
     mocks.limiterFetch.mockImplementation(async (input: Request) => {
-      if (new URL(input.url).pathname === '/check') return Response.json({ blocked: false });
+      if (new URL(input.url).pathname === '/reserve')
+        return Response.json({ blocked: false, reservation_id: 'r1' });
       throw new Error('limiter unavailable');
     });
 
@@ -218,6 +359,11 @@ describe('device code lookup API', () => {
 
     expect(response.status).toBe(503);
     await expect(response.json()).resolves.toMatchObject({ error: 'temporarily_unavailable' });
+    // the reservation was valid: the code was looked up, and only the miss could not be counted
+    expect(mocks.storeFetch).toHaveBeenCalledTimes(1);
+    expect(
+      mocks.limiterFetch.mock.calls.map(([input]) => new URL((input as Request).url).pathname)
+    ).toEqual(['/reserve', '/record-failure']);
   });
 
   it.each([
@@ -239,7 +385,7 @@ describe('device code lookup API', () => {
       await expect(response.json()).resolves.toMatchObject({ error: 'temporarily_unavailable' });
       expect(
         mocks.limiterFetch.mock.calls.map(([input]) => new URL((input as Request).url).pathname)
-      ).toEqual(['/check']);
+      ).toEqual(['/reserve', '/release']);
     }
   );
 

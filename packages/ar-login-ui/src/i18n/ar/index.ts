@@ -376,7 +376,7 @@ const ar = createTranslation({
 	device_subtitle: 'أدخل الرمز الظاهر على جهازك',
 	device_codeLabel: 'رمز التحقق',
 	device_codePlaceholder: 'XXXX-XXXX',
-	device_codeHint: 'أدخل الرمز المكوّن من 8 أحرف الظاهر على جهازك (التنسيق: XXXX-XXXX)',
+	device_codeHint: 'أدخل الرمز الظاهر على جهازك',
 	device_verifyButton: 'التحقق من الرمز',
 	device_confirmTitle: 'تفويض الجهاز',
 	device_requestedPermissions: 'الأذونات المطلوبة',

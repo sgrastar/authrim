@@ -694,7 +694,7 @@ describe('DeviceCodeStore user code uniqueness', () => {
     expect(response.status).toBe(409);
     expect(await response.json()).toEqual({ error: 'user_code_conflict' });
     expect(storage.values.has('d:device-2')).toBe(false);
-    expect(storage.values.get('u:ABCD-EFGH')).toBe('device-1');
+    expect(storage.values.get('u:ABCDEFGH')).toBe('device-1');
     const holder = await rpc(store, '/get-by-user-code', { user_code: 'ABCD-EFGH' });
     expect(await holder.json()).toMatchObject({ device_code: 'device-1', client_id: OWNER });
   });
@@ -721,7 +721,7 @@ describe('DeviceCodeStore user code uniqueness', () => {
     advance(600_001);
 
     expect((await conflict(store, { device_code: 'device-2' })).status).toBe(200);
-    expect(storage.values.get('u:ABCD-EFGH')).toBe('device-2');
+    expect(storage.values.get('u:ABCDEFGH')).toBe('device-2');
     expect(storage.values.has('d:device-1')).toBe(false);
   });
 
@@ -735,10 +735,10 @@ describe('DeviceCodeStore user code uniqueness', () => {
 
   it('ignores a mapping whose device code is gone', async () => {
     const { store, storage } = await deviceDriver.create();
-    storage.values.set('u:ABCD-EFGH', 'ghost-device');
+    storage.values.set('u:ABCDEFGH', 'ghost-device');
 
     expect((await conflict(store, { device_code: 'device-2' })).status).toBe(200);
-    expect(storage.values.get('u:ABCD-EFGH')).toBe('device-2');
+    expect(storage.values.get('u:ABCDEFGH')).toBe('device-2');
   });
 
   it('lets only one of two simultaneous stores of the same user code in', async () => {

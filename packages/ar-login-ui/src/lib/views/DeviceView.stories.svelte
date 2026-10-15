@@ -15,7 +15,7 @@
 			step: 'input',
 			userCode: '',
 			onCodeInput: fn(),
-			onKeyPress: fn(),
+			onKeyDown: fn(),
 			onVerify: fn(),
 			onApprove: fn(),
 			onDeny: fn(),
@@ -50,6 +50,10 @@
 </Story>
 
 <Story name="Code complete" args={{ userCode: 'ABCD-1234' }}>
+	{#snippet template(args)}{@render page(args)}{/snippet}
+</Story>
+
+<Story name="Longer code (tenant setting)" args={{ userCode: 'ABCD-EFGH-JKM' }}>
 	{#snippet template(args)}{@render page(args)}{/snippet}
 </Story>
 

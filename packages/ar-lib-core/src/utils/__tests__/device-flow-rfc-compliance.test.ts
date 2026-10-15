@@ -216,19 +216,15 @@ describe('RFC 8628 Compliance Tests', () => {
       // Mixed case should be accepted
       expect(validateUserCodeFormat('WdJb-MjHt')).toBe(true);
 
-      // Normalization should uppercase
-      expect(normalizeUserCode('wdjb-mjht')).toBe(userCode);
+      // Normalization should uppercase (the canonical form has no separators)
+      expect(normalizeUserCode('wdjb-mjht')).toBe(userCode.replace('-', ''));
     });
 
     it('[RFC 8628 §6.1] User code validation SHOULD be lenient with hyphens', () => {
-      // Without hyphen
-      expect(normalizeUserCode('WDJBMJHT')).toBe('WDJB-MJHT');
-
-      // With hyphen
-      expect(normalizeUserCode('WDJB-MJHT')).toBe('WDJB-MJHT');
-
-      // With extra hyphens
-      expect(normalizeUserCode('W-D-J-B-M-J-H-T')).toBe('WDJB-MJHT');
+      // Without hyphen, with hyphen and with extra hyphens are the same code
+      expect(normalizeUserCode('WDJBMJHT')).toBe('WDJBMJHT');
+      expect(normalizeUserCode('WDJB-MJHT')).toBe('WDJBMJHT');
+      expect(normalizeUserCode('W-D-J-B-M-J-H-T')).toBe('WDJBMJHT');
     });
   });
 

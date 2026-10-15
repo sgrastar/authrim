@@ -3097,6 +3097,86 @@ describe('Settings API v2', () => {
       expect(after.sources['device_flow.max_interval']).toBe('kv');
     });
 
+    describe('the user code charset and length (entropy floor of 34 bits)', () => {
+      const CHARSET = 'device_flow.user_code_charset';
+      const LENGTH = 'device_flow.user_code_length';
+
+      it('reads BASE31 x 8 when nothing is saved', async () => {
+        const patch = await patcher();
+        const before = await patch.read();
+
+        expect(before.values[CHARSET]).toBe('BASE31');
+        expect(before.values[LENGTH]).toBe(8);
+      });
+
+      it.each([
+        [{ [CHARSET]: 'NUMERIC', [LENGTH]: 10 }, /at least 11 characters with NUMERIC/],
+        [{ [CHARSET]: 'NUMERIC' }, /user_code_length \(8\).*at least 11 characters with NUMERIC/],
+        [{ [CHARSET]: 'BASE20', [LENGTH]: 7 }, /at least 8 characters with BASE20/],
+        [{ [LENGTH]: 6 }, /at least 7 characters with BASE31/],
+        [{ [CHARSET]: 'HEX' }, /must be one of: BASE31, BASE20, NUMERIC/],
+        [{ [LENGTH]: 17 }, /user_code_length/],
+      ])('refuses %j, names the minimum, and the read-back is unchanged', async (set, message) => {
+        const patch = await patcher();
+        const before = await patch.read();
+
+        const res = await patch({ set });
+
+        expect(res.status).toBe(400);
+        const body = (await res.json()) as ApiResponse;
+        expect(body.error).toBe('validation_failed');
+        expect(body.message as string).toMatch(message);
+        const after = await patch.read();
+        expect(after.version).toBe(before.version);
+        expect(after.values).toEqual(before.values);
+        expect(after.sources[CHARSET]).not.toBe('kv');
+        expect(after.sources[LENGTH]).not.toBe('kv');
+      });
+
+      it('saves a pair at or above the floor, in one request, and reads it back', async () => {
+        const patch = await patcher();
+
+        expect((await patch({ set: { [CHARSET]: 'NUMERIC', [LENGTH]: 11 } })).status).toBe(200);
+
+        const after = await patch.read();
+        expect(after.values).toMatchObject({ [CHARSET]: 'NUMERIC', [LENGTH]: 11 });
+        expect(after.sources[CHARSET]).toBe('kv');
+      });
+
+      it('refuses a partial patch that would leave a pair below the floor, and keeps the saved pair', async () => {
+        const patch = await patcher();
+        expect((await patch({ set: { [CHARSET]: 'NUMERIC', [LENGTH]: 12 } })).status).toBe(200);
+        const before = await patch.read();
+
+        // the length alone falls under the NUMERIC floor
+        const res = await patch({ set: { [LENGTH]: 10, 'device_flow.max_poll_count': 200 } });
+
+        expect(res.status).toBe(400);
+        const after = await patch.read();
+        expect(after.values).toEqual(before.values);
+        expect(after.version).toBe(before.version);
+        expect(after.values[LENGTH]).toBe(12);
+        expect(after.values['device_flow.max_poll_count']).not.toBe(200);
+      });
+
+      it('takes a cleared key as what it inherits (an environment variable)', async () => {
+        const patch = await patcher({ DEVICE_FLOW_USER_CODE_LENGTH: '8' });
+        expect((await patch({ set: { [CHARSET]: 'NUMERIC', [LENGTH]: 12 } })).status).toBe(200);
+
+        const res = await patch({ clear: [LENGTH] });
+
+        expect(res.status).toBe(400);
+        expect(((await res.json()) as ApiResponse).message as string).toMatch(
+          /user_code_length \(8\).*at least 11 characters with NUMERIC/
+        );
+        expect((await patch.read()).values[LENGTH]).toBe(12);
+        // clearing both is fine: BASE31 x 8 (the environment length) is above the floor
+        expect((await patch({ clear: [CHARSET, LENGTH] })).status).toBe(200);
+        const cleared = await patch.read();
+        expect(cleared.values).toMatchObject({ [CHARSET]: 'BASE31', [LENGTH]: 8 });
+      });
+    });
+
     describe('a PATCH with a key that would be refused alone saves nothing', () => {
       it.each([
         [
@@ -3255,6 +3335,35 @@ describe('Settings API v2', () => {
 
       expect(res.status).toBe(200);
       expect((await api.readClient()).values['device_flow.max_expires_in']).toBe(600);
+    });
+
+    it.each([
+      [{ 'device_flow.user_code_charset': 'BASE31' }, 'device_flow.user_code_charset'],
+      [{ 'device_flow.user_code_length': 12 }, 'device_flow.user_code_length'],
+    ])('refuses %j: the user code format is a tenant setting', async (set, namedKey) => {
+      const api = setup();
+      const before = await api.readClient();
+
+      const res = await api.client({ set });
+
+      expect(res.status).toBe(400);
+      expect(((await res.json()) as ApiResponse).message as string).toContain(namedKey);
+      const after = await api.readClient();
+      expect(after.version).toBe(before.version);
+      expect(after.values).toEqual(before.values);
+    });
+
+    it('shows a client the tenant user code format', async () => {
+      // the tenant sets BASE20 x 9; the client has no value of its own for these keys
+      const api = setup();
+      await api.tenant({
+        set: { 'device_flow.user_code_charset': 'BASE20', 'device_flow.user_code_length': 9 },
+      });
+
+      const client = await api.readClient();
+
+      expect(client.values['device_flow.user_code_charset']).toBe('BASE20');
+      expect(client.values['device_flow.user_code_length']).toBe(9);
     });
 
     it('checks the relations of the PATCH itself', async () => {

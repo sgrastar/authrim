@@ -391,7 +391,7 @@ const translation = {
 	device_subtitle: 'अपने डिवाइस पर दिखाए गए कोड दर्ज करें',
 	device_codeLabel: 'सत्यापन कोड',
 	device_codePlaceholder: 'XXXX-XXXX',
-	device_codeHint: 'अपने डिवाइस से 8-वर्ण कोड दर्ज करें (फॉर्मेटः XXXX-XXXX)',
+	device_codeHint: 'अपने डिवाइस पर दिखाया गया कोड दर्ज करें',
 	device_verifyButton: 'कोड सत्यापित करें',
 	device_confirmTitle: 'डिवाइस को अधिकृत करें',
 	device_requestedPermissions: 'अनुरोधित अनुमतियाँ',

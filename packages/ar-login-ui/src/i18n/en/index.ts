@@ -408,7 +408,7 @@ const en = {
 	device_subtitle: 'Enter the code shown on your device',
 	device_codeLabel: 'Verification code',
 	device_codePlaceholder: 'XXXX-XXXX',
-	device_codeHint: 'Enter the 8-character code from your device (format: XXXX-XXXX)',
+	device_codeHint: 'Enter the code shown on your device',
 	device_verifyButton: 'Verify code',
 	device_confirmTitle: 'Authorize device',
 	device_requestedPermissions: 'Requested permissions',

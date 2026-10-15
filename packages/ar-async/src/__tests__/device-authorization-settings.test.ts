@@ -256,6 +256,117 @@ describe('/device_authorization with device flow settings', () => {
     });
   });
 
+  describe('the user code format (tenant settings)', () => {
+    const KINDS = {
+      BASE31: /^[23456789ABCDEFGHJKMNPQRSTUVWXYZ]+$/,
+      BASE20: /^[BCDFGHJKLMNPQRSTVWXZ]+$/,
+      NUMERIC: /^[0-9]+$/,
+    } as const;
+
+    it('is 8 characters of BASE31 with a hyphen after the fourth when nothing is saved', async () => {
+      const { body } = await post();
+
+      expect(body.user_code).toMatch(
+        /^[23456789ABCDEFGHJKMNPQRSTUVWXYZ]{4}-[23456789ABCDEFGHJKMNPQRSTUVWXYZ]{4}$/
+      );
+      expect(onlyStored().user_code).toBe(body.user_code);
+      expect(new URL(body.verification_uri_complete).searchParams.get('user_code')).toBe(
+        body.user_code
+      );
+    });
+
+    it.each([
+      ['NUMERIC', 12, /^\d{4}-\d{4}-\d{4}$/],
+      ['NUMERIC', 11, /^\d{4}-\d{4}-\d{3}$/],
+      ['BASE20', 8, /^[BCDFGHJKLMNPQRSTVWXZ]{4}-[BCDFGHJKLMNPQRSTVWXZ]{4}$/],
+      ['BASE20', 16, /^([BCDFGHJKLMNPQRSTVWXZ]{4}-){3}[BCDFGHJKLMNPQRSTVWXZ]{4}$/],
+      ['BASE31', 7, /^[23456789ABCDEFGHJKMNPQRSTUVWXYZ]{4}-[23456789ABCDEFGHJKMNPQRSTUVWXYZ]{3}$/],
+    ] as const)('issues %s x %i as the tenant set it', async (charset, length, shape) => {
+      documents[TENANT_KEY] = {
+        'device_flow.user_code_charset': charset,
+        'device_flow.user_code_length': length,
+      };
+
+      const { response, body } = await post();
+
+      expect(response.status).toBe(200);
+      // in the response, in the stored record, and in the link that carries it
+      expect(body.user_code).toMatch(shape);
+      expect(onlyStored().user_code).toBe(body.user_code);
+      expect(new URL(body.verification_uri_complete).searchParams.get('user_code')).toBe(
+        body.user_code
+      );
+      const canonical = body.user_code.replace(/-/g, '');
+      expect(canonical).toHaveLength(length);
+      expect(canonical).toMatch(KINDS[charset]);
+    });
+
+    it('keeps the default pair when the stored pair is below the entropy floor', async () => {
+      documents[TENANT_KEY] = {
+        'device_flow.user_code_charset': 'NUMERIC',
+        'device_flow.user_code_length': 10,
+      };
+
+      const { body } = await post();
+
+      expect(body.user_code).toMatch(
+        /^[23456789ABCDEFGHJKMNPQRSTUVWXYZ]{4}-[23456789ABCDEFGHJKMNPQRSTUVWXYZ]{4}$/
+      );
+    });
+
+    it('does not take the format from a client document', async () => {
+      documents[CLIENT_KEY] = {
+        'device_flow.user_code_charset': 'NUMERIC',
+        'device_flow.user_code_length': 16,
+      };
+
+      const { body } = await post();
+
+      expect(body.user_code).toMatch(
+        /^[23456789ABCDEFGHJKMNPQRSTUVWXYZ]{4}-[23456789ABCDEFGHJKMNPQRSTUVWXYZ]{4}$/
+      );
+    });
+
+    it('can come from the environment, as a pair', async () => {
+      const { body } = await post(undefined, {
+        DEVICE_FLOW_USER_CODE_CHARSET: 'NUMERIC',
+        DEVICE_FLOW_USER_CODE_LENGTH: '12',
+      });
+      expect(body.user_code).toMatch(/^\d{4}-\d{4}-\d{4}$/);
+    });
+
+    it('falls back to the default pair for an environment pair below the floor', async () => {
+      const { body } = await post(undefined, {
+        DEVICE_FLOW_USER_CODE_CHARSET: 'NUMERIC',
+        DEVICE_FLOW_USER_CODE_LENGTH: '8',
+      });
+      expect(body.user_code).toMatch(
+        /^[23456789ABCDEFGHJKMNPQRSTUVWXYZ]{4}-[23456789ABCDEFGHJKMNPQRSTUVWXYZ]{4}$/
+      );
+    });
+
+    it('redraws in the same format after a conflict', async () => {
+      documents[TENANT_KEY] = {
+        'device_flow.user_code_charset': 'NUMERIC',
+        'device_flow.user_code_length': 12,
+      };
+      let attempts = 0;
+      storeFetch.mockImplementation(async (request: Request) => {
+        stored.push((await request.json()) as DeviceCodeMetadata);
+        return ++attempts < 3
+          ? Response.json({ error: 'user_code_conflict' }, { status: 409 })
+          : Response.json({ success: true });
+      });
+
+      const { response, body } = await post();
+
+      expect(response.status).toBe(200);
+      expect(stored).toHaveLength(3);
+      for (const record of stored) expect(record.user_code).toMatch(/^\d{4}-\d{4}-\d{4}$/);
+      expect(body.user_code).toBe(stored[2].user_code);
+    });
+  });
+
   describe('settings that cannot be read', () => {
     it('stop the request with a retryable 503 and store nothing', async () => {
       documents[TENANT_KEY] = new Error('KV unavailable');

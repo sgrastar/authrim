@@ -366,7 +366,7 @@ const translation = {
 	device_subtitle: 'በመሣሪያዎ ላይ የሚታየውን ኮድ ያስገቡ',
 	device_codeLabel: 'የማረጋገጫ ኮድ',
 	device_codePlaceholder: 'XXXX-XXXX',
-	device_codeHint: 'መሣሪያዎ ላይ የ 8 ቁምፊ ኮድ ያስገቡ (ቅጽ: XXXX-XXXX)',
+	device_codeHint: 'በመሣሪያዎ ላይ የሚታየውን ኮድ ያስገቡ',
 	device_verifyButton: 'ኮዱን ያረጋግጡ',
 	device_confirmTitle: 'መሣሪያውን ፍቀድ',
 	device_requestedPermissions: 'የተጠየቁ ፍቃዶች',

@@ -24,7 +24,7 @@ import { getAuthenticatedAsyncUser } from './authenticated-session';
 import {
   USER_CODE_GUARD_UNAVAILABLE,
   checkUserCodeRateLimit,
-  lookUpDeviceCodeByUserCode,
+  lookUpAndSettle,
   userCodeBlockedResponse,
 } from './user-code-guard';
 
@@ -36,7 +36,7 @@ import {
  *   POST /api/devices/lookup
  *   Content-Type: application/json
  *
- *   { "user_code": "WDJB-MJHT" }
+ *   { "user_code": "WDJB-MJHT" }   (any case; hyphens and spaces are optional)
  *
  * Response:
  *   Success (200):
@@ -69,6 +69,9 @@ export async function deviceLookupApiHandler(c: Context<{ Bindings: Env }>) {
       variables: { field: 'tenant context' },
     });
   }
+  // The reservation held from the rate limit check until the lookup settles it (see
+  // user-code-guard.ts); released on every other way out, so no slot is left in flight.
+  let held: { release(): Promise<unknown> } | undefined;
   try {
     const authenticatedUser = await getAuthenticatedAsyncUser(c, tenantId);
     const mockAuthEnabled = await isMockAuthEnabled(c.env);
@@ -83,14 +86,6 @@ export async function deviceLookupApiHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
-    const rateLimit = await checkUserCodeRateLimit(c, tenantId, { mockAuthEnabled });
-    if (rateLimit.status === 'unavailable') {
-      return c.json(USER_CODE_GUARD_UNAVAILABLE, 503);
-    }
-    if (rateLimit.status === 'blocked') {
-      return userCodeBlockedResponse(c, rateLimit.retryAfter);
-    }
-
     const body = (await c.req.json()) as { user_code?: unknown };
     if (typeof body.user_code !== 'string' || !body.user_code) {
       return c.json(
@@ -103,26 +98,37 @@ export async function deviceLookupApiHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
+    // Canonical form and a format check only (see device-verify-api.ts): the store decides
     const userCode = normalizeUserCode(body.user_code);
     if (!validateUserCodeFormat(userCode)) {
       return c.json(
         {
           success: false,
           error: 'invalid_code',
-          error_description: 'Invalid user code format. Expected: XXXX-XXXX',
+          error_description:
+            'Invalid user code format. Enter the code as shown on the device (4 to 16 letters and digits).',
         },
         400
       );
     }
 
-    const lookup = await lookUpDeviceCodeByUserCode(c, tenantId, userCode);
+    // Only now is a guess taken from the budget: nothing slow that the client controls (the body)
+    // happens between the reservation and its settling, so the reservation cannot lapse while the
+    // request is stalled by its sender, and what the lookup finds is disclosed only for a live one.
+    const rateLimit = await checkUserCodeRateLimit(c, tenantId, { mockAuthEnabled });
+    if (rateLimit.status === 'unavailable') {
+      return c.json(USER_CODE_GUARD_UNAVAILABLE, 503);
+    }
+    if (rateLimit.status === 'blocked') {
+      return userCodeBlockedResponse(c, rateLimit.retryAfter);
+    }
+    held = rateLimit;
+
+    const lookup = await lookUpAndSettle(c, tenantId, userCode, rateLimit);
     if (lookup.status === 'unavailable') {
       return c.json(USER_CODE_GUARD_UNAVAILABLE, 503);
     }
     if (lookup.status === 'absent') {
-      if (!(await rateLimit.recordFailure())) {
-        return c.json(USER_CODE_GUARD_UNAVAILABLE, 503);
-      }
       return c.json(
         {
           success: false,
@@ -185,5 +191,7 @@ export async function deviceLookupApiHandler(c: Context<{ Bindings: Env }>) {
       },
       500
     );
+  } finally {
+    await held?.release();
   }
 }

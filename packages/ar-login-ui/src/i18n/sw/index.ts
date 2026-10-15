@@ -394,7 +394,7 @@ const translation = {
 	device_subtitle: 'Ingiza nambari iliyoonyeshwa kwenye kifaa chako',
 	device_codeLabel: 'Nambari ya uthibitisho',
 	device_codePlaceholder: 'XXXX-XXXX',
-	device_codeHint: 'Ingiza nambari ya herufi 8 kutoka kifaa chako (muundo: XXXX-XXXX)',
+	device_codeHint: 'Ingiza nambari iliyoonyeshwa kwenye kifaa chako',
 	device_verifyButton: 'Thibitisha msimbo',
 	device_confirmTitle: 'Idhinisha kifaa',
 	device_requestedPermissions: 'ruhusa zinazohitajika',

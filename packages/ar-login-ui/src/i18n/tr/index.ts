@@ -394,7 +394,7 @@ const translation = {
 	device_subtitle: 'Cihazınızda gösterilen kodu girin',
 	device_codeLabel: 'Doğrulama kodu',
 	device_codePlaceholder: 'XXXX-XXXX',
-	device_codeHint: 'Cihazınızdan 8 karakterlik kodu girin (format: XXXX-XXXX)',
+	device_codeHint: 'Cihazınızda görüntülenen kodu girin',
 	device_verifyButton: 'Kodu doğrula',
 	device_confirmTitle: 'Cihazı yetkilendir',
 	device_requestedPermissions: 'İstenen izinler',

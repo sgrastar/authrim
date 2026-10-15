@@ -85,7 +85,7 @@ const completion = {
 	device_subtitle: '기기에 표시된 코드를 입력하세요',
 	device_codeLabel: '인증 코드',
 	device_codePlaceholder: 'XXXX-XXXX',
-	device_codeHint: '기기에 표시된 8자리 코드를 입력하세요(형식: XXXX-XXXX)',
+	device_codeHint: '기기에 표시된 코드를 입력하세요',
 	device_verifyButton: '코드 확인',
 	device_confirmTitle: '기기 승인',
 	device_requestedPermissions: '요청한 권한',

@@ -71,7 +71,7 @@ export async function deviceAuthorizationHandler(c: Context<{ Bindings: Env }>) 
       return createErrorResponse(c, AR_ERROR_CODES.CLIENT_NOT_ALLOWED_GRANT);
     }
 
-    // The lifetime, polling interval and poll limits of the tenant and this client. Read only
+    // The lifetime, polling interval, poll limits and user code format of the tenant and this client. Read only
     // for a client that exists and may use the grant, so a request that names a stranger's
     // client_id cannot probe the settings. Settings that cannot be read stop the request like the
     // assurance settings above.
@@ -93,7 +93,8 @@ export async function deviceAuthorizationHandler(c: Context<{ Bindings: Env }>) 
       );
     }
 
-    // Generate device code (the user code is generated below, and again if it is taken)
+    // Generate device code (the user code is generated below, in the tenant's format, and again if
+    // it is taken)
     const deviceCode = generateDeviceCode();
 
     // Create device code metadata
@@ -115,7 +116,7 @@ export async function deviceAuthorizationHandler(c: Context<{ Bindings: Env }>) 
     let userCode = '';
     let stored = false;
     for (let attempt = 0; attempt < USER_CODE_ATTEMPTS && !stored; attempt++) {
-      userCode = generateUserCode();
+      userCode = generateUserCode(policy);
       const metadata: DeviceCodeMetadata = {
         tenant_id: tenantId,
         device_code: deviceCode,

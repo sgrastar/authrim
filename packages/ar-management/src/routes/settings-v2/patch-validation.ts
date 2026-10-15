@@ -18,6 +18,8 @@ import {
   CIBA_HARD_LIMITS,
   DEVICE_FLOW_DEFAULTS,
   DEVICE_FLOW_SETTINGS_META,
+  isUserCodeCharsetName,
+  userCodeFormatProblem,
   AUTHORIZATION_SIGNING_ALGORITHMS,
   REQUEST_OBJECT_SIGNING_ALGORITHMS,
   CLIENT_AUTH_METHODS,
@@ -450,8 +452,13 @@ export interface DeviceFlowPatchState extends CibaPatchState {
  * profiles) only the values the PATCH itself holds are compared. A cleared key takes what it
  * inherits (`state.inherited`: the tenant and platform, an environment variable, else the
  * default). For a client (`state.scope`), the bounds it sets may not widen the tenant's: runtime
- * only ever narrows them, so a wider value would look saved and do nothing. Returns the problem,
- * or null.
+ * only ever narrows them, so a wider value would look saved and do nothing.
+ *
+ * The user code charset and length are checked together on the pair the save would leave (a
+ * cleared key counts as what it inherits): the code needs at least 34 bits of entropy, so
+ * NUMERIC with 10 digits (33.2 bits) is refused, with a message naming the minimum for the
+ * charset. They are tenant settings: for a client PATCH they are refused. Runtime holds the same
+ * floor whatever is stored. Returns the problem, or null.
  */
 export function validateDeviceFlowPatch(
   body: SettingsPatchRequest,
@@ -484,6 +491,11 @@ export function validateDeviceFlowPatch(
 
   type Key = keyof typeof DEVICE_FLOW_DEFAULTS;
   const inheritedValue = (key: Key): unknown => state.inherited?.[key] ?? DEVICE_FLOW_DEFAULTS[key];
+  const userCodeKeys = ['device_flow.user_code_charset', 'device_flow.user_code_length'] as const;
+  if (state.scope === 'client') {
+    const named = userCodeKeys.find((key) => operations.has(key));
+    if (named) return `${named} is a tenant setting: a client cannot set it`;
+  }
   const resulting = (key: Key): number | undefined => {
     let value: unknown;
     if (body.set && key in body.set) value = body.set[key];
@@ -492,6 +504,26 @@ export function validateDeviceFlowPatch(
     return typeof value === 'number' && Number.isInteger(value) ? value : undefined;
   };
   const touches = (...keys: string[]) => keys.some((key) => operations.has(key));
+
+  // The charset and the length are only usable together
+  if (touches(...userCodeKeys)) {
+    const charsetKey = 'device_flow.user_code_charset';
+    const lengthKey = 'device_flow.user_code_length';
+    const resultingValue = (key: Key): unknown =>
+      body.set && key in body.set
+        ? body.set[key]
+        : body.clear?.includes(key)
+          ? inheritedValue(key)
+          : state.current
+            ? (state.current[key] ?? DEVICE_FLOW_DEFAULTS[key])
+            : undefined;
+    const charset = resultingValue(charsetKey);
+    const length = resultingValue(lengthKey);
+    if (isUserCodeCharsetName(charset) && typeof length === 'number') {
+      const problem = userCodeFormatProblem(charset, length);
+      if (problem) return problem;
+    }
+  }
 
   const pairs: Array<[min: Key, max: Key, value: Key]> = [
     ['device_flow.min_expires_in', 'device_flow.max_expires_in', 'device_flow.expires_in'],

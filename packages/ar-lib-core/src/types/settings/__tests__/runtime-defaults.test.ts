@@ -13,7 +13,18 @@ import { CIBA_DEFAULTS, CIBA_SETTINGS_META } from '../ciba';
 import { CIBA_CONSTANTS } from '../../../utils/ciba';
 import { CIBA_HARD_LIMITS } from '../../../services/ciba-config';
 import { DEVICE_FLOW_DEFAULTS, DEVICE_FLOW_SETTINGS_META } from '../device-flow';
-import { DEVICE_FLOW_CONSTANTS } from '../../../utils/device-flow';
+import {
+  DEFAULT_USER_CODE_CHARSET,
+  DEFAULT_USER_CODE_LENGTH,
+  DEVICE_FLOW_CONSTANTS,
+  USER_CODE_CHARSETS,
+  USER_CODE_CHARSET_NAMES,
+  USER_CODE_MAX_LENGTH,
+  USER_CODE_MIN_ENTROPY_BITS,
+  USER_CODE_MIN_LENGTH,
+  isUserCodeFormatAllowed,
+  minimumUserCodeLength,
+} from '../../../utils/device-flow';
 import { DEVICE_FLOW_HARD_LIMITS } from '../../../services/device-flow-settings';
 import { DEFAULT_LOGOUT_CONFIG, DEFAULT_LOGOUT_WEBHOOK_CONFIG } from '../../logout';
 import { DEFAULT_ID_JAG_CONFIG } from '../../id-jag';
@@ -263,13 +274,56 @@ describe('settings that replace older stores default to runtime behaviour', () =
       }
     });
 
-    it('leave the user code settings in development: the code format is still fixed', () => {
-      expect(DEVICE_FLOW_SETTINGS_META['device_flow.user_code_charset'].status).toBe(
-        'in_development'
+    it('default the user code to what the endpoint always issued', () => {
+      expect(DEVICE_FLOW_DEFAULTS['device_flow.user_code_charset']).toBe(DEFAULT_USER_CODE_CHARSET);
+      expect(DEVICE_FLOW_DEFAULTS['device_flow.user_code_length']).toBe(DEFAULT_USER_CODE_LENGTH);
+      // 8 characters of the 31 character alphabet, as before the setting existed
+      expect(DEFAULT_USER_CODE_CHARSET).toBe('BASE31');
+      expect(USER_CODE_CHARSETS.BASE31).toBe('23456789ABCDEFGHJKMNPQRSTUVWXYZ');
+      expect(DEFAULT_USER_CODE_LENGTH).toBe(8);
+      // and the default pair is above the entropy floor
+      expect(isUserCodeFormatAllowed(DEFAULT_USER_CODE_CHARSET, DEFAULT_USER_CODE_LENGTH)).toBe(
+        true
       );
-      expect(DEVICE_FLOW_SETTINGS_META['device_flow.user_code_length'].status).toBe(
-        'in_development'
+    });
+
+    it('offer exactly the alphabets the generator has', () => {
+      expect(DEVICE_FLOW_SETTINGS_META['device_flow.user_code_charset'].enum).toEqual(
+        USER_CODE_CHARSET_NAMES
       );
+      expect(USER_CODE_CHARSETS.BASE20).toBe('BCDFGHJKLMNPQRSTVWXZ');
+      expect(USER_CODE_CHARSETS.NUMERIC).toBe('0123456789');
+    });
+
+    it('allow the lengths the generator and the verification page handle', () => {
+      const length = DEVICE_FLOW_SETTINGS_META['device_flow.user_code_length'];
+      expect({ min: length.min, max: length.max }).toEqual({
+        min: USER_CODE_MIN_LENGTH,
+        max: USER_CODE_MAX_LENGTH,
+      });
+      expect(length.integer).toBe(true);
+      expect(length.envNumber).toBe('strict-in-range');
+    });
+
+    it('apply per tenant only, and are no longer in development', () => {
+      for (const key of [
+        'device_flow.user_code_charset',
+        'device_flow.user_code_length',
+      ] as const) {
+        expect(DEVICE_FLOW_SETTINGS_META[key].scopes, key).toEqual(['tenant']);
+        expect(DEVICE_FLOW_SETTINGS_META[key].status, key).toBeUndefined();
+      }
+    });
+
+    it('state the bits per charset and the floor in the description', () => {
+      const charset = DEVICE_FLOW_SETTINGS_META['device_flow.user_code_charset'].description;
+      for (const name of USER_CODE_CHARSET_NAMES) expect(charset).toContain(name);
+      for (const name of USER_CODE_CHARSET_NAMES) {
+        const bits = Math.log2(USER_CODE_CHARSETS[name].length).toFixed(2);
+        expect(charset, name).toContain(`${bits} bits per character`);
+        expect(charset, name).toContain(`${minimumUserCodeLength(name)} with ${name}`);
+      }
+      expect(charset).toContain(`${USER_CODE_MIN_ENTROPY_BITS} bits`);
     });
 
     it('allow the same ranges as CIBA for the values a poll record carries', () => {

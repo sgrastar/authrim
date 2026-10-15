@@ -82,7 +82,7 @@ const completion = {
 	device_subtitle: '请输入设备上显示的代码',
 	device_codeLabel: '验证码',
 	device_codePlaceholder: 'XXXX-XXXX',
-	device_codeHint: '请输入设备上的 8 位代码（格式：XXXX-XXXX）',
+	device_codeHint: '请输入设备上显示的代码',
 	device_verifyButton: '验证代码',
 	device_confirmTitle: '授权设备',
 	device_requestedPermissions: '请求的权限',

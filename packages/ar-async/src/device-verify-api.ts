@@ -26,7 +26,7 @@ import {
 import {
   USER_CODE_GUARD_UNAVAILABLE,
   checkUserCodeRateLimit,
-  lookUpDeviceCodeByUserCode,
+  lookUpAndSettle,
   userCodeBlockedResponse,
 } from './user-code-guard';
 
@@ -71,17 +71,11 @@ export async function deviceVerifyApiHandler(c: Context<{ Bindings: Env }>) {
     'Content-Type': 'application/json',
     'X-Authrim-Tenant-Id': tenantId,
   };
+  // The reservation held from the rate limit check until the lookup settles it (see
+  // user-code-guard.ts); released on every other way out, so no slot is left in flight.
+  let held: { release(): Promise<unknown> } | undefined;
   try {
     const mockAuthEnabled = await isMockAuthEnabled(c.env);
-
-    // Per-IP user code rate limiting. Fails closed: see user-code-guard.ts.
-    const rateLimit = await checkUserCodeRateLimit(c, tenantId, { mockAuthEnabled });
-    if (rateLimit.status === 'unavailable') {
-      return c.json(USER_CODE_GUARD_UNAVAILABLE, 503);
-    }
-    if (rateLimit.status === 'blocked') {
-      return userCodeBlockedResponse(c, rateLimit.retryAfter);
-    }
 
     // Parse JSON request body
     const body = await c.req.json();
@@ -91,7 +85,7 @@ export async function deviceVerifyApiHandler(c: Context<{ Bindings: Env }>) {
     const sub = body.sub as string | undefined;
 
     // Validate user_code is present
-    if (!userCode) {
+    if (typeof userCode !== 'string' || !userCode) {
       return c.json(
         {
           success: false,
@@ -102,7 +96,9 @@ export async function deviceVerifyApiHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
-    // Normalize and validate user code format
+    // Canonical form (upper case, separators removed) and a format check only: the alphabet and
+    // length are not checked, because the tenant's settings may have changed since the code was
+    // issued. The store decides whether the code exists; the per-IP limiter counts the misses.
     userCode = normalizeUserCode(userCode);
 
     if (!validateUserCodeFormat(userCode)) {
@@ -110,22 +106,33 @@ export async function deviceVerifyApiHandler(c: Context<{ Bindings: Env }>) {
         {
           success: false,
           error: 'invalid_code',
-          error_description: 'Invalid user code format. Expected: XXXX-XXXX',
+          error_description:
+            'Invalid user code format. Enter the code as shown on the device (4 to 16 letters and digits).',
         },
         400
       );
     }
 
+    // Per-IP user code rate limiting, fails closed (see user-code-guard.ts). Only now is a guess
+    // taken from the budget: the body is already read, so nothing slow that the client controls
+    // happens between the reservation and its settling, and what the lookup finds is disclosed
+    // only for a reservation that is still live.
+    const rateLimit = await checkUserCodeRateLimit(c, tenantId, { mockAuthEnabled });
+    if (rateLimit.status === 'unavailable') {
+      return c.json(USER_CODE_GUARD_UNAVAILABLE, 503);
+    }
+    if (rateLimit.status === 'blocked') {
+      return userCodeBlockedResponse(c, rateLimit.retryAfter);
+    }
+    held = rateLimit;
+
     // Get device code metadata from DeviceCodeStore. A store that cannot answer is not "no such
     // code": it neither reports invalid_code nor counts a failure.
-    const lookup = await lookUpDeviceCodeByUserCode(c, tenantId, userCode);
+    const lookup = await lookUpAndSettle(c, tenantId, userCode, rateLimit);
     if (lookup.status === 'unavailable') {
       return c.json(USER_CODE_GUARD_UNAVAILABLE, 503);
     }
     if (lookup.status === 'absent') {
-      if (!(await rateLimit.recordFailure())) {
-        return c.json(USER_CODE_GUARD_UNAVAILABLE, 503);
-      }
       return c.json(
         {
           success: false,
@@ -236,8 +243,10 @@ export async function deviceVerifyApiHandler(c: Context<{ Bindings: Env }>) {
         );
       }
 
-      // Reset rate limiting on successful verification
-      await rateLimit.reset();
+      // The failure budget is NOT cleared by a successful approval: an IP that guesses codes could
+      // otherwise issue a code of its own, approve it, and start over (4 guesses, one approval,
+      // 4 guesses, ...). Failures age out of the limiter's window by themselves (see
+      // UserCodeRateLimiter.ts).
 
       return c.json(
         {
@@ -287,5 +296,7 @@ export async function deviceVerifyApiHandler(c: Context<{ Bindings: Env }>) {
       },
       500
     );
+  } finally {
+    await held?.release();
   }
 }

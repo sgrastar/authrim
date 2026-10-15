@@ -818,7 +818,7 @@ export interface DeviceAuthorizationRequest {
  */
 export interface DeviceAuthorizationResponse {
   device_code: string; // Unique device verification code
-  user_code: string; // End-user verification code (8-char, human-readable)
+  user_code: string; // End-user verification code (human-readable; format set by device_flow.user_code_*)
   verification_uri: string; // End-user verification URI
   verification_uri_complete?: string; // Verification URI with user_code included
   expires_in: number; // Lifetime in seconds (typically 300-600)

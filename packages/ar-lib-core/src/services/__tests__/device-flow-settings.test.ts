@@ -3,7 +3,14 @@ import type { EffectiveSettingsEnv } from '../effective-settings';
 
 const { resolveEffectiveSettings } = vi.hoisted(() => ({ resolveEffectiveSettings: vi.fn() }));
 
-vi.mock('../effective-settings', () => ({ resolveEffectiveSettings }));
+vi.mock('../effective-settings', () => ({
+  resolveEffectiveSettings,
+  // the sources are not what these tests are about: the real reader is used in the env tests
+  resolveEffectiveSettingsWithSources: async (...args: unknown[]) => ({
+    values: await resolveEffectiveSettings(...args),
+    sources: {},
+  }),
+}));
 
 import { DEVICE_FLOW_HARD_LIMITS, resolveDeviceFlowPolicy } from '../device-flow-settings';
 import { DEVICE_FLOW_CONSTANTS } from '../../utils/device-flow';
@@ -51,6 +58,9 @@ describe('resolveDeviceFlowPolicy', () => {
       maxInterval: DEVICE_FLOW_CONSTANTS.MAX_INTERVAL,
       slowDownIncrement: DEVICE_FLOW_CONSTANTS.SLOW_DOWN_INCREMENT,
       maxPollCount: DEVICE_FLOW_CONSTANTS.MAX_POLL_COUNT,
+      // today's user code: 8 characters of the 31 character alphabet
+      userCodeCharset: 'BASE31',
+      userCodeLength: 8,
     };
     await expect(resolveWith({})).resolves.toEqual(expected);
     await expect(resolveWith({}, {})).resolves.toEqual(expected);
@@ -77,6 +87,8 @@ describe('resolveDeviceFlowPolicy', () => {
       maxInterval: 120,
       slowDownIncrement: 12,
       maxPollCount: 300,
+      userCodeCharset: 'BASE31',
+      userCodeLength: 8,
     });
   });
 
@@ -382,5 +394,103 @@ describe('resolveDeviceFlowPolicy', () => {
       expect(policy.minInterval).toBeGreaterThanOrEqual(DEVICE_FLOW_HARD_LIMITS.minInterval);
       expect(policy.pollInterval).toBeGreaterThanOrEqual(DEVICE_FLOW_HARD_LIMITS.minInterval);
     });
+  });
+});
+
+describe('the user code format', () => {
+  beforeEach(() => {
+    resolveEffectiveSettings.mockReset();
+  });
+
+  const format = (policy: Awaited<ReturnType<typeof resolveDeviceFlowPolicy>>) => [
+    policy.userCodeCharset,
+    policy.userCodeLength,
+  ];
+
+  it.each([
+    ['BASE31', 7],
+    ['BASE31', 16],
+    ['BASE20', 8],
+    ['BASE20', 12],
+    ['NUMERIC', 11],
+    ['NUMERIC', 16],
+  ] as const)('takes %s x %i from the tenant', async (charset, length) => {
+    const policy = await resolveWith({
+      'device_flow.user_code_charset': charset,
+      'device_flow.user_code_length': length,
+    });
+    expect(format(policy)).toEqual([charset, length]);
+  });
+
+  it('is read from the tenant document only: a client document value is ignored', async () => {
+    const policy = await resolveWith(
+      { 'device_flow.user_code_charset': 'BASE20', 'device_flow.user_code_length': 9 },
+      { 'device_flow.user_code_charset': 'NUMERIC', 'device_flow.user_code_length': 16 }
+    );
+    expect(format(policy)).toEqual(['BASE20', 9]);
+  });
+
+  it('is the default for a client whose document sets it while the tenant does not', async () => {
+    const policy = await resolveWith(
+      {},
+      { 'device_flow.user_code_charset': 'NUMERIC', 'device_flow.user_code_length': 16 }
+    );
+    expect(format(policy)).toEqual(['BASE31', 8]);
+  });
+
+  it.each([
+    // below the entropy floor of 34 bits
+    ['NUMERIC', 10],
+    ['NUMERIC', 8],
+    ['BASE20', 7],
+    ['BASE31', 6],
+    ['BASE31', 4],
+    // a stored value the setting does not allow
+    ['BASE31', 17],
+    ['BASE31', 3],
+    ['BASE31', 7.5],
+    ['BASE31', '8'],
+    ['BASE31', null],
+    ['hex', 8],
+    ['base31', 8],
+    [undefined, 8],
+    [42, 8],
+  ])(
+    'falls back to the default PAIR for %j x %j, not to one default value',
+    async (charset, length) => {
+      const policy = await resolveWith({
+        'device_flow.user_code_charset': charset,
+        'device_flow.user_code_length': length,
+      });
+      expect(format(policy)).toEqual(['BASE31', 8]);
+    }
+  );
+
+  it('does not keep a valid charset when only the length is below its floor', async () => {
+    // NUMERIC x 8 is below the floor: the pair goes back to (BASE31, 8), it is not NUMERIC x 8
+    // and not BASE31 x 8 chosen by length alone
+    const policy = await resolveWith({
+      'device_flow.user_code_charset': 'NUMERIC',
+      'device_flow.user_code_length': 8,
+    });
+    expect(format(policy)).toEqual(['BASE31', 8]);
+  });
+
+  it('uses a valid length with the default charset (an environment-fed length)', async () => {
+    // the settings reader supplies the default charset next to an environment variable length
+    const policy = await resolveWith({
+      'device_flow.user_code_charset': 'BASE31',
+      'device_flow.user_code_length': 11,
+    });
+    expect(format(policy)).toEqual(['BASE31', 11]);
+  });
+
+  it('uses the default pair when the settings reader holds nothing for it', async () => {
+    expect(format(await resolveWith({}))).toEqual(['BASE31', 8]);
+  });
+
+  it('refuses to issue (throws) when the settings cannot be read, like the other keys', async () => {
+    resolveEffectiveSettings.mockRejectedValue(new Error('KV unavailable'));
+    await expect(resolveDeviceFlowPolicy(env, 't')).rejects.toThrow('KV unavailable');
   });
 });

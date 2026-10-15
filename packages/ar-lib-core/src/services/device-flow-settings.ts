@@ -13,8 +13,14 @@
  *   follows the interval needs). /device_authorization keeps both, and the maximum interval, on
  *   the code, so the polls that follow need no settings read.
  *
- * The user code format (`user_code_charset`, `user_code_length`) is not read here: it is still
- * fixed in code.
+ * - the user code format: `device_flow.user_code_charset` and `device_flow.user_code_length`. These
+ *   are tenant settings only (the client is not known when a user types a code in), so they are read
+ *   from the tenant's document even for a client; a value a client document holds is not used. The
+ *   pair has to carry at least 34 bits of entropy (see `isUserCodeFormatAllowed`): a pair below
+ *   that, an unknown charset or a length out of range falls back to the default PAIR (BASE31, 8),
+ *   never to one stored value with the other's default. The same holds for an environment variable
+ *   that is set but not allowed (the settings reader would drop it key by key and leave the other
+ *   key's value next to a default): the pair is the default pair.
  *
  * Environment variables stay the deployment default (the setting's `envKey`), a stored value
  * overrides them (the client's over the tenant's), and the built-in default (today's constants) is
@@ -29,8 +35,14 @@
  */
 
 import { DEVICE_FLOW_DEFAULTS, DEVICE_FLOW_SETTINGS_META } from '../types/settings/device-flow';
+import { resolveUserCodeFormat, type UserCodeCharsetName } from '../utils/device-flow';
 import { isWithinSettingRange } from './setting-range';
-import { resolveEffectiveSettings, type EffectiveSettingsEnv } from './effective-settings';
+import {
+  resolveEffectiveSettings,
+  resolveEffectiveSettingsWithSources,
+  type EffectiveSettingsEnv,
+} from './effective-settings';
+import type { SettingSource } from '../utils/settings-manager';
 
 export interface DeviceFlowPolicy {
   /** Lifetime of the device code (seconds); also the `expires_in` of the response. */
@@ -49,6 +61,10 @@ export interface DeviceFlowPolicy {
   slowDownIncrement: number;
   /** The configured poll count; a floor, the governor raises the cap for a long lifetime. */
   maxPollCount: number;
+  /** Alphabet of the user code (tenant setting; the pair with the length is above the floor). */
+  userCodeCharset: UserCodeCharsetName;
+  /** Number of characters of the user code, separators not counted. */
+  userCodeLength: number;
 }
 
 /** Limits held in code, whatever is stored. */
@@ -134,6 +150,25 @@ function narrow(tenant: Bounds, client: Bounds): Bounds {
   };
 }
 
+const USER_CODE_KEYS = ['device_flow.user_code_charset', 'device_flow.user_code_length'] as const;
+
+/**
+ * Whether an environment variable is set for one of the user code keys but was not used because it
+ * is not a value the setting allows. The settings reader drops such a value silently, key by key,
+ * and the key then reads as its default: a bad length would leave a valid charset next to the
+ * default length, a bad charset a valid length next to the default charset. A misconfigured pair
+ * must not be half applied, so the caller takes the default PAIR instead.
+ */
+function userCodeEnvIgnored(
+  env: EffectiveSettingsEnv,
+  sources: Record<string, SettingSource> | undefined
+): boolean {
+  return USER_CODE_KEYS.some((key) => {
+    const raw = (env as unknown as Record<string, unknown>)[DEVICE_FLOW_SETTINGS_META[key].envKey!];
+    return typeof raw === 'string' && raw !== '' && sources?.[key] === 'default';
+  });
+}
+
 /**
  * The device flow policy for a tenant, and for one of its clients when `clientId` is given.
  * Throws when the settings cannot be read.
@@ -143,7 +178,8 @@ export async function resolveDeviceFlowPolicy(
   tenantId: string,
   clientId?: string
 ): Promise<DeviceFlowPolicy> {
-  const tenantValues = await resolveEffectiveSettings(env, 'device-flow', { tenantId });
+  const { values: tenantValues, sources: tenantSources } =
+    await resolveEffectiveSettingsWithSources(env, 'device-flow', { tenantId });
   let values = tenantValues;
   let bounds = boundsOf(tenantValues);
   if (clientId) {
@@ -176,5 +212,12 @@ export async function resolveDeviceFlowPolicy(
       numberOrDefault(values, 'device_flow.max_poll_count'),
       DEVICE_FLOW_HARD_LIMITS.maxPollCount
     ),
+    // Tenant scope only: a client's document never changes the code format
+    ...(userCodeEnvIgnored(env, tenantSources)
+      ? resolveUserCodeFormat(undefined, undefined)
+      : resolveUserCodeFormat(
+          tenantValues['device_flow.user_code_charset'],
+          tenantValues['device_flow.user_code_length']
+        )),
   };
 }

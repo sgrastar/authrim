@@ -11,6 +11,11 @@
 
 import type { TranslationFunctions } from '$i18n/i18n-types';
 import {
+	formatUserCode,
+	isUserCodeComplete,
+	userCodeCharacters
+} from '$lib/utils/device-user-code';
+import {
 	classifyApprovalFailure,
 	deviceApprovalErrorMessage,
 	type ApprovalApiError
@@ -135,7 +140,7 @@ export async function recheckDeviceDecision(
 
 export interface DeviceFlowState {
 	step: 'input' | 'verified';
-	/** The code as typed (formatted XXXX-XXXX). */
+	/** The code as typed, in groups of 4 characters separated by a hyphen. */
 	userCode: string;
 	/** The details of the looked-up code; shown only in the `verified` step. */
 	deviceInfo: DeviceCodeDetails | null;
@@ -154,9 +159,25 @@ export interface DeviceFlowOptions {
 	onDenied: () => void;
 }
 
-export function formatUserCode(value: string): string {
-	const clean = value.replace(/[^A-Z0-9]/gi, '').toUpperCase();
-	return clean.length > 4 ? `${clean.slice(0, 4)}-${clean.slice(4, 8)}` : clean;
+export { formatUserCode };
+
+/**
+ * The code input changed. While an IME composition is open the browser owns the text, and
+ * rewriting it would break the conversion: the code is formatted when the composition ends (the
+ * `compositionend` event, or an `input` event that is no longer composing).
+ */
+export function applyUserCodeInput(
+	event: Event,
+	flow: Pick<DeviceFlow, 'setUserCode' | 'interrupt'>
+): void {
+	if ((event as InputEvent).isComposing) {
+		// The text is being replaced although it is not ours to rewrite yet: whatever a lookup in
+		// flight is about is no longer what the field will say.
+		flow.interrupt();
+		return;
+	}
+	const input = event.target as HTMLInputElement;
+	input.value = flow.setUserCode(input.value);
 }
 
 export type DeviceFlow = ReturnType<typeof createDeviceFlow>;
@@ -209,6 +230,18 @@ export function createDeviceFlow(options: DeviceFlowOptions) {
 			return formatted;
 		},
 
+		/**
+		 * The person started to replace the code (an IME composition opened) but the text is not
+		 * final: forget the lookup in flight and any shown details, so an answer for the old code
+		 * cannot take over the screen. The input's text is left alone.
+		 */
+		interrupt() {
+			if (!state.verifying && confirmedCode === null && state.step === 'input') return;
+			lookupTicket += 1;
+			confirmedCode = null;
+			update({ step: 'input', deviceInfo: null, verifying: false, success: '' });
+		},
+
 		dismissError() {
 			update({ error: '' });
 		},
@@ -216,11 +249,13 @@ export function createDeviceFlow(options: DeviceFlowOptions) {
 		async verify() {
 			const LL = options.translations();
 			if (state.verifying || state.loading) return;
-			const code = state.userCode.replace(/-/g, '');
-			if (code.length !== 8) {
+			// The server issues codes of 4 to 16 characters (the tenant's setting) and decides
+			// whether this one exists
+			if (!isUserCodeComplete(state.userCode)) {
 				update({ error: LL.device_errorInvalidCode() });
 				return;
 			}
+			const code = userCodeCharacters(state.userCode);
 			const ticket = ++lookupTicket;
 			confirmedCode = null;
 			update({ error: '', verifying: true });

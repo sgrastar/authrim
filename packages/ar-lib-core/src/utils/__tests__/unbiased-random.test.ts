@@ -80,7 +80,7 @@ describe('randomCharacters', () => {
 });
 
 describe.each([
-  ['generateUserCode', generateUserCode],
+  ['generateUserCode', (source?: RandomBytesSource) => generateUserCode(undefined, source)],
   ['generateCIBAUserCode', generateCIBAUserCode],
 ])('%s', (_name, generate) => {
   it('keeps the format: 4 + 4 characters of the same alphabet, hyphen after the fourth', () => {
