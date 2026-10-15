@@ -77,6 +77,7 @@ import {
 } from '@authrim/ar-lib-core';
 import {
   validateCategoryPatch,
+  validateCibaPatch,
   validatePlatformUIPatch,
   validateTenantUIPaths,
 } from './patch-validation';
@@ -1591,7 +1592,21 @@ settingsV2.patch(
             }
           }
 
-          const categoryError = validateCategoryPatch(category, body);
+          // CIBA bounds are checked on the document the save leaves: the tenant's current values
+          // stand in for the keys the PATCH does not hold, and a cleared key takes what it
+          // inherits (the platform, an environment variable or the default).
+          const cibaState =
+            category === 'ciba'
+              ? await manager.getAll(category, scope, {
+                  parents: settingsParentScopes(category, scope),
+                })
+              : null;
+          const categoryError = cibaState
+            ? validateCibaPatch(body, {
+                current: cibaState.values,
+                inherited: cibaState.inherited.values,
+              })
+            : validateCategoryPatch(category, body);
           if (categoryError) {
             await recordSettingsAuditFailure(c, {
               category,

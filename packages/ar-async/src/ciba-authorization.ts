@@ -9,17 +9,17 @@ import type { Env, CIBARequestMetadata, ClientMetadata } from '@authrim/ar-lib-c
 import {
   generateAuthReqId,
   generateCIBAUserCode,
-  CIBA_CONSTANTS,
   validateCIBARequest,
   validateCIBARequestObject,
   validateCIBAIdTokenHint,
   determineDeliveryMode,
-  calculatePollingInterval,
   parseLoginHint,
   getClientCached,
   createErrorResponse,
   AR_ERROR_CODES,
   getLogger,
+  resolveCibaConfig,
+  type CibaConfig,
   getIssuedIDTokenKeys,
   publishEvent,
   buildDOInstanceName,
@@ -56,6 +56,21 @@ export async function cibaAuthorizationHandler(c: Context<{ Bindings: Env }>) {
   }
   const assuranceRefusal = await fal3Refusal(c, tenantId);
   if (assuranceRefusal) return assuranceRefusal;
+  // The tenant's CIBA limits. Settings that cannot be read stop the request like the assurance
+  // settings above: `binding_message_required` is a restriction, so defaults must not stand in.
+  let cibaConfig: CibaConfig;
+  try {
+    cibaConfig = await resolveCibaConfig(c.env, tenantId);
+  } catch (error) {
+    log.error('Failed to load CIBA settings', { action: 'ciba_settings' }, error as Error);
+    return c.json(
+      {
+        error: 'temporarily_unavailable',
+        error_description: 'CIBA settings are temporarily unavailable',
+      },
+      503
+    );
+  }
   const requestIssuer = getRequestIssuer(c, tenantId);
 
   try {
@@ -180,15 +195,21 @@ export async function cibaAuthorizationHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
-    const validation = validateCIBARequest({
-      scope,
-      login_hint,
-      login_hint_token,
-      id_token_hint,
-      binding_message,
-      user_code,
-      requested_expiry,
-    });
+    const validation = validateCIBARequest(
+      {
+        scope,
+        login_hint,
+        login_hint_token,
+        id_token_hint,
+        binding_message,
+        user_code,
+        requested_expiry,
+      },
+      {
+        maxLength: cibaConfig.maxBindingMessageLength,
+        required: cibaConfig.bindingMessageRequired,
+      }
+    );
     if (!validation.valid) {
       return c.json(
         {
@@ -279,15 +300,15 @@ export async function cibaAuthorizationHandler(c: Context<{ Bindings: Env }>) {
     // Calculate expiration
     const now = Date.now();
     const expiresIn = Math.min(
-      Math.max(
-        requested_expiry ?? CIBA_CONSTANTS.DEFAULT_EXPIRES_IN,
-        CIBA_CONSTANTS.MIN_EXPIRES_IN
-      ),
-      CIBA_CONSTANTS.MAX_EXPIRES_IN
+      Math.max(requested_expiry ?? cibaConfig.expiresIn, cibaConfig.minExpiresIn),
+      cibaConfig.maxExpiresIn
     );
     // requested_expiry controls the auth_req_id lifetime, not the polling
     // interval. CIBA has no request parameter for choosing the interval.
-    const interval = calculatePollingInterval(null);
+    const interval = Math.min(
+      Math.max(cibaConfig.pollInterval, cibaConfig.minInterval),
+      cibaConfig.maxInterval
+    );
 
     // Create CIBA request metadata
     const metadata: CIBARequestMetadata = {
@@ -311,6 +332,8 @@ export async function cibaAuthorizationHandler(c: Context<{ Bindings: Env }>) {
       expires_at: now + expiresIn * 1000,
       poll_count: 0,
       interval,
+      // slow_down can raise this request's interval no higher than the tenant's limit of now
+      max_interval: cibaConfig.maxInterval,
       token_issued: false,
       // Store resolved subject ID from JWT hint validation
       resolved_subject_id: resolvedSubjectId,

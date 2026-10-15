@@ -536,6 +536,45 @@ describe('poll governor: CIBA ping and push requests', () => {
   );
 });
 
+describe('poll governor: CIBA request with the tenant maximum interval', () => {
+  it('stores the maximum with the request and caps slow_down at it, however often the client polls early', async () => {
+    const { store, storage } = await cibaDriver.create();
+    await cibaDriver.seed(store, { max_interval: 12 });
+    expect(storage.values.get(cibaDriver.recordKey)).toMatchObject({ max_interval: 12 });
+
+    for (let poll = 0; poll < 20; poll++) {
+      await cibaDriver.poll(store);
+      advance(1_000);
+    }
+
+    expect(storage.values.get(cibaDriver.recordKey)).toMatchObject({
+      interval: 12,
+      base_interval: 5,
+      poll_count: 20,
+      max_interval: 12,
+    });
+  });
+
+  it('allows an interval above the constant when the tenant maximum is higher', async () => {
+    const { store } = await cibaDriver.create();
+    await cibaDriver.seed(store, { interval: 60, max_interval: 120 });
+    await cibaDriver.poll(store);
+    advance(1_000);
+
+    expect(ok(await cibaDriver.poll(store)).metadata.interval).toBe(65);
+  });
+
+  it('keeps the constant for a request stored without a maximum', async () => {
+    const { store, storage } = await cibaDriver.create();
+    await cibaDriver.seed(store, { interval: 58 });
+    expect(storage.values.get(cibaDriver.recordKey)).not.toHaveProperty('max_interval');
+    await cibaDriver.poll(store);
+    advance(1_000);
+
+    expect(ok(await cibaDriver.poll(store)).metadata.interval).toBe(60);
+  });
+});
+
 describe('the deprecated /update-poll route', () => {
   it('still records a poll for a caller deployed before /poll existed', async () => {
     const device = await deviceDriver.create();

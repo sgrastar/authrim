@@ -9,6 +9,9 @@ import { EXTERNAL_IDP_DEFAULTS } from '../external-idp';
 import { TENANT_DEFAULTS } from '../tenant';
 import { RATE_LIMIT_DEFAULTS, RATE_LIMIT_PROFILE_SETTING_NAMES } from '../rate-limit';
 import { SECURITY_DEFAULTS } from '../security';
+import { CIBA_DEFAULTS, CIBA_SETTINGS_META } from '../ciba';
+import { CIBA_CONSTANTS } from '../../../utils/ciba';
+import { CIBA_HARD_LIMITS } from '../../../services/ciba-config';
 import { DEFAULT_LOGOUT_CONFIG, DEFAULT_LOGOUT_WEBHOOK_CONFIG } from '../../logout';
 import { DEFAULT_ID_JAG_CONFIG } from '../../id-jag';
 import { DEFAULT_JIT_CONFIG } from '../../jit-config';
@@ -110,6 +113,30 @@ describe('settings that replace older stores default to runtime behaviour', () =
   it('FAPI message signing algorithms', () => {
     expect(SECURITY_DEFAULTS['security.request_object_signing_algs']).toBe(
       FAPI2_MESSAGE_SIGNING_ALGS.join(',')
+    );
+  });
+
+  it('CIBA request lifetime, polling interval and binding message settings', () => {
+    expect(CIBA_DEFAULTS['ciba.expires_in']).toBe(CIBA_CONSTANTS.DEFAULT_EXPIRES_IN);
+    expect(CIBA_DEFAULTS['ciba.min_expires_in']).toBe(CIBA_CONSTANTS.MIN_EXPIRES_IN);
+    expect(CIBA_DEFAULTS['ciba.max_expires_in']).toBe(CIBA_CONSTANTS.MAX_EXPIRES_IN);
+    expect(CIBA_DEFAULTS['ciba.poll_interval']).toBe(CIBA_CONSTANTS.DEFAULT_INTERVAL);
+    expect(CIBA_DEFAULTS['ciba.min_interval']).toBe(CIBA_CONSTANTS.MIN_INTERVAL);
+    expect(CIBA_DEFAULTS['ciba.max_interval']).toBe(CIBA_CONSTANTS.MAX_INTERVAL);
+    expect(CIBA_DEFAULTS['ciba.max_binding_message_length']).toBe(
+      CIBA_CONSTANTS.MAX_BINDING_MESSAGE_LENGTH
+    );
+    expect(CIBA_DEFAULTS['ciba.binding_message_required']).toBe(false);
+  });
+
+  it('CIBA settings stay inside the limits held in code', () => {
+    expect(CIBA_SETTINGS_META['ciba.max_expires_in'].max).toBe(CIBA_HARD_LIMITS.maxExpiresIn);
+    expect(CIBA_SETTINGS_META['ciba.max_interval'].max).toBe(CIBA_HARD_LIMITS.maxInterval);
+    expect(CIBA_SETTINGS_META['ciba.max_binding_message_length'].max).toBe(
+      CIBA_HARD_LIMITS.maxBindingMessageLength
+    );
+    expect(CIBA_SETTINGS_META['ciba.min_interval'].min).toBeLessThanOrEqual(
+      CIBA_HARD_LIMITS.minInterval
     );
   });
 });

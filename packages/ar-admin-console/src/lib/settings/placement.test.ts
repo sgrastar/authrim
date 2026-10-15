@@ -62,6 +62,25 @@ describe('where settings live', () => {
 		}
 	});
 
+	it('does not mark the CIBA lifetime, interval and binding message settings, which the runtime reads', () => {
+		const applied = [
+			'ciba.expires_in',
+			'ciba.min_expires_in',
+			'ciba.max_expires_in',
+			'ciba.poll_interval',
+			'ciba.min_interval',
+			'ciba.max_interval',
+			'ciba.max_binding_message_length',
+			'ciba.binding_message_required'
+		];
+		for (const key of applied) {
+			expect(NOT_APPLIED.has(key), key).toBe(false);
+			expect(ALL_CATEGORY_META.ciba.settings[key].status, key).toBeUndefined();
+		}
+		// The rest of the category is still to be wired
+		expect(NOT_APPLIED.has('ciba.slow_down_increment')).toBe(true);
+	});
+
 	it('points every duplicate at a setting that exists', () => {
 		for (const entry of DRAFT.filter((e) => e.duplicateOf)) {
 			expect(everyKey, entry.key).toContain(entry.duplicateOf);

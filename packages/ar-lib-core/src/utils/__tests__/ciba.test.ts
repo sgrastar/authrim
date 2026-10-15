@@ -116,6 +116,77 @@ describe('CIBA Utilities', () => {
       const result = validateBindingMessage(undefined);
       expect(result.valid).toBe(true);
     });
+
+    it('takes the length limit from the tenant, at n and n + 1', () => {
+      expect(validateBindingMessage('a'.repeat(50), { maxLength: 50 }).valid).toBe(true);
+      const over = validateBindingMessage('a'.repeat(51), { maxLength: 50 });
+      expect(over.valid).toBe(false);
+      expect(over.error).toContain('max 50 characters');
+      // A limit above the default admits what the default refuses
+      expect(validateBindingMessage('a'.repeat(141), { maxLength: 500 }).valid).toBe(true);
+    });
+
+    it('counts UTF-16 code units: an emoji is two', () => {
+      expect(validateBindingMessage('😀'.repeat(25), { maxLength: 50 }).valid).toBe(true);
+      expect(validateBindingMessage('😀'.repeat(26), { maxLength: 50 }).valid).toBe(false);
+    });
+
+    it.each(['', '   ', '\n', '\t \n', '\u00a0', '\u3000'])(
+      'counts the whitespace-only message %j as missing when one is required',
+      (message) => {
+        expect(validateBindingMessage(message, { required: true })).toEqual({
+          valid: false,
+          error: 'binding_message is required',
+        });
+      }
+    );
+
+    it('keeps the old rules for a whitespace-only message when none is required', () => {
+      expect(validateBindingMessage('   ', { required: false }).valid).toBe(true);
+      expect(validateBindingMessage('   ').valid).toBe(true);
+      // the length limit still counts every character, spaces included
+      expect(validateBindingMessage(' '.repeat(51), { maxLength: 50 }).valid).toBe(false);
+    });
+
+    it('does not trim a message that has content: length counts its spaces', () => {
+      expect(validateBindingMessage(' 12 ', { required: true, maxLength: 4 }).valid).toBe(true);
+      expect(validateBindingMessage(' 12 ', { required: true, maxLength: 3 }).valid).toBe(false);
+    });
+
+    it('refuses a missing or empty message only when one is required', () => {
+      expect(validateBindingMessage(undefined, { required: true })).toMatchObject({ valid: false });
+      expect(validateBindingMessage('', { required: true })).toMatchObject({ valid: false });
+      expect(validateBindingMessage('1234', { required: true }).valid).toBe(true);
+      expect(validateBindingMessage(undefined, { required: false }).valid).toBe(true);
+    });
+  });
+
+  describe('validateCIBARequest binding message limits', () => {
+    const base = { scope: 'openid', login_hint: 'user@example.com' };
+
+    it('keeps the default behaviour when no limits are passed', () => {
+      expect(validateCIBARequest(base).valid).toBe(true);
+      expect(validateCIBARequest({ ...base, binding_message: 'a'.repeat(140) }).valid).toBe(true);
+      expect(validateCIBARequest({ ...base, binding_message: 'a'.repeat(141) })).toMatchObject({
+        valid: false,
+        error: 'invalid_binding_message',
+      });
+    });
+
+    it('applies the tenant limits', () => {
+      const limits = { maxLength: 60, required: true };
+      expect(validateCIBARequest({ ...base, binding_message: 'a'.repeat(60) }, limits).valid).toBe(
+        true
+      );
+      expect(
+        validateCIBARequest({ ...base, binding_message: 'a'.repeat(61) }, limits)
+      ).toMatchObject({ valid: false, error: 'invalid_binding_message' });
+      expect(validateCIBARequest(base, limits)).toMatchObject({
+        valid: false,
+        error: 'invalid_binding_message',
+        error_description: 'binding_message is required',
+      });
+    });
   });
 
   describe('validateCIBARequest', () => {

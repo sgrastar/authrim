@@ -6,6 +6,7 @@ import {
   currentPollInterval,
   evaluatePoll,
   maxPollCountFor,
+  maxPollInterval,
   type PollGovernedRecord,
 } from '../poll-governor';
 import { CIBA_CONSTANTS } from '../ciba';
@@ -141,5 +142,49 @@ describe('evaluatePoll', () => {
 
     expect(result.limitExceeded).toBe(true);
     expect(result.next).toBe(atCap);
+  });
+});
+
+describe('a request that carries its own maximum interval', () => {
+  it('is raised by slow_down no higher than that maximum', () => {
+    const near = record({ last_poll_at: NOW - 1_000, interval: 8, max_interval: 10 });
+
+    const result = evaluatePoll(near, NOW, CIBA_POLL_LIMITS, true);
+
+    expect(result.tooFast).toBe(true);
+    // 8 + 5 would be 13: the tenant's maximum is 10, below the constant 60
+    expect(result.next.interval).toBe(10);
+  });
+
+  it('can be raised past the constant when the tenant allows more', () => {
+    const wide = record({ last_poll_at: NOW - 1_000, interval: 58, max_interval: 120 });
+
+    expect(evaluatePoll(wide, NOW, CIBA_POLL_LIMITS, true).next.interval).toBe(63);
+  });
+
+  it('does not lower an interval that is already above its maximum', () => {
+    const above = record({ last_poll_at: NOW - 1_000, interval: 30, max_interval: 10 });
+
+    expect(evaluatePoll(above, NOW, CIBA_POLL_LIMITS, true).next.interval).toBe(30);
+  });
+
+  it('is ignored when it is not a usable number, and the limit applies', () => {
+    for (const max_interval of [0, -1, Number.NaN, '10' as unknown as number]) {
+      const bad = record({ last_poll_at: NOW - 1_000, interval: 58, max_interval });
+      expect(evaluatePoll(bad, NOW, CIBA_POLL_LIMITS, true).next.interval).toBe(60);
+    }
+  });
+
+  it('behaves as before on a record stored without it', () => {
+    const legacy = record({ last_poll_at: NOW - 1_000, interval: 58 });
+
+    expect(maxPollInterval(legacy, CIBA_POLL_LIMITS)).toBe(CIBA_CONSTANTS.MAX_INTERVAL);
+    expect(evaluatePoll(legacy, NOW, CIBA_POLL_LIMITS, true).next.interval).toBe(60);
+  });
+
+  it('does not change the poll cap', () => {
+    const a = record({ max_interval: 10 });
+    const b = record();
+    expect(maxPollCountFor(a, CIBA_POLL_LIMITS)).toBe(maxPollCountFor(b, CIBA_POLL_LIMITS));
   });
 });
