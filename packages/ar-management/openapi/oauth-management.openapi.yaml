@@ -29,6 +29,16 @@ paths:
       tags:
         - Dynamic Client Registration
       summary: Register an OAuth/OIDC client.
+      description: >-
+        RFC 7591 registration. An app without the authorization code grant that names no
+        default_audience or default_resource, and that registers with a grant that uses a default
+        target (currently client credentials or CIBA; device and token exchange apps are created
+        through the admin API, which does not copy the default), gets the tenant's
+        dcr.default_audience and dcr.default_resource when the tenant has set them. Answers 503 temporarily_unavailable,
+        registering nothing, when the tenant's DCR settings exist but cannot be read, or when the
+        tenant's issuers (its primary custom domain) cannot be determined to check the default.
+        The initial access token is consumed before registration runs, so a single-use token is
+        spent by such a 503 (as by any other failure after it was accepted): ask for a new one.
       security:
         - initialAccessToken: []
       requestBody:
@@ -39,6 +49,8 @@ paths:
         '400':
           $ref: '#/components/responses/OAuthError'
         '401':
+          $ref: '#/components/responses/OAuthError'
+        '503':
           $ref: '#/components/responses/OAuthError'
   /oauth/admin-agent/register:
     post:
@@ -566,9 +578,25 @@ components:
           type: string
         default_audience:
           type: string
+          description: >-
+            Audience of the app's access tokens when a token request names none. When neither this
+            nor default_resource is sent, an app with the authorization code grant gets the
+            tenant's issuer URL as its default resource. An app that registers without it but
+            with a grant that uses a default target gets the tenant's dcr.default_audience /
+            dcr.default_resource when the tenant has set them (copied at registration, so a later
+            change does not retarget the app). Dynamic registration currently registers client
+            credentials and CIBA apps from that set; device and token exchange apps are created
+            through the admin API, which does not copy this default. Any other app (implicit or
+            refresh token only) has no default target. The tenant's default cannot be an issuer
+            URL of the tenant or its /userinfo URL: every issuer host the tenant's host and
+            identifier policy allows is reserved, whether or not a custom domain or lookup routes
+            it today.
         default_resource:
           type: string
           format: uri
+          description: >-
+            Resource indicator (RFC 8707) of the app's access tokens when a token request names
+            none. See default_audience for the default an app gets when it sends neither.
         jwks:
           type: object
           additionalProperties: true
@@ -620,6 +648,12 @@ components:
             format: uri
         require_pkce:
           type: boolean
+        default_audience:
+          type: string
+          description: Present when the app sent it, or when the app was given the tenant's dcr.default_audience.
+        default_resource:
+          type: string
+          description: Present when the app sent it, or when the app was given the tenant's dcr.default_resource. Not present for the issuer URL an authorization code app gets by default.
         token_endpoint_auth_method:
           type: string
         token_endpoint_auth_signing_alg:

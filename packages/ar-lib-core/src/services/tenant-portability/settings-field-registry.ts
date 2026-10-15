@@ -327,15 +327,6 @@ const REVIEWED_FIELDS: readonly [string, TenantSettingValueType, TenantSettingHa
   `,
     ],
     [
-      'client',
-      'string',
-      'url_or_asset',
-      `
-    client.default_audience
-    client.default_resource
-  `,
-    ],
-    [
       'feature-flags',
       'boolean',
       'value',
@@ -406,7 +397,6 @@ const REVIEWED_FIELDS: readonly [string, TenantSettingValueType, TenantSettingHa
       'string',
       'value',
       `
-    tenant.name
     tenant.ui_login_path
     tenant.ui_consent_path
     tenant.ui_reauth_path
@@ -537,6 +527,15 @@ const REVIEWED_FIELDS: readonly [string, TenantSettingValueType, TenantSettingHa
     dcr.require_initial_access_token
     dcr.scope_restriction_enabled
     dcr.allow_duplicate_software_id
+  `,
+    ],
+    [
+      'dcr',
+      'string',
+      'value',
+      `
+    dcr.default_audience
+    dcr.default_resource
   `,
     ],
     [

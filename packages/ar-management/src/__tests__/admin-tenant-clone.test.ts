@@ -313,7 +313,6 @@ describe('admin tenant clone', () => {
   it('removes destination-bound identities, keys, and uncopied resource references', () => {
     const context = {
       targetTenantId: 'destination',
-      targetTenantName: 'Destination',
       includeClients: false,
     };
 
@@ -335,9 +334,46 @@ describe('admin tenant clone', () => {
         )!
       )
     ).toEqual({
-      // tenant.default_id is no longer a setting: the source's stale value is dropped.
-      'tenant.name': 'Destination',
+      // tenant.default_id and tenant.name are no longer settings (the tenant record holds the
+      // name): the source's stale values are dropped, not carried over or rewritten.
       'tenant.logo_uri': 'https://cdn.example/logo.svg',
+    });
+
+    expect(
+      JSON.parse(
+        sanitizeCopiedSettingsValue(
+          'client',
+          JSON.stringify({
+            'client.sso_enabled': true,
+            // The app registration holds the default target: a source that still holds these as
+            // settings does not carry them over.
+            'client.default_audience': 'https://api.example.com',
+            'client.default_resource': 'https://api.example.com/',
+          }),
+          false,
+          context
+        )!
+      )
+    ).toEqual({ 'client.sso_enabled': true });
+
+    // The new DCR default target is an ordinary tenant setting and is copied.
+    expect(
+      JSON.parse(
+        sanitizeCopiedSettingsValue(
+          'dcr',
+          JSON.stringify({
+            'dcr.enabled': true,
+            'dcr.default_audience': 'https://api.example.com',
+            'dcr.default_resource': 'https://api.example.com/',
+          }),
+          false,
+          context
+        )!
+      )
+    ).toEqual({
+      'dcr.enabled': true,
+      'dcr.default_audience': 'https://api.example.com',
+      'dcr.default_resource': 'https://api.example.com/',
     });
 
     expect(
@@ -476,7 +512,6 @@ describe('admin tenant clone', () => {
         false,
         {
           targetTenantId: 'destination',
-          targetTenantName: 'Destination',
           includeClients: false,
         }
       )!
@@ -774,7 +809,6 @@ describe('admin tenant clone', () => {
 
     expect(response.status).toBe(201);
     expect(JSON.parse(config.values.get('settings:tenant:destination:tenant')!)).toEqual({
-      'tenant.name': 'Destination',
       'tenant.logo_uri': 'https://cdn.example/logo.svg',
     });
   });

@@ -221,7 +221,6 @@ interface KvRollbackEntry {
 
 interface SettingsCopyContext {
   targetTenantId: string;
-  targetTenantName: string;
   includeClients: boolean;
 }
 
@@ -339,10 +338,17 @@ export function sanitizeCopiedSettingsValue(
       'tenant.residency_profile_id',
       // No longer settings (deployment and key management hold them): stale values are dropped.
       'tenant.default_id',
+      // No longer a setting (the tenant record holds the name): a stale value is dropped.
+      'tenant.name',
     ]) {
       delete record[key];
     }
-    record['tenant.name'] = context.targetTenantName;
+  }
+
+  if (category === 'client') {
+    // No longer settings (the app registration holds the default target): stale values are dropped.
+    delete record['client.default_audience'];
+    delete record['client.default_resource'];
   }
 
   if (category === 'security') {
@@ -981,7 +987,6 @@ async function cloneClientKvConfiguration(
   env: Env,
   sourceTenantId: string,
   targetTenantId: string,
-  targetTenantName: string,
   clientIds: Set<string>,
   includeCredentials: boolean,
   writtenKvKeys: KvRollbackEntry[],
@@ -1007,7 +1012,6 @@ async function cloneClientKvConfiguration(
       budget,
       {
         targetTenantId,
-        targetTenantName,
         includeClients: true,
       }
     );
@@ -1577,7 +1581,6 @@ async function executeTenantCloneHandler(
         kvBudget,
         {
           targetTenantId,
-          targetTenantName: parsed.data.name,
           includeClients: options.clients,
         }
       );
@@ -1593,7 +1596,6 @@ async function executeTenantCloneHandler(
         kvBudget,
         {
           targetTenantId,
-          targetTenantName: parsed.data.name,
           includeClients: options.clients,
         },
         new Set(['tenant'])
@@ -1642,7 +1644,8 @@ async function executeTenantCloneHandler(
           else delete mergedValues[key];
         }
         delete mergedValues['tenant.default_id'];
-        mergedValues['tenant.name'] = parsed.data.name;
+        // No longer a setting (the tenant record holds the name): a stale value is dropped.
+        delete mergedValues['tenant.name'];
         await putTrackedKv(
           c.env.AUTHRIM_CONFIG,
           targetTenantSettingsKey,
@@ -1715,7 +1718,6 @@ async function executeTenantCloneHandler(
         c.env,
         sourceTenantId,
         targetTenantId,
-        parsed.data.name,
         clonedClientIds,
         options.client_credentials,
         writtenKvKeys,

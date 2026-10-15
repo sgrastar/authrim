@@ -131,6 +131,35 @@ describe('where settings live', () => {
 		}
 	});
 
+	it('no longer has the tenant name or the app default audience and resource as settings', () => {
+		// The tenant record holds the name; the app registration holds the default target.
+		for (const key of ['tenant.name', 'client.default_audience', 'client.default_resource']) {
+			expect(everyKey, key).not.toContain(key);
+			expect([...placed, ...drafted], key).not.toContain(key);
+			expect(NOT_APPLIED.has(key), key).toBe(false);
+		}
+		// The rest of the Tenant section stays where it was
+		expect(drafted).toContain('tenant.logo_uri');
+		expect(Object.keys(ALL_CATEGORY_META.client.settings).sort()).toEqual([
+			'client.app_login_enabled',
+			'client.sso_enabled'
+		]);
+	});
+
+	it('places the default target of new apps next to the other DCR settings, as applied', () => {
+		const dcr = ALL_CATEGORY_META.dcr.settings;
+		for (const key of ['dcr.default_audience', 'dcr.default_resource']) {
+			expect(everyKey, key).toContain(key);
+			expect(NOT_APPLIED.has(key), key).toBe(false);
+			expect(dcr[key].status, key).toBeUndefined();
+			expect(ALL_CATEGORY_META.dcr.settings[key].scopes ?? ['tenant'], key).toEqual(['tenant']);
+			const entry = DRAFT.find((candidate) => candidate.key === key);
+			const sibling = DRAFT.find((candidate) => candidate.key === 'dcr.enabled');
+			expect(entry?.page, key).toBe(sibling?.page);
+			expect(entry?.section, key).toBe(sibling?.section);
+		}
+	});
+
 	it('points every duplicate at a setting that exists', () => {
 		for (const entry of DRAFT.filter((e) => e.duplicateOf)) {
 			expect(everyKey, entry.key).toContain(entry.duplicateOf);

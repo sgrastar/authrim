@@ -74,6 +74,10 @@ import {
   bumpAuthenticationMethodsCacheRevision,
   resolveClientTrustPolicy,
   validateTenantUIBaseUrlAsync,
+  dcrReservedTargetProblem,
+  tenantIssuerUrls,
+  getTenantMetadataContextFromHono,
+  type DatabaseSource,
 } from '@authrim/ar-lib-core';
 import {
   validateCategoryPatch,
@@ -513,6 +517,38 @@ async function validateTenantUIPatch(
     }
   }
   return validateTenantUIPaths(body);
+}
+
+/**
+ * The default access token target of new apps must not be an audience the platform keeps for
+ * itself: an issuer URL of this tenant (what authorization code apps get) or its /userinfo URL.
+ * Every issuer host the tenant's host and identifier policy allows is reserved, whether or not a
+ * custom domain or lookup routes it today (see `tenantIssuerUrls`). Registration ignores such a
+ * value too, whatever is stored. The primary custom domain is looked up strictly: when that fails
+ * the issuers are unknown and `unavailable` is set, so nothing is saved on a guess. Returns the
+ * problem, or null.
+ */
+async function validateDcrReservedTargets(
+  body: SettingsPatchRequest,
+  env: Env,
+  tenantId: string,
+  tenantCoreDb?: DatabaseSource
+): Promise<{ problem: string | null; unavailable?: boolean }> {
+  const keys = (['dcr.default_audience', 'dcr.default_resource'] as const).filter(
+    (key) => typeof body.set?.[key] === 'string' && body.set[key] !== ''
+  );
+  if (keys.length === 0) return { problem: null };
+  let issuerUrls: string[];
+  try {
+    issuerUrls = await tenantIssuerUrls(env, tenantId, [], { tenantCoreDb });
+  } catch {
+    return { problem: null, unavailable: true };
+  }
+  for (const key of keys) {
+    const problem = dcrReservedTargetProblem(key, body.set?.[key] as string, issuerUrls);
+    if (problem) return { problem };
+  }
+  return { problem: null };
 }
 
 function validateLoginUIPatch(body: SettingsPatchRequest): {
@@ -1616,6 +1652,38 @@ settingsV2.patch(
             return errorResponse(c, 'validation_failed', categoryError, 400);
           }
 
+          if (category === 'dcr') {
+            const dcrTarget = await validateDcrReservedTargets(
+              body,
+              c.env,
+              tenantId,
+              getTenantMetadataContextFromHono(
+                c as unknown as Parameters<typeof getTenantMetadataContextFromHono>[0]
+              )?.coreDb
+            );
+            if (dcrTarget.unavailable) {
+              await recordSettingsAuditFailure(c, {
+                category,
+                scope,
+                reason: 'dcr_issuers_unavailable',
+              });
+              return errorResponse(
+                c,
+                'temporarily_unavailable',
+                "The tenant's issuers cannot be determined right now, so the default target cannot be checked; try again",
+                503
+              );
+            }
+            if (dcrTarget.problem) {
+              await recordSettingsAuditFailure(c, {
+                category,
+                scope,
+                reason: 'dcr_validation_failed',
+              });
+              return errorResponse(c, 'validation_failed', dcrTarget.problem, 400);
+            }
+          }
+
           const postLoginValidation = await validatePostLoginRelatedPatch(
             c.env,
             tenantId,
@@ -2362,7 +2430,7 @@ settingsV2.patch('/platform/settings/:category', (c) => {
 
           const platformError =
             category === 'tenant'
-              ? validatePlatformUIPatch(body, c.env)
+              ? (validatePlatformUIPatch(body, c.env) ?? validateCategoryPatch(category, body))
               : validateCategoryPatch(category, body);
           if (platformError) {
             await recordSettingsAuditFailure(c, {

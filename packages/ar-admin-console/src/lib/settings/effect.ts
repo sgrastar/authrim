@@ -12,8 +12,8 @@
  * ceilings, extended introspection claims, the SCIM token lifetime, the SAML switch, assertion
  * and request lifetimes and provider defaults, the identity assurance level recorded for accounts
  * the organisation creates, the scope-to-IAL requirements, and the use of the IAL assurance
- * values in OIDC (eduperson_assurance) and SAML (eduPersonAssurance), the SAML AuthnContextClassRef to AAL map, the CIBA request lifetime and polling interval bounds, the binding message limits, the slow_down increment and poll count, the user code switch and the ping timeout, the device code lifetime, polling interval and expiry and interval bounds, the device flow slow_down increment and poll count, and the device user code charset and length; and less the settings that left the catalog (duplicates, copies of the app
- * registration, values too fine or fixed at deployment, and CIBA settings with no CIBA behaviour behind them: the request cache lifetime and the notifier timeouts). Update this list when a setting starts to apply or leaves the catalog.
+ * values in OIDC (eduperson_assurance) and SAML (eduPersonAssurance), the SAML AuthnContextClassRef to AAL map, the CIBA request lifetime and polling interval bounds, the binding message limits, the slow_down increment and poll count, the user code switch and the ping timeout, the device code lifetime, polling interval and expiry and interval bounds, the device flow slow_down increment and poll count, and the device user code charset and length, and the default audience and resource of newly registered apps; and less the settings that left the catalog (duplicates, copies of the app
+ * registration (the app's default audience and resource) or of the tenant record (the tenant name), values too fine or fixed at deployment, and CIBA settings with no CIBA behaviour behind them: the request cache lifetime and the notifier timeouts). Update this list when a setting starts to apply or leaves the catalog.
  *
  * Shown in the settings map (Storybook: Pages › Settings map).
  */
@@ -55,13 +55,8 @@ export const NOT_APPLIED: ReadonlyMap<string, NotApplied> = new Map([
 		'plugin.notifier_console_enabled',
 		'tenant.ui_register_path'
 	]),
-	// to-wire (4)
-	...reason('to-wire', [
-		'assurance.ida_profile',
-		'client.default_audience',
-		'client.default_resource',
-		'tenant.name'
-	]),
+	// to-wire (1)
+	...reason('to-wire', ['assurance.ida_profile']),
 	// internal (5)
 	...reason('internal', [
 		'login-ui.account_page_draft',

@@ -38,6 +38,7 @@ export * from './services/saml-authorization-challenge';
 export * from './services/sign-in-limits';
 export * from './services/ciba-config';
 export * from './services/device-flow-settings';
+export * from './services/dcr-default-target';
 export * from './services/scim-token-expiry';
 export * from './services/saml-settings';
 export * from './services/token-exchange-ceilings';

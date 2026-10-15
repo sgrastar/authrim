@@ -17,6 +17,16 @@ import type { Env } from '../types/env';
 import { createLogger } from './logger';
 import { DCR_DEFAULTS, type DCRSettings } from '../types/settings/dcr';
 
+/**
+ * The on/off DCR settings this module reads. The default target (`dcr.default_audience`,
+ * `dcr.default_resource`) is read strictly by `resolveDcrDefaultTarget`.
+ */
+export type DCRFlagKey = Exclude<
+  keyof DCRSettings,
+  'dcr.default_audience' | 'dcr.default_resource'
+>;
+export type DCRFlagSettings = Pick<DCRSettings, DCRFlagKey>;
+
 const log = createLogger().module('DCR_CONFIG');
 
 /**
@@ -102,21 +112,21 @@ function parseBool(value: string | undefined, defaultValue: boolean): boolean {
  * @param tenantId - Tenant ID
  * @returns Resolved setting value
  */
-export async function getDCRSetting<K extends keyof DCRSettings>(
+export async function getDCRSetting<K extends DCRFlagKey>(
   key: K,
   env: Env,
   tenantId: string
-): Promise<DCRSettings[K]> {
+): Promise<DCRFlagSettings[K]> {
   // Load KV settings
   const kvSettings = await loadDCRSettingsFromKV(env, tenantId);
 
   // Check KV first
   if (kvSettings[key] !== undefined) {
-    return kvSettings[key] as DCRSettings[K];
+    return kvSettings[key] as DCRFlagSettings[K];
   }
 
   // Check environment variable
-  const envKeyMap: Record<keyof DCRSettings, string> = {
+  const envKeyMap: Record<DCRFlagKey, string> = {
     'dcr.enabled': 'DCR_ENABLED',
     'dcr.require_initial_access_token': 'DCR_REQUIRE_INITIAL_ACCESS_TOKEN',
     'dcr.scope_restriction_enabled': 'DCR_SCOPE_RESTRICTION_ENABLED',
@@ -127,7 +137,7 @@ export async function getDCRSetting<K extends keyof DCRSettings>(
   const envValue = (env as unknown as Record<string, string | undefined>)[envKey];
 
   if (envValue !== undefined && envValue !== '') {
-    return parseBool(envValue, DCR_DEFAULTS[key]) as DCRSettings[K];
+    return parseBool(envValue, DCR_DEFAULTS[key]) as DCRFlagSettings[K];
   }
 
   // Return default
@@ -137,7 +147,7 @@ export async function getDCRSetting<K extends keyof DCRSettings>(
 /**
  * Get all DCR settings
  */
-export async function getAllDCRSettings(env: Env, tenantId: string): Promise<DCRSettings> {
+export async function getAllDCRSettings(env: Env, tenantId: string): Promise<DCRFlagSettings> {
   return {
     'dcr.enabled': await getDCRSetting('dcr.enabled', env, tenantId),
     'dcr.require_initial_access_token': await getDCRSetting(
