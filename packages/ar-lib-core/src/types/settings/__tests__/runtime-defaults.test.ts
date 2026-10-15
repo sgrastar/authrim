@@ -13,6 +13,8 @@ import { CIBA_DEFAULTS, CIBA_SETTINGS_META } from '../ciba';
 import { CIBA_CONSTANTS } from '../../../utils/ciba';
 import { CIBA_HARD_LIMITS } from '../../../services/ciba-config';
 import { DEVICE_FLOW_DEFAULTS, DEVICE_FLOW_SETTINGS_META } from '../device-flow';
+import { DCR_DEFAULTS, DCR_SETTINGS_META } from '../dcr';
+import { DCR_DEFAULT_TARGET_MAX_LENGTH } from '../../../services/dcr-default-target';
 import {
   DEFAULT_USER_CODE_CHARSET,
   DEFAULT_USER_CODE_LENGTH,
@@ -338,6 +340,24 @@ describe('settings that replace older stores default to runtime behaviour', () =
           max: ciba.max,
           integer: ciba.integer,
         });
+      }
+    });
+  });
+
+  describe('default target of newly registered apps', () => {
+    it('is unset by default: a registration gets no target from the tenant', () => {
+      expect(DCR_DEFAULTS['dcr.default_audience']).toBe('');
+      expect(DCR_DEFAULTS['dcr.default_resource']).toBe('');
+    });
+
+    it('is read from the environment under the names the settings declare', () => {
+      expect(DCR_SETTINGS_META['dcr.default_audience'].envKey).toBe('DCR_DEFAULT_AUDIENCE');
+      expect(DCR_SETTINGS_META['dcr.default_resource'].envKey).toBe('DCR_DEFAULT_RESOURCE');
+    });
+
+    it('state the limit the validator enforces', () => {
+      for (const key of ['dcr.default_audience', 'dcr.default_resource'] as const) {
+        expect(DCR_SETTINGS_META[key].description).toContain(`${DCR_DEFAULT_TARGET_MAX_LENGTH}`);
       }
     });
   });

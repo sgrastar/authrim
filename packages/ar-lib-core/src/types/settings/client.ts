@@ -17,9 +17,6 @@ export interface ClientSettings {
 
   // SSO Override
   'client.sso_enabled': boolean;
-
-  'client.default_audience': string;
-  'client.default_resource': string;
 }
 
 /**
@@ -45,28 +42,6 @@ export const CLIENT_SETTINGS_META: Record<keyof ClientSettings, SettingMeta> = {
       'Enable Single Sign-On for this client. When disabled, users must authenticate even with an existing session.',
     visibility: 'public',
   },
-
-  'client.default_audience': {
-    key: 'client.default_audience',
-    type: 'string',
-    default: '',
-    envKey: 'CLIENT_DEFAULT_AUDIENCE',
-    label: 'Default Audience',
-    description: 'Default audience for tokens',
-    visibility: 'admin',
-    status: 'in_development',
-  },
-  'client.default_resource': {
-    key: 'client.default_resource',
-    type: 'string',
-    default: '',
-    envKey: 'CLIENT_DEFAULT_RESOURCE',
-    label: 'Default Resource',
-    description:
-      'Default resource target for access tokens when the token request omits resource/audience.',
-    visibility: 'admin',
-    status: 'in_development',
-  },
 };
 
 /**
@@ -85,6 +60,4 @@ export const CLIENT_CATEGORY_META: CategoryMeta = {
 export const CLIENT_DEFAULTS: ClientSettings = {
   'client.app_login_enabled': false,
   'client.sso_enabled': false,
-  'client.default_audience': '',
-  'client.default_resource': '',
 };

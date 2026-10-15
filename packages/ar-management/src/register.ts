@@ -30,6 +30,7 @@ import {
   AR_ERROR_CODES,
   getLogger,
   createLogger,
+  type Logger,
   // Custom Redirect URIs (Authrim Extension)
   validateAllowedOrigins,
   // Simple Logout Webhook (Authrim Extension)
@@ -42,8 +43,11 @@ import {
   hashClientSecret,
   // DCR Configuration
   getDCRSetting,
-  createSettingsManager,
-  CLIENT_CATEGORY_META,
+  resolveDcrDefaultTarget,
+  getTenantMetadataContextFromHono,
+  type DatabaseSource,
+  grantsUseDefaultTarget,
+  tenantIssuerUrls,
   // Write-Through cache for client metadata
   putClient,
   SUPPORTED_JWE_ALG,
@@ -1193,13 +1197,37 @@ function normalizeOptionalString(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim().length > 0 ? value.trim() : undefined;
 }
 
+/**
+ * Thrown when the tenant's DCR settings exist but cannot be read: whether the tenant gives new
+ * apps a default target is then unknown, and registering without one would leave a device or
+ * client credentials app that can never get a token.
+ */
+class DefaultTargetUnavailableError extends Error {}
+
+/**
+ * The access token target a new app starts with:
+ *
+ * 1. what the registration request names (default_audience / default_resource);
+ * 2. for an app with the authorization code grant, the issuer URL (the audience /userinfo accepts):
+ *    the tenant's default (`dcr.default_audience` / `dcr.default_resource`) never replaces it;
+ * 3. for an app with a grant that uses the default target (client credentials, CIBA, device,
+ *    token exchange), the tenant's default when it has a valid one (copied here, so changing it
+ *    later does not retarget this app); a stored value that is not valid (or equals an issuer of
+ *    the tenant or its /userinfo) is ignored, as if unset;
+ * 4. else none.
+ *
+ * Only step 3 reads the tenant's settings, and it throws DefaultTargetUnavailableError when they
+ * cannot be read (a missing document is simply no default).
+ */
 async function resolveDefaultAccessTokenTarget(
   env: Env,
   tenantId: string,
   issuerUrl: string,
   request: ClientRegistrationRequestWithPkce,
-  grantTypes: string[]
-): Promise<{ defaultAudience?: string; defaultResource?: string }> {
+  grantTypes: string[],
+  log: Logger,
+  tenantCoreDb: DatabaseSource | undefined
+): Promise<{ defaultAudience?: string; defaultResource?: string; fromTenantDefault?: boolean }> {
   const requestedDefaultResource = normalizeOptionalString(request.default_resource);
   const requestedDefaultAudience = normalizeOptionalString(request.default_audience);
 
@@ -1210,30 +1238,36 @@ async function resolveDefaultAccessTokenTarget(
     };
   }
 
-  const settingsManager = createSettingsManager({
-    env: env as unknown as Record<string, string | undefined>,
-    kv: env.SETTINGS ?? null,
-    cacheTTL: 30000,
-  });
-  settingsManager.registerCategory(CLIENT_CATEGORY_META);
-
-  const [configuredDefaultResource, configuredDefaultAudience] = await Promise.all([
-    settingsManager
-      .get('client.default_resource', { type: 'tenant', id: tenantId })
-      .catch(() => ''),
-    settingsManager
-      .get('client.default_audience', { type: 'tenant', id: tenantId })
-      .catch(() => ''),
-  ]);
-
-  const defaultResource = normalizeOptionalString(configuredDefaultResource);
-  const defaultAudience = normalizeOptionalString(configuredDefaultAudience);
-  if (defaultResource || defaultAudience) {
-    return { defaultResource, defaultAudience };
-  }
-
   if (grantTypes.includes('authorization_code')) {
     return { defaultResource: issuerUrl };
+  }
+
+  // An app none of whose grants falls back to the default target (implicit, refresh token only)
+  // would never use one: it gets none.
+  if (!grantsUseDefaultTarget(grantTypes)) {
+    return {};
+  }
+
+  let target: Awaited<ReturnType<typeof resolveDcrDefaultTarget>>;
+  try {
+    target = await resolveDcrDefaultTarget(
+      env,
+      tenantId,
+      await tenantIssuerUrls(env, tenantId, [issuerUrl], { tenantCoreDb })
+    );
+  } catch (error) {
+    log.error('DCR default target settings could not be read', { tenantId }, error as Error);
+    throw new DefaultTargetUnavailableError();
+  }
+  for (const { key, problem } of target.ignored) {
+    log.warn('Ignoring an invalid tenant default access token target', { tenantId, key, problem });
+  }
+  if (target.audience || target.resource) {
+    return {
+      defaultAudience: target.audience,
+      defaultResource: target.resource,
+      fromTenantDefault: true,
+    };
   }
 
   return {};
@@ -1786,13 +1820,27 @@ export async function registerHandler(c: Context<{ Bindings: Env }>): Promise<Re
     const requirePkce =
       request.require_pkce ??
       (tokenEndpointAuthMethod === 'none' && grantTypes.includes('authorization_code'));
-    const defaultTarget = await resolveDefaultAccessTokenTarget(
-      c.env,
-      tenantId,
-      issuerUrl,
-      request,
-      grantTypes
-    );
+    let defaultTarget: Awaited<ReturnType<typeof resolveDefaultAccessTokenTarget>>;
+    try {
+      defaultTarget = await resolveDefaultAccessTokenTarget(
+        c.env,
+        tenantId,
+        issuerUrl,
+        request,
+        grantTypes,
+        getLogger(c).module('DCR'),
+        getTenantMetadataContextFromHono(c)?.coreDb
+      );
+    } catch (error) {
+      if (!(error instanceof DefaultTargetUnavailableError)) throw error;
+      return c.json(
+        {
+          error: 'temporarily_unavailable',
+          error_description: 'Registration settings are temporarily unavailable',
+        },
+        503
+      );
+    }
 
     // Determine if client is trusted based on redirect_uri domain
     // Trusted clients can skip consent screens (First-Party clients)
@@ -1848,6 +1896,12 @@ export async function registerHandler(c: Context<{ Bindings: Env }>): Promise<Re
     if (request.default_scope) response.default_scope = request.default_scope;
     if (request.default_audience) response.default_audience = request.default_audience;
     if (request.default_resource) response.default_resource = request.default_resource;
+    // The tenant's default target is part of the registered metadata (RFC 7591 section 3.2.1): the
+    // app sees what its tokens will be for. The issuer URL an authorization code app gets is not.
+    if (defaultTarget.fromTenantDefault) {
+      if (defaultTarget.defaultAudience) response.default_audience = defaultTarget.defaultAudience;
+      if (defaultTarget.defaultResource) response.default_resource = defaultTarget.defaultResource;
+    }
     // OIDC Core 8: Subject type and sector identifier
     response.subject_type = subjectType;
     if (request.sector_identifier_uri)

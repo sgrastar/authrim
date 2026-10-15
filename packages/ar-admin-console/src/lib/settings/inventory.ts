@@ -350,7 +350,9 @@ place('applications/defaults', 'Dynamic client registration', {
 	advanced: [
 		'dcr.require_initial_access_token',
 		'dcr.scope_restriction_enabled',
-		'dcr.allow_duplicate_software_id'
+		'dcr.allow_duplicate_software_id',
+		'dcr.default_audience',
+		'dcr.default_resource'
 	]
 });
 place('applications/defaults', 'Discovery document', {
@@ -371,9 +373,6 @@ place(
 			'Unset on most apps (DCR apps always): show the effective value and that it comes from oauth.sso_enabled, with a link. See Pages › Settings UX backlog.'
 	}
 );
-place('applications/all', 'App: scopes and audience', {
-	advanced: ['client.default_audience', 'client.default_resource']
-});
 place('applications/all', 'App: native and browser apps', {
 	advanced: ['client.app_login_enabled']
 });
@@ -623,7 +622,7 @@ place('integrations/plugins', 'Plugins', {
 // Tenant settings
 
 place('settings/general', 'Tenant', {
-	primary: ['tenant.name', 'tenant.logo_uri']
+	primary: ['tenant.logo_uri']
 });
 place('settings/domains', 'Domains and origins', {
 	primary: ['tenant.allowed_domains'],

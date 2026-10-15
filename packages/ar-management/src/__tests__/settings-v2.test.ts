@@ -236,6 +236,8 @@ function createTestApp(
     tenantId?: string;
     env?: Record<string, string>;
     adminAuth?: AdminAuthContext;
+    /** The tenant's core database, as the request context would have resolved it. */
+    tenantCoreDb?: D1Database;
   } = {}
 ) {
   const mockKV = options.kv ?? createMockKV();
@@ -265,6 +267,10 @@ function createTestApp(
       }
     );
     c.set('tenantId', options.tenantId ?? 'default');
+    (c as unknown as { set(key: string, value: unknown): void }).set('tenantMetadataContext', {
+      tenantId: options.tenantId ?? 'default',
+      coreDb: options.tenantCoreDb ?? c.env.DB,
+    });
     await next();
   });
 
@@ -1799,7 +1805,6 @@ describe('Settings API v2', () => {
               ifMatch: getData.version,
               set: {
                 'client.sso_enabled': true,
-                'client.default_audience': 'https://api.example.com',
               },
             }),
           },
@@ -1809,8 +1814,47 @@ describe('Settings API v2', () => {
         expect(res.status).toBe(200);
         const body = (await res.json()) as SettingsPatchResult;
         expect(body.applied).toContain('client.sso_enabled');
-        expect(body.applied).toContain('client.default_audience');
       });
+
+      it.each(['client.default_audience', 'client.default_resource'])(
+        'no longer lists %s and does not save it: the app registration holds the default target',
+        async (key) => {
+          const mockKV = createMockKV({
+            'client:test-tenant:client_abc:metadata': JSON.stringify({ tenant_id: 'test-tenant' }),
+            // A document saved before the keys were retired still holds them.
+            'settings:client:test-tenant:client_abc:client': JSON.stringify({
+              'client.sso_enabled': true,
+              [key]: 'https://api.example.com',
+            }),
+          });
+          const { app, mockEnv } = createTestApp({ kv: mockKV });
+          const headers = { 'Content-Type': 'application/json', 'X-Tenant-Id': 'test-tenant' };
+
+          const getRes = await app.request(
+            '/api/admin/clients/client_abc/settings',
+            { method: 'GET', headers },
+            mockEnv
+          );
+          const current = (await getRes.json()) as SettingsGetResult;
+          expect(current.values['client.sso_enabled']).toBe(true);
+          expect(current.values).not.toHaveProperty(key);
+          expect(current.sources).not.toHaveProperty(key);
+
+          const res = await app.request(
+            '/api/admin/clients/client_abc/settings',
+            {
+              method: 'PATCH',
+              headers,
+              body: JSON.stringify({ ifMatch: current.version, set: { [key]: 'https://other' } }),
+            },
+            mockEnv
+          );
+          expect(res.status).toBe(400);
+          expect(((await res.json()) as SettingsPatchResult).rejected).toEqual({
+            [key]: 'Unknown setting key',
+          });
+        }
+      );
 
       it.each(['client.consent_required', 'client.first_party'])(
         'rejects deprecated consent authority key %s',
@@ -3418,6 +3462,329 @@ describe('Settings API v2', () => {
       const after = await api.readClient();
       expect(after.values['device_flow.max_interval']).toBe(30);
       expect(after.sources['device_flow.max_interval']).toBe('tenant');
+    });
+  });
+
+  describe('tenant.name, retired from the tenant category', () => {
+    const saved = {
+      'settings:tenant:tenant_123:tenant': JSON.stringify({
+        'tenant.name': 'Stale name',
+        'tenant.logo_uri': 'https://cdn.example/logo.svg',
+      }),
+    };
+    async function tenantSettings(env: Record<string, string> = {}) {
+      const { app, mockEnv } = createTestApp({ kv: createMockKV(saved), env });
+      const read = async () =>
+        (await (
+          await app.request(
+            '/api/admin/tenants/tenant_123/settings/tenant',
+            { method: 'GET' },
+            mockEnv
+          )
+        ).json()) as SettingsGetResult;
+      const patch = async (body: Record<string, unknown>) =>
+        app.request(
+          '/api/admin/tenants/tenant_123/settings/tenant',
+          {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ifMatch: (await read()).version, ...body }),
+          },
+          mockEnv
+        );
+      return { read, patch };
+    }
+
+    it('reads without the stored name or the TENANT_NAME variable, and keeps the other values', async () => {
+      const { read } = await tenantSettings({ TENANT_NAME: 'From env' });
+      const view = await read();
+
+      expect(view.values['tenant.logo_uri']).toBe('https://cdn.example/logo.svg');
+      expect(view.values).not.toHaveProperty('tenant.name');
+      expect(view.sources).not.toHaveProperty('tenant.name');
+    });
+
+    it('still saves another setting while the document holds the stale name', async () => {
+      const { read, patch } = await tenantSettings();
+      const res = await patch({ set: { 'tenant.logo_uri': 'https://cdn.example/new.svg' } });
+
+      expect(res.status).toBe(200);
+      expect((await read()).values['tenant.logo_uri']).toBe('https://cdn.example/new.svg');
+    });
+
+    it.each(['set', 'clear', 'disable'])(
+      'refuses naming it in %s as not a tenant setting',
+      async (op) => {
+        const { read, patch } = await tenantSettings();
+        const before = await read();
+
+        const res = await patch(
+          op === 'set' ? { set: { 'tenant.name': 'New name' } } : { [op]: ['tenant.name'] }
+        );
+
+        expect(res.status).toBe(400);
+        expect(((await res.json()) as ApiResponse).message).toBe(
+          'tenant.name is not a tenant setting'
+        );
+        expect((await read()).version).toBe(before.version);
+      }
+    );
+
+    it('refuses the whole PATCH when it names the retired key next to a valid one', async () => {
+      const { read, patch } = await tenantSettings();
+      const before = await read();
+
+      const res = await patch({
+        set: { 'tenant.name': 'New name', 'tenant.logo_uri': 'https://cdn.example/new.svg' },
+      });
+
+      expect(res.status).toBe(400);
+      const after = await read();
+      expect(after.version).toBe(before.version);
+      expect(after.values['tenant.logo_uri']).toBe('https://cdn.example/logo.svg');
+    });
+  });
+
+  describe('default access token target of new apps on PATCH /tenants/:tenantId/settings/dcr', () => {
+    async function dcrSettings(stored: Record<string, string> = {}) {
+      const { app, mockEnv } = createTestApp({ kv: createMockKV(stored) });
+      const read = async () =>
+        (await (
+          await app.request(
+            '/api/admin/tenants/tenant_123/settings/dcr',
+            { method: 'GET' },
+            mockEnv
+          )
+        ).json()) as SettingsGetResult;
+      const patch = async (body: Record<string, unknown>) =>
+        app.request(
+          '/api/admin/tenants/tenant_123/settings/dcr',
+          {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ifMatch: (await read()).version, ...body }),
+          },
+          mockEnv
+        );
+      return { read, patch };
+    }
+
+    it('lists both settings, empty by default', async () => {
+      const { read } = await dcrSettings();
+      const view = await read();
+
+      expect(view.values['dcr.default_audience']).toBe('');
+      expect(view.values['dcr.default_resource']).toBe('');
+      expect(view.sources['dcr.default_audience']).toBe('default');
+    });
+
+    it('saves a valid audience and resource and reads them back', async () => {
+      const { read, patch } = await dcrSettings();
+      const res = await patch({
+        set: {
+          'dcr.default_audience': 'urn:example:api',
+          'dcr.default_resource': 'https://api.example.com/v1',
+        },
+      });
+
+      expect(res.status).toBe(200);
+      const view = await read();
+      expect(view.values['dcr.default_audience']).toBe('urn:example:api');
+      expect(view.values['dcr.default_resource']).toBe('https://api.example.com/v1');
+      expect(view.sources['dcr.default_resource']).toBe('kv');
+    });
+
+    it.each([
+      ['dcr.default_resource', 'api.example.com/v1', 'absolute URI'],
+      ['dcr.default_resource', 'https://api.example.com/v1#frag', 'fragment'],
+      ['dcr.default_resource', 'http://api.example.com/v1', 'https'],
+      ['dcr.default_resource', 'ftp://api.example.com/v1', 'https'],
+      ['dcr.default_resource', 'https://api.example.com/a b', 'spaces'],
+      ['dcr.default_audience', 'two words', 'spaces'],
+      ['dcr.default_audience', ' padded', 'spaces'],
+      ['dcr.default_audience', 'tab\there', 'control'],
+      ['dcr.default_audience', 'https://tenant_123.example.com', 'issuer'],
+      ['dcr.default_audience', 'https://tenant_123.example.com/userinfo', 'issuer'],
+      ['dcr.default_resource', 'https://tenant_123.example.com/', 'issuer'],
+      ['dcr.default_resource', 'https://TENANT_123.example.com:443/userinfo/', 'issuer'],
+    ])('refuses %s = %j (%s) and saves nothing', async (key, value, mentions) => {
+      const { read, patch } = await dcrSettings();
+      const before = await read();
+
+      const res = await patch({ set: { [key]: value, 'dcr.enabled': true } });
+
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as ApiResponse;
+      expect(body.error).toBe('validation_failed');
+      expect(body.message as string).toContain(key);
+      expect(body.message as string).toContain(mentions);
+      const after = await read();
+      expect(after.version).toBe(before.version);
+      expect(after.sources['dcr.enabled']).not.toBe('kv');
+    });
+
+    it.each([
+      ['dcr.default_resource', `https://api.example.com/${'a'.repeat(2048)}`],
+      ['dcr.default_audience', 'a'.repeat(2049)],
+    ])('refuses %s longer than 2048 characters and saves nothing', async (key, value) => {
+      const { read, patch } = await dcrSettings();
+      const before = await read();
+
+      const res = await patch({ set: { [key]: value } });
+
+      expect(res.status).toBe(400);
+      expect(((await res.json()) as ApiResponse).message as string).toContain('at most 2048');
+      expect((await read()).version).toBe(before.version);
+    });
+
+    it.each([
+      ['dcr.default_resource', 'http://localhost:8080/api'],
+      ['dcr.default_resource', 'http://127.0.0.1/api'],
+      ['dcr.default_resource', 'http://[::1]:3000/api'],
+      ['dcr.default_audience', 'https://tenant_123.example.com/api'],
+      ['dcr.default_audience', 'https://other-tenant.example.com'],
+      ['dcr.default_audience', ''],
+    ])('accepts %s = %j', async (key, value) => {
+      const { patch } = await dcrSettings();
+      expect((await patch({ set: { [key]: value } })).status).toBe(200);
+    });
+
+    describe('for a tenant reachable on more than one issuer', () => {
+      // The primary tenant answers on the naked domain and on its own subdomain, both allowed.
+      async function nakedDomainTenant() {
+        const { app, mockEnv } = createTestApp({
+          kv: createMockKV({
+            'settings:tenant:acme:tenant': JSON.stringify({
+              'tenant.allowed_domains': 'example.com, acme.example.com',
+              'tenant.allowed_identifiers': 'https://example.com, https://acme.example.com',
+            }),
+          }),
+          env: { NAKED_DOMAIN_AS_ISSUER: 'true', PRIMARY_TENANT_ID: 'acme' },
+        });
+        const url = '/api/admin/tenants/acme/settings/dcr';
+        return async (set: Record<string, unknown>) => {
+          const current = (await (
+            await app.request(url, { method: 'GET' }, mockEnv)
+          ).json()) as SettingsGetResult;
+          return app.request(
+            url,
+            {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ ifMatch: current.version, set }),
+            },
+            mockEnv
+          );
+        };
+      }
+
+      it.each([
+        ['dcr.default_audience', 'https://example.com'],
+        ['dcr.default_audience', 'https://acme.example.com'],
+        ['dcr.default_resource', 'https://ACME.example.com:443/userinfo/'],
+        ['dcr.default_resource', 'https://example.com/userinfo'],
+      ])('refuses %s = %s: both are issuers of the tenant', async (key, value) => {
+        const patch = await nakedDomainTenant();
+        const res = await patch({ [key]: value });
+
+        expect(res.status).toBe(400);
+        expect(((await res.json()) as ApiResponse).message as string).toContain('issuer URL');
+      });
+
+      it('still accepts a target on neither', async () => {
+        const patch = await nakedDomainTenant();
+        expect((await patch({ 'dcr.default_audience': 'https://api.example.com' })).status).toBe(
+          200
+        );
+      });
+    });
+
+    describe('when the primary custom domain of the tenant cannot be looked up', () => {
+      const failingDb = () =>
+        ({
+          prepare: vi.fn().mockReturnValue({
+            bind: vi.fn().mockReturnThis(),
+            first: vi.fn().mockRejectedValue(new Error('D1 unavailable')),
+            all: vi.fn().mockRejectedValue(new Error('D1 unavailable')),
+          }),
+        }) as unknown as D1Database;
+
+      async function unavailable() {
+        const { app, mockEnv } = createTestApp({
+          kv: createMockKV(),
+          tenantCoreDb: failingDb(),
+        });
+        const url = '/api/admin/tenants/tenant_123/settings/dcr';
+        const read = async () =>
+          (await (await app.request(url, { method: 'GET' }, mockEnv)).json()) as SettingsGetResult;
+        const patch = async (set: Record<string, unknown>) =>
+          app.request(
+            url,
+            {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ ifMatch: (await read()).version, set }),
+            },
+            mockEnv
+          );
+        return { read, patch };
+      }
+
+      it.each([
+        ['dcr.default_audience', 'urn:example:api'],
+        ['dcr.default_resource', 'https://api.example.com/v1'],
+      ])('refuses %s with 503 and saves nothing: the issuers are unknown', async (key, value) => {
+        const { read, patch } = await unavailable();
+        const before = await read();
+
+        const res = await patch({ [key]: value, 'dcr.enabled': true });
+
+        expect(res.status).toBe(503);
+        expect(((await res.json()) as ApiResponse).error).toBe('temporarily_unavailable');
+        const after = await read();
+        expect(after.version).toBe(before.version);
+        expect(after.sources[key]).not.toBe('kv');
+        expect(after.sources['dcr.enabled']).not.toBe('kv');
+      });
+
+      it('still saves a PATCH that sets no default target', async () => {
+        const { read, patch } = await unavailable();
+
+        expect((await patch({ 'dcr.enabled': true })).status).toBe(200);
+        expect((await read()).values['dcr.enabled']).toBe(true);
+      });
+
+      it('still saves an empty default: nothing to compare', async () => {
+        const { patch } = await unavailable();
+        expect((await patch({ 'dcr.default_audience': '' })).status).toBe(200);
+      });
+    });
+
+    it('accepts the subdomain of a tenant that answers on its subdomain only', async () => {
+      // No allowed domains: the naked domain is not the tenant's, and only tenant_123's own
+      // subdomain is reserved.
+      const { patch } = await dcrSettings();
+      expect((await patch({ set: { 'dcr.default_audience': 'https://example.com' } })).status).toBe(
+        200
+      );
+    });
+
+    it('does not take the other keys of the category into account', async () => {
+      const { read, patch } = await dcrSettings();
+      const res = await patch({
+        set: { 'dcr.enabled': true, 'dcr.require_initial_access_token': false },
+      });
+
+      expect(res.status).toBe(200);
+      expect((await read()).values['dcr.enabled']).toBe(true);
+    });
+
+    it('refuses a key the category does not have', async () => {
+      const { patch } = await dcrSettings();
+      const res = await patch({ set: { 'dcr.nope': 'x' } });
+
+      expect(res.status).toBe(400);
+      expect(((await res.json()) as ApiResponse).message).toBe('dcr.nope is not a DCR setting');
     });
   });
 

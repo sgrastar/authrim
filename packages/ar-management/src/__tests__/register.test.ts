@@ -651,35 +651,540 @@ describe('Dynamic Client Registration Handler', () => {
       expect(args).toContain('https://id.example.com');
     });
 
-    it('uses tenant client.default_resource before the issuer URL default', async () => {
-      mockEnv.SETTINGS = createMockKV();
-      await mockEnv.SETTINGS.put(
-        'settings:tenant:default:client',
-        JSON.stringify({ 'client.default_resource': 'https://api.example.com/' })
-      );
-
-      const requestBody = {
-        redirect_uris: ['https://example.com/callback'],
+    describe('default access token target of the new app', () => {
+      const ISSUER = 'https://id.example.com';
+      const TENANT_DEFAULT = {
+        'dcr.default_audience': 'urn:example:api',
+        'dcr.default_resource': 'https://api.example.com/v1',
+      };
+      const AUTH_CODE = { redirect_uris: ['https://example.com/callback'] };
+      const CLIENT_CREDENTIALS = {
+        grant_types: ['client_credentials'],
+        client_credentials_allowed: true,
+        token_endpoint_auth_method: 'client_secret_basic',
+      };
+      const CIBA = {
+        grant_types: ['urn:openid:params:grant-type:ciba'],
+        response_types: [],
+        token_endpoint_auth_method: 'client_secret_basic',
       };
 
-      const res = await app.request(
-        '/register',
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
+      /** The target columns of the last client the handler inserted, by column name. */
+      function insertedTarget(env: Env): { default_audience: unknown; default_resource: unknown } {
+        const db = env.DB as unknown as ReturnType<typeof createMockDB>;
+        const sql = String(
+          vi
+            .mocked(db.prepare)
+            .mock.calls.map(([text]) => String(text))
+            .filter((text) => text.includes('INSERT INTO oauth_clients'))
+            .pop() ?? ''
+        );
+        const columns = (/INSERT INTO oauth_clients \(([\s\S]*?)\) VALUES/.exec(sql)?.[1] ?? '')
+          .split(',')
+          .map((column) => column.trim())
+          .filter(Boolean);
+        const args = db._mockStatement.bind.mock.calls
+          .filter((call) => call.length === columns.length)
+          .pop();
+        if (!args) throw new Error('no client was inserted');
+        return {
+          default_audience: args[columns.indexOf('default_audience')],
+          default_resource: args[columns.indexOf('default_resource')],
+        };
+      }
+
+      function inserted(env: Env): boolean {
+        const db = env.DB as unknown as ReturnType<typeof createMockDB>;
+        return vi
+          .mocked(db.prepare)
+          .mock.calls.some(([text]) => String(text).includes('INSERT INTO oauth_clients'));
+      }
+
+      /** The tenant's DCR settings document, as the Settings API stores it. */
+      function withTenantDcrSettings(document: Record<string, unknown> | string) {
+        mockEnv.SETTINGS = createMockKV();
+        void mockEnv.SETTINGS.put(
+          'settings:tenant:default:dcr',
+          typeof document === 'string' ? document : JSON.stringify(document)
+        );
+      }
+
+      function register(body: Record<string, unknown>) {
+        return app.request(
+          '/register',
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
           },
-          body: JSON.stringify(requestBody),
-        },
-        mockEnv
-      );
+          mockEnv
+        );
+      }
 
-      expect(res.status).toBe(201);
+      describe('without a tenant default', () => {
+        it('gives an authorization code app the issuer URL, as before', async () => {
+          const res = await register(AUTH_CODE);
 
-      const args = getLastBindArgs(mockEnv);
-      expect(args).toHaveLength(72);
-      expect(args).toContain('https://api.example.com/');
-      expect(args).not.toContain('https://id.example.com');
+          expect(res.status).toBe(201);
+          expect(insertedTarget(mockEnv)).toEqual({
+            default_audience: null,
+            default_resource: ISSUER,
+          });
+        });
+
+        it.each([
+          ['client credentials', CLIENT_CREDENTIALS],
+          ['CIBA', CIBA],
+        ])('gives a %s app no target', async (_name, body) => {
+          const res = await register(body);
+
+          expect(res.status).toBe(201);
+          expect(insertedTarget(mockEnv)).toEqual({
+            default_audience: null,
+            default_resource: null,
+          });
+          const json = (await res.json()) as RegistrationResponse;
+          expect(json).not.toHaveProperty('default_audience');
+          expect(json).not.toHaveProperty('default_resource');
+        });
+      });
+
+      describe('with a tenant default', () => {
+        beforeEach(() => withTenantDcrSettings(TENANT_DEFAULT));
+
+        it('leaves the issuer URL of an authorization code app alone', async () => {
+          const res = await register(AUTH_CODE);
+
+          expect(res.status).toBe(201);
+          expect(insertedTarget(mockEnv)).toEqual({
+            default_audience: null,
+            default_resource: ISSUER,
+          });
+          const json = (await res.json()) as RegistrationResponse;
+          expect(json).not.toHaveProperty('default_audience');
+          expect(json).not.toHaveProperty('default_resource');
+        });
+
+        it('leaves the issuer URL when the app has the authorization code grant among others', async () => {
+          const res = await register({
+            ...CLIENT_CREDENTIALS,
+            grant_types: ['authorization_code', 'client_credentials', 'refresh_token'],
+            redirect_uris: ['https://example.com/callback'],
+          });
+
+          expect(res.status).toBe(201);
+          expect(insertedTarget(mockEnv)).toEqual({
+            default_audience: null,
+            default_resource: ISSUER,
+          });
+        });
+
+        it.each([
+          ['client credentials', CLIENT_CREDENTIALS],
+          ['CIBA', CIBA],
+          [
+            'implicit and client credentials',
+            {
+              ...CLIENT_CREDENTIALS,
+              grant_types: ['implicit', 'client_credentials'],
+              response_types: ['token'],
+              redirect_uris: ['https://example.com/callback'],
+            },
+          ],
+          [
+            'CIBA and refresh token',
+            { ...CIBA, grant_types: [...CIBA.grant_types, 'refresh_token'] },
+          ],
+        ])('copies the default into a %s app, and tells the app', async (_name, body) => {
+          const res = await register(body);
+
+          expect(res.status).toBe(201);
+          expect(insertedTarget(mockEnv)).toEqual({
+            default_audience: 'urn:example:api',
+            default_resource: 'https://api.example.com/v1',
+          });
+          await expect(res.json()).resolves.toMatchObject({
+            default_audience: 'urn:example:api',
+            default_resource: 'https://api.example.com/v1',
+          });
+        });
+
+        it.each([
+          [
+            'implicit',
+            {
+              grant_types: ['implicit'],
+              response_types: ['token'],
+              redirect_uris: ['https://example.com/callback'],
+            },
+          ],
+          ['refresh token', { ...CIBA, grant_types: ['refresh_token'] }],
+        ])(
+          'gives an %s only app no target: no token path of it uses one, and the response does not advertise one',
+          async (_name, body) => {
+            const res = await register(body);
+
+            expect(res.status).toBe(201);
+            expect(insertedTarget(mockEnv)).toEqual({
+              default_audience: null,
+              default_resource: null,
+            });
+            const json = (await res.json()) as RegistrationResponse;
+            expect(json).not.toHaveProperty('default_audience');
+            expect(json).not.toHaveProperty('default_resource');
+          }
+        );
+
+        it('copies only the half the tenant set', async () => {
+          withTenantDcrSettings({ 'dcr.default_audience': 'urn:example:api' });
+          const res = await register(CLIENT_CREDENTIALS);
+
+          expect(res.status).toBe(201);
+          expect(insertedTarget(mockEnv)).toEqual({
+            default_audience: 'urn:example:api',
+            default_resource: null,
+          });
+        });
+
+        it.each([
+          [{ default_audience: 'urn:own:audience' }, 'urn:own:audience', null],
+          [{ default_resource: 'https://own.example.com/' }, null, 'https://own.example.com/'],
+          [
+            { default_audience: 'urn:own:audience', default_resource: 'https://own.example.com/' },
+            'urn:own:audience',
+            'https://own.example.com/',
+          ],
+        ])('keeps what the app asked for: %j', async (own, audience, resource) => {
+          const res = await register({ ...CLIENT_CREDENTIALS, ...own });
+
+          expect(res.status).toBe(201);
+          // The two halves are not mixed: the app named its target, the tenant's default is not
+          // added to it.
+          expect(insertedTarget(mockEnv)).toEqual({
+            default_audience: audience,
+            default_resource: resource,
+          });
+        });
+
+        it('keeps what an authorization code app asked for', async () => {
+          const res = await register({
+            ...AUTH_CODE,
+            default_resource: 'https://own.example.com/',
+          });
+
+          expect(res.status).toBe(201);
+          expect(insertedTarget(mockEnv)).toEqual({
+            default_audience: null,
+            default_resource: 'https://own.example.com/',
+          });
+        });
+
+        it('is copied: a later change does not reach the app already registered', async () => {
+          expect((await register(CLIENT_CREDENTIALS)).status).toBe(201);
+          const first = insertedTarget(mockEnv);
+          expect(first.default_audience).toBe('urn:example:api');
+
+          // Another isolate, a minute later, sees the tenant's new default.
+          withTenantDcrSettings({ 'dcr.default_audience': 'urn:example:other' });
+          expect((await register(CLIENT_CREDENTIALS)).status).toBe(201);
+
+          expect(insertedTarget(mockEnv)).toEqual({
+            default_audience: 'urn:example:other',
+            default_resource: null,
+          });
+          // What the first app stored is a plain value of its own row.
+          expect(first).toEqual({
+            default_audience: 'urn:example:api',
+            default_resource: 'https://api.example.com/v1',
+          });
+        });
+      });
+
+      describe('with the tenant default changed within the cache lifetime of a settings document', () => {
+        it('copies what the document holds now, not what an earlier registration read', async () => {
+          withTenantDcrSettings({ 'dcr.default_audience': 'urn:example:first' });
+          const kv = mockEnv.SETTINGS as KVNamespace;
+          await register(CLIENT_CREDENTIALS);
+          expect(insertedTarget(mockEnv).default_audience).toBe('urn:example:first');
+
+          // The same binding, a moment later: an admin changes the default ...
+          await kv.put(
+            'settings:tenant:default:dcr',
+            JSON.stringify({ 'dcr.default_audience': 'urn:example:second' })
+          );
+          await register(CLIENT_CREDENTIALS);
+          expect(insertedTarget(mockEnv).default_audience).toBe('urn:example:second');
+
+          // ... and then clears it.
+          await kv.delete('settings:tenant:default:dcr');
+          await register(CLIENT_CREDENTIALS);
+          expect(insertedTarget(mockEnv)).toEqual({
+            default_audience: null,
+            default_resource: null,
+          });
+        });
+      });
+
+      describe('with the tenant reachable on more than one issuer', () => {
+        // The primary tenant answers on the naked domain and on its own subdomain, both allowed.
+        const NAKED = 'https://example.com';
+        const SUBDOMAIN = 'https://default.example.com';
+        function nakedDomainTenant(identifiers: string) {
+          mockEnv = {
+            ...mockEnv,
+            ISSUER_URL: undefined,
+            BASE_DOMAIN: 'example.com',
+            NAKED_DOMAIN_AS_ISSUER: 'true',
+            PRIMARY_TENANT_ID: 'default',
+          } as unknown as Env;
+          mockEnv.SETTINGS = createMockKV();
+          void mockEnv.SETTINGS.put(
+            'settings:tenant:default:tenant',
+            JSON.stringify({
+              'tenant.allowed_domains': 'example.com, default.example.com',
+              'tenant.allowed_identifiers': identifiers,
+            })
+          );
+        }
+
+        it.each([
+          ['the naked domain', NAKED],
+          ['the subdomain', SUBDOMAIN],
+          ['the subdomain userinfo URL', `${SUBDOMAIN}/userinfo`],
+          ['the naked domain userinfo URL', `${NAKED}/userinfo/`],
+        ])('ignores %s as the default audience', async (_name, audience) => {
+          nakedDomainTenant(`${NAKED}, ${SUBDOMAIN}`);
+          void mockEnv.SETTINGS!.put(
+            'settings:tenant:default:dcr',
+            JSON.stringify({ 'dcr.default_audience': audience })
+          );
+
+          const res = await register(CLIENT_CREDENTIALS);
+
+          expect(res.status).toBe(201);
+          expect(insertedTarget(mockEnv).default_audience).toBeNull();
+        });
+
+        it('still copies an audience that is on neither issuer', async () => {
+          nakedDomainTenant(`${NAKED}, ${SUBDOMAIN}`);
+          void mockEnv.SETTINGS!.put(
+            'settings:tenant:default:dcr',
+            JSON.stringify({ 'dcr.default_audience': 'https://api.example.com' })
+          );
+
+          await register(CLIENT_CREDENTIALS);
+
+          expect(insertedTarget(mockEnv).default_audience).toBe('https://api.example.com');
+        });
+      });
+
+      describe('with a stored default that is not valid', () => {
+        it.each([
+          ['an http resource', { 'dcr.default_resource': 'http://api.example.com/v1' }],
+          ['a resource with a fragment', { 'dcr.default_resource': 'https://api.example.com/#x' }],
+          ['a relative resource', { 'dcr.default_resource': 'api.example.com/v1' }],
+          [
+            'a resource that is too long',
+            { 'dcr.default_resource': `https://a.example/${'a'.repeat(2048)}` },
+          ],
+          ['an audience with a space', { 'dcr.default_audience': 'two words' }],
+          ['an audience that is too long', { 'dcr.default_audience': 'a'.repeat(2049) }],
+          ['the issuer as the audience', { 'dcr.default_audience': ISSUER }],
+          ['the issuer with a slash as the resource', { 'dcr.default_resource': `${ISSUER}/` }],
+          ['the userinfo URL as the audience', { 'dcr.default_audience': `${ISSUER}/userinfo` }],
+          ['an audience that is not text', { 'dcr.default_audience': 123 }],
+        ])('ignores %s, as if unset', async (_name, document) => {
+          withTenantDcrSettings(document);
+          const res = await register(CLIENT_CREDENTIALS);
+
+          expect(res.status).toBe(201);
+          expect(insertedTarget(mockEnv)).toEqual({
+            default_audience: null,
+            default_resource: null,
+          });
+        });
+
+        it('ignores only the invalid half', async () => {
+          withTenantDcrSettings({
+            'dcr.default_audience': 'urn:example:api',
+            'dcr.default_resource': 'http://api.example.com/v1',
+          });
+          const res = await register(CLIENT_CREDENTIALS);
+
+          expect(res.status).toBe(201);
+          expect(insertedTarget(mockEnv)).toEqual({
+            default_audience: 'urn:example:api',
+            default_resource: null,
+          });
+        });
+      });
+
+      describe('when the tenant DCR settings cannot be read', () => {
+        function unreadableDcrSettings() {
+          mockEnv.SETTINGS = {
+            get: async (key: string) => {
+              if (key.endsWith(':dcr')) throw new Error('KV unavailable');
+              return null;
+            },
+            put: async () => undefined,
+            delete: async () => undefined,
+          } as unknown as KVNamespace;
+        }
+
+        it('refuses the registration of an app that would get a tenant default, and registers nothing', async () => {
+          unreadableDcrSettings();
+          const res = await register(CLIENT_CREDENTIALS);
+
+          expect(res.status).toBe(503);
+          await expect(res.json()).resolves.toMatchObject({ error: 'temporarily_unavailable' });
+          expect(inserted(mockEnv)).toBe(false);
+        });
+
+        it('refuses it when the document is not valid JSON', async () => {
+          withTenantDcrSettings('{not json');
+          const res = await register(CLIENT_CREDENTIALS);
+
+          expect(res.status).toBe(503);
+          expect(inserted(mockEnv)).toBe(false);
+        });
+
+        it('does not silently register an app without a default', async () => {
+          unreadableDcrSettings();
+          expect((await register(CIBA)).status).toBe(503);
+          expect(inserted(mockEnv)).toBe(false);
+        });
+
+        it('does not affect an authorization code app: the settings cannot change its target', async () => {
+          unreadableDcrSettings();
+          const res = await register(AUTH_CODE);
+
+          expect(res.status).toBe(201);
+          expect(insertedTarget(mockEnv).default_resource).toBe(ISSUER);
+        });
+
+        it('does not affect an app that names its own target', async () => {
+          unreadableDcrSettings();
+          const res = await register({ ...CLIENT_CREDENTIALS, default_audience: 'urn:own' });
+
+          expect(res.status).toBe(201);
+          expect(insertedTarget(mockEnv).default_audience).toBe('urn:own');
+        });
+      });
+
+      describe('when the primary custom domain of the tenant cannot be looked up', () => {
+        function failingVanityLookup() {
+          const db = mockEnv.DB as unknown as ReturnType<typeof createMockDB>;
+          const original = db.prepare;
+          db.prepare = vi.fn((sql: string) =>
+            String(sql).includes('tenant_vanity_domains')
+              ? {
+                  bind: vi.fn().mockReturnThis(),
+                  first: vi.fn().mockRejectedValue(new Error('D1 unavailable')),
+                }
+              : original(sql)
+          ) as never;
+        }
+
+        it('refuses to register an app that would get the tenant default, and registers nothing', async () => {
+          withTenantDcrSettings(TENANT_DEFAULT);
+          failingVanityLookup();
+
+          const res = await register(CLIENT_CREDENTIALS);
+
+          expect(res.status).toBe(503);
+          await expect(res.json()).resolves.toMatchObject({ error: 'temporarily_unavailable' });
+          expect(inserted(mockEnv)).toBe(false);
+        });
+
+        it('does not touch an app that never gets the tenant default', async () => {
+          withTenantDcrSettings(TENANT_DEFAULT);
+          failingVanityLookup();
+
+          expect((await register(AUTH_CODE)).status).toBe(201);
+          expect(insertedTarget(mockEnv).default_resource).toBe(ISSUER);
+        });
+      });
+
+      describe('a grant that dynamic registration does not accept', () => {
+        // The default is for apps that register with a grant that uses a default target. DCR
+        // registers client credentials and CIBA apps from that set; device and token exchange
+        // apps are created through the admin API, which does not copy the default.
+        it.each([
+          ['device', 'urn:ietf:params:oauth:grant-type:device_code'],
+          ['token exchange', 'urn:ietf:params:oauth:grant-type:token-exchange'],
+        ])('refuses a %s app: unsupported grant_type', async (_name, grant) => {
+          withTenantDcrSettings(TENANT_DEFAULT);
+
+          const res = await register({ ...CLIENT_CREDENTIALS, grant_types: [grant] });
+
+          expect(res.status).toBe(400);
+          await expect(res.json()).resolves.toMatchObject({
+            error: 'invalid_client_metadata',
+            error_description: `Unsupported grant_type: ${grant}`,
+          });
+          expect(inserted(mockEnv)).toBe(false);
+        });
+      });
+
+      describe('the settings that no longer give an app a target', () => {
+        it('ignores client.default_resource / client.default_audience in the tenant documents', async () => {
+          mockEnv.SETTINGS = createMockKV();
+          const retired = JSON.stringify({
+            'client.default_resource': 'https://api.example.com/',
+            'client.default_audience': 'urn:example:api',
+          });
+          await mockEnv.SETTINGS.put('settings:tenant:default:client', retired);
+          await mockEnv.SETTINGS.put('settings:tenant:default:dcr', retired);
+
+          await register(AUTH_CODE);
+          expect(insertedTarget(mockEnv)).toEqual({
+            default_audience: null,
+            default_resource: ISSUER,
+          });
+          await register(CLIENT_CREDENTIALS);
+          expect(insertedTarget(mockEnv)).toEqual({
+            default_audience: null,
+            default_resource: null,
+          });
+        });
+
+        it('ignores the CLIENT_DEFAULT_AUDIENCE / CLIENT_DEFAULT_RESOURCE variables', async () => {
+          const env = {
+            ...mockEnv,
+            CLIENT_DEFAULT_AUDIENCE: 'urn:example:api',
+            CLIENT_DEFAULT_RESOURCE: 'https://api.example.com/',
+          } as unknown as Env;
+          mockEnv = env;
+
+          await register(AUTH_CODE);
+          expect(insertedTarget(mockEnv).default_resource).toBe(ISSUER);
+          await register(CLIENT_CREDENTIALS);
+          expect(insertedTarget(mockEnv)).toEqual({
+            default_audience: null,
+            default_resource: null,
+          });
+        });
+
+        it('applies the DCR_DEFAULT_AUDIENCE / DCR_DEFAULT_RESOURCE variables, under the tenant document', async () => {
+          mockEnv = {
+            ...mockEnv,
+            DCR_DEFAULT_AUDIENCE: 'urn:from:env',
+            DCR_DEFAULT_RESOURCE: 'https://env.example.com/',
+          } as unknown as Env;
+          await register(CLIENT_CREDENTIALS);
+          expect(insertedTarget(mockEnv)).toEqual({
+            default_audience: 'urn:from:env',
+            default_resource: 'https://env.example.com/',
+          });
+
+          withTenantDcrSettings({ 'dcr.default_audience': 'urn:from:document' });
+          await register(CLIENT_CREDENTIALS);
+          expect(insertedTarget(mockEnv)).toEqual({
+            default_audience: 'urn:from:document',
+            default_resource: 'https://env.example.com/',
+          });
+        });
+      });
     });
 
     it('should register a client with all optional fields', async () => {

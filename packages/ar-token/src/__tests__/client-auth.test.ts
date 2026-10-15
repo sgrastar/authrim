@@ -2177,6 +2177,75 @@ describe('Client Authentication Tests', () => {
       expect(mocks.mockCreateRefreshToken).toHaveBeenCalledTimes(1);
     });
 
+    describe('the target of an app registered without one of its own', () => {
+      // A registration (POST /register) without the authorization code grant copies the tenant's
+      // dcr.default_audience / dcr.default_resource into the app's columns. The token endpoint
+      // reads only those columns.
+      it('names the tenant default the app was given, without a resource in the request', async () => {
+        configureDeviceCode(baseDeviceMetadata({ status: 'approved', sub: 'user-123' }));
+        mocks.mockGetClientCached.mockResolvedValue(
+          createPublicClient({
+            client_id: clientId,
+            default_resource: 'https://api.example.com/v1',
+            default_audience: 'urn:example:api',
+          })
+        );
+
+        const { response } = await requestDeviceToken();
+
+        expect(response.status).toBe(200);
+        expect(mocks.mockCreateAccessToken).toHaveBeenCalledWith(
+          expect.objectContaining({ aud: 'https://api.example.com/v1' }),
+          expect.anything(),
+          expect.any(String),
+          expect.any(Number),
+          expect.any(String)
+        );
+      });
+
+      it('uses the audience when the tenant default has no resource', async () => {
+        configureDeviceCode(baseDeviceMetadata({ status: 'approved', sub: 'user-123' }));
+        mocks.mockGetClientCached.mockResolvedValue(
+          createPublicClient({
+            client_id: clientId,
+            default_resource: undefined,
+            default_audience: 'urn:example:api',
+          })
+        );
+
+        const { response } = await requestDeviceToken();
+
+        expect(response.status).toBe(200);
+        expect(mocks.mockCreateAccessToken).toHaveBeenCalledWith(
+          expect.objectContaining({ aud: 'urn:example:api' }),
+          expect.anything(),
+          expect.any(String),
+          expect.any(Number),
+          expect.any(String)
+        );
+      });
+
+      it('has no target without a default: invalid_target, no token', async () => {
+        configureDeviceCode(baseDeviceMetadata({ status: 'approved', sub: 'user-123' }));
+        mocks.mockGetClientCached.mockResolvedValue(
+          createPublicClient({
+            client_id: clientId,
+            default_resource: undefined,
+            default_audience: undefined,
+          })
+        );
+
+        const { response, body } = await requestDeviceToken();
+
+        expect(response.status).toBe(400);
+        expect(body).toMatchObject({
+          error: 'invalid_target',
+          error_description: 'No target resource is configured for this access token',
+        });
+        expect(mocks.mockCreateAccessToken).not.toHaveBeenCalled();
+      });
+    });
+
     it("caps the access token at the tenant profile's lifetime, as every grant does", async () => {
       configureDeviceCode(baseDeviceMetadata({ status: 'approved', sub: 'user-123' }));
       mocks.mockGetClientCached.mockResolvedValue(createPublicClient({ client_id: clientId }));

@@ -72,7 +72,9 @@ function normalizeIdentifierCandidate(value: string): string {
 export async function getTenantBindingPolicy(
   kv: KVNamespace | undefined,
   env: Partial<Env>,
-  tenantId: string
+  tenantId: string,
+  /** strictVanity: a primary custom domain lookup that fails throws, instead of reading as none. */
+  options: { strictVanity?: boolean } = {}
 ): Promise<TenantBindingPolicy> {
   const settings = await getTenantSettingsDocument(
     { SETTINGS: env.SETTINGS, AUTHRIM_CONFIG: kv },
@@ -109,7 +111,9 @@ export async function getTenantBindingPolicy(
     }
   }
 
-  const primaryVanityDomain = await getPrimaryTenantVanityDomain(env, tenantId);
+  const primaryVanityDomain = await getPrimaryTenantVanityDomain(env, tenantId, {
+    strict: options.strictVanity === true,
+  });
   if (primaryVanityDomain) {
     configuredHosts.add(primaryVanityDomain.hostname);
     configuredIdentifiers.add(`https://${primaryVanityDomain.hostname}`);
@@ -127,13 +131,16 @@ export async function getTenantBindingPolicy(
   };
 }
 
-export async function validateTenantRequestBinding(
+/**
+ * Whether a request passes a tenant's binding policy: its host is one of the tenant's allowed
+ * hosts, and the issuer or identifier it implies is one of the tenant's allowed identifiers.
+ */
+function requestMatchesBindingPolicy(
+  policy: TenantBindingPolicy,
   request: Request,
-  kv: KVNamespace | undefined,
   env: Partial<Env>,
   tenantId: string
-): Promise<boolean> {
-  const policy = await getTenantBindingPolicy(kv, env, tenantId);
+): boolean {
   const requestHost = getRequestHost(request)?.split(':')[0]?.toLowerCase();
 
   if (requestHost && policy.allowedHosts.length > 0 && !policy.allowedHosts.includes(requestHost)) {
@@ -167,4 +174,52 @@ export async function validateTenantRequestBinding(
   return [...identifierCandidates].some((candidate) =>
     policy.allowedIdentifiers.includes(candidate)
   );
+}
+
+export async function validateTenantRequestBinding(
+  request: Request,
+  kv: KVNamespace | undefined,
+  env: Partial<Env>,
+  tenantId: string
+): Promise<boolean> {
+  const policy = await getTenantBindingPolicy(kv, env, tenantId);
+  return requestMatchesBindingPolicy(policy, request, env, tenantId);
+}
+
+/**
+ * Every issuer URL a tenant is configured to answer protocol requests on: for each host of the
+ * tenant's binding policy (its allowed domains, its primary custom domain, else its configured
+ * issuer host), the issuer a request to that host would have, when the same policy that guards
+ * the router (`validateTenantRequestBinding`) lets that request through. The tenant's configured
+ * issuer is always included.
+ *
+ * Every issuer host the tenant's host/identifier policy allows is reserved, whether or not a
+ * vanity/lookup assignment routes it today: the list is meant to be conservative, so a host the
+ * tenant has configured but that nothing routes yet is still returned.
+ *
+ * With `strictVanity` a failing primary custom domain lookup THROWS instead of reading as "no
+ * custom domain" (for callers that must not decide on a guess); routing does not set it.
+ */
+export async function getTenantReachableIssuers(
+  kv: KVNamespace | undefined,
+  env: Partial<Env>,
+  tenantId: string,
+  options: { strictVanity?: boolean } = {}
+): Promise<string[]> {
+  const policy = await getTenantBindingPolicy(kv, env, tenantId, options);
+  const issuers = new Set<string>();
+  const configured = buildIssuerUrl(env, tenantId);
+  if (configured) issuers.add(configured);
+  for (const host of policy.allowedHosts) {
+    let request: Request;
+    try {
+      request = new Request(`https://${host}/`);
+    } catch {
+      continue;
+    }
+    if (!requestMatchesBindingPolicy(policy, request, env, tenantId)) continue;
+    const issuer = buildRequestIssuerUrl(request, env, tenantId);
+    if (issuer) issuers.add(issuer);
+  }
+  return [...issuers];
 }

@@ -32,7 +32,6 @@ export interface TenantSettings {
   'tenant.saml_attribute_release_failure_message_mode': SAMLAttributeReleaseFailureUserMessageMode;
 
   // Branding
-  'tenant.name': string;
   'tenant.logo_uri': string;
 
   // UI Paths
@@ -150,18 +149,6 @@ export const TENANT_SETTINGS_META: Record<keyof TenantSettings, SettingMeta> = {
   },
 
   // Branding
-  'tenant.name': {
-    key: 'tenant.name',
-    // Per tenant (or app) only, as before the category had platform values.
-    scopes: ['tenant'],
-    type: 'string',
-    default: '',
-    envKey: 'TENANT_NAME',
-    label: 'Tenant Name',
-    description: 'Display name for this tenant',
-    visibility: 'public',
-    status: 'in_development',
-  },
   'tenant.logo_uri': {
     key: 'tenant.logo_uri',
     // Per tenant (or app) only, as before the category had platform values.
@@ -295,7 +282,6 @@ export const TENANT_DEFAULTS: TenantSettings = {
   'tenant.browser_public_client_mode': 'cookie_fallback',
   'tenant.saml_attribute_release_failure_message_mode': 'generic',
   // Branding
-  'tenant.name': '',
   'tenant.logo_uri': '',
   // UI Paths
   'tenant.ui_base_url': '',

@@ -976,7 +976,8 @@
 			require_auth_time: (clientSettings.values['client.require_auth_time'] as boolean) ?? false,
 			subject_type: (clientSettings.values['client.subject_type'] as string) ?? 'public',
 			// Scopes tab
-			default_audience: (clientSettings.values['client.default_audience'] as string) ?? '',
+			// The app registration holds it (the client API), not the settings.
+			default_audience: client.default_audience ?? '',
 			allowed_scopes_restriction_enabled:
 				(clientSettings.values['client.allowed_scopes_restriction_enabled'] as boolean) ?? false,
 			client_credentials_allowed:

@@ -323,8 +323,10 @@ export async function getPrimaryTenantVanityDomain(
 export async function buildCanonicalTenantIssuerUrl(
   env: TenantVanityLookupEnv,
   tenantId: string,
-  fallback: string
+  fallback: string,
+  /** strict: a lookup that fails throws, instead of reading as no primary domain. */
+  options: { strict?: boolean } = {}
 ): Promise<string> {
-  const primary = await getPrimaryTenantVanityDomain(env, tenantId);
+  const primary = await getPrimaryTenantVanityDomain(env, tenantId, options);
   return primary ? `https://${primary.hostname}` : fallback;
 }

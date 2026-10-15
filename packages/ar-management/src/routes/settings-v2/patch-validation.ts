@@ -20,6 +20,7 @@ import {
   DEVICE_FLOW_SETTINGS_META,
   isUserCodeCharsetName,
   userCodeFormatProblem,
+  dcrDefaultTargetProblem,
   AUTHORIZATION_SIGNING_ALGORITHMS,
   REQUEST_OBJECT_SIGNING_ALGORITHMS,
   CLIENT_AUTH_METHODS,
@@ -569,8 +570,51 @@ export function validateDeviceFlowPatch(
   return null;
 }
 
+/**
+ * A PATCH names only keys the category has. The settings manager would reject an unknown key one
+ * by one and save the rest; the categories that retired settings refuse the whole PATCH instead,
+ * so a script still setting a retired key hears about it (`noun` is the category as a person
+ * names it, as in "tenant.name is not a tenant setting").
+ */
+export function validateKnownSettingKeys(
+  category: keyof typeof ALL_CATEGORY_META,
+  noun: string,
+  body: SettingsPatchRequest
+): string | null {
+  const settings = ALL_CATEGORY_META[category].settings;
+  for (const key of [
+    ...Object.keys(body.set ?? {}),
+    ...(body.clear ?? []),
+    ...(body.disable ?? []),
+  ]) {
+    if (!Object.hasOwn(settings, key)) return `${key} is not a ${noun} setting`;
+  }
+  return null;
+}
+
+/**
+ * The DCR category: the default access token target of new apps must be a value a registration
+ * can use (see services/dcr-default-target.ts). The tenant's own issuer URL is checked by the
+ * PATCH route, which knows the tenant.
+ */
+export function validateDcrPatch(body: SettingsPatchRequest): string | null {
+  const unknown = validateKnownSettingKeys('dcr', 'DCR', body);
+  if (unknown) return unknown;
+  for (const key of ['dcr.default_audience', 'dcr.default_resource'] as const) {
+    if (body.set && key in body.set) {
+      const problem = dcrDefaultTargetProblem(key, body.set[key]);
+      if (problem) return problem;
+    }
+  }
+  return null;
+}
+
 export function validateCategoryPatch(category: string, body: SettingsPatchRequest): string | null {
   switch (category) {
+    case 'tenant':
+      return validateKnownSettingKeys('tenant', 'tenant', body);
+    case 'dcr':
+      return validateDcrPatch(body);
     case 'assurance':
       return validateAssurancePatch(body);
     case 'oauth':
