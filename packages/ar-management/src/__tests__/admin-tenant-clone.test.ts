@@ -364,6 +364,25 @@ describe('admin tenant clone', () => {
     expect(
       JSON.parse(
         sanitizeCopiedSettingsValue(
+          'ciba',
+          JSON.stringify({
+            'ciba.expires_in': 120,
+            'ciba.user_code_enabled': true,
+            // Retired CIBA settings: a source that still holds them does not carry them over.
+            'ciba.auth_request_ttl': 120,
+            'ciba.notifier_default_timeout_ms': 2000,
+            'ciba.notifier_max_timeout_ms': 9000,
+            'ciba.notifier_retry_delay_base_ms': 500,
+          }),
+          false,
+          context
+        )!
+      )
+    ).toEqual({ 'ciba.expires_in': 120, 'ciba.user_code_enabled': true });
+
+    expect(
+      JSON.parse(
+        sanitizeCopiedSettingsValue(
           'feature-flags',
           JSON.stringify({
             'feature.enable_abac': true,

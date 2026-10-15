@@ -12,8 +12,8 @@
  * ceilings, extended introspection claims, the SCIM token lifetime, the SAML switch, assertion
  * and request lifetimes and provider defaults, the identity assurance level recorded for accounts
  * the organisation creates, the scope-to-IAL requirements, and the use of the IAL assurance
- * values in OIDC (eduperson_assurance) and SAML (eduPersonAssurance), the SAML AuthnContextClassRef to AAL map, the CIBA request lifetime and polling interval bounds and the binding message limits; and less the settings that left the catalog (duplicates, copies of the app
- * registration, and values too fine or fixed at deployment). Update this list when a setting starts to apply or leaves the catalog.
+ * values in OIDC (eduperson_assurance) and SAML (eduPersonAssurance), the SAML AuthnContextClassRef to AAL map, the CIBA request lifetime and polling interval bounds, the binding message limits, the slow_down increment and poll count, the user code switch and the ping timeout; and less the settings that left the catalog (duplicates, copies of the app
+ * registration, values too fine or fixed at deployment, and CIBA settings with no CIBA behaviour behind them: the request cache lifetime and the notifier timeouts). Update this list when a setting starts to apply or leaves the catalog.
  *
  * Shown in the settings map (Storybook: Pages › Settings map).
  */
@@ -38,8 +38,10 @@ function reason(why: NotApplied, keys: readonly string[]): [string, NotApplied][
 }
 
 export const NOT_APPLIED: ReadonlyMap<string, NotApplied> = new Map([
-	// to-build (12)
+	// to-build (13)
 	...reason('to-build', [
+		// Push delivery of tokens does not exist yet (nothing calls sendPushModeTokens).
+		'ciba.push_notification_timeout_ms',
 		'diagnostic-logging.filter_pii',
 		'diagnostic-logging.filter_tokens',
 		'diagnostic-logging.merged_output_enabled',
@@ -53,18 +55,9 @@ export const NOT_APPLIED: ReadonlyMap<string, NotApplied> = new Map([
 		'plugin.notifier_console_enabled',
 		'tenant.ui_register_path'
 	]),
-	// to-wire (23)
+	// to-wire (14)
 	...reason('to-wire', [
 		'assurance.ida_profile',
-		'ciba.auth_request_ttl',
-		'ciba.max_poll_count',
-		'ciba.notifier_default_timeout_ms',
-		'ciba.notifier_max_timeout_ms',
-		'ciba.notifier_retry_delay_base_ms',
-		'ciba.ping_notification_timeout_ms',
-		'ciba.push_notification_timeout_ms',
-		'ciba.slow_down_increment',
-		'ciba.user_code_enabled',
 		'client.default_audience',
 		'client.default_resource',
 		'device_flow.expires_in',

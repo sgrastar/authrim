@@ -78,8 +78,9 @@ function pending(overrides: Partial<CIBARequestMetadata> = {}): CIBARequestMetad
   } as CIBARequestMetadata;
 }
 
-function createEnv(): Env {
+function createEnv(extra: Record<string, unknown> = {}): Env {
   return {
+    ...extra,
     CIBA_REQUEST_STORE: {
       idFromName: vi.fn().mockReturnValue('store'),
       get: vi.fn().mockReturnValue({ fetch: mocks.storeFetch }),
@@ -97,7 +98,7 @@ function createApp() {
   return app;
 }
 
-function request(body: unknown) {
+function request(body: unknown, env: Env = createEnv()) {
   return createApp().request(
     'http://localhost/approve',
     {
@@ -105,7 +106,7 @@ function request(body: unknown) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     },
-    createEnv()
+    env
   );
 }
 
@@ -323,9 +324,102 @@ describe('CIBA approval security branches', () => {
     expect(mocks.sendPingNotification).toHaveBeenCalledWith(
       'https://client.example.com/ciba',
       'notification-token',
-      'legacy-request-id'
+      'legacy-request-id',
+      { timeoutMs: 5000 }
     );
     expect(mocks.logger.error).toHaveBeenCalledTimes(fails ? 1 : 0);
+  });
+
+  describe('the ping notification timeout (ciba.ping_notification_timeout_ms)', () => {
+    const CIBA_KEY = 'settings:tenant:tenant-a:ciba';
+
+    function envWithSettings(read: () => Promise<string | null>): Env {
+      return createEnv({
+        SETTINGS: { get: vi.fn(async (key: string) => (key === CIBA_KEY ? read() : null)) },
+      });
+    }
+
+    beforeEach(() => {
+      mocks.storeFetch.mockImplementation(async (input: Request) => {
+        const path = new URL(input.url).pathname;
+        if (path === '/get-by-auth-req-id') {
+          return Response.json(
+            pending({
+              delivery_mode: 'ping',
+              client_notification_endpoint: 'https://client.example.com/ciba',
+              client_notification_token: 'notification-token',
+            })
+          );
+        }
+        return Response.json({ success: true });
+      });
+    });
+
+    const timeoutPassed = () => mocks.sendPingNotification.mock.calls[0][3];
+
+    it('passes the tenant value', async () => {
+      const env = envWithSettings(async () =>
+        JSON.stringify({ 'ciba.ping_notification_timeout_ms': 12000 })
+      );
+      const response = await request({ auth_req_id: 'legacy-request-id' }, env);
+
+      expect(response.status).toBe(200);
+      expect(timeoutPassed()).toEqual({ timeoutMs: 12000 });
+    });
+
+    it.each([999, 30001, 2500.5, '8000', null])(
+      'passes the default for a saved value that is out of range or not whole (%j)',
+      async (value) => {
+        const env = envWithSettings(async () =>
+          JSON.stringify({ 'ciba.ping_notification_timeout_ms': value })
+        );
+        await request({ auth_req_id: 'legacy-request-id' }, env);
+
+        expect(timeoutPassed()).toEqual({ timeoutMs: 5000 });
+      }
+    );
+
+    it('passes the edges of the range as saved', async () => {
+      for (const value of [1000, 30000]) {
+        mocks.sendPingNotification.mockClear();
+        const env = envWithSettings(async () =>
+          JSON.stringify({ 'ciba.ping_notification_timeout_ms': value })
+        );
+        await request({ auth_req_id: 'legacy-request-id' }, env);
+        expect(timeoutPassed()).toEqual({ timeoutMs: value });
+      }
+    });
+
+    it('uses the default and warns when the settings cannot be read, and the approval still completes', async () => {
+      const env = envWithSettings(async () => {
+        throw new Error('kv down');
+      });
+      const response = await request({ auth_req_id: 'legacy-request-id' }, env);
+
+      expect(response.status).toBe(200);
+      expect(timeoutPassed()).toEqual({ timeoutMs: 5000 });
+      expect(mocks.logger.warn).toHaveBeenCalledWith(
+        expect.stringContaining('CIBA settings'),
+        expect.objectContaining({ action: 'ciba_ping_timeout_settings' }),
+        expect.any(Error)
+      );
+      expect(mocks.logger.error).not.toHaveBeenCalled();
+    });
+
+    it('does not read the settings for a request that is not in ping mode', async () => {
+      mocks.storeFetch.mockImplementation(async (input: Request) => {
+        const path = new URL(input.url).pathname;
+        if (path === '/get-by-auth-req-id') return Response.json(pending());
+        return Response.json({ success: true });
+      });
+      const read = vi.fn(async () => null);
+      const env = envWithSettings(read);
+
+      expect((await request({ auth_req_id: 'legacy-request-id' }, env)).status).toBe(200);
+
+      expect(read).not.toHaveBeenCalled();
+      expect(mocks.sendPingNotification).not.toHaveBeenCalled();
+    });
   });
 
   it('masks unexpected JSON errors', async () => {

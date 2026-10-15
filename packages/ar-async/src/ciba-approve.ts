@@ -22,6 +22,7 @@ import {
 } from '@authrim/ar-lib-core';
 import { sendPingNotification } from '@authrim/ar-lib-core/notifications';
 import { resolveAsyncTenantId } from './tenant';
+import { resolvePingTimeoutMs } from './ciba-ping-timeout';
 import { cibaStoreUnavailable, readCibaRequest, sendCibaDecision } from './ciba-store';
 import {
   cibaRequestMatchesAuthenticatedUser,
@@ -206,10 +207,14 @@ export async function cibaApproveHandler(c: Context<{ Bindings: Env }>) {
     // Send ping mode notification if required
     if (metadata.delivery_mode === 'ping' && metadata.client_notification_endpoint) {
       try {
+        // Awaited inline: the approving person's request is held open until the client's endpoint
+        // answers or the tenant's ping timeout (ciba.ping_notification_timeout_ms) runs out.
+        const timeoutMs = await resolvePingTimeoutMs(c.env, tenantId, log);
         await sendPingNotification(
           metadata.client_notification_endpoint,
           metadata.client_notification_token!,
-          authReqId
+          authReqId,
+          { timeoutMs }
         );
       } catch (error) {
         log.error('Failed to send ping notification', {}, error as Error);

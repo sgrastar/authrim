@@ -62,7 +62,7 @@ describe('where settings live', () => {
 		}
 	});
 
-	it('does not mark the CIBA lifetime, interval and binding message settings, which the runtime reads', () => {
+	it('does not mark the CIBA settings the runtime reads', () => {
 		const applied = [
 			'ciba.expires_in',
 			'ciba.min_expires_in',
@@ -71,14 +71,36 @@ describe('where settings live', () => {
 			'ciba.min_interval',
 			'ciba.max_interval',
 			'ciba.max_binding_message_length',
-			'ciba.binding_message_required'
+			'ciba.binding_message_required',
+			'ciba.slow_down_increment',
+			'ciba.max_poll_count',
+			'ciba.user_code_enabled',
+			'ciba.ping_notification_timeout_ms'
 		];
 		for (const key of applied) {
 			expect(NOT_APPLIED.has(key), key).toBe(false);
 			expect(ALL_CATEGORY_META.ciba.settings[key].status, key).toBeUndefined();
 		}
-		// The rest of the category is still to be wired
-		expect(NOT_APPLIED.has('ciba.slow_down_increment')).toBe(true);
+	});
+
+	it('keeps the CIBA push timeout as to-build: tokens are never pushed', () => {
+		expect(NOT_APPLIED.get('ciba.push_notification_timeout_ms')).toBe('to-build');
+		expect(ALL_CATEGORY_META.ciba.settings['ciba.push_notification_timeout_ms'].status).toBe(
+			'in_development'
+		);
+	});
+
+	it('no longer has the CIBA settings that no CIBA behaviour is behind', () => {
+		for (const key of [
+			'ciba.auth_request_ttl',
+			'ciba.notifier_default_timeout_ms',
+			'ciba.notifier_max_timeout_ms',
+			'ciba.notifier_retry_delay_base_ms'
+		]) {
+			expect(everyKey, key).not.toContain(key);
+			expect([...placed, ...drafted], key).not.toContain(key);
+			expect(NOT_APPLIED.has(key), key).toBe(false);
+		}
 	});
 
 	it('points every duplicate at a setting that exists', () => {

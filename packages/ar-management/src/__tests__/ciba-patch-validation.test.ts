@@ -192,22 +192,64 @@ describe('validateCibaPatch', () => {
       }
     );
 
-    it.each([
-      ['ciba.slow_down_increment', 2.5],
-      ['ciba.ping_notification_timeout_ms', 2500.5],
-      ['ciba.notifier_retry_delay_base_ms', 150.5],
-      ['ciba.max_poll_count', 100.5],
-    ])('accepts a fractional %s: the setting does not require a whole number', (key, value) => {
-      expect(validateCibaPatch(patch({ [key]: value }), { current })).toBeNull();
+    it('accepts a fractional ciba.push_notification_timeout_ms: that setting does not require a whole number', () => {
+      expect(
+        validateCibaPatch(patch({ 'ciba.push_notification_timeout_ms': 2500.5 }), { current })
+      ).toBeNull();
     });
 
     it.each([
-      ['ciba.slow_down_increment', 0.5],
+      ['ciba.slow_down_increment', 5.5],
+      ['ciba.max_poll_count', 100.5],
+      ['ciba.ping_notification_timeout_ms', 2500.5],
+    ])('refuses a fractional %s: the setting requires a whole number', (key, value) => {
+      expect(validateCibaPatch(patch({ [key]: value }), { current })).toMatch(
+        new RegExp(`${key.replace('.', '\\.')} must be a whole number`)
+      );
+    });
+
+    it.each([
+      ['ciba.slow_down_increment', 4],
+      ['ciba.slow_down_increment', 1],
       ['ciba.slow_down_increment', 31],
       ['ciba.slow_down_increment', Infinity],
+      ['ciba.max_poll_count', 9],
+      ['ciba.max_poll_count', 501],
+      ['ciba.ping_notification_timeout_ms', 999],
+      ['ciba.ping_notification_timeout_ms', 30001],
       ['ciba.ping_notification_timeout_ms', NaN],
-    ])('still checks the range and finiteness of %s = %s', (key, value) => {
+    ])('checks the range and finiteness of %s = %s', (key, value) => {
       expect(validateCibaPatch(patch({ [key]: value }), { current })).toContain(key);
+    });
+
+    it.each([
+      ['ciba.slow_down_increment', 5],
+      ['ciba.slow_down_increment', 30],
+      ['ciba.max_poll_count', 10],
+      ['ciba.max_poll_count', 500],
+      ['ciba.ping_notification_timeout_ms', 1000],
+      ['ciba.ping_notification_timeout_ms', 30000],
+    ])('accepts %s = %s, on the edge of its range', (key, value) => {
+      expect(validateCibaPatch(patch({ [key]: value }), { current })).toBeNull();
+    });
+
+    it('accepts the user code switch on, off, and disabled, independent of the other keys', () => {
+      expect(validateCibaPatch(patch({ 'ciba.user_code_enabled': true }), { current })).toBeNull();
+      expect(validateCibaPatch(patch({ 'ciba.user_code_enabled': false }), { current })).toBeNull();
+      expect(validateCibaPatch(patch({}, { disable: ['ciba.user_code_enabled'] }))).toBeNull();
+      expect(validateCibaPatch(patch({ 'ciba.user_code_enabled': 'yes' }), { current })).toMatch(
+        /user_code_enabled must be true or false/
+      );
+    });
+
+    it('does not tie the slow_down increment or the ping timeout to the interval bounds', () => {
+      const tight = { ...current, 'ciba.max_interval': 5, 'ciba.poll_interval': 5 };
+      expect(
+        validateCibaPatch(
+          patch({ 'ciba.slow_down_increment': 30, 'ciba.ping_notification_timeout_ms': 30000 }),
+          { current: tight }
+        )
+      ).toBeNull();
     });
 
     it('refuses a fractional value of a setting that requires a whole number', () => {
@@ -220,6 +262,23 @@ describe('validateCibaPatch', () => {
       }
       expect(validateCibaPatch(patch({ 'ciba.poll_interval': 6.5 }), { current })).toMatch(
         /ciba\.poll_interval must be a whole number/
+      );
+    });
+
+    it.each([
+      'ciba.auth_request_ttl',
+      'ciba.notifier_default_timeout_ms',
+      'ciba.notifier_max_timeout_ms',
+      'ciba.notifier_retry_delay_base_ms',
+    ])('refuses the retired %s as not a CIBA setting, whatever the operation', (key) => {
+      expect(validateCibaPatch(patch({ [key]: 1000 }), { current })).toBe(
+        `${key} is not a CIBA setting`
+      );
+      expect(validateCibaPatch(patch({}, { clear: [key] }), { current })).toBe(
+        `${key} is not a CIBA setting`
+      );
+      expect(validateCibaPatch(patch({}, { disable: [key] }), { current })).toBe(
+        `${key} is not a CIBA setting`
       );
     });
 

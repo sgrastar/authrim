@@ -131,7 +131,13 @@ paths:
         kept between ciba.min_interval and ciba.max_interval) and the binding_message limits.
         A binding_message longer than ciba.max_binding_message_length (counted in UTF-16 code
         units), or missing (or only whitespace) when ciba.binding_message_required is on, is refused with 400
-        invalid_binding_message.
+        invalid_binding_message. A request that carries a user_code (also inside a signed request
+        object) while ciba.user_code_enabled is off, which is the default, is refused with 400
+        invalid_request (user_code is not supported); discovery then advertises
+        backchannel_user_code_parameter_supported as false. With it on, the user_code is accepted,
+        stored and shown to the person approving the request; it is not verified. The request
+        keeps the tenant's ciba.slow_down_increment and ciba.max_poll_count as they were when it
+        was made; the token endpoint applies them while the client polls.
       requestBody:
         $ref: '#/components/requestBodies/CibaAuthorization'
       responses:
@@ -208,7 +214,10 @@ paths:
         request does not exist (or expired and was removed). 503 temporarily_unavailable also when
         the request store cannot answer or does not confirm the approval; the approval may or may
         not have been saved, so check the request (GET /api/ciba/requests/{auth_req_id}) before
-        retrying. A request already decided is 400.
+        retrying. A request already decided is 400. For a ping-mode request the client's
+        notification endpoint is called before this response is sent, and waits at most
+        ciba.ping_notification_timeout_ms (a failed notification is not retried and does not fail
+        the approval).
       security:
         - sessionCookie: []
         - sessionHeader: []
@@ -661,6 +670,7 @@ components:
         user_code:
           type: string
           example: '123456'
+          description: Refused with 400 invalid_request unless the tenant's ciba.user_code_enabled is on.
         requested_expiry:
           type: integer
           example: 300

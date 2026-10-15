@@ -407,6 +407,60 @@ describe('CIBA polling through the token endpoint', () => {
     expect(record()).toBeUndefined();
   });
 
+  describe('with the tenant slow_down increment and poll count kept on the request', () => {
+    it('raises the interval by the request increment, up to the request maximum', async () => {
+      await seed({ slow_down_increment: 12, max_interval: 25 });
+      await poll();
+
+      advanceFrozenClockByMs(1_000);
+      expect(await poll()).toMatchObject({ status: 400, error: 'slow_down' });
+      expect(record()).toMatchObject({ interval: 17, base_interval: 5 });
+
+      advanceFrozenClockByMs(1_000);
+      expect((await poll()).error).toBe('slow_down');
+      expect(record()).toMatchObject({ interval: 25 });
+    });
+
+    it('never raises it by less than 5 seconds, whatever the request holds', async () => {
+      await seed({ slow_down_increment: 1 });
+      await poll();
+      advanceFrozenClockByMs(1_000);
+      await poll();
+
+      expect(record()).toMatchObject({ interval: 10 });
+    });
+
+    it('cuts a client off at a configured count above what the lifetime needs', async () => {
+      // 300 s at 5 s needs 60 polls (cap 70); a configured 150 is the cap
+      await seed({ max_poll_count: 150 });
+
+      const answers: Array<string | null> = [];
+      for (let index = 0; index < 160; index++) {
+        answers.push((await poll()).error);
+        advanceFrozenClockByMs(1_000);
+      }
+
+      expect(answers.slice(1, 150).every((answer) => answer === 'slow_down')).toBe(true);
+      expect(answers.slice(150).every((answer) => answer === 'expired_token')).toBe(true);
+      expect(record()).toBeUndefined();
+    });
+
+    it('does not cut off a client that follows the interval, whatever count is configured', async () => {
+      // 600 s at 5 s needs 120 polls: the configured minimum of 10 is only a floor
+      await seed({ max_poll_count: 10 }, 600_000);
+      const start = frozenNowMs();
+
+      let polls = 0;
+      while (frozenNowMs() - start < 600_000) {
+        expect((await poll()).error, `poll ${polls + 1}`).toBe('authorization_pending');
+        polls++;
+        advanceFrozenClockByMs(5_000);
+      }
+
+      expect(polls).toBe(120);
+    });
+  });
+
   it('does not let another authenticated client change a request it does not own', async () => {
     await seed();
     await poll();

@@ -2709,8 +2709,8 @@ describe('Settings API v2', () => {
   });
 
   describe('CIBA bounds on PATCH /tenants/:tenantId/settings/ciba', () => {
-    async function patcher(env: Record<string, string> = {}) {
-      const mockKV = createMockKV();
+    async function patcher(env: Record<string, string> = {}, stored: Record<string, string> = {}) {
+      const mockKV = createMockKV(stored);
       const { app, mockEnv } = createTestApp({ kv: mockKV, env });
       const patch = async (body: Record<string, unknown>) => {
         const getRes = await app.request(
@@ -2865,13 +2865,13 @@ describe('Settings API v2', () => {
       it('saves a fractional value of a setting that does not require a whole number', async () => {
         const patch = await patcher();
         const res = await patch({
-          set: { 'ciba.slow_down_increment': 2.5, 'ciba.min_interval': 3 },
+          set: { 'ciba.push_notification_timeout_ms': 2500.5, 'ciba.min_interval': 3 },
         });
 
         expect(res.status).toBe(200);
         const after = await patch.read();
-        expect(after.values['ciba.slow_down_increment']).toBe(2.5);
-        expect(after.sources['ciba.slow_down_increment']).toBe('kv');
+        expect(after.values['ciba.push_notification_timeout_ms']).toBe(2500.5);
+        expect(after.sources['ciba.push_notification_timeout_ms']).toBe('kv');
         expect(after.values['ciba.min_interval']).toBe(3);
       });
 
@@ -2880,7 +2880,7 @@ describe('Settings API v2', () => {
         const before = await patch.read();
 
         const res = await patch({
-          set: { 'ciba.slow_down_increment': 2.5, 'ciba.poll_interval': 6.5 },
+          set: { 'ciba.push_notification_timeout_ms': 2500.5, 'ciba.poll_interval': 6.5 },
         });
 
         expect(res.status).toBe(400);
@@ -2890,7 +2890,101 @@ describe('Settings API v2', () => {
         const after = await patch.read();
         expect(after.values).toEqual(before.values);
         expect(after.version).toBe(before.version);
-        expect(after.sources['ciba.slow_down_increment']).not.toBe('kv');
+        expect(after.sources['ciba.push_notification_timeout_ms']).not.toBe('kv');
+      });
+
+      it.each([
+        ['ciba.slow_down_increment', 4],
+        ['ciba.slow_down_increment', 5.5],
+        ['ciba.max_poll_count', 9],
+        ['ciba.ping_notification_timeout_ms', 999],
+        ['ciba.ping_notification_timeout_ms', 2500.5],
+      ])('refuses %s = %s and saves nothing', async (key, value) => {
+        const patch = await patcher();
+        const before = await patch.read();
+
+        const res = await patch({ set: { [key]: value, 'ciba.min_interval': 3 } });
+
+        expect(res.status).toBe(400);
+        expect(((await res.json()) as ApiResponse).message as string).toContain(key);
+        const after = await patch.read();
+        expect(after.version).toBe(before.version);
+        expect(after.sources['ciba.min_interval']).not.toBe('kv');
+      });
+
+      it('saves the new CIBA settings and reads them back', async () => {
+        const patch = await patcher();
+        const res = await patch({
+          set: {
+            'ciba.slow_down_increment': 10,
+            'ciba.max_poll_count': 200,
+            'ciba.user_code_enabled': true,
+            'ciba.ping_notification_timeout_ms': 8000,
+          },
+        });
+
+        expect(res.status).toBe(200);
+        const after = await patch.read();
+        expect(after.values).toMatchObject({
+          'ciba.slow_down_increment': 10,
+          'ciba.max_poll_count': 200,
+          'ciba.user_code_enabled': true,
+          'ciba.ping_notification_timeout_ms': 8000,
+        });
+      });
+
+      describe('a document saved before four CIBA settings were retired', () => {
+        const retired = {
+          'ciba.auth_request_ttl': 120,
+          'ciba.notifier_default_timeout_ms': 2000,
+          'ciba.notifier_max_timeout_ms': 9000,
+          'ciba.notifier_retry_delay_base_ms': 500,
+        };
+        const saved = {
+          'settings:tenant:tenant_123:ciba': JSON.stringify({
+            'ciba.expires_in': 200,
+            ...retired,
+          }),
+        };
+
+        it('reads without the retired keys, and keeps the others', async () => {
+          const patch = await patcher({}, saved);
+          const read = await patch.read();
+
+          expect(read.values['ciba.expires_in']).toBe(200);
+          expect(read.sources['ciba.expires_in']).toBe('kv');
+          for (const key of Object.keys(retired)) {
+            expect(read.values).not.toHaveProperty(key);
+            expect(read.sources).not.toHaveProperty(key);
+          }
+        });
+
+        it('still saves another setting', async () => {
+          const patch = await patcher({}, saved);
+
+          const res = await patch({ set: { 'ciba.max_poll_count': 200 } });
+
+          expect(res.status).toBe(200);
+          const after = await patch.read();
+          expect(after.values['ciba.max_poll_count']).toBe(200);
+          expect(after.values['ciba.expires_in']).toBe(200);
+        });
+
+        it.each(Object.keys(retired))(
+          'refuses setting %s again as not a CIBA setting',
+          async (key) => {
+            const patch = await patcher({}, saved);
+            const before = await patch.read();
+
+            const res = await patch({ set: { [key]: 1000 } });
+
+            expect(res.status).toBe(400);
+            expect(((await res.json()) as ApiResponse).message as string).toBe(
+              `${key} is not a CIBA setting`
+            );
+            expect((await patch.read()).version).toBe(before.version);
+          }
+        );
       });
 
       it('still saves a fully valid patch', async () => {

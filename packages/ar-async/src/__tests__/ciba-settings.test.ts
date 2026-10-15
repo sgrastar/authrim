@@ -311,6 +311,191 @@ describe('/bc-authorize with CIBA settings', () => {
     });
   });
 
+  describe('polling limits kept on the request', () => {
+    it('stores the default slow_down increment and poll count, which are the constants', async () => {
+      await post(baseRequest);
+
+      expect(onlyStored()).toMatchObject({ slow_down_increment: 5, max_poll_count: 120 });
+    });
+
+    it('stores the tenant slow_down increment and poll count', async () => {
+      settings({ 'ciba.slow_down_increment': 12, 'ciba.max_poll_count': 300 });
+      await post(baseRequest);
+
+      expect(onlyStored()).toMatchObject({ slow_down_increment: 12, max_poll_count: 300 });
+    });
+
+    it('stores a value outside the ranges as the default, and an increment below 5 never', async () => {
+      for (const [increment, count] of [
+        [4, 9],
+        [1, 501],
+        [31, 'many'],
+        [5.5, 100.5],
+      ]) {
+        stored.clear();
+        settings({ 'ciba.slow_down_increment': increment, 'ciba.max_poll_count': count });
+        await post(baseRequest);
+
+        expect(onlyStored(), `${increment}, ${count}`).toMatchObject({
+          slow_down_increment: 5,
+          max_poll_count: 120,
+        });
+      }
+    });
+
+    it('stores them for a ping client too: the record is the same shape', async () => {
+      settings({ 'ciba.slow_down_increment': 9 });
+      mockGetClient.mockResolvedValue(
+        clientMetadata({
+          backchannel_token_delivery_mode: 'ping',
+          backchannel_client_notification_endpoint: 'https://client.example.com/notify',
+        })
+      );
+      await post({ ...baseRequest, client_notification_token: 'notification-token' });
+
+      expect(onlyStored().slow_down_increment).toBe(9);
+    });
+  });
+
+  describe('user_code (ciba.user_code_enabled)', () => {
+    const withUserCode = { ...baseRequest, user_code: 'SECRET-1', binding_message: '1234' };
+
+    async function signedRequest(claims: Record<string, unknown>) {
+      const { publicKey, privateKey } = await generateKeyPair('ES256');
+      const jwk = { ...(await exportJWK(publicKey)), kid: 'k1', alg: 'ES256', use: 'sig' };
+      mockGetClient.mockResolvedValue(
+        clientMetadata({
+          backchannel_authentication_request_signing_alg: 'ES256',
+          jwks: { keys: [jwk] },
+        })
+      );
+      return new SignJWT({ scope: 'openid', login_hint: 'user@example.com', ...claims })
+        .setProtectedHeader({ alg: 'ES256', kid: 'k1' })
+        .setIssuer('ciba-client')
+        .setAudience(ISSUER)
+        .setIssuedAt()
+        .setNotBefore('0s')
+        .setExpirationTime('5m')
+        .setJti(crypto.randomUUID())
+        .sign(privateKey);
+    }
+
+    describe('while it is off, which is the default', () => {
+      it('refuses a request that carries a user_code, and stores nothing', async () => {
+        const { response, body } = await post(withUserCode);
+
+        expect(response.status).toBe(400);
+        expect(body).toEqual({
+          error: 'invalid_request',
+          error_description: 'user_code is not supported',
+        });
+        expect(stored.size).toBe(0);
+        expect(storeFetch).not.toHaveBeenCalled();
+      });
+
+      it('refuses it when the tenant saved the switch off explicitly', async () => {
+        settings({ 'ciba.user_code_enabled': false });
+
+        expect((await post(withUserCode)).response.status).toBe(400);
+      });
+
+      it('refuses a user_code inside a signed request object', async () => {
+        const request = await signedRequest({ user_code: 'SECRET-1' });
+        const { response, body } = await post({
+          client_id: 'ciba-client',
+          client_secret: 'ciba-secret',
+          request,
+        });
+
+        expect(response.status).toBe(400);
+        expect(body).toEqual({
+          error: 'invalid_request',
+          error_description: 'user_code is not supported',
+        });
+        expect(stored.size).toBe(0);
+      });
+
+      it('refuses a user_code that is not a string, in the signed request object', async () => {
+        const request = await signedRequest({ user_code: 123456 });
+        const { response, body } = await post({
+          client_id: 'ciba-client',
+          client_secret: 'ciba-secret',
+          request,
+        });
+
+        expect(response.status).toBe(400);
+        expect(body.error_description).toBe('user_code is not supported');
+      });
+
+      it('still accepts a signed request object without one', async () => {
+        const request = await signedRequest({ binding_message: '1234' });
+        const { response } = await post({
+          client_id: 'ciba-client',
+          client_secret: 'ciba-secret',
+          request,
+        });
+
+        expect(response.status).toBe(200);
+      });
+
+      it('accepts a request without a user_code, or with an empty one', async () => {
+        expect((await post(baseRequest)).response.status).toBe(200);
+        stored.clear();
+        expect((await post({ ...baseRequest, user_code: '' })).response.status).toBe(200);
+        expect(stored.size).toBe(1);
+      });
+
+      it('still generates the display code for a binding_message: that is not the parameter', async () => {
+        const { response } = await post({ ...baseRequest, binding_message: '1234' });
+
+        expect(response.status).toBe(200);
+        expect(onlyStored().user_code).toMatch(/\S+/);
+      });
+    });
+
+    describe('while it is on', () => {
+      beforeEach(() => settings({ 'ciba.user_code_enabled': true }));
+
+      it('accepts the user_code and stores it for the approver', async () => {
+        const { response } = await post(withUserCode);
+
+        expect(response.status).toBe(200);
+        expect(onlyStored().user_code).toBe('SECRET-1');
+      });
+
+      it('accepts a user_code inside a signed request object', async () => {
+        const request = await signedRequest({ user_code: 'SECRET-2', binding_message: '1234' });
+        const { response } = await post({
+          client_id: 'ciba-client',
+          client_secret: 'ciba-secret',
+          request,
+        });
+
+        expect(response.status).toBe(200);
+        expect(onlyStored().user_code).toBe('SECRET-2');
+      });
+    });
+
+    it('is taken from the environment as the deployment default, and a stored value beats it', async () => {
+      expect((await post(withUserCode, { ENABLE_CIBA_USER_CODE: 'true' })).response.status).toBe(
+        200
+      );
+      stored.clear();
+      settings({ 'ciba.user_code_enabled': false });
+      expect((await post(withUserCode, { ENABLE_CIBA_USER_CODE: 'true' })).response.status).toBe(
+        400
+      );
+    });
+
+    it('is not checked before the settings can be read: unreadable settings are a 503', async () => {
+      cibaDocument = async () => {
+        throw new Error('KV unavailable');
+      };
+
+      expect((await post(withUserCode)).response.status).toBe(503);
+    });
+  });
+
   describe('settings that cannot be used', () => {
     it('falls back per value, and to the defaults of a pair the wrong way round', async () => {
       settings({
