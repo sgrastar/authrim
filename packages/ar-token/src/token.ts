@@ -3,6 +3,7 @@ import type {
   DatabaseAdapter,
   DatabaseSource,
   Env,
+  PollRpcResult,
   RefreshTokenLifetimePolicy,
 } from '@authrim/ar-lib-core';
 import {
@@ -5029,6 +5030,69 @@ async function handleJWTBearerGrant(
   });
 }
 
+/** The device code record as the token endpoint reads it from the store's `/poll`. */
+interface DeviceFlowPollMetadata {
+  device_code: string;
+  user_code: string;
+  client_id: string;
+  scope: string;
+  status: 'pending' | 'approved' | 'denied' | 'expired';
+  sub?: string;
+  user_id?: string;
+  last_poll_at?: number;
+  poll_count?: number;
+  created_at: number;
+  expires_at: number;
+  consent_generation?: number;
+}
+
+/** The CIBA request record as the token endpoint reads it from the store's `/poll`. */
+interface CIBAPollMetadata {
+  auth_req_id: string;
+  client_id: string;
+  scope: string;
+  status: 'pending' | 'approved' | 'denied' | 'expired';
+  delivery_mode: 'poll' | 'ping' | 'push';
+  interval: number;
+  sub?: string;
+  user_id?: string;
+  nonce?: string;
+  authenticated_acr?: string;
+  last_poll_at?: number;
+  poll_count?: number;
+  created_at: number;
+  expires_at: number;
+  token_issued?: boolean;
+  consent_generation?: number;
+}
+
+/**
+ * Ask a device code or CIBA request store to evaluate and record one poll. Null when the store
+ * could not answer (unreachable, an error, or a store that predates `/poll`): the token endpoint
+ * cannot tell whether the client may be answered, so it asks the client to retry.
+ */
+async function pollStore<M>(
+  store: { fetch: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response> },
+  path: '/poll',
+  body: Record<string, string>,
+  headers: Record<string, string>
+): Promise<PollRpcResult<M> | null> {
+  try {
+    const response = await store.fetch(
+      new Request(`https://internal${path}`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(body),
+      })
+    );
+    if (!response.ok) return null;
+    const result = (await response.json()) as PollRpcResult<M> | null;
+    return result && typeof result.result === 'string' ? result : null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Handle Device Code Grant
  * RFC 8628: OAuth 2.0 Device Authorization Grant
@@ -5122,55 +5186,24 @@ async function handleDeviceCodeGrant(
     deviceCodeStore = c.env.DEVICE_CODE_STORE.get(deviceCodeStoreId);
   }
 
-  // Update poll time (for rate limiting)
-  try {
-    await deviceCodeStore.fetch(
-      new Request('https://internal/update-poll', {
-        method: 'POST',
-        headers: internalHeaders,
-        body: JSON.stringify({ device_code: deviceCode }),
-      })
-    );
-  } catch (error) {
-    log.error('Failed to update poll time', {}, error as Error);
-  }
-
-  // Get device code metadata
-  const getResponse = await deviceCodeStore.fetch(
-    new Request('https://internal/get-by-device-code', {
-      method: 'POST',
-      headers: internalHeaders,
-      body: JSON.stringify({ device_code: deviceCode }),
-    })
+  // One poll: the store checks ownership, evaluates the poll against the previous one, and
+  // records it, in one state change. Evaluating after a separate "record the poll" call would
+  // compare the request with the poll that was just made.
+  const pollResult = await pollStore<DeviceFlowPollMetadata>(
+    deviceCodeStore,
+    '/poll',
+    {
+      device_code: deviceCode,
+      client_id,
+    },
+    internalHeaders
   );
-
-  const metadata = (await getResponse.json()) as {
-    device_code: string;
-    user_code: string;
-    client_id: string;
-    scope: string;
-    status: 'pending' | 'approved' | 'denied' | 'expired';
-    sub?: string;
-    user_id?: string;
-    last_poll_at?: number;
-    poll_count?: number;
-    created_at: number;
-    expires_at: number;
-    consent_generation?: number;
-  };
-
-  if (!metadata || !metadata.device_code) {
-    return c.json(
-      {
-        error: 'expired_token',
-        error_description: 'Device code has expired or is invalid',
-      },
-      400
-    );
+  if (!pollResult) {
+    log.error('Device code poll could not be recorded', { action: 'device_poll' });
+    return oauthError(c, 'temporarily_unavailable', 'Device code state is unavailable', 503);
   }
 
-  // Check if device code is for the correct client
-  if (metadata.client_id !== client_id) {
+  if (pollResult.result === 'client_mismatch') {
     return c.json(
       {
         error: 'invalid_grant',
@@ -5180,13 +5213,23 @@ async function handleDeviceCodeGrant(
     );
   }
 
+  if (pollResult.result !== 'ok' || !pollResult.metadata?.device_code) {
+    // Missing, expired, or cut off for polling past the cap (the store has dropped it)
+    return c.json(
+      {
+        error: 'expired_token',
+        error_description: 'Device code has expired or is invalid',
+      },
+      400
+    );
+  }
+  const metadata = pollResult.metadata;
+
   // Check status and return appropriate response
   if (metadata.status === 'pending') {
-    // User has not yet approved - check if polling too fast
-    const { isDeviceFlowPollingTooFast, DEVICE_FLOW_CONSTANTS } =
-      await import('@authrim/ar-lib-core/utils/device-flow');
-
-    if (isDeviceFlowPollingTooFast(metadata, DEVICE_FLOW_CONSTANTS.DEFAULT_INTERVAL)) {
+    // User has not yet approved. RFC 8628 section 3.5: a poll before the interval ran out is
+    // answered slow_down (the store has already raised the interval); otherwise keep waiting.
+    if (pollResult.too_fast) {
       return c.json(
         {
           error: 'slow_down',
@@ -5803,59 +5846,23 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
     cibaRequestStore = c.env.CIBA_REQUEST_STORE.get(cibaRequestStoreId);
   }
 
-  // Update poll time (for rate limiting in poll mode)
-  try {
-    await cibaRequestStore.fetch(
-      new Request('https://internal/update-poll', {
-        method: 'POST',
-        headers: internalHeaders,
-        body: JSON.stringify({ auth_req_id: authReqId }),
-      })
-    );
-  } catch (error) {
-    log.error('Failed to update poll time', {}, error as Error);
-  }
-
-  // Get CIBA request metadata
-  const getResponse = await cibaRequestStore.fetch(
-    new Request('https://internal/get-by-auth-req-id', {
-      method: 'POST',
-      headers: internalHeaders,
-      body: JSON.stringify({ auth_req_id: authReqId }),
-    })
+  // One poll: the store checks ownership, evaluates the poll against the previous one (poll mode
+  // only), and records it, in one state change. A poll by another client changes nothing.
+  const pollResult = await pollStore<CIBAPollMetadata>(
+    cibaRequestStore,
+    '/poll',
+    {
+      auth_req_id: authReqId,
+      client_id,
+    },
+    internalHeaders
   );
-
-  const metadata = (await getResponse.json()) as {
-    auth_req_id: string;
-    client_id: string;
-    scope: string;
-    status: 'pending' | 'approved' | 'denied' | 'expired';
-    delivery_mode: 'poll' | 'ping' | 'push';
-    interval: number;
-    sub?: string;
-    user_id?: string;
-    nonce?: string;
-    authenticated_acr?: string;
-    last_poll_at?: number;
-    poll_count?: number;
-    created_at: number;
-    expires_at: number;
-    token_issued?: boolean;
-    consent_generation?: number;
-  };
-
-  if (!metadata || !metadata.auth_req_id) {
-    return c.json(
-      {
-        error: 'expired_token',
-        error_description: 'CIBA request has expired or is invalid',
-      },
-      400
-    );
+  if (!pollResult) {
+    log.error('CIBA poll could not be recorded', { action: 'ciba_poll' });
+    return oauthError(c, 'temporarily_unavailable', 'CIBA request state is unavailable', 503);
   }
 
-  // Check if auth_req_id is for the correct client
-  if (metadata.client_id !== client_id) {
+  if (pollResult.result === 'client_mismatch') {
     return c.json(
       {
         error: 'invalid_grant',
@@ -5864,6 +5871,18 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
       400
     );
   }
+
+  if (pollResult.result !== 'ok' || !pollResult.metadata?.auth_req_id) {
+    // Missing, expired, or cut off for polling past the cap (the store has dropped it)
+    return c.json(
+      {
+        error: 'expired_token',
+        error_description: 'CIBA request has expired or is invalid',
+      },
+      400
+    );
+  }
+  const metadata = pollResult.metadata;
 
   // Check if tokens have already been issued (one-time use)
   if (metadata.token_issued) {
@@ -5878,19 +5897,17 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
 
   // Check status and return appropriate response
   if (metadata.status === 'pending') {
-    // User has not yet approved - check if polling too fast (poll mode only)
-    if (metadata.delivery_mode === 'poll') {
-      const { isPollingTooFast } = await import('@authrim/ar-lib-core/utils/ciba');
-
-      if (isPollingTooFast(metadata)) {
-        return c.json(
-          {
-            error: 'slow_down',
-            error_description: 'You are polling too frequently. Please slow down.',
-          },
-          400
-        );
-      }
+    // User has not yet approved. CIBA Core section 11: a poll-mode client that polls before the
+    // interval ran out is answered slow_down (the store has already raised the interval). Ping
+    // and push clients are never rate-limited, so the store reports them as not too fast.
+    if (pollResult.too_fast) {
+      return c.json(
+        {
+          error: 'slow_down',
+          error_description: 'You are polling too frequently. Please slow down.',
+        },
+        400
+      );
     }
 
     return c.json(

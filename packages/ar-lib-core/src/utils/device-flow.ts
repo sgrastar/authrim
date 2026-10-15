@@ -5,6 +5,7 @@
  */
 
 import type { DeviceCodeMetadata } from '../types/oidc';
+import { randomCharacters, type RandomBytesSource } from './unbiased-random';
 
 /**
  * Generate a device code (opaque, unique identifier)
@@ -26,31 +27,19 @@ export function generateDeviceCode(): string {
  * Character set: Excludes ambiguous characters (0, O, 1, I, L)
  * to reduce user input errors
  *
+ * @param source - Random byte source (defaults to Web Crypto; replaceable in tests)
  * @returns User code string (format: XXXX-XXXX)
  */
-export function generateUserCode(): string {
+export function generateUserCode(source?: RandomBytesSource): string {
   // Character set excluding ambiguous characters
   // Removed: 0 (zero), O (letter O), 1 (one), I (letter I), L (letter L)
   const charset = '23456789ABCDEFGHJKMNPQRSTUVWXYZ';
   const codeLength = 8;
   const separatorPosition = 4;
 
-  let code = '';
-  const randomBytes = new Uint8Array(codeLength);
-  crypto.getRandomValues(randomBytes);
-
-  for (let i = 0; i < codeLength; i++) {
-    // Use modulo to map random byte to charset index
-    const index = randomBytes[i] % charset.length;
-    code += charset[index];
-
-    // Add hyphen separator for readability
-    if (i === separatorPosition - 1 && i < codeLength - 1) {
-      code += '-';
-    }
-  }
-
-  return code;
+  // Rejection sampling: `byte % 31` alone would favour the first 8 characters of the set
+  const characters = randomCharacters(charset, codeLength, source);
+  return `${characters.slice(0, separatorPosition)}-${characters.slice(separatorPosition)}`;
 }
 
 /**

@@ -24,6 +24,7 @@ import type { DurableObjectState } from '@cloudflare/workers-types';
 import type { Env } from '../types/env';
 import type { CIBARequestMetadata } from '../types/oidc';
 import { isCIBARequestExpired } from '../utils/ciba';
+import { CIBA_POLL_LIMITS, evaluatePoll, type PollRpcResult } from '../utils/poll-governor';
 import { createLogger, type Logger } from '../utils/logger';
 
 /**
@@ -509,7 +510,25 @@ export class CIBARequestStore {
         });
       }
 
-      // Update last poll time (for rate limiting)
+      // One poll of the token endpoint: evaluate against the previous poll, then record it.
+      if (path === '/poll' && request.method === 'POST') {
+        const { auth_req_id, client_id } = (await request.json()) as {
+          auth_req_id?: unknown;
+          client_id?: unknown;
+        };
+        const result =
+          typeof auth_req_id === 'string' && typeof client_id === 'string'
+            ? await this.pollRequest(auth_req_id, client_id)
+            : ({ result: 'not_found' } satisfies PollRpcResult<CIBARequestV2>);
+        return new Response(JSON.stringify(result), {
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
+      // Update last poll time (for rate limiting).
+      // Deprecated: records the poll without evaluating it, so a caller that reads the request
+      // afterwards sees its own write. The token endpoint uses /poll; this stays for callers
+      // deployed before it existed.
       if (path === '/update-poll' && request.method === 'POST') {
         const { auth_req_id } = (await request.json()) as { auth_req_id: string };
         await this.updatePollTime(auth_req_id);
@@ -914,6 +933,67 @@ export class CIBARequestStore {
       clientId: metadata.client_id,
       timestamp: Date.now(),
     });
+  }
+
+  /**
+   * One poll of the token endpoint, decided and recorded in one state change (see
+   * utils/poll-governor.ts for the sequence). It queues with approve, deny and mark-token-issued,
+   * so none of them can run between the check and the write.
+   *
+   * A poll by a client the request does not belong to changes nothing. Only a pending poll-mode
+   * request is rate-limited: ping and push clients are told when to call the token endpoint, so
+   * their polls are still recorded (`last_poll_at`, `poll_count + 1`), but they can never be too
+   * fast (`slow_down`), never raise the interval, and are never checked against the cap.
+   */
+  private pollRequest(authReqId: string, clientId: string): Promise<PollRpcResult<CIBARequestV2>> {
+    return this.serializeTransition(() => this.applyPoll(authReqId, clientId));
+  }
+
+  private async applyPoll(
+    authReqId: string,
+    clientId: string
+  ): Promise<PollRpcResult<CIBARequestV2>> {
+    // Removes an expired request, so a missing and an expired request look the same
+    const metadata = await this.getByAuthReqId(authReqId);
+    if (!metadata) {
+      return { result: 'not_found' };
+    }
+    if (metadata.client_id !== clientId) {
+      return { result: 'client_mismatch' };
+    }
+
+    const evaluation = evaluatePoll(
+      metadata,
+      Date.now(),
+      CIBA_POLL_LIMITS,
+      metadata.status === 'pending' && metadata.delivery_mode === 'poll'
+    );
+    if (evaluation.limitExceeded) {
+      await this.removeRequest(authReqId);
+      this.logEvent({
+        action: 'ciba_request_expired',
+        authReqId,
+        clientId: metadata.client_id,
+        metadata: { reason: 'poll_limit_exceeded', poll_count: metadata.poll_count },
+        timestamp: Date.now(),
+      });
+      return { result: 'poll_limit_exceeded' };
+    }
+
+    // V2: Update in Durable Storage, then the cache
+    await this.saveRequest(authReqId, evaluation.next, metadata);
+    this.cacheSaved(authReqId, metadata, evaluation.next);
+
+    if (evaluation.tooFast) {
+      this.logEvent({
+        action: 'ciba_slow_down',
+        authReqId,
+        clientId: metadata.client_id,
+        metadata: { interval: evaluation.next.interval },
+        timestamp: Date.now(),
+      });
+    }
+    return { result: 'ok', too_fast: evaluation.tooFast, metadata: evaluation.next };
   }
 
   /**

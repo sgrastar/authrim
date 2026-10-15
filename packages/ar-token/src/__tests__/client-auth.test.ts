@@ -1301,12 +1301,11 @@ describe('Client Authentication Tests', () => {
 
       const cibaStoreFetch = vi.fn().mockImplementation(async (request: Request) => {
         const pathname = new URL(request.url).pathname;
-        if (pathname === '/update-poll') {
-          return new Response(JSON.stringify({ success: true }), { status: 200 });
-        }
-        if (pathname === '/get-by-auth-req-id') {
-          return new Response(
-            JSON.stringify({
+        if (pathname === '/poll') {
+          return Response.json({
+            result: 'ok',
+            too_fast: false,
+            metadata: {
               auth_req_id: 'auth-req-123',
               client_id: client.client_id,
               scope: 'openid profile',
@@ -1316,9 +1315,8 @@ describe('Client Authentication Tests', () => {
               created_at: Date.now() - 1000,
               expires_at: Date.now() + 60000,
               token_issued: false,
-            }),
-            { status: 200 }
-          );
+            },
+          });
         }
         return new Response(JSON.stringify({ error: 'not_found' }), { status: 404 });
       });
@@ -1354,18 +1352,25 @@ describe('Client Authentication Tests', () => {
     function configureCIBARequest(
       client: TestClientMetadata,
       metadata: Record<string, unknown>,
-      options: { markIssuedResponse?: Response; updatePollError?: Error } = {}
+      options: {
+        markIssuedResponse?: Response;
+        pollError?: Error;
+        pollResponse?: Response;
+        tooFast?: boolean;
+      } = {}
     ) {
       const fetch = vi.fn().mockImplementation(async (request: Request) => {
         const pathname = new URL(request.url).pathname;
-        if (pathname === '/update-poll') {
-          if (options.updatePollError) {
-            throw options.updatePollError;
+        if (pathname === '/poll') {
+          if (options.pollError) {
+            throw options.pollError;
           }
-          return Response.json({ success: true });
-        }
-        if (pathname === '/get-by-auth-req-id') {
-          return Response.json(metadata);
+          if (options.pollResponse) return options.pollResponse.clone();
+          // Like the real store: ownership first, then the evaluated and recorded poll
+          const { client_id } = (await request.json()) as { client_id: string };
+          if (!metadata.auth_req_id) return Response.json({ result: 'not_found' });
+          if (metadata.client_id !== client_id) return Response.json({ result: 'client_mismatch' });
+          return Response.json({ result: 'ok', too_fast: options.tooFast === true, metadata });
         }
         if (pathname === '/mark-token-issued') {
           return options.markIssuedResponse ?? Response.json({ success: true });
@@ -1578,21 +1583,63 @@ describe('Client Authentication Tests', () => {
       expect(mocks.mockCreateAccessToken).not.toHaveBeenCalled();
     });
 
-    it('continues safely when updating poll metadata fails', async () => {
+    it('answers 503 when the store cannot evaluate the poll', async () => {
       const client = createCIBAClient({ client_secret_hash: CIBA_CLIENT_SECRET_HASH });
       configureCIBARequest(client, baseCIBAMetadata(client), {
-        updatePollError: new Error('poll metadata unavailable'),
+        pollError: new Error('poll metadata unavailable'),
+      });
+
+      const { response, body } = await requestCIBAToken(client);
+
+      expect(response.status).toBe(503);
+      expect(body).toMatchObject({ error: 'temporarily_unavailable' });
+      expect(mocks.mockCreateAccessToken).not.toHaveBeenCalled();
+    });
+
+    it('answers 503 from a store that has no /poll route (not yet deployed)', async () => {
+      const client = createCIBAClient({ client_secret_hash: CIBA_CLIENT_SECRET_HASH });
+      configureCIBARequest(client, baseCIBAMetadata(client), {
+        pollResponse: new Response('Not found', { status: 404 }),
+      });
+
+      const { response, body } = await requestCIBAToken(client);
+
+      expect(response.status).toBe(503);
+      expect(body).toMatchObject({ error: 'temporarily_unavailable' });
+    });
+
+    it('answers slow_down when the store reports a poll before the interval', async () => {
+      const client = createCIBAClient({ client_secret_hash: CIBA_CLIENT_SECRET_HASH });
+      configureCIBARequest(client, baseCIBAMetadata(client, { delivery_mode: 'poll' }), {
+        tooFast: true,
       });
 
       const { response, body } = await requestCIBAToken(client);
 
       expect(response.status).toBe(400);
+      expect(body).toMatchObject({ error: 'slow_down' });
+    });
+
+    it('answers authorization_pending for a poll the store does not report as too fast', async () => {
+      const client = createCIBAClient({ client_secret_hash: CIBA_CLIENT_SECRET_HASH });
+      configureCIBARequest(client, baseCIBAMetadata(client, { delivery_mode: 'poll' }));
+
+      const { response, body } = await requestCIBAToken(client);
+
+      expect(response.status).toBe(400);
       expect(body).toMatchObject({ error: 'authorization_pending' });
-      expect(mocks.mockLoggerMethods.error).toHaveBeenCalledWith(
-        'Failed to update poll time',
-        {},
-        expect.any(Error)
-      );
+    });
+
+    it('answers expired_token for a request the store dropped for polling past the cap', async () => {
+      const client = createCIBAClient({ client_secret_hash: CIBA_CLIENT_SECRET_HASH });
+      configureCIBARequest(client, baseCIBAMetadata(client), {
+        pollResponse: Response.json({ result: 'poll_limit_exceeded' }),
+      });
+
+      const { response, body } = await requestCIBAToken(client);
+
+      expect(response.status).toBe(400);
+      expect(body).toMatchObject({ error: 'expired_token' });
     });
 
     it('rejects a concurrent replay reported by the atomic mark-issued operation', async () => {
@@ -1760,15 +1807,24 @@ describe('Client Authentication Tests', () => {
 
     function configureDeviceCode(
       metadata: Record<string, unknown>,
-      options: { consumeStatus?: number; updatePollError?: Error } = {}
+      options: {
+        consumeStatus?: number;
+        pollError?: Error;
+        pollResponse?: Response;
+        tooFast?: boolean;
+      } = {}
     ) {
       const fetch = vi.fn().mockImplementation(async (request: Request) => {
         const pathname = new URL(request.url).pathname;
-        if (pathname === '/update-poll') {
-          if (options.updatePollError) throw options.updatePollError;
-          return Response.json({ success: true });
+        if (pathname === '/poll') {
+          if (options.pollError) throw options.pollError;
+          if (options.pollResponse) return options.pollResponse.clone();
+          // Like the real store: ownership first, then the evaluated and recorded poll
+          const { client_id } = (await request.json()) as { client_id: string };
+          if (!metadata.device_code) return Response.json({ result: 'not_found' });
+          if (metadata.client_id !== client_id) return Response.json({ result: 'client_mismatch' });
+          return Response.json({ result: 'ok', too_fast: options.tooFast === true, metadata });
         }
-        if (pathname === '/get-by-device-code') return Response.json(metadata);
         if (pathname === '/mark-token-issued') {
           return Response.json(
             { success: options.consumeStatus === undefined },
@@ -1981,20 +2037,65 @@ describe('Client Authentication Tests', () => {
       expect(mocks.mockCreateIDToken).not.toHaveBeenCalled();
     });
 
-    it('reports poll metadata failures but preserves the authorization state response', async () => {
+    it('answers 503 when the store cannot evaluate the poll', async () => {
       configureDeviceCode(baseDeviceMetadata(), {
-        updatePollError: new Error('poll write unavailable'),
+        pollError: new Error('poll write unavailable'),
       });
+
+      const { response, body } = await requestDeviceToken();
+
+      expect(response.status).toBe(503);
+      expect(body).toMatchObject({ error: 'temporarily_unavailable' });
+    });
+
+    it('answers 503 from a store that has no /poll route (not yet deployed)', async () => {
+      configureDeviceCode(baseDeviceMetadata(), {
+        pollResponse: new Response('Not found', { status: 404 }),
+      });
+
+      const { response, body } = await requestDeviceToken();
+
+      expect(response.status).toBe(503);
+      expect(body).toMatchObject({ error: 'temporarily_unavailable' });
+    });
+
+    it('answers slow_down when the store reports a poll before the interval', async () => {
+      configureDeviceCode(baseDeviceMetadata(), { tooFast: true });
+
+      const { response, body } = await requestDeviceToken();
+
+      expect(response.status).toBe(400);
+      expect(body).toMatchObject({ error: 'slow_down' });
+    });
+
+    it('answers authorization_pending for a poll the store does not report as too fast', async () => {
+      configureDeviceCode(baseDeviceMetadata());
 
       const { response, body } = await requestDeviceToken();
 
       expect(response.status).toBe(400);
       expect(body).toMatchObject({ error: 'authorization_pending' });
-      expect(mocks.mockLoggerMethods.error).toHaveBeenCalledWith(
-        'Failed to update poll time',
-        {},
-        expect.any(Error)
-      );
+    });
+
+    it('answers expired_token for a code the store dropped for polling past the cap', async () => {
+      configureDeviceCode(baseDeviceMetadata(), {
+        pollResponse: Response.json({ result: 'poll_limit_exceeded' }),
+      });
+
+      const { response, body } = await requestDeviceToken();
+
+      expect(response.status).toBe(400);
+      expect(body).toMatchObject({ error: 'expired_token' });
+    });
+
+    it('does not let a too-fast report hide an approved code', async () => {
+      configureDeviceCode(baseDeviceMetadata({ status: 'approved', sub: 'user-123' }), {
+        tooFast: true,
+      });
+
+      const { response } = await requestDeviceToken();
+
+      expect(response.status).toBe(200);
     });
 
     it('does not return a partial response when ID token signing fails', async () => {

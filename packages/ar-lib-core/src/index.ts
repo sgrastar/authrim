@@ -101,6 +101,8 @@ export * from './utils/id';
 export * from './utils/d1-retry';
 export * from './utils/device-flow';
 export * from './utils/ciba';
+export * from './utils/poll-governor';
+export * from './utils/unbiased-random';
 export * from './utils/delegated-write';
 export * from './utils/dpop';
 export * from './utils/dr-bundle';

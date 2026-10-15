@@ -86,6 +86,17 @@ paths:
         spent by then, returns invalid_grant asking the client to start again). Access tokens
         already issued stay valid until they expire (UserInfo and introspection are not affected);
         revoking evidence stops new tokens, refreshes and exchanges from the next request.
+        Polling (device code, RFC 8628 section 3.5; CIBA poll mode, CIBA Core section 11): the
+        first poll of a pending request answers authorization_pending. A poll that comes before
+        the request's polling interval has passed answers slow_down and raises that interval by 5
+        seconds, up to 60 seconds, for this and every later poll of the request (the first
+        interval is 5 seconds). Only a pending device code or CIBA poll-mode request can answer
+        slow_down; ping and push CIBA requests never do. Every poll counts, and a request polled
+        more often than a client that obeys the interval and slow_down would (at least 120 polls,
+        more for a longer lifetime) is dropped and answers expired_token, like an expired one.
+        A poll with another client's device_code or auth_req_id answers invalid_grant and changes
+        nothing. When the request store cannot record the poll, the response is 503
+        temporarily_unavailable.
       requestBody:
         required: true
         content:
