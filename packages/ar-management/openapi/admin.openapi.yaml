@@ -2072,6 +2072,17 @@ paths:
         settings change (assurance, security, tokens, oauth or session) may set only the fields its
         Tool binds and may not clear or disable settings; anything else returns 400
         AGENT_ELEVATION_SETTINGS_OUT_OF_SCOPE.
+        For the ciba and device-flow categories the whole PATCH is refused (400 validation_failed,
+        naming the key) when any key of it would be rejected one by one: an unknown key, a value of
+        the wrong type, a fractional value where the setting is whole-number, a value outside its
+        range, a key named by more than one of set, clear and disable, or a disable of a setting
+        that is not on/off. Nothing is saved then. Relations are checked on the document the save
+        leaves: each min_expires_in must not exceed max_expires_in, and each min_interval must not
+        exceed max_interval; expires_in must lie within [min_expires_in, max_expires_in], and
+        poll_interval within [min_interval, max_interval]. A cleared key counts as the value it
+        then inherits (the platform, an environment variable, else the default). For example, with
+        the default device_flow.min_interval of 5, device_flow.poll_interval 2 is refused with 400
+        and nothing is saved; lower min_interval in the same request to save it.
         The request must include the current settings version in ifMatch; stale writes return 409.
       security:
         - adminBearer: []
@@ -7413,6 +7424,18 @@ paths:
       description: >-
         Partially updates client-scoped settings in a category. The request must include `ifMatch`;
         version conflicts return the current version.
+        For the device-flow category the whole PATCH is refused (400 `validation_failed`, naming the
+        key) when any key of it would be rejected one by one: an unknown key, a value of the wrong
+        type, a fractional value where the setting is whole-number, a value outside its range, a
+        key named by more than one of set, clear and disable, or any disable. Nothing is saved
+        then. Relations are checked on the client's resulting document, where every key the client
+        does not set is the tenant's value: min <= max for the expiry and interval bounds,
+        `device_flow.expires_in` within the expiry bounds and `device_flow.poll_interval` within
+        the interval bounds (so a client value outside the tenant's bounds is refused). A cleared
+        key counts as the value it then inherits (the tenant, the platform, an environment
+        variable, else the default). A client `min_*` or `max_*` that would widen the tenant's
+        bounds is refused: a client can only narrow them. With the default `device_flow.min_interval`
+        of 5, `device_flow.poll_interval` 2 is refused with 400.
       responses:
         '200':
           $ref: '#/components/responses/SettingsV2Patch'

@@ -25,6 +25,16 @@ paths:
         temporarily_unavailable. A user code another live device code already holds is not
         reused: a new one is generated, up to 5 attempts. When no unique user code could be
         stored, the response is 503 temporarily_unavailable with Retry-After: 1.
+        The expires_in and interval of the response come from the device flow settings of the
+        tenant and, for a client that has its own, of the client (the client's value wins, held
+        between the tenant's bounds): device_flow.expires_in kept between device_flow.min_expires_in
+        and device_flow.max_expires_in (never above one hour), and device_flow.poll_interval kept
+        between device_flow.min_interval and device_flow.max_interval. With nothing saved they are
+        600 and 5. The settings are read only for a registered client that may use the grant
+        (an unknown client or one that may not is refused first). Device flow settings that cannot
+        be read return 503 temporarily_unavailable and no code is issued. The code keeps
+        device_flow.slow_down_increment, device_flow.max_poll_count and device_flow.max_interval
+        as they were when it was issued; the token endpoint applies them while the device polls.
       requestBody:
         $ref: '#/components/requestBodies/DeviceAuthorization'
       responses:

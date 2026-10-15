@@ -16,6 +16,8 @@ import {
   CIBA_DEFAULTS,
   CIBA_SETTINGS_META,
   CIBA_HARD_LIMITS,
+  DEVICE_FLOW_DEFAULTS,
+  DEVICE_FLOW_SETTINGS_META,
   AUTHORIZATION_SIGNING_ALGORITHMS,
   REQUEST_OBJECT_SIGNING_ALGORITHMS,
   CLIENT_AUTH_METHODS,
@@ -280,11 +282,26 @@ export interface CibaPatchState {
   inherited?: Record<string, unknown>;
 }
 
-/** The problem with one value of a CIBA key, as the settings manager would refuse it, or null. */
-function cibaValueProblem(key: string, value: unknown): string | null {
-  const meta = CIBA_SETTINGS_META[key as keyof typeof CIBA_SETTINGS_META];
+/** The problem with one value of a setting, as the settings manager would refuse it, or null. */
+function settingValueProblem(
+  meta: {
+    type: string;
+    min?: number;
+    max?: number;
+    integer?: boolean;
+    step?: number;
+    enum?: string[];
+  },
+  key: string,
+  value: unknown
+): string | null {
   if (meta.type === 'boolean') {
     return typeof value === 'boolean' ? null : `${key} must be true or false`;
+  }
+  if (meta.type === 'enum') {
+    return typeof value === 'string' && (!meta.enum || meta.enum.includes(value))
+      ? null
+      : `${key} must be one of: ${(meta.enum ?? []).join(', ')}`;
   }
   // As the settings manager checks a number: finite, whole only where the setting says so, in range.
   if (typeof value !== 'number' || !Number.isFinite(value)) {
@@ -300,6 +317,15 @@ function cibaValueProblem(key: string, value: unknown): string | null {
     return `${key} must be between ${meta.min} and ${meta.max}`;
   }
   return null;
+}
+
+/** The problem with one value of a CIBA key, as the settings manager would refuse it, or null. */
+function cibaValueProblem(key: string, value: unknown): string | null {
+  return settingValueProblem(
+    CIBA_SETTINGS_META[key as keyof typeof CIBA_SETTINGS_META],
+    key,
+    value
+  );
 }
 
 /**
@@ -395,6 +421,122 @@ export function validateCibaPatch(
   return null;
 }
 
+/** What a device flow PATCH is checked against: the values before it, and what a key inherits. */
+export interface DeviceFlowPatchState extends CibaPatchState {
+  /**
+   * 'client' when the PATCH is for one client: its lifetime and interval bounds may only narrow
+   * the tenant's, which are what `inherited` holds. Defaults to the tenant.
+   */
+  scope?: 'tenant' | 'client';
+}
+
+/**
+ * Device flow settings that only make sense together, checked on the document the save would
+ * leave: the code lifetime bounds (`device_flow.min_expires_in` <= `device_flow.max_expires_in`,
+ * with `device_flow.expires_in` between them) and the polling interval bounds
+ * (`device_flow.min_interval` <= `device_flow.max_interval`, with `device_flow.poll_interval`
+ * between them). Runtime keeps such a document usable on its own (a pair that is the wrong way
+ * round falls back to the defaults, a value outside its bounds is clamped); this refuses to save
+ * one an admin did not mean.
+ *
+ * The relations are only meaningful for the changes that will really be saved, so first the whole
+ * PATCH is refused when any of its keys would be refused one by one (an unknown key, a value of
+ * the wrong type, not whole or out of range, a key named by two operations, any `disable`: no
+ * device flow setting is an on/off switch): the settings manager would save the rest, leaving a
+ * document nobody checked.
+ *
+ * With `state.current` (the effective values before the PATCH, for the tenant or the client) the
+ * final document is every key the PATCH does not name as it is now. Without it (imports,
+ * profiles) only the values the PATCH itself holds are compared. A cleared key takes what it
+ * inherits (`state.inherited`: the tenant and platform, an environment variable, else the
+ * default). For a client (`state.scope`), the bounds it sets may not widen the tenant's: runtime
+ * only ever narrows them, so a wider value would look saved and do nothing. Returns the problem,
+ * or null.
+ */
+export function validateDeviceFlowPatch(
+  body: SettingsPatchRequest,
+  state: DeviceFlowPatchState = {}
+): string | null {
+  const known = (key: string) => Object.hasOwn(DEVICE_FLOW_SETTINGS_META, key);
+  const operations = new Map<string, number>();
+  for (const key of [
+    ...new Set(Object.keys(body.set ?? {})),
+    ...new Set(body.clear ?? []),
+    ...new Set(body.disable ?? []),
+  ]) {
+    operations.set(key, (operations.get(key) ?? 0) + 1);
+  }
+  for (const [key, count] of operations) {
+    if (!known(key)) return `${key} is not a device flow setting`;
+    if (count > 1) return `${key} is named by more than one operation (set, clear, disable)`;
+  }
+  for (const [key, value] of Object.entries(body.set ?? {})) {
+    const problem = settingValueProblem(
+      DEVICE_FLOW_SETTINGS_META[key as keyof typeof DEVICE_FLOW_SETTINGS_META],
+      key,
+      value
+    );
+    if (problem) return problem;
+  }
+  for (const key of body.disable ?? []) {
+    return `${key} cannot be disabled: only on/off settings can`;
+  }
+
+  type Key = keyof typeof DEVICE_FLOW_DEFAULTS;
+  const inheritedValue = (key: Key): unknown => state.inherited?.[key] ?? DEVICE_FLOW_DEFAULTS[key];
+  const resulting = (key: Key): number | undefined => {
+    let value: unknown;
+    if (body.set && key in body.set) value = body.set[key];
+    else if (body.clear?.includes(key)) value = inheritedValue(key);
+    else value = state.current?.[key];
+    return typeof value === 'number' && Number.isInteger(value) ? value : undefined;
+  };
+  const touches = (...keys: string[]) => keys.some((key) => operations.has(key));
+
+  const pairs: Array<[min: Key, max: Key, value: Key]> = [
+    ['device_flow.min_expires_in', 'device_flow.max_expires_in', 'device_flow.expires_in'],
+    ['device_flow.min_interval', 'device_flow.max_interval', 'device_flow.poll_interval'],
+  ];
+  for (const [minKey, maxKey, valueKey] of pairs) {
+    if (!touches(minKey, maxKey, valueKey)) continue;
+    const min = resulting(minKey);
+    const max = resulting(maxKey);
+    const value = resulting(valueKey);
+    if (min !== undefined && max !== undefined && min > max) {
+      return `${minKey} (${min}) must not be greater than ${maxKey} (${max})`;
+    }
+    if (value !== undefined && min !== undefined && value < min) {
+      return `${valueKey} (${value}) must not be below ${minKey} (${min})`;
+    }
+    if (value !== undefined && max !== undefined && value > max) {
+      return `${valueKey} (${value}) must not be above ${maxKey} (${max})`;
+    }
+    if (state.scope === 'client') {
+      const tenantMin = inheritedValue(minKey);
+      const tenantMax = inheritedValue(maxKey);
+      if (
+        body.set &&
+        minKey in body.set &&
+        min !== undefined &&
+        typeof tenantMin === 'number' &&
+        min < tenantMin
+      ) {
+        return `${minKey} (${min}) must not be below the tenant's ${tenantMin}: a client can only narrow the tenant's bounds`;
+      }
+      if (
+        body.set &&
+        maxKey in body.set &&
+        max !== undefined &&
+        typeof tenantMax === 'number' &&
+        max > tenantMax
+      ) {
+        return `${maxKey} (${max}) must not be above the tenant's ${tenantMax}: a client can only narrow the tenant's bounds`;
+      }
+    }
+  }
+  return null;
+}
+
 export function validateCategoryPatch(category: string, body: SettingsPatchRequest): string | null {
   switch (category) {
     case 'assurance':
@@ -411,9 +553,35 @@ export function validateCategoryPatch(category: string, body: SettingsPatchReque
       return validateDiscoveryPatch(body);
     case 'ciba':
       return validateCibaPatch(body);
+    case 'device-flow':
+      return validateDeviceFlowPatch(body);
     default:
       return null;
   }
+}
+
+/**
+ * Categories whose settings are checked against each other on the document a save leaves, so the
+ * PATCH routes read the current and inherited values first (see {@link validateCategoryPatchAt}).
+ */
+export function categoryPatchNeedsState(category: string): boolean {
+  return category === 'ciba' || category === 'device-flow';
+}
+
+/**
+ * The validation of a PATCH at one scope. Categories that need the values around the change
+ * (`categoryPatchNeedsState`) are checked against `state`; the others need none.
+ */
+export function validateCategoryPatchAt(
+  category: string,
+  scope: 'tenant' | 'client',
+  body: SettingsPatchRequest,
+  state: CibaPatchState | null
+): string | null {
+  if (state && category === 'ciba') return validateCibaPatch(body, state);
+  if (state && category === 'device-flow')
+    return validateDeviceFlowPatch(body, { ...state, scope });
+  return validateCategoryPatch(category, body);
 }
 
 /**

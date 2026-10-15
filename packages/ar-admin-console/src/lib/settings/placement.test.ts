@@ -90,6 +90,30 @@ describe('where settings live', () => {
 		);
 	});
 
+	it('does not mark the device flow settings the runtime reads', () => {
+		const applied = [
+			'device_flow.expires_in',
+			'device_flow.min_expires_in',
+			'device_flow.max_expires_in',
+			'device_flow.poll_interval',
+			'device_flow.min_interval',
+			'device_flow.max_interval',
+			'device_flow.slow_down_increment',
+			'device_flow.max_poll_count'
+		];
+		for (const key of applied) {
+			expect(NOT_APPLIED.has(key), key).toBe(false);
+			expect(ALL_CATEGORY_META['device-flow'].settings[key].status, key).toBeUndefined();
+		}
+	});
+
+	it('keeps the device user code settings as to-wire: the code format is still fixed', () => {
+		for (const key of ['device_flow.user_code_charset', 'device_flow.user_code_length']) {
+			expect(NOT_APPLIED.get(key), key).toBe('to-wire');
+			expect(ALL_CATEGORY_META['device-flow'].settings[key].status, key).toBe('in_development');
+		}
+	});
+
 	it('no longer has the CIBA settings that no CIBA behaviour is behind', () => {
 		for (const key of [
 			'ciba.auth_request_ttl',
