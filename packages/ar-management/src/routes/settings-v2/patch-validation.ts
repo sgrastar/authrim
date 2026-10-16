@@ -615,6 +615,10 @@ export function validateCategoryPatch(category: string, body: SettingsPatchReque
       return validateKnownSettingKeys('tenant', 'tenant', body);
     case 'dcr':
       return validateDcrPatch(body);
+    case 'plugin':
+      return validateKnownSettingKeys('plugin', 'plugin', body);
+    case 'diagnostic-logging':
+      return validateKnownSettingKeys('diagnostic-logging', 'diagnostic logging', body);
     case 'assurance':
       return validateAssurancePatch(body);
     case 'oauth':

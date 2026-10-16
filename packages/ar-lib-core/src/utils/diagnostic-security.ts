@@ -10,6 +10,19 @@
  */
 
 import type { DiagnosticLogEntry, DiagnosticLogPrivacyMode } from '../services/diagnostic/types';
+import {
+  containsPiiText,
+  isProtectedForm,
+  isSecretName,
+  maskIpAddress,
+  maskIpOrMarker,
+  piiKeyKind,
+  protectDiagnosticEntry,
+  redactCompactJwts,
+  redactPiiText,
+  safeSnapshot,
+  sha256Hex,
+} from './diagnostic-redaction';
 
 /**
  * Default safe headers allowlist
@@ -56,14 +69,7 @@ export const SENSITIVE_HEADERS = [
  * @returns Hashed token prefix (irreversible)
  */
 export async function hashToken(token: string, prefixLength: number = 12): Promise<string> {
-  // Use Web Crypto API (available in Cloudflare Workers)
-  const encoder = new TextEncoder();
-  const data = encoder.encode(token);
-  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
-
-  // Convert to hex string
-  const hashArray = Array.from(new Uint8Array(hashBuffer));
-  const hashHex = hashArray.map((b) => b.toString(16).padStart(2, '0')).join('');
+  const hashHex = await sha256Hex(token);
 
   // Return prefix only
   return hashHex.slice(0, Math.max(8, Math.min(64, prefixLength)));
@@ -104,6 +110,40 @@ export async function maskWithHmac(
 }
 
 /**
+ * Mask a value unless it already is a protected form (a fingerprint from the universal pass, a
+ * marker, an earlier mask): a protected value is never masked again into a partial shell.
+ */
+async function maskUnlessProtected(
+  value: string,
+  secret: string,
+  prefixLength: number,
+  suffixLength: number,
+  hashPrefixLength: number
+): Promise<string> {
+  return isProtectedForm(value)
+    ? value
+    : maskWithHmac(value, secret, prefixLength, suffixLength, hashPrefixLength);
+}
+
+/**
+ * Mask a person's name. A short name would be mostly shown by a prefix and suffix mask (two
+ * characters of a three-character name), so a name of up to 8 characters keeps nothing but its
+ * HMAC; a longer one keeps a small fraction of itself.
+ */
+export async function maskName(
+  value: string,
+  secret: string,
+  hashPrefixLength: number = 12
+): Promise<string> {
+  if (isProtectedForm(value)) return value;
+  if (Array.from(value).length <= 8) {
+    const hash = await hmacSha256Hex(value, secret);
+    return `hmac:${hash.slice(0, Math.max(8, Math.min(64, hashPrefixLength)))}`;
+  }
+  return maskWithHmac(value, secret, 2, 1, hashPrefixLength);
+}
+
+/**
  * Mask email address and append HMAC fingerprint
  */
 export async function maskEmail(
@@ -111,11 +151,14 @@ export async function maskEmail(
   secret: string,
   hashPrefixLength: number = 12
 ): Promise<string> {
-  const [local, domain] = email.split('@');
-  if (!domain) {
+  const at = email.indexOf('@');
+  const local = at < 0 ? '' : email.slice(0, at);
+  const domain = at < 0 ? '' : email.slice(at + 1);
+  // Only a plain domain is shown; anything else after the @ (a sender's marker, spaces) is not
+  if (!domain || !/^[\p{L}\p{N}\p{M}.-]+$/u.test(domain)) {
     return maskWithHmac(email, secret, 2, 2, hashPrefixLength);
   }
-  const maskedLocal = local.length > 0 ? `${local[0]}***` : '***';
+  const maskedLocal = local.length > 0 ? `${Array.from(local)[0]}***` : '***';
   const hash = await hmacSha256Hex(email, secret);
   const hashPrefix = hash.slice(0, Math.max(8, Math.min(64, hashPrefixLength)));
   return `${maskedLocal}@${domain} (hmac:${hashPrefix})`;
@@ -137,20 +180,10 @@ export async function maskPhone(
 }
 
 /**
- * Mask IP address
+ * Mask IP address: IPv4 to /24, IPv6 to /48 (see maskIpAddress)
  */
 export function maskIp(ip: string): string {
-  if (ip.includes(':')) {
-    // IPv6: keep first 4 segments
-    const parts = ip.split(':');
-    return `${parts.slice(0, 4).join(':')}::/48`;
-  }
-  // IPv4: keep /24
-  const parts = ip.split('.');
-  if (parts.length === 4) {
-    return `${parts[0]}.${parts[1]}.${parts[2]}.0/24`;
-  }
-  return ip;
+  return maskIpAddress(ip);
 }
 
 /**
@@ -174,6 +207,12 @@ export interface PrivacyTransformOptions {
   mode: DiagnosticLogPrivacyMode;
   secret: string;
   tokenHashPrefixLength?: number;
+  /**
+   * Redact personal data (emails, phone numbers, names, IP addresses) in `full` mode. Only the
+   * literal `false` turns it off, so a missing or unreadable setting keeps the safe behaviour.
+   * `masked` and `minimal` apply their own rules whatever this is.
+   */
+  filterPii?: boolean;
 }
 
 /**
@@ -183,12 +222,36 @@ export async function applyPrivacyModeToEntry(
   entry: DiagnosticLogEntry,
   options: PrivacyTransformOptions
 ): Promise<DiagnosticLogEntry> {
+  const protection = {
+    hashPrefixLength: options.tokenHashPrefixLength,
+    redactEmailsInFreeText: options.mode !== 'full' || options.filterPii !== false,
+  };
+  // Whatever the mode (and whatever the step or category), secrets are never stored in clear text
+  // and identifiers are validated: see diagnostic-redaction.ts. The pass runs FIRST, so a secret
+  // is a fingerprint before any mode-specific mask (which leaves protected values alone, instead
+  // of keeping a prefix and suffix of the token), and once more at the end over what the mode
+  // wrote.
+  const protectedEntry = await protectDiagnosticEntry(entry, { ...protection, protectKeys: false });
+  // What was there before any value became a fingerprint or a marker: presence flags are taken
+  // from it (an empty token is not a token, and neither is a 0).
+  const original = safeSnapshot(entry) as unknown as Record<string, unknown>;
+  const transformed = await transformEntryForMode(protectedEntry, options, original);
+  return protectDiagnosticEntry(transformed, protection);
+}
+
+async function transformEntryForMode(
+  entry: DiagnosticLogEntry,
+  options: PrivacyTransformOptions,
+  original: Record<string, unknown> = {}
+): Promise<DiagnosticLogEntry> {
   if (options.mode === 'full') {
-    return entry;
+    return options.filterPii === false
+      ? safeSnapshot(entry)
+      : redactPiiInFullModeEntry(entry, options);
   }
 
   const hashPrefixLength = options.tokenHashPrefixLength ?? 12;
-  const sanitized = JSON.parse(JSON.stringify(entry)) as DiagnosticLogEntry;
+  const sanitized = safeSnapshot(entry);
 
   if ('errorMessage' in sanitized && typeof sanitized.errorMessage === 'string') {
     sanitized.errorMessage = redactPII(sanitized.errorMessage);
@@ -226,7 +289,7 @@ export async function applyPrivacyModeToEntry(
             'refresh_token',
           ]);
           if (sensitiveKeys.has(key)) {
-            sanitized.query[key] = await maskWithHmac(
+            sanitized.query[key] = await maskUnlessProtected(
               value,
               options.secret,
               6,
@@ -267,7 +330,7 @@ export async function applyPrivacyModeToEntry(
             'nonce',
           ]);
           if (sensitiveKeys.has(key)) {
-            summary[key] = await maskWithHmac(value, options.secret, 6, 4, hashPrefixLength);
+            summary[key] = await maskUnlessProtected(value, options.secret, 6, 4, hashPrefixLength);
           }
         }
       }
@@ -308,7 +371,8 @@ export async function applyPrivacyModeToEntry(
         sanitized.details as Record<string, unknown>,
         options.mode,
         options.secret,
-        hashPrefixLength
+        hashPrefixLength,
+        original.details as Record<string, unknown> | undefined
       );
     }
 
@@ -348,7 +412,8 @@ async function applyTokenDetailsPrivacy(
   details: Record<string, unknown>,
   mode: DiagnosticLogPrivacyMode,
   secret: string,
-  hashPrefixLength: number
+  hashPrefixLength: number,
+  originalDetails?: Record<string, unknown>
 ): Promise<Record<string, unknown>> {
   if (mode === 'full') return details;
 
@@ -356,7 +421,7 @@ async function applyTokenDetailsPrivacy(
 
   const maskField = async (key: string, value: unknown) => {
     if (typeof value !== 'string') return value;
-    return maskWithHmac(value, secret, 6, 4, hashPrefixLength);
+    return maskUnlessProtected(value, secret, 6, 4, hashPrefixLength);
   };
 
   if (step === 'token-request') {
@@ -373,8 +438,12 @@ async function applyTokenDetailsPrivacy(
 
   if (step === 'token-response') {
     if (mode === 'minimal') {
-      sanitized.has_access_token = Boolean(sanitized.access_token);
-      sanitized.has_id_token = Boolean(sanitized.id_token);
+      // (a flag written by an earlier pass stays: the token itself is gone by then)
+      // taken from the value as it was before it became a fingerprint or a marker
+      sanitized.has_access_token =
+        Boolean(originalDetails?.access_token) || sanitized.has_access_token === true;
+      sanitized.has_id_token =
+        Boolean(originalDetails?.id_token) || sanitized.has_id_token === true;
       delete sanitized.access_token;
       delete sanitized.id_token;
       delete sanitized.refresh_token;
@@ -393,10 +462,10 @@ async function applyTokenDetailsPrivacy(
     } else if (sanitized.claims && typeof sanitized.claims === 'object') {
       const claims = { ...(sanitized.claims as Record<string, unknown>) };
       if (claims.sub && typeof claims.sub === 'string') {
-        claims.sub = await maskWithHmac(claims.sub, secret, 4, 2, hashPrefixLength);
+        claims.sub = await maskUnlessProtected(claims.sub, secret, 4, 2, hashPrefixLength);
       }
       if (claims.nonce && typeof claims.nonce === 'string') {
-        claims.nonce = await maskWithHmac(claims.nonce, secret, 4, 2, hashPrefixLength);
+        claims.nonce = await maskUnlessProtected(claims.nonce, secret, 4, 2, hashPrefixLength);
       }
       sanitized.claims = claims;
     }
@@ -410,24 +479,33 @@ async function applyTokenDetailsPrivacy(
 
   if (step === 'userinfo-response') {
     if (mode === 'minimal') {
-      sanitized.has_sub = Boolean((sanitized.claims as Record<string, unknown> | undefined)?.sub);
-      sanitized.has_email = Boolean(
-        (sanitized.claims as Record<string, unknown> | undefined)?.email
-      );
+      const claims = originalDetails?.claims as Record<string, unknown> | undefined;
+      sanitized.has_sub = Boolean(claims?.sub) || sanitized.has_sub === true;
+      sanitized.has_email = Boolean(claims?.email) || sanitized.has_email === true;
       delete sanitized.claims;
     } else if (sanitized.claims && typeof sanitized.claims === 'object') {
       const claims = { ...(sanitized.claims as Record<string, unknown>) };
       if (claims.sub && typeof claims.sub === 'string') {
-        claims.sub = await maskWithHmac(claims.sub, secret, 4, 2, hashPrefixLength);
+        claims.sub = await maskUnlessProtected(claims.sub, secret, 4, 2, hashPrefixLength);
       }
-      if (claims.email && typeof claims.email === 'string') {
-        claims.email = await maskEmail(claims.email, secret, hashPrefixLength);
-      }
-      if (claims.phone_number && typeof claims.phone_number === 'string') {
-        claims.phone_number = await maskPhone(claims.phone_number, secret, hashPrefixLength);
-      }
-      if (claims.name && typeof claims.name === 'string') {
-        claims.name = await maskWithHmac(claims.name, secret, 2, 1, hashPrefixLength);
+      // Personal data by key, in any spelling (givenName, given_name, ipAddress ...)
+      for (const [key, value] of Object.entries(claims)) {
+        const kind = piiKeyKind(key);
+        if (!kind) continue;
+        if (kind === 'opaque') {
+          claims[key] = '[PII_REDACTED]';
+        } else if (typeof value === 'string' && !isProtectedForm(value)) {
+          claims[key] =
+            kind === 'email'
+              ? await maskEmail(value, secret, hashPrefixLength)
+              : kind === 'phone'
+                ? await maskPhone(value, secret, hashPrefixLength)
+                : kind === 'ip'
+                  ? maskIpOrMarker(value)
+                  : await maskName(value, secret, hashPrefixLength);
+        } else if (value !== null && typeof value !== 'string' && typeof value !== 'boolean') {
+          claims[key] = '[PII_REDACTED]';
+        }
       }
       sanitized.claims = claims;
     }
@@ -439,7 +517,7 @@ async function applyTokenDetailsPrivacy(
       delete sanitized.actual_sub;
     } else {
       if (sanitized.expected_sub && typeof sanitized.expected_sub === 'string') {
-        sanitized.expected_sub = await maskWithHmac(
+        sanitized.expected_sub = await maskUnlessProtected(
           sanitized.expected_sub,
           secret,
           4,
@@ -448,7 +526,7 @@ async function applyTokenDetailsPrivacy(
         );
       }
       if (sanitized.actual_sub && typeof sanitized.actual_sub === 'string') {
-        sanitized.actual_sub = await maskWithHmac(
+        sanitized.actual_sub = await maskUnlessProtected(
           sanitized.actual_sub,
           secret,
           4,
@@ -486,7 +564,7 @@ async function applyAuthContextPrivacy(
         delete sanitized[key];
       }
     } else if (sensitiveKeys.has(key) && typeof value === 'string') {
-      sanitized[key] = await maskWithHmac(value, secret, 6, 4, hashPrefixLength);
+      sanitized[key] = await maskUnlessProtected(value, secret, 6, 4, hashPrefixLength);
     }
   }
 
@@ -713,62 +791,145 @@ export function sanitizeQueryParams(query: Record<string, string>): Record<strin
  * @returns True if PII detected
  */
 export function containsPII(value: string): boolean {
-  // Email pattern
-  if (/\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/.test(value)) {
-    return true;
-  }
-
-  // Phone pattern (basic)
-  if (/\b\d{3}[-.]?\d{3}[-.]?\d{4}\b/.test(value)) {
-    return true;
-  }
-
-  // Credit card pattern (basic)
-  if (
-    /\b(?:\d{4}[-\s]?){3}\d{4}\b/.test(value) ||
-    /\b3[47]\d{2}[-\s]?\d{6}[-\s]?\d{5}\b/.test(value)
-  ) {
-    return true;
-  }
-
-  // SSN pattern (US)
-  if (/\b\d{3}-\d{2}-\d{4}\b/.test(value)) {
-    return true;
-  }
-
-  return false;
+  return containsPiiText(value);
 }
 
 /**
- * Redact PII from a string
+ * Redact PII from a string: compact JWTs, then emails, card numbers, social security numbers and
+ * phone numbers (found on a Unicode-normalised view, so full-width digits and internationalised
+ * addresses count).
  *
  * @param value - String to redact
  * @returns Redacted string
  */
 export function redactPII(value: string): string {
-  let redacted = value;
+  return redactPiiText(redactCompactJwts(value));
+}
 
-  // Redact email
-  redacted = redacted.replace(
-    /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g,
-    '[EMAIL_REDACTED]'
-  );
+// ---------------------------------------------------------------------------------------------
+// Full storage mode: personal data
+// ---------------------------------------------------------------------------------------------
 
-  // Redact phone
-  redacted = redacted.replace(/\b\d{3}[-.]?\d{3}[-.]?\d{4}\b/g, '[PHONE_REDACTED]');
+/** Fields of an entry that identify it and carry no personal data: left as they are here. */
+const STRUCTURAL_ENTRY_FIELDS = new Set([
+  'id',
+  'diagnosticSessionId',
+  'flowId',
+  'tenantId',
+  'clientId',
+  'category',
+  'level',
+  'timestamp',
+  'requestId',
+  'storageMode',
+  'anonymizedUserId',
+  'step',
+  'tokenType',
+  'tokenHash',
+  'result',
+  'decision',
+  'status',
+  'method',
+  'path',
+  'durationMs',
+  'grantType',
+  'flow',
+  'source',
+]);
 
-  // Redact credit card
-  redacted = redacted.replace(/\b(?:\d{4}[-\s]?){3}\d{4}\b/g, '[CC_REDACTED]');
-  redacted = redacted.replace(/\b3[47]\d{2}[-\s]?\d{6}[-\s]?\d{5}\b/g, '[CC_REDACTED]');
+const MAX_WALK_DEPTH = 24;
 
-  // Redact SSN
-  redacted = redacted.replace(/\b\d{3}-\d{2}-\d{4}\b/g, '[SSN_REDACTED]');
+interface FullModeContext {
+  secret: string;
+  hashPrefixLength: number;
+}
 
-  // Redact compact JWT-like tokens
-  redacted = redacted.replace(
-    /\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g,
-    '[JWT_REDACTED]'
-  );
+/**
+ * In `full` mode, while the PII filter is on (the default), personal data is redacted: emails,
+ * phone numbers, names, addresses, IP addresses (by key, in any spelling: givenName, given_name),
+ * and anything in free text that looks like an email, phone number, card or social security
+ * number. The rest of the detail stays as the operator asked for it. A value that is ENTIRELY one
+ * of the forms this code writes when it masks is left alone, so protecting twice changes nothing;
+ * any other string is protected, a marker appended or not.
+ */
+async function redactPiiInFullModeEntry(
+  entry: DiagnosticLogEntry,
+  options: PrivacyTransformOptions
+): Promise<DiagnosticLogEntry> {
+  const context: FullModeContext = {
+    secret: options.secret,
+    hashPrefixLength: options.tokenHashPrefixLength ?? 12,
+  };
+  const source = safeSnapshot(entry) as unknown as Record<string, unknown>;
+  const result: Record<string, unknown> = {};
+  for (const [field, value] of Object.entries(source)) {
+    Object.defineProperty(result, field, {
+      value: STRUCTURAL_ENTRY_FIELDS.has(field)
+        ? value
+        : await redactPiiValue(value, field, context, 0),
+      enumerable: true,
+      writable: true,
+      configurable: true,
+    });
+  }
+  return result as unknown as DiagnosticLogEntry;
+}
 
-  return redacted;
+async function redactPiiValue(
+  value: unknown,
+  key: string,
+  context: FullModeContext,
+  depth: number
+): Promise<unknown> {
+  if (value === null || value === undefined) return value;
+  // Secrets are the universal pass's: a fingerprint, not a PII marker.
+  if (isSecretName(key)) return value;
+  const kind = piiKeyKind(key);
+
+  if (Array.isArray(value)) {
+    if (depth >= MAX_WALK_DEPTH) return '[TRUNCATED]';
+    const items: unknown[] = [];
+    for (const item of value) items.push(await redactPiiValue(item, key, context, depth + 1));
+    return items;
+  }
+
+  if (typeof value === 'object') {
+    // Under a key that names personal data, a structure is personal data as a whole
+    if (kind) return '[PII_REDACTED]';
+    if (depth >= MAX_WALK_DEPTH) return '[TRUNCATED]';
+    const result: Record<string, unknown> = {};
+    for (const [childKey, childValue] of Object.entries(value as Record<string, unknown>)) {
+      Object.defineProperty(result, childKey, {
+        value: await redactPiiValue(childValue, childKey, context, depth + 1),
+        enumerable: true,
+        writable: true,
+        configurable: true,
+      });
+    }
+    return result;
+  }
+
+  if (typeof value !== 'string') {
+    // A number (or any other value that is not text) under such a key is personal data too
+    return kind && typeof value !== 'boolean' ? '[PII_REDACTED]' : value;
+  }
+
+  if (value.length === 0 || isProtectedForm(value)) return value;
+  switch (kind) {
+    case 'opaque':
+      return '[PII_REDACTED]';
+    case 'email':
+      return maskEmail(value, context.secret, context.hashPrefixLength);
+    case 'phone':
+      return maskPhone(value, context.secret, context.hashPrefixLength);
+    case 'name':
+      return maskName(value, context.secret, context.hashPrefixLength);
+    case 'ip':
+      return value
+        .split(',')
+        .map((part) => maskIpOrMarker(part.trim()))
+        .join(', ');
+    default:
+      return redactPII(value);
+  }
 }

@@ -79,10 +79,8 @@ export interface DiagnosticLoggingSettings {
   'diagnostic-logging.batch_interval_ms': number;
 
   // Filter settings
-  /** Filter PII (Personally Identifiable Information) */
+  /** Redact PII (emails, phone numbers, names, IP addresses) in `full` storage mode */
   'diagnostic-logging.filter_pii': boolean;
-  /** Hash token values using SHA-256 */
-  'diagnostic-logging.filter_tokens': boolean;
   /** Token hash prefix length (default 12 characters) */
   'diagnostic-logging.token_hash_prefix_length': number;
 
@@ -246,20 +244,12 @@ export const DIAGNOSTIC_LOGGING_SETTINGS_META: Record<
     type: 'boolean',
     default: true,
     envKey: 'DIAGNOSTIC_LOGGING_FILTER_PII',
-    label: 'Filter PII',
-    description: 'Exclude Personally Identifiable Information from logs',
+    // Only the exact string `false` turns the filter off: `0`, `no`, an empty or any other value keeps it on.
+    envBoolean: 'unless-exactly-false',
+    label: 'Redact PII in full mode',
+    description:
+      'Redact personal data (email addresses, phone numbers, names, IP addresses) in logs stored in full storage mode. On by default: turn it off only to see raw personal data while debugging. Masked and minimal storage modes always apply their own privacy rules, whatever this is set to. Tokens and authorization codes are never logged in clear text in any mode. Applies to logs written after the change, and to exports.',
     visibility: 'admin',
-    status: 'in_development',
-  },
-  'diagnostic-logging.filter_tokens': {
-    key: 'diagnostic-logging.filter_tokens',
-    type: 'boolean',
-    default: true,
-    envKey: 'DIAGNOSTIC_LOGGING_FILTER_TOKENS',
-    label: 'Hash Tokens',
-    description: 'Hash token values using SHA-256 (irreversible)',
-    visibility: 'admin',
-    status: 'in_development',
   },
   'diagnostic-logging.token_hash_prefix_length': {
     key: 'diagnostic-logging.token_hash_prefix_length',
@@ -334,9 +324,8 @@ export const DIAGNOSTIC_LOGGING_SETTINGS_META: Record<
     envKey: 'MERGED_OUTPUT_ENABLED',
     label: 'Enable Merged Log Output',
     description:
-      'Export server and SDK logs in a single merged timeline using diagnosticSessionId correlation',
+      'Export server and SDK logs as one timeline, correlated by diagnosticSessionId. When on, an export names which side wrote each entry (server or sdk), orders everything by time unless the request names another order, and, when it is limited to some clients, also brings in the server entries of the same sessions that are not filed under those clients. Off by default: exports are then exactly as they were. Entries are labelled when they are written, so entries written before this existed show no writer.',
     visibility: 'admin',
-    status: 'in_development',
   },
 };
 
@@ -369,7 +358,6 @@ export const DIAGNOSTIC_LOGGING_DEFAULTS: DiagnosticLoggingSettings = {
   'diagnostic-logging.batch_size': 100,
   'diagnostic-logging.batch_interval_ms': 5000,
   'diagnostic-logging.filter_pii': true,
-  'diagnostic-logging.filter_tokens': true,
   'diagnostic-logging.token_hash_prefix_length': 12,
   'diagnostic-logging.http_safe_headers':
     'content-type,accept,user-agent,x-correlation-id,x-diagnostic-session-id',

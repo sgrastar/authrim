@@ -20,6 +20,11 @@ export type DiagnosticLogCategory =
 export type DiagnosticLogPrivacyMode = 'full' | 'masked' | 'minimal';
 
 /**
+ * Which side wrote a diagnostic log entry
+ */
+export type DiagnosticLogSource = 'server' | 'sdk';
+
+/**
  * Log level
  */
 export type DiagnosticLogLevel = 'debug' | 'info' | 'warn' | 'error';
@@ -63,6 +68,13 @@ export interface BaseDiagnosticLogEntry {
 
   /** Additional metadata */
   metadata?: Record<string, unknown>;
+
+  /**
+   * Which side wrote the entry: `server` (this deployment's own logging) or `sdk` (ingested from
+   * a client SDK). Set by the writer, never taken from the sender. Exports show it only when the
+   * tenant has merged output on.
+   */
+  source?: DiagnosticLogSource;
 }
 
 /**

@@ -3515,7 +3515,11 @@ paths:
         - name: clientIds
           in: query
           required: false
-          description: Comma-separated client identifiers.
+          description: >-
+            Comma-separated client identifiers. When the tenant has merged output on, the export
+            also contains the entries of the same diagnostic sessions that are filed outside
+            these clients' folders (for example server entries with no client), and each entry
+            names its writer in a source field (server or sdk).
           schema:
             type: string
         - name: startDate
@@ -3533,7 +3537,10 @@ paths:
         - name: sessionIds
           in: query
           required: false
-          description: Comma-separated diagnostic session identifiers.
+          description: >-
+            Comma-separated diagnostic session identifiers. An identifier that is not a plain one
+            (a token-shaped value) is stored as a fingerprint; it is found by the value it was
+            written with, as the filter value is normalised the same way.
           schema:
             type: string
         - name: flowIds
@@ -3566,13 +3573,22 @@ paths:
         - name: sortMode
           in: query
           required: false
+          description: >-
+            Order of the entries. Defaults to grouping by session, or to one timeline when the
+            tenant has merged output on (diagnostic-logging.merged_output_enabled).
           schema:
             type: string
             enum: [session, category, timeline]
         - name: exportMode
           in: query
           required: false
-          description: Privacy mode may only make stored data more restrictive.
+          description: >-
+            Privacy mode may only make stored data more restrictive. Whatever the mode, secrets
+            (tokens, codes, client secrets, passwords, credential headers, secret parameters in
+            URLs and form bodies) are exported as SHA-256 fingerprints or markers. Entries stored
+            in full mode also have personal data redacted unless the tenant turned
+            diagnostic-logging.filter_pii off. A token validation entry carries its tokenHash
+            among its details, so exports can be matched on it.
           schema:
             type: string
             enum: [full, masked, minimal]
@@ -24360,7 +24376,12 @@ paths:
       summary: Ingest SDK diagnostic logs
       description: >-
         Accepts SDK diagnostic log batches after client credential validation, privacy filtering,
-        and tenant resolution, then writes sanitized entries to R2.
+        and tenant resolution, then writes sanitized entries to R2. The tenant's diagnostic
+        logging settings apply (Settings API namespace); when they cannot be read the request is
+        refused with 503 and nothing is stored. Entries are labelled source sdk by the server,
+        whatever the sender claims. Secrets are never stored in clear text, in any storage mode
+        or step; identifiers such as requestId are validated; in full storage mode personal data
+        is redacted unless diagnostic-logging.filter_pii is off.
       responses:
         '200':
           $ref: '#/components/responses/DiagnosticLogIngest'
@@ -24369,6 +24390,8 @@ paths:
         '401':
           $ref: '#/components/responses/Error'
         '403':
+          $ref: '#/components/responses/Error'
+        '503':
           $ref: '#/components/responses/Error'
       requestBody:
         $ref: '#/components/requestBodies/DiagnosticLogIngest'

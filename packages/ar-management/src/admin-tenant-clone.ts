@@ -371,6 +371,18 @@ export function sanitizeCopiedSettingsValue(
     delete record['feature.introspection_cache_enabled'];
   }
 
+  if (category === 'plugin') {
+    // These plugin settings are gone (the platform fixes the memory; a tenant cannot switch on
+    // the console notifier, which prints secrets): saved values are dropped.
+    delete record['plugin.memory_limit_mb'];
+    delete record['plugin.notifier_console_enabled'];
+  }
+
+  if (category === 'diagnostic-logging') {
+    // Tokens are never stored in clear text, so the switch for hashing them is gone.
+    delete record['diagnostic-logging.filter_tokens'];
+  }
+
   if (category === 'ciba') {
     // These CIBA settings are gone (no CIBA behaviour was behind them): saved values are dropped.
     delete record['ciba.auth_request_ttl'];

@@ -569,7 +569,6 @@ place('monitoring/diagnostics', 'Diagnostic logging', {
 		'diagnostic-logging.token_validation_enabled',
 		'diagnostic-logging.auth_decision_enabled',
 		'diagnostic-logging.filter_pii',
-		'diagnostic-logging.filter_tokens',
 		'diagnostic-logging.storage_mode.default',
 		'diagnostic-logging.storage_mode.by_client',
 		'diagnostic-logging.retention_days',
@@ -611,11 +610,9 @@ place('integrations/plugins', 'Plugins', {
 	primary: ['plugin.enabled'],
 	advanced: [
 		'plugin.execution_timeout_ms',
-		'plugin.memory_limit_mb',
 		'plugin.auto_update_check',
 		'plugin.notifier_resend_enabled'
-	],
-	search: ['plugin.notifier_console_enabled']
+	]
 });
 
 // ---------------------------------------------------------------------------------------------

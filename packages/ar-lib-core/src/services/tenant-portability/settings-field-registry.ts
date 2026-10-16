@@ -420,7 +420,6 @@ const REVIEWED_FIELDS: readonly [string, TenantSettingValueType, TenantSettingHa
     plugin.enabled
     plugin.auto_update_check
     plugin.notifier_resend_enabled
-    plugin.notifier_console_enabled
   `,
     ],
     [
@@ -429,14 +428,6 @@ const REVIEWED_FIELDS: readonly [string, TenantSettingValueType, TenantSettingHa
       'value',
       `
     plugin.execution_timeout_ms
-  `,
-    ],
-    [
-      'plugin',
-      'number',
-      'value',
-      `
-    plugin.memory_limit_mb
   `,
     ],
     [
@@ -747,7 +738,6 @@ const REVIEWED_FIELDS: readonly [string, TenantSettingValueType, TenantSettingHa
     diagnostic-logging.auth_decision_enabled
     diagnostic-logging.r2_output_enabled
     diagnostic-logging.filter_pii
-    diagnostic-logging.filter_tokens
     diagnostic-logging.http_body_schema_aware
     diagnostic-logging.sdk_ingest_enabled
     diagnostic-logging.merged_output_enabled
