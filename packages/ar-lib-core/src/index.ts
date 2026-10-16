@@ -463,6 +463,20 @@ export {
 // Diagnostic Logging (Debugging, Troubleshooting, OIDF Conformance)
 export * from './services/diagnostic';
 export * from './utils/diagnostic-security';
+export {
+  protectDiagnosticEntry,
+  isSafeIdentifier,
+  isProtectedForm,
+  maskIpAddress,
+  redactSecretsInText,
+  redactCompactJwts,
+  redactPhoneNumbers,
+  redactPiiText,
+  redactEmails,
+  safeSnapshot,
+  identifierOrFingerprint,
+  type UniversalProtectionOptions,
+} from './utils/diagnostic-redaction';
 export * from './utils/diagnostic-log-formatter';
 export * from './utils/admin-invitation-security';
 

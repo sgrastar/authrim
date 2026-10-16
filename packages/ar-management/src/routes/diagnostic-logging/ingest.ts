@@ -16,6 +16,7 @@ import {
   createSettingsManager,
   DIAGNOSTIC_LOGGING_CATEGORY_META,
   applyPrivacyModeToEntry,
+  identifierOrFingerprint,
   getDefaultTenantId,
   isMultiTenantEnabled,
   emitRuntimeLogRecords,
@@ -98,7 +99,10 @@ async function validateClient(
 
     return { valid: true, client };
   } catch (error) {
-    log.error('Failed to validate client', { clientId, error: String(error) });
+    log.error('Failed to validate client', {
+      clientId: await identifierOrFingerprint(clientId),
+      error: String(error),
+    });
     return { valid: false, error: 'validation_error' };
   }
 }
@@ -153,6 +157,12 @@ async function recordDiagnosticIngestFailure(
   }
 ): Promise<void> {
   const tenantId = input.tenantId || getDefaultTenantId(c.env);
+  // The client id is what the sender wrote before anything was checked: it reaches the archive
+  // only as a plain identifier or a fingerprint (an email-shaped client_id is not stored).
+  const clientId =
+    input.clientId === null || input.clientId === undefined
+      ? null
+      : await identifierOrFingerprint(input.clientId);
   try {
     await emitRuntimeLogRecords({
       env: c.env,
@@ -166,10 +176,10 @@ async function recordDiagnosticIngestFailure(
           eventAt: Date.now(),
           type: 'diagnostic.ingest.failure',
           severity: input.httpStatus >= 500 ? 'error' : 'warn',
-          subject: input.clientId ? `client:${input.clientId}` : null,
+          subject: clientId ? `client:${clientId}` : null,
           payload: {
             reason: input.reason,
-            client_id: input.clientId ?? null,
+            client_id: clientId,
             http_status: input.httpStatus,
             ...(input.metadata ?? {}),
           },
@@ -293,7 +303,7 @@ app.post('/', async (c) => {
   const validation = await validateClient(c.env, tenantId, body.client_id, body.client_secret);
   if (!validation.valid) {
     log.warn('Client validation failed', {
-      clientId: body.client_id,
+      clientId: await identifierOrFingerprint(body.client_id),
       error: validation.error,
     });
     await recordDiagnosticIngestFailure(c, {
@@ -329,13 +339,19 @@ app.post('/', async (c) => {
       401
     );
   }
-  let diagnosticSettings: DiagnosticLoggingSettings | null = null;
-
+  // The tenant's settings decide whether anything is stored at all (sdk_ingest_enabled), so
+  // when they cannot be read nothing is stored: a settings outage must not switch ingest on.
+  let diagnosticSettings: DiagnosticLoggingSettings;
   try {
+    // A deployment without the settings namespace cannot say whether ingest is on: same as a
+    // namespace that cannot be read.
+    if (!c.env.SETTINGS) throw new Error('settings_binding_missing');
     const manager = createSettingsManager({
       env: c.env as unknown as Record<string, string | undefined>,
-      kv: c.env.AUTHRIM_CONFIG ?? c.env.KV ?? null,
+      kv: c.env.SETTINGS ?? null,
       cacheTTL: 5000,
+      // A settings document that exists but cannot be read must not pass for the tenant's choices.
+      strictReads: true,
     });
     manager.registerCategory(DIAGNOSTIC_LOGGING_CATEGORY_META);
 
@@ -344,56 +360,41 @@ app.post('/', async (c) => {
       id: tenantId,
     });
     diagnosticSettings = result.values as unknown as DiagnosticLoggingSettings;
-
-    if (!diagnosticSettings['diagnostic-logging.sdk_ingest_enabled']) {
-      await recordDiagnosticIngestFailure(c, {
-        reason: 'sdk_ingest_disabled',
-        tenantId,
-        clientId: body.client_id,
-        httpStatus: 403,
-      });
-      return c.json(
-        {
-          error: 'feature_disabled',
-          error_description: 'SDK log ingestion is disabled',
-        },
-        403
-      );
-    }
   } catch (error) {
     log.error('Failed to load diagnostic logging settings', { error: String(error) });
-    // Fail open: if we can't check the setting, allow the request
+    await recordDiagnosticIngestFailure(c, {
+      reason: 'settings_unavailable',
+      tenantId,
+      clientId: body.client_id,
+      httpStatus: 503,
+    });
+    return c.json(
+      {
+        error: 'temporarily_unavailable',
+        error_description: 'Diagnostic logging settings cannot be read right now; try again',
+      },
+      503
+    );
+  }
+
+  if (!diagnosticSettings['diagnostic-logging.sdk_ingest_enabled']) {
+    await recordDiagnosticIngestFailure(c, {
+      reason: 'sdk_ingest_disabled',
+      tenantId,
+      clientId: body.client_id,
+      httpStatus: 403,
+    });
+    return c.json(
+      {
+        error: 'feature_disabled',
+        error_description: 'SDK log ingestion is disabled',
+      },
+      403
+    );
   }
 
   try {
-    const settingsFallback: DiagnosticLoggingSettings = {
-      'diagnostic-logging.enabled': true,
-      'diagnostic-logging.log_level': 'debug',
-      'diagnostic-logging.http_request_enabled': true,
-      'diagnostic-logging.http_response_enabled': true,
-      'diagnostic-logging.token_validation_enabled': true,
-      'diagnostic-logging.auth_decision_enabled': true,
-      'diagnostic-logging.r2_output_enabled': true,
-      'diagnostic-logging.r2_bucket_binding': 'DIAGNOSTIC_LOGS',
-      'diagnostic-logging.r2_path_prefix': 'diagnostic-logs',
-      'diagnostic-logging.output_format': 'jsonl',
-      'diagnostic-logging.buffer_strategy': 'queue',
-      'diagnostic-logging.batch_size': 100,
-      'diagnostic-logging.batch_interval_ms': 5000,
-      'diagnostic-logging.filter_pii': true,
-      'diagnostic-logging.filter_tokens': true,
-      'diagnostic-logging.token_hash_prefix_length': 12,
-      'diagnostic-logging.http_safe_headers':
-        'content-type,accept,user-agent,x-correlation-id,x-diagnostic-session-id',
-      'diagnostic-logging.http_body_schema_aware': true,
-      'diagnostic-logging.retention_days': 30,
-      'diagnostic-logging.storage_mode.default': 'masked',
-      'diagnostic-logging.storage_mode.by_client': '{}',
-      'diagnostic-logging.sdk_ingest_enabled': true,
-      'diagnostic-logging.merged_output_enabled': false,
-    };
-
-    const effectiveSettings = diagnosticSettings ?? settingsFallback;
+    const effectiveSettings = diagnosticSettings;
     const storageMode = resolveStorageMode(effectiveSettings, body.client_id);
     const pathPrefix = effectiveSettings['diagnostic-logging.r2_path_prefix'] || 'diagnostic-logs';
     const hashSecret = resolveHashSecret(c.env, tenantId);
@@ -407,11 +408,14 @@ app.post('/', async (c) => {
           tenantId,
           clientId: body.client_id,
           storageMode,
+          // Named by the receiver, never taken from the sender: a merged export shows it.
+          source: 'sdk',
         };
         return applyPrivacyModeToEntry(normalized, {
           mode: storageMode,
           secret: hashSecret,
           tokenHashPrefixLength,
+          filterPii: effectiveSettings['diagnostic-logging.filter_pii'] !== false,
         });
       })
     );

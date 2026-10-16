@@ -28,7 +28,6 @@ import {
   extractBodySummary,
   sanitizeQueryParams,
   hashToken,
-  redactPII,
   applyPrivacyModeToEntry,
 } from '../../utils/diagnostic-security';
 import { readRequestTextWithLimit } from '../../utils/body-limits';
@@ -307,7 +306,7 @@ export class DiagnosticLogger {
 
     // Hash token if provided (used for legacy validation logs)
     let tokenHash: string | undefined;
-    if (options.token && this.storageMode !== 'full') {
+    if (options.token) {
       tokenHash = await hashToken(options.token, this.tokenHashPrefixLength);
     }
 
@@ -375,10 +374,14 @@ export class DiagnosticLogger {
    * Write log entry (internal)
    */
   private async writeLog(entry: DiagnosticLogEntry): Promise<void> {
+    // Name the writer so a merged export can tell server entries from SDK ones.
+    entry.source = 'server';
     const sanitized = await applyPrivacyModeToEntry(entry, {
       mode: this.storageMode,
       secret: this.hashSecret,
       tokenHashPrefixLength: this.tokenHashPrefixLength,
+      // Only an explicit `false` shows raw personal data (in full mode); anything else redacts it.
+      filterPii: this.settings['diagnostic-logging.filter_pii'] !== false,
     });
 
     // Console output (always enabled)
@@ -388,44 +391,6 @@ export class DiagnosticLogger {
     if (this.r2Adapter) {
       await this.writeToR2(sanitized);
     }
-  }
-
-  /**
-   * Apply PII filter to log entry
-   */
-  private applyPIIFilter(entry: DiagnosticLogEntry): void {
-    // Redact PII from string fields
-    if ('errorMessage' in entry && entry.errorMessage) {
-      entry.errorMessage = redactPII(entry.errorMessage);
-    }
-
-    if ('reason' in entry && entry.reason) {
-      entry.reason = redactPII(entry.reason);
-    }
-
-    // Recursively redact metadata
-    if (entry.metadata) {
-      entry.metadata = this.redactObjectPII(entry.metadata);
-    }
-  }
-
-  /**
-   * Recursively redact PII from object
-   */
-  private redactObjectPII(obj: Record<string, unknown>): Record<string, unknown> {
-    const redacted: Record<string, unknown> = {};
-
-    for (const [key, value] of Object.entries(obj)) {
-      if (typeof value === 'string') {
-        redacted[key] = redactPII(value);
-      } else if (value && typeof value === 'object' && !Array.isArray(value)) {
-        redacted[key] = this.redactObjectPII(value as Record<string, unknown>);
-      } else {
-        redacted[key] = value;
-      }
-    }
-
-    return redacted;
   }
 
   /**

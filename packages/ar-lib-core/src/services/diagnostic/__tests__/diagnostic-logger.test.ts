@@ -55,7 +55,6 @@ function createSettings(
     'diagnostic-logging.batch_size': 100,
     'diagnostic-logging.batch_interval_ms': 1000,
     'diagnostic-logging.filter_pii': true,
-    'diagnostic-logging.filter_tokens': true,
     'diagnostic-logging.token_hash_prefix_length': 12,
     'diagnostic-logging.http_safe_headers':
       'content-type,user-agent,x-diagnostic-session-id,x-request-id',
@@ -326,5 +325,199 @@ describe('DiagnosticLogger', () => {
     expect(details.refresh_token).toBeUndefined();
     expect(details.has_access_token).toBe(true);
     expect(details.has_id_token).toBe(true);
+  });
+
+  it('names itself as the writer of every entry', async () => {
+    const bucket = new MockR2Bucket();
+    const logger = new DiagnosticLogger({
+      env: createEnv(bucket),
+      tenantId: 'tenant-1',
+      settings: createSettings(),
+    });
+    await logger.logAuthDecision({ decision: 'allow', reason: 'ok' });
+    await logger.logTokenValidation({ step: 'issuer-check', result: 'pass' });
+
+    const entries = getStoredEntries(bucket);
+    expect(entries).toHaveLength(2);
+    for (const entry of entries) expect(entry.source).toBe('server');
+  });
+
+  describe.each(['full', 'masked', 'minimal'] as const)('secrets in %s storage mode', (mode) => {
+    it('are never stored, whatever the step, category or nesting', async () => {
+      const bucket = new MockR2Bucket();
+      const logger = new DiagnosticLogger({
+        env: createEnv(bucket),
+        tenantId: 'tenant-1',
+        clientId: 'rp-client',
+        settings: createSettings({ 'diagnostic-logging.storage_mode.default': mode }),
+      });
+      await logger.logTokenValidation({
+        step: 'issuer-check',
+        result: 'fail',
+        errorMessage: 'failed for https://rp.example.com/cb?code=raw-code-1&state=s',
+        expected: { client_secret: 'raw-expected-secret' },
+        details: {
+          client_secret: 'raw-client-secret',
+          nested: [{ refresh_token: 'raw-refresh' }, { password: { value: 'raw-password' } }],
+        },
+      });
+      await logger.logAuthDecision({
+        decision: 'deny',
+        reason: 'bad Bearer raw.opaque-credential',
+        context: { deep: { accessToken: 'raw-access', cookie: 'sid=raw-cookie' } },
+      });
+
+      const text = JSON.stringify(getStoredEntries(bucket));
+      expect(text.length).toBeGreaterThan(100);
+      for (const raw of [
+        'raw-client-secret',
+        'raw-refresh',
+        'raw-password',
+        'raw-expected-secret',
+        'raw-code-1',
+        'raw.opaque-credential',
+        'raw-access',
+        'raw-cookie',
+      ]) {
+        expect(text, raw).not.toContain(raw);
+      }
+    });
+  });
+
+  describe('full storage mode', () => {
+    const PII_CLAIMS = {
+      sub: 'upstream-sub-1',
+      email: 'jane.doe@example.com',
+      phone_number: '+81 90-1234-5678',
+      name: 'Jane Doe',
+      given_name: 'Jane',
+      family_name: 'Doe',
+      address: { street_address: '1 Main St' },
+    };
+    const TOKENS = {
+      access_token: 'raw-access-token-value',
+      id_token: 'eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJ4In0.c2lnbmF0dXJl',
+      refresh_token: 'raw-refresh-token-value',
+    };
+
+    async function writeFullModeLogs(settings: Partial<DiagnosticLoggingSettings>) {
+      const bucket = new MockR2Bucket();
+      const logger = new DiagnosticLogger({
+        env: createEnv(bucket),
+        tenantId: 'tenant-1',
+        clientId: 'rp-client',
+        settings: createSettings({
+          'diagnostic-logging.storage_mode.default': 'full',
+          ...settings,
+        }),
+      });
+      await logger.logTokenValidation({
+        step: 'token-response',
+        tokenType: 'access_token',
+        token: TOKENS.access_token,
+        result: 'pass',
+        errorMessage: 'sent to jane.doe@example.com',
+        details: { ...TOKENS },
+      });
+      await logger.logTokenValidation({
+        step: 'userinfo-response',
+        result: 'pass',
+        details: { endpoint: 'https://idp.example.com/userinfo', claims: { ...PII_CLAIMS } },
+      });
+      await logger.logHttpRequest({
+        request: new Request('https://op.example.com/token?code=abc123&state=opaque-state', {
+          headers: { 'cf-connecting-ip': '203.0.113.42', 'user-agent': 'Chrome/123' },
+        }),
+      });
+      return getStoredEntries(bucket);
+    }
+
+    it('redacts PII while the PII filter is on, which is the default', async () => {
+      const entries = await writeFullModeLogs({});
+      const text = JSON.stringify(entries);
+      for (const raw of [
+        'jane.doe@example.com',
+        '+81 90-1234-5678',
+        'Jane Doe',
+        '1 Main St',
+        '203.0.113.42',
+      ]) {
+        expect(text, raw).not.toContain(raw);
+      }
+      const userinfo = entries.find((e) => e.step === 'userinfo-response') as {
+        details: { claims: Record<string, unknown> };
+      };
+      expect(userinfo.details.claims.sub).toBe('upstream-sub-1');
+      expect(userinfo.details.claims.address).toBe('[PII_REDACTED]');
+      expect(String(userinfo.details.claims.email)).toMatch(/^j\*\*\*@example\.com \(hmac:/);
+      const request = entries.find((e) => e.category === 'http-request') as Record<string, unknown>;
+      expect(request.remoteAddress).toBe('203.0.113.0/24');
+      // what is not personal data stays as it was
+      expect((request.query as Record<string, string>).state).toBe('opaque-state');
+      expect((request.headers as Record<string, string>)['user-agent']).toBe('Chrome/123');
+    });
+
+    it('keeps the filter on when the setting is missing or not a boolean', async () => {
+      for (const value of [undefined, 'false', 0, null]) {
+        const entries = await writeFullModeLogs({
+          'diagnostic-logging.filter_pii': value as never,
+        });
+        expect(JSON.stringify(entries), String(value)).not.toContain('jane.doe@example.com');
+      }
+    });
+
+    it('shows raw PII only when the PII filter is explicitly off', async () => {
+      const entries = await writeFullModeLogs({ 'diagnostic-logging.filter_pii': false });
+      const text = JSON.stringify(entries);
+      for (const raw of ['jane.doe@example.com', '+81 90-1234-5678', 'Jane Doe', '203.0.113.42']) {
+        expect(text, raw).toContain(raw);
+      }
+    });
+
+    it.each([true, false])('never stores a token in clear text (PII filter %s)', async (filter) => {
+      const entries = await writeFullModeLogs({ 'diagnostic-logging.filter_pii': filter });
+      const text = JSON.stringify(entries);
+      for (const raw of [
+        TOKENS.access_token,
+        TOKENS.id_token,
+        TOKENS.refresh_token,
+        'code=abc123',
+        'eyJhbGciOiJSUzI1NiJ9',
+      ]) {
+        expect(text, raw).not.toContain(raw);
+      }
+      const response = entries.find((e) => e.step === 'token-response') as {
+        tokenHash?: string;
+        details: Record<string, string>;
+      };
+      expect(response.details.access_token).toMatch(/^sha256:[0-9a-f]{12}$/);
+      expect(response.details.refresh_token).toMatch(/^sha256:[0-9a-f]{12}$/);
+      expect(response.tokenHash).toMatch(/^[0-9a-f]{12}$/);
+      const request = entries.find((e) => e.category === 'http-request') as {
+        query: Record<string, string>;
+      };
+      expect(request.query.code_present).toBe('true');
+    });
+
+    it('does not change what masked and minimal storage store, whatever the PII filter is', async () => {
+      for (const mode of ['masked', 'minimal'] as const) {
+        const outputs: string[] = [];
+        for (const filter of [true, false]) {
+          const entries = await writeFullModeLogs({
+            'diagnostic-logging.storage_mode.default': mode,
+            'diagnostic-logging.filter_pii': filter,
+          });
+          // ids and times differ between runs
+          outputs.push(
+            JSON.stringify(entries, (key, value) =>
+              ['id', 'timestamp'].includes(key) ? undefined : value
+            )
+          );
+          expect(JSON.stringify(entries), mode).not.toContain('jane.doe@example.com');
+          expect(JSON.stringify(entries), mode).not.toContain(TOKENS.access_token);
+        }
+        expect(outputs[0], mode).toBe(outputs[1]);
+      }
+    });
   });
 });

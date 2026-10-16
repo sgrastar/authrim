@@ -17,7 +17,10 @@ import {
   formatAsText,
   getLogStatistics,
   DIAGNOSTIC_LOGGING_CATEGORY_META,
+  DIAGNOSTIC_LOGGING_DEFAULTS,
   applyPrivacyModeToEntry,
+  protectDiagnosticEntry,
+  identifierOrFingerprint,
   buildDiagnosticLogPrefix,
   type DiagnosticLogPrivacyMode,
   type DiagnosticLoggingSettings,
@@ -361,31 +364,12 @@ app.get('/', adminAuthMiddleware({ requirePermissions: ['admin:diagnostics:read'
   }
 
   try {
+    // Settings that cannot be read leave the defaults, which are the safe values: PII filter on,
+    // merged output off (the export is then exactly what it was before the setting existed).
     const settingsFallback: DiagnosticLoggingSettings = {
+      ...DIAGNOSTIC_LOGGING_DEFAULTS,
       'diagnostic-logging.enabled': true,
-      'diagnostic-logging.log_level': 'debug',
-      'diagnostic-logging.http_request_enabled': true,
-      'diagnostic-logging.http_response_enabled': true,
-      'diagnostic-logging.token_validation_enabled': true,
-      'diagnostic-logging.auth_decision_enabled': true,
       'diagnostic-logging.r2_output_enabled': true,
-      'diagnostic-logging.r2_bucket_binding': 'DIAGNOSTIC_LOGS',
-      'diagnostic-logging.r2_path_prefix': 'diagnostic-logs',
-      'diagnostic-logging.output_format': 'jsonl',
-      'diagnostic-logging.buffer_strategy': 'queue',
-      'diagnostic-logging.batch_size': 100,
-      'diagnostic-logging.batch_interval_ms': 5000,
-      'diagnostic-logging.filter_pii': true,
-      'diagnostic-logging.filter_tokens': true,
-      'diagnostic-logging.token_hash_prefix_length': 12,
-      'diagnostic-logging.http_safe_headers':
-        'content-type,accept,user-agent,x-correlation-id,x-diagnostic-session-id',
-      'diagnostic-logging.http_body_schema_aware': true,
-      'diagnostic-logging.retention_days': 30,
-      'diagnostic-logging.storage_mode.default': 'masked',
-      'diagnostic-logging.storage_mode.by_client': '{}',
-      'diagnostic-logging.sdk_ingest_enabled': true,
-      'diagnostic-logging.merged_output_enabled': false,
     };
 
     let diagnosticSettings = settingsFallback;
@@ -394,6 +378,8 @@ app.get('/', adminAuthMiddleware({ requirePermissions: ['admin:diagnostics:read'
         env: c.env as unknown as Record<string, string | undefined>,
         kv: c.env.SETTINGS ?? null,
         cacheTTL: 5000,
+        // A settings document that exists but cannot be read must not pass for the tenant's choices.
+        strictReads: true,
       });
       manager.registerCategory(DIAGNOSTIC_LOGGING_CATEGORY_META);
       const result = await manager.getAll('diagnostic-logging', {
@@ -408,6 +394,25 @@ app.get('/', adminAuthMiddleware({ requirePermissions: ['admin:diagnostics:read'
     const hashSecret = resolveHashSecret(c.env, tenantId);
     const tokenHashPrefixLength =
       diagnosticSettings['diagnostic-logging.token_hash_prefix_length'] ?? 12;
+    // Only an explicit `true` merges; anything else (including an unreadable setting) exports as
+    // it always did. Only an explicit `false` shows raw personal data of `full` entries.
+    const mergedOutput = diagnosticSettings['diagnostic-logging.merged_output_enabled'] === true;
+    const filterPii = diagnosticSettings['diagnostic-logging.filter_pii'] !== false;
+
+    // Ids are stored as plain identifiers, or as a fingerprint when they are not plain (a token-
+    // shaped id): a filter value goes through the same function, so the id is found by the value
+    // it was written with, and raw entries written before are found too.
+    const normalizedIds = new Map<string, string>();
+    const normalizeId = async (value: string): Promise<string> => {
+      let normalized = normalizedIds.get(value);
+      if (normalized === undefined) {
+        normalized = await identifierOrFingerprint(value, tokenHashPrefixLength);
+        normalizedIds.set(value, normalized);
+      }
+      return normalized;
+    };
+    const sessionFilter = sessionIds ? await Promise.all(sessionIds.map(normalizeId)) : undefined;
+    const flowFilter = flowIds ? await Promise.all(flowIds.map(normalizeId)) : undefined;
 
     // Build R2 prefixes for immutable diagnostic chunks.
     const logTypes = categories || ['token-validation', 'auth-decision'];
@@ -454,19 +459,66 @@ app.get('/', adminAuthMiddleware({ requirePermissions: ['admin:diagnostics:read'
     const logs = await fetchLogsFromR2(r2, Array.from(keySet));
     allLogs.push(...logs);
 
+    // Merged output: an export limited to some clients leaves out what the server wrote for the
+    // same sessions outside those clients' folders (a server entry with no client sits in the
+    // tenant folder). Correlated by diagnosticSessionId, those entries join the export.
+    if (mergedOutput && clientIds && clientIds.length > 0) {
+      // Only sessions that exist in the selected clients' folders are merged: the sessions asked
+      // for (sessionIds) that those folders hold, or, with no sessionIds, the sessions they hold.
+      // A session that only another client has is never brought in.
+      const sessionsOfClients = new Set<string>();
+      for (const entry of logs) {
+        if (entry.diagnosticSessionId) {
+          sessionsOfClients.add(await normalizeId(entry.diagnosticSessionId));
+        }
+      }
+      const sessionsToMerge = sessionFilter
+        ? new Set(sessionFilter.filter((sessionId) => sessionsOfClients.has(sessionId)))
+        : sessionsOfClients;
+      if (sessionsToMerge.size > 0) {
+        const otherKeys = new Set<string>();
+        for (const logType of logTypes) {
+          const prefix = await buildDiagnosticLogPrefix({
+            pathPrefix,
+            tenantId,
+            tenantKeySalt: c.env.LOGGING_TENANT_KEY_SALT,
+            category: logType as DiagnosticLogEntry['category'],
+          });
+          for (const key of await listR2Objects(r2, prefix, startDate, endDate)) {
+            if (!keySet.has(key)) otherKeys.add(key);
+          }
+        }
+        const others = await fetchLogsFromR2(r2, Array.from(otherKeys));
+        for (const entry of others) {
+          if (
+            entry.diagnosticSessionId &&
+            sessionsToMerge.has(await normalizeId(entry.diagnosticSessionId))
+          ) {
+            allLogs.push(entry);
+          }
+        }
+      }
+    }
+
     const processedLogs = await Promise.all(
       allLogs.map(async (entry) => {
         const storedMode = normalizeMode(entry.storageMode) ?? 'masked';
         const effectiveMode = resolveEffectiveMode(storedMode, exportMode);
-        if (effectiveMode === storedMode) {
-          return entry;
+        if (effectiveMode === storedMode && effectiveMode !== 'full') {
+          // Written before, perhaps by a writer that did not protect it: secrets are taken out
+          // whatever the mode and step.
+          return protectDiagnosticEntry(entry, { hashPrefixLength: tokenHashPrefixLength });
         }
+        // Entries stored in full mode go through the same protection as new ones: tokens are
+        // fingerprints and, while the PII filter is on, personal data is redacted, also in logs
+        // written before that was so.
         return applyPrivacyModeToEntry(
           { ...entry, storageMode: storedMode },
           {
             mode: effectiveMode,
             secret: hashSecret,
             tokenHashPrefixLength,
+            filterPii,
           }
         );
       })
@@ -480,13 +532,15 @@ app.get('/', adminAuthMiddleware({ requirePermissions: ['admin:diagnostics:read'
 
     // Build export options
     const exportOptions: ExportOptions = {
-      sessionIds,
-      flowIds,
+      sessionIds: sessionFilter,
+      flowIds: flowFilter,
       startTime,
       endTime,
       categories,
       sortOrder: 'asc',
-      sortMode,
+      // Merged output is one timeline unless the request names another order.
+      sortMode: sortMode ?? (mergedOutput ? 'timeline' : undefined),
+      includeSource: mergedOutput,
     };
 
     // Format logs

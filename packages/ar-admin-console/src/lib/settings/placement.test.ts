@@ -160,6 +160,34 @@ describe('where settings live', () => {
 		}
 	});
 
+	it('no longer has the settings that must not be a tenant switch or that the platform fixes', () => {
+		for (const key of [
+			'diagnostic-logging.filter_tokens',
+			'plugin.memory_limit_mb',
+			'plugin.notifier_console_enabled'
+		]) {
+			expect(everyKey, key).not.toContain(key);
+			expect([...placed, ...drafted], key).not.toContain(key);
+			expect(NOT_APPLIED.has(key), key).toBe(false);
+		}
+	});
+
+	it('places the diagnostic logging PII filter and merged output as applied', () => {
+		for (const key of [
+			'diagnostic-logging.filter_pii',
+			'diagnostic-logging.merged_output_enabled'
+		]) {
+			expect(everyKey, key).toContain(key);
+			expect([...placed, ...drafted], key).toContain(key);
+			expect(NOT_APPLIED.has(key), key).toBe(false);
+			expect(ALL_CATEGORY_META['diagnostic-logging'].settings[key].status, key).toBeUndefined();
+		}
+	});
+
+	it('keeps the plugin execution timeout as to-build: the plugin runner cannot read tenant settings', () => {
+		expect(NOT_APPLIED.get('plugin.execution_timeout_ms')).toBe('to-build');
+	});
+
 	it('points every duplicate at a setting that exists', () => {
 		for (const entry of DRAFT.filter((e) => e.duplicateOf)) {
 			expect(everyKey, entry.key).toContain(entry.duplicateOf);

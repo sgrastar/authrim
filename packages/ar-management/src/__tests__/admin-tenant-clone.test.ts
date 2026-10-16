@@ -400,6 +400,47 @@ describe('admin tenant clone', () => {
     expect(
       JSON.parse(
         sanitizeCopiedSettingsValue(
+          'plugin',
+          JSON.stringify({
+            'plugin.enabled': true,
+            // Retired plugin settings: a source that still holds them does not carry them over.
+            'plugin.memory_limit_mb': 256,
+            'plugin.notifier_console_enabled': true,
+          }),
+          false,
+          context
+        )!
+      )
+    ).toEqual({ 'plugin.enabled': true });
+
+    expect(
+      JSON.parse(
+        sanitizeCopiedSettingsValue(
+          'diagnostic-logging',
+          JSON.stringify({
+            'diagnostic-logging.filter_pii': false,
+            // Retired: tokens are never stored in clear text, so there is no switch.
+            'diagnostic-logging.filter_tokens': false,
+          }),
+          false,
+          context
+        )!
+      )
+    ).toMatchObject({ 'diagnostic-logging.filter_pii': false });
+    expect(
+      JSON.parse(
+        sanitizeCopiedSettingsValue(
+          'diagnostic-logging',
+          JSON.stringify({ 'diagnostic-logging.filter_tokens': false }),
+          false,
+          context
+        )!
+      )
+    ).not.toHaveProperty('diagnostic-logging.filter_tokens');
+
+    expect(
+      JSON.parse(
+        sanitizeCopiedSettingsValue(
           'ciba',
           JSON.stringify({
             'ciba.expires_in': 120,

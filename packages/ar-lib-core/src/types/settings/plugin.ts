@@ -15,14 +15,12 @@ export interface PluginSettings {
   // Plugin Execution
   'plugin.enabled': boolean;
   'plugin.execution_timeout_ms': number;
-  'plugin.memory_limit_mb': number;
 
   // Plugin Management
   'plugin.auto_update_check': boolean;
 
   // Individual Plugin Enable/Disable
   'plugin.notifier_resend_enabled': boolean;
-  'plugin.notifier_console_enabled': boolean;
 }
 
 /**
@@ -53,19 +51,6 @@ export const PLUGIN_SETTINGS_META: Record<keyof PluginSettings, SettingMeta> = {
     dependsOn: [{ key: 'plugin.enabled', value: true }],
     status: 'in_development',
   },
-  'plugin.memory_limit_mb': {
-    key: 'plugin.memory_limit_mb',
-    type: 'number',
-    default: 128,
-    envKey: 'PLUGIN_MEMORY_LIMIT_MB',
-    label: 'Memory Limit',
-    description: 'Maximum memory allocation for plugins in megabytes',
-    min: 16,
-    max: 512,
-    visibility: 'admin',
-    dependsOn: [{ key: 'plugin.enabled', value: true }],
-    status: 'in_development',
-  },
   'plugin.auto_update_check': {
     key: 'plugin.auto_update_check',
     type: 'boolean',
@@ -88,18 +73,6 @@ export const PLUGIN_SETTINGS_META: Record<keyof PluginSettings, SettingMeta> = {
     visibility: 'admin',
     dependsOn: [{ key: 'plugin.enabled', value: true }],
   },
-  'plugin.notifier_console_enabled': {
-    key: 'plugin.notifier_console_enabled',
-    type: 'boolean',
-    default: false,
-    envKey: 'PLUGIN_NOTIFIER_CONSOLE_ENABLED',
-    label: 'Console Notifier Plugin',
-    description:
-      'Enable the Console notifier plugin (development only, logs notifications to console)',
-    visibility: 'admin',
-    dependsOn: [{ key: 'plugin.enabled', value: true }],
-    status: 'in_development',
-  },
 };
 
 /**
@@ -118,8 +91,6 @@ export const PLUGIN_CATEGORY_META: CategoryMeta = {
 export const PLUGIN_DEFAULTS: PluginSettings = {
   'plugin.enabled': false,
   'plugin.execution_timeout_ms': 5000,
-  'plugin.memory_limit_mb': 128,
   'plugin.auto_update_check': true,
   'plugin.notifier_resend_enabled': true,
-  'plugin.notifier_console_enabled': false,
 };

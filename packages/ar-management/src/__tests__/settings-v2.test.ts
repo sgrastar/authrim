@@ -3545,6 +3545,114 @@ describe('Settings API v2', () => {
     });
   });
 
+  describe.each([
+    {
+      category: 'plugin',
+      noun: 'plugin',
+      retired: ['plugin.memory_limit_mb', 'plugin.notifier_console_enabled'],
+      stale: { 'plugin.memory_limit_mb': 256, 'plugin.notifier_console_enabled': true },
+      env: { PLUGIN_MEMORY_LIMIT_MB: '512', PLUGIN_NOTIFIER_CONSOLE_ENABLED: 'true' } as Record<
+        string,
+        string
+      >,
+      kept: ['plugin.enabled', true] as const,
+    },
+    {
+      category: 'diagnostic-logging',
+      noun: 'diagnostic logging',
+      retired: ['diagnostic-logging.filter_tokens'],
+      stale: { 'diagnostic-logging.filter_tokens': false },
+      env: { DIAGNOSTIC_LOGGING_FILTER_TOKENS: 'false' } as Record<string, string>,
+      kept: ['diagnostic-logging.filter_pii', false] as const,
+    },
+  ])('retired $category settings', ({ category, noun, retired, stale, env, kept }) => {
+    const saved = {
+      [`settings:tenant:tenant_123:${category}`]: JSON.stringify({ ...stale, [kept[0]]: kept[1] }),
+    };
+    async function categorySettings(vars: Record<string, string> = {}) {
+      const { app, mockEnv } = createTestApp({ kv: createMockKV(saved), env: vars });
+      const url = `/api/admin/tenants/tenant_123/settings/${category}`;
+      const read = async () =>
+        (await (await app.request(url, { method: 'GET' }, mockEnv)).json()) as SettingsGetResult;
+      const patch = async (body: Record<string, unknown>) =>
+        app.request(
+          url,
+          {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ifMatch: (await read()).version, ...body }),
+          },
+          mockEnv
+        );
+      return { read, patch };
+    }
+
+    it('read without the stored values or the environment variables, keeping the others', async () => {
+      const { read } = await categorySettings(env);
+      const view = await read();
+
+      expect(view.values[kept[0]]).toBe(kept[1]);
+      expect(view.sources[kept[0]]).toBe('kv');
+      for (const key of retired) {
+        expect(view.values).not.toHaveProperty(key);
+        expect(view.sources).not.toHaveProperty(key);
+      }
+    });
+
+    it('are not listed in the category metadata', async () => {
+      const { app, mockEnv } = createTestApp();
+      const res = await app.request(
+        `/api/admin/settings/meta/${category}`,
+        { method: 'GET' },
+        mockEnv
+      );
+      const body = (await res.json()) as { settings: Record<string, unknown> };
+
+      expect(res.status).toBe(200);
+      for (const key of retired) expect(body.settings).not.toHaveProperty(key);
+    });
+
+    it('do not stop another setting being saved', async () => {
+      const { read, patch } = await categorySettings();
+      const next =
+        category === 'plugin'
+          ? ['plugin.enabled', false]
+          : ['diagnostic-logging.retention_days', 14];
+
+      const res = await patch({ set: { [next[0] as string]: next[1] } });
+
+      expect(res.status).toBe(200);
+      expect((await read()).values[next[0] as string]).toBe(next[1]);
+    });
+
+    it.each(
+      retired.flatMap((key) => (['set', 'clear', 'disable'] as const).map((op) => [key, op]))
+    )('refuse naming %s in %s as not a setting of the category', async (key, op) => {
+      const { read, patch } = await categorySettings();
+      const before = await read();
+
+      const res = await patch(op === 'set' ? { set: { [key]: 1 } } : { [op]: [key] });
+
+      expect(res.status).toBe(400);
+      expect(((await res.json()) as ApiResponse).message).toBe(`${key} is not a ${noun} setting`);
+      expect((await read()).version).toBe(before.version);
+    });
+
+    it('refuse the whole PATCH when it names a retired key next to a valid one', async () => {
+      const { read, patch } = await categorySettings();
+      const before = await read();
+
+      const res = await patch({
+        set: { [retired[0]]: 1, [kept[0]]: kept[1] === true ? false : true },
+      });
+
+      expect(res.status).toBe(400);
+      const after = await read();
+      expect(after.version).toBe(before.version);
+      expect(after.values[kept[0]]).toBe(kept[1]);
+    });
+  });
+
   describe('default access token target of new apps on PATCH /tenants/:tenantId/settings/dcr', () => {
     async function dcrSettings(stored: Record<string, string> = {}) {
       const { app, mockEnv } = createTestApp({ kv: createMockKV(stored) });
