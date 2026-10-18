@@ -667,13 +667,14 @@ describe('adding an identifier again after it was removed', () => {
       await add('account-a', 'op-1');
       await remove('account-a', 'rm-1');
 
-      // A replay of the first add after its removal, through the production path (reserve, then
-      // publish): the reservation the removal released belongs to that very operation, a finished
-      // add, so it is not acquired again and nothing is published.
+      // A replay of the first add after its removal, through the production path: that add
+      // already succeeded, so it is answered from its outbox row; the reservation the removal
+      // released is not acquired again and nothing is published.
       clock += 10;
-      await expect(productionAdd('account-a', 'op-1')).rejects.toThrow(
-        'directory_identifier_reservation_conflict'
-      );
+      await expect(productionAdd('account-a', 'op-1')).resolves.toMatchObject({
+        status: 201,
+        operationId: 'op-1',
+      });
       expect(await resolveAccounts()).toEqual([]);
       expect(routeRows()).toEqual([expect.objectContaining({ lifecycle_state: 'disabled' })]);
       expect(reservationRow()).toMatchObject({
@@ -768,16 +769,17 @@ describe('adding an identifier again after it was removed', () => {
   });
 
   describe('production path: add, remove, replay, add again', () => {
-    it('refuses a replay of an add that was removed, and accepts the same identifier under a new operation', async () => {
+    it('answers a replay of an add that was removed without bringing it back, and accepts the same identifier under a new operation', async () => {
       await expect(productionAdd('account-a', 'op-1')).resolves.toMatchObject({ status: 201 });
       clock += 10;
       await expect(productionRemove('account-a', 'rm-1')).resolves.toMatchObject({ status: 201 });
       expect(await resolveAccounts()).toEqual([]);
 
       clock += 10;
-      await expect(productionAdd('account-a', 'op-1')).rejects.toThrow(
-        'directory_identifier_reservation_conflict'
-      );
+      await expect(productionAdd('account-a', 'op-1')).resolves.toMatchObject({
+        status: 201,
+        operationId: 'op-1',
+      });
       expect(await resolveAccounts()).toEqual([]);
       expect(routeRows()).toEqual([expect.objectContaining({ lifecycle_state: 'disabled' })]);
       expect(reservationRow()).toMatchObject({
@@ -1099,6 +1101,213 @@ describe('adding an identifier again after it was removed', () => {
       await expect(coordinator().publish(publication)).rejects.toThrow();
       expect(await resolveAccounts()).toEqual([]);
       expect(routeRows()).toEqual([expect.objectContaining({ lifecycle_state: 'pending' })]);
+    });
+  });
+
+  describe('a replay of an add that already succeeded', () => {
+    const outboxStatus = (operationId: string) =>
+      (
+        tenantDatabase
+          .prepare(`SELECT status FROM account_routing_outbox WHERE outbox_id = ?`)
+          .get(`account-routing:${operationId}`) as { status: string } | undefined
+      )?.status;
+
+    /** op-x adds and is removed, op-y adds and is removed: the row is released by op-y. */
+    async function twoCyclesLater() {
+      await productionAdd('account-a', 'op-x');
+      clock += 10;
+      await productionRemove('account-a', 'rm-x');
+      clock += 10;
+      await productionAdd('account-a', 'op-y');
+      clock += 10;
+      await productionRemove('account-a', 'rm-y');
+      clock += 10;
+      expect(outboxStatus('op-x')).toBe('succeeded');
+      expect(reservationRow()).toMatchObject({
+        operation_id: 'op-y',
+        reservation_state: 'released',
+      });
+    }
+
+    it('is answered from the outbox: the reservation is not taken back and no route comes back', async () => {
+      await twoCyclesLater();
+      const routes = routeRows();
+      const reservation = reservationRow();
+      const published = publicationCount();
+
+      await expect(productionAdd('account-a', 'op-x')).resolves.toEqual({
+        status: 201,
+        operationId: 'op-x',
+        accountId: 'account-a',
+      });
+      expect(await resolveAccounts()).toEqual([]);
+      expect(routeRows()).toEqual(routes);
+      expect(reservationRow()).toEqual(reservation);
+      expect(publicationCount()).toBe(published);
+    });
+
+    it('does not reserve or publish at all', async () => {
+      await twoCyclesLater();
+      const publishAccountDirectory = vi.fn();
+      const reserve = vi.spyOn(InitialAccountIdentifierReservationService.prototype, 'reserve');
+      try {
+        await expect(
+          publishAccountExternalSubjectAddition({} as Env, productionInput('account-a', 'op-x'), {
+            ...productionDependencies(),
+            directory: { publishAccountDirectory } as unknown as AccountDirectoryServiceBinding,
+          })
+        ).resolves.toMatchObject({ status: 201, operationId: 'op-x' });
+        expect(reserve).not.toHaveBeenCalled();
+        expect(publishAccountDirectory).not.toHaveBeenCalled();
+      } finally {
+        reserve.mockRestore();
+      }
+    });
+
+    it('leaves the identifier to the operation that holds it now', async () => {
+      await twoCyclesLater();
+      await expect(productionAdd('account-b', 'op-z')).resolves.toMatchObject({ status: 201 });
+      expect(await resolveAccounts()).toEqual(['account-b']);
+
+      clock += 10;
+      await expect(productionAdd('account-a', 'op-x')).resolves.toMatchObject({ status: 201 });
+      expect(await resolveAccounts()).toEqual(['account-b']);
+      expect(reservationRow()).toMatchObject({
+        account_id: 'account-b',
+        operation_id: 'op-z',
+        reservation_state: 'committed',
+      });
+      expect(routeRows()).toEqual([
+        expect.objectContaining({ account_id: 'account-a', lifecycle_state: 'disabled' }),
+        expect.objectContaining({ account_id: 'account-b', lifecycle_state: 'active' }),
+      ]);
+    });
+
+    it('still refuses a payload that differs from the one the add succeeded with', async () => {
+      await productionAdd('account-a', 'op-x');
+      clock += 10;
+      await expect(
+        publishAccountExternalSubjectAddition(
+          {} as Env,
+          { ...productionInput('account-a', 'op-x'), idempotencyKey: 'another-key' },
+          productionDependencies()
+        )
+      ).rejects.toThrow('account_identifier_addition_outbox_conflict');
+    });
+
+    it.each(['prepared', 'pending'])(
+      'goes the usual way while the add is %s (reservation first, then outbox and publication)',
+      async (status) => {
+        // Another account holds the identifier: only the reserve() step can tell.
+        await reservations().reserve(await addition('account-b', 'op-z'));
+        const publication = await addition('account-a', 'op-x');
+        if (status === 'prepared') {
+          tenantDatabase
+            .prepare(`DELETE FROM account_routing_outbox WHERE outbox_id = 'account-routing:op-x'`)
+            .run();
+          tenantDatabase
+            .prepare(
+              `INSERT INTO account_routing_outbox (
+                 outbox_id, tenant_id, account_id, event_kind, route_generation,
+                 route_schema_version, hmac_key_generation, payload_json, status,
+                 attempt_count, created_at, updated_at
+               ) VALUES ('account-routing:op-x', 'tenant-a', 'account-a', 'identifier_added',
+                         1, 1, 1, ?, 'prepared', 0, 1, 1)`
+            )
+            .run(JSON.stringify(publication));
+        }
+        expect(outboxStatus('op-x')).toBe(status);
+        clock += 10;
+        const reserve = vi.spyOn(InitialAccountIdentifierReservationService.prototype, 'reserve');
+        try {
+          await expect(productionAdd('account-a', 'op-x')).rejects.toThrow(
+            'directory_identifier_reservation_conflict'
+          );
+          expect(reserve).toHaveBeenCalledTimes(1);
+        } finally {
+          reserve.mockRestore();
+        }
+      }
+    );
+
+    it('adds a fresh operation as before when there is no outbox row yet', async () => {
+      expect(outboxStatus('op-x')).toBeUndefined();
+      await expect(productionAdd('account-a', 'op-x')).resolves.toMatchObject({ status: 201 });
+      expect(await resolveAccounts()).toEqual(['account-a']);
+      expect(outboxStatus('op-x')).toBe('succeeded');
+    });
+  });
+
+  describe('a releasing reservation created by an HMAC reindex', () => {
+    const LEASE = 2 * 60 * 60;
+    beforeEach(() => {
+      // Late enough for a reservation to be older than a lease.
+      clock = 100_000;
+    });
+    function seedReindexRow(input: {
+      state: string;
+      updatedAt: number;
+      operationId?: string;
+      account?: string;
+    }) {
+      lookupDatabase
+        .prepare(
+          `INSERT INTO lookup_identifier_reservations (
+             virtual_bucket, tenant_id, index_kind, normalization_version,
+             hmac_key_generation, identifier_blind_digest, account_id,
+             reservation_state, operation_id, lease_expires_at, committed_at, released_at,
+             created_at, updated_at
+           ) VALUES (?, 'tenant-a', 'external_subject', ?, ?, ?, ?, ?, ?, NULL, 1, NULL, 1, ?)`
+        )
+        .run(
+          didIndex.virtualBucket,
+          didIndex.normalizationVersion,
+          didIndex.hmacKeyGeneration,
+          didIndex.digest,
+          input.account ?? 'account-a',
+          input.state,
+          input.operationId ?? 'hmac-reindex:hmac-operation-1',
+          input.updatedAt
+        );
+    }
+
+    // The email replacement also moves rows of any operation (reindex rows included) to
+    // 'releasing' and keeps the operation id, until its completion releases them and verifies it.
+    // Nothing in the table tells that apart from a reindex leftover, so no add takes the row,
+    // however long it has stood: an operator repairs a stuck one.
+    it.each([
+      ['just now', 0],
+      ['a lease ago', LEASE],
+      ['a day ago', 24 * 60 * 60],
+      ['at the epoch', 100_000 - 1],
+    ])('is never taken over by an add (untouched since %s)', async (_name, age) => {
+      seedReindexRow({ state: 'releasing', updatedAt: clock - age });
+      const before = reservationRow();
+      await expect(reservations().reserve(await addition('account-b', 'op-new'))).rejects.toThrow(
+        'directory_identifier_reservation_conflict'
+      );
+      await expect(productionAdd('account-a', 'op-new')).rejects.toThrow(
+        'directory_identifier_reservation_conflict'
+      );
+      expect(reservationRow()).toEqual(before);
+    });
+
+    it.each([
+      ['an operation that is not a reindex', 'releasing', 'op-1'],
+      ['a reindex reservation that is committed', 'committed', 'hmac-reindex:hmac-operation-1'],
+      [
+        'a reindex reservation that needs repair',
+        'repair_required',
+        'hmac-reindex:hmac-operation-1',
+      ],
+      ['a reindex reservation that is reserved', 'reserved', 'hmac-reindex:hmac-operation-1'],
+    ])('never takes over %s, however old', async (_name, state, operationId) => {
+      seedReindexRow({ state, operationId, updatedAt: 1 });
+      const before = reservationRow();
+      await expect(reservations().reserve(await addition('account-a', 'op-new'))).rejects.toThrow(
+        'directory_identifier_reservation_conflict'
+      );
+      expect(reservationRow()).toEqual(before);
     });
   });
 });
