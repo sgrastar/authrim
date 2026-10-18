@@ -88,7 +88,10 @@ describe('built-in human-verification Runner execution', () => {
   beforeEach(() => {
     database = new DatabaseSync(':memory:');
     database.exec('PRAGMA foreign_keys = ON');
-    for (const migration of ['001_0_4_0_plugin_runner_baseline.sql']) {
+    for (const migration of [
+      '001_0_4_0_plugin_runner_baseline.sql',
+      '007_tenant_external_plugin_gates.sql',
+    ]) {
       database.exec(
         readFileSync(resolve(REPO_ROOT, 'migrations/plugin-runner/d1', migration), 'utf8')
       );

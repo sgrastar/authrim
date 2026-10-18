@@ -606,10 +606,15 @@ place(
 			'Storage destinations are chosen in one place for every feature (logs, backups). In development: backups go to the deployment’s export bucket for now.'
 	}
 );
-place('integrations/plugins', 'Plugins', {
-	primary: ['plugin.enabled'],
-	advanced: ['plugin.notifier_resend_enabled']
-});
+place(
+	'integrations/plugins',
+	'Plugins',
+	{ primary: ['plugin.enabled'] },
+	{
+		'plugin.enabled':
+			'Allows the code of external (custom) plugins to run. It does not switch the built-in email providers, CAPTCHA providers or TOTP: those are chosen under Email and under Sign-in methods.'
+	}
+);
 
 // ---------------------------------------------------------------------------------------------
 // Tenant settings

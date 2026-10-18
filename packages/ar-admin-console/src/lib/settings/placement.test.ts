@@ -184,12 +184,26 @@ describe('where settings live', () => {
 			'plugin.memory_limit_mb',
 			'plugin.notifier_console_enabled',
 			'plugin.execution_timeout_ms',
-			'plugin.auto_update_check'
+			'plugin.auto_update_check',
+			'plugin.notifier_resend_enabled'
 		]) {
 			expect(everyKey, key).not.toContain(key);
 			expect([...placed, ...drafted], key).not.toContain(key);
 			expect(NOT_APPLIED.has(key), key).toBe(false);
 		}
+	});
+
+	it('places the switch for external plugin code as the only plugin setting, as applied', () => {
+		// plugin.enabled gates the code of external (dynamic worker) plugins; the built-in email
+		// and CAPTCHA providers are not behind it.
+		const plugin = ALL_CATEGORY_META.plugin.settings;
+		expect(Object.keys(plugin)).toEqual(['plugin.enabled']);
+		expect(plugin['plugin.enabled'].status).toBeUndefined();
+		expect(NOT_APPLIED.has('plugin.enabled')).toBe(false);
+		expect(DRAFT.find((entry) => entry.key === 'plugin.enabled')).toMatchObject({
+			page: 'integrations/plugins',
+			depth: 'primary'
+		});
 	});
 
 	it('places the diagnostic logging PII filter and merged output as applied', () => {

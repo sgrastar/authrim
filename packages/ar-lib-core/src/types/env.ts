@@ -297,6 +297,14 @@ export interface AccountEventInstallation {
   capability: 'hook.account.lifecycle';
 }
 
+/** A tenant's gate for external (dynamic worker) plugin code in ar-plugin-runner. */
+export interface TenantExternalGate {
+  tenantId: string;
+  allowed: boolean;
+  /** Grows by one for each change of `allowed`; 0 when the tenant has no row (closed). */
+  generation: number;
+}
+
 export interface PluginRunnerServiceBinding {
   runHumanVerification(input: HumanVerificationHookInput): Promise<PluginRunnerDecisionResult>;
   runPolicyDecision(input: PolicyDecisionHookInput): Promise<PluginRunnerDecisionResult>;
@@ -365,6 +373,28 @@ export interface PluginRunnerServiceBinding {
   resolveAccountEventInstallations(
     input: ResolveAccountEventInstallationsInput
   ): Promise<AccountEventInstallation[]>;
+  /**
+   * The runner-side enforcement point of the tenant's `plugin.enabled`: no external installation
+   * of the tenant is resolved for execution unless its gate is open (no row means closed).
+   */
+  setTenantExternalGate(input: {
+    tenantId: string;
+    allowed: boolean;
+    /**
+     * Required to open, and never with a close: the generation the opener read before it read the
+     * saved setting. A gate written since (any close advances it) refuses the open.
+     */
+    ifGeneration?: number;
+  }): Promise<TenantExternalGate>;
+  getTenantExternalGate(input: { tenantId: string }): Promise<TenantExternalGate>;
+  /**
+   * Tenants whose gate may not match their setting, by tenant id after `after`: those with an open
+   * gate, and those with an enabled external installation but no open gate.
+   */
+  listTenantExternalGateCandidates(input: {
+    limit?: number;
+    after?: string | null;
+  }): Promise<TenantExternalGate[]>;
 }
 
 /**

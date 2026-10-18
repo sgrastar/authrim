@@ -12,8 +12,8 @@
  * ceilings, extended introspection claims, the SCIM token lifetime, the SAML switch, assertion
  * and request lifetimes and provider defaults, the identity assurance level recorded for accounts
  * the organisation creates, the scope-to-IAL requirements, and the use of the IAL assurance
- * values in OIDC (eduperson_assurance) and SAML (eduPersonAssurance), the SAML AuthnContextClassRef to AAL map, the CIBA request lifetime and polling interval bounds, the binding message limits, the slow_down increment and poll count, the user code switch and the ping timeout, the device code lifetime, polling interval and expiry and interval bounds, the device flow slow_down increment and poll count, and the device user code charset and length, the default audience and resource of newly registered apps, the sign-up page path (opened by prompt=create), and the diagnostic logging PII redaction in full mode and merged output; and less the settings that left the catalog (duplicates, copies of the app
- * registration (the app's default audience and resource) or of the tenant record (the tenant name), values too fine or fixed at deployment, CIBA settings with no CIBA behaviour behind them: the request cache lifetime and the notifier timeouts, and settings that must not be a tenant switch or that the platform fixes: hashing tokens in diagnostic logs, the plugin memory limit, the plugin execution time limit, which each installation sets, the plugin update check, which has no source of updates to check, and the console notifier). Update this list when a setting starts to apply or leaves the catalog.
+ * values in OIDC (eduperson_assurance) and SAML (eduPersonAssurance), the SAML AuthnContextClassRef to AAL map, the CIBA request lifetime and polling interval bounds, the binding message limits, the slow_down increment and poll count, the user code switch and the ping timeout, the device code lifetime, polling interval and expiry and interval bounds, the device flow slow_down increment and poll count, and the device user code charset and length, the default audience and resource of newly registered apps, the sign-up page path (opened by prompt=create), the switch for the code of external plugins (plugin.enabled), and the diagnostic logging PII redaction in full mode and merged output; and less the settings that left the catalog (duplicates, copies of the app
+ * registration (the app's default audience and resource) or of the tenant record (the tenant name), values too fine or fixed at deployment, CIBA settings with no CIBA behaviour behind them: the request cache lifetime and the notifier timeouts, and settings that must not be a tenant switch or that the platform fixes: hashing tokens in diagnostic logs, the plugin memory limit, the plugin execution time limit, which each installation sets, the plugin update check, which has no source of updates to check, the Resend switch of the notifier, which stopped no sending (the Email Settings order picks the provider), and the console notifier). Update this list when a setting starts to apply or leaves the catalog.
  *
  * Shown in the settings map (Storybook: Pages › Settings map).
  */
@@ -38,14 +38,13 @@ function reason(why: NotApplied, keys: readonly string[]): [string, NotApplied][
 }
 
 export const NOT_APPLIED: ReadonlyMap<string, NotApplied> = new Map([
-	// to-build (5)
+	// to-build (4)
 	...reason('to-build', [
 		// Push delivery of tokens does not exist yet (nothing calls sendPushModeTokens).
 		'ciba.push_notification_timeout_ms',
 		'dr-backup.storage_destination_id',
 		'federation.saml_artifact_resolution_timeout',
-		'federation.saml_artifact_ttl',
-		'plugin.enabled'
+		'federation.saml_artifact_ttl'
 	]),
 	// to-wire (1)
 	...reason('to-wire', ['assurance.ida_profile']),

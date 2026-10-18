@@ -2,8 +2,6 @@ import { z } from 'zod';
 import type { Context } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
 import {
-  getTenantSettingsDocument,
-  TenantSettingsUnavailableError,
   AR_ERROR_CODES,
   createErrorResponse,
   getTenantEmailSettings,
@@ -58,26 +56,13 @@ async function getPluginRegistry(kv: KVNamespace): Promise<Record<string, Plugin
   }
 }
 
-function pluginIdToSettingsKey(pluginId: string): string {
-  return `plugin.${pluginId.replace(/-/g, '_')}_enabled`;
-}
-
+/**
+ * Whether the tenant has this email provider switched on (the plugin admin API's flag:
+ * `plugins:enabled:{pluginId}:tenant:{tenantId}`, then `plugins:enabled:{pluginId}`, else on).
+ * The tenant settings document holds no per-provider switch: `plugin.notifier_resend_enabled` is
+ * retired, and a value saved under it neither hides Resend here nor keeps it out of the order.
+ */
 async function isPluginEnabled(env: Env, pluginId: string, tenantId: string): Promise<boolean> {
-  try {
-    const settingsKey = pluginIdToSettingsKey(pluginId);
-    const enabled = (await getTenantSettingsDocument(env, tenantId, 'plugin'))?.[settingsKey];
-    if (typeof enabled === 'boolean') {
-      return enabled;
-    }
-    if (typeof enabled === 'string') {
-      return enabled === 'true';
-    }
-  } catch (error) {
-    // A document that exists but cannot be read must not fall back to other flags.
-    if (error instanceof TenantSettingsUnavailableError) throw error;
-    // Fall through to legacy KV.
-  }
-
   const kv = env.SETTINGS;
   if (!kv) {
     return true;

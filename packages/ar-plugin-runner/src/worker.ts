@@ -21,6 +21,7 @@ import type { PluginRunnerEnv, PluginRunnerRpcProps } from './types';
 import { createBuiltinHumanVerificationRegistry } from './builtin-human-verification';
 import { D1HumanVerificationInstallationStore } from './human-verification-installations';
 import { D1AccountEventInstallationResolver } from './account-event-installations';
+import { D1TenantExternalGateStore } from './external-gate';
 import { R2PluginWorkerCodeResolver } from './dynamic-worker-code';
 import { D1PluginInstallationResolver } from './installations';
 import type { PluginEgressContext } from './types';
@@ -728,6 +729,72 @@ export default class PluginRunnerWorker extends WorkerEntrypoint<
       return new D1AccountEventInstallationResolver(this.env.PLUGIN_RUNNER_DB).resolve(
         accountEventInstallationsInput(input)
       );
+    });
+  }
+
+  /**
+   * Opens or closes the tenant's gate for external plugin code (the projection of the tenant's
+   * `plugin.enabled`). Closing it stops every external installation of the tenant from being
+   * resolved for execution, whatever its own state is.
+   */
+  setTenantExternalGate(input: unknown) {
+    return rpcResult(() => {
+      authorized(this.env, this.ctx.props, ['ar-management']);
+      // Opening names the generation the opener read (ifGeneration); closing takes none.
+      const raw = input as Record<string, unknown> | null;
+      const value = exactRecord(input, [
+        'tenantId',
+        'allowed',
+        ...(raw && typeof raw === 'object' && 'ifGeneration' in raw ? ['ifGeneration'] : []),
+      ]);
+      if (
+        typeof value.allowed !== 'boolean' ||
+        (value.allowed
+          ? !Number.isSafeInteger(value.ifGeneration) || (value.ifGeneration as number) < 0
+          : value.ifGeneration !== undefined)
+      ) {
+        throw new Error('plugin_dynamic_external_gate_input_invalid');
+      }
+      return new D1TenantExternalGateStore(this.env.PLUGIN_RUNNER_DB).set({
+        tenantId: id(value.tenantId),
+        allowed: value.allowed,
+        ...(value.allowed ? { ifGeneration: value.ifGeneration as number } : {}),
+      });
+    });
+  }
+
+  /**
+   * The tenants whose gate may not match their setting (see D1TenantExternalGateStore.listCandidates),
+   * for ar-management's periodic reconciliation. `limit` defaults to 50 (at most 200); `after` is the
+   * last tenant id of the previous page.
+   */
+  listTenantExternalGateCandidates(input: unknown) {
+    return rpcResult(() => {
+      authorized(this.env, this.ctx.props, ['ar-management']);
+      const raw = input as Record<string, unknown> | null;
+      const optional = raw && typeof raw === 'object' ? Object.keys(raw) : [];
+      const value = exactRecord(
+        input,
+        optional.filter((key) => key === 'limit' || key === 'after')
+      );
+      if (
+        (value.limit !== undefined && !Number.isSafeInteger(value.limit)) ||
+        (value.after !== undefined && value.after !== null && typeof value.after !== 'string')
+      ) {
+        throw new Error('plugin_dynamic_external_gate_input_invalid');
+      }
+      return new D1TenantExternalGateStore(this.env.PLUGIN_RUNNER_DB).listCandidates({
+        ...(value.limit === undefined ? {} : { limit: value.limit as number }),
+        after: (value.after as string | null) ?? null,
+      });
+    });
+  }
+
+  getTenantExternalGate(input: unknown) {
+    return rpcResult(() => {
+      authorized(this.env, this.ctx.props, ['ar-management']);
+      const value = exactRecord(input, ['tenantId']);
+      return new D1TenantExternalGateStore(this.env.PLUGIN_RUNNER_DB).get(id(value.tenantId));
     });
   }
 

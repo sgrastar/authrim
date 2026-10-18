@@ -110,7 +110,7 @@ function dynamicBackend(
     : undefined;
   return new DynamicWorkerSyncHookBackend(
     loader,
-    { resolve: async () => syncCodeTarget },
+    { resolve: async () => syncCodeTarget, isExternalGateOpen: async () => true },
     {
       resolve: async () => ({
         compatibilityDate: '2026-07-30',
@@ -285,13 +285,18 @@ describe('SyncHookService circuit breaker', () => {
 
   beforeEach(() => {
     database = new DatabaseSync(':memory:');
-    for (const migration of ['001_0_4_0_plugin_runner_baseline.sql']) {
+    for (const migration of [
+      '001_0_4_0_plugin_runner_baseline.sql',
+      '007_tenant_external_plugin_gates.sql',
+    ]) {
       database.exec(
         readFileSync(resolve(REPO_ROOT, 'migrations/plugin-runner/d1', migration), 'utf8')
       );
     }
     database.exec(
-      `INSERT INTO plugin_runner_installations (
+      `INSERT INTO plugin_runner_tenant_external_gates (tenant_id, allowed, generation, updated_at)
+       VALUES ('tenant-a', 1, 1, 1);
+       INSERT INTO plugin_runner_installations (
          installation_id, tenant_id, plugin_id, backend_kind, script_name,
          state, config_version, created_at, updated_at
        ) VALUES (
@@ -361,6 +366,56 @@ describe('SyncHookService circuit breaker', () => {
         )
         .get()
     ).toEqual({ state: 'closed', failure_count: 0, retry_after: null, probe_token: null });
+  });
+
+  it('refuses an external installation while the tenant gate for external plugin code is closed', async () => {
+    database.exec(
+      `UPDATE plugin_runner_tenant_external_gates SET allowed = 0 WHERE tenant_id = 'tenant-a'`
+    );
+
+    await expect(service.runHumanVerification(humanInput)).resolves.toEqual({
+      decision: 'deny',
+      reasonCode: 'plugin_unavailable',
+    });
+    expect(fetch).not.toHaveBeenCalled();
+    expect(
+      database.prepare(`SELECT COUNT(*) AS count FROM plugin_runner_circuit_breakers`).get()
+    ).toEqual({ count: 0 });
+
+    database.exec(
+      `UPDATE plugin_runner_tenant_external_gates SET allowed = 1 WHERE tenant_id = 'tenant-a'`
+    );
+    await expect(service.runHumanVerification(humanInput)).resolves.toEqual({
+      decision: 'allow',
+      reasonCode: 'verified',
+    });
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('runs an in-process installation whatever the tenant gate says', async () => {
+    database.exec(
+      `UPDATE plugin_runner_tenant_external_gates SET allowed = 0 WHERE tenant_id = 'tenant-a';
+       UPDATE plugin_runner_installations
+          SET backend_kind = 'in_process', script_name = NULL
+        WHERE installation_id = 'installation-a'`
+    );
+    const handler = vi.fn(async () => ({ decision: 'allow', reasonCode: 'verified' }));
+    service = new SyncHookService(
+      d1(database),
+      new SyncHookBackendRouter(
+        dynamicBackend(fetch),
+        new StaticInProcessSyncHookRegistry(
+          new Map([['human-plugin:human_verification.verify', handler]])
+        )
+      ),
+      () => now
+    );
+
+    await expect(service.runHumanVerification(humanInput)).resolves.toEqual({
+      decision: 'allow',
+      reasonCode: 'verified',
+    });
+    expect(handler).toHaveBeenCalledTimes(1);
   });
 
   it('routes an in-process installation through the same policy and breaker state', async () => {

@@ -285,7 +285,7 @@ const TABLE_GROUPS: Partial<
       authrim_migrations migration_metadata tenant_database_migration_state
       plugin_runner_circuit_breakers plugin_runner_dispatch_leases plugin_runner_full_sweep_state plugin_runner_migration_state
       plugin_runner_r2_metric_scan_state plugin_runner_rate_limit_buckets plugin_runner_registry_shards plugin_runner_registry_state
-      plugin_runner_shard_cursors
+      plugin_runner_shard_cursors plugin_runner_tenant_external_gates
     `,
     ephemeral: `tenant_backup_restore_targets tenant_backup_snapshots tenant_backup_preimages authrim_runtime_probes`,
   },

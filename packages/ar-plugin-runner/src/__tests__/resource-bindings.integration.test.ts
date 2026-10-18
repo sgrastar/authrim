@@ -137,7 +137,10 @@ describe('Plugin Dynamic Worker resource bindings', () => {
     runner = new DatabaseSync(':memory:');
     resource = new DatabaseSync(':memory:');
     runner.exec('PRAGMA foreign_keys = ON');
-    for (const migration of ['001_0_4_0_plugin_runner_baseline.sql']) {
+    for (const migration of [
+      '001_0_4_0_plugin_runner_baseline.sql',
+      '007_tenant_external_plugin_gates.sql',
+    ]) {
       runner.exec(
         readFileSync(resolve(REPO_ROOT, 'migrations/plugin-runner/d1', migration), 'utf8')
       );
@@ -393,6 +396,10 @@ describe('Plugin Dynamic Worker resource bindings', () => {
 
   it('resolves an enabled installation only when its active map matches the manifest', async () => {
     await reflect();
+    runner.exec(
+      `INSERT INTO plugin_runner_tenant_external_gates (tenant_id, allowed, generation, updated_at)
+       VALUES ('tenant-a', 1, 1, 1)`
+    );
     runner
       .prepare(
         `INSERT INTO plugin_runner_installations (

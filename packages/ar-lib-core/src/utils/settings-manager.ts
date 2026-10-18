@@ -64,6 +64,12 @@ export interface SettingsPatchOptions extends SettingsReadOptions {
    * certification profile), where refusing one would change what applies.
    */
   skipDependencyCheck?: boolean;
+  /**
+   * Decide what the request would apply, clear, disable and reject (version conflict included)
+   * without saving, auditing or invalidating anything. A caller that must act before a change
+   * is saved uses it to act only on a change that will be accepted.
+   */
+  dryRun?: boolean;
 }
 
 interface InheritedLayer {
@@ -600,7 +606,9 @@ export class SettingsManager {
 
     // Load current KV data directly from KV (skip cache to prevent TOCTOU race conditions)
     // This ensures we always read the latest KV data for version checking
-    const kvData = await this.loadKVData(category, scope, true);
+    // The loaded document is also what the cache holds: change a copy, never the cached object
+    // (a dry run, or a request that ends up saving nothing, must leave no candidate behind).
+    const kvData = structuredClone(await this.loadKVData(category, scope, true));
     const currentVersion = generateVersion(kvData);
     // Dependencies are checked against effective values, which may come from a parent scope.
     const parents = options.parents ?? [];
@@ -734,6 +742,10 @@ export class SettingsManager {
     }
     for (const key of disabled) {
       diff[key] = { before: original[key], after: DISABLED_MARKER };
+    }
+
+    if (options.dryRun) {
+      return { version: currentVersion, applied, cleared, disabled, rejected };
     }
 
     // Save if anything changed

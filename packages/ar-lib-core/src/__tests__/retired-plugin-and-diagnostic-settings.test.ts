@@ -1,10 +1,12 @@
 /**
- * Five settings are gone: `plugin.memory_limit_mb` (the platform fixes the memory of a plugin),
+ * Six settings are gone: `plugin.memory_limit_mb` (the platform fixes the memory of a plugin),
  * `plugin.notifier_console_enabled` (a notifier that prints secrets is never a tenant switch),
  * `plugin.execution_timeout_ms` (ar-plugin-runner reads the run time limit from the policy of each
  * installation, never from the tenant, so a tenant value would mislead),
  * `plugin.auto_update_check` (there is no source of plugin updates to check, so the switch did
- * nothing) and
+ * nothing),
+ * `plugin.notifier_resend_enabled` (it stopped no sending and Cloudflare Mail had no equal; the
+ * Email Settings order picks the provider) and
  * `diagnostic-logging.filter_tokens` (tokens are never stored in clear text in any mode, so there
  * is nothing to switch). Documents saved before that, and environment variables, still hold them:
  * they must read, save and resolve as before, and none of them is a setting any more.
@@ -31,6 +33,7 @@ const RETIRED_PLUGIN = {
   'plugin.notifier_console_enabled': true,
   'plugin.execution_timeout_ms': 30000,
   'plugin.auto_update_check': true,
+  'plugin.notifier_resend_enabled': false,
 };
 const RETIRED_DIAGNOSTIC = { 'diagnostic-logging.filter_tokens': false };
 const RETIRED_ENV_KEYS = [
@@ -38,6 +41,7 @@ const RETIRED_ENV_KEYS = [
   'PLUGIN_NOTIFIER_CONSOLE_ENABLED',
   'PLUGIN_EXECUTION_TIMEOUT_MS',
   'PLUGIN_AUTO_UPDATE_CHECK',
+  'PLUGIN_NOTIFIER_RESEND_ENABLED',
   'DIAGNOSTIC_LOGGING_FILTER_TOKENS',
 ];
 
@@ -57,10 +61,7 @@ function createMockKV(data: Record<string, string>): KVNamespace {
 }
 
 const SAVED = {
-  'settings:tenant:t1:plugin': JSON.stringify({
-    ...RETIRED_PLUGIN,
-    'plugin.notifier_resend_enabled': false,
-  }),
+  'settings:tenant:t1:plugin': JSON.stringify(RETIRED_PLUGIN),
   'settings:tenant:t1:diagnostic-logging': JSON.stringify({
     ...RETIRED_DIAGNOSTIC,
     'diagnostic-logging.retention_days': 7,
@@ -89,10 +90,7 @@ describe('the retired plugin and diagnostic logging settings', () => {
   });
 
   it('keep the other plugin and diagnostic logging settings', () => {
-    expect(Object.keys(PLUGIN_SETTINGS_META).sort()).toEqual([
-      'plugin.enabled',
-      'plugin.notifier_resend_enabled',
-    ]);
+    expect(Object.keys(PLUGIN_SETTINGS_META)).toEqual(['plugin.enabled']);
     expect(Object.keys(DIAGNOSTIC_LOGGING_SETTINGS_META)).toEqual(
       expect.arrayContaining([
         'diagnostic-logging.filter_pii',
@@ -108,7 +106,7 @@ describe('the retired plugin and diagnostic logging settings', () => {
     manager.registerCategory(DIAGNOSTIC_LOGGING_CATEGORY_META);
 
     const plugin = await manager.getAll('plugin', { type: 'tenant', id: 't1' });
-    expect(plugin.values['plugin.notifier_resend_enabled']).toBe(false);
+    expect(plugin.values['plugin.enabled']).toBe(false);
     for (const key of Object.keys(RETIRED_PLUGIN)) {
       expect(plugin.values).not.toHaveProperty(key);
       expect(plugin.sources).not.toHaveProperty(key);
@@ -159,7 +157,7 @@ describe('the retired plugin and diagnostic logging settings', () => {
       'admin'
     );
     expect(pluginResult.applied).toEqual([]);
-    expect(Object.values(pluginResult.rejected)).toEqual(Array(4).fill('Unknown setting key'));
+    expect(Object.values(pluginResult.rejected)).toEqual(Array(5).fill('Unknown setting key'));
 
     const diagnostic = await manager.getAll('diagnostic-logging', { type: 'tenant', id: 't1' });
     const diagnosticResult = await manager.patch(
@@ -181,11 +179,12 @@ describe('the retired plugin and diagnostic logging settings', () => {
       PLUGIN_NOTIFIER_CONSOLE_ENABLED: 'true',
       PLUGIN_EXECUTION_TIMEOUT_MS: '30000',
       PLUGIN_AUTO_UPDATE_CHECK: 'true',
+      PLUGIN_NOTIFIER_RESEND_ENABLED: 'false',
       DIAGNOSTIC_LOGGING_FILTER_TOKENS: 'false',
     };
 
     const plugin = await resolveEffectiveSettings(env, 'plugin', { tenantId: 't1' });
-    expect(plugin['plugin.notifier_resend_enabled']).toBe(false);
+    expect(plugin['plugin.enabled']).toBe(false);
     for (const key of Object.keys(RETIRED_PLUGIN)) expect(plugin).not.toHaveProperty(key);
 
     const diagnostic = await resolveEffectiveSettings(env, 'diagnostic-logging', {

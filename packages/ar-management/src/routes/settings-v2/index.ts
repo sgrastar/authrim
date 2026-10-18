@@ -95,6 +95,15 @@ import { ensureSupportedTenantId } from '../../single-tenant-guard';
 import { agentElevatedExecutionMiddleware } from '../../agent-elevated-execution';
 import { BUILTIN_HUMAN_VERIFICATION_PROVIDER_IDS } from '../../human-verification-provider-projection';
 import { markGlobalProviderDesiredRevision } from '../../provider-reprojection-jobs';
+import {
+  disableTenantExternalPlugins,
+  ExternalPluginShutdownError,
+  patchTurnsExternalPluginsOff,
+} from '../../external-plugin-shutdown';
+import {
+  reconcileRunnerExternalGate,
+  setRunnerExternalGate,
+} from '../../external-plugin-gate-sync';
 
 // Module-level logger for settings audit
 const log = createLogger().module('SETTINGS_AUDIT');
@@ -951,6 +960,43 @@ async function recordSettingsAuditFailure(
   }
 }
 
+/** Persistent record of the external plugins a turn-off of `plugin.enabled` switched off. */
+async function recordExternalPluginShutdownAudit(
+  c: Context<{ Bindings: Env; Variables: { adminAuth?: AdminAuthContext } }, string>,
+  input: {
+    scope: SettingScope;
+    stopped: readonly string[];
+    outcome: 'success' | 'failure';
+    /** The plugin whose switch-off failed; null when none is to blame (the listing failed). */
+    failedPluginId: string | null;
+  }
+): Promise<void> {
+  const scopeId =
+    'id' in input.scope && typeof input.scope.id === 'string' ? input.scope.id : 'platform';
+  try {
+    await createAuditLogFromContext(
+      c as unknown as Parameters<typeof createAuditLogFromContext>[0],
+      'settings.plugin.external_shutdown',
+      'settings',
+      `${input.scope.type}:${scopeId}:plugin`,
+      {
+        scope: input.scope.type,
+        scope_id: scopeId,
+        category: 'plugin',
+        result: input.outcome,
+        stopped_plugin_ids: [...input.stopped],
+        ...(input.failedPluginId === null ? {} : { failed_plugin_id: input.failedPluginId }),
+      },
+      input.outcome === 'success' ? 'info' : 'warning'
+    );
+  } catch {
+    log.warn('Failed to mirror the external plugin shutdown audit', {
+      scope: input.scope.type,
+      stoppedCount: input.stopped.length,
+    });
+  }
+}
+
 /**
  * Error response helper
  */
@@ -1708,6 +1754,94 @@ settingsV2.patch(
 
           // Get actor from context (set by auth middleware)
           const actor = adminAuth?.userId ?? 'unknown';
+
+          // Turning external plugin code off (`plugin.enabled`). What stops external code is the
+          // tenant gate in ar-plugin-runner, so, before anything is saved: (a) close the gate;
+          // (b) switch the tenant's external installations off. Either failing refuses the PATCH
+          // (503) and saves nothing: never a saved "off" that the runner has not been told. This
+          // only runs for a change the settings manager would accept (a dry run decides, so a
+          // refused or conflicting request stops nothing). If the save then fails (a version
+          // conflict between the dry run and the save), the gate stays closed and the
+          // installations stay off, which is the safe side: a later save of "on" (or enabling an
+          // external plugin) opens the gate again from the saved setting.
+          let externalPluginsTurnedOff = false;
+          if (category === 'plugin') {
+            const decision = await manager.patch(category, scope, body, actor, {
+              parents: settingsParentScopes(category, scope),
+              dryRun: true,
+            });
+            externalPluginsTurnedOff = await patchTurnsExternalPluginsOff(
+              body,
+              decision,
+              async () => {
+                const state = await manager.getAll(category, scope, {
+                  parents: settingsParentScopes(category, scope),
+                });
+                return state.inherited.values['plugin.enabled'];
+              }
+            );
+          }
+          if (externalPluginsTurnedOff) {
+            try {
+              await setRunnerExternalGate(c.env, tenantId, false);
+            } catch {
+              log.error('Failed to close the external plugin gate; plugin.enabled was not saved', {
+                tenantId,
+              });
+              await recordSettingsAuditFailure(c, {
+                category,
+                scope,
+                reason: 'external_plugin_gate_close_failed',
+              });
+              return errorResponse(
+                c,
+                'temporarily_unavailable',
+                "The tenant's external plugin gate could not be closed, so plugin.enabled was not changed; try again",
+                503,
+                { reason: 'external_plugin_gate_unavailable' }
+              );
+            }
+            try {
+              const stopped = await disableTenantExternalPlugins(c.env, tenantId);
+              if (stopped.length > 0) {
+                await recordExternalPluginShutdownAudit(c, {
+                  scope,
+                  stopped,
+                  outcome: 'success',
+                  failedPluginId: null,
+                });
+              }
+            } catch (error) {
+              const stopped = error instanceof ExternalPluginShutdownError ? error.stopped : [];
+              const failed =
+                error instanceof ExternalPluginShutdownError ? error.failedPluginId : null;
+              log.error('Failed to switch off external plugins; plugin.enabled was not saved', {
+                tenantId,
+                stoppedPluginIds: stopped,
+                failedPluginId: failed,
+              });
+              await recordExternalPluginShutdownAudit(c, {
+                scope,
+                stopped,
+                outcome: 'failure',
+                failedPluginId: failed,
+              });
+              await recordSettingsAuditFailure(c, {
+                category,
+                scope,
+                reason: 'external_plugin_shutdown_failed',
+                metadata: { stopped_plugin_ids: stopped, failed_plugin_id: failed },
+              });
+              return errorResponse(
+                c,
+                'temporarily_unavailable',
+                "The tenant's external plugins could not all be switched off, so plugin.enabled was not changed; try again",
+                503,
+                { reason: 'external_plugin_shutdown_failed', stopped_plugin_ids: stopped }
+              );
+            }
+          }
+
           const authenticationMethodsBefore =
             category === 'authentication-methods'
               ? await readScopedSettingsRecord(c.env, category, scope)
@@ -1770,6 +1904,31 @@ settingsV2.patch(
 
           if (hasApplied && AUTHENTICATION_METHODS_TENANT_CACHE_CATEGORIES.has(category)) {
             await invalidateAuthenticationMethodsCacheRevision(c, tenantId, `tenant:${category}`);
+          }
+
+          // Bring the runner's gate in step with what was just saved (the saved setting, not the
+          // KV copy). A turn-off closed it already, so only an unchanged-or-opened gate can be
+          // late: then the gate stays closed (fail-closed) and the response says so, and the same
+          // PATCH again, or enabling an external plugin, opens it.
+          if (category === 'plugin' && changedKeys.includes('plugin.enabled')) {
+            try {
+              await reconcileRunnerExternalGate(c.env, tenantId);
+            } catch {
+              log.warn('External plugin gate was not brought in step with plugin.enabled', {
+                tenantId,
+              });
+              // After a turn-off this means the closing after the save did not go through, so a
+              // concurrent enable may have reopened the gate: say so (the periodic reconciliation
+              // closes it) and leave a record of it.
+              if (externalPluginsTurnedOff) {
+                await recordSettingsAuditFailure(c, {
+                  category,
+                  scope,
+                  reason: 'external_plugin_gate_resync_failed',
+                });
+              }
+              return c.json({ ...result, externalPluginGate: 'pending' as const });
+            }
           }
 
           return c.json(result);

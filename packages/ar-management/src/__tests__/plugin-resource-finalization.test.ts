@@ -106,6 +106,8 @@ function env(settings: KVNamespace, readiness: 'pending' | 'ready', operationId 
   return {
     value: {
       AUTHRIM_ENVIRONMENT_NAME: 'test',
+      // The tenant allows external plugin code (plugin.enabled), which switching one on requires.
+      PLUGIN_ENABLED: 'true',
       SETTINGS: settings,
       CONTROL: {
         getPluginDynamicWorkerResourcePreparation: getPreparation,
@@ -114,6 +116,15 @@ function env(settings: KVNamespace, readiness: 'pending' | 'ready', operationId 
         syncPluginDynamicWorkerObservedState: sync,
       },
       PLUGIN_RUNNER: {
+        setTenantExternalGate: vi.fn(async (input: { tenantId: string; allowed: boolean }) => ({
+          ...input,
+          generation: 1,
+        })),
+        getTenantExternalGate: vi.fn(async (input: { tenantId: string }) => ({
+          tenantId: input.tenantId,
+          allowed: false,
+          generation: 0,
+        })),
         configureDynamicPluginInstallation: configure,
         getDynamicPluginInstallationStatus: getStatus,
         stageDynamicPluginActivation: stage,
@@ -197,6 +208,33 @@ describe('dynamic plugin resource finalization', () => {
     });
     expect(target.sync).toHaveBeenCalledTimes(1);
     expect(store.store.size).toBe(0);
+  });
+
+  it('does not switch a plugin on after the tenant stopped allowing external plugin code', async () => {
+    const store = kv();
+    await enqueueDynamicPluginResourceFinalization(
+      store.binding,
+      { operationId: 'op-plugin-a', tenantId: 'tenant-a', pluginId: 'plugin-a' },
+      100
+    );
+    const target = env(store.binding, 'ready');
+    (target.value as unknown as Record<string, unknown>).PLUGIN_ENABLED = 'false';
+    const binding = target.value.CONTROL;
+    if (!binding) throw new Error('test_control_binding_missing');
+    binding.getPluginDynamicWorkerResourcePreparation = rpcMethod(target.getPreparation);
+
+    await expect(processDynamicPluginResourceFinalizations(target.value)).resolves.toEqual({
+      inspected: 1,
+      finalized: 0,
+      pending: 0,
+      failed: 1,
+    });
+    expect(target.configure).not.toHaveBeenCalled();
+    expect(target.stage).not.toHaveBeenCalled();
+    expect(JSON.parse([...store.store.values()][0] ?? '')).toMatchObject({
+      attemptCount: 1,
+      lastErrorCode: 'external_plugin_execution_not_allowed',
+    });
   });
 
   it('fails closed on an operation mismatch and stores only a redacted code', async () => {
