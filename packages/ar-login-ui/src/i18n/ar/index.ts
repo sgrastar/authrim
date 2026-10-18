@@ -249,6 +249,8 @@ const ar = createTranslation({
 	login_continueWith: 'المتابعة باستخدام {provider}',
 	login_humanVerificationLoading: 'جارٍ تحميل فحص الأمان...',
 	login_humanVerificationLoadFailed: 'تعذّر تحميل فحص الأمان. أعد تحميل الصفحة وحاول مرة أخرى.',
+	login_humanVerificationUnavailable:
+		'التحقق من أنك لست روبوتًا غير متاح حاليًا. يُرجى التواصل مع المسؤول.',
 	login_noMethodsAvailable: 'لا توجد طريقة مصادقة مفعّلة لهذه المؤسسة. تواصل مع المسؤول.',
 	login_passkeyPreparing: 'جارٍ تجهيز المصادقة باستخدام مفتاح المرور.',
 	login_passkeyPrompt: 'أكمل طلب مفتاح المرور في متصفحك أو على جهازك.',

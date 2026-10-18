@@ -255,6 +255,8 @@ const vi = createTranslation({
 	login_humanVerificationLoading: 'Đang tải bước kiểm tra bảo mật...',
 	login_humanVerificationLoadFailed:
 		'Không thể tải bước kiểm tra bảo mật. Hãy tải lại trang rồi thử lần nữa.',
+	login_humanVerificationUnavailable:
+		'Xác minh con người hiện không khả dụng. Vui lòng liên hệ quản trị viên.',
 	login_noMethodsAvailable:
 		'Tổ chức này chưa bật phương thức xác thực nào. Hãy liên hệ quản trị viên.',
 	login_passkeyPreparing: 'Đang chuẩn bị xác thực bằng khoá truy cập.',

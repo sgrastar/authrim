@@ -31,6 +31,7 @@
 	} from '$lib/utils/url-validation';
 	import {
 		fetchAuthenticationMethods,
+		isHumanVerificationUnavailableFor,
 		fetchAuthenticationMethodsForClient,
 		type AuthenticationMethodsResponse,
 		type ExternalProvider
@@ -104,6 +105,7 @@
 		humanVerificationProvider: 'turnstile' | 'hcaptcha' | 'recaptcha' | 'custom';
 		humanVerificationMode: 'managed' | 'checkbox' | 'invisible' | 'score';
 		turnstileRequired: boolean;
+		humanVerificationUnavailable: boolean;
 	}
 
 	function normalizeSixOrEightDigits(value: unknown): number {
@@ -146,7 +148,11 @@
 			turnstileSiteKey: turnstileRequired ? data.methods.humanVerification.siteKey : null,
 			humanVerificationProvider,
 			humanVerificationMode: data.methods.humanVerification.widget.mode ?? 'managed',
-			turnstileRequired
+			turnstileRequired,
+			humanVerificationUnavailable: isHumanVerificationUnavailableFor(
+				data.methods.humanVerification,
+				'login'
+			)
 		};
 	}
 
@@ -268,6 +274,10 @@
 		authenticationMethodsState?.humanVerificationMode ?? 'managed'
 	);
 	const turnstileRequired = $derived(authenticationMethodsState?.turnstileRequired ?? false);
+	// Required by the tenant, but the provider is off: say so rather than fail silently.
+	const humanVerificationUnavailable = $derived(
+		authenticationMethodsState?.humanVerificationUnavailable ?? false
+	);
 	let turnstileToken = $state('');
 	let turnstileResetKey = $state(0);
 	let activeTurnstileTarget = $state<string | null>(null);
@@ -2215,6 +2225,7 @@
 		alerts={{
 			externalIdp: externalIdpError,
 			error,
+			humanVerificationUnavailable,
 			runtimeFlow: runtimeFlowError,
 			runtimeScreenMissing: runtimeAuthFormMissing,
 			passkeyProgress: passkeyProgressMessage,

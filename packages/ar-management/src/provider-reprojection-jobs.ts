@@ -1,8 +1,12 @@
 import {
   ensureDatabaseAdapter,
   getTenantEmailSettings,
+  HUMAN_VERIFICATION_FLOWS,
+  isHumanVerificationPluginEnabled,
+  isHumanVerificationRequired,
   listEnvironmentTenantDefaultStores,
   putTenantEmailSettings,
+  readHumanVerificationSelection,
   type DatabaseAdapter,
   type Env,
 } from '@authrim/ar-lib-core';
@@ -175,10 +179,6 @@ async function pluginIsEnabled(env: Env, pluginId: string, tenantId: string): Pr
   return (await env.SETTINGS?.get(`plugins:enabled:${pluginId}`)) !== 'false';
 }
 
-function enabled(value: unknown): boolean {
-  return value === true || (typeof value === 'string' && value.trim().toLowerCase() === 'true');
-}
-
 async function projectTenant(
   env: Env,
   pluginId: string,
@@ -190,7 +190,11 @@ async function projectTenant(
   if (override !== null && override !== undefined) {
     return { status: 'skipped', source: 'override' };
   }
-  const isEnabled = await pluginIsEnabled(env, pluginId, tenantId);
+  // A human verification provider is on only once an admin enabled it (an unset flag is off, as
+  // for the API and the servers); the email providers keep their own default (unset is on).
+  const isEnabled = BUILTIN_NOTIFICATION_PROVIDER_IDS.has(pluginId)
+    ? await pluginIsEnabled(env, pluginId, tenantId)
+    : await isHumanVerificationPluginEnabled(env, tenantId, pluginId);
   if (BUILTIN_NOTIFICATION_PROVIDER_IDS.has(pluginId)) {
     const settings = await getTenantEmailSettings(env, tenantId);
     if (!isEnabled) {
@@ -223,15 +227,11 @@ async function projectTenant(
     return { status: 'applied', source: 'inherited' };
   }
 
-  const rawMethods = await env.SETTINGS?.get(`settings:tenant:${tenantId}:authentication-methods`);
-  const methods = rawMethods ? (JSON.parse(rawMethods) as Record<string, unknown>) : {};
-  const selected =
-    typeof methods['authentication-methods.human_verification.provider'] === 'string'
-      ? methods['authentication-methods.human_verification.provider']
-      : 'human-verification-cloudflare-turnstile';
-  const inUse = ['login', 'signup', 'reauth'].some((action) =>
-    enabled(methods[`authentication-methods.human_verification.${action}_enabled`])
-  );
+  // The selection the API and the servers use (trimmed provider, blank means the default), not
+  // the raw values: a provider written as ' human-verification-cloudflare-turnstile ' is Turnstile.
+  const selection = await readHumanVerificationSelection(env, tenantId);
+  const selected = selection.pluginId;
+  const inUse = isHumanVerificationRequired(selection, HUMAN_VERIFICATION_FLOWS);
   if (selected !== pluginId) {
     await disableTenantHumanVerificationProvider(env, {
       tenantId,

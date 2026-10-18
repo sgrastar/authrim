@@ -256,6 +256,8 @@ const translation = {
 	login_humanVerificationLoading: 'Sprawdzanie bezpieczeństwa...',
 	login_humanVerificationLoadFailed:
 		'Nie udało się wczytać zabezpieczenia. Odśwież stronę i spróbuj ponownie.',
+	login_humanVerificationUnavailable:
+		'Weryfikacja, że jesteś człowiekiem, jest obecnie niedostępna. Skontaktuj się z administratorem.',
 	login_noMethodsAvailable:
 		'Żadna metoda uwierzytelniania nie jest włączona do tej organizacji. Skontaktuj się ze swoim administratorem.',
 	login_passkeyPreparing: 'Przygotowywanie uwierzytelniania kluczem dostępu…',

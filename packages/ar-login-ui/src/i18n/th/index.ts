@@ -250,6 +250,8 @@ const th = createTranslation({
 	login_humanVerificationLoading: 'กำลังโหลดการตรวจสอบความปลอดภัย...',
 	login_humanVerificationLoadFailed:
 		'โหลดการตรวจสอบความปลอดภัยไม่ได้ โปรดโหลดหน้าใหม่แล้วลองอีกครั้ง',
+	login_humanVerificationUnavailable:
+		'การยืนยันว่าเป็นมนุษย์ไม่พร้อมใช้งานในขณะนี้ โปรดติดต่อผู้ดูแลระบบ',
 	login_noMethodsAvailable: 'องค์กรนี้ไม่ได้เปิดใช้วิธียืนยันตัวตน โปรดติดต่อผู้ดูแลระบบ',
 	login_passkeyPreparing: 'กำลังเตรียมการยืนยันตัวตนด้วยพาสคีย์',
 	login_passkeyPrompt: 'ดำเนินการตามคำขอพาสคีย์ในเบราว์เซอร์หรือบนอุปกรณ์ของคุณให้เสร็จ',

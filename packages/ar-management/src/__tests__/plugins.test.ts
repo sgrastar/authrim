@@ -23,11 +23,14 @@ import type {
   Env,
 } from '@authrim/ar-lib-core';
 
+const { listTenantsMock } = vi.hoisted(() => ({ listTenantsMock: vi.fn() }));
+
 // Mock ar-lib-core functions
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@authrim/ar-lib-core')>();
   return {
     ...actual,
+    listEnvironmentTenantDefaultStores: listTenantsMock,
     scheduleAuditLogFromContext: vi.fn(),
     produceNotificationDelivery: vi.fn(async (env, input) => {
       try {
@@ -515,6 +518,23 @@ describe('Plugin Admin API - Get Plugin', () => {
       expect(body).toHaveProperty('error');
     });
 
+    it.each(['toString', 'constructor', 'hasOwnProperty', 'valueOf'])(
+      'should return 404 for the inherited property name %s, not a plugin',
+      async (name) => {
+        const kv = createMockKV({
+          getValues: {
+            'plugins:registry': JSON.stringify({ 'test-plugin': createPluginEntry() }),
+          },
+        });
+
+        const c = createMockContext({ params: { id: name }, kv });
+
+        const { status } = await getResponseData(await getPluginHandler(c));
+
+        expect(status).toBe(404);
+      }
+    );
+
     it('should mask sensitive fields in config', async () => {
       const registry = {
         'secret-plugin': createPluginEntry({ id: 'secret-plugin' }),
@@ -989,6 +1009,39 @@ describe('Plugin Admin API - Update Plugin Config', () => {
           siteKey: 'site-key',
           secretKey: 'secret-key',
           widgetMode: 'score',
+          failurePolicy: 'fail_closed',
+        },
+      },
+      {
+        pluginId: 'human-verification-cloudflare-turnstile',
+        config: { siteKey: 'site-key', secretKey: '   ', failurePolicy: 'fail_closed' },
+      },
+      {
+        pluginId: 'human-verification-hcaptcha',
+        config: { siteKey: ' \t ', secretKey: 'secret-key', failurePolicy: 'fail_closed' },
+      },
+      {
+        pluginId: 'human-verification-google-recaptcha',
+        config: { siteKey: 'site-key', secretKey: '  ', failurePolicy: 'fail_closed' },
+      },
+      {
+        pluginId: 'human-verification-cloudflare-turnstile',
+        config: {
+          siteKey: 'a'.repeat(2_049),
+          secretKey: 'secret-key',
+          failurePolicy: 'fail_closed',
+        },
+      },
+      {
+        pluginId: 'human-verification-hcaptcha',
+        config: { siteKey: 'site-key', secretKey: 'a'.repeat(8_193), failurePolicy: 'fail_closed' },
+      },
+      {
+        pluginId: 'human-verification-google-recaptcha',
+        config: {
+          siteKey: 'site-key',
+          secretKey: 'secret-key',
+          expectedHostname: 'https://not-a-hostname',
           failurePolicy: 'fail_closed',
         },
       },
@@ -1586,6 +1639,371 @@ describe('Plugin Admin API - Enable/Disable', () => {
         'plugins:enabled:notifier-cloudflare:tenant:tenant-1',
         'false'
       );
+    });
+  });
+
+  describe('PUT /api/admin/plugins/:id/disable for a human verification provider', () => {
+    const turnstile = 'human-verification-cloudflare-turnstile';
+    const settingsKey = 'settings:tenant:tenant-1:authentication-methods';
+
+    function setup(values: Record<string, string>, pluginId = turnstile) {
+      const kv = createMockKV({
+        getValues: {
+          'plugins:registry': JSON.stringify({
+            [turnstile]: createPluginEntry({ id: turnstile }),
+            'human-verification-hcaptcha': createPluginEntry({
+              id: 'human-verification-hcaptcha',
+            }),
+            'test-plugin': createPluginEntry({ id: 'test-plugin' }),
+          }),
+          [`plugins:enabled:${turnstile}:tenant:tenant-1`]: 'true',
+          ...values,
+        },
+      });
+      const configureHumanVerificationInstallation = vi.fn(async () => ({}));
+      const c = createMockContext({
+        method: 'PUT',
+        params: { id: pluginId },
+        tenantId: 'tenant-1',
+        body: {},
+        kv,
+        envOverrides: {
+          AUTHRIM_ENVIRONMENT_NAME: 'test',
+          PLUGIN_RUNNER: { configureHumanVerificationInstallation },
+        },
+      });
+      return { kv, c, configureHumanVerificationInstallation };
+    }
+
+    it.each([['login_enabled'], ['signup_enabled'], ['reauth_enabled']])(
+      'refuses with 409 while %s requires it, naming the setting',
+      async (flow) => {
+        const { kv, c, configureHumanVerificationInstallation } = setup({
+          [settingsKey]: JSON.stringify({
+            [`authentication-methods.human_verification.${flow}`]: true,
+          }),
+        });
+
+        const response = await disablePluginHandler(c);
+        const { body, status } = await getResponseData(response);
+
+        expect(status).toBe(409);
+        expect(body).toMatchObject({
+          error: 'human_verification_provider_in_use',
+          plugin_id: turnstile,
+          tenant_id: 'tenant-1',
+          settings: [`authentication-methods.human_verification.${flow}`],
+        });
+        expect(kv.put).not.toHaveBeenCalled();
+        expect(configureHumanVerificationInstallation).not.toHaveBeenCalled();
+      }
+    );
+
+    it('lists every setting that requires it', async () => {
+      const { c } = setup({
+        [settingsKey]: JSON.stringify({
+          'authentication-methods.human_verification.login_enabled': 'true',
+          'authentication-methods.human_verification.reauth_enabled': true,
+        }),
+      });
+      const { body } = await getResponseData(await disablePluginHandler(c));
+      expect(body.settings).toEqual([
+        'authentication-methods.human_verification.login_enabled',
+        'authentication-methods.human_verification.reauth_enabled',
+      ]);
+    });
+
+    it('treats a tenant that did not choose a provider as using Turnstile', async () => {
+      const { c } = setup({
+        [settingsKey]: JSON.stringify({
+          'authentication-methods.human_verification.login_enabled': true,
+        }),
+      });
+      const { status } = await getResponseData(await disablePluginHandler(c));
+      expect(status).toBe(409);
+    });
+
+    it('disables it once the required settings are off', async () => {
+      const { kv, c, configureHumanVerificationInstallation } = setup({
+        [settingsKey]: JSON.stringify({
+          'authentication-methods.human_verification.login_enabled': false,
+          'authentication-methods.human_verification.signup_enabled': 'false',
+        }),
+      });
+      await disablePluginHandler(c);
+      expect(c.json).toHaveBeenCalledWith(
+        expect.objectContaining({ success: true, pluginId: turnstile, enabled: false })
+      );
+      expect(kv.put).toHaveBeenCalledWith(`plugins:enabled:${turnstile}:tenant:tenant-1`, 'false');
+      expect(configureHumanVerificationInstallation).toHaveBeenCalledWith(
+        expect.objectContaining({ pluginId: turnstile, enabled: false })
+      );
+    });
+
+    it('disables it when the tenant has no settings at all', async () => {
+      const { kv, c } = setup({});
+      await disablePluginHandler(c);
+      expect(kv.put).toHaveBeenCalledWith(`plugins:enabled:${turnstile}:tenant:tenant-1`, 'false');
+    });
+
+    it('disables a provider the tenant does not use, whatever its flows require', async () => {
+      const { kv, c } = setup({
+        [settingsKey]: JSON.stringify({
+          'authentication-methods.human_verification.provider': 'human-verification-hcaptcha',
+          'authentication-methods.human_verification.login_enabled': true,
+        }),
+      });
+      await disablePluginHandler(c);
+      expect(kv.put).toHaveBeenCalledWith(`plugins:enabled:${turnstile}:tenant:tenant-1`, 'false');
+    });
+
+    it('refuses the provider the tenant chose, not the default', async () => {
+      const { c } = setup(
+        {
+          [settingsKey]: JSON.stringify({
+            'authentication-methods.human_verification.provider': 'human-verification-hcaptcha',
+            'authentication-methods.human_verification.login_enabled': true,
+          }),
+        },
+        'human-verification-hcaptcha'
+      );
+      const { status } = await getResponseData(await disablePluginHandler(c));
+      expect(status).toBe(409);
+    });
+
+    it('does not look at human verification settings for another plugin', async () => {
+      const { kv, c } = setup(
+        {
+          [settingsKey]: JSON.stringify({
+            'authentication-methods.human_verification.login_enabled': true,
+          }),
+        },
+        'test-plugin'
+      );
+      await disablePluginHandler(c);
+      expect(kv.put).toHaveBeenCalledWith('plugins:enabled:test-plugin:tenant:tenant-1', 'false');
+      expect(kv.get).not.toHaveBeenCalledWith(settingsKey);
+    });
+
+    it('refuses with 503 and writes nothing when the settings cannot be fetched', async () => {
+      const { kv, c, configureHumanVerificationInstallation } = setup({});
+      const original = kv.get as unknown as ReturnType<typeof vi.fn>;
+      const implementation = original.getMockImplementation() as (
+        key: string,
+        ...rest: unknown[]
+      ) => Promise<unknown>;
+      original.mockImplementation(async (key: string, ...rest: unknown[]) => {
+        if (key === 'settings:tenant:tenant-1:authentication-methods') throw new Error('kv down');
+        return implementation(key, ...rest);
+      });
+      const { body, status } = await getResponseData(await disablePluginHandler(c));
+      expect(status).toBe(503);
+      expect(body).toMatchObject({
+        error: 'temporarily_unavailable',
+        reason: 'settings_unavailable',
+        plugin_id: turnstile,
+      });
+      expect(kv.put).not.toHaveBeenCalled();
+      expect(configureHumanVerificationInstallation).not.toHaveBeenCalled();
+    });
+
+    it('can still disable it for a tenant whose settings cannot be read (the servers refuse them anyway)', async () => {
+      const { kv, c } = setup({ [settingsKey]: '{broken' });
+      await disablePluginHandler(c);
+      expect(kv.put).toHaveBeenCalledWith(`plugins:enabled:${turnstile}:tenant:tenant-1`, 'false');
+    });
+  });
+
+  describe('PUT /api/admin/platform/plugins/:id/disable for a human verification provider', () => {
+    const turnstile = 'human-verification-cloudflare-turnstile';
+    const requiresLogin = JSON.stringify({
+      'authentication-methods.human_verification.login_enabled': true,
+    });
+
+    function setup(values: Record<string, string>, tenantIds: string[], pluginId = turnstile) {
+      listTenantsMock.mockImplementation(
+        async (_env: unknown, options: { limit: number; afterTenantId?: string }) =>
+          tenantIds
+            .filter((tenantId) => tenantId > (options.afterTenantId ?? ''))
+            .slice(0, options.limit)
+            .map((tenantId) => ({ tenantId, store: {} }))
+      );
+      const kv = createMockKV({
+        getValues: {
+          'plugins:registry': JSON.stringify({
+            [turnstile]: createPluginEntry({ id: turnstile }),
+            'test-plugin': createPluginEntry({ id: 'test-plugin' }),
+          }),
+          [`plugins:enabled:${turnstile}`]: 'true',
+          ...values,
+        },
+      });
+      const c = createMockContext({
+        method: 'PUT',
+        params: { id: pluginId },
+        pluginTenantScope: 'platform',
+        body: {},
+        kv,
+      });
+      return { kv, c };
+    }
+
+    beforeEach(() => {
+      listTenantsMock.mockReset();
+    });
+
+    it('refuses with 409 while a tenant that inherits the flag requires it, naming the tenants', async () => {
+      const { kv, c } = setup(
+        {
+          'settings:tenant:tenant-a:authentication-methods': requiresLogin,
+          'settings:tenant:tenant-b:authentication-methods': requiresLogin,
+          // tenant-b keeps the provider on for itself, so the platform switch does not touch it.
+          [`plugins:enabled:${turnstile}:tenant:tenant-b`]: 'true',
+          // tenant-c requires nothing.
+          'settings:tenant:tenant-c:authentication-methods': JSON.stringify({}),
+        },
+        ['tenant-a', 'tenant-b', 'tenant-c']
+      );
+
+      const { body, status } = await getResponseData(await disablePluginHandler(c));
+
+      expect(status).toBe(409);
+      expect(body).toMatchObject({
+        error: 'human_verification_provider_in_use',
+        plugin_id: turnstile,
+        tenant_count: 1,
+        tenants: [
+          {
+            tenant_id: 'tenant-a',
+            settings: ['authentication-methods.human_verification.login_enabled'],
+          },
+        ],
+      });
+      expect(kv.put).not.toHaveBeenCalled();
+    });
+
+    it('disables it when no inheriting tenant requires it', async () => {
+      const { kv, c } = setup(
+        {
+          'settings:tenant:tenant-a:authentication-methods': requiresLogin,
+          [`plugins:enabled:${turnstile}:tenant:tenant-a`]: 'true',
+          'settings:tenant:tenant-b:authentication-methods': JSON.stringify({
+            'authentication-methods.human_verification.provider': 'human-verification-hcaptcha',
+            'authentication-methods.human_verification.login_enabled': true,
+          }),
+        },
+        ['tenant-a', 'tenant-b', 'tenant-c']
+      );
+      await disablePluginHandler(c);
+      expect(kv.put).toHaveBeenCalledWith(`plugins:enabled:${turnstile}`, 'false');
+    });
+
+    it('does not look at tenants when the platform flag is not on', async () => {
+      const { kv, c } = setup(
+        {
+          [`plugins:enabled:${turnstile}`]: 'false',
+          'settings:tenant:tenant-a:authentication-methods': requiresLogin,
+        },
+        ['tenant-a']
+      );
+      await disablePluginHandler(c);
+      expect(listTenantsMock).not.toHaveBeenCalled();
+      expect(kv.put).toHaveBeenCalledWith(`plugins:enabled:${turnstile}`, 'false');
+    });
+
+    it('does not look at tenants for another plugin', async () => {
+      const { kv, c } = setup({}, ['tenant-a'], 'test-plugin');
+      await disablePluginHandler(c);
+      expect(listTenantsMock).not.toHaveBeenCalled();
+      expect(kv.put).toHaveBeenCalledWith('plugins:enabled:test-plugin', 'false');
+    });
+
+    it('reads the tenants page by page and finds a tenant on a later page', async () => {
+      const tenantIds = Array.from(
+        { length: 150 },
+        (_, index) => `tenant-${String(index).padStart(3, '0')}`
+      );
+      const { c } = setup(
+        { 'settings:tenant:tenant-149:authentication-methods': requiresLogin },
+        tenantIds
+      );
+      const { body, status } = await getResponseData(await disablePluginHandler(c));
+      expect(status).toBe(409);
+      expect(body.tenants).toEqual([expect.objectContaining({ tenant_id: 'tenant-149' })]);
+      expect(listTenantsMock).toHaveBeenCalledTimes(2);
+      expect(listTenantsMock.mock.calls[1]?.[1]).toMatchObject({ afterTenantId: 'tenant-099' });
+    });
+
+    it('checks exactly 200 tenants', async () => {
+      const tenantIds = Array.from(
+        { length: 200 },
+        (_, index) => `tenant-${String(index).padStart(3, '0')}`
+      );
+      const { kv, c } = setup({}, tenantIds);
+      await disablePluginHandler(c);
+      expect(kv.put).toHaveBeenCalledWith(`plugins:enabled:${turnstile}`, 'false');
+    });
+
+    it('refuses on the safe side when there are more tenants than it can check', async () => {
+      const tenantIds = Array.from(
+        { length: 201 },
+        (_, index) => `tenant-${String(index).padStart(3, '0')}`
+      );
+      const { kv, c } = setup({}, tenantIds);
+      const { body, status } = await getResponseData(await disablePluginHandler(c));
+      expect(status).toBe(409);
+      expect(body).toMatchObject({ error: 'human_verification_scope_too_large' });
+      expect(kv.put).not.toHaveBeenCalled();
+    });
+
+    it('says when no tenant directory is configured (retrying will not help), without leaking more', async () => {
+      const { kv, c } = setup({}, []);
+      listTenantsMock.mockRejectedValue(new Error('environment_tenant_directory_unavailable'));
+      const { body, status } = await getResponseData(await disablePluginHandler(c));
+      expect(status).toBe(503);
+      expect(body).toMatchObject({
+        error: 'temporarily_unavailable',
+        reason: 'tenant_directory_unavailable',
+        plugin_id: turnstile,
+      });
+      expect(body.error_description).toMatch(/Retrying will not help/);
+      expect(JSON.stringify(body)).not.toMatch(/TENANT_RUNTIME_REGISTRY|environment_tenant/);
+      expect(kv.put).not.toHaveBeenCalled();
+    });
+
+    it('treats any other failure to list the tenants as worth retrying', async () => {
+      const { kv, c } = setup({}, []);
+      listTenantsMock.mockRejectedValue(new Error('d1 timeout'));
+      const { body, status } = await getResponseData(await disablePluginHandler(c));
+      expect(status).toBe(503);
+      expect(body).toMatchObject({ reason: 'settings_unavailable' });
+      expect(kv.put).not.toHaveBeenCalled();
+    });
+
+    it('asks for at most one tenant past the room left under the limit', async () => {
+      const tenantIds = Array.from(
+        { length: 201 },
+        (_, index) => `tenant-${String(index).padStart(3, '0')}`
+      );
+      const { c } = setup({}, tenantIds);
+      await disablePluginHandler(c);
+      expect(listTenantsMock.mock.calls.map((call) => call[1].limit)).toEqual([100, 100, 1]);
+    });
+
+    it('refuses on the safe side when a tenant settings read fails', async () => {
+      const { kv, c } = setup({}, ['tenant-a']);
+      const original = kv.get as unknown as ReturnType<typeof vi.fn>;
+      const implementation = original.getMockImplementation() as (
+        key: string,
+        ...rest: unknown[]
+      ) => Promise<unknown>;
+      original.mockImplementation(async (key: string, ...rest: unknown[]) => {
+        if (key === 'settings:tenant:tenant-a:authentication-methods') throw new Error('kv down');
+        return implementation(key, ...rest);
+      });
+      const { status } = await getResponseData(await disablePluginHandler(c));
+      expect(status).toBe(503);
+      expect(kv.put).not.toHaveBeenCalled();
     });
   });
 

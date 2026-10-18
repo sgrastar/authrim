@@ -35,6 +35,8 @@
 	type Props = {
 		loading?: boolean;
 		error?: string;
+		/** The tenant requires human verification the provider cannot give; shown apart from `error`. */
+		humanVerificationUnavailable?: boolean;
 		challengeData?: ChallengeData | null;
 		showPasskey?: boolean;
 		emailCodeEnabled?: boolean;
@@ -68,6 +70,7 @@
 	let {
 		loading = false,
 		error = '',
+		humanVerificationUnavailable = false,
 		challengeData = null,
 		showPasskey = false,
 		emailCodeEnabled = false,
@@ -144,6 +147,12 @@
 					</div>
 				</div>
 			</div>
+		{/if}
+
+		{#if humanVerificationUnavailable}
+			<Alert variant="error" class="mb-4">
+				{$LL.login_humanVerificationUnavailable()}
+			</Alert>
 		{/if}
 
 		{#if error}

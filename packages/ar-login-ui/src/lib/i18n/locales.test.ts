@@ -289,6 +289,7 @@ describe('LoginUI locales', () => {
 			'login_errorDirectoryUnmapped',
 			'login_errorDirectoryFailed',
 			'login_humanVerificationLoadFailed',
+			'login_humanVerificationUnavailable',
 			'login_noMethodsAvailable',
 			'login_methodsLoadFailed',
 			'register_totpStartFailed',

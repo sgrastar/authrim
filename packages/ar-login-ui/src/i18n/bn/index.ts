@@ -258,6 +258,8 @@ const translation = {
 	login_humanVerificationLoading: 'নিরাপত্তা যাচাই লোড হচ্ছে...',
 	login_humanVerificationLoadFailed:
 		'সিকিউরিটি চেক লোড করা যায়নি। পৃষ্ঠাটি পুনরায় লোড করুন এবং আবার চেষ্টা করুন।',
+	login_humanVerificationUnavailable:
+		'মানুষ যাচাইকরণ এখন উপলব্ধ নয়। অনুগ্রহ করে প্রশাসকের সঙ্গে যোগাযোগ করুন।',
 	login_noMethodsAvailable:
 		'এই সংস্থার জন্য কোনও প্রমাণীকরণ পদ্ধতি সক্ষম নয়। আপনার প্রশাসকের সাথে যোগাযোগ করুন।',
 	login_passkeyPreparing: 'পাসকি প্রমাণীকরণ প্রস্তুত হচ্ছে...',

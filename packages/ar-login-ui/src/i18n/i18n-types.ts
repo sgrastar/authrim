@@ -990,6 +990,10 @@ type RootTranslation = {
 	 */
 	login_humanVerificationLoadFailed: string
 	/**
+	 * H​u​m​a​n​ ​v​e​r​i​f​i​c​a​t​i​o​n​ ​i​s​ ​c​u​r​r​e​n​t​l​y​ ​u​n​a​v​a​i​l​a​b​l​e​.​ ​C​o​n​t​a​c​t​ ​y​o​u​r​ ​a​d​m​i​n​i​s​t​r​a​t​o​r​.
+	 */
+	login_humanVerificationUnavailable: string
+	/**
 	 * N​o​ ​a​u​t​h​e​n​t​i​c​a​t​i​o​n​ ​m​e​t​h​o​d​ ​i​s​ ​e​n​a​b​l​e​d​ ​f​o​r​ ​t​h​i​s​ ​o​r​g​a​n​i​z​a​t​i​o​n​.​ ​C​o​n​t​a​c​t​ ​y​o​u​r​ ​a​d​m​i​n​i​s​t​r​a​t​o​r​.
 	 */
 	login_noMethodsAvailable: string
@@ -2753,6 +2757,10 @@ export type TranslationFunctions = {
 	 * Security check could not be loaded. Reload the page and try again.
 	 */
 	login_humanVerificationLoadFailed: () => LocalizedString
+	/**
+	 * Human verification is currently unavailable. Contact your administrator.
+	 */
+	login_humanVerificationUnavailable: () => LocalizedString
 	/**
 	 * No authentication method is enabled for this organization. Contact your administrator.
 	 */

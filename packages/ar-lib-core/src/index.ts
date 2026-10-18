@@ -57,6 +57,7 @@ export * from './services/notification-installation-id';
 export * from './services/plugin-installation-id';
 export * from './services/plugin-host-interface-contract.js';
 export * from './services/human-verification-runner';
+export * from './services/human-verification-policy';
 
 // RFC 7517: JWK Types
 export * from './types/jwk';

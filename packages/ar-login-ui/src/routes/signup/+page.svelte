@@ -22,6 +22,7 @@
 	import { isValidImageUrl, isValidRedirectUrl, sanitizeColor } from '$lib/utils/url-validation';
 	import {
 		fetchAuthenticationMethods,
+		isHumanVerificationUnavailableFor,
 		fetchAuthenticationMethodsForClient,
 		type AuthenticationMethodsResponse,
 		type ExternalProvider
@@ -168,6 +169,7 @@
 	);
 	let humanVerificationMode = $state<'managed' | 'checkbox' | 'invisible' | 'score'>('managed');
 	let turnstileRequired = $state(false);
+	let humanVerificationUnavailable = $state(false);
 	let turnstileToken = $state('');
 	let turnstileResetKey = $state(0);
 	let activeTurnstileTarget = $state<string | null>(null);
@@ -544,6 +546,10 @@
 			humanVerificationProvider !== 'custom' &&
 			Boolean(data.methods.humanVerification.siteKey);
 		turnstileSiteKey = turnstileRequired ? data.methods.humanVerification.siteKey : null;
+		humanVerificationUnavailable = isHumanVerificationUnavailableFor(
+			data.methods.humanVerification,
+			'signup'
+		);
 		externalProviders = data.methods.external.providers.filter(
 			(provider) => provider.signupEnabled ?? provider.enabled !== false
 		);
@@ -1782,6 +1788,7 @@
 		legacyMethods={!blockLegacyAuthLayout}
 		alerts={{
 			error,
+			humanVerificationUnavailable,
 			runtimeFlow: runtimeFlowError,
 			runtimeScreenMissing: runtimeAuthFormMissing,
 			passkeyProgress: passkeyProgressMessage,

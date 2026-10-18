@@ -770,8 +770,234 @@ describe('Authentication Methods API', () => {
         signupEnabled: false,
         reauthEnabled: false,
         failurePolicy: 'fail_closed',
+        required: true,
+        requiredFor: { login: true, signup: false, reauth: false },
+        available: true,
+        reason: null,
       });
       expect(JSON.stringify(body)).not.toContain('0x4AAAAAA_secret_key');
+    });
+
+    describe('a flow that requires human verification when the provider cannot serve it', () => {
+      const TURNSTILE = 'human-verification-cloudflare-turnstile';
+      const config = JSON.stringify({ siteKey: 'site-key', secretKey: 'secret-key' });
+
+      async function fetchMethods(values: Record<string, string>) {
+        const { app, mockEnv } = createTestApp({ settingsKV: createMockKV(values) });
+        const res = await app.request(
+          '/api/auth/authentication-methods',
+          { method: 'GET' },
+          mockEnv
+        );
+        expect(res.status).toBe(200);
+        return ((await res.json()) as any).methods.humanVerification;
+      }
+
+      const loginRequired = JSON.stringify({
+        'authentication-methods.human_verification.login_enabled': true,
+      });
+
+      it('says the provider is disabled when its plugin was disabled', async () => {
+        const hv = await fetchMethods({
+          'settings:tenant:default:authentication-methods': loginRequired,
+          [`plugins:enabled:${TURNSTILE}:tenant:default`]: 'false',
+          [`plugins:config:${TURNSTILE}:tenant:default`]: config,
+        });
+        expect(hv).toMatchObject({
+          enabled: false,
+          loginEnabled: false,
+          siteKey: null,
+          required: true,
+          requiredFor: { login: true, signup: false, reauth: false },
+          available: false,
+          reason: 'provider_disabled',
+        });
+      });
+
+      it('says the provider is disabled when its plugin was never enabled (unset is off, as in the plugin admin API)', async () => {
+        const hv = await fetchMethods({
+          'settings:tenant:default:authentication-methods': loginRequired,
+          [`plugins:config:${TURNSTILE}:tenant:default`]: config,
+        });
+        expect(hv).toMatchObject({
+          siteKey: null,
+          required: true,
+          available: false,
+          reason: 'provider_disabled',
+        });
+      });
+
+      it('says the provider is unconfigured when it is enabled but has no credentials', async () => {
+        const hv = await fetchMethods({
+          'settings:tenant:default:authentication-methods': loginRequired,
+          [`plugins:enabled:${TURNSTILE}:tenant:default`]: 'true',
+        });
+        expect(hv).toMatchObject({
+          enabled: true,
+          loginEnabled: true,
+          siteKey: null,
+          required: true,
+          available: false,
+          reason: 'provider_unconfigured',
+        });
+      });
+
+      it('honours a global enable, and a tenant disable over it', async () => {
+        const base = {
+          'settings:tenant:default:authentication-methods': loginRequired,
+          [`plugins:config:${TURNSTILE}:tenant:default`]: config,
+        };
+        await expect(
+          fetchMethods({ ...base, [`plugins:enabled:${TURNSTILE}`]: 'true' })
+        ).resolves.toMatchObject({ available: true, siteKey: 'site-key' });
+        await expect(
+          fetchMethods({
+            ...base,
+            [`plugins:enabled:${TURNSTILE}`]: 'true',
+            [`plugins:enabled:${TURNSTILE}:tenant:default`]: 'false',
+          })
+        ).resolves.toMatchObject({ available: false, reason: 'provider_disabled' });
+      });
+
+      it.each(['{bad', '[]', 'null', '"text"'])(
+        'says the settings are unreadable when the document is %s, as the servers refuse then',
+        async (document) => {
+          const { app, mockEnv } = createTestApp({
+            settingsKV: createMockKV({
+              'settings:tenant:default:authentication-methods': document,
+              [`plugins:enabled:${TURNSTILE}:tenant:default`]: 'true',
+              [`plugins:config:${TURNSTILE}:tenant:default`]: config,
+            }),
+          });
+          const res = await app.request(
+            '/api/auth/authentication-methods',
+            { method: 'GET' },
+            mockEnv
+          );
+          expect(res.status).toBe(200);
+          const body = (await res.json()) as any;
+          expect(body.methods.humanVerification).toMatchObject({
+            enabled: false,
+            siteKey: null,
+            required: true,
+            requiredFor: { login: true, signup: true, reauth: true },
+            available: false,
+            reason: 'settings_unreadable',
+          });
+          // The rest of the response is still there.
+          expect(body.methods.passkey).toBeDefined();
+          expect(body.methods.external).toBeDefined();
+        }
+      );
+
+      it('says the settings are unreadable when the KV read throws', async () => {
+        const settingsKV = createMockKV({});
+        const get = settingsKV.get as unknown as ReturnType<typeof vi.fn>;
+        const original = get.getMockImplementation() as
+          | ((key: string, ...rest: unknown[]) => Promise<unknown>)
+          | undefined;
+        get.mockImplementation(async (key: string, ...rest: unknown[]) => {
+          if (key === 'settings:tenant:default:authentication-methods') throw new Error('kv down');
+          return original ? original(key, ...rest) : null;
+        });
+        const { app, mockEnv } = createTestApp({ settingsKV });
+        const res = await app.request(
+          '/api/auth/authentication-methods',
+          { method: 'GET' },
+          mockEnv
+        );
+        const body = (await res.json()) as any;
+        expect(body.methods.humanVerification).toMatchObject({
+          available: false,
+          reason: 'settings_unreadable',
+        });
+      });
+
+      it.each([
+        ['a secret key of spaces', { siteKey: 'site-key', secretKey: '   ' }],
+        ['a site key of spaces', { siteKey: ' \t', secretKey: 'secret-key' }],
+        ['no secret key', { siteKey: 'site-key' }],
+        [
+          'a fail_open policy (the runner never takes one)',
+          { siteKey: 'site-key', secretKey: 'secret-key', failurePolicy: 'fail_open' },
+        ],
+        [
+          'a site key past the runner limit',
+          { siteKey: 'a'.repeat(2_049), secretKey: 'secret-key' },
+        ],
+        [
+          'a secret key past the runner limit',
+          { siteKey: 'site-key', secretKey: 'a'.repeat(8_193) },
+        ],
+        [
+          'a hostname the runner refuses',
+          { siteKey: 'site-key', secretKey: 'secret-key', expectedHostname: 'not a host' },
+        ],
+        [
+          'a widget mode Turnstile does not support',
+          { siteKey: 'site-key', secretKey: 'secret-key', widgetMode: 'checkbox' },
+        ],
+      ])('says the provider is unconfigured with %s', async (_name, credentials) => {
+        const hv = await fetchMethods({
+          'settings:tenant:default:authentication-methods': loginRequired,
+          [`plugins:enabled:${TURNSTILE}:tenant:default`]: 'true',
+          [`plugins:config:${TURNSTILE}:tenant:default`]: JSON.stringify(credentials),
+        });
+        expect(hv).toMatchObject({
+          siteKey: null,
+          available: false,
+          reason: 'provider_unconfigured',
+        });
+      });
+
+      it('returns the site key without surrounding spaces', async () => {
+        const hv = await fetchMethods({
+          'settings:tenant:default:authentication-methods': loginRequired,
+          [`plugins:enabled:${TURNSTILE}:tenant:default`]: 'true',
+          [`plugins:config:${TURNSTILE}:tenant:default`]: JSON.stringify({
+            siteKey: '  site-key ',
+            secretKey: 'secret-key',
+          }),
+        });
+        expect(hv).toMatchObject({ siteKey: 'site-key', available: true });
+      });
+
+      it('reports requiredFor per flow, whatever the provider state', async () => {
+        const hv = await fetchMethods({
+          'settings:tenant:default:authentication-methods': JSON.stringify({
+            'authentication-methods.human_verification.signup_enabled': 'true',
+            'authentication-methods.human_verification.reauth_enabled': true,
+          }),
+        });
+        expect(hv.requiredFor).toEqual({ login: false, signup: true, reauth: true });
+        expect(hv.required).toBe(true);
+      });
+
+      it('requires nothing, and reports a usable provider as available, by default', async () => {
+        const hv = await fetchMethods({
+          [`plugins:enabled:${TURNSTILE}:tenant:default`]: 'true',
+          [`plugins:config:${TURNSTILE}:tenant:default`]: config,
+        });
+        expect(hv).toMatchObject({
+          enabled: false,
+          required: false,
+          requiredFor: { login: false, signup: false, reauth: false },
+          available: true,
+          reason: null,
+        });
+      });
+
+      it('picks the provider the same way the server does (trimmed, default when blank)', async () => {
+        const hv = await fetchMethods({
+          'settings:tenant:default:authentication-methods': JSON.stringify({
+            'authentication-methods.human_verification.provider': '   ',
+            'authentication-methods.human_verification.login_enabled': true,
+          }),
+          [`plugins:enabled:${TURNSTILE}:tenant:default`]: 'true',
+          [`plugins:config:${TURNSTILE}:tenant:default`]: config,
+        });
+        expect(hv).toMatchObject({ provider: 'turnstile', available: true, siteKey: 'site-key' });
+      });
     });
 
     it('should expose selected reCAPTCHA provider metadata without the secret key', async () => {
@@ -787,7 +1013,7 @@ describe('Authentication Methods API', () => {
           secretKey: 'recaptcha-secret-key',
           widgetMode: 'score',
           scoreThreshold: 0.7,
-          failurePolicy: 'fail_open',
+          failurePolicy: 'fail_closed',
         }),
       });
       const { app, mockEnv } = createTestApp({ settingsKV });

@@ -22,8 +22,19 @@
  */
 
 import type { Context } from 'hono';
-import type { Env, LoginUITextLocalizations } from '@authrim/ar-lib-core';
+import type {
+  Env,
+  HumanVerificationUnavailableReason,
+  LoginUITextLocalizations,
+} from '@authrim/ar-lib-core';
 import {
+  HUMAN_VERIFICATION_FLOWS,
+  humanVerificationConfigValid,
+  humanVerificationProviderAvailability,
+  humanVerificationSelectionFromSettings,
+  isHumanVerificationPluginEnabled,
+  isHumanVerificationRequired,
+  readHumanVerificationSelection,
   getRequestHost,
   getLogger,
   getTenantIdFromContext,
@@ -101,12 +112,25 @@ type HumanVerificationFailurePolicy = 'fail_closed';
 type HumanVerificationWidgetMode = 'managed' | 'checkbox' | 'invisible' | 'score';
 
 interface HumanVerificationMethod {
+  /** The widget is shown for at least one flow (the provider is on and a flow asks for it). */
   enabled: boolean;
   provider: HumanVerificationProvider;
   siteKey: string | null;
+  /** Per flow: the widget is shown (the flow asks for it and the provider is on). */
   loginEnabled: boolean;
   signupEnabled: boolean;
   reauthEnabled: boolean;
+  /** At least one flow's settings ask for human verification, whether or not the provider is on. */
+  required: boolean;
+  /** Per flow: the settings ask for human verification (the server refuses without a token). */
+  requiredFor: { login: boolean; signup: boolean; reauth: boolean };
+  /** The provider can verify a token (it is enabled and has credentials). */
+  available: boolean;
+  /**
+   * Why it cannot. A flow in `requiredFor` with `available: false` cannot be completed: the
+   * server refuses it, so the UI says so instead of showing no widget.
+   */
+  reason: HumanVerificationUnavailableReason | null;
   failurePolicy: HumanVerificationFailurePolicy;
   widget: {
     actionPrefix: string;
@@ -1738,14 +1762,7 @@ interface DirectoryPasswordResolved {
   label: string;
 }
 
-interface HumanVerificationResolved {
-  providerPluginId: string;
-  loginEnabled: boolean;
-  signupEnabled: boolean;
-  reauthEnabled: boolean;
-}
-
-interface HumanVerificationPluginConfig {
+interface HumanVerificationPluginConfig extends Record<string, unknown> {
   siteKey?: unknown;
   secretKey?: unknown;
   failurePolicy?: unknown;
@@ -2005,97 +2022,104 @@ function widgetModeFromConfig(
   return 'checkbox';
 }
 
-async function isPluginEnabled(
-  settings: KVNamespace | undefined,
-  pluginId: string,
-  tenantId: string
-): Promise<boolean> {
-  if (!settings) return false;
+interface HumanVerificationProviderState {
+  pluginEnabled: boolean;
+  configured: boolean;
+  siteKey: string;
+  config: HumanVerificationPluginConfig;
+}
 
-  const tenantValue = await settings.get(`plugins:enabled:${pluginId}:tenant:${tenantId}`);
-  if (tenantValue !== null) {
-    return tenantValue === 'true';
+async function readHumanVerificationProviderState(
+  env: Env,
+  tenantId: string,
+  pluginId: string
+): Promise<HumanVerificationProviderState> {
+  try {
+    const pluginEnabled = await isHumanVerificationPluginEnabled(env, tenantId, pluginId);
+    const config = await readHumanVerificationPluginConfig(env, tenantId, pluginId);
+    const siteKey = typeof config.siteKey === 'string' ? config.siteKey.trim() : '';
+    return {
+      pluginEnabled,
+      // The same test the projection to the runner applies: both keys within their limits, a
+      // well-formed hostname, a widget mode the provider supports.
+      configured: humanVerificationConfigValid(pluginId, config),
+      siteKey,
+      config,
+    };
+  } catch {
+    return { pluginEnabled: false, configured: false, siteKey: '', config: {} };
   }
+}
 
-  const globalValue = await settings.get(`plugins:enabled:${pluginId}`);
-  if (globalValue !== null) {
-    return globalValue === 'true';
-  }
-
-  return true;
+/**
+ * Whether the provider can verify a token for the tenant, and why not: the same answer
+ * `/api/auth/authentication-methods` gives the login UI, for the admin guards to use.
+ */
+export async function resolveHumanVerificationProviderAvailability(
+  env: Env,
+  tenantId: string,
+  pluginId: string
+): Promise<{ available: boolean; reason: HumanVerificationUnavailableReason | null }> {
+  const state = await readHumanVerificationProviderState(env, tenantId, pluginId);
+  return humanVerificationProviderAvailability(state);
 }
 
 async function resolveHumanVerificationMethod(
   env: Env,
   tenantId: string
 ): Promise<HumanVerificationMethod> {
-  const defaults: HumanVerificationResolved = {
-    providerPluginId: 'human-verification-cloudflare-turnstile',
-    loginEnabled: false,
-    signupEnabled: false,
-    reauthEnabled: false,
-  };
-
-  let resolved = defaults;
+  // The selection and the availability come from the same functions the servers that check the
+  // token use (ar-lib-core human-verification-policy.ts), so the widget and the check agree.
+  let selection;
   try {
-    const kvJson = await env.SETTINGS?.get(`settings:tenant:${tenantId}:authentication-methods`);
-    if (kvJson) {
-      const kvSettings = JSON.parse(kvJson) as AuthenticationMethodKVSettings;
-      resolved = {
-        providerPluginId:
-          typeof kvSettings['authentication-methods.human_verification.provider'] === 'string'
-            ? kvSettings['authentication-methods.human_verification.provider']
-            : defaults.providerPluginId,
-        loginEnabled: normalizeBoolean(
-          kvSettings['authentication-methods.human_verification.login_enabled'],
-          defaults.loginEnabled
-        ),
-        signupEnabled: normalizeBoolean(
-          kvSettings['authentication-methods.human_verification.signup_enabled'],
-          defaults.signupEnabled
-        ),
-        reauthEnabled: normalizeBoolean(
-          kvSettings['authentication-methods.human_verification.reauth_enabled'],
-          defaults.reauthEnabled
-        ),
-      };
-    }
+    selection = await readHumanVerificationSelection(env, tenantId);
   } catch {
-    resolved = defaults;
+    // The settings cannot be read, so the servers refuse every attempt (fail closed). Say so:
+    // every flow counts as required and unavailable. Only this part of the response is affected.
+    const fallback = humanVerificationSelectionFromSettings(null);
+    return {
+      enabled: false,
+      provider: providerFromHumanVerificationPluginId(fallback.pluginId),
+      siteKey: null,
+      loginEnabled: false,
+      signupEnabled: false,
+      reauthEnabled: false,
+      required: true,
+      requiredFor: { login: true, signup: true, reauth: true },
+      available: false,
+      reason: 'settings_unreadable',
+      failurePolicy: 'fail_closed',
+      widget: { actionPrefix: 'authrim', theme: 'auto', size: 'flexible', mode: 'managed' },
+    };
   }
 
-  let pluginEnabled = false;
-  let pluginConfig: HumanVerificationPluginConfig = {};
-  try {
-    pluginEnabled = await isPluginEnabled(env.SETTINGS, resolved.providerPluginId, tenantId);
-    pluginConfig = await readHumanVerificationPluginConfig(
-      env,
-      tenantId,
-      resolved.providerPluginId
-    );
-  } catch {
-    pluginEnabled = false;
-    pluginConfig = {};
-  }
-  const provider = providerFromHumanVerificationPluginId(resolved.providerPluginId);
-  const siteKey = typeof pluginConfig.siteKey === 'string' ? pluginConfig.siteKey : '';
-  const configured = Boolean(siteKey && typeof pluginConfig.secretKey === 'string');
+  const state = await readHumanVerificationProviderState(env, tenantId, selection.pluginId);
+  const availability = humanVerificationProviderAvailability(state);
+  const provider = providerFromHumanVerificationPluginId(selection.pluginId);
   const failurePolicy = 'fail_closed' as const;
-  const hasEnabledUsage = resolved.loginEnabled || resolved.signupEnabled || resolved.reauthEnabled;
+  const required = isHumanVerificationRequired(selection, HUMAN_VERIFICATION_FLOWS);
 
   return {
-    enabled: pluginEnabled && hasEnabledUsage,
+    enabled: state.pluginEnabled && required,
     provider,
-    siteKey: pluginEnabled && configured ? siteKey : null,
-    loginEnabled: pluginEnabled && resolved.loginEnabled,
-    signupEnabled: pluginEnabled && resolved.signupEnabled,
-    reauthEnabled: pluginEnabled && resolved.reauthEnabled,
+    siteKey: state.pluginEnabled && state.configured ? state.siteKey : null,
+    loginEnabled: state.pluginEnabled && selection.required.login,
+    signupEnabled: state.pluginEnabled && selection.required.signup,
+    reauthEnabled: state.pluginEnabled && selection.required.reauth,
+    required,
+    requiredFor: {
+      login: selection.required.login,
+      signup: selection.required.signup,
+      reauth: selection.required.reauth,
+    },
+    available: availability.available,
+    reason: availability.reason,
     failurePolicy,
     widget: {
       actionPrefix: 'authrim',
       theme: 'auto',
       size: 'flexible',
-      mode: widgetModeFromConfig(provider, pluginConfig),
+      mode: widgetModeFromConfig(provider, state.config),
     },
   };
 }

@@ -171,6 +171,57 @@ describe('provider reprojection jobs', () => {
 
   const logger = { info: vi.fn(), warn: vi.fn() };
 
+  it.each([
+    ['padded with spaces', '  human-verification-cloudflare-turnstile '],
+    ['blank (the default provider)', '   '],
+    ['empty (the default provider)', ''],
+  ])('reads a provider that is %s as the selection the API reports', async (_name, provider) => {
+    env.SETTINGS = kv({
+      'plugins:config:human-verification-cloudflare-turnstile': JSON.stringify({
+        siteKey: 'site-key',
+        secretKey: 'secret-key',
+        failurePolicy: 'fail_closed',
+      }),
+      'plugins:enabled:human-verification-cloudflare-turnstile': 'true',
+      'settings:tenant:tenant-a:authentication-methods': JSON.stringify({
+        'authentication-methods.human_verification.provider': provider,
+        'authentication-methods.human_verification.login_enabled': true,
+      }),
+      'settings:tenant:tenant-b:authentication-methods': JSON.stringify({
+        'authentication-methods.human_verification.provider': provider,
+        'authentication-methods.human_verification.login_enabled': true,
+      }),
+    });
+    await markGlobalProviderDesiredRevision(env, 'human-verification-cloudflare-turnstile', 1_000);
+    await processProviderReprojectionJobs(env, logger, { now: 1_001 });
+    expect(configureHumanVerificationInstallation).toHaveBeenCalledTimes(2);
+    for (const call of configureHumanVerificationInstallation.mock.calls) {
+      expect(call[0]).toMatchObject({
+        pluginId: 'human-verification-cloudflare-turnstile',
+        enabled: true,
+      });
+    }
+  });
+
+  it('does not project a provider whose key is only spaces', async () => {
+    env.SETTINGS = kv({
+      'plugins:config:human-verification-cloudflare-turnstile': JSON.stringify({
+        siteKey: 'site-key',
+        secretKey: '   ',
+        failurePolicy: 'fail_closed',
+      }),
+      'plugins:enabled:human-verification-cloudflare-turnstile': 'true',
+      'settings:tenant:tenant-a:authentication-methods': JSON.stringify({
+        'authentication-methods.human_verification.login_enabled': true,
+      }),
+    });
+    await markGlobalProviderDesiredRevision(env, 'human-verification-cloudflare-turnstile', 1_000);
+    await processProviderReprojectionJobs(env, logger, { now: 1_001 });
+    expect(configureHumanVerificationInstallation).not.toHaveBeenCalledWith(
+      expect.objectContaining({ tenantId: 'tenant-a', enabled: true })
+    );
+  });
+
   it('automatically projects the global revision and exposes completed progress', async () => {
     const revision = await markGlobalProviderDesiredRevision(
       env,
@@ -210,6 +261,80 @@ describe('provider reprojection jobs', () => {
       'environment_tenant_directory_unavailable'
     );
     expect(configureHumanVerificationInstallation).not.toHaveBeenCalled();
+  });
+
+  it('does not create an enabled CAPTCHA installation for a provider nobody enabled', async () => {
+    // No plugins:enabled flag at all: the plugin admin API, the UI and the servers call it off.
+    env.SETTINGS = kv({
+      'plugins:config:human-verification-cloudflare-turnstile': JSON.stringify({
+        siteKey: 'site-key',
+        secretKey: 'secret-key',
+        failurePolicy: 'fail_closed',
+      }),
+      'settings:tenant:tenant-a:authentication-methods': JSON.stringify({
+        'authentication-methods.human_verification.login_enabled': true,
+      }),
+      'settings:tenant:tenant-b:authentication-methods': JSON.stringify({
+        'authentication-methods.human_verification.login_enabled': true,
+      }),
+    });
+    await markGlobalProviderDesiredRevision(env, 'human-verification-cloudflare-turnstile', 1_000);
+    await processProviderReprojectionJobs(env, logger, { now: 1_001 });
+    expect(configureHumanVerificationInstallation).not.toHaveBeenCalledWith(
+      expect.objectContaining({ enabled: true })
+    );
+    // It is switched off for the tenants, which is what the API reports.
+    expect(configureHumanVerificationInstallation).toHaveBeenCalledWith(
+      expect.objectContaining({ tenantId: 'tenant-a', enabled: false })
+    );
+  });
+
+  it('still projects a provider enabled for the tenant alone', async () => {
+    env.SETTINGS = kv({
+      'plugins:config:human-verification-cloudflare-turnstile': JSON.stringify({
+        siteKey: 'site-key',
+        secretKey: 'secret-key',
+        failurePolicy: 'fail_closed',
+      }),
+      'plugins:enabled:human-verification-cloudflare-turnstile:tenant:tenant-a': 'true',
+      'settings:tenant:tenant-a:authentication-methods': JSON.stringify({
+        'authentication-methods.human_verification.login_enabled': true,
+      }),
+      'settings:tenant:tenant-b:authentication-methods': JSON.stringify({
+        'authentication-methods.human_verification.login_enabled': true,
+      }),
+    });
+    await markGlobalProviderDesiredRevision(env, 'human-verification-cloudflare-turnstile', 1_000);
+    await processProviderReprojectionJobs(env, logger, { now: 1_001 });
+    expect(configureHumanVerificationInstallation).toHaveBeenCalledWith(
+      expect.objectContaining({ tenantId: 'tenant-a', enabled: true })
+    );
+    expect(configureHumanVerificationInstallation).not.toHaveBeenCalledWith(
+      expect.objectContaining({ tenantId: 'tenant-b', enabled: true })
+    );
+  });
+
+  it('keeps the email providers on by default: an unset flag does not switch them off', async () => {
+    const configureNotificationInstallation = vi.fn(async () => {
+      throw new Error('unexpected_notification_runner_call');
+    });
+    env.SETTINGS = kv({});
+    (env as unknown as { PLUGIN_RUNNER: unknown }).PLUGIN_RUNNER = {
+      configureHumanVerificationInstallation,
+      configureNotificationInstallation,
+    };
+    await markGlobalProviderDesiredRevision(env, 'notifier-resend', 1_000);
+    await processProviderReprojectionJobs(env, logger, { now: 1_001 });
+    // On by default and not in the tenants' provider order: nothing to project or to disable.
+    expect(configureNotificationInstallation).not.toHaveBeenCalled();
+    await expect(listProviderReprojectionStatus(env)).resolves.toEqual([
+      expect.objectContaining({
+        pluginId: 'notifier-resend',
+        status: 'completed',
+        failed: 0,
+        skipped: 2,
+      }),
+    ]);
   });
 
   it('skips explicit tenant config overrides without copying global credentials', async () => {
