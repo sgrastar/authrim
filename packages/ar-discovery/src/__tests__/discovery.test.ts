@@ -401,6 +401,95 @@ describe('Discovery Handler', () => {
       expect(metadata.userinfo_signing_alg_values_supported).toEqual(['RS256', 'ES256']);
     });
 
+    describe('prompt_values_supported (prompt=create)', () => {
+      function envWithOauthSettings(settings?: Record<string, unknown>): Env {
+        const env = createMockEnv();
+        const documents: Record<string, unknown> = settings
+          ? { 'settings:tenant:default:oauth': settings }
+          : {};
+        env.SETTINGS = {
+          get: async (key: string) => (key in documents ? JSON.stringify(documents[key]) : null),
+        } as unknown as KVNamespace;
+        return env;
+      }
+
+      async function fetchMetadata(env: Env): Promise<Record<string, unknown>> {
+        const response = await app.request('/.well-known/openid-configuration', {}, env);
+        expect(response.status).toBe(200);
+        return (await response.json()) as Record<string, unknown>;
+      }
+
+      it('is absent while the tenant has prompt=create off', async () => {
+        expect(await fetchMetadata(envWithOauthSettings())).not.toHaveProperty(
+          'prompt_values_supported'
+        );
+        expect(
+          await fetchMetadata(envWithOauthSettings({ 'oauth.prompt_create_enabled': false }))
+        ).not.toHaveProperty('prompt_values_supported');
+      });
+
+      it.each(['true', 1, 'yes'])('does not list create for the saved value %j', async (value) => {
+        expect(
+          await fetchMetadata(envWithOauthSettings({ 'oauth.prompt_create_enabled': value }))
+        ).not.toHaveProperty('prompt_values_supported');
+      });
+
+      it('lists create with the values the authorization endpoint acts on when it is on', async () => {
+        const metadata = await fetchMetadata(
+          envWithOauthSettings({ 'oauth.prompt_create_enabled': true })
+        );
+        expect(metadata.prompt_values_supported).toEqual(['none', 'login', 'consent', 'create']);
+      });
+
+      it('follows the environment variable, which only the exact value true turns on', async () => {
+        const on = envWithOauthSettings();
+        on.OAUTH_PROMPT_CREATE_ENABLED = 'true';
+        expect((await fetchMetadata(on)).prompt_values_supported).toContain('create');
+
+        for (const value of ['TRUE', '1', 'false']) {
+          const off = envWithOauthSettings();
+          off.OAUTH_PROMPT_CREATE_ENABLED = value;
+          expect(await fetchMetadata(off)).not.toHaveProperty('prompt_values_supported');
+        }
+      });
+
+      it('does not serve a cached document after the setting changes', async () => {
+        const off = envWithOauthSettings();
+        expect(await fetchMetadata(off)).not.toHaveProperty('prompt_values_supported');
+
+        const on = envWithOauthSettings({ 'oauth.prompt_create_enabled': true });
+        expect((await fetchMetadata(on)).prompt_values_supported).toContain('create');
+
+        expect(await fetchMetadata(envWithOauthSettings())).not.toHaveProperty(
+          'prompt_values_supported'
+        );
+      });
+
+      it('is decided per tenant', async () => {
+        const env = createMockEnv();
+        const documents: Record<string, unknown> = {
+          'settings:tenant:acme:oauth': { 'oauth.prompt_create_enabled': true },
+        };
+        env.SETTINGS = {
+          get: async (key: string) => (key in documents ? JSON.stringify(documents[key]) : null),
+        } as unknown as KVNamespace;
+
+        const acme = await fetchDiscoveryMetadata(
+          'acme',
+          'https://acme.example.com/.well-known/openid-configuration',
+          env
+        );
+        const other = await fetchDiscoveryMetadata(
+          'other',
+          'https://other.example.com/.well-known/openid-configuration',
+          env
+        );
+
+        expect(acme.prompt_values_supported).toContain('create');
+        expect(other).not.toHaveProperty('prompt_values_supported');
+      });
+    });
+
     it('should support public and pairwise subject types', async () => {
       const env = createMockEnv();
       const response = await app.request(

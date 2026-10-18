@@ -4093,6 +4093,36 @@ describe('Direct Auth primary passkey and email-code flows', () => {
       1_000_500,
       false,
     ],
+    // A proof dated to the millisecond is compared exactly, with no skew: the browser's earlier
+    // sign-in cannot answer a challenge made a moment later.
+    [
+      'refuses a dated proof 500 ms before the challenge although its auth_time second matches',
+      { fresh_sign_in_after: 1_000_000 },
+      1_000,
+      999_500,
+      true,
+    ],
+    [
+      'refuses a dated proof 1 ms before the challenge',
+      { fresh_sign_in_after: 1_000_000 },
+      1_000,
+      999_999,
+      true,
+    ],
+    [
+      'accepts a dated proof made in the same millisecond as the challenge',
+      { fresh_sign_in_after: 1_000_000 },
+      1_000,
+      1_000_000,
+      false,
+    ],
+    [
+      'accepts a dated proof 1 ms after the challenge',
+      { fresh_sign_in_after: 1_000_000 },
+      1_000,
+      1_000_001,
+      false,
+    ],
     // A proof the server did not date falls back to its auth_time (whole seconds).
     [
       'accepts an undated sign-in whose auth_time follows the challenge',
@@ -4131,6 +4161,31 @@ describe('Direct Auth primary passkey and email-code flows', () => {
     );
 
     expect('error' in result).toBe(refused);
+  });
+
+  describe('isProofOlderThanChallengeRequirement', () => {
+    it('compares a dated sign-in proof with the challenge exactly, and an undated one by auth_time', async () => {
+      const { isProofOlderThanChallengeRequirement } = await import('../direct-auth');
+      const login = { kind: 'login' as const, issuedAt: 1_000_000 };
+      // Dated: no skew, the same instant is not older.
+      expect(isProofOlderThanChallengeRequirement(login, 1_000, 999_999)).toBe(true);
+      expect(isProofOlderThanChallengeRequirement(login, 1_000, 1_000_000)).toBe(false);
+      expect(isProofOlderThanChallengeRequirement(login, 1_000, 1_000_001)).toBe(false);
+      // The date wins over auth_time, whichever way they differ.
+      expect(isProofOlderThanChallengeRequirement(login, 5_000, 999_000)).toBe(true);
+      expect(isProofOlderThanChallengeRequirement(login, 1, 1_000_500)).toBe(false);
+      // Undated: auth_time is whole seconds, so up to a second earlier still counts as the same.
+      expect(isProofOlderThanChallengeRequirement(login, 999)).toBe(false);
+      expect(isProofOlderThanChallengeRequirement(login, 998)).toBe(true);
+    });
+
+    it('still needs a dated proof for a re-authentication', async () => {
+      const { isProofOlderThanChallengeRequirement } = await import('../direct-auth');
+      const reauth = { kind: 'reauth' as const, issuedAt: 1_000_000 };
+      expect(isProofOlderThanChallengeRequirement(reauth, 2_000)).toBe(true);
+      expect(isProofOlderThanChallengeRequirement(reauth, 2_000, 999_999)).toBe(true);
+      expect(isProofOlderThanChallengeRequirement(reauth, 2_000, 1_000_000)).toBe(false);
+    });
   });
 
   describe('judging a proof before the authorization challenge is used up', () => {
@@ -4272,6 +4327,68 @@ describe('Direct Auth primary passkey and email-code flows', () => {
 
         expect('error' in result && result.error.status).toBe(400);
         expect(mocks.challengeStore.consumeChallengeRpc).not.toHaveBeenCalled();
+      });
+    });
+
+    describe('the challenge of a prompt=create request', () => {
+      const createStored = () => ({
+        type: 'login',
+        metadata: {
+          fresh_sign_in_after: 1_000_000,
+          prompt: 'create',
+          response_type: 'code',
+          client_id: 'web-client',
+          redirect_uri: 'https://app.example.com/callback',
+          scope: 'openid',
+          state: 'create-state',
+          issuer: 'https://op.example.com',
+        },
+      });
+
+      it.each([
+        ['long before', 900, 900_000],
+        ['500 ms before, in the same second', 1_000, 999_500],
+        ['1 ms before', 1_000, 999_999],
+      ])(
+        'is not answered by a session proven %s the request (the browser was signed in)',
+        async (_label, authTime, provenAtMs) => {
+          const result = await continueWith(createStored(), {
+            userId: 'user_existing',
+            authTime,
+            provenAtMs,
+          });
+
+          expect('error' in result && result.error.status).toBe(403);
+          expect(mocks.challengeStore.consumeChallengeRpc).not.toHaveBeenCalled();
+        }
+      );
+
+      it('continues the original request, still carrying prompt=create, after a new sign-up', async () => {
+        const result = await continueWith(createStored(), {
+          userId: 'user_new',
+          authTime: 1_001,
+          provenAtMs: 1_001_000,
+        });
+
+        expect(result).toEqual({
+          type: 'login',
+          redirectUrl: expect.stringMatching(
+            /^https:\/\/op\.example\.com\/authorize\?_confirmation_challenge=/
+          ),
+        });
+        expect(mocks.challengeStore.storeChallengeRpc).toHaveBeenCalledWith(
+          expect.objectContaining({
+            userId: 'user_new',
+            metadata: expect.objectContaining({
+              purpose: 'authorize_confirmation',
+              authorization_request: expect.objectContaining({
+                prompt: 'create',
+                client_id: 'web-client',
+                state: 'create-state',
+              }),
+            }),
+          })
+        );
       });
     });
 

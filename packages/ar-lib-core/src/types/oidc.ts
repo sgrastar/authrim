@@ -75,6 +75,8 @@ export interface OIDCProviderMetadata {
   transformed_claims_max_depth?: number;
   transformed_claims_max_count?: number;
   acr_values_supported?: string[];
+  // OIDC Discovery / Initiating User Registration (prompt=create)
+  prompt_values_supported?: string[];
   // OIDC Session Management 1.0
   check_session_iframe?: string;
   // OIDC RP-Initiated Logout 1.0

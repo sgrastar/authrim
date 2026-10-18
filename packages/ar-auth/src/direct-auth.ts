@@ -531,8 +531,8 @@ export function reauthProvenMethodFromAmr(
 }
 
 /**
- * auth_time has whole seconds: a sign-in in the same second as the challenge may read up to a
- * second earlier than the challenge's millisecond time.
+ * auth_time has whole seconds: an undated sign-in in the same second as the challenge may read up
+ * to a second earlier than the challenge's millisecond time. Applies to auth_time only.
  */
 const FRESH_SIGN_IN_CLOCK_SKEW_MS = 1000;
 
@@ -608,7 +608,11 @@ export function isProofOlderThanChallengeRequirement(
     // A proof of unknown time (a session or artifact that did not record one) cannot show it.
     return provenAtMs === undefined || provenAtMs < freshness.issuedAt;
   }
-  return (provenAtMs ?? authTime * 1000) < freshness.issuedAt - FRESH_SIGN_IN_CLOCK_SKEW_MS;
+  // A proof the server dated to the millisecond is compared exactly: one made before the challenge
+  // (the same instant counts as after) never answers it. Only an auth_time, which is kept in whole
+  // seconds, is given the skew of the second it was truncated to.
+  if (provenAtMs !== undefined) return provenAtMs < freshness.issuedAt;
+  return authTime * 1000 < freshness.issuedAt - FRESH_SIGN_IN_CLOCK_SKEW_MS;
 }
 
 async function authorizationConfirmationId(tenantId: string, challengeId: string): Promise<string> {

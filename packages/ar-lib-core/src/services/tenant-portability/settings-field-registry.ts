@@ -53,6 +53,7 @@ const REVIEWED_FIELDS: readonly [string, TenantSettingValueType, TenantSettingHa
     oauth.state_required
     oauth.userinfo_require_openid
     oauth.sso_enabled
+    oauth.prompt_create_enabled
     oauth.https_request_uri_enabled
     oauth.id_token_signing_alg_client_override
   `,

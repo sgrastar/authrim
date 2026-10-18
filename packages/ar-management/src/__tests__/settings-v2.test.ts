@@ -628,6 +628,86 @@ describe('Settings API v2', () => {
         expect(body.version).toBeDefined();
       });
 
+      describe('oauth.prompt_create_enabled', () => {
+        const patchOauth = async (
+          set: Record<string, unknown>,
+          kv: ReturnType<typeof createMockKV> = createMockKV()
+        ) => {
+          const { app, mockEnv } = createTestApp({ kv });
+          const getRes = await app.request(
+            '/api/admin/tenants/tenant_123/settings/oauth',
+            { method: 'GET' },
+            mockEnv
+          );
+          const current = (await getRes.json()) as SettingsGetResult;
+          const res = await app.request(
+            '/api/admin/tenants/tenant_123/settings/oauth',
+            {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ ifMatch: current.version, set }),
+            },
+            mockEnv
+          );
+          return { res, app, mockEnv, current };
+        };
+
+        it('is off by default', async () => {
+          const { app, mockEnv } = createTestApp();
+          const res = await app.request(
+            '/api/admin/tenants/tenant_123/settings/oauth',
+            { method: 'GET' },
+            mockEnv
+          );
+          const body = (await res.json()) as SettingsGetResult;
+          expect(body.values['oauth.prompt_create_enabled']).toBe(false);
+          expect(body.sources['oauth.prompt_create_enabled']).toBe('default');
+        });
+
+        it('turns on and off through the Settings API', async () => {
+          const kv = createMockKV();
+          const on = await patchOauth({ 'oauth.prompt_create_enabled': true }, kv);
+          expect(on.res.status).toBe(200);
+          expect(((await on.res.json()) as SettingsPatchResult).applied).toContain(
+            'oauth.prompt_create_enabled'
+          );
+          const read = async () =>
+            (await (
+              await on.app.request(
+                '/api/admin/tenants/tenant_123/settings/oauth',
+                { method: 'GET' },
+                on.mockEnv
+              )
+            ).json()) as SettingsGetResult;
+          expect((await read()).values['oauth.prompt_create_enabled']).toBe(true);
+          expect((await read()).sources['oauth.prompt_create_enabled']).toBe('kv');
+
+          const current = await read();
+          const off = await on.app.request(
+            '/api/admin/tenants/tenant_123/settings/oauth',
+            {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                ifMatch: current.version,
+                set: { 'oauth.prompt_create_enabled': false },
+              }),
+            },
+            on.mockEnv
+          );
+          expect(off.status).toBe(200);
+          expect((await read()).values['oauth.prompt_create_enabled']).toBe(false);
+        });
+
+        it.each([['yes'], ['true'], [1], [null], [{}]])('refuses %j as a value', async (value) => {
+          const { res } = await patchOauth({ 'oauth.prompt_create_enabled': value });
+          expect(res.status).toBe(400);
+          expect((await res.json()) as ApiResponse).toMatchObject({
+            error: 'validation_failed',
+          });
+        });
+      });
+
       it('does not fail the settings patch when audit mirroring fails', async () => {
         const mockKV = createMockKV();
         const failingAuditDb = {

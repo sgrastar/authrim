@@ -87,6 +87,9 @@ export const jaSettings = {
 		'認可リクエストを、先にサーバー間で送る（Pushed Authorization Request）ことを求めます。',
 	'set.k.oauth.state_required': 'state パラメーターを必須にする',
 	'set.k.oauth.state_required.desc': 'CSRF 対策の state を持たない認可リクエストを拒否します。',
+	'set.k.oauth.prompt_create_enabled': 'prompt=create で新規登録画面を開く',
+	'set.k.oauth.prompt_create_enabled.desc':
+		'アプリが新規登録を求める認可リクエスト（prompt=create）を受けたとき、ログイン画面ではなく新規登録画面を開きます。新規登録に使える方法（パスキー、メールコード、認証アプリ）が有効なときだけ働き、無効なときは通常どおりログインします。オンにすると、Discovery の prompt_values_supported に create が載ります。',
 	'set.k.security.require_signed_request_object': '署名済みの request object を必須にする',
 	'set.k.security.require_signed_request_object.desc':
 		'アプリが署名した request object で認可リクエストを送ることを求めます。',

@@ -37,6 +37,9 @@ export interface OAuthSettings {
   // SSO Settings
   'oauth.sso_enabled': boolean;
 
+  // Initiating User Registration (prompt=create)
+  'oauth.prompt_create_enabled': boolean;
+
   // ID Token Signing
   'oauth.id_token_signing_alg': 'RS256' | 'ES256' | 'PS256';
   'oauth.id_token_signing_alg_client_override': boolean;
@@ -272,6 +275,22 @@ export const OAUTH_SETTINGS_META: Record<keyof OAuthSettings, SettingMeta> = {
     visibility: 'public',
   },
 
+  // Initiating User Registration via OpenID Connect 1.0 (prompt=create)
+  'oauth.prompt_create_enabled': {
+    key: 'oauth.prompt_create_enabled',
+    scopes: ['tenant'],
+    type: 'boolean',
+    // Off: prompt=create is ignored and discovery does not advertise it (conformance unaffected).
+    default: false,
+    envKey: 'OAUTH_PROMPT_CREATE_ENABLED',
+    // Only an explicit `true` turns it on.
+    envBoolean: 'exactly-true',
+    label: 'Sign-up Requests (prompt=create)',
+    description:
+      "On: an authorization request with prompt=create opens this tenant's sign-up page (tenant.ui_register_path) instead of the sign-in page, and discovery lists create in prompt_values_supported. Applies only while a sign-up method (passkey, email code or authenticator app) is on for sign-up; otherwise the value is ignored and the sign-in page opens as usual.",
+    visibility: 'admin',
+  },
+
   'oauth.id_token_signing_alg': {
     key: 'oauth.id_token_signing_alg',
     // The tenant's algorithm; an app chooses its own with id_token_signed_response_alg.
@@ -481,6 +500,7 @@ export const OAUTH_DEFAULTS: OAuthSettings = {
   // Note: pkce_required, pkce_s256_required, nonce_required moved to security.ts
   'oauth.userinfo_require_openid': true,
   'oauth.sso_enabled': false,
+  'oauth.prompt_create_enabled': false,
   'oauth.id_token_signing_alg': 'RS256',
   'oauth.id_token_signing_alg_client_override': true,
   'oauth.max_codes_per_user': 100,

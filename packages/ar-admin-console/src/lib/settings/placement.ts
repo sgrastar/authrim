@@ -189,7 +189,8 @@ export const APP_DEFAULTS: SettingsPageDef = {
 				{ key: 'oauth.state_required', depth: 'primary' },
 				{ key: 'security.require_signed_request_object', depth: 'advanced' },
 				{ key: 'security.require_encrypted_request_object', depth: 'advanced' },
-				{ key: 'security.allow_unsigned_request_object', depth: 'advanced' }
+				{ key: 'security.allow_unsigned_request_object', depth: 'advanced' },
+				{ key: 'oauth.prompt_create_enabled', depth: 'advanced' }
 			]
 		},
 		{

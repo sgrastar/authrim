@@ -47,6 +47,9 @@ import {
   type OIDCSigningAlgorithm,
 } from '@authrim/ar-lib-core/utils/oidc-signing';
 
+/** The prompt values /authorize acts on, with create (listed only while prompt=create is on). */
+const PROMPT_VALUES_WITH_CREATE = ['none', 'login', 'consent', 'create'];
+
 // Cache for metadata to improve performance
 // Key: tenantId:settingsHash, Value: metadata
 const metadataCache = new Map<string, OIDCProviderMetadata>();
@@ -118,21 +121,26 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
   // backchannel_user_code_parameter_supported: the tenant's ciba.user_code_enabled, which is also
   // what /bc-authorize enforces. Read only where CIBA is advertised at all.
   let cibaUserCodeSupported = false;
+  // prompt=create (oauth.prompt_create_enabled): listed in prompt_values_supported only while on.
+  let promptCreateSupported = false;
 
   try {
-    const [tokens, flags, discoverySettings, assurance, idTokenSigning, ciba] = await Promise.all([
-      resolveEffectiveSettings(c.env, 'tokens', {
-        tenantId,
-      }),
-      resolveEffectiveSettings(c.env, 'feature-flags', {
-        tenantId,
-      }),
-      resolveEffectiveSettings(c.env, 'discovery', { tenantId }),
-      resolveEffectiveSettings(c.env, 'assurance', { tenantId }),
-      resolveIDTokenSigningPolicy(c.env, tenantId),
-      asyncEnabled ? resolveCibaConfig(c.env, tenantId) : null,
-    ]);
+    const [tokens, flags, discoverySettings, assurance, idTokenSigning, ciba, oauth] =
+      await Promise.all([
+        resolveEffectiveSettings(c.env, 'tokens', {
+          tenantId,
+        }),
+        resolveEffectiveSettings(c.env, 'feature-flags', {
+          tenantId,
+        }),
+        resolveEffectiveSettings(c.env, 'discovery', { tenantId }),
+        resolveEffectiveSettings(c.env, 'assurance', { tenantId }),
+        resolveIDTokenSigningPolicy(c.env, tenantId),
+        asyncEnabled ? resolveCibaConfig(c.env, tenantId) : null,
+        resolveEffectiveSettings(c.env, 'oauth', { tenantId }),
+      ]);
     cibaUserCodeSupported = ciba?.userCodeEnabled === true;
+    promptCreateSupported = oauth['oauth.prompt_create_enabled'] === true;
     if (!idTokenSigning.appsMayChoose) {
       idTokenSigningAlgorithms = publishedSigningAlgorithms.filter(
         (algorithm) => algorithm === idTokenSigning.algorithm
@@ -233,7 +241,7 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
   const profileHash = `profile=${tenantProfile.type}`;
   const assuranceClaimsHash = `ea=${eduPersonAssuranceSupported}`;
   const signingAlgorithmsHash = `oidc_algs=${publishedSigningAlgorithms.join(',')}:id_token_algs=${idTokenSigningAlgorithms.join(',')}`;
-  const settingsHash = `${currentSettingsJson}:acr=${acrValuesSupported.join(',')}:issuer=${issuer}:async=${asyncEnabled}:te=${tokenExchangeEnabled}:cc=${clientCredentialsEnabled}:ns=${nativeSSOEnabled}:rar=${rarEnabled}:ai=${aiScopesEnabled}:idjag=${idJagEnabled}:fe=${flowEngineEnabled}:${profileHash}:${logoutHash}:${signingAlgorithmsHash}:${assuranceClaimsHash}:cuc=${cibaUserCodeSupported}`;
+  const settingsHash = `${currentSettingsJson}:acr=${acrValuesSupported.join(',')}:issuer=${issuer}:async=${asyncEnabled}:te=${tokenExchangeEnabled}:cc=${clientCredentialsEnabled}:ns=${nativeSSOEnabled}:rar=${rarEnabled}:ai=${aiScopesEnabled}:idjag=${idJagEnabled}:fe=${flowEngineEnabled}:${profileHash}:${logoutHash}:${signingAlgorithmsHash}:${assuranceClaimsHash}:cuc=${cibaUserCodeSupported}:pc=${promptCreateSupported}`;
   // A digest of everything the metadata depends on: a fixed-length key, however long the settings
   // (a KV key is at most 512 bytes).
   const settingsDigest = Array.from(
@@ -478,6 +486,9 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
     transformed_claims_predefined: PREDEFINED_TRANSFORMED_CLAIMS,
     transformed_claims_max_depth: 2,
     transformed_claims_max_count: 0,
+    // OIDC Initiating User Registration (prompt=create): once create is supported, the values the
+    // authorization endpoint acts on are listed with it. Absent while the tenant has it off.
+    ...(promptCreateSupported ? { prompt_values_supported: PROMPT_VALUES_WITH_CREATE } : {}),
     // ACR (Authentication Context Class Reference) support
     ...(acrValuesSupported.length > 0 ? { acr_values_supported: acrValuesSupported } : {}),
     // OIDC Discovery: Recommended metadata fields

@@ -153,6 +153,7 @@ import { type FAL } from '@authrim/ar-lib-core';
 import { getRequestIssuer } from './issuer';
 import type { FAPI2MessageSigningConfig } from './fapi-message-signing';
 import { timeAuthRequestDiagnosticOperation } from './request-diagnostics';
+import { isSelfRegistrationAvailable } from './authentication-method-settings';
 
 const DEFAULT_HANDOFF_ARTIFACT_TTL_SECONDS = 60;
 const MIN_HANDOFF_ARTIFACT_TTL_SECONDS = 30;
@@ -422,7 +423,7 @@ type UIRedirectResult =
  * Determine the UI redirect target from the client's, tenant's or global UI configuration.
  *
  * Priority:
- * 1. Client login UI URL → redirect there
+ * 1. Client login UI URL → redirect there (the sign-up page's path is the tenant's setting)
  * 2. Tenant or global UI configured → redirect to that UI
  * 3. Neither → signal configuration error
  *
@@ -454,7 +455,16 @@ async function getUIRedirectTarget(
   if (clientLoginUiUrl) {
     const clientConfig: UIConfig = {
       baseUrl: clientLoginUiUrl,
-      paths: DEFAULT_UI_PATHS,
+      // The sign-up page (prompt=create) is the tenant's setting (tenant.ui_register_path,
+      // validated, default /signup) on the app's own UI too. The other pages keep the default
+      // paths on an app's UI, as they always have.
+      paths:
+        path === 'register'
+          ? {
+              ...DEFAULT_UI_PATHS,
+              register: (await getTenantUIConfig(env, tenantId)).paths.register,
+            }
+          : DEFAULT_UI_PATHS,
     };
     const url = buildUIUrl(clientConfig, path, queryParams, tenantId);
     return { type: 'redirect', url };
@@ -3118,6 +3128,11 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       ])
   );
 
+  // The prompt values (OIDC Core 3.1.2.1): space-delimited, case-sensitive, each one a whole token.
+  // A value this server does not act on (including one that merely contains a known value, such
+  // as "nonetheless") is ignored; every check below reads this one set.
+  const promptValues = new Set((prompt ?? '').split(' ').filter(Boolean));
+
   // Process authentication-related parameters (OIDC Core 3.1.2.1)
   let sessionUserId: string | undefined;
   let authTime: number | undefined;
@@ -3243,7 +3258,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
     });
 
     // prompt=login or max_age re-authentication requires a new auth_time (user just re-authenticated)
-    if (prompt?.includes('login') || max_age !== undefined) {
+    if (promptValues.has('login') || max_age !== undefined) {
       // The time of the authentication that answered the challenge, as the confirmation carries it
       // (the sign-in just made, or the session's own time when a session answered). "Now" would
       // date an authentication that did not happen.
@@ -3280,6 +3295,8 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   // ============================================================
   // Priority: Client KV > Tenant KV > Client ENV > Tenant ENV > Default (false)
   let ssoEnabled = false; // Default: disabled for security
+  // prompt=create (Initiating User Registration): off unless the tenant turned it on.
+  let promptCreateEnabled = false;
 
   try {
     let clientSsoSetting: boolean | null = null;
@@ -3300,6 +3317,8 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       ) {
         clientSsoSetting = clientSso;
       }
+
+      promptCreateEnabled = tenantSettings?.values['oauth.prompt_create_enabled'] === true;
 
       const tenantSso = tenantSettings?.values['oauth.sso_enabled'];
       if (
@@ -3333,6 +3352,39 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       error: error instanceof Error ? error.message : String(error),
     });
     ssoEnabled = false;
+  }
+
+  // prompt=create (Initiating User Registration via OpenID Connect 1.0): the client asks for the
+  // sign-up screen first. Honoured only while the tenant turned it on and offers a sign-up
+  // method; otherwise it is an unknown prompt value, which is ignored like any other. The browser's
+  // session does not answer it: only an authentication made after this request completes it (the
+  // login challenge below). Once the sign-up (or sign-in) came back (_confirmed, or the consent
+  // that follows it) the request is continued, not sent to sign up again. none cannot be combined
+  // with any value (rejected in the prompt handling below), so it is not acted on here.
+  let signUpRequested = false;
+  if (
+    promptCreateEnabled &&
+    _confirmed !== 'true' &&
+    _consent_confirmed !== 'true' &&
+    promptValues.has('create') &&
+    !promptValues.has('none')
+  ) {
+    if (await isSelfRegistrationAvailable(c.env, tenantId)) {
+      signUpRequested = true;
+      log.info('prompt=create - sending the user to sign up', {
+        action: 'prompt_create',
+        clientId: validClientId,
+        hadSession: sessionUserId !== undefined,
+      });
+      sessionUserId = undefined;
+      authTime = undefined;
+      isAnonymousSession = false;
+    } else {
+      log.info('prompt=create ignored - the tenant offers no sign-up method', {
+        action: 'prompt_create_ignored',
+        clientId: validClientId,
+      });
+    }
   }
 
   // id_token_hint (OIDC Core 3.1.2.1, 3.1.2.2): an ID token this server issued, naming the
@@ -3384,7 +3436,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
 
   // 1. prompt=login: Explicit re-authentication request (OIDC Core 3.1.2.1)
   //    → Always force re-authentication regardless of SSO setting
-  if (prompt && prompt.includes('login') && _confirmed !== 'true') {
+  if (promptValues.has('login') && _confirmed !== 'true') {
     log.info('prompt=login - forcing re-authentication', {
       action: 'prompt_login',
       clientId: validClientId,
@@ -3402,7 +3454,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   else if (
     max_age !== undefined &&
     authTime !== undefined &&
-    !prompt?.includes('none') &&
+    !promptValues.has('none') &&
     _confirmed !== 'true'
   ) {
     const authAge = Math.floor(Date.now() / 1000) - authTime;
@@ -3460,18 +3512,16 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   }
 
   // Handle prompt parameter (OIDC Core 3.1.2.1)
-  if (prompt) {
-    const promptValues = prompt.split(' ');
-
+  if (promptValues.size > 0) {
     // Check for invalid prompt combinations
-    if (promptValues.includes('none') && promptValues.length > 1) {
+    if (promptValues.has('none') && promptValues.size > 1) {
       return sendError(
         'invalid_request',
         'prompt=none cannot be combined with other prompt values'
       );
     }
 
-    if (promptValues.includes('none')) {
+    if (promptValues.has('none')) {
       // prompt=none: MUST NOT display any authentication or consent UI
 
       // When SSO is disabled, prompt=none always returns login_required
@@ -3641,7 +3691,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
     const outboundAcrMappings = parseOutboundAcrMappings(
       assuranceSettings['assurance.outbound_acr_mappings']
     );
-    const interactive = !prompt?.split(' ').includes('none');
+    const interactive = !promptValues.has('none');
     const required = requiredAAL({
       defaultAAL: (assuranceSettings['assurance.default_aal'] as AAL) ?? 'AAL1',
       scopes: (scope ?? '').split(' ').filter(Boolean),
@@ -3829,7 +3879,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   }
 
   // If no session exists and prompt is not 'none', redirect to login screen
-  if (!sessionUserId && !prompt?.includes('none')) {
+  if (!sessionUserId && !promptValues.has('none')) {
     // Store authorization request parameters in ChallengeStore (RPC)
     // Use challengeId-based sharding for better scalability
     const challengeId = crypto.randomUUID();
@@ -3849,7 +3899,8 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       metadata: {
         // SSO off: the browser's session never answers this client's sign-in, so only an
         // authentication made after this challenge completes it (no silent reuse through the UI).
-        ...(!ssoEnabled ? { fresh_sign_in_after: Date.now() } : {}),
+        // prompt=create: the same, whatever the SSO setting says.
+        ...(!ssoEnabled || signUpRequested ? { fresh_sign_in_after: Date.now() } : {}),
         response_type,
         client_id,
         redirect_uri,
@@ -3907,7 +3958,8 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
     const loginUiQueryParams = getChallengeUiQueryParams(challengeId, ui_locales);
     const loginTarget = await getUIRedirectTarget(
       c.env,
-      'login',
+      // prompt=create opens the tenant's sign-up page; the challenge is the same.
+      signUpRequested ? 'register' : 'login',
       getTenantAwareUiQueryParams(c, loginUiQueryParams),
       tenantId,
       clientMetadata?.login_ui_url,
@@ -4091,10 +4143,10 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       action: 'consent_check_decision',
       clientId: validClientId,
       isTrustedClient,
-      promptIncludesConsent: prompt?.includes('consent'),
+      promptIncludesConsent: promptValues.has('consent'),
       willSkipConsent:
         isTrustedClient &&
-        !prompt?.includes('consent') &&
+        !promptValues.has('consent') &&
         !requiresPerAuthorizationAttributeReleaseConsent &&
         !requiresFirstTimeSignInConfirmation &&
         !requiresEveryTimeSignInConfirmation,
@@ -4103,7 +4155,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
     // Trusted clients skip consent (unless prompt=consent is explicitly specified)
     if (
       isTrustedClient &&
-      !prompt?.includes('consent') &&
+      !promptValues.has('consent') &&
       !requiresPerAuthorizationAttributeReleaseConsent &&
       !requiresFirstTimeSignInConfirmation &&
       !requiresEveryTimeSignInConfirmation
@@ -4214,7 +4266,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         }
 
         // Force consent if prompt=consent
-        if (prompt?.includes('consent')) {
+        if (promptValues.has('consent')) {
           consentRequired = true;
         }
         if (requiresPerAuthorizationAttributeReleaseConsent) {
@@ -4245,7 +4297,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
 
       if (consentRequired) {
         // prompt=none requires consent but can't show UI
-        if (prompt?.includes('none')) {
+        if (promptValues.has('none')) {
           return sendError('consent_required', 'User consent is required');
         }
 
@@ -4388,7 +4440,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
 
           if (!satisfied) {
             // prompt=none: can't show UI
-            if (prompt?.includes('none')) {
+            if (promptValues.has('none')) {
               return sendError(
                 'consent_required',
                 'Consent management items require user interaction'
@@ -4487,7 +4539,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
 
   // Handoff Token SSO (Authrim Extension)
   // Issue only after all prompt=none, session, max_age, and consent checks have passed.
-  if (prompt?.split(' ').includes('none') && handoff === 'true') {
+  if (promptValues.has('none') && handoff === 'true') {
     log.info('Handoff SSO: Issuing handoff token', {
       action: 'handoff_sso',
       hasSession: !!sessionId,

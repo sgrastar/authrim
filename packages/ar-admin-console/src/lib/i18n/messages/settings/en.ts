@@ -85,6 +85,9 @@ export const enSettings: Record<keyof typeof jaSettings, string> = {
 	'set.k.oauth.state_required': 'Require the state parameter',
 	'set.k.oauth.state_required.desc':
 		'Refuse authorization requests without a state (CSRF protection).',
+	'set.k.oauth.prompt_create_enabled': 'Open the sign-up page for prompt=create',
+	'set.k.oauth.prompt_create_enabled.desc':
+		'An app that asks for sign-up (prompt=create) lands on the sign-up page instead of the sign-in page. Needs a sign-up method turned on (passkey, email code or authenticator app); otherwise the request signs in as usual. Discovery then lists create among the prompt values.',
 	'set.k.security.require_signed_request_object': 'Require signed request objects',
 	'set.k.security.require_signed_request_object.desc':
 		'Authorization requests must come in a request object the app signed.',

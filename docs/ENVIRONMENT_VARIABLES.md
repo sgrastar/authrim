@@ -109,6 +109,7 @@ ENABLE_CLIENT_CREDENTIALS
 | `ENABLE_CLIENT_CREDENTIALS`           | boolean | `false` | Enable RFC 6749 Client Credentials grant                                                           |
 | `ENABLE_RATE_LIMIT`                   | boolean | `true`  | Enable rate limiting                                                                               |
 | `ENABLE_HTTPS_REQUEST_URI`            | boolean | `false` | Enable HTTPS request_uri support (JAR)                                                             |
+| `OAUTH_PROMPT_CREATE_ENABLED`         | boolean | `false` | Open the sign-up page for `prompt=create` and list it in discovery (only the exact value `true`)   |
 | `ENABLE_RAR`                          | boolean | `false` | Enable RFC 9396 Rich Authorization Requests                                                        |
 | `ENABLE_AI_SCOPES`                    | boolean | `false` | Enable AI Ephemeral Auth scopes                                                                    |
 | `ENABLE_NATIVE_SSO`                   | boolean | `false` | Enable OIDC Native SSO 1.0                                                                         |
