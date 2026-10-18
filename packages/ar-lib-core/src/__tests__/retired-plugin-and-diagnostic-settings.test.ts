@@ -1,8 +1,10 @@
 /**
- * Four settings are gone: `plugin.memory_limit_mb` (the platform fixes the memory of a plugin),
+ * Five settings are gone: `plugin.memory_limit_mb` (the platform fixes the memory of a plugin),
  * `plugin.notifier_console_enabled` (a notifier that prints secrets is never a tenant switch),
  * `plugin.execution_timeout_ms` (ar-plugin-runner reads the run time limit from the policy of each
- * installation, never from the tenant, so a tenant value would mislead) and
+ * installation, never from the tenant, so a tenant value would mislead),
+ * `plugin.auto_update_check` (there is no source of plugin updates to check, so the switch did
+ * nothing) and
  * `diagnostic-logging.filter_tokens` (tokens are never stored in clear text in any mode, so there
  * is nothing to switch). Documents saved before that, and environment variables, still hold them:
  * they must read, save and resolve as before, and none of them is a setting any more.
@@ -28,12 +30,14 @@ const RETIRED_PLUGIN = {
   'plugin.memory_limit_mb': 256,
   'plugin.notifier_console_enabled': true,
   'plugin.execution_timeout_ms': 30000,
+  'plugin.auto_update_check': true,
 };
 const RETIRED_DIAGNOSTIC = { 'diagnostic-logging.filter_tokens': false };
 const RETIRED_ENV_KEYS = [
   'PLUGIN_MEMORY_LIMIT_MB',
   'PLUGIN_NOTIFIER_CONSOLE_ENABLED',
   'PLUGIN_EXECUTION_TIMEOUT_MS',
+  'PLUGIN_AUTO_UPDATE_CHECK',
   'DIAGNOSTIC_LOGGING_FILTER_TOKENS',
 ];
 
@@ -86,7 +90,6 @@ describe('the retired plugin and diagnostic logging settings', () => {
 
   it('keep the other plugin and diagnostic logging settings', () => {
     expect(Object.keys(PLUGIN_SETTINGS_META).sort()).toEqual([
-      'plugin.auto_update_check',
       'plugin.enabled',
       'plugin.notifier_resend_enabled',
     ]);
@@ -156,7 +159,7 @@ describe('the retired plugin and diagnostic logging settings', () => {
       'admin'
     );
     expect(pluginResult.applied).toEqual([]);
-    expect(Object.values(pluginResult.rejected)).toEqual(Array(3).fill('Unknown setting key'));
+    expect(Object.values(pluginResult.rejected)).toEqual(Array(4).fill('Unknown setting key'));
 
     const diagnostic = await manager.getAll('diagnostic-logging', { type: 'tenant', id: 't1' });
     const diagnosticResult = await manager.patch(
@@ -177,6 +180,7 @@ describe('the retired plugin and diagnostic logging settings', () => {
       PLUGIN_MEMORY_LIMIT_MB: '512',
       PLUGIN_NOTIFIER_CONSOLE_ENABLED: 'true',
       PLUGIN_EXECUTION_TIMEOUT_MS: '30000',
+      PLUGIN_AUTO_UPDATE_CHECK: 'true',
       DIAGNOSTIC_LOGGING_FILTER_TOKENS: 'false',
     };
 
