@@ -5573,12 +5573,47 @@ describe('Authorization Handler', () => {
         }
       );
 
-      it("leaves the sign-in page's path as it was: the app UI's default", async () => {
+      it("opens the tenant's sign-in path on the app UI: the app UI replaces the base URL only", async () => {
         await tenantPaths({ 'tenant.ui_login_path': '/signin' });
 
         const url = destination(await app.request(`${base}`, {}, env));
 
+        expect(url.origin + url.pathname).toBe(`${clientUi}/signin`);
+      });
+
+      it('opens the default sign-in path on the app UI when the tenant set none', async () => {
+        const url = destination(await app.request(`${base}`, {}, env));
+
         expect(url.origin + url.pathname).toBe(`${clientUi}/login`);
+      });
+
+      it.each(['//evil.example', '/x?y=1', '/\\evil.example', 'signin'])(
+        'falls back to the default sign-in path on the app UI for the tenant value %s',
+        async (value) => {
+          await tenantPaths({ 'tenant.ui_login_path': value });
+
+          const url = destination(await app.request(`${base}`, {}, env));
+
+          expect(url.origin + url.pathname).toBe(`${clientUi}/login`);
+        }
+      );
+
+      // Re-authentication and consent are not sent to the app's UI (only sign-in and sign-up
+      // are): they open on the tenant's UI, with the tenant's path. Whether an app's own UI also
+      // takes them is a separate decision, since it may not implement those pages.
+      it("keeps re-authentication on the tenant's UI, with the tenant's path", async () => {
+        await tenantPaths({ 'tenant.ui_reauth_path': '/again' });
+        configureClientTrustPolicy(env);
+        seedSession(env);
+
+        const response = await app.request(
+          `${base}&prompt=login`,
+          { headers: { Cookie: `authrim_session=${encodeURIComponent(TEST_SESSION_ID)}` } },
+          env
+        );
+
+        const url = destination(response);
+        expect(url.origin + url.pathname).toBe('https://login.example.com/again');
       });
     });
 
