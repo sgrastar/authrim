@@ -635,7 +635,7 @@ describe('the tenant gate for external plugin code', () => {
         )
         .all() as Array<{ detail: string }>;
       expect(plan.map((row) => row.detail).join('\n')).toContain(
-        'idx_plugin_runner_installations_enabled_external'
+        'idx_plugin_runner_installations_backend_state_tenant'
       );
     });
   });

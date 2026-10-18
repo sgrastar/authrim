@@ -12,7 +12,7 @@ CREATE TABLE IF NOT EXISTS plugin_runner_tenant_external_gates (
 );
 
 -- The periodic reconciliation of the gates (ar-management) looks for tenants that have an enabled
--- external installation; this keeps that lookup off the built-in installations.
-CREATE INDEX IF NOT EXISTS idx_plugin_runner_installations_enabled_external
-  ON plugin_runner_installations (tenant_id)
-  WHERE backend_kind = 'dynamic_worker' AND state = 'enabled';
+-- external installation; this keeps that lookup off the built-in installations. It is a plain
+-- index: the plugin runner's D1 migrations carry no partial (WHERE) indexes.
+CREATE INDEX IF NOT EXISTS idx_plugin_runner_installations_backend_state_tenant
+  ON plugin_runner_installations (backend_kind, state, tenant_id);
