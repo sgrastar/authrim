@@ -10,6 +10,7 @@ import {
   csrfProtectionMiddleware,
   validateHostHeader,
   getDefaultTenantId,
+  AUTHENTICATION_METHODS_RESPONSE_SHAPE_VERSION,
   readAuthenticationMethodsCacheRevision,
   SELF_SERVICE_DEFAULTS,
   validateAccountPagePath,
@@ -405,7 +406,7 @@ function buildAuthenticationMethodsRouterCacheRequest(input: {
 }): Request {
   const serviceUrl = new URL(input.serviceRequest.url);
   const url = new URL(
-    '/cache/authentication-methods/v3',
+    `/cache/authentication-methods/v3/shape-${AUTHENTICATION_METHODS_RESPONSE_SHAPE_VERSION}`,
     AUTHENTICATION_METHODS_ROUTER_CACHE_KEY_ORIGIN
   );
   url.searchParams.set('tenant', input.tenantId);

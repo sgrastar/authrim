@@ -41,6 +41,7 @@ import {
   resolveGuestSettings,
   loadClientContractCached,
   profileForTotpPreset,
+  AUTHENTICATION_METHODS_RESPONSE_SHAPE_VERSION,
   readAuthenticationMethodsCacheRevision,
   resolveSamlEnabled,
   resolveAuthCorePersistenceAdapterFromEnv,
@@ -833,7 +834,10 @@ function buildAuthenticationMethodsEdgeCacheRequest(input: {
   clientId: string | null;
   revision: string;
 }): Request {
-  const url = new URL('/cache/authentication-methods/v2', EDGE_CACHE_KEY_ORIGIN);
+  const url = new URL(
+    `/cache/authentication-methods/v2/shape-${AUTHENTICATION_METHODS_RESPONSE_SHAPE_VERSION}`,
+    EDGE_CACHE_KEY_ORIGIN
+  );
   url.searchParams.set('tenant', input.tenantId);
   url.searchParams.set('host', normalizeCacheKeyPart(input.forwardedHost, '__unknown_host__'));
   url.searchParams.set('client', input.clientId?.trim() || '__tenant__');

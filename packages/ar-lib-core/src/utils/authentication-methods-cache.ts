@@ -6,6 +6,18 @@ const AUTHENTICATION_METHODS_CACHE_TENANT_REVISION_PREFIX =
   'cache:authentication-methods:v1:revision:tenant:';
 const FALLBACK_REVISION = '0';
 
+/**
+ * The shape of the `/api/auth/authentication-methods` response, in the cache keys of the router
+ * and of the edge cache. The revision above moves when a setting is saved; it does not move when
+ * the code starts to answer with another shape, so a response cached before a deploy that adds a
+ * field would be served for the whole cache lifetime (a day at the router). Raise this number
+ * whenever the response gains, loses or changes a field.
+ *
+ * 1: the methods and the UI config; 2: `humanVerification` carries `required`, `requiredFor`,
+ * `available` and `reason`.
+ */
+export const AUTHENTICATION_METHODS_RESPONSE_SHAPE_VERSION = 2;
+
 type SettingsEnv = Pick<Env, 'SETTINGS'>;
 
 export function buildAuthenticationMethodsTenantCacheRevisionKey(tenantId: string): string {
