@@ -90,6 +90,24 @@ describe('where settings live', () => {
 		);
 	});
 
+	it('applies the sign-up page path and the prompt=create switch that opens it', () => {
+		// prompt=create sends the browser to tenant.ui_register_path while the switch is on.
+		for (const key of ['tenant.ui_register_path', 'oauth.prompt_create_enabled']) {
+			expect(NOT_APPLIED.has(key), key).toBe(false);
+		}
+		expect(ALL_CATEGORY_META.tenant.settings['tenant.ui_register_path'].status).toBeUndefined();
+		expect(ALL_CATEGORY_META.oauth.settings['oauth.prompt_create_enabled'].status).toBeUndefined();
+	});
+
+	it('puts the prompt=create switch on the app defaults page', () => {
+		const page = SETTINGS_PAGES.find((candidate) => candidate.id === 'app-defaults');
+		const setting = page?.sections
+			.flatMap((section) => section.settings)
+			.find((candidate) => candidate.key === 'oauth.prompt_create_enabled');
+		expect(setting?.depth).toBe('advanced');
+		expect(drafted).not.toContain('oauth.prompt_create_enabled');
+	});
+
 	it('does not mark the device flow settings the runtime reads', () => {
 		const applied = [
 			'device_flow.expires_in',

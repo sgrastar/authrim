@@ -103,3 +103,31 @@ export async function isDidLoginEnabled(
 ): Promise<boolean> {
   return didLoginEnabled(await readAuthenticationMethodSettings(env, tenantId, options));
 }
+
+/**
+ * Whether the tenant lets a new person sign up with a method of its own: passkey, email code or
+ * authenticator app, each by its sign-up switch (passkey and email code as for login, the
+ * authenticator app off unless the tenant turned it on). Settings that cannot be read give
+ * `false`: a request for the sign-up page is then treated as the sign-in it would otherwise be.
+ * Sign-up through an external provider is not counted (it is set per provider, and the sign-in
+ * page offers it).
+ */
+export async function isSelfRegistrationAvailable(env: Env, tenantId: string): Promise<boolean> {
+  let settings: AuthenticationMethodKVSettings;
+  try {
+    settings = await readAuthenticationMethodSettings(env, tenantId, { strict: true });
+  } catch {
+    return false;
+  }
+  if (
+    methodUsageEnabled(settings, 'passkey', 'signup') ||
+    methodUsageEnabled(settings, 'email_otp', 'signup')
+  ) {
+    return true;
+  }
+  const totpSettings = settings as Record<string, unknown>;
+  return normalizeBooleanSetting(
+    totpSettings['authentication-methods.totp.signup_enabled'],
+    normalizeBooleanSetting(totpSettings['authentication-methods.totp.enabled'], false)
+  );
+}

@@ -501,6 +501,7 @@ export interface Env {
   ENABLE_OPEN_REGISTRATION?: string; // "true" to allow registration without Initial Access Token
   ENABLE_CONFORMANCE_MODE?: string; // "true" to enable conformance-test-only behaviour (never in production)
   OAUTH_SSO_ENABLED?: string; // "true" to enable SSO (session sharing) at tenant level (default: "false")
+  OAUTH_PROMPT_CREATE_ENABLED?: string; // exactly "true" to act on prompt=create (sign-up page first) and list it in discovery (default: off)
   CLIENT_SSO_ENABLED?: string; // "true" to enable SSO (session sharing) at client level (default: "false")
   ENABLE_IFRAME_OIDC_AUTH?: string; // "true" to allow iframe-based OIDC auth after tenant/client origin opt-in
 

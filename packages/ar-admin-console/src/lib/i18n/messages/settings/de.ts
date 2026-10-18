@@ -85,6 +85,9 @@ export const deSettings: Record<keyof typeof jaSettings, string> = {
 		'Autorisierungsanfragen müssen zuerst serverseitig übermittelt werden (Pushed Authorization Request).',
 	'set.k.oauth.state_required': 'state-Parameter verlangen',
 	'set.k.oauth.state_required.desc': 'Autorisierungsanfragen ohne state ablehnen (CSRF-Schutz).',
+	'set.k.oauth.prompt_create_enabled': 'Registrierungsseite bei prompt=create öffnen',
+	'set.k.oauth.prompt_create_enabled.desc':
+		'Eine App, die eine Registrierung anfordert (prompt=create), landet auf der Registrierungsseite statt auf der Anmeldeseite. Setzt eine aktive Registrierungsmethode voraus (Passkey, E-Mail-Code oder Authenticator-App); sonst läuft die Anmeldung wie gewohnt. Discovery führt create dann unter den prompt-Werten auf.',
 	'set.k.security.require_signed_request_object': 'Signierte Request Objects verlangen',
 	'set.k.security.require_signed_request_object.desc':
 		'Autorisierungsanfragen müssen in einem von der App signierten Request Object kommen.',

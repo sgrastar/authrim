@@ -251,10 +251,9 @@ export const TENANT_SETTINGS_META: Record<keyof TenantSettings, SettingMeta> = {
     type: 'string',
     label: 'Register Path',
     description:
-      "Path of the sign-up page on this tenant's sign-in UI (starts with a single /; no query or fragment). Unset: the platform's.",
+      "Path of the sign-up page on this tenant's sign-in UI (starts with a single /; no query or fragment). Authorization requests with prompt=create open it while Sign-up Requests (oauth.prompt_create_enabled) is on. Unset: the platform's.",
     visibility: 'page',
     default: '/signup',
-    status: 'in_development',
   },
 };
 

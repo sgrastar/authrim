@@ -380,6 +380,8 @@ async function storeAuthorizationChallenge(options: {
   kind: 'login' | 'reauth';
   freshAfter?: number;
   clientId?: string;
+  /** More of what authorize recorded for the request (prompt, ...). */
+  extra?: Record<string, unknown>;
   /** The issuer authorize recorded (the continuation is an address on it). */
   issuer?: string;
 }): Promise<string> {
@@ -399,6 +401,7 @@ async function storeAuthorizationChallenge(options: {
       state: 'state_1',
       nonce: 'nonce_1',
       response_type: 'code',
+      ...options.extra,
       ...(options.kind === 'login' && options.freshAfter !== undefined
         ? { fresh_sign_in_after: options.freshAfter }
         : {}),
@@ -882,6 +885,32 @@ describe('sign-in sequences through the real handlers', () => {
       expect(failures(browser)).toEqual([]);
     });
 
+    it('email code, /authorize: a session made 500 ms before the request does not answer it', async () => {
+      // The challenge carries fresh_sign_in_after whenever the browser's session must not answer
+      // it: SSO off, or prompt=create (the person switches from the sign-up page to signing in).
+      // A session proven a moment earlier is still an earlier one.
+      const sessionId = existingSession(500);
+      const challengeId = await storeAuthorizationChallenge({
+        kind: 'login',
+        freshAfter: Date.now(),
+        clientId: oidcClientId,
+      });
+      const browser = browserWith(sessionId);
+
+      const result = await signInByEmailCode(browser, {
+        challengeId,
+        oidcClientId,
+        selectionInput,
+      });
+
+      expect(result.selection.status).toBe(200);
+      expect(result.continuation).toBeDefined();
+      // Signed in anew: the earlier session was not the answer.
+      expect(browser.sessionCookie).toBeDefined();
+      expect(browser.sessionCookie).not.toBe(sessionId);
+      expect(await challengeIsUsedUp(challengeId)).toBe(true);
+    });
+
     it('email code, /authorize for a re-authentication, with a session made earlier', async () => {
       const sessionId = existingSession(60_000);
       const challengeId = await storeAuthorizationChallenge({
@@ -1020,6 +1049,74 @@ describe('sign-in sequences through the real handlers', () => {
       expect(result.final?.json.completed).toBe(true);
       expect(browser.sessionCookie).toBeDefined();
       expect(failures(browser)).toEqual([]);
+    });
+
+    describe('for a prompt=create request (the sign-up page opened by /authorize)', () => {
+      const confirmationOf = async (continuation: string | undefined) => {
+        const id = new URL(continuation ?? 'https://invalid.example/').searchParams.get(
+          '_confirmation_challenge'
+        );
+        expect(id).toBeTruthy();
+        return (await (world.challenges as ChallengeStore).getChallengeRpc(id!)) as {
+          userId: string;
+          metadata: Record<string, unknown>;
+        } | null;
+      };
+
+      it('signs the new person up, uses the challenge up and continues the request with prompt=create', async () => {
+        const challengeId = await storeAuthorizationChallenge({
+          kind: 'login',
+          freshAfter: Date.now(),
+          issuer: ORIGIN,
+          extra: { prompt: 'create' },
+        });
+        const browser = browserWith();
+
+        const result = await signInByEmailCode(browser, { flowKind: 'registration', challengeId });
+
+        expect(result.final?.status).toBe(200);
+        expect(result.final?.json.completed).toBe(true);
+        expect(browser.sessionCookie).toBeDefined();
+        expect(failures(browser)).toEqual([]);
+        const used = (await (world.challenges as ChallengeStore).getChallengeRpc(challengeId)) as {
+          consumed?: boolean;
+        } | null;
+        expect(!used || used.consumed === true).toBe(true);
+        // The browser goes back to /authorize with the confirmation of this sign-up: the request
+        // it continues is the original one, with its prompt (authorize then does not send the
+        // person to sign up again, see the prompt=create tests of the authorization handler).
+        expect(result.continuation).toMatch(
+          /^https:\/\/app\.example\.com\/authorize\?_confirmation_challenge=/
+        );
+        const confirmation = await confirmationOf(result.continuation);
+        expect(confirmation?.metadata).toMatchObject({
+          purpose: 'authorize_confirmation',
+          authorization_request: {
+            prompt: 'create',
+            client_id: CLIENT_ID,
+            redirect_uri: 'https://rp.example.com/callback',
+            state: 'state_1',
+          },
+        });
+      });
+
+      it('does not let a session the browser already holds answer the request', async () => {
+        const sessionId = existingSession(500);
+        const challengeId = await storeAuthorizationChallenge({
+          kind: 'login',
+          freshAfter: Date.now(),
+          issuer: ORIGIN,
+          extra: { prompt: 'create' },
+        });
+        const browser = browserWith(sessionId);
+
+        const result = await signInByEmailCode(browser, { flowKind: 'registration', challengeId });
+
+        expect(result.final?.status).toBe(200);
+        // A new session, from the sign-up; the earlier one did not answer the request.
+        expect(browser.sessionCookie).not.toBe(sessionId);
+        expect(await confirmationOf(result.continuation)).not.toBeNull();
+      });
     });
 
     it('does not complete for a browser that has not signed in', async () => {

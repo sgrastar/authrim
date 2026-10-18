@@ -5079,6 +5079,663 @@ describe('Authorization Handler', () => {
     });
   });
 
+  describe('prompt=create (Initiating User Registration)', () => {
+    const base =
+      '/authorize?response_type=code&client_id=test-client&redirect_uri=https://example.com/callback&scope=openid&state=create-state';
+    const sessionHeaders = () => ({
+      Cookie: `authrim_session=${encodeURIComponent(TEST_SESSION_ID)}`,
+    });
+
+    async function enablePromptCreate(settings: Record<string, unknown> = {}) {
+      await configureTenantOauthSettings(env, { 'oauth.prompt_create_enabled': true, ...settings });
+    }
+
+    async function configureAuthenticationMethods(settings: Record<string, unknown>) {
+      await (env.SETTINGS as unknown as MockKVNamespace).put(
+        'settings:tenant:default:authentication-methods',
+        JSON.stringify(settings)
+      );
+    }
+
+    function destination(response: Response): URL {
+      expect(response.status).toBe(302);
+      return new URL(response.headers.get('Location')!);
+    }
+
+    function challengeOf(url: URL) {
+      return getChallengeMap(env).get(url.searchParams.get('challenge_id')!) as {
+        type: string;
+        metadata: Record<string, unknown>;
+      };
+    }
+
+    it('sends the user to the sign-up page with the login challenge when enabled', async () => {
+      await enablePromptCreate();
+
+      const url = destination(await app.request(`${base}&prompt=create`, {}, env));
+
+      expect(url.origin + url.pathname).toBe('https://login.example.com/signup');
+      expect(url.searchParams.get('challenge_id')).toBeTruthy();
+      expect(url.searchParams.get('tenant_hint')).toBe('default');
+      expect(challengeOf(url)).toMatchObject({
+        type: 'login',
+        metadata: expect.objectContaining({
+          prompt: 'create',
+          client_id: 'test-client',
+          state: 'create-state',
+          redirect_uri: 'https://example.com/callback',
+        }),
+      });
+    });
+
+    it('ignores prompt=create while the tenant has not turned it on', async () => {
+      const url = destination(await app.request(`${base}&prompt=create`, {}, env));
+
+      expect(url.pathname).toBe('/login');
+      expect(challengeOf(url).type).toBe('login');
+    });
+
+    it('turns on from the environment variable only when it is exactly true', async () => {
+      env.OAUTH_PROMPT_CREATE_ENABLED = 'true';
+      expect(destination(await app.request(`${base}&prompt=create`, {}, env)).pathname).toBe(
+        '/signup'
+      );
+      for (const value of ['TRUE', '1', 'yes', '']) {
+        env.OAUTH_PROMPT_CREATE_ENABLED = value;
+        expect(destination(await app.request(`${base}&prompt=create`, {}, env)).pathname).toBe(
+          '/login'
+        );
+      }
+    });
+
+    it('lets the tenant setting override the environment variable', async () => {
+      env.OAUTH_PROMPT_CREATE_ENABLED = 'true';
+      await configureTenantOauthSettings(env, { 'oauth.prompt_create_enabled': false });
+      expect(destination(await app.request(`${base}&prompt=create`, {}, env)).pathname).toBe(
+        '/login'
+      );
+    });
+
+    it.each([
+      ['a string', 'true'],
+      ['a number', 1],
+    ])('does not turn on from %s in the tenant setting', async (_label, value) => {
+      await configureTenantOauthSettings(env, { 'oauth.prompt_create_enabled': value });
+      expect(destination(await app.request(`${base}&prompt=create`, {}, env)).pathname).toBe(
+        '/login'
+      );
+    });
+
+    it('goes to the sign-in page when the tenant offers no sign-up method', async () => {
+      await enablePromptCreate();
+      await configureAuthenticationMethods({
+        'authentication-methods.passkey.signup_enabled': false,
+        'authentication-methods.email_otp.signup_enabled': false,
+      });
+
+      const url = destination(await app.request(`${base}&prompt=create`, {}, env));
+
+      expect(url.pathname).toBe('/login');
+    });
+
+    it('goes to the sign-in page when the sign-up settings cannot be read', async () => {
+      await enablePromptCreate();
+      await (env.SETTINGS as unknown as MockKVNamespace).put(
+        'settings:tenant:default:authentication-methods',
+        'not json'
+      );
+
+      expect(destination(await app.request(`${base}&prompt=create`, {}, env)).pathname).toBe(
+        '/login'
+      );
+    });
+
+    it.each([
+      [
+        'email code',
+        {
+          'authentication-methods.passkey.enabled': false,
+          'authentication-methods.email_otp.signup_enabled': true,
+        },
+      ],
+      [
+        'authenticator app',
+        {
+          'authentication-methods.passkey.enabled': false,
+          'authentication-methods.totp.signup_enabled': true,
+        },
+      ],
+    ])('goes to the sign-up page when only %s is on for sign-up', async (_label, methods) => {
+      await enablePromptCreate();
+      await configureAuthenticationMethods(methods);
+
+      expect(destination(await app.request(`${base}&prompt=create`, {}, env)).pathname).toBe(
+        '/signup'
+      );
+    });
+
+    it.each([
+      ['login create', 'login%20create'],
+      ['consent create', 'consent%20create'],
+      ['create login', 'create%20login'],
+      ['create create', 'create%20create'],
+    ])('sends %s to the sign-up page, and keeps the other value', async (_label, prompt) => {
+      await enablePromptCreate();
+
+      const url = destination(await app.request(`${base}&prompt=${prompt}`, {}, env));
+
+      expect(url.pathname).toBe('/signup');
+      expect(challengeOf(url).metadata.prompt).toBe(decodeURIComponent(prompt));
+    });
+
+    it.each(['none%20create', 'create%20none', 'none%20login%20create'])(
+      'rejects prompt=%s as invalid_request, as none with any other value',
+      async (prompt) => {
+        await enablePromptCreate();
+        const response = await app.request(`${base}&prompt=${prompt}`, {}, env);
+        expect(response.status).toBe(302);
+        expect(response.headers.get('Location')).toContain('error=invalid_request');
+      }
+    );
+
+    it('rejects none with create even when prompt=create is off', async () => {
+      const response = await app.request(`${base}&prompt=none%20create`, {}, env);
+      expect(response.headers.get('Location')).toContain('error=invalid_request');
+    });
+
+    it('does not take a longer value for create', async () => {
+      await enablePromptCreate();
+      expect(destination(await app.request(`${base}&prompt=created`, {}, env)).pathname).toBe(
+        '/login'
+      );
+    });
+
+    it.each([true, false])(
+      'sends a signed-in user to sign up without using the session (SSO enabled=%s)',
+      async (ssoEnabled) => {
+        await enablePromptCreate();
+        await configureClientSettings(env, { 'client.sso_enabled': ssoEnabled });
+        configureClientTrustPolicy(env);
+        seedSession(env);
+
+        const url = destination(
+          await app.request(
+            `${base}&prompt=create`,
+            { method: 'GET', headers: sessionHeaders() },
+            env
+          )
+        );
+
+        expect(url.pathname).toBe('/signup');
+        const challenge = challengeOf(url);
+        expect(challenge.type).toBe('login');
+        // Only an authentication made after this request completes it.
+        expect(challenge.metadata.fresh_sign_in_after).toEqual(expect.any(Number));
+        expect(challenge.metadata).not.toHaveProperty('sessionUserId');
+        expect(getAuthCodeStore(env).storeCodeRpc).not.toHaveBeenCalled();
+      }
+    );
+
+    it('sends login create from a signed-in user to sign up, not to re-authenticate', async () => {
+      await enablePromptCreate();
+      await configureClientSettings(env, { 'client.sso_enabled': true });
+      seedSession(env);
+
+      const url = destination(
+        await app.request(
+          `${base}&prompt=login%20create`,
+          { method: 'GET', headers: sessionHeaders() },
+          env
+        )
+      );
+
+      expect(url.pathname).toBe('/signup');
+      expect(challengeOf(url).type).toBe('login');
+    });
+
+    it('still checks an id_token_hint sent with prompt=create', async () => {
+      await enablePromptCreate();
+      await configureClientSettings(env, { 'client.sso_enabled': true });
+      seedSession(env);
+
+      const response = await app.request(
+        `${base}&prompt=create&id_token_hint=not-a-token`,
+        { method: 'GET', headers: sessionHeaders() },
+        env
+      );
+
+      // Not an ID token this server issued.
+      expect(response.status).toBe(302);
+      expect(response.headers.get('Location')).toContain('error=invalid_request');
+    });
+
+    it('keeps using the session for a signed-in user while prompt=create is off', async () => {
+      await configureClientSettings(env, { 'client.sso_enabled': true });
+      configureClientTrustPolicy(env);
+      seedSession(env);
+
+      const response = await app.request(
+        `${base}&prompt=create`,
+        { method: 'GET', headers: sessionHeaders() },
+        env
+      );
+
+      expect(response.status).toBe(302);
+      const url = new URL(response.headers.get('Location')!);
+      expect(url.origin + url.pathname).toBe('https://example.com/callback');
+      expect(url.searchParams.get('code')).toBeTruthy();
+    });
+
+    it('continues the request after the sign-up instead of sending the user to sign up again', async () => {
+      await enablePromptCreate();
+      configureClientTrustPolicy(env);
+      seedSession(env, 'new-user');
+      getChallengeMap(env).set('confirm_signup', {
+        id: 'confirm_signup',
+        tenantId: 'default',
+        type: 'reauth',
+        userId: 'new-user',
+        challenge: 'confirm_signup',
+        metadata: {
+          purpose: 'authorize_confirmation',
+          authTime: Math.floor(Date.now() / 1000),
+          sessionUserId: 'new-user',
+          browserBinding: 'signup-browser',
+        },
+      });
+
+      const response = await app.request(
+        `${base}&prompt=create&_confirmation_challenge=confirm_signup`,
+        {
+          method: 'GET',
+          headers: {
+            Cookie:
+              `authrim_session=${encodeURIComponent(TEST_SESSION_ID)}; ` +
+              'authrim_authorize_confirmation=signup-browser',
+          },
+        },
+        env
+      );
+
+      const url = destination(response);
+      expect(url.origin + url.pathname).toBe('https://example.com/callback');
+      expect(url.searchParams.get('code')).toBeTruthy();
+      expect(getAuthCodeStore(env).storeCodeRpc).toHaveBeenCalledWith(
+        expect.objectContaining({ userId: 'new-user' })
+      );
+    });
+
+    it('does not send the user back to sign up once the consent that follows is confirmed', async () => {
+      await enablePromptCreate();
+      seedSession(env, 'new-user');
+      getChallengeMap(env).set('confirm_consent_after_signup', {
+        id: 'confirm_consent_after_signup',
+        tenantId: 'default',
+        type: 'consent',
+        userId: 'new-user',
+        challenge: 'confirm_consent_after_signup',
+        metadata: {
+          purpose: 'authorize_consent_confirmation',
+          consent_generation: 0,
+          sessionId: TEST_SESSION_ID,
+          browserBinding: 'consent-browser-binding',
+        },
+      });
+
+      const response = await app.request(
+        `${base}&prompt=create&_consent_confirmation_challenge=confirm_consent_after_signup`,
+        {
+          method: 'GET',
+          headers: {
+            Cookie:
+              `authrim_session=${encodeURIComponent(TEST_SESSION_ID)}; ` +
+              'authrim_consent_confirmation=consent-browser-binding',
+          },
+        },
+        env
+      );
+
+      const url = destination(response);
+      expect(url.origin + url.pathname).toBe('https://example.com/callback');
+      expect(url.searchParams.get('code')).toBeTruthy();
+    });
+
+    it('opens the sign-up path the tenant set', async () => {
+      await enablePromptCreate();
+      await (env.SETTINGS as unknown as MockKVNamespace).put(
+        'settings:tenant:default:tenant',
+        JSON.stringify({ 'tenant.ui_register_path': '/join' })
+      );
+
+      const url = destination(await app.request(`${base}&prompt=create`, {}, env));
+
+      expect(url.origin + url.pathname).toBe('https://login.example.com/join');
+      expect(url.searchParams.get('challenge_id')).toBeTruthy();
+    });
+
+    describe('prompt values are whole, case-sensitive tokens', () => {
+      it.each([
+        ['create nonetheless', 'create%20nonetheless', '/signup'],
+        ['nonetheless create', 'nonetheless%20create', '/signup'],
+        ['create  login (two spaces)', 'create%20%20login', '/signup'],
+        ['a leading space', '%20create', '/signup'],
+        ['a trailing space', 'create%20', '/signup'],
+        ['nonecreate', 'nonecreate', '/login'],
+        ['xcreate', 'xcreate', '/login'],
+        ['createx', 'createx', '/login'],
+        ['CREATE', 'CREATE', '/login'],
+        ['Create', 'Create', '/login'],
+        ['create,login', 'create,login', '/login'],
+      ])('sends %s to %s', async (_label, prompt, path) => {
+        await enablePromptCreate();
+
+        const url = destination(await app.request(`${base}&prompt=${prompt}`, {}, env));
+
+        expect(url.pathname).toBe(path);
+      });
+
+      it.each([true, false])(
+        'ignores a value that only contains none (SSO enabled=%s): no login_required',
+        async (ssoEnabled) => {
+          await enablePromptCreate();
+          await configureClientSettings(env, { 'client.sso_enabled': ssoEnabled });
+          configureClientTrustPolicy(env);
+
+          // Without a session: the sign-in page, as for a request without the value.
+          const noSession = destination(await app.request(`${base}&prompt=nonetheless`, {}, env));
+          expect(noSession.pathname).toBe('/login');
+          expect(noSession.searchParams.get('error')).toBeNull();
+        }
+      );
+
+      it('uses the session of a signed-in user for a value that only contains none', async () => {
+        await configureClientSettings(env, { 'client.sso_enabled': true });
+        configureClientTrustPolicy(env);
+        seedSession(env);
+
+        const url = destination(
+          await app.request(
+            `${base}&prompt=nonetheless`,
+            { method: 'GET', headers: sessionHeaders() },
+            env
+          )
+        );
+
+        expect(url.origin + url.pathname).toBe('https://example.com/callback');
+        expect(url.searchParams.get('code')).toBeTruthy();
+        expect(url.searchParams.get('error')).toBeNull();
+      });
+
+      it('does not force re-authentication for a value that only contains login', async () => {
+        await configureClientSettings(env, { 'client.sso_enabled': true });
+        configureClientTrustPolicy(env);
+        seedSession(env);
+
+        const url = destination(
+          await app.request(
+            `${base}&prompt=loginnow`,
+            { method: 'GET', headers: sessionHeaders() },
+            env
+          )
+        );
+
+        expect(url.origin + url.pathname).toBe('https://example.com/callback');
+        expect(url.searchParams.get('code')).toBeTruthy();
+      });
+
+      it.each([
+        ['consent', '/consent'],
+        ['consentx', null],
+        ['xconsent', null],
+        ['CONSENT', null],
+      ])(
+        'asks for consent again only for the whole value consent (prompt=%s)',
+        async (prompt, consentPath) => {
+          await configureClientSettings(env, { 'client.sso_enabled': true });
+          configureClientTrustPolicy(env);
+          seedSession(env);
+
+          const url = destination(
+            await app.request(
+              `${base}&prompt=${prompt}`,
+              { method: 'GET', headers: sessionHeaders() },
+              env
+            )
+          );
+
+          if (consentPath) {
+            expect(url.origin + url.pathname).toBe(`https://login.example.com${consentPath}`);
+          } else {
+            expect(url.origin + url.pathname).toBe('https://example.com/callback');
+            expect(url.searchParams.get('code')).toBeTruthy();
+          }
+        }
+      );
+
+      it('still answers prompt=none with login_required, and rejects none with other values', async () => {
+        await configureClientSettings(env, { 'client.sso_enabled': true });
+        const noSession = await app.request(`${base}&prompt=none`, {}, env);
+        expect(noSession.headers.get('Location')).toContain('error=login_required');
+        for (const prompt of ['none%20login', 'none%20unknown', 'login%20none']) {
+          const response = await app.request(`${base}&prompt=${prompt}`, {}, env);
+          expect(response.headers.get('Location'), prompt).toContain('error=invalid_request');
+        }
+      });
+    });
+
+    describe("with the app's own sign-in UI (login_ui_url)", () => {
+      const clientUi = 'https://client-ui.example';
+      beforeEach(() => {
+        mockGetClient.mockResolvedValue({
+          client_id: 'test-client',
+          client_secret: 'test-secret',
+          redirect_uris: ['https://example.com/callback'],
+          grant_types: ['authorization_code'],
+          response_types: ['code'],
+          scope: 'openid profile email',
+          token_endpoint_auth_method: 'client_secret_basic',
+          login_ui_url: clientUi,
+        });
+      });
+      const tenantPaths = (paths: Record<string, unknown>) =>
+        (env.SETTINGS as unknown as MockKVNamespace).put(
+          'settings:tenant:default:tenant',
+          JSON.stringify(paths)
+        );
+
+      it('opens the tenant sign-up path on the app UI when both are set', async () => {
+        await enablePromptCreate();
+        await tenantPaths({ 'tenant.ui_register_path': '/join' });
+
+        const url = destination(await app.request(`${base}&prompt=create`, {}, env));
+
+        expect(url.origin + url.pathname).toBe(`${clientUi}/join`);
+        expect(url.searchParams.get('challenge_id')).toBeTruthy();
+      });
+
+      it('opens the default sign-up path on the app UI when the tenant set none', async () => {
+        await enablePromptCreate();
+
+        const url = destination(await app.request(`${base}&prompt=create`, {}, env));
+
+        expect(url.origin + url.pathname).toBe(`${clientUi}/signup`);
+      });
+
+      it.each(['//evil.example', '/x?y=1', '/\\evil.example', 'join'])(
+        'falls back to the default sign-up path on the app UI for the tenant value %s',
+        async (value) => {
+          await enablePromptCreate();
+          await tenantPaths({ 'tenant.ui_register_path': value });
+
+          const url = destination(await app.request(`${base}&prompt=create`, {}, env));
+
+          expect(url.origin + url.pathname).toBe(`${clientUi}/signup`);
+        }
+      );
+
+      it("leaves the sign-in page's path as it was: the app UI's default", async () => {
+        await tenantPaths({ 'tenant.ui_login_path': '/signin' });
+
+        const url = destination(await app.request(`${base}`, {}, env));
+
+        expect(url.origin + url.pathname).toBe(`${clientUi}/login`);
+      });
+    });
+
+    it('opens the sign-up path on the tenant UI base URL', async () => {
+      await enablePromptCreate();
+      env.ALLOWED_ORIGINS = 'https://accounts.example.com';
+      await (env.SETTINGS as unknown as MockKVNamespace).put(
+        'settings:tenant:default:tenant',
+        JSON.stringify({
+          'tenant.ui_base_url': 'https://accounts.example.com',
+          'tenant.ui_register_path': '/join',
+        })
+      );
+
+      const url = destination(await app.request(`${base}&prompt=create`, {}, env));
+
+      expect(url.origin + url.pathname).toBe('https://accounts.example.com/join');
+    });
+
+    it.each([
+      '//evil.example',
+      '/\\evil.example',
+      '/x?y=1',
+      '/x#y',
+      'signup',
+      'https://evil.example/',
+    ])('falls back to the default sign-up path for the unusable value %s', async (value) => {
+      await enablePromptCreate();
+      await (env.SETTINGS as unknown as MockKVNamespace).put(
+        'settings:tenant:default:tenant',
+        JSON.stringify({ 'tenant.ui_register_path': value })
+      );
+
+      const url = destination(await app.request(`${base}&prompt=create`, {}, env));
+
+      expect(url.origin + url.pathname).toBe('https://login.example.com/signup');
+    });
+
+    it('answers temporarily_unavailable when no sign-in UI is configured', async () => {
+      await enablePromptCreate();
+      delete (env as { UI_URL?: string }).UI_URL;
+
+      const response = await app.request(`${base}&prompt=create`, {}, env);
+
+      expect(response.status).toBe(302);
+      expect(response.headers.get('Location')).toContain('error=temporarily_unavailable');
+      expect(getChallengeMap(env).size).toBe(0);
+    });
+
+    it('sends a PAR request with prompt=create to the sign-up page', async () => {
+      await enablePromptCreate();
+      const requestUri = 'urn:ietf:params:oauth:request_uri:par_prompt_create';
+      const parStore = createMockPARRequestStore({
+        client_id: 'test-client',
+        response_type: 'code',
+        redirect_uri: 'https://example.com/callback',
+        scope: 'openid',
+        state: 'par-create',
+        prompt: 'create',
+        code_challenge: 'a'.repeat(43),
+        code_challenge_method: 'S256',
+      });
+      env.PAR_REQUEST_STORE = parStore as unknown as Env['PAR_REQUEST_STORE'];
+
+      const url = destination(
+        await app.request(
+          `/authorize?client_id=test-client&request_uri=${encodeURIComponent(requestUri)}`,
+          {},
+          env
+        )
+      );
+
+      expect(url.pathname).toBe('/signup');
+      expect(challengeOf(url).metadata).toMatchObject({
+        prompt: 'create',
+        authorization_request_source: 'par',
+        par_request_uri: requestUri,
+      });
+    });
+
+    it('sends a signed request object with prompt=create to the sign-up page', async () => {
+      await enablePromptCreate();
+      const keyPair = await generateKeyPair('RS256');
+      const publicJwk = {
+        ...(await exportJWK(keyPair.publicKey)),
+        kid: 'jar-prompt-create-key',
+        alg: 'RS256',
+        use: 'sig',
+      };
+      mockGetClient.mockResolvedValue({
+        client_id: 'test-client',
+        client_secret_hash: 'confidential-client-secret-hash',
+        redirect_uris: ['https://example.com/callback'],
+        grant_types: ['authorization_code'],
+        response_types: ['code'],
+        scope: 'openid',
+        token_endpoint_auth_method: 'private_key_jwt',
+        jwks: { keys: [publicJwk] },
+      });
+      await configureClientSettings(env, { 'client.sso_enabled': true });
+      configureClientTrustPolicy(env);
+      seedSession(env, 'jar-create-user');
+
+      const requestObject = await new SignJWT({
+        client_id: 'test-client',
+        response_type: 'code',
+        redirect_uri: 'https://example.com/callback',
+        scope: 'openid',
+        state: 'jar-create-state',
+        prompt: 'create',
+      })
+        .setProtectedHeader({ alg: 'RS256', kid: publicJwk.kid })
+        .setIssuer('test-client')
+        .setAudience('https://test.example.com')
+        .setIssuedAt()
+        .setExpirationTime('5m')
+        .sign(keyPair.privateKey);
+
+      const url = destination(
+        await app.request(
+          `/authorize?client_id=test-client&request=${encodeURIComponent(requestObject)}`,
+          { method: 'GET', headers: sessionHeaders() },
+          env
+        )
+      );
+
+      expect(url.pathname).toBe('/signup');
+      expect(challengeOf(url).metadata).toMatchObject({
+        prompt: 'create',
+        state: 'jar-create-state',
+      });
+      expect(getAuthCodeStore(env).storeCodeRpc).not.toHaveBeenCalled();
+    });
+
+    it('sends a POSTed authorization request with prompt=create to the sign-up page', async () => {
+      await enablePromptCreate();
+      const response = await app.request(
+        '/authorize',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({
+            response_type: 'code',
+            client_id: 'test-client',
+            redirect_uri: 'https://example.com/callback',
+            scope: 'openid',
+            state: 'post-create',
+            prompt: 'create',
+          }),
+        },
+        env
+      );
+
+      expect(destination(response).pathname).toBe('/signup');
+    });
+  });
+
   describe('identity assurance (IAL enforcement)', () => {
     const NOW = Date.now();
     const authorizeUrl = (extra = '', scope = 'openid') =>

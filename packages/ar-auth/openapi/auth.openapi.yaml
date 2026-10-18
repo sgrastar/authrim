@@ -70,6 +70,17 @@ paths:
         have expired), else invalid_request; it never stands in for a session. When the signed-in
         End-User is not the one it names (its sub, or the sub the app's identity mapping issues),
         the request ends with login_required, whether prompt=none or not.
+        prompt=create (Initiating User Registration) is acted on only while the tenant has
+        oauth.prompt_create_enabled on and a sign-up method (passkey, email code or authenticator
+        app) is on for sign-up. The browser then goes to the tenant's sign-up page
+        (tenant.ui_register_path) with the same challenge_id as the sign-in page gets, whether or
+        not it holds a session: only an authentication made after the request completes it, and
+        the request then continues as after any sign-in. Otherwise the value is ignored, as any
+        prompt value is that this server does not act on. prompt=create with none is
+        invalid_request, as none with any other value. The prompt values are the space-separated,
+        case-sensitive whole tokens of the parameter: a value that only contains a known one
+        (nonetheless, loginnow) is ignored. An app with its own sign-in UI (login_ui_url) is sent
+        to the tenant's sign-up path on that UI.
       parameters:
         - $ref: '#/components/parameters/ClientIdQuery'
         - name: redirect_uri

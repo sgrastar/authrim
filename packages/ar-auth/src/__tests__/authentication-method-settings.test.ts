@@ -4,6 +4,7 @@ import {
   didLoginEnabled,
   isAuthenticationMethodUsageEnabled,
   isDidLoginEnabled,
+  isSelfRegistrationAvailable,
   readAuthenticationMethodSettings,
 } from '../authentication-method-settings';
 
@@ -124,5 +125,72 @@ describe('authentication method settings', () => {
       ).rejects.toThrow();
       expect(await isDidLoginEnabled(envWith('{not json'), 't1')).toBe(false);
     });
+  });
+});
+
+describe('isSelfRegistrationAvailable', () => {
+  const available = (settings: Record<string, unknown> | string | null) =>
+    isSelfRegistrationAvailable(
+      envWith(
+        settings === null || typeof settings === 'string' ? settings : JSON.stringify(settings)
+      ),
+      't1'
+    );
+
+  it('is available with nothing set: passkeys are on for sign-up', async () => {
+    expect(await available(null)).toBe(true);
+  });
+
+  it('is not available once every sign-up method is off', async () => {
+    expect(
+      await available({
+        'authentication-methods.passkey.signup_enabled': false,
+        'authentication-methods.email_otp.signup_enabled': false,
+        'authentication-methods.totp.signup_enabled': false,
+      })
+    ).toBe(false);
+    expect(await available({ 'authentication-methods.passkey.enabled': false })).toBe(false);
+  });
+
+  it.each([
+    ['email code', { 'authentication-methods.email_otp.signup_enabled': true }],
+    ['email code through its method switch', { 'authentication-methods.email_otp.enabled': true }],
+    ['an authenticator app', { 'authentication-methods.totp.signup_enabled': true }],
+    [
+      'an authenticator app through its method switch',
+      { 'authentication-methods.totp.enabled': true },
+    ],
+  ])('is available with only %s on', async (_label, extra) => {
+    expect(await available({ 'authentication-methods.passkey.enabled': false, ...extra })).toBe(
+      true
+    );
+  });
+
+  it('is not turned on by sign-in alone', async () => {
+    expect(
+      await available({
+        'authentication-methods.passkey.enabled': false,
+        'authentication-methods.email_otp.login_enabled': true,
+        'authentication-methods.totp.login_enabled': true,
+      })
+    ).toBe(false);
+  });
+
+  it.each(['', '   ', '{not json', '[]', 'null'])(
+    'is not available when the settings cannot be read (%j)',
+    async (document) => {
+      expect(await available(document)).toBe(false);
+    }
+  );
+
+  it('is not available when the settings read fails', async () => {
+    const env = {
+      SETTINGS: {
+        get: async () => {
+          throw new Error('kv down');
+        },
+      },
+    } as never;
+    expect(await isSelfRegistrationAvailable(env, 't1')).toBe(false);
   });
 });

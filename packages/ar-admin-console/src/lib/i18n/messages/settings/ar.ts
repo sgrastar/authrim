@@ -84,6 +84,9 @@ export const arSettings: Record<keyof typeof jaSettings, string> = {
 		'يجب دفع طلبات التفويض أولًا من خادم إلى خادم (Pushed Authorization Request).',
 	'set.k.oauth.state_required': 'اشتراط معامل state',
 	'set.k.oauth.state_required.desc': 'رفض طلبات التفويض التي لا تحتوي على state (حماية CSRF).',
+	'set.k.oauth.prompt_create_enabled': 'فتح صفحة التسجيل عند prompt=create',
+	'set.k.oauth.prompt_create_enabled.desc':
+		'يصل التطبيق الذي يطلب إنشاء حساب (prompt=create) إلى صفحة التسجيل بدلاً من صفحة تسجيل الدخول. يتطلب تفعيل طريقة تسجيل (مفتاح المرور أو رمز البريد أو تطبيق المصادقة)؛ وإلا يجري تسجيل الدخول كالمعتاد. وتدرج خاصية الاكتشاف القيمة create ضمن قيم prompt.',
 	'set.k.security.require_signed_request_object': 'اشتراط كائنات طلب موقّعة',
 	'set.k.security.require_signed_request_object.desc':
 		'يجب أن تصل طلبات التفويض في كائن طلب وقّعه التطبيق.',
