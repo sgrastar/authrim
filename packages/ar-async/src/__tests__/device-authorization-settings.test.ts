@@ -6,6 +6,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Env, DeviceCodeMetadata } from '@authrim/ar-lib-core';
 import { deviceAuthorizationHandler } from '../device-authorization';
+import { formRequest, realRateLimiter } from './real-rate-limiter';
 
 const mocks = vi.hoisted(() => ({
   getClient: vi.fn(),
@@ -43,7 +44,9 @@ describe('/device_authorization with device flow settings', () => {
     stored.length = 0;
     documents = {};
     kvReads = [];
-    mocks.getClient.mockReset().mockResolvedValue({ client_id: 'device-client' });
+    mocks.getClient
+      .mockReset()
+      .mockResolvedValue({ client_id: 'device-client', token_endpoint_auth_method: 'none' });
     storeFetch = vi.fn(async (request: Request) => {
       stored.push((await request.json()) as DeviceCodeMetadata);
       return Response.json({ success: true });
@@ -64,8 +67,7 @@ describe('/device_authorization with device flow settings', () => {
     } as unknown as KVNamespace;
     const c = {
       req: {
-        parseBody: vi.fn().mockResolvedValue(body),
-        raw: new Request('https://auth.example.com/device_authorization', { method: 'POST' }),
+        ...formRequest(body),
       },
       json: vi.fn((data: unknown, status = 200, headers?: Record<string, string>) =>
         Response.json(data, { status, headers })
@@ -74,6 +76,7 @@ describe('/device_authorization with device flow settings', () => {
         ISSUER_URL: 'https://auth.example.com',
         UI_URL: 'https://ui.example.com',
         SETTINGS: kv,
+        RATE_LIMITER: realRateLimiter().namespace,
         DEVICE_CODE_STORE: {
           idFromName: vi.fn().mockReturnValue('device-store'),
           get: vi.fn().mockReturnValue({ fetch: storeFetch }),
@@ -229,7 +232,10 @@ describe('/device_authorization with device flow settings', () => {
     it('apply to that client only', async () => {
       documents[TENANT_KEY] = { 'device_flow.expires_in': 900 };
       documents[CLIENT_KEY] = { 'device_flow.expires_in': 500 };
-      mocks.getClient.mockResolvedValue({ client_id: 'other-client' });
+      mocks.getClient.mockResolvedValue({
+        client_id: 'other-client',
+        token_endpoint_auth_method: 'none',
+      });
 
       const { body } = await post({ client_id: 'other-client', scope: 'openid' });
 

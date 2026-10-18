@@ -10,6 +10,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { Hono } from 'hono';
 import { deviceAuthorizationHandler } from '../device-authorization';
+import { formRequest, realRateLimiter } from './real-rate-limiter';
 import { deviceVerifyApiHandler } from '../device-verify-api';
 import type { Env } from '@authrim/ar-lib-core';
 import { settledAnswer } from './real-user-code-limiter';
@@ -50,6 +51,7 @@ describe('Device Flow Security', () => {
     mockEnv = {
       ISSUER_URL: 'https://auth.example.com',
       UI_URL: 'https://ui.example.com',
+      RATE_LIMITER: realRateLimiter().namespace as any,
       DB: {
         prepare: vi.fn().mockReturnValue({
           bind: vi.fn().mockReturnThis(),
@@ -82,11 +84,13 @@ describe('Device Flow Security', () => {
 
   describe('Client Validation', () => {
     it('allows a registered public client with the default scope and external UI', async () => {
-      mockGetClient.mockResolvedValue({ client_id: 'public-device-client' });
+      mockGetClient.mockResolvedValue({
+        client_id: 'public-device-client',
+        token_endpoint_auth_method: 'none',
+      });
       const mockContext = {
         req: {
-          parseBody: vi.fn().mockResolvedValue({ client_id: 'public-device-client' }),
-          raw: new Request('https://auth.example.com/device_authorization', { method: 'POST' }),
+          ...formRequest({ client_id: 'public-device-client' }),
         },
         json: vi.fn().mockImplementation((data, status) => {
           return new Response(JSON.stringify(data), { status });
@@ -107,7 +111,7 @@ describe('Device Flow Security', () => {
     it('should reject request with missing client_id', async () => {
       const mockContext = {
         req: {
-          parseBody: vi.fn().mockResolvedValue({
+          ...formRequest({
             scope: 'openid',
           }),
         },
@@ -132,7 +136,7 @@ describe('Device Flow Security', () => {
 
       const mockContext = {
         req: {
-          parseBody: vi.fn().mockResolvedValue({
+          ...formRequest({
             client_id: 'invalid-client-123',
             scope: 'openid',
           }),
@@ -156,6 +160,7 @@ describe('Device Flow Security', () => {
       // Mock client without device_code grant type
       const mockClient = {
         client_id: 'test-client',
+        token_endpoint_auth_method: 'none',
         grant_types: ['authorization_code'], // No device_code
       };
 
@@ -163,7 +168,7 @@ describe('Device Flow Security', () => {
 
       const mockContext = {
         req: {
-          parseBody: vi.fn().mockResolvedValue({
+          ...formRequest({
             client_id: 'test-client',
             scope: 'openid',
           }),

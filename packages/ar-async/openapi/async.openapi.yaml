@@ -35,12 +35,45 @@ paths:
         be read return 503 temporarily_unavailable and no code is issued. The code keeps
         device_flow.slow_down_increment, device_flow.max_poll_count and device_flow.max_interval
         as they were when it was issued; the token endpoint applies them while the device polls.
+        The request must be application/x-www-form-urlencoded, and client_id, client_secret,
+        client_assertion, client_assertion_type and scope may each appear once (a repeated,
+        non-string or oversized parameter is 400 invalid_request; client_id is up to 256 characters,
+        scope up to 2048); the body is limited to 64 KiB as it is read, whatever Content-Length says
+        (a larger one is 400 invalid_request). A public client (token_endpoint_auth_method none, the
+        only kind the token endpoint's device_code grant treats as public) sends its client_id
+        only; a client with no registered method and no secret authenticates as a confidential
+        one, and so is refused. A confidential client authenticates as at the token endpoint (RFC 8628 section 3.1):
+        client_secret_basic (client_id may then come from the Authorization header only),
+        client_secret_post or private_key_jwt (the assertion audience may be this endpoint, the
+        token endpoint or the issuer). A client that does not exist and a client that fails to
+        authenticate get the same 401 invalid_client (with WWW-Authenticate: Basic when the client
+        sent a Basic Authorization header); only an authenticated client learns that it may not use
+        the grant (400 unauthorized_client). A scope that is malformed, or that the client may not
+        request (its requestable_scopes, else allowed_scopes, else its registered scope, else openid
+        profile email; the same rule as /authorize), is 400 invalid_scope; openid is not required.
+        With no scope (or a blank one) the code is issued for openid profile email narrowed to what
+        the client may request, and 400 invalid_scope when that is nothing. The scope is stored once
+        per scope, separated by single spaces. Requests are limited per IP address (the moderate
+        rate limit profile, 60 per minute by default) and, once the client is authenticated, per
+        client (the lenient profile, 300 per minute by default); both follow rate_limit.moderate,
+        rate_limit.lenient and their _window_seconds in the platform rate limit settings. Over a
+        limit the answer is 429 rate_limit_exceeded with Retry-After and X-RateLimit-* headers; a
+        rate limiter that cannot answer is 503 temporarily_unavailable (no code is issued). Every
+        answer, the early refusals included, carries Cache-Control: no-store and Pragma: no-cache.
+        Known limit: whether a client exists may be told from the response time (an unregistered
+        client skips the secret check, and a private_key_jwt client with a jwks_uri has its key
+        set fetched before the signature fails), as at /bc-authorize; evening it out belongs to the
+        shared client authentication code.
       requestBody:
         $ref: '#/components/requestBodies/DeviceAuthorization'
       responses:
         '200':
           $ref: '#/components/responses/DeviceAuthorization'
         '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '429':
           $ref: '#/components/responses/Error'
         '503':
           $ref: '#/components/responses/Error'
@@ -547,12 +580,24 @@ components:
       properties:
         client_id:
           type: string
+          maxLength: 256
           example: client_123
+          description: Required unless the client sends it in the Authorization header (client_secret_basic) or as the subject of its client_assertion.
+        client_secret:
+          type: string
+          maxLength: 1024
+          description: For a client registered with client_secret_post.
+        client_assertion:
+          type: string
+          maxLength: 16384
+          description: For a client registered with private_key_jwt.
+        client_assertion_type:
+          type: string
+          example: urn:ietf:params:oauth:client-assertion-type:jwt-bearer
         scope:
           type: string
+          maxLength: 2048
           example: openid profile email
-      required:
-        - client_id
     DeviceAuthorizationResponse:
       type: object
       properties:

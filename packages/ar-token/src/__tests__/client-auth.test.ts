@@ -2017,6 +2017,60 @@ describe('Client Authentication Tests', () => {
       ).toBe(true);
     });
 
+    // The device authorization endpoint (packages/ar-async) issues a code to a client with only its
+    // client_id exactly when this table says "public". The same table is in ar-async's
+    // device-authorization-client-auth test, driven through that endpoint.
+    describe.each([
+      ['none', { token_endpoint_auth_method: 'none' }, true],
+      [
+        'none with a leftover secret',
+        { token_endpoint_auth_method: 'none', client_secret_hash: 'a-secret-hash' },
+        true,
+      ],
+      [
+        'client_secret_basic',
+        { token_endpoint_auth_method: 'client_secret_basic', client_secret_hash: 'a-secret-hash' },
+        false,
+      ],
+      [
+        'client_secret_post',
+        { token_endpoint_auth_method: 'client_secret_post', client_secret_hash: 'a-secret-hash' },
+        false,
+      ],
+      [
+        'private_key_jwt',
+        { token_endpoint_auth_method: 'private_key_jwt', jwks: { keys: [] } },
+        false,
+      ],
+      ['legacy: no method, no secret', {}, false],
+      ['legacy: no method, with a secret', { client_secret_hash: 'a-secret-hash' }, false],
+    ] as Array<[string, Record<string, unknown>, boolean]>)(
+      'a %s client presenting its client_id only',
+      (_label, metadata, isPublic) => {
+        it(`${isPublic ? 'redeems' : 'cannot redeem'} an approved device code`, async () => {
+          const fetch = configureDeviceCode(
+            baseDeviceMetadata({ status: 'approved', sub: 'user-123' })
+          );
+          mocks.mockGetClientCached.mockResolvedValue({
+            client_id: clientId,
+            tenant_id: 'default',
+            grant_types: ['urn:ietf:params:oauth:grant-type:device_code'],
+            default_resource: 'https://api.example.com',
+            ...metadata,
+          });
+
+          const { response } = await requestDeviceToken();
+
+          expect(response.status).toBe(isPublic ? 200 : 401);
+          expect(
+            fetch.mock.calls.some(
+              ([request]) => new URL((request as Request).url).pathname === '/mark-token-issued'
+            )
+          ).toBe(isPublic);
+        });
+      }
+    );
+
     it('rejects a concurrent redemption before signing any tokens', async () => {
       const client = createPublicClient({
         client_id: clientId,

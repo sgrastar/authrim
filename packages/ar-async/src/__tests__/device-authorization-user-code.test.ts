@@ -5,6 +5,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Env } from '@authrim/ar-lib-core';
 import { deviceAuthorizationHandler } from '../device-authorization';
+import { formRequest, realRateLimiter } from './real-rate-limiter';
 
 const mocks = vi.hoisted(() => ({
   getClient: vi.fn(),
@@ -33,8 +34,7 @@ vi.mock('@authrim/ar-lib-core', async () => {
 function context(env: Partial<Env>) {
   return {
     req: {
-      parseBody: vi.fn().mockResolvedValue({ client_id: 'device-client', scope: 'openid' }),
-      raw: new Request('https://auth.example.com/device_authorization', { method: 'POST' }),
+      ...formRequest({ client_id: 'device-client', scope: 'openid' }),
     },
     json: vi.fn((data: unknown, status = 200, headers?: Record<string, string>) =>
       Response.json(data, { status, headers })
@@ -55,6 +55,7 @@ function envWithStore(statuses: number[]) {
   const env = {
     ISSUER_URL: 'https://auth.example.com',
     UI_URL: 'https://ui.example.com',
+    RATE_LIMITER: realRateLimiter().namespace,
     DEVICE_CODE_STORE: {
       idFromName: vi.fn().mockReturnValue('device-store'),
       get: vi.fn().mockReturnValue({ fetch }),
@@ -65,7 +66,9 @@ function envWithStore(statuses: number[]) {
 
 describe('device authorization user code retries', () => {
   beforeEach(() => {
-    mocks.getClient.mockReset().mockResolvedValue({ client_id: 'device-client' });
+    mocks.getClient
+      .mockReset()
+      .mockResolvedValue({ client_id: 'device-client', token_endpoint_auth_method: 'none' });
     let drawn = 0;
     mocks.generateUserCode.mockReset().mockImplementation(() => `AAAA-${2000 + ++drawn}`);
   });

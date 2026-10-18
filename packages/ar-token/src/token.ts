@@ -148,6 +148,7 @@ import {
   validateClientAssertion,
   parseOAuthClientAuthenticationParams,
   authenticateConfidentialOAuthClient,
+  isDeviceCodePublicClient,
   validateRegisteredClientAuthenticationMethod,
   parseTrustedIssuers,
   getIDTokenRBACClaims,
@@ -5147,7 +5148,7 @@ async function handleDeviceCodeGrant(
     return oauthError(c, 'invalid_client', 'Client authentication failed', 401);
   }
 
-  if (clientMetadata.token_endpoint_auth_method === 'none') {
+  if (isDeviceCodePublicClient(clientMetadata)) {
     const methodValidation = validateRegisteredClientAuthenticationMethod(
       clientMetadata as unknown as ClientMetadata,
       clientAuth.credentials.presentation
