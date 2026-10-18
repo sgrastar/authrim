@@ -73,6 +73,7 @@ interface LookupReflectionRow {
 interface ReservationReflectionRow {
   account_id: string;
   reservation_state: string;
+  created_at?: number | string;
 }
 
 interface VerificationRow {
@@ -410,16 +411,23 @@ function rawIdentifier(
   };
 }
 
+/**
+ * Checks that the source generation's reservation is committed for this account and returns when
+ * it was acquired (null for an account id, which has no reservation). The new generation's
+ * reservation inherits that time: it is the same claim on the same identifier, and a removal
+ * decides what it may release by the time a reservation was acquired (see
+ * AccountDirectoryRemovalCoordinator).
+ */
 async function verifySourceReservation(input: {
   lookupForBucket: (virtualBucket: number) => Promise<D1Database>;
   sourceIndex: LookupBlindIndex;
   tenantId: string;
   accountId: string;
-}): Promise<void> {
-  if (input.sourceIndex.indexKind === 'account_id') return;
+}): Promise<number | null> {
+  if (input.sourceIndex.indexKind === 'account_id') return null;
   const row = await primary(await input.lookupForBucket(input.sourceIndex.virtualBucket))
     .prepare(
-      `SELECT account_id, reservation_state FROM lookup_identifier_reservations
+      `SELECT account_id, reservation_state, created_at FROM lookup_identifier_reservations
         WHERE virtual_bucket = ? AND tenant_id = ? AND index_kind = ?
           AND normalization_version = ? AND hmac_key_generation = ?
           AND identifier_blind_digest = ?`
@@ -436,6 +444,8 @@ async function verifySourceReservation(input: {
   if (row?.account_id !== input.accountId || row.reservation_state !== 'committed') {
     throw new Error('lookup_hmac_reindex_source_reservation_invalid');
   }
+  const createdAt = Number(row.created_at);
+  return Number.isSafeInteger(createdAt) && createdAt >= 1 ? createdAt : null;
 }
 
 async function upsertCurrentIdentifier(input: {
@@ -446,7 +456,9 @@ async function upsertCurrentIdentifier(input: {
   accountId: string;
   routeProjection: AccountDirectoryPublication['routeProjection'];
   now: number;
-}): Promise<void> {
+  /** When the source generation's reservation was acquired; the new reservation takes that time. */
+  sourceReservationCreatedAt: number | null;
+}): Promise<'projected' | 'reservation_not_committed'> {
   const lookup = primary(await input.lookupForBucket(input.currentIndex.virtualBucket));
   if (input.currentIndex.indexKind !== 'account_id') {
     await lookup
@@ -467,7 +479,9 @@ async function upsertCurrentIdentifier(input: {
         input.accountId,
         `hmac-reindex:${input.operationId}`,
         input.now,
-        input.now,
+        // Not the time of the reindex: a reservation that looks newer than a removal prepared
+        // before it was created is taken for a later add, and that removal leaves it behind.
+        Math.min(input.sourceReservationCreatedAt ?? input.now, input.now),
         input.now
       )
       .run();
@@ -502,6 +516,30 @@ async function upsertCurrentIdentifier(input: {
   if (publicationCounter?.present !== 1) {
     throw new Error('lookup_hmac_reindex_publication_counter_missing');
   }
+  // A route is written only while the account's reservation of the identifier is still committed,
+  // read in the same statement (the shape of OWNS_RESERVATION_SQL in the directory coordinator).
+  const reservationParams =
+    input.currentIndex.indexKind === 'account_id'
+      ? []
+      : [
+          input.currentIndex.virtualBucket,
+          input.tenantId,
+          input.currentIndex.indexKind,
+          input.currentIndex.normalizationVersion,
+          input.currentIndex.hmacKeyGeneration,
+          input.currentIndex.digest,
+          input.accountId,
+        ];
+  const holdsReservation =
+    input.currentIndex.indexKind === 'account_id'
+      ? '1 = 1'
+      : `EXISTS (
+           SELECT 1 FROM lookup_identifier_reservations reservation
+            WHERE reservation.virtual_bucket = ? AND reservation.tenant_id = ?
+              AND reservation.index_kind = ? AND reservation.normalization_version = ?
+              AND reservation.hmac_key_generation = ? AND reservation.identifier_blind_digest = ?
+              AND reservation.account_id = ? AND reservation.reservation_state = 'committed'
+         )`;
   await lookup.batch([
     lookup
       .prepare(
@@ -514,7 +552,8 @@ async function upsertCurrentIdentifier(input: {
                WHERE virtual_bucket = ? AND index_kind = ? AND normalization_version = ?
                  AND hmac_key_generation = ? AND identifier_blind_digest = ?
                  AND tenant_id = ? AND account_id = ? AND lifecycle_state = 'active'
-            )`
+            )
+            AND ${holdsReservation}`
       )
       .bind(
         input.now,
@@ -525,7 +564,8 @@ async function upsertCurrentIdentifier(input: {
         input.currentIndex.hmacKeyGeneration,
         input.currentIndex.digest,
         input.tenantId,
-        input.accountId
+        input.accountId,
+        ...reservationParams
       ),
     lookup
       .prepare(
@@ -535,7 +575,8 @@ async function upsertCurrentIdentifier(input: {
          account_route_generation, required_binding_route_generation, residency_policy_id,
          route_projection_json, tenant_lifecycle_state, runtime_route_status,
          lifecycle_state, created_at, updated_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', 'active', 'active', ?, ?)
+       ) SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', 'active', 'active', ?, ?
+        WHERE ${holdsReservation}
        ON CONFLICT(
          virtual_bucket, index_kind, normalization_version, hmac_key_generation,
          identifier_blind_digest, tenant_id, account_id
@@ -559,9 +600,28 @@ async function upsertCurrentIdentifier(input: {
         input.routeProjection.residencyPolicyId,
         projection,
         input.now,
-        input.now
+        input.now,
+        ...reservationParams
       ),
   ]);
+  if (input.currentIndex.indexKind !== 'account_id') {
+    // The reservation can be released between the check above and the batch (the email
+    // replacement releases the old address when it completes, and a removal does too): the batch
+    // then wrote nothing, and this identifier is finished as far as the directory is concerned.
+    // The authority check that follows decides what else is left to do.
+    const held = await lookup
+      .prepare(
+        `SELECT account_id, reservation_state FROM lookup_identifier_reservations
+          WHERE virtual_bucket = ? AND tenant_id = ? AND index_kind = ?
+            AND normalization_version = ? AND hmac_key_generation = ?
+            AND identifier_blind_digest = ?`
+      )
+      .bind(...reservationParams.slice(0, 6))
+      .first<ReservationReflectionRow>();
+    if (held?.account_id !== input.accountId || held.reservation_state !== 'committed') {
+      return 'reservation_not_committed';
+    }
+  }
   const reflected = await lookup
     .prepare(
       `SELECT tenant_id, account_id, route_projection_json, lifecycle_state
@@ -588,6 +648,7 @@ async function upsertCurrentIdentifier(input: {
   ) {
     throw new Error('lookup_hmac_reindex_reflection_failed');
   }
+  return 'projected';
 }
 
 async function sourceStillAuthoritative(
@@ -677,6 +738,57 @@ async function sourceStillAuthoritative(
   return reflected?.id === external.authority_id;
 }
 
+/**
+ * An email replacement that has not finished owns the old address in the directory: it moves the
+ * old reservation to 'releasing' itself, releases it only once the new address is verified, and
+ * verifies that release by account. The old address leaving the authority is that replacement's
+ * own switch, not a stale projection, so the reindex must not release (or touch) the row: another
+ * account could take the address before the replacement completes, and the replacement would
+ * then stop in blocked_forward_repair. The replacement records the blind digests it will release
+ * in the same database as the email values the reindex reads, so one read decides it. Only email
+ * values can be replaced this way among the reindex sources (the other replaceable identifier,
+ * a SCIM user name, is not a reindex source), so no other source kind is checked.
+ */
+async function unfinishedEmailReplacementOwns(
+  source: ControlLookupHmacRotationSourceShardView,
+  session: D1DatabaseSession,
+  input: { tenantId: string; accountId: string; index: LookupBlindIndex }
+): Promise<boolean> {
+  if (source.sourceKind !== 'email_exact') return false;
+  const owned = await session
+    .prepare(
+      `SELECT 1 AS owned
+         FROM identity_identifier_replacement_projections projection
+         JOIN identity_identifier_replacement_operations operation
+           ON operation.operation_id = projection.operation_id
+        WHERE projection.identifier_side = 'old'
+          AND projection.hmac_key_generation = ? AND projection.normalization_version = ?
+          AND projection.virtual_bucket = ? AND projection.blind_digest = ?
+          AND operation.tenant_id = ? AND operation.account_id IN (?, ?)
+          AND operation.identifier_kind = 'email_exact'
+          AND operation.state NOT IN ('completed', 'canceled')
+        LIMIT 1`
+    )
+    .bind(
+      input.index.hmacKeyGeneration,
+      input.index.normalizationVersion,
+      input.index.virtualBucket,
+      input.index.digest,
+      input.tenantId,
+      input.accountId,
+      input.accountId.replace(/^account:/, '')
+    )
+    .first<{ owned: number }>();
+  return owned?.owned === 1;
+}
+
+/**
+ * The authority no longer has the identifier this run projected into the new generation: take the
+ * projection back. The route is disabled, and the reservation this run created is released (not
+ * left in `releasing`, which nothing advances for a reindex row, and which would refuse every
+ * later add of the identifier). A reservation held by another operation is not ours to release:
+ * its holder removes it, and then the route stays as that holder's.
+ */
 async function disableStaleCurrentIdentifier(input: {
   lookupForBucket: (virtualBucket: number) => Promise<D1Database>;
   operationId: string;
@@ -686,49 +798,65 @@ async function disableStaleCurrentIdentifier(input: {
   now: number;
 }): Promise<void> {
   const lookup = primary(await input.lookupForBucket(input.index.virtualBucket));
-  await lookup
-    .prepare(
-      `UPDATE lookup_identifiers
-          SET lifecycle_state = 'disabled', disabled_at = ?, updated_at = ?
-        WHERE virtual_bucket = ? AND index_kind = ? AND normalization_version = ?
-          AND hmac_key_generation = ? AND identifier_blind_digest = ?
-          AND tenant_id = ? AND account_id = ? AND lifecycle_state = 'active'`
-    )
-    .bind(
-      input.now,
-      input.now,
-      input.index.virtualBucket,
-      input.index.indexKind,
-      input.index.normalizationVersion,
-      input.index.hmacKeyGeneration,
-      input.index.digest,
-      input.tenantId,
-      input.accountId
-    )
-    .run();
-  if (input.index.indexKind !== 'account_id') {
-    await lookup
+  const reindexOperationId = `hmac-reindex:${input.operationId}`;
+  const key = [
+    input.index.virtualBucket,
+    input.tenantId,
+    input.index.indexKind,
+    input.index.normalizationVersion,
+    input.index.hmacKeyGeneration,
+    input.index.digest,
+  ];
+  const statements = [
+    lookup
       .prepare(
-        `UPDATE lookup_identifier_reservations
-            SET reservation_state = 'releasing', updated_at = ?
-          WHERE virtual_bucket = ? AND tenant_id = ? AND index_kind = ?
-            AND normalization_version = ? AND hmac_key_generation = ?
-            AND identifier_blind_digest = ? AND account_id = ?
-            AND operation_id = ? AND reservation_state = 'committed'`
+        `UPDATE lookup_identifiers
+            SET lifecycle_state = 'disabled', disabled_at = ?, updated_at = ?
+          WHERE virtual_bucket = ? AND index_kind = ? AND normalization_version = ?
+            AND hmac_key_generation = ? AND identifier_blind_digest = ?
+            AND tenant_id = ? AND account_id = ? AND lifecycle_state = 'active'
+            AND NOT EXISTS (
+              SELECT 1 FROM lookup_identifier_reservations reservation
+               WHERE reservation.virtual_bucket = lookup_identifiers.virtual_bucket
+                 AND reservation.tenant_id = lookup_identifiers.tenant_id
+                 AND reservation.index_kind = lookup_identifiers.index_kind
+                 AND reservation.normalization_version = lookup_identifiers.normalization_version
+                 AND reservation.hmac_key_generation = lookup_identifiers.hmac_key_generation
+                 AND reservation.identifier_blind_digest = lookup_identifiers.identifier_blind_digest
+                 AND reservation.account_id = lookup_identifiers.account_id
+                 AND reservation.operation_id <> ?
+                 AND reservation.reservation_state IN ('reserved', 'committed')
+            )`
       )
       .bind(
         input.now,
+        input.now,
         input.index.virtualBucket,
-        input.tenantId,
         input.index.indexKind,
         input.index.normalizationVersion,
         input.index.hmacKeyGeneration,
         input.index.digest,
+        input.tenantId,
         input.accountId,
-        `hmac-reindex:${input.operationId}`
-      )
-      .run();
+        reindexOperationId
+      ),
+  ];
+  if (input.index.indexKind !== 'account_id') {
+    statements.push(
+      lookup
+        .prepare(
+          `UPDATE lookup_identifier_reservations
+              SET reservation_state = 'released', lease_expires_at = NULL,
+                  released_at = COALESCE(released_at, ?), updated_at = ?
+            WHERE virtual_bucket = ? AND tenant_id = ? AND index_kind = ?
+              AND normalization_version = ? AND hmac_key_generation = ?
+              AND identifier_blind_digest = ? AND account_id = ?
+              AND operation_id = ? AND reservation_state IN ('committed', 'releasing')`
+        )
+        .bind(input.now, input.now, ...key, input.accountId, reindexOperationId)
+    );
   }
+  await lookup.batch(statements);
 }
 
 async function publicationForRow(input: {
@@ -1114,13 +1242,13 @@ export function createLookupHmacReindexProcessor(env: Env): DirectoryJobProcesso
         createLookupBlindIndex(source.sourceKind, raw.value, keys.source),
         createLookupBlindIndex(source.sourceKind, raw.value, keys.current),
       ]);
-      await verifySourceReservation({
+      const sourceReservationCreatedAt = await verifySourceReservation({
         lookupForBucket,
         sourceIndex,
         tenantId: raw.tenantId,
         accountId: raw.accountId,
       });
-      await upsertCurrentIdentifier({
+      const projected = await upsertCurrentIdentifier({
         lookupForBucket,
         operationId: operation.operationId,
         currentIndex,
@@ -1128,9 +1256,27 @@ export function createLookupHmacReindexProcessor(env: Env): DirectoryJobProcesso
         accountId: raw.accountId,
         routeProjection: publication.routeProjection,
         now: Math.floor(input.nowMs() / 1000),
+        sourceReservationCreatedAt,
       });
       const authoritative = await sourceStillAuthoritative(source, sourceSession, row);
-      if (!authoritative) {
+      if (projected === 'reservation_not_committed' && authoritative) {
+        // The reservation was released after this run checked it, so no route was written, yet
+        // the authority still has the link: marking the row done would leave a link without a
+        // route in the new generation, and nothing later looks for it (the verification compares
+        // counts, which another account's new route can make up). Fail the row instead: the
+        // cursor stays, and the next run projects it again once the reservation has settled
+        // (the same way a reservation held by someone else fails with
+        // lookup_hmac_reindex_reservation_conflict).
+        throw new Error('lookup_hmac_reindex_reservation_not_committed');
+      }
+      if (
+        !authoritative &&
+        !(await unfinishedEmailReplacementOwns(source, sourceSession, {
+          tenantId: raw.tenantId,
+          accountId: raw.accountId,
+          index: currentIndex,
+        }))
+      ) {
         await disableStaleCurrentIdentifier({
           lookupForBucket,
           operationId: operation.operationId,

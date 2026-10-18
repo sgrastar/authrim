@@ -211,14 +211,36 @@ async function publishAccountIdentifierAddition(
   if (!Number.isSafeInteger(now) || now < 1) {
     throw new Error('account_identifier_addition_time_invalid');
   }
+  const outboxId = accountDirectoryOutboxId(publication.operationId);
+  const payload = JSON.stringify(publication);
+  // An addition whose outbox row already succeeded is finished: its reservation was committed and
+  // its route published. A replay of it must not touch the reservation again. reserve() refuses to
+  // re-acquire a row only from the operation that released it last, so a replay arriving after the
+  // identifier went to another operation and was released again would take the row back and
+  // revive a route nothing owns. The finished add is answered from the outbox, which stays as the
+  // record of it however the identifier was removed since.
+  const finished = await dependencies.tenantCoreUsers.queryOne<OutboxReflection>(
+    `SELECT payload_json, status FROM account_routing_outbox
+      WHERE outbox_id = ? AND tenant_id = ? AND account_id = ? AND event_kind = 'identifier_added'`,
+    [outboxId, publication.tenantId, publication.accountId]
+  );
+  if (finished?.status === 'succeeded') {
+    if (finished.payload_json !== payload) {
+      throw new Error('account_identifier_addition_outbox_conflict');
+    }
+    return {
+      status: 201,
+      operationId: publication.operationId,
+      accountId: publication.accountId,
+    };
+  }
+
   const lookupForBucket = await createLookupBucketWriteResolver(env);
   await new InitialAccountIdentifierReservationService({
     lookupForBucket,
     now: () => now,
   }).reserve(publication);
 
-  const outboxId = accountDirectoryOutboxId(publication.operationId);
-  const payload = JSON.stringify(publication);
   await dependencies.tenantCoreUsers.execute(
     `INSERT OR IGNORE INTO account_routing_outbox (
        outbox_id, tenant_id, account_id, event_kind, route_generation,
