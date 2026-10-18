@@ -406,6 +406,7 @@ describe('admin tenant clone', () => {
             // Retired plugin settings: a source that still holds them does not carry them over.
             'plugin.memory_limit_mb': 256,
             'plugin.notifier_console_enabled': true,
+            'plugin.execution_timeout_ms': 30000,
           }),
           false,
           context

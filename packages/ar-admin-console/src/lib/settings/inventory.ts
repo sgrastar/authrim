@@ -608,11 +608,7 @@ place(
 );
 place('integrations/plugins', 'Plugins', {
 	primary: ['plugin.enabled'],
-	advanced: [
-		'plugin.execution_timeout_ms',
-		'plugin.auto_update_check',
-		'plugin.notifier_resend_enabled'
-	]
+	advanced: ['plugin.auto_update_check', 'plugin.notifier_resend_enabled']
 });
 
 // ---------------------------------------------------------------------------------------------

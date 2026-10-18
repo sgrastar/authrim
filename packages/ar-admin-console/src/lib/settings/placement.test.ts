@@ -164,7 +164,8 @@ describe('where settings live', () => {
 		for (const key of [
 			'diagnostic-logging.filter_tokens',
 			'plugin.memory_limit_mb',
-			'plugin.notifier_console_enabled'
+			'plugin.notifier_console_enabled',
+			'plugin.execution_timeout_ms'
 		]) {
 			expect(everyKey, key).not.toContain(key);
 			expect([...placed, ...drafted], key).not.toContain(key);
@@ -182,10 +183,6 @@ describe('where settings live', () => {
 			expect(NOT_APPLIED.has(key), key).toBe(false);
 			expect(ALL_CATEGORY_META['diagnostic-logging'].settings[key].status, key).toBeUndefined();
 		}
-	});
-
-	it('keeps the plugin execution timeout as to-build: the plugin runner cannot read tenant settings', () => {
-		expect(NOT_APPLIED.get('plugin.execution_timeout_ms')).toBe('to-build');
 	});
 
 	it('points every duplicate at a setting that exists', () => {

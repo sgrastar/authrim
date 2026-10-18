@@ -2,6 +2,8 @@
  * Plugin Settings Category
  *
  * Settings related to plugin execution and management.
+ * How long a plugin may run is not a tenant setting: ar-plugin-runner reads it from the policy of
+ * each installation (timeout_ms, 1 to 30,000 ms), so the tenant has no switch for it.
  * API: GET/PATCH /api/admin/tenants/:tenantId/settings/plugin
  * Config Level: tenant
  */
@@ -14,7 +16,6 @@ import type { CategoryMeta, SettingMeta } from '../../utils/settings-manager';
 export interface PluginSettings {
   // Plugin Execution
   'plugin.enabled': boolean;
-  'plugin.execution_timeout_ms': number;
 
   // Plugin Management
   'plugin.auto_update_check': boolean;
@@ -35,20 +36,6 @@ export const PLUGIN_SETTINGS_META: Record<keyof PluginSettings, SettingMeta> = {
     label: 'Plugins Enabled',
     description: 'Enable plugin execution for this tenant',
     visibility: 'admin',
-    status: 'in_development',
-  },
-  'plugin.execution_timeout_ms': {
-    key: 'plugin.execution_timeout_ms',
-    type: 'duration',
-    default: 5000,
-    envKey: 'PLUGIN_EXECUTION_TIMEOUT_MS',
-    label: 'Execution Timeout',
-    description: 'Maximum plugin execution time in milliseconds',
-    min: 100,
-    max: 30000,
-    unit: 'ms',
-    visibility: 'admin',
-    dependsOn: [{ key: 'plugin.enabled', value: true }],
     status: 'in_development',
   },
   'plugin.auto_update_check': {
@@ -90,7 +77,6 @@ export const PLUGIN_CATEGORY_META: CategoryMeta = {
  */
 export const PLUGIN_DEFAULTS: PluginSettings = {
   'plugin.enabled': false,
-  'plugin.execution_timeout_ms': 5000,
   'plugin.auto_update_check': true,
   'plugin.notifier_resend_enabled': true,
 };

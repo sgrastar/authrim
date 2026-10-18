@@ -423,14 +423,6 @@ const REVIEWED_FIELDS: readonly [string, TenantSettingValueType, TenantSettingHa
   `,
     ],
     [
-      'plugin',
-      'duration',
-      'value',
-      `
-    plugin.execution_timeout_ms
-  `,
-    ],
-    [
       'infrastructure',
       'string',
       'logical_reference',
