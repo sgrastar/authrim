@@ -2127,6 +2127,14 @@ paths:
         Runtime holds the same floor whatever is stored: a stored pair below it issues codes with
         the default pair (BASE31, 8).
         The request must include the current settings version in ifMatch; stale writes return 409.
+        On the authentication-methods category, turning human verification on for a flow
+        (authentication-methods.human_verification.login_enabled, signup_enabled, reauth_enabled),
+        or switching the provider while a flow requires it, is refused with 400 when the provider's
+        plugin is not enabled or has no credentials (`error: human_verification_provider_unavailable`,
+        with `reason` provider_disabled or provider_unconfigured); enable and configure the plugin
+        first. A save that does not create such a mismatch is unaffected, even when the tenant is
+        already in one. Known limit: this check and a plugin disable that run at the same time can
+        both pass; serialising them would need a shared coordinator.
       security:
         - adminBearer: []
         - adminSessionCookie: []
@@ -16903,7 +16911,9 @@ paths:
       summary: Disable a platform plugin.
       description: >-
         Stores the platform plugin enabled flag as false in KV and invalidates runtime plugin
-        caches. Missing plugins return not found.
+        caches. Missing plugins return not found. For a built-in human verification provider the
+        tenants are checked first (see 409 and 503); the same concurrency limit as the tenant
+        disable applies.
       responses:
         '200':
           $ref: '#/components/responses/AdminPluginToggle'
@@ -16911,6 +16921,60 @@ paths:
           $ref: '#/components/responses/Error'
         '403':
           $ref: '#/components/responses/Error'
+        '409':
+          description: >-
+            A built-in human verification (CAPTCHA) provider cannot be disabled platform-wide while
+            tenants that inherit it require it for a flow (`error: human_verification_provider_in_use`,
+            with `tenants` listing the first 20 and `tenant_count`), or when there are more than 200
+            tenants to check (`error: human_verification_scope_too_large`; disable it per tenant).
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [error]
+                properties:
+                  error:
+                    type: string
+                    enum: [human_verification_provider_in_use, human_verification_scope_too_large]
+                  error_description:
+                    type: string
+                  plugin_id:
+                    type: string
+                  tenant_count:
+                    type: integer
+                  tenants:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        tenant_id:
+                          type: string
+                        settings:
+                          type: array
+                          items:
+                            type: string
+        '503':
+          description: >-
+            The tenants could not be checked, so a human verification provider was not disabled.
+            `reason: tenant_directory_unavailable` means no tenant list is configured in this
+            environment; retrying does not help, disable the provider per tenant instead.
+            `reason: settings_unavailable` is a failed read; try again.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [error]
+                properties:
+                  error:
+                    type: string
+                    enum: [temporarily_unavailable]
+                  error_description:
+                    type: string
+                  reason:
+                    type: string
+                    enum: [tenant_directory_unavailable, settings_unavailable]
+                  plugin_id:
+                    type: string
         '404':
           $ref: '#/components/responses/Error'
         '500':
@@ -17780,7 +17844,12 @@ paths:
         - Plugins
       operationId: putApiAdminPluginsByIdDisable
       summary: Disable a tenant plugin.
-      description: Disable a plugin for the current tenant and return the updated enabled state.
+      description: >-
+        Disable a plugin for the current tenant and return the updated enabled state. A built-in
+        human verification provider is refused with 409 while a flow requires it; both the canonical
+        settings document and the KV copy are read, and either one requiring it counts. Known
+        limit: a settings PATCH that makes a flow required and this disable, run at the same time,
+        can both pass their checks; serialising them would need a shared coordinator.
       responses:
         '200':
           $ref: '#/components/responses/AdminPluginToggle'
@@ -17788,10 +17857,54 @@ paths:
           $ref: '#/components/responses/Error'
         '403':
           $ref: '#/components/responses/Error'
+        '409':
+          description: >-
+            A built-in human verification (CAPTCHA) provider cannot be disabled while a flow of the
+            tenant requires it (`error: human_verification_provider_in_use`, with `settings` naming
+            the authentication-methods.human_verification.*_enabled settings that require it).
+            Turn those settings off first.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [error]
+                properties:
+                  error:
+                    type: string
+                    enum: [human_verification_provider_in_use]
+                  error_description:
+                    type: string
+                  plugin_id:
+                    type: string
+                  settings:
+                    type: array
+                    items:
+                      type: string
         '404':
           $ref: '#/components/responses/Error'
         '500':
           $ref: '#/components/responses/Error'
+        '503':
+          description: >-
+            The tenant settings (the canonical document or the KV copy) could not be read to check
+            whether a human verification provider is required (`reason: settings_unavailable`), so
+            nothing was changed; try again. A malformed settings document counts as requiring nothing.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [error]
+                properties:
+                  error:
+                    type: string
+                    enum: [temporarily_unavailable]
+                  error_description:
+                    type: string
+                  reason:
+                    type: string
+                    enum: [settings_unavailable]
+                  plugin_id:
+                    type: string
       parameters:
         - name: id
           in: path

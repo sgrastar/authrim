@@ -257,6 +257,8 @@ const en = {
 	login_humanVerificationLoading: 'Loading security check...',
 	login_humanVerificationLoadFailed:
 		'Security check could not be loaded. Reload the page and try again.',
+	login_humanVerificationUnavailable:
+		'Human verification is currently unavailable. Contact your administrator.',
 	login_noMethodsAvailable:
 		'No authentication method is enabled for this organization. Contact your administrator.',
 	login_passkeyPreparing: 'Preparing passkey authentication.',

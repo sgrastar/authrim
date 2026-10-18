@@ -242,6 +242,7 @@ const translation = {
 	login_continueWith: '{provider} ጋር ይቀጥሉ',
 	login_humanVerificationLoading: 'የደህንነት ፍተሻ በመጫን ላይ...',
 	login_humanVerificationLoadFailed: 'የደህንነት ፍተሻውን መጫን አልተቻለም። ገጹን ዳግም ጭነው ይሞክሩ።',
+	login_humanVerificationUnavailable: 'የሰው ማረጋገጫ አሁን አይገኝም። አስተዳዳሪዎን ያነጋግሩ።',
 	login_noMethodsAvailable: 'ለዚህ ድርጅት የማረጋገጫ ዘዴ አልተቻለም። አስተዳዳሪህን አነጋግረው።',
 	login_passkeyPreparing: 'የይለፍ ቁልፍ ማረጋገጫ ማዘጋጀት.',
 	login_passkeyPrompt: 'በአሳሽዎ ወይም በመሣሪያዎ ውስጥ ያለውን የይለፍ ቁልፍ ጥያቄ ይሙሉ።',

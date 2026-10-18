@@ -560,6 +560,48 @@ describe('SettingsManager', () => {
       expect(after.values['test.number_setting']).toBe(500);
     });
 
+    it('returns the scope document before and after the request, without the rejected operations', async () => {
+      const initial = await manager.getAll('test', scope);
+      await manager.patch(
+        'test',
+        scope,
+        { ifMatch: initial.version, set: { 'test.number_setting': 500 } },
+        'test_actor'
+      );
+      const before = await manager.getAll('test', scope);
+
+      const decision = await manager.patch(
+        'test',
+        scope,
+        {
+          ifMatch: before.version,
+          // The same key set and cleared is a conflict: neither is applied.
+          set: { 'test.number_setting': 700, 'test.string_setting': 'new_value' },
+          clear: ['test.number_setting'],
+        },
+        'test_actor',
+        { dryRun: true }
+      );
+
+      expect(decision.rejected).toHaveProperty('test.number_setting');
+      expect(decision.candidate?.before).toEqual({ 'test.number_setting': 500 });
+      expect(decision.candidate?.after).toEqual({
+        'test.number_setting': 500,
+        'test.string_setting': 'new_value',
+      });
+    });
+
+    it('does not return a candidate for a real patch', async () => {
+      const initial = await manager.getAll('test', scope);
+      const result = await manager.patch(
+        'test',
+        scope,
+        { ifMatch: initial.version, set: { 'test.number_setting': 500 } },
+        'test_actor'
+      );
+      expect(result.candidate).toBeUndefined();
+    });
+
     it.each([
       ['set', { set: { 'test.string_setting': 'candidate', 'test.number_setting': 999 } }],
       ['clear', { clear: ['test.number_setting'] }],

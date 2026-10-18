@@ -15,6 +15,11 @@
 	export type LoginAlerts = {
 		externalIdp?: LoginExternalIdpError | null;
 		error?: string;
+		/**
+		 * The tenant requires human verification the provider cannot give. Shown apart from `error`,
+		 * and not dismissible: it stays until the settings change, whatever else goes wrong.
+		 */
+		humanVerificationUnavailable?: boolean;
 		runtimeFlow?: string;
 		/** The runtime step needs a screen the tenant has not configured. */
 		runtimeScreenMissing?: boolean;
@@ -353,6 +358,12 @@
 							</p>
 						{/if}
 					</div>
+				</Alert>
+			{/if}
+
+			{#if alerts.humanVerificationUnavailable}
+				<Alert variant="error" class="mb-4">
+					{$LL.login_humanVerificationUnavailable()}
 				</Alert>
 			{/if}
 

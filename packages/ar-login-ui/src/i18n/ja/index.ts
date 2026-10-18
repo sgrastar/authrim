@@ -259,6 +259,7 @@ const ja = {
 	login_humanVerificationLoading: 'セキュリティ確認を読み込んでいます...',
 	login_humanVerificationLoadFailed:
 		'セキュリティ確認を読み込めませんでした。ページを再読み込みしてもう一度お試しください。',
+	login_humanVerificationUnavailable: '人間確認が現在利用できません。管理者に連絡してください。',
 	login_noMethodsAvailable:
 		'このテナントで利用できるログイン方法がありません。管理者にお問い合わせください。',
 	login_passkeyPreparing: 'Passkey認証を準備しています。',

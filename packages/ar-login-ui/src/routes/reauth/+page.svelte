@@ -8,7 +8,10 @@
 	import { passkeyAPI, emailCodeAPI, loginChallengeAPI, totpAPI } from '$lib/api/client';
 	import { loginUiDisplayError, messageForCaughtError } from '$lib/errors/display-error';
 	import { isValidRedirectUrl } from '$lib/utils/url-validation';
-	import { fetchAuthenticationMethods } from '$lib/api/authentication-methods';
+	import {
+		fetchAuthenticationMethods,
+		isHumanVerificationUnavailableFor
+	} from '$lib/api/authentication-methods';
 	import { resolveTurnstileLanguage as resolveConfiguredTurnstileLanguage } from '$lib/turnstile-options';
 	import { startAuthentication } from '@simplewebauthn/browser';
 	import { startTotpReauth, verifyTotpReauth } from './reauth-totp';
@@ -26,6 +29,8 @@
 	// ---------------------------------------------------------------------------
 	let loading = $state(true);
 	let error = $state('');
+	// Required by the tenant but the provider cannot verify: kept apart from `error`, which actions clear.
+	let humanVerificationUnavailable = $state(false);
 	let challengeId = $state('');
 
 	// Challenge data
@@ -148,6 +153,10 @@
 					humanVerificationProvider !== 'custom' &&
 					Boolean(data.methods.humanVerification.siteKey);
 				turnstileSiteKey = turnstileRequired ? data.methods.humanVerification.siteKey : null;
+				humanVerificationUnavailable = isHumanVerificationUnavailableFor(
+					data.methods.humanVerification,
+					'reauth'
+				);
 			}
 		} catch {
 			passkeyEnabled = true;
@@ -340,6 +349,7 @@
 	<ReauthView
 		{loading}
 		{error}
+		{humanVerificationUnavailable}
 		{challengeData}
 		{showPasskey}
 		{emailCodeEnabled}

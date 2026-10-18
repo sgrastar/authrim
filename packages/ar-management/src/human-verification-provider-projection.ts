@@ -1,4 +1,8 @@
-import { derivePluginInstallationId, type Env } from '@authrim/ar-lib-core';
+import {
+  derivePluginInstallationId,
+  humanVerificationConfigValid,
+  type Env,
+} from '@authrim/ar-lib-core';
 
 export const BUILTIN_HUMAN_VERIFICATION_PROVIDER_IDS = new Set([
   'human-verification-cloudflare-turnstile',
@@ -48,7 +52,7 @@ export async function projectTenantHumanVerificationProvider(
   }
   const siteKey = stringValue(input.config, 'siteKey');
   const secretKey = stringValue(input.config, 'secretKey');
-  if (!siteKey || !secretKey) {
+  if (!humanVerificationConfigValid(input.pluginId, input.config) || !siteKey || !secretKey) {
     throw new Error('human_verification_projection_config_unavailable');
   }
   const expectedHostname = stringValue(input.config, 'expectedHostname');

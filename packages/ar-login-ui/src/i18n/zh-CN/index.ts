@@ -224,6 +224,7 @@ const zhCN = createTranslation({
 	login_continueWith: '使用 {provider} 继续',
 	login_humanVerificationLoading: '正在加载安全检查...',
 	login_humanVerificationLoadFailed: '无法加载安全检查。请刷新页面后重试。',
+	login_humanVerificationUnavailable: '人机验证当前不可用。请联系管理员。',
 	login_noMethodsAvailable: '此租户未启用任何身份验证方式。请联系管理员。',
 	login_passkeyPreparing: '正在准备 Passkey 身份验证。',
 	login_passkeyPrompt: '请在浏览器或设备上完成 Passkey 确认。',

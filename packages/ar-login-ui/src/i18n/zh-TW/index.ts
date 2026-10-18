@@ -225,6 +225,7 @@ const zhTW = createTranslation({
 	login_continueWith: '使用 {provider} 繼續',
 	login_humanVerificationLoading: '正在載入安全檢查...',
 	login_humanVerificationLoadFailed: '無法載入安全檢查。請重新整理頁面後再試。',
+	login_humanVerificationUnavailable: '人機驗證目前無法使用。請聯絡管理員。',
 	login_noMethodsAvailable: '此租戶未啟用任何驗證方式。請聯絡管理員。',
 	login_passkeyPreparing: '正在準備 Passkey 驗證。',
 	login_passkeyPrompt: '請在瀏覽器或裝置上完成 Passkey 確認。',

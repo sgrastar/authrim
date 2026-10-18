@@ -234,6 +234,7 @@ const ko = createTranslation({
 	login_humanVerificationLoading: '보안 확인을 불러오는 중...',
 	login_humanVerificationLoadFailed:
 		'보안 확인을 불러올 수 없습니다. 페이지를 새로고침한 후 다시 시도하세요.',
+	login_humanVerificationUnavailable: '사람 확인을 현재 사용할 수 없습니다. 관리자에게 문의하세요.',
 	login_noMethodsAvailable:
 		'이 조직에서 사용할 수 있는 인증 방법이 없습니다. 관리자에게 문의하세요.',
 	login_passkeyPreparing: 'Passkey 인증을 준비하고 있습니다.',

@@ -27,7 +27,10 @@ import { runTenantBackupCoveredMutation } from '../../tenant-backup-writer';
 
 import { Hono, type Context } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
-import { requireDedicatedAdminDatabaseAdapter } from '@authrim/ar-lib-core';
+import {
+  humanVerificationSelectionFromSettings,
+  requireDedicatedAdminDatabaseAdapter,
+} from '@authrim/ar-lib-core';
 import { DatabaseSettingsCanonicalStore } from '@authrim/ar-lib-core/services/settings-canonical-store';
 import legacyImportRouter from './legacy-import';
 import {
@@ -94,6 +97,10 @@ import type { JsonObject, JsonValue } from '@authrim/ar-agent-access/core';
 import { ensureSupportedTenantId } from '../../single-tenant-guard';
 import { agentElevatedExecutionMiddleware } from '../../agent-elevated-execution';
 import { BUILTIN_HUMAN_VERIFICATION_PROVIDER_IDS } from '../../human-verification-provider-projection';
+import {
+  humanVerificationDocumentRefusal,
+  patchTouchesHumanVerification,
+} from '../../human-verification-guards';
 import { markGlobalProviderDesiredRevision } from '../../provider-reprojection-jobs';
 import {
   disableTenantExternalPlugins,
@@ -1058,9 +1065,10 @@ async function readScopedSettingsRecord(
 }
 
 function selectedHumanVerificationProvider(settings: Record<string, unknown>): string {
-  const value = settings[`${HUMAN_VERIFICATION_SETTING_PREFIX}provider`];
-  return typeof value === 'string' && BUILTIN_HUMAN_VERIFICATION_PROVIDER_IDS.has(value)
-    ? value
+  // The selection the API and the servers use (trimmed, blank means the default).
+  const { pluginId } = humanVerificationSelectionFromSettings(settings);
+  return BUILTIN_HUMAN_VERIFICATION_PROVIDER_IDS.has(pluginId)
+    ? pluginId
     : DEFAULT_HUMAN_VERIFICATION_PROVIDER;
 }
 
@@ -1846,6 +1854,48 @@ settingsV2.patch(
             category === 'authentication-methods'
               ? await readScopedSettingsRecord(c.env, category, scope)
               : null;
+
+          // Turning a flow's human verification on (or switching the provider under it) while the
+          // provider is disabled or has no credentials would leave the flow with no widget and a
+          // server that refuses every attempt: refuse it. Only a change that creates the mismatch
+          // is refused; a tenant already in one can still save its other settings.
+          if (category === 'authentication-methods' && patchTouchesHumanVerification(body)) {
+            // Judged on what the save would act on: the canonical document, with the operations
+            // the manager rejects left out (a dry run decides both).
+            const decision = await manager.patch(category, scope, body, actor, {
+              parents: settingsParentScopes(category, scope),
+              dryRun: true,
+            });
+            const refusal = decision.candidate
+              ? await humanVerificationDocumentRefusal(
+                  c.env,
+                  tenantId,
+                  decision.candidate.before,
+                  decision.candidate.after
+                )
+              : null;
+            if (refusal) {
+              await recordSettingsAuditFailure(c, {
+                category,
+                scope,
+                reason: 'human_verification_provider_unavailable',
+                metadata: { plugin_id: refusal.pluginId, reason: refusal.reason },
+              });
+              return errorResponse(
+                c,
+                'human_verification_provider_unavailable',
+                refusal.reason === 'provider_disabled'
+                  ? 'The human verification provider is not enabled for this tenant, so a flow cannot be made to require it. Enable the plugin first.'
+                  : 'The human verification provider has no credentials for this tenant, so a flow cannot be made to require it. Configure the plugin first.',
+                400,
+                {
+                  reason: refusal.reason,
+                  plugin_id: refusal.pluginId,
+                  settings: refusal.settings,
+                }
+              );
+            }
+          }
 
           const result = await manager.patch(category, scope, body, actor, {
             parents: settingsParentScopes(category, scope),

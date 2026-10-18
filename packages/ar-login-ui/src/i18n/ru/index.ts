@@ -240,6 +240,8 @@ const ru = createTranslation({
 	login_humanVerificationLoading: 'Загрузка проверки безопасности...',
 	login_humanVerificationLoadFailed:
 		'Не удалось загрузить проверку. Обновите страницу и повторите попытку.',
+	login_humanVerificationUnavailable:
+		'Проверка на человека сейчас недоступна. Обратитесь к администратору.',
 	login_noMethodsAvailable:
 		'Для этой организации не включён ни один способ аутентификации. Обратитесь к администратору.',
 	login_passkeyPreparing: 'Подготовка проверки с Passkey.',

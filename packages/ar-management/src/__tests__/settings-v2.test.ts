@@ -299,6 +299,13 @@ function createTestApp(
   return { app, mockEnv, mockKV, mockRateLimiterIncrement };
 }
 
+const TURNSTILE_ENABLED_KEY =
+  'plugins:enabled:human-verification-cloudflare-turnstile:tenant:tenant_123';
+const TURNSTILE_GLOBAL_CONFIG_KEY = 'plugins:config:human-verification-cloudflare-turnstile';
+const TURNSTILE_CONFIG = JSON.stringify({ siteKey: 'site', secretKey: 'secret' });
+const AUTHENTICATION_METHODS_URL = '/api/admin/tenants/tenant_123/settings/authentication-methods';
+const AUTHENTICATION_METHODS_KEY = 'settings:tenant:tenant_123:authentication-methods';
+
 describe('Settings API v2', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -810,7 +817,10 @@ describe('Settings API v2', () => {
       });
 
       it('automatically schedules inherited human-verification projection after enabling it', async () => {
-        const mockKV = createMockKV();
+        const mockKV = createMockKV({
+          [TURNSTILE_ENABLED_KEY]: 'true',
+          [TURNSTILE_GLOBAL_CONFIG_KEY]: TURNSTILE_CONFIG,
+        });
         const { app, mockEnv } = createTestApp({ kv: mockKV });
         const getRes = await app.request(
           '/api/admin/tenants/tenant_123/settings/authentication-methods',
@@ -844,6 +854,7 @@ describe('Settings API v2', () => {
 
       it('does not schedule global projection for an explicit tenant provider override', async () => {
         const mockKV = createMockKV({
+          [TURNSTILE_ENABLED_KEY]: 'true',
           'plugins:config:human-verification-cloudflare-turnstile:tenant:tenant_123':
             JSON.stringify({ siteKey: 'tenant-site', secretKey: 'encrypted' }),
         });
@@ -872,6 +883,244 @@ describe('Settings API v2', () => {
         await expect(
           mockKV.get('plugins:provider-projection:desired:human-verification-cloudflare-turnstile')
         ).resolves.toBeNull();
+      });
+
+      describe('human verification must not be required of a flow its provider cannot serve', () => {
+        async function patchAuthenticationMethods(
+          ctx: ReturnType<typeof createTestApp>,
+          body: { set?: Record<string, unknown>; clear?: string[] }
+        ) {
+          const current = (await (
+            await ctx.app.request(AUTHENTICATION_METHODS_URL, { method: 'GET' }, ctx.mockEnv)
+          ).json()) as SettingsGetResult;
+          const res = await ctx.app.request(
+            AUTHENTICATION_METHODS_URL,
+            {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ ifMatch: current.version, ...body }),
+            },
+            ctx.mockEnv
+          );
+          return {
+            res,
+            saved: JSON.parse(String((await ctx.mockKV.get(AUTHENTICATION_METHODS_KEY)) ?? '{}')),
+          };
+        }
+
+        const LOGIN = 'authentication-methods.human_verification.login_enabled';
+        const SIGNUP = 'authentication-methods.human_verification.signup_enabled';
+        const PROVIDER = 'authentication-methods.human_verification.provider';
+
+        it.each(['login_enabled', 'signup_enabled', 'reauth_enabled'])(
+          'refuses %s while the provider was never enabled (400), and saves nothing',
+          async (flow) => {
+            const ctx = createTestApp({
+              kv: createMockKV({ [TURNSTILE_GLOBAL_CONFIG_KEY]: TURNSTILE_CONFIG }),
+            });
+            const { res, saved } = await patchAuthenticationMethods(ctx, {
+              set: { [`authentication-methods.human_verification.${flow}`]: true },
+            });
+            expect(res.status).toBe(400);
+            await expect(res.json()).resolves.toMatchObject({
+              error: 'human_verification_provider_unavailable',
+              reason: 'provider_disabled',
+              plugin_id: 'human-verification-cloudflare-turnstile',
+              settings: [`authentication-methods.human_verification.${flow}`],
+            });
+            expect(saved[`authentication-methods.human_verification.${flow}`]).toBeUndefined();
+          }
+        );
+
+        it('refuses it while the plugin is disabled explicitly', async () => {
+          const ctx = createTestApp({
+            kv: createMockKV({
+              [TURNSTILE_ENABLED_KEY]: 'false',
+              [TURNSTILE_GLOBAL_CONFIG_KEY]: TURNSTILE_CONFIG,
+            }),
+          });
+          const { res } = await patchAuthenticationMethods(ctx, { set: { [LOGIN]: true } });
+          expect(res.status).toBe(400);
+        });
+
+        it('refuses it while the plugin is enabled but has no credentials', async () => {
+          const ctx = createTestApp({ kv: createMockKV({ [TURNSTILE_ENABLED_KEY]: 'true' }) });
+          const { res } = await patchAuthenticationMethods(ctx, { set: { [LOGIN]: true } });
+          expect(res.status).toBe(400);
+          await expect(res.json()).resolves.toMatchObject({ reason: 'provider_unconfigured' });
+        });
+
+        it('accepts it once the provider is enabled and configured', async () => {
+          const ctx = createTestApp({
+            kv: createMockKV({
+              [TURNSTILE_ENABLED_KEY]: 'true',
+              [TURNSTILE_GLOBAL_CONFIG_KEY]: TURNSTILE_CONFIG,
+            }),
+          });
+          const { res, saved } = await patchAuthenticationMethods(ctx, { set: { [LOGIN]: true } });
+          expect(res.status).toBe(200);
+          expect(saved[LOGIN]).toBe(true);
+        });
+
+        it('refuses switching the provider under a required flow to one that is not enabled', async () => {
+          const ctx = createTestApp({
+            kv: createMockKV({
+              [TURNSTILE_ENABLED_KEY]: 'true',
+              [TURNSTILE_GLOBAL_CONFIG_KEY]: TURNSTILE_CONFIG,
+              [AUTHENTICATION_METHODS_KEY]: JSON.stringify({ [LOGIN]: true }),
+            }),
+          });
+          const { res, saved } = await patchAuthenticationMethods(ctx, {
+            set: { [PROVIDER]: 'human-verification-hcaptcha' },
+          });
+          expect(res.status).toBe(400);
+          await expect(res.json()).resolves.toMatchObject({
+            reason: 'provider_disabled',
+            plugin_id: 'human-verification-hcaptcha',
+          });
+          expect(saved[PROVIDER]).toBeUndefined();
+        });
+
+        it('allows switching the provider while no flow requires one', async () => {
+          const ctx = createTestApp();
+          const { res } = await patchAuthenticationMethods(ctx, {
+            set: { [PROVIDER]: 'human-verification-hcaptcha' },
+          });
+          expect(res.status).toBe(200);
+        });
+
+        it('judges the canonical document, not a stale KV projection', async () => {
+          // Canonical: hCaptcha (never enabled), login off. The KV projection still holds the
+          // earlier Turnstile + login on, as when a projection is pending.
+          const ctx = createTestApp({
+            kv: createMockKV({
+              [TURNSTILE_ENABLED_KEY]: 'true',
+              [TURNSTILE_GLOBAL_CONFIG_KEY]: TURNSTILE_CONFIG,
+            }),
+          });
+          const first = await patchAuthenticationMethods(ctx, {
+            set: { [PROVIDER]: 'human-verification-hcaptcha', [LOGIN]: false },
+          });
+          expect(first.res.status).toBe(200);
+          await ctx.mockKV.put(
+            AUTHENTICATION_METHODS_KEY,
+            JSON.stringify({ [PROVIDER]: 'human-verification-cloudflare-turnstile', [LOGIN]: true })
+          );
+
+          const { res } = await patchAuthenticationMethods(ctx, { set: { [LOGIN]: true } });
+          expect(res.status).toBe(400);
+          await expect(res.json()).resolves.toMatchObject({
+            reason: 'provider_disabled',
+            plugin_id: 'human-verification-hcaptcha',
+          });
+        });
+
+        it('judges what the manager would save when it rejects a conflicting operation', async () => {
+          // Login requires Turnstile now. The request moves the provider to a disabled hCaptcha
+          // and "turns login off" with set + clear for the same key: the manager rejects the
+          // conflicting login operations and saves the provider alone, leaving login required.
+          const ctx = createTestApp({
+            kv: createMockKV({
+              [TURNSTILE_ENABLED_KEY]: 'true',
+              [TURNSTILE_GLOBAL_CONFIG_KEY]: TURNSTILE_CONFIG,
+              [AUTHENTICATION_METHODS_KEY]: JSON.stringify({ [LOGIN]: true }),
+            }),
+          });
+          const { res, saved } = await patchAuthenticationMethods(ctx, {
+            set: { [PROVIDER]: 'human-verification-hcaptcha', [LOGIN]: false },
+            clear: [LOGIN],
+          });
+          expect(res.status).toBe(400);
+          await expect(res.json()).resolves.toMatchObject({ reason: 'provider_disabled' });
+          expect(saved[PROVIDER]).toBeUndefined();
+        });
+
+        it('accepts switching the provider when the same request turns the required flow off', async () => {
+          const ctx = createTestApp({
+            kv: createMockKV({
+              [TURNSTILE_ENABLED_KEY]: 'true',
+              [TURNSTILE_GLOBAL_CONFIG_KEY]: TURNSTILE_CONFIG,
+              [AUTHENTICATION_METHODS_KEY]: JSON.stringify({ [LOGIN]: true }),
+            }),
+          });
+          const { res } = await patchAuthenticationMethods(ctx, {
+            set: { [PROVIDER]: 'human-verification-hcaptcha', [LOGIN]: false },
+          });
+          expect(res.status).toBe(200);
+        });
+
+        it('refuses credentials the runner would not project (a site key past its limit)', async () => {
+          const ctx = createTestApp({
+            kv: createMockKV({
+              [TURNSTILE_ENABLED_KEY]: 'true',
+              [TURNSTILE_GLOBAL_CONFIG_KEY]: JSON.stringify({
+                siteKey: 'a'.repeat(2_049),
+                secretKey: 'secret',
+              }),
+            }),
+          });
+          const { res } = await patchAuthenticationMethods(ctx, { set: { [LOGIN]: true } });
+          expect(res.status).toBe(400);
+          await expect(res.json()).resolves.toMatchObject({ reason: 'provider_unconfigured' });
+        });
+
+        it('refuses a key of spaces as the credentials', async () => {
+          const ctx = createTestApp({
+            kv: createMockKV({
+              [TURNSTILE_ENABLED_KEY]: 'true',
+              [TURNSTILE_GLOBAL_CONFIG_KEY]: JSON.stringify({ siteKey: 'site', secretKey: '   ' }),
+            }),
+          });
+          const { res } = await patchAuthenticationMethods(ctx, { set: { [LOGIN]: true } });
+          expect(res.status).toBe(400);
+          await expect(res.json()).resolves.toMatchObject({ reason: 'provider_unconfigured' });
+        });
+
+        describe('a tenant already in the mismatch', () => {
+          function mismatched() {
+            // Login already requires verification; the provider was never enabled.
+            return createTestApp({
+              kv: createMockKV({ [AUTHENTICATION_METHODS_KEY]: JSON.stringify({ [LOGIN]: true }) }),
+            });
+          }
+
+          it('can still save its other settings', async () => {
+            const ctx = mismatched();
+            const { res, saved } = await patchAuthenticationMethods(ctx, {
+              set: { 'authentication-methods.did.login_enabled': true },
+            });
+            expect(res.status).toBe(200);
+            expect(saved['authentication-methods.did.login_enabled']).toBe(true);
+            expect(saved[LOGIN]).toBe(true);
+          });
+
+          it('can save a human verification value that changes nothing', async () => {
+            const { res } = await patchAuthenticationMethods(mismatched(), {
+              set: { [LOGIN]: true },
+            });
+            expect(res.status).toBe(200);
+          });
+
+          it('can turn the flow off', async () => {
+            const { res, saved } = await patchAuthenticationMethods(mismatched(), {
+              set: { [LOGIN]: false },
+            });
+            expect(res.status).toBe(200);
+            expect(saved[LOGIN]).toBe(false);
+          });
+
+          it('can clear the flow setting', async () => {
+            const { res } = await patchAuthenticationMethods(mismatched(), { clear: [LOGIN] });
+            expect(res.status).toBe(200);
+          });
+
+          it('cannot make another flow require the missing provider', async () => {
+            const { res } = await patchAuthenticationMethods(mismatched(), {
+              set: { [SIGNUP]: true },
+            });
+            expect(res.status).toBe(400);
+          });
+        });
       });
 
       it('keeps DID login off until a tenant turns it on, and saves the switch where sign-in reads it', async () => {

@@ -238,6 +238,16 @@ export interface SettingsPatchResult {
    * Until a scheduled retry copies it (within about a minute), runtime keeps the previous values.
    */
   projection?: 'pending';
+  /**
+   * Only on a dry run: the scope's own document (what is saved, not the inherited values) before
+   * the request and as the request would leave it, after the keys it rejects are left out. A caller
+   * that must judge the result before it is saved (a guard) reads this, not the KV projection, so
+   * it sees the same document the save would act on.
+   */
+  candidate?: {
+    before: Record<string, unknown>;
+    after: Record<string, unknown>;
+  };
 }
 
 export interface CanonicalSettingsDocument {
@@ -745,7 +755,14 @@ export class SettingsManager {
     }
 
     if (options.dryRun) {
-      return { version: currentVersion, applied, cleared, disabled, rejected };
+      return {
+        version: currentVersion,
+        applied,
+        cleared,
+        disabled,
+        rejected,
+        candidate: { before: original, after: { ...kvData } },
+      };
     }
 
     // Save if anything changed

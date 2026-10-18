@@ -238,6 +238,8 @@ const id = createTranslation({
 	login_humanVerificationLoading: 'Memuat pemeriksaan keamanan...',
 	login_humanVerificationLoadFailed:
 		'Pemeriksaan keamanan tidak dapat dimuat. Muat ulang halaman dan coba lagi.',
+	login_humanVerificationUnavailable:
+		'Verifikasi manusia saat ini tidak tersedia. Hubungi administrator Anda.',
 	login_noMethodsAvailable:
 		'Tidak ada metode autentikasi yang aktif untuk organisasi ini. Hubungi administrator.',
 	login_passkeyPreparing: 'Menyiapkan autentikasi Passkey.',

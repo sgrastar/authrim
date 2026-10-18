@@ -1181,6 +1181,59 @@ components:
             humanVerification:
               type: object
               additionalProperties: true
+              description: >-
+                Human verification (CAPTCHA) for the tenant. `required` / `requiredFor` say what the
+                tenant's settings ask for; `available` / `reason` say whether the provider can
+                verify a token. A flow in `requiredFor` while `available` is false cannot be
+                completed (the servers refuse it), so a client must say so instead of showing
+                no widget.
+              properties:
+                enabled:
+                  type: boolean
+                  description: The widget is shown for at least one flow.
+                provider:
+                  type: string
+                siteKey:
+                  type: string
+                  nullable: true
+                loginEnabled:
+                  type: boolean
+                  description: The widget is shown on the login screen.
+                signupEnabled:
+                  type: boolean
+                reauthEnabled:
+                  type: boolean
+                required:
+                  type: boolean
+                  description: At least one flow's settings ask for human verification.
+                requiredFor:
+                  type: object
+                  description: Per flow, whether the settings ask for human verification.
+                  properties:
+                    login:
+                      type: boolean
+                    signup:
+                      type: boolean
+                    reauth:
+                      type: boolean
+                available:
+                  type: boolean
+                  description: >-
+                    The provider can verify a token (its plugin is enabled and its
+                    configuration is one the runner accepts: both keys within their length limits,
+                    a well-formed hostname, a supported widget mode). A provider that was never enabled is not available.
+                reason:
+                  type: string
+                  nullable: true
+                  enum:
+                    - provider_disabled
+                    - provider_unconfigured
+                    - settings_unreadable
+                    - null
+                  description: >-
+                    Why the flows cannot be completed; null when the provider is available.
+                    settings_unreadable means the tenant's settings cannot be read, so the servers
+                    refuse every attempt; every flow is then reported as required.
             external:
               type: object
               additionalProperties: true

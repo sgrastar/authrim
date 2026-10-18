@@ -254,6 +254,8 @@ const translation = {
 	login_humanVerificationLoading: 'सुरक्षा जाँच लोड हो रही है...',
 	login_humanVerificationLoadFailed:
 		'सुरक्षा जाँच लोड नहीं की जा सकी। पृष्ठ को फिर से लोड करें और पुनः प्रयास करें।',
+	login_humanVerificationUnavailable:
+		'मानव सत्यापन अभी उपलब्ध नहीं है। कृपया अपने व्यवस्थापक से संपर्क करें।',
 	login_noMethodsAvailable:
 		'इस संगठन के लिए कोई प्रमाणीकरण विधि सक्षम नहीं है। अपने प्रशासक से संपर्क करें।',
 	login_passkeyPreparing: 'पासकी प्रमाणीकरण तैयार हो रहा है...',

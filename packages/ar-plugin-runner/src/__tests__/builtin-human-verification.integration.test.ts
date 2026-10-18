@@ -3,6 +3,7 @@ import { resolve } from 'node:path';
 import { DatabaseSync, type StatementSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { humanVerificationConfigValid } from '@authrim/ar-lib-core';
 import { createBuiltinHumanVerificationRegistry } from '../builtin-human-verification';
 import { D1HumanVerificationInstallationStore } from '../human-verification-installations';
 import { SyncHookBackendRouter } from '../sync-hook-backend-router';
@@ -150,6 +151,49 @@ describe('built-in human-verification Runner execution', () => {
     responseToken: 'browser-token',
     remoteIp: '203.0.113.7',
   };
+
+  // The settings API, the admin guards and the projection call a configuration usable by
+  // humanVerificationConfigValid; the Runner must accept exactly those (and nothing else).
+  const TURNSTILE = 'human-verification-cloudflare-turnstile';
+  const HCAPTCHA = 'human-verification-hcaptcha';
+  const RECAPTCHA = 'human-verification-google-recaptcha';
+  const keys = { siteKey: 'site', secretKey: 'secret' };
+  it.each([
+    ['plain keys', TURNSTILE, keys],
+    ['site key at its limit', TURNSTILE, { ...keys, siteKey: 'a'.repeat(2_048) }],
+    ['site key over its limit', TURNSTILE, { ...keys, siteKey: 'a'.repeat(2_049) }],
+    ['secret key at its limit', TURNSTILE, { ...keys, secretKey: 'a'.repeat(8_192) }],
+    ['secret key over its limit', TURNSTILE, { ...keys, secretKey: 'a'.repeat(8_193) }],
+    ['a hostname', TURNSTILE, { ...keys, expectedHostname: 'Login.Example.com' }],
+    ['a malformed hostname', TURNSTILE, { ...keys, expectedHostname: 'not a host' }],
+    ['a hostname with a scheme', TURNSTILE, { ...keys, expectedHostname: 'https://a.example.com' }],
+    ['a single-label hostname', TURNSTILE, { ...keys, expectedHostname: 'localhost' }],
+    ['a widget mode Turnstile lacks', TURNSTILE, { ...keys, widgetMode: 'checkbox' }],
+    ['hCaptcha invisible', HCAPTCHA, { ...keys, widgetMode: 'invisible' }],
+    ['hCaptcha score (unsupported)', HCAPTCHA, { ...keys, widgetMode: 'score' }],
+    ['reCAPTCHA score', RECAPTCHA, { ...keys, widgetMode: 'score', scoreThreshold: 0.7 }],
+    ['a score threshold above 1', RECAPTCHA, { ...keys, scoreThreshold: 1.5 }],
+    ['a negative score threshold', RECAPTCHA, { ...keys, scoreThreshold: -0.1 }],
+  ])('accepts a configuration exactly when it is valid: %s', async (_name, pluginId, config) => {
+    const valid = humanVerificationConfigValid(pluginId, config);
+    // What the projection sends: trimmed keys, only the fields that are set.
+    const store = new D1HumanVerificationInstallationStore(
+      env.PLUGIN_RUNNER_DB,
+      ENCRYPTION_SECRET,
+      MUTATION_SECRET,
+      () => 1_000
+    );
+    const run = store.configure({
+      operationId: 'limits-config-a',
+      installationId: 'limits-installation-a',
+      tenantId: 'tenant-a',
+      pluginId,
+      enabled: true,
+      config: config as never,
+    });
+    if (valid) await expect(run).resolves.toBeDefined();
+    else await expect(run).rejects.toThrow('plugin_human_verification_config_invalid');
+  });
 
   it('injects the secret in Runner and allows only a matching Turnstile response', async () => {
     await configureTurnstile();

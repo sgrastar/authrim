@@ -243,6 +243,8 @@ const es = createTranslation({
 	login_humanVerificationLoading: 'Cargando comprobación de seguridad...',
 	login_humanVerificationLoadFailed:
 		'No se pudo cargar la comprobación. Recarga la página e inténtalo de nuevo.',
+	login_humanVerificationUnavailable:
+		'La verificación humana no está disponible en este momento. Póngase en contacto con el administrador.',
 	login_noMethodsAvailable:
 		'No hay ningún método de autenticación habilitado para esta organización. Contacta con el administrador.',
 	login_passkeyPreparing: 'Preparando la autenticación con Passkey.',

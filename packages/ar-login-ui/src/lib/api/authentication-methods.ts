@@ -102,6 +102,11 @@ export interface HumanVerificationMethod {
 	loginEnabled: boolean;
 	signupEnabled: boolean;
 	reauthEnabled: boolean;
+	/** Per flow: the tenant's settings ask for human verification (absent from older servers). */
+	requiredFor?: { login: boolean; signup: boolean; reauth: boolean };
+	/** The provider can verify a token (it is enabled and configured); absent from older servers. */
+	available?: boolean;
+	reason?: 'provider_disabled' | 'provider_unconfigured' | 'settings_unreadable' | null;
 	failurePolicy: HumanVerificationFailurePolicy;
 	widget: {
 		actionPrefix: string;
@@ -109,6 +114,18 @@ export interface HumanVerificationMethod {
 		size: 'flexible';
 		mode: 'managed' | 'checkbox' | 'invisible' | 'score';
 	};
+}
+
+/**
+ * The flow asks for human verification but the provider cannot verify (disabled, or without
+ * credentials): the server refuses every attempt and no widget can be shown, so the screen has to
+ * say so instead of failing without a word.
+ */
+export function isHumanVerificationUnavailableFor(
+	humanVerification: HumanVerificationMethod,
+	flow: 'login' | 'signup' | 'reauth'
+): boolean {
+	return humanVerification.requiredFor?.[flow] === true && humanVerification.available === false;
 }
 
 export interface AuthenticationMethods {

@@ -254,6 +254,8 @@ const translation = {
 	login_humanVerificationLoading: 'Güvenlik kontrolü yükleniyor...',
 	login_humanVerificationLoadFailed:
 		'Güvenlik kontrolü yüklenemedi. Sayfayı yeniden yükle ve tekrar dene.',
+	login_humanVerificationUnavailable:
+		'İnsan doğrulaması şu anda kullanılamıyor. Lütfen yöneticinizle iletişime geçin.',
 	login_noMethodsAvailable:
 		'Bu kuruluş için hiçbir kimlik doğrulama yöntemi etkinleştirilmemiş. Yöneticinizle iletişime geçin.',
 	login_passkeyPreparing: 'Geçiş anahtarıyla kimlik doğrulama hazırlanıyor…',

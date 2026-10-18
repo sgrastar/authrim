@@ -207,3 +207,41 @@ describe('authentication methods API', () => {
 		await suspendedRequest;
 	});
 });
+
+describe('isHumanVerificationUnavailableFor', () => {
+	const base = createAuthenticationMethodsResponse().methods
+		.humanVerification as import('./authentication-methods').HumanVerificationMethod;
+	const required = { login: true, signup: false, reauth: true };
+
+	it.each([
+		['login', true],
+		['signup', false],
+		['reauth', true]
+	] as const)(
+		'is true for %s only when it requires verification the provider cannot give',
+		async (flow, expected) => {
+			const { isHumanVerificationUnavailableFor } = await loadApi();
+			expect(
+				isHumanVerificationUnavailableFor(
+					{ ...base, requiredFor: required, available: false, reason: 'provider_disabled' },
+					flow
+				)
+			).toBe(expected);
+		}
+	);
+
+	it('is false when the provider is available', async () => {
+		const { isHumanVerificationUnavailableFor } = await loadApi();
+		expect(
+			isHumanVerificationUnavailableFor(
+				{ ...base, requiredFor: required, available: true, reason: null },
+				'login'
+			)
+		).toBe(false);
+	});
+
+	it('is false for a server that does not send the fields', async () => {
+		const { isHumanVerificationUnavailableFor } = await loadApi();
+		expect(isHumanVerificationUnavailableFor(base, 'login')).toBe(false);
+	});
+});

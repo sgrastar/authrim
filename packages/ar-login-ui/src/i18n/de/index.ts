@@ -246,6 +246,8 @@ const de = createTranslation({
 	login_humanVerificationLoading: 'Sicherheitsprüfung wird geladen...',
 	login_humanVerificationLoadFailed:
 		'Die Sicherheitsprüfung konnte nicht geladen werden. Laden Sie die Seite neu.',
+	login_humanVerificationUnavailable:
+		'Die Prüfung, ob Sie ein Mensch sind, ist derzeit nicht verfügbar. Wenden Sie sich an den Administrator.',
 	login_noMethodsAvailable:
 		'Für diesen Mandanten ist keine Authentifizierungsmethode aktiviert. Wenden Sie sich an den Administrator.',
 	login_passkeyPreparing: 'Passkey-Authentifizierung wird vorbereitet.',

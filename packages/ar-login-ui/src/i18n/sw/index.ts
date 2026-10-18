@@ -256,6 +256,8 @@ const translation = {
 	login_humanVerificationLoading: 'Upakiaji wa ukaguzi wa usalama...',
 	login_humanVerificationLoadFailed:
 		'Ukaguzi wa usalama haukuweza kupakiwa. Pakia tena ukurasa na ujaribu tena.',
+	login_humanVerificationUnavailable:
+		'Uthibitishaji wa binadamu haupatikani kwa sasa. Wasiliana na msimamizi wako.',
 	login_noMethodsAvailable:
 		'Hakuna njia ya uthibitisho imewezeshwa kwa ajili ya shirika hili. Wasiliana na msimamizi wako.',
 	login_passkeyPreparing: 'Inatayarisha uthibitishaji wa Passkey...',
