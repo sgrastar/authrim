@@ -681,6 +681,7 @@ export interface Env {
   AUTHENTICATION_METHODS_CACHE_TTL?: string; // Browser/client TTL for public authentication methods (default: 60)
   AUTHENTICATION_METHODS_EDGE_CACHE_TTL?: string; // Edge Cache API TTL for public authentication methods (default: 86400)
   AUTHENTICATION_METHODS_ROUTER_CACHE_TTL?: string; // Router Cache API TTL for public authentication methods (default: edge TTL)
+  ROUTER_FORM_BODY_MAX_BYTES?: string; // Router: max form body bytes buffered to reject access_token fields (default: 262144, range 4096-1048576)
 
   // Unified Identity Mapping runtime cutover guard
   ENABLE_CANONICAL_IDENTITY_RUNTIME?: string; // "true" to read SCIM user runtime projection from canonical identity tables

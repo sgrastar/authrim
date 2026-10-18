@@ -14,6 +14,8 @@ import {
   readAuthenticationMethodsCacheRevision,
   SELF_SERVICE_DEFAULTS,
   validateAccountPagePath,
+  BodyLimitExceededError,
+  readRequestBytesWithLimit,
 } from '@authrim/ar-lib-core';
 
 // Module-level logger for router (no Hono context available in error handler)
@@ -82,6 +84,11 @@ interface Env {
   AUTHENTICATION_METHODS_ROUTER_CACHE_TTL?: string;
   /** Shared edge Cache API TTL for public authentication methods (seconds) */
   AUTHENTICATION_METHODS_EDGE_CACHE_TTL?: string;
+  /**
+   * Largest form body (bytes) the router buffers to look for an `access_token` field on
+   * Bearer-token canonical paths. Larger form bodies are rejected with 413.
+   */
+  ROUTER_FORM_BODY_MAX_BYTES?: string;
 }
 
 const LOGIN_UI_ASSET_PREFIX = '/_authrim_login';
@@ -127,6 +134,23 @@ const LOGIN_UI_PATHS = [
 ];
 
 const BEARER_TOKEN_TRANSPORT_UNSUPPORTED = 'bearer_token_transport_unsupported';
+const FORM_BODY_TOO_LARGE = 'request_body_too_large';
+
+// The router reads a form body before authentication, rate limiting and CSRF to reject
+// `access_token` form fields (RFC 6750 section 2.2), so the read must be bounded.
+// Explicit downstream form limits found: ar-auth and ar-management /api/admin 100 KiB,
+// ar-async device endpoints 64 KiB. Some paths (for example the /vp response form and /token)
+// have no explicit downstream limit, so the router's limit is the only bound there. The default
+// is above the explicit limits so the router is not the tighter bound for those requests, and is
+// small enough that one unauthenticated request buffers only about this much.
+const DEFAULT_ROUTER_FORM_BODY_MAX_BYTES = 256 * 1024;
+const MIN_ROUTER_FORM_BODY_MAX_BYTES = 4 * 1024;
+const MAX_ROUTER_FORM_BODY_MAX_BYTES = 1024 * 1024;
+// Paths whose form body is legitimately larger. Keep in step with the downstream
+// bodyLimit (ar-management: 5 MiB for the Login UI public asset upload).
+const ROUTER_FORM_BODY_UPLOAD_PATH_MAX_BYTES: Readonly<Record<string, number>> = {
+  '/api/admin/assets/login-ui': 5 * 1024 * 1024,
+};
 
 const accountPageSettingsCache = new Map<
   string,
@@ -256,6 +280,25 @@ function bearerTokenTransportError(): Response {
     },
     {
       status: 400,
+      headers: {
+        'Cache-Control': 'no-store',
+        Pragma: 'no-cache',
+      },
+    }
+  );
+}
+
+function formBodyTooLargeError(): Response {
+  return Response.json(
+    {
+      error: 'invalid_request',
+      error_description: 'Request body exceeds the maximum allowed size for this endpoint.',
+      error_details: {
+        code: FORM_BODY_TOO_LARGE,
+      },
+    },
+    {
+      status: 413,
       headers: {
         'Cache-Control': 'no-store',
         Pragma: 'no-cache',
@@ -639,20 +682,74 @@ async function fetchAuthenticationMethodsWithRouterCache(
   });
 }
 
-async function requestHasFormBearerToken(request: Request): Promise<boolean> {
-  const contentType = request.headers.get('Content-Type')?.toLowerCase() ?? '';
+type FormBearerTokenInspection = 'absent' | 'present' | 'too_large';
+
+function resolveFormBodyMaxBytes(env: Env, path: string): number {
+  const uploadLimit = ROUTER_FORM_BODY_UPLOAD_PATH_MAX_BYTES[path];
+  if (uploadLimit !== undefined) {
+    return uploadLimit;
+  }
+  return readBoundedIntegerEnvValue(
+    env.ROUTER_FORM_BODY_MAX_BYTES,
+    DEFAULT_ROUTER_FORM_BODY_MAX_BYTES,
+    MIN_ROUTER_FORM_BODY_MAX_BYTES,
+    MAX_ROUTER_FORM_BODY_MAX_BYTES
+  );
+}
+
+function discardRequestBody(request: Request): void {
+  try {
+    void request.body?.cancel().catch(() => {});
+  } catch {
+    // The body may already be locked or released; there is nothing left to free.
+  }
+}
+
+/**
+ * Looks for an `access_token` field in a form body without reading much more than the limit.
+ *
+ * The inspection reads a clone, so the original request keeps its body for the downstream
+ * worker. The body is parsed with `Response.formData()` and the request's own Content-Type
+ * header, the same parser and media type handling the downstream worker uses, so a crafted
+ * Content-Type cannot make the router and the downstream read the body differently. The
+ * decision to inspect uses the same loose `includes()` match the downstream workers use, so it
+ * never skips a body they would treat as a form.
+ *
+ * Bytes are counted as they arrive (Content-Length is only an early hint) and the stream is
+ * cancelled once the limit is crossed. What is held is the limit plus the chunk that crossed
+ * it plus any chunks the stream had already prefetched (a few chunks, tens of KiB), and the
+ * clone's tee keeps a copy of the same bytes for the original branch. A body over the limit is
+ * never passed on.
+ */
+async function inspectFormBodyForBearerToken(
+  request: Request,
+  maxBytes: number
+): Promise<FormBearerTokenInspection> {
+  const contentTypeHeader = request.headers.get('Content-Type') ?? '';
+  const contentType = contentTypeHeader.toLowerCase();
   if (
     !contentType.includes('application/x-www-form-urlencoded') &&
     !contentType.includes('multipart/form-data')
   ) {
-    return false;
+    return 'absent';
   }
 
+  const inspected = request.clone();
   try {
-    const formData = await request.clone().formData();
-    return formData.has('access_token');
-  } catch {
-    return false;
+    const bytes = await readRequestBytesWithLimit(inspected, maxBytes);
+    const formData = await new Response(bytes, {
+      headers: { 'Content-Type': contentTypeHeader },
+    }).formData();
+    return formData.has('access_token') ? 'present' : 'absent';
+  } catch (error) {
+    if (error instanceof BodyLimitExceededError) {
+      discardRequestBody(inspected);
+      discardRequestBody(request);
+      return 'too_large';
+    }
+    // Unparseable or interrupted bodies are left to the downstream parser, which sees the
+    // same bytes and fails the same way.
+    return 'absent';
   }
 }
 
@@ -1091,8 +1188,15 @@ app.use('*', async (c, next) => {
     return bearerTokenTransportError();
   }
 
-  if (await requestHasFormBearerToken(c.req.raw)) {
+  const formInspection = await inspectFormBodyForBearerToken(
+    c.req.raw,
+    resolveFormBodyMaxBytes(c.env, c.req.path)
+  );
+  if (formInspection === 'present') {
     return bearerTokenTransportError();
+  }
+  if (formInspection === 'too_large') {
+    return formBodyTooLargeError();
   }
 
   return next();
