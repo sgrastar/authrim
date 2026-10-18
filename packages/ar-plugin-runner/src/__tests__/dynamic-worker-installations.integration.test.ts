@@ -7,6 +7,7 @@ import { derivePluginInstallationId } from '@authrim/ar-lib-core';
 import { D1PluginConfigStore } from '../config-store';
 import { D1DynamicPluginInstallationStore } from '../dynamic-worker-installations';
 import { D1PluginInstallationResolver } from '../installations';
+import { D1TenantExternalGateStore } from '../external-gate';
 
 type SqlValue = string | number | null | Uint8Array;
 const REPO_ROOT = fileURLToPath(new URL('../../../../', import.meta.url));
@@ -159,7 +160,10 @@ describe('D1DynamicPluginInstallationStore', () => {
   beforeEach(() => {
     database = new DatabaseSync(':memory:');
     database.exec('PRAGMA foreign_keys = ON');
-    for (const migration of ['001_0_4_0_plugin_runner_baseline.sql']) {
+    for (const migration of [
+      '001_0_4_0_plugin_runner_baseline.sql',
+      '007_tenant_external_plugin_gates.sql',
+    ]) {
       database.exec(
         readFileSync(resolve(REPO_ROOT, 'migrations/plugin-runner/d1', migration), 'utf8')
       );
@@ -692,6 +696,19 @@ describe('D1DynamicPluginInstallationStore', () => {
       enabled: true,
     });
     const resolver = new D1PluginInstallationResolver(d1(database));
+    // Enabled, but the tenant's gate for external plugin code is closed (no row): not resolved.
+    await expect(
+      resolver.resolve({
+        tenantId: 'tenant-a',
+        pluginInstallationId: enabled.installationId,
+        capability: 'flow.evaluate',
+      })
+    ).resolves.toBeNull();
+    await new D1TenantExternalGateStore(d1(database), () => 100).set({
+      tenantId: 'tenant-a',
+      allowed: true,
+      ifGeneration: 0,
+    });
     await expect(
       resolver.resolve({
         tenantId: 'tenant-a',

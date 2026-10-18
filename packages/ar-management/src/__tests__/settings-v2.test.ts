@@ -28,9 +28,12 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     resolveAuthCorePersistenceAdapterFromEnv: vi.fn(async (env: Env, partition: string) =>
       actual.ensureDatabaseAdapter(env.DB, partition)
     ),
+    createAuditLogFromContext: vi.fn(actual.createAuditLogFromContext),
   };
 });
 
+import { createAuditLogFromContext } from '@authrim/ar-lib-core';
+import { sweepExternalPluginGates } from '../external-plugin-gate-sweep';
 import settingsV2 from '../routes/settings-v2';
 
 // Response types
@@ -234,7 +237,7 @@ function createTestApp(
     kv?: KVNamespace;
     db?: D1Database;
     tenantId?: string;
-    env?: Record<string, string>;
+    env?: Record<string, unknown>;
     adminAuth?: AdminAuthContext;
     /** The tenant's core database, as the request context would have resolved it. */
     tenantCoreDb?: D1Database;
@@ -3634,18 +3637,21 @@ describe('Settings API v2', () => {
         'plugin.notifier_console_enabled',
         'plugin.execution_timeout_ms',
         'plugin.auto_update_check',
+        'plugin.notifier_resend_enabled',
       ],
       stale: {
         'plugin.memory_limit_mb': 256,
         'plugin.notifier_console_enabled': true,
         'plugin.execution_timeout_ms': 30000,
         'plugin.auto_update_check': true,
+        'plugin.notifier_resend_enabled': false,
       },
       env: {
         PLUGIN_MEMORY_LIMIT_MB: '512',
         PLUGIN_NOTIFIER_CONSOLE_ENABLED: 'true',
         PLUGIN_EXECUTION_TIMEOUT_MS: '30000',
         PLUGIN_AUTO_UPDATE_CHECK: 'true',
+        PLUGIN_NOTIFIER_RESEND_ENABLED: 'false',
       } as Record<string, string>,
       kept: ['plugin.enabled', true] as const,
     },
@@ -3742,6 +3748,538 @@ describe('Settings API v2', () => {
       const after = await read();
       expect(after.version).toBe(before.version);
       expect(after.values[kept[0]]).toBe(kept[1]);
+    });
+  });
+
+  describe('plugin.enabled, the tenant permission for external plugin code', () => {
+    const installationId = `plugin-installation-v1-${'a'.repeat(64)}`;
+    const manifestDigest = 'c'.repeat(64);
+    const approved = (pluginId: string) => ({
+      pluginId,
+      capabilityManifestDigest: manifestDigest,
+      activeVersionDigest: 'a'.repeat(64),
+      visibility: 'tenant' as const,
+      capabilities: ['hook.account.lifecycle'],
+      credentials: [],
+      resources: [],
+      updatedAt: 100,
+    });
+
+    function services(
+      states: Record<string, 'enabled' | 'disabled'>,
+      options: {
+        failInstall?: string;
+        failList?: boolean;
+        failGate?: 'close' | 'open' | 'any';
+        /** Only the nth close fails (1-based): a passing fault of the closing after the save. */
+        failCloseFrom?: number;
+        /** Runs right after the nth close was applied: something else happening at that moment. */
+        afterClose?: (n: number, gate: { allowed: boolean; generation: number }) => void;
+      } = {},
+      onEvent: (event: string) => Promise<void> = async () => undefined
+    ) {
+      const gate = { allowed: false, generation: 0 };
+      let closes = 0;
+      const runner = {
+        listTenantExternalGateCandidates: vi.fn(async () =>
+          gate.allowed ? [{ tenantId: 'tenant_123', ...gate }] : []
+        ),
+        getTenantExternalGate: vi.fn(async (input: { tenantId: string }) => ({
+          tenantId: input.tenantId,
+          ...gate,
+        })),
+        setTenantExternalGate: vi.fn(
+          async (input: { tenantId: string; allowed: boolean; ifGeneration?: number }) => {
+            await onEvent(`gate:${input.allowed}`);
+            const fails =
+              options.failGate === 'any' ||
+              (options.failGate === 'close' && !input.allowed) ||
+              (options.failGate === 'open' && input.allowed);
+            if (fails) throw new Error('plugin_sync_internal_error');
+            // The runner's compare-and-swap: every close advances the generation, an open must
+            // name the generation it read.
+            if (input.allowed) {
+              if (input.ifGeneration !== gate.generation) {
+                throw new Error('plugin_dynamic_external_gate_generation_conflict');
+              }
+              if (!gate.allowed) {
+                gate.allowed = true;
+                gate.generation += 1;
+              }
+            } else {
+              closes += 1;
+              if (options.failCloseFrom !== undefined && closes === options.failCloseFrom) {
+                throw new Error('plugin_sync_internal_error');
+              }
+              gate.allowed = false;
+              gate.generation += 1;
+              const reply = { tenantId: input.tenantId, ...gate };
+              options.afterClose?.(closes, gate);
+              return reply;
+            }
+            return { tenantId: input.tenantId, ...gate };
+          }
+        ),
+        listApprovedDynamicPlugins: vi.fn(async () => {
+          if (options.failList) throw new Error('runner_down');
+          return Object.keys(states).map(approved);
+        }),
+        getDynamicPluginInstallationStatus: vi.fn(
+          async (input: { tenantId: string; pluginId: string }) => ({
+            installationId,
+            tenantId: input.tenantId,
+            pluginId: input.pluginId,
+            state: states[input.pluginId],
+            configVersion: 3,
+            configuredKeys: [],
+            missingRequiredFields: [],
+            pinnedVersionDigest: states[input.pluginId] === 'enabled' ? 'a'.repeat(64) : null,
+          })
+        ),
+        configureDynamicPluginInstallation: vi.fn(
+          async (input: { tenantId: string; pluginId: string; enabled: boolean }) => {
+            await onEvent(`install:${input.pluginId}:${input.enabled}`);
+            if (input.pluginId === options.failInstall) throw new Error('runner_down');
+            return {
+              installationId,
+              tenantId: input.tenantId,
+              pluginId: input.pluginId,
+              state: input.enabled ? ('enabled' as const) : ('disabled' as const),
+              configVersion: 4,
+              pinnedVersionDigest: input.enabled ? 'a'.repeat(64) : null,
+            };
+          }
+        ),
+      };
+      const control = {
+        validatePluginDynamicWorkerDesiredState: vi.fn(
+          async (input: { tenantId: string; pluginId: string; enabled: boolean }) => ({
+            environmentId: 'test',
+            tenantId: input.tenantId,
+            pluginId: input.pluginId,
+            installationId,
+            capabilityManifestDigest: manifestDigest,
+            enabled: input.enabled,
+            bindings: [],
+            resources: [],
+          })
+        ),
+        syncPluginDynamicWorkerObservedState: vi.fn(
+          async (input: {
+            installationId: string;
+            tenantId: string;
+            pluginId: string;
+            state: 'enabled' | 'disabled';
+            configVersion: number;
+            pinnedVersionDigest: string | null;
+          }) => ({
+            operationId: 'op_sync',
+            environmentId: 'test',
+            capabilityManifestDigest: manifestDigest,
+            enabled: input.state === 'enabled',
+            bindings: [],
+            resources: [],
+            bindingStatus: 'deleted' as const,
+            ...input,
+          })
+        ),
+      };
+      return { runner, control, gate };
+    }
+
+    async function pluginSettings(
+      stored: boolean | null,
+      states: Record<string, 'enabled' | 'disabled'>,
+      options: {
+        failInstall?: string;
+        failList?: boolean;
+        failGate?: 'close' | 'open' | 'any';
+        failCloseFrom?: number;
+        afterClose?: (n: number, gate: { allowed: boolean; generation: number }) => void;
+        env?: Record<string, unknown>;
+        noRunner?: boolean;
+      } = {}
+    ) {
+      const events: string[] = [];
+      let observe: (event: string) => Promise<void> = async () => undefined;
+      const fake = services(states, options, (event) => observe(event));
+      const { app, mockEnv } = createTestApp({
+        kv: createMockKV(
+          stored === null
+            ? {}
+            : { 'settings:tenant:tenant_123:plugin': JSON.stringify({ 'plugin.enabled': stored }) }
+        ),
+        env: {
+          AUTHRIM_ENVIRONMENT_NAME: 'test',
+          ...(options.noRunner ? {} : { PLUGIN_RUNNER: fake.runner, CONTROL: fake.control }),
+          ...options.env,
+        },
+      });
+      const url = '/api/admin/tenants/tenant_123/settings/plugin';
+      const read = async () =>
+        (await (await app.request(url, { method: 'GET' }, mockEnv)).json()) as SettingsGetResult;
+      // Every runner call is recorded with the saved value as it stood when the call was made.
+      observe = async (event) => {
+        events.push(`${event}@saved=${String((await read()).values['plugin.enabled'])}`);
+      };
+      const patchRaw = async (body: Record<string, unknown>) =>
+        app.request(
+          url,
+          {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+          },
+          mockEnv
+        );
+      const patch = async (body: Record<string, unknown>) =>
+        patchRaw({ ifMatch: (await read()).version, ...body });
+      return { ...fake, env: mockEnv, events, read, patch, patchRaw };
+    }
+
+    const calledAudit = (action: string) =>
+      vi.mocked(createAuditLogFromContext).mock.calls.filter(([, name]) => name === action);
+
+    it('is off unless the tenant turns it on', async () => {
+      const { read } = await pluginSettings(null, {});
+      const view = await read();
+      expect(view.values['plugin.enabled']).toBe(false);
+      expect(view.sources['plugin.enabled']).toBe('default');
+    });
+
+    it.each([
+      ['sets it to false', { set: { 'plugin.enabled': false } }],
+      ['disables it', { disable: ['plugin.enabled'] }],
+      ['clears the tenant value (nothing inherited is on)', { clear: ['plugin.enabled'] }],
+    ])(
+      'closes the runner gate, then switches installations off, then saves, when a PATCH %s',
+      async (_, body) => {
+        const { runner, control, events, read, patch } = await pluginSettings(true, {
+          'custom-a': 'enabled',
+        });
+
+        const res = await patch(body);
+
+        expect(res.status).toBe(200);
+        expect((await read()).values['plugin.enabled']).toBe(false);
+        // The gate is closed and the installations are off while the saved value still says on; the
+        // gate is put in step with the saved value once more after the save.
+        expect(events).toEqual([
+          'gate:false@saved=true',
+          'install:custom-a:false@saved=true',
+          'gate:false@saved=false',
+        ]);
+        expect(runner.setTenantExternalGate).toHaveBeenCalledWith({
+          tenantId: 'tenant_123',
+          allowed: false,
+        });
+        expect(runner.configureDynamicPluginInstallation).toHaveBeenCalledWith({
+          tenantId: 'tenant_123',
+          pluginId: 'custom-a',
+          enabled: false,
+        });
+        expect(control.syncPluginDynamicWorkerObservedState).toHaveBeenCalledTimes(1);
+        expect(calledAudit('settings.plugin.external_shutdown')).toHaveLength(1);
+        expect(calledAudit('settings.plugin.external_shutdown')[0][4]).toMatchObject({
+          result: 'success',
+          stopped_plugin_ids: ['custom-a'],
+        });
+      }
+    );
+
+    it('closes the gate even when no installation is on, and touches no installation that is off', async () => {
+      const { runner, patch } = await pluginSettings(true, { 'custom-a': 'disabled' });
+
+      expect((await patch({ set: { 'plugin.enabled': false } })).status).toBe(200);
+
+      expect(runner.setTenantExternalGate).toHaveBeenCalledWith({
+        tenantId: 'tenant_123',
+        allowed: false,
+      });
+      expect(runner.configureDynamicPluginInstallation).not.toHaveBeenCalled();
+      expect(calledAudit('settings.plugin.external_shutdown')).toHaveLength(0);
+    });
+
+    it('opens the gate from the saved value after a PATCH that turns it on, and switches nothing off', async () => {
+      const { runner, events, read, patch } = await pluginSettings(false, {
+        'custom-a': 'enabled',
+      });
+
+      const res = await patch({ set: { 'plugin.enabled': true } });
+      const body = (await res.json()) as ApiResponse;
+
+      expect(res.status).toBe(200);
+      expect(body).not.toHaveProperty('externalPluginGate');
+      expect((await read()).values['plugin.enabled']).toBe(true);
+      expect(events).toEqual(['gate:true@saved=true']);
+      expect(runner.listApprovedDynamicPlugins).not.toHaveBeenCalled();
+      expect(runner.configureDynamicPluginInstallation).not.toHaveBeenCalled();
+    });
+
+    it('saves "on" but says the gate is pending when it cannot be opened, which leaves it closed', async () => {
+      const { runner, read, patch } = await pluginSettings(false, {}, { failGate: 'open' });
+
+      const res = await patch({ set: { 'plugin.enabled': true } });
+
+      expect(res.status).toBe(200);
+      expect((await res.json()) as ApiResponse).toMatchObject({
+        applied: ['plugin.enabled'],
+        externalPluginGate: 'pending',
+      });
+      expect((await read()).values['plugin.enabled']).toBe(true);
+      expect(runner.setTenantExternalGate).toHaveBeenCalledTimes(1);
+      expect(runner.setTenantExternalGate).toHaveBeenCalledWith({
+        tenantId: 'tenant_123',
+        allowed: true,
+        ifGeneration: 0,
+      });
+    });
+
+    it('keeps the gate open when clearing the tenant value leaves PLUGIN_ENABLED on', async () => {
+      const { runner, events, read, patch } = await pluginSettings(
+        false,
+        { 'custom-a': 'enabled' },
+        { env: { PLUGIN_ENABLED: 'true' } }
+      );
+
+      expect((await patch({ clear: ['plugin.enabled'] })).status).toBe(200);
+
+      expect((await read()).values['plugin.enabled']).toBe(true);
+      expect(events).toEqual(['gate:true@saved=true']);
+      expect(runner.configureDynamicPluginInstallation).not.toHaveBeenCalled();
+    });
+
+    it('does not save the setting when the gate cannot be closed, and switches nothing off', async () => {
+      const { runner, read, patch } = await pluginSettings(
+        true,
+        { 'custom-a': 'enabled' },
+        { failGate: 'close' }
+      );
+      const before = await read();
+
+      const res = await patch({ set: { 'plugin.enabled': false } });
+      const body = (await res.json()) as ApiResponse;
+
+      expect(res.status).toBe(503);
+      expect(body).toMatchObject({
+        error: 'temporarily_unavailable',
+        reason: 'external_plugin_gate_unavailable',
+      });
+      expect(runner.configureDynamicPluginInstallation).not.toHaveBeenCalled();
+      const after = await read();
+      expect(after.version).toBe(before.version);
+      expect(after.values['plugin.enabled']).toBe(true);
+    });
+
+    it('does not save the setting when a runner that cannot hold a gate is bound', async () => {
+      const { runner, read, patch } = await pluginSettings(true, { 'custom-a': 'enabled' });
+      delete (runner as Partial<typeof runner>).setTenantExternalGate;
+
+      expect((await patch({ set: { 'plugin.enabled': false } })).status).toBe(503);
+      expect((await read()).values['plugin.enabled']).toBe(true);
+    });
+
+    it('turns it off when there is no plugin runner at all: nothing external can run', async () => {
+      const { read, patch } = await pluginSettings(true, {}, { noRunner: true });
+
+      expect((await patch({ set: { 'plugin.enabled': false } })).status).toBe(200);
+      expect((await read()).values['plugin.enabled']).toBe(false);
+    });
+
+    it('does not save the setting when an installation cannot be switched off, and records what was', async () => {
+      const { runner, read, patch } = await pluginSettings(
+        true,
+        { 'custom-a': 'enabled', 'custom-b': 'enabled', 'custom-c': 'enabled' },
+        { failInstall: 'custom-b' }
+      );
+      const before = await read();
+
+      const res = await patch({ set: { 'plugin.enabled': false } });
+      const body = (await res.json()) as ApiResponse;
+
+      expect(res.status).toBe(503);
+      expect(body).toMatchObject({
+        error: 'temporarily_unavailable',
+        reason: 'external_plugin_shutdown_failed',
+        stopped_plugin_ids: ['custom-a'],
+      });
+      expect(
+        runner.configureDynamicPluginInstallation.mock.calls.map(([input]) => input.pluginId)
+      ).toEqual(['custom-a', 'custom-b']);
+      const after = await read();
+      expect(after.version).toBe(before.version);
+      expect(after.values['plugin.enabled']).toBe(true);
+      // The persistent audit says which plugins were stopped before the failure, and which failed.
+      expect(calledAudit('settings.plugin.external_shutdown')[0][4]).toMatchObject({
+        result: 'failure',
+        stopped_plugin_ids: ['custom-a'],
+        failed_plugin_id: 'custom-b',
+      });
+      expect(calledAudit('settings.patch.failure')[0][4]).toMatchObject({
+        reason: 'external_plugin_shutdown_failed',
+        stopped_plugin_ids: ['custom-a'],
+        failed_plugin_id: 'custom-b',
+      });
+    });
+
+    it('audits a failed listing of the external plugins as a failure, with nobody to blame', async () => {
+      const { read, patch } = await pluginSettings(true, {}, { failList: true });
+      const before = await read();
+
+      const res = await patch({ set: { 'plugin.enabled': false } });
+
+      expect(res.status).toBe(503);
+      expect(((await res.json()) as ApiResponse).reason).toBe('external_plugin_shutdown_failed');
+      expect((await read()).version).toBe(before.version);
+      const audits = calledAudit('settings.plugin.external_shutdown');
+      expect(audits).toHaveLength(1);
+      expect(audits[0][4]).toMatchObject({ result: 'failure', stopped_plugin_ids: [] });
+      expect(audits[0][4]).not.toHaveProperty('failed_plugin_id');
+      expect(audits[0][5]).toBe('warning');
+    });
+
+    it('audits a switch-off that worked as a success', async () => {
+      const { patch } = await pluginSettings(true, { 'custom-a': 'enabled' });
+
+      expect((await patch({ set: { 'plugin.enabled': false } })).status).toBe(200);
+
+      const audits = calledAudit('settings.plugin.external_shutdown');
+      expect(audits[0][4]).toMatchObject({ result: 'success', stopped_plugin_ids: ['custom-a'] });
+      expect(audits[0][5]).toBe('info');
+    });
+
+    it('says the gate is pending, records it, and has the reconciliation close a gate that a concurrent enable reopened', async () => {
+      // The turn-off closes the gate and switches the installations off; an enable that read the
+      // new generation and the still-saved "on" reopens the gate; the turn-off is saved; the
+      // closing after the save fails on a passing fault. The setting is off and the gate is open.
+      const { runner, gate, env, read, patch } = await pluginSettings(
+        true,
+        { 'custom-a': 'enabled' },
+        {
+          failCloseFrom: 2,
+          afterClose: (n, state) => {
+            if (n === 1) {
+              state.allowed = true; // the concurrent enable's open, by compare-and-swap
+              state.generation += 1;
+            }
+          },
+        }
+      );
+
+      const res = await patch({ set: { 'plugin.enabled': false } });
+
+      expect(res.status).toBe(200);
+      expect((await res.json()) as ApiResponse).toMatchObject({
+        applied: ['plugin.enabled'],
+        externalPluginGate: 'pending',
+      });
+      expect((await read()).values['plugin.enabled']).toBe(false);
+      expect(gate.allowed).toBe(true); // the drift
+      expect(calledAudit('settings.patch.failure').map(([, , , , meta]) => meta)).toContainEqual(
+        expect.objectContaining({ reason: 'external_plugin_gate_resync_failed' })
+      );
+
+      // The next reconciliation (the scheduled run) closes it.
+      runner.setTenantExternalGate.mockClear();
+      const result = await sweepExternalPluginGates(env, { info: vi.fn(), warn: vi.fn() });
+      expect(result).toMatchObject({ examined: 1, closed: 1 });
+      expect(gate.allowed).toBe(false);
+    });
+
+    it('does not say the gate is pending after a turn-off whose closing after the save worked', async () => {
+      const { patch } = await pluginSettings(true, { 'custom-a': 'enabled' });
+      const body = (await (
+        await patch({ set: { 'plugin.enabled': false } })
+      ).json()) as ApiResponse;
+      expect(body).not.toHaveProperty('externalPluginGate');
+    });
+
+    describe('a request the settings manager refuses stops nothing', () => {
+      it.each([
+        [
+          'set true with disable of the same key',
+          { set: { 'plugin.enabled': true }, disable: ['plugin.enabled'] },
+        ],
+        [
+          'set false with clear of the same key',
+          { set: { 'plugin.enabled': false }, clear: ['plugin.enabled'] },
+        ],
+        [
+          'clear with disable of the same key',
+          { clear: ['plugin.enabled'], disable: ['plugin.enabled'] },
+        ],
+        [
+          'set false with disable of the same key',
+          { set: { 'plugin.enabled': false }, disable: ['plugin.enabled'] },
+        ],
+        [
+          'set false next to a key that is not a plugin setting',
+          { set: { 'plugin.enabled': false, 'plugin.notifier_resend_enabled': false } },
+        ],
+        ['set false with a value that is not boolean', { set: { 'plugin.enabled': 'off' } }],
+      ])('%s', async (_, body) => {
+        const { runner, events, read, patch } = await pluginSettings(true, {
+          'custom-a': 'enabled',
+        });
+        const before = await read();
+
+        const res = await patch(body);
+
+        expect(res.status).toBe(400);
+        expect(events).toEqual([]);
+        expect(runner.setTenantExternalGate).not.toHaveBeenCalled();
+        expect(runner.listApprovedDynamicPlugins).not.toHaveBeenCalled();
+        expect(runner.configureDynamicPluginInstallation).not.toHaveBeenCalled();
+        const after = await read();
+        expect(after.version).toBe(before.version);
+        expect(after.values['plugin.enabled']).toBe(true);
+      });
+
+      it('a version mismatch (ifMatch) is a conflict that stops nothing', async () => {
+        const { runner, events, read, patchRaw } = await pluginSettings(true, {
+          'custom-a': 'enabled',
+        });
+        const before = await read();
+
+        const res = await patchRaw({
+          ifMatch: 'not-the-current-version',
+          set: { 'plugin.enabled': false },
+        });
+
+        expect(res.status).toBe(409);
+        expect(events).toEqual([]);
+        expect(runner.configureDynamicPluginInstallation).not.toHaveBeenCalled();
+        expect((await read()).version).toBe(before.version);
+      });
+
+      it('a request without ifMatch stops nothing', async () => {
+        const { runner, patchRaw } = await pluginSettings(true, { 'custom-a': 'enabled' });
+
+        const res = await patchRaw({ set: { 'plugin.enabled': false } });
+
+        expect(res.status).toBe(400);
+        expect(runner.setTenantExternalGate).not.toHaveBeenCalled();
+      });
+
+      it('a PATCH of another category never touches the runner', async () => {
+        const { app, mockEnv } = createTestApp();
+        const runner = services({ 'custom-a': 'enabled' }).runner;
+        const url = '/api/admin/tenants/tenant_123/settings/oauth';
+        const read = (await (
+          await app.request(url, { method: 'GET' }, { ...mockEnv, PLUGIN_RUNNER: runner } as never)
+        ).json()) as SettingsGetResult;
+        await app.request(
+          url,
+          {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ifMatch: read.version, set: {} }),
+          },
+          { ...mockEnv, PLUGIN_RUNNER: runner } as never
+        );
+        expect(runner.setTenantExternalGate).not.toHaveBeenCalled();
+        expect(runner.listApprovedDynamicPlugins).not.toHaveBeenCalled();
+      });
     });
   });
 

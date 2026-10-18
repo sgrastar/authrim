@@ -26,10 +26,6 @@
 import type { Context, Next } from 'hono';
 import type { Env } from '../types/env';
 import { createLogger } from '../utils/logger';
-import {
-  getTenantSettingsDocument,
-  TenantSettingsUnavailableError,
-} from '../utils/tenant-settings';
 
 const log = createLogger().module('PluginContext');
 
@@ -648,20 +644,14 @@ async function getTenantPluginConfigRecord(
 }
 
 /**
- * Convert plugin ID to settings-v2 key format
- * e.g. "notifier-resend" → "plugin.notifier_resend_enabled"
- */
-function pluginIdToSettingsKey(pluginId: string): string {
-  return `plugin.${pluginId.replace(/-/g, '_')}_enabled`;
-}
-
-/**
  * Check if a plugin is enabled
  *
  * Resolution order:
- * 1. settings-v2 (AUTHRIM_CONFIG KV): `plugin.{plugin_id_underscore}_enabled`
- * 2. Legacy (SETTINGS KV): `plugins:enabled:{pluginId}` (tenant-specific → global)
- * 3. Default: true
+ * 1. Legacy (SETTINGS KV): `plugins:enabled:{pluginId}` (tenant-specific → global)
+ * 2. Default: true
+ *
+ * The tenant settings document holds no per-plugin switch any more (`plugin.notifier_resend_enabled`
+ * was the only one and is retired): a value saved under that key is ignored.
  */
 async function isPluginEnabledInKV(env: Env, pluginId: string, tenantId: string): Promise<boolean> {
   const cacheKey = getPluginEnabledCacheKey(pluginId, tenantId);
@@ -670,24 +660,7 @@ async function isPluginEnabledInKV(env: Env, pluginId: string, tenantId: string)
     return cached;
   }
 
-  // 1. Check the Settings API document (settings:tenant:<tenantId>:plugin)
-  try {
-    const settingsKey = pluginIdToSettingsKey(pluginId);
-    const settings = await getTenantSettingsDocument(env, tenantId, 'plugin');
-    if (typeof settings?.[settingsKey] === 'boolean') {
-      return setCachedValue(env, cacheKey, settings[settingsKey] as boolean);
-    }
-    // Also check string form (KV stores may serialize as string)
-    if (typeof settings?.[settingsKey] === 'string') {
-      return setCachedValue(env, cacheKey, settings[settingsKey] === 'true');
-    }
-  } catch (error) {
-    // A document that exists but cannot be read must not fall back to other flags.
-    if (error instanceof TenantSettingsUnavailableError) throw error;
-    // Ignore errors, fall through
-  }
-
-  // 2. Check legacy SETTINGS KV
+  // 1. Check legacy SETTINGS KV
   const kv = env.SETTINGS;
   if (kv) {
     try {
@@ -709,7 +682,7 @@ async function isPluginEnabledInKV(env: Env, pluginId: string, tenantId: string)
     }
   }
 
-  // 3. Default: enabled
+  // 2. Default: enabled
   return setCachedValue(env, cacheKey, true);
 }
 

@@ -1,4 +1,5 @@
 import type { D1Database, D1DatabaseSession } from '@cloudflare/workers-types';
+import { EXTERNAL_GATE_OPEN } from './external-gate';
 
 const SAFE_ID = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,255}$/u;
 const SAFE_CAPABILITY = /^[a-z][a-z0-9_.:-]{0,127}$/u;
@@ -118,8 +119,10 @@ export class D1PluginDispatchLimiter implements PluginDispatchLimiter {
                AND destination_host = ? AND lease_expires_at > ?
           ) < ?
            AND EXISTS (
-             SELECT 1 FROM plugin_runner_installations
-              WHERE installation_id = ? AND tenant_id = ? AND state = 'enabled'
+             SELECT 1 FROM plugin_runner_installations installation
+              WHERE installation.installation_id = ? AND installation.tenant_id = ?
+                AND installation.state = 'enabled'
+                AND ${EXTERNAL_GATE_OPEN}
            )`
       )
       .bind(

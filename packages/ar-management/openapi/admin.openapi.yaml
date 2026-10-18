@@ -2037,12 +2037,47 @@ paths:
                 properties:
                   error:
                     type: string
-                    enum: [backup_mutation_unavailable]
+                    enum: [backup_mutation_unavailable, temporarily_unavailable]
                   message:
                     type: string
+                  reason:
+                    type: string
+                    enum: [external_plugin_gate_unavailable, external_plugin_shutdown_failed]
+                    description: >-
+                      Only with temporarily_unavailable, on the tenant `plugin` category when
+                      plugin.enabled is turned off: ar-plugin-runner's gate for external plugin
+                      code could not be closed (external_plugin_gate_unavailable), or the tenant's
+                      external plugins could not all be switched off
+                      (external_plugin_shutdown_failed). Nothing was saved; retry.
+                  stopped_plugin_ids:
+                    type: array
+                    items:
+                      type: string
+                    description: >-
+                      With external_plugin_shutdown_failed: the external plugins that were
+                      switched off before the failure (they stay off).
       description: >-
         Update Setting settings in the Tenants area. The request body is JSON unless the detailed
-        schema for this operation states otherwise. Account-lifecycle settings are tenant-scoped.
+        schema for this operation states otherwise. plugin.enabled (default false) allows the code
+        of external (custom Dynamic Worker) plugins to run for the tenant; it does not affect the
+        built-in email providers, CAPTCHA providers or TOTP. Turning it off first closes the
+        tenant's gate in ar-plugin-runner (which stops every external installation of the tenant
+        from running, queued hooks included) and switches its external plugins off, then saves; if
+        either fails the PATCH is refused with 503 and nothing is saved. A PATCH the settings
+        manager would refuse (conflicting operations on the key, a version mismatch) does neither.
+        The gate stops external code from starting, not code that has already started: a hook or
+        sync call launched before the gate closed runs to completion (bounded by its timeout), and
+        a few milliseconds can pass between the runner's last gate check and the launch. Opening
+        the gate is a compare-and-swap on its generation, so an enable that read the setting before
+        a turn-off cannot reopen the gate after it. The gate is a projection written by this
+        service, not a lease: a change not yet written is not seen by the runner. A periodic
+        reconciliation (about every two minutes, a rolling pass over the tenants that have an open
+        gate or an enabled external installation without one) compares each gate with the saved
+        setting and corrects it, so a gate that drifted (a failed write after a save, a changed
+        PLUGIN_ENABLED, a gate never written) is corrected within one pass, which takes
+        ceil(tenants listed / 50) runs; external hooks queued while a gate has never been written
+        are retried until then rather than discarded.
+        Account-lifecycle settings are tenant-scoped.
         Retention changes apply only to guests created subsequently; saving never reschedules
         existing accounts. Disabling deletion leaves existing deadlines unchanged. The tenant
         category's sign-in UI routing is validated: tenant.ui_base_url must be the platform's or the
@@ -17779,7 +17814,10 @@ paths:
         Enable a plugin for the current tenant after verifying that all required configuration
         fields are present. Dynamic Worker plugins with dedicated resources return 202 while the
         Control Worker provisions and verifies those resources; the plugin remains disabled until
-        the activation gate is ready.
+        the activation gate is ready. Dynamic Worker (external) plugins run custom code, so enabling
+        one also needs the tenant's `plugin.enabled` setting to be on (off by default); otherwise
+        the request is refused with 403 and error `external_plugin_execution_not_allowed`. Built-in
+        plugins (email providers, CAPTCHA providers) are not affected by `plugin.enabled`. The gate for external plugin code in ar-plugin-runner is opened from the saved setting just before the plugin is switched on; if the setting or the gate is unavailable the request is refused with 503 (temporarily_unavailable).
       responses:
         '200':
           $ref: '#/components/responses/AdminPluginToggle'
@@ -17794,6 +17832,8 @@ paths:
         '404':
           $ref: '#/components/responses/Error'
         '500':
+          $ref: '#/components/responses/Error'
+        '503':
           $ref: '#/components/responses/Error'
       parameters:
         - name: id
@@ -47673,6 +47713,18 @@ components:
             Present when the change was saved but could not yet be copied to the store runtime
             workers read. A scheduled retry copies it, normally within a minute; until then
             runtime keeps the previous values. Absent when the change already applies.
+        externalPluginGate:
+          type: string
+          enum: [pending]
+          description: >-
+            Only on a tenant `plugin` category save that touched plugin.enabled: the change was
+            saved but ar-plugin-runner's gate for external plugin code could not be put in step
+            afterwards. After a turn-on the gate stays as it was (closed unless it had been opened
+            before), so external code does not run on the strength of an unconfirmed "on". After a
+            turn-off the gate was closed before the save, but a concurrent enable may have reopened
+            it. Either way saving plugin.enabled again, or enabling an external plugin, retries,
+            and the periodic reconciliation puts the gate where the saved setting says within one
+            pass. Absent when the gate is in step.
       example:
         applied:
           - oauth.require_pkce
@@ -58446,6 +58498,12 @@ components:
           type: string
           enum: [dynamic_worker]
           description: Present for operator-approved custom Dynamic Worker plugins.
+        externalExecutionAllowed:
+          type: boolean
+          description: >-
+            Only on Dynamic Worker plugins, for a tenant request: whether the tenant's
+            `plugin.enabled` setting lets external plugin code run. When false, the plugin cannot be
+            enabled and none of its code runs.
         capabilityManifestDigest:
           type: string
           pattern: '^[a-f0-9]{64}$'

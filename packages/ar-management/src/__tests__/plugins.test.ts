@@ -3147,6 +3147,8 @@ describe('Plugin Admin API - Tenant Isolation', () => {
 });
 
 describe('Plugin Admin API - Approved Dynamic Workers', () => {
+  // The tenant allows external plugin code (plugin.enabled), which switching one on requires.
+  const EXTERNAL_PLUGINS_ALLOWED = { PLUGIN_ENABLED: 'true' };
   const approved: ApprovedDynamicPlugin = {
     pluginId: 'custom-a',
     capabilityManifestDigest: 'b'.repeat(64),
@@ -3160,6 +3162,15 @@ describe('Plugin Admin API - Approved Dynamic Workers', () => {
 
   function runner() {
     return {
+      setTenantExternalGate: vi.fn(async (input: { tenantId: string; allowed: boolean }) => ({
+        ...input,
+        generation: 1,
+      })),
+      getTenantExternalGate: vi.fn(async (input: { tenantId: string }) => ({
+        tenantId: input.tenantId,
+        allowed: false,
+        generation: 0,
+      })),
       listApprovedDynamicPlugins: vi.fn(async () => [approved]),
       getDynamicPluginInstallationStatus: vi.fn(
         async (): Promise<DynamicPluginInstallationStatus> => ({
@@ -3414,7 +3425,11 @@ describe('Plugin Admin API - Approved Dynamic Workers', () => {
       tenantId: 'tenant-a',
       body: {},
       kv,
-      envOverrides: { PLUGIN_RUNNER: service, CONTROL: controlService },
+      envOverrides: {
+        PLUGIN_RUNNER: service,
+        CONTROL: controlService,
+        ...EXTERNAL_PLUGINS_ALLOWED,
+      },
     };
 
     await enablePluginHandler(createMockContext({ method: 'PUT', ...common }));
@@ -3501,7 +3516,11 @@ describe('Plugin Admin API - Approved Dynamic Workers', () => {
       tenantId: 'tenant-a',
       body: { tenant_id: 'tenant-a', idempotency_key: 'uninstall-a', confirmation: 'DELETE' },
       kv: createMockKV({ getValues: { 'plugins:registry': '{}' } }),
-      envOverrides: { PLUGIN_RUNNER: service, CONTROL: controlService },
+      envOverrides: {
+        PLUGIN_RUNNER: service,
+        CONTROL: controlService,
+        ...EXTERNAL_PLUGINS_ALLOWED,
+      },
     });
 
     expect((await getResponseData(await uninstallPluginHandler(c))).status).toBe(400);
@@ -3565,7 +3584,11 @@ describe('Plugin Admin API - Approved Dynamic Workers', () => {
         ],
       },
       kv,
-      envOverrides: { PLUGIN_RUNNER: service, CONTROL: controlService },
+      envOverrides: {
+        PLUGIN_RUNNER: service,
+        CONTROL: controlService,
+        ...EXTERNAL_PLUGINS_ALLOWED,
+      },
     });
 
     const response = await enablePluginHandler(c);
@@ -3652,7 +3675,11 @@ describe('Plugin Admin API - Approved Dynamic Workers', () => {
       tenantId: 'tenant-a',
       body: {},
       kv: createMockKV({ getValues: { 'plugins:registry': '{}' } }),
-      envOverrides: { PLUGIN_RUNNER: service, CONTROL: controlService },
+      envOverrides: {
+        PLUGIN_RUNNER: service,
+        CONTROL: controlService,
+        ...EXTERNAL_PLUGINS_ALLOWED,
+      },
     });
 
     const result = await getResponseData(await enablePluginHandler(c));
@@ -3739,7 +3766,11 @@ describe('Plugin Admin API - Approved Dynamic Workers', () => {
       tenantId: 'tenant-a',
       body: {},
       kv: createMockKV({ getValues: { 'plugins:registry': '{}' } }),
-      envOverrides: { PLUGIN_RUNNER: service, CONTROL: controlService },
+      envOverrides: {
+        PLUGIN_RUNNER: service,
+        CONTROL: controlService,
+        ...EXTERNAL_PLUGINS_ALLOWED,
+      },
     });
 
     const result = await getResponseData(await enablePluginHandler(c));
@@ -3753,5 +3784,373 @@ describe('Plugin Admin API - Approved Dynamic Workers', () => {
       enabled: true,
     });
     expect(controlService.syncPluginDynamicWorkerObservedState).toHaveBeenCalledTimes(1);
+  });
+
+  describe('the tenant permission for external plugin code (plugin.enabled)', () => {
+    const closed = {
+      PLUGIN_ENABLED: 'false',
+    };
+
+    it('refuses to enable an external plugin while it is off, and starts nothing', async () => {
+      const service = runner();
+      const controlService = control();
+      const kv = createMockKV({ getValues: { 'plugins:registry': '{}' } });
+      const c = createMockContext({
+        method: 'PUT',
+        params: { id: 'custom-a' },
+        tenantId: 'tenant-a',
+        body: {},
+        kv,
+        envOverrides: { PLUGIN_RUNNER: service, CONTROL: controlService, ...closed },
+      });
+
+      const result = await getResponseData(await enablePluginHandler(c));
+
+      expect(result.status).toBe(403);
+      expect(result.body).toMatchObject({
+        error: 'external_plugin_execution_not_allowed',
+        setting: 'plugin.enabled',
+        plugin_id: 'custom-a',
+        tenant_id: 'tenant-a',
+      });
+      expect(result.body.error_description).toContain('plugin.enabled');
+      expect(controlService.validatePluginDynamicWorkerDesiredState).not.toHaveBeenCalled();
+      expect(controlService.preparePluginDynamicWorkerResources).not.toHaveBeenCalled();
+      expect(service.stageDynamicPluginActivation).not.toHaveBeenCalled();
+      expect(service.configureDynamicPluginInstallation).not.toHaveBeenCalled();
+      expect(kv.put).not.toHaveBeenCalled();
+    });
+
+    it('refuses to enable an external plugin when the tenant turned it off over an environment that is on', async () => {
+      const service = runner();
+      const kv = createMockKV({
+        getValues: {
+          'plugins:registry': '{}',
+          'settings:tenant:tenant-a:plugin': JSON.stringify({ 'plugin.enabled': false }),
+        },
+      });
+      const c = createMockContext({
+        method: 'PUT',
+        params: { id: 'custom-a' },
+        tenantId: 'tenant-a',
+        body: {},
+        kv,
+        envOverrides: { PLUGIN_RUNNER: service, CONTROL: control(), PLUGIN_ENABLED: 'true' },
+      });
+
+      expect((await getResponseData(await enablePluginHandler(c))).status).toBe(403);
+      expect(service.configureDynamicPluginInstallation).not.toHaveBeenCalled();
+    });
+
+    it('enables an external plugin once the tenant turned it on', async () => {
+      const service = runner();
+      const kv = createMockKV({
+        getValues: {
+          'plugins:registry': '{}',
+          'settings:tenant:tenant-a:plugin': JSON.stringify({ 'plugin.enabled': true }),
+        },
+      });
+      const c = createMockContext({
+        method: 'PUT',
+        params: { id: 'custom-a' },
+        tenantId: 'tenant-a',
+        body: {},
+        kv,
+        envOverrides: { PLUGIN_RUNNER: service, CONTROL: control(), ...closed },
+      });
+
+      const result = await getResponseData(await enablePluginHandler(c));
+
+      expect(result.status).toBe(200);
+      expect(result.body).toMatchObject({ pluginId: 'custom-a', enabled: true });
+      expect(service.configureDynamicPluginInstallation).toHaveBeenCalledTimes(1);
+    });
+
+    it('opens the runner gate for the tenant before it switches the installation on', async () => {
+      const service = runner();
+      const order: string[] = [];
+      service.setTenantExternalGate.mockImplementation(async (input) => {
+        order.push(`gate:${input.tenantId}:${input.allowed}`);
+        return { ...input, generation: 1 };
+      });
+      service.configureDynamicPluginInstallation.mockImplementation(async (input) => {
+        order.push(`install:${input.enabled}`);
+        return {
+          installationId: 'plugin-installation-v1-a',
+          tenantId: input.tenantId,
+          pluginId: input.pluginId,
+          state: input.enabled ? ('enabled' as const) : ('disabled' as const),
+          configVersion: 2,
+          pinnedVersionDigest: approved.activeVersionDigest,
+        };
+      });
+      const c = createMockContext({
+        method: 'PUT',
+        params: { id: 'custom-a' },
+        tenantId: 'tenant-a',
+        body: {},
+        kv: createMockKV({
+          getValues: {
+            'plugins:registry': '{}',
+            'settings:tenant:tenant-a:plugin': JSON.stringify({ 'plugin.enabled': true }),
+          },
+        }),
+        envOverrides: { PLUGIN_RUNNER: service, CONTROL: control(), ...closed },
+      });
+
+      expect((await getResponseData(await enablePluginHandler(c))).status).toBe(200);
+      expect(order).toEqual(['gate:tenant-a:true', 'install:true']);
+    });
+
+    it('answers 503 and enables nothing when the runner gate cannot be opened', async () => {
+      const service = runner();
+      service.setTenantExternalGate.mockRejectedValue(new Error('plugin_sync_internal_error'));
+      const c = createMockContext({
+        method: 'PUT',
+        params: { id: 'custom-a' },
+        tenantId: 'tenant-a',
+        body: {},
+        kv: createMockKV({ getValues: { 'plugins:registry': '{}' } }),
+        envOverrides: { PLUGIN_RUNNER: service, CONTROL: control(), PLUGIN_ENABLED: 'true' },
+      });
+
+      const result = await getResponseData(await enablePluginHandler(c));
+
+      expect(result.status).toBe(503);
+      expect(result.body).toMatchObject({
+        error: 'temporarily_unavailable',
+        setting: 'plugin.enabled',
+      });
+      expect(service.configureDynamicPluginInstallation).not.toHaveBeenCalled();
+    });
+
+    it('answers 503 and enables nothing when the plugin.enabled setting cannot be read', async () => {
+      const service = runner();
+      const kv = createMockKV({ getValues: { 'plugins:registry': '{}' } });
+      const registryGet = kv.get as unknown as ReturnType<typeof vi.fn>;
+      const original = registryGet.getMockImplementation() as (key: string) => Promise<unknown>;
+      registryGet.mockImplementation(async (key: string) => {
+        if (key.startsWith('settings:')) throw new Error('kv_unavailable');
+        return original(key);
+      });
+      const c = createMockContext({
+        method: 'PUT',
+        params: { id: 'custom-a' },
+        tenantId: 'tenant-a',
+        body: {},
+        kv,
+        envOverrides: { PLUGIN_RUNNER: service, CONTROL: control(), PLUGIN_ENABLED: 'true' },
+      });
+
+      expect((await getResponseData(await enablePluginHandler(c))).status).toBe(503);
+      expect(service.configureDynamicPluginInstallation).not.toHaveBeenCalled();
+    });
+
+    it('still disables and uninstalls an external plugin while it is off', async () => {
+      const service = runner();
+      const controlService = {
+        ...control(),
+        requestPluginResourceCleanup: vi.fn(async () => null),
+      };
+      const envOverrides = { PLUGIN_RUNNER: service, CONTROL: controlService, ...closed };
+      const kv = createMockKV({ getValues: { 'plugins:registry': '{}' } });
+
+      const disabled = await getResponseData(
+        await disablePluginHandler(
+          createMockContext({
+            method: 'PUT',
+            params: { id: 'custom-a' },
+            tenantId: 'tenant-a',
+            body: {},
+            kv,
+            envOverrides,
+          })
+        )
+      );
+      const uninstalled = await getResponseData(
+        await uninstallPluginHandler(
+          createMockContext({
+            method: 'POST',
+            params: { id: 'custom-a' },
+            tenantId: 'tenant-a',
+            body: {
+              tenant_id: 'tenant-a',
+              idempotency_key: 'uninstall-a',
+              confirmation: 'UNINSTALL',
+            },
+            kv,
+            envOverrides,
+          })
+        )
+      );
+
+      expect(disabled.status).toBe(200);
+      expect(uninstalled.status).toBe(200);
+      expect(service.configureDynamicPluginInstallation).toHaveBeenCalledTimes(2);
+    });
+
+    it('tells the list and the detail view whether external plugins may run, for external plugins only', async () => {
+      const builtin = createPluginEntry({ id: 'test-plugin' });
+      const kv = createMockKV({
+        getValues: { 'plugins:registry': JSON.stringify({ 'test-plugin': builtin }) },
+      });
+      const list = async (envOverrides: Record<string, unknown>) => {
+        const c = createMockContext({
+          tenantId: 'tenant-a',
+          kv,
+          envOverrides: { PLUGIN_RUNNER: runner(), ...envOverrides },
+        });
+        await listPluginsHandler(c);
+        return (c.json.mock.calls[0][0] as { plugins: Array<Record<string, unknown>> }).plugins;
+      };
+
+      const off = await list(closed);
+      expect(off.find((p) => p.id === 'custom-a')).toMatchObject({
+        externalExecutionAllowed: false,
+      });
+      expect(off.find((p) => p.id === 'test-plugin')).not.toHaveProperty(
+        'externalExecutionAllowed'
+      );
+
+      const getC = createMockContext({
+        params: { id: 'custom-a' },
+        tenantId: 'tenant-a',
+        kv: createMockKV({ getValues: { 'plugins:registry': '{}' } }),
+        envOverrides: { PLUGIN_RUNNER: runner(), PLUGIN_ENABLED: 'true' },
+      });
+      await getPluginHandler(getC);
+      expect(getC.json.mock.calls[0][0].status).toMatchObject({ externalExecutionAllowed: true });
+    });
+  });
+
+  describe('built-in plugins do not depend on plugin.enabled', () => {
+    // The tenant has switched external plugin code off in every way a tenant can.
+    const closed = {
+      PLUGIN_ENABLED: 'false',
+    };
+    const offDocument = {
+      'settings:tenant:tenant-1:plugin': JSON.stringify({ 'plugin.enabled': false }),
+    };
+
+    it('enables and disables a built-in email provider, a legacy KV plugin and no Runner dynamic call is made', async () => {
+      const registry = {
+        'notifier-cloudflare': createPluginEntry({ id: 'notifier-cloudflare' }),
+        'test-plugin': createPluginEntry({ id: 'test-plugin' }),
+      };
+      const configureNotificationInstallation = vi.fn(async (input) => ({
+        ...input,
+        state: input.enabled ? ('enabled' as const) : ('disabled' as const),
+        configVersion: 2,
+      }));
+      const service = {
+        configureNotificationInstallation,
+        resolveNotificationProviderOrder: vi.fn(async () => ({
+          tenantId: 'tenant-1',
+          channel: 'email' as const,
+          configVersion: 2,
+          state: 'enabled' as const,
+          installationIds: [],
+        })),
+        replaceNotificationProviderOrder: vi.fn(async (input) => ({
+          tenantId: input.tenantId,
+          channel: input.channel,
+          configVersion: input.expectedConfigVersion + 1,
+          state: 'disabled' as const,
+          installationIds: input.installationIds,
+        })),
+        configureDynamicPluginInstallation: vi.fn(),
+      };
+      const kv = createMockKV({
+        getValues: { 'plugins:registry': JSON.stringify(registry), ...offDocument },
+      });
+      const common = (id: string) => ({
+        params: { id },
+        tenantId: 'tenant-1',
+        body: {},
+        kv,
+        envOverrides: { AUTHRIM_ENVIRONMENT_NAME: 'test', PLUGIN_RUNNER: service, ...closed },
+      });
+
+      for (const id of ['notifier-cloudflare', 'test-plugin']) {
+        const on = await getResponseData(
+          await enablePluginHandler(createMockContext({ method: 'PUT', ...common(id) }))
+        );
+        expect(on.status, id).toBe(200);
+        expect(on.body, id).toMatchObject({ pluginId: id, enabled: true });
+        expect(kv.put).toHaveBeenCalledWith(`plugins:enabled:${id}:tenant:tenant-1`, 'true');
+      }
+      expect(configureNotificationInstallation).toHaveBeenCalledWith(
+        expect.objectContaining({ pluginId: 'notifier-cloudflare', enabled: true })
+      );
+
+      for (const id of ['notifier-cloudflare', 'test-plugin']) {
+        const off = await getResponseData(
+          await disablePluginHandler(createMockContext({ method: 'PUT', ...common(id) }))
+        );
+        expect(off.status, id).toBe(200);
+        expect(off.body, id).toMatchObject({ pluginId: id, enabled: false });
+        expect(kv.put).toHaveBeenCalledWith(`plugins:enabled:${id}:tenant:tenant-1`, 'false');
+      }
+      expect(service.configureDynamicPluginInstallation).not.toHaveBeenCalled();
+    });
+
+    it('enables and disables a built-in CAPTCHA provider', async () => {
+      const pluginId = 'human-verification-cloudflare-turnstile';
+      const configureHumanVerificationInstallation = vi.fn(async (input) => ({
+        ...input,
+        state: input.enabled ? ('enabled' as const) : ('disabled' as const),
+        configVersion: 2,
+      }));
+      const kv = createMockKV({
+        getValues: {
+          'plugins:registry': JSON.stringify({ [pluginId]: createPluginEntry({ id: pluginId }) }),
+          [`plugins:config:${pluginId}:tenant:tenant-1`]: JSON.stringify({
+            siteKey: 'tenant-site',
+            secretKey: 'tenant-secret',
+            failurePolicy: 'fail_closed',
+          }),
+          ...offDocument,
+        },
+      });
+      const envOverrides = {
+        AUTHRIM_ENVIRONMENT_NAME: 'test',
+        PLUGIN_RUNNER: { configureHumanVerificationInstallation },
+        ...closed,
+      };
+
+      const on = await getResponseData(
+        await enablePluginHandler(
+          createMockContext({
+            method: 'PUT',
+            params: { id: pluginId },
+            tenantId: 'tenant-1',
+            body: {},
+            kv,
+            envOverrides,
+          })
+        )
+      );
+      const off = await getResponseData(
+        await disablePluginHandler(
+          createMockContext({
+            method: 'PUT',
+            params: { id: pluginId },
+            tenantId: 'tenant-1',
+            body: {},
+            kv,
+            envOverrides,
+          })
+        )
+      );
+
+      expect(on.status).toBe(200);
+      expect(off.status).toBe(200);
+      expect(configureHumanVerificationInstallation).toHaveBeenCalledWith(
+        expect.objectContaining({ pluginId, enabled: true })
+      );
+      expect(configureHumanVerificationInstallation).toHaveBeenCalledWith(
+        expect.objectContaining({ pluginId, enabled: false })
+      );
+    });
   });
 });

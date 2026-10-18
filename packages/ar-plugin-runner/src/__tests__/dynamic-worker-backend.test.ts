@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 import { DynamicWorkerPluginBackend, type PluginOutboundFactory } from '../dynamic-worker-backend';
 
+/** The installation resolver's gate check, open: these tests are about everything else. */
+const gateOpen = { isExternalGateOpen: async () => true };
+
 const codeTarget = {
   pluginId: 'plugin-a',
   scriptName: 'plugin-a',
@@ -54,7 +57,12 @@ const invocation = {
 
 describe('DynamicWorkerPluginBackend', () => {
   it('fails closed when the optional Worker Loader is unavailable', async () => {
-    const backend = new DynamicWorkerPluginBackend(undefined, { resolve: vi.fn() }, code, outbound);
+    const backend = new DynamicWorkerPluginBackend(
+      undefined,
+      { resolve: vi.fn(), ...gateOpen },
+      code,
+      outbound
+    );
 
     await expect(
       backend.invoke({
@@ -82,6 +90,7 @@ describe('DynamicWorkerPluginBackend', () => {
     const backend = new DynamicWorkerPluginBackend(
       loader,
       {
+        ...gateOpen,
         resolve: vi.fn(async () => codeTarget),
       },
       code,
@@ -124,6 +133,7 @@ describe('DynamicWorkerPluginBackend', () => {
     const backend = new DynamicWorkerPluginBackend(
       loader,
       {
+        ...gateOpen,
         resolve: async () => ({
           ...codeTarget,
           hostInterfaces: [
@@ -164,6 +174,7 @@ describe('DynamicWorkerPluginBackend', () => {
     const backend = new DynamicWorkerPluginBackend(
       loader,
       {
+        ...gateOpen,
         resolve: async () => ({
           ...codeTarget,
           hostInterfaces: [
@@ -186,7 +197,7 @@ describe('DynamicWorkerPluginBackend', () => {
     const { loader } = loaderFor(async () => new Response(null, { status: 204 }));
     const backend = new DynamicWorkerPluginBackend(
       loader,
-      { resolve: async () => codeTarget },
+      { ...gateOpen, resolve: async () => codeTarget },
       { resolve: async () => ({ ...(await code.resolve()), env: { DB: {} } }) },
       outbound
     );
@@ -199,7 +210,7 @@ describe('DynamicWorkerPluginBackend', () => {
       const { loader } = loaderFor(async () => new Response(null, { status }));
       return new DynamicWorkerPluginBackend(
         loader,
-        { resolve: async () => codeTarget },
+        { ...gateOpen, resolve: async () => codeTarget },
         code,
         outbound
       ).invoke(invocation);
@@ -213,7 +224,7 @@ describe('DynamicWorkerPluginBackend', () => {
   it('classifies installation storage failure as retryable', async () => {
     const backend = new DynamicWorkerPluginBackend(
       { get: vi.fn() } as never,
-      { resolve: async () => Promise.reject(new Error('d1_unavailable')) },
+      { ...gateOpen, resolve: async () => Promise.reject(new Error('d1_unavailable')) },
       code,
       outbound
     );
@@ -225,7 +236,7 @@ describe('DynamicWorkerPluginBackend', () => {
     const { loader, get } = loaderFor(async () => new Response(null, { status: 204 }));
     const backend = new DynamicWorkerPluginBackend(
       loader,
-      { resolve: async () => codeTarget },
+      { ...gateOpen, resolve: async () => codeTarget },
       code,
       outbound,
       {

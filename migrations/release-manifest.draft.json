@@ -407,6 +407,10 @@
             {
               "path": "006_tenant_backup_preimage_row_partitions.sql",
               "checksum": "ec32b226b04a17da04ba3ac3427c5726814ec89503110386c25e9a264141506e"
+            },
+            {
+              "path": "007_tenant_external_plugin_gates.sql",
+              "checksum": "0d511650d4d403368027a61eafce65caeda03eb72c3dc9a7abb5f26ba143364c"
             }
           ]
         },
@@ -916,6 +920,10 @@
         {
           "path": "006_tenant_backup_preimage_row_partitions.sql",
           "checksum": "ec32b226b04a17da04ba3ac3427c5726814ec89503110386c25e9a264141506e"
+        },
+        {
+          "path": "007_tenant_external_plugin_gates.sql",
+          "checksum": "0d511650d4d403368027a61eafce65caeda03eb72c3dc9a7abb5f26ba143364c"
         }
       ]
     },

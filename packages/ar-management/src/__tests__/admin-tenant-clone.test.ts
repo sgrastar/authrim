@@ -408,6 +408,7 @@ describe('admin tenant clone', () => {
             'plugin.notifier_console_enabled': true,
             'plugin.execution_timeout_ms': 30000,
             'plugin.auto_update_check': true,
+            'plugin.notifier_resend_enabled': true,
           }),
           false,
           context
@@ -1728,7 +1729,9 @@ describe('admin tenant clone', () => {
     });
     const config = kvNamespace({
       'settings:tenant:source:plugin': JSON.stringify({
-        'plugin.notifier_resend_enabled': true,
+        'plugin.enabled': true,
+        // Retired: a source that still holds it does not carry it over.
+        'plugin.notifier_resend_enabled': false,
       }),
     });
 
@@ -1744,9 +1747,11 @@ describe('admin tenant clone', () => {
     );
 
     expect(response.status).toBe(201);
-    expect(config.values.get('settings:tenant:destination:plugin')).toBe(
-      config.values.get('settings:tenant:source:plugin')
-    );
+    // plugin.enabled travels with the plugin settings (they are confidential: only with
+    // secret_settings), so the copy allows external plugin code too; the retired key does not.
+    expect(JSON.parse(config.values.get('settings:tenant:destination:plugin')!)).toEqual({
+      'plugin.enabled': true,
+    });
     expect(settings.values.get('plugins:config:notifier-resend:tenant:destination')).toBe(
       settings.values.get('plugins:config:notifier-resend:tenant:source')
     );
@@ -1769,7 +1774,7 @@ describe('admin tenant clone', () => {
     });
     const config = kvNamespace({
       'settings:tenant:source:plugin': JSON.stringify({
-        'plugin.notifier_resend_enabled': true,
+        'plugin.enabled': true,
       }),
     });
 

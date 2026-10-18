@@ -6,7 +6,8 @@ import {
 
 const PREFIX = 'plugins:dynamic-resource-finalization:';
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u;
-const SAFE_ERROR_CODE = /^(?:control_plugin|dynamic_plugin|plugin_resource)_[a-z0-9_]+$/u;
+const SAFE_ERROR_CODE =
+  /^(?:control_plugin|dynamic_plugin|external_plugin|plugin_resource)_[a-z0-9_]+$/u;
 
 interface PluginResourceFinalizationJob {
   schemaVersion: 1;

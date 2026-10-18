@@ -322,4 +322,110 @@ describe('tenant email settings API', () => {
       JSON.stringify({ strategy: 'priority_failover', providerOrder: [] })
     );
   });
+
+  describe('the provider switches in the tenant plugin settings do not decide the providers', () => {
+    // plugin.notifier_resend_enabled is retired and plugin.enabled covers external plugin code
+    // only: neither hides a built-in provider nor keeps it out of the order.
+    const registry = {
+      'plugins:registry': JSON.stringify({
+        'notifier-cloudflare': {
+          id: 'notifier-cloudflare',
+          version: '1.0.0',
+          capabilities: ['notifier.email'],
+        },
+        'notifier-resend': {
+          id: 'notifier-resend',
+          version: '1.0.0',
+          capabilities: ['notifier.email'],
+        },
+      }),
+      'plugins:schema:notifier-cloudflare': JSON.stringify({
+        type: 'object',
+        required: ['defaultFrom'],
+      }),
+      'plugins:schema:notifier-resend': JSON.stringify({
+        type: 'object',
+        required: ['apiKey', 'defaultFrom'],
+      }),
+      'plugins:config:notifier-cloudflare': JSON.stringify({
+        defaultFrom: 'cloudflare@example.com',
+      }),
+      'plugins:config:notifier-resend': JSON.stringify({
+        apiKey: 're_live_1234',
+        defaultFrom: 'resend@example.com',
+      }),
+    };
+    const stalePluginDocument = JSON.stringify({
+      'plugin.notifier_resend_enabled': false,
+      'plugin.enabled': false,
+    });
+
+    it('still lists Resend when a stale document says the retired switch is off', async () => {
+      const settingsKv = createMockKV({
+        ...registry,
+        'settings:tenant:tenant-a:plugin': stalePluginDocument,
+      });
+      const configKv = createMockKV({ 'settings:tenant:tenant-a:plugin': stalePluginDocument });
+      const c = createMockContext({ settingsKv, configKv });
+
+      const response = (await getTenantEmailSettingsHandler(c)) as Response;
+      const body = (await response.json()) as { providers: Array<{ id: string }> };
+
+      expect(body.providers.map((provider) => provider.id).sort()).toEqual([
+        'notifier-cloudflare',
+        'notifier-resend',
+      ]);
+    });
+
+    it('accepts Resend in the order for a tenant with no saved plugin settings, as before', async () => {
+      const c = createMockContext({
+        settingsKv: createMockKV(registry),
+        configKv: createMockKV({}),
+        body: {
+          strategy: 'priority_failover',
+          providerOrder: ['notifier-resend', 'notifier-cloudflare'],
+        },
+      });
+
+      const response = (await updateTenantEmailSettingsHandler(c)) as Response;
+      const body = (await response.json()) as { settings: { providerOrder: string[] } };
+
+      expect(response.status).toBe(200);
+      expect(body.settings.providerOrder).toEqual(['notifier-resend', 'notifier-cloudflare']);
+    });
+
+    it('accepts Resend in the order while a stale document holds the retired switch off', async () => {
+      const settingsKv = createMockKV({
+        ...registry,
+        'settings:tenant:tenant-a:plugin': stalePluginDocument,
+      });
+      const configKv = createMockKV({ 'settings:tenant:tenant-a:plugin': stalePluginDocument });
+      const c = createMockContext({
+        settingsKv,
+        configKv,
+        body: { strategy: 'priority_failover', providerOrder: ['notifier-resend'] },
+      });
+
+      const response = (await updateTenantEmailSettingsHandler(c)) as Response;
+      const body = (await response.json()) as { settings: { providerOrder: string[] } };
+
+      expect(response.status).toBe(200);
+      expect(body.settings.providerOrder).toEqual(['notifier-resend']);
+    });
+
+    it('still honours the plugin admin API switch for Resend', async () => {
+      const c = createMockContext({
+        settingsKv: createMockKV({
+          ...registry,
+          'plugins:enabled:notifier-resend:tenant:tenant-a': 'false',
+        }),
+        configKv: createMockKV({}),
+        body: { strategy: 'priority_failover', providerOrder: ['notifier-resend'] },
+      });
+
+      const response = (await updateTenantEmailSettingsHandler(c)) as Response;
+
+      expect(response.status).toBe(400);
+    });
+  });
 });

@@ -916,6 +916,15 @@ export class PluginHookOutboxDispatcher {
         capability: claim.invocation.capability,
       });
     } catch (error) {
+      if (error instanceof Error && error.message === 'plugin_gate_uninitialized') {
+        return this.store.fail(claim, {
+          now,
+          errorCode: 'plugin_gate_uninitialized',
+          retryable: true,
+          maxAttempts: 12,
+          failureScope: 'platform',
+        });
+      }
       const permanent =
         error instanceof Error &&
         [

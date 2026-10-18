@@ -520,6 +520,139 @@ describe('SettingsManager', () => {
     });
   });
 
+  describe('patch with dryRun', () => {
+    const scope = { type: 'tenant', id: 'tenant_1' } as const;
+
+    it('decides what would be applied, cleared, disabled and rejected, and saves nothing', async () => {
+      const initial = await manager.getAll('test', scope);
+      await manager.patch(
+        'test',
+        scope,
+        { ifMatch: initial.version, set: { 'test.number_setting': 500 } },
+        'test_actor'
+      );
+      auditEvents.length = 0;
+      vi.mocked(mockKV.put).mockClear();
+      const before = await manager.getAll('test', scope);
+
+      const decision = await manager.patch(
+        'test',
+        scope,
+        {
+          ifMatch: before.version,
+          set: { 'test.string_setting': 'new_value', 'unknown.key': 1 },
+          clear: ['test.number_setting'],
+          disable: ['test.boolean_setting'],
+        },
+        'test_actor',
+        { dryRun: true }
+      );
+
+      expect(decision.applied).toEqual(['test.string_setting']);
+      expect(decision.cleared).toEqual(['test.number_setting']);
+      expect(decision.disabled).toEqual(['test.boolean_setting']);
+      expect(decision.rejected).toEqual({ 'unknown.key': 'Unknown setting key' });
+      expect(decision.version).toBe(before.version);
+      expect(mockKV.put).not.toHaveBeenCalled();
+      expect(auditEvents).toEqual([]);
+      const after = await manager.getAll('test', scope);
+      expect(after.version).toBe(before.version);
+      expect(after.values['test.number_setting']).toBe(500);
+    });
+
+    it.each([
+      ['set', { set: { 'test.string_setting': 'candidate', 'test.number_setting': 999 } }],
+      ['clear', { clear: ['test.number_setting'] }],
+      ['disable', { disable: ['test.boolean_setting'] }],
+    ])(
+      'leaves the cache of a manager with a TTL untouched after a dry run that would %s',
+      async (_, change) => {
+        const cached = createSettingsManager({
+          env: {},
+          kv: createMockKV({
+            'settings:tenant:tenant_1:test': JSON.stringify({ 'test.number_setting': 200 }),
+          }),
+          cacheTTL: 60_000,
+        });
+        cached.registerCategory(TEST_CATEGORY_META);
+        const before = await cached.getAll('test', scope);
+
+        const decision = await cached.patch(
+          'test',
+          scope,
+          { ifMatch: before.version, ...change },
+          'test_actor',
+          { dryRun: true }
+        );
+
+        expect(decision.applied.length + decision.cleared.length + decision.disabled.length).toBe(
+          1 + (change.set ? 1 : 0)
+        );
+        // A read that is served from the cache sees the saved values and the saved version only.
+        const after = await cached.getAll('test', scope);
+        expect(after.version).toBe(before.version);
+        expect(after.values).toEqual(before.values);
+        expect(after.sources).toEqual(before.sources);
+        expect((await cached.getRuntimeView('test', scope))['test.number_setting']).toBe(200);
+      }
+    );
+
+    it('still saves and serves what a real patch changed (the clone does not stop the cache refresh)', async () => {
+      const cached = createSettingsManager({
+        env: {},
+        kv: createMockKV(),
+        cacheTTL: 60_000,
+      });
+      cached.registerCategory(TEST_CATEGORY_META);
+      const before = await cached.getAll('test', scope);
+
+      await cached.patch(
+        'test',
+        scope,
+        { ifMatch: before.version, set: { 'test.number_setting': 321 } },
+        'test_actor'
+      );
+
+      const after = await cached.getAll('test', scope);
+      expect(after.values['test.number_setting']).toBe(321);
+      expect(after.version).not.toBe(before.version);
+    });
+
+    it('refuses conflicting operations on one key exactly as a save would', async () => {
+      const initial = await manager.getAll('test', scope);
+
+      const decision = await manager.patch(
+        'test',
+        scope,
+        {
+          ifMatch: initial.version,
+          set: { 'test.boolean_setting': false },
+          disable: ['test.boolean_setting'],
+        },
+        'test_actor',
+        { dryRun: true }
+      );
+
+      expect(decision.applied).toEqual([]);
+      expect(decision.disabled).toEqual([]);
+      expect(decision.rejected['test.boolean_setting']).toBe(
+        'Conflicting operations for the same key'
+      );
+    });
+
+    it('still reports a version conflict', async () => {
+      await expect(
+        manager.patch(
+          'test',
+          scope,
+          { ifMatch: 'not-the-version', set: { 'test.string_setting': 'x' } },
+          'test_actor',
+          { dryRun: true }
+        )
+      ).rejects.toBeInstanceOf(ConflictError);
+    });
+  });
+
   describe('dependsOn validation in patch', () => {
     it('should reject settings with unsatisfied dependencies', async () => {
       // First, set the dependency to false

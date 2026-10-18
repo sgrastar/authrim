@@ -2,6 +2,12 @@
  * Plugin Settings Category
  *
  * Settings related to plugin execution and management.
+ * `plugin.enabled` is the tenant's permission for external (custom, dynamic worker) plugin code to
+ * run. It does not touch the built-in plugins: the email providers (Resend, Cloudflare Mail,
+ * console), the CAPTCHA providers (Turnstile, reCAPTCHA, hCaptcha) and TOTP are chosen by the
+ * plugin admin API, the Email Settings order and `authentication-methods.human_verification`, as
+ * before. Whether a tenant admin or only the platform may flip it is not decided here: both may
+ * (settings category `plugin` is tenant-scoped); a platform-only switch could be added later.
  * How long a plugin may run is not a tenant setting: ar-plugin-runner reads it from the policy of
  * each installation (timeout_ms, 1 to 30,000 ms), so the tenant has no switch for it.
  * Updating plugins is not a setting either: there is no source to check for updates (no registry or
@@ -19,9 +25,6 @@ import type { CategoryMeta, SettingMeta } from '../../utils/settings-manager';
 export interface PluginSettings {
   // Plugin Execution
   'plugin.enabled': boolean;
-
-  // Individual Plugin Enable/Disable
-  'plugin.notifier_resend_enabled': boolean;
 }
 
 /**
@@ -33,21 +36,10 @@ export const PLUGIN_SETTINGS_META: Record<keyof PluginSettings, SettingMeta> = {
     type: 'boolean',
     default: false,
     envKey: 'PLUGIN_ENABLED',
-    label: 'Plugins Enabled',
-    description: 'Enable plugin execution for this tenant',
-    visibility: 'admin',
-    status: 'in_development',
-  },
-  'plugin.notifier_resend_enabled': {
-    key: 'plugin.notifier_resend_enabled',
-    type: 'boolean',
-    default: true,
-    envKey: 'PLUGIN_NOTIFIER_RESEND_ENABLED',
-    label: 'Resend Email Plugin',
+    label: 'External Plugins Enabled',
     description:
-      'Enable the Resend Email notifier plugin for sending OTP codes and transactional emails',
+      'Allow the code of external (custom) plugins to run for this tenant. Built-in email, CAPTCHA and TOTP providers are not affected.',
     visibility: 'admin',
-    dependsOn: [{ key: 'plugin.enabled', value: true }],
   },
 };
 
@@ -66,5 +58,4 @@ export const PLUGIN_CATEGORY_META: CategoryMeta = {
  */
 export const PLUGIN_DEFAULTS: PluginSettings = {
   'plugin.enabled': false,
-  'plugin.notifier_resend_enabled': true,
 };

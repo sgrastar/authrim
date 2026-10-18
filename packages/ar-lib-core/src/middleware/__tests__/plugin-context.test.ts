@@ -177,6 +177,53 @@ describe('createPluginLoader', () => {
     expect(registry.getNotifier('email')).toBeUndefined();
   });
 
+  it('ignores the retired plugin.notifier_resend_enabled value in the tenant plugin settings', async () => {
+    const register = vi.fn();
+    const loadPlugins = createPluginLoader([
+      {
+        plugin: {
+          id: 'notifier-resend',
+          version: '1.0.0',
+          capabilities: ['notifier.email'],
+          configSchema: z.object({ apiKey: z.string() }),
+          register,
+        },
+        envConfigResolver: () => ({ apiKey: 're_live_1234' }),
+      },
+    ]);
+    const settings = createMockKV({
+      'settings:tenant:tenant-a:plugin': JSON.stringify({
+        'plugin.notifier_resend_enabled': false,
+        'plugin.enabled': false,
+      }),
+    });
+
+    await loadPlugins({ SETTINGS: settings } as unknown as Env, 'tenant-a');
+
+    expect(register).toHaveBeenCalledTimes(1);
+  });
+
+  it('still honours the plugin admin API switch of a tenant', async () => {
+    const register = vi.fn();
+    const loadPlugins = createPluginLoader([
+      {
+        plugin: {
+          id: 'notifier-resend',
+          version: '1.0.0',
+          capabilities: ['notifier.email'],
+          configSchema: z.object({ apiKey: z.string() }),
+          register,
+        },
+        envConfigResolver: () => ({ apiKey: 're_live_1234' }),
+      },
+    ]);
+    const settings = createMockKV({ 'plugins:enabled:notifier-resend:tenant:tenant-a': 'false' });
+
+    await loadPlugins({ SETTINGS: settings } as unknown as Env, 'tenant-a');
+
+    expect(register).not.toHaveBeenCalled();
+  });
+
   it('keeps tenant-specific plugin config isolated', async () => {
     const loadPlugins = createPluginLoader([
       {

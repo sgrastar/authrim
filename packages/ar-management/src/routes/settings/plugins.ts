@@ -42,6 +42,8 @@ import {
   putTenantEmailSettings,
   invalidatePluginRuntimeCaches,
   bumpAuthenticationMethodsCacheRevision,
+  EXTERNAL_PLUGIN_EXECUTION_NOT_ALLOWED,
+  isExternalPluginExecutionAllowed,
 } from '@authrim/ar-lib-core';
 import {
   maskSensitiveFieldsRecursive,
@@ -73,6 +75,7 @@ import {
   projectTenantHumanVerificationProvider,
 } from '../../human-verification-provider-projection';
 import { writeAdminAuditLog } from '../../admin-shared';
+import { ExternalPluginGateUnavailableError } from '../../external-plugin-gate-sync';
 import {
   listProviderReprojectionStatus,
   markGlobalProviderDesiredRevision,
@@ -80,6 +83,7 @@ import {
 import {
   configureDynamicPluginWithControl,
   DynamicPluginResourcesPendingError,
+  ExternalPluginExecutionNotAllowedError,
   getDynamicPluginResourcePreparation,
   getDynamicPluginResourcePreparationForDisable,
   getDynamicPluginResourceProvisioning,
@@ -202,6 +206,12 @@ interface PluginStatus {
     state: 'pending' | 'blocked';
     kind: 'provisioning' | 'cleanup';
   };
+  /**
+   * Only on external (dynamic worker) plugins, for a tenant request: whether the tenant lets
+   * external plugin code run (`plugin.enabled`). When false the plugin cannot be enabled and
+   * none of its code runs.
+   */
+  externalExecutionAllowed?: boolean;
   hasTenantOverride?: boolean;
   loadedAt?: number;
   lastHealthCheck?: {
@@ -300,6 +310,24 @@ function getAdminAuth(c: Context<{ Bindings: Env }>): AdminAuthContext | null {
  */
 function getPluginKV(env: Env): KVNamespace | undefined {
   return env.SETTINGS;
+}
+
+function externalPluginExecutionNotAllowedResponse(
+  c: Context<{ Bindings: Env }>,
+  pluginId: string,
+  tenantId: string
+) {
+  return c.json(
+    {
+      error: EXTERNAL_PLUGIN_EXECUTION_NOT_ALLOWED,
+      error_description:
+        'External plugin execution is not allowed for this tenant (plugin.enabled). Turn plugin.enabled on in the tenant plugin settings first.',
+      setting: 'plugin.enabled',
+      plugin_id: pluginId,
+      tenant_id: tenantId,
+    },
+    403
+  );
 }
 
 type PluginTenantScope = 'tenant' | 'platform';
@@ -980,6 +1008,10 @@ export async function listPluginsHandler(c: Context<{ Bindings: Env }>) {
 
   const registry = await getPluginRegistry(kv, c.env);
   const plugins: Array<PluginRegistryEntry & PluginStatus> = [];
+  const externalExecutionAllowed =
+    tenantId && Object.values(registry).some((entry) => entry.backendKind === 'dynamic_worker')
+      ? await isExternalPluginExecutionAllowed(c.env, tenantId, { fresh: true })
+      : undefined;
 
   for (const [pluginId, entry] of Object.entries(registry)) {
     const [dynamicStatus, provisioning] =
@@ -1029,6 +1061,9 @@ export async function listPluginsHandler(c: Context<{ Bindings: Env }>) {
       configured: resolved.configured,
       missingRequiredFields: resolved.missingRequiredFields,
       ...(provisioning ? { provisioning } : {}),
+      ...(entry.backendKind === 'dynamic_worker' && externalExecutionAllowed !== undefined
+        ? { externalExecutionAllowed }
+        : {}),
       lastHealthCheck,
     });
   }
@@ -1111,6 +1146,13 @@ export async function getPluginHandler(c: Context<{ Bindings: Env }>) {
       configured: resolved.configured,
       missingRequiredFields: resolved.missingRequiredFields,
       ...(provisioning ? { provisioning } : {}),
+      ...(entry.backendKind === 'dynamic_worker' && tenantId
+        ? {
+            externalExecutionAllowed: await isExternalPluginExecutionAllowed(c.env, tenantId, {
+              fresh: true,
+            }),
+          }
+        : {}),
       hasTenantOverride,
       lastHealthCheck,
     },
@@ -1461,6 +1503,30 @@ export async function enablePluginHandler(c: Context<{ Bindings: Env }>) {
           : {}),
       }));
     } catch (error) {
+      if (error instanceof ExternalPluginExecutionNotAllowedError) {
+        log.info(
+          'Dynamic plugin enable refused: external plugin execution is not allowed',
+          buildPluginAuditLog('enable', adminId, { pluginId, tenantId })
+        );
+        return externalPluginExecutionNotAllowedResponse(c, pluginId, tenantId);
+      }
+      if (error instanceof ExternalPluginGateUnavailableError) {
+        log.warn(
+          'Dynamic plugin enable refused: the external plugin gate is unavailable',
+          buildPluginAuditLog('enable', adminId, { pluginId, tenantId })
+        );
+        return c.json(
+          {
+            error: 'temporarily_unavailable',
+            error_description:
+              'The external plugin gate or the plugin.enabled setting is unavailable, so the plugin was not enabled; try again.',
+            setting: 'plugin.enabled',
+            plugin_id: pluginId,
+            tenant_id: tenantId,
+          },
+          503
+        );
+      }
       if (!(error instanceof DynamicPluginResourcesPendingError)) throw error;
       log.info(
         'Dynamic plugin resource provisioning requested',

@@ -89,7 +89,10 @@ describe('PluginOutboundGateway', () => {
   beforeEach(() => {
     database = new DatabaseSync(':memory:');
     database.exec('PRAGMA foreign_keys = ON');
-    for (const migration of ['001_0_4_0_plugin_runner_baseline.sql']) {
+    for (const migration of [
+      '001_0_4_0_plugin_runner_baseline.sql',
+      '007_tenant_external_plugin_gates.sql',
+    ]) {
       database.exec(
         readFileSync(resolve(REPO_ROOT, 'migrations/plugin-runner/d1', migration), 'utf8')
       );
@@ -323,6 +326,44 @@ describe('PluginOutboundGateway', () => {
     expect(database.prepare(`SELECT result_code FROM plugin_runner_egress_audit`).get()).toEqual({
       result_code: 'host_denied',
     });
+  });
+
+  it('refuses an external installation while the tenant gate is closed, and an in-process one never depends on it', async () => {
+    const V = 'a'.repeat(64);
+    database.exec(
+      `UPDATE plugin_runner_installations
+          SET backend_kind = 'dynamic_worker', script_name = 'notifier-plugin'
+        WHERE installation_id = 'installation-a';
+       INSERT INTO plugin_runner_dynamic_worker_releases (
+         plugin_id, version_digest, code_sha256, code_object_key, source_manifest_hash,
+         capability_manifest_digest, policy_json, state, published_at, updated_at
+       ) VALUES (
+         'notifier-plugin', '${V}', '${'b'.repeat(64)}',
+         'plugins/notifier-plugin/${'b'.repeat(64)}.json', '${'c'.repeat(64)}',
+         '${'d'.repeat(64)}', '{}', 'published', 1, 1
+       );
+       INSERT INTO plugin_runner_dynamic_worker_manifests (
+         plugin_id, active_version_digest, state, updated_at
+       ) VALUES ('notifier-plugin', '${V}', 'active', 1);
+       INSERT INTO plugin_runner_dynamic_worker_artifacts (
+         artifact_id, installation_id, plugin_id, version_digest, state, activated_at, updated_at
+       ) VALUES ('artifact-a', 'installation-a', 'notifier-plugin', '${V}', 'active', 1, 1);`
+    );
+    const externalFetch = vi.fn(async () => new Response('ok'));
+    const gateway = () => new PluginOutboundGateway(environment(), externalFetch, () => 1_000);
+
+    await expect(gateway().fetch(new Request('https://hooks.example.com/events'))).rejects.toThrow(
+      'plugin_egress_installation_unavailable'
+    );
+
+    database.exec(
+      `INSERT INTO plugin_runner_tenant_external_gates (tenant_id, allowed, generation, updated_at)
+       VALUES ('tenant-a', 1, 1, 1)`
+    );
+    await expect(
+      gateway().fetch(new Request('https://hooks.example.com/events'))
+    ).rejects.not.toThrow('plugin_egress_installation_unavailable');
+    expect(externalFetch).not.toHaveBeenCalled();
   });
 
   it('enforces the platform rate limit before credential loading or external fetch', async () => {

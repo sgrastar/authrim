@@ -419,7 +419,6 @@ const REVIEWED_FIELDS: readonly [string, TenantSettingValueType, TenantSettingHa
       'value',
       `
     plugin.enabled
-    plugin.notifier_resend_enabled
   `,
     ],
     [

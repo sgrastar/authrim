@@ -1,13 +1,21 @@
-import type {
-  ControlPluginResourceCleanupView,
-  ControlPluginDynamicWorkerStateView,
-  ControlPluginDynamicWorkerResourcePreparation,
-  ControlPluginDynamicWorkerDesiredStateRequest,
-  ControlPluginDynamicWorkerObservedStateRequest,
-  ControlPluginResourceSelection,
-  DynamicPluginInstallationResult,
-  Env,
+import {
+  EXTERNAL_PLUGIN_EXECUTION_NOT_ALLOWED,
+  getExternalPluginExecutionState,
+  type ControlPluginResourceCleanupView,
+  type ControlPluginDynamicWorkerStateView,
+  type ControlPluginDynamicWorkerResourcePreparation,
+  type ControlPluginDynamicWorkerDesiredStateRequest,
+  type ControlPluginDynamicWorkerObservedStateRequest,
+  type ControlPluginResourceSelection,
+  type DynamicPluginInstallationResult,
+  type Env,
 } from '@authrim/ar-lib-core';
+import {
+  ExternalPluginGateUnavailableError,
+  readSavedExternalPluginSetting,
+  reconcileRunnerExternalGate,
+  setRunnerExternalGate,
+} from './external-plugin-gate-sync';
 
 function control(env: Env) {
   const binding = env.CONTROL;
@@ -50,6 +58,14 @@ export class DynamicPluginResourcesPendingError extends Error {
   constructor(readonly preparation: ControlPluginDynamicWorkerResourcePreparation) {
     super('dynamic_plugin_resources_not_ready');
     this.name = 'DynamicPluginResourcesPendingError';
+  }
+}
+
+/** The tenant's `plugin.enabled` does not allow external plugin code, so nothing is switched on. */
+export class ExternalPluginExecutionNotAllowedError extends Error {
+  constructor() {
+    super(EXTERNAL_PLUGIN_EXECUTION_NOT_ALLOWED);
+    this.name = 'ExternalPluginExecutionNotAllowedError';
   }
 }
 
@@ -141,6 +157,19 @@ export async function configureDynamicPluginWithControl(
   installation: DynamicPluginInstallationResult;
   controlState: ControlPluginDynamicWorkerStateView;
 }> {
+  // Switching an external plugin on needs the tenant's permission to run external code
+  // (`plugin.enabled`); this runs before any resource is provisioned, and the delayed activation
+  // of a plugin whose resources were still being prepared passes through here too. Switching off
+  // is never refused. The platform and the built-in plugins do not come through here.
+  //
+  // This is an early refusal on the settings the runtime reads. What stops external code is the
+  // tenant gate in ar-plugin-runner: it is opened here from the saved setting (not the KV copy)
+  // just before the installation is switched on, and checked again afterwards (see below).
+  if (input.enabled) {
+    const state = await getExternalPluginExecutionState(env, input.tenantId, { fresh: true });
+    if (state === 'unreadable') throw new ExternalPluginGateUnavailableError('settings_unreadable');
+    if (state !== 'allowed') throw new ExternalPluginExecutionNotAllowedError();
+  }
   const controlBinding = control(env);
   let activationRequestId = input.activationRequestId;
   const controlInput = {
@@ -214,40 +243,102 @@ export async function configureDynamicPluginWithControl(
       });
     }
   }
-  const installation = await runner(env).configureDynamicPluginInstallation({
-    tenantId: input.tenantId,
-    pluginId: input.pluginId,
-    enabled: input.enabled,
-    ...(activationRequestId ? { activationRequestId } : {}),
-  });
-  if (
-    installation.installationId !== plan.installationId ||
-    installation.tenantId !== input.tenantId ||
-    installation.pluginId !== input.pluginId ||
-    installation.state !== (input.enabled ? 'enabled' : 'disabled')
-  ) {
-    throw new Error('dynamic_plugin_runner_result_mismatch');
+  if (input.enabled) {
+    if (!(await reconcileRunnerExternalGate(env, input.tenantId, { requireRunner: true }))) {
+      throw new ExternalPluginExecutionNotAllowedError();
+    }
   }
-  const controlState = await controlBinding.sync({
-    installationId: installation.installationId,
-    tenantId: installation.tenantId,
-    pluginId: installation.pluginId,
-    state: installation.state,
-    configVersion: installation.configVersion,
-    pinnedVersionDigest: installation.pinnedVersionDigest,
-    resourceSelections: input.resourceSelections ?? [],
-  });
-  if (
-    controlState.installationId !== installation.installationId ||
-    controlState.tenantId !== installation.tenantId ||
-    controlState.pluginId !== installation.pluginId ||
-    controlState.state !== installation.state ||
-    controlState.configVersion !== installation.configVersion ||
-    controlState.pinnedVersionDigest !== installation.pinnedVersionDigest
-  ) {
-    throw new Error('dynamic_plugin_control_state_mismatch');
+  // From here the gate is open (for a saved "on") and the installation is being switched on. An
+  // exception at any later step (Control sync failing, the runner answering oddly, the setting
+  // turned off meanwhile) must not leave an open gate behind a setting that is off.
+  try {
+    const installation = await runner(env).configureDynamicPluginInstallation({
+      tenantId: input.tenantId,
+      pluginId: input.pluginId,
+      enabled: input.enabled,
+      ...(activationRequestId ? { activationRequestId } : {}),
+    });
+    if (
+      installation.installationId !== plan.installationId ||
+      installation.tenantId !== input.tenantId ||
+      installation.pluginId !== input.pluginId ||
+      installation.state !== (input.enabled ? 'enabled' : 'disabled')
+    ) {
+      throw new Error('dynamic_plugin_runner_result_mismatch');
+    }
+    const controlState = await controlBinding.sync({
+      installationId: installation.installationId,
+      tenantId: installation.tenantId,
+      pluginId: installation.pluginId,
+      state: installation.state,
+      configVersion: installation.configVersion,
+      pinnedVersionDigest: installation.pinnedVersionDigest,
+      resourceSelections: input.resourceSelections ?? [],
+    });
+    if (
+      controlState.installationId !== installation.installationId ||
+      controlState.tenantId !== installation.tenantId ||
+      controlState.pluginId !== installation.pluginId ||
+      controlState.state !== installation.state ||
+      controlState.configVersion !== installation.configVersion ||
+      controlState.pinnedVersionDigest !== installation.pinnedVersionDigest
+    ) {
+      throw new Error('dynamic_plugin_control_state_mismatch');
+    }
+    if (input.enabled) await confirmGateAfterEnable(env, input);
+    return { installation, controlState };
+  } catch (error) {
+    if (input.enabled) await settleFailedEnable(env, input);
+    throw error;
   }
-  return { installation, controlState };
+}
+
+/**
+ * An enable failed after the gate was opened. If the saved setting no longer says on (or cannot
+ * be read), close the gate and switch the installation back off, so a turn-off that finished
+ * meanwhile is not undone by this enable. If it still says on, the gate is rightly open for the
+ * tenant's other external plugins and is left alone. The original error is what the caller gets.
+ */
+async function settleFailedEnable(
+  env: Env,
+  input: { tenantId: string; pluginId: string }
+): Promise<void> {
+  let saved = false;
+  try {
+    saved = await readSavedExternalPluginSetting(env, input.tenantId);
+  } catch {
+    saved = false;
+  }
+  if (saved) return;
+  try {
+    await setRunnerExternalGate(env, input.tenantId, false, { requireRunner: true });
+  } catch {
+    // Nothing more can be done here; the caller still reports the original failure.
+  }
+  try {
+    await configureDynamicPluginWithControl(env, {
+      tenantId: input.tenantId,
+      pluginId: input.pluginId,
+      enabled: false,
+    });
+  } catch {
+    // The gate is closed; the installation is switched off by the turn-off that won the race.
+  }
+}
+
+/**
+ * The setting may have been turned off while this enable was under way (the turn-off closes the
+ * gate and switches the installations off, but this enable can still switch one on after that).
+ * Look at the saved setting once more now that the installation is on: if it is off, refuse (the
+ * failure path then closes the gate and switches the installation back off).
+ */
+async function confirmGateAfterEnable(
+  env: Env,
+  input: { tenantId: string; pluginId: string }
+): Promise<void> {
+  if (await readSavedExternalPluginSetting(env, input.tenantId)) return;
+  // The caller's catch closes the gate and switches the installation back off.
+  throw new ExternalPluginExecutionNotAllowedError();
 }
 
 export async function stageDynamicPluginActivation(
