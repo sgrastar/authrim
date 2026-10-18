@@ -35,7 +35,8 @@ import {
   resolveAccountDataContextByIdentifier,
   resolveTenantMetadataContext,
   type AuthAccountProvisioningInput,
-  NO_JIT_PROVIDER,
+  parseJitAllowedProviderIds,
+  jitSettingValuesWellTyped,
   resolveEffectiveSettings,
   updateProfileOnLogin,
 } from '@authrim/ar-lib-core';
@@ -143,33 +144,22 @@ export async function getJITConfig(env: Env, tenantId: string): Promise<JITProvi
   } catch {
     return { ...DEFAULT_JIT_CONFIG, enabled: false };
   }
-  const switches = [
-    'external_idp.jit_provisioning_enabled',
-    'external_idp.jit_require_verified_email',
-    'external_idp.jit_join_all_matching_orgs',
-    'external_idp.jit_allow_user_without_org',
-    'external_idp.jit_allow_unverified_domain_mappings',
-  ];
   const providerList = values['external_idp.jit_allowed_provider_ids'];
   const role = values['external_idp.jit_default_role_id'];
-  // A value of the wrong type is not taken for one that allows more: JIT stays off.
+  // A value of the wrong type is not taken for one that allows more: JIT stays off. The sign-up
+  // prediction for prompt=create (ar-lib-core) applies the same check.
   if (
-    switches.some((key) => typeof values[key] !== 'boolean') ||
+    !jitSettingValuesWellTyped(values) ||
     typeof providerList !== 'string' ||
     typeof role !== 'string'
   ) {
     return { ...DEFAULT_JIT_CONFIG, enabled: false };
   }
-  const listed = providerList
-    .split(',')
-    .map((id) => id.trim())
-    .filter(Boolean);
-  // Only an empty value allows every provider: one that names none allows none.
-  const providers = providerList !== '' && listed.length === 0 ? [NO_JIT_PROVIDER] : listed;
   return {
     enabled: values['external_idp.jit_provisioning_enabled'] === true,
     require_verified_email: values['external_idp.jit_require_verified_email'] === true,
-    allowed_provider_ids: providers.length > 0 ? providers : null,
+    // Only an empty value allows every provider: one that names none allows none.
+    allowed_provider_ids: parseJitAllowedProviderIds(providerList),
     join_all_matching_orgs: values['external_idp.jit_join_all_matching_orgs'] === true,
     allow_user_without_org: values['external_idp.jit_allow_user_without_org'] === true,
     // Empty: no default role.

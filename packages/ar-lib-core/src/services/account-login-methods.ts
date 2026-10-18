@@ -143,9 +143,44 @@ async function readExternalProviderUsageEntry(
   if (!settings || typeof settings !== 'object' || Array.isArray(settings)) {
     throw new Error('authentication_methods_settings_invalid');
   }
-  const usageValue = (settings as Record<string, unknown>)[
-    'authentication-methods.external_provider_usage'
-  ];
+  return findExternalProviderUsageEntry(settings as Record<string, unknown>, key, options);
+}
+
+/**
+ * `readExternalProviderUsageEntry` over a tenant's `authentication-methods` document already
+ * read and parsed (for a caller that checks several providers against one read).
+ */
+export function findExternalProviderUsageEntry(
+  settings: Record<string, unknown>,
+  key: ExternalProviderUsageKey,
+  options: { unsetWhenBlank: boolean }
+): Record<string, unknown> | null {
+  const entries = externalProviderUsageEntries(settings, key, options);
+  if (!entries) return null;
+  return (
+    entries.find((item) => item.providerId === key.providerId) ??
+    entries.find((item) => usesLegacyId(item, key)) ??
+    null
+  );
+}
+
+/** An entry without a providerId, naming the provider by an id it once had (a slug). */
+function usesLegacyId(item: Record<string, unknown>, key: ExternalProviderUsageKey): boolean {
+  return (
+    (item.providerId === undefined || item.providerId === null || item.providerId === '') &&
+    typeof item.id === 'string' &&
+    key.ids.includes(item.id)
+  );
+}
+
+/** The object entries of the saved usage list, or null where none is saved. Throws if not understood. */
+function externalProviderUsageEntries(
+  settings: Record<string, unknown>,
+  key: ExternalProviderUsageKey,
+  options: { unsetWhenBlank: boolean }
+): Record<string, unknown>[] | null {
+  if (!key.providerId) throw new Error('external_provider_key_invalid');
+  const usageValue = settings['authentication-methods.external_provider_usage'];
   if (usageValue === undefined) return null;
   if (
     options.unsetWhenBlank &&
@@ -156,20 +191,26 @@ async function readExternalProviderUsageEntry(
   if (usageValue === null || usageValue === '') throw new Error('external_provider_usage_invalid');
   const usage = typeof usageValue === 'string' ? (JSON.parse(usageValue) as unknown) : usageValue;
   if (!Array.isArray(usage)) throw new Error('external_provider_usage_invalid');
-  const entries = usage.filter(
+  return usage.filter(
     (item): item is Record<string, unknown> =>
       Boolean(item) && typeof item === 'object' && !Array.isArray(item)
   );
-  return (
-    entries.find((item) => item.providerId === key.providerId) ??
-    entries.find(
-      (item) =>
-        (item.providerId === undefined || item.providerId === null || item.providerId === '') &&
-        typeof item.id === 'string' &&
-        key.ids.includes(item.id)
-    ) ??
-    null
-  );
+}
+
+/**
+ * The sign-up switch of every saved entry that applies to the provider (by its providerId, or an
+ * older entry's id), each read strictly. The bridge uses the first of them; a screen may use
+ * another. A caller that predicts the bridge compares them: entries that disagree leave the
+ * answer unclear.
+ */
+export function externalProviderSignupSwitches(
+  settings: Record<string, unknown>,
+  key: ExternalProviderUsageKey
+): boolean[] {
+  const entries = externalProviderUsageEntries(settings, key, { unsetWhenBlank: true }) ?? [];
+  return entries
+    .filter((item) => item.providerId === key.providerId || usesLegacyId(item, key))
+    .map((item) => strictBoolean(item.signupEnabled, true));
 }
 
 /**
@@ -225,6 +266,20 @@ export async function readExternalProviderUsagePolicy(
   const entry = await readExternalProviderUsageEntry(env, tenantId, key, {
     unsetWhenBlank: true,
   });
+  return usagePolicyOfEntry(entry);
+}
+
+/** `readExternalProviderUsagePolicy` over a tenant's `authentication-methods` document already read. */
+export function externalProviderUsagePolicyFrom(
+  settings: Record<string, unknown>,
+  key: ExternalProviderUsageKey
+): ExternalProviderUsagePolicy {
+  return usagePolicyOfEntry(
+    findExternalProviderUsageEntry(settings, key, { unsetWhenBlank: true })
+  );
+}
+
+function usagePolicyOfEntry(entry: Record<string, unknown> | null): ExternalProviderUsagePolicy {
   if (!entry) return { loginEnabled: true, signupEnabled: true };
   return {
     loginEnabled: strictBoolean(entry.loginEnabled, true),

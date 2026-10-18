@@ -71,8 +71,15 @@ paths:
         End-User is not the one it names (its sub, or the sub the app's identity mapping issues),
         the request ends with login_required, whether prompt=none or not.
         prompt=create (Initiating User Registration) is acted on only while the tenant has
-        oauth.prompt_create_enabled on and a sign-up method (passkey, email code or authenticator
-        app) is on for sign-up. The browser then goes to the tenant's sign-up page
+        oauth.prompt_create_enabled on and a sign-up method is available: passkey, email code or
+        authenticator app switched on for sign-up, or an external identity provider (social
+        login) that the sign-up page offers and that can create the account (the provider is
+        enabled, the tenant has not turned off its sign-up use, its own JIT provisioning is on,
+        and the tenant's external_idp.jit_provisioning_enabled is on and
+        external_idp.jit_allowed_provider_ids allows it; a provider that can only link an
+        existing account does not count). Changing those provider settings changes whether the
+        value is acted on. When the settings cannot be read, the value is ignored. The browser
+        then goes to the tenant's sign-up page
         (tenant.ui_register_path) with the same challenge_id as the sign-in page gets, whether or
         not it holds a session: only an authentication made after the request completes it, and
         the request then continues as after any sign-in. Otherwise the value is ignored, as any

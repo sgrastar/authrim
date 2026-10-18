@@ -82,6 +82,14 @@ vi.mock('@authrim/ar-lib-core', async () => {
       .fn()
       .mockImplementation((_c, env, clientId) => mockGetClient(env, clientId)),
     resolveAccountDataContextFromHono: mockResolveAccountDataContextFromHono,
+    // The mock D1 binding stands in for the tenant's Core database (the signed tenant registry
+    // that picks it is not part of these tests).
+    resolveAuthCorePersistenceAdapterFromEnv: vi.fn(
+      async (env: { DB: unknown }, partition?: string) =>
+        (
+          actual as { ensureDatabaseAdapter: (db: unknown, partition?: string) => unknown }
+        ).ensureDatabaseAdapter(env.DB, partition)
+    ),
     deriveOIDCSubject: mockDeriveOIDCSubject,
     CanonicalRuntimeUserProjectionRepository: class {
       async findByLegacyUserId(...args: unknown[]) {
@@ -216,6 +224,12 @@ class MockKVNamespace {
  */
 function createMockDB() {
   const trustPolicies = new Map<string, Record<string, unknown>>();
+  // The bridge's external providers (`upstream_providers`), answered as the query asks for them:
+  // the tenant's enabled rows, in order, up to the limit. `failure` makes the read throw.
+  const upstreamProviders = {
+    rows: [] as Array<Record<string, unknown>>,
+    failure: false,
+  };
   const prepare = vi.fn((sql: string) => {
     let boundParams: unknown[] = [];
     const statement = {
@@ -230,6 +244,15 @@ function createMockDB() {
           const policy = trustPolicies.get(`${tenantId}:${targetType}:${targetId}`);
           return { results: policy ? [policy] : [] };
         }
+        if (sql.includes('FROM upstream_providers')) {
+          if (upstreamProviders.failure) throw new Error('D1 unavailable');
+          const [tenantId, limit] = boundParams;
+          return {
+            results: upstreamProviders.rows
+              .filter((row) => row.tenant_id === tenantId && row.enabled === 1)
+              .slice(0, Number(limit)),
+          };
+        }
         return { results: [] };
       }),
       // D1 reports the rows a write changed.
@@ -242,8 +265,10 @@ function createMockDB() {
     prepare,
     batch: vi.fn().mockResolvedValue([]),
     _trustPolicies: trustPolicies,
+    _upstreamProviders: upstreamProviders,
   } as unknown as D1Database & {
     _trustPolicies: Map<string, Record<string, unknown>>;
+    _upstreamProviders: typeof upstreamProviders;
   };
 }
 
@@ -5212,6 +5237,246 @@ describe('Authorization Handler', () => {
       expect(destination(await app.request(`${base}&prompt=create`, {}, env)).pathname).toBe(
         '/signup'
       );
+    });
+
+    describe('through an external identity provider', () => {
+      const noOwnMethods = {
+        'authentication-methods.passkey.signup_enabled': false,
+        'authentication-methods.email_otp.signup_enabled': false,
+        'authentication-methods.totp.signup_enabled': false,
+      };
+      type UpstreamDb = {
+        _upstreamProviders: { rows: Array<Record<string, unknown>>; failure: boolean };
+        prepare: ReturnType<typeof vi.fn>;
+      };
+      const upstream = () => env.DB as unknown as UpstreamDb;
+
+      function addProvider(overrides: Record<string, unknown> = {}) {
+        upstream()._upstreamProviders.rows.push({
+          id: 'prov-1',
+          tenant_id: 'default',
+          slug: 'corp',
+          name: 'Corp',
+          enabled: 1,
+          priority: 0,
+          jit_provisioning: 1,
+          ...overrides,
+        });
+      }
+
+      async function configureExternalIdp(settings: Record<string, unknown> | string) {
+        await (env.SETTINGS as unknown as MockKVNamespace).put(
+          'settings:tenant:default:external-idp',
+          typeof settings === 'string' ? settings : JSON.stringify(settings)
+        );
+      }
+
+      const queriedProviders = () =>
+        upstream().prepare.mock.calls.some(([sql]) => String(sql).includes('upstream_providers'));
+      const outcome = async () =>
+        destination(await app.request(`${base}&prompt=create`, {}, env)).pathname;
+
+      it('goes to the sign-up page when only a provider that creates accounts offers sign-up', async () => {
+        await enablePromptCreate();
+        await configureAuthenticationMethods(noOwnMethods);
+        addProvider();
+
+        expect(await outcome()).toBe('/signup');
+      });
+
+      it('ignores prompt=create for a provider that can only link an existing account', async () => {
+        await enablePromptCreate();
+        await configureAuthenticationMethods(noOwnMethods);
+        addProvider({ jit_provisioning: 0 });
+
+        expect(await outcome()).toBe('/login');
+      });
+
+      it('counts a provider that creates accounts even next to one that only links', async () => {
+        await enablePromptCreate();
+        await configureAuthenticationMethods(noOwnMethods);
+        addProvider({ id: 'link-only', slug: 'link', jit_provisioning: 0, priority: 0 });
+        addProvider({ id: 'prov-2', slug: 'second', priority: 1 });
+
+        expect(await outcome()).toBe('/signup');
+      });
+
+      it('ignores prompt=create when there is no provider', async () => {
+        await enablePromptCreate();
+        await configureAuthenticationMethods(noOwnMethods);
+
+        expect(await outcome()).toBe('/login');
+      });
+
+      it("ignores prompt=create for a disabled provider, and for another tenant's", async () => {
+        await enablePromptCreate();
+        await configureAuthenticationMethods(noOwnMethods);
+        addProvider({ enabled: 0 });
+        addProvider({ id: 'other', tenant_id: 'another-tenant' });
+
+        expect(await outcome()).toBe('/login');
+      });
+
+      it.each([
+        [
+          "the provider's sign-up use is off (by its id)",
+          [{ providerId: 'prov-1', loginEnabled: true, signupEnabled: false }],
+        ],
+        [
+          "the provider's sign-up use is off (an older entry, by its slug)",
+          [{ id: 'corp', loginEnabled: true, signupEnabled: 'false' }],
+        ],
+        [
+          'every use of every listed provider is off, so the sign-up page lists none',
+          [
+            {
+              providerId: 'prov-1',
+              loginEnabled: false,
+              signupEnabled: false,
+              reauthEnabled: false,
+              accountLinkEnabled: false,
+            },
+          ],
+        ],
+      ])('ignores prompt=create when %s', async (_label, usage) => {
+        await enablePromptCreate();
+        await configureAuthenticationMethods({
+          ...noOwnMethods,
+          'authentication-methods.external_provider_usage': usage,
+        });
+        addProvider();
+
+        expect(await outcome()).toBe('/login');
+      });
+
+      it('goes to the sign-up page when the saved usage leaves sign-up on', async () => {
+        await enablePromptCreate();
+        await configureAuthenticationMethods({
+          ...noOwnMethods,
+          'authentication-methods.external_provider_usage': [
+            { providerId: 'prov-1', loginEnabled: false, signupEnabled: true },
+          ],
+        });
+        addProvider();
+
+        expect(await outcome()).toBe('/signup');
+      });
+
+      it('ignores prompt=create when the tenant has turned JIT provisioning off', async () => {
+        await enablePromptCreate();
+        await configureAuthenticationMethods(noOwnMethods);
+        await configureExternalIdp({ 'external_idp.jit_provisioning_enabled': false });
+        addProvider();
+
+        expect(await outcome()).toBe('/login');
+      });
+
+      // The tenant's settings are read through the isolate's 60 s cache: one value per test.
+      it.each([
+        ['names the provider', 'prov-1', '/signup'],
+        ['is empty (every provider)', '', '/signup'],
+        ['names only other providers', 'someone-else, x', '/login'],
+        ['names no provider', '-', '/login'],
+      ])(
+        "follows the tenant's list of providers allowed to create accounts: %s",
+        async (_label, allowed, expected) => {
+          await enablePromptCreate();
+          await configureAuthenticationMethods(noOwnMethods);
+          await configureExternalIdp({ 'external_idp.jit_allowed_provider_ids': allowed });
+          addProvider();
+
+          expect(await outcome()).toBe(expected);
+        }
+      );
+
+      it('is not decided by a verified-email requirement, which depends on the person', async () => {
+        await enablePromptCreate();
+        await configureAuthenticationMethods(noOwnMethods);
+        await configureExternalIdp({ 'external_idp.jit_require_verified_email': true });
+        addProvider();
+
+        expect(await outcome()).toBe('/signup');
+      });
+
+      it('ignores prompt=create when a provider has contradicting saved sign-up entries', async () => {
+        await enablePromptCreate();
+        await configureAuthenticationMethods({
+          ...noOwnMethods,
+          'authentication-methods.external_provider_usage': [
+            { providerId: 'prov-1', loginEnabled: true, signupEnabled: true },
+            { providerId: 'prov-1', loginEnabled: true, signupEnabled: false },
+          ],
+        });
+        addProvider();
+
+        expect(await outcome()).toBe('/login');
+      });
+
+      it('ignores prompt=create when any JIT setting has the wrong type, as the bridge does', async () => {
+        await enablePromptCreate();
+        await configureAuthenticationMethods(noOwnMethods);
+        await configureExternalIdp({ 'external_idp.jit_require_verified_email': 'maybe' });
+        addProvider();
+
+        expect(await outcome()).toBe('/login');
+      });
+
+      it('ignores prompt=create when the provider list cannot be read', async () => {
+        await enablePromptCreate();
+        await configureAuthenticationMethods(noOwnMethods);
+        addProvider();
+        upstream()._upstreamProviders.failure = true;
+
+        expect(await outcome()).toBe('/login');
+      });
+
+      it.each([
+        ['the JIT settings are damaged', () => configureExternalIdp('not json')],
+        [
+          'the JIT switch is not a boolean',
+          () => configureExternalIdp({ 'external_idp.jit_provisioning_enabled': 'yes' }),
+        ],
+        [
+          'the saved usage is not understood',
+          () =>
+            configureAuthenticationMethods({
+              ...noOwnMethods,
+              'authentication-methods.external_provider_usage': [
+                { providerId: 'prov-1', signupEnabled: 'maybe' },
+              ],
+            }),
+        ],
+      ])('ignores prompt=create when %s', async (_label, damage) => {
+        await enablePromptCreate();
+        await configureAuthenticationMethods(noOwnMethods);
+        addProvider();
+        await damage();
+
+        expect(await outcome()).toBe('/login');
+      });
+
+      it("leaves the tenant's own methods as they were, and does not read providers for them", async () => {
+        await enablePromptCreate();
+        addProvider({ jit_provisioning: 0 });
+        upstream()._upstreamProviders.failure = true;
+
+        // Passkey sign-up is on by default.
+        expect(await outcome()).toBe('/signup');
+        await configureAuthenticationMethods({
+          'authentication-methods.passkey.enabled': false,
+          'authentication-methods.email_otp.signup_enabled': true,
+        });
+        expect(await outcome()).toBe('/signup');
+        expect(queriedProviders()).toBe(false);
+      });
+
+      it('does not read providers while prompt=create is not acted on', async () => {
+        await configureAuthenticationMethods(noOwnMethods);
+        addProvider();
+
+        expect(await outcome()).toBe('/login');
+        expect(queriedProviders()).toBe(false);
+      });
     });
 
     it.each([
