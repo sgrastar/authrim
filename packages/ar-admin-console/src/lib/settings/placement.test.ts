@@ -183,7 +183,8 @@ describe('where settings live', () => {
 			'diagnostic-logging.filter_tokens',
 			'plugin.memory_limit_mb',
 			'plugin.notifier_console_enabled',
-			'plugin.execution_timeout_ms'
+			'plugin.execution_timeout_ms',
+			'plugin.auto_update_check'
 		]) {
 			expect(everyKey, key).not.toContain(key);
 			expect([...placed, ...drafted], key).not.toContain(key);
