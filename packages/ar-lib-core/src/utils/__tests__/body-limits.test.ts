@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { readRequestBytesWithLimit, readRequestTextWithLimit } from '../body-limits';
+import {
+  BodyLimitExceededError,
+  readRequestBytesWithLimit,
+  readRequestTextWithLimit,
+} from '../body-limits';
 
 describe('body limit utilities', () => {
   it('reads request text within the configured byte limit', async () => {
@@ -53,5 +57,62 @@ describe('body limit utilities', () => {
       'Body exceeds maximum size'
     );
     expect(cancelled).toBe(true);
+  });
+
+  it('reports a counted overrun as BodyLimitExceededError with the same message', async () => {
+    const request = new Request('https://auth.example.test/body', {
+      method: 'POST',
+      body: 'hello!',
+    });
+
+    const error = await readRequestBytesWithLimit(request, 5).catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(BodyLimitExceededError);
+    expect((error as BodyLimitExceededError).message).toBe(
+      'Body exceeds maximum size: 6 > 5 bytes'
+    );
+    expect((error as BodyLimitExceededError).maxBytes).toBe(5);
+  });
+
+  it('reports an over-limit Content-Length as BodyLimitExceededError without reading', async () => {
+    let pulled = false;
+    const stream = new ReadableStream<Uint8Array>(
+      {
+        pull(controller) {
+          pulled = true;
+          controller.enqueue(new Uint8Array([1]));
+        },
+      },
+      { highWaterMark: 0 }
+    );
+    const request = new Request('https://auth.example.test/body', {
+      method: 'POST',
+      headers: { 'Content-Length': '100' },
+      body: stream,
+      duplex: 'half',
+    } as RequestInit & { duplex: 'half' });
+
+    await expect(readRequestBytesWithLimit(request, 5)).rejects.toBeInstanceOf(
+      BodyLimitExceededError
+    );
+    expect(pulled).toBe(false);
+  });
+
+  it('does not report a stream failure as BodyLimitExceededError', async () => {
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.error(new Error('connection reset'));
+      },
+    });
+    const request = new Request('https://auth.example.test/body', {
+      method: 'POST',
+      body: stream,
+      duplex: 'half',
+    } as RequestInit & { duplex: 'half' });
+
+    const error = await readRequestBytesWithLimit(request, 5).catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(Error);
+    expect(error).not.toBeInstanceOf(BodyLimitExceededError);
   });
 });
