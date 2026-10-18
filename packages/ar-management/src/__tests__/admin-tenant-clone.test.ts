@@ -407,6 +407,7 @@ describe('admin tenant clone', () => {
             'plugin.memory_limit_mb': 256,
             'plugin.notifier_console_enabled': true,
             'plugin.execution_timeout_ms': 30000,
+            'plugin.auto_update_check': true,
           }),
           false,
           context

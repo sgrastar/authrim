@@ -373,10 +373,11 @@ export function sanitizeCopiedSettingsValue(
 
   if (category === 'plugin') {
     // These plugin settings are gone (the platform fixes the memory; a tenant cannot switch on
-    // the console notifier, which prints secrets; the run time limit is set per installation):
-    // saved values are dropped.
+    // the console notifier, which prints secrets; the run time limit is set per installation; there is no source for plugin updates to
+    // check): saved values are dropped.
     delete record['plugin.memory_limit_mb'];
     delete record['plugin.execution_timeout_ms'];
+    delete record['plugin.auto_update_check'];
     delete record['plugin.notifier_console_enabled'];
   }
 
