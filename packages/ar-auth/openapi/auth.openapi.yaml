@@ -80,7 +80,8 @@ paths:
         invalid_request, as none with any other value. The prompt values are the space-separated,
         case-sensitive whole tokens of the parameter: a value that only contains a known one
         (nonetheless, loginnow) is ignored. An app with its own sign-in UI (login_ui_url) is sent
-        to the tenant's sign-up path on that UI.
+        to that UI with the tenant's sign-up path (the base URL is the app's, the paths are the
+        tenant's).
       parameters:
         - $ref: '#/components/parameters/ClientIdQuery'
         - name: redirect_uri
