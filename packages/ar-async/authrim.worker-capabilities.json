@@ -24,6 +24,7 @@
       "kind": "durable_object_namespace",
       "required": true
     },
+    { "name": "RATE_LIMITER", "kind": "durable_object_namespace", "required": true },
     {
       "name": "KEY_MANAGER_PUBLIC",
       "kind": "service",

@@ -3,6 +3,7 @@ import type { Env } from '@authrim/ar-lib-core';
 import { fal3Refusal } from '../assurance';
 import { deviceAuthorizationHandler } from '../device-authorization';
 import { cibaAuthorizationHandler } from '../ciba-authorization';
+import { realRateLimiter } from './real-rate-limiter';
 
 const ASSURANCE_KEY = 'settings:tenant:default:assurance';
 
@@ -25,7 +26,11 @@ function context(env: Partial<Env>, body: Record<string, unknown> = {}) {
     },
     get: vi.fn().mockReturnValue(undefined),
     json: vi.fn((data: unknown, status = 200) => new Response(JSON.stringify(data), { status })),
-    env: { ISSUER_URL: 'https://auth.example.com', ...env },
+    env: {
+      ISSUER_URL: 'https://auth.example.com',
+      RATE_LIMITER: realRateLimiter().namespace,
+      ...env,
+    },
   } as never;
 }
 

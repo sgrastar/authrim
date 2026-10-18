@@ -62,6 +62,7 @@ import { deviceLookupApiHandler } from '../device-lookup-api';
 import { deviceVerifyApiHandler } from '../device-verify-api';
 import { deviceVerifyHandler } from '../device-verify';
 import { realUserCodeLimiter, type RealUserCodeLimiter } from './real-user-code-limiter';
+import { realRateLimiter } from './real-rate-limiter';
 
 const TENANT_KEY = 'settings:tenant:default:device-flow';
 
@@ -116,6 +117,7 @@ async function environment(): Promise<Env> {
       get: vi.fn().mockReturnValue({ fetch: (request: Request) => store.fetch(request) }),
     },
     USER_CODE_RATE_LIMITER: limiter.namespace,
+    RATE_LIMITER: realRateLimiter().namespace,
   } as unknown as Env;
 }
 
@@ -166,6 +168,7 @@ beforeEach(() => {
   mocks.getClient.mockReset().mockResolvedValue({
     client_id: 'device-client',
     client_name: 'Acme TV',
+    token_endpoint_auth_method: 'none',
   });
   mocks.authenticatedUser.mockResolvedValue({ userId: 'user-1', sub: 'subject-1', email: 'u@x.y' });
 });

@@ -411,6 +411,13 @@ describe('generateRoutes', () => {
           class_name: 'UserCodeRateLimiter',
           script_name: 'emailtest-ar-lib-core',
         },
+        // POST /device_authorization is rate limited per IP and per client with the
+        // RateLimiterCounter, and refuses (503) when the binding is missing.
+        {
+          name: 'RATE_LIMITER',
+          class_name: 'RateLimiterCounter',
+          script_name: 'emailtest-ar-lib-core',
+        },
       ])
     );
     expect(libCoreConfig.durable_objects?.bindings).toContainEqual({

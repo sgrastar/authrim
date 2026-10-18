@@ -448,12 +448,14 @@ const COMPONENT_DO_BINDINGS: Record<WorkerComponent, string[]> = {
   'ar-router': [],
   // SESSION_STORE: the device and CIBA approval APIs act for the signed-in browser session.
   // USER_CODE_RATE_LIMITER: per-IP limit on guessing device user codes (fails closed if absent).
+  // RATE_LIMITER: per-IP and per-client limits on issuing device codes (fails closed if absent).
   'ar-async': [
     'DEVICE_CODE_STORE',
     'CIBA_REQUEST_STORE',
     'DPOP_JTI_STORE',
     'SESSION_STORE',
     'USER_CODE_RATE_LIMITER',
+    'RATE_LIMITER',
   ],
   'ar-policy': ['PERMISSION_CHANGE_HUB'],
   'ar-saml': [

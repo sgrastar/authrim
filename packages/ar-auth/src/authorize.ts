@@ -7,6 +7,7 @@ import {
   validateClientId,
   validateRedirectUri,
   validateScope,
+  getClientAllowedScopes,
   validateState,
   validateNonce,
   isRedirectUriRegistered,
@@ -160,7 +161,6 @@ const MIN_HANDOFF_ARTIFACT_TTL_SECONDS = 30;
 const MAX_HANDOFF_ARTIFACT_TTL_SECONDS = 300;
 const HTTPS_REQUEST_URI_MAX_REDIRECTS = 5;
 const AUTHORIZE_CONFIRMATION_COOKIE_NAME = 'authrim_authorize_confirmation';
-const DEFAULT_CLIENT_AUTHORIZATION_SCOPES = ['openid', 'profile', 'email'];
 
 function splitScopes(scope: string | undefined | null): string[] {
   return (scope ?? '')
@@ -218,24 +218,6 @@ function readConfirmedReauthentication(value: unknown): ConfirmedReauthenticatio
         }
       : undefined;
   return { authTime, reauthIssuedAt, assuranceStepUp };
-}
-
-function getClientAllowedScopes(clientMetadata: {
-  allowed_scopes?: string[] | null;
-  requestable_scopes?: string[] | null;
-  scope?: string | null;
-}): string[] {
-  if (
-    Array.isArray(clientMetadata.requestable_scopes) &&
-    clientMetadata.requestable_scopes.length
-  ) {
-    return clientMetadata.requestable_scopes;
-  }
-  if (Array.isArray(clientMetadata.allowed_scopes) && clientMetadata.allowed_scopes.length) {
-    return clientMetadata.allowed_scopes;
-  }
-  const registeredScopes = splitScopes(clientMetadata.scope);
-  return registeredScopes.length > 0 ? registeredScopes : [...DEFAULT_CLIENT_AUTHORIZATION_SCOPES];
 }
 
 function isClientPublic(clientMetadata: {

@@ -118,14 +118,28 @@ describe('Basic Auth Parser', () => {
         }
       });
 
-      it('should return error for lowercase "basic"', () => {
-        // RFC 7617: "Basic" is case-sensitive in strict implementations
-        const encoded = btoa('client:secret');
-        const result = parseBasicAuth(`basic ${encoded}`);
+      it.each(['basic', 'BASIC', 'bAsIc', 'Basic'])(
+        'accepts the scheme as "%s" (RFC 9110 section 11.1: case-insensitive)',
+        (scheme) => {
+          const result = parseBasicAuth(`${scheme} ${btoa('client:secret')}`);
 
-        expect(result.success).toBe(false);
-        if (!result.success) {
-          expect(result.error).toBe('invalid_scheme');
+          expect(result).toEqual({
+            success: true,
+            credentials: { username: 'client', password: 'secret' },
+          });
+        }
+      );
+
+      it('accepts more than one space between the scheme and the credentials', () => {
+        const result = parseBasicAuth(`basic   ${btoa('client:secret')}`);
+
+        expect(result.success).toBe(true);
+      });
+
+      it('still refuses a scheme that only starts with Basic, and no space at all', () => {
+        for (const header of [`Basicx ${btoa('a:b')}`, `Basic${btoa('a:b')}`, 'Basic']) {
+          const result = parseBasicAuth(header);
+          expect(result).toEqual({ success: false, error: 'invalid_scheme' });
         }
       });
 

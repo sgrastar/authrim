@@ -5,7 +5,7 @@
  */
 
 import type { Context } from 'hono';
-import type { Env, DeviceCodeMetadata } from '@authrim/ar-lib-core';
+import type { Env, DeviceCodeMetadata, ClientMetadata } from '@authrim/ar-lib-core';
 import {
   generateDeviceCode,
   generateUserCode,
@@ -23,6 +23,14 @@ import {
 } from '@authrim/ar-lib-core';
 import { resolveAsyncTenantId } from './tenant';
 import { fal3Refusal } from './assurance';
+import {
+  authenticateDeviceClient,
+  deviceAuthorizationError,
+  invalidClientResponse,
+  readDeviceAuthorizationForm,
+  resolveDeviceScope,
+} from './device-authorization-request';
+import { spendClientBudget, spendIpBudget } from './device-authorization-rate-limit';
 
 /** Times a user code is drawn before the request gives up (each draw collides with a live code). */
 const USER_CODE_ATTEMPTS = 5;
@@ -34,6 +42,44 @@ const USER_CODE_ATTEMPTS = 5;
  * Issues device_code and user_code for device flow
  */
 export async function deviceAuthorizationHandler(c: Context<{ Bindings: Env }>) {
+  let response: Response;
+  try {
+    response = await issueDeviceAuthorization(c);
+  } catch (error) {
+    getLogger(c)
+      .module('DEVICE')
+      .error('Device authorization error', { action: 'authorization' }, error as Error);
+    response = deviceAuthorizationError(
+      c,
+      'server_error',
+      'The request could not be processed.',
+      500
+    );
+  }
+  return withNoStore(response);
+}
+
+/**
+ * Every answer of this endpoint is uncacheable (RFC 8628 section 3.2 and RFC 6749 section 5.1/5.2:
+ * the success answer carries the device code, an error may not be replayed either). Set here, on
+ * whatever the steps above returned (the rate limits, the FAL3 refusal, an unknown tenant too),
+ * so no early answer can miss them.
+ */
+function withNoStore(response: Response): Response {
+  const set = (target: Response) => {
+    target.headers.set('Cache-Control', 'no-store');
+    target.headers.set('Pragma', 'no-cache');
+    return target;
+  };
+  try {
+    return set(response);
+  } catch {
+    // headers of a response that came from a fetch are immutable: copy it
+    return set(new Response(response.body, response));
+  }
+}
+
+async function issueDeviceAuthorization(c: Context<{ Bindings: Env }>): Promise<Response> {
   const log = getLogger(c).module('DEVICE');
   const tenantId = resolveAsyncTenantId(c);
   if (!tenantId) {
@@ -41,35 +87,57 @@ export async function deviceAuthorizationHandler(c: Context<{ Bindings: Env }>) 
       variables: { field: 'tenant context' },
     });
   }
+  // The per-IP budget comes first: a flood costs no settings read, body parsing or client lookup
+  const ipBudget = await spendIpBudget(c, tenantId);
+  if ('refusal' in ipBudget) return ipBudget.refusal;
   const assuranceRefusal = await fal3Refusal(c, tenantId);
   if (assuranceRefusal) return assuranceRefusal;
 
   try {
-    // Parse request body
-    const body = await c.req.parseBody();
-    const client_id = body.client_id as string;
-    const scope = (body.scope as string) || 'openid profile email';
+    const request = await readDeviceAuthorizationForm(c);
+    if (!request.ok) return request.response;
+    const { clientAuth, clientId: client_id } = request.form;
 
-    // Validate client_id
-    if (!client_id) {
-      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
-        variables: { field: 'client_id' },
-      });
-    }
-
-    // Validate client exists and is authorized for device flow
-    // Per RFC 8628 Section 3.1: Client authentication is OPTIONAL for public clients,
-    // but we MUST verify the client is registered
-    const clientMetadata = await getClientCached(c, c.env, client_id);
+    // The client must be registered. A client that does not exist and one that fails to
+    // authenticate get the same answer.
+    const clientMetadata = (await getClientCached(
+      c,
+      c.env,
+      client_id
+    )) as unknown as ClientMetadata | null;
     if (!clientMetadata) {
-      return createErrorResponse(c, AR_ERROR_CODES.CLIENT_AUTH_FAILED);
+      return invalidClientResponse(c);
     }
 
-    // Verify client is authorized to use device flow grant type
+    // RFC 8628 section 3.1: a confidential client, or one that was issued credentials,
+    // authenticates as it does at the token endpoint; a public client sends its client_id only.
+    if (!(await authenticateDeviceClient(c, tenantId, clientMetadata, clientAuth))) {
+      log.warn('Device authorization client authentication failed', {
+        action: 'client_authentication',
+        clientId: client_id,
+      });
+      return invalidClientResponse(c);
+    }
+
+    // Only an authenticated client learns whether it may use the grant
     const grantTypes = clientMetadata.grant_types as string[] | undefined;
     if (grantTypes && !grantTypes.includes('urn:ietf:params:oauth:grant-type:device_code')) {
-      return createErrorResponse(c, AR_ERROR_CODES.CLIENT_NOT_ALLOWED_GRANT);
+      return deviceAuthorizationError(
+        c,
+        'unauthorized_client',
+        'The client is not authorized to use this grant type.',
+        400
+      );
     }
+
+    const clientBudget = await spendClientBudget(c, tenantId, client_id);
+    if ('refusal' in clientBudget) return clientBudget.refusal;
+
+    const resolvedScope = resolveDeviceScope(clientMetadata, request.form.scope);
+    if (!resolvedScope.ok) {
+      return deviceAuthorizationError(c, 'invalid_scope', resolvedScope.description, 400);
+    }
+    const scope = resolvedScope.scope;
 
     // The lifetime, polling interval, poll limits and user code format of the tenant and this client. Read only
     // for a client that exists and may use the grant, so a request that names a stranger's
@@ -84,11 +152,10 @@ export async function deviceAuthorizationHandler(c: Context<{ Bindings: Env }>) 
         { action: 'device_flow_settings' },
         error as Error
       );
-      return c.json(
-        {
-          error: 'temporarily_unavailable',
-          error_description: 'Device flow settings are temporarily unavailable',
-        },
+      return deviceAuthorizationError(
+        c,
+        'temporarily_unavailable',
+        'Device flow settings are temporarily unavailable',
         503
       );
     }
@@ -154,7 +221,12 @@ export async function deviceAuthorizationHandler(c: Context<{ Bindings: Env }>) 
           { action: 'store_device_code' },
           new Error(JSON.stringify(error))
         );
-        return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
+        return deviceAuthorizationError(
+          c,
+          'server_error',
+          'The device code could not be issued.',
+          500
+        );
       }
       stored = true;
     }
@@ -164,11 +236,10 @@ export async function deviceAuthorizationHandler(c: Context<{ Bindings: Env }>) 
         action: 'store_device_code',
         attempts: USER_CODE_ATTEMPTS,
       });
-      return c.json(
-        {
-          error: 'temporarily_unavailable',
-          error_description: 'The device code could not be issued. Retry shortly.',
-        },
+      return deviceAuthorizationError(
+        c,
+        'temporarily_unavailable',
+        'The device code could not be issued. Retry shortly.',
         503,
         { 'Retry-After': '1' }
       );
@@ -198,7 +269,14 @@ export async function deviceAuthorizationHandler(c: Context<{ Bindings: Env }>) 
       tenantId
     );
 
-    // Return device authorization response
+    log.info('Device authorization issued', {
+      action: 'device_code_issued',
+      clientId: client_id,
+      scope,
+      expiresIn,
+    });
+
+    // Return device authorization response (the codes are secrets: never cached)
     return c.json(
       {
         device_code: deviceCode,
@@ -208,10 +286,11 @@ export async function deviceAuthorizationHandler(c: Context<{ Bindings: Env }>) 
         expires_in: expiresIn,
         interval,
       },
-      200
+      200,
+      ipBudget.headers
     );
   } catch (error) {
     log.error('Device authorization error', { action: 'authorization' }, error as Error);
-    return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
+    return deviceAuthorizationError(c, 'server_error', 'The request could not be processed.', 500);
   }
 }
