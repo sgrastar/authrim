@@ -58,7 +58,6 @@ import {
   // UI Configuration
   getTenantUIConfig,
   buildUIUrl,
-  DEFAULT_UI_PATHS,
   type UIConfig,
   // Custom Redirect URIs (Authrim Extension)
   validateCustomRedirectParams,
@@ -405,7 +404,8 @@ type UIRedirectResult =
  * Determine the UI redirect target from the client's, tenant's or global UI configuration.
  *
  * Priority:
- * 1. Client login UI URL → redirect there (the sign-up page's path is the tenant's setting)
+ * 1. Client login UI URL → redirect there (its base URL replaces the tenant's; the paths stay the
+ *    tenant's settings)
  * 2. Tenant or global UI configured → redirect to that UI
  * 3. Neither → signal configuration error
  *
@@ -435,18 +435,11 @@ async function getUIRedirectTarget(
 ): Promise<UIRedirectResult> {
   // Check client-specific login UI URL (priority 1)
   if (clientLoginUiUrl) {
+    // The app's UI replaces the base URL only: the paths are the tenant's settings
+    // (tenant.ui_*_path, validated, defaults when unset), the same as on the tenant's own UI.
     const clientConfig: UIConfig = {
       baseUrl: clientLoginUiUrl,
-      // The sign-up page (prompt=create) is the tenant's setting (tenant.ui_register_path,
-      // validated, default /signup) on the app's own UI too. The other pages keep the default
-      // paths on an app's UI, as they always have.
-      paths:
-        path === 'register'
-          ? {
-              ...DEFAULT_UI_PATHS,
-              register: (await getTenantUIConfig(env, tenantId)).paths.register,
-            }
-          : DEFAULT_UI_PATHS,
+      paths: (await getTenantUIConfig(env, tenantId)).paths,
     };
     const url = buildUIUrl(clientConfig, path, queryParams, tenantId);
     return { type: 'redirect', url };

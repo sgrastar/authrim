@@ -840,7 +840,13 @@ components:
         login_ui_url:
           type: string
           format: uri
-          example: https://auth.example.com/login
+          description: >-
+            Base URL of the app's own sign-in UI. Sign-in and sign-up (prompt=create) are sent
+            there instead of to the tenant's UI; the paths stay the tenant's settings
+            (tenant.ui_login_path and tenant.ui_register_path, the standard paths when unset).
+            Re-authentication and consent are not sent to the app's UI: they open on the
+            tenant's.
+          example: https://auth.example.com
         initiate_login_uri:
           type: string
           format: uri
