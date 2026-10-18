@@ -3549,12 +3549,21 @@ describe('Settings API v2', () => {
     {
       category: 'plugin',
       noun: 'plugin',
-      retired: ['plugin.memory_limit_mb', 'plugin.notifier_console_enabled'],
-      stale: { 'plugin.memory_limit_mb': 256, 'plugin.notifier_console_enabled': true },
-      env: { PLUGIN_MEMORY_LIMIT_MB: '512', PLUGIN_NOTIFIER_CONSOLE_ENABLED: 'true' } as Record<
-        string,
-        string
-      >,
+      retired: [
+        'plugin.memory_limit_mb',
+        'plugin.notifier_console_enabled',
+        'plugin.execution_timeout_ms',
+      ],
+      stale: {
+        'plugin.memory_limit_mb': 256,
+        'plugin.notifier_console_enabled': true,
+        'plugin.execution_timeout_ms': 30000,
+      },
+      env: {
+        PLUGIN_MEMORY_LIMIT_MB: '512',
+        PLUGIN_NOTIFIER_CONSOLE_ENABLED: 'true',
+        PLUGIN_EXECUTION_TIMEOUT_MS: '30000',
+      } as Record<string, string>,
       kept: ['plugin.enabled', true] as const,
     },
     {
