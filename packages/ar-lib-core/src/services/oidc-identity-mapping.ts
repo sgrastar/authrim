@@ -9,6 +9,7 @@ import {
 } from './custom-claims/resolver';
 import { resolveCustomClaimRuntimeSourcesFromEnv } from './custom-claims/runtime-sources';
 import { requireDedicatedAdminDatabaseAdapter } from './admin-database-adapter';
+import { RuntimeIdentityMappingOwnerError } from './identity-mapping-owner';
 import { isNonAccountSubject } from '../utils/id';
 import { logSwallowedIdentityMappingFailure } from './identity-mapping-swallowed-failure';
 import {
@@ -32,7 +33,14 @@ import {
 export interface ApplyOIDCIdentityMappingInput {
   adapter: DatabaseAdapter;
   env?: Partial<Env>;
+  /** The tenant the request is for. Consent, custom fields and identifiers stay with it. */
   tenantId: string;
+  /**
+   * The tenant ID that owns the Mapping Set the selector names, when it is the platform's rather
+   * than the calling tenant's (see RuntimeIdentityMappingResolutionContext.ownerTenantId). Only
+   * the lookup of the mapping's own rows follows it. Unset: the calling tenant owns them.
+   */
+  ownerTenantId?: string;
   clientId: string;
   sectorIdentifier?: string | null;
   selector?: OIDCIdentityMappingFieldMappingSelector | null;
@@ -111,6 +119,7 @@ export async function applyOIDCIdentityMapping(
       : input.adapter;
     binding = await resolveRuntimeIdentityMappingBinding(mappingAdapter, {
       tenantId: input.tenantId,
+      ownerTenantId: input.ownerTenantId,
       protocol: 'oidc',
       role: 'op',
       fieldMappingSetId: input.selector?.fieldMappingSetId,
@@ -119,6 +128,9 @@ export async function applyOIDCIdentityMapping(
       clientId: input.clientId,
     });
   } catch (error) {
+    // A wrong owner is a bug of the caller, not a mapping that cannot be read: it must not turn
+    // into a request that goes on without the mapping.
+    if (error instanceof RuntimeIdentityMappingOwnerError) throw error;
     if (!input.selector?.fieldMappingSetId) {
       // The app names no Mapping Set, so the request goes on without a mapping. That hides a
       // tenant-wide mapping that exists and cannot be read, so it is recorded as an error.

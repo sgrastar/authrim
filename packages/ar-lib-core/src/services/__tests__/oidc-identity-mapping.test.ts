@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DatabaseAdapter } from '../../db/adapter';
+import { RuntimeIdentityMappingOwnerError } from '../identity-mapping-owner';
 import { resetSwallowedIdentityMappingFailureThrottle } from '../identity-mapping-swallowed-failure';
 
 const {
@@ -131,6 +132,48 @@ describe('applyOIDCIdentityMapping fail-closed behavior', () => {
       })
     );
     expect(resolveBinding).not.toHaveBeenCalledWith(adapter, expect.anything());
+  });
+
+  it('hands the owner to the resolver only when the caller gives one', async () => {
+    const claims = { sub: 'user-1' };
+    const selector = { fieldMappingSetId: 'set-1' };
+
+    await applyOIDCIdentityMapping({
+      adapter,
+      tenantId: 'tenant-a',
+      clientId: 'client-a',
+      selector,
+      claims,
+    });
+    await applyOIDCIdentityMapping({
+      adapter,
+      tenantId: 'tenant-a',
+      ownerTenantId: 'platform',
+      clientId: 'client-a',
+      selector,
+      claims,
+    });
+
+    expect(resolveBinding.mock.calls[0][1].ownerTenantId).toBeUndefined();
+    expect(resolveBinding.mock.calls[1][1]).toMatchObject({
+      tenantId: 'tenant-a',
+      ownerTenantId: 'platform',
+      fieldMappingSetId: 'set-1',
+    });
+  });
+
+  it('does not let a wrong owner turn into a request that goes on without the mapping', async () => {
+    resolveBinding.mockRejectedValue(new RuntimeIdentityMappingOwnerError('owner not allowed'));
+
+    await expect(
+      applyOIDCIdentityMapping({
+        adapter,
+        tenantId: 'tenant-a',
+        ownerTenantId: 'platform',
+        clientId: 'client-a',
+        claims: { sub: 'user-1' },
+      })
+    ).rejects.toBeInstanceOf(RuntimeIdentityMappingOwnerError);
   });
 
   it('exposes neutral display and picture aliases only to the mapping runtime', async () => {

@@ -9544,7 +9544,9 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
     }
 
     function isValidTenantId(value) {
-      return /^[a-z][a-z0-9-]{0,62}$/.test(String(value || '').trim());
+      const id = String(value || '').trim();
+      // 'platform' is reserved for platform-wide rows (see core/tenant-id.ts).
+      return /^[a-z][a-z0-9-]{0,62}$/.test(id) && id.toLowerCase() !== 'platform';
     }
 
     function showTenantIdValidationError(inputId, label) {
