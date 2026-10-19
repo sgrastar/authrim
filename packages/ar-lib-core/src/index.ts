@@ -34,6 +34,7 @@ export * from './services/profile-update-on-login';
 export * from './services/logout-settings';
 export * from './services/account-session';
 export * from './services/account-login-methods';
+export * from './services/external-signup-availability';
 export * from './services/authorization-challenge-kind';
 export * from './services/saml-authorization-challenge';
 export * from './services/sign-in-limits';

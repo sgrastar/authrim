@@ -3,7 +3,15 @@
  * account linking): the tenant's `authentication-methods` settings in KV. Shared by every
  * endpoint that sends or verifies a code, so one switch governs them all.
  */
-import type { Env } from '@authrim/ar-lib-core';
+import {
+  EXTERNAL_PROVIDER_LIST_LIMIT,
+  bridgeExternalProvidersListed,
+  externalJitSignupPolicy,
+  externalSignupProviderIds,
+  resolveAuthCorePersistenceAdapterFromEnv,
+  resolveEffectiveSettings,
+  type Env,
+} from '@authrim/ar-lib-core';
 
 export type AuthenticationMethodUsage = 'login' | 'signup' | 'reauth' | 'account_link';
 
@@ -104,13 +112,63 @@ export async function isDidLoginEnabled(
   return didLoginEnabled(await readAuthenticationMethodSettings(env, tenantId, options));
 }
 
+interface UpstreamSignupRow {
+  id: string;
+  slug: string | null;
+  enabled: number;
+  jit_provisioning: number;
+}
+
 /**
- * Whether the tenant lets a new person sign up with a method of its own: passkey, email code or
- * authenticator app, each by its sign-up switch (passkey and email code as for login, the
- * authenticator app off unless the tenant turned it on). Settings that cannot be read give
- * `false`: a request for the sign-up page is then treated as the sign-in it would otherwise be.
- * Sign-up through an external provider is not counted (it is set per provider, and the sign-in
- * page offers it).
+ * Whether the tenant lets a new person sign up through some external provider. Reads the
+ * tenant's JIT settings (the settings cache) and up to `EXTERNAL_PROVIDER_LIST_LIMIT` provider
+ * rows, in the order the bridge lists them for the sign-up page; `authenticationMethods` is the
+ * tenant's `authentication-methods` document the caller already read. Throws when anything
+ * cannot be read: the caller decides what that means.
+ */
+async function isExternalSignupAvailable(
+  env: Env,
+  tenantId: string,
+  authenticationMethods: Record<string, unknown>
+): Promise<boolean> {
+  const jit = externalJitSignupPolicy(
+    await resolveEffectiveSettings(env, 'external-idp', { tenantId })
+  );
+  // Nothing to read from the database when no provider could count.
+  if (!jit.enabled || !bridgeExternalProvidersListed(authenticationMethods)) return false;
+
+  const adapter = await resolveAuthCorePersistenceAdapterFromEnv(
+    env,
+    'external-signup-availability',
+    { tenantId }
+  );
+  const rows = await adapter.query<UpstreamSignupRow>(
+    'SELECT id, slug, enabled, jit_provisioning FROM upstream_providers WHERE tenant_id = ? AND enabled = 1 ORDER BY priority ASC, name ASC LIMIT ?',
+    [tenantId, EXTERNAL_PROVIDER_LIST_LIMIT]
+  );
+  return (
+    externalSignupProviderIds({
+      authenticationMethods,
+      providers: rows.map((row) => ({
+        id: row.id,
+        slug: row.slug,
+        enabled: row.enabled === 1,
+        jitProvisioning: row.jit_provisioning === 1,
+      })),
+      jit,
+    }).length > 0
+  );
+}
+
+/**
+ * Whether the tenant lets a new person sign up: with a method of its own (passkey, email code or
+ * authenticator app, each by its sign-up switch: passkey and email code as for login, the
+ * authenticator app off unless the tenant turned it on), or through an external provider that
+ * the sign-up page offers and that can create the account (see `externalSignupProviderIds`:
+ * the provider's sign-up switch, its own JIT switch and the tenant's JIT settings; a provider that
+ * can only link an existing account does not count). Settings that cannot be read, in either
+ * place, give `false`: a request for the sign-up page is then treated as the sign-in it would
+ * otherwise be.
  */
 export async function isSelfRegistrationAvailable(env: Env, tenantId: string): Promise<boolean> {
   let settings: AuthenticationMethodKVSettings;
@@ -126,8 +184,19 @@ export async function isSelfRegistrationAvailable(env: Env, tenantId: string): P
     return true;
   }
   const totpSettings = settings as Record<string, unknown>;
-  return normalizeBooleanSetting(
-    totpSettings['authentication-methods.totp.signup_enabled'],
-    normalizeBooleanSetting(totpSettings['authentication-methods.totp.enabled'], false)
-  );
+  if (
+    normalizeBooleanSetting(
+      totpSettings['authentication-methods.totp.signup_enabled'],
+      normalizeBooleanSetting(totpSettings['authentication-methods.totp.enabled'], false)
+    )
+  ) {
+    return true;
+  }
+  // Last, because it reads the provider list: only a tenant with no sign-up method of its own
+  // gets here.
+  try {
+    return await isExternalSignupAvailable(env, tenantId, totpSettings);
+  } catch {
+    return false;
+  }
 }

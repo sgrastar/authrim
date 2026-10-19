@@ -172,6 +172,8 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     // values, else the saved document (as the older reader maps it), else the defaults.
     JIT_PROVISIONING_SETTING_KEYS: actual.JIT_PROVISIONING_SETTING_KEYS,
     updateProfileOnLogin: actual.updateProfileOnLogin,
+    parseJitAllowedProviderIds: actual.parseJitAllowedProviderIds,
+    jitSettingValuesWellTyped: actual.jitSettingValuesWellTyped,
     readExternalProviderUsagePolicy: actual.readExternalProviderUsagePolicy,
     resolveEffectiveSettings: vi.fn(
       async (

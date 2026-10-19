@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { legacyJitProvisioningValues, type Env } from '@authrim/ar-lib-core';
+import {
+  EXTERNAL_IDP_SETTINGS_META,
+  externalJitSignupPolicy,
+  externalSignupProviderIds,
+  legacyJitProvisioningValues,
+  resolveEffectiveSettings,
+  type Env,
+} from '@authrim/ar-lib-core';
 import { getJITConfig } from '../services/identity-stitching';
 
 function envWith(get: (key: string) => Promise<string | null>): Env {
@@ -185,6 +192,82 @@ describe('getJITConfig', () => {
       await expect(
         getJITConfig(saved({ 'settings:tenant:acme:external-idp': value }), 'acme')
       ).resolves.toMatchObject({ enabled: false });
+    }
+  });
+});
+
+/**
+ * The sign-up prediction for prompt=create (ar-lib-core) must say "no" exactly where the bridge
+ * refuses to create accounts because of the tenant's JIT settings.
+ */
+describe('getJITConfig and the sign-up prediction read the JIT settings alike', () => {
+  const providers = [{ id: 'idp-a', slug: 'a', enabled: true, jitProvisioning: true }];
+  const badValues: Array<[string, unknown]> = [
+    ['text', 'maybe'],
+    ['a number', 7],
+    ['zero', 0],
+    ['null', null],
+    ['a list', ['x']],
+    ['an object', { a: 1 }],
+    ['an empty text', ''],
+    ['the text "true"', 'true'],
+  ];
+
+  async function bothFor(tenantValues: Record<string, unknown>) {
+    const env = saved({ 'settings:tenant:acme:external-idp': tenantValues });
+    const config = await getJITConfig(env, 'acme');
+    const policy = externalJitSignupPolicy(
+      await resolveEffectiveSettings(env, 'external-idp', { tenantId: 'acme' })
+    );
+    const predicted = externalSignupProviderIds({
+      authenticationMethods: null,
+      providers,
+      jit: policy,
+    });
+    return { bridgeCreates: config.enabled, predictedSignup: predicted.length > 0 };
+  }
+
+  it('agrees with nothing saved and with valid values', async () => {
+    for (const values of [
+      {},
+      { 'external_idp.jit_provisioning_enabled': false },
+      { 'external_idp.jit_require_verified_email': false },
+      { 'external_idp.jit_default_role_id': '' },
+      { 'external_idp.jit_allowed_provider_ids': 'idp-a' },
+      { 'external_idp.jit_allowed_provider_ids': 'idp-b' },
+    ]) {
+      const { bridgeCreates, predictedSignup } = await bothFor(values);
+      const allowed = values['external_idp.jit_allowed_provider_ids' as keyof typeof values];
+      const listed = allowed === undefined || allowed === 'idp-a';
+      expect(predictedSignup).toBe(bridgeCreates && listed);
+    }
+  });
+
+  // Every external_idp setting, not only those the bridge checks: the two must agree on each.
+  const keys = Object.keys(EXTERNAL_IDP_SETTINGS_META);
+  it.each(keys.flatMap((key) => badValues.map(([label, value]) => [key, label, value] as const)))(
+    '%s as %s',
+    async (key, _label, value) => {
+      const { bridgeCreates, predictedSignup } = await bothFor({ [key]: value });
+      // Predicting a sign-up is never looser than the bridge, and here (one provider, no
+      // allow list) it is exactly as strict.
+      expect(predictedSignup).toBe(
+        bridgeCreates && (key !== 'external_idp.jit_allowed_provider_ids' || value === '')
+      );
+    }
+  );
+
+  it('covers every key the bridge checks', () => {
+    for (const key of [
+      'external_idp.jit_provisioning_enabled',
+      'external_idp.jit_require_verified_email',
+      'external_idp.jit_join_all_matching_orgs',
+      'external_idp.jit_allow_user_without_org',
+      'external_idp.jit_allow_unverified_domain_mappings',
+      'external_idp.jit_allowed_provider_ids',
+      'external_idp.jit_default_role_id',
+    ]) {
+      expect(keys).toContain(key);
     }
   });
 });

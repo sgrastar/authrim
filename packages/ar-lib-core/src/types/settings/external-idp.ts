@@ -18,6 +18,44 @@ import { DEFAULT_PROFILE_UPDATE_FIELDS } from '../../services/profile-update-fie
  */
 export const NO_JIT_PROVIDER = '-';
 
+/** The `external_idp.jit_*` switches the bridge requires to be booleans before it creates an account. */
+const JIT_BOOLEAN_SETTING_KEYS = [
+  'external_idp.jit_provisioning_enabled',
+  'external_idp.jit_require_verified_email',
+  'external_idp.jit_join_all_matching_orgs',
+  'external_idp.jit_allow_user_without_org',
+  'external_idp.jit_allow_unverified_domain_mappings',
+] as const;
+
+/**
+ * Whether the resolved `external_idp.jit_*` values are of the types the bridge needs to create an
+ * account: the switches booleans, the allow list and the default role strings. Any other value
+ * (a number, text such as "maybe", null, a list, an object) is not taken for one that allows
+ * more: the bridge switches JIT off, and whatever predicts it must too. Shared by both.
+ */
+export function jitSettingValuesWellTyped(values: Record<string, unknown>): boolean {
+  return (
+    JIT_BOOLEAN_SETTING_KEYS.every((key) => typeof values[key] === 'boolean') &&
+    typeof values['external_idp.jit_allowed_provider_ids'] === 'string' &&
+    typeof values['external_idp.jit_default_role_id'] === 'string'
+  );
+}
+
+/**
+ * The providers `external_idp.jit_allowed_provider_ids` allows to create accounts: null for every
+ * provider (an empty value), else the listed IDs. Only an empty value allows every provider; a
+ * value that lists none (such as `-` or `,`) allows none. Shared by the bridge, which enforces
+ * it, and by whatever predicts it.
+ */
+export function parseJitAllowedProviderIds(value: string): string[] | null {
+  const listed = value
+    .split(',')
+    .map((id) => id.trim())
+    .filter(Boolean);
+  const providers = value !== '' && listed.length === 0 ? [NO_JIT_PROVIDER] : listed;
+  return providers.length > 0 ? providers : null;
+}
+
 export interface ExternalIdPSettings {
   // JIT Provisioning
   'external_idp.jit_provisioning_enabled': boolean;

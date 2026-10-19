@@ -287,7 +287,7 @@ export const OAUTH_SETTINGS_META: Record<keyof OAuthSettings, SettingMeta> = {
     envBoolean: 'exactly-true',
     label: 'Sign-up Requests (prompt=create)',
     description:
-      "On: an authorization request with prompt=create opens this tenant's sign-up page (tenant.ui_register_path) instead of the sign-in page, and discovery lists create in prompt_values_supported. Applies only while a sign-up method (passkey, email code or authenticator app) is on for sign-up; otherwise the value is ignored and the sign-in page opens as usual.",
+      "On: an authorization request with prompt=create opens this tenant's sign-up page (tenant.ui_register_path) instead of the sign-in page, and discovery lists create in prompt_values_supported. Applies only while a sign-up method (passkey, email code, authenticator app, or an external provider that can create accounts through JIT provisioning) is on for sign-up; otherwise the value is ignored and the sign-in page opens as usual.",
     visibility: 'admin',
   },
 

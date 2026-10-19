@@ -55,6 +55,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
 import { Hono } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
 import { deriveEncryptionKey, encryptSecretFields } from '@authrim/ar-lib-plugin';
+import { externalSignupProviderIds } from '@authrim/ar-lib-core';
 import { getAuthenticationMethodsHandler } from '../authentication-methods';
 
 // =============================================================================
@@ -1553,6 +1554,269 @@ describe('Authentication Methods API', () => {
       expect(externalIdp.fetch).not.toHaveBeenCalled();
       expect(body.methods.external.enabled).toBe(false);
       expect(body.methods.external.providers).toEqual([]);
+    });
+  });
+
+  // ===========================================================================
+  // The sign-up page and the prompt=create prediction
+  // ===========================================================================
+
+  describe('providers offered for sign-up match the prompt=create prediction', () => {
+    type Bridge = { id: string; slug?: string; enabled?: boolean };
+    const named = (id: string, slug?: string, enabled = true): Bridge => ({ id, slug, enabled });
+    const usageOf = (...entries: Array<Record<string, unknown>>) => entries;
+    const allOff = {
+      loginEnabled: false,
+      signupEnabled: false,
+      reauthEnabled: false,
+      accountLinkEnabled: false,
+    };
+
+    const many = Array.from({ length: 22 }, (_, i) => named(`prov-${i}`, `slug-${i}`));
+    const cases: Array<[string, Bridge[], unknown]> = [
+      ['no saved usage', [named('a', 'alpha'), named('b', 'beta')], undefined],
+      ['no saved usage, providers without a slug', [named('a'), named('b')], undefined],
+      ['an empty list', [named('a', 'alpha')], []],
+      ['an empty text', [named('a', 'alpha')], ''],
+      ['a text that is not JSON', [named('a', 'alpha')], 'not json'],
+      [
+        'a text holding a list',
+        [named('a', 'alpha')],
+        JSON.stringify(usageOf({ providerId: 'a', signupEnabled: true })),
+      ],
+      [
+        'a value that is not a list',
+        [named('a', 'alpha')],
+        { providerId: 'a', signupEnabled: false },
+      ],
+      [
+        'sign-up off by provider id',
+        [named('a', 'alpha'), named('b', 'beta')],
+        usageOf({ providerId: 'a', loginEnabled: true, signupEnabled: false }),
+      ],
+      [
+        'sign-up off by provider id, on for the other',
+        [named('a', 'alpha'), named('b', 'beta')],
+        usageOf(
+          { providerId: 'a', loginEnabled: true, signupEnabled: false },
+          { providerId: 'b', loginEnabled: false, signupEnabled: true }
+        ),
+      ],
+      [
+        'sign-up off by an older entry naming the slug',
+        [named('a', 'alpha'), named('b', 'beta')],
+        usageOf({ id: 'alpha', loginEnabled: true, signupEnabled: 'false' }),
+      ],
+      [
+        'sign-up off by an older entry naming the id of a provider without a slug',
+        [named('a'), named('b')],
+        usageOf({ id: 'a', loginEnabled: true, signupEnabled: false }),
+      ],
+      [
+        "another provider's entry that once had the slug",
+        [named('a', 'alpha')],
+        usageOf({ id: 'alpha', providerId: 'old', ...allOff }),
+      ],
+      [
+        'every use of the only entry off',
+        [named('a', 'alpha'), named('b', 'beta')],
+        usageOf({ providerId: 'a', ...allOff }),
+      ],
+      [
+        'sign-up on in an entry whose other uses are off',
+        [named('a', 'alpha')],
+        usageOf({ providerId: 'a', ...allOff, signupEnabled: true }),
+      ],
+      [
+        'only a SAML entry',
+        [named('a', 'alpha')],
+        usageOf({ id: 'saml:x', loginEnabled: true, signupEnabled: true }),
+      ],
+      [
+        'two entries for one provider, on then off (the page keeps the last)',
+        [named('a', 'alpha'), named('b', 'beta')],
+        usageOf(
+          { providerId: 'a', loginEnabled: true, signupEnabled: true },
+          { providerId: 'a', loginEnabled: true, signupEnabled: false }
+        ),
+      ],
+      [
+        'two entries for one provider, both on',
+        [named('a', 'alpha'), named('b', 'beta')],
+        usageOf(
+          { providerId: 'a', loginEnabled: true, signupEnabled: true },
+          { providerId: 'a', loginEnabled: false, signupEnabled: true }
+        ),
+      ],
+      [
+        'two entries for one provider, both off',
+        [named('a', 'alpha'), named('b', 'beta')],
+        usageOf(
+          { providerId: 'a', loginEnabled: true, signupEnabled: false },
+          { providerId: 'a', loginEnabled: true, signupEnabled: false }
+        ),
+      ],
+      [
+        'two older entries for one slug, on then off',
+        [named('a', 'alpha'), named('b', 'beta')],
+        usageOf(
+          { id: 'alpha', loginEnabled: true, signupEnabled: true },
+          { id: 'alpha', loginEnabled: true, signupEnabled: false }
+        ),
+      ],
+      [
+        'an entry by provider id off, an older entry by slug on',
+        [named('a', 'alpha'), named('b', 'beta')],
+        usageOf(
+          { providerId: 'a', loginEnabled: true, signupEnabled: false },
+          { id: 'alpha', loginEnabled: true, signupEnabled: true }
+        ),
+      ],
+      ['a disabled provider', [named('a', 'alpha', false), named('b', 'beta')], undefined],
+      ['more providers than the page lists', many, undefined],
+      [
+        'more providers than the page lists, the last one named',
+        many,
+        usageOf({ providerId: 'prov-21', loginEnabled: true, signupEnabled: true }),
+      ],
+    ];
+
+    it.each(cases)('%s', async (_label, bridge, usage) => {
+      const externalIdp = createMockExternalIdp({
+        providers: bridge.map((p) => ({
+          id: p.id,
+          name: `Provider ${p.id}`,
+          slug: p.slug,
+          providerType: 'oidc',
+          enabled: p.enabled,
+        })),
+      });
+      const document: Record<string, unknown> = {};
+      if (usage !== undefined) {
+        document['authentication-methods.external_provider_usage'] = usage;
+      }
+      const settingsKV = createMockKV({
+        'settings:tenant:default:authentication-methods': JSON.stringify(document),
+      });
+      const { app, mockEnv } = createTestApp({ settingsKV, externalIdp });
+
+      const res = await app.request('/api/auth/authentication-methods', { method: 'GET' }, mockEnv);
+      const body = (await res.json()) as any;
+      // What the sign-up page lists: the screen's own filter (ar-login-ui signup page).
+      const shown: string[] = body.methods.external.providers
+        .filter((p: any) => p.signupEnabled ?? p.enabled !== false)
+        .map((p: any) => p.id);
+      const screenOffersExternal = body.methods.external.enabled && shown.length > 0;
+
+      // The prediction for the same tenant, with every provider able to create accounts, so it
+      // answers only "does the page offer it".
+      const predict = () =>
+        externalSignupProviderIds({
+          authenticationMethods: document,
+          providers: bridge.map((p) => ({
+            id: p.id,
+            slug: p.slug ?? null,
+            enabled: p.enabled !== false,
+            jitProvisioning: true,
+          })),
+          jit: { enabled: true, allowedProviderIds: null },
+        }).map((id) => bridge.find((p) => p.id === id)?.slug ?? id);
+
+      if (!Array.isArray(usage) && typeof usage === 'object' && usage !== null) {
+        // Saved usage that is neither a list nor text: the page still lists the providers, but
+        // the prediction cannot understand it and refuses (prompt=create is then ignored).
+        expect(predict).toThrow();
+        return;
+      }
+      const predicted = predict();
+      expect(predicted).toEqual(shown);
+      expect(predicted.length > 0).toBe(screenOffersExternal);
+    });
+  });
+
+  describe('contradicting entries for one provider', () => {
+    // The bridge takes the first entry that applies, the page the last one saved for the same
+    // key. The prediction cannot tell which the page shows, so it counts neither provider: it
+    // may be stricter than the page, never looser.
+    it.each([
+      [
+        'off then on (by provider id)',
+        [
+          { providerId: 'a', loginEnabled: true, signupEnabled: false },
+          { providerId: 'a', loginEnabled: true, signupEnabled: true },
+        ],
+      ],
+      [
+        'on by provider id, off by an older entry naming the slug',
+        [
+          { providerId: 'a', loginEnabled: true, signupEnabled: true },
+          { id: 'alpha', loginEnabled: true, signupEnabled: false },
+        ],
+      ],
+      [
+        'on by an older entry naming the slug, off by one naming the id of a provider with a slug',
+        [
+          { id: 'alpha', loginEnabled: true, signupEnabled: true },
+          { id: 'a', loginEnabled: true, signupEnabled: false },
+        ],
+      ],
+    ])('the prediction counts nothing the page might hide: %s', async (_label, usage) => {
+      const externalIdp = createMockExternalIdp({
+        providers: [{ id: 'a', name: 'A', slug: 'alpha', providerType: 'oidc' }],
+      });
+      const document = { 'authentication-methods.external_provider_usage': usage };
+      const settingsKV = createMockKV({
+        'settings:tenant:default:authentication-methods': JSON.stringify(document),
+      });
+      const { app, mockEnv } = createTestApp({ settingsKV, externalIdp });
+
+      const res = await app.request('/api/auth/authentication-methods', { method: 'GET' }, mockEnv);
+      const body = (await res.json()) as any;
+      const shown: string[] = body.methods.external.providers
+        .filter((p: any) => p.signupEnabled ?? p.enabled !== false)
+        .map((p: any) => p.id);
+      const predicted = externalSignupProviderIds({
+        authenticationMethods: document,
+        providers: [{ id: 'a', slug: 'alpha', enabled: true, jitProvisioning: true }],
+        jit: { enabled: true, allowedProviderIds: null },
+      });
+
+      // Contradicting entries: not counted, whichever the page shows.
+      expect(predicted).toEqual([]);
+      // And never the other way round: nothing predicted that the page hides.
+      for (const id of predicted) expect(shown).toContain(id === 'a' ? 'alpha' : id);
+    });
+  });
+
+  describe('where the page and the bridge read a saved usage entry differently', () => {
+    it('the prediction refuses a provider the page still lists (the safe side)', async () => {
+      // An older entry naming the provider's id while the provider has a slug: the page matches
+      // it by slug only and keeps the provider; the bridge (and the prediction) match both ids,
+      // so the bridge would refuse the sign-up.
+      const externalIdp = createMockExternalIdp({
+        providers: [{ id: 'uuid-1', name: 'Corp', slug: 'corp', providerType: 'oidc' }],
+      });
+      const document = {
+        'authentication-methods.external_provider_usage': [
+          { id: 'uuid-1', loginEnabled: true, signupEnabled: false },
+        ],
+      };
+      const settingsKV = createMockKV({
+        'settings:tenant:default:authentication-methods': JSON.stringify(document),
+      });
+      const { app, mockEnv } = createTestApp({ settingsKV, externalIdp });
+
+      const res = await app.request('/api/auth/authentication-methods', { method: 'GET' }, mockEnv);
+      const body = (await res.json()) as any;
+      const shown = body.methods.external.providers.map((p: any) => p.id);
+      const predicted = externalSignupProviderIds({
+        authenticationMethods: document,
+        providers: [{ id: 'uuid-1', slug: 'corp', enabled: true, jitProvisioning: true }],
+        jit: { enabled: true, allowedProviderIds: null },
+      });
+
+      expect(shown).toEqual(['corp']);
+      expect(predicted).toEqual([]);
     });
   });
 

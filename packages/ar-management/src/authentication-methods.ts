@@ -42,6 +42,7 @@ import {
   loadClientContractCached,
   profileForTotpPreset,
   AUTHENTICATION_METHODS_RESPONSE_SHAPE_VERSION,
+  bridgeExternalProvidersListed,
   readAuthenticationMethodsCacheRevision,
   resolveSamlEnabled,
   resolveAuthCorePersistenceAdapterFromEnv,
@@ -1497,45 +1498,12 @@ function buildExternalIdpProviderHeaders(
   return headers;
 }
 
-function parseExternalProviderUsageItems(
-  settings: AuthenticationMethodKVSettings | null
-): ExternalLoginProviderUsageConfig[] | null {
-  if (!settings) return null;
-  const rawUsage = settings['authentication-methods.external_provider_usage'];
-  if (rawUsage === undefined) return null;
-  if (Array.isArray(rawUsage)) return rawUsage;
-  if (typeof rawUsage === 'string') {
-    return safeParseJsonArray<ExternalLoginProviderUsageConfig>(rawUsage);
-  }
-  return null;
-}
-
-function isSAMLExternalProviderUsage(item: ExternalLoginProviderUsageConfig): boolean {
-  const id = typeof item.id === 'string' ? item.id : '';
-  const providerId = typeof item.providerId === 'string' ? item.providerId : '';
-  return id.startsWith('saml:') || providerId.startsWith('saml:');
-}
-
-function externalProviderUsageHasEnabledSurface(item: ExternalLoginProviderUsageConfig): boolean {
-  return (
-    normalizeBoolean(item.loginEnabled, true) ||
-    normalizeBoolean(item.signupEnabled, true) ||
-    normalizeBoolean(item.reauthEnabled, true) ||
-    normalizeBoolean(item.accountLinkEnabled, true)
-  );
-}
-
 function shouldFetchExternalLoginProviders(
   settings: AuthenticationMethodKVSettings | null
 ): boolean {
-  const usageItems = parseExternalProviderUsageItems(settings);
-  if (usageItems === null) {
-    // Legacy tenant: bridge providers may exist even before usage settings were saved.
-    return true;
-  }
-  return usageItems.some(
-    (item) => !isSAMLExternalProviderUsage(item) && externalProviderUsageHasEnabledSurface(item)
-  );
+  // The same rule the sign-up prediction for prompt=create applies (ar-lib-core), so a provider
+  // this API does not list is not counted as a way to sign up.
+  return bridgeExternalProvidersListed(settings as Record<string, unknown> | null);
 }
 
 /**
