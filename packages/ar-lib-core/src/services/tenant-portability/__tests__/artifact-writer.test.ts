@@ -56,6 +56,7 @@ beforeEach(async () => {
     '036_tenant_backup_capacity_parts.sql',
     '012_tenant_backup_cipher_journal.sql',
     '021_tenant_backup_export_manifests.sql',
+    '042_tenant_backup_export_dataset_progress.sql',
   ])
     db.exec(
       readFileSync(

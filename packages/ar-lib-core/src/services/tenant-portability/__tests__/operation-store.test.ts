@@ -806,6 +806,49 @@ it('advances one operation through a bounded number of durable scheduler transit
     phase: 'capture-3',
   });
 });
+it('starts no transition or operation once the scheduler run budget has passed', async () => {
+  await store.create({ ...create, id: 'budget-a', idempotencyKey: 'budget-a' });
+  await store.create({ ...create, id: 'budget-b', idempotencyKey: 'budget-b' });
+  let clock = 101;
+  const calls: string[] = [];
+  const handlers: TenantBackupOperationHandlers = {
+    async run(context) {
+      calls.push(context.operation.id);
+      clock += 30;
+      return { phase: 'capture', cursor: null, disposition: 'continue' };
+    },
+    async cleanup() {
+      return { cursor: null, done: true };
+    },
+  };
+
+  // 50 ms budget: the second transition starts at 131 and ends past the deadline at 161.
+  expect(
+    await runTenantBackupScheduler(
+      adapter,
+      handlers,
+      new AbortController().signal,
+      () => clock,
+      ['export', 'import'],
+      8,
+      50
+    )
+  ).toEqual({ inspected: 2, advanced: 2, failures: 0, failureCodes: [] });
+  expect(calls).toEqual(['budget-a', 'budget-a']);
+  expect(await store.get('tenant-a', 'budget-a')).toMatchObject({ state: 'queued' });
+  expect(await store.get('tenant-a', 'budget-b')).toMatchObject({ state: 'queued' });
+  await expect(
+    runTenantBackupScheduler(
+      adapter,
+      handlers,
+      new AbortController().signal,
+      () => clock,
+      ['export'],
+      8,
+      0
+    )
+  ).rejects.toThrow('invalid_backup_scheduler_budget');
+});
 it('stops normal retries after eight failures while cancellation remains recoverable', async () => {
   await store.create(create);
   let now = 101;

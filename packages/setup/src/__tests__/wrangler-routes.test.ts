@@ -83,6 +83,30 @@ describe('Worker placement generation', () => {
     ).toEqual({ mode: 'smart' });
   });
 
+  it('raises CPU and subrequest limits only for ar-management', () => {
+    const config = createDefaultConfig('test');
+    config.urls = {
+      api: { custom: null, auto: 'https://test-ar-router.example.workers.dev' },
+      loginUi: {
+        custom: null,
+        auto: 'https://test-ar-login-ui.example.workers.dev',
+        sameAsApi: false,
+      },
+      adminUi: {
+        custom: null,
+        auto: 'https://test-ar-admin-ui.example.workers.dev',
+        sameAsApi: false,
+      },
+    };
+    const management = generateWranglerConfig('ar-management', config, { d1: {}, kv: {} });
+    expect(management.limits).toEqual({ cpu_ms: 300_000, subrequests: 50_000 });
+    expect(toToml(management, 'test')).toContain(
+      '[env.test.limits]\ncpu_ms = 300000\nsubrequests = 50000\n'
+    );
+    expect(toToml(management)).toContain('[limits]\ncpu_ms = 300000\nsubrequests = 50000\n');
+    expect(generateWranglerConfig('ar-auth', config, { d1: {}, kv: {} }).limits).toBeUndefined();
+  });
+
   it('enables same-Worker loopback RPC exports only for ar-management', () => {
     const config = createDefaultConfig('test');
     config.urls = {

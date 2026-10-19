@@ -74,6 +74,8 @@ export interface WranglerConfig {
   workers_dev: boolean;
   build?: { command: string };
   placement?: { mode: string };
+  /** Per-invocation runtime limits (Workers Paid / standard usage model). */
+  limits?: { cpu_ms?: number; subrequests?: number };
   version_metadata?: { binding: string };
   worker_loaders?: Array<{ binding: string }>;
   kv_namespaces?: Array<{ binding: string; id: string; preview_id?: string }>;
@@ -794,6 +796,9 @@ export function generateWranglerConfig(
     wranglerConfig.triggers = {
       crons: ['* * * * *', '*/2 * * * *', '*/5 * * * *', '0 */6 * * *'],
     };
+    // One scheduled run advances up to 8 tenant backup slices; each reads ~750 D1 queries and
+    // spends seconds of CPU on row decoding and hashing. The defaults are 30 s and 10,000.
+    wranglerConfig.limits = { cpu_ms: 300_000, subrequests: 50_000 };
     wranglerConfig.vars['AUTHRIM_R2_MAINTENANCE_CRON_ENABLED'] = 'true';
   }
 
@@ -1830,6 +1835,15 @@ export function toToml(config: WranglerConfig, envName?: string): string {
     lines.push(`workers_dev = ${config.workers_dev}`);
     lines.push('');
 
+    // Runtime limits
+    if (config.limits) {
+      lines.push(`[env.${envName}.limits]`);
+      if (config.limits.cpu_ms !== undefined) lines.push(`cpu_ms = ${config.limits.cpu_ms}`);
+      if (config.limits.subrequests !== undefined)
+        lines.push(`subrequests = ${config.limits.subrequests}`);
+      lines.push('');
+    }
+
     // Placement
     if (config.placement) {
       lines.push(`[env.${envName}.placement]`);
@@ -2019,6 +2033,15 @@ export function toToml(config: WranglerConfig, envName?: string): string {
     if (config.build) {
       lines.push('[build]');
       lines.push(`command = ${JSON.stringify(config.build.command)}`);
+      lines.push('');
+    }
+
+    // Runtime limits
+    if (config.limits) {
+      lines.push('[limits]');
+      if (config.limits.cpu_ms !== undefined) lines.push(`cpu_ms = ${config.limits.cpu_ms}`);
+      if (config.limits.subrequests !== undefined)
+        lines.push(`subrequests = ${config.limits.subrequests}`);
       lines.push('');
     }
 

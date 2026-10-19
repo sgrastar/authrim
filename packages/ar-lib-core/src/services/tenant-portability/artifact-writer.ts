@@ -30,6 +30,17 @@ function fail(): never {
 function hex(value: Uint8Array): string {
   return Array.from(value, (b) => b.toString(16).padStart(2, '0')).join('');
 }
+/** Stats of one finished non-empty dataset in a checkpointed v2 export. */
+export interface TenantBackupExportDatasetStat {
+  ordinal: number;
+  id: string;
+  rows: number;
+  bytes: number;
+  offset: number;
+  /** Dataset SHA-256 sealed by the caller; it is opaque here. */
+  sealedSha256: string;
+}
+const DATASET_STATS_PER_STATEMENT = 50;
 interface Part {
   object_key: string;
   byte_count: number;
@@ -232,6 +243,91 @@ export class TenantBackupArtifactWriter {
       [this.attemptId, this.lease.tenantId, ordinal, sha, ...this.params()]
     );
     if (!receipt) fail();
+  }
+  /** Retries must repeat identical values; a different value for a saved dataset fails. */
+  async saveDatasetStats(stats: readonly TenantBackupExportDatasetStat[]): Promise<void> {
+    for (const stat of stats)
+      if (
+        !Number.isSafeInteger(stat.ordinal) ||
+        stat.ordinal < 0 ||
+        stat.ordinal > 65535 ||
+        typeof stat.id !== 'string' ||
+        !stat.id ||
+        stat.id.length > 256 ||
+        !Number.isSafeInteger(stat.rows) ||
+        stat.rows < 1 ||
+        !Number.isSafeInteger(stat.bytes) ||
+        stat.bytes < 1 ||
+        !Number.isSafeInteger(stat.offset) ||
+        stat.offset < 0 ||
+        typeof stat.sealedSha256 !== 'string' ||
+        !/^(?:[a-f0-9]{2}){28,256}$/.test(stat.sealedSha256)
+      )
+        fail();
+    for (let start = 0; start < stats.length; start += DATASET_STATS_PER_STATEMENT) {
+      const batch = stats
+        .slice(start, start + DATASET_STATS_PER_STATEMENT)
+        .map((stat) => [
+          stat.ordinal,
+          stat.id,
+          stat.rows,
+          stat.bytes,
+          stat.offset,
+          stat.sealedSha256,
+        ]);
+      await this.db.execute(
+        `INSERT INTO tenant_backup_export_datasets
+        (attempt_id,ordinal,dataset_id,row_count,byte_count,byte_offset,sealed_sha256)
+        SELECT ?,json_extract(j.value,'$[0]'),json_extract(j.value,'$[1]'),json_extract(j.value,'$[2]'),
+        json_extract(j.value,'$[3]'),json_extract(j.value,'$[4]'),json_extract(j.value,'$[5]')
+        FROM json_each(?) j WHERE ${ACTIVE} ON CONFLICT(attempt_id,ordinal) DO NOTHING`,
+        [this.attemptId, JSON.stringify(batch), ...this.params()]
+      );
+    }
+    // A retried slice seals again with a fresh IV, so the sealed digest is not compared here; the
+    // frame receipts already prove the retried bytes, and so the digest, are identical.
+    const saved = new Map((await this.datasetStats()).map((stat) => [stat.ordinal, stat]));
+    for (const stat of stats) {
+      const row = saved.get(stat.ordinal);
+      if (
+        !row ||
+        row.id !== stat.id ||
+        row.rows !== stat.rows ||
+        row.bytes !== stat.bytes ||
+        row.offset !== stat.offset
+      )
+        fail();
+    }
+  }
+  async datasetStats(): Promise<TenantBackupExportDatasetStat[]> {
+    const row = await this.db.queryOne<{ stats: string }>(
+      `SELECT json_group_array(
+      json_array(ordinal,dataset_id,row_count,byte_count,byte_offset,sealed_sha256))
+      AS stats FROM (SELECT * FROM tenant_backup_export_datasets
+      WHERE attempt_id=? AND ${ACTIVE} ORDER BY ordinal)`,
+      [this.attemptId, ...this.params()]
+    );
+    let values: unknown;
+    try {
+      values = JSON.parse(row?.stats ?? 'null');
+    } catch {
+      fail();
+    }
+    if (!Array.isArray(values)) fail();
+    return values.map((value) => {
+      if (!Array.isArray(value) || value.length !== 6) fail();
+      const [ordinal, id, rows, bytes, offset, sealedSha256] = value as unknown[];
+      if (
+        typeof ordinal !== 'number' ||
+        typeof id !== 'string' ||
+        typeof rows !== 'number' ||
+        typeof bytes !== 'number' ||
+        typeof offset !== 'number' ||
+        typeof sealedSha256 !== 'string'
+      )
+        fail();
+      return { ordinal, id, rows, bytes, offset, sealedSha256 };
+    });
   }
   async seal(parts: number, bytes: number): Promise<void> {
     if (
