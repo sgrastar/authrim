@@ -10,6 +10,7 @@ import {
 import { resolveCustomClaimRuntimeSourcesFromEnv } from './custom-claims/runtime-sources';
 import { requireDedicatedAdminDatabaseAdapter } from './admin-database-adapter';
 import { isNonAccountSubject } from '../utils/id';
+import { logSwallowedIdentityMappingFailure } from './identity-mapping-swallowed-failure';
 import {
   filterOidcClaimsByDestinationConsent,
   filterOidcClaimsWithoutDestinationProfile,
@@ -119,6 +120,15 @@ export async function applyOIDCIdentityMapping(
     });
   } catch (error) {
     if (!input.selector?.fieldMappingSetId) {
+      // The app names no Mapping Set, so the request goes on without a mapping. That hides a
+      // tenant-wide mapping that exists and cannot be read, so it is recorded as an error.
+      logSwallowedIdentityMappingFailure({
+        component: 'OIDC-IDENTITY-MAPPING',
+        tenantId: input.tenantId,
+        clientId: input.clientId,
+        adminDatabaseBound: Boolean(input.env?.DB_ADMIN),
+        error,
+      });
       if (input.subjectOnly) return { claims: input.claims, binding: null };
       return {
         claims: await applyOIDCDestinationFieldConsent(input, input.claims, null),
