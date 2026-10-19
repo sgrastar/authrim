@@ -102,9 +102,14 @@ describe('SQLite snapshot native primary key paging', () => {
     }
   });
 
-  it.each([items, ledger, entries])(
-    'emits $table boundary rows once in native order while writes continue between pages',
-    (schema) => {
+  // A 3-key scan reads bodies inline; a 50-key scan reads only the returned bodies, by key.
+  const scans = [items, ledger, entries].flatMap((schema) =>
+    [3, 50].map((scan) => [schema.table, scan, schema] as const)
+  );
+
+  it.each(scans)(
+    'emits %s boundary rows once in native order while writes continue between pages (scan %i)',
+    (_table, scan, schema) => {
       const table = schema.table;
       const insert = db.prepare(
         `INSERT INTO ${table} (${schema.columns.join(', ')}) VALUES (${schema.columns.map(() => '?').join(', ')})`
@@ -132,13 +137,13 @@ describe('SQLite snapshot native primary key paging', () => {
         `UPDATE ${table} SET label = 'again' WHERE n IN (1, 5, 37, 39)`,
         `DELETE FROM ${table} WHERE n IN (3, 38)`,
       ];
-      expect(readAll(schema, mutations).emitted).toEqual(expected);
+      expect(readAll(schema, mutations, scan).emitted).toEqual(expected);
     }
   );
 
-  it.each([items, ledger, entries])(
-    'moves past $table runs of rewritten and new rows with bounded progress pages',
-    (schema) => {
+  it.each(scans)(
+    'moves past %s runs of rewritten and new rows with bounded progress pages (scan %i)',
+    (_table, scan, schema) => {
       const table = schema.table;
       const insert = db.prepare(
         `INSERT INTO ${table} (${schema.columns.join(', ')}) VALUES (${schema.columns.map(() => '?').join(', ')})`
@@ -160,21 +165,25 @@ describe('SQLite snapshot native primary key paging', () => {
           FROM g WHERE n % 10 <> 0`,
         `UPDATE ${table} SET label = 'changed' WHERE n % 10 = 0 AND n > 100`,
       ];
-      const { emitted, progressPages } = readAll(schema, mutations);
+      const { emitted, progressPages } = readAll(schema, mutations, scan);
       expect(emitted).toEqual(
         Array.from({ length: 30 }, (_, index) => `${(index + 1) * 10}:t0-${(index + 1) * 10}`)
       );
-      expect(progressPages).toBeGreaterThan(0);
+      // A 50-key scan crosses each 9-row gap of omitted rows within one page.
+      if (scan === 3) expect(progressPages).toBeGreaterThan(0);
     }
   );
 
-  function readAll(schema: SnapshotTableSchema, mutations: readonly string[]) {
-    const page = db.prepare(sqliteSnapshotPageQuery(schema, 'json'));
+  /** scan > 3 scans more keys than a page returns and reads the returned row bodies by key. */
+  function readAll(schema: SnapshotTableSchema, mutations: readonly string[], scan = 3) {
+    const page = db.prepare(
+      sqliteSnapshotPageQuery(schema, 'json', undefined, { scanLimit: true })
+    );
     const emitted: string[] = [];
     let progressPages = 0;
     let after = '';
     for (let step = 0; step < 1000; step++) {
-      const rows = page.all('s', 'a', after, 3) as Array<{
+      const rows = page.all('s', 'a', after, 3, scan) as Array<{
         record_key: string;
         row_json: string | null;
         page_order: number;

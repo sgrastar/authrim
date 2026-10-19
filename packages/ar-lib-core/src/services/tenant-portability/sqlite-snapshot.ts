@@ -347,7 +347,8 @@ BEGIN ${capture('OLD', true)} END;
 }
 
 /**
- * Bind snapshotId, tenantId, afterKey, limit. Validate existence/state before execution.
+ * Bind snapshotId, tenantId, afterKey, limit, plus scanLimit when options.scanLimit is set.
+ * Validate existence/state before execution.
  * afterKey is '' or the last emitted record_key. Rows follow native primary key order, not
  * record_key text order; consumers must order by page_order.
  * row_json is a packed BLOB or legacy JSON TEXT; use the dataset source for portable JSON.
@@ -357,7 +358,8 @@ BEGIN ${capture('OLD', true)} END;
 export function sqliteSnapshotPageQuery(
   schema: CaptureSchema,
   representation: 'json' | 'packed' = 'packed',
-  partitions?: readonly string[]
+  partitions?: readonly string[],
+  options: { scanLimit?: boolean } = {}
 ): string {
   validateSchema(schema);
   if (schema.rowPartition) {
@@ -394,12 +396,19 @@ export function sqliteSnapshotPageQuery(
   const snapshotRow = `snapshot.id = (SELECT snapshot_id FROM params)
       AND +snapshot.tenant_id = (SELECT tenant_id FROM params) AND +snapshot.state = 'capturing'`;
   const limit = 'LIMIT (SELECT page_limit FROM params)';
+  const scanRows = '(SELECT max(page_limit, coalesce(scan_limit, page_limit)) FROM params)';
+  const scanLimit = `LIMIT ${scanRows}`;
+  // A page scanning more keys than it returns (scan_limit > page_limit) reads row bodies by key
+  // for the returned rows only, so a wide scan past omitted rows never materializes their bodies.
+  // A normal page keeps reading bodies inline during the scan.
+  const inlineBodies = '(SELECT coalesce(scan_limit, page_limit) <= page_limit FROM params)';
   // Live rows replaced by a preimage are flagged, not filtered, so the LIMIT bounds the index walk
   // itself. Filtering first would walk every replaced row behind the cursor on every page.
   const liveRows = (
     bound: string
   ) => `SELECT ${liveKey.map((term, index) => `${term} AS k${index}`).join(', ')},
-      ${recordKey(schema, 'live')} AS record_key, ${representation === 'packed' ? sqlitePackedRowExpression(schema.columns, 'live') : rowJson(schema, 'live')} AS row_json,
+      ${recordKey(schema, 'live')} AS record_key, 1 AS live_source,
+      CASE WHEN ${inlineBodies} THEN ${representation === 'packed' ? sqlitePackedRowExpression(schema.columns, 'live') : rowJson(schema, 'live')} END AS row_json,
       EXISTS (
         SELECT 1 FROM tenant_backup_preimages AS previous
         WHERE previous.snapshot_id = snapshot.id AND previous.source_table = '${schema.table}'
@@ -408,17 +417,18 @@ export function sqliteSnapshotPageQuery(
     FROM tenant_backup_snapshots AS snapshot CROSS JOIN ${identifier(schema.table)} AS live
     WHERE ${snapshotRow} AND ${bound} AND ${ownedAtBoundary(schema, 'live', 'snapshot', true)}
       ${selectedPartitions ? `AND +live.${identifier(partitionColumn ?? '')} IN (${selectedPartitions})` : ''}
-    ORDER BY ${liveKey.join(', ')} ${limit}`;
+    ORDER BY ${liveKey.join(', ')} ${scanLimit}`;
   // `fixed` leading terms are equality-bound; ordering by them would add a sort of the range.
   const preimageRows = (
     bound: string,
     fixed = 0
   ) => `SELECT ${preimageKey.map((term, index) => `${term} AS k${index}`).join(', ')},
-      previous.record_key, previous.row_json, 0 AS replaced
+      previous.record_key, 0 AS live_source,
+      CASE WHEN ${inlineBodies} THEN previous.row_json END AS row_json, 0 AS replaced
     FROM tenant_backup_snapshots AS snapshot CROSS JOIN tenant_backup_preimages AS previous
     WHERE ${snapshotRow} AND ${bound} AND previous.snapshot_id = snapshot.id
       AND previous.source_table = '${schema.table}' AND previous.present = 1${selectedPartitions ? ` AND previous.row_partition IN (${selectedPartitions})` : ''}
-    ORDER BY ${preimageKey.slice(fixed).join(', ')} ${limit}`;
+    ORDER BY ${preimageKey.slice(fixed).join(', ')} ${scanLimit}`;
   // SQLite cannot range-scan a row value over expression index terms. Split "key > after" into
   // disjoint ranges, each an equality prefix plus one scalar range on the index.
   const preimageAfter = preimageKey.map((term, index) =>
@@ -432,15 +442,28 @@ export function sqliteSnapshotPageQuery(
   const order = keys.join(', ');
   const lastOf = (source: string) =>
     `SELECT ${order}, record_key FROM ${source} ORDER BY ${order}
-    LIMIT 1 OFFSET (SELECT page_limit FROM params) - 1`;
+    LIMIT 1 OFFSET ${scanRows} - 1`;
   // A full source may continue past its last scanned key, so only keys up to both sources' last
   // scanned keys are complete. Beyond that a row of the other source could still sort earlier.
   const withinScan = (source: string) =>
     `(NOT EXISTS (SELECT 1 FROM ${source}) OR ${vector(keys)} <= (SELECT ${order} FROM ${source}))`;
-  // Each source scans at most one page in the shared native order; their merge is the page.
-  // When every scanned live row was replaced and no preimage sorts before the scan ends, the
-  // page is one row_json NULL progress row: the reader moves its cursor there and reads on.
-  return `WITH params(snapshot_id, tenant_id, after_key, page_limit) AS (SELECT ?, ?, ?, ?),
+  // Same statement, so the body read by key is the row the scan saw.
+  const liveBody = `(SELECT ${representation === 'packed' ? sqlitePackedRowExpression(schema.columns, 'live') : rowJson(schema, 'live')}
+      FROM ${identifier(schema.table)} AS live
+      WHERE ${schema.primaryKey.map((column, index) => `live.${identifier(column)} = page.k${index}`).join(' AND ')})`;
+  const preimageBody = `(SELECT previous.row_json FROM tenant_backup_preimages AS previous
+      WHERE previous.snapshot_id = (SELECT snapshot_id FROM params)
+        AND previous.source_table = '${schema.table}' AND previous.record_key = page.record_key)`;
+  // Each source scans at most scan_limit keys in the shared native order; their merge, cut to
+  // page_limit rows, is the page. When every scanned live row was replaced and no preimage sorts
+  // before the scan ends, the page is one row_json NULL progress row at the last scanned live key:
+  // the reader moves its cursor there and reads on. An empty page has no preimage left to merge
+  // (a full preimage scan always contributes rows), so that position is safe even when the live
+  // scan ended early.
+  // scanLimit adds a fifth bind: how many keys each source may scan. It defaults to page_limit.
+  return `WITH params(snapshot_id, tenant_id, after_key, page_limit, scan_limit) AS (
+    SELECT ?, ?, ?, ?, ${options.scanLimit ? '?' : 'NULL'}
+  ),
   after_bound AS (
     SELECT ${keys.map((key, index) => `${nativeKeyTerm('after_key', index)} AS ${key}`).join(', ')}
     FROM params WHERE after_key <> ''
@@ -453,7 +476,7 @@ export function sqliteSnapshotPageQuery(
   preimage_scan AS MATERIALIZED (
     SELECT * FROM preimage_first
     ${preimageAfter.map((_, index) => `UNION ALL SELECT * FROM preimage_after_${index}`).join('\n    ')}
-    ORDER BY ${order} ${limit}
+    ORDER BY ${order} ${scanLimit}
   ),
   live_last AS (${lastOf('live_scan')}),
   preimage_last AS (${lastOf('preimage_scan')}),
@@ -461,8 +484,13 @@ export function sqliteSnapshotPageQuery(
     SELECT * FROM (SELECT * FROM live_scan WHERE NOT replaced UNION ALL SELECT * FROM preimage_scan)
     WHERE ${withinScan('live_last')} AND ${withinScan('preimage_last')}
     ORDER BY ${order} ${limit}
-  ) SELECT record_key, row_json, row_number() OVER (ORDER BY ${order}) AS page_order FROM page
-  UNION ALL SELECT record_key, NULL, 1 FROM live_last WHERE NOT EXISTS (SELECT 1 FROM page)
+  ) SELECT record_key,
+    coalesce(row_json, CASE WHEN live_source THEN ${liveBody} ELSE ${preimageBody} END) AS row_json,
+    row_number() OVER (ORDER BY ${order}) AS page_order FROM page
+  UNION ALL SELECT (
+      SELECT record_key FROM live_scan ORDER BY ${keys.map((key) => `${key} DESC`).join(', ')} LIMIT 1
+    ), NULL, 1
+  WHERE NOT EXISTS (SELECT 1 FROM page) AND EXISTS (SELECT 1 FROM live_scan)
   ORDER BY page_order`;
 }
 

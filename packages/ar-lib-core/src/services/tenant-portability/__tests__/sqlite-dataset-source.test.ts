@@ -360,6 +360,52 @@ it('rejects a cursor past the current row instead of silently ending the dataset
     await expect(readNextSqliteSnapshotChunk(input, cursor)).rejects.toThrow('invalid_cursor');
 });
 
+it('crosses a long run of rows written after T0 in few queries and does not walk it twice', async () => {
+  // Time-ordered ids put every row written during capture after the T0 rows. Each page used to
+  // advance 100 omitted keys, so one call issued about one query per 100 of them and the next
+  // call walked the same run again. One export step shares one Worker subrequest budget.
+  const insert = db.prepare("INSERT INTO accounts VALUES ('a',?,'t0',0,NULL)");
+  for (let index = 0; index < 300; index++) insert.run(String(index).padStart(3, '0'));
+  db.exec(`INSERT INTO tenant_backup_snapshots(id,tenant_id,state) VALUES ('snapshot','a','capturing');
+    WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 20000)
+      INSERT INTO accounts SELECT 'a', printf('z%06d', i), 'new', 0, NULL FROM n;`);
+  let queries = 0;
+  const counted: Pick<DatabaseAdapter, 'query' | 'queryOne'> = {
+    async query<T>(sql: string, params: unknown[] = []) {
+      queries++;
+      return database.query<T>(sql, params);
+    },
+    async queryOne<T>(sql: string, params: unknown[] = []) {
+      queries++;
+      return database.queryOne<T>(sql, params);
+    },
+  };
+  const input = {
+    database: counted,
+    schema,
+    snapshotId: 'snapshot',
+    tenantId: 'a',
+    signal: new AbortController().signal,
+  };
+  let cursor: string | null = null;
+  const perCall: number[] = [];
+  const values: string[] = [];
+  for (;;) {
+    queries = 0;
+    const next = await readNextSqliteSnapshotChunk(input, cursor);
+    perCall.push(queries);
+    if (!next) break;
+    for (const row of new TextDecoder().decode(next.bytes).trim().split('\n'))
+      values.push((JSON.parse(row) as { value: [string, string] }).value[1]);
+    cursor = next.nextCursor;
+  }
+  expect(values).toEqual(Array.from({ length: 300 }, () => 't0'));
+  // The run of 20,000 omitted keys is crossed once, in scans that double up to 12,800 keys.
+  expect(perCall).toHaveLength(3);
+  expect(Math.max(...perCall)).toBeLessThan(40);
+  expect(perCall[2]).toBeLessThanOrEqual(4);
+});
+
 it('refuses to resume a position recorded in the legacy record_key text order', async () => {
   const insert = db.prepare("INSERT INTO accounts VALUES ('a',?,'value',0,NULL)");
   for (const id of ['1', '2']) insert.run(id);

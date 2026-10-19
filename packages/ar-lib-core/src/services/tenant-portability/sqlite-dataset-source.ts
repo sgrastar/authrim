@@ -7,6 +7,13 @@ import {
 import { packedSqliteRowToJson } from './sqlite-packed-row';
 
 const PAGE_ROWS = 100;
+/**
+ * Consecutive pages of only omitted rows (post-T0 inserts, rewritten rows) double how many keys
+ * the next page scans, up to this bound. A run of R omitted rows then costs about
+ * log2(R / PAGE_ROWS) + R / MAX_SCAN_ROWS queries instead of R / PAGE_ROWS, which matters
+ * because one export step shares a single Worker invocation's subrequest budget.
+ */
+const MAX_SCAN_ROWS = 128 * PAGE_ROWS;
 const FRAGMENT_BYTES = 256 * 1024;
 const READ_BATCH_ROWS = 250;
 const READ_BATCH_BYTES = 1024 * 1024;
@@ -60,12 +67,17 @@ interface SourceInput {
   assertSnapshotActive?: () => Promise<void>;
 }
 
-/** Trusted COW source with durable output positions. Cursor must come from the same operation. */
+/**
+ * Trusted COW source with durable output positions. Cursor must come from the same operation.
+ * A zero-byte item only moves the position past omitted rows.
+ */
 export async function* readSqliteSnapshotChunks(
   input: SourceInput & { cursor?: SqliteSnapshotSourceCursor }
 ): AsyncGenerator<{ bytes: Uint8Array; nextCursor: SqliteSnapshotSourceCursor }> {
   const { database, snapshotId, tenantId, signal } = input;
-  const pageSql = sqliteSnapshotPageQuery(input.schema, 'packed', input.partitions);
+  const pageSql = sqliteSnapshotPageQuery(input.schema, 'packed', input.partitions, {
+    scanLimit: true,
+  });
   const sql = `WITH candidates AS (${pageSql})
     SELECT record_key,typeof(row_json) AS row_type,length(CAST(row_json AS BLOB)) AS total_bytes
     FROM candidates ORDER BY page_order`;
@@ -166,6 +178,7 @@ export async function* readSqliteSnapshotChunks(
   if (input.cursor && input.cursor.order !== 'native' && (after !== '' || skip !== 0))
     throw new Error('backup_snapshot_invalid_cursor');
   if (after !== '') assertNativeRecordKey(after);
+  let scanRows = PAGE_ROWS;
   while (true) {
     await active();
     let rows =
@@ -175,12 +188,13 @@ export async function* readSqliteSnapshotChunks(
             tenantId,
             after,
             PAGE_ROWS,
+            scanRows,
             READ_BATCH_BYTES,
             FRAGMENT_BYTES,
           ])
         : [];
     if (!rows.length)
-      rows = await database.query<Row>(sql, [snapshotId, tenantId, after, PAGE_ROWS]);
+      rows = await database.query<Row>(sql, [snapshotId, tenantId, after, PAGE_ROWS, scanRows]);
     await active();
     if (!rows.length) {
       if (skip) throw new Error('backup_snapshot_invalid_cursor');
@@ -199,8 +213,14 @@ export async function* readSqliteSnapshotChunks(
         throw new Error('backup_snapshot_invalid_row');
       assertNativeRecordKey(progress.record_key);
       after = progress.record_key;
+      scanRows = Math.min(scanRows * 2, MAX_SCAN_ROWS);
+      // A position-only step: the batch it ends carries the new position, so the next read does
+      // not walk the same omitted rows again. Mid-row positions stay on the resumed row.
+      if (skip === 0)
+        yield { bytes: new Uint8Array(0), nextCursor: { after, chunk: 0, order: 'native' } };
       continue;
     }
+    scanRows = PAGE_ROWS;
     for (const row of rows) {
       signal.throwIfAborted();
       if (
@@ -280,7 +300,8 @@ export async function* readSqliteSnapshotChunks(
 
 /** Compatibility streaming API; production resumable writers use readSqliteSnapshotChunks. */
 export async function* readSqliteSnapshotDataset(input: SourceInput): AsyncGenerator<Uint8Array> {
-  for await (const chunk of readSqliteSnapshotChunks(input)) yield chunk.bytes;
+  for await (const chunk of readSqliteSnapshotChunks(input))
+    if (chunk.bytes.length) yield chunk.bytes;
 }
 
 /** Read one resumable chunk and release the iterator before returning to the durable executor. */
@@ -313,6 +334,11 @@ export async function readNextSqliteSnapshotChunk(
     for (;;) {
       const next = await iterator.next();
       if (next.done) break;
+      if (!next.value.bytes.length) {
+        // Positions only travel with bytes: callers require every step to return data.
+        if (parts.length) nextCursor = next.value.nextCursor;
+        continue;
+      }
       if (parts.length > 0 && totalBytes + next.value.bytes.length > READ_BATCH_BYTES) break;
       parts.push(next.value.bytes);
       totalBytes += next.value.bytes.length;
