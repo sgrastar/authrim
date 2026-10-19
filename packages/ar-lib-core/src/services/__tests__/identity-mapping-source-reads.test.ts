@@ -1,9 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import {
   findConflictingSourceIds,
+  isTenantDefinedSubjectNamespace,
+  mappingDestinationProfileIds,
+  mappingReferenceCatalogEntryId,
+  mappingReferencePath,
+  mappingReferenceProfileId,
   mappingSourceSubjectPath,
   normalizeSubjectReadPath,
+  readsTenantDefinedSubjectPart,
   resolveSourceClassification,
+  toMappingSourceReference,
 } from '../identity-mapping-source-reads';
 
 describe('mappingSourceSubjectPath', () => {
@@ -201,5 +208,102 @@ describe('keys that are members of Object.prototype', () => {
         { namespace: 'authrim.profile', path: 'constructor', catalogEntryId: '__proto__' },
       ])
     ).toEqual([]);
+  });
+});
+
+describe('tenant-defined parts of the subject', () => {
+  it.each([
+    ['authrim.custom_claims', 'x'],
+    ['custom_claims', 'x'],
+    ['authrim.custom_fields', 'x'],
+    ['custom_fields', 'x'],
+    ['authrim.attributes', 'x'],
+    ['attributes', 'x'],
+    // Spelled by path: the same place is read whatever the namespace says.
+    ['authrim.profile', 'custom_claims.x'],
+    ['authrim.canonical', 'custom_fields.x'],
+    ['oidc.claim', 'customClaims.x'],
+    ['authrim.profile', 'attributes.x'],
+  ])('%s:%s reads a part a tenant defines', (namespace, path) => {
+    expect(readsTenantDefinedSubjectPart({ namespace, path })).toBe(true);
+  });
+
+  it.each([
+    ['authrim.profile', 'email'],
+    ['authrim.canonical', 'given_name'],
+    ['authrim.claims', 'department'],
+    ['claims', 'department'],
+    ['authrim.system', 'uid'],
+    ['oidc.claim', 'custom_claims'],
+    ['authrim.profile', 'constructor'],
+    ['authrim.profile', 'attributes_summary.x'],
+  ])('%s:%s does not', (namespace, path) => {
+    expect(readsTenantDefinedSubjectPart({ namespace, path })).toBe(false);
+  });
+
+  it('knows the namespaces on their own, and not a name the destination chose', () => {
+    for (const namespace of [
+      'authrim.custom_claims',
+      'custom_claims',
+      'authrim.custom_fields',
+      'custom_fields',
+      'authrim.attributes',
+      'attributes',
+    ]) {
+      expect(isTenantDefinedSubjectNamespace(namespace)).toBe(true);
+    }
+    for (const namespace of ['authrim.profile', 'oidc.claim', 'authrim.claims', 'authrim.system']) {
+      expect(isTenantDefinedSubjectNamespace(namespace)).toBe(false);
+    }
+  });
+});
+
+describe('how a stored reference is read', () => {
+  it('takes the path from path, else fieldKey, else nodeId', () => {
+    expect(mappingReferencePath({ path: 'a', fieldKey: 'b', nodeId: 'c' })).toBe('a');
+    expect(mappingReferencePath({ fieldKey: 'b', nodeId: 'c' })).toBe('b');
+    expect(mappingReferencePath({ path: '', fieldKey: '', nodeId: 'c' })).toBe('c');
+    expect(mappingReferencePath({ path: 1, fieldKey: null })).toBeUndefined();
+  });
+
+  it('takes the catalog entry from catalogEntryId, else catalog_entry_id', () => {
+    expect(mappingReferenceCatalogEntryId({ catalogEntryId: 'a', catalog_entry_id: 'b' })).toBe(
+      'a'
+    );
+    expect(mappingReferenceCatalogEntryId({ catalog_entry_id: 'b' })).toBe('b');
+    expect(mappingReferenceCatalogEntryId({})).toBeUndefined();
+  });
+
+  it('takes the Destination Profile from profileId, else profile_id', () => {
+    expect(mappingReferenceProfileId({ profileId: 'a', profile_id: 'b' })).toBe('a');
+    expect(mappingReferenceProfileId({ profile_id: 'b' })).toBe('b');
+    expect(mappingReferenceProfileId({ profileId: '' })).toBeUndefined();
+  });
+
+  it('turns a source reference into the place it reads, whatever its spelling', () => {
+    expect(
+      toMappingSourceReference({
+        namespace: 'authrim.canonical',
+        fieldKey: 'email',
+        catalog_entry_id: 'e',
+      })
+    ).toEqual({ namespace: 'authrim.canonical', path: 'email', catalogEntryId: 'e' });
+    expect(toMappingSourceReference({})).toEqual({
+      namespace: '',
+      path: '',
+      catalogEntryId: undefined,
+    });
+  });
+
+  it('counts the profiles the way the resolver does: each once, destination side only', () => {
+    expect(
+      mappingDestinationProfileIds([
+        { profileId: 'destination-profile-p1' },
+        { profile_id: 'p1' },
+        { side: 'destination', profile_id: 'p2' },
+        { side: 'source', profileId: 'p3' },
+        { path: 'email' },
+      ])
+    ).toEqual(['p1', 'p2']);
   });
 });

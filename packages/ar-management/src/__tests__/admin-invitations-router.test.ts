@@ -59,6 +59,10 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
           userId: 'admin_actor',
           email: 'actor@example.com',
           permissions: (c.req.header('x-test-permissions') ?? '').split(',').filter(Boolean),
+          globalPermissions: (c.req.header('x-test-global-permissions') ?? '')
+            .split(',')
+            .filter(Boolean),
+          tenantScope: (c.req.header('x-test-tenant-scope') ?? '').split(',').filter(Boolean),
           roles: ['admin'],
           hierarchyLevel: Number(c.req.header('x-test-hierarchy-level') ?? '100'),
         });
@@ -259,6 +263,8 @@ describe('adminInvitationsRouter', () => {
         headers: {
           'content-type': 'application/json',
           'x-test-permissions': invitationPermissions(['*']),
+          'x-test-global-permissions': '*',
+          'x-test-tenant-scope': '*',
           'x-test-hierarchy-level': '0',
         },
         body: JSON.stringify({ email: 'peer@example.com', role_id: 'role_super_admin' }),
@@ -270,6 +276,45 @@ describe('adminInvitationsRouter', () => {
     const insertParams = getInvitationInsertParams();
     expect(insertParams?.[7]).toBe('global');
     expect(insertParams?.[8]).toBeNull();
+  });
+
+  it.each([
+    [
+      'a wildcard that is not a global one',
+      { 'x-test-global-permissions': '', 'x-test-tenant-scope': '*' },
+    ],
+    [
+      'a global wildcard under a tenant scope',
+      { 'x-test-global-permissions': '*', 'x-test-tenant-scope': 'tenant_123' },
+    ],
+  ])('refuses %s to invite a super_admin, which is global', async (_name, extraHeaders) => {
+    repo.getRole.mockResolvedValue({
+      id: 'role_super_admin',
+      tenant_id: 'default',
+      name: 'super_admin',
+      display_name: 'Super Admin',
+      hierarchy_level: 0,
+      is_system: true,
+    });
+    const { app, env } = createTestApp();
+    const response = await app.request(
+      '/api/admin/admin-invitations',
+      {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-test-permissions': invitationPermissions(['*']),
+          'x-test-hierarchy-level': '0',
+          ...extraHeaders,
+        },
+        body: JSON.stringify({ email: 'peer@example.com', role_id: 'role_super_admin' }),
+      },
+      env
+    );
+
+    expect(response.status).toBeGreaterThanOrEqual(400);
+    expect(response.status).toBeLessThan(500);
+    expect(getInvitationInsertParams()).toBeUndefined();
   });
 
   it('returns a stable conflict when concurrent creation hits the pending-email constraint', async () => {

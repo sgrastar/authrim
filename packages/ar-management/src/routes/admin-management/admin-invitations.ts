@@ -11,6 +11,7 @@ import {
   getTenantIdFromContext,
   hashAdminInvitationCode,
   hasAdminPermission,
+  hasGlobalAdminPermission,
   normalizeAdminInvitationIpRanges,
   requireDedicatedAdminDatabaseAdapter,
   adminAuthMiddleware,
@@ -293,7 +294,9 @@ adminInvitationsRouter.post('/', async (c) => {
   if (!role || (role.tenant_id !== tenantId && !(role.tenant_id === 'default' && role.is_system))) {
     return c.json({ error: 'role_not_found' }, 404);
   }
-  const wildcardAuthority = hasAdminPermission(auth.permissions ?? [], '*');
+  // A global invitation (and a super_admin one is always global) takes effect for every tenant,
+  // so it needs the wildcard from a global assignment, not one that is only held for this tenant.
+  const wildcardAuthority = hasGlobalAdminPermission(auth, '*');
   const invitingPeerSuperAdmin = role.name === 'super_admin' && wildcardAuthority;
   if (
     auth.hierarchyLevel !== undefined &&

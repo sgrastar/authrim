@@ -1,7 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { Hono } from 'hono';
 import { SignJWT, exportJWK, generateKeyPair } from 'jose';
-import { adminAuthMiddleware, requireAdminPermissions, requireMfa } from '../admin-auth';
+import {
+  adminAuthMiddleware,
+  hasGlobalAdminPermission,
+  requireAdminPermissions,
+  requireMfa,
+} from '../admin-auth';
 import type { Env } from '../../types/env';
 
 /**
@@ -57,6 +62,14 @@ function createMockDB(
       hierarchy_level: number;
       inherits_from?: string | null;
     }>;
+    /** Every role of the tenant, for inheritance (default: the assigned roles). */
+    allRoles?: Array<{
+      id?: string;
+      name: string;
+      permissions_json: string;
+      hierarchy_level: number;
+      inherits_from?: string | null;
+    }>;
     machinePrincipal?: Record<string, unknown> | null;
     machineCredential?: Record<string, unknown> | null;
     machinePrincipalPermissions?: Array<{ permission: string }>;
@@ -73,6 +86,7 @@ function createMockDB(
     parentSession = null,
     adminUser = null,
     roles = [],
+    allRoles,
     machinePrincipal = null,
     machineCredential = null,
     machinePrincipalPermissions = [
@@ -115,7 +129,7 @@ function createMockDB(
             return { results: roles, success: true };
           }
           if (sql.includes('admin_roles')) {
-            return { results: roles, success: true };
+            return { results: allRoles ?? roles, success: true };
           }
           if (sql.includes('admin_machine_principal_permissions')) {
             return { results: machinePrincipalPermissions, success: true };
@@ -574,6 +588,45 @@ describe('adminAuthMiddleware', () => {
         tenantScope: ['default'],
       });
     });
+
+    it.each([
+      ['a global token', ['*'], { scope_mode: 'all', tenant_id: null }, ['*']],
+      [
+        'a token limited to the tenant',
+        ['default'],
+        { scope_mode: 'allow', tenant_id: 'default' },
+        [],
+      ],
+    ])(
+      'gives %s its permissions as global ones only when its tenant scope is global',
+      async (_name, tenantScope, principalScope, expectedGlobal) => {
+        const fixture = await createMachineAccessFixture(tenantScope, { scope: '*' });
+        const db = createMockDB({
+          machinePrincipal: fixture.machinePrincipal,
+          machineCredential: fixture.machineCredential,
+          machinePrincipalPermissions: [{ permission: '*' }],
+          machinePrincipalTenantScopes: [principalScope],
+        });
+        const app = createTestApp(
+          createMockEnv({ DB: db, PUBLIC_JWK_JSON: JSON.stringify(fixture.publicJwk) })
+        );
+
+        const response = await app.fetch(
+          new Request('http://localhost/api/admin/test', {
+            headers: { Authorization: `Bearer ${fixture.token}` },
+          })
+        );
+
+        expect(response.status).toBe(200);
+        const { adminAuth } = (await response.json()) as { adminAuth: Record<string, unknown> };
+        expect(adminAuth).toMatchObject({
+          permissions: ['*'],
+          globalRoles: [],
+          globalPermissions: expectedGlobal,
+          tenantScope,
+        });
+      }
+    );
 
     it('should reject Admin machine access tokens after permission grants are removed', async () => {
       const fixture = await createMachineAccessFixture(['default']);
@@ -1929,6 +1982,124 @@ describe('adminAuthMiddleware', () => {
       expect(data.adminAuth?.tenantScope).toEqual(['*']);
     });
 
+    it('keeps what only the global assignments give apart from the sum of all of them', async () => {
+      // One admin: a viewer everywhere, and a super_admin for this tenant only. `roles` and
+      // `permissions` add the two up; the global part is the viewer alone.
+      const userId = 'admin-user-mixed-scope';
+      const role = (name: string, level: number, global: boolean, permissions: string[]) => ({
+        id: `role_${name}`,
+        name,
+        permissions_json: JSON.stringify(permissions),
+        hierarchy_level: level,
+        inherits_from: null,
+        has_global_scope: global ? 1 : 0,
+      });
+      const db = createMockDB({
+        session: createValidSession(userId),
+        adminUser: createValidAdminUser(userId),
+        roles: [
+          role('super_admin', 100, false, ['*']),
+          role('viewer', 10, true, ['admin:users:read']),
+        ],
+      });
+      const app = createTestApp(createMockEnv({ DB: db, BASE_DOMAIN: 'authrim.test' }));
+
+      const response = await app.fetch(
+        new Request('https://acme.authrim.test/api/admin/test', {
+          headers: {
+            Host: 'acme.authrim.test',
+            Cookie: `authrim_admin_session=${VALID_SESSION_ID}`,
+          },
+        })
+      );
+
+      expect(response.status).toBe(200);
+      const { adminAuth } = (await response.json()) as { adminAuth: Record<string, unknown> };
+      expect(adminAuth).toMatchObject({
+        roles: ['super_admin', 'viewer'],
+        permissions: expect.arrayContaining(['*', 'admin:users:read']),
+        globalRoles: ['viewer'],
+        globalPermissions: ['admin:users:read'],
+        tenantScope: ['*'],
+      });
+    });
+
+    it('puts a role with a global assignment, and what it inherits, in the global part', async () => {
+      const userId = 'admin-user-global-inherit';
+      const db = createMockDB({
+        session: createValidSession(userId),
+        adminUser: createValidAdminUser(userId),
+        roles: [
+          {
+            id: 'role_super_admin',
+            name: 'super_admin',
+            permissions_json: JSON.stringify(['admin:own:*']),
+            hierarchy_level: 100,
+            inherits_from: 'role_base',
+            has_global_scope: 1,
+          },
+        ],
+        allRoles: [
+          {
+            id: 'role_super_admin',
+            name: 'super_admin',
+            permissions_json: JSON.stringify(['admin:own:*']),
+            hierarchy_level: 100,
+            inherits_from: 'role_base',
+          },
+          {
+            id: 'role_base',
+            name: 'base',
+            permissions_json: JSON.stringify(['admin:base:read']),
+            hierarchy_level: 1,
+            inherits_from: null,
+          },
+        ],
+      });
+      const app = createTestApp(createMockEnv({ DB: db, BASE_DOMAIN: 'authrim.test' }));
+
+      const response = await app.fetch(
+        new Request('https://acme.authrim.test/api/admin/test', {
+          headers: {
+            Host: 'acme.authrim.test',
+            Cookie: `authrim_admin_session=${VALID_SESSION_ID}`,
+          },
+        })
+      );
+
+      const { adminAuth } = (await response.json()) as { adminAuth: Record<string, string[]> };
+      expect(adminAuth.globalRoles).toEqual(['super_admin']);
+      expect([...adminAuth.globalPermissions].sort()).toEqual([...adminAuth.permissions].sort());
+    });
+
+    it('has no global part for a session whose roles are all for the tenant', async () => {
+      const userId = 'admin-user-tenant-only';
+      const db = createMockDB({
+        session: createValidSession(userId),
+        adminUser: createValidAdminUser(userId),
+        roles: createAdminRoles(['super_admin'], false),
+      });
+      const app = createTestApp(
+        createMockEnv({ DB: db, BASE_DOMAIN: 'authrim.test' }),
+        {},
+        'default'
+      );
+
+      const response = await app.fetch(
+        new Request('http://localhost/api/admin/test', {
+          headers: { Cookie: `authrim_admin_session=${VALID_SESSION_ID}` },
+        })
+      );
+
+      const { adminAuth } = (await response.json()) as { adminAuth: Record<string, unknown> };
+      expect(adminAuth).toMatchObject({
+        roles: ['super_admin'],
+        globalRoles: [],
+        globalPermissions: [],
+        tenantScope: ['default'],
+      });
+    });
+
     it('should reject tenant routes when request tenant cannot be resolved', async () => {
       const userId = 'admin-user-unresolved-tenant';
       const db = createMockDB({
@@ -2284,5 +2455,46 @@ describe('admin authorization guards', () => {
     }).request('/guard');
 
     expect(response.status).toBe(200);
+  });
+});
+
+describe('hasGlobalAdminPermission', () => {
+  const context = (overrides: Record<string, unknown>) =>
+    ({ userId: 'u', authMethod: 'session', roles: [], ...overrides }) as never;
+
+  it('needs the permission among the global ones and a global tenant scope', () => {
+    expect(
+      hasGlobalAdminPermission(context({ globalPermissions: ['*'], tenantScope: ['*'] }), '*')
+    ).toBe(true);
+    expect(
+      hasGlobalAdminPermission(
+        context({ globalPermissions: ['admin:roles:*'], tenantScope: ['*'] }),
+        'admin:roles:write'
+      )
+    ).toBe(true);
+  });
+
+  it.each([
+    [
+      'the permission only in the sum',
+      { permissions: ['*'], globalPermissions: [], tenantScope: ['*'] },
+    ],
+    [
+      'the permission only in the sum, no global part at all',
+      { permissions: ['*'], tenantScope: ['*'] },
+    ],
+    [
+      'a global permission under a tenant scope',
+      { globalPermissions: ['*'], tenantScope: ['acme'] },
+    ],
+    ['a global permission and no scope', { globalPermissions: ['*'] }],
+    ['a global permission and an empty scope', { globalPermissions: ['*'], tenantScope: [] }],
+    ['another global permission', { globalPermissions: ['admin:users:read'], tenantScope: ['*'] }],
+  ])('is false for %s', (_name, overrides) => {
+    expect(hasGlobalAdminPermission(context(overrides), '*')).toBe(false);
+  });
+
+  it('is false without a context', () => {
+    expect(hasGlobalAdminPermission(undefined, '*')).toBe(false);
   });
 });

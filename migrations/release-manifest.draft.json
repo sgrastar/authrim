@@ -306,6 +306,10 @@
             {
               "path": "040_settings_legacy_import_state.sql",
               "checksum": "48ad4a13af900706cc0309226b9fb938cd33c0e4dde56aa63eda8befecfb7e51"
+            },
+            {
+              "path": "041_platform_default_canonical_catalog.sql",
+              "checksum": "6c94ef0bccf3b4e85d7ed2fb86f125a1718c17142ec5bec6af6220e26dafb720"
             }
           ]
         },
@@ -807,6 +811,10 @@
         {
           "path": "040_settings_legacy_import_state.sql",
           "checksum": "48ad4a13af900706cc0309226b9fb938cd33c0e4dde56aa63eda8befecfb7e51"
+        },
+        {
+          "path": "041_platform_default_canonical_catalog.sql",
+          "checksum": "6c94ef0bccf3b4e85d7ed2fb86f125a1718c17142ec5bec6af6220e26dafb720"
         }
       ]
     },

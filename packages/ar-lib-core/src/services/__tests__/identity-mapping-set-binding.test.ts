@@ -130,6 +130,31 @@ describe('loadMappingBindingBySetId', () => {
     expect(error.code).toBe('set_missing');
   });
 
+  it('reads a reference by fieldKey, nodeId and profile_id as the shared readers do', async () => {
+    const db = openAdminDatabase();
+    seedMapping(db, { owner: PLATFORM_MAPPING_TENANT_ID, id: 'plat' });
+    db.prepare('UPDATE mapping_rule_edges SET source_ref_json = ?, target_ref_json = ?').run(
+      JSON.stringify({ side: 'source', namespace: 'authrim.profile', fieldKey: 'email' }),
+      JSON.stringify({
+        side: 'destination',
+        namespace: 'oidc.claim',
+        nodeId: 'email',
+        profile_id: 'profile-plat',
+        catalog_entry_id: 'entry-plat',
+      })
+    );
+
+    const binding = await loadMappingBindingBySetId(input(sqliteAdapter(db)));
+
+    expect(binding.edges[0].sourceRef.path).toBe('email');
+    expect(binding.edges[0].targetRef).toMatchObject({
+      path: 'email',
+      catalogEntryId: 'entry-plat',
+    });
+    expect(binding.destinationProfileIds).toEqual(['profile-plat']);
+    expect(binding.destinationProfileId).toBe('profile-plat');
+  });
+
   it('reports a set that is not active as set_inactive', async () => {
     const db = openAdminDatabase();
     seedMapping(db, { owner: PLATFORM_MAPPING_TENANT_ID, id: 'plat', setState: 'draft' });

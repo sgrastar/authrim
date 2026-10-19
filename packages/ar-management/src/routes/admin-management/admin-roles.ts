@@ -23,6 +23,7 @@ import {
   adminAuthMiddleware,
   ADMIN_PERMISSIONS,
   hasAdminPermission,
+  hasGlobalAdminPermission,
   requireDedicatedAdminDatabaseAdapter,
   type AdminRole,
   type AdminRoleAssignmentScopeType,
@@ -301,10 +302,7 @@ adminRolesRouter.post('/:id/assignments', async (c) => {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INVALID_REQUEST);
     }
 
-    if (
-      normalizedScope.scopeType === 'global' &&
-      !hasAdminPermission(authContext.permissions || [], '*')
-    ) {
+    if (normalizedScope.scopeType === 'global' && !hasGlobalAdminPermission(authContext, '*')) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);
     }
 
@@ -400,10 +398,7 @@ adminRolesRouter.patch('/:id/assignments/:assignmentId', async (c) => {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INVALID_REQUEST);
     }
 
-    if (
-      normalizedScope.scopeType === 'global' &&
-      !hasAdminPermission(authContext.permissions || [], '*')
-    ) {
+    if (normalizedScope.scopeType === 'global' && !hasGlobalAdminPermission(authContext, '*')) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);
     }
 
