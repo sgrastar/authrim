@@ -185,6 +185,24 @@ export function adminAuthContextHasTenantScope(
   return tenantScope.includes('*') || tenantScope.includes(tenantId);
 }
 
+/**
+ * Whether the caller holds `permission` for every tenant: a global tenant scope, and the
+ * permission among what the global assignments (or a global token) give. `authContext.permissions`
+ * adds up every assignment that applies to the request, so a permission held only for this tenant
+ * is in it too; an operation that takes effect across tenants (granting a global role, say) must
+ * not be allowed on that sum.
+ */
+export function hasGlobalAdminPermission(
+  authContext: AdminAuthContext | undefined,
+  permission: string
+): boolean {
+  return (
+    authContext !== undefined &&
+    (authContext.tenantScope ?? []).includes('*') &&
+    hasAdminPermission(authContext.globalPermissions ?? [], permission)
+  );
+}
+
 function stringArrayClaim(value: unknown): string[] {
   return Array.isArray(value)
     ? value.filter((item): item is string => typeof item === 'string')
@@ -370,6 +388,9 @@ async function authenticateMachineAccessToken(
       credentialId: credential.id,
       authMethod: 'machine_access_token',
       roles: [],
+      // The token has one tenant scope, so its permissions are global exactly when that scope is.
+      globalRoles: [],
+      globalPermissions: tenantScope.includes('*') ? tokenPermissions : [],
       tenantId,
       permissions: tokenPermissions,
       hierarchyLevel: 0,
@@ -552,14 +573,24 @@ export async function authenticateAdminSessionForTenant(
 
     const roles: string[] = [];
     const allPermissions = new Set<string>();
+    // What only the global assignments give. `roles` and `permissions` add up every assignment
+    // that applies to this request (global ones and the requested tenant's), so a tenant-only
+    // role is among them; a decision that needs a role to hold for every tenant reads these.
+    const globalRoles: string[] = [];
+    const globalPermissions = new Set<string>();
     let maxHierarchyLevel = 0;
     let hasGlobalScope = false;
 
     for (const role of rolesResult) {
       roles.push(role.name);
       maxHierarchyLevel = Math.max(maxHierarchyLevel, role.hierarchy_level);
-      hasGlobalScope = hasGlobalScope || Number(role.has_global_scope ?? 0) > 0;
+      const isGlobalRole = Number(role.has_global_scope ?? 0) > 0;
+      hasGlobalScope = hasGlobalScope || isGlobalRole;
       collectInheritedRolePermissions(role, rolesById, allPermissions);
+      if (isGlobalRole) {
+        globalRoles.push(role.name);
+        collectInheritedRolePermissions(role, rolesById, globalPermissions);
+      }
     }
 
     // Check if user has any of the required roles
@@ -589,6 +620,8 @@ export async function authenticateAdminSessionForTenant(
       userId: adminUser.id,
       authMethod: 'session',
       roles,
+      globalRoles,
+      globalPermissions: Array.from(globalPermissions),
       tenantId: session.tenant_id,
       email: adminUser.email,
       permissions: Array.from(allPermissions),

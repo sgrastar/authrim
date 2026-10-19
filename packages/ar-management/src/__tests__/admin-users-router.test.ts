@@ -96,6 +96,10 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
           userId: c.req.header('x-test-user-id') ?? 'admin_1',
           email: 'admin@example.com',
           permissions: (c.req.header('x-test-permissions') ?? '').split(',').filter(Boolean),
+          globalPermissions: (c.req.header('x-test-global-permissions') ?? '')
+            .split(',')
+            .filter(Boolean),
+          tenantScope: (c.req.header('x-test-tenant-scope') ?? '').split(',').filter(Boolean),
           roles: (c.req.header('x-test-roles') ?? 'admin').split(',').filter(Boolean),
           hierarchyLevel: c.req.header('x-test-hierarchy-level')
             ? Number(c.req.header('x-test-hierarchy-level'))
@@ -823,6 +827,40 @@ describe('adminUsersRouter', () => {
     }
   );
 
+  it.each([
+    [
+      'a wildcard that is not a global one',
+      { 'x-test-global-permissions': 'admin:roles:read', 'x-test-tenant-scope': '*' },
+    ],
+    [
+      'a global wildcard under a tenant scope',
+      { 'x-test-global-permissions': '*', 'x-test-tenant-scope': 'tenant_123' },
+    ],
+  ])('refuses %s to assign a role globally', async (_name, extraHeaders) => {
+    repoMocks.findByTenantAndId.mockResolvedValue({ id: 'admin_target' });
+    repoMocks.getRole.mockResolvedValue({
+      id: 'role_system',
+      tenant_id: 'default',
+      is_system: true,
+      hierarchy_level: 5,
+      name: 'system-auditor',
+    });
+    const { app, env } = createTestApp();
+
+    const response = await app.request(
+      '/api/admin/admins/admin_target/roles',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-test-permissions': '*', ...extraHeaders },
+        body: JSON.stringify({ role_id: 'role_system', scope_type: 'global' }),
+      },
+      env
+    );
+
+    expect(response.status).toBe(403);
+    expect(repoMocks.assignRole).not.toHaveBeenCalled();
+  });
+
   it('allows a platform-authorized caller to assign a shared system role globally', async () => {
     repoMocks.findByTenantAndId.mockResolvedValue({ id: 'admin_target' });
     repoMocks.getRole.mockResolvedValue({
@@ -843,6 +881,8 @@ describe('adminUsersRouter', () => {
         headers: {
           'Content-Type': 'application/json',
           'x-test-permissions': '*',
+          'x-test-global-permissions': '*',
+          'x-test-tenant-scope': '*',
         },
         body: JSON.stringify({ role_id: 'role_system', scope_type: 'global' }),
       },

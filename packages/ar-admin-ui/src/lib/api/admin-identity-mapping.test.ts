@@ -69,6 +69,49 @@ describe('adminIdentityMappingAPI', () => {
 		});
 	});
 
+	describe('listFieldMappingSets', () => {
+		const set = (id: string, owner?: string) => ({
+			id,
+			tenantId: owner === 'platform' ? 'platform' : 'tenant-a',
+			...(owner === undefined ? {} : { owner }),
+			fieldMappingKey: id,
+			displayName: id,
+			lifecycleState: 'active'
+		});
+
+		it("keeps to the tenant's own sets, and leaves out the platform's", async () => {
+			fetchMock.mockResolvedValueOnce(
+				new Response(
+					JSON.stringify({
+						fieldMappingSets: [
+							set('own', 'tenant'),
+							set('shared', 'platform'),
+							set('also-own', 'tenant')
+						]
+					}),
+					{ status: 200, headers: { 'Content-Type': 'application/json' } }
+				)
+			);
+
+			const result = await adminIdentityMappingAPI.listFieldMappingSets();
+
+			expect(result.fieldMappingSets.map((item) => item.id)).toEqual(['own', 'also-own']);
+		});
+
+		it('takes a set with no owner (an older API) as the tenant’s', async () => {
+			fetchMock.mockResolvedValueOnce(
+				new Response(JSON.stringify({ fieldMappingSets: [set('old-1'), set('old-2')] }), {
+					status: 200,
+					headers: { 'Content-Type': 'application/json' }
+				})
+			);
+
+			const result = await adminIdentityMappingAPI.listFieldMappingSets();
+
+			expect(result.fieldMappingSets.map((item) => item.id)).toEqual(['old-1', 'old-2']);
+		});
+	});
+
 	it('loads field mapping control-plane collections from admin endpoints', async () => {
 		await adminIdentityMappingAPI.listFieldMappingSets();
 		await adminIdentityMappingAPI.listCatalogs();

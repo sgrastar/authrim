@@ -13,7 +13,15 @@ import type {
 } from '@authrim/ar-lib-field-mapping/contract';
 import type { DatabaseAdapter } from '../db/adapter';
 import {
+  PLATFORM_MAPPING_TENANT_ID,
+  RuntimeIdentityMappingOwnerError,
+} from './identity-mapping-owner';
+import {
   findConflictingSourceIds,
+  mappingDestinationProfileIds,
+  mappingReferenceCatalogEntryId,
+  mappingReferencePath,
+  normalizeDestinationProfileReference,
   resolveSourceClassification,
   sensitiveClassificationRank,
 } from './identity-mapping-source-reads';
@@ -22,7 +30,15 @@ export type RuntimeIdentityMappingProtocol = 'saml' | 'oidc' | 'vc' | string;
 export type RuntimeIdentityMappingRole = 'idp' | 'sp' | 'op' | 'rp' | string;
 
 export interface RuntimeIdentityMappingResolutionContext {
+  /** The tenant the call is made for. Activation scopes are matched against it. */
   tenantId: string;
+  /**
+   * The tenant ID that owns the Mapping Set and every row under it, when that is not the calling
+   * tenant: only `PLATFORM_MAPPING_TENANT_ID` is accepted, and only together with
+   * `fieldMappingSetId` (the platform's sets are read when one is named, and never searched for).
+   * Unset, the calling tenant owns them.
+   */
+  ownerTenantId?: string;
   protocol: RuntimeIdentityMappingProtocol;
   role: RuntimeIdentityMappingRole;
   fieldMappingSetId?: string;
@@ -46,6 +62,7 @@ export interface RuntimeIdentityMappingResolutionContext {
 
 export interface RuntimeIdentityMappingBinding {
   id: string;
+  /** The tenant ID that owns the activation (the calling tenant unless `ownerTenantId` was given). */
   tenantId: string;
   fieldMappingSetId: string;
   fieldMappingVersionId: string;
@@ -266,18 +283,42 @@ interface FieldMappingRuleRow {
   metadata_json: string | null;
 }
 
+/**
+ * The tenant ID whose rows the call reads. Another owner than the calling tenant is the
+ * platform's, and only for a Mapping Set the call names: an activation search over the platform's
+ * rows would hand every tenant a platform activation it never chose.
+ */
+function resolveOwnerTenantId(context: RuntimeIdentityMappingResolutionContext): string {
+  if (context.ownerTenantId === undefined) return context.tenantId;
+  if (
+    context.ownerTenantId !== context.tenantId &&
+    context.ownerTenantId !== PLATFORM_MAPPING_TENANT_ID
+  ) {
+    throw new RuntimeIdentityMappingOwnerError(
+      'Identity mapping owner must be the calling tenant or the platform'
+    );
+  }
+  if (!context.fieldMappingSetId) {
+    throw new RuntimeIdentityMappingOwnerError(
+      'Identity mapping owner can only be set together with a Mapping Set ID'
+    );
+  }
+  return context.ownerTenantId;
+}
+
 export async function resolveRuntimeIdentityMappingBinding(
   adapter: DatabaseAdapter,
   context: RuntimeIdentityMappingResolutionContext
 ): Promise<RuntimeIdentityMappingBinding | null> {
-  const activeRows = await loadActiveActivationRows(adapter, context);
+  const ownerTenantId = resolveOwnerTenantId(context);
+  const activeRows = await loadActiveActivationRows(adapter, ownerTenantId, context);
   const rankedRows = rankActivations(activeRows, context);
   let selected: ActiveActivationRow | undefined = rankedRows[0];
   let selectedEdges: EdgeRow[] | undefined;
   if (context.destinationProfileId) {
     selected = undefined;
     for (const candidate of rankedRows) {
-      const edges = await loadEdges(adapter, context.tenantId, candidate.field_mapping_version_id);
+      const edges = await loadEdges(adapter, ownerTenantId, candidate.field_mapping_version_id);
       if (
         uniqueDestinationProfileIds(edges).some((profileId) =>
           destinationProfileReferencesMatch(profileId, context.destinationProfileId as string)
@@ -297,14 +338,14 @@ export async function resolveRuntimeIdentityMappingBinding(
     [
       loadCatalogEntries(
         adapter,
-        context.tenantId,
+        ownerTenantId,
         selected.catalog_version_id,
         context.resolveCanonicalCatalog === true
       ),
-      selectedEdges ?? loadEdges(adapter, context.tenantId, selected.field_mapping_version_id),
-      loadTransforms(adapter, context.tenantId, selected.field_mapping_version_id),
-      loadValidationRules(adapter, context.tenantId, selected.field_mapping_version_id),
-      loadFieldMappingRules(adapter, context.tenantId, selected.field_mapping_version_id),
+      selectedEdges ?? loadEdges(adapter, ownerTenantId, selected.field_mapping_version_id),
+      loadTransforms(adapter, ownerTenantId, selected.field_mapping_version_id),
+      loadValidationRules(adapter, ownerTenantId, selected.field_mapping_version_id),
+      loadFieldMappingRules(adapter, ownerTenantId, selected.field_mapping_version_id),
     ]
   );
   const activationScope = parseJsonObject(selected.activation_scope_json);
@@ -381,23 +422,15 @@ export async function resolveRuntimeIdentityMappingBinding(
 }
 
 function uniqueDestinationProfileIds(edges: EdgeRow[]): string[] {
-  const profileIds = new Set<string>();
-  for (const edge of edges) {
-    const targetRef = parseJsonObject(edge.target_ref_json);
-    const profileId = readString(targetRef.profileId) ?? readString(targetRef.profile_id);
-    const side = readString(targetRef.side);
-    if (profileId && (!side || side === 'destination')) {
-      profileIds.add(normalizeDestinationProfileReference(profileId));
-    }
-  }
-  return [...profileIds];
+  return mappingDestinationProfileIds(edges.map((edge) => parseJsonObject(edge.target_ref_json)));
 }
 
 async function loadActiveActivationRows(
   adapter: DatabaseAdapter,
+  ownerTenantId: string,
   context: RuntimeIdentityMappingResolutionContext
 ): Promise<ActiveActivationRow[]> {
-  const params: unknown[] = [context.tenantId, 'active'];
+  const params: unknown[] = [ownerTenantId, 'active'];
   const fieldMappingSetFilter = context.fieldMappingSetId ? 'AND a.field_mapping_set_id = ?' : '';
   if (context.fieldMappingSetId) {
     params.push(context.fieldMappingSetId);
@@ -459,12 +492,6 @@ function rankActivations(
 
 function destinationProfileReferencesMatch(left: string, right: string): boolean {
   return normalizeDestinationProfileReference(left) === normalizeDestinationProfileReference(right);
-}
-
-function normalizeDestinationProfileReference(value: string): string {
-  return value.startsWith('destination-profile-')
-    ? value.slice('destination-profile-'.length)
-    : value;
 }
 
 function activationScore(
@@ -774,9 +801,8 @@ function normalizeFieldRef(value: Record<string, unknown>): FieldRef {
   return {
     side: (readString(value.side) ?? 'source') as FieldRef['side'],
     namespace: readString(value.namespace) ?? 'unknown',
-    path:
-      readString(value.path) ?? readString(value.fieldKey) ?? readString(value.nodeId) ?? 'unknown',
-    catalogEntryId: readString(value.catalogEntryId) ?? readString(value.catalog_entry_id),
+    path: mappingReferencePath(value) ?? 'unknown',
+    catalogEntryId: mappingReferenceCatalogEntryId(value),
     valueType: readString(value.valueType) ?? readString(value.value_type),
   };
 }

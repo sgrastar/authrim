@@ -80,6 +80,7 @@ vi.mock('@authrim/ar-lib-core', () => ({
     return new Response(JSON.stringify({ error: code, details }), { status });
   }),
   getDefaultTenantId: vi.fn(() => 'default'),
+  isReservedPlatformTenantId: vi.fn((id: string) => id.trim().toLowerCase() === 'platform'),
   getLogger: vi.fn(() => ({
     module: vi.fn(() => ({
       error: vi.fn(),
@@ -363,6 +364,63 @@ describe('Control Plane tenant management', () => {
 
     expect(response.status).toBe(403);
     expect(body.error).toBe('admin_insufficient_permissions');
+  });
+
+  it.each(['platform', 'Platform', 'PLATFORM', ' platform', 'platform ', '\tplatform\n'])(
+    'refuses to create a tenant under the reserved platform ID %j',
+    async (id) => {
+      adapters.defaultAdapter = createAdapter(() => null);
+      adapters.adminAdapter = createAdapter(() => null);
+
+      const response = await adminTenantCreateHandler(createContext({ id, name: 'Reserved' }));
+
+      expect(response.status).toBe(400);
+      expect(adapters.defaultAdapter.calls).toEqual([]);
+      expect(adapters.adminAdapter.calls).toEqual([]);
+    }
+  );
+
+  it.each(['platform', 'Platform', ' platform', 'platform '])(
+    'refuses the reserved platform tenant code %j on create',
+    async (tenantCode) => {
+      adapters.defaultAdapter = createAdapter(() => null);
+      adapters.adminAdapter = createAdapter(() => null);
+
+      const response = await adminTenantCreateHandler(
+        createContext({ id: 'second', name: 'Second', tenant_code: tenantCode })
+      );
+
+      expect(response.status).toBe(400);
+      expect(adapters.defaultAdapter.calls).toEqual([]);
+      expect(adapters.adminAdapter.calls).toEqual([]);
+    }
+  );
+
+  it.each(['platform', 'Platform', ' platform', 'platform '])(
+    'refuses to change a tenant code to the reserved platform code %j',
+    async (tenantCode) => {
+      adapters.defaultAdapter = createAdapter();
+
+      const response = await adminTenantUpdateHandler(
+        createContext({ tenant_code: tenantCode }, {}, { id: 'second' })
+      );
+
+      expect(response.status).toBe(400);
+      expect(adapters.defaultAdapter.execute).not.toHaveBeenCalled();
+      expect(adapters.defaultAdapter.queryOne).not.toHaveBeenCalled();
+    }
+  );
+
+  it('still accepts an ID that only contains the reserved word', async () => {
+    adapters.defaultAdapter = createAdapter(() => null);
+    adapters.adminAdapter = createAdapter(() => null);
+
+    const response = await adminTenantCreateHandler(
+      createContext({ id: 'platform-eu', name: 'Not reserved' })
+    );
+
+    // It gets past validation (the unconfigured fixture then stops it), unlike the reserved ID.
+    expect(response.status).not.toBe(400);
   });
 
   it('accepts Control provisioning without reading a preallocated slot', async () => {

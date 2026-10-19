@@ -16,6 +16,65 @@ export interface MappingSourceReference {
 }
 
 /**
+ * How a stored mapping reference is read. A reference is a JSON object whose spelling the author
+ * chose, and the runtime resolver takes the first form it finds: the path is `path`, else
+ * `fieldKey`, else `nodeId`; the catalog entry is `catalogEntryId`, else `catalog_entry_id`; the
+ * Destination Profile is `profileId`, else `profile_id`. Everything that judges a reference (the
+ * control plane when it saves, compiles and activates, and the resolver itself) reads it through
+ * these, so none of them judges a form that the runtime then reads differently. A value counts when
+ * it is a non-empty string, as for the runtime.
+ */
+function referenceString(value: unknown): string | undefined {
+  return typeof value === 'string' && value.length > 0 ? value : undefined;
+}
+
+export function mappingReferencePath(ref: Record<string, unknown>): string | undefined {
+  return referenceString(ref.path) ?? referenceString(ref.fieldKey) ?? referenceString(ref.nodeId);
+}
+
+export function mappingReferenceCatalogEntryId(ref: Record<string, unknown>): string | undefined {
+  return referenceString(ref.catalogEntryId) ?? referenceString(ref.catalog_entry_id);
+}
+
+export function mappingReferenceProfileId(ref: Record<string, unknown>): string | undefined {
+  return referenceString(ref.profileId) ?? referenceString(ref.profile_id);
+}
+
+/** A stored source reference as the place it reads (an empty path when it names none). */
+export function toMappingSourceReference(ref: Record<string, unknown>): MappingSourceReference {
+  return {
+    namespace: referenceString(ref.namespace) ?? '',
+    path: mappingReferencePath(ref) ?? '',
+    catalogEntryId: mappingReferenceCatalogEntryId(ref),
+  };
+}
+
+/** A Destination Profile reference without the prefix some authors give it. */
+export function normalizeDestinationProfileReference(profileId: string): string {
+  return profileId.startsWith('destination-profile-')
+    ? profileId.slice('destination-profile-'.length)
+    : profileId;
+}
+
+/**
+ * The Destination Profiles that stored target references release into, once each: what the
+ * runtime resolver counts when it decides whether a mapping has exactly one.
+ */
+export function mappingDestinationProfileIds(
+  targetRefs: ReadonlyArray<Record<string, unknown>>
+): string[] {
+  const profileIds = new Set<string>();
+  for (const targetRef of targetRefs) {
+    const profileId = mappingReferenceProfileId(targetRef);
+    const side = referenceString(targetRef.side);
+    if (profileId && (!side || side === 'destination')) {
+      profileIds.add(normalizeDestinationProfileReference(profileId));
+    }
+  }
+  return [...profileIds];
+}
+
+/**
  * The whole-path aliases of the subject's own keys (`sub` is the id), and the snake_case names of
  * its parts, as a path's first segment may spell them. Maps, not objects: a key such as
  * `constructor` (which a custom field may be named) must not find a member of Object.prototype.
@@ -75,6 +134,47 @@ function namespacedSubjectPath(ref: Pick<MappingSourceReference, 'namespace' | '
       // authrim.profile, authrim.claim, oidc.claim, the catalog's own namespace, and any other.
       return ref.path;
   }
+}
+
+/**
+ * The parts of the subject that a tenant defines the keys of (custom claims, custom fields and
+ * attributes). A Mapping Set the platform owns is shared by every tenant, so it cannot name a key
+ * that only one tenant defines.
+ */
+const TENANT_DEFINED_SUBJECT_ROOTS: ReadonlySet<string> = new Set([
+  'customClaims',
+  'customFields',
+  'attributes',
+]);
+
+/**
+ * Whether a reference reads (as a source) one of the subject's tenant-defined parts, by whatever
+ * spelling: a namespace of that part (`authrim.custom_claims`, `custom_fields`, ...) or a path
+ * that starts with it (`custom_claims.x`). Decided by where the value is read from
+ * (mappingSourceSubjectPath), so it cannot drift from what the attribute release reads.
+ */
+export function readsTenantDefinedSubjectPart(
+  ref: Pick<MappingSourceReference, 'namespace' | 'path'>
+): boolean {
+  const readsFrom = mappingSourceSubjectPath(ref);
+  const separator = readsFrom.indexOf('.');
+  return TENANT_DEFINED_SUBJECT_ROOTS.has(
+    separator < 0 ? readsFrom : readsFrom.slice(0, separator)
+  );
+}
+
+/**
+ * Whether a namespace alone is one of the subject's tenant-defined parts. Used for a reference
+ * that is not read as a source (a destination), whose path is a name of the destination's own
+ * and so says nothing about the subject.
+ */
+export function isTenantDefinedSubjectNamespace(namespace: string): boolean {
+  const readsFrom = mappingSourceSubjectPath({ namespace, path: 'x' });
+  return (
+    readsFrom.startsWith('customClaims.') ||
+    readsFrom.startsWith('customFields.') ||
+    readsFrom.startsWith('attributes.')
+  );
 }
 
 /**

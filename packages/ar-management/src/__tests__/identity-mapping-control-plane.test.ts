@@ -4858,6 +4858,7 @@ describe('identity mapping control plane Admin API handlers', () => {
         {
           id: 'policy_1',
           tenantId: 'tenant_a',
+          owner: 'tenant',
           fieldMappingKey: 'default',
           displayName: 'Default field mapping set',
           description: null,

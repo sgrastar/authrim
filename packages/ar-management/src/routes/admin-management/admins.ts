@@ -24,6 +24,7 @@ import {
   adminAuthMiddleware,
   ADMIN_PERMISSIONS,
   hasAdminPermission,
+  hasGlobalAdminPermission,
   requireDedicatedAdminDatabaseAdapter,
   type AdminUser,
 } from '@authrim/ar-lib-core';
@@ -629,7 +630,7 @@ adminUsersRouter.post('/:id/roles', async (c) => {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INVALID_REQUEST);
     }
 
-    if (normalizedScope.scopeType === 'global' && !hasAdminPermission(permissions, '*')) {
+    if (normalizedScope.scopeType === 'global' && !hasGlobalAdminPermission(authContext, '*')) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);
     }
 

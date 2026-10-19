@@ -5,14 +5,20 @@
  * no such tables), as in a deployment with separate databases.
  */
 
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { Env } from '@authrim/ar-lib-core';
+import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest';
+import { resetSwallowedIdentityMappingFailureThrottle, type Env } from '@authrim/ar-lib-core';
 
 const ADMIN_MARKER_SQL = 'SELECT marker FROM admin_database_marker';
 const mockIntrospectTokenFromContext = vi.hoisted(() => vi.fn());
 const mockGetClientCached = vi.hoisted(() => vi.fn());
 const mockResolveEffectiveSettings = vi.hoisted(() => vi.fn());
 const mappingLookups = vi.hoisted(() => ({ found: [] as boolean[] }));
+// The Destination Profile the tenant-wide mapping carries, and whether the user has agreed to
+// release its fields. Unset: the profile and the agreement the first tests below use.
+const profileFixture = vi.hoisted(() => ({
+  claims: undefined as Array<Record<string, unknown>> | undefined,
+  selection: 'all' as 'all' | 'none',
+}));
 
 vi.mock('@authrim/ar-lib-core', async () => {
   const actual = await vi.importActual('@authrim/ar-lib-core');
@@ -79,7 +85,7 @@ vi.mock('@authrim/ar-lib-core/services/destination-profile-consent', async () =>
   return {
     ...actual,
     filterOidcClaimsByDestinationConsent: (input: { claims: Record<string, unknown> }) => {
-      const claims = [
+      const claims = profileFixture.claims ?? [
         { claimName: 'sub', required: true, surfaces: ['id_token', 'userinfo'] },
         { claimName: 'name', surfaces: ['userinfo'] },
         { claimName: 'email', surfaces: ['id_token'] },
@@ -93,13 +99,15 @@ vi.mock('@authrim/ar-lib-core/services/destination-profile-consent', async () =>
                 version_id: 'version-1',
                 schema_json: JSON.stringify({ claims }),
               }
-            : {
-                id: 'consent-1',
-                released_claims_json: JSON.stringify(claims.map((claim) => claim.claimName)),
-                released_attributes_json: null,
-                evidence_json: '{}',
-                created_at: 1,
-              },
+            : profileFixture.selection === 'none'
+              ? null
+              : {
+                  id: 'consent-1',
+                  released_claims_json: JSON.stringify(claims.map((claim) => claim.claimName)),
+                  released_attributes_json: null,
+                  evidence_json: '{}',
+                  created_at: 1,
+                },
       };
       return (actual.filterOidcClaimsByDestinationConsent as (i: unknown) => unknown)({
         ...input,
@@ -191,6 +199,8 @@ describe('UserInfo and the Admin database', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mappingLookups.found = [];
+    profileFixture.claims = undefined;
+    profileFixture.selection = 'all';
     mockResolveEffectiveSettings.mockResolvedValue({ 'oauth.userinfo_require_openid': false });
     mockGetClientCached.mockResolvedValue({ client_id: 'client-1', identity_mapping: null });
     mockIntrospectTokenFromContext.mockResolvedValue({
@@ -217,5 +227,98 @@ describe('UserInfo and the Admin database', () => {
     expect(mappingLookups.found).toEqual([false]);
     expect(body).toMatchObject({ email: 'test@example.com' });
     expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining('DB_ADMIN is not bound'));
+  });
+});
+
+/**
+ * CURRENT BEHAVIOR, documented as it is (field mapping tiers, stage 0). Not the intended behavior:
+ * stage 2 reverses these assertions.
+ *
+ * The app's `identity_mapping` is NULL, yet the tenant-wide activation applies to it (the mapping
+ * lookup above names no Mapping Set). With the standard claims listed as optional in its
+ * Destination Profile (the 2026-10-10 shape), UserInfo answers only `sub` until the user has
+ * selected the fields; and a Worker without DB_ADMIN answers every claim the scopes release,
+ * because it cannot read the mapping: its UserInfo then differs from the ID token that the
+ * authorization endpoint (which has DB_ADMIN) held to the mapping.
+ */
+describe('[current behavior, reversed in stage 2] UserInfo of an app with no Mapping Set', () => {
+  let errorSpy: MockInstance<typeof console.error>;
+  const swallowed = () =>
+    errorSpy.mock.calls
+      .map(([line]: unknown[]) => {
+        try {
+          return JSON.parse(String(line)) as Record<string, unknown>;
+        } catch {
+          return {};
+        }
+      })
+      .filter((entry) => entry.action === 'identity_mapping_resolution_swallowed');
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mappingLookups.found = [];
+    resetSwallowedIdentityMappingFailureThrottle();
+    errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    mockResolveEffectiveSettings.mockResolvedValue({ 'oauth.userinfo_require_openid': false });
+    mockGetClientCached.mockResolvedValue({ client_id: 'client-1', identity_mapping: null });
+    mockIntrospectTokenFromContext.mockResolvedValue({
+      valid: true,
+      claims: { sub: 'user-123', client_id: 'client-1', scope: 'openid email profile' },
+    });
+    profileFixture.claims = [
+      { claimName: 'sub', required: true, surfaces: ['id_token', 'userinfo'] },
+      { claimName: 'name', surfaces: ['userinfo'], requiredScopes: ['profile'] },
+      { claimName: 'email', surfaces: ['userinfo'], requiredScopes: ['email'] },
+      { claimName: 'email_verified', surfaces: ['userinfo'], requiredScopes: ['email'] },
+    ];
+    profileFixture.selection = 'none';
+  });
+  afterEach(() => {
+    errorSpy.mockRestore();
+    profileFixture.claims = undefined;
+    profileFixture.selection = 'all';
+  });
+
+  it('with DB_ADMIN, holds the response to the tenant-wide mapping: no optional claim before the user selects it', async () => {
+    const { body, status } = await userinfo({ DB_ADMIN: fakeD1('admin') as never });
+
+    expect(status).toBe(200);
+    expect(mappingLookups.found).toEqual([true]);
+    expect(body).toEqual({ sub: 'user-123' });
+    expect(swallowed()).toEqual([]);
+  });
+
+  it('with DB_ADMIN, answers the claims once the user has selected the profile’s fields', async () => {
+    profileFixture.selection = 'all';
+
+    const { body } = await userinfo({ DB_ADMIN: fakeD1('admin') as never });
+
+    expect(body).toMatchObject({ sub: 'user-123', name: 'Test User', email: 'test@example.com' });
+  });
+
+  it('without DB_ADMIN, answers every claim the scopes release (it cannot read the mapping), and records why', async () => {
+    const { body, status } = await userinfo({});
+
+    expect(status).toBe(200);
+    expect(mappingLookups.found).toEqual([false]);
+    expect(body).toMatchObject({ sub: 'user-123', name: 'Test User', email: 'test@example.com' });
+    expect(swallowed()).toEqual([
+      expect.objectContaining({
+        level: 'error',
+        tenantId: 'default',
+        clientId: 'client-1',
+        failure_kind: 'admin_database_unbound',
+        reason_code: 'no_such_table',
+      }),
+    ]);
+  });
+
+  it('records the failure without the error message or the user', async () => {
+    await userinfo({});
+
+    const line = JSON.stringify(swallowed());
+    expect(line).not.toContain('field_mapping_activations');
+    expect(line).not.toContain('test@example.com');
+    expect(line).not.toContain('user-123');
   });
 });

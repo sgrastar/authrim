@@ -27,6 +27,7 @@ import {
   KV_NAMESPACES,
 } from './naming.js';
 import type { AuthrimConfig, D1Location, D1Jurisdiction } from './config.js';
+import { isReservedTenantId } from './tenant-id.js';
 import type { DnsOwnershipEntry, DnsOwnershipRole, DnsRecordRestoreSnapshot } from './lock.js';
 import type {
   ProvisioningResourceCheckpoint,
@@ -4693,6 +4694,135 @@ function parseD1RowsFromWranglerResult<T extends Record<string, unknown>>(
   throw new SyntaxError('Wrangler stdout and stderr did not contain a valid D1 query result');
 }
 
+/**
+ * The rows of a D1 result that reports success, or an error. Unlike normalizeD1QueryRows, an
+ * empty list, an entry that does not say `success: true`, and a failure response are all errors,
+ * so "no rows" can only mean a query that ran and found nothing.
+ */
+function normalizeD1QueryRowsStrict<T extends Record<string, unknown>>(payload: unknown): T[] {
+  const entries = Array.isArray(payload)
+    ? payload
+    : payload && typeof payload === 'object' && 'result' in payload
+      ? (payload as { success?: unknown; result?: unknown }).success === true
+        ? (payload as { result?: unknown }).result
+        : undefined
+      : undefined;
+  if (!Array.isArray(entries) || entries.length !== 1) {
+    throw new TypeError('D1 query response did not contain exactly one successful result');
+  }
+  for (const entry of entries) {
+    if (!entry || typeof entry !== 'object' || (entry as { success?: unknown }).success !== true) {
+      throw new TypeError('D1 query response contained a result that was not successful');
+    }
+  }
+  return normalizeD1QueryRows<T>(entries);
+}
+
+/**
+ * The independent JSON values in `text`: each `[...]` or `{...}` that parses, taken whole and in
+ * order, with whatever lies inside one never listed again as a value of its own.
+ */
+function findIndependentJsonFragments(text: string): unknown[] {
+  const fragments: unknown[] = [];
+  let index = 0;
+  while (index < text.length) {
+    const open = text[index];
+    const close = open === '[' ? ']' : open === '{' ? '}' : null;
+    if (!close) {
+      index += 1;
+      continue;
+    }
+    let end = -1;
+    let depth = 0;
+    let inString = false;
+    for (let cursor = index; cursor < text.length; cursor += 1) {
+      const char = text[cursor];
+      if (inString) {
+        if (char === '\\') cursor += 1;
+        else if (char === '"') inString = false;
+      } else if (char === '"') {
+        inString = true;
+      } else if (char === '[' || char === '{') {
+        depth += 1;
+      } else if (char === ']' || char === '}') {
+        depth -= 1;
+        if (depth === 0) {
+          end = cursor;
+          break;
+        }
+      }
+    }
+    if (end < 0) {
+      index += 1;
+      continue;
+    }
+    try {
+      fragments.push(JSON.parse(text.slice(index, end + 1)));
+      index = end + 1;
+    } catch {
+      index += 1;
+    }
+  }
+  return fragments;
+}
+
+/**
+ * Reads the answer from Wrangler's output, stdout and stderr both. Every independent JSON value
+ * in either must be a successful result: one that reports a failure (or is not a D1 result at
+ * all) makes the whole output a failure, whatever else it carries. The answer is the single
+ * value that is left; two results, even agreeing ones, are refused.
+ */
+function parseD1RowsFromWranglerResultStrict<T extends Record<string, unknown>>(
+  result: D1ExecuteCommandResult
+): T[] {
+  const fragments = [result.stdout, result.stderr].flatMap((output) =>
+    findIndependentJsonFragments(stripAnsiSequences(output ?? ''))
+  );
+  if (fragments.length === 0) {
+    throw new SyntaxError('Wrangler output did not contain a valid D1 query result');
+  }
+  const rows = fragments.map((fragment) => normalizeD1QueryRowsStrict<T>(fragment));
+  if (rows.length !== 1) {
+    throw new SyntaxError('Wrangler output contained more than one D1 query result');
+  }
+  return rows[0];
+}
+
+/**
+ * queryD1Rows for a check whose "found nothing" answer lets a write go ahead. A result counts
+ * only when D1 reported a successful result entry; an empty list, a failure response and output
+ * that cannot be parsed all throw (the Cloudflare API is tried only when Wrangler could not
+ * answer, and held to the same rule).
+ */
+export async function queryD1RowsStrict<T extends Record<string, unknown>>(
+  dbName: string,
+  sql: string,
+  options: { target?: LocalWranglerTarget } = {}
+): Promise<T[]> {
+  if (options.target) {
+    const result = await executeD1Command(dbName, sql, { json: true, target: options.target });
+    return parseD1RowsFromWranglerResultStrict<T>(result);
+  }
+  let wranglerError: unknown;
+  try {
+    const result = await executeD1Command(dbName, sql, { json: true });
+    return parseD1RowsFromWranglerResultStrict<T>(result);
+  } catch (error) {
+    wranglerError = error;
+  }
+  try {
+    const apiRows = await queryD1RowsViaApi<T>(dbName, sql, normalizeD1QueryRowsStrict<T>);
+    if (apiRows) return apiRows;
+  } catch (apiError) {
+    const wranglerMessage = describeInventoryError(wranglerError, 'unknown Wrangler error');
+    const apiMessage = describeInventoryError(apiError, 'unknown API error');
+    throw new Error(
+      `Could not query D1 via Wrangler (${wranglerMessage}) or the Cloudflare API (${apiMessage})`
+    );
+  }
+  throw wranglerError;
+}
+
 export async function queryD1Rows<T extends Record<string, unknown>>(
   dbName: string,
   sql: string,
@@ -4726,7 +4856,8 @@ export async function queryD1Rows<T extends Record<string, unknown>>(
 
 async function queryD1RowsViaApi<T extends Record<string, unknown>>(
   databaseIdentifier: string,
-  sql: string
+  sql: string,
+  normalize: (payload: unknown) => T[] = normalizeD1QueryRows<T>
 ): Promise<T[] | null> {
   const credentials = await resolveCloudflareInventoryCredentials();
   if (!credentials) return null;
@@ -4762,7 +4893,7 @@ async function queryD1RowsViaApi<T extends Record<string, unknown>>(
     throw new Error(`Cloudflare D1 query failed (${response.status})`);
   }
 
-  return normalizeD1QueryRows<T>(data);
+  return normalize(data);
 }
 
 /**
@@ -5597,6 +5728,21 @@ function sqlString(value: string): string {
   return `'${value.replace(/'/g, "''")}'`;
 }
 
+/** The initial tenant is created (or renamed to) under this ID, so a reserved one must stop here. */
+function assertInitialTenantIdNotReserved(tenantId: string): void {
+  if (isReservedTenantId(tenantId)) {
+    throw new Error(
+      `Initial tenant ID "${tenantId.trim()}" is reserved for platform-wide data; choose another tenant ID`
+    );
+  }
+}
+
+/**
+ * Read-only check for tenants already registered under the reserved platform ID, as the tenant ID
+ * or as the tenant code. Such a row would make platform-wide rows look like that tenant's.
+ */
+export const RESERVED_TENANT_ROWS_QUERY_SQL = `SELECT id, tenant_code FROM tenants WHERE lower(trim(id)) = 'platform' OR lower(trim(tenant_code)) = 'platform'`;
+
 /**
  * Build idempotent SQL that guarantees the configured initial tenant exists.
  *
@@ -5607,6 +5753,7 @@ function sqlString(value: string): string {
 export function buildInitialTenantBootstrapSql(config: AuthrimConfig): string {
   const sqlExpr = getPortableSqlExpressions('sqlite');
   const tenantId = config.tenant?.name?.trim() || 'default';
+  assertInitialTenantIdNotReserved(tenantId);
   const tenantCode = tenantId;
   const displayName = config.tenant?.displayName?.trim() || 'Initial Tenant';
   const placementPolicy = config.tenant?.placementPolicy ?? 'tenant_exclusive';
@@ -5839,6 +5986,7 @@ WHERE tenant_id = ${tenantIdSql}
  */
 export function buildInitialAdminRolesBootstrapSql(config: AuthrimConfig): string {
   const tenantId = config.tenant?.name?.trim() || 'default';
+  assertInitialTenantIdNotReserved(tenantId);
   const tenantIdSql = sqlString(tenantId);
 
   return `
@@ -5949,9 +6097,28 @@ export async function ensureInitialTenantInD1(
 ): Promise<InitialTenantBootstrapResult> {
   const dbName = options.databaseIdentifier?.trim() || getD1DatabaseName(env, 'core-db');
   const tenantId = config.tenant?.name?.trim() || 'default';
+  if (isReservedTenantId(tenantId)) {
+    const error = `Initial tenant ID "${tenantId}" is reserved for platform-wide data; choose another tenant ID`;
+    onProgress?.(`  ❌ Initial tenant bootstrap refused: ${error}`);
+    return { success: false, error };
+  }
   const sql = buildInitialTenantBootstrapSql(config);
 
   try {
+    // Every setup, update and deploy path ends up here, so this is where a tenant that already
+    // holds the reserved ID or code is found, before anything is written.
+    const reservedRows = await queryD1RowsStrict<{ id: unknown; tenant_code: unknown }>(
+      dbName,
+      RESERVED_TENANT_ROWS_QUERY_SQL,
+      { target: options.target }
+    );
+    if (reservedRows.length > 0) {
+      const error =
+        'A tenant is registered with the reserved ID or code "platform" in ' +
+        `${dbName}. Platform-wide data uses that ID, so rename or remove the tenant before continuing.`;
+      onProgress?.(`  ❌ Initial tenant bootstrap refused: ${error}`);
+      return { success: false, error };
+    }
     onProgress?.(`🔧 Ensuring initial tenant exists in ${dbName} (${tenantId})...`);
     const { stdout, stderr } = await executeD1Command(dbName, sql, {
       onProgress,
@@ -6143,7 +6310,7 @@ type SeededRuntimeProfile = {
   payload: Record<string, unknown>;
 };
 
-type DefaultCanonicalCatalogEntrySeed = {
+export type DefaultCanonicalCatalogEntrySeed = {
   stableFieldId: string;
   path: string;
   valueType: string;
@@ -6163,7 +6330,11 @@ const DEFAULT_CANONICAL_CATALOG_VERSION_LABEL = '2026-05-30';
 const DEFAULT_CANONICAL_CATALOG_BUNDLE_HASH =
   '0000000000000000000000000000000000000000000000000000000000000001';
 
-const DEFAULT_CANONICAL_CATALOG_ENTRIES: DefaultCanonicalCatalogEntrySeed[] = [
+/**
+ * The standard canonical fields. Migration admin/d1/041_platform_default_canonical_catalog.sql
+ * seeds the same fields for the platform namespace; a test keeps the two equal.
+ */
+export const DEFAULT_CANONICAL_CATALOG_ENTRIES: DefaultCanonicalCatalogEntrySeed[] = [
   {
     stableFieldId: 'field.canonical.name',
     path: 'name',
