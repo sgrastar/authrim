@@ -24,6 +24,7 @@ import {
   getLogger,
   getPrimaryTenantId,
   getTenantIdFromContext,
+  isReservedPlatformTenantId,
   // Contract provisioning
   TENANT_POLICY_PRESETS,
   type TenantContract,
@@ -339,7 +340,8 @@ const CreateTenantSchema = z.object({
     .regex(
       TENANT_ID_REGEX,
       'id must start and end with a lowercase letter or digit (hyphens allowed in between)'
-    ),
+    )
+    .refine((id) => !isReservedPlatformTenantId(id), 'id is reserved'),
   name: z.string().min(1).max(200),
   tenant_code: z
     .string()
@@ -349,6 +351,7 @@ const CreateTenantSchema = z.object({
       TENANT_ID_REGEX,
       'tenant_code must start and end with a lowercase letter or digit (hyphens allowed in between)'
     )
+    .refine((code) => !isReservedPlatformTenantId(code), 'tenant_code is reserved')
     .optional(),
   description: z.string().max(500).optional(),
   isolation_policy: z.enum(['shared_pool', 'tenant_exclusive']).default('tenant_exclusive'),
@@ -365,6 +368,7 @@ const UpdateTenantSchema = z
         TENANT_ID_REGEX,
         'tenant_code must start and end with a lowercase letter or digit (hyphens allowed in between)'
       )
+      .refine((code) => !isReservedPlatformTenantId(code), 'tenant_code is reserved')
       .optional(),
     description: z.string().max(500).nullable().optional(),
   })

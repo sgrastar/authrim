@@ -7,8 +7,21 @@ export const TENANT_ID_STRICT_PATTERN = /^[a-z][a-z0-9-]{0,62}$/;
 const RANDOM_TENANT_ALPHABET = 'abcdefghjkmnpqrstuvwxyz';
 const RANDOM_TENANT_BODY_LENGTH = 12;
 
+/**
+ * The tenant ID the Admin database reserves for platform-wide rows. No tenant is created under it.
+ * This repeats @authrim/ar-lib-core's PLATFORM_MAPPING_TENANT_ID and isReservedPlatformTenantId
+ * (this file stays free of that package so the Web setup UI can mirror it); a test pins the two
+ * to the same rule.
+ */
+export const RESERVED_PLATFORM_TENANT_ID = 'platform';
+
+/** Whether `value` names the reserved platform ID once case and surrounding whitespace are ignored. */
+export function isReservedTenantId(value: string): boolean {
+  return value.trim().toLowerCase() === RESERVED_PLATFORM_TENANT_ID;
+}
+
 export function isValidTenantId(value: string): boolean {
-  return TENANT_ID_STRICT_PATTERN.test(value);
+  return TENANT_ID_STRICT_PATTERN.test(value) && !isReservedTenantId(value);
 }
 
 export function generateTenantIdFromBytes(

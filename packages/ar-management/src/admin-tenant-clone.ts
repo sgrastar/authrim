@@ -12,6 +12,7 @@ import {
   createAuthContextFromHono,
   createErrorResponse,
   getLogger,
+  isReservedPlatformTenantId,
   requireAdminDatabaseAdapter,
   resolveAuthCorePersistenceAdapterFromEnv,
   seedBuiltinProfileClaimSchemas,
@@ -62,8 +63,19 @@ const CloneSourceSnapshotSchema = z
 
 const TenantCloneRequestSchema = z
   .object({
-    id: z.string().min(1).max(63).regex(TENANT_ID_REGEX),
-    tenant_code: z.string().min(1).max(63).regex(TENANT_ID_REGEX).optional(),
+    id: z
+      .string()
+      .min(1)
+      .max(63)
+      .regex(TENANT_ID_REGEX)
+      .refine((id) => !isReservedPlatformTenantId(id), 'id is reserved'),
+    tenant_code: z
+      .string()
+      .min(1)
+      .max(63)
+      .regex(TENANT_ID_REGEX)
+      .refine((code) => !isReservedPlatformTenantId(code), 'tenant_code is reserved')
+      .optional(),
     name: z.string().min(1).max(200),
     description: z.string().max(500).optional(),
     isolation_policy: z.enum(['shared_pool', 'tenant_exclusive']).default('tenant_exclusive'),

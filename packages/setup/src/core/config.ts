@@ -6,7 +6,7 @@
  */
 
 import { z } from 'zod';
-import { TENANT_ID_STRICT_PATTERN } from './tenant-id.js';
+import { isReservedTenantId, TENANT_ID_STRICT_PATTERN } from './tenant-id.js';
 
 // =============================================================================
 // URL Configuration
@@ -96,10 +96,16 @@ export const EnvironmentConfigSchema = z.object({
  * - uuid: Standard UUID v4 format
  */
 export const UserIdFormatSchema = z.enum(['nanoid', 'uuid']).default('nanoid');
-export const TenantIdSchema = z.string().trim().min(1).max(63).regex(TENANT_ID_STRICT_PATTERN, {
-  message:
-    'Tenant ID must start with a lowercase letter and contain only lowercase letters, numbers, and hyphens',
-});
+export const TenantIdSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(63)
+  .regex(TENANT_ID_STRICT_PATTERN, {
+    message:
+      'Tenant ID must start with a lowercase letter and contain only lowercase letters, numbers, and hyphens',
+  })
+  .refine((id) => !isReservedTenantId(id), { message: 'Tenant ID "platform" is reserved' });
 
 export const TenantConfigSchema = z.object({
   /** Default tenant identifier */

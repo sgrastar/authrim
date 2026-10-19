@@ -1479,6 +1479,31 @@ describe('admin tenant clone', () => {
     expect(mocks.provision).not.toHaveBeenCalled();
   });
 
+  it.each(['platform', 'Platform', 'PLATFORM', ' platform', 'platform ', '\tplatform\n'])(
+    'rejects the reserved platform ID %j for the new tenant before reading the source',
+    async (id) => {
+      const response = await adminTenantCloneHandler(context({ id, name: 'Reserved' }, {}));
+
+      expect(response.status).toBe(400);
+      expect(mocks.source.queryOne).not.toHaveBeenCalled();
+      expect(mocks.beginProvisioning).not.toHaveBeenCalled();
+      expect(mocks.provision).not.toHaveBeenCalled();
+    }
+  );
+
+  it.each(['platform', 'Platform', ' platform', 'platform '])(
+    'rejects the reserved platform tenant code %j before reading the source',
+    async (tenantCode) => {
+      const response = await adminTenantCloneHandler(
+        context({ id: 'destination', name: 'Reserved', tenant_code: tenantCode }, {})
+      );
+
+      expect(response.status).toBe(400);
+      expect(mocks.source.queryOne).not.toHaveBeenCalled();
+      expect(mocks.beginProvisioning).not.toHaveBeenCalled();
+    }
+  );
+
   it('rejects malformed JSON without provisioning a tenant', async () => {
     const c = context({}, {});
     (c as { req: { json: ReturnType<typeof vi.fn> } }).req.json.mockRejectedValue(
