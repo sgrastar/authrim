@@ -312,7 +312,7 @@
               "checksum": "6c94ef0bccf3b4e85d7ed2fb86f125a1718c17142ec5bec6af6220e26dafb720"
             },
             {
-              "path": "043_tenant_backup_input_frames.sql",
+              "path": "045_tenant_backup_input_frames.sql",
               "checksum": "bede336778f791a467ec2653c1042942778117c28a7e9dfeeac141099f3e0275"
             }
           ]
@@ -821,7 +821,7 @@
           "checksum": "6c94ef0bccf3b4e85d7ed2fb86f125a1718c17142ec5bec6af6220e26dafb720"
         },
         {
-          "path": "043_tenant_backup_input_frames.sql",
+          "path": "045_tenant_backup_input_frames.sql",
           "checksum": "bede336778f791a467ec2653c1042942778117c28a7e9dfeeac141099f3e0275"
         }
       ]

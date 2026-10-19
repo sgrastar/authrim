@@ -610,7 +610,7 @@ describe('decode_input with a durable frame index', () => {
       '004_tenant_backup_validation_index',
       '008_tenant_backup_retry_state',
       '037_tenant_backup_container_inputs',
-      '043_tenant_backup_input_frames',
+      '045_tenant_backup_input_frames',
     ])
       sql.exec(
         readFileSync(
