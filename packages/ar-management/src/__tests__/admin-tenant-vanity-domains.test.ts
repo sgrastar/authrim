@@ -103,7 +103,13 @@ function domain(overrides: Record<string, unknown> = {}) {
   };
 }
 
-type Auth = { userId: string; roles: string[]; permissions: string[] };
+type Auth = {
+  userId: string;
+  roles: string[];
+  permissions: string[];
+  globalRoles?: string[];
+  tenantScope?: string[];
+};
 
 function context(
   options: {
@@ -116,7 +122,7 @@ function context(
   } = {}
 ) {
   const query = options.query ?? {};
-  const auth =
+  const given =
     options.auth === undefined
       ? {
           userId: 'admin-1',
@@ -124,6 +130,15 @@ function context(
           permissions: Object.values(ADMIN_PERMISSIONS),
         }
       : options.auth;
+  // A platform role in this fixture comes from a global assignment.
+  const platformRole = given?.roles.some(
+    (role) => role === 'system_admin' || role === 'super_admin'
+  );
+  const auth = given && {
+    globalRoles: platformRole ? given.roles : [],
+    tenantScope: platformRole ? ['*'] : ['tenant-a'],
+    ...given,
+  };
   return {
     get: vi.fn((name: string) => (name === 'adminAuth' ? auth : undefined)),
     req: {
@@ -204,6 +219,24 @@ describe('tenant vanity domain administration', () => {
       const response = await handler(context());
       expect(response.status).toBe(403);
     });
+
+    it.each([['system_admin'], ['super_admin']])(
+      'denies %s held for one tenant only: platform domains are across tenants',
+      async (role) => {
+        const response = await listPlatformTenantVanityDomainsHandler(
+          context({
+            auth: {
+              userId: 'system-1',
+              roles: [role],
+              permissions: [],
+              globalRoles: [],
+              tenantScope: ['tenant-a'],
+            },
+          })
+        );
+        expect(response.status).toBe(403);
+      }
+    );
 
     it.each([['system_admin'], ['super_admin']])(
       'accepts %s as platform authority',

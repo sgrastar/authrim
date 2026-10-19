@@ -15,6 +15,7 @@ import {
   encryptValue,
   getTenantIdFromContext,
   hasAdminPermission,
+  hasGlobalPlatformAuthority,
   requireDedicatedAdminDatabaseAdapter,
   TenantDatabaseRegistryRepository,
 } from '@authrim/ar-lib-core';
@@ -265,12 +266,9 @@ function hasPermission(authContext: AdminAuthContext, permission: string): boole
   return hasAdminPermission(authContext.permissions || [], permission);
 }
 
+// Database connections are platform-wide, so the authority has to come from a global assignment.
 function hasPlatformAuthority(authContext: AdminAuthContext): boolean {
-  return (
-    hasAdminPermission(authContext.permissions || [], ADMIN_PERMISSIONS.ALL) ||
-    (authContext.roles || []).includes('super_admin') ||
-    (authContext.roles || []).includes('system_admin')
-  );
+  return hasGlobalPlatformAuthority(authContext);
 }
 
 function parseConfig(config: unknown): Record<string, unknown> {

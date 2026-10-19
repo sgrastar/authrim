@@ -636,6 +636,72 @@ describe('admin tenant clone', () => {
     );
   });
 
+  describe('the default Mapping Set of the identity-mapping category', () => {
+    const KEY = 'identity_mapping.oidc_default_set_id';
+    const copyContext = { targetTenantId: 'destination', includeClients: false };
+    const copy = (record: Record<string, unknown>, keptMappingSetIds?: string[]) =>
+      JSON.parse(
+        sanitizeCopiedSettingsValue('identity-mapping', JSON.stringify(record), false, {
+          ...copyContext,
+          keptMappingSetIds: keptMappingSetIds && new Set(keptMappingSetIds),
+        })!
+      );
+
+    it('drops a set ID unless it was found to be the platform’s', () => {
+      expect(copy({ [KEY]: 'set-source' })).toEqual({});
+      expect(copy({ [KEY]: 'set-source' }, [])).toEqual({});
+      // Only the set the document names counts.
+      expect(copy({ [KEY]: 'set-source' }, ['set-other'])).toEqual({});
+      expect(copy({ [KEY]: 'set-platform' }, ['set-platform'])).toEqual({ [KEY]: 'set-platform' });
+    });
+
+    it('keeps none, which names no set, and drops a value that is not a string', () => {
+      expect(copy({ [KEY]: 'none' })).toEqual({ [KEY]: 'none' });
+      for (const value of [false, null, 1, {}, ['set-platform']]) {
+        expect(copy({ [KEY]: value }, ['set-platform']), JSON.stringify(value)).toEqual({});
+      }
+    });
+
+    const cloneWith = async (
+      setId: string,
+      owners: Record<string, string | null | Error>
+    ): Promise<string | undefined> => {
+      mocks.admin.queryOne.mockImplementation(async (sql: string, params?: unknown[]) => {
+        if (!sql.includes('FROM field_mapping_sets')) return null;
+        const owner = owners[String(params?.[0])];
+        if (owner instanceof Error) throw owner;
+        return owner ? { tenant_id: owner } : null;
+      });
+      const settings = kvNamespace({
+        'settings:tenant:source:identity-mapping': JSON.stringify({ [KEY]: setId }),
+      });
+      const response = await adminTenantCloneHandler(
+        context(
+          { id: 'destination', name: 'Destination' },
+          { SETTINGS: settings, AUTHRIM_CONFIG: kvNamespace(), ENVIRONMENT: 'test' }
+        )
+      );
+      expect(response.status).toBe(201);
+      return settings.values.get('settings:tenant:destination:identity-mapping');
+    };
+
+    it('copies a default that names a set the platform owns, and none', async () => {
+      expect(
+        JSON.parse((await cloneWith('set-platform', { 'set-platform': 'platform' }))!)
+      ).toEqual({ [KEY]: 'set-platform' });
+      expect(JSON.parse((await cloneWith('none', {}))!)).toEqual({ [KEY]: 'none' });
+    });
+
+    it.each([
+      ['a set the source tenant owns', { 'set-source': 'source' }],
+      ['a set another tenant owns', { 'set-source': 'tenant-b' }],
+      ['a set that cannot be found', {}],
+      ['a set whose owner cannot be looked up', { 'set-source': new Error('d1 unavailable') }],
+    ])('does not copy a default that names %s', async (_name, owners) => {
+      expect(JSON.parse((await cloneWith('set-source', owners))!)).toEqual({});
+    });
+  });
+
   it('starts the Control-plane saga instead of reserving a preallocated clone slot', async () => {
     const response = await publicAdminTenantCloneHandler(
       context(
@@ -1478,6 +1544,31 @@ describe('admin tenant clone', () => {
     expect(response.status).toBe(400);
     expect(mocks.provision).not.toHaveBeenCalled();
   });
+
+  it.each(['platform', 'Platform', 'PLATFORM', ' platform', 'platform ', '\tplatform\n'])(
+    'rejects the reserved platform ID %j for the new tenant before reading the source',
+    async (id) => {
+      const response = await adminTenantCloneHandler(context({ id, name: 'Reserved' }, {}));
+
+      expect(response.status).toBe(400);
+      expect(mocks.source.queryOne).not.toHaveBeenCalled();
+      expect(mocks.beginProvisioning).not.toHaveBeenCalled();
+      expect(mocks.provision).not.toHaveBeenCalled();
+    }
+  );
+
+  it.each(['platform', 'Platform', ' platform', 'platform '])(
+    'rejects the reserved platform tenant code %j before reading the source',
+    async (tenantCode) => {
+      const response = await adminTenantCloneHandler(
+        context({ id: 'destination', name: 'Reserved', tenant_code: tenantCode }, {})
+      );
+
+      expect(response.status).toBe(400);
+      expect(mocks.source.queryOne).not.toHaveBeenCalled();
+      expect(mocks.beginProvisioning).not.toHaveBeenCalled();
+    }
+  );
 
   it('rejects malformed JSON without provisioning a tenant', async () => {
     const c = context({}, {});

@@ -63,6 +63,9 @@ function createApp(input?: {
       authMethod: 'session',
       actorType: input?.actorType ?? 'human',
       roles: input?.roles ?? ['system_admin'],
+      // The roles of this fixture's Admin come from a global assignment.
+      globalRoles: input?.roles ?? ['system_admin'],
+      tenantScope: ['*'],
       permissions: [],
     });
     await next();

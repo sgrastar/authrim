@@ -224,6 +224,10 @@ export const arSettings: Record<keyof typeof jaSettings, string> = {
 	'set.k.session.backchannel_retry_max_delay_ms': 'أطول وقت بين محاولتين',
 	'set.k.session.backchannel_retry_backoff_multiplier': 'معامل إطالة الوقت بين المحاولات',
 
+	'set.k.identity_mapping.oidc_default_set_id': 'مجموعة الربط الافتراضية (OIDC)',
+	'set.k.identity_mapping.oidc_default_set_id.desc':
+		'معرّف مجموعة الربط التي تستخدمها التطبيقات في هذا النطاق إذا لم تختر مجموعة خاصة بها. عدم التعيين يعني عدم وجود إعداد افتراضي، فلا يُطبَّق أي ربط. يمكن للمستأجر إدخال none لتجاهل الإعداد الافتراضي للمنصة أيضًا. يمكن تحديد مجموعة ربط نشطة فقط. يُحفظ هذا الإعداد ويُتحقق منه حاليًا فقط، ولا يستخدمه تسجيل الدخول بعد.',
+
 	'settings.advanced': 'متقدم',
 	'settings.setHere': 'الإعدادات المتجاوزة: {n}',
 	'settings.readOnly.title': 'عرض فقط',

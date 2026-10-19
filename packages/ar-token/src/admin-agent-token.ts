@@ -164,17 +164,6 @@ interface ModeBMachineActor {
   permissions: string[];
 }
 
-function explicitTenantAllowed(
-  scopes: readonly { scopeMode: string; tenantId: string | null }[],
-  tenantId: string
-): boolean {
-  return (
-    scopes.length > 0 &&
-    scopes.every((scope) => scope.scopeMode === 'allow') &&
-    scopes.some((scope) => scope.tenantId === tenantId)
-  );
-}
-
 async function modeALinkedPrincipalPermissionLimit(
   env: Env,
   tenantId: string,
@@ -184,14 +173,9 @@ async function modeALinkedPrincipalPermissionLimit(
   const repository = new AdminMachineAccessRepository(
     requireDedicatedAdminDatabaseAdapter(env, 'admin-agent-mode-a-principal-limit')
   );
-  const [principal, scopes, permissions] = await Promise.all([
-    repository.findPrincipalById(principalId),
-    repository.getPrincipalTenantScopes(principalId),
-    repository.getPrincipalPermissions(principalId),
-  ]);
-  return principal?.status === 'active' && explicitTenantAllowed(scopes, tenantId)
-    ? permissions
-    : null;
+  // One snapshot of the principal: its scope and permissions are those of the same stored state.
+  const limit = await repository.resolveTenantMachineLimit(tenantId, principalId);
+  return limit ? limit.permissions : null;
 }
 
 function linkedPrincipalCoversGrant(
@@ -255,39 +239,12 @@ async function authenticateModeBActor(
   const machine = new AdminMachineAccessRepository(
     requireDedicatedAdminDatabaseAdapter(c.env, 'admin-agent-mode-b-actor')
   );
-  const [principal, credential] = await Promise.all([
-    machine.findPrincipalById(principalId),
-    machine.findCredentialById(credentialId),
-  ]);
-  if (
-    !principal ||
-    !credential ||
-    principal.status !== 'active' ||
-    (credential.status !== 'active' && credential.status !== 'rotating') ||
-    credential.principalId !== principal.id ||
-    principal.clientId !== clientId
-  ) {
+  // One snapshot of the principal and the credential (see `resolveTenantMachineLimit`).
+  const limit = await machine.resolveTenantMachineLimit(tenantId, principalId, credentialId);
+  if (!limit || limit.principal.clientId !== clientId) {
     return null;
   }
-  const [principalPermissions, credentialPermissions, principalScopes, credentialScopes] =
-    await Promise.all([
-      machine.getPrincipalPermissions(principal.id),
-      machine.getCredentialPermissions(credential.id),
-      machine.getPrincipalTenantScopes(principal.id),
-      machine.getCredentialTenantScopes(credential.id),
-    ]);
-  if (
-    !explicitTenantAllowed(principalScopes, tenantId) ||
-    (credentialScopes.length > 0 && !explicitTenantAllowed(credentialScopes, tenantId))
-  ) {
-    return null;
-  }
-  const permissions =
-    credentialPermissions.length === 0
-      ? principalPermissions
-      : principalPermissions.filter((permission) =>
-          credentialPermissions.some((limit) => hasAdminPermission([limit], permission))
-        );
+  const permissions = limit.permissions;
   return { principalId, credentialId, clientId, dpopJkt: cnf, permissions };
 }
 

@@ -101,6 +101,9 @@ function buildPlatformGuardApp(roles: string[]) {
       userId: 'admin-1',
       authMethod: 'session',
       roles,
+      // The roles of this fixture's Admin come from a global assignment.
+      globalRoles: roles,
+      tenantScope: ['*'],
       tenantId: 'tenant-a',
       permissions: [],
     });
@@ -128,7 +131,12 @@ describe('adminTenantPolicyMiddleware', () => {
     );
     expect(
       hasPlatformTenantManagementAuthority(
-        { ...machine, permissions: ['admin:tenants:lifecycle:standard'] },
+        {
+          ...machine,
+          permissions: ['admin:tenants:lifecycle:standard'],
+          // A machine token's tenant scope is global, so its permissions are global ones.
+          globalPermissions: ['admin:tenants:lifecycle:standard'],
+        },
         'admin:tenants:lifecycle:standard'
       )
     ).toBe(true);

@@ -141,8 +141,11 @@ export {
 } from './tenant-database-registry';
 export {
   AdminMachineAccessRepository,
+  AdminMachineConflictError,
+  type AdminMachineWriteGuard,
   type AdminMachineActorRef,
   type AdminMachineClientCredential,
+  type AdminMachineGrantSnapshot,
   type AdminMachineCredential,
   type AdminMachineCredentialAlgorithm,
   type AdminMachineCredentialCreateInput,

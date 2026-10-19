@@ -7,6 +7,13 @@ const { mockRepo, mockWriteAdminAuditLog } = vi.hoisted(() => ({
     listPrincipals: vi.fn(),
     findPrincipalById: vi.fn(),
     createPrincipal: vi.fn(),
+    getPrincipalRevision: vi.fn(),
+    getCredentialRevision: vi.fn(),
+    createPrincipalWithGrant: vi.fn(),
+    updatePrincipalWithGrant: vi.fn(),
+    createCredentialWithGrant: vi.fn(),
+    updateCredentialWithGrant: vi.fn(),
+    rotateCredential: vi.fn(),
     updatePrincipal: vi.fn(),
     createCredential: vi.fn(),
     findCredentialById: vi.fn(),
@@ -46,9 +53,12 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
             actorId: 'admin-1',
             roles: [],
             permissions,
+            // A global scope here stands for a global assignment that gives these permissions.
+            globalPermissions: tenantScope.includes('*') ? permissions : [],
             tenantId: 'tenant-a',
             tenantScope,
           });
+          c.set('tenantId', 'tenant-a');
 
           if (
             options?.requirePermissions?.some(
@@ -90,10 +100,12 @@ describe('machineAccessRouter', () => {
     mockRepo.getCredentialPermissions.mockResolvedValue(['admin:agent_grants:*']);
     mockRepo.getCredentialTenantScopes.mockResolvedValue([{ scopeMode: 'all', tenantId: null }]);
     mockRepo.listCredentials.mockResolvedValue([]);
+    mockRepo.getPrincipalRevision.mockResolvedValue('principal-revision');
+    mockRepo.getCredentialRevision.mockResolvedValue('credential-revision');
   });
 
   it('creates a machine principal with permissions and tenant scopes', async () => {
-    mockRepo.createPrincipal.mockResolvedValue({
+    mockRepo.createPrincipalWithGrant.mockResolvedValue({
       id: 'amp_mcp',
       clientId: 'mcp-admin',
       displayName: 'MCP Admin',
@@ -132,20 +144,16 @@ describe('machineAccessRouter', () => {
     );
 
     expect(res.status).toBe(201);
-    expect(mockRepo.createPrincipal).toHaveBeenCalledWith(
+    // The principal, its permissions and its tenant scopes are one write.
+    expect(mockRepo.createPrincipalWithGrant).toHaveBeenCalledWith(
       expect.objectContaining({
         clientId: 'mcp-admin',
         principalType: 'mcp_server',
-      })
-    );
-    expect(mockRepo.setPrincipalPermissions).toHaveBeenCalledWith(
-      'amp_mcp',
-      ['admin:agent_grants:*'],
-      expect.objectContaining({ actorId: 'admin-1' })
-    );
-    expect(mockRepo.setPrincipalTenantScopes).toHaveBeenCalledWith(
-      'amp_mcp',
-      [{ scopeMode: 'all', tenantId: null }],
+      }),
+      {
+        permissions: ['admin:agent_grants:*'],
+        tenantScopes: [{ scopeMode: 'all', tenantId: null }],
+      },
       expect.objectContaining({ actorId: 'admin-1' })
     );
     expect(mockWriteAdminAuditLog).toHaveBeenCalledWith(
@@ -343,7 +351,7 @@ describe('machineAccessRouter', () => {
       kid: id === 'amk_old' ? 'old-kid' : 'new-kid',
       status: id === 'amk_old' ? 'rotating' : 'active',
     }));
-    mockRepo.createCredential.mockResolvedValue({
+    mockRepo.rotateCredential.mockResolvedValue({
       id: 'amk_new',
       principalId: 'amp_mcp',
       kid: 'new-kid',
@@ -356,7 +364,8 @@ describe('machineAccessRouter', () => {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'X-Admin-Permissions': 'admin:machine_access:*',
+          // Rotating hands the caller a key for the principal, so the caller holds what it holds.
+          'X-Admin-Permissions': 'admin:machine_access:*,admin:agent_grants:*',
           'X-Admin-Tenant-Scope': '*',
         },
         body: JSON.stringify({
@@ -371,23 +380,18 @@ describe('machineAccessRouter', () => {
     );
 
     expect(res.status).toBe(201);
-    expect(mockRepo.updateCredential).toHaveBeenCalledWith(
-      'amk_old',
+    // The old key's overlap, the new key and its rows are one write.
+    expect(mockRepo.rotateCredential).toHaveBeenCalledWith(
       expect.objectContaining({
-        status: 'rotating',
-        revokeReason: 'rotation_overlap',
+        previousCredentialId: 'amk_old',
+        previousUpdate: expect.objectContaining({
+          status: 'rotating',
+          revokeReason: 'rotation_overlap',
+        }),
+        next: expect.objectContaining({ principalId: 'amp_mcp', kid: 'new-kid' }),
+        grant: expect.objectContaining({ permissions: ['admin:agent_grants:*'] }),
+        actor: expect.objectContaining({ actorId: 'admin-1' }),
       })
-    );
-    expect(mockRepo.createCredential).toHaveBeenCalledWith(
-      expect.objectContaining({
-        principalId: 'amp_mcp',
-        kid: 'new-kid',
-      })
-    );
-    expect(mockRepo.setCredentialPermissions).toHaveBeenCalledWith(
-      'amk_new',
-      ['admin:agent_grants:*'],
-      expect.objectContaining({ actorId: 'admin-1' })
     );
     expect(mockWriteAdminAuditLog).toHaveBeenCalledWith(
       expect.anything(),
@@ -431,7 +435,12 @@ describe('machineAccessRouter', () => {
       expect.objectContaining({
         status: 'revoked',
         revokeReason: 'suspected compromise',
-      })
+      }),
+      // What the revoke was decided on, checked inside the write.
+      {
+        principal: { id: 'amp_mcp', revision: 'principal-revision' },
+        credential: { id: 'amk_mcp', revision: 'credential-revision' },
+      }
     );
     expect(mockWriteAdminAuditLog).toHaveBeenCalledWith(
       expect.anything(),
@@ -473,7 +482,8 @@ describe('machineAccessRouter', () => {
       'amp_mcp',
       expect.objectContaining({
         status: 'disabled',
-      })
+      }),
+      { principal: { id: 'amp_mcp', revision: 'principal-revision' } }
     );
     expect(mockWriteAdminAuditLog).toHaveBeenCalledWith(
       expect.anything(),

@@ -9,7 +9,12 @@ import {
 } from './custom-claims/resolver';
 import { resolveCustomClaimRuntimeSourcesFromEnv } from './custom-claims/runtime-sources';
 import { requireDedicatedAdminDatabaseAdapter } from './admin-database-adapter';
+import {
+  PLATFORM_MAPPING_TENANT_ID,
+  RuntimeIdentityMappingOwnerError,
+} from './identity-mapping-owner';
 import { isNonAccountSubject } from '../utils/id';
+import { logSwallowedIdentityMappingFailure } from './identity-mapping-swallowed-failure';
 import {
   filterOidcClaimsByDestinationConsent,
   filterOidcClaimsWithoutDestinationProfile,
@@ -31,7 +36,14 @@ import {
 export interface ApplyOIDCIdentityMappingInput {
   adapter: DatabaseAdapter;
   env?: Partial<Env>;
+  /** The tenant the request is for. Consent, custom fields and identifiers stay with it. */
   tenantId: string;
+  /**
+   * The tenant ID that owns the Mapping Set the selector names, when it is the platform's rather
+   * than the calling tenant's (see RuntimeIdentityMappingResolutionContext.ownerTenantId). Only
+   * the lookup of the mapping's own rows follows it. Unset: the calling tenant owns them.
+   */
+  ownerTenantId?: string;
   clientId: string;
   sectorIdentifier?: string | null;
   selector?: OIDCIdentityMappingFieldMappingSelector | null;
@@ -110,6 +122,7 @@ export async function applyOIDCIdentityMapping(
       : input.adapter;
     binding = await resolveRuntimeIdentityMappingBinding(mappingAdapter, {
       tenantId: input.tenantId,
+      ownerTenantId: input.ownerTenantId,
       protocol: 'oidc',
       role: 'op',
       fieldMappingSetId: input.selector?.fieldMappingSetId,
@@ -118,7 +131,19 @@ export async function applyOIDCIdentityMapping(
       clientId: input.clientId,
     });
   } catch (error) {
+    // A wrong owner is a bug of the caller, not a mapping that cannot be read: it must not turn
+    // into a request that goes on without the mapping.
+    if (error instanceof RuntimeIdentityMappingOwnerError) throw error;
     if (!input.selector?.fieldMappingSetId) {
+      // The app names no Mapping Set, so the request goes on without a mapping. That hides a
+      // tenant-wide mapping that exists and cannot be read, so it is recorded as an error.
+      logSwallowedIdentityMappingFailure({
+        component: 'OIDC-IDENTITY-MAPPING',
+        tenantId: input.tenantId,
+        clientId: input.clientId,
+        adminDatabaseBound: Boolean(input.env?.DB_ADMIN),
+        error,
+      });
       if (input.subjectOnly) return { claims: input.claims, binding: null };
       return {
         claims: await applyOIDCDestinationFieldConsent(input, input.claims, null),
@@ -160,13 +185,24 @@ export async function applyOIDCIdentityMapping(
   const destinationProfileAdapter = input.env?.DB_ADMIN
     ? requireDedicatedAdminDatabaseAdapter(input.env, 'oidc-destination-profile-safety')
     : input.adapter;
+  // A mapping the platform owns releases into a Destination Profile the platform owns: the
+  // profile is looked up under its owner, so a profile a tenant owns is never taken for it.
+  const ownedByPlatform = input.ownerTenantId === PLATFORM_MAPPING_TENANT_ID;
   const destinationDescriptor = await loadDestinationProfileConsentDescriptor(
     destinationProfileAdapter,
-    input.tenantId,
+    ownedByPlatform ? PLATFORM_MAPPING_TENANT_ID : input.tenantId,
     binding.destinationProfileId
   );
   if (destinationDescriptor?.destinationType === 'oidc') {
-    assertRuntimeIdentityMappingReleaseSafety(binding, destinationDescriptor.fields, true);
+    if (ownedByPlatform) {
+      // One mapping serves every tenant, so a source whose classification cannot be told is
+      // refused rather than let through.
+      assertRuntimeIdentityMappingReleaseSafety(binding, destinationDescriptor.fields, true, {
+        requireKnownSources: true,
+      });
+    } else {
+      assertRuntimeIdentityMappingReleaseSafety(binding, destinationDescriptor.fields, true);
+    }
   }
 
   const destinationNamespace =
@@ -256,6 +292,10 @@ async function loadMappedCustomClaimSources(
     }
   }
 
+  // The platform's mapping is saved without tenant-defined fields, so a key it reads that the
+  // claims lack is a standard one. Looking it up among the calling tenant's custom fields would
+  // let a tenant's field of the same name stand in for it.
+  if (input.ownerTenantId === PLATFORM_MAPPING_TENANT_ID) return claims;
   if (!input.env) return claims;
   const subjectId = typeof input.claims.sub === 'string' ? input.claims.sub : '';
   if (!subjectId) return claims;

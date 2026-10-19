@@ -24,11 +24,13 @@ import {
   adminAuthMiddleware,
   ADMIN_PERMISSIONS,
   hasAdminPermission,
+  hasGlobalAdminPermission,
   requireDedicatedAdminDatabaseAdapter,
   type AdminUser,
 } from '@authrim/ar-lib-core';
 import { resolveAaguidAuthenticator } from '@authrim/ar-lib-core/webauthn/aaguid-metadata';
 import { writeAdminAuditLog } from '../../admin-shared';
+import { callerOutranks, callerOutranksGlobally } from './admin-role-authority';
 
 // Create router
 export const adminUsersRouter = new Hono<{
@@ -617,10 +619,7 @@ adminUsersRouter.post('/:id/roles', async (c) => {
     }
 
     // Check hierarchy - can only assign roles with lower hierarchy level
-    if (
-      authContext.hierarchyLevel !== undefined &&
-      role.hierarchy_level >= authContext.hierarchyLevel
-    ) {
+    if (!callerOutranks(authContext, role.hierarchy_level)) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);
     }
 
@@ -629,7 +628,15 @@ adminUsersRouter.post('/:id/roles', async (c) => {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INVALID_REQUEST);
     }
 
-    if (normalizedScope.scopeType === 'global' && !hasAdminPermission(permissions, '*')) {
+    // A global assignment is measured by the caller's global hierarchy, not the sum.
+    if (
+      normalizedScope.scopeType === 'global' &&
+      !callerOutranksGlobally(authContext, role.hierarchy_level)
+    ) {
+      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);
+    }
+
+    if (normalizedScope.scopeType === 'global' && !hasGlobalAdminPermission(authContext, '*')) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);
     }
 

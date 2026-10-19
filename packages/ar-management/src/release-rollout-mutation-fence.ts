@@ -2,6 +2,7 @@ import type { MiddlewareHandler } from 'hono';
 import {
   ADMIN_PERMISSIONS,
   hasAdminPermission,
+  isBootstrapSetupMachine,
   type AdminAuthContext,
   type Env,
 } from '@authrim/ar-lib-core';
@@ -83,10 +84,8 @@ async function isAuthorizedInitialSystemClientBootstrap(
   );
   const idempotencyKey = c.req.header('Idempotency-Key') ?? '';
   if (
-    auth?.actorType !== 'machine' ||
-    auth.authMethod !== 'machine_access_token' ||
-    auth.principalType !== 'setup_tool' ||
-    auth.clientId !== 'authrim-setup' ||
+    !auth ||
+    !isBootstrapSetupMachine(auth) ||
     !hasAdminPermission(auth.permissions ?? [], ADMIN_PERMISSIONS.CLIENTS_WRITE) ||
     (!SETUP_LOGIN_UI_IDEMPOTENCY_KEY.test(idempotencyKey) &&
       !SETUP_DOWNSTREAM_IDEMPOTENCY_KEY.test(idempotencyKey))

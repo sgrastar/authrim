@@ -11,6 +11,7 @@ import {
   getLogger,
   getTenantIdFromContext,
   hasAdminPermission,
+  hasGlobalAdminRole,
   invalidateTenantVanityDomainCache,
   loadVerifiedLookupBucketAssignmentProvider,
   LookupRouteResolver,
@@ -99,13 +100,22 @@ function getAdminAuth(c: Context<{ Bindings: Env }>): AdminAuthContext | null {
   return (c as unknown as { get(name: 'adminAuth'): AdminAuthContext | null }).get('adminAuth');
 }
 
+/**
+ * Platform domain operations (approving, verifying and listing domains across tenants) are for a
+ * platform administrator: the role has to come from a global assignment, as `roles` also holds
+ * what is given for one tenant only.
+ */
 function isSystemAdmin(auth: AdminAuthContext | null): boolean {
-  return !!auth?.roles?.some((role) => role === 'system_admin' || role === 'super_admin');
+  return hasGlobalAdminRole(auth ?? undefined, ['system_admin', 'super_admin']);
 }
 
+/** A tenant's own domains: roles and permissions here are the ones worked out for that tenant. */
 function hasPermission(c: Context<{ Bindings: Env }>, permission: string): boolean {
   const auth = getAdminAuth(c);
-  return isSystemAdmin(auth) || hasAdminPermission(auth?.permissions ?? [], permission);
+  const holdsSystemRole = !!auth?.roles?.some(
+    (role) => role === 'system_admin' || role === 'super_admin'
+  );
+  return holdsSystemRole || hasAdminPermission(auth?.permissions ?? [], permission);
 }
 
 function permissionDenied(c: Context<{ Bindings: Env }>) {

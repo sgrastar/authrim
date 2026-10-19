@@ -9,12 +9,13 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { Env } from '@authrim/ar-lib-core';
+import { openAdminDatabase, sqliteAdapter } from './helpers/admin-authority-fixture';
+import { seedDestinationProfile, seedMapping } from './helpers/identity-mapping-seed';
 
 const {
   mockPostgresAdapterFactory,
   canonicalRuntimeUsers,
-  resolveIdentityMappingBinding,
-  loadDestinationProfileDescriptor,
+  validateMappingSetReference,
   executeDurableAccountCreation,
   resolveAccountCreationTargets,
   listCrossShardAccounts,
@@ -34,15 +35,14 @@ const {
 } = vi.hoisted(() => ({
   mockPostgresAdapterFactory: vi.fn(),
   canonicalRuntimeUsers: new Map<string, any>(),
-  resolveIdentityMappingBinding: vi.fn(async () => ({
+  // The shared check of a Mapping Set an app names (the database side is tested with the check).
+  validateMappingSetReference: vi.fn(async (input: { setId: string; versionId?: string }) => ({
+    ok: true as const,
+    ownerTenantId: 'default',
+    setId: input.setId,
+    versionId: input.versionId ?? 'mapping_version_1',
     destinationProfileId: 'destination_oidc_1',
-    destinationProfileIds: ['destination_oidc_1'],
-  })),
-  loadDestinationProfileDescriptor: vi.fn(async () => ({
-    profileId: 'destination_oidc_1',
-    profileVersionId: 'destination_oidc_version_1',
-    destinationType: 'oidc',
-    fields: [],
+    snapshotHash: 'snapshot_1',
   })),
   executeDurableAccountCreation: vi.fn(),
   resolveAccountCreationTargets: vi.fn(),
@@ -182,8 +182,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
       lifecycle: input.lifecycle,
     })),
     produceNotificationDelivery,
-    resolveRuntimeIdentityMappingBinding: resolveIdentityMappingBinding,
-    loadDestinationProfileConsentDescriptor: loadDestinationProfileDescriptor,
+    validateOidcMappingSetReference: validateMappingSetReference,
     resolveAaguidAuthenticator: vi.fn((aaguid: string | null | undefined) =>
       aaguid
         ? {
@@ -4876,12 +4875,11 @@ describe('Admin API Handlers', () => {
       const response = await adminClientCreateHandler(c);
 
       expect(response.status).toBe(201);
-      expect(resolveIdentityMappingBinding).toHaveBeenCalledWith(
-        expect.anything(),
+      expect(validateMappingSetReference).toHaveBeenCalledWith(
         expect.objectContaining({
-          tenantId: 'default',
-          protocol: 'oidc',
-          fieldMappingSetId: 'mapping_set_1',
+          contextTenantId: 'default',
+          scope: 'client',
+          setId: 'mapping_set_1',
         })
       );
       expect(mockDB._mockStatement.bind.mock.calls.flat()).toContainEqual(
@@ -4900,6 +4898,148 @@ describe('Admin API Handlers', () => {
           }),
         }),
         201
+      );
+    });
+
+    it.each([
+      ['set_missing', 404, 'not_found', /does not reference a Mapping Set available/],
+      ['set_inactive', 400, 'invalid_request', /active compiled Mapping Set/],
+      [
+        'destination_profile_invalid',
+        400,
+        'invalid_request',
+        /exactly one active OIDC Destination Profile/,
+      ],
+      ['platform_set_unsafe', 400, 'invalid_request', /platform mapping cannot read/],
+      ['admin_database_unavailable', 503, 'temporarily_unavailable', /Unable to validate/],
+    ] as const)(
+      'refuses a Mapping Set that fails as %s with %s, on create and on update, saving nothing',
+      async (code, status, error, description) => {
+        const failure = {
+          ok: false as const,
+          code,
+          message: code === 'platform_set_unsafe' ? 'platform mapping cannot read x' : 'x',
+        };
+        validateMappingSetReference.mockResolvedValueOnce(failure as never);
+        const createDB = createMockDB({ firstResult: null, runResult: { success: true } });
+        const created = createMockContext({
+          method: 'POST',
+          body: {
+            client_name: 'Mapped Client',
+            redirect_uris: ['https://example.com/callback'],
+            identity_mapping: { fieldMappingSetId: 'mapping_set_x' },
+          },
+          db: createDB,
+        });
+        const createResponse = await adminClientCreateHandler(created);
+        expect(createResponse.status).toBe(status);
+        expect(await createResponse.json()).toMatchObject({
+          error,
+          error_description: expect.stringMatching(description),
+        });
+        expect(createDB.prepare).not.toHaveBeenCalledWith(expect.stringContaining('INSERT'));
+
+        validateMappingSetReference.mockResolvedValueOnce(failure as never);
+        const updateDB = createMockDB({
+          firstResult: createOAuthClientRow('mapped-client'),
+          runResult: { success: true, meta: { changes: 1 } },
+        });
+        const updated = createMockContext({
+          method: 'PUT',
+          params: { id: 'mapped-client' },
+          body: { identity_mapping: { fieldMappingSetId: 'mapping_set_x' } },
+          db: updateDB,
+        });
+        const updateResponse = await adminClientUpdateHandler(updated);
+        expect(updateResponse.status).toBe(status);
+        expect(await updateResponse.json()).toMatchObject({ error });
+        expect(updateDB.prepare).not.toHaveBeenCalledWith(expect.stringContaining('UPDATE'));
+      }
+    );
+
+    // Until the runtime resolves an app's own Mapping Set under its owner (stage 2), an app saved
+    // with a platform-owned set would fail every sign-in: the real check refuses it at save time.
+    describe('with the real shared check on a real Admin schema', () => {
+      async function withRealCheck() {
+        const actual =
+          await vi.importActual<typeof import('@authrim/ar-lib-core')>('@authrim/ar-lib-core');
+        validateMappingSetReference.mockImplementationOnce(
+          actual.validateOidcMappingSetReference as never
+        );
+        const db = openAdminDatabase();
+        seedMapping(db, { owner: 'platform', id: 'plat' });
+        seedDestinationProfile(db, { owner: 'platform', id: 'profile-plat' });
+        seedMapping(db, { owner: 'default', id: 'own' });
+        seedDestinationProfile(db, { owner: 'default', id: 'profile-own' });
+        seedMapping(db, { owner: 'tenant-b', id: 'other' });
+        seedDestinationProfile(db, { owner: 'tenant-b', id: 'profile-other' });
+        return sqliteAdapter(db);
+      }
+
+      it.each([
+        ['a platform-owned set', 'set-plat', 404],
+        ['another tenant’s set', 'set-other', 404],
+        ['a set that does not exist', 'set-nothing', 404],
+        ['the tenant’s own set', 'set-own', 201],
+      ])('create with %s answers %s', async (_name, setId, status) => {
+        const DB_ADMIN = await withRealCheck();
+        const mockDB = createMockDB({ firstResult: null, runResult: { success: true } });
+        const c = createMockContext({
+          method: 'POST',
+          body: {
+            client_name: 'Mapped Client',
+            redirect_uris: ['https://example.com/callback'],
+            identity_mapping: { fieldMappingSetId: setId },
+          },
+          db: mockDB,
+          envOverrides: { DB_ADMIN } as never,
+        });
+        const response = await adminClientCreateHandler(c);
+        expect(response.status).toBe(status);
+        if (status === 404) {
+          expect(await response.json()).toMatchObject({ error: 'not_found' });
+          expect(mockDB.prepare).not.toHaveBeenCalledWith(expect.stringContaining('INSERT'));
+        }
+      });
+
+      it.each([
+        ['a platform-owned set', 'set-plat', 404],
+        ['the tenant’s own set', 'set-own', 200],
+      ])('update with %s answers %s', async (_name, setId, status) => {
+        const DB_ADMIN = await withRealCheck();
+        const mockDB = createMockDB({
+          firstResult: createOAuthClientRow('mapped-client'),
+          runResult: { success: true, meta: { changes: 1 } },
+        });
+        const c = createMockContext({
+          method: 'PUT',
+          params: { id: 'mapped-client' },
+          body: { identity_mapping: { fieldMappingSetId: setId } },
+          db: mockDB,
+          envOverrides: { DB_ADMIN } as never,
+        });
+        const response = await adminClientUpdateHandler(c);
+        expect(response.status).toBe(status);
+        if (status === 404) {
+          expect(mockDB.prepare).not.toHaveBeenCalledWith(expect.stringContaining('UPDATE'));
+        }
+      });
+    });
+
+    it('asks the shared check with no Admin database when none is bound, so it answers unavailable', async () => {
+      const c = createMockContext({
+        method: 'POST',
+        body: {
+          client_name: 'Mapped Client',
+          redirect_uris: ['https://example.com/callback'],
+          identity_mapping: { fieldMappingSetId: 'mapping_set_1' },
+        },
+        db: createMockDB({ firstResult: null, runResult: { success: true } }),
+      });
+      (c.env as unknown as Record<string, unknown>).DB_ADMIN = undefined;
+      await adminClientCreateHandler(c);
+      expect(validateMappingSetReference).toHaveBeenLastCalledWith(
+        expect.objectContaining({ adminAdapter: null })
       );
     });
 
@@ -5936,13 +6076,12 @@ describe('Admin API Handlers', () => {
       const response = await adminClientUpdateHandler(c);
 
       expect(response.status).toBe(200);
-      expect(resolveIdentityMappingBinding).toHaveBeenCalledWith(
-        expect.anything(),
+      expect(validateMappingSetReference).toHaveBeenCalledWith(
         expect.objectContaining({
-          tenantId: 'default',
-          protocol: 'oidc',
-          fieldMappingSetId: 'mapping_set_2',
-          fieldMappingVersionId: 'mapping_version_2',
+          contextTenantId: 'default',
+          scope: 'client',
+          setId: 'mapping_set_2',
+          versionId: 'mapping_version_2',
         })
       );
       expect(mockDB._mockStatement.bind.mock.calls.flat()).toContainEqual(

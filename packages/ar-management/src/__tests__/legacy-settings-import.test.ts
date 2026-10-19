@@ -394,10 +394,17 @@ describe('runLegacySettingsImport', () => {
 });
 
 describe('/api/admin/platform/settings/legacy-import', () => {
-  const appFor = (env: Env, roles: string[]) => {
+  const appFor = (env: Env, roles: string[], roleIsGlobal = true) => {
     const app = new Hono<{ Bindings: Env; Variables: { adminAuth?: AdminAuthContext } }>();
     app.use('*', async (c, next) => {
-      c.set('adminAuth', { userId: 'admin', authMethod: 'bearer', roles } as AdminAuthContext);
+      // The roles of this fixture's Admin come from a global assignment.
+      c.set('adminAuth', {
+        userId: 'admin',
+        authMethod: 'bearer',
+        roles,
+        globalRoles: roleIsGlobal ? roles : [],
+        tenantScope: ['*'],
+      } as AdminAuthContext);
       await next();
     });
     app.route('/api/admin', settingsV2);
@@ -432,6 +439,15 @@ describe('/api/admin/platform/settings/legacy-import', () => {
     await expect(run.json()).resolves.toMatchObject({ status: 'needs_attention' });
     const accepted = await request('POST', { acceptRejections: true });
     await expect(accepted.json()).resolves.toMatchObject({ status: 'completed' });
+  });
+
+  it('refuses a platform role that only a tenant gives: the import covers the whole environment', async () => {
+    const { env } = environment(saved, config);
+    const request = appFor(env, ['system_admin'], false);
+
+    expect((await request('GET')).status).toBe(403);
+    expect((await request('POST', { dryRun: false })).status).toBe(403);
+    await expect(readLegacyImportState(env)).resolves.toBeNull();
   });
 
   it('changes nothing while a backup or restore holds settings writes', async () => {

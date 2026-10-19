@@ -23,11 +23,19 @@ import {
   adminAuthMiddleware,
   ADMIN_PERMISSIONS,
   hasAdminPermission,
+  hasGlobalAdminPermission,
   requireDedicatedAdminDatabaseAdapter,
   type AdminRole,
   type AdminRoleAssignmentScopeType,
 } from '@authrim/ar-lib-core';
 import { writeAdminAuditLog } from '../../admin-shared';
+import {
+  callerOutranks,
+  callerOutranksGlobally,
+  checkRoleInheritance,
+  mayGiveGlobally,
+  roleReachesGlobalAssignment,
+} from './admin-role-authority';
 
 // Create router
 export const adminRolesRouter = new Hono<{
@@ -62,6 +70,18 @@ function hasWritePermission(authContext: AdminAuthContext): boolean {
 function canAccessRole(role: AdminRole, tenantId: string): boolean {
   return role.tenant_id === tenantId || (role.tenant_id === 'default' && role.is_system);
 }
+
+/**
+ * Role names that Admin checks read as authority (platform and tenant administrators), whether or
+ * not a system role carries them: a custom role must not take one.
+ */
+const RESERVED_ROLE_NAMES: ReadonlySet<string> = new Set([
+  'super_admin',
+  'system_admin',
+  'distributor_admin',
+  'tenant_admin',
+  'org_admin',
+]);
 
 function isPlatformAdminRole(roleName: string | undefined): boolean {
   return roleName === 'super_admin';
@@ -301,16 +321,14 @@ adminRolesRouter.post('/:id/assignments', async (c) => {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INVALID_REQUEST);
     }
 
-    if (
-      normalizedScope.scopeType === 'global' &&
-      !hasAdminPermission(authContext.permissions || [], '*')
-    ) {
+    if (normalizedScope.scopeType === 'global' && !hasGlobalAdminPermission(authContext, '*')) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);
     }
 
     if (
-      authContext.hierarchyLevel !== undefined &&
-      role.hierarchy_level >= authContext.hierarchyLevel
+      !callerOutranks(authContext, role.hierarchy_level) ||
+      (normalizedScope.scopeType === 'global' &&
+        !callerOutranksGlobally(authContext, role.hierarchy_level))
     ) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);
     }
@@ -400,10 +418,7 @@ adminRolesRouter.patch('/:id/assignments/:assignmentId', async (c) => {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INVALID_REQUEST);
     }
 
-    if (
-      normalizedScope.scopeType === 'global' &&
-      !hasAdminPermission(authContext.permissions || [], '*')
-    ) {
+    if (normalizedScope.scopeType === 'global' && !hasGlobalAdminPermission(authContext, '*')) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);
     }
 
@@ -413,6 +428,16 @@ adminRolesRouter.patch('/:id/assignments/:assignmentId', async (c) => {
       (!Number.isFinite(body.expires_at) || body.expires_at <= 0)
     ) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INVALID_REQUEST);
+    }
+
+    // The same rule as giving the role in the first place: only a role below the caller's own,
+    // and below the caller's global hierarchy for a global assignment.
+    if (
+      !callerOutranks(authContext, role.hierarchy_level) ||
+      (normalizedScope.scopeType === 'global' &&
+        !callerOutranksGlobally(authContext, role.hierarchy_level))
+    ) {
+      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);
     }
 
     const duplicate = await roleAssignmentRepo.assignmentExists({
@@ -550,15 +575,24 @@ adminRolesRouter.post('/', async (c) => {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INVALID_REQUEST);
     }
 
-    // Check if name already exists
+    // Check if name already exists. A system role's name is taken in every tenant: Admin checks
+    // read role names, so a custom role must not be able to carry one.
     const existing = await roleRepo.findByName(tenantId, body.name);
     if (existing) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_CONFLICT);
     }
+    const systemRoles = await roleRepo.getSystemRoles();
+    if (
+      RESERVED_ROLE_NAMES.has(body.name) ||
+      systemRoles.some((systemRole) => systemRole.name === body.name)
+    ) {
+      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_CONFLICT);
+    }
 
-    // Validate hierarchy level - can only create roles with lower hierarchy
+    // Validate hierarchy level - can only create roles with lower hierarchy. A caller whose
+    // hierarchy is unknown creates none.
     const hierarchyLevel = body.hierarchy_level ?? 0;
-    if (authContext.hierarchyLevel !== undefined && hierarchyLevel >= authContext.hierarchyLevel) {
+    if (!callerOutranks(authContext, hierarchyLevel)) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);
     }
 
@@ -572,6 +606,22 @@ adminRolesRouter.post('/', async (c) => {
       }
     }
 
+    // A new role has no assignment yet, so what it inherits is held to the caller's permissions.
+    const inheritance = await checkRoleInheritance(
+      roleRepo,
+      tenantId,
+      authContext,
+      body.inherits_from
+    );
+    if (!inheritance.ok) {
+      return createErrorResponse(
+        c,
+        inheritance.reason === 'forbidden'
+          ? AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS
+          : AR_ERROR_CODES.ADMIN_INVALID_REQUEST
+      );
+    }
+
     const role = await roleRepo.createRole({
       tenant_id: tenantId,
       name: body.name,
@@ -580,7 +630,7 @@ adminRolesRouter.post('/', async (c) => {
       permissions: body.permissions,
       hierarchy_level: hierarchyLevel,
       role_type: 'custom',
-      inherits_from: body.inherits_from,
+      inherits_from: body.inherits_from || null,
     });
 
     // Create audit log
@@ -637,26 +687,70 @@ adminRolesRouter.patch('/:id', async (c) => {
       inherits_from?: string | null;
     }>();
 
-    // Validate permissions if being updated
-    if (body.permissions) {
-      const myPermissions = authContext.permissions || [];
-      if (!hasAdminPermission(myPermissions, '*')) {
-        for (const perm of body.permissions) {
-          if (!hasAdminPermission(myPermissions, perm)) {
-            return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);
-          }
-        }
-      }
+    if (
+      body.permissions !== undefined &&
+      (!Array.isArray(body.permissions) ||
+        body.permissions.some((permission) => typeof permission !== 'string'))
+    ) {
+      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INVALID_REQUEST);
+    }
+
+    // Only a role below the caller's own hierarchy can be changed, as only one can be created.
+    if (!callerOutranks(authContext, existing.hierarchy_level)) {
+      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);
     }
 
     // Validate hierarchy level if being updated
-    if (body.hierarchy_level !== undefined) {
-      if (
-        authContext.hierarchyLevel !== undefined &&
-        body.hierarchy_level >= authContext.hierarchyLevel
-      ) {
-        return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);
+    if (body.hierarchy_level !== undefined && !callerOutranks(authContext, body.hierarchy_level)) {
+      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);
+    }
+
+    // What the role will inherit, when that changes.
+    let inheritedPermissions: string[] = [];
+    const inheritanceChanges =
+      body.inherits_from !== undefined && (body.inherits_from || null) !== existing.inherits_from;
+    if (inheritanceChanges) {
+      const inheritance = await checkRoleInheritance(
+        roleRepo,
+        tenantId,
+        authContext,
+        body.inherits_from,
+        id
+      );
+      if (!inheritance.ok) {
+        return createErrorResponse(
+          c,
+          inheritance.reason === 'forbidden'
+            ? AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS
+            : AR_ERROR_CODES.ADMIN_INVALID_REQUEST
+        );
       }
+      inheritedPermissions = inheritance.inheritedPermissions;
+    }
+
+    // Validate permissions if being updated
+    const grantedPermissions = [...(body.permissions ?? []), ...inheritedPermissions];
+    const myPermissions = authContext.permissions || [];
+    if (!grantedPermissions.every((perm) => hasAdminPermission(myPermissions, perm))) {
+      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);
+    }
+
+    // A role that a global assignment leads to, directly or by inheritance, takes effect for every
+    // tenant, so changing what it holds needs the permission from a global assignment, and what it
+    // is given has to be within the caller's global permissions.
+    // Its hierarchy is measured the same way: a global role reaching a high level would give that
+    // level in every tenant, so it is held to the caller's global hierarchy, not the sum.
+    if (
+      (body.permissions !== undefined ||
+        inheritanceChanges ||
+        body.hierarchy_level !== undefined) &&
+      (await roleReachesGlobalAssignment(adapter, tenantId, id)) &&
+      (!mayGiveGlobally(authContext, grantedPermissions) ||
+        !callerOutranksGlobally(authContext, existing.hierarchy_level) ||
+        (body.hierarchy_level !== undefined &&
+          !callerOutranksGlobally(authContext, body.hierarchy_level)))
+    ) {
+      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);
     }
 
     const role = await roleRepo.updateRole(id, {
@@ -664,7 +758,7 @@ adminRolesRouter.patch('/:id', async (c) => {
       description: body.description,
       permissions: body.permissions,
       hierarchy_level: body.hierarchy_level,
-      inherits_from: body.inherits_from,
+      inherits_from: body.inherits_from === undefined ? undefined : body.inherits_from || null,
     });
 
     if (!role) {

@@ -3658,6 +3658,55 @@ describe('Authorization Handler', () => {
           });
         });
 
+        // CURRENT BEHAVIOR, documented as it is (field mapping tiers, stage 0). Not the intended
+        // behavior: stage 2 reverses it. `policy` is an app with `identity_mapping` NULL, yet the
+        // tenant-wide activation (activationScope { tenantId } here, `{ kind: 'tenant' }` as the
+        // admin console sends it) is the mapping the ID token is held to. This is how the 2026-10-10
+        // environment lost email, phone and name from its ID tokens: the Destination Profile lists
+        // the standard claims as optional, and for UserInfo only.
+        describe('[current behavior, reversed in stage 2] an app with no Mapping Set of its own', () => {
+          const allScopes = 'openid profile email phone';
+
+          beforeEach(() => {
+            mappingFixture.profileConsent = 'none';
+          });
+
+          it('is held to the tenant-wide mapping, so its ID token loses the scope claims', async () => {
+            const fragment = await authorizeFor('id_token', { scope: allScopes, client: policy });
+
+            const idToken = decodeJwt(fragment.get('id_token')!);
+            expect(idToken.sub).toBe('mapped-user');
+            for (const claim of ['name', 'email', 'email_verified', 'phone_number']) {
+              expect(idToken).not.toHaveProperty(claim);
+            }
+          });
+
+          it('would carry them with no tenant-wide mapping in force (the contrast)', async () => {
+            mappingFixture.binding = null;
+            mappingFixture.profile = null;
+
+            const fragment = await authorizeFor('id_token', { scope: allScopes, client: policy });
+
+            expect(decodeJwt(fragment.get('id_token')!)).toMatchObject({
+              email: 'alice@example.com',
+              phone_number: '+8100000000',
+              name: 'Alice Example',
+            });
+          });
+
+          it('loses the same when the claims parameter asks for them', async () => {
+            const fragment = await authorizeFor('id_token', {
+              scope: 'openid',
+              claims: { id_token: { email: { essential: true }, name: null } },
+              client: { ...policy, allow_claims_without_scope: true },
+            });
+
+            const idToken = decodeJwt(fragment.get('id_token')!);
+            expect(idToken).not.toHaveProperty('email');
+            expect(idToken).not.toHaveProperty('name');
+          });
+        });
+
         it('does not carry the claims of a scope that was not granted', async () => {
           const fragment = await authorizeFor('id_token', { scope: 'openid', client: policy });
 

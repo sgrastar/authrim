@@ -182,7 +182,11 @@ export * from './utils/totp';
 export * from './utils/totp-backup-codes';
 
 // Runtime services
+export * from './services/identity-mapping-owner';
 export * from './services/identity-mapping-runtime-resolver';
+export * from './services/identity-mapping-set-binding';
+export * from './services/identity-mapping-platform-checks';
+export * from './services/identity-mapping-set-reference';
 export * from './services/identity-mapping-source-reads';
 export * from './services/identity-mapping-output-graph';
 export * from './services/server-flow-execution';
@@ -191,6 +195,7 @@ export * from './services/lookup-directory';
 export * from './services/directory-auth';
 export * from './services/directory-connector-fleet';
 export * from './services/oidc-identity-mapping';
+export * from './services/identity-mapping-swallowed-failure';
 export * from './services/introspection-identity-mapping';
 export * from './services/oidc-attribute-release-consent';
 export * from './services/oidc-id-token-release';

@@ -294,21 +294,18 @@ export class CloudflareAgentBulkPlanAdapter implements AgentBulkPlanPort {
       return result(409, { error: 'AGENT_BULK_PLAN_CANARY_PROTECTED' });
     }
 
-    const [
-      principal,
-      credential,
-      principalScopes,
-      credentialScopes,
-      principalPermissions,
-      credentialPermissions,
-    ] = await Promise.all([
-      this.machines.findPrincipalById(request.actor.machinePrincipalId),
-      this.machines.findCredentialById(request.actor.machineCredentialId),
-      this.machines.getPrincipalTenantScopes(request.actor.machinePrincipalId),
-      this.machines.getCredentialTenantScopes(request.actor.machineCredentialId),
-      this.machines.getPrincipalPermissions(request.actor.machinePrincipalId),
-      this.machines.getCredentialPermissions(request.actor.machineCredentialId),
-    ]);
+    // One snapshot of the principal, the credential and their scopes and permissions: the scope
+    // of one stored state is never combined with the permissions of another.
+    const machineSnapshot = await this.machines.loadMachineGrantSnapshot(
+      request.actor.machinePrincipalId,
+      request.actor.machineCredentialId
+    );
+    const principal = machineSnapshot?.principal;
+    const credential = machineSnapshot?.credential;
+    const principalScopes = machineSnapshot?.principalTenantScopes ?? [];
+    const credentialScopes = machineSnapshot?.credentialTenantScopes ?? [];
+    const principalPermissions = machineSnapshot?.principalPermissions ?? [];
+    const credentialPermissions = machineSnapshot?.credentialPermissions ?? [];
     if (
       !principal ||
       principal.status !== 'active' ||
