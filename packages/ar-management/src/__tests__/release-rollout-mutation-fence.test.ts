@@ -143,6 +143,7 @@ describe('release rollout mutation fence', () => {
       actorType: 'machine',
       principalType: 'setup_tool',
       clientId: 'authrim-setup',
+      actorId: 'amp_authrim_setup',
       roles: [],
       permissions: [ADMIN_PERMISSIONS.CLIENTS_WRITE],
     };

@@ -1117,6 +1117,14 @@ const REVIEWED_FIELDS: readonly [string, TenantSettingValueType, TenantSettingHa
     tenant.ui_register_path
   `,
     ],
+    [
+      'identity-mapping',
+      'string',
+      'logical_reference',
+      `
+    identity_mapping.oidc_default_set_id
+  `,
+    ],
   ];
 
 export const TENANT_SETTING_FIELD_POLICIES: readonly TenantSettingFieldPolicy[] =

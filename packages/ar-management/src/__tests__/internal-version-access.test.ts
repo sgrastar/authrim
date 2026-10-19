@@ -26,7 +26,10 @@ function humanAuth(overrides: Partial<AdminAuthContext> = {}): AdminAuthContext 
     authMethod: 'session',
     tenantId: 'tenant-a',
     roles: ['system_admin'],
+    // The role and the permission come from a global assignment.
+    globalRoles: ['system_admin'],
     permissions: [ADMIN_PERMISSIONS.CONTROL_PLANE_READ],
+    globalPermissions: [ADMIN_PERMISSIONS.CONTROL_PLANE_READ],
     hierarchyLevel: 100,
     mfaVerified: true,
     tenantScope: ['*'],
@@ -54,7 +57,36 @@ describe('internal version manager authority', () => {
   });
 
   it('rejects a global platform admin without the operation permission', async () => {
-    const app = createApp(humanAuth({ permissions: [] }), ADMIN_PERMISSIONS.CONTROL_PLANE_READ);
+    const app = createApp(
+      humanAuth({ permissions: [], globalPermissions: [] }),
+      ADMIN_PERMISSIONS.CONTROL_PLANE_READ
+    );
+
+    expect((await app.request('/internal')).status).toBe(403);
+  });
+
+  it('rejects a global platform admin whose permission is held only for a tenant', async () => {
+    const app = createApp(
+      humanAuth({
+        permissions: [ADMIN_PERMISSIONS.CONTROL_PLANE_READ],
+        globalPermissions: ['admin:users:read'],
+      }),
+      ADMIN_PERMISSIONS.CONTROL_PLANE_READ
+    );
+
+    expect((await app.request('/internal')).status).toBe(403);
+  });
+
+  it('rejects a platform role or permission held for one tenant while the global assignment is only a viewer', async () => {
+    const app = createApp(
+      humanAuth({
+        roles: ['viewer', 'system_admin'],
+        globalRoles: ['viewer'],
+        permissions: ['*'],
+        globalPermissions: [ADMIN_PERMISSIONS.CONTROL_PLANE_READ],
+      }),
+      ADMIN_PERMISSIONS.CONTROL_PLANE_READ
+    );
 
     expect((await app.request('/internal')).status).toBe(403);
   });
@@ -73,6 +105,8 @@ describe('internal version manager authority', () => {
       tenantScope: ['tenant-a'],
       principalType: 'setup_tool',
       clientId: 'authrim-setup',
+      // The ID the setup bootstrap writes; a principal made through the Admin API gets another.
+      actorId: 'amp_authrim_setup',
     });
     const otherMachine = { ...setupMachine, clientId: 'tenant-automation' };
 

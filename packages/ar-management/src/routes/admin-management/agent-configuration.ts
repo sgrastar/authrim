@@ -23,6 +23,7 @@ import {
   type Env,
 } from '@authrim/ar-lib-core';
 import { isAgentMcpEnabled, type AgentManagementEnv } from '../../agent-downscope-auth';
+import { actorReachesTenants } from './tenant-reach';
 
 type AgentConfigurationContext = Context<{
   Bindings: AgentManagementEnv;
@@ -380,12 +381,10 @@ async function normalizedScope(
       tenant(c)
     );
     const targets = normalized.definition.tenantIds;
-    const tenantScope = auth(c).tenantScope ?? [];
     if (
       targets.length > 1 &&
       (!permitted(c, ADMIN_PERMISSIONS.BULK_PLANS_CREATE) ||
-        (!tenantScope.includes('*') &&
-          targets.some((targetTenantId) => !tenantScope.includes(targetTenantId))))
+        !actorReachesTenants(auth(c), tenant(c), targets, ADMIN_PERMISSIONS.BULK_PLANS_CREATE))
     ) {
       return null;
     }

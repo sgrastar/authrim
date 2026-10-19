@@ -166,3 +166,51 @@ export function addEdge(
     })
   );
 }
+
+export interface SeedDestinationProfileInput {
+  owner: string;
+  id: string;
+  destinationType?: string;
+  lifecycleState?: string;
+  /** The state of its active version. */
+  versionState?: string;
+}
+
+/** A Destination Profile with one active version, as `loadDestinationProfileConsentDescriptor` reads it. */
+export function seedDestinationProfile(db: DatabaseSync, input: SeedDestinationProfileInput): void {
+  const { owner, id } = input;
+  const type = input.destinationType ?? 'oidc';
+  db.prepare(
+    `INSERT INTO destination_profiles (id, tenant_id, destination_type, profile_key, display_name, owner_scope_type, lifecycle_state, active_version_id, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, 1)`
+  ).run(
+    id,
+    owner,
+    type,
+    `key-${id}`,
+    `Profile ${id}`,
+    owner === 'platform' ? 'platform' : 'tenant',
+    input.lifecycleState ?? 'active',
+    `${id}-v1`
+  );
+  db.prepare(
+    `INSERT INTO destination_profile_versions (id, tenant_id, profile_id, version_label, lifecycle_state, schema_hash, schema_json, validation_summary_json, warning_summary_json, release_impact_json, created_at, updated_at)
+     VALUES (?, ?, ?, 'v1', ?, 'hash', ?, '{}', '{}', '{}', 1, 1)`
+  ).run(
+    `${id}-v1`,
+    owner,
+    id,
+    input.versionState ?? 'active',
+    JSON.stringify({
+      destinationType: type,
+      claims: [
+        {
+          claimName: 'email',
+          surfaces: ['id_token', 'userinfo'],
+          requiredScopes: ['email'],
+          classification: 'pii',
+        },
+      ],
+    })
+  );
+}

@@ -218,6 +218,33 @@ describe('where settings live', () => {
 		}
 	});
 
+	it('places the default Mapping Set once, on the Mapping Sets page, as saved but not applied', () => {
+		const key = 'identity_mapping.oidc_default_set_id';
+		const meta = ALL_CATEGORY_META['identity-mapping'].settings[key];
+		expect(categoryOf(key)).toBe('identity-mapping');
+		// Nothing reads it at runtime yet.
+		expect(meta.status).toBe('in_development');
+		expect(NOT_APPLIED.get(key)).toBe('to-wire');
+		expect(placed).not.toContain(key);
+		expect(DRAFT.filter((entry) => entry.key === key)).toMatchObject([
+			{ page: 'access/mapping-sets', depth: 'primary' }
+		]);
+		expect(DRAFT_PAGES.find((page) => page.id === 'access/mapping-sets')).toBeDefined();
+		// Named in every language the console has.
+		expect(hasMessage(settingText(key).label)).toBe(true);
+		expect(settingText(key).description).toBeDefined();
+	});
+
+	it('lets only the platform and a tenant set the default Mapping Set, never an app', () => {
+		const category = 'identity-mapping';
+		expect(Object.keys(ALL_CATEGORY_META[category].settings)).toEqual([
+			'identity_mapping.oidc_default_set_id'
+		]);
+		expect(
+			ALL_CATEGORY_META[category].settings['identity_mapping.oidc_default_set_id'].envKey
+		).toBe(undefined);
+	});
+
 	it('points every duplicate at a setting that exists', () => {
 		for (const entry of DRAFT.filter((e) => e.duplicateOf)) {
 			expect(everyKey, entry.key).toContain(entry.duplicateOf);

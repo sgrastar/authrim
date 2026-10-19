@@ -13,6 +13,7 @@ import {
   getTenantIdFromContext,
   hasCapturingTenantBackupSnapshot,
   hasAdminPermission,
+  hasGlobalPlatformAuthority,
   loadChunkedSensitiveDetailJson,
   loadEnvironmentProfileDefaultsFromEnv,
   readR2ObjectTextWithLimit,
@@ -180,13 +181,9 @@ function hasAnyPermission(authContext: AdminAuthContext, permissions: string[]):
   return permissions.some((permission) => hasPermission(authContext, permission));
 }
 
+// Platform logging reaches every tenant, so the authority has to come from a global assignment.
 function hasPlatformAuthority(authContext: AdminAuthContext): boolean {
-  return (
-    hasPermission(authContext, ADMIN_PERMISSIONS.ALL) ||
-    (authContext.roles || []).includes('super_admin') ||
-    (authContext.roles || []).includes('system_admin') ||
-    authContext.tenantScope?.includes('*') === true
-  );
+  return hasGlobalPlatformAuthority(authContext, true);
 }
 
 async function requirePlatformAuthority(c: AdminContext): Promise<Response | null> {

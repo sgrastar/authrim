@@ -19,7 +19,7 @@ import {
   resolveSourceClassification,
   toMappingSourceReference,
   type ClassifyingCatalogEntry,
-} from '@authrim/ar-lib-core';
+} from './identity-mapping-source-reads';
 
 type Ref = Record<string, unknown>;
 

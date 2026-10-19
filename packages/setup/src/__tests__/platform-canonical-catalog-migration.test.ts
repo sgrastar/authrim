@@ -88,7 +88,7 @@ describe.skipIf(!sqlite3)('admin migration 041: the platform canonical field cat
   it('is one of the admin migrations, after the existing ones', () => {
     const files = listD1MigrationSqlFiles(adminMigrationsDir);
     expect(files).toContain(MIGRATION);
-    // Later migrations may follow; it must come after every admin migration that predates it.
+    // Later migrations may follow; it must come right after the ones that existed before it.
     expect(files.indexOf(MIGRATION)).toBe(
       files.indexOf('040_settings_legacy_import_state.sql') + 1
     );

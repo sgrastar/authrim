@@ -19,6 +19,7 @@ import {
   DEVICE_FLOW_DEFAULTS,
   DEVICE_FLOW_SETTINGS_META,
   isUserCodeCharsetName,
+  oidcDefaultSetValueProblem,
   userCodeFormatProblem,
   dcrDefaultTargetProblem,
   AUTHORIZATION_SIGNING_ALGORITHMS,
@@ -609,8 +610,40 @@ export function validateDcrPatch(body: SettingsPatchRequest): string | null {
   return null;
 }
 
-export function validateCategoryPatch(category: string, body: SettingsPatchRequest): string | null {
+const OIDC_DEFAULT_SET_KEY = 'identity_mapping.oidc_default_set_id';
+
+/**
+ * The identity-mapping category: the value is a Mapping Set ID, or (for a tenant) `none`. It must
+ * be saved as a string: the disabled marker and `false` / `null` would all read back as "no
+ * value" (the settings reader turns the marker into `false`), so they are refused here, and
+ * "no default" is a cleared key (or `none` for a tenant that refuses the platform's). Whether the
+ * set exists is checked where the Admin database is at hand (see identity-mapping-reference.ts).
+ */
+export function validateIdentityMappingPatch(
+  body: SettingsPatchRequest,
+  scope: 'platform' | 'tenant'
+): string | null {
+  const unknown = validateKnownSettingKeys('identity-mapping', 'identity mapping', body);
+  if (unknown) return unknown;
+  if (body.disable?.includes(OIDC_DEFAULT_SET_KEY)) {
+    return `${OIDC_DEFAULT_SET_KEY} cannot be disabled; clear it, or save none to refuse the platform's default`;
+  }
+  if (body.set && OIDC_DEFAULT_SET_KEY in body.set) {
+    return oidcDefaultSetValueProblem(body.set[OIDC_DEFAULT_SET_KEY], scope);
+  }
+  return null;
+}
+
+export function validateCategoryPatch(
+  category: string,
+  body: SettingsPatchRequest,
+  /** Where the patch is saved; the identity-mapping category judges the value by it. */
+  scope: 'platform' | 'tenant' | 'client' = 'tenant'
+): string | null {
   switch (category) {
+    case 'identity-mapping':
+      // The platform's rule is the stricter one, and an app has no such setting.
+      return validateIdentityMappingPatch(body, scope === 'platform' ? 'platform' : 'tenant');
     case 'tenant':
       return validateKnownSettingKeys('tenant', 'tenant', body);
     case 'dcr':
@@ -661,7 +694,7 @@ export function validateCategoryPatchAt(
   if (state && category === 'ciba') return validateCibaPatch(body, state);
   if (state && category === 'device-flow')
     return validateDeviceFlowPatch(body, { ...state, scope });
-  return validateCategoryPatch(category, body);
+  return validateCategoryPatch(category, body, scope);
 }
 
 /**
@@ -679,5 +712,5 @@ export function validateSettingValue(
   if (category === 'tenant') {
     return scope === 'platform' ? validatePlatformUIPatch(body, env) : validateTenantUIPaths(body);
   }
-  return validateCategoryPatch(category, body);
+  return validateCategoryPatch(category, body, scope);
 }

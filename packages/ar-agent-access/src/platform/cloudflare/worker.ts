@@ -19,7 +19,6 @@ import {
   AdminMachineAccessRepository,
   buildIssuerUrl,
   ensureDatabaseAdapter,
-  hasAdminPermission,
   isAllowedOrigin,
   parseAllowedOrigins,
   requireDedicatedAdminDatabaseAdapter,
@@ -27,6 +26,7 @@ import {
   type Env as CoreEnv,
 } from '@authrim/ar-lib-core';
 import { CloudflareAdminAgentAuditAdapter } from './admin-agent-audit';
+import { machinePermissionLimit } from './machine-permission-limit';
 import { CloudflareAgentMcpAdmissionAuditAdapter } from './mcp-admission-audit';
 import { CloudflareAgentConfigurationPlanAdapter } from './configuration-plans';
 import { CloudflareAgentConfigurationResourceReader } from './configuration-resources';
@@ -149,43 +149,8 @@ const AgentAccessMcpAgentBase = createCloudflareAgentAccessMcpAgent<CloudflareAg
         isFeatureEnabled: (tenantId) => isCloudflareAgentAccessMcpEnabled(env, tenantId),
         getDelegatorPermissions: (tenantId, delegatorId, now) =>
           repository.getActiveDelegatorPermissions(tenantId, delegatorId, now),
-        getPrincipalPermissionLimit: async (tenantId, principalId, credentialId) => {
-          const principal = await machineRepository.findPrincipalById(principalId);
-          if (!principal || principal.status !== 'active') return null;
-          const tenantScopes = await machineRepository.getPrincipalTenantScopes(principalId);
-          if (
-            tenantScopes.length === 0 ||
-            tenantScopes.some((scope) => scope.scopeMode !== 'allow') ||
-            !tenantScopes.some((scope) => scope.tenantId === tenantId)
-          ) {
-            return null;
-          }
-          const principalPermissions = await machineRepository.getPrincipalPermissions(principalId);
-          if (!credentialId) return principalPermissions;
-          const credential = await machineRepository.findCredentialById(credentialId);
-          if (
-            !credential ||
-            credential.principalId !== principalId ||
-            (credential.status !== 'active' && credential.status !== 'rotating')
-          ) {
-            return null;
-          }
-          const credentialScopes = await machineRepository.getCredentialTenantScopes(credentialId);
-          if (
-            credentialScopes.length > 0 &&
-            (credentialScopes.some((scope) => scope.scopeMode !== 'allow') ||
-              !credentialScopes.some((scope) => scope.tenantId === tenantId))
-          ) {
-            return null;
-          }
-          const credentialPermissions =
-            await machineRepository.getCredentialPermissions(credentialId);
-          return credentialPermissions.length === 0
-            ? principalPermissions
-            : principalPermissions.filter((permission) =>
-                hasAdminPermission(credentialPermissions, permission)
-              );
-        },
+        getPrincipalPermissionLimit: (tenantId, principalId, credentialId) =>
+          machinePermissionLimit(machineRepository, tenantId, principalId, credentialId),
         getRiskPolicy: async (tenantId) => {
           const tenantSettings = await settings.get(tenantId);
           return {

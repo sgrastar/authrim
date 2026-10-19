@@ -320,11 +320,11 @@
               "checksum": "6c94ef0bccf3b4e85d7ed2fb86f125a1718c17142ec5bec6af6220e26dafb720"
             },
             {
-              "path": "041_tenant_backup_preimage_native_order.sql",
+              "path": "042_tenant_backup_preimage_native_order.sql",
               "checksum": "faadc3b940fa6f8d9ae277437a5339a52da8d25498822c4bf2e074b1d2d8d15f"
             },
             {
-              "path": "042_tenant_backup_export_dataset_progress.sql",
+              "path": "044_tenant_backup_export_dataset_progress.sql",
               "checksum": "ab6e8992735e8502016b5da3d9b84557f9cba93b8a282ad4f91ba4d6fe57651d"
             }
           ]
@@ -849,11 +849,11 @@
           "checksum": "6c94ef0bccf3b4e85d7ed2fb86f125a1718c17142ec5bec6af6220e26dafb720"
         },
         {
-          "path": "041_tenant_backup_preimage_native_order.sql",
+          "path": "042_tenant_backup_preimage_native_order.sql",
           "checksum": "faadc3b940fa6f8d9ae277437a5339a52da8d25498822c4bf2e074b1d2d8d15f"
         },
         {
-          "path": "042_tenant_backup_export_dataset_progress.sql",
+          "path": "044_tenant_backup_export_dataset_progress.sql",
           "checksum": "ab6e8992735e8502016b5da3d9b84557f9cba93b8a282ad4f91ba4d6fe57651d"
         }
       ]

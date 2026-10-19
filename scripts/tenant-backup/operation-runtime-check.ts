@@ -1185,7 +1185,7 @@ try {
   await db.batch(splitMigrationSql(exportManifestSql).map((sql) => db.prepare(sql)));
   const exportProgressSql = readFileSync(
     new URL(
-      '../../migrations/admin/d1/042_tenant_backup_export_dataset_progress.sql',
+      '../../migrations/admin/d1/044_tenant_backup_export_dataset_progress.sql',
       import.meta.url
     ),
     'utf8'
