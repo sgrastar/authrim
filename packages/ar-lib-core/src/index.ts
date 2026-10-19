@@ -191,6 +191,7 @@ export * from './services/lookup-directory';
 export * from './services/directory-auth';
 export * from './services/directory-connector-fleet';
 export * from './services/oidc-identity-mapping';
+export * from './services/identity-mapping-swallowed-failure';
 export * from './services/introspection-identity-mapping';
 export * from './services/oidc-attribute-release-consent';
 export * from './services/oidc-id-token-release';
