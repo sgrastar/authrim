@@ -95,6 +95,10 @@
             {
               "path": "020_tenant_backup_preimage_native_order.sql",
               "checksum": "faadc3b940fa6f8d9ae277437a5339a52da8d25498822c4bf2e074b1d2d8d15f"
+            },
+            {
+              "path": "021_tenant_ordered_tenant_indexes.sql",
+              "checksum": "8e8a737b014aedca2c62699ee34fd121fa46cf34ce741f4b494ab791ea6c468e"
             }
           ]
         },
@@ -147,6 +151,10 @@
             {
               "path": "011_tenant_backup_preimage_native_order.sql",
               "checksum": "faadc3b940fa6f8d9ae277437a5339a52da8d25498822c4bf2e074b1d2d8d15f"
+            },
+            {
+              "path": "012_tenant_ordered_tenant_indexes.sql",
+              "checksum": "9ba43004b26152f0a5fa46c32c37d64ee3e82dae87dbcba1c0b94c8773ec21ef"
             }
           ]
         },
@@ -318,6 +326,10 @@
             {
               "path": "041_tenant_backup_preimage_native_order.sql",
               "checksum": "faadc3b940fa6f8d9ae277437a5339a52da8d25498822c4bf2e074b1d2d8d15f"
+            },
+            {
+              "path": "042_tenant_ordered_tenant_indexes.sql",
+              "checksum": "a6b03e139fcbb98bbe7ea5ddc285cad4c8e9c2531462a3a6db81c8927dbfcdeb"
             }
           ]
         },
@@ -608,6 +620,10 @@
         {
           "path": "020_tenant_backup_preimage_native_order.sql",
           "checksum": "faadc3b940fa6f8d9ae277437a5339a52da8d25498822c4bf2e074b1d2d8d15f"
+        },
+        {
+          "path": "021_tenant_ordered_tenant_indexes.sql",
+          "checksum": "8e8a737b014aedca2c62699ee34fd121fa46cf34ce741f4b494ab791ea6c468e"
         }
       ]
     },
@@ -664,6 +680,10 @@
         {
           "path": "011_tenant_backup_preimage_native_order.sql",
           "checksum": "faadc3b940fa6f8d9ae277437a5339a52da8d25498822c4bf2e074b1d2d8d15f"
+        },
+        {
+          "path": "012_tenant_ordered_tenant_indexes.sql",
+          "checksum": "9ba43004b26152f0a5fa46c32c37d64ee3e82dae87dbcba1c0b94c8773ec21ef"
         }
       ]
     },
@@ -839,6 +859,10 @@
         {
           "path": "041_tenant_backup_preimage_native_order.sql",
           "checksum": "faadc3b940fa6f8d9ae277437a5339a52da8d25498822c4bf2e074b1d2d8d15f"
+        },
+        {
+          "path": "042_tenant_ordered_tenant_indexes.sql",
+          "checksum": "a6b03e139fcbb98bbe7ea5ddc285cad4c8e9c2531462a3a6db81c8927dbfcdeb"
         }
       ]
     },
