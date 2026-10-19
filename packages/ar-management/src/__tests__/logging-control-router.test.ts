@@ -183,14 +183,25 @@ const env = {
   },
 } as unknown as Env;
 
-function createApp(permissions: string[] = [], roles: string[] = ['tenant_admin']) {
+function createApp(
+  permissions: string[] = [],
+  roles: string[] = ['tenant_admin'],
+  platformRoleIsGlobal = true
+) {
   const app = new Hono<{ Bindings: Env; Variables: { adminAuth?: unknown; tenantId?: string } }>();
   app.use('*', async (c, next) => {
     c.set('tenantId', c.req.header('x-test-tenant-id') ?? 'tenant-a');
+    // A platform role in this fixture comes from a global assignment.
+    const global =
+      platformRoleIsGlobal &&
+      roles.some((role) => role === 'system_admin' || role === 'super_admin');
     c.set('adminAuth', {
       userId: 'admin-1',
       permissions,
       roles,
+      globalRoles: global ? roles : [],
+      globalPermissions: global ? permissions : [],
+      tenantScope: global ? ['*'] : ['tenant-a'],
     });
     await next();
   });
@@ -476,6 +487,27 @@ describe('logging control routers', () => {
       env
     );
     expect(forbiddenTenant.status).toBe(403);
+
+    // A platform role held for one tenant only is not platform authority.
+    const tenantOnlyPlatformRole = await createApp(
+      [ADMIN_PERMISSIONS.STORAGE_DESTINATIONS_CREATE],
+      ['system_admin'],
+      false
+    ).request(
+      '/api/admin/destinations',
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          scope_type: 'platform',
+          provider: 'r2',
+          name: 'archive',
+          provider_config: { bindingRef: 'AUDIT_ARCHIVE' },
+        }),
+        headers: { 'content-type': 'application/json' },
+      },
+      env
+    );
+    expect(tenantOnlyPlatformRole.status).toBe(403);
 
     const allowed = await createPlatformApp([
       ADMIN_PERMISSIONS.STORAGE_DESTINATIONS_CREATE,

@@ -13,7 +13,12 @@
  */
 
 import { Hono, type Context } from 'hono';
-import { createLogger, type AdminAuthContext, type Env } from '@authrim/ar-lib-core';
+import {
+  createLogger,
+  hasGlobalAdminRole,
+  type AdminAuthContext,
+  type Env,
+} from '@authrim/ar-lib-core';
 import { LegacyImportStateError, runLegacySettingsImport } from '../../legacy-settings-import';
 import { runTenantBackupCoveredMutation } from '../../tenant-backup-writer';
 
@@ -25,9 +30,10 @@ const legacyImport = new Hono<{ Bindings: Env; Variables: { adminAuth?: AdminAut
 
 const PLATFORM_ADMIN_ROLES = ['super_admin', 'system_admin'];
 
+// The import covers the whole environment, so the role has to come from a global assignment:
+// `roles` also holds what is given for one tenant only.
 function isPlatformAdmin(c: ImportContext): boolean {
-  const roles = c.get('adminAuth')?.roles ?? [];
-  return roles.some((role) => PLATFORM_ADMIN_ROLES.includes(role));
+  return hasGlobalAdminRole(c.get('adminAuth'), PLATFORM_ADMIN_ROLES);
 }
 
 async function respond(c: ImportContext, mode: 'dry_run' | 'run' | 'accept_rejections') {

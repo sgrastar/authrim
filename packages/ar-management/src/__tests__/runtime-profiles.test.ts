@@ -61,6 +61,7 @@ function createTestApp() {
         userId: string;
         actorId: string;
         roles: string[];
+        globalRoles?: string[];
         tenantScope?: string[];
         authMethod: 'session';
       };
@@ -71,6 +72,7 @@ function createTestApp() {
       userId: 'admin-1',
       actorId: 'admin-1',
       roles: ['system_admin'],
+      globalRoles: ['system_admin'],
       tenantScope: ['*'],
       authMethod: 'session',
     });
@@ -88,6 +90,8 @@ function createTestApp() {
       userId: 'admin-1',
       actorId: 'admin-1',
       roles: ['system_admin'],
+      globalRoles: ['system_admin'],
+      tenantScope: ['*'],
       authMethod: 'session',
     });
     await next();

@@ -1330,7 +1330,10 @@ async function deleteKvPrefix(kv: KVNamespace | undefined, prefix: string): Prom
 export async function adminTenantsListHandler(c: Context<{ Bindings: Env }>) {
   try {
     const adminAuth = getAdminAuth(c);
-    const hasPlatformAuthority = hasPlatformTenantManagementAuthority(adminAuth);
+    const hasPlatformAuthority = hasPlatformTenantManagementAuthority(
+      adminAuth,
+      ADMIN_PERMISSIONS.SETTINGS_READ
+    );
     const scopedTenantIds = hasPlatformAuthority ? [] : getTenantInventoryScope(adminAuth);
 
     if (!hasPlatformAuthority && scopedTenantIds.length === 0) {

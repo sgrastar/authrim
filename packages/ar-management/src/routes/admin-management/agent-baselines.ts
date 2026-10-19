@@ -32,6 +32,7 @@ import {
 } from '@authrim/ar-lib-core';
 import { isAgentMcpEnabled, type AgentManagementEnv } from '../../agent-downscope-auth';
 import { isFreshAdminHuman } from '../../agent-fresh-auth';
+import { actorReachesTenants } from './tenant-reach';
 
 type BaselineContext = Context<{
   Bindings: AgentManagementEnv;
@@ -76,9 +77,12 @@ function permitted(c: BaselineContext, permission: string): boolean {
   return hasAdminPermission(auth(c).permissions ?? [], permission);
 }
 
-function tenantScoped(c: BaselineContext, tenantIds: readonly string[]): boolean {
-  const scope = auth(c).tenantScope ?? [];
-  return scope.includes('*') || tenantIds.every((tenantId) => scope.includes(tenantId));
+function tenantScoped(
+  c: BaselineContext,
+  tenantIds: readonly string[],
+  permission: string
+): boolean {
+  return actorReachesTenants(auth(c), controlTenant(c), tenantIds, permission);
 }
 
 function error(c: BaselineContext, status: 400 | 403 | 404 | 409 | 503, code: string) {
@@ -271,7 +275,7 @@ agentTemplatesRouter.post('/:id/:version/copies', async (c) => {
     typeof bulkPlanVersion !== 'number' ||
     !Number.isSafeInteger(bulkPlanVersion) ||
     bulkPlanVersion < 1 ||
-    !tenantScoped(c, tenantIds as string[]) ||
+    !tenantScoped(c, tenantIds as string[], ADMIN_PERMISSIONS.AGENT_TEMPLATES_PUBLISH) ||
     !(await activeTenants(c, tenantIds as string[]))
   ) {
     return error(c, 400, 'AGENT_TEMPLATE_COPY_INVALID');
@@ -420,7 +424,7 @@ agentBaselinesRouter.post('/:id/:version/assignments', async (c) => {
     typeof bulkPlanVersion !== 'number' ||
     !Number.isSafeInteger(bulkPlanVersion) ||
     bulkPlanVersion < 1 ||
-    !tenantScoped(c, [tenantId])
+    !tenantScoped(c, [tenantId], ADMIN_PERMISSIONS.AGENT_BASELINES_APPLY)
   ) {
     return error(c, 400, 'AGENT_BASELINE_ASSIGNMENT_INVALID');
   }
@@ -470,7 +474,7 @@ agentBaselinesRouter.post('/assignments/:assignmentId/evaluate', async (c) => {
   const repository = repositories(c).baseline;
   const context = await repository.getAssignmentContext(controlTenant(c), assignmentId);
   if (!context) return error(c, 404, 'AGENT_BASELINE_ASSIGNMENT_NOT_FOUND');
-  if (!tenantScoped(c, [context.assignment.tenantId])) {
+  if (!tenantScoped(c, [context.assignment.tenantId], ADMIN_PERMISSIONS.AGENT_BASELINES_APPLY)) {
     return error(c, 403, 'ADMIN_INSUFFICIENT_TENANT_SCOPE');
   }
   if (context.baseline.status !== 'active') {
@@ -606,7 +610,7 @@ agentBaselinesRouter.post('/assignments/:assignmentId/exceptions', async (c) => 
   const repository = repositories(c).baseline;
   const context = await repository.getAssignmentContext(controlTenant(c), assignmentId);
   if (!context) return error(c, 404, 'AGENT_BASELINE_ASSIGNMENT_NOT_FOUND');
-  if (!tenantScoped(c, [context.assignment.tenantId])) {
+  if (!tenantScoped(c, [context.assignment.tenantId], ADMIN_PERMISSIONS.AGENT_BASELINES_APPLY)) {
     return error(c, 403, 'ADMIN_INSUFFICIENT_TENANT_SCOPE');
   }
   const id = `abx_${crypto.randomUUID()}`;

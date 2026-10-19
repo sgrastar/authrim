@@ -4,6 +4,10 @@ import { SignJWT, exportJWK, generateKeyPair } from 'jose';
 import {
   adminAuthMiddleware,
   hasGlobalAdminPermission,
+  hasGlobalAdminRole,
+  hasGlobalMachinePermission,
+  hasGlobalPlatformAuthority,
+  isBootstrapSetupMachine,
   requireAdminPermissions,
   requireMfa,
 } from '../admin-auth';
@@ -115,6 +119,26 @@ function createMockDB(
             return session;
           }
           if (sql.includes('admin_users')) return adminUser;
+          if (sql.includes('principal_permissions_json')) {
+            // The principal, the credential and their grants, read as one snapshot.
+            if (!machinePrincipal || !machineCredential) return null;
+            if (machineCredential.principal_id !== machinePrincipal.id) return null;
+            const credentialColumns = Object.fromEntries(
+              Object.entries(machineCredential).map(([key, value]) => [`credential_${key}`, value])
+            );
+            return {
+              ...machinePrincipal,
+              ...credentialColumns,
+              principal_permissions_json: JSON.stringify(
+                machinePrincipalPermissions.map((entry) => entry.permission)
+              ),
+              credential_permissions_json: JSON.stringify(
+                machineCredentialPermissions.map((entry) => entry.permission)
+              ),
+              principal_scopes_json: JSON.stringify(machinePrincipalTenantScopes),
+              credential_scopes_json: JSON.stringify(machineCredentialTenantScopes),
+            };
+          }
           if (sql.includes('admin_machine_principals')) return machinePrincipal;
           if (sql.includes('admin_machine_credentials')) return machineCredential;
           return null;
@@ -2496,5 +2520,123 @@ describe('hasGlobalAdminPermission', () => {
 
   it('is false without a context', () => {
     expect(hasGlobalAdminPermission(undefined, '*')).toBe(false);
+  });
+});
+
+describe('hasGlobalAdminRole', () => {
+  const context = (overrides: Record<string, unknown>) =>
+    ({ userId: 'u', authMethod: 'session', roles: [], ...overrides }) as never;
+
+  it('needs the role among the global ones and a global tenant scope', () => {
+    expect(
+      hasGlobalAdminRole(context({ globalRoles: ['system_admin'], tenantScope: ['*'] }), [
+        'super_admin',
+        'system_admin',
+      ])
+    ).toBe(true);
+  });
+
+  it.each([
+    ['the role only in the sum', { roles: ['super_admin'], globalRoles: ['viewer'] }],
+    ['the role only in the sum, no global part at all', { roles: ['super_admin'] }],
+    ['a global role under a tenant scope', { globalRoles: ['super_admin'], tenantScope: ['acme'] }],
+    ['a global role and no scope', { globalRoles: ['super_admin'], tenantScope: undefined }],
+    ['another global role', { globalRoles: ['viewer'], tenantScope: ['*'] }],
+  ])('is false for %s', (_name, overrides) => {
+    expect(hasGlobalAdminRole(context({ tenantScope: ['*'], ...overrides }), ['super_admin'])).toBe(
+      false
+    );
+  });
+
+  it('is false without a context', () => {
+    expect(hasGlobalAdminRole(undefined, ['super_admin'])).toBe(false);
+  });
+});
+
+describe('hasGlobalPlatformAuthority', () => {
+  const context = (overrides: Record<string, unknown>) =>
+    ({ userId: 'u', authMethod: 'session', roles: [], ...overrides }) as never;
+
+  it('accepts the wildcard or a platform role held through a global assignment', () => {
+    expect(
+      hasGlobalPlatformAuthority(context({ globalPermissions: ['*'], tenantScope: ['*'] }))
+    ).toBe(true);
+    expect(
+      hasGlobalPlatformAuthority(context({ globalRoles: ['system_admin'], tenantScope: ['*'] }))
+    ).toBe(true);
+  });
+
+  it.each([
+    [
+      'a global viewer with the wildcard held for a tenant',
+      { permissions: ['*'], roles: ['viewer', 'super_admin'], globalRoles: ['viewer'] },
+    ],
+    ['a global scope alone', { globalRoles: ['viewer'], globalPermissions: ['admin:users:read'] }],
+  ])('rejects %s', (_name, overrides) => {
+    expect(hasGlobalPlatformAuthority(context({ tenantScope: ['*'], ...overrides }))).toBe(false);
+  });
+
+  it('takes a machine token with a global scope only when asked to', () => {
+    const machine = context({
+      authMethod: 'machine_access_token',
+      tenantScope: ['*'],
+      permissions: ['admin:control_plane:read'],
+      globalPermissions: ['admin:control_plane:read'],
+    });
+
+    expect(hasGlobalPlatformAuthority(machine)).toBe(false);
+    expect(hasGlobalPlatformAuthority(machine, true)).toBe(true);
+  });
+});
+
+describe('hasGlobalMachinePermission', () => {
+  const machine = (overrides: Record<string, unknown>) =>
+    ({
+      userId: 'm',
+      authMethod: 'machine_access_token',
+      roles: [],
+      tenantScope: ['*'],
+      globalPermissions: ['admin:*'],
+      permissions: ['admin:*'],
+      ...overrides,
+    }) as never;
+
+  it('is true for a token whose scope is global and which holds the permission', () => {
+    expect(hasGlobalMachinePermission(machine({}), 'admin:*')).toBe(true);
+  });
+
+  it.each([
+    ['a token limited to a tenant', { tenantScope: ['acme'], globalPermissions: [] }],
+    ['a human session', { authMethod: 'session' }],
+    ['another permission', { globalPermissions: ['admin:users:read'] }],
+  ])('is false for %s', (_name, overrides) => {
+    expect(hasGlobalMachinePermission(machine(overrides), 'admin:*')).toBe(false);
+  });
+});
+
+describe('isBootstrapSetupMachine', () => {
+  const setup = (overrides: Record<string, unknown> = {}) =>
+    ({
+      userId: 'amp_authrim_setup',
+      authMethod: 'machine_access_token',
+      actorType: 'machine',
+      actorId: 'amp_authrim_setup',
+      principalType: 'setup_tool',
+      clientId: 'authrim-setup',
+      roles: [],
+      ...overrides,
+    }) as never;
+
+  it('is the principal the bootstrap wrote, by ID, type and client', () => {
+    expect(isBootstrapSetupMachine(setup())).toBe(true);
+  });
+
+  it.each([
+    ['a principal made through the Admin API (generated ID)', { actorId: 'd7ebb595' }],
+    ['another client', { clientId: 'other' }],
+    ['another type', { principalType: 'internal_service' }],
+    ['a session', { authMethod: 'session' }],
+  ])('is false for %s', (_name, overrides) => {
+    expect(isBootstrapSetupMachine(setup(overrides))).toBe(false);
   });
 });

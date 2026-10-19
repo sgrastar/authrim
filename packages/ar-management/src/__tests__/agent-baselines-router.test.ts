@@ -110,6 +110,8 @@ describe('Agent template and baseline control plane', () => {
       mfaVerified: true,
       authenticationTimeMs: Date.now(),
     };
+    // The scope is global through a global assignment, which gives these permissions.
+    authContext = { ...authContext, globalPermissions: authContext.permissions };
     adapter.query.mockResolvedValue([]);
     adapter.queryOne.mockResolvedValue(null);
     adapter.batch.mockResolvedValue([{ rowsAffected: 1 }, { rowsAffected: 1 }]);
@@ -185,6 +187,48 @@ describe('Agent template and baseline control plane', () => {
 
   it('rejects a managed exception outside the administrator tenant scope', async () => {
     authContext = { ...authContext, tenantScope: ['tenant-allowed'] };
+    adapter.queryOne.mockResolvedValue({
+      assignment_id: 'assignment-1',
+      baseline_id: 'baseline-1',
+      baseline_version: 1,
+      tenant_id: 'tenant-other',
+      source_bulk_plan_id: 'bulk-1',
+      source_bulk_plan_version: 1,
+      assigned_by: 'platform-admin',
+      assigned_at: 1,
+      last_evaluated_at: null,
+      drift_status: 'drifted',
+      drift_digest: 'drift-1',
+      control_tenant_id: 'control',
+      baseline_name: 'Client baseline',
+      baseline_mode: 'managed',
+      baseline_enforcement: 'report_only',
+      definition_json: JSON.stringify({
+        schemaVersion: 'authrim-agent-baseline-v1',
+        taskSet: { id: 'task-set', version: 1, digest: 'x'.repeat(32) },
+        configurationProfile: configurationProfile(),
+      }),
+      definition_digest: 'baseline-definition-digest',
+      baseline_status: 'active',
+      baseline_created_by: 'platform-admin',
+      baseline_created_at: 1,
+    });
+    const response = await request(
+      '/api/admin/agent-baselines/assignments/assignment-1/exceptions',
+      'POST',
+      {
+        fields: ['client-metadata.client_name'],
+        reason: 'Temporary exception',
+        expires_at: Date.now() + 60_000,
+      }
+    );
+    expect(response.status).toBe(403);
+    expect(adapter.batch).not.toHaveBeenCalled();
+  });
+
+  it('rejects a managed exception in another tenant when the global scope does not bring the permission', async () => {
+    // The apply permission is held for the control tenant only; the global assignment is a viewer.
+    authContext = { ...authContext, tenantScope: ['*'], globalPermissions: [] };
     adapter.queryOne.mockResolvedValue({
       assignment_id: 'assignment-1',
       baseline_id: 'baseline-1',

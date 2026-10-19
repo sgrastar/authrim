@@ -426,6 +426,7 @@ function createApp(input?: {
   authMethod?: AdminAuthContext['authMethod'];
   principalType?: AdminAuthContext['principalType'];
   clientId?: string;
+  actorId?: string;
   permissions?: string[];
   environmentId?: string;
   control?: Partial<NonNullable<Env['CONTROL']>>;
@@ -588,8 +589,13 @@ function createApp(input?: {
       actorType: input?.actorType ?? 'human',
       principalType: input?.principalType,
       clientId: input?.clientId,
+      actorId: input?.actorId,
       roles: input?.roles ?? ['system_admin'],
+      // The roles of this fixture's Admin come from a global assignment.
+      globalRoles: input?.roles ?? ['system_admin'],
+      tenantScope: ['*'],
       permissions: input?.permissions ?? [],
+      globalPermissions: input?.permissions ?? [],
     });
     await next();
   });
@@ -1057,6 +1063,7 @@ describe('control-plane operations admin router', () => {
       authMethod: 'machine_access_token',
       principalType: 'setup_tool',
       clientId: 'authrim-setup',
+      actorId: 'amp_authrim_setup',
       permissions: ['admin:control_plane:provision'],
     });
     const setupResponse = await setupMachine.app.request(
@@ -1450,6 +1457,7 @@ describe('control-plane operations admin router', () => {
       authMethod: 'machine_access_token',
       principalType: 'setup_tool',
       clientId: 'authrim-setup',
+      actorId: 'amp_authrim_setup',
       roles: [],
       permissions: ['admin:control_plane:provision'],
     });

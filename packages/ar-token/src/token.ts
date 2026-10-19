@@ -433,61 +433,6 @@ function intersectScopes(requestedScopes: string[], allowedScopes: string[]): st
   return requestedScopes.filter((scope) => hasAdminPermission(allowedScopes, scope));
 }
 
-function intersectMachinePermissionSets(
-  principalPermissions: string[],
-  credentialPermissions: string[]
-): string[] {
-  const result = new Set<string>();
-  for (const principalPermission of principalPermissions) {
-    for (const credentialPermission of credentialPermissions) {
-      if (hasAdminPermission([principalPermission], credentialPermission)) {
-        result.add(credentialPermission);
-      } else if (hasAdminPermission([credentialPermission], principalPermission)) {
-        result.add(principalPermission);
-      }
-    }
-  }
-  return Array.from(result);
-}
-
-function resolveMachineTenantScope(
-  principalScopes: Array<{ scopeMode: string; tenantId: string | null }>,
-  credentialScopes: Array<{ scopeMode: string; tenantId: string | null }>
-): string[] {
-  const effectiveCredentialScopes =
-    credentialScopes.length > 0 ? credentialScopes : principalScopes;
-  const principalAll = principalScopes.some((scope) => scope.scopeMode === 'all');
-  const credentialAll = effectiveCredentialScopes.some((scope) => scope.scopeMode === 'all');
-
-  if (principalAll && credentialAll) {
-    return ['*'];
-  }
-
-  const principalTenants = principalAll
-    ? null
-    : new Set(
-        principalScopes
-          .filter((scope) => scope.scopeMode === 'allow' && scope.tenantId)
-          .map((scope) => scope.tenantId as string)
-      );
-  const credentialTenants = credentialAll
-    ? null
-    : new Set(
-        effectiveCredentialScopes
-          .filter((scope) => scope.scopeMode === 'allow' && scope.tenantId)
-          .map((scope) => scope.tenantId as string)
-      );
-
-  if (principalTenants === null) {
-    return Array.from(credentialTenants ?? []);
-  }
-  if (credentialTenants === null) {
-    return Array.from(principalTenants);
-  }
-
-  return Array.from(principalTenants).filter((tenantId) => credentialTenants.has(tenantId));
-}
-
 function toAccessTokenAudience(targets: string[]): AccessTokenAudience {
   return targets.length === 1 ? targets[0] : targets;
 }
@@ -9334,13 +9279,22 @@ async function handleAdminMachineClientCredentialsGrant(
     return oauthError(c, 'invalid_scope', 'Admin API machine access requires scope', 400);
   }
 
-  const principalPermissions = await machineRepo.getPrincipalPermissions(principal.id);
-  const credentialPermissions = await machineRepo.getCredentialPermissions(credential.id);
-  const allowedPermissions =
-    credentialPermissions.length > 0
-      ? intersectMachinePermissionSets(principalPermissions, credentialPermissions)
-      : principalPermissions;
-  const grantedScopes = intersectScopes(requestedScopes, allowedPermissions);
+  // What the token carries is decided on one snapshot of the principal, the credential and their
+  // permissions and tenant scopes. Read one by one, a change in between could give a combination
+  // that was never stored (the permissions of one state with the scope of the next). Whether the
+  // principal and the credential are still usable is taken from the same snapshot.
+  const snapshot = await machineRepo.loadMachineGrantSnapshot(principal.id, credential.id);
+  const snapshotNowMs = Date.now();
+  if (
+    !snapshot ||
+    snapshot.principal.status !== 'active' ||
+    (snapshot.credential.status !== 'active' && snapshot.credential.status !== 'rotating') ||
+    (snapshot.credential.notBefore !== null && snapshot.credential.notBefore > snapshotNowMs) ||
+    (snapshot.credential.expiresAt !== null && snapshot.credential.expiresAt <= snapshotNowMs)
+  ) {
+    return oauthError(c, 'invalid_client', 'Client authentication failed', 401);
+  }
+  const grantedScopes = intersectScopes(requestedScopes, snapshot.permissions);
   if (grantedScopes.length === 0) {
     return oauthError(
       c,
@@ -9350,9 +9304,7 @@ async function handleAdminMachineClientCredentialsGrant(
     );
   }
 
-  const principalTenantScopes = await machineRepo.getPrincipalTenantScopes(principal.id);
-  const credentialTenantScopes = await machineRepo.getCredentialTenantScopes(credential.id);
-  const tenantScope = resolveMachineTenantScope(principalTenantScopes, credentialTenantScopes);
+  const tenantScope = snapshot.tenantScope;
 
   const adminSigningTenantId = getDefaultTenantId(c.env);
   let privateKey: CryptoKey;
@@ -9366,7 +9318,9 @@ async function handleAdminMachineClientCredentialsGrant(
     return oauthError(c, 'server_error', 'Failed to load signing key', 500);
   }
 
-  let expiresIn = Math.min(principal.tokenTtlSeconds, 900);
+  // The lifetime comes from the snapshot, like everything else the token carries: the first
+  // lookup may be from before a rotation or a change of the principal.
+  let expiresIn = Math.min(snapshot.principal.tokenTtlSeconds, 900);
   const dpopProof = extractDPoPProof(c.req.raw.headers);
   let dpopJkt: string | undefined;
   if (dpopProof) {
@@ -9408,12 +9362,12 @@ async function handleAdminMachineClientCredentialsGrant(
   let accessTokenJti = '';
   try {
     const { jti: regionAwareJti } = await generateRegionAwareJti(c.env, adminSigningTenantId);
-    if (credential.expiresAt !== null) {
+    if (snapshot.credential.expiresAt !== null) {
       // Keep an issued bearer token strictly inside the credential's hard
       // lifetime. The one-second margin accounts for JWT NumericDate rounding
       // between this calculation and createAccessToken's own clock read.
       const remainingCredentialLifetimeSeconds =
-        Math.floor((credential.expiresAt - Date.now()) / 1000) - 1;
+        Math.floor((snapshot.credential.expiresAt - Date.now()) / 1000) - 1;
       if (remainingCredentialLifetimeSeconds < 1) {
         return oauthError(c, 'invalid_client', 'Client authentication failed', 401);
       }

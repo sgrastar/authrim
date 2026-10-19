@@ -6967,6 +6967,11 @@ describe('Client Authentication Tests', () => {
             credential_revoked_by_actor_type: null,
             credential_revoked_by_actor_id: null,
             credential_revoke_reason: null,
+            // The same row read as one snapshot, with the permissions and tenant scopes of both.
+            principal_permissions_json: JSON.stringify(principalPermissions),
+            credential_permissions_json: JSON.stringify(credentialPermissions),
+            principal_scopes_json: JSON.stringify(principalTenantScopes),
+            credential_scopes_json: JSON.stringify(credentialTenantScopes),
           };
         }
         return null;
@@ -7053,6 +7058,152 @@ describe('Client Authentication Tests', () => {
         expect.any(String)
       );
     });
+
+    it('signs a token from one consistent state when the principal changes while it is read', async () => {
+      // L: the wildcard for one tenant. G: a global scope with only a narrow permission. Each is a
+      // state the Admin could have stored; the pair "L's permissions with G's scope" never was.
+      const L = {
+        permissions: ['*'],
+        scopes: [{ scope_mode: 'allow', tenant_id: 'tenant-a' }],
+      };
+      const G = {
+        permissions: ['admin:machine_access:write'],
+        scopes: [{ scope_mode: 'all', tenant_id: null }],
+      };
+      mockAdminMachineAccess({
+        principalPermissions: L.permissions,
+        principalTenantScopes: L.scopes,
+        credentialTenantScopes: [{ scope_mode: 'all', tenant_id: null }],
+      });
+      let state: {
+        permissions: string[];
+        scopes: Array<{ scope_mode: string; tenant_id: string | null }>;
+      } = L;
+      const baseQueryOne = mocks.mockAdminAdapter.queryOne.getMockImplementation()!;
+      const baseQuery = mocks.mockAdminAdapter.query.getMockImplementation()!;
+      mocks.mockAdminAdapter.queryOne.mockImplementation(
+        async (sql: string, ...rest: unknown[]) => {
+          const row = (await baseQueryOne(sql, ...rest)) as Record<string, unknown> | null;
+          if (row && sql.includes('principal_permissions_json')) {
+            const snapshot = {
+              ...row,
+              principal_permissions_json: JSON.stringify(state.permissions),
+              principal_scopes_json: JSON.stringify(state.scopes),
+            };
+            // The change lands right after the snapshot.
+            state = G;
+            return snapshot;
+          }
+          return row;
+        }
+      );
+      mocks.mockAdminAdapter.query.mockImplementation(async (sql: string, ...rest: unknown[]) => {
+        if (sql.includes('admin_machine_principal_permissions')) {
+          const permissions = state.permissions.map((permission) => ({ permission }));
+          // The change lands between the read of the permissions and the read of the scopes.
+          state = G;
+          return permissions;
+        }
+        if (sql.includes('admin_machine_principal_tenant_scopes')) {
+          return state.scopes;
+        }
+        return baseQuery(sql, ...rest);
+      });
+      mocks.mockParseToken.mockReturnValue({
+        iss: 'setup-tool',
+        sub: 'setup-tool',
+        aud: 'https://test.example.com/token',
+        exp: Math.floor(Date.now() / 1000) + 60,
+        iat: Math.floor(Date.now() / 1000),
+        jti: 'assertion-torn',
+      });
+      mocks.mockParseTokenHeader.mockReturnValue({ alg: 'ES256', kid: 'setup-2026-05' });
+      mocks.mockValidateClientAssertion.mockResolvedValue({ valid: true, client_id: 'setup-tool' });
+
+      const response = await tokenHandler(
+        createMockContext({
+          method: 'POST',
+          body: {
+            grant_type: 'client_credentials',
+            client_id: 'setup-tool',
+            client_assertion_type: 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer',
+            client_assertion: 'header.payload.signature',
+            audience: 'authrim:admin-api',
+            scope: 'admin:machine_access:write admin:settings:write',
+          },
+          env: { ...mockEnv, ENABLE_CLIENT_CREDENTIALS: 'true' },
+        })
+      );
+
+      expect(response.status).toBe(200);
+      const claims = mocks.mockCreateAccessToken.mock.calls[0]![0] as {
+        scope: string;
+        tenant_scope: string[];
+      };
+      // Whatever it signs is one of the two stored states: a global scope never carries the
+      // permission only L held.
+      expect(
+        claims.tenant_scope.includes('*') &&
+          claims.scope.split(' ').includes('admin:settings:write')
+      ).toBe(false);
+      expect(claims.tenant_scope).toEqual(['tenant-a']);
+    });
+
+    it.each([
+      ['the principal token lifetime', () => ({ token_ttl_seconds: 20 }), 20],
+      ['the credential expiry', () => ({ credential_expires_at: Date.now() + 30_000 }), 29],
+    ])(
+      'limits the lifetime by %s as the snapshot read it, not the first lookup',
+      async (_name, changed, limit) => {
+        mockAdminMachineAccess();
+        const baseQueryOne = mocks.mockAdminAdapter.queryOne.getMockImplementation()!;
+        let lookups = 0;
+        mocks.mockAdminAdapter.queryOne.mockImplementation(
+          async (sql: string, ...rest: unknown[]) => {
+            const row = (await baseQueryOne(sql, ...rest)) as Record<string, unknown> | null;
+            if (!row || !sql.includes('JOIN admin_machine_credentials')) return row;
+            lookups += 1;
+            // The first lookup is from before a rotation that gave the credential a short life and
+            // a shorter token lifetime to the principal; the snapshot is after it.
+            return lookups === 1
+              ? row
+              : { ...row, credential_expires_at: Date.now() + 30_000, token_ttl_seconds: 20 };
+          }
+        );
+        mocks.mockParseToken.mockReturnValue({
+          iss: 'setup-tool',
+          sub: 'setup-tool',
+          aud: 'https://test.example.com/token',
+          exp: Math.floor(Date.now() / 1000) + 60,
+          iat: Math.floor(Date.now() / 1000),
+          jti: 'assertion-lifetime',
+        });
+        mocks.mockParseTokenHeader.mockReturnValue({ alg: 'ES256', kid: 'setup-2026-05' });
+        mocks.mockValidateClientAssertion.mockResolvedValue({
+          valid: true,
+          client_id: 'setup-tool',
+        });
+
+        const response = await tokenHandler(
+          createMockContext({
+            method: 'POST',
+            body: {
+              grant_type: 'client_credentials',
+              client_id: 'setup-tool',
+              client_assertion_type: 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer',
+              client_assertion: 'header.payload.signature',
+              audience: 'authrim:admin-api',
+              scope: 'admin:tenants.read',
+            },
+            env: { ...mockEnv, ENABLE_CLIENT_CREDENTIALS: 'true' },
+          })
+        );
+
+        expect(response.status).toBe(200);
+        expect(lookups).toBe(2);
+        expect(mocks.mockCreateAccessToken.mock.calls[0]![3]).toBeLessThanOrEqual(limit);
+      }
+    );
 
     it('optionally sender-constrains an Admin machine token for Mode B use', async () => {
       mockAdminMachineAccess();
