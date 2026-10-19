@@ -46,8 +46,12 @@ export const NOT_APPLIED: ReadonlyMap<string, NotApplied> = new Map([
 		'federation.saml_artifact_resolution_timeout',
 		'federation.saml_artifact_ttl'
 	]),
-	// to-wire (1)
-	...reason('to-wire', ['assurance.ida_profile']),
+	// to-wire (2)
+	...reason('to-wire', [
+		'assurance.ida_profile',
+		// Saved and checked; the runtime does not read the default Mapping Set yet.
+		'identity_mapping.oidc_default_set_id'
+	]),
 	// internal (5)
 	...reason('internal', [
 		'login-ui.account_page_draft',

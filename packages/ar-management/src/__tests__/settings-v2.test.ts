@@ -267,6 +267,9 @@ function createTestApp(
         userId: 'test_admin',
         authMethod: 'bearer',
         roles: ['system_admin'], // system_admin has access to all settings
+        // Held through a global assignment, as the platform settings routes ask.
+        globalRoles: ['system_admin'],
+        tenantScope: ['*'],
       }
     );
     c.set('tenantId', options.tenantId ?? 'default');

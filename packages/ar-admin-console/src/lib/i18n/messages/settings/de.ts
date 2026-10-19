@@ -232,6 +232,10 @@ export const deSettings: Record<keyof typeof jaSettings, string> = {
 	'set.k.session.backchannel_retry_backoff_multiplier':
 		'Faktor, um den die Zeit zwischen Wiederholungen wächst',
 
+	'set.k.identity_mapping.oidc_default_set_id': 'Standard-Mapping-Set (OIDC)',
+	'set.k.identity_mapping.oidc_default_set_id.desc':
+		'Die ID des Mapping-Sets für Apps dieses Bereichs, die kein eigenes gewählt haben. Nicht gesetzt bedeutet: kein Standard, es wird kein Mapping angewendet. Ein Tenant kann none eintragen, um auch den Standard der Plattform nicht zu verwenden. Es kann nur ein aktives Mapping-Set angegeben werden. Der Wert wird derzeit nur gespeichert und geprüft; die Anmeldung nutzt ihn noch nicht.',
+
 	'settings.advanced': 'Erweitert',
 	'settings.setHere': 'Überschriebene Einstellungen: {n}',
 	'settings.readOnly.title': 'Nur ansehen',
