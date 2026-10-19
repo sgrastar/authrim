@@ -10831,8 +10831,10 @@ paths:
       operationId: getApiAdminFieldMappingFieldMappingSets
       summary: List field mapping sets.
       description: >-
-        Lists field mapping sets owned by the tenant, including key, display name, owner scope,
-        lifecycle state, and timestamps.
+        Lists the field mapping sets the tenant owns together with the platform's, which every
+        tenant can read. Each set carries its key, display name, owner (`tenant` or `platform`),
+        lifecycle state, and timestamps. A set another tenant owns is never listed. A platform set
+        can be read but not changed with tenant authority.
       responses:
         '200':
           $ref: '#/components/responses/FieldMappingSets'
@@ -10858,7 +10860,10 @@ paths:
       summary: Create a field mapping set.
       description: >-
         Creates a field mapping set container. Versions and rules are added through the versions
-        endpoint.
+        endpoint. With `ownerScopeType` set to `platform` the set is created in the platform's
+        namespace (the set every tenant can read), which requires platform administrator
+        authority; any other value creates a set the calling tenant owns. A tenant set cannot
+        carry the platform owner scope.
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
       responses:
@@ -10887,7 +10892,10 @@ paths:
         - Field Mapping
       operationId: deleteApiAdminFieldMappingFieldMappingSetsByFieldMappingSetId
       summary: Delete a field mapping set.
-      description: Deletes a field mapping set by id and returns a mutation result envelope.
+      description: >-
+        Deletes a field mapping set by id and returns a mutation result envelope. A set that
+        another tenant owns answers 404 as a set that does not exist does. A set the platform owns
+        requires platform administrator authority (403 otherwise).
       responses:
         '200':
           $ref: '#/components/responses/FieldMappingDeleteResult'
@@ -10959,7 +10967,8 @@ paths:
       summary: List field mapping versions.
       description: >-
         Lists versions for a field mapping set, including rule and transform summaries and compiled
-        snapshot metadata.
+        snapshot metadata. The set may be the tenant's or the platform's; a set another tenant
+        owns, or one that does not exist, answers 404.
       responses:
         '200':
           $ref: '#/components/responses/FieldMappingVersions'
@@ -10992,7 +11001,9 @@ paths:
       summary: Create a field mapping version.
       description: >-
         Creates a draft version for a field mapping set with rules, edges, transforms, validation
-        rules, release rules, and conflict rules. Mapping edges cannot target claims owned by an OIDC
+        rules, release rules, and conflict rules. A set the platform owns cannot read a field a
+        tenant defines (custom claims, custom fields, attributes), make a persistent identifier,
+        or use a Source Profile. Mapping edges cannot target claims owned by an OIDC
         or introspection protocol envelope. Every source field marked mappingRequired in a referenced
         Source Profile must be connected by an edge.
       responses:
@@ -11031,7 +11042,10 @@ paths:
       summary: Activate a field mapping version.
       description: >-
         Activates a compiled field mapping version for the supplied activation scope. Requires a
-        compiled snapshot id in the request body.
+        compiled snapshot id in the request body. A set the platform owns applies to every tenant,
+        so its activation is stored with an empty scope (a tenant-wide scope is accepted and
+        normalised; a narrower one is refused), and it must release into exactly one OIDC
+        Destination Profile that the platform owns.
       responses:
         '200':
           $ref: '#/components/responses/FieldMappingActivationResult'
@@ -11075,7 +11089,8 @@ paths:
       summary: Compile a field mapping version.
       description: >-
         Compiles a field mapping version against a catalog version and returns the compiled snapshot
-        metadata.
+        metadata. For a set the platform owns, the catalog version must be the platform's, every
+        source must be a field of it, and a custom field is refused.
       responses:
         '200':
           $ref: '#/components/responses/FieldMappingCompileResult'
@@ -56294,6 +56309,7 @@ components:
       required:
         - id
         - tenantId
+        - owner
         - fieldMappingKey
         - displayName
         - lifecycleState
@@ -56304,6 +56320,15 @@ components:
           type: string
         tenantId:
           type: string
+          description: >-
+            The tenant ID the set is stored under: the tenant's own, or `platform` for a set the
+            platform owns.
+        owner:
+          type: string
+          enum:
+            - tenant
+            - platform
+          description: Who owns the set. A `platform` set is shared by every tenant and read-only for them.
         fieldMappingKey:
           type: string
         displayName:
@@ -56347,6 +56372,9 @@ components:
           type: string
         ownerScopeType:
           type: string
+          description: >-
+            `platform` creates the set in the platform's namespace (platform administrator
+            authority required). Otherwise the set belongs to the calling tenant.
         ownerScopeId:
           type: string
     FieldMappingSetMutationResponse:

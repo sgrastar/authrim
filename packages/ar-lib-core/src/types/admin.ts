@@ -88,6 +88,18 @@ export interface AdminAuthContext {
   tenantScope?: string[];
   /** User roles (e.g., ['admin', 'super_admin']) */
   roles: string[];
+  /**
+   * The part of `roles` that comes from a global assignment (or, for a machine token, from a
+   * token whose tenant scope is global). `roles` adds up every assignment that applies to the
+   * request, so a role held only for some tenants is in it too; this is the part that holds for
+   * every tenant. Absent means none.
+   */
+  globalRoles?: string[];
+  /**
+   * The same for `permissions`: what the global assignments grant (with what their roles
+   * inherit). Absent means none.
+   */
+  globalPermissions?: string[];
   // ==========================================================================
   // Admin/EndUser Separation Extensions
   // ==========================================================================

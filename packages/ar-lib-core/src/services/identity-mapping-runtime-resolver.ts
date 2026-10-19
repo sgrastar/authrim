@@ -18,6 +18,10 @@ import {
 } from './identity-mapping-owner';
 import {
   findConflictingSourceIds,
+  mappingDestinationProfileIds,
+  mappingReferenceCatalogEntryId,
+  mappingReferencePath,
+  normalizeDestinationProfileReference,
   resolveSourceClassification,
   sensitiveClassificationRank,
 } from './identity-mapping-source-reads';
@@ -418,16 +422,7 @@ export async function resolveRuntimeIdentityMappingBinding(
 }
 
 function uniqueDestinationProfileIds(edges: EdgeRow[]): string[] {
-  const profileIds = new Set<string>();
-  for (const edge of edges) {
-    const targetRef = parseJsonObject(edge.target_ref_json);
-    const profileId = readString(targetRef.profileId) ?? readString(targetRef.profile_id);
-    const side = readString(targetRef.side);
-    if (profileId && (!side || side === 'destination')) {
-      profileIds.add(normalizeDestinationProfileReference(profileId));
-    }
-  }
-  return [...profileIds];
+  return mappingDestinationProfileIds(edges.map((edge) => parseJsonObject(edge.target_ref_json)));
 }
 
 async function loadActiveActivationRows(
@@ -497,12 +492,6 @@ function rankActivations(
 
 function destinationProfileReferencesMatch(left: string, right: string): boolean {
   return normalizeDestinationProfileReference(left) === normalizeDestinationProfileReference(right);
-}
-
-function normalizeDestinationProfileReference(value: string): string {
-  return value.startsWith('destination-profile-')
-    ? value.slice('destination-profile-'.length)
-    : value;
 }
 
 function activationScore(
@@ -812,9 +801,8 @@ function normalizeFieldRef(value: Record<string, unknown>): FieldRef {
   return {
     side: (readString(value.side) ?? 'source') as FieldRef['side'],
     namespace: readString(value.namespace) ?? 'unknown',
-    path:
-      readString(value.path) ?? readString(value.fieldKey) ?? readString(value.nodeId) ?? 'unknown',
-    catalogEntryId: readString(value.catalogEntryId) ?? readString(value.catalog_entry_id),
+    path: mappingReferencePath(value) ?? 'unknown',
+    catalogEntryId: mappingReferenceCatalogEntryId(value),
     valueType: readString(value.valueType) ?? readString(value.value_type),
   };
 }

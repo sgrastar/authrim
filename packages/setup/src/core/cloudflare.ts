@@ -6310,7 +6310,7 @@ type SeededRuntimeProfile = {
   payload: Record<string, unknown>;
 };
 
-type DefaultCanonicalCatalogEntrySeed = {
+export type DefaultCanonicalCatalogEntrySeed = {
   stableFieldId: string;
   path: string;
   valueType: string;
@@ -6330,7 +6330,11 @@ const DEFAULT_CANONICAL_CATALOG_VERSION_LABEL = '2026-05-30';
 const DEFAULT_CANONICAL_CATALOG_BUNDLE_HASH =
   '0000000000000000000000000000000000000000000000000000000000000001';
 
-const DEFAULT_CANONICAL_CATALOG_ENTRIES: DefaultCanonicalCatalogEntrySeed[] = [
+/**
+ * The standard canonical fields. Migration admin/d1/041_platform_default_canonical_catalog.sql
+ * seeds the same fields for the platform namespace; a test keeps the two equal.
+ */
+export const DEFAULT_CANONICAL_CATALOG_ENTRIES: DefaultCanonicalCatalogEntrySeed[] = [
   {
     stableFieldId: 'field.canonical.name',
     path: 'name',

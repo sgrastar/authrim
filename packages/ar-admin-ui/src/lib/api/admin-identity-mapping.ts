@@ -7,6 +7,8 @@ export interface IdentityMappingFieldMappingSetSummary {
 	tenantId: string;
 	fieldMappingKey: string;
 	displayName: string;
+	/** Who owns the set. A response without it (an older API) is the tenant's. */
+	owner?: 'tenant' | 'platform';
 	description?: string | null;
 	lifecycleState: string;
 	createdAt?: number | null;
@@ -702,7 +704,19 @@ export const adminIdentityMappingAPI = {
 		fieldMappingSets: IdentityMappingFieldMappingSetSummary[];
 	}> {
 		const response = await adminFetch(`${API_BASE_URL}/api/admin/field-mapping/field-mapping-sets`);
-		return parseJson(response, 'Failed to load field mapping sets');
+		const result = await parseJson<{ fieldMappingSets: IdentityMappingFieldMappingSetSummary[] }>(
+			response,
+			'Failed to load field mapping sets'
+		);
+		// The API also lists the platform's sets, which every tenant can read. Nothing here can
+		// choose one yet (the runtime resolves a set the tenant owns), so the pickers keep to the
+		// tenant's own. A response with no owner is an older API's, and all of it is the tenant's.
+		return {
+			...result,
+			fieldMappingSets: (result.fieldMappingSets ?? []).filter(
+				(fieldMappingSet) => (fieldMappingSet.owner ?? 'tenant') === 'tenant'
+			)
+		};
 	},
 
 	async createFieldMappingSet(

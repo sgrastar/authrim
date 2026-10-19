@@ -87,6 +87,10 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
           userId: c.req.header('x-test-user-id') ?? 'admin_1',
           email: 'admin@example.com',
           permissions: (c.req.header('x-test-permissions') ?? '').split(',').filter(Boolean),
+          globalPermissions: (c.req.header('x-test-global-permissions') ?? '')
+            .split(',')
+            .filter(Boolean),
+          tenantScope: (c.req.header('x-test-tenant-scope') ?? '').split(',').filter(Boolean),
           roles: (c.req.header('x-test-roles') ?? 'admin').split(',').filter(Boolean),
           hierarchyLevel: c.req.header('x-test-hierarchy-level')
             ? Number(c.req.header('x-test-hierarchy-level'))
@@ -501,6 +505,8 @@ describe('adminRolesRouter', () => {
         headers: {
           'Content-Type': 'application/json',
           'x-test-permissions': `*,${ADMIN_PERMISSIONS.ADMIN_ROLES_WRITE},${ADMIN_PERMISSIONS.ADMIN_ROLES_READ}`,
+          'x-test-global-permissions': '*',
+          'x-test-tenant-scope': '*',
           'x-test-hierarchy-level': '50',
         },
         body: JSON.stringify({
@@ -623,6 +629,99 @@ describe('adminRolesRouter', () => {
         expires_at: 2000,
       })
     );
+  });
+
+  describe('a global scope takes the wildcard from a global assignment', () => {
+    // `permissions` adds up every assignment, so a wildcard held for the tenant is in it.
+    const summedOnly = {
+      'x-test-permissions': `*,${ADMIN_PERMISSIONS.ADMIN_ROLES_WRITE},${ADMIN_PERMISSIONS.ADMIN_ROLES_READ}`,
+      'x-test-global-permissions': ADMIN_PERMISSIONS.ADMIN_ROLES_READ,
+      'x-test-tenant-scope': '*',
+      'x-test-hierarchy-level': '50',
+    };
+    const wildcardWithoutGlobalScope = {
+      ...summedOnly,
+      'x-test-global-permissions': '*',
+      'x-test-tenant-scope': 'tenant_123',
+    };
+
+    beforeEach(() => {
+      repoMocks.getRole.mockResolvedValue({
+        id: 'role_support',
+        tenant_id: 'tenant_123',
+        is_system: false,
+        permissions: ['admin:users:read'],
+        hierarchy_level: 10,
+        name: 'support',
+      });
+      repoMocks.findAdminUserByTenantAndId.mockResolvedValue({ id: 'admin_2' });
+      repoMocks.getAssignment.mockResolvedValue({
+        id: 'assignment_1',
+        admin_role_id: 'role_support',
+        admin_user_id: 'admin_2',
+        scope_type: 'tenant',
+        scope_id: 'tenant_123',
+      });
+      repoMocks.assignmentExists.mockResolvedValue(false);
+    });
+
+    it.each([
+      ['a wildcard that is not a global one', summedOnly],
+      ['a global wildcard under a tenant scope', wildcardWithoutGlobalScope],
+    ])('refuses %s to create a global assignment', async (_name, headers) => {
+      const { app, env } = createTestApp();
+      const response = await app.request(
+        '/api/admin/admin-roles/role_support/assignments',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...headers },
+          body: JSON.stringify({ admin_user_id: 'admin_2', scope_type: 'global' }),
+        },
+        env
+      );
+
+      expect(response.status).toBe(403);
+      expect(repoMocks.assignRole).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['a wildcard that is not a global one', summedOnly],
+      ['a global wildcard under a tenant scope', wildcardWithoutGlobalScope],
+    ])('refuses %s to widen an assignment to global', async (_name, headers) => {
+      const { app, env } = createTestApp();
+      const response = await app.request(
+        '/api/admin/admin-roles/role_support/assignments/assignment_1',
+        {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json', ...headers },
+          body: JSON.stringify({ scope_type: 'global' }),
+        },
+        env
+      );
+
+      expect(response.status).toBe(403);
+      expect(repoMocks.updateAssignment).not.toHaveBeenCalled();
+    });
+
+    it('lets a global wildcard widen an assignment to global', async () => {
+      repoMocks.updateAssignment.mockResolvedValue({ id: 'assignment_1', scope_type: 'global' });
+      const { app, env } = createTestApp();
+      const response = await app.request(
+        '/api/admin/admin-roles/role_support/assignments/assignment_1',
+        {
+          method: 'PATCH',
+          headers: {
+            'Content-Type': 'application/json',
+            ...summedOnly,
+            'x-test-global-permissions': '*',
+          },
+          body: JSON.stringify({ scope_type: 'global' }),
+        },
+        env
+      );
+
+      expect(response.status).toBe(200);
+    });
   });
 
   it('should reject creating a role at or above the caller hierarchy level', async () => {
