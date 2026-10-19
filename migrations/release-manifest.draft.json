@@ -91,6 +91,10 @@
             {
               "path": "019_oauth_client_minimum_ial.sql",
               "checksum": "c064b78adf6ecf563f244d6b6f579d83cddf10288996bc33c2fad75a5398856b"
+            },
+            {
+              "path": "020_tenant_backup_preimage_native_order.sql",
+              "checksum": "faadc3b940fa6f8d9ae277437a5339a52da8d25498822c4bf2e074b1d2d8d15f"
             }
           ]
         },
@@ -139,6 +143,10 @@
             {
               "path": "010_tenant_backup_preimage_row_partitions.sql",
               "checksum": "ec32b226b04a17da04ba3ac3427c5726814ec89503110386c25e9a264141506e"
+            },
+            {
+              "path": "011_tenant_backup_preimage_native_order.sql",
+              "checksum": "faadc3b940fa6f8d9ae277437a5339a52da8d25498822c4bf2e074b1d2d8d15f"
             }
           ]
         },
@@ -306,6 +314,10 @@
             {
               "path": "040_settings_legacy_import_state.sql",
               "checksum": "48ad4a13af900706cc0309226b9fb938cd33c0e4dde56aa63eda8befecfb7e51"
+            },
+            {
+              "path": "041_tenant_backup_preimage_native_order.sql",
+              "checksum": "faadc3b940fa6f8d9ae277437a5339a52da8d25498822c4bf2e074b1d2d8d15f"
             }
           ]
         },
@@ -361,6 +373,10 @@
             {
               "path": "012_release_rollout_expected_targets.sql",
               "checksum": "4d96952be03bd80f2cbc7d3a2fe37f7b418bf4dfee066059f8e28548f2b8f750"
+            },
+            {
+              "path": "013_tenant_backup_preimage_native_order.sql",
+              "checksum": "faadc3b940fa6f8d9ae277437a5339a52da8d25498822c4bf2e074b1d2d8d15f"
             }
           ]
         },
@@ -411,6 +427,10 @@
             {
               "path": "007_tenant_external_plugin_gates.sql",
               "checksum": "0d511650d4d403368027a61eafce65caeda03eb72c3dc9a7abb5f26ba143364c"
+            },
+            {
+              "path": "008_tenant_backup_preimage_native_order.sql",
+              "checksum": "faadc3b940fa6f8d9ae277437a5339a52da8d25498822c4bf2e074b1d2d8d15f"
             }
           ]
         },
@@ -584,6 +604,10 @@
         {
           "path": "019_oauth_client_minimum_ial.sql",
           "checksum": "c064b78adf6ecf563f244d6b6f579d83cddf10288996bc33c2fad75a5398856b"
+        },
+        {
+          "path": "020_tenant_backup_preimage_native_order.sql",
+          "checksum": "faadc3b940fa6f8d9ae277437a5339a52da8d25498822c4bf2e074b1d2d8d15f"
         }
       ]
     },
@@ -636,6 +660,10 @@
         {
           "path": "010_tenant_backup_preimage_row_partitions.sql",
           "checksum": "ec32b226b04a17da04ba3ac3427c5726814ec89503110386c25e9a264141506e"
+        },
+        {
+          "path": "011_tenant_backup_preimage_native_order.sql",
+          "checksum": "faadc3b940fa6f8d9ae277437a5339a52da8d25498822c4bf2e074b1d2d8d15f"
         }
       ]
     },
@@ -807,6 +835,10 @@
         {
           "path": "040_settings_legacy_import_state.sql",
           "checksum": "48ad4a13af900706cc0309226b9fb938cd33c0e4dde56aa63eda8befecfb7e51"
+        },
+        {
+          "path": "041_tenant_backup_preimage_native_order.sql",
+          "checksum": "faadc3b940fa6f8d9ae277437a5339a52da8d25498822c4bf2e074b1d2d8d15f"
         }
       ]
     },
@@ -866,6 +898,10 @@
         {
           "path": "012_release_rollout_expected_targets.sql",
           "checksum": "4d96952be03bd80f2cbc7d3a2fe37f7b418bf4dfee066059f8e28548f2b8f750"
+        },
+        {
+          "path": "013_tenant_backup_preimage_native_order.sql",
+          "checksum": "faadc3b940fa6f8d9ae277437a5339a52da8d25498822c4bf2e074b1d2d8d15f"
         }
       ]
     },
@@ -924,6 +960,10 @@
         {
           "path": "007_tenant_external_plugin_gates.sql",
           "checksum": "0d511650d4d403368027a61eafce65caeda03eb72c3dc9a7abb5f26ba143364c"
+        },
+        {
+          "path": "008_tenant_backup_preimage_native_order.sql",
+          "checksum": "faadc3b940fa6f8d9ae277437a5339a52da8d25498822c4bf2e074b1d2d8d15f"
         }
       ]
     },
