@@ -27,10 +27,13 @@ import { hasAdminPermission } from '../types/admin-user';
 import { buildRequestIssuerUrl, getDefaultTenantId } from '../utils/issuer';
 import { resolveTenantFromRequest } from '../utils/tenant-context';
 import { parseTokenHeader, verifyToken } from '../utils/jwt';
+import { AdminMachineAccessRepository } from '../repositories/admin/admin-machine-access';
 import {
-  AdminMachineAccessRepository,
-  type AdminMachineTenantScope,
-} from '../repositories/admin/admin-machine-access';
+  intersectMachinePermissionSets,
+  resolveMachineTenantScope,
+} from '../repositories/admin/admin-machine-grant';
+
+export { intersectMachinePermissionSets, resolveMachineTenantScope };
 import { importJWK, type CryptoKey, type JWK, type JWTPayload } from 'jose';
 
 const log = createLogger().module('ADMIN-AUTH');
@@ -203,65 +206,93 @@ export function hasGlobalAdminPermission(
   );
 }
 
+/**
+ * Whether the caller holds one of `roleNames` for every tenant: a global tenant scope and the
+ * role among those given by the global assignments. `authContext.roles` adds up every assignment
+ * that applies to the request, and a role is only a name an Admin of a tenant can give a custom
+ * role, so a decision that reaches across tenants must not be made on it.
+ */
+export function hasGlobalAdminRole(
+  authContext: AdminAuthContext | undefined,
+  roleNames: readonly string[]
+): boolean {
+  return (
+    authContext !== undefined &&
+    (authContext.tenantScope ?? []).includes('*') &&
+    (authContext.globalRoles ?? []).some((role) => roleNames.includes(role))
+  );
+}
+
+/**
+ * Whether the caller is a platform administrator: the wildcard, or the super_admin or system_admin
+ * role, held through a global assignment. This is what a platform-wide operation asks for (the
+ * control plane, platform logging, the database connections), and it is not read from `roles` or
+ * `permissions`, which also hold what is given for one tenant only.
+ *
+ * `includeGlobalScopeMachine` also accepts a machine token whose tenant scope is global: its
+ * permissions are all global ones, and the operation's own permission rule decides which of them
+ * it needs.
+ */
+export function hasGlobalPlatformAuthority(
+  authContext: AdminAuthContext | undefined,
+  includeGlobalScopeMachine = false
+): boolean {
+  if (!authContext) {
+    return false;
+  }
+  if (
+    hasGlobalAdminPermission(authContext, '*') ||
+    hasGlobalAdminRole(authContext, ['super_admin', 'system_admin'])
+  ) {
+    return true;
+  }
+  return (
+    includeGlobalScopeMachine &&
+    authContext.authMethod === 'machine_access_token' &&
+    (authContext.tenantScope ?? []).includes('*')
+  );
+}
+
+/** The fixed principal ID the setup bootstrap writes; an Admin API request cannot choose an ID. */
+export const SETUP_MACHINE_PRINCIPAL_ID = 'amp_authrim_setup';
+export const SETUP_MACHINE_CLIENT_ID = 'authrim-setup';
+
+/**
+ * Whether the token is the setup tool the bootstrap wrote (not one created through the Admin API,
+ * which always gets a generated ID). Its tenant scope is the default tenant, so it is trusted for
+ * platform operations by what it is, and not by a global scope.
+ */
+export function isBootstrapSetupMachine(authContext: AdminAuthContext | undefined): boolean {
+  return (
+    authContext !== undefined &&
+    authContext.authMethod === 'machine_access_token' &&
+    authContext.actorType === 'machine' &&
+    authContext.principalType === 'setup_tool' &&
+    authContext.clientId === SETUP_MACHINE_CLIENT_ID &&
+    authContext.actorId === SETUP_MACHINE_PRINCIPAL_ID
+  );
+}
+
+/**
+ * Whether a machine token holds `permission` for every tenant: its tenant scope is global, and a
+ * token has one scope, so then its permissions are global ones. A token limited to some tenants
+ * holds nothing for the platform, whatever its permissions are.
+ */
+export function hasGlobalMachinePermission(
+  authContext: AdminAuthContext | undefined,
+  permission: string
+): boolean {
+  return (
+    authContext !== undefined &&
+    authContext.authMethod === 'machine_access_token' &&
+    hasGlobalAdminPermission(authContext, permission)
+  );
+}
+
 function stringArrayClaim(value: unknown): string[] {
   return Array.isArray(value)
     ? value.filter((item): item is string => typeof item === 'string')
     : [];
-}
-
-function intersectMachinePermissionSets(
-  principalPermissions: string[],
-  credentialPermissions: string[]
-): string[] {
-  const result = new Set<string>();
-  for (const principalPermission of principalPermissions) {
-    for (const credentialPermission of credentialPermissions) {
-      if (hasAdminPermission([principalPermission], credentialPermission)) {
-        result.add(credentialPermission);
-      } else if (hasAdminPermission([credentialPermission], principalPermission)) {
-        result.add(principalPermission);
-      }
-    }
-  }
-  return Array.from(result);
-}
-
-function resolveMachineTenantScope(
-  principalScopes: AdminMachineTenantScope[],
-  credentialScopes: AdminMachineTenantScope[]
-): string[] {
-  const effectiveCredentialScopes =
-    credentialScopes.length > 0 ? credentialScopes : principalScopes;
-  const principalAll = principalScopes.some((scope) => scope.scopeMode === 'all');
-  const credentialAll = effectiveCredentialScopes.some((scope) => scope.scopeMode === 'all');
-
-  if (principalAll && credentialAll) {
-    return ['*'];
-  }
-
-  const principalTenants = principalAll
-    ? null
-    : new Set(
-        principalScopes
-          .filter((scope) => scope.scopeMode === 'allow' && scope.tenantId)
-          .map((scope) => scope.tenantId as string)
-      );
-  const credentialTenants = credentialAll
-    ? null
-    : new Set(
-        effectiveCredentialScopes
-          .filter((scope) => scope.scopeMode === 'allow' && scope.tenantId)
-          .map((scope) => scope.tenantId as string)
-      );
-
-  if (principalTenants === null) {
-    return Array.from(credentialTenants ?? []);
-  }
-  if (credentialTenants === null) {
-    return Array.from(principalTenants);
-  }
-
-  return Array.from(principalTenants).filter((tenantId) => credentialTenants.has(tenantId));
 }
 
 function isSubsetOfTenantScope(claimTenantScope: string[], currentTenantScope: string[]): boolean {
@@ -335,47 +366,31 @@ async function authenticateMachineAccessToken(
       'admin-machine-access'
     );
     const machineRepo = new AdminMachineAccessRepository(adminAdapter);
-    const principal = await machineRepo.findPrincipalById(payload.actor_id);
-    const credential = await machineRepo.findCredentialById(payload.credential_id);
-    if (!principal || !credential) {
+    // The principal, the credential and their permissions and tenant scopes are read as one
+    // snapshot: read one by one, a change between the reads can give a combination that was never
+    // stored (the permissions before it with the scope after it).
+    const snapshot = await machineRepo.loadMachineGrantSnapshot(
+      payload.actor_id,
+      payload.credential_id
+    );
+    if (!snapshot) {
       return null;
     }
+    const { principal, credential } = snapshot;
     if (principal.status !== 'active') {
       return null;
     }
     if (credential.status !== 'active' && credential.status !== 'rotating') {
       return null;
     }
-    if (credential.principalId !== principal.id) {
-      return null;
-    }
 
     const tokenPermissions = payload.scope.split(/\s+/).filter((scope) => scope.length > 0);
-    const [
-      principalPermissions,
-      credentialPermissions,
-      principalTenantScopes,
-      credentialTenantScopes,
-    ] = await Promise.all([
-      machineRepo.getPrincipalPermissions(principal.id),
-      machineRepo.getCredentialPermissions(credential.id),
-      machineRepo.getPrincipalTenantScopes(principal.id),
-      machineRepo.getCredentialTenantScopes(credential.id),
-    ]);
-    const currentPermissions =
-      credentialPermissions.length > 0
-        ? intersectMachinePermissionSets(principalPermissions, credentialPermissions)
-        : principalPermissions;
-    if (tokenPermissions.some((scope) => !hasAdminPermission(currentPermissions, scope))) {
+    if (tokenPermissions.some((scope) => !hasAdminPermission(snapshot.permissions, scope))) {
       return null;
     }
 
     const tenantScope = stringArrayClaim(payload.tenant_scope);
-    const currentTenantScope = resolveMachineTenantScope(
-      principalTenantScopes,
-      credentialTenantScopes
-    );
-    if (!isSubsetOfTenantScope(tenantScope, currentTenantScope)) {
+    if (!isSubsetOfTenantScope(tenantScope, snapshot.tenantScope)) {
       return null;
     }
 
@@ -391,6 +406,7 @@ async function authenticateMachineAccessToken(
       // The token has one tenant scope, so its permissions are global exactly when that scope is.
       globalRoles: [],
       globalPermissions: tenantScope.includes('*') ? tokenPermissions : [],
+      globalHierarchyLevel: 0,
       tenantId,
       permissions: tokenPermissions,
       hierarchyLevel: 0,
@@ -579,6 +595,7 @@ export async function authenticateAdminSessionForTenant(
     const globalRoles: string[] = [];
     const globalPermissions = new Set<string>();
     let maxHierarchyLevel = 0;
+    let globalHierarchyLevel = 0;
     let hasGlobalScope = false;
 
     for (const role of rolesResult) {
@@ -588,6 +605,7 @@ export async function authenticateAdminSessionForTenant(
       hasGlobalScope = hasGlobalScope || isGlobalRole;
       collectInheritedRolePermissions(role, rolesById, allPermissions);
       if (isGlobalRole) {
+        globalHierarchyLevel = Math.max(globalHierarchyLevel, role.hierarchy_level);
         globalRoles.push(role.name);
         collectInheritedRolePermissions(role, rolesById, globalPermissions);
       }
@@ -622,6 +640,7 @@ export async function authenticateAdminSessionForTenant(
       roles,
       globalRoles,
       globalPermissions: Array.from(globalPermissions),
+      globalHierarchyLevel,
       tenantId: session.tenant_id,
       email: adminUser.email,
       permissions: Array.from(allPermissions),

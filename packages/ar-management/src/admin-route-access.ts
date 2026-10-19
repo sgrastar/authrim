@@ -4,6 +4,7 @@ import {
   ADMIN_PERMISSIONS,
   getLogger,
   hasAdminPermission,
+  hasGlobalAdminRole,
   type AdminAuthContext,
 } from '@authrim/ar-lib-core';
 
@@ -1951,7 +1952,14 @@ function isAllowedByRule(authContext: AdminAuthContext, accessRule: AdminRouteAc
     return true;
   }
 
-  if (accessRule.roles && hasAnyRole(roles, accessRule.roles)) {
+  // A rule that names the platform roles guards a platform-wide operation, so the role has to come
+  // from a global assignment: `roles` also holds what is given for one tenant only.
+  if (
+    accessRule.roles &&
+    (accessRule.roles === PLATFORM_ADMIN_ROLES
+      ? hasGlobalAdminRole(authContext, accessRule.roles)
+      : hasAnyRole(roles, accessRule.roles))
+  ) {
     return true;
   }
 

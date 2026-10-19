@@ -100,6 +100,13 @@ export interface AdminAuthContext {
    * inherit). Absent means none.
    */
   globalPermissions?: string[];
+  /**
+   * The same for the hierarchy: the highest `hierarchy_level` among the roles the global
+   * assignments give (a higher number is a stronger role, as in `hierarchyLevel`), or 0 without
+   * one. `hierarchyLevel` adds up every assignment of the request, so a high role held for one
+   * tenant is in it too; what a global role or a global assignment may reach is measured here.
+   */
+  globalHierarchyLevel?: number;
   // ==========================================================================
   // Admin/EndUser Separation Extensions
   // ==========================================================================

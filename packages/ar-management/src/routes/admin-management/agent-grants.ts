@@ -224,7 +224,9 @@ agentGrantsRouter.get('/eligible-permissions', async (c) => {
     const machines = new AdminMachineAccessRepository(
       requireDedicatedAdminDatabaseAdapter(c.env, 'agent-grant-eligibility')
     );
-    const principal = await machines.findPrincipalById(principalId);
+    // The principal, its permissions and its tenant scopes are one snapshot, not three reads.
+    const principalSnapshot = await machines.loadPrincipalGrantSnapshot(principalId);
+    const principal = principalSnapshot?.principal;
     if (
       !principal ||
       principal.status !== 'active' ||
@@ -232,10 +234,8 @@ agentGrantsRouter.get('/eligible-permissions', async (c) => {
     ) {
       return error(c, 400, 'AGENT_PRINCIPAL_INVALID');
     }
-    [principalPermissions, principalTenantScopes] = await Promise.all([
-      machines.getPrincipalPermissions(principalId),
-      machines.getPrincipalTenantScopes(principalId),
-    ]);
+    principalPermissions = principalSnapshot!.permissions;
+    principalTenantScopes = principalSnapshot!.tenantScopes;
   }
 
   const candidates = [
@@ -344,12 +344,13 @@ agentGrantsRouter.post('/:id/preauthorize', async (c) => {
     return error(c, 400, 'AGENT_GRANT_CLIENT_SCOPE_NOT_ALLOWED');
   }
   const machines = new AdminMachineAccessRepository(admin);
-  const principal = await machines.findPrincipalById(grant.machinePrincipalId);
-  const [delegatorPermissions, principalPermissions, principalTenantScopes] = await Promise.all([
+  const [delegatorPermissions, principalSnapshot] = await Promise.all([
     repository.getActiveDelegatorPermissions(tenant, grant.delegatorId, Date.now()),
-    machines.getPrincipalPermissions(grant.machinePrincipalId),
-    machines.getPrincipalTenantScopes(grant.machinePrincipalId),
+    machines.loadPrincipalGrantSnapshot(grant.machinePrincipalId),
   ]);
+  const principal = principalSnapshot?.principal;
+  const principalPermissions = principalSnapshot?.permissions ?? [];
+  const principalTenantScopes = principalSnapshot?.tenantScopes ?? [];
   if (
     !principal ||
     principal.status !== 'active' ||
@@ -739,7 +740,8 @@ agentGrantsRouter.patch('/:id', async (c) => {
     const machines = new AdminMachineAccessRepository(
       requireDedicatedAdminDatabaseAdapter(c.env, 'agent-grant-principal-validation')
     );
-    const principal = await machines.findPrincipalById(grant.machinePrincipalId);
+    const principalSnapshot = await machines.loadPrincipalGrantSnapshot(grant.machinePrincipalId);
+    const principal = principalSnapshot?.principal;
     if (
       !principal ||
       principal.status !== 'active' ||
@@ -747,10 +749,8 @@ agentGrantsRouter.patch('/:id', async (c) => {
     ) {
       return error(c, 400, 'AGENT_PRINCIPAL_INVALID');
     }
-    [principalPermissions, principalTenantScopes] = await Promise.all([
-      machines.getPrincipalPermissions(grant.machinePrincipalId),
-      machines.getPrincipalTenantScopes(grant.machinePrincipalId),
-    ]);
+    principalPermissions = principalSnapshot!.permissions;
+    principalTenantScopes = principalSnapshot!.tenantScopes;
   }
   const validation = validateAgentGrantPermissions({
     tenantBoundary: {
@@ -1006,7 +1006,9 @@ agentGrantsRouter.post('/', async (c) => {
     | undefined;
   if (machinePrincipalId) {
     const machineRepository = new AdminMachineAccessRepository(admin);
-    const principal = await machineRepository.findPrincipalById(machinePrincipalId);
+    const principalSnapshot =
+      await machineRepository.loadPrincipalGrantSnapshot(machinePrincipalId);
+    const principal = principalSnapshot?.principal;
     if (
       !principal ||
       principal.status !== 'active' ||
@@ -1014,10 +1016,8 @@ agentGrantsRouter.post('/', async (c) => {
     ) {
       return error(c, 400, 'AGENT_PRINCIPAL_INVALID');
     }
-    [principalPermissions, principalTenantScopes] = await Promise.all([
-      machineRepository.getPrincipalPermissions(machinePrincipalId),
-      machineRepository.getPrincipalTenantScopes(machinePrincipalId),
-    ]);
+    principalPermissions = principalSnapshot!.permissions;
+    principalTenantScopes = principalSnapshot!.tenantScopes;
   }
 
   const validation = validateAgentGrantPermissions({
@@ -1316,11 +1316,10 @@ agentGrantsRouter.post('/:id/resume', async (c) => {
     const machines = new AdminMachineAccessRepository(
       requireDedicatedAdminDatabaseAdapter(c.env, 'agent-grant-principal-validation')
     );
-    const principal = await machines.findPrincipalById(grant.machinePrincipalId);
-    const [principalPermissions, principalTenantScopes] = await Promise.all([
-      machines.getPrincipalPermissions(grant.machinePrincipalId),
-      machines.getPrincipalTenantScopes(grant.machinePrincipalId),
-    ]);
+    const principalSnapshot = await machines.loadPrincipalGrantSnapshot(grant.machinePrincipalId);
+    const principal = principalSnapshot?.principal;
+    const principalPermissions = principalSnapshot?.permissions ?? [];
+    const principalTenantScopes = principalSnapshot?.tenantScopes ?? [];
     if (
       !principal ||
       principal.status !== 'active' ||

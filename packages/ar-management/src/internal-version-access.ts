@@ -1,24 +1,26 @@
 import type { Context, Next } from 'hono';
 import type { AdminAuthContext, Env } from '@authrim/ar-lib-core';
-import { hasAdminPermission } from '@authrim/ar-lib-core';
+import {
+  hasAdminPermission,
+  hasGlobalAdminRole,
+  isBootstrapSetupMachine,
+} from '@authrim/ar-lib-core';
 
 const PLATFORM_ADMIN_ROLES = new Set(['super_admin', 'system_admin']);
 
+/**
+ * Registering Worker versions affects every tenant, so the platform role has to come from a global
+ * assignment; `roles` also holds what is given for one tenant only.
+ */
 function hasHumanPlatformAuthority(authContext: AdminAuthContext): boolean {
   return (
     authContext.authMethod === 'session' &&
-    authContext.tenantScope?.includes('*') === true &&
-    authContext.roles.some((role) => PLATFORM_ADMIN_ROLES.has(role))
+    hasGlobalAdminRole(authContext, [...PLATFORM_ADMIN_ROLES])
   );
 }
 
 function isSetupMachine(authContext: AdminAuthContext): boolean {
-  return (
-    authContext.authMethod === 'machine_access_token' &&
-    authContext.actorType === 'machine' &&
-    authContext.principalType === 'setup_tool' &&
-    authContext.clientId === 'authrim-setup'
-  );
+  return isBootstrapSetupMachine(authContext);
 }
 
 export function requireInternalVersionManagerAuthority(permission: string) {
@@ -37,10 +39,11 @@ export function requireInternalVersionManagerAuthority(permission: string) {
       );
     }
 
-    if (
-      !hasAdminPermission(authContext.permissions ?? [], permission) ||
-      (!hasHumanPlatformAuthority(authContext) && !isSetupMachine(authContext))
-    ) {
+    const permitted = isSetupMachine(authContext)
+      ? hasAdminPermission(authContext.permissions ?? [], permission)
+      : hasHumanPlatformAuthority(authContext) &&
+        hasAdminPermission(authContext.globalPermissions ?? [], permission);
+    if (!permitted) {
       return c.json(
         {
           error: 'insufficient_permissions',

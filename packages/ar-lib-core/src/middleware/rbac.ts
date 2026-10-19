@@ -25,6 +25,7 @@
 import type { Context, Next } from 'hono';
 import type { Env } from '../types/env';
 import type { AdminAuthContext } from '../types/admin';
+import { hasGlobalAdminRole, hasGlobalMachinePermission } from './admin-auth';
 
 /**
  * Error response for RBAC failures
@@ -255,8 +256,10 @@ export function requireAdmin() {
 /**
  * Require system admin role
  *
- * Convenience middleware that checks for system_admin role.
- * This is the highest privilege level.
+ * Convenience middleware for platform-wide operations: the role has to come from a global
+ * assignment. `authContext.roles` adds up every assignment that applies to the request, so a
+ * system_admin or super_admin role held only for one tenant is in it too, and must not open an
+ * operation that takes effect across tenants.
  *
  * @returns Hono middleware
  *
@@ -266,7 +269,30 @@ export function requireAdmin() {
  * ```
  */
 export function requireSystemAdmin() {
-  return requireRole('system_admin');
+  return async (c: Context<{ Bindings: Env }>, next: Next) => {
+    const authContext = getAdminAuth(c);
+
+    if (!authContext) {
+      return c.json(
+        {
+          error: 'invalid_token',
+          error_description: 'Authentication required. Please authenticate first.',
+        },
+        401
+      );
+    }
+
+    // A machine token passes on `admin:*` only when its scope is global (so the permission is a
+    // global one); `admin:*` limited to some tenants is the tenants' own.
+    if (
+      hasGlobalAdminRole(authContext, SUPER_ADMIN_ROLES) ||
+      hasGlobalMachinePermission(authContext, 'admin:*')
+    ) {
+      return next();
+    }
+
+    return c.json(createAccessDeniedResponse(['system_admin']), 403);
+  };
 }
 
 /**

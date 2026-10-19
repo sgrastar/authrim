@@ -1,10 +1,9 @@
 import { Hono } from 'hono';
 import type { Context } from 'hono';
 import {
-  ADMIN_PERMISSIONS,
   adminAuthMiddleware,
   assertControlPlaneRecordIsSecretFree,
-  hasAdminPermission,
+  hasGlobalPlatformAuthority,
   type AdminAuthContext,
   type ControlReadReplicationStartRequest,
   type ControlReadReplicationStatusView,
@@ -54,13 +53,9 @@ function auth(c: AdminContext): AdminAuthContext {
   return c.get('adminAuth') as AdminAuthContext;
 }
 
+// Read replication is platform-wide, so the authority has to come from a global assignment.
 function hasPlatformAuthority(value: AdminAuthContext): boolean {
-  return (
-    hasAdminPermission(value.permissions ?? [], ADMIN_PERMISSIONS.ALL) ||
-    value.roles.includes('super_admin') ||
-    value.roles.includes('system_admin') ||
-    value.tenantScope?.includes('*') === true
-  );
+  return hasGlobalPlatformAuthority(value, true);
 }
 
 function error(c: AdminContext, status: 400 | 403 | 409 | 503, code: string): Response {
