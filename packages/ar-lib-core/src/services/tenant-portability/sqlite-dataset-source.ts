@@ -8,8 +8,9 @@ import { packedSqliteRowToJson } from './sqlite-packed-row';
 
 const PAGE_ROWS = 100;
 /**
- * Consecutive pages of only omitted rows (post-T0 inserts, rewritten rows) double how many keys
- * the next page scans, up to this bound. A run of R omitted rows then costs about
+ * Consecutive short pages (mostly omitted rows: post-T0 inserts, rewritten rows, other tenants'
+ * rows) double how many keys the next page scans, up to this bound. A run of R omitted rows then
+ * costs about
  * log2(R / PAGE_ROWS) + R / MAX_SCAN_ROWS queries instead of R / PAGE_ROWS, which matters
  * because one export step shares a single Worker invocation's subrequest budget.
  */
@@ -68,6 +69,39 @@ interface SourceInput {
 }
 
 /**
+ * The statements one snapshot read sends. Each must stay under D1's SQL statement length limit
+ * (100,000 bytes) for every captured table, including wide tables and long composite keys.
+ */
+export function sqliteSnapshotReadStatements(
+  schema: CaptureSchema,
+  partitions?: readonly string[]
+): { sql: string; fastSql: string; fragmentSql: string } {
+  const pageSql = sqliteSnapshotPageQuery(schema, 'packed', partitions, {
+    scanLimit: true,
+  });
+  // MATERIALIZED: a row body is read by key once, not once per reference to row_json.
+  const sql = `WITH candidates AS MATERIALIZED (${pageSql})
+    SELECT record_key,typeof(row_json) AS row_type,length(CAST(row_json AS BLOB)) AS total_bytes,
+      count(*) OVER () AS page_rows
+    FROM candidates ORDER BY page_order`;
+  const fastSql = `WITH candidates AS MATERIALIZED (${pageSql}), ranked AS (
+    SELECT record_key,typeof(row_json) AS row_type,length(CAST(row_json AS BLOB)) AS total_bytes,
+      CAST(row_json AS BLOB) AS row_blob,
+      page_order, count(*) OVER () AS page_rows,
+      sum(length(CAST(row_json AS BLOB))) OVER (ORDER BY page_order) AS cumulative_bytes,
+      max(length(CAST(row_json AS BLOB))) OVER (ORDER BY page_order) AS max_prefix_bytes
+    FROM candidates
+  ) SELECT record_key,row_type,total_bytes,page_rows,hex(row_blob) AS fragment
+    FROM ranked WHERE (cumulative_bytes<=? AND max_prefix_bytes<=?) OR row_blob IS NULL
+    ORDER BY page_order`;
+  const fragmentSql = `WITH candidate AS (${sqliteSnapshotRowQuery(schema, 'packed', partitions)})
+    SELECT record_key,typeof(row_json) AS row_type,length(CAST(row_json AS BLOB)) AS total_bytes,
+      hex(substr(CAST(row_json AS BLOB),?,?)) AS fragment
+    FROM candidate`;
+  return { sql, fastSql, fragmentSql };
+}
+
+/**
  * Trusted COW source with durable output positions. Cursor must come from the same operation.
  * A zero-byte item only moves the position past omitted rows.
  */
@@ -75,22 +109,10 @@ export async function* readSqliteSnapshotChunks(
   input: SourceInput & { cursor?: SqliteSnapshotSourceCursor }
 ): AsyncGenerator<{ bytes: Uint8Array; nextCursor: SqliteSnapshotSourceCursor }> {
   const { database, snapshotId, tenantId, signal } = input;
-  const pageSql = sqliteSnapshotPageQuery(input.schema, 'packed', input.partitions, {
-    scanLimit: true,
-  });
-  const sql = `WITH candidates AS (${pageSql})
-    SELECT record_key,typeof(row_json) AS row_type,length(CAST(row_json AS BLOB)) AS total_bytes
-    FROM candidates ORDER BY page_order`;
-  const fastSql = `WITH candidates AS (${pageSql}), ranked AS (
-    SELECT record_key,typeof(row_json) AS row_type,length(CAST(row_json AS BLOB)) AS total_bytes,
-      CAST(row_json AS BLOB) AS row_blob,
-      page_order,
-      sum(length(CAST(row_json AS BLOB))) OVER (ORDER BY page_order) AS cumulative_bytes,
-      max(length(CAST(row_json AS BLOB))) OVER (ORDER BY page_order) AS max_prefix_bytes
-    FROM candidates
-  ) SELECT record_key,row_type,total_bytes,hex(row_blob) AS fragment
-    FROM ranked WHERE (cumulative_bytes<=? AND max_prefix_bytes<=?) OR row_blob IS NULL
-    ORDER BY page_order`;
+  const { sql, fastSql, fragmentSql } = sqliteSnapshotReadStatements(
+    input.schema,
+    input.partitions
+  );
   async function active(): Promise<void> {
     signal.throwIfAborted();
     if (input.assertSnapshotActive) {
@@ -109,6 +131,8 @@ export async function* readSqliteSnapshotChunks(
     /** 'null' marks a progress-only row: the cursor moves past rows the snapshot omits. */
     row_type: 'blob' | 'text' | 'null';
     total_bytes: number;
+    /** Rows on the whole page, before the fast read cuts it to the byte budget. */
+    page_rows?: number;
     fragment?: string;
   }
   function decodeFragment(fragment: string): Uint8Array {
@@ -119,10 +143,6 @@ export async function* readSqliteSnapshotChunks(
       bytes[i] = parseInt(fragment.slice(i * 2, i * 2 + 2), 16);
     return bytes;
   }
-  const fragmentSql = `WITH candidate AS (${sqliteSnapshotRowQuery(input.schema, 'packed', input.partitions)})
-    SELECT record_key,typeof(row_json) AS row_type,length(CAST(row_json AS BLOB)) AS total_bytes,
-      hex(substr(CAST(row_json AS BLOB),?,?)) AS fragment
-    FROM candidate`;
   async function* fragments(row: Row): AsyncGenerator<Uint8Array> {
     let offset = 0;
     while (offset < row.total_bytes) {
@@ -220,7 +240,13 @@ export async function* readSqliteSnapshotChunks(
         yield { bytes: new Uint8Array(0), nextCursor: { after, chunk: 0, order: 'native' } };
       continue;
     }
-    scanRows = PAGE_ROWS;
+    // A short page met mostly omitted rows, such as other tenants' rows in a shared table: scan
+    // wider. A full page found enough rows: scan one page again, so a dense run is not read
+    // MAX_SCAN_ROWS keys at a time.
+    const pageRows = rows[0].page_rows;
+    if (!Number.isSafeInteger(pageRows) || (pageRows ?? 0) < rows.length)
+      throw new Error('backup_snapshot_invalid_row');
+    scanRows = (pageRows ?? 0) < PAGE_ROWS ? Math.min(scanRows * 2, MAX_SCAN_ROWS) : PAGE_ROWS;
     for (const row of rows) {
       signal.throwIfAborted();
       if (

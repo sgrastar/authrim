@@ -67,8 +67,9 @@ describe('SQLite snapshot native primary key paging', () => {
     [
       ledger,
       [
-        'SEARCH live USING INDEX sqlite_autoindex_ledger_1 (tenant_id=?)',
-        'SEARCH live USING INDEX sqlite_autoindex_ledger_1 (tenant_id=? AND n>?)',
+        // Scans read keys only; a key holding every column the flags need is a covering read.
+        'SEARCH live USING COVERING INDEX sqlite_autoindex_ledger_1 (tenant_id=?)',
+        'SEARCH live USING COVERING INDEX sqlite_autoindex_ledger_1 (tenant_id=? AND n>?)',
       ],
     ],
     [
@@ -102,7 +103,8 @@ describe('SQLite snapshot native primary key paging', () => {
     }
   });
 
-  // A 3-key scan reads bodies inline; a 50-key scan reads only the returned bodies, by key.
+  // A 3-key scan returns pages as large as its scan; a 50-key scan walks past other tenants' and
+  // omitted rows (flagged, not filtered) well beyond the 3 rows a page returns.
   const scans = [items, ledger, entries].flatMap((schema) =>
     [3, 50].map((scan) => [schema.table, scan, schema] as const)
   );
@@ -174,7 +176,7 @@ describe('SQLite snapshot native primary key paging', () => {
     }
   );
 
-  /** scan > 3 scans more keys than a page returns and reads the returned row bodies by key. */
+  /** scan > 3 scans more keys than a page returns. */
   function readAll(schema: SnapshotTableSchema, mutations: readonly string[], scan = 3) {
     const page = db.prepare(
       sqliteSnapshotPageQuery(schema, 'json', undefined, { scanLimit: true })

@@ -49,14 +49,22 @@ afterAll(async () => {
   await runtime?.dispose();
 });
 
-// Writes after T0: a tenth of the rows changed, every row changed, or a new row after every
-// T0 row. The last two leave each page's live scan mostly omitted rows.
-type AfterT0 = 'some-updated' | 'all-updated' | 'interleaved-inserts';
+// Writes after T0: a tenth of the rows changed, every row changed, a new row after every T0
+// row, or every row deleted while another tenant's rows sort after them. The last three leave
+// each page's live scan mostly omitted rows; in the last, only preimages are exported.
+type AfterT0 =
+  | 'some-updated'
+  | 'all-updated'
+  | 'interleaved-inserts'
+  | 'deleted-before-other-tenant';
 const afterT0: Record<AfterT0, (table: string) => string> = {
   'some-updated': (table) => `UPDATE ${table} SET label = 'changed' WHERE rowid % 10 = 0;`,
   'all-updated': (table) => `UPDATE ${table} SET label = 'changed';`,
   'interleaved-inserts': (table) =>
     `INSERT INTO ${table} (id, tenant_id, label) SELECT id || '-new', tenant_id, 'new' FROM ${table};`,
+  'deleted-before-other-tenant': (table) =>
+    `INSERT INTO ${table} (id, tenant_id, label) SELECT replace(id, 'r', 's'), 'b', 'other' FROM ${table};
+    DELETE FROM ${table} WHERE tenant_id = 'a';`,
 };
 
 async function exportRowsRead(schema: SnapshotTableSchema, rows: number, writes: AfterT0) {
@@ -109,9 +117,9 @@ async function exportRowsRead(schema: SnapshotTableSchema, rows: number, writes:
 
 it.each(
   [users, ledger].flatMap((schema) =>
-    (['some-updated', 'all-updated', 'interleaved-inserts'] as const).map(
-      (writes) => [schema.table, schema, writes] as const
-    )
+    (
+      ['some-updated', 'all-updated', 'interleaved-inserts', 'deleted-before-other-tenant'] as const
+    ).map((writes) => [schema.table, schema, writes] as const)
   )
 )(
   'reads a %s export with %s rows in proportion to the table size',
@@ -119,12 +127,14 @@ it.each(
     const perRow = new Map<number, number>();
     for (const rows of [500, 1000, 2000, 8000])
       perRow.set(rows, await exportRowsRead(schema, rows, writes));
-    // ~17-22 rows per exported row at every size, settling near 20.5 by 32000 rows. The
-    // previous text-order paging query alone read ~13, 23, 44 and 170, and filtering omitted
-    // rows before the page limit grew ~30x for 8x the rows once every row was rewritten.
+    // ~21-30 rows per exported row at every size: ~21-26 for live rows, whose bodies are read by
+    // key after the merge, and ~29.5 when only preimages remain before another tenant's rows.
+    // The previous text-order paging query alone read ~13, 23, 44 and 170. Filtering omitted rows
+    // before the page limit grew ~30x for 8x the rows once every row was rewritten, and filtering
+    // other tenants' rows grew 22.6 to 97.4 in the last case.
     const baseline = perRow.get(500) ?? 0;
     for (const value of perRow.values()) {
-      expect(value).toBeLessThan(24);
+      expect(value).toBeLessThan(32);
       expect(value).toBeLessThan(baseline * 1.25);
     }
   },
