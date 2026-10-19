@@ -6,17 +6,16 @@ import type { DatabaseTenantBundleReferenceIndex } from './validation-index';
  * and pages pass. A provenance-only historical admin actor is the sole missing-target exception.
  */
 export async function validateTenantBackupReferencePage(input: {
-  index: Pick<DatabaseTenantBundleReferenceIndex, 'referencesPage' | 'hasRecord'>;
+  index: Pick<DatabaseTenantBundleReferenceIndex, 'resolvedReferencesPage'>;
   after: string;
   assertCompleteInputInspection: () => Promise<void>;
 }): Promise<{ nextCursor: string; done: boolean; examined: number; unresolvedProvenance: number }> {
   await input.assertCompleteInputInspection();
-  const page = await input.index.referencesPage(input.after);
+  const page = await input.index.resolvedReferencesPage(input.after);
   let unresolvedProvenance = 0;
-  for (const { bundleId, dependency } of page.entries) {
-    if (!(await input.index.hasRecord(dependency.from, bundleId)))
-      throw new Error('backup_reference_source_missing');
-    if (await input.index.hasRecord(dependency.to)) continue;
+  for (const { dependency, sourceFound, targetFound } of page.entries) {
+    if (!sourceFound) throw new Error('backup_reference_source_missing');
+    if (targetFound) continue;
     if (dependency.to.requirement === 'provenance' && dependency.to.meaning === 'admin_actor')
       unresolvedProvenance++;
     else throw new Error('backup_reference_target_missing');

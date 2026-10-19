@@ -2,7 +2,11 @@ import { readSqliteRestoreSeedFingerprint } from '../sqlite-restore-seed';
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
 import { readFileSync } from 'node:fs';
 import { afterEach, beforeEach, expect, it } from 'vitest';
-import { invalidateSqliteRestoreTarget, SqliteRestoreTarget } from '../sqlite-restore-target';
+import {
+  invalidateSqliteRestoreTarget,
+  SqliteRestoreTarget,
+  sqliteRestoreVerifyRowBudget,
+} from '../sqlite-restore-target';
 import type { SqliteDatasetInspectionPolicy } from '../sqlite-dataset-inspector';
 import type { TenantBundleManifest } from '../bundle-manifest';
 let db: DatabaseSync;
@@ -188,6 +192,72 @@ it('writes multiple restore rows with one atomic database batch', async () => {
     '{"id":["text","two"],"tenant_id":["text","a"],"value":["text","second"]}',
   ]);
   expect(aggregateVerifyCalls).toBe(1);
+});
+
+it('sizes verify batches so wide rows stay within the read-back query budget', async () => {
+  const columns = ['id', 'tenant_id', ...Array.from({ length: 85 }, (_, index) => `c${index}`)];
+  db.exec(
+    `CREATE TABLE wide_rows(id TEXT NOT NULL PRIMARY KEY,tenant_id TEXT NOT NULL,${columns
+      .slice(2)
+      .map((column) => `${column} TEXT`)
+      .join(',')})`
+  );
+  identity.seedFingerprint = await readSqliteRestoreSeedFingerprint(
+    input().database,
+    async () => {}
+  );
+  const widePolicy: SqliteDatasetInspectionPolicy = {
+    ...policy,
+    dataset: { ...policy.dataset, id: 'core.wide_rows' },
+    schema: {
+      table: 'wide_rows',
+      columns,
+      primaryKey: ['id'],
+      uniqueKeys: [],
+      tenantColumn: 'tenant_id',
+    },
+  };
+  const narrowPolicy: SqliteDatasetInspectionPolicy = {
+    ...widePolicy,
+    schema: { ...widePolicy.schema, columns: ['id', 'tenant_id', 'value'] },
+  };
+  expect(sqliteRestoreVerifyRowBudget(narrowPolicy, 400)).toBeGreaterThanOrEqual(2000);
+  const rowsForBudget = sqliteRestoreVerifyRowBudget(widePolicy, 40);
+  expect(rowsForBudget).toBe(13);
+  const wideManifest = { ...manifest, datasets: [widePolicy.dataset] };
+  const rows = Array.from({ length: rowsForBudget }, (_, row) =>
+    JSON.stringify(
+      Object.fromEntries(
+        columns.map((column) => [
+          column,
+          [
+            'text',
+            column === 'id' ? `row-${row}` : column === 'tenant_id' ? 'a' : `${column}-${row}`,
+          ],
+        ])
+      )
+    )
+  );
+  const writer = await SqliteRestoreTarget.open(input());
+  await writer.writeRows(widePolicy, wideManifest, rows);
+  const sealer = await SqliteRestoreTarget.open({ ...input(2), mode: 'seal' });
+  await sealer.seal();
+  const base = { ...input(3), mode: 'verify' as const };
+  let queries = 0;
+  const verifier = await SqliteRestoreTarget.open({
+    ...base,
+    database: {
+      ...base.database,
+      async queryOne<T>(sql: string, params: unknown[] = []) {
+        queries++;
+        return base.database.queryOne<T>(sql, params);
+      },
+    },
+  });
+  queries = 0;
+  await verifier.verifyRows(widePolicy, wideManifest, rows);
+  // 13 rows × 3 column chunks, plus the two liveness checks around the read-back.
+  expect(queries).toBeLessThanOrEqual(40 + 2);
 });
 
 it('atomically removes restore-generated outbox rows before final verification', async () => {

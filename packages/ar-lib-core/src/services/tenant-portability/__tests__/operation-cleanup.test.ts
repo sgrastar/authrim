@@ -29,6 +29,7 @@ beforeEach(() => {
     '020_tenant_backup_publications',
     '036_tenant_backup_capacity_parts',
     '037_tenant_backup_container_inputs',
+    '043_tenant_backup_input_frames',
   ])
     sql.exec(
       readFileSync(
@@ -142,6 +143,53 @@ it('starts import cleanup at validation and waits for adapter-owned staging', as
   expect((await store.get('tenant-a', operationId))?.state).toBe('cancelled');
   expect(adapter.abortBoundary).not.toHaveBeenCalled();
   expect(adapter.cleanupStagingPage).toHaveBeenCalledTimes(2);
+});
+
+it('removes an input frame index and its receipt before staging cleanup', async () => {
+  const operationId = await createCancelled('import');
+  const bundle = 'ab'.repeat(16);
+  for (const [sequence, objectOffset, plainOffset] of [
+    [0, 133, 0],
+    [1, 1158, 1000],
+  ])
+    sql
+      .prepare(
+        `INSERT INTO tenant_backup_input_frames
+        (operation_id,tenant_id,bundle_id,sequence,object_offset,frame_bytes,plain_offset,plain_bytes)
+        VALUES (?,?,?,?,?,1025,?,1000)`
+      )
+      .run(operationId, 'tenant-a', bundle, sequence, objectOffset, plainOffset);
+  sql
+    .prepare(
+      `INSERT INTO tenant_backup_container_inputs
+      (operation_id,tenant_id,bundle_id,object_key,object_version,object_etag,object_size,manifest_sha256,dataset_stats_json,verified_at)
+      VALUES (?,?,?,'k','v','e',2500,?,'{}',1)`
+    )
+    .run(operationId, 'tenant-a', bundle, 'cd'.repeat(32));
+  const adapter = installedAdapter();
+  for (let slices = 0; slices < 6; slices += 1) {
+    now += 1;
+    await executeTenantBackupSlice(
+      store,
+      {
+        tenantId: 'tenant-a',
+        operationId,
+        workerId: `worker-${slices}`,
+        signal: new AbortController().signal,
+      },
+      {
+        async run() {
+          throw new Error('unexpected run');
+        },
+        cleanup: (context) =>
+          runTenantBackupOperationCleanupStep({ database, context, adapter, now: () => now }),
+      },
+      () => now
+    );
+  }
+  expect((await store.get('tenant-a', operationId))?.state).toBe('cancelled');
+  expect(sql.prepare('SELECT count(*) AS n FROM tenant_backup_input_frames').get()?.n).toBe(0);
+  expect(sql.prepare('SELECT count(*) AS n FROM tenant_backup_container_inputs').get()?.n).toBe(0);
 });
 
 it('fails closed on an unknown cleanup cursor', async () => {

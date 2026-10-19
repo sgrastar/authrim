@@ -284,6 +284,63 @@ describe('durable backup operation leases', () => {
     expect(db.prepare('PRAGMA foreign_key_check').all()).toEqual([]);
   });
 
+  it('resolves reference endpoints in SQL exactly as hasRecord does, a thousand per page', async () => {
+    await store.create(create);
+    const run = await store.claim('tenant-a', 'operation-a', 'worker', 101);
+    const lease = {
+      tenantId: 'tenant-a',
+      operationId: 'operation-a',
+      owner: 'worker',
+      fencingToken: run!.fencing_token,
+    };
+    const index = await DatabaseTenantBundleReferenceIndex.create(adapter, lease, () => 102);
+    const record = (id: string) => ({
+      tenantId: 'tenant-a',
+      module: 'applications',
+      collection: 'clients',
+      id,
+    });
+    await index.record('bundle-a', record('a-1'));
+    await index.record('bundle-b', record('b-1'));
+    const edges = [
+      { from: 'a-1', to: 'b-1', bundle: 'bundle-a', meaning: 'resource', requirement: 'required' },
+      { from: 'b-1', to: 'a-1', bundle: 'bundle-a', meaning: 'resource', requirement: 'required' },
+      { from: 'a-1', to: 'none', bundle: 'bundle-a', meaning: 'resource', requirement: 'required' },
+      {
+        from: 'a-1',
+        to: 'none',
+        bundle: 'bundle-a',
+        meaning: 'admin_actor',
+        requirement: 'provenance',
+      },
+    ] as const;
+    for (let i = 0; i < 1003; i++) {
+      const edge = edges[i % edges.length];
+      await index.referenceOnce(edge.bundle, `dataset:0:row:${String(i).padStart(4, '0')}:edge:0`, {
+        from: record(edge.from),
+        to: { ...record(edge.to), meaning: edge.meaning, requirement: edge.requirement },
+      });
+    }
+    const first = await index.resolvedReferencesPage('');
+    expect(first.entries).toHaveLength(1000);
+    expect(first.done).toBe(false);
+    const second = await index.resolvedReferencesPage(first.nextCursor);
+    expect(second.entries).toHaveLength(3);
+    expect(second.done).toBe(true);
+    for (const entry of [...first.entries, ...second.entries]) {
+      expect(entry.sourceFound).toBe(await index.hasRecord(entry.dependency.from, entry.bundleId));
+      expect(entry.targetFound).toBe(await index.hasRecord(entry.dependency.to));
+    }
+    expect(
+      first.entries.slice(0, 4).map(({ sourceFound, targetFound }) => [sourceFound, targetFound])
+    ).toEqual([
+      [true, true],
+      [false, true],
+      [true, false],
+      [true, false],
+    ]);
+  });
+
   it('rejects expired or cancelled validation writes without disturbing a newer session', async () => {
     await store.create(create);
     const run = await store.claim('tenant-a', 'operation-a', 'worker', 101);
@@ -772,6 +829,63 @@ it('claims only the explicitly enabled operation kind', async () => {
 
   expect(calls).toEqual(['export-only']);
   expect(await store.get('tenant-a', 'import-held')).toMatchObject({ state: 'queued' });
+});
+it('stops starting transitions once the per-operation wall budget is spent', async () => {
+  await store.create(create);
+  let clock = 101;
+  let runs = 0;
+  const handlers: TenantBackupOperationHandlers = {
+    async run() {
+      runs++;
+      clock += 30;
+      return { phase: 'capture', cursor: `{"page":${runs}}`, disposition: 'continue' };
+    },
+    async cleanup() {
+      return { cursor: null, done: true };
+    },
+  };
+  const result = await runTenantBackupScheduler(
+    adapter,
+    handlers,
+    new AbortController().signal,
+    () => clock,
+    ['export'],
+    8,
+    50
+  );
+  expect(result.advanced).toBe(2);
+  expect(runs).toBe(2);
+  expect(await store.get('tenant-a', 'operation-a')).toMatchObject({
+    state: 'queued',
+    cursor_json: '{"page":2}',
+  });
+});
+it('shares one transition budget across every operation of a scheduler tick', async () => {
+  for (const id of ['shared-a', 'shared-b', 'shared-c'])
+    await store.create({ ...create, id, idempotencyKey: id });
+  const runs: string[] = [];
+  const handlers: TenantBackupOperationHandlers = {
+    async run(context) {
+      runs.push(context.operation.id);
+      return { phase: 'capture', cursor: '{}', disposition: 'continue' };
+    },
+    async cleanup() {
+      return { cursor: null, done: true };
+    },
+  };
+  const result = await runTenantBackupScheduler(
+    adapter,
+    handlers,
+    new AbortController().signal,
+    () => 101,
+    ['export'],
+    4,
+    undefined,
+    { transitions: 5, wallMs: 60_000 }
+  );
+  expect(result.advanced).toBe(5);
+  expect(runs).toEqual(['shared-a', 'shared-a', 'shared-a', 'shared-a', 'shared-b']);
+  expect(await store.get('tenant-a', 'shared-c')).toMatchObject({ state: 'queued', revision: 0 });
 });
 it('advances one operation through a bounded number of durable scheduler transitions', async () => {
   await store.create(create);

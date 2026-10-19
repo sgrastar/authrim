@@ -35,6 +35,38 @@ const SEALED_GUARD = GUARD.replace("state='loading'", "state='sealed'");
 const SEALABLE_GUARD = GUARD.replace("state='loading'", "state IN ('loading','sealed')");
 export type SqliteRestoreTargetMode = 'write' | 'seal' | 'verify';
 const error = () => new Error('backup_restore_target_rejected');
+const SQLITE_STORAGE_CLASSES: ReadonlySet<unknown> = new Set([
+  'null',
+  'integer',
+  'real',
+  'text',
+  'blob',
+]);
+const VERIFY_QUERIES_IN_FLIGHT = 4;
+/** Bound parameters one grouped verify query may carry, and an upper bound for the guard's share. */
+const VERIFY_GROUP_PARAMETERS = 90;
+const VERIFY_GUARD_PARAMETERS_MAX = 12;
+
+/**
+ * Rows of this policy that `verifyRows` can check within `queries` D1 queries (at least one).
+ * Rows that fit the grouped COUNT query share one; rows over 32 compared columns or 80 bound values
+ * cost one query per 32-column chunk. Ignored columns are counted too, so this errs on the low side.
+ */
+export function sqliteRestoreVerifyRowBudget(
+  policy: SqliteDatasetInspectionPolicy,
+  queries: number
+): number {
+  const keys = policy.schema.primaryKey.length;
+  const compared = Math.max(0, policy.schema.columns.length - keys);
+  const chunks = Math.max(1, Math.ceil(compared / 32));
+  const parameters = keys + Math.min(compared, 32);
+  if (chunks > 1 || parameters > 80) return Math.max(1, Math.floor(queries / chunks));
+  const rowsPerQuery = Math.max(
+    1,
+    Math.floor((VERIFY_GROUP_PARAMETERS - VERIFY_GUARD_PARAMETERS_MAX) / Math.max(1, parameters))
+  );
+  return Math.max(1, queries * rowsPerQuery);
+}
 const APPEND_ONLY_OPERATIONAL_KINDS = new Set([
   'audit',
   'history',
@@ -527,6 +559,7 @@ export class SqliteRestoreTarget {
       }
       pending.push(clauses[0]);
     }
+    const groups: (typeof pending)[] = [];
     while (pending.length) {
       const group: typeof pending = [];
       let parameters = this.guard().length;
@@ -537,13 +570,23 @@ export class SqliteRestoreTarget {
         parameters += clause.params.length;
       }
       if (!group.length) throw error();
-      const found = await this.database.queryOne<{ matches: number | bigint }>(
-        `SELECT COUNT(*) AS matches FROM "${policy.schema.table}" WHERE ${this.guardSql()}
-        AND (${group.map(({ sql }) => `(${sql})`).join(' OR ')})`,
-        [...this.guard(), ...group.flatMap(({ params }) => params)]
-      );
-      if (Number(found?.matches) !== group.length) throw error();
+      groups.push(group);
     }
+    // Read-only aggregate checks are independent, so a few run concurrently.
+    let next = 0;
+    await Promise.all(
+      Array.from({ length: Math.min(VERIFY_QUERIES_IN_FLIGHT, groups.length) }, async () => {
+        while (next < groups.length) {
+          const group = groups[next++];
+          const found = await this.database.queryOne<{ matches: number | bigint }>(
+            `SELECT COUNT(*) AS matches FROM "${policy.schema.table}" WHERE ${this.guardSql()}
+            AND (${group.map(({ sql }) => `(${sql})`).join(' OR ')})`,
+            [...this.guard(), ...group.flatMap(({ params }) => params)]
+          );
+          if (Number(found?.matches) !== group.length) throw error();
+        }
+      })
+    );
     await this.assertLive();
   }
   /** Apply one installed sidecar value while this target is still fenced and unpublished. */
@@ -906,10 +949,13 @@ export class SqliteRestoreTarget {
     const columnClause = (column: string): { sql: string; params: unknown[] } => {
       const index = policy.schema.columns.indexOf(column);
       if (index < 0) throw error();
-      const params: unknown[] = [row[column][0]];
+      // SQLite's five storage class names are inlined; anything else stays a bound parameter.
+      const type = row[column][0];
+      const inlineType = SQLITE_STORAGE_CLASSES.has(type);
+      const params: unknown[] = inlineType ? [] : [type];
       if (parameterByColumn.has(column)) params.push(parameterByColumn.get(column));
       return {
-        sql: `typeof("${column}")=? AND "${column}" COLLATE BINARY IS ${values[index]}`,
+        sql: `typeof("${column}")=${inlineType ? `'${type}'` : '?'} AND "${column}" COLLATE BINARY IS ${values[index]}`,
         params,
       };
     };

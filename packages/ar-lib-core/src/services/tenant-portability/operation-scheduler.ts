@@ -9,7 +9,14 @@ export async function runTenantBackupScheduler(
   signal: AbortSignal,
   now: () => number = Date.now,
   kinds: readonly ('export' | 'import')[] = ['export', 'import'],
-  maxTransitionsPerOperation = 1
+  maxTransitionsPerOperation = 1,
+  /** Wall-time budget per claimed operation; transitions stop at the first boundary past it. */
+  operationBudgetMs?: number,
+  /**
+   * Budget shared by every operation this tick serves. The operations run in one invocation, so
+   * they share its CPU time and subrequests; a failed batch counts as having used its whole cap.
+   */
+  invocationBudget?: { transitions: number; wallMs: number }
 ): Promise<{ inspected: number; advanced: number; failures: number; failureCodes: string[] }> {
   signal.throwIfAborted();
   const timestamp = now();
@@ -35,23 +42,44 @@ export async function runTenantBackupScheduler(
     ORDER BY updated_at,id LIMIT 5`,
     [timestamp, timestamp, timestamp, timestamp]
   );
+  if (
+    invocationBudget &&
+    (!Number.isSafeInteger(invocationBudget.transitions) ||
+      invocationBudget.transitions < 1 ||
+      !Number.isSafeInteger(invocationBudget.wallMs) ||
+      invocationBudget.wallMs < 1)
+  )
+    throw new Error('invalid_backup_scheduler_transition_limit');
   const store = new TenantBackupOperationStore(database);
   let advanced = 0,
-    failures = 0;
+    failures = 0,
+    spent = 0;
   const failureCodes = new Set<string>();
   for (const item of due) {
     const workerId = crypto.randomUUID();
     signal.throwIfAborted();
+    let maxTransitions = maxTransitionsPerOperation;
+    let budgetMs = operationBudgetMs;
+    if (invocationBudget) {
+      const remainingMs = invocationBudget.wallMs - (now() - timestamp);
+      const remaining = invocationBudget.transitions - spent;
+      if (remaining < 1 || remainingMs < 1) break;
+      maxTransitions = Math.min(maxTransitions, remaining);
+      budgetMs = Math.min(budgetMs ?? remainingMs, remainingMs);
+    }
     try {
       const result = await executeTenantBackupBatch(
         store,
         { tenantId: item.tenant_id, operationId: item.id, workerId, signal },
         handlers,
         now,
-        maxTransitionsPerOperation
+        maxTransitions,
+        budgetMs
       );
       advanced += result.transitions;
+      spent += result.transitions;
     } catch (error) {
+      spent += maxTransitions;
       signal.throwIfAborted();
       const current = await store.get(item.tenant_id, item.id);
       const cause = error instanceof Error ? error.cause : undefined;

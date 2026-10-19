@@ -85,7 +85,8 @@ async function assertAdminResourcesClean(
       EXISTS (SELECT 1 FROM tenant_backup_snapshot_resources WHERE operation_id=? AND tenant_id=? AND cleaned=0)
         OR EXISTS (SELECT 1 FROM tenant_backup_artifact_attempts WHERE operation_id=? AND tenant_id=?)
         OR EXISTS (SELECT 1 FROM tenant_backup_validation_sessions WHERE operation_id=? AND tenant_id=?)
-        OR EXISTS (SELECT 1 FROM tenant_backup_container_inputs WHERE operation_id=? AND tenant_id=?) AS dirty`,
+        OR EXISTS (SELECT 1 FROM tenant_backup_container_inputs WHERE operation_id=? AND tenant_id=?)
+        OR EXISTS (SELECT 1 FROM tenant_backup_input_frames WHERE operation_id=? AND tenant_id=?) AS dirty`,
     [
       context.lease.operationId,
       context.lease.tenantId,
@@ -93,6 +94,8 @@ async function assertAdminResourcesClean(
       context.lease.fencingToken,
       timestamp,
       timestamp,
+      context.lease.operationId,
+      context.lease.tenantId,
       context.lease.operationId,
       context.lease.tenantId,
       context.lease.operationId,
@@ -158,6 +161,24 @@ export async function runTenantBackupOperationCleanupStep(input: {
     );
     if (result.found || !result.done) return { cursor: JSON.stringify(cursor), done: false };
     const timestamp = now();
+    const frames = await input.database.execute(
+      `DELETE FROM tenant_backup_input_frames WHERE rowid IN (
+        SELECT rowid FROM tenant_backup_input_frames WHERE operation_id=? AND tenant_id=? LIMIT 1000)
+      AND EXISTS (SELECT 1 FROM tenant_backup_operations WHERE id=? AND tenant_id=?
+      AND state='cancelling' AND lease_owner=? AND fencing_token=?
+      AND lease_expires_at>? AND updated_at<=?)`,
+      [
+        input.context.lease.operationId,
+        input.context.lease.tenantId,
+        input.context.lease.operationId,
+        input.context.lease.tenantId,
+        input.context.lease.owner,
+        input.context.lease.fencingToken,
+        timestamp,
+        timestamp,
+      ]
+    );
+    if (frames.rowsAffected) return { cursor: JSON.stringify(cursor), done: false };
     const removed = await input.database.execute(
       `DELETE FROM tenant_backup_container_inputs WHERE operation_id=? AND tenant_id=?
       AND EXISTS (SELECT 1 FROM tenant_backup_operations WHERE id=? AND tenant_id=?

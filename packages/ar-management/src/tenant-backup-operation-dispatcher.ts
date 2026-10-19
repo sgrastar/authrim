@@ -95,7 +95,9 @@ export function processTenantBackupOperations(
   signal: AbortSignal,
   now: () => number = Date.now,
   kinds: readonly ('export' | 'import')[] = ['export', 'import'],
-  maxTransitionsPerOperation = 1
+  maxTransitionsPerOperation = 1,
+  operationBudgetMs?: number,
+  invocationBudget?: { transitions: number; wallMs: number }
 ) {
   return runTenantBackupScheduler(
     requireDedicatedAdminDatabaseAdapter(env, 'tenant-backup'),
@@ -103,6 +105,8 @@ export function processTenantBackupOperations(
     signal,
     now,
     kinds,
-    maxTransitionsPerOperation
+    maxTransitionsPerOperation,
+    operationBudgetMs,
+    invocationBudget
   );
 }

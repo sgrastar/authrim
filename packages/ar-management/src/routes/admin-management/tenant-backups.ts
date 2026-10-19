@@ -26,6 +26,7 @@ import {
   TenantBackupUploadStore,
   TENANT_BACKUP_UPLOAD_PART_BYTES,
 } from '@authrim/ar-lib-core/services/tenant-portability/upload-store';
+import { TENANT_BACKUP_MAX_INPUT_BYTES } from '@authrim/ar-lib-core/services/tenant-portability/pinned-input-object';
 import { initializeTenantBackupMultipart } from '@authrim/ar-lib-core/services/tenant-portability/allocate-upload';
 import { uploadTenantBackupPart } from '@authrim/ar-lib-core/services/tenant-portability/upload-part';
 import { completeTenantBackupUpload } from '@authrim/ar-lib-core/services/tenant-portability/complete-upload';
@@ -125,7 +126,7 @@ tenantBackupsRouter.post('/uploads', async (c) => {
     typeof value.sizeBytes !== 'number' ||
     !Number.isSafeInteger(value.sizeBytes) ||
     value.sizeBytes < 174 ||
-    value.sizeBytes > TENANT_BACKUP_UPLOAD_PART_BYTES * 10000
+    value.sizeBytes > TENANT_BACKUP_MAX_INPUT_BYTES
   )
     return c.json({ error: 'invalid_backup_upload' }, 400);
   const uploadId = crypto.randomUUID();
