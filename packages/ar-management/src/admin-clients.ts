@@ -27,9 +27,9 @@ import {
   type WebOriginRegistryDocument,
   type WebOriginRegistryWritePayload,
   DEFAULT_ASC_ALLOWED_TRANSFORMED_CLAIMS,
-  loadDestinationProfileConsentDescriptor,
   requireAdminDatabaseAdapter,
-  resolveRuntimeIdentityMappingBinding,
+  validateOidcMappingSetReference,
+  type DatabaseAdapter,
   type AttributeReleaseConsentPolicy,
   type ClaimReleasePolicy,
   buildContractKey,
@@ -684,42 +684,74 @@ function parseIdentityMappingSelectorField(
   return validation.ok ? (validation.value ?? null) : null;
 }
 
+/** Why an app's Mapping Set choice cannot be saved, as the response that says so. */
+interface IdentityMappingSelectorProblem {
+  status: 400 | 404 | 503;
+  error: 'invalid_request' | 'not_found' | 'temporarily_unavailable';
+  description: string;
+}
+
 async function validateOIDCIdentityMappingSelector(
   env: Env,
   tenantId: string,
   selector: AdminOIDCIdentityMappingSelector | null | undefined
-): Promise<string | null> {
+): Promise<IdentityMappingSelectorProblem | null> {
   if (selector === undefined || selector === null) return null;
   if (!selector.fieldMappingSetId) {
-    return 'identity_mapping.fieldMappingSetId is required';
+    return {
+      status: 400,
+      error: 'invalid_request',
+      description: 'identity_mapping.fieldMappingSetId is required',
+    };
   }
 
+  let adminAdapter: DatabaseAdapter | null = null;
   try {
-    const adminAdapter = requireAdminDatabaseAdapter(env, 'oidc-client-identity-mapping');
-    const binding = await resolveRuntimeIdentityMappingBinding(adminAdapter, {
-      tenantId,
-      protocol: 'oidc',
-      role: 'op',
-      fieldMappingSetId: selector.fieldMappingSetId,
-      fieldMappingVersionId: selector.fieldMappingVersionId,
-    });
-    if (!binding) {
-      return 'identity_mapping.fieldMappingSetId must reference an active compiled Mapping Set';
-    }
-    if (binding.destinationProfileIds.length !== 1 || !binding.destinationProfileId) {
-      return 'The active Mapping Set must reference exactly one OIDC Destination Profile';
-    }
-    const descriptor = await loadDestinationProfileConsentDescriptor(
-      adminAdapter,
-      tenantId,
-      binding.destinationProfileId
-    );
-    if (!descriptor || descriptor.destinationType !== 'oidc') {
-      return 'The active Mapping Set must reference an active OIDC Destination Profile';
-    }
-    return null;
+    adminAdapter = requireAdminDatabaseAdapter(env, 'oidc-client-identity-mapping');
   } catch {
-    return 'Unable to validate identity_mapping against the active Mapping Set';
+    // Left null: the shared check answers `admin_database_unavailable`.
+  }
+  // The same check as the tenant's and the platform's default Mapping Set. The platform's own sets
+  // may be chosen too (the order of the tiers allows an app to name one).
+  const result = await validateOidcMappingSetReference({
+    adminAdapter,
+    contextTenantId: tenantId,
+    scope: 'client',
+    setId: selector.fieldMappingSetId,
+    versionId: selector.fieldMappingVersionId,
+  });
+  if (result.ok) return null;
+  switch (result.code) {
+    case 'set_missing':
+      return {
+        status: 404,
+        error: 'not_found',
+        description:
+          'identity_mapping.fieldMappingSetId does not reference a Mapping Set available to this tenant',
+      };
+    case 'set_inactive':
+      return {
+        status: 400,
+        error: 'invalid_request',
+        description:
+          'identity_mapping.fieldMappingSetId must reference an active compiled Mapping Set',
+      };
+    case 'destination_profile_invalid':
+      return {
+        status: 400,
+        error: 'invalid_request',
+        description:
+          'The active Mapping Set must reference exactly one active OIDC Destination Profile',
+      };
+    case 'platform_set_unsafe':
+      return { status: 400, error: 'invalid_request', description: result.message };
+    default:
+      return {
+        status: 503,
+        error: 'temporarily_unavailable',
+        description:
+          'Unable to validate identity_mapping against the active Mapping Set; try again',
+      };
   }
 }
 
@@ -1483,7 +1515,10 @@ export async function adminClientCreateHandler(c: Context<{ Bindings: Env }>) {
       identityMappingValidation.value
     );
     if (identityMappingError) {
-      return c.json({ error: 'invalid_request', error_description: identityMappingError }, 400);
+      return c.json(
+        { error: identityMappingError.error, error_description: identityMappingError.description },
+        identityMappingError.status
+      );
     }
     const isPublicClient = tokenEndpointAuthMethodValidation.value === 'none';
     const clientSecret = isPublicClient
@@ -2360,7 +2395,10 @@ export async function adminClientUpdateHandler(c: Context<{ Bindings: Env }>) {
       identityMappingValidation.value
     );
     if (identityMappingError) {
-      return c.json({ error: 'invalid_request', error_description: identityMappingError }, 400);
+      return c.json(
+        { error: identityMappingError.error, error_description: identityMappingError.description },
+        identityMappingError.status
+      );
     }
 
     const attributeReleaseConsentValidation = validateOptionalAttributeReleaseConsentPolicyField(

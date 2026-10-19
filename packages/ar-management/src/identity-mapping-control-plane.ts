@@ -3,13 +3,21 @@ import type { Env, DatabaseAdapter, PreparedStatement } from '@authrim/ar-lib-co
 import {
   createAuthContextFromHono,
   findConflictingSourceIds,
+  findPlatformMappingCompileViolation,
+  findPlatformMappingVersionViolation,
   getTenantIdFromContext,
   isOutputGraphTarget,
+  mappingReferencePath,
+  mappingReferenceProfileId,
+  normalizePlatformActivationScope,
   OIDC_STANDARD_CLAIM_SCOPE,
+  PLATFORM_MAPPING_TENANT_ID,
+  platformDestinationProfileRefs,
   EDUPERSON_ASSURANCE_CLAIM,
   requireDedicatedAdminDatabaseAdapter,
   resolveSourceClassification,
   sensitiveClassificationRank,
+  toMappingSourceReference,
   transitionAccountAuthenticationState,
   validateExternalUrl,
 } from '@authrim/ar-lib-core';
@@ -1762,6 +1770,16 @@ export class IdentityMappingControlPlaneRepository {
       throw badRequest('catalog bundle is invalid');
     }
     validateCustomEntries(input.entries, input.customEntries ?? []);
+    if (tenantId === PLATFORM_MAPPING_TENANT_ID) {
+      // A platform catalog is read by every tenant's mappings, so it holds no field that is one
+      // tenant's own.
+      if ((input.customEntries ?? []).length > 0) {
+        throw badRequest('platform catalog cannot hold custom entries');
+      }
+      if (input.entries.some((entry) => (entry.targetType as string | undefined) === 'custom')) {
+        throw badRequest('platform catalog cannot hold custom fields');
+      }
+    }
 
     const now = this.now();
     await this.adapter.transaction(async (tx) => {
@@ -1952,6 +1970,8 @@ export class IdentityMappingControlPlaneRepository {
   private async loadConfiguredCanonicalCatalog(
     tenantId: string
   ): Promise<FieldCatalogSummary | null> {
+    // The platform has no custom fields of its own to derive a catalog from.
+    if (tenantId === PLATFORM_MAPPING_TENANT_ID) return null;
     let rows: CustomClaimSchemaCatalogRow[];
     try {
       rows = await (this.coreAdapter ?? this.adapter).query<CustomClaimSchemaCatalogRow>(
@@ -3290,9 +3310,24 @@ export class IdentityMappingControlPlaneRepository {
     }));
   }
 
+  /**
+   * `tenantId` is the namespace the set is created in: a tenant's, or the platform's. The owner
+   * scope follows it (`owner_scope_type = 'platform'` exactly when the tenant ID is the
+   * platform's), so a tenant cannot write a set that claims to be the platform's.
+   */
   async createFieldMappingSet(tenantId: string, input: CreateFieldMappingSetRequest) {
     validateRequiredString(input.fieldMappingKey, 'fieldMappingKey');
     validateRequiredString(input.displayName, 'displayName');
+    const isPlatform = tenantId === PLATFORM_MAPPING_TENANT_ID;
+    const ownerScopeType = input.ownerScopeType ?? (isPlatform ? 'platform' : 'tenant');
+    if ((ownerScopeType === 'platform') !== isPlatform) {
+      throw badRequest(
+        isPlatform
+          ? 'a platform field mapping set must have the platform owner scope'
+          : 'platform owner scope is only for a set the platform owns'
+      );
+    }
+    const ownerScopeId = isPlatform ? null : (input.ownerScopeId ?? null);
     const now = this.now();
     const id = createId('field_mapping');
     await this.adapter.execute(
@@ -3306,8 +3341,8 @@ export class IdentityMappingControlPlaneRepository {
         input.fieldMappingKey,
         input.displayName,
         input.description ?? null,
-        input.ownerScopeType ?? 'tenant',
-        input.ownerScopeId ?? null,
+        ownerScopeType,
+        ownerScopeId,
         'draft',
         now,
         now,
@@ -3316,6 +3351,7 @@ export class IdentityMappingControlPlaneRepository {
     return {
       id,
       tenantId,
+      owner: fieldMappingSetOwnerLabel(tenantId),
       fieldMappingKey: input.fieldMappingKey,
       displayName: input.displayName,
       description: input.description ?? null,
@@ -3325,14 +3361,18 @@ export class IdentityMappingControlPlaneRepository {
     };
   }
 
+  /**
+   * The sets the tenant has and the platform's (each with its owner), which every tenant may read.
+   */
   async listFieldMappingSets(tenantId: string) {
     const rows = await this.adapter.query<FieldMappingSetRow>(
-      `SELECT * FROM field_mapping_sets WHERE tenant_id = ? ORDER BY updated_at DESC`,
-      [tenantId]
+      `SELECT * FROM field_mapping_sets WHERE tenant_id IN (?, ?) ORDER BY updated_at DESC`,
+      [tenantId, PLATFORM_MAPPING_TENANT_ID]
     );
     return rows.map((row) => ({
       id: row.id,
       tenantId: row.tenant_id,
+      owner: fieldMappingSetOwnerLabel(row.tenant_id),
       fieldMappingKey: row.field_mapping_key,
       displayName: row.display_name,
       description: row.description,
@@ -3340,6 +3380,22 @@ export class IdentityMappingControlPlaneRepository {
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     }));
+  }
+
+  /**
+   * The tenant ID that owns a set the caller may see: the caller's own, or the platform's. A set
+   * that does not exist and one another tenant owns are both null, so the answer tells a tenant
+   * nothing about the others.
+   */
+  async findFieldMappingSetOwner(
+    contextTenantId: string,
+    fieldMappingSetId: string
+  ): Promise<string | null> {
+    const row = await this.adapter.queryOne<{ tenant_id: string }>(
+      `SELECT tenant_id FROM field_mapping_sets WHERE id = ? AND tenant_id IN (?, ?)`,
+      [fieldMappingSetId, contextTenantId, PLATFORM_MAPPING_TENANT_ID]
+    );
+    return row?.tenant_id ?? null;
   }
 
   async deleteFieldMappingSet(tenantId: string, fieldMappingSetId: string) {
@@ -3826,6 +3882,15 @@ export class IdentityMappingControlPlaneRepository {
       throw badRequest('sourceProfileIds must be an array of non-empty strings');
     }
     assertFieldMappingVersionRequestSafe(input);
+    if (tenantId === PLATFORM_MAPPING_TENANT_ID) {
+      const violation = findPlatformMappingVersionViolation(input.rules, input.sourceProfileIds);
+      if (violation) throw badRequest(violation);
+      await this.assertPlatformOidcDestinationProfile(
+        tenantId,
+        input.rules.flatMap((rule) => (rule.edges ?? []).map((edge) => edge.targetRef)),
+        false
+      );
+    }
 
     const fieldMappingSet = await this.getFieldMappingSet(tenantId, fieldMappingSetId);
     if (!fieldMappingSet) {
@@ -4012,6 +4077,13 @@ export class IdentityMappingControlPlaneRepository {
       throw notFound('catalog version not found');
     }
     assertNoSensitiveMetadata(input.metadata, 'metadata');
+    if (tenantId === PLATFORM_MAPPING_TENANT_ID) {
+      await this.assertPlatformMappingCompilable(
+        tenantId,
+        fieldMappingVersionId,
+        catalogVersion.id
+      );
+    }
 
     const now = this.now();
     const dependencyGraph = {
@@ -4084,6 +4156,13 @@ export class IdentityMappingControlPlaneRepository {
     input: ActivateFieldMappingRequest
   ) {
     validateRequiredString(input.snapshotId, 'snapshotId');
+    let activationScope = input.activationScope;
+    if (tenantId === PLATFORM_MAPPING_TENANT_ID) {
+      // Written empty, so it applies to every calling tenant (see normalizePlatformActivationScope).
+      const normalized = normalizePlatformActivationScope(input.activationScope, tenantId);
+      if ('violation' in normalized) throw badRequest(normalized.violation);
+      activationScope = normalized.scope;
+    }
     const version = await this.getFieldMappingVersion(
       tenantId,
       fieldMappingSetId,
@@ -4101,6 +4180,14 @@ export class IdentityMappingControlPlaneRepository {
       fieldMappingVersionId,
       snapshot.catalog_version_id
     );
+    if (tenantId === PLATFORM_MAPPING_TENANT_ID && snapshot.catalog_version_id) {
+      // The rows may have changed since the snapshot was compiled: judge them again.
+      await this.assertPlatformMappingCompilable(
+        tenantId,
+        fieldMappingVersionId,
+        snapshot.catalog_version_id
+      );
+    }
     const now = this.now();
     if (snapshot.lifecycle_state === 'active') {
       const existingActivation = await this.adapter.queryOne<{ id: string }>(
@@ -4199,7 +4286,7 @@ export class IdentityMappingControlPlaneRepository {
           tenantId,
           fieldMappingSetId,
           fieldMappingVersionId,
-          stableJson(input.activationScope),
+          stableJson(activationScope),
           'active',
           now,
           null,
@@ -6775,9 +6862,17 @@ export class IdentityMappingControlPlaneRepository {
         // bring a source profile's fields into the canonical ones are not judged here.
         isOutputGraphTarget({
           namespace: readStringValue(targetRef.namespace) ?? undefined,
-          profileId: readStringValue(targetRef.profileId) ?? undefined,
+          profileId: mappingReferenceProfileId(targetRef),
         })
       );
+    if (tenantId === PLATFORM_MAPPING_TENANT_ID) {
+      // The runtime counts the profile of every edge, not only the ones judged below.
+      await this.assertPlatformOidcDestinationProfile(
+        tenantId,
+        edgeRows.map((row) => parseJsonObject(row.target_ref_json, {})),
+        true
+      );
+    }
     if (releaseEdges.length === 0) return;
     if (!catalogVersionId) {
       throw badRequest('sensitive destination mappings require a compiled catalog snapshot');
@@ -6798,7 +6893,7 @@ export class IdentityMappingControlPlaneRepository {
       const targetSide = readStringValue(targetRef.side) ?? 'destination';
       if (sourceSide !== 'source' || targetSide !== 'destination') {
         throw badRequest(
-          `mapping edge references must be a source and a destination: ${readStringValue(targetRef.path) ?? 'unknown'}`
+          `mapping edge references must be a source and a destination: ${mappingReferencePath(targetRef) ?? 'unknown'}`
         );
       }
     }
@@ -6818,13 +6913,20 @@ export class IdentityMappingControlPlaneRepository {
       );
       const sourceNamespace = readStringValue(sourceRef.namespace);
       if (sourceClassification === null) {
+        if (tenantId === PLATFORM_MAPPING_TENANT_ID) {
+          // Every tenant is released to by this mapping, so a source that cannot be classified is
+          // never let through (a tenant's own OIDC mapping may skip it).
+          throw badRequest(
+            `platform mapping source classification is unknown: ${mappingReferencePath(sourceRef) ?? 'unknown'}`
+          );
+        }
         if (sourceNamespace === 'authrim.profile') {
           throw badRequest(
-            `mapping source field is missing from compiled catalog: ${readStringValue(sourceRef.path) ?? 'unknown'}`
+            `mapping source field is missing from compiled catalog: ${mappingReferencePath(sourceRef) ?? 'unknown'}`
           );
         }
         // A SAML attribute is released only from a source whose classification is known.
-        const unknownSourceProfileRef = readStringValue(targetRef.profileId);
+        const unknownSourceProfileRef = mappingReferenceProfileId(targetRef);
         if (unknownSourceProfileRef) {
           let unknownSourceProfile = profileCache.get(unknownSourceProfileRef);
           if (unknownSourceProfile === undefined) {
@@ -6836,7 +6938,7 @@ export class IdentityMappingControlPlaneRepository {
           }
           if (unknownSourceProfile?.destination_type === 'saml') {
             throw badRequest(
-              `mapping source classification is unknown: ${readStringValue(sourceRef.path) ?? 'unknown'}`
+              `mapping source classification is unknown: ${mappingReferencePath(sourceRef) ?? 'unknown'}`
             );
           }
         }
@@ -6845,8 +6947,8 @@ export class IdentityMappingControlPlaneRepository {
       const sourceSensitivity = sensitiveClassificationRank(sourceClassification);
       if (sourceSensitivity === 0) continue;
 
-      const profileRef = readStringValue(targetRef.profileId);
-      const targetPath = readStringValue(targetRef.path);
+      const profileRef = mappingReferenceProfileId(targetRef);
+      const targetPath = mappingReferencePath(targetRef);
       if (!profileRef || !targetPath) {
         throw badRequest('sensitive destination mapping must reference a profile field');
       }
@@ -6881,6 +6983,111 @@ export class IdentityMappingControlPlaneRepository {
         );
       }
     }
+  }
+
+  /**
+   * A platform Mapping Set releases into exactly one OIDC Destination Profile, and that profile is
+   * the platform's: a profile a tenant owns is not visible to the other tenants this mapping runs
+   * for. The profiles are counted as the runtime resolver counts them (every target reference, by
+   * `profileId` or `profile_id`). While a version is being written the profile may not be active
+   * yet; at activation it must be.
+   */
+  private async assertPlatformOidcDestinationProfile(
+    platformTenantId: string,
+    targetRefs: Array<Record<string, unknown>>,
+    requireActive: boolean
+  ): Promise<void> {
+    const refs = platformDestinationProfileRefs(targetRefs);
+    if ('violation' in refs) throw badRequest(refs.violation);
+    const [profileRef] = refs.profileIds;
+    // Looked up under the platform ID alone, so a profile with a tenant owner is not found.
+    const destinationType = requireActive
+      ? ((await this.loadActiveDestinationProfileForActivation(platformTenantId, profileRef))
+          ?.destination_type ?? null)
+      : (
+          await this.adapter.queryOne<{ destination_type: string }>(
+            `SELECT destination_type
+               FROM destination_profiles
+              WHERE tenant_id = ?
+                AND id IN (${destinationProfileReferenceCandidates(profileRef)
+                  .map(() => '?')
+                  .join(', ')})
+              LIMIT 1`,
+            [platformTenantId, ...destinationProfileReferenceCandidates(profileRef)]
+          )
+        )?.destination_type;
+    if (!destinationType) {
+      throw badRequest(
+        `platform mapping must reference ${requireActive ? 'an active ' : 'a '}platform-owned Destination Profile: ${profileRef}`
+      );
+    }
+    if (destinationType !== 'oidc') {
+      throw badRequest(
+        `platform mapping must reference an OIDC Destination Profile: ${profileRef}`
+      );
+    }
+  }
+
+  /** What the platform catalog backs of a stored version (see findPlatformMappingCompileViolation). */
+  private async assertPlatformMappingCompilable(
+    platformTenantId: string,
+    fieldMappingVersionId: string,
+    catalogVersionId: string
+  ): Promise<void> {
+    const params = [platformTenantId, fieldMappingVersionId];
+    const [edgeRows, validationRows, transformRows, entries] = await Promise.all([
+      this.adapter.query<{ source_ref_json: string; target_ref_json: string }>(
+        `SELECT e.source_ref_json, e.target_ref_json
+           FROM mapping_rules r
+           JOIN mapping_rule_edges e ON e.tenant_id = r.tenant_id AND e.rule_id = r.id
+          WHERE r.tenant_id = ? AND r.field_mapping_version_id = ?`,
+        params
+      ),
+      this.adapter.query<{ target_ref_json: string }>(
+        `SELECT v.target_ref_json
+           FROM mapping_rules r
+           JOIN mapping_validation_rules v ON v.tenant_id = r.tenant_id AND v.rule_id = r.id
+          WHERE r.tenant_id = ? AND r.field_mapping_version_id = ?`,
+        params
+      ),
+      this.adapter.query<{ operation: string; parameters_json: string | null }>(
+        `SELECT t.operation, t.parameters_json
+           FROM mapping_rules r
+           JOIN mapping_transform_steps t ON t.tenant_id = r.tenant_id AND t.rule_id = r.id
+          WHERE r.tenant_id = ? AND r.field_mapping_version_id = ?`,
+        params
+      ),
+      this.loadCatalogEntriesForActivation(platformTenantId, catalogVersionId),
+    ]);
+    const violation = findPlatformMappingCompileViolation(
+      {
+        edges: edgeRows.map((row) => ({
+          sourceRef: parseJsonObject(row.source_ref_json, {}),
+          targetRef: parseJsonObject(row.target_ref_json, {}),
+        })),
+        validationRules: validationRows.map((row) => ({
+          targetRef: parseJsonObject(row.target_ref_json, {}),
+        })),
+        transforms: transformRows.map((row) => ({
+          operation: row.operation,
+          parameters: parseJsonObject(row.parameters_json ?? '{}', {}),
+        })),
+      },
+      entries.map((entry) => ({
+        ids: [entry.id, entry.stableFieldId],
+        namespace: entry.namespace,
+        path: entry.path,
+        classification: entry.classification,
+        targetType: entry.targetTaxonomy,
+        targetTaxonomy: entry.targetTaxonomy,
+      }))
+    );
+    if (violation) throw badRequest(violation);
+    await this.assertPlatformOidcDestinationProfile(
+      platformTenantId,
+      edgeRows.map((row) => parseJsonObject(row.target_ref_json, {})),
+      false
+    );
   }
 
   private async loadCatalogEntriesForActivation(
@@ -7164,6 +7371,11 @@ export class IdentityMappingControlPlaneRepository {
   }
 }
 
+/** Who owns a set (or a row under it), from the tenant ID it is stored under. */
+function fieldMappingSetOwnerLabel(ownerTenantId: string): 'tenant' | 'platform' {
+  return ownerTenantId === PLATFORM_MAPPING_TENANT_ID ? 'platform' : 'tenant';
+}
+
 function catalogEntryValidation(entry: FieldCatalogEntry): Record<string, unknown> {
   const input = entry as FieldCatalogEntry & {
     allowedValues?: unknown;
@@ -7440,24 +7652,47 @@ export async function adminIdentityFieldMappingSetsListHandler(c: AdminContext) 
 }
 
 export async function adminIdentityFieldMappingVersionsListHandler(c: AdminContext) {
-  return handleControlPlane(c, async (repository, tenantId) => ({
-    fieldMappingVersions: await repository.listFieldMappingVersions(
+  return handleControlPlane(c, async (repository, tenantId) => {
+    const fieldMappingSetId = requiredParam(c, 'fieldMappingSetId');
+    const ownerTenantId = await resolveFieldMappingSetOwner(
+      c,
+      repository,
       tenantId,
-      requiredParam(c, 'fieldMappingSetId')
-    ),
-  }));
+      fieldMappingSetId,
+      'read'
+    );
+    return {
+      fieldMappingVersions: await repository.listFieldMappingVersions(
+        ownerTenantId,
+        fieldMappingSetId
+      ),
+    };
+  });
 }
 
 export async function adminIdentityFieldMappingSetCreateHandler(c: AdminContext) {
-  return handleMutation(c, 'field_mapping.create', async (repository, tenantId, body) =>
-    repository.createFieldMappingSet(tenantId, body as CreateFieldMappingSetRequest)
-  );
+  return handleMutation(c, 'field_mapping.create', async (repository, tenantId, body) => {
+    // The set is created in the platform's namespace, or in the caller's. The owner scope in the
+    // body only picks between the two, and the platform's needs platform authority.
+    assertPlatformOwnerScopeAllowed(c, body);
+    const ownerTenantId =
+      isRecord(body) && body.ownerScopeType === 'platform' ? PLATFORM_MAPPING_TENANT_ID : tenantId;
+    return repository.createFieldMappingSet(ownerTenantId, body as CreateFieldMappingSetRequest);
+  });
 }
 
 export async function adminIdentityFieldMappingSetDeleteHandler(c: AdminContext) {
-  return handleMutation(c, 'field_mapping.delete', async (repository, tenantId) =>
-    repository.deleteFieldMappingSet(tenantId, requiredParam(c, 'fieldMappingSetId'))
-  );
+  return handleMutation(c, 'field_mapping.delete', async (repository, tenantId) => {
+    const fieldMappingSetId = requiredParam(c, 'fieldMappingSetId');
+    const ownerTenantId = await resolveFieldMappingSetOwner(
+      c,
+      repository,
+      tenantId,
+      fieldMappingSetId,
+      'write'
+    );
+    return repository.deleteFieldMappingSet(ownerTenantId, fieldMappingSetId);
+  });
 }
 
 export async function adminIdentityFieldMappingVersionCreateHandler(c: AdminContext) {
@@ -7466,7 +7701,15 @@ export async function adminIdentityFieldMappingVersionCreateHandler(c: AdminCont
     const adminAuth = (
       c as unknown as { get: (key: string) => { userId?: string } | undefined }
     ).get('adminAuth');
-    return repository.createFieldMappingVersion(tenantId, requiredParam(c, 'fieldMappingSetId'), {
+    const fieldMappingSetId = requiredParam(c, 'fieldMappingSetId');
+    const ownerTenantId = await resolveFieldMappingSetOwner(
+      c,
+      repository,
+      tenantId,
+      fieldMappingSetId,
+      'write'
+    );
+    return repository.createFieldMappingVersion(ownerTenantId, fieldMappingSetId, {
       ...request,
       authorId: request.authorId ?? adminAuth?.userId,
     });
@@ -7474,51 +7717,91 @@ export async function adminIdentityFieldMappingVersionCreateHandler(c: AdminCont
 }
 
 export async function adminIdentityFieldMappingVersionPublishHandler(c: AdminContext) {
-  return handleMutation(c, 'field_mapping.version.publish', async (repository, tenantId) =>
-    repository.publishFieldMappingVersion(
+  return handleMutation(c, 'field_mapping.version.publish', async (repository, tenantId) => {
+    const fieldMappingSetId = requiredParam(c, 'fieldMappingSetId');
+    const ownerTenantId = await resolveFieldMappingSetOwner(
+      c,
+      repository,
       tenantId,
-      requiredParam(c, 'fieldMappingSetId'),
+      fieldMappingSetId,
+      'write'
+    );
+    return repository.publishFieldMappingVersion(
+      ownerTenantId,
+      fieldMappingSetId,
       requiredParam(c, 'fieldMappingVersionId')
-    )
-  );
+    );
+  });
 }
 
 export async function adminIdentityFieldMappingVersionCompileHandler(c: AdminContext) {
-  return handleMutation(c, 'field_mapping.version.compile', async (repository, tenantId, body) =>
-    repository.compileFieldMappingVersion(
+  return handleMutation(c, 'field_mapping.version.compile', async (repository, tenantId, body) => {
+    const fieldMappingSetId = requiredParam(c, 'fieldMappingSetId');
+    const ownerTenantId = await resolveFieldMappingSetOwner(
+      c,
+      repository,
       tenantId,
-      requiredParam(c, 'fieldMappingSetId'),
+      fieldMappingSetId,
+      'write'
+    );
+    return repository.compileFieldMappingVersion(
+      ownerTenantId,
+      fieldMappingSetId,
       requiredParam(c, 'fieldMappingVersionId'),
       body as CompileFieldMappingRequest
-    )
-  );
+    );
+  });
 }
 
 export async function adminIdentityFieldMappingVersionActivateHandler(c: AdminContext) {
-  return handleMutation(c, 'field_mapping.version.activate', async (repository, tenantId, body) =>
-    repository.activateFieldMappingVersion(
+  return handleMutation(c, 'field_mapping.version.activate', async (repository, tenantId, body) => {
+    const fieldMappingSetId = requiredParam(c, 'fieldMappingSetId');
+    const ownerTenantId = await resolveFieldMappingSetOwner(
+      c,
+      repository,
       tenantId,
-      requiredParam(c, 'fieldMappingSetId'),
+      fieldMappingSetId,
+      'write'
+    );
+    return repository.activateFieldMappingVersion(
+      ownerTenantId,
+      fieldMappingSetId,
       requiredParam(c, 'fieldMappingVersionId'),
       body as ActivateFieldMappingRequest
-    )
-  );
+    );
+  });
 }
 
 export async function adminIdentityFieldMappingVersionDeactivateHandler(c: AdminContext) {
-  return handleMutation(c, 'field_mapping.version.deactivate', async (repository, tenantId) =>
-    repository.deactivateFieldMappingVersion(
+  return handleMutation(c, 'field_mapping.version.deactivate', async (repository, tenantId) => {
+    const fieldMappingSetId = requiredParam(c, 'fieldMappingSetId');
+    const ownerTenantId = await resolveFieldMappingSetOwner(
+      c,
+      repository,
       tenantId,
-      requiredParam(c, 'fieldMappingSetId'),
+      fieldMappingSetId,
+      'write'
+    );
+    return repository.deactivateFieldMappingVersion(
+      ownerTenantId,
+      fieldMappingSetId,
       requiredParam(c, 'fieldMappingVersionId')
-    )
-  );
+    );
+  });
 }
 
 export async function adminIdentityFieldMappingSetRollbackHandler(c: AdminContext) {
-  return handleMutation(c, 'field_mapping.rollback', async (repository, tenantId) =>
-    repository.rollbackFieldMappingSet(tenantId, requiredParam(c, 'fieldMappingSetId'))
-  );
+  return handleMutation(c, 'field_mapping.rollback', async (repository, tenantId) => {
+    const fieldMappingSetId = requiredParam(c, 'fieldMappingSetId');
+    const ownerTenantId = await resolveFieldMappingSetOwner(
+      c,
+      repository,
+      tenantId,
+      fieldMappingSetId,
+      'write'
+    );
+    return repository.rollbackFieldMappingSet(ownerTenantId, fieldMappingSetId);
+  });
 }
 
 export async function adminIdentityMappingSourceAuthorityContractsListHandler(c: AdminContext) {
@@ -7825,25 +8108,61 @@ function assertPlatformOwnerScopeAllowed(c: AdminContext, body: unknown): void {
   throw forbidden('platform owner scope requires platform admin authority');
 }
 
+/**
+ * The namespace (tenant ID) a request for a set runs in: the owner of the set, found from its ID
+ * among the caller's sets and the platform's. A set that does not exist and one another tenant
+ * owns are both "not found". The platform's sets are readable by every tenant admin, and changed
+ * only with platform authority.
+ */
+async function resolveFieldMappingSetOwner(
+  c: AdminContext,
+  repository: IdentityMappingControlPlaneRepository,
+  contextTenantId: string,
+  fieldMappingSetId: string,
+  access: 'read' | 'write'
+): Promise<string> {
+  const ownerTenantId = await repository.findFieldMappingSetOwner(
+    contextTenantId,
+    fieldMappingSetId
+  );
+  if (!ownerTenantId) {
+    throw notFound('field mapping set not found');
+  }
+  if (
+    ownerTenantId === PLATFORM_MAPPING_TENANT_ID &&
+    access === 'write' &&
+    !hasPlatformOwnerScopeAuthority(c)
+  ) {
+    throw forbidden('platform field mapping set requires platform admin authority');
+  }
+  return ownerTenantId;
+}
+
+/**
+ * Whether the caller may change what the platform owns: a platform-level role or permission that
+ * holds for every tenant, and a global tenant scope. Both come from the same place. The roles and
+ * permissions the admin-auth middleware puts in `roles` / `permissions` add up every assignment
+ * that applies to the request, so a role held only for this tenant is among them; the platform's
+ * data is decided on `globalRoles` / `globalPermissions` instead, which only global assignments
+ * (or a token whose tenant scope is global) feed. (`is_platform_admin` is a field of the session
+ * status response and is not part of the auth context, so it is not read.)
+ */
 function hasPlatformOwnerScopeAuthority(c: AdminContext): boolean {
   const auth = (c as unknown as { get(key: string): unknown }).get('adminAuth') as
     | {
-        is_platform_admin?: boolean;
-        roles?: string[];
-        permissions?: string[];
+        globalRoles?: string[];
+        globalPermissions?: string[];
+        tenantScope?: string[];
       }
     | undefined;
-  const roles = auth?.roles ?? [];
-  const permissions = auth?.permissions ?? [];
-  if (
-    auth?.is_platform_admin === true ||
-    roles.includes('super_admin') ||
-    roles.includes('system_admin') ||
-    permissions.includes('*')
-  ) {
-    return true;
-  }
-  return false;
+  const globalRoles = auth?.globalRoles ?? [];
+  const globalPermissions = auth?.globalPermissions ?? [];
+  const hasPlatformRole =
+    globalRoles.includes('super_admin') ||
+    globalRoles.includes('system_admin') ||
+    globalPermissions.includes('*');
+  const hasGlobalScope = Array.isArray(auth?.tenantScope) && auth.tenantScope.includes('*');
+  return hasPlatformRole && hasGlobalScope;
 }
 
 async function readJsonBody(c: AdminContext): Promise<unknown> {
@@ -8656,14 +8975,6 @@ function isDestinationProfileMappingReference(profileId: string | null): boolean
     profileId &&
     (profileId.startsWith('destination-profile-') || profileId.startsWith('destination_profile_'))
   );
-}
-
-function toMappingSourceReference(ref: Record<string, unknown>) {
-  return {
-    namespace: readStringValue(ref.namespace) ?? '',
-    path: readStringValue(ref.path) ?? '',
-    catalogEntryId: readStringValue(ref.catalogEntryId) ?? undefined,
-  };
 }
 
 function destinationProfileReferenceCandidates(profileId: string): string[] {

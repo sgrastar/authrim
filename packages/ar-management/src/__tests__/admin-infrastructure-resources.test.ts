@@ -114,10 +114,19 @@ function createApp() {
   const app = new Hono<{ Bindings: Env; Variables: { adminAuth?: unknown; tenantId?: string } }>();
   app.use('*', async (c, next) => {
     c.set('tenantId', c.req.header('x-test-tenant-id') ?? 'tenant-a');
+    const permissions = (c.req.header('x-test-permissions') ?? '').split(',').filter(Boolean);
+    const roles = (c.req.header('x-test-roles') ?? 'tenant_admin').split(',').filter(Boolean);
+    // A platform role in this fixture comes from a global assignment.
+    const global =
+      c.req.header('x-test-roles-global') !== 'false' &&
+      roles.some((role) => role === 'system_admin' || role === 'super_admin');
     c.set('adminAuth', {
       userId: 'admin-1',
-      permissions: (c.req.header('x-test-permissions') ?? '').split(',').filter(Boolean),
-      roles: (c.req.header('x-test-roles') ?? 'tenant_admin').split(',').filter(Boolean),
+      permissions,
+      roles,
+      globalRoles: global ? roles : [],
+      globalPermissions: global ? permissions : [],
+      tenantScope: global ? ['*'] : ['tenant-a'],
     });
     await next();
   });
@@ -338,6 +347,23 @@ describe('admin infrastructure resource routers', () => {
     expect(response.status).toBe(403);
     expect(body.error_code).toBe(AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);
     expect(repoMocks.storage.createDestination).not.toHaveBeenCalled();
+  });
+
+  it('rejects a platform role held for one tenant only: platform authority comes from a global assignment', async () => {
+    const app = createApp();
+    const response = await app.request(
+      '/api/admin/database-connections',
+      {
+        headers: {
+          'x-test-roles': 'system_admin',
+          'x-test-roles-global': 'false',
+          'x-test-permissions': ADMIN_PERMISSIONS.DATABASE_CONNECTIONS_LIST,
+        },
+      },
+      env
+    );
+
+    expect(response.status).toBe(403);
   });
 
   it('rejects tenant admin storage destination creation even with create permission', async () => {

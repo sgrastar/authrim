@@ -11,11 +11,13 @@ import {
   getTenantIdFromContext,
   hashAdminInvitationCode,
   hasAdminPermission,
+  hasGlobalAdminPermission,
   normalizeAdminInvitationIpRanges,
   requireDedicatedAdminDatabaseAdapter,
   adminAuthMiddleware,
 } from '@authrim/ar-lib-core';
 import { writeAdminAuditLog } from '../../admin-shared';
+import { callerOutranksGlobally } from './admin-role-authority';
 
 const DEFAULT_INVITATION_TTL_MS = 24 * 60 * 60 * 1000;
 const MAX_INVITATION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
@@ -293,7 +295,9 @@ adminInvitationsRouter.post('/', async (c) => {
   if (!role || (role.tenant_id !== tenantId && !(role.tenant_id === 'default' && role.is_system))) {
     return c.json({ error: 'role_not_found' }, 404);
   }
-  const wildcardAuthority = hasAdminPermission(auth.permissions ?? [], '*');
+  // A global invitation (and a super_admin one is always global) takes effect for every tenant,
+  // so it needs the wildcard from a global assignment, not one that is only held for this tenant.
+  const wildcardAuthority = hasGlobalAdminPermission(auth, '*');
   const invitingPeerSuperAdmin = role.name === 'super_admin' && wildcardAuthority;
   if (
     auth.hierarchyLevel !== undefined &&
@@ -311,6 +315,15 @@ adminInvitationsRouter.post('/', async (c) => {
     (scopeType === 'tenant' && scopeId !== tenantId)
   ) {
     return c.json({ error: 'invalid_scope' }, 400);
+  }
+  // A global invitation is a global assignment once accepted, so the role is measured by the
+  // caller's global hierarchy (a peer super_admin invitation is the one exception, as above).
+  if (
+    scopeType === 'global' &&
+    !invitingPeerSuperAdmin &&
+    !callerOutranksGlobally(auth, role.hierarchy_level)
+  ) {
+    return c.json({ error: 'insufficient_permissions' }, 403);
   }
   if (roleExpiresAt !== undefined && (!Number.isFinite(roleExpiresAt) || roleExpiresAt <= now)) {
     return c.json({ error: 'invalid_role_expiry' }, 400);
@@ -459,6 +472,17 @@ adminInvitationsRouter.post('/:id/resend', async (c) => {
     [c.req.param('id'), tenantId]
   );
   if (!invitation) return c.json({ error: 'invitation_not_found' }, 404);
+
+  // A resend gives the invitation a new code and a new 24 hours, which brings an expired one back.
+  // An invitation for a global assignment (a super_admin one always is) takes effect for every
+  // tenant once accepted, so bringing it back takes the wildcard from a global assignment, as
+  // creating it did.
+  if (
+    (invitation.scope_type === 'global' || invitation.role_name === 'super_admin') &&
+    !hasGlobalAdminPermission(auth, '*')
+  ) {
+    return c.json({ error: 'insufficient_permissions' }, 403);
+  }
 
   const code = generateAdminInvitationCode();
   const now = Date.now();

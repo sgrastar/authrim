@@ -88,6 +88,25 @@ export interface AdminAuthContext {
   tenantScope?: string[];
   /** User roles (e.g., ['admin', 'super_admin']) */
   roles: string[];
+  /**
+   * The part of `roles` that comes from a global assignment (or, for a machine token, from a
+   * token whose tenant scope is global). `roles` adds up every assignment that applies to the
+   * request, so a role held only for some tenants is in it too; this is the part that holds for
+   * every tenant. Absent means none.
+   */
+  globalRoles?: string[];
+  /**
+   * The same for `permissions`: what the global assignments grant (with what their roles
+   * inherit). Absent means none.
+   */
+  globalPermissions?: string[];
+  /**
+   * The same for the hierarchy: the highest `hierarchy_level` among the roles the global
+   * assignments give (a higher number is a stronger role, as in `hierarchyLevel`), or 0 without
+   * one. `hierarchyLevel` adds up every assignment of the request, so a high role held for one
+   * tenant is in it too; what a global role or a global assignment may reach is measured here.
+   */
+  globalHierarchyLevel?: number;
   // ==========================================================================
   // Admin/EndUser Separation Extensions
   // ==========================================================================

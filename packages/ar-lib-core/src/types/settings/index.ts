@@ -41,6 +41,7 @@ export * from './tenant-discovery-ui';
 export * from './support-ops';
 export * from './self-service';
 export * from './service-site';
+export * from './identity-mapping';
 
 // Re-export SettingsManager types
 export type {

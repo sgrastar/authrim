@@ -1588,9 +1588,22 @@ paths:
           $ref: '#/components/responses/AdminClient'
         '400':
           $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
       description: >-
         Create Client in the Clients area. The request body is JSON unless the detailed schema for
         this operation states otherwise.
+        When identity_mapping names a Mapping Set it is checked the way a default Mapping Set is: the
+        set must be one the tenant owns (a platform-owned set is not accepted for an app yet, and
+        answers as a set that does not exist), active, with an active activation that
+        applies and an active compiled snapshot (and, when fieldMappingVersionId is given, that
+        version), and must release into exactly one active OIDC Destination Profile. 404 when the
+        set does not exist or is not available to the tenant (another tenant's set answers the
+        same), 400 when it exists but cannot be used (not active, no active compiled snapshot, no
+        single active OIDC Destination Profile, or a platform set that holds what a platform set
+        may not), 503 when the Admin database cannot be read to check it.
       security:
         - adminBearer: []
         - adminSessionCookie: []
@@ -1627,9 +1640,22 @@ paths:
           $ref: '#/components/responses/AdminClientMutation'
         '400':
           $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
       description: >-
         Replace Client in the Clients area. The request body is JSON unless the detailed schema for
-        this operation states otherwise.
+        this operation states otherwise. 404 also answers a client that does not exist.
+        When identity_mapping names a Mapping Set it is checked the way a default Mapping Set is: the
+        set must be one the tenant owns (a platform-owned set is not accepted for an app yet, and
+        answers as a set that does not exist), active, with an active activation that
+        applies and an active compiled snapshot (and, when fieldMappingVersionId is given, that
+        version), and must release into exactly one active OIDC Destination Profile. 404 when the
+        set does not exist or is not available to the tenant (another tenant's set answers the
+        same), 400 when it exists but cannot be used (not active, no active compiled snapshot, no
+        single active OIDC Destination Profile, or a platform set that holds what a platform set
+        may not), 503 when the Admin database cannot be read to check it.
       security:
         - adminBearer: []
         - adminSessionCookie: []
@@ -2021,6 +2047,13 @@ paths:
           $ref: '#/components/responses/SettingsV2Patch'
         '400':
           $ref: '#/components/responses/Error'
+        '409':
+          description: >-
+            The settings changed since ifMatch (conflict, with currentVersion).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '503':
           description: >-
             The update could not be admitted or its completion could not be confirmed.
@@ -2135,6 +2168,22 @@ paths:
         first. A save that does not create such a mismatch is unaffected, even when the tenant is
         already in one. Known limit: this check and a plugin disable that run at the same time can
         both pass; serialising them would need a shared coordinator.
+        For the identity-mapping category, identity_mapping.oidc_default_set_id names the Mapping Set
+        that applies to apps of the scope that choose none of their own (unset: no default, so no
+        mapping applies; there is no environment variable; nothing reads it at runtime yet). The
+        value is a Mapping Set ID (letters, digits and _ . : -, at most 200 characters, no
+        surrounding whitespace) or, for a tenant, the reserved value none, which refuses the
+        platform's default; a string only (the disabled marker, false and null are refused, and
+        disable is refused for the key; clear it to remove it). The set must exist and be
+        usable, or the whole PATCH is refused with 400 validation_failed and nothing is saved:
+        a tenant may name a set it owns or one the platform owns, the platform only one the
+        platform owns (any other set answers the same as one that does not exist); the set must be
+        active, with an active activation that applies to the tenant (or to every tenant) and an
+        active compiled snapshot, and must release into exactly one active OIDC Destination
+        Profile; a platform-owned set must also hold only what a platform set may hold. 503
+        temporarily_unavailable when the Admin database cannot be read to check it (nothing is
+        saved). The category is not available for apps (400), and cannot be rolled back through the
+        settings history routes (400).
       security:
         - adminBearer: []
         - adminSessionCookie: []
@@ -2304,6 +2353,15 @@ paths:
       responses:
         '200':
           $ref: '#/components/responses/SettingsV2Patch'
+        '400':
+          $ref: '#/components/responses/Error'
+        '409':
+          description: >-
+            The settings changed since ifMatch (conflict, with currentVersion).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '503':
           description: >-
             The update could not be admitted or its completion could not be confirmed.
@@ -2320,12 +2378,33 @@ paths:
                 properties:
                   error:
                     type: string
-                    enum: [backup_mutation_unavailable]
+                    enum: [backup_mutation_unavailable, temporarily_unavailable]
                   message:
                     type: string
       description: >-
         Update Setting settings in the Admin Miscellaneous area. The request body is JSON unless the
-        detailed schema for this operation states otherwise.
+        detailed schema for this operation states otherwise. The category must be available at the
+        platform scope and writable, and the caller needs platform authority from a global role
+        assignment (an administrator limited to one tenant is refused with 403, whatever role it
+        holds there), or, for a machine token, the settings write permission with a global tenant
+        scope (a token limited to some tenants is refused with 403).
+        For the identity-mapping category, identity_mapping.oidc_default_set_id (the default for
+        every tenant that has set no default of its own, and has not saved none) names the Mapping Set
+        that applies to apps of the scope that choose none of their own (unset: no default, so no
+        mapping applies; there is no environment variable; nothing reads it at runtime yet). The
+        value is a Mapping Set ID (letters, digits and _ . : -, at most 200 characters, no
+        surrounding whitespace) or, for a tenant, the reserved value none, which refuses the
+        platform's default; a string only (the disabled marker, false and null are refused, and
+        disable is refused for the key; clear it to remove it). The set must exist and be
+        usable, or the whole PATCH is refused with 400 validation_failed and nothing is saved:
+        a tenant may name a set it owns or one the platform owns, the platform only one the
+        platform owns (any other set answers the same as one that does not exist); the set must be
+        active, with an active activation that applies to the tenant (or to every tenant) and an
+        active compiled snapshot, and must release into exactly one active OIDC Destination
+        Profile; a platform-owned set must also hold only what a platform set may hold. 503
+        temporarily_unavailable when the Admin database cannot be read to check it (nothing is
+        saved). The category is not available for apps (400), and cannot be rolled back through the
+        settings history routes (400).
       security:
         - adminBearer: []
         - adminSessionCookie: []
@@ -10831,8 +10910,10 @@ paths:
       operationId: getApiAdminFieldMappingFieldMappingSets
       summary: List field mapping sets.
       description: >-
-        Lists field mapping sets owned by the tenant, including key, display name, owner scope,
-        lifecycle state, and timestamps.
+        Lists the field mapping sets the tenant owns together with the platform's, which every
+        tenant can read. Each set carries its key, display name, owner (`tenant` or `platform`),
+        lifecycle state, and timestamps. A set another tenant owns is never listed. A platform set
+        can be read but not changed with tenant authority.
       responses:
         '200':
           $ref: '#/components/responses/FieldMappingSets'
@@ -10858,7 +10939,10 @@ paths:
       summary: Create a field mapping set.
       description: >-
         Creates a field mapping set container. Versions and rules are added through the versions
-        endpoint.
+        endpoint. With `ownerScopeType` set to `platform` the set is created in the platform's
+        namespace (the set every tenant can read), which requires platform administrator
+        authority; any other value creates a set the calling tenant owns. A tenant set cannot
+        carry the platform owner scope.
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
       responses:
@@ -10887,7 +10971,10 @@ paths:
         - Field Mapping
       operationId: deleteApiAdminFieldMappingFieldMappingSetsByFieldMappingSetId
       summary: Delete a field mapping set.
-      description: Deletes a field mapping set by id and returns a mutation result envelope.
+      description: >-
+        Deletes a field mapping set by id and returns a mutation result envelope. A set that
+        another tenant owns answers 404 as a set that does not exist does. A set the platform owns
+        requires platform administrator authority (403 otherwise).
       responses:
         '200':
           $ref: '#/components/responses/FieldMappingDeleteResult'
@@ -10959,7 +11046,8 @@ paths:
       summary: List field mapping versions.
       description: >-
         Lists versions for a field mapping set, including rule and transform summaries and compiled
-        snapshot metadata.
+        snapshot metadata. The set may be the tenant's or the platform's; a set another tenant
+        owns, or one that does not exist, answers 404.
       responses:
         '200':
           $ref: '#/components/responses/FieldMappingVersions'
@@ -10992,7 +11080,9 @@ paths:
       summary: Create a field mapping version.
       description: >-
         Creates a draft version for a field mapping set with rules, edges, transforms, validation
-        rules, release rules, and conflict rules. Mapping edges cannot target claims owned by an OIDC
+        rules, release rules, and conflict rules. A set the platform owns cannot read a field a
+        tenant defines (custom claims, custom fields, attributes), make a persistent identifier,
+        or use a Source Profile. Mapping edges cannot target claims owned by an OIDC
         or introspection protocol envelope. Every source field marked mappingRequired in a referenced
         Source Profile must be connected by an edge.
       responses:
@@ -11031,7 +11121,10 @@ paths:
       summary: Activate a field mapping version.
       description: >-
         Activates a compiled field mapping version for the supplied activation scope. Requires a
-        compiled snapshot id in the request body.
+        compiled snapshot id in the request body. A set the platform owns applies to every tenant,
+        so its activation is stored with an empty scope (a tenant-wide scope is accepted and
+        normalised; a narrower one is refused), and it must release into exactly one OIDC
+        Destination Profile that the platform owns.
       responses:
         '200':
           $ref: '#/components/responses/FieldMappingActivationResult'
@@ -11075,7 +11168,8 @@ paths:
       summary: Compile a field mapping version.
       description: >-
         Compiles a field mapping version against a catalog version and returns the compiled snapshot
-        metadata.
+        metadata. For a set the platform owns, the catalog version must be the platform's, every
+        source must be a field of it, and a custom field is refused.
       responses:
         '200':
           $ref: '#/components/responses/FieldMappingCompileResult'
@@ -56294,6 +56388,7 @@ components:
       required:
         - id
         - tenantId
+        - owner
         - fieldMappingKey
         - displayName
         - lifecycleState
@@ -56304,6 +56399,15 @@ components:
           type: string
         tenantId:
           type: string
+          description: >-
+            The tenant ID the set is stored under: the tenant's own, or `platform` for a set the
+            platform owns.
+        owner:
+          type: string
+          enum:
+            - tenant
+            - platform
+          description: Who owns the set. A `platform` set is shared by every tenant and read-only for them.
         fieldMappingKey:
           type: string
         displayName:
@@ -56347,6 +56451,9 @@ components:
           type: string
         ownerScopeType:
           type: string
+          description: >-
+            `platform` creates the set in the platform's namespace (platform administrator
+            authority required). Otherwise the set belongs to the calling tenant.
         ownerScopeId:
           type: string
     FieldMappingSetMutationResponse:

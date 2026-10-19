@@ -5,6 +5,8 @@ import {
   adminAuthMiddleware,
   assertControlPlaneRecordIsSecretFree,
   hasAdminPermission,
+  hasGlobalPlatformAuthority,
+  isBootstrapSetupMachine,
   type AdminAuthContext,
   type ControlCapacityProfileRequest,
   type ControlCapacityProvisioningRequest,
@@ -394,36 +396,39 @@ function auth(c: AdminContext): AdminAuthContext {
   return c.get('adminAuth') as AdminAuthContext;
 }
 
+// The control plane is platform-wide, so the authority has to come from a global assignment.
 function hasPlatformAuthority(value: AdminAuthContext): boolean {
-  return (
-    hasAdminPermission(value.permissions ?? [], ADMIN_PERMISSIONS.ALL) ||
-    value.roles.includes('super_admin') ||
-    value.roles.includes('system_admin') ||
-    value.tenantScope?.includes('*') === true
-  );
+  return hasGlobalPlatformAuthority(value, true);
 }
 
 function hasControlPlanePermission(
   value: AdminAuthContext,
   permission: 'read' | 'rotate' | 'provision'
 ): boolean {
-  const permissions = value.permissions ?? [];
-  const explicit =
+  const holdsPermission = (permissions: string[]) =>
     hasAdminPermission(permissions, `admin:control_plane:${permission}`) ||
     hasAdminPermission(permissions, 'admin:control_plane:*') ||
     hasAdminPermission(permissions, ADMIN_PERMISSIONS.ALL);
   if (value.actorType === 'machine' || value.authMethod === 'machine_access_token') {
-    return explicit;
+    // The platform's control plane: a token holds the permission for it when its scope is global
+    // (so its permissions are global ones), or when it is the setup tool the bootstrap wrote,
+    // which is limited to the default tenant. A token limited to some tenants holds nothing here,
+    // whatever its permissions are.
+    return isBootstrapSetupMachine(value)
+      ? holdsPermission(value.permissions ?? [])
+      : (value.tenantScope ?? []).includes('*') && holdsPermission(value.globalPermissions ?? []);
   }
-  return explicit || hasPlatformAuthority(value);
+  // The control plane is platform-wide: a human holds the permission through a global assignment,
+  // not through one given for a tenant (`permissions` adds those up too).
+  return (
+    hasPlatformAuthority(value) ||
+    ((value.tenantScope ?? []).includes('*') && holdsPermission(value.globalPermissions ?? []))
+  );
 }
 
 function isSetupProvisioningMachine(value: AdminAuthContext): boolean {
   return (
-    value.actorType === 'machine' &&
-    value.authMethod === 'machine_access_token' &&
-    value.principalType === 'setup_tool' &&
-    value.clientId === 'authrim-setup' &&
+    isBootstrapSetupMachine(value) &&
     hasAdminPermission(value.permissions ?? [], 'admin:control_plane:provision')
   );
 }

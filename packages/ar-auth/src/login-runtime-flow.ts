@@ -23,6 +23,7 @@ import {
   getChallengeStoreByChallengeId,
   getFeatureFlag,
   getLogger,
+  logSwallowedIdentityMappingFailure,
   getSessionStoreBySessionId,
   getTenantIdFromContext,
   hashIpAddress,
@@ -40,6 +41,7 @@ import {
   CanonicalRuntimeUserStore,
   type DatabaseAdapter,
   type Env,
+  type Logger,
   type Challenge,
   type FlowAssignmentTargetType,
   type FlowConditionConfig,
@@ -1747,7 +1749,8 @@ async function resolveRuntimeDestinationFieldConsent(
     db,
     adminAdapter,
     tenantId,
-    requestContext
+    requestContext,
+    getLogger(c)
   );
   if (!selector) return null;
   const descriptor = await loadDestinationProfileConsentDescriptor(
@@ -1792,7 +1795,8 @@ async function resolveRuntimeDestinationProfileSelector(
   db: DatabaseAdapter,
   adminDb: DatabaseAdapter,
   tenantId: string,
-  requestContext: FlowRequestContext
+  requestContext: FlowRequestContext,
+  logger?: Logger
 ): Promise<{
   profileId: string;
   fieldPolicies?: DestinationFieldReleasePolicies;
@@ -1854,7 +1858,18 @@ async function resolveRuntimeDestinationProfileSelector(
         partnerEntityId: requestContext.client_id,
         clientId: requestContext.client_id,
       });
-    } catch {
+    } catch (error) {
+      // Left to the release, which answers for it; recorded here so that a mapping which exists
+      // and cannot be read is visible (the user is then asked about other fields than the
+      // release holds the ID token to).
+      logSwallowedIdentityMappingFailure({
+        component: 'LOGIN-RUNTIME-FLOW',
+        tenantId,
+        clientId: requestContext.client_id,
+        adminDatabaseBound: true,
+        error,
+        logger,
+      });
       tenantBinding = null;
     }
     if (

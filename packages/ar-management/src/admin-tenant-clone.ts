@@ -12,6 +12,8 @@ import {
   createAuthContextFromHono,
   createErrorResponse,
   getLogger,
+  isReservedPlatformTenantId,
+  PLATFORM_MAPPING_TENANT_ID,
   requireAdminDatabaseAdapter,
   resolveAuthCorePersistenceAdapterFromEnv,
   seedBuiltinProfileClaimSchemas,
@@ -62,8 +64,19 @@ const CloneSourceSnapshotSchema = z
 
 const TenantCloneRequestSchema = z
   .object({
-    id: z.string().min(1).max(63).regex(TENANT_ID_REGEX),
-    tenant_code: z.string().min(1).max(63).regex(TENANT_ID_REGEX).optional(),
+    id: z
+      .string()
+      .min(1)
+      .max(63)
+      .regex(TENANT_ID_REGEX)
+      .refine((id) => !isReservedPlatformTenantId(id), 'id is reserved'),
+    tenant_code: z
+      .string()
+      .min(1)
+      .max(63)
+      .regex(TENANT_ID_REGEX)
+      .refine((code) => !isReservedPlatformTenantId(code), 'tenant_code is reserved')
+      .optional(),
     name: z.string().min(1).max(200),
     description: z.string().max(500).optional(),
     isolation_policy: z.enum(['shared_pool', 'tenant_exclusive']).default('tenant_exclusive'),
@@ -222,6 +235,17 @@ interface KvRollbackEntry {
 interface SettingsCopyContext {
   targetTenantId: string;
   includeClients: boolean;
+  /**
+   * Who owns a Mapping Set: the tenant ID on its row, or null when there is no such set or it
+   * cannot be looked up. Settings that name a Mapping Set keep the name only when the platform owns
+   * the set (the target tenant has none of the source's).
+   */
+  mappingSetOwner?: (setId: string) => Promise<string | null>;
+  /**
+   * The Mapping Set names a copied identity-mapping document may keep, decided before the (synchronous)
+   * sanitising: those whose owner is the platform. `none` names no set and is always kept.
+   */
+  keptMappingSetIds?: ReadonlySet<string>;
 }
 
 function consumeKvCloneBudget(budget: KvCloneBudget, count = 1): void {
@@ -341,6 +365,20 @@ export function sanitizeCopiedSettingsValue(
       // No longer a setting (the tenant record holds the name): a stale value is dropped.
       'tenant.name',
     ]) {
+      delete record[key];
+    }
+  }
+
+  if (category === 'identity-mapping') {
+    // The target tenant does not have the source's Mapping Sets: a default that names one of them
+    // would point at nothing (or, if the same ID ever appeared there, at another tenant's set).
+    // A set the platform owns is the target's to use as well; `none` names no set.
+    const key = 'identity_mapping.oidc_default_set_id';
+    const setId = record[key];
+    if (
+      setId !== undefined &&
+      !(typeof setId === 'string' && (setId === 'none' || context.keptMappingSetIds?.has(setId)))
+    ) {
       delete record[key];
     }
   }
@@ -753,6 +791,37 @@ export async function cleanupTenantCloneKvArtifacts(env: Env, tenantId: string):
   }
 }
 
+/**
+ * The copy context with the Mapping Set the document names, if the platform owns it. The owner is
+ * read from the Admin database; a set that cannot be found or looked up is not kept.
+ */
+async function withKeptMappingSet(
+  value: string,
+  context: SettingsCopyContext
+): Promise<SettingsCopyContext> {
+  const setId = parseSettingsRecord(value)?.['identity_mapping.oidc_default_set_id'];
+  if (typeof setId !== 'string' || setId === 'none' || !context.mappingSetOwner) return context;
+  let owner: string | null = null;
+  try {
+    owner = await context.mappingSetOwner(setId);
+  } catch {
+    owner = null;
+  }
+  return owner === PLATFORM_MAPPING_TENANT_ID
+    ? { ...context, keptMappingSetIds: new Set([setId]) }
+    : context;
+}
+
+/** Who owns the Mapping Set (see SettingsCopyContext.mappingSetOwner). */
+function mappingSetOwnerLookup(env: Env): (setId: string) => Promise<string | null> {
+  return async (setId) => {
+    const row = await requireAdminDatabaseAdapter(env, 'tenant-clone-mapping-owner').queryOne<{
+      tenant_id: string;
+    }>('SELECT tenant_id FROM field_mapping_sets WHERE id = ?', [setId]);
+    return row?.tenant_id ?? null;
+  };
+}
+
 async function copyKvPrefix(
   kv: KVNamespace | undefined,
   sourcePrefix: string,
@@ -788,7 +857,12 @@ async function copyKvPrefix(
           }
           const value = assertCloneKvValueSize(await kv.get(key.name));
           if (value === null) return;
-          const copiedValue = sanitizeCopiedSettingsValue(category, value, includeSecrets, context);
+          const copiedValue = sanitizeCopiedSettingsValue(
+            category,
+            value,
+            includeSecrets,
+            category === 'identity-mapping' ? await withKeptMappingSet(value, context) : context
+          );
           if (copiedValue === null) {
             skippedUnclassified += 1;
             return;
@@ -1599,6 +1673,7 @@ async function executeTenantCloneHandler(
         {
           targetTenantId,
           includeClients: options.clients,
+          mappingSetOwner: mappingSetOwnerLookup(c.env),
         }
       );
       summary.settings += copied.copied;
@@ -1614,6 +1689,7 @@ async function executeTenantCloneHandler(
         {
           targetTenantId,
           includeClients: options.clients,
+          mappingSetOwner: mappingSetOwnerLookup(c.env),
         },
         new Set(['tenant'])
       );

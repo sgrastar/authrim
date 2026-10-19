@@ -1,6 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Context } from 'hono';
-import type { DatabaseAdapter, Env, FlowRuntimeContract } from '@authrim/ar-lib-core';
+import {
+  resetSwallowedIdentityMappingFailureThrottle,
+  type DatabaseAdapter,
+  type Env,
+  type FlowRuntimeContract,
+} from '@authrim/ar-lib-core';
 import {
   cleanupExpiredFlowInteractions,
   clearLoginRuntimeFlowVersionCacheForTests,
@@ -2264,6 +2269,44 @@ describe('LoginUI runtime Flow handlers', () => {
         expect.objectContaining({ key: 'sub', required: true }),
         expect.objectContaining({ key: 'email', required: false }),
       ],
+    });
+  });
+
+  it('records, as an error, a tenant mapping it cannot read, and goes on with no fields to ask about', async () => {
+    resetSwallowedIdentityMappingFailureThrottle();
+    mockStartQueries(consentRuntime);
+    mocks.coreAdapter.queryOne
+      .mockResolvedValueOnce({ identity_mapping: null })
+      .mockResolvedValueOnce({
+        id: 'policy_registration',
+        display_name: 'Authorization consent',
+        description: null,
+        is_active: 1,
+      });
+    mocks.coreAdapter.query.mockResolvedValueOnce([]);
+    mocks.resolveRuntimeIdentityMappingBinding.mockRejectedValueOnce(
+      new Error('no such table: field_mapping_activations')
+    );
+
+    const response = await loginRuntimeInteractionStartHandler(
+      createContext({
+        env: { DB_ADMIN: mocks.adminAdapter as never },
+        body: { flow_kind: 'login', client_id: 'client_1', requested_scope: ['openid', 'email'] },
+      })
+    );
+    const data = await readJson(response);
+    const contract = data.contract as FlowRuntimeContract;
+
+    // The behavior is unchanged: the request goes on, with no fields to ask the user about.
+    expect(response.status).toBe(200);
+    expect(contract.ui.steps[0]?.content?.destination_field_consent).toBeUndefined();
+    // What is new: the failure is visible, with no message and nothing of the user.
+    expect(mocks.error).toHaveBeenCalledWith(expect.stringContaining('could not be resolved'), {
+      action: 'identity_mapping_resolution_swallowed',
+      clientId: 'client_1',
+      failure_kind: 'query_failed',
+      reason_code: 'no_such_table',
+      suppressed_since_last_log: 0,
     });
   });
 

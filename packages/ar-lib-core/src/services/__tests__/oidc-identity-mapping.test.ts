@@ -1,5 +1,7 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DatabaseAdapter } from '../../db/adapter';
+import { RuntimeIdentityMappingOwnerError } from '../identity-mapping-owner';
+import { resetSwallowedIdentityMappingFailureThrottle } from '../identity-mapping-swallowed-failure';
 
 const {
   resolveBinding,
@@ -130,6 +132,48 @@ describe('applyOIDCIdentityMapping fail-closed behavior', () => {
       })
     );
     expect(resolveBinding).not.toHaveBeenCalledWith(adapter, expect.anything());
+  });
+
+  it('hands the owner to the resolver only when the caller gives one', async () => {
+    const claims = { sub: 'user-1' };
+    const selector = { fieldMappingSetId: 'set-1' };
+
+    await applyOIDCIdentityMapping({
+      adapter,
+      tenantId: 'tenant-a',
+      clientId: 'client-a',
+      selector,
+      claims,
+    });
+    await applyOIDCIdentityMapping({
+      adapter,
+      tenantId: 'tenant-a',
+      ownerTenantId: 'platform',
+      clientId: 'client-a',
+      selector,
+      claims,
+    });
+
+    expect(resolveBinding.mock.calls[0][1].ownerTenantId).toBeUndefined();
+    expect(resolveBinding.mock.calls[1][1]).toMatchObject({
+      tenantId: 'tenant-a',
+      ownerTenantId: 'platform',
+      fieldMappingSetId: 'set-1',
+    });
+  });
+
+  it('does not let a wrong owner turn into a request that goes on without the mapping', async () => {
+    resolveBinding.mockRejectedValue(new RuntimeIdentityMappingOwnerError('owner not allowed'));
+
+    await expect(
+      applyOIDCIdentityMapping({
+        adapter,
+        tenantId: 'tenant-a',
+        ownerTenantId: 'platform',
+        clientId: 'client-a',
+        claims: { sub: 'user-1' },
+      })
+    ).rejects.toBeInstanceOf(RuntimeIdentityMappingOwnerError);
   });
 
   it('exposes neutral display and picture aliases only to the mapping runtime', async () => {
@@ -740,5 +784,117 @@ describe('deriveOIDCSubject', () => {
       })
     ).resolves.toBe('user-1');
     expect(filterBaselineClaims).not.toHaveBeenCalled();
+  });
+});
+
+describe('when the identity mapping cannot be resolved and the app names no Mapping Set', () => {
+  let errorSpy: ReturnType<typeof vi.spyOn>;
+  const recorded = () =>
+    errorSpy.mock.calls
+      .map(([line]) => JSON.parse(String(line)) as Record<string, unknown>)
+      .filter((entry) => entry.action === 'identity_mapping_resolution_swallowed');
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    resetSwallowedIdentityMappingFailureThrottle();
+    errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    resolveBinding.mockRejectedValue(new Error('no such table: field_mapping_activations'));
+  });
+  afterEach(() => errorSpy.mockRestore());
+
+  it('goes on without the mapping, as before, and records the failure as an error', async () => {
+    await expect(
+      applyOIDCIdentityMapping({
+        adapter,
+        env: { DB_ADMIN: adminAdapter as never },
+        tenantId: 'tenant-a',
+        clientId: 'client-a',
+        claims: { sub: 'user-1', email: 'user@example.com' },
+      })
+    ).resolves.toEqual({
+      claims: { sub: 'user-1', email: 'user@example.com' },
+      binding: null,
+    });
+
+    expect(recorded()).toEqual([
+      expect.objectContaining({
+        level: 'error',
+        module: 'OIDC-IDENTITY-MAPPING',
+        tenantId: 'tenant-a',
+        clientId: 'client-a',
+        failure_kind: 'query_failed',
+        reason_code: 'no_such_table',
+      }),
+    ]);
+  });
+
+  it('names the unbound Admin database when the lookup fell back to the tenant database', async () => {
+    await applyOIDCIdentityMapping({
+      adapter,
+      tenantId: 'tenant-a',
+      clientId: 'client-a',
+      claims: { sub: 'user-1' },
+    });
+
+    expect(recorded()).toEqual([
+      expect.objectContaining({ failure_kind: 'admin_database_unbound' }),
+    ]);
+  });
+
+  it('records the failure for the subject-only derivation too, and still answers the given sub', async () => {
+    await expect(
+      deriveOIDCSubject({
+        adapter,
+        env: { DB_ADMIN: adminAdapter as never },
+        tenantId: 'tenant-a',
+        clientId: 'client-a',
+        claims: { sub: 'user-1' },
+      })
+    ).resolves.toBe('user-1');
+
+    expect(recorded()).toHaveLength(1);
+  });
+
+  it('records one error for a run of failures, not one per request', async () => {
+    for (let request = 0; request < 50; request += 1) {
+      await applyOIDCIdentityMapping({
+        adapter,
+        env: { DB_ADMIN: adminAdapter as never },
+        tenantId: 'tenant-a',
+        clientId: `client-${request}`,
+        claims: { sub: 'user-1' },
+      });
+    }
+
+    expect(recorded()).toHaveLength(1);
+  });
+
+  it('records nothing when the app names a Mapping Set: that failure is thrown, not swallowed', async () => {
+    await expect(
+      applyOIDCIdentityMapping({
+        adapter,
+        env: { DB_ADMIN: adminAdapter as never },
+        tenantId: 'tenant-a',
+        clientId: 'client-a',
+        selector: { fieldMappingSetId: 'required-set' },
+        claims: { sub: 'user-1' },
+      })
+    ).rejects.toThrow('no such table');
+
+    expect(recorded()).toEqual([]);
+  });
+
+  it('records nothing when the lookup works and finds no mapping', async () => {
+    resolveBinding.mockResolvedValue(null);
+
+    await applyOIDCIdentityMapping({
+      adapter,
+      env: { DB_ADMIN: adminAdapter as never },
+      tenantId: 'tenant-a',
+      clientId: 'client-a',
+      claims: { sub: 'user-1' },
+    });
+
+    expect(recorded()).toEqual([]);
   });
 });

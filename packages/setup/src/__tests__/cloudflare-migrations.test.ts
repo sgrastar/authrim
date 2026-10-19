@@ -236,18 +236,28 @@ describe('buildDefaultCanonicalCatalogSeedSql', () => {
         buildDefaultCanonicalCatalogSeedSql(createDefaultConfig('dev'))
       );
 
-      expect(readSqlite(sqlite3Path, dbPath, 'SELECT COUNT(*) FROM field_catalogs;')).toBe('1');
-      expect(readSqlite(sqlite3Path, dbPath, 'SELECT COUNT(*) FROM field_catalog_versions;')).toBe(
-        '1'
-      );
-      expect(readSqlite(sqlite3Path, dbPath, 'SELECT COUNT(*) FROM field_catalog_entries;')).toBe(
-        '27'
-      );
+      // The tenant's catalog, and the platform's that migration 041 made (see
+      // platform-canonical-catalog-migration.test.ts).
+      const tenantOnly = "WHERE tenant_id <> 'platform'";
+      expect(
+        readSqlite(sqlite3Path, dbPath, `SELECT COUNT(*) FROM field_catalogs ${tenantOnly};`)
+      ).toBe('1');
       expect(
         readSqlite(
           sqlite3Path,
           dbPath,
-          "SELECT ui_group_label FROM field_catalog_entries WHERE stable_field_id = 'field.canonical.given_name';"
+          `SELECT COUNT(*) FROM field_catalog_versions ${tenantOnly};`
+        )
+      ).toBe('1');
+      expect(
+        readSqlite(sqlite3Path, dbPath, `SELECT COUNT(*) FROM field_catalog_entries ${tenantOnly};`)
+      ).toBe('27');
+      expect(readSqlite(sqlite3Path, dbPath, 'SELECT COUNT(*) FROM field_catalogs;')).toBe('2');
+      expect(
+        readSqlite(
+          sqlite3Path,
+          dbPath,
+          "SELECT ui_group_label FROM field_catalog_entries WHERE stable_field_id = 'field.canonical.given_name' AND tenant_id <> 'platform';"
         )
       ).toBe('Name');
     } finally {
