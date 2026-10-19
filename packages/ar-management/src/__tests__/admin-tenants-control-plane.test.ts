@@ -52,10 +52,29 @@ const seedBuiltinProfileClaimSchemas = vi.hoisted(() => vi.fn(async () => 8));
 
 vi.mock('@authrim/ar-lib-core', () => ({
   ADMIN_PERMISSIONS: {
+    SETTINGS_READ: 'admin:settings:read',
     TENANT_LIFECYCLE_BREAK_GLASS: 'admin:tenants:lifecycle:break_glass',
   },
   hasAdminPermission: vi.fn((permissions: string[], required: string) =>
     permissions.includes(required)
+  ),
+  hasGlobalAdminPermission: vi.fn(
+    (
+      auth: { tenantScope?: string[]; globalPermissions?: string[] } | undefined,
+      required: string
+    ) =>
+      (auth?.tenantScope ?? []).includes('*') &&
+      (auth?.globalPermissions ?? []).some(
+        (permission) => permission === '*' || permission === required
+      )
+  ),
+  hasGlobalAdminRole: vi.fn(
+    (
+      auth: { tenantScope?: string[]; globalRoles?: string[] } | undefined,
+      roles: readonly string[]
+    ) =>
+      (auth?.tenantScope ?? []).includes('*') &&
+      (auth?.globalRoles ?? []).some((role) => roles.includes(role))
   ),
   AR_ERROR_CODES: {
     ADMIN_RESOURCE_NOT_FOUND: 'admin_resource_not_found',
@@ -239,6 +258,9 @@ function createContext(
   adminAuth: Record<string, unknown> = {
     userId: 'platform-admin',
     roles: ['system_admin'],
+    // The role comes from a global assignment.
+    globalRoles: ['system_admin'],
+    tenantScope: ['*'],
     permissions: [],
   }
 ) {

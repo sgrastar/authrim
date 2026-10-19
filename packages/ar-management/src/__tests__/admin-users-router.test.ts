@@ -104,6 +104,9 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
           hierarchyLevel: c.req.header('x-test-hierarchy-level')
             ? Number(c.req.header('x-test-hierarchy-level'))
             : undefined,
+          globalHierarchyLevel: c.req.header('x-test-global-hierarchy-level')
+            ? Number(c.req.header('x-test-global-hierarchy-level'))
+            : undefined,
         });
         c.set('tenantId', c.req.header('x-test-tenant-id') ?? 'tenant_123');
         await next();
@@ -883,6 +886,8 @@ describe('adminUsersRouter', () => {
           'x-test-permissions': '*',
           'x-test-global-permissions': '*',
           'x-test-tenant-scope': '*',
+          'x-test-hierarchy-level': '150',
+          'x-test-global-hierarchy-level': '150',
         },
         body: JSON.stringify({ role_id: 'role_system', scope_type: 'global' }),
       },
@@ -923,6 +928,7 @@ describe('adminUsersRouter', () => {
         headers: {
           'Content-Type': 'application/json',
           'x-test-permissions': ADMIN_PERMISSIONS.ADMIN_ROLES_WRITE,
+          'x-test-hierarchy-level': '10',
         },
         body: JSON.stringify(body),
       },

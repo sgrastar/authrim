@@ -46,6 +46,33 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
       getCredentialTenantScopes = mocks.getCredentialTenantScopes;
       getPrincipalPermissions = mocks.getPrincipalPermissions;
       getCredentialPermissions = mocks.getCredentialPermissions;
+      // The snapshot read, composed from the per-table mocks this file sets up.
+      async loadMachineGrantSnapshot(principalId: string, credentialId: string) {
+        const [
+          principal,
+          credential,
+          principalTenantScopes,
+          credentialTenantScopes,
+          principalPermissions,
+          credentialPermissions,
+        ] = await Promise.all([
+          mocks.findPrincipalById(principalId),
+          mocks.findCredentialById(credentialId),
+          mocks.getPrincipalTenantScopes(principalId),
+          mocks.getCredentialTenantScopes(credentialId),
+          mocks.getPrincipalPermissions(principalId),
+          mocks.getCredentialPermissions(credentialId),
+        ]);
+        if (!principal || !credential || credential.principalId !== principal.id) return null;
+        return {
+          principal,
+          credential,
+          principalTenantScopes,
+          credentialTenantScopes,
+          principalPermissions,
+          credentialPermissions,
+        };
+      }
     },
   };
 });

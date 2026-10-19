@@ -171,11 +171,55 @@ describe('RBAC middleware security decisions', () => {
     ).toBe(403);
     expect(
       (
-        await app(requireSystemAdmin(), auth({ roles: ['system_admin'] })).instance.request(
-          '/protected'
-        )
+        await app(
+          requireSystemAdmin(),
+          auth({ roles: ['system_admin'], globalRoles: ['system_admin'], tenantScope: ['*'] })
+        ).instance.request('/protected')
       ).status
     ).toBe(200);
+  });
+
+  it('requireSystemAdmin takes the role from a global assignment, not one held for a tenant', async () => {
+    for (const roles of [
+      // The role is in the sum of the assignments, but only a viewer is global.
+      { roles: ['viewer', 'system_admin'], globalRoles: ['viewer'], tenantScope: ['*'] },
+      { roles: ['super_admin'], globalRoles: [], tenantScope: ['tenant-a'] },
+      // A global role without the global scope that goes with it.
+      { roles: ['system_admin'], globalRoles: ['system_admin'], tenantScope: ['tenant-a'] },
+    ]) {
+      expect(
+        (await app(requireSystemAdmin(), auth(roles)).instance.request('/protected')).status
+      ).toBe(403);
+    }
+    expect(
+      (
+        await app(
+          requireSystemAdmin(),
+          auth({ roles: ['super_admin'], globalRoles: ['super_admin'], tenantScope: ['*'] })
+        ).instance.request('/protected')
+      ).status
+    ).toBe(200);
+  });
+
+  it('requireSystemAdmin passes a machine token on admin:* only when its scope is global', async () => {
+    const machine = (overrides: Partial<AdminAuthContext>) =>
+      auth({
+        authMethod: 'machine_access_token',
+        permissions: ['admin:*'],
+        tenantScope: ['*'],
+        globalPermissions: ['admin:*'],
+        ...overrides,
+      });
+
+    for (const [context, status] of [
+      [machine({}), 200],
+      [machine({ tenantScope: ['tenant-a'], globalPermissions: [] }), 403],
+      [machine({ globalPermissions: [] }), 403],
+    ] as const) {
+      expect((await app(requireSystemAdmin(), context).instance.request('/protected')).status).toBe(
+        status
+      );
+    }
   });
 
   it.each([

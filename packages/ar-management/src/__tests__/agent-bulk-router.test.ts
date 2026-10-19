@@ -68,6 +68,33 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
       getCredentialTenantScopes = mocks.getCredentialTenantScopes;
       getPrincipalPermissions = mocks.getPrincipalPermissions;
       getCredentialPermissions = mocks.getCredentialPermissions;
+      // The snapshot read, composed from the per-table mocks this file sets up.
+      async loadMachineGrantSnapshot(principalId: string, credentialId: string) {
+        const [
+          principal,
+          credential,
+          principalTenantScopes,
+          credentialTenantScopes,
+          principalPermissions,
+          credentialPermissions,
+        ] = await Promise.all([
+          mocks.findPrincipalById(principalId),
+          mocks.findCredentialById(credentialId),
+          mocks.getPrincipalTenantScopes(principalId),
+          mocks.getCredentialTenantScopes(credentialId),
+          mocks.getPrincipalPermissions(principalId),
+          mocks.getCredentialPermissions(credentialId),
+        ]);
+        if (!principal || !credential || credential.principalId !== principal.id) return null;
+        return {
+          principal,
+          credential,
+          principalTenantScopes,
+          credentialTenantScopes,
+          principalPermissions,
+          credentialPermissions,
+        };
+      }
     },
   };
 });
@@ -124,6 +151,8 @@ describe('Agent Bulk Plan management routes', () => {
         ADMIN_PERMISSIONS.CLIENTS_WRITE,
       ],
     };
+    // The scope is global through a global assignment, which gives these permissions.
+    mocks.auth = { ...mocks.auth, globalPermissions: mocks.auth.permissions };
     mocks.query.mockResolvedValue([
       { id: 'tenant-1', lifecycle_state: 'active' },
       { id: 'tenant-2', lifecycle_state: 'active' },
@@ -233,6 +262,54 @@ describe('Agent Bulk Plan management routes', () => {
     expect(mocks.adminQuery).not.toHaveBeenCalled();
   });
 
+  const createRequest = () =>
+    app().request(
+      '/api/admin/agent-bulk-plans',
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          grant_id: 'grant-1',
+          machine_credential_id: 'credential-1',
+          definition,
+        }),
+      },
+      env
+    );
+
+  it('needs the tool permissions from a global assignment for tenants other than its own', async () => {
+    // The clients permission is held for the control tenant only; the global assignment brings
+    // the Bulk permissions and nothing for the clients.
+    mocks.auth = {
+      ...mocks.auth,
+      globalPermissions: [
+        ADMIN_PERMISSIONS.BULK_PLANS_READ,
+        ADMIN_PERMISSIONS.BULK_PLANS_CREATE,
+        ADMIN_PERMISSIONS.BULK_PLANS_APPLY,
+      ],
+    };
+
+    const response = await createRequest();
+
+    expect(response.status).toBe(403);
+    await expect(response.json()).resolves.toMatchObject({
+      error: 'AGENT_BULK_PLAN_BASE_PERMISSION_REQUIRED',
+    });
+    expect(mocks.create).not.toHaveBeenCalled();
+  });
+
+  it('is created only by the Admin the grant delegates for', async () => {
+    mocks.auth = { ...mocks.auth, userId: 'admin-other' };
+
+    const response = await createRequest();
+
+    expect(response.status).toBe(403);
+    await expect(response.json()).resolves.toMatchObject({
+      error: 'AGENT_BULK_PLAN_GRANT_INVALID',
+    });
+    expect(mocks.create).not.toHaveBeenCalled();
+  });
+
   it('rejects a broad rollout override and a non-platform session', async () => {
     const broad = await app().request(
       '/api/admin/agent-bulk-plans',
@@ -297,6 +374,29 @@ describe('Agent Bulk Plan management routes', () => {
 
   it('rechecks the immutable target snapshot against current tenant scope', async () => {
     mocks.auth = { ...mocks.auth, tenantScope: ['tenant-1'] };
+    mocks.get.mockResolvedValue({
+      id: 'abp-1',
+      version: 1,
+      definitionDigest: 'digest-1',
+      targetTenantIds: ['tenant-1', 'tenant-2'],
+      targetSnapshotDigest: 'targets-1',
+      canaryDigest: 'canary-1',
+    });
+    const response = await app().request(
+      '/api/admin/agent-bulk-plans/abp-1/1/start',
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ plan_digest: 'digest-1' }),
+      },
+      env
+    );
+    expect(response.status).toBe(403);
+    expect(mocks.startApproved).not.toHaveBeenCalled();
+  });
+
+  it('does not take a global scope as reach over other tenants when the permission is held for one only', async () => {
+    mocks.auth = { ...mocks.auth, tenantScope: ['*'], globalPermissions: [] };
     mocks.get.mockResolvedValue({
       id: 'abp-1',
       version: 1,

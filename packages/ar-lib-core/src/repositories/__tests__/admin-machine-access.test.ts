@@ -113,11 +113,12 @@ describe('AdminMachineAccessRepository', () => {
       userAgent: 'authrim-setup/1.0',
     });
 
-    expect(execute).toHaveBeenCalledWith(expect.stringContaining('last_used_at'), [
+    // `updated_at` is the revision authorization decisions are checked against; using the key does
+    // not move it.
+    expect(execute).toHaveBeenCalledWith(expect.not.stringContaining('updated_at'), [
       expect.any(Number),
       '203.0.113.10',
       'authrim-setup/1.0',
-      expect.any(Number),
       'amk_setup_1',
     ]);
   });
