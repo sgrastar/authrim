@@ -3,12 +3,16 @@ import type { Env, DatabaseAdapter, PreparedStatement } from '@authrim/ar-lib-co
 import {
   createAuthContextFromHono,
   findConflictingSourceIds,
+  findPlatformMappingCompileViolation,
+  findPlatformMappingVersionViolation,
   getTenantIdFromContext,
   isOutputGraphTarget,
   mappingReferencePath,
   mappingReferenceProfileId,
+  normalizePlatformActivationScope,
   OIDC_STANDARD_CLAIM_SCOPE,
   PLATFORM_MAPPING_TENANT_ID,
+  platformDestinationProfileRefs,
   EDUPERSON_ASSURANCE_CLAIM,
   requireDedicatedAdminDatabaseAdapter,
   resolveSourceClassification,
@@ -23,12 +27,6 @@ import {
   AUTHORIZATION_SERVER_GRANT_CLAIMS,
   AUTHORIZATION_SERVER_PRINCIPAL_CLAIMS,
 } from '@authrim/ar-lib-core/services/destination-profile-consent';
-import {
-  findPlatformMappingCompileViolation,
-  findPlatformMappingVersionViolation,
-  normalizePlatformActivationScope,
-  platformDestinationProfileRefs,
-} from './identity-mapping-platform-checks';
 import type {
   LifecycleSignalType,
   ProvisioningAssignmentCondition,

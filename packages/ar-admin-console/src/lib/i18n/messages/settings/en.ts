@@ -229,6 +229,10 @@ export const enSettings: Record<keyof typeof jaSettings, string> = {
 	'set.k.session.backchannel_retry_backoff_multiplier':
 		'Factor that lengthens the time between retries',
 
+	'set.k.identity_mapping.oidc_default_set_id': 'Default Mapping Set (OIDC)',
+	'set.k.identity_mapping.oidc_default_set_id.desc':
+		'The ID of the Mapping Set used by apps in this scope that did not choose one of their own. Unset means no default, so no mapping is applied. A tenant can enter none to ignore the platform default as well. Only an active Mapping Set can be named. For now this is saved and checked only; sign-in does not use it yet.',
+
 	'settings.advanced': 'Advanced',
 	'settings.setHere': 'Overridden settings: {n}',
 	'settings.readOnly.title': 'View only',
