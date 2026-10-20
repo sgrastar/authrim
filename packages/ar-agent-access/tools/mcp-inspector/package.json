@@ -1,8 +1,0 @@
-{
-  "name": "ar-agent-access-mcp-inspector",
-  "private": true,
-  "description": "Pinned MCP Inspector for the manual test:inspector gate. Kept outside the pnpm workspace: Inspector 2.x depends on Vite 8, which would move the workspace's Vite 7 toolchain.",
-  "dependencies": {
-    "@modelcontextprotocol/inspector": "2.11.0"
-  }
-}

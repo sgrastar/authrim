@@ -67,7 +67,6 @@
     "lint": "echo 'ar-agent-access: dependency boundaries enforced by tests'",
     "test": "pnpm exec vitest run",
     "test:mcp-conformance": "node scripts/run-mcp-conformance-gate.mjs",
-    "test:inspector": "node scripts/run-inspector-gate.mjs",
     "clean": "rm -rf dist"
   },
   "dependencies": {
