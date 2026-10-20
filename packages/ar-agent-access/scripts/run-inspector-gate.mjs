@@ -1,18 +1,18 @@
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
+// The Inspector runs from its own npx install, not the workspace: 2.x brings Vite 8, React 19
+// and its web UI, which would move the workspace's Vite 7 toolchain (vitest, SvelteKit) to 8.
+const INSPECTOR = '@modelcontextprotocol/inspector@2.11.0';
 const packageRoot = fileURLToPath(new URL('..', import.meta.url));
-const workspaceRoot = fileURLToPath(new URL('../../..', import.meta.url));
-const inspectorBuild = `${workspaceRoot}/node_modules/@modelcontextprotocol/inspector-cli/build`;
-const inspectorCli = `${inspectorBuild}/index.js`;
 const fixture = `${packageRoot}/scripts/inspector-server.ts`;
 
 function inspect(args) {
   const output = execFileSync(
-    process.execPath,
-    [inspectorCli, process.execPath, '--import', 'tsx', fixture, ...args],
+    'npx',
+    ['--yes', INSPECTOR, '--cli', process.execPath, '--import', 'tsx', fixture, ...args],
     {
-      cwd: inspectorBuild,
+      cwd: packageRoot,
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe'],
     }
