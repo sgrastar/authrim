@@ -334,8 +334,12 @@
             {
               "path": "043_tenant_ordered_tenant_indexes.sql",
               "checksum": "a6b03e139fcbb98bbe7ea5ddc285cad4c8e9c2531462a3a6db81c8927dbfcdeb"
+            },
+            {
+              "path": "044_tenant_backup_export_dataset_progress.sql",
+              "checksum": "3ee194c64a5937eeba9e74dfd718db9f423d4ae9751627e1c6a915df948eb517"
             }
-            ]
+          ]
         },
         {
           "id": "control-d1",
@@ -871,8 +875,12 @@
         {
           "path": "043_tenant_ordered_tenant_indexes.sql",
           "checksum": "a6b03e139fcbb98bbe7ea5ddc285cad4c8e9c2531462a3a6db81c8927dbfcdeb"
+        },
+        {
+          "path": "044_tenant_backup_export_dataset_progress.sql",
+          "checksum": "3ee194c64a5937eeba9e74dfd718db9f423d4ae9751627e1c6a915df948eb517"
         }
-        ]
+      ]
     },
     {
       "id": "control-d1",

@@ -6,6 +6,8 @@ import { encodeTenantBundle, type TenantBundleDatasetSource } from './bundle-cod
 import type { EncodedTenantBackupContainerV2 } from './backup-container-v2';
 
 const PART_BYTES = 16 * 1024 * 1024;
+/** Largest artifact part any writer stores; readers accept parts up to this size. */
+export const TENANT_BACKUP_ARTIFACT_PART_MAX_BYTES = PART_BYTES;
 const LEGACY_PART_BYTES = 4 * 1024 * 1024;
 type Database = Pick<DatabaseAdapter, 'queryOne' | 'execute'>;
 interface ObjectReceipt {
@@ -24,12 +26,25 @@ const ACTIVE = `EXISTS (SELECT 1 FROM tenant_backup_artifact_attempts a JOIN ten
   ON o.id=a.operation_id AND o.tenant_id=a.tenant_id WHERE a.id=? AND a.tenant_id=? AND a.state='writing'
   AND a.fencing_token=? AND o.fencing_token=a.fencing_token AND o.state='running'
   AND o.lease_owner=? AND o.lease_expires_at>? AND o.updated_at<=?)`;
+/** Like ACTIVE, but also after sealing, for cleanup the export step owes a sealed attempt. */
+const OWNED = ACTIVE.replace("a.state='writing'", "a.state IN ('writing','sealed')");
 function fail(): never {
   throw new Error('backup_artifact_write_failed');
 }
 function hex(value: Uint8Array): string {
   return Array.from(value, (b) => b.toString(16).padStart(2, '0')).join('');
 }
+/** Stats of one finished non-empty dataset in a checkpointed v2 export. */
+export interface TenantBackupExportDatasetStat {
+  ordinal: number;
+  id: string;
+  rows: number;
+  bytes: number;
+  offset: number;
+  /** Dataset SHA-256 sealed by the caller; it is opaque here. */
+  sealedSha256: string;
+}
+const DATASET_STATS_PER_STATEMENT = 50;
 interface Part {
   object_key: string;
   byte_count: number;
@@ -232,6 +247,193 @@ export class TenantBackupArtifactWriter {
       [this.attemptId, this.lease.tenantId, ordinal, sha, ...this.params()]
     );
     if (!receipt) fail();
+  }
+  /**
+   * Byte counts of parts reserved at or after `fromOrdinal`. A slice that failed after writing
+   * parts left these; its retry must cut the same frames, so it reads their lengths back.
+   */
+  async reservedPartSizes(fromOrdinal: number): Promise<Map<number, number>> {
+    if (!Number.isSafeInteger(fromOrdinal) || fromOrdinal < 0) fail();
+    const row = await this.db.queryOne<{ parts: string }>(
+      `SELECT json_group_array(json_array(ordinal,byte_count)) AS parts FROM (
+      SELECT ordinal,byte_count FROM tenant_backup_artifact_parts
+      WHERE attempt_id=? AND tenant_id=? AND ordinal>=? AND ${ACTIVE} ORDER BY ordinal)`,
+      [this.attemptId, this.lease.tenantId, fromOrdinal, ...this.params()]
+    );
+    let values: unknown;
+    try {
+      values = JSON.parse(row?.parts ?? 'null');
+    } catch {
+      fail();
+    }
+    if (!Array.isArray(values)) fail();
+    const sizes = new Map<number, number>();
+    for (const value of values) {
+      if (
+        !Array.isArray(value) ||
+        !Number.isSafeInteger(value[0]) ||
+        !Number.isSafeInteger(value[1]) ||
+        (value[1] as number) < 1
+      )
+        fail();
+      sizes.set(value[0] as number, value[1] as number);
+    }
+    return sizes;
+  }
+  /**
+   * Store the sealed bytes of a reserved frame that a slice could not finish re-cutting within
+   * its budget. Chunks are read back one per query, so each stays far below D1's row limit.
+   */
+  async saveSpill(spillId: string, ordinal: number, chunks: readonly string[]): Promise<void> {
+    if (
+      !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(spillId) ||
+      !Number.isSafeInteger(ordinal) ||
+      ordinal < 0 ||
+      ordinal > 1_000_000 ||
+      !chunks.length ||
+      chunks.length > 63 ||
+      chunks.some((chunk) => typeof chunk !== 'string' || !/^[a-f0-9]{56,1200000}$/.test(chunk))
+    )
+      fail();
+    for (const [index, sealed] of chunks.entries())
+      await this.db.execute(
+        `INSERT INTO tenant_backup_export_spills (attempt_id,spill_id,ordinal,chunk,sealed)
+        SELECT ?,?,?,?,? WHERE ${ACTIVE} ON CONFLICT(attempt_id,spill_id,chunk) DO NOTHING`,
+        [this.attemptId, spillId, ordinal, index, sealed, ...this.params()]
+      );
+    const saved = await this.loadSpill(spillId, ordinal);
+    if (saved.length !== chunks.length || saved.some((value, index) => value !== chunks[index]))
+      fail();
+  }
+  async loadSpill(spillId: string, ordinal: number): Promise<string[]> {
+    const count = await this.db.queryOne<{
+      chunks: number;
+      ordinals: number;
+      ordinal: number;
+      last: number;
+    }>(
+      `SELECT count(*) AS chunks,count(DISTINCT ordinal) AS ordinals,max(ordinal) AS ordinal,
+      max(chunk) AS last FROM tenant_backup_export_spills
+      WHERE attempt_id=? AND spill_id=? AND ${ACTIVE}`,
+      [this.attemptId, spillId, ...this.params()]
+    );
+    if (
+      !count ||
+      !count.chunks ||
+      count.ordinals !== 1 ||
+      count.ordinal !== ordinal ||
+      count.last !== count.chunks - 1
+    )
+      fail();
+    const chunks: string[] = [];
+    for (let index = 0; index < count.chunks; index++) {
+      const row = await this.db.queryOne<{ sealed: string }>(
+        `SELECT sealed FROM tenant_backup_export_spills
+        WHERE attempt_id=? AND spill_id=? AND chunk=? AND ${ACTIVE}`,
+        [this.attemptId, spillId, index, ...this.params()]
+      );
+      if (!row || typeof row.sealed !== 'string') fail();
+      chunks.push(row.sealed);
+    }
+    return chunks;
+  }
+  /**
+   * Delete every spill except the one the saved checkpoint names (`keep`). Call it only with the
+   * durable cursor's spill: one written by a slice whose checkpoint was never saved, or one a saved
+   * checkpoint has since moved past, is never read again.
+   */
+  async collectSpills(keep: string | null): Promise<void> {
+    if (keep !== null && !/^[a-f0-9-]{36}$/.test(keep)) fail();
+    await this.db.execute(
+      `DELETE FROM tenant_backup_export_spills WHERE attempt_id=? AND (? IS NULL OR spill_id<>?)
+      AND ${OWNED}`,
+      [this.attemptId, keep, keep, ...this.params()]
+    );
+  }
+  /** Retries must repeat identical values; a different value for a saved dataset fails. */
+  async saveDatasetStats(stats: readonly TenantBackupExportDatasetStat[]): Promise<void> {
+    for (const stat of stats)
+      if (
+        !Number.isSafeInteger(stat.ordinal) ||
+        stat.ordinal < 0 ||
+        stat.ordinal > 65535 ||
+        typeof stat.id !== 'string' ||
+        !stat.id ||
+        stat.id.length > 256 ||
+        !Number.isSafeInteger(stat.rows) ||
+        stat.rows < 1 ||
+        !Number.isSafeInteger(stat.bytes) ||
+        stat.bytes < 1 ||
+        !Number.isSafeInteger(stat.offset) ||
+        stat.offset < 0 ||
+        typeof stat.sealedSha256 !== 'string' ||
+        !/^(?:[a-f0-9]{2}){28,256}$/.test(stat.sealedSha256)
+      )
+        fail();
+    for (let start = 0; start < stats.length; start += DATASET_STATS_PER_STATEMENT) {
+      const batch = stats
+        .slice(start, start + DATASET_STATS_PER_STATEMENT)
+        .map((stat) => [
+          stat.ordinal,
+          stat.id,
+          stat.rows,
+          stat.bytes,
+          stat.offset,
+          stat.sealedSha256,
+        ]);
+      await this.db.execute(
+        `INSERT INTO tenant_backup_export_datasets
+        (attempt_id,ordinal,dataset_id,row_count,byte_count,byte_offset,sealed_sha256)
+        SELECT ?,json_extract(j.value,'$[0]'),json_extract(j.value,'$[1]'),json_extract(j.value,'$[2]'),
+        json_extract(j.value,'$[3]'),json_extract(j.value,'$[4]'),json_extract(j.value,'$[5]')
+        FROM json_each(?) j WHERE ${ACTIVE} ON CONFLICT(attempt_id,ordinal) DO NOTHING`,
+        [this.attemptId, JSON.stringify(batch), ...this.params()]
+      );
+    }
+    // A retried slice seals again with a fresh IV, so the sealed digest is not compared here; the
+    // frame receipts already prove the retried bytes, and so the digest, are identical.
+    const saved = new Map((await this.datasetStats()).map((stat) => [stat.ordinal, stat]));
+    for (const stat of stats) {
+      const row = saved.get(stat.ordinal);
+      if (
+        !row ||
+        row.id !== stat.id ||
+        row.rows !== stat.rows ||
+        row.bytes !== stat.bytes ||
+        row.offset !== stat.offset
+      )
+        fail();
+    }
+  }
+  async datasetStats(): Promise<TenantBackupExportDatasetStat[]> {
+    const row = await this.db.queryOne<{ stats: string }>(
+      `SELECT json_group_array(
+      json_array(ordinal,dataset_id,row_count,byte_count,byte_offset,sealed_sha256))
+      AS stats FROM (SELECT * FROM tenant_backup_export_datasets
+      WHERE attempt_id=? AND ${ACTIVE} ORDER BY ordinal)`,
+      [this.attemptId, ...this.params()]
+    );
+    let values: unknown;
+    try {
+      values = JSON.parse(row?.stats ?? 'null');
+    } catch {
+      fail();
+    }
+    if (!Array.isArray(values)) fail();
+    return values.map((value) => {
+      if (!Array.isArray(value) || value.length !== 6) fail();
+      const [ordinal, id, rows, bytes, offset, sealedSha256] = value as unknown[];
+      if (
+        typeof ordinal !== 'number' ||
+        typeof id !== 'string' ||
+        typeof rows !== 'number' ||
+        typeof bytes !== 'number' ||
+        typeof offset !== 'number' ||
+        typeof sealedSha256 !== 'string'
+      )
+        fail();
+      return { ordinal, id, rows, bytes, offset, sealedSha256 };
+    });
   }
   async seal(parts: number, bytes: number): Promise<void> {
     if (

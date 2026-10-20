@@ -2,14 +2,19 @@ import type { DatabaseAdapter } from '../../db/adapter';
 import { TenantBackupOperationStore } from './operation-store';
 import { executeTenantBackupBatch, type TenantBackupOperationHandlers } from './operation-executor';
 
-/** One bounded scheduling tick. The database lease arbitrates overlapping invocations. */
+/**
+ * One bounded scheduling tick. The database lease arbitrates overlapping invocations. All
+ * operations of a tick share one Worker invocation, so `budgetMs` caps the whole tick: once it has
+ * passed, no operation is claimed and no transition starts (the running one finishes).
+ */
 export async function runTenantBackupScheduler(
   database: Pick<DatabaseAdapter, 'query' | 'queryOne' | 'execute'>,
   handlers: TenantBackupOperationHandlers,
   signal: AbortSignal,
   now: () => number = Date.now,
   kinds: readonly ('export' | 'import')[] = ['export', 'import'],
-  maxTransitionsPerOperation = 1
+  maxTransitionsPerOperation = 1,
+  budgetMs?: number
 ): Promise<{ inspected: number; advanced: number; failures: number; failureCodes: string[] }> {
   signal.throwIfAborted();
   const timestamp = now();
@@ -23,6 +28,9 @@ export async function runTenantBackupScheduler(
     maxTransitionsPerOperation > 32
   )
     throw new Error('invalid_backup_scheduler_transition_limit');
+  if (budgetMs !== undefined && (!Number.isSafeInteger(budgetMs) || budgetMs < 1))
+    throw new Error('invalid_backup_scheduler_budget');
+  const deadline = budgetMs === undefined ? undefined : timestamp + budgetMs;
   const kindPredicate =
     kinds.length === 2 ? '' : kinds[0] === 'export' ? "AND kind='export'" : "AND kind='import'";
   // Oldest updated first prevents a repeatedly yielding operation from monopolizing every tick.
@@ -40,6 +48,7 @@ export async function runTenantBackupScheduler(
     failures = 0;
   const failureCodes = new Set<string>();
   for (const item of due) {
+    if (deadline !== undefined && now() >= deadline) break;
     const workerId = crypto.randomUUID();
     signal.throwIfAborted();
     try {
@@ -48,7 +57,8 @@ export async function runTenantBackupScheduler(
         { tenantId: item.tenant_id, operationId: item.id, workerId, signal },
         handlers,
         now,
-        maxTransitionsPerOperation
+        maxTransitionsPerOperation,
+        deadline
       );
       advanced += result.transitions;
     } catch (error) {

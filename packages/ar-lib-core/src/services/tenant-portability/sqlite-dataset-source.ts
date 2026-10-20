@@ -18,6 +18,11 @@ const MAX_SCAN_ROWS = 128 * PAGE_ROWS;
 const FRAGMENT_BYTES = 256 * 1024;
 const READ_BATCH_ROWS = 250;
 const READ_BATCH_BYTES = 1024 * 1024;
+/**
+ * D1 queries one readNext call may start before it returns what it has. Omitted rows (post-T0
+ * inserts, rows a filter drops) produce no bytes, so without this a call could walk a whole table.
+ */
+const READ_QUERY_BUDGET = 24;
 const NATIVE_KEY_TAGS = new Set(['integer', 'text', 'blob']);
 
 /**
@@ -106,7 +111,14 @@ export function sqliteSnapshotReadStatements(
  * A zero-byte item only moves the position past omitted rows.
  */
 export async function* readSqliteSnapshotChunks(
-  input: SourceInput & { cursor?: SqliteSnapshotSourceCursor }
+  input: SourceInput & {
+    cursor?: SqliteSnapshotSourceCursor;
+    /**
+     * Rows the caller stops after. Without a row filter the last page asks for only the rows
+     * still needed, so a caller that drops the iterator does not read rows its next call re-pages.
+     */
+    rowLimit?: number;
+  }
 ): AsyncGenerator<{ bytes: Uint8Array; nextCursor: SqliteSnapshotSourceCursor }> {
   const { database, snapshotId, tenantId, signal } = input;
   const { sql, fastSql, fragmentSql } = sqliteSnapshotReadStatements(
@@ -199,22 +211,28 @@ export async function* readSqliteSnapshotChunks(
     throw new Error('backup_snapshot_invalid_cursor');
   if (after !== '') assertNativeRecordKey(after);
   let scanRows = PAGE_ROWS;
+  let completedRows = 0;
+  const rowLimit = input.filterRow ? undefined : input.rowLimit;
   while (true) {
     await active();
+    const remaining = rowLimit === undefined ? PAGE_ROWS : rowLimit - completedRows;
+    const pageLimit = remaining > 0 && remaining < PAGE_ROWS ? remaining : PAGE_ROWS;
+    // A normal page scans as many keys as it returns; only pages after short ones scan wider.
+    const pageScanRows = scanRows === PAGE_ROWS ? pageLimit : scanRows;
     let rows =
       skip === 0
         ? await database.query<Row>(fastSql, [
             snapshotId,
             tenantId,
             after,
-            PAGE_ROWS,
-            scanRows,
+            pageLimit,
+            pageScanRows,
             READ_BATCH_BYTES,
             FRAGMENT_BYTES,
           ])
         : [];
     if (!rows.length)
-      rows = await database.query<Row>(sql, [snapshotId, tenantId, after, PAGE_ROWS, scanRows]);
+      rows = await database.query<Row>(sql, [snapshotId, tenantId, after, pageLimit, pageScanRows]);
     await active();
     if (!rows.length) {
       if (skip) throw new Error('backup_snapshot_invalid_cursor');
@@ -246,7 +264,8 @@ export async function* readSqliteSnapshotChunks(
     const pageRows = rows[0].page_rows;
     if (!Number.isSafeInteger(pageRows) || (pageRows ?? 0) < rows.length)
       throw new Error('backup_snapshot_invalid_row');
-    scanRows = (pageRows ?? 0) < PAGE_ROWS ? Math.min(scanRows * 2, MAX_SCAN_ROWS) : PAGE_ROWS;
+    // A page trimmed to the rows this call still needs is short by request, not by omissions.
+    scanRows = (pageRows ?? 0) < pageLimit ? Math.min(scanRows * 2, MAX_SCAN_ROWS) : PAGE_ROWS;
     for (const row of rows) {
       signal.throwIfAborted();
       if (
@@ -318,8 +337,15 @@ export async function* readSqliteSnapshotChunks(
       } finally {
         await iterator.return?.(undefined);
       }
+      // A filtered row emits nothing; its position still moves the cursor.
+      if (ordinal === 0)
+        yield {
+          bytes: new Uint8Array(0),
+          nextCursor: { after: row.record_key, chunk: 0, order: 'native' },
+        };
       skip = 0;
       after = row.record_key;
+      completedRows++;
     }
   }
 }
@@ -330,7 +356,11 @@ export async function* readSqliteSnapshotDataset(input: SourceInput): AsyncGener
     if (chunk.bytes.length) yield chunk.bytes;
 }
 
-/** Read one resumable chunk and release the iterator before returning to the durable executor. */
+/**
+ * Read one resumable chunk and release the iterator before returning to the durable executor.
+ * A call that spends its query budget on omitted rows returns zero bytes with the new position;
+ * null means the dataset has no more rows.
+ */
 export async function readNextSqliteSnapshotChunk(
   input: SourceInput,
   cursorJson: string | null
@@ -351,18 +381,38 @@ export async function readNextSqliteSnapshotChunk(
       throw new Error('backup_snapshot_invalid_cursor');
     }
   }
-  const iterator = readSqliteSnapshotChunks({ ...input, cursor });
+  let queries = 0;
+  const database: SourceInput['database'] = {
+    query<T>(sql: string, params?: unknown[]) {
+      queries++;
+      return input.database.query<T>(sql, params);
+    },
+    queryOne<T>(sql: string, params?: unknown[]) {
+      queries++;
+      return input.database.queryOne<T>(sql, params);
+    },
+  };
+  const iterator = readSqliteSnapshotChunks({
+    ...input,
+    database,
+    cursor,
+    rowLimit: READ_BATCH_ROWS,
+  });
   try {
     const parts: Uint8Array[] = [];
     let totalBytes = 0;
     let completedRows = 0;
     let nextCursor: SqliteSnapshotSourceCursor | null = null;
+    let finished = false;
     for (;;) {
       const next = await iterator.next();
-      if (next.done) break;
+      if (next.done) {
+        finished = true;
+        break;
+      }
       if (!next.value.bytes.length) {
-        // Positions only travel with bytes: callers require every step to return data.
-        if (parts.length) nextCursor = next.value.nextCursor;
+        nextCursor = next.value.nextCursor;
+        if (queries >= READ_QUERY_BUDGET) break;
         continue;
       }
       if (parts.length > 0 && totalBytes + next.value.bytes.length > READ_BATCH_BYTES) break;
@@ -370,9 +420,15 @@ export async function readNextSqliteSnapshotChunk(
       totalBytes += next.value.bytes.length;
       nextCursor = next.value.nextCursor;
       if (nextCursor.chunk === 0) completedRows++;
-      if (completedRows >= READ_BATCH_ROWS || totalBytes >= READ_BATCH_BYTES) break;
+      if (
+        completedRows >= READ_BATCH_ROWS ||
+        totalBytes >= READ_BATCH_BYTES ||
+        queries >= READ_QUERY_BUDGET
+      )
+        break;
     }
-    if (!nextCursor) return null;
+    // Positions past omitted rows matter only while rows may follow them.
+    if (!nextCursor || (finished && !totalBytes)) return null;
     const bytes = new Uint8Array(totalBytes);
     let offset = 0;
     for (const part of parts) {

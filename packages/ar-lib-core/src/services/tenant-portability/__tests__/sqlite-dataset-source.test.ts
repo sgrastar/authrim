@@ -400,10 +400,56 @@ it('crosses a long run of rows written after T0 in few queries and does not walk
     cursor = next.nextCursor;
   }
   expect(values).toEqual(Array.from({ length: 300 }, () => 't0'));
-  // The run of 20,000 omitted keys is crossed once, in scans that double up to 12,800 keys.
-  expect(perCall).toHaveLength(3);
-  expect(Math.max(...perCall)).toBeLessThan(40);
-  expect(perCall[2]).toBeLessThanOrEqual(4);
+  // The run of 20,000 omitted keys is crossed once, in scans that double up to 12,800 keys. A
+  // call stops near its query budget and hands the position to the next call.
+  expect(perCall.length).toBeLessThanOrEqual(4);
+  expect(Math.max(...perCall)).toBeLessThanOrEqual(28);
+  expect(perCall.reduce((sum, value) => sum + value, 0)).toBeLessThan(70);
+});
+
+it('returns positions without bytes while a filter drops every row, within the query budget', async () => {
+  const insert = db.prepare("INSERT INTO accounts VALUES ('a',?,'hidden',0,NULL)");
+  for (let index = 0; index < 3000; index++) insert.run(String(index).padStart(5, '0'));
+  db.exec(
+    "INSERT INTO tenant_backup_snapshots(id,tenant_id,state) VALUES ('snapshot','a','capturing')"
+  );
+  let queries = 0;
+  const counted: Pick<DatabaseAdapter, 'query' | 'queryOne'> = {
+    async query<T>(sql: string, params: unknown[] = []) {
+      queries++;
+      return database.query<T>(sql, params);
+    },
+    async queryOne<T>(sql: string, params: unknown[] = []) {
+      queries++;
+      return database.queryOne<T>(sql, params);
+    },
+  };
+  let cursor: string | null = null;
+  const perCall: number[] = [];
+  for (;;) {
+    queries = 0;
+    const next = await readNextSqliteSnapshotChunk(
+      {
+        database: counted,
+        schema,
+        snapshotId: 'snapshot',
+        tenantId: 'a',
+        signal: new AbortController().signal,
+        filterRow: async () => false,
+      },
+      cursor
+    );
+    perCall.push(queries);
+    if (!next) break;
+    expect(next.bytes).toHaveLength(0);
+    expect(next.nextCursor).not.toBe(cursor);
+    cursor = next.nextCursor;
+  }
+  // 3,000 dropped rows are 30 pages of one page query plus two snapshot checks; no call walks
+  // them all, and walking any page twice would push the total well past 120.
+  expect(perCall.length).toBeGreaterThan(2);
+  expect(Math.max(...perCall)).toBeLessThanOrEqual(28);
+  expect(perCall.reduce((sum, value) => sum + value, 0)).toBeLessThan(120);
 });
 
 it('refuses to resume a position recorded in the legacy record_key text order', async () => {
