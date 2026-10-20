@@ -91,6 +91,14 @@
             {
               "path": "019_oauth_client_minimum_ial.sql",
               "checksum": "c064b78adf6ecf563f244d6b6f579d83cddf10288996bc33c2fad75a5398856b"
+            },
+            {
+              "path": "020_tenant_backup_preimage_native_order.sql",
+              "checksum": "faadc3b940fa6f8d9ae277437a5339a52da8d25498822c4bf2e074b1d2d8d15f"
+            },
+            {
+              "path": "021_tenant_ordered_tenant_indexes.sql",
+              "checksum": "8e8a737b014aedca2c62699ee34fd121fa46cf34ce741f4b494ab791ea6c468e"
             }
           ]
         },
@@ -139,6 +147,14 @@
             {
               "path": "010_tenant_backup_preimage_row_partitions.sql",
               "checksum": "ec32b226b04a17da04ba3ac3427c5726814ec89503110386c25e9a264141506e"
+            },
+            {
+              "path": "011_tenant_backup_preimage_native_order.sql",
+              "checksum": "faadc3b940fa6f8d9ae277437a5339a52da8d25498822c4bf2e074b1d2d8d15f"
+            },
+            {
+              "path": "012_tenant_ordered_tenant_indexes.sql",
+              "checksum": "9ba43004b26152f0a5fa46c32c37d64ee3e82dae87dbcba1c0b94c8773ec21ef"
             }
           ]
         },
@@ -312,6 +328,14 @@
               "checksum": "6c94ef0bccf3b4e85d7ed2fb86f125a1718c17142ec5bec6af6220e26dafb720"
             },
             {
+              "path": "042_tenant_backup_preimage_native_order.sql",
+              "checksum": "faadc3b940fa6f8d9ae277437a5339a52da8d25498822c4bf2e074b1d2d8d15f"
+            },
+            {
+              "path": "043_tenant_ordered_tenant_indexes.sql",
+              "checksum": "a6b03e139fcbb98bbe7ea5ddc285cad4c8e9c2531462a3a6db81c8927dbfcdeb"
+            },
+            {
               "path": "045_tenant_backup_input_frames.sql",
               "checksum": "bede336778f791a467ec2653c1042942778117c28a7e9dfeeac141099f3e0275"
             }
@@ -369,6 +393,10 @@
             {
               "path": "012_release_rollout_expected_targets.sql",
               "checksum": "4d96952be03bd80f2cbc7d3a2fe37f7b418bf4dfee066059f8e28548f2b8f750"
+            },
+            {
+              "path": "013_tenant_backup_preimage_native_order.sql",
+              "checksum": "faadc3b940fa6f8d9ae277437a5339a52da8d25498822c4bf2e074b1d2d8d15f"
             }
           ]
         },
@@ -419,6 +447,10 @@
             {
               "path": "007_tenant_external_plugin_gates.sql",
               "checksum": "0d511650d4d403368027a61eafce65caeda03eb72c3dc9a7abb5f26ba143364c"
+            },
+            {
+              "path": "008_tenant_backup_preimage_native_order.sql",
+              "checksum": "faadc3b940fa6f8d9ae277437a5339a52da8d25498822c4bf2e074b1d2d8d15f"
             }
           ]
         },
@@ -592,6 +624,14 @@
         {
           "path": "019_oauth_client_minimum_ial.sql",
           "checksum": "c064b78adf6ecf563f244d6b6f579d83cddf10288996bc33c2fad75a5398856b"
+        },
+        {
+          "path": "020_tenant_backup_preimage_native_order.sql",
+          "checksum": "faadc3b940fa6f8d9ae277437a5339a52da8d25498822c4bf2e074b1d2d8d15f"
+        },
+        {
+          "path": "021_tenant_ordered_tenant_indexes.sql",
+          "checksum": "8e8a737b014aedca2c62699ee34fd121fa46cf34ce741f4b494ab791ea6c468e"
         }
       ]
     },
@@ -644,6 +684,14 @@
         {
           "path": "010_tenant_backup_preimage_row_partitions.sql",
           "checksum": "ec32b226b04a17da04ba3ac3427c5726814ec89503110386c25e9a264141506e"
+        },
+        {
+          "path": "011_tenant_backup_preimage_native_order.sql",
+          "checksum": "faadc3b940fa6f8d9ae277437a5339a52da8d25498822c4bf2e074b1d2d8d15f"
+        },
+        {
+          "path": "012_tenant_ordered_tenant_indexes.sql",
+          "checksum": "9ba43004b26152f0a5fa46c32c37d64ee3e82dae87dbcba1c0b94c8773ec21ef"
         }
       ]
     },
@@ -821,6 +869,14 @@
           "checksum": "6c94ef0bccf3b4e85d7ed2fb86f125a1718c17142ec5bec6af6220e26dafb720"
         },
         {
+          "path": "042_tenant_backup_preimage_native_order.sql",
+          "checksum": "faadc3b940fa6f8d9ae277437a5339a52da8d25498822c4bf2e074b1d2d8d15f"
+        },
+        {
+          "path": "043_tenant_ordered_tenant_indexes.sql",
+          "checksum": "a6b03e139fcbb98bbe7ea5ddc285cad4c8e9c2531462a3a6db81c8927dbfcdeb"
+        },
+        {
           "path": "045_tenant_backup_input_frames.sql",
           "checksum": "bede336778f791a467ec2653c1042942778117c28a7e9dfeeac141099f3e0275"
         }
@@ -882,6 +938,10 @@
         {
           "path": "012_release_rollout_expected_targets.sql",
           "checksum": "4d96952be03bd80f2cbc7d3a2fe37f7b418bf4dfee066059f8e28548f2b8f750"
+        },
+        {
+          "path": "013_tenant_backup_preimage_native_order.sql",
+          "checksum": "faadc3b940fa6f8d9ae277437a5339a52da8d25498822c4bf2e074b1d2d8d15f"
         }
       ]
     },
@@ -940,6 +1000,10 @@
         {
           "path": "007_tenant_external_plugin_gates.sql",
           "checksum": "0d511650d4d403368027a61eafce65caeda03eb72c3dc9a7abb5f26ba143364c"
+        },
+        {
+          "path": "008_tenant_backup_preimage_native_order.sql",
+          "checksum": "faadc3b940fa6f8d9ae277437a5339a52da8d25498822c4bf2e074b1d2d8d15f"
         }
       ]
     },
