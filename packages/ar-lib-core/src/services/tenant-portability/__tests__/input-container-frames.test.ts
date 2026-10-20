@@ -6,6 +6,7 @@ import {
   decodeTenantBackupContainerV2,
   encodeTenantBackupContainerV2,
   TENANT_BACKUP_CONTAINER_V2_LIMITS,
+  TENANT_BACKUP_CONTAINER_V2_MAX_DATA_FRAMES,
 } from '../backup-container-v2';
 import { tenantBundleCipherParameters } from '../bundle-cipher-parameters';
 import {
@@ -378,10 +379,10 @@ describe('frame-by-frame verification', () => {
       const data = { 'core.a': rows('a', 2) };
       const atCap = await build(
         data,
-        Array.from({ length: 65_535 }, () => 0)
+        Array.from({ length: TENANT_BACKUP_CONTAINER_V2_MAX_DATA_FRAMES - 1 }, () => 0)
       );
       const verified = await verifyAll(atCap, TENANT_BACKUP_VERIFY_ALL);
-      expect(verified.frames).toHaveLength(65_536);
+      expect(verified.frames).toHaveLength(TENANT_BACKUP_CONTAINER_V2_MAX_DATA_FRAMES);
       await expect(
         readTenantBackupContainerV2Manifest({
           object: pinned(atCap),
@@ -393,7 +394,7 @@ describe('frame-by-frame verification', () => {
       ).resolves.toMatchObject({ done: true });
       const overCap = await build(
         data,
-        Array.from({ length: 65_536 }, () => 0)
+        Array.from({ length: TENANT_BACKUP_CONTAINER_V2_MAX_DATA_FRAMES }, () => 0)
       );
       await expect(
         decodeTenantBackupContainerV2({ parts: [overCap], session })

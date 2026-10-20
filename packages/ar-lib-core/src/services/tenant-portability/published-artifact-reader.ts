@@ -1,3 +1,4 @@
+import { TENANT_BACKUP_CONTAINER_V2_MAX_DATA_FRAMES } from './backup-container-v2';
 import type { DatabaseAdapter } from '../../db/adapter';
 import type { readTenantBackupArtifact } from './artifact-reader';
 import { TENANT_BACKUP_ARTIFACT_PART_MAX_BYTES } from './artifact-writer';
@@ -38,7 +39,7 @@ export async function openTenantBackupDownload(input: {
       !row ||
       !Number.isSafeInteger(row.part_count) ||
       row.part_count < 1 ||
-      row.part_count > 1000001 ||
+      row.part_count > TENANT_BACKUP_CONTAINER_V2_MAX_DATA_FRAMES + 1 ||
       !Number.isSafeInteger(row.byte_count) ||
       row.byte_count < 1
     )

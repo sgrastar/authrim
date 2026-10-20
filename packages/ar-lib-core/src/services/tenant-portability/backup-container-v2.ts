@@ -490,6 +490,15 @@ export function tenantBackupContainerRowCountV2(newlines: number, bytes: number,
  */
 export const TENANT_BACKUP_CONTAINER_V2_MAX_OBJECT_BYTES = 16 * 1024 * 1024 * 1024;
 
+/**
+ * Most data frames a container may have, for export, verification, import and download alike.
+ * Every artifact part holds at least one data frame, so a container has at most this many parts
+ * plus one, and the public download (four subrequests per part) stays well inside the 50,000
+ * subrequests ar-management is configured for. 16 GiB of 4 MiB frames needs about 4,100, which
+ * leaves room for the shorter frames sliced exports write where a transition stopped.
+ */
+export const TENANT_BACKUP_CONTAINER_V2_MAX_DATA_FRAMES = 10_000;
+
 export const TENANT_BACKUP_CONTAINER_V2_LIMITS = {
   singleObjectDataBytes: SINGLE_OBJECT_DATA_BYTES,
   capacityPartBytes: CAPACITY_PART_BYTES,

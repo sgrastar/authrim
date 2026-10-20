@@ -17,8 +17,14 @@ import { runTenantBackupArtifactVerificationStep } from '../verify-artifact-step
 import { readTenantBackupArtifact } from '../artifact-reader';
 import { openTenantBackupDownload } from '../published-artifact-reader';
 import {
+  initialTenantBackupContainerVerificationProgress,
+  verifyTenantBackupContainerV2Slice,
+} from '../input-container-verification';
+import type { TenantBackupInputFrame } from '../input-frame-index';
+import {
   decodeTenantBackupContainerV2,
   encodeTenantBackupContainerV2,
+  TENANT_BACKUP_CONTAINER_V2_MAX_DATA_FRAMES,
 } from '../backup-container-v2';
 import type { TenantBundleManifest } from '../bundle-manifest';
 
@@ -213,7 +219,12 @@ function exportStep(
   phase: string,
   cursor: string | null,
   options: {
-    slice?: { frameBytes: number; readCalls: number; maxObjectBytes?: number };
+    slice?: {
+      frameBytes: number;
+      readCalls: number;
+      maxObjectBytes?: number;
+      maxDataFrames?: number;
+    };
     read?: typeof readNext;
   } = {}
 ) {
@@ -688,6 +699,84 @@ it('refuses to export or verify a container larger than import accepts', async (
       }
     )
   ).rejects.toThrow('backup_artifact_too_large');
+});
+
+it('refuses to export or verify more data frames than import accepts', async () => {
+  const { attemptId, expected } = await prepare();
+  await expect(
+    runExport(attemptId, expected, {
+      slice: { frameBytes: 1000, readCalls: 1, maxDataFrames: 5 },
+    })
+  ).rejects.toThrow('backup_export_too_large');
+
+  const second = await prepare();
+  await runExport(second.attemptId, second.expected, {
+    slice: { frameBytes: 1000, readCalls: 1 },
+  });
+  const { parts } = await decodeSaved(second.attemptId);
+  expect(parts.length).toBeGreaterThan(5);
+  await expect(
+    runTenantBackupArtifactVerificationStep(
+      {
+        operation: {
+          ...operation,
+          phase: 'verify_artifact',
+          cursor_json: JSON.stringify({ version: 2, attemptId: second.attemptId }),
+        },
+        lease,
+        signal,
+      },
+      {
+        database: adapter,
+        bucket,
+        attemptId: second.attemptId,
+        key: session,
+        expected: second.expected,
+        now,
+        slice: { stepBytes: 1, maxDataFrames: 5 },
+      }
+    )
+  ).rejects.toThrow('backup_artifact_too_large');
+});
+
+it('imports an export cut into many short frames', async () => {
+  const { attemptId, expected } = await prepare();
+  // One read per transition: every transition stops with a short frame.
+  await runExport(attemptId, expected, { slice: { frameBytes: 1000, readCalls: 1 } });
+  const { parts, decoded } = await decodeSaved(attemptId);
+  expect(decoded.footer.dataFrames).toBeGreaterThan(50);
+  expect(decoded.footer.dataFrames).toBeLessThanOrEqual(TENANT_BACKUP_CONTAINER_V2_MAX_DATA_FRAMES);
+  const object = new Uint8Array(parts.reduce((total, part) => total + part.length, 0));
+  let offset = 0;
+  for (const part of parts) {
+    object.set(part, offset);
+    offset += part.length;
+  }
+  const source = {
+    size: object.length,
+    read: async (from: number, length: number) => object.slice(from, from + length),
+  } as never;
+  const frames: TenantBackupInputFrame[] = [];
+  let progress = initialTenantBackupContainerVerificationProgress();
+  for (;;) {
+    const slice = await verifyTenantBackupContainerV2Slice({
+      object: source,
+      session,
+      progress,
+      loadFrames: async (from, count) => frames.slice(from, from + count),
+      saveFrames: async (saved) => {
+        frames.push(...saved);
+      },
+      acceptManifest: () => {},
+      signal,
+    });
+    if (slice.done) {
+      expect(slice.manifest).toEqual(decoded.manifest);
+      break;
+    }
+    progress = slice.progress;
+  }
+  expect(frames).toHaveLength(decoded.footer.dataFrames);
 });
 
 it('serves parts above 4 MiB through the public download', async () => {

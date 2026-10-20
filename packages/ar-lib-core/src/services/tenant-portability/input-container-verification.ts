@@ -4,6 +4,7 @@ import {
   readTenantBackupFramePrefixV2,
   tenantBackupContainerRowCountV2,
   TENANT_BACKUP_CONTAINER_V2_LIMITS,
+  TENANT_BACKUP_CONTAINER_V2_MAX_DATA_FRAMES,
   type TenantBackupContainerV2Cipher,
   type TenantBackupContainerFooterV2,
   type TenantBackupContainerManifestV2,
@@ -23,11 +24,8 @@ const {
   maxFramePlainBytes: MAX_FRAME_PLAIN_BYTES,
 } = TENANT_BACKUP_CONTAINER_V2_LIMITS;
 
-/**
- * Data frames one input may have. Encoders write ~4 MiB (12 MiB before) frames, so 16 GiB needs
- * ~4,100; the cap keeps a pathological input of tiny frames from producing a huge index.
- */
-export const TENANT_BACKUP_INPUT_MAX_DATA_FRAMES = 65_536;
+/** Data frames one input may have: the cap export, verification and download share. */
+export const TENANT_BACKUP_INPUT_MAX_DATA_FRAMES = TENANT_BACKUP_CONTAINER_V2_MAX_DATA_FRAMES;
 
 /** Work one decode_input transition may do before it checkpoints. */
 export interface TenantBackupContainerVerificationBudget {
@@ -156,7 +154,7 @@ function hashContext(
  *    per-dataset SHA-256 and newline counts. Hash midstates survive checkpoints, sealed.
  *
  * Accepts what `decodeTenantBackupContainerV2` accepts, except frames over 16 MiB of plaintext and
- * more than 65,536 data frames. The caller persists `frames` before it checkpoints `progress`, and
+ * more than `TENANT_BACKUP_CONTAINER_V2_MAX_DATA_FRAMES` data frames. The caller persists `frames` before it checkpoints `progress`, and
  * saves the input receipt only after `done`.
  */
 export async function verifyTenantBackupContainerV2Slice(input: {

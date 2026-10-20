@@ -4,6 +4,7 @@ import type { SqliteDatasetInspectionPolicy } from './sqlite-dataset-inspector';
 import type { TenantBundleManifest } from './bundle-manifest';
 import { DatabaseTenantBundleReferenceIndex } from './validation-index';
 import { inspectSqliteInputRow } from './sqlite-input-inspection';
+import { TENANT_BACKUP_CONTAINER_MAX_ROW_BYTES } from './container-dataset-reader';
 
 function fail(): never {
   throw new Error('backup_sqlite_validation_step_invalid');
@@ -118,11 +119,11 @@ export async function runSqliteInputValidationStep(
     )
       fail();
     const rowBytes = new TextEncoder().encode(row.rowJson).length;
-    if (
-      rowBytes > VALIDATION_BATCH_BYTES ||
-      (count > 0 && bytes + rowBytes > VALIDATION_BATCH_BYTES)
-    )
-      break;
+    // The batch bound limits a slice's total; a single row may exceed it (up to the container's
+    // row limit) and is then validated alone, so every slice makes progress.
+    if (rowBytes > TENANT_BACKUP_CONTAINER_MAX_ROW_BYTES)
+      throw new Error('backup_sqlite_row_too_large');
+    if (count > 0 && bytes + rowBytes > VALIDATION_BATCH_BYTES) break;
     const recordCount = records.length;
     const referenceCount = references.length;
     await inspectSqliteInputRow({

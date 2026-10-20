@@ -177,7 +177,12 @@ async function runVerifyBatch(
         throw new Error('backup_restore_row_transform_failed');
       }
     const rowBytes = new TextEncoder().encode(rowJson).length;
-    if (!rowJson || rowBytes > RESTORE_BATCH_BYTES) invalid();
+    if (!rowJson) invalid();
+    // Like the write path: a row over the batch bound is verified alone on the single-row path.
+    if (rowBytes > RESTORE_BATCH_BYTES) {
+      if (!processedRows) return runSingleStep(context, input, 'verify');
+      break;
+    }
     if (processedRows && bytes + rowBytes > RESTORE_BATCH_BYTES) break;
     if (held) heldRows.push(next.rowJson);
     else rows.push(rowJson);
