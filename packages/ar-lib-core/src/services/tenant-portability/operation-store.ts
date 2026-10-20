@@ -202,7 +202,7 @@ export class TenantBackupOperationStore {
       SET state=CASE WHEN state='cancelling' THEN 'cancelling' WHEN failure_count>=7 THEN 'waiting' ELSE 'queued' END,
       next_attempt_at=?+MIN(60000,1000*(1 << MIN(failure_count,6))),failure_count=failure_count+1,
       last_error_code='backup_operation_slice_failed',
-      failure_reason=CASE WHEN state='cancelling' THEN failure_reason ELSE ? END,
+      failure_reason=CASE WHEN state='cancelling' THEN failure_reason ELSE coalesce(?, failure_reason) END,
       lease_owner=NULL,lease_expires_at=NULL,
       revision=revision+1,fencing_token=fencing_token+1,updated_at=?
       WHERE tenant_id=? AND id=? AND state IN ('running','cancelling') AND lease_owner=?

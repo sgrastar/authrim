@@ -1129,6 +1129,36 @@ it('keeps retrying a permanent import failure after restore writes began and sho
     )
   ).toMatchObject({ state: 'queued', failure_reason: null });
 });
+it('keeps a permanent failure reason when a later retry fails for a transient reason', async () => {
+  await store.create({ ...create, kind: 'import' });
+  let attempts = 0;
+  const handlers: TenantBackupOperationHandlers = {
+    async run(context) {
+      if (context.operation.phase === 'apply_sqlite_dataset') {
+        attempts++;
+        throw new Error(attempts === 1 ? 'backup_sqlite_row_too_large' : 'd1_network_error');
+      }
+      return { phase: 'apply_sqlite_dataset', cursor: null, disposition: 'continue' };
+    },
+    async cleanup() {
+      return { cursor: null, done: true };
+    },
+  };
+  let now = 101;
+  await runTenantBackupScheduler(adapter, handlers, new AbortController().signal, () => now);
+  now = 102;
+  for (let i = 0; i < 3; i++) {
+    await runTenantBackupScheduler(adapter, handlers, new AbortController().signal, () => now);
+    const current = (await store.get(create.tenantId, create.id))!;
+    // Only a checkpoint, a resume or a cancel clears it; a transient failure does not.
+    expect(current).toMatchObject({
+      failure_count: i + 1,
+      failure_reason: 'backup_sqlite_row_too_large',
+    });
+    now = current.next_attempt_at;
+  }
+  expect(attempts).toBe(3);
+});
 it('refuses to fail an import permanently once it is past validation', async () => {
   await store.create({ ...create, kind: 'import' });
   const claimed = (await store.claim(create.tenantId, create.id, 'worker', 101))!;
