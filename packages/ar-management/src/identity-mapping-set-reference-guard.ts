@@ -16,10 +16,12 @@ import {
   findMappingVersionSwapViolation,
   getTenantIdFromContext,
   hasGlobalAdminPermission,
+  normalizeDestinationProfileReference,
   mappingSetReferenceBlock,
   PLATFORM_MAPPING_TENANT_ID,
   requireDedicatedAdminDatabaseAdapter,
   resolveAuthCorePersistenceAdapterFromEnv,
+  runtimeDestinationProfileIds,
   summarizeMappingSetReferences,
   type AdminAuthContext,
   type DatabaseAdapter,
@@ -308,22 +310,29 @@ export async function checkDestinationProfileUnreferenced(
   // The operation answers a profile that is not there.
   if (!profile) return null;
 
-  // The sets whose active version releases into the profile, under either spelling of its ID. A
-  // tenant's profile is only used by that tenant's sets; the platform's by any tenant's.
+  // The sets in use that release into the profile. In use means an active activation with an
+  // active compiled snapshot (the version row's own state can say `published` while its activation
+  // is live). What an activation releases into is what the runtime counts: the profiles its edges
+  // name together with the one its scope names, so that is worked out here as the runtime does,
+  // not matched in SQL. A tenant's profile is only used by that tenant's sets; the platform's by
+  // any tenant's.
   const platformOwned = profile.tenant_id === PLATFORM_MAPPING_TENANT_ID;
-  const spellings = [input.profileId, `destination-profile-${input.profileId}`];
-  const ref = (column: string) =>
-    `CASE WHEN json_valid(e.target_ref_json) THEN json_extract(e.target_ref_json, '${column}') END`;
   const setLimit = 100;
-  // In use means an active activation with an active compiled snapshot: the version row's own
-  // state can say `published` while its activation is live (publishing an active version).
-  const sets = await admin.query<{ set_id: string; owner: string }>(
-    `SELECT DISTINCT s.id AS set_id, s.tenant_id AS owner
+  const rowLimit = 5000;
+  const rows = await admin.query<{
+    tenant_id: string;
+    set_id: string;
+    version_id: string;
+    activation_scope_json: string | null;
+    target_ref_json: string | null;
+  }>(
+    `SELECT a.tenant_id, a.field_mapping_set_id AS set_id, a.field_mapping_version_id AS version_id,
+            a.activation_scope_json, e.target_ref_json
        FROM field_mapping_activations a
        JOIN field_mapping_sets s ON s.tenant_id = a.tenant_id AND s.id = a.field_mapping_set_id
-       JOIN mapping_rules r
+       LEFT JOIN mapping_rules r
          ON r.tenant_id = a.tenant_id AND r.field_mapping_version_id = a.field_mapping_version_id
-       JOIN mapping_rule_edges e ON e.tenant_id = r.tenant_id AND e.rule_id = r.id
+       LEFT JOIN mapping_rule_edges e ON e.tenant_id = r.tenant_id AND e.rule_id = r.id
       WHERE a.lifecycle_state = 'active'
         AND EXISTS (
           SELECT 1 FROM compiled_mapping_snapshots n
@@ -332,15 +341,57 @@ export async function checkDestinationProfileUnreferenced(
              AND n.lifecycle_state = 'active'
         )
         ${platformOwned ? '' : 'AND a.tenant_id = ?'}
-        AND (${ref('$.profileId')} IN (?, ?) OR ${ref('$.profile_id')} IN (?, ?))
-      ORDER BY s.id LIMIT ${setLimit + 1}`,
-    platformOwned ? [...spellings, ...spellings] : [profile.tenant_id, ...spellings, ...spellings]
+      ORDER BY a.tenant_id, a.field_mapping_set_id, a.id LIMIT ${rowLimit + 1}`,
+    platformOwned ? [] : [profile.tenant_id]
   );
+  const wanted = normalizeDestinationProfileReference(input.profileId);
+  const activations = new Map<
+    string,
+    {
+      setId: string;
+      owner: string;
+      scope: Record<string, unknown>;
+      targetRefs: Record<string, unknown>[];
+    }
+  >();
+  for (const row of rows.slice(0, rowLimit)) {
+    const key = JSON.stringify([row.tenant_id, row.set_id, row.version_id]);
+    let entry = activations.get(key);
+    if (!entry) {
+      entry = {
+        setId: row.set_id,
+        owner: row.tenant_id,
+        scope: parseJsonObject(row.activation_scope_json),
+        targetRefs: [],
+      };
+      activations.set(key, entry);
+    }
+    if (row.target_ref_json) entry.targetRefs.push(parseJsonObject(row.target_ref_json));
+  }
+  const sets = [
+    ...new Map(
+      [...activations.values()]
+        .filter((entry) =>
+          runtimeDestinationProfileIds(entry.targetRefs, entry.scope).some(
+            (id) => normalizeDestinationProfileReference(id) === wanted
+          )
+        )
+        .map((entry) => [
+          `${entry.owner}\u0000${entry.setId}`,
+          { set_id: entry.setId, owner: entry.owner },
+        ])
+    ).values(),
+  ];
 
   const references: MappingSetReference[] = [];
   const unscanned: MappingSetReferenceScan['unscanned'] = [];
-  let truncated = sets.length > setLimit;
-  if (truncated) unscanned.push({ area: 'tenant_limit', reason: 'set_limit_exceeded' });
+  // More activations than are read in full, or more sets than are searched, could hide one that
+  // uses the profile: refused as incomplete.
+  let truncated = rows.length > rowLimit;
+  if (truncated || sets.length > setLimit) {
+    truncated = true;
+    unscanned.push({ area: 'tenant_limit', reason: 'set_limit_exceeded' });
+  }
   for (const set of sets.slice(0, setLimit)) {
     const scan = await scanMappingSetReferences(c, {
       setId: set.set_id,
@@ -352,4 +403,15 @@ export async function checkDestinationProfileUnreferenced(
     unscanned.push(...scan.unscanned);
   }
   return conflictFor(c, { references, truncated, unscanned }, 'Destination Profile', 'deleted');
+}
+
+function parseJsonObject(json: string | null): Record<string, unknown> {
+  try {
+    const parsed: unknown = json ? JSON.parse(json) : {};
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : {};
+  } catch {
+    return {};
+  }
 }

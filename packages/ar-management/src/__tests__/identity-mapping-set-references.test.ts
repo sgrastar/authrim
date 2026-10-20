@@ -1372,3 +1372,119 @@ describe('what a SAML service provider saved about its Destination Profile', () 
     expect(samlDestinationPolicyCoversProfile([], [])).toBe(false);
   });
 });
+
+describe('a Destination Profile an activation scope names', () => {
+  const del = (t: ReturnType<typeof setup>, profileId: string, who = t.cookie()) =>
+    t.mutate(who, 'DELETE', `/api/admin/field-mapping/destination-profiles/${profileId}`);
+  const profileExists = (t: ReturnType<typeof setup>, id: string) =>
+    t.count(`SELECT COUNT(*) AS n FROM destination_profiles WHERE id = '${id}'`) === 1;
+
+  /** `set-c` is named by an app; its activation has the given scope and its edges the given profiles. */
+  function named(scope: Record<string, unknown>, edgeProfiles: string[]) {
+    const t = setup();
+    seedMapping(t.db, { owner: TENANT, id: 'c', scope, profiles: edgeProfiles });
+    for (const id of ['profile-c', 'profile-x'])
+      seedDestinationProfile(t.db, { owner: TENANT, id });
+    t.refs.client(t.coreA, 'set-c');
+    return t;
+  }
+
+  it.each([
+    ['only the scope names it', { destinationProfileId: 'profile-c' }, [], 'profile-c'],
+    [
+      'only the scope names it, with the prefix',
+      { destinationProfileId: 'destination-profile-profile-c' },
+      [],
+      'profile-c',
+    ],
+    ['only the edges name it', {}, ['profile-c'], 'profile-c'],
+    [
+      'the edges and the scope both name it',
+      { destinationProfileId: 'profile-c' },
+      ['profile-c'],
+      'profile-c',
+    ],
+    [
+      'the scope names it besides the edges’ profile',
+      { destinationProfileId: 'profile-x' },
+      ['profile-c'],
+      'profile-x',
+    ],
+    [
+      'the scope names another besides the edges’ profile, which is then named by the edges',
+      { destinationProfileId: 'profile-x' },
+      ['profile-c'],
+      'profile-c',
+    ],
+  ])(
+    'cannot be deleted while a set in use releases into it: %s',
+    async (_n, scope, edges, target) => {
+      const t = named(scope, edges);
+      const refused = await del(t, target);
+      expect(refused.status).toBe(409);
+      expect(refused.json).toMatchObject({
+        reason: 'referenced',
+        references: {
+          items: [expect.objectContaining({ kind: 'client', viaMappingSetId: 'set-c' })],
+        },
+      });
+      expect(profileExists(t, target)).toBe(true);
+    }
+  );
+
+  it('can be deleted when no set in use names it, in the edges or the scope', async () => {
+    const t = named({ destinationProfileId: 'profile-c' }, []);
+    expect((await del(t, 'profile-x')).status).toBe(200);
+  });
+
+  it('is not held by an activation that is no longer active', async () => {
+    const t = named({ destinationProfileId: 'profile-c' }, []);
+    t.db.exec(
+      "UPDATE field_mapping_activations SET lifecycle_state = 'retired' WHERE id = 'act-c'"
+    );
+    expect((await del(t, 'profile-c')).status).toBe(200);
+  });
+
+  it('is refused as incomplete when more activations are in use than are read in full', async () => {
+    const t = setup();
+    seedDestinationProfile(t.db, { owner: TENANT, id: 'profile-c' });
+    seedDestinationProfile(t.db, { owner: TENANT, id: 'profile-x' });
+    const insert = t.db.prepare(
+      `INSERT INTO field_mapping_activations (id, tenant_id, field_mapping_set_id, field_mapping_version_id, activation_scope_json, lifecycle_state, activated_at, created_at, updated_at)
+       VALUES (?, ?, 'set-a', 'ver-a', '{}', 'active', 1, 1, 1)`
+    );
+    for (let index = 0; index < 5001; index += 1) insert.run(`bulk-${index}`, TENANT);
+    const refused = await del(t, 'profile-x');
+    expect(refused.status).toBe(409);
+    expect(refused.json.reason).toBe('scan_incomplete');
+    expect(profileExists(t, 'profile-x')).toBe(true);
+  });
+
+  it('is not held by a set nothing names', async () => {
+    const t = setup();
+    seedMapping(t.db, {
+      owner: TENANT,
+      id: 'c',
+      scope: { destinationProfileId: 'profile-c' },
+      profiles: [],
+    });
+    seedDestinationProfile(t.db, { owner: TENANT, id: 'profile-c' });
+    expect((await del(t, 'profile-c')).status).toBe(200);
+  });
+
+  it('is held for the platform’s profile too, by a tenant’s set whose scope names it', async () => {
+    const t = setup();
+    seedMapping(t.db, {
+      owner: 'tenant-b',
+      id: 'b2',
+      scope: { destinationProfileId: 'profile-plat' },
+      profiles: [],
+    });
+    t.refs.client(t.coreB, 'set-b2', 'tenant-b', 'b-app');
+    const refused = await del(t, 'profile-plat', t.cookie(GLOBAL_SUPER_ADMIN));
+    expect(refused.status).toBe(409);
+    expect(refused.json.references.items).toEqual([
+      expect.objectContaining({ tenantId: 'tenant-b', clientId: 'b-app' }),
+    ]);
+  });
+});
