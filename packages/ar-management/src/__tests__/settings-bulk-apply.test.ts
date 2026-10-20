@@ -57,6 +57,7 @@ import {
   type Assignment,
 } from './helpers/admin-authority-fixture';
 import { insertOAuthClient, insertTenant, openCoreDatabase } from './helpers/core-database';
+import { d1OverSqlite } from './helpers/d1-over-sqlite';
 import { seedDestinationProfile, seedMapping } from './helpers/identity-mapping-seed';
 
 /**
@@ -106,7 +107,7 @@ function kv() {
 let sequence = 0;
 const PUBLIC_JWK = { kty: 'EC', crv: 'P-256', x: 'x', y: 'y' };
 
-async function setup(env: Record<string, unknown> = {}) {
+async function setup(env: Record<string, unknown> = {}, options: { realD1?: boolean } = {}) {
   const kit = await createTokenKit('https://tenant-a.example.com');
   const cores: Record<string, ReturnType<typeof openCoreDatabase>> = {};
   for (const id of ['tenant-a', 'tenant-b', 'tenant-d']) cores[id] = openCoreDatabase();
@@ -121,54 +122,54 @@ async function setup(env: Record<string, unknown> = {}) {
   directory.exec("UPDATE tenants SET lifecycle_state = 'deleted' WHERE id = 'tenant-gone'");
   const settings = kv();
 
-  const context = setupApp(
-    (app) => {
-      app.use('*', async (c, next) => {
-        (c as unknown as { set(key: string, value: unknown): void }).set('tenantMetadataContext', {
-          tenantId: TENANT,
-          coreDb: adapters[TENANT],
-          route: {},
-        });
-        await next();
-      });
-      app.use(
-        '/api/admin/*',
-        adminAuthMiddleware({ plane: 'tenant' }),
-        enforceDeclaredAdminRouteAccess()
-      );
-      // A test can narrow what the signed-in caller holds after the real authentication, to reach
-      // checks that the real contexts never fail (the entrance and the tenant right differ).
-      app.use(BULK, async (c, next) => {
-        const how = c.req.header('x-test-narrow');
-        const get = c as unknown as { get(k: string): any; set(k: string, v: unknown): void };
-        const auth = get.get('adminAuth');
-        if (how === 'roles') get.set('adminAuth', { ...auth, roles: ['viewer'] });
-        if (how === 'agent') get.set('adminAuth', { ...auth, actorType: 'agent' });
-        await next();
-      });
-      app.route('/api/admin', settingsV2);
-    },
-    {
-      DB: sqliteAdapter(directory),
-      SETTINGS: settings.namespace,
-      AUTHRIM_CONFIG: settings.namespace,
-      TEST_CORES: adapters,
-      BASE_DOMAIN: 'example.com',
-      RATE_LIMITER: {
-        idFromName: vi.fn().mockReturnValue('rate-limit-id'),
-        get: vi.fn().mockReturnValue({
-          incrementRpc: vi.fn().mockResolvedValue({
-            allowed: true,
-            current: 1,
-            limit: 100,
-            resetAt: Math.floor(Date.now() / 1000) + 60,
-          }),
+  const envExtras: Record<string, unknown> = {
+    DB: sqliteAdapter(directory),
+    SETTINGS: settings.namespace,
+    AUTHRIM_CONFIG: settings.namespace,
+    TEST_CORES: adapters,
+    BASE_DOMAIN: 'example.com',
+    RATE_LIMITER: {
+      idFromName: vi.fn().mockReturnValue('rate-limit-id'),
+      get: vi.fn().mockReturnValue({
+        incrementRpc: vi.fn().mockResolvedValue({
+          allowed: true,
+          current: 1,
+          limit: 100,
+          resetAt: Math.floor(Date.now() / 1000) + 60,
         }),
-      },
-      ...kit.env,
-      ...env,
-    }
-  );
+      }),
+    },
+    ...kit.env,
+    ...env,
+  };
+  const context = setupApp((app) => {
+    app.use('*', async (c, next) => {
+      (c as unknown as { set(key: string, value: unknown): void }).set('tenantMetadataContext', {
+        tenantId: TENANT,
+        coreDb: adapters[TENANT],
+        route: {},
+      });
+      await next();
+    });
+    app.use(
+      '/api/admin/*',
+      adminAuthMiddleware({ plane: 'tenant' }),
+      enforceDeclaredAdminRouteAccess()
+    );
+    // A test can narrow what the signed-in caller holds after the real authentication, to reach
+    // checks that the real contexts never fail (the entrance and the tenant right differ).
+    app.use(BULK, async (c, next) => {
+      const how = c.req.header('x-test-narrow');
+      const get = c as unknown as { get(k: string): any; set(k: string, v: unknown): void };
+      const auth = get.get('adminAuth');
+      if (how === 'roles') get.set('adminAuth', { ...auth, roles: ['viewer'] });
+      if (how === 'agent') get.set('adminAuth', { ...auth, actorType: 'agent' });
+      await next();
+    });
+    app.route('/api/admin', settingsV2);
+  }, envExtras);
+  // The real D1 adapter, with its retry and its wrapping of a database error, over the same database.
+  if (options.realD1) envExtras.DB_ADMIN = d1OverSqlite(context.db);
   for (const file of SETTINGS_MIGRATIONS) {
     context.db.exec(readFileSync(resolve(REPO_ROOT, `migrations/admin/d1/${file}`), 'utf8'));
   }
@@ -237,6 +238,13 @@ async function setup(env: Record<string, unknown> = {}) {
       .all(),
     kv: [...settings.store.entries()].filter(([, value]) => value !== '{}').sort(),
   });
+  /** Rows of replay protection in the Core database of any tenant (there must be none). */
+  const tenantIdempotencyRows = () =>
+    [...Object.values(cores), directory].reduce(
+      (sum, db) =>
+        sum + (db.prepare('SELECT COUNT(*) AS n FROM idempotency_keys').get() as { n: number }).n,
+      0
+    );
   const principal = (permissions: string[], scope: 'all' | 'allow') => {
     sequence += 1;
     const now = Date.now();
@@ -284,6 +292,7 @@ async function setup(env: Record<string, unknown> = {}) {
     seed,
     versions,
     rows,
+    tenantIdempotencyRows,
     snapshot,
     principal,
   };
@@ -357,13 +366,8 @@ describe('who may use the bulk apply', () => {
           expect(response.status, mode).toBe(403);
           // Nothing was written, and the refused call left no idempotency record behind.
           expect(t.snapshot()).toEqual(before);
-          expect(
-            (
-              t.cores['tenant-a'].prepare('SELECT COUNT(*) AS n FROM idempotency_keys').get() as {
-                n: number;
-              }
-            ).n
-          ).toBe(0);
+          expect(t.rows('SELECT COUNT(*) AS n FROM idempotency_records')).toBe(0);
+          expect(t.tenantIdempotencyRows()).toBe(0);
         }
       }
     }
@@ -921,8 +925,9 @@ describe('an apply', () => {
     expect(resultFor(response.json, 'tenant-a').changes[0]).toMatchObject({
       status: 'rejected',
       reason: 'validation_failed',
-      message: expect.stringMatching(/supported_locales/),
+      detail_code: 'value_invalid',
     });
+    expect(resultFor(response.json, 'tenant-a').changes[0]).not.toHaveProperty('message');
     const pat = await t.call(t.admin, 'PATCH', '/api/admin/tenants/tenant-a/settings/login-ui', {
       ifMatch: (await t.doc('tenant-a', 'login-ui')).version,
       set: { 'login-ui.supported_locales': 'xx-nowhere' },
@@ -1618,10 +1623,11 @@ describe('the size of an answer', () => {
       // The long values are not repeated in the answer, whole.
       expect(JSON.stringify(first.json)).not.toContain(big(300));
       // The answer was kept, and a repeat of the request gets it back.
-      const stored = t.cores['tenant-a']
-        .prepare('SELECT response_status AS s FROM idempotency_keys')
-        .all() as Array<{ s: number }>;
-      expect(stored.map((row) => row.s)).toEqual([200]);
+      const stored = t.db.prepare('SELECT status FROM idempotency_records').all() as Array<{
+        status: string;
+      }>;
+      expect(stored.map((row) => row.status)).toEqual(['complete']);
+      expect(t.tenantIdempotencyRows()).toBe(0);
       const again = await t.bulk(t.admin, heavy(mode), { key: `heavy-key-${mode}` });
       expect(again.status).toBe(200);
       expect(again.json).toEqual(first.json);
@@ -1673,11 +1679,9 @@ describe('the size of an answer', () => {
     expect(many.status).toBe(400);
     expect(many.json).toMatchObject({ code: 'value_too_large' });
     expect(t.snapshot()).toEqual(before);
-    expect(
-      t.cores['tenant-a']
-        .prepare('SELECT COUNT(*) AS n FROM idempotency_keys WHERE response_status = 425')
-        .get()
-    ).toEqual({ n: 0 });
+    expect(t.rows("SELECT COUNT(*) AS n FROM idempotency_records WHERE status <> 'complete'")).toBe(
+      0
+    );
   });
 
   it('refuses at once a request whose answer could pass the limit, with the limits raised', async () => {
@@ -1698,11 +1702,9 @@ describe('the size of an answer', () => {
     );
     expect(response.status).toBe(400);
     expect(response.json).toMatchObject({ code: 'response_too_large' });
-    expect(
-      t.cores['tenant-a']
-        .prepare('SELECT COUNT(*) AS n FROM idempotency_keys WHERE response_status = 425')
-        .get()
-    ).toEqual({ n: 0 });
+    expect(t.rows("SELECT COUNT(*) AS n FROM idempotency_records WHERE status <> 'complete'")).toBe(
+      0
+    );
   });
 });
 
@@ -1998,11 +2000,9 @@ describe('an answer is never bigger than its estimate', () => {
       expect(again.status, mode).toBe(200);
       expect(again.json).toEqual(first.json);
     }
-    expect(
-      t.cores['tenant-a']
-        .prepare('SELECT COUNT(*) AS n FROM idempotency_keys WHERE response_status = 425')
-        .get()
-    ).toEqual({ n: 0 });
+    expect(t.rows("SELECT COUNT(*) AS n FROM idempotency_records WHERE status <> 'complete'")).toBe(
+      0
+    );
   });
 
   it('does not refuse the largest request that is in order: 25 tenants and 20 settings of 254 characters', async () => {
@@ -2180,5 +2180,596 @@ describe('what a refusal says', () => {
     expect(failure.metadata).toMatchObject({ rejected_keys: ['oauth.access_token_expiry'] });
     expect(JSON.stringify(failure.metadata)).not.toContain('a value that is wrong');
     expect(failure.metadata).not.toHaveProperty('rejected');
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+
+describe('where the replay record is kept', () => {
+  const records = (t: Awaited<ReturnType<typeof setup>>) =>
+    t.db
+      .prepare(
+        'SELECT tenant_id, operation_key, idempotency_key, status, response_ref FROM idempotency_records ORDER BY created_at, id'
+      )
+      .all() as Array<{
+      tenant_id: string;
+      operation_key: string;
+      idempotency_key: string;
+      status: string;
+      response_ref: string | null;
+    }>;
+  const sha256 = async (text: string) =>
+    [...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text)))]
+      .map((b) => b.toString(16).padStart(2, '0'))
+      .join('');
+
+  it.each(['preview', 'apply'])(
+    'is the platform’s Admin database, never a tenant’s, for a %s',
+    async (mode) => {
+      const t = await setup();
+      const response = await t.bulk(
+        t.admin,
+        request({ mode, tenant_ids: ['tenant-a', 'tenant-b', 'tenant-d'] }),
+        {
+          key: 'platform-key-01',
+        }
+      );
+      expect(response.status).toBe(200);
+      // No tenant’s database holds the answer, which has the settings and IDs of the others.
+      expect(t.tenantIdempotencyRows()).toBe(0);
+      const [row] = records(t);
+      expect(records(t)).toHaveLength(1);
+      expect(row).toMatchObject({
+        tenant_id: 'platform',
+        idempotency_key: 'platform-key-01',
+        status: 'complete',
+      });
+      expect(row.operation_key).toMatch(/^settings\.bulk_apply:admin-\d+$/);
+      expect(JSON.parse(row.response_ref!)).toMatchObject({
+        status: 200,
+        body: { mode },
+      });
+    }
+  );
+
+  it('answers a repeat with the stored answer, and the same key with another body with 409', async () => {
+    const t = await setup();
+    const first = await t.bulk(t.admin, request(), { key: 'platform-key-02' });
+    const writes = audits('settings.settings.updated').length;
+    const again = await t.bulk(t.admin, request(), { key: 'platform-key-02' });
+    expect(again.status).toBe(200);
+    expect(again.json).toEqual(first.json);
+    expect(audits('settings.settings.updated').length).toBe(writes);
+    const other = await t.bulk(t.admin, request({ changes: [ttl(100)] }), {
+      key: 'platform-key-02',
+    });
+    expect(other.status).toBe(409);
+    expect(other.json.error).toBe('idempotency_conflict');
+    expect(records(t)).toHaveLength(1);
+    expect(t.tenantIdempotencyRows()).toBe(0);
+  });
+
+  it('treats the same key of another administrator as another request', async () => {
+    const t = await setup();
+    const first = await t.bulk(t.admin, request(), { key: 'platform-key-03' });
+    const second = await t.bulk(t.cookie(), request(), { key: 'platform-key-03' });
+    expect(second.status).toBe(200);
+    expect(second.json.bulk_id).not.toBe(first.json.bulk_id);
+    const rows = records(t);
+    expect(rows).toHaveLength(2);
+    expect(new Set(rows.map((r) => r.operation_key)).size).toBe(2);
+    // And the same body under the same key does not collide with the other administrator’s.
+    const third = await t.bulk(t.cookie(), request({ changes: [ttl(3600000)] }), {
+      key: 'platform-key-03',
+    });
+    expect(third.status).toBe(200);
+  });
+
+  it('keeps a machine token apart from a person with the same key', async () => {
+    const t = await setup();
+    const token = await t.principal(['admin:settings:write'], 'all');
+    const byPerson = await t.bulk(t.admin, request(), { key: 'platform-key-04' });
+    const byMachine = await t.callWithToken(token, 'POST', BULK, request(), {
+      'Idempotency-Key': 'platform-key-04',
+    });
+    expect(byMachine.status).toBe(200);
+    expect(byMachine.json.bulk_id).not.toBe(byPerson.json.bulk_id);
+  });
+
+  it('is 425 while the same request is still running, and runs again once the record has run out', async () => {
+    const t = await setup();
+    const body = request();
+    const hash = await sha256(JSON.stringify(body));
+    const now = Date.now();
+    const operation = async () => {
+      const first = await t.bulk(t.admin, request({ changes: [ttl(1)] }), {
+        key: 'platform-key-05',
+      });
+      return (
+        t.db.prepare('SELECT operation_key FROM idempotency_records').get() as {
+          operation_key: string;
+        }
+      ).operation_key;
+    };
+    const key = await operation();
+    t.db.prepare('DELETE FROM idempotency_records').run();
+    t.db
+      .prepare(
+        `INSERT INTO idempotency_records (id, tenant_id, idempotency_key, operation_key, request_hash,
+           response_ref, status, expires_at, created_at, updated_at)
+         VALUES ('r1', 'platform', 'platform-key-06', ?, ?, NULL, 'in_progress', ?, ?, ?)`
+      )
+      .run(key, hash, now + 60_000, now, now);
+    const running = await t.bulk(t.admin, body, { key: 'platform-key-06' });
+    expect(running.status).toBe(425);
+    expect(await t.own('tenant-a', 'session', TTL)).toBeUndefined();
+
+    t.db.prepare('UPDATE idempotency_records SET expires_at = ? WHERE id = ?').run(now - 1, 'r1');
+    const runs = await t.bulk(t.admin, body, { key: 'platform-key-06' });
+    expect(runs.status).toBe(200);
+    expect(await t.own('tenant-a', 'session', TTL)).toBe(7200000);
+  });
+
+  it('does not keep an answer that settled nothing: a failed lookup of the tenants can be repeated', async () => {
+    const t = await setup({ DB: undefined });
+    const failed = await t.bulk(t.admin, request(), { key: 'platform-key-07' });
+    expect(failed.status).toBe(503);
+    expect(records(t)).toHaveLength(0);
+  });
+
+  it('refuses, and does nothing, when the record cannot be made', async () => {
+    const t = await setup();
+    const real = t.adapter.execute.bind(t.adapter);
+    t.adapter.execute = async (sql: string, params?: unknown[]) => {
+      if (/INSERT INTO idempotency_records/.test(sql)) throw new Error('d1 down');
+      return real(sql, params);
+    };
+    const response = await t.bulk(t.admin, request(), { key: 'platform-key-08' });
+    expect(response.status).toBe(503);
+    expect(await t.own('tenant-a', 'session', TTL)).toBeUndefined();
+    expect(t.tenantIdempotencyRows()).toBe(0);
+  });
+
+  it('does not accept a key that is too short or too long', async () => {
+    const t = await setup();
+    for (const key of ['short', 'k'.repeat(129)]) {
+      const response = await t.bulk(t.admin, request(), { key });
+      expect(response.status).toBe(400);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+
+describe('a refusal that depends on what is saved gives a code, not its text', () => {
+  const both = async (
+    t: Awaited<ReturnType<typeof setup>>,
+    changes: unknown[],
+    tenantIds = ['tenant-a']
+  ) => {
+    const preview = await t.bulk(
+      t.admin,
+      request({ mode: 'preview', tenant_ids: tenantIds, changes })
+    );
+    const apply = await t.bulk(t.admin, request({ tenant_ids: tenantIds, changes }));
+    expect(preview.status).toBe(200);
+    expect(apply.status).toBe(200);
+    return { preview, apply, text: JSON.stringify([preview.json, apply.json]) };
+  };
+  const patch = async (
+    t: Awaited<ReturnType<typeof setup>>,
+    tenantId: string,
+    category: string,
+    set: Record<string, unknown>
+  ) => {
+    const doc = await t.doc(tenantId, category);
+    return t.call(t.admin, 'PATCH', `/api/admin/tenants/${tenantId}/settings/${category}`, {
+      ifMatch: doc.version,
+      set,
+    });
+  };
+
+  it('does not repeat a bound the tenant has saved (CIBA)', async () => {
+    const t = await setup();
+    expect((await patch(t, 'tenant-a', 'ciba', { 'ciba.max_expires_in': 433 })).status).toBe(200);
+    // A PATCH says it, with the saved value in it.
+    const direct = await patch(t, 'tenant-a', 'ciba', { 'ciba.expires_in': 500 });
+    expect(direct.status).toBe(400);
+    expect(JSON.stringify(direct.json)).toContain('433');
+
+    const { preview, apply, text } = await both(t, [
+      { category: 'ciba', set: { 'ciba.expires_in': 500 } },
+    ]);
+    expect(resultFor(apply.json, 'tenant-a').changes[0]).toMatchObject({
+      status: 'rejected',
+      reason: 'validation_failed',
+    });
+    expect(resultFor(apply.json, 'tenant-a').changes[0]).not.toHaveProperty('message');
+    expect(resultFor(apply.json, 'tenant-a').changes[0]).toMatchObject({
+      detail_code: 'bounds_not_met',
+    });
+    expect(resultFor(preview.json, 'tenant-a').changes[0].validation.errors[0]).toEqual({
+      code: 'validation_failed',
+      detail_code: 'bounds_not_met',
+    });
+    expect(text).not.toContain('433');
+  });
+
+  it('gives the code of a Mapping Set that cannot be named, and not its text or another tenant’s ID', async () => {
+    const t = await setup();
+    const { preview, apply, text } = await both(t, [
+      { category: 'identity-mapping', set: { [MAPPING_KEY]: 'set-b1' } },
+    ]);
+    expect(resultFor(apply.json, 'tenant-a').changes[0]).toMatchObject({
+      status: 'rejected',
+      reason: 'validation_failed',
+      detail_code: 'identity_mapping_set_missing',
+    });
+    expect(resultFor(preview.json, 'tenant-a').changes[0].validation.errors[0]).toEqual({
+      code: 'validation_failed',
+      detail_code: 'identity_mapping_set_missing',
+    });
+    expect(text).not.toMatch(/does not exist|tenant-b/);
+  });
+
+  it('does not name the client of App Login, nor its link', async () => {
+    const t = await setup();
+    await patch(t, 'tenant-a', 'login-entry', {
+      'login-entry.app_login_client_id': 'client-sensitive',
+      'login-entry.app_login_redirect_uri': 'https://app.example.com/callback',
+    });
+    const { text } = await both(t, [
+      { category: 'login-entry', set: { 'login-entry.post_login_behavior': 'app_login' } },
+    ]);
+    expect(text).not.toMatch(/client-sensitive|app\.example\.com|resolutionLink|Client settings/);
+  });
+
+  it('gives no text for the Account Page that Login UI still needs', async () => {
+    const t = await setup();
+    expect(
+      (await patch(t, 'tenant-a', 'login-entry', { 'login-entry.post_login_behavior': 'account' }))
+        .status
+    ).toBe(200);
+    const { apply, text } = await both(t, [
+      { category: 'self-service', set: { 'self-service.account_page_enabled': false } },
+    ]);
+    expect(resultFor(apply.json, 'tenant-a').changes[0]).toMatchObject({
+      status: 'rejected',
+      reason: 'validation_failed',
+    });
+    expect(resultFor(apply.json, 'tenant-a').changes[0]).not.toHaveProperty('message');
+    expect(text).not.toMatch(/login-ui#post-login|Account Page cannot/);
+  });
+
+  it('says only that a human verification provider is not usable, not which one', async () => {
+    const t = await setup();
+    const { apply, text } = await both(t, [
+      {
+        category: 'authentication-methods',
+        set: { 'authentication-methods.human_verification.login_enabled': true },
+      },
+    ]);
+    const change = resultFor(apply.json, 'tenant-a').changes[0];
+    expect(change).toMatchObject({ status: 'rejected', reason: 'validation_failed' });
+    expect(change).not.toHaveProperty('message');
+    expect(text).not.toMatch(/turnstile|plugin_id|credentials|Enable the plugin/i);
+  });
+
+  it('gives a code for a value that was sent, and no piece of it', async () => {
+    const t = await setup();
+    const { preview, apply } = await both(t, [
+      {
+        category: 'tokens',
+        set: { 'tokens.exchange_allowed_subject_token_types': 'access_token,secret-a,secret-b' },
+      },
+      { category: 'login-ui', set: { 'login-ui.supported_locales': 'xx-nowhere' } },
+    ]);
+    const [tokens, locales] = resultFor(apply.json, 'tenant-a').changes;
+    expect(tokens).toMatchObject({ status: 'rejected', detail_code: 'value_invalid' });
+    expect(locales).toMatchObject({ status: 'rejected', detail_code: 'value_invalid' });
+    const found = JSON.stringify([
+      ...resultFor(preview.json, 'tenant-a').changes.map((c: any) => c.validation),
+      ...resultFor(apply.json, 'tenant-a').changes.map((c: any) => [
+        c.reason,
+        c.detail_code,
+        c.message,
+      ]),
+    ]);
+    expect(found).not.toMatch(/secret-a|secret-b|xx-nowhere|may list only/);
+  });
+
+  it('gives the code of a dependency that is not met, not the state that is saved', async () => {
+    const t = await setup();
+    const doc = await t.doc('tenant-a', 'tokens');
+    expect(
+      (
+        await t.call(t.admin, 'PATCH', '/api/admin/tenants/tenant-a/settings/tokens', {
+          ifMatch: doc.version,
+          disable: ['tokens.exchange_enabled'],
+        })
+      ).status
+    ).toBe(200);
+    const { preview, apply, text } = await both(t, [
+      { category: 'tokens', set: { 'tokens.exchange_delegation_enabled': true } },
+    ]);
+    expect(resultFor(apply.json, 'tenant-a').changes[0]).toMatchObject({
+      status: 'rejected',
+      reason: 'validation_failed',
+      detail_code: 'dependency_not_met',
+    });
+    expect(resultFor(preview.json, 'tenant-a').changes[0].validation.errors[0]).toEqual({
+      code: 'validation_failed',
+      detail_code: 'dependency_not_met',
+    });
+    expect(text).not.toMatch(/Depends on|currently disabled|message/);
+  });
+
+  it('never returns a sentence of a validation, and only a code from the fixed set', async () => {
+    const t = await setup();
+    const allowed =
+      /^(value_invalid|value_out_of_range|value_wrong_type|dependency_not_met|unknown_key|bounds_not_met|identity_mapping_[a-z_]+|human_verification_[a-z_]+)$/;
+    const scenarios = [
+      [{ category: 'oauth', set: { 'oauth.access_token_expiry': 5 } }],
+      [{ category: 'oauth', set: { 'oauth.access_token_expiry': 'soon' } }],
+      [{ category: 'oauth', set: { 'oauth.refresh_token_rotation': 'yes' } }],
+      [{ category: 'oauth', set: { 'oauth.error_response_format': 'nope' } }],
+      [{ category: 'session', set: { 'session.nothing': 1 } }],
+      [{ category: 'identity-mapping', set: { [MAPPING_KEY]: 'set-nothing' } }],
+      [{ category: 'login-ui', set: { 'login-ui.supported_locales': 'xx' } }],
+    ];
+    for (const changes of scenarios) {
+      const { preview, apply } = await both(t, changes);
+      const keys: string[] = [];
+      JSON.stringify([preview.json, apply.json], (key, value) => {
+        if (key) keys.push(key);
+        return value;
+      });
+      expect(keys, JSON.stringify(changes)).not.toContain('message');
+      for (const result of [...preview.json.results, ...apply.json.results]) {
+        for (const change of result.changes) {
+          const codes = [
+            change.detail_code,
+            ...(change.validation?.errors ?? []).map((e: any) => e.detail_code),
+          ].filter(Boolean);
+          for (const code of codes) expect(code, JSON.stringify(changes)).toMatch(allowed);
+        }
+      }
+    }
+  });
+
+  it('treats a refusal that did not say what it was about as one about the state', async () => {
+    const t = await setup();
+    const { categoryValidationKind } = await import('../routes/settings-v2/patch-validation');
+    expect(categoryValidationKind('a-category-nobody-listed')).toBe('state');
+    expect(categoryValidationKind('ciba')).toBe('state');
+    expect(categoryValidationKind('device-flow')).toBe('state');
+    for (const category of [
+      'identity-mapping',
+      'tenant',
+      'dcr',
+      'plugin',
+      'diagnostic-logging',
+      'assurance',
+      'oauth',
+      'tokens',
+      'external-idp',
+      'security',
+      'discovery',
+    ]) {
+      expect(categoryValidationKind(category), category).toBe('value');
+    }
+    expect(t).toBeDefined();
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+
+describe('the replay record through the real D1 adapter', () => {
+  const rows = (t: Awaited<ReturnType<typeof setup>>) =>
+    t.db
+      .prepare(
+        'SELECT status, response_ref, operation_key, expires_at FROM idempotency_records ORDER BY created_at, id'
+      )
+      .all() as Array<{
+      status: string;
+      response_ref: string | null;
+      operation_key: string;
+      expires_at: number;
+    }>;
+
+  it('answers a repeat with the stored result and another body with 409, as the adapter wraps the unique error', async () => {
+    const t = await setup({}, { realD1: true });
+    const first = await t.bulk(t.admin, request(), { key: 'real-d1-key-01' });
+    expect(first.status).toBe(200);
+    const again = await t.bulk(t.admin, request(), { key: 'real-d1-key-01' });
+    expect(again.status).toBe(200);
+    expect(again.json).toEqual(first.json);
+    const other = await t.bulk(t.admin, request({ changes: [ttl(100)] }), {
+      key: 'real-d1-key-01',
+    });
+    expect(other.status).toBe(409);
+    expect(other.json.error).toBe('idempotency_conflict');
+    expect(rows(t)).toHaveLength(1);
+    expect(t.tenantIdempotencyRows()).toBe(0);
+  });
+
+  it('is 425 for a request whose record is still running', async () => {
+    const t = await setup({}, { realD1: true });
+    const hash = [
+      ...new Uint8Array(
+        await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify(request())))
+      ),
+    ]
+      .map((b) => b.toString(16).padStart(2, '0'))
+      .join('');
+    await t.bulk(t.admin, request({ changes: [ttl(1)] }), { key: 'real-d1-key-00' });
+    const { operation_key: operation } = rows(t)[0];
+    t.db.prepare('DELETE FROM idempotency_records').run();
+    const now = Date.now();
+    t.db
+      .prepare(
+        `INSERT INTO idempotency_records (id, tenant_id, idempotency_key, operation_key, request_hash,
+           response_ref, status, expires_at, created_at, updated_at)
+         VALUES ('r1', 'platform', 'real-d1-key-02', ?, ?, NULL, 'in_progress', ?, ?, ?)`
+      )
+      .run(operation, hash, now + 60_000, now, now);
+    const running = await t.bulk(t.admin, request(), { key: 'real-d1-key-02' });
+    expect(running.status).toBe(425);
+    expect(await t.own('tenant-a', 'session', TTL)).toBeUndefined();
+  });
+
+  it('never answers 503 to two requests with the same key at once: one runs, the other waits or replays', async () => {
+    const t = await setup({}, { realD1: true });
+    const [a, b] = await Promise.all([
+      t.bulk(t.admin, request(), { key: 'real-d1-key-03' }),
+      t.bulk(t.admin, request(), { key: 'real-d1-key-03' }),
+    ]);
+    expect([a.status, b.status].sort()).not.toContain(503);
+    expect([a.status, b.status]).toContain(200);
+    for (const response of [a, b]) expect([200, 425]).toContain(response.status);
+    expect(rows(t)).toHaveLength(1);
+  });
+});
+
+describe('a record whose answer could not be kept', () => {
+  const failStoring = (t: Awaited<ReturnType<typeof setup>>, alsoMark = false) => {
+    const real = t.adapter.execute.bind(t.adapter);
+    const attempts = { stores: 0 };
+    t.adapter.execute = async (sql: string, params?: unknown[]) => {
+      if (/SET status = 'complete'/.test(sql)) {
+        attempts.stores += 1;
+        throw new Error('d1 down');
+      }
+      if (alsoMark && /SET status = 'unknown'/.test(sql)) throw new Error('d1 down');
+      return real(sql, params);
+    };
+    return attempts;
+  };
+  const status = (t: Awaited<ReturnType<typeof setup>>) =>
+    (t.db.prepare('SELECT status FROM idempotency_records').all() as Array<{ status: string }>).map(
+      (row) => row.status
+    );
+
+  it('is tried a few times, then held as unknown: a repeat is not run again, whatever changed since', async () => {
+    const t = await setup();
+    const attempts = failStoring(t);
+    const first = await t.bulk(t.admin, request({ on_existing_override: 'overwrite' }), {
+      key: 'unknown-key-01',
+    });
+    expect(first.status).toBe(200);
+    expect(attempts.stores).toBe(3);
+    expect(status(t)).toEqual(['unknown']);
+    expect(await t.own('tenant-a', 'session', TTL)).toBe(7200000);
+
+    // Someone else sets another value meanwhile; the caller never saw the answer and repeats.
+    await t.seed('tenant-a', 'session', { [TTL]: 2400000 });
+    const updates = audits('settings.settings.updated').length;
+    const repeat = await t.bulk(t.admin, request({ on_existing_override: 'overwrite' }), {
+      key: 'unknown-key-01',
+    });
+
+    expect(repeat.status).toBe(409);
+    expect(repeat.json.error).toBe('result_unknown');
+    expect(await t.own('tenant-a', 'session', TTL)).toBe(2400000);
+    expect(audits('settings.settings.updated').length).toBe(updates);
+    // Another key is a new request.
+    const fresh = await t.bulk(t.admin, request({ on_existing_override: 'overwrite' }), {
+      key: 'unknown-key-02',
+    });
+    expect(fresh.status).toBe(200);
+  });
+
+  it('is still not run again when it cannot even be marked: it waits as a running one until it runs out', async () => {
+    const t = await setup();
+    failStoring(t, true);
+    const first = await t.bulk(t.admin, request(), { key: 'unknown-key-03' });
+    expect(first.status).toBe(200);
+    expect(status(t)).toEqual(['in_progress']);
+    await t.seed('tenant-a', 'session', { [TTL]: 2400000 });
+    const repeat = await t.bulk(t.admin, request({ on_existing_override: 'overwrite' }), {
+      key: 'unknown-key-03',
+    });
+    expect(repeat.status).toBe(409); // another body: the key is the same, the body is not
+    const same = await t.bulk(t.admin, request(), { key: 'unknown-key-03' });
+    expect(same.status).toBe(425);
+    expect(await t.own('tenant-a', 'session', TTL)).toBe(2400000);
+  });
+
+  it('is released for a preview, which changed nothing: the repeat runs', async () => {
+    const t = await setup();
+    failStoring(t);
+    const first = await t.bulk(t.admin, request({ mode: 'preview' }), { key: 'unknown-key-04' });
+    expect(first.status).toBe(200);
+    expect(status(t)).toEqual([]);
+    const repeat = await t.bulk(t.admin, request({ mode: 'preview' }), { key: 'unknown-key-04' });
+    expect(repeat.status).toBe(200);
+  });
+});
+
+describe('how long the replay record lasts', () => {
+  const insert = (
+    t: Awaited<ReturnType<typeof setup>>,
+    row: { id: string; tenant?: string; operation: string; expires: number; key?: string }
+  ) =>
+    t.db
+      .prepare(
+        `INSERT INTO idempotency_records (id, tenant_id, idempotency_key, operation_key, request_hash,
+           response_ref, status, expires_at, created_at, updated_at)
+         VALUES (?, ?, ?, ?, 'h', '{"status":200,"body":{}}', 'complete', ?, 1, 1)`
+      )
+      .run(row.id, row.tenant ?? 'platform', row.key ?? row.id, row.operation, row.expires);
+  const ids = (t: Awaited<ReturnType<typeof setup>>) =>
+    (
+      t.db.prepare('SELECT id FROM idempotency_records ORDER BY id').all() as Array<{ id: string }>
+    ).map((row) => row.id);
+
+  it('is not replayed after it has run out, and the key can be used again', async () => {
+    const t = await setup();
+    const first = await t.bulk(t.admin, request(), { key: 'ttl-key-0001' });
+    t.db.prepare('UPDATE idempotency_records SET expires_at = ?').run(Date.now() - 1);
+    const again = await t.bulk(t.admin, request(), { key: 'ttl-key-0001' });
+    expect(again.status).toBe(200);
+    expect(again.json.bulk_id).not.toBe(first.json.bulk_id);
+  });
+
+  it('is removed by the sweep when it has run out, a page at a time, and nothing else is', async () => {
+    const t = await setup();
+    const { sweepExpiredBulkApplyRecords } =
+      await import('../routes/settings-v2/bulk-apply-idempotency');
+    const past = Date.now() - 1000;
+    const future = Date.now() + 60_000;
+    insert(t, { id: 'a1', operation: 'settings.bulk_apply:admin-1', expires: past });
+    insert(t, { id: 'a2', operation: 'settings.bulk_apply:admin-2', expires: past });
+    insert(t, { id: 'a3', operation: 'settings.bulk_apply:machine-9', expires: past });
+    insert(t, { id: 'b1', operation: 'settings.bulk_apply:admin-1', expires: future });
+    insert(t, { id: 'c1', operation: 'identity-mapping.other:admin-1', expires: past });
+    insert(t, {
+      id: 'd1',
+      tenant: 'tenant-a',
+      operation: 'settings.bulk_apply:admin-1',
+      expires: past,
+    });
+    const env = { DB_ADMIN: t.adapter } as never;
+
+    expect(await sweepExpiredBulkApplyRecords(env, { limit: 2 })).toBe(2);
+    expect(ids(t)).toHaveLength(4);
+    expect(await sweepExpiredBulkApplyRecords(env, { limit: 2 })).toBe(1);
+    expect(ids(t)).toEqual(['b1', 'c1', 'd1']);
+    expect(await sweepExpiredBulkApplyRecords(env)).toBe(0);
+  });
+
+  it('is swept by the scheduled run of the directory cron', async () => {
+    const t = await setup();
+    insert(t, {
+      id: 'old1',
+      operation: 'settings.bulk_apply:admin-1',
+      expires: Date.now() - 1000,
+    });
+    const worker = (await import('../index')).default;
+    await worker.scheduled(
+      { cron: '*/2 * * * *', scheduledTime: Date.now() } as never,
+      { DB_ADMIN: t.adapter, SETTINGS: undefined } as never
+    );
+    expect(ids(t)).toEqual([]);
   });
 });

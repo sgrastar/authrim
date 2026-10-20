@@ -30,7 +30,8 @@ import {
 } from '@authrim/ar-lib-core';
 import { getSingleTenantId, isSingleTenantMode } from '../../single-tenant-guard';
 import { bulkApplyImpactProviders } from './bulk-apply-impact';
-import { capMessage, summarizeValue } from './bulk-apply-size';
+import { BULK_APPLY_STARTED } from './bulk-apply-idempotency';
+import { summarizeValue } from './bulk-apply-size';
 import {
   parseBulkApplyRequest,
   resolveBulkApplyLimits,
@@ -43,7 +44,7 @@ import {
   hasTenantSettingsPermission,
 } from './settings-authorization';
 import { getSettingsManager } from './settings-support';
-import { applyTenantSettingsChange } from './tenant-settings-apply';
+import { applyTenantSettingsChange, type ValidationRefusal } from './tenant-settings-apply';
 
 const log = createLogger().module('SETTINGS_BULK_APPLY');
 
@@ -118,7 +119,6 @@ interface PlannedEntry {
   /** `pending`: to be written (after validation); the others are decided already. */
   decision: 'pending' | 'skip' | 'reject' | 'conflict';
   reason?: string;
-  message?: string;
 }
 
 interface CategoryPlan {
@@ -130,7 +130,7 @@ interface CategoryPlan {
 
 interface Validation {
   ok: boolean | null;
-  errors?: Array<{ code: string; message?: string }>;
+  errors?: Array<{ code: string; detail_code?: string }>;
 }
 
 function deepEqual(a: unknown, b: unknown): boolean {
@@ -166,10 +166,9 @@ function entriesOf(change: BulkApplyChange): PlannedEntry[] {
   ];
 }
 
-function reject(entry: PlannedEntry, reason: string, message?: string): void {
+function reject(entry: PlannedEntry, reason: string): void {
   entry.decision = 'reject';
   entry.reason = reason;
-  if (message) entry.message = capMessage(message);
 }
 
 function currentOf(state: SettingsGetResult, key: string): CurrentView {
@@ -204,13 +203,12 @@ async function planCategory(
 
   const categoryVerdict = bulkApplyCategoryVerdict(change.category);
   if (!categoryVerdict.ok) {
-    for (const entry of plan.entries)
-      reject(entry, categoryVerdict.reason, categoryVerdict.explanation);
+    for (const entry of plan.entries) reject(entry, categoryVerdict.reason);
     return plan;
   }
   for (const entry of plan.entries) {
     const verdict = bulkApplyKeyVerdict(change.category, entry.key);
-    if (!verdict.ok) reject(entry, verdict.reason, verdict.explanation);
+    if (!verdict.ok) reject(entry, verdict.reason);
   }
   const eligible = plan.entries.filter((entry) => entry.decision === 'pending');
   if (eligible.length === 0) return plan;
@@ -280,6 +278,8 @@ async function planCategory(
 interface SavedAnswer {
   status: number;
   json: Record<string, unknown>;
+  /** What the validation that refused the save was about, when it said (see `ValidationKind`). */
+  refusal?: ValidationRefusal;
 }
 
 async function runSharedSave(
@@ -294,9 +294,13 @@ async function runSharedSave(
     dryRun: boolean;
   }
 ): Promise<SavedAnswer> {
+  let refusal: ValidationRefusal | undefined;
   try {
     const response = await applyTenantSettingsChange({
       c,
+      onRefusal: (given) => {
+        refusal = given;
+      },
       adminAuth: c.get('adminAuth'),
       tenantId: input.tenantId,
       category: input.category as CategoryName,
@@ -330,7 +334,7 @@ async function runSharedSave(
     } catch {
       // A body that is not JSON carries nothing to read.
     }
-    return { status: response.status, json };
+    return { status: response.status, json, refusal };
   } catch {
     // Only the class is logged: the error may hold anything of the tenant.
     log.error('A bulk apply save failed unexpectedly', { category: input.category });
@@ -338,12 +342,42 @@ async function runSharedSave(
   }
 }
 
-function messageOf(json: Record<string, unknown>): string | undefined {
-  // Only what the validations of a value say about the value it was given. The other refusals
-  // (the post-login and App Login checks) name what the tenant has saved, such as a client ID.
-  return json.error === 'validation_failed' && typeof json.message === 'string'
-    ? capMessage(json.message)
-    : undefined;
+/**
+ * The fixed code of a rejection the settings manager gives for a key, from the kind of reason it
+ * gives. The reasons are the manager's own sentences, which are not given on: only the code is, and
+ * a reason this does not know gives none.
+ */
+export function managerRejectionCode(reason: string): string | undefined {
+  if (/^Unknown setting key/.test(reason) || /^Not settable at/.test(reason)) return 'unknown_key';
+  if (/^Depends on/.test(reason)) return 'dependency_not_met';
+  if (/^Expected (number|boolean|string|valid JSON|JSON-serializable)/.test(reason)) {
+    return 'value_wrong_type';
+  }
+  if (/^Value must be (>=|<=|a multiple of|a safe integer)/.test(reason))
+    return 'value_out_of_range';
+  if (/^Value must be one of|^Conflicting operations|^Only boolean settings/.test(reason)) {
+    return 'value_invalid';
+  }
+  return undefined;
+}
+
+const DETAIL_CODE = /^[a-z0-9_]{1,48}$/;
+
+/**
+ * What a refused save says of why, in a form that is safe to give: a fixed code, never the text of
+ * the refusal. The text of a validation can name an ID, a link or the value of another setting the
+ * tenant has saved, or repeat a piece of what was sent. A refusal that gave no code gives none.
+ */
+function refusalDetail(answer: SavedAnswer): { detail_code?: string } {
+  const refusal = answer.refusal;
+  const code = refusal?.code;
+  return code && DETAIL_CODE.test(code) ? { detail_code: code } : {};
+}
+
+/** The code for the reason the manager gave one key. */
+export function rejectionDetail(reason: unknown): { detail_code?: string } {
+  const code = typeof reason === 'string' ? managerRejectionCode(reason) : undefined;
+  return code ? { detail_code: code } : {};
 }
 
 function pendingBody(plan: CategoryPlan): { set: Record<string, unknown>; clear: string[] } {
@@ -414,12 +448,7 @@ async function validatePending(
           ? { ok: true }
           : {
               ok: false,
-              errors: [
-                {
-                  code: 'rejected',
-                  ...(typeof why === 'string' ? { message: capMessage(why) } : {}),
-                },
-              ],
+              errors: [{ code: 'validation_failed', ...rejectionDetail(why) }],
             }
       );
     }
@@ -427,7 +456,7 @@ async function validatePending(
   }
   // 400, and 404 (the post-login checks find no client): a refusal of the value given.
   const refusal = answer.status === 400 || answer.status === 404;
-  const message = refusal ? messageOf(answer.json) : undefined;
+  const detail = refusal ? refusalDetail(answer) : {};
   const code = refusal
     ? 'validation_failed'
     : answer.status === 403
@@ -436,7 +465,7 @@ async function validatePending(
         ? 'version_changed'
         : failureCode(answer);
   for (const entry of pending) {
-    results.set(entry.key, { ok: false, errors: [{ code, ...(message ? { message } : {}) }] });
+    results.set(entry.key, { ok: false, errors: [{ code, ...detail }] });
   }
   return results;
 }
@@ -461,10 +490,7 @@ async function previewTenant(
       else if (entry.decision === 'reject') action = 'would_reject';
       else if (validation && validation.ok === false) {
         action = 'would_reject';
-        reason =
-          validation.errors?.[0]?.code === 'rejected'
-            ? 'validation_failed'
-            : validation.errors?.[0]?.code;
+        reason = validation.errors?.[0]?.code;
       } else {
         action = entry.op === 'clear' ? 'would_clear' : 'would_apply';
         writes = true;
@@ -521,7 +547,8 @@ interface AppliedChange {
   key: string;
   status: ChangeStatus;
   reason?: string;
-  message?: string;
+  /** A fixed code of the refusal, when the validation gave one (for example for a Mapping Set). */
+  detail_code?: string;
   /** The tenant's own value before (null: it had none, and inherited). */
   previous: unknown;
   /** The value now (or `"clear"`: back to inheriting); what was asked for when nothing changed. */
@@ -569,7 +596,6 @@ async function applyCategory(
         entry.key,
         settle(entry, failed ? 'failed' : 'rejected', {
           reason: entry.reason,
-          ...(entry.message ? { message: entry.message } : {}),
         })
       );
     }
@@ -621,17 +647,16 @@ async function applyCategory(
             entry.key,
             settle(entry, 'rejected', {
               reason: 'validation_failed',
-              ...(typeof why === 'string' ? { message: capMessage(why) } : {}),
+              ...rejectionDetail(why),
             })
           );
         }
       } else if (answer.status === 400 || answer.status === 404) {
-        const message = messageOf(answer.json);
         results.set(
           entry.key,
           settle(entry, 'rejected', {
             reason: 'validation_failed',
-            ...(message ? { message } : {}),
+            ...refusalDetail(answer),
           })
         );
       } else if (answer.status === 403) {
@@ -775,6 +800,10 @@ export async function bulkApplyHandler(c: BulkContext): Promise<Response> {
 
   const apply = request.mode === 'apply';
   const bulkId = crypto.randomUUID();
+  if (apply) {
+    // From here tenants may be changed: the replay record is held whatever happens next.
+    (c as unknown as { set(name: string, value: unknown): void }).set(BULK_APPLY_STARTED, true);
+  }
   const requestCache: TenantDatabaseRequestCache = new Map();
 
   const results = await mapWithConcurrency(request.tenantIds, TENANT_CONCURRENCY, async (id) => {

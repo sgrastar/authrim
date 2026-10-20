@@ -2503,12 +2503,23 @@ paths:
         once (`settings.bulk_apply`: counts, categories and key names, never a value), and every
         tenant's own audit record carries the bulk ID and, for the keys changed, what was done to each
         (`changed_keys`, `results`), never the values before or after; a failure record holds codes
-        and key names only, not what a validation found. A refusal's `message` is given only for
-        the value that was sent, never for what the tenant has saved. Needs the platform's authority over settings
+        and key names only, not what a validation found. A refusal by a validation gives
+        `reason: validation_failed` and, where there is one, a fixed `detail_code`; the sentence of
+        the validation is never given (it can name what the tenant has saved, or repeat a piece of
+        what was sent), and the allowed values of a setting are read from the settings metadata. Needs the platform's authority over settings
         (a global assignment of a platform role with a global tenant scope, or a machine token for
         every tenant with the settings write permission); a tenant administrator, and an Agent, are
-        refused with 403. Strict rate limit. `Idempotency-Key` is required: the same key with the
-        same body answers with the stored result; with another body, 409.
+        refused with 403. Strict rate limit. `Idempotency-Key` is required (8 to 128 characters): the
+        same key with the same body, by the same administrator or machine principal, answers with
+        the stored result; with another body, 409; another principal's request with the same key
+        is another request. The stored result (which holds the settings and IDs of many tenants) is
+        kept for 15 minutes in the platform's Admin database, never in the database of any
+        tenant, and removed when the time runs out (a scheduled sweep does it even if the
+        administrator never calls again). Once an apply has started, its key is never released:
+        if its result could not be kept, a repeat of the key is a 409 (`result_unknown`) and does
+        not run again, so look at the tenants and use another key to run it again. A request that
+        changed nothing (a preview, a refusal, a failure before the first change) is not kept, so
+        that it can be repeated.
       parameters:
         - $ref: '#/components/parameters/RequiredIdempotencyKey'
       requestBody:
@@ -56652,8 +56663,9 @@ components:
                 properties:
                   code:
                     type: string
-                  message:
+                  detail_code:
                     type: string
+                    description: See `detail_code` of a result.
         version:
           type: string
           nullable: true
@@ -56694,9 +56706,14 @@ components:
             reason the setting cannot be given in bulk (for example `tenant_specific_url`,
             `tenant_ui_routing`, `tenant_brand_text`, `structured_value`), `forbidden`, or
             `validation_failed`. For `conflict`: `version_changed`. For `failed`: a fixed code.
-        message:
+        detail_code:
           type: string
-          description: For a refusal by validation, why (about the value given).
+          description: >-
+            Why a validation refused the key, as a fixed code and never as the sentence of the
+            validation: `value_invalid`, `value_out_of_range`, `value_wrong_type`,
+            `dependency_not_met`, `unknown_key`, `bounds_not_met`, `identity_mapping_*` or
+            `human_verification_*`. What a value may be (range, type, allowed values) is in the
+            settings metadata, `GET /api/admin/settings/meta/{category}`.
         previous:
           nullable: true
           description: The tenant's own value before; null when it had none.

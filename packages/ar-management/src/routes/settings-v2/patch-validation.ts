@@ -634,6 +634,40 @@ export function validateIdentityMappingPatch(
   return null;
 }
 
+/**
+ * What a refusal by a validation is about, for the callers that must not repeat a refusal's text.
+ * `value`: only the value that was sent (its form, range, or the keys of the category), so the
+ * text cannot hold anything the tenant has saved. `state`: it depends on what is saved or stored
+ * (the other settings of the tenant, a database), so the text may name it. Every validation of
+ * `validateCategoryPatch` is listed; one that is not is `state`, the safe reading.
+ */
+export type ValidationKind = 'value' | 'state';
+
+const CATEGORY_VALIDATION_KIND: Readonly<Record<string, ValidationKind>> = {
+  // These take the PATCH body alone (see their signatures).
+  'identity-mapping': 'value',
+  tenant: 'value',
+  dcr: 'value',
+  plugin: 'value',
+  'diagnostic-logging': 'value',
+  'bulk-apply': 'value',
+  assurance: 'value',
+  oauth: 'value',
+  tokens: 'value',
+  'external-idp': 'value',
+  security: 'value',
+  discovery: 'value',
+  // The bounds of the document the save leaves: the tenant's current and inherited values.
+  ciba: 'state',
+  'device-flow': 'state',
+};
+
+export function categoryValidationKind(category: string): ValidationKind {
+  return Object.hasOwn(CATEGORY_VALIDATION_KIND, category)
+    ? CATEGORY_VALIDATION_KIND[category]
+    : 'state';
+}
+
 export function validateCategoryPatch(
   category: string,
   body: SettingsPatchRequest,

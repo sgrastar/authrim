@@ -48,7 +48,6 @@ import {
   DEFAULT_SCOPE_PERMISSIONS,
   // Rate limiting
   rateLimitMiddleware,
-  requiredIdempotencyMiddleware,
   getRateLimitProfileAsync,
   // Logger
   createLogger,
@@ -78,6 +77,7 @@ import { agentElevatedExecutionMiddleware } from '../../agent-elevated-execution
 import { identityMappingReferenceProblem } from './identity-mapping-reference';
 import { applyTenantSettingsChange } from './tenant-settings-apply';
 import { bulkApplyHandler, requireBulkApplyAuthority } from './bulk-apply';
+import { bulkApplyIdempotency } from './bulk-apply-idempotency';
 import {
   canAccessTenant,
   checkRolePermission,
@@ -1411,12 +1411,7 @@ settingsV2.post(
       endpoints: ['/api/admin/settings/bulk-apply'],
     })(c as unknown as RateLimitContext, next);
   },
-  requiredIdempotencyMiddleware({
-    ttlSeconds: 900,
-    failClosedOnStorageError: true,
-    reserveBeforeExecution: true,
-    redactFields: [],
-  }),
+  bulkApplyIdempotency,
   bulkApplyHandler
 );
 

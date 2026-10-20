@@ -17,8 +17,6 @@ export function jsonBytes(value: unknown): number {
 
 /** A value of more than this many bytes (as JSON) is summarised in an answer. */
 export const RESULT_VALUE_CAP = 256;
-/** A message of an answer is cut to this many bytes (as a JSON string). */
-export const MESSAGE_CAP = 300;
 /** The most one value of a request may be (bytes as JSON), and all its values together. */
 export const MAX_REQUEST_VALUE_BYTES = 2048;
 export const MAX_REQUEST_VALUES_BYTES = 32768;
@@ -36,24 +34,12 @@ export function summarizeValue(value: unknown): unknown {
   };
 }
 
-/** A message cut so that, as a JSON string, it takes at most `MESSAGE_CAP` bytes. */
-export function capMessage(message: string): string {
-  let cut = message.slice(0, MESSAGE_CAP);
-  while (cut.length > 0 && jsonBytes(cut) > MESSAGE_CAP) {
-    // Escapes and wide characters make the text longer than it reads: shorten by what is over.
-    const over = jsonBytes(cut) - MESSAGE_CAP;
-    cut = cut.slice(0, Math.max(0, cut.length - Math.max(1, Math.ceil(over / 6))));
-  }
-  return cut;
-}
-
-/** A string of `bytes` bytes as JSON (quotes included): the worst case of a value or a message. */
+/** A string of `bytes` bytes as JSON (quotes included): the worst case of a value. */
 function filler(bytes: number): string {
   return 'x'.repeat(Math.max(0, bytes - 2));
 }
 
 const WORST_VALUE = filler(RESULT_VALUE_CAP);
-const WORST_MESSAGE = filler(MESSAGE_CAP);
 const WORST_CODE = 'x'.repeat(48);
 const VERSION = 'sha256:0000000000000000';
 /** The top of an answer: ID, mode, limits and the counts by status. */
@@ -64,7 +50,7 @@ const IMPACT_BYTES = 160;
 /**
  * An upper bound of the answer, from what the answer is made of. For each tenant: its entry (the
  * real ID) and, for each key, an entry of the shape the mode gives it with the parts that depend
- * on the tenant's data (its own and effective values, a previous value, a message, a code) at their
+ * on the tenant's data (its own and effective values, a previous value, a code) at their
  * largest, and the proposed value as it will be shown (the real one, summarised). It never comes
  * to less than the answer.
  */
@@ -97,7 +83,10 @@ export function estimateResponseBytes(
               proposed: shown,
               action: 'would_reject',
               reason: WORST_CODE,
-              validation: { ok: false, errors: [{ code: WORST_CODE, message: WORST_MESSAGE }] },
+              validation: {
+                ok: false,
+                errors: [{ code: WORST_CODE, detail_code: WORST_CODE }],
+              },
               version: VERSION,
             }
           : {
@@ -105,7 +94,7 @@ export function estimateResponseBytes(
               key,
               status: 'conflict',
               reason: WORST_CODE,
-              message: WORST_MESSAGE,
+              detail_code: WORST_CODE,
               previous: WORST_VALUE,
               new: shown,
               version_before: VERSION,

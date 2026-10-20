@@ -31,7 +31,12 @@ import {
   setRunnerExternalGate,
 } from '../../external-plugin-gate-sync';
 import { identityMappingReferenceProblem } from './identity-mapping-reference';
-import { categoryPatchNeedsState, validateCategoryPatchAt } from './patch-validation';
+import {
+  categoryPatchNeedsState,
+  categoryValidationKind,
+  validateCategoryPatchAt,
+  type ValidationKind,
+} from './patch-validation';
 import {
   canAccessTenant,
   hasTenantSettingsPermission,
@@ -108,6 +113,18 @@ export interface ApplyTenantSettingsChangeInput {
   dryRun?: boolean;
   /** Keep the values of the change out of the audit records and the log (the bulk apply). */
   auditOmitValues?: boolean;
+  /**
+   * Told what a refusal by a validation is about (see `ValidationKind`), for a caller that must not
+   * repeat the text of a refusal that names what the tenant has saved. A refusal this does not
+   * hear of (and a refusal that gives no `code`) is to be read as `state` with no code.
+   */
+  onRefusal?: (refusal: ValidationRefusal) => void;
+}
+
+/** What a validation that refused a save was about; `code` is a fixed one, safe to give. */
+export interface ValidationRefusal {
+  kind: ValidationKind;
+  code?: string;
 }
 
 /**
@@ -185,6 +202,7 @@ export async function applyTenantSettingsChange(
       if (category === 'login-ui') {
         const loginUiValidation = validateLoginUIPatch(body);
         if (!loginUiValidation.ok) {
+          input.onRefusal?.({ kind: 'value', code: 'value_invalid' });
           await auditFailure({
             category,
             scope,
@@ -204,6 +222,7 @@ export async function applyTenantSettingsChange(
       if (category === 'tenant') {
         const tenantUiError = await validateTenantUIPatch(body, c.env, tenantId);
         if (tenantUiError) {
+          input.onRefusal?.({ kind: 'state', code: 'value_invalid' });
           await auditFailure({
             category,
             scope,
@@ -228,6 +247,8 @@ export async function applyTenantSettingsChange(
         patchState && { current: patchState.values, inherited: patchState.inherited.values }
       );
       if (categoryError) {
+        const kind = categoryValidationKind(category);
+        input.onRefusal?.({ kind, code: kind === 'state' ? 'bounds_not_met' : 'value_invalid' });
         await auditFailure({
           category,
           scope,
@@ -261,6 +282,7 @@ export async function applyTenantSettingsChange(
           );
         }
         if (dcrTarget.problem) {
+          input.onRefusal?.({ kind: 'state', code: 'value_invalid' });
           await auditFailure({
             category,
             scope,
@@ -276,6 +298,7 @@ export async function applyTenantSettingsChange(
           tenantId,
         });
         if (mappingProblem) {
+          input.onRefusal?.({ kind: 'state', code: mappingProblem.reason });
           await auditFailure({
             category,
             scope,
@@ -295,6 +318,7 @@ export async function applyTenantSettingsChange(
         dryRun ? 'none' : undefined
       );
       if (!postLoginValidation.ok) {
+        input.onRefusal?.({ kind: 'state', code: 'dependency_not_met' });
         await auditFailure({
           category,
           scope,
@@ -421,6 +445,7 @@ export async function applyTenantSettingsChange(
             )
           : null;
         if (refusal) {
+          input.onRefusal?.({ kind: 'state', code: `human_verification_${refusal.reason}` });
           await auditFailure({
             category,
             scope,
@@ -481,6 +506,9 @@ export async function applyTenantSettingsChange(
       // 200 OK if anything was applied (even with rejections)
       // 400 Bad Request if everything was rejected
       if (!hasApplied && hasRejections) {
+        // The reasons are the manager's: about the keys and values sent, and the metadata of the
+        // settings they depend on, never what the tenant has saved.
+        input.onRefusal?.({ kind: 'value' });
         await auditFailure({
           category,
           scope,

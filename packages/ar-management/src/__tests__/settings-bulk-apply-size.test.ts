@@ -1,9 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
-  capMessage,
   estimateResponseBytes,
   jsonBytes,
-  MESSAGE_CAP,
   RESULT_VALUE_CAP,
   summarizeValue,
 } from '../routes/settings-v2/bulk-apply-size';
@@ -56,16 +54,6 @@ describe('summarizeValue', () => {
   });
 });
 
-describe('capMessage', () => {
-  it.each(SAMPLES)('cuts %s to at most the cap as a JSON string', (_name, text) => {
-    expect(jsonBytes(capMessage(text))).toBeLessThanOrEqual(MESSAGE_CAP);
-  });
-
-  it('leaves a short message alone', () => {
-    expect(capMessage('x is not valid')).toBe('x is not valid');
-  });
-});
-
 describe('estimateResponseBytes', () => {
   const changes = [
     { category: 'discovery', set: { 'discovery.claims_supported': 'a' }, clear: [] },
@@ -111,7 +99,6 @@ describe('estimateResponseBytes as a bound', () => {
   ];
   /** The longest of everything an entry can hold, written out by hand. */
   const own = 'x'.repeat(RESULT_VALUE_CAP - 2);
-  const message = 'x'.repeat(MESSAGE_CAP - 2);
   const preview = (id: string): Record<string, unknown> => ({
     tenant_id: id,
     status: 'nothing_to_do',
@@ -122,7 +109,10 @@ describe('estimateResponseBytes as a bound', () => {
       proposed: 'x'.repeat(254),
       action: 'would_reject',
       reason: 'x'.repeat(40),
-      validation: { ok: false, errors: [{ code: 'x'.repeat(30), message }] },
+      validation: {
+        ok: false,
+        errors: [{ code: 'x'.repeat(30), detail_code: 'x'.repeat(48) }],
+      },
       version: 'sha256:0123456789abcdef',
     })),
     impact: { discovery: { available: false, reason: 'core_database_unavailable' } },
@@ -135,7 +125,7 @@ describe('estimateResponseBytes as a bound', () => {
       key,
       status: 'conflict',
       reason: 'x'.repeat(40),
-      message,
+      detail_code: 'x'.repeat(48),
       previous: own,
       new: 'x'.repeat(254),
       version_before: 'sha256:0123456789abcdef',
@@ -161,5 +151,40 @@ describe('estimateResponseBytes as a bound', () => {
   ] as const)('is not below an answer with the longest of everything, in a %s', (mode, entry) => {
     const answer = frame(mode, ids.map(entry));
     expect(jsonBytes(answer)).toBeLessThanOrEqual(estimateResponseBytes(mode, ids, changes));
+  });
+});
+
+describe('managerRejectionCode', () => {
+  it.each([
+    ['Unknown setting key', 'unknown_key'],
+    ['Not settable at tenant scope', 'unknown_key'],
+    ['Depends on tokens.exchange_enabled which is currently disabled', 'dependency_not_met'],
+    ['Depends on a.b = true', 'dependency_not_met'],
+    ['Expected number, got string', 'value_wrong_type'],
+    ['Expected boolean, got number', 'value_wrong_type'],
+    ['Expected valid JSON string', 'value_wrong_type'],
+    ['Value must be >= 60', 'value_out_of_range'],
+    ['Value must be <= 600', 'value_out_of_range'],
+    ['Value must be a multiple of 1000', 'value_out_of_range'],
+    ['Value must be one of: a, b', 'value_invalid'],
+    ['Conflicting operations for the same key', 'value_invalid'],
+  ])('maps %s to %s, and nothing else of the sentence', async (reason, code) => {
+    const { managerRejectionCode } = await import('../routes/settings-v2/bulk-apply');
+    expect(managerRejectionCode(reason)).toBe(code);
+  });
+
+  it('gives no code for a reason it does not know', async () => {
+    const { managerRejectionCode } = await import('../routes/settings-v2/bulk-apply');
+    expect(managerRejectionCode('Something else, with an ID client-1')).toBeUndefined();
+  });
+});
+
+describe('rejectionDetail', () => {
+  it('gives the code of a known reason, and nothing of a reason it does not know', async () => {
+    const { rejectionDetail } = await import('../routes/settings-v2/bulk-apply');
+    expect(rejectionDetail('Depends on a.b = true')).toEqual({ detail_code: 'dependency_not_met' });
+    expect(rejectionDetail('A sentence that names client-1')).toEqual({});
+    expect(rejectionDetail(undefined)).toEqual({});
+    expect(rejectionDetail({ reason: 'Depends on a' })).toEqual({});
   });
 });
