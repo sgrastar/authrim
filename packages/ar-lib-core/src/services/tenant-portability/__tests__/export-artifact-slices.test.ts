@@ -128,7 +128,6 @@ beforeEach(async () => {
     '012_tenant_backup_cipher_journal.sql',
     '036_tenant_backup_capacity_parts.sql',
     '021_tenant_backup_export_manifests.sql',
-    '012_tenant_backup_cipher_journal.sql',
     '020_tenant_backup_publications.sql',
     '044_tenant_backup_export_dataset_progress.sql',
     '046_tenant_backup_operation_failure_reason.sql',
