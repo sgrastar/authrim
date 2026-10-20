@@ -1,16 +1,23 @@
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
-// The Inspector runs from its own npx install, not the workspace: 2.x brings Vite 8, React 19
-// and its web UI, which would move the workspace's Vite 7 toolchain (vitest, SvelteKit) to 8.
-const INSPECTOR = '@modelcontextprotocol/inspector@2.11.0';
 const packageRoot = fileURLToPath(new URL('..', import.meta.url));
 const fixture = `${packageRoot}/scripts/inspector-server.ts`;
+// The Inspector has its own package and lockfile outside the pnpm workspace: 2.x depends on
+// Vite 8, which would move the workspace's Vite 7 toolchain. npm ci installs exactly the locked
+// tree, with integrity checks and no install scripts.
+const inspectorRoot = `${packageRoot}/tools/mcp-inspector`;
+const inspectorCli = `${inspectorRoot}/node_modules/@modelcontextprotocol/inspector/clients/cli/build/index.js`;
+
+execFileSync('npm', ['ci', '--ignore-scripts', '--no-audit', '--no-fund'], {
+  cwd: inspectorRoot,
+  stdio: ['ignore', 'ignore', 'inherit'],
+});
 
 function inspect(args) {
   const output = execFileSync(
-    'npx',
-    ['--yes', INSPECTOR, '--cli', process.execPath, '--import', 'tsx', fixture, ...args],
+    process.execPath,
+    [inspectorCli, process.execPath, '--import', 'tsx', fixture, ...args],
     {
       cwd: packageRoot,
       encoding: 'utf8',
