@@ -262,7 +262,8 @@ async function expectSameRows(object: Uint8Array) {
   const reader = await readerFor(object);
   for (const [id, bytes] of decoded.datasets) {
     const source = reader.dataset(id);
-    expect(await source.readAll()).toEqual(bytes);
+    // Byte-wise toEqual on multi-MiB arrays is very slow under coverage; compare natively.
+    expect(Buffer.from(await source.readAll()).equals(Buffer.from(bytes))).toBe(true);
     let expected: string | null = null;
     let actual: string | null = null;
     for (;;) {
@@ -499,7 +500,7 @@ describe('frame reader', () => {
     expect([...cache.keys()]).toEqual(['a', 'c']);
   });
 
-  it('returns the same rows and cursors as the in-memory reader for row-aligned frames', async () => {
+  it('returns the same rows and cursors as the in-memory reader for one-shot encoder frames', async () => {
     await expectSameRows(
       await encode({ 'core.a': rows('a', 20_000, 200), 'core.b': rows('b', 3) })
     );
@@ -551,21 +552,27 @@ describe('frame reader', () => {
     );
   });
 
-  it(
-    'reads a 15 MiB row that sliced-export 4 MiB cuts and a stopped transition split',
-    { timeout: 180_000 },
-    async () => {
-      const big = encoder.encode(`{"id":["text","${'y'.repeat(15 * 1024 * 1024)}"]}\n`);
-      const data = { 'core.a': join([rows('a', 3), big, rows('a', 2)]), 'core.b': rows('b', 1) };
-      const all = join(Object.values(data));
-      const mebi = 1024 * 1024;
-      // Fixed 4 MiB cuts inside the big row, with one short frame where a transition stopped.
-      const cuts = [4 * mebi, 6 * mebi, 10 * mebi, 14 * mebi, 18 * mebi].filter(
-        (cut) => cut < all.length
-      );
-      await expectSameRows(await build(data, cuts));
-    }
-  );
+  it('reads a row that sliced-export fixed cuts and a stopped transition split into five frames', async () => {
+    // Scaled down 1:1024 (4 KiB cuts, a 15 KiB row) so it stays fast under CI coverage; the
+    // frame layout is what a 15 MiB row gets from 4 MiB sliced-export frames.
+    const big = encoder.encode(`{"id":["text","${'y'.repeat(15 * 1024)}"]}\n`);
+    const data = { 'core.a': join([rows('a', 3), big, rows('a', 2)]), 'core.b': rows('b', 1) };
+    const all = join(Object.values(data));
+    const kibi = 1024;
+    // Fixed 4 KiB cuts inside the big row, with one short frame where a transition stopped.
+    const cuts = [4 * kibi, 6 * kibi, 10 * kibi, 14 * kibi, 18 * kibi].filter(
+      (cut) => cut < all.length
+    );
+    const object = await build(data, cuts);
+    const verified = await verifyAll(object, TENANT_BACKUP_VERIFY_ALL);
+    const rowStart = data['core.a'].indexOf(big[0], rows('a', 3).length);
+    const spanned = verified.frames.filter(
+      (frame) =>
+        frame.plainOffset < rowStart + big.length && frame.plainOffset + frame.plainBytes > rowStart
+    );
+    expect(spanned).toHaveLength(5);
+    await expectSameRows(object);
+  });
 
   it('fails like the in-memory reader on cursors that are not row starts', async () => {
     const data = { 'core.a': rows('a', 4) };

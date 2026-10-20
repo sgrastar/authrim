@@ -1,8 +1,5 @@
 import { beforeAll, beforeEach, expect, it, vi } from 'vitest';
-import {
-  decodeTenantBackupContainerV2,
-  encodeTenantBackupContainerV2,
-} from '../backup-container-v2';
+import { encodeTenantBackupContainerV2 } from '../backup-container-v2';
 import {
   createTenantBundleKeyEnvelope,
   type TenantBundleKeyEnvelope,
@@ -116,7 +113,6 @@ beforeAll(async () => {
     object.set(part, offset);
     offset += part.length;
   }
-  const decoded = await decodeTenantBackupContainerV2({ parts: [object], session });
   const pinned = {
     size: object.length,
     read: async (from: number, length: number) => object.slice(from, from + length),
@@ -125,8 +121,8 @@ beforeAll(async () => {
     object: pinned,
     session,
     frames: await walkTenantBackupContainerV2Frames({ object: pinned, maxFrames: 100, signal }),
-    datasets: decoded.manifest.datasets,
-    totalBytes: decoded.manifest.totalBytes,
+    datasets: encoded.manifest.datasets,
+    totalBytes: encoded.manifest.totalBytes,
   });
   source = reader.dataset(dataset.id);
 }, 180_000);
