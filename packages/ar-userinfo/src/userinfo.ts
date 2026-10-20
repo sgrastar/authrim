@@ -364,6 +364,8 @@ export async function userinfoHandler(c: Context<{ Bindings: Env }>) {
         // The mapping reads the user's attributes, not only what these scopes release, so it
         // derives the same sub as the ID token does.
         sourceAttributes: userData,
+        // For the shadow comparison of the Mapping Set selection; it does nothing to the response.
+        waitUntil: (promise) => c.executionCtx.waitUntil(promise),
       });
       if (mapped.claims !== userClaims) {
         Object.keys(userClaims).forEach((key) => {

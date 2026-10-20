@@ -896,6 +896,11 @@ export const ADMIN_ROUTE_ACCESS_RULES: AdminRouteAccessRule[] = [
     'identity mapping set usage'
   ),
   readOnly(
+    '/api/admin/identity-mapping/effective',
+    ADMIN_PERMISSIONS.SETTINGS_READ,
+    'identity mapping effective selection'
+  ),
+  readOnly(
     '/api/admin/credential-profiles',
     ADMIN_PERMISSIONS.VC_CREDENTIAL_PROFILES_READ,
     'credential profiles'

@@ -2516,6 +2516,33 @@ describe('Authorization Handler', () => {
         expect(getAuthCodeStore(env).storeCodeRpc).not.toHaveBeenCalled();
       });
 
+      it('hands the shadow comparison of the identity mapping to waitUntil, also when the hint ends the request early', async () => {
+        const sign = await hintSigner();
+        const waitUntil = vi.fn();
+        const response = await app.request(
+          `/authorize?response_type=code&client_id=test-client&redirect_uri=https://example.com/callback&scope=openid&state=hint&prompt=none&id_token_hint=${encodeURIComponent(await sign('another-user'))}`,
+          {
+            method: 'GET',
+            headers: { Cookie: `authrim_session=${encodeURIComponent(TEST_SESSION_ID)}` },
+          },
+          env,
+          { waitUntil, passThroughOnException: vi.fn() } as unknown as ExecutionContext
+        );
+        // The request ended early, with login_required...
+        expect(new URL(response.headers.get('Location')!).searchParams.get('error')).toBe(
+          'login_required'
+        );
+        // ...and the mapping it derived the hint's subject with carries a way to keep the
+        // comparison running past the response.
+        const input = mockDeriveOIDCSubject.mock.calls.at(-1)?.[0] as {
+          waitUntil?: (promise: Promise<unknown>) => void;
+        };
+        expect(input.waitUntil).toBeTypeOf('function');
+        const pending = Promise.resolve();
+        input.waitUntil?.(pending);
+        expect(waitUntil).toHaveBeenCalledWith(pending);
+      });
+
       it('answers login_required to an interactive request when another End-User is signed in', async () => {
         const sign = await hintSigner();
         const response = await app.request(

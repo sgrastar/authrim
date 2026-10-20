@@ -1009,6 +1009,7 @@ import {
   adminIdentityMappingTemplateCreateHandler,
   adminIdentityMappingTemplatesListHandler,
 } from './identity-mapping-control-plane';
+import { adminIdentityMappingEffectiveHandler } from './identity-mapping-effective';
 import { adminIdentityMappingUsageHandler } from './identity-mapping-usage';
 import {
   getLoggingConfig,
@@ -3139,6 +3140,21 @@ app.get(
   '/api/admin/identity-mapping/usage',
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_READ]),
   adminIdentityMappingUsageHandler
+);
+// One app row, the settings (cached by the isolate) and one Admin database read, for one app or
+// the tenant: a standard read, so the moderate profile (the strict one of the usage route is for
+// its fan-out over the tenants' databases).
+app.use('/api/admin/identity-mapping/effective', async (c, next) => {
+  const profile = await getRateLimitProfileAsync(c.env, 'moderate');
+  return rateLimitMiddleware({
+    ...profile,
+    endpoints: ['/api/admin/identity-mapping/effective'],
+  })(c, next);
+});
+app.get(
+  '/api/admin/identity-mapping/effective',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_READ]),
+  adminIdentityMappingEffectiveHandler
 );
 app.get(
   '/api/admin/field-mapping/source-authority-contracts',
