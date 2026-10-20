@@ -4901,6 +4901,52 @@ describe('Admin API Handlers', () => {
       );
     });
 
+    describe('a selector of the older kind (a Destination Profile and no Mapping Set)', () => {
+      it.each([
+        [
+          'destinationProfileId',
+          { destinationProfileId: 'profile-1' },
+          /fieldMappingSetId is required/,
+        ],
+        [
+          'destination_profile_id',
+          { destination_profile_id: 'profile-1' },
+          /destination_profile_id is not accepted/,
+        ],
+      ])('is refused on create and on update, as %s', async (_name, selector, description) => {
+        const createDB = createMockDB({ firstResult: null, runResult: { success: true } });
+        const created = createMockContext({
+          method: 'POST',
+          body: {
+            client_name: 'Old Client',
+            redirect_uris: ['https://example.com/callback'],
+            identity_mapping: selector,
+          },
+          db: createDB,
+        });
+        const createResponse = await adminClientCreateHandler(created);
+        expect(createResponse.status).toBe(400);
+        expect(await createResponse.json()).toMatchObject({
+          error: 'invalid_request',
+          error_description: expect.stringMatching(description),
+        });
+        expect(createDB.prepare).not.toHaveBeenCalledWith(expect.stringContaining('INSERT'));
+
+        const updateDB = createMockDB({
+          firstResult: createOAuthClientRow('mapped-client'),
+          runResult: { success: true, meta: { changes: 1 } },
+        });
+        const updated = createMockContext({
+          method: 'PUT',
+          params: { id: 'mapped-client' },
+          body: { identity_mapping: selector },
+          db: updateDB,
+        });
+        expect((await adminClientUpdateHandler(updated)).status).toBe(400);
+        expect(updateDB.prepare).not.toHaveBeenCalledWith(expect.stringContaining('UPDATE'));
+      });
+    });
+
     describe('the opt-out { mode: "none" }', () => {
       it('is saved on create, as the whole choice, without checking any Mapping Set', async () => {
         const mockDB = createMockDB({ firstResult: null, runResult: { success: true } });

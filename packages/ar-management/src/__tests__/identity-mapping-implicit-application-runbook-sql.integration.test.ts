@@ -873,9 +873,12 @@ describe('identity mapping implicit-application runbook SQL', () => {
       addClient('older-spelling', '{"policySetId":"set-1"}');
       addClient('null-set-older-spelling', '{"fieldMappingSetId":null,"policySetId":"set-1"}');
       addClient('opt-out', '{"mode":"none"}');
+      addClient('set-with-profile', '{"fieldMappingSetId":"set-1","destinationProfileId":"p"}');
+      addClient('opt-out-with-profile', '{"mode":"none","destinationProfileId":"p"}');
       addClient('null-mode', '{"mode":null,"fieldMappingSetId":"set-1"}');
       // Not a choice, or no longer read.
       addClient('profile-only', '{"destinationProfileId":"profile-1"}');
+      addClient('profile-only-snake', '{"destination_profile_id":"profile-1"}');
       addClient('empty-set', '{"fieldMappingSetId":""}');
       addClient('numeric-set', '{"fieldMappingSetId":5}');
       addClient('padded-set', '{"fieldMappingSetId":" set-1"}');
@@ -891,6 +894,7 @@ describe('identity mapping implicit-application runbook SQL', () => {
 
       expect(findings()).toEqual({
         'profile-only': 'profile_only',
+        'profile-only-snake': 'profile_only',
         'empty-set': 'invalid_set_id',
         'numeric-set': 'invalid_set_id',
         'padded-set': 'invalid_set_id',
@@ -930,6 +934,9 @@ describe('identity mapping implicit-application runbook SQL', () => {
         '{"mode":"none"}',
         '{"mode":null,"fieldMappingSetId":"set-1"}',
         '{"destinationProfileId":"p"}',
+        '{"destination_profile_id":"p"}',
+        '{"mode":"none","destinationProfileId":"p"}',
+        '{"fieldMappingSetId":"set-1","destinationProfileId":"p"}',
         '{"fieldMappingSetId":""}',
         '{"fieldMappingSetId":5}',
         '{"fieldMappingSetId":" a"}',
@@ -945,8 +952,8 @@ describe('identity mapping implicit-application runbook SQL', () => {
 
       samples.forEach((sample, index) => {
         const choice = readClientIdentityMappingChoice(sample).kind;
-        const legacyProfile = /destinationProfileId/.test(sample) && choice === 'unset';
-        const expected = choice === 'invalid' || legacyProfile;
+        // A selector of the older kind is not a choice: the selection fails for it.
+        const expected = choice === 'invalid';
         expect(`sample-${index}` in reported, `${sample} (${choice})`).toBe(expected);
       });
     });

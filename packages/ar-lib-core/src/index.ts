@@ -188,6 +188,7 @@ export * from './services/identity-mapping-set-binding';
 export * from './services/identity-mapping-selection';
 export * from './services/settings-bulk-apply-policy';
 export * from './services/identity-mapping-resolution';
+export * from './services/identity-mapping-implicit-activations';
 export * from './services/identity-mapping-platform-checks';
 export * from './services/identity-mapping-set-reference';
 export * from './services/identity-mapping-set-references';

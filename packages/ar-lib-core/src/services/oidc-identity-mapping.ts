@@ -313,8 +313,8 @@ async function applyOIDCDestinationFieldConsent(
   binding: RuntimeIdentityMappingBinding | null
 ): Promise<Record<string, unknown>> {
   // Only a Mapping Set that was selected brings a Destination Profile. An app whose selector names
-  // only a profile (no set) is not bound to it: the profile is not looked up for a request that
-  // no Mapping Set governs, as the consent screen does not look it up.
+  // only a profile (no set) never gets here: the selection fails for it (a selector of that older
+  // kind is not a choice), so the profile's gate is not dropped in silence.
   const profileId = binding?.destinationProfileId;
   const subjectId = typeof input.claims.sub === 'string' ? input.claims.sub : '';
   const authorizedClaimNames = input.authorizedClaimNames ?? [];

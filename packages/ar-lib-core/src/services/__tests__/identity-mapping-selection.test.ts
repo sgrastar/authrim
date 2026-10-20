@@ -145,7 +145,7 @@ describe('selectIdentityMapping: the order', () => {
     );
 
     it('treats an app row that holds nothing (an empty object, no row value) as unset', async () => {
-      for (const raw of [undefined, null, '', '  ', {}, { destinationProfileId: 'profile-1' }]) {
+      for (const raw of [undefined, null, '', '  ', {}, { destinationNamespace: 'oidc.claim' }]) {
         expect(await outcome(raw, documents('set', 'unset'))).toMatchObject({
           kind: 'bound',
           tier: 'tenant_default',
@@ -207,6 +207,52 @@ describe('selectIdentityMapping: the app’s own value', () => {
       name: 'IdentityMappingSelectionError',
       code: 'client_selector_invalid',
       tier: 'client',
+    });
+  });
+
+  describe('a selector of the older kind: a Destination Profile and no Mapping Set', () => {
+    it.each([
+      ['destinationProfileId', { destinationProfileId: 'profile-1' }],
+      ['destination_profile_id', { destination_profile_id: 'profile-1' }],
+      ['an empty destinationProfileId', { destinationProfileId: '' }],
+      [
+        'a profile beside the other fields',
+        { destinationProfileId: 'p', destinationNamespace: 'x' },
+      ],
+      ['the stored JSON text', '{"destinationProfileId":"profile-1"}'],
+    ])('fails for %s, whatever the defaults say', async (_name, raw) => {
+      for (const docs of [documents('set', 'set'), documents('none', 'unset'), {}]) {
+        const error = await select(raw, docs).then(
+          () => undefined,
+          (thrown: unknown) => thrown
+        );
+
+        expect(error).toMatchObject({
+          name: 'IdentityMappingSelectionError',
+          code: 'client_selector_invalid',
+          tier: 'client',
+          reasonCode: 'legacy_profile_only_selector',
+        });
+      }
+    });
+
+    it('is read as invalid, with the reason', () => {
+      expect(readClientIdentityMappingChoice({ destinationProfileId: 'p' })).toEqual({
+        kind: 'invalid',
+        reason: 'legacy_profile_only_selector',
+      });
+    });
+
+    it.each([
+      ['a Mapping Set', { fieldMappingSetId: 'set-A', destinationProfileId: 'p' }, 'set'],
+      [
+        'the older spelling of a Mapping Set',
+        { policySetId: 'set-A', destinationProfileId: 'p' },
+        'set',
+      ],
+      ['the opt-out', { mode: 'none', destinationProfileId: 'p' }, 'none'],
+    ])('is not one when it also names %s', (_name, raw, kind) => {
+      expect(readClientIdentityMappingChoice(raw).kind).toBe(kind);
     });
   });
 

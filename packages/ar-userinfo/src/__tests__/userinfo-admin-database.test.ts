@@ -314,6 +314,24 @@ describe('UserInfo and the Admin database', () => {
     expect(body).toMatchObject({ error: 'invalid_client_metadata' });
   });
 
+  it('answers 400 for an app whose selector is of the older kind (a Destination Profile, no Mapping Set)', async () => {
+    mockGetClientCached.mockResolvedValue({
+      client_id: 'client-1',
+      identity_mapping: { destinationProfileId: 'profile-1' },
+    });
+
+    const { body, status } = await userinfo({
+      DB_ADMIN: fakeD1('admin') as never,
+      SETTINGS: settingsWith({ tenant: 'set-tenant' }),
+    });
+
+    // Its profile's gate is not dropped in silence: nothing is released.
+    expect(status).toBe(400);
+    expect(body).toMatchObject({ error: 'invalid_client_metadata' });
+    expect(body).not.toHaveProperty('email');
+    expect(mappingLookups.setIds).toEqual([]);
+  });
+
   it('answers 500 when the settings cannot be read', async () => {
     const { status } = await userinfo({
       DB_ADMIN: fakeD1('admin') as never,

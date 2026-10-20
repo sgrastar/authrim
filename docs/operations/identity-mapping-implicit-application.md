@@ -29,13 +29,13 @@ default, or as the platform default).
 
 ## What changes in a running environment
 
-| Situation (app names no Mapping Set)                             | Before                                                                                               | After                                                                                                              |
-| ---------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
-| The tenant has an activation that fits every OIDC call           | That Mapping Set applied to the app (ID token, UserInfo and consent could each differ by the Worker) | Nothing applies, unless the tenant or the platform names a default                                                 |
-| No activation                                                    | Nothing applied                                                                                      | Nothing applies                                                                                                    |
-| The Admin database cannot be read (not bound, no table, error)   | The request went on without the mapping and logged `identity_mapping_resolution_swallowed`           | Nothing is looked up for an app bound to nothing, so nothing fails; a **named** Mapping Set fails without DB_ADMIN |
-| The tenant names a default, or the app names a Mapping Set       | Only the app's own choice was read                                                                   | The named set applies in every Worker; one that cannot be used fails the request                                   |
-| The app's `identity_mapping` holds only a `destinationProfileId` | That Destination Profile held the claims and set the fields the consent screen asked about           | Ignored: the app is bound to nothing (or to the default). See Statement 3                                          |
+| Situation (app names no Mapping Set)                             | Before                                                                                               | After                                                                                                                    |
+| ---------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| The tenant has an activation that fits every OIDC call           | That Mapping Set applied to the app (ID token, UserInfo and consent could each differ by the Worker) | Nothing applies, unless the tenant or the platform names a default                                                       |
+| No activation                                                    | Nothing applied                                                                                      | Nothing applies                                                                                                          |
+| The Admin database cannot be read (not bound, no table, error)   | The request went on without the mapping and logged `identity_mapping_resolution_swallowed`           | Nothing is looked up for an app bound to nothing, so nothing fails; a **named** Mapping Set fails without DB_ADMIN       |
+| The tenant names a default, or the app names a Mapping Set       | Only the app's own choice was read                                                                   | The named set applies in every Worker; one that cannot be used fails the request                                         |
+| The app's `identity_mapping` holds only a `destinationProfileId` | That Destination Profile held the claims and set the fields the consent screen asked about           | **Fails** the request (`invalid_client`), so its profile's gate is not dropped in silence. Fix it first: see Statement 3 |
 
 Other protocols are not changed by this: SAML, Introspection, VC and SCIM keep their own ways of
 naming a mapping (a Mapping Set on the provider or profile, or the older lookups that are still in
@@ -97,6 +97,23 @@ the default; `{"mode": "none"}` does not, and the two must not be mixed up.
 
 To check what an app is bound to, and why, ask the admin API that runs the same selection as the
 runtime: `GET /api/admin/identity-mapping/effective?client_id=<client id>`.
+
+**After the switch**, an implicit application that stopped working shows up there too. When
+nothing is named for the tenant (`selection.reason` is `no_default`) and the tenant still has an
+active activation that fits an OIDC call, the answer carries a warning:
+
+```json
+"warnings": [{ "code": "implicit_activation_no_longer_applies",
+               "activations": [{ "activationId": "...", "setId": "...", "setName": "..." }] }]
+```
+
+It names the activations and their Mapping Sets (IDs and names only) that once applied to the
+apps naming no Mapping Set, and no longer do. Name the set as the tenant default to keep what it
+did, or leave it unset on purpose (the warning goes away when a default, or the tenant's `none`, is
+saved). `warnings_unavailable: true` means the Admin database could not be read for the check. The
+preview of the bulk apply gives the same warning per tenant in `impact.warnings`, and counts in
+`impact.apps_with_unusable_choice` the apps whose selector names only a Destination Profile
+(Statement 3), which fail rather than follow the default.
 
 ## How the old lookup picked an activation (what Statements 1 and 2 reproduce)
 
@@ -324,7 +341,8 @@ npx wrangler d1 execute <CORE_DATABASE_NAME> --remote --json --command "$(cat ap
 - `without_mapping_set`: apps the old lookup treated as naming no Mapping Set: `NULL`, text that is
   not JSON, or JSON without a non-empty `fieldMappingSetId` (an old `destinationProfileId`-only
   selector, for example). Only these apps were looked up by activation at all. Since this change
-  they follow the default instead (Statement 3 lists the shapes that fail rather than follow it).
+  a `NULL` one follows the default instead, and a `destinationProfileId`-only one fails (Statement 3
+  lists the shapes that fail rather than follow it).
 - `bound_by_client_activation`: of those, the apps on your list. They take the `one_client`
   activation that names them (Statement 1, `wins_for_named_app = 1`), whether or not a
   tenant-wide activation exists.
@@ -406,7 +424,7 @@ SELECT *
              CASE WHEN root_type = 'object' THEN json_extract(raw, '$.mode') END AS mode_value,
              CASE WHEN root_type = 'object' THEN NULLIF(json_type(raw, '$.fieldMappingSetId'), 'null') END AS set_type,
              CASE WHEN root_type = 'object' THEN NULLIF(json_type(raw, '$.policySetId'), 'null') END AS old_set_type,
-             CASE WHEN root_type = 'object' THEN NULLIF(json_type(raw, '$.destinationProfileId'), 'null') END AS profile_type
+             CASE WHEN root_type = 'object' THEN COALESCE(NULLIF(json_type(raw, '$.destinationProfileId'), 'null'), NULLIF(json_type(raw, '$.destination_profile_id'), 'null')) END AS profile_type
         FROM sel
     ),
     named AS (
@@ -427,7 +445,7 @@ SELECT *
              WHEN named_type IS NULL THEN NULL
              WHEN named_type <> 'text' OR named_value = '' OR named_value <> trim(named_value) OR length(named_value) > 200 THEN 'invalid_set_id'
            END AS finding,
-           CASE WHEN named_type IS NULL AND profile_type = 'text' THEN json_extract(raw, '$.destinationProfileId') END AS destination_profile_id
+           CASE WHEN named_type IS NULL AND profile_type = 'text' THEN COALESCE(json_extract(raw, '$.destinationProfileId'), json_extract(raw, '$.destination_profile_id')) END AS destination_profile_id
       FROM named
   )
  WHERE finding IS NOT NULL
@@ -439,15 +457,19 @@ SELECT *
 npx wrangler d1 execute <CORE_DATABASE_NAME> --remote --json --command "$(cat legacy-selectors.sql)"
 ```
 
-| `finding`                   | Meaning                                                                                                                                                                                                                                                                   | What to do                                                                                                                                                                            |
-| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `profile_only`              | An object with a `destinationProfileId` (and no Mapping Set). Before, that Destination Profile held the claims and set the fields asked about on the consent screen. Now it is ignored: the app follows the default, or none. `destination_profile_id` names the profile. | Decide whether the app should use a Mapping Set whose Destination Profile it is; if so select that Mapping Set on the app. If not, clear `identity_mapping` or set `{"mode":"none"}`. |
-| `invalid_set_id`            | A Mapping Set ID that is not a non-empty string without surrounding spaces and up to 200 characters (`""`, a number, ...). The release fails for the app (`invalid_client`).                                                                                              | Save the app again with a Mapping Set, or clear `identity_mapping`.                                                                                                                   |
-| `invalid_mode`              | A `mode` other than `none`, or `none` beside a Mapping Set. The release fails for the app.                                                                                                                                                                                | Save `{"mode":"none"}` alone, or a Mapping Set alone.                                                                                                                                 |
-| `not_json`, `not_an_object` | Text that is not a JSON object. The release fails for the app.                                                                                                                                                                                                            | Clear `identity_mapping`.                                                                                                                                                             |
+| `finding`                   | Meaning                                                                                                                                                                                                                                                                                                                                                                             | What to do                                                                                                                                                                                     |
+| --------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `profile_only`              | An object with a `destinationProfileId` (and no Mapping Set). Before, that Destination Profile held the claims and set the fields asked about on the consent screen. It binds nothing now, and the app **fails** (`invalid_client`) rather than lose that gate in silence. `destination_profile_id` names the profile (`destinationProfileId` or `destination_profile_id` is read). | Select the Mapping Set whose Destination Profile it is on the app (`fieldMappingSetId`), or save `{"mode":"none"}`; clear `identity_mapping` only if the app should follow the tenant default. |
+| `invalid_set_id`            | A Mapping Set ID that is not a non-empty string without surrounding spaces and up to 200 characters (`""`, a number, ...). The release fails for the app (`invalid_client`).                                                                                                                                                                                                        | Save the app again with a Mapping Set, or clear `identity_mapping`.                                                                                                                            |
+| `invalid_mode`              | A `mode` other than `none`, or `none` beside a Mapping Set. The release fails for the app.                                                                                                                                                                                                                                                                                          | Save `{"mode":"none"}` alone, or a Mapping Set alone.                                                                                                                                          |
+| `not_json`, `not_an_object` | Text that is not a JSON object. The release fails for the app.                                                                                                                                                                                                                                                                                                                      | Clear `identity_mapping`.                                                                                                                                                                      |
+
+**These rows fail after the switch.** Fix each one before you deploy: select a Mapping Set
+(`fieldMappingSetId`) or save `{"mode":"none"}`; a row that should simply follow the default is
+cleared (`NULL`).
 
 An app whose `identity_mapping` is `NULL`, empty, `null`, `{}`, or an object with no Mapping Set
-and no `destinationProfileId` is unset, and follows the default. (The admin API refuses to save
+and no destination profile is unset, and follows the default. (The admin API refuses to save
 most of these shapes, so the rows come from hand edits or older versions.)
 
 ## Rolling back

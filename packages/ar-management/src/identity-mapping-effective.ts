@@ -11,11 +11,19 @@
  *
  * The selection itself reads no database. The name and owner of each set it names are read from
  * the Admin database in one query; if that cannot be read, the answer is the same without them.
+ *
+ * `warnings`: when the selection is none because nothing is named (`no_default`) and the tenant has
+ * an active activation that the OIDC release used to apply to an app naming no Mapping Set, the
+ * answer says it no longer does (`implicit_activation_no_longer_applies`), with the IDs and names of
+ * those activations and their sets, and nothing else. That is one more query on the Admin database,
+ * made only for that answer; if it cannot be made the answer is the same with
+ * `warnings_unavailable: true`.
  */
 import type { Context } from 'hono';
 import {
   createAuthContextFromHono,
   ensureAdminDatabaseAdapter,
+  findImplicitOidcActivations,
   getTenantIdFromContext,
   IdentityMappingSelectionError,
   PLATFORM_MAPPING_TENANT_ID,
@@ -111,6 +119,36 @@ function describeSelection(
   };
 }
 
+/**
+ * The activations of the calling tenant that stopped applying (see `findImplicitOidcActivations`),
+ * as the warnings of the answer. Only this tenant's rows are read; what is returned is IDs and
+ * names.
+ */
+async function readImplicitActivationWarnings(
+  c: Context<{ Bindings: Env }>,
+  tenantId: string,
+  clientId: string | undefined
+): Promise<{
+  warnings: Array<{
+    code: 'implicit_activation_no_longer_applies';
+    activations: Array<{ activationId: string; setId: string; setName?: string }>;
+  }>;
+  warnings_unavailable?: true;
+}> {
+  try {
+    const admin = ensureAdminDatabaseAdapter(c.env, 'identity-mapping-effective');
+    if (!admin) return { warnings: [], warnings_unavailable: true };
+    const activations = await findImplicitOidcActivations(admin, { tenantId, clientId });
+    return activations.length === 0
+      ? { warnings: [] }
+      : {
+          warnings: [{ code: 'implicit_activation_no_longer_applies', activations }],
+        };
+  } catch {
+    return { warnings: [], warnings_unavailable: true };
+  }
+}
+
 export async function adminIdentityMappingEffectiveHandler(c: Context<{ Bindings: Env }>) {
   const clientId = c.req.query('client_id');
   if (
@@ -173,6 +211,11 @@ export async function adminIdentityMappingEffectiveHandler(c: Context<{ Bindings
     const setIds = [...new Set(chain.flatMap((entry) => (entry.setId ? [entry.setId] : [])))];
     const facts = await readSetFacts(c, tenantId, setIds);
 
+    const implicit =
+      selection?.kind === 'none' && selection.reason === 'no_default'
+        ? await readImplicitActivationWarnings(c, tenantId, clientId)
+        : { warnings: [] };
+
     return c.json({
       tenantId,
       clientId: clientId ?? null,
@@ -180,8 +223,14 @@ export async function adminIdentityMappingEffectiveHandler(c: Context<{ Bindings
         ? describeSelection(selection, facts)
         : // The level that failed is named, never its value: the selection fails rather than
           // fall to another level.
-          { kind: 'failed' as const, code: failure!.code, tier: failure!.tier },
+          {
+            kind: 'failed' as const,
+            code: failure!.code,
+            tier: failure!.tier,
+            ...(failure!.reasonCode ? { reason: failure!.reasonCode } : {}),
+          },
       chain: describeChain(chain, facts),
+      ...implicit,
     });
   } catch {
     return c.json(

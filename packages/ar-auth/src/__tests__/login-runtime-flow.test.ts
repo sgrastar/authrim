@@ -4,6 +4,7 @@ import {
   IdentityMappingResolutionError,
   IdentityMappingSelectionError,
   OIDCIdentityMappingRuntimeError,
+  readClientIdentityMappingChoice,
   type DatabaseAdapter,
   type Env,
   type FlowRuntimeContract,
@@ -793,6 +794,19 @@ function oidcResolution(setId: string | null, destinationProfileId = 'destinatio
     : { selection: { kind: 'none', reason: 'no_default', chain }, binding: null };
 }
 
+/** The selection's reading of the app's own choice is the real one: what it rejects fails here too. */
+function failIfNotAChoice(clientSelector: unknown): void {
+  const choice = readClientIdentityMappingChoice(clientSelector);
+  if (choice.kind === 'invalid') {
+    throw new IdentityMappingSelectionError(
+      'client_selector_invalid',
+      'client',
+      undefined,
+      choice.reason
+    );
+  }
+}
+
 function namedSetId(clientSelector: unknown): string | null {
   try {
     const value =
@@ -807,7 +821,10 @@ function resetAdapter() {
   vi.clearAllMocks();
   mocks.resolveOidcIdentityMappingBinding.mockReset();
   mocks.resolveOidcIdentityMappingBinding.mockImplementation(
-    async (input: { clientSelector: unknown }) => oidcResolution(namedSetId(input.clientSelector))
+    async (input: { clientSelector: unknown }) => {
+      failIfNotAChoice(input.clientSelector);
+      return oidcResolution(namedSetId(input.clientSelector));
+    }
   );
   txExecuteCalls.length = 0;
   mocks.coreAdapter.query.mockReset();
@@ -2338,10 +2355,6 @@ describe('LoginUI runtime Flow handlers', () => {
     it.each([
       ['has no choice of its own', { identity_mapping: null }],
       ['opts out with { mode: "none" }', { identity_mapping: JSON.stringify({ mode: 'none' }) }],
-      [
-        'names only a Destination Profile (a selector of the older kind), which binds nothing',
-        { identity_mapping: JSON.stringify({ destinationProfileId: 'destination_oidc_1' }) },
-      ],
     ])(
       'asks about no fields when it %s, with or without the Admin database',
       async (_name, row) => {
@@ -2354,6 +2367,22 @@ describe('LoginUI runtime Flow handlers', () => {
           // No Destination Profile was looked up, and no activation was looked for by its scope.
           expect(mocks.adminAdapter.queryOne).not.toHaveBeenCalled();
           expect(mocks.resolveRuntimeIdentityMappingBinding).not.toHaveBeenCalled();
+        }
+      }
+    );
+
+    it.each([{ destinationProfileId: 'destination_oidc_1' }, { destination_profile_id: 'p' }])(
+      'fails for a selector of the older kind (%j), with or without the Admin database',
+      async (legacy) => {
+        for (const env of [{ DB_ADMIN: mocks.adminAdapter as never }, {}]) {
+          resetAdapter();
+
+          await expect(
+            consentOf({ identity_mapping: JSON.stringify(legacy) }, env)
+          ).rejects.toBeInstanceOf(OIDCIdentityMappingRuntimeError);
+          // Its Destination Profile was not looked up: it holds no gate any more, and the screen
+          // is not shown without one.
+          expect(mocks.adminAdapter.queryOne).not.toHaveBeenCalled();
         }
       }
     );

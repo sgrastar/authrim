@@ -597,6 +597,14 @@ function validateOptionalIdentityMappingSelectorField(
     }
     return { ok: true, value: { mode: 'none' } };
   }
+  // A selector of the older kind (a Destination Profile and no Mapping Set) is not a choice: the
+  // release fails for an app that holds one, so it is not saved, whatever the spelling.
+  if (source.destination_profile_id !== undefined && source.destination_profile_id !== null) {
+    return {
+      ok: false,
+      error: `${field}.destination_profile_id is not accepted; name a Mapping Set (fieldMappingSetId) or use { "mode": "none" }`,
+    };
+  }
   for (const key of [
     'fieldMappingSetId',
     'fieldMappingVersionId',

@@ -415,25 +415,65 @@ describe('an app with no Mapping Set of its own, and an activation for the whole
 });
 
 describe('an app whose selector names only a Destination Profile (the older kind)', () => {
+  const legacy = { destinationProfileId: 'profile-1' };
+
+  // That profile once held the app's claims and its consent screen. It binds nothing now, and the
+  // app must not lose that gate in silence: every entrance fails for it.
   it.each([
     ['with the Admin database', true],
     ['without the Admin database', false],
-  ])('is bound to nothing, and no profile holds its claims, %s', async (_name, adminBound) => {
-    const { binding, claims } = await apply(workerEnv({}, adminBound), {
-      destinationProfileId: 'profile-1',
-    });
+  ])('fails on every entrance, %s', async (_name, adminBound) => {
+    for (const defaults of [{}, { tenant: 'set-T' }, { platform: 'set-P' }, { tenant: 'none' }]) {
+      for (const surface of ['id_token', 'userinfo', 'subject'] as const) {
+        const outcomeOf = await outcome(() =>
+          apply(workerEnv(defaults, adminBound), legacy, surface)
+        );
 
-    expect(binding).toBeNull();
-    expect(claims).toMatchObject({ email: 'alice@example.com', name: 'Alice Example' });
-    expect(fixture.lookups.filter((sql) => sql.includes('destination_profiles'))).toEqual([]);
+        expect(outcomeOf).toBe('error:policy.invalid_client_identity_mapping');
+      }
+    }
+    expect(fixture.lookups).toEqual([]);
   });
 
-  it('follows the tenant default, as an app with no selector does', async () => {
-    const { binding } = await apply(workerEnv({ tenant: 'set-T' }), {
-      destinationProfileId: 'profile-1',
+  it('stops the consent screen’s lookup too', async () => {
+    await expect(
+      resolveOidcIdentityMappingBinding({
+        env: workerEnv({ tenant: 'set-T' }),
+        tenantId: 'tenant-a',
+        clientId: 'client-a',
+        clientSelector: legacy,
+      })
+    ).rejects.toMatchObject({
+      name: 'IdentityMappingSelectionError',
+      code: 'client_selector_invalid',
     });
+  });
 
-    expect(binding?.fieldMappingSetId).toBe('set-T');
+  it('answers invalid_client (400) for the ID token', async () => {
+    const result = await mapIDTokenClaims(
+      {
+        env: workerEnv(),
+        adapter: coreDatabase().adapter,
+        tenantId: 'tenant-a',
+        clientId: 'client-a',
+        clientMetadata: { client_id: 'client-a', identity_mapping: legacy },
+        loadUserAttributes: async () => null,
+        log: { warn: vi.fn(), error: vi.fn() },
+      } as unknown as IDTokenReleaseContext,
+      { ...USER_CLAIMS },
+      ALL_SCOPES
+    );
+
+    expect(result).toMatchObject({ ok: false, failure: { error: 'invalid_client', status: 400 } });
+  });
+
+  it('is no longer a failure once the app names a Mapping Set or opts out', async () => {
+    expect(
+      (await apply(workerEnv(), { ...legacy, fieldMappingSetId: 'set-A' })).binding
+    ).toMatchObject({
+      fieldMappingSetId: 'set-A',
+    });
+    expect((await apply(workerEnv(), { mode: 'none' })).binding).toBeNull();
   });
 });
 
