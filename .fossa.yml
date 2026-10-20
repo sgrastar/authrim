@@ -1,0 +1,8 @@
+# FOSSA license analysis settings.
+version: 3
+
+paths:
+  exclude:
+    # Development-only MCP Inspector for the manual test:inspector gate. It has its own npm
+    # lockfile outside the pnpm workspace and is never built into or shipped with Authrim.
+    - ./packages/ar-agent-access/tools/mcp-inspector
