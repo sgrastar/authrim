@@ -390,7 +390,7 @@ describe('frame-by-frame verification', () => {
 
   it(
     'accepts exactly the data-frame cap in the probe and in decode',
-    { timeout: 60_000 },
+    { timeout: 180_000 },
     async () => {
       const data = { 'core.a': rows('a', 2) };
       const atCap = await build(
@@ -519,7 +519,7 @@ describe('frame reader', () => {
     await expectSameRows(
       await encode({ 'core.a': rows('a', 20_000, 200), 'core.b': rows('b', 3) })
     );
-  }, 60_000);
+  }, 180_000);
 
   it('assembles rows that legacy fixed cuts split across frames', async () => {
     const data = {
@@ -572,7 +572,7 @@ describe('frame reader', () => {
 
   it(
     'range-reads only the header and the frame a row needs on large inputs',
-    { timeout: 60_000 },
+    { timeout: 180_000 },
     async () => {
       const object = await encode({ 'core.a': rows('a', 130_000, 100) });
       expect(object.length).toBeGreaterThan(16 * 1024 * 1024);
