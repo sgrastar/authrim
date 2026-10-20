@@ -6,6 +6,8 @@ import { encodeTenantBundle, type TenantBundleDatasetSource } from './bundle-cod
 import type { EncodedTenantBackupContainerV2 } from './backup-container-v2';
 
 const PART_BYTES = 16 * 1024 * 1024;
+/** Largest artifact part any writer stores; readers accept parts up to this size. */
+export const TENANT_BACKUP_ARTIFACT_PART_MAX_BYTES = PART_BYTES;
 const LEGACY_PART_BYTES = 4 * 1024 * 1024;
 type Database = Pick<DatabaseAdapter, 'queryOne' | 'execute'>;
 interface ObjectReceipt {
@@ -243,6 +245,38 @@ export class TenantBackupArtifactWriter {
       [this.attemptId, this.lease.tenantId, ordinal, sha, ...this.params()]
     );
     if (!receipt) fail();
+  }
+  /**
+   * Byte counts of parts reserved at or after `fromOrdinal`. A slice that failed after writing
+   * parts left these; its retry must cut the same frames, so it reads their lengths back.
+   */
+  async reservedPartSizes(fromOrdinal: number): Promise<Map<number, number>> {
+    if (!Number.isSafeInteger(fromOrdinal) || fromOrdinal < 0) fail();
+    const row = await this.db.queryOne<{ parts: string }>(
+      `SELECT json_group_array(json_array(ordinal,byte_count)) AS parts FROM (
+      SELECT ordinal,byte_count FROM tenant_backup_artifact_parts
+      WHERE attempt_id=? AND tenant_id=? AND ordinal>=? AND ${ACTIVE} ORDER BY ordinal)`,
+      [this.attemptId, this.lease.tenantId, fromOrdinal, ...this.params()]
+    );
+    let values: unknown;
+    try {
+      values = JSON.parse(row?.parts ?? 'null');
+    } catch {
+      fail();
+    }
+    if (!Array.isArray(values)) fail();
+    const sizes = new Map<number, number>();
+    for (const value of values) {
+      if (
+        !Array.isArray(value) ||
+        !Number.isSafeInteger(value[0]) ||
+        !Number.isSafeInteger(value[1]) ||
+        (value[1] as number) < 1
+      )
+        fail();
+      sizes.set(value[0] as number, value[1] as number);
+    }
+    return sizes;
   }
   /** Retries must repeat identical values; a different value for a saved dataset fails. */
   async saveDatasetStats(stats: readonly TenantBackupExportDatasetStat[]): Promise<void> {

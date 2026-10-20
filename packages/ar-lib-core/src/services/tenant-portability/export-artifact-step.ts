@@ -1,4 +1,5 @@
 import {
+  TENANT_BACKUP_CONTAINER_V2_MAX_OBJECT_BYTES,
   openTenantBackupContainerV2Cipher,
   tenantBackupContainerV2Metadata,
   type TenantBackupContainerDatasetV2,
@@ -13,16 +14,17 @@ import { openTenantBackupCheckpointSeal, type TenantBackupCheckpointSeal } from 
 
 type WriterArguments = Parameters<typeof TenantBackupArtifactWriter.resume>;
 /**
- * A data frame closes at the first row end at or past this size, or is cut at FRAME_MAX_BYTES
- * inside an oversize record. Both rules depend only on the exported bytes, so a retried slice
- * re-encrypts identical plaintext under each nonce.
+ * Data frames hold this much plaintext, cut at fixed positions of the exported byte stream, never
+ * where a read batch happened to end. A transition that stops on its budget writes what it holds
+ * as one shorter frame. A retry re-cuts frames a failed slice already reserved at their recorded
+ * lengths, so each nonce is only ever used for the same plaintext.
  */
-const FRAME_TARGET_BYTES = 4 * 1024 * 1024;
-/** One frame plus the header or the metadata frame must fit in a 16 MiB artifact part. */
-const FRAME_MAX_BYTES = 12 * 1024 * 1024;
+const FRAME_BYTES = 4 * 1024 * 1024;
+/** Frame header and AES-GCM tag around a frame's ciphertext. */
+const FRAME_OVERHEAD_BYTES = 9 + 16;
 /**
- * readNext calls after which a transition stops once nothing is buffered. Each call is bounded by
- * the reader's own query budget; the scheduler run has a deadline across transitions on top.
+ * readNext calls after which a transition stops, with or without buffered bytes. Each call is
+ * bounded by the reader's own query budget; the scheduler run has a deadline across transitions.
  */
 const STEP_READ_CALLS = 120;
 const CURSOR_LIMIT = 16384;
@@ -200,8 +202,8 @@ export async function runTenantBackupArtifactStep(
       readSession?: object
     ) => Promise<{ bytes: Uint8Array; nextCursor: string } | null>;
     assertBoundary: () => Promise<void>;
-    /** Smaller frames and read budgets let tests cross many slices with little data. */
-    slice?: { frameTargetBytes: number; frameMaxBytes?: number; readCalls: number };
+    /** Smaller frames, budgets and size caps let tests cross many slices with little data. */
+    slice?: { frameBytes: number; readCalls: number; maxObjectBytes?: number };
   }
 ): Promise<TenantBackupStepResult> {
   const { operation, lease, signal } = context;
@@ -215,17 +217,18 @@ export async function runTenantBackupArtifactStep(
     input.expected.source.tenantId !== lease.tenantId
   )
     throw new Error('backup_export_step_context');
-  const frameTarget = input.slice?.frameTargetBytes ?? FRAME_TARGET_BYTES;
-  const frameMax = input.slice?.frameMaxBytes ?? FRAME_MAX_BYTES;
+  const frameBytes = input.slice?.frameBytes ?? FRAME_BYTES;
   const readCalls = input.slice?.readCalls ?? STEP_READ_CALLS;
+  const maxObjectBytes = input.slice?.maxObjectBytes ?? TENANT_BACKUP_CONTAINER_V2_MAX_OBJECT_BYTES;
   if (
-    !Number.isSafeInteger(frameTarget) ||
-    frameTarget < 1 ||
-    !Number.isSafeInteger(frameMax) ||
-    frameMax < frameTarget ||
-    frameMax > FRAME_MAX_BYTES ||
+    !Number.isSafeInteger(frameBytes) ||
+    frameBytes < 1 ||
+    frameBytes > FRAME_BYTES ||
     !Number.isSafeInteger(readCalls) ||
-    readCalls < 1
+    readCalls < 1 ||
+    !Number.isSafeInteger(maxObjectBytes) ||
+    maxObjectBytes < 1 ||
+    maxObjectBytes > TENANT_BACKUP_CONTAINER_V2_MAX_OBJECT_BYTES
   )
     throw new Error('backup_export_step_context');
   const salt = await tenantBackupSlicedExportSalt(input.attemptId);
@@ -267,6 +270,11 @@ export async function runTenantBackupArtifactStep(
   // A sealed attempt means the last slice finished but its checkpoint was lost.
   if (written.state === 'sealed') return verify;
   if (written.reservedParts < state.parts) fail();
+  // Parts that a failed slice reserved after this checkpoint fix the frames this retry must cut.
+  const reserved =
+    written.reservedParts > state.parts
+      ? await writer.reservedPartSizes(state.parts)
+      : new Map<number, number>();
 
   const cipher = await openTenantBackupContainerV2Cipher(input.key, salt);
   const dataHash = ResumableSha256.restore(secrets.dataHash);
@@ -281,6 +289,9 @@ export async function runTenantBackupArtifactStep(
   const writePart = async (pieces: Uint8Array[]): Promise<void> => {
     if (state.parts === 0) pieces.unshift(cipher.header);
     const part = join(pieces);
+    // Import decodes whole containers up to this size; a larger artifact could not be restored.
+    if (state.objectBytes + part.length > maxObjectBytes)
+      throw new Error('backup_export_too_large');
     signal.throwIfAborted();
     await input.assertBoundary();
     await writer.writePart(state.parts, part);
@@ -293,18 +304,31 @@ export async function runTenantBackupArtifactStep(
     state.offset += plain.length;
     return frame;
   };
-  const takeBuffer = (): Uint8Array => {
-    const plain = join(buffer);
-    buffer = [];
-    bufferBytes = 0;
+  const takeBuffer = (length = bufferBytes): Uint8Array => {
+    const all = join(buffer);
+    buffer = length < all.length ? [all.slice(length)] : [];
+    bufferBytes = all.length - length;
+    return all.subarray(0, length);
+  };
+  /** Plaintext of the next data frame: what its reserved part holds, else a full frame. */
+  const nextFrameBytes = (): number => {
+    const size = reserved.get(state.parts);
+    if (size === undefined) return frameBytes;
+    const plain = size - FRAME_OVERHEAD_BYTES - (state.parts === 0 ? cipher.header.length : 0);
+    if (plain < 1) fail();
     return plain;
+  };
+  const writeFrame = async (length: number): Promise<void> => {
+    await writePart([await sealFrame(takeBuffer(length))]);
   };
 
   for (;;) {
     signal.throwIfAborted();
     if (state.dataset === manifest.datasets.length) {
-      // The last data frame always shares a part with the metadata frame, so the part layout
-      // does not depend on where a transition happened to stop.
+      // Data frames a failed slice already wrote come first, cut where they were. Every other
+      // last data frame shares the last part with the metadata frame.
+      while (bufferBytes && reserved.has(state.parts) && bufferBytes >= nextFrameBytes())
+        await writeFrame(nextFrameBytes());
       const pieces: Uint8Array[] = [];
       if (bufferBytes || state.sequence === 0) pieces.push(await sealFrame(takeBuffer()));
       const stats = [...(await writer.datasetStats()), ...completed];
@@ -328,7 +352,12 @@ export async function runTenantBackupArtifactStep(
       await input.assertBoundary();
       return verify;
     }
-    // Stop only when nothing is buffered, so the checkpoint never carries unwritten bytes.
+    if (calls >= readCalls) {
+      // Write what is buffered as a shorter frame, so the checkpoint carries no unwritten bytes.
+      // A frame a failed slice reserved must keep its recorded length, which may need more reads.
+      while (bufferBytes && (!reserved.has(state.parts) || bufferBytes >= nextFrameBytes()))
+        await writeFrame(Math.min(bufferBytes, nextFrameBytes()));
+    }
     if (!bufferBytes && calls >= readCalls) {
       await writer.saveDatasetStats(completed);
       const cursor = JSON.stringify({
@@ -395,17 +424,8 @@ export async function runTenantBackupArtifactStep(
     datasetLast = bytes[bytes.length - 1];
     buffer.push(bytes);
     bufferBytes += bytes.length;
-    // An oversize record is cut at the frame cap; verification carries row state across frames.
-    while (bufferBytes >= frameMax) {
-      const plain = takeBuffer();
-      await writePart([await sealFrame(plain.subarray(0, frameMax))]);
-      if (plain.length > frameMax) {
-        buffer = [plain.slice(frameMax)];
-        bufferBytes = plain.length - frameMax;
-      }
-    }
-    if (bufferBytes >= frameTarget && datasetLast === 10)
-      await writePart([await sealFrame(takeBuffer())]);
+    // Frames may end inside a row; verification and readers carry row state across frames.
+    while (bufferBytes >= nextFrameBytes()) await writeFrame(nextFrameBytes());
   }
 }
 

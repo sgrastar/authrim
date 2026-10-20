@@ -1,4 +1,5 @@
 import {
+  TENANT_BACKUP_CONTAINER_V2_MAX_OBJECT_BYTES,
   decodeTenantBackupContainerV2,
   type DecodedTenantBackupContainerV2,
 } from './backup-container-v2';
@@ -6,7 +7,7 @@ import type { TenantBundleKeyEnvelope } from './bundle-key-envelope';
 import type { TenantBackupInputIdentity } from './input-frame-reader';
 
 const RANGE_BYTES = 8 * 1024 * 1024;
-const MAX_INPUT_BYTES = 256 * 1024 * 1024;
+const MAX_INPUT_BYTES = TENANT_BACKUP_CONTAINER_V2_MAX_OBJECT_BYTES;
 
 interface InputObject {
   version: string;

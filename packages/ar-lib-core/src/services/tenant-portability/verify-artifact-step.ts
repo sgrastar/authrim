@@ -1,4 +1,5 @@
 import {
+  TENANT_BACKUP_CONTAINER_V2_MAX_OBJECT_BYTES,
   openTenantBackupContainerV2Cipher,
   parseTenantBackupContainerV2Metadata,
   tenantBackupContainerV2Frames,
@@ -119,8 +120,8 @@ export async function runTenantBackupArtifactVerificationStep(
     key: TenantBundleKeyEnvelope;
     expected: Parameters<typeof loadTenantBackupExportManifest>[0]['expected'];
     now: () => number;
-    /** A smaller per-transition budget lets tests cross many slices with little data. */
-    slice?: { stepBytes: number };
+    /** Smaller budgets and size caps let tests cross many slices with little data. */
+    slice?: { stepBytes: number; maxObjectBytes?: number };
   }
 ): Promise<TenantBackupStepResult> {
   const { operation, lease, signal } = context;
@@ -134,7 +135,14 @@ export async function runTenantBackupArtifactVerificationStep(
   )
     throw new Error('backup_verify_step_context');
   const stepBudget = input.slice?.stepBytes ?? STEP_BYTES;
-  if (!Number.isSafeInteger(stepBudget) || stepBudget < 1)
+  const maxObjectBytes = input.slice?.maxObjectBytes ?? TENANT_BACKUP_CONTAINER_V2_MAX_OBJECT_BYTES;
+  if (
+    !Number.isSafeInteger(stepBudget) ||
+    stepBudget < 1 ||
+    !Number.isSafeInteger(maxObjectBytes) ||
+    maxObjectBytes < 1 ||
+    maxObjectBytes > TENANT_BACKUP_CONTAINER_V2_MAX_OBJECT_BYTES
+  )
     throw new Error('backup_verify_step_context');
   const parsed = parseCursor(operation.cursor_json, input.attemptId);
   const attempt = await input.database.queryOne<{ part_count: number; byte_count: number }>(
@@ -152,6 +160,8 @@ export async function runTenantBackupArtifactVerificationStep(
         parsed.state.verifiedBytes >= attempt.byte_count))
   )
     cursorFail();
+  // Import accepts containers up to this size only; never verify one it would refuse.
+  if (attempt.byte_count > maxObjectBytes) throw new Error('backup_artifact_too_large');
   const savedManifest = await loadTenantBackupExportManifest({
     database: input.database,
     lease,

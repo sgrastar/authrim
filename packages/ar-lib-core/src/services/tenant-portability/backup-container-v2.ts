@@ -439,6 +439,12 @@ export async function decodeTenantBackupContainerV2(input: {
   return { manifest, footer, datasets };
 }
 
+/**
+ * Largest container object export, verification and import accept. Import still decodes a whole
+ * container in memory, so all three stop here until a streaming import raises it in one place.
+ */
+export const TENANT_BACKUP_CONTAINER_V2_MAX_OBJECT_BYTES = 256 * 1024 * 1024;
+
 export const TENANT_BACKUP_CONTAINER_V2_LIMITS = {
   singleObjectDataBytes: SINGLE_OBJECT_DATA_BYTES,
   capacityPartBytes: CAPACITY_PART_BYTES,

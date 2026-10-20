@@ -15,6 +15,7 @@ import { saveTenantBackupExportManifest } from '../export-manifest-store';
 import { runTenantBackupArtifactStep } from '../export-artifact-step';
 import { runTenantBackupArtifactVerificationStep } from '../verify-artifact-step';
 import { readTenantBackupArtifact } from '../artifact-reader';
+import { openTenantBackupDownload } from '../published-artifact-reader';
 import {
   decodeTenantBackupContainerV2,
   encodeTenantBackupContainerV2,
@@ -116,6 +117,7 @@ beforeEach(async () => {
     '009_tenant_backup_artifact_parts.sql',
     '036_tenant_backup_capacity_parts.sql',
     '021_tenant_backup_export_manifests.sql',
+    '020_tenant_backup_publications.sql',
     '044_tenant_backup_export_dataset_progress.sql',
   ])
     db.exec(
@@ -204,7 +206,10 @@ function exportStep(
   expected: ReturnType<typeof expectation>,
   phase: string,
   cursor: string | null,
-  options: { slice?: { frameTargetBytes: number; readCalls: number }; read?: typeof readNext } = {}
+  options: {
+    slice?: { frameBytes: number; readCalls: number; maxObjectBytes?: number };
+    read?: typeof readNext;
+  } = {}
 ) {
   return runTenantBackupArtifactStep(
     { operation: { ...operation, phase, cursor_json: cursor }, lease, signal },
@@ -272,7 +277,7 @@ function expectDatasets(decoded: Awaited<ReturnType<typeof decodeSaved>>['decode
 
 it('exports and verifies across many slices into a container the v2 reader accepts', async () => {
   const { attemptId, expected } = await prepare();
-  const slice = { frameTargetBytes: 8 * 1024, readCalls: 5 };
+  const slice = { frameBytes: 8 * 1024, readCalls: 5 };
   let phase = 'export_artifact';
   let cursor: string | null = JSON.stringify({ version: 2, attemptId });
   let exportSlices = 0;
@@ -312,11 +317,17 @@ it('exports and verifies across many slices into a container the v2 reader accep
 
 it('writes a small tenant as one part in one transition with the default budget', async () => {
   const { attemptId, expected } = await prepare();
+  // Production batches hold up to 250 rows; a small tenant needs far fewer calls than the budget.
+  const read: typeof readNext = async (datasetId, cursor) => {
+    if (cursor !== null || !sources[datasetId]?.length) return null;
+    return { bytes: encoder.encode(sources[datasetId].join('')), nextCursor: '"all"' };
+  };
   const result = await exportStep(
     attemptId,
     expected,
     'export_artifact',
-    JSON.stringify({ version: 2, attemptId })
+    JSON.stringify({ version: 2, attemptId }),
+    { read }
   );
   expect(result.phase).toBe('verify_artifact');
   const { parts, decoded } = await decodeSaved(attemptId);
@@ -332,7 +343,7 @@ it('writes a small tenant as one part in one transition with the default budget'
 
 it('repeats a slice whose checkpoint was lost with identical parts and finishes once sealed', async () => {
   const { attemptId, expected } = await prepare();
-  const slice = { frameTargetBytes: 16 * 1024, readCalls: 4 };
+  const slice = { frameBytes: 16 * 1024, readCalls: 4 };
   const cursors: Array<string | null> = [JSON.stringify({ version: 2, attemptId })];
   let phase = 'export_artifact';
   while (phase === 'export_artifact') {
@@ -371,7 +382,7 @@ it('repeats a slice whose checkpoint was lost with identical parts and finishes 
 
 it('refuses different source bytes for a frame that was already written', async () => {
   const { attemptId, expected } = await prepare();
-  const slice = { frameTargetBytes: 16 * 1024, readCalls: 4 };
+  const slice = { frameBytes: 16 * 1024, readCalls: 4 };
   const start = JSON.stringify({ version: 2, attemptId });
   await exportStep(attemptId, expected, 'export_artifact', start, { slice });
   const objectCount = objects.size;
@@ -389,7 +400,7 @@ it('refuses different source bytes for a frame that was already written', async 
 
 it('rejects tampered export and verification cursors', async () => {
   const { attemptId, expected } = await prepare();
-  const slice = { frameTargetBytes: 16 * 1024, readCalls: 4 };
+  const slice = { frameBytes: 16 * 1024, readCalls: 4 };
   const first = await exportStep(
     attemptId,
     expected,
@@ -483,8 +494,8 @@ it('accepts positions without bytes and may stop on one', async () => {
     return next ? { bytes: new Uint8Array(0), nextCursor: `skipped:${cursor ?? ''}` } : null;
   };
   const cursors = await runExport(attemptId, expected, {
-    // Every real batch closes a frame, so the buffer is empty when a position-only step lands.
-    slice: { frameTargetBytes: 1, readCalls: 3 },
+    // Three calls per transition: some transitions end right after a position-only step.
+    slice: { frameBytes: 16 * 1024, readCalls: 3 },
     read,
   });
   expect(cursors.some((cursor) => JSON.parse(cursor).source?.startsWith('skipped:'))).toBe(true);
@@ -492,16 +503,16 @@ it('accepts positions without bytes and may stop on one', async () => {
   expectDatasets((await decodeSaved(attemptId)).decoded);
 });
 
-it('cuts a frame inside an oversize batch at the frame cap', async () => {
+it('cuts an oversize batch into fixed frames', async () => {
   const { attemptId, expected } = await prepare();
-  // The whole users dataset arrives as one ~250 KB batch, far above a 16 KiB frame cap.
+  // The whole users dataset arrives as one ~250 KB batch, far above a 16 KiB frame.
   const read: typeof readNext = async (datasetId, cursor) => {
     if (datasetId !== 'users') return readNext(datasetId, cursor);
     if (cursor !== null) return null;
     return { bytes: encoder.encode(sources.users.join('')), nextCursor: '"all"' };
   };
   await runExport(attemptId, expected, {
-    slice: { frameTargetBytes: 4 * 1024, frameMaxBytes: 16 * 1024, readCalls: 2 },
+    slice: { frameBytes: 16 * 1024, readCalls: 2 },
     read,
   });
   await runVerify(attemptId, expected);
@@ -520,7 +531,7 @@ it('keeps plaintext out of export and verification checkpoints', async () => {
   try {
     const { attemptId, expected } = await prepare();
     const exportCursors = await runExport(attemptId, expected, {
-      slice: { frameTargetBytes: 1000, readCalls: 1 },
+      slice: { frameBytes: 1000, readCalls: 1 },
     });
     const verifyCursors = await runVerify(attemptId, expected);
     expect(exportCursors.length).toBeGreaterThan(20);
@@ -555,4 +566,153 @@ it('uses a salt of its own, so a one-shot attempt is never continued under the s
     )
   );
   expect(Array.from(first.subarray(101, 133))).not.toEqual(Array.from(oneShot));
+});
+
+/** The same NDJSON as readNext, in batches of a different size. */
+function batched(size: number, failAfter?: number): typeof readNext {
+  let calls = 0;
+  return async (datasetId, cursor) => {
+    if (failAfter !== undefined && ++calls > failAfter) throw new Error('worker_lost');
+    const all = sources[datasetId];
+    const start = cursor === null ? 0 : (JSON.parse(cursor) as { next: number }).next;
+    if (!all || start >= all.length) return null;
+    const end = Math.min(all.length, start + size);
+    return {
+      bytes: encoder.encode(all.slice(start, end).join('')),
+      nextCursor: JSON.stringify({ next: end }),
+    };
+  };
+}
+
+it('retries a slice with other read batches and cuts the frames it already wrote again', async () => {
+  const { attemptId, expected } = await prepare();
+  const slice = { frameBytes: 8 * 1024, readCalls: 12 };
+  const start = JSON.stringify({ version: 2, attemptId });
+  // The first slice writes parts, then the worker is lost before its checkpoint.
+  await expect(
+    exportStep(attemptId, expected, 'export_artifact', start, { slice, read: batched(7, 10) })
+  ).rejects.toThrow();
+  const written = objects.size;
+  expect(written).toBeGreaterThanOrEqual(2);
+  // A second slice ends on its budget with a shorter frame; its checkpoint is lost too.
+  await exportStep(attemptId, expected, 'export_artifact', start, { slice, read: batched(11) });
+  // The retries read in batches of 3 rows, so no batch ends where an earlier one did.
+  let phase = 'export_artifact';
+  let cursor: string | null = start;
+  while (phase === 'export_artifact') {
+    const result = await exportStep(attemptId, expected, phase, cursor, {
+      slice,
+      read: batched(3),
+    });
+    phase = result.phase;
+    cursor = result.cursor;
+  }
+  expect(objects.size).toBeGreaterThan(written);
+  await runVerify(attemptId, expected);
+  expectDatasets((await decodeSaved(attemptId)).decoded);
+});
+
+it('stops on its read budget while bytes are buffered', async () => {
+  const { attemptId, expected } = await prepare();
+  // After each batch the source walks 30 omitted positions before the next rows.
+  let calls = 0;
+  const read: typeof readNext = async (datasetId, cursor) => {
+    calls++;
+    const match = cursor?.match(/^skip:(\d+):(.*)$/s);
+    if (match && Number(match[1]) < 30)
+      return { bytes: new Uint8Array(0), nextCursor: `skip:${Number(match[1]) + 1}:${match[2]}` };
+    const next = await readNext(datasetId, match ? match[2] || null : cursor);
+    return next ? { bytes: next.bytes, nextCursor: `skip:0:${next.nextCursor}` } : null;
+  };
+  // A 1 MiB frame never fills here, so every transition stops with bytes buffered.
+  const perSlice: number[] = [];
+  let phase = 'export_artifact';
+  let cursor: string | null = JSON.stringify({ version: 2, attemptId });
+  while (phase === 'export_artifact') {
+    calls = 0;
+    const result = await exportStep(attemptId, expected, phase, cursor, {
+      slice: { frameBytes: 1024 * 1024, readCalls: 5 },
+      read,
+    });
+    perSlice.push(calls);
+    phase = result.phase;
+    cursor = result.cursor;
+  }
+  expect(perSlice.length).toBeGreaterThan(20);
+  expect(Math.max(...perSlice)).toBeLessThanOrEqual(5);
+  await runVerify(attemptId, expected);
+  const { parts, decoded } = await decodeSaved(attemptId);
+  expect(parts.length).toBeGreaterThan(3);
+  expectDatasets(decoded);
+});
+
+it('refuses to export or verify a container larger than import accepts', async () => {
+  const { attemptId, expected } = await prepare();
+  await expect(
+    runExport(attemptId, expected, {
+      slice: { frameBytes: 8 * 1024, readCalls: 20, maxObjectBytes: 50_000 },
+    })
+  ).rejects.toThrow('backup_export_too_large');
+
+  const second = await prepare();
+  await runExport(second.attemptId, second.expected, {});
+  const total = (await decodeSaved(second.attemptId)).parts.reduce(
+    (sum, part) => sum + part.length,
+    0
+  );
+  await expect(
+    runTenantBackupArtifactVerificationStep(
+      {
+        operation: {
+          ...operation,
+          phase: 'verify_artifact',
+          cursor_json: JSON.stringify({ version: 2, attemptId: second.attemptId }),
+        },
+        lease,
+        signal,
+      },
+      {
+        database: adapter,
+        bucket,
+        attemptId: second.attemptId,
+        key: session,
+        expected: second.expected,
+        now,
+        slice: { stepBytes: 1, maxObjectBytes: total - 1 },
+      }
+    )
+  ).rejects.toThrow('backup_artifact_too_large');
+});
+
+it('serves parts above 4 MiB through the public download', async () => {
+  const { attemptId, expected } = await prepare();
+  // 5 MiB of users rows: the first part holds the header and a full 4 MiB frame.
+  const big = Array.from({ length: 12 }, () => sources.users.join('')).join('');
+  const read: typeof readNext = async (datasetId, cursor) => {
+    if (cursor !== null) return null;
+    if (datasetId === 'users') return { bytes: encoder.encode(big + big), nextCursor: '"all"' };
+    return readNext(datasetId, cursor);
+  };
+  await runExport(attemptId, expected, { read });
+  await runVerify(attemptId, expected);
+  const { parts } = await decodeSaved(attemptId);
+  expect(parts[0].length).toBeGreaterThan(4 * 1024 * 1024);
+  db.prepare(
+    "UPDATE tenant_backup_operations SET state='ready',phase='export_complete',lease_owner=NULL,lease_expires_at=NULL WHERE id='operation'"
+  ).run();
+  db.prepare(
+    'INSERT INTO tenant_backup_publications (operation_id,tenant_id,attempt_id,inventory_digest,published_at,expires_at) VALUES (?,?,?,?,?,?)'
+  ).run('operation', 'tenant-a', attemptId, 'ab'.repeat(32), 150, 150 + 604800000);
+  const download = await openTenantBackupDownload({
+    database: adapter,
+    bucket,
+    tenantId: 'tenant-a',
+    operationId: 'operation',
+    now: () => 200,
+    signal,
+  });
+  const received: Uint8Array[] = [];
+  for await (const chunk of download.chunks) received.push(chunk);
+  expect(received.map((part) => part.length)).toEqual(parts.map((part) => part.length));
+  expect(download.byteCount).toBe(parts.reduce((sum, part) => sum + part.length, 0));
 });
