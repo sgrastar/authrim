@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { Hono } from 'hono';
 import {
   adminAuthMiddleware,
@@ -28,6 +28,18 @@ import {
   IdentityMappingControlPlaneRepository,
 } from '../identity-mapping-control-plane';
 import { DatabaseSync, type SQLiteDatabase, type SQLInputValue } from './test-sqlite';
+import { insertTenant, openCoreDatabase } from './helpers/core-database';
+
+// Tenant routing is not set up in this test: every tenant's Core database is the one of the test.
+vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@authrim/ar-lib-core')>();
+  return {
+    ...actual,
+    resolveAuthCorePersistenceAdapterFromEnv: vi.fn(async (env: { TEST_CORE?: unknown }) => {
+      return env.TEST_CORE as DatabaseAdapter;
+    }),
+  };
+});
 
 /**
  * The platform's Mapping Sets through the Admin API, on the real Admin schema: what a platform
@@ -50,6 +62,15 @@ function openAdminDatabase(): SQLiteDatabase {
       .replaceAll('__AUTHRIM_NOW_EPOCH_MILLISECONDS__', '(unixepoch() * 1000)')
       .replaceAll('__AUTHRIM_NOW_EPOCH_SECONDS__', 'unixepoch()')
   );
+  // The settings documents the reference search reads (the default Mapping Set lives there).
+  for (const file of [
+    '028_tenant_settings_documents.sql',
+    '038_tenant_settings_reconciled_at.sql',
+    '039_platform_settings_documents.sql',
+    '040_settings_legacy_import_state.sql',
+  ]) {
+    db.exec(readFileSync(resolve(REPO_ROOT, `migrations/admin/d1/${file}`), 'utf8'));
+  }
   return db;
 }
 
@@ -119,6 +140,11 @@ const TENANT_B_ADMIN: Actor = { tenant: 'tenant-b', auth: TENANT_ADMIN_AUTH };
 let idempotencyKeys = 0;
 
 function createApp(adapter: DatabaseAdapter, useSessionAuth = false) {
+  // The Core database of every tenant here, and the platform's directory of tenants.
+  const coreSqlite = openCoreDatabase();
+  insertTenant(coreSqlite, 'tenant-a');
+  const core = sqliteAdapter(coreSqlite);
+  const settingsStore = new Map<string, string>();
   const app = new Hono<{ Bindings: Env }>();
   app.use('*', async (c, next) => {
     const set = (c as unknown as { set(key: string, value: unknown): void }).set;
@@ -128,7 +154,10 @@ function createApp(adapter: DatabaseAdapter, useSessionAuth = false) {
       tenantId,
       // The platform has no custom fields; a tenant's would be read from here.
       coreDb: {
-        query: async () => {
+        ...core,
+        // Only the apps are read from it; there are no custom claim schemas in this test.
+        query: async (sql: string, params?: unknown[]) => {
+          if (/oauth_clients|identity_providers/.test(sql)) return core.query(sql, params);
           throw new Error('no custom claim schemas in this test');
         },
       },
@@ -197,12 +226,19 @@ function createApp(adapter: DatabaseAdapter, useSessionAuth = false) {
         },
         ...(body === undefined ? {} : { body: JSON.stringify(body) }),
       },
-      { DB_ADMIN: adapter } as unknown as Env
+      {
+        DB_ADMIN: adapter,
+        DB: core,
+        TEST_CORE: core,
+        SETTINGS: {
+          get: async (key: string) => settingsStore.get(key) ?? null,
+        },
+      } as unknown as Env
     );
     const json = (await response.json()) as Record<string, any>;
     return { status: response.status, json, result: json.result as Record<string, any> };
   };
-  return { call, callUrl };
+  return { call, callUrl, coreSqlite, settingsStore };
 }
 
 const OIDC_PROFILE_SCHEMA = {

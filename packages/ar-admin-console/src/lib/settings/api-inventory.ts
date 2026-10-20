@@ -253,6 +253,7 @@ export const API_GROUPS: readonly ApiGroup[] = [
 		page: 'access/mapping-sets',
 		paths: [
 			`${A}/field-mapping/field-mapping-sets`,
+			`${A}/identity-mapping/usage`,
 			`${A}/field-mapping/templates`,
 			`${A}/field-mapping/preview`
 		]

@@ -56,6 +56,8 @@ export interface TenantBackupOperationSummary {
   createdAt: number;
   updatedAt: number;
   lastErrorCode: string | null;
+  /** Why a 'failed' operation can never succeed, e.g. backup_export_too_large. */
+  failureReason: string | null;
 }
 
 export interface TenantBackupOperationView extends TenantBackupOperationSummary {
@@ -90,6 +92,7 @@ function summary(operation: TenantBackupOperation): TenantBackupOperationSummary
     createdAt: operation.created_at,
     updatedAt: operation.updated_at,
     lastErrorCode: operation.last_error_code,
+    failureReason: operation.failure_reason ?? null,
   };
 }
 

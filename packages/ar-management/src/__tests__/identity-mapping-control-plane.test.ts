@@ -2576,7 +2576,16 @@ describe('IdentityMappingControlPlaneRepository policy activation', () => {
   });
 
   it('deactivates an active field mapping set version', async () => {
-    const adapter = createAdapter({});
+    const adapter = createAdapter({
+      queryOneRows: [
+        {
+          id: 'policy_version_1',
+          tenant_id: 'tenant_a',
+          field_mapping_set_id: 'policy_1',
+          lifecycle_state: 'active',
+        },
+      ],
+    });
     const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
 
     const result = await repository.deactivateFieldMappingVersion(
@@ -2598,6 +2607,18 @@ describe('IdentityMappingControlPlaneRepository policy activation', () => {
       expect.stringContaining('UPDATE field_mapping_versions'),
       expect.stringContaining('UPDATE field_mapping_sets'),
     ]);
+    // The snapshots are found through the set the version is in, not by the version alone.
+    expect(adapter.executes[1].sql).toContain('field_mapping_set_id = ?');
+  });
+
+  it('does not deactivate a version that is not in the set', async () => {
+    const adapter = createAdapter({});
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+
+    await expect(
+      repository.deactivateFieldMappingVersion('tenant_a', 'policy_1', 'version_of_another_set')
+    ).rejects.toMatchObject({ status: 404 });
+    expect(adapter.executes).toEqual([]);
   });
 
   it('repairs parent lifecycle state when an already-active version is activated again', async () => {

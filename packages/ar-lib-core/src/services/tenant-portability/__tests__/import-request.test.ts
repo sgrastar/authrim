@@ -92,6 +92,7 @@ beforeEach(() => {
     '005_tenant_backup_key_handoffs.sql',
     '006_tenant_backup_request_intent.sql',
     '008_tenant_backup_retry_state.sql',
+    '046_tenant_backup_operation_failure_reason.sql',
     '022_tenant_backup_uploads.sql',
     '023_tenant_backup_operation_inputs.sql'
   );

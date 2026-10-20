@@ -2,6 +2,7 @@ import { beforeEach, expect, it, vi } from 'vitest';
 import type { TenantBackupExecutionInventory } from '../execution-inventory';
 import type { TenantBackupStepContext } from '../operation-executor';
 import { runTenantBackupSqliteInputValidationSequenceStep } from '../input-sqlite-validation-sequence';
+import { readNextTenantBackupContainerRow } from '../container-dataset-reader';
 
 const mocks = vi.hoisted(() => ({
   loadPlanned: vi.fn<(...args: unknown[]) => Promise<unknown>>(),
@@ -9,7 +10,7 @@ const mocks = vi.hoisted(() => ({
   finalizeDataset: vi.fn<(...args: unknown[]) => Promise<unknown>>(),
   validateReferences: vi.fn<(...args: unknown[]) => Promise<unknown>>(),
   finalizeInput: vi.fn<(...args: unknown[]) => Promise<unknown>>(),
-  loadDataset: vi.fn<(...args: unknown[]) => Promise<Uint8Array>>(),
+  openDataset: vi.fn<(...args: unknown[]) => Promise<unknown>>(),
 }));
 vi.mock('../input-plan', () => ({
   loadPlannedTenantBackupInput: (...args: unknown[]) => mocks.loadPlanned(...args),
@@ -76,7 +77,7 @@ const loadInput = vi.fn(async (_ordinal: number, bundleId: string) => ({
   },
   session: key,
   loadPolicy,
-  loadDataset: mocks.loadDataset,
+  openDataset: mocks.openDataset,
   assertAuthorized: authorize,
 }));
 const head = { state: 'sealed', item_count: 1, chain_digest: digest };
@@ -110,7 +111,6 @@ function run(
 ) {
   return runTenantBackupSqliteInputValidationSequenceStep(context, {
     database: {} as never,
-    bucket: {} as never,
     inventory,
     now: () => 100,
     loadInput,
@@ -141,9 +141,17 @@ beforeEach(() => {
     disposition: 'continue',
   });
   mocks.finalizeInput.mockResolvedValue(undefined);
-  mocks.loadDataset.mockResolvedValue(
-    new TextEncoder().encode('{"client_id":["text","client"],"tenant_id":["text","tenant"]}\n')
+  const rows = new TextEncoder().encode(
+    '{"client_id":["text","client"],"tenant_id":["text","tenant"]}\n'
   );
+  mocks.openDataset.mockImplementation(async (id) => ({
+    id,
+    rows: 1,
+    bytes: rows.length,
+    readAll: async () => rows,
+    canReadAll: true,
+    readNextRow: async (cursor: string | null) => readNextTenantBackupContainerRow(rows, cursor),
+  }));
 });
 
 it('starts the installed SQL policy at the exact ordered input and dataset', async () => {
@@ -203,7 +211,7 @@ it.each(['kv', 'durable_object', 'object'] as const)(
       },
       session: key,
       loadPolicy: vi.fn(async () => ({ ...policy, dataset: recordDataset })),
-      loadDataset: mocks.loadDataset,
+      openDataset: mocks.openDataset,
       assertAuthorized: authorize,
     });
     await expect(run()).resolves.toMatchObject({ phase: 'validate_sqlite_dataset' });
@@ -218,7 +226,7 @@ it('runs one dataset validation batch from the authenticated container', async (
   });
   expect(result.phase).toBe('validate_sqlite_dataset');
   expect(JSON.parse(JSON.parse(result.cursor ?? 'null').datasetCursor)).toEqual({ inner: 1 });
-  expect(mocks.loadDataset).toHaveBeenCalledWith(dataset.id);
+  expect(mocks.openDataset).toHaveBeenCalledWith(dataset.id);
   const request = mocks.validateDataset.mock.calls[0]?.[1] as {
     readNextRow(cursor: string | null): Promise<unknown>;
   };

@@ -338,6 +338,14 @@
             {
               "path": "044_tenant_backup_export_dataset_progress.sql",
               "checksum": "3ee194c64a5937eeba9e74dfd718db9f423d4ae9751627e1c6a915df948eb517"
+            },
+            {
+              "path": "045_tenant_backup_input_frames.sql",
+              "checksum": "bede336778f791a467ec2653c1042942778117c28a7e9dfeeac141099f3e0275"
+            },
+            {
+              "path": "046_tenant_backup_operation_failure_reason.sql",
+              "checksum": "f958b2d1e29801233e766f3ea04951e9436f42c1f4a6b8c398adce47174add97"
             }
           ]
         },
@@ -879,6 +887,14 @@
         {
           "path": "044_tenant_backup_export_dataset_progress.sql",
           "checksum": "3ee194c64a5937eeba9e74dfd718db9f423d4ae9751627e1c6a915df948eb517"
+        },
+        {
+          "path": "045_tenant_backup_input_frames.sql",
+          "checksum": "bede336778f791a467ec2653c1042942778117c28a7e9dfeeac141099f3e0275"
+        },
+        {
+          "path": "046_tenant_backup_operation_failure_reason.sql",
+          "checksum": "f958b2d1e29801233e766f3ea04951e9436f42c1f4a6b8c398adce47174add97"
         }
       ]
     },

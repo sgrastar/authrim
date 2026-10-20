@@ -4,6 +4,10 @@ import type { SqliteDatasetInspectionPolicy } from './sqlite-dataset-inspector';
 import type { TenantBundleManifest } from './bundle-manifest';
 import { DatabaseTenantBundleReferenceIndex } from './validation-index';
 import { inspectSqliteInputRow } from './sqlite-input-inspection';
+import {
+  assertTenantBackupSqliteRowFits,
+  TENANT_BACKUP_CONTAINER_MAX_ROW_BYTES,
+} from './container-dataset-reader';
 
 function fail(): never {
   throw new Error('backup_sqlite_validation_step_invalid');
@@ -17,14 +21,17 @@ interface Cursor {
   rows: number;
 }
 
-const VALIDATION_BATCH_ROWS = 250;
+const VALIDATION_BATCH_ROWS = 1000;
 const VALIDATION_BATCH_BYTES = 4 * 1024 * 1024;
+/** Index records plus reference edges written by one batch (~2 D1 round trips per 50). */
+const VALIDATION_BATCH_ENTRIES = 4000;
 
 /** Inspect one bounded dataset batch and save only the batch-level operation checkpoint. */
 export async function runSqliteInputValidationStep(
   context: TenantBackupStepContext,
   input: {
-    database: Pick<DatabaseAdapter, 'query' | 'queryOne' | 'execute'>;
+    database: Pick<DatabaseAdapter, 'query' | 'queryOne' | 'execute'> &
+      Partial<Pick<DatabaseAdapter, 'batch'>>;
     now: () => number;
     sessionId: string;
     policy: SqliteDatasetInspectionPolicy;
@@ -79,6 +86,24 @@ export async function runSqliteInputValidationStep(
     lease,
     input.now
   );
+  // With D1 batches the whole slice's index entries are written together (idempotent, read back);
+  // without them each entry is written and read back on its own.
+  const records: Parameters<
+    DatabaseTenantBundleReferenceIndex['recordInspectionBatch']
+  >[0]['records'][number][] = [];
+  const references: Parameters<
+    DatabaseTenantBundleReferenceIndex['recordInspectionBatch']
+  >[0]['references'][number][] = [];
+  const collector: Pick<DatabaseTenantBundleReferenceIndex, 'recordOnce' | 'referenceOnce'> = {
+    async recordOnce(bundleId, sourceId, record) {
+      records.push({ bundleId, sourceId, record });
+      return true;
+    },
+    async referenceOnce(bundleId, sourceEdgeId, dependency) {
+      references.push({ bundleId, sourceEdgeId, dependency });
+    },
+  };
+  const batched = Boolean(input.database.batch);
   let sourceCursor = cursor.sourceCursor;
   let rows = cursor.rows;
   let bytes = 0;
@@ -97,23 +122,35 @@ export async function runSqliteInputValidationStep(
     )
       fail();
     const rowBytes = new TextEncoder().encode(row.rowJson).length;
-    if (
-      rowBytes > VALIDATION_BATCH_BYTES ||
-      (count > 0 && bytes + rowBytes > VALIDATION_BATCH_BYTES)
-    )
-      break;
+    // The batch bound limits a slice's total; a single row may exceed it (up to the container's
+    // row limit) and is then validated alone, so every slice makes progress.
+    if (rowBytes > TENANT_BACKUP_CONTAINER_MAX_ROW_BYTES)
+      throw new Error('backup_sqlite_row_too_large');
+    // SQL rows must also fit the restore target, or restore would fail on them much later.
+    if (input.policy.dataset.store === 'database') assertTenantBackupSqliteRowFits(row.rowJson);
+    if (count > 0 && bytes + rowBytes > VALIDATION_BATCH_BYTES) break;
+    const recordCount = records.length;
+    const referenceCount = references.length;
     await inspectSqliteInputRow({
       policy: input.policy,
       manifest: input.manifest,
       rowJson: row.rowJson,
       rowOrdinal: rows,
-      index,
+      index: batched ? collector : index,
       assertPinnedInput: async () => {},
     });
+    if (count > 0 && records.length + references.length > VALIDATION_BATCH_ENTRIES) {
+      // Leave this row for the next slice; its entries were only collected, never written.
+      records.length = recordCount;
+      references.length = referenceCount;
+      break;
+    }
     sourceCursor = row.nextCursor;
     rows++;
     bytes += rowBytes;
   }
+  if (records.length || references.length)
+    await index.recordInspectionBatch({ records, references });
   await assertPinned();
   return {
     phase: complete ? 'advance_validation_dataset' : 'validate_sqlite_dataset',

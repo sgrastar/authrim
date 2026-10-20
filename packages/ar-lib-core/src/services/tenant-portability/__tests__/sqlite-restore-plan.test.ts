@@ -92,6 +92,7 @@ beforeEach(async () => {
     '003_tenant_backup_operations.sql',
     '004_tenant_backup_validation_index.sql',
     '008_tenant_backup_retry_state.sql',
+    '046_tenant_backup_operation_failure_reason.sql',
     '010_tenant_backup_execution_inventory.sql',
     '019_tenant_backup_input_validations.sql',
   ])

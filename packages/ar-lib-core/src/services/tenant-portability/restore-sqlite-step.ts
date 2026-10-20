@@ -5,6 +5,8 @@ import {
   type SqliteDatasetInspectionPolicy,
 } from './sqlite-dataset-inspector';
 import { openPlannedSqliteRestoreTarget } from './sqlite-restore-plan';
+import { sqliteRestoreVerifyRowBudget } from './sqlite-restore-target';
+import { assertTenantBackupSqliteRowFits } from './container-dataset-reader';
 
 type TargetInput = Parameters<typeof openPlannedSqliteRestoreTarget>[0];
 export interface SqliteRestoreDatasetCursor {
@@ -60,8 +62,38 @@ async function runStep(
   return runSingleStep(context, input, mode);
 }
 
-const RESTORE_BATCH_ROWS = 250;
 const RESTORE_BATCH_BYTES = 4 * 1024 * 1024;
+/** Rows one D1 write or read-back call may carry (the restore target's own bound). */
+const RESTORE_CALL_ROWS = 500;
+
+/**
+ * Rows per transition. Plain rows go to D1 in several bounded calls; rows with per-row hold side
+ * effects keep the original small batch.
+ */
+/** Most rows one write or verify page (one transition of one dataset) carries. */
+export const RESTORE_PAGE_ROWS_MAX = 2000;
+
+function restoreBatchRows(policy: SqliteDatasetInspectionPolicy): number {
+  return policy.restoreHold ? 250 : RESTORE_PAGE_ROWS_MAX;
+}
+
+/** D1 queries one verify transition may spend on row read-back. */
+export const RESTORE_VERIFY_QUERY_BUDGET = 400;
+
+/** Verify transitions also stop where wide rows would exceed the read-back query budget. */
+function verifyBatchRows(policy: SqliteDatasetInspectionPolicy): number {
+  return Math.min(
+    restoreBatchRows(policy),
+    sqliteRestoreVerifyRowBudget(policy, RESTORE_VERIFY_QUERY_BUDGET)
+  );
+}
+
+function calls<T>(values: readonly T[]): T[][] {
+  const chunks: T[][] = [];
+  for (let start = 0; start < values.length; start += RESTORE_CALL_ROWS)
+    chunks.push(values.slice(start, start + RESTORE_CALL_ROWS));
+  return chunks;
+}
 
 async function runVerifyBatch(
   context: TenantBackupStepContext,
@@ -110,7 +142,7 @@ async function runVerifyBatch(
   let processedRows = 0;
   let sourceCursor = current.verifySourceCursor;
   let sourceComplete = false;
-  for (let index = 0; index < RESTORE_BATCH_ROWS; index++) {
+  for (let index = 0; index < verifyBatchRows(policy); index++) {
     context.signal.throwIfAborted();
     let next: Awaited<ReturnType<RestoreStepInput['readNextValidatedRow']>>;
     try {
@@ -146,7 +178,10 @@ async function runVerifyBatch(
         throw new Error('backup_restore_row_transform_failed');
       }
     const rowBytes = new TextEncoder().encode(rowJson).length;
-    if (!rowJson || rowBytes > RESTORE_BATCH_BYTES) invalid();
+    if (!rowJson) invalid();
+    // Rows the restore target cannot hold fail permanently here instead of in the target. Every
+    // other row is far below the batch bound, so a batch always takes at least one row.
+    assertTenantBackupSqliteRowFits(rowJson);
     if (processedRows && bytes + rowBytes > RESTORE_BATCH_BYTES) break;
     if (held) heldRows.push(next.rowJson);
     else rows.push(rowJson);
@@ -161,7 +196,7 @@ async function runVerifyBatch(
     let target: Awaited<ReturnType<typeof openPlannedSqliteRestoreTarget>>;
     try {
       target = await openPlannedSqliteRestoreTarget({ ...input, context });
-      await target.verifyRows(policy, manifest, rows);
+      for (const chunk of calls(rows)) await target.verifyRows(policy, manifest, chunk);
     } catch {
       throw new Error('backup_restore_row_verify_failed');
     }
@@ -232,7 +267,7 @@ async function runWriteBatch(
   let processedRows = 0;
   let sourceCursor = current.sourceCursor;
   let sourceComplete = false;
-  for (let index = 0; index < RESTORE_BATCH_ROWS; index++) {
+  for (let index = 0; index < restoreBatchRows(policy); index++) {
     context.signal.throwIfAborted();
     let next: Awaited<ReturnType<RestoreStepInput['readNextValidatedRow']>>;
     try {
@@ -270,10 +305,8 @@ async function runWriteBatch(
         throw new Error('backup_restore_row_transform_failed');
       }
     const rowBytes = new TextEncoder().encode(rowJson).length;
-    if (!rowJson || rowBytes > RESTORE_BATCH_BYTES) {
-      if (!processedRows) return runSingleStep(context, input, 'write');
-      break;
-    }
+    if (!rowJson) invalid();
+    assertTenantBackupSqliteRowFits(rowJson);
     if (processedRows && bytes + rowBytes > RESTORE_BATCH_BYTES) break;
     if (held) heldRows.push(next.rowJson);
     else rows.push(rowJson);
@@ -292,7 +325,7 @@ async function runWriteBatch(
       throw new Error('backup_restore_target_open_failed');
     }
     try {
-      if (rows.length) await target.writeRows(policy, manifest, rows);
+      for (const chunk of calls(rows)) await target.writeRows(policy, manifest, chunk);
     } catch {
       throw new Error('backup_restore_row_write_failed');
     }
@@ -577,12 +610,8 @@ async function runSingleStep(
     } catch {
       throw new Error('backup_restore_row_transform_failed');
     }
-    if (
-      typeof rowJson !== 'string' ||
-      !rowJson ||
-      new TextEncoder().encode(rowJson).length > 16 * 1024 * 1024
-    )
-      invalid();
+    if (typeof rowJson !== 'string' || !rowJson) invalid();
+    assertTenantBackupSqliteRowFits(rowJson);
     // Mapping or other installed transforms may yield; recheck the exact plan before mutation.
     await input.inventory.headForLease(context.lease);
     await input.assertValidatedUnpublishedPlan(head.chain_digest);

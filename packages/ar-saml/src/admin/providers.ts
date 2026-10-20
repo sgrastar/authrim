@@ -62,7 +62,8 @@ import {
   resolveSamlProvisioningDefaults,
   isAAL,
   isIAL,
-  sliceOutputGraph,
+  samlDestinationPolicyCoversProfile,
+  findRenamedOutputAttributes,
 } from '@authrim/ar-lib-core';
 import {
   parseXml,
@@ -79,7 +80,6 @@ import {
   normalizeSAMLSPAttributePresetConfig,
 } from '../idp/attribute-presets';
 import { normalizeAttributeReleaseConsentPolicy } from '../idp/attribute-release-consent';
-import { findRenamedAttributeDescriptors } from '../idp/runtime-identity-mapping';
 import { SAMLMetadataValidationError } from './errors';
 import { applySAMLSPProfileDefaults, SAML_SP_PROFILE_DEFAULTS } from './profile-defaults';
 import { fillSAMLProviderProvisioningDefaults } from './provisioning-defaults';
@@ -515,20 +515,12 @@ async function validateSAMLSPMappingConfig(
     }
     // The release policy and the classification check are by Destination Profile field, so an
     // attribute descriptor may not name the attribute as another field.
-    const outputGraph = sliceOutputGraph({
-      edges: binding.edges ?? [],
-      transforms: binding.transforms ?? [],
-      destinationNamespace:
-        config.identityMapping?.destinationNamespace ??
-        binding.destinationNamespace ??
-        'saml.attribute',
-    });
     if (
-      findRenamedAttributeDescriptors(
-        [
-          ...outputGraph.edges.map((edge) => edge.targetRef),
-          ...outputGraph.transforms.map((transform) => transform.outputTargetRef),
-        ],
+      findRenamedOutputAttributes(
+        { edges: binding.edges ?? [], transforms: binding.transforms ?? [] },
+        config.identityMapping?.destinationNamespace ??
+          binding.destinationNamespace ??
+          'saml.attribute',
         config.identityMapping?.attributeDescriptors
       ).length > 0
     ) {
@@ -542,14 +534,12 @@ async function validateSAMLSPMappingConfig(
     if (!descriptor || descriptor.destinationType !== 'saml') {
       return { field: 'identityMapping.fieldMappingSetId' };
     }
-    const profileFields = new Set(descriptor.fields.map((field) => field.key));
-    const policyFields = new Set(
-      Object.keys(config.identityMapping?.destinationFieldPolicies ?? {})
-    );
+    // The same rule the check for putting another version of the set in use applies.
     if (
-      profileFields.size === 0 ||
-      profileFields.size !== policyFields.size ||
-      [...profileFields].some((field) => !policyFields.has(field))
+      !samlDestinationPolicyCoversProfile(
+        Object.keys(config.identityMapping?.destinationFieldPolicies ?? {}),
+        descriptor.fields.map((field) => field.key)
+      )
     ) {
       return { field: 'identityMapping.destinationFieldPolicies' };
     }

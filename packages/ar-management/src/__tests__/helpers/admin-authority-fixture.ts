@@ -195,7 +195,8 @@ export function setupApp(mount: Mount, envExtras: Record<string, unknown> = {}) 
     credentials: Record<string, string>,
     method: string,
     path: string,
-    body?: unknown
+    body?: unknown,
+    headers: Record<string, string> = {}
   ) => {
     const response = await app.request(
       path,
@@ -205,6 +206,7 @@ export function setupApp(mount: Mount, envExtras: Record<string, unknown> = {}) 
           'content-type': 'application/json',
           'X-Tenant-Id': TENANT,
           ...credentials,
+          ...headers,
         },
         ...(body === undefined ? {} : { body: JSON.stringify(body) }),
       },
@@ -219,8 +221,13 @@ export function setupApp(mount: Mount, envExtras: Record<string, unknown> = {}) 
     }
     return { status: response.status, json };
   };
-  const call = (cookie: string, method: string, path: string, body?: unknown) =>
-    send({ Cookie: cookie }, method, path, body);
+  const call = (
+    cookie: string,
+    method: string,
+    path: string,
+    body?: unknown,
+    headers?: Record<string, string>
+  ) => send({ Cookie: cookie }, method, path, body, headers);
   /** The same with an Admin API access token of a machine credential. */
   const callWithToken = (token: string, method: string, path: string, body?: unknown) =>
     send({ Authorization: `Bearer ${token}` }, method, path, body);

@@ -8,10 +8,13 @@ import {
 import type { TenantBackupExecutionInventory } from './execution-inventory';
 import { finalizeTenantBackupInputValidation } from './finalize-input-validation';
 import { loadPlannedTenantBackupInput } from './input-plan';
-import { readTenantBackupContainerV2Input } from './input-container-v2';
-import { readNextTenantBackupContainerRow } from './container-dataset-reader';
+import {
+  assertTenantBackupSqliteRowFits,
+  readNextTenantBackupContainerRow,
+} from './container-dataset-reader';
 import type { TenantBackupStepContext, TenantBackupStepResult } from './operation-executor';
 import type { SqliteDatasetInspectionPolicy } from './sqlite-dataset-inspector';
+import type { TenantBackupContainerDatasetSource } from './container-frame-reader';
 import { runSqliteInputValidationStep } from './validate-sqlite-input-step';
 import { runTenantBackupReferenceValidationStep } from './validate-references-step';
 import { DatabaseTenantBundleReferenceIndex } from './validation-index';
@@ -32,15 +35,20 @@ interface LoadedInput {
   session: TenantBundleKeyEnvelope;
   loadPolicy(datasetId: string): Promise<SqliteDatasetInspectionPolicy>;
   loadPolicies?(): Promise<readonly SqliteDatasetInspectionPolicy[]>;
-  loadDataset?(datasetId: string): Promise<Uint8Array>;
+  /** One dataset of the verified input, read through its frame index. */
+  openDataset(datasetId: string): Promise<TenantBackupContainerDatasetSource>;
   assertAuthorized(): Promise<void>;
 }
 
 function fail(): never {
   throw new Error('backup_input_validation_sequence_invalid');
 }
-const VALIDATION_BATCH_ROWS = 250;
+const VALIDATION_BATCH_ROWS = 1000;
 const VALIDATION_BATCH_BYTES = 4 * 1024 * 1024;
+/** Rows of one dataset in a combined batch; batch inspection receipts accept at most 500. */
+const VALIDATION_BATCH_DATASET_ROWS = 500;
+/** Index records plus reference edges one batch may write (recordInspectionBatch allows 8,192 each). */
+const VALIDATION_BATCH_ENTRIES = 4000;
 function position(raw: string | null): PositionCursor {
   let value: PositionCursor;
   try {
@@ -98,7 +106,6 @@ export async function runTenantBackupSqliteInputValidationSequenceStep(
   context: TenantBackupStepContext,
   input: {
     database: Database;
-    bucket: Parameters<typeof readTenantBackupContainerV2Input>[0]['bucket'];
     inventory: TenantBackupExecutionInventory;
     now: () => number;
     loadInput(ordinal: number, bundleId: string): Promise<LoadedInput>;
@@ -241,18 +248,16 @@ export async function runTenantBackupSqliteInputValidationSequenceStep(
     let nextDatasetIndex = outer.datasetIndex;
     let batchRows = 0;
     let batchBytes = 0;
-    const index =
-      loaded.loadDataset && loaded.loadPolicies
-        ? await DatabaseTenantBundleReferenceIndex.resume(
-            input.database,
-            outer.sessionId,
-            lease,
-            input.now
-          )
-        : null;
-    if (loaded.loadDataset && loaded.loadPolicies && !index) fail();
+    const index = loaded.loadPolicies
+      ? await DatabaseTenantBundleReferenceIndex.resume(
+          input.database,
+          outer.sessionId,
+          lease,
+          input.now
+        )
+      : null;
+    if (loaded.loadPolicies && !index) fail();
     while (
-      loaded.loadDataset &&
       loaded.loadPolicies &&
       nextDatasetIndex < planned.manifest.datasets.length &&
       batch.length < 256
@@ -264,9 +269,17 @@ export async function runTenantBackupSqliteInputValidationSequenceStep(
         !(await input.ownsDataset(outer.inputOrdinal, bundleId, candidate.id))
       )
         break;
-      const bytes = await loaded.loadDataset(candidate.id);
-      if (!(bytes instanceof Uint8Array) || batchBytes + bytes.length > VALIDATION_BATCH_BYTES)
+      const source = await loaded.openDataset(candidate.id);
+      if (source.id !== candidate.id) fail();
+      // A dataset spread over too many frames to read at once is validated row by row instead.
+      if (
+        batchBytes + source.bytes > VALIDATION_BATCH_BYTES ||
+        source.rows > VALIDATION_BATCH_DATASET_ROWS ||
+        !source.canReadAll
+      )
         break;
+      const bytes = await source.readAll();
+      if (!(bytes instanceof Uint8Array) || bytes.length !== source.bytes) fail();
       const candidatePolicy =
         policiesById?.get(candidate.id) ?? (await loaded.loadPolicy(candidate.id));
       if (candidatePolicy.dataset.id !== candidate.id) fail();
@@ -275,6 +288,8 @@ export async function runTenantBackupSqliteInputValidationSequenceStep(
       for (;;) {
         const row = readNextTenantBackupContainerRow(bytes, cursor);
         if (!row) break;
+        if (candidatePolicy.dataset.store === 'database')
+          assertTenantBackupSqliteRowFits(row.rowJson);
         rows.push(row.rowJson);
         if (batchRows + rows.length > VALIDATION_BATCH_ROWS) break;
         cursor = row.nextCursor;
@@ -282,6 +297,9 @@ export async function runTenantBackupSqliteInputValidationSequenceStep(
       if (batchRows + rows.length > VALIDATION_BATCH_ROWS) break;
       const activeIndex = index;
       if (!activeIndex) fail();
+      const recordCount = batchRecords.length;
+      const referenceCount = batchReferences.length;
+      let overBudget = false;
       for (let rowOrdinal = 0; rowOrdinal < rows.length; rowOrdinal++) {
         await inspectSqliteInputRow({
           policy: candidatePolicy,
@@ -303,6 +321,18 @@ export async function runTenantBackupSqliteInputValidationSequenceStep(
           },
           assertPinnedInput: async () => {},
         });
+        // Checked after every row, so a dataset with many references per row cannot pile them up.
+        if (batchRecords.length + batchReferences.length > VALIDATION_BATCH_ENTRIES) {
+          overBudget = true;
+          break;
+        }
+      }
+      if (overBudget) {
+        // Collected entries were never written. A dataset that alone exceeds the budget is left
+        // to the per-dataset path, which spreads its entries over several transitions.
+        batchRecords.length = recordCount;
+        batchReferences.length = referenceCount;
+        break;
       }
       batch.push({ policy: candidatePolicy, recordCount: rows.length });
       batchRows += rows.length;
@@ -311,7 +341,9 @@ export async function runTenantBackupSqliteInputValidationSequenceStep(
     }
     if (batch.length) {
       if (!index) fail();
-      await index.recordInspectionBatch({ records: batchRecords, references: batchReferences });
+      // A batch of only empty datasets has no index entries; its inspection receipts still apply.
+      if (batchRecords.length || batchReferences.length)
+        await index.recordInspectionBatch({ records: batchRecords, references: batchReferences });
       await finalizeSqliteDatasetBatchInspections(context, {
         database: input.database,
         manifest: planned.manifest,
@@ -365,18 +397,8 @@ export async function runTenantBackupSqliteInputValidationSequenceStep(
     fail();
   const policy = await loaded.loadPolicy(dataset.id);
   if (policy.dataset.id !== dataset.id) fail();
-  const datasetBytes = loaded.loadDataset
-    ? await loaded.loadDataset(dataset.id)
-    : (
-        await readTenantBackupContainerV2Input({
-          bucket: input.bucket,
-          identity: planned.identity,
-          session: loaded.session,
-          signal,
-          assertAuthorized: authorize,
-        })
-      ).datasets.get(dataset.id);
-  if (!(datasetBytes instanceof Uint8Array)) fail();
+  const source = await loaded.openDataset(dataset.id);
+  if (source.id !== dataset.id) fail();
   const innerContext = {
     ...context,
     operation: { ...operation, cursor_json: active.datasetCursor },
@@ -389,8 +411,7 @@ export async function runTenantBackupSqliteInputValidationSequenceStep(
       policy,
       manifest: planned.manifest,
       assertPinnedInput: authorize,
-      readNextRow: async (sourceCursor) =>
-        readNextTenantBackupContainerRow(datasetBytes, sourceCursor),
+      readNextRow: (sourceCursor) => source.readNextRow(sourceCursor),
     });
     if (!['validate_sqlite_dataset', 'advance_validation_dataset'].includes(result.phase)) fail();
     return {

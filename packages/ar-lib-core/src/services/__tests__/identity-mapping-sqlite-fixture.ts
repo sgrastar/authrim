@@ -171,6 +171,8 @@ export interface SeedDestinationProfileInput {
   owner: string;
   id: string;
   destinationType?: string;
+  /** The names of the fields of a SAML profile (default: none). */
+  attributes?: string[];
   lifecycleState?: string;
   /** The state of its active version. */
   versionState?: string;
@@ -203,6 +205,7 @@ export function seedDestinationProfile(db: DatabaseSync, input: SeedDestinationP
     input.versionState ?? 'active',
     JSON.stringify({
       destinationType: type,
+      ...(input.attributes ? { attributes: input.attributes.map((name) => ({ name })) } : {}),
       claims: [
         {
           claimName: 'email',
@@ -213,4 +216,36 @@ export function seedDestinationProfile(db: DatabaseSync, input: SeedDestinationP
       ],
     })
   );
+}
+
+/**
+ * The real Core baseline on an in-memory SQLite (`oauth_clients`, `identity_providers`, ...), for
+ * the tests that read a tenant's apps.
+ */
+export function openCoreDatabase(): DatabaseSync {
+  const db = new DatabaseSync(':memory:', { enableForeignKeyConstraints: false });
+  db.exec(
+    renderPortableMigrationSql(
+      readFileSync(
+        new URL('../../../../../migrations/core/d1/001_0_4_0_core_baseline.sql', import.meta.url),
+        'utf8'
+      ),
+      'sqlite'
+    )
+  );
+  return db;
+}
+
+/** The settings documents tables the reference search reads, as the migrations create them. */
+export function addSettingsDocumentTables(db: DatabaseSync): void {
+  for (const file of [
+    '028_tenant_settings_documents.sql',
+    '038_tenant_settings_reconciled_at.sql',
+    '039_platform_settings_documents.sql',
+    '040_settings_legacy_import_state.sql',
+  ]) {
+    db.exec(
+      readFileSync(new URL(`../../../../../migrations/admin/d1/${file}`, import.meta.url), 'utf8')
+    );
+  }
 }

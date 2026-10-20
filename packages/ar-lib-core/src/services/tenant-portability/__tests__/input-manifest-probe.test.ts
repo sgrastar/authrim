@@ -107,16 +107,26 @@ function request(value = object) {
 }
 
 describe('tenant backup input manifest probe', () => {
-  it('authenticates the first two frames and returns the canonical manifest', async () => {
+  it('authenticates the metadata frame and returns the canonical manifest', async () => {
     const input = request();
     const result = await probeTenantBackupInputManifest(input);
-    expect(result).toEqual({ manifest, expected });
-    expect(input.assertAuthorized).toHaveBeenCalledTimes(3);
+    expect(result).toEqual({ done: true, manifest, expected });
+    expect(input.assertAuthorized).toHaveBeenCalledTimes(2);
   });
 
-  it('rejects ciphertext changes, a wrong key and changed installed expectations', async () => {
+  it('leaves data frames to decode_input, which authenticates every one of them', async () => {
     const changed = object.slice();
-    changed[changed.length > 160 ? 160 : changed.length - 1] ^= 1;
+    changed[160] ^= 1;
+    await expect(probeTenantBackupInputManifest(request(changed))).resolves.toEqual({
+      done: true,
+      manifest,
+      expected,
+    });
+  });
+
+  it('rejects metadata changes, a wrong key and changed installed expectations', async () => {
+    const changed = object.slice();
+    changed[changed.length - 1] ^= 1;
     await expect(probeTenantBackupInputManifest(request(changed))).rejects.toThrow(
       'backup_input_manifest_probe_failed'
     );
@@ -132,10 +142,25 @@ describe('tenant backup input manifest probe', () => {
     ).rejects.toThrow('backup_input_manifest_probe_failed');
   });
 
+  it('pauses a long prefix walk and resumes it from the returned position', async () => {
+    const paused = await probeTenantBackupInputManifest({ ...request(), frames: 1 });
+    expect(paused).toMatchObject({ done: false, progress: { stage: 'walk', sequence: 1 } });
+    if (paused.done) throw new Error('expected a paused walk');
+    await expect(
+      probeTenantBackupInputManifest({
+        ...request(),
+        progress: JSON.parse(JSON.stringify(paused.progress)),
+      })
+    ).resolves.toEqual({ done: true, manifest, expected });
+    await expect(
+      probeTenantBackupInputManifest({ ...request(), limits: { ...limits, maxFrames: 1 } })
+    ).rejects.toThrow('backup_input_manifest_probe_failed');
+  });
+
   it('rechecks authorization after authenticated manifest parsing', async () => {
     const input = request();
     input.assertAuthorized.mockImplementation(async () => {
-      if (input.assertAuthorized.mock.calls.length === 3) throw new Error('lease changed');
+      if (input.assertAuthorized.mock.calls.length === 2) throw new Error('lease changed');
     });
     await expect(probeTenantBackupInputManifest(input)).rejects.toThrow(
       'backup_input_manifest_probe_failed'

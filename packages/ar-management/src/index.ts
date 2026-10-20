@@ -1009,6 +1009,7 @@ import {
   adminIdentityMappingTemplateCreateHandler,
   adminIdentityMappingTemplatesListHandler,
 } from './identity-mapping-control-plane';
+import { adminIdentityMappingUsageHandler } from './identity-mapping-usage';
 import {
   getLoggingConfig,
   updateLoggingConfig,
@@ -3125,6 +3126,20 @@ app.post(
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
   adminIdentityFieldMappingSetRollbackHandler
 );
+// The search reads the databases of the tenants (one read each for a platform set), so it is
+// rate limited like the other admin endpoints that fan out (strict profile).
+app.use('/api/admin/identity-mapping/usage', async (c, next) => {
+  const profile = await getRateLimitProfileAsync(c.env, 'strict');
+  return rateLimitMiddleware({
+    ...profile,
+    endpoints: ['/api/admin/identity-mapping/usage'],
+  })(c, next);
+});
+app.get(
+  '/api/admin/identity-mapping/usage',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_READ]),
+  adminIdentityMappingUsageHandler
+);
 app.get(
   '/api/admin/field-mapping/source-authority-contracts',
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_READ]),
@@ -4002,7 +4017,14 @@ async function deleteExpiredTenantRows(
  * [triggers]
  * crons = ["0 * * * *"]  # Hourly
  */
-const TENANT_BACKUP_SCHEDULED_TRANSITION_LIMIT = 8;
+/** Transitions one operation may take in a scheduled run. */
+const TENANT_BACKUP_SCHEDULED_TRANSITION_LIMIT = 16;
+/**
+ * Transitions all operations of one scheduled run may take together. Each transition is bounded
+ * in subrequests (a decode_input slice reads at most 256 frames, a row batch ~400 D1 queries), so
+ * this bounds the invocation's subrequests too.
+ */
+const TENANT_BACKUP_SCHEDULED_TICK_TRANSITIONS = 16;
 /**
  * Wall time after which a scheduled run starts no further backup transition. A cron invocation
  * on a sub-hourly schedule gets 30 s of CPU for everything it does, and one export or verify
@@ -4028,7 +4050,8 @@ async function handleScheduled(event: ScheduledEvent, env: Env): Promise<void> {
         Date.now,
         ['export', 'import'],
         TENANT_BACKUP_SCHEDULED_TRANSITION_LIMIT,
-        TENANT_BACKUP_SCHEDULED_BUDGET_MS
+        TENANT_BACKUP_SCHEDULED_BUDGET_MS,
+        TENANT_BACKUP_SCHEDULED_TICK_TRANSITIONS
       );
       if (operations.inspected > 0)
         log.info('Tenant backup operation scheduler completed', operations);

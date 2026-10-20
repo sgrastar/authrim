@@ -439,13 +439,70 @@ export async function decodeTenantBackupContainerV2(input: {
   return { manifest, footer, datasets };
 }
 
+/** Frame prefix (length, sequence, type) and AES-GCM tag around a frame's plaintext. */
+const FRAME_OVERHEAD_BYTES = 9 + 16;
+/** Largest frame plaintext a streaming reader accepts (encoders write 4 or 12 MiB). */
+const MAX_FRAME_PLAIN_BYTES = 16 * 1024 * 1024;
+
 /**
- * Largest container object export, verification and import accept. Import still decodes a whole
- * container in memory, so all three stop here until a streaming import raises it in one place.
+ * Check a container header read from storage against the accepted key envelope and open its
+ * stream cipher. Frames read later are authenticated with this header's hash.
  */
-export const TENANT_BACKUP_CONTAINER_V2_MAX_OBJECT_BYTES = 256 * 1024 * 1024;
+export async function openTenantBackupContainerHeaderV2(
+  header: Uint8Array,
+  session: TenantBundleKeyEnvelope
+): Promise<TenantBackupContainerV2Cipher> {
+  if (header.length !== HEADER_BYTES || !MAGIC.every((byte, index) => header[index] === byte))
+    invalid();
+  const envelope = header.subarray(8, 101);
+  if (
+    session.envelope.length !== envelope.length ||
+    !envelope.every((byte, index) => byte === session.envelope[index])
+  )
+    invalid();
+  const cipher = await openTenantBackupContainerV2Cipher(session, header.subarray(101));
+  if (!cipher.header.every((byte, index) => byte === header[index])) invalid();
+  return cipher;
+}
+
+/** Parse a 9-byte frame prefix; `frameBytes` includes the 4-byte length field itself. */
+export function readTenantBackupFramePrefixV2(
+  prefix: Uint8Array,
+  sequence: number
+): { type: 1 | 2; frameBytes: number } {
+  if (prefix.length < 9) invalid();
+  const view = new DataView(prefix.buffer, prefix.byteOffset, 9);
+  const length = view.getUint32(0);
+  const type = prefix[8];
+  if (length < 21 || view.getUint32(4) !== sequence || (type !== 1 && type !== 2)) invalid();
+  return { type, frameBytes: 4 + length };
+}
+
+/** Rows as the encoder counts them: newline-terminated rows plus an unterminated tail. */
+export function tenantBackupContainerRowCountV2(newlines: number, bytes: number, lastByte: number) {
+  return bytes && lastByte !== 10 ? newlines + 1 : newlines;
+}
+
+/**
+ * Largest container object export, verification and import accept. All three stream the
+ * container (sliced export and verification, frame-indexed import), so they share this one cap;
+ * the in-memory `decodeTenantBackupContainerV2` keeps its own 256 MiB bound.
+ */
+export const TENANT_BACKUP_CONTAINER_V2_MAX_OBJECT_BYTES = 16 * 1024 * 1024 * 1024;
+
+/**
+ * Most data frames a container may have, for export, verification, import and download alike.
+ * Every artifact part holds at least one data frame, so a container has at most this many parts
+ * plus one, and the public download (four subrequests per part) stays well inside the 50,000
+ * subrequests ar-management is configured for. 16 GiB of 4 MiB frames needs about 4,100, which
+ * leaves room for the shorter frames sliced exports write where a transition stopped.
+ */
+export const TENANT_BACKUP_CONTAINER_V2_MAX_DATA_FRAMES = 10_000;
 
 export const TENANT_BACKUP_CONTAINER_V2_LIMITS = {
   singleObjectDataBytes: SINGLE_OBJECT_DATA_BYTES,
   capacityPartBytes: CAPACITY_PART_BYTES,
+  headerBytes: HEADER_BYTES,
+  frameOverheadBytes: FRAME_OVERHEAD_BYTES,
+  maxFramePlainBytes: MAX_FRAME_PLAIN_BYTES,
 } as const;

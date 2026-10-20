@@ -10474,7 +10474,10 @@ paths:
       summary: Delete a destination profile.
       description: >-
         Deletes a destination profile by id. Platform-owned profiles require platform-admin
-        authority.
+        authority. Refused with 409 (`reason` `referenced`) while a Mapping Set whose active version
+        releases into the profile is named by a default, an app, a SAML provider, a credential
+        profile or SCIM; each reference carries `viaMappingSetId`. 409 `scan_incomplete` when where
+        those sets are used could not be checked everywhere.
       responses:
         '200':
           $ref: '#/components/responses/FieldMappingDeleteResult'
@@ -10487,7 +10490,7 @@ paths:
         '404':
           $ref: '#/components/responses/Error'
         '409':
-          $ref: '#/components/responses/Error'
+          $ref: '#/components/responses/MappingSetInUse'
         '500':
           $ref: '#/components/responses/Error'
       parameters:
@@ -10974,7 +10977,7 @@ paths:
       description: >-
         Deletes a field mapping set by id and returns a mutation result envelope. A set that
         another tenant owns answers 404 as a set that does not exist does. A set the platform owns
-        requires platform administrator authority (403 otherwise).
+        requires platform administrator authority (403 otherwise). Refused with 409 (`reason` `referenced`) while a default (the platform's or a tenant's), an app, a SAML provider, a credential profile or SCIM still names the set, or with 409 (`reason` `scan_incomplete`) when where it is used could not be checked everywhere. `references` carries the count, the first references, and for a platform set the count of other tenants' references; their tenant and app IDs are given only to a caller with global authority.
       responses:
         '200':
           $ref: '#/components/responses/FieldMappingDeleteResult'
@@ -10987,7 +10990,7 @@ paths:
         '404':
           $ref: '#/components/responses/Error'
         '409':
-          $ref: '#/components/responses/Error'
+          $ref: '#/components/responses/MappingSetInUse'
         '500':
           $ref: '#/components/responses/Error'
       parameters:
@@ -11009,7 +11012,7 @@ paths:
       summary: Rollback a field mapping set.
       description: >-
         Rolls back a field mapping set to a previous active state according to the repository policy
-        and returns rollback metadata.
+        and returns rollback metadata. Refused with 409 (`reason` `referenced`) while a default (the platform's or a tenant's), an app, a SAML provider, a credential profile or SCIM still names the set (a rollback re-activates an earlier activation whose compiled snapshot is not active), or with 409 (`reason` `scan_incomplete`) when where it is used could not be checked everywhere. `references` carries the count, the first references, and for a platform set the count of other tenants' references; their tenant and app IDs are given only to a caller with global authority. Also 409 (`reason` `would_break_references`) when the version would not meet what the references need.
       responses:
         '200':
           $ref: '#/components/responses/FieldMappingRollbackResult'
@@ -11022,7 +11025,7 @@ paths:
         '404':
           $ref: '#/components/responses/Error'
         '409':
-          $ref: '#/components/responses/Error'
+          $ref: '#/components/responses/MappingSetInUse'
         '500':
           $ref: '#/components/responses/Error'
       parameters:
@@ -11035,6 +11038,52 @@ paths:
           description: Field mapping set identifier.
       requestBody:
         $ref: '#/components/requestBodies/FieldMappingEmptyMutation'
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  /api/admin/identity-mapping/usage:
+    get:
+      tags:
+        - Field Mapping
+      operationId: getApiAdminIdentityMappingUsage
+      summary: Show where a Mapping Set is used.
+      description: >-
+        Lists what names a Mapping Set: the platform's default and the tenants' default
+        (`identity_mapping.oidc_default_set_id`), apps (OIDC clients), SAML providers, federation
+        trust sources (`runtimeResolution.idpFieldMappingSetId` and `spFieldMappingSetId`),
+        credential profile versions, and the tenant's SCIM inbound provisioning. It is the search the
+        operations that delete, deactivate, roll back or replace a set run before they are refused,
+        so the answer says whether such a change would be refused now (`blocksChange`). The set is
+        the calling tenant's or the platform's; a set another tenant owns, or one that does not
+        exist, answers 404. The caller sees its own tenant's references in full. For a set the
+        platform owns, only a caller who holds the wildcard permission through a global assignment
+        has the other tenants' databases read and their references given in full; for the others
+        only the calling tenant's databases are read, what the Admin database holds of other
+        tenants is given as a count (`usage.otherTenants`, with `scanned` false), and
+        `usage.unscanned` lists the other tenants as not looked at. Places that could not be
+        checked are listed in `usage.unscanned`, and `usage.scanComplete` is false. The endpoint
+        is rate limited with the strict profile.
+      parameters:
+        - name: set_id
+          in: query
+          required: true
+          schema:
+            type: string
+            maxLength: 200
+          description: Mapping Set identifier.
+      responses:
+        '200':
+          $ref: '#/components/responses/MappingSetUsage'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
       security:
         - adminBearer: []
         - adminSessionCookie: []
@@ -11124,7 +11173,22 @@ paths:
         compiled snapshot id in the request body. A set the platform owns applies to every tenant,
         so its activation is stored with an empty scope (a tenant-wide scope is accepted and
         normalised; a narrower one is refused), and it must release into exactly one OIDC
-        Destination Profile that the platform owns.
+        Destination Profile that the platform owns. While the set has a version in use and is
+        named by a default, an app, a SAML provider, a credential profile or SCIM, the version put
+        in its place must still release into exactly one active Destination Profile of the kind in
+        use (and, for a platform set, hold only what a platform set may), keep the version or
+        snapshot that an app, a SAML provider or a credential profile is bound to, and the scope of
+        the new activation must still apply to the context of each of them; otherwise 409 with
+        `reason` `would_break_references` and the failed condition in `references.violation`.
+        Mappings that read what comes in (SAML identity providers, SCIM) and credential mappings
+        need no Destination Profile. The profiles counted are the ones the runtime counts: those
+        the version's edges name together with the `destinationProfileId` of the activation scope.
+        A SAML provider's saved release policy and attribute names must still hold for the new
+        version's profile, by the rules that save the provider's configuration. When more
+        references exist than are read in full, the change is refused as `scan_incomplete`; the
+        list in `references` is then a lower bound (`countIsLowerBound`) and `scanComplete` is
+        false. 409
+        `scan_incomplete` when where the set is used could not be checked everywhere.
       responses:
         '200':
           $ref: '#/components/responses/FieldMappingActivationResult'
@@ -11137,7 +11201,7 @@ paths:
         '404':
           $ref: '#/components/responses/Error'
         '409':
-          $ref: '#/components/responses/Error'
+          $ref: '#/components/responses/MappingSetInUse'
         '500':
           $ref: '#/components/responses/Error'
       parameters:
@@ -11213,7 +11277,11 @@ paths:
       summary: Deactivate a field mapping version.
       description: >-
         Deactivates an active field mapping version and returns a lifecycle transition result
-        envelope.
+        envelope. Refused while the version in use is named (see `references`): a default, an
+        app, a SAML provider, a federation trust source, a credential profile or SCIM names the set
+        (`reason` `referenced`), or where it is used could not be checked everywhere
+        (`scan_incomplete`). Deactivating a version that is not in use is not refused. A version
+        that is not one of this set answers 404.
       responses:
         '200':
           $ref: '#/components/responses/FieldMappingLifecycleTransition'
@@ -11226,7 +11294,7 @@ paths:
         '404':
           $ref: '#/components/responses/Error'
         '409':
-          $ref: '#/components/responses/Error'
+          $ref: '#/components/responses/MappingSetInUse'
         '500':
           $ref: '#/components/responses/Error'
       parameters:
@@ -37041,6 +37109,21 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/FieldMappingDestinationProfileMutationResponse'
+    MappingSetUsage:
+      description: Where a Mapping Set is used.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/MappingSetUsageResponse'
+    MappingSetInUse:
+      description: >-
+        The change was refused: the Mapping Set is named somewhere (`referenced`), the version
+        would not meet what the references need (`would_break_references`), or where it is used
+        could not be checked everywhere (`scan_incomplete`).
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/MappingSetInUseError'
     FieldMappingDeleteResult:
       description: Delete mutation response.
       content:
@@ -55900,6 +55983,213 @@ components:
       properties:
         result:
           $ref: '#/components/schemas/FieldMappingLifecycleTransitionResult'
+    MappingSetReference:
+      type: object
+      additionalProperties: false
+      required:
+        - kind
+      properties:
+        kind:
+          type: string
+          enum:
+            - platform_default
+            - tenant_default
+            - client
+            - saml_provider
+            - credential_profile
+            - federation_trust_source
+            - scim
+        tenantId:
+          type: string
+          description: The tenant the reference is in. Absent for the platform's own default.
+        clientId:
+          type: string
+        providerId:
+          type: string
+        providerType:
+          type: string
+        entityId:
+          type: string
+          description: The entity ID of the SAML partner the provider is configured for.
+        profileId:
+          type: string
+        versionId:
+          type: string
+        versionLifecycleState:
+          type: string
+        credentialConfigurationId:
+          type: string
+        trustSourceId:
+          type: string
+          description: A federation trust source whose runtime resolution names the set.
+        federationRole:
+          type: string
+          enum:
+            - saml_idp
+            - saml_sp
+        role:
+          type: string
+          enum:
+            - issuance
+            - verification
+        pinnedVersionId:
+          type: string
+          description: A Mapping Set version the reference pins.
+        pinnedSnapshotHash:
+          type: string
+          description: The compiled snapshot a credential profile version was published with.
+        viaMappingSetId:
+          type: string
+          description: When asked about a Destination Profile, the Mapping Set the reference is through.
+    MappingSetUnscannedScope:
+      type: object
+      additionalProperties: false
+      required:
+        - area
+        - reason
+      properties:
+        area:
+          type: string
+          enum:
+            - platform_settings
+            - tenant_settings
+            - credential_profiles
+            - federation_trust_sources
+            - tenant_clients
+            - tenant_saml
+            - scim_settings
+            - tenant_directory
+            - tenant_limit
+            - other_tenants
+        tenantId:
+          type: string
+          description: Given only for the caller's own tenant, or to a caller with global authority.
+        reason:
+          type: string
+          description: A fixed code (for example core_database_unavailable, no_such_table).
+    MappingSetReferenceSummary:
+      type: object
+      additionalProperties: false
+      required:
+        - count
+        - countIsLowerBound
+        - items
+        - itemsTruncated
+        - scanComplete
+        - unscanned
+      properties:
+        count:
+          type: integer
+          description: Everything found, other tenants' included.
+        countIsLowerBound:
+          type: boolean
+          description: True when a place held more rows than were read.
+        items:
+          type: array
+          description: The first references the caller may see in full.
+          items:
+            $ref: '#/components/schemas/MappingSetReference'
+        itemsTruncated:
+          type: boolean
+        otherTenants:
+          type: object
+          additionalProperties: false
+          description: References in other tenants the caller may not see, as counts only.
+          required:
+            - referenceCount
+            - tenantCount
+            - scanned
+          properties:
+            referenceCount:
+              type: integer
+            tenantCount:
+              type: integer
+            scanned:
+              type: boolean
+              description: >-
+                False when the other tenants' Core databases were not read (the caller has no
+                global authority): the counts then hold only what the Admin database knows.
+        scanComplete:
+          type: boolean
+        unscanned:
+          type: object
+          additionalProperties: false
+          required:
+            - count
+            - items
+          properties:
+            count:
+              type: integer
+            items:
+              type: array
+              items:
+                $ref: '#/components/schemas/MappingSetUnscannedScope'
+        violation:
+          type: object
+          additionalProperties: false
+          description: >-
+            Only on `would_break_references`, the condition the version would fail.
+          properties:
+            code:
+              type: string
+              enum:
+                - destination_profile_invalid
+                - platform_set_unsafe
+                - snapshot_inactive
+                - pinned_version_replaced
+                - activation_scope_mismatch
+                - saml_destination_policy_mismatch
+                - saml_attribute_descriptor_renames_field
+            message:
+              type: string
+    MappingSetUsageResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - setId
+        - owner
+        - usage
+        - blocksChange
+      properties:
+        setId:
+          type: string
+        owner:
+          type: string
+          enum:
+            - tenant
+            - platform
+        usage:
+          $ref: '#/components/schemas/MappingSetReferenceSummary'
+        blocksChange:
+          type: boolean
+          nullable: true
+          description: >-
+            Whether deleting, deactivating, rolling back or replacing the set would be refused
+            now (it is named, or could not be checked everywhere). Null when it is not known: the
+            other tenants of a platform set were not looked at and nothing else is in the way.
+    MappingSetInUseError:
+      type: object
+      additionalProperties: true
+      required:
+        - error
+        - error_description
+        - reason
+        - references
+      properties:
+        error:
+          type: string
+          enum:
+            - conflict
+        error_description:
+          type: string
+        reason:
+          type: string
+          enum:
+            - referenced
+            - scan_incomplete
+            - would_break_references
+        references:
+          $ref: '#/components/schemas/MappingSetReferenceSummary'
     FieldMappingDeleteResultResponse:
       type: object
       additionalProperties: false
