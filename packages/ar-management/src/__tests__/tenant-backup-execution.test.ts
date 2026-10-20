@@ -36,6 +36,14 @@ const mocks = vi.hoisted(() => ({
   decodeSequence: vi.fn<(...args: unknown[]) => Promise<unknown>>(),
   validationSequence: vi.fn<(...args: unknown[]) => Promise<unknown>>(),
   restorePlanStep: vi.fn<(...args: unknown[]) => Promise<unknown>>(),
+  openInput: vi.fn<(...args: unknown[]) => Promise<unknown>>(),
+}));
+vi.mock('@authrim/ar-lib-core/services/tenant-portability/container-frame-reader', () => ({
+  openVerifiedTenantBackupInput: (...args: unknown[]) => mocks.openInput(...args),
+  rememberTenantBackupInputReader: (cache: Map<string, unknown>, key: string, value: unknown) => {
+    cache.delete(key);
+    cache.set(key, value);
+  },
 }));
 vi.mock('@authrim/ar-lib-core/services/tenant-portability/input-decode-sequence', () => ({
   runTenantBackupInputDecodeSequenceStep: (...args: unknown[]) => mocks.decodeSequence(...args),
@@ -355,10 +363,22 @@ it('probes and pins one immutable import input per preparation slice, then seals
   mocks.importRequest.mockResolvedValue(imported);
   mocks.issuer.mockResolvedValue(imported.intent.source.issuer);
   mocks.activeInputs.mockResolvedValue([{ inputId: 'upload-a', key: importKey }]);
+  const walkProgress = { stage: 'walk', sequence: 256, objectOffset: 4096, plainOffset: 3000 };
   mocks.probe.mockImplementation(async (input) => {
-    const value = input as { assertAuthorized(): Promise<void>; expected: object };
+    const value = input as {
+      assertAuthorized(): Promise<void>;
+      expected: object;
+      progress?: unknown;
+    };
     await value.assertAuthorized();
-    return { manifest, expected: { bundleId: manifest.bundleId, ...value.expected } };
+    // A long prefix walk pauses once; the resumed call must receive its position back.
+    if (value.progress === undefined) return { done: false, progress: walkProgress };
+    expect(value.progress).toEqual(walkProgress);
+    return {
+      done: true,
+      manifest,
+      expected: { bundleId: manifest.bundleId, ...value.expected },
+    };
   });
   mocks.persistInput.mockImplementation(async (input) => {
     const value = input as {
@@ -373,10 +393,22 @@ it('probes and pins one immutable import input per preparation slice, then seals
     await value.assertUploadOwnership(value.identity);
   });
   const importEnv = { IMPORT_ARTIFACTS: {} } as unknown as Env;
+  const paused = await runTenantBackupImportPreparation(
+    importEnv,
+    importContext,
+    () => datasets,
+    () => 100
+  );
+  expect(paused).toEqual({
+    phase: 'prepare',
+    cursor: JSON.stringify({ version: 1, nextInput: 0, probe: walkProgress }),
+    disposition: 'continue',
+  });
+  expect(mocks.persistInput).not.toHaveBeenCalled();
   expect(
     await runTenantBackupImportPreparation(
       importEnv,
-      importContext,
+      { ...importContext, operation: { ...importContext.operation, cursor_json: paused.cursor } },
       () => datasets,
       () => 100
     )
@@ -625,6 +657,72 @@ it('validates imported SQL through installed policies with live request and key 
   expect(loadPolicy).toHaveBeenCalledWith(datasets[0].id);
   expect(assertSources.mock.calls.length).toBeGreaterThanOrEqual(5);
   expect(mocks.activeInputs.mock.calls.length).toBeGreaterThanOrEqual(5);
+});
+
+it('shares one input reader across a lease but authorizes reads with the current transition', async () => {
+  const datasets = [
+    {
+      id: 'core.clients',
+      module: 'applications' as const,
+      kind: 'settings' as const,
+      store: 'database' as const,
+      schemaVersion: 1,
+      disposition: 'include' as const,
+    },
+  ];
+  const identity = { key: 'input', version: 'v1', etag: 'etag', size: 1000 };
+  const imported = {
+    intent: {
+      source: { tenantId: 'tenant', issuer: 'https://issuer.example', productVersion: version },
+      selection: {},
+    },
+    inputs: [{ inputId: 'upload-a', ordinal: 0, digestSha256: 'ab'.repeat(32), identity }],
+  };
+  const transition = (revision: number) =>
+    ({
+      ...context,
+      operation: {
+        ...context.operation,
+        kind: 'import',
+        phase: 'validate_sqlite_dataset',
+        revision,
+      },
+    }) as unknown as TenantBackupStepContext;
+  mocks.importRequest.mockResolvedValue(imported);
+  mocks.activeInputs.mockResolvedValue([{ inputId: 'upload-a', key }]);
+  let authorize: (() => Promise<void>) | undefined;
+  mocks.openInput.mockImplementation(async (raw) => {
+    const request = raw as { assertAuthorized(): Promise<void>; identity: unknown };
+    expect(request.identity).toEqual(identity);
+    authorize = request.assertAuthorized;
+    return { dataset: (id: string) => ({ id }) };
+  });
+  mocks.validationSequence.mockImplementation(async (_context, raw) => {
+    const input = raw as {
+      loadInput(
+        ordinal: number,
+        bundleId: string
+      ): Promise<{ openDataset(datasetId: string): Promise<{ id: string }> }>;
+    };
+    const loaded = await input.loadInput(0, 'cd'.repeat(16));
+    expect(await loaded.openDataset('core.clients')).toEqual({ id: 'core.clients' });
+    return { phase: 'validate_sqlite_dataset', cursor: '{}', disposition: 'continue' };
+  });
+  const inputReaders = new Map();
+  const adapter = {
+    datasets: () => datasets,
+    loadPolicy: vi.fn(async () => ({ dataset: datasets[0] })) as never,
+    assertSources: vi.fn(async () => {}),
+    inputReaders,
+  };
+  const env = { IMPORT_ARTIFACTS: {} } as unknown as Env;
+  await runTenantBackupImportValidation(env, transition(1), adapter, () => 100);
+  const second = transition(2);
+  await runTenantBackupImportValidation(env, second, adapter, () => 100);
+  expect(mocks.openInput).toHaveBeenCalledTimes(1);
+  mocks.importRequest.mockClear();
+  await authorize!();
+  expect(mocks.importRequest).toHaveBeenCalledWith(second, expect.any(Function));
 });
 
 it('builds restore planning only while the validated input request and keys remain live', async () => {

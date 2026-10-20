@@ -3,10 +3,14 @@ import { encodeTenantBundleManifest } from './bundle-manifest';
 import type { TenantBackupRestorePlanInventoryPort } from './restore-plan-inventory';
 import type { TenantBackupStepContext, TenantBackupStepResult } from './operation-executor';
 import {
+  RESTORE_PAGE_ROWS_MAX,
+  RESTORE_VERIFY_QUERY_BUDGET,
   runSqliteRestoreDatasetDeferredStep,
   runSqliteRestoreDatasetStep,
   runSqliteRestoreDatasetVerificationStep,
 } from './restore-sqlite-step';
+import { sqliteRestoreVerifyRowBudget } from './sqlite-restore-target';
+import { assertTenantBackupSqliteRowFits } from './container-dataset-reader';
 import { TENANT_BACKUP_MAX_SQLITE_DATASETS } from './installed-sqlite-datasets';
 import {
   cloneSqliteDatasetInspectionPolicy,
@@ -15,6 +19,12 @@ import {
 
 type DatasetInput = Parameters<typeof runSqliteRestoreDatasetStep>[1];
 type Source = Pick<DatasetInput, 'policy' | 'manifest' | 'readNextValidatedRow'>;
+/**
+ * What a batch keeps of a dataset after its rows are read. Dropping the row reader lets the input
+ * reader (and its decrypted frames) go once the caller's reader cache evicts it.
+ */
+type Loaded = Pick<Source, 'policy' | 'manifest'>;
+const kept = (loaded: Source): Loaded => ({ policy: loaded.policy, manifest: loaded.manifest });
 export interface PlannedSqliteRestoreSequenceJob {
   targetId: string;
   targetOrdinal: number;
@@ -29,7 +39,8 @@ export interface PlannedSqliteRestoreSequenceJob {
 }
 type Job = PlannedSqliteRestoreSequenceJob;
 const fail = () => new Error('backup_restore_sequence_invalid');
-const EXECUTION_BATCH_ROWS = 250;
+// One shared D1 write batch; the restore target accepts at most 500 rows per call.
+const EXECUTION_BATCH_ROWS = 500;
 const EXECUTION_BATCH_BYTES = 4 * 1024 * 1024;
 
 function canShareExecutionBatch(policy: Source['policy']): boolean {
@@ -65,6 +76,7 @@ async function readCompleteDataset(
     });
     if (next === null) return { rows, bytes };
     if (!next.nextCursor || next.nextCursor === sourceCursor) throw fail();
+    assertTenantBackupSqliteRowFits(next.rowJson);
     const rowBytes = new TextEncoder().encode(next.rowJson).length;
     if (rows.length >= remainingRows || bytes + rowBytes > remainingBytes) return null;
     rows.push(next.rowJson);
@@ -75,7 +87,7 @@ async function readCompleteDataset(
 
 async function transformRows(
   context: TenantBackupStepContext,
-  source: Source,
+  source: Pick<Source, 'policy'>,
   rows: readonly string[],
   mode: 'write' | 'verify'
 ): Promise<string[]> {
@@ -83,7 +95,8 @@ async function transformRows(
   const transformed: string[] = [];
   for (const row of rows) {
     const value = await source.policy.restoreTransform.transform(context, row, mode);
-    if (!value || new TextEncoder().encode(value).length > 16 * 1024 * 1024) throw fail();
+    if (!value) throw fail();
+    assertTenantBackupSqliteRowFits(value);
     transformed.push(value);
   }
   return transformed;
@@ -605,7 +618,7 @@ export async function runSqliteRestoreSequenceStep(
   }
   let job = jobs[index];
   if (datasetCursor === null) {
-    const batch: { job: Job; loaded: Source; rows: string[]; bytes: number }[] = [];
+    const batch: { job: Job; loaded: Loaded; rows: string[]; bytes: number }[] = [];
     let batchRows = 0;
     let batchBytes = 0;
     for (let candidateIndex = index; candidateIndex < jobs.length; candidateIndex++) {
@@ -633,7 +646,7 @@ export async function runSqliteRestoreSequenceStep(
         (complete.rows.length && !canShareExecutionBatch(loaded.policy))
       )
         break;
-      batch.push({ job: candidate, loaded, ...complete });
+      batch.push({ job: candidate, loaded: kept(loaded), ...complete });
       batchRows += complete.rows.length;
       batchBytes += complete.bytes;
     }
@@ -819,7 +832,7 @@ async function finalizeSqliteTargets(
   }
   if (cursor.datasetCursor === null) {
     const targetId = jobs[verifyIndex].targetId;
-    const empty: { job: Job; loaded: Source }[] = [];
+    const empty: { job: Job; loaded: Loaded }[] = [];
     while (
       verifyIndex + empty.length < jobs.length &&
       jobs[verifyIndex + empty.length].targetId === targetId &&
@@ -839,7 +852,7 @@ async function finalizeSqliteTargets(
         ) !== JSON.stringify(candidate)
       )
         throw fail();
-      empty.push({ job: candidate, loaded });
+      empty.push({ job: candidate, loaded: kept(loaded) });
     }
     if (empty.length) {
       const writable = empty.filter(
@@ -863,9 +876,11 @@ async function finalizeSqliteTargets(
       };
     }
 
-    const batch: { job: Job; loaded: Source; rows: string[] }[] = [];
+    const batch: { job: Job; loaded: Loaded; rows: string[] }[] = [];
     let batchRows = 0;
     let batchBytes = 0;
+    // Share of the read-back query budget used so far; wide tables cost more per row.
+    let batchQueries = 0;
     const verificationHead = await input.inventory.headForLease(context.lease);
     for (let candidateIndex = verifyIndex; candidateIndex < jobs.length; candidateIndex++) {
       const candidate = jobs[candidateIndex];
@@ -884,17 +899,25 @@ async function finalizeSqliteTargets(
         ) !== JSON.stringify(candidate)
       )
         throw fail();
+      const rowsPerBudget = sqliteRestoreVerifyRowBudget(
+        loaded.policy,
+        RESTORE_VERIFY_QUERY_BUDGET
+      );
+      const queryRows = Math.floor(
+        ((RESTORE_VERIFY_QUERY_BUDGET - batchQueries) * rowsPerBudget) / RESTORE_VERIFY_QUERY_BUDGET
+      );
       const complete = await readCompleteDataset(
         loaded,
         candidate,
         verificationHead.chain_digest,
-        EXECUTION_BATCH_ROWS - batchRows,
+        Math.min(EXECUTION_BATCH_ROWS - batchRows, queryRows),
         EXECUTION_BATCH_BYTES - batchBytes
       );
       if (!complete || complete.rows.length !== completedRows[candidateIndex]) break;
-      batch.push({ job: candidate, loaded, rows: complete.rows });
+      batch.push({ job: candidate, loaded: kept(loaded), rows: complete.rows });
       batchRows += complete.rows.length;
       batchBytes += complete.bytes;
+      batchQueries += (complete.rows.length * RESTORE_VERIFY_QUERY_BUDGET) / rowsPerBudget;
     }
     if (batch.length) {
       const target = await openPlannedSqliteRestoreTarget({
@@ -955,7 +978,19 @@ async function finalizeSqliteTargets(
   )
     throw fail();
   let verificationCursor = inner;
-  for (let page = 0; page < 8; page++) {
+  // Each page may already spend the whole read-back query budget on wide rows; run more pages in
+  // this transition only where whole pages of narrow rows fit into that budget together.
+  const pages = Math.max(
+    1,
+    Math.min(
+      8,
+      Math.floor(
+        sqliteRestoreVerifyRowBudget(loaded.policy, RESTORE_VERIFY_QUERY_BUDGET) /
+          RESTORE_PAGE_ROWS_MAX
+      )
+    )
+  );
+  for (let page = 0; page < pages; page++) {
     const result = await runSqliteRestoreDatasetVerificationStep(
       {
         ...context,

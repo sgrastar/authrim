@@ -4017,7 +4017,20 @@ async function deleteExpiredTenantRows(
  * [triggers]
  * crons = ["0 * * * *"]  # Hourly
  */
-const TENANT_BACKUP_SCHEDULED_TRANSITION_LIMIT = 8;
+/** Transitions one operation may take in a scheduled run. */
+const TENANT_BACKUP_SCHEDULED_TRANSITION_LIMIT = 16;
+/**
+ * Transitions all operations of one scheduled run may take together. Each transition is bounded
+ * in subrequests (a decode_input slice reads at most 256 frames, a row batch ~400 D1 queries), so
+ * this bounds the invocation's subrequests too.
+ */
+const TENANT_BACKUP_SCHEDULED_TICK_TRANSITIONS = 16;
+/**
+ * Wall time after which a scheduled run starts no further backup transition. A cron invocation
+ * on a sub-hourly schedule gets 30 s of CPU for everything it does, and one export or verify
+ * transition can spend a few seconds, so stop early and leave room for the rest of this handler.
+ */
+const TENANT_BACKUP_SCHEDULED_BUDGET_MS = 15_000;
 
 async function handleScheduled(event: ScheduledEvent, env: Env): Promise<void> {
   const log = createLogger().module('SCHEDULED');
@@ -4036,7 +4049,9 @@ async function handleScheduled(event: ScheduledEvent, env: Env): Promise<void> {
         new AbortController().signal,
         Date.now,
         ['export', 'import'],
-        TENANT_BACKUP_SCHEDULED_TRANSITION_LIMIT
+        TENANT_BACKUP_SCHEDULED_TRANSITION_LIMIT,
+        TENANT_BACKUP_SCHEDULED_BUDGET_MS,
+        TENANT_BACKUP_SCHEDULED_TICK_TRANSITIONS
       );
       if (operations.inspected > 0)
         log.info('Tenant backup operation scheduler completed', operations);

@@ -20,6 +20,7 @@ beforeEach(async () => {
     '004_tenant_backup_validation_index.sql',
     '008_tenant_backup_retry_state.sql',
     '011_tenant_backup_snapshot_resources.sql',
+    '046_tenant_backup_operation_failure_reason.sql',
   ])
     db.exec(
       readFileSync(

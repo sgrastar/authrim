@@ -16,6 +16,7 @@ import type { SqliteDatasetInspectionPolicy } from '@authrim/ar-lib-core/service
 import type { TenantBackupSqliteRestorePlanTarget } from '@authrim/ar-lib-core/services/tenant-portability/sqlite-restore-plan-step';
 import { requireDedicatedAdminDatabaseAdapter } from '@authrim/ar-lib-core';
 import {
+  type TenantBackupValidationInputReader,
   runTenantBackupImportDecode,
   runTenantBackupImportPreparation,
   runTenantBackupImportRestorePlanning,
@@ -252,6 +253,22 @@ async function runStoreExecutionBatch(
 }
 
 /** Dispatch one import phase; the common scheduler owns its outer lease and checkpoint. */
+// The installed adapter lives for one lease (see the operation dispatcher), so readers cached on it
+// are shared by that invocation's validation transitions and dropped with it.
+const inputReaderCaches = new WeakMap<
+  TenantBackupInstalledImportAdapter,
+  Map<string, TenantBackupValidationInputReader>
+>();
+
+function validationInputReaders(adapter: TenantBackupInstalledImportAdapter) {
+  let cache = inputReaderCaches.get(adapter);
+  if (!cache) {
+    cache = new Map();
+    inputReaderCaches.set(adapter, cache);
+  }
+  return cache;
+}
+
 export async function runTenantBackupImportOperationStep(
   env: Env,
   context: TenantBackupStepContext,
@@ -291,6 +308,7 @@ export async function runTenantBackupImportOperationStep(
         ...(adapter.loadPolicies ? { loadPolicies: () => adapter.loadPolicies!(context) } : {}),
         loadPolicy: (datasetId) => adapter.loadPolicy(context, datasetId),
         assertSources: () => adapter.assertSources(context),
+        inputReaders: validationInputReaders(adapter),
       },
       now
     );

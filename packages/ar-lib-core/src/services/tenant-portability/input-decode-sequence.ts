@@ -29,7 +29,7 @@ async function validationSessionId(operationId: string, inventoryDigest: string)
 }
 
 /**
- * Decode one authenticated frame from one pinned input per slice. Input ordering comes from the
+ * Authenticate one pinned input per slice, frame by frame across slices when it is large. Input ordering comes from the
  * atomic import request, while the encrypted manifest and R2 identity come from the sealed
  * inventory. After the last input, a deterministic validation session is created or resumed.
  */
@@ -56,15 +56,18 @@ export async function runTenantBackupInputDecodeSequenceStep(
     input.inputCount > 32
   )
     fail();
-  let cursor: { version: 1; inputOrdinal: number };
+  let cursor: { version: 1; inputOrdinal: number; progress?: unknown };
   try {
     cursor = JSON.parse(operation.cursor_json ?? 'null') as typeof cursor;
   } catch {
     return fail();
   }
+  const keys = Object.keys(cursor ?? {})
+    .sort()
+    .join(',');
   if (
     !cursor ||
-    Object.keys(cursor).sort().join(',') !== 'inputOrdinal,version' ||
+    (keys !== 'inputOrdinal,version' && keys !== 'inputOrdinal,progress,version') ||
     cursor.version !== 1 ||
     !Number.isSafeInteger(cursor.inputOrdinal) ||
     cursor.inputOrdinal < 0 ||
@@ -85,7 +88,11 @@ export async function runTenantBackupInputDecodeSequenceStep(
       ...context,
       operation: {
         ...operation,
-        cursor_json: JSON.stringify({ version: 2, bundleId }),
+        cursor_json: JSON.stringify(
+          cursor.progress === undefined
+            ? { version: 2, bundleId }
+            : { version: 2, bundleId, progress: cursor.progress }
+        ),
       },
     },
     {
@@ -98,8 +105,20 @@ export async function runTenantBackupInputDecodeSequenceStep(
       now: input.now,
     }
   );
-  if (result.phase === 'decode_input')
-    return { phase: 'decode_input', cursor: JSON.stringify(cursor), disposition: 'continue' };
+  if (result.phase === 'decode_input') {
+    // The inner step validated its own cursor; carry only its verification progress forward.
+    const inner = JSON.parse(result.cursor ?? 'null') as { progress?: unknown } | null;
+    if (!inner?.progress) fail();
+    return {
+      phase: 'decode_input',
+      cursor: JSON.stringify({
+        version: 1,
+        inputOrdinal: cursor.inputOrdinal,
+        progress: inner.progress,
+      }),
+      disposition: 'continue',
+    };
+  }
   if (result.phase !== 'validate_input_modules') fail();
   const inputOrdinal = cursor.inputOrdinal + 1;
   if (inputOrdinal < input.inputCount)

@@ -1,5 +1,7 @@
+import { TENANT_BACKUP_CONTAINER_V2_MAX_DATA_FRAMES } from './backup-container-v2';
 import type { DatabaseAdapter } from '../../db/adapter';
 import type { readTenantBackupArtifact } from './artifact-reader';
+import { TENANT_BACKUP_ARTIFACT_PART_MAX_BYTES } from './artifact-writer';
 
 type Bucket = Parameters<typeof readTenantBackupArtifact>[0]['bucket'];
 interface Publication {
@@ -37,7 +39,7 @@ export async function openTenantBackupDownload(input: {
       !row ||
       !Number.isSafeInteger(row.part_count) ||
       row.part_count < 1 ||
-      row.part_count > 1000001 ||
+      row.part_count > TENANT_BACKUP_CONTAINER_V2_MAX_DATA_FRAMES + 1 ||
       !Number.isSafeInteger(row.byte_count) ||
       row.byte_count < 1
     )
@@ -73,7 +75,9 @@ export async function openTenantBackupDownload(input: {
         part.uploaded !== 1 ||
         !Number.isSafeInteger(part.byte_count) ||
         part.byte_count < 1 ||
-        part.byte_count > 4194304 ||
+        // Same bound as the writer: v2 frames are 4 MiB of plaintext plus framing, one-shot v2
+        // capacity parts up to 16 MiB; legacy v1 parts stay at 4 MiB and fit as well.
+        part.byte_count > TENANT_BACKUP_ARTIFACT_PART_MAX_BYTES ||
         part.byte_count > pinned.byte_count - total ||
         !/^[a-f0-9]{64}$/.test(part.sha256) ||
         !part.object_key.startsWith(`tenant-backup-staging/${pinned.attempt_id}/${ordinal}/`)

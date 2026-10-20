@@ -1,15 +1,27 @@
 import type { DatabaseAdapter } from '../../db/adapter';
-import { TenantBackupOperationStore } from './operation-store';
+import {
+  canCleanUpTenantBackupFailure,
+  isTenantBackupPermanentFailure,
+  TenantBackupOperationStore,
+} from './operation-store';
 import { executeTenantBackupBatch, type TenantBackupOperationHandlers } from './operation-executor';
 
-/** One bounded scheduling tick. The database lease arbitrates overlapping invocations. */
+/**
+ * One bounded scheduling tick. The database lease arbitrates overlapping invocations. All
+ * operations of a tick share one Worker invocation, so `budgetMs` caps the whole tick: once it has
+ * passed, no operation is claimed and no transition starts (the running one finishes).
+ * `tickTransitions` likewise caps the transitions of all operations together, which bounds the
+ * invocation's subrequests; a failed batch counts as having used its whole per-operation cap.
+ */
 export async function runTenantBackupScheduler(
   database: Pick<DatabaseAdapter, 'query' | 'queryOne' | 'execute'>,
   handlers: TenantBackupOperationHandlers,
   signal: AbortSignal,
   now: () => number = Date.now,
   kinds: readonly ('export' | 'import')[] = ['export', 'import'],
-  maxTransitionsPerOperation = 1
+  maxTransitionsPerOperation = 1,
+  budgetMs?: number,
+  tickTransitions?: number
 ): Promise<{ inspected: number; advanced: number; failures: number; failureCodes: string[] }> {
   signal.throwIfAborted();
   const timestamp = now();
@@ -23,6 +35,14 @@ export async function runTenantBackupScheduler(
     maxTransitionsPerOperation > 32
   )
     throw new Error('invalid_backup_scheduler_transition_limit');
+  if (budgetMs !== undefined && (!Number.isSafeInteger(budgetMs) || budgetMs < 1))
+    throw new Error('invalid_backup_scheduler_budget');
+  if (
+    tickTransitions !== undefined &&
+    (!Number.isSafeInteger(tickTransitions) || tickTransitions < 1)
+  )
+    throw new Error('invalid_backup_scheduler_transition_limit');
+  const deadline = budgetMs === undefined ? undefined : timestamp + budgetMs;
   const kindPredicate =
     kinds.length === 2 ? '' : kinds[0] === 'export' ? "AND kind='export'" : "AND kind='import'";
   // Oldest updated first prevents a repeatedly yielding operation from monopolizing every tick.
@@ -39,7 +59,14 @@ export async function runTenantBackupScheduler(
   let advanced = 0,
     failures = 0;
   const failureCodes = new Set<string>();
+  let spent = 0;
   for (const item of due) {
+    if (deadline !== undefined && now() >= deadline) break;
+    const maxTransitions = Math.min(
+      maxTransitionsPerOperation,
+      (tickTransitions ?? Number.MAX_SAFE_INTEGER) - spent
+    );
+    if (maxTransitions < 1) break;
     const workerId = crypto.randomUUID();
     signal.throwIfAborted();
     try {
@@ -48,10 +75,13 @@ export async function runTenantBackupScheduler(
         { tenantId: item.tenant_id, operationId: item.id, workerId, signal },
         handlers,
         now,
-        maxTransitionsPerOperation
+        maxTransitions,
+        deadline
       );
       advanced += result.transitions;
+      spent += result.transitions;
     } catch (error) {
+      spent += maxTransitions;
       signal.throwIfAborted();
       const current = await store.get(item.tenant_id, item.id);
       const cause = error instanceof Error ? error.cause : undefined;
@@ -62,16 +92,26 @@ export async function runTenantBackupScheduler(
       failureCodes.add(errorCode);
       // Do not reschedule a new owner after cancellation, lease takeover, or a stale response.
       if (current?.lease_owner === workerId) {
-        await store.retryFailure(
-          {
-            tenantId: item.tenant_id,
-            operationId: item.id,
-            owner: workerId,
-            fencingToken: current.fencing_token,
-          },
-          current.revision,
-          now()
-        );
+        const lease = {
+          tenantId: item.tenant_id,
+          operationId: item.id,
+          owner: workerId,
+          fencingToken: current.fencing_token,
+        };
+        const permanent = isTenantBackupPermanentFailure(errorCode) ? errorCode : null;
+        // Retrying cannot fix these; clean the operation up and keep the reason instead. An import
+        // that already wrote to its restore targets cannot be cleaned up yet, so it keeps the
+        // usual retries (ending in 'waiting') and only records the reason.
+        if (
+          permanent &&
+          current.state === 'running' &&
+          canCleanUpTenantBackupFailure(current) &&
+          (await store.failPermanently(lease, current.revision, permanent, now()))
+        ) {
+          failures++;
+          continue;
+        }
+        await store.retryFailure(lease, current.revision, now(), permanent);
       }
       failures++;
     }

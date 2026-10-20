@@ -1183,6 +1183,14 @@ try {
     'utf8'
   );
   await db.batch(splitMigrationSql(exportManifestSql).map((sql) => db.prepare(sql)));
+  const exportProgressSql = readFileSync(
+    new URL(
+      '../../migrations/admin/d1/044_tenant_backup_export_dataset_progress.sql',
+      import.meta.url
+    ),
+    'utf8'
+  );
+  await db.batch(splitMigrationSql(exportProgressSql).map((sql) => db.prepare(sql)));
   const restoreSession = await createTenantBundleKeyEnvelope('local fixture restore passphrase');
   const restoreManifest = {
     formatVersion: 1 as const,

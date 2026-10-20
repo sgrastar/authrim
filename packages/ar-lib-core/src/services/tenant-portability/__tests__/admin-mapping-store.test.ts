@@ -39,6 +39,7 @@ beforeEach(() => {
     '003_tenant_backup_operations.sql',
     '006_tenant_backup_request_intent.sql',
     '008_tenant_backup_retry_state.sql',
+    '046_tenant_backup_operation_failure_reason.sql',
     '004_tenant_backup_validation_index.sql',
     '017_tenant_backup_validation_record_sources.sql',
     '019_tenant_backup_input_validations.sql',

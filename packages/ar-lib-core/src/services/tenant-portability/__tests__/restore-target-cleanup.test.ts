@@ -18,6 +18,7 @@ beforeEach(async () => {
     '003_tenant_backup_operations',
     '004_tenant_backup_validation_index',
     '008_tenant_backup_retry_state',
+    '046_tenant_backup_operation_failure_reason',
     '024_tenant_backup_restore_plan_inventory',
     '026_tenant_backup_restore_cleanup_receipts',
   ])
