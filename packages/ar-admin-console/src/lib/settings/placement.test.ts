@@ -264,6 +264,32 @@ describe('where settings live', () => {
 		expect(settingText(key).description).toBeDefined();
 	});
 
+	it('places the bulk apply limits once, as applied platform-only settings', () => {
+		for (const [key, envKey] of [
+			['bulk_apply.max_tenants_per_request', 'BULK_APPLY_MAX_TENANTS_PER_REQUEST'],
+			['bulk_apply.max_keys_per_request', 'BULK_APPLY_MAX_KEYS_PER_REQUEST']
+		] as const) {
+			const meta = ALL_CATEGORY_META['bulk-apply'].settings[key];
+			expect(categoryOf(key)).toBe('bulk-apply');
+			// The limits are read by the bulk apply route, so they are not "in development".
+			expect(meta.status).toBeUndefined();
+			expect(NOT_APPLIED.has(key)).toBe(false);
+			expect(meta.scopes).toEqual(['platform']);
+			expect(meta.envKey).toBe(envKey);
+			expect(placed).not.toContain(key);
+			expect(DRAFT.filter((entry) => entry.key === key)).toMatchObject([
+				{ page: 'plat-tenants/bulk-apply', depth: 'advanced' }
+			]);
+			// Named in every language the console has.
+			expect(hasMessage(settingText(key).label)).toBe(true);
+			expect(settingText(key).description).toBeDefined();
+		}
+		expect(DRAFT_PAGES.find((page) => page.id === 'plat-tenants/bulk-apply')).toMatchObject({
+			scope: 'platform',
+			proposed: true
+		});
+	});
+
 	it('points every duplicate at a setting that exists', () => {
 		for (const entry of DRAFT.filter((e) => e.duplicateOf)) {
 			expect(everyKey, entry.key).toContain(entry.duplicateOf);

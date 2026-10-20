@@ -1552,3 +1552,129 @@ it('groups multiple signed assignments to one physical backup database', async (
     'tenant_core/users',
   ]);
 });
+
+describe('resolving without side effects', () => {
+  beforeEach(() => {
+    clearTenantDatabaseResolverMemoryCache();
+  });
+
+  /** A signed snapshot that points at a binding the deployment does not have, published long ago. */
+  async function envWithMissingBinding(snapshot = createRuntimeRegistrySnapshot()) {
+    const { privateJwk, publicJwk } = await generateEd25519Jwks();
+    const signed = await signTenantRuntimeRegistrySnapshot(
+      snapshot,
+      { privateJwk, keyId: 'runtime-registry-key-1' },
+      '2026-05-16T00:00:00.000Z'
+    );
+    const admin = createAdminAdapter();
+    const env = {
+      DB_ADMIN: admin,
+      AUTHRIM_DEPLOYMENT_TARGET: 'edge-a',
+      TENANT_RUNTIME_REGISTRY_VERIFYING_PUBLIC_JWKS: JSON.stringify({ keys: [publicJwk] }),
+      TENANT_RUNTIME_REGISTRY: {
+        get: vi.fn(async (key: string) =>
+          key.includes(':runtime-registry:generation:')
+            ? createRuntimeGenerationDocument()
+            : JSON.stringify(signed)
+        ),
+      },
+    };
+    return { env, admin };
+  }
+
+  const options = { tenantId: 'tenant-a', role: 'tenant_core' as const, minimumSchemaVersion: 2 };
+
+  it('reports a binding that is missing, as it always did, when asked to nothing else', async () => {
+    const { env, admin } = await envWithMissingBinding();
+    await expectResolverCode(
+      resolveTenantDatabaseSourceFromRegistry(env, options),
+      'missing_binding'
+    );
+    expect(admin.execute).toHaveBeenCalledWith(
+      expect.stringContaining('INSERT INTO internal_notification_events'),
+      expect.anything()
+    );
+    expect(admin.execute).toHaveBeenCalledWith(
+      expect.stringContaining('INSERT OR IGNORE INTO admin_jobs'),
+      expect.anything()
+    );
+  });
+
+  it('writes no notification and no repair job for a missing binding when told to leave no trace', async () => {
+    const { env, admin } = await envWithMissingBinding();
+    await expectResolverCode(
+      resolveTenantDatabaseSourceFromRegistry(env, { ...options, sideEffects: 'none' }),
+      'missing_binding'
+    );
+    expect(admin.execute).not.toHaveBeenCalled();
+  });
+
+  it('writes nothing for a schema that is too old either', async () => {
+    const { env, admin } = await envWithMissingBinding();
+    await expectResolverCode(
+      resolveTenantDatabaseSourceFromRegistry(env, {
+        ...options,
+        minimumSchemaVersion: 9,
+        sideEffects: 'none',
+      }),
+      'schema_version_too_old'
+    );
+    expect(admin.execute).not.toHaveBeenCalled();
+    // And it does report one when not told otherwise.
+    clearTenantDatabaseResolverMemoryCache();
+    await expectResolverCode(
+      resolveTenantDatabaseSourceFromRegistry(env, { ...options, minimumSchemaVersion: 9 }),
+      'schema_version_too_old'
+    );
+    expect(admin.execute).toHaveBeenCalled();
+  });
+
+  it('writes no security event for a snapshot that does not verify, and reports it otherwise', async () => {
+    const { env, admin } = await envWithMissingBinding();
+    const unverifiable = { ...env, TENANT_RUNTIME_REGISTRY_VERIFYING_PUBLIC_JWKS: '{"keys":[]}' };
+    await expect(
+      resolveTenantDatabaseSourceFromRegistry(unverifiable, { ...options, sideEffects: 'none' })
+    ).rejects.toBeInstanceOf(TenantDatabaseResolverError);
+    expect(admin.execute).not.toHaveBeenCalled();
+    clearTenantDatabaseResolverMemoryCache();
+    await expect(
+      resolveTenantDatabaseSourceFromRegistry(unverifiable, options)
+    ).rejects.toBeInstanceOf(TenantDatabaseResolverError);
+    expect(admin.execute).toHaveBeenCalled();
+  });
+
+  it.each([
+    ['writes nothing', 'none' as const, false],
+    ['reports it', undefined, true],
+  ])(
+    '%s when the route is served from the worker’s memory and the binding is gone',
+    async (_name, sideEffects, reported) => {
+      const { env, admin } = await envWithMissingBinding();
+      const withBinding = { ...env, TDB_TENANT_A_SNAPSHOT_CORE: createD1Binding() } as Record<
+        string,
+        unknown
+      >;
+      await resolveTenantDatabaseSourceFromRegistry(withBinding as never, options);
+      delete withBinding.TDB_TENANT_A_SNAPSHOT_CORE;
+
+      await expectResolverCode(
+        resolveTenantDatabaseSourceFromRegistry(withBinding as never, { ...options, sideEffects }),
+        'missing_binding'
+      );
+      expect(admin.execute.mock.calls.length > 0).toBe(reported);
+    }
+  );
+
+  it('also writes nothing through the control registry', async () => {
+    const admin = createAdminAdapter();
+    await expectResolverCode(
+      resolveTenantDatabaseSourceFromControlRegistry(
+        { DB_ADMIN: admin },
+        { tenantId: 'tenant-a', role: 'tenant_core', sideEffects: 'none' },
+        createRepository({ pointer: createPointer(), row: createRow() })
+      ),
+      'missing_binding'
+    );
+    expect(admin.execute).not.toHaveBeenCalled();
+  });
+});

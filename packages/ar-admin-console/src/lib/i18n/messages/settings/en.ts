@@ -237,6 +237,14 @@ export const enSettings: Record<keyof typeof jaSettings, string> = {
 	'set.k.identity_mapping.shadow_compare_enabled.desc':
 		"While on, each OIDC identity mapping resolution is also run through the new selection (the app's own choice, then the tenant default, then the platform default), and a difference from what the request used is written to the log as a warning. Responses do not change. It adds a settings read and, when a Mapping Set is selected, a database read to each resolution, so turn it on only where you want the comparison. Platform setting; off by default.",
 
+	'set.k.bulk_apply.max_tenants_per_request': 'Bulk apply: tenants per request',
+	'set.k.bulk_apply.max_tenants_per_request.desc':
+		'The most tenants one bulk apply request may name; the same tenant named twice counts once. Each tenant costs several subrequests and some run time, so one request can only serve so many; a larger job is sent in several requests. Held between 1 and 100. Platform setting; 25 by default.',
+
+	'set.k.bulk_apply.max_keys_per_request': 'Bulk apply: settings per request',
+	'set.k.bulk_apply.max_keys_per_request.desc':
+		'The most settings (keys set or cleared, over all categories) one bulk apply request may carry. Held between 1 and 100. Platform setting; 20 by default.',
+
 	'settings.advanced': 'Advanced',
 	'settings.setHere': 'Overridden settings: {n}',
 	'settings.readOnly.title': 'View only',

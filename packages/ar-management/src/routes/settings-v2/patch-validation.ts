@@ -644,6 +644,8 @@ export function validateCategoryPatch(
     case 'identity-mapping':
       // The platform's rule is the stricter one, and an app has no such setting.
       return validateIdentityMappingPatch(body, scope === 'platform' ? 'platform' : 'tenant');
+    case 'bulk-apply':
+      return validateKnownSettingKeys('bulk-apply', 'bulk apply', body);
     case 'tenant':
       return validateKnownSettingKeys('tenant', 'tenant', body);
     case 'dcr':

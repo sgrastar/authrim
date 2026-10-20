@@ -734,6 +734,14 @@ export const API_GROUPS: readonly ApiGroup[] = [
 		]
 	},
 	{
+		id: 'settings-bulk-apply',
+		name: 'Bulk apply of settings to several tenants',
+		kind: 'actions',
+		page: 'plat-tenants/bulk-apply',
+		paths: [`${A}/settings/bulk-apply`],
+		note: 'Preview, then apply, the same settings to many tenants; the result is per tenant and key, with the previous value for undoing.'
+	},
+	{
 		id: 'platform-domains',
 		name: 'Tenant domains and mappings',
 		kind: 'records',

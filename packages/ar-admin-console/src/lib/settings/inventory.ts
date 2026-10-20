@@ -97,6 +97,13 @@ export const DRAFT_PAGES: readonly DraftPage[] = [
 	{ id: 'settings/team', scope: 'tenant' },
 	{ id: 'plat-tenants/discovery', scope: 'platform' },
 	{
+		id: 'plat-tenants/bulk-apply',
+		title: 'Bulk apply',
+		proposed: true,
+		scope: 'platform',
+		note: 'Gives the same settings to several tenants: choose the settings and tenants, preview what changes, apply, and see the result for each tenant (POST /api/admin/settings/bulk-apply). The screen is built later; these are its limits.'
+	},
+	{
 		id: 'plat-infra/scale',
 		scope: 'platform',
 		note: 'Caches, retries and timeouts: technical tuning, found by search.'
@@ -720,6 +727,19 @@ place('plat-tenants/discovery', 'Discovery screen', {
 		'tenant-discovery-ui.subtitle_text'
 	]
 });
+place(
+	'plat-tenants/bulk-apply',
+	'Limits of one request',
+	{
+		advanced: ['bulk_apply.max_tenants_per_request', 'bulk_apply.max_keys_per_request']
+	},
+	{
+		'bulk_apply.max_tenants_per_request':
+			'Platform setting only. Each tenant costs several subrequests, so a request holds a few dozen at most; the screen sends larger jobs in several requests.',
+		'bulk_apply.max_keys_per_request':
+			'Platform setting only. Held between 1 and 100, with the number of tenants.'
+	}
+);
 
 // ---------------------------------------------------------------------------------------------
 // Not shown: deploy-time, in development, and duplicates
