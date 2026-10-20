@@ -26,10 +26,19 @@ export interface SnapshotTableSchema {
     column: string;
     values: readonly string[];
   };
+  /**
+   * Trusted name of a non-partial index whose key is exactly the tenant column followed by the
+   * complete primary key, all ascending BINARY. Export pages read one tenant's rows from it in
+   * primary key order instead of walking every tenant's rows in the primary key index.
+   */
+  tenantOrderIndex?: string;
 }
 
 /** Same-database parent ownership; reference values must use the parent's key storage types. */
-export interface ParentSnapshotTableSchema extends Omit<SnapshotTableSchema, 'tenantColumn'> {
+export interface ParentSnapshotTableSchema extends Omit<
+  SnapshotTableSchema,
+  'tenantColumn' | 'tenantOrderIndex'
+> {
   parent: {
     schema: SnapshotTableSchema;
     /** Child columns in the exact order of the parent's complete primary key. */
@@ -121,6 +130,7 @@ function validateSchema(schema: CaptureSchema): void {
     if ('parent' in schema.parent.schema || schema.parent.schema.table === schema.table) {
       throw new Error('snapshot_parent_chain_unsupported');
     }
+    if ('tenantOrderIndex' in schema) throw new Error('snapshot_invalid_tenant_order_index');
     validateSchema(schema.parent.schema);
     if (
       schema.parent.childColumns.length !== schema.parent.schema.primaryKey.length ||
@@ -141,6 +151,14 @@ function validateSchema(schema: CaptureSchema): void {
       identifier(schema.scopeTypeColumn);
       if (!schema.columns.includes(schema.scopeTypeColumn))
         throw new Error('snapshot_missing_scope_type_column');
+    }
+    if (schema.tenantOrderIndex !== undefined) {
+      if (
+        typeof schema.tenantOrderIndex !== 'string' ||
+        schema.primaryKey[0] === schema.tenantColumn
+      )
+        throw new Error('snapshot_invalid_tenant_order_index');
+      identifier(schema.tenantOrderIndex);
     }
   }
   if (
@@ -232,7 +250,9 @@ function directlyOwned(
 ): string {
   const identity = schema.tenantIdentity === 'tenantKey' ? 'tenant_key' : 'tenant_id';
   const filter = scan ? '+' : '';
-  const tenantFilter = scan && schema.primaryKey[0] === schema.tenantColumn ? '' : filter;
+  // A scan may use the tenant equality only through an index ordered by the primary key after it.
+  const tenantFilter =
+    scan && (schema.primaryKey[0] === schema.tenantColumn || schema.tenantOrderIndex) ? '' : filter;
   const tenant = `${tenantFilter}${alias}.${identifier(schema.tenantColumn)} = ${snapshot}.${identity}`;
   return schema.scopeTypeColumn
     ? `(${tenant} AND ${filter}${alias}.${identifier(schema.scopeTypeColumn)} = 'tenant')`
@@ -390,6 +410,12 @@ export function sqliteSnapshotPageQuery(
   const liveAfter = tenantLeading
     ? `${vector(liveKey.slice(1))} > ${afterKey(1)}`
     : `${vector(liveKey)} > ${afterKey(0)}`;
+  // The same holds inside a (tenant, primary key...) index. INDEXED BY pins it: with statistics
+  // the planner may otherwise prefer another tenant-first index and sort the tenant on each page.
+  const tenantIndex =
+    !('parent' in schema) && !tenantLeading && schema.tenantOrderIndex
+      ? ` INDEXED BY ${identifier(schema.tenantOrderIndex)}`
+      : '';
   const firstPage = "(SELECT after_key FROM params) = ''";
   // A direct unique-key lookup keeps the snapshot a one-row loop, so ORDER BY + LIMIT stops on the
   // index instead of sorting every remaining row of the table.
@@ -397,12 +423,13 @@ export function sqliteSnapshotPageQuery(
       AND +snapshot.tenant_id = (SELECT tenant_id FROM params) AND +snapshot.state = 'capturing'`;
   const limit = 'LIMIT (SELECT page_limit FROM params)';
   const scanLimit = 'LIMIT (SELECT max(page_limit, coalesce(scan_limit, page_limit)) FROM params)';
-  // Only a tenant-leading key bounds the walk to the tenant's rows. Every other selection test is
-  // a flag, not a filter, so the LIMIT bounds the index walk itself: filtering first would walk
+  // Only a tenant-leading key or a (tenant, primary key) index bounds the walk to the tenant's rows.
+  // Every other selection test is a flag, not a filter, so the LIMIT bounds the index walk itself: filtering first would walk
   // other tenants' rows, rows of unselected partitions and replaced rows behind the cursor again
   // on every page.
   const tenantRange =
-    !('parent' in schema) && schema.primaryKey[0] === schema.tenantColumn
+    !('parent' in schema) &&
+    (schema.primaryKey[0] === schema.tenantColumn || schema.tenantOrderIndex)
       ? ` AND ${directlyOwned({ ...schema, scopeTypeColumn: undefined }, 'live', 'snapshot', true)}`
       : '';
   const selected = [
@@ -416,7 +443,7 @@ export function sqliteSnapshotPageQuery(
   const liveRows = (bound: string) => `SELECT ${liveKey
     .map((term, index) => `${term} AS k${index}`)
     .join(', ')}, (${selected}) AS selected
-    FROM tenant_backup_snapshots AS snapshot CROSS JOIN ${identifier(schema.table)} AS live
+    FROM tenant_backup_snapshots AS snapshot CROSS JOIN ${identifier(schema.table)} AS live${tenantIndex}
     WHERE ${snapshotRow} AND ${bound}${tenantRange}
     ORDER BY ${liveKey.join(', ')} ${scanLimit}`;
   // `fixed` leading terms are equality-bound; ordering by them would add a sort of the range.

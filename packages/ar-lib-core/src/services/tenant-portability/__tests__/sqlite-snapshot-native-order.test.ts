@@ -30,6 +30,17 @@ const entries: SnapshotTableSchema = {
   primaryKey: ['bucket', 'n'],
   uniqueKeys: [],
 };
+// Same keys, scanned through a (tenant, primary key...) index instead of the whole key range.
+const tagged: SnapshotTableSchema = {
+  ...items,
+  table: 'tagged',
+  tenantOrderIndex: 'tagged_tenant_order',
+};
+const shelved: SnapshotTableSchema = {
+  ...entries,
+  table: 'shelved',
+  tenantOrderIndex: 'shelved_tenant_order',
+};
 
 interface PlanRow {
   id: number;
@@ -49,10 +60,18 @@ describe('SQLite snapshot native primary key paging', () => {
       CREATE TABLE entries (bucket TEXT NOT NULL, n INTEGER NOT NULL, tenant_id TEXT NOT NULL,
         label TEXT, PRIMARY KEY (bucket, n));
       CREATE INDEX entries_tenant ON entries(tenant_id);
+      CREATE TABLE tagged (n INTEGER PRIMARY KEY NOT NULL, tenant_id TEXT NOT NULL, label TEXT);
+      CREATE INDEX tagged_tenant_label ON tagged(tenant_id, label);
+      CREATE INDEX tagged_tenant_order ON tagged(tenant_id, n);
+      CREATE TABLE shelved (bucket TEXT NOT NULL, n INTEGER NOT NULL, tenant_id TEXT NOT NULL,
+        label TEXT, PRIMARY KEY (bucket, n));
+      CREATE INDEX shelved_tenant_order ON shelved(tenant_id, bucket, n);
       ${SQLITE_SNAPSHOT_SCHEMA}
       ${sqliteSnapshotTriggers(items, 'json')}
       ${sqliteSnapshotTriggers(ledger, 'json')}
-      ${sqliteSnapshotTriggers(entries, 'json')}`);
+      ${sqliteSnapshotTriggers(entries, 'json')}
+      ${sqliteSnapshotTriggers(tagged, 'json')}
+      ${sqliteSnapshotTriggers(shelved, 'json')}`);
   });
   afterEach(() => db.close());
 
@@ -77,6 +96,20 @@ describe('SQLite snapshot native primary key paging', () => {
       [
         'SCAN live USING INDEX sqlite_autoindex_entries_1',
         'SEARCH live USING INDEX sqlite_autoindex_entries_1 ((bucket,n)>(?,?))',
+      ],
+    ],
+    [
+      tagged,
+      [
+        'SEARCH live USING COVERING INDEX tagged_tenant_order (tenant_id=?)',
+        'SEARCH live USING COVERING INDEX tagged_tenant_order (tenant_id=? AND n>?)',
+      ],
+    ],
+    [
+      shelved,
+      [
+        'SEARCH live USING COVERING INDEX shelved_tenant_order (tenant_id=?)',
+        'SEARCH live USING COVERING INDEX shelved_tenant_order (tenant_id=? AND (bucket,n)>(?,?))',
       ],
     ],
   ] as const)('reads $table pages as primary key and preimage index ranges', (schema, live) => {
@@ -105,7 +138,7 @@ describe('SQLite snapshot native primary key paging', () => {
 
   // A 3-key scan returns pages as large as its scan; a 50-key scan walks past other tenants' and
   // omitted rows (flagged, not filtered) well beyond the 3 rows a page returns.
-  const scans = [items, ledger, entries].flatMap((schema) =>
+  const scans = [items, ledger, entries, tagged, shelved].flatMap((schema) =>
     [3, 50].map((scan) => [schema.table, scan, schema] as const)
   );
 
@@ -224,6 +257,25 @@ describe('SQLite snapshot native primary key paging', () => {
       'SEARCH previous USING INDEX sqlite_autoindex_tenant_backup_preimages_1 (snapshot_id=? AND source_table=? AND record_key=?)'
     );
     expect(details.filter((detail) => /^SCAN (live|previous|snapshot)\b/.test(detail))).toEqual([]);
+  });
+
+  it.each([
+    [{ ...ledger, tenantOrderIndex: 'ledger_tenant' }, 'snapshot_invalid_tenant_order_index'],
+    [{ ...items, tenantOrderIndex: 'items tenant' }, 'snapshot_invalid_identifier'],
+    [{ ...items, tenantOrderIndex: 7 as unknown as string }, 'snapshot_invalid_tenant_order_index'],
+    [
+      {
+        table: 'notes',
+        columns: ['id', 'item_n'],
+        primaryKey: ['id'],
+        uniqueKeys: [],
+        tenantOrderIndex: 'notes_order',
+        parent: { schema: items, childColumns: ['item_n'] },
+      } as unknown as SnapshotTableSchema,
+      'snapshot_invalid_tenant_order_index',
+    ],
+  ] as const)('rejects a tenant order index the scan cannot use (%#)', (schema, error) => {
+    expect(() => sqliteSnapshotPageQuery(schema)).toThrow(error);
   });
 
   it('rejects primary keys wider than the preimage order index', () => {

@@ -14,7 +14,7 @@ import {
   type TenantDatasetSelectionRule,
 } from './selection-contract';
 import { sqliteCapturePlan } from './sqlite-capture-plan';
-import { assessSqliteCaptureStructure } from './sqlite-schema-assessment';
+import { assessSqliteCaptureStructure, sqliteTenantOrderIndex } from './sqlite-schema-assessment';
 import type { BackupSchemaTable } from './sqlite-schema-types';
 import type { CaptureSchema } from './sqlite-snapshot';
 
@@ -85,12 +85,19 @@ export function planSqliteTenantDatasets(
   ): CaptureSchema {
     const structure = assessSqliteCaptureStructure(table);
     if (!structure.schema) throw new Error(`backup_plan_structure:${structure.concerns.join(',')}`);
+    const primaryKey = structure.schema.primaryKey;
+    // Recorded only when the index exists, so plans of schemas without one stay byte-identical.
+    const tenantOrder = (column: string) => {
+      const index = sqliteTenantOrderIndex(table, column, primaryKey);
+      return index ? { tenantOrderIndex: index } : {};
+    };
     if (rule.kind === 'tenant') {
       if (!table.columns.some((column) => column.name === rule.column && !column.generated))
         throw new Error('backup_plan_ownership_column_missing');
       return {
         ...structure.schema,
         tenantColumn: rule.column,
+        ...tenantOrder(rule.column),
         ...(rule.identity === 'tenantKey' ? { tenantIdentity: 'tenantKey' as const } : {}),
         ...(partition
           ? {
@@ -112,6 +119,7 @@ export function planSqliteTenantDatasets(
       return {
         ...structure.schema,
         tenantColumn: rule.idColumn,
+        ...tenantOrder(rule.idColumn),
         scopeTypeColumn: rule.typeColumn,
         ...(partition
           ? {
