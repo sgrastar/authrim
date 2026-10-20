@@ -240,6 +240,14 @@ export const deSettings: Record<keyof typeof jaSettings, string> = {
 	'set.k.identity_mapping.shadow_compare_enabled.desc':
 		'Wenn aktiviert, wird jede OIDC-Identity-Mapping-Auflösung zusätzlich mit der neuen Auswahl durchgeführt (eigene Wahl der App, dann Standard des Tenants, dann Standard der Plattform). Weicht das Ergebnis von dem der Anfrage ab, wird eine Warnung ins Log geschrieben. Die Antworten ändern sich nicht. Jede Auflösung benötigt dafür ein zusätzliches Lesen der Einstellungen und, wenn ein Mapping-Set gewählt wird, einen Datenbankzugriff; aktivieren Sie es daher nur dort, wo der Vergleich gewünscht ist. Plattformeinstellung; standardmäßig aus.',
 
+	'set.k.bulk_apply.max_tenants_per_request': 'Sammelanwendung: Tenants pro Anfrage',
+	'set.k.bulk_apply.max_tenants_per_request.desc':
+		'Die höchste Zahl an Tenants, die eine Sammelanwendung nennen darf; ein doppelt genannter Tenant zählt einmal. Jeder Tenant kostet mehrere Subrequests und etwas Laufzeit, daher passt nur eine begrenzte Zahl in eine Anfrage; größere Aufgaben werden auf mehrere Anfragen verteilt. Wird auf 1 bis 100 begrenzt. Plattformeinstellung; Standard 25.',
+
+	'set.k.bulk_apply.max_keys_per_request': 'Sammelanwendung: Einstellungen pro Anfrage',
+	'set.k.bulk_apply.max_keys_per_request.desc':
+		'Die höchste Zahl an Einstellungen (gesetzte oder gelöschte Schlüssel, über alle Kategorien), die eine Sammelanwendung enthalten darf. Wird auf 1 bis 100 begrenzt. Plattformeinstellung; Standard 20.',
+
 	'settings.advanced': 'Erweitert',
 	'settings.setHere': 'Überschriebene Einstellungen: {n}',
 	'settings.readOnly.title': 'Nur ansehen',

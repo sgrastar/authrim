@@ -2456,6 +2456,98 @@ paths:
       security:
         - adminBearer: []
         - adminSessionCookie: []
+  /api/admin/settings/bulk-apply:
+    post:
+      tags:
+        - Settings - General
+      operationId: postApiAdminSettingsBulkApply
+      summary: Preview or apply the same settings to several tenants.
+      description: >-
+        Gives the same settings to several tenants in one request, for any setting a tenant can have
+        that the bulk apply allows. `mode: preview` writes nothing and says, for each tenant and key,
+        what the tenant has now (`current.own` is the tenant's own value, `current.effective` what is
+        in force), what is proposed, and what an apply would do (`would_apply`, `would_clear`,
+        `would_skip` or `would_reject`), with the result of the same checks an apply runs (the Admin
+        database reference check of the default Mapping Set included) and the `version` of the
+        tenant's document. A category can add what its change affects in `impact`: for
+        `identity-mapping`, the number of the tenant's apps that follow the default (those with no
+        Mapping Set of their own), or `available: false` with a reason when the tenant's database
+        cannot be read. `mode: apply` writes, tenant by tenant and independently (a tenant that
+        fails does not stop or undo another; there is no rollback of the whole), through the same
+        save as the tenant PATCH, with the caller's right to edit that tenant's category checked
+        again for each tenant. Each change reports `previous` (the tenant's own value before; null
+        when it had none) so that an apply can be undone, `new` (the value, or `"clear"`),
+        `version_before` and, when written, `version_after`. A tenant that already has a value of
+        its own for a key keeps it unless `on_existing_override` is `overwrite` (reported as
+        `skipped`, reason `existing_override`; `already_set` when it is the same value and
+        `not_overridden` for a clear of nothing). `expected` holds the versions a preview returned:
+        a category whose version has changed is `conflict` (`version_changed`) and is not written.
+        Settings the bulk apply does not give (a tenant's URLs, domains, identifiers, brand text,
+        references to its own records, secrets, structured documents, platform-only settings) are
+        `rejected` with a reason. A tenant that does not exist, or is deleted, is `rejected`
+        (`tenant_not_found`, `tenant_deleted`). A request names at most
+        `bulk_apply.max_tenants_per_request` tenants (25 by default; duplicates count once) and
+        `bulk_apply.max_keys_per_request` settings (20), both platform settings held between 1 and
+        100; more is a 400, and a larger job is sent in several requests. A key counts once for
+        each category it is set or cleared in, and a request carries at most 20 changes (one for
+        each category; a category that does not exist is a 400). A value is at most 2048
+        bytes as JSON (UTF-8, escapes counted), and all values together at most 32768. A value of
+        more than 256 bytes is not repeated in the answer: it is shown as
+        `{"value_too_large": true, "type": ..., "length": ...}` (also for `previous`, which then
+        cannot be used to undo that key). A request whose answer could pass the 900,000 bytes the
+        idempotency store keeps (an upper bound worked out from the tenant IDs, the keys and the
+        proposed values) is a 400 (`response_too_large`) before anything is done. A preview reads
+        the tenants' Core databases for `impact` without leaving a trace: nothing is written for a
+        tenant whose database cannot be routed. The result of a failed
+        tenant carries a fixed code, nothing of the tenant or the database. An apply is recorded
+        once (`settings.bulk_apply`: counts, categories and key names, never a value), and every
+        tenant's own audit record carries the bulk ID and, for the keys changed, what was done to each
+        (`changed_keys`, `results`), never the values before or after; a failure record holds codes
+        and key names only, not what a validation found. A refusal by a validation gives
+        `reason: validation_failed` and, where there is one, a fixed `detail_code`; the sentence of
+        the validation is never given (it can name what the tenant has saved, or repeat a piece of
+        what was sent), and the allowed values of a setting are read from the settings metadata. Needs the platform's authority over settings
+        (a global assignment of a platform role with a global tenant scope, or a machine token for
+        every tenant with the settings write permission); a tenant administrator, and an Agent, are
+        refused with 403. Strict rate limit. `Idempotency-Key` is required (8 to 128 characters): the
+        same key with the same body, by the same administrator or machine principal, answers with
+        the stored result; with another body, 409; another principal's request with the same key
+        is another request. The stored result (which holds the settings and IDs of many tenants) is
+        kept for 15 minutes in the platform's Admin database, never in the database of any
+        tenant, and removed when the time runs out (a scheduled sweep does it even if the
+        administrator never calls again). Once an apply has started, its key is never released:
+        if its result could not be kept, a repeat of the key is a 409 (`result_unknown`) and does
+        not run again, so look at the tenants and use another key to run it again. A request that
+        changed nothing (a preview, a refusal, a failure before the first change) is not kept, so
+        that it can be repeated.
+      parameters:
+        - $ref: '#/components/parameters/RequiredIdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BulkApplyRequest'
+      responses:
+        '200':
+          $ref: '#/components/responses/BulkApply'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+        '413':
+          $ref: '#/components/responses/Error'
+        '429':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
   /api/admin/settings/meta:
     get:
       tags:
@@ -37161,6 +37253,14 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/MappingSetUsageResponse'
+    BulkApply:
+      description: >-
+        The preview of, or the result of, a bulk apply: one entry per tenant named, in the order of
+        first appearance.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/BulkApplyResponse'
     IdentityMappingEffective:
       description: The Mapping Set an app is bound to, and the levels that decided it.
       content:
@@ -56346,6 +56446,290 @@ components:
                 - client
                 - tenant_default
                 - platform_default
+    BulkApplyRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - mode
+        - tenant_ids
+        - changes
+      properties:
+        mode:
+          type: string
+          enum:
+            - preview
+            - apply
+        tenant_ids:
+          type: array
+          minItems: 1
+          description: >-
+            The tenants to give the changes to; duplicates are dropped. At most
+            `bulk_apply.max_tenants_per_request` (25 by default, between 1 and 100).
+          items:
+            type: string
+            pattern: '^[A-Za-z0-9_-]{1,128}$'
+        changes:
+          type: array
+          minItems: 1
+          maxItems: 20
+          description: >-
+            One entry per settings category (a category appears once). The keys set or cleared, over
+            all entries, number at most `bulk_apply.max_keys_per_request` (20 by default).
+          items:
+            $ref: '#/components/schemas/BulkApplyChange'
+        on_existing_override:
+          type: string
+          enum:
+            - skip
+            - overwrite
+          default: skip
+          description: >-
+            What to do with a key the tenant already has a value of its own for: leave it
+            (`skip`) or replace or clear it (`overwrite`).
+        expected:
+          type: object
+          description: >-
+            For `apply`, optional: the `version` of each category a preview returned, by tenant ID
+            and category. A category whose version is now another is not written.
+          additionalProperties:
+            type: object
+            additionalProperties:
+              type: string
+    BulkApplyChange:
+      type: object
+      additionalProperties: false
+      required:
+        - category
+      properties:
+        category:
+          type: string
+          description: A settings category that can be set for a tenant.
+        set:
+          type: object
+          additionalProperties: true
+          description: Setting keys and the values to give them.
+        clear:
+          type: array
+          description: >-
+            Setting keys to take back to what the tenant inherits (the tenant's own value is
+            removed), as `clear` of a PATCH does.
+          items:
+            type: string
+    BulkApplyResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - mode
+        - on_existing_override
+        - limits
+        - summary
+        - results
+      properties:
+        bulk_id:
+          type: string
+          format: uuid
+          description: Present for an apply; in every audit record the apply wrote.
+        mode:
+          type: string
+          enum:
+            - preview
+            - apply
+        on_existing_override:
+          type: string
+          enum:
+            - skip
+            - overwrite
+        limits:
+          type: object
+          additionalProperties: false
+          properties:
+            max_tenants_per_request:
+              type: integer
+            max_keys_per_request:
+              type: integer
+        summary:
+          type: object
+          additionalProperties: false
+          properties:
+            tenants:
+              type: integer
+            by_status:
+              type: object
+              description: The number of tenants by status.
+              additionalProperties:
+                type: integer
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/BulkApplyTenantResult'
+    BulkApplyTenantResult:
+      type: object
+      additionalProperties: false
+      required:
+        - tenant_id
+        - status
+        - changes
+      properties:
+        tenant_id:
+          type: string
+        status:
+          type: string
+          description: >-
+            Apply: `applied`, `cleared`, `skipped`, `rejected`, `conflict` or `failed` (the worst
+            outcome of the tenant's changes leads; a tenant that cannot be worked on is `rejected`
+            with a `reason`). Preview: `ready`, `nothing_to_do`, or `rejected` for a tenant that
+            cannot be worked on.
+        reason:
+          type: string
+          description: Why the whole tenant was rejected (`tenant_not_found`, `tenant_deleted`).
+        error:
+          type: object
+          additionalProperties: false
+          properties:
+            code:
+              type: string
+          description: A fixed code for a tenant that failed as a whole; nothing else.
+        changes:
+          type: array
+          items:
+            oneOf:
+              - $ref: '#/components/schemas/BulkApplyPreviewChange'
+              - $ref: '#/components/schemas/BulkApplyAppliedChange'
+        impact:
+          type: object
+          description: >-
+            Preview only. What a category's changes affect in the tenant, by category. For
+            `identity-mapping`: `apps_total` and `apps_following_default` (the apps with no Mapping
+            Set of their own), or `available: false` and a `reason`.
+          additionalProperties: true
+    BulkApplyPreviewChange:
+      type: object
+      additionalProperties: false
+      required:
+        - category
+        - key
+        - proposed
+        - action
+        - validation
+      properties:
+        category:
+          type: string
+        key:
+          type: string
+        current:
+          type: object
+          nullable: true
+          additionalProperties: false
+          description: >-
+            What the tenant has now; null when it was not read (a refused key, or settings that
+            could not be read).
+          properties:
+            overridden:
+              type: boolean
+            own:
+              nullable: true
+              description: The tenant's own value; null when it has none.
+            effective:
+              description: The value in force.
+            source:
+              type: string
+              description: Where the value in force comes from (`kv` is the tenant's own).
+        proposed:
+          description: The value, or `"clear"`.
+        action:
+          type: string
+          enum:
+            - would_apply
+            - would_clear
+            - would_skip
+            - would_reject
+        reason:
+          type: string
+        validation:
+          type: object
+          additionalProperties: false
+          required:
+            - ok
+          properties:
+            ok:
+              type: boolean
+              nullable: true
+              description: Null when the key was not checked (it would be skipped or refused already).
+            errors:
+              type: array
+              items:
+                type: object
+                additionalProperties: false
+                properties:
+                  code:
+                    type: string
+                  detail_code:
+                    type: string
+                    description: See `detail_code` of a result.
+        version:
+          type: string
+          nullable: true
+          description: The version of the tenant's document for the category, for `expected`.
+        warnings:
+          type: array
+          items:
+            type: string
+    BulkApplyAppliedChange:
+      type: object
+      additionalProperties: false
+      required:
+        - category
+        - key
+        - status
+        - previous
+        - new
+        - version_before
+        - version_after
+      properties:
+        category:
+          type: string
+        key:
+          type: string
+        status:
+          type: string
+          enum:
+            - applied
+            - cleared
+            - skipped
+            - rejected
+            - conflict
+            - failed
+        reason:
+          type: string
+          description: >-
+            For `skipped`: `existing_override`, `already_set`, `not_overridden`. For `rejected`: a
+            reason the setting cannot be given in bulk (for example `tenant_specific_url`,
+            `tenant_ui_routing`, `tenant_brand_text`, `structured_value`), `forbidden`, or
+            `validation_failed`. For `conflict`: `version_changed`. For `failed`: a fixed code.
+        detail_code:
+          type: string
+          description: >-
+            Why a validation refused the key, as a fixed code and never as the sentence of the
+            validation: `value_invalid`, `value_out_of_range`, `value_wrong_type`,
+            `dependency_not_met`, `unknown_key`, `bounds_not_met`, `identity_mapping_*` or
+            `human_verification_*`. What a value may be (range, type, allowed values) is in the
+            settings metadata, `GET /api/admin/settings/meta/{category}`.
+        previous:
+          nullable: true
+          description: The tenant's own value before; null when it had none.
+        new:
+          description: The value given, or `"clear"`.
+        version_before:
+          type: string
+          nullable: true
+        version_after:
+          type: string
+          nullable: true
+          description: Set only when the key was written.
+        warnings:
+          type: array
+          items:
+            type: string
     IdentityMappingEffectiveResponse:
       type: object
       additionalProperties: false

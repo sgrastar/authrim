@@ -186,6 +186,7 @@ export * from './services/identity-mapping-owner';
 export * from './services/identity-mapping-runtime-resolver';
 export * from './services/identity-mapping-set-binding';
 export * from './services/identity-mapping-selection';
+export * from './services/settings-bulk-apply-policy';
 export * from './services/identity-mapping-resolution';
 export * from './services/identity-mapping-shadow-compare';
 export * from './services/identity-mapping-platform-checks';

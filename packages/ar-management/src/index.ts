@@ -86,6 +86,7 @@ import { processScheduledAgentTokenRevocations } from './agent-token-revocation'
 import { processScheduledAgentPayloadRetention } from './agent-payload-retention';
 import { processControlPlaneDriftNotifications } from './control-plane-drift-notifications';
 import { isDirectoryScheduledCron, processScheduledDirectoryJobs } from './directory-scheduled';
+import { sweepExpiredBulkApplyRecords } from './routes/settings-v2/bulk-apply-idempotency';
 import {
   isLookupScaleOutObservationDue,
   processNextLookupBucketMigration,
@@ -4188,6 +4189,15 @@ async function handleCoveredScheduled(
       await processScheduledIdentifierReplacements(env, log.module('IDENTIFIER-REPLACEMENT'));
     } catch (error) {
       log.warn('Identifier replacement scheduler failed', {
+        errorType: error instanceof Error ? error.name : 'Unknown',
+      });
+    }
+    try {
+      // The answers kept for replay hold many tenants' settings: they go as their time runs out.
+      const removed = await sweepExpiredBulkApplyRecords(env);
+      if (removed > 0) log.info('Expired bulk apply records removed', { removed });
+    } catch (error) {
+      log.warn('Bulk apply record sweep failed', {
         errorType: error instanceof Error ? error.name : 'Unknown',
       });
     }

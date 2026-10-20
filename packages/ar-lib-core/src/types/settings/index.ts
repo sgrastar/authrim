@@ -42,6 +42,7 @@ export * from './support-ops';
 export * from './self-service';
 export * from './service-site';
 export * from './identity-mapping';
+export * from './bulk-apply';
 
 // Re-export SettingsManager types
 export type {

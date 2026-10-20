@@ -153,6 +153,21 @@ with action `identity_mapping_resolution_diff`. Responses do not change. It is o
 each resolution then costs a settings read and, when the new selection names a Mapping Set, an
 Admin database read: turn it on only in the environments where the comparison is wanted.
 
+### Bulk Apply
+
+| Variable                             | Type   | Default | Description                                                                    |
+| ------------------------------------ | ------ | ------- | ------------------------------------------------------------------------------ |
+| `BULK_APPLY_MAX_TENANTS_PER_REQUEST` | number | `25`    | Most tenants one `POST /api/admin/settings/bulk-apply` request may name        |
+| `BULK_APPLY_MAX_KEYS_PER_REQUEST`    | number | `20`    | Most settings (keys set or cleared, over all categories) one request may carry |
+
+These are the deployment defaults of the platform settings `bulk_apply.max_tenants_per_request`
+and `bulk_apply.max_keys_per_request` (Settings API, `bulk-apply` category, platform scope; a value
+saved there overrides the variable). A value outside 1 to 100 is held to that range (a value that
+is not a number is ignored). Each tenant a request names costs several subrequests and some run
+time, so the limits keep one request inside what a Worker invocation can do; a larger job is sent
+in several requests. See the OpenAPI description of the endpoint for what the bulk apply gives and
+refuses.
+
 ### Introspection Settings
 
 | Variable                                 | Type    | Default | Description                         |

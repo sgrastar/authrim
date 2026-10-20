@@ -255,3 +255,19 @@ export interface D1Result {
   results?: unknown[];
   error?: string;
 }
+
+/**
+ * Whether a database error is a unique-constraint violation, seen through the wrapping the
+ * adapters give it: `D1OperationError` keeps the database's own error in `cause`, and the wrapper's
+ * own message ("... failed after retries exhausted") says nothing of the constraint. Reading only
+ * the message of the outer error misses it.
+ */
+export function isUniqueConstraintError(error: unknown): boolean {
+  let current: unknown = error;
+  for (let depth = 0; depth < 5 && current !== undefined && current !== null; depth += 1) {
+    const message = current instanceof Error ? current.message : String(current);
+    if (/UNIQUE constraint failed|duplicate key value|Duplicate entry/i.test(message)) return true;
+    current = current instanceof Error ? (current as Error & { cause?: unknown }).cause : undefined;
+  }
+  return false;
+}

@@ -1133,6 +1133,15 @@ const REVIEWED_FIELDS: readonly [string, TenantSettingValueType, TenantSettingHa
     identity_mapping.shadow_compare_enabled
   `,
     ],
+    [
+      'bulk-apply',
+      'number',
+      'value',
+      `
+    bulk_apply.max_tenants_per_request
+    bulk_apply.max_keys_per_request
+  `,
+    ],
   ];
 
 export const TENANT_SETTING_FIELD_POLICIES: readonly TenantSettingFieldPolicy[] =

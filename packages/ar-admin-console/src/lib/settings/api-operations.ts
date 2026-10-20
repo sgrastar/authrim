@@ -751,6 +751,7 @@ const ROWS: readonly (readonly [ApiMethod, string, string, ApiOperation['spec']]
 	["DELETE","/api/admin/settings/audit-storage/routing-rules/{name}","Delete audit routing rule","admin"],
 	["GET","/api/admin/settings/audit-storage/stats","Get audit storage status","admin"],
 	["GET","/api/admin/settings/audit/pii-config","List tenant audit PII configurations","admin"],
+	["POST","/api/admin/settings/bulk-apply","Preview or apply the same settings to several tenants.","admin"],
 	["GET","/api/admin/settings/cache-mode","Get platform cache mode","admin"],
 	["POST","/api/admin/settings/cache-mode","Set platform cache mode","admin"],
 	["GET","/api/admin/settings/cache-mode/info","Get cache mode reference","admin"],

@@ -365,3 +365,26 @@ describe('D1 Retry Utilities', () => {
     });
   });
 });
+
+describe('isUniqueConstraintError', () => {
+  it('sees a unique violation in the error itself and behind a D1OperationError', async () => {
+    const { D1OperationError, isUniqueConstraintError } = await import('../d1-retry');
+    const database = new Error('D1_ERROR: UNIQUE constraint failed: idempotency_records.id');
+    expect(isUniqueConstraintError(database)).toBe(true);
+    expect(isUniqueConstraintError(new D1OperationError('execute', 1, database, false))).toBe(true);
+    expect(isUniqueConstraintError('UNIQUE constraint failed: t.c')).toBe(true);
+    expect(
+      isUniqueConstraintError(new Error('duplicate key value violates unique constraint'))
+    ).toBe(true);
+  });
+
+  it('does not take other failures for one', async () => {
+    const { D1OperationError, isUniqueConstraintError } = await import('../d1-retry');
+    expect(isUniqueConstraintError(new Error('network lost'))).toBe(false);
+    expect(
+      isUniqueConstraintError(new D1OperationError('execute', 1, new Error('timeout'), true))
+    ).toBe(false);
+    expect(isUniqueConstraintError(undefined)).toBe(false);
+    expect(isUniqueConstraintError(null)).toBe(false);
+  });
+});
