@@ -91,10 +91,17 @@ function run(value: TenantBackupStepContext = context) {
   } as never);
 }
 
-it('keeps one input ordinal until its authenticated footer is complete', async () => {
-  expect(await run()).toEqual({
+it('keeps one input ordinal and its verification progress until the input is complete', async () => {
+  const progress = { stage: 'walk', sequence: 3, objectOffset: 9000, plainOffset: 8000 };
+  mocks.decode.mockResolvedValue({
     phase: 'decode_input',
-    cursor: JSON.stringify({ version: 1, inputOrdinal: 0 }),
+    cursor: JSON.stringify({ version: 2, bundleId: bundles[0], progress }),
+    disposition: 'continue',
+  });
+  const first = await run();
+  expect(first).toEqual({
+    phase: 'decode_input',
+    cursor: JSON.stringify({ version: 1, inputOrdinal: 0, progress }),
     disposition: 'continue',
   });
   const inner = mocks.decode.mock.calls[0]?.[0] as TenantBackupStepContext;
@@ -102,8 +109,19 @@ it('keeps one input ordinal until its authenticated footer is complete', async (
     version: 2,
     bundleId: bundles[0],
   });
+  await run({ ...context, operation: { ...context.operation, cursor_json: first.cursor } });
+  const resumed = mocks.decode.mock.calls[1]?.[0] as TenantBackupStepContext;
+  expect(JSON.parse(resumed.operation.cursor_json ?? 'null')).toEqual({
+    version: 2,
+    bundleId: bundles[0],
+    progress,
+  });
   expect(loadInput).toHaveBeenCalledWith(0, bundles[0]);
   expect(mocks.validation).not.toHaveBeenCalled();
+});
+
+it('rejects an inner continuation without verification progress', async () => {
+  await expect(run()).rejects.toThrow('backup_input_decode_sequence_invalid');
 });
 
 it('advances inputs in order and creates one deterministic validation session after the last', async () => {

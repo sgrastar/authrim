@@ -11,9 +11,12 @@ import type { TenantBackupStepContext } from '@authrim/ar-lib-core/services/tena
 import { DatabaseTenantBackupRestorePlanInventory } from '@authrim/ar-lib-core/services/tenant-portability/restore-plan-inventory';
 import type { TenantBackupSelection } from '@authrim/ar-lib-core/services/tenant-portability/selection-contract';
 import type { Phase8ValidatedSqliteRestoreDataset } from '@authrim/ar-lib-core/services/tenant-portability/phase8-restore-targets';
-import { readTenantBackupContainerV2Input } from '@authrim/ar-lib-core/services/tenant-portability/input-container-v2';
-import { readNextTenantBackupContainerRow } from '@authrim/ar-lib-core/services/tenant-portability/container-dataset-reader';
-import { TenantBackupContainerInputStore } from '@authrim/ar-lib-core/services/tenant-portability/container-input-store';
+import {
+  loadVerifiedTenantBackupInputStats,
+  openVerifiedTenantBackupInput,
+  rememberTenantBackupInputReader,
+  type TenantBackupContainerFrameReader,
+} from '@authrim/ar-lib-core/services/tenant-portability/container-frame-reader';
 import type { SqliteDatasetInspectionPolicy } from '@authrim/ar-lib-core/services/tenant-portability/sqlite-dataset-inspector';
 import type { TenantBundleManifest } from '@authrim/ar-lib-core/services/tenant-portability/bundle-manifest';
 import type { TenantBackupInstalledImportAdapter } from './tenant-backup-import-dispatcher';
@@ -130,10 +133,7 @@ export function createTenantBackupValidatedInputPorts(
   let planAuthorizationCache:
     | { leaseKey: string; planDigest: string; value: Promise<void> }
     | undefined;
-  const decodedCache = new Map<
-    string,
-    Promise<Awaited<ReturnType<typeof readTenantBackupContainerV2Input>>>
-  >();
+  const readerCache = new Map<string, Promise<TenantBackupContainerFrameReader>>();
 
   function operationLeaseKey(context: TenantBackupStepContext): string {
     return JSON.stringify([
@@ -235,37 +235,35 @@ export function createTenantBackupValidatedInputPorts(
     return value;
   }
 
-  async function loadDecoded(
+  async function loadReader(
     context: TenantBackupStepContext,
     planned: Awaited<ReturnType<typeof loadPlannedTenantBackupInput>>,
     key: Current['keys'][number],
     bucket: Current['bucket']
-  ) {
+  ): Promise<TenantBackupContainerFrameReader> {
     const cacheKey = `${operationLeaseKey(context)}:${planned.manifest.bundleId}`;
-    const existing = decodedCache.get(cacheKey);
-    if (existing) return existing;
-    const value = (async () => {
-      const store = new TenantBackupContainerInputStore(database, context.lease, now);
-      const receipt = await store.load(planned.manifest.bundleId);
-      if (
-        receipt.object_key !== planned.identity.key ||
-        receipt.object_version !== planned.identity.version ||
-        receipt.object_etag !== planned.identity.etag ||
-        receipt.object_size !== planned.identity.size
-      )
-        invalid();
-      return readTenantBackupContainerV2Input({
-        bucket,
-        identity: planned.identity,
-        session: key.key,
-        signal: context.signal,
-        assertAuthorized: async () => {
-          await loadCurrent(context);
-          await store.load(planned.manifest.bundleId);
-        },
-      });
-    })();
-    decodedCache.set(cacheKey, value);
+    const existing = readerCache.get(cacheKey);
+    if (existing) {
+      rememberTenantBackupInputReader(readerCache, cacheKey, existing);
+      return existing;
+    }
+    // One reader per lease and input: its decrypted-frame cache is shared by every transition
+    // that this invocation runs, and it never holds more than a few frames.
+    const value = openVerifiedTenantBackupInput({
+      database,
+      lease: context.lease,
+      now,
+      bundleId: planned.manifest.bundleId,
+      bucket,
+      identity: planned.identity,
+      session: key.key,
+      signal: context.signal,
+      assertAuthorized: async () => {
+        await loadCurrent(context);
+      },
+    });
+    rememberTenantBackupInputReader(readerCache, cacheKey, value);
+    value.catch(() => readerCache.delete(cacheKey));
     return value;
   }
 
@@ -327,15 +325,16 @@ export function createTenantBackupValidatedInputPorts(
       const authorize = async () => {
         await authorizeInput(context, execution);
       };
-      const decoded = await loadDecoded(context, planned, key, current.bucket);
-      const datasetBytes = decoded.datasets.get(job.datasetId) ?? invalid();
+      const source = (await loadReader(context, planned, key, current.bucket)).dataset(
+        job.datasetId
+      );
       await authorize();
       return {
         policy,
         manifest: planned.manifest,
         readNextValidatedRow: async ({ datasetId, sourceCursor, planDigest }) => {
           if (datasetId !== job.datasetId || !/^[a-f0-9]{64}$/u.test(planDigest)) invalid();
-          return readNextTenantBackupContainerRow(datasetBytes, sourceCursor);
+          return source.readNextRow(sourceCursor);
         },
       };
     },
@@ -346,8 +345,14 @@ export function createTenantBackupValidatedInputPorts(
       const result: Phase8ValidatedSqliteRestoreDataset[] = [];
       for (const [ordinal, planned] of plannedInputs.entries()) {
         if (current.request.inputs[ordinal]?.ordinal !== ordinal) invalid();
-        const key = current.keys[ordinal] ?? invalid();
-        const decoded = await loadDecoded(context, planned, key, current.bucket);
+        if (!current.keys[ordinal]) invalid();
+        const stats = await loadVerifiedTenantBackupInputStats({
+          database,
+          lease: context.lease,
+          now,
+          bundleId: planned.manifest.bundleId,
+          identity: planned.identity,
+        });
         for (const dataset of planned.manifest.datasets.filter(
           ({ id, store }) => store === 'database' && owners.get(id) === planned.manifest.bundleId
         )) {
@@ -359,20 +364,14 @@ export function createTenantBackupValidatedInputPorts(
             policy.schema.table.length > 256
           )
             invalid();
-          const datasetBytes = decoded.datasets.get(dataset.id) ?? invalid();
-          let recordCount = 0;
-          let sourceCursor: string | null = null;
-          for (;;) {
-            const row = readNextTenantBackupContainerRow(datasetBytes, sourceCursor);
-            if (!row) break;
-            recordCount += 1;
-            sourceCursor = row.nextCursor;
-          }
+          // Row and byte counts were authenticated by decode_input and every row was parsed by
+          // input validation, so the plan uses them without reading the dataset again.
+          const source = stats.get(dataset.id) ?? invalid();
           result.push({
             manifest: planned.manifest,
             policy,
-            recordCount,
-            byteCount: datasetBytes.byteLength,
+            recordCount: source.rows,
+            byteCount: source.bytes,
           });
         }
       }
@@ -407,15 +406,12 @@ export function createTenantBackupValidatedInputPorts(
         await execution.assertInputValidated(context.lease);
         await assertPlan(context, planDigest);
       };
-      const decoded = await loadDecoded(context, planned, key, current.bucket);
-      const datasetBytes = decoded.datasets.get(datasetId) ?? invalid();
+      const source = (await loadReader(context, planned, key, current.bucket)).dataset(datasetId);
       await authorize();
       return {
         policy,
         manifest: planned.manifest,
-        readNextValidatedRow: async ({ sourceCursor }) => {
-          return readNextTenantBackupContainerRow(datasetBytes, sourceCursor);
-        },
+        readNextValidatedRow: async ({ sourceCursor }) => source.readNextRow(sourceCursor),
       };
     },
   };

@@ -43,6 +43,15 @@ beforeEach(() => {
       'utf8'
     )
   );
+  db.exec(
+    readFileSync(
+      new URL(
+        '../../../../../../migrations/admin/d1/046_tenant_backup_operation_failure_reason.sql',
+        import.meta.url
+      ),
+      'utf8'
+    )
+  );
   adapter = {
     async query<T>(sql: string, params: unknown[] = []) {
       return db.prepare(sql).all(...(params as SQLInputValue[])) as T[];
@@ -282,6 +291,63 @@ describe('durable backup operation leases', () => {
     expect(await index.cleanupPage()).toBe(true);
     expect(await index.cleanupPage()).toBe(true);
     expect(db.prepare('PRAGMA foreign_key_check').all()).toEqual([]);
+  });
+
+  it('resolves reference endpoints in SQL exactly as hasRecord does, a thousand per page', async () => {
+    await store.create(create);
+    const run = await store.claim('tenant-a', 'operation-a', 'worker', 101);
+    const lease = {
+      tenantId: 'tenant-a',
+      operationId: 'operation-a',
+      owner: 'worker',
+      fencingToken: run!.fencing_token,
+    };
+    const index = await DatabaseTenantBundleReferenceIndex.create(adapter, lease, () => 102);
+    const record = (id: string) => ({
+      tenantId: 'tenant-a',
+      module: 'applications',
+      collection: 'clients',
+      id,
+    });
+    await index.record('bundle-a', record('a-1'));
+    await index.record('bundle-b', record('b-1'));
+    const edges = [
+      { from: 'a-1', to: 'b-1', bundle: 'bundle-a', meaning: 'resource', requirement: 'required' },
+      { from: 'b-1', to: 'a-1', bundle: 'bundle-a', meaning: 'resource', requirement: 'required' },
+      { from: 'a-1', to: 'none', bundle: 'bundle-a', meaning: 'resource', requirement: 'required' },
+      {
+        from: 'a-1',
+        to: 'none',
+        bundle: 'bundle-a',
+        meaning: 'admin_actor',
+        requirement: 'provenance',
+      },
+    ] as const;
+    for (let i = 0; i < 1003; i++) {
+      const edge = edges[i % edges.length];
+      await index.referenceOnce(edge.bundle, `dataset:0:row:${String(i).padStart(4, '0')}:edge:0`, {
+        from: record(edge.from),
+        to: { ...record(edge.to), meaning: edge.meaning, requirement: edge.requirement },
+      });
+    }
+    const first = await index.resolvedReferencesPage('');
+    expect(first.entries).toHaveLength(1000);
+    expect(first.done).toBe(false);
+    const second = await index.resolvedReferencesPage(first.nextCursor);
+    expect(second.entries).toHaveLength(3);
+    expect(second.done).toBe(true);
+    for (const entry of [...first.entries, ...second.entries]) {
+      expect(entry.sourceFound).toBe(await index.hasRecord(entry.dependency.from, entry.bundleId));
+      expect(entry.targetFound).toBe(await index.hasRecord(entry.dependency.to));
+    }
+    expect(
+      first.entries.slice(0, 4).map(({ sourceFound, targetFound }) => [sourceFound, targetFound])
+    ).toEqual([
+      [true, true],
+      [false, true],
+      [true, false],
+      [true, false],
+    ]);
   });
 
   it('rejects expired or cancelled validation writes without disturbing a newer session', async () => {
@@ -773,6 +839,63 @@ it('claims only the explicitly enabled operation kind', async () => {
   expect(calls).toEqual(['export-only']);
   expect(await store.get('tenant-a', 'import-held')).toMatchObject({ state: 'queued' });
 });
+it('stops starting transitions once the tick deadline has passed', async () => {
+  await store.create(create);
+  let clock = 101;
+  let runs = 0;
+  const handlers: TenantBackupOperationHandlers = {
+    async run() {
+      runs++;
+      clock += 30;
+      return { phase: 'capture', cursor: `{"page":${runs}}`, disposition: 'continue' };
+    },
+    async cleanup() {
+      return { cursor: null, done: true };
+    },
+  };
+  const result = await runTenantBackupScheduler(
+    adapter,
+    handlers,
+    new AbortController().signal,
+    () => clock,
+    ['export'],
+    8,
+    50
+  );
+  expect(result.advanced).toBe(2);
+  expect(runs).toBe(2);
+  expect(await store.get('tenant-a', 'operation-a')).toMatchObject({
+    state: 'queued',
+    cursor_json: '{"page":2}',
+  });
+});
+it('shares one transition budget across every operation of a scheduler tick', async () => {
+  for (const id of ['shared-a', 'shared-b', 'shared-c'])
+    await store.create({ ...create, id, idempotencyKey: id });
+  const runs: string[] = [];
+  const handlers: TenantBackupOperationHandlers = {
+    async run(context) {
+      runs.push(context.operation.id);
+      return { phase: 'capture', cursor: '{}', disposition: 'continue' };
+    },
+    async cleanup() {
+      return { cursor: null, done: true };
+    },
+  };
+  const result = await runTenantBackupScheduler(
+    adapter,
+    handlers,
+    new AbortController().signal,
+    () => 101,
+    ['export'],
+    4,
+    60_000,
+    5
+  );
+  expect(result.advanced).toBe(5);
+  expect(runs).toEqual(['shared-a', 'shared-a', 'shared-a', 'shared-a', 'shared-b']);
+  expect(await store.get('tenant-a', 'shared-c')).toMatchObject({ state: 'queued', revision: 0 });
+});
 it('advances one operation through a bounded number of durable scheduler transitions', async () => {
   await store.create(create);
   const calls: number[] = [];
@@ -898,6 +1021,181 @@ it('stops normal retries after eight failures while cancellation remains recover
     ).advanced
   ).toBe(1);
   expect((await store.get(create.tenantId, create.id))?.state).toBe('cancelled');
+});
+it('sends a permanent failure straight to cleanup and finishes it as failed', async () => {
+  await store.create(create);
+  const cleanups: string[] = [];
+  const handlers: TenantBackupOperationHandlers = {
+    async run() {
+      throw new Error('backup_export_too_large');
+    },
+    async cleanup(context) {
+      cleanups.push(context.operation.phase);
+      return { cursor: null, done: true };
+    },
+  };
+  const tick = (now: number) =>
+    runTenantBackupScheduler(adapter, handlers, new AbortController().signal, () => now);
+  expect(await tick(101)).toMatchObject({
+    failures: 1,
+    failureCodes: ['backup_export_too_large'],
+  });
+  expect(await store.get(create.tenantId, create.id)).toMatchObject({
+    state: 'cancelling',
+    phase: 'cleanup',
+    cursor_json: null,
+    failure_reason: 'backup_export_too_large',
+    failure_count: 0,
+    last_error_code: null,
+    lease_owner: null,
+    next_attempt_at: 0,
+  });
+  expect((await tick(102)).advanced).toBe(1);
+  expect(cleanups).toEqual(['cleanup']);
+  expect(await store.get(create.tenantId, create.id)).toMatchObject({
+    state: 'failed',
+    failure_reason: 'backup_export_too_large',
+    lease_owner: null,
+  });
+  // A finished operation is not picked up again.
+  expect((await tick(103)).inspected).toBe(0);
+});
+it('cleans up a permanent import failure during validation and finishes it as failed', async () => {
+  await store.create({ ...create, kind: 'import' });
+  const handlers: TenantBackupOperationHandlers = {
+    async run(context) {
+      if (context.operation.phase === 'validate_sqlite_dataset')
+        throw new Error('backup_sqlite_row_too_large');
+      return { phase: 'validate_sqlite_dataset', cursor: null, disposition: 'continue' };
+    },
+    async cleanup() {
+      return { cursor: null, done: true };
+    },
+  };
+  const tick = (now: number) =>
+    runTenantBackupScheduler(adapter, handlers, new AbortController().signal, () => now);
+  expect((await tick(101)).advanced).toBe(1);
+  expect((await tick(102)).failureCodes).toEqual(['backup_sqlite_row_too_large']);
+  expect(await store.get(create.tenantId, create.id)).toMatchObject({
+    state: 'cancelling',
+    phase: 'cleanup',
+    failure_reason: 'backup_sqlite_row_too_large',
+  });
+  expect((await tick(103)).advanced).toBe(1);
+  expect(await store.get(create.tenantId, create.id)).toMatchObject({
+    state: 'failed',
+    failure_reason: 'backup_sqlite_row_too_large',
+  });
+});
+it('keeps retrying a permanent import failure after restore writes began and shows the reason', async () => {
+  await store.create({ ...create, kind: 'import' });
+  let cleanups = 0;
+  const handlers: TenantBackupOperationHandlers = {
+    async run(context) {
+      if (context.operation.phase === 'apply_sqlite_dataset')
+        throw new Error('backup_sqlite_row_too_large');
+      return { phase: 'apply_sqlite_dataset', cursor: null, disposition: 'continue' };
+    },
+    async cleanup() {
+      cleanups++;
+      return { cursor: null, done: true };
+    },
+  };
+  let now = 101;
+  await runTenantBackupScheduler(adapter, handlers, new AbortController().signal, () => now);
+  now = 102;
+  for (let i = 0; i < 8; i++) {
+    await runTenantBackupScheduler(adapter, handlers, new AbortController().signal, () => now);
+    const current = await store.get(create.tenantId, create.id);
+    expect(current).toMatchObject({
+      phase: 'apply_sqlite_dataset',
+      failure_count: i + 1,
+      last_error_code: 'backup_operation_slice_failed',
+      failure_reason: 'backup_sqlite_row_too_large',
+    });
+    now = current!.next_attempt_at;
+  }
+  const waiting = (await store.get(create.tenantId, create.id))!;
+  expect(waiting.state).toBe('waiting');
+  expect(cleanups).toBe(0);
+  // Resuming starts a fresh attempt, so the old reason no longer describes it.
+  expect(
+    await store.resumeWaiting(
+      create.tenantId,
+      create.id,
+      waiting.revision,
+      create.requestDigest,
+      now
+    )
+  ).toMatchObject({ state: 'queued', failure_reason: null });
+});
+it('keeps a permanent failure reason when a later retry fails for a transient reason', async () => {
+  await store.create({ ...create, kind: 'import' });
+  let attempts = 0;
+  const handlers: TenantBackupOperationHandlers = {
+    async run(context) {
+      if (context.operation.phase === 'apply_sqlite_dataset') {
+        attempts++;
+        throw new Error(attempts === 1 ? 'backup_sqlite_row_too_large' : 'd1_network_error');
+      }
+      return { phase: 'apply_sqlite_dataset', cursor: null, disposition: 'continue' };
+    },
+    async cleanup() {
+      return { cursor: null, done: true };
+    },
+  };
+  let now = 101;
+  await runTenantBackupScheduler(adapter, handlers, new AbortController().signal, () => now);
+  now = 102;
+  for (let i = 0; i < 3; i++) {
+    await runTenantBackupScheduler(adapter, handlers, new AbortController().signal, () => now);
+    const current = (await store.get(create.tenantId, create.id))!;
+    // Only a checkpoint, a resume or a cancel clears it; a transient failure does not.
+    expect(current).toMatchObject({
+      failure_count: i + 1,
+      failure_reason: 'backup_sqlite_row_too_large',
+    });
+    now = current.next_attempt_at;
+  }
+  expect(attempts).toBe(3);
+});
+it('refuses to fail an import permanently once it is past validation', async () => {
+  await store.create({ ...create, kind: 'import' });
+  const claimed = (await store.claim(create.tenantId, create.id, 'worker', 101))!;
+  const lease = {
+    tenantId: create.tenantId,
+    operationId: create.id,
+    owner: 'worker',
+    fencingToken: claimed.fencing_token,
+  };
+  const applying = (await store.checkpoint(
+    lease,
+    claimed.revision,
+    'apply_sqlite_dataset',
+    null,
+    102
+  ))!;
+  expect(
+    await store.failPermanently(lease, applying.revision, 'backup_sqlite_row_too_large', 103)
+  ).toBeNull();
+  expect((await store.get(create.tenantId, create.id))?.state).toBe('running');
+});
+it('keeps a user cancellation a cancellation when no permanent failure was recorded', async () => {
+  await store.create(create);
+  await store.requestCancel(create.tenantId, create.id, 101);
+  const handlers: TenantBackupOperationHandlers = {
+    async run() {
+      throw new Error('unexpected');
+    },
+    async cleanup() {
+      return { cursor: null, done: true };
+    },
+  };
+  await runTenantBackupScheduler(adapter, handlers, new AbortController().signal, () => 102);
+  expect(await store.get(create.tenantId, create.id)).toMatchObject({
+    state: 'cancelled',
+    failure_reason: null,
+  });
 });
 it('does not overwrite cancellation with a failed stale handler retry', async () => {
   await store.create(create);

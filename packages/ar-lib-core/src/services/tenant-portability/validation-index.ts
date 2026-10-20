@@ -6,7 +6,34 @@ import type { TenantPortableDependency, TenantPortableRecordIdentity } from './r
 type Database = Pick<DatabaseAdapter, 'query' | 'queryOne' | 'execute'> &
   Partial<Pick<DatabaseAdapter, 'batch'>>;
 const PAGE_SIZE = 100;
+/** References resolved per validation transition; two indexed lookups each, in one query. */
+const RESOLVED_PAGE_SIZE = 1000;
 const WRITE_BATCH_SIZE = 50;
+/** Independent write pages in flight at once; each page is atomic and read back on its own. */
+const WRITE_PAGES_IN_FLIGHT = 4;
+
+/** Write pages of one bundle each, so read-backs can use the (session, bundle, source) index. */
+async function eachPage<T extends { bundleId: string }>(
+  items: readonly T[],
+  write: (page: T[]) => Promise<void>
+) {
+  const byBundle = new Map<string, T[]>();
+  for (const item of items) {
+    const group = byBundle.get(item.bundleId) ?? [];
+    group.push(item);
+    byBundle.set(item.bundleId, group);
+  }
+  const pages: T[][] = [];
+  for (const group of byBundle.values())
+    for (let offset = 0; offset < group.length; offset += WRITE_BATCH_SIZE)
+      pages.push(group.slice(offset, offset + WRITE_BATCH_SIZE));
+  let next = 0;
+  await Promise.all(
+    Array.from({ length: Math.min(WRITE_PAGES_IN_FLIGHT, pages.length) }, async () => {
+      while (next < pages.length) await write(pages[next++]);
+    })
+  );
+}
 const ACTIVE = `EXISTS (SELECT 1 FROM tenant_backup_validation_sessions s
   JOIN tenant_backup_operations o ON o.id=s.operation_id AND o.tenant_id=s.tenant_id
   WHERE s.id=? AND s.tenant_id=? AND s.state IN ('open','sealed') AND s.fencing_token=?
@@ -330,8 +357,7 @@ export class DatabaseTenantBundleReferenceIndex implements TenantBundleReference
       };
     });
 
-    for (let offset = 0; offset < records.length; offset += WRITE_BATCH_SIZE) {
-      const page = records.slice(offset, offset + WRITE_BATCH_SIZE);
+    await eachPage(records, async (page) => {
       const statements = page.map((entry) => ({
         sql: `INSERT INTO tenant_backup_validation_records(session_id,tenant_id,module,collection,record_id,bundle_id,source_id)
           SELECT ?,?,?,?,?,?,? WHERE ${ACTIVE} AND EXISTS (SELECT 1 FROM tenant_backup_validation_sessions WHERE id=? AND state='open')
@@ -358,11 +384,12 @@ export class DatabaseTenantBundleReferenceIndex implements TenantBundleReference
       }>(
         `SELECT module,collection,record_id,bundle_id,source_id
          FROM tenant_backup_validation_records
-         WHERE session_id=? AND tenant_id=? AND source_id IN (${page.map(() => '?').join(',')})
+         WHERE session_id=? AND tenant_id=? AND bundle_id=? AND source_id IN (${page.map(() => '?').join(',')})
          AND ${ACTIVE} AND EXISTS (SELECT 1 FROM tenant_backup_validation_sessions WHERE id=? AND state='open')`,
         [
           this.sessionId,
           this.lease.tenantId,
+          page[0].bundleId,
           ...page.map(({ sourceId }) => sourceId),
           ...this.params(),
           this.sessionId,
@@ -396,10 +423,9 @@ export class DatabaseTenantBundleReferenceIndex implements TenantBundleReference
         expected.size
       )
         throw new Error('backup_validation_index_retry_conflict');
-    }
+    });
 
-    for (let offset = 0; offset < references.length; offset += WRITE_BATCH_SIZE) {
-      const page = references.slice(offset, offset + WRITE_BATCH_SIZE);
+    await eachPage(references, async (page) => {
       const statements = page.map((entry) => ({
         sql: `INSERT INTO tenant_backup_validation_references(session_id,id,tenant_id,bundle_id,dependency_json)
           SELECT ?,?,?,?,? WHERE ${ACTIVE} AND EXISTS (SELECT 1 FROM tenant_backup_validation_sessions WHERE id=? AND state='open')
@@ -443,7 +469,7 @@ export class DatabaseTenantBundleReferenceIndex implements TenantBundleReference
         expected.size
       )
         throw new Error('backup_validation_index_retry_conflict');
-    }
+    });
   }
 
   async hasRecord(record: TenantPortableRecordIdentity, bundleId?: string): Promise<boolean> {
@@ -522,6 +548,73 @@ export class DatabaseTenantBundleReferenceIndex implements TenantBundleReference
       })),
       nextCursor: rows.length ? rows[rows.length - 1].id : after,
       done: rows.length < PAGE_SIZE,
+    };
+  }
+
+  /**
+   * One sealed page of references with both endpoints resolved in SQL: the source must exist in
+   * the same bundle and the target in any input, exactly as `hasRecord` checks them one by one.
+   */
+  async resolvedReferencesPage(after = ''): Promise<{
+    entries: {
+      id: string;
+      bundleId: string;
+      dependency: TenantPortableDependency;
+      sourceFound: boolean;
+      targetFound: boolean;
+    }[];
+    nextCursor: string;
+    done: boolean;
+  }> {
+    if (typeof after !== 'string' || after.length > 4096)
+      throw new Error('backup_validation_index_cursor');
+    const sealed = await this.database.queryOne<{ id: string }>(
+      `UPDATE tenant_backup_validation_sessions SET state='sealed' WHERE id=? AND tenant_id=? AND ${ACTIVE} RETURNING id`,
+      [this.sessionId, this.lease.tenantId, ...this.params()]
+    );
+    if (!sealed) throw new Error('backup_validation_index_fenced');
+    const endpoint = (alias: string, side: 'from' | 'to') =>
+      `${alias}.session_id=r.session_id AND ${alias}.tenant_id=r.tenant_id
+        AND ${alias}.module=json_extract(r.dependency_json,'$.${side}.module')
+        AND ${alias}.collection=json_extract(r.dependency_json,'$.${side}.collection')
+        AND ${alias}.record_id=json_extract(r.dependency_json,'$.${side}.id')`;
+    const rows = await this.database.query<{
+      id: string;
+      bundle_id: string;
+      dependency_json: string;
+      source_found: number;
+      target_found: number;
+    }>(
+      `SELECT r.id,r.bundle_id,r.dependency_json,
+        EXISTS (SELECT 1 FROM tenant_backup_validation_records f
+          WHERE ${endpoint('f', 'from')} AND f.bundle_id=r.bundle_id) AS source_found,
+        EXISTS (SELECT 1 FROM tenant_backup_validation_records t
+          WHERE ${endpoint('t', 'to')}) AS target_found
+      FROM tenant_backup_validation_references r
+      WHERE r.session_id=? AND r.tenant_id=? AND r.id>? AND ${ACTIVE} ORDER BY r.id LIMIT ?`,
+      [this.sessionId, this.lease.tenantId, after, ...this.params(), RESOLVED_PAGE_SIZE]
+    );
+    const active = await this.database.queryOne<{ active: number }>(
+      `SELECT ${ACTIVE} AS active`,
+      this.params()
+    );
+    if (!active?.active) throw new Error('backup_validation_index_fenced');
+    const entries = rows.map((row) => {
+      const dependency = JSON.parse(row.dependency_json) as TenantPortableDependency;
+      this.identity(dependency.from);
+      this.identity(dependency.to);
+      return {
+        id: row.id,
+        bundleId: row.bundle_id,
+        dependency,
+        sourceFound: Boolean(row.source_found),
+        targetFound: Boolean(row.target_found),
+      };
+    });
+    return {
+      entries,
+      nextCursor: rows.length ? rows[rows.length - 1].id : after,
+      done: rows.length < RESOLVED_PAGE_SIZE,
     };
   }
 

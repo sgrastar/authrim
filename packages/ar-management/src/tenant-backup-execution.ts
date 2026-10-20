@@ -23,7 +23,11 @@ import {
   type TenantBackupSqliteRestorePlanTarget,
 } from '@authrim/ar-lib-core/services/tenant-portability/sqlite-restore-plan-step';
 import { probeTenantBackupInputManifest } from '@authrim/ar-lib-core/services/tenant-portability/input-manifest-probe';
-import { readTenantBackupContainerV2Input } from '@authrim/ar-lib-core/services/tenant-portability/input-container-v2';
+import {
+  openVerifiedTenantBackupInput,
+  rememberTenantBackupInputReader,
+  type TenantBackupContainerFrameReader,
+} from '@authrim/ar-lib-core/services/tenant-portability/container-frame-reader';
 import {
   loadPlannedTenantBackupInputs,
   persistTenantBackupInput,
@@ -58,21 +62,29 @@ function sameInputIdentity(
   );
 }
 
-function importCursor(value: string | null): { version: 1; nextInput: number } {
+/** `probe` is the manifest probe's prefix-walk position inside input `nextInput`, if it paused. */
+function importCursor(value: string | null): {
+  version: 1;
+  nextInput: number;
+  probe?: unknown;
+} {
   if (value === null) return { version: 1, nextInput: 0 };
   try {
     const cursor = JSON.parse(value) as Record<string, unknown>;
+    const keys = Object.keys(cursor ?? {})
+      .sort()
+      .join(',');
     if (
       !cursor ||
       Array.isArray(cursor) ||
-      Object.keys(cursor).sort().join(',') !== 'nextInput,version' ||
+      (keys !== 'nextInput,version' && keys !== 'nextInput,probe,version') ||
       cursor.version !== 1 ||
       !Number.isSafeInteger(cursor.nextInput) ||
       (cursor.nextInput as number) < 0 ||
       (cursor.nextInput as number) > 32
     )
       throw new Error();
-    return cursor as { version: 1; nextInput: number };
+    return cursor as { version: 1; nextInput: number; probe?: unknown };
   } catch {
     throw new Error('backup_import_execution_cursor');
   }
@@ -298,7 +310,16 @@ export async function runTenantBackupImportPreparation(
     signal: context.signal,
     assertAuthorized: assertCurrent,
     selectionMode: 'subset',
+    progress: cursor.probe,
   });
+  if (!probed.done) {
+    await assertCurrent();
+    return {
+      phase: 'prepare',
+      cursor: JSON.stringify({ version: 1, nextInput: cursor.nextInput, probe: probed.progress }),
+      disposition: 'continue',
+    };
+  }
   await persistTenantBackupInput({
     context,
     inventory,
@@ -390,6 +411,15 @@ export async function runTenantBackupImportDecode(
 }
 
 /** Validate ordered SQL inputs against installed policies before any restore target is writable. */
+/**
+ * A reader kept across the validation transitions of one lease. Each transition installs its own
+ * authorization check, because the import request store binds checks to the operation revision.
+ */
+export interface TenantBackupValidationInputReader {
+  reader: Promise<TenantBackupContainerFrameReader>;
+  authorize: () => Promise<void>;
+}
+
 export async function runTenantBackupImportValidation(
   env: Env,
   context: TenantBackupStepContext,
@@ -398,6 +428,8 @@ export async function runTenantBackupImportValidation(
     loadPolicies?(): Promise<readonly SqliteDatasetInspectionPolicy[]>;
     loadPolicy(datasetId: string): Promise<SqliteDatasetInspectionPolicy>;
     assertSources(): Promise<void>;
+    /** Readers shared by the transitions of one invocation, keyed by lease and input. */
+    inputReaders?: Map<string, TenantBackupValidationInputReader>;
   },
   now: () => number = Date.now
 ): Promise<TenantBackupStepResult> {
@@ -445,13 +477,16 @@ export async function runTenantBackupImportValidation(
     datasets,
   };
   const policies = adapter.loadPolicies ? adapter.loadPolicies() : null;
-  const decodedInputs = new Map<
-    string,
-    Promise<Awaited<ReturnType<typeof readTenantBackupContainerV2Input>>>
-  >();
+  const inputReaders = adapter.inputReaders ?? new Map<string, TenantBackupValidationInputReader>();
+  const leaseKey = JSON.stringify([
+    context.lease.tenantId,
+    context.lease.operationId,
+    context.lease.owner,
+    context.lease.fencingToken,
+  ]);
+  for (const key of inputReaders.keys()) if (!key.startsWith(leaseKey)) inputReaders.delete(key);
   const result = await runTenantBackupSqliteInputValidationSequenceStep(context, {
     database,
-    bucket: env.IMPORT_ARTIFACTS,
     inventory,
     now,
     async ownsDataset(_ordinal, bundleId, datasetId) {
@@ -478,23 +513,34 @@ export async function runTenantBackupImportValidation(
           datasets,
         },
         session: key.key,
-        loadDataset: async (datasetId: string) => {
-          let decoded = decodedInputs.get(bundleId);
-          if (!decoded) {
-            decoded = readTenantBackupContainerV2Input({
-              bucket: env.IMPORT_ARTIFACTS!,
-              identity: bound.identity,
-              session: key.key,
-              signal: context.signal,
-              assertAuthorized: async () => {
+        openDataset: async (datasetId: string) => {
+          const cacheKey = `${leaseKey}:${bundleId}`;
+          let cached = inputReaders.get(cacheKey);
+          if (!cached) {
+            const entry: TenantBackupValidationInputReader = {
+              authorize: async () => {
                 await assertCurrent();
               },
-            });
-            decodedInputs.set(bundleId, decoded);
+              reader: openVerifiedTenantBackupInput({
+                database,
+                lease: context.lease,
+                now,
+                bundleId,
+                bucket: env.IMPORT_ARTIFACTS!,
+                identity: bound.identity,
+                session: key.key,
+                signal: context.signal,
+                assertAuthorized: () => entry.authorize(),
+              }),
+            };
+            cached = entry;
+            entry.reader.catch(() => inputReaders.delete(cacheKey));
           }
-          const bytes = (await decoded).datasets.get(datasetId);
-          if (!(bytes instanceof Uint8Array)) throw new Error('backup_import_input_changed');
-          return bytes;
+          cached.authorize = async () => {
+            await assertCurrent();
+          };
+          rememberTenantBackupInputReader(inputReaders, cacheKey, cached);
+          return (await cached.reader).dataset(datasetId);
         },
         loadPolicy: async (datasetId) => {
           await assertCurrent();

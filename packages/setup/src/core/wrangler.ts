@@ -796,7 +796,7 @@ export function generateWranglerConfig(
     wranglerConfig.triggers = {
       crons: ['* * * * *', '*/2 * * * *', '*/5 * * * *', '0 */6 * * *'],
     };
-    // One scheduled run advances up to 8 tenant backup slices; each reads ~750 D1 queries and
+    // One scheduled run advances up to 16 tenant backup transitions; each reads up to ~750 D1 queries and
     // spends seconds of CPU on row decoding and hashing. The defaults are 30 s and 10,000.
     wranglerConfig.limits = { cpu_ms: 300_000, subrequests: 50_000 };
     wranglerConfig.vars['AUTHRIM_R2_MAINTENANCE_CRON_ENABLED'] = 'true';

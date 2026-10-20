@@ -4,7 +4,17 @@ import {
 } from '@authrim/ar-lib-core/services/tenant-portability/bundle-key-envelope';
 import { TenantBundleCipherDecoder } from '@authrim/ar-lib-core/services/tenant-portability/bundle-cipher-decoder';
 import { TENANT_BUNDLE_MANIFEST_MAX_BYTES } from '@authrim/ar-lib-core/services/tenant-portability/bundle-manifest';
-import { decodeTenantBackupContainerV2 } from '@authrim/ar-lib-core/services/tenant-portability/backup-container-v2';
+import {
+	decodeTenantBackupContainerV2,
+	TENANT_BACKUP_CONTAINER_V2_MAX_OBJECT_BYTES
+} from '@authrim/ar-lib-core/services/tenant-portability/backup-container-v2';
+import {
+	readTenantBackupContainerV2Manifest,
+	TENANT_BACKUP_INPUT_MAX_DATA_FRAMES
+} from '@authrim/ar-lib-core/services/tenant-portability/input-container-verification';
+
+/** Containers up to this size are decoded and fully authenticated in the browser before upload. */
+const TENANT_BACKUP_BROWSER_DECODE_MAX_BYTES = 256 * 1024 * 1024;
 import type { TenantBackupKeyHandoffContext } from '@authrim/ar-lib-core/services/tenant-portability/operation-key-handoff';
 import { API_BASE_URL, adminFetch, buildAdminHeaders } from './admin-request';
 import { hashTenantBackupFile } from './tenant-backup-sha256';
@@ -264,11 +274,30 @@ export async function inspectTenantBackupSource(
 	const envelope = extractTenantBackupEnvelope(prefix.slice(0, 137).buffer);
 	const session = await unlockTenantBundleKeyEnvelope(envelope, passphrase);
 	if (new TextDecoder().decode(prefix.subarray(0, 8)) === 'AUTHRIM2') {
-		const decoded = await decodeTenantBackupContainerV2({
-			parts: [new Uint8Array(await file.arrayBuffer())],
-			session
+		if (file.size <= TENANT_BACKUP_BROWSER_DECODE_MAX_BYTES) {
+			const decoded = await decodeTenantBackupContainerV2({
+				parts: [new Uint8Array(await file.arrayBuffer())],
+				session
+			});
+			return validateTenantBackupSource(decoded.manifest.backup.source);
+		}
+		// Too large to hold in the browser: authenticate only the metadata frame here. The import's
+		// decode step authenticates every data frame before any row is restored.
+		if (file.size > TENANT_BACKUP_CONTAINER_V2_MAX_OBJECT_BYTES)
+			throw new Error('Invalid Authrim tenant backup file');
+		const read = await readTenantBackupContainerV2Manifest({
+			object: {
+				size: file.size,
+				read: async (offset, length) =>
+					new Uint8Array(await file.slice(offset, offset + length).arrayBuffer())
+			},
+			session,
+			frames: TENANT_BACKUP_INPUT_MAX_DATA_FRAMES + 1,
+			maxFrames: TENANT_BACKUP_INPUT_MAX_DATA_FRAMES + 1,
+			signal: new AbortController().signal
 		});
-		return validateTenantBackupSource(decoded.manifest.backup.source);
+		if (!read.done) throw new Error('Invalid Authrim tenant backup file');
+		return validateTenantBackupSource(read.manifest.backup.source);
 	}
 	const contentLength = new DataView(prefix.buffer, prefix.byteOffset + 137, 4).getUint32(0, false);
 	if (

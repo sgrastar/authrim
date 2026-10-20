@@ -18,8 +18,8 @@ const mocks = vi.hoisted(() => ({
   planned: vi.fn<(...args: unknown[]) => Promise<unknown>>(),
   plannedInputs: vi.fn<(...args: unknown[]) => Promise<unknown>>(),
   readNext: vi.fn<(...args: unknown[]) => unknown>(),
-  readContainer: vi.fn<(...args: unknown[]) => Promise<unknown>>(),
-  containerReceipt: vi.fn<(...args: unknown[]) => Promise<unknown>>(),
+  openInput: vi.fn<(...args: unknown[]) => Promise<unknown>>(),
+  inputStats: vi.fn<(...args: unknown[]) => Promise<unknown>>(),
 }));
 
 vi.mock('@authrim/ar-lib-core', () => ({
@@ -65,17 +65,12 @@ vi.mock('@authrim/ar-lib-core/services/tenant-portability/input-plan', () => ({
       inputs.flatMap(({ manifest }) => manifest.datasets.map(({ id }) => [id, manifest.bundleId]))
     ),
 }));
-vi.mock('@authrim/ar-lib-core/services/tenant-portability/input-container-v2', () => ({
-  readTenantBackupContainerV2Input: (...args: unknown[]) => mocks.readContainer(...args),
-}));
-vi.mock('@authrim/ar-lib-core/services/tenant-portability/container-dataset-reader', () => ({
-  readNextTenantBackupContainerRow: (...args: unknown[]) => mocks.readNext(...args),
-}));
-vi.mock('@authrim/ar-lib-core/services/tenant-portability/container-input-store', () => ({
-  TenantBackupContainerInputStore: class {
-    load(...args: unknown[]) {
-      return mocks.containerReceipt(...args);
-    }
+vi.mock('@authrim/ar-lib-core/services/tenant-portability/container-frame-reader', () => ({
+  openVerifiedTenantBackupInput: (...args: unknown[]) => mocks.openInput(...args),
+  loadVerifiedTenantBackupInputStats: (...args: unknown[]) => mocks.inputStats(...args),
+  rememberTenantBackupInputReader: (cache: Map<string, unknown>, key: string, value: unknown) => {
+    cache.delete(key);
+    cache.set(key, value);
   },
 }));
 vi.mock('../tenant-backup-services', () => ({
@@ -157,16 +152,18 @@ describe('tenant backup validated input production port', () => {
       },
     });
     mocks.plannedInputs.mockImplementation(async () => [await mocks.planned()]);
-    mocks.containerReceipt.mockResolvedValue({
-      object_key: request.inputs[0].identity.key,
-      object_version: request.inputs[0].identity.version,
-      object_etag: request.inputs[0].identity.etag,
-      object_size: request.inputs[0].identity.size,
+    mocks.inputStats.mockResolvedValue(new Map([[dataset.id, { rows: 1, bytes: 25 }]]));
+    mocks.openInput.mockResolvedValue({
+      dataset: (id: string) => ({
+        id,
+        rows: 1,
+        bytes: 25,
+        readNextRow: (sourceCursor: string | null) => mocks.readNext(sourceCursor),
+        readAll: async () => new TextEncoder().encode('{"id":["text","user-a"]}\n'),
+        canReadAll: true,
+      }),
     });
-    mocks.readContainer.mockResolvedValue({
-      datasets: new Map([[dataset.id, new TextEncoder().encode('{"id":["text","user-a"]}\n')]]),
-    });
-    mocks.readNext.mockImplementation((_bytes, sourceCursor) =>
+    mocks.readNext.mockImplementation((sourceCursor) =>
       sourceCursor === null ? { rowJson: '{"id":["text","user-a"]}', nextCursor: '{}' } : null
     );
   });
@@ -212,7 +209,15 @@ describe('tenant backup validated input production port', () => {
         planDigest: digest,
       })
     ).resolves.toEqual({ rowJson: '{"id":["text","user-a"]}', nextCursor: '{}' });
-    expect(mocks.readContainer).toHaveBeenCalledTimes(1);
+    expect(mocks.openInput).toHaveBeenCalledTimes(1);
+    expect(mocks.openInput).toHaveBeenCalledWith(
+      expect.objectContaining({
+        bundleId,
+        identity: request.inputs[0].identity,
+        session: { id: 'session-a' },
+        lease: context.lease,
+      })
+    );
     expect(mocks.executionValidated).toHaveBeenCalled();
     expect(assertSources).toHaveBeenCalled();
     expect(assertUnpublishedTarget).not.toHaveBeenCalled();
@@ -346,8 +351,8 @@ describe('tenant backup validated input production port', () => {
       rowJson: '{"id":["text","user-a"]}',
       nextCursor: '{}',
     });
-    expect(mocks.readContainer).toHaveBeenCalledTimes(1);
-    expect(mocks.readNext).toHaveBeenCalledWith(expect.any(Uint8Array), null);
+    expect(mocks.openInput).toHaveBeenCalledTimes(1);
+    expect(mocks.readNext).toHaveBeenCalledWith(null);
   });
 
   it('reuses the sealed plan, input inventory, and installed policies within one lease', async () => {
@@ -374,6 +379,17 @@ describe('tenant backup validated input production port', () => {
     expect(mocks.plannedInputs).toHaveBeenCalledTimes(1);
     expect(loadPolicies).toHaveBeenCalledTimes(1);
     expect(loadPolicy).not.toHaveBeenCalled();
-    expect(mocks.readContainer).toHaveBeenCalledTimes(1);
+    expect(mocks.openInput).toHaveBeenCalledTimes(1);
+  });
+
+  it('plans from the authenticated row and byte counts without re-reading rows', async () => {
+    const { value } = ports();
+    const loaded = await value.loadValidatedSqliteDatasets(context);
+    expect(loaded[0]).toMatchObject({ recordCount: 1, byteCount: 25 });
+    expect(mocks.readNext).not.toHaveBeenCalled();
+    expect(mocks.openInput).not.toHaveBeenCalled();
+    expect(mocks.inputStats).toHaveBeenCalledWith(
+      expect.objectContaining({ bundleId, identity: request.inputs[0].identity })
+    );
   });
 });

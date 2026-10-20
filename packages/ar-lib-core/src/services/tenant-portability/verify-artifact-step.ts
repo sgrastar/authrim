@@ -1,4 +1,5 @@
 import {
+  TENANT_BACKUP_CONTAINER_V2_MAX_DATA_FRAMES,
   TENANT_BACKUP_CONTAINER_V2_MAX_OBJECT_BYTES,
   openTenantBackupContainerV2Cipher,
   parseTenantBackupContainerV2Metadata,
@@ -121,7 +122,7 @@ export async function runTenantBackupArtifactVerificationStep(
     expected: Parameters<typeof loadTenantBackupExportManifest>[0]['expected'];
     now: () => number;
     /** Smaller budgets and size caps let tests cross many slices with little data. */
-    slice?: { stepBytes: number; maxObjectBytes?: number };
+    slice?: { stepBytes: number; maxObjectBytes?: number; maxDataFrames?: number };
   }
 ): Promise<TenantBackupStepResult> {
   const { operation, lease, signal } = context;
@@ -136,7 +137,11 @@ export async function runTenantBackupArtifactVerificationStep(
     throw new Error('backup_verify_step_context');
   const stepBudget = input.slice?.stepBytes ?? STEP_BYTES;
   const maxObjectBytes = input.slice?.maxObjectBytes ?? TENANT_BACKUP_CONTAINER_V2_MAX_OBJECT_BYTES;
+  const maxDataFrames = input.slice?.maxDataFrames ?? TENANT_BACKUP_CONTAINER_V2_MAX_DATA_FRAMES;
   if (
+    !Number.isSafeInteger(maxDataFrames) ||
+    maxDataFrames < 1 ||
+    maxDataFrames > TENANT_BACKUP_CONTAINER_V2_MAX_DATA_FRAMES ||
     !Number.isSafeInteger(stepBudget) ||
     stepBudget < 1 ||
     !Number.isSafeInteger(maxObjectBytes) ||
@@ -161,7 +166,8 @@ export async function runTenantBackupArtifactVerificationStep(
   )
     cursorFail();
   // Import accepts containers up to this size only; never verify one it would refuse.
-  if (attempt.byte_count > maxObjectBytes) throw new Error('backup_artifact_too_large');
+  if (attempt.byte_count > maxObjectBytes || attempt.part_count > maxDataFrames + 1)
+    throw new Error('backup_artifact_too_large');
   const savedManifest = await loadTenantBackupExportManifest({
     database: input.database,
     lease,
@@ -302,6 +308,7 @@ export async function runTenantBackupArtifactVerificationStep(
         metadataSeen = true;
         continue;
       }
+      if (frame.sequence >= maxDataFrames) throw new Error('backup_artifact_too_large');
       verifyData(await cipher.open(frame.sequence, 1, frame.encrypted));
       state.sequence++;
     }

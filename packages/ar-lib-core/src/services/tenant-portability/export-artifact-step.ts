@@ -1,4 +1,5 @@
 import {
+  TENANT_BACKUP_CONTAINER_V2_MAX_DATA_FRAMES,
   TENANT_BACKUP_CONTAINER_V2_MAX_OBJECT_BYTES,
   openTenantBackupContainerV2Cipher,
   tenantBackupContainerV2Metadata,
@@ -227,7 +228,12 @@ export async function runTenantBackupArtifactStep(
     ) => Promise<{ bytes: Uint8Array; nextCursor: string } | null>;
     assertBoundary: () => Promise<void>;
     /** Smaller frames, budgets and size caps let tests cross many slices with little data. */
-    slice?: { frameBytes: number; readCalls: number; maxObjectBytes?: number };
+    slice?: {
+      frameBytes: number;
+      readCalls: number;
+      maxObjectBytes?: number;
+      maxDataFrames?: number;
+    };
   }
 ): Promise<TenantBackupStepResult> {
   const { operation, lease, signal } = context;
@@ -244,7 +250,11 @@ export async function runTenantBackupArtifactStep(
   const frameBytes = input.slice?.frameBytes ?? FRAME_BYTES;
   const readCalls = input.slice?.readCalls ?? STEP_READ_CALLS;
   const maxObjectBytes = input.slice?.maxObjectBytes ?? TENANT_BACKUP_CONTAINER_V2_MAX_OBJECT_BYTES;
+  const maxDataFrames = input.slice?.maxDataFrames ?? TENANT_BACKUP_CONTAINER_V2_MAX_DATA_FRAMES;
   if (
+    !Number.isSafeInteger(maxDataFrames) ||
+    maxDataFrames < 1 ||
+    maxDataFrames > TENANT_BACKUP_CONTAINER_V2_MAX_DATA_FRAMES ||
     !Number.isSafeInteger(frameBytes) ||
     frameBytes < 1 ||
     frameBytes > FRAME_BYTES ||
@@ -349,6 +359,8 @@ export async function runTenantBackupArtifactStep(
     state.objectBytes += part.length;
   };
   const sealFrame = async (plain: Uint8Array): Promise<Uint8Array> => {
+    // Import, verification and download accept only so many frames; stop before writing one more.
+    if (state.sequence >= maxDataFrames) throw new Error('backup_export_too_large');
     const frame = await cipher.seal(state.sequence, 1, plain);
     state.sequence++;
     state.offset += plain.length;

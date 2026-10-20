@@ -1,3 +1,4 @@
+import { TENANT_BACKUP_MAX_INPUT_BYTES } from './pinned-input-object';
 import type { DatabaseAdapter } from '../../db/adapter';
 
 export const TENANT_BACKUP_UPLOAD_PART_BYTES = 8 * 1024 * 1024;
@@ -43,7 +44,7 @@ export class TenantBackupUploadStore {
     if (
       !Number.isSafeInteger(input.bytes) ||
       input.bytes < 174 ||
-      input.bytes > TENANT_BACKUP_UPLOAD_PART_BYTES * 10000 ||
+      input.bytes > TENANT_BACKUP_MAX_INPUT_BYTES ||
       !/^[a-f0-9]{64}$/.test(input.sha256)
     )
       throw new Error('backup_upload_input');
