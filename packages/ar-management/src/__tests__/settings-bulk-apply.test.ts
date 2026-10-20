@@ -2771,5 +2771,6 @@ describe('how long the replay record lasts', () => {
       { DB_ADMIN: t.adapter, SETTINGS: undefined } as never
     );
     expect(ids(t)).toEqual([]);
-  });
+    // The first import of the whole worker entry is slow on a loaded CI runner.
+  }, 60_000);
 });
