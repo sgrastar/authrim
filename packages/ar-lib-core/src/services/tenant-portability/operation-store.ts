@@ -28,13 +28,17 @@ export interface TenantBackupOperation {
   next_attempt_at: number;
   failure_count: number;
   last_error_code: string | null;
-  /** Set when the operation failed permanently; cleanup then finishes it as 'failed'. */
+  /**
+   * The permanent failure that stopped the operation. Cleanup then finishes it as 'failed'; an
+   * import that already wrote to its restore targets keeps retrying and only shows the reason.
+   */
   failure_reason?: TenantBackupPermanentFailure | null;
 }
 
 /**
- * Step errors that retrying cannot fix. The scheduler cleans such an operation up like a
- * cancellation instead of retrying it, and keeps the code as the failure reason.
+ * Step errors that retrying cannot fix. Where cleanup can undo the work so far (see
+ * canCleanUpTenantBackupFailure), the scheduler cleans such an operation up like a cancellation
+ * instead of retrying it, and keeps the code as the failure reason.
  */
 export const TENANT_BACKUP_PERMANENT_FAILURES = [
   'backup_export_too_large',
@@ -46,6 +50,33 @@ export type TenantBackupPermanentFailure = (typeof TENANT_BACKUP_PERMANENT_FAILU
 export function isTenantBackupPermanentFailure(code: string): code is TenantBackupPermanentFailure {
   return (TENANT_BACKUP_PERMANENT_FAILURES as readonly string[]).includes(code);
 }
+
+/**
+ * Import phases before anything is written to a restore target. Cleanup of an import past them
+ * has to remove restored tenant data, which the installed cleanup cannot do yet.
+ */
+export const TENANT_BACKUP_IMPORT_PRE_WRITE_PHASES = [
+  'prepare',
+  'decode_input',
+  'validate_input_modules',
+  'validate_sqlite_dataset',
+  'advance_validation_dataset',
+  'validate_input_references',
+  'finalize_input_validation',
+] as const;
+
+/** Whether a permanent failure in this operation's current phase can be cleaned up. */
+export function canCleanUpTenantBackupFailure(
+  operation: Pick<TenantBackupOperation, 'kind' | 'phase'>
+): boolean {
+  return (
+    operation.kind === 'export' ||
+    (TENANT_BACKUP_IMPORT_PRE_WRITE_PHASES as readonly string[]).includes(operation.phase)
+  );
+}
+const PRE_WRITE_PHASES_SQL = TENANT_BACKUP_IMPORT_PRE_WRITE_PHASES.map(
+  (phase) => `'${phase}'`
+).join(',');
 export interface TenantBackupLease {
   tenantId: string;
   operationId: string;
@@ -147,25 +178,38 @@ export class TenantBackupOperationStore {
   }
 
   /** Persist retry delay without advancing the last successful cursor. */
+  /**
+   * `reason` records a permanent failure that could not be cleaned up, so it stays visible while
+   * the operation retries. A cleanup retry keeps the reason it is cleaning up for.
+   */
   async retryFailure(
     lease: TenantBackupLease,
     revision: number,
-    now: number
+    now: number,
+    reason: TenantBackupPermanentFailure | null = null
   ): Promise<TenantBackupOperation | null> {
     leaseValues(lease);
     time(now);
-    if (!Number.isSafeInteger(revision) || revision < 0 || now > Number.MAX_SAFE_INTEGER - 60_000)
+    if (
+      !Number.isSafeInteger(revision) ||
+      revision < 0 ||
+      now > Number.MAX_SAFE_INTEGER - 60_000 ||
+      (reason !== null && !isTenantBackupPermanentFailure(reason))
+    )
       throw new Error('invalid_backup_operation_retry');
     return this.database.queryOne(
       `UPDATE tenant_backup_operations
       SET state=CASE WHEN state='cancelling' THEN 'cancelling' WHEN failure_count>=7 THEN 'waiting' ELSE 'queued' END,
       next_attempt_at=?+MIN(60000,1000*(1 << MIN(failure_count,6))),failure_count=failure_count+1,
-      last_error_code='backup_operation_slice_failed',lease_owner=NULL,lease_expires_at=NULL,
+      last_error_code='backup_operation_slice_failed',
+      failure_reason=CASE WHEN state='cancelling' THEN failure_reason ELSE ? END,
+      lease_owner=NULL,lease_expires_at=NULL,
       revision=revision+1,fencing_token=fencing_token+1,updated_at=?
       WHERE tenant_id=? AND id=? AND state IN ('running','cancelling') AND lease_owner=?
       AND fencing_token=? AND revision=? AND lease_expires_at>? AND updated_at<=? RETURNING *`,
       [
         now,
+        reason,
         now,
         lease.tenantId,
         lease.operationId,
@@ -222,7 +266,8 @@ export class TenantBackupOperationStore {
       }
     }
     return this.database.queryOne(
-      `UPDATE tenant_backup_operations SET phase=?,cursor_json=?,revision=revision+1,updated_at=?,lease_expires_at=?,failure_count=0,last_error_code=NULL,next_attempt_at=0
+      `UPDATE tenant_backup_operations SET phase=?,cursor_json=?,revision=revision+1,updated_at=?,lease_expires_at=?,failure_count=0,last_error_code=NULL,next_attempt_at=0,
+      failure_reason=CASE WHEN state='cancelling' THEN failure_reason ELSE NULL END
       WHERE tenant_id=? AND id=? AND state=? AND lease_owner=? AND fencing_token=? AND revision=? AND lease_expires_at>? AND updated_at<=? RETURNING *`,
       [
         phase,
@@ -285,7 +330,8 @@ export class TenantBackupOperationStore {
 
   /**
    * Give up on a running operation that can never succeed: record why and hand it to the same
-   * cleanup a cancellation gets, so partial artifacts, spills and staging are removed.
+   * cleanup a cancellation gets, so partial artifacts, spills and staging are removed. Only an
+   * export or an import that has not written to a restore target qualifies.
    */
   async failPermanently(
     lease: TenantBackupLease,
@@ -302,7 +348,8 @@ export class TenantBackupOperationStore {
       SET state='cancelling',phase='cleanup',cursor_json=NULL,failure_reason=?,failure_count=0,
       last_error_code=NULL,next_attempt_at=0,lease_owner=NULL,lease_expires_at=NULL,
       fencing_token=fencing_token+1,revision=revision+1,updated_at=?
-      WHERE tenant_id=? AND id=? AND state='running' AND lease_owner=? AND fencing_token=? AND revision=? AND lease_expires_at>? AND updated_at<=? RETURNING *`,
+      WHERE tenant_id=? AND id=? AND state='running' AND (kind='export' OR phase IN (${PRE_WRITE_PHASES_SQL}))
+      AND lease_owner=? AND fencing_token=? AND revision=? AND lease_expires_at>? AND updated_at<=? RETURNING *`,
       [
         reason,
         now,
@@ -381,7 +428,7 @@ export class TenantBackupOperationStore {
     if (!Number.isSafeInteger(revision) || revision < 0 || !/^[0-9a-f]{64}$/.test(requestDigest))
       throw new Error('invalid_backup_operation_resume');
     return this.database.queryOne(
-      `UPDATE tenant_backup_operations SET state='queued',revision=revision+1,updated_at=?,failure_count=0,last_error_code=NULL,next_attempt_at=0
+      `UPDATE tenant_backup_operations SET state='queued',revision=revision+1,updated_at=?,failure_count=0,last_error_code=NULL,failure_reason=NULL,next_attempt_at=0
       WHERE tenant_id=? AND id=? AND state='waiting' AND revision=? AND request_digest=? AND updated_at<=? RETURNING *`,
       [now, tenantId, operationId, revision, requestDigest, now]
     );
@@ -398,7 +445,7 @@ export class TenantBackupOperationStore {
     time(now);
     return this.database.queryOne(
       `UPDATE tenant_backup_operations
-      SET next_attempt_at=0,failure_count=0,last_error_code=NULL,state='cancelling',phase='cleanup',cursor_json=NULL,lease_owner=NULL,lease_expires_at=NULL,fencing_token=fencing_token+1,revision=revision+1,updated_at=?
+      SET next_attempt_at=0,failure_count=0,last_error_code=NULL,failure_reason=NULL,state='cancelling',phase='cleanup',cursor_json=NULL,lease_owner=NULL,lease_expires_at=NULL,fencing_token=fencing_token+1,revision=revision+1,updated_at=?
       WHERE tenant_id=? AND id=? AND state IN ('queued','running','waiting','ready') AND updated_at<=? RETURNING *`,
       [now, tenantId, operationId, now]
     );

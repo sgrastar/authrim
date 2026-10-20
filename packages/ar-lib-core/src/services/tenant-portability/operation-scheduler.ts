@@ -1,5 +1,9 @@
 import type { DatabaseAdapter } from '../../db/adapter';
-import { isTenantBackupPermanentFailure, TenantBackupOperationStore } from './operation-store';
+import {
+  canCleanUpTenantBackupFailure,
+  isTenantBackupPermanentFailure,
+  TenantBackupOperationStore,
+} from './operation-store';
 import { executeTenantBackupBatch, type TenantBackupOperationHandlers } from './operation-executor';
 
 /**
@@ -94,16 +98,20 @@ export async function runTenantBackupScheduler(
           owner: workerId,
           fencingToken: current.fencing_token,
         };
-        // Retrying cannot fix these; clean the operation up and keep the reason instead.
+        const permanent = isTenantBackupPermanentFailure(errorCode) ? errorCode : null;
+        // Retrying cannot fix these; clean the operation up and keep the reason instead. An import
+        // that already wrote to its restore targets cannot be cleaned up yet, so it keeps the
+        // usual retries (ending in 'waiting') and only records the reason.
         if (
+          permanent &&
           current.state === 'running' &&
-          isTenantBackupPermanentFailure(errorCode) &&
-          (await store.failPermanently(lease, current.revision, errorCode, now()))
+          canCleanUpTenantBackupFailure(current) &&
+          (await store.failPermanently(lease, current.revision, permanent, now()))
         ) {
           failures++;
           continue;
         }
-        await store.retryFailure(lease, current.revision, now());
+        await store.retryFailure(lease, current.revision, now(), permanent);
       }
       failures++;
     }

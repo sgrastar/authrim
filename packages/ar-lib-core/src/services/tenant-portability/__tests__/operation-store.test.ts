@@ -1060,6 +1060,96 @@ it('sends a permanent failure straight to cleanup and finishes it as failed', as
   // A finished operation is not picked up again.
   expect((await tick(103)).inspected).toBe(0);
 });
+it('cleans up a permanent import failure during validation and finishes it as failed', async () => {
+  await store.create({ ...create, kind: 'import' });
+  const handlers: TenantBackupOperationHandlers = {
+    async run(context) {
+      if (context.operation.phase === 'validate_sqlite_dataset')
+        throw new Error('backup_sqlite_row_too_large');
+      return { phase: 'validate_sqlite_dataset', cursor: null, disposition: 'continue' };
+    },
+    async cleanup() {
+      return { cursor: null, done: true };
+    },
+  };
+  const tick = (now: number) =>
+    runTenantBackupScheduler(adapter, handlers, new AbortController().signal, () => now);
+  expect((await tick(101)).advanced).toBe(1);
+  expect((await tick(102)).failureCodes).toEqual(['backup_sqlite_row_too_large']);
+  expect(await store.get(create.tenantId, create.id)).toMatchObject({
+    state: 'cancelling',
+    phase: 'cleanup',
+    failure_reason: 'backup_sqlite_row_too_large',
+  });
+  expect((await tick(103)).advanced).toBe(1);
+  expect(await store.get(create.tenantId, create.id)).toMatchObject({
+    state: 'failed',
+    failure_reason: 'backup_sqlite_row_too_large',
+  });
+});
+it('keeps retrying a permanent import failure after restore writes began and shows the reason', async () => {
+  await store.create({ ...create, kind: 'import' });
+  let cleanups = 0;
+  const handlers: TenantBackupOperationHandlers = {
+    async run(context) {
+      if (context.operation.phase === 'apply_sqlite_dataset')
+        throw new Error('backup_sqlite_row_too_large');
+      return { phase: 'apply_sqlite_dataset', cursor: null, disposition: 'continue' };
+    },
+    async cleanup() {
+      cleanups++;
+      return { cursor: null, done: true };
+    },
+  };
+  let now = 101;
+  await runTenantBackupScheduler(adapter, handlers, new AbortController().signal, () => now);
+  now = 102;
+  for (let i = 0; i < 8; i++) {
+    await runTenantBackupScheduler(adapter, handlers, new AbortController().signal, () => now);
+    const current = await store.get(create.tenantId, create.id);
+    expect(current).toMatchObject({
+      phase: 'apply_sqlite_dataset',
+      failure_count: i + 1,
+      last_error_code: 'backup_operation_slice_failed',
+      failure_reason: 'backup_sqlite_row_too_large',
+    });
+    now = current!.next_attempt_at;
+  }
+  const waiting = (await store.get(create.tenantId, create.id))!;
+  expect(waiting.state).toBe('waiting');
+  expect(cleanups).toBe(0);
+  // Resuming starts a fresh attempt, so the old reason no longer describes it.
+  expect(
+    await store.resumeWaiting(
+      create.tenantId,
+      create.id,
+      waiting.revision,
+      create.requestDigest,
+      now
+    )
+  ).toMatchObject({ state: 'queued', failure_reason: null });
+});
+it('refuses to fail an import permanently once it is past validation', async () => {
+  await store.create({ ...create, kind: 'import' });
+  const claimed = (await store.claim(create.tenantId, create.id, 'worker', 101))!;
+  const lease = {
+    tenantId: create.tenantId,
+    operationId: create.id,
+    owner: 'worker',
+    fencingToken: claimed.fencing_token,
+  };
+  const applying = (await store.checkpoint(
+    lease,
+    claimed.revision,
+    'apply_sqlite_dataset',
+    null,
+    102
+  ))!;
+  expect(
+    await store.failPermanently(lease, applying.revision, 'backup_sqlite_row_too_large', 103)
+  ).toBeNull();
+  expect((await store.get(create.tenantId, create.id))?.state).toBe('running');
+});
 it('keeps a user cancellation a cancellation when no permanent failure was recorded', async () => {
   await store.create(create);
   await store.requestCancel(create.tenantId, create.id, 101);

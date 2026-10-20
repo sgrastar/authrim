@@ -627,6 +627,7 @@ describe('decode_input with a durable frame index', () => {
       '003_tenant_backup_operations',
       '004_tenant_backup_validation_index',
       '008_tenant_backup_retry_state',
+      '046_tenant_backup_operation_failure_reason',
       '037_tenant_backup_container_inputs',
       '045_tenant_backup_input_frames',
     ])
