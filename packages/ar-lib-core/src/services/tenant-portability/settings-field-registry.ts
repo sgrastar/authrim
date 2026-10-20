@@ -1125,6 +1125,14 @@ const REVIEWED_FIELDS: readonly [string, TenantSettingValueType, TenantSettingHa
     identity_mapping.oidc_default_set_id
   `,
     ],
+    [
+      'identity-mapping',
+      'boolean',
+      'value',
+      `
+    identity_mapping.shadow_compare_enabled
+  `,
+    ],
   ];
 
 export const TENANT_SETTING_FIELD_POLICIES: readonly TenantSettingFieldPolicy[] =

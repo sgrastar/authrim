@@ -238,11 +238,30 @@ describe('where settings live', () => {
 	it('lets only the platform and a tenant set the default Mapping Set, never an app', () => {
 		const category = 'identity-mapping';
 		expect(Object.keys(ALL_CATEGORY_META[category].settings)).toEqual([
-			'identity_mapping.oidc_default_set_id'
+			'identity_mapping.oidc_default_set_id',
+			'identity_mapping.shadow_compare_enabled'
 		]);
 		expect(
 			ALL_CATEGORY_META[category].settings['identity_mapping.oidc_default_set_id'].envKey
 		).toBe(undefined);
+	});
+
+	it('places the shadow comparison switch once, as an applied platform-only setting', () => {
+		const key = 'identity_mapping.shadow_compare_enabled';
+		const meta = ALL_CATEGORY_META['identity-mapping'].settings[key];
+		expect(categoryOf(key)).toBe('identity-mapping');
+		// The comparison runs, so it is not "in development" and not listed as not applied.
+		expect(meta.status).toBeUndefined();
+		expect(NOT_APPLIED.has(key)).toBe(false);
+		expect(meta.scopes).toEqual(['platform']);
+		expect(meta.envKey).toBe('IDENTITY_MAPPING_SHADOW_COMPARE');
+		expect(placed).not.toContain(key);
+		expect(DRAFT.filter((entry) => entry.key === key)).toMatchObject([
+			{ page: 'access/mapping-sets', depth: 'advanced' }
+		]);
+		// Named in every language the console has.
+		expect(hasMessage(settingText(key).label)).toBe(true);
+		expect(settingText(key).description).toBeDefined();
 	});
 
 	it('points every duplicate at a setting that exists', () => {
