@@ -28,6 +28,9 @@ const FRAME_OVERHEAD_BYTES = 9 + 16;
  */
 const STEP_READ_CALLS = 120;
 const CURSOR_LIMIT = 16384;
+/** Plaintext per sealed spill chunk; one sealed chunk stays near 1 MB of hex in D1. */
+const SPILL_CHUNK_BYTES = 512 * 1024;
+const MAX_SPILL_BYTES = 16 * 1024 * 1024;
 const EMPTY_SHA256 = 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855';
 
 /** Position of a checkpointed export; saved only when every read byte is in a written part. */
@@ -47,6 +50,11 @@ interface ExportProgress {
   datasetOffset: number;
   /** Newlines of the current dataset so far. */
   datasetRows: number;
+  /**
+   * Bytes read toward the reserved frame `sequence` when the budget ended before it was complete.
+   * They are sealed in tenant_backup_export_spills and count as read but not yet written.
+   */
+  spill: { id: string; bytes: number } | null;
 }
 /** Values derived from plaintext. They only reach D1 sealed (see checkpoint-seal.ts). */
 interface ExportSecrets {
@@ -66,6 +74,10 @@ function count(value: unknown, max = Number.MAX_SAFE_INTEGER): value is number {
 
 function checkpointContext(state: ExportProgress): string {
   return `authrim-export-checkpoint:${JSON.stringify(state)}`;
+}
+
+function spillContext(attemptId: string, id: string, ordinal: number, chunk: number): string {
+  return `authrim-export-spill:${JSON.stringify([attemptId, id, ordinal, chunk])}`;
 }
 
 function datasetContext(
@@ -103,6 +115,7 @@ async function parseCursor(
         offset: 0,
         datasetOffset: 0,
         datasetRows: 0,
+        spill: null,
       },
       secrets: {
         datasetLast: -1,
@@ -114,7 +127,7 @@ async function parseCursor(
   const { sealed, ...fields } = cursor;
   if (
     cursor.version !== 3 ||
-    Object.keys(cursor).length !== 11 ||
+    Object.keys(cursor).length !== 12 ||
     typeof sealed !== 'string' ||
     !count(cursor.sequence, 999_999) ||
     !count(cursor.parts, 1_000_000) ||
@@ -125,11 +138,22 @@ async function parseCursor(
     !(cursor.source === null || (typeof cursor.source === 'string' && cursor.source)) ||
     !count(cursor.offset) ||
     !count(cursor.datasetOffset) ||
-    cursor.datasetOffset > cursor.offset ||
-    !count(cursor.datasetRows)
+    !count(cursor.datasetRows) ||
+    !(
+      cursor.spill === null ||
+      (typeof cursor.spill === 'object' &&
+        Object.keys(cursor.spill).length === 2 &&
+        typeof cursor.spill.id === 'string' &&
+        /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(cursor.spill.id) &&
+        count(cursor.spill.bytes, MAX_SPILL_BYTES) &&
+        cursor.spill.bytes > 0)
+    )
   )
     fail();
   const state = fields as ExportProgress;
+  // Bytes already read: those in written frames plus a spilled partial frame.
+  const read = state.offset + (state.spill?.bytes ?? 0);
+  if (state.datasetOffset > read) fail();
   let secrets: ExportSecrets;
   try {
     secrets = JSON.parse(await seal.open(sealed, checkpointContext(state))) as ExportSecrets;
@@ -142,11 +166,11 @@ async function parseCursor(
     !Number.isSafeInteger(secrets.datasetLast) ||
     secrets.datasetLast < -1 ||
     secrets.datasetLast > 255 ||
-    (secrets.datasetLast === -1) !== (state.datasetOffset === state.offset) ||
+    (secrets.datasetLast === -1) !== (state.datasetOffset === read) ||
     typeof secrets.datasetHash !== 'string' ||
     typeof secrets.dataHash !== 'string' ||
-    ResumableSha256.restore(secrets.dataHash).byteLength !== state.offset ||
-    ResumableSha256.restore(secrets.datasetHash).byteLength !== state.offset - state.datasetOffset
+    ResumableSha256.restore(secrets.dataHash).byteLength !== read ||
+    ResumableSha256.restore(secrets.datasetHash).byteLength !== read - state.datasetOffset
   )
     fail();
   return { state, secrets };
@@ -276,13 +300,30 @@ export async function runTenantBackupArtifactStep(
       ? await writer.reservedPartSizes(state.parts)
       : new Map<number, number>();
 
+  // A spill holds the start of a reserved frame that the previous slice had to leave unfinished.
+  if (state.spill && !reserved.has(state.parts)) fail();
+  const spilled = state.spill
+    ? join(
+        await Promise.all(
+          (await writer.loadSpill(state.spill.id, state.parts)).map((chunk, index) =>
+            seal.openBytes(
+              chunk,
+              spillContext(input.attemptId, state.spill!.id, state.parts, index)
+            )
+          )
+        )
+      )
+    : new Uint8Array(0);
+  if (state.spill && spilled.length !== state.spill.bytes) fail();
+  state.spill = null;
+
   const cipher = await openTenantBackupContainerV2Cipher(input.key, salt);
   const dataHash = ResumableSha256.restore(secrets.dataHash);
   let datasetHash = ResumableSha256.restore(secrets.datasetHash);
   let datasetLast = secrets.datasetLast;
   const completed: TenantBackupExportDatasetStat[] = [];
-  let buffer: Uint8Array[] = [];
-  let bufferBytes = 0;
+  let buffer: Uint8Array[] = spilled.length ? [spilled] : [];
+  let bufferBytes = spilled.length;
   let calls = 0;
   const readSession = {};
 
@@ -319,7 +360,9 @@ export async function runTenantBackupArtifactStep(
     return plain;
   };
   const writeFrame = async (length: number): Promise<void> => {
+    const ordinal = state.parts;
     await writePart([await sealFrame(takeBuffer(length))]);
+    if (reserved.has(ordinal)) await writer.deleteSpills(ordinal);
   };
 
   for (;;) {
@@ -354,12 +397,26 @@ export async function runTenantBackupArtifactStep(
     }
     if (calls >= readCalls) {
       // Write what is buffered as a shorter frame, so the checkpoint carries no unwritten bytes.
-      // A frame a failed slice reserved must keep its recorded length, which may need more reads.
+      // A frame a failed slice reserved must keep its recorded length: if it is not complete yet,
+      // its bytes so far are sealed and spilled, and the next slice continues from them.
       while (bufferBytes && (!reserved.has(state.parts) || bufferBytes >= nextFrameBytes()))
         await writeFrame(Math.min(bufferBytes, nextFrameBytes()));
-    }
-    if (!bufferBytes && calls >= readCalls) {
       await writer.saveDatasetStats(completed);
+      if (bufferBytes) {
+        if (bufferBytes > MAX_SPILL_BYTES) throw new Error('backup_export_spill_limit');
+        const id = crypto.randomUUID();
+        const plain = join(buffer);
+        const chunks: string[] = [];
+        for (let start = 0, index = 0; start < plain.length; start += SPILL_CHUNK_BYTES, index++)
+          chunks.push(
+            await seal.sealBytes(
+              plain.subarray(start, start + SPILL_CHUNK_BYTES),
+              spillContext(input.attemptId, id, state.parts, index)
+            )
+          );
+        await writer.saveSpill(id, state.parts, chunks);
+        state.spill = { id, bytes: plain.length };
+      }
       const cursor = JSON.stringify({
         ...state,
         sealed: await seal.seal(

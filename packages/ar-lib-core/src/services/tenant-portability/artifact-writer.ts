@@ -278,6 +278,71 @@ export class TenantBackupArtifactWriter {
     }
     return sizes;
   }
+  /**
+   * Store the sealed bytes of a reserved frame that a slice could not finish re-cutting within
+   * its budget. Chunks are read back one per query, so each stays far below D1's row limit.
+   */
+  async saveSpill(spillId: string, ordinal: number, chunks: readonly string[]): Promise<void> {
+    if (
+      !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(spillId) ||
+      !Number.isSafeInteger(ordinal) ||
+      ordinal < 0 ||
+      ordinal > 1_000_000 ||
+      !chunks.length ||
+      chunks.length > 63 ||
+      chunks.some((chunk) => typeof chunk !== 'string' || !/^[a-f0-9]{56,1200000}$/.test(chunk))
+    )
+      fail();
+    for (const [index, sealed] of chunks.entries())
+      await this.db.execute(
+        `INSERT INTO tenant_backup_export_spills (attempt_id,spill_id,ordinal,chunk,sealed)
+        SELECT ?,?,?,?,? WHERE ${ACTIVE} ON CONFLICT(attempt_id,spill_id,chunk) DO NOTHING`,
+        [this.attemptId, spillId, ordinal, index, sealed, ...this.params()]
+      );
+    const saved = await this.loadSpill(spillId, ordinal);
+    if (saved.length !== chunks.length || saved.some((value, index) => value !== chunks[index]))
+      fail();
+  }
+  async loadSpill(spillId: string, ordinal: number): Promise<string[]> {
+    const count = await this.db.queryOne<{
+      chunks: number;
+      ordinals: number;
+      ordinal: number;
+      last: number;
+    }>(
+      `SELECT count(*) AS chunks,count(DISTINCT ordinal) AS ordinals,max(ordinal) AS ordinal,
+      max(chunk) AS last FROM tenant_backup_export_spills
+      WHERE attempt_id=? AND spill_id=? AND ${ACTIVE}`,
+      [this.attemptId, spillId, ...this.params()]
+    );
+    if (
+      !count ||
+      !count.chunks ||
+      count.ordinals !== 1 ||
+      count.ordinal !== ordinal ||
+      count.last !== count.chunks - 1
+    )
+      fail();
+    const chunks: string[] = [];
+    for (let index = 0; index < count.chunks; index++) {
+      const row = await this.db.queryOne<{ sealed: string }>(
+        `SELECT sealed FROM tenant_backup_export_spills
+        WHERE attempt_id=? AND spill_id=? AND chunk=? AND ${ACTIVE}`,
+        [this.attemptId, spillId, index, ...this.params()]
+      );
+      if (!row || typeof row.sealed !== 'string') fail();
+      chunks.push(row.sealed);
+    }
+    return chunks;
+  }
+  /** Spills for frames up to `ordinal` are no longer needed once that frame's part is written. */
+  async deleteSpills(ordinal: number): Promise<void> {
+    if (!Number.isSafeInteger(ordinal) || ordinal < 0) fail();
+    await this.db.execute(
+      `DELETE FROM tenant_backup_export_spills WHERE attempt_id=? AND ordinal<=? AND ${ACTIVE}`,
+      [this.attemptId, ordinal, ...this.params()]
+    );
+  }
   /** Retries must repeat identical values; a different value for a saved dataset fails. */
   async saveDatasetStats(stats: readonly TenantBackupExportDatasetStat[]): Promise<void> {
     for (const stat of stats)

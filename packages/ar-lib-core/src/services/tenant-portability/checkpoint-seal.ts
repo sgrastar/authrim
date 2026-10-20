@@ -3,7 +3,7 @@ import type { TenantBundleKeyEnvelope } from './bundle-key-envelope';
 const INFO = new TextEncoder().encode('authrim-tenant-backup-checkpoint-v1');
 const IV_BYTES = 12;
 const TAG_BYTES = 16;
-const SEALED = /^(?:[a-f0-9]{2})+$/;
+const SEALED = /^[a-f0-9]+$/;
 
 function invalid(): never {
   throw new Error('backup_checkpoint_seal_invalid');
@@ -22,6 +22,18 @@ function hex(bytes: Uint8Array): string {
 export interface TenantBackupCheckpointSeal {
   seal(value: string, context: string): Promise<string>;
   open(sealed: string, context: string): Promise<string>;
+  sealBytes(value: Uint8Array, context: string): Promise<string>;
+  openBytes(sealed: string, context: string): Promise<Uint8Array>;
+}
+
+function unhex(value: string): Uint8Array<ArrayBuffer> {
+  const bytes = new Uint8Array(value.length / 2);
+  for (let i = 0; i < bytes.length; i++) {
+    const byte = parseInt(value.slice(i * 2, i * 2 + 2), 16);
+    if (Number.isNaN(byte)) invalid();
+    bytes[i] = byte;
+  }
+  return bytes;
 }
 
 export async function openTenantBackupCheckpointSeal(
@@ -37,45 +49,58 @@ export async function openTenantBackupCheckpointSeal(
     ['encrypt', 'decrypt']
   );
   const encoder = new TextEncoder();
-  return {
-    async seal(value, context) {
-      const iv = crypto.getRandomValues(new Uint8Array(IV_BYTES));
-      const encrypted = new Uint8Array(
-        await crypto.subtle.encrypt(
-          { name: 'AES-GCM', iv, additionalData: encoder.encode(context), tagLength: 128 },
+  const sealBytes = async (value: Uint8Array, context: string): Promise<string> => {
+    const iv = crypto.getRandomValues(new Uint8Array(IV_BYTES));
+    const encrypted = new Uint8Array(
+      await crypto.subtle.encrypt(
+        { name: 'AES-GCM', iv, additionalData: encoder.encode(context), tagLength: 128 },
+        key,
+        Uint8Array.from(value)
+      )
+    );
+    const out = new Uint8Array(IV_BYTES + encrypted.length);
+    out.set(iv);
+    out.set(encrypted, IV_BYTES);
+    return hex(out);
+  };
+  const openBytes = async (sealed: string, context: string): Promise<Uint8Array> => {
+    if (
+      typeof sealed !== 'string' ||
+      sealed.length % 2 !== 0 ||
+      sealed.length < (IV_BYTES + TAG_BYTES) * 2 ||
+      !SEALED.test(sealed)
+    )
+      invalid();
+    const bytes = unhex(sealed);
+    try {
+      return new Uint8Array(
+        await crypto.subtle.decrypt(
+          {
+            name: 'AES-GCM',
+            iv: bytes.subarray(0, IV_BYTES),
+            additionalData: encoder.encode(context),
+            tagLength: 128,
+          },
           key,
-          encoder.encode(value)
+          bytes.subarray(IV_BYTES)
         )
       );
-      const out = new Uint8Array(IV_BYTES + encrypted.length);
-      out.set(iv);
-      out.set(encrypted, IV_BYTES);
-      return hex(out);
-    },
+    } catch {
+      invalid();
+    }
+  };
+  return {
+    seal: (value, context) => sealBytes(encoder.encode(value), context),
     async open(sealed, context) {
-      if (
-        typeof sealed !== 'string' ||
-        !SEALED.test(sealed) ||
-        sealed.length < (IV_BYTES + TAG_BYTES) * 2
-      )
-        invalid();
-      const bytes = Uint8Array.from(sealed.match(/../g) ?? [], (pair) => parseInt(pair, 16));
       try {
         return new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(
-          await crypto.subtle.decrypt(
-            {
-              name: 'AES-GCM',
-              iv: bytes.subarray(0, IV_BYTES),
-              additionalData: encoder.encode(context),
-              tagLength: 128,
-            },
-            key,
-            bytes.subarray(IV_BYTES)
-          )
+          await openBytes(sealed, context)
         );
       } catch {
         invalid();
       }
     },
+    sealBytes,
+    openBytes,
   };
 }

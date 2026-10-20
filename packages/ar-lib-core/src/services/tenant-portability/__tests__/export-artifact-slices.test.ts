@@ -34,6 +34,8 @@ const objects = new Map<
   { body: Uint8Array; size: number; checksums: { sha256: ArrayBuffer } }
 >();
 const signal = new AbortController().signal;
+/** One-shot R2 fault: fail before storing, or store and then lose the response. */
+let putFault: 'before' | 'after' | null = null;
 const now = () => 102;
 
 function rows(prefix: string, count: number): string[] {
@@ -157,6 +159,9 @@ beforeEach(async () => {
   objects.clear();
   bucket = {
     async put(key: string, value: Uint8Array) {
+      const fault = putFault;
+      putFault = null;
+      if (fault === 'before') throw new Error('r2_unavailable');
       if (objects.has(key)) return null;
       const object = {
         body: new Uint8Array(value),
@@ -164,6 +169,7 @@ beforeEach(async () => {
         checksums: { sha256: await crypto.subtle.digest('SHA-256', new Uint8Array(value)) },
       };
       objects.set(key, object);
+      if (fault === 'after') throw new Error('r2_response_lost');
       return object;
     },
     async head(key: string) {
@@ -716,3 +722,67 @@ it('serves parts above 4 MiB through the public download', async () => {
   expect(received.map((part) => part.length)).toEqual(parts.map((part) => part.length));
   expect(download.byteCount).toBe(parts.reduce((sum, part) => sum + part.length, 0));
 });
+
+it.each([
+  ['after its part was reserved', 'before' as const],
+  ['after its part reached R2', 'after' as const],
+  ['after its receipt', null],
+])(
+  'retries a slice lost %s within the read budget, even in one-row batches',
+  async (_case, fault) => {
+    const { attemptId, expected } = await prepare();
+    const start = JSON.stringify({ version: 2, attemptId });
+    // The lost slice wrote whole 8 KiB frames from 7-row batches; the last one fails as given.
+    let frames = 0;
+    const lost: typeof readNext = async (datasetId, cursor) => {
+      if (objects.size >= 3 && fault === null) throw new Error('worker_lost');
+      return batched(7)(datasetId, cursor);
+    };
+    putFault = null;
+    const original = bucket.put.bind(bucket);
+    bucket.put = (async (...args: Parameters<R2Bucket['put']>) => {
+      if (++frames === 3 && fault) putFault = fault;
+      return original(...args);
+    }) as R2Bucket['put'];
+    await expect(
+      exportStep(attemptId, expected, 'export_artifact', start, {
+        slice: { frameBytes: 8 * 1024, readCalls: 60 },
+        read: lost,
+      })
+    ).rejects.toThrow();
+    bucket.put = original;
+    const reserved = db.prepare('SELECT count(*) AS n FROM tenant_backup_artifact_parts').get() as {
+      n: number;
+    };
+    expect(reserved.n).toBeGreaterThanOrEqual(3);
+    // Retries read one row per call with a budget of 3 calls: no transition may read more.
+    let calls = 0;
+    const counted: typeof readNext = async (datasetId, cursor) => {
+      calls++;
+      return batched(1)(datasetId, cursor);
+    };
+    const perSlice: number[] = [];
+    let spilled = false;
+    let phase = 'export_artifact';
+    let cursor: string | null = start;
+    while (phase === 'export_artifact') {
+      calls = 0;
+      const result = await exportStep(attemptId, expected, phase, cursor, {
+        slice: { frameBytes: 8 * 1024, readCalls: 3 },
+        read: counted,
+      });
+      perSlice.push(calls);
+      if (result.phase === 'export_artifact' && JSON.parse(result.cursor!).spill) spilled = true;
+      phase = result.phase;
+      cursor = result.cursor;
+    }
+    expect(Math.max(...perSlice)).toBeLessThanOrEqual(3);
+    expect(spilled).toBe(true);
+    await runVerify(attemptId, expected);
+    expectDatasets((await decodeSaved(attemptId)).decoded);
+    // Spills are gone once their frames are written; none hold plaintext in the clear.
+    expect(db.prepare('SELECT count(*) AS n FROM tenant_backup_export_spills').get()).toEqual({
+      n: 0,
+    });
+  }
+);
