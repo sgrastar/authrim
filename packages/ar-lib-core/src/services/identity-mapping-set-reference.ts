@@ -198,7 +198,7 @@ function parseRef(json: string | null): Record<string, unknown> {
  * and again when it is activated (a platform set is shared by every tenant, so it can only read the
  * platform catalog's standard fields). Returns the first violation, or null.
  */
-async function platformSetViolation(
+export async function platformSetViolation(
   adapter: DatabaseAdapter,
   versionId: string,
   catalogVersionId: string

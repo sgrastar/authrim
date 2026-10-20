@@ -1009,6 +1009,7 @@ import {
   adminIdentityMappingTemplateCreateHandler,
   adminIdentityMappingTemplatesListHandler,
 } from './identity-mapping-control-plane';
+import { adminIdentityMappingUsageHandler } from './identity-mapping-usage';
 import {
   getLoggingConfig,
   updateLoggingConfig,
@@ -3124,6 +3125,20 @@ app.post(
   '/api/admin/field-mapping/field-mapping-sets/:fieldMappingSetId/rollback',
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
   adminIdentityFieldMappingSetRollbackHandler
+);
+// The search reads the databases of the tenants (one read each for a platform set), so it is
+// rate limited like the other admin endpoints that fan out (strict profile).
+app.use('/api/admin/identity-mapping/usage', async (c, next) => {
+  const profile = await getRateLimitProfileAsync(c.env, 'strict');
+  return rateLimitMiddleware({
+    ...profile,
+    endpoints: ['/api/admin/identity-mapping/usage'],
+  })(c, next);
+});
+app.get(
+  '/api/admin/identity-mapping/usage',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_READ]),
+  adminIdentityMappingUsageHandler
 );
 app.get(
   '/api/admin/field-mapping/source-authority-contracts',

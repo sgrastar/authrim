@@ -21,6 +21,7 @@
 
 import type { Env, SAMLSPConfig } from '@authrim/ar-lib-core';
 import {
+  findRenamedAttributeDescriptors,
   isVirtualCanonicalCatalogVersion,
   loadCustomClaimSchemaCatalogEntries,
   loadDestinationProfileConsentDescriptor,
@@ -88,26 +89,7 @@ export function destinationCatalogEntries(input: {
   return added;
 }
 
-/** The destination keys whose attribute descriptor names the attribute otherwise than the field. */
-export function findRenamedAttributeDescriptors(
-  targets: ReadonlyArray<{ namespace: string; path: string; catalogEntryId?: string }>,
-  descriptors: Record<string, { name?: string; friendlyName?: string }> | undefined
-): string[] {
-  if (!descriptors) return [];
-  const renamed = new Set<string>();
-  for (const target of targets) {
-    // Own keys only: a field may be named constructor or toString.
-    const own = (key: string) => (Object.hasOwn(descriptors, key) ? descriptors[key] : undefined);
-    const descriptor =
-      (target.catalogEntryId ? own(target.catalogEntryId) : undefined) ??
-      own(target.path) ??
-      own(`${target.namespace}:${target.path}`);
-    if (descriptor?.name !== undefined && descriptor.name !== target.path) {
-      renamed.add(target.path);
-    }
-  }
-  return [...renamed];
-}
+export { findRenamedAttributeDescriptors };
 
 export async function resolveSAMLRuntimeIdentityMapping(
   env: Env,
